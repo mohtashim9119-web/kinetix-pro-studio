@@ -63,7 +63,59 @@ export const EAR_SITTINGS = {
   /** WS1 Session S — the owner's live pass over ALL TEN v6 unscripted-run
    *  boundaries, scored in the app on the shipped production path. */
   'live-runs-s': 6,
+  /** WS1 Session T — an A/B SIDE-BY-SIDE sitting (not solo listening): for
+   *  each row the owner heard the shipped/clamped value and candidate B
+   *  (unclamped whole-silence midpoint) played back to back and picked one.
+   *  PROCESS NOTE, recorded because this sitting overturned a solo-listened
+   *  one: side-by-side comparison supersedes solo listening. `live-runs-s`
+   *  (order 6) was a single continuous playback per boundary — one value
+   *  heard once, scored against the owner's memory of what "right" sounds
+   *  like — and it passed `383_sixty_four` at 1188.95. Placed side by side
+   *  against 1189.05, the owner reversed that call: both sit inside 1.26s of
+   *  literal digital silence, indistinguishable in isolation, and only the
+   *  comparison surfaced that 1188.95 was early. No other `live-runs-s` CORRECT
+   *  verdict has been re-run A/B as of this sitting — see this file's own
+   *  audit note below listing every solo-listened CORRECT pin still standing
+   *  unconfirmed by a comparison pass. */
+  'ear-verify-t': 7,
 } as const;
+
+// ---------------------------------------------------------------------------
+// WS1 SESSION T — SOLO-LISTENED PIN AUDIT (Step 2's second half).
+//
+// Every `'CORRECT'` verdict in this ledger, audited for whether its own
+// sitting was a SOLO listen (one value played, scored against memory) or an
+// A/B COMPARISON (two or more candidates played back to back). Only
+// `ear-verify-t` (this session) and `ov3-triage` (Session D's blinded OV3
+// triage of R-AA's three candidates, which by its own design compared
+// candidates) are A/B by construction. Every other sitting recorded a solo
+// verdict per row — INCLUDING `live-runs-s`, whose `383_sixty_four` row this
+// session's A/B pass just overturned.
+//
+// WHAT THIS MEANS: a solo `'CORRECT'` is not thereby wrong — `383` was
+// right about direction (candidate B) for five other rows on the very same
+// sitting — but it is UNAUDITED against the specific failure mode measured
+// here: two candidates 0.10s apart, both sitting inside a region a listener
+// cannot resolve in isolation. The rows below are flagged for exactly that
+// reason, not reopened; `EAR_PASS_LEDGER`'s supersession-by-order already
+// means a future A/B pass that disagrees with any of them simply outranks
+// them by being added, no bookkeeping required here.
+//
+// FLAGGED (solo-listened CORRECT, no A/B comparison yet run against it):
+//   - `live-runs-s`: '125_night_circle'@370.75, '192_scout_listening'@571.07,
+//     '226_four_scouts'@671.17, and every EARLY/WRONG verdict on that sitting
+//     (their negative status is likewise unconfirmed by a comparison pass).
+//   - `ear-12`, `ear-12-h`, `mover-audit-k`: every CORRECT row — the original
+//     12-item pass, the second 12-row pass, and the 24-row mover audit were
+//     all solo listens.
+//   - `session-p-live`: transcribed from `phase4-fa-replay.test.ts`'s own
+//     KNOWN_BAD table, not a fresh sitting at all; its own provenance comment
+//     already says so.
+//
+// NOT a call to re-run all of them now — flagged so the NEXT session that
+// touches any of these rows knows the standing verdict is solo, and can
+// choose to A/B it rather than assume solo-equals-settled.
+// ---------------------------------------------------------------------------
 
 export type EarSitting = keyof typeof EAR_SITTINGS;
 export type Corpus = 'v6' | '173' | 'spanish';
@@ -248,7 +300,51 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
   { sitting: 'live-runs-s', corpus: 'v6', tag: '340_fifty_eight', scoredValue: 1044.67, verdict: 'EARLY', note: 'L9.' },
   { sitting: 'live-runs-s', corpus: 'v6', tag: '383_sixty_four', scoredValue: 1188.95, verdict: 'CORRECT',
     note: 'L10. R.12\'s corrected value. Previously closed as `verification: \'structural\'` — this is the ' +
-      'first ear pass to score it, and it PASSES, so the closure is upgraded to \'ear\'.' },
+      'first ear pass to score it, and it PASSES, so the closure is upgraded to \'ear\'. SUPERSEDED below ' +
+      '(order 7): the ear-verify-t A/B pass reverses this verdict — see that sitting\'s own note.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION T — A/B side-by-side pass (`docs/ws1-sync-pipeline/
+  // stage1-session-s-ear-list.md`'s five-row list, plus its own 383 question,
+  // plus a sixth row — L7/266 — carried over unchanged from the live app).
+  // Six candidate-B confirmations and one refutation of a prior solo verdict.
+  // -------------------------------------------------------------------------
+  { sitting: 'ear-verify-t', corpus: 'v6', tag: '042_eleven_years', scoredValue: 125.760, verdict: 'CORRECT',
+    note: 'Row 1. A=125.540 (shipped, = the breath onset) vs B=125.760 (unclamped) vs C=125.900 (silence ' +
+      'end). Owner: B.' },
+  { sitting: 'ear-verify-t', corpus: 'v6', tag: '176_twenty_six_scout', scoredValue: 522.460, verdict: 'CORRECT',
+    note: 'Row 2, the row the owner had annotated "cuts between breath and prev segment". A=521.710 (before ' +
+      'the -52.8 dBFS breath) vs B=522.460 (after it) vs C=523.500. Owner: B — after the breath, confirming ' +
+      'the breath belongs with the run, not the outgoing scene.' },
+  { sitting: 'ear-verify-t', corpus: 'v6', tag: '224_thirty_three', scoredValue: 664.330, verdict: 'CORRECT',
+    note: 'Row 3, NO breath at all in the gap (floor -56 to -91 dBFS) — the control for breath-irrelevance. ' +
+      'A=663.785 vs B=664.330 vs C=665.000. Owner: B, same family as the breath rows.' },
+  { sitting: 'ear-verify-t', corpus: 'v6', tag: '307_forty_nine_years', scoredValue: 925.430, verdict: 'CORRECT',
+    note: 'Row 4, a LOUD -32.0 dBFS breath sitting BEFORE the detected silence starts (already excluded from ' +
+      'it, so A already sits after it). A=924.920 vs B=925.430 vs C=926.160. Owner: B.' },
+  { sitting: 'ear-verify-t', corpus: 'v6', tag: '340_fifty_eight', scoredValue: 1045.620, verdict: 'CORRECT',
+    note: 'Row 5, the most extreme: the shipped value sat 2.5% into a 2.00s silence. A=1044.670 vs ' +
+      'B=1045.620 vs C=1046.620. Owner: B.' },
+  { sitting: 'ear-verify-t', corpus: 'v6', tag: '383_sixty_four', scoredValue: 1188.950, verdict: 'EARLY',
+    note: 'THE REFUTATION, RECORDED AS ITS OWN ROW so `earPassAuthorising`/`earPassRejects` can see it — the ' +
+      'mechanism keys on (corpus, tag, VALUE), so a supersession has to re-score the SAME value, not merely ' +
+      'score a nearby one. `live-runs-s` (a SOLO listen) scored 1188.950 CORRECT; heard A/B against 1189.050, ' +
+      'the owner now places it as early.' },
+  { sitting: 'ear-verify-t', corpus: 'v6', tag: '383_sixty_four', scoredValue: 1189.050, verdict: 'CORRECT',
+    note: 'THE REVERSAL. A/B against 1188.950 (the value `live-runs-s`, a SOLO listen, scored CORRECT): ' +
+      'the owner now hears 1189.050 as correct and 1188.950 as early. Both sit inside 1.26s of literal ' +
+      'digital silence — indistinguishable played alone, resolved only by the comparison. `live-runs-s`\'s ' +
+      '1188.95 row is superseded, not deleted; see its own note.' },
+  { sitting: 'ear-verify-t', corpus: 'v6', tag: '266_forty_one_burden', scoredValue: 788.65, verdict: 'CORRECT',
+    note: 'L7, carried over unchanged from the live app (not part of the five-row A/B list — this is the ' +
+      'R-AP ownership fix from Session S, re-confirmed, not a candidate-B row). WS1 Session T STEP 0 measured ' +
+      'the pre-Step-1 production value at exactly 788.65 and this sitting confirms it CORRECT. FLAGGED: ' +
+      'Step 1\'s onset correction (`acousticRunExtent`, applied uniformly, no special case) moves run 6\'s ' +
+      'acoustic onset from 789.26 to 789.46, which moves this row\'s OWN computed value from 788.65 to ' +
+      '788.75 — a fresh 0.10s regression AWAY from this very verdict, discovered by measurement after this ' +
+      'row was already confirmed. Production commits 788.75 as of this session\'s HEAD, NOT the 788.65 this ' +
+      'row authorises; see `ws1-session-q-production-pins.test.ts`\'s own pin and comment for the open item ' +
+      'this creates. Not resolved this session — flagged, not special-cased.' },
 ];
 
 /** Default match tolerance — the Zero-Defect Register's own. */

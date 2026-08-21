@@ -33,9 +33,32 @@ import { describe, it, expect } from 'vitest';
 import { normalize } from '../src/services/whisperService';
 import { CORPORA, runProductionPath, tagOf } from './ws1-session-p-pipeline.js';
 import type { TranscriptToken } from '../src/types';
+import type { SilenceInterval } from '../src/services/silenceDetector';
 
 const substantive = (t: TranscriptToken | undefined): boolean =>
   t !== undefined && normalize(t.text).length > 0;
+
+/** WS1 SESSION T — the acoustic onset itself is now a CORRECTED quantity, not
+ *  merely "the first substantive token". Reimplemented independently here
+ *  (not by calling `acousticRunExtent`) for the same reason the surrounding
+ *  block already gives: this invariant exists to catch a bug IN that helper,
+ *  so it must not become circular by calling the helper it is checking. See
+ *  `faRunPlacementGate.ts`'s own header for the full reasoning — a Whisper
+ *  onset timestamp can sit inside a real detected pause, and the invariant is
+ *  about where speech actually starts, not about a model's estimate of it. */
+function correctedOnsetSec(claimedOnset: number, speechEnd: number | undefined, silences: readonly SilenceInterval[], runEnd: number): number {
+  if (speechEnd === undefined) return claimedOnset;
+  let pause: SilenceInterval | undefined;
+  for (const sInterval of silences) {
+    if (!(sInterval.endSec > speechEnd + 1e-9)) continue;
+    if (!(sInterval.startSec < runEnd - 1e-9)) continue;
+    if (pause === undefined || sInterval.startSec < pause.startSec) pause = sInterval;
+  }
+  if (!pause) return claimedOnset;
+  if (!(pause.endSec > claimedOnset + 1e-9)) return claimedOnset;
+  if (!(pause.endSec < runEnd - 1e-9)) return claimedOnset;
+  return pause.endSec;
+}
 
 describe('WS1 Session P — production invariants (v6 live bundle)', () => {
   const TIMEOUT = 900_000;
@@ -57,9 +80,14 @@ describe('WS1 Session P — production invariants (v6 live bundle)', () => {
       while (hi >= run.tokenLo && !substantive(r.whisperTokens[hi])) hi--;
       const on = r.whisperTokens[lo];
       const off = r.whisperTokens[hi];
-      return on && off && lo <= hi
-        ? { startSec: on.startSec, endSec: off.endSec }
-        : { startSec: run.startSec, endSec: run.endSec };
+      if (!on || !off || lo > hi) return { startSec: run.startSec, endSec: run.endSec };
+      // WS1 Session T: the onset is corrected against the preceding pause —
+      // see `correctedOnsetSec`'s own doc comment for why this is
+      // reimplemented rather than imported.
+      let pi = run.tokenLo - 1;
+      while (pi >= 0 && !substantive(r.whisperTokens[pi])) pi--;
+      const speechEnd = r.whisperTokens[pi]?.endSec;
+      return { startSec: correctedOnsetSec(on.startSec, speechEnd, r.silences, off.endSec), endSec: off.endSec };
     });
 
     const violations = r.committed.flatMap((s, i) => {

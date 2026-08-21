@@ -6739,3 +6739,116 @@ pin site (`pinEarVerified` vs `pinChangeDetector`). The check found two more ove
 being written, both corrected: `r12-266-forty-one-burden` is downgraded `'ear'` -> `'structural'`
 (nobody ever heard 788.65), and `r12-383-sixty-four` is promoted `'structural'` -> `'ear'` (the
 Session S sitting is the first to hear 1188.95, and it passes).
+
+---
+
+## Part R — Candidate B Licensed: the Clamp Was a Symptom Mask, the Run's Onset Was the Real Defect (WS1 Session T, 2026-08-21, append-only)
+
+**(a) THE RULING, from the owner's A/B side-by-side pass (`ear-verify-t`, `docs/ws1-sync-pipeline/
+stage1-session-s-ear-list.md`).** Candidate B (the unclamped whole-silence midpoint) is licensed
+on all six rows tested: `042` -> 125.760, `176` -> 522.460, `224` -> 664.330, `307` -> 925.430,
+`340` -> 1045.620, `383` -> 1189.050 (reversing the SOLO-listened `1188.950` — see (d)). Breath
+presence is confirmed irrelevant to correct placement: the owner chose B on a row with a quiet
+breath (176), a row with a loud breath (307), and a row with no breath at all (224). No
+breath-aware logic was built; `silenceDetector.ts` is untouched.
+
+**(b) STEP 0 — L7's value, measured before anything else changed.** `266_forty_one_burden`
+committed **788.65000** at this session's HEAD, confirming Session S's R-AP fix (Part Q) still
+holds unmodified. Per the session's own criterion this closed the row at the moment it was
+measured — Step 1's uniform fix reopened it for an unrelated reason (see (e)).
+
+**(c) STEP 1 — THE CLAMP WAS NEVER THE RULE. IT WAS A SYMPTOM MASK FOR A DEFECT ONE LAYER DEEPER.**
+Sessions H through S took R.12's placement as the midpoint of (the leading silence ∩ the gap),
+and Part Q's own header argued the intersection was forced by measurement: "a detected silence
+routinely starts before a run and runs on past its onset... taking such a silence's whole midpoint
+puts the boundary back INSIDE the run — measured on four of the nine rows." **That observation was
+real. Its explanation was wrong.** A silence only appeared to "run on past the run's onset"
+because the onset itself — `run.startSec`'s substantive-token-scan result, a WHISPER TOKEN
+TIMESTAMP — sat INSIDE that very silence. `acousticRunExtent` now corrects the onset directly: when
+a detected pause, still open after the last substantive token before the run, closes LATER than
+the token timestamp Whisper claims the recitation starts at, the onset moves to the pause's end
+instead. Bounded at both edges (never earlier than the model's own claim; never past the run's own
+end) so the correction cannot invert the extent or swallow preceding speech. **Measured
+consequence: once the onset is corrected, clamped and unclamped agree to the bit on all 8 R.12
+rows on the live v6 bundle.** The clamp is DEAD CODE post-fix and is removed rather than left
+inert — a construct whose stated justification has been refuted is a trap for the next reader, and
+leaving it in place would make the rule's value silently depend on a model timestamp again the
+moment a silence ever outlasted a corrected gap.
+
+**Blast radius, predicted before building, confirmed after.** Prediction: declamping the
+PRE-Step-1b `backingSilence` (i.e. dropping the clamp alone, before the onset fix) reproduces the
+owner's licensed values on 6 of 8 rows exactly, using values already visible in Part Q's own
+Session S measurement table. Confirmed: `125_night_circle` and `383_sixty_four` needed no onset
+correction at all (their backing silences already sat fully inside the OLD gap); the other six
+did. H7 rejected the naive declamp-only candidate on 4 of those six (`176`/`224`/`307`/`340`) —
+resolved by (c)'s onset fix, not by weakening H7: once the onset is measured correctly, the
+candidate the guard used to reject no longer lands inside the run at all, because the run's own
+measured extent moved. `042_eleven_years` reaches its candidate by the SAME `silence-midpoint`
+path every other row now uses (not the `run-start-fallback` it took before) — principled, not
+coincidental: the OLD gap ended exactly at the Whisper onset, so no silence intersected it at all;
+the WIDENED gap (onset corrected) reaches the real post-breath pause.
+
+**`224_thirty_three` drops out of R.12's fixture findings (9 -> 8), and it is the rule working.**
+The frozen fixture's own pre-correction value (664.33) was already OUTSIDE the corrected run
+(onset moved 663.91 -> 665.00), so R.12 has nothing left to fix on that corpus — and 664.33 is
+exactly the value the ear licensed. On the LIVE bundle the row still fires (its own pre-rule value
+differs from the fixture's) and corrects TO 664.33 — same value, different path, same conclusion.
+`085_the_spear_bearer`'s live value also moves, 250.69 -> 250.81, CONVERGING with Whisper's own
+already-independently-correct value at that exact boundary (Session H's own entry: "Whisper commits
+250.81, correctly outside the run") rather than diverging from it — the FA path catching up to
+what the other engine already had right.
+
+**(d) STEP 2 — 383 RE-PINNED, and the process finding matters more than the value.** A/B against
+1188.950 (the value a SOLO sitting, `live-runs-s`, had scored CORRECT) reverses it: the owner now
+hears 1189.050 as correct and 1188.950 as early. Both sit inside 1.26s of literal digital silence,
+indistinguishable played alone — which is exactly why the comparison, not the isolated listen,
+resolved it. Recorded in `scripts/ws1-ear-pass-ledger.ts` as an explicit process note: **side-by-
+side comparison supersedes solo listening.** Every other solo-listened `CORRECT` verdict on record
+is flagged (not reopened) in that file's own audit block: `live-runs-s`'s remaining CORRECT rows
+(`125_night_circle`, `192_scout_listening`, `226_four_scouts`), every CORRECT row from `ear-12`,
+`ear-12-h`, and `mover-audit-k` (all solo passes), and `session-p-live` (transcribed from another
+file's KNOWN_BAD table, not a fresh sitting at all). Only `ov3-triage` (Session D, blinded by
+design) and this session's own `ear-verify-t` are A/B by construction.
+
+**(e) THE ONE ROW THAT DID NOT CLOSE.** `266_forty_one_burden`'s live value moved 788.65 ->
+**788.75**, AWAY from the value `ear-verify-t` had just confirmed correct, as a measured side
+effect of the SAME uniform onset correction that fixed the other six: run 6's backing silence
+[788.04, 789.46] pushes the acoustic onset from 789.26 to 789.46, the identical shape every other
+affected row has. **NOT special-cased.** Excluding this one boundary from the uniform fix would be
+exactly the corpus-fitted-constant-wearing-a-rule's-clothes move ruled out across this entire
+investigation. Flagged in three places rather than resolved: `s-266-live-path-collision`
+(`scripts/phase4-fa-replay.test.ts`'s KNOWN_BAD, faValue and earCorrect both updated),
+`scripts/ws1-session-s-exclusion.test.ts`'s own pin (788.65 -> 788.75, reason stated inline), and
+`scripts/ws1-session-q-production-pins.test.ts`'s `pinChangeDetector`. Left for a future session's
+A/B sitting on 788.75 itself, or a structural fix to how the onset correction treats a run whose
+FIXTURE closure and LIVE value have diverged this way.
+
+**(f) FIXTURE VERSUS LIVE PATH, KEPT DELIBERATELY SEPARATE.** `phase4-fa-second-baseline-v6-
+segments.csv` was NOT regenerated this session — doing so requires the full FA/ONNX production
+pipeline, which is exactly the kind of generator the repo rule keeps out of the default sweep, and
+regenerating it casually (by hand-computing new numbers rather than running the real pipeline)
+would produce a file that only LOOKS like FA output. `phase4-fa-replay.test.ts`'s
+`CLOSED_BY_POSITIVE_ASSERTION` entries for `085`/`125`/`266`/`383` are therefore UNCHANGED in
+value (still testing against the frozen, real fixture) and each affected one carries a caveat note
+pointing at the live-path divergence — the same treatment `item-7`'s own entry already established
+a precedent for, one session prior. `r12-383-sixty-four` is the one exception: its FIXTURE closure
+itself is now false (the ear ledger rejects 1188.95, the value the fixture still shows), so it is
+REOPENED into KNOWN_BAD rather than left silently asserting a refuted claim — `REGISTER_HIGH_WATER`
+raised 14 -> 15 to carry it.
+
+**(g) MUTATION COVERAGE.** `faAnchors.ts` (sha256 `b61e94cb…`) verified unchanged after every
+revert. M13 (Session S's own — neuter R-AP's exclusion) re-verified RED. Two new mutations for this
+session's own changes: **M14** (restore the clamped-midpoint formula) RED; **M15** (neuter the
+onset correction, i.e. return `acousticRunExtent`'s raw substantive-token onset unmodified) RED.
+M1-M12 were not independently re-executed — their target code was untouched by this session's
+edits, and the full `npm test` suite (2464 passed / 21 skipped at rest, up from the prior session's
+2460/19 by this session's own additions) is the coverage claim for everything this session did not
+directly mutate.
+
+**(h) SCOPE — unchanged from Part Q's own ruling.** Class A and Class B remain untouched and
+recorded as a distinct population from R.12 (Part Q(k) still applies verbatim: R.12's placement
+never consults segment spans, so Session R's word-attribution finding does not transfer). The
+propose-then-arbitrate rule-stage refactor (Part Q(f)) remains the scheduled, not-started follow-
+up. `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `project-state.md`,
+`docs/history.md` and `scripts/fixtures/phase4-baseline-*.csv` were not touched. Golden replay 6/6
+byte-identical.

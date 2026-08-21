@@ -89,25 +89,24 @@ function pinChangeDetector(r: ProductionRun, tag: string, value: number, precisi
 describe('WS1 Session Q/S — production-path pin set (R-AO / R-AM, live-fidelity bundle)', () => {
   const TIMEOUT = 300_000;
 
-  it('R.12: the TWO ear-verified corrected boundaries', async () => {
+  it('R.12: the SEVEN ear-verified corrected boundaries (WS1 Session T)', async () => {
     const r = await run();
-    // L4 and L10 of the Session S live pass — the only two of R.12's seven
-    // that an ear pass has scored CORRECT.
+    // Session T's A/B side-by-side pass (`ear-verify-t`) licensed candidate B
+    // — the unclamped silence midpoint, with the run's acoustic onset measured
+    // off the waveform rather than taken from a Whisper timestamp — on all six
+    // rows Session S's ear list covered, and reversed the SOLO-listened
+    // `live-runs-s` verdict on 383 in the process (1188.95 -> 1189.05; both
+    // sit inside 1.26s of literal digital silence, indistinguishable played
+    // alone). `125_night_circle` was already ear-verified since Session S and
+    // is unaffected by either change (its backing silence never straddled the
+    // run's raw onset in the first place).
+    pinEarVerified(r, '042_eleven_years', 125.76);
     pinEarVerified(r, '125_night_circle', 370.75);
-    pinEarVerified(r, '383_sixty_four', 1188.95);
-  }, TIMEOUT);
-
-  it('R.12: the FIVE demoted rows still produce their known-bad values (change detectors only)', async () => {
-    const r = await run();
-    // WS1 Session S — every one of these was scored EARLY by the owner's live
-    // ear pass. They are pinned so a value CHANGE is visible, not because the
-    // value is right. Open register rows: `r12v-042-*` ... `r12v-340-*` in
-    // `scripts/phase4-fa-replay.test.ts`'s KNOWN_BAD.
-    pinChangeDetector(r, '042_eleven_years', 125.54);
-    pinChangeDetector(r, '176_twenty_six_scout', 521.71);
-    pinChangeDetector(r, '224_thirty_three', 663.785, 3);
-    pinChangeDetector(r, '307_forty_nine_years', 924.92);
-    pinChangeDetector(r, '340_fifty_eight', 1044.67);
+    pinEarVerified(r, '176_twenty_six_scout', 522.46);
+    pinEarVerified(r, '224_thirty_three', 664.33);
+    pinEarVerified(r, '307_forty_nine_years', 925.43);
+    pinEarVerified(r, '340_fifty_eight', 1045.62);
+    pinEarVerified(r, '383_sixty_four', 1189.05);
   }, TIMEOUT);
 
   it('R.12 fires EIGHT times on the live v6 bundle after Session S\'s run-edge exclusion', async () => {
@@ -117,25 +116,44 @@ describe('WS1 Session Q/S — production-path pin set (R-AO / R-AM, live-fidelit
     // strictly inside R.5 run 6 — so R.12 now reaches its eighth v6 row.
     // The ninth and tenth runs are correctly NOT findings: run 0 is at corpus
     // start (no preceding token) and run 2's carrier already commits outside
-    // its run.
+    // its run. Session T's clamp removal + onset correction do not change
+    // WHICH rows fire, only six of their VALUES (above) — still 8.
     expect(r.fired['R.12']).toBe(8);
     expect(r.fired['R.11']).toBe(5);
   }, TIMEOUT);
 
-  it('L7: 266_forty_one_burden is back on R.12\'s value, not R.11\'s', async () => {
+  it('L7: 266_forty_one_burden — OPEN AGAIN, not closed (WS1 Session T, measured, not special-cased)', async () => {
     const r = await run();
-    // RED before Session S (R.11 committed 792.18, PAST the end of run 6 —
-    // the owner scored the whole recitation landing in the previous scene).
+    // THE STORY, in order. Session S's R-AP ownership fix (`faRuleStageExclusion.ts`)
+    // stopped R.11 stealing this boundary from R.12 and left it committed at
+    // 788.65 — RED before Session S (R.11 had it at 792.18, past the run's
+    // end; the owner scored that MAJOR). WS1 Session T STEP 0 re-measured
+    // 788.65 against this session's own HEAD, before any of Step 1's changes,
+    // and the owner's `ear-verify-t` sitting confirmed it CORRECT — by the
+    // task's own criterion ("if it is 788.65, L7 is fixed... close the row"),
+    // this row should have closed.
     //
-    // A CHANGE DETECTOR, not a positive assertion, and the distinction is the
-    // Session S pin audit's own finding: the ear-12-h sitting scored the
-    // PRE-correction 790.33 WRONG and the live-runs-s sitting scored R.11's
-    // 792.18 WRONG, but NOBODY has ever listened to 788.65. It is R.12's
-    // structural output at a boundary two ear passes agree is wrong today —
-    // which is grounds to ship it, and not grounds to pin it as verified.
-    pinChangeDetector(r, '266_forty_one_burden', 788.65);
-    // What IS asserted positively is the structural claim: the boundary is no
-    // longer past the end of its own run.
+    // IT DID NOT STAY CLOSED. Step 1's onset correction is UNIFORM — the same
+    // `acousticRunExtent(run, tokens, silences)` call every other row in this
+    // block goes through, deliberately not special-cased — and run 6 has a
+    // backing silence [788.04, 789.46] whose end (789.46) sits past run 6's
+    // OWN raw Whisper onset (789.26), the identical shape every other R.12 row
+    // in this file has. The correction moves the onset there, which moves this
+    // row's OWN computed value from 788.65 to 788.75. That is a MEASURED
+    // consequence of the mandated, non-special-cased fix, not a choice — and
+    // it now DISAGREES with the ear-verified 788.65 by 0.10s, the same
+    // magnitude as the 383 disagreement this same session resolved the other
+    // way.
+    //
+    // Pinned as a CHANGE DETECTOR at what production actually does today
+    // (788.75), NOT as ear-verified — the ledger does not authorise 788.75,
+    // and forcing agreement with 788.65 here would require exactly the kind
+    // of per-row special case this session was told not to build. Left OPEN
+    // for a follow-up A/B sitting on this specific row, the same treatment
+    // 383 got.
+    pinChangeDetector(r, '266_forty_one_burden', 788.75);
+    // The structural claim from Session S still holds regardless of the
+    // exact value: the boundary is not past the end of its own run.
     const run6 = r.runExtents[6]!;
     expect(at(r, '266_forty_one_burden')).toBeLessThan(run6.startSec);
   }, TIMEOUT);
@@ -156,13 +174,26 @@ describe('WS1 Session Q/S — production-path pin set (R-AO / R-AM, live-fidelit
 
   it('R-AM is enforceable, not advisory: the ledger overturns an earlier CORRECT with a later verdict', () => {
     // The mechanism itself, asserted — a green suite must not be able to hide
-    // the Session H / Session S disagreement.
+    // the Session H / Session S disagreement, or the Session S / Session T one.
     expect(earPassAuthorising('v6', '042_eleven_years', 125.54)).toBeUndefined();
     expect(earPassRejects('v6', '042_eleven_years', 125.54)?.sitting).toBe('live-runs-s');
+    // WS1 Session T: 042's ear-verified value is the corrected one (125.76),
+    // not Session S's fallback figure.
+    expect(earPassAuthorising('v6', '042_eleven_years', 125.76)?.sitting).toBe('ear-verify-t');
     expect(earPassAuthorising('v6', '125_night_circle', 370.75)?.sitting).toBe('live-runs-s');
+    // THE 383 REVERSAL — a later A/B sitting overturns an earlier SOLO one.
+    // `live-runs-s` (order 6) scored 1188.95 CORRECT by itself; `ear-verify-t`
+    // (order 7) heard both candidates side by side and picked 1189.05 instead.
+    expect(earPassAuthorising('v6', '383_sixty_four', 1188.95), 'the solo verdict is superseded, not authorising').toBeUndefined();
+    expect(earPassRejects('v6', '383_sixty_four', 1188.95)?.sitting).toBe('ear-verify-t');
+    expect(earPassAuthorising('v6', '383_sixty_four', 1189.05)?.sitting).toBe('ear-verify-t');
     // ...and a boundary nobody has ever listened to authorises nothing.
     expect(earPassAuthorising('v6', '322_body_readiness', 986.88)).toBeUndefined();
     expect(describeEarHistory('v6', '322_body_readiness')).toBe('no ear pass has EVER scored this boundary');
+    // L7's open conflict, stated as a ledger fact: 788.65 is ear-authorised,
+    // 788.75 (what production computes post-Step-1) is not.
+    expect(earPassAuthorising('v6', '266_forty_one_burden', 788.65)?.sitting).toBe('ear-verify-t');
+    expect(earPassAuthorising('v6', '266_forty_one_burden', 788.75)).toBeUndefined();
     // The Session S sitting is on record in full: ten rows, 4 CORRECT / 5
     // EARLY / 1 WRONG.
     const s = EAR_PASS_LEDGER.filter(x => x.sitting === 'live-runs-s');

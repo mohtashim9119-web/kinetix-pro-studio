@@ -49,6 +49,7 @@ import { detectSeamFitDefects, applySeamFitCorrections } from '../src/services/f
 import {
   detectRunPlacementDefects, applyRunPlacementCorrections,
   detectUtterancePlacementDefects, applyUtterancePlacementCorrections,
+  acousticRunExtent,
 } from '../src/services/faRunPlacementGate';
 import { detectUnspokenScriptSegmentsFromWhisper, applyUnspokenScriptGate } from '../src/services/faUnspokenGate';
 import { computeUnscriptedRuns } from '../src/services/faChunkPlan';
@@ -205,9 +206,15 @@ describe('WS1 production path — v6, FA ON (R-AO gate)', () => {
       await parseProjectData(script, sceneDetails, [], V6.audioDuration), V6.audioDuration,
     );
     const runs = computeUnscriptedRuns(anchorTimed, whisperTokens, silences, V6.audioDuration);
+    // WS1 Session T: the invariant is stated against each run's ACOUSTIC
+    // extent, the same interval R.12/R.13/R-AP use — not the raw token span
+    // `computeUnscriptedRuns` returns, which `acousticRunExtent`'s own header
+    // documents as the wrong quantity for exactly this test (a leading
+    // punctuation token can pin `run.startSec` earlier than any real speech).
+    const extents = runs.map(r => acousticRunExtent(r, whisperTokens, silences));
 
     const violations = committed.slice(1).filter(s =>
-      runs.some(r => s.startTime > r.startSec + 1e-9 && s.startTime < r.endSec - 1e-9),
+      extents.some(e => s.startTime > e.startSec + 1e-9 && s.startTime < e.endSec - 1e-9),
     ).map(s => `${(s as unknown as { tag?: string }).tag}@${s.startTime.toFixed(2)}`);
     expect(violations, 'no committed boundary may land mid-recitation').toEqual([]);
   }, TIMEOUT);

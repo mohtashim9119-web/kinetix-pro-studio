@@ -18,6 +18,18 @@
 // the default sweep. The cheap arm (structural facts about the seven rows)
 // runs always.
 //
+// WS1 SESSION T SUPERSESSION NOTE. This file's own STEP 3 exit condition
+// concluded NO CANDIDATE SHIPS — the unclamped midpoint fixed five rows but
+// missed `383_sixty_four` by 0.100s. That conclusion is SUPERSEDED: Session T
+// found the missing piece (the run's onset itself was a Whisper timestamp
+// sitting inside the real silence, not merely clamped wrong) and the owner's
+// A/B `ear-verify-t` sitting resolved the 0.100s gap at 383 the OTHER
+// direction than this file's own Step-1-linked solo listen had. The two
+// cheap-arm tests below are UPDATED to assert the current, positive result
+// rather than left asserting a now-false negative — see each test's own
+// comment. The MEASURE-gated heavy arm below is UNCHANGED and left as the
+// historical record of Session S's own RMS profiling.
+//
 // THE RMS PROFILE'S OWN FRAME GRID IS THE DETECTOR'S. `silenceDetector.ts` is
 // UNMODIFIABLE this session, and the point of the profile is to see what the
 // detector saw — so the frame size (20 ms), the RMS definition
@@ -236,56 +248,60 @@ describe('WS1 Session S — Step 2/3 structural picture of R.12\'s seven rows', 
     mkdirSync(OUT_ROOT, { recursive: true });
     writeFileSync(resolve(OUT_ROOT, 'stepS-r12-rows.json'), JSON.stringify({ runId: r.runId, rows }, null, 2));
 
-    // The structural separator, asserted rather than merely dumped: on BOTH
-    // ear-passing rows the chosen silence is contained in the gap to within
-    // the run's own onset by a small margin, while every EARLY row's silence
-    // overhangs the onset by a full second or more. This is a MEASURED
-    // property of this bundle, pinned so a future change that flattens it is
-    // visible.
+    // WS1 SESSION S found a structural separator here: on the two
+    // ear-passing rows the chosen silence stayed inside the gap, while every
+    // EARLY row's silence overhung the run's onset by a full second or more.
+    // WS1 SESSION T ROOT-CAUSED THAT SEPARATOR AND REMOVED IT — it was a
+    // SYMPTOM of the defect (a Whisper-timestamp onset sitting inside the
+    // real silence), not an independent signal, and now that
+    // `acousticRunExtent` measures the onset off the waveform, the gap's own
+    // right edge tracks the backing silence's end on every row, not just two.
+    // Asserted here as the new, opposite finding: overhang is now ~0 on ALL
+    // eight rows (042 still takes the fallback path since it has no gap-local
+    // silence at the RAW onset — Session T's correction is what makes that
+    // pause visible to it at all, see the other describe block above).
     const byTag = new Map(rows.map(x => [x.tag, x]));
     const overhang = (t: string): number => byTag.get(t)!.silenceOverhangSec ?? Number.NaN;
-    expect(overhang('125_night_circle')).toBeLessThan(0);   // silence ENDS INSIDE the gap
-    expect(overhang('383_sixty_four')).toBeLessThan(0.25);  // overhangs, but barely
-    for (const t of ['176_twenty_six_scout', '224_thirty_three', '307_forty_nine_years', '340_fifty_eight']) {
-      expect(overhang(t), `${t} silence overhang past the run onset`).toBeGreaterThan(1.0);
+    // `125_night_circle` is the one row this doesn't apply to, unchanged from
+    // Session S's own finding: its backing silence was ALREADY entirely
+    // inside the gap before Session T touched anything (the clamp never bit
+    // here), so its onset was never corrected and its overhang stays
+    // negative — it is not one of the seven rows the fix changed.
+    expect(overhang('125_night_circle')).toBeLessThan(0);
+    for (const t of ['042_eleven_years', '176_twenty_six_scout', '224_thirty_three',
+      '266_forty_one_burden', '307_forty_nine_years', '340_fifty_eight', '383_sixty_four']) {
+      const o = overhang(t);
+      if (Number.isNaN(o)) continue; // 042: fallback path, no backing silence to measure.
+      expect(Math.abs(o), `${t}: overhang should now be ~0, the discriminator Session S found is gone`).toBeLessThan(0.005);
     }
-    // 042 is the odd one out: NO silence intersects its gap at all, so it took
-    // the `run-start-fallback` and sits exactly ON the run's acoustic onset.
-    expect(byTag.get('042_eleven_years')!.placement).toBe('run-start-fallback');
   }, TIMEOUT);
 
-  // The STEP 3 EXIT CONDITION, in the form that needs no audio — pure
-  // arithmetic over the shipped silence array — so the measured negative is
-  // re-checked on every sweep rather than only when someone sets
-  // `WS1_SESSION_S_MEASURE=1` with the 44.1 kHz source to hand.
-  //
-  // THE ONE CANDIDATE THAT COMES CLOSE is the UNCLAMPED midpoint of the
-  // leading silence. It moves all five EARLY rows later by 0.22s-0.95s, and it
-  // reproduces `125_night_circle` -> 370.75 EXACTLY. It misses
-  // `383_sixty_four` by 0.100s, and 0.005s is the register's tolerance, so it
-  // does not ship. Whether 0.100s is audible at 383 — both values sit inside
-  // 1.26s of literal all-zero samples — is a question only an ear pass can
-  // settle, and it is on the Session S ear list for exactly that reason.
-  it('EXIT S1, re-derived without audio: the unclamped midpoint fixes the five but misses 383 by 0.100s', async () => {
+  // WS1 SESSION S's STEP 3 EXIT CONDITION, RE-DERIVED AND NOW INVERTED. The
+  // original form of this test (kept here in spirit, not literally) asserted
+  // a NEGATIVE: the unclamped midpoint moved all five EARLY rows later but
+  // missed `383_sixty_four` by 0.100s, so no candidate shipped. WS1 SESSION T
+  // supplied the missing piece — the onset itself was measured wrong, not
+  // just clamped wrong — and the A/B `ear-verify-t` sitting resolved the
+  // 0.100s gap the OTHER way than Session S's own solo listen had (383's
+  // ear-correct value moved from 1188.95 to 1189.05, not the reverse). This
+  // test now asserts the POSITIVE: `r.r12`'s live `correctedValue` (the real,
+  // shipped output, not a hand-rederived candidate) matches the six A/B
+  // targets to the register's own 0.005s tolerance.
+  it('WS1 Session T: the shipped correctedValue now matches all six ear-verify-t targets', async () => {
     const r = await v6();
-    const full = (tag: string): number => {
-      const f = r.r12.find(x => x.segmentTag === tag)!;
-      expect(f.backingSilence, `${tag} must have a backing silence for this candidate to exist`).toBeDefined();
-      return (f.backingSilence!.startSec + f.backingSilence!.endSec) / 2;
+    const shipped = (tag: string): number => r.r12.find(x => x.segmentTag === tag)!.correctedValue;
+    const TARGETS: Record<string, number> = {
+      '042_eleven_years': 125.76, '125_night_circle': 370.75, '176_twenty_six_scout': 522.46,
+      '224_thirty_three': 664.33, '307_forty_nine_years': 925.43, '340_fifty_eight': 1045.62,
+      '383_sixty_four': 1189.05,
     };
-    const committed = (tag: string): number => r.r12.find(x => x.segmentTag === tag)!.correctedValue;
-
-    // Reproduces one ear-CORRECT row exactly...
-    expect(Math.abs(full('125_night_circle') - 370.75)).toBeLessThan(0.005);
-    // ...and misses the other by a tenth of a second.
-    expect(full('383_sixty_four') - 1188.95).toBeCloseTo(0.100, 3);
-    // Moves every EARLY row later, which is the direction the ear asked for.
-    for (const tag of ['176_twenty_six_scout', '224_thirty_three', '307_forty_nine_years', '340_fifty_eight']) {
-      expect(full(tag) - committed(tag), `${tag}: unclamped is later`).toBeGreaterThan(0.2);
+    for (const [tag, target] of Object.entries(TARGETS)) {
+      expect(Math.abs(shipped(tag) - target), `${tag}: shipped ${shipped(tag)}, ear-verify-t target ${target}`).toBeLessThan(0.005);
     }
-    // `042_eleven_years` cannot be reached by ANY silence-based candidate the
-    // shipped rule can see: no detected silence intersects its placement gap.
-    expect(r.r12.find(x => x.segmentTag === '042_eleven_years')!.backingSilence).toBeUndefined();
+    // 266 is the ONE row this fix does not close — see its own open register
+    // entry (`s-266-live-path-collision`) for why: it is a separate,
+    // measured 0.10s regression off the value the SAME sitting confirmed.
+    expect(Math.abs(shipped('266_forty_one_burden') - 788.65)).toBeGreaterThan(0.05);
   }, TIMEOUT);
 });
 

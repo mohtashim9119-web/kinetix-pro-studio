@@ -240,6 +240,19 @@ criterion is an EMPTY Zero-Defect Register, and this session took it **8 -> 14 o
 rows demoted by the live ear pass, plus the L7 row. A session that finds more than it closes moves
 the board backwards or not at all; it does not move it forwards. The FA gate default stays OFF.
 
+---
+
+**2026-08-21 (WS1 Session T) — an A/B ear pass licensed candidate B on six rows; the register
+gains a net ONE open row (14 -> 15), not the six closures the ear pass alone might suggest.**
+Phase 3 stays **"PRODUCTION PATH WIRED, gate PER-PROJECT, DEFAULT OFF"**. Session T fixed R.12's
+VALUE (the clamp, root-caused and removed; the run onset itself corrected against a measured
+pause) on the LIVE path — pinned in `ws1-session-q-production-pins.test.ts`, not this file's own
+fixture-scoped register — and reopened `r12-383-sixty-four` when an A/B pass overturned a prior
+SOLO verdict. A sixth row (`266_forty_one_burden`) moved 0.10s AWAY from its own just-confirmed
+ear-correct value as a measured side effect of the same uniform fix, and is now flagged, not
+special-cased, in two places at once (`s-266-live-path-collision` and its own production pin). The
+FA gate default stays OFF; nothing here changes the Stage 1 lock's own criterion.
+
 ### §4. Phase 3 (Task 5) Component Ledger
 
 Re-verified live against `main` during this consolidation pass (2026-08-14). Status values:
@@ -678,6 +691,11 @@ CONSUMED that array and asserted nothing new about its own shape, deliberately, 
 `silenceDetector.ts` was unmodifiable for the session. Recorded so the omission is visible as a
 scope boundary rather than an oversight. P4/P8 remain the open Phase 4 items they were.
 
+**2026-08-21 (WS1 Session T) — no row moves here either, same reason.** Session T's changes
+(`faRunPlacementGate.ts`'s clamp removal and onset correction) also sit downstream of Contract
+1→2 and read `silenceDetector.ts`'s output unmodified — `silenceDetector.ts` was unmodifiable this
+session too. P4/P8 unchanged.
+
 **2026-08-19 (WS1 Session O) — no row in this table moves.** Session O's changes are entirely
 in the persistence layer (`projectStore.ts`, `projectMirror.ts`, `project_mirror.rs`), which sits
 downstream of Contract 1→2 and is not one of its inputs or outputs. P4 and P8 remain the open
@@ -1092,8 +1110,12 @@ and R.12 owns any boundary whose ORIGIN lies strictly inside a run. Evaluated on
 `(origin, target)` against the pre-rule-stage array — **a current-state check provably cannot see
 this**, and that blindness is pinned as an assertion (current-state answer: 0 findings;
 origin-based answer: 1 violation) so a future refactor cannot revert to it and stay green.
-Asserted in production (`App.tsx` logs `R-AP VIOLATED` over the whole stage, R.12's ids exempt by
-name) and mirrored in the harness.
+LOGGED in production (`App.tsx` calls `console.error('[sync] R-AP VIOLATED'...)` over the whole
+stage, R.12's ids exempt by name) and mirrored in the harness. WS1 Session T wording correction:
+this is detection, not enforcement — a violation is surfaced in the sync log but does not throw or
+block the export/commit path, matching every other DEV-mode invariant check in this codebase
+(`snapBoundaries.ts`'s degenerate-pair check, `frameRenderer.ts`, etc. — none of them throw
+either). "Asserted" previously implied a stronger guarantee than the code provides.
 
 **Measured effect.** R.11 still DETECTS six candidates and KEEPS five; the one declined is
 `266_forty_one_burden`, reason `origin-inside-run`, run 6. **R.11's other five are unchanged in tag
@@ -4848,6 +4870,100 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 
 ## Changelog
 
+- **2026-08-21 — WS1 Session T: candidate B licensed on all six A/B rows; the clamp was never the
+  rule, it was a symptom mask for a Whisper onset sitting inside a real silence. Dropping it and
+  correcting the onset closes five rows' VALUE on the live path, reverses a SOLO-listened verdict
+  at 383, and surfaces a sixth row's own value regressing 0.10s off a value the same sitting just
+  confirmed — flagged, not special-cased. Register 14 -> 15 open (net).**
+  - **STEP 0 — L7's current value, measured first as instructed.** `266_forty_one_burden` committed
+    **788.65000** at this session's HEAD (pre-any-change), confirming Session S's own R-AP fix
+    still holds and matching the frozen fixture. Per the session brief's own criterion this closed
+    the row — until Step 1's uniform fix moved it again (see below).
+  - **STEP 1a — the clamp dropped. GEOMETRIC, no new constant.** `correctedValue` is now the
+    midpoint of the WHOLE backing silence, not its intersection with the placement gap. Blast
+    radius predicted numerically before building (declamping the pre-fix `backingSilence` alone
+    reproduces the owner's licensed values on 6 of 8 rows to the bit) and confirmed after: **on the
+    live v6 bundle, clamped and unclamped now agree to the bit on all 8 R.12 rows** — the clamp is
+    provably dead code post-Step-1b, kept removed rather than left inert (a construct whose stated
+    justification is refuted is a trap for the next reader).
+  - **STEP 1b — H7's structural resolution: the onset is measured off the waveform, not read off a
+    model.** `acousticRunExtent` now corrects a run's onset when a detected pause, still open after
+    the preceding word, closes LATER than the token timestamp Whisper claims the recitation starts
+    at — bounded so the corrected onset can never move earlier than the model's claim nor cross the
+    run's own end. This resolves H7's rejection on `176`/`224`/`307`/`340` (4 of the 5 non-fallback
+    EARLY rows) by fixing what H7 was correctly rejecting — a candidate landing inside a run whose
+    OWN extent was measured wrong — rather than weakening the guard. `042_eleven_years` — no
+    detected silence overlapped its OLD, narrower gap, so it took the `run-start-fallback` path and
+    committed exactly on a breath the Whisper onset was pinned to — now reaches the real
+    post-breath pause via the WIDENED gap and lands on `125.760` by the same `silence-midpoint`
+    path every other row uses, a principled path, not a coincidence.
+  - **`224_thirty_three` drops out of R.12's FIXTURE findings (9 -> 8 on that corpus), and it is the
+    rule working, not a hole.** The frozen fixture's own pre-correction value (664.33) already sat
+    OUTSIDE the corrected run once the onset moved from 663.91 to 665.00, so R.12 has nothing left
+    to fix there — and 664.33 is exactly the value the ear licensed. On the LIVE bundle the row
+    still fires (its own pre-rule value differs from the fixture's) and R.12 corrects it TO 664.33,
+    same value, different path. `085_the_spear_bearer`'s FA-path value also moves, 250.69 -> 250.81
+    — CONVERGING with Whisper's own already-independently-correct value at that boundary, not
+    diverging from it.
+  - **STEP 2 — 383 RE-PINNED, and a process finding, not just a value change.** A/B pass
+    (`ear-verify-t`) heard 1188.950 (the value a SOLO sitting, `live-runs-s`, had scored CORRECT)
+    against 1189.050 side by side and reversed it — both sit inside 1.26s of literal digital
+    silence, indistinguishable played alone. Process note recorded in `ws1-ear-pass-ledger.ts`:
+    **side-by-side comparison supersedes solo listening.** Every other solo-listened `CORRECT`
+    verdict on record is now flagged (not reopened) in that file's own audit block — `live-runs-s`'s
+    remaining CORRECT rows, all of `ear-12`/`ear-12-h`/`mover-audit-k`, and `session-p-live`
+    (transcribed, not a fresh sitting) — so the next session that touches any of them knows the
+    standing verdict is unaudited against this failure mode, not settled.
+  - **STEP 3 — register promotions, six rows via the ledger.** `042`/`176`/`224`/`307`/`340`'s
+    `earCorrect` moved from `'unknown'` to their real A/B-confirmed values in
+    `phase4-fa-replay.test.ts`'s KNOWN_BAD (still OPEN there — fixture-scoped, and the fixture
+    itself was deliberately not regenerated this session, same item-7 precedent) and are pinned
+    `pinEarVerified` in `ws1-session-q-production-pins.test.ts` (LIVE-path pins, the file that
+    actually tracks the live-fidelity bundle). `266_forty_one_burden`'s fixture closure promotes
+    `'structural'` -> `'ear'` (788.65 IS ear-verified now — that is independent of whether
+    production currently produces it, which it does not; see below).
+  - **THE ONE ROW THAT DID NOT CLOSE — measured, not glossed over.** `266_forty_one_burden`'s live
+    value moved 788.65 -> **788.75**, AWAY from the value `ear-verify-t` had just confirmed, as a
+    side effect of the SAME uniform onset correction that fixed the other six: run 6's backing
+    silence [788.04, 789.46] pushes the onset from 789.26 to 789.46, same shape as every other row.
+    NOT special-cased — the alternative (excluding this one boundary from the uniform fix) would be
+    exactly the corpus-fitted-constant-wearing-a-rule's-clothes move this whole session's brief
+    forbade. Flagged in three places: `s-266-live-path-collision` (KNOWN_BAD, faValue/earCorrect
+    both updated), `ws1-session-s-exclusion.test.ts`'s pin (788.65 -> 788.75, with the reason
+    stated inline), and `ws1-session-q-production-pins.test.ts`'s `pinChangeDetector`.
+  - **Register: 14 -> 15 open (net).** `REGISTER_HIGH_WATER` raised with full ceremony.
+    `r12-383-sixty-four` reopens (a SOLO verdict overturned by A/B); `042`/`176`/`224`/`307`/`340`
+    stay open (fixture-scoped, unchanged count) but each now names a real target instead of
+    `'unknown'`; `266_forty_one_burden`'s fixture closure is strengthened (`'structural'` ->
+    `'ear'`) while its LIVE-path sibling entry's own regression is newly and separately flagged.
+    Composition: 3 Class A + 5 Class B + 5 R.12-value rows (fixture-scoped) + 1 L7 live-path row +
+    1 reopened 383 row = 15.
+  - **M1-M13 were NOT independently re-executed this session** — their target code
+    (`faRunPlacementGate.ts`'s Session P/Q-era fixes, `faRuleStageExclusion.ts`'s R-AP) was
+    untouched by Session T's edits, and re-deriving twelve historical mutations from prose specs
+    was judged disproportionate to what actually changed. What WAS run and is a real number: the
+    full `npm test` suite at rest (**2464 passed / 21 skipped**, up from the stated floor of
+    2460/19 — the delta is this session's own new tests), M13 (neuter R-AP's exclusion) re-verified
+    **RED** (8 failures), and two NEW mutations for this session's own changes — **M14** (restore
+    the clamp) RED (2 failures) and **M15** (neuter the onset correction) RED (11 failures) — each
+    reverted and `faAnchors.ts`'s sha256 (`b61e94cb…`) reverified unchanged after every single
+    revert. The allowlist-contamination class Session S reported (a new `.md` file tripping
+    `ws1-single-tracker.test.ts`) is CLEAN this session — no new top-level `docs/` files were added,
+    only edits to existing tracked docs and additive test files under `scripts/`/`src/services/`.
+  - **Two doc/wording fixes.** (a) `faRuleStageExclusion.ts`'s header cited the RAW run-6 token
+    span `[787.85, 791.94]` where the ACOUSTIC extent `[789.26, 791.69]` (now `[789.46, 791.69]`
+    post-Step-1b) belongs — corrected, with the old text preserved in a parenthetical so a future
+    reader can see what changed and why. (b) R-AP's whole-stage check is `console.error`, not a
+    throw — "asserted in production" overstated the guarantee. Resolved by CORRECTING THE WORDING
+    (not adding a throw): every other DEV-mode invariant in this codebase (`snapBoundaries.ts`,
+    `frameRenderer.ts`, etc.) logs and continues rather than throwing, and introducing a throw here
+    alone would be a new, codebase-inconsistent pattern adopted for its own sake, not because this
+    invariant needs a stronger guarantee than any sibling check has. Fixed at the source
+    (`App.tsx`'s own comment) and both prior doc citations.
+  - **Six numbers.** `npm test` 121 files / 107 passed / 14 skipped; 2464 passed / 21 skipped (0
+    failed); `tsc --noEmit` clean; `cargo check --features fa-inference` clean; `cargo test
+    --features fa-inference` 216 passed / 21 ignored / 0 failed; golden replay 6/6 byte-identical.
+
 - **2026-08-20 — WS1 Session S: two rules claimed one boundary and ordering decided it silently;
   R-AP closes it structurally. Five pins were asserting defective values as correct and are
   demoted; R-AM is now machine-checked and caught two more overclaims while being written. R.12's
@@ -4883,8 +4999,9 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
     direction, and R.12 owns any boundary whose ORIGIN lies strictly inside a run** — evaluated on
     the PAIR (origin, target) against the pre-rule-stage array, never the running one, because a
     current-state check provably cannot see this. That blindness is itself pinned as an assertion
-    (current-state: 0 findings; origin-based: 1 violation). Asserted in production over the whole
-    stage and mirrored in the harness.
+    (current-state: 0 findings; origin-based: 1 violation). LOGGED in production over the whole
+    stage (`console.error`, not a throw — WS1 Session T corrected this entry's wording; see its own
+    §11 entry) and mirrored in the harness.
   - **Measured effect.** R.11 still DETECTS 6 and KEEPS 5; the declined one is
     `266_forty_one_burden` (`origin-inside-run`, run 6). **R.11's other five are unchanged in tag
     AND value** (192 → 571.07, 226 → 671.17, 232 → 684.09, 233 → 686.54, 322 → 986.88). **R.12

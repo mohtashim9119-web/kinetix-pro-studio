@@ -23,8 +23,14 @@
 //
 // R-AP — THE RUN-EDGE EXCLUSION INVARIANT (WS1 Session S).
 //
-// THE DEFECT THAT FORCED IT, measured on the live v6 bundle. R.5 run 6 spans
-// [787.85, 791.94]. The committed boundary for `266_forty_one_burden` came out
+// THE DEFECT THAT FORCED IT, measured on the live v6 bundle. R.5 run 6's
+// ACOUSTIC extent — the interval every clause of this rule is stated against,
+// and the one `computeRunExtents` below returns — is [789.46, 791.69]. (Its
+// RAW token span is the wider [787.85, 791.94]; earlier revisions of this
+// header cited that span by mistake, which is the one quantity R-AP never
+// uses. WS1 Session T's onset correction moved the acoustic start from 789.26
+// to 789.46; the raw span is unchanged and still irrelevant here.) The
+// committed boundary for `266_forty_one_burden` came out
 // of `snapCoveredBoundaries` at 790.33 — strictly INSIDE that run, which is
 // precisely R.12's defect signature. But R.11 runs FIRST, saw the same
 // boundary, and moved it to 792.18: PAST the run's end. The owner's ear scored
@@ -108,7 +114,7 @@ export function computeRunExtents(
   audioDuration: number,
 ): RunExtent[] {
   return computeUnscriptedRuns(parsedSegments, tokens, silences, audioDuration).map((run, runIndex) => {
-    const e = acousticRunExtent(run, tokens);
+    const e = acousticRunExtent(run, tokens, silences);
     return { runIndex, startSec: e.startSec, endSec: e.endSec };
   });
 }

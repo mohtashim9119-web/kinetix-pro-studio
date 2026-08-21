@@ -3343,12 +3343,22 @@ export default function App() {
         }
         finalTimedSegments = applyUtterancePlacementCorrections(finalTimedSegments, keptUtterance);
 
-        // R-AP, ASSERTED IN PRODUCTION over the whole stage, on the (origin,
+        // R-AP, CHECKED AND LOGGED over the whole stage, on the (origin,
         // final) PAIR. This is not a restatement of the two filters above: a
         // filter can only decline what its own rule proposes, while this sees
         // the composed result of every rule — including a future rule added
         // without an R-AP filter, and including two individually-legal moves
         // that compose into an illegal one. R.12's own ids are exempt by name.
+        //
+        // WS1 SESSION T WORDING FIX: this is DETECTION, not enforcement. A
+        // violation is `console.error`'d into the sync log, matching every
+        // other DEV-mode invariant check in this codebase (none of them
+        // throw) — it does not block the commit, export, or any downstream
+        // step. Earlier text here and in the docs said "asserted", which
+        // overstated the guarantee; corrected rather than changed to throw,
+        // since throwing here would be a new, codebase-inconsistent pattern
+        // introduced for its own sake, not because this invariant needs a
+        // stronger guarantee than any other DEV check in `App.tsx` has.
         const runEdgeViolations = findRunEdgeViolations(
           preRuleSegments, finalTimedSegments, runExtents,
           new Set(runPlacementFindings.map(f => f.segmentId)),

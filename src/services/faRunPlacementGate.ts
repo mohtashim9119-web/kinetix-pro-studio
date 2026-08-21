@@ -51,15 +51,37 @@
 // citations carry the amendment explicitly; this is a recorded reversal, not
 // a silent contradiction.
 //
-// CLAMPED MIDPOINT, FORCED BY MEASUREMENT. Within that gap the value is the
-// midpoint of (the leading silence ∩ the gap), falling back to `run.startSec`
-// when no silence overlaps the gap at all. The INTERSECTION is load-bearing:
-// a detected silence routinely starts before a run and runs on past its onset
-// (the narrator pauses, then begins the recitation), and taking such a
-// silence's whole midpoint puts the boundary back INSIDE the run — measured on
-// four of the nine rows (R4/R5/R7/R8), and on R5 it reproduces the current
-// defect value exactly. Clamping is not taste; unclamped placement fails on
-// its own corpus.
+// UNCLAMPED MIDPOINT (WS1 Session T). Within that gap the value is the
+// midpoint of THE WHOLE leading silence, falling back to the run's acoustic
+// onset when no silence overlaps the gap at all. Purely geometric: no
+// threshold, no constant, no corpus-fitted offset.
+//
+// THE CLAMP IS GONE, AND IT WAS NEVER THE RULE — IT WAS A SYMPTOM MASK.
+// Sessions H through S took the value as the midpoint of (the leading silence
+// ∩ the gap), and the header here argued the intersection was load-bearing:
+// "a detected silence routinely starts before a run and runs on past its
+// onset, and taking such a silence's whole midpoint puts the boundary back
+// INSIDE the run — measured on four of the nine rows." That observation was
+// real. Its explanation was wrong. A silence appeared to "run on past the
+// run's onset" only because the onset itself was a Whisper timestamp sitting
+// INSIDE that very silence — the defect `acousticRunExtent` now corrects. Once
+// the onset is measured off the waveform instead of taken from the model, the
+// gap's right edge IS the pause's end on every affected row, so the
+// intersection is the identity and the clamp does nothing. Measured, v6 live
+// bundle: clamped and unclamped agree to the bit on all 8 R.12 rows after the
+// onset correction. The clamp is removed rather than left inert because a
+// construct whose stated justification has been refuted is a trap for the next
+// reader, and because with it in place the rule's value would silently depend
+// on a model timestamp again the moment a silence outlasted the gap.
+//
+// WHAT THE OWNER'S EAR LICENSED (WS1 Session T, A/B side-by-side against the
+// shipped values, all six rows): 042 -> 125.760, 176 -> 522.460, 224 ->
+// 664.330, 307 -> 925.430, 340 -> 1045.620, 383 -> 1189.050, with
+// 125_night_circle -> 370.750 reproduced unchanged. Breath presence is NOT the
+// discriminator and no breath-aware logic exists anywhere on this path: the
+// owner chose the same candidate family on a row with a quiet breath (176), a
+// row with a loud breath (307) and a row with no breath at all (224). That
+// investigation is CLOSED.
 //
 // A STRUCTURAL SIDE EFFECT WORTH NAMING: because the interval's left edge is
 // the END of the last token before the run, a correction can never strip the
@@ -179,10 +201,64 @@ const isSubstantiveToken = (t: TranscriptToken | undefined): boolean =>
  *  EXPORTED (WS1 Session S) so `faRuleStageExclusion.ts` states R-AP against
  *  the IDENTICAL interval R.12 and R.13 use. A second, independently-derived
  *  notion of "the run" in the rule that arbitrates between the two would be
- *  the same category of defect this helper was introduced to fix. */
+ *  the same category of defect this helper was introduced to fix.
+ *
+ *  ---------------------------------------------------------------------
+ *  WS1 SESSION T — THE ONSET IS A MEASUREMENT, AND IT WAS TAKING THE WRONG
+ *  MEASURING DEVICE'S ANSWER.
+ *
+ *  `onset.startSec` is a WHISPER TOKEN TIMESTAMP: a model's estimate of when
+ *  a word begins. A detected silence is a DIRECT MEASUREMENT of the waveform
+ *  — `silenceDetector.ts` reports an interval only after 0.25 s of continuous
+ *  sub-threshold audio, and ends it at the first frame carrying real energy.
+ *  On the v6 corpus the two CONTRADICT each other on eight of ten runs: the
+ *  model places the recitation's first word 0.20 s-1.90 s inside a stretch the
+ *  waveform says is a pause. Both cannot be true, and speech cannot happen
+ *  during measured silence.
+ *
+ *  THE CORRECTION, in one line: A RUN'S ACOUSTIC ONSET MAY NOT LIE AT OR
+ *  BEFORE THE END OF THE MEASURED PAUSE THAT SEPARATES IT FROM THE PRECEDING
+ *  SPEECH. Take `pause` = the first detected silence still open after the last
+ *  substantive token before the run. If `pause.endSec` is later than the
+ *  model's claimed onset, the claim is inside the pause and the onset is
+ *  `pause.endSec` instead. Otherwise the pause closed before the claim and the
+ *  claim stands.
+ *
+ *  WHY THIS IS NOT BREATH LOGIC, and why it needed none (WS1 Session T; the
+ *  owner's A/B ear pass ruled breath presence irrelevant to correct placement,
+ *  and that investigation is CLOSED). The rule never looks for a breath, never
+ *  reasons about one, and reads no amplitude. A breath is simply invisible to
+ *  it: on `042_eleven_years` a -40.8 dBFS breath at [125.540, 125.620] crosses
+ *  the detector's own threshold, so it is EXCLUDED from every silence, and the
+ *  first pause still open after the previous word is the POST-breath one at
+ *  [125.620, 125.900]. Its end, 125.900, is later than the model's 125.540, so
+ *  the onset moves there — past the breath, without the rule ever knowing a
+ *  breath was there. `silenceDetector.ts` is untouched.
+ *
+ *  IDENTITY IS STILL TOKEN BUSINESS (CLAUDE.md's standing invariant). WHICH
+ *  tokens constitute the run is decided upstream in token-index space and is
+ *  NOT changed here — `onsetIndex` still names the first substantive token,
+ *  and no timestamp decides that two things are the same thing. Only the run's
+ *  EXTENT, a distance, is corrected, which is precisely what that invariant
+ *  reserves timestamps for.
+ *
+ *  MONOTONE BY CONSTRUCTION: the corrected onset is never EARLIER than the
+ *  model's, only later or equal, so the run can never grow leftward and
+ *  swallow preceding speech.
+ *
+ *  SCOPED TO THE ONSET, deliberately. The mirror defect at the run's tail
+ *  (an offset timestamp landing inside the pause that FOLLOWS the run) is
+ *  structurally possible and is NOT corrected here, because no measurement
+ *  shows one: the raw-vs-acoustic `endSec` delta is 0.08 s-0.40 s on all ten
+ *  v6 runs and R.13 fires zero. Correcting an end nothing has measured wrong
+ *  would be a change without evidence.
+ *
+ *  `silences` may be empty — the helper then returns the model's own answer,
+ *  which is the honest behaviour when there is no measurement to prefer. */
 export function acousticRunExtent(
   run: UnscriptedRun,
   tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[] = [],
 ): { startSec: number; endSec: number; onsetIndex: number } {
   let lo = run.tokenLo;
   while (lo <= run.tokenHi && !isSubstantiveToken(tokens[lo])) lo++;
@@ -193,7 +269,69 @@ export function acousticRunExtent(
   if (!onset || !offset || lo > hi) {
     return { startSec: run.startSec, endSec: run.endSec, onsetIndex: run.tokenLo };
   }
-  return { startSec: onset.startSec, endSec: offset.endSec, onsetIndex: lo };
+  return {
+    startSec: correctOnsetAgainstPause(
+      onset.startSec, offset.endSec, precedingSpeechEnd(run, tokens), silences,
+    ),
+    endSec: offset.endSec,
+    onsetIndex: lo,
+  };
+}
+
+/** The END of the last token carrying speech before `run` — the instant after
+ *  which any detected silence is a pause SEPARATING that speech from the run.
+ *  `undefined` at corpus start, where there is no preceding speech and so no
+ *  separating pause to measure against. Scans backward for a SUBSTANTIVE token
+ *  rather than taking `tokens[run.tokenLo - 1]`, the same content-not-adjacency
+ *  rule the rest of this file applies. */
+function precedingSpeechEnd(
+  run: UnscriptedRun,
+  tokens: readonly TranscriptToken[],
+): number | undefined {
+  let i = run.tokenLo - 1;
+  while (i >= 0 && !isSubstantiveToken(tokens[i])) i--;
+  return tokens[i]?.endSec;
+}
+
+/** See `acousticRunExtent`'s header for the reasoning. Returns `claimedOnset`
+ *  unchanged when there is no preceding speech, no separating pause, or the
+ *  pause closed before the claim.
+ *
+ *  BOUNDED AT BOTH ENDS, and both bounds are load-bearing rather than
+ *  defensive decoration:
+ *
+ *   - `s.endSec > speechEnd` (not `s.startSec >= speechEnd`) so a silence that
+ *     STRADDLES the preceding token's end — structurally possible on malformed
+ *     timings — is still recognised as the separating pause rather than
+ *     skipped, which would walk the search on to a later, unrelated silence.
+ *   - `s.startSec < runEnd` because a silence beginning after the run's own
+ *     speech has finished is not between anything; it is the pause AFTER the
+ *     run. Without this bound, a run with no separating pause in front of it
+ *     picks up the following one and the returned extent inverts
+ *     (`startSec > endSec`), which every interior test downstream reads as an
+ *     empty run.
+ *   - the accepted `pause.endSec` must still land strictly before `runEnd`. If
+ *     it does not, the measurement says the run's own words are inside a
+ *     silence — the two sources contradict each other beyond repair, and there
+ *     is no honest onset to derive. The model's answer stands, unchanged;
+ *     declining to guess is the rule here, as everywhere else in this file. */
+function correctOnsetAgainstPause(
+  claimedOnset: number,
+  runEnd: number,
+  speechEnd: number | undefined,
+  silences: readonly SilenceInterval[],
+): number {
+  if (speechEnd === undefined) return claimedOnset;
+  let pause: SilenceInterval | undefined;
+  for (const s of silences) {
+    if (!(s.endSec > speechEnd + 1e-9)) continue;
+    if (!(s.startSec < runEnd - 1e-9)) continue;
+    if (pause === undefined || s.startSec < pause.startSec) pause = s;
+  }
+  if (!pause) return claimedOnset;
+  if (!(pause.endSec > claimedOnset + 1e-9)) return claimedOnset;
+  if (!(pause.endSec < runEnd - 1e-9)) return claimedOnset;
+  return pause.endSec;
 }
 
 /**
@@ -231,7 +369,7 @@ export function detectRunPlacementDefects(
   // why the raw token span's own edges cannot be used here. Both the interior
   // test and the H7 guard below read THIS view, not `run.startSec`/`endSec`;
   // mixing the two is what made the rule reject its own correct output.
-  const extents = runs.map(run => acousticRunExtent(run, tokens));
+  const extents = runs.map(run => acousticRunExtent(run, tokens, silences));
 
   const findings: RunPlacementFinding[] = [];
 
@@ -277,7 +415,11 @@ export function detectRunPlacementDefects(
       }
     }
 
-    const correctedValue = best ? (best.lo + best.hi) / 2 : gapEndSec;
+    // GEOMETRIC, AND UNCLAMPED (WS1 Session T). The value is the midpoint of
+    // the WHOLE backing silence, not of its intersection with the gap. See
+    // this file's "THE CLAMP IS GONE" header note for why the intersection was
+    // here and why it is not any more.
+    const correctedValue = best ? (best.silence.startSec + best.silence.endSec) / 2 : gapEndSec;
 
     // H7, as a permanent guard rather than a one-off check: a corrected value
     // may never itself land inside a run. It cannot today — the gap sits
@@ -564,7 +706,7 @@ export function detectUtterancePlacementDefects(
   // R.12 already had to make this same correction for its own placement gap;
   // R.13's carrier lookup below needed the identical fix for a different
   // reason — see that lookup's own comment.
-  const extents = runs.map(run => acousticRunExtent(run, tokens));
+  const extents = runs.map(run => acousticRunExtent(run, tokens, silences));
 
   const findings: UtterancePlacementFinding[] = [];
 

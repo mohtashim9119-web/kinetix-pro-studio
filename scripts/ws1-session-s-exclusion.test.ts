@@ -84,7 +84,19 @@ describe('WS1 Session S — R-AP on the live v6 bundle (R-AO)', () => {
     ]);
   }, TIMEOUT);
 
-  it('R.12 now fires EIGHT, and its eighth row commits 266_forty_one_burden at 788.65', async () => {
+  it('R.12 now fires EIGHT, and its eighth row commits 266_forty_one_burden at 788.75 (WS1 Session T)', async () => {
+    // WS1 SESSION T: the committed value moved from 788.65 to 788.75. This is
+    // NOT a regression of R-AP (Session S's own ownership fix, asserted
+    // elsewhere in this file) — it is Step 1's SEPARATE, uniform onset
+    // correction (`acousticRunExtent`, applied identically to every R.12 row,
+    // not special-cased for this one) moving run 6's acoustic onset from
+    // 789.26 to 789.46. The A/B `ear-verify-t` sitting confirmed 788.65 as
+    // correct, so this 0.10s move is a MEASURED, OPEN regression against that
+    // verdict — see `s-266-live-path-collision` in
+    // `scripts/phase4-fa-replay.test.ts`'s KNOWN_BAD and this row's pin in
+    // `scripts/ws1-session-q-production-pins.test.ts` for the full account.
+    // This test's job is narrower: confirm R-AP itself (which rule owns the
+    // boundary) is still correct, independent of what value that rule computes.
     const r = await run('v6');
     expect(r.fired['R.12']).toBe(8);
     expect(r.fired['R.11']).toBe(5);
@@ -95,8 +107,8 @@ describe('WS1 Session S — R-AP on the live v6 bundle (R-AO)', () => {
     expect(f, 'R.12 must now reach the row it owns').toBeDefined();
     expect(f!.runIndex).toBe(6);
     expect(f!.committedValue, 'the boundary R.11 no longer moved').toBeCloseTo(790.33, 2);
-    expect(f!.correctedValue).toBeCloseTo(788.65, 2);
-    expect(startOf(r.committed, '266_forty_one_burden')).toBeCloseTo(788.65, 2);
+    expect(f!.correctedValue).toBeCloseTo(788.75, 2);
+    expect(startOf(r.committed, '266_forty_one_burden')).toBeCloseTo(788.75, 2);
   }, TIMEOUT);
 
   it('AT REST: the shipped stage produces ZERO R-AP violations on all three corpora', async () => {

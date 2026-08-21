@@ -24,6 +24,7 @@ import {
   applyRunPlacementCorrections,
   detectUtterancePlacementDefects,
   applyUtterancePlacementCorrections,
+  acousticRunExtent,
 } from './faRunPlacementGate';
 import { computeUnscriptedRuns, computeFaChunkPlan } from './faChunkPlan';
 import { R11_MAX_SPAN_WORD_CONF, R12_MIN_CORRECTION_SEC } from './syncConstants';
@@ -105,20 +106,29 @@ describe('R.12 — the atomic-run invariant: detection', () => {
     expect(f.delta).toBeCloseTo(-1.00, 5);
   });
 
-  it('CLAMPS to the gap: a silence that runs on past the run onset is intersected, never used whole', () => {
-    // The clamp is forced by measurement, not taste — unclamped, the midpoint
-    // of a silence that overruns the run onset lands back INSIDE the run,
-    // which is the very defect R.12 exists to remove. Measured on four of the
-    // nine corpus rows (R4/R5/R7/R8) and, on R5, reproducing the committed
-    // defect value exactly.
+  it('WS1 SESSION T REVERSAL: this fixture used to need a clamp; it no longer needs a correction at all', () => {
+    // WHAT THIS CASE USED TO ASSERT, and why it was wrong — kept rather than
+    // deleted, because the reversal is the point. Sessions H-S pinned the
+    // CLAMPED answer 2.70 here and argued the intersection was forced by
+    // measurement: "unclamped, the midpoint of a silence that overruns the run
+    // onset lands back INSIDE the run". That was true of this fixture and of
+    // four real corpus rows, and the explanation was still wrong. A silence
+    // only appeared to "overrun the run onset" because the onset was a Whisper
+    // timestamp sitting inside that very silence — `acousticRunExtent` now
+    // measures the onset off the waveform instead, and once it does, the
+    // silence [2.40, 4.40] is exactly the pause separating "delta" (ends 2.00)
+    // from the run: it is still open at the model's claimed onset (3.00), so
+    // the run's real acoustic onset is 4.40, not 3.00.
+    //
+    // The committed boundary this fixture is built around (`seg1` at 3.50) was
+    // NEVER actually inside the run — it only looked that way because the run
+    // was measured wrong. Corrected, `seg1` sits cleanly before the run
+    // starts, and R.12 has nothing to fix: the same shape `224_thirty_three`
+    // took in the real corpus (see the `EIGHT` table's own header comment).
     const { parsed, tokens, audioDuration } = baseFixture();
     const silences: SilenceInterval[] = [{ startSec: 2.40, endSec: 4.40 }];
     const findings = detectRunPlacementDefects(parsed, committedFrom(parsed), tokens, silences, audioDuration);
-
-    expect(findings).toHaveLength(1);
-    // Unclamped this would be (2.40 + 4.40) / 2 = 3.40 — inside [3.00, 4.60].
-    expect(findings[0]!.correctedValue).toBeCloseTo(2.70, 5); // midpoint of [2.40, 3.00]
-    expect(findings[0]!.correctedValue).toBeLessThanOrEqual(3.00);
+    expect(findings).toHaveLength(0);
   });
 
   it('FALLBACK: with no silence overlapping the pre-run gap, the boundary goes to run.startSec', () => {
@@ -484,27 +494,41 @@ function corpus(key: Corpus): {
   return { parsed, committed, tokens, silences, audioDuration: AUDIO[key] };
 }
 
-/** The nine corpus rows, with their Step-3 measured corrected values. */
-const NINE: Array<{ tag: string; committed: number; corrected: number; placement: 'silence-midpoint' | 'run-start-fallback' }> = [
-  { tag: '042_eleven_years', committed: 127.17, corrected: 125.54, placement: 'run-start-fallback' },
-  { tag: '085_the_spear_bearer', committed: 252.74, corrected: 250.69, placement: 'silence-midpoint' },
+/** The corpus rows R.12 fires on, with their measured corrected values.
+ *
+ *  WS1 SESSION T RE-PIN — nine rows became EIGHT, and the departure is the
+ *  rule working rather than a regression. `224_thirty_three` sits at 664.33 in
+ *  this frozen fixture. Run 5's acoustic onset was a Whisper timestamp at
+ *  663.91, which put 664.33 "inside" the run and gave R.12 a defect to fix;
+ *  the onset is now measured off the waveform at 665.00, and 664.33 is
+ *  comfortably OUTSIDE the run. There is nothing left to correct, so R.12
+ *  declines. (The value R.12 used to impose there, 663.785, is one of the five
+ *  the owner scored EARLY; 664.33 is within 0.000s of the value the Session T
+ *  A/B pass licensed for that boundary. The fixture's own committed value was
+ *  right and the rule had been dragging it earlier.)
+ *
+ *  `042_eleven_years` also changes PATH here, `run-start-fallback` ->
+ *  `silence-midpoint`, for the same reason: the widened gap now reaches the
+ *  post-breath pause at [125.62, 125.90], which no longer has to be guessed
+ *  at. */
+const EIGHT: Array<{ tag: string; committed: number; corrected: number; placement: 'silence-midpoint' | 'run-start-fallback' }> = [
+  { tag: '042_eleven_years', committed: 127.17, corrected: 125.76, placement: 'silence-midpoint' },
+  { tag: '085_the_spear_bearer', committed: 252.74, corrected: 250.81, placement: 'silence-midpoint' },
   { tag: '125_night_circle', committed: 372.35, corrected: 370.75, placement: 'silence-midpoint' },
-  { tag: '176_twenty_six_scout', committed: 524.39, corrected: 521.71, placement: 'silence-midpoint' },
-  // The one row whose midpoint is not a 2dp value: (663.66 + 663.91) / 2.
-  { tag: '224_thirty_three', committed: 664.33, corrected: 663.785, placement: 'silence-midpoint' },
-  { tag: '266_forty_one_burden', committed: 790.33, corrected: 788.65, placement: 'silence-midpoint' },
-  { tag: '307_forty_nine_years', committed: 926.97, corrected: 924.92, placement: 'silence-midpoint' },
-  { tag: '340_fifty_eight', committed: 1047.57, corrected: 1044.67, placement: 'silence-midpoint' },
-  { tag: '383_sixty_four', committed: 1190.81, corrected: 1188.95, placement: 'silence-midpoint' },
+  { tag: '176_twenty_six_scout', committed: 524.39, corrected: 522.46, placement: 'silence-midpoint' },
+  { tag: '266_forty_one_burden', committed: 790.33, corrected: 788.75, placement: 'silence-midpoint' },
+  { tag: '307_forty_nine_years', committed: 926.97, corrected: 925.43, placement: 'silence-midpoint' },
+  { tag: '340_fifty_eight', committed: 1047.57, corrected: 1045.62, placement: 'silence-midpoint' },
+  { tag: '383_sixty_four', committed: 1190.81, corrected: 1189.05, placement: 'silence-midpoint' },
 ];
 
 describe('R.12 — the corpus: all nine rows, blast radius, and the controls', () => {
-  it('v6: fires on exactly the nine rows, at exactly their measured values', () => {
+  it('v6: fires on exactly the eight rows, at exactly their measured values', () => {
     const { parsed, committed, tokens, silences, audioDuration } = corpus('v6');
     const findings = detectRunPlacementDefects(parsed, committed, tokens, silences, audioDuration);
 
-    expect(findings.map(f => f.segmentId)).toEqual(NINE.map(n => n.tag));
-    for (const n of NINE) {
+    expect(findings.map(f => f.segmentId)).toEqual(EIGHT.map(n => n.tag));
+    for (const n of EIGHT) {
       const f = findings.find(x => x.segmentId === n.tag)!;
       expect(Math.abs(f.committedValue - n.committed), `${n.tag}: committed`).toBeLessThan(0.005);
       expect(Math.abs(f.correctedValue - n.corrected), `${n.tag}: corrected`).toBeLessThan(0.005);
@@ -513,11 +537,20 @@ describe('R.12 — the corpus: all nine rows, blast radius, and the controls', (
     }
   }, CORPUS_TIMEOUT_MS);
 
-  it('exactly ONE of the nine takes the fallback path (042_eleven_years) — H8 as a standing check', () => {
+  it('NONE of the eight takes the fallback path any more — H8 as a standing check', () => {
+    // H8 asked "how many rows have to be guessed at, because no measured
+    // silence backs them?" Through Session S the answer was one:
+    // `042_eleven_years`, whose gap ended at Whisper's claimed onset and
+    // therefore contained no silence at all. Session T's onset correction
+    // widens that gap to the pause's real end, and the pause is inside it.
+    // The answer is now ZERO — every corpus row is backed by a measurement.
+    // The fallback path is still live and still tested, on the synthetic
+    // shapes that actually have no silence to find (see the Session T block
+    // and the zero-length-intersection case above).
     const { parsed, committed, tokens, silences, audioDuration } = corpus('v6');
     const findings = detectRunPlacementDefects(parsed, committed, tokens, silences, audioDuration);
     const fallbacks = findings.filter(f => f.placement === 'run-start-fallback');
-    expect(fallbacks.map(f => f.segmentId)).toEqual(['042_eleven_years']);
+    expect(fallbacks.map(f => f.segmentId)).toEqual([]);
   }, CORPUS_TIMEOUT_MS);
 
   it('173 and spanish are UNTOUCHED — zero unscripted runs means zero effect', () => {
@@ -528,7 +561,7 @@ describe('R.12 — the corpus: all nine rows, blast radius, and the controls', (
     }
   }, CORPUS_TIMEOUT_MS);
 
-  it('blast radius is exactly 9 of 649 parsed rows across all three corpora', () => {
+  it('blast radius is exactly 8 of 649 parsed rows across all three corpora', () => {
     let fired = 0; let rows = 0;
     for (const key of ['v6', '173', 'spanish'] as const) {
       const { parsed, committed, tokens, silences, audioDuration } = corpus(key);
@@ -536,14 +569,27 @@ describe('R.12 — the corpus: all nine rows, blast radius, and the controls', (
       fired += detectRunPlacementDefects(parsed, committed, tokens, silences, audioDuration).length;
     }
     expect(rows).toBe(649);
-    expect(fired).toBe(9);
+    expect(fired).toBe(8);
   }, CORPUS_TIMEOUT_MS);
 
   it('H7 on the real corpus: no corrected value lies inside ANY unscripted run', () => {
+    // STATED AGAINST THE ACOUSTIC EXTENT, which is the interval H7 itself
+    // tests and the one every clause of R.12, R.13 and R-AP is written
+    // against. Through Session S this loop read `computeUnscriptedRuns`'s RAW
+    // token span instead and still passed — but only because this frozen
+    // fixture's word CSV is a PRE-FILTERED token array in which the run's
+    // leading punctuation token is absent, making raw and acoustic identical.
+    // On the live production path they are not: v6 run 1's raw span opens at
+    // 125.25 (the end of the preceding word) while its acoustic extent opens
+    // at 125.90, so a raw-span reading of this invariant is false in
+    // production and always was. Testing the guard against a second,
+    // independently-derived notion of "the run" is precisely the defect
+    // `acousticRunExtent` exists to prevent — see its header.
     const { parsed, committed, tokens, silences, audioDuration } = corpus('v6');
-    const runs = computeUnscriptedRuns(parsed, tokens, silences, audioDuration);
+    const extents = computeUnscriptedRuns(parsed, tokens, silences, audioDuration)
+      .map(r => acousticRunExtent(r, tokens, silences));
     for (const f of detectRunPlacementDefects(parsed, committed, tokens, silences, audioDuration)) {
-      for (const u of runs) {
+      for (const u of extents) {
         expect(
           f.correctedValue > u.startSec + 1e-9 && f.correctedValue < u.endSec - 1e-9,
           `${f.segmentId}: corrected ${f.correctedValue} inside run [${u.startSec}, ${u.endSec}]`,
@@ -1077,7 +1123,7 @@ describe('R.13 — mutual exclusion against R.5, R.10, R.11, R.12 and R-U', () =
     const r12 = detectRunPlacementDefects(parsed, pre, tokens, silences, audioDuration).map(f => f.segmentId);
     const { committed: post } = postR12('v6');
     const r13 = detectUtterancePlacementDefects(parsed, post, tokens, silences, audioDuration).map(f => f.segmentId);
-    expect(r12).toHaveLength(9);
+    expect(r12).toHaveLength(8); // WS1 Session T: 224_thirty_three is no longer inside its run.
     expect(r13).toEqual(['225_night_scouts']);
     for (const tag of r13) expect(r12, `R.12 and R.13 both claim ${tag}`).not.toContain(tag);
   }, CORPUS_TIMEOUT_MS);
@@ -1134,10 +1180,14 @@ describe('R.12 + R.13 — the run invariant holds on BOTH edges of every run', (
     );
     const runs = computeUnscriptedRuns(c.parsed, c.tokens, c.silences, c.audioDuration);
     expect(runs).toHaveLength(10);
+    // The ACOUSTIC extent, for the reason the H7 corpus case above states at
+    // length: it is the interval the invariant is defined on, and the raw
+    // token span is not the same thing on the live path.
+    const extents = runs.map(r => acousticRunExtent(r, c.tokens, c.silences));
 
     // OPENING: no committed boundary strictly inside any run.
     for (let i = 1; i < committed.length; i++) {
-      for (const u of runs) {
+      for (const u of extents) {
         expect(
           committed[i]!.startTime > u.startSec + 1e-9 && committed[i]!.startTime < u.endSec - 1e-9,
           `${committed[i]!.id} at ${committed[i]!.startTime} is inside run [${u.startSec}, ${u.endSec}]`,
@@ -1150,4 +1200,145 @@ describe('R.12 + R.13 — the run invariant holds on BOTH edges of every run', (
       'a closing-edge defect survived both halves',
     ).toEqual([]);
   }, CORPUS_TIMEOUT_MS);
+});
+
+// ---------------------------------------------------------------------------
+// WS1 SESSION T — the onset correction, and the clamp's removal.
+//
+// Two independent changes, tested independently, plus the guard that must NOT
+// have moved. Every fixture here is synthetic and states its own shape; the
+// corpus evidence for both changes lives in
+// `scripts/ws1-session-t-measure.test.ts` and in the plan doc's Part R.
+// ---------------------------------------------------------------------------
+describe('R.12 — WS1 Session T: the run onset is measured, not modelled', () => {
+  /** The `042_eleven_years` SHAPE, reduced to a synthetic fixture.
+   *
+   *  The run's first token claims to start at 3.00. A short loud event (a
+   *  breath, in the real corpus) occupies [3.00, 3.08], so the detector does
+   *  NOT report silence there; the pause it does report is [3.08, 3.40], and
+   *  real energy begins at 3.40. The pre-run gap therefore contains NO silence
+   *  under the model's onset, and the pre-Session-T rule fell back to the
+   *  claimed onset itself — landing the boundary on the breath.
+   *
+   *  This is the row that proves the correction is not breath logic: nothing
+   *  here inspects amplitude, and the breath is represented only by the ABSENCE
+   *  of a silence interval over it. */
+  function breathShapeFixture() {
+    const f = baseFixture();
+    // Pause sits AFTER the claimed onset, separated from the previous word by
+    // the (unrepresented) breath. Nothing overlaps the gap [2.00, 3.00].
+    f.silences = [{ startSec: 3.08, endSec: 3.40 }, { startSec: 4.70, endSec: 4.95 }];
+    return f;
+  }
+
+  it('moves the onset past a pause the model claimed to speak through — the 042 shape', () => {
+    const f = breathShapeFixture();
+    const findings = detectRunPlacementDefects(
+      f.parsed, committedFrom(f.parsed), f.tokens, f.silences, f.audioDuration,
+    );
+    expect(findings).toHaveLength(1);
+    const [found] = findings;
+    // The gap's right edge is now the PAUSE's end (3.40), not the model's
+    // claimed onset (3.00) — that widening is what brings the pause into the
+    // gap at all.
+    expect(found!.gapStartSec).toBeCloseTo(2.00, 6);
+    expect(found!.gapEndSec).toBeCloseTo(3.40, 6);
+    // Which makes this the silence-midpoint path, not the fallback it used to
+    // take, and puts the value after the breath rather than on it.
+    expect(found!.placement).toBe('silence-midpoint');
+    expect(found!.correctedValue).toBeCloseTo(3.24, 6);
+    expect(found!.runStartSec).toBeCloseTo(3.40, 6);
+  });
+
+  it('leaves the onset alone when the separating pause closed before the claim', () => {
+    // `baseFixture`'s pause is [2.20, 2.80]; the claimed onset is 3.00. The
+    // pause is shut well before the claim, so the model's answer stands and
+    // the committed value is unchanged from every prior session's.
+    const f = baseFixture();
+    const findings = detectRunPlacementDefects(
+      f.parsed, committedFrom(f.parsed), f.tokens, f.silences, f.audioDuration,
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.runStartSec).toBeCloseTo(3.00, 6);
+    expect(findings[0]!.gapEndSec).toBeCloseTo(3.00, 6);
+    expect(findings[0]!.correctedValue).toBeCloseTo(2.50, 6);
+  });
+
+  it('never moves the onset EARLIER than the model claimed', () => {
+    // A pause that both opens and closes before the claimed onset cannot pull
+    // the run's start backward — that would let a run swallow preceding
+    // speech. Asserted directly rather than left to the corpus.
+    const f = baseFixture();
+    f.silences = [{ startSec: 2.10, endSec: 2.30 }, { startSec: 2.50, endSec: 2.90 }];
+    const findings = detectRunPlacementDefects(
+      f.parsed, committedFrom(f.parsed), f.tokens, f.silences, f.audioDuration,
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.runStartSec).toBeCloseTo(3.00, 6);
+  });
+
+  it('takes the model onset when there are no detected silences at all', () => {
+    const f = baseFixture();
+    f.silences = [];
+    const findings = detectRunPlacementDefects(
+      f.parsed, committedFrom(f.parsed), f.tokens, f.silences, f.audioDuration,
+    );
+    expect(findings).toHaveLength(1);
+    expect(findings[0]!.runStartSec).toBeCloseTo(3.00, 6);
+    expect(findings[0]!.placement).toBe('run-start-fallback');
+    expect(findings[0]!.correctedValue).toBeCloseTo(3.00, 6);
+  });
+});
+
+describe('R.12 — WS1 Session T: the placement value is UNCLAMPED', () => {
+  /** A silence that outlasts the placement gap. The FIRST pause after the
+   *  previous word is a brief one at [2.02, 2.10], which closes before the
+   *  claimed onset (3.00) and so leaves the onset alone; the WIDER silence at
+   *  [2.40, 3.40] is therefore not the separating pause, but it is the one
+   *  with the strongest overlap with the gap [2.00, 3.00], so it backs the
+   *  placement — and it runs on past the gap's right edge.
+   *
+   *  Clamped, the value would be mid([2.40, 3.00]) = 2.70.
+   *  Unclamped, it is mid([2.40, 3.40]) = 2.90.
+   *
+   *  THIS IS THE MUTATION TARGET (M14): restoring `(best.lo + best.hi) / 2`
+   *  makes this case RED. */
+  function outlastingSilenceFixture() {
+    const f = baseFixture();
+    f.silences = [
+      { startSec: 2.02, endSec: 2.10 },
+      { startSec: 2.40, endSec: 3.40 },
+      { startSec: 4.70, endSec: 4.95 },
+    ];
+    return f;
+  }
+
+  it('uses the WHOLE backing silence, not its intersection with the gap', () => {
+    const f = outlastingSilenceFixture();
+    const findings = detectRunPlacementDefects(
+      f.parsed, committedFrom(f.parsed), f.tokens, f.silences, f.audioDuration,
+    );
+    expect(findings).toHaveLength(1);
+    const [found] = findings;
+    expect(found!.gapEndSec).toBeCloseTo(3.00, 6);
+    expect(found!.backingSilence).toEqual({ startSec: 2.40, endSec: 3.40 });
+    expect(found!.correctedValue).toBeCloseTo(2.90, 6);
+    // Stated as an inequality too, so the case cannot pass by coincidence if
+    // the fixture's numbers are ever adjusted: the clamped answer is 2.70.
+    expect(found!.correctedValue).toBeGreaterThan(2.70 + 1e-6);
+  });
+
+  it('H7 still declines a value the unclamped midpoint would push inside a run', () => {
+    // The guard was NOT weakened to accommodate the unclamped value — it is
+    // the same test, and it still bites. Here the backing silence is wide
+    // enough that its whole midpoint lands inside the run's own acoustic
+    // extent [3.00, 4.60], so R.12 declines rather than relocating the defect.
+    const f = baseFixture();
+    f.silences = [{ startSec: 2.02, endSec: 2.10 }, { startSec: 2.60, endSec: 5.00 }];
+    const findings = detectRunPlacementDefects(
+      f.parsed, committedFrom(f.parsed), f.tokens, f.silences, f.audioDuration,
+    );
+    // mid([2.60, 5.00]) = 3.80, strictly inside [3.00, 4.60] -> declined.
+    expect(findings).toHaveLength(0);
+  });
 });
