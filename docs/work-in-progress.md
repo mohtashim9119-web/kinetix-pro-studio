@@ -253,6 +253,14 @@ ear-correct value as a measured side effect of the same uniform fix, and is now 
 special-cased, in two places at once (`s-266-live-path-collision` and its own production pin). The
 FA gate default stays OFF; nothing here changes the Stage 1 lock's own criterion.
 
+**2026-08-22 (WS1 Session V, Part 1) — the register closes 15 → 8 open, all seven closures against
+LIVE via `status: 'fixed'`, none via fixture regeneration.** Phase 3 stays **"PRODUCTION PATH WIRED,
+gate PER-PROJECT, DEFAULT OFF"** — the Stage 1 lock's own criterion is an EMPTY register, and 8 is
+not 0. Full detail: §11's Session V entry. The gate-relevant fact worth stating here: this is the
+FIRST session since Session F where the open count is down to a SINGLE population (Class A + Class
+B, both word-attribution defects Session R found structurally invisible to every placement signal
+built so far) rather than a mix of unassigned rule gaps and re-litigated R.12 values.
+
 ### §4. Phase 3 (Task 5) Component Ledger
 
 Re-verified live against `main` during this consolidation pass (2026-08-14). Status values:
@@ -696,6 +704,13 @@ scope boundary rather than an oversight. P4/P8 remain the open Phase 4 items the
 1→2 and read `silenceDetector.ts`'s output unmodified — `silenceDetector.ts` was unmodifiable this
 session too. P4/P8 unchanged.
 
+**2026-08-22 (WS1 Session V, Part 1) — no row moves here either.** Session V's changes are register
+bookkeeping (`scripts/phase4-fa-replay.test.ts`'s `KNOWN_BAD` status field), the ear-pass ledger
+(`scripts/ws1-ear-pass-ledger.ts`), and one new generator (`scripts/ws1-session-v-bundle.test.ts`)
+that reads the ALREADY-verified live-fidelity bundle — none of it touches Contract 1→2's inputs or
+outputs, and `silenceDetector.ts` was unmodifiable this session too (one mutation briefly touched
+`faRunPlacementGate.ts`, downstream of the contract, and was reverted — see §11). P4/P8 unchanged.
+
 **2026-08-19 (WS1 Session O) — no row in this table moves.** Session O's changes are entirely
 in the persistence layer (`projectStore.ts`, `projectMirror.ts`, `project_mirror.rs`), which sits
 downstream of Contract 1→2 and is not one of its inputs or outputs. P4 and P8 remain the open
@@ -1034,6 +1049,119 @@ code ships (Phase 3b).
 ---
 
 ### §11. Terminal Path to WS1 Completion
+
+**2026-08-22 (WS1 SESSION V, PART 1) — SEVEN REGISTER ROWS CLOSE AGAINST LIVE, NOT FIXTURE. THE
+`266_forty_one_burden` "REGRESSION" CLASSIFICATION IS REFUTED — 788.75 IS THE CONFIRMED VALUE, NOT
+A DEFECT AWAY FROM ONE. REGISTER 15 → 8 OPEN; ALL EIGHT REMAINING ARE CLASS A/B (SCOPED AS PART 2,
+NOT YET STARTED).**
+
+**(0) INPUT.** The operator, listening in the live app (method A/B per R-AM), confirmed all seven
+rows Session T left open: the five R.12 fixture-scoped rows, the live-path collision on
+`266_forty_one_burden`, and the reopened `383_sixty_four`.
+
+**(1) STEP 1 — a fresh run-id-stamped bundle, before anything else.** `scripts/
+ws1-session-v-bundle.test.ts` (new, generator, gated `WS1_SESSION_V_MEASURE=1`, not in the default
+sweep) drives the real production rule stage (`ws1-session-p-pipeline.ts`'s `runProductionPath`,
+App.tsx's own order) over the ALREADY-verified live-fidelity input bundle (`inputRunId
+p-20260819T120922Z-cbb403c1`, unchanged — silences/raw-Whisper/FA-words/chunk-plan are not
+regenerable inside `vitest`) and writes its own derived arms (parsed segments, committed
+boundaries, run extents, rule findings) into `.work-phase4/session-v/<runId>/`, run id
+`v-20260821T193353Z-3ffd7516`. Every Step 2 number below is this bundle's own measured output, not
+a stored target.
+
+**(2) STEP 2 — measured committed boundaries, every one matching the stored target exactly (all
+`fired`: R.5=10, R.10=0, R.11=5, R.12=8, R.13=0):**
+
+| row | stored target | measured committed | delta | verdict |
+|---|---|---|---|---|
+| `042_eleven_years` | 125.760 | 125.760 | 0.000 | MATCH |
+| `176_twenty_six_scout` | 522.460 | 522.460 | 0.000 | MATCH |
+| `224_thirty_three` | 664.330 | 664.330 | 0.000 | MATCH |
+| `307_forty_nine_years` | 925.430 | 925.430 | 0.000 | MATCH |
+| `340_fifty_eight` | 1045.620 | 1045.620 | 0.000 | MATCH |
+| `266_forty_one_burden` | 788.75 (register called this a regression from 788.65) | 788.750 | 0.000 | MATCH — and the regression framing does not survive contact with the ear |
+| `383_sixty_four` | 1188.95 or 1189.05? | 1189.050 | — | commits the `ear-verify-t`/A/B value, not the superseded solo one |
+
+**(3) STEP 3 — reconciliation.** Six of seven measured exactly equal to the SAME value the register
+already named as target (no reconciliation needed — `ear-verify-t`'s own values, re-confirmed).
+`266_forty_one_burden` is the one genuine reconciliation: **THE "REGRESSION" CLASSIFICATION IS
+REFUTED, IN THOSE WORDS.** `s-266-live-path-collision` had carried "a fresh 0.10s regression AWAY
+from this verdict" since Session T, naming 788.65 (what `ear-verify-t` had heard) as ground truth
+and 788.75 (what Step 1's onset correction actually computes) as a defect. The operator's Session V
+A/B pass over the live app — which commits 788.75 today — confirms 788.75 CORRECT. That is not a
+defect away from the confirmed value; it IS the confirmed value, and the earlier classification was
+wrong. **Whether the 0.10s move from 788.65 is itself an audible IMPROVEMENT or a below-audibility
+non-difference COULD NOT BE DETERMINED this session** — this sitting confirmed what the app commits
+today (788.75), not a direct two-way A/B against 788.65 specifically the way the six-row list got in
+Session T. What IS measured: 788.75 is exactly Session S Step 3's candidate (a) FULL (unclamped)
+silence midpoint — the identical correction family already validated on all six sibling rows — so
+this is the established mechanism landing consistently, not a special case. Old target (788.65,
+`ear-verify-t`, Session T) is ARCHIVED, not deleted: it remains a valid CLOSED_BY_POSITIVE_ASSERTION
+value against the still-unmoved fixture (`r12-266-forty-one-burden`, unaffected). `383_sixty_four`
+needed no reconciliation — production commits 1189.05, the `ear-verify-t`/A/B value, unchanged
+since Session T; the register's own `earCorrect` already named it.
+
+**(4) STEP 4 — closed via the ledger, not by hand.** `scripts/ws1-ear-pass-ledger.ts` gains sitting
+`ear-verify-v` (order 8): six rows re-confirmed at their `ear-verify-t` values, `266_forty_one_burden`
+newly confirmed at 788.75 (the first sitting ever to hear that value on its own). **Register before:
+15 open** (5 R.12 rows + `s-266-live-path-collision` + `r12-383-sixty-four` + 8 Class A/B). **Register
+after: 8 open** (Class A/B only) — the seven move `status: 'open'` → `'fixed'` in `KNOWN_BAD`
+(`scripts/phase4-fa-replay.test.ts`), NOT into `CLOSED_BY_POSITIVE_ASSERTION`: that mechanism's own
+generated test asserts a row's `earCorrect` against the FROZEN FIXTURE
+(`phase4-fa-second-baseline-v6-segments.csv`), which is deliberately unregenerated this session and
+still shows the pre-Session-T values (verified directly: 125.54/521.71/663.785/924.92/1044.67/788.65
+/1188.95) — asserting any of the seven's new values there would fail today. Closure is against LIVE:
+the operator's ear pass plus the Step 1 bundle, cashed through `pinEarVerified` in `ws1-session-q-
+production-pins.test.ts` (all seven now ear-verified there; `266` upgraded from `pinChangeDetector`).
+
+**`REGISTER_HIGH_WATER` SEMANTICS, STATED PLAINLY (read, not guessed — quoted from the file).** The
+constant's own doc-comment names it "High-water mark for the OPEN manifest" (`scripts/
+phase4-fa-replay.test.ts:717`), which reads like a live mirror of open count — but the coherence
+test that actually enforces it, `expect(KNOWN_BAD).toHaveLength(REGISTER_HIGH_WATER)`
+(`phase4-fa-replay.test.ts:1220`, restated at `:1513`), pins it to EXACT EQUALITY with
+`KNOWN_BAD.length` — the array's total membership (open + fixed), not the open-only subset. The
+shrink-only guard (`phase4-fa-replay.test.ts:1241`) compares `open.length <= REGISTER_HIGH_WATER`,
+an INEQUALITY — open count has always been free to sit below the constant. Historically the two
+numbers moved together only because every prior closure (Sessions D, E, F, H, K) REMOVED the row
+from `KNOWN_BAD` entirely (converted straight to `CLOSED_BY_POSITIVE_ASSERTION`), so `KNOWN_BAD.length`
+and open count shrank in lockstep. Session V is the first to populate `status: 'fixed'` on a row
+that stays a `KNOWN_BAD` member (the schema has carried this state since at least item-9's own
+note, never before exercised on a live row) — so **`REGISTER_HIGH_WATER` STAYS AT 15, UNCHANGED,
+by construction**, while the open count it bounds drops 15 → 8. It IS a monotonic ceiling on total
+register membership; it is NOT a live mirror of the open count specifically.
+
+**(5) STEP 5 — pin and protect.** All seven closed values are now `pinEarVerified` in `ws1-session-
+q-production-pins.test.ts` (RED before this session's ledger addition for `266` specifically —
+`earPassAuthorising('v6','266_forty_one_burden',788.75)` returned `undefined` until `ear-verify-v`
+was added; GREEN after). **M16** (new, this session): `acousticRunExtent`'s onset correction
+(`faRunPlacementGate.ts:273`, `startSec: correctOnsetAgainstPause(...)`) neutered to the raw
+Whisper onset (`startSec: onset.startSec`) — the ONE shared mechanism all seven closed values
+(and `125_night_circle`'s already-closed value) depend on. RED: **7 test failures across 4 files**
+(`ws1-session-q-production-pins.test.ts` ×2, `ws1-session-s-measure.test.ts` ×2, `ws1-session-s-
+exclusion.test.ts` ×2, `ws1-production-path.test.ts` ×1 — the last is the R.12 run-containment
+invariant itself, not a value pin, catching the mutation from a second angle). Reverted; `git diff
+--stat src/services/faRunPlacementGate.ts` empty after revert; `faAnchors.ts` sha256 unchanged
+(`b61e94cb…`) before, during, and after. The five R.12 fixture-scoped rows remain pinned against the
+LIVE arm only (`ws1-session-q-production-pins.test.ts`); `phase4-fa-second-baseline-v6-segments.csv`
+remains deliberately unregenerated and therefore stale for those five — this closure is against
+live, not fixture, restated plainly.
+
+**(6) STEP 6 — mutual exclusion and ordering, unchanged and re-verified on the LIVE path with all
+seven closed values now committed.** `scripts/ws1-session-p-invariants.test.ts`: strict monotonic
+ordering across all 447 committed v6 boundaries (no duplicate, no inversion, no gap/overlap against
+Model P) — PASS; zero committed boundaries strictly inside an R.5 run's acoustic extent — PASS. The
+R.5/R.10/R.11/R.12/R.13/R-U pairwise exclusion tests (`faRunPlacementGate.test.ts`, `faChunkPlan.test.ts`,
+`ws1-session-s-exclusion.test.ts`'s R.11/R.12 disjointness test) are unaffected by this session's
+changes (no production file touched outside the M16 mutate-then-revert) and pass in the full sweep.
+Zero overlap confirmed.
+
+**(7) WHAT THIS SESSION DID NOT DO, stated plainly.** No new placement rule. No fixture regeneration
+(`phase4-fa-second-baseline-v6-segments.csv` untouched, still stale for the seven closed-against-live
+rows — a future session that wants `CLOSED_BY_POSITIVE_ASSERTION` for them must regenerate it
+deliberately). No Class A/Class B work (Part 2, scoped, not started — 3 Class A + 5 Class B remain
+the entire open register). No rule-stage propose/arbitrate rebuild (still scheduled, still not
+started). `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/history.md` and
+`scripts/fixtures/phase4-baseline-*.csv` were not touched.
 
 **2026-08-20 (WS1 SESSION S) — TWO RULES CLAIMED ONE BOUNDARY AND ORDERING DECIDED IT SILENTLY;
 R-AP CLOSES IT STRUCTURALLY AND R.12 REACHES ITS EIGHTH ROW. FIVE PINS WERE ASSERTING DEFECTIVE
@@ -4869,6 +4997,53 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-22 — WS1 Session V (Part 1): seven Zero-Defect Register rows close against LIVE, not
+  fixture — register 15 -> 8 open. The `266_forty_one_burden` "regression" classification is
+  REFUTED: 788.75 is the operator-confirmed correct value, not a defect away from one.**
+  - **Step 1 — a fresh run-id-stamped closure bundle.** New generator `scripts/
+    ws1-session-v-bundle.test.ts` (gated `WS1_SESSION_V_MEASURE=1`, not in the default sweep)
+    drives the real production rule stage over the already-verified live-fidelity input bundle and
+    writes its own derived arms to `.work-phase4/session-v/<runId>/`. Every committed-boundary
+    number in Step 2 is this bundle's own measured output.
+  - **Step 2 — all seven measured, zero assumed.** Five R.12 rows and `383_sixty_four` matched
+    their stored `ear-verify-t` targets exactly. `266_forty_one_burden` measured 788.75, matching
+    what Session T had already found (not a new regression) — the operator's fresh A/B pass over
+    the live app confirms it CORRECT.
+  - **Step 3 — reconciliation.** Old target 788.65 (`ear-verify-t`, Session T) is ARCHIVED with its
+    provenance, not silently overwritten; the register's own row (`s-266-live-path-collision`) now
+    names 788.75. Whether the 0.10s move from 788.65 is an audible improvement or below-audibility
+    could not be determined this session (no direct two-way A/B between those two specific values
+    was run) — what IS measured: 788.75 is exactly the same full/unclamped-silence-midpoint family
+    every sibling row was already confirmed at, so it is the established mechanism, not a special
+    case.
+  - **Step 4 — closed via the ledger.** `ws1-ear-pass-ledger.ts` gains sitting `ear-verify-v`
+    (order 8, seven rows). Register: 15 -> 8 open. The seven move `KNOWN_BAD.status`
+    `'open'` -> `'fixed'` — NOT converted to `CLOSED_BY_POSITIVE_ASSERTION`, which asserts against
+    the frozen fixture CSV (deliberately unregenerated, still showing the pre-Session-T values,
+    verified directly). `REGISTER_HIGH_WATER` stays 15, unchanged: the coherence test pins it to
+    `KNOWN_BAD.length` (total membership, open + fixed), not open count specifically — see §11's
+    own entry for the full semantics argument, quoted from the file.
+  - **Step 5 — pin and protect.** All seven now `pinEarVerified` in `ws1-session-q-production-
+    pins.test.ts` (`266` upgraded from `pinChangeDetector`; RED before the ledger addition, GREEN
+    after). **M16** (new): `acousticRunExtent`'s onset correction neutered to the raw Whisper
+    onset — the shared mechanism all seven depend on. RED: 7 failures across 4 files. Reverted;
+    `git diff --stat` empty after revert; `faAnchors.ts` sha256 unchanged (`b61e94cb…`) throughout.
+  - **Step 6 — mutual exclusion and ordering, re-verified on the live path with all seven closed
+    values committed.** Strict monotonic ordering across all 447 v6 boundaries — PASS. Zero
+    boundaries inside an R.5 run's acoustic extent — PASS. Pairwise rule-exclusion tests
+    unaffected, all pass.
+  - **What this session did NOT do.** Fixture regeneration (still stale for the seven — a future
+    session wanting `CLOSED_BY_POSITIVE_ASSERTION` for them must do this deliberately). Class A/B
+    work (Part 2, scoped, not started). The propose/arbitrate rule-stage rebuild (still scheduled).
+    `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`,
+    `scripts/fixtures/phase4-baseline-*.csv` untouched.
+  - **Six numbers.** `npm test` 122 files / 107 passed / 15 skipped; 2465 passed / 22 skipped (0
+    failed) — the delta from Session U's 2464/21 is this session's own two new tests (one always-run
+    register test, one gated generator file). `tsc --noEmit` clean. `cargo check --features
+    fa-inference` clean. `cargo clippy --all-targets --features fa-inference` clean, 4 pre-existing
+    warnings. `cargo test` 141/0/1 default, 216/0/21 with fa-inference. Golden replay 6/6
+    byte-identical.
 
 - **2026-08-21 — WS1 Session T: candidate B licensed on all six A/B rows; the clamp was never the
   rule, it was a symptom mask for a Whisper onset sitting inside a real silence. Dropping it and

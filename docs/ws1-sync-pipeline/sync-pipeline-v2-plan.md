@@ -6852,3 +6852,66 @@ propose-then-arbitrate rule-stage refactor (Part Q(f)) remains the scheduled, no
 up. `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `project-state.md`,
 `docs/history.md` and `scripts/fixtures/phase4-baseline-*.csv` were not touched. Golden replay 6/6
 byte-identical.
+
+## Part S — Seven Rows Close Against Live, Not Fixture; the 266 "Regression" Is Refuted (WS1 Session V, Part 1, 2026-08-22, append-only)
+
+**(a) THE MECHANISM, FORMALIZED.** `KnownBadRow.status: 'fixed'` (`scripts/phase4-fa-replay.test.ts`,
+declared since at least item-9's own note, never before populated on a live row) is the register's
+own sanctioned answer for "the fix is real, but the frozen fixture predates it and cannot be
+regenerated this session": the row stays a `KNOWN_BAD` member (never converted to
+`CLOSED_BY_POSITIVE_ASSERTION`, which asserts against the fixture CSV) but drops out of the OPEN
+count. Session V populates it for the first time on seven live rows, and widens the file's own
+coherence tests (open-XOR-closed, roster arithmetic, bookkeeping) from a binary to the three-way
+split the schema already declared. This is completing an existing mechanism's test coverage, not
+inventing a new register concept.
+
+**(b) THE SEVEN, MEASURED FRESH.** A new run-id-stamped bundle (`scripts/
+ws1-session-v-bundle.test.ts`, runId `v-20260821T193353Z-3ffd7516`, `inputRunId
+p-20260819T120922Z-cbb403c1` unchanged) drives the real production rule stage and writes its own
+committed-boundary arm. All seven measured values match what the register already named as target:
+`042` 125.760, `176` 522.460, `224` 664.330, `307` 925.430, `340` 1045.620, `383` 1189.050 (the
+`ear-verify-t`/A/B value, not the superseded solo 1188.95), `266` 788.750.
+
+**(c) THE 266 REFUTATION.** `s-266-live-path-collision` had carried, since Session T (Part R(e)),
+the framing that 788.75 was "a fresh 0.10s regression AWAY from" the ear-verified 788.65. The
+operator's Session V A/B pass over the live app — which commits 788.75 today, unchanged since
+Session T's own Step 1 — confirms 788.75 CORRECT. **The regression framing is refuted, not merely
+closed**: 788.75 was never a defective value drifting away from a good one; it is the value the
+uniform onset correction was always going to produce, and it is now the one the ear accepts.
+Structurally it is exactly Part R(c)'s candidate (a) full/unclamped silence midpoint — the SAME
+family every sibling row was already licensed at — so this is the established mechanism landing
+consistently on its seventh row, not a special case requiring its own logic. Whether the 0.10s
+move from 788.65 is itself an audible improvement or a below-audibility non-difference is NOT
+determined: this sitting confirmed today's committed value, not a direct A/B between the two
+specific numbers. 788.65 remains valid and unmoved as `r12-266-forty-one-burden`'s
+`CLOSED_BY_POSITIVE_ASSERTION` entry, which asserts against the still-unregenerated fixture — the
+two entries continue to describe the same boundary from deliberately un-merged sources.
+
+**(d) THE LEDGER, EXTENDED.** `ws1-ear-pass-ledger.ts` gains sitting `ear-verify-v` (order 8): six
+rows re-confirmed unchanged, `266_forty_one_burden` heard on its own at 788.75 for the first time
+(Session T's `ear-verify-t` sitting had only ever heard 788.65, the pre-Step-1b production value).
+By R-AM's supersede-by-order rule, `ear-verify-v` is now the row `earPassAuthorising` returns for
+all seven values — a later sitting re-confirming the same number, not a disagreement.
+
+**(e) REGISTER: 15 -> 8 open.** The five R.12 fixture-scoped rows, `s-266-live-path-collision`, and
+`r12-383-sixty-four` all move `status: 'open'` -> `'fixed'`. `REGISTER_HIGH_WATER` STAYS AT 15 —
+the coherence test pins it to `KNOWN_BAD.length` (total membership, open + fixed combined), not to
+open count; only entries actually removed from the array (via `CLOSED_BY_POSITIVE_ASSERTION`
+conversion) have ever lowered it historically, and none were removed this session. Full semantics
+argument, quoted from the file by line number: `docs/work-in-progress.md` §11's Session V entry.
+
+**(f) MUTATION M16.** `acousticRunExtent`'s onset correction (`faRunPlacementGate.ts:273`)
+neutered to the raw Whisper onset — the one mechanism all seven closed values share. RED: 7 test
+failures across 4 files, including the R.12 run-containment invariant itself (a structural check,
+not a value pin), catching the mutation from a second angle. Reverted; `faAnchors.ts` sha256
+unchanged (`b61e94cb…`) before, during, and after.
+
+**(g) SCOPE.** Class A and Class B (8 rows) are untouched and now constitute the ENTIRE open
+register — the first time since Session F the open set is a single population rather than a mix of
+rule gaps and re-litigated R.12 values. Part 2 (an attribution-side detector for these 8) is
+scoped in the same session's brief but explicitly NOT started pending approval. The propose-then-
+arbitrate rule-stage refactor remains scheduled, not started. `snapBoundaries.ts`,
+`silenceDetector.ts`, the Hirschberg aligner, `docs/history.md` and
+`scripts/fixtures/phase4-baseline-*.csv` were not touched; `phase4-fa-second-baseline-v6-
+segments.csv` remains deliberately unregenerated and therefore stale for the five R.12 rows and
+`266`/`383` — closure this session is against live, not fixture. Golden replay 6/6 byte-identical.

@@ -298,9 +298,14 @@ describe('WS1 Session S — Step 2/3 structural picture of R.12\'s seven rows', 
     for (const [tag, target] of Object.entries(TARGETS)) {
       expect(Math.abs(shipped(tag) - target), `${tag}: shipped ${shipped(tag)}, ear-verify-t target ${target}`).toBeLessThan(0.005);
     }
-    // 266 is the ONE row this fix does not close — see its own open register
-    // entry (`s-266-live-path-collision`) for why: it is a separate,
-    // measured 0.10s regression off the value the SAME sitting confirmed.
+    // 266 is the ONE row this fix does not close AT THE `ear-verify-t` VALUE
+    // (788.65) — it is a separate, measured 0.10s move off the value that
+    // sitting confirmed. WS1 SESSION V ran the follow-up A/B this row was
+    // left flagged for (`ear-verify-v`) and confirmed 788.75 instead — see
+    // `s-266-live-path-collision` (now `status: 'fixed'`) and
+    // `ws1-session-q-production-pins.test.ts`'s `pinEarVerified` for the
+    // closure. This assertion is unchanged: it only pins that shipped stays
+    // away from 788.65, which remains true at 788.75.
     expect(Math.abs(shipped('266_forty_one_burden') - 788.65)).toBeGreaterThan(0.05);
   }, TIMEOUT);
 });

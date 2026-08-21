@@ -444,77 +444,86 @@ const KNOWN_BAD: KnownBadRow[] = [
   // -------------------------------------------------------------------------
   {
     id: 'r12-042-eleven-years', origin: 'live-runs-s', corpus: 'v6', tag: '042_eleven_years',
-    owningRule: 'R.12', closingCommit: '',
+    owningRule: 'R.12',
     faValue: 125.54, earCorrect: 125.76,
     mechanism: 'THE ONE FALLBACK ROW of the seven (`run-start-fallback`): no detected silence intersects the ' +
       'placement gap [125.25, 125.54] at all, so the value goes to the run\'s acoustic onset itself. Measured ' +
       'RMS: real speech does not begin until 125.90, and the detector\'s own silence [125.62, 125.90] sits ' +
       'ENTIRELY AFTER the gap, so R.12 cannot see it. A -41 dBFS, 80 ms breath band at [125.52, 125.62] is ' +
       'what the Whisper onset was pinned to, and it is EXCLUDED from silence because it crosses -45 dBFS.',
-    status: 'open',
+    status: 'fixed',
+    closingCommit: 'WS1-SESSION-V',
     note: 'L2 of the Session S live pass. The only row where candidate (c) — the run\'s acoustic onset — is ' +
       'already the committed value, and it is still early. WS1 SESSION T: `earCorrect` is now a NUMBER, not ' +
       '\'unknown\' — `ear-verify-t` A/B-confirmed 125.76, and `acousticRunExtent`\'s onset correction (measuring ' +
       'the run\'s start off the waveform, not a Whisper timestamp) makes the LIVE production path commit it ' +
-      '(`scripts/ws1-session-q-production-pins.test.ts` pins it `pinEarVerified`). STAYS OPEN HERE ONLY because ' +
-      'this row\'s claim is scoped to the FROZEN fixture (`phase4-fa-second-baseline-v6-segments.csv`), which ' +
-      'Session T did not regenerate — same deferral item-7 already established for exactly this shape.',
+      '(`scripts/ws1-session-q-production-pins.test.ts` pins it `pinEarVerified`). WS1 SESSION V: `status` ' +
+      'moves \'open\' -> \'fixed\' (the item-9 pattern, this schema\'s own header comment) — the operator\'s ' +
+      'fresh Session V pass (`ear-verify-v`) re-confirmed 125.76 on the live app, re-measured against a ' +
+      'fresh run-id-stamped bundle (`.work-phase4/session-v`, Step 1), and `faValue` !== `earCorrect` records ' +
+      'the fix is real. NOT converted to `CLOSED_BY_POSITIVE_ASSERTION`: that requires matching the FROZEN ' +
+      'fixture (`phase4-fa-second-baseline-v6-segments.csv`), still 125.54, deliberately unregenerated this ' +
+      'session (see the file\'s own Session V CONSTRAINTS). Closed against LIVE, not fixture.',
   },
   {
     id: 'r12-176-twenty-six-scout', origin: 'live-runs-s', corpus: 'v6', tag: '176_twenty_six_scout',
-    owningRule: 'R.12', closingCommit: '',
+    owningRule: 'R.12',
     faValue: 521.71, earCorrect: 522.46,
     mechanism: 'Backing silence [521.42, 523.50] overhangs the run\'s Whisper-derived onset (522.00) by 1.50s; ' +
       'clamped to [521.42, 522.00] the midpoint is 521.71, at 13.9% of the real silence. Speech begins at ' +
       '523.50 — the silence\'s own end.',
-    status: 'open',
+    status: 'fixed',
+    closingCommit: 'WS1-SESSION-V',
     note: 'L5. The owner\'s note — "cuts between breath and prev segment" — is CONFIRMED by the RMS profile: a ' +
       '-53 dBFS breath band sits at ~[521.88, 522.12], MERGED into silence (it never crosses -45 dBFS), and ' +
       '521.71 sits between the previous segment\'s last word (521.25) and that breath. WS1 SESSION T: ' +
       '`earCorrect` is now 522.46, `ear-verify-t` confirmed — after the breath, exactly as the owner\'s ' +
-      'annotation predicted. Live path fixed and pinned; this fixture-scoped row stays open pending ' +
-      'regeneration (see r12-042\'s note for the general reason).',
+      'annotation predicted. WS1 SESSION V: `status` -> \'fixed\' (see r12-042\'s note for the general ' +
+      'mechanism). Closed against LIVE, not fixture — the fixture is still 521.71, unregenerated.',
   },
   {
     id: 'r12-224-thirty-three', origin: 'live-runs-s', corpus: 'v6', tag: '224_thirty_three',
-    owningRule: 'R.12', closingCommit: '',
+    owningRule: 'R.12',
     faValue: 663.785, earCorrect: 664.33,
     mechanism: 'Backing silence [663.66, 665.00] overhangs the onset (663.91) by 1.09s; clamped midpoint ' +
       '663.785 sits at 9.3% of the real silence. Speech begins at 665.00. NO breath band: the whole interval ' +
       'is floor (-56 to -91 dBFS), so the Whisper onset at 663.91 is pinned to nothing acoustic at all.',
-    status: 'open',
+    status: 'fixed',
+    closingCommit: 'WS1-SESSION-V',
     note: 'L6. Was closed `verification: \'structural\'` — Session S is the first ear pass to score it, and it ' +
       'FAILS. The structural marker did its job: this row was never claimed as ear-verified. WS1 SESSION T: ' +
       '`earCorrect` is now 664.33, `ear-verify-t` confirmed — the control row with NO breath at all, ruling ' +
-      'breath presence out as the discriminator. Live path fixed and pinned; this fixture-scoped row stays ' +
-      'open pending regeneration.',
+      'breath presence out as the discriminator. WS1 SESSION V: `status` -> \'fixed\'. Closed against LIVE, ' +
+      'not fixture — the fixture is still 663.785, unregenerated.',
   },
   {
     id: 'r12-307-forty-nine-years', origin: 'live-runs-s', corpus: 'v6', tag: '307_forty_nine_years',
-    owningRule: 'R.12', closingCommit: '',
+    owningRule: 'R.12',
     faValue: 924.92, earCorrect: 925.43,
     mechanism: 'Backing silence [924.70, 926.16] overhangs the onset (925.14) by 1.02s; clamped midpoint ' +
       '924.92 sits at 15.1% of the real silence. Speech begins at 926.16. A -33 dBFS breath band at ' +
       '[924.58, 924.70] is EXCLUDED from silence (it crosses -45 dBFS) and is why the silence starts where ' +
       'it does; the committed value is already past it.',
-    status: 'open',
+    status: 'fixed',
+    closingCommit: 'WS1-SESSION-V',
     note: 'L8. Previously `verification: \'structural\'`. WS1 SESSION T: `earCorrect` is now 925.43, ' +
       '`ear-verify-t` confirmed — a LOUD breath, already excluded from the silence before Session T touched ' +
-      'anything, ruling breath presence out as the discriminator from the other side. Live path fixed and ' +
-      'pinned; this fixture-scoped row stays open pending regeneration.',
+      'anything, ruling breath presence out as the discriminator from the other side. WS1 SESSION V: `status` ' +
+      '-> \'fixed\'. Closed against LIVE, not fixture — the fixture is still 924.92, unregenerated.',
   },
   {
     id: 'r12-340-fifty-eight', origin: 'live-runs-s', corpus: 'v6', tag: '340_fifty_eight',
-    owningRule: 'R.12', closingCommit: '',
+    owningRule: 'R.12',
     faValue: 1044.67, earCorrect: 1045.62,
     mechanism: 'The most extreme of the five: backing silence [1044.62, 1046.62] overhangs the onset ' +
       '(1044.72) by 1.90s, so the clamped midpoint 1044.67 sits at 2.5% of the real silence — 50 ms after ' +
       'the silence begins. Speech begins at 1046.62. A -38 dBFS breath band at [1044.50, 1044.60] is ' +
       'EXCLUDED from silence and sits BEFORE the committed value.',
-    status: 'open',
+    status: 'fixed',
+    closingCommit: 'WS1-SESSION-V',
     note: 'L9. 1.26s of the interval is literal digital silence (all-zero samples, -inf dBFS). WS1 SESSION T: ' +
-      '`earCorrect` is now 1045.62, `ear-verify-t` confirmed. Live path fixed and pinned; this fixture-scoped ' +
-      'row stays open pending regeneration.',
+      '`earCorrect` is now 1045.62, `ear-verify-t` confirmed. WS1 SESSION V: `status` -> \'fixed\'. Closed ' +
+      'against LIVE, not fixture — the fixture is still 1044.67, unregenerated.',
   },
   // -------------------------------------------------------------------------
   // WS1 SESSION S — L7, THE R.11/R.12 COLLISION. Held OPEN pending an ear pass
@@ -534,33 +543,48 @@ const KNOWN_BAD: KnownBadRow[] = [
   // value; Session Q declined to open a row there because no ear pass had
   // scored the live value. Here one has, which is the difference.
   //
-  // FIXED STRUCTURALLY IN THIS COMMIT by R-AP (`faRuleStageExclusion.ts`): the
-  // live path now commits 788.65 again. It stays OPEN because the register
-  // closes rows on ear passes, not on green tests, and no ear pass has scored
-  // the post-fix live value.
+  // FIXED STRUCTURALLY BY R-AP (`faRuleStageExclusion.ts`, WS1 Session S).
+  //
+  // WS1 SESSION V — CLOSED (status 'fixed'), NOT reopened as a fresh MAJOR.
+  // Step 1's fresh run-id-stamped bundle re-measured this row's committed
+  // value at 788.75 (unchanged from Session T's own finding — Step 1's onset
+  // correction is the SAME uniform mechanism, not touched this session), and
+  // the operator's A/B ear pass over the live app confirms 788.75 CORRECT.
+  // THE "REGRESSION" CLASSIFICATION THIS ROW CARRIED SINCE SESSION T IS
+  // REFUTED: 788.75 is not a defect away from a confirmed value, it is
+  // ITSELF the confirmed value — Session T's ear-verify-t sitting had only
+  // ever heard 788.65 (the then-current live value, "carried over unchanged
+  // from the live app... not part of the five-row A/B list" per its own
+  // ledger note), never a genuine A/B between 788.65 and 788.75 specifically.
+  // Whether the 0.10s move from 788.65 is an audible IMPROVEMENT or a
+  // below-audibility non-difference COULD NOT BE DETERMINED this session —
+  // no direct two-way A/B between those two exact values was recorded, only
+  // a confirmation of what the app commits today (788.75). What IS measured:
+  // 788.75 is exactly Session S Step 3's candidate (a) FULL (unclamped)
+  // silence midpoint — the identical correction family `ear-verify-t`
+  // already validated on all six sibling R.12 rows — so it is CONSISTENT
+  // WITH, not divergent from, the established correction, not a special case.
   // -------------------------------------------------------------------------
   {
     id: 's-266-live-path-collision', origin: 'live-runs-s', corpus: 'v6', tag: '266_forty_one_burden',
-    owningRule: 'R.12', closingCommit: '',
-    // WS1 SESSION T UPDATE. `earCorrect` is no longer 'unknown': `ear-verify-t`
-    // scored 788.65 CORRECT (Step 0 of that session measured it as the
-    // then-current live value and the sitting confirmed it).
+    owningRule: 'R.12', closingCommit: 'WS1-SESSION-V',
+    // `faValue` STAYS 788.65 here, deliberately — this file's own machine
+    // check for OPEN rows reads `faValue` against the FROZEN FIXTURE
+    // (`phase4-fa-second-baseline-v6-segments.csv`), which still shows
+    // 788.65, unregenerated this session. Now that `status` is 'fixed' that
+    // check no longer applies to this row, but `faValue` keeps the same
+    // meaning every sibling row in this array gives it (the frozen fixture's
+    // value) rather than being redefined ad hoc.
     //
-    // `faValue` STAYS 788.65 here, deliberately, even though the LIVE bundle
-    // this row's own `origin` field names now computes 788.75 — this file's
-    // own machine check (`'v6: open KNOWN-BAD boundaries still match their
-    // currently-committed FA value'`, WS1 Session A) reads `faValue` against
-    // the FROZEN FIXTURE (`phase4-fa-second-baseline-v6-segments.csv`), not
-    // the live bundle, regardless of what an entry's `origin` narrates. The
-    // fixture is unregenerated and still shows 788.65, so that is what
-    // `faValue` must say for this file's own tests to tell the truth. The
-    // REAL, measured live-bundle regression (788.65 -> 788.75, discovered by
-    // Step 1's onset correction — `acousticRunExtent`, applied uniformly,
-    // deliberately not special-cased) is recorded in full in this row's
-    // `mechanism`/`note` below and pinned as a change detector in
-    // `scripts/ws1-session-q-production-pins.test.ts`, the file actually built
-    // to track the live-fidelity bundle rather than the fixture.
-    faValue: 788.65, earCorrect: 788.65,
+    // `earCorrect` is UPDATED 788.65 -> 788.75 this session. WS1 SESSION T's
+    // value is ARCHIVED, not silently overwritten: it was the operator's
+    // Session T verdict (via `ear-verify-t`), correct at the time for the
+    // value production then computed, but superseded once Step 1's onset
+    // correction (present since Session T, unchanged this session) moved
+    // production's own answer to 788.75 and the operator's Session V pass
+    // confirmed THAT value instead. See `ws1-ear-pass-ledger.ts`'s
+    // `ear-verify-v` sitting for the fresh row.
+    faValue: 788.65, earCorrect: 788.75,
     mechanism: 'R.11 and R.12 both claimed one boundary and ordering decided it silently: the rule stage ' +
       'applies corrections to a shared array in sequence, so R.11 (first) moved 790.33 -> 792.18 and R.12 ' +
       '(second) then saw a boundary correctly outside the run and declined. A current-state check CANNOT see ' +
@@ -568,11 +592,14 @@ const KNOWN_BAD: KnownBadRow[] = [
       'R-AP: no rule but R.12 may move a boundary across an R.5 run edge, and R.12 owns any boundary whose ' +
       'ORIGIN lies strictly inside a run. R-AP itself is UNCHANGED and still correct — the ownership fix and ' +
       'the value regression are two independent mechanisms that happen to share this row.',
-    status: 'open',
+    status: 'fixed',
     note: 'L7 of the Session S live pass, the only MAJOR. R-AP (Session S) fixed WHICH rule owns this ' +
-      'boundary; Session T\'s onset correction then moved WHAT VALUE that rule computes, off the just-confirmed ' +
-      '788.65. Two separate, both-measured findings, not one. Closes when a future onset-extent fix (or ' +
-      'a fresh A/B sitting on 788.75 itself) brings the two back into agreement.',
+      'boundary; Session T\'s onset correction then moved WHAT VALUE that rule computes, to 788.75. WS1 ' +
+      'SESSION V: the operator A/B-confirmed 788.75 in the live app, re-measured against a fresh run-id-' +
+      'stamped bundle (Step 1) at the identical value — closing the row against LIVE. The FIXTURE-scoped ' +
+      'sibling entry `r12-266-forty-one-burden` (in CLOSED_BY_POSITIVE_ASSERTION) is UNAFFECTED and correctly ' +
+      'still asserts 788.65 against the frozen fixture, which has not moved — the two entries continue to ' +
+      'describe the same boundary from two deliberately un-merged sources.',
   },
   // -------------------------------------------------------------------------
   // WS1 SESSION T — REOPENED (DEMOTION). `r12-383-sixty-four` closed in
@@ -595,19 +622,23 @@ const KNOWN_BAD: KnownBadRow[] = [
   // -------------------------------------------------------------------------
   {
     id: 'r12-383-sixty-four', origin: 'live-runs-s', corpus: 'v6', tag: '383_sixty_four',
-    owningRule: 'R.12', closingCommit: '',
+    owningRule: 'R.12', closingCommit: 'WS1-SESSION-V',
     faValue: 1188.95, earCorrect: 1189.05,
     mechanism: 'Committed (fixture) 1190.81 — midpoint of silence [1190.56, 1191.06] inside "Level 10. The ' +
       'one the fire remembers." [1189.76, 1192.17]. The CLAMPED correction (fixture\'s own, unchanged) is the ' +
       'midpoint of [1188.14, 1189.96] ∩ [1188.05, 1189.76] = 1188.95. The UNCLAMPED value `ear-verify-t` ' +
       'licenses is the midpoint of the WHOLE backing silence, 1189.05 — a 0.100s difference, both sitting ' +
       'inside 1.26s of literal digital silence.',
-    status: 'open',
+    status: 'fixed',
     note: 'THE 383 REVERSAL. Was `verification: \'ear\'` at 1188.95 (`live-runs-s`, a solo listen). ' +
       '`ear-verify-t`\'s A/B comparison (`docs/ws1-sync-pipeline/stage1-session-s-ear-list.md` §2) reverses ' +
       'it. See `ws1-ear-pass-ledger.ts`\'s `ear-verify-t` sitting for both rows (the refutation of 1188.95 ' +
       'AND the confirmation of 1189.05) and its solo-listened-pin audit for what else this finding puts in ' +
-      'question.',
+      'question. WS1 SESSION V: `status` -> \'fixed\'. Step 1\'s fresh bundle re-measures the live production ' +
+      'commit at 1189.05, unchanged from Session T, and the operator\'s A/B pass re-confirms it. Closed ' +
+      'against LIVE, not fixture — the fixture (post-R.12, pre-`ear-verify-t`) is still 1188.95, matching ' +
+      '`faValue` above; 1190.81 in `mechanism` is the PRE-R.12 origin this row\'s own correction moved away ' +
+      'from, not the fixture\'s current value. Unregenerated this session.',
   },
   {
     id: 'classB-403-vigilant-embers', origin: 'session-p-live', corpus: 'v6', tag: '403_vigilant_embers',
@@ -892,7 +923,40 @@ const REGISTER_ROSTER = [
  *  `ws1-ear-pass-ledger.ts`'s process note on why A/B supersedes solo
  *  listening). Every other Session T finding is a live-path change or a
  *  caveat on an unmoved fixture entry — this is the one row whose FIXTURE
- *  closure itself is now false, so it is the one open-count change. */
+ *  closure itself is now false, so it is the one open-count change.
+ *
+ *  WS1 SESSION V — STAYS AT 15, AND THE REASON IS THE WHOLE POINT. Seven rows
+ *  (the five R.12 fixture-scoped rows, `s-266-live-path-collision`, and
+ *  `r12-383-sixty-four`) move `status: 'open'` -> `'fixed'` on the strength of
+ *  a fresh operator A/B ear pass over the live app, backed by a run-id-
+ *  stamped bundle this session's own Step 1 captured. THE OPEN COUNT SHRINKS
+ *  15 -> 8; THE CONSTANT DOES NOT, because a `'fixed'` row is still a member
+ *  of `KNOWN_BAD` — this schema's own doc-comment on `KnownBadRow.status`
+ *  ("`status: 'fixed'` is recorded for completeness but NOT asserted against
+ *  the fixture value, because the fixture itself predates the fix that closed
+ *  it") is precisely this case: closure is against LIVE, and the frozen
+ *  fixture (`phase4-fa-second-baseline-v6-segments.csv`) is deliberately
+ *  unregenerated this session, so none of the seven can be converted into
+ *  `CLOSED_BY_POSITIVE_ASSERTION` — that mechanism's own generated test
+ *  (below) asserts an entry's `earCorrect` against the frozen fixture, which
+ *  would fail for all seven today.
+ *
+ *  THE SEMANTICS, STATED PLAINLY (this constant is checked by name in this
+ *  session's own report). `REGISTER_HIGH_WATER` is NOT a live mirror of the
+ *  current open count — the shrink-only test two blocks below compares
+ *  `open.length <= REGISTER_HIGH_WATER`, an INEQUALITY, and `open.length` has
+ *  moved independently of this constant every session that used `'fixed'` or
+ *  left rows open across a session boundary. It IS pinned to exact equality
+ *  with `KNOWN_BAD.length` — the coherence test (`expect(KNOWN_BAD).
+ *  toHaveLength(REGISTER_HIGH_WATER)`) enforces this every run — so in
+ *  practice it tracks "how many rows are current KNOWN_BAD members (open OR
+ *  fixed), i.e. not yet promoted to a fixture-verified `CLOSED_BY_POSITIVE_
+ *  ASSERTION` entry". Historically (Sessions D, E, F, H, K) it moved in step
+ *  with `open.length` only because every prior closure REMOVED the row from
+ *  the array entirely (converted straight to `CLOSED_BY_POSITIVE_ASSERTION`);
+ *  this session is the first to populate `'fixed'` on a currently-live row,
+ *  which is why the two numbers (constant vs. open count) diverge for the
+ *  first time since the type was declared. */
 const REGISTER_HIGH_WATER = 15;
 
 /** Entries CONVERTED out of KNOWN_BAD, each carrying the positive assertion
@@ -1139,27 +1203,45 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // KNOWN_BAD (the shrink-only guard below should have caught it first) or a
   // row this test expects still open was silently closed without moving to
   // CLOSED_BY_POSITIVE_ASSERTION.
-  it('the Zero-Defect Register holds exactly the fifteen rows WS1 Session T left open', () => {
+  it('the Zero-Defect Register holds exactly the eight rows WS1 Session V left open', () => {
+    // WS1 SESSION V — seven rows move 'open' -> 'fixed' (NOT removed from
+    // KNOWN_BAD, NOT converted to CLOSED_BY_POSITIVE_ASSERTION — that would
+    // require matching the frozen fixture, which is deliberately
+    // unregenerated this session). The operator's fresh A/B ear pass over
+    // the live app, backed by a fresh run-id-stamped bundle (Step 1),
+    // confirms all seven: the five R.12 fixture-scoped rows at their
+    // ear-verify-t values, `266`'s live-path regression at 788.75 (the
+    // "regression" framing REFUTED — 788.75 IS the confirmed value), and
+    // `383` re-confirmed at 1189.05. Only the eight Class A/B rows, which
+    // Session R found structurally invisible to every placement-side signal
+    // built so far, remain open.
     const EXPECTED_OPEN = [
-      // Session Q's eight, untouched this session by scope discipline.
       'classA-214-solitary-fire', 'classA-231-slowing-pace', 'classA-447-scout-facing-dark',
       'classB-056-dropping-torch', 'classB-167-smell-of-butchery', 'classB-286-fact-to-act',
       'classB-400-endless-dark', 'classB-403-vigilant-embers',
-      // Session S's five demotions — still open here (fixture-scoped; the
-      // LIVE path is fixed and pinned in ws1-session-q-production-pins.test.ts).
-      'r12-042-eleven-years', 'r12-176-twenty-six-scout', 'r12-224-thirty-three',
-      'r12-307-forty-nine-years', 'r12-340-fifty-eight',
-      // ...the live-path collision Session S found and fixed structurally,
-      // now ALSO carrying Session T's separate value regression (788.65 -> 788.75)...
-      's-266-live-path-collision',
-      // ...and WS1 Session T's own reopening: an A/B pass overturned the SOLO
-      // verdict that had licensed this row's fixture closure.
-      'r12-383-sixty-four',
     ];
     expect(
       KNOWN_BAD.filter(k => k.status === 'open').map(k => k.id).sort(),
-      'the register\'s open set drifted from what WS1 Session T left it at',
+      'the register\'s open set drifted from what WS1 Session V left it at',
     ).toEqual([...EXPECTED_OPEN].sort());
+  });
+
+  // (1c) THE SEVEN ROWS Session V moved to 'fixed' — asserted by their own
+  // name here, separately from the open-set test above, so a reader does not
+  // have to diff two id lists to see which seven closed against LIVE.
+  it('WS1 Session V: exactly seven rows are `fixed` (closed against LIVE, not fixture)', () => {
+    const FIXED = [
+      'r12-042-eleven-years', 'r12-176-twenty-six-scout', 'r12-224-thirty-three',
+      'r12-307-forty-nine-years', 'r12-340-fifty-eight',
+      's-266-live-path-collision', 'r12-383-sixty-four',
+    ];
+    expect(
+      KNOWN_BAD.filter(k => k.status === 'fixed').map(k => k.id).sort(),
+      'the fixed set drifted from what WS1 Session V closed against live',
+    ).toEqual([...FIXED].sort());
+    for (const kb of KNOWN_BAD.filter(k => k.status === 'fixed')) {
+      expect(kb.closingCommit, `${kb.id}: a 'fixed' row must name its closing commit`).not.toBe('');
+    }
   });
 
   // (1b) Coherence, asserted in its OWN right, not only as a by-product of
@@ -1202,19 +1284,31 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   });
 
   // (3) CONVERSION, NOT DELETION.
-  it('every roster entry is either still open or CLOSED BY A POSITIVE ASSERTION', () => {
-    const open = new Set(KNOWN_BAD.filter(k => k.status === 'open').map(k => k.id));
+  //
+  // WS1 SESSION V — widened from a binary (open XOR closed) to a three-way
+  // split, to give KNOWN_BAD's own `status: 'fixed'` (declared in this
+  // file's KnownBadRow doc-comment since at least item-9, never previously
+  // exercised by a currently-live row) real machine coverage. A `'fixed'`
+  // row is STILL a member of KNOWN_BAD — the array a row can vanish from is
+  // KNOWN_BAD itself, not the narrower `status === 'open'` filter — so
+  // "vanished" means absent from BOTH KNOWN_BAD and CLOSED_BY_POSITIVE_ASSERTION,
+  // and "both" means present in CLOSED_BY_POSITIVE_ASSERTION while ALSO still
+  // a KNOWN_BAD member (open or fixed) — CLOSED_BY_POSITIVE_ASSERTION is a
+  // real conversion out of the array, `status: 'fixed'` is not.
+  it('every roster entry is still IN THE REGISTER (open or fixed) XOR CLOSED BY A POSITIVE ASSERTION', () => {
+    const inRegister = new Set(KNOWN_BAD.map(k => k.id));
     const closed = new Set(CLOSED_BY_POSITIVE_ASSERTION.map(c => c.id));
     for (const id of REGISTER_ROSTER) {
       expect(
-        open.has(id) || closed.has(id),
-        `Register entry ${id} has VANISHED: it is neither open in KNOWN_BAD nor present in ` +
+        inRegister.has(id) || closed.has(id),
+        `Register entry ${id} has VANISHED: it is neither in KNOWN_BAD (open or fixed) nor present in ` +
         `CLOSED_BY_POSITIVE_ASSERTION. An entry may only be CONVERTED, never deleted — move it to ` +
         `CLOSED_BY_POSITIVE_ASSERTION with its ear-correct value and the commit that closed it.`,
       ).toBe(true);
       expect(
-        open.has(id) && closed.has(id),
-        `Register entry ${id} is BOTH open and closed — one of the two lists is stale.`,
+        inRegister.has(id) && closed.has(id),
+        `Register entry ${id} is BOTH still in KNOWN_BAD and in CLOSED_BY_POSITIVE_ASSERTION — one of the ` +
+        `two lists is stale.`,
       ).toBe(false);
     }
   });
@@ -1287,19 +1381,31 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // (3d) ...and the same rule applied to the OPEN rows: a row cannot sit open
   //      with a numeric `earCorrect` that no ear pass ever produced, and it
   //      cannot sit open at a value an ear pass has AUTHORISED.
-  it('R-AM: no open entry claims an ear-correct target the ledger does not support', () => {
-    for (const kb of KNOWN_BAD.filter(k => k.status === 'open')) {
+  it('R-AM: no open or fixed entry claims an ear-correct target the ledger does not support', () => {
+    // WS1 Session V widened this from `status === 'open'` to every KNOWN_BAD
+    // member: a 'fixed' row's whole claim is "the ledger now authorises this
+    // value", so it needs the SAME machine check an open row gets, not a
+    // weaker one just because it moved status.
+    for (const kb of KNOWN_BAD) {
       if (typeof kb.earCorrect !== 'number') continue;
       expect(
         earPassAuthorising(kb.corpus, kb.tag, kb.earCorrect) ?? earPassRejects(kb.corpus, kb.tag, kb.faValue),
         `${kb.id} names an ear-correct ${kb.earCorrect} with nothing in the ear ledger behind it, and no ` +
         `ear pass rejecting its current ${kb.faValue} either. Ledger: ${describeEarHistory(kb.corpus, kb.tag)}.`,
       ).toBeDefined();
+      if (kb.status === 'fixed') {
+        expect(
+          earPassAuthorising(kb.corpus, kb.tag, kb.earCorrect)?.verdict,
+          `${kb.id} is 'fixed' (closed against LIVE) but its earCorrect ${kb.earCorrect} is not itself ` +
+          `an ear-authorised CORRECT value — a 'fixed' row's earCorrect must be the value an ear pass ` +
+          `actually accepted, not merely one it did not reject.`,
+        ).toBe('CORRECT');
+      }
     }
   });
 
   // (4) BOOKKEEPING CONSISTENCY.
-  it('open entries name an owning rule and carry no closing commit; closed entries carry one', () => {
+  it('open entries name an owning rule and carry no closing commit; fixed/closed entries carry one', () => {
     for (const kb of KNOWN_BAD.filter(k => k.status === 'open')) {
       expect(['R.5', 'R.10', 'R.11', 'R.12', 'unassigned'], `${kb.id}: owningRule`).toContain(kb.owningRule);
       expect(kb.closingCommit, `${kb.id} is still open but already names a closing commit`).toBe('');
@@ -1310,6 +1416,14 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
       else expect(kb.item, `${kb.id}: a triage entry must NOT invent an ear-pass item number`).toBeUndefined();
       expect(REGISTER_ROSTER as readonly string[], `${kb.id} is open but missing from REGISTER_ROSTER`).toContain(kb.id);
     }
+    // WS1 Session V — a 'fixed' row is a real closure (against LIVE, not
+    // fixture) and must carry the same closingCommit discipline a
+    // CLOSED_BY_POSITIVE_ASSERTION entry does, even though it stays inside
+    // KNOWN_BAD rather than moving array.
+    for (const kb of KNOWN_BAD.filter(k => k.status === 'fixed')) {
+      expect(kb.closingCommit.length, `fixed entry ${kb.id} must name the commit that closed it`).toBeGreaterThan(0);
+      expect(['R.5', 'R.10', 'R.11', 'R.12', 'unassigned'], `${kb.id}: owningRule`).toContain(kb.owningRule);
+    }
     for (const c of CLOSED_BY_POSITIVE_ASSERTION) {
       expect(c.closingCommit.length, `closed entry ${c.id} must name the commit that closed it`).toBeGreaterThan(0);
     }
@@ -1319,16 +1433,22 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   //     state of the programme without opening this file.
   it('register census (informational)', () => {
     const open = KNOWN_BAD.filter(k => k.status === 'open');
+    const fixed = KNOWN_BAD.filter(k => k.status === 'fixed');
     const byRule = new Map<string, string[]>();
     for (const k of open) byRule.set(k.owningRule, [...(byRule.get(k.owningRule) ?? []), k.id]);
     // eslint-disable-next-line no-console
     console.log(
       `[fa-replay:register] OPEN ${open.length}/${REGISTER_HIGH_WATER} — ` +
       [...byRule.entries()].map(([r, ids]) => `${r}: ${ids.join('/')}`).join('; ') +
+      ` | FIXED (closed against LIVE, not fixture) ${fixed.length} (${fixed.map(k => `${k.id}@${k.closingCommit}`).join(', ')})` +
       ` | CLOSED ${CLOSED_BY_POSITIVE_ASSERTION.length} (${CLOSED_BY_POSITIVE_ASSERTION.map(c => `${c.id}@${c.closingCommit}`).join(', ')})` +
       ` | roster ${REGISTER_ROSTER.length}`,
     );
-    expect(open.length + CLOSED_BY_POSITIVE_ASSERTION.length).toBe(REGISTER_ROSTER.length);
+    // WS1 Session V — widened to include the 'fixed' bucket: it is a real
+    // conversion (never removed from KNOWN_BAD, so still counted there, but
+    // no longer 'open'), and open+fixed IS KNOWN_BAD.length by construction,
+    // so this reduces to the same roster-coverage arithmetic as before.
+    expect(open.length + fixed.length + CLOSED_BY_POSITIVE_ASSERTION.length).toBe(REGISTER_ROSTER.length);
   });
 });
 
@@ -1410,7 +1530,7 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     }
   });
 
-  it('the manifest holds FIFTEEN open entries as of WS1 Session T', () => {
+  it('the manifest holds FIFTEEN entries (open + fixed) as of WS1 Session V', () => {
     // Item 6 left this table in WS1 Session B; item 9 in Session C; items 4/5
     // in Session D (R.5); items 10/11 in Session E (R.10); item 7 and both
     // OV3 triage entries in Session F (R.11) — the manifest WAS empty from
@@ -1421,8 +1541,15 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     // back out of the closed list by the owner's live ear pass, plus the
     // R.11/R.12 live-path collision. WS1 SESSION T took it 14 -> 15:
     // `r12-383-sixty-four` reopens when an A/B pass overturns the solo verdict
-    // that had licensed its fixture closure. See the top-level register
-    // describe block for the exact open set this test does not duplicate.
+    // that had licensed its fixture closure. WS1 SESSION V does NOT change
+    // this count: seven rows move 'open' -> 'fixed' (closed against LIVE,
+    // not fixture — the frozen fixture is deliberately unregenerated this
+    // session, so the fixture-scoped CLOSED_BY_POSITIVE_ASSERTION mechanism
+    // cannot apply), and 'fixed' rows are STILL KNOWN_BAD members — they
+    // never leave the array, only `CLOSED_BY_POSITIVE_ASSERTION` conversion
+    // does that. Total membership stays 15; only the OPEN subset shrinks,
+    // 15 -> 8. See the top-level register describe block for the exact
+    // open/fixed sets this test does not duplicate.
     expect(KNOWN_BAD).toHaveLength(REGISTER_HIGH_WATER);
   });
 
@@ -1574,17 +1701,23 @@ describe('WS1 Session H — R.12: the atomic-run invariant', () => {
     }
   });
 
-  it('the nine R.12 rows are all still accounted for — three closed, six open (WS1 Session T)', () => {
+  it('the nine R.12 rows are all still accounted for — three closed, six fixed, zero open (WS1 Session V)', () => {
     // Session H closed all nine. Session S's live listening pass sent five
     // back; Session T's A/B pass sent a sixth (383) back the OTHER direction
     // it had gone in Session S, and promoted a seventh's verification (266,
-    // still closed, 'structural' -> 'ear'). This test is the guard that the
-    // NINE never becomes eight by an entry going missing in either direction.
+    // still closed, 'structural' -> 'ear'). WS1 SESSION V moves the six
+    // still-OPEN rows to 'fixed' — closed against LIVE (a fresh run-id-
+    // stamped bundle plus the operator's A/B pass), not against the frozen
+    // fixture, which is unregenerated and would still fail every one of
+    // them. This test is the guard that the NINE never becomes eight by an
+    // entry going missing in any of the three states.
     const closed = CLOSED_BY_POSITIVE_ASSERTION.filter(c => c.id.startsWith('r12-'));
+    const fixed = KNOWN_BAD.filter(k => k.id.startsWith('r12-') && k.status === 'fixed');
     const open = KNOWN_BAD.filter(k => k.id.startsWith('r12-') && k.status === 'open');
-    expect(closed.length + open.length, 'R.12 owns nine rows and always will').toBe(9);
+    expect(closed.length + fixed.length + open.length, 'R.12 owns nine rows and always will').toBe(9);
+    expect(open, 'WS1 Session V: no r12- row remains open — all six moved to fixed').toHaveLength(0);
 
-    expect(open.map(k => k.tag).sort()).toEqual([
+    expect(fixed.map(k => k.tag).sort()).toEqual([
       '042_eleven_years', '176_twenty_six_scout', '224_thirty_three', '307_forty_nine_years', '340_fifty_eight',
       '383_sixty_four',
     ].sort());
@@ -1609,20 +1742,22 @@ describe('WS1 Session H — R.12: the atomic-run invariant', () => {
     // Session H list has no row for at all. The structural marker cost 224/307
     // nothing when Session S failed them; 383's `'ear'` marker did not save it
     // either, once a later, better (A/B) sitting disagreed — which is the
-    // whole point of R-AM's supersede-by-order rule.
+    // whole point of R-AM's supersede-by-order rule. The split survives
+    // Session V's status change unchanged — it is about ear-pass PROVENANCE,
+    // not about open-vs-fixed.
     const earScoredWrong = new Set(SESSION_H_EAR_12.filter(r => r.verdict === 'wrong').map(r => r.tag));
-    expect(open.filter(k => earScoredWrong.has(k.tag)).map(k => k.tag).sort())
+    expect(fixed.filter(k => earScoredWrong.has(k.tag)).map(k => k.tag).sort())
       .toEqual(['042_eleven_years', '176_twenty_six_scout', '340_fifty_eight']);
-    expect(open.filter(k => !earScoredWrong.has(k.tag)).map(k => k.tag).sort())
+    expect(fixed.filter(k => !earScoredWrong.has(k.tag)).map(k => k.tag).sort())
       .toEqual(['224_thirty_three', '307_forty_nine_years', '383_sixty_four']);
     // WS1 SESSION S's premise here — "EARLY is a verdict, not a target" —
     // held because no candidate reproduced both ear-CORRECT rows and Session
     // S shipped none. WS1 SESSION T's `ear-verify-t` A/B pass is exactly the
-    // measurement that changed this: every open row now has a real,
-    // A/B-confirmed numeric target, and `earCorrect: 'unknown'` on any of
-    // them would UNDERSTATE what the ear has since established.
-    for (const k of open) {
-      expect(typeof k.earCorrect, `${k.tag}: WS1 Session T's A/B pass named a real target for every open row`).toBe('number');
+    // measurement that changed this, and WS1 SESSION V's own operator pass
+    // re-confirmed every one of them against a fresh bundle: every fixed row
+    // carries a real, A/B-confirmed numeric target, never `'unknown'`.
+    for (const k of fixed) {
+      expect(typeof k.earCorrect, `${k.tag}: WS1 Session T/V's A/B passes named a real target for every fixed row`).toBe('number');
     }
   });
 
@@ -1640,10 +1775,14 @@ describe('WS1 Session H — R.12: the atomic-run invariant', () => {
     // WS1 Session S: iterate the NINE rows wherever they now live — five
     // moved back into KNOWN_BAD, and the claim being made here is about the
     // FIXTURE, which this session did not touch, so it must not narrow to
-    // whichever rows happen to be closed today.
+    // whichever rows happen to be closed today. WS1 Session V: 'fixed' rows
+    // are STILL KNOWN_BAD members (see the coherence test's own note) and
+    // still describe the FIXTURE's own value here — this claim is about the
+    // frozen CSV, unaffected by a live-only status change — so the filter
+    // must include both 'open' and 'fixed', not narrow to 'open' alone.
     const nineTags = [
       ...CLOSED_BY_POSITIVE_ASSERTION.filter(c => c.id.startsWith('r12-')).map(c => c.tag),
-      ...KNOWN_BAD.filter(k => k.id.startsWith('r12-') && k.status === 'open').map(k => k.tag),
+      ...KNOWN_BAD.filter(k => k.id.startsWith('r12-')).map(k => k.tag),
     ];
     expect(nineTags).toHaveLength(9);
     let maxDelta = 0;

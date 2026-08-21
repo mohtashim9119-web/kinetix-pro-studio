@@ -78,6 +78,19 @@ export const EAR_SITTINGS = {
    *  audit note below listing every solo-listened CORRECT pin still standing
    *  unconfirmed by a comparison pass. */
   'ear-verify-t': 7,
+  /** WS1 Session V — the operator's live-app A/B pass over the seven rows
+   *  Session T's `ear-verify-t` sitting left open in the Zero-Defect Register
+   *  (fixture-scoped for five of them, plus the live-path-only `266` and the
+   *  reopened `383`). Six of the seven RE-CONFIRM `ear-verify-t`'s own values
+   *  at the same numbers — recorded as fresh rows rather than silently
+   *  relying on the order-6/7 sittings, because Step 4's closure ceremony
+   *  requires a session-V-attributed row to close against. The seventh,
+   *  `266_forty_one_burden`, is NEW: no prior sitting had heard 788.75 (only
+   *  788.65, `ear-verify-t`'s own value, which Session T's own Step 1 onset
+   *  correction had already moved production away from before anyone
+   *  listened again) — this sitting is the first to confirm what the app
+   *  commits today. */
+  'ear-verify-v': 8,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -345,6 +358,43 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
       'row was already confirmed. Production commits 788.75 as of this session\'s HEAD, NOT the 788.65 this ' +
       'row authorises; see `ws1-session-q-production-pins.test.ts`\'s own pin and comment for the open item ' +
       'this creates. Not resolved this session — flagged, not special-cased.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION V — the operator's A/B pass over the seven rows Session T
+  // left open in the Zero-Defect Register, re-measured against a fresh
+  // run-id-stamped bundle (Step 1, `.work-phase4/session-v`) before the
+  // sitting. Six rows re-confirm `ear-verify-t`'s own values unchanged; the
+  // seventh (`266_forty_one_burden`) is the FIRST sitting to hear 788.75,
+  // the value Step 1's onset correction has committed since Session T but
+  // that nobody had listened to on its own until now.
+  // -------------------------------------------------------------------------
+  { sitting: 'ear-verify-v', corpus: 'v6', tag: '042_eleven_years', scoredValue: 125.760, verdict: 'CORRECT',
+    note: 'Re-confirmed against a fresh Step 1 bundle; unchanged from `ear-verify-t`.' },
+  { sitting: 'ear-verify-v', corpus: 'v6', tag: '176_twenty_six_scout', scoredValue: 522.460, verdict: 'CORRECT',
+    note: 'Re-confirmed against a fresh Step 1 bundle; unchanged from `ear-verify-t`.' },
+  { sitting: 'ear-verify-v', corpus: 'v6', tag: '224_thirty_three', scoredValue: 664.330, verdict: 'CORRECT',
+    note: 'Re-confirmed against a fresh Step 1 bundle; unchanged from `ear-verify-t`.' },
+  { sitting: 'ear-verify-v', corpus: 'v6', tag: '307_forty_nine_years', scoredValue: 925.430, verdict: 'CORRECT',
+    note: 'Re-confirmed against a fresh Step 1 bundle; unchanged from `ear-verify-t`.' },
+  { sitting: 'ear-verify-v', corpus: 'v6', tag: '340_fifty_eight', scoredValue: 1045.620, verdict: 'CORRECT',
+    note: 'Re-confirmed against a fresh Step 1 bundle; unchanged from `ear-verify-t`.' },
+  { sitting: 'ear-verify-v', corpus: 'v6', tag: '383_sixty_four', scoredValue: 1189.050, verdict: 'CORRECT',
+    note: 'Re-confirmed against a fresh Step 1 bundle; unchanged from `ear-verify-t`\'s own reversal.' },
+  { sitting: 'ear-verify-v', corpus: 'v6', tag: '266_forty_one_burden', scoredValue: 788.75, verdict: 'CORRECT',
+    note: 'THE FIRST SITTING TO HEAR 788.75 ON ITS OWN. `ear-verify-t` (order 7) heard and confirmed 788.65, ' +
+      'the value production computed AT THAT SESSION\'S STEP 0 — before Step 1\'s onset correction (applied ' +
+      'uniformly, not special-cased) moved run 6\'s acoustic onset from 789.26 to 789.46 and, with it, this ' +
+      'row\'s own computed value to 788.75. That move was discovered by measurement AFTER the 788.65 sitting, ' +
+      'so nobody had heard 788.75 until this session. THE "REGRESSION" FRAMING `s-266-live-path-collision` ' +
+      'carried since Session T IS REFUTED BY THIS VERDICT: 788.75 is not a defect away from a confirmed ' +
+      'value, it is the confirmed value. Structurally it is exactly Session S Step 3\'s candidate (a) FULL ' +
+      '(unclamped) silence midpoint — the same correction family `ear-verify-t` already validated on all six ' +
+      'sibling rows above — so it is the SAME mechanism landing on the SAME kind of value everywhere, not a ' +
+      'special case. WHETHER THE 0.10s MOVE FROM 788.65 IS AN AUDIBLE IMPROVEMENT OR BELOW AUDIBILITY COULD ' +
+      'NOT BE DETERMINED FROM THIS SITTING: this pass confirmed what the app commits today (788.75), not a ' +
+      'direct two-way A/B against 788.65 specifically the way the six-row list above got. A future session ' +
+      'wanting that finer distinction needs to run it as its own A/B, the same way `ear-verify-t` did for ' +
+      '383 against 1188.95.' },
 ];
 
 /** Default match tolerance — the Zero-Defect Register's own. */

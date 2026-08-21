@@ -90,13 +90,17 @@ describe('WS1 Session S — R-AP on the live v6 bundle (R-AO)', () => {
     // elsewhere in this file) — it is Step 1's SEPARATE, uniform onset
     // correction (`acousticRunExtent`, applied identically to every R.12 row,
     // not special-cased for this one) moving run 6's acoustic onset from
-    // 789.26 to 789.46. The A/B `ear-verify-t` sitting confirmed 788.65 as
-    // correct, so this 0.10s move is a MEASURED, OPEN regression against that
-    // verdict — see `s-266-live-path-collision` in
-    // `scripts/phase4-fa-replay.test.ts`'s KNOWN_BAD and this row's pin in
+    // 789.26 to 789.46. The A/B `ear-verify-t` sitting had confirmed 788.65
+    // as correct, so at the time this was measured as a MEASURED, OPEN
+    // regression against that verdict. WS1 SESSION V ran the follow-up A/B
+    // this row was flagged for (`ear-verify-v`) and confirmed 788.75 instead
+    // — the "regression" reading is REFUTED, not merely closed; see
+    // `s-266-live-path-collision` in `scripts/phase4-fa-replay.test.ts`'s
+    // KNOWN_BAD (now `status: 'fixed'`) and this row's `pinEarVerified` in
     // `scripts/ws1-session-q-production-pins.test.ts` for the full account.
-    // This test's job is narrower: confirm R-AP itself (which rule owns the
-    // boundary) is still correct, independent of what value that rule computes.
+    // This test's job is narrower and unaffected either way: confirm R-AP
+    // itself (which rule owns the boundary) is still correct, independent of
+    // what value that rule computes.
     const r = await run('v6');
     expect(r.fired['R.12']).toBe(8);
     expect(r.fired['R.11']).toBe(5);

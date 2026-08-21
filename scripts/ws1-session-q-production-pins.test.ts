@@ -122,36 +122,35 @@ describe('WS1 Session Q/S — production-path pin set (R-AO / R-AM, live-fidelit
     expect(r.fired['R.11']).toBe(5);
   }, TIMEOUT);
 
-  it('L7: 266_forty_one_burden — OPEN AGAIN, not closed (WS1 Session T, measured, not special-cased)', async () => {
+  it('L7: 266_forty_one_burden — EAR-VERIFIED at 788.75 (WS1 Session V closes the follow-up A/B)', async () => {
     const r = await run();
     // THE STORY, in order. Session S's R-AP ownership fix (`faRuleStageExclusion.ts`)
     // stopped R.11 stealing this boundary from R.12 and left it committed at
     // 788.65 — RED before Session S (R.11 had it at 792.18, past the run's
     // end; the owner scored that MAJOR). WS1 Session T STEP 0 re-measured
-    // 788.65 against this session's own HEAD, before any of Step 1's changes,
-    // and the owner's `ear-verify-t` sitting confirmed it CORRECT — by the
-    // task's own criterion ("if it is 788.65, L7 is fixed... close the row"),
-    // this row should have closed.
+    // 788.65 against that session's own HEAD, before any of Step 1's changes,
+    // and the owner's `ear-verify-t` sitting confirmed it CORRECT.
     //
-    // IT DID NOT STAY CLOSED. Step 1's onset correction is UNIFORM — the same
-    // `acousticRunExtent(run, tokens, silences)` call every other row in this
-    // block goes through, deliberately not special-cased — and run 6 has a
-    // backing silence [788.04, 789.46] whose end (789.46) sits past run 6's
-    // OWN raw Whisper onset (789.26), the identical shape every other R.12 row
-    // in this file has. The correction moves the onset there, which moves this
-    // row's OWN computed value from 788.65 to 788.75. That is a MEASURED
-    // consequence of the mandated, non-special-cased fix, not a choice — and
-    // it now DISAGREES with the ear-verified 788.65 by 0.10s, the same
-    // magnitude as the 383 disagreement this same session resolved the other
-    // way.
+    // IT DID NOT STAY CLOSED AT THAT VALUE. Step 1's onset correction is
+    // UNIFORM — the same `acousticRunExtent(run, tokens, silences)` call
+    // every other row in this block goes through, deliberately not
+    // special-cased — and run 6 has a backing silence [788.04, 789.46] whose
+    // end (789.46) sits past run 6's OWN raw Whisper onset (789.26), the
+    // identical shape every other R.12 row in this file has. The correction
+    // moves the onset there, which moves this row's OWN computed value from
+    // 788.65 to 788.75. That is a MEASURED consequence of the mandated,
+    // non-special-cased fix, not a choice.
     //
-    // Pinned as a CHANGE DETECTOR at what production actually does today
-    // (788.75), NOT as ear-verified — the ledger does not authorise 788.75,
-    // and forcing agreement with 788.65 here would require exactly the kind
-    // of per-row special case this session was told not to build. Left OPEN
-    // for a follow-up A/B sitting on this specific row, the same treatment
-    // 383 got.
-    pinChangeDetector(r, '266_forty_one_burden', 788.75);
+    // WS1 SESSION V ran exactly the follow-up A/B sitting Session T flagged
+    // as needed (`ear-verify-v`, `ws1-ear-pass-ledger.ts`): the first ear
+    // pass to hear 788.75 on its own, re-measured against a fresh run-id-
+    // stamped bundle. It scores CORRECT. THE "REGRESSION" READING IS
+    // REFUTED: 788.75 is not a defect away from the confirmed value, it IS
+    // the confirmed value — and structurally it is exactly the same
+    // full/unclamped-silence-midpoint family (Session S Step 3's candidate
+    // (a)) the other six R.12 rows were already confirmed at, so this is the
+    // established correction landing consistently, not a special case.
+    pinEarVerified(r, '266_forty_one_burden', 788.75);
     // The structural claim from Session S still holds regardless of the
     // exact value: the boundary is not past the end of its own run.
     const run6 = r.runExtents[6]!;
@@ -177,23 +176,29 @@ describe('WS1 Session Q/S — production-path pin set (R-AO / R-AM, live-fidelit
     // the Session H / Session S disagreement, or the Session S / Session T one.
     expect(earPassAuthorising('v6', '042_eleven_years', 125.54)).toBeUndefined();
     expect(earPassRejects('v6', '042_eleven_years', 125.54)?.sitting).toBe('live-runs-s');
-    // WS1 Session T: 042's ear-verified value is the corrected one (125.76),
-    // not Session S's fallback figure.
-    expect(earPassAuthorising('v6', '042_eleven_years', 125.76)?.sitting).toBe('ear-verify-t');
+    // WS1 Session T named 042's ear-verified value as the corrected one
+    // (125.76), not Session S's fallback figure; WS1 Session V's own A/B
+    // pass (`ear-verify-v`, order 8) re-confirmed the SAME value and, by
+    // R-AM's supersede-by-order rule, is now the row `earHistory` returns —
+    // not a disagreement, the latest sitting saying the same thing.
+    expect(earPassAuthorising('v6', '042_eleven_years', 125.76)?.sitting).toBe('ear-verify-v');
     expect(earPassAuthorising('v6', '125_night_circle', 370.75)?.sitting).toBe('live-runs-s');
     // THE 383 REVERSAL — a later A/B sitting overturns an earlier SOLO one.
     // `live-runs-s` (order 6) scored 1188.95 CORRECT by itself; `ear-verify-t`
-    // (order 7) heard both candidates side by side and picked 1189.05 instead.
+    // (order 7) heard both candidates side by side and picked 1189.05 instead;
+    // `ear-verify-v` (order 8) re-confirmed 1189.05 again.
     expect(earPassAuthorising('v6', '383_sixty_four', 1188.95), 'the solo verdict is superseded, not authorising').toBeUndefined();
     expect(earPassRejects('v6', '383_sixty_four', 1188.95)?.sitting).toBe('ear-verify-t');
-    expect(earPassAuthorising('v6', '383_sixty_four', 1189.05)?.sitting).toBe('ear-verify-t');
+    expect(earPassAuthorising('v6', '383_sixty_four', 1189.05)?.sitting).toBe('ear-verify-v');
     // ...and a boundary nobody has ever listened to authorises nothing.
     expect(earPassAuthorising('v6', '322_body_readiness', 986.88)).toBeUndefined();
     expect(describeEarHistory('v6', '322_body_readiness')).toBe('no ear pass has EVER scored this boundary');
-    // L7's open conflict, stated as a ledger fact: 788.65 is ear-authorised,
-    // 788.75 (what production computes post-Step-1) is not.
+    // L7, CLOSED THIS SESSION: `ear-verify-v` is the FIRST sitting to hear
+    // 788.75 on its own (788.65 was the `ear-verify-t`-era production value,
+    // before Step 1's onset correction moved it), and it authorises 788.75 —
+    // no longer the open conflict Session T left it as.
     expect(earPassAuthorising('v6', '266_forty_one_burden', 788.65)?.sitting).toBe('ear-verify-t');
-    expect(earPassAuthorising('v6', '266_forty_one_burden', 788.75)).toBeUndefined();
+    expect(earPassAuthorising('v6', '266_forty_one_burden', 788.75)?.sitting).toBe('ear-verify-v');
     // The Session S sitting is on record in full: ten rows, 4 CORRECT / 5
     // EARLY / 1 WRONG.
     const s = EAR_PASS_LEDGER.filter(x => x.sitting === 'live-runs-s');

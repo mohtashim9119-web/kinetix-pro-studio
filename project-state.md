@@ -16,18 +16,18 @@
 | Field | Value |
 |---|---|
 | Branch | `main` (trunk; `webgl2-effects-engine` tracks it, name is historical) |
-| HEAD | `53cc5cd`, 2026-08-21 — fix(ipc): stream audio as raw IPC body instead of base64 across the Tauri bridge |
-| `vitest` (`npm test`) | 2464 passed / 21 skipped / 0 failed — 107 files passed, 14 skipped (121) |
+| HEAD | WS1 Session V (Part 1) — feat(ws1): close seven Zero-Defect Register rows against LIVE via `status: 'fixed'` + ear-pass ledger |
+| `vitest` (`npm test`) | 2465 passed / 22 skipped / 0 failed — 107 files passed, 15 skipped (122) |
 | `tsc --noEmit` (= `npm run lint`) | clean |
 | `cargo check --features fa-inference` | clean |
 | `cargo clippy --all-targets --features fa-inference` | clean — 4 pre-existing warnings (`fa_onnx.rs`/`fa.rs`), 0 new |
 | `cargo test` (default, no feature) | 141 passed / 0 failed / 1 ignored |
 | `cargo test --features fa-inference` | 216 passed / 0 failed / 21 ignored |
-| Golden replay (`scripts/phase4-handoff-replay-sync.test.ts` + `phase4-fa-replay.test.ts`) | 6/6 byte-identical (53/53 tests across both files) |
-| FA Zero-Defect Register (`scripts/phase4-fa-replay.test.ts`) | **15 open** (not empty — this is the Stage 1 lock's own blocking criterion, see §2) |
+| Golden replay (`scripts/phase4-handoff-replay-sync.test.ts` + `phase4-fa-replay.test.ts`) | 6/6 byte-identical |
+| FA Zero-Defect Register (`scripts/phase4-fa-replay.test.ts`) | **8 open** (down from 15 — WS1 Session V closed 7 via `status: 'fixed'`, i.e. against LIVE, not the frozen fixture; not empty — this is still the Stage 1 lock's own blocking criterion, see §2) |
 | `faAnchors.ts` sha256 | `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c` — unchanged since Session E |
 
-All six floors measured directly 2026-08-21 (WS1 Session U — documentation reconciliation only, no rule/logic changes). App status: shipping desktop app (Tauri DMG/installer, native ffmpeg sidecar export, no server/web hosting). Target users: YouTube creators, initial internal use across 5–10 channels. Repo: `github.com/mohtashim9119-web/kinetix-pro-studio`.
+All six floors measured directly 2026-08-22 (WS1 Session V, Part 1 — register closure + ledger + one mutation; no `snapBoundaries.ts`/`silenceDetector.ts`/Hirschberg-aligner changes). App status: shipping desktop app (Tauri DMG/installer, native ffmpeg sidecar export, no server/web hosting). Target users: YouTube creators, initial internal use across 5–10 channels. Repo: `github.com/mohtashim9119-web/kinetix-pro-studio`.
 
 ---
 
@@ -35,7 +35,7 @@ All six floors measured directly 2026-08-21 (WS1 Session U — documentation rec
 
 Task-level detail lives in [`docs/work-in-progress.md`](docs/work-in-progress.md), not here.
 
-- **WS1 — Sync Pipeline (forced-alignment timing-source upgrade):** Phase 3 (= Task 5) is **PRODUCTION PATH WIRED, gate PER-PROJECT, DEFAULT OFF**. The FA gate's default flip to ON is deferred to the final act of Stage 1 (ruling R-AD), gated on an **EMPTY Zero-Defect Register** — currently 15 open rows (composition: 3 Class A + 5 Class B + 5 R.12-value rows, fixture-scoped + 1 live-path regression + 1 reopened row; full detail and row IDs in `docs/work-in-progress.md` §3/§7). WS1 Session T (2026-08-21) closed 5 of those rows' target values via an A/B ear pass and root-caused R.12's early placement to a since-removed clamp; one row (`266_forty_one_burden`) regressed 788.65→788.75 as a measured side effect and is flagged, not special-cased. See `docs/work-in-progress.md`.
+- **WS1 — Sync Pipeline (forced-alignment timing-source upgrade):** Phase 3 (= Task 5) is **PRODUCTION PATH WIRED, gate PER-PROJECT, DEFAULT OFF**. The FA gate's default flip to ON is deferred to the final act of Stage 1 (ruling R-AD), gated on an **EMPTY Zero-Defect Register** — currently **8 open rows, all Class A (3) + Class B (5)**; full detail and row IDs in `docs/work-in-progress.md` §11. WS1 Session V (2026-08-22, Part 1) closed the other 7 (the five R.12 fixture-scoped rows, the `266_forty_one_burden` live-path row, and the reopened `383_sixty_four`) against a fresh run-id-stamped live bundle plus an operator A/B ear pass — `status: 'fixed'` in `KNOWN_BAD`, not converted to `CLOSED_BY_POSITIVE_ASSERTION`, because that requires matching the frozen fixture CSV, deliberately still unregenerated. `266`'s "regression" classification (788.65→788.75) is REFUTED: 788.75 is now the operator-confirmed correct value. Session V Part 2 (a Class A/B attribution-side detector) is scoped but not yet started — awaiting approval. See `docs/work-in-progress.md` §11.
 
 ---
 
@@ -51,9 +51,9 @@ Task-level detail lives in [`docs/work-in-progress.md`](docs/work-in-progress.md
 
 Rolling 3 — worked in order. **Maintenance rule:** when the first task completes it is removed, the list shifts up, and the next task from the roadmap's priority order is appended; the list is always exactly three.
 
-1. **Design an attribution-side detector for Class A/Class B (8 open rows).** Session R closed off the boundary-placement family of candidate signals (structurally blind, measured 0/446) and reframed the defect as word-attribution — this is the open register's largest single population and has no detector yet. Detail: `docs/work-in-progress.md` §11, Session R + §7 item tracking Class A/B.
-2. **Resolve the `266_forty_one_burden` live-path regression** (`s-266-live-path-collision`, 788.65 → 788.75) — a measured side effect of Session T's onset-correction fix, currently flagged in two places (`KNOWN_BAD` and `ws1-session-s-exclusion.test.ts`'s pin) but not investigated further. Detail: `docs/work-in-progress.md` Changelog, "2026-08-21 — WS1 Session T."
-3. **Slice 2 — re-derive the 50/50 silence-split rule.** Port `snapBoundaries.ts` + Apply-Sync plumbing (park-commit `210855d`) against current `main`. Still not started; will deliberately break the golden replay, budget a per-boundary review, never a blind re-baseline. Detail: `docs/work-in-progress.md` WS1 item 2.
+1. **Design an attribution-side detector for Class A/Class B (8 open rows) — WS1 Session V Part 2, scoped, awaiting approval to proceed.** Session R closed off the boundary-placement family of candidate signals (structurally blind, measured 0/446) and reframed the defect as word-attribution — this is now the ENTIRE open register (Session V Part 1 closed everything else). Detail: `docs/work-in-progress.md` §11, Session R + Session V entries.
+2. **Slice 2 — re-derive the 50/50 silence-split rule.** Port `snapBoundaries.ts` + Apply-Sync plumbing (park-commit `210855d`) against current `main`. Still not started; will deliberately break the golden replay, budget a per-boundary review, never a blind re-baseline. Detail: `docs/work-in-progress.md` WS1 item 2.
+3. **Not currently determined.** The master roadmap this rolling list drew its priority order from (`ws1-master-roadmap.md`) was deleted 2026-08-14 during the docs consolidation (content folded elsewhere, per `CLAUDE.md` §7); no further next-priority item beyond the two above is presently named anywhere in the tracked docs. Needs the owner to set the next item explicitly rather than one being inferred here.
 
 ---
 
