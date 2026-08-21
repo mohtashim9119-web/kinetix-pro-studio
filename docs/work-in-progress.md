@@ -1050,6 +1050,67 @@ code ships (Phase 3b).
 
 ### §11. Terminal Path to WS1 Completion
 
+**2026-08-22 (WS1 SESSION W) — PRE-FIX CAPTURE OF 173, NO ROWS OPENED OR CLOSED, NO RULE
+CHANGES.** The operator ran a live sync of 173 ("FINAL TEST 173", syncRunId
+`59b1a1a8-4657-47ce-bd80-90208c4768ad`, 2026-08-21T19:37:04.501Z) and, before any ear pass,
+flagged what sounded like a wrong cut at the segment 6-7 boundary. This session froze the
+pre-fix state so a later fix has something real to measure against — Part 2 (the Class
+A/B attribution detector) stays on hold; nothing here touches rule logic.
+
+*Step 0.* Copied the live project file, its Session-O-guard rotating backups, and confirmed
+a persisted sync log DOES exist — not a separate file, `project.syncLog`/`syncRunSummaries`
+embedded in the project JSON itself (9 log entries, 1 run summary). Landed read-only at
+`.work-phase4/session-w/live/` (gitignored, mtimes preserved).
+
+*Step 1.* `scripts/ws1-session-w-bundle.test.ts` (new, generator, gated
+`WS1_SESSION_W_MEASURE=1`, not in the default sweep) drove `runProductionPath('173')` over
+the already-verified `.work-phase4/replay/173` input bundle (inputRunId
+`p-20260819T133910Z-5bf038bb` — its `fa_live_words.json`/`silences_native.json` arms are the
+Rust ONNX engine (`fa_onnx::align_chunked` via `fa::fa_align`), not the Python arm). Audio
+identity confirmed MEASURED, not assumed: the replay bundle's `audio_16k.wav` is
+sha256-identical (`c6150bcf51…`) to the durable FA-audio-cache entry the live 2026-08-21 sync
+itself produced, and matches the live project's own `lastTranscribedFileIdentity`. Output run
+id `w-20260821T205355Z-c8a8157f`, written to `.work-phase4/session-w/w-20260821T205355Z-c8a8157f/`.
+
+*Step 2 (fidelity gate).* 172 of 173 committed boundaries match the live project exactly.
+One divergence: `vessel_damage_clue` (boundary 45-46), live 174.740 vs. this session's fresh
+regen 172.910 — both are real silence midpoints ([174.52,174.96] and [172.70,173.12]
+respectively) in the SAME input arms; which of two adjacent silences got picked differs
+between the live run and this regen, mechanism not chased (out of scope, capture only). The
+operator's reported 6-7 seam is NOT part of this divergence — it matches exactly (23.16000
+both ways) — so the gate does not block using this session's own attribution analysis there.
+
+*Step 3 (arm divergence).* Silences: harness (`scripts/fixtures/phase4-baseline-173-silences.csv`,
+16 kHz mono, 239 rows) vs. native (`silences_native.json`, 48 kHz left-channel, 237 rows) — 220
+exact matches, 17 shifted (start/end deltas up to 80 ms), 2 harness-only phantoms, 0
+native-only phantoms. Tokens: live raw 2082, live syncLog's own filter breakdown (246 filtered
+= 192 empty text + 54 zero/inverted) reconciles EXACTLY to the harness's pre-cleaned 1836 —
+no unexplained residual, unlike v6's own harness/native token gap.
+
+*Step 4 (reference sheet).* `reference-sheet.csv` (173 rows) in the capture bundle: every
+boundary's nearest silence, distance, flanking raw-Whisper word times, and per-segment
+match confidence. No early-segment low-match pattern (v6's 44-57% first-few-segments issue
+does not recur on 173 — segments 1-6 all read 76.9-100%). Zero segments under 60% match. 18
+boundaries sit off any detected silence by >20 ms; 6 of those are the live app's own "still
+playing" warnings (already known), the other 12 are new (this session's own finding, not
+previously surfaced) and are Section B of the ear list below.
+
+*Step 5 (6-7 seam attribution).* For boundaries 5-6, 6-7, 7-8: every one of the last four FA
+words attributed to the left segment and first four to the right belongs to that segment's
+OWN scripted text — zero cross-seam misattribution at all three. If the 6-7 cut is still
+wrong on a re-listen, it is a placement defect (wrong instant on a real silence), not an
+attribution defect (right instant, word funneled to the wrong side).
+
+*Step 6.* Ear list emitted, verdicts blank:
+`docs/ws1-sync-pipeline/stage1-session-w-173-ear-list.md` (20 rows: the 6-7 seam, the
+`vessel_damage_clue` divergence, the app's own 6 flagged cuts, and 12 additional
+lower-priority non-silence boundaries).
+
+*Floors re-verified*, all match Session V's Part 1 numbers except `npm test`'s own skip
+count (+1 skipped test / +1 skipped file — this session's own gated generator, not a
+regression). `faAnchors.ts` sha256 unchanged. `git diff --stat` against `a806d9a` is empty
+(only new/untracked files: the generator script and this session's two docs).
+
 **2026-08-22 (WS1 SESSION V, PART 1) — SEVEN REGISTER ROWS CLOSE AGAINST LIVE, NOT FIXTURE. THE
 `266_forty_one_burden` "REGRESSION" CLASSIFICATION IS REFUTED — 788.75 IS THE CONFIRMED VALUE, NOT
 A DEFECT AWAY FROM ONE. REGISTER 15 → 8 OPEN; ALL EIGHT REMAINING ARE CLASS A/B (SCOPED AS PART 2,
