@@ -16,14 +16,18 @@
 | Field | Value |
 |---|---|
 | Branch | `main` (trunk; `webgl2-effects-engine` tracks it, name is historical) |
-| HEAD | `918018f`, 2026-08-11 — docs(ws1): relocate deferred items to wip, add polish list, roll next-3 |
-| `vitest` | 1803 tests — 1803 pass, 0 fail, 1 skip — 72 files |
-| `tsc --noEmit` | clean |
-| `cargo check` | clean |
-| `cargo clippy --all-targets` | clean |
-| Golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) | 3/3 byte-identical |
+| HEAD | `53cc5cd`, 2026-08-21 — fix(ipc): stream audio as raw IPC body instead of base64 across the Tauri bridge |
+| `vitest` (`npm test`) | 2464 passed / 21 skipped / 0 failed — 107 files passed, 14 skipped (121) |
+| `tsc --noEmit` (= `npm run lint`) | clean |
+| `cargo check --features fa-inference` | clean |
+| `cargo clippy --all-targets --features fa-inference` | clean — 4 pre-existing warnings (`fa_onnx.rs`/`fa.rs`), 0 new |
+| `cargo test` (default, no feature) | 141 passed / 0 failed / 1 ignored |
+| `cargo test --features fa-inference` | 216 passed / 0 failed / 21 ignored |
+| Golden replay (`scripts/phase4-handoff-replay-sync.test.ts` + `phase4-fa-replay.test.ts`) | 6/6 byte-identical (53/53 tests across both files) |
+| FA Zero-Defect Register (`scripts/phase4-fa-replay.test.ts`) | **15 open** (not empty — this is the Stage 1 lock's own blocking criterion, see §2) |
+| `faAnchors.ts` sha256 | `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c` — unchanged since Session E |
 
-App status: shipping desktop app (Tauri DMG/installer, native ffmpeg sidecar export, no server/web hosting). Target users: YouTube creators, initial internal use across 5–10 channels. Repo: `github.com/mohtashim9119-web/kinetix-pro-studio`.
+All six floors measured directly 2026-08-21 (WS1 Session U — documentation reconciliation only, no rule/logic changes). App status: shipping desktop app (Tauri DMG/installer, native ffmpeg sidecar export, no server/web hosting). Target users: YouTube creators, initial internal use across 5–10 channels. Repo: `github.com/mohtashim9119-web/kinetix-pro-studio`.
 
 ---
 
@@ -31,13 +35,15 @@ App status: shipping desktop app (Tauri DMG/installer, native ffmpeg sidecar exp
 
 Task-level detail lives in [`docs/work-in-progress.md`](docs/work-in-progress.md), not here.
 
-- **WS1 — Sync Pipeline (forced-alignment timing-source upgrade):** 2/10 tasks done (slice 1; K13 fix) — Slice 2 (50/50 silence-split re-derivation) is next. See `docs/work-in-progress.md`.
+- **WS1 — Sync Pipeline (forced-alignment timing-source upgrade):** Phase 3 (= Task 5) is **PRODUCTION PATH WIRED, gate PER-PROJECT, DEFAULT OFF**. The FA gate's default flip to ON is deferred to the final act of Stage 1 (ruling R-AD), gated on an **EMPTY Zero-Defect Register** — currently 15 open rows (composition: 3 Class A + 5 Class B + 5 R.12-value rows, fixture-scoped + 1 live-path regression + 1 reopened row; full detail and row IDs in `docs/work-in-progress.md` §3/§7). WS1 Session T (2026-08-21) closed 5 of those rows' target values via an A/B ear pass and root-caused R.12's early placement to a since-removed clamp; one row (`266_forty_one_burden`) regressed 788.65→788.75 as a measured side effect and is flagged, not special-cased. See `docs/work-in-progress.md`.
 
 ---
 
 ## 3. Open Decisions
 
-- **C10 structural check is not CI-ready; C05 and C11 now are.** Step W (2026-08-06) recovered C05's FA token arrays and re-scored it against the shipped gate itself: verdict CI-IN (also has the manual Python harness, `scripts/phase4-step-w-trust.py`). C11 (live K13 repro, `scripts/phase4-step-w-k13-repro.test.ts`) is CI-IN too — as of K13's 2026-08-11 fix it has flipped from proving the defect to proving the fix holds (3/3, inverted); `scripts/phase4-step-w-trust.py`/`phase4-step-x-verify.py` were repaired the same day to narrate the held regression instead of the old defect-trap framing. Only C10 (seam cross-attribution) stays CI-OUT: ear-verified recall is 0/4 regardless of predicate tuning — "quieter is not fixed." None of the three block WS1's current slice.
+- **Class A (3 open of 4) / Class B (5 open) rows need a new detection track, not a placement fix.** WS1 Session R found the defect class is word-*attribution* (Hirschberg hands 1-5 words to the wrong segment), not boundary placement — any rule testing a boundary against segment spans is structurally blind to it (0/446 violations found by word-containment). No attribution-side detector has been designed yet. Detail: `docs/work-in-progress.md` §11, Session R entry.
+- **Rule-stage architecture: propose-then-arbitrate rebuild is scheduled, not started.** Rules currently mutate a shared array in sequence, so a conflict between two rules' claims resolves by ordering with no record a conflict occurred (this is what produced the R.11/R.12 collision R-AP closed in Session S). The scheduled fix — every rule emits a proposal against the origin array, an arbitrator resolves competing claims on stated ownership — would also absorb the R-AP performance cost below. Detail: `docs/work-in-progress.md` §11(f).
+- **R-AP's measured cost (~2.70s per Apply Sync on the 447-segment v6 corpus) has a known fix, not yet built.** `computeUnscriptedRuns`'s Hirschberg alignment now runs 4 times per Apply Sync instead of 1 (once per rule stage that needs run structure); a memo on the pure function removes 3 of the 4 passes. Deliberately bundled with the propose/arbitrate rebuild above rather than bolted on standalone. Detail: `docs/work-in-progress.md` §11(h2).
 
 ---
 
@@ -45,9 +51,9 @@ Task-level detail lives in [`docs/work-in-progress.md`](docs/work-in-progress.md
 
 Rolling 3 — worked in order. **Maintenance rule:** when the first task completes it is removed, the list shifts up, and the next task from the roadmap's priority order is appended; the list is always exactly three.
 
-1. **Task 5 — Rust integration for forced alignment (Phase 3).** Replace Whisper's word timestamps with a forced-alignment (CTC) sidecar — the real timing-source upgrade WS1 exists to deliver. Sits first: unblocks the most downstream work (task 4 as a side effect, task 6 transitively) and was gated on the Spanish accuracy gate, which closed 2026-08-11. Unblocked — all 3 Rust-integration gates closed. Detail: `docs/ws1-sync-pipeline/ws1-master-roadmap.md`'s NEXT UP block.
-2. **Task 2 — Slice 2, re-derive the 50/50 silence-split rule.** Port `snapBoundaries.ts` + Apply-Sync plumbing (park-commit `210855d`) against current `main`. Sequenced after task 5 — cleanly decoupled from the editor path, so it can proceed once the higher-leverage timing-source work is underway; will deliberately break the golden replay, budget a per-boundary review, never a blind re-baseline. Unblocked. Detail: `docs/work-in-progress.md` WS1 item 2.
-3. **Task 3 — Verify stale-anchor scroll degradation with a dedicated test.** Currently asserted correct by code reading only, no test exists yet. Lowest-effort of the three; closes a verification gap rather than shipping new behavior. Unblocked. Detail: `docs/work-in-progress.md` WS1 item 3.
+1. **Design an attribution-side detector for Class A/Class B (8 open rows).** Session R closed off the boundary-placement family of candidate signals (structurally blind, measured 0/446) and reframed the defect as word-attribution — this is the open register's largest single population and has no detector yet. Detail: `docs/work-in-progress.md` §11, Session R + §7 item tracking Class A/B.
+2. **Resolve the `266_forty_one_burden` live-path regression** (`s-266-live-path-collision`, 788.65 → 788.75) — a measured side effect of Session T's onset-correction fix, currently flagged in two places (`KNOWN_BAD` and `ws1-session-s-exclusion.test.ts`'s pin) but not investigated further. Detail: `docs/work-in-progress.md` Changelog, "2026-08-21 — WS1 Session T."
+3. **Slice 2 — re-derive the 50/50 silence-split rule.** Port `snapBoundaries.ts` + Apply-Sync plumbing (park-commit `210855d`) against current `main`. Still not started; will deliberately break the golden replay, budget a per-boundary review, never a blind re-baseline. Detail: `docs/work-in-progress.md` WS1 item 2.
 
 ---
 

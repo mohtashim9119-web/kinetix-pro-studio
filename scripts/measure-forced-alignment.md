@@ -1,7 +1,7 @@
 # measure-forced-alignment — Phase 3 forced-alignment (MMS-FA) measurement
 
 Companion to `scripts/measure-forced-alignment.py`. Committed for the same
-reason `scripts/measure-word-onset.py` was (`docs/sync-pipeline-v2-plan.md`
+reason `scripts/measure-word-onset.py` was (`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`
 Part K's K8): a prototype session (2026-08-05) produced real artifacts —
 `tokens_fa.json`, `emission.pt`, `onset_errors_fa.csv`, `meta_fa.json`,
 `silences.json`, `audio_16k.wav` — for both V6 and the 173-project at
@@ -18,7 +18,7 @@ re-runnable without archaeology, same as K8 required for Phase 2b.
 Runs [torchaudio's `MMS_FA` bundle](https://pytorch.org/audio/stable/pipelines.html#torchaudio.pipelines.MMS_FA)
 (Meta's multilingual forced-alignment model — a wav2vec2-large-scale CTC
 acoustic model over a 28-symbol romanized alphabet, released CC-BY-NC-4.0;
-see `docs/sync-pipeline-v2-plan.md`'s H.3/Phase 3 entry for the full
+see `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s H.3/Phase 3 entry for the full
 license/model-choice record, Blocker 1) against a project's own
 already-committed segments, producing per-word `{text, start, end, score}`
 timestamps in **exactly** the shape `measure-word-onset.py`'s

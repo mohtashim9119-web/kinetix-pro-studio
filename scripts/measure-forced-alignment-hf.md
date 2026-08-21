@@ -8,7 +8,7 @@ driver script live only in `/tmp`.
 
 ## Why this script exists
 
-`docs/sync-pipeline-v2-plan.md`'s Phase 3 entry, Blocker 1, found MMS-FA
+`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Phase 3 entry, Blocker 1, found MMS-FA
 (torchaudio's `MMS_FA` bundle, measured in `measure-forced-alignment.py`) to
 be **CC-BY-NC-4.0** — usable for this measurement programme, not for a
 commercial ship of the app. Blocker 1 named two unadopted commercial-license
@@ -136,7 +136,7 @@ cp "$P173_DIR/onset_errors_hf.csv" docs/phase3-onset-173-hf.csv
 
 ## Results (173, side by side with MMS-FA's own `fa2` run)
 
-See `docs/sync-pipeline-v2-plan.md`'s Phase 3 entry for the full table and
+See `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Phase 3 entry for the full table and
 gate-relevant discussion. Summary: median and p95 both within ~10-20ms of
 MMS-FA's own numbers (noise-level on this project), zero zero-duration
 tokens (clean pass, same as MMS-FA), wall-clock ~29% slower than MMS-FA on
@@ -169,7 +169,7 @@ tokens — within noise of MMS-FA's own V6 numbers (21.2ms/476ms/49.0%), and
 **both models independently fail on the identical segment (320)**, the same
 CTC-constraint-violation defect Blocker 2 already found — model-agnostic
 confirmation it is a pre-existing committed-duration bug, not an aligner
-artifact. Spanish: see `docs/sync-pipeline-v2-plan.md`'s Phase 3->4 handoff
+artifact. Spanish: see `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s Phase 3->4 handoff
 entry (Step N.2) for the completed figures, or the disclosed download-time
 gap if the session ended first — the Spanish-language model weight (~1.2GB)
 required a cold download that repeatedly stalled on this network and needed

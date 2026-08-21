@@ -1,7 +1,7 @@
 # measure-word-onset — Phase 2b timing-source measurement
 
 Companion to `scripts/measure-word-onset.py`. Committed per
-`docs/sync-pipeline-v2-plan.md` Part K's K8: the original investigation's
+`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` Part K's K8: the original investigation's
 harness (which produced the ~190ms figure cited throughout the plan) lived in
 `/tmp` and was never committed — confirmed unrecoverable in
 `docs/audit-verification-2026-08-03.md` §C.7. This tool exists so Phase 2b,
@@ -20,7 +20,7 @@ match where the pause actually ends?
 
 `onset_error = word.start - silence.end` (signed seconds). Negative means the
 word's declared start precedes the true end of the pause before it — the
-segment-96 pathology (`docs/sync-pipeline-v2-plan.md` Part C): Whisper
+segment-96 pathology (`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` Part C): Whisper
 assigning a pause's onset to the following word instead of to when the word
 was actually spoken.
 
@@ -45,7 +45,7 @@ trusting any future re-run's numbers.
 ## Exact invocation used for the Phase 2b measurement (2026-08-05)
 
 Paths below are this machine's corpus locations
-(`docs/sync-pipeline-v2-plan.md` Part D.0) — substitute your own.
+(`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` Part D.0) — substitute your own.
 
 ```bash
 SCRIPT="scripts/measure-word-onset.py"

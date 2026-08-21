@@ -5,7 +5,7 @@ The model files in this directory are gitignored (too large for git).
 ## Re-provisioning
 
 Download the multilingual model (used by the app since Phase 2a,
-2026-08-04 — see `docs/sync-pipeline-v2-plan.md` H.1):
+2026-08-04 — see `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` H.1):
 ```bash
 curl -L -o src-tauri/models/ggml-large-v3-turbo.bin \
   "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin"

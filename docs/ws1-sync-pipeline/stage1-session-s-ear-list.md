@@ -1,5 +1,14 @@
 # WS1 Session S — R.12 Placement Ear List (5 clips)
 
+> **RESOLVED, WS1 Session T (2026-08-21).** The owner's answer was **B on all five, "no
+> difference" on 383** — the fourth row of the licensing table in §3 below. Session T shipped it:
+> the clamp (candidate A) is removed, replaced by a waveform-measured run onset
+> (`acousticRunExtent`), closing `042`/`176`/`224`/`307`/`340` at their B values and reopening
+> `383_sixty_four` after an A/B side-by-side pass (not this file's own solo-listening format)
+> reversed the SOLO verdict recorded here. Full write-up: `docs/work-in-progress.md`'s Changelog,
+> "2026-08-21 — WS1 Session T." This file's own content below is kept verbatim as the record of
+> what was asked and why — not updated in place.
+
 > **Drawn at the Session S working tree**, against the run-id-stamped live-fidelity
 > bundle `p-20260819T120922Z-cbb403c1` and the real production
 > `detectRunPlacementDefects` / `computeUnscriptedRuns` / native-rate detected-silence

@@ -99,7 +99,8 @@ export interface FaError {
 /** Argument shape for the `fa_align` Tauri command (`fa.rs`'s `fa_align`).
  *  `audioPath` is a filesystem path (e.g. the same 16 kHz mono WAV
  *  `whisper.rs`'s `transcode_to_wav` already produces), not re-uploaded
- *  audio bytes — unlike `whisper_transcribe`'s `audio_b64`. */
+ *  audio bytes — `whisper_transcribe` takes the same shape now too, via
+ *  `whisper_stage_audio_raw`. */
 export interface FaAlignArgs {
   audioPath: string;
   chunks: FaChunkInput[];

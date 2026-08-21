@@ -4938,16 +4938,17 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
     `'ear'`) while its LIVE-path sibling entry's own regression is newly and separately flagged.
     Composition: 3 Class A + 5 Class B + 5 R.12-value rows (fixture-scoped) + 1 L7 live-path row +
     1 reopened 383 row = 15.
-  - **M1-M13 were NOT independently re-executed this session** — their target code
-    (`faRunPlacementGate.ts`'s Session P/Q-era fixes, `faRuleStageExclusion.ts`'s R-AP) was
-    untouched by Session T's edits, and re-deriving twelve historical mutations from prose specs
-    was judged disproportionate to what actually changed. What WAS run and is a real number: the
-    full `npm test` suite at rest (**2464 passed / 21 skipped**, up from the stated floor of
-    2460/19 — the delta is this session's own new tests), M13 (neuter R-AP's exclusion) re-verified
-    **RED** (8 failures), and two NEW mutations for this session's own changes — **M14** (restore
-    the clamp) RED (2 failures) and **M15** (neuter the onset correction) RED (11 failures) — each
-    reverted and `faAnchors.ts`'s sha256 (`b61e94cb…`) reverified unchanged after every single
-    revert. The allowlist-contamination class Session S reported (a new `.md` file tripping
+  - **M1-M12 were NOT independently re-executed this session** — their target code
+    (`faRunPlacementGate.ts`'s Session P/Q-era fixes) was untouched by Session T's edits, and
+    re-deriving eleven historical mutations from prose specs was judged disproportionate to what
+    actually changed; this is a stated scope limit, not an implied full matrix run. What WAS run
+    and is a real number: the full `npm test` suite at rest (**2464 passed / 21 skipped**, up from
+    the stated floor of 2460/19 — the delta is this session's own new tests), **M13** (neuter
+    R-AP's exclusion, `faRuleStageExclusion.ts`, in scope this session since Step 1a/1b sit right
+    beside it) re-verified **RED** (8 failures), and two NEW mutations for this session's own
+    changes — **M14** (restore the clamp) RED (2 failures) and **M15** (neuter the onset
+    correction) RED (11 failures) — each reverted and `faAnchors.ts`'s sha256 (`b61e94cb…`)
+    reverified unchanged after every single revert. The allowlist-contamination class Session S reported (a new `.md` file tripping
     `ws1-single-tracker.test.ts`) is CLEAN this session — no new top-level `docs/` files were added,
     only edits to existing tracked docs and additive test files under `scripts/`/`src/services/`.
   - **Two doc/wording fixes.** (a) `faRuleStageExclusion.ts`'s header cited the RAW run-6 token
