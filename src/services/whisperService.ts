@@ -23,20 +23,6 @@ type WhisperEvent =
   | { event: 'Error'; data: { message: string } };
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const CHUNK = 3 * 4096; // 12288 — multiple of 3, safe boundary
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
-// ---------------------------------------------------------------------------
 // Alignment tokenizer (architecture doc §3.2, R1)
 // ---------------------------------------------------------------------------
 // The number/contraction/symbol canonicalization that used to live inline here
@@ -1556,7 +1542,12 @@ export async function transcribeWithProgress(
     }
     buffer = await response.arrayBuffer();
   }
-  const audiob64 = arrayBufferToBase64(buffer);
+  // Raw IPC body (Uint8Array), not base64 — whisper_stage_audio_raw writes it
+  // straight to a temp file and hands back the path. A long voiceover as
+  // base64 JSON inflates ~5-8x across the JS heap and the WKWebView IPC
+  // bridge before Rust ever sees it; this avoids that entirely, mirroring
+  // ffmpeg.rs's ffmpeg_write_file_raw precedent on the export path.
+  const audioPath = await invoke<string>('whisper_stage_audio_raw', new Uint8Array(buffer));
 
   return new Promise<TranscribeResult>((resolve, reject) => {
     if (signal.aborted) {
@@ -1583,7 +1574,7 @@ export async function transcribeWithProgress(
     signal.addEventListener('abort', onAbort, { once: true });
 
     invoke('whisper_transcribe', {
-      audioB64: audiob64,
+      audioPath,
       durationSecs,
       language: language ?? 'auto',
       onEvent: channel,

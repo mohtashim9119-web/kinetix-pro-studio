@@ -112,11 +112,22 @@ fn main() {
         "app_local_data_dir() must resolve to the same path production does"
     );
 
+    // `fa_align_dev` now takes an already-staged `input_path` (WS1 — the
+    // audio_b64/audio_ext_hint IPC shape was replaced by a raw-body staging
+    // command, `fa_stage_audio_raw`, to avoid a 5-8x base64/JSON memory
+    // multiplication across the JS heap and the WKWebView IPC bridge on a
+    // long voiceover). This probe calls `fa_align_dev` directly as a Rust
+    // function, bypassing the Tauri IPC dispatcher entirely, so it can't
+    // invoke `fa_stage_audio_raw` (which extracts its raw body from a real
+    // `tauri::ipc::Request`) — instead it replicates that command's own
+    // content-addressed write by hand: same `kinetix-fa-dev-inputs` dir,
+    // same sha256-of-bytes filename scheme.
     let audio_bytes = std::fs::read(&audio_path).expect("read real 173 corpus audio");
-    let audio_b64 = {
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD.encode(&audio_bytes)
-    };
+    let content_key = sha256_hex_of_file(&audio_path);
+    std::fs::create_dir_all(&dev_input_dir).expect("create dev input dir");
+    let input_path = dev_input_dir.join(format!("{content_key}.wav"));
+    std::fs::write(&input_path, &audio_bytes).expect("stage input audio");
+    let input_path_str = input_path.to_string_lossy().to_string();
     let chunks = vec![FaChunkInput { start_sec: 0.0, end_sec: 1.0, text: "probe".to_string() }];
 
     let run = |label: &str| -> std::time::Duration {
@@ -128,8 +139,7 @@ fn main() {
             app_handle.clone(),
             state,
             model_cache,
-            audio_b64.clone(),
-            "wav".to_string(),
+            input_path_str.clone(),
             chunks.clone(),
             "en".to_string(),
             on_event,

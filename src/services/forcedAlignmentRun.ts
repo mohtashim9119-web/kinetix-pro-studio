@@ -35,7 +35,6 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import { detectSilences } from './silenceDetector';
 import { computeFaChunkPlan, computeUnscriptedRuns, type UnscriptedRun } from './faChunkPlan';
 import { faWordSpansToTranscriptTokens, type FaEvent, type FaWordSpan } from './faBoundaryTypes';
-import { bytesToBase64 } from './tauriFfmpeg';
 import type { FaLanguageCode } from './faTextNormalize';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
 
@@ -131,11 +130,6 @@ export async function runForcedAlignmentForSync(
 
   try {
     const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
-    const buffer = await voiceoverBlob.arrayBuffer();
-    const audioB64 = bytesToBase64(new Uint8Array(buffer));
-    const audioExtHint = voiceoverAsset.file?.type
-      || voiceoverAsset.file?.name.split('.').pop()
-      || '';
 
     const silenceResult = await detectSilences(voiceoverBlob);
     const silences = silenceResult.status === 'ok' ? silenceResult.silences : [];
@@ -150,6 +144,28 @@ export async function runForcedAlignmentForSync(
       return { status: 'fallback', reason: 'empty-chunk-plan' };
     }
 
+    const buffer = await voiceoverBlob.arrayBuffer();
+    const audioExtHint = voiceoverAsset.file?.type
+      || voiceoverAsset.file?.name.split('.').pop()
+      || '';
+    // Raw IPC body (Uint8Array) staged to a content-addressed temp file by
+    // fa_stage_audio_raw, not base64+JSON — a long/uncompressed voiceover as
+    // base64 inflates ~5-8x across the JS heap and the WKWebView IPC bridge
+    // before Rust ever sees it (fa_stage_audio_raw's own doc comment has the
+    // full accounting). 'kinetix-fa-production-inputs' namespaces this
+    // command's staged inputs apart from the DEV harness's own
+    // 'kinetix-fa-dev-inputs' so the two can never collide on the same
+    // content-addressed path. Deferred until after the empty-chunk-plan
+    // check above — matching the pre-existing fail-cheap-before-IPC
+    // ordering — so a run that's about to fall back never pays for staging
+    // a file it will not use.
+    const inputPath = await invoke<string>('fa_stage_audio_raw', new Uint8Array(buffer), {
+      headers: {
+        'cache-dir': 'kinetix-fa-production-inputs',
+        'ext-hint': audioExtHint,
+      },
+    });
+
     const channel = new Channel<FaEvent>();
     const words = await new Promise<FaWordSpan[]>((resolve, reject) => {
       channel.onmessage = (msg) => {
@@ -160,8 +176,7 @@ export async function runForcedAlignmentForSync(
         }
       };
       invoke('fa_align_production', {
-        audioB64,
-        audioExtHint,
+        inputPath,
         chunks,
         language,
         onEvent: channel,

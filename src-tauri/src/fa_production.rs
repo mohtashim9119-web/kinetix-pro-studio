@@ -15,36 +15,30 @@
 // present is identical to `fa_align`'s: a clean `Err`, never a panic.
 //
 // Body is `fa_dev.rs`'s `resolve_wav_and_align` — the exact same
-// resolve-model / decode-audio / durable-WAV / delegate-to-`fa_align` path
-// `fa_align_dev` already runs, live-verified against a real `AppHandle<Wry>`
-// (D25 A1) — under this command's OWN temp-directory namespace
+// resolve-model / durable-WAV / delegate-to-`fa_align` path `fa_align_dev`
+// already runs, live-verified against a real `AppHandle<Wry>` (D25 A1).
+// `input_path` is a file `fa_stage_audio_raw` (`fa_dev.rs`) already staged
+// under this command's OWN temp-directory namespace
 // (`kinetix-fa-production-inputs`, distinct from `fa_align_dev`'s
-// `kinetix-fa-dev-inputs`), so a devtools call and a real production call
-// against the same audio content never race on the same content-addressed
-// path.
+// `kinetix-fa-dev-inputs` — the frontend passes that namespace as
+// `fa_stage_audio_raw`'s `cache-dir` header), so a devtools call and a real
+// production call against the same audio content never race on the same
+// content-addressed path.
 // ---------------------------------------------------------------------------
 
 use crate::fa::{FaChunkInput, FaError, FaEvent, FaModelCache, FaState};
 use crate::fa_dev::resolve_wav_and_align;
 use tauri::ipc::Channel;
 
-// Same shape as `fa_align`/`fa_align_dev`'s own already-accepted
-// AppHandle+2 States+several args+Channel Tauri-command signature.
-#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn fa_align_production(
     app: tauri::AppHandle,
     state: tauri::State<'_, FaState>,
     model_cache: tauri::State<'_, FaModelCache>,
-    audio_b64: String,
-    audio_ext_hint: String,
+    input_path: String,
     chunks: Vec<FaChunkInput>,
     language: String,
     on_event: Channel<FaEvent>,
 ) -> Result<(), FaError> {
-    resolve_wav_and_align(
-        app, state, model_cache, audio_b64, audio_ext_hint, chunks, language, on_event,
-        "kinetix-fa-production-inputs",
-    )
-    .await
+    resolve_wav_and_align(app, state, model_cache, input_path, chunks, language, on_event).await
 }

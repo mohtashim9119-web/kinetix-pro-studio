@@ -228,7 +228,7 @@ import { useExport, formatElapsed, formatElapsedLong, type ExportResolution, typ
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
-import { isTauri, probeAudioDuration, probeVideoFps, bytesToBase64 } from './services/tauriFfmpeg';
+import { isTauri, probeAudioDuration, probeVideoFps } from './services/tauriFfmpeg';
 import { readUiState, patchUiState } from './services/uiStateStore';
 import { compactRanges } from './services/rangeCompact';
 import { formatTime } from './services/timeFormat';
@@ -3965,10 +3965,18 @@ export default function App() {
 
       const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
       const buffer = await voiceoverBlob.arrayBuffer();
-      const audioB64 = bytesToBase64(new Uint8Array(buffer));
       const audioExtHint = voiceoverAsset.file?.type
         || voiceoverAsset.file?.name.split('.').pop()
         || '';
+      // Raw IPC body, staged by fa_stage_audio_raw into 'kinetix-fa-dev-inputs'
+      // — see forcedAlignmentRun.ts's own call for the full base64-avoidance
+      // rationale, identical here.
+      const inputPath = await invoke<string>('fa_stage_audio_raw', new Uint8Array(buffer), {
+        headers: {
+          'cache-dir': 'kinetix-fa-dev-inputs',
+          'ext-hint': audioExtHint,
+        },
+      });
 
       // WS1 Task 5 Slice D11: whole-file FA is infeasible at production
       // audio length (D10) — build the windowed chunk plan via
@@ -4013,8 +4021,7 @@ export default function App() {
             }
           };
           invoke('fa_align_dev', {
-            audioB64,
-            audioExtHint,
+            inputPath,
             chunks,
             language,
             onEvent: channel,

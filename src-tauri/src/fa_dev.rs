@@ -25,7 +25,6 @@
 // ---------------------------------------------------------------------------
 
 use crate::fa::{fa_align, fa_model_path, FaChunkInput, FaError, FaErrorKind, FaEvent, FaModelCache, FaState};
-use base64::{engine::general_purpose::STANDARD, Engine};
 use std::fs;
 use std::path::Path;
 use tauri::ipc::Channel;
@@ -193,29 +192,80 @@ fn extension_for(hint: &str) -> &'static str {
     }
 }
 
-fn dev_error(message: impl Into<String>) -> FaError {
-    FaError { kind: FaErrorKind::InferenceFailed, message: message.into() }
+/// Raw-binary staging command for the `input_path` argument `fa_align_dev`
+/// and `fa_align_production` now take.
+///
+/// Writes the invoke request's raw body bytes to a content-addressed
+/// (SHA-256 of the bytes) path under `cache_dir_name` (a caller-owned
+/// namespace, carried as the `cache-dir` request header, so a devtools call
+/// and a real Apply-Sync call against the same audio content can never
+/// collide on the same path — the two namespaces `fa_align_dev` and
+/// `fa_align_production` each used to pass down to `resolve_wav_and_align`
+/// before this command existed). `ext-hint` (optional; same values
+/// `extension_for` below already accepts) picks the written file's
+/// extension.
+///
+/// Content-addressing, not per-call/uuid'd, for the same reason
+/// `resolve_wav_and_align`'s old inline version of this write was
+/// content-addressed: `ensure_durable_wav`'s cache key is the SOURCE file's
+/// own identity (name|size|mtime — `fa.rs::source_identity_key`), so a fresh
+/// uuid'd temp file on every call would give every invocation of the SAME
+/// clip a fresh mtime and defeat the durable cache before it ever got a
+/// chance to hit.
+///
+/// Unlike the `audio_b64` shape this replaces, the payload is NOT
+/// base64/JSON-encoded — the frontend passes a `Uint8Array` as the invoke
+/// body (Tauri v2 raw request body). This removes the base64 encode (JS) +
+/// inflated-string IPC transfer + base64 decode (Rust) that `ffmpeg.rs`'s
+/// `ffmpeg_write_file_raw` doc comment already names as the cost this shape
+/// avoids on the export path — applied here to a whole voiceover file
+/// (potentially hundreds of MB uncompressed) instead of one export frame,
+/// where the base64+JSON round trip's ~5-8x peak memory multiplication
+/// across the JS heap and the WKWebView IPC bridge is far more likely to
+/// matter.
+#[tauri::command]
+pub fn fa_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let headers = request.headers();
+    let cache_dir_name = headers
+        .get("cache-dir")
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| "fa_stage_audio_raw: missing or invalid 'cache-dir' header".to_string())?;
+    let ext_hint = headers
+        .get("ext-hint")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(data) => data,
+        tauri::ipc::InvokeBody::Json(_) => {
+            return Err("fa_stage_audio_raw: expected a raw byte body, got JSON".to_string())
+        }
+    };
+
+    let input_dir = std::env::temp_dir().join(cache_dir_name);
+    fs::create_dir_all(&input_dir).map_err(|e| format!("create audio input cache dir: {e}"))?;
+    let mut hasher = crate::sha256::Sha256::new();
+    hasher.update(bytes);
+    let content_key = crate::sha256::hex_digest(&hasher.finish());
+    let input_path = input_dir.join(format!("{content_key}.{}", extension_for(ext_hint)));
+    if !input_path.exists() {
+        fs::write(&input_path, bytes).map_err(|e| format!("write audio: {e}"))?;
+    }
+
+    Ok(input_path.to_string_lossy().to_string())
 }
 
 /// Dev-only end-to-end FA entry point (WS1 Task 5 Slice D10): resolves +
-/// manifest-verifies the model for `language`, decodes `audio_b64`, then
-/// (WS1 Task 5 Slice D25 A1) obtains a 16kHz mono WAV via
-/// `fa::ensure_durable_wav` — the durable, LRU-evicted cache under
-/// `app_local_data_dir()/fa-audio-cache/` (WS1 Task 5 Slice D24 B1/B2) —
-/// rather than transcoding to a throwaway per-call WAV as before, then
-/// delegates to the real `fa_align` unmodified.
+/// manifest-verifies the model for `language`, then (WS1 Task 5 Slice D25
+/// A1) obtains a 16kHz mono WAV via `fa::ensure_durable_wav` — the durable,
+/// LRU-evicted cache under `app_local_data_dir()/fa-audio-cache/` (WS1 Task
+/// 5 Slice D24 B1/B2) — rather than transcoding to a throwaway per-call WAV
+/// as before, then delegates to the real `fa_align` unmodified.
 ///
-/// The decoded audio bytes are also written to a content-addressed (SHA-256
-/// of the bytes), NOT per-call/uuid'd, path under a stable temp directory
-/// (`kinetix-fa-dev-inputs`): `ensure_durable_wav`'s cache key is the SOURCE
-/// file's own identity (name|size|mtime — `fa.rs::source_identity_key`), so
-/// a fresh uuid'd temp file on every call would give every invocation of the
-/// SAME clip a fresh mtime and defeat the durable cache before it ever got a
-/// chance to hit. Content-addressing means two calls with byte-identical
-/// decoded audio resolve to the same input path, which is left untouched
-/// (mtime preserved, not rewritten) if it already exists — so its identity,
-/// and therefore the durable WAV cache entry `ensure_durable_wav` resolves
-/// it to, is stable across repeated dev invocations of the same clip.
+/// `input_path` is a content-addressed file `fa_stage_audio_raw` (above)
+/// already staged under `kinetix-fa-dev-inputs` — the frontend calls that
+/// command first, with the raw audio bytes as the request body, and passes
+/// the returned path here.
 ///
 /// Neither the dev-input cache nor the durable WAV cache is cleaned up at
 /// the end of this call (both are deliberately persistent, unlike the old
@@ -236,69 +286,38 @@ pub async fn fa_align_dev(
     app: tauri::AppHandle,
     state: tauri::State<'_, FaState>,
     model_cache: tauri::State<'_, FaModelCache>,
-    audio_b64: String,
-    audio_ext_hint: String,
+    input_path: String,
     chunks: Vec<FaChunkInput>,
     language: String,
     on_event: Channel<FaEvent>,
 ) -> Result<(), FaError> {
-    resolve_wav_and_align(
-        app, state, model_cache, audio_b64, audio_ext_hint, chunks, language, on_event,
-        "kinetix-fa-dev-inputs",
-    )
-    .await
+    resolve_wav_and_align(app, state, model_cache, input_path, chunks, language, on_event).await
 }
 
 /// Shared body behind both `fa_align_dev` (above) and the production,
 /// capability-gated `fa_align_production` (`fa_production.rs`,
 /// docs/work-in-progress.md §11 item 1): resolves + manifest-verifies the
-/// model, decodes `audio_b64` into a content-addressed temp file under
-/// `input_cache_dir_name` (a caller-owned namespace so a devtools call and a
-/// real Apply-Sync call against the same audio content can never collide on
-/// the same path), obtains a durable 16kHz mono WAV via
-/// `fa::ensure_durable_wav`, then delegates to the real, unmodified
-/// `fa_align`. Extracted as its own function (rather than duplicated) so the
-/// production command is provably running the exact same
-/// resolve-then-delegate path this dev command has already been live-verified
-/// against a real `AppHandle<Wry>` (D25 A1) — one implementation, two thin
-/// command wrappers.
-// One more argument than `fa_align_dev` itself (`input_cache_dir_name`), the
-// caller-owned namespace this extraction exists to parameterize — same
-// already-accepted shape as `fa_align`/`fa_align_dev`'s own
-// `#[allow(clippy::too_many_arguments)]`-worthy Tauri-command signatures
-// (AppHandle + 2 States + several plain args + a Channel is inherent to this
-// module's IPC boundary, not a design smell to fix by bundling into a
-// struct).
-#[allow(clippy::too_many_arguments)]
+/// model, obtains a durable 16kHz mono WAV via `fa::ensure_durable_wav` from
+/// the already-staged `input_path` (see `fa_stage_audio_raw` above — the
+/// caller runs that first and passes its result here), then delegates to
+/// the real, unmodified `fa_align`. Extracted as its own function (rather
+/// than duplicated) so the production command is provably running the exact
+/// same resolve-then-delegate path this dev command has already been
+/// live-verified against a real `AppHandle<Wry>` (D25 A1) — one
+/// implementation, two thin command wrappers.
 pub(crate) async fn resolve_wav_and_align(
     app: tauri::AppHandle,
     state: tauri::State<'_, FaState>,
     model_cache: tauri::State<'_, FaModelCache>,
-    audio_b64: String,
-    audio_ext_hint: String,
+    input_path: String,
     chunks: Vec<FaChunkInput>,
     language: String,
     on_event: Channel<FaEvent>,
-    input_cache_dir_name: &str,
 ) -> Result<(), FaError> {
     let model_path = fa_model_path(&app, &language)?;
     verify_model_manifest(&model_path, &language)?;
 
-    let audio_bytes = STANDARD
-        .decode(&audio_b64)
-        .map_err(|e| dev_error(format!("base64 decode failed: {e}")))?;
-
-    let input_dir = std::env::temp_dir().join(input_cache_dir_name);
-    fs::create_dir_all(&input_dir).map_err(|e| dev_error(format!("create audio input cache dir: {e}")))?;
-    let mut hasher = crate::sha256::Sha256::new();
-    hasher.update(&audio_bytes);
-    let content_key = crate::sha256::hex_digest(&hasher.finish());
-    let input_path = input_dir.join(format!("{content_key}.{}", extension_for(&audio_ext_hint)));
-    if !input_path.exists() {
-        fs::write(&input_path, &audio_bytes).map_err(|e| dev_error(format!("write audio: {e}")))?;
-    }
-
-    let wav_path = crate::fa::ensure_durable_wav(&app, &input_path).await?;
+    let wav_path = crate::fa::ensure_durable_wav(&app, Path::new(&input_path)).await?;
 
     let audio_path = wav_path.to_string_lossy().to_string();
     fa_align(app, state, model_cache, audio_path, chunks, language, on_event).await

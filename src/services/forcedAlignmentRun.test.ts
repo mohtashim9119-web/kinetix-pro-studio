@@ -67,6 +67,25 @@ const mockInvoke = invoke as unknown as Mock;
 const mockComputeFaChunkPlan = computeFaChunkPlan as unknown as Mock;
 const mockComputeUnscriptedRuns = computeUnscriptedRuns as unknown as Mock;
 
+// `runForcedAlignmentForSync` now makes TWO invoke calls in sequence:
+// 'fa_stage_audio_raw' (stages the raw audio bytes, returns a path string)
+// then 'fa_align_production' (the actual alignment, driven by `onEvent`).
+// This wires the staging call to always succeed with a fixed fake path and
+// delegates only the alignment call to `alignImpl` — so every test below can
+// keep asserting against the alignment call's behavior exactly as before the
+// staging call existed.
+const FAKE_STAGED_INPUT_PATH = '/fake-staging-dir/kinetix-fa-production-inputs/deadbeef.wav';
+function mockStageThenAlign(
+  alignImpl: (args: { onEvent: FakeChannel<unknown> }) => void | Promise<void>,
+): void {
+  mockInvoke.mockImplementation(async (cmd: string, args: unknown) => {
+    if (cmd === 'fa_stage_audio_raw') {
+      return FAKE_STAGED_INPUT_PATH;
+    }
+    return alignImpl(args as { onEvent: FakeChannel<unknown> });
+  });
+}
+
 function makeAsset(): Asset {
   return {
     id: 'vo1',
@@ -123,7 +142,14 @@ describe('runForcedAlignmentForSync — fail-clean fallback, and the reason it n
   });
 
   it('falls back when invoke rejects — the real shape of a gate-on-without-a-model run (ModelNotFound/InferenceFailed)', async () => {
-    mockInvoke.mockRejectedValue({ kind: 'modelNotFound', message: 'no model.onnx found for language "en"' });
+    // The model lookup that can fail this way lives in fa_align_production
+    // (resolve_wav_and_align), not in fa_stage_audio_raw (which only writes
+    // a file) — so staging succeeds and the alignment call is the one that
+    // rejects, exactly as it would against a real gate-on-without-a-model run.
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'fa_stage_audio_raw') return FAKE_STAGED_INPUT_PATH;
+      throw { kind: 'modelNotFound', message: 'no model.onnx found for language "en"' };
+    });
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
     expect(result).toMatchObject({ status: 'fallback', reason: 'inference-error' });
     expect(mockInvoke).toHaveBeenCalledWith('fa_align_production', expect.objectContaining({ language: 'en' }));
@@ -134,7 +160,7 @@ describe('runForcedAlignmentForSync — fail-clean fallback, and the reason it n
     // model / hash mismatch / runtime failure all arrive here, and only this
     // string tells them apart. Dropping it would put the fallback back to being
     // unattributable, which is the defect this contract change exists to fix.
-    mockInvoke.mockImplementation(async (_cmd: string, args: { onEvent: FakeChannel<unknown> }) => {
+    mockStageThenAlign((args) => {
       args.onEvent.onmessage({ event: 'Error', data: { message: 'model hash mismatch for "en"' } });
     });
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
@@ -146,7 +172,7 @@ describe('runForcedAlignmentForSync — fail-clean fallback, and the reason it n
   });
 
   it('falls back when the run completes with zero words, distinctly from an inference error', async () => {
-    mockInvoke.mockImplementation(async (_cmd: string, args: { onEvent: FakeChannel<unknown> }) => {
+    mockStageThenAlign((args) => {
       args.onEvent.onmessage({ event: 'Done', data: { words: [] } });
     });
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
@@ -187,7 +213,7 @@ describe('runForcedAlignmentForSync — fail-clean fallback, and the reason it n
 
 describe('runForcedAlignmentForSync — success path', () => {
   function resolveWithTwoWords(): void {
-    mockInvoke.mockImplementation(async (_cmd: string, args: { onEvent: FakeChannel<unknown> }) => {
+    mockStageThenAlign((args) => {
       args.onEvent.onmessage({
         event: 'Done',
         data: {
@@ -211,7 +237,7 @@ describe('runForcedAlignmentForSync — success path', () => {
   });
 
   it('passes the anchor-timed segments and raw whisper tokens straight through to computeFaChunkPlan', async () => {
-    mockInvoke.mockImplementation(async (_cmd: string, args: { onEvent: FakeChannel<unknown> }) => {
+    mockStageThenAlign((args) => {
       args.onEvent.onmessage({ event: 'Done', data: { words: [] } });
     });
     const segments = makeSegments();

@@ -1,4 +1,3 @@
-use base64::{engine::general_purpose::STANDARD, Engine};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -115,6 +114,82 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 // Commands
 // ---------------------------------------------------------------------------
 
+/// Sniffs a file extension from magic bytes — the same detection
+/// `whisper_transcribe` used to run inline on its base64-decoded bytes,
+/// extracted so `whisper_stage_audio_raw` can run it on the raw request body
+/// instead.
+fn audio_extension_from_bytes(bytes: &[u8]) -> &'static str {
+    let mime = if bytes.starts_with(b"RIFF") {
+        "audio/wav"
+    } else if bytes.starts_with(b"ID3")
+        || bytes.starts_with(b"\xff\xfb")
+        || bytes.starts_with(b"\xff\xf3")
+        || bytes.starts_with(b"\xff\xf2")
+    {
+        "audio/mpeg"
+    } else if bytes.starts_with(b"\x00\x00\x00") && bytes.get(4..8) == Some(b"ftyp") {
+        "audio/mp4"
+    } else if bytes.starts_with(b"OggS") {
+        "audio/ogg"
+    } else if bytes.starts_with(b"fLaC") {
+        "audio/flac"
+    } else if bytes.starts_with(b"FORM")
+        && (bytes.get(8..12) == Some(b"AIFF") || bytes.get(8..12) == Some(b"AIFC"))
+    {
+        "audio/aiff"
+    } else if bytes.starts_with(b"\x1a\x45\xdf\xa3") {
+        "audio/webm"
+    } else {
+        "audio/wav" // fallback — let whisper try
+    };
+
+    match mime {
+        "audio/mpeg" | "audio/mp3" => "mp3",
+        "audio/wav" | "audio/wave" | "audio/x-wav" => "wav",
+        "audio/ogg" | "audio/vorbis" => "ogg",
+        "audio/flac" | "audio/x-flac" => "flac",
+        "audio/mp4" | "audio/x-m4a" | "audio/aac" => "m4a",
+        "audio/aiff" | "audio/x-aiff" => "aiff",
+        "audio/opus" => "opus",
+        "audio/webm" => "webm",
+        _ => "wav",
+    }
+}
+
+/// Raw-binary staging command for `whisper_transcribe`'s audio input.
+///
+/// Writes the invoke request's raw body bytes to a fresh per-call temp
+/// directory and returns the resulting file's path, which the frontend then
+/// passes to `whisper_transcribe` as `audio_path`. Unlike the `audio_b64`
+/// shape this replaces, the payload is NOT base64/JSON-encoded — the
+/// frontend passes a `Uint8Array` as the invoke body (Tauri v2 raw request
+/// body). This removes the base64 encode (JS) + inflated-string IPC
+/// transfer + base64 decode (Rust) that `ffmpeg.rs`'s `ffmpeg_write_file_raw`
+/// doc comment already names as the cost this shape avoids on the export
+/// path — applied here to a whole voiceover file (potentially hundreds of MB
+/// uncompressed) instead of one export frame, where the base64+JSON
+/// round trip's ~5-8x peak memory multiplication across the JS heap and the
+/// WKWebView IPC bridge is far more likely to matter.
+#[tauri::command]
+pub fn whisper_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(data) => data,
+        tauri::ipc::InvokeBody::Json(_) => {
+            return Err("whisper_stage_audio_raw: expected a raw byte body, got JSON".to_string())
+        }
+    };
+
+    let tmp_id = Uuid::new_v4().to_string();
+    let tmp_dir = std::env::temp_dir().join(format!("kinetix-whisper-{}", tmp_id));
+    fs::create_dir_all(&tmp_dir).map_err(|e| format!("create temp dir: {e}"))?;
+
+    let audio_ext = audio_extension_from_bytes(bytes);
+    let audio_path = tmp_dir.join(format!("input.{}", audio_ext));
+    fs::write(&audio_path, bytes).map_err(|e| format!("write audio: {e}"))?;
+
+    Ok(audio_path.to_string_lossy().to_string())
+}
+
 /// Transcodes any ffmpeg-readable audio file into a 16 kHz mono WAV via the
 /// bundled ffmpeg sidecar.
 ///
@@ -167,7 +242,10 @@ pub(crate) async fn transcode_to_wav(
 /// The raw upload is first normalized to 16 kHz mono WAV via `transcode_to_wav`
 /// (see above) so whisper-cli's format limitations never apply.
 ///
-/// * `audio_b64`    — base64-encoded audio bytes (any container ffmpeg can read)
+/// * `audio_path`   — filesystem path to the raw audio file, already staged
+///                     on disk by `whisper_stage_audio_raw` (any container
+///                     ffmpeg can read). Its parent directory is this call's
+///                     own temp dir, removed on completion below.
 /// * `duration_secs` — total audio duration (drives 0–100 progress)
 /// * `language`     — a whisper language code (e.g. "en"), or "auto" to let
 ///                     whisper-cli detect it (Phase 2a — H.1/H.7: detection is
@@ -179,7 +257,7 @@ pub(crate) async fn transcode_to_wav(
 pub async fn whisper_transcribe(
     app: tauri::AppHandle,
     state: tauri::State<'_, WhisperState>,
-    audio_b64: String,
+    audio_path: String,
     duration_secs: f64,
     language: String,
     on_event: Channel<WhisperEvent>,
@@ -192,55 +270,11 @@ pub async fn whisper_transcribe(
         }
     }
 
-    let audio_bytes = STANDARD
-        .decode(&audio_b64)
-        .map_err(|e| format!("base64 decode: {e}"))?;
-
-    let tmp_id = Uuid::new_v4().to_string();
-    let tmp_dir = std::env::temp_dir().join(format!("kinetix-whisper-{}", tmp_id));
-    fs::create_dir_all(&tmp_dir).map_err(|e| format!("create temp dir: {e}"))?;
-
-    // Detect audio format from magic bytes, map to MIME, then resolve extension
-    let mime = if audio_bytes.starts_with(b"RIFF") {
-        "audio/wav"
-    } else if audio_bytes.starts_with(b"ID3")
-        || audio_bytes.starts_with(b"\xff\xfb")
-        || audio_bytes.starts_with(b"\xff\xf3")
-        || audio_bytes.starts_with(b"\xff\xf2")
-    {
-        "audio/mpeg"
-    } else if audio_bytes.starts_with(b"\x00\x00\x00")
-        && audio_bytes.get(4..8) == Some(b"ftyp")
-    {
-        "audio/mp4"
-    } else if audio_bytes.starts_with(b"OggS") {
-        "audio/ogg"
-    } else if audio_bytes.starts_with(b"fLaC") {
-        "audio/flac"
-    } else if audio_bytes.starts_with(b"FORM")
-        && (audio_bytes.get(8..12) == Some(b"AIFF") || audio_bytes.get(8..12) == Some(b"AIFC"))
-    {
-        "audio/aiff"
-    } else if audio_bytes.starts_with(b"\x1a\x45\xdf\xa3") {
-        "audio/webm"
-    } else {
-        "audio/wav" // fallback — let whisper try
-    };
-
-    let audio_ext = match mime {
-        "audio/mpeg" | "audio/mp3"                  => "mp3",
-        "audio/wav"  | "audio/wave" | "audio/x-wav" => "wav",
-        "audio/ogg"  | "audio/vorbis"               => "ogg",
-        "audio/flac" | "audio/x-flac"               => "flac",
-        "audio/mp4"  | "audio/x-m4a" | "audio/aac" => "m4a",
-        "audio/aiff" | "audio/x-aiff"               => "aiff",
-        "audio/opus"                                 => "opus",
-        "audio/webm"                                 => "webm",
-        _                                            => "wav",
-    };
-
-    let audio_path = tmp_dir.join(format!("input.{}", audio_ext));
-    fs::write(&audio_path, &audio_bytes).map_err(|e| format!("write audio: {e}"))?;
+    let audio_path = PathBuf::from(audio_path);
+    let tmp_dir = audio_path
+        .parent()
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(std::env::temp_dir);
 
     // Universal pre-transcode: normalize the upload (any ffmpeg-readable
     // container/codec) into 16 kHz mono WAV before whisper-cli runs. On failure,
