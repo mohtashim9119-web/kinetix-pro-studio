@@ -274,7 +274,14 @@ interface KnownBadRow {
    *  production path (`scripts/ws1-ear-pass-ledger.ts`, sitting
    *  `live-runs-s`). A future origin adds a member here rather than being
    *  forced into one of these. */
-  origin: 'ear-12' | 'ov3-triage' | 'ear-12-h' | 'r12-structural' | 'session-p-live' | 'live-runs-s';
+  origin: 'ear-12' | 'ov3-triage' | 'ear-12-h' | 'r12-structural' | 'session-p-live' | 'live-runs-s'
+    // WS1 Session AE: two more sittings become register origins. `'ear-173-x'`
+    // = WS1 Session X's full 173 listening pass, whose five defects had lived
+    // in `ws1-ear-pass-ledger.ts` for two sessions WITHOUT a register row —
+    // the ledger knew about them and the register did not, which is exactly
+    // the drift the two structures exist to make impossible. `'ear-verify-ae'`
+    // = this session's own sitting, which found `008_unknown_void`.
+    | 'ear-173-x' | 'ear-verify-ae';
   /** The ear-pass item number — ONLY for `origin: 'ear-12'`. */
   item?: number;
   corpus: Corpus;
@@ -650,6 +657,104 @@ const KNOWN_BAD: KnownBadRow[] = [
     status: 'open',
     note: '',
   },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION AE — SIX ROWS ENTER. The register grows 8 -> 14, deliberately,
+  // with `REGISTER_HIGH_WATER` raised in this same commit and six roster
+  // appends beside it — the growth ceremony the shrink-only guard exists to
+  // force.
+  //
+  // FIVE OF THE SIX ARE NOT NEW DEFECTS. They are WS1 Session X's own 173
+  // listening pass (`ws1-ear-pass-ledger.ts`, sitting `ear-173-x`), which
+  // scored five boundaries EARLY and NAMED each one's correct value — and
+  // whose rows never reached this register. For two sessions the ledger has
+  // recorded five ear-verified 173 defects that the register reported as
+  // nonexistent, and the register's own perfection arithmetic for 173 was
+  // computed without them. Entering them is a CORRECTION OF THE RECORD, not a
+  // discovery: `origin: 'ear-173-x'` says so, and the high-water raise is
+  // therefore not evidence that the pipeline got worse.
+  //
+  // THE SIXTH, `008_unknown_void`, IS genuinely new — see its own note.
+  // -------------------------------------------------------------------------
+  {
+    id: 'ae-008-unknown-void', origin: 'ear-verify-ae', corpus: 'v6', tag: '008_unknown_void',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 23.13, earCorrect: 23.46,
+    mechanism: 'The Class B / R.14 placement family, measured (WS1 Session AE Step 1): FA claims the ' +
+      'incoming segment\'s first word "you" at [23.14, 23.28] with confidence 8.5e-8, INSIDE the real ' +
+      '[23.10, 23.80] silence; the word gap against the outgoing segment\'s last word ("outside", ' +
+      'confidence 1.000, ends 23.12) is one 20ms aligner frame wide, and the commit lands at that gap\'s ' +
+      'midpoint. ordinalDelta 0 — nobody\'s words are on the wrong side, so this is placement, not ' +
+      'attribution.',
+    status: 'open',
+    note: 'HOW THIS ROW WAS FOUND, recorded because the finding mechanism is itself a negative result. ' +
+      'A PROPOSED 0.028 amplitude floor flagged this boundary; the ear pass that followed found the ' +
+      'flagged boundary DEFECTIVE. That makes the 0.028 floor a lead, not a validated detector — it ' +
+      'produced one true positive with no measured false-positive rate, and a floor that flags a bad ' +
+      'boundary has demonstrated nothing about its ability to leave good ones alone. THE 0.028 FLOOR IS ' +
+      'REJECTED AND NOT SHIPPED; the 0.05 floor in force is not lowered either. What this session ' +
+      'ingests is the ear verdict alone.',
+  },
+  {
+    id: 'x173-lethal-nature-hazard', origin: 'ear-173-x', corpus: '173', tag: 'lethal_nature_hazard',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 18.51, earCorrect: 19.27,
+    mechanism: 'WRONG-LANDMARK class (WS1 Session AE Step 1). The committed value is the exact midpoint ' +
+      'of a REAL detected silence [18.32, 18.70] — it is simply the wrong silence: an intra-utterance ' +
+      'pause, not the seam. The seam\'s own word gap ["worst" ends 18.68, "because" starts 19.30] ' +
+      'contains no detected silence at all, and the ear-correct 19.27 sits at fraction 0.952 of it. ' +
+      'ordinalDelta 0 with a RELIABLE (0.966) incoming anchor — neither R.14 (which requires an ' +
+      'unreliable incoming anchor) nor R.15 (which requires a negative ordinal) claims it.',
+    status: 'open',
+    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); this is the register catching up.',
+  },
+  {
+    id: 'x173-iron-bounce', origin: 'ear-173-x', corpus: '173', tag: 'iron_bounce',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 75.66, earCorrect: 76.59,
+    mechanism: 'ATTRIBUTION class (WS1 Session AE Step 1), ordinalDelta -2: the outgoing segment\'s own ' +
+      'final two words ("thick" @76.18, "enough" @76.38, both confidence >=0.963) start AFTER the ' +
+      'committed boundary, so they are played under the incoming scene. The committed value is again a ' +
+      'real silence\'s midpoint ([75.50, 75.82]) — the wrong one.',
+    status: 'open',
+    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); this is the register catching up.',
+  },
+  {
+    id: 'x173-wall-split-path', origin: 'ear-173-x', corpus: '173', tag: 'wall_split_path',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 161.33, earCorrect: 162.15,
+    mechanism: 'ATTRIBUTION class, ordinalDelta -2 — the same shape as `iron_bounce`. THE ONE ROW WHOSE ' +
+      'EAR TARGET NO SCRIPT-ANCHORED PLACEMENT CAN REACH: 162.15 sits STRICTLY INSIDE the outgoing ' +
+      'segment\'s own last claimed word "competing" [161.96, 162.42], confidence 1.000, and the script ' +
+      '(`sync.txt`) does put "competing" in `orientation_conflict` — so honouring 162.15 exactly means ' +
+      'cutting a full-confidence word in half. The word gap opens at 162.42. Independently reproduced ' +
+      'by WS1 Sessions Y and Z, which recorded the same refutation.',
+    status: 'open',
+    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); this is the register catching up.',
+  },
+  {
+    id: 'x173-logic-clash', origin: 'ear-173-x', corpus: '173', tag: 'logic_clash',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 417.15, earCorrect: 418.14,
+    mechanism: 'ATTRIBUTION class, ordinalDelta -1: the outgoing segment\'s own last word "laws" ' +
+      '[417.18, 417.28] starts after the committed boundary. Committed sits on the midpoint of the real ' +
+      'but wrong silence [417.00, 417.30]; the seam\'s word gap is [417.28, 418.16] and the ear-correct ' +
+      '418.14 is one aligner frame before "governing" (confidence 0.999).',
+    status: 'open',
+    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); this is the register catching up.',
+  },
+  {
+    id: 'x173-gadget-decay', origin: 'ear-173-x', corpus: '173', tag: 'gadget_decay',
+    owningRule: 'unassigned', closingCommit: '',
+    faValue: 427.48, earCorrect: 427.60,
+    mechanism: 'WRONG-LANDMARK class, ordinalDelta 0 with a reliable (0.959) incoming anchor — the same ' +
+      'shape as `lethal_nature_hazard`. The smallest correction in the register at 0.12s: the ear-correct ' +
+      'value sits 0.06s PAST the incoming segment\'s own first word onset (427.54), i.e. past the word ' +
+      'gap entirely, which is why a right-edge-minus-pre-roll rule cannot reach it either (independently ' +
+      'recorded by WS1 Sessions Y and Z).',
+    status: 'open',
+    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); this is the register catching up.',
+  },
 ];
 
 // ===========================================================================
@@ -743,6 +848,15 @@ const REGISTER_ROSTER = [
   // reopening `r12-266-forty-one-burden` (a claim about the fixture, still
   // green). See that entry's own comment in KNOWN_BAD.
   's-266-live-path-collision',
+  // WS1 Session AE — the register REOPENS at 14 and closes to 7 in the same
+  // session. Six new roster members: five are WS1 Session X's 173 defects,
+  // ear-scored two sessions ago and never entered here (the register was
+  // reporting 173 as defect-free while the ledger held five named defects for
+  // it); the sixth, `ae-008-unknown-void`, is genuinely new. See their own
+  // KNOWN_BAD entries.
+  'ae-008-unknown-void',
+  'x173-lethal-nature-hazard', 'x173-iron-bounce', 'x173-wall-split-path',
+  'x173-logic-clash', 'x173-gadget-decay',
 ] as const;
 
 /** High-water mark for the OPEN manifest.
@@ -957,7 +1071,12 @@ const REGISTER_ROSTER = [
  *  this session is the first to populate `'fixed'` on a currently-live row,
  *  which is why the two numbers (constant vs. open count) diverge for the
  *  first time since the type was declared. */
-const REGISTER_HIGH_WATER = 15;
+// WS1 SESSION AE: 15 -> 21. `KNOWN_BAD.length` (the coherence test's own
+// equality) grows by the six rows added above; the OPEN count — what the
+// shrink-only guard actually reads — goes 8 -> 14 on ingestion and 14 -> 7
+// once R.14/R.15 land in this same session. Raised deliberately, with the six
+// roster appends and the docs row the guard's own failure message demands.
+const REGISTER_HIGH_WATER = 21;
 
 /** Entries CONVERTED out of KNOWN_BAD, each carrying the positive assertion
  *  that replaced its known-bad pin. This is what makes deletion impossible:
@@ -1203,7 +1322,7 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // KNOWN_BAD (the shrink-only guard below should have caught it first) or a
   // row this test expects still open was silently closed without moving to
   // CLOSED_BY_POSITIVE_ASSERTION.
-  it('the Zero-Defect Register holds exactly the eight rows WS1 Session V left open', () => {
+  it('the Zero-Defect Register holds exactly the rows WS1 Session AE left open', () => {
     // WS1 SESSION V — seven rows move 'open' -> 'fixed' (NOT removed from
     // KNOWN_BAD, NOT converted to CLOSED_BY_POSITIVE_ASSERTION — that would
     // require matching the frozen fixture, which is deliberately
@@ -1215,10 +1334,19 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
     // `383` re-confirmed at 1189.05. Only the eight Class A/B rows, which
     // Session R found structurally invisible to every placement-side signal
     // built so far, remain open.
+    //
+    // WS1 SESSION AE — the open set is 14 as of the ground-truth ingestion
+    // commit: Session V's eight, plus `008_unknown_void` (new) and the five
+    // 173 rows WS1 Session X's ear pass named two sessions ago and that this
+    // register never carried. The R.14/R.15 commit that follows takes it to
+    // seven; this expectation moves with it, in that commit, deliberately.
     const EXPECTED_OPEN = [
       'classA-214-solitary-fire', 'classA-231-slowing-pace', 'classA-447-scout-facing-dark',
       'classB-056-dropping-torch', 'classB-167-smell-of-butchery', 'classB-286-fact-to-act',
       'classB-400-endless-dark', 'classB-403-vigilant-embers',
+      'ae-008-unknown-void',
+      'x173-lethal-nature-hazard', 'x173-iron-bounce', 'x173-wall-split-path',
+      'x173-logic-clash', 'x173-gadget-decay',
     ];
     expect(
       KNOWN_BAD.filter(k => k.status === 'open').map(k => k.id).sort(),

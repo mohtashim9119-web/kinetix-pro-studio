@@ -119,6 +119,25 @@ export const EAR_SITTINGS = {
    *  sitting's own row-0 notes for the 450.99 supersession this pass surfaced
    *  while reconciling item-7 against the ledger. */
   'ear-verify-ad': 10,
+  /** WS1 Session AE — the operator's A/B (side-by-side candidate comparison)
+   *  pass that surfaced `008_unknown_void`, a v6 defect NO candidate list had
+   *  ever carried: it was found only because a proposed 0.028 amplitude floor
+   *  flagged the boundary, and the listening pass that followed found the
+   *  boundary itself defective. THE FLOOR IS REJECTED AND IS NOT SHIPPED, and
+   *  the distinction matters enough to record here rather than only in the
+   *  session narrative: a detector that flags a boundary which turns out to be
+   *  DEFECTIVE has not demonstrated it can tell a good boundary from a bad one
+   *  — it has produced one true positive with no measured false-positive rate,
+   *  which is a lead, not a detector. The 0.05 floor already in force is
+   *  likewise not lowered. What is ingested from this sitting is the EAR
+   *  VERDICT alone.
+   *
+   *  This sitting also re-states, without re-scoring, that WS1 Session X's
+   *  `ear-173-x` rows for 173's five defects (5-6, 21-22, 42-43, 104-105,
+   *  106-107) were checked value-for-value against the session brief's own
+   *  ground-truth list and are IDENTICAL — no row is overwritten, and none
+   *  needed to be. */
+  'ear-verify-ae': 11,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -589,6 +608,30 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
       'amplitude already clears the still-playing checker\'s 0.05 floor, unlike at the replay bundle\'s ' +
       '16kHz rate — detection improves independent of any threshold change; this row\'s CORRECTION ' +
       'status (the target above) is unaffected either way.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION AE — one NEW v6 defect, method A/B, operator-attributed.
+  //
+  // `008_unknown_void` had never appeared on any candidate list, in any
+  // sitting, in this file's whole history. It was reached only because a
+  // PROPOSED 0.028 amplitude floor flagged it — and the listening pass then
+  // found the flagged boundary itself defective. See this sitting's own note
+  // in `EAR_SITTINGS` for why that makes the 0.028 floor evidence of nothing
+  // and why it is rejected rather than shipped.
+  //
+  // Structurally this row is the same defect family as the five Class B rows
+  // above, measured (WS1 Session AE Step 1): FA smears the incoming segment's
+  // opening words BACKWARD across a real 0.70s silence with confidence 8.5e-8,
+  // the word gap collapses to a single 20ms aligner frame, and the commit
+  // lands at that gap's midpoint (23.13) instead of the silence's own (23.45).
+  // -------------------------------------------------------------------------
+  { sitting: 'ear-verify-ae', corpus: 'v6', tag: '008_unknown_void', scoredValue: 23.13, verdict: 'EARLY',
+    note: 'The committed value. Confirmed EARLY — the cut lands 0.03s into the [23.10, 23.80] silence, ' +
+      'while "You do not know what it is." has not begun.' },
+  { sitting: 'ear-verify-ae', corpus: 'v6', tag: '008_unknown_void', scoredValue: 23.46, verdict: 'CORRECT',
+    note: 'Target. A/B-confirmed CORRECT against 23.13. Sits 0.01s off the [23.10, 23.80] silence\'s own ' +
+      'midpoint (23.45) — the same whole-silence-midpoint family `ear-verify-t` validated on six rows and ' +
+      '`ear-verify-ad` on five more, landing on a value nobody had computed when the sitting was run.' },
 ];
 
 /** Default match tolerance — the Zero-Defect Register's own. */
