@@ -88,6 +88,11 @@ const ALLOWLIST = new Set<string>([
   // test's own stated purpose (run sheets are worked THROUGH, not read) both
   // apply to it exactly as they do to its Session K/S siblings above.
   'docs/ws1-sync-pipeline/stage1-session-w-173-ear-list.md',
+  // WS1 Session AC's open-Class-A/B ear list — same class again: a run sheet
+  // worked THROUGH against the audio (ffplay commands per row), sealed CAPTURE
+  // ONLY with blank Ear Verdict/Class columns. Its RESULTS go to
+  // docs/work-in-progress.md §11 and scripts/ws1-ear-pass-ledger.ts.
+  'docs/ws1-sync-pipeline/stage1-session-ac-ear-list.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
