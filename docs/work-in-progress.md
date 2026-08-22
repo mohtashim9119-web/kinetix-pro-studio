@@ -5269,6 +5269,45 @@ INFERRED; "I could not determine X" preferred over fabrication.
 
 ---
 
+### §11b. WS1 Session Y — RESULTS
+
+**Phases 1-2 executed; Phase 3 designed but not implemented; Phase 4a blocked as planned.** Full
+narrative: `sync-pipeline-v2-plan.md`'s "Part T" (append-only decisions log). Summary:
+
+**Phase 1.** `load_session` (`src-tauri/src/fa_onnx.rs:390-406`) now pins
+`with_intra_threads(1)`/`with_inter_threads(1)`/`with_parallel_execution(false)`/
+`with_deterministic_compute(true)`. New `#[cfg(test)] mod phase1_determinism` in the same file:
+3 independent pinned-session runs on real 173/v6 production audio+chunks measured
+BYTE-IDENTICAL both corpora. The mutation control (same window, pre-Session-Y unpinned session
+construction) was ALSO byte-identical on this hardware — the mutation did not turn RED, so
+Session X's live-vs-regen divergence is not reproduced by this in-process windowed replay in
+either configuration; the mechanism stays INFERRED. Both tests are permanent, `#[ignore]`d (run
+via `cargo test --features fa-inference --lib phase1_determinism -- --ignored`).
+
+**Phase 2.** Script-anchored word-gap hypothesis tested on 173's 5 real defects (properly
+attributed via each row's true left/right segment text, not proximity to the — often wrong —
+committed value): 3/5 have ear-correct inside the true interval, biased to the interval's right
+edge (fractions 0.75-0.98, not the geometric midpoint); 2/5 refute it outright. v6's 15 register
+rows hit widespread near-zero FA confidence at the interval's own edge words, making that
+measurement unreliable rather than a clean test. **Ships nothing** — no GEOMETRIC placement
+constant derived or landed. `faAnchors.ts` untouched.
+
+**Phase 3.** Not implemented — no driving rule change from Phase 2, and a propose/arbitrate
+rewrite of the hash-pinned, 2465-test-covered rule stage deserves its own dedicated session, not
+a rushed pass at the end of an already-large one. Deferred deliberately (see sync-pipeline-v2-
+plan.md Part T(d) for the two reasons).
+
+**Phase 4a.** Blocked per §11a's own scope decision — not attempted.
+
+**Six numbers.** `npm test` — see this session's own floor re-run below. `tsc --noEmit` clean.
+`cargo check --features fa-inference` clean. `cargo clippy --features fa-inference --all-targets`
+clean, 4 pre-existing warnings (unchanged). `cargo test` 141 passed/0 failed/1 ignored. `cargo
+test --features fa-inference` 216 passed/0 failed/23 ignored (+2 ignored vs. Session X's 21 —
+this session's own two new determinism tests, both real, both pass when run explicitly with
+`-- --ignored`). Golden replay 6/6. `faAnchors.ts` sha256 unchanged, `b61e94cb…`.
+
+---
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -5326,6 +5365,26 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-22 — WS1 Session Y: engine determinism PINNED and PROVEN byte-identical (mutation
+  control inconclusive); script-anchored word-gap placement hypothesis tested on real ground
+  truth, MIXED result, SHIPS NOTHING; propose/arbitrate rule rebuild DESIGNED, not implemented;
+  Phase 4a BLOCKED as planned. No register row opened or closed, `faAnchors.ts` untouched.**
+  Full narrative: `sync-pipeline-v2-plan.md`'s Part T; results summary: `docs/work-in-progress.
+  md` §11b. `fa_onnx.rs`'s `load_session` (`src-tauri/src/fa_onnx.rs:390-406`) now pins ONNX
+  Runtime to single-threaded/sequential/deterministic execution; 3 independent runs on real
+  173/v6 production audio MEASURED byte-identical (new permanent `#[ignore]`d test,
+  `phase1_determinism` module, same file) — but the mutation control (same window, pre-fix
+  unpinned construction) was ALSO byte-identical on this hardware, so Session X's live-vs-regen
+  divergence stays INFERRED, not confirmed by this session. The word-gap hypothesis: 3/5 of
+  173's real defects have ear-correct inside the true (project-text-attributed, not naive-
+  proximity) interval, biased to the interval's right edge rather than the geometric midpoint;
+  2/5 refute it outright; v6's 15 rows hit widespread near-zero-confidence anchor words, making
+  that measurement unreliable rather than a clean pass/fail. Floors: `npm test` 2465/23/0
+  (unchanged, no TS/JS touched), `tsc` clean, `cargo check --features fa-inference` clean,
+  clippy 4 pre-existing warnings (unchanged), `cargo test` 141/0/1, `cargo test --features
+  fa-inference` 216/0/23 (+2 ignored, this session's own two new tests), golden replay 6/6,
+  `faAnchors.ts` sha256 unchanged `b61e94cb…`.
 
 - **2026-08-22 — WS1 Session Y: plan recorded (§11a) before execution — engine determinism,
   script-anchored word-gap placement, propose/arbitrate rule rebuild, and an 8-corpus gate.**

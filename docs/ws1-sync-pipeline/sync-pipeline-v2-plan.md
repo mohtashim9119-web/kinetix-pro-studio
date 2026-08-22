@@ -6915,3 +6915,102 @@ arbitrate rule-stage refactor remains scheduled, not started. `snapBoundaries.ts
 `scripts/fixtures/phase4-baseline-*.csv` were not touched; `phase4-fa-second-baseline-v6-
 segments.csv` remains deliberately unregenerated and therefore stale for the five R.12 rows and
 `266`/`383` — closure this session is against live, not fixture. Golden replay 6/6 byte-identical.
+
+## Part T — Engine Determinism Pinned and Proven; the Word-Gap Placement Hypothesis Only Partially
+Holds and Ships Nothing (WS1 Session Y, 2026-08-22, append-only)
+
+**Scope executed: Phases 1-2 of the session's own four-phase plan (`docs/work-in-progress.md`
+§11a). Phase 3 (propose/arbitrate rule-stage rebuild) is designed but NOT implemented this
+session — see (d). Phase 4a (5 new WPM corpora) is blocked — no TTS/audio tooling available;
+recorded in §11a before execution began, not re-litigated here.**
+
+**(a) PHASE 1 — DETERMINISM PINNED, PROVEN BYTE-IDENTICAL, MUTATION INCONCLUSIVE.**
+`fa_onnx.rs`'s `load_session` (`src-tauri/src/fa_onnx.rs:390-406`, pre-Session-Y) built its ONNX
+`Session` with zero thread/execution-mode/determinism configuration — ORT's own defaults. Now
+pins `with_intra_threads(1)`, `with_inter_threads(1)`, `with_parallel_execution(false)`,
+`with_deterministic_compute(true)` (all confirmed present on the pinned `ort = "2.0.0-rc.13"` via
+the vendored crate source). Proof: a new `#[cfg(test)] mod phase1_determinism` in the same file
+runs `align_chunked` 3x independently (fresh `Session` each time, forcing a real
+`load_session` reload, not a warm cache) on REAL production audio+chunks for both 173
+(`.work-phase4/replay/173`, window [161.46,194.22) — the real production chunk boundaries either
+side of the "45-46" `vessel_damage_clue` divergence) and v6 (`.work-phase4/replay/v6`, window
+[0,25.5)). **MEASURED: all 3 runs byte-identical, both corpora** (`cargo test --features
+fa-inference --lib phase1_determinism::pinned_session_is_byte_identical_173_and_v6 -- --ignored
+--nocapture`, 83.6s).
+
+**Adjudication of 45-46, SCOPED HONESTLY.** Under the pinned engine, replaying the frozen
+2026-08-19 input arm 3x always lands "chemical" at [172.700,173.100] confidence 1.53e-6 — the
+LOW-CONFIDENCE character Session X called "regen," not the LIVE run's [173.42,173.78] confidence
+0.983. This is the RAW FA WORD-ALIGNMENT LAYER only — the sync engine's actual committed boundary
+(174.74 vs 172.91) is produced by downstream rule logic (silence detection, R.12, etc.) this test
+does not re-run, so **this does NOT by itself prove the final committed value would move** — it
+proves the word-evidence FA now hands downstream is deterministically the low-confidence reading
+for this frozen arm, not that 174.74 is now unreachable by the full pipeline.
+
+**Mutation control, RUN, INCONCLUSIVE — reported plainly rather than suppressed.** A second test
+(`unpinned_session_control_173`) replays the SAME 173 window 3x through a reconstructed PRE-
+Session-Y unpinned session (bare `Session::builder()`, no pinning) as a standing check that the
+pinned test isn't vacuously passing. **MEASURED: the unpinned path was ALSO byte-identical on
+this window, this hardware.** The mutation did not turn RED. This means Session X's live-vs-regen
+divergence is NOT reproduced by an in-process, windowed, same-machine replay in either
+configuration — the actual mechanism remains INFERRED, not confirmed by this session either. Both
+tests are permanent (`#[ignore]`, run via `cargo test --features fa-inference --lib
+phase1_determinism -- --ignored`), so a future full-file or cross-process reproduction attempt has
+a fixed baseline to build on.
+
+**(b) PHASE 2 — THE HYPOTHESIS TESTED ON REAL GROUND TRUTH, MIXED RESULT, SHIPS NOTHING.**
+Tested per-row, using each row's actual project-text left/right segment (from
+`golden_baseline_segments.json`'s `tag`/`text`/`order` fields, cross-referenced against real FA
+words in `fa_production_words.json` by text content near the row's own timestamp, NOT by naive
+timestamp proximity — an early naive-proximity pass was run first, found to silently misattribute
+4 of 5 defect rows to the wrong word gap, and was discarded before any table below was written).
+
+*173's 5 real defects (5-6, 21-22, 42-43, 104-105, 106-107 — the boundary is INTO the named
+segment, its true left neighbor is the PRECEDING segment in `order`, not the segment itself):*
+3/5 have the ear-correct value falling inside the true [left-segment-last-word-end,
+right-segment-first-word-start] interval (fractions 0.750-0.977 — near the RIGHT edge, not the
+geometric midpoint); 2/5 refute it outright — `wall_split_path`'s ear-correct value (162.15) sits
+BEFORE the interval even opens (162.42), landing mid-word inside "competing" itself; `gadget_decay`
+sits just past the interval's right edge (fraction 1.5).
+
+*173's 19 controls:* trivially 19/19 "in gap" — committed equals ear-correct for a control by
+definition, so this direction does not independently test the hypothesis (recorded honestly rather
+than presented as 19 confirmations).
+
+*v6's 15 register rows (7 closed, 8 open):* the SAME rigorous n-gram-anchored method was applied,
+but the majority of rows' right-edge anchor word landed at near-zero FA confidence (1e-7 to 1e-5,
+the same collapsed-confidence signature Session X flagged for 45-46) — meaning the interval's own
+edge timestamp is not evidence this codebase's own invariant ("timestamps must never decide
+identity") licenses trusting. Reported as MEASURED-BUT-UNRELIABLE rather than folded into a clean
+pass/fail count: 8/15 committed and 3/15 ear-correct fell inside the naive interval, but this
+number is not a clean test of the hypothesis given the confidence contamination.
+
+**Verdict: hypothesis SHIPS NOTHING.** Even where the interval contains the ear-correct value, the
+placement is NOT near the geometric midpoint the plan's own Phase 2 spec proposed testing — no
+GEOMETRIC constant is derived or shipped. Consistent with Session S's own precedent: when no
+principled candidate reproduces every known-correct row, ship nothing and record the negative.
+`faAnchors.ts` untouched, sha256 unchanged.
+
+**(c) SUBSUMPTION.** Not applicable — no rule shipped this session, so R.11's firings, R.12's
+corrections, and the seven Session V closures are unaffected by construction (nothing in the rule
+stage changed).
+
+**(d) PHASE 3 — DESIGNED, NOT IMPLEMENTED. Deferred deliberately, not silently dropped.** Two
+reasons, both load-bearing: (1) Phase 2 produced no new placement rule to route through a
+propose/arbitrate arbiter, so there is no concrete change to drive the rebuild against this
+session — building the arbiter speculatively, with nothing real flowing through it, risks
+designing to an imagined shape rather than the real one. (2) The rule stage is hash-pinned
+(`faAnchors.ts`, `b61e94cb…`) and covered by 2465 passing tests plus a byte-identical golden
+replay across 447 v6 boundaries — a propose/arbitrate rewrite touching every existing rule's
+(R.5/R.10/R.11/R.12/R-AP) integration point is a genuine regression-risk undertaking that this
+already-large session's remaining budget could not do carefully. Scheduled for a dedicated future
+session with a concrete driving change (from a landed Phase 2 result or a fresh Class A/B
+detector) to build the arbiter against, per this file's own existing "remains scheduled, not
+started" note above (Session V, Part 1).
+
+**(e) FLOORS, RE-VERIFIED AT HEAD.** `npm test`, `tsc --noEmit`, `cargo check --features
+fa-inference`, `cargo clippy --features fa-inference --all-targets` (4 pre-existing warnings,
+unchanged), `cargo test` (141/0/1), `cargo test --features fa-inference` (216/0/23 — the +2
+ignored are this session's own two new determinism tests, both real and both passing when run
+explicitly). Golden replay 6/6. Zero movement across all 447 v6 boundaries. `faAnchors.ts` sha256
+unchanged. Full numbers: `docs/work-in-progress.md`'s Session Y Changelog entry.
