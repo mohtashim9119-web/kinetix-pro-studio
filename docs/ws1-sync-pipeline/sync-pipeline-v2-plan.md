@@ -8196,3 +8196,235 @@ ignored (unchanged). `cargo test --features fa-inference` 216 passed/0 failed/24
 `scripts/` files (`ws1-session-ad-step4-classA.py`, `ws1-session-ad-step6-classB.test.ts`, neither
 in the default sweep), plus this document, `docs/work-in-progress.md` (§11g + Changelog) and
 `project-state.md` — no `src/` or `src-tauri/` file touched.
+
+---
+
+## Part Z — The Ordinal Split: Two Rules Ship (R.14 / R.15), Class B Closes, Native Rate Was Already Shipped (WS1 Session AE, 2026-08-23, append-only)
+
+**Scope, stated first.** The brief restricted this session to Class A and Class B on v6 and 173.
+Idle exit criteria, the Spanish reopening trigger, the D-1 regression checklist, Contract IN / 1→2
+verification, inspector smear thresholds and the WPM tier suite are all recorded as DEFERRED in
+`docs/work-in-progress.md` §11 and no work was done on any of them.
+
+### Z.1 — Ground truth ingested; the register had been under-reporting 173 for two sessions
+
+`008_unknown_void` (v6): committed 23.13, ear-correct 23.46, EARLY CUT. Ingested as
+`ws1-ear-pass-ledger.ts` sitting `ear-verify-ae` (order 11). **The 0.028 amplitude floor that
+surfaced it is REJECTED and is not shipped, and the 0.05 floor in force is not lowered.** The
+reasoning is recorded in the ledger and the register rather than only here: the floor flagged a
+boundary that turned out to be *defective*, which makes it one true positive with no measured
+false-positive rate — a lead, not a detector. A floor that flags a bad boundary has demonstrated
+nothing about its ability to leave good ones alone.
+
+173's five defects (5-6 18.51→19.27, 21-22 75.66→76.59, 42-43 161.33→162.15, 104-105
+417.15→418.14, 106-107 427.48→427.60) were checked value-for-value against the brief's list:
+**all five already present and identical**, under WS1 Session X's `ear-173-x` sitting. Nothing was
+overwritten. The nine Session AD rows are likewise present and unchanged, and a fresh
+production-path probe reconfirms the pipeline still commits every value that sitting rejected.
+
+What *was* wrong is the register, not the ledger: none of those five 173 rows had ever been entered
+into `KNOWN_BAD`, so for two sessions the register reported 173 as defect-free while the ledger held
+five named 173 defects, and 173's perfection arithmetic was computed without them. **Register open
+count: 8 before ingestion → 14 after** (five 173 rows, `origin: 'ear-173-x'`, plus
+`ae-008-unknown-void`), `REGISTER_HIGH_WATER` 15 → 21, six roster appends. Six rows added is a
+correction of the record, not evidence the pipeline got worse.
+
+### Z.2 — The interval word census: one integer splits the defect population
+
+Every committed boundary in all three corpora (645 rows), classified against the ledger rather than
+a hand-written list. The interval-word count does **not** separate Class A from Class B (Class A 2-5
+words, Class B 1-2, overlapping at 2 — **no separation margin exists**). This does:
+
+```
+ordinalDelta := (index of the last FA token whose ONSET precedes the committed boundary)
+                - (the left segment's own last claimed token index)
+```
+
+| corpus | boundaries | ordinalDelta < 0 | of which known defects |
+|---|---|---|---|
+| v6 | 446 | **0** | — |
+| 173 | 172 | **4** | 3 |
+| spanish | 26 | **0** | — |
+
+**The split runs the opposite way to the brief's expectation.** The attribution class (words on the
+wrong side of the cut) is 173's, three rows; the placement class is v6's, nine of its ten. The gate
+the brief specified ("if ordinalDelta is 0 for all 173 defects, treat 173 as a separate placement
+problem") **does not fire** — it is 0 for two of 173's five, not all five.
+
+**Reconciliation with WS1 Session W's zero-misattribution finding for seams 5-6, 6-7, 7-8: THERE IS
+NO CONTRADICTION, and neither measurement was wrong.** That finding covered exactly those three
+seams. This session measures seam 5-6 (`lethal_nature_hazard`) at ordinalDelta **0** — agreeing with
+it exactly — and 6-7/7-8 are ear-CORRECT controls. The three rows with a negative ordinal (21-22,
+42-43, 104-105) were never in that check's scope; two of the three were not on any candidate list at
+all until the operator's full listen-through found them.
+
+**Directional bias, quantified: all 15 known defects are EARLY CUTS. No counter-example exists in
+any corpus.** Deltas run +0.12s to +1.83s. The pipeline does not cut late.
+
+**Reachability under the reliability line, answered plainly.** All ten v6 defects have an incoming
+anchor below 0.056, and eight of the ten have a *left* anchor below it too. **A detector requiring
+two reliable anchors reaches 0 of 10.** The shipped R.14 therefore requires the incoming anchor to
+be UNRELIABLE — it treats sub-threshold confidence as the symptom, not as a disqualification. The
+reachable fraction is consequently 9/10 on the ordinal conjunct and 8/10 after the gap conjunct.
+
+### Z.3 — Native-rate decode: HOLD, nothing to ship
+
+`silenceDetector.ts` already decodes the original voiceover through `AudioContext.decodeAudioData`
+and reads channel 0 — the device's native rate — and the production-path harness has consumed
+`silences_native.json` since WS1 Session P. The only 16 kHz signal anywhere is the replay bundle's
+own capture, and the only production consumer whose numbers move with rate is
+`validateBoundaryQuality`'s amplitude probe, which is detection-only and moves no boundary.
+
+Movement census, 16 kHz arm → native arm, both driven through the real production path:
+
+| corpus | boundaries | unchanged | <30 ms | 30-100 ms | >100 ms |
+|---|---|---|---|---|---|
+| v6 | 447 | 422 | 18 | 7 | **0** |
+| 173 | 173 | 163 | 7 | 3 | **0** |
+| spanish | 27 | 21 | 5 | 1 | **0** |
+
+Band C is empty everywhere, so no boundary moves far enough to need an ear list; every sub-30 ms
+mover is an acoustically invariant re-baseline per the brief's own rule and is **not** logged as
+UNVERIFIED-MOVED. **And decisively: all 15 defect rows move by exactly 0.000s between the arms.**
+Rate is not the mechanism. Class B is not closed by decoding, and no threshold was reached for.
+
+### Z.4 — R.14 and R.15 (`src/services/faAnchorTrustGate.ts`)
+
+**R.14 — smeared-anchor placement.** Fires iff `ordinalDelta == 0` **and** the incoming segment's
+first claimed FA word is below `CONF_MIN_FALLBACK` **and** the word gap is shorter than
+`SILENCE_MIN_DETECTABLE_SEC`. Places at the midpoint of the first detected silence whose **own
+midpoint** lies after the boundary. Midpoint rather than start is load-bearing and measured:
+`214`/`447` already sit exactly on a containing silence's midpoint (that silence is used up, the
+correction belongs to the next), while `008`/`400` sit inside a silence they have *not* been placed
+at. Two guards, both of which decline rather than clamp: the correction may not reach the next
+committed boundary, and it may not land past the onset of the incoming segment's first *reliable*
+word.
+
+**R.15 — tail attribution.** Fires iff `ordinalDelta < 0` **and** the incoming anchor is at or above
+`CONF_MIN_FALLBACK`. Places one aligner frame before the incoming word's onset, clamped so it can
+never cut the outgoing segment's own last word.
+
+The two are mutually exclusive twice over — disjoint ordinal conditions, complementary confidence
+conditions — so their order in the rule stage cannot matter.
+
+**No amplitude, no energy, no silence-proximity in either detection decision.** R.14's three
+conjuncts are a token ordinal, an aligner posterior and a token-geometry width; R.15's two are a
+token ordinal and a posterior. Silence enters only R.14's *placement*. **Stated against the brief
+rather than around it: that placement is NOT confined to the word gap, and cannot be.** Not one v6
+row's ear-verified value lies inside its own word gap — the gaps are 0.02-0.36s wide and the targets
+sit 0.32-1.83s later. A gap-confined placement model reproduces zero of the ten.
+
+**Constants, all GEOMETRIC, none derived from the rows the rules fire on:**
+
+| constant | value | derivation |
+|---|---|---|
+| `CONF_MIN_FALLBACK` | 0.056 | WS1 Session Z's measured empty log-bin `[0.0316, 0.1)` between the confidence distribution's two modes. Reused, not re-derived. |
+| `SILENCE_MIN_DETECTABLE_SEC` | 0.25 | `silenceDetector.ts`'s own `minDurationSec`. An existence bound, not a distance: a shorter gap cannot contain a detected silence. |
+| `FA_FRAME_SEC` | 0.02 | wav2vec2's CTC frame stride (320 samples at 16 kHz). Measured on the bundles: 7676/7748 v6, 3320/3320 173, 498/498 Spanish timestamps land on it. |
+
+**Two-sided sensitivity, ±5% and ±10% on each, all three corpora pooled: TP 10, closed 8, FP 0,
+unverified-moved 4 at every point — completely flat.** Flat as well from `CONF_MIN_FALLBACK` 0.01
+to 0.5 and from 0 to 2 aligner frames.
+
+**LOOCV is a no-op by construction and that is the point.** No constant is fitted to the firing set,
+so re-deriving with any row held out returns the same three values and the held-out row still fires.
+Corpus holdout: R.14's evidence is v6-only and it fires 0 times on 173 and Spanish; R.15's evidence
+is 173-only and it fires 0 times on v6 and Spanish. Zero false positives on both holdouts.
+
+**Deliberately not widened.** A 0.40s gap bound would additionally close `447_scout_facing_dark`
+(gap 0.360s) at zero measured false positives. It is not shipped: 0.40 has no derivation beyond
+being larger than that one row's own gap, which is precisely a corpus-fitted value wearing a rule's
+clothes.
+
+### Z.5 — Three-corpus validation
+
+| corpus | boundaries | fired | TP | within ±50 ms | **FP** | unverified-moved |
+|---|---|---|---|---|---|---|
+| v6 | 446 | 11 (R.14) | 7 | 6 | **0** | 4 (+0.22 to +0.46s) |
+| 173 | 172 | 3 (R.15) | 3 | 2 | **0** | 0 |
+| spanish | 26 | 0 | 0 | — | **0** | 0 |
+
+Precision on ear-scored rows **10/10 = 1.000**. Zero false positives against all 37 ear-CORRECT
+controls. **Closest non-firing control: `192_scout_listening` and `318_scout_on_ridge`, separated
+from R.14 by ONE TOKEN ORDINAL** (both `ordinalDelta` +1, both otherwise inside every conjunct);
+on the gap conjunct the closest is `abysmal_opinion` at 0.500s against the 0.25s bound, a 2× margin.
+
+No ear-verified closed row is reopened, and no row is reopened on confidence grounds.
+
+**Mutation gate M17: eight mutations run this session — both placements, every conjunct, both
+guards, and the Model P apply arithmetic. ALL EIGHT RED.** No green row; nothing about either rule
+is uncovered-by-design. The standing half is `src/services/faAnchorTrustGate.test.ts` (18 tests).
+
+### Z.6 — What stays open, with reasons
+
+- `214_solitary_fire` — `ordinalDelta` **+1**: the *incoming* segment's own first claimed word
+  starts before the cut, the mirror of R.15's defect, and neither rule claims it. Widening R.14 to
+  `>= 0` was measured and rejected: it turns `087_throwing_spear_poise`, `192_scout_listening` and
+  `318_scout_on_ridge` — all ear-CORRECT — into false positives.
+- `231_slowing_pace` — declined by R.14's reliable-onset guard. Its ear-verified value sits 0.70s
+  past the point FA reliably places the incoming segment's speech. **The guard is worth more than
+  the row, and both halves are measured:** without it, v6 gains a 3.30s unverified move
+  (`289_winter_predator_breach`) and Spanish gains two, one of which lands exactly on
+  `023_scylla_six_sailors`'s own ear-verified boundary — a zero-duration segment.
+- `447_scout_facing_dark` — word gap 0.360s, above the detectable-silence bound. See Z.4's
+  not-widened note.
+- `400_endless_dark` — **IMPROVED, NOT CLOSED.** R.14 moves it 1266.21 → 1266.75 against an
+  ear-correct 1266.66; residual −0.450s → +0.090s. Its backing silence is unusually wide (1.18s) so
+  the midpoint overshoots. An improvement is not a closure.
+- `wall_split_path` (173) — **IMPROVED, NOT CLOSED.** R.15 moves it 161.33 → 162.46 against 162.15;
+  residual −0.820s → +0.310s. **No script-anchored rule can reach 162.15:** that instant is strictly
+  inside the outgoing segment's own last claimed word "competing" (confidence 1.000), and
+  `sync.txt` does assign "competing" to `orientation_conflict`. Honouring it exactly means cutting a
+  full-confidence word in half. Independently recorded by Sessions Y and Z.
+- `lethal_nature_hazard` / `gadget_decay` (173) — the **wrong-landmark class**: `ordinalDelta` 0
+  with a *reliable* incoming anchor, committed on a real silence's midpoint that is simply the wrong
+  silence. Neither rule addresses this class and neither pretends to.
+
+**Item-7 verdict (`152_frozen_brush_mice`): REACHED.** R.14 fires on it and commits 451.03 on the
+live path, residual 0.000s against `ear-12`'s verdict — the ledger's oldest positive assertion. The
+live-path-only defect that R.11 was structurally unable to reach (fitDeviation pinned at the
+metric's mathematical floor of 1.0) is closed by a rule that never looks at fitDeviation. Stage 1's
+lock is no longer blocked on item-7.
+
+**`vessel_damage_clue` (173), recorded rather than acted on.** It is the fourth negative-ordinal row
+on 173, and R.15 correctly declines it on the incoming-anchor conjunct: both its anchors are smear,
+its ear-verified value (174.74) is a silence midpoint 1.4s past anything the word gap can reach, and
+R.15's placement would have moved it to 173.30 — *away* from the right answer. The bundle commits
+172.91 (the known Session X FA non-determinism), which carries no ear verdict of its own; it is
+therefore neither a demonstrated false positive nor a demonstrated true positive, and no register
+row is opened for it this session.
+
+### Z.7 — Perfection accounting, both denominators, stated honestly
+
+The "97.1%" figure carried into this session was **not** re-used. Both denominators are recomputed:
+
+| corpus | ear-audited population | measured perfection, before → after | whole-population UPPER BOUND, before → after | unaudited |
+|---|---|---|---|---|
+| v6 | 24 (14 correct + 10 defective) | **14/24 = 58.3% → 20/24 = 83.3%** | 436/446 = 97.76% → **442/446 = 99.10%** | 422 (94.6%) |
+| 173 | 26 (21 + 5) | **21/26 = 80.8% → 23/26 = 88.5%** | 167/172 = 97.09% → **169/172 = 98.26%** | 146 (84.9%) |
+| spanish | 2 (2 + 0) | 2/2 = 100% → 2/2 = 100% | 26/26 = 100% → 26/26 = 100% | 24 (92.3%) |
+
+**Neither number is "the" perfection rate, and saying so is the point.** The measured rate is biased
+*down* — the audited population was selected for suspicion, so it is enriched in defects. The upper
+bound is biased *up* — it assumes every unaudited boundary is correct, and Session X's own
+listen-through refuted exactly that assumption when three of its five 173 defects turned out to be
+on no candidate list at all. The true rate lies between them and cannot be narrowed without more
+listening.
+
+**Residual list standing between the current state and a 99% upper bound:** v6 is already there
+(99.10%; the four open rows are inside the 4-defect budget a 99% bound allows on 446). 173 is not:
+at 98.26% it needs **two** of its three remaining defects fixed —
+`lethal_nature_hazard`/`gadget_decay` (the wrong-landmark class, no rule designed) and
+`wall_split_path` (unreachable by any script-anchored placement, per Z.6).
+
+### Z.8 — Floors
+
+`npm test` 2485 passed / 37 skipped / 0 failed (108 files passed, 23 skipped) — +20 tests and +9
+skips vs. the 2465/28 floor, all of them this session's own new gate tests and gated generators;
+zero regressions. `tsc --noEmit` clean. `cargo check --features fa-inference` clean.
+`cargo clippy --all-targets --features fa-inference` clean, 4 pre-existing warnings. `cargo test`
+141/0/1. `cargo test --features fa-inference` 216/0/24. **Golden replay 6/6 byte-identical** — the
+replay harness stops at `snapCoveredBoundaries` and never reaches the rule stage, so R.14/R.15
+cannot touch it and no re-baseline was needed or made. `faAnchors.ts` sha256 unchanged,
+`b61e94cb…`. `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner
+(`whisperService.ts`), `docs/history.md` and `scripts/fixtures/phase4-baseline-*.csv` all untouched.

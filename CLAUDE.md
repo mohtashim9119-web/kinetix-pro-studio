@@ -50,6 +50,9 @@ The ~25 modules a new session most needs to orient itself. One line each — wha
 - `src/services/whisperService.ts` — Whisper alignment: sliding-window text matcher, per-segment rescue for zero-match segments, run-survival gates.
 - `src/services/snapBoundaries.ts` — refines segment boundaries against detected silence for the covered (matched) segment array.
 - `src/services/textNormalize.ts` — the one shared text-normalization pipeline (`canonicalize` / `stripStageDirections`) used by both the alignment and filename paths.
+- `src/services/faAnchorTrustGate.ts` — R.14/R.15: corrects a committed boundary when FA's own token
+  ordinals say it sits in the wrong place (smeared incoming anchor) or on the wrong side of a word
+  (outgoing segment's tail after the cut).
 - `src/services/syncConstants.ts` — every tuning constant the sync pipeline uses; imported, never duplicated locally.
 
 **Undo/redo**
@@ -124,6 +127,15 @@ Standing rules that are true today and must not be broken. (Pulled out of the ol
 - Sync accuracy is verified for five languages (English, Spanish, French, Portuguese, German — `constants.ts`'s `SUPPORTED_LANGUAGES`, backed by the `ggml-large-v3-turbo.bin` model); other whisper-cli codes are accepted, never blocked, but trip an `unsupported-language` sync-log warning.
 - Only 720p and 1080p resolution tiers exist, for all three aspect ratios. 4K/2K are deliberately absent from the type, not just untested.
 - **A solo listening pass can be overturned by a side-by-side (A/B) pass; a side-by-side pass is not itself re-litigated by a later solo pass.** Two near-identical timestamps can be indistinguishable played alone but clearly ordered played side by side (WS1 Session T: 1188.950 vs 1189.050, both inside 1.26s of digital silence, reversed a SOLO "correct" verdict on comparison). A verdict recorded from a solo sitting is not wrong on its face, but is unaudited against this failure mode — flag it for re-verification when touched, don't silently trust it as settled.
+- **Whether a boundary is DEFECTIVE is decided from token ordinals and aligner posteriors; acoustic
+  silence may decide only WHERE the corrected boundary goes.** A silence array cannot tell you a cut is
+  wrong — every one of the 15 ear-verified defects sits on or beside a real detected silence, and 5 of
+  them sit exactly on one's midpoint. What separates them from correct boundaries is the ordinal
+  relationship between the cut and the two segments' own claimed words (WS1 Session AE:
+  `faAnchorTrustGate.ts`, zero false positives across 37 ear-verified controls in 3 corpora, where the
+  same rows resisted every amplitude/energy/silence-distance signal tried in Sessions Q, R, AB and AD).
+  Corollary: a corrected boundary is NOT confined to the word gap it was supposed to land in — measured,
+  not one v6 row's ear-verified target lies inside its own gap.
 - **A sync rule's threshold/offset must be derived from a measurable acoustic or structural property, never fitted to make specific corpus rows agree.** A constant tuned until known rows pass is a corpus-fitted value wearing a rule's clothes — it will not generalize past the rows used to derive it. When no principled candidate reproduces every known-correct row, the correct outcome is to ship nothing and record the negative (WS1 Session S: none of 7 candidate placement rules satisfied both ear-verified anchors, so none shipped that session).
 
 **Export**

@@ -111,6 +111,19 @@ lock-gate text, not copied from the deleted file uncritically).
 | 6b | 3 | **NOT STARTED** | — | Phase 5 | Verify 173-project's `pairIdx-20` boundary defect |
 | 7 | 4 | **NOT STARTED** | — | Stage 1/2/3 locks | Observability: clamp/floor/fallback logging, `boundaryUsedFallback` 4-arg bug fix |
 
+**2026-08-23 (WS1 SESSION AE) — NO PHASE ROW ADVANCES, BUT THE STAGE 1 LOCK'S OWN CRITERION MOVES
+FOR THE FIRST TIME SINCE SESSION V.** Two new rules ship (`src/services/faAnchorTrustGate.ts`,
+R.14 smeared-anchor placement and R.15 tail attribution) and the Zero-Defect Register goes
+**8 → 14 → 7 open** in one session: six rows added (five of them WS1 Session X's own 173 defects,
+which the register had never carried, plus the new `008_unknown_void`), seven closed against LIVE.
+The rows are additions to the rule stage, not to any phase on this board — Phase 3/Task 5 stays
+exactly where Session H left it ("PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT OFF"), and the
+register is still not empty, so row 3's criterion still binds. What DID change about that criterion:
+`152_frozen_brush_mice`/item-7, carried since Session Q as structurally unreachable by R.11 at any
+threshold, is reached by R.14 at residual 0.000s — **Stage 1's lock is no longer blocked on it.**
+Golden replay 6/6 byte-identical (the replay harness stops at `snapCoveredBoundaries` and never
+reaches the rule stage). Full detail: §11h, `sync-pipeline-v2-plan.md` Part Z.
+
 **2026-08-22 (WS1 SESSION AC) — NOTHING ON THIS BOARD ADVANCES.** Measurement and documentation
 session: register drift audit (zero drift beyond Session AB's own finding), ear-evidence
 categorization, a new ear list, and the Stage 1 exit criteria checklist (§11f). No rule shipped,
@@ -795,6 +808,13 @@ bookkeeping (`scripts/phase4-fa-replay.test.ts`'s `KNOWN_BAD` status field), the
 that reads the ALREADY-verified live-fidelity bundle — none of it touches Contract 1→2's inputs or
 outputs, and `silenceDetector.ts` was unmodifiable this session too (one mutation briefly touched
 `faRunPlacementGate.ts`, downstream of the contract, and was reverted — see §11). P4/P8 unchanged.
+
+**2026-08-23 (WS1 Session AE) — no row moves here, and this session's brief says so explicitly.**
+Contract IN / 1→2 verification is one of the six items the Session AE brief placed OUT OF SCOPE and
+directed to be recorded as DEFERRED (see §11h's own deferred list). Independently of that, nothing
+this session shipped could have moved a row: R.14/R.15 live in a new file at the END of the rule
+stage, downstream of Contract 1→2, and read `silenceDetector.ts`'s output unmodified —
+`silenceDetector.ts` was unmodifiable this session too. P4/P8 unchanged.
 
 **2026-08-22 (WS1 Session X) — no row moves here either.** Session X's changes are the 173 ear-pass
 ingestion (`scripts/ws1-ear-pass-ledger.ts`), a single-line `ws1-single-tracker.test.ts` allowlist
@@ -5824,6 +5844,130 @@ files (neither in the default sweep), this document, `sync-pipeline-v2-plan.md`,
 
 ---
 
+### §11h. WS1 Session AE — RESULTS
+
+Full narrative, all steps: `sync-pipeline-v2-plan.md`'s Part Z (append-only).
+
+**Step 0 — ground truth.** `008_unknown_void` (v6) ingested as sitting `ear-verify-ae` (order 11):
+committed 23.13 EARLY, target 23.46 CORRECT. **The 0.028 amplitude floor that surfaced it is
+REJECTED and not shipped; the 0.05 floor is not lowered either** — the floor flagged a boundary
+that turned out to be defective, which is one true positive with no measured false-positive rate,
+a lead rather than a detector. 173's five defects were checked value-for-value against the brief's
+list: **all five already present and IDENTICAL** (`ear-173-x`, WS1 Session X); the nine Session AD
+rows likewise present and unchanged, with production still committing every value that sitting
+rejected. **Register open 8 → 14**, `REGISTER_HIGH_WATER` 15 → 21, six roster appends — five of the
+six are Session X's own 173 defects, which had lived in the ledger for two sessions with no register
+row, so the register had been reporting 173 as defect-free. That is a correction of the record, not
+a regression.
+
+**Step 1 — the interval word census (645 boundaries, all three corpora).** The interval-word count
+does NOT separate Class A from Class B (2-5 vs. 1-2, overlapping at 2 — **no separation margin
+exists**). One integer does: `ordinalDelta` = (last FA token whose onset precedes the boundary) −
+(the left segment's own last claimed token). Negative at **0/446 on v6, 4/172 on 173, 0/26 on
+Spanish**. The split runs OPPOSITE to the brief's expectation — the attribution class is 173's
+(3 rows), the placement class is v6's (9 of 10). The brief's gate does not fire (ordinalDelta is 0
+for two of 173's five, not all five). **Reconciliation with Session W's zero-misattribution finding
+for seams 5-6/6-7/7-8: no contradiction and neither measurement was wrong** — this session measures
+5-6 at ordinalDelta 0, agreeing exactly; 6-7 and 7-8 are ear-CORRECT controls; the three
+negative-ordinal rows were never in that check's scope. **All 15 known defects are EARLY CUTS, no
+counter-example in any corpus** (deltas +0.12s to +1.83s) — the pipeline does not cut late.
+Reachability under the 0.056 line: all ten v6 defects have a sub-threshold incoming anchor and
+eight also a sub-threshold left anchor, so **a detector requiring two reliable anchors reaches 0 of
+10** — R.14 therefore treats sub-threshold confidence as the symptom, not a disqualification.
+
+**Step 2 — native-rate decode: HOLD, nothing left to ship.** `silenceDetector.ts` already decodes
+the original voiceover natively via `decodeAudioData`/channel 0, and the harness has consumed
+`silences_native.json` since Session P; the only 16 kHz signal is the replay capture, and the only
+rate-sensitive production consumer (`validateBoundaryQuality`) is detection-only. Movement census
+16 kHz → native: v6 422/447 unchanged, 18 under 30 ms, 7 in 30-100 ms, **0 over 100 ms**; 173
+163/173, 7, 3, **0**; Spanish 21/27, 5, 1, **0**. Band C empty everywhere, so no ear list is needed
+and every sub-30 ms mover is an acoustically invariant re-baseline, not UNVERIFIED-MOVED. **All 15
+defect rows move by exactly 0.000s between the arms** — rate is not the mechanism, Class B is not
+closed by decoding, and no threshold was reached for.
+
+**Step 3 — R.14/R.15 ship (`src/services/faAnchorTrustGate.ts`).** R.14 (smeared-anchor placement)
+fires on `ordinalDelta == 0` + sub-reliability incoming anchor + word gap shorter than the shortest
+detectable silence, and places at the midpoint of the first silence whose OWN midpoint is after the
+boundary; two guards (next-boundary ordering, and never past the incoming segment's first reliable
+word). R.15 (tail attribution) fires on `ordinalDelta < 0` + a RELIABLE incoming anchor and places
+one aligner frame before that word. Mutually exclusive twice over. **No amplitude, energy or
+silence-proximity in either detection decision**; silence enters only R.14's placement, and — stated
+against the brief rather than around it — **that placement cannot be confined to the word gap:** not
+one v6 row's ear-verified value lies inside its own gap (gaps 0.02-0.36s, targets 0.32-1.83s later),
+so a gap-confined model reproduces zero of ten. Constants all GEOMETRIC and none derived from the
+firing set: `CONF_MIN_FALLBACK` 0.056 (Session Z's measured empty log-bin), `SILENCE_MIN_DETECTABLE_SEC`
+0.25 (`silenceDetector.ts`'s own minimum, reused), `FA_FRAME_SEC` 0.02 (wav2vec2's CTC stride,
+measured 99.1% on-grid on v6 and 100% on 173/Spanish). **Two-sided sensitivity ±5%/±10% on all
+three: TP 10, closed 8, FP 0, unverified-moved 4 at every point — completely flat**, and flat from
+`CONF_MIN_FALLBACK` 0.01 to 0.5 and 0 to 2 frames. **LOOCV is a no-op by construction** (no constant
+is fitted to the firing set); corpus holdout gives 0 FP both ways. A 0.40s gap bound would
+additionally close `447_scout_facing_dark` at zero measured FPs and is **deliberately not shipped**
+— 0.40 has no derivation beyond being larger than that row's own gap.
+
+**Step 3c — validation.** v6 446 boundaries: 11 fired, 7 TP (6 within ±50 ms), **0 FP**, 4
+unverified-moved (+0.22 to +0.46s). 173 172 boundaries: 3 fired, 3 TP (2 within ±50 ms), **0 FP**, 0
+unverified-moved. Spanish 26 boundaries: 0 fired, **0 FP**. Precision on ear-scored rows **10/10 =
+1.000**; zero false positives against all 37 ear-CORRECT controls. **Closest non-firing control:
+`192_scout_listening` / `318_scout_on_ridge`, one token ordinal away**; on the gap conjunct
+`abysmal_opinion` at 0.500s against 0.25s, a 2× margin. No closed row reopened; nothing reopened on
+confidence grounds. **Mutation gate M17: eight mutations run — both placements, every conjunct, both
+guards, the Model P apply arithmetic — ALL EIGHT RED, no green row.** Standing half:
+`src/services/faAnchorTrustGate.test.ts` (18 tests).
+
+**Step 4 — regression and invariants.** Register **14 → 7 open** (seven rows close against LIVE via
+`status: 'fixed'`, Session V's own route — the frozen fixture stays unregenerated, so `faValue` is
+NOT updated for rows that moved without closing; that mistake was made and reverted this session and
+the field's doc-comment now says so). All 13 production pins reproduced unchanged. Invariants across
+all three corpora: strict monotonic ordering, zero duplicates, zero non-positive durations, gapless
+partition intact, **zero corrected boundaries inside an R.5 run**. **Golden replay 6/6
+byte-identical** — the replay harness stops at `snapCoveredBoundaries` and never reaches the rule
+stage, so no re-baseline was needed or made.
+
+**Still open, each with a reason:** `214_solitary_fire` (ordinalDelta +1, the mirror defect; widening
+R.14 to `>= 0` turns three ear-CORRECT controls into FPs, measured); `231_slowing_pace` (declined by
+the reliable-onset guard — without it v6 gains a 3.30s unverified move and Spanish gains two, one
+landing exactly on a neighbouring ear-verified boundary); `447_scout_facing_dark` (gap 0.360s);
+`400_endless_dark` and `wall_split_path` (both IMPROVED but outside ±50 ms — an improvement is not a
+closure); `lethal_nature_hazard` / `gadget_decay` (wrong-landmark class, unclaimed by either rule).
+**Item-7 (`152_frozen_brush_mice`) IS REACHED**: R.14 commits 451.03 on the live path, residual
+0.000s — Stage 1's lock is no longer blocked on it.
+
+**Perfection accounting — both denominators, neither of them "the" rate.** v6 audited 24 rows:
+14/24 = 58.3% → **20/24 = 83.3%**; whole-population upper bound 436/446 = 97.76% → **442/446 =
+99.10%** (422 unaudited). 173 audited 26 rows: 21/26 = 80.8% → **23/26 = 88.5%**; upper bound
+167/172 = 97.09% → **169/172 = 98.26%** (146 unaudited). The carried-forward "97.1%" was recomputed,
+not reused. The measured rate is biased DOWN (the audited set was selected for suspicion); the upper
+bound is biased UP (it assumes every unaudited boundary is correct — the assumption Session X's own
+listen-through refuted). **Residual to a 99% upper bound:** v6 is already there; 173 needs two of its
+three remaining defects, and both classes standing in the way (wrong-landmark, and
+`wall_split_path`'s unreachable-by-construction target) have no rule designed.
+
+**DEFERRED THIS SESSION, by the brief's own scope restriction — no work done, recorded so the next
+session does not have to rediscover them:** idle exit criteria; the Spanish reopening trigger; the
+D-1 regression checklist; Contract IN / 1→2 verification; inspector smear thresholds; the WPM
+5-tier suite. Added to that list by this session's own findings: the **wrong-landmark defect class**
+(`lethal_nature_hazard`, `gadget_decay` — committed on a real but wrong silence, reliable anchors,
+no rule designed); the **ordinalDelta +1 mirror class** (`214_solitary_fire`); and a listening pass
+on the **four UNVERIFIED-MOVED v6 boundaries** (`039_river_trap`, `083_unbidden_alertness`,
+`221_skill_removes`, `222_long_silence`) plus `289_winter_predator_breach`, whose verdict would
+decide whether R.14's reliable-onset guard should be relaxed to recover `231_slowing_pace`.
+
+**Six numbers.** `npm test` 2485 passed / 37 skipped / 0 failed (108 files passed, 23 skipped) —
++20 tests and +9 skips vs. the 2465/28 floor, all this session's own gate tests and gated
+generators. `tsc --noEmit` clean. `cargo check --features fa-inference` clean. `cargo clippy
+--all-targets --features fa-inference` clean, 4 pre-existing warnings (unchanged). `cargo test`
+141/0/1 (unchanged). `cargo test --features fa-inference` 216/0/24 (unchanged). Golden replay 6/6
+byte-identical. `faAnchors.ts` sha256 unchanged, `b61e94cb…`. `git diff --stat` against `e880814`:
+`src/App.tsx` (+33, the gate's call site), `src/services/syncConstants.ts` (+55, three constants),
+two new `src/services/faAnchorTrustGate.{ts,test.ts}` files, `scripts/phase4-fa-replay.test.ts`,
+`scripts/ws1-ear-pass-ledger.ts`, `scripts/ws1-generalization.test.ts`,
+`scripts/ws1-session-p-pipeline.ts` and four new gated `scripts/` generators, plus this document,
+`sync-pipeline-v2-plan.md` and `project-state.md`. **`snapBoundaries.ts`, `silenceDetector.ts`, the
+Hirschberg aligner (`whisperService.ts`), `docs/history.md` and
+`scripts/fixtures/phase4-baseline-*.csv` are all untouched**, and no new repo-root file was created.
+
+---
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -5881,6 +6025,28 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-23 — WS1 Session AE: the ordinal split. Two rules ship (R.14 smeared-anchor placement,
+  R.15 tail attribution), the register goes 8 → 14 → 7 open, item-7 is reached, and native-rate
+  decode turns out to be already shipped.** Step 0 ingested `008_unknown_void` (23.13 → 23.46) and
+  REJECTED the 0.028 amplitude floor that found it (a floor that flags a defective boundary has one
+  true positive and no measured false-positive rate); 173's five defects were already in the ledger
+  value-for-value, but had never reached the register, so six rows were added and
+  `REGISTER_HIGH_WATER` raised 15 → 21. Step 1's census over all 645 boundaries found the
+  interval-word count does not separate Class A from Class B at all, and that one integer does —
+  `ordinalDelta`, negative at 0/446 on v6, 4/172 on 173, 0/26 on Spanish — splitting the population
+  the opposite way to the brief's expectation and reconciling with Session W's zero-misattribution
+  finding without contradicting it. All 15 defects are early cuts; no counter-example exists. Step 2
+  measured the 16 kHz → native-rate arm movement (band >100 ms empty in all three corpora, all 15
+  defect rows moving exactly 0.000s) and concluded there is no native-rate fix left to ship. Step 3
+  shipped both rules with three GEOMETRIC constants, none fitted to the firing set: 10/10 precision
+  on ear-scored rows, ZERO false positives against 37 controls, sensitivity completely flat at ±10%,
+  and mutation gate M17 red on all eight mutations. Seven register rows close against live;
+  `152_frozen_brush_mice`/item-7 is reached at residual 0.000s, so Stage 1's lock is no longer
+  blocked on it. Perfection recomputed with both denominators rather than carrying "97.1%" forward:
+  v6 58.3% → 83.3% measured / 97.76% → 99.10% upper bound; 173 80.8% → 88.5% / 97.09% → 98.26%.
+  Golden replay 6/6 byte-identical, all invariants clean, `faAnchors.ts` untouched. Full detail:
+  `sync-pipeline-v2-plan.md` Part Z, §11h above.
 
 - **2026-08-22 — WS1 Session AD: genuine A/B ear pass ingested for row-0/item-7 plus all 8 open
   Class A/B rows (0/9 to 9/9 A/B-grade evidence); the 450.99 supersession traced to a Session P
