@@ -261,6 +261,19 @@ FIRST session since Session F where the open count is down to a SINGLE populatio
 B, both word-attribution defects Session R found structurally invisible to every placement signal
 built so far) rather than a mix of unassigned rule gaps and re-litigated R.12 values.
 
+**2026-08-22 (WS1 Session X) — the register (`scripts/phase4-fa-replay.test.ts`'s `KNOWN_BAD`)
+stays at 8 open; 173's five newly-ear-confirmed defects (5-6, 21-22, 42-43, 104-105, 106-107) are
+NOT added to it this session.** Full detail: §11's Session X entry. They ARE ingested into the
+ear-pass ledger (`scripts/ws1-ear-pass-ledger.ts`, sitting `ear-173-x`) — the record of what has
+been heard — but a `KNOWN_BAD` row additionally requires an `owningRule` and a `faValue` asserted
+against a verified `phase4-fa-second-baseline-173-segments.csv` regeneration at THIS session's HEAD,
+neither of which this session produced (no rule was shipped — R-MD's suppressor design came back
+negative; §11 — and regenerating that fixture is exactly the kind of fixture-touching machinery
+this session's own constraints keep out of scope). Recorded as a decision, not an oversight: adding
+open rows without a verified `faValue` would risk the same integrity failure `ws1-ear-pass-ledger.ts`'s
+own header names as its reason for existing. Phase 3 stays **"PRODUCTION PATH WIRED, gate
+PER-PROJECT, DEFAULT OFF"**.
+
 ### §4. Phase 3 (Task 5) Component Ledger
 
 Re-verified live against `main` during this consolidation pass (2026-08-14). Status values:
@@ -711,6 +724,13 @@ that reads the ALREADY-verified live-fidelity bundle — none of it touches Cont
 outputs, and `silenceDetector.ts` was unmodifiable this session too (one mutation briefly touched
 `faRunPlacementGate.ts`, downstream of the contract, and was reverted — see §11). P4/P8 unchanged.
 
+**2026-08-22 (WS1 Session X) — no row moves here either.** Session X's changes are the 173 ear-pass
+ingestion (`scripts/ws1-ear-pass-ledger.ts`), a single-line `ws1-single-tracker.test.ts` allowlist
+fix (Session W's own `stage1-session-w-173-ear-list.md` landed without being added — the test caught
+it), and this documentation. No rule shipped (R-MD's suppressor design came back negative — §11) and
+`silenceDetector.ts`/`snapBoundaries.ts`/the Hirschberg aligner were unmodifiable this session. P4/P8
+unchanged.
+
 **2026-08-19 (WS1 Session O) — no row in this table moves.** Session O's changes are entirely
 in the persistence layer (`projectStore.ts`, `projectMirror.ts`, `project_mirror.rs`), which sits
 downstream of Contract 1→2 and is not one of its inputs or outputs. P4 and P8 remain the open
@@ -1049,6 +1069,191 @@ code ships (Phase 3b).
 ---
 
 ### §11. Terminal Path to WS1 Completion
+
+**2026-08-22 (WS1 SESSION X) — 173 EAR RESULTS INGESTED, PRECISION/RECALL MEASURED, R-MD
+SHIPS NOTHING, THE 45-46 NON-DETERMINISM CHASED TO A NAMED MECHANISM. NO ROWS OPENED OR
+CLOSED IN THE ZERO-DEFECT REGISTER, NO RULE CHANGES.** Session W froze 173's pre-fix state and
+emitted a blank 20-row ear list; this session is the operator's listening pass over it plus a
+fuller listen-through that caught three more defects no candidate list had surfaced, and the
+measurement Session W deferred ("mechanism not chased, out of scope, capture only") on the
+45-46 divergence.
+
+*Step 0 (row count).* The ear-list CSV (`/Users/mohtashim/Downloads/173 20-seg list -
+Sheet1.csv`) numbers Section A rows **0-8, nine rows** — the doc's own "8 rows" header
+(`stage1-session-w-173-ear-list.md`) describes only the original three categories (operator-
+reported 6-7, the fidelity-gate divergence, the app's 6 still-playing flags = 8) and is stale:
+row 0 (5-6) was added to the sitting afterward and is not one of those three categories. **The
+CSV's count is right; the doc's header is wrong.** Nine used everywhere below.
+
+*Step 1 (ledger ingestion).* All 24 verdicts (Section A's 9 + Section B's 12 + the 3 off-list
+defects) landed in `scripts/ws1-ear-pass-ledger.ts` as a new sitting, `ear-173-x` (order 9).
+Two rows re-confirm prior sittings unchanged (`vessel_damage_clue`@174.74 vs. `ear-12`;
+`protection_failure`@603.69 vs. `mover-audit-k`); the other 22 are new. **Register decision:
+ledger-only this session, NOT a new `KNOWN_BAD` 173 arm** — see §3's own entry for the full
+reasoning (short version: 173 already HAS register presence — `item-6`, `item-10`, `item-11`
+and `ov3-abysmal-opinion` are all `corpus: '173'` rows in `CLOSED_BY_POSITIVE_ASSERTION`
+already; the task's framing that "173 has no register presence" is corrected here — but a NEW
+open `KNOWN_BAD` row needs a verified `phase4-fa-second-baseline-173-segments.csv` regeneration
+at this HEAD to assert `faValue` against, and producing that fixture is out of this session's
+scope). The 5 defects are NOT silently mixed into v6's `KNOWN_BAD` — they are corpus-`'173'`
+in the ledger and nowhere else.
+
+*Step 2 (precision/recall — the core deliverable).* Ground truth: 5 defects (5-6 @18.51→19.27,
+21-22 @75.66→76.59, 42-43 @161.33→162.15, 104-105 @417.15→418.14, 106-107 @427.48→427.60), 19
+ear-confirmed-correct boundaries (Section A's other 7 + Section B's 12), ~149 unlistened.
+Measured against the Session W bundle (`reference-sheet.csv`, `ruleFindings.json`,
+`run_manifest.json`; full script `.work-phase4/session-x/step2-measure.py`):
+
+| signal | fires (of the 24 heard) | TP | FP | recall | precision |
+|---|---|---|---|---|---|
+| still-playing (live detector) | 6 | 1 (106) | 5 (34,88,96,133,144) | 1/5 = 20% | 1/6 ≈ 17% |
+| silence-distance > 20ms | 18† | 1 (106) | 17 | 1/5 = 20% | 1/18 ≈ 6% |
+| R.5 | 0 (whole run) | 0 | 0 | 0/5 | n/a |
+| R.10 | 2 (whole run) | — | — | not comparable‡ | — |
+| R.11 | 0 (whole run) | 0 | 0 | 0/5 | n/a |
+| R.12 | 0 (whole run) | 0 | 0 | 0/5 | n/a |
+| R.13 | 0 (whole run) | 0 | 0 | 0/5 | n/a |
+| R-U | never invoked§ | — | — | not comparable§ | — |
+
+† `reference-sheet.csv` shows 19 boundaries with `distanceToSilence > 0.020`, but one
+(`boundaryIndex` 0) is the recording's own start (t=0.00), not a real cut — the generator's own
+comment says so. 18 real boundaries, excluding that artifact. **Corrects Session W's own
+prediction of "20 flagged."** ‡ R.10 drops SEGMENTS pre-commit (`perilous_realms`,
+`blue_monkey`, in the pre-drop parse space) — it does not operate on the 173-boundary committed
+space this ground truth is defined over, so it cannot have a true/false positive against it by
+construction, not merely by absence of overlap. § `ws1-session-p-pipeline.ts`'s
+`runProductionPath` — the ONE harness this bundle and every Session P/V/W/X measurement runs
+through — never calls `computeFaAnchors`/`faAnchors.ts` at all; R-U's 0 fires here is evidence
+the harness doesn't exercise it, not evidence about R-U's own quality.
+
+**Both numbers Session W predicted are corrected here, not merely confirmed.** "Still-playing
+fired 6, 5 correct" — exact match. "Silence-distance flagged 20, 17 correct" — the 17-correct
+half holds exactly, but the total is **18, not 20** (see † above).
+
+*Step 3 (generalization verdict).* **The silence-midpoint geometry that fixed v6 does NOT
+generalize to 173.** Both currently-live proximity/loudness signals run at massive false-
+positive rates on 173 — still-playing 83% (5/6), silence-distance 94% (17/18) — because 173 is
+mid-dialogue narration where a sentence split legitimately falls on speech with no acoustic
+seam at all, not v6's deliberate long-pause structure the geometry was shaped against. Attached
+evidence: `shifting_monolith`@130.17 (boundary 34-35) splits mid-sentence inside "...and
+debris, fused by warp transit into a structure too massive to ignore..." and is ear-confirmed
+**correct** — the app was already right, and every existing loudness/proximity signal flags it
+as if it were wrong anyway. **Implication for the 8 open v6 Class A/B rows: none.** They are
+v6-scoped, ear-verified on their own corpus, and nothing measured here reopens or touches them
+— the finding is that a UNIVERSAL threshold tuned on one corpus's acoustic shape cannot be
+assumed to transfer to the other's, not that either corpus's own rows are now in question.
+
+*Step 4 (R-MD, the suppression class) — NEGATIVE RESULT, SHIPPED NOTHING.* Searched for a
+GEOMETRIC discriminator that vetoes all 19 correct rows, does not veto 106-107, and would
+produce zero movement on v6 by construction (no rule currently fires on either corpus's control
+population, so any veto layered ahead of R.11/R.12/R.13/R-U is a no-op today regardless — the
+real bar is whether the signal itself is clean enough to trust on a FUTURE corrector). Tried:
+FA confidence of the 3 words flanking the committed cut (`faWordTimings`, live project). Result:
+**no separation.** Defect 5-6's flanking words collapse to near-zero confidence (0.016, ~0,
+~0) — consistent with "confidence collapse marks a bad cut" — but **control 45-46 (174.74,
+ear-confirmed CORRECT) collapses identically** (0.0001, 0, 0 on the left; 0, 0.9995, 1.0 on the
+right), and **defect 106-107 shows NO collapse at all** (0.997-1.0 both sides) despite being a
+genuine +0.12s defect. The signal fires on a correct row and misses a real defect in a sample
+of 6. Per instruction: **ship nothing rather than tune per row.** A follow-up candidate not
+testable this session — raw waveform RMS-ratio magnitude (the still-playing detector's own `k`
+constant, graded rather than thresholded) — is named but not measured: this bundle has silence
+INTERVALS, not waveform peaks, and computing it needs a fresh audio decode this session did not
+budget for. **Mutation-gate requirement N/A**: there is no suppressor to gate, so no mutation to
+add.
+
+*Step 5 (5-vs-19 discriminator).* **No signal in this session's reach catches 5/5 with zero
+false positives among the 19 controls — negative, same search as Step 4.** Structural finding
+instead: the 5 defects split into two mechanistically distinct sub-classes, not one. **Four**
+(5-6, 21-22, 42-43, 104-105) commit EXACTLY on a real detected silence (`distanceToSilence`
+0.000 for all four) that is the WRONG landmark — the true instant has NO detected silence
+within 3s in any direction (`silences.json`, checked per-row). This is a wrong-silence-chosen
+defect, not a missing-silence or proximity defect, and neither existing signal's shape (built
+around "is the committed value far from A silence") can see it by construction. Seam-attribution
+for 5-6 (`seam-attribution.json`): every flanking word is in its owner's own script — no word
+crosses the seam — but the left segment's trailing words ("they're the worst") carry FA
+confidence 0.016/~0/~0, while the FIRST word after the true 19.27 cut ("because") carries 0.97.
+The mechanism is a placement-confidence defect (the model doesn't trust its own timing for the
+words right before the wrong silence), not a word-attribution defect. **One** (106-107) is
+structurally different: no detected silence within 3s of EITHER value, a genuine no-anchor
+fallback boundary — the shape the still-playing detector was built for, and its one true
+positive here.
+
+*Step 6 (recall gap).* 21-22, 42-43 and 104-105 were invisible to both live signals for the same
+structural reason named in Step 5: their committed values sit at distance 0.000 from a REAL
+silence, so a "how far from the nearest silence" check (both signals, differently gated) reads
+them as clean by definition — the defect is which silence, not how far. **Measured flagged-set
+recall here is 1/5 = 20% (still-playing alone, silence-distance alone, and their union all
+agree at exactly 1/5 — only 106-107 is ever caught).** This is HALF of the "2/5, 40%" the task's
+own framing predicted, not a match — corrected here, not confirmed. Whether 173's 20% and v6's
+cited 40% for the still-playing detector reflect the same underlying blindness or a corpus-
+driven difference is **not established this session**: re-deriving v6's own recall denominator
+against its own ground truth was out of scope here (this session's measurement ran only against
+the 173 bundle).
+
+*Step 7 (45-46 non-determinism — highest severity, MECHANISM FOUND).* Live committed 174.74000
+(ear-confirmed correct, this session). A same-HEAD regeneration through the SAME
+`runProductionPath` harness against the SAME (audio-byte-identical) source produced 172.91000 —
+wrong. Chased to a named mechanism, not left as "not chased":
+  - **Whisper tokens: MEASURED byte-identical.** The live project's own `transcriptTokens`
+    (2082 tokens) and the regen's `whisperRaw.json` (2082 tokens) agree on every field for
+    every token from 168s-176s — text, `startSec`, `endSec`, to the trailing float digit.
+    Consistent with Phase 0's own whisper-cli determinism finding (byte-identical, MD5-
+    identical across two runs, same machine) — whisper.cpp is ruled OUT as the source.
+  - **FA (ONNX) word-level output: MEASURED to diverge substantially, not by jitter.** The
+    live project's `faWordTimings` (`faHighPrecisionSync: true` for this project;
+    `syncLog` confirms "Timing engine: forced alignment (1660 aligned word(s))," matching the
+    regen's own 1660-word `faWords.json` count exactly) and the regen's `faWords.json` disagree
+    on both TIMING and CONFIDENCE for the same words given the same upstream tokens: word
+    "chemical" lands at [173.42,173.78] confidence 0.983 live vs. [172.70,173.10] confidence
+    1.5e-6 in the regen; "is"/"a" swing from 0.999/0.992 (live) to 1.8e-6/5.3e-6 (regen). This
+    is a real difference in what the aligner found evidence for, not a few-ms wobble.
+  - **Mechanism, INFERRED not MEASURED (I could not re-run the native ONNX engine live this
+    session to confirm directly).** `fa_onnx.rs`'s own comment describes `align_chunked` as
+    "single-threaded and synchronous end to end (no `.await` anywhere in its call graph)" — but
+    that claim is about the RUST CALLING CODE's determinism for cancellation purposes; no
+    `intra_op`/thread-count configuration was found anywhere in `fa_onnx.rs` pinning ONNX
+    Runtime's OWN internal execution provider to one thread. The most likely candidate is ORT's
+    default (unpinned) intra-op thread pool producing floating-point-order-dependent output
+    across two separate inference invocations two days apart (replay bundle captured
+    2026-08-19, live sync 2026-08-21) — the two spike-runtime onnxruntime builds present on
+    this machine (1.22.0 and 1.23.2) were NOT checked against each other as a contributing
+    variable; a genuine follow-up, not ruled out.
+  - **Severity, SCOPED.** "Every pin in the register is unreliable" is true specifically for
+    FA-gated projects (`faHighPrecisionSync: true`, opt-in, default OFF since WS1 Session H) —
+    it does NOT implicate the Whisper-only default path, whose own determinism was separately
+    MEASURED clean (Phase 0). Every existing register pin on 173/v6/spanish is asserted against
+    a FIXTURE-frozen `phase4-fa-second-baseline-*` snapshot, not a live re-run, so this finding
+    does not retroactively invalidate any of them — but it means a FUTURE fixture regeneration
+    on an FA-gated corpus is not guaranteed to reproduce a prior one, and that guarantee would
+    need re-establishing (e.g. pinning ORT thread count to 1 and re-measuring) before trusting
+    one.
+
+*Step 8 (v6 regression safety).* No code shipped this session touches `snapBoundaries.ts`,
+`silenceDetector.ts`, the Hirschberg aligner, or any rule file — `git diff --stat` against
+`dc96fef` touches exactly `scripts/ws1-ear-pass-ledger.ts` (+103, additive) and
+`scripts/ws1-single-tracker.test.ts` (+11, one allowlist entry) before this documentation.
+Full suite re-run at this HEAD: **one pre-existing failure found and fixed** — Session W's own
+`stage1-session-w-173-ear-list.md` landed without being added to `ws1-single-tracker.test.ts`'s
+allowlist (an oversight in `dc96fef`, not a Session X defect), caught by this session's own
+`npm test` run (2464 passed / 1 failed / 23 skipped before the fix). Added the missing
+allowlist entry (same class as its Session K/S siblings, one-line precedent-following fix,
+no logic changed) — **2465 passed / 23 skipped after**, golden replay 6/6 and the Zero-Defect
+Register's own coherence tests included and green, zero movement across all 447 v6 boundaries,
+all seven Session V closures intact.
+
+*Six numbers, re-run.* `npm test` **2465 passed / 23 skipped** (0 failed, after the allowlist
+fix above); `tsc --noEmit` clean; `cargo check --features fa-inference` clean; `clippy --features
+fa-inference --all-targets` clean, **4 pre-existing warnings** (unchanged); `cargo test`
+**141 passed / 1 ignored**; `cargo test --features fa-inference` **216 passed / 21 ignored**.
+All six match the stated Session W floor exactly, once the pre-existing single-tracker gap was
+closed. `faAnchors.ts` sha256 **`b61e94cb…`, unchanged**.
+
+*Next action.* The FA-inference non-determinism (Step 7) is the highest-priority open item this
+session surfaces: pin ONNX Runtime's thread configuration to 1 and re-run the same two-capture
+comparison to confirm or refute the inferred mechanism, BEFORE trusting any future FA-gated
+fixture regeneration. Separately, the "R-MD" suppression-class search remains open with a named,
+untested next candidate (waveform RMS-ratio magnitude) that needs an audio decode this session
+did not budget for.
 
 **2026-08-22 (WS1 SESSION W) — PRE-FIX CAPTURE OF 173, NO ROWS OPENED OR CLOSED, NO RULE
 CHANGES.** The operator ran a live sync of 173 ("FINAL TEST 173", syncRunId
@@ -5058,6 +5263,50 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-22 — WS1 Session X: 173's ear results ingested (24 verdicts, 5 real defects), every
+  live boundary signal's precision/recall measured against ground truth for the first time, the
+  R-MD suppression class comes back a negative result, and the 45-46 non-determinism Session W
+  deferred is chased to a named mechanism (FA/ONNX word-level output diverges across two capture
+  runs despite byte-identical Whisper tokens). No rule shipped, no register row opened or closed.**
+  - **Step 0.** Row-count settlement: the ear-list CSV's 0-8 (nine rows) is right; the source
+    doc's "8 rows" header is stale.
+  - **Step 1.** All 24 verdicts landed in `scripts/ws1-ear-pass-ledger.ts` (sitting `ear-173-x`,
+    order 9). Register decision: ledger-only — 173 already has 4 `CLOSED_BY_POSITIVE_ASSERTION`
+    rows (corrects the framing that it "has no register presence"), but a new open `KNOWN_BAD` row
+    needs a verified fixture regeneration this session did not produce, so none were added.
+  - **Step 2 (core deliverable).** Precision/recall measured for every live signal against 5
+    defects + 19 controls: still-playing 1/6 fired correct (recall 20%, matches Session W's
+    prediction exactly); silence-distance>20ms 1/18 correct, not 1/20 as predicted (one flagged
+    row was a t=0.00 artifact, not a real boundary) — recall 20%. R.5/R.11/R.12/R.13 fired zero
+    times on 173 this run; R.10's two fires are segment drops, not boundary-comparable; R-U was
+    never invoked by the harness at all (0 fires ≠ a quality finding about R-U).
+  - **Step 3.** Generalization verdict: NO — the geometry that fixed v6 runs at 83-94%
+    false-positive rates on 173's mid-dialogue narration structure. The 8 open v6 Class A/B rows
+    are unaffected (corpus-scoped findings, not reopened).
+  - **Step 4.** R-MD (the suppression class) — negative result, shipped nothing. The one tested
+    discriminator (FA confidence of the words flanking the cut) fires on a correct control and
+    misses a real defect in a sample of 6; no clean separator found.
+  - **Step 5.** The 5 defects split into two mechanisms: four are "wrong silence chosen" (commits
+    exactly on a real silence that isn't the true boundary; the true instant has no silence at
+    all — structurally invisible to any proximity-based signal); one is a genuine no-anchor
+    fallback (the still-playing detector's own design target, and its only true positive here).
+  - **Step 6.** Recall gap: 1/5 (20%) for every current signal and their union — corrects the
+    "2/5, 40%" prediction, not a confirmation. Whether this matches or differs from v6's own
+    still-playing recall was not established (v6's ground truth was not re-derived this session).
+  - **Step 7 (highest severity).** Whisper tokens MEASURED byte-identical between the live
+    2026-08-21 sync and a same-HEAD regeneration; FA (ONNX) word timings/confidences MEASURED to
+    diverge substantially for the same words given those identical tokens. `fa_onnx.rs`'s
+    "single-threaded" claim covers only the Rust calling code's cancellation determinism, not
+    ONNX Runtime's own (unpinned) internal thread pool — the most likely mechanism, INFERRED not
+    directly confirmed. Scoped: this affects FA-gated projects only (`faHighPrecisionSync: true`,
+    opt-in, default OFF); the Whisper-only default path's own determinism was separately verified
+    clean in Phase 0 and is not implicated.
+  - **Step 8.** Found and fixed one pre-existing gap: Session W's own `stage1-session-w-173-ear-
+    list.md` landed without a `ws1-single-tracker.test.ts` allowlist entry (`dc96fef`'s oversight,
+    caught by this session's own full-suite run). One-line fix, same class as its Session K/S
+    siblings. Six numbers re-verified at floor after the fix; golden replay 6/6; zero movement
+    across all 447 v6 boundaries; `faAnchors.ts` sha256 unchanged.
 
 - **2026-08-22 — WS1 Session V (Part 1): seven Zero-Defect Register rows close against LIVE, not
   fixture — register 15 -> 8 open. The `266_forty_one_burden` "regression" classification is
