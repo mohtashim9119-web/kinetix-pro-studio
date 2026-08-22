@@ -5206,6 +5206,69 @@ index is complete and correctly indexed.
 
 ---
 
+### §11a. WS1 Session Y — PLAN (recorded before execution; STEP 0)
+
+**Scope decision (made in chat, not in this doc's own text): Phases 1–3 execute this session.
+Phase 4a (sourcing 5 new WPM pacing corpora) is blocked — no TTS/audio-generation or
+audio-playback tool is available in this environment, and ear-verified ground truth
+fundamentally requires a human listening pass. Per this plan's own Phase 4a rule
+("if a tier cannot be sourced, stop and report which and why; do not fabricate a corpus"),
+Phase 4 stops at the sourcing gate and is reported as blocked, not attempted.**
+
+**Phase 1 — Engine determinism (blocking).** Target: `fa_onnx.rs`'s `load_session` (confirmed
+at `src-tauri/src/fa_onnx.rs:390-400` — calls bare `Session::builder().commit_from_file(...)`
+with no thread count, execution mode, or determinism flag set, i.e. ONNX Runtime's own
+defaults). Session X (`docs/work-in-progress.md`'s Changelog, 2026-08-22) already named this as
+the INFERRED mechanism behind the 45-46 non-determinism (`chemical` at [173.42,173.78] conf 0.98
+live vs [172.70,173.10] conf 1.5e-6 regen) without confirming it. This session pins
+`with_intra_threads(1)`, `with_inter_threads(1)`, `with_parallel_execution(false)`, and
+`with_deterministic_compute(true)` (all confirmed present on `ort = "2.0.0-rc.13"` via the local
+crate source at `~/.cargo/registry/src/.../ort-2.0.0-rc.13/src/session/builder/impl_options.rs`),
+then proves byte-identical word arrays across 3 consecutive runs each on 173 and v6. If it does
+not produce byte-identical output, stop and report — do not proceed to Phase 2. A determinism
+test is added to the FA gate (fails on divergence) plus a mutation that unpins threads and must
+turn it RED. 45-46 is then adjudicated fresh under the pinned engine, not assumed.
+
+**Phase 2 — Script-anchored word-gap placement.** Test, per row, across all available ground
+truth (173's 5 defects + 19 controls, v6's 7 closed + 8 open Class A/B rows, Spanish): does the
+ear-correct boundary fall inside [left segment's last-word end, right segment's first-word
+start] as attributed by script alignment? Report the interval, whether committed and
+ear-correct values fall inside it, and where in the interval ear-correct sits — full table,
+even if it refutes the hypothesis. If it holds: place at silence-midpoint only when that
+silence lies wholly inside the interval, else the interval's own geometric midpoint (named
+GEOMETRIC, not fitted to any specific row). Must reproduce R.11's six firings, R.12's
+corrections, and all seven Session V closures, or report exactly which break and why. A
+refutation on any row means ship nothing, full table reported anyway.
+
+**Phase 3 — Propose/arbitrate rule stage.** Rules emit read-only proposals (rule id, boundary
+index, origin, target, justification) against an immutable origin array; one arbiter resolves
+conflicts, failing loudly rather than resolving by rule ordering. Retires the L7 class
+permanently. Four invariants, each with its own mutation test: no boundary crosses an R.5 run
+edge; no boundary lands inside an R.5 run; strict monotonic ordering across all boundaries; no
+two rules claim one boundary without explicit precedence.
+
+**Phase 4 — Cross-corpus gate + 5-tier WPM suite (BLOCKED at 4a, see scope decision above).**
+4a needs audio + script + run-id-stamped bundle + boundary ground truth for 120/140/160/180/200
+WPM tiers — none exist yet and this session cannot originate them. 4b-4e (ground-truth
+provenance labeling, the fires/TP/FP/precision/recall gate wired into CI, the 100%-precision/
+explicit-recall-floor landing bar with the zero-fires-is-NOT-perfect-precision and
+recall-floor anti-loopholes, and the final 8-corpus table) are not attempted this session as a
+result — they require 4a's output as input.
+
+**Landing bar (recorded for when Phase 4 resumes):** a rule lands only at 100% precision with
+zero regressions across every tier that has real (non-synthetic) ground truth; a corpus with
+zero fires is reported NOT EXERCISED, never as perfect precision; recall is reported alongside
+precision against an explicit, data-justified floor so a rule cannot qualify by declining to
+act.
+
+**Constraints carried into execution:** `faAnchors.ts` hash fixed unless Phase 2/3 changes are
+proven and land; no changes to `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg
+aligner, `docs/history.md`, or `scripts/fixtures/phase4-baseline-*.csv`; no new repo-root files;
+no `git checkout` reverts; every number from a real function; every premise MEASURED or
+INFERRED; "I could not determine X" preferred over fabrication.
+
+---
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -5263,6 +5326,13 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-22 — WS1 Session Y: plan recorded (§11a) before execution — engine determinism,
+  script-anchored word-gap placement, propose/arbitrate rule rebuild, and an 8-corpus gate.**
+  Phase 4a (5 new WPM pacing corpora) is scoped out this session at the plan stage: no
+  TTS/audio-generation or audio-playback tool is available here, and ear-verified ground truth
+  needs a human listening pass this environment cannot provide. Phases 1-3 proceed; Phase 4
+  stops at the sourcing gate per its own "do not fabricate a corpus" rule.
 
 - **2026-08-22 — WS1 Session X: 173's ear results ingested (24 verdicts, 5 real defects), every
   live boundary signal's precision/recall measured against ground truth for the first time, the
