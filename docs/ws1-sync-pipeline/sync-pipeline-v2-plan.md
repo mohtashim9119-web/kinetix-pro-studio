@@ -7811,3 +7811,171 @@ provenance comment above named `214_solitary_fire`'s exact ear-confirmed target 
 it immediately (RED, `src/services/syncConstants.ts: 630.09`). Rewritten to describe the finding in
 ratios and qualitative terms only, real numbers kept to this file. The guard did exactly the job it
 was built for.
+
+---
+
+## Part X — Register Drift Audit, Ear List, and Stage 1 Exit Criteria (WS1 Session AC, 2026-08-22, append-only)
+
+**(a) Scope and method.** Measurement and documentation session per brief: no rule shipped, no
+threshold tuned, `faAnchors.ts` hash fixed, no `src/`/`src-tauri/` file touched. Every committed
+value below is a FRESH measurement this session, not a re-statement of a prior session's number —
+`scripts/ws1-session-ac-drift-probe.test.ts` (`WS1_SESSION_AC_MEASURE=1`) drives the same
+`runProductionPath` harness (`scripts/ws1-session-p-pipeline.ts`, App.tsx's own rule order and
+arguments) `ws1-session-q-production-pins.test.ts` pins against, over the same run-id-stamped
+live-fidelity bundle every session since Q has read from (`.work-phase4/replay/v6`, run id
+`p-20260819T120922Z-cbb403c1`; `.work-phase4/replay/173`, run id `p-20260819T133910Z-5bf038bb`).
+Silence-interval bounds for the ear list (below) were independently re-derived from
+`silences_native.json` directly, not copied from any prior session's prose.
+
+**(b) Step 1 — register drift audit: seventeen rows, zero drift.** Every one of the eight open
+Class A/B rows, the seven Session V closures, and the two historical R.11 register members
+(`152_frozen_brush_mice`, `abysmal_opinion`) was re-measured against today's live bundle. Every
+row reproduces byte-identical to its value on record — this session found **no new drift beyond
+what Session AB already reported** for the two historical members.
+
+| Row | On record | Today (fresh) | Verdict |
+|---|---|---|---|
+| `classA-214-solitary-fire` | faValue 629.01 / earCorrect 630.09 | 629.01 | **STILL A DEFECT** |
+| `classA-231-slowing-pace` | faValue 681.63 / earCorrect 682.74 | 681.63 | **STILL A DEFECT** |
+| `classA-447-scout-facing-dark` | faValue 1417.12 / earCorrect 1418.53 | 1417.12 | **STILL A DEFECT** |
+| `classB-056-dropping-torch` | faValue 167.03 / earCorrect 167.70 | 167.03 | **STILL A DEFECT** |
+| `classB-167-smell-of-butchery` | faValue 494.43 / earCorrect 494.75 | 494.43 | **STILL A DEFECT** |
+| `classB-286-fact-to-act` | faValue 856.09 / earCorrect 856.52 | 856.09 | **STILL A DEFECT** |
+| `classB-400-endless-dark` | faValue 1266.21 / earCorrect 1266.66 | 1266.21 | **STILL A DEFECT** |
+| `classB-403-vigilant-embers` | faValue 1273.14 / earCorrect 1273.55 | 1273.14 | **STILL A DEFECT** |
+| `r12-042-eleven-years` | earCorrect 125.76 | 125.76 | **NO LONGER REPRODUCES** (fixed, stable) |
+| `r12-176-twenty-six-scout` | earCorrect 522.46 | 522.46 | **NO LONGER REPRODUCES** (fixed, stable) |
+| `r12-224-thirty-three` | earCorrect 664.33 | 664.330 | **NO LONGER REPRODUCES** (fixed, stable) |
+| `r12-307-forty-nine-years` | earCorrect 925.43 | 925.430 | **NO LONGER REPRODUCES** (fixed, stable) |
+| `r12-340-fifty-eight` | earCorrect 1045.62 | 1045.62 | **NO LONGER REPRODUCES** (fixed, stable) |
+| `r12-383-sixty-four` | earCorrect 1189.05 | 1189.050 | **NO LONGER REPRODUCES** (fixed, stable) |
+| `s-266-live-path-collision` | earCorrect 788.75 | 788.75 | **NO LONGER REPRODUCES** (fixed, stable) |
+| `item-7` (152, historical) | fixture earCorrect 451.03 | **449.20** (live) | **STILL A DEFECT** on the live path (fixture-level closure unaffected — Session Q/AB's finding, reconfirmed) |
+| `ov3-abysmal-opinion` (historical) | earCorrect 17.88 | 17.88 | **NO LONGER REPRODUCES** (drifted to correct, Session AB's finding, reconfirmed) |
+
+No row is DRIFTED-UNMEASURABLE — all seventeen were directly measurable via the real production
+path this session. `152_frozen_brush_mice` stays a live defect for the reason Session AB named:
+its fitDeviation sits at exactly 1.0, the metric's own mathematical floor (`max(fit, 1/fit) >= 1`
+identically), so no threshold on `R11_MIN_FIT_DEVIATION` — however low — can ever admit it without
+firing on every perfectly-fit chunk in the corpus; this is a structural blind spot, not a
+threshold-tuning gap. Cross-check: `R.5`=10/`R.10`=0/`R.11`=5/`R.12`=8/`R.13`=0 on v6,
+`R.10`=2/all others 0 on 173 — both exactly matching every prior session's own recorded firing
+counts, and `npx vitest run scripts/ws1-session-q-production-pins.test.ts` (all `pinEarVerified`/
+`pinChangeDetector` assertions) reproduced green this session, independently confirming the same
+seven Session V values via a second, pre-existing measurement path.
+
+**(c) Step 2 — ear-evidence categorization: the `session-p-live` gap.** Cross-referencing all
+eight open rows against `scripts/ws1-ear-pass-ledger.ts` finds every one of them backed ONLY by
+the `session-p-live` sitting — and `session-p-live` is not an independent listening pass. Its own
+`EAR_SITTINGS` doc comment says it was "entered here in WS1 Session S by TRANSCRIPTION from
+`phase4-fa-replay.test.ts`'s KNOWN_BAD rows... not from a fresh sitting" — i.e. it is the
+register's own claimed `earCorrect` value, copy-pasted into ledger format, scored against itself.
+A repo-wide search for any narrated listening act behind these eight specific target values
+(an `afplay`/`ffplay` invocation, a described A/B comparison, an "owner heard X and said Y" —
+the pattern every OTHER sitting in the ledger carries) returns nothing: none of the eight
+`earCorrect` numbers (630.09, 682.74, 1418.53, 167.70, 494.75, 856.52, 1266.66, 1273.55) appears
+anywhere in this document outside the register's own bookkeeping and the scripts that consume it.
+Session P/Q's own Part N/O narrate MEASUREMENT (silence-distance geometry, the still-playing
+amplitude checker) for these rows, never a listening act. This is the exact blurring Session AB's
+own brief for this session anticipated, generalized from R.11's six firings (where the same audit
+found only two of six genuinely ear-backed) to the full open register.
+
+| Category | Count | Rows |
+|---|---|---|
+| Open row with an ear pass scoring its OWN proposed correction | **0** | — |
+| Open row with a defect report (register entry, `faValue`/`earCorrect`/mechanism) but no scored correction | **8** | all eight — see (b) |
+| Open row with neither a defect report nor ear evidence | **0** | — |
+
+For contrast, the two historical R.11 members (not open register rows, but audited in Step 1)
+both carry genuine sittings: `152_frozen_brush_mice` — `ear-12` (the original 12-item pass) scored
+451.03 CORRECT; `abysmal_opinion` — `ov3-triage` (Session D's blinded OV3 triage) scored 17.88
+CORRECT. Neither needs a fresh listen; neither is on this session's ear list.
+
+**(d) Step 3 — ear list.** `docs/ws1-sync-pipeline/stage1-session-ac-ear-list.md`. All eight open
+rows (not six — `231_slowing_pace` and `167_smell_of_butchery` measure identically to the six the
+session brief named by example and belong on the same list for the same reason). Candidates and
+silence bounds independently re-measured this session, not copied from the register's prose;
+verdict/class columns blank; candidates in timestamp order, not correctness order.
+
+**(e) Steps 4-5 — STAGE 1 EXIT CRITERIA, checked against current state, and the four-phase
+assessment.** Full checklist and phase-by-phase assessment: `docs/work-in-progress.md` §11f (this
+session's own results section) — reproduced there rather than duplicated here so there is exactly
+one copy to keep current. Headline findings, stated here because they revise standing claims in
+this very document:
+
+- The **Spanish non-English-corpus acceptance appears to have silently lapsed.** Its own written
+  reopening trigger ("voided... the moment any Spanish-specific normalization or alignment code
+  ships (Phase 3b)") is satisfied by its own literal text — Phase 3b shipped Spanish cardinals
+  0-30 on 2026-08-15 (`docs/work-in-progress.md` §3 row 3b) — but the passage in THIS document
+  asserting "No Spanish-specific code has shipped in Task 5 to date, so... has not fired"
+  (`:6174`, "Spanish language gate — CLOSED") is dated to a day before Task 5's first commit,
+  predates the Phase 3b shipment it discusses, and was never revisited afterward. This session
+  does not resolve the question (whether the trigger's own text should be read as scoped to Task
+  5/alignment code specifically, narrower than its literal wording) — it is flagged for the owner,
+  full reasoning at `docs/work-in-progress.md` §11f.
+- **Phase 2 (script-anchored word-gap placement) is WAIVED-BY-EVIDENCE for Stage 1 lock purposes**
+  — three separate sessions (Y, Z, AA) each independently tested and refuted it; Stage 1 lock does
+  not require a placement-model replacement of any kind (the open register rows are attribution
+  defects per Session R, not placement ones). One correction to the session brief's own shorthand:
+  its "(n=3, n=5, n=41)" figure conflates two related but distinct findings — the word-gap
+  PLACEMENT hypothesis was tested at n=5 (Session Y, mixed 3-confirm/2-refute), n=2 (Session Z, a
+  derived pre-roll retest of the two refuting rows) and n=3 (Session AA, restricted to
+  non-collapsed anchors) — three sessions, three negative outcomes, none of them n=41. n=41 is
+  Session AB's SEPARATE onset-lead-in CONTROL-population extension (order of magnitude survives,
+  the precise 10-30ms range does not) — a related but different hypothesis about a fixed pre-roll
+  constant, not the word-gap interval model itself. Both are negative; neither is the same n=41
+  finding. Full detail: `docs/work-in-progress.md` §11f.
+- **Phase 3 (propose/arbitrate rule-stage rebuild) is not demonstrably required for Stage 1
+  lock.** Its stated purpose — retiring "the L7 class" of silent rule-ordering collisions — is
+  already discharged for the one collision that has ever actually occurred
+  (`s-266-live-path-collision`) by the narrower, already-shipped R-AP exclusion invariant
+  (`faRuleStageExclusion.ts`, Session S). No currently-open register row is known to need a rule-
+  stage architecture change to close.
+- **The WPM suite gates a future placement rule's landing, not Stage 1 lock.** Since Stage 1 lock
+  does not require a placement rule (per Phase 2's waiver above), the WPM suite's own "blocking
+  prerequisite before any PLACEMENT rule ships to main" language (Part W(i)) does not, by its own
+  scope, block Stage 1 lock either — it would gate a FUTURE session's placement-rule proposal, if
+  one is ever made. Cost estimate: `docs/work-in-progress.md` §11f Step 6.
+
+**(f) Step 6 — WPM prerequisite, costed.** Full estimate: `docs/work-in-progress.md` §11f. Headline:
+sourcing five 120/140/160/180/200-WPM pacing corpora needs, per tier, real narrated audio at that
+pacing (this environment has no TTS/audio-generation tool — Session Y's own Phase 4a finding,
+unchanged), a matching script/scene-doc pair, a run-id-stamped live-fidelity bundle capture (the
+same four-arm process `ws1-session-p-pipeline.ts` already automates for the three existing
+corpora), and a full human ear-verified boundary ground-truth pass per tier (Phase 4a's own rule:
+"ear-verified ground truth fundamentally requires a human listening pass"). Five tiers at a
+per-corpus boundary count comparable to the three existing corpora (27-447) puts the listening
+burden in the hundreds-of-rows range in the worst case, tens in the best (a short, purpose-built
+corpus rather than a full narration) — see the work-in-progress.md estimate for the range and its
+assumptions. If TTS is the only feasible sourcing route (this environment has none available),
+that weakens the resulting ground truth for exactly the property WPM tiers exist to test: TTS
+pacing/prosody does not reproduce a human narrator's real pause distribution at a given words-per-
+minute rate, so a TTS-sourced tier would validate the rule against synthetic pacing, not the real
+variable this suite is meant to cover — worth stating plainly rather than treated as an equivalent
+substitute.
+
+**(g) Floors, re-verified at HEAD (`aea0d19`).** `npm test` 2465 passed/27 skipped/0 failed (+1
+skipped vs. the 26 floor — this session's own new gated probe file,
+`WS1_SESSION_AC_MEASURE=1`, contributing exactly 1 always-skipped-by-default test, zero
+regressions; 107 files passed/18 skipped, up from 17). **One real RED was caught and fixed en
+route, worth recording**: the first full re-run failed `scripts/ws1-single-tracker.test.ts`
+(1 failed/2464 passed/27 skipped) — the new ear-list doc landed before being added to that file's
+allowlist, the exact Session W-era oversight `docs/work-in-progress.md` §9's own history already
+names as a recurring failure mode for this gate. Fixed with a one-line allowlist addition
+(same file, same pattern as every prior ear-list doc); re-run green.
+
+`tsc --noEmit` clean. `cargo check --features fa-inference` clean (unchanged — no Rust file
+touched). `cargo clippy --features fa-inference --all-targets` clean, 4 pre-existing warnings
+(unchanged). `cargo test` 141 passed/0 failed/1 ignored (unchanged). `cargo test --features
+fa-inference` 216 passed/0 failed/24 ignored (unchanged). Golden replay 6/6 (54/54 underlying
+tests across both files, freshly re-run standalone this session, byte-identical). `faAnchors.ts`
+sha256 unchanged, `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`.
+
+`git diff --stat` against `aea0d19`: documentation only (`docs/ws1-sync-pipeline/sync-pipeline-v2-
+plan.md`, `docs/work-in-progress.md` including its own Changelog section, `project-state.md`) plus
+one new gated `scripts/` measurement file (`ws1-session-ac-drift-probe.test.ts`, not in the
+default sweep), a one-line fix to `scripts/ws1-single-tracker.test.ts`'s allowlist (the RED caught
+above), and one new ear-list doc — no `snapBoundaries.ts`, `silenceDetector.ts`, Hirschberg
+aligner, `docs/history.md`, or `scripts/fixtures/phase4-baseline-*.csv` touched; no `src/` or
+`src-tauri/` file touched; no repo-root file added; no `git checkout` reverts; no ear-verified row
+reopened on confidence grounds; no rule changes; no arbiter rebuild.

@@ -111,6 +111,16 @@ lock-gate text, not copied from the deleted file uncritically).
 | 6b | 3 | **NOT STARTED** | — | Phase 5 | Verify 173-project's `pairIdx-20` boundary defect |
 | 7 | 4 | **NOT STARTED** | — | Stage 1/2/3 locks | Observability: clamp/floor/fallback logging, `boundaryUsedFallback` 4-arg bug fix |
 
+**2026-08-22 (WS1 SESSION AC) — NOTHING ON THIS BOARD ADVANCES.** Measurement and documentation
+session: register drift audit (zero drift beyond Session AB's own finding), ear-evidence
+categorization, a new ear list, and the Stage 1 exit criteria checklist (§11f). No rule shipped,
+no threshold tuned, `faAnchors.ts` untouched. Phase 3/Task 5 stays exactly where Session H left it
+("PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT REVERTED TO OFF"); the Zero-Defect Register
+stays at 8 open (row 3's own criterion). One finding worth flagging here even though it moves no
+row: the Spanish non-English-corpus written acceptance's own reopening trigger appears to have
+fired (Phase 3b shipped Spanish-specific normalization 2026-08-15) without being actioned — see
+§11f criterion 4.
+
 **2026-08-22 (WS1 SESSION AB) — NOTHING ON THIS BOARD ADVANCES.** Re-derived `R.11`'s two
 corpus-derived constants (`R11_MAX_SPAN_WORD_CONF` moved, `R11_MIN_FIT_DEVIATION` reaffirmed
 unchanged) and tested amplitude/energy discriminator candidates for Class A (negative — see
@@ -752,6 +762,14 @@ cross-referenced against `src/types.ts` live:
 | P6 | Same language-keyed normalizer, byte-identical English path | ✅ **2026-08-18 (WS1 Session J); Spanish vacuity closed WS1 Session M** | **MEASURED, zero asymmetries.** `src/services/normalizerSymmetry.test.ts` (in the standing `npm test` pass) drives the production `canonicalize`/`stripStageDirections`/`normalize`/`normalizeSceneDoc` over the committed en/es fixtures. Cross-side lexical agreement: no raw word reaches two normalized forms. Compositionality (the untested risk — transcript side normalizes per TOKEN, script side per SEGMENT, and `canonicalize` does multi-word rewrites like `1985`→nineteen eighty five): per-token and whole-text streams are byte-identical, v6 3998=3998 / 173 1837=1837 / spanish 363=363. **Session M closed the debt Session L was left holding open (reconciled into this session's commit):** the Spanish CORPUS has zero expanding tokens (vacuous on real material, unchanged), but the property is NOT non-falsifiable in Spanish — a new test runs the `es`-keyed normalizer on constructed digit material (the digit→words reading is language-independent) and confirms both expansion and compositionality. What stays corpus-vacuous is only what a digit-free Spanish corpus can reach; the machinery itself is now exercised. `stripStageDirections` still fires on 0 segments of all three corpora. Phase 3c's accepted hyphen class remains excluded by construction |
 | P7 | Timing-source identified on output, type-level | ~ partial | `types.ts:223` `VideoSegment.anchorSource?: 'forced-alignment' \| 'whisper' \| 'estimate'` exists (ahead of schedule, includes `'forced-alignment'` per R-G) but lives on the *segment*, not per-token/per-Stage-1-output as the contract literally specifies |
 | P8 | Tokens/silences/audioDuration/segments as ONE bundled, type-enforced object | ❌ | `project.transcriptTokens` (`types.ts:336`) remains separately reachable; `useWhisper.ts:44-51`'s own doc comment *warns* callers to use `AlignFromCacheResult.tokens` instead — discipline, not type enforcement. This is "old R7," scheduled for Phase 4 |
+
+**2026-08-22 (WS1 Session AC) — no row in this table moves.** Session AC's changes are the
+register drift-audit script (`scripts/ws1-session-ac-drift-probe.test.ts`), a new ear-list doc,
+and this document's own §11f — none of it touches Contract 1→2's inputs or outputs. Worth naming
+directly: this session's Step 4 exit-criteria audit (§11f, criterion 1) found P4/P8 still ❌ and
+concluded criterion 1 ("verified guarantee-by-guarantee by owner inspection") is NOT MET as a
+whole — not a new finding, but the first session to state it as a numbered Stage-1-lock checklist
+item rather than leave it implicit in this table's own per-row status.
 
 **2026-08-22 (WS1 Session AB) — no row in this table moves.** Session AB's changes
 (`syncConstants.ts`'s `R11_MAX_SPAN_WORD_CONF`, `faSeamFitGate.test.ts`) sit downstream of
@@ -5579,6 +5597,150 @@ clean, 4 pre-existing warnings (unchanged). `cargo test` 141 passed/0 failed/1 i
 
 ---
 
+### §11f. WS1 Session AC — RESULTS
+
+Full narrative, all steps: `sync-pipeline-v2-plan.md`'s Part X (append-only). This section holds
+the two checkable deliverables in full — the register drift audit and the Stage 1 exit criteria —
+so there is exactly one copy of each to keep current.
+
+**Step 1 — register drift audit.** All seventeen audited rows (eight open Class A/B, seven
+Session V closures, two historical R.11 members) re-measured fresh against today's live bundle
+via `scripts/ws1-session-ac-drift-probe.test.ts`. Every row reproduces byte-identical to its
+value on record. Eight STILL A DEFECT (the open rows, unchanged), seven NO LONGER REPRODUCES
+(the Session V closures, still fixed), one STILL A DEFECT on the live path only
+(`152_frozen_brush_mice`, fixture-level closure unaffected — a structural blind spot, fitDeviation
+pinned at the metric's own mathematical floor of exactly 1.0, not a threshold gap), one NO LONGER
+REPRODUCES (`abysmal_opinion`, drifted to correct). Zero DRIFTED-UNMEASURABLE. No drift beyond
+what Session AB already found for the two historical members — full table: Part X(b).
+
+**Step 2 — ear-evidence categorization.** All eight open rows are backed only by the
+`session-p-live` ledger sitting, which is a same-session transcription of the register's own
+`earCorrect` claim (`ws1-ear-pass-ledger.ts`'s own doc comment says so), not an independent
+listening pass — no narrated listening act for any of the eight target values exists anywhere in
+the tracked docs. Result: **0** open rows with an ear pass scoring their own proposed correction,
+**8** with a defect report but no scored correction, **0** with neither. Full reasoning: Part X(c).
+
+**Step 3 — ear list.** `docs/ws1-sync-pipeline/stage1-session-ac-ear-list.md` — all eight open
+rows, candidates and silence bounds independently re-measured this session, verdict/class blank.
+
+**Step 4 — STAGE 1 EXIT CRITERIA.** Derived from the plan doc's own `STAGE 1 LOCK GATE`
+(`sync-pipeline-v2-plan.md:5305`), `D.-1`'s four-part lock definition (`:147`), and current
+register/session state. Status as of this session (WS1 Session AC, 2026-08-22, HEAD `aea0d19`):
+
+| # | Criterion | Status | Evidence |
+|---|---|---|---|
+| 1 | Contract IN + Contract 1→2 verified guarantee-by-guarantee by owner inspection | **NOT MET** | §9 above: P4 (silence ascending/disjoint runtime assertion) ❌ not built; P8 (bundled Stage-1-output object) ❌ not built; P7 partial (lives on segment, not per-output). 6/8 rows pass; no session records an owner inspection PASS on the guarantee-by-guarantee list as a whole |
+| 2 | Inspector run on ≥1 tight-pause + ≥1 long-pause project, numeric smear thresholds met | **NOT MET** | Last recorded measurement (plan doc `:5367`): shipped config fails 7 of 8 readings across the two projects; "only forced alignment can clear this." FA is still gate-OFF-by-default (Master Phase Board row 3) — nothing has re-run this measurement under a default-path config since |
+| 3a | Determinism check passed (Phase 0 — the original whisper-cli sidecar check) | **MET** | Closed 2026-08-04, plan doc `:190` — unrelated to and unaffected by the newer FA/ONNX question below |
+| 3b | *(added this session, not in the original gate text)* FA/ONNX engine determinism gate armed as a proven regression detector | **WAIVED-WITH-REASON** | Session Y pinned single-threaded/deterministic ONNX config and proved 3 runs byte-identical on real audio, but the paired mutation control was ALSO byte-identical on this hardware (Sessions Y and Z, 4 escalating mutations total) — the gate is MEASURED INERT here, ships as documentation of a pinned configuration, not an armed regression test. Does not block Stage 1 lock: FA is off by default, and every committed value this session re-measured is independently reproducible across five separate captures spanning 2026-08-19 to today regardless of whether this specific gate can catch a future regression. Should be armed (or the inertness formally accepted in writing) before any future `fa_onnx.rs` change relies on it |
+| 4 | Non-English corpus status resolved: H.8 minimum exists and was exercised, or the gap is accepted in writing with a reopening trigger | **NOT MET** | fr/de/pt: still WAIVED, correctly — no corpus exists for any of the three, so the general Phase 3b "dormant until corpus arrives" allowance still applies unconditionally. **Spanish: the specific written acceptance's own reopening trigger appears to have fired and gone unactioned** — see Part X(e)/below. Flagged for owner clarification, not resolved by this session |
+| 5 | No Stage 1 defect deferred downstream | **MET** | Phase 3c CLOSED by written acceptance (2026-08-15); Phase 3d SKIPPED, reopens only on a named condition that has not occurred |
+| 6 | R.5 and R.10 each built and verified, or accepted in writing | **MET** | Both built and landed (Sessions D/E); both fire on the live path today exactly as expected (R.5=10/R.10=0 on v6, R.10=2 on 173, this session's own fresh measurement); zero open register rows owned by either |
+| 7 | Cross-cutting regression checklist (D.-1, 9 items: locks/skipped-segments/headings/no-voiceover/silence-scan-failure/empty-token-fallback/persistence-reload/export-preview-consumers/DEV-harnesses) run and clean | **NOT MET** | No session has recorded running this specific checklist as a dedicated pass; §9's own last status line still reads "regression checklist not run" |
+| 8 | The Zero-Defect Register is EMPTY | **NOT MET** | 8 open rows, confirmed fresh this session (Step 1), zero drift. This is the criterion every session since Session C has named as the actual blocker |
+| 9 | FA default flip is the final act of Stage 1 | **WAIVED-WITH-REASON — SUPERSEDED** | Ruling R-AK (Session G) shipped the flip independently as a per-project opt-in field (default OFF), dissolving the ordering hazard this criterion existed to prevent; it is no longer gated by Stage 1 lock timing at all. Its own named sub-criteria for making the flip the DEFAULT (not Stage-1-lock-relevant) remain undischarged: R-S(ii) (zero boundaries >1.0s from ear-correct on a stratified+control sample) and R-S(iii) (runtime, ~231s on V6) are both unrun/unresolved; Contract 1→2's P8 ("R7") is explicitly scoped to the Master Phase Board's own Phase 4, which by its own stated blocking dependency does not even START until Stage 1 locks — naming it as a Stage-1 precondition would be circular, so it is treated as post-lock work here |
+| 10 | Tier-1 12/12 ear pass drawn and ready to run | **NOT MET** | Drawn (`stage1-lock-ear-list.md` exists, 7 MOVED/5 UNMOVED, blinding preserved) but never scored — "neither has been listened to" is the last recorded status and nothing since has changed it |
+| 11 | *(added this session, per brief)* A placement-model rule (Phase 2's word-gap hypothesis or any successor) is required before lock | **WAIVED-WITH-REASON** — not required | Three independent cross-session refutations (Sessions Y/Z/AA — see Step 5). The open register rows are word-ATTRIBUTION defects (Session R), structurally a different problem from boundary placement; closing them needs an attribution-side detector (not yet designed — project-state.md's own Next Action #1) or ear-pass-confirmed acceptance of current values, neither of which is a placement rule |
+| 12 | *(added this session, per brief)* Phase 3 (propose/arbitrate rule-stage rebuild) is required before lock | **WAIVED-WITH-REASON** — not required | Its purpose (retiring silent rule-ordering collisions, "the L7 class") is already discharged for the one collision that has occurred, by the narrower, already-shipped R-AP exclusion invariant. No open register row is known to need a rule-stage architecture change |
+| 13 | *(added this session, per brief)* The 5-tier WPM suite gates Stage 1 lock | **WAIVED-WITH-REASON** — does not gate lock | By its own stated scope (Part W(i)) it gates a future PLACEMENT rule's landing. Since criterion 11 finds no placement rule is required for lock, the WPM suite is not a Stage-1-lock blocker either — it remains a real prerequisite only if/when a placement rule is next proposed. Cost estimate: Step 6 below |
+
+**Count: 4 MET, 6 NOT MET, 6 WAIVED-WITH-REASON** (13 line items; criteria 3 and 9 each split into
+sub-items above rather than forced into one cell). The two binding NOT MET items that matter most
+in practice are **8** (the register itself) and **4** (the Spanish trigger question) — every other
+NOT MET item (1, 2, 7, 10) has been NOT MET, unchanged, since at least Session Q and is not new
+information this session surfaces, only re-confirms.
+
+**Step 5 — the four Session Y phases against these criteria.**
+
+**Phase 1 (engine determinism)** shipped a real, measured configuration change
+(`fa_onnx.rs`'s `load_session` pinning) and proved it byte-identical across 3 runs on real
+173/v6 audio — but the paired mutation control was ALSO byte-identical on this hardware in both
+Session Y's and Session Z's (progressively stronger) attempts, so the gate exists as a pinned,
+documented configuration rather than a proven-armed regression test. This does not block Stage 1
+lock (criterion 3b above, WAIVED-WITH-REASON) because FA ships gate-OFF-by-default and nothing
+in this session's own re-measurement depended on the gate catching anything — the values it
+would protect are independently reproducible across five separate captures without it.
+
+**Phase 2 (script-anchored word-gap placement)** was tested three separate times (Sessions Y, Z,
+AA) and refuted or came back mixed-negative every time — Session Y's own n=5 test on 173's real
+defects found 3/5 confirming but biased off the geometric midpoint and 2/5 refuting outright;
+Session Z's derived-pre-roll retest (n=2, the two refuting rows) still refuted; Session AA's
+restricted retest (n=3, non-collapsed anchors only) still refuted the same two. **WAIVED-BY-
+EVIDENCE for Stage 1 lock**: three consecutive cross-corpus refutations is not "under-tested," it
+is a hypothesis that does not hold on this data, and Stage 1 lock does not require replacing the
+boundary placement model at all — the open register rows are attribution, not placement, defects
+(Session R). Ships nothing; `faAnchors.ts` untouched across all three attempts. (One correction to
+this session's own brief: its shorthand "n=3, n=5, n=41" for Phase 2's refutations conflates the
+word-gap hypothesis's own three tests — n=5/n=2/n=3 — with Session AB's SEPARATE n=41
+onset-lead-in control-population extension, a related but distinct hypothesis about a fixed
+pre-roll constant. Both are negative results; they are not the same finding restated three times.)
+
+**Phase 3 (propose/arbitrate rule stage)** was designed, not implemented — deliberately deferred,
+per Session Y's own stated reasons (no driving rule change from Phase 2's result; the rewrite's
+regression risk to a hash-pinned, 2465-test-covered module warrants its own session). This gap
+does not block lock (criterion 12, WAIVED-WITH-REASON): the one rule-ordering collision it would
+prevent already has a narrower, shipped fix (R-AP).
+
+**Phase 4a (5-tier WPM corpora, sourcing)** is BLOCKED, stated plainly and unchanged across every
+session since Y: no TTS/audio-generation tool exists in this environment, and ear-verified ground
+truth fundamentally requires a human listening pass that sourcing alone cannot substitute for.
+This gap does not block lock either (criterion 13, WAIVED-WITH-REASON) — it gates a future
+placement rule's landing bar, and criterion 11 finds no placement rule is required for lock. **The
+gap is real and should stay tracked, just not as a Stage-1-lock blocker**: it is the correct
+prerequisite the day a placement rule is next proposed, whether for the current register or a
+future one.
+
+**Step 6 — WPM prerequisite, costed.** What sourcing five (120/140/160/180/200 WPM) pacing
+corpora actually requires, per tier, mirroring what the three existing corpora (v6/173/Spanish)
+each needed:
+
+- **Audio.** Real narrated speech at a controlled, verified words-per-minute rate — not a
+  by-product of picking existing material, since none of the three existing corpora were recorded
+  to hit a specific WPM target. This needs either a narrator recording fresh material at each of
+  five target paces, or hunting for/verifying existing recordings that happen to land in each
+  120-200 WPM band (unlikely to exist in the needed spread already). Neither is available in this
+  environment (no audio-recording or TTS tooling — Session Y's own Phase 4a finding, unchanged).
+- **Script.** A scene-tagged script/sync-doc pair per tier, in the same format `parseProjectData`
+  consumes (`scripts/fixtures/README.md`'s existing corpora are the template) — needs authoring or
+  reuse of existing script text re-paced, either way new content-authoring work per tier.
+- **Bundle capture.** A run-id-stamped four-arm live-fidelity bundle
+  (`whisper_raw_tokens.json`/`silences_native.json`/`fa_live_words.json`/manifest) per tier — this
+  step alone is NOT blocked: `scripts/ws1-session-p-pipeline.ts`'s `loadLiveBundle`/`verifyBundle`
+  machinery already generalizes over an arbitrary corpus key, and Session Q already proved the
+  capture process reproducible on 173/Spanish for the first time. The blocker is upstream (audio +
+  script), not this step.
+- **Ear-verified boundary ground truth, per tier.** A full human listening pass scoring every
+  candidate boundary — the same shape as the existing 40-47-boundary verification sets (v6/173)
+  or the smaller 27-segment Spanish one. **Estimated listening burden:** if each tier corpus is
+  built short and purpose-specific (closer to Spanish's 27 segments / ~92s than v6's 447 / 1421s),
+  five tiers put the total burden at roughly **100-150 scored rows** (5 tiers × 20-30 boundaries
+  each, matching the smallest existing corpus's scale); if each tier instead needs a full-length
+  corpus comparable to v6/173, the burden is **five hundred to over a thousand rows** (5 × 100-450).
+  The true number depends entirely on a scoping decision (short purpose-built tiers vs. full
+  corpora) nobody has made yet — this estimate brackets it rather than picking a point value.
+- **If TTS is the only feasible sourcing route**, that weakens the resulting ground truth for
+  exactly the property these tiers exist to test: TTS pacing does not reproduce a real narrator's
+  pause distribution/prosody at a given WPM the way human narration does, so a TTS-sourced tier
+  would validate against synthetic pacing regularity, not the real-world pacing variation the WPM
+  suite is meant to stress-test. This should be stated as a real limitation if TTS is ever used,
+  not silently treated as equivalent to the other three corpora's real narration.
+
+This remains, by a wide margin, the largest unscheduled item on the WS1 board — and per Step 5,
+it is not currently gating anything, which is itself useful information: it does not need to be
+solved before the next session can act on the register.
+
+**Six numbers.** `npm test` 2465 passed/27 skipped/0 failed (107 files passed/18 skipped) — +1
+skipped vs. the 26 floor (this session's own new gated probe file, zero regressions). One real RED
+caught and fixed en route: the first full re-run failed `ws1-single-tracker.test.ts` (the new
+ear-list doc landed before its allowlist entry) — fixed with a one-line addition, re-run green;
+full account: `sync-pipeline-v2-plan.md` Part X(g). `tsc --noEmit` clean. `cargo check --features
+fa-inference` clean (unchanged). `cargo clippy --features fa-inference --all-targets` clean, 4
+pre-existing warnings (unchanged). `cargo test` 141 passed/0 failed/1 ignored (unchanged). `cargo
+test --features fa-inference` 216 passed/0 failed/24 ignored (unchanged). Golden replay 6/6 (54/54
+underlying tests, freshly re-run standalone this session). `faAnchors.ts` sha256 unchanged, `b61e94cb…`.
+
+---
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -5636,6 +5798,38 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-22 — WS1 Session AC: register drift audit finds zero drift beyond Session AB's own
+  report; ear-evidence audit finds none of the eight open Class A/B rows independently
+  ear-verified; a fresh ear list and an explicit Stage 1 exit-criteria checklist ship.** All
+  seventeen audited rows (8 open, 7 Session V closures, 2 historical R.11 members) re-measured
+  fresh against today's live bundle, byte-identical to their value on record in every case — 8
+  STILL A DEFECT (open, unchanged), 8 NO LONGER REPRODUCES (7 Session V closures + `abysmal_
+  opinion`, all still fixed/drifted-correct), 1 STILL A DEFECT on the live path only
+  (`152_frozen_brush_mice`, a structural fitDeviation-floor blind spot, fixture-level closure
+  unaffected). Every one of the eight open rows is backed only by `ws1-ear-pass-ledger.ts`'s
+  `session-p-live` sitting, which its own doc comment admits is a same-session transcription of
+  the register's own claim, not an independent listening pass — no narrated listening act for any
+  of the eight target values exists anywhere in the tracked docs. New ear list:
+  `docs/ws1-sync-pipeline/stage1-session-ac-ear-list.md` (all 8 rows, candidates/silence bounds
+  freshly re-measured, verdicts blank). New Stage 1 exit-criteria checklist (`docs/work-in-
+  progress.md` §11f): 4 MET / 6 NOT MET / 6 WAIVED-WITH-REASON across 13 items, including two
+  newly-surfaced questions — a possible silent lapse of the Spanish non-English-corpus written
+  acceptance (its own reopening trigger's literal text appears satisfied since Phase 3b shipped
+  Spanish cardinals 2026-08-15, unactioned since), and an explicit finding that neither Phase 2's
+  placement model, Phase 3's rule-stage rebuild, nor the 5-tier WPM suite gate Stage 1 lock —
+  Phase 2 is marked WAIVED-BY-EVIDENCE after three independent cross-session refutations (Y/Z/AA),
+  with one correction to this session's own brief: its "n=3, n=5, n=41" shorthand conflates the
+  word-gap hypothesis's own three tests (n=5/n=2/n=3) with Session AB's separate n=41 onset-lead-in
+  finding, a related but distinct question. WPM prerequisite costed: audio/script/bundle-capture/
+  ear-ground-truth per tier, estimated 100-150 rows (short purpose-built tiers) to 500+ rows (full-
+  length tiers) of listening burden, TTS sourcing flagged as weakening the ground truth if used.
+  Six numbers: `npm test` 2465 passed/27 skipped/0 failed (+1 skipped, this session's own gated
+  probe file; one real RED caught and fixed en route — a new-file allowlist gate,
+  `ws1-single-tracker.test.ts` — before the final green run). `tsc` clean; `cargo check`/`clippy`/
+  `test` all unchanged (no Rust touched). Golden replay 6/6. `faAnchors.ts` sha256 unchanged. Zero
+  rule changes, zero threshold tuning. Full detail: `sync-pipeline-v2-plan.md` Part X,
+  `docs/work-in-progress.md` §11f.
 
 - **2026-08-22 — WS1 Session AB: R.11's "six ear-confirmed firings" premise corrected to two;
   `R11_MAX_SPAN_WORD_CONF` re-derived and shipped (2.8x → ~4.0x margin), `R11_MIN_FIT_DEVIATION`
