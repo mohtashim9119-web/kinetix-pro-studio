@@ -5644,8 +5644,9 @@ register/session state. Status as of this session (WS1 Session AC, 2026-08-22, H
 | 12 | *(added this session, per brief)* Phase 3 (propose/arbitrate rule-stage rebuild) is required before lock | **WAIVED-WITH-REASON** — not required | Its purpose (retiring silent rule-ordering collisions, "the L7 class") is already discharged for the one collision that has occurred, by the narrower, already-shipped R-AP exclusion invariant. No open register row is known to need a rule-stage architecture change |
 | 13 | *(added this session, per brief)* The 5-tier WPM suite gates Stage 1 lock | **WAIVED-WITH-REASON** — does not gate lock | By its own stated scope (Part W(i)) it gates a future PLACEMENT rule's landing. Since criterion 11 finds no placement rule is required for lock, the WPM suite is not a Stage-1-lock blocker either — it remains a real prerequisite only if/when a placement rule is next proposed. Cost estimate: Step 6 below |
 
-**Count: 4 MET, 6 NOT MET, 6 WAIVED-WITH-REASON** (13 line items; criteria 3 and 9 each split into
-sub-items above rather than forced into one cell). The two binding NOT MET items that matter most
+**Count: 3 MET, 6 NOT MET, 5 WAIVED-WITH-REASON** (14 line items; criterion 3 splits into 3a/3b
+above rather than being forced into one cell that would have to average an old, settled MET
+against a new, separate WAIVED). The two binding NOT MET items that matter most
 in practice are **8** (the register itself) and **4** (the Spanish trigger question) — every other
 NOT MET item (1, 2, 7, 10) has been NOT MET, unchanged, since at least Session Q and is not new
 information this session surfaces, only re-confirms.
@@ -5813,7 +5814,7 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   of the eight target values exists anywhere in the tracked docs. New ear list:
   `docs/ws1-sync-pipeline/stage1-session-ac-ear-list.md` (all 8 rows, candidates/silence bounds
   freshly re-measured, verdicts blank). New Stage 1 exit-criteria checklist (`docs/work-in-
-  progress.md` §11f): 4 MET / 6 NOT MET / 6 WAIVED-WITH-REASON across 13 items, including two
+  progress.md` §11f): 3 MET / 6 NOT MET / 5 WAIVED-WITH-REASON across 14 items, including two
   newly-surfaced questions — a possible silent lapse of the Spanish non-English-corpus written
   acceptance (its own reopening trigger's literal text appears satisfied since Phase 3b shipped
   Spanish cardinals 2026-08-15, unactioned since), and an explicit finding that neither Phase 2's
