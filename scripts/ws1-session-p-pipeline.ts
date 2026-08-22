@@ -104,7 +104,7 @@ export interface LiveBundle {
  * the Step 9 guard, applied at the point of USE rather than only in one test,
  * so no analysis can accidentally run on a mixed-vintage bundle.
  */
-export function loadLiveBundle(key: string, requireStamp = true): LiveBundle {
+export function loadLiveBundle(key: string, requireStamp = true, silencesFile?: string): LiveBundle {
   const dir = resolve(REPLAY_ROOT, key);
   let runId: string | undefined;
   if (requireStamp) {
@@ -121,8 +121,14 @@ export function loadLiveBundle(key: string, requireStamp = true): LiveBundle {
     }
   ).tokens.map(t => ({ text: t.text, startSec: t.startSec, endSec: t.endSec }));
 
+  // WS1 Session AE: `silencesFile` is an ADDITIVE arm override, defaulting to
+  // the manifest's own native-rate arm so every existing caller is unchanged.
+  // It exists so the 16 kHz capture arm (`silences_app.json`) and the
+  // native-rate arm (`silences_native.json`) can be driven through the SAME
+  // production path for a rate-movement census, rather than a second harness
+  // re-deriving one of them.
   const silences: SilenceInterval[] = (
-    JSON.parse(readArm(key, V6_BUNDLE_ARMS.silences!)) as { silences: SilenceInterval[] }
+    JSON.parse(readArm(key, silencesFile ?? V6_BUNDLE_ARMS.silences!)) as { silences: SilenceInterval[] }
   ).silences;
 
   const faTokens: TranscriptToken[] = (
@@ -179,8 +185,10 @@ export interface ProductionRun {
 }
 
 /** The real production rule stage, in App.tsx's order, over one live bundle. */
-export async function runProductionPath(spec: CorpusSpec, requireStamp = true): Promise<ProductionRun> {
-  const { whisperTokens, silences, faTokens, runId } = loadLiveBundle(spec.key, requireStamp);
+export async function runProductionPath(
+  spec: CorpusSpec, requireStamp = true, silencesFile?: string,
+): Promise<ProductionRun> {
+  const { whisperTokens, silences, faTokens, runId } = loadLiveBundle(spec.key, requireStamp, silencesFile);
   const audioDuration = spec.audioDuration;
 
   const newSegmentsRaw = await parseProjectData(
