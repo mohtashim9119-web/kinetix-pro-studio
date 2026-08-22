@@ -7979,3 +7979,220 @@ above), and one new ear-list doc — no `snapBoundaries.ts`, `silenceDetector.ts
 aligner, `docs/history.md`, or `scripts/fixtures/phase4-baseline-*.csv` touched; no `src/` or
 `src-tauri/` file touched; no repo-root file added; no `git checkout` reverts; no ear-verified row
 reopened on confidence grounds; no rule changes; no arbiter rebuild.
+
+---
+
+## Part Y — Ear Ground Truth Ingested; Class A/B Discriminator Searches Re-Run on Validated Positives, Both Negative (WS1 Session AD, 2026-08-22, append-only)
+
+**BRIEF.** Ingest the operator's genuine A/B (side-by-side) listening pass over the historical
+row-0/`152_frozen_brush_mice`/item-7 plus all 8 open Class A/B rows — closing the ear-evidence gap
+Session AC identified — without closing any register row on that evidence alone; re-run the Class
+A and Class B discriminator searches against the now-validated positive set; report honestly on
+what does and does not ship.
+
+**(a) STEP 1 — RECONCILIATION.** Rows 1-8 (the 8 open register rows) checked directly against
+`scripts/phase4-fa-replay.test.ts`'s own `KNOWN_BAD.earCorrect` fields: all eight match the
+session brief's targets exactly (`629.01→630.09`, `681.63→682.74`, `1417.12→1418.53`,
+`167.03→167.70`, `494.43→494.75`, `856.09→856.52`, `1266.21→1266.66`, `1273.14→1273.55`) — byte
+grep, not paraphrase. Row 2's committed value (681.63) is unchanged from the register.
+
+**Row 0 — the 449.20/450.99/451.03 reconciliation.** `git log -S"450.99"` traced the value to
+exactly one commit, `e7e4f9a` (WS1 Session P, 2026-08-19), which introduced it in TWO places: the
+"Class A is not a threshold problem" per-conjunct prose table (`docs/work-in-progress.md`) and
+`scripts/ws1-generalization.test.ts`'s banned-ear-list-timestamp guard. Both instances write
+`449.20 → 450.99` for this row. But `scripts/ws1-ear-pass-ledger.ts`'s `ear-12` sitting (order 1 —
+the ORIGINAL 12-item ear pass, predating Session P by three sessions) already recorded this exact
+row as `scoredValue: 451.03, verdict: CORRECT` — and every OTHER file that names this row's
+ear-correct value (`docs/work-in-progress.md`'s dozens of other references, `sync-pipeline-v2-
+plan.md`'s own Parts M/N/Q, `src/services/faSeamFitGate.test.ts:250`, `faRunPlacementGate.
+test.ts:646`, `scripts/phase4-fa-replay.test.ts`'s own `earCorrect: 451.03` and its `toBeCloseTo
+(451.03, 0.005)` assertion) agrees on 451.03, not 450.99. Session P's own probe/measurement
+scripts (`ws1-session-p-r11probe.test.ts`, `ws1-session-p-measure.test.ts`) never reference either
+number in code — the discrepancy exists ONLY in that one session's prose table and its
+mechanically-derived banned-string list, never in a computed value. **Verdict: 450.99 was a
+transcription slip in Session P's own table — not a re-derivation, not a conflicting measurement —
+and it propagated by citation, unchecked against the ledger, into three later sessions' hardcoded
+constants** (`ws1-session-q-silence-distance.test.ts:43`, `ws1-session-q-detector-validate.
+test.ts:181`, `ws1-session-r-containment.test.ts:72`), all of which cite it as "already-ear-verified"
+without re-deriving it. **This is recorded as a SUPERSESSION, not a correction**, because the
+original value (451.03, `ear-12`, order 1) was right the entire time and nothing in
+`ws1-ear-pass-ledger.ts` — the file that is supposed to be authoritative — ever carried a
+contradicting row; 450.99 leaked in beside the ledger, not through it. None of the four files
+naming 450.99 is edited this session: each is an append-only record of its OWN session's
+measurement (the same discipline every other Part in this document follows), and
+`ws1-generalization.test.ts`'s banned list cannot simply swap in 451.03 without first checking for
+a collision against 451.03's own LEGITIMATE existing use as a closed-row regression pin in two
+`src/services/*.test.ts` files — a check out of this session's scope. The supersession is recorded
+where it belongs going forward: `scripts/ws1-ear-pass-ledger.ts`'s new `ear-verify-ad` sitting (Step
+2 below) reconfirms 451.03 explicitly and documents the 450.99 provenance inline.
+
+**(b) STEP 2 — LEDGER INGESTION.** All nine rows ingested into `scripts/ws1-ear-pass-ledger.ts`
+as sitting `ear-verify-ad` (order 10, the highest — supersedes by the ledger's own
+supersession-by-order mechanism), 18 rows total (a WRONG-at-committed / CORRECT-at-target pair
+per boundary, matching `session-p-live`'s own established convention). Verified via
+`earPassAuthorising`: all nine tags now resolve to `ear-verify-ad: CORRECT` at their target value.
+
+**Ear-evidence categorisation, before and after, stated precisely rather than as a bare count.**
+Before this session: the 8 open rows were backed ONLY by `session-p-live` (order 5) — per Session
+AC's own finding, a same-session self-transcription of the register's own claim, not an independent
+sitting; row 0 was backed by `ear-12` (order 1), a GENUINE sitting, but a SOLO one, flagged by this
+same ledger's own "Session T solo-listened pin audit" header comment as unaudited against the
+solo-vs-A/B failure mode Session T's own `383_sixty_four` reversal demonstrated. **So the honest
+"before" state is: zero of nine rows had A/B-grade evidence — eight had no genuine sitting at all,
+one had a genuine but unaudited-by-comparison solo sitting.** After this session: all nine resolve
+to `ear-verify-ad`, a genuine A/B (side-by-side candidate comparison) sitting — **nine of nine**.
+This is the "0 to 9" the session brief anticipated, stated exactly rather than rounded: it is a
+change in EVIDENCE GRADE for all nine, not the creation of evidence where literally none existed
+for row 0.
+
+**(c) STEP 3 — REGISTER STATUS, EXPLICITLY UNCHANGED.** `git diff` confirms `scripts/phase4-fa-
+replay.test.ts` is untouched this session (zero lines changed). The register still reads **8 open**
+(3 Class A + 5 Class B), and item-7/`152_frozen_brush_mice` is still NOT among them — closed at the
+fixture level since Session F, reopened only as a LIVE-PATH-ONLY defect since Session Q, unchanged
+by anything in this session. **Step 2 changed evidence QUALITY, not row STATUS** — ear evidence
+establishes what the correct value is; it does not by itself move a single boundary in production.
+No row was closed, no row was opened, no `KNOWN_BAD` entry was edited.
+
+**(d) STEP 4 — CLASS A DISCRIMINATOR, RE-RUN ON ALL FOUR VALIDATED POSITIVES, NEGATIVE (measured,
+`scripts/ws1-session-ad-step4-classA.py`, real 16kHz audio† — see caveat in (f) — 41 ear-confirmed
+controls pooled across v6/173/spanish, same 7 features as Session AB's own search).** Session AB
+tested only 2 of the 4 Class A rows (`214_solitary_fire`, `447_scout_facing_dark`); this session
+adds the two it never tested — `231_slowing_pace` and row-0/`152_frozen_brush_mice` — now that all
+four carry A/B-grade ear evidence. Full 14-candidate sweep (7 features × 2 directions), best
+threshold per candidate forced to recall 1.000 (catch all 4):
+
+| candidate | direction | threshold | classA caught | control FP | precision | recall |
+|---|---|---|---|---|---|---|
+| `seam_asymmetry_abs` | ≥ | 6.029e-3 | 4/4 | 22/41 | **0.154** | 1.000 |
+| `rms_at_50ms` | ≥ | 1.129e-4 | 4/4 | 28/41 | 0.125 | 1.000 |
+| `nearest_silence_depth_peak` | ≤ | 1.596e-2 | 4/4 | 28/41 | 0.125 | 1.000 |
+| `nearest_silence_dist` | ≤ | 0.86 | 4/4 | 25/41 | 0.138 | 1.000 |
+| `seam_asymmetry_ratio` | ≥ | 1.171 | 4/4 | 31/41 | 0.114 | 1.000 |
+| (9 more candidates) | | | 4/4 | 33-41/41 | 0.089-0.108 | 1.000 |
+
+**Best candidate is WORSE than Session AB's 2-row-only result** (0.154 vs. 0.400 precision) —
+adding `231_slowing_pace` (0.13-0.64s from any real detected silence) and row-0 (0.86s from any
+real detected silence) to the confirmed-positive population widens every threshold far beyond what
+`214`/`447` alone required, because neither new row shares `214`/`447`'s own defining property
+(sitting exactly on a real, if wrong, silence). **Full 5-way leave-one-out, to confirm this is a
+population property and not one outlier row dragging the number down:**
+
+| population | best precision | candidate |
+|---|---|---|
+| all 4 (214, 231, 447, 152) | 0.154 | `seam_asymmetry_abs ≥ 6.029e-3` |
+| exclude 214 | 0.120 | `seam_asymmetry_abs ≥ 6.029e-3` |
+| exclude 231 | 0.120 | `seam_asymmetry_abs ≥ 6.029e-3` |
+| exclude 447 | 0.125 | `seam_asymmetry_ratio ≤ 1.783` |
+| exclude 152 (row 0) | 0.120 | `seam_asymmetry_abs ≥ 6.887e-3` |
+
+All five configurations cluster in 0.120-0.154 — **the full 4-row set is the BEST of the five**,
+so row 0 is not a uniquely bad case dragging an otherwise-viable signal down; the whole remaining
+Class A population is equally resistant to amplitude/energy discrimination. **VERDICT: FULL
+NEGATIVE. Nothing ships. No Class A code change.** Per the brief's own instruction, no row was
+tuned individually and no candidate was cherry-picked below the recall=1.000 bar.
+
+**(e) STEP 5 — ITEM-7 ADDRESSABILITY, THREE ORTHOGONAL SIGNAL FAMILIES NOW TESTED, ALL NEGATIVE.**
+Restated plainly: item-7/`152_frozen_brush_mice` is not addressable by any rule or signal family
+measured to date, across three independent sessions:
+1. **`R11_MIN_FIT_DEVIATION` (R.11's own fit-deviation family).** Session P/AB/AC: fitDeviation
+   measures EXACTLY 1.0, the metric's own mathematical floor (`max(fit, 1/fit) ≥ 1` always) —
+   structurally unreachable by ANY threshold, not a narrowly-missed one.
+2. **Silence-distance (Session Q).** `nearest_silence_dist` = 0.86s this session (matches Session
+   Q's own 1.18s-scale finding within measurement-vintage tolerance) — but `214`/`447` sit at
+   distance EXACTLY 0, the identical blind spot `fitDeviation` has, so distance cannot separate
+   item-7 from R.11's own already-known-blind rows either; Session Q's own attempted correction via
+   nearest-silence proposed 448.02 for this row — the WRONG silence.
+3. **Amplitude/energy (this session, Step 4).** Best precision 0.154 with item-7 included, 0.120
+   without it — item-7 is not an outlier making the other rows' case worse; excluding it does not
+   rescue a clean separator for the rest either.
+
+**No detector shipped in this document has ever reached item-7.** Per Session R's Part P finding
+(reaffirmed, not re-tested this session): the defect class here is word-ATTRIBUTION, not boundary
+placement — item-7's own traced mechanism (`docs/work-in-progress.md`'s ADDENDUM 2 to item 6) is
+`findAgreeingSilence` (`faAnchors.ts`) anchoring on "moving," the SIXTH word of the segment's OWN
+correct text, because that word's Whisper timestamp happens to sit 0.10s from a real silence's
+`endSec` — the segment's first five words get trapped in the preceding chunk. Any detector that
+evaluates a committed BOUNDARY against segment spans, silence proximity, or acoustic amplitude AT
+the boundary (all three families tested above) is testing the pipeline's output against the very
+corruption that produced it — Part P's own standing conclusion. **What class of detector WOULD be
+required:** one operating on TOKEN-ORDINAL / identity information, matching CLAUDE.md's own
+standing invariant ("timestamps may measure distance; they must never decide identity") — concretely,
+a check on whether an agreeing-silence anchor's matched word sits at or near its OWN segment's
+first word (ordinal position ≈ 1) versus deep inside it (item-7's anchor word is the sixth). This
+is a design-level answer, not a proposal built or tested this session — no threshold was widened to
+reach item-7, per the brief's own instruction.
+
+**(f) STEP 6 — CLASS B FLOOR, RE-DERIVED AT NATIVE RATE, ONE UNRESOLVED CANDIDATE FALSE POSITIVE
+(measured, `scripts/ws1-session-ad-step6-classB.test.ts`, decoded at 48000 Hz via `ffmpeg` — NOT
+the replay bundle's 16kHz capture, which Session R's Part P(e) already measured as a sample-rate
+artefact).** † This caveat applies to (d) above too: Session AB's and this session's Step 4 both
+used the 16kHz replay capture; Session R already proved this rate is measurably artefactual for
+amplitude features specifically, so (d)'s numbers, like Session AB's own, carry that same
+unresolved caveat and have not been re-verified at native rate this session (Step 4's own scope was
+the confirmed-positive-set expansion, not the sample-rate question Step 6 addresses for Class B).
+
+Re-running Session R's own `ws1-session-r-native-rate.test.ts` fresh (unchanged this session,
+confirms rather than re-derives) reproduces its finding exactly: at native rate, `403_vigilant_
+embers` moves from 0.0433 (16kHz) to 0.0544 (48kHz) — ABOVE the shipped 0.05 floor already, taking
+Class B recall from 1/5 to **2/5 for free**, with no floor change at all. The three remaining
+misses, at native rate: `056_dropping_torch` 0.0297, `286_fact_to_act` 0.0313, `400_endless_dark`
+0.0280 (up from 0.0152 at 16kHz — nearly double; the 16kHz-derived candidate floor from an
+initial, superseded pass of this same measurement was 0.0152, an artefact of the same rate issue).
+
+**A single re-derived floor (0.02799908…, GEOMETRIC — 400's own native-rate amplitude, the
+minimum of the three remaining misses) achieves recall 5/5.** Sweeping every fallback-examined
+pair across all three corpora at this floor (`totalFallbackPairsAcrossCorpora: 48` — v6 27, 173
+19, spanish 2) finds **exactly ONE** boundary that newly passes and was not already flagged: `v6
+008_unknown_void @ 23.13s` (amplitude 0.0383). It carries **zero ear-pass evidence either way** —
+never named in any prior WS1 session, confirmed by direct grep. **LOOCV (5-fold, holding out each
+Class B row in turn):** the derived floor stays in the narrow 0.0280-0.0313 range regardless of
+which row is held out (400 is the binding minimum in 4 of 5 folds; its own hold-out shifts the
+floor to 056's 0.0297, still comfortably below `008_unknown_void`'s 0.0383) — the derivation is
+stable, not a single-row artefact. **173 provides NO validating signal at any floor**: Session R's
+own conjunct breakdown (reproduced fresh) shows 173's `passRatio` conjunct is 0/19 at every rate —
+every one of its 19 fallback pairs fails the loudness-RATIO conjunct regardless of amplitude, so
+its own zero-new-firings count is **NOT EXERCISED**, not a clean pass, exactly as Session R Part
+P(e) already established and this session reproduces rather than merely cites. Spanish contributes
+only 2 fallback pairs total across the whole corpus — too thin to validate or refute anything.
+**VERDICT: NOT SHIPPABLE. One ear check away from shippable, not a clean negative and not a clean
+win** — recall reaches 5/5 on real, stable evidence, but `008_unknown_void` is a genuine unresolved
+risk (unverified, not confirmed either way) and the honest bar ("zero false positives") is not met
+while it stands unverified. No `syncConstants.ts` change made this session.
+
+**(g) STEP 7 — THREE-CORPUS MEASUREMENT, NOTHING SHIPPED.** Both searches this session are
+negative/not-shippable, so there is no new constant to tabulate a fires/TP/FP table for — restated
+per the brief's own instruction rather than omitted:
+
+| corpus | Class A (Step 4) | Class B (Step 6) |
+|---|---|---|
+| v6 | 4/4 confirmed positives, best precision 0.154 (22 control FP) | 5/5 recall achievable, 1 unresolved candidate FP (`008_unknown_void`) |
+| 173 | contributes controls to the pooled 41 (no v6-scale defect population of its own) | **NOT EXERCISED** — 0/19 pairs ever pass the ratio conjunct, at any floor |
+| spanish | contributes controls to the pooled 41 | 2 fallback pairs total — too thin to validate or refute |
+
+The **5-tier WPM validation suite remains a blocking prerequisite before any PLACEMENT rule ships to
+main** (unchanged from Sessions Y/Z/AA/AB — restated per the brief's own instruction; this session
+shipped no rule, placement or otherwise, so the prerequisite gates nothing new today but remains
+the standing blocker for Class A/B's eventual fix).
+
+**(h) SCOPE DISCIPLINE.** `faAnchors.ts` (sha256 `b61e94cb…`, unchanged), `snapBoundaries.ts`,
+`silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`, and every
+`scripts/fixtures/phase4-baseline-*.csv` untouched. `scripts/phase4-fa-replay.test.ts` (the
+register) untouched. No new repo-root file. No `git checkout` reverts. No arbiter rebuild. No
+Phase 4 corpus work. Two new gated measurement files (`ws1-session-ad-step4-classA.py`,
+`ws1-session-ad-step6-classB.test.ts`, the latter gated `describe.skipIf(!WS1_SESSION_AD_MEASURE)`
+— neither runs in the default `npm test` sweep). One data file edited
+(`scripts/ws1-ear-pass-ledger.ts`, additive only — 18 new rows + 1 new sitting, zero existing rows
+edited).
+
+**(i) FLOORS, RE-VERIFIED AT HEAD (`478bfb5`).** `npm test` 2465 passed/28 skipped/0 failed (+1
+skipped vs. the 27 floor — this session's own new gated test file, `WS1_SESSION_AD_MEASURE=1`,
+zero regressions; 107 files passed/19 skipped). `tsc --noEmit` clean. `cargo check --features
+fa-inference` clean (unchanged — no Rust file touched). `cargo clippy --features fa-inference
+--all-targets` clean, 4 pre-existing warnings (unchanged). `cargo test` 141 passed/0 failed/1
+ignored (unchanged). `cargo test --features fa-inference` 216 passed/0 failed/24 ignored
+(unchanged). Golden replay 6/6 (54/54 underlying tests, freshly re-run standalone, byte-identical).
+`faAnchors.ts` sha256 unchanged, `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`.
+`git diff --stat` against `478bfb5`: `scripts/ws1-ear-pass-ledger.ts` (+109/-0, additive), two new
+`scripts/` files (`ws1-session-ad-step4-classA.py`, `ws1-session-ad-step6-classB.test.ts`, neither
+in the default sweep), plus this document, `docs/work-in-progress.md` (§11g + Changelog) and
+`project-state.md` — no `src/` or `src-tauri/` file touched.
