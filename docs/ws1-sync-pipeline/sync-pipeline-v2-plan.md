@@ -7240,3 +7240,269 @@ unchanged, `b61e94cb…`. `git diff --stat` against `29ddcd3`: `src-tauri/src/fa
 insertions only — no other file touched, all CONSTRAINTS held (no edits to `faAnchors.ts`,
 `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`, or any
 `scripts/fixtures/phase4-baseline-*.csv`).
+
+---
+
+## Part V — Near-Zero FA Confidence Predicts Neither Token Class Nor Misplacement; No Guard
+Wired This Session (WS1 Session AA, 2026-08-22, append-only)
+
+**Scope: Steps 1-6 of the session's own brief.** All analysis is read-only against files already
+on disk (`.work-phase4/replay/{v6,173}/*`, `scripts/fixtures/phase4-fa-second-baseline-*-segments.csv`)
+via standalone Python scripts in the session scratchpad, not committed to the repo (they are not
+fixtures anything reads by hardcoded path, and CLAUDE.md §7 only requires an index for files
+`scripts/*.py`/`scripts/*.test.ts` read — nothing in-repo reads these). No source file, fixture,
+or `KNOWN_BAD` row was touched; `faAnchors.ts` sha256 is unchanged (confirmed at STEP 0 and again
+at close, §(g) below).
+
+**(a) METHOD VALIDATION, BEFORE TRUSTING ANY NEW NUMBER.** Session Z's own 44.3%/19.7% table
+(Part U §(g)) was reproduced exactly before building anything on top of it: "the FA word nearest
+each committed boundary's timestamp," read against `fa_production_words.json`, means nearest by
+**start time**, not nearest by interval-inclusive distance — the latter (tried first) gives
+42.3%/447 v6, off by 9 boundaries from Session Z's 198. Nearest-by-start reproduces v6
+198/447=44.3%, 173 34/173=19.7% and the `<0.056` engagement counts 199/447=44.5%, 35/173=20.2%
+**exactly**. This confirms the population (620 boundary-adjacent FA words, v6 447 + 173 173) and
+the method before any stratification.
+
+**(b) STEP 1a — COMPOSITION OF THE SUB-THRESHOLD POPULATION. THE LEADING HYPOTHESIS DOES NOT
+SURVIVE THE FIRST MEASUREMENT.** Every one of the 620 boundary-adjacent words was classified
+content vs. function by a closed-class/open-class heuristic (determiners, pronouns, prepositions,
+conjunctions, auxiliary/modal verbs, and a small particle set = function; everything else =
+content) — no POS tagger is available in this environment (`nltk`, `spacy` both absent,
+MEASURED via `python3 -c "import nltk"` / `import spacy`, both `ModuleNotFoundError`), so this is
+a closed-class heuristic, not a full POS tag, reported as such.
+
+| population | n | function | content |
+|---|---|---|---|
+| Sub-threshold (<0.01) | 232 | 129 (55.6%) | 103 (44.4%) |
+| Control (>0.9) | 346 | 223 (64.5%) | 123 (35.5%) |
+| Full 620-point population | 620 | 376 (60.6%) | 244 (39.4%) |
+
+The sub-threshold population is **not** overwhelmingly function words — its function-word share
+(55.6%) sits **below** the full population's own baseline rate (60.6%) and well below the
+control (high-confidence) population's rate (64.5%). If anything, near-zero confidence is
+mildly enriched for content words relative to baseline, the opposite direction the leading
+hypothesis predicts. Per-corpus: v6 sub-threshold (n=198) 56.6% function/43.4% content; 173
+(n=34) exactly 50/50. **Composition alone already argues against "near-zero confidence is mostly
+short, low-energy function words."**
+
+**(c) STEP 1b — INDEPENDENT-ARM VALIDATION AGAINST WHISPER, SAME RUN-ID BUNDLE.** Population
+rebuilt on `fa_live_words.json` (the run-id-stamped FA arm — `_runId` `p-20260819T120922Z-cbb403c1`
+v6 / `p-20260819T133910Z-5bf038bb` 173) so it pairs, under the identical `_runId`, with
+`whisper_raw_tokens.json` — the only arm-pair in either replay bundle that literally shares a run
+id (`run_manifest.json`, both corpora, MEASURED). Composition on this arm is close to (a)'s
+`fa_production_words.json` figures — sub-threshold 225/620 (36.3%) vs. 232/620 (37.4%), function
+share 54.7% vs. 55.6% — confirming (b)'s finding is not an artifact of vintage choice.
+
+**Matching methodology, and a dead end reported honestly.** A first pass matched each FA word to
+the temporally-NEAREST same-text Whisper token (window up to 15s). Forensic inspection of the
+worst outliers (`v6 030_watching_older_hunters`, FA `"you"`@87.80 conf=0.908, matched Whisper
+`"You"`@89.71, diff=1.91s) showed Whisper's own token stream **deletes** an entire clause here
+("you start watching" never appears in `whisper_raw_tokens.json`'s 84-92s window — FA's own
+neighboring words at confidence 0.97-0.9998 confirm FA is right and Whisper skipped it) — high-
+frequency words ("you", "the", "a", "it", "every") recur every few seconds, so nearest-in-time
+matching can silently pair the wrong occurrence, or correctly find the nearest occurrence and
+have that occurrence itself reflect a genuine WHISPER error, not an FA one. A second pass tried
+occurrence-RANK matching instead (identity by cross-stream ordinal position, not timestamp
+proximity, following CLAUDE.md's own standing invariant against deciding identity by raw-
+timestamp distance) — this failed **worse**: FA/Whisper occurrence counts for common words drift
+apart over a 20-40 minute transcript (ASR insertions/deletions accumulate), so rank correspondence
+desyncs across the file and produces catastrophic outliers (mean 42.7s / 18.1s per cell,
+`p90` up to 162s) — a dead end, reported rather than silently discarded, and itself evidence that
+Whisper's own token stream is not a clean ground truth for this comparison. **Final method:**
+nearest-in-time matching, window narrowed to 2.5s (results insensitive to window choice from 2.5s
+to 15s — the match counts and medians below are unchanged across that range, confirming the 15s
+window's occasional bad matches were rare, not systemic). Where no same-text Whisper token exists
+within 2.5s, the point is reported as unmatched, not inferred.
+
+| cell | n | matched | unmatched | median\|Δ\| | mean | p90 | ≤100ms | ≤250ms | ≤500ms |
+|---|---|---|---|---|---|---|---|---|---|
+| control / content | 123 | 86 | 37 | 0.345s | 0.419s | 0.910s | 24.4% | 40.7% | 64.0% |
+| control / function | 227 | 224 | 3 | 0.410s | 0.449s | 0.920s | 22.3% | 33.9% | 62.5% |
+| near-zero / content | 102 | 92 | 10 | 0.190s | 0.254s | 0.570s | 29.3% | 64.1% | 85.9% |
+| near-zero / function | 123 | 123 | 0 | 0.170s | 0.247s | 0.540s | 36.6% | 61.0% | 87.0% |
+
+**n is adequate to see a directional pattern** (102-227 per cell, 86-224 matched) — not adequate
+to fully decompose the confound demonstrated in (c) above (Whisper's own deletion errors
+concentrate on exactly the high-frequency words that dominate the control band). That confound is
+named, not hidden, but it cannot by itself explain the pattern: it predicts control cells look
+*noisier*, and both control cells (content AND function, separately) show worse agreement than
+both near-zero cells — the pattern holds within class, not only in aggregate, which a pure
+word-frequency confound would not produce on its own.
+
+**(d) STEP 1 VERDICT — STATED PLAINLY, PER THE BRIEF'S OWN THIRD BRANCH.** Neither half of the
+leading hypothesis survives measurement. Composition (b): the sub-threshold population is not
+concentrated in function words — it sits at 55.6%/54.7% function share against a 60.6%/64.9%(control)
+baseline, the wrong direction for "near-zero is mostly function words." Placement accuracy (c):
+near-zero-confidence words show **equal-to-better** agreement with the independent Whisper arm
+than high-confidence control words, in both the content and function sub-classes separately. **The
+aligner is uncertain but not measurably wrong here** — Session Z's 44.3%/19.7% headline is a real,
+correctly-measured number, but its use as a signal of unreliable placement is a misreading, stated
+plainly per the brief's own instruction. This is INFERRED with the stated Whisper-arm-reliability
+caveat, not proven to the standard an ear pass would give — no ear pass was run this session (an
+autonomous session cannot listen, per the register's own established convention).
+
+**(e) STEP 2 — THE GUARD'S SHAPE CHANGED: NONE WIRED THIS SESSION, TWO INDEPENDENT REASONS.**
+First, (d) removes the evidentiary basis for a blind global decline-on-low-confidence gate — a
+guard built on "near-zero confidence means untrustworthy" would suppress placement on ~36-44% of
+boundaries (revised engagement below) for a hypothesis this session's own measurement does not
+support. Second, and independently sufficient on its own: **no call site among the six audited
+rules (§(f) below) places a boundary directly at a raw FA timestamp on the strength of trusting
+its confidence.** R.5/R.12/R.13/R-U never consult FA per-word confidence at all (§(f)). R.10/R.11
+already consult it, but as an ABSENCE-OF-EVIDENCE signal justifying a decline-to-commit or
+move-away decision — never as trust in a low-confidence anchor's own timestamp as a destination.
+The one place a raw FA timestamp becomes a committed boundary regardless of its driving token's
+confidence is `faAnchors.ts`'s own `findAgreeingSilence`/`computeAnchors` (silence-snap against a
+Whisper-token-index-derived seam, MEASURED via full-file grep: zero `confidence` references in
+that module's logic) — and that file is under this session's own hard no-touch CONSTRAINT. A
+guard cannot be wired into a call site that both (a) the evidence does not justify gating and (b)
+this session is barred from editing. Both reasons are stated because either alone would already be
+sufficient — this is not "the evidence was ambiguous so we deferred," it is "the evidence argues
+against it, and the one place it would apply is off-limits."
+
+**LOW_CONFIDENCE_NO_OP — event schema SPECIFIED, not implemented.** Designed so a future session
+with a justified engagement point (a different corpus, a placement rule this audit did not cover,
+or `faAnchors.ts`'s constraint lifting) can wire it without re-deriving the shape:
+
+```ts
+interface LowConfidenceNoOpEvent {
+  type: 'LOW_CONFIDENCE_NO_OP';
+  boundaryIndex: number;        // index into the committed segment array
+  decliningRuleId: string;      // e.g. 'R.11', distinguishes from an already-correct no-op
+  committedAnchorConfidence: number;
+  correctedAnchorConfidence: number;
+  thresholdApplied: number;     // CONF_MIN_FALLBACK at time of decline, for audit-ability
+}
+```
+
+Distinguishable from a rule declining because the boundary was already correct (that path emits no
+event at all under every rule's existing no-op convention, e.g. `R11_MIN_CORRECTION_SEC`/
+`R12_MIN_CORRECTION_SEC`'s own already-right short-circuit) — `LOW_CONFIDENCE_NO_OP` fires only
+when a rule *would* have moved a boundary and a confidence gate is what stopped it, which is
+exactly why no code emits it yet: no rule in this session's editable surface has such a gate.
+
+**Revised engagement (blast radius), both arms, `<0.056` (`CONF_MIN_FALLBACK`):**
+
+| arm | v6 | 173 |
+|---|---|---|
+| `fa_production_words.json` (Session Z's own, matches its 199/35 exactly) | 199/447 (44.5%) | 35/173 (20.2%) |
+| `fa_live_words.json` (run-id-stamped) | 190/447 (42.5%) | 38/173 (22.0%) |
+
+Session Z's own counts reproduce exactly on its own arm; the run-id-stamped arm revises them by
+1-2 points either direction, not materially. **What Step 1 revises is not the count, it is the
+interpretation**: this is not a measured misplacement rate, it is a measured *uncertainty* rate
+with no demonstrated accuracy cost — a guard gating on it would trade real placement coverage
+(44%/20% of boundaries) for a benefit this session could not measure.
+
+**Mutation gate: not applicable, stated plainly rather than left implied.** The brief asks for a
+mutation removing the guard that must turn a gate RED. No guard was wired (e), so there is nothing
+to mutate and no gate exists to test — per Session Z Step 3's own precedent (`unpinned_session_
+control_173`/`forced_parallel_session_control_173`, Part U §(e)) of stating a gate's real status
+plainly rather than implying coverage that does not exist, this is recorded as N/A, not silently
+skipped.
+
+**(f) STEP 3 — RULE-BY-RULE CONFIDENCE EXPOSURE. NO ROW REOPENED.** Full-file grep for
+`confidence`/`onfidence` across each rule's own implementation (not comments), cross-checked
+against each file's own header claims:
+
+| rule | file | confidence dependency | historical firings | sub-threshold fraction | classification |
+|---|---|---|---|---|---|
+| R.5 | `faChunkPlan.ts` | none (zero references) | N/A to this audit | N/A | N/A — does not consume FA confidence |
+| R.10 | `faUnspokenGate.ts` | `R10_MAX_WORD_CONF=5e-4` (absence-of-evidence: "was this text spoken at all") | 2 (173 only: `perilous_realms`, `blue_monkey` — `faRunPlacementGate.ts:107`) | 100% by construction (threshold ≪ 0.01) | **EVIDENCE-BACKED** — 850x margin over 649 boundaries, re-derived independently twice (Sessions D, E), threshold never moved (`syncConstants.ts:548-565`) |
+| R.11 | `faSeamFitGate.ts` | `R11_MAX_SPAN_WORD_CONF=1.0835e-2` (absence-of-evidence: "is this specific mis-corrected span acoustically empty") | 4 (all 3 corpora combined — `faRunPlacementGate.ts:109`) | 100% by construction (threshold ≪ 0.01) | **UNDER-EVIDENCED** — only a 2.8x margin, and the file's own header already self-describes it as "NOT a clean structural zero... membership is suspicion, not guilt" (`syncConstants.ts:589-605`) — a pre-existing, self-acknowledged weakness, reaffirmed not newly found |
+| R.12 | `faRunPlacementGate.ts` | none — file's own header: "R.12 HAS NO SIGNAL THRESHOLD... no confidence... anywhere" (`syncConstants.ts:656-658`) | N/A | N/A | N/A — does not consume FA confidence |
+| R.13 | `faRunPlacementGate.ts` (`detectUtterancePlacementDefects`) | none (same file, same architecture, zero `confidence` references in its own implementation) | N/A | N/A | N/A — does not consume FA confidence |
+| R-U | `faAnchors.ts` (`spansATokenSeam`/`findAgreeingSilence`) | none — structural token-seam veto over Whisper-token timestamps; the function's own header disclaims "any distance test" for identity | N/A | N/A | N/A — does not consume FA confidence |
+
+**The confidence question this session investigated (does low confidence mean the aligner's
+TIMESTAMP is untrustworthy for PLACEMENT) is orthogonal to how R.10/R.11 actually use confidence
+(as ABSENCE evidence, justifying a decline-to-commit or move-away, never a placement destination).**
+Neither rule places a boundary AT a low-confidence anchor's own timestamp, so (d)'s finding does
+not implicate either rule's correctness — it does mean R.11's own pre-existing thin margin (2.8x,
+self-flagged in its own file) is the one rule on this list that **warrants re-derivation**, for a
+reason unrelated to this session's own new measurement. R.5/R.12/R.13/R-U warrant none — they were
+never exposed to begin with. **No row in `KNOWN_BAD` was reopened, edited, or had its `status`
+changed this session** — confirmed by `git status --short scripts/phase4-fa-replay.test.ts`
+(empty) before and after this session's analysis.
+
+**(g) STEP 4 — WORD-GAP RE-TEST, RESTRICTED TO ANCHORS THIS SESSION CAN VOUCH FOR AT ALL.** All 5
+known candidate rows are 173-only (grep-verified: 0 hits in the v6 baseline CSV for any of the 5
+tags, 1 hit each in 173's) — **v6 and Spanish contribute zero candidates**, not because they were
+excluded, but because none exists in the register; searching for new ones would be new corpus
+work, barred by CONSTRAINTS. Reliability criterion: (d) found raw confidence does not predict
+Whisper-agreement well enough to use as a general misplacement filter — so it is used here only in
+its narrowest defensible form, "an anchor this session has *no* signal to reason about at all"
+(confidence <0.01, i.e. collapsed), not as a claim that a non-collapsed anchor is thereby proven
+accurate:
+
+| tag | left anchor conf | right anchor conf | passes (both ≥0.01) | fraction | holds? |
+|---|---|---|---|---|---|
+| `lethal_nature_hazard` | 3.69e-6 | 0.9656 | **no** (left collapsed) | 0.952 | — |
+| `iron_bounce` | 0.9996 | 0.9989 | **yes** | 0.750 | yes |
+| `wall_split_path` | 0.9998 | 0.9983 | **yes** | -4.5 (before interval) | no |
+| `logic_clash` | 3.13e-6 | 0.9991 | **no** (left collapsed) | 0.977 | — |
+| `gadget_decay` | 1.00 | 0.9593 | **yes** | 1.5 (past interval) | no |
+
+Restricting removes `lethal_nature_hazard` and `logic_clash` — both were **confirming** rows
+(0.952, 0.977) — leaving **n=3**: 1 confirming (`iron_bounce`, 0.750), 2 refuting (`wall_split_path`,
+`gadget_decay`). **Still net negative (2/3 refute), same direction and same two refuting rows as
+the unrestricted n=5.** Labelled **underpowered, not conclusive, as a fresh n=3 finding on its
+own** — but this is the THIRD independent session (Y, Z, this one) to land on the same negative
+verdict with the same two refuting rows, which the brief's own text names as an acceptable outcome
+in its own right. `faAnchors.ts` untouched, sha256 unchanged.
+
+**(h) STEP 5 — 45-46 PARKED, AS INSTRUCTED.** The live-in-memory-decode-vs-cached-file hypothesis
+(Session Z Part U §(f)'s own "this is INFERRED... a live, instrumented capture... would be needed")
+is recorded as the scheduled follow-up, needing in-process instrumentation this session does not
+build. Not attempted.
+
+**(i) STEP 6 — TRACTABILITY VERDICT ON THE 8 OPEN CLASS A/B ROWS.** A qualitative spot-check (not
+a new stratified sample — the 8 rows are a fixed, already-diagnosed set) pulled the FA word and
+nearest Whisper token at both the committed and ear-correct timestamp for each row (v6,
+`fa_production_words.json` / `whisper_raw_tokens.json`, ±3s window):
+
+- **3 of 8** (`classB-167`, `classB-403`, and `classB-056` at its ear-correct anchor) show FA and
+  Whisper's own text AND timing agreeing closely (e.g. `classB-167` committed: FA `"drawn"`@494.44
+  vs. Whisper `"drawn"`@494.40; `classB-403` committed: FA `"and"`@1273.16 vs. Whisper
+  `"and"`@1273.11) **despite near-zero FA confidence** — directly consistent with (d): the low
+  confidence here is not signaling a wrong timestamp.
+- **5 of 8** (`classA-214`, `classA-231`, `classA-447`, `classB-056` at its committed anchor,
+  `classB-286`, `classB-400`) show FA and Whisper disagreeing on the WORD ITSELF, not just its
+  timing (e.g. `classA-214` committed: FA `"you"` vs. Whisper `"why"`; `classB-400`: FA `"you"`
+  (same FA word/timestamp at both the committed AND ear-correct query) vs. Whisper `"body"`/`"."`)
+  — both systems genuinely struggle to transcribe these specific spans, consistent with each row's
+  own already-diagnosed mechanism (silence-selection ambiguity, a `fitDeviation===1.0` blind spot,
+  or a fallback boundary with no detected silence in the search window at all).
+
+**Verdict: addressable with current FA output, not blocked pending better alignment — INFERRED
+from this session's Step 1 finding plus each row's own pre-existing, per-row diagnosed mechanism,
+not newly derived.** (d)'s finding removes the one plausible objection that these 8 rows are stuck
+behind an unreliable acoustic model — if that were true, near-zero confidence would predict
+disagreement, and it does not, at scale or on this spot-check. Every row already has a named,
+specific structural cause that is a **detector-design** gap, not an alignment-quality gap: `classA-
+214`/`classA-447` share a `fitDeviation` exactly 1.0 + silence-distance exactly 0 blind spot,
+needing (per the row's own note) "a third, not-yet-identified discriminator"; `classA-231` needs
+chunk-edge-aware silence selection, not proximity to the wrong silence; the four `classB` fallback
+rows (`056`, `286`, `400`, `403`) all decline on `BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR`
+(0.05) by margins from 0.0067 to 0.0348, with their other two conjuncts (distance, loudness ratio)
+passing comfortably — none of this requires a different acoustic model or a re-run of forced
+alignment. **What would unblock them:** (a) the fitDeviation/silence-distance pair needs a third
+discriminator, not yet identified by any prior session; (b) the four amplitude-floor rows need
+either a revisited floor constant or a still-playing checker that CORRECTS (today it only WARNS —
+Part T's own `docs/work-in-progress.md` note); (c) `classA-231` needs a chunk-edge-aware silence
+selector. None of the three is an alignment-technology change. This is INFERRED, not a fix shipped
+this session — no row's `status` or `owningRule` changed.
+
+**(j) FLOORS, RE-VERIFIED AT HEAD (`ceaa6df`, this session's own changes are docs-only).**
+`npm test` 2465 passed/23 skipped/0 failed (unchanged). `tsc --noEmit` clean. `cargo check
+--features fa-inference` clean. `cargo clippy --features fa-inference --all-targets` clean, 4
+pre-existing warnings (unchanged — same 3 lint classes as Session Z: `needless_return`,
+`needless_lifetimes`, `neg_multiply`). `cargo test` 141 passed/0 failed/1 ignored (unchanged).
+`cargo test --features fa-inference` 216 passed/0 failed/24 ignored (unchanged — no new test
+added this session). Golden replay 6/6 (`scripts/phase4-handoff-replay-sync.test.ts`, run
+standalone and confirmed part of the full green `npm test`). `faAnchors.ts` sha256 unchanged,
+`b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`. `git diff --stat` against
+`ceaa6df`: docs only (this file, `docs/work-in-progress.md`, `project-state.md`) — no
+`src/`/`src-tauri/` file touched, all CONSTRAINTS held (no edits to `faAnchors.ts`,
+`snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`, or any
+`scripts/fixtures/phase4-baseline-*.csv`; no repo-root files added; no generator run in the
+default sweep; no Phase 4 corpus work; no arbiter rebuild; no ear-verified row reopened).
