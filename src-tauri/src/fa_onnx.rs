@@ -4009,6 +4009,95 @@ mod phase1_determinism {
             );
         }
     }
+
+    /// Mirrors `load_session_unpinned` but forces the MOST aggressive
+    /// divergence-prone configuration `ort = "2.0.0-rc.13"` exposes: explicit
+    /// PARALLEL execution mode plus a multi-thread intra-op pool (unpinned
+    /// defaults to ORT's own choice, which on this build is sequential mode —
+    /// `unpinned_session_control_173` above stayed byte-identical, so this
+    /// tries harder before concluding no mutation can turn the gate RED).
+    /// `with_deterministic_compute` is left at its default (off).
+    fn load_session_forced_parallel(model_path: &Path) -> Session {
+        let dylib_path = std::env::var("ORT_DYLIB_PATH").expect("ORT_DYLIB_PATH must be set (checked by common_setup)");
+        ort::init_from(dylib_path).expect("ort::init_from").commit();
+        Session::builder()
+            .expect("Session::builder")
+            .with_intra_threads(8)
+            .expect("with_intra_threads")
+            .with_inter_threads(4)
+            .expect("with_inter_threads")
+            .with_parallel_execution(true)
+            .expect("with_parallel_execution")
+            .commit_from_file(model_path)
+            .expect("commit_from_file")
+    }
+
+    fn run_once_forced_parallel(model_path: &Path, audio_path: &str, chunks: &[crate::fa::FaChunkInput]) -> Vec<super::WordSpan> {
+        let mut session = load_session_forced_parallel(model_path);
+        let vocab = load_vocab("en").expect("load_vocab en");
+        let samples = read_wav_mono_16k(Path::new(audio_path)).expect("read_wav_mono_16k");
+        let mut all_words = Vec::new();
+        for chunk in chunks {
+            let (start_sample, end_sample) = chunk_sample_range(samples.len(), chunk.start_sec, chunk.end_sec);
+            let chunk_samples = &samples[start_sample..end_sample];
+            let words = align_chunk_samples(&mut session, &vocab, Language::En, chunk_samples, &chunk.text)
+                .unwrap_or_else(|e| panic!("run_once_forced_parallel: align_chunk_samples failed: {e}"));
+            for w in words {
+                all_words.push(super::WordSpan {
+                    text: w.text,
+                    start_seconds: w.start_seconds + chunk.start_sec,
+                    end_seconds: w.end_seconds + chunk.start_sec,
+                    score: w.score,
+                });
+            }
+        }
+        all_words
+    }
+
+    /// STEP 3 (WS1 Session Z): `unpinned_session_control_173` never turns
+    /// RED on this hardware — ORT's own unconfigured defaults happened to be
+    /// sequential-mode and stable here, so that control cannot prove the gate
+    /// catches a real regression. This test tries a strictly more aggressive
+    /// mutation (explicit parallel execution mode, 8 intra-op + 4 inter-op
+    /// threads) run 5x (not 3 — a thread-scheduling race is not guaranteed
+    /// to show on the 3rd run either). Diagnostic only, like the test above:
+    /// it reports which outcome occurred rather than asserting one, because
+    /// an assertion here would be asserting a property of THIS hardware/ORT
+    /// build's thread scheduler, not a property this codebase controls.
+    #[test]
+    #[ignore]
+    fn forced_parallel_session_control_173() {
+        const CONTEXT: &str = "forced_parallel_session_control_173";
+        let Some((model_path, audio_path)) = common_setup(CONTEXT, "173") else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+        let chunks = load_production_chunks_windowed("173", 161.46, 194.22);
+        assert!(!chunks.is_empty());
+
+        eprintln!("=== 173: 5 independent FORCED-PARALLEL-session runs (stronger mutation) over [161.46,194.22) ===");
+        let runs: Vec<Vec<super::WordSpan>> = (1..=5)
+            .map(|i| {
+                let r = run_once_forced_parallel(&model_path, audio_path_str, &chunks);
+                report_words(&format!("run {i}"), &r);
+                r
+            })
+            .collect();
+
+        let all_identical = runs.windows(2).all(|w| w[0] == w[1]);
+        if all_identical {
+            eprintln!(
+                "=== 173: FORCED-PARALLEL runs (5x, 8 intra + 4 inter threads, explicit parallel \
+                 execution mode) were ALSO byte-identical on this hardware — no configuration this \
+                 test tried turns the determinism gate RED here; treat the pinned test as \
+                 documentation of intended configuration, not as a proven-armed regression gate ==="
+            );
+        } else {
+            eprintln!(
+                "=== 173: FORCED-PARALLEL runs DIVERGED — the gate CAN be turned RED on this \
+                 hardware; pinning is doing real work, and the divergence mechanism is real \
+                 thread-scheduling-order-dependent floating point, not merely INFERRED ==="
+            );
+        }
+    }
 }
 
 #[cfg(test)]
