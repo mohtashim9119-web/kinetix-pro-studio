@@ -761,3 +761,58 @@ export const NUMBER_WORDS: ReadonlySet<string> = new Set<string>([
   ...NUMBER_TENS,
   ...NUMBER_SCALES,
 ]);
+
+// ---------------------------------------------------------------------------
+// WS1 Session AE — THE ANCHOR-TRUST CONSTANTS (`faAnchorTrustGate.ts`, R.14 /
+// R.15). Three values, each labelled with where it comes from. None of them is
+// derived from — or tuned against — the rows the two rules fire on; that is the
+// whole point of the labels, and it is what makes the leave-one-out check on
+// those rows a no-op rather than a re-fit (CLAUDE.md: "a constant tuned until
+// known rows pass is a corpus-fitted value wearing a rule's clothes").
+// ---------------------------------------------------------------------------
+
+/**
+ * GEOMETRIC. The forced aligner's own confidence reliability line, taken
+ * unchanged from WS1 Session Z's measured distribution rather than re-derived
+ * here: a 24-bin log-scale histogram of boundary-adjacent FA word confidence
+ * over v6 + 173 pooled (620 points) is cleanly BIMODAL, with a genuinely empty
+ * bin at `[10^-1.5, 10^-1.0)` = `[0.0316, 0.1)` separating the two modes.
+ * 0.056 is that empty gap's geometric midpoint in log space. Engagement is
+ * FLAT across the entire empty range — 0.01 through 0.1 all give the identical
+ * engagement counts (v6 199/447, 173 35/173) — so the exact digits are not
+ * load-bearing, which is exactly what distinguishes a measured separation point
+ * from a fitted threshold.
+ *
+ * Below this line the aligner is telling you it does not know where the word
+ * is. R.14 and R.15 read it in opposite directions and are therefore mutually
+ * exclusive on the same boundary by construction.
+ */
+export const CONF_MIN_FALLBACK = 0.056;
+
+/**
+ * GEOMETRIC (reused, not re-derived). `silenceDetector.ts`'s own
+ * `minDurationSec` default — the shortest stretch of sub-threshold audio the
+ * detector will ever emit as a silence. R.14 uses it as an EXISTENCE bound,
+ * not a distance: a word gap shorter than this provably cannot contain a
+ * detected silence, so FA is claiming the incoming segment begins speaking
+ * with no acoustic room for a seam at all. Kept as its own named constant here
+ * rather than imported so this module never reaches into the detector's option
+ * defaults; a change there is a deliberate change here too.
+ */
+export const SILENCE_MIN_DETECTABLE_SEC = 0.25;
+
+/**
+ * GEOMETRIC. The forced aligner's CTC frame stride — wav2vec2 emits one frame
+ * per 320 samples at 16 kHz = 20 ms, so every FA word edge is quantized to this
+ * grid. Measured on the shipped bundles: 7676/7748 v6 timestamps, 3320/3320 on
+ * 173 and 498/498 on Spanish land exactly on it (v6's 72 exceptions are whole
+ * chunks whose own offset is odd-tenths, shifting the absolute grid by 10 ms —
+ * the stride itself is unchanged).
+ *
+ * R.15 places its corrected boundary ONE frame before the incoming segment's
+ * first word onset — the smallest step the aligner can express, i.e. "just
+ * before this word", not a tuned pre-roll. Two-sided sensitivity over the
+ * whole range 0 to 2 frames moves its residuals by at most 20 ms, an order
+ * below the 50 ms verification tolerance.
+ */
+export const FA_FRAME_SEC = 0.02;

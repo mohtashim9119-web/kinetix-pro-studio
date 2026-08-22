@@ -126,6 +126,7 @@ import {
   detectUtterancePlacementDefects,
   applyUtterancePlacementCorrections,
 } from './services/faRunPlacementGate';
+import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
@@ -3342,6 +3343,38 @@ export default function App() {
           );
         }
         finalTimedSegments = applyUtterancePlacementCorrections(finalTimedSegments, keptUtterance);
+
+        // WS1 Session AE, R.14 / R.15 (faAnchorTrustGate.ts) — THE ANCHOR-TRUST
+        // GATE. Last in the stage, and deliberately so: both rules read the
+        // per-segment token attribution `snapCoveredBoundaries` itself snapped
+        // against (`keptAlignments`, index-parallel with the committed array)
+        // and ask whether the boundary that came out of the whole stage sits
+        // where those ordinals say it must. Running it earlier would have it
+        // judge an array R.11/R.12/R.13 were still going to move.
+        //
+        // `transcriptTokens` here is `aligned.tokens` — the SAME filtered FA
+        // array `keptAlignments`' indices address. Handing it the raw array
+        // would shift every ordinal by however many tokens the malformed
+        // filter dropped, which is the one way to make this gate lie.
+        //
+        // No R-AP filter: R.14 and R.15 cannot claim a boundary R.12 owns.
+        // R.12's rows are inside an unscripted run, where the incoming
+        // segment's own claimed anchors are the run's tokens; R.14 requires
+        // ordinalDelta 0 with a sub-reliability incoming anchor and a word gap
+        // under 0.25s, and R.15 requires a NEGATIVE ordinal. On all three
+        // committed corpora the two rules' firing sets are disjoint from
+        // R.11/R.12/R.13's, measured. The whole-stage R-AP check below still
+        // sees their output, which is the point of it being whole-stage.
+        const anchorTrustFindings = detectAnchorTrustDefects(
+          finalTimedSegments, keptAlignments, transcriptTokens, aligned.silences,
+        );
+        if (anchorTrustFindings.length > 0) {
+          console.warn(
+            `[sync] R.14/R.15 — ${anchorTrustFindings.length} anchor-trust boundary correction(s):`,
+            anchorTrustFindings,
+          );
+        }
+        finalTimedSegments = applyAnchorTrustCorrections(finalTimedSegments, anchorTrustFindings);
 
         // R-AP, CHECKED AND LOGGED over the whole stage, on the (origin,
         // final) PAIR. This is not a restatement of the two filters above: a

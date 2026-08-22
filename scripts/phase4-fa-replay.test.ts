@@ -143,7 +143,10 @@ import { createHash } from 'crypto';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { computeFaChunkPlan, computeRuns } from '../src/services/faChunkPlan';
-import { R11_MIN_FIT_DEVIATION, R12_MIN_CORRECTION_SEC } from '../src/services/syncConstants';
+import {
+  R11_MIN_FIT_DEVIATION, R12_MIN_CORRECTION_SEC,
+  CONF_MIN_FALLBACK, SILENCE_MIN_DETECTABLE_SEC, FA_FRAME_SEC,
+} from '../src/services/syncConstants';
 import type { TranscriptToken, VideoSegment } from '../src/types';
 import type { SilenceInterval } from '../src/services/silenceDetector';
 
@@ -302,7 +305,17 @@ interface KnownBadRow {
   /** The commit that closed this entry. EMPTY until closed — filled in by the
    *  same commit that converts the row into a positive assertion below. */
   closingCommit: string;
-  /** FA's currently committed value, as of this session's HEAD. */
+  /** THE VALUE THIS ROW IS BROKEN AT — asserted against the FROZEN fixture
+   *  (`phase4-fa-second-baseline-<corpus>-segments.csv`) for every OPEN row,
+   *  and required to differ from `earCorrect` for every `'fixed'` one.
+   *
+   *  WS1 SESSION AE spells this out because the field's old one-line gloss
+   *  ("FA's currently committed value, as of this session's HEAD") invites the
+   *  exact mistake this session made and had to undo: when R.14/R.15 moved
+   *  `400_endless_dark` and `wall_split_path` on the LIVE path, updating
+   *  `faValue` to the new live number broke the fixture assertion, because the
+   *  fixture is deliberately unregenerated. A live move that does not close a
+   *  row belongs in the `note`, never here. */
   faValue: number;
   /** The ear-verified correct value; `null` when the correct behavior is
    *  "not committed as a timed segment at all" (Whisper drops it and the
@@ -381,36 +394,52 @@ const KNOWN_BAD: KnownBadRow[] = [
   },
   {
     id: 'classB-056-dropping-torch', origin: 'session-p-live', corpus: 'v6', tag: '056_dropping_torch',
-    owningRule: 'unassigned', closingCommit: '',
+    owningRule: 'unassigned', closingCommit: 'WS1-SESSION-AE',
     faValue: 167.03, earCorrect: 167.70,
     mechanism: 'FALLBACK boundary (`boundaryUsedFallback` true — no silence was ever assignable in ' +
       'this pair\'s search window). The shipped still-playing checker examines it (it is a fallback pair) ' +
       'but declines: boundary amplitude 0.029 sits BELOW `BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR` ' +
       '(0.05) by 0.021, even though the OTHER two conjuncts (distance 0.53s past the 0.10s floor; ' +
       'loudness ratio 34.3x past the 2x floor) pass with wide margins.',
-    status: 'open',
+    status: 'fixed',
     note: 'Measured on the replay bundle\'s 16kHz capture, not the app\'s native-rate decode — see ' +
-      '`scripts/ws1-session-q-still-playing.test.ts`\'s own header for the caveat this implies.',
+      '`scripts/ws1-session-q-still-playing.test.ts`\'s own header for the caveat this implies. WS1 ' +
+      'SESSION AE — CLOSED AGAINST LIVE (status \'fixed\', NOT converted to ' +
+      'CLOSED_BY_POSITIVE_ASSERTION, which would require regenerating the frozen fixture this ' +
+      'session\'s constraints bar — the same route WS1 Session V used for its seven). R.14 ' +
+      '(`faAnchorTrustGate.ts`) commits 167.70, residual 0.000s. The ledger AUTHORISES this exact ' +
+      'value (`ear-verify-ad`, A/B), so this closure carries genuine ear verification, not merely ' +
+      'tolerance.',
   },
   {
     id: 'classB-167-smell-of-butchery', origin: 'session-p-live', corpus: 'v6', tag: '167_smell_of_butchery',
-    owningRule: 'unassigned', closingCommit: '',
+    owningRule: 'unassigned', closingCommit: 'WS1-SESSION-AE',
     faValue: 494.43, earCorrect: 494.75,
     mechanism: 'The ONE Class B row the shipped still-playing checker DOES flag: amplitude 0.256, ' +
       'clearing the 0.05 floor by 0.206. Still open because the checker WARNS, it does not CORRECT — ' +
       'no rule moves the boundary.',
-    status: 'open',
-    note: 'Recall on the still-playing checker measured 1/5 on Class B this session, not the previously ' +
-      'documented 2/5 — see REGISTER_HIGH_WATER\'s own comment on the likely 16kHz-capture cause.',
+    status: 'fixed',
+    note: 'WS1 SESSION AE — CLOSED AGAINST LIVE (status \'fixed\', NOT converted to ' +
+      'CLOSED_BY_POSITIVE_ASSERTION, which would require regenerating the frozen fixture this ' +
+      'session\'s constraints bar — the same route WS1 Session V used for its seven). R.14 commits ' +
+      '494.77 against an ear-correct 494.75 — residual +0.020s, inside this session\'s stated 50ms ' +
+      'verification tolerance but OUTSIDE the ledger\'s own 5ms pin tolerance. STATED PLAINLY: no ' +
+      'ear pass has scored 494.77. The closure rests on a 20ms residual being an order below ' +
+      'audibility, not on a listening pass at this value, and NO POSITIVE PIN IS ADDED at it.',
   },
   {
     id: 'classB-286-fact-to-act', origin: 'session-p-live', corpus: 'v6', tag: '286_fact_to_act',
-    owningRule: 'unassigned', closingCommit: '',
+    owningRule: 'unassigned', closingCommit: 'WS1-SESSION-AE',
     faValue: 856.09, earCorrect: 856.52,
     mechanism: 'Fallback boundary; still-playing checker declines on the amplitude floor (measured ' +
       '0.0295, floor 0.05, deficit 0.0205) — distance (0.685s) and ratio (92.0x) conjuncts pass.',
-    status: 'open',
-    note: '',
+    status: 'fixed',
+    note: 'WS1 SESSION AE — CLOSED AGAINST LIVE (status \'fixed\', NOT converted to ' +
+      'CLOSED_BY_POSITIVE_ASSERTION, which would require regenerating the frozen fixture this ' +
+      'session\'s constraints bar — the same route WS1 Session V used for its seven). R.14 commits ' +
+      '856.54 against an ear-correct 856.52 — residual +0.020s. Same standing as ' +
+      '`classB-167-smell-of-butchery`: inside the 50ms tolerance, outside the ledger\'s 5ms pin ' +
+      'tolerance, no ear pass has scored 856.54, and no positive pin is added at it.',
   },
   {
     id: 'classB-400-endless-dark', origin: 'session-p-live', corpus: 'v6', tag: '400_endless_dark',
@@ -420,7 +449,12 @@ const KNOWN_BAD: KnownBadRow[] = [
       '0.0152, floor 0.05, deficit 0.0348 — the widest floor miss of the four) — distance (0.205s) and ' +
       'ratio (39.3x) conjuncts pass.',
     status: 'open',
-    note: '',
+    note: 'WS1 SESSION AE — IMPROVED, NOT CLOSED, and `faValue` is UPDATED to what production commits ' +
+      'today. R.14 fires and moves this boundary 1266.21 -> 1266.75; the ear-correct value is ' +
+      '1266.66, so the residual goes from -0.450s to +0.090s. It is the only one of R.14\'s seven ' +
+      'true positives outside the 50ms tolerance, and the one row whose backing silence is ' +
+      'unusually wide (1.18s, [1266.16, 1267.34]) so its midpoint overshoots. STAYS OPEN: an ' +
+      'improvement is not a closure, and nothing here licenses calling 1266.75 correct.',
   },
   // -------------------------------------------------------------------------
   // WS1 SESSION S — REOPENED (DEMOTION). Five of R.12's nine Session H
@@ -649,13 +683,17 @@ const KNOWN_BAD: KnownBadRow[] = [
   },
   {
     id: 'classB-403-vigilant-embers', origin: 'session-p-live', corpus: 'v6', tag: '403_vigilant_embers',
-    owningRule: 'unassigned', closingCommit: '',
+    owningRule: 'unassigned', closingCommit: 'WS1-SESSION-AE',
     faValue: 1273.14, earCorrect: 1273.55,
     mechanism: 'Fallback boundary; still-playing checker declines on the amplitude floor (measured ' +
       '0.0433, floor 0.05, deficit 0.0067 — the narrowest floor miss of the four) — distance (0.705s) ' +
       'and ratio (96.9x) conjuncts pass.',
-    status: 'open',
-    note: '',
+    status: 'fixed',
+    note: 'WS1 SESSION AE — CLOSED AGAINST LIVE (status \'fixed\', NOT converted to ' +
+      'CLOSED_BY_POSITIVE_ASSERTION, which would require regenerating the frozen fixture this ' +
+      'session\'s constraints bar — the same route WS1 Session V used for its seven). R.14 commits ' +
+      '1273.56 against an ear-correct 1273.55 — residual +0.010s. Inside the 50ms tolerance, ' +
+      'outside the ledger\'s 5ms pin tolerance; no ear pass has scored 1273.56.',
   },
 
   // -------------------------------------------------------------------------
@@ -678,7 +716,7 @@ const KNOWN_BAD: KnownBadRow[] = [
   // -------------------------------------------------------------------------
   {
     id: 'ae-008-unknown-void', origin: 'ear-verify-ae', corpus: 'v6', tag: '008_unknown_void',
-    owningRule: 'unassigned', closingCommit: '',
+    owningRule: 'unassigned', closingCommit: 'WS1-SESSION-AE',
     faValue: 23.13, earCorrect: 23.46,
     mechanism: 'The Class B / R.14 placement family, measured (WS1 Session AE Step 1): FA claims the ' +
       'incoming segment\'s first word "you" at [23.14, 23.28] with confidence 8.5e-8, INSIDE the real ' +
@@ -686,14 +724,21 @@ const KNOWN_BAD: KnownBadRow[] = [
       'confidence 1.000, ends 23.12) is one 20ms aligner frame wide, and the commit lands at that gap\'s ' +
       'midpoint. ordinalDelta 0 — nobody\'s words are on the wrong side, so this is placement, not ' +
       'attribution.',
-    status: 'open',
+    status: 'fixed',
     note: 'HOW THIS ROW WAS FOUND, recorded because the finding mechanism is itself a negative result. ' +
       'A PROPOSED 0.028 amplitude floor flagged this boundary; the ear pass that followed found the ' +
       'flagged boundary DEFECTIVE. That makes the 0.028 floor a lead, not a validated detector — it ' +
-      'produced one true positive with no measured false-positive rate, and a floor that flags a bad ' +
-      'boundary has demonstrated nothing about its ability to leave good ones alone. THE 0.028 FLOOR IS ' +
-      'REJECTED AND NOT SHIPPED; the 0.05 floor in force is not lowered either. What this session ' +
-      'ingests is the ear verdict alone.',
+      'produced one true positive with no measured false-positive rate, and a floor that flags a ' +
+      'bad boundary has demonstrated nothing about its ability to leave good ones alone. THE 0.028 ' +
+      'FLOOR IS REJECTED AND NOT SHIPPED; the 0.05 floor in force is not lowered either. What this ' +
+      'session ingests is the ear verdict alone. WS1 SESSION AE — CLOSED AGAINST LIVE (status ' +
+      '\'fixed\', NOT converted to CLOSED_BY_POSITIVE_ASSERTION, which would require regenerating ' +
+      'the frozen fixture this session\'s constraints bar — the same route WS1 Session V used for ' +
+      'its seven). R.14 commits 23.45 against an ear-correct 23.46 — residual -0.010s. Inside the ' +
+      '50ms tolerance, outside the ledger\'s 5ms pin tolerance. Opened and closed in the same ' +
+      'session, which is the register working as designed and not a shortcut: the ear pass came ' +
+      'first (sitting `ear-verify-ae`), the rule was designed against the ordinal census, and this ' +
+      'row\'s own value was never an input to any constant.',
   },
   {
     id: 'x173-lethal-nature-hazard', origin: 'ear-173-x', corpus: '173', tag: 'lethal_nature_hazard',
@@ -710,14 +755,18 @@ const KNOWN_BAD: KnownBadRow[] = [
   },
   {
     id: 'x173-iron-bounce', origin: 'ear-173-x', corpus: '173', tag: 'iron_bounce',
-    owningRule: 'unassigned', closingCommit: '',
+    owningRule: 'unassigned', closingCommit: 'WS1-SESSION-AE',
     faValue: 75.66, earCorrect: 76.59,
     mechanism: 'ATTRIBUTION class (WS1 Session AE Step 1), ordinalDelta -2: the outgoing segment\'s own ' +
       'final two words ("thick" @76.18, "enough" @76.38, both confidence >=0.963) start AFTER the ' +
       'committed boundary, so they are played under the incoming scene. The committed value is again a ' +
       'real silence\'s midpoint ([75.50, 75.82]) — the wrong one.',
-    status: 'open',
-    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); this is the register catching up.',
+    status: 'fixed',
+    note: 'WS1 SESSION AE — CLOSED AGAINST LIVE (status \'fixed\', NOT converted to ' +
+      'CLOSED_BY_POSITIVE_ASSERTION, which would require regenerating the frozen fixture this ' +
+      'session\'s constraints bar — the same route WS1 Session V used for its seven). R.15 commits ' +
+      '76.58 against an ear-correct 76.59 — residual -0.010s, one aligner frame before the incoming ' +
+      'word "to". Inside the 50ms tolerance, outside the ledger\'s 5ms pin tolerance.',
   },
   {
     id: 'x173-wall-split-path', origin: 'ear-173-x', corpus: '173', tag: 'wall_split_path',
@@ -730,18 +779,27 @@ const KNOWN_BAD: KnownBadRow[] = [
       'cutting a full-confidence word in half. The word gap opens at 162.42. Independently reproduced ' +
       'by WS1 Sessions Y and Z, which recorded the same refutation.',
     status: 'open',
-    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); this is the register catching up.',
+    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); the register was catching up. WS1 ' +
+      'SESSION AE — IMPROVED, NOT CLOSED; `faValue` UPDATED to what production commits today. R.15 ' +
+      'fires and moves this boundary 161.33 -> 162.46 (residual -0.820s -> +0.310s). It cannot ' +
+      'reach 162.15 and no script-anchored rule can: that instant is strictly inside the outgoing ' +
+      'segment\'s own full-confidence word "competing". STAYS OPEN.',
   },
   {
     id: 'x173-logic-clash', origin: 'ear-173-x', corpus: '173', tag: 'logic_clash',
-    owningRule: 'unassigned', closingCommit: '',
+    owningRule: 'unassigned', closingCommit: 'WS1-SESSION-AE',
     faValue: 417.15, earCorrect: 418.14,
     mechanism: 'ATTRIBUTION class, ordinalDelta -1: the outgoing segment\'s own last word "laws" ' +
       '[417.18, 417.28] starts after the committed boundary. Committed sits on the midpoint of the real ' +
       'but wrong silence [417.00, 417.30]; the seam\'s word gap is [417.28, 418.16] and the ear-correct ' +
       '418.14 is one aligner frame before "governing" (confidence 0.999).',
-    status: 'open',
-    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); this is the register catching up.',
+    status: 'fixed',
+    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); the register was catching up. WS1 ' +
+      'SESSION AE — CLOSED AGAINST LIVE (status \'fixed\', NOT converted to ' +
+      'CLOSED_BY_POSITIVE_ASSERTION, which would require regenerating the frozen fixture this ' +
+      'session\'s constraints bar — the same route WS1 Session V used for its seven). R.15 commits ' +
+      '418.14, residual 0.000s. The ledger AUTHORISES this exact value (`ear-173-x`), so this ' +
+      'closure carries genuine ear verification.',
   },
   {
     id: 'x173-gadget-decay', origin: 'ear-173-x', corpus: '173', tag: 'gadget_decay',
@@ -1342,11 +1400,8 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
     // seven; this expectation moves with it, in that commit, deliberately.
     const EXPECTED_OPEN = [
       'classA-214-solitary-fire', 'classA-231-slowing-pace', 'classA-447-scout-facing-dark',
-      'classB-056-dropping-torch', 'classB-167-smell-of-butchery', 'classB-286-fact-to-act',
-      'classB-400-endless-dark', 'classB-403-vigilant-embers',
-      'ae-008-unknown-void',
-      'x173-lethal-nature-hazard', 'x173-iron-bounce', 'x173-wall-split-path',
-      'x173-logic-clash', 'x173-gadget-decay',
+      'classB-400-endless-dark',
+      'x173-lethal-nature-hazard', 'x173-wall-split-path', 'x173-gadget-decay',
     ];
     expect(
       KNOWN_BAD.filter(k => k.status === 'open').map(k => k.id).sort(),
@@ -1357,15 +1412,22 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // (1c) THE SEVEN ROWS Session V moved to 'fixed' — asserted by their own
   // name here, separately from the open-set test above, so a reader does not
   // have to diff two id lists to see which seven closed against LIVE.
-  it('WS1 Session V: exactly seven rows are `fixed` (closed against LIVE, not fixture)', () => {
+  it('WS1 Session AE: exactly fourteen rows are `fixed` (closed against LIVE, not fixture)', () => {
+    // WS1 SESSION AE — Session V's seven, plus the seven R.14/R.15 close.
+    // Same mechanism and same limitation: closed against the LIVE production
+    // path, not against the frozen fixture, so `faValue` still records the
+    // value each row was BROKEN at and the corrected value lives in the note.
     const FIXED = [
       'r12-042-eleven-years', 'r12-176-twenty-six-scout', 'r12-224-thirty-three',
       'r12-307-forty-nine-years', 'r12-340-fifty-eight',
       's-266-live-path-collision', 'r12-383-sixty-four',
+      'classB-056-dropping-torch', 'classB-167-smell-of-butchery', 'classB-286-fact-to-act',
+      'classB-403-vigilant-embers', 'ae-008-unknown-void',
+      'x173-iron-bounce', 'x173-logic-clash',
     ];
     expect(
       KNOWN_BAD.filter(k => k.status === 'fixed').map(k => k.id).sort(),
-      'the fixed set drifted from what WS1 Session V closed against live',
+      'the fixed set drifted from what WS1 Session AE closed against live',
     ).toEqual([...FIXED].sort());
     for (const kb of KNOWN_BAD.filter(k => k.status === 'fixed')) {
       expect(kb.closingCommit, `${kb.id}: a 'fixed' row must name its closing commit`).not.toBe('');
@@ -1658,7 +1720,7 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     }
   });
 
-  it('the manifest holds FIFTEEN entries (open + fixed) as of WS1 Session V', () => {
+  it('the manifest holds TWENTY-ONE entries (open + fixed) as of WS1 Session AE', () => {
     // Item 6 left this table in WS1 Session B; item 9 in Session C; items 4/5
     // in Session D (R.5); items 10/11 in Session E (R.10); item 7 and both
     // OV3 triage entries in Session F (R.11) — the manifest WAS empty from
@@ -1670,6 +1732,11 @@ describe('WS1 Session A — FA replay gate (R10): KNOWN-BAD manifest, row-for-ro
     // R.11/R.12 live-path collision. WS1 SESSION T took it 14 -> 15:
     // `r12-383-sixty-four` reopens when an A/B pass overturns the solo verdict
     // that had licensed its fixture closure. WS1 SESSION V does NOT change
+    // WS1 SESSION AE takes membership 15 -> 21 and the OPEN subset 8 -> 7:
+    // six rows are ADDED (five of them WS1 Session X's own 173 ear-pass
+    // defects, which had lived in the ledger for two sessions without a
+    // register row, plus the new `008_unknown_void`), and SEVEN move
+    // 'open' -> 'fixed' when R.14/R.15 land. Session V does NOT change
     // this count: seven rows move 'open' -> 'fixed' (closed against LIVE,
     // not fixture — the frozen fixture is deliberately unregenerated this
     // session, so the fixture-scoped CLOSED_BY_POSITIVE_ASSERTION mechanism
@@ -2065,6 +2132,57 @@ describe('WS1 Session K — R.13: the atomic-utterance invariant', () => {
     // were run and confirms the current state is green, which is what licenses
     // trusting the reported result.
     expect(R12_MIN_CORRECTION_SEC).toBeLessThan(1.58); // R.13's own Δ must stay reachable.
+  });
+
+  it('M17 — mutations specific to R.14/R.15 must turn their gate RED (mutation-matrix entry, verified this session)', () => {
+    // WS1 SESSION AE. The mutations actually run this session, in the same
+    // style as M1-M8: a manually-verified-per-session matrix, not committed
+    // mutants. The STANDING half is `src/services/faAnchorTrustGate.test.ts`,
+    // whose per-conjunct and per-guard decline tests are what make these bite;
+    // this entry records that they were run and what happened, which is what
+    // licenses trusting the reported result.
+    //
+    // Every mutation below perturbs a NEWLY COMMITTED boundary — the ten rows
+    // R.14/R.15 move — rather than a constant in the abstract, because the
+    // brief's own requirement is that the gate go red when the committed value
+    // moves, not merely when a threshold changes.
+    //
+    //   M17-A  R.14 placement: select the CONTAINING silence's midpoint instead
+    //          of the first silence whose midpoint is after the boundary.
+    //          RED — 1 failure ("skips a silence the boundary is ALREADY
+    //          sitting on the midpoint of"). On the corpora it reverts
+    //          `214`/`447`-shaped rows to a no-op and moves nothing.
+    //   M17-B  R.14 firing: widen `ordinalDelta === 0` to `>= 0`.
+    //          RED — 1 failure ("DECLINES when a word already sits on the wrong
+    //          side of the cut"). On the corpora it turns three ear-CORRECT
+    //          controls into false positives.
+    //   M17-C  R.14 firing: drop the word-gap conjunct entirely.
+    //          RED — 1 failure ("DECLINES when the word gap is wide enough to
+    //          hold a detectable silence"). On 173 it makes `abysmal_opinion`,
+    //          an ear-CORRECT control, a false positive.
+    //   M17-D  R.14 guard: drop the reliable-onset guard.
+    //          RED — 1 failure ("DECLINES a correction that would land past the
+    //          incoming segment's first RELIABLE word").
+    //   M17-E  R.14 guard: drop the ordering guard.
+    //          RED — 1 failure ("DECLINES a correction that would reach or pass
+    //          the NEXT committed boundary").
+    //   M17-F  R.15 firing: drop the reliable-incoming-anchor conjunct.
+    //          RED — 1 failure ("DECLINES when the incoming anchor is ALSO
+    //          unreliable — the `vessel_damage_clue` refutation").
+    //   M17-G  R.15 placement: drop the clamp to the outgoing word's end.
+    //          RED — 1 failure ("clamps so the correction can never cut into
+    //          the outgoing segment's own last word").
+    //   M17-H  `applyAnchorTrustCorrections`: stop absorbing the delta into the
+    //          predecessor's duration (move `startTime` only).
+    //          RED — 1 failure ("preserves the gapless partition and Σ duration
+    //          exactly"), i.e. Model P is really pinned, not incidentally true.
+    //
+    // NO GREEN ROW. Every conjunct, both guards, both placements and the apply
+    // arithmetic are covered. Had any mutation survived, the honest report
+    // would have been "that conjunct is INERT", not "the gate covers it".
+    expect(CONF_MIN_FALLBACK).toBeGreaterThan(0.0316); // inside Session Z's measured empty bin,
+    expect(CONF_MIN_FALLBACK).toBeLessThan(0.1);       // which is what makes it GEOMETRIC.
+    expect(FA_FRAME_SEC).toBeLessThan(SILENCE_MIN_DETECTABLE_SEC); // a frame can never be a silence.
   });
 });
 

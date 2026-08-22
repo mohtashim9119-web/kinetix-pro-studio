@@ -71,6 +71,13 @@ const PROVENANCE_ALLOWLIST = new Set([
   'src/services/faRunPlacementGate.ts',
   'src/services/syncConstants.ts',
   'src/services/syncLog.ts',
+  // WS1 Session AE. R.14/R.15's header records, per conjunct, which measured
+  // observation the conjunct exists for and which ear-CORRECT control is the
+  // nearest thing it declines — `192_scout_listening` among them, which is the
+  // identifier that puts this file here. That is exactly the provenance tier 3
+  // exists to preserve, and tiers 1 and 2 (no ear-list timestamp, no corpus
+  // identifier in executable code) both pass on this file unaided.
+  'src/services/faAnchorTrustGate.ts',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

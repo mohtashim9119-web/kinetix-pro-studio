@@ -39,6 +39,7 @@ import {
   detectUtterancePlacementDefects, applyUtterancePlacementCorrections,
 } from '../src/services/faRunPlacementGate';
 import { detectUnspokenScriptSegmentsFromWhisper, applyUnspokenScriptGate } from '../src/services/faUnspokenGate';
+import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from '../src/services/faAnchorTrustGate';
 import { computeUnscriptedRuns, computeFaChunkPlan, computeRuns } from '../src/services/faChunkPlan';
 import {
   computeRunExtents, excludeRunEdgeViolations, findRunEdgeViolations,
@@ -171,6 +172,9 @@ export interface ProductionRun {
   r11Kept: ReturnType<typeof detectSeamFitDefects>;
   r13Kept: ReturnType<typeof detectUtterancePlacementDefects>;
   runEdgeViolations: RunEdgeViolation[];
+  /** WS1 Session AE — R.14/R.15's raw proposals, in one array (the gate is
+   *  one detector; `finding.rule` says which rule owns each row). */
+  anchorTrust: ReturnType<typeof detectAnchorTrustDefects>;
   r11: ReturnType<typeof detectSeamFitDefects>;
   r12: ReturnType<typeof detectRunPlacementDefects>;
   r13: ReturnType<typeof detectUtterancePlacementDefects>;
@@ -248,6 +252,13 @@ export async function runProductionPath(
   fired['R.13'] = r13Verdict.kept.length;
   committed = applyUtterancePlacementCorrections(committed, r13Verdict.kept);
 
+  // WS1 Session AE, R.14/R.15 (faAnchorTrustGate.ts) — the anchor-trust gate,
+  // last in the stage and on the composed array, exactly as App.tsx runs it.
+  const anchorTrust = detectAnchorTrustDefects(committed, keptAlignments, usable, silences);
+  fired['R.14'] = anchorTrust.filter(f => f.rule === 'R.14').length;
+  fired['R.15'] = anchorTrust.filter(f => f.rule === 'R.15').length;
+  committed = applyAnchorTrustCorrections(committed, anchorTrust);
+
   const runEdgeViolations = findRunEdgeViolations(
     preRuleSegments, committed, runExtents, new Set(r12.map(f => f.segmentId)),
   );
@@ -259,7 +270,7 @@ export async function runProductionPath(
     r11Kept: r11Verdict.kept, r13Kept: r13Verdict.kept,
     aborted: gate.aborted,
     whisperFilter: { total: wFilter.totalTokens, skipped: wFilter.skippedCount, kept: wFilter.tokens.length, dropReasons },
-    r5runs, r11, r12, r13, unspoken, anchorTimed, whisperTokens, faTokens, usableFaTokens: usable, silences,
+    r5runs, r11, r12, r13, anchorTrust, unspoken, anchorTimed, whisperTokens, faTokens, usableFaTokens: usable, silences,
     chunks: computeFaChunkPlan(anchorTimed, whisperTokens, silences, audioDuration),
     runs: computeRuns(anchorTimed, whisperTokens, silences, audioDuration),
   };
