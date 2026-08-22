@@ -111,6 +111,13 @@ lock-gate text, not copied from the deleted file uncritically).
 | 6b | 3 | **NOT STARTED** | — | Phase 5 | Verify 173-project's `pairIdx-20` boundary defect |
 | 7 | 4 | **NOT STARTED** | — | Stage 1/2/3 locks | Observability: clamp/floor/fallback logging, `boundaryUsedFallback` 4-arg bug fix |
 
+**2026-08-22 (WS1 SESSION AB) — NOTHING ON THIS BOARD ADVANCES.** Re-derived `R.11`'s two
+corpus-derived constants (`R11_MAX_SPAN_WORD_CONF` moved, `R11_MIN_FIT_DEVIATION` reaffirmed
+unchanged) and tested amplitude/energy discriminator candidates for Class A (negative — see
+`sync-pipeline-v2-plan.md` Part W). Phase 3/Task 5 stays exactly where Session H left it
+("PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT REVERTED TO OFF"); no exit criterion moves, no
+new phase starts. `snapBoundaries.ts` untouched, so §3 row 2 is again unaffected.
+
 **2026-08-19 (WS1 SESSION O) — NOTHING ON THIS BOARD ADVANCES.** Stated explicitly.
 Session O was a data-loss forensics + persistence-guard session: it read the real on-disk
 stores, established that **no data was lost** (12/12 projects hydrate through the production
@@ -745,6 +752,10 @@ cross-referenced against `src/types.ts` live:
 | P6 | Same language-keyed normalizer, byte-identical English path | ✅ **2026-08-18 (WS1 Session J); Spanish vacuity closed WS1 Session M** | **MEASURED, zero asymmetries.** `src/services/normalizerSymmetry.test.ts` (in the standing `npm test` pass) drives the production `canonicalize`/`stripStageDirections`/`normalize`/`normalizeSceneDoc` over the committed en/es fixtures. Cross-side lexical agreement: no raw word reaches two normalized forms. Compositionality (the untested risk — transcript side normalizes per TOKEN, script side per SEGMENT, and `canonicalize` does multi-word rewrites like `1985`→nineteen eighty five): per-token and whole-text streams are byte-identical, v6 3998=3998 / 173 1837=1837 / spanish 363=363. **Session M closed the debt Session L was left holding open (reconciled into this session's commit):** the Spanish CORPUS has zero expanding tokens (vacuous on real material, unchanged), but the property is NOT non-falsifiable in Spanish — a new test runs the `es`-keyed normalizer on constructed digit material (the digit→words reading is language-independent) and confirms both expansion and compositionality. What stays corpus-vacuous is only what a digit-free Spanish corpus can reach; the machinery itself is now exercised. `stripStageDirections` still fires on 0 segments of all three corpora. Phase 3c's accepted hyphen class remains excluded by construction |
 | P7 | Timing-source identified on output, type-level | ~ partial | `types.ts:223` `VideoSegment.anchorSource?: 'forced-alignment' \| 'whisper' \| 'estimate'` exists (ahead of schedule, includes `'forced-alignment'` per R-G) but lives on the *segment*, not per-token/per-Stage-1-output as the contract literally specifies |
 | P8 | Tokens/silences/audioDuration/segments as ONE bundled, type-enforced object | ❌ | `project.transcriptTokens` (`types.ts:336`) remains separately reachable; `useWhisper.ts:44-51`'s own doc comment *warns* callers to use `AlignFromCacheResult.tokens` instead — discipline, not type enforcement. This is "old R7," scheduled for Phase 4 |
+
+**2026-08-22 (WS1 Session AB) — no row in this table moves.** Session AB's changes
+(`syncConstants.ts`'s `R11_MAX_SPAN_WORD_CONF`, `faSeamFitGate.test.ts`) sit downstream of
+Contract 1→2 and read no Stage-1 output shape directly — same reasoning as Sessions S/T below.
 
 **2026-08-20 (WS1 Session S) — no row in this table moves, and P4 is worth naming.** Session S's
 production change is R-AP (`faRuleStageExclusion.ts`), a post-inference arbitration invariant over
@@ -5502,6 +5513,72 @@ failed/1 ignored (unchanged). `cargo test --features fa-inference` 216 passed/0 
 
 ---
 
+### §11e. WS1 Session AB — RESULTS
+
+Full narrative, all steps: `sync-pipeline-v2-plan.md`'s Part W (append-only). Summary:
+
+**The brief's own premise, corrected first.** "R.11's six ear-confirmed firings" does not hold —
+R.11 detects six raw candidates on live v6 (matches the "R.11 fires 6" already on record from
+Sessions P/S), but only TWO carry an ear pass that scored R.11's OWN proposed correction correct
+(`192_scout_listening`, `226_four_scouts`); the other four are either unpinned change detectors
+never scored by any sitting, or (for the two historical register members, item-7/`152_frozen_
+brush_mice` and `abysmal_opinion`) have drifted off the live chunk plan entirely since Session Q —
+one to the mathematical fitDeviation floor (unreachable at any threshold), one to no longer needing
+correction at all. Re-derivation is built on the real two, not the assumed six.
+
+**Re-derivation.** `R11_MIN_FIT_DEVIATION` (1.3093) REAFFIRMED UNCHANGED — no separating value
+exists without crossing into Class A/B's own explicitly-deferred territory (widening it far enough
+to reach `214_solitary_fire`'s near-miss also admits four Class B rows and one R.12-owned false
+positive sharing the exact same fitDeviation floor as a genuine Class A defect). `R11_MAX_SPAN_
+WORD_CONF` RE-DERIVED and SHIPPED: 1.0835e-2 → 3.9362e-3, geometric midpoint of `226_four_scouts`'s
+live spanMaxConfidence (9.789e-4) and `abysmal_opinion`'s own spurious end-edge candidate
+(1.5828e-2) — a ~4.02x margin, wider than the original 2.8x, monotonically safe (a lower threshold
+can only make the gate stricter). Sensitivity: `R11_MIN_FIT_DEVIATION` sits only 2.8% above its
+first real flip point (`214_solitary_fire`); `R11_MAX_SPAN_WORD_CONF` has +46.1%/-62.2% two-sided
+room. LOOCV on n=5 (mostly counterfactual) reported but not trusted alone; the stronger corpus-
+holdout result — 173 fires zero raw candidates AND supplies the new constant's own binding negative
+— is the primary generalization evidence. Blast radius: all thirteen regression pins (R.11's six
+live firings + R.12's seven Session V closures) reproduce byte-identical before/after, empirically
+re-run, not just argued. Mutation (constant pushed to 0.02) turns 173's `abysmal_opinion` candidate
+RED as predicted; reverted, reconfirmed GREEN.
+
+**Third discriminator for Class A (214/447) — negative.** Seven amplitude/energy candidates
+measured against real 16kHz audio and 41 ear-confirmed controls; best (`nearest_silence_width`)
+reaches only 40% precision (3/41 controls false-positive: `042_eleven_years`, `strategic_
+equivalence`, `unbound_chaos`) — corpus-confounded (173's own on-silence controls are, as a
+recording-level property, as narrow as Class A's defects). No candidate reaches the required zero
+false positives. Ships nothing; full table in Part W.
+
+**Onset-clipping guard.** Session Z's n=3 (median 20ms, range 10-30ms) extended to the full
+41-control population using raw Whisper tokens: unfiltered, median jumps to 280ms (a different,
+broader question — most boundaries sit in comfortably wide silences where "lead-in" isn't the
+relevant concept). Restricted to the same narrow-interval regime Session Z tested, n grows to 9
+pooled points, range widens to 10-90ms — order of magnitude survives, the precise 10-30ms range
+does not. No new cut point was adopted this session (Step 4 negative), so nothing is wired.
+
+**Class B (five rows) — measured, recorded, untouched.** Amplitude-floor deficits for all four
+missed rows restated verbatim from the register for Session AC: `056_dropping_torch` 0.021 short,
+`286_fact_to_act` 0.0205 short, `400_endless_dark` 0.0348 short (widest miss), `403_vigilant_
+embers` 0.0067 short (narrowest miss); `167_smell_of_butchery` already clears the floor by 0.206
+and is the one row the shipped checker already flags. No Class B code changed.
+
+**Caught mid-session.** A first-draft `syncConstants.ts` comment named an ear-list value in prose;
+`ws1-generalization.test.ts`'s tier-1 guard failed RED on it immediately (real values in comments,
+not just code, are banned). Rewritten to ratios/qualitative language; guard passes.
+
+**Six numbers.** `npm test` 2465 passed/26 skipped/0 failed (+3 skipped — this session's own new
+gated probe file, zero regressions). `tsc --noEmit` clean. `cargo check --features fa-inference`
+clean (unchanged, no Rust file touched). `cargo clippy --features fa-inference --all-targets`
+clean, 4 pre-existing warnings (unchanged). `cargo test` 141 passed/0 failed/1 ignored (unchanged).
+`cargo test --features fa-inference` 216 passed/0 failed/24 ignored (unchanged). Golden replay
+6/6. `faAnchors.ts` sha256 unchanged, `b61e94cb…`. `git diff --stat` against `2a082d6`:
+`src/services/syncConstants.ts` + `src/services/faSeamFitGate.test.ts` only, plus five new
+`scripts/` measurement files (none in the default sweep) — no `snapBoundaries.ts`,
+`silenceDetector.ts`, Hirschberg aligner, `docs/history.md`, or `scripts/fixtures/phase4-baseline-
+*.csv` touched.
+
+---
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -5559,6 +5636,35 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-22 — WS1 Session AB: R.11's "six ear-confirmed firings" premise corrected to two;
+  `R11_MAX_SPAN_WORD_CONF` re-derived and shipped (2.8x → ~4.0x margin), `R11_MIN_FIT_DEVIATION`
+  reaffirmed unchanged; amplitude/energy discriminator for Class A measured negative.** Of R.11's
+  six raw live firings on v6, only `192_scout_listening` and `226_four_scouts` carry an ear pass
+  scoring R.11's own proposed correction correct; the other two historical register members
+  (`152_frozen_brush_mice`, `abysmal_opinion`) have drifted off the live chunk plan since Session
+  Q — one to the mathematical fitDeviation floor, one to no longer needing correction. Re-derived
+  both corpus-fitted R.11 constants on this corrected, full live cross-corpus evidence:
+  `R11_MIN_FIT_DEVIATION` (1.3093) ships unchanged — no separating threshold exists without
+  reaching into Class A/B's own explicitly-deferred territory (a real Class A near-miss and an
+  R.12-owned false positive share the exact same fitDeviation floor as a genuine defect).
+  `R11_MAX_SPAN_WORD_CONF` re-derived 1.0835e-2 → 3.9362e-3 (geometric midpoint of `226_four_
+  scouts`'s live spanMaxConfidence and `abysmal_opinion`'s own spurious end-edge candidate), a
+  ~4.02x margin, monotonically safe (strictly cannot admit a new false positive), all thirteen
+  regression pins (R.11's six live firings + R.12's seven Session V closures) reproduced
+  byte-identical, mutation confirmed RED-then-reverted-GREEN empirically. Seven amplitude/energy
+  candidates tested against real 16kHz audio and 41 ear-confirmed controls for `classA-214-
+  solitary-fire`/`classA-447-scout-facing-dark` — best candidate (silence width) reaches only 40%
+  precision, corpus-confounded (173's own healthy controls are as narrow as Class A's defects) —
+  ships nothing. Session Z's n=3 onset-lead-in (median 20ms) extended to 41 controls: order of
+  magnitude survives, precise 10-30ms range does not (real 90ms case in the narrow-interval
+  regime); no new cut point adopted, so the guard stays unwired. Class B's four amplitude-floor
+  deficits recorded verbatim for Session AC, untouched. A first-draft comment naming an ear-list
+  value in prose was caught RED by `ws1-generalization.test.ts`'s own tier-1 guard and rewritten.
+  Six numbers: `npm test` 2465/26/0 (+3 skipped, this session's own gated probe, zero
+  regressions); `tsc` clean; `cargo check`/`clippy`/`test` all unchanged (no Rust touched); golden
+  replay 6/6; `faAnchors.ts` sha256 unchanged. Full detail: `sync-pipeline-v2-plan.md` Part W,
+  `docs/work-in-progress.md` §11e.
 
 - **2026-08-22 — WS1 Session AA: near-zero FA confidence predicts NEITHER token class NOR
   misplacement — Session Z's 44.3%/19.7% headline is a real, correctly-measured number whose

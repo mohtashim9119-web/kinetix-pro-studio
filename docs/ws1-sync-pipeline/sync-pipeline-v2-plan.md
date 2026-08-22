@@ -7506,3 +7506,308 @@ standalone and confirmed part of the full green `npm test`). `faAnchors.ts` sha2
 `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`, or any
 `scripts/fixtures/phase4-baseline-*.csv`; no repo-root files added; no generator run in the
 default sweep; no Phase 4 corpus work; no arbiter rebuild; no ear-verified row reopened).
+
+## Part W — R.11 Re-Derived on Live Cross-Corpus Evidence; Amplitude/Energy Discriminator Negative for Class A (WS1 Session AB, 2026-08-22, append-only)
+
+**BRIEF.** Re-derive R.11's two corpus-derived constants (`R11_MIN_FIT_DEVIATION`,
+`R11_MAX_SPAN_WORD_CONF`) from the full live cross-corpus evidence now available (not the Session F
+frozen-fixture sample alone); measure sensitivity and LOOCV; confirm blast radius and mutation
+coverage before shipping anything; propose and test amplitude/energy discriminator candidates for
+`classA-214-solitary-fire` and `classA-447-scout-facing-dark`; extend Session Z's n=3 onset-lead-in
+measurement; record Class B's amplitude-floor deficits for a future session; measure whatever ships
+across all three corpora.
+
+**INFRASTRUCTURE, NEW THIS SESSION.** `scripts/ws1-session-ab-r11-corpus-probe.test.ts`
+(`WS1_SESSION_AB_MEASURE=1`) generalizes Session P's v6-only `ws1-session-p-r11probe.test.ts` to
+all three corpora and, unlike that probe, does NOT short-circuit at the first failing conjunct — C2
+through C4 are evaluated whenever structurally reachable even when C1 already declines, so a
+sensitivity sweep can see what would ACTUALLY happen downstream, not just where fitDeviation sits.
+Reads the real captured live bundles (`.work-phase4/replay/{v6,173,spanish}`) — real Whisper
+tokens, real detected silences, real per-word FA confidence from the jonatasgrosman ONNX production
+path, the same arm `App.tsx`'s own rule stage consumes. Output cross-checked against a second,
+independently-captured v6 bundle (`.work-phase4/session-v/v-20260821T193353Z-3ffd7516`, Session
+V's own post-Step-1 capture): all six raw v6 firings reproduce identical tags and corrected values
+across both bundles — the live evidence below is not an artifact of one capture. `scripts/ws1-
+session-ab-analyze.ts` and `scripts/ws1-session-ab-step1.ts` cross-reference every candidate
+against `scripts/ws1-ear-pass-ledger.ts`'s `earPassAuthorising`/`earPassRejects` (by value, within
+its own 0.005s tolerance) to classify each as ALREADY_CORRECT / DEFECT_FIXED / DEFECT_UNFIXED /
+UNVERIFIED. `scripts/ws1-session-ab-step4-amplitude.py` (`.venv-phase4`, `soundfile`+`numpy`) reads
+real 16kHz audio (`audio_16k.wav`) for the amplitude/energy work. `scripts/ws1-session-ab-step4a-
+leadin.ts` extends the onset-lead-in measurement across the full ear-confirmed control population.
+All five are read-only measurement scripts, none in the default `npm test` sweep (the `.test.ts`
+one is gated `describe.skipIf(!MEASURE)`, matching every prior session's own convention; the
+others are plain scripts run via `tsx`/`python3`, invoked directly, never part of any test file).
+
+**(a) STEP 1 — THE PREMISE "R.11's SIX EAR-CONFIRMED FIRINGS" DOES NOT HOLD; RE-DERIVED FROM WHAT
+IS ACTUALLY EAR-CONFIRMED (MEASURED, corrects the session brief before building on it).** R.11
+DETECTS six raw candidates on the live v6 bundle (`192_scout_listening`, `226_four_scouts`,
+`232_sudden_halt`, `233_firelight_speech`, `266_forty_one_burden`, `322_body_readiness` — matches
+`docs/work-in-progress.md`'s own "R.11 fires 6" from Session P/S) and KEEPS five after R-AP declines
+`266_forty_one_burden` (that boundary's origin lies strictly inside an R.5 run; R.12 owns it). Of
+those six, only TWO carry an ear pass that scored R.11's OWN proposed correction CORRECT:
+`192_scout_listening` and `226_four_scouts` (`scripts/ws1-ear-pass-ledger.ts`'s `h-192-scout-
+listening`/`ov3-226-four-scouts` rows). `232_sudden_halt`, `233_firelight_speech`,
+`322_body_readiness` appear NOWHERE in `EAR_PASS_LEDGER` (confirmed by direct grep of all 550 lines
+of that file) — `docs/work-in-progress.md`'s own Session Q entry already names them "Positive-
+looking pins WITHOUT one, now labelled change detectors," which this session's fresh measurement
+reproduces exactly. `266_forty_one_burden`'s R.11 PROPOSAL (moving the boundary past the run's end)
+is R.12's row, not R.11's — R.12's own value there is ear-confirmed, R.11's is not and never was.
+The other two historically-attributed register members have both drifted OFF the live path since
+Session Q: `152_frozen_brush_mice`/item-7 now measures fitDeviation EXACTLY 1.0 on the live chunk
+plan (the mathematical floor `max(fit,1/fit)` can ever take — unreachable by C1 at ANY threshold,
+confirmed structurally, not merely narrowly missed) and stays closed only against the FROZEN
+fixture; `abysmal_opinion` no longer needs correction at all on the live bundle — its own boundary
+already sits at the ear-confirmed value via an upstream mechanism, and R.11's own no-op guard
+(conjunct 3) correctly declines it as a true negative rather than firing. **So the real,
+ear-confirmed, currently-reachable positive population is TWO rows (`226_four_scouts`,
+`192_scout_listening`), not six — this correction is reported because Step 1's own re-derivation
+depends on getting the positive/negative population right, and the brief's count does not survive
+contact with the ledger.**
+
+Re-derivation, geometric midpoint of worst-reachable-confirmed-positive and nearest-must-decline-
+negative, same methodology Session F used, applied to live data:
+
+- `R11_MIN_FIT_DEVIATION`: worst reachable confirmed-fixed positive is `226_four_scouts` at
+  deviation EXACTLY 1.5 (the live 277-chunk plan re-splits this chunk from Session F's 280-chunk
+  vintage — `444_scout_past_watch`, the original nearest-negative anchor, has itself drifted to
+  the mathematical floor, 1.0). Below the current threshold sits `214_solitary_fire` (Class A,
+  deviation 1.2727) whose UNGATED chunk-edge proposal lands within 0.01s of its own ear-confirmed
+  target — closer than the register's own 0.005s pin tolerance can admit as an exact match, but far
+  too close to license fit deviation as a clean separator. Widening C1 to reach it would ALSO admit
+  four Class B rows (`403_vigilant_embers`, `286_fact_to_act`, `400_endless_dark`,
+  `167_smell_of_butchery`, deviations 1.08-1.14, landing 0.01-0.09s from their own targets — one,
+  `400_endless_dark`, misses by 0.09s, not a clean hit even loosely) — Class B is explicitly out of
+  this session's scope (Step 5). An R.12-owned boundary (`340_fifty_eight`) shares the EXACT SAME
+  deviation floor (1.0) as `447_scout_facing_dark` (Class A) — both sit at the mathematical minimum
+  `fitDeviation >= 1`, so no threshold, however low, can admit one without the other; `340`'s own
+  ungated proposal is 4.25s from its ear-confirmed value, a real false positive were C1 ever lowered
+  that far. **VERDICT: no separating value exists in the evidence now on hand without crossing into
+  Class A/B's own explicitly-deferred territory. Constant SHIPS UNCHANGED at 1.3093 — Step 3's
+  negative-result outcome, not a failure to look.**
+
+- `R11_MAX_SPAN_WORD_CONF`: worst reachable confirmed-fixed positive is `226_four_scouts` at
+  spanMaxConfidence 9.789e-4 (live). Nearest must-decline negative is `abysmal_opinion`'s OWN
+  spurious end-edge candidate — the SAME tag also generates a second, structurally distinct
+  candidate proposing to move its already-correct boundary to a DIFFERENT, wrong silence, which
+  conjunct 4 must keep declining — at 1.5828e-2, tighter than `125_night_circle`'s own live value
+  (1.9128e-2, the R.12 mutual-exclusion case, unchanged mechanism). Geometric midpoint:
+  sqrt(9.789e-4 × 1.5828e-2) = **3.9362e-3**, a **~4.02x margin on each side** — wider than the
+  original 2.8x. MONOTONICALLY SAFE in the tightening direction: every one of R.11's six live raw
+  firings has its own spanMaxConfidence at least 4x below the new value (highest is
+  `226_four_scouts` itself, 9.789e-4), so none can newly decline; a lower threshold can only make
+  conjunct 4 stricter, never admit a new false positive. **SHIPPED**: `syncConstants.ts`'s
+  `R11_MAX_SPAN_WORD_CONF` moves 1.0835e-2 → 3.9362e-3. The two self-consistency tests in
+  `faSeamFitGate.test.ts` (`R11_MAX_SPAN_WORD_CONF` at the geometric midpoint / distinct from
+  R10/CONF_MIN) are updated to the live derivation above; every OTHER existing behavioral test in
+  that file (which fires, which doesn't, at which exact values) passes UNCHANGED — verified by
+  running the full file before and after.
+
+**(b) STEP 1a — SENSITIVITY, DISTANCE-TO-FIRST-FLIP, BOTH DIRECTIONS.**
+
+`R11_MIN_FIT_DEVIATION` (unchanged, 1.3093) — fixed ±5%/±10% check: -10%→1.1784 and -5%→1.2438 both
+newly admit `214_solitary_fire` to C1 (it clears C2 and reaches C4, i.e. `wouldFireIfC1Passed=true`
+— a real, structurally-live candidate, not a dead one); +5%/+10% admit nothing new but lose three
+positives (`056_dropping_torch`, `152_frozen_brush_mice`, and 173's `vessel_damage_clue` — all
+three are candidates whose UNGATED proposal happens to land on an ear-confirmed value, though only
+via mechanisms unrelated to R.11's own historical attribution for two of them; see the false-
+positive risk caveat below). EXACT DOWNWARD FLIP: the threshold would have to drop to 1.2727 —
+2.793% below current — before `214_solitary_fire` first flips PASS→FAIL(fires); no ear-confirmed
+CORRECT boundary flips before that point (checked down to the lowest fitDeviation present in the
+population, 1.0). EXACT UPWARD FLIP: rising to the mathematical floor (1.0) is needed before losing
+`152_frozen_brush_mice` — already unreachable in practice, so this is a formality, not a live risk.
+Distance-to-flip is **narrow (2.8%) in the direction that matters** (lowering), which is exactly why
+Step 1's own conclusion above is "ships unchanged" rather than "ships slightly lower" — 2.8% is not
+a comfortable buffer to further erode.
+
+`R11_MAX_SPAN_WORD_CONF` (new, 3.9362e-3) — fixed ±5%/±10% around the NEW value: all four points
+(±5%, ±10%) admit zero new dangerous negatives and lose zero positives — locally flat. EXACT
+flip toward looser (raising the bar, risk direction): the threshold would have to rise to 1.5828e-2
+— **+46.1%** above the shipped value — before `abysmal_opinion`'s spurious candidate first passes
+C4 (empirically reproduced this session: mutating the live constant to 0.02 makes it fire, moving an
+already-correct boundary to a wrong one — RED, reverted). EXACT flip toward tighter (lowering, loses
+a positive): the threshold would have to fall to 1.4899e-3 — **-62.2%** below shipped — before
+losing `152_frozen_brush_mice`'s OWN spanMaxConfidence value (which, again, is moot in practice
+since C1 never lets that candidate reach C4 at all; the binding floor among candidates that
+currently DO reach C4 is `226_four_scouts` at 9.789e-4, an even larger **-75.1%** buffer). Both
+margins (+46.1% / -62.2% to -75.1%) are wide, a fixed check alone would have understated neither.
+
+**(c) STEP 1b — LOOCV, PLUS CORPUS HOLDOUT (kept separate, not conflated).** Five confirmed-fixed
+positives are available across the counterfactual population once C1's short-circuit is removed
+(`056_dropping_torch`, `152_frozen_brush_mice`, `192_scout_listening`, `226_four_scouts`, 173's
+`vessel_damage_clue`) — but only TWO of these (`192_scout_listening`, `226_four_scouts`) are
+CURRENTLY reachable through C1 at 1.3093; the other three are counterfactual-only findings (real,
+UNGATED matches, but not evidence R.11's OWN historical attribution ever claimed — `vessel_damage_
+clue` is R-U's row and `056_dropping_torch` is an unassigned Class B row; both landing on their own
+ear-confirmed target via R.11's chunk-fit mechanism is a genuinely interesting SEPARATE finding
+[see (f)], not proof R.11 already "owns" them). Leave-one-out over all five: holding out
+`152_frozen_brush_mice` (deviation 1.0) is the only case where the REMAINING worst-bad (1.1429)
+would still sit above it — i.e., every OTHER single-row holdout changes which row is "worst," which
+is expected with n=5 and is exactly why a percentage-split test would have been meaningless here.
+**Corpus holdout (the stronger test, kept separate from LOOCV as instructed):** 173 fires ZERO raw
+candidates at current thresholds — `abysmal_opinion` no longer clears C1's proposal-vs-committed gap
+at all on live data — confirmed by direct measurement of the full 149-candidate 173 population, not
+inferred. Re-derivation moved ONLY `R11_MAX_SPAN_WORD_CONF`, and 173's own must-decline negative
+(`abysmal_opinion`'s spurious end-edge candidate, spanMaxConfidence 1.5828e-2) is the constant's OWN
+binding upper bound — 173 is not merely unmoved, it is LOAD-BEARING evidence for the new value.
+Spanish: zero raw candidates, zero movement, unchanged (7 total candidates in the whole corpus, none
+clearing C1). **LOOCV measures only within-population generalization on n=5, most of which is
+counterfactual; the corpus-holdout result (173 supplying the binding negative, Spanish inert) is the
+stronger, real cross-corpus evidence and is reported as the primary result — this ordering matches
+the brief's own instruction not to present LOOCV alone as generalization evidence.**
+
+**(d) STEP 2 — BLAST RADIUS AND THE THIRTEEN PINS, MEASURED BEFORE APPLYING.** `R11_MAX_SPAN_WORD_
+CONF`'s change affects a value ONLY conjunct 4 reads — it changes WHETHER a finding survives to
+output, never `committedValue`/`correctedValue` (those are computed identically regardless). Direct
+before/after re-run of the full corpus probe at both the old (1.0835e-2) and new (3.9362e-3)
+constant reproduces the IDENTICAL six-tag v6 firing set at IDENTICAL corrected values, and IDENTICAL
+zero firings on 173 and Spanish — confirmed empirically, not argued from the monotonic-safety logic
+alone (though that logic is also airtight: lowering conjunct 4's bar can only strictly increase
+declines, never admit a new pass). **All six of R.11's live firings reproduce exactly**
+(`192_scout_listening`, `226_four_scouts`, `232_sudden_halt`, `233_firelight_speech`,
+`266_forty_one_burden`, `322_body_readiness` — tags and values byte-identical before/after). **All
+seven WS1 Session V closures are R.12's, a rule this change does not touch at all** (`042_eleven_
+years`, `176_twenty_six_scout`, `224_thirty_three`, `307_forty_nine_years`, `340_fifty_eight`,
+`s-266-live-path-collision`, `r12-383-sixty-four`) — trivially unaffected, confirmed by inspection
+(`R11_MAX_SPAN_WORD_CONF` does not appear anywhere in `faRunPlacementGate.ts`). **Thirteen for
+thirteen, reproduced.** Zero movement confirmed across the full v6 447-boundary committed array (the
+constant gates a detection-survival check only; no committed boundary value in the array depends on
+it either way when nothing newly fires or declines). **MUTATION (Step 2's own requirement):**
+temporarily set `R11_MAX_SPAN_WORD_CONF = 0.02` (above `abysmal_opinion`'s own 1.5828e-2) and re-ran
+the real corpus probe against the live 173 bundle — `abysmal_opinion`'s end-edge candidate flips
+DECLINED→FIRES, proposing to move its own already-correct boundary to a wrong new value. **RED,
+confirmed.** Reverted; re-ran to confirm GREEN (zero 173/Spanish firings, unchanged v6 six-tag set)
+before shipping. An in-file `vitest`-level mutation test was attempted first
+(monkey-patching the constant via `vi.doMock` against `125_night_circle`'s FIXTURE case) and
+abandoned when it did not reproduce RED — diagnosed to a genuine, separate fact: that fixture's
+`committedValue` is POST-R.12 (370.75, baked into `phase4-fa-second-baseline-v6-segments.csv`),
+which shifts R.11's own correction span past the fixture's hardcoded 0.0301-confidence word
+entirely, so the decline reason there is "no usable evidence in span" under ANY threshold, not
+"real evidence above the bar" — no C4 value can flip it. Recorded in `faSeamFitGate.test.ts`'s own
+comment rather than silently deleted, since a future session touching that fixture should know why.
+
+**(e) STEP 3 — FOLDED INTO (a): `R11_MIN_FIT_DEVIATION` REPORTS AS A NEGATIVE RESULT.** A wider
+margin is not available in the evidence now on hand. What WOULD change this: an ear pass that
+either (i) confirms `214_solitary_fire`'s UNGATED chunk-edge proposal as the genuinely correct value
+(closing the 0.01s gap between it and the register's own pin), which would license admitting it
+specifically without a corpus-wide threshold change, or (ii) a Class B ear-verification pass that
+independently resolves whether the four Class B near-misses at similar deviations are real
+mechanism matches or coincidence — either would change what "nearest negative" means for this
+constant. Neither exists yet; Class B ear-verification is explicitly out of this session's scope.
+
+**(f) STEP 4 — THIRD DISCRIMINATOR FOR CLASS A: AMPLITUDE/ENERGY CANDIDATES, ALL NEGATIVE (measured,
+`scripts/ws1-session-ab-step4-amplitude.py`, real 16kHz audio, 41 ear-confirmed controls + the 2
+Class A rows).** Seven candidates computed per boundary: RMS 300ms before/after the seam and their
+absolute/ratio asymmetry, RMS in a narrow 50ms window centered on the seam, and the backing
+silence's own distance/width/depth (RMS and peak). Best-threshold precision/recall per candidate
+(both catch BOTH Class A rows at recall 1.000 by construction of the search; precision is what
+separates them):
+
+| candidate | direction | threshold | classA caught | control FP | precision | recall |
+|---|---|---|---|---|---|---|
+| `nearest_silence_width` | ≤ | 0.36s | 2/2 | 3/41 | **0.400** | 1.000 |
+| `rms_at_50ms` | ≤ | 1.54e-4 | 2/2 | 14/41 | 0.125 | 1.000 |
+| `seam_asymmetry_abs` | ≥ | 6.87e-3 | 2/2 | 22/41 | 0.083 | 1.000 |
+| `nearest_silence_dist` | ≤ | 0.000 | 2/2 | 23/41 | 0.080 | 1.000 |
+| `nearest_silence_depth_rms` | ≥ | 8.76e-4 | 2/2 | 24/41 | 0.077 | 1.000 |
+| `nearest_silence_depth_peak` | ≥ | 1.123e-2 | 2/2 | 27/41 | 0.069 | 1.000 |
+| `seam_asymmetry_ratio` | ≥ | 1.215 | 2/2 | 29/41 | 0.065 | 1.000 |
+| `rms_at_50ms` | ≥ | 1.13e-4 | 2/2 | 28/41 | 0.067 | 1.000 |
+| `seam_asymmetry_abs` | ≤ | 3.447e-2 | 2/2 | 31/41 | 0.061 | 1.000 |
+| `nearest_silence_depth_rms` | ≤ | 1.967e-3 | 2/2 | 38/41 | 0.050 | 1.000 |
+
+Best candidate (`nearest_silence_width ≤ 0.36s`) is REAL and interpretable — Class A's own
+mechanism (committed value already sits at ITS OWN silence's midpoint, just the wrong silence) means
+that wrong silence is typically a brief, local pause, and width does correlate — but 3/41 false
+positives is not the required zero, and the named false positives are informative, not noise:
+`042_eleven_years` (v6, R.12's own fallback row), `strategic_equivalence` and `unbound_chaos` (173).
+Restricting to "boundary sits ON a detected silence" controls only (Class A's own defining
+property) makes the confound explicit rather than implicit: 173's own on-silence control population
+(`hostile_landscape`, `abysmal_opinion`, `fallen_regiment_site`, `earthwork_corridor`, `rugged_
+survivalist`) has widths 0.36-0.44s — ALL comparable to or narrower than Class A's own 0.30/0.36s —
+because 173's silences are systematically narrower than v6's as a corpus-level recording property,
+not a defect signature. A width threshold tuned to v6 alone would misfire constantly on 173 — the
+exact overfitting risk `ws1-generalization.test.ts` exists to police, reproduced here by direct
+measurement rather than asserted. **VERDICT: no amplitude/energy candidate measured this session
+reaches zero false positives. Reported in full as a negative result, per the brief's own
+instruction — no candidate ships, no Class A code change.**
+
+**(g) STEP 4a — ONSET-CLIPPING GUARD: EXTENDED MEASUREMENT, STILL CONDITIONAL, STILL NOT WIRED
+(nothing shipped in (f) to attach it to).** Session Z's own n=3 lead-in (`lethal_nature_hazard` 30ms,
+`iron_bounce` 10ms, `logic_clash` 20ms, median 20ms, range 10-30ms) is treated here as FITTED-RISK
+rather than accepting Session Z's own "MEASURED, not FITTED" self-description at face value — n=3 is
+too thin to carry that distinction meaningfully, per this session's own brief. Extended measurement
+(`scripts/ws1-session-ab-step4a-leadin.ts`): for all 41 ear-confirmed controls, lead-in = (first
+Whisper token after the boundary) − earCorrect. Full population: n=41, median **280ms**, mean
+**361ms**, range **10-1850ms** — only 4.9% fall inside Session Z's original 10-30ms window. THIS
+DOES NOT REFUTE Session Z's finding; it measures a DIFFERENT, broader question. Session Z's n=3 was
+deliberately curated to NARROW-INTERVAL, truncation-risk cases (interval widths 0.04-0.88s); most of
+this session's 41-row population sits in comfortably WIDE silences where "lead-in" isn't the
+relevant concept at all (the 1850ms/1370ms/880ms outliers are ordinary multi-second R.5-run-onset
+silences, not near-misses). Restricting to the SAME regime — lead-in under 100ms, the only subset
+where a clipping risk is even plausible — yields n=6 real additional data points: `sturdy_plating`
+10ms, `uncertain_outcome` 30ms, `023_scylla_six_sailors`/`158_scout_false_alert` 40ms, `016_
+prepares_weapons` 70ms, `318_scout_on_ridge` 90ms. Pooled with Session Z's own n=3 (methodologically
+distinct — raw Whisper tokens here vs. FA plosive-onset anchors there — reported side by side, not
+merged into one derivation): 9 points, range 10-90ms, order-of-magnitude consistent with a ~20-30ms
+guard but with a wider spread (up to 90ms) than the original 10-30ms suggested. **Conclusion: the
+guard's rough magnitude survives a 3x larger, differently-sourced sample; its precise 10-30ms range
+does not — a real 90ms case exists in the extended population.** Per this session's own instruction,
+the guard would apply ONLY where a candidate cut lands at or after the following word's FA onset,
+never as a global pre-roll — no candidate was adopted this session, so nothing is wired. WPM-tier
+prerequisite restated at (i) below.
+
+**(h) STEP 5 — CLASS B AMPLITUDE-FLOOR DEFICITS, RECORDED FOR SESSION AC, NO CODE TOUCHED.** Read
+directly from `scripts/phase4-fa-replay.test.ts`'s own `KNOWN_BAD` entries (not re-measured this
+session — no Class B measurement ran):
+
+| row | measured boundary amplitude | `BOUNDARY_QUALITY_ABSOLUTE_AMPLITUDE_FLOOR` | deficit | other two conjuncts |
+|---|---|---|---|---|
+| `classB-056-dropping-torch` | 0.029 | 0.05 | 0.021 | distance 0.53s (clears 0.10s floor), ratio 34.3x (clears 2x floor) |
+| `classB-167-smell-of-butchery` | 0.256 | 0.05 | **clears the floor by 0.206** (the one row the shipped checker already flags) | — |
+| `classB-286-fact-to-act` | 0.0295 | 0.05 | 0.0205 | distance 0.685s, ratio 92.0x |
+| `classB-400-endless-dark` | 0.0152 | 0.05 | **0.0348 (widest of the four)** | distance ~, ratio 39.3x |
+| `classB-403-vigilant-embers` | 0.0433 | 0.05 | **0.0067 (narrowest of the four)** | distance 0.705s, ratio 96.9x |
+
+All five are FALLBACK boundaries (`boundaryUsedFallback` true); four fail the ABSOLUTE amplitude
+floor alone while clearing the other two conjuncts by wide margins. No Class B code changed this
+session, per the brief's own instruction.
+
+**(i) STEP 6 — THREE-CORPUS MEASUREMENT TABLE FOR WHAT SHIPPED (`R11_MAX_SPAN_WORD_CONF` only).**
+
+| corpus | fires (before) | fires (after) | true positives | false positives | precision | recall (of 2 known-reachable) |
+|---|---|---|---|---|---|---|
+| v6 | 6 | 6 (identical set) | 2 confirmed (`226_four_scouts`, `192_scout_listening`) | 0 | 1.000 (on confirmed) | 1.000 |
+| 173 | 0 | 0 | — | 0 | — | — (**NOT EXERCISED**, not perfect) |
+| Spanish | 0 | 0 | — | 0 | — | — (**NOT EXERCISED**, not perfect) |
+
+Zero fires on 173/Spanish is explicitly NOT EXERCISED there, restated per this session's own
+instruction — 173 nonetheless supplies the constant's own binding nearest-negative (abysmal_
+opinion's spurious candidate), so it is evidentially load-bearing even at zero fires. The **5-tier
+WPM validation suite remains a blocking prerequisite before any PLACEMENT rule ships to main**
+(unchanged from Session Y/Z/AA — no such corpora exist in this environment; this session shipped a
+threshold TIGHTENING on an existing, already-shipped rule, not a new placement rule, so this
+prerequisite gates the onset-guard work in (g) and any future Class A/B fix, not today's change).
+
+**(j) FLOORS, RE-VERIFIED AT HEAD (`2a082d6`).** `npm test` 2465 passed/26 skipped/0 failed (+3
+skipped vs. the 23 floor — this session's own new gated probe file, `WS1_SESSION_AB_MEASURE=1`,
+contributing 3 always-skipped-by-default tests, matching every prior session's own convention; zero
+regressions). `tsc --noEmit` clean. `cargo check --features fa-inference` clean (unchanged — no
+Rust file touched). `cargo clippy --features fa-inference --all-targets` clean, 4 pre-existing
+warnings (unchanged). `cargo test` 141 passed/0 failed/1 ignored (unchanged). `cargo test --features
+fa-inference` 216 passed/0 failed/24 ignored (unchanged). Golden replay 6/6 — both
+`phase4-handoff-replay-sync.test.ts` and `phase4-fa-replay.test.ts` run standalone, 54/54 tests
+green, and confirmed part of the full green `npm test`. `faAnchors.ts` sha256 unchanged,
+`b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`. `git diff --stat` against
+`2a082d6`: `src/services/syncConstants.ts` (+90/-17 across both blocks) and
+`src/services/faSeamFitGate.test.ts` (+47/-4) only — `faAnchors.ts`, `snapBoundaries.ts`,
+`silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`, and every
+`scripts/fixtures/phase4-baseline-*.csv` untouched; no repo-root file added (five new files, all
+under `scripts/`); no generator in the default sweep; no ear-verified row reopened on confidence
+grounds; no Phase 4 corpus work; no arbiter rebuild.
+
+**CAUGHT DURING THIS SESSION, WORTH RECORDING.** A first draft of `R11_MIN_FIT_DEVIATION`'s
+provenance comment above named `214_solitary_fire`'s exact ear-confirmed target value in prose —
+`ws1-generalization.test.ts`'s tier-1 guard (banned ear-list timestamps, comments included) caught
+it immediately (RED, `src/services/syncConstants.ts: 630.09`). Rewritten to describe the finding in
+ratios and qualitative terms only, real numbers kept to this file. The guard did exactly the job it
+was built for.
