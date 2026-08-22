@@ -107,6 +107,18 @@ export const EAR_SITTINGS = {
    *  and the three off-list defects are transcribed here from the operator's
    *  own session-brief summary, not from a machine-readable export). */
   'ear-173-x': 9,
+  /** WS1 Session AD — the operator's A/B (side-by-side candidate comparison)
+   *  pass over the historical row-0/`152_frozen_brush_mice`/item-7 PLUS all 8
+   *  open Class A/B rows (`docs/ws1-sync-pipeline/stage1-session-ac-ear-
+   *  list.md`'s own candidate list) — closing the exact gap Session AC
+   *  identified: none of those 8 rows previously carried a genuine listening
+   *  pass, only `session-p-live`'s same-session self-transcription of the
+   *  register's own claim. Every value below reconfirms what was already on
+   *  record (`session-p-live` for the 8 open rows, `ear-12` for item-7) —
+   *  nothing here changes a number, only its evidentiary status. See this
+   *  sitting's own row-0 notes for the 450.99 supersession this pass surfaced
+   *  while reconciling item-7 against the ledger. */
+  'ear-verify-ad': 10,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -498,6 +510,85 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
     note: 'Section B row 19. Flagged by silence-distance (1.17s, the narrowest gap in this sitting) alone.' },
   { sitting: 'ear-173-x', corpus: '173', tag: 'troop_deployment', scoredValue: 696.04, verdict: 'CORRECT',
     note: 'Section B row 20. Flagged by silence-distance (1.30s) alone.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION AD — operator A/B pass, row-0/item-7 plus all 8 open rows.
+  // Method: candidates played side by side (not solo), per `ear-verify-t`/
+  // `ear-verify-v`'s own convention. EVERY value below is IDENTICAL to what
+  // was already on record before this sitting — see this file's header note
+  // on sitting `ear-verify-ad` for why that is still worth ingesting (it
+  // upgrades evidentiary status, not the numbers).
+  // -------------------------------------------------------------------------
+
+  // Row 0 — historical, NOT one of the 8 open register rows. Item-7 is CLOSED
+  // at the fixture level (`ear-12`'s order-1 sitting already scored 451.03
+  // CORRECT) and stays open only as a LIVE-PATH-ONLY defect (fitDeviation
+  // pinned at the metric's own mathematical floor of 1.0 — structurally
+  // unreachable by R.11 at any threshold, `docs/work-in-progress.md` §11f).
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '152_frozen_brush_mice', scoredValue: 449.20, verdict: 'WRONG',
+    note: 'Row 0. The live-path committed value. Confirmed wrong, A/B against the target below.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '152_frozen_brush_mice', scoredValue: 451.03, verdict: 'CORRECT',
+    note: 'Row 0 target. RECONFIRMS `ear-12`\'s (order 1, the earliest sitting on record) original ' +
+      'verdict, unchanged — a SUPERSESSION, not a correction: the earliest sitting already had this ' +
+      'right, and nothing between then and now ever entered a contradicting row INTO THIS LEDGER. ' +
+      'SEPARATELY SUPERSEDED, for the record: the value `450.99`, which was NEVER an EAR_PASS_LEDGER ' +
+      'entry — it originates in WS1 Session P\'s (2026-08-19, commit `e7e4f9a`) own "Class A is not a ' +
+      'threshold problem" per-conjunct prose table (`docs/work-in-progress.md`), which transcribed ' +
+      'this row\'s own already-on-record 451.03 as 450.99 and from there propagated into `scripts/ws1-' +
+      'generalization.test.ts`\'s banned-timestamp guard list and three Session Q/R measurement ' +
+      'scripts\' hardcoded constants (`ws1-session-q-silence-distance.test.ts`, `ws1-session-q-' +
+      'detector-validate.test.ts`, `ws1-session-r-containment.test.ts`), none of which re-derived it ' +
+      'from this ledger before using it. Those four files are NOT edited this session: each is an ' +
+      'append-only record of its OWN session\'s measurement, and `ws1-generalization.test.ts`\'s ' +
+      'banned list cannot swap in 451.03 without first checking for a collision against 451.03\'s own ' +
+      'LEGITIMATE existing use as a regression pin elsewhere (`src/services/faSeamFitGate.test.ts:250`, ' +
+      '`faRunPlacementGate.test.ts:646`) — out of this session\'s scope. 450.99 is hereby marked ' +
+      'SUPERSEDED; this ledger has never authorised any value for this row other than 451.03.' },
+
+  // Rows 1-3 — Class A (3 of the 8 open rows).
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '214_solitary_fire', scoredValue: 629.01, verdict: 'WRONG',
+    note: 'Row 1. Confirmed wrong. Supersedes `session-p-live`\'s self-transcription of the same value ' +
+      'with a genuine A/B listening pass.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '214_solitary_fire', scoredValue: 630.09, verdict: 'CORRECT',
+    note: 'Row 1 target. A/B-confirmed CORRECT, same value the register\'s own earCorrect already named.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '231_slowing_pace', scoredValue: 681.63, verdict: 'WRONG',
+    note: 'Row 2. Confirmed wrong; committed value re-confirmed against a fresh probe this session, ' +
+      'unchanged at 681.63.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '231_slowing_pace', scoredValue: 682.74, verdict: 'CORRECT',
+    note: 'Row 2 target. A/B-confirmed CORRECT — the THIRD option in a three-way choice ' +
+      '(`stage1-session-ac-ear-list.md` row 2: A=680.99 a naive nearest-silence detector\'s own ' +
+      'proposal, B=681.63 committed, C=682.74 this target); the owner picked C.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '447_scout_facing_dark', scoredValue: 1417.12, verdict: 'WRONG',
+    note: 'Row 3. Confirmed wrong. Supersedes `session-p-live`\'s self-transcription of the same value ' +
+      'with a genuine A/B listening pass.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '447_scout_facing_dark', scoredValue: 1418.53, verdict: 'CORRECT',
+    note: 'Row 3 target. A/B-confirmed CORRECT, same value the register\'s own earCorrect already named.' },
+
+  // Rows 4-8 — Class B (5 of the 8 open rows).
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '056_dropping_torch', scoredValue: 167.03, verdict: 'WRONG',
+    note: 'Row 4. Confirmed wrong. Supersedes `session-p-live`\'s self-transcription of the same value.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '056_dropping_torch', scoredValue: 167.70, verdict: 'CORRECT',
+    note: 'Row 4 target. A/B-confirmed CORRECT, same value the register\'s own earCorrect already named.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '167_smell_of_butchery', scoredValue: 494.43, verdict: 'WRONG',
+    note: 'Row 5. Confirmed wrong. Supersedes `session-p-live`\'s self-transcription of the same value.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '167_smell_of_butchery', scoredValue: 494.75, verdict: 'CORRECT',
+    note: 'Row 5 target. A/B-confirmed CORRECT, same value the register\'s own earCorrect already named.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '286_fact_to_act', scoredValue: 856.09, verdict: 'WRONG',
+    note: 'Row 6. Confirmed wrong. Supersedes `session-p-live`\'s self-transcription of the same value.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '286_fact_to_act', scoredValue: 856.52, verdict: 'CORRECT',
+    note: 'Row 6 target. A/B-confirmed CORRECT, same value the register\'s own earCorrect already named.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '400_endless_dark', scoredValue: 1266.21, verdict: 'WRONG',
+    note: 'Row 7. Confirmed wrong. Supersedes `session-p-live`\'s self-transcription of the same value.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '400_endless_dark', scoredValue: 1266.66, verdict: 'CORRECT',
+    note: 'Row 7 target. A/B-confirmed CORRECT, same value the register\'s own earCorrect already named.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '403_vigilant_embers', scoredValue: 1273.14, verdict: 'WRONG',
+    note: 'Row 8. Confirmed wrong. Supersedes `session-p-live`\'s self-transcription of the same value.' },
+  { sitting: 'ear-verify-ad', corpus: 'v6', tag: '403_vigilant_embers', scoredValue: 1273.55, verdict: 'CORRECT',
+    note: 'Row 8 target. A/B-confirmed CORRECT, same value the register\'s own earCorrect already named. ' +
+      'NOTE (Session AD Step 6): at the app\'s real native audio decode rate this boundary\'s OWN ' +
+      'amplitude already clears the still-playing checker\'s 0.05 floor, unlike at the replay bundle\'s ' +
+      '16kHz rate — detection improves independent of any threshold change; this row\'s CORRECTION ' +
+      'status (the target above) is unaffected either way.' },
 ];
 
 /** Default match tolerance — the Zero-Defect Register's own. */
