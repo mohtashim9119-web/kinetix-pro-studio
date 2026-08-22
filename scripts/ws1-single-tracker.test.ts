@@ -77,6 +77,17 @@ const ALLOWLIST = new Set<string>([
   // asks is which of two or three named timestamps is correct, which cannot be
   // asked without naming them. R.12's value change is blocked on it.
   'docs/ws1-sync-pipeline/stage1-session-s-ear-list.md',
+  // WS1 Session W's 173 pre-fix capture — same class again: a run sheet worked
+  // THROUGH against the audio (Section A/B rows, ffmpeg+afplay commands per
+  // row), sealed CAPTURE ONLY with blank Ear Verdict/Class columns at the time
+  // it was written. Its RESULTS (the Session X ear pass) go to
+  // docs/work-in-progress.md §11 and `scripts/ws1-ear-pass-ledger.ts`. Missing
+  // from this allowlist since its own landing commit (`dc96fef`) — an
+  // oversight in that commit, not a new exception; added here rather than
+  // deleting the file, since CLAUDE.md's audit-persistence rule and this
+  // test's own stated purpose (run sheets are worked THROUGH, not read) both
+  // apply to it exactly as they do to its Session K/S siblings above.
+  'docs/ws1-sync-pipeline/stage1-session-w-173-ear-list.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
