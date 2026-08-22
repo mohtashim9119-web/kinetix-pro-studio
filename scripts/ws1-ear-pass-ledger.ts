@@ -91,6 +91,22 @@ export const EAR_SITTINGS = {
    *  listened again) — this sitting is the first to confirm what the app
    *  commits today. */
   'ear-verify-v': 8,
+  /** WS1 Session X — the operator's full 173 listening pass (Method A/B):
+   *  Section A (9 rows, `docs/ws1-sync-pipeline/stage1-session-w-173-ear-list.md`
+   *  — the CSV numbers these 0-8, nine rows; the doc's own "8 rows" header is
+   *  stale, left over from before row 0 (5-6) was added to the sitting) +
+   *  Section B (12 rows) of that same capture-only run sheet, PLUS three
+   *  further defects (21-22, 42-43, 104-105) the operator caught in a fuller
+   *  listen-through that were never on either section's candidate list at
+   *  all — 24 verdicts total, corpus 173 exclusively. Supersedes every prior
+   *  173 verdict at HEAD for any row it re-scores (`vessel_damage_clue`@174.74
+   *  re-confirms `ear-12`'s own row unchanged; `protection_failure`@603.69
+   *  re-confirms `mover-audit-k`'s). Source: `/Users/mohtashim/Downloads/173
+   *  20-seg list - Sheet1.csv` (Section A's Ear-verdict/Class columns filled
+   *  in; Section B's are not present in that sheet — its 12/12 PASS verdict
+   *  and the three off-list defects are transcribed here from the operator's
+   *  own session-brief summary, not from a machine-readable export). */
+  'ear-173-x': 9,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -395,6 +411,93 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
       'direct two-way A/B against 788.65 specifically the way the six-row list above got. A future session ' +
       'wanting that finer distinction needs to run it as its own A/B, the same way `ear-verify-t` did for ' +
       '383 against 1188.95.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION X — the operator's full 173 listening pass, corpus 173
+  // exclusively. Section A (9 rows, idx 0-8 in the CSV's own numbering) +
+  // Section B (12 rows) of `docs/ws1-sync-pipeline/stage1-session-w-173-ear-
+  // list.md`'s capture-only run sheet, plus three further defects the
+  // operator caught in a fuller listen-through that were on NEITHER
+  // section's candidate list. `scoredValue` below is the value actually
+  // heard: the committed value for every CORRECT row, and BOTH the rejected
+  // committed value (EARLY) and the named correct value (CORRECT) for each
+  // of the five real defects, following this file's own two-row convention
+  // for a named target (see `session-p-live`'s Class A/B pairs above).
+  // -------------------------------------------------------------------------
+  { sitting: 'ear-173-x', corpus: '173', tag: 'lethal_nature_hazard', scoredValue: 18.51, verdict: 'EARLY',
+    note: 'Section A row 0 (5-6). distanceToSilence 0.000 — sits exactly on a real detected silence ' +
+      '[18.32,18.70], just not the right one; no silence exists anywhere near the correct instant.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'lethal_nature_hazard', scoredValue: 19.27, verdict: 'CORRECT',
+    note: 'Section A row 0 (5-6) named target. No detected silence backs this instant — it sits in the ' +
+      'gap between "worst" (ends 18.68, FA confidence collapses to ~0 for the trailing left words) and ' +
+      '"because" (starts 19.30, FA confidence 0.97+). Wrong-landmark defect, not a proximity defect.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'rugged_survivalist', scoredValue: 23.16, verdict: 'CORRECT',
+    note: 'Section A row 1 (6-7), the operator-reported seam. seam-attribution.json: no word crosses the ' +
+      'seam to the wrong side — a placement question, and the ear says 23.16 was already the right placement.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'ancient_schematic_view', scoredValue: 59.59, verdict: 'CORRECT',
+    note: 'Section B row 9. Flagged by silence-distance (2.15s) alone, not still-playing.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'iron_bounce', scoredValue: 75.66, verdict: 'EARLY',
+    note: 'Off-list defect (21-22), never flagged by any existing signal — distanceToSilence 0.000, sits ' +
+      'exactly on real silence [75.50,75.82]. Found only by full listen-through, not by any candidate list.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'iron_bounce', scoredValue: 76.59, verdict: 'CORRECT',
+    note: 'Off-list defect (21-22) named target. No detected silence within 3s of this instant.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'maintenance_blade', scoredValue: 110.86, verdict: 'CORRECT',
+    note: 'Section B row 10. Flagged by silence-distance (2.10s) alone.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'shifting_monolith', scoredValue: 130.17, verdict: 'CORRECT',
+    note: 'Section A row 2 (34-35), app-flagged "still playing". Splits mid-sentence inside "...and debris, ' +
+      'fused by warp transit into a structure too massive to ignore..." — a legitimate mid-dialogue cut with ' +
+      'no silence at the seam; the app was already right. Attached evidence for the R-MD suppression-class ' +
+      'question (Step 4).' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'wall_split_path', scoredValue: 161.33, verdict: 'EARLY',
+    note: 'Off-list defect (42-43), never flagged by any existing signal — distanceToSilence 0.000, sits ' +
+      'exactly on real silence [161.20,161.46]. Found only by full listen-through.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'wall_split_path', scoredValue: 162.15, verdict: 'CORRECT',
+    note: 'Off-list defect (42-43) named target. No detected silence within 3s of this instant.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'vessel_damage_clue', scoredValue: 174.74, verdict: 'CORRECT',
+    note: 'Section A row 3 (45-46), the fidelity-gate divergence — re-confirms `ear-12`\'s own row at the ' +
+      'same value, unchanged. This is the LIVE value; a same-HEAD regeneration against the cached ' +
+      '`.work-phase4/replay/173` FA arm produced 172.91 instead (non-determinism, WS1 Session X Step 7) — ' +
+      '172.91 was never heard by this sitting and carries no ear verdict.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'listening_error', scoredValue: 191.43, verdict: 'CORRECT',
+    note: 'Section B row 11. Flagged by silence-distance (2.37s) alone.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'perpendicular_structural_entry', scoredValue: 201.89, verdict: 'CORRECT',
+    note: 'Section B row 12. Flagged by silence-distance (4.91s, the widest gap in this sitting) alone.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'rugged_landscape', scoredValue: 228.48, verdict: 'CORRECT',
+    note: 'Section B row 13. Flagged by silence-distance (2.92s) alone.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'sturdy_plating', scoredValue: 244.60, verdict: 'CORRECT',
+    note: 'Section B row 14. Flagged by silence-distance (3.20s) alone.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'strategic_equivalence', scoredValue: 305.43, verdict: 'CORRECT',
+    note: 'Section B row 15. Flagged by silence-distance (2.81s) alone.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'rapid_skirmish_clash', scoredValue: 348.93, verdict: 'CORRECT',
+    note: 'Section A row 4 (88-89), app-flagged "still playing".' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'ancient_guardian_mechanism', scoredValue: 382.20, verdict: 'CORRECT',
+    note: 'Section A row 5 (96-97), app-flagged "still playing".' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'explosive_focus', scoredValue: 399.29, verdict: 'CORRECT',
+    note: 'Section B row 16. Flagged by silence-distance (1.41s) alone.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'logic_clash', scoredValue: 417.15, verdict: 'EARLY',
+    note: 'Off-list defect (104-105), never flagged by any existing signal — distanceToSilence 0.000, sits ' +
+      'exactly on real silence [417.00,417.30]. Found only by full listen-through.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'logic_clash', scoredValue: 418.14, verdict: 'CORRECT',
+    note: 'Off-list defect (104-105) named target. Sits in the gap between two real silences ' +
+      '([417.00,417.30] and [419.56,420.06]) with no silence of its own.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'gadget_decay', scoredValue: 427.48, verdict: 'EARLY',
+    note: 'Section A row 6 (106-107), app-flagged "still playing" — the ONE row in this sitting where the ' +
+      'flag was RIGHT. No detected silence anywhere within 3s; a genuine no-anchor fallback boundary.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'gadget_decay', scoredValue: 427.60, verdict: 'CORRECT',
+    note: 'Section A row 6 (106-107) named target, +0.12s from committed — the smallest of the five corrections.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'mystery_signal_lag', scoredValue: 472.26, verdict: 'CORRECT',
+    note: 'Section B row 17. Flagged by silence-distance (1.86s) alone.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'pattern_chaos', scoredValue: 545.89, verdict: 'CORRECT',
+    note: 'Section A row 7 (133-134), app-flagged "still playing".' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'unbound_chaos', scoredValue: 563.50, verdict: 'CORRECT',
+    note: 'Section B row 18. Flagged by silence-distance (2.48s) alone.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'protection_failure', scoredValue: 603.69, verdict: 'CORRECT',
+    note: 'Section A row 8 (144-145), app-flagged "still playing" — re-confirms `mover-audit-k`\'s own row ' +
+      'at the same value, unchanged.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'uncertain_outcome', scoredValue: 682.13, verdict: 'CORRECT',
+    note: 'Section B row 19. Flagged by silence-distance (1.17s, the narrowest gap in this sitting) alone.' },
+  { sitting: 'ear-173-x', corpus: '173', tag: 'troop_deployment', scoredValue: 696.04, verdict: 'CORRECT',
+    note: 'Section B row 20. Flagged by silence-distance (1.30s) alone.' },
 ];
 
 /** Default match tolerance — the Zero-Defect Register's own. */
