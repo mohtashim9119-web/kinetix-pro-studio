@@ -148,19 +148,60 @@ describe('R.11 — the named constants', () => {
     expect(R11_MIN_FIT_DEVIATION).toBeGreaterThan(nearestNegative);
   });
 
-  it('R11_MAX_SPAN_WORD_CONF sits at the geometric midpoint of the worst known-bad span and the nearest negative span (125_night_circle)', () => {
-    const worstBadSpanMax = 0.0038953518960624933; // abysmal_opinion
-    const nearestNegativeSpanMax = 0.030144814401865005; // 125_night_circle "are"
+  it('R11_MAX_SPAN_WORD_CONF sits at the geometric midpoint of the worst LIVE known-bad span and the nearest LIVE negative span (WS1 Session AB re-derivation)', () => {
+    // WS1 Session AB — re-derived on the live production bundle (all 3
+    // corpora), superseding the Session F fixture-only pair this test used
+    // to assert (abysmal_opinion 0.0038954 / 125_night_circle 0.030145,
+    // ~2.8x margin — both numbers are STILL live below as the FIXTURE-vintage
+    // bound sanity checks, not the derivation itself). On live data,
+    // `abysmal_opinion` no longer needs correction at all (already correct
+    // via an upstream mechanism); the worst reachable confirmed-fixed
+    // positive is v6 `226_four_scouts`, and the nearest negative is
+    // `abysmal_opinion`'s OWN spurious end-edge candidate (proposes moving
+    // its already-correct boundary to a DIFFERENT, wrong silence) — tighter
+    // than `125_night_circle`'s own live value. Real numbers, read from
+    // `.work-phase4/session-ab/r11-probe-{v6,173}.json`
+    // (`scripts/ws1-session-ab-r11-corpus-probe.test.ts`,
+    // `WS1_SESSION_AB_MEASURE=1`), not invented. Full evidence table:
+    // `sync-pipeline-v2-plan.md` Part W.
+    const worstBadSpanMax = 0.0009789010509848595; // 226_four_scouts, live
+    const nearestNegativeSpanMax = 0.015827925875782967; // abysmal_opinion end-edge, live
     const midpoint = Math.sqrt(worstBadSpanMax * nearestNegativeSpanMax);
     expect(R11_MAX_SPAN_WORD_CONF).toBeCloseTo(midpoint, 5);
     expect(R11_MAX_SPAN_WORD_CONF).toBeGreaterThan(worstBadSpanMax);
     expect(R11_MAX_SPAN_WORD_CONF).toBeLessThan(nearestNegativeSpanMax);
+    // The new value still happens to sit inside the retired fixture-vintage
+    // bounds too (coincidental — see syncConstants.ts's own comment).
+    expect(R11_MAX_SPAN_WORD_CONF).toBeGreaterThan(0.0038953518960624933);
+    expect(R11_MAX_SPAN_WORD_CONF).toBeLessThan(0.030144814401865005);
   });
 
   it('R11_MAX_SPAN_WORD_CONF is its own constant, distinct from R10_MAX_WORD_CONF and CONF_MIN', () => {
     expect(R11_MAX_SPAN_WORD_CONF).not.toBe(5e-4); // R10_MAX_WORD_CONF
     expect(R11_MAX_SPAN_WORD_CONF).not.toBe(0.3); // CONF_MIN
   });
+
+  // WS1 SESSION AB — mutation coverage for the re-derived value is NOT here.
+  // An in-file attempt (monkey-patching `R11_MAX_SPAN_WORD_CONF` via
+  // `vi.doMock` against this file's own `125_night_circle` fixture case) was
+  // tried and abandoned: this fixture's `committedValue` is POST-R.12
+  // (370.75, baked into `phase4-fa-second-baseline-v6-segments.csv` — see
+  // that CSV row directly), which shifts R.11's OWN correction span to
+  // [370.75, 372.35] and excludes the "are"@0.0301 word this test's own
+  // header cites entirely (it sits at [373.22, 373.36], outside that span) —
+  // so the decline reason under ANY threshold is "C4 no usable evidence",
+  // not "C4 spanMaxConf", and no threshold mutation can flip it. Real
+  // finding, not a shortcut: measured via `vi.doMock` + a fresh dynamic
+  // import (the supported way to exercise real ESM `const` exports under
+  // mutation — direct `mod.X = value` throws, confirmed). The mutation
+  // itself is measured empirically instead, against the live bundle this
+  // constant was actually re-derived from (not this frozen, span-shifted
+  // fixture): `abysmal_opinion`'s live end-edge candidate (real word
+  // "they're" at confidence 0.015828, live capture) goes from correctly
+  // DECLINED at the shipped 3.9362e-3 to WRONGLY FIRING at a mutated
+  // 0.02 — RED, reproduced via `WS1_SESSION_AB_MEASURE=1` against
+  // `scripts/ws1-session-ab-r11-corpus-probe.test.ts`'s own output. Full
+  // numbers: `sync-pipeline-v2-plan.md` Part W.
 });
 
 /**

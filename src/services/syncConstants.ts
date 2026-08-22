@@ -603,6 +603,41 @@ export const R10_MIN_WORD_COUNT = 2;
 // suspicion, not guilt, and every boundary this fires on beyond the three
 // ear-verified register members is a genuinely open triage item, not a
 // silently-applied correction the way R.10's drop was.
+//
+// WS1 SESSION AB — RE-DERIVATION ATTEMPTED ON FULL LIVE CROSS-CORPUS
+// EVIDENCE, REAFFIRMED UNCHANGED (a negative result, not an oversight). NO
+// EAR-LIST BOUNDARY VALUE IS NAMED BELOW, deliberately — this constant sits
+// exactly on the boundary the generalization guard exists to police
+// (`scripts/ws1-generalization.test.ts` tier 1), so its OWN provenance
+// comment must describe the finding in ratios and qualitative terms only,
+// never in the specific timestamps that guard bans; see `sync-pipeline-v2-
+// plan.md` Part W for the full table WITH real numbers, kept out of `src/`.
+//
+// Measured against the current live production bundle (all 3 corpora, 447
+// candidate v6 chunk-edge boundaries alone), NOT the Session F frozen
+// fixture: the geometric-midpoint methodology no longer produces a clean
+// separator. The worst REACHABLE confirmed-fixed positive on live is v6
+// `226_four_scouts` at deviation EXACTLY 1.5 (the live chunk plan re-splits
+// this chunk from Session F's vintage; `444_scout_past_watch`, the original
+// nearest-negative anchor, has itself drifted to the mathematical floor,
+// deviation 1.0). Below the current threshold sits `214_solitary_fire`
+// (Class A, deviation 1.2727) whose UNGATED chunk-edge proposal lands
+// closer to its own ear-confirmed target than the register's own pin
+// tolerance can admit as an exact match, but far too close to treat fit
+// deviation as cleanly separating it from a real defect. Lowering the
+// threshold to reach it would also newly admit four Class B rows (all
+// deviations 1.08-1.14, all landing close to their own targets by the same
+// near-miss margin) — Class B is explicitly out of this session's scope. An
+// R.12-owned boundary (WS1 Session S/R-AP) shares the exact SAME deviation
+// floor (1.0) as `447_scout_facing_dark` (Class A) — both sit at the
+// mathematical minimum `fitDeviation >= 1` can ever take, so no threshold,
+// however low, can admit one without the other, and that R.12 boundary's own
+// ungated proposal is seconds away from its ear-confirmed value — a real
+// false positive, not a near miss. Full evidence table (with real numbers),
+// LOOCV, sensitivity sweep and blast-radius check: `sync-pipeline-v2-
+// plan.md` Part W. Conclusion: a wider margin is not available in the
+// evidence now on hand without crossing into Class A/B's own
+// explicitly-deferred territory; this constant ships unchanged.
 export const R11_MIN_FIT_DEVIATION = 1.3093;
 
 // R.11's minimum correction magnitude — a candidate whose chunk-edge
@@ -635,20 +670,47 @@ export const R11_MIN_CORRECTION_SEC = 0.05;
 // the committed value is right — a boundary can be wrong for a reason R.11
 // cannot see, which is exactly what 372.35 turned out to be.
 //
-// DERIVED, NOT FITTED. Measured over the WS1 Session F candidate set (every
-// boundary R11_MIN_FIT_DEVIATION alone flags, all three corpora, against the
-// real captured FA word output): the worst (highest) max-in-span confidence
-// among the three known register defects is 173 `abysmal_opinion` at
-// 3.8954e-3; the nearest negative comparable is v6 `125_night_circle` at
-// 3.0145e-2. The threshold is the geometric midpoint of those two:
-// sqrt(3.8954e-3 * 3.0145e-2) = 1.0835e-2 — a ~2.8x margin on each side.
-// Smaller than R.10's 850x, and stated as such rather than dressed up — see
-// `faSeamFitGate.ts`'s own header for the honest characterization of R.11's
-// overall separation quality. This constant answers a DIFFERENT question
-// than `R10_MAX_WORD_CONF` (was ANY text ever spoken here at all, vs. is
-// THIS specific mis-corrected span acoustically empty) and is deliberately
-// its own constant for the same reason `R10_MAX_WORD_CONF` is not `CONF_MIN`.
-export const R11_MAX_SPAN_WORD_CONF = 1.0835e-2;
+// DERIVED, NOT FITTED. Originally measured over the WS1 Session F candidate
+// set (every boundary R11_MIN_FIT_DEVIATION alone flags, all three corpora,
+// against the real captured FA word output, FROZEN FIXTURE vintage): the
+// worst (highest) max-in-span confidence among the three known register
+// defects was 173 `abysmal_opinion` at 3.8954e-3; the nearest negative
+// comparable was v6 `125_night_circle` at 3.0145e-2, geometric midpoint
+// 1.0835e-2, a ~2.8x margin on each side.
+//
+// WS1 SESSION AB — RE-DERIVED ON FULL LIVE CROSS-CORPUS EVIDENCE, WIDER
+// MARGIN, VALUE MOVED. Measured against the current live production bundle
+// (all 3 corpora): `abysmal_opinion` no longer needs correction at all on
+// the live chunk plan (its own boundary already sits at the ear-confirmed
+// value via an upstream mechanism — R.11's own no-op guard, conjunct 3,
+// correctly declines it as a true negative). The worst REACHABLE
+// confirmed-fixed positive is now v6 `226_four_scouts` at 9.789e-4; the
+// nearest negative is `abysmal_opinion`'s OWN spurious end-edge candidate
+// (a real chunk-fit candidate this same tag also generates, proposing to
+// move its already-correct boundary to a DIFFERENT, wrong silence) at
+// 1.5828e-2 — tighter than `125_night_circle`'s live value (1.9128e-2),
+// which remains a must-decline negative for the unchanged reason (R.12
+// mutual exclusion, see `faSeamFitGate.ts`'s header and
+// `faRunPlacementGate.ts`'s MUTUAL EXCLUSION section). Geometric midpoint:
+// sqrt(9.789e-4 * 1.5828e-2) = 3.9362e-3 — a ~4.0x margin on each side,
+// wider than the original 2.8x. MONOTONICALLY SAFE: lowering this constant
+// can only make conjunct 4 stricter (more candidates decline, never fewer
+// admitted), and every one of R.11's six live raw firings has its own
+// spanMaxConfidence at least 4x below the new value (highest is
+// `226_four_scouts` itself, 9.789e-4) — none can newly decline. The new
+// value (3.9362e-3) also happens to still fall between the ORIGINAL
+// fixture-vintage bounds (> 3.8954e-3 fixture worst-bad, < 3.0145e-2 fixture
+// nearest-negative) — coincidental, not load-bearing: it is derived fresh
+// from the live pair above, not fitted to satisfy the old fixture bounds,
+// and the fixture-scoped unit tests below assert the LIVE derivation, not
+// the retired fixture one. Full evidence table, sensitivity sweep (exact
+// two-sided flip points) and
+// blast-radius confirmation across all three corpora: `sync-pipeline-v2-
+// plan.md` Part W. This constant answers a DIFFERENT question than
+// `R10_MAX_WORD_CONF` (was ANY text ever spoken here at all, vs. is THIS
+// specific mis-corrected span acoustically empty) and is deliberately its
+// own constant for the same reason `R10_MAX_WORD_CONF` is not `CONF_MIN`.
+export const R11_MAX_SPAN_WORD_CONF = 3.9362e-3;
 
 // ---------------------------------------------------------------------------
 // R.12 — the atomic-run invariant (`faRunPlacementGate.ts`).
