@@ -7014,3 +7014,229 @@ unchanged), `cargo test` (141/0/1), `cargo test --features fa-inference` (216/0/
 ignored are this session's own two new determinism tests, both real and both passing when run
 explicitly). Golden replay 6/6. Zero movement across all 447 v6 boundaries. `faAnchors.ts` sha256
 unchanged. Full numbers: `docs/work-in-progress.md`'s Session Y Changelog entry.
+
+---
+
+## Part U — The Chunk-Plan Hypothesis Is Refuted, the 45-46 Mechanism Stays Unexplained, the
+Mutation Gate Is Proven Inert on This Hardware, and the Word-Gap Model Ships Nothing a Second Time
+(WS1 Session Z, 2026-08-22, append-only)
+
+**Scope: Steps 0-7 of the session's own brief, executed in order. Step 0 (push) done first.
+Step 7 (arbiter rebuild) not attempted — Step 6 is negative, per the brief's own conditional.**
+
+**(a) STEP 0.** Pushed the three unpinned Session Y commits unchanged. `9d3f99a..29ddcd3 main ->
+main`. HEAD `29ddcd3`.
+
+**(b) STEP 1a — THE LEADING HYPOTHESIS IS FALSE. MEASURED, NOT ASSUMED.** First correction: the
+task brief's own premise ("prior sessions recorded 280 vs. 277 vs. 273 chunks") is a
+misattribution — those three numbers are V6's chunk-plan history across Sessions M/N/P/D25 (grep-
+confirmed: `docs/work-in-progress.md` lines 1905/1912/4307), never 173's. 173's own chunk count has
+independently drifted across captures too, just with different numbers: **118** (the replay
+bundle's `fa_production_chunks.json`), **119** (Session W's fresh `runProductionPath('173')` regen),
+**126** (the same replay bundle's `fa_live_chunks.json`) — three real, MEASURED counts, not one.
+
+Locally, at the 45-46 window specifically: `fa_production_chunks.json` and `fa_live_chunks.json`
+agree exactly — both split at 173.12s, putting "chemical" as the LAST word of a 28-word chunk
+(word-position fraction 0.96, right at the trailing edge). Session W's own regen chunk plan does
+**not** split there — it runs one continuous 33-word chunk 161.46→174.96, putting "chemical" at
+fraction 0.82, four words from the end, not at an edge. **This is exactly the signature the brief
+asked to check for — "chemical" sits mid-chunk in one plan and near a chunk edge in the other —
+and it is real.**
+
+**But it does not explain the divergence.** Word-level FA output was pulled directly from all
+three arms for this window: `fa_production_words.json`, `fa_live_words.json`, and Session W's own
+`faWords.json` (from the merged, no-edge plan) are **byte-identical to each other** at "chemical"
+— all three read `[172.70,173.10]` confidence `1.53e-6`, the LOW reading. The chunk-edge
+difference measured above exists, but produces **no measurable difference in FA output** at this
+word. **Verdict: the chunk-plan hypothesis is REFUTED for this case**, not confirmed — three
+genuinely different chunk plans (118/119/126, two of which differ locally right at this word)
+collapse to one identical low-confidence answer, and none of the three match the operator's true
+live-app reading (`[173.42,173.78]` confidence `0.983`, pulled directly from the live project's own
+`faWordTimings`, `wordIndex` 415). Whatever produces the live app's high-confidence reading, it is
+not chunk boundary placement.
+
+**(c) STEP 1b — REMAINING-AXES DIFFERENCE TABLE.**
+
+| Axis | Frozen/regen arms | True live app (2026-08-21T19:37:04.501Z) | Differs? |
+|---|---|---|---|
+| Model file | `~/Library/.../fa-models/en/model.onnx` (jonatasgrosman ONNX, same path both) | same path | not measured to differ — same resolution code, no evidence of a second model on disk |
+| ORT version | `libonnxruntime.1.23.2.dylib` (bundled, `ORT_DYLIB_PATH` pinned filename) | same bundled dylib — Session X's "1.22.0 and 1.23.2 both present" note is about two dylibs present ON DISK, not two dylibs actually loaded; `ensure_ort_dylib` resolves the bundled 1.23.2 unconditionally unless a shell `ORT_DYLIB_PATH` overrides it | not measured to differ, but the two-dylib coexistence itself is still an unclosed loose end (Session X's own "not ruled out") |
+| Audio decode / sample rate | `audio_16k.wav`, sha256-identical to the live run's own FA-audio-cache entry (Session W, MEASURED) | same | **no** — directly measured identical |
+| Exact commit executed | Session W regen ran at HEAD ≈ `a806d9a0` (minted 2026-08-21T20:53:55Z, after Session V Part 1) | live sync ran at `f6fda905` (Session U, 2026-08-22T00:03:23+05:00 local ≈ 19:03 UTC, ~34 min before the 19:37:04 sync) | **yes, by one commit** (`a806d9a0`, Session V Part 1 — register-doc + `ws1-ear-pass-ledger.ts` changes only, no touch to `fa_onnx.rs`/`faChunkPlan.ts`/rule files); real but not FA-mechanism-relevant on inspection |
+| IPC transfer path | replay bundle minted 2026-08-19T13:39:10Z — **before** `53cc5cd9` ("stream audio as raw IPC body instead of base64", landed 2026-08-21T23:47:21+05:00) | live sync ran **after** that commit | **yes, a real code difference in how the audio bytes crossed the IPC bridge** — but the fix is a memory-inflation fix, not a correctness fix, and Session W's own sha256 audio-identity measurement already shows the bytes that landed on disk are identical either way |
+| FA setting (`faHighPrecisionSync`) | `true` in every arm | `true` (project field, confirmed) | no |
+
+**Overall statement: UNEXPLAINED, not retracted, not confirmed.** Chunk plan (1a) is refuted.
+Audio identity is measured identical. The one real commit-level difference (Session V Part 1, `a806d9a0`)
+touches no FA/chunking/rule code. The IPC transfer-encoding change is real but does not change the
+measured bytes. None of the axes in this table, individually or combined, account for the observed
+divergence. The finding is downgraded from "an inferred mechanism" to **"a real, measured
+divergence between one live execution and every offline replay of it, with no candidate explanation
+that survives direct measurement."** This is reported as `docs/history.md`'s own standing preference
+states it should be: "I could not determine the mechanism," not a fabricated one.
+
+**(d) STEP 2 — REPRODUCTION ATTEMPTED UNDER LOAD, UNREPRODUCED. 7 trials total.** Session Y's own
+3 pinned + 3 unpinned internal reps (idle) are the first 6. This session ran
+`unpinned_session_control_173` a 7th distinct way — under synthetic CPU saturation (14 busy-loop
+processes pinning ~390% CPU) — **byte-identical**. Then ran it twice **concurrently** (two real
+`cargo test` processes launched at the same instant, sharing the same 16-core machine) — **both
+processes byte-identical to each other and to every prior run**. **Downgraded per the brief's own
+instruction: this is not a reproduced non-deterministic pipeline. It is one unexplained
+observation (Session X's original live-vs-frozen-capture divergence), unreproduced across 7 trials
+spanning idle/saturated/concurrent conditions on this hardware.** What was ruled out: ORT thread-pool
+scheduling variance under contention, on this machine, at this window size.
+
+**(e) STEP 3 — THE MUTATION GATE IS INERT ON THIS HARDWARE, STATED PLAINLY, NOT LEFT IMPLIED.**
+`unpinned_session_control_173` cannot itself go RED — it is diagnostic (`eprintln!` on both
+branches, no `assert`). A strictly stronger mutation was built and run this session:
+`forced_parallel_session_control_173` (`src-tauri/src/fa_onnx.rs`, new `#[ignore]`d test) —
+explicit `with_parallel_execution(true)`, 8 intra-op + 4 inter-op threads (vs. unpinned's bare
+`Session::builder()`, which defaults to ORT's own sequential mode on this build). Run 5x, not 3.
+**Byte-identical across all 5 runs.** Three escalating mutation strategies now agree: bare
+unpinned defaults, unpinned under external CPU load, and explicit forced-parallel execution all
+fail to diverge. **No mutation available this session turns the gate RED on this hardware.**
+Per the brief's own instruction, this is stated plainly rather than left as a green light implying
+coverage that does not exist: `pinned_session_is_byte_identical_173_and_v6` is a real regression
+gate for the PINNED configuration itself (its `assert_eq!` would fail if pinning broke), but the
+mutation-control tests (`unpinned_session_control_173`, `forced_parallel_session_control_173`) are
+**documentation of intended behavior on this machine, not proof the gate catches a real
+regression** — that proof would require a machine/ORT build where the unpinned/parallel path
+genuinely diverges, which this hardware does not provide.
+
+**(f) STEP 4 — 45-46 ADJUDICATED THROUGH THE FULL PATH: COMMITS 172.91, A GENUINE DEFECT AGAINST
+EAR GROUND TRUTH ON THE FROZEN CAPTURE, ROOT MECHANISM UNEXPLAINED.** Session W's regen already
+ran the complete production rule stage over this same frozen input arm; its
+`committedBoundaries.json` (directly read this session) shows `vessel_damage_clue`, index 45,
+`startTime: 172.91`, `preRuleStart: 172.91` — R.5/R.10/R.11/R.12/R.13 all decline on this boundary
+(Session W's own fired-counts: R.5 0, R.10 2, R.11 0, R.12 0, R.13 0), so **172.91 is a pure
+silence-snap decision, untouched by any rule** — the two candidate silences are
+`[172.70,173.12]` (midpoint 172.91, what gets picked) and `[174.52,174.96]` (midpoint 174.74, what
+the operator's live run picked and the ear confirms correct). Since (b)/(c)/(e) above rule out
+chunk plan, ONNX threading (3 mutation strategies), and audio identity as the cause, **and this is
+a `preRuleStart` value with zero rule-stage involvement**, the defect is located precisely: it is
+which of two real, correctly-detected silences the raw FA/Whisper estimate's own timestamp snaps
+to — exactly the failure mode `CLAUDE.md`'s own standing invariant names ("timestamps can smear
+100-900ms across a real silence seam"). **Classification: CONFIRMED DEFECT against ear ground truth
+on the frozen 2026-08-19 capture / offline harness path — not confirmed as a defect in the live
+app's own behavior, which got this boundary right.** **Not added to `KNOWN_BAD` this session** —
+per Session X's own scoping (`docs/work-in-progress.md` §11, Session X Step 1) a new open row needs
+a verified `phase4-fa-second-baseline-173-segments.csv` regeneration to assert `faValue` against,
+and this session's CONSTRAINTS explicitly bar touching that file. Recorded here, in full, as a
+named open item instead.
+
+**Confidence collapse, connected to (b)/(c) directly.** The collapse itself (0.983 live vs.
+1.53e-6 frozen, same word) is NOT explained by the chunk-edge difference measured in (b) — that
+difference is real but produces byte-identical output across all three offline arms regardless of
+which side of the 173.12s edge "chemical" falls on. The collapse is therefore evidence FOR, not
+against, the "the frozen capture's underlying acoustic window differs from what the live app
+actually processed" possibility — since every offline avenue (three chunk plans, pinned engine,
+unpinned engine, forced-parallel engine) converges on the SAME low-confidence answer, the
+divergence most likely lives upstream of everything replayed offline this session and Session Y —
+in exactly what got captured into `.work-phase4/replay/173/audio_16k.wav` on 2026-08-19 vs.
+whatever bytes the live app's own in-memory decode held on 2026-08-21, despite the two on-disk
+files hashing identical. This is INFERRED, not measured directly — a live, instrumented capture
+of the app's own in-process decode buffer (not its written cache file) would be needed to confirm
+or refute it, and that instrumentation does not exist yet.
+
+**(g) STEP 5 — V6's FA OUTPUT IS SYSTEMATICALLY WEAKER AT BOUNDARIES THAN 173's, AND EVERY OPEN
+CLASS A/B ROW SITS IN THE WEAK ZONE.** Measured: for each of v6's 447 committed boundaries (per
+`scripts/fixtures/phase4-fa-second-baseline-v6-segments.csv`, read-only) and 173's 173 boundaries
+(`phase4-fa-second-baseline-173-segments.csv`), the FA word nearest the boundary timestamp in
+`fa_production_words.json` was pulled and its `confidence` recorded.
+
+| | n | <0.01 conf | share | >0.9 conf | share | median |
+|---|---|---|---|---|---|---|
+| V6 | 447 | 198 | 44.3% | 236 | 52.8% | 0.941 |
+| 173 | 173 | 34 | 19.7% | 110 | 63.6% | 0.986 |
+
+V6's near-zero rate is **2.25x** 173's. A log-scale histogram (24 bins, `10^-12` to `10^0`, both
+corpora pooled, 620 points) shows a clean two-mode shape — a lower mode centered `10^-7` to
+`10^-6.5` and an upper mode at `10^-0.5` to `10^0` — separated by a **genuinely empty bin**,
+`[10^-1.5, 10^-1.0)` = `[0.0316, 0.1)`, zero points. This is the natural GEOMETRIC separation
+point, not a fitted one — engagement counts are flat across the entire empty range (0.01 through
+0.1 all give v6=199, 173=35), so the exact threshold choice inside the gap is inconsequential.
+
+**Clustering on the 8 open Class A/B rows: 8/8, both anchors, unambiguous.** Every open row's FA
+word nearest its `faValue` (committed) AND nearest its `earCorrect` timestamp reads confidence
+under 0.01 — most under `1e-5` (`classA-214`: 2.2e-7/1.3e-5; `classA-231`: 0.0070/0.00036;
+`classA-447`: 0.0023/1.8e-7; `classB-056`: 4.3e-8/7.7e-7; `classB-167`: 2.3e-6/5.3e-8; `classB-286`:
+0.0062/1.4e-7; `classB-400`: 1.5e-7/1.5e-7; `classB-403`: 6.5e-7/5.6e-7). Against a 44.3% base
+rate, observing 8/8 (100%) is a strong enrichment on a small sample — **every rule ever proposed
+against these 8 rows, past or future, has been evaluating evidence the aligner itself flagged as
+unreliable.** This is the bigger finding the brief anticipated.
+
+**(h) STEP 5b — LOW-CONFIDENCE FALLBACK, SPECIFIED.** `CONF_MIN_FALLBACK = 0.056` (the geometric
+midpoint, in log space, of the measured empty gap `[0.0316, 0.1)` — labelled **GEOMETRIC**, derived
+from the measured bimodal split, not fitted to any row's pass/fail; engagement is flat across the
+whole gap so the exact digits are not load-bearing). When a boundary's nearest FA anchor word
+falls under this threshold, the specified behavior is: **decline to move the boundary and record
+the reason** (never place on the noisy timestamp) — script-level word-position fallback is NOT
+specified this session because no script-position estimator exists yet in this codebase to route
+to; that is a real gap, named, not silently defaulted around. Engagement: **v6 199/447 (44.5%)**,
+**173 35/173 (20.2%)** — this fallback would suppress placement on nearly half of v6's boundaries
+and a fifth of 173's, which is itself evidence of how much of the corpus this aligner currently
+hands the rule stage low-quality evidence for.
+
+**(i) STEP 6a — INTERVAL-FRACTION TABLE, EXACT, RECONSTRUCTED FROM REAL FA WORDS (not Session Y's
+rounded range).** True left/right segment text pulled from the live project's own `sceneDetails`
+(script-tag blocks), true anchor words located in `fa_production_words.json` by content match:
+
+| tag | true left anchor (word, end) | true right anchor (word, start) | interval width | earCorrect | fraction | holds? |
+|---|---|---|---|---|---|---|
+| `lethal_nature_hazard` | "worst" @18.68 | "because" @19.30 | 0.62s | 19.27 | **0.952** | yes |
+| `iron_bounce` | "enough" @76.56 | "to" @76.60 | 0.04s | 76.59 | **0.750** | yes |
+| `wall_split_path` | "competing" @162.42 | "directions" @162.48 | 0.06s | 162.15 | **-4.5** (inside "competing" itself, before interval opens) | no |
+| `logic_clash` | "laws" @417.28 | "governing" @418.16 | 0.88s | 418.14 | **0.977** | yes |
+| `gadget_decay` | "terror" @427.42 | "requires" @427.54 | 0.12s | 427.60 | **1.5** (past interval, past "requires"'s own start) | no |
+
+Matches Session Y's rounded 0.750-0.977 range exactly, and its two named refutations (`wall_split_path`
+before the interval, `gadget_decay`'s 1.5 fraction) exactly — this session's reconstruction from raw
+words independently confirms Session Y's own numbers rather than superseding them.
+
+**(j) STEP 6b — DERIVED PRE-ROLL, LABELLED, WITH ITS SAMPLE SIZE STATED HONESTLY.** For the 3
+confirming rows, lead-in = (right-anchor start) − earCorrect: `lethal_nature_hazard` 30ms,
+`iron_bounce` 10ms, `logic_clash` 20ms. **n=3, median 20ms, range 10-30ms.** All three right
+anchors are plosive onsets ("because," "to," "governing") — consistent with the truncation-risk
+concern the brief raises. This value is **MEASURED, not FITTED to any pass/fail target** (it is
+the plain empirical lead-in of the only 3 real confirming rows, not tuned to make anything pass),
+but it is **statistically thin (n=3)** and must be labelled as such rather than presented as a
+settled constant — two-sided sensitivity is exactly its own range, 10ms to 30ms, since that range
+IS the full dataset. **Placement verdict: right-edge-minus-derived-lead-in** (fraction 0.75-0.98,
+consistently near the right edge, never the geometric midpoint — an interval-fraction model would
+be wrong here), pre-roll ≈ 20ms (median of n=3).
+
+**(k) STEP 6c — RE-TESTED, BOTH REFUTING ROWS STILL REFUTE. SECOND NEGATIVE.** Revised rule:
+place at (right-anchor start − 0.020s). `wall_split_path`: 162.48−0.02=162.46 vs. earCorrect
+162.15 — still wrong by 0.31s, and for the same reason as before (earCorrect sits inside the LEFT
+word "competing," nowhere near the right edge at all — no right-edge-based constant fixes a
+wrong-interval-side failure). `gadget_decay`: 427.54−0.02=427.52 vs. earCorrect 427.60 — still
+wrong, now by 0.08s, and on the OPPOSITE side (earCorrect needs the placement to overshoot the
+right anchor's start, not undershoot it). **Verdict: SHIPS NOTHING, a second negative, reported in
+full per the brief's own instruction that this is an acceptable outcome.** `faAnchors.ts` untouched,
+sha256 unchanged.
+
+**(l) STEP 6d — WPM MATRIX PREREQUISITE, RESTATED.** Unchanged from Session Y §11a's own scope
+decision: no TTS/audio-generation tooling exists in this environment, ear-verified ground truth
+requires a human listening pass, and the 120-200 WPM 5-tier corpora do not exist. This remains a
+hard blocking prerequisite before ANY placement rule — including a hypothetical future rule that
+passes on 173/v6 — ships to main; fast-tier narration is named explicitly as where a derived
+pre-roll (j) is most likely to fail, since faster speech compresses inter-word gaps and a
+20ms-median pre-roll measured on this corpus's pacing has no evidence it transfers.
+
+**(m) STEP 7 — NOT ATTEMPTED, PER THE BRIEF'S OWN CONDITIONAL.** Step 6 is negative (k). The
+propose/arbitrate rule-stage rebuild stays exactly where Session Y Part T(d) left it: designed, not
+started, scheduled for a dedicated future session with a concrete driving rule change — which
+neither Session Y nor this session produced.
+
+**(n) FLOORS, RE-VERIFIED AT HEAD (`29ddcd3` + this session's own `fa_onnx.rs` addition).**
+`npm test` 2465 passed/23 skipped/0 failed (unchanged). `tsc --noEmit` clean. `cargo check
+--features fa-inference` clean. `cargo clippy --features fa-inference --all-targets` clean, 4
+pre-existing warnings (unchanged — grep-verified no new warning class introduced). `cargo test`
+141 passed/0 failed/1 ignored (unchanged). `cargo test --features fa-inference` 216 passed/0
+failed/**24** ignored (+1 vs. Session Y's 23 — this session's own new
+`forced_parallel_session_control_173`, real, passes explicitly under `-- --ignored`). Golden
+replay 6/6 (full `npm test` green, no test file skipped or failing). `faAnchors.ts` sha256
+unchanged, `b61e94cb…`. `git diff --stat` against `29ddcd3`: `src-tauri/src/fa_onnx.rs` +89
+insertions only — no other file touched, all CONSTRAINTS held (no edits to `faAnchors.ts`,
+`snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`, or any
+`scripts/fixtures/phase4-baseline-*.csv`).

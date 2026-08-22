@@ -274,6 +274,22 @@ open rows without a verified `faValue` would risk the same integrity failure `ws
 own header names as its reason for existing. Phase 3 stays **"PRODUCTION PATH WIRED, gate
 PER-PROJECT, DEFAULT OFF"**.
 
+**2026-08-22 (WS1 Session Y) — engine determinism pinned and proven byte-identical; mutation
+control ALSO byte-identical (inconclusive on this hardware); word-gap placement hypothesis mixed,
+ships nothing.** Register unchanged at 8 open. Full detail: §11a/§11b, `sync-pipeline-v2-plan.md`
+Part T.
+
+**2026-08-22 (WS1 Session Z) — the chunk-plan hypothesis for the 45-46 divergence is REFUTED by
+direct measurement; the mechanism stays UNEXPLAINED after ruling out chunk plan, 3 escalating
+ONNX-determinism mutations (idle/loaded/concurrent/forced-parallel), and audio identity; the
+mutation gate is INERT on this hardware (documentation, not a proven-armed regression gate); v6's
+FA confidence at boundaries is 2.25x lower than 173's and all 8 open Class A/B rows cluster in the
+near-zero band; the word-gap placement model ships nothing a second time (2/5 still refute under a
+derived right-edge-minus-lead-in revision).** Register unchanged at 8 open — nothing added or
+closed this session (the frozen-capture 172.91 defect at `vessel_damage_clue` is named and
+classified but NOT registered, since a `KNOWN_BAD` row needs a `phase4-fa-second-baseline-173-segments.csv`
+regeneration this session's own CONSTRAINTS bar). Full detail: `sync-pipeline-v2-plan.md` Part U.
+
 ### §4. Phase 3 (Task 5) Component Ledger
 
 Re-verified live against `main` during this consolidation pass (2026-08-14). Status values:
@@ -729,6 +745,17 @@ ingestion (`scripts/ws1-ear-pass-ledger.ts`), a single-line `ws1-single-tracker.
 fix (Session W's own `stage1-session-w-173-ear-list.md` landed without being added — the test caught
 it), and this documentation. No rule shipped (R-MD's suppressor design came back negative — §11) and
 `silenceDetector.ts`/`snapBoundaries.ts`/the Hirschberg aligner were unmodifiable this session. P4/P8
+unchanged.
+
+**2026-08-22 (WS1 Session Y) — no row moves here either.** Session Y's changes are `fa_onnx.rs`'s
+`load_session` pinning plus its own two new `#[ignore]`d determinism tests — upstream of chunk
+planning, not a Contract 1→2 input or output. P4/P8 unchanged.
+
+**2026-08-22 (WS1 Session Z) — no row moves here either.** Session Z's only code change is a third
+`#[ignore]`d determinism-mutation test in `fa_onnx.rs` (`forced_parallel_session_control_173`) —
+same file, same reasoning as Session Y's own entry above. Every other change this session is
+documentation or read-only measurement against existing `.work-phase4/` capture data; `faAnchors.ts`,
+`snapBoundaries.ts`, `silenceDetector.ts`, and the Hirschberg aligner were untouched. P4/P8
 unchanged.
 
 **2026-08-19 (WS1 Session O) — no row in this table moves.** Session O's changes are entirely
@@ -5308,6 +5335,69 @@ this session's own two new determinism tests, both real, both pass when run expl
 
 ---
 
+### §11c. WS1 Session Z — RESULTS
+
+Full narrative, all 7 steps: `sync-pipeline-v2-plan.md`'s Part U (append-only). Summary:
+
+**Step 1 (highest priority).** The brief's own "280 vs. 277 vs. 273 chunks" premise is a
+misattribution — those are V6's numbers, not 173's. 173's own chunk count independently drifted
+across captures too (118/119/126, MEASURED). Locally at the 45-46 window, two of the three plans
+DO split right where "chemical" sits (edge, fraction 0.96) and one does not (mid-chunk, fraction
+0.82) — the exact signature the brief asked to check for. **But word-level FA output is
+byte-identical across all three plans at that word** — the chunk-edge difference is real but does
+not explain the divergence. Remaining axes (model file, ORT version, audio decode, exact commit,
+IPC transfer encoding) are tabled in Part U(c); none explain it either. **Verdict: UNEXPLAINED, not
+retracted, not confirmed** — downgraded from "inferred mechanism" to "no candidate explanation
+survives direct measurement."
+
+**Step 2.** 7 reproduction trials total (Session Y's 6 + this session's 1 CPU-saturated + 2
+concurrent), all byte-identical. **Downgraded to one unexplained observation, unreproduced.**
+
+**Step 3.** A third, strictly stronger mutation (`forced_parallel_session_control_173` —
+explicit parallel execution, 8+4 threads, 5 runs) was built and also came back byte-identical.
+**The mutation gate is stated plainly as INERT on this hardware** — documentation of intended
+configuration, not a proven-armed regression gate. The pinned test itself remains a real gate for
+its own configuration.
+
+**Step 4.** Session W's own `committedBoundaries.json` shows `vessel_damage_clue` committing
+172.91 as a `preRuleStart` value (no rule touched it) on the frozen capture — a genuine defect
+against ear ground truth (174.74) **on that capture / offline harness path**, not confirmed as a
+live-app defect (which got it right). Root cause: a silence-snap decision between two real
+silences, the exact failure mode CLAUDE.md's own "timestamps must never decide identity" invariant
+names. **Not added to `KNOWN_BAD`** — requires a `phase4-fa-second-baseline-173-segments.csv`
+regeneration this session's CONSTRAINTS bar; recorded as a named open item instead. The confidence
+collapse is explicitly NOT explained by the chunk-edge finding (Step 1) — connected in Part U(f).
+
+**Step 5.** V6's boundary-adjacent FA confidence is <0.01 at 44.3% of its 447 boundaries vs.
+173's 19.7% of 173 — 2.25x. All 8 open Class A/B rows cluster in the near-zero band at BOTH their
+committed and ear-correct anchors (8/8). `CONF_MIN_FALLBACK = 0.056`, labelled GEOMETRIC (the
+measured empty gap `[0.0316,0.1)` between the distribution's two modes; engagement is flat across
+the whole gap). Fallback behavior specified: decline + record, never place on a noisy timestamp;
+no script-position estimator exists yet to route to instead (named gap). Engagement: v6 199/447
+(44.5%), 173 35/173 (20.2%).
+
+**Step 6.** Exact fractions for 173's 3 confirming defects: 0.750/0.952/0.977 (matches Session Y's
+rounded range, independently reconstructed from raw FA words). Derived pre-roll from these 3 rows:
+median 20ms (range 10-30ms, n=3 — thin, labelled honestly). Re-tested the 2 refuting rows under a
+revised right-edge-minus-20ms rule: **both still refute** — `wall_split_path` (ear-correct sits
+inside the left word itself, no right-edge constant reaches it) and `gadget_decay` (ear-correct
+needs an overshoot past the right anchor, this rule undershoots). **Ships nothing, a second
+negative.** WPM-matrix prerequisite restated as still blocking, fast tier named as the likeliest
+failure point for any derived pre-roll.
+
+**Step 7.** Not attempted — Step 6 is negative, per the brief's own conditional. Arbiter rebuild
+stays scheduled (Session Y Part T(d)), nothing new to add.
+
+**Six numbers.** `npm test` 2465 passed/23 skipped/0 failed (unchanged). `tsc --noEmit` clean.
+`cargo check --features fa-inference` clean. `cargo clippy --features fa-inference --all-targets`
+clean, 4 pre-existing warnings (unchanged, grep-verified no new class). `cargo test` 141 passed/0
+failed/1 ignored (unchanged). `cargo test --features fa-inference` 216 passed/0 failed/**24**
+ignored (+1 vs. Session Y's 23 — this session's own new `forced_parallel_session_control_173`,
+real, passes explicitly). Golden replay 6/6. `faAnchors.ts` sha256 unchanged, `b61e94cb…`.
+`git diff --stat` against `29ddcd3`: `src-tauri/src/fa_onnx.rs` +89 insertions only.
+
+---
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -5365,6 +5455,24 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-22 — WS1 Session Z: the chunk-plan hypothesis for the 45-46 divergence is REFUTED by
+  direct measurement (three real chunk plans, one with the exact chunk-edge signature the brief
+  predicted, all give byte-identical FA output); the divergence mechanism is UNEXPLAINED, not
+  retracted, after ruling out chunk plan, 3 escalating ONNX-determinism mutations, and audio
+  identity; the determinism mutation gate is INERT on this hardware — stated plainly, not left
+  implied; 45-46 committed 172.91 through the complete rule stage on the frozen capture, a genuine
+  defect against ear ground truth (174.74) on that capture, NOT registered (needs a fixture
+  regeneration this session's CONSTRAINTS bar); v6's boundary-adjacent FA confidence is 2.25x
+  lower than 173's and ALL 8 open Class A/B rows cluster in the near-zero band on both anchors;
+  low-confidence fallback threshold specified (0.056, GEOMETRIC); word-gap placement model SHIPS
+  NOTHING a second time (2/5 still refute under a derived right-edge-minus-20ms revision). No
+  register row opened or closed, `faAnchors.ts` untouched.** Full narrative:
+  `sync-pipeline-v2-plan.md`'s Part U; results summary: `docs/work-in-progress.md` §11c. Only code
+  change: a third `#[ignore]`d determinism-mutation test in `fa_onnx.rs`
+  (`forced_parallel_session_control_173`, explicit parallel execution + 8/4 threads, 5 runs,
+  byte-identical) — `git diff --stat` against Session Y's HEAD (`29ddcd3`) is `fa_onnx.rs` +89
+  insertions only.
 
 - **2026-08-22 — WS1 Session Y: engine determinism PINNED and PROVEN byte-identical (mutation
   control inconclusive); script-anchored word-gap placement hypothesis tested on real ground
