@@ -8428,3 +8428,308 @@ replay harness stops at `snapCoveredBoundaries` and never reaches the rule stage
 cannot touch it and no re-baseline was needed or made. `faAnchors.ts` sha256 unchanged,
 `b61e94cb…`. `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner
 (`whisperService.ts`), `docs/history.md` and `scripts/fixtures/phase4-baseline-*.csv` all untouched.
+
+---
+
+## Part AA — S1 Repairs the Chunk Plan at the Source; R.14's Firings Collapse 11 → 1 and Two Ear-Verified Controls Regress (WS1 Session AG, 2026-08-23, append-only)
+
+### AA.0 — What this session set out to do, and what actually happened
+
+Session AE shipped R.14/R.15, a gate that *detects* untrustworthy FA timestamps and substitutes
+an acoustic landmark. `fa-chunk-phantom-root-cause.md` then identified the mechanism producing
+those untrustworthy timestamps — script text filed into a chunk window's silent tail comes back
+with a timestamp and a collapsed posterior — and named the experiment that would settle
+causality. This session ran that experiment.
+
+**Headline: the mechanism is confirmed causal, and the fix is not free.** S1 (fold a chunk's
+trailing no-audio text forward) drops R.14's firing count on v6 from **11 to 1**, moves seven
+boundaries onto the values R.14 used to have to correct them to — *with R.14 not firing at all* —
+and additionally fixes three rows R.14 could never reach. It also moves **two ear-verified
+CORRECT controls off their verified values**, which is a regression regardless of the rest.
+
+**S1 IS BUILT AND MEASURED BUT NOT SHIPPED.** `foldPhantomTails` defaults to `false`.
+
+### AA.1 — Step 1: the seam-scoped census, and a mis-specification in the three-condition model
+
+The root-cause report's model says the defect needs three coincident conditions. Measured
+literally (`scripts/ws1-session-ag-census.test.ts`), the funnel is:
+
+| corpus | chunks | (1) phantom tail | (1)∧(2) at a seam | (1)∧(2)∧(3) in the collapsed gap |
+|---|---|---|---|---|
+| v6 | 277 | **183 (66.1%)** | 110 | **19** |
+| 173 | 119 | 46 (38.7%) | 13 | **2** |
+| spanish | 5 | 3 (60.0%) | 3 | **2** |
+
+v6's condition-1 count reproduces the root-cause report's own 183/277 exactly, so the census is
+measuring the same thing that report measured.
+
+**Gate: |(1)∧(2)∧(3)| = 23 against 13 attributed defects — ratio 1.77:1, under the brief's 3:1
+stop threshold. PROCEED.**
+
+**Finding 1 — does the set contain all 13 attributed defects? NO. It contains 2.** Not a census
+bug. The per-defect diagnostic (`ws1-session-ag-diagnose.test.ts`) shows three distinct reasons,
+and the most important one is a **mis-specification in condition (2)**:
+
+- **Condition (2) assumes the phantom belongs to the INCOMING segment.** On
+  `231_slowing_pace` — the report's own flagship row — it belongs to the **OUTGOING** one. The
+  phantom tail `But when you` sits in chunk #121, and those words are segment *230*'s, not 231's.
+  The defect surfaces one seam later, via the word-shift. Same for `wall_split_path` and
+  `logic_clash`. Condition (2) as written cannot hold at the defective seam for these rows even
+  though the mechanism does.
+- **"Wholly inside a detected silence" is too strict at the leading edge.** `056_dropping_torch`'s
+  `you` is [167.040, 167.100] against a silence starting 167.080 — sub-reliability at 4.3e-8 and
+  unambiguously a phantom, excluded on a 40 ms straddle. Same shape for `167_smell_of_butchery`.
+- **Some phantom runs sit in no detected silence at all.** `152_frozen_brush_mice`'s whole
+  trailing run is ≤1.5e-3 with no containing silence; likewise `447_scout_facing_dark`.
+
+The two rows the report attributes elsewhere (`iron_bounce`, `gadget_decay`) are correctly OUT.
+
+**Finding 2 — 7 ear-verified-CORRECT boundaries are in the set** (`039_river_trap`,
+`083_unbidden_alertness`, `125_night_circle`, `221_skill_removes`, `222_long_silence`,
+`289_winter_predator_breach`, `340_fifty_eight`). Their presence does not falsify condition (3);
+it shows condition (3) is not *sufficient*. Five of the seven are boundaries R.14 itself moved and
+Session AG's own ear pass then confirmed — i.e. the collapsed gap was real and the correction was
+right, so the row is correct *because it was corrected*, not by luck.
+
+**Finding 3 — 14 unaudited boundaries in the set.** That was the predicted listening bill.
+
+### AA.2 — Step 2: engine fidelity PASSES; 173's chunk plan does NOT reproduce
+
+`ORT_DYLIB_PATH` provisioned against `.work-phase4/spike-runtime/onnxruntime-osx-x86_64-1.23.2`.
+That dylib is **byte-identical** (sha256 `8c9c78de65ea3786…`) to the bundled
+`src-tauri/onnxruntime/libonnxruntime.1.23.2.dylib`, so the two candidate runtimes are the same
+file. Models: `…/fa-models/en/model.onnx` sha256 `48a3c2e143a9741e…`,
+`…/fa-models/es/model.onnx` sha256 `7e11fee93ac8fbf2…`. Session Y's single-thread pinning is
+active and unmodified in `fa_onnx.rs::load_session`:
+
+```rust
+.with_intra_threads(1)
+.with_inter_threads(1)
+.with_parallel_execution(false)
+.with_deterministic_compute(true)
+```
+
+**FA re-run unchanged, all three corpora: every token identical in text and timing to 1e-9.**
+Only posteriors wobble (~1e-7 relative, float32): v6 908/3874, 173 474/1660. Committed boundaries
+on v6: **447/447 exact, every rule firing identical, 0 controls disturbed.** The wobble is four
+orders of magnitude below `CONF_MIN_FALLBACK` and changes nothing downstream.
+
+Wall clock, debug build: v6 534.7 s, 173 286.4 s, spanish 46.6 s.
+
+**NEW FINDING, reported not fixed.** 173's stored `fa_live_chunks.json` holds **126** chunks; the
+production four-argument call recomputes **119** today. v6 (277) and spanish (5) reproduce
+byte-for-byte, windows and text. The manifest's input arms are unchanged, `faChunkPlan.ts` and
+`faAnchors.ts` have not been touched since capture, and the source script/scene files predate the
+capture by two weeks. Neither silence arm reproduces 126 (native 119, app 121). **I could not
+determine the cause.** The first divergence is at chunk 11: the stored plan splits
+[37.94, 42.48] into [37.94, 40.08] + [40.08, 42.48]; today's plan emits one chunk. The ENGINE is
+faithful on 173; only the PLAN is not. Consequence for this session: 173's S1 arm isolates S1
+correctly (both arms use today's recomputed plan), but its *baseline* is not the plan the stored
+FA words came from, so 173's numbers are weaker evidence than v6's.
+
+### AA.3 — Step 3: golden replay's scope, corrected
+
+The brief states golden replay "covers chunk plan → FA → snap, so it will change." **It does
+not.** `scripts/phase4-handoff-replay-sync.test.ts` reads `transcript_tokens.json` (Whisper) and
+`silences_app.json` and runs parse → `alignScenestoTranscript` → `distributeSegmentTimes` →
+`snapCoveredBoundaries`. Measured: **zero** occurrences of `faChunkPlan`, `computeFaChunkPlan`,
+`fa_live_words`, `forcedAlignment`, or any rule-stage gate in that file. It never reaches the
+chunk planner, never runs FA, and never runs a rule.
+
+So the conversion to a per-boundary diff is **not required for S1** — S1 lives in a code path
+golden replay does not execute, and the fixture is unaffected whatever the adjudication decides.
+Golden replay **6/6 byte-identical** this session, as a floor rather than as evidence about S1.
+
+The per-boundary diff is still the right instrument; it is built as
+`scripts/ws1-session-ag-boundary-diff.test.ts` and applied where the change actually is — the two
+live FA arms. It reports unchanged / moved (old, new, delta) / added / removed per fixture, plus
+rule firings and disturbed controls on both sides.
+
+**FOR THE RECORD, and this is the blocking prerequisite for deleting R.14:** the rule stage — R.5,
+R.10, R.11, R.12, R.13, R-U, R-MD, R.14, R.15 — is outside golden replay's reach, and so are the
+chunk planner and FA. Step 3 of the root-cause report's R.14 sequencing plan therefore proposes
+deleting a rule that **no golden fixture covers**. That coverage is not built this session; it is
+recorded as the gate on actually removing R.14.
+
+### AA.4 — Step 4: S1, and a real defect found in the first cut
+
+S1 extends the planner's existing zero-duration fold to the partial case. The total case, in
+`attributeByIndex`, is unchanged; the extension is its mirror. It stays an existence test: a run
+window ends at an anchor, `faAnchors.ts` guarantees an anchor's time is always a detected
+silence's `endSec`, so the window's trailing silence is simply the silence whose end IS the
+window's end. The only question asked is whether any script text was filed into it. **No new
+threshold.** One constant, `EPS_SEC = 1e-9`, GEOMETRIC — a float-identity guard nine orders of
+magnitude below the aligner's 20 ms grid, informed by no corpus row. No FITTED constant, so no
+sensitivity or LOOCV is owed.
+
+**A DEFECT IN THE FIRST CUT, found by running it.** S1 can hand text to a run whose window is
+zero-duration, because "the next run" is not always a run with audio. Emitting that as a chunk
+sends the aligner an empty window: ONNX Runtime failed the very first Conv node with
+`Invalid input shape: {0}` — **24 such chunks on v6, 6 on 173**. The fix is ordering, not a new
+guard: S1 now runs BEFORE the total-case fold, which is exactly the pass that already exists to
+prevent empty windows, and whose single ascending scan chains correctly. After the fix: **0
+zero-duration and 0 empty-text chunks on all three corpora.**
+
+**Cascade check.** v6 208 folds / 391 words moved; 173 48 / 54; spanish 3 / 4. **`sourceRunsEmptied
+= 0` and `chainedFolds = 0` on all three** — no fold empties its source run, and no text crosses
+more than one chunk boundary. S1 does not relocate the defect. Chunk counts move v6 277 → 275,
+173 119 → 119, spanish 5 → 6.
+
+Seam 230 at the plan level: baseline chunk #121 ends `…There is no formal sense here. But when
+you`; S1 chunk #120 ends `…There is no formal sense here.` and the next begins `But when you slow
+they slow.` — exactly the three words the root-cause report named.
+
+### AA.5 — Step 5: what S1 measured
+
+**Phantom-tail rate, before → after:**
+
+| corpus | (1) before | (1) after | (1)∧(2)∧(3) before | after |
+|---|---|---|---|---|
+| v6 | 183/277 (66.1%) | **46/275 (16.7%)** | 19 | **6** |
+| 173 | 46/119 (38.7%) | **21/119 (17.6%)** | 2 | **1** |
+| spanish | 3/5 (60.0%) | **0/6 (0.0%)** | 2 | **0** |
+
+**0 of the 13 attributed defects remain in the (1)∧(2)∧(3) set.**
+
+**The 13 attributed rows.** CORRECT is ±50 ms of the ear value; DIRECTION-CORRECT is kept as a
+separate column and is **0** — nothing landed in between.
+
+| row | incoming anchor conf | pre-rule (snap only) | committed | ear | CORRECT |
+|---|---|---|---|---|---|
+| `008_unknown_void` | 8.5e-8 → **1.0e0** | 23.130 → **23.450** (R.14 → none) | 23.450 → 23.450 | 23.460 | ✅ |
+| `056_dropping_torch` | 4.3e-8 → **1.0e0** | 167.030 → **167.700** (R.14 → none) | 167.700 → 167.700 | 167.700 | ✅ |
+| `152_frozen_brush_mice` | 1.5e-3 → 3.6e-3 | 449.200 → **451.030** (R.14 → none) | 451.030 → 451.030 | 451.030 | ✅ |
+| `167_smell_of_butchery` | 2.3e-6 → 1.1e-6 | 494.430 → **494.770** (R.14 → none) | 494.770 → 494.770 | 494.750 | ✅ |
+| `214_solitary_fire` | 2.2e-7 → **1.0e0** | 629.010 → **630.100** (none → none) | 629.010 → **630.100** | 630.090 | ✅ |
+| `231_slowing_pace` | 7.0e-3 → **9.1e-1** | 681.630 → **682.740** (none → none) | 681.630 → **682.740** | 682.740 | ✅ |
+| `286_fact_to_act` | 6.2e-3 → **1.0e0** | 856.090 → **856.540** (R.14 → none) | 856.540 → 856.540 | 856.520 | ✅ |
+| `400_endless_dark` | 1.5e-7 → **1.0e0** | 1266.210 → **1266.750** (R.14 → none) | 1266.750 → 1266.750 | 1266.660 | ❌ (0.090) |
+| `403_vigilant_embers` | 6.5e-7 → 4.4e-7 | 1273.140 → **1273.560** (R.14 → none) | 1273.560 → 1273.560 | 1273.550 | ✅ |
+| `447_scout_facing_dark` | 2.3e-3 → 3.8e-8 | 1417.120 → **1418.510** (none → none) | 1417.120 → **1418.510** | 1418.530 | ✅ |
+| `lethal_nature_hazard` | 0.966 → 0.966 | 18.510 → 18.510 | unchanged | 19.270 | ❌ |
+| `wall_split_path` | 0.998 → 0.999 | 161.330 → 161.330 (R.15 both) | 162.460 → 162.460 | 162.150 | ❌ |
+| `logic_clash` | 0.999 → 0.999 | 417.150 → 417.150 (R.15 both) | 418.140 → 418.140 | 418.140 | ✅ |
+
+**Total: CORRECT 10/13, DIRECTION-CORRECT 0, WORSENED 0.**
+
+**The load-bearing column is `pre-rule`.** On seven v6 rows the baseline needed R.14 to reach the
+correct value; under S1, `snapCoveredBoundaries` lands on the *identical* value with R.14 not
+firing at all. S1 fixes them at the source. Three further rows (214, 231, 447) are fixed by S1
+alone and were unreachable by R.14 — 214 is the `ordinalDelta +1` mirror class, 231 was declined
+by the reliable-onset guard, 447 by the gap-width bound.
+
+**SEAM 230, CONFIRMED.** `231_slowing_pace` commits **682.740**, the ear-verified value, exactly —
+residual 0.000. Its incoming anchor confidence rises 7.0e-3 → 0.909. The word gap moves from
+[681.620, 681.640] (0.020 s) to [682.340, 683.120] (0.780 s), which brackets the operator's own
+waveform reading of segment 231's speech onset at 683.04. The real `slow` at [682.04, 682.34],
+posterior 1.000, is now segment 230's.
+
+**R.14/R.15 firing counts.**
+
+| corpus | R.14 before → after | R.15 before → after | remaining firings |
+|---|---|---|---|
+| v6 | **11 → 1** | 0 → 1 | R.14 `011_shivering_by_fire` 28.470→28.890; R.15 `273_cold_grass` 820.310→820.600 |
+| 173 | 0 → 0 | 3 → 3 | R.15 `iron_bounce`, `wall_split_path`, `logic_clash` — all unchanged |
+| spanish | 0 → 0 | 0 → 0 | none |
+
+**Movement census.** v6 446 boundaries: 426 unchanged, **21 moved** (all later, +0.29 to +1.39 s),
+0 added, 0 removed. 173 172: **1 moved**. Spanish 26: **1 moved**. Of the 23 moves: 4 improved onto
+an ear-verified value, 2 worsened off one, 17 have no ear evidence.
+
+**173's single move is a repair of a long-standing open item.** `vessel_damage_clue`
+172.910 → **174.740** — the ear-verified value, and the exact row Session X recorded as a
+non-determinism divergence ("a same-HEAD regeneration produced 172.91 instead"). S1 lands it on
+the value the live app commits and the ear confirmed.
+
+**THE 43 EAR-VERIFIED CONTROLS: 41 UNCHANGED, 2 MOVED OFF THEIR VERIFIED VALUE.** Both are
+regressions and neither is corrected by any rule:
+
+| control | verified | under S1 | delta | rule |
+|---|---|---|---|---|
+| `318_scout_on_ridge` (v6) | 969.300 | **969.760** | +0.460 | none fired |
+| `023_scylla_six_sailors` (spanish) | 65.120 | **66.730** | +1.610 | none fired |
+
+Both share one signature: the word gap did not widen, it **jumped past the verified value** —
+[968.940, 969.180] → [969.740, 969.780], and [64.560, 65.620] → [66.720, 66.740]. S1 folded a word
+that should have stayed, pushing the incoming segment's first claimed word too far right. That is
+S1's failure mode, and it is now named.
+
+**All 13 production pins reproduce unchanged on the baseline arm.** The Session AE closures are
+intact: every one of R.14's original eight rows commits its Session AE value under S1.
+
+### AA.6 — Step 6: Phase 2 is PARTIALLY revived — containment yes, placement no
+
+Session AE's interval census concluded that a gap-confined placement model reproduces zero of ten
+v6 rows. **That measurement was made against collapsed phantom gaps and is void as evidence about
+the real interval** — the gap's right edge was itself the artefact.
+
+Re-measured on repaired FA (`ws1-session-ag-step6-interval.test.ts`), over 23 defect targets and
+36 controls:
+
+- **defect targets whose ear value lies inside the word gap: 11 → 18 of 23**
+- **controls: 25 → 30 of 36**
+- gaps that widened: 19 of 59
+
+Row by row, the reversal is real: `008` [23.120,23.140]→[23.120,23.800] (inside, frac 0.500),
+`214` [628.920,628.940]→[629.580,630.660] (inside, 0.472), `231`
+[681.620,681.640]→[682.340,683.120] (inside, 0.513), `400`
+[1266.200,1266.220]→[1266.200,1267.340] (inside, 0.404).
+
+**But the fractional positions are scattered: min 0.121, median 0.472, max 0.977 (n=18).** A
+placement rule needs a consistent fraction; this is not one. **VERDICT: Phase 2's CONTAINMENT
+claim is revived — the ear-correct value usually does lie inside the repaired word gap, which was
+false before. Phase 2's PLACEMENT claim remains REFUTED: no single fraction of the gap
+reproduces the rows.** The three prior refutations (Sessions Y/Z/AA) were run against collapsed
+gaps and should be treated as void rather than as confirmation; the placement claim's current
+refutation rests on this measurement, not on theirs.
+
+### AA.7 — `iron_bounce` and `gadget_decay` re-examined: both unchanged, as predicted
+
+| row | word gap, baseline | word gap, S1 | ear inside? | committed |
+|---|---|---|---|---|
+| `iron_bounce` | [76.560, 76.600] | **identical** | yes, frac 0.750 | 76.580 both arms (R.15) |
+| `gadget_decay` | [427.420, 427.540] | **identical** | **no**, both arms | 427.480 both arms |
+
+Neither was predicted to change and neither did. No fold occurs within 3 s of `iron_bounce`'s
+seam; `gadget_decay`'s only nearby fold is 16 s away in a different segment.
+
+On the brief's question — does a repaired word-gap placement reach `iron_bounce`? **Yes, but not
+because of S1 and not newly.** Its ear value 76.590 already sat inside its 0.040 s gap on both
+arms, and R.15 already commits 76.580 at residual 0.010. The row that no landmark reaches is
+`gadget_decay`: its ear value 427.600 lies **outside** its gap [427.420, 427.540] on both arms, so
+no word-gap placement serves it, and no detected silence sits within 3 s. It remains open with no
+rule designed.
+
+### AA.8 — Step 7: R.14 disposition — SCOPED, NOT DELETED
+
+R.14's firing count does **not** reach zero. It fires once, and that firing is load-bearing:
+
+```
+011_shivering_by_fire   base  pre=28.890  committed=28.890  rule=none
+011_shivering_by_fire   S1    pre=28.470  committed=28.890  rule=R.14
+```
+
+**R.14 is repairing an S1-induced pre-rule regression and restoring the baseline-correct value.**
+The patch is compensating for the fix. Deleting R.14 while shipping S1 would turn
+`011_shivering_by_fire` into a new defect.
+
+**No double-correction was measured.** Every R.14/R.15 firing on the S1 arm moves a boundary the
+S1 arm places wrongly; none moves a boundary S1 places correctly. The combination is additive,
+not conflicting.
+
+**Disposition: R.14 STAYS, scoped to the residual set.** Its header is rewritten to say what it
+now covers and why. Deleting it requires, in order: (a) the movement census adjudicated and S1
+shipped, (b) golden coverage built for the rule stage — which does not exist today (AA.3), and
+(c) a firing count of zero with all rows still correct, which this session does not observe.
+
+### AA.9 — Step 8 and what is deferred
+
+`docs/ws1-sync-pipeline/stage1-session-ag-ear-list.md`: **19 rows** (predicted 21) — 17 v6
+boundaries with no ear evidence, plus the 2 ear-verified controls that moved. The 4 known defect
+targets that moved are excluded (they already carry verdicts).
+
+**Deferred, with reasons:** the AF random-sample defect-rate audit — deferred until the pipeline
+is stable, because a defect-rate measured on a pipeline about to move by 23 boundaries measures
+the old pipeline. S2 (never split a script sentence at a chunk edge) — out of scope by the brief.
+173's chunk-plan non-reproduction (AA.2) — a different session's work. Golden coverage for the
+rule stage (AA.3) — the gate on R.14 deletion.

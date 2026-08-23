@@ -124,6 +124,18 @@ threshold, is reached by R.14 at residual 0.000s — **Stage 1's lock is no long
 Golden replay 6/6 byte-identical (the replay harness stops at `snapCoveredBoundaries` and never
 reaches the rule stage). Full detail: §11h, `sync-pipeline-v2-plan.md` Part Z.
 
+**2026-08-23 (WS1 SESSION AG) — STILL NO PHASE ROW ADVANCES, AND ONE ROW'S EVIDENCE BASE CHANGES.**
+S1 (the trailing-silence chunk-text fold, `faChunkPlan.ts`) is built, driven through a real FA
+re-run on all three corpora, and measured: R.14's v6 firing count drops **11 → 1** and 10 of the
+13 attributed defects land CORRECT. **It is NOT shipped** — `foldPhantomTails` defaults to `false`
+— because it also moves two ear-verified controls off their verified values. Phase 3/Task 5 stays
+where Session H left it. **Phase 2's row changes, though**: its status has been WAIVED-BY-EVIDENCE
+on three refutations (Sessions Y/Z/AA), and all three were measured against collapsed phantom word
+gaps. That evidence is void; see §11i Step 6 for the split verdict (containment revived, placement
+still refuted on a fresh measurement). Golden replay 6/6 — and this session measured WHY that is
+uninformative about FA work: the harness contains zero references to the chunk planner, FA, or any
+rule gate. Full detail: §11i, `sync-pipeline-v2-plan.md` Part AA.
+
 **2026-08-22 (WS1 SESSION AC) — NOTHING ON THIS BOARD ADVANCES.** Measurement and documentation
 session: register drift audit (zero drift beyond Session AB's own finding), ear-evidence
 categorization, a new ear list, and the Stage 1 exit criteria checklist (§11f). No rule shipped,
@@ -773,6 +785,19 @@ cross-referenced against `src/types.ts` live:
 | P4 | Silence ascending/disjoint runtime assertion | ❌ | grepped `silence-scan-anomaly` across `src/` — zero hits; Phase 4, REQUIRED ADDITION, not built |
 | P5 | Silence-scan-failed vs. no-silence-found, type-level | ✅ | `silenceDetector.ts:21-22` — `{status:'ok', silences}` \| `{status:'error', errorMessage}` |
 | P6 | Same language-keyed normalizer, byte-identical English path | ✅ **2026-08-18 (WS1 Session J); Spanish vacuity closed WS1 Session M** | **MEASURED, zero asymmetries.** `src/services/normalizerSymmetry.test.ts` (in the standing `npm test` pass) drives the production `canonicalize`/`stripStageDirections`/`normalize`/`normalizeSceneDoc` over the committed en/es fixtures. Cross-side lexical agreement: no raw word reaches two normalized forms. Compositionality (the untested risk — transcript side normalizes per TOKEN, script side per SEGMENT, and `canonicalize` does multi-word rewrites like `1985`→nineteen eighty five): per-token and whole-text streams are byte-identical, v6 3998=3998 / 173 1837=1837 / spanish 363=363. **Session M closed the debt Session L was left holding open (reconciled into this session's commit):** the Spanish CORPUS has zero expanding tokens (vacuous on real material, unchanged), but the property is NOT non-falsifiable in Spanish — a new test runs the `es`-keyed normalizer on constructed digit material (the digit→words reading is language-independent) and confirms both expansion and compositionality. What stays corpus-vacuous is only what a digit-free Spanish corpus can reach; the machinery itself is now exercised. `stripStageDirections` still fires on 0 segments of all three corpora. Phase 3c's accepted hyphen class remains excluded by construction |
+
+**2026-08-23 (WS1 Session AG) — a Contract-adjacent finding, recorded here because it is exactly
+the kind of arm-provenance defect this checklist exists to catch.** 173's stored chunk plan
+(`fa_live_chunks.json`, 126 chunks) is NOT reproducible from its own stored input arms by today's
+`computeFaChunkPlan` (119 chunks); v6 and Spanish reproduce byte-for-byte, windows and text. The
+FA word arm for 173 was therefore aligned against a plan the pipeline no longer computes. The
+ENGINE is faithful (an unchanged-plan FA re-run reproduces all 1660 tokens to 1e-9); only the PLAN
+is not. Cause could not be determined: inputs byte-identical per the manifest, `faChunkPlan.ts`
+and `faAnchors.ts` untouched since capture, source files two weeks older than the capture, and
+neither silence arm reproduces 126 (native 119, app 121). **No compliance row is flipped on this
+— it is a bundle-provenance defect, not a Contract 1→2 requirement** — but any future 173
+measurement that depends on the chunk plan should be read against it. Full detail:
+`sync-pipeline-v2-plan.md` Part AA.2.
 | P7 | Timing-source identified on output, type-level | ~ partial | `types.ts:223` `VideoSegment.anchorSource?: 'forced-alignment' \| 'whisper' \| 'estimate'` exists (ahead of schedule, includes `'forced-alignment'` per R-G) but lives on the *segment*, not per-token/per-Stage-1-output as the contract literally specifies |
 | P8 | Tokens/silences/audioDuration/segments as ONE bundled, type-enforced object | ❌ | `project.transcriptTokens` (`types.ts:336`) remains separately reachable; `useWhisper.ts:44-51`'s own doc comment *warns* callers to use `AlignFromCacheResult.tokens` instead — discipline, not type enforcement. This is "old R7," scheduled for Phase 4 |
 
@@ -5968,6 +5993,125 @@ Hirschberg aligner (`whisperService.ts`), `docs/history.md` and
 
 ---
 
+### §11i. WS1 Session AG — RESULTS
+
+**One-line verdict: the phantom mechanism is CONFIRMED CAUSAL — S1 drops R.14's v6 firing count
+11 → 1 and fixes 10 of 13 attributed rows — and it costs two ear-verified control regressions, so
+it is BUILT AND MEASURED BUT NOT SHIPPED (`foldPhantomTails` defaults to `false`).** Full
+narrative and every table: `sync-pipeline-v2-plan.md` Part AA.
+
+**Step 0 — ingestion.** Six operator ear verdicts entered as sitting `ear-verify-ag` (order 12).
+The four UNVERIFIED-MOVED R.14 boundaries (`039_river_trap` 114.640, `083_unbidden_alertness`
+245.270, `221_skill_removes` 654.450, `222_long_silence` 659.330) all scored CORRECT at the moved
+value, so **R.14/R.15 precision stops being an interval: 14/14 = 1.000, no unverified remainder.**
+Ear-verified control population **37 → 43**. Two guard verdicts that disagree:
+`289_winter_predator_breach`@865.390 CORRECT (the reliable-onset guard's TRUE negative) and
+`231_slowing_pace`@682.740 CORRECT as a target (the same guard's FALSE negative). Register **7
+open before, 7 open after** — the verdicts add controls and confirm a target; they close nothing.
+
+**Step 1 — the census, and a model correction.** Funnel: v6 277 → 183 → 110 → **19**; 173 119 →
+46 → 13 → **2**; spanish 5 → 3 → 3 → **2**. v6's condition-1 count reproduces the root-cause
+report's 183/277 exactly. Gate: 23/13 = **1.77:1**, under the 3:1 stop threshold, PROCEED. But
+**only 2 of 13 attributed defects are in the set**, and the reason is a mis-specification, not a
+census bug: condition (2) assumes the phantom belongs to the INCOMING segment, and on
+`231_slowing_pace`, `wall_split_path` and `logic_clash` it belongs to the OUTGOING one — the
+defect surfaces one seam later via the word-shift. Two further exclusion causes measured: a
+phantom straddling the silence's leading edge by 40 ms (`056`, `167`), and a phantom run sitting
+in no detected silence at all (`152`, `447`). 7 ear-verified-CORRECT boundaries are in the set;
+14 unaudited.
+
+**Step 2 — fidelity.** ORT provisioned; the spike-runtime dylib is byte-identical (sha256
+`8c9c78de…`) to the bundled one. Models `en` `48a3c2e1…`, `es` `7e11fee9…`. Session Y's
+single-thread pinning verified active. **FA re-run unchanged: every token identical in text and
+timing to 1e-9 on all three corpora**; posteriors wobble ~1e-7 (v6 908/3874, 173 474/1660), four
+orders of magnitude below `CONF_MIN_FALLBACK`. v6 committed boundaries **447/447 exact**, all rule
+firings identical, 0 controls disturbed. Wall clock (debug): v6 534.7 s, 173 286.4 s, spanish
+46.6 s. **NEW FINDING, reported not fixed: 173's stored chunk plan does not reproduce** (126
+stored vs 119 recomputed; v6 and spanish reproduce byte-for-byte). Inputs byte-identical per the
+manifest, planner code untouched since capture, source files two weeks older than the capture,
+and neither silence arm reproduces 126. **I could not determine the cause.**
+
+**Step 3 — golden replay's scope, corrected.** The brief's premise that golden replay covers
+"chunk plan → FA → snap" is wrong, measured: `phase4-handoff-replay-sync.test.ts` contains
+**zero** references to `faChunkPlan`, FA, or any rule gate. It is a Whisper-token replay stopping
+at `snapCoveredBoundaries`. So S1 cannot change it and no re-baseline is owed; **6/6
+byte-identical** stands as a floor, not as evidence about S1. The per-boundary diff instrument was
+still built (`ws1-session-ag-boundary-diff.test.ts`) and applied where the change is — the two
+live FA arms. **Recorded as the blocking prerequisite for R.14 deletion: the rule stage (R.5,
+R.10, R.11, R.12, R.13, R-U, R-MD, R.14, R.15), the chunk planner and FA are all outside golden
+replay's reach, so step 3 of the R.14 sequencing plan would delete a rule no fixture covers. That
+coverage is NOT built this session.**
+
+**Step 4 — S1.** Extends `attributeByIndex`'s zero-duration fold to the partial case, as its
+mirror. Existence test, no new threshold: a run window ends at an anchor and `faAnchors.ts`
+guarantees an anchor's time is a detected silence's `endSec`, so the trailing silence is the one
+whose end IS the window's end, and the only question is whether text was filed into it. One
+constant, `EPS_SEC = 1e-9`, **GEOMETRIC** (float-identity guard, nine orders below the 20 ms
+aligner grid, no corpus row informed it). **No FITTED constant, so no sensitivity/LOOCV is owed.**
+**A real defect was found by running it:** S1 can hand text to a zero-duration run, producing an
+empty-window chunk — ONNX Runtime failed the first Conv node, `Invalid input shape: {0}`, 24 such
+chunks on v6 and 6 on 173. Fixed by ORDERING (S1 now runs before the total-case fold, which is
+the pass that already exists to prevent exactly this); after the fix, 0 zero-duration and 0
+empty-text chunks everywhere. **Cascade: `sourceRunsEmptied = 0` and `chainedFolds = 0` on all
+three corpora** — S1 relocates no defect.
+
+**Step 5 — measurement.** Phantom-tail rate v6 **66.1% → 16.7%**, 173 **38.7% → 17.6%**, spanish
+**60.0% → 0.0%**; (1)∧(2)∧(3) 23 → 7; **0 of 13 attributed defects remain in the set.** Attributed
+rows: **CORRECT 10/13, DIRECTION-CORRECT 0, WORSENED 0.** The load-bearing column is pre-rule: on
+seven v6 rows the baseline needed R.14 to reach the correct value and under S1 snap lands on the
+identical value **with R.14 not firing**; three more (`214_solitary_fire`, `231_slowing_pace`,
+`447_scout_facing_dark`) are fixed by S1 alone and were unreachable by R.14. **Seam 230 confirmed
+exactly: `231_slowing_pace` commits 682.740, residual 0.000**, anchor confidence 7.0e-3 → 0.909,
+and the real `slow`@[682.04,682.34] posterior 1.000 is now segment 230's. R.14 v6 **11 → 1**,
+R.15 v6 0 → 1, 173 3 → 3 unchanged. Movement census: v6 426 unchanged / 21 moved / 0 added / 0
+removed; 173 1 moved; spanish 1 moved. **173's single move REPAIRS a long-standing open item** —
+`vessel_damage_clue` 172.910 → 174.740, the ear-verified value and the exact row Session X
+recorded as a non-determinism divergence. **THE 43 CONTROLS: 41 unchanged, 2 MOVED OFF THEIR
+VERIFIED VALUE** — `318_scout_on_ridge` 969.300 → 969.760 and `023_scylla_six_sailors` 65.120 →
+66.730, neither corrected by any rule. Both share one signature: the word gap did not widen, it
+jumped past the verified value. That is S1's failure mode, now named. All 13 production pins
+reproduce; every Session AE closure intact.
+
+**Step 6 — PHASE 2 STATUS REVERSED, PARTIALLY.** Session AE's interval census was measured against
+collapsed phantom gaps and is **void as evidence about the real interval** — the gap's right edge
+was itself the artefact. Re-measured on repaired FA: defect targets whose ear value lies inside
+the word gap **11 → 18 of 23**; controls **25 → 30 of 36**. **Phase 2's CONTAINMENT claim is
+REVIVED** (it was false before and is usually true now). **Phase 2's PLACEMENT claim remains
+REFUTED**: fractional positions inside the repaired gap are scattered — min 0.121, median 0.472,
+max 0.977 (n=18) — and no single fraction reproduces the rows. The three prior refutations
+(Sessions Y/Z/AA) were run against collapsed gaps and should be treated as **void rather than as
+confirmation**; the current refutation rests on this measurement, not theirs.
+
+**Step 6b — `iron_bounce` / `gadget_decay`.** Both predicted unchanged; both measured unchanged,
+word gaps identical on the two arms. `iron_bounce`'s ear value already sat inside its 0.040 s gap
+on both arms and R.15 already commits 76.580 at residual 0.010 — a word-gap placement reaches it,
+but not because of S1 and not newly. **`gadget_decay`'s ear value 427.600 lies OUTSIDE its gap
+[427.420, 427.540] on both arms**, so no word-gap placement serves it and no detected silence sits
+within 3 s. It stays open with no rule designed.
+
+**Step 7 — R.14 disposition: SCOPED, NOT DELETED.** The firing count does not reach zero, and the
+one remaining v6 R.14 firing is load-bearing: `011_shivering_by_fire` has base pre-rule 28.890
+(correct, no rule) and S1 pre-rule 28.470, which R.14 corrects back to 28.890. **R.14 is repairing
+an S1-induced regression** — deleting it while shipping S1 would create a new defect. **No
+double-correction measured:** every gate firing on the S1 arm moves a boundary S1 places wrongly.
+Deletion needs, in order: the movement census adjudicated and S1 shipped; golden coverage for the
+rule stage (does not exist); a firing count of zero with all rows still correct.
+
+**Step 8 — the bill.** `docs/ws1-sync-pipeline/stage1-session-ag-ear-list.md`, **19 rows**
+(predicted 21): 17 v6 boundaries with no ear evidence plus the 2 regressed controls. Adjudicating
+it is the gate on flipping `foldPhantomTails`.
+
+**DEFERRED, each with a reason:** the **AF random-sample defect-rate audit** — until the pipeline
+is stable, because a defect rate measured on a pipeline about to move 23 boundaries measures the
+old pipeline. **S2** (never split a script sentence at a chunk edge) — out of scope by the brief,
+and now better motivated: S1's two regressions are both cases where the fold moved a word that
+should have stayed, which is precisely what a sentence-aware text boundary would prevent.
+**173's chunk-plan non-reproduction.** **Golden coverage for the rule stage.** Also still
+deferred from Session AE and untouched here: idle exit criteria, the Spanish reopening trigger,
+the D-1 regression checklist, Contract IN / 1→2 verification, inspector smear thresholds, the WPM
+5-tier suite, the wrong-landmark class, and the `ordinalDelta +1` mirror class (which S1 has now
+in fact closed on its one known member, `214_solitary_fire`).
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -6025,6 +6169,63 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-23 — WS1 Session AG: the phantom mechanism is CONFIRMED CAUSAL. S1 repairs the chunk
+  plan at the source, R.14's v6 firings collapse 11 → 1, and two ear-verified controls regress —
+  so S1 is built, measured, and deliberately NOT shipped.** Step 0 ingested six operator ear
+  verdicts as sitting `ear-verify-ag`: the four UNVERIFIED-MOVED R.14 boundaries all scored CORRECT
+  at the moved value, so **R.14/R.15's precision stops being an interval — 14/14 = 1.000 with no
+  unverified remainder** — and the ear-verified control population went 37 → 43. Register 7 open
+  before and after; the verdicts add controls and confirm a target, they close nothing. Two guard
+  verdicts that point opposite ways are both recorded: `289_winter_predator_breach`@865.390 CORRECT
+  (the reliable-onset guard's true negative) and `231_slowing_pace`@682.740 CORRECT as a target
+  (the same guard's false negative), so relaxing that guard is still not authorised. **Step 1's
+  seam-scoped census passed its gate at 1.77:1 but put only 2 of 13 attributed defects in the
+  (1)∧(2)∧(3) set — and the per-defect diagnostic showed that is a MIS-SPECIFICATION, not a census
+  bug: condition (2) assumes the phantom belongs to the incoming segment, and on the root-cause
+  report's own flagship row it belongs to the OUTGOING one**, surfacing one seam later via the
+  word-shift. **Step 2's fidelity check passed on the engine and FAILED on one bundle**: an
+  unchanged-plan FA re-run reproduced every token in text and timing to 1e-9 on all three corpora
+  (posteriors wobble ~1e-7, four orders below `CONF_MIN_FALLBACK`; v6 committed boundaries 447/447
+  exact), but 173's stored chunk plan holds 126 chunks against 119 recomputed today, with
+  byte-identical inputs and untouched planner code — cause NOT determined, reported not fixed.
+  **Step 3 corrected the brief's premise by measurement**: golden replay does not cover the chunk
+  plan or FA at all — zero references to either, or to any rule gate — so S1 cannot change it, and
+  the absence of rule-stage coverage is now recorded as the blocking prerequisite for ever deleting
+  R.14. **Step 4 shipped S1 as a mirror of the planner's existing zero-duration fold**, an
+  existence test with no new threshold (one GEOMETRIC 1e-9 float-identity guard; no FITTED
+  constant, so no sensitivity or LOOCV owed) — and running it immediately found a real defect in
+  the first cut: S1 could hand text to a zero-duration run, which ONNX Runtime rejected at the
+  first Conv node (`Invalid input shape: {0}`, 24 chunks on v6, 6 on 173), fixed by ordering S1
+  before the total-case fold that already exists to prevent exactly that. Cascade clean:
+  `sourceRunsEmptied = 0`, `chainedFolds = 0` on all three corpora. **Step 5 measured the fix**:
+  phantom-tail rate 66.1% → 16.7% (v6), 38.7% → 17.6% (173), 60% → 0% (spanish); 0 of 13 attributed
+  defects left in the set; attributed rows CORRECT 10/13, DIRECTION-CORRECT 0, WORSENED 0. The
+  load-bearing column is pre-rule — on seven v6 rows `snapCoveredBoundaries` now lands on the
+  identical value R.14 used to correct to, with R.14 not firing, and three more rows R.14 could
+  never reach are fixed by S1 alone. **Seam 230, the one seam with independent two-arm ground
+  truth, lands exactly: 682.740, residual 0.000.** 173's single move repairs `vessel_damage_clue`
+  onto its ear-verified 174.740, the long-standing Session X non-determinism row. **The cost, stated
+  as a regression and not softened: 2 of 43 ear-verified controls moved off their verified values**
+  (`318_scout_on_ridge` +0.460, `023_scylla_six_sailors` +1.610), neither corrected by any rule,
+  both with the same signature — the word gap did not widen, it jumped past the verified value.
+  **Step 6 reversed a standing status**: Session AE's interval census was measured against
+  collapsed phantom gaps and is void, and on repaired FA the ear value lies inside the word gap for
+  18 of 23 defect targets against 11 before — so Phase 2's CONTAINMENT claim is revived while its
+  PLACEMENT claim stays refuted (fractional positions scatter 0.121–0.977). `iron_bounce` and
+  `gadget_decay` were predicted unchanged and measured unchanged; `gadget_decay`'s target lies
+  outside its gap on both arms, so no word-gap placement serves it. **Step 7: R.14 is SCOPED, NOT
+  DELETED** — its one residual firing is load-bearing (it repairs an S1-induced regression on
+  `011_shivering_by_fire`), and no double-correction was measured. **Step 8** wrote the 19-row ear
+  list (predicted 21) that gates flipping `foldPhantomTails`. The AF random-sample defect-rate audit
+  is deferred until the pipeline is stable. Six numbers: `npm test` 2485 passed / 46 skipped / 0
+  failed (passes unchanged, +9 skips, all this session's gated generators); `tsc --noEmit` clean;
+  `cargo check --features fa-inference` clean; clippy clean with the same 4 pre-existing warnings;
+  `cargo test` 141/0/1 and 216/0/24 with `fa-inference`; golden replay 6/6 byte-identical.
+  `faAnchors.ts` sha256 unchanged, `b61e94cb…`. `snapBoundaries.ts`, `silenceDetector.ts`,
+  `whisperService.ts`, the Hirschberg aligner, `docs/history.md` and
+  `scripts/fixtures/phase4-baseline-*.csv` all untouched; no new repo-root file. Full detail: §11i,
+  `sync-pipeline-v2-plan.md` Part AA.
 
 - **2026-08-23 — WS1 Session AE: the ordinal split. Two rules ship (R.14 smeared-anchor placement,
   R.15 tail attribution), the register goes 8 → 14 → 7 open, item-7 is reached, and native-rate

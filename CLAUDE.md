@@ -156,6 +156,7 @@ Standing rules that are true today and must not be broken. (Pulled out of the ol
 
 **Testing**
 - Sync/anchor timing is regression-locked: `src/services/syncTiming.test.ts` (150+ tests) plus `scripts/phase4-handoff-replay-sync.test.ts` (the golden-baseline replay against 3 real corpus projects) protect it — the golden replay is the signal every future sync-timing change should be diffed against, and a failure there names the boundary to investigate, never a reason to re-baseline blindly.
+- **Golden replay's reach stops at `snapCoveredBoundaries`, and a green 6/6 is therefore NOT evidence about forced alignment.** It reads Whisper tokens and silences and runs parse → align → distribute → snap. It never computes a chunk plan, never runs FA, and never runs a rule (R.5, R.10, R.11, R.12, R.13, R-U, R-MD, R.14, R.15) — measured, zero references to any of them in that file. So a change confined to `faChunkPlan.ts`, the FA path, or any rule gate leaves the fixtures byte-identical no matter how many boundaries it moves in the app, and **deleting a rule on the strength of a green golden replay is deleting code no fixture protects.** Rule-stage changes are verified against the live FA arms instead (`scripts/ws1-session-p-pipeline.ts`'s `runProductionPath`, plus a per-boundary diff), never against golden replay alone.
 
 ---
 
