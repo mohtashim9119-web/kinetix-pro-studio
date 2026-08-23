@@ -69,7 +69,7 @@
 //     wrong-landmark class and neither pretends to.
 //
 // ---------------------------------------------------------------------------
-// WS1 SESSION AG — WHAT THIS GATE IS *FOR*, NOW THAT THE CAUSE IS KNOWN.
+// WS1 SESSIONS AG/AH — WHAT THIS GATE IS *FOR*, NOW THAT THE CAUSE IS KNOWN.
 //
 // READ THIS BEFORE CHANGING OR DELETING EITHER RULE.
 //
@@ -77,40 +77,34 @@
 // `computeFaChunkPlan` can file script text into a chunk window's silent tail,
 // and a forced aligner must return a time for every word it is given, so that
 // text comes back with a timestamp and a collapsed posterior — a PHANTOM.
-// Session AG built the fix (`faChunkPlan.ts`'s S1 trailing-silence fold),
-// drove it through a real ONNX re-run on all three corpora, and measured what
-// happens to this gate:
 //
-//   * R.14's v6 firing count drops 11 -> 1.
-//   * On SEVEN of its rows (008, 056, 152, 167, 286, 400, 403) the repaired
-//     chunk plan makes `snapCoveredBoundaries` land on the IDENTICAL value
-//     R.14 was correcting to, with R.14 not firing at all.
-//   * Three rows this gate could never reach are fixed by S1 alone:
-//     `214_solitary_fire` (ordinalDelta +1, the mirror class), `231_slowing_pace`
-//     (declined by the reliable-onset guard) and `447_scout_facing_dark`
-//     (declined by the gap-width bound).
+// Session AG built a cleanup for that (S1, `faChunkPlan.ts`'s trailing-silence
+// fold), drove it through a real ONNX re-run on all three corpora, and measured
+// R.14's v6 firing count dropping 11 -> 1. SESSION AH ROLLED S1 BACK AS A
+// PERMANENT NEGATIVE. The operator ear-audited all 18 boundaries S1 moved
+// without prior ear evidence and every single one was a REGRESSION: the
+// production cut was already right. The detector S1 keys on fires on 183 of 277
+// v6 chunks against ~13 true defects — ~7% precision — so a repair keyed on it
+// moves ~13 right and ~170 wrong. Cleanup at the DETECTION layer is rejected;
+// prevention at the PARTITION layer (S2) is the successor. See
+// `docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md` §8.
 //
-// SO WHY IS THIS FILE STILL HERE, AND WHY IS NEITHER RULE SCOPED DOWN?
+// SO THIS GATE STAYS, AND NEITHER RULE IS SCOPED DOWN:
 //
-//   1. S1 IS NOT SHIPPED. `foldPhantomTails` defaults to `false`, because S1
-//      also moves two ear-verified CORRECT controls off their values
-//      (`318_scout_on_ridge`, `023_scylla_six_sailors`). On the configuration
-//      that actually ships today, R.14 still fires all 11 times and every one
-//      of those firings is doing real work. Narrowing the rule now would
-//      reopen eight register rows in production to fix a problem production
-//      does not have.
-//   2. EVEN UNDER S1, THE FIRING COUNT IS NOT ZERO, AND THE RESIDUAL FIRING IS
+//   1. THE UPSTREAM FIX DOES NOT EXIST. On the configuration that ships today
+//      — the only one that has ever existed in production — R.14 fires all 11
+//      times and every one of those firings is doing real work. Narrowing the
+//      rule would reopen eight register rows to fix a problem production does
+//      not have.
+//   2. EVEN UNDER S1 THE FIRING COUNT WAS NOT ZERO, AND THE RESIDUAL FIRING WAS
 //      LOAD-BEARING. `011_shivering_by_fire` has a base pre-rule value of
 //      28.890 (correct, no rule needed) and an S1 pre-rule value of 28.470 —
-//      R.14 corrects it back to 28.890. The patch is repairing a regression the
-//      fix introduces. Deleting R.14 while shipping S1 creates a new defect.
-//   3. NO DOUBLE-CORRECTION EXISTS TO WORRY ABOUT — measured, not assumed.
-//      Every R.14/R.15 firing on the S1 arm moves a boundary the S1 arm places
-//      wrongly; none moves a boundary S1 places correctly. The two mechanisms
-//      compose additively.
+//      R.14 corrected it back to 28.890. The patch was repairing a regression
+//      the fix introduced. Any future upstream fix must be re-measured the same
+//      way before either rule is touched.
 //
 // DELETION GATE, in order — all three, not any one:
-//   (a) Session AG's movement census adjudicated and S1 shipped;
+//   (a) an upstream fix that is SHIPPED, not merely measured (S1 failed this);
 //   (b) GOLDEN COVERAGE BUILT FOR THE RULE STAGE. There is none today:
 //       `scripts/phase4-handoff-replay-sync.test.ts` contains zero references
 //       to this file, to `faChunkPlan.ts`, or to FA at all — it is a
@@ -118,8 +112,8 @@
 //       either rule today would be deleting code no fixture protects.
 //   (c) a measured firing count of zero with all rows still correct.
 //
-// Full evidence: `sync-pipeline-v2-plan.md` Part AA, `docs/work-in-progress.md`
-// §11i.
+// Full evidence: `sync-pipeline-v2-plan.md` Parts AA/AB, `docs/work-in-progress.md`
+// §§11i/11j.
 // ---------------------------------------------------------------------------
 //
 // NO AMPLITUDE, NO ENERGY, NO SILENCE-PROXIMITY ANYWHERE IN EITHER DETECTION

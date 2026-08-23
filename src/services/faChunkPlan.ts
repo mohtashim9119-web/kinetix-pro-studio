@@ -55,27 +55,6 @@ export interface FaChunk {
   text: string;
 }
 
-/** WS1 Session AG (S1) — what the trailing-silence fold did, for the
- *  measurement harness. Purely observational: the planner never reads it, and
- *  omitting it changes nothing. */
-export interface FoldDiagnostics {
-  folds: Array<{
-    runIndex: number;
-    windowStart: number;
-    windowEnd: number;
-    silenceStart: number;
-    silenceEnd: number;
-    movedWords: string[];
-    /** The moved words' own script indices — what makes a CHAIN detectable: a
-     *  fold at run i+1 whose moved qi were themselves moved by the fold at
-     *  run i has propagated text across more than one chunk boundary. */
-    movedQiStarts: number[];
-    /** How many words the source run has LEFT after the fold. Zero means the
-     *  fold emptied it — the cascade case worth counting. */
-    remainingWords: number;
-  }>;
-}
-
 /** One raw (whitespace-split, UNNORMALIZED) script token, tagged with the
  *  half-open `queryWords` index range it contributed. `qiStart === qiEnd` for a
  *  token that normalizes to nothing (a stage direction, a punctuation-only
@@ -111,13 +90,6 @@ interface RunContext {
   rawTokens: RawScriptToken[];
   totalQi: number;
   unscripted: UnscriptedRun[];
-  /** WS1 Session AG (S1): script word index -> the ONSET of the Whisper token
-   *  that script word matched, or `null` where it matched nothing. This is not
-   *  new information and introduces no new attribution rule — it is the SAME
-   *  query->subject match `computeFaAnchors` and `detectUnscriptedRuns` are
-   *  already built on, surfaced so the trailing-silence fold below can ask
-   *  where in a window a given script word was filed. */
-  qiOnsetSec: Array<number | null>;
 }
 
 /**
@@ -187,20 +159,7 @@ function computeRunContext(
   const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, subjectTokenIdx);
   const unscripted = detectUnscriptedRuns(alignment.matchedSubjectOf, subjectTokenIdx, segQiRanges, tokens);
 
-  // WS1 Session AG (S1): the same `matchedSubjectOf` -> `subjectTokenIdx` ->
-  // token hop `detectUnscriptedRuns` just made, materialised per query word.
-  // `-1` (no true match) stays `null` — a script word FA never matched has no
-  // measured onset, and guessing one is exactly what this map must not do.
-  const qiOnsetSec: Array<number | null> = new Array<number | null>(queryWords.length).fill(null);
-  for (let qi = 0; qi < queryWords.length; qi++) {
-    const sIdx = alignment.matchedSubjectOf[qi]!;
-    if (sIdx < 0) continue;
-    const tIdx = subjectTokenIdx[sIdx];
-    if (tIdx === undefined) continue;
-    qiOnsetSec[qi] = tokens[tIdx]?.startSec ?? null;
-  }
-
-  return { runs, anchors, rawTokens, totalQi: queryWords.length, unscripted, qiOnsetSec };
+  return { runs, anchors, rawTokens, totalQi: queryWords.length, unscripted };
 }
 
 // ---------------------------------------------------------------------------
@@ -549,15 +508,9 @@ export function computeFaChunkPlan(
   attribution: FaTextAttribution = 'script-word-index',
   languageCode?: FaLanguageCode,
   vocabChars?: ReadonlySet<string>,
-  /** WS1 Session AG — S1. Off by default; see
-   *  `computeFaChunkPlanWithAttribution`'s own parameter doc for why the
-   *  production default is not flipped in the session that built it. */
-  foldPhantomTails = false,
-  foldOut?: FoldDiagnostics,
 ): FaChunk[] {
   return computeFaChunkPlanWithAttribution(
     segments, tokens, silences, audioDuration, attribution, undefined, languageCode, vocabChars,
-    foldPhantomTails, foldOut,
   );
 }
 
@@ -820,15 +773,6 @@ function attributeByIndex(
    *  `qiStart`, so `exciseUnscriptedRuns` can cut a chunk's TEXT at a script
    *  index without re-deriving the attribution it just performed. */
   textQiOut?: Map<FaChunk, Array<{ text: string; qiStart: number }>>,
-  /** S1 inputs (WS1 Session AG). BOTH must be supplied for the partial fold to
-   *  run at all; omitting either leaves this function's output byte-identical
-   *  to its pre-S1 behaviour, which is what `faChunkPlan.test.ts`'s existing
-   *  direct callers rely on. */
-  silences?: readonly SilenceInterval[],
-  qiOnsetSec?: ReadonlyArray<number | null>,
-  /** S1 diagnostics, for the measurement harness only — never read by the
-   *  planner itself. */
-  foldOut?: FoldDiagnostics,
 ): FaChunk[] {
   if (ranges.length === 0) return [];
 
@@ -839,90 +783,21 @@ function attributeByIndex(
     textsByRun[rangeIdx]!.push({ text: tok.text, qiStart: tok.qiStart });
   }
 
-  // ---- S1: THE PARTIAL CASE (WS1 Session AG) ------------------------------
-  // The loop above handles a window with NO audio at all. This one handles a
-  // window with audio whose TRAILING text has none.
+  // ---- THE TOTAL CASE: a run with text but a ZERO-DURATION window --------
+  // Emitting that as a chunk sends the aligner an empty window — measured:
+  // ONNX Runtime fails the very first Conv node with "Invalid input shape:
+  // {0}". Its text folds FORWARD into the next run, which is the run that
+  // actually contains that audio. Shipped, tested, and load-bearing: it
+  // guards a real CTC-infeasibility crash.
   //
-  // WHY IT IS THE SAME DEFECT. The total case exists because "sending Rust
-  // text with an empty window is a guaranteed CTC-infeasibility". A forced
-  // aligner must return a time for every word it is given and has no way to
-  // answer "not present in this audio", so text handed a silent window comes
-  // back with a timestamp and a collapsed posterior — a PHANTOM. A window
-  // whose tail is silence does exactly this to whatever text was filed into
-  // that tail; the only difference from the total case is that the rest of the
-  // window is fine. Measured instance: `fa-chunk-phantom-root-cause.md` §2,
-  // where "But when you" is filed into a window ending at 681.50 and comes
-  // back at confidence 5e-8, having actually been spoken at 681.47-682.43 on
-  // the far side of the cut.
-  //
-  // THE TEST IS AN EXISTENCE TEST, WITH NO NEW CONSTANT. A run window ends at
-  // an anchor, and `faAnchors.ts` guarantees an anchor's time is "always a
-  // detected silence's `endSec`" (see `FaAnchor.timeSec`). So the window's own
-  // trailing silence is simply the detected silence whose `endSec` IS this
-  // window's end. The question S1 asks is then purely: WAS ANY SCRIPT TEXT
-  // FILED INTO THAT SILENCE? A word whose matched Whisper onset lies at or
-  // after the silence's start was placed where this window carries no speech.
-  // Nothing here is tuned: the silence's own start is the cut, and it comes
-  // from the production detector, not from this module.
-  //
-  // ONLY A SUFFIX MOVES. Folding an interior word would break the qi partition
-  // every downstream consumer (`exciseUnscriptedRuns`, `textQiOut`) depends on.
-  // The maximal trailing run of in-silence words is taken and nothing else; a
-  // window whose in-silence words are not a suffix folds only its suffix.
-  //
-  // A WORD WITH NO MATCHED ONSET (`null`) IS NEVER FOLDED and stops the suffix
-  // scan. It carries no evidence either way, and moving text on absent
-  // evidence is the opposite of what this rule is for.
-  if (silences !== undefined && qiOnsetSec !== undefined) {
-    // A window's end may sit one float ulp off the silence's own `endSec`.
-    // 1e-9 s is nine orders of magnitude below the aligner's 20 ms grid — it
-    // is a float-identity guard, not a tolerance, and is GEOMETRIC in the
-    // sense that no corpus row informed it.
-    const EPS_SEC = 1e-9;
-    for (let i = 0; i < ranges.length - 1; i++) {
-      const r = ranges[i]!.run;
-      if (!(r.windowEnd - r.windowStart > 0)) continue;   // total case, already folded
-      const carried = textsByRun[i]!;
-      if (carried.length === 0) continue;
-
-      // The detected silence this window ENDS on, if any.
-      const tail = silences.find(sil =>
-        Math.abs(sil.endSec - r.windowEnd) <= EPS_SEC && sil.startSec > r.windowStart + EPS_SEC);
-      if (tail === undefined) continue;
-
-      // Maximal suffix of words filed at or after that silence's start.
-      let cut = carried.length;
-      while (cut > 0) {
-        const onset = qiOnsetSec[carried[cut - 1]!.qiStart];
-        if (onset === null || onset === undefined) break;
-        if (onset < tail.startSec) break;
-        cut--;
-      }
-      if (cut === carried.length) continue;               // nothing filed into the silence
-
-      const moved = carried.slice(cut);
-      textsByRun[i] = carried.slice(0, cut);
-      textsByRun[i + 1]!.unshift(...moved);
-      foldOut?.folds.push({
-        runIndex: i,
-        windowStart: r.windowStart, windowEnd: r.windowEnd,
-        silenceStart: tail.startSec, silenceEnd: tail.endSec,
-        movedWords: moved.map(m => m.text),
-        movedQiStarts: moved.map(m => m.qiStart),
-        remainingWords: textsByRun[i]!.length,
-      });
-    }
-  }
-  // ---- THE TOTAL CASE (pre-existing; RUNS AFTER S1, see below) -----------
-  // ORDER IS LOAD-BEARING (WS1 Session AG). S1 above can hand text to a run
-  // whose window is ZERO-DURATION, because "the next run" is not always a
-  // run with audio. Emitting that as a chunk sends the aligner an empty
-  // window — measured: ONNX Runtime fails the very first Conv node with
-  // "Invalid input shape: {0}", 24 such chunks on v6 and 6 on 173. This
-  // loop is exactly the fold that already exists to prevent that, so S1
-  // runs FIRST and this pass cleans up after it. Its single ascending scan
-  // also chains correctly: text pushed into a zero-duration run at i is
-  // carried on to i+1 when the scan reaches it.
+  // THE PARTIAL CASE IS DELIBERATELY NOT HANDLED HERE (WS1 Session AH). A
+  // window with audio whose TRAILING text has none produces the same phantom,
+  // and Session AG built exactly that fold (S1). It was ROLLED BACK as a
+  // permanent negative: the phantom-tail existence test fires on 183 of 277
+  // v6 chunks against ~13 true defects (~7% precision), and a repair keyed on
+  // it moved 18 boundaries an operator ear audit confirmed were ALREADY
+  // CORRECT. Do not reintroduce a cleanup keyed on this test. See
+  // `docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md` §8.
   // Fold zero-duration runs' text forward into the next run that has audio.
   for (let i = 0; i < ranges.length - 1; i++) {
     const r = ranges[i]!.run;
@@ -1019,17 +894,6 @@ export function computeFaChunkPlanWithAttribution(
   coalesceTargetSec?: number,
   languageCode?: FaLanguageCode,
   vocabChars?: ReadonlySet<string>,
-  /** WS1 Session AG — S1, the trailing-silence (partial) text fold. DEFAULT
-   *  OFF, deliberately. S1 changes the chunk text for a measured fraction of
-   *  chunks, which changes FA's output, which moves committed boundaries —
-   *  including boundaries that are correct today and carry no ear evidence
-   *  either way. Session AG's own brief requires that movement census to be
-   *  ADJUDICATED before it ships, so this session builds the mechanism, drives
-   *  it through a real FA re-run, and leaves the production default untouched.
-   *  Flipping this to `true` at the `computeFaChunkPlan` call site is the whole
-   *  of "shipping S1"; nothing else has to change. */
-  foldPhantomTails = false,
-  foldOut?: FoldDiagnostics,
 ): FaChunk[] {
   // `languageCode` also drives `computeRunContext`'s qi bookkeeping (Phase 3c) —
   // not just `applyFaTextNormalization` below, which is a separate, later step
@@ -1055,12 +919,7 @@ export function computeFaChunkPlanWithAttribution(
     // (`faChunkPlan.test.ts`), and it carries no `qi` to cut a chunk's text at.
     const textQi = new Map<FaChunk, Array<{ text: string; qiStart: number }>>();
     chunks = exciseUnscriptedRuns(
-      attributeByIndex(
-        ranges, ctx.rawTokens, textQi,
-        foldPhantomTails ? silences : undefined,
-        foldPhantomTails ? ctx.qiOnsetSec : undefined,
-        foldOut,
-      ),
+      attributeByIndex(ranges, ctx.rawTokens, textQi),
       ctx.unscripted, textQi,
     );
   }

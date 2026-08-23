@@ -109,8 +109,10 @@ describe.skipIf(!MEASURE)('WS1 Session AG Step 8 — ear list for the S1 collate
     D.push('> **ear-verified control that moved off its verified value**. Worked THROUGH against the');
     D.push('> audio, not read. Verdict and Class columns are deliberately blank.');
     D.push('>');
-    D.push('> **S1 IS NOT SHIPPED.** `foldPhantomTails` defaults to `false`. This sheet is what has to');
-    D.push('> be adjudicated before that default flips — the rows below are what would change.');
+    D.push('> **S1 WAS REJECTED (WS1 Session AH).** This sheet was adjudicated and every listed row');
+    D.push('> came back a REGRESSION — the production cut was already correct. S1 is deleted from');
+    D.push('> `faChunkPlan.ts`; this generator is retained because S2 reuses it. Regenerating it');
+    D.push('> against the current tree produces the pre-S1 arm and therefore an EMPTY row set.');
     D.push('>');
     D.push('> **Not blinded, and deliberately so.** Both the current and the proposed value are named,');
     D.push('> because the question is which of two specific instants is right. Play them A/B:');

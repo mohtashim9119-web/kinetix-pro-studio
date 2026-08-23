@@ -4,8 +4,13 @@
 > measurement of the `230_slowing_pace` / `231_slowing_pace` seam, which contradicted
 > every timestamp the pipeline had for it. Read with `sync-pipeline-v2-plan.md` Part Z.
 >
-> **Status: a mechanism is identified and evidenced on 13 of 15 known defects. It is NOT
-> proven causal.** The proving experiment is named in §6 and has not been run.
+> **Status: the mechanism is identified and evidenced on 13 of 15 known defects, and the
+> cleanup built on it (S1) is a PERMANENT NEGATIVE — READ §8 BEFORE ACTING ON §5 OR §6.**
+> The proving experiment named in §6 was run in Session AG. Its verdict, after the operator
+> ear-audited the result in Session AH, is that repairing at the DETECTION layer moves
+> correct boundaries: 18 of 18 unaudited moves came back regressions, off a detector running
+> at ~7% precision. §8 records the numbers, why the go/no-go gate was the wrong gate, and
+> what replaces it (S2, prevention at the partition layer).
 
 ---
 
@@ -165,7 +170,11 @@ causes and would survive a perfect chunk-plan fix untouched.
 
 ## 5. Proposed solutions
 
-### S1 — Fold trailing no-audio text forward (primary fix)
+### S1 — Fold trailing no-audio text forward (primary fix) — **REJECTED, see §8**
+
+> **DO NOT BUILD THIS.** It was built in Session AG and deleted in Session AH after an
+> operator ear audit returned 18 regressions out of 18 moves. The detector it keys on runs
+> at ~7% precision. Kept below only as the record of what was tried. §8 has the numbers.
 
 `faChunkPlan.ts` **already does this for the total case**: a run with text but a
 zero-duration window has its text merged forward into the run that actually contains the
@@ -180,7 +189,7 @@ This reuses a shipped, tested mechanism rather than inventing one, and it needs 
 
 *Risk:* changes chunk text for a large fraction of chunks; must be measured, not assumed.
 
-### S2 — Never let a chunk edge split a script sentence
+### S2 — Never let a chunk edge split a script sentence — **THE SUCCESSOR**
 
 Prefer chunk edges that coincide with sentence or segment ends. Where a silence-derived edge
 would fall mid-phrase, move the *text* boundary to the nearest script boundary while keeping
@@ -258,3 +267,85 @@ guarantee, and it must be measured rather than assumed.
 
 The honest summary is that R.14 bought correct output and a diagnosis. It should be spent, not
 kept.
+
+---
+
+## 8. PERMANENT NEGATIVE RESULT — S1 is rejected (WS1 Session AH, 2026-08-23)
+
+**S1 (§5) was built, measured, ear-audited, and deleted. Do not rebuild it. Do not rebuild
+anything else keyed on the phantom-tail existence test.**
+
+### What was measured
+
+| quantity | value | source |
+|---|---|---|
+| v6 chunks the phantom-tail test fires on | **183 of 277 (66.1%)** | §4 census |
+| v6 boundaries actually defective | **~13** | §3, Class A/B rows |
+| **detector precision on v6** | **~13/183 ≈ 7.1%** | derived |
+| boundaries S1 moved with no prior ear evidence | **18** | Session AG Step 8 ear list |
+| of those, operator ear verdict = REGRESSION | **18 of 18 (100%)** | Session AH operator audit |
+| of those, operator ear verdict = improvement | **0** | Session AH operator audit |
+
+Every proposed S1 move on v6 was wrong. In each case the **current production cut was
+already right**. This includes the row S1 was celebrated for in Session AG:
+`152_frozen_brush_mice`, whose S1 value 450.99 is discarded and whose sole ground truth is
+the production value **451.03**.
+
+### Why it failed, stated as a rule
+
+The phantom-tail test is a **necessary-but-nowhere-near-sufficient** condition (§4 already
+said so, in those words). At ~7% precision, a repair keyed on it moves ~13 boundaries right
+and ~170 wrong. There is no version of that trade that ships. The measured 18/18 regression
+rate is not a tuning problem — no threshold recovers a 7%-precision detector, because the
+signal it keys on is present on two thirds of all chunks including the correct ones.
+
+### THE GO/NO-GO GATE WAS THE WRONG GATE
+
+Session AG gated S1 on **collateral ratio** — "10 of 13 attributed defects CORRECT, 0
+worsened, against 2 named control regressions" — and read that as a favourable trade. That
+framing counted the rows S1 was *aimed at* and treated the other 17 moved boundaries as
+merely *unadjudicated*, not as *predicted-wrong*. The census in §4 was sitting in the same
+document and already implied the answer: a detector firing 183 times for 13 defects will
+move mostly-correct boundaries, and the unadjudicated set is therefore expected to be
+dominated by regressions. It was.
+
+**The correct gate for any future repair of this class is DETECTOR PRECISION, measured
+before the repair is built — not the collateral ratio measured after.** A detector below
+roughly break-even precision cannot be made safe by a better repair downstream of it,
+because the repair never learns which firings were real. State the precision first; if it
+is not defensible, do not build the repair.
+
+This generalises the existing CLAUDE.md invariant *"whether a boundary is DEFECTIVE is
+decided from token ordinals and aligner posteriors; acoustic silence may decide only WHERE
+the corrected boundary goes."* S1 violated its spirit: it used a silence-membership test to
+decide **that** a chunk's text was misfiled, which is an identity decision.
+
+### What replaces it
+
+**Cleanup at the DETECTION layer is rejected. Prevention at the PARTITION layer is the
+successor** — S2 (§5), "never let a chunk edge split a script sentence". The distinction is
+load-bearing:
+
+* **S1 (rejected)** asked, per chunk, *does this chunk look like it has misfiled text?* — a
+  detector, applied after a bad partition already exists, at 7% precision.
+* **S2 (successor)** makes the bad partition **unconstructible**: the text partition is
+  decided by the script's own sentence structure alone, before any audio evidence is
+  consulted, so there is no per-chunk judgement call to get wrong and no precision figure to
+  clear. Whisper timestamps are excluded from the identity decision entirely; the detected
+  silence is consulted only to choose WHERE the audio cut goes, once the text seam is
+  already fixed.
+
+S2's dry-run measurement (sentence statistics, chunk-length distribution, forced-violation
+set) is WS1 Session AH Step 3; its results and its honest limits are in
+`sync-pipeline-v2-plan.md` Part AB.
+
+### What was retained
+
+The **total case** fold — a run with text and a genuinely zero-duration window — is
+untouched. It is shipped, tested, and guards a real CTC-infeasibility crash (ONNX Runtime
+fails the first Conv node with `Invalid input shape: {0}`). It is not a detector: a
+zero-duration window has no audio at all, which is a structural fact, not an inference.
+
+All Session AG **measurement machinery** is retained and is what S2 is measured with: the
+funnel census, the parameterised Rust regen harness, the per-boundary diff, and the ear-list
+generator.
