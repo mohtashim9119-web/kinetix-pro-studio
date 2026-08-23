@@ -148,6 +148,12 @@ const ALLOWLIST = new Set<string>([
   // arm — it consumes ground truth and can never ship — which is exactly the
   // kind of caveat that must live in a file rather than a chat transcript.
   'docs/ws1-sync-pipeline/session-am-armg-inspection.md',
+  // WS1 Session AM's six-arm accuracy measurement and Step 6 adjudication,
+  // written by `scripts/ws1-session-am-step5-measure.test.ts`. Same class as
+  // the three entries above — a single-run MEASUREMENT DUMP with the gate,
+  // predictions-vs-outcomes and the pre-committed conclusion quoted verbatim,
+  // not a status page. Its STATUS lives in docs/work-in-progress.md §11o.
+  'docs/ws1-sync-pipeline/session-am-six-arm-measurement.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
