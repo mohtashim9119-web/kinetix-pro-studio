@@ -124,6 +124,19 @@ threshold, is reached by R.14 at residual 0.000s — **Stage 1's lock is no long
 Golden replay 6/6 byte-identical (the replay harness stops at `snapCoveredBoundaries` and never
 reaches the rule stage). Full detail: §11h, `sync-pipeline-v2-plan.md` Part Z.
 
+**2026-08-23 (WS1 Session AH) — no phase row advances.** S1 (Session AG's chunk-plan cleanup) is
+REJECTED and rolled back as a permanent negative — 18/18 operator ear regressions on its own
+collateral sheet. Phase 3/Task 5 stays at Session H's "PRODUCTION PATH WIRED; gate PER-PROJECT,
+DEFAULT OFF"; the rejection touches only the chunk planner (`faChunkPlan.ts`), which is upstream
+of every phase row, not a row itself. 173's chunk-plan non-reproduction (flagged in the §9 entry
+below) is RESOLVED — the stored plan is retired, RE-CAPTURED at HEAD, and its fidelity gate found
+172/173 boundaries bit-identical with the one difference (`vessel_damage_clue`) repairing a defect
+in the retired arm rather than introducing one. S2 (the sentence-aware successor) is measured as a
+read-only dry run — no code written — with pre-registered predictions and a no-ears validation
+proxy that FAILS (ruling R-AT). Golden replay 6/6 byte-identical throughout, unchanged (the replay
+harness never reaches the chunk planner or the rule stage). Full detail: §11j,
+`sync-pipeline-v2-plan.md` Part AB.
+
 **2026-08-23 (WS1 SESSION AG) — STILL NO PHASE ROW ADVANCES, AND ONE ROW'S EVIDENCE BASE CHANGES.**
 S1 (the trailing-silence chunk-text fold, `faChunkPlan.ts`) is built, driven through a real FA
 re-run on all three corpora, and measured: R.14's v6 firing count drops **11 → 1** and 10 of the
@@ -798,6 +811,19 @@ neither silence arm reproduces 126 (native 119, app 121). **No compliance row is
 — it is a bundle-provenance defect, not a Contract 1→2 requirement** — but any future 173
 measurement that depends on the chunk plan should be read against it. Full detail:
 `sync-pipeline-v2-plan.md` Part AA.2.
+
+**2026-08-23 (WS1 Session AH) — RESOLVED (retired + re-captured), not fixed in place.** Bisected
+across every committed tree since the bundle's mint: none reproduces 126, none of eight
+arm/attribution combinations reproduces it, all four stamped arms verify their manifest sha256,
+and the silence arm re-derives byte-identical from raw audio (237, zero diffs). The stored
+126-chunk plan is retired as un-reproducible from any version-controlled state (cause narrowed to
+"code that never landed", not fully determined) and superseded by a fresh HEAD capture
+(`fa_ah_chunks.json`, 119 chunks, stamped bundle `ah-20260823T122703Z-0740b27e`). Fidelity gate:
+172/173 committed boundaries bit-identical between the retired and re-captured FA word arms; the
+one difference, `vessel_damage_clue`, has the retired arm committing 172.910 — WRONG, against
+`ear-12` item-6's 174.740, the register's oldest positive assertion — while the re-captured arm
+commits 174.740 exactly. **The retired plan was not merely unreproducible; it was wrong at the
+project's longest-standing ear verdict.** Full detail: `sync-pipeline-v2-plan.md` AB.7.
 | P7 | Timing-source identified on output, type-level | ~ partial | `types.ts:223` `VideoSegment.anchorSource?: 'forced-alignment' \| 'whisper' \| 'estimate'` exists (ahead of schedule, includes `'forced-alignment'` per R-G) but lives on the *segment*, not per-token/per-Stage-1-output as the contract literally specifies |
 | P8 | Tokens/silences/audioDuration/segments as ONE bundled, type-enforced object | ❌ | `project.transcriptTokens` (`types.ts:336`) remains separately reachable; `useWhisper.ts:44-51`'s own doc comment *warns* callers to use `AlignFromCacheResult.tokens` instead — discipline, not type enforcement. This is "old R7," scheduled for Phase 4 |
 
@@ -6112,6 +6138,70 @@ the D-1 regression checklist, Contract IN / 1→2 verification, inspector smear 
 5-tier suite, the wrong-landmark class, and the `ordinalDelta +1` mirror class (which S1 has now
 in fact closed on its one known member, `214_solitary_fire`).
 
+### §11j. WS1 Session AH — RESULTS
+
+**One-line verdict: S1 is REJECTED — 18/18 operator ear regressions — and rolled back as a
+permanent negative. 173's chunk plan is re-captured and its non-reproduction is retired with a
+narrowed (not fully determined) cause. S2's dry run is measured and its predictions
+pre-registered. The no-ears proxy FAILS: S2 validation needs ears.** Full narrative and every
+table: `sync-pipeline-v2-plan.md` Part AB.
+
+**Step 0 — S1 rollback.** `docs/ws1-sync-pipeline/stage1-session-ag-ear-list.md` adjudicated:
+all eighteen v6 boundaries S1 moved with no prior evidence came back REGRESSION, including the
+control it was believed to fix (`152_frozen_brush_mice`, which S1's own arm left at 451.030 —
+unchanged from production). `foldPhantomTails`, `FoldDiagnostics`, and the fold body are DELETED
+from `faChunkPlan.ts`, not disabled. Total-case fold untouched. Committed boundaries dumped from a
+clean worktree at `09790ac` and from the rolled-back tree are byte-identical on all three corpora
+(sha256 `a4d214af...`). Ruling **R-AS**: the correct go/no-go gate for this defect class is
+DETECTOR PRECISION, measured before the repair is built, never collateral ratio measured after —
+the phantom-tail test's ~7% precision (183/277 v6 chunks fire against ~13 true defects) was
+visible in Session AG's own §4 census and should have blocked shipping to measurement.
+
+**Step 1 — ledger ingestion.** New sitting `ear-verify-ah` (order 13), 22 rows: the 18 rejected
+moves scored CORRECT at the production value (the project's first labelled WRONG-MOVE set,
+`S1_KNOWN_BAD_MOVES`, 19 rows counting one ledger-inherited spanish row), plus the operator's four
+fixed-row verdicts. STRUCTURAL vs RULE-DEPENDENT, measured: `152_frozen_brush_mice` and
+`iron_bounce` are RULE-DEPENDENT (R.14/R.15 respectively — both reopen if those rules are
+deleted), `logic_clash` is RULE-DEPENDENT (R.15, exact), and `wall_split_path` does NOT reproduce
+its named value at all (production commits 162.460 via R.15, +0.310s from the brief's 162.15,
+which the register's own note says is unreachable by any script-anchored placement — flagged for
+the operator, not resolved). PROVENANCE CORRECTION: 450.99 traces to Session P
+(`e7e4f9a`), already superseded in Session AD (`d189e87`), never to S1 — S1's own arm left this
+row at 451.030 regardless.
+
+**Step 2 — 173 re-capture.** Bisected the 126/119 discrepancy across every committed tree since
+the bundle's mint (`4b9bea9` onward): all compute 119, none of eight arm/attribution combinations
+reaches 126, all four stamped arms verify their manifest sha256, and the silence arm
+re-derives byte-identical (237, zero diffs) from raw audio. **Disposition: RETIRED** — produced
+by code that never landed; the extra boundaries' specific origin is NOT DETERMINED. Re-captured
+at HEAD (`fa_ah_chunks.json`, 119 chunks) and aligned by the same ONNX model under ORT 1.23.2 with
+Session Y's four single-thread pins active (5:21.89 wall). **Fidelity: 172/173 committed
+boundaries bit-identical; the one difference is `vessel_damage_clue`, which the retired arm got
+WRONG (172.910) against the ear-verified 174.740 (`ear-12` item-6, the register's oldest positive
+assertion) that the re-captured arm now commits exactly.** All five 173 register rows reproduce.
+
+**Step 3 — S2 dry run.** No `wav2vec2-en.onnx` hard context limit exists (both graph dimensions
+symbolic, convolutional not learned positional embedding); the limit is soft, empirically 60s
+at 3.85 GiB / 1.3x realtime, 90s at 6.69 GiB / 1.0x realtime (full sweep:
+`sync-pipeline-v2-plan.md` AB.9-AB.10). Sentence structure measured: zero segments in any corpus
+hold more than one sentence (the load-bearing zero — rules 1/2 never conflict inside a segment);
+59/38/4 sentences span a segment seam on v6/173/spanish. Simulated packing collapses chunk count
+~10x (v6 277→26) and grows median length ~4s→~57s — stated as a real, unresolved cost, not
+credited as an improvement. Zero forced oversize chunks; audio-cut offsets grow (173 median
+1.406s, max 3.718s). **Pre-registered, before any FA run: all seven named rows (5 open + 2
+rule-dependent) get NO chunk edge under S2** — the phantom cannot form there by construction,
+which is explicitly not the same claim as "S2 places the boundary correctly". `gadget_decay`
+confirmed not reached; no rule added.
+
+**Step 4 — the no-ears proxy FAILS.** Word-gap containment against `S1_KNOWN_BAD_MOVES` (19) vs
+ledger-authorised committed controls (69, disjoint by construction): precision 0.370, and the
+separation margin is **negative** (-1.820s — the known-bad range sits INSIDE the known-good
+range). Two-sided sensitivity at ±5%/±10% leaves the confusion matrix bit-identical, so the
+constant does no work; LOOCV 0.648 is worse than the 0.784 majority-class baseline. **Ruling
+R-AT: a validator built from FA's own word timings measures itself — 29 of 69 false positives are
+exactly the phantom rows the proxy exists to catch, misread as "late" because their own yardstick
+is the defect.** S2 validation needs ears; no artifact-only shortcut exists today.
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -6169,6 +6259,66 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-23 — WS1 Session AH: S1 REJECTED on 18/18 operator ear regressions and rolled back as
+  a permanent negative; 173's chunk plan retired and re-captured; S2 measured as a dry run; the
+  no-ears proxy FAILS.** **Step 0** deleted `foldPhantomTails`/`FoldDiagnostics`/the fold body from
+  `faChunkPlan.ts` (not disabled), retaining the total-case fold and all Session AG measurement
+  machinery. The operator ear-audited every row `stage1-session-ag-ear-list.md` named and every one
+  came back REGRESSION — including `152_frozen_brush_mice`, which S1's own arm left at 451.030
+  unchanged from production. Recorded as a permanent negative in
+  `fa-chunk-phantom-root-cause.md` §8: the phantom-tail existence test fires on 183/277 v6 chunks
+  against ~13 true defects (~7% precision), so a repair keyed on it moves ~13 right and ~170 wrong
+  — no threshold recovers that. **Ruling R-AS: the correct go/no-go gate for this defect class is
+  DETECTOR PRECISION, measured before the repair is built, never the collateral ratio measured
+  after** — Session AG's own §4 census already showed the 7% figure and read it as favourable
+  anyway. Committed boundaries dumped from a clean `09790ac` worktree and from the rolled-back tree
+  are byte-identical on all three corpora (sha256 `a4d214af...`) — S1 was default-off, so this was
+  measured rather than assumed. **Step 1** ingested `ear-verify-ah` (order 13, 22 rows) and built
+  `S1_KNOWN_BAD_MOVES` (19 rows) — the project's first labelled WRONG-MOVE set, disjoint from the
+  ledger's positive controls by construction (verified, not assumed). Structural-vs-rule-dependent
+  measured for the four "fixed" rows: `152_frozen_brush_mice` (R.14) and `iron_bounce`/`logic_clash`
+  (R.15) are RULE-DEPENDENT — they reopen if those rules are ever deleted — and `wall_split_path`
+  does not reproduce its named value at all (production commits 162.460, not the brief's 162.15,
+  which the register's own note says is unreachable by any script-anchored rule; flagged for the
+  operator). The 19/18 reconciliation resolved: the unaccounted row is the scoped-out spanish
+  boundary, included and labelled `'ledger-inherited'`. PROVENANCE CORRECTED: 450.99 traces to
+  Session P (`e7e4f9a`), already superseded in Session AD, never to S1. **Step 2** bisected 173's
+  126-vs-119 chunk-plan discrepancy across every committed tree since the bundle's mint — none
+  reproduces 126, none of eight arm/attribution combinations does either, all four stamped arms
+  verify their sha256, and the silence arm re-derives byte-identical (237, zero diffs) from audio.
+  **Disposition: RETIRED** (produced by code that never landed; extra-boundary origin NOT
+  DETERMINED), superseded by a fresh HEAD capture (`fa_ah_chunks.json`, 119 chunks) aligned by the
+  same ONNX model under Session Y's four single-thread pins (5:21.89 wall). **Fidelity: 172/173
+  boundaries bit-identical; the one difference, `vessel_damage_clue`, has the RETIRED arm WRONG
+  (172.910) against the ear-verified 174.740 (`ear-12` item-6, the register's oldest positive
+  assertion) that the re-capture now commits exactly** — the retired plan was not merely
+  unreproducible, it was wrong at the project's oldest ear row. All five 173 register rows
+  reproduce. **Step 3** found no hard context limit in `wav2vec2-en.onnx` (both graph dimensions
+  symbolic, convolutional positional embedding) and measured a soft, empirical one: 60s clears at
+  3.85 GiB / 1.3x realtime, 90s at 6.69 GiB / 1.0x realtime. Sentence structure: **zero segments in
+  any corpus hold more than one sentence** (load-bearing — rules 1/2 never conflict inside a
+  segment), 59/38/4 sentences span a seam on v6/173/spanish. Simulated S2 packing collapses chunk
+  count ~10x (v6 277→26) and grows median length ~4s→~57s, reported as a real unresolved cost, not
+  a win. Zero forced oversize chunks; audio-cut offsets grow (173 median 1.406s, max 3.718s), full
+  forced-violation set named per seam. **Pre-registered before any FA run: all seven named rows (5
+  open + 2 rule-dependent) get NO chunk edge under simulated S2** — the phantom cannot form there
+  by construction, explicitly not the same claim as correct placement; `gadget_decay` confirmed not
+  reached, no rule added. **Step 4: the no-ears proxy FAILS.** Word-gap containment scores
+  precision 0.370 against the two labelled sets (19 known-bad vs 69 ledger-authorised controls,
+  verified disjoint), with a **negative separation margin (-1.820s — the known-bad range sits
+  INSIDE the known-good range)**; two-sided sensitivity at ±5%/±10% leaves the confusion matrix
+  bit-identical (the constant does no work); LOOCV 0.648 is worse than the 0.784 majority-class
+  baseline. **Ruling R-AT: a validator built from FA's own word timings measures itself** — 29 of
+  69 false positives are exactly the phantom rows the proxy exists to catch, misread as "late"
+  because their own yardstick is the defect. **S2 validation needs ears; no artifact-only shortcut
+  exists today.** Six numbers: `npm test` 2485 passed / 45 skipped / 0 failed; `tsc --noEmit`
+  clean; `cargo check --features fa-inference` clean; clippy clean with the same 4 pre-existing
+  warnings; `cargo test` 141/0/1 and 216/0/24 with `fa-inference`; golden replay 6/6 byte-identical.
+  `faAnchors.ts` sha256 unchanged, `b61e94cb…`. `snapBoundaries.ts`, `silenceDetector.ts`,
+  `whisperService.ts`, the Hirschberg aligner, `docs/history.md` and
+  `scripts/fixtures/phase4-baseline-*.csv` all untouched; no new repo-root file. Full detail: §11j,
+  `sync-pipeline-v2-plan.md` Part AB.
 
 - **2026-08-23 — WS1 Session AG: the phantom mechanism is CONFIRMED CAUSAL. S1 repairs the chunk
   plan at the source, R.14's v6 firings collapse 11 → 1, and two ear-verified controls regress —

@@ -8733,3 +8733,370 @@ is stable, because a defect-rate measured on a pipeline about to move by 23 boun
 the old pipeline. S2 (never split a script sentence at a chunk edge) — out of scope by the brief.
 173's chunk-plan non-reproduction (AA.2) — a different session's work. Golden coverage for the
 rule stage (AA.3) — the gate on R.14 deletion.
+
+---
+
+## Part AB — S1 Rejected on 18/18 Ear Regressions; the Gate Was Collateral Ratio and Should Have Been Precision (WS1 Session AH, 2026-08-23, append-only)
+
+### AB.1 — The verdict
+
+The operator ear-audited `docs/ws1-sync-pipeline/stage1-session-ag-ear-list.md`, the full
+collateral sheet Session AG produced for S1. **Every one of the eighteen v6 boundaries came back
+a REGRESSION**: the current production cut was already right, and S1's proposed value was wrong.
+Zero improvements, zero neutrals.
+
+S1 -- `faChunkPlan.ts`'s partial-case trailing-silence text fold, and its `foldPhantomTails` flag
+-- is **DELETED** from the tree, not disabled. This is recorded as a permanent negative result in
+`docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md` §8 and in the planner's own source
+comment, so the next session cannot rebuild it by reading §5 alone.
+
+The **total case** fold (a run with text and a genuinely zero-duration window) is untouched. It is
+shipped, tested, and guards a real CTC-infeasibility crash. It is not a detector -- a
+zero-duration window has no audio at all, which is a structural fact rather than an inference.
+
+### AB.2 — Why it failed, in one number
+
+| quantity | value |
+|---|---|
+| v6 chunks the phantom-tail existence test fires on | 183 of 277 (66.1%) |
+| v6 boundaries actually defective | ~13 |
+| **detector precision** | **~7.1%** |
+| S1 moves with no prior ear evidence | 18 |
+| operator verdict REGRESSION | 18 of 18 (100%) |
+
+A detector at ~7% precision moves roughly 13 boundaries right and 170 wrong. No threshold
+recovers that, because the signal it keys on is present on two thirds of all chunks *including
+the correct ones*. Session AG's own §4 census already said the phantom was "necessary but nowhere
+near sufficient" -- in those words -- and the repair was built anyway.
+
+### AB.3 — THE GATE WAS THE WRONG GATE
+
+Session AG gated S1 on **collateral ratio**: 10 of 13 attributed defects CORRECT, 0 worsened, 2
+named control regressions, R.14 firings 11 -> 1, seam 230 exact. Read as a trade, that looks
+favourable. It counted the rows S1 was *aimed at*, and filed the other 17 moved boundaries as
+merely *unadjudicated* rather than as *predicted-wrong*. Given a 7%-precision detector, the
+unadjudicated set was expected to be dominated by regressions. It was, at 100%.
+
+**Ruling R-AS. The go/no-go gate for any repair of this class is DETECTOR PRECISION, measured
+before the repair is built -- never the collateral ratio measured after.** A detector below
+break-even precision cannot be rescued by a better repair downstream of it, because the repair
+never learns which of its firings were real. State the precision first; if it is not defensible,
+do not build the repair, and record the negative.
+
+This is the measurable form of an invariant CLAUDE.md already carries: *whether a boundary is
+DEFECTIVE is decided from token ordinals and aligner posteriors; acoustic silence may decide only
+WHERE the corrected boundary goes.* S1 used a silence-membership test to decide **that** a chunk's
+text was misfiled -- an identity decision, made from acoustic evidence.
+
+### AB.4 — What the rollback is worth, measured
+
+The rollback is provably behaviour-neutral. Committed boundaries were dumped from a clean
+worktree at `09790ac` and from the rolled-back tree and compared byte-for-byte:
+
+```
+sha256 committed-HEAD.txt == committed-AH.txt == a4d214af...
+v6 447 committed / 277 chunks | 173 173 committed / 119 chunks | spanish 27 committed / 5 chunks
+```
+
+Identical on all three corpora, all four rule-firing profiles unchanged. This is expected -- S1
+was default-off, so the deleted branch was unreachable -- but it was measured rather than argued.
+
+### AB.5 — The first negative ground truth
+
+The eighteen rejected moves are ingested into `scripts/ws1-ear-pass-ledger.ts` as sitting
+`ear-verify-ah` (order 13), scored CORRECT at the **production** value, plus a new exported
+`S1_KNOWN_BAD_MOVES` table carrying each boundary's correct value, S1's proposed value, and the
+delta.
+
+This matters beyond eighteen controls. Every prior sitting scored values the pipeline had
+**already committed**, so the ledger has only ever recorded what *right* sounds like. This one
+scored eighteen values a candidate change **proposed** and rejected all of them, so the project
+now has a labelled **wrong-move** set. A detector that cannot separate these eighteen from the
+ear-verified controls is not measuring anything -- which is exactly what Step 4 tests.
+
+**The 19/18 reconciliation.** The sheet was generated with 19 rows; the operator reports 18. The
+sheet is 18 v6 rows (1 moved ear-verified control + 17 unaudited) plus 1 spanish row, and the
+operator's report is scoped to v6. The unaccounted row is `spanish/023_scylla_six_sailors`
+(65.120 -> 66.730, +1.610), and it needs no fresh sitting: 65.120 is an `ear-12` CORRECT value and
+sits in `CLOSED_BY_POSITIVE_ASSERTION` as item-9, so S1's move off it is known-bad on evidence
+predating S1 by eleven sittings. It is carried in the table labelled `'ledger-inherited'`;
+callers wanting only the operator-attested set filter on `'ah-sitting'`.
+
+### AB.6 — PROVENANCE CORRECTION: 450.99 is not an S1 value
+
+Session AH's brief directed that `152_frozen_brush_mice`'s discarded value 450.99 be archived
+"with provenance naming S1 as its source". **Measured, that is not where it came from.**
+`git log -S"450.99"` puts its only introduction in `e7e4f9a` (WS1 Session P, 2026-08-19), as a
+transcription slip in that session's own prose table, and Session AD (`d189e87`) already marked it
+SUPERSEDED. It has never been an `EAR_PASS_LEDGER` row, and S1's own arm committed 451.030 for
+this boundary -- the same value production commits -- so the rollback does not move it at all.
+
+The brief's intended outcome stands unchanged: **451.03 is the sole ground truth**, as it has been
+since `ear-12` (order 1). Only the attribution is corrected, and the ledger records the true
+provenance rather than the stated one.
+
+### AB.7 — 173 re-captured; the retired plan was WRONG at the register's oldest ear row
+
+Session AG reported that 173's stored bundle holds 126 chunks while current code computes 119,
+and could not attribute it. Session AH bisected it.
+
+**Ruled out by measurement, not by argument.** Every committed tree from `4b9bea9` — the commit
+that was HEAD when the bundle was minted, 2026-08-19T13:39Z — through HEAD computes **119**, with
+a byte-identical `chunk[11]`. None of the eight available arm/attribution combinations reaches
+126 (native/app silences x raw/legacy tokens x script-word-index/segment-start-time gives
+119 / 121 / 1 / 1 / 89 / 90 / 35 / 36). All four stamped arms verify against their manifest
+sha256, so it is not a silent edit. The silence arm was **re-derived from the audio** this
+session: 237 entries, **zero elementwise differences**. `faAnchors.ts` is untouched since
+2026-08-16, three days before the mint. The corpus source files' mtimes (Jul 22 / Aug 4) predate
+it too.
+
+**Disposition: RETIRED, cause narrowed to one sentence.** The stored plan was produced by code
+that never landed in the repository — an uncommitted Session P working state. The specific origin
+of its 7 extra run boundaries is **NOT DETERMINED**, and is recorded as such rather than guessed.
+
+**The re-capture.** `fa_ah_chunks.json` (119) computed at HEAD, aligned by the same ONNX model
+(sha256 `48a3c2e1...`, 1,262,512,711 bytes) under ONNX Runtime **1.23.2** via
+`session_p_regen` — 5:21.89 wall, 99% cpu, with Session Y's four single-thread pins active and
+quoted. 1660 words, the same count the retired arm carried. Stamped
+`ah-20260823T122703Z-0740b27e` into `.work-phase4/session-ah/173-bundle/` with six arms
+(silences, raw Whisper tokens, chunk plan, FA words, parsed segments, committed boundaries). The
+retired arm is left in place as the historical record.
+
+**Fidelity gate — and the finding.** **172 of 173** committed boundaries are BIT-IDENTICAL across
+the two arms. All five register rows reproduce exactly (18.510 / 76.580 / 162.460 / 418.140 /
+427.480), and every other ledger-scored 173 boundary is unchanged.
+
+The single difference is `vessel_damage_clue`: the retired arm commits **172.910**, the
+re-captured arm commits **174.740** — the ear-verified value, carried by BOTH `ear-12` item-6
+(the register's oldest positive assertion) and `ear-173-x`.
+
+So the retired plan was not merely unreproducible; **it was wrong at the boundary with the
+project's longest-standing ear verdict, and the re-capture repairs it.** A consequence for
+Session AG's record: S1's single 173 "improvement" was this same row landing on 174.740. It is
+now fully explained by using a reproducible chunk plan, and not by the trailing-silence fold.
+
+---
+
+### AB.8 — S2 measured as a dry run, before a line of planner code
+
+The ordering is the lesson of S1: measure the design, then decide, then build. Nothing in
+`faChunkPlan.ts` changed for this.
+
+**S2's three rules, none of which is a threshold.** (1) A chunk's text is always a whole number of
+script segments, never a fragment. (2) A chunk edge never falls inside a sentence, including one
+that spans a segment seam. (3) The text partition is fixed by the script alone, before any audio
+evidence is consulted; only then is the audio cut placed, at the detected silence nearest the
+chosen seam. Whisper timestamps are excluded from the identity decision entirely.
+
+**3b — sentence structure (MEASURED).**
+
+| | v6 | 173 | spanish |
+|---|---|---|---|
+| script segments | 447 | 175 | 27 |
+| sentence terminators | 368 | 137 | 21 |
+| **sentences spanning >1 segment** | **59** | **38** | **4** |
+| segments touched by one | 138 | 76 | 10 |
+| widest spanning sentence | 4 segs | 2 segs | 3 segs |
+| **segments containing >1 sentence** | **0** | **0** | **0** |
+| unbreakable groups | 368 | 137 | 21 |
+
+**The zero row is the load-bearing one.** No script segment in any corpus contains more than one
+sentence, so rule 1 and rule 2 never conflict *inside* a segment. The only tension is sentences
+that span segment seams — 59 / 38 / 4 of them — and that is exactly the case rule 2 exists for.
+173's segments 5+6 are the worked example: *"They're the worst"* + *"because the environment was
+already doing the killing before the enemy showed up."* One sentence, two segments, and today's
+planner is free to cut between them.
+
+**3c — chunk-length distribution (MEASURED).**
+
+| | v6 S2 | v6 today | 173 S2 | 173 today | es S2 | es today |
+|---|---|---|---|---|---|---|
+| chunks | **26** | 277 | **13** | 119 | **2** | 5 |
+| min | 5.42s | 0.10s | 37.02s | 0.46s | 35.80s | 7.04s |
+| median | 57.34s | 4.04s | 56.61s | 4.36s | 56.24s | 14.30s |
+| max | 59.73s | 19.48s | 59.48s | 27.92s | 56.24s | 30.68s |
+| below 15s | 1 | 273 | 0 | 111 | 0 | 3 |
+| above 60s | **0** | 0 | **0** | 0 | **0** | 0 |
+
+Chunk count collapses by roughly 10x and median chunk length grows from ~4s to ~57s. **This is
+the single biggest fact about S2 and it is not obviously good.** Today's longest chunk ever run
+is 30.68s; S2's median is nearly double that, and its behaviour there is measured for capacity
+(AB.9) but NOT for accuracy. A longer window gives the aligner more room to drift internally, and
+this session produced no evidence either way.
+
+**3d — the forced-violation set, in full.** Zero unbreakable groups exceed 60s on any corpus, so
+S2 is never forced to emit an oversize chunk. One chunk falls under 15s (v6 segments 444-446,
+5.42s) and it is the file tail — an unavoidable remainder, not a rule failure. The real cost is
+in the audio cut: offsets grow because there are far fewer seams and each is pinned to a script
+location rather than chosen for acoustic convenience.
+
+| | v6 | 173 | spanish |
+|---|---|---|---|
+| internal seams | 25 | 12 | 1 |
+| median abs offset | 0.591s | **1.406s** | 0.118s |
+| p90 | 1.802s | 2.874s | 0.118s |
+| max | 1.884s | **3.718s** | 0.118s |
+| no silence within +/-1.0s | 7 | 6 | 0 |
+| no silence within +/-2.0s | 0 | 3 | 0 |
+| no silence within +/-5.0s | 0 | 0 | 0 |
+
+Every such seam is named individually in `.work-phase4/session-ah/step3-s2dryrun.md`. At each,
+S2 must either accept the offset or leave the seam unrealised and merge the two chunks; this
+session does not choose between those, because choosing would require a constant nobody has
+derived. Reporting the distribution at four windows rather than picking one keeps any single
+number from becoming load-bearing by accident.
+
+**3e — pre-registered predictions.** Written and committed before any FA run against a simulated
+plan. For **all seven** named rows — the five open defects plus the two rule-dependent ones — the
+simulated S2 partition places **NO chunk edge at the seam**:
+
+| corpus | seam | ear value | S2 edge? |
+|---|---|---|---|
+| v6 | `214_solitary_fire` | 630.09 | NO |
+| v6 | `231_slowing_pace` | 682.74 | NO |
+| v6 | `447_scout_facing_dark` | 1418.53 | NO |
+| v6 | `152_frozen_brush_mice` (R.14) | 451.03 | NO |
+| 173 | `lethal_nature_hazard` | 19.27 | NO |
+| 173 | `gadget_decay` | 427.60 | NO |
+| 173 | `iron_bounce` (R.15) | 76.59 | NO |
+
+With no edge, the seam sits in a chunk interior, there is no silent tail to file text into, and
+the phantom **cannot form by construction**. **This is not the same as S2 placing these
+boundaries correctly.** It removes the failure mode without supplying a landmark, and where FA
+then puts each boundary is an open empirical question this session does not answer. Recording
+that distinction in advance is the point of pre-registering: "the defect mechanism is gone" and
+"the boundary is right" are different claims, and S1 was sold on the first while being judged on
+the second.
+
+**`gadget_decay` is explicitly NOT REACHED**, as the brief requires stated outright: no chunk edge
+(today both segments sit inside one chunk `[417.30, 433.52]`, and S2 places no edge there either),
+no detected silence within seconds of the true seam, and its ear target 427.60 sits 0.06s PAST the
+incoming segment's own first word onset (427.54) — outside its own word gap, so no
+right-edge-minus-pre-roll placement reaches it either. **No rule was added to cover it this
+session.** It is the strongest single piece of evidence that the phantom is not the only defect
+cause: a perfect chunk plan leaves this row exactly where it is.
+
+---
+
+### AB.9 — the context limit is not in the model, and had to be measured
+
+`wav2vec2-en.onnx` (sha256 `48a3c2e1...`, byte-identical to the production model at
+`~/Library/Application Support/com.kinetix.pro-studio/fa-models/en/model.onnx`) declares its
+input as:
+
+```
+INPUT  input_values ['batch', 'sequence']       # both dimensions symbolic
+OUTPUT logits       ['batch', 'frames', 33]
+```
+
+**There is no hard context limit in the artifact.** Both dimensions are symbolic, and the graph
+carries no fixed positional-embedding table — wav2vec2 uses a *convolutional* positional
+embedding (`onnx::Conv_4004 [1024, 64, 128]`), which has no maximum position by construction.
+Nothing in `fa_onnx.rs` imposes one either. The nearest thing to a ceiling anywhere in the
+pipeline is `syncConstants.ts`'s `MAX_RUN_SEC = 30`, which bounds a *run*, not the model.
+
+So the limit is **soft** — memory and time, degrading rather than failing — and it was derived
+empirically. See AB.10 for the measured sweep.
+
+---
+
+### AB.11 — THE NO-EARS PROXY FAILS. Reported as a negative, not weakened to pass.
+
+**The question.** S1 cost an eighteen-row listening session to refute. If a candidate change's
+moves could be scored from artifacts alone, that session would not have been needed. So: is there
+a signal that separates a known-good boundary value from a known-bad proposed one, without ears?
+
+**The two labelled sets**, verified disjoint by value in Step 1 so separation is measurable rather
+than definitional:
+
+* **POSITIVE (must not flag) — 69 boundaries** whose *currently committed* value the ledger
+  authorises as CORRECT. Defined against production deliberately, not against the ledger alone: a
+  row saying "this VALUE is correct" is not the claim "the boundary production commits here is
+  correct". `lethal_nature_hazard` has an ear-CORRECT target at 19.27 while production commits
+  18.51, scored EARLY — that boundary *should* be flagged, and counting it as a control would be
+  scoring the proxy against a known defect. (Session AG's "43 controls" counted the boundaries a
+  rule could be scored against at the time; 69 is the count under this stricter, production-joined
+  definition, and it is the set that answers the question actually being asked.)
+* **NEGATIVE (must flag) — 19** `S1_KNOWN_BAD_MOVES` proposed values.
+
+**The proxy.** Score the candidate `V` at seam *(i-1, i)* against the seam's own **word gap**,
+`[outgoingEnd, incomingOnset]` — the outgoing segment's last claimed FA word ending, and the
+incoming segment's first claimed FA word beginning. FLAG when `V` falls outside it. Both endpoints
+are measured aligner quantities, so the test is an ORDER comparison with no tuning surface. The
+only constant is the +/-50 ms tolerance, which is the Zero-Defect Register's own standing
+tolerance — it predates these rows by many sessions and was not chosen against them. A second
+signal is scored alongside because the brief names it: the incoming first word's FA confidence
+against production's `CONF_MIN_FALLBACK` (0.056), i.e. the phantom signal itself.
+
+**Result — MEASURED.**
+
+| proxy variant | TP | FP | FN | TN | precision | recall |
+|---|---|---|---|---|---|---|
+| A. word-gap containment | 17 | **29** | 2 | 40 | **0.370** | 0.895 |
+| A-late. past `incomingOnset` only | 17 | 29 | 2 | 40 | 0.370 | 0.895 |
+| B. incoming conf < `CONF_MIN_FALLBACK` | 15 | 36 | 4 | 33 | 0.294 | 0.789 |
+| A OR B | 17 | 36 | 2 | 33 | 0.321 | 0.895 |
+
+**Separation margin.** On `overshoot = candidate - incomingOnset`, the continuous quantity behind
+signal A:
+
+| set | n | min | median | max |
+|---|---|---|---|---|
+| GOOD | 69 | -4.460 | -0.030 | **+1.810** |
+| BAD | 19 | **-0.010** | +0.810 | +1.490 |
+
+**margin = min(BAD) - max(GOOD) = -0.010 - 1.810 = -1.820s.** The sets do not merely fail to
+separate cleanly — the BAD range is *contained inside* the GOOD range. No threshold on this signal
+can work, at any tolerance. Two-sided sensitivity confirms it: at -10%, -5%, 0, +5%, +10% on
+`TOL_SEC` the confusion matrix is **identical** (17/29/2/40) — the constant is doing no work at
+all, which is the clearest possible evidence that the failure is structural rather than a tuning
+miss. LOOCV accuracy 57/88 = 0.648, against a majority-class baseline of 69/88 = 0.784: the proxy
+is **worse than always answering "fine"**.
+
+**WHY IT FAILS, and this is the finding worth keeping.** The proxy's own reference point is
+computed from the FA output whose errors it is trying to detect. Look at the largest false
+positive: `152_frozen_brush_mice`, committed 451.030, ear-verified CORRECT since `ear-12`. Its
+`incomingOnset` reads 449.220 at confidence **1.49e-3** — a phantom, 1.8s early. The correct
+boundary looks 1.81s "late" only because the yardstick is broken exactly where the defect lives.
+Twenty-nine of the sixty-nine controls fail this way, spread across every sitting in the ledger,
+so no subset of controls rescues it.
+
+**Ruling R-AT. A validator for a change to the FA chunk plan cannot be built from FA's own word
+timings.** The change alters the very timings the validator reads, so such a proxy measures
+itself. Any future no-ears validator needs a reference INDEPENDENT of the arm under test — a
+second aligner, a different model, or the operator's own waveform measurement — and this session
+produced no such reference.
+
+**Consequence, stated plainly because it is the answer to the question that was asked: S2
+VALIDATION NEEDS EARS.** There is no artifact-only shortcut available today. The proxy was not
+weakened to pass and no partial rule was shipped from it.
+
+### AB.10 — Context sweep, measured (stopped deliberately, not because it failed)
+
+Synthetic Gaussian-noise input at increasing durations, through the SAME production model
+(sha256 `48a3c2e1...`, byte-identical to the app's bundled copy) and the SAME single-threaded,
+sequential, deterministic session configuration Session Y pinned (`fa_onnx.rs:411-422`):
+
+| duration | frames out | wall time | x realtime | peak RSS |
+|---|---|---|---|---|
+| 10s | 499 | 5.00s | 2.0x | 2.69 GiB |
+| 20s | 999 | 10.40s | 1.9x | 2.82 GiB |
+| 30s | 1,499 | 16.81s | 1.8x | 2.95 GiB |
+| 45s | 2,249 | 26.60s | 1.7x | 3.27 GiB |
+| 60s | 2,999 | 46.08s | 1.3x | 3.85 GiB |
+| 90s | 4,499 | 93.39s | 1.0x | 6.69 GiB |
+| **120s** | 5,999 | 168.94s | **0.7x** | **11.25 GiB** |
+
+Every point ran to completion — **there is no failure point in this sweep, at any duration
+tried.** Memory and wall time both grow super-linearly (attention over the whole window scales
+quadratically in frame count), which is consistent with there being no fixed context limit and a
+purely resource-bound one instead. The sweep was stopped BEFORE 180s deliberately: at the
+120→90s growth rate, 180s was projected to approach or exceed this machine's 32 GiB RAM
+alongside everything else already running, and crashing the harness was not worth the next data
+point. **This is an INFERRED ceiling from the growth curve, not a measured failure — stated as
+such rather than as a hard number.**
+
+**What this means for S2, concretely.** Every chunk length S2's own simulation produced across
+all three corpora (AB.8, max 59.73s) sits at or below the 60s point, which completed in well
+under a minute at under 4 GiB. The empirical ceiling is nowhere near being tested by S2's actual
+output — the real cost of S2 is the accuracy question (AB.8's stated non-finding), not capacity.
