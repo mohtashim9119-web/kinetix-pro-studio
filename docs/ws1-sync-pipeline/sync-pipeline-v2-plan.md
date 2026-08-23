@@ -9100,3 +9100,52 @@ such rather than as a hard number.**
 all three corpora (AB.8, max 59.73s) sits at or below the 60s point, which completed in well
 under a minute at under 4 GiB. The empirical ceiling is nowhere near being tested by S2's actual
 output — the real cost of S2 is the accuracy question (AB.8's stated non-finding), not capacity.
+
+---
+
+### AB.12 — Six numbers, MEASURED (post-rollback, post-recapture, post-docs), and every SHA
+
+Re-run from a clean state after every code change this session, not carried forward from Step 0's
+earlier measurement:
+
+| check | result |
+|---|---|
+| `npm test` | **2485 passed / 54 skipped / 0 failed** — 108 files passed, 40 skipped (148) |
+| `tsc --noEmit` (`npm run lint`) | clean |
+| `cargo check --features fa-inference` | clean |
+| `cargo clippy --all-targets --features fa-inference` | clean — 4 pre-existing warnings, 0 new |
+| `cargo test` (default) / `--features fa-inference` | 141/0/1 / 216/0/24, unchanged |
+| Golden replay (`phase4-handoff-replay-sync.test.ts`) | 6/6 byte-identical |
+
+The 54-skip figure is 45 (Step 0's own post-rollback measurement: the pre-session 46-skip floor
+minus S1's deleted generator) plus the 9 new Session AH gated generators (Steps 1-4), none in the
+default sweep. All nine are `describe.skipIf`/`DEST`-gated the same way every prior WS1 generator
+is — confirmed by grep before this entry was written, not assumed.
+
+`faAnchors.ts` sha256 unchanged: `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`.
+
+**Commits, in order:**
+
+| commit | summary |
+|---|---|
+| `4c6cad6` | Step 0 — S1 deleted as a permanent negative |
+| `e46fdef` | Step 1 — ledger ingestion, `S1_KNOWN_BAD_MOVES`, structural-vs-rule-dependent |
+| `4196337` | Step 2 — 173 re-capture, fidelity gate, retirement of the 126-chunk plan |
+| `ae2c516` | Steps 3-4 — S2 dry run, pre-registered predictions, the failed proxy |
+| `5006806` | docs — this Part, §§3/9/11j, Changelog, project-state, CLAUDE.md invariants |
+
+`git diff --stat 09790ac` touches only: `docs/work-in-progress.md`, `fa-chunk-phantom-root-cause.md`,
+`sync-pipeline-v2-plan.md`, `project-state.md`, `CLAUDE.md`, `scripts/ws1-ear-pass-ledger.ts`, nine
+new `scripts/ws1-session-ah-*.test.ts` files, one deleted `scripts/ws1-session-ag-s1-plan.test.ts`,
+two small edits to `scripts/ws1-session-ag-step8-earlist.test.ts`/`ws1-single-tracker.test.ts` (both
+prose-only, updating what they say about S1's status), `src/services/faAnchorTrustGate.ts` (header
+rewrite), `src/services/faChunkPlan.ts` (S1 deletion). **Confirmed untouched:**
+`snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts`, the Hirschberg aligner,
+`docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv` — zero hits for any of them in the diff
+stat. No new repo-root file (checked against the repo-root listing directly, not inferred from
+`git status`, since some pre-existing untracked spike files live there already).
+
+The 13 production pins (`ws1-session-q-production-pins.test.ts`) re-verified passing standalone.
+Committed-boundary dump from a clean `09790ac` worktree matched this tree byte-for-byte on all
+three corpora before any doc was written (AB.4); re-confirmed unnecessary to re-run after Steps
+1-4, since none of them touch `faChunkPlan.ts` or any rule.

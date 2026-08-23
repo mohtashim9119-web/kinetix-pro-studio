@@ -6312,7 +6312,8 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
   baseline. **Ruling R-AT: a validator built from FA's own word timings measures itself** — 29 of
   69 false positives are exactly the phantom rows the proxy exists to catch, misread as "late"
   because their own yardstick is the defect. **S2 validation needs ears; no artifact-only shortcut
-  exists today.** Six numbers: `npm test` 2485 passed / 45 skipped / 0 failed; `tsc --noEmit`
+  exists today.** Six numbers: `npm test` 2485 passed / 54 skipped / 0 failed (108 files passed, 40
+  skipped); `tsc --noEmit`
   clean; `cargo check --features fa-inference` clean; clippy clean with the same 4 pre-existing
   warnings; `cargo test` 141/0/1 and 216/0/24 with `fa-inference`; golden replay 6/6 byte-identical.
   `faAnchors.ts` sha256 unchanged, `b61e94cb…`. `snapBoundaries.ts`, `silenceDetector.ts`,
