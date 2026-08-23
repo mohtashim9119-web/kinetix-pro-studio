@@ -10233,3 +10233,249 @@ or per-row constant introduced; nothing shipped to the production default.
 **Next action:** sweep S2's chunk-width band on **173 alone** — the corpus where R.5 excision is
 provably irrelevant — to isolate chunk WIDTH from chunk COUNT as the cause of the 40 regressions
 excision cannot touch. Everything else this session measured is already explained.
+
+---
+
+## Part AF — Chunk Width Is Not the Cause: a Period-Strict 1–15s Band Regresses MORE Than the 10–30s Arm, and the Arch Is the Anchor Estimate's Own Error (WS1 Session AL, 2026-08-24, append-only)
+
+**Scope: v6 only, by operator direction.** 173 and Spanish were not run. Session AK recommended
+ESCALATE on 173's 40 arm-invariant regressions; the operator directed the same isolation from the
+other end — hold the corpus fixed and vary the chunk width instead.
+
+### AF.1 The gate, written and committed before the planner existed
+
+`scripts/ws1-session-al-step1-gate.ts` (commit `59b24ad`) fixes every threshold up front, R-AS
+applied prospectively as in Session AK. Hard fails: 0 attested-correct v6 boundaries moved beyond
+±50ms, 0 of the 18 `S1_KNOWN_BAD_MOVES` values reproduced. Success bar: **3 of 3** v6 open defects
+landed within ±50ms — not lower, because arm C already lands exactly 1 (`447_scout_facing_dark`)
+and a bar an existing arm clears cannot separate this change's contribution from zero. Ship cap:
+implied precision ≥ 50%.
+
+Regression thresholds, both stated in advance:
+
+* **Worse than arm C:** more than **279** regressed boundaries.
+* **Worse than production:** more than **1** at the 5ms ear-bill band, equivalently more than **0**
+  at the 50ms band. Arm A's single row is `102_frozen_scouts` at oracle 306.42 vs committed 306.43
+  — a 10ms bookkeeping difference well inside the hard-fail band. Both numbers are recorded so
+  neither can be quietly swapped for the other.
+* **Materially better (the Step 5 arm-E trigger):** **≤ 139**, i.e. arm D must at least halve arm C.
+  Half is not arbitrary — R.5 excision alone already bought a 14.3% reduction (326 → 279), so a
+  width change that cannot beat that by a wide margin sits inside the range one already-measured,
+  non-width variable moves, and attributing anything to width in that regime is not supportable.
+
+### AF.2 Both drift shapes registered in advance — the reason this session is interpretable
+
+Session AK measured v6's S2 drift as an **arch**: rising from ≈ −0.9s, peaking at decile 5 (arm B
+−23.786s, arm C −19.155s) and returning to +0.157s in decile 9, identically in both arms. This
+session asked a different question of the same curve — **is its amplitude set by chunk width?** —
+and registered both answers before running:
+
+**IF WIDTH CAUSES THE ARCH.** Peak |mean decile Δ| ≤ **10.0s** (≈52% of arm C's, tracking arm D's
+median width being ≈50% of arm C's); peak |drift| monotone increasing in median chunk width across
+A < D < C < B; arch retained with |final decile| < 1.0s. Linear interpolation between arm A (4.04s
+width, ~0 drift) and arm C (26.06s, 19.155s) puts a ~13s median at **8.2s**.
+
+**IF WIDTH IS IRRELEVANT.** Peak |mean decile Δ| ≥ **14.0s** (within ~25% of arm C's); peak in the
+same decile (4, 5 or 6); final decile +0.157s ± 0.5s.
+
+**The independent discriminator, also registered in advance.** If width is irrelevant, arm D's
+per-decile drift should track the per-decile error of the **anchor-based estimate itself**
+(`applyAnchorBasedTiming(anchorTimed).startTime − oracle.startTime`) — a quantity that involves no
+FA, no chunk plan and no band, and is therefore identical for arms B, C and D by construction.
+Registered thresholds: Pearson r ≥ 0.85 = TRACKING, < 0.50 = NOT TRACKING. This satisfies Session
+AH's ruling that a validator must have a reference independent of the arm under test; the estimate
+is computed upstream of every arm and cannot be moved by any of them.
+
+**The falsifier, one sentence:** arm D reproducing the arch at an amplitude that does not scale
+down with its median chunk width — peak ≥ 14.0s at a median width near half arm C's — falsifies
+the claim that chunk width drives v6's drift.
+
+### AF.3 The period rule, and why v6 makes this a pure width test
+
+The rule, quoted from `faChunkPlan.ts`'s own section header: *a segment ENDS A SENTENCE iff, after
+trimming trailing whitespace and then stripping any run of closing quotation/bracket characters
+(`"` `'` `”` `’` `»` `)` `]` `}`), the final character is `.`, `!` or `?`, AND that terminator is
+not disqualified as* **E1 an ellipsis** (`…`, or the last of a run of two or more `.` — the
+substantive tightening over `S2_SENTENCE_TERMINATOR`, whose `[.!?…]` class accepts both), **E2 an
+abbreviation** (a closed list, or a single capital initial, case-sensitive at a word boundary), or
+**E3 a decimal** (digit on both sides; impossible at segment-final position, kept as an explicit
+branch so it is a decision rather than an accident). *Everything else — comma, colon, semicolon,
+dash, no punctuation at all — is NOT a sentence end.*
+
+**Every ambiguous case in v6, MEASURED and named** (`docs/ws1-sync-pipeline/session-al-v6-chunk-inspection.md`,
+"The period-detection census"). v6's script contains **368 periods, 95 commas, and nothing else**:
+
+| class | anywhere in text | at segment-final position | resolution |
+|---|---|---|---|
+| ellipsis (`…` or `...`) | 0 | 0 | structurally absent; E1 inert |
+| decimal (digit.digit) | 0 | 0 | structurally absent; E3 inert |
+| any digit | 0 | 0 | structurally absent |
+| abbreviation (closed list) | 0 | 0 | structurally absent; E2 inert |
+| single-capital initial | 0 | 0 | structurally absent; E2 inert |
+| quote or bracket | 16 | **0** | all 16 are intra-word right single quotes (`else’s`, `Fen’s`, `fire’s`); none sits at the position the rule reads, so none can change a verdict |
+| colon or semicolon | 0 | 0 | structurally absent |
+| `!` or `?` | 0 | 0 | structurally absent |
+
+So all three exclusions are inert on v6 and the period-strict rule selects **exactly the same 368
+sentence ends** as `s2EndsSentence` — **0 disagreements over 447 segments**, asserted rather than
+assumed. **Arm D is therefore a pure BAND change from arm C**, cleaner than the brief anticipated.
+
+### AF.4 Packing, and the two conservation properties the narrow band forced into the open
+
+**Greedy left-to-right over sentence groups, never balanced.** A break is taken before group *g*
+iff an R.5 excision seam forces one there (a forced break always wins over the band: it is an
+invariant, the band a preference) or `acc + weight(g) > 15s` and `acc >= 1s`, where `weight(g)` is
+the group's estimated span net of any overlapping excised run. Greedy rather than balanced because
+balancing needs a global objective, and every objective function is a knob whose weight would have
+to be fitted to a corpus — which R-AS forbids. **Degenerate final chunk:** a last chunk whose net
+weight is under 1s merges back into its predecessor, unless a forced excision break separates them.
+On v6 this rule did not fire.
+
+At 1–15s an excised run's far edge can sit **past** a following chunk's own estimate-derived seam —
+directly the phenomenon arm C's own section header names, that a recitation displaces the anchor
+estimate around it. The inherited arm-C emit loop responds to that by dropping the chunk, which
+**loses its script text**, and by setting the cursor to a value **behind itself**, which emits
+overlapping windows. Both are fixed here as conservation properties, not new rules: the chunk's
+segments are carried forward into the next emitted chunk, and the cursor is monotone
+non-decreasing. **Arm C never reaches this on v6** — 0 violations, MEASURED Session AK Step 3 —
+because a 26s chunk absorbs a displacement a 13s chunk cannot.
+
+**The size of that displacement is itself a measurement.** The four collapsed windows are
+[525.820, 519.080], [666.610, 659.820], [791.940, 779.960] and [929.330, 916.500] — the estimate
+seam sitting **6.74s, 6.79s, 11.98s and 12.83s BEHIND** the excised run's far edge. Those are
+recitation-adjacent points, and the magnitudes are the same order as the arch itself.
+
+### AF.5 Arm D, measured
+
+110 chunks (pre-registered point 115, band 95–150 — **HELD**). Distribution: min 1.71s, p25 10.64s,
+**median 12.86s**, p75 14.48s, max 33.01s, mean 12.545s; **0 chunks under 1s, 22 over the 15s cap**.
+Cut kinds: 100 detected-silence, 9 excision-run-edge, 1 corpus-end, **0 geometric fallbacks** —
+every non-excision cut found a detected silence inside ±5s, so the geometric-midpoint mechanism is
+inert on this corpus and arm D stays one variable from arm C.
+
+**The complete violation list**, 28 events: **22 `cap-exceeded`** (33.01, 28.09, 23.38, 22.73,
+19.87, 17.96, 17.35, 17.30, 17.04, 16.50, 16.33, 16.00, 15.86, 15.66, 15.62, 15.52, 15.43, 15.32,
+15.20, 15.20, 15.16, 15.14s), **2 `oversize-unbreakable-group`** (18.058s at segments 308–310,
+16.091s at 422–423 — the only two the cap is legitimately exceeded *for*), and **4
+`excision-collapsed-chunk`** (segments 175–179, 223–228, 265–266, 306–307, all carried forward).
+Note the asymmetry this exposes: only 2 of the 22 cap exceedances are caused by an unbreakable
+sentence group. The other 20 are caused by **cut displacement** — the packer weighs groups by their
+estimated span while the emitted window is bounded by silence-snapped cuts derived from that same
+displaced estimate, so a 15s target routinely emits a 15–17s window and occasionally a 33s one.
+
+**Accuracy against the AJ-0 oracle, four arms at one commit:**
+
+| arm | plan | chunks | median width | unchanged | repaired | **regressed** | unadjudicable | moved |
+|---|---|---|---|---|---|---|---|---|
+| A | production | 277 | 4.04s | 446 | 0 | **1** | 0 | 1 |
+| B | S2 10–30s | 54 | 27.44s | 116 | 1 | **326** | 4 | 331 |
+| C | S2 + R.5 excision 10–30s | 57 | 26.06s | 164 | 1 | **279** | 3 | 283 |
+| D | **period-strict 1–15s + R.5** | 110 | 12.86s | 81 | 1 | **363** | 2 | 366 |
+
+Every arm's categories sum to 447, asserted. Arm D's unadjudicable pair is
+`open-defect-moved-without-landing`; unlike B and C it loses no segment (447 committed, matching
+production). **Arm D is worse than arm C (363 > 279) and worse than production (363 > 1).** The
+arm-E trigger (≤ 139) is not reached, so no attribution run was made — per the brief, a materially
+worse arm is reported as a negative and the band is not iterated.
+
+Gate: HARD FAIL 1 **362** beyond ±50ms (bar 0), HARD FAIL 2 **0** known-bad reproduced (bar 0,
+PASS), success bar **1 of 3** defects landed (bar 3), ship cap **0.27%** implied precision (bar
+50%) — below arm C's 0.36%, arm B's 0.31%, and the ~7% at which S1 was rejected. **GATE VERDICT:
+FAIL, 3 of 4.**
+
+Ear-verified controls moved off their attested value: A 0/42, B 30/42, C 18/42, **D 22/42**.
+Against arm B's 30-row regression set, arm D repairs 10 exactly (arm C: 14), partial 6, unchanged
+8, **worsened 6** (arm C: 1).
+
+The three open defects: `447_scout_facing_dark` lands in B, C and D alike at 1418.510 (Δ −0.020s,
+confidence 1.00e+0). `214_solitary_fire` moves 607.680 → 608.770 but stays 21.3s from its ear
+target; notably its incoming-anchor confidence jumps to **8.16e-1** from arm C's 2.50e-4 — high
+confidence in a badly wrong place, which is exactly the failure mode R.14/R.15 exist for and
+exactly why confidence may not reopen an ear-verified row.
+**`231_slowing_pace`'s collapse HOLDS: 6.97e-3 (A) → 2.26e-5 (B) → 0.00e+0 (C) → 0.00e+0 (D)**,
+committed at 668.950 in both C and D. Narrowing the band did not reverse it.
+
+Phantom funnel (1)/(1)∧(2)/(1)∧(2)∧(3): A 183/110/**19**, B 22/6/**0**, C 28/9/**3**, D
+27/8/**2**. **Arm D does not return to zero** — it reproduces two of arm C's three
+(`012_sudden_hush`, `078_column_stops`).
+
+Rules: R.14 fires 11 (A) / 64 (B) / 36 (C) / **59 (D)**; R.15 0/7/7/**6**. Double-corrections under
+Session AK's recomputed AI definition: 0/74/45/**69** — arm D is 53% worse than arm C on this axis,
+i.e. the rule stage is doing substantially more repair work on top of a plan change. Of the two
+rule-dependent rows, `400_endless_dark` is structurally correct pre-rule in B, C and D alike;
+`152_frozen_brush_mice` is correct pre-rule in none, and arm D moves it further off (432.640, vs
+arm C's 435.150 and the attested 451.030).
+
+Resources, under Session AK's conditions (`/usr/bin/time -l`, debug profile, single-threaded pinned
+ORT 1.23.2): **611.6s wall** (predicted 300–450s — **MISSED**) and **2421.6 MB peak RSS** (predicted
+2100–2600 — **HELD**, down from arm C's 3205.3 MB). The wall-clock miss is informative: halving
+chunk width cut runtime only 5%, so per-chunk fixed overhead dominates, not the quadratic attention
+term the prediction assumed. Peak RSS did track the largest chunk as predicted. **6 CTC-infeasible
+chunks vs arm C's 2, and 2880 needs_review words vs 2220** — a narrower band makes CTC
+infeasibility *more* common, because a short window carrying carried-forward text can hold more
+target symbols than it has frames (chunk 27, [373.49, 375.20), 1.71s against 245 target symbols).
+
+### AF.6 The drift shapes, adjudicated — and where the arch actually comes from
+
+| decile | arm B mean Δ | arm C mean Δ | **arm D mean Δ** | **anchor-estimate error** |
+|---|---|---|---|---|
+| 0–142s | −0.968 | −0.877 | **−2.238** | −5.056 |
+| 142–284s | −2.677 | −1.762 | **−5.966** | −7.302 |
+| 284–426s | −9.241 | −8.151 | **−9.473** | −11.362 |
+| 426–569s | −17.353 | −13.534 | **−14.243** | −16.671 |
+| 569–711s | −23.252 | −17.366 | **−18.627** | −22.370 |
+| 711–853s | −23.786 | −19.155 | **−20.617** | −23.347 |
+| 853–995s | −17.848 | −14.801 | **−15.374** | −17.478 |
+| 995–1137s | −12.318 | −7.810 | **−10.364** | −12.321 |
+| 1137–1279s | −2.735 | −1.348 | **−5.077** | −6.523 |
+| 1279–1421s | +0.157 | +0.157 | **+0.147** | +0.957 |
+
+**Peak |mean decile Δ| against median chunk width:** A 4.04s → 0.000s; **D 12.86s → 20.617s**; C
+26.06s → 19.155s; B 27.44s → 23.786s.
+
+**"WIDTH CAUSES THE ARCH" MISSED, and not narrowly.** Its 10.0s bar was exceeded by a factor of
+two, its 8.2s linear point estimate by a factor of 2.5, and monotonicity in width broke outright —
+arm D at half arm C's width drifts *more* than arm C, not less.
+
+**"WIDTH IS IRRELEVANT" MATCHED on all three registered conditions**: peak 20.617s ≥ 14.0s, peak
+decile 5 ∈ {4,5,6}, final decile +0.147s within 0.5s of +0.157s. **The registered falsifier
+FIRED.**
+
+**Where the arch comes from, measured with a reference independent of every arm.** The
+anchor-based estimate's own error against the oracle is itself an arch — peaking at decile 5 at
+−23.347s and returning to +0.957s — and it correlates with arm D's per-decile drift at **Pearson
+r = 0.9940** (arm B 0.9778, arm C 0.9732), against a pre-registered TRACKING threshold of 0.85.
+That reference contains no FA, no chunk plan and no band; it is computed upstream of all four arms
+and cannot be moved by any of them.
+
+Two things follow, and only two. First, **chunk width is eliminated** as the driver of v6's S2
+drift: the amplitude does not scale with it in either direction. Second, what survives is the
+family of mechanisms **invariant across the 10–30s, excised 10–30s and 1–15s bands**, of which the
+measured one is that every S2-family arm places its chunk edges from the anchor-based *estimate*
+(via `segment.startTime`), whereas production's `computeFaChunkPlan` places them at `faAnchors.ts`'s
+three-source-agreement anchors. The r = 0.994 does not prove that mechanism — correlation with an
+upstream error is consistent with several causal routes — but it does rule out any explanation
+that requires the drift to depend on how wide a chunk is.
+
+**Why the arch returns to zero, structurally.** Σ content-segment duration = voiceoverDuration
+(`CLAUDE.md` §4). The anchor-based estimate distributes a *fixed total* across the script by
+character weight, so its error is a redistribution and must sum to zero across the corpus — it
+cannot end anywhere but near zero. Session AK's "a drift that returns to zero was never cumulative"
+now has its positive counterpart: **an arch is the signature of a conserved-total distribution
+error, not of an accumulating one.** No architecture is proposed on the strength of this; it is
+recorded as what the measurement eliminates.
+
+### AF.7 Verdict
+
+Nothing ships. No rule added, deleted or re-tuned; no arbiter rebuilt; no per-project or per-row
+constant; no seam-scoped planner; no 173 or Spanish run; nothing wired to the production default;
+`faAnchors.ts` unchanged (sha256 `b61e94cb…`). Golden replay 6/6 and the oracle diff test both
+green — and worth restating, since arm D moved 366 v6 boundaries while golden replay stayed
+byte-identical: **golden replay stops at `snapCoveredBoundaries` and cannot observe a chunk plan or
+any rule.**
+
+**Next action:** measure whether replacing the S2 family's estimate-derived chunk edges with
+`faAnchors.ts`'s three-source-agreement anchor times — the one thing production does differently
+and the only mechanism this session's r = 0.994 leaves standing — removes the arch, as a single
+additive arm on v6 against the same gate. If it does not, the arch is not an edge-placement
+property at all and the S2 family should be closed out rather than iterated.

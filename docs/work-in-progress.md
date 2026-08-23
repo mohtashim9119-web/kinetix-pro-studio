@@ -141,6 +141,20 @@ bundle arm is repointed (oracle diff 172/173 → **173/173 exact**), `400_endles
 1266.75, and two 10ms ledger supersessions are applied. Detail: §11m,
 `sync-pipeline-v2-plan.md` Part AE.
 
+**2026-08-24 (WS1 Session AL) — no phase row advances; the width hypothesis is closed negative and
+the drift is relocated upstream of the planner.** v6-only, by operator direction. A period-strict
+1–15s band (arm D) was measured against production, global S2 and S2+excision at one commit, judged
+against a gate committed before the planner existed. **Chunk width is eliminated**: halving the
+median width (26.06s → 12.86s) raised peak drift to −20.617s from arm C's −19.155s, at the same
+decile and the same return to ~0, firing the session's pre-registered falsifier. Regressed
+boundaries went 279 → **363**, worse than arm C and worse than production, so no attribution arm was
+run and the band was not iterated. The independent discriminator located the arch upstream of every
+arm: the **anchor-based estimate's own per-decile error against the oracle is the same arch**
+(peak −23.347s) and correlates with arm D's drift at **r = 0.9940** — a reference with no FA, no
+chunk plan and no band. Phase 3/Task 5 stays exactly where Session H left it. Golden replay 6/6
+byte-identical while arm D moved 366 v6 boundaries — the rule/plan blind spot again. Full detail:
+§11n, `sync-pipeline-v2-plan.md` Part AF.
+
 **2026-08-23 (WS1 Session AJ-0) — no phase row advances; a machine oracle is installed and one
 long-parked question is solved.** Read-only forensics session: the operator's own live-app saves
 (v6 447 segments, 173 173 segments — settling 172/173/174 as 173, Spanish 27 — settling 26/27 as
@@ -859,6 +873,16 @@ neither silence arm reproduces 126 (native 119, app 121). **No compliance row is
 — it is a bundle-provenance defect, not a Contract 1→2 requirement** — but any future 173
 measurement that depends on the chunk plan should be read against it. Full detail:
 `sync-pipeline-v2-plan.md` Part AA.2.
+
+**2026-08-24 (WS1 Session AL) — no row in this table moves, and P4 is worth restating against what
+this session measured.** Arm D's chunk plan is deliberately NOT gapless (every gap is an excised R.5
+run) and, at a 1–15s band, the inherited emit loop could produce a **non-monotone** plan whose
+windows overlap — a chunk-plan analogue of exactly the ascending/disjoint property P4 still does not
+assert at runtime for silences. It was caught here only because the generation harness asserts
+monotonicity and text conservation itself. P4 stays ❌ (silence-side, Phase 4, still not built); the
+chunk-plan side is now asserted in `scripts/ws1-session-al-step2-generate.test.ts` rather than
+relied upon. No contract requirement is affected — recorded because the class of defect is the one
+this checklist exists to catch.
 
 **2026-08-23 (WS1 Session AK) — no row in this table moves; the arm-provenance defect Session
 AJ-0 diagnosed is FIXED.** The repoint turned out to need a code change rather than a manifest edit:
@@ -6579,9 +6603,108 @@ with provable inertness, not a detector. The pre-registered falsifier HALF-FIRED
 the weak claim survives, but the drift *shape* is unchanged and 173 is bit-identical — **the claim as
 stated ("R.5 excision fixes v6's regressions") IS falsified.**
 
+### §11n. WS1 Session AL — RESULTS
+
+**One-line verdict: chunk width is NOT the cause. A period-strict 1–15s band regresses 363 v6
+boundaries against arm C's 279 and production's 1, and the arch turns out to be the anchor-based
+ESTIMATE's own error, tracked at r = 0.9940 by a reference containing no FA, no chunk plan and no
+band.** v6 only, by operator direction; 173 and Spanish not run. Full detail:
+`sync-pipeline-v2-plan.md` Part AF. Gate: `scripts/ws1-session-al-step1-gate.ts`, committed at
+`59b24ad` **before** the planner existed and before any arm ran.
+
+**What was built.** `computeFaChunkPlanPeriodStrict` in `faChunkPlan.ts` — a separate,
+explicitly-parameterised path with no production caller, no flag and no defaults on its band
+arguments. Arms A/B/C sit above it untouched and both re-reproduced their stored plans at HEAD,
+asserted in the generation test rather than assumed.
+
+**Why this is a PURE width test, measured not assumed.** v6's script contains 368 periods, 95
+commas and nothing else — zero `!`, `?`, `…`, `...`, digits, abbreviations, colons and semicolons,
+and zero quotes or brackets at any *segment-final* position (16 segments carry an intra-word right
+single quote; none sits where the rule reads). All three period-rule exclusions are therefore
+structurally inert here, and the rule selects exactly the same 368 sentence ends as
+`s2EndsSentence`: **0 disagreements over 447 segments**. Arm D differs from arm C only in BAND.
+
+**The numbers.** 110 chunks (pre-registered 115, band 95–150 — HELD); median 12.86s, min 1.71s,
+max 33.01s, 0 under 1s, 22 over the cap. Cuts: 100 detected-silence, 9 excision-run-edge, 1
+corpus-end, **0 geometric fallbacks** (the fallback mechanism never fired, so arm D stays one
+variable from arm C). 28 violation events, all listed in the dump: 22 cap-exceeded, of which only
+**2** are genuinely oversize unbreakable groups — the other 20 come from cut displacement, not from
+sentence length. Oracle regressions A 1 / B 326 / C 279 / **D 363**. Gate FAILS 3 of 4: 362 beyond
+±50ms (bar 0), 1 of 3 defects landed (bar 3), 0.27% implied precision (bar 50%, below arm C's
+0.36%, arm B's 0.31% and S1's rejected ~7%); known-bad reproductions **0** (PASS). Funnel
+19/0/3/**2** — arm D does not return to zero. Double-corrections 0/74/45/**69**. R.14 11/64/36/**59**,
+R.15 0/7/7/**6**. 611.6s wall (predicted 300–450 — MISSED) and 2421.6 MB peak RSS (predicted
+2100–2600 — HELD). 6 CTC-infeasible chunks vs arm C's 2; 2880 needs_review words vs 2220.
+
+**The pre-registered falsifier FIRED.** Halving the median width (26.06s → 12.86s) did not halve
+the arch: peak mean drift **−20.617s, ABOVE arm C's −19.155s**, same decile 5, same return to
++0.147s. "Width causes the arch" missed its 10.0s bar by 2× and broke monotonicity in width
+outright; "width is irrelevant" matched all three of its registered conditions. The independent
+discriminator then located the arch: the anchor-based estimate's own per-decile error against the
+oracle is itself an arch peaking at decile 5 (−23.347s), and correlates with arm D's drift at
+**r = 0.9940** (B 0.9778, C 0.9732). It involves no FA, no chunk plan and no band — a reference
+independent of the arm under test, as Session AH's ruling requires.
+
+**A real defect the narrow band exposed, fixed as conservation rather than as a new rule.** At
+1–15s an excised R.5 run's far edge can sit past a following chunk's own estimate-derived seam. The
+inherited arm-C emit loop drops that chunk (losing script text) and moves the cursor backwards
+(emitting overlapping windows). Arm D carries the segments forward and holds the cursor monotone.
+**Arm C never reaches this on v6** — 0 violations, MEASURED Session AK — because a 26s chunk absorbs
+a displacement a 13s chunk cannot. The four collapsed windows measure that displacement directly:
+the seam sits **6.74s, 6.79s, 11.98s and 12.83s behind** the run's far edge, the same order as the
+arch itself.
+
+**`231_slowing_pace`: the collapse HOLDS.** 6.97e-3 (A) → 2.26e-5 (B) → 0.00e+0 (C) → **0.00e+0
+(D)**, committed at 668.950 in C and D alike. Narrowing the band neither reversed nor worsened it.
+`214_solitary_fire` is the cautionary row: its incoming confidence jumps to **8.16e-1** while the
+boundary stays 21.3s from its ear target — high confidence in a badly wrong place, and a live
+demonstration of why confidence may not reopen an ear-verified row.
+
+**Roadmap.** Chunk-width sweep — **CLOSED NEGATIVE, do not iterate the band.** Repaired timings —
+moved *backwards* (10 exact repairs vs arm C's 14, and 6 worsened vs 1). Word-gap placement —
+untouched. R.14/R.15 deletion — untouched to slightly backwards (59 R.14 firings vs arm C's 36).
+Rule-stage golden coverage — untouched, and the blind spot restated: golden replay stayed 6/6
+byte-identical while arm D moved 366 v6 boundaries.
+
+**Nothing shipped.** No rule added, deleted or re-tuned; no arbiter rebuilt; no per-project or
+per-row constant; no seam-scoped planner; no 173 or Spanish run; `faAnchors.ts` unchanged
+(sha256 `b61e94cb…`). Inspection dump:
+`docs/ws1-sync-pipeline/session-al-v6-chunk-inspection.md` (working copy
+`.work-phase4/session-al/v6-chunk-inspection.md`), allowlisted in its own commit.
+
+
 ---
 
 ## Changelog
+
+- **2026-08-24 — WS1 Session AL: chunk WIDTH is eliminated as the cause of v6's S2 drift; a
+  period-strict 1–15s band is WORSE than the 10–30s arm on every accuracy axis, and the arch is the
+  anchor-based ESTIMATE's own error at r = 0.9940.** v6 only, by operator direction. The gate was
+  written and committed (`59b24ad`, `scripts/ws1-session-al-step1-gate.ts`) before the planner
+  existed and before any arm ran, with **both drift shapes pre-registered** — which is what makes
+  the result readable either way. Arm D (`computeFaChunkPlanPeriodStrict`, separate path, no
+  production caller, no flag, no defaults) is a **pure band change** from arm C: v6's script holds
+  368 periods, 95 commas and nothing else, so all three period-rule exclusions are structurally
+  inert and the strict rule picks exactly the same 368 sentence ends as `s2EndsSentence`, **0
+  disagreements over 447 segments**. 110 chunks (predicted 115, band 95–150 — HELD), median 12.86s,
+  0 geometric fallbacks, 28 first-class violations of which only 2 cap exceedances are caused by an
+  oversize sentence group — the other 20 by cut displacement. **Oracle regressions A 1 / B 326 /
+  C 279 / D 363**: worse than arm C AND worse than production, so the arm-E attribution run was not
+  triggered and the band was not iterated. Gate FAILS 3 of 4 (362 beyond ±50ms, 1 of 3 defects
+  landed, 0.27% precision — below arm C's 0.36% and S1's rejected ~7%); known-bad reproductions 0.
+  **The registered falsifier FIRED**: halving the median width raised peak drift to −20.617s from
+  arm C's −19.155s, at the same decile and the same return to ~0. The independent discriminator
+  then found the arch upstream of every arm — the anchor estimate's own per-decile error is the
+  same arch (peak −23.347s) and correlates with arm D's at **r = 0.9940**, a reference containing no
+  FA, no chunk plan and no band. Also measured: the narrow band exposed a real text-loss and
+  cursor-reversal defect in the inherited emit loop (fixed as conservation, not as a new rule) whose
+  four collapsed windows put the estimate seam **6.7–12.8s behind** an excised run's far edge; 6
+  CTC-infeasible chunks vs arm C's 2; wall clock fell only 5% (611.6s) so per-chunk overhead
+  dominates, while peak RSS tracked the largest chunk as predicted (2421.6 MB). `231_slowing_pace`'s
+  confidence collapse **HOLDS** at 0.00e+0. Full chunk inspection table — every chunk, no elision —
+  at `docs/ws1-sync-pipeline/session-al-v6-chunk-inspection.md`. Nothing shipped; no rule added,
+  deleted or re-tuned; no 173 or Spanish run; `faAnchors.ts` unchanged. Full detail: §11n,
+  `sync-pipeline-v2-plan.md` Part AF.
 
 - **2026-08-23 — WS1 Session AK: R.5 excision is a CONTRIBUTING CAUSE of v6's S2 drift, not the
   cause; global S2 FAILS its pre-registered gate 3 of 4 at 0.62% precision and nothing ships.**
