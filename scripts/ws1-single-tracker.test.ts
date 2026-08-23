@@ -93,6 +93,15 @@ const ALLOWLIST = new Set<string>([
   // ONLY with blank Ear Verdict/Class columns. Its RESULTS go to
   // docs/work-in-progress.md §11 and scripts/ws1-ear-pass-ledger.ts.
   'docs/ws1-sync-pipeline/stage1-session-ac-ear-list.md',
+  // WS1 Session AE's follow-up root-cause investigation into the FA "phantom
+  // text" mechanism. NOT a tracking/status file: it is a single-question
+  // forensic report (why does FA place segment 231's words on segment 230's
+  // audio), of the same class as `stage1-session-k-rootcause.md` above, and
+  // CLAUDE.md §5's rule that an audit/investigation report must be persisted
+  // into docs/ rather than left in a chat transcript is what requires it to
+  // exist as a file at all. Its STATUS (what was done about it) lives in
+  // docs/work-in-progress.md §11, not here.
+  'docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

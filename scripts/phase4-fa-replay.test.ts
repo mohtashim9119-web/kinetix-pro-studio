@@ -379,7 +379,15 @@ const KNOWN_BAD: KnownBadRow[] = [
     status: 'open',
     note: 'Confirms the session brief\'s own question: a silence-based (not chunk-edge-based) detector ' +
       'DOES reach 231 as a detection, but its proposed correction is the wrong silence — measured, not ' +
-      'assumed (`scripts/ws1-session-q-detector-validate.test.ts`).',
+      'assumed (`scripts/ws1-session-q-detector-validate.test.ts`). WS1 SESSION AG: `earCorrect` 682.74 ' +
+      'is RE-CONFIRMED by an independent sitting (`ear-verify-ag`) and independently corroborated by the ' +
+      'operator\'s own waveform measurement of the seam (segment 230 speaks 681.47-682.43, segment 231 ' +
+      'speaks 683.04-683.84 — `docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md` §1). R.14 reaches ' +
+      'this row as a DETECTION and then DECLINES it on the reliable-onset guard, so the row is now known ' +
+      'to be a guard FALSE NEGATIVE rather than an undetected defect. It stays OPEN: production still ' +
+      'commits 681.63. Relaxing the guard is NOT authorised by that verdict — the same sitting scored ' +
+      '`289_winter_predator_breach`@865.390 CORRECT, which is the guard\'s TRUE negative, and Session ' +
+      'AE measured that relaxing it costs v6 a 3.30s unverified move and Spanish two more.',
   },
   {
     id: 'classA-447-scout-facing-dark', origin: 'session-p-live', corpus: 'v6', tag: '447_scout_facing_dark',

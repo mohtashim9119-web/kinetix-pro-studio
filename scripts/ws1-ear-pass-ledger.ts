@@ -138,6 +138,27 @@ export const EAR_SITTINGS = {
    *  ground-truth list and are IDENTICAL — no row is overwritten, and none
    *  needed to be. */
   'ear-verify-ae': 11,
+  /** WS1 Session AG — the operator's listening pass over the five v6 rows
+   *  Session AE's own "deferred" list named (the FOUR UNVERIFIED-MOVED R.14
+   *  boundaries plus `289_winter_predator_breach`, which R.14's reliable-onset
+   *  guard DECLINED), plus a re-hearing of `231_slowing_pace`'s named target.
+   *
+   *  WHY IT MATTERS BEYOND SIX ROWS. Session AE shipped R.14/R.15 with
+   *  precision 10/10 on ear-scored rows and FOUR moves nobody had heard. A
+   *  precision figure with an unverified remainder is an interval, not a
+   *  number: the true value lay somewhere in [10/14, 14/14] and the register
+   *  could not say where. All four are scored CORRECT here, so the interval
+   *  collapses — R.14/R.15's precision is 14/14 = 1.000 with NO unverified
+   *  remainder, and every boundary the gate has ever moved is now audited.
+   *
+   *  TWO GUARD VERDICTS, POINTING OPPOSITE WAYS, and both are recorded because
+   *  the disagreement is the finding. `289_winter_predator_breach`@865.390 is
+   *  CORRECT as committed — the reliable-onset guard was RIGHT to decline it.
+   *  `231_slowing_pace`@682.740 is confirmed CORRECT as a target — so the SAME
+   *  guard was WRONG to decline that row, which still commits 681.63. One
+   *  guard, one true negative and one false negative; relaxing it is therefore
+   *  not free, and this sitting does not authorise relaxing it. */
+  'ear-verify-ag': 12,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -632,6 +653,46 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
     note: 'Target. A/B-confirmed CORRECT against 23.13. Sits 0.01s off the [23.10, 23.80] silence\'s own ' +
       'midpoint (23.45) — the same whole-silence-midpoint family `ear-verify-t` validated on six rows and ' +
       '`ear-verify-ad` on five more, landing on a value nobody had computed when the sitting was run.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION AG — the four UNVERIFIED-MOVED R.14 boundaries, audited.
+  //
+  // These are NOT defects and were never on any defect list. Each is a
+  // boundary R.14 MOVED in Session AE with no ear evidence either way — the
+  // remainder that made that session's "precision 10/10" an interval rather
+  // than a number. All four scored CORRECT at the moved value, so each one is
+  // simultaneously (a) a true positive for the gate and (b) a new ear-verified
+  // CONTROL for every future rule, taking the control population 37 -> 43.
+  // -------------------------------------------------------------------------
+  { sitting: 'ear-verify-ag', corpus: 'v6', tag: '039_river_trap', scoredValue: 114.640, verdict: 'CORRECT',
+    note: 'R.14 moved this 114.250 -> 114.640 (+0.390) in Session AE with no ear evidence. Heard here and ' +
+      'accepted at the MOVED value: the correction was right. Now a positive control.' },
+  { sitting: 'ear-verify-ag', corpus: 'v6', tag: '083_unbidden_alertness', scoredValue: 245.270, verdict: 'CORRECT',
+    note: 'R.14 moved this 244.810 -> 245.270 (+0.460) in Session AE with no ear evidence. Heard here and ' +
+      'accepted at the MOVED value. Now a positive control.' },
+  { sitting: 'ear-verify-ag', corpus: 'v6', tag: '221_skill_removes', scoredValue: 654.450, verdict: 'CORRECT',
+    note: 'R.14 moved this 654.230 -> 654.450 (+0.220) in Session AE with no ear evidence — the SMALLEST of ' +
+      'the four unverified moves, and the one most at risk of being below audibility either way. Heard here ' +
+      'and accepted at the MOVED value. Now a positive control.' },
+  { sitting: 'ear-verify-ag', corpus: 'v6', tag: '222_long_silence', scoredValue: 659.330, verdict: 'CORRECT',
+    note: 'R.14 moved this 658.940 -> 659.330 (+0.390) in Session AE with no ear evidence. Heard here and ' +
+      'accepted at the MOVED value. Now a positive control.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION AG — the two GUARD verdicts, which disagree with each other.
+  // -------------------------------------------------------------------------
+  { sitting: 'ear-verify-ag', corpus: 'v6', tag: '289_winter_predator_breach', scoredValue: 865.390, verdict: 'CORRECT',
+    note: 'THE GUARD\'S TRUE NEGATIVE. R.14\'s reliable-onset guard DECLINED to move this boundary; the ' +
+      'committed value is confirmed CORRECT, so declining was right. A control for any future relaxation ' +
+      'of that guard — relaxing it must not move this row.' },
+  { sitting: 'ear-verify-ag', corpus: 'v6', tag: '231_slowing_pace', scoredValue: 682.740, verdict: 'CORRECT',
+    note: 'THE GUARD\'S FALSE NEGATIVE, and an independent re-confirmation of `ear-verify-ad`\'s own target ' +
+      'at the same value. R.14 DECLINED this row on the reliable-onset guard, so production still commits ' +
+      '681.63 (heard WRONG by `ear-verify-ad`). The operator\'s own waveform measurement of this seam ' +
+      '(`docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md` §1) puts segment 231\'s speech at ' +
+      '683.04-683.84 and segment 230\'s at 681.47-682.43, independently corroborating that the cut belongs ' +
+      'after 682.43 and not at 681.63. Register row `classA-231-slowing-pace` STAYS OPEN: this sitting ' +
+      'confirms the target, it does not move production onto it.' },
 ];
 
 /** Default match tolerance — the Zero-Defect Register's own. */
