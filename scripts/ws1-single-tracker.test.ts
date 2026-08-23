@@ -142,6 +142,12 @@ const ALLOWLIST = new Set<string>([
   // chunk, written by `scripts/ws1-session-am-step3-armf.test.ts`. Same class
   // and same reason as the two entries above.
   'docs/ws1-sync-pipeline/session-am-armf-inspection.md',
+  // WS1 Session AM's arm-G chunk inspection table, written by
+  // `scripts/ws1-session-am-step4-armg.test.ts`. Same class as the entry above,
+  // and it additionally carries the standing DIAGNOSTIC-ONLY notice for that
+  // arm — it consumes ground truth and can never ship — which is exactly the
+  // kind of caveat that must live in a file rather than a chat transcript.
+  'docs/ws1-sync-pipeline/session-am-armg-inspection.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
