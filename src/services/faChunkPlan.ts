@@ -1485,3 +1485,518 @@ export function computeFaChunkPlanS2Excised(
     violations,
   };
 }
+
+// ---------------------------------------------------------------------------
+// PERIOD-STRICT PLANNER (WS1 Session AL, MEASUREMENT ARM ONLY — "arm D").
+//
+// ONE VARIABLE FROM ARM C. `computeFaChunkPlanS2Excised` above is arm C: S2's
+// five invariants plus R.5 excision, at the operator-directed 10-30s band.
+// This function is the SAME thing at a 1-15s band with a STRICTER sentence-end
+// rule and a BOUNDED silence search. Everything else — the group atoms, the
+// excision placement rule, `silence.endSec` as the cut landmark, greedy
+// packing — is inherited unchanged and deliberately not re-derived, because a
+// second simultaneous change would make the width result uninterpretable.
+//
+// SEPARATE FUNCTION, NO FLAG, NO PRODUCTION CALLER, and every band parameter
+// REQUIRED rather than defaulted — the brief's "explicitly-parameterised
+// path". Arms A/B/C stay byte-reproducible at this commit because nothing
+// above this line is touched.
+//
+// THE PERIOD RULE, stated once and quoted verbatim in the session report:
+//
+//   A segment ENDS A SENTENCE iff, after trimming trailing whitespace and then
+//   stripping any run of closing quotation/bracket characters (" ' " ' » ) ] }),
+//   the final character is `.`, `!` or `?`, AND that terminator is not
+//   disqualified by one of three exclusions:
+//
+//     E1 ELLIPSIS. The stop is the last of a run of two or more consecutive
+//        `.` characters, or the character is `…`. An ellipsis marks
+//        CONTINUATION, not a full stop, so it is not a legal chunk edge. This
+//        is the substantive tightening over `S2_SENTENCE_TERMINATOR`, whose
+//        `[.!?…]` class accepts both `…` and `...`.
+//     E2 ABBREVIATION. The final `.` is immediately preceded by a token from
+//        the closed list below, or by a single capital letter (an initial),
+//        matched case-sensitively at a word boundary.
+//     E3 DECIMAL. The final `.` is preceded by a digit AND followed by a
+//        digit. At segment-final position nothing follows, so a trailing
+//        `<digit>.` is a full stop and never a decimal — the exclusion is
+//        stated so that this is a decision rather than an accident.
+//
+//   Everything else — comma, colon, semicolon, dash, or no punctuation at all
+//   — is NOT a sentence end. A mis-detected period is a mid-sentence split
+//   wearing a disguise, so every exclusion resolves toward FEWER legal seams.
+//
+// MEASURED ON v6 (Session AL Step 2 census): the script contains 368 periods,
+// 95 commas and NOTHING ELSE — zero `!`, `?`, `…`, `...`, quotes, brackets,
+// colons, semicolons, digits and abbreviations, at any position. So all three
+// exclusions are STRUCTURALLY INERT on v6 and this rule selects exactly the
+// same 368 sentence ends as `s2EndsSentence` does. Arm D is therefore a PURE
+// WIDTH change from arm C on this corpus — cleaner than the brief assumed,
+// and asserted rather than assumed by the Step 2 census test.
+// ---------------------------------------------------------------------------
+
+/** Closing quotation/bracket characters strippable after a terminator. Superset
+ *  of `S2_SENTENCE_TERMINATOR`'s own class (adds `»` and `}`). */
+const PS_CLOSERS = /["'”’»\)\]\}]+$/;
+
+/** E2's closed abbreviation list. A CLOSED list, never a heuristic: an
+ *  ML/statistical sentence guess would reintroduce exactly the inference S2
+ *  exists to remove (invariant 3). */
+const PS_ABBREVIATIONS = [
+  'Mr', 'Mrs', 'Ms', 'Dr', 'Prof', 'St', 'Jr', 'Sr', 'vs', 'etc', 'approx',
+  'Fig', 'No', 'Vol', 'Inc', 'Ltd', 'Co', 'Ave', 'Rd', 'Mt', 'Gen', 'Capt',
+  'Sgt', 'Lt', 'e.g', 'i.e', 'cf', 'al',
+];
+const PS_ABBREV_RE = new RegExp(
+  `(?:^|\\s)(?:${PS_ABBREVIATIONS.map(a => a.replace(/\./g, '\\.')).join('|')})\\.$`,
+);
+const PS_INITIAL_RE = /(?:^|\s)[A-Z]\.$/;
+
+/** Why a candidate sentence end was rejected — reported per segment by the
+ *  Step 2 census so every ambiguous case can be named. */
+export type PeriodStrictRejection = 'no-terminator' | 'ellipsis' | 'abbreviation' | 'decimal' | 'empty';
+
+export interface PeriodStrictVerdict {
+  endsSentence: boolean;
+  /** Present only when `endsSentence` is false. */
+  rejectedAs?: PeriodStrictRejection;
+  /** The terminator character actually found, for the census table. */
+  terminator?: string;
+  /** Closing characters stripped before the terminator was read. */
+  closersStripped: string;
+}
+
+/** THE PERIOD RULE, executable. See the section header for the prose form. */
+export function periodStrictEndsSentence(text: string | undefined): PeriodStrictVerdict {
+  const trimmed = (text ?? '').trim();
+  if (trimmed.length === 0) return { endsSentence: false, rejectedAs: 'empty', closersStripped: '' };
+
+  const closerMatch = PS_CLOSERS.exec(trimmed);
+  const closers = closerMatch ? closerMatch[0] : '';
+  const core = closers.length > 0 ? trimmed.slice(0, -closers.length) : trimmed;
+  const last = core.slice(-1);
+
+  if (last === '…') return { endsSentence: false, rejectedAs: 'ellipsis', terminator: '…', closersStripped: closers };
+  if (last === '!' || last === '?') return { endsSentence: true, terminator: last, closersStripped: closers };
+  if (last !== '.') return { endsSentence: false, rejectedAs: 'no-terminator', terminator: last, closersStripped: closers };
+
+  // E1 — a run of two or more dots is an ellipsis, not a full stop.
+  if (core.slice(-2) === '..') {
+    return { endsSentence: false, rejectedAs: 'ellipsis', terminator: '...', closersStripped: closers };
+  }
+  // E2 — abbreviation or single-capital initial.
+  if (PS_ABBREV_RE.test(core) || PS_INITIAL_RE.test(core)) {
+    return { endsSentence: false, rejectedAs: 'abbreviation', terminator: '.', closersStripped: closers };
+  }
+  // E3 — a decimal needs a digit on BOTH sides; nothing follows a segment-final
+  // stop, so this can never fire here. Kept as an explicit branch so the rule
+  // is complete rather than silently relying on position.
+  if (/\d\.\d$/.test(core)) {
+    return { endsSentence: false, rejectedAs: 'decimal', terminator: '.', closersStripped: closers };
+  }
+  return { endsSentence: true, terminator: '.', closersStripped: closers };
+}
+
+/** Period-strict unbreakable groups. Identical construction to
+ *  `s2UnbreakableGroups` except for which predicate decides a sentence end. */
+function periodStrictGroups(segments: readonly VideoSegment[]): S2Group[] {
+  const groups: S2Group[] = [];
+  let cur: number[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    cur.push(i);
+    if (periodStrictEndsSentence(segments[i]!.text).endsSentence || i === segments.length - 1) {
+      const first = segments[cur[0]!]!;
+      const last = segments[cur[cur.length - 1]!]!;
+      groups.push({
+        segIdx: cur,
+        startSec: first.startTime,
+        endSec: last.startTime + last.duration,
+        durationSec: (last.startTime + last.duration) - first.startTime,
+      });
+      cur = [];
+    }
+  }
+  return groups;
+}
+
+/**
+ * Invariant 4, BOUNDED. Unlike `s2NearestSilenceCut` (which searches the whole
+ * corpus and always accepts, flagging a far result as a violation after the
+ * fact), this returns `undefined` when the nearest silence end is further than
+ * `windowSec` from the ideal seam — the brief's "if no silence exists within
+ * the search window". The caller then takes the geometric fallback rather than
+ * accepting an arbitrarily distant silence.
+ */
+function periodStrictSilenceCut(
+  idealSec: number, silences: readonly SilenceInterval[], windowSec: number,
+): { cutSec: number; offsetSec: number } | undefined {
+  let best: { cutSec: number; offsetSec: number } | undefined;
+  for (const s of silences) {
+    const off = s.endSec - idealSec;
+    if (Math.abs(off) > windowSec) continue;
+    if (best === undefined || Math.abs(off) < Math.abs(best.offsetSec)) best = { cutSec: s.endSec, offsetSec: off };
+  }
+  return best;
+}
+
+/**
+ * The geometric fallback: the MIDPOINT of the inter-word gap straddling the
+ * ideal seam — `(lastTokenEndingBefore.endSec + firstTokenStartingAfter.startSec) / 2`.
+ *
+ * GEOMETRIC, not fitted: a midpoint has no free parameter. Whisper timestamps
+ * decide only WHERE the audio is sliced, never WHICH TEXT belongs to which
+ * chunk (invariant 3 is untouched — the text was already fixed by the packer
+ * before this is called). Falls back to the ideal seam itself when no token
+ * straddles it, which cannot happen on a non-empty transcript but is not
+ * assumed.
+ */
+function periodStrictGeometricCut(idealSec: number, tokens: readonly TranscriptToken[]): { cutSec: number; gapSec: number } {
+  let prevEnd: number | undefined;
+  let nextStart: number | undefined;
+  for (const t of tokens) {
+    if (t.endSec <= idealSec) { if (prevEnd === undefined || t.endSec > prevEnd) prevEnd = t.endSec; }
+    if (t.startSec >= idealSec) { if (nextStart === undefined || t.startSec < nextStart) nextStart = t.startSec; }
+  }
+  if (prevEnd === undefined || nextStart === undefined || nextStart < prevEnd) {
+    return { cutSec: idealSec, gapSec: 0 };
+  }
+  return { cutSec: (prevEnd + nextStart) / 2, gapSec: nextStart - prevEnd };
+}
+
+/** A period-strict plan's first-class violation events. A superset of S2's
+ *  causes; a SEPARATE type so `FaChunkPlanS2Violation` — which arms B and C
+ *  are reported against — is not perturbed. */
+export interface FaChunkPlanPeriodStrictViolation {
+  segIdx: number;
+  cause:
+    | 'oversize-unbreakable-group'
+    | 'cap-exceeded'
+    | 'geometric-fallback-cut'
+    | 'degenerate-final-chunk-merged'
+    | 'unexcised-run'
+    | 'excision-collapsed-chunk';
+  idealSec: number;
+  /** Seam time actually committed, where the event concerns a cut. */
+  seamSec?: number;
+  /** Chunk duration, where the event concerns a chunk's size. */
+  durationSec?: number;
+  fallback: string;
+}
+
+/** One row of the chunk inspection dump — everything the brief's table needs,
+ *  produced by the planner itself so the dump cannot drift from the plan. */
+export interface PeriodStrictChunkInspection {
+  index: number;
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+  /** The chunk's final ~80 characters, punctuation included. */
+  endingText: string;
+  sentenceCount: number;
+  segFrom: number;
+  segTo: number;
+  /** How the chunk's END was placed. */
+  cutKind: 'detected-silence' | 'geometric-fallback' | 'excision-run-edge' | 'corpus-end';
+  /** Signed offset of the committed cut from the ideal (estimate) seam. */
+  cutOffsetSec: number;
+  exceededCap: boolean;
+}
+
+export interface FaChunkPlanPeriodStrictResult {
+  chunks: FaChunk[];
+  violations: FaChunkPlanPeriodStrictViolation[];
+  inspection: PeriodStrictChunkInspection[];
+}
+
+/**
+ * ARM D. Period-strict grouping, operator-directed `[targetMinSec,
+ * targetMaxSec]` band with `targetMaxSec` as a HARD CAP, bounded silence
+ * search with a geometric-midpoint fallback, and R.5 excision ON (matching arm
+ * C, so this is a one-variable change from it).
+ *
+ * INVARIANTS, in the brief's strict precedence order:
+ *   1. A chunk's text is a whole number of script segments and never splits a
+ *      sentence. INVIOLABLE — nothing below may override it.
+ *   2. Chunks end only at a full stop (`periodStrictEndsSentence`). Never at a
+ *      comma, colon or semicolon.
+ *   3. Whisper timestamps are excluded ENTIRELY from deciding which text
+ *      belongs to which chunk. They inform only WHERE audio is sliced.
+ *   4. The audio cut is the detected silence corresponding to the chosen
+ *      period; with none inside `silenceWindowSec`, the chunk still ends at
+ *      that period and the cut is the geometric midpoint of the inter-word
+ *      gap, LOGGED — never slid to the next period.
+ *   5. Target `[targetMinSec, targetMaxSec]`, hard cap `targetMaxSec`. A
+ *      single sentence or unbreakable group that exceeds the cap exceeds it,
+ *      with a first-class violation carrying the seam, duration and cause.
+ *      Never a mid-sentence split to satisfy the cap.
+ *
+ * PACKING — greedy left-to-right over groups, never balanced, and stated
+ * rather than left implicit. A break is taken immediately before group g iff
+ * (i) an R.5 excision seam forces one there — a forced break always wins over
+ * the band, because it is an invariant and the band is a preference — or
+ * (ii) `acc + weight(g) > targetMaxSec` and `acc >= targetMinSec`, where
+ * `weight(g)` is the group's estimated span NET of any excised run overlapping
+ * it. Greedy rather than balanced because balancing needs a global objective,
+ * and every objective function is a knob whose weight would have to be fitted
+ * to a corpus — which R-AS forbids. Greedy adds no free parameter beyond the
+ * operator-directed band.
+ *
+ * DEGENERATE FINAL CHUNK — after packing, a last chunk whose net weight is
+ * below `targetMinSec` is merged back into its predecessor and a
+ * `degenerate-final-chunk-merged` event is emitted, UNLESS a forced excision
+ * break separates them (invariant precedence again). If the merge pushes the
+ * predecessor past the cap, a `cap-exceeded` event is emitted too: the cap
+ * yields to anti-degeneracy, never the reverse, because a sub-`targetMinSec`
+ * window cannot be aligned meaningfully while an oversize one merely costs
+ * memory.
+ *
+ * NO PRODUCTION CALLER, NO FLAG, NO DEFAULTS. Every band parameter is
+ * required. THE SHIP DECISION remains a separate, operator-signed step.
+ */
+export function computeFaChunkPlanPeriodStrict(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  targetMinSec: number,
+  targetMaxSec: number,
+  silenceWindowSec: number,
+  languageCode?: FaLanguageCode,
+  vocabChars?: ReadonlySet<string>,
+): FaChunkPlanPeriodStrictResult {
+  if (segments.length === 0) return { chunks: [], violations: [], inspection: [] };
+
+  const groups = periodStrictGroups(segments);
+  const violations: FaChunkPlanPeriodStrictViolation[] = [];
+
+  // R.5, reused unchanged — the shipped detector, as arm C uses it.
+  const runs = computeUnscriptedRuns(segments, tokens, silences, audioDuration);
+
+  // `qiSplit` -> segment -> group, exactly as arm C places an excision seam.
+  const qiRanges = s2SegQiRanges(segments, languageCode);
+  const totalQi = qiRanges[qiRanges.length - 1]?.end ?? 0;
+  const groupOfSeg = new Map<number, number>();
+  groups.forEach((g, gi) => { for (const si of g.segIdx) groupOfSeg.set(si, gi); });
+
+  const seams: S2ExcisionSeam[] = [];
+  for (const run of runs) {
+    if (run.qiSplit >= totalQi) { seams.push({ groupIdx: groups.length, run, trailing: true }); continue; }
+    const segIdx = qiRanges.findIndex(r => run.qiSplit >= r.start && run.qiSplit < r.end);
+    const gi = segIdx >= 0 ? groupOfSeg.get(segIdx) : undefined;
+    if (gi === undefined) {
+      violations.push({
+        segIdx: segIdx >= 0 ? segIdx : 0,
+        cause: 'unexcised-run',
+        idealSec: run.startSec,
+        fallback: `R.5 run [${run.startSec.toFixed(2)}, ${run.endSec.toFixed(2)}] has qiSplit ${run.qiSplit}, which `
+          + 'maps to no segment in this script; left INSIDE whatever chunk contains it rather than guessed at',
+      });
+      continue;
+    }
+    seams.push({ groupIdx: gi, run, trailing: false });
+  }
+
+  const forcedBreakAt = new Set(seams.filter(s => !s.trailing).map(s => s.groupIdx));
+  const weightOf = (g: S2Group): number =>
+    Math.max(0, g.durationSec - s2ExcisedWithin(g.startSec, g.endSec, runs));
+
+  // ---- greedy pack, groups only ------------------------------------------
+  const packed: S2Group[][] = [];
+  {
+    let cur: S2Group[] = [];
+    let acc = 0;
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i]!;
+      const w = weightOf(g);
+      if (cur.length > 0 && (forcedBreakAt.has(i) || (acc + w > targetMaxSec && acc >= targetMinSec))) {
+        packed.push(cur); cur = []; acc = 0;
+      }
+      cur.push(g); acc += w;
+    }
+    if (cur.length > 0) packed.push(cur);
+  }
+
+  // ---- anti-degeneracy on the FINAL chunk only ----------------------------
+  if (packed.length >= 2) {
+    const lastPack = packed[packed.length - 1]!;
+    const lastWeight = lastPack.reduce((a, g) => a + weightOf(g), 0);
+    const firstGroupIdxOfLast = groups.indexOf(lastPack[0]!);
+    const separatedByForcedBreak = forcedBreakAt.has(firstGroupIdxOfLast);
+    if (lastWeight < targetMinSec && !separatedByForcedBreak) {
+      const prev = packed[packed.length - 2]!;
+      const mergedWeight = prev.reduce((a, g) => a + weightOf(g), 0) + lastWeight;
+      violations.push({
+        segIdx: lastPack[0]!.segIdx[0]!,
+        cause: 'degenerate-final-chunk-merged',
+        idealSec: lastPack[0]!.startSec,
+        durationSec: +lastWeight.toFixed(3),
+        fallback: `final chunk's net weight ${lastWeight.toFixed(3)}s is below targetMin ${targetMinSec}s; merged `
+          + `back into its predecessor (merged net weight ${mergedWeight.toFixed(3)}s)`,
+      });
+      prev.push(...lastPack);
+      packed.pop();
+    }
+  }
+
+  for (const g of groups) {
+    if (g.durationSec > targetMaxSec) {
+      violations.push({
+        segIdx: g.segIdx[0]!,
+        cause: 'oversize-unbreakable-group',
+        idealSec: g.startSec,
+        durationSec: +g.durationSec.toFixed(3),
+        fallback: `single unbreakable group spans ${g.durationSec.toFixed(2)}s (segments ${g.segIdx[0]}-`
+          + `${g.segIdx[g.segIdx.length - 1]}); invariant 1 forbids splitting a sentence regardless of the `
+          + `${targetMaxSec}s cap, so the cap is exceeded deliberately`,
+      });
+    }
+  }
+
+  // ---- emit ---------------------------------------------------------------
+  const runOpening = new Map<number, UnscriptedRun>();
+  for (let ci = 0; ci < packed.length; ci++) {
+    const firstGroupIdx = groups.indexOf(packed[ci]![0]!);
+    const seam = seams.find(s => !s.trailing && s.groupIdx === firstGroupIdx);
+    if (seam) runOpening.set(ci, seam.run);
+  }
+  const trailingRun = seams.find(s => s.trailing)?.run;
+
+  const chunks: FaChunk[] = [];
+  const inspection: PeriodStrictChunkInspection[] = [];
+  let cursor = runOpening.get(0)?.endSec ?? 0;
+  // Script segments carried over from a chunk whose audio window collapsed —
+  // see `excision-collapsed-chunk` below. NEVER dropped: the plan as a whole
+  // must carry every segment exactly once, which is what makes the text
+  // conservation check against arm C meaningful.
+  let carried: number[] = [];
+  let carriedFrom: number | undefined;
+  for (let i = 0; i < packed.length; i++) {
+    const gs = packed[i]!;
+    const startSec = cursor;
+    const lastGroup = gs[gs.length - 1]!;
+    const idealEnd = lastGroup.endSec;
+    const seamSegIdx = lastGroup.segIdx[lastGroup.segIdx.length - 1]!;
+
+    let endSec: number;
+    let cutKind: PeriodStrictChunkInspection['cutKind'];
+    let nextCursor: number;
+    const nextOpening = runOpening.get(i + 1);
+    if (i === packed.length - 1) {
+      endSec = trailingRun !== undefined ? trailingRun.startSec : audioDuration;
+      cutKind = trailingRun !== undefined ? 'excision-run-edge' : 'corpus-end';
+      nextCursor = endSec;
+    } else if (nextOpening !== undefined) {
+      endSec = nextOpening.startSec;
+      cutKind = 'excision-run-edge';
+      nextCursor = nextOpening.endSec;
+    } else {
+      const cut = periodStrictSilenceCut(idealEnd, silences, silenceWindowSec);
+      if (cut === undefined) {
+        const geo = periodStrictGeometricCut(idealEnd, tokens);
+        endSec = geo.cutSec;
+        cutKind = 'geometric-fallback';
+        violations.push({
+          segIdx: seamSegIdx + 1,
+          cause: 'geometric-fallback-cut',
+          idealSec: idealEnd,
+          seamSec: +geo.cutSec.toFixed(3),
+          fallback: `no detected silence within \u00b1${silenceWindowSec}s of the ideal seam ${idealEnd.toFixed(3)}; `
+            + `chunk still ends at THIS period (never slid to the next) and the audio is cut at the geometric `
+            + `midpoint of the ${geo.gapSec.toFixed(3)}s inter-word gap, ${geo.cutSec.toFixed(3)}`,
+        });
+      } else {
+        endSec = cut.cutSec;
+        cutKind = 'detected-silence';
+      }
+      nextCursor = endSec;
+    }
+
+    const segIdxThisChunk = [...carried, ...gs.flatMap(g => g.segIdx)];
+    const text = segIdxThisChunk.map(idx => segments[idx]!.text ?? '').filter(t => t.length > 0).join(' ');
+
+    // A COLLAPSED WINDOW. `cursor` sits at an excised run's far edge while this
+    // chunk's own estimate-derived seam lies BEHIND it — the arm-C section
+    // header's own observation that a recitation displaces the estimate, made
+    // visible by a narrow band where one chunk no longer spans the whole
+    // displacement. Two conservation properties are enforced here, neither of
+    // them a new rule:
+    //   TEXT — this chunk's segments are CARRIED FORWARD into the next emitted
+    //     chunk, never dropped. Invariant 1 still holds (whole segments) and so
+    //     does invariant 2 (the carrying chunk still ends at a full stop).
+    //   TIME — `cursor` is NOT advanced to a value behind itself. A chunk plan
+    //     that walked backwards would emit overlapping windows, which
+    //     `align_chunked` would align twice.
+    if (endSec <= startSec || text.length === 0) {
+      if (text.length > 0) {
+        violations.push({
+          segIdx: segIdxThisChunk[0]!,
+          cause: 'excision-collapsed-chunk',
+          idealSec: idealEnd,
+          seamSec: +endSec.toFixed(3),
+          durationSec: +(endSec - startSec).toFixed(3),
+          fallback: `window collapsed to [${startSec.toFixed(3)}, ${endSec.toFixed(3)}] because an excised run `
+            + `left the cursor past this chunk's own seam; segments ${segIdxThisChunk[0]}-${seamSegIdx} carried `
+            + 'forward into the next emitted chunk rather than dropped, and the cursor held rather than moved back',
+        });
+        if (carriedFrom === undefined) carriedFrom = segIdxThisChunk[0]!;
+        carried = segIdxThisChunk;
+      }
+      // Monotone non-decreasing, always. A collapsed silence cut holds the
+      // cursor where it is; a collapsed run edge still advances past the run,
+      // because the run's audio must be excised either way.
+      cursor = Math.max(cursor, nextCursor);
+      continue;
+    }
+    carried = [];
+
+    const durationSec = endSec - startSec;
+    const exceededCap = durationSec > targetMaxSec;
+    if (exceededCap) {
+      violations.push({
+        segIdx: segIdxThisChunk[0]!,
+        cause: 'cap-exceeded',
+        idealSec: startSec,
+        seamSec: +endSec.toFixed(3),
+        durationSec: +durationSec.toFixed(3),
+        fallback: `emitted chunk spans ${durationSec.toFixed(3)}s, over the ${targetMaxSec}s cap (segments `
+          + `${segIdxThisChunk[0]}-${seamSegIdx}); invariant 1 forbids the mid-sentence split that would avoid it`,
+      });
+    }
+    inspection.push({
+      index: chunks.length,
+      startSec: +startSec.toFixed(6),
+      endSec: +endSec.toFixed(6),
+      durationSec: +durationSec.toFixed(6),
+      endingText: text.slice(-80),
+      sentenceCount: gs.length,
+      segFrom: carriedFrom ?? segIdxThisChunk[0]!,
+      segTo: seamSegIdx,
+      cutKind,
+      cutOffsetSec: +(endSec - idealEnd).toFixed(6),
+      exceededCap,
+    });
+    carriedFrom = undefined;
+    chunks.push({ startSec, endSec, text });
+    cursor = nextCursor;
+  }
+
+  // Anything still carried at the end of the loop would be lost text. There is
+  // no legal plan that drops it, so this is an assertion, not a fallback.
+  if (carried.length > 0) {
+    violations.push({
+      segIdx: carried[0]!,
+      cause: 'excision-collapsed-chunk',
+      idealSec: audioDuration,
+      fallback: `segments ${carried[0]}-${carried[carried.length - 1]} were carried past the final chunk and `
+        + 'have no window; the plan is INCOMPLETE and must not be aligned',
+    });
+  }
+
+  return {
+    chunks: languageCode !== undefined && vocabChars !== undefined
+      ? applyFaTextNormalization(chunks, languageCode, vocabChars)
+      : chunks,
+    violations,
+    inspection,
+  };
+}
