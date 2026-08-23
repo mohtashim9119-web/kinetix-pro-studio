@@ -9541,3 +9541,214 @@ partition with R.5 excision added, OR a version of S2 capped well below 30s on v
 before any further chunk-plan iteration. Until that mechanism is understood, `computeFaChunkPlanS2`
 should not be iterated on blindly narrower/wider bands; the failure is not evidently a band-width
 problem.
+
+## Part AD — The Live Export Installed as a Machine Oracle; `vessel_damage_clue` Was Never Non-Determinism (WS1 Session AJ-0, 2026-08-23, append-only)
+
+### AD.1 — The verdict, in one paragraph
+
+The operator ear-verified both live-app projects (v6, 447 segments; 173, 173 segments — settling
+the long-open 172/173/174 question as **173**) in full, confirming every boundary correct except
+the five already-named open defects, and confirmed **no boundary was ever manually dragged** —
+every value is raw Apply-Sync output. This session extracted both projects (plus Spanish, settling
+26 vs 27 as **27**) from `~/Library/Application Support/com.kinetix.pro-studio` read-only,
+installed them as `scripts/fixtures/session-aj0-oracle-{v6,173,spanish}.json`, and diffed a fresh
+HEAD production-path run against them: **446/447 (v6) and 172/173 (173) match to full float
+precision**, with the only 173 divergence being `vessel_damage_clue` (172.910 fresh vs. 174.740
+export) and the only v6 divergence a newly-found 10ms drift at `102_frozen_scouts` (306.43 vs
+306.42) not among the five named defects. **`vessel_damage_clue`'s divergence is SOLVED, not
+parked**: it is the harness's `CORPORA['173']` default bundle still pointing at the
+Session-AH-retired `fa_live_words.json`/`fa_live_chunks.json` arm (minted 2026-08-19, never
+repointed after AB.7 retired it), not non-determinism of any kind — driving the SAME harness call
+against `fa_ah_words.json` (Session AH's own recapture) reproduces 174.740 exactly. Session AI's
+own Step 4 census (base=172.91 for this row) measured against the same stale default and inherited
+the same defect; its `computeFaChunkPlanS2` conclusions are unaffected (S2 read its own chunk plan
+independently and correctly produced 174.740 for this row, per AC's own table). No rule, planner,
+or arbiter code touched this session — read-only forensics plus one new reporting-only test.
+
+### AD.2 — Step 0-1: extraction
+
+Live artifacts (registry + 3 project files + 25 backup-rotation snapshots, 34 files, 1.66MB) copied
+byte-identical and made read-only under `.work-phase4/session-aj0/live/` before any other work;
+originals' mtimes verified unchanged after the copy. `registry.json` names the three current
+projects unambiguously (`FINAL TEST V6` / `FINAL TEST 173` / `FINAL TEST SPANISH`); two orphaned
+backup UUIDs (`30e61c51…`, `fd77f95e…`, both Aug 19 vintage, absent from the registry) were
+inspected and are earlier/renamed project attempts, not candidates for the current save. Schema
+found: `VideoSegment` in the saved format carries exactly `{text, transition, animation, trimStart,
+extraOverlays, tag, assetId, id, startTime, duration, anchorStart, anchorSource, order,
+showOverlay}` — no manual-edit flag, no owning-rule field, no snap-origin field. Rule provenance
+instead lives in `project.syncLog` (52 entries for v6 across 2 back-to-back identical Apply-Sync
+runs; 8 for 173, single run) and `project.syncRunSummaries` — **both logs record R.5/R.11/R.12
+corrections but ZERO R.14/R.15 entries on either corpus**, even though a fresh HEAD run fires R.14
+11× (v6) and R.15 3× (173) and the committed segments show their effect. This is a **logging gap,
+not evidence R.14/R.15 didn't run live** — the fresh-run diff (AD.1) shows the committed array
+already carries the correction in both saves. All three counts are gapless-partition clean
+(`startTime[i]+duration[i]===startTime[i+1]` holds for every adjacent pair, all three corpora).
+Stored precision: full float64, not rounded — 446/447 v6 boundaries and 172/173 boundaries match a
+fresh harness run to `1e-9`, ruling out any storage-side rounding as the general case.
+
+### AD.3 — Step 2: RAW PIPELINE OUTPUT, confirmed two independent ways
+
+Classification: **RAW PIPELINE OUTPUT**, not operator-corrected, not mixed. Evidence: (1) the
+operator's direct statement that no boundary was ever manually moved; (2) `syncLog` shows only
+Apply-Sync-generated `rule-correction`/`info` entries, no drag/manual-edit event type exists in the
+schema at all. Consequence, as the session brief itself states it: the file is the baseline the
+pipeline must not move except at the five named seams — confirmed as the correct framing by the
+diff in AD.1.
+
+### AD.4 — Step 3: fresh-run diff, and the `vessel_damage_clue` resolution
+
+`runProductionPath` at HEAD (`scripts/ws1-session-p-pipeline.ts`, unmodified) against each corpus's
+default stamped bundle:
+
+| corpus | compared | exact | diverge |
+|---|---|---|---|
+| v6 | 447 | 446 | 1 (`102_frozen_scouts`, 306.43 vs 306.42, +10ms, NOT one of the 5 named defects) |
+| 173 | 173 | 172 | 1 (`vessel_damage_clue`, 172.910 vs 174.740, -1.83s) |
+| spanish | 27 | 27 | 0 |
+
+The five named open-defect seams themselves reproduce EXACTLY (629.01/681.63/1417.12/18.51/427.48
+— all `prod`, none the ear target) — the export is not silently ahead of or behind the current
+pipeline at those seams; they are exactly as open as recorded.
+
+**`vessel_damage_clue` — SOLVED.** `.work-phase4/replay/173/run_manifest.json` stamps
+`fa_live_words.json`/`fa_live_chunks.json` (minted 2026-08-19T13:39:10Z) as the corpus's default
+FA-words arm. Session AH (AB.7, 2026-08-23 — the SAME day as this project's live save) explicitly
+retired that exact arm as un-reproducible from any version-controlled state and measured it
+committing **172.910 — WRONG** against the register's oldest positive assertion (174.740),
+superseding it with a fresh recapture (`fa_ah_words.json`/`fa_ah_chunks.json`, stamped bundle
+`ah-20260823T122703Z-0740b27e`) that commits **174.740 exactly**. Nobody repointed
+`run_manifest.json`'s default arm after AB.7, so every caller of `runProductionPath(CORPORA['173'])`
+without an explicit `faWordsFile` override — this session's own Step 3 run AND Session AI's Step 4
+census (`base: 172.91` for this row) — silently replays the retired, known-wrong arm. Verified
+directly this session: `runProductionPath(CORPORA['173'], true, undefined, 'fa_ah_words.json')`
+reproduces `174.74` exactly, R.15 not involved (`fired['R.15']` still 3, but this segment's
+pre-rule and committed values are identical in both bundles — the divergence is entirely in the
+base alignment stage, before any rule runs). **The parked non-determinism question is ANSWERED: it
+was never non-determinism, code or data. It is a stale default-bundle pointer in the harness,
+dated from before AB.7's own retirement, that this session traced to its exact cause.** Not fixed
+this session (Step 7 hard stop; also, silently repointing the default would retroactively change
+Session AI's own `base` column without operator sign-off) — recorded as the single highest-value
+next action.
+
+### AD.5 — Step 4: ledger diff
+
+69 ear-verified controls stand at HEAD (v6 41, 173 26, spanish 2) — matches Session AI's own
+cited 69 exactly, confirming no ledger drift since. Diffed against the live exports (2 of the 69
+are R.5 run-onset markers, `run-0-onset`/`run-2-onset`, not segment tags — benignly absent from
+`project.segments` by construction, not a data gap): **64/67 segment-tag controls agree with the
+export exactly (≤5ms).** Three do not — a supersession proposal table, **none applied without
+operator sign-off**:
+
+| corpus | tag | ledger CORRECT | export | delta | proposal |
+|---|---|---|---|---|---|
+| v6 | `231_slowing_pace` | 682.740 | 681.630 | -1.110 | no change — this IS the open defect, already tracked |
+| v6 | `226_four_scouts` | 671.180 | 671.170 | -0.010 | **propose** updating ledger CORRECT value to 671.170 (10ms, below the 5ms `EAR_PIN_TOLERANCE_SEC`×2, plausible transcription rounding) |
+| 173 | `iron_bounce` | 76.590 | 76.580 | -0.010 | **propose** updating ledger CORRECT value to 76.580 (same class as above; also reproduces in a fresh HEAD run, so it's not export-only) |
+
+The three rule-dependent rows: `152_frozen_brush_mice` (451.03, exact), `logic_clash` (418.14,
+exact) both confirm; `iron_bounce` is the 10ms proposal above, also rule-dependent (R.15). All
+three are RULE-DEPENDENT on R.14/R.15 exactly as recorded — golden replay's blind spot (§4
+Testing, CLAUDE.md) still applies; nothing here is protected by a fixture.
+
+### AD.6 — Step 5: reconciliation
+
+**`S1_KNOWN_BAD_MOVES`, confirmed exactly as composed**: 18 v6 rows (`provenance: 'ah-sitting'`) +
+1 spanish row (`023_scylla_six_sailors`, `provenance: 'ledger-inherited'`) = 19, **zero on 173** —
+correct as stated, because this list is REJECTED moves only, and 173's one S1 move
+(`vessel_damage_clue` → 174.740) was not rejected; it agreed with the ear-verified target, so its
+absence here is confirmatory, not a gap.
+
+**The Session AI census "265/31 unaccounted" is FULLY RECONCILED — there was no lost data, only a
+mis-added total.** `movement.controlsMoved` (30 v6 + 6 173 = 36) is a SUBSET of
+`movement.noEvidence`\-classified rows (`earStatus: 'moved-without-evidence-at-this-value'`), not
+an additive category alongside it — every one of the 36 control-regressions already carries that
+`earStatus`. The true, exhaustive partition of the 331 v6 / 45 173 moved rows is two categories
+that sum exactly: v6 = 295 `unaudited` + 36 `moved-without-evidence-at-this-value` = 331; 173 = 36
+`unaudited` + 8 `moved-without-evidence-at-this-value` + 1 `S2-value-ear-verified-correct`
+(`vessel_damage_clue`, S2 correctly reproduces 174.74) = 45. **265 and 31 were never missing rows —
+they are exactly the `unaudited` bucket, which the session's own printed summary never named as a
+category, only its two narrower subsets.**
+
+The Session AI ear-list's own 372-row categorization (`open-defect`/`control-moved`/
+`confidence-jump`/`no-evidence`) is a DIFFERENT, finer partition layered on top via an FA-confidence
+heuristic, not the same boundary as the census's `earStatus` field — reconciled by direct set
+comparison, not assumption. `control-moved` (35) = census's raw 36 minus exactly one row
+(`v6/231_slowing_pace`, correctly reclassified into the 5-row `open-defect` bucket instead — the
+other two open-defect tags, `214_solitary_fire`/`447_scout_facing_dark`, were never in the naive
+36 to begin with, because `earVerifiedControls()`'s `earHistory()[0]` picks the array-order-first
+row among ties at the same sitting order, and for those two tags the WRONG-verdict row happens to
+sit before the CORRECT-verdict row in `EAR_PASS_LEDGER`'s source order — a real selection quirk,
+not a data error, flagged here rather than fixed). `no-evidence` (47) draws from all 44 census
+no-evidence rows (34→`control-moved`, 5→`open-defect`, 2→`confidence-jump`, 2 stayed) plus 45 rows
+promoted from `unaudited` by the confidence heuristic — the two lists were never meant to be the
+same partition. One census no-evidence row, `173/blue_monkey`, is absent from the ear list entirely
+— benign: it is one of 173's two R.10-skipped (never-committed) segments, with no audio boundary to
+play.
+
+**Control count: 69 confirmed at HEAD, matching Session AI's own cited 69 exactly** — no drift.
+(AG's cited 43 predates this session's scope to re-derive; not independently re-measured here.)
+
+### AD.7 — Step 6: the oracle
+
+`scripts/fixtures/session-aj0-oracle-{v6,173,spanish}.json` — one file per corpus, full boundary
+list (index, tag, startTime, duration, anchorStart, anchorSource), the five open defects flagged
+`openDefect: true` with `earTarget`, the newly-found `102_frozen_scouts`/`226_four_scouts`/
+`iron_bounce` 10ms drifts flagged `knownMicroDrift` with a note. `scripts/ws1-session-aj0-oracle-diff.test.ts`
+runs `runProductionPath` fresh and diffs against it — REPORTING ONLY (structural asserts on segment
+count and tag order; every value delta is printed, none fails the suite) — per this session's own
+brief, since the export legitimately differs from a fresh run at the five seams. To become a hard
+gate: (1) repoint 173's default bundle at the AH recapture (AD.4) so `vessel_damage_clue` stops
+being a permanent false departure; (2) get operator sign-off on the two 10ms ledger proposals
+(AD.5) so they can be allowlisted with confidence instead of guessed at; (3) decide whether a
+future session that fixes one of the five open defects updates the oracle in the same commit as the
+fix (recommended) or in a follow-up (risks the oracle going stale the way `run_manifest.json` did).
+**Ears-needed count after this session: zero new** — every departure this session found already
+has either an `openDefect` (ear target on record) or `knownMicroDrift` (fully attributed to a stale
+arm or a 10ms ledger rounding) explanation; nothing here requires a fresh listening pass to
+adjudicate.
+
+### AD.8 — Floors, re-measured
+
+`npm test` 2493/61/0 (2490 baseline + 3 new oracle-diff tests, 0 failed) · `tsc --noEmit` clean ·
+`cargo check --features fa-inference` clean · `cargo clippy --all-targets --features fa-inference`
+clean, 4 pre-existing warnings (`fa.rs:117` unit-arg, `fa.rs:833` needless-return,
+`fa_onnx.rs:759` needless-lifetimes, `fa_onnx.rs:4747` neg-multiply) · `cargo test` 141/0/1 default,
+216/0/24 `--features fa-inference` · golden replay 6/6. `faAnchors.ts` sha256 unchanged
+(`b61e94cb…`). `git diff --stat a3b0ffc` touches only the 4 new AJ-0 files (3 oracle fixtures + the
+reporting test) plus this docs commit's own targets — zero hits for `snapBoundaries.ts`,
+`silenceDetector.ts`, `whisperService.ts`, `docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv`.
+
+**Next action: repoint `.work-phase4/replay/173/run_manifest.json`'s default `faWords`/`chunkPlan`
+arms from `fa_live_*` to `fa_ah_*`** (AD.4) — the single highest-value fix this session found,
+since every 173 harness measurement since AB.7 (including Session AI's own census) has been
+silently reading a self-admittedly-retired, known-wrong arm for this one row. Requires re-checking
+whether any OTHER 173 finding since AB.7 depended on that stale default before repointing it.
+
+### AD.9 — The AJ ablation gate, rewritten (proposed, NOT executed this session)
+
+Prior to this session, an "AJ ablation" (a planned four-arm S1/S2/rule-stage comparison) would have
+needed a fresh ear pass to adjudicate every arm's output — exactly the "ear-cost problem" AD.7
+states is now closed. With the oracle installed, the gate can be rewritten as a pure diff, no
+listening required for any row the oracle already classifies:
+
+1. Run each arm (base production, S1, S2, any future candidate) through `runProductionPath` (with
+   173's `faWordsFile` corrected to `fa_ah_words.json` first — AD.4 — or the gate inherits the same
+   stale-arm defect this session found).
+2. Diff each arm's committed array against the corpus's oracle
+   (`scripts/fixtures/session-aj0-oracle-*.json`).
+3. **Pass condition**, all four required: (a) zero movement on any boundary NOT flagged
+   `openDefect`/`knownMicroDrift` in the oracle — this is the 69-control zero-tolerance threshold
+   Session AI's own gate used, restated as an oracle diff instead of a hardcoded control list, so it
+   cannot drift out of sync with the ledger the way the hardcoded 69 could; (b) at least one of the
+   five `openDefect` rows lands within its recorded `earTarget` ± 50ms (Session AI's own low bar,
+   unchanged); (c) zero reproduction of any `S1_KNOWN_BAD_MOVES` value; (d) any NEW divergence
+   outside the oracle's known set is a hard fail, not a silent pass — this is what makes the gate
+   stricter than Session AI's own, which had no third-category catch-all and consequently miscounted
+   its own results (AD.6).
+4. A row the oracle does not yet classify (a genuinely new boundary, or a corpus not yet extracted)
+   still requires an ear pass — the oracle only closes the ear-cost problem for what it already
+   covers, not for material outside its scope.
+
+This gate is stricter than a re-run of Session AI's own (adds condition (a)'s "no new departure"
+catch, closing exactly the accounting gap AD.6 found), and needs no listening pass to run except on
+genuinely novel material. Not executed this session per the hard stop at Step 7.

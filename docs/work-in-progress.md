@@ -124,6 +124,22 @@ threshold, is reached by R.14 at residual 0.000s — **Stage 1's lock is no long
 Golden replay 6/6 byte-identical (the replay harness stops at `snapCoveredBoundaries` and never
 reaches the rule stage). Full detail: §11h, `sync-pipeline-v2-plan.md` Part Z.
 
+**2026-08-23 (WS1 Session AJ-0) — no phase row advances; a machine oracle is installed and one
+long-parked question is solved.** Read-only forensics session: the operator's own live-app saves
+(v6 447 segments, 173 173 segments — settling 172/173/174 as 173, Spanish 27 — settling 26/27 as
+27) are extracted, confirmed RAW PIPELINE OUTPUT (no boundary ever manually dragged), and installed
+as `scripts/fixtures/session-aj0-oracle-{v6,173,spanish}.json` with a reporting-only diff test
+(`scripts/ws1-session-aj0-oracle-diff.test.ts`). A fresh HEAD run matches 446/447 (v6) and 172/173
+(173) to full float precision; the five named open defects reproduce exactly as recorded (no
+drift). **`vessel_damage_clue`'s long-parked 172.91-vs-174.74 gap is SOLVED, not non-determinism**:
+the harness's `run_manifest.json` for 173 still defaults to the arm Session AH (AB.7) explicitly
+retired as known-wrong at this exact row, never repointed to AH's own recapture — driving the same
+harness call against the recapture reproduces 174.740 exactly. Session AI's own Step 4 census
+inherited the same stale default. The Session AI census's apparent "265/31 unaccounted" boundaries
+are fully reconciled as a mis-added total, not lost data (§11l). One new, previously-untracked 10ms
+drift found (v6 `102_frozen_scouts`). No rule/planner/arbiter code touched. Full detail: §11l,
+`sync-pipeline-v2-plan.md` Part AD.
+
 **2026-08-23 (WS1 Session AH) — no phase row advances.** S1 (Session AG's chunk-plan cleanup) is
 REJECTED and rolled back as a permanent negative — 18/18 operator ear regressions on its own
 collateral sheet. Phase 3/Task 5 stays at Session H's "PRODUCTION PATH WIRED; gate PER-PROJECT,
@@ -826,6 +842,17 @@ neither silence arm reproduces 126 (native 119, app 121). **No compliance row is
 — it is a bundle-provenance defect, not a Contract 1→2 requirement** — but any future 173
 measurement that depends on the chunk plan should be read against it. Full detail:
 `sync-pipeline-v2-plan.md` Part AA.2.
+
+**2026-08-23 (WS1 Session AJ-0) — no row in this table moves; an arm-provenance defect matching
+Session AG's own class is found on 173.** `.work-phase4/replay/173/run_manifest.json`'s stamped
+default `faWords`/`chunkPlan` arm (`fa_live_*`, minted 2026-08-19) was never repointed after
+Session AH (AB.7) explicitly retired it as un-reproducible and wrong at `vessel_damage_clue`
+(committing 172.910 against the register's 174.740) and superseded it with `fa_ah_*`. Every 173
+harness measurement since AB.7 that did not pass an explicit `faWordsFile` override — including
+Session AI's own Step 4 census — has been silently reading the retired arm for this one row. Not a
+Contract 1→2 row (same reasoning as Sessions S/AB/AC/AI: this is bundle provenance, not the
+Stage 1→2 contract's own shape) — recorded here for the same reason Session AG's arm-provenance
+finding was. Full detail: `sync-pipeline-v2-plan.md` Part AD.4.
 
 **2026-08-23 (WS1 Session AI) — no row in this table moves.** `computeFaChunkPlanS2` sits upstream
 of Contract 1→2's own shape (it decides how audio is windowed for FA, not the tokens/silences/
@@ -6303,6 +6330,69 @@ bounded above by ~0.3% on known outcomes — worse than S1's own rejected ~7%. T
 ("S2 improves FA timing quality") IS falsified, by the pre-registered standard, not one fitted
 after the fact.
 
+### §11l. WS1 Session AJ-0 — RESULTS
+
+**One-line verdict: the operator's ear-verified live-app saves are extracted, confirmed RAW
+PIPELINE OUTPUT, and installed as a machine oracle (`scripts/fixtures/session-aj0-oracle-*.json` +
+a reporting-only diff test); `vessel_damage_clue`'s parked non-determinism question is SOLVED as a
+stale default-bundle pointer, not non-determinism of any kind; the Session AI census's apparent
+265/31 "unaccounted" boundaries are fully reconciled as a mis-added total. No rule/planner/arbiter
+code touched.** Full narrative and every table: `sync-pipeline-v2-plan.md` Part AD.
+
+**Step 0.** Live artifacts preserved read-only under `.work-phase4/session-aj0/live/` (34 files,
+byte-identical copies, verified against source hashes; originals' mtimes unchanged after copy).
+Registry unambiguously names the three current projects; two orphaned pre-registry backup UUIDs
+inspected and ruled out as candidates.
+
+**Step 1.** Segment counts settle three open questions: v6 447 (matches prior record), **173
+= 173** (not 172 or 174), **Spanish = 27** (not 26). Schema carries no manual-edit/owning-rule/
+snap-origin field; rule provenance lives in `syncLog`/`syncRunSummaries`, which log R.5/R.11/R.12
+but never R.14/R.15 (a logging gap, not evidence the gate didn't run — the committed arrays already
+carry its effect). All three gapless-partition clean. Stored precision full float64 — 618/620
+boundaries match a fresh HEAD run to `1e-9`.
+
+**Step 2.** RAW PIPELINE OUTPUT, confirmed by direct operator statement (no boundary ever manually
+dragged) and by the syncLog schema (no manual-edit event type exists). Consequence: the file is the
+baseline the pipeline must not move except at the five named seams.
+
+**Step 3.** Fresh `runProductionPath` diff: v6 446/447 exact (1 new, previously-untracked 10ms
+drift at `102_frozen_scouts`), 173 172/173 exact (`vessel_damage_clue` only), spanish 27/27 exact.
+The five named open defects reproduce their recorded `prod` values exactly — no drift at those
+seams. **`vessel_damage_clue` SOLVED**: `.work-phase4/replay/173/run_manifest.json`'s default FA-
+words arm (`fa_live_words.json`, minted 2026-08-19) was never repointed after Session AH (AB.7)
+retired it as known-wrong at this exact row and superseded it with `fa_ah_words.json`. Driving
+`runProductionPath` against the AH recapture reproduces 174.740 exactly, verified directly this
+session. Session AI's own Step 4 census (`base: 172.91`) inherited the same stale default.
+
+**Step 4.** 69 ear-verified controls at HEAD (matches Session AI's own cited 69 exactly). 64/67
+segment-tag controls (2 of 69 are non-segment R.5 run-onset markers) agree with the export exactly;
+3 disagree — `231_slowing_pace` (the open defect, no action), and two 10ms proposals
+(`226_four_scouts` 671.18→671.17, `iron_bounce` 76.59→76.58) awaiting operator sign-off, not
+applied. The three rule-dependent rows: `152_frozen_brush_mice` and `logic_clash` confirm exactly;
+`iron_bounce` is the 10ms proposal above.
+
+**Step 5.** `S1_KNOWN_BAD_MOVES` confirmed exactly as composed: 18 v6 + 1 spanish, zero 173 (173's
+one S1 move, `vessel_damage_clue`, wasn't rejected — it agreed with the ear target, hence its
+correct absence from a REJECTED-moves list). The census's 265/31 "unaccounted" fully reconciled:
+`controlsMoved` (36) is a SUBSET of `noEvidence`-classified rows, not additive alongside them — the
+true partition is `unaudited` (295 v6 + 36 173) + `moved-without-evidence-at-this-value` (36 v6 + 8
+173, minus 1 for 173's `S2-value-ear-verified-correct` row) = 331/45 exactly, with zero rows lost.
+The Session AI ear-list's own finer categorization (372 rows: 5 open-defect, 35 control-moved, 285
+confidence-jump, 47 no-evidence) is reconciled by direct set comparison against the census, not
+assumption — every row accounted for except `173/blue_monkey` (a R.10-skipped, never-committed
+segment with no audio to play — benign).
+
+**Step 6.** Oracle installed: `scripts/fixtures/session-aj0-oracle-{v6,173,spanish}.json` (full
+boundary lists, 5 open defects and 3 micro-drifts flagged with notes) +
+`scripts/ws1-session-aj0-oracle-diff.test.ts` (reporting-only — structural asserts on count/tag
+order, all value deltas printed, none fails the suite). Zero new ears needed — every departure
+found this session already has a recorded explanation (open-defect target, or a fully-attributed
+micro-drift).
+
+**Step 7.** Not executed, per the session's own hard stop: S2, R.5 integration, the four-arm
+ablation, any rule/planner/arbiter change. AJ ablation gate rewrite proposed, not run
+(`sync-pipeline-v2-plan.md` AD.9).
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -6360,6 +6450,25 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-23 — WS1 Session AJ-0: the operator's ear-verified live-app saves installed as a
+  machine oracle; `vessel_damage_clue`'s parked non-determinism SOLVED as a stale default-bundle
+  pointer; Session AI's apparent 265/31-unaccounted census reconciled as a mis-added total, no
+  data lost.** Read-only forensics: v6 (447 segments), 173 (173 — settling 172/173/174), and
+  Spanish (27 — settling 26/27) extracted from `~/Library/Application Support/com.kinetix.pro-studio`
+  and preserved under `.work-phase4/session-aj0/live/`; confirmed RAW PIPELINE OUTPUT (operator
+  never manually dragged a boundary). Fresh HEAD `runProductionPath` matches the exports to full
+  float precision except the five already-known open defects (unchanged) plus one new 10ms drift
+  (v6 `102_frozen_scouts`) and `173/vessel_damage_clue`. The latter is traced to its exact cause:
+  `.work-phase4/replay/173/run_manifest.json` still defaults to the FA-words arm Session AH (AB.7)
+  explicitly retired as known-wrong at this row, never repointed to AH's own recapture — driving
+  the harness against the recapture reproduces the ear-verified 174.740 exactly, and Session AI's
+  own Step 4 census inherited the same stale default. Oracle installed at
+  `scripts/fixtures/session-aj0-oracle-{v6,173,spanish}.json` with a reporting-only diff test
+  (`scripts/ws1-session-aj0-oracle-diff.test.ts`) — zero new ears needed for anything this session
+  found. AJ ablation gate rewritten as a pure oracle diff (proposed, not run —
+  `sync-pipeline-v2-plan.md` AD.9). No rule/planner/arbiter code touched. Full detail: §11l,
+  `sync-pipeline-v2-plan.md` Part AD.
 
 - **2026-08-23 — WS1 Session AI: S2 BUILT AND MEASURED — the phantom-tail mechanism is
   structurally eliminated, and the fix is rejected on 36 control regressions it also causes.**
