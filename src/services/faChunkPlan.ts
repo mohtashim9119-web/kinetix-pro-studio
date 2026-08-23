@@ -2000,3 +2000,197 @@ export function computeFaChunkPlanPeriodStrict(
     inspection,
   };
 }
+
+// ---------------------------------------------------------------------------
+// EDGE-PLACEMENT SUBSTITUTION SURFACE (WS1 Session AM, MEASUREMENT ONLY).
+//
+// WHAT THIS IS FOR. Every S2-family arm (B, C, D) places an internal chunk edge
+// by taking the closing sentence group's ESTIMATE-DERIVED end time and snapping
+// a detected silence to it. Production does not: `runQiRanges` above pairs each
+// chunk edge with a `faAnchors.ts` three-source-agreement anchor BY SCRIPT-WORD
+// INDEX, never by time. Session AL measured production's per-decile drift at
+// identically zero and every S2 arm's at an arch tracking the estimate's own
+// error at r >= 0.973. This accessor exposes, WITHOUT ALIGNING ANYTHING, how
+// much of the S2 edge set could actually be re-placed the production way — the
+// coverage question that decides whether arm F is a full or partial
+// substitution, asked BEFORE the arm is built or run.
+//
+// READ-ONLY AND ADDITIVE. It computes no plan, emits no chunk, and is called by
+// no production path. `computeRunContext` is reused unchanged, so the anchors
+// reported here are bit-for-bit the anchors production would use.
+//
+// INDEX SPACE, NOT TIME. `pickSeamAnchor` decides WHICH anchor IS a given seam
+// by comparing script-word indices — `CLAUDE.md` §4's rule that timestamps may
+// measure distance but never decide identity, whose named worked violation is
+// `faAnchors.ts`'s own `findAgreeingSilence` matching by timestamp proximity. A
+// time-radius search would additionally be self-defeating: the ideal seam time
+// is READ OFF THE ESTIMATE, so searching near it in time re-imports exactly the
+// error the substitution exists to remove. `anchorMinusIdealSec` below is
+// therefore a REPORTED MEASUREMENT and never a decision input.
+// ---------------------------------------------------------------------------
+
+/** The anchor an index-space search selected for one seam, or the reason none
+ *  was admissible. */
+export interface SeamAnchorPick {
+  anchorIdx: number;
+  qi: number;
+  tokenIdx: number;
+  timeSec: number;
+  /** `anchor.qi - seamQi`. Zero means the anchor IS the seam: `faAnchors.ts`
+   *  defines an anchor's time as the END of the detected silence spanning the
+   *  token seam immediately before script word `qi`, i.e. the instant word `qi`
+   *  begins. */
+  deltaQi: number;
+}
+
+/**
+ * The one anchor-selection rule, shared by the surface accessor and by arm F's
+ * planner so the two can never disagree about what "the anchor for this seam"
+ * means.
+ *
+ * Nearest anchor to `seamQi` by |Δqi|, admissible only while its own `qi` lies
+ * in `[windowQiLo, windowQiHi)` — the half-open script-word span of the two
+ * sentence groups the seam separates. That window is STRUCTURAL, not a
+ * tolerance: sentence groups are the planner's own atoms and the only place
+ * invariant 2 permits an edge, so an anchor outside the pair belongs to a
+ * DIFFERENT legal seam and committing it here would place this chunk's edge at
+ * another chunk's boundary. There is no millisecond radius and no tunable.
+ *
+ * TIE-BREAK on equal |Δqi|: prefer `qi >= seamQi`. A chunk's TEXT is fixed by
+ * packing, so an edge placed late leaves the closing chunk holding audio for
+ * words whose text it also holds, while an edge placed early hands the opening
+ * chunk audio for words whose text stayed behind. Late is the recoverable
+ * direction. Stated so it is a decision rather than an accident.
+ *
+ * `anchors` must be ascending in `qi` — `computeAnchors` emits them in query
+ * order, and this function asserts nothing about it because a violation would
+ * only ever pick a farther-but-still-admissible anchor, never an inadmissible
+ * one: the window test is applied per candidate, not to a range.
+ */
+export function pickSeamAnchor(
+  anchors: readonly FaAnchor[],
+  seamQi: number,
+  windowQiLo: number,
+  windowQiHi: number,
+): SeamAnchorPick | undefined {
+  let best: SeamAnchorPick | undefined;
+  for (let i = 0; i < anchors.length; i++) {
+    const a = anchors[i]!;
+    if (a.qi < windowQiLo || a.qi >= windowQiHi) continue;
+    const deltaQi = a.qi - seamQi;
+    if (best === undefined
+      || Math.abs(deltaQi) < Math.abs(best.deltaQi)
+      || (Math.abs(deltaQi) === Math.abs(best.deltaQi) && deltaQi > best.deltaQi)) {
+      best = { anchorIdx: i, qi: a.qi, tokenIdx: a.tokenIdx, timeSec: a.timeSec, deltaQi };
+    }
+  }
+  return best;
+}
+
+/** One sentence-group end — a place the S2 planner is permitted to break —
+ *  paired with what each edge-placement rule would commit there. */
+export interface S2SeamSurfaceRow {
+  /** Index into the group array; the seam sits between this group and the next. */
+  groupIdx: number;
+  firstSegIdx: number;
+  /** The segment whose end IS the seam. */
+  lastSegIdx: number;
+  /** The script-word index at the seam — the identity coordinate. */
+  seamQi: number;
+  /** The estimate-derived ideal seam time (`applyAnchorBasedTiming`'s own group
+   *  end). What arms B/C/D snap a silence to. */
+  idealSec: number;
+  /** What arm C commits here: the nearest detected silence END to `idealSec`. */
+  silenceCutSec?: number;
+  /** `silenceCutSec - idealSec`. */
+  silenceOffsetSec?: number;
+  /** The structural admissibility window, in script-word indices. */
+  windowQiLo: number;
+  windowQiHi: number;
+  /** The anchor an index-space search selects, when one is admissible. */
+  pick?: SeamAnchorPick;
+  /** REPORTED ONLY, never a decision input: how far the selected anchor's time
+   *  sits from the estimate-derived ideal seam. This is the "substitution
+   *  surface" the session brief asks for in milliseconds. */
+  anchorMinusIdealSec?: number;
+}
+
+export interface S2SeamSurface {
+  /** Every anchor `computeFaAnchors` emits for this corpus. */
+  anchors: readonly FaAnchor[];
+  /** Anchors carrying THREE-SOURCE AGREEMENT. Equal to `anchors.length` by
+   *  construction, not by coincidence: `computeAnchors` emits an anchor only
+   *  when the Hirschberg op is a `'match'` (script agrees with Whisper), the
+   *  token is R-O-distinctive inside a long enough match run, AND a detected
+   *  silence spans the token seam before it (R.1(c)/I6). There is no
+   *  weaker-provenance anchor to filter out — reported explicitly so "how many
+   *  carry three-source agreement" is answered by the code path rather than
+   *  assumed. */
+  threeSourceAnchors: number;
+  totalQi: number;
+  groupCount: number;
+  /** One row per sentence-group end the planner may break at, excluding the
+   *  corpus's final group (which has no seam after it). */
+  rows: S2SeamSurfaceRow[];
+  /** Provenance census of `computeFaAnchors`'s own run partition, so a forced
+   *  split is never miscounted as an anchor. */
+  runBoundaryProvenance: Record<string, number>;
+}
+
+/**
+ * Enumerates every sentence-group end on a corpus and reports, per seam, what
+ * arm C's silence rule commits and what an index-space anchor search would
+ * commit instead. Computes no chunk plan and runs no alignment.
+ */
+export function computeS2SeamSurface(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  languageCode?: FaLanguageCode,
+): S2SeamSurface {
+  const ctx = computeRunContext(segments, tokens, silences, audioDuration, languageCode);
+  const groups = s2UnbreakableGroups(segments);
+  const qiRanges = s2SegQiRanges(segments, languageCode);
+
+  const runBoundaryProvenance: Record<string, number> = {};
+  for (const r of ctx.runs) {
+    runBoundaryProvenance[r.endProvenance] = (runBoundaryProvenance[r.endProvenance] ?? 0) + 1;
+  }
+
+  const rows: S2SeamSurfaceRow[] = [];
+  for (let gi = 0; gi < groups.length - 1; gi++) {
+    const g = groups[gi]!;
+    const next = groups[gi + 1]!;
+    const firstSegIdx = g.segIdx[0]!;
+    const lastSegIdx = g.segIdx[g.segIdx.length - 1]!;
+    const seamQi = qiRanges[lastSegIdx]!.end;
+    const windowQiLo = qiRanges[firstSegIdx]!.start;
+    const windowQiHi = qiRanges[next.segIdx[next.segIdx.length - 1]!]!.end;
+
+    const cut = s2NearestSilenceCut(g.endSec, silences);
+    const pick = pickSeamAnchor(ctx.anchors, seamQi, windowQiLo, windowQiHi);
+    rows.push({
+      groupIdx: gi,
+      firstSegIdx,
+      lastSegIdx,
+      seamQi,
+      idealSec: g.endSec,
+      silenceCutSec: cut?.cutSec,
+      silenceOffsetSec: cut?.offsetSec,
+      windowQiLo,
+      windowQiHi,
+      pick,
+      anchorMinusIdealSec: pick === undefined ? undefined : pick.timeSec - g.endSec,
+    });
+  }
+
+  return {
+    anchors: ctx.anchors,
+    threeSourceAnchors: ctx.anchors.length,
+    totalQi: ctx.totalQi,
+    groupCount: groups.length,
+    rows,
+    runBoundaryProvenance,
+  };
+}

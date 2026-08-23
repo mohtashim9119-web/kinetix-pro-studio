@@ -130,6 +130,14 @@ const ALLOWLIST = new Set<string>([
   // It is .md rather than .csv deliberately — CLAUDE.md §7 keeps CSV/JSON data
   // out of docs/, and the machine-readable twin lives in .work-phase4/.
   'docs/ws1-sync-pipeline/session-al-v6-chunk-inspection.md',
+  // WS1 Session AM's substitution-surface measurement. Same class as the arm-D
+  // dump above and admitted for the same reason: a single-run MEASUREMENT
+  // DUMP, written by `scripts/ws1-session-am-step2-surface.test.ts`, one row
+  // per internal chunk edge plus the anchor-coverage and front-loading tables
+  // the session's gate is adjudicated against. It is read against the plan, not
+  // maintained as a status page; its STATUS lives in
+  // docs/work-in-progress.md §11o.
+  'docs/ws1-sync-pipeline/session-am-substitution-surface.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
