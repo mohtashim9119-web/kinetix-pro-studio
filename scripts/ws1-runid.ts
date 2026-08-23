@@ -161,3 +161,40 @@ export const V6_BUNDLE_ARMS: Record<string, string> = {
   chunkPlan: 'fa_live_chunks.json',
   faWords: 'fa_live_words.json',
 };
+
+/**
+ * PER-CORPUS ARM OVERRIDES (WS1 Session AK, Step 0).
+ *
+ * `V6_BUNDLE_ARMS` was written when every corpus's default arm carried the
+ * same filename, and `loadLiveBundle` reads those names DIRECTLY — the
+ * manifest records each arm's file, but nothing ever read that field back.
+ * So a manifest repointed on its own would change nothing at all, and worse,
+ * `verifyBundle` would then hash the hardcoded file against the repointed
+ * arm's sha256 and report a SILENT EDIT that never happened.
+ *
+ * The repoint therefore has to happen here, where the filename is actually
+ * resolved. 173's `fa_live_*` arm was retired by WS1 Session AH (AB.7) as
+ * un-reproducible from any version-controlled state and MEASURED committing
+ * 172.910 at `vessel_damage_clue` against the register's oldest positive
+ * assertion (174.740, `ear-12`); `fa_ah_*` is Session AH's own recapture at
+ * HEAD and commits 174.740 exactly, with the other 172 of 173 boundaries
+ * bit-identical (`.work-phase4/session-ah/step2b-fidelity.md`). Nobody
+ * repointed the default after that retirement, so every unqualified
+ * `runProductionPath(CORPORA['173'])` — Session AI's Step 4 census and
+ * Session AJ-0's own oracle diff included — silently replayed the known-wrong
+ * arm.
+ *
+ * The retired files stay ON DISK, untouched, as the historical record. Only
+ * which one is DEFAULT changes.
+ */
+export const BUNDLE_ARM_OVERRIDES: Record<string, Readonly<Record<string, string>>> = {
+  '173': { chunkPlan: 'fa_ah_chunks.json', faWords: 'fa_ah_words.json' },
+};
+
+/** The arm filenames for one corpus — `V6_BUNDLE_ARMS` with that corpus's
+ *  overrides applied. Every reader of a bundle must go through this, never
+ *  `V6_BUNDLE_ARMS` directly, or two callers will disagree about which arm a
+ *  corpus's default is. */
+export function bundleArmsFor(corpus: string): Record<string, string> {
+  return { ...V6_BUNDLE_ARMS, ...(BUNDLE_ARM_OVERRIDES[corpus] ?? {}) };
+}

@@ -197,6 +197,38 @@ export const EAR_SITTINGS = {
    *  `ear-verify-ah`'s own row for this boundary (order 13) also scored
    *  162.15, so it is superseded by this sitting too, on the same basis. */
   'ear-verify-ai': 14,
+  /** WS1 Sessions AJ-0 / AK — THE OPERATOR FULL PASS, and the strongest
+   *  sitting on record by construction.
+   *
+   *  Every prior sitting scored a CANDIDATE LIST: rows someone had already
+   *  flagged, which means every one of them is silent about the boundaries
+   *  nobody thought to put on a list. This sitting is a complete listen-through
+   *  of two whole corpora — all 447 v6 boundaries and all 173 173 boundaries,
+   *  620 in total — returning 615 CORRECT and exactly five open defects. There
+   *  is no unaudited remainder left on either corpus to hide a regression in,
+   *  which is what makes the Session AK gate's "moves > 5ms are the ear bill"
+   *  arithmetic possible at all: before this pass, a moved boundary might have
+   *  been unaudited; after it, every one of them has a standing verdict.
+   *
+   *  It is also the sitting that resolved three long-standing 10ms/target
+   *  discrepancies, all by the same principle — the operator heard the LIVE
+   *  EXPORT, so what the export commits is what was accepted:
+   *    `226_four_scouts`  671.18 -> 671.17 (a measured 16 kHz/native silence-arm
+   *                       difference, not drift — Session AK re-measured it)
+   *    `iron_bounce`      76.59  -> 76.58  (reproduces in a fresh HEAD run too,
+   *                       so not export-only)
+   *    `400_endless_dark` 1266.66 (a never-committed Class B TARGET) -> 1266.75
+   *                       (what the pipeline actually commits, via R.14)
+   *  None of the superseded values is deleted — this ledger is append-only and
+   *  supersession is by `EAR_SITTINGS` order alone.
+   *
+   *  SCOPE, stated because it is load-bearing: v6 and 173 ONLY. SPANISH IS NOT
+   *  COVERED. It has no full pass, was last touched 2026-08-19, and holds the
+   *  one `S1_KNOWN_BAD_MOVES` row whose rejection is `ledger-inherited` rather
+   *  than heard in a sitting. Its 27 boundaries are OUT OF REGISTER pending
+   *  their own pass; treating a spanish row as attested on the strength of this
+   *  sitting would be reading an attestation that was never made. */
+  'full-pass-aj0': 15,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -851,6 +883,36 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
       'never be reached by any script-anchored placement: it sits strictly inside the outgoing ' +
       'segment\'s own full-confidence last word "competing" [161.96, 162.42]. RULE-DEPENDENT (R.15): ' +
       'pre-rule is 161.330, which every prior sitting scored EARLY. Deleting R.15 reopens this row.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSIONS AJ-0 / AK — the OPERATOR FULL PASS. See the `full-pass-aj0`
+  // entry in EAR_SITTINGS for what this sitting is and why it outranks
+  // everything before it on the rows it covers.
+  // -------------------------------------------------------------------------
+  { sitting: 'full-pass-aj0', corpus: 'v6', tag: '226_four_scouts', scoredValue: 671.17, verdict: 'CORRECT',
+    note: 'SUPERSEDES `ov3-triage` (order 2), which scored 671.18 CORRECT with an ' +
+      '`armToleranceSec: 0.02` widening. ARCHIVED, not deleted: 671.18 was scored on the 16 kHz ' +
+      'silence arm, which places the backing silence\'s midpoint there; the NATIVE-rate arm the live ' +
+      'production path uses places the same silence at 671.17, and Session AK re-measured exactly ' +
+      'that split this session (native 671.170, `silences_app.json` 671.180 — the 10ms is the ' +
+      'documented arm difference, reproduced on demand). The operator\'s full pass heard the LIVE ' +
+      'export, which is the native arm, so 671.17 is the value actually accepted. The `ov3-triage` ' +
+      'row and its arm-tolerance note remain in place above and are outranked by order alone.' },
+  { sitting: 'full-pass-aj0', corpus: '173', tag: 'iron_bounce', scoredValue: 76.58, verdict: 'CORRECT',
+    note: 'SUPERSEDES `ear-verify-ah` (order 13) and `ear-173-x` (order 9), both of which scored ' +
+      '76.59 CORRECT. ARCHIVED, not deleted: 76.59 is the value both of those sittings recorded; ' +
+      '76.58 is what the live export commits AND what a fresh HEAD run reproduces, so unlike ' +
+      '`226_four_scouts` this one is not export-only and is not an arm artefact. RULE-DEPENDENT ' +
+      '(R.15): this boundary is correct BECAUSE R.15 fires on it. Deleting R.15 reopens the row.' },
+  { sitting: 'full-pass-aj0', corpus: 'v6', tag: '400_endless_dark', scoredValue: 1266.75, verdict: 'CORRECT',
+    note: 'CLOSES the row. SUPERSEDES `ear-verify-ad` (order 10) and `session-p-live` (order 5), ' +
+      'which both named 1266.66 as the Class B target while production committed 1266.21 (scored ' +
+      'WRONG by both). ARCHIVED, not deleted: 1266.66 was a TARGET proposed from the Class B ' +
+      'analysis, never a value the shipped pipeline committed; 1266.75 is what the pipeline commits ' +
+      'today and what the operator\'s full pass accepted. RULE-DEPENDENT (R.14): the value is R.14 ' +
+      'snapping to the silence midpoint. Deleting R.14 reopens this row, which is why it is recorded ' +
+      'here alongside `152_frozen_brush_mice` (R.14), `iron_bounce` and `logic_clash` (R.15) — the ' +
+      'four rows whose correctness is owned by a rule rather than by the base alignment.' },
 ];
 
 /** Default match tolerance — the Zero-Defect Register's own. */

@@ -48,7 +48,7 @@ import type { RunEdgeViolation, RunExtent } from '../src/services/faRuleStageExc
 import type { TranscriptToken, VideoSegment } from '../src/types';
 import type { SegmentAlignment } from '../src/services/whisperService';
 import type { SilenceInterval } from '../src/services/silenceDetector';
-import { verifyBundle, V6_BUNDLE_ARMS } from './ws1-runid.js';
+import { verifyBundle, bundleArmsFor } from './ws1-runid.js';
 
 export const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const REPLAY_ROOT = resolve(REPO, '.work-phase4/replay');
@@ -109,9 +109,12 @@ export function loadLiveBundle(
   key: string, requireStamp = true, silencesFile?: string, faWordsFile?: string,
 ): LiveBundle {
   const dir = resolve(REPLAY_ROOT, key);
+  // WS1 Session AK Step 0 — per-corpus arm resolution. 173's default FA arm is
+  // `fa_ah_*` (Session AH's recapture), not the retired `fa_live_*`.
+  const arms = bundleArmsFor(key);
   let runId: string | undefined;
   if (requireStamp) {
-    const verdict = verifyBundle(dir, V6_BUNDLE_ARMS);
+    const verdict = verifyBundle(dir, arms);
     if (!verdict.ok) {
       throw new Error(`Bundle ${key} is not a single-vintage live-fidelity bundle:\n  ${verdict.problems.join('\n  ')}`);
     }
@@ -119,7 +122,7 @@ export function loadLiveBundle(
   }
 
   const whisperTokens: TranscriptToken[] = (
-    JSON.parse(readArm(key, V6_BUNDLE_ARMS.whisperRaw!)) as {
+    JSON.parse(readArm(key, arms.whisperRaw!)) as {
       tokens: Array<{ text: string; startSec: number; endSec: number }>;
     }
   ).tokens.map(t => ({ text: t.text, startSec: t.startSec, endSec: t.endSec }));
@@ -131,7 +134,7 @@ export function loadLiveBundle(
   // production path for a rate-movement census, rather than a second harness
   // re-deriving one of them.
   const silences: SilenceInterval[] = (
-    JSON.parse(readArm(key, silencesFile ?? V6_BUNDLE_ARMS.silences!)) as { silences: SilenceInterval[] }
+    JSON.parse(readArm(key, silencesFile ?? arms.silences!)) as { silences: SilenceInterval[] }
   ).silences;
 
   // WS1 Session AG: `faWordsFile` is an ADDITIVE arm override on the same
@@ -144,7 +147,7 @@ export function loadLiveBundle(
   // The three stamped arms are still verified; only which FA words are read
   // changes.
   const faTokens: TranscriptToken[] = (
-    JSON.parse(readArm(key, faWordsFile ?? V6_BUNDLE_ARMS.faWords!)) as {
+    JSON.parse(readArm(key, faWordsFile ?? arms.faWords!)) as {
       words: Array<{ word: string; startSec: number; endSec: number; confidence: number }>;
     }
   ).words.map(w => ({ text: w.word, startSec: w.startSec, endSec: w.endSec, confidence: w.confidence }));
