@@ -839,17 +839,6 @@ function attributeByIndex(
     textsByRun[rangeIdx]!.push({ text: tok.text, qiStart: tok.qiStart });
   }
 
-  // ---- THE TOTAL CASE (pre-existing, unchanged) --------------------------
-  // Fold zero-duration runs' text forward into the next run that has audio.
-  for (let i = 0; i < ranges.length - 1; i++) {
-    const r = ranges[i]!.run;
-    if (r.windowEnd - r.windowStart > 0) continue;
-    const carried = textsByRun[i]!;
-    if (carried.length === 0) continue;
-    textsByRun[i + 1]!.unshift(...carried);
-    textsByRun[i] = [];
-  }
-
   // ---- S1: THE PARTIAL CASE (WS1 Session AG) ------------------------------
   // The loop above handles a window with NO audio at all. This one handles a
   // window with audio whose TRAILING text has none.
@@ -924,6 +913,26 @@ function attributeByIndex(
       });
     }
   }
+  // ---- THE TOTAL CASE (pre-existing; RUNS AFTER S1, see below) -----------
+  // ORDER IS LOAD-BEARING (WS1 Session AG). S1 above can hand text to a run
+  // whose window is ZERO-DURATION, because "the next run" is not always a
+  // run with audio. Emitting that as a chunk sends the aligner an empty
+  // window — measured: ONNX Runtime fails the very first Conv node with
+  // "Invalid input shape: {0}", 24 such chunks on v6 and 6 on 173. This
+  // loop is exactly the fold that already exists to prevent that, so S1
+  // runs FIRST and this pass cleans up after it. Its single ascending scan
+  // also chains correctly: text pushed into a zero-duration run at i is
+  // carried on to i+1 when the scan reaches it.
+  // Fold zero-duration runs' text forward into the next run that has audio.
+  for (let i = 0; i < ranges.length - 1; i++) {
+    const r = ranges[i]!.run;
+    if (r.windowEnd - r.windowStart > 0) continue;
+    const carried = textsByRun[i]!;
+    if (carried.length === 0) continue;
+    textsByRun[i + 1]!.unshift(...carried);
+    textsByRun[i] = [];
+  }
+
 
   const chunks: FaChunk[] = [];
   let pendingStart: number | undefined;

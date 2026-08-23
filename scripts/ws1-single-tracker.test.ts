@@ -102,6 +102,12 @@ const ALLOWLIST = new Set<string>([
   // exist as a file at all. Its STATUS (what was done about it) lives in
   // docs/work-in-progress.md §11, not here.
   'docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md',
+  // WS1 Session AG's S1-collateral ear list — the same class as the Session
+  // K/S/W/AC run sheets above: a listening sheet worked THROUGH against the
+  // audio, one ffplay command per row, with blank Verdict/Class columns. It is
+  // the adjudication gate on flipping S1's `foldPhantomTails` default, and its
+  // RESULTS go to docs/work-in-progress.md §11 and ws1-ear-pass-ledger.ts.
+  'docs/ws1-sync-pipeline/stage1-session-ag-ear-list.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

@@ -42,7 +42,9 @@ import { describe, it } from 'vitest';
 import { writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 
-import { CORPORA, runProductionPath, tagOf, REPO } from './ws1-session-p-pipeline.js';
+import { readFileSync } from 'fs';
+import { CORPORA, runProductionPath, tagOf, REPO, REPLAY_ROOT } from './ws1-session-p-pipeline.js';
+import type { FaChunk } from '../src/services/faChunkPlan';
 import { CONF_MIN_FALLBACK } from '../src/services/syncConstants';
 import { EAR_PASS_LEDGER, earHistory } from './ws1-ear-pass-ledger.js';
 import type { Corpus } from './ws1-ear-pass-ledger.js';
@@ -51,6 +53,14 @@ import type { SilenceInterval } from '../src/services/silenceDetector';
 
 const MEASURE = process.env.WS1_SESSION_AG_MEASURE === '1';
 const OUT = resolve(REPO, '.work-phase4/session-ag');
+
+// WS1 Session AG Step 5: the SAME funnel, re-run over the S1 arm. `WS1_AG_ARM`
+// selects the FA word file and `WS1_AG_PLAN` the chunk plan it was aligned
+// against — they must be set together or the census would score S1's words
+// against the baseline's chunk boundaries. Unset = the baseline census.
+const ARM = process.env.WS1_AG_ARM;
+const PLAN = process.env.WS1_AG_PLAN;
+const LABEL = process.env.WS1_AG_LABEL ?? 'baseline';
 
 const confOf = (t: TranscriptToken | undefined): number =>
   t === undefined ? 0 : ((t as { confidence?: number }).confidence ?? 0);
@@ -140,15 +150,18 @@ describe.skipIf(!MEASURE)('WS1 Session AG Step 1 — seam-scoped phantom census'
     const allRows: Row[] = [];
     const summary: Record<string, unknown> = {};
 
-    L.push('WS1 SESSION AG — STEP 1: SEAM-SCOPED PHANTOM CENSUS');
+    L.push(`WS1 SESSION AG — SEAM-SCOPED PHANTOM CENSUS   label="${LABEL}" ` +
+      `arm=${ARM ?? '(baseline)'} plan=${PLAN ?? '(recomputed baseline)'}`);
     L.push(`reliability line: CONF_MIN_FALLBACK = ${CONF_MIN_FALLBACK} (syncConstants.ts, unchanged)`);
     L.push('');
 
     for (const key of ['v6', '173', 'spanish'] as const) {
-      const run = await runProductionPath(CORPORA[key]!);
+      const run = await runProductionPath(CORPORA[key]!, true, undefined, ARM);
       const toks = run.usableFaTokens;
       const sil = run.silences;
-      const chunks = run.chunks;
+      const chunks: readonly FaChunk[] = PLAN === undefined
+        ? run.chunks
+        : (JSON.parse(readFileSync(resolve(REPLAY_ROOT, key, PLAN), 'utf-8')) as { chunks: FaChunk[] }).chunks;
 
       // ---- Attribute FA tokens to chunks by ONSET containment. -------------
       // `align_chunked` emits each chunk's words inside that chunk's own
@@ -323,8 +336,8 @@ describe.skipIf(!MEASURE)('WS1 Session AG Step 1 — seam-scoped phantom census'
       `VERDICT: ${ratio > 3 ? 'STOP AND REPORT' : 'PROCEED'}`);
 
     console.log(L.join('\n'));
-    writeFileSync(resolve(OUT, 'step1-census.txt'), L.join('\n') + '\n');
-    writeFileSync(resolve(OUT, 'step1-census.json'),
+    writeFileSync(resolve(OUT, `census-${LABEL}.txt`), L.join('\n') + '\n');
+    writeFileSync(resolve(OUT, `census-${LABEL}.json`),
       JSON.stringify({ summary, rows: allRows, ledgerRows: EAR_PASS_LEDGER.length }, null, 2) + '\n');
   }, 1_800_000);
 });
