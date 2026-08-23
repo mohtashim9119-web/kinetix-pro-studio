@@ -105,7 +105,9 @@ export interface LiveBundle {
  * the Step 9 guard, applied at the point of USE rather than only in one test,
  * so no analysis can accidentally run on a mixed-vintage bundle.
  */
-export function loadLiveBundle(key: string, requireStamp = true, silencesFile?: string): LiveBundle {
+export function loadLiveBundle(
+  key: string, requireStamp = true, silencesFile?: string, faWordsFile?: string,
+): LiveBundle {
   const dir = resolve(REPLAY_ROOT, key);
   let runId: string | undefined;
   if (requireStamp) {
@@ -132,8 +134,17 @@ export function loadLiveBundle(key: string, requireStamp = true, silencesFile?: 
     JSON.parse(readArm(key, silencesFile ?? V6_BUNDLE_ARMS.silences!)) as { silences: SilenceInterval[] }
   ).silences;
 
+  // WS1 Session AG: `faWordsFile` is an ADDITIVE arm override on the same
+  // pattern as `silencesFile` above, defaulting to the manifest's own FA arm so
+  // every existing caller is unchanged. It exists so an ALTERNATE FA word set
+  // (the same audio aligned against a different chunk plan — Session AG's S1
+  // fold, and its own unchanged-plan fidelity re-run) can be driven through the
+  // SAME production path, rather than a second harness re-deriving the rule
+  // stage and disagreeing with the app the way Session P's two harnesses did.
+  // The three stamped arms are still verified; only which FA words are read
+  // changes.
   const faTokens: TranscriptToken[] = (
-    JSON.parse(readArm(key, V6_BUNDLE_ARMS.faWords!)) as {
+    JSON.parse(readArm(key, faWordsFile ?? V6_BUNDLE_ARMS.faWords!)) as {
       words: Array<{ word: string; startSec: number; endSec: number; confidence: number }>;
     }
   ).words.map(w => ({ text: w.word, startSec: w.startSec, endSec: w.endSec, confidence: w.confidence }));
@@ -190,9 +201,10 @@ export interface ProductionRun {
 
 /** The real production rule stage, in App.tsx's order, over one live bundle. */
 export async function runProductionPath(
-  spec: CorpusSpec, requireStamp = true, silencesFile?: string,
+  spec: CorpusSpec, requireStamp = true, silencesFile?: string, faWordsFile?: string,
 ): Promise<ProductionRun> {
-  const { whisperTokens, silences, faTokens, runId } = loadLiveBundle(spec.key, requireStamp, silencesFile);
+  const { whisperTokens, silences, faTokens, runId } =
+    loadLiveBundle(spec.key, requireStamp, silencesFile, faWordsFile);
   const audioDuration = spec.audioDuration;
 
   const newSegmentsRaw = await parseProjectData(
