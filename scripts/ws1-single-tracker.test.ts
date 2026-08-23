@@ -138,6 +138,10 @@ const ALLOWLIST = new Set<string>([
   // maintained as a status page; its STATUS lives in
   // docs/work-in-progress.md §11o.
   'docs/ws1-sync-pipeline/session-am-substitution-surface.md',
+  // WS1 Session AM's arm-F chunk inspection table — one row per chunk, every
+  // chunk, written by `scripts/ws1-session-am-step3-armf.test.ts`. Same class
+  // and same reason as the two entries above.
+  'docs/ws1-sync-pipeline/session-am-armf-inspection.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

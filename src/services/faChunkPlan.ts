@@ -2194,3 +2194,390 @@ export function computeS2SeamSurface(
     runBoundaryProvenance,
   };
 }
+
+// ---------------------------------------------------------------------------
+// EDGE-PLACEMENT ARMS F AND G (WS1 Session AM, MEASUREMENT ARMS ONLY).
+//
+// ONE VARIABLE FROM ARM C — and ARM C, NOT ARM D, IS THE BASE. Everything
+// except WHERE an internal chunk edge is cut is inherited from
+// `computeFaChunkPlanS2Excised` unchanged and deliberately not re-derived: the
+// same `s2UnbreakableGroups` atoms, the same R.5 excision placement rule via
+// `qiSplit`, the same net-of-excision greedy packing, the same 10-30s
+// operator-directed band, the same `s2NearestSilenceCut` used as the fallback,
+// the same invariants in the same precedence order. A second simultaneous
+// change would make the edge-placement result uninterpretable, which is the
+// whole lesson of Session AL's width arm.
+//
+// WHY EDGE PLACEMENT IS THE VARIABLE. Session AL eliminated chunk width
+// (halving the band RAISED peak drift and broke monotonicity) and found the
+// same arch in `applyAnchorBasedTiming`'s OWN per-decile error against the
+// oracle, correlating with every S2 arm at r >= 0.973. What survives that
+// elimination is the one thing every S2-family arm shares and production does
+// NOT: an S2 edge is a detected silence snapped to a seam time READ OFF THE
+// CHARACTER-WEIGHT ESTIMATE, whereas `runQiRanges` above pairs each production
+// edge with a three-source-agreement anchor BY SCRIPT-WORD INDEX.
+//
+//   ARM F — `{ kind: 'anchor' }`. The estimate-derived cut is replaced by the
+//     `pickSeamAnchor` selection above: nearest anchor to the seam's own script
+//     word index, admissible only inside the two sentence groups the seam
+//     separates. GEOMETRIC, zero numeric constants, and index-space by
+//     necessity — see `pickSeamAnchor`'s doc comment for why a time-radius
+//     search would both violate CLAUDE.md §4 and re-import the very estimate
+//     error the arm exists to remove.
+//
+//   ARM G — `{ kind: 'attested' }`. THE CEILING, AND DIAGNOSTIC-ONLY: IT CAN
+//     NEVER SHIP. It places every internal edge at the ORACLE's own attested
+//     boundary time for the segment that opens the next chunk, i.e. it consumes
+//     ground truth, and exists solely to answer "if chunk edges were PERFECT,
+//     would the arch go away?". It is unreachable from production by
+//     CONSTRUCTION, not by convention: the attested table is a REQUIRED field
+//     with no default and no fixture read anywhere in `src/`, so an arm-G plan
+//     is unconstructible without a caller that already holds every oracle value
+//     and passes them in explicitly. Nothing in `src/` can supply one.
+//
+// NO PRODUCTION CALLER, NO FLAG ON AN EXISTING FUNCTION, AND ARMS A/B/C/D STAY
+// BYTE-REPRODUCIBLE at this commit because nothing above this line is touched.
+// `{ kind: 'silence' }` reproduces `computeFaChunkPlanS2Excised` exactly and is
+// asserted to, so "held identical to arm C" is a measured claim rather than a
+// promise.
+// ---------------------------------------------------------------------------
+
+/** How an internal chunk edge is placed. The discriminant IS the arm. */
+export type S2EdgePlacement =
+  /** ARM C's rule, reproduced exactly — the control for the other two. */
+  | { kind: 'silence' }
+  /** ARM F. */
+  | { kind: 'anchor' }
+  /**
+   * ARM G. DIAGNOSTIC ONLY — CONSUMES GROUND TRUTH AND CAN NEVER SHIP.
+   * `attestedStartBySegIdx` maps a segment index to its attested boundary time;
+   * a seam takes the attested start of the segment that OPENS the next chunk.
+   * Required, with no default: this is what makes arm G unreachable from any
+   * production path.
+   */
+  | { kind: 'attested'; attestedStartBySegIdx: ReadonlyMap<number, number> };
+
+export interface FaChunkPlanEdgeArmInspection {
+  index: number;
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+  segFrom: number;
+  /** The segment whose end IS this chunk's closing seam. */
+  segTo: number;
+  /** How this chunk's END was placed. */
+  cutKind: 'anchor' | 'attested' | 'detected-silence' | 'excision-run-edge' | 'corpus-end';
+  /** The estimate-derived ideal seam this chunk would have been cut at under
+   *  arm C — retained on EVERY row, including substituted ones, so the size of
+   *  the substitution is visible per edge rather than only in aggregate. */
+  idealSec: number;
+  /** Committed cut minus `idealSec`. */
+  cutOffsetSec: number;
+  /** Arm F only: `anchor.qi - seamQi`. Zero means the anchor IS the seam. */
+  deltaQi?: number;
+  /** Arm F only: the anchor's own script-word index. */
+  anchorQi?: number;
+  exceededCap: boolean;
+}
+
+export interface FaChunkPlanEdgeArmViolation {
+  segIdx: number;
+  cause:
+    | 'oversize-unbreakable-group'
+    | 'no-usable-silence-nearby'
+    | 'unexcised-run'
+    | 'no-admissible-anchor'
+    | 'no-attested-time'
+    | 'excision-collapsed-chunk'
+    | 'cap-exceeded';
+  idealSec: number;
+  seamSec?: number;
+  durationSec?: number;
+  fallback: string;
+}
+
+export interface FaChunkPlanEdgeArmResult {
+  chunks: FaChunk[];
+  violations: FaChunkPlanEdgeArmViolation[];
+  inspection: FaChunkPlanEdgeArmInspection[];
+  /** How many internal edges each placement route actually produced — the
+   *  substitution rate, measured on the emitted plan rather than predicted. */
+  edgeCensus: Record<string, number>;
+}
+
+/**
+ * ARMS F AND G, and arm C as their control, behind one placement discriminant.
+ *
+ * INVARIANTS — arm C's, unchanged and in arm C's own precedence order:
+ *   1. A chunk's text is a whole number of script segments and never splits a
+ *      sentence group. INVIOLABLE.
+ *   2. A chunk edge falls only at a sentence-group boundary.
+ *   3. Whisper timestamps never decide which text belongs to which chunk; they
+ *      inform only where audio is sliced.
+ *   4. The audio cut is placed by `placement`. This is the ONLY line that
+ *      differs between the three arms.
+ *   5. Target `[targetMinSec, targetMaxSec]`; an unbreakable group that exceeds
+ *      the cap exceeds it, with a first-class violation.
+ *
+ * CONSERVATION, carried forward from Session AL's arm D because an edge that
+ * moves by a measured median of eleven seconds can collapse a window exactly as
+ * a narrow band could:
+ *   TEXT — a chunk whose audio window collapses has its segments CARRIED
+ *     FORWARD into the next emitted chunk, never dropped, so the plan still
+ *     carries every segment exactly once and text conservation against arm C
+ *     stays a meaningful check.
+ *   TIME — `cursor` is never advanced to a value behind itself. A plan that
+ *     walked backwards would emit overlapping windows, which `align_chunked`
+ *     would align twice.
+ * Both are reported per run rather than assumed inert.
+ */
+export function computeFaChunkPlanS2EdgeArm(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  placement: S2EdgePlacement,
+  targetMinSec: number,
+  targetMaxSec: number,
+  languageCode?: FaLanguageCode,
+  vocabChars?: ReadonlySet<string>,
+): FaChunkPlanEdgeArmResult {
+  const empty: FaChunkPlanEdgeArmResult = { chunks: [], violations: [], inspection: [], edgeCensus: {} };
+  if (segments.length === 0) return empty;
+
+  const groups = s2UnbreakableGroups(segments);
+  const violations: FaChunkPlanEdgeArmViolation[] = [];
+
+  // ---- arm C's own preamble, verbatim in behaviour ------------------------
+  const runs = computeUnscriptedRuns(segments, tokens, silences, audioDuration);
+  const qiRanges = s2SegQiRanges(segments, languageCode);
+  const totalQi = qiRanges[qiRanges.length - 1]?.end ?? 0;
+  const groupOfSeg = new Map<number, number>();
+  groups.forEach((g, gi) => { for (const si of g.segIdx) groupOfSeg.set(si, gi); });
+
+  const seams: S2ExcisionSeam[] = [];
+  for (const run of runs) {
+    if (run.qiSplit >= totalQi) { seams.push({ groupIdx: groups.length, run, trailing: true }); continue; }
+    const segIdx = qiRanges.findIndex(r => run.qiSplit >= r.start && run.qiSplit < r.end);
+    const gi = segIdx >= 0 ? groupOfSeg.get(segIdx) : undefined;
+    if (gi === undefined) {
+      violations.push({
+        segIdx: segIdx >= 0 ? segIdx : 0,
+        cause: 'unexcised-run',
+        idealSec: run.startSec,
+        fallback: `R.5 run [${run.startSec.toFixed(2)}, ${run.endSec.toFixed(2)}] has qiSplit ${run.qiSplit}, which `
+          + 'maps to no segment in this script; the run is left INSIDE whatever chunk contains it rather than '
+          + 'guessed at, matching production exciseUnscriptedRuns\'s own not-wholly-contained behaviour',
+      });
+      continue;
+    }
+    seams.push({ groupIdx: gi, run, trailing: false });
+  }
+
+  const forcedBreakAt = new Set(seams.filter(s => !s.trailing).map(s => s.groupIdx));
+  const packed = s2PackGroupsExcised(groups, runs, forcedBreakAt, targetMinSec, targetMaxSec);
+
+  for (const g of groups) {
+    if (g.durationSec > targetMaxSec) {
+      violations.push({
+        segIdx: g.segIdx[0]!,
+        cause: 'oversize-unbreakable-group',
+        idealSec: g.startSec,
+        durationSec: +g.durationSec.toFixed(3),
+        fallback: `emitted whole as one ${g.durationSec.toFixed(2)}s chunk (segments `
+          + `${g.segIdx[0]}-${g.segIdx[g.segIdx.length - 1]}); rule 2 forbids splitting a sentence group `
+          + `regardless of the ${targetMaxSec}s cap`,
+      });
+    }
+  }
+
+  const runOpening = new Map<number, UnscriptedRun>();
+  for (let ci = 0; ci < packed.length; ci++) {
+    const firstGroupIdx = groups.indexOf(packed[ci]![0]!);
+    const seam = seams.find(s => !s.trailing && s.groupIdx === firstGroupIdx);
+    if (seam) runOpening.set(ci, seam.run);
+  }
+  const trailingRun = seams.find(s => s.trailing)?.run;
+
+  // Anchors are computed ONCE, and only for the arm that needs them — arm C's
+  // and arm G's plans must not pay for, or be perturbed by, a pass they do not
+  // use.
+  const anchors: readonly FaAnchor[] = placement.kind === 'anchor'
+    ? computeRunContext(segments, tokens, silences, audioDuration, languageCode).anchors
+    : [];
+
+  const chunks: FaChunk[] = [];
+  const inspection: FaChunkPlanEdgeArmInspection[] = [];
+  const edgeCensus: Record<string, number> = {};
+  let cursor = runOpening.get(0)?.endSec ?? 0;
+  let carried: number[] = [];
+  let carriedFrom: number | undefined;
+
+  for (let i = 0; i < packed.length; i++) {
+    const gs = packed[i]!;
+    const startSec = cursor;
+    const lastGroup = gs[gs.length - 1]!;
+    const idealEnd = lastGroup.endSec;
+    const seamSegIdx = lastGroup.segIdx[lastGroup.segIdx.length - 1]!;
+
+    let endSec: number;
+    let cutKind: FaChunkPlanEdgeArmInspection['cutKind'];
+    let nextCursor: number;
+    let deltaQi: number | undefined;
+    let anchorQi: number | undefined;
+    const nextOpening = runOpening.get(i + 1);
+
+    if (i === packed.length - 1) {
+      // The corpus's last edge is not an internal seam and is not substituted
+      // in any arm — there is nothing after it for an anchor or an attested
+      // time to mark.
+      endSec = trailingRun !== undefined ? trailingRun.startSec : audioDuration;
+      cutKind = trailingRun !== undefined ? 'excision-run-edge' : 'corpus-end';
+      nextCursor = endSec;
+    } else if (nextOpening !== undefined) {
+      // An excision seam's cut is the RUN'S OWN edge in every arm — it is not
+      // estimate-derived, so there is nothing here to substitute. Held
+      // identical to arm C deliberately.
+      endSec = nextOpening.startSec;
+      cutKind = 'excision-run-edge';
+      nextCursor = nextOpening.endSec;
+    } else {
+      // ================= THE ONE LINE THAT DIFFERS =======================
+      const nextPack = packed[i + 1]!;
+      const openingSegIdx = nextPack[0]!.segIdx[0]!;
+      let placed: { cutSec: number; kind: FaChunkPlanEdgeArmInspection['cutKind'] } | undefined;
+
+      if (placement.kind === 'anchor') {
+        const seamQi = qiRanges[seamSegIdx]!.end;
+        const windowQiLo = qiRanges[lastGroup.segIdx[0]!]!.start;
+        const openingGroup = nextPack[0]!;
+        const windowQiHi = qiRanges[openingGroup.segIdx[openingGroup.segIdx.length - 1]!]!.end;
+        const pick = pickSeamAnchor(anchors, seamQi, windowQiLo, windowQiHi);
+        if (pick !== undefined) {
+          placed = { cutSec: pick.timeSec, kind: 'anchor' };
+          deltaQi = pick.deltaQi;
+          anchorQi = pick.qi;
+        } else {
+          violations.push({
+            segIdx: seamSegIdx + 1,
+            cause: 'no-admissible-anchor',
+            idealSec: idealEnd,
+            fallback: `no three-source-agreement anchor lies inside the two sentence groups this seam `
+              + `separates (script-word window [${windowQiLo}, ${windowQiHi}), seam at qi ${seamQi}); fell back `
+              + 'to arm C\'s own nearest-detected-silence cut, so this edge is NOT substituted and remains an '
+              + 'arm-C edge',
+          });
+        }
+      } else if (placement.kind === 'attested') {
+        const t = placement.attestedStartBySegIdx.get(openingSegIdx);
+        if (t !== undefined) {
+          placed = { cutSec: t, kind: 'attested' };
+        } else {
+          violations.push({
+            segIdx: openingSegIdx,
+            cause: 'no-attested-time',
+            idealSec: idealEnd,
+            fallback: `no attested boundary time was supplied for segment ${openingSegIdx}; fell back to arm C's `
+              + 'own nearest-detected-silence cut rather than interpolating a ground-truth value that was '
+              + 'not given',
+          });
+        }
+      }
+
+      if (placed === undefined) {
+        const cut = s2NearestSilenceCut(idealEnd, silences);
+        if (cut === undefined) {
+          violations.push({
+            segIdx: seamSegIdx + 1,
+            cause: 'no-usable-silence-nearby',
+            idealSec: idealEnd,
+            fallback: `no detected silence exists in this corpus's silence array at all; used the estimated `
+              + `seam time ${idealEnd.toFixed(3)} directly`,
+          });
+          placed = { cutSec: idealEnd, kind: 'detected-silence' };
+        } else {
+          placed = { cutSec: cut.cutSec, kind: 'detected-silence' };
+          if (Math.abs(cut.offsetSec) > S2_SILENCE_SEARCH_WINDOW_SEC) {
+            violations.push({
+              segIdx: seamSegIdx + 1,
+              cause: 'no-usable-silence-nearby',
+              idealSec: idealEnd,
+              fallback: `nearest silence end is ${cut.offsetSec >= 0 ? '+' : ''}${cut.offsetSec.toFixed(3)}s from `
+                + `the ideal seam, outside the ${S2_SILENCE_SEARCH_WINDOW_SEC}s search window; accepted anyway `
+                + `per invariant 4 (some silence always exists) rather than split mid-sentence`,
+            });
+          }
+        }
+      }
+      endSec = placed.cutSec;
+      cutKind = placed.kind;
+      nextCursor = endSec;
+      // ====================================================================
+    }
+
+    const segIdxThisChunk = [...carried, ...gs.flatMap(g => g.segIdx)];
+    const text = segIdxThisChunk.map(idx => segments[idx]!.text ?? '').filter(t => t.length > 0).join(' ');
+
+    if (endSec <= startSec || text.length === 0) {
+      if (text.length > 0) {
+        violations.push({
+          segIdx: segIdxThisChunk[0]!,
+          cause: 'excision-collapsed-chunk',
+          idealSec: idealEnd,
+          seamSec: +endSec.toFixed(3),
+          durationSec: +(endSec - startSec).toFixed(3),
+          fallback: `window collapsed to [${startSec.toFixed(3)}, ${endSec.toFixed(3)}] because the cursor already `
+            + `sat past this chunk's own committed cut; segments ${segIdxThisChunk[0]}-${seamSegIdx} carried `
+            + 'forward into the next emitted chunk rather than dropped, and the cursor held rather than moved back',
+        });
+        if (carriedFrom === undefined) carriedFrom = segIdxThisChunk[0]!;
+        carried = segIdxThisChunk;
+      }
+      cursor = Math.max(cursor, nextCursor);
+      continue;
+    }
+    carried = [];
+
+    const durationSec = endSec - startSec;
+    const exceededCap = durationSec > targetMaxSec;
+    if (exceededCap) {
+      violations.push({
+        segIdx: segIdxThisChunk[0]!,
+        cause: 'cap-exceeded',
+        idealSec: startSec,
+        seamSec: +endSec.toFixed(3),
+        durationSec: +durationSec.toFixed(3),
+        fallback: `emitted chunk spans ${durationSec.toFixed(3)}s, over the ${targetMaxSec}s cap (segments `
+          + `${segIdxThisChunk[0]}-${seamSegIdx}); invariant 1 forbids the mid-sentence split that would avoid it`,
+      });
+    }
+
+    edgeCensus[cutKind] = (edgeCensus[cutKind] ?? 0) + 1;
+    inspection.push({
+      index: chunks.length,
+      startSec: +startSec.toFixed(6),
+      endSec: +endSec.toFixed(6),
+      durationSec: +durationSec.toFixed(6),
+      segFrom: carriedFrom ?? segIdxThisChunk[0]!,
+      segTo: seamSegIdx,
+      cutKind,
+      idealSec: +idealEnd.toFixed(6),
+      cutOffsetSec: +(endSec - idealEnd).toFixed(6),
+      deltaQi,
+      anchorQi,
+      exceededCap,
+    });
+    carriedFrom = undefined;
+    chunks.push({ startSec, endSec, text });
+    cursor = nextCursor;
+  }
+
+  return {
+    chunks: languageCode !== undefined && vocabChars !== undefined
+      ? applyFaTextNormalization(chunks, languageCode, vocabChars)
+      : chunks,
+    violations,
+    inspection,
+    edgeCensus,
+  };
+}
