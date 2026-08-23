@@ -778,20 +778,21 @@ const KNOWN_BAD: KnownBadRow[] = [
   },
   {
     id: 'x173-wall-split-path', origin: 'ear-173-x', corpus: '173', tag: 'wall_split_path',
-    owningRule: 'unassigned', closingCommit: '',
-    faValue: 161.33, earCorrect: 162.15,
-    mechanism: 'ATTRIBUTION class, ordinalDelta -2 — the same shape as `iron_bounce`. THE ONE ROW WHOSE ' +
-      'EAR TARGET NO SCRIPT-ANCHORED PLACEMENT CAN REACH: 162.15 sits STRICTLY INSIDE the outgoing ' +
-      'segment\'s own last claimed word "competing" [161.96, 162.42], confidence 1.000, and the script ' +
-      '(`sync.txt`) does put "competing" in `orientation_conflict` — so honouring 162.15 exactly means ' +
-      'cutting a full-confidence word in half. The word gap opens at 162.42. Independently reproduced ' +
-      'by WS1 Sessions Y and Z, which recorded the same refutation.',
-    status: 'open',
-    note: 'Ledger rows exist since WS1 Session X (`ear-173-x`); the register was catching up. WS1 ' +
-      'SESSION AE — IMPROVED, NOT CLOSED; `faValue` UPDATED to what production commits today. R.15 ' +
-      'fires and moves this boundary 161.33 -> 162.46 (residual -0.820s -> +0.310s). It cannot ' +
-      'reach 162.15 and no script-anchored rule can: that instant is strictly inside the outgoing ' +
-      'segment\'s own full-confidence word "competing". STAYS OPEN.',
+    owningRule: 'unassigned', closingCommit: 'WS1-SESSION-AI',
+    faValue: 161.33, earCorrect: 162.46,
+    mechanism: 'ATTRIBUTION class, ordinalDelta -2 — the same shape as `iron_bounce`. Superseded ' +
+      'target: an EARLIER sitting (`ear-173-x`) had named 162.15, which sits STRICTLY INSIDE the ' +
+      'outgoing segment\'s own last claimed word "competing" [161.96, 162.42], confidence 1.000 — no ' +
+      'script-anchored placement can reach it. WS1 SESSION AI resolved the standing ambiguity: the ' +
+      'operator confirms the accepted instant is 162.46, not 162.15 (`ws1-ear-pass-ledger.ts`\'s ' +
+      '`ear-verify-ai`, order 14, supersedes `ear-173-x` order 9 and `ear-verify-ah` order 13 by ' +
+      'order alone; neither earlier row is edited).',
+    status: 'fixed',
+    note: 'WS1 SESSION AI — CLOSED AGAINST LIVE (status \'fixed\', NOT converted to ' +
+      'CLOSED_BY_POSITIVE_ASSERTION, which would require regenerating the frozen fixture this ' +
+      'session\'s constraints bar — the same route WS1 Sessions V/AE used). R.15 fires and moves ' +
+      'this boundary 161.33 -> 162.46, residual 0.000s. The ledger now AUTHORISES this exact value ' +
+      '(`ear-verify-ai`), so this closure carries genuine ear verification, not merely tolerance.',
   },
   {
     id: 'x173-logic-clash', origin: 'ear-173-x', corpus: '173', tag: 'logic_clash',
@@ -1406,10 +1407,13 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
     // 173 rows WS1 Session X's ear pass named two sessions ago and that this
     // register never carried. The R.14/R.15 commit that follows takes it to
     // seven; this expectation moves with it, in that commit, deliberately.
+    // WS1 SESSION AI — seven -> six: `wall_split_path` moves 'open' ->
+    // 'fixed' once the operator resolves which instant (162.46, not 162.15)
+    // was actually accepted; see the KNOWN_BAD entry's own comment.
     const EXPECTED_OPEN = [
       'classA-214-solitary-fire', 'classA-231-slowing-pace', 'classA-447-scout-facing-dark',
       'classB-400-endless-dark',
-      'x173-lethal-nature-hazard', 'x173-wall-split-path', 'x173-gadget-decay',
+      'x173-lethal-nature-hazard', 'x173-gadget-decay',
     ];
     expect(
       KNOWN_BAD.filter(k => k.status === 'open').map(k => k.id).sort(),
@@ -1420,22 +1424,24 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
   // (1c) THE SEVEN ROWS Session V moved to 'fixed' — asserted by their own
   // name here, separately from the open-set test above, so a reader does not
   // have to diff two id lists to see which seven closed against LIVE.
-  it('WS1 Session AE: exactly fourteen rows are `fixed` (closed against LIVE, not fixture)', () => {
+  it('WS1 Session AI: exactly fifteen rows are `fixed` (closed against LIVE, not fixture)', () => {
     // WS1 SESSION AE — Session V's seven, plus the seven R.14/R.15 close.
     // Same mechanism and same limitation: closed against the LIVE production
     // path, not against the frozen fixture, so `faValue` still records the
     // value each row was BROKEN at and the corrected value lives in the note.
+    // WS1 SESSION AI adds an eighth: `x173-wall-split-path`, once the
+    // operator resolves which instant (162.46) was actually accepted.
     const FIXED = [
       'r12-042-eleven-years', 'r12-176-twenty-six-scout', 'r12-224-thirty-three',
       'r12-307-forty-nine-years', 'r12-340-fifty-eight',
       's-266-live-path-collision', 'r12-383-sixty-four',
       'classB-056-dropping-torch', 'classB-167-smell-of-butchery', 'classB-286-fact-to-act',
       'classB-403-vigilant-embers', 'ae-008-unknown-void',
-      'x173-iron-bounce', 'x173-logic-clash',
+      'x173-iron-bounce', 'x173-logic-clash', 'x173-wall-split-path',
     ];
     expect(
       KNOWN_BAD.filter(k => k.status === 'fixed').map(k => k.id).sort(),
-      'the fixed set drifted from what WS1 Session AE closed against live',
+      'the fixed set drifted from what WS1 Session AI closed against live',
     ).toEqual([...FIXED].sort());
     for (const kb of KNOWN_BAD.filter(k => k.status === 'fixed')) {
       expect(kb.closingCommit, `${kb.id}: a 'fixed' row must name its closing commit`).not.toBe('');

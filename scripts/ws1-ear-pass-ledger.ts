@@ -182,6 +182,21 @@ export const EAR_SITTINGS = {
    *  because that is the instant the operator accepted. Each is therefore also
    *  a new positive control. */
   'ear-verify-ah': 13,
+  /** WS1 Session AI — resolves the one standing ambiguity `ear-verify-ah`
+   *  (order 13) left open rather than closed: for `173/wall_split_path`, was
+   *  the instant the operator accepted 162.46 (what production commits via
+   *  R.15) or 162.15 (the value `ear-173-x`, order 9, recorded as the named
+   *  target)? The operator's answer, ingested here: **162.46**. 162.15 is
+   *  NOT deleted — this ledger is append-only and a later sitting outranks an
+   *  earlier one by `EAR_SITTINGS` order alone — but it is now a SUPERSEDED
+   *  value, not the standing ground truth. Its own provenance, for the
+   *  record: it traces to `ear-173-x` (WS1 Session X, order 9), itself
+   *  transcribed from `/Users/mohtashim/Downloads/173 20-seg list -
+   *  Sheet1.csv` — a full listen-through off-list defect (Section A, item
+   *  42-43), not from either candidate list that sitting was built to check.
+   *  `ear-verify-ah`'s own row for this boundary (order 13) also scored
+   *  162.15, so it is superseded by this sitting too, on the same basis. */
+  'ear-verify-ai': 14,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -820,6 +835,22 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
   { sitting: 'ear-verify-ah', corpus: '173', tag: 'logic_clash', scoredValue: 418.14, verdict: 'CORRECT',
     note: 'RE-CONFIRMS `ear-173-x`. Production commits 418.140 exactly, via R.15. RULE-DEPENDENT ' +
       '(R.15): pre-rule is 417.150, which `ear-173-x` scored EARLY. Deleting R.15 reopens this row.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION AI — resolves `ear-verify-ah`'s one open question.
+  // -------------------------------------------------------------------------
+  { sitting: 'ear-verify-ai', corpus: '173', tag: 'wall_split_path', scoredValue: 162.46, verdict: 'CORRECT',
+    note: 'RESOLVES `ear-verify-ah`\'s standing question ("was the instant you accepted 162.46 or ' +
+      '162.15?"). Answer: 162.46 — what production commits via R.15. SUPERSEDES both `ear-173-x` ' +
+      '(order 9) and `ear-verify-ah` (order 13), which each scored 162.15 CORRECT; neither row is ' +
+      'edited or removed (append-only), both are outranked by this sitting\'s order alone. 162.15\'s ' +
+      'own provenance, archived rather than deleted: `ear-173-x`, sourced from ' +
+      '`/Users/mohtashim/Downloads/173 20-seg list - Sheet1.csv`, a full listen-through off-list ' +
+      'defect never on either candidate list that sitting was built to check. The register\'s own ' +
+      'note (`phase4-fa-replay.test.ts`, `x173-wall-split-path`) already recorded WHY 162.15 could ' +
+      'never be reached by any script-anchored placement: it sits strictly inside the outgoing ' +
+      'segment\'s own full-confidence last word "competing" [161.96, 162.42]. RULE-DEPENDENT (R.15): ' +
+      'pre-rule is 161.330, which every prior sitting scored EARLY. Deleting R.15 reopens this row.' },
 ];
 
 /** Default match tolerance — the Zero-Defect Register's own. */
