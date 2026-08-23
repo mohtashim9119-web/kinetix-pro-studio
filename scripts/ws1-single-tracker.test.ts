@@ -117,6 +117,19 @@ const ALLOWLIST = new Set<string>([
   // independently of any listening pass. Its RESULTS go to
   // docs/work-in-progress.md §11 and ws1-ear-pass-ledger.ts.
   'docs/ws1-sync-pipeline/stage1-session-ai-ear-list.md',
+  // WS1 Session AL's v6 arm-D chunk inspection table. NOT a tracking/status
+  // file: it is a single-run MEASUREMENT DUMP — one row per chunk, every chunk,
+  // written by `scripts/ws1-session-al-step2-generate.test.ts` — and the
+  // operator's brief for that session requires it committed and allowlisted in
+  // the same commit that produces it. It is admitted for the same reason the
+  // run sheets above are: it is read row by row against the audio and the plan,
+  // never maintained as a status page, and CLAUDE.md §5's rule that an
+  // audit/investigation artefact must be persisted into docs/ rather than left
+  // in a chat transcript is what requires it to exist as a file at all. Its
+  // STATUS (what was concluded from it) lives in docs/work-in-progress.md §11n.
+  // It is .md rather than .csv deliberately — CLAUDE.md §7 keeps CSV/JSON data
+  // out of docs/, and the machine-readable twin lives in .work-phase4/.
+  'docs/ws1-sync-pipeline/session-al-v6-chunk-inspection.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
