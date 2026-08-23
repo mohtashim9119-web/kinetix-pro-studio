@@ -9752,3 +9752,484 @@ listening required for any row the oracle already classifies:
 This gate is stricter than a re-run of Session AI's own (adds condition (a)'s "no new departure"
 catch, closing exactly the accounting gap AD.6 found), and needs no listening pass to run except on
 genuinely novel material. Not executed this session per the hard stop at Step 7.
+
+## Part AE — R.5 Excision Is a Contributing Cause, Not the Cause: Global S2 Fails Its Pre-Registered Gate at 0.62% Precision (WS1 Session AK, 2026-08-23, append-only)
+
+### AE.1 — The verdict, in one paragraph
+
+Session AC named the confound and AC.10 named the experiment: v6 alone carries ~10 unscripted
+recitations, R.5 excision was not applied to S2's output, and until that was controlled nobody could
+say whether S2's -27.7s v6 drift was a chunk-length effect or a recitation effect. This session ran
+it. **R.5 excision is a CONTRIBUTING CAUSE, not the cause.** It repairs a real and measurable share
+of v6's damage — 14 of 30 ear-verified control regressions returned **exactly** to their attested
+values, regressed boundaries fell 326 → 279, peak drift fell -23.786s → -19.155s — and it is
+provably inert where there is nothing to excise: 173 and spanish carry **zero** R.5 runs, and arm
+C's chunk plan *and* FA words came back **byte-identical** to arm B on both, so the v6 delta is
+attributable to excision and nothing else. But **173 regresses 40 boundaries under both arms,
+bit-identically**, which settles the general question before v6 is even consulted: a corpus with no
+recitations at all cannot have recitation-caused regressions, so whatever mechanism global S2 is
+using to move 40 correct boundaries there is untouched by this fix. The pre-registered gate
+(committed to git *before* any arm ran, `scripts/ws1-session-ak-step1-gate.ts`, commit `788faf7`)
+**FAILS 3 of its 4 conditions**: 317 attested-correct boundaries moved beyond ±50ms against a bar of
+zero, 2 of 4 operator-targeted defects landed against a bar of 4, and implied improvement precision
+is **0.62%** against a bar of 50% — *below the ~7% at which S1 was rejected*, by an order of
+magnitude. Arm C additionally fails to hold the funnel zero on v6 (0 → 3). Nothing ships.
+Housekeeping this session was not incidental: repointing 173's default bundle arm took the AJ-0
+oracle diff from 172/173 to **173/173 exact** and deleted one of the "36" control regressions as a
+stale-baseline artifact.
+
+### AE.2 — Step 0: housekeeping, and two figures corrected at their source
+
+**The manifest repoint required a code change, not a manifest edit.** `loadLiveBundle` resolved arm
+filenames from the hardcoded `V6_BUNDLE_ARMS` and never read the manifest's own `file` field, so
+repointing only the manifest would have changed zero loaded bytes *and* made `verifyBundle` hash the
+old file against the new arm's sha256 and report a `SILENT EDIT` that never happened. Fixed at
+`bundleArmsFor(corpus)` (`ws1-runid.ts`), where the name is actually resolved; the retired
+`fa_live_*` files stay on disk untouched as the historical record. Bundle restamped
+(`ak-20260823T174719Z-7d9c1245`, four arms, one vintage). **MEASURED after the repoint:**
+`vessel_damage_clue` = **174.740** exactly on the default path, and the AJ-0 oracle diff for 173 goes
+**172/173 → 173/173 exact**. Across all three corpora the oracle diff at HEAD is now **646/647
+exact**, the single departure being `102_frozen_scouts`. No other consumer of the stale arm survives:
+every remaining reference in `scripts/` is either a historical comment or an explicit override.
+
+**`102_frozen_scouts` — one hypothesis REFUTED, cause localized, provenance UNDETERMINED.** Export
+306.42, fresh run 306.43. Measured this session: (a) NOT the 16 kHz-vs-native silence-arm difference
+— *both* stored arms give 306.430, and the control row `226_four_scouts` *does* show that difference
+(native 671.170, 16 kHz 671.180) with the export matching the native arm, so the export was produced
+on the native arm; (b) NOT rounding — 306.43 is the **exact midpoint** of native silence
+[305.82, 307.04], and its distance to the 0.01 grid line at 306.425 is a full 0.005, not a knife
+edge; (c) NOT rule-stage drift — pre-rule equals committed, no rule touched the row. What remains is
+that the live app's own silence detection produced a marginally different interval at this one
+silence. **That cannot be verified**: the saved project carries `transcriptTokens` and `syncLog` but
+**no silence array**, so the export's own detector input is not recoverable. Recorded as
+UNDETERMINED rather than asserted. **What it costs the oracle's promotion to a hard gate:** the gate
+must either keep `102_frozen_scouts` on a permanent allowlist entry that can never be retired, or
+run at a tolerance ≥10ms — and a 10ms-tolerant gate stops detecting genuine regressions in the whole
+sub-tolerance band. Persisting the detected silence array into the project save would close it; that
+is a real, small, and currently unscheduled change.
+
+**Three ledger supersessions applied** (new sitting `full-pass-aj0`, order 15 — the first sitting to
+score two whole corpora rather than a candidate list). All resolve the same way: the operator heard
+the LIVE EXPORT, so the export's value is what was accepted. Nothing deleted; supersession is by
+order alone. `226_four_scouts` 671.18 → **671.17** (arm difference, re-measured this session);
+`iron_bounce` 76.59 → **76.58** (also reproduces in a fresh HEAD run, so not export-only);
+`400_endless_dark` 1266.66 — a never-committed Class B *target* — → **1266.75**, row **CLOSED**,
+committed by R.14 snapping to the silence midpoint. It joins `152_frozen_brush_mice` (R.14),
+`iron_bounce` and `logic_clash` (R.15) as the four RULE-DEPENDENT rows, which matters only for
+R.14/R.15 deletion planning (AE.7).
+
+**Spanish scoping: OUT OF REGISTER, pending its own pass.** It has no full pass, was last touched
+2026-08-19, and holds the one `S1_KNOWN_BAD_MOVES` row whose rejection is `ledger-inherited` rather
+than heard. Its 27 boundaries are therefore classified `unadjudicable` in every table below, never
+`regressed` — treating a spanish row as attested would be reading an attestation nobody made.
+
+**Register open count: 5**, as expected — v6 213-214 → 630.09, v6 230-231 → 682.74, v6 446-447 →
+1418.53, 173 5-6 → 19.27, 173 106-107 → 427.60.
+
+**R.5 run census, the fact the whole session turns on.** MEASURED via the shipped
+`computeUnscriptedRuns`:
+
+| corpus | R.5 runs | excised audio | % of corpus |
+|---|---|---|---|
+| v6 | **10** | 41.31s | 2.91% |
+| 173 | **0** | 0.00s | 0% |
+| spanish | **0** | 0.00s | 0% |
+
+173 and spanish are therefore **structural nulls** — not merely expected to be unaffected, but
+*incapable* of being affected. That is what makes them the strongest controls this programme has had.
+
+### AE.3 — Step 1: the gate, written and committed before any arm ran
+
+R-AS applied prospectively. `scripts/ws1-session-ak-step1-gate.ts` is data and predicates only — it
+computes no measurement and reads no arm, so it cannot be relaxed in the commit that produces the
+numbers. Committed as `788faf7`, *before* `addcc38` produced any result.
+
+| condition | bar | derivation |
+|---|---|---|
+| HARD FAIL 1 | 0 of the 615 attested-correct boundaries move >50ms | the brief's own condition |
+| HARD FAIL 2 | 0 of the 19 `S1_KNOWN_BAD_MOVES` values reproduced (±5ms) | the only labelled negative ground truth |
+| SUCCESS BAR | **4 of 4** operator-targeted defects land within ±50ms | see below |
+| SHIP CAP | implied precision **≥50%** | see below |
+
+**Why the success bar is 4 and was not lowered.** A bar of 2 is no bar at all — arm B *already*
+lands 2 of 5 (`447_scout_facing_dark`, `lethal_nature_hazard`) at a cost of 35 control regressions,
+so a bar it already clears cannot distinguish excision's contribution from zero. A bar of 3 means
+excision bought one defect while the arm still moves hundreds of boundaries. The operator named
+four; setting a lower bar after seeing which rows are easy is precisely what R-AS forbids. The fifth
+(`gadget_decay`, a 0.12s defect the operator did not name) is reported, not required.
+
+**Why the ship cap is a ratio, not a count.** A count would be fitted to these three corpora. The
+derivation: the ledger's own matching rule (`earPassAuthorising`) authorises a value within
+`EAR_PIN_TOLERANCE_SEC` = 5ms of a scored one, so a move ≤5ms *preserves* the operator's standing
+verdict and a move >5ms does not — it costs exactly one unit of ear re-verification. Every open
+defect landed removes one. A change that creates more ear work than it closes cannot be shipped on
+its own measurement, so moves >5ms among the attested-correct must not exceed defects landed:
+**precision ≥50%**. For scale, both MEASURED: S1 was rejected at ~7%; arm B sits at ~0.3% on v6.
+
+**The pre-registered predictions, which are what make the v6 result interpretable.** 173 and spanish
+carry zero R.5 runs, so arm C **must** be bit-identical to arm B on both — chunk plan, FA words, and
+committed array alike. Any movement there would mean the integration is doing something other than
+excising runs, and every v6 number it produced would be uninterpretable. **A standing inference was
+also recorded before the run**, following from the census alone: 173 shows control regressions under
+arm B and has zero runs, so excision cannot be the *general* explanation for S2's regressions before
+a single arm-C boundary is computed. Arm C could only ever measure the size of a v6-local
+contribution. That framing was fixed in advance, not adopted after seeing the result.
+
+**The named stop condition:** 173's arm-B control regressions surviving arm C unchanged ⇒ recommend
+against shipping global S2 even after excision.
+
+### AE.4 — Step 2: the integration, and its index accounting
+
+`computeFaChunkPlanS2Excised` is a **sibling**, not a flag: the S2 header explicitly forbids a gating
+boolean, the module already establishes the sibling pattern (`computeFaChunkPlan` /
+`…Coalesced` / `…S2`), and a sibling keeps arm B **reproducible at HEAD** — an in-place edit would
+have handed the ablation a moving baseline, which Step 3's own stop check exists to prevent. R.5
+itself is reused unchanged via `computeUnscriptedRuns`; nothing is reimplemented.
+
+**What excision removes, stated precisely because a mis-accounting here produces exactly the
+cumulative drift being tested for:**
+
+- **AUDIO — yes.** The run's `[startSec, endSec]` is left unclaimed by any chunk.
+- **SCRIPT TEXT — nothing.** By R.5's own zero-hole rule a run has *no* unmatched script word
+  opposite it, so there is no text belonging to the run to delete. `qiSplit` is a **partition point,
+  never a deletion**. This is asserted, not assumed: the generator checks both arms' concatenated
+  chunk text is byte-identical, on all three corpora.
+- **DOWNSTREAM BOUNDARY INDICES — nothing shifts, and nothing needs accounting for.**
+  `align_chunked` (`fa_onnx.rs`) aligns each chunk independently and offsets its words by that
+  chunk's own `start_sec`, so every emitted word carries an **absolute** time regardless of what the
+  previous chunk covered. A hole in the plan is legal there (the R.5 section header states this
+  directly) and costs no index correction; word ordinals are assigned in emission order over
+  unchanged text, so ordinal *k* means the same script word in both arms. **This is why excision
+  cannot itself introduce cumulative drift** — and the measured arm-C drift shape (AE.6) confirms it
+  independently.
+
+**Where the cut goes is derived from two rules already in force, not tuned.** MEASURED: **zero of
+v6's ten runs land cleanly between two adjacent sentence groups**, and five land strictly *inside*
+one group's estimated span — which is itself displaced by the recitation, since the anchor-based
+estimate distributes script text across audio that includes it. So the cut cannot be read off the
+run's timestamps without breaking S2 invariant 3, and cannot be assumed to fall at a group seam. It
+is read off R.5's own `qiSplit` — a script-word index, exactly the index-space quantity `CLAUDE.md`
+§4 requires for an identity decision — and then moved to the start of the sentence group containing
+that word, because invariant 2 admits no other legal chunk edge. Both steps are consequences of
+stated rules. **No new constants**; the 10-30s band and the 5.0s silence-search window remain
+GEOMETRIC operator-directed parameters, unchanged.
+
+**Excision counts, MEASURED.** v6: 10 runs, all excised — 9 as inter-chunk gaps (125.25-129.15,
+249.50-253.32, 369.75-373.49, 521.25-525.82, 663.63-666.61, 787.85-791.94, 924.50-929.33,
+1044.47-1050.08, 1188.05-1192.33; 37.82s) plus the leading run at 0.08-3.57 (3.49s) which becomes the
+plan's start offset rather than a gap — 41.31s total, matching the census exactly. 0 violations.
+173 and spanish: **zero runs**, plan byte-identical to arm B, which is what makes them controls.
+
+**A REAL CONFOUND, reported rather than absorbed.** The density adjustment subtracts a run's seconds
+from a group's packing weight using the group's *estimated* span — and those estimates are displaced
+by the very recitation being subtracted. Globally it balances (total weight drops by exactly the
+excised total), but **locally it does not**, and the chunk-length distribution widens at both tails:
+
+| arm | n | min | median | max | chunks >30s |
+|---|---|---|---|---|---|
+| B | 54 | 10.57 | 27.44 | 31.92 | 9 |
+| C | 57 | **4.87** | 26.06 | **43.91** | 7 |
+
+Three arm-C chunks (36.43s, 39.85s, 43.91s) exceed arm B's maximum, and **all three end exactly at
+an excised run**. So arm C changes *two* things versus arm B — it excises recitations *and* it
+widens the window distribution — and per `CLAUDE.md`'s standing invariant a wider FA window is an
+independent accuracy risk. This bounds the attribution: the 14 repairs are excision's floor
+contribution, and part of the 16 non-repairs may be this confound rather than a residual mechanism.
+Fixing it would require either clamping wall span (a new rule) or a per-corpus constant — both
+barred this session, and neither justified while the gate fails by two orders of magnitude.
+
+### AE.5 — Step 3: arm B reproduces; both structural nulls hold
+
+Arm B re-derived at HEAD reproduces Session AI's stored chunk plan byte-for-byte on all three
+corpora (**54/54, 28/28, 4/4**), so the ablation is not measured against a moving baseline. Arm B
+still holds the funnel zero and still lands `447_scout_facing_dark` (1418.510) and
+`lethal_nature_hazard` (19.230) — confirmed below.
+
+**The structural nulls held exactly as pre-registered**, and were checked at the strongest available
+level — not inferred from the plan but measured on the aligner's own output:
+
+| corpus | R.5 runs | arm B vs C chunk plan | arm B vs C **FA words** | boundaries moved B→C |
+|---|---|---|---|---|
+| 173 | 0 | byte-identical | **byte-identical (1660 words)** | **0** |
+| spanish | 0 | byte-identical | **byte-identical (249 words)** | **0** |
+| v6 | 10 | 54 vs 57 chunks | differ (3874 vs 3874 words) | 172 |
+
+This doubles as an empirical confirmation of Session Y's `with_deterministic_compute(true)` pinning:
+identical plan through the same model returned identical words, twice, on real audio.
+
+### AE.6 — Steps 4-5: every table
+
+**Full oracle diff, per corpus per arm.** Categories partition the moved set exactly (asserted in
+code: `unchanged + repaired + regressed + unadjudicable === compared`).
+
+| corpus | arm | compared | unchanged | repaired | regressed | unadjudicable | moved |
+|---|---|---|---|---|---|---|---|
+| v6 | A | 447 | 446 | 0 | 1 | 0 | 1 |
+| v6 | B | 447 | 116 | 1 | **326** | 4 | 331 |
+| v6 | C | 447 | **164** | 1 | **279** | 3 | 283 |
+| 173 | A | 173 | **173** | 0 | 0 | 0 | 0 |
+| 173 | B | 173 | 130 | 1 | **40** | 2 | 43 |
+| 173 | C | 173 | 130 | 1 | **40** | 2 | 43 |
+| spanish | A/B/C | 27 | 27 | 0 | 0 | 0 | 0 |
+
+Arm A's single v6 `regressed` row is `102_frozen_scouts` (10ms, AE.2) — inside the ±50ms hard-fail
+band, so HARD FAIL 1 is clear for arm A. **Attested-correct boundaries moved beyond ±50ms: arm A 0,
+arm B 364, arm C 317.**
+
+**Step 4 — the arm-B control regressions, attributed.** The set is **35, not 36**. The missing one is
+173's `vessel_damage_clue`, whose own Session AI row is labelled `S2-value-ear-verified-correct`: it
+counted as a "regression" only because the BASELINE was the retired arm. Step 0's repoint deletes it
+— arm A and arm B now both commit 174.740 and it does not move. This is a figure corrected at its
+source, not an adjustment.
+
+| corpus | arm-B control regressions | **repaired** (exactly back) | partial (closer) | unchanged | worsened |
+|---|---|---|---|---|---|
+| v6 | 30 | **14** | 4 | 11 | 1 |
+| 173 | **5** | **0** | 0 | **5** | 0 |
+
+**14 of v6's 30 repaired to the exact attested value** — `125_night_circle`, `176_twenty_six_scout`,
+`266_forty_one_burden`, `340_fifty_eight`, `087_throwing_spear_poise`, `224_thirty_three`,
+`307_forty_nine_years`, `383_sixty_four`, `221_skill_removes`, `222_long_silence`, `057_root_trip`,
+`076_feeling_change`, `305_carrying_grief`, `367_dropped_torch`. **16 survive.** One
+(`216_chest_revelation`) worsened, 19.070 → 20.950 off its attested value.
+
+**Do the survivors sit near recitation spans?** No — and this is the informative half. The repaired
+rows cluster where an excised run sits between the boundary and its chunk edge; the survivors
+(`152_frozen_brush_mice` 15.880s, `192_scout_listening` 22.250s, `289_winter_predator_breach`
+21.890s, `213_pensive_stare` 21.860s, `293_sitting_brooding` 18.320s, `318_scout_on_ridge` 14.860s,
+`325_contrasting_student`, `364_the_full_cost`, `158_scout_false_alert`, `039_river_trap`,
+`443_scout_cliff_edge`) are spread across the corpus at magnitudes essentially unchanged from arm B.
+They are residual S2 damage, not recitation damage.
+
+**The drift profile, and its shape.** Measured by decile, arm value − arm A value:
+
+| decile | n | arm B mean | arm C mean | arm B max abs | arm C max abs |
+|---|---|---|---|---|---|
+| 0-142s | 47 | -0.968 | -0.877 | 6.610 | 8.000 |
+| 142-284s | 48 | -2.677 | -1.762 | 8.210 | 7.870 |
+| 284-426s | 48 | -9.241 | -8.151 | 16.910 | 15.280 |
+| 426-569s | 47 | -17.353 | -13.534 | 24.450 | 22.070 |
+| 569-711s | 52 | -23.252 | -17.366 | 27.500 | 26.020 |
+| **711-853s** | 42 | **-23.786** | **-19.155** | 27.700 | 27.470 |
+| 853-995s | 40 | -17.848 | -14.801 | 23.010 | 23.010 |
+| 995-1137s | 42 | -12.318 | -7.810 | 19.060 | 16.970 |
+| 1137-1279s | 37 | -2.735 | -1.348 | 10.950 | 8.130 |
+| 1279-1421s | 44 | **0.157** | **0.157** | 2.130 | 2.130 |
+
+**The drift does NOT collapse in arm C — it shrinks by ~19% and keeps its shape exactly.** And the
+shape is the finding: **both arms are an ARCH**, not a ramp. It rises from ~0, peaks at decile 5, and
+**returns to 0.157s in the final decile — identically in both arms**. So **the drift was never
+cumulative**: an accumulating error cannot come back on its own. It is a per-region displacement
+that something re-anchors by corpus end. That is measured, not inferred, and it retires the
+"cumulative drift" framing the confound was originally described under. (173's own drift is likewise
+an arch, but *positive* and far smaller, peaking at +3.854s.)
+
+**The open defects, per arm, with incoming anchor confidence.**
+
+| corpus | tag | ear | arm A | arm B | arm C | C landed? | conf A | conf B | conf C |
+|---|---|---|---|---|---|---|---|---|---|
+| v6 | `214_solitary_fire` | 630.09 | 629.010 | 607.680 | 607.680 | no (-22.410) | 2.19e-7 | 2.19e-4 | 2.50e-4 |
+| v6 | `231_slowing_pace` | 682.74 | 681.630 | 657.350 | 668.950 | no (-13.790) | 6.97e-3 | 2.26e-5 | **0.00e+0** |
+| v6 | `447_scout_facing_dark` | 1418.53 | 1417.120 | 1418.510 | 1418.510 | **YES** (-0.020) | 2.31e-3 | 1.00e+0 | 1.00e+0 |
+| 173 | `lethal_nature_hazard` | 19.27 | 18.510 | 19.230 | 19.230 | **YES** (-0.040) | 9.66e-1 | 9.94e-1 | 9.94e-1 |
+| 173 | `gadget_decay` | 427.60 | 427.480 | 427.470 | 427.470 | no (-0.130) | 9.59e-1 | 9.47e-1 | 9.47e-1 |
+
+**The confidence mechanism predicted a rise from ~1e-7 and got one on exactly one row.**
+`214_solitary_fire` rises 2.19e-7 → 2.50e-4 (three orders) and still does not land. On
+`231_slowing_pace` the Session AI observation is **confirmed and made worse, not reversed**:
+confidence fell 6.97e-3 → 2.26e-5 under arm B and reaches **exactly 0.00e+0** under arm C. Excision
+does not reverse that fall; it completes it. The two rows that land carry confidence 1.00e+0 and
+9.94e-1 — they were never the low-confidence cases.
+
+**`S1_KNOWN_BAD_MOVES`: 0 reproduced by any arm, on any corpus.** HARD FAIL 2 is the one condition
+arm C passes.
+
+**Phantom funnel. Arm C does NOT hold the structural zero on v6.**
+
+| corpus | stage | A | B | C |
+|---|---|---|---|---|
+| v6 | (1) trailing phantom | 183 | 22 | 28 |
+| v6 | (1)∧(2) at a seam | 110 | 6 | 9 |
+| v6 | **(1)∧(2)∧(3)** | **19** | **0** | **3** |
+| 173 | (1)∧(2)∧(3) | 2 | 0 | **0** |
+| spanish | (1)∧(2)∧(3) | 2 | 0 | **0** |
+
+Arm C reintroduces three v6 funnel hits arm B had eliminated — `012_sudden_hush`, `078_column_stops`,
+`373_slow_blade_draw`. This is a genuine cost of the integration, most plausibly the widened-window
+confound of AE.4, and it means **excision is not strictly dominant over plain S2**: it trades 47
+regressions for 3 phantom hits and 1 worsened control.
+
+**Resources, arm C measured directly** (`/usr/bin/time -l`, debug profile, single-threaded pinned ORT
+1.23.2). Arms A and B are stored artefacts and were not re-aligned, so no figure is claimed for them.
+
+| corpus | chunks | wall clock | peak RSS |
+|---|---|---|---|
+| v6 | 57 | 644.81s | 3205.3 MB |
+| 173 | 28 | 327.43s | 2227.6 MB |
+| spanish | 4 | 49.42s | 1938.1 MB |
+
+**Violations: 0 for arm C on every corpus**, and 0 for arm B (Session AI's own stored figure) — no
+`oversize-unbreakable-group`, no `no-usable-silence-nearby`, no `unexcised-run`.
+
+### AE.7 — Rule firings, and the rule-dependent rows
+
+| corpus | arm | R.14 | R.15 | double-corrected (AI defn) | double-corrected (stacked) |
+|---|---|---|---|---|---|
+| v6 | A / B / C | 11 / **64** / **36** | 0 / 7 / 7 | 0 / **74** / **45** | 0 / 0 / 1 |
+| 173 | A / B / C | 0 / 2 / 2 | 3 / 2 / 2 | 0 / 11 / 11 | 0 / 0 / 0 |
+| spanish | A / B / C | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
+
+**Double-corrections under arm B are 85, not 96.** Recomputed with Session AI's own definition, this
+matches its stored artifact exactly (74 v6 + 11 173 + 0 spanish = 85); the 96 in the session brief
+does not correspond to any recorded figure. Arm C reduces it to **56** — excision roughly halves
+v6's rule-stage churn (74 → 45), consistent with R.14's own firing count falling 64 → 36. Both remain
+far above arm A's 11.
+
+**The four rule-dependent rows — does any become structurally correct with its owning rule not
+firing?** Two do, and two get worse:
+
+| tag | rule | attested | arm A pre-rule | arm B/C pre-rule | verdict under S2 |
+|---|---|---|---|---|---|
+| `400_endless_dark` | R.14 | 1266.75 | 1266.210 | **1266.750** | **STRUCTURALLY CORRECT** — rule not needed |
+| `iron_bounce` | R.15 | 76.58 | 75.660 | **76.580** | **STRUCTURALLY CORRECT** — rule not needed |
+| `152_frozen_brush_mice` | R.14 | 451.03 | 449.200 | 435.150 | worse — 15.880s off, rule can't reach it |
+| `logic_clash` | R.15 | 418.14 | 417.150 | 421.550 | worse — 3.410s off, rule can't reach it |
+
+This is the session's one clean contribution to **R.14/R.15 deletion planning**: under an S2-class
+planner, two of the four rows the rules exist to rescue no longer need rescuing, because the base
+alignment already puts the boundary in the right place. It is *not* an argument for deleting either
+rule — the other two rows get materially worse — but it is the first evidence that the
+rule-dependency is a property of today's planner rather than of the boundaries themselves.
+
+### AE.8 — Implied precision under R-AS, and the gate verdict
+
+| corpus | arm | repaired | regressed | implied precision |
+|---|---|---|---|---|
+| v6 | B | 1 | 326 | 0.31% |
+| v6 | **C** | 1 | 279 | **0.36%** |
+| 173 | B / C | 1 | 40 | 2.44% |
+
+Whole-register (v6 + 173, spanish excluded as out of register): **2 defects landed against an ear
+bill of 319 → 0.62%.**
+
+| condition | bar | arm C | verdict |
+|---|---|---|---|
+| HARD FAIL 1 — attested-correct moved >50ms | 0 | **317** | **FAIL** |
+| HARD FAIL 2 — known-bad reproduced | 0 | **0** | PASS |
+| SUCCESS BAR — operator-targeted defects landed | ≥4 of 4 | **2** | **FAIL** |
+| SHIP CAP — implied precision | ≥50% | **0.62%** | **FAIL** |
+
+**GATE VERDICT: FAIL, 3 of 4.** Arm C's precision is **an order of magnitude below the ~7% at which
+S1 was rejected 18/18 on ear audit**. Under R-AS that is dispositive on its own: a repair whose
+precision is worse than an already-rejected repair's does not need a listening pass to be declined.
+
+### AE.9 — Step 6: recommendation — ESCALATE
+
+**The driving number: 40.** 173 regresses **40 boundaries under both arms, bit-identically**, on a
+corpus with **zero** R.5 runs. The named stop condition fired exactly as written.
+
+This is ESCALATE, not ITERATE, and the distinction is the point. Iterating would mean naming the
+next change to the excision integration — but excision is not what is failing. It works: it is inert
+where it should be inert (byte-identical on both null corpora) and it repairs 14 of 30 controls
+exactly where it should. **The surviving mechanism is global S2 itself.** Its signature, now
+measured on a corpus where recitations cannot be blamed: replacing a ~5s-median chunk plan (119
+chunks) with a ~27s-median one (28 chunks) moves 43 of 173 boundaries and regresses 40, drives an
+arch-shaped displacement peaking mid-corpus, and multiplies R.14 firings. That is a chunk-width
+effect on alignment accuracy, exactly the risk `CLAUDE.md`'s standing invariant names — and the
+capacity sweep that cleared 120s gave no warning of it, exactly as that invariant says it cannot.
+
+Per the brief's own instruction, this report stops here rather than proposing a new architecture in
+the same breath. What it does **not** do, deliberately: propose seam-scoped repartition. Arm C's
+surviving failures are demonstrably **not** seam-local — the 16 surviving v6 controls are spread
+across the corpus at magnitudes unchanged from arm B, 173's 40 regressions occur with no seam
+excision available at all, and the drift is a whole-region arch rather than a set of bad seams. A
+seam-scoped planner would be aimed at a symptom this session measured and found absent.
+
+**What would change the recommendation:** a measurement isolating chunk WIDTH from chunk COUNT on
+173 — the one corpus where excision is provably irrelevant — by sweeping S2's band alone. That is a
+capacity-independent accuracy question, and it is the only remaining hypothesis this session's data
+does not already rule out.
+
+### AE.10 — Step 7: self-check
+
+**Does arm C remove the cause or detect the symptom?** It removes *a* cause, and the evidence is
+structural rather than statistical: excision is byte-identical-inert on two corpora that cannot
+contain the thing it removes, and on the third it repairs 14 controls to their exact attested values.
+That is removal, not detection — nothing here is keyed on a detector firing. But it removes a cause
+that accounts for roughly 14% of the damage (326 → 279 regressed) and none of the damage on 173.
+
+**Which roadmap items move.** *Repaired timings* — advanced, but not to a shippable point: 14
+repairs, 2 defects landed, gate failed. *Word-gap placement replacing silence-midpoint* — untouched;
+no placement rule was written or tested. *R.14/R.15 deletion* — genuinely advanced (AE.7): two of the
+four rule-dependent rows become structurally correct under an S2-class planner, the first evidence
+that rule-dependency is a planner property. *Rule-stage golden coverage* — **untouched, and this
+session is another instance of why it matters**: golden replay stayed 6/6 byte-identical throughout
+while arm C moved 283 v6 boundaries, exactly the blind spot `CLAUDE.md` §4 records. **Nothing moved
+backwards**, with one honest qualification: arm C reintroduces 3 v6 phantom-funnel hits that arm B
+had eliminated, so on that one axis arm C is worse than the arm it was meant to improve.
+
+**Every tuned rather than structural choice in the integration.** There is exactly one judgement
+call, and it is not a constant: **the decision to move `qiSplit` to the containing sentence group's
+START** rather than its end. It is forced (invariant 2 admits no edge inside a group) but the choice
+of *which* legal edge — the group's start versus the previous group's — is a decision the rules do
+not make for me. Everything else is derived: no new numeric constant was introduced, the 10-30s band
+and the 5.0s search window are unchanged and GEOMETRIC, and the density adjustment is arithmetic on
+measured run spans. The **widened chunk-length distribution** (AE.4) is a structural side effect, not
+a tuned one, but it is a confound and is reported as such.
+
+**Anything that would fail R-AS if reframed as a detector.** Yes, and it should be said plainly: if
+the excision integration were reframed as a detector — "flag boundaries near recitations and move
+them" — its precision on v6 is 14 repairs out of 172 boundaries moved between arms B and C, ≈8%.
+That is the same order as S1's rejected ~7%. Excision survives this session's scrutiny **only**
+because it is not a detector: it is a structural removal whose inertness on null corpora is provable,
+and its 14 repairs land exactly on attested values rather than near them. Had it been keyed on a
+detector, the same numbers would have required rejection.
+
+**What would falsify the claim that R.5 excision fixes v6's regressions, and did it fire?** The
+falsifier was pre-registered: *v6 arm C reproducing arm B's drift profile essentially unchanged*.
+**It half-fired, and the honest reading is the strong one.** The magnitude did move (-23.786s →
+-19.155s peak, 16 of 30 controls repaired or partially repaired), so the claim is not fully
+falsified. But the *shape* is unchanged — same arch, same peak decile, same final-decile value to
+three decimals — and 173's regressions are bit-identical across the arms. So the claim as stated
+("excision fixes v6's regressions") **is** falsified; the weaker claim it supports ("excision removes
+a measurable, structurally-attributable share of them") is not. That distinction is the session's
+result.
+
+### AE.11 — The six numbers, MEASURED, and every SHA
+
+| check | result |
+|---|---|
+| `npm test` | **2493 passed / 66 skipped / 0 failed** |
+| `tsc --noEmit` (`npm run lint`) | clean |
+| `cargo check --features fa-inference` | clean |
+| `cargo clippy --all-targets --features fa-inference` | clean — 4 pre-existing warnings, 0 new |
+| `cargo test` (default) / `--features fa-inference` | 141/0/1 / 216/0/24, unchanged |
+| Golden replay | **6/6 byte-identical** |
+
+The skip count rises 61 → 66: five new Session AK gated harnesses (step0-repoint, step0-forensics,
+step2-runprobe, step3-generate, step4-measure), each contributing exactly one `describe.skipIf`,
+none in the default sweep. Passing count unchanged at 2493 — no new always-on test was added, and
+none was lost.
+
+`faAnchors.ts` sha256 unchanged: `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`.
+
+**Commits, in order:**
+
+| commit | summary |
+|---|---|
+| `25eb100` | Step 0 — repoint 173's default arm, three ledger supersessions |
+| `788faf7` | Steps 1-3 — the gate (committed before any arm ran), R.5 excision wired into S2 |
+| `addcc38` | Steps 4-5 — the three-arm ablation, measured |
+| *(this commit)* | docs — this Part, §§3/9/11m, Changelog, project-state |
+
+`git diff --stat 702b8fe` touches `scripts/ws1-runid.ts`, `scripts/ws1-session-p-pipeline.ts`,
+`scripts/ws1-ear-pass-ledger.ts`, `src/services/faChunkPlan.ts`, five new
+`scripts/ws1-session-ak-*.ts` files, plus this docs commit's own targets. **Confirmed untouched:**
+`snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts` (the Hirschberg aligner),
+`faAnchors.ts`, `docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv` — zero hits for any of
+them. No new repo-root file. No rule added, deleted, or re-tuned; no arbiter rebuilt; no per-project
+or per-row constant introduced; nothing shipped to the production default.
+
+**Next action:** sweep S2's chunk-width band on **173 alone** — the corpus where R.5 excision is
+provably irrelevant — to isolate chunk WIDTH from chunk COUNT as the cause of the 40 regressions
+excision cannot touch. Everything else this session measured is already explained.

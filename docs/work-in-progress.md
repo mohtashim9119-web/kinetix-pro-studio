@@ -124,6 +124,23 @@ threshold, is reached by R.14 at residual 0.000s — **Stage 1's lock is no long
 Golden replay 6/6 byte-identical (the replay harness stops at `snapCoveredBoundaries` and never
 reaches the rule stage). Full detail: §11h, `sync-pipeline-v2-plan.md` Part Z.
 
+**2026-08-23 (WS1 Session AK) — no phase row advances; the S2 confound is controlled and the
+answer is negative.** Ran the controlled experiment Session AC named: a three-arm ablation
+(production / global S2 / global S2 + R.5 excision) over all three corpora at one commit, judged
+against a gate committed to git BEFORE any arm ran. **R.5 excision is a CONTRIBUTING CAUSE, not the
+cause** — it repairs 14 of 30 v6 ear-verified control regressions to their exact attested values and
+is provably inert where there is nothing to excise (173 and spanish carry zero R.5 runs and returned
+byte-identical chunk plans AND FA words), but 173 regresses 40 boundaries identically under both
+arms, so the general mechanism is untouched. Global S2 **FAILS the gate 3 of 4**: 317
+attested-correct boundaries moved >50ms (bar 0), 2 of 4 operator-targeted defects landed (bar 4),
+implied precision **0.62%** (bar 50%, and below the ~7% at which S1 was rejected). The v6 drift
+shrinks ~19% but keeps its shape — an arch peaking mid-corpus and returning to ~0 in both arms,
+which establishes it was **never cumulative**. Nothing ships; recommendation ESCALATE, with the next
+measurement scoped to chunk WIDTH on 173 alone. Housekeeping did move real ground: 173's default
+bundle arm is repointed (oracle diff 172/173 → **173/173 exact**), `400_endless_dark` is CLOSED at
+1266.75, and two 10ms ledger supersessions are applied. Detail: §11m,
+`sync-pipeline-v2-plan.md` Part AE.
+
 **2026-08-23 (WS1 Session AJ-0) — no phase row advances; a machine oracle is installed and one
 long-parked question is solved.** Read-only forensics session: the operator's own live-app saves
 (v6 447 segments, 173 173 segments — settling 172/173/174 as 173, Spanish 27 — settling 26/27 as
@@ -842,6 +859,18 @@ neither silence arm reproduces 126 (native 119, app 121). **No compliance row is
 — it is a bundle-provenance defect, not a Contract 1→2 requirement** — but any future 173
 measurement that depends on the chunk plan should be read against it. Full detail:
 `sync-pipeline-v2-plan.md` Part AA.2.
+
+**2026-08-23 (WS1 Session AK) — no row in this table moves; the arm-provenance defect Session
+AJ-0 diagnosed is FIXED.** The repoint turned out to need a code change rather than a manifest edit:
+`loadLiveBundle` resolved arm filenames from the hardcoded `V6_BUNDLE_ARMS` and never read the
+manifest's own `file` field, so repointing the manifest alone would have loaded the identical bytes
+while making `verifyBundle` hash the old file against the new arm's sha256 and report a `SILENT
+EDIT` that never happened. Resolution: per-corpus resolution at `bundleArmsFor()` (`ws1-runid.ts`),
+173 bundle restamped one-vintage (`ak-20260823T174719Z-7d9c1245`), retired `fa_live_*` left on disk
+as the historical record. MEASURED: `vessel_damage_clue` 174.740 exactly on the default path, 173's
+oracle diff **172/173 → 173/173 exact**, and one of Session AI's six 173 "control regressions"
+disappears as the stale-baseline artifact it always was. No contract row is affected — this is
+harness provenance, upstream of every guarantee in this table.
 
 **2026-08-23 (WS1 Session AJ-0) — no row in this table moves; an arm-provenance defect matching
 Session AG's own class is found on 173.** `.work-phase4/replay/173/run_manifest.json`'s stamped
@@ -6449,7 +6478,141 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 
 ---
 
+### §11m. WS1 Session AK — RESULTS
+
+**One-line verdict: R.5 unscripted-recitation excision is a CONTRIBUTING CAUSE of v6's S2 drift, not
+the cause — it repairs 14 of 30 ear-verified control regressions exactly and is provably inert on
+both zero-run corpora, but 173 regresses 40 boundaries identically under both arms, and global S2
+FAILS its pre-registered gate 3 of 4 at 0.62% implied precision, an order of magnitude below the
+~7% at which S1 was rejected. Nothing ships; recommendation is ESCALATE.** Full narrative and every
+table: `sync-pipeline-v2-plan.md` Part AE.
+
+**Step 0 — housekeeping.** The 173 manifest repoint needed a CODE change, not a manifest edit:
+`loadLiveBundle` resolved arm names from the hardcoded `V6_BUNDLE_ARMS` and never read the
+manifest's `file` field, so a manifest-only repoint would have loaded the same bytes while making
+`verifyBundle` report a phantom `SILENT EDIT`. Fixed at `bundleArmsFor()`; retired `fa_live_*` left
+on disk. MEASURED: `vessel_damage_clue` = 174.740 exactly, and the AJ-0 oracle diff for 173 goes
+**172/173 → 173/173 exact** (all three corpora now **646/647**). `400_endless_dark` CLOSED at
+1266.75 (R.14-dependent; the superseded 1266.66 was a never-committed Class B *target*, archived
+with provenance). Two 10ms supersessions applied, export winning: `226_four_scouts` → 671.17,
+`iron_bounce` → 76.58. New ledger sitting `full-pass-aj0` (order 15). **`102_frozen_scouts`: the
+arm hypothesis is REFUTED** (both silence arms give 306.430; the control row `226_four_scouts` DOES
+show the arm split and the export matches the native arm), rounding is refuted (306.43 is the exact
+midpoint of silence [305.82, 307.04], a full 0.005 from the grid line), rule drift is refuted
+(pre-rule == committed). Cause localized to the live silence array; **provenance UNDETERMINED**,
+because the project save carries no silence array. Cost to a hard gate: a permanent un-retirable
+allowlist entry, or a ≥10ms tolerance that blinds the whole sub-tolerance band. Spanish scoped **OUT
+OF REGISTER** (no full pass, holds the one `ledger-inherited` known-bad row). Register open = **5**,
+as expected. **R.5 census: v6 10 runs / 41.31s / 2.91%; 173 ZERO; spanish ZERO** — the two null
+corpora are structural controls.
+
+**Step 1 — the gate, committed as `788faf7` BEFORE any arm ran** (`ws1-session-ak-step1-gate.ts`,
+data and predicates only). Hard fails: 0 attested-correct moving >50ms; 0 known-bad reproduced.
+Success bar **4 of 4 operator-targeted defects** — not lowered, because arm B already lands 2 of 5,
+so a lower bar cannot distinguish excision from zero. Ship cap **precision ≥50%**, derived from the
+ledger's own 5ms pin tolerance (a move past it costs exactly one unit of ear work) rather than
+fitted. Predictions registered: 173 and spanish must be **bit-identical** B→C. Standing inference
+recorded in advance: 173 has regressions and zero runs, so excision could never be the general
+explanation.
+
+**Step 2 — `computeFaChunkPlanS2Excised`**, a sibling not a flag (the S2 header forbids a gating
+boolean; a sibling also keeps arm B reproducible at HEAD). Excision removes **audio only** — by
+R.5's zero-hole rule a run has no script word opposite it, so `qiSplit` is a partition point, never
+a deletion (asserted: both arms' concatenated chunk text is byte-identical). **No index shifts**:
+`align_chunked` aligns each chunk independently and offsets by its own `start_sec`, so a plan gap is
+legal and costs no correction. Cut placement derived, not tuned: MEASURED zero of ten runs land at a
+sentence-group seam and five land inside a group's (recitation-displaced) estimated span, so the cut
+comes from `qiSplit` — a script-word index — moved to the containing group's start, the only edge
+invariant 2 allows. No new constants. **Reported confound:** the density adjustment widens the
+chunk-length distribution at both tails (min 10.57→4.87s, max 31.92→43.91s; three chunks exceed arm
+B's max and all three end at an excised run), so arm C changes two things at once.
+
+**Step 3 — arm B reproduces** byte-for-byte at HEAD on all three corpora (54/54, 28/28, 4/4). Both
+structural nulls held at the strongest level: arm C's chunk plan **and FA words** are byte-identical
+to arm B on 173 (1660 words) and spanish (249) — which also empirically re-confirms Session Y's
+determinism pinning.
+
+**Step 4 — attribution.** The arm-B control-regression set is **35, not 36**: the sixth was 173's
+`vessel_damage_clue`, whose Session AI row is labelled `S2-value-ear-verified-correct` — it counted
+as a regression only because the baseline was the stale arm, and Step 0's repoint deletes it. v6: 30
+→ **14 REPAIRED exactly**, 4 partial, 11 unchanged, 1 worsened. 173: 5 → **0 repaired, 5 unchanged**.
+Survivors are spread across the corpus at magnitudes unchanged from arm B, not clustered near
+recitations. **The drift does not collapse — it shrinks ~19% and keeps its shape**: both arms are an
+ARCH peaking at decile 5 (-23.786s → -19.155s) and returning to 0.157s in the final decile,
+identically. **So the drift was never cumulative** — an accumulating error cannot come back.
+**Verdict: CONTRIBUTING CAUSE.** 173's six→five regressions have no recitation to blame and no
+mechanism was determined for them beyond "chunk width", which is stated as the open question, not a
+finding.
+
+**Step 5 — the census.** Oracle diff (categories asserted to partition the moved set): v6 A
+446/447 unchanged, B 116 unchanged / 326 regressed, C **164 unchanged / 279 regressed**; 173 A
+**173/173**, B and C both 130 / **40 regressed**, identical; spanish 27/27 in every arm. Open
+defects: **2 of 5 land under both arms** (`447_scout_facing_dark` 1418.510, `lethal_nature_hazard`
+19.230) — excision moves neither. Confidence: `214_solitary_fire` rises 2.19e-7 → 2.50e-4 and still
+misses; **`231_slowing_pace`'s fall is confirmed and completed, not reversed** — 6.97e-3 → 2.26e-5
+(B) → **0.00e+0** (C). Known-bad: **0 reproduced by any arm**. **Funnel: arm C does NOT hold the
+structural zero on v6** (0 → 3: `012_sudden_hush`, `078_column_stops`, `373_slow_blade_draw`); it
+holds on 173 and spanish. Violations 0 in every arm. R.14 v6 11 / 64 / 36. **Double-corrections
+under arm B are 85, not 96** — recomputed with Session AI's own definition and matching its stored
+artifact exactly (74 v6 + 11 173); arm C reduces it to 56. **Rule-dependent rows: 2 of 4 become
+STRUCTURALLY CORRECT with their rule not firing** (`400_endless_dark`, `iron_bounce` — pre-rule
+already right under S2), while `152_frozen_brush_mice` and `logic_clash` get materially worse.
+Resources (arm C, measured): v6 644.81s / 3205.3 MB, 173 327.43s / 2227.6 MB, spanish 49.42s /
+1938.1 MB.
+
+**Step 6 — ESCALATE. Driving number: 40.** 173 regresses 40 boundaries under both arms,
+bit-identically, with zero R.5 runs — the pre-registered stop condition, fired exactly as written.
+Excision is not what is failing; global S2 is. Seam-scoped repartition is deliberately NOT proposed:
+the surviving failures are demonstrably not seam-local (survivors spread corpus-wide at unchanged
+magnitudes, 173 regressing with no seam excision available, drift a whole-region arch).
+
+**Step 7 — self-check.** Arm C removes *a* cause structurally (inert on both null corpora, 14 exact
+repairs), not a symptom — but a cause worth ~14% of the damage and none of 173's. Roadmap: repaired
+timings advanced but not shippable; word-gap placement untouched; **R.14/R.15 deletion genuinely
+advanced** (first evidence rule-dependency is a planner property); rule-stage golden coverage
+untouched — and golden replay stayed 6/6 while arm C moved 283 v6 boundaries, the blind spot again.
+One axis moved backwards: arm C reintroduces 3 funnel hits arm B had eliminated. One judgement call,
+not a constant: moving `qiSplit` to the containing group's START rather than the previous group's
+end. **Reframed as a detector, excision's v6 precision is ≈8% (14 repairs / 172 boundaries moved
+B→C) — the same order as S1's rejected ~7%**; it survives only because it is a structural removal
+with provable inertness, not a detector. The pre-registered falsifier HALF-FIRED: magnitude moved, so
+the weak claim survives, but the drift *shape* is unchanged and 173 is bit-identical — **the claim as
+stated ("R.5 excision fixes v6's regressions") IS falsified.**
+
+---
+
 ## Changelog
+
+- **2026-08-23 — WS1 Session AK: R.5 excision is a CONTRIBUTING CAUSE of v6's S2 drift, not the
+  cause; global S2 FAILS its pre-registered gate 3 of 4 at 0.62% precision and nothing ships.**
+  Ran the controlled experiment Session AC named as its next action, as a three-arm ablation
+  (A production / B global S2 / C global S2 + R.5 excision) over all three corpora at one commit,
+  machine-adjudicated against the AJ-0 oracle with **zero listening**. The gate was written and
+  committed to git (`788faf7`, `scripts/ws1-session-ak-step1-gate.ts`) BEFORE any arm ran — R-AS
+  applied prospectively. **Both structural nulls held exactly**: 173 and spanish carry zero R.5 runs
+  and arm C's chunk plan AND FA words came back byte-identical to arm B on both, so the v6 delta is
+  attributable to excision alone. **v6: 14 of 30 ear-verified control regressions repaired to their
+  exact attested values**, regressed boundaries 326 → 279, peak drift -23.786s → -19.155s — but the
+  drift SHAPE is unchanged (both arms an arch peaking at decile 5 and returning to 0.157s, so the
+  drift was **never cumulative**), and **173 regresses 40 boundaries identically under both arms**,
+  firing the pre-registered stop condition: a corpus with no recitations cannot have
+  recitation-caused regressions. Gate: 317 attested-correct boundaries moved >50ms (bar 0), 2 of 4
+  operator-targeted defects landed (bar 4), implied precision **0.62%** (bar 50%) — below the ~7% at
+  which S1 was rejected. Arm C also fails to hold the v6 funnel zero (0 → 3). Recommendation
+  **ESCALATE**; seam-scoped repartition deliberately not proposed (surviving failures measured
+  non-seam-local). **Step 0 housekeeping**: 173's default bundle arm repointed to `fa_ah_*` — which
+  required a code change at `bundleArmsFor()`, since `loadLiveBundle` never read the manifest's
+  `file` field — taking the oracle diff to **173/173 exact** (646/647 across all corpora); three
+  ledger supersessions applied from the operator's full pass (`226_four_scouts` → 671.17,
+  `iron_bounce` → 76.58, `400_endless_dark` CLOSED at 1266.75), new sitting `full-pass-aj0`;
+  `102_frozen_scouts`'s 10ms gap traced past three refuted hypotheses to the live silence array and
+  recorded **UNDETERMINED**, with its cost to a hard gate stated; spanish scoped OUT OF REGISTER.
+  Two figures corrected at their source: arm-B control regressions are **35, not 36** (the sixth was
+  the stale-arm artifact), and arm-B double-corrections are **85, not 96** (matching Session AI's own
+  stored artifact). No rule added, deleted or re-tuned; no arbiter rebuilt; no per-row constant;
+  nothing shipped to the production default; `faAnchors.ts` unchanged. Full detail: §11m,
+  `sync-pipeline-v2-plan.md` Part AE.
+
 
 - **2026-08-23 — WS1 Session AJ-0: the operator's ear-verified live-app saves installed as a
   machine oracle; `vessel_damage_clue`'s parked non-determinism SOLVED as a stale default-bundle
