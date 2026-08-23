@@ -155,6 +155,26 @@ chunk plan and no band. Phase 3/Task 5 stays exactly where Session H left it. Go
 byte-identical while arm D moved 366 v6 boundaries — the rule/plan blind spot again. Full detail:
 §11n, `sync-pipeline-v2-plan.md` Part AF.
 
+**2026-08-24 (WS1 Session AM) — no phase row advances; the arch's cause is found and confirmed
+twice.** v6-only, by operator direction. Two additive arms, one variable each from arm C: **arm F**
+places internal chunk edges at the qi-nearest `faAnchors.ts` three-source-agreement anchor (index
+space, zero numeric constants); **arm G** places them at the AJ-0 oracle's own attested times
+(**DIAGNOSTIC ONLY, can never ship** — unreachability checked across all 229 `src/` files, not
+asserted). The substitution surface was measured before any FA ran: 325 anchors, all three-source,
+25.0% fallback on arm C's 56 internal edges (below the pre-registered partial-substitution line),
+anchor coverage UNIFORM along the timeline (ruling out a front-loading confound). **Both arms kill
+the arch** against the ≤5.0s DIED band fixed in Step 1: arm F peaks at **3.249s**, arm G at
+**0.042s** — and neither pre-registered falsifier fired. Oracle regressions 279 (arm C) → **68**
+(arm F) → **2** (arm G); arm F recovers production-grade FA alignment confidence (0.8356 vs
+production's 0.8398) at 57 chunks instead of production's 277, with **zero** ear-verified controls
+worsened. `231_slowing_pace`'s confidence collapse is traced to a specific mechanism — it holds
+identically in C/D/F because that row's chunk edge is exactly one of arm F's five fallback seams,
+and clears under arm G's oracle placement at that same seam. **Gate verdict: arm F FAILS** (67
+boundaries still beyond ±50ms, 2.86% implied precision vs the 50% cap) — not shippable this session,
+but materially better than arm C, so the S2 family continues rather than closing. Golden replay 6/6
+byte-identical while arm F moved 71 v6 boundaries — the same blind spot, restated again. Full
+detail: §11o, `sync-pipeline-v2-plan.md` Part AG.
+
 **2026-08-23 (WS1 Session AJ-0) — no phase row advances; a machine oracle is installed and one
 long-parked question is solved.** Read-only forensics session: the operator's own live-app saves
 (v6 447 segments, 173 173 segments — settling 172/173/174 as 173, Spanish 27 — settling 26/27 as
@@ -883,6 +903,13 @@ monotonicity and text conservation itself. P4 stays ❌ (silence-side, Phase 4, 
 chunk-plan side is now asserted in `scripts/ws1-session-al-step2-generate.test.ts` rather than
 relied upon. No contract requirement is affected — recorded because the class of defect is the one
 this checklist exists to catch.
+
+**2026-08-24 (WS1 Session AM) — no row in this table moves.** Arms F and G both stay Model-P-
+adjacent by construction (gapless except at excised R.5 runs, monotone, text-conserving against arm
+C — all three asserted in the generation harnesses, `scripts/ws1-session-am-step3-armf.test.ts` and
+`-step4-armg.test.ts`); neither of Session AL's two conservation properties (text carry-forward on a
+collapsed window, monotone cursor) fired at this band in either arm. No contract requirement is
+affected.
 
 **2026-08-23 (WS1 Session AK) — no row in this table moves; the arm-provenance defect Session
 AJ-0 diagnosed is FIXED.** The repoint turned out to need a code change rather than a manifest edit:
@@ -6672,10 +6699,101 @@ per-row constant; no seam-scoped planner; no 173 or Spanish run; `faAnchors.ts` 
 `docs/ws1-sync-pipeline/session-al-v6-chunk-inspection.md` (working copy
 `.work-phase4/session-al/v6-chunk-inspection.md`), allowlisted in its own commit.
 
+### §11o. WS1 Session AM — RESULTS
+
+**One-line verdict: chunk-edge placement error IS the driver. Replacing the S2-family's
+estimate-derived internal chunk edges with `faAnchors.ts` three-source-agreement anchors (arm F, one
+variable from arm C) kills v6's drift arch outright — peak 3.249s against the pre-registered ≤5.0s
+DIED band — and cuts oracle regressions 76% (279 → 68). Placing edges at the AJ-0 oracle's own
+attested times (arm G, DIAGNOSTIC ONLY, can never ship) kills it further still — 0.042s, 2
+regressions. Neither pre-registered falsifier fired.** v6 only, by operator direction. Gate:
+`scripts/ws1-session-am-step1-gate.ts`, committed at `50adbe5` **before either planner existed and
+before any arm ran**. Full detail: `sync-pipeline-v2-plan.md` Part AG.
+
+**What was built.** `computeS2SeamSurface`/`pickSeamAnchor` (read-only, no production caller) measure
+the anchor substitution surface before any FA runs; `computeFaChunkPlanS2EdgeArm` is one
+parameterised path with three placement discriminants (`silence`/`anchor`/`attested`), no flag, no
+production caller. **Load-bearing equivalence check, measured not asserted**: the `silence`
+discriminant reproduces `computeFaChunkPlanS2Excised` byte-for-byte, which is what makes "one
+variable from arm C" a measurement rather than a description. Arms A/B/C/D stay byte-reproducible —
+asserted, not assumed.
+
+**The substitution surface, measured before FA.** 325 anchors, all three-source (equal by CODE PATH —
+`computeAnchors` cannot emit a weaker-provenance one). 314 of 367 group ends (85.6%) carry an
+admissible anchor; of arm C's own 56 internal chunk edges, 42 are substituted and 5 fall back —
+**25.0% fallback, below the pre-registered one-third partial-substitution line**. The anchor set is
+UNIFORM along the timeline (23–43 per decile against a 32.5 mean) — the confound check the gate
+required before trusting a surviving-or-dying arch either way.
+
+**The numbers.** Oracle regressions A 1 / B 326 / C 279 / D 363 / **F 68** / **G 2**. Ear-verified-
+control attribution (30 arm-B regressions): arm F repairs 27, worsens **zero**; arm G repairs 29,
+worsens zero (arm C's own split: repaired 14, worsened 1). Mean FA word confidence: A(production)
+0.8398 / C 0.4188 / **F 0.8356** / **G 0.9689** — arm F recovers production-grade alignment quality
+at 57 chunks instead of production's 277, while every prior S2 arm sat below half that confidence.
+CTC-infeasible chunks C 2 / D 6 / F 2 / **G 0**. Phantom-tail funnel (1)∧(2)∧(3): A 19 / C 3 / D 2 /
+**F 1** / **G 0**. Two of three open defects land in arm F (`214_solitary_fire`, `447_scout_facing_
+dark`); all three land in arm G.
+
+**`231_slowing_pace`, traced end to end — the session's clearest mechanistic result.** Confidence
+collapse (0.00e+0) HOLDS identically in C, D and F, but **clears to 9.99e-1 in G**. Segment 230/231
+sits INSIDE a chunk (223–235), not at a chunk edge; that chunk's closing seam is exactly one of arm
+F's five documented `no-admissible-anchor` fallbacks, so the chunk stays undersized (4.87s) and
+CTC-infeasible in both C and F. Under G the same seam is oracle-placed 24s later, the chunk widens to
+30.44s, and the confidence recovers. **A collapse surviving oracle-placed edges would mean the edge
+isn't the cause; one clearing at a seam identified in advance as arm F's own fallback gap is direct
+confirmation, not correlation.**
+
+**Gate verdict: arm F FAILS** (67 beyond ±50ms vs bar 0; 2 of 3 defects landed vs bar 3; 2.86%
+implied precision vs bar 50%, though 8× arm C's 0.36%) — **arm F is not a shipping candidate this
+session**; it is the diagnostic result answering the session's question. "Materially better than arm
+C" (68 ≤ 139) fires: the S2 family continues. Arm G is not gated by design
+(`ARM_G_SHIP_GATE_APPLIES = false`) — its 60.00% precision and 2 regressions are the ceiling, not a
+cleared bar.
+
+**Both falsifiers, pre-registered, did not fire.** Arm F needed SURVIVED (≥14.0s) at ≥66.7%
+substitution; it substituted 75.0% and DIED at 3.249s. Arm G needed SURVIVED at 100% substitution; it
+substituted 100% of substitutable edges and DIED at 0.042s.
+
+**Roadmap.** Repaired timings — advanced substantially (27/30 control regressions repaired exactly,
+2/3 open defects landed, a bar no prior S2 arm cleared even once beyond the one geometry-favoured
+row). R.14/R.15 deletion — advanced: R.14 firings collapsed 36 (arm C) → 1 (arm F), the sharpest
+evidence yet that most R.14 corrections compensate for bad edge placement rather than a property FA
+itself needs correcting for. Word-gap placement — untouched. Rule-stage golden coverage — untouched,
+restated with a sharper number: golden replay stayed 6/6 byte-identical while arm F moved 71 v6
+boundaries.
+
+**Nothing shipped.** No rule added, deleted or re-tuned; no arbiter rebuilt; no per-project or
+per-row constant; no 173 or Spanish run; `faAnchors.ts` unchanged (sha256 `b61e94cb…`); production's
+default remains `computeFaChunkPlan`, untouched. Full six-arm dump (every row, no elision):
+`docs/ws1-sync-pipeline/session-am-six-arm-measurement.md`, plus the substitution-surface and per-
+chunk inspection dumps for arms F and G, all allowlisted in their own commits.
+
 
 ---
 
 ## Changelog
+
+- **2026-08-24 — WS1 Session AM: chunk-edge PLACEMENT ERROR is the driver of v6's S2 drift arch —
+  replacing the S2 family's estimate-derived internal edges with `faAnchors.ts` three-source-
+  agreement anchors (arm F) kills the arch outright (peak 3.249s, DIED band ≤5.0s) and cuts oracle
+  regressions 76% (279 → 68); an oracle-placed ceiling arm (arm G, DIAGNOSTIC ONLY, can never ship)
+  kills it further to 0.042s / 2 regressions.** v6 only, by operator direction. Gate committed
+  (`50adbe5`, `scripts/ws1-session-am-step1-gate.ts`) before either planner existed and before any
+  arm ran; both arch-survival bands (DIED ≤5.0s, SURVIVED ≥14.0s) fixed numerically in advance, and
+  neither of the two pre-registered falsifiers fired. The substitution surface was measured before a
+  single second of audio was aligned: 325 anchors (all three-source by code path), 25.0% fallback on
+  arm C's 56 internal edges — below the one-third partial-substitution line — and a UNIFORM anchor
+  distribution ruling out a front-loading confound. Arm F recovers production-grade FA alignment
+  confidence (0.8356 vs production's 0.8398, vs arm C's 0.4188) at 57 chunks instead of production's
+  277; ear-verified-control attribution shows 27 of 30 arm-B regressions repaired and **zero
+  worsened**. `231_slowing_pace`'s confidence collapse is traced end to end: it HOLDS identically in
+  C/D/F because its chunk's closing seam is exactly one of arm F's five documented fallback edges,
+  and CLEARS under arm G's oracle placement at that same seam — direct mechanistic confirmation, not
+  correlation. **Gate verdict: arm F FAILS** (67 attested-correct boundaries still beyond ±50ms, 2 of
+  3 open defects landed, 2.86% implied precision vs the 50% ship cap) — not a shipping candidate this
+  session, but "materially better than arm C" fires and the S2 family continues. Nothing shipped; no
+  rule added, deleted or re-tuned; `faAnchors.ts` unchanged. Full detail: `sync-pipeline-v2-plan.md`
+  Part AG, `docs/work-in-progress.md` §11o.
 
 - **2026-08-24 — WS1 Session AL: chunk WIDTH is eliminated as the cause of v6's S2 drift; a
   period-strict 1–15s band is WORSE than the 10–30s arm on every accuracy axis, and the arch is the

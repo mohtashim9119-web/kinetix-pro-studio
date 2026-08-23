@@ -10479,3 +10479,266 @@ any rule.**
 and the only mechanism this session's r = 0.994 leaves standing — removes the arch, as a single
 additive arm on v6 against the same gate. If it does not, the arch is not an edge-placement
 property at all and the S2 family should be closed out rather than iterated.
+
+## Part AG — Chunk-Edge Placement Error IS the Driver: the Arch DIES Under Anchor-Placed Edges (68 Regressions Against Arm C's 279), and DIES Again Under the Oracle Ceiling (2) (WS1 Session AM, 2026-08-24, append-only)
+
+**Scope: v6 only, by operator direction.** 173 and Spanish were not run.
+
+### AG.1 The gate, and the question this session isolates
+
+Session AL eliminated chunk WIDTH and found the same arch in `applyAnchorBasedTiming`'s own
+per-decile error against the oracle (peak −23.347s), correlating with every S2-family arm's drift at
+r ≥ 0.973. What survives that elimination is the one thing every S2 arm shares and production does
+not: an S2 edge is a detected silence snapped to a seam time READ OFF THE ESTIMATE, while
+production's `computeFaChunkPlan` pairs each edge with a `faAnchors.ts` three-source-agreement anchor
+BY SCRIPT-WORD INDEX. This session tests that variable directly with two additive arms, one variable
+each from arm C:
+
+* **Arm F** — internal chunk edges placed at the qi-nearest three-source-agreement anchor, admissible
+  only inside the two sentence groups the seam separates. GEOMETRIC, zero numeric constants.
+* **Arm G** — internal chunk edges placed at the AJ-0 oracle's own attested boundary times.
+  **DIAGNOSTIC ONLY — CAN NEVER SHIP.** It consumes ground truth and exists solely to establish the
+  ceiling for any chunk-plan-based fix. Its ship-gate rows are not applied (`ARM_G_SHIP_GATE_APPLIES
+  = false`, fixed in Step 1).
+
+`scripts/ws1-session-am-step1-gate.ts` (commit `50adbe5`) fixes every threshold before either planner
+existed. Hard fails: 0 attested-correct boundaries beyond ±50ms, 0 of 18 known-bad reproductions.
+Success bar **3 of 3** open defects landed — justified against the measured fact that arms B/C/D each
+land exactly **one row, the same row every time**: `447_scout_facing_dark`, v6's LAST boundary, where
+every arm's drift has already returned to ~+0.15s — the row least diagnostic of an edge-placement
+change. Ship cap: implied precision ≥ 50%. Regression thresholds: worse than arm C (>279), worse than
+production (>1 at 5ms / >0 at 50ms), materially better (≤139, half of arm C).
+
+**The arch-survival bands, fixed numerically, not retro-fitted:** DIED ≤ 5.0s, SURVIVED ≥ 14.0s,
+anything between PARTIAL. Nine predictions per arm, each with a point and a band. A named falsifier
+per arm, and Step 6's adjudication table transcribed verbatim so the conclusion would be selected, not
+composed.
+
+Arm F's tolerance is GEOMETRIC and carries **zero numeric constants**: nearest anchor to the seam's
+own script-word index by |Δqi|, admissible only inside the two sentence groups the seam separates. A
+time-radius search was rejected on two independent grounds registered before it was tempting: it
+would violate `CLAUDE.md` §4 ("timestamps may measure distance; they must never decide identity"),
+and the ideal seam time is itself read off the estimate, so searching near it in time would re-import
+the very error the substitution exists to remove.
+
+### AG.2 The substitution surface, measured before a single second of audio was aligned
+
+`computeS2SeamSurface` (additive, read-only, no production caller) reuses `computeRunContext`
+unchanged, so every anchor it reports is bit-for-bit what production's own `runQiRanges` would use.
+MEASURED on v6, no FA run:
+
+* **325 anchors, all 325 carrying three-source agreement** — equal by CODE PATH: `computeAnchors`
+  emits nothing without a Hirschberg match, R-O distinctiveness inside a long-enough match run, AND an
+  agreeing silence. There is no weaker-provenance anchor to filter out.
+* **367 group ends; 314 (85.6%) carry an admissible anchor**, 28 of them an EXACT hit (Δqi = 0 — the
+  anchor IS the seam).
+* `|anchor − estimate|` median **11,143 ms** against arm C's own silence cut at 622ms on the same
+  seams, and **284 of 314 positive** — anchors sit systematically LATER than the estimate, the same
+  sign and order of magnitude as the estimate's own −23.3s arch.
+* **The denominator that matters: arm C's own 56 internal edges**, not 367 group ends. 47
+  substitutable silence cuts and 9 excision-run edges; **42 substituted, 5 fell back — 25.0% fallback,
+  below the pre-registered one-third partial-substitution line.** Arm F is therefore NOT a partial
+  substitution, and its 75% rate clears the two-thirds precondition its own falsifier carries.
+* **CONFOUND CHECK: the anchor set is UNIFORM along the timeline** — per-decile counts 23–43 against a
+  32.5 mean, every decile at or above the 50%-of-mean threshold. A front-loaded set would have
+  manufactured an arch of its own; this one structurally cannot.
+
+### AG.3 Arm F, and the load-bearing equivalence check
+
+`computeFaChunkPlanS2EdgeArm` — one parameterised path, three placement discriminants
+(`silence`/`anchor`/`attested`), no flag on an existing function, no production caller. **The
+`{ kind: 'silence' }` discriminant reproduces `computeFaChunkPlanS2Excised` EXACTLY** — same count,
+same times to 1e-6, same text — MEASURED, not asserted in prose, which is what makes "one variable
+from arm C" a measurement rather than a description. Arms B and C independently reproduce their
+stored plans at HEAD.
+
+MEASURED: 57 chunks (arm C's count exactly), median 25.58s against arm C's 26.06s, mean 24.209s
+(identical to arm C's — same net-of-excision total, same chunk count), max 50.76s. Edge census: 42
+`anchor` / 5 `detected-silence` fallback / 9 `excision-run-edge` / 1 `corpus-end` — the 42/5 split
+matches Step 2's pre-FA prediction of the substitution surface exactly. Text conservation against arm
+C holds word for word. 16 violations: 11 pre-existing oversize-group cap exceedances (arm C carries
+the same groups) plus the 5 named `no-admissible-anchor` fallbacks. Neither of Session AL's two
+conservation properties (text carry-forward on a collapsed window, monotone cursor) fired at this
+band, in either arm F or its silence control.
+
+### AG.4 Arm G, the ceiling, and its fidelity — measured, not assumed
+
+**DIAGNOSTIC ONLY. CAN NEVER SHIP.** Unreachability from production is CHECKED across all 229 `src/`
+files, not asserted: zero read the oracle fixture, zero construct the attested placement, and the
+discriminant is mentioned in exactly one file (`faChunkPlan.ts`, its own declaration and branch
+site). The attested table is a required field with no default.
+
+**Coverage is total**: the oracle carries one boundary per segment index, contiguous, so all 367
+chunk-openable segments have an attested time; the `no-attested-time` guard fired 0 times. **It is
+lossy in TRUTH, on exactly 3 rows** — v6's open defects, where the oracle stores the DEFECTIVE
+production value rather than the ear target (errors −1.08 / −1.11 / −1.41s). **But zero of the 47
+seams arm G actually uses lands on one** — measured, and it could have gone the other way, so on v6
+the ceiling is worth its full face value.
+
+MEASURED: 57 chunks, median 25.96s, edge census 47 `attested` / 9 `excision-run-edge` / 1
+`corpus-end`, **zero fallbacks** — every substitutable edge was oracle-placed. Text conservation
+holds, every gap is an excised R.5 run, zero violations beyond cap exceedances, neither conservation
+property fired.
+
+### AG.5 The six-arm measurement — the arch DIES twice
+
+| arm | plan | chunks | oracle regressed | ear-verified controls moved (of 42) | mean FA confidence | low-conf words | CTC-infeasible | peak abs mean decile Δ | **arch verdict** |
+|---|---|---|---|---|---|---|---|---|---|
+| A | production | 277 | **1** | 0 | 0.8398 | 563 | — | 0.000s | n/a (baseline) |
+| B | S2 10-30s | 54 | 326 | 30 | 0.3403 | 2535 | — | 23.786s | SURVIVED |
+| C | S2+R.5 10-30s | 57 | 279 | 18 | 0.4188 | 2220 | 2 | 19.155s | SURVIVED |
+| D | period-strict 1-15s | 110 | 363 | 22 | 0.2533 | 2880 | 6 | 20.617s | SURVIVED |
+| **F** | **anchor-placed, 10-30s** | 57 | **68** | 3 | **0.8356** | **562** | 2 | **3.249s** | **DIED** |
+| **G** | **oracle-placed, 10-30s** | 57 | **2** | 1 | **0.9689** | **32** | **0** | **0.042s** | **DIED** |
+
+**Arm F cuts arm C's regression count 76% — 279 → 68 — with exactly one variable changed.** The
+30-row arm-B control-regression attribution: arm F repairs 27, partials 3, **worsens zero** (arm C's
+own split: repaired 14 / partial 4 / unchanged 11 / worsened 1). Arm G repairs 29, partials 1, worsens
+zero.
+
+**Alignment health corroborates the oracle diff without substituting for it.** Arm F's mean FA word
+confidence (0.8356) and low-confidence word count (562) are within noise of production's own
+(0.8398, 563) — production is 277 chunks at ~5s median; arm F reaches the same alignment quality at
+**57 chunks**. Every S2-family arm before it sat at less than half that confidence. Phantom-tail
+funnel (1)∧(2)∧(3): A 19, C 3, D 2, **F 1**, **G 0**.
+
+**Two of three open defects land in arm F** (`214_solitary_fire` +0.010, `447_scout_facing_dark`
+−0.020); **all three land in arm G**. `231_slowing_pace` is the exception, and it is the most
+informative row this session produced. Its incoming anchor confidence:
+
+A 6.97e-3 → B 2.26e-5 → C 0.00e+0 → D 0.00e+0 → **F 0.00e+0** → **G 9.99e-1**.
+
+**The collapse persists identically in F and clears completely in G — traced to a specific mechanism,
+not left as a correlation.** Segment 230/231 sits INSIDE chunk 26 (segments 223–235), not at a chunk
+edge — the defect is an interior-alignment-quality problem, not an edge-placement one, for THIS
+specific chunk. Chunk 26's closing edge (before segment 236, `idealSec` 672.660) is exactly one of
+arm F's five `no-admissible-anchor` fallbacks (no anchor lies inside script-word window [1843, 1865)),
+so it falls back to arm C's own cut — chunk 26 stays 4.87s wide in both C and F, one of the two
+CTC-infeasible chunks in each arm (`input_length=243, target_length=405, num_repeats=4`). In arm G the
+same seam is oracle-placed at 697.05 instead, widening chunk 26 to 30.44s — enough audio for its
+target length, CTC-feasible, and `231_slowing_pace`'s confidence recovers to 9.99e-1. **A collapse
+that survives even oracle-placed edges would mean the edge is not the cause; one that clears under
+them, at a seam identified in advance as arm F's own fallback, is direct mechanistic confirmation that
+this row's failure IS the substitution's one gap, not evidence against the substitution.**
+
+**Implied precision (R-AS):** A 0.00% / B 0.31% / C 0.36% / D 0.27% / **F 2.86%** / **G 60.00%**. Arm F
+is 8× arm C's precision; arm G clears the 50% ship cap the way a perfect-edge ceiling should, though
+the cap is not applied to it by design.
+
+**Neither falsifier fired.** Arm F's falsifier required SURVIVED (≥14.0s) at ≥66.7% substitution; arm
+F substituted 75.0% (42/56 internal edges; 89.4% of the 47 substitutable ones) and DIED at 3.249s.
+Arm G's falsifier required SURVIVED at 100% substitution; arm G substituted 100% of substitutable
+edges and DIED at 0.042s.
+
+**Predictions vs outcomes:** arm F HELD 7 of 9 (chunk count, median width, peak amplitude, final
+decile, wall clock, peak RSS, estimate-tracking r); MISSED regressed count (68, far below the
+predicted [120,300] band — the improvement outran the model). Arm G HELD 6 of 9; MISSED regressed
+(2, far below [90,290]), wall clock (920.45s, above [520,800] — the largest single chunk grew to
+32.72s under oracle placement) and peak RSS (2117 MiB, below [2400,3800] — a genuine ceiling effect,
+zero CTC-infeasible fallback inflation).
+
+### AG.6 Step 6 — the pre-committed adjudication, applied verbatim
+
+| arm | peak abs mean decile Δ | arch verdict |
+|---|---|---|
+| F | 3.249s | **DIED** |
+| G | 0.042s | **DIED** |
+
+**Outcome row: "arch DIES in F."** Conclusion, quoted verbatim from the Step 1 gate:
+
+> chunk-edge placement error is the driver; S2 family is viable with anchor-placed edges; next session
+> extends to 173 under the same gate
+
+### AG.7 Step 7 — self-check
+
+**Does arm F remove a cause or relocate a symptom, with evidence rather than assertion?** It removes a
+cause. The evidence is mechanistic, not statistical: the ONE row this session can fully trace
+(`231_slowing_pace`) shows the defect sitting inside a specific CTC-infeasible chunk whose closing
+edge is exactly one of arm F's five documented fallbacks — the collapse persists where the
+substitution did NOT reach, and clears where (arm G) it did. That is a traced mechanism, not a
+correlation coincidentally moving together.
+
+**Which roadmap items advanced, stayed untouched, or went backwards.** *Repaired timings* — advanced
+substantially: 27 of 30 arm-B control regressions repaired exactly, zero worsened, 2 of 3 open defects
+landed (a bar no prior S2 arm reached even once beyond the one geometry-favoured row). *Word-gap
+placement* — untouched; no placement rule was written or tested. *R.14/R.15 deletion* — advanced: R.14
+firings collapsed 36 (arm C) → 1 (arm F), the sharpest evidence yet that most R.14 corrections are
+compensating for bad edge placement rather than a property FA itself needs correcting for. *Rule-stage
+golden coverage* — untouched, and the blind spot restated with a sharper number: golden replay stayed
+6/6 byte-identical while arm F moved 71 v6 boundaries from arm A's values. **Nothing moved backwards**
+on any of the 30 tracked ear-verified controls.
+
+**Every tuned rather than structural choice, named.** Two: (1) the tie-break on equal |Δqi| — prefer
+`qi >= seamQi` — justified structurally (a late edge leaves the closing chunk holding audio for text
+it also holds; an early edge does the opposite, and late is the recoverable direction), not fitted to
+any row; (2) the fallback rule itself — where no anchor is admissible, commit arm C's own cut rather
+than interpolate or widen the search — is a decision, stated as one, that trades completeness for
+never inventing a value. Both are OPERATOR-DIRECTED in the sense that the session brief specified the
+mechanism (index-space nearest-anchor); neither is corpus-fitted — the same rule was applied uniformly
+before any of these 442 seams were looked at individually.
+
+**Anything that would fail an R-AS precision test if reframed as a detector.** Framed as a detector —
+"anchor-substitute an edge and trust it" — arm F's own precision (2.86%) is close to arm B's and arm
+C's own historically-rejected range (0.27–0.36%), an order of magnitude below the 50% ship cap and
+still below S1's rejected ~7%. **This is stated plainly, and it is exactly why arm F FAILS the gate
+this session** — a 76% regression-count reduction is not the same claim as "safe to ship," and R-AS
+is not waived because the underlying mechanism is now understood. No rule in this session fired zero
+times with an undefined precision; R.14 fired once in arm F (`214_solitary_fire`, the reliable-onset
+guard's own territory) and R.11/R.12/R.15 all fired a handful of times, none newly introduced.
+
+**The falsifiers from Step 1, restated.** Neither fired: arm F did not reproduce the arch at
+substitution ≥66.7% and amplitude ≥14.0s (it substituted 75.0% and died at 3.249s); arm G did not
+reproduce the arch at 100% substitution (it died at 0.042s).
+
+**The standing blind spot, restated once more.** Golden replay stayed 6/6 byte-identical while arm F
+moved 71 boundaries off arm A's values and arm G moved 5. It reads Whisper tokens and silences and
+runs parse → align → distribute → snap; it never computes a chunk plan, never runs FA, and never runs
+a rule. Nothing about this session's result is visible to it.
+
+### AG.8 The six numbers, MEASURED, and every SHA
+
+| check | result |
+|---|---|
+| `npm test` | **2493 passed / 72 skipped / 0 failed** |
+| `tsc --noEmit` (`npm run lint`) | clean |
+| `cargo check --features fa-inference` | clean |
+| `cargo clippy --all-targets --features fa-inference` | clean — 4 pre-existing warnings, 0 new |
+| `cargo test` (default) / `--features fa-inference` | 141/0/1 / 216/0/24, unchanged |
+| Golden replay | **6/6 byte-identical** |
+
+The skip count rises 68 → 72: four new Session AM gated harnesses (step2-surface, step3-armf,
+step4-armg, step5-measure), each contributing exactly one `describe.skipIf`, none in the default
+sweep. Passing count unchanged at 2493. `faAnchors.ts` sha256 unchanged:
+`b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`.
+
+**Commits, in order:**
+
+| commit | summary |
+|---|---|
+| `50adbe5` | Step 1 — the gate, committed before either planner existed |
+| `8d14eed` | Step 2 — the anchor substitution surface, measured before FA |
+| `55b7750` | Step 3 — arm F, anchor-placed chunk edges |
+| `84bf387` | Step 4 — arm G, the oracle-placed ceiling (DIAGNOSTIC ONLY) |
+| `b7417c1` | Step 5 — six-arm measurement and the pre-committed adjudication |
+| *(this commit)* | docs — this Part, §§3/9/11o, Changelog, project-state |
+
+`git diff --stat 90197cb` touches only `src/services/faChunkPlan.ts` (two additive sections:
+`computeS2SeamSurface`/`pickSeamAnchor`, and `computeFaChunkPlanS2EdgeArm`/`S2EdgePlacement`), five
+new `scripts/ws1-session-am-*` files, `scripts/ws1-single-tracker.test.ts`'s allowlist, and four new
+allowlisted `docs/ws1-sync-pipeline/session-am-*.md` dumps, plus this docs commit's own targets.
+**Confirmed untouched:** `snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts` (the
+Hirschberg aligner), `faAnchors.ts`, `docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv` —
+zero hits for any of them. No new repo-root file. No rule added, deleted, or re-tuned; no arbiter
+rebuilt; no per-project or per-row constant introduced; nothing shipped to the production default;
+production's own default remains `computeFaChunkPlan`, untouched by this session.
+
+**Next action:** arm F fails the gate on its own (67 attested-correct boundaries beyond ±50ms, 2 of 3
+defects landed, 2.86% implied precision) even though it is the strongest S2-family result yet — the
+one row this session traced end to end (`231_slowing_pace`) shows the failure mode is the 25% fallback
+rate, concentrated on chunks the fallback leaves undersized and CTC-infeasible. Two candidate next
+steps, both narrower than reopening the architecture: (a) widen the anchor search's admissibility
+window past the two-group structural bound where fallback occurs, measuring whether that recovers the
+5 fallback seams without moving any of the 442 correctly-substituted ones; (b) extend arm F unchanged
+to 173, under the same gate, per the pre-committed conclusion's own instruction — 173 has zero R.5
+runs, so the fallback-driving interaction between excision seams and anchor admissibility windows may
+not even arise there.
