@@ -137,6 +137,21 @@ proxy that FAILS (ruling R-AT). Golden replay 6/6 byte-identical throughout, unc
 harness never reaches the chunk planner or the rule stage). Full detail: §11j,
 `sync-pipeline-v2-plan.md` Part AB.
 
+**2026-08-23 (WS1 Session AI) — no phase row advances.** `computeFaChunkPlanS2` (a wholly separate,
+unshipped function alongside `computeFaChunkPlan`) is built and measured on all three corpora
+through a real ONNX forced-alignment re-run. It eliminates the phantom-tail mechanism structurally
+(the AG census's condition (2)/(3) drops to exactly zero on all three corpora) but causes 36
+ear-verified-control regressions on v6/173 combined — a hard fail against the ship gate this
+session wrote before running Step 3 — so it is **NOT shipped, and also not deleted**: the defect
+found is in FA's alignment quality on longer/denser chunks, not in the partitioning logic, and the
+invariants achieve exactly what they were built to achieve. Phase 3/Task 5 stays at Session H's
+"PRODUCTION PATH WIRED; gate PER-PROJECT, DEFAULT OFF" — this session's change is entirely upstream
+of any phase row. `wall_split_path` (flagged open in Session AH) is SETTLED (162.46, not 162.15)
+and closes the Zero-Defect Register 7 → 6. Golden replay 6/6 byte-identical throughout — confirmed
+again that it never reaches the chunk planner or rule stage, which is exactly why it did not catch
+this session's own severe FA-layer regression; the live measurement did. Full detail: §11k,
+`sync-pipeline-v2-plan.md` Part AC.
+
 **2026-08-23 (WS1 SESSION AG) — STILL NO PHASE ROW ADVANCES, AND ONE ROW'S EVIDENCE BASE CHANGES.**
 S1 (the trailing-silence chunk-text fold, `faChunkPlan.ts`) is built, driven through a real FA
 re-run on all three corpora, and measured: R.14's v6 firing count drops **11 → 1** and 10 of the
@@ -811,6 +826,14 @@ neither silence arm reproduces 126 (native 119, app 121). **No compliance row is
 — it is a bundle-provenance defect, not a Contract 1→2 requirement** — but any future 173
 measurement that depends on the chunk plan should be read against it. Full detail:
 `sync-pipeline-v2-plan.md` Part AA.2.
+
+**2026-08-23 (WS1 Session AI) — no row in this table moves.** `computeFaChunkPlanS2` sits upstream
+of Contract 1→2's own shape (it decides how audio is windowed for FA, not the tokens/silences/
+audioDuration/segments bundle Contract 1→2 governs) and is not shipped — same reasoning as Sessions
+S/AB/AC above. Worth naming: P4 (silence ascending/disjoint runtime assertion) is the row this
+session's own silence-consumption (`s2NearestSilenceCut`) might suggest should move, and does not,
+for the same reason Session S recorded — this session CONSUMED the silence array and asserted
+nothing new about its own shape.
 
 **2026-08-23 (WS1 Session AH) — RESOLVED (retired + re-captured), not fixed in place.** Bisected
 across every committed tree since the bundle's mint: none reproduces 126, none of eight
@@ -6202,6 +6225,84 @@ R-AT: a validator built from FA's own word timings measures itself — 29 of 69 
 exactly the phantom rows the proxy exists to catch, misread as "late" because their own yardstick
 is the defect.** S2 validation needs ears; no artifact-only shortcut exists today.
 
+### §11k. WS1 Session AI — RESULTS
+
+**One-line verdict: `computeFaChunkPlanS2` is BUILT AND MEASURED — the phantom-tail mechanism is
+STRUCTURALLY ELIMINATED (condition (2)/(3) of the AG census: zero on all three corpora) — but it
+causes 36 ear-verified-control regressions (30 v6 + 6 173), a HARD FAIL against the ship gate this
+session wrote before running it. NOT SHIPPED, NOT DELETED — the defect is in FA alignment quality
+on longer chunks, not in the chunk-planning logic.** Full narrative and every table:
+`sync-pipeline-v2-plan.md` Part AC.
+
+**Step 0.** `ear-verify-ai` (order 14) settles `ear-verify-ah`'s standing question:
+`173/wall_split_path`'s accepted instant is **162.46**, not 162.15 (archived, provenance to
+`ear-173-x`'s CSV source). Measured live: production commits 162.460 exactly, residual 0.000s,
+RULE-DEPENDENT on R.15. Register `x173-wall-split-path` moves `'open'` → `'fixed'`. **Register
+open count 7 → 6** (the sixth, `v6/400_endless_dark`, is out of scope — a different, fallback-
+boundary mechanism, not a chunk-plan phantom tail).
+
+**Step 1.** The AH 15-60s dry run is void at this session's operator-directed 10-30s/30s-cap band;
+re-measured from scratch. Chunk count roughly doubles (v6 26→54, 173 13→28, es 2→4). **Zero
+unbreakable sentence groups exceed the 30s cap on any corpus — the forced-violation set is
+unchanged from AH's own zero**, so the gate proceeds without widening the band. Far-seam offset
+counts roughly double as a separate, non-blocking cost. All seven pre-registered rows again get NO
+chunk edge at the new band — identical finding to AH's 15-60s run.
+
+**Step 2.** The ship gate is written and fixed BEFORE Step 3 exists: (1) zero movement on any of
+the 69 ear-verified controls, hard fail; (2) ≥1 of 5 open defects within ±50ms, deliberately a low
+bar since Step 1 already showed no chunk edge touches any of the five seams; (3) an unaudited-move
+cap of 25, headroom over AH's proven-tractable 19-row S1 sitting; (4) zero reproduction of the 18
+confirmed known-bad values, hard fail. The concrete falsifying result is named in advance.
+
+**Step 3.** `computeFaChunkPlanS2` — a wholly separate, explicitly-named function, no flag, no
+default-true/dead-default-false gate — implements the five invariants (whole-segment chunks, no
+mid-sentence edge, Whisper timestamps excluded from the text-partition decision, silence-nearest
+audio cut, 10-30s target growing toward the cap with a first-class violation event rather than a
+silent split). Every constant GEOMETRIC, none FITTED, so no sensitivity analysis is owed. No
+phantom-tail cleanup logic of any kind is reintroduced — confirmed, S2 never reads a `qi` range or
+excises anything after the fact. Explicitly out of scope, named rather than silently absorbed: R.5
+unscripted-run excision is NOT applied to S2's output (v6 carries ~10 genuine recitations; this is
+a real, uncontrolled-for confound in AC.9's own self-check). Real planner output matches the Step 1
+simulation exactly, zero violations on any corpus.
+
+**Step 4 — measured, real FA, all three corpora.** Wall-clock/peak RSS: v6 729.4s / 2.60 GiB, 173
+380.1s / 2.04 GiB, spanish 68.1s / 1.85 GiB — capacity was never the risk (every chunk sits at or
+under AB.10's 120s-tested sweep); ALIGNMENT ACCURACY was, and this session found it wanting.
+**Phantom funnel condition (1)∧(2)∧(3) drops to exactly zero on all three corpora** (v6 19→0, 173
+2→0, es 2→0) — the targeted mechanism is gone by construction. But v6 shows severe, corpus-specific
+negative drift (up to -27.7s, concentrated across roughly the file's back half, shrinking near the
+end): **30 v6 + 6 173 = 36 ear-verified controls regress**, a hard fail against threshold 1. 173's
+own movement is far smaller and mostly the opposite sign. Zero known-bad values reproduced.
+**2 of 5 open defects (`447_scout_facing_dark`, `173/lethal_nature_hazard`) land CORRECT within
+±50ms for the first time** — a real, partial win, clearing threshold 2's deliberately low bar, but
+not offsetting the regression.
+
+**Step 5.** None of the three rule-dependent rows (`152_frozen_brush_mice`, `iron_bounce`,
+`logic_clash`) becomes STRUCTURALLY correct under S2 — if anything, two of the three land far from
+correct WITH THEIR OWNING RULE NO LONGER FIRING AT ALL, since S2's altered pre-rule landscape no
+longer trips the trust gate. This is the opposite of advancing R.14/R.15 toward deletion. **96
+double-correction cases** (85 v6 + 11 173) where S2's own chunk-plan change already moved a
+pre-rule value and a rule fired again on the same segment — each reported as a defect of the
+combination, not netted against a win. R.14/R.15 NOT deleted; golden replay still never reaches the
+rule stage, so no fixture protects a deletion, and 173's `iron_bounce`/`logic_clash` still reopen
+the instant R.15 is removed.
+
+**Step 6.** `docs/ws1-sync-pipeline/stage1-session-ai-ear-list.md`, **372 rows** (5 open-defect, 35
+control-moved, 285 confidence-jump, 47 no-evidence) — nearly 15x over the 25-row cap. Reported as
+confirmatory, not primary: the gate already failed on the 36 hard control regressions, which need
+no ears to detect.
+
+**Step 7 self-check, in full: `sync-pipeline-v2-plan.md` AC.9.** S2 removes a specific CAUSE with
+direct structural evidence (the phantom census's own zero), but does not improve overall FA timing
+quality — two separate claims, only the first survives. None of the four remaining roadmap items
+(repaired timings, word-gap placement, R.14/R.15 deletion, rule-stage golden coverage) is advanced
+in a net-positive sense; if anything, R.14/R.15 deletion moves further away. Every threshold is
+GEOMETRIC and named; the one real, un-ruled-out gap is R.5 excision's absence, confounded with
+v6's unique severity. Reframed as a detector, S2's implied boundary-improvement precision on v6 is
+bounded above by ~0.3% on known outcomes — worse than S1's own rejected ~7%. The falsifiable claim
+("S2 improves FA timing quality") IS falsified, by the pre-registered standard, not one fitted
+after the fact.
+
 ### §12. Deleted File Archive (2026-08-14 consolidation, indexed 2026-08-15)
 
 Every file the 2026-08-14 consolidation commit (`9cf5867`) deleted, with its pre-deletion
@@ -6259,6 +6360,61 @@ pointer) plus this section for execution/status, plus the `measurements/` data d
 ---
 
 ## Changelog
+
+- **2026-08-23 — WS1 Session AI: S2 BUILT AND MEASURED — the phantom-tail mechanism is
+  structurally eliminated, and the fix is rejected on 36 control regressions it also causes.**
+  **Step 0** ingests `ear-verify-ai` (order 14, `ws1-ear-pass-ledger.ts`), settling
+  `ear-verify-ah`'s standing question: `173/wall_split_path`'s accepted instant is **162.46**, not
+  162.15 (archived with provenance to `ear-173-x`'s CSV source, never edited). Measured live:
+  production commits 162.460 exactly, residual 0.000s, RULE-DEPENDENT on R.15. Zero-Defect
+  Register `x173-wall-split-path` moves `'open'` → `'fixed'`; **register open count 7 → 6**.
+  **Step 1** re-parameterises the AH 15-60s dry run (void at the new band) to this session's
+  operator-directed **10-30s, 30s hard cap** (GEOMETRIC, not fitted): chunk count roughly doubles
+  per corpus, **zero unbreakable sentence groups exceed the cap on any corpus** (unchanged from
+  AH's own zero forced-violation finding), and all seven pre-registered rows again get NO chunk
+  edge at the new band. **Step 2** writes the ship gate BEFORE Step 3 exists: zero tolerance on the
+  69 ear-verified controls; ≥1 of 5 open defects within ±50ms (a deliberately low bar, since Step 1
+  already showed no edge touches any of the five seams); an unaudited-move cap of 25; zero
+  reproduction of the 18 confirmed known-bad values — with the falsifying result named in advance.
+  **Step 3** implements `computeFaChunkPlanS2` (`faChunkPlan.ts`) — a wholly separate,
+  explicitly-named function, no flag, no default-true/dead-default-false gate on the existing
+  planner — realising five invariants (whole-segment chunks; no mid-sentence chunk edge, including
+  one spanning a segment seam; Whisper timestamps excluded entirely from the text-partition
+  decision; the audio cut is the nearest detected silence; 10-30s target growing toward the cap
+  with a first-class violation event, never a silent split). Every constant GEOMETRIC, none
+  FITTED. No phantom-tail cleanup logic is reintroduced. R.5 unscripted-run excision is explicitly
+  NOT applied to S2's output — named as a real, unruled-out confound, not silently absorbed. Real
+  planner output matches the Step 1 simulation exactly (v6 54 / 173 28 / es 4 chunks, zero
+  violations on any corpus). **Step 4** measures S2 on all three corpora through a real ONNX
+  forced-alignment re-run (`fa_onnx.rs`'s `session_p_regen`) driven through the same production
+  rule stage every WS1 measurement uses. Wall/RSS: v6 729.4s/2.60 GiB, 173 380.1s/2.04 GiB,
+  spanish 68.1s/1.85 GiB — capacity was never the risk; **ALIGNMENT ACCURACY was**. Phantom-tail
+  condition (1)∧(2)∧(3) (seam-coincident, in-collapsed-gap) drops to **exactly zero on all three
+  corpora** — the targeted mechanism is gone by construction. But v6 shows severe, corpus-specific
+  negative drift (up to **-27.7s**, concentrated across roughly the file's back half): **30 v6 + 6
+  173 = 36 ear-verified controls regress**, a hard fail against the pre-registered gate's zero-
+  tolerance threshold. Zero known-bad values reproduced. 2 of 5 open defects
+  (`447_scout_facing_dark`, `173/lethal_nature_hazard`) land CORRECT within ±50ms for the first
+  time — a real, partial win, not an offsetting one. **Step 5:** none of the three rule-dependent
+  rows becomes structurally correct under S2 — two of three lose their owning rule's firing
+  entirely, moving R.14/R.15 deletion further away, not closer. 96 double-correction cases (85 v6 +
+  11 173) where S2's own chunk-plan change and a rule both moved the same boundary, reported as
+  defects of the combination. R.14/R.15 not deleted; golden replay still never reaches the rule
+  stage. **Step 6:** `docs/ws1-sync-pipeline/stage1-session-ai-ear-list.md`, **372 rows** — nearly
+  15x over the 25-row cap, reported as confirmatory (the gate already failed on the 36 hard
+  regressions, which need no ears). **Step 7 self-check:** S2 eliminates the phantom-tail mechanism
+  (TRUE, evidenced) but does not improve FA timing quality (FALSE, evidenced) — two separate
+  claims. None of the four roadmap items (repaired timings, word-gap placement, R.14/R.15
+  deletion, rule-stage golden coverage) advances net-positive this session. Reframed as a detector,
+  S2's implied precision on v6 (~0.3% on known outcomes) is worse than S1's own rejected ~7%.
+  **`computeFaChunkPlanS2` is NOT SHIPPED and NOT DELETED** — its invariants achieve exactly what
+  they were built to achieve; the defect found is in FA's own alignment behaviour on longer,
+  denser chunks, an open question this session names but does not resolve. One real regression was
+  caught and fixed this session (not merely re-measured): `ws1-single-tracker.test.ts`'s allowlist
+  needed the new ear-list `.md` file added, same discipline every prior ear-list file used. Golden
+  replay 6/6 byte-identical throughout — confirmed again to never reach the chunk planner or rule
+  stage, which is exactly why this session's own severe FA-layer regression needed live
+  measurement, not golden replay, to catch. Full detail: §11k, `sync-pipeline-v2-plan.md` Part AC.
 
 - **2026-08-23 — WS1 Session AH: S1 REJECTED on 18/18 operator ear regressions and rolled back as
   a permanent negative; 173's chunk plan retired and re-captured; S2 measured as a dry run; the

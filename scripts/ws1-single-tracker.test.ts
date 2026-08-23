@@ -109,6 +109,14 @@ const ALLOWLIST = new Set<string>([
   // and S1 was rolled back in Session AH. Its RESULTS go to
   // docs/work-in-progress.md §11 and ws1-ear-pass-ledger.ts.
   'docs/ws1-sync-pipeline/stage1-session-ag-ear-list.md',
+  // WS1 Session AI's S2-measurement ear list — same class, same discipline: a
+  // listening sheet worked THROUGH against the audio, blank Verdict/Class
+  // columns. This is the adjudication gate S2 (`computeFaChunkPlanS2`, not
+  // shipped) is measured against — 372 rows, decisively over the session's own
+  // 25-row cap, on top of 36 ear-verified-control regressions measured
+  // independently of any listening pass. Its RESULTS go to
+  // docs/work-in-progress.md §11 and ws1-ear-pass-ledger.ts.
+  'docs/ws1-sync-pipeline/stage1-session-ai-ear-list.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

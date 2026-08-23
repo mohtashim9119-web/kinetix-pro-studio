@@ -9149,3 +9149,395 @@ The 13 production pins (`ws1-session-q-production-pins.test.ts`) re-verified pas
 Committed-boundary dump from a clean `09790ac` worktree matched this tree byte-for-byte on all
 three corpora before any doc was written (AB.4); re-confirmed unnecessary to re-run after Steps
 1-4, since none of them touch `faChunkPlan.ts` or any rule.
+
+---
+
+## Part AC — S2 Built and Measured: the Phantom Mechanism Is Structurally Eliminated, and the Fix Is Rejected on 36 Control Regressions It Also Causes (WS1 Session AI, 2026-08-23, append-only)
+
+### AC.1 — The verdict, in one paragraph
+
+`computeFaChunkPlanS2` — a wholly separate, explicitly-named chunk planner implementing the five
+sentence-bounded invariants the brief specified — is BUILT, MEASURED on all three corpora through
+a real ONNX forced-alignment re-run, and **FAILS the ship gate this session wrote before running
+it (Part AC.4)**. The phantom-tail mechanism it targets is genuinely, structurally gone: condition
+(2)/(3) of the AG census (a phantom tail coinciding with a segment seam, landing inside the
+collapsed word gap) drops to **exactly zero on all three corpora** (v6 19→0, 173 2→0, spanish
+2→0), by construction, not by threshold. But v6 shows severe, corpus-specific negative alignment
+drift under S2's wider chunks — up to **-27.7s**, affecting the bulk of the file's back half — and
+**36 ear-verified controls (30 v6 + 6 173) move off their authorised value**, a hard fail against
+a zero-tolerance threshold fixed in advance. Two of the five open defects land within 50ms for the
+first time (`447_scout_facing_dark`, `173/lethal_nature_hazard`) — a real, partial win — but it
+does not offset the regression. `computeFaChunkPlanS2` is **not shipped and not deleted**: its
+invariants are sound and its own goal is achieved; the defect this session surfaces is in FA's
+alignment quality on longer, denser chunks, not in the partitioning logic. Full tables below.
+
+### AC.2 — Step 0: `wall_split_path` settled
+
+The operator's answer to `ear-verify-ah`'s standing question: the accepted instant is **162.46**,
+not 162.15. Ingested as `ear-verify-ai` (order 14, `ws1-ear-pass-ledger.ts`), superseding both
+`ear-173-x` (order 9) and `ear-verify-ah` (order 13) by append-only order, never edited. 162.15's
+provenance is archived rather than deleted: it traces to `ear-173-x`, sourced from the operator's
+CSV export (`/Users/mohtashim/Downloads/173 20-seg list - Sheet1.csv`), a full listen-through
+off-list defect never on either candidate list that sitting was built to check.
+
+**Measured, live pipeline, HEAD:** production commits 162.460 for this seam, residual **0.000s**
+against the new ground truth — NOT a defect. The row is RULE-DEPENDENT on R.15 (pre-rule
+161.330), the same class as `iron_bounce`/`logic_clash`; deleting R.15 reopens it. The Zero-Defect
+Register's `x173-wall-split-path` entry moves `'open'` → `'fixed'` (`phase4-fa-replay.test.ts`),
+closingCommit `WS1-SESSION-AI`.
+
+**Register open count: 7 → 6.** The seven pre-ingestion open rows: `v6/214_solitary_fire`,
+`v6/231_slowing_pace`, `v6/447_scout_facing_dark`, `v6/400_endless_dark`, `173/lethal_nature_hazard`,
+`173/gadget_decay`, `173/wall_split_path`. `400_endless_dark` is carried for completeness (the
+open-count reconciliation must be exact) but is a DIFFERENT mechanism — a fallback-boundary
+amplitude-floor case, not a chunk-plan phantom tail — and is out of scope for S1/S2 alike; the
+"five open defects" S2's predictions are scored against exclude it, matching AH's own scoping.
+Structural-vs-rule-dependent restated for every currently-CORRECT row touched: `152_frozen_brush_mice`
+(R.14), `iron_bounce` (R.15), `logic_clash` (R.15), `wall_split_path` (R.15, closes this session) —
+all four RULE-DEPENDENT, none structural.
+
+### AC.3 — Step 1: the dry run re-parameterised to 10-30s
+
+AH's 15-60s distribution and seven-row prediction are void at this session's operator-directed
+10-30s/30s-cap band (GEOMETRIC, not fitted — the brief's own parameters). Re-measured from scratch
+(`ws1-session-ai-step1-s2dryrun.test.ts`):
+
+| | v6 10-30s | v6 15-60s (AH) | 173 10-30s | 173 15-60s (AH) | es 10-30s | es 15-60s (AH) |
+|---|---|---|---|---|---|---|
+| chunks | **54** | 26 | **28** | 13 | **4** | 2 |
+| min | 10.97s | 5.42s | 2.40s | 37.02s | 7.72s | 35.80s |
+| max | 29.86s | 59.73s | 29.93s | 59.48s | 28.72s | 56.24s |
+| median | 27.90s | 57.34s | 26.88s | 56.61s | 28.09s | 56.24s |
+| below target min | 0 | — | 1 (file tail) | — | 1 (file tail) | — |
+| at/above cap | 0 | — | 0 | — | 0 | — |
+
+Sentence structure (re-measured, unchanged by the band — the band affects packing, not sentence
+detection, and the numbers reconfirm AH's own): 59/38/4 sentences span a segment seam on
+v6/173/spanish; **zero segments in any corpus contain more than one sentence** — the load-bearing
+zero, unchanged.
+
+**Forced-violation set, in full: ZERO unbreakable groups exceed the 30s cap on any corpus** — the
+true hard-invariant-cannot-hold case is identical to AH's 15-60s measurement (also zero). **Gate:
+NOT materially larger — proceed without widening the band**, per Step 2's own prospective ruling
+(this comparison was run and the recommendation made before Step 3 was written). A separate, real
+but non-blocking cost: far-seam offset counts roughly double (v6 "no silence within ±1.0s" 7→17,
+173 6→12) from having ~2x as many internal seams — reported, not treated as a violation, since
+`nearestSilenceCut` always finds SOME silence in every corpus measured and invariant 2 is never
+broken by it.
+
+**Pre-registered predictions at 10-30s (`ws1-session-ai-step1-predict.test.ts`), committed BEFORE
+any FA run:** identical finding to AH's 15-60s run — **all seven named rows (five open defects +
+two rule-dependent) get NO chunk edge** at the new band either. `gadget_decay` re-confirmed NOT
+REACHED; no rule added.
+
+### AC.4 — Step 2: the ship gate, written before Step 3 existed
+
+Four thresholds, fixed in advance (full text: `.work-phase4/session-ai/step2-shipgate.md`, not
+committed — gitignored working-measurement directory, same as every prior session's `.work-phase4`
+output; the gate's substance is reproduced here in full so the record survives independent of that
+directory):
+
+1. **Zero movement on any of the 69 ear-verified controls — HARD FAIL, measurable without ears.**
+2. **≥1 of 5 open defects within ±50ms** — set deliberately LOW, because Step 1's own measurement
+   already showed no chunk edge touches any of the five seams, so a chunk-plan fix cannot be
+   credited or blamed for a boundary its own plan never reaches; any change would be a genuine but
+   unproven second-order effect (wider FA context altering nearby word-level quality).
+3. **Unaudited-move cap of 25** — headroom over AH's own proven-tractable 19-row S1 sitting.
+   Exceeding it does not alone fail the gate, but converts the outcome from "adjudicate now" to
+   "needs a follow-up sitting before shipping."
+4. **Zero reproduction of the 18 confirmed known-bad values — HARD FAIL.**
+
+**Named in advance, per the brief's own requirement:** a recommendation against shipping follows
+from ANY control regression, ANY known-bad reproduction, OR an unaudited-move count over the cap
+with fewer than one open-defect win to show for it. **All three fired.**
+
+### AC.5 — Step 3: `computeFaChunkPlanS2`, the diff
+
+Implemented in `faChunkPlan.ts` as a wholly separate, explicitly-named function — no flag, no
+default-true and no dead default-false gate on the existing planner, the exact discipline S1's own
+rollback required (`faChunkPlan.ts`'s own S1-removal comment, quoted verbatim in the new code's
+own header). No production caller invokes it.
+
+Five invariants, in precedence order, each with its own doc-comment justification in the source:
+(1) a chunk's text is a whole number of script segments; (2) no chunk edge falls inside a sentence,
+including one spanning a segment seam; (3) Whisper timestamps are excluded entirely from the
+text-partition decision (`computeFaChunkPlanS2`'s signature carries no `TranscriptToken[]`
+parameter at all — pinned by a standing unit test); (4) the audio cut is the detected silence
+nearest the chosen sentence seam's estimated time; (5) target 10-30s (GEOMETRIC), growing an
+unbreakable group toward the cap and emitting a first-class `FaChunkPlanS2Violation` — never a
+silent mid-sentence split — when the invariant still cannot hold cleanly.
+
+Every constant is GEOMETRIC (`S2_TARGET_MIN_SEC=10`, `S2_TARGET_MAX_SEC=30`,
+`S2_SILENCE_SEARCH_WINDOW_SEC=5.0`), labelled as operator-directed in the source, none fitted to
+any corpus row — so no two-sided sensitivity is owed (the brief's own rule: only a FITTED constant
+needs one).
+
+**Confirmed: no phantom-tail cleanup logic of any kind is reintroduced.** `attributeByIndex`'s
+total-case fold (zero-DURATION window) is untouched; S2 is an entirely separate code path that
+never calls it, never reads a `qi` range, and never excises a phantom tail after the fact — it
+prevents the geometry that creates one, at the partition layer, by construction.
+
+**Explicitly out of scope, named rather than silently absorbed:** R.5 unscripted-run excision
+(`exciseUnscriptedRuns`) is NOT applied to S2's output. v6 carries ~10 genuine unscripted
+recitations; a wide S2 chunk that wholly contains one is not excised under this session's
+implementation. This is a real, named gap for any future work on S2, not evidence it was safe —
+see AC.9's self-check for what was and wasn't checked about it this session.
+
+Five new unit tests (`faChunkPlan.test.ts`) pin the invariants against synthetic fixtures: no edge
+inside a cross-seam sentence, whole-segment chunking, a first-class violation (not a silent split)
+for an oversize group, the signature's own absence of a token/alignment argument, and pure-function
+non-mutation of inputs. All 44 tests in the file pass (39 pre-existing + 5 new).
+
+**Real planner output matches the Step 1 simulation exactly**, chunk-for-chunk: v6 54, 173 28,
+spanish 4, **zero violations on any corpus** (`ws1-session-ai-step3-generate.test.ts`).
+
+### AC.6 — Step 4: measured on all three corpora, real FA
+
+`fa_ai_chunks.json` (Step 3's real planner output) aligned by the SAME production ONNX path
+(`fa_onnx.rs`'s `session_p_regen::regenerate_fa_against_live_plan`, `align_chunked`, single call
+over the whole chunk slice — production's own shape, Session Y's single-thread pins active)
+against the SAME `audio_16k.wav`, writing `fa_ai_words.json`. Then driven through the SAME
+`runProductionPath` every other WS1 measurement uses, with `faWordsFile: 'fa_ai_words.json'`.
+
+**Wall-clock and peak RSS, MEASURED:**
+
+| corpus | chunks | words | needs_review | wall (uncontended) | peak RSS |
+|---|---|---|---|---|---|
+| v6 | 54 | 3874 | 2535 (65.4%) | **729.4s** | **2.60 GiB** |
+| 173 | 28 | 1660 | 374 (22.5%) | **380.1s** (384.29s `time -l` real) | **2.04 GiB** |
+| spanish | 4 | 249 | 10 (4.0%) | **68.1s** (72.21s `time -l` real) | **1.85 GiB** |
+
+v6's peak-RSS run was re-executed a second time under `/usr/bin/time -l` for the memory
+measurement specifically; that second run's own wall-clock (1361.6s) is NOT reported as the
+corpus's cost — it ran concurrently with this session's `npm test` and cargo-test floor checks and
+is CPU-contended, not a clean measurement. The first, uncontended run's 729.4s is what is reported
+above. `needs_review` uses the regen harness's own `CONF_MIN` (0.3) DTO threshold — a DIFFERENT,
+larger threshold than `CONF_MIN_FALLBACK` (the phantom-detection constant elsewhere in this
+document), so this percentage is not comparable to any phantom-rate figure cited elsewhere.
+
+Every measured chunk sits at or under 30s, well inside AB.10's sweep (which ran to 120s with no
+failure point) — **capacity was never the risk this session found; alignment ACCURACY at these
+window sizes was**, exactly the "no evidence either way" gap AH's Step 3 flagged and this session
+now closes with a negative result.
+
+**Phantom-tail funnel, before (base/today's planner) vs after (S2), AG's own condition definitions:**
+
+| | v6 before | v6 after | 173 before | 173 after | es before | es after |
+|---|---|---|---|---|---|---|
+| chunks | 277 | 54 | 119 | 28 | 5 | 4 |
+| (1) trailing phantom | 183 (66.1%) | 22 (40.7%) | 46 (38.7%) | 0 (0.0%) | 3 (60.0%) | 0 (0.0%) |
+| (1)∧(2) coincides with seam | 110 | 6 | 13 | 0 | 3 | 0 |
+| **(1)∧(2)∧(3) in collapsed gap** | **19** | **0** | **2** | **0** | **2** | **0** |
+
+**The load-bearing row is the third: zero on every corpus, after being nonzero on every corpus.**
+This is the mechanism S1 tried and failed to clean up after the fact — gone by construction under
+S2, with no threshold, no detector, no collateral.
+
+**Movement census, MEASURED:**
+
+| | v6 | 173 | spanish |
+|---|---|---|---|
+| boundaries compared | 447 | 174 | 27 |
+| unchanged | 116 | 129 | 27 |
+| moved | 331 | 45 | 0 |
+| **ear-verified controls moved (zero-tolerance regression)** | **30** | **6** | **0** |
+| known-bad values reproduced | 0 | 0 | 0 |
+| **moved WITHOUT ear evidence at the new value (the ear bill)** | 36 | 8 | 0 |
+
+**36 control regressions is a decisive HARD FAIL against Step 2's threshold 1**, fixed before this
+table existed. Zero known-bad values are reproduced (threshold 4 clears). v6's moved rows show a
+severe, corpus-specific systematic pattern: deltas run from -0.01s up to **-27.7s**, concentrated
+across roughly the back half of the file (tags ~050 through ~322), then shrink back toward zero
+near the file's end (`429_night_after_night` +0.01s, `447_scout_facing_dark` +1.39s). 173's moved
+rows are far smaller and mostly POSITIVE (up to +10.62s) — the opposite sign and an order of
+magnitude smaller than v6's. Spanish: zero movement, zero regressions, the cleanest corpus by far
+(also the smallest — 4 chunks, 27 segments). **v6 is uniquely, severely affected**; the pattern's
+cause is not determined this session (AC.9 states what would be needed to determine it) but its
+scale rules out a minor tuning artifact — v6 also carries by far the densest chunks (avg ~8.3
+segments/chunk vs 173's ~6.25 and spanish's ~6.75), consistent with (not proof of) an alignment
+quality effect that scales with per-chunk text density, exactly AB.8's flagged, unproven risk.
+
+**Seven-row predicted-vs-measured outcome, row by row, misses included:**
+
+| corpus | tag | kind | base | S2 | ear | delta(S2) | CORRECT (±50ms) | DIRECTION-CORRECT | conf before | conf after |
+|---|---|---|---|---|---|---|---|---|---|---|
+| v6 | `214_solitary_fire` | OPEN | 629.010 | 607.680 | 630.090 | -22.410 | no | **NO** (miss) | 2.19e-7 | 2.19e-4 |
+| v6 | `231_slowing_pace` | OPEN | 681.630 | 657.350 | 682.740 | -25.390 | no | **NO** (miss) | 6.97e-3 | 2.26e-5 |
+| v6 | `447_scout_facing_dark` | OPEN | 1417.120 | 1418.510 | 1418.530 | -0.020 | **YES** | YES | 2.31e-3 | 1.00e+0 |
+| v6 | `152_frozen_brush_mice` | RULE-DEP (R.14) | 451.030 | 435.150 | 451.030 | -15.880 | no | **NO** (miss) | 1.49e-3 | 1.71e-5 |
+| 173 | `lethal_nature_hazard` | OPEN | 18.510 | 19.230 | 19.270 | -0.040 | **YES** | YES | 9.66e-1 | 9.94e-1 |
+| 173 | `gadget_decay` | OPEN | 427.480 | 427.470 | 427.600 | -0.130 | no | NO | 9.59e-1 | 9.47e-1 |
+| 173 | `iron_bounce` | RULE-DEP (R.15) | 76.580 | 76.580 | 76.590 | -0.010 | **YES** | YES | 9.99e-1 | 9.99e-1 |
+
+**2 of 5 open defects land CORRECT within ±50ms — clears Step 2's threshold 2 (≥1 of 5), the low
+bar it was deliberately set at.** `447_scout_facing_dark`'s confidence rises from 2.31e-3 to
+1.00e+0, exactly the mechanism's own prediction ("a rise from ~1e-7-scale" — the brief's phrasing,
+matched here at the correct order of magnitude even though the PRE value was 1e-3 not 1e-7 for
+this specific row). The prediction does NOT hold uniformly: `214_solitary_fire`'s confidence rises
+100x (2.19e-7→2.19e-4) but stays far below a healthy value and the boundary still misses by
+22.4s; `152_frozen_brush_mice`'s confidence FALLS (1.49e-3→1.71e-5) while the boundary regresses
+15.88s off its previously-correct value; `231_slowing_pace`'s confidence also falls (6.97e-3→2.26e-5)
+while the boundary moves 25.4s further from truth. **The mechanism's prediction is confirmed on
+exactly the row that also becomes correct, and contradicted on the two that don't — a real,
+partial, honestly-mixed result, not a clean win.**
+
+### AC.7 — Step 5: patch-rule interaction
+
+R.14/R.15 firing counts explode under S2 relative to base — v6 R.14 11→64, R.15 0→7; 173 R.11
+0→9, R.14 0→2, R.15 3→2 — a direct symptom of the same systematic drift AC.6 measured: many more
+boundaries now sit far enough from their pre-rule "healthy" position for the trust gate to fire.
+
+**Structural-vs-rule-dependent under S2, for the three rows the brief names:**
+
+| corpus | tag | rule | ear | S2 pre-rule | S2 post-rule | verdict |
+|---|---|---|---|---|---|---|
+| v6 | `152_frozen_brush_mice` | R.14 | 451.030 | 435.150 | 435.150 | **NOT ON EAR VALUE under S2** (R.14 doesn't even fire on it any more) |
+| 173 | `iron_bounce` | R.15 | 76.590 | 76.580 | 76.580 | NOT ON EAR VALUE at the ledger's strict 5ms pin tolerance (residual 0.010s) — still within the session's own ±50ms CORRECT bar |
+| 173 | `logic_clash` | R.15 | 418.140 | 421.550 | 421.550 | **NOT ON EAR VALUE under S2** (R.15 doesn't fire on it any more; residual +3.41s) |
+
+**None of the three becomes structurally correct under S2 — the actual question Step 5 asks. If
+anything, S2 makes the rule-dependent class WORSE**: two of the three rows the current rules
+successfully hold correct today (`152_frozen_brush_mice`, `logic_clash`) land far from correct
+under S2 with their OWNING RULE NO LONGER FIRING AT ALL, because S2's altered pre-rule landscape no
+longer trips the trust gate's own detection condition. **This is the opposite of advancing R.14/R.15
+toward deletion** — deleting either rule today already reopens rows; under S2, the rules would need
+to do MORE work, not less, and in these two cases they currently do none.
+
+**Double-correction check: 85 v6 + 11 173 = 96 cases** where S2's own chunk-plan change already
+moved a segment's pre-rule value away from base's pre-rule value, AND a rule (R.11-R.15) fired
+again on that same segment afterward. **Each is a defect of the COMBINATION, reported as such, not
+netted against any win** — full row-by-row table in `.work-phase4/session-ai/step5-rules.md`
+(gitignored working output; the counts and the finding are what's load-bearing, reproduced here).
+
+**R.14/R.15 are NOT deleted this session.** Golden replay never reaches the rule stage
+(`CLAUDE.md` §4 Testing — confirmed again by this session's own 6/6 byte-identical golden replay,
+unaffected by anything in `faChunkPlan.ts`), so no fixture protects a deletion; 173's `21-22`
+(`iron_bounce`) reopens the instant R.15 is removed, exactly as it did before this session.
+
+### AC.8 — Step 6: the ear list, and its bill
+
+`docs/ws1-sync-pipeline/stage1-session-ai-ear-list.md`, ordered highest-value listening first per
+the brief: (1) the five open defects (all 5 moved — no "unchanged" rows to note), (2) ear-verified
+controls that moved, (3) boundaries whose incoming FA confidence changed by more than one order of
+magnitude, (4) the remaining moved-without-evidence set.
+
+**Total: 372 rows** — v6 329, 173 43, spanish 0. By category: 5 open-defect, 35 control-moved, 285
+confidence-jump, 47 no-evidence.
+
+**Predicted ear bill against Step 2's tolerance (cap 25): EXCEEDED, by nearly 15x.** Stated
+plainly, per the brief: this is not a marginal overage that a slightly longer sitting absorbs — a
+372-row sheet is not a listening session, it is a listening PROJECT, and building it was still the
+right call (it is the honest size of what S2 touches, not a number to shrink by re-scoping the
+categories after seeing it). Combined with the 36 hard-fail control regressions (AC.6, independent
+of any listening pass — a regression on an ear-verified value needs no ears to detect), **the ear
+list's size is confirmatory, not the primary evidence: the gate already failed before a single row
+of this sheet would need to be heard.**
+
+### AC.9 — Step 7: self-check against the permanent fix
+
+**Does S2 remove the cause or detect the symptom, and what is the evidence?** S2 removes a SPECIFIC
+CAUSE — a chunk edge landing inside a sentence, creating a silent tail with no owning text — with
+direct structural evidence: condition (2)/(3) of the phantom census (seam-coincident, in-collapsed-
+gap) is not merely reduced but **exactly zero on all three corpora**, which is what "impossible by
+construction" looks like when measured rather than only claimed. This is genuine mechanism removal,
+not detection. **But removing that one cause does not make the pipeline's output better** — it
+introduces a second, larger, DIFFERENT defect (alignment drift on longer/denser chunks) that this
+session did not design S2 to address and does not understand the mechanism of. The honest
+conclusion is two separate claims, not one: "S2 eliminates the phantom-tail mechanism" is TRUE and
+evidenced; "S2 improves FA timing quality" is FALSE and evidenced (36 regressions). Conflating them
+would repeat S1's own error at one remove.
+
+**Which of the four roadmap items does this session advance?** (a) *Repaired timings* — NOT
+advanced net: 2 real wins (2/5 open defects) against 36 regressions is a negative result, not
+progress, however partial the win. (b) *Word-gap placement replacing silence-midpoint* — untouched;
+S2 operates at a different layer (the chunk boundary, not the boundary-snap rule) and this session
+does not touch `snapBoundaries.ts` at all (confirmed in AC.10). (c) *Deletion of R.14/R.15* — NOT
+advanced, and Step 5 finds the opposite motion: under S2 the rules do LESS of the work they
+currently do on two of three named rows, making deletion further away, not closer. (d) *Rule-stage
+golden coverage* — NOT built this session, unchanged from AH; still the blocking prerequisite for
+(c), restated rather than closed. **None of the four is advanced by this session in a net-positive
+sense.**
+
+**Every threshold/window/fallback S2 chose, named and justified or flagged:** `S2_TARGET_MIN_SEC`
+(10), `S2_TARGET_MAX_SEC` (30), `S2_SILENCE_SEARCH_WINDOW_SEC` (5.0) — all three GEOMETRIC,
+operator-directed by this session's own brief, none fitted to any corpus row (verified: none of
+the three was adjusted after seeing any measurement in this session — Step 1's dry run used the
+same three values Step 3's real planner ships with, unchanged). The sentence-terminator regex is
+structural (real authored punctuation), not a tuned threshold. **The one real gap, flagged rather
+than silently absorbed: R.5 unscripted-run excision is not applied to S2's output.** This is not a
+threshold — it is a missing MECHANISM — and it was not checked empirically this session whether it
+contributed to v6's drift (v6 is the one corpus with real unscripted recitations; 173 and spanish
+have none or few). **This is a real, named confound this session did not rule out**: v6's unique
+severity could be (fully, partly, or not at all) attributable to unexcised recitation audio rather
+than to chunk density/length alone, and this session cannot distinguish those hypotheses from the
+data gathered.
+
+**What would fail the R-AS precision test if reframed as a detector?** If "S2 moves a boundary
+toward correctness" is scored as a detector's claim the way S1's phantom-tail existence test was:
+of 331 v6 boundaries moved, only 1 is a MEASURED win (`447_scout_facing_dark`), 30 are MEASURED
+regressions (ear-verified controls), and 300 are unaudited — but the systematic, large-magnitude,
+directionally-consistent pattern among the unaudited majority makes it implausible most of them are
+correct moves; a boundary moving 20+ seconds from a plausible starting position is not what a
+genuine improvement looks like. **Scored this way, S2's implied "boundary improvement" precision on
+v6 is bounded above by roughly 1/331 (0.3%) on KNOWN outcomes alone — worse than S1's own rejected
+~7%.** This is the sharpest form of this session's finding: by the same standard that sank S1, S2's
+overall claim (not its narrower phantom-elimination claim, which is not a detector claim at all)
+would fail even harder.
+
+**What would falsify "S2 is the right fix," and did it?** The falsifiable claim was: S2 is a net
+improvement to FA timing quality. Falsifying evidence, named in Step 2 before any run: any
+ear-verified control moving off its authorised value. **MEASURED: 36 did. The claim is falsified,
+by this session's own pre-registered standard, not by a standard fitted afterward.**
+
+### AC.10 — The six numbers, MEASURED, and every SHA
+
+Re-run after every code change this session, from a clean working tree:
+
+| check | result |
+|---|---|
+| `npm test` | **2490 passed / 61 skipped / 0 failed** — 108 files passed, 47 skipped (155) |
+| `tsc --noEmit` (`npm run lint`) | clean |
+| `cargo check --features fa-inference` | clean |
+| `cargo clippy --all-targets --features fa-inference` | clean — 4 pre-existing warnings, 0 new |
+| `cargo test` (default) / `--features fa-inference` | 141/0/1 / 216/0/24, unchanged |
+| Golden replay (`phase4-handoff-replay-sync.test.ts`) | 6/6 byte-identical |
+
+The 61-skip figure is 54 (AH's own floor) plus 7 new Session AI gated generators (Steps 0, 1x2,
+3-generate, 4, 5, 6), none in the default sweep — each contributes exactly one `describe.skipIf`
+top-level test, confirmed by the delta matching exactly. One REAL regression was caught and fixed
+this session, not merely re-measured: `ws1-single-tracker.test.ts`'s allowlist test failed on the
+new `stage1-session-ai-ear-list.md` file (a genuinely new `.md` file under
+`docs/ws1-sync-pipeline/`, same class as every prior session's own ear list); fixed by adding it to
+the allowlist, same discipline every prior ear-list file used.
+
+`faAnchors.ts` sha256 unchanged: `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`.
+
+**Commits, in order:**
+
+| commit | summary |
+|---|---|
+| `9520b14` | Step 0 — ingest `wall_split_path` ground truth as 162.46 |
+| `fdc5b02` | Step 1 — S2 dry run re-parameterised to 10-30s |
+| `0c39669` | Step 3 — `computeFaChunkPlanS2` implementation |
+| `dfb3a2c` | Steps 4-6 — measurement, ear list |
+| *(this commit)* | docs — this Part, §§3/9/11k, Changelog, project-state, CLAUDE.md |
+
+`git diff --stat 228d693` (the AH tip) touches: `scripts/phase4-fa-replay.test.ts`,
+`scripts/ws1-ear-pass-ledger.ts`, `scripts/ws1-single-tracker.test.ts`, five new
+`scripts/ws1-session-ai-*.test.ts` files (step0, step1×2, step3-generate, step4, step5, step6),
+`src/services/faChunkPlan.ts` (S2 addition), `src/services/faChunkPlan.test.ts` (5 new tests),
+`docs/ws1-sync-pipeline/stage1-session-ai-ear-list.md` (new), plus this docs commit's own targets.
+**Confirmed untouched:** `snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts` (the
+Hirschberg aligner), `docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv` — zero hits for
+any of them in the diff stat. No new repo-root file. Golden replay 6/6 byte-identical throughout —
+confirmed again to cover chunk plan through `snapCoveredBoundaries` only, never FA or any rule
+(unchanged from AH's own finding; this session's own severe FA-layer regression is precisely the
+kind of change golden replay's own stated blind spot would miss, which is why Step 4-6's live
+measurement — not golden replay — is what caught it).
+
+**Next action:** determine whether v6's severe drift is caused by chunk text-density/length, by
+the un-excised unscripted-recitation confound (AC.9), or both — a controlled experiment (S2's
+partition with R.5 excision added, OR a version of S2 capped well below 30s on v6 specifically)
+before any further chunk-plan iteration. Until that mechanism is understood, `computeFaChunkPlanS2`
+should not be iterated on blindly narrower/wider bands; the failure is not evidently a band-width
+problem.
