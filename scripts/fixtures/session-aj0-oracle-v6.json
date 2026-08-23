@@ -1,0 +1,3591 @@
+{
+  "sourceProjectId": "fb21815d-8024-4fdf-952b-e8daba964a06",
+  "sourceSha256": "a9d6d9959c3aa97e29d6fb787578b59456ade1a6a463bd728fa2e92b7728fc96",
+  "segmentCount": 447,
+  "boundaries": [
+    {
+      "index": 0,
+      "tag": "001_child_seven",
+      "startTime": 0,
+      "duration": 5.64,
+      "anchorStart": 0,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 1,
+      "tag": "002_skin_shelter",
+      "startTime": 5.64,
+      "duration": 4.27,
+      "anchorStart": 5.64,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 2,
+      "tag": "003_mother_fire",
+      "startTime": 9.91,
+      "duration": 4.43,
+      "anchorStart": 9.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 3,
+      "tag": "004_grandmother_asleep",
+      "startTime": 14.34,
+      "duration": 3.22,
+      "anchorStart": 14.34,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 4,
+      "tag": "005_deep_night",
+      "startTime": 17.56,
+      "duration": 1.83,
+      "anchorStart": 17.56,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 5,
+      "tag": "006_boy_alert",
+      "startTime": 19.39,
+      "duration": 1.96,
+      "anchorStart": 19.39,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 6,
+      "tag": "007_listening_outside",
+      "startTime": 21.35,
+      "duration": 2.100000000000004,
+      "anchorStart": 21.35,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 7,
+      "tag": "008_unknown_void",
+      "startTime": 23.450000000000003,
+      "duration": 1.729999999999996,
+      "anchorStart": 23.13,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 8,
+      "tag": "009_large_shadow",
+      "startTime": 25.18,
+      "duration": 2.27,
+      "anchorStart": 25.18,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 9,
+      "tag": "010_close_danger",
+      "startTime": 27.45,
+      "duration": 1.44,
+      "anchorStart": 27.45,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 10,
+      "tag": "011_shivering_by_fire",
+      "startTime": 28.89,
+      "duration": 3.41,
+      "anchorStart": 28.89,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 11,
+      "tag": "012_sudden_hush",
+      "startTime": 32.3,
+      "duration": 2.02,
+      "anchorStart": 32.3,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 12,
+      "tag": "013_silent_prehistoric_night",
+      "startTime": 34.32,
+      "duration": 1.97,
+      "anchorStart": 34.32,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 13,
+      "tag": "014_chest_tightens_fear",
+      "startTime": 36.29,
+      "duration": 3.48,
+      "anchorStart": 36.29,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 14,
+      "tag": "015_mother_unmoved",
+      "startTime": 39.77,
+      "duration": 2.15,
+      "anchorStart": 39.77,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 15,
+      "tag": "016_feeding_the_hearth",
+      "startTime": 41.92,
+      "duration": 3.98,
+      "anchorStart": 41.92,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 16,
+      "tag": "017_heavy_stillness",
+      "startTime": 45.9,
+      "duration": 2.37,
+      "anchorStart": 45.9,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 17,
+      "tag": "018_listening_mother_profile",
+      "startTime": 48.27,
+      "duration": 2.89,
+      "anchorStart": 48.27,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 18,
+      "tag": "019_silent_observation",
+      "startTime": 51.16,
+      "duration": 5.4,
+      "anchorStart": 51.16,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 19,
+      "tag": "020_lurking_darkness",
+      "startTime": 56.56,
+      "duration": 3.19,
+      "anchorStart": 56.56,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 20,
+      "tag": "021_heavy_flint_spear",
+      "startTime": 59.75,
+      "duration": 1.36,
+      "anchorStart": 59.75,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 21,
+      "tag": "022_fire_boundary_void",
+      "startTime": 61.11,
+      "duration": 4.66,
+      "anchorStart": 61.11,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 22,
+      "tag": "023_sleeping_mother_side",
+      "startTime": 65.77,
+      "duration": 2.54,
+      "anchorStart": 65.77,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 23,
+      "tag": "024_hand_warm_stones",
+      "startTime": 68.31,
+      "duration": 3.54,
+      "anchorStart": 68.31,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 24,
+      "tag": "025_dream_sound_shapes",
+      "startTime": 71.85,
+      "duration": 2.11,
+      "anchorStart": 71.85,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 25,
+      "tag": "026_frosty_morning_run",
+      "startTime": 73.96,
+      "duration": 4.6,
+      "anchorStart": 73.96,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 26,
+      "tag": "027_internal_change_face",
+      "startTime": 78.56,
+      "duration": 2.18,
+      "anchorStart": 78.56,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 27,
+      "tag": "028_small_permanent_flake",
+      "startTime": 80.74,
+      "duration": 2.79,
+      "anchorStart": 80.74,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 28,
+      "tag": "029_night_understanding",
+      "startTime": 83.53,
+      "duration": 3.7,
+      "anchorStart": 83.53,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 29,
+      "tag": "030_watching_older_hunters",
+      "startTime": 87.23,
+      "duration": 2.91,
+      "anchorStart": 87.23,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 30,
+      "tag": "031_sunset_gaze",
+      "startTime": 90.14,
+      "duration": 2.99,
+      "anchorStart": 90.14,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 31,
+      "tag": "032_fire_gathering",
+      "startTime": 93.13,
+      "duration": 4.73,
+      "anchorStart": 93.13,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 32,
+      "tag": "033_watchful_eyes",
+      "startTime": 97.86,
+      "duration": 2.18,
+      "anchorStart": 97.86,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 33,
+      "tag": "034_natural_order",
+      "startTime": 100.04,
+      "duration": 1.68,
+      "anchorStart": 100.04,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 34,
+      "tag": "035_nocturnal_formation",
+      "startTime": 101.72,
+      "duration": 3.83,
+      "anchorStart": 101.72,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 35,
+      "tag": "036_outward_sentry",
+      "startTime": 105.55,
+      "duration": 3,
+      "anchorStart": 105.55,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 36,
+      "tag": "037_inner_circle",
+      "startTime": 108.55,
+      "duration": 3.36,
+      "anchorStart": 108.55,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 37,
+      "tag": "038_spear_glint",
+      "startTime": 111.91,
+      "duration": 2.7300000000000004,
+      "anchorStart": 111.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 38,
+      "tag": "039_river_trap",
+      "startTime": 114.64,
+      "duration": 4.569999999999999,
+      "anchorStart": 114.25,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 39,
+      "tag": "040_outside_circle",
+      "startTime": 119.21,
+      "duration": 3.43,
+      "anchorStart": 119.21,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 40,
+      "tag": "041_elder_lesson",
+      "startTime": 122.64,
+      "duration": 3.1200000000000037,
+      "anchorStart": 122.64,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 41,
+      "tag": "042_eleven_years",
+      "startTime": 125.76,
+      "duration": 5.199999999999997,
+      "anchorStart": 127.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 42,
+      "tag": "043_night_migration",
+      "startTime": 130.96,
+      "duration": 3.04,
+      "anchorStart": 130.96,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 43,
+      "tag": "044_carrying_torch",
+      "startTime": 134,
+      "duration": 2.54,
+      "anchorStart": 134,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 44,
+      "tag": "045_torch_materials",
+      "startTime": 136.54,
+      "duration": 2.37,
+      "anchorStart": 136.54,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 45,
+      "tag": "046_sinew_binding",
+      "startTime": 138.91,
+      "duration": 1.26,
+      "anchorStart": 138.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 46,
+      "tag": "047_proper_hold",
+      "startTime": 140.17,
+      "duration": 2.68,
+      "anchorStart": 140.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 47,
+      "tag": "048_flickering_wind",
+      "startTime": 142.85,
+      "duration": 3.53,
+      "anchorStart": 142.85,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 48,
+      "tag": "049_chest_protection",
+      "startTime": 146.38,
+      "duration": 2.74,
+      "anchorStart": 146.38,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 49,
+      "tag": "050_hunters_ahead",
+      "startTime": 149.12,
+      "duration": 2.07,
+      "anchorStart": 149.12,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 50,
+      "tag": "051_center_column",
+      "startTime": 151.19,
+      "duration": 3.4,
+      "anchorStart": 151.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 51,
+      "tag": "052_rear_guards",
+      "startTime": 154.59,
+      "duration": 7.46,
+      "anchorStart": 154.59,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 52,
+      "tag": "053_silent_men",
+      "startTime": 162.05,
+      "duration": 2.37,
+      "anchorStart": 162.05,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 53,
+      "tag": "054_silent_tool",
+      "startTime": 164.42,
+      "duration": 1.63,
+      "anchorStart": 164.42,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 54,
+      "tag": "055_spear_comparison",
+      "startTime": 166.05,
+      "duration": 1.6499999999999875,
+      "anchorStart": 166.05,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 55,
+      "tag": "056_dropping_torch",
+      "startTime": 167.7,
+      "duration": 4.050000000000012,
+      "anchorStart": 167.03,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 56,
+      "tag": "057_root_trip",
+      "startTime": 171.75,
+      "duration": 8.16,
+      "anchorStart": 171.75,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 57,
+      "tag": "058_silent_reaction",
+      "startTime": 179.91,
+      "duration": 1.82,
+      "anchorStart": 179.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 58,
+      "tag": "059_daret_approaches",
+      "startTime": 181.73,
+      "duration": 2.29,
+      "anchorStart": 181.73,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 59,
+      "tag": "060_reassuring_hand",
+      "startTime": 184.02,
+      "duration": 3.74,
+      "anchorStart": 184.02,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 60,
+      "tag": "061_elder_touch",
+      "startTime": 187.76,
+      "duration": 1.51,
+      "anchorStart": 187.76,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 61,
+      "tag": "062_firm_grip",
+      "startTime": 189.27,
+      "duration": 1.29,
+      "anchorStart": 189.27,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 62,
+      "tag": "063_scout_silhouette",
+      "startTime": 190.56,
+      "duration": 1.49,
+      "anchorStart": 190.56,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 63,
+      "tag": "064_lighting_torch",
+      "startTime": 192.05,
+      "duration": 4.96,
+      "anchorStart": 192.05,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 64,
+      "tag": "065_elder_leaves",
+      "startTime": 197.01,
+      "duration": 3.15,
+      "anchorStart": 197.01,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 65,
+      "tag": "066_torch_reflection",
+      "startTime": 200.16,
+      "duration": 2.15,
+      "anchorStart": 200.16,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 66,
+      "tag": "067_group_danger",
+      "startTime": 202.31,
+      "duration": 2.32,
+      "anchorStart": 202.31,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 67,
+      "tag": "068_scout_solitude",
+      "startTime": 204.63,
+      "duration": 2.22,
+      "anchorStart": 204.63,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 68,
+      "tag": "069_scout_resolve",
+      "startTime": 206.85,
+      "duration": 2.82,
+      "anchorStart": 206.85,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 69,
+      "tag": "070_scout_advancing",
+      "startTime": 209.67,
+      "duration": 2.07,
+      "anchorStart": 209.67,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 70,
+      "tag": "071_night_column_walk",
+      "startTime": 211.74,
+      "duration": 4.49,
+      "anchorStart": 211.74,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 71,
+      "tag": "072_neutral_owl",
+      "startTime": 216.23,
+      "duration": 1.74,
+      "anchorStart": 216.23,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 72,
+      "tag": "073_sudden_silence",
+      "startTime": 217.97,
+      "duration": 2.72,
+      "anchorStart": 217.97,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 73,
+      "tag": "074_erratic_wind",
+      "startTime": 220.69,
+      "duration": 2.65,
+      "anchorStart": 220.69,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 74,
+      "tag": "075_rhythmic_movement",
+      "startTime": 223.34,
+      "duration": 4.86,
+      "anchorStart": 223.34,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 75,
+      "tag": "076_feeling_change",
+      "startTime": 228.2,
+      "duration": 3.61,
+      "anchorStart": 228.2,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 76,
+      "tag": "077_lead_hunter_slows",
+      "startTime": 231.81,
+      "duration": 1.88,
+      "anchorStart": 231.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 77,
+      "tag": "078_column_stops",
+      "startTime": 233.69,
+      "duration": 1.66,
+      "anchorStart": 233.69,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 78,
+      "tag": "079_no_signal",
+      "startTime": 235.35,
+      "duration": 1.06,
+      "anchorStart": 235.35,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 79,
+      "tag": "080_no_sound",
+      "startTime": 236.41,
+      "duration": 1.35,
+      "anchorStart": 236.41,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 80,
+      "tag": "081_hearth_shift",
+      "startTime": 237.76,
+      "duration": 4.64,
+      "anchorStart": 237.76,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 81,
+      "tag": "082_sleepless_vigil",
+      "startTime": 242.4,
+      "duration": 2.8699999999999797,
+      "anchorStart": 242.4,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 82,
+      "tag": "083_unbidden_alertness",
+      "startTime": 245.26999999999998,
+      "duration": 1.9900000000000206,
+      "anchorStart": 244.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 83,
+      "tag": "084_instinctive_grip",
+      "startTime": 247.26,
+      "duration": 3.55,
+      "anchorStart": 247.26,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 84,
+      "tag": "085_the_spear_bearer",
+      "startTime": 250.81,
+      "duration": 5.93,
+      "anchorStart": 250.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 85,
+      "tag": "086_spear_contrast",
+      "startTime": 256.74,
+      "duration": 3.14,
+      "anchorStart": 256.74,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 86,
+      "tag": "087_throwing_spear_poise",
+      "startTime": 259.88,
+      "duration": 1.57,
+      "anchorStart": 259.88,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 87,
+      "tag": "088_spear_craftsmanship",
+      "startTime": 261.45,
+      "duration": 7.24,
+      "anchorStart": 261.45,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 88,
+      "tag": "089_forward_scouting",
+      "startTime": 268.69,
+      "duration": 2.42,
+      "anchorStart": 268.69,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 89,
+      "tag": "090_tethered_distance",
+      "startTime": 271.11,
+      "duration": 1.43,
+      "anchorStart": 271.11,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 90,
+      "tag": "091_scouts_walking",
+      "startTime": 272.54,
+      "duration": 1.55,
+      "anchorStart": 272.54,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 91,
+      "tag": "092_moving_with_korik",
+      "startTime": 274.09,
+      "duration": 1.68,
+      "anchorStart": 274.09,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 92,
+      "tag": "093_korik_scout",
+      "startTime": 275.77,
+      "duration": 2.87,
+      "anchorStart": 275.77,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 93,
+      "tag": "094_scouts_ahead",
+      "startTime": 278.64,
+      "duration": 5,
+      "anchorStart": 278.64,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 94,
+      "tag": "095_reading_ground",
+      "startTime": 283.64,
+      "duration": 3.8,
+      "anchorStart": 283.64,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 95,
+      "tag": "096_smell_first",
+      "startTime": 287.44,
+      "duration": 2.23,
+      "anchorStart": 287.44,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 96,
+      "tag": "097_predator_presence",
+      "startTime": 289.67,
+      "duration": 3.6,
+      "anchorStart": 289.67,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 97,
+      "tag": "098_thick_musky",
+      "startTime": 293.27,
+      "duration": 5.46,
+      "anchorStart": 293.27,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 98,
+      "tag": "099_sudden_stop",
+      "startTime": 298.73,
+      "duration": 3.44,
+      "anchorStart": 298.73,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 99,
+      "tag": "100_korik_stops",
+      "startTime": 302.17,
+      "duration": 2.53,
+      "anchorStart": 302.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 100,
+      "tag": "101_shared_realization",
+      "startTime": 304.7,
+      "duration": 1.72,
+      "anchorStart": 304.7,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 101,
+      "tag": "102_frozen_scouts",
+      "startTime": 306.42,
+      "duration": 3.12,
+      "anchorStart": 306.42,
+      "anchorSource": "forced-alignment",
+      "knownMicroDrift": "harness regen gives 306.43 vs export 306.42 (10ms) \u2014 not one of the 5 named open defects, newly observed AJ-0"
+    },
+    {
+      "index": 102,
+      "tag": "103_held_breath",
+      "startTime": 309.54,
+      "duration": 3.7,
+      "anchorStart": 309.54,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 103,
+      "tag": "104_silent_retreat",
+      "startTime": 313.24,
+      "duration": 3.38,
+      "anchorStart": 313.24,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 104,
+      "tag": "105_careful_steps",
+      "startTime": 316.62,
+      "duration": 5.39,
+      "anchorStart": 316.62,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 105,
+      "tag": "106_empty_night",
+      "startTime": 322.01,
+      "duration": 3.24,
+      "anchorStart": 322.01,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 106,
+      "tag": "107_frost_tracks",
+      "startTime": 325.25,
+      "duration": 3.33,
+      "anchorStart": 325.25,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 107,
+      "tag": "108_spear_measure",
+      "startTime": 328.58,
+      "duration": 2.22,
+      "anchorStart": 328.58,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 108,
+      "tag": "109_giant_print",
+      "startTime": 330.8,
+      "duration": 3.44,
+      "anchorStart": 330.8,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 109,
+      "tag": "110_long_stare",
+      "startTime": 334.24,
+      "duration": 1.95,
+      "anchorStart": 334.24,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 110,
+      "tag": "111_scout_returning_camp",
+      "startTime": 336.19,
+      "duration": 2.25,
+      "anchorStart": 336.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 111,
+      "tag": "112_scout_reporting_mission",
+      "startTime": 338.44,
+      "duration": 1.78,
+      "anchorStart": 338.44,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 112,
+      "tag": "113_scout_hiding_shadows",
+      "startTime": 340.22,
+      "duration": 1.63,
+      "anchorStart": 340.22,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 113,
+      "tag": "114_scout_restrained_grip",
+      "startTime": 341.85,
+      "duration": 1.75,
+      "anchorStart": 341.85,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 114,
+      "tag": "115_scout_observing_turning",
+      "startTime": 343.6,
+      "duration": 3.08,
+      "anchorStart": 343.6,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 115,
+      "tag": "116_scout_missed_threat",
+      "startTime": 346.68,
+      "duration": 3,
+      "anchorStart": 346.68,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 116,
+      "tag": "117_scout_imagined_monster",
+      "startTime": 349.68,
+      "duration": 3.75,
+      "anchorStart": 349.68,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 117,
+      "tag": "118_scout_delivering_truth",
+      "startTime": 353.43,
+      "duration": 4.46,
+      "anchorStart": 353.43,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 118,
+      "tag": "119_scout_inner_tremble",
+      "startTime": 357.89,
+      "duration": 2.34,
+      "anchorStart": 357.89,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 119,
+      "tag": "120_scout_steady_voice",
+      "startTime": 360.23,
+      "duration": 1.96,
+      "anchorStart": 360.23,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 120,
+      "tag": "121_still_hands",
+      "startTime": 362.19,
+      "duration": 1.84,
+      "anchorStart": 362.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 121,
+      "tag": "122_daret_watching",
+      "startTime": 364.03,
+      "duration": 2.8,
+      "anchorStart": 364.03,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 122,
+      "tag": "123_catching_gaze",
+      "startTime": 366.83,
+      "duration": 1.62,
+      "anchorStart": 366.83,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 123,
+      "tag": "124_working_hands",
+      "startTime": 368.45,
+      "duration": 2.300000000000025,
+      "anchorStart": 368.45,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 124,
+      "tag": "125_night_circle",
+      "startTime": 370.75,
+      "duration": 8.149999999999974,
+      "anchorStart": 372.34,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 125,
+      "tag": "126_eastern_post",
+      "startTime": 378.9,
+      "duration": 1.7,
+      "anchorStart": 378.9,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 126,
+      "tag": "127_river_treeline",
+      "startTime": 380.6,
+      "duration": 3.14,
+      "anchorStart": 380.6,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 127,
+      "tag": "128_back_to_fire",
+      "startTime": 383.74,
+      "duration": 5.65,
+      "anchorStart": 383.74,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 128,
+      "tag": "129_warmth_and_cold",
+      "startTime": 389.39,
+      "duration": 4.72,
+      "anchorStart": 389.39,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 129,
+      "tag": "130_discomfort_point",
+      "startTime": 394.11,
+      "duration": 2.21,
+      "anchorStart": 394.11,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 130,
+      "tag": "131_drifting_guard",
+      "startTime": 396.32,
+      "duration": 1.88,
+      "anchorStart": 396.32,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 131,
+      "tag": "132_guarding_stretch",
+      "startTime": 398.2,
+      "duration": 1.59,
+      "anchorStart": 398.2,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 132,
+      "tag": "133_wake_man",
+      "startTime": 399.79,
+      "duration": 1.23,
+      "anchorStart": 399.79,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 133,
+      "tag": "134_exhausted_sleep",
+      "startTime": 401.02,
+      "duration": 0.76,
+      "anchorStart": 401.02,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 134,
+      "tag": "135_three_hours",
+      "startTime": 401.78,
+      "duration": 2.89,
+      "anchorStart": 401.78,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 135,
+      "tag": "136_nightly_rotation",
+      "startTime": 404.67,
+      "duration": 1.98,
+      "anchorStart": 404.67,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 136,
+      "tag": "137_harsh_weather",
+      "startTime": 406.65,
+      "duration": 1.16,
+      "anchorStart": 406.65,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 137,
+      "tag": "138_cracking_ice",
+      "startTime": 407.81,
+      "duration": 4.7,
+      "anchorStart": 407.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 138,
+      "tag": "139_restless_tribe",
+      "startTime": 412.51,
+      "duration": 3.62,
+      "anchorStart": 412.51,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 139,
+      "tag": "140_sudden_alertness",
+      "startTime": 416.13,
+      "duration": 4.97,
+      "anchorStart": 416.13,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 140,
+      "tag": "141_night_listening",
+      "startTime": 421.1,
+      "duration": 2.13,
+      "anchorStart": 421.1,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 141,
+      "tag": "142_noisy_void",
+      "startTime": 423.23,
+      "duration": 1.94,
+      "anchorStart": 423.23,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 142,
+      "tag": "143_meaningless_noises",
+      "startTime": 425.17,
+      "duration": 2.5,
+      "anchorStart": 425.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 143,
+      "tag": "144_howling_wind",
+      "startTime": 427.67,
+      "duration": 1.41,
+      "anchorStart": 427.67,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 144,
+      "tag": "145_scurrying_creature",
+      "startTime": 429.08,
+      "duration": 1.85,
+      "anchorStart": 429.08,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 145,
+      "tag": "146_fire_settling",
+      "startTime": 430.93,
+      "duration": 1.71,
+      "anchorStart": 430.93,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 146,
+      "tag": "147_frozen_branches",
+      "startTime": 432.64,
+      "duration": 2.51,
+      "anchorStart": 432.64,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 147,
+      "tag": "148_breathing_clan",
+      "startTime": 435.15,
+      "duration": 2.07,
+      "anchorStart": 435.15,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 148,
+      "tag": "149_month_rotation",
+      "startTime": 437.22,
+      "duration": 7.92,
+      "anchorStart": 437.22,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 149,
+      "tag": "150_listening_intent",
+      "startTime": 445.14,
+      "duration": 2.88,
+      "anchorStart": 445.14,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 150,
+      "tag": "151_scout_listening_void",
+      "startTime": 448.02,
+      "duration": 3.009999999999984,
+      "anchorStart": 448.02,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 151,
+      "tag": "152_frozen_brush_mice",
+      "startTime": 451.03,
+      "duration": 3.300000000000016,
+      "anchorStart": 449.2,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 152,
+      "tag": "153_something_stopped_them",
+      "startTime": 454.33,
+      "duration": 1.53,
+      "anchorStart": 454.33,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 153,
+      "tag": "154_silent_night_birds",
+      "startTime": 455.86,
+      "duration": 1.95,
+      "anchorStart": 455.86,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 154,
+      "tag": "155_predator_passing_under",
+      "startTime": 457.81,
+      "duration": 2.06,
+      "anchorStart": 457.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 155,
+      "tag": "156_scout_deep_realization",
+      "startTime": 459.87,
+      "duration": 3.5,
+      "anchorStart": 459.87,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 156,
+      "tag": "157_scout_nervous_reflection",
+      "startTime": 463.37,
+      "duration": 2.72,
+      "anchorStart": 463.37,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 157,
+      "tag": "158_scout_false_alert",
+      "startTime": 466.09,
+      "duration": 4.79,
+      "anchorStart": 466.09,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 158,
+      "tag": "159_camp_standing_alert",
+      "startTime": 470.88,
+      "duration": 3.61,
+      "anchorStart": 470.88,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 159,
+      "tag": "160_camp_forgiveness",
+      "startTime": 474.49,
+      "duration": 2.25,
+      "anchorStart": 474.49,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 160,
+      "tag": "161_waste_chest",
+      "startTime": 476.74,
+      "duration": 2.56,
+      "anchorStart": 476.74,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 161,
+      "tag": "162_false_alarm_burn",
+      "startTime": 479.3,
+      "duration": 2.26,
+      "anchorStart": 479.3,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 162,
+      "tag": "163_not_carrying_feeling",
+      "startTime": 481.56,
+      "duration": 2.77,
+      "anchorStart": 481.56,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 163,
+      "tag": "164_waiting_too_long",
+      "startTime": 484.33,
+      "duration": 2.65,
+      "anchorStart": 484.33,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 164,
+      "tag": "165_talking_out_trust",
+      "startTime": 486.98,
+      "duration": 3.93,
+      "anchorStart": 486.98,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 165,
+      "tag": "166_dire_wolf_perimeter",
+      "startTime": 490.91,
+      "duration": 3.859999999999975,
+      "anchorStart": 490.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 166,
+      "tag": "167_smell_of_butchery",
+      "startTime": 494.77,
+      "duration": 3.200000000000025,
+      "anchorStart": 494.43,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 167,
+      "tag": "168_daret_thrown_stone",
+      "startTime": 497.97,
+      "duration": 5.56,
+      "anchorStart": 497.97,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 168,
+      "tag": "169_daret_meets_scout",
+      "startTime": 503.53,
+      "duration": 2.64,
+      "anchorStart": 503.53,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 169,
+      "tag": "170_daret_speaks",
+      "startTime": 506.17,
+      "duration": 1.8,
+      "anchorStart": 506.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 170,
+      "tag": "171_scout_carrying_load",
+      "startTime": 507.97,
+      "duration": 2.48,
+      "anchorStart": 507.97,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 171,
+      "tag": "172_body_instinct_grip",
+      "startTime": 510.45,
+      "duration": 3.01,
+      "anchorStart": 510.45,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 172,
+      "tag": "173_broken_track_pattern",
+      "startTime": 513.46,
+      "duration": 3.3,
+      "anchorStart": 513.46,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 173,
+      "tag": "174_enough_standing_tall",
+      "startTime": 516.76,
+      "duration": 1.64,
+      "anchorStart": 516.76,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 174,
+      "tag": "175_stepping_into_void",
+      "startTime": 518.4,
+      "duration": 4.060000000000077,
+      "anchorStart": 518.4,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 175,
+      "tag": "176_twenty_six_scout",
+      "startTime": 522.46,
+      "duration": 5.569999999999922,
+      "anchorStart": 524.42,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 176,
+      "tag": "177_leading_in_darkness",
+      "startTime": 528.03,
+      "duration": 3.45,
+      "anchorStart": 528.03,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 177,
+      "tag": "178_fear_running_alongside",
+      "startTime": 531.48,
+      "duration": 1.89,
+      "anchorStart": 531.48,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 178,
+      "tag": "179_not_in_charge",
+      "startTime": 533.37,
+      "duration": 2.29,
+      "anchorStart": 533.37,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 179,
+      "tag": "180_late_autumn_transformation",
+      "startTime": 535.66,
+      "duration": 3.25,
+      "anchorStart": 535.66,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 180,
+      "tag": "181_aurochs_drive",
+      "startTime": 538.91,
+      "duration": 3.91,
+      "anchorStart": 538.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 181,
+      "tag": "182_breaking_aurochs",
+      "startTime": 542.82,
+      "duration": 4.79,
+      "anchorStart": 542.82,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 182,
+      "tag": "183_chasing_hunters",
+      "startTime": 547.61,
+      "duration": 2.3,
+      "anchorStart": 547.61,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 183,
+      "tag": "184_mc_running",
+      "startTime": 549.91,
+      "duration": 2.17,
+      "anchorStart": 549.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 184,
+      "tag": "185_yaro_running",
+      "startTime": 552.08,
+      "duration": 2.09,
+      "anchorStart": 552.08,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 185,
+      "tag": "186_yaro_age",
+      "startTime": 554.17,
+      "duration": 1.39,
+      "anchorStart": 554.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 186,
+      "tag": "187_composed_yaro",
+      "startTime": 555.56,
+      "duration": 3.48,
+      "anchorStart": 555.56,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 187,
+      "tag": "188_fading_light",
+      "startTime": 559.04,
+      "duration": 2.41,
+      "anchorStart": 559.04,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 188,
+      "tag": "189_heavy_timber",
+      "startTime": 561.45,
+      "duration": 5.6,
+      "anchorStart": 561.45,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 189,
+      "tag": "190_yaro_signal",
+      "startTime": 567.05,
+      "duration": 2.1,
+      "anchorStart": 567.05,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 190,
+      "tag": "191_both_still",
+      "startTime": 569.15,
+      "duration": 1.9199999999999864,
+      "anchorStart": 569.15,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 191,
+      "tag": "192_scout_listening",
+      "startTime": 571.0699999999999,
+      "duration": 1.1700000000000137,
+      "anchorStart": 570.18,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 192,
+      "tag": "193_low_ground",
+      "startTime": 572.24,
+      "duration": 5.03,
+      "anchorStart": 572.24,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 193,
+      "tag": "194_breathing_tension",
+      "startTime": 577.27,
+      "duration": 2.89,
+      "anchorStart": 577.27,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 194,
+      "tag": "195_unseen_woods",
+      "startTime": 580.16,
+      "duration": 2.06,
+      "anchorStart": 580.16,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 195,
+      "tag": "196_main_frozen",
+      "startTime": 582.22,
+      "duration": 1.48,
+      "anchorStart": 582.22,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 196,
+      "tag": "197_yaro_still",
+      "startTime": 583.7,
+      "duration": 2.19,
+      "anchorStart": 583.7,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 197,
+      "tag": "198_stopped_breathing",
+      "startTime": 585.89,
+      "duration": 1.91,
+      "anchorStart": 585.89,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 198,
+      "tag": "199_three_seconds",
+      "startTime": 587.8,
+      "duration": 1.74,
+      "anchorStart": 587.8,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 199,
+      "tag": "200_yaro_shifts",
+      "startTime": 589.54,
+      "duration": 2.53,
+      "anchorStart": 589.54,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 200,
+      "tag": "201_stealthy_footstep",
+      "startTime": 592.07,
+      "duration": 1.28,
+      "anchorStart": 592.07,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 201,
+      "tag": "202_mirroring_scout",
+      "startTime": 593.35,
+      "duration": 2.48,
+      "anchorStart": 593.35,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 202,
+      "tag": "203_backward_retreat",
+      "startTime": 595.83,
+      "duration": 7.03,
+      "anchorStart": 595.83,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 203,
+      "tag": "204_meadow_run",
+      "startTime": 602.86,
+      "duration": 3.32,
+      "anchorStart": 602.86,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 204,
+      "tag": "205_instinctual_flight",
+      "startTime": 606.18,
+      "duration": 1.5,
+      "anchorStart": 606.18,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 205,
+      "tag": "206_scouts_sprinting",
+      "startTime": 607.68,
+      "duration": 1.09,
+      "anchorStart": 607.68,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 206,
+      "tag": "207_reporting_to_leader",
+      "startTime": 608.77,
+      "duration": 2.53,
+      "anchorStart": 608.77,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 207,
+      "tag": "208_leader_decision",
+      "startTime": 611.3,
+      "duration": 2.87,
+      "anchorStart": 611.3,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 208,
+      "tag": "209_empty_meadow",
+      "startTime": 614.17,
+      "duration": 1.77,
+      "anchorStart": 614.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 209,
+      "tag": "210_ominous_timber",
+      "startTime": 615.94,
+      "duration": 3.37,
+      "anchorStart": 615.94,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 210,
+      "tag": "211_hearth_reflection",
+      "startTime": 619.31,
+      "duration": 4.27,
+      "anchorStart": 619.31,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 211,
+      "tag": "212_watching_eyes",
+      "startTime": 623.58,
+      "duration": 3.19,
+      "anchorStart": 623.58,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 212,
+      "tag": "213_pensive_stare",
+      "startTime": 626.77,
+      "duration": 2.24,
+      "anchorStart": 626.77,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 213,
+      "tag": "214_solitary_fire",
+      "startTime": 629.01,
+      "duration": 5.56,
+      "anchorStart": 629.01,
+      "anchorSource": "forced-alignment",
+      "openDefect": true,
+      "earTarget": 630.09
+    },
+    {
+      "index": 214,
+      "tag": "215_spear_grip",
+      "startTime": 634.57,
+      "duration": 3.81,
+      "anchorStart": 634.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 215,
+      "tag": "216_chest_revelation",
+      "startTime": 638.38,
+      "duration": 2.85,
+      "anchorStart": 638.38,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 216,
+      "tag": "217_still_silence",
+      "startTime": 641.23,
+      "duration": 1.79,
+      "anchorStart": 641.23,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 217,
+      "tag": "218_upright_posture",
+      "startTime": 643.02,
+      "duration": 3.2,
+      "anchorStart": 643.02,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 218,
+      "tag": "219_starry_void",
+      "startTime": 646.22,
+      "duration": 4.4,
+      "anchorStart": 646.22,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 219,
+      "tag": "220_lethal_gap",
+      "startTime": 650.62,
+      "duration": 3.830000000000027,
+      "anchorStart": 650.62,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 220,
+      "tag": "221_skill_removes",
+      "startTime": 654.45,
+      "duration": 4.879999999999959,
+      "anchorStart": 654.23,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 221,
+      "tag": "222_long_silence",
+      "startTime": 659.33,
+      "duration": 3.2200000000000135,
+      "anchorStart": 658.94,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 222,
+      "tag": "223_carrying_weight",
+      "startTime": 662.55,
+      "duration": 1.7799999999998861,
+      "anchorStart": 662.55,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 223,
+      "tag": "224_thirty_three",
+      "startTime": 664.3299999999999,
+      "duration": 4.730000000000114,
+      "anchorStart": 666.08,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 224,
+      "tag": "225_night_scouts",
+      "startTime": 669.06,
+      "duration": 2.1100000000000634,
+      "anchorStart": 669.06,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 225,
+      "tag": "226_four_scouts",
+      "startTime": 671.1700000000001,
+      "duration": 1.6299999999999364,
+      "anchorStart": 670.24,
+      "anchorSource": "forced-alignment",
+      "knownMicroDrift": "ledger CORRECT value 671.18 vs export 671.17 (10ms)"
+    },
+    {
+      "index": 226,
+      "tag": "227_scout_ages",
+      "startTime": 672.8,
+      "duration": 2.75,
+      "anchorStart": 672.8,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 227,
+      "tag": "228_informal_bond",
+      "startTime": 675.55,
+      "duration": 3.03,
+      "anchorStart": 675.55,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 228,
+      "tag": "229_no_formal_sense",
+      "startTime": 678.58,
+      "duration": 2.41,
+      "anchorStart": 678.58,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 229,
+      "tag": "230_slowing_pace",
+      "startTime": 680.99,
+      "duration": 0.64,
+      "anchorStart": 680.99,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 230,
+      "tag": "231_slowing_pace",
+      "startTime": 681.63,
+      "duration": 2.460000000000023,
+      "anchorStart": 681.63,
+      "anchorSource": "forced-alignment",
+      "openDefect": true,
+      "earTarget": 682.74
+    },
+    {
+      "index": 231,
+      "tag": "232_sudden_halt",
+      "startTime": 684.09,
+      "duration": 2.449999999999977,
+      "anchorStart": 682.74,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 232,
+      "tag": "233_firelight_speech",
+      "startTime": 686.54,
+      "duration": 2.8499999999999996,
+      "anchorStart": 685.29,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 233,
+      "tag": "234_focused_attention",
+      "startTime": 689.39,
+      "duration": 3.5,
+      "anchorStart": 689.39,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 234,
+      "tag": "235_unasked_burden",
+      "startTime": 692.89,
+      "duration": 2.06,
+      "anchorStart": 692.89,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 235,
+      "tag": "236_uncertain_start",
+      "startTime": 694.95,
+      "duration": 2.1,
+      "anchorStart": 694.95,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 236,
+      "tag": "237_heavy_weight",
+      "startTime": 697.05,
+      "duration": 4.24,
+      "anchorStart": 697.05,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 237,
+      "tag": "238_youthful_fear",
+      "startTime": 701.29,
+      "duration": 2.22,
+      "anchorStart": 701.29,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 238,
+      "tag": "239_internal_burden",
+      "startTime": 703.51,
+      "duration": 1.85,
+      "anchorStart": 703.51,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 239,
+      "tag": "240_tribal_survival",
+      "startTime": 705.36,
+      "duration": 1.83,
+      "anchorStart": 705.36,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 240,
+      "tag": "241_fen_young_scout",
+      "startTime": 707.19,
+      "duration": 2.92,
+      "anchorStart": 707.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 241,
+      "tag": "242_fen_excited_run",
+      "startTime": 710.11,
+      "duration": 4.34,
+      "anchorStart": 710.11,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 242,
+      "tag": "243_fen_too_quick",
+      "startTime": 714.45,
+      "duration": 1.9,
+      "anchorStart": 714.45,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 243,
+      "tag": "244_elder_watching_fen",
+      "startTime": 716.35,
+      "duration": 3.56,
+      "anchorStart": 716.35,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 244,
+      "tag": "245_seasonal_contrast",
+      "startTime": 719.91,
+      "duration": 2.02,
+      "anchorStart": 719.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 245,
+      "tag": "246_elder_speaks_plainly",
+      "startTime": 721.93,
+      "duration": 3.03,
+      "anchorStart": 721.93,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 246,
+      "tag": "247_danger_lesson",
+      "startTime": 724.96,
+      "duration": 2.77,
+      "anchorStart": 724.96,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 247,
+      "tag": "248_stealthy_movement",
+      "startTime": 727.73,
+      "duration": 3.29,
+      "anchorStart": 727.73,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 248,
+      "tag": "249_fast_after_decision",
+      "startTime": 731.02,
+      "duration": 3.64,
+      "anchorStart": 731.02,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 249,
+      "tag": "250_before_the_moment",
+      "startTime": 734.66,
+      "duration": 1.25,
+      "anchorStart": 734.66,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 250,
+      "tag": "251_main_focused_observation",
+      "startTime": 735.91,
+      "duration": 2.21,
+      "anchorStart": 735.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 251,
+      "tag": "252_fen_slowing_run",
+      "startTime": 738.12,
+      "duration": 1.9,
+      "anchorStart": 738.12,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 252,
+      "tag": "253_fen_measured_movement",
+      "startTime": 740.02,
+      "duration": 1.42,
+      "anchorStart": 740.02,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 253,
+      "tag": "254_main_observing_fen",
+      "startTime": 741.44,
+      "duration": 1.69,
+      "anchorStart": 741.44,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 254,
+      "tag": "255_daret_hand_on_shoulder",
+      "startTime": 743.13,
+      "duration": 4.25,
+      "anchorStart": 743.13,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 255,
+      "tag": "256_korik_stopping_in_dark",
+      "startTime": 747.38,
+      "duration": 3.72,
+      "anchorStart": 747.38,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 256,
+      "tag": "257_wordless_confirmation_scent",
+      "startTime": 751.1,
+      "duration": 4.04,
+      "anchorStart": 751.1,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 257,
+      "tag": "258_main_contemplative_ridge",
+      "startTime": 755.14,
+      "duration": 4.39,
+      "anchorStart": 755.14,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 258,
+      "tag": "259_mentors_around_hearth",
+      "startTime": 759.53,
+      "duration": 6.33,
+      "anchorStart": 759.53,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 259,
+      "tag": "260_main_teaching_fen",
+      "startTime": 765.86,
+      "duration": 2.86,
+      "anchorStart": 765.86,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 260,
+      "tag": "261_weary_leader",
+      "startTime": 768.72,
+      "duration": 1.88,
+      "anchorStart": 768.72,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 261,
+      "tag": "262_stern_warning",
+      "startTime": 770.6,
+      "duration": 8.62,
+      "anchorStart": 770.6,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 262,
+      "tag": "263_temporary_dawn",
+      "startTime": 779.22,
+      "duration": 2.76,
+      "anchorStart": 779.22,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 263,
+      "tag": "264_feeding_fire",
+      "startTime": 781.98,
+      "duration": 3.6,
+      "anchorStart": 781.98,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 264,
+      "tag": "265_unending_dark",
+      "startTime": 785.58,
+      "duration": 3.169999999999959,
+      "anchorStart": 785.58,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 265,
+      "tag": "266_forty_one_burden",
+      "startTime": 788.75,
+      "duration": 5.44000000000004,
+      "anchorStart": 790.33,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 266,
+      "tag": "267_leader_of_children",
+      "startTime": 794.19,
+      "duration": 9.19,
+      "anchorStart": 794.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 267,
+      "tag": "268_morning_visitor",
+      "startTime": 803.38,
+      "duration": 5.15,
+      "anchorStart": 803.38,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 268,
+      "tag": "269_gift_of_meat",
+      "startTime": 808.53,
+      "duration": 1.98,
+      "anchorStart": 808.53,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 269,
+      "tag": "270_silent_departure",
+      "startTime": 810.51,
+      "duration": 2.24,
+      "anchorStart": 810.51,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 270,
+      "tag": "271_holding_meat",
+      "startTime": 812.75,
+      "duration": 5.21,
+      "anchorStart": 812.75,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 271,
+      "tag": "272_hunched_back",
+      "startTime": 817.96,
+      "duration": 2.35,
+      "anchorStart": 817.96,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 272,
+      "tag": "273_cold_grass",
+      "startTime": 820.31,
+      "duration": 2.31,
+      "anchorStart": 820.31,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 273,
+      "tag": "274_stillness_ache",
+      "startTime": 822.62,
+      "duration": 3.22,
+      "anchorStart": 822.62,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 274,
+      "tag": "275_morning_knees",
+      "startTime": 825.84,
+      "duration": 4.63,
+      "anchorStart": 825.84,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 275,
+      "tag": "276_not_old",
+      "startTime": 830.47,
+      "duration": 2.63,
+      "anchorStart": 830.47,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 276,
+      "tag": "277_night_body",
+      "startTime": 833.1,
+      "duration": 4.98,
+      "anchorStart": 833.1,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 277,
+      "tag": "278_faster_men",
+      "startTime": 838.08,
+      "duration": 1.9,
+      "anchorStart": 838.08,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 278,
+      "tag": "279_sharper_ears",
+      "startTime": 839.98,
+      "duration": 2.29,
+      "anchorStart": 839.98,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 279,
+      "tag": "280_saying_so",
+      "startTime": 842.27,
+      "duration": 1.23,
+      "anchorStart": 842.27,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 280,
+      "tag": "281_hearth_counsel",
+      "startTime": 843.5,
+      "duration": 1.33,
+      "anchorStart": 843.5,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 281,
+      "tag": "282_fen_leading",
+      "startTime": 844.83,
+      "duration": 3.51,
+      "anchorStart": 844.83,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 282,
+      "tag": "283_fen_keen_ears",
+      "startTime": 848.34,
+      "duration": 3.48,
+      "anchorStart": 848.34,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 283,
+      "tag": "284_fen_modesty",
+      "startTime": 851.82,
+      "duration": 2.54,
+      "anchorStart": 851.82,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 284,
+      "tag": "285_elder_seriousness",
+      "startTime": 854.36,
+      "duration": 2.1799999999999318,
+      "anchorStart": 854.36,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 285,
+      "tag": "286_fact_to_act",
+      "startTime": 856.54,
+      "duration": 2.660000000000068,
+      "anchorStart": 856.09,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 286,
+      "tag": "287_growing_responsibility",
+      "startTime": 859.2,
+      "duration": 5.24,
+      "anchorStart": 859.2,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 287,
+      "tag": "288_not_smaller",
+      "startTime": 864.44,
+      "duration": 0.95,
+      "anchorStart": 864.44,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 288,
+      "tag": "289_winter_predator_breach",
+      "startTime": 865.39,
+      "duration": 7.47,
+      "anchorStart": 865.39,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 289,
+      "tag": "290_tragic_aftermath",
+      "startTime": 872.86,
+      "duration": 2.58,
+      "anchorStart": 872.86,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 290,
+      "tag": "291_eastern_post",
+      "startTime": 875.44,
+      "duration": 2.16,
+      "anchorStart": 875.44,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 291,
+      "tag": "292_distant_attack",
+      "startTime": 877.6,
+      "duration": 3.4,
+      "anchorStart": 877.6,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 292,
+      "tag": "293_sitting_brooding",
+      "startTime": 881,
+      "duration": 2.21,
+      "anchorStart": 881,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 293,
+      "tag": "294_intense_thought",
+      "startTime": 883.21,
+      "duration": 2.9,
+      "anchorStart": 883.21,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 294,
+      "tag": "295_defensive_positioning",
+      "startTime": 886.11,
+      "duration": 2.26,
+      "anchorStart": 886.11,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 295,
+      "tag": "296_orderly_rotations",
+      "startTime": 888.37,
+      "duration": 1.74,
+      "anchorStart": 888.37,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 296,
+      "tag": "297_standard_arrangement",
+      "startTime": 890.11,
+      "duration": 2.7,
+      "anchorStart": 890.11,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 297,
+      "tag": "298_heavy_burden",
+      "startTime": 892.81,
+      "duration": 2.2,
+      "anchorStart": 892.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 298,
+      "tag": "299_realization_moment",
+      "startTime": 895.01,
+      "duration": 1.52,
+      "anchorStart": 895.01,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 299,
+      "tag": "300_night_gap",
+      "startTime": 896.53,
+      "duration": 8.62,
+      "anchorStart": 896.53,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 300,
+      "tag": "301_hearth_reflection",
+      "startTime": 905.15,
+      "duration": 6.27,
+      "anchorStart": 905.15,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 301,
+      "tag": "302_night_sprint",
+      "startTime": 911.42,
+      "duration": 3.09,
+      "anchorStart": 911.42,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 302,
+      "tag": "303_rebuilding_shelter",
+      "startTime": 914.51,
+      "duration": 1.56,
+      "anchorStart": 914.51,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 303,
+      "tag": "304_closing_gap",
+      "startTime": 916.07,
+      "duration": 3.11,
+      "anchorStart": 916.07,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 304,
+      "tag": "305_carrying_grief",
+      "startTime": 919.18,
+      "duration": 2.18,
+      "anchorStart": 919.18,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 305,
+      "tag": "306_flint_knapping",
+      "startTime": 921.36,
+      "duration": 4.070000000000037,
+      "anchorStart": 921.36,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 306,
+      "tag": "307_forty_nine_years",
+      "startTime": 925.4300000000001,
+      "duration": 5.969999999999963,
+      "anchorStart": 926.97,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 307,
+      "tag": "308_scouts_leading",
+      "startTime": 931.4,
+      "duration": 4.85,
+      "anchorStart": 931.4,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 308,
+      "tag": "309_wide_river_meeting",
+      "startTime": 936.25,
+      "duration": 3.84,
+      "anchorStart": 936.25,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 309,
+      "tag": "310_scouts_at_fire",
+      "startTime": 940.09,
+      "duration": 1.89,
+      "anchorStart": 940.09,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 310,
+      "tag": "311_quiet_hearth_talk",
+      "startTime": 941.98,
+      "duration": 8.92,
+      "anchorStart": 941.98,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 311,
+      "tag": "312_fen_scouts_introduction",
+      "startTime": 950.9,
+      "duration": 3.54,
+      "anchorStart": 950.9,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 312,
+      "tag": "313_fen_silent_gaze",
+      "startTime": 954.44,
+      "duration": 2.7,
+      "anchorStart": 954.44,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 313,
+      "tag": "314_scouts_settle_down",
+      "startTime": 957.14,
+      "duration": 4.39,
+      "anchorStart": 957.14,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 314,
+      "tag": "315_observing_over_time",
+      "startTime": 961.53,
+      "duration": 2.92,
+      "anchorStart": 961.53,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 315,
+      "tag": "316_scout_instinct_fear",
+      "startTime": 964.45,
+      "duration": 2.85,
+      "anchorStart": 964.45,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 316,
+      "tag": "317_sharpening_bone_tool",
+      "startTime": 967.3,
+      "duration": 2,
+      "anchorStart": 967.3,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 317,
+      "tag": "318_scout_on_ridge",
+      "startTime": 969.3,
+      "duration": 2.61,
+      "anchorStart": 969.3,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 318,
+      "tag": "319_eye_reflection_awareness",
+      "startTime": 971.91,
+      "duration": 2.35,
+      "anchorStart": 971.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 319,
+      "tag": "320_body_warning_signal",
+      "startTime": 974.26,
+      "duration": 5.91,
+      "anchorStart": 974.26,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 320,
+      "tag": "321_hearth_counsel",
+      "startTime": 980.17,
+      "duration": 6.709999999999959,
+      "anchorStart": 980.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 321,
+      "tag": "322_body_readiness",
+      "startTime": 986.88,
+      "duration": 1.930000000000041,
+      "anchorStart": 986.71,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 322,
+      "tag": "323_direct_speech",
+      "startTime": 988.81,
+      "duration": 4.29,
+      "anchorStart": 988.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 323,
+      "tag": "324_youth_realization",
+      "startTime": 993.1,
+      "duration": 2.05,
+      "anchorStart": 993.1,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 324,
+      "tag": "325_contrasting_student",
+      "startTime": 995.15,
+      "duration": 3,
+      "anchorStart": 995.15,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 325,
+      "tag": "326_careless_ease",
+      "startTime": 998.15,
+      "duration": 7.09,
+      "anchorStart": 998.15,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 326,
+      "tag": "327_perimeter_lesson",
+      "startTime": 1005.24,
+      "duration": 6.51,
+      "anchorStart": 1005.24,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 327,
+      "tag": "328_obvious_sights",
+      "startTime": 1011.75,
+      "duration": 2.85,
+      "anchorStart": 1011.75,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 328,
+      "tag": "329_patient_silence",
+      "startTime": 1014.6,
+      "duration": 1.32,
+      "anchorStart": 1014.6,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 329,
+      "tag": "330_finer_observations",
+      "startTime": 1015.92,
+      "duration": 1.9,
+      "anchorStart": 1015.92,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 330,
+      "tag": "331_scent_at_slope",
+      "startTime": 1017.82,
+      "duration": 2.83,
+      "anchorStart": 1017.82,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 331,
+      "tag": "332_fading_sound",
+      "startTime": 1020.65,
+      "duration": 4.16,
+      "anchorStart": 1020.65,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 332,
+      "tag": "333_passing_knowledge",
+      "startTime": 1024.81,
+      "duration": 1.69,
+      "anchorStart": 1024.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 333,
+      "tag": "334_internal_noticing",
+      "startTime": 1026.5,
+      "duration": 2.08,
+      "anchorStart": 1026.5,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 334,
+      "tag": "335_tracking_skill",
+      "startTime": 1028.58,
+      "duration": 2.99,
+      "anchorStart": 1028.58,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 335,
+      "tag": "336_uncertain_mentorship",
+      "startTime": 1031.57,
+      "duration": 3.74,
+      "anchorStart": 1031.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 336,
+      "tag": "337_mutual_exchange",
+      "startTime": 1035.31,
+      "duration": 4.17,
+      "anchorStart": 1035.31,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 337,
+      "tag": "338_final_gift",
+      "startTime": 1039.48,
+      "duration": 2.08,
+      "anchorStart": 1039.48,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 338,
+      "tag": "339_night_voyage",
+      "startTime": 1041.56,
+      "duration": 4.059999999999954,
+      "anchorStart": 1041.56,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 339,
+      "tag": "340_fifty_eight",
+      "startTime": 1045.62,
+      "duration": 6.0300000000000455,
+      "anchorStart": 1047.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 340,
+      "tag": "341_aging_temples",
+      "startTime": 1051.65,
+      "duration": 2.72,
+      "anchorStart": 1051.65,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 341,
+      "tag": "342_steady_grip",
+      "startTime": 1054.37,
+      "duration": 2.05,
+      "anchorStart": 1054.37,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 342,
+      "tag": "343_shaking_scout",
+      "startTime": 1056.42,
+      "duration": 4.58,
+      "anchorStart": 1056.42,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 343,
+      "tag": "344_marked_palms",
+      "startTime": 1061,
+      "duration": 3.19,
+      "anchorStart": 1061,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 344,
+      "tag": "345_palm_scar",
+      "startTime": 1064.19,
+      "duration": 4.36,
+      "anchorStart": 1064.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 345,
+      "tag": "346_shortened_finger",
+      "startTime": 1068.55,
+      "duration": 4.59,
+      "anchorStart": 1068.55,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 346,
+      "tag": "347_thickened_knuckles",
+      "startTime": 1073.14,
+      "duration": 4.6,
+      "anchorStart": 1073.14,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 347,
+      "tag": "348_distant_bands",
+      "startTime": 1077.74,
+      "duration": 1.97,
+      "anchorStart": 1077.74,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 348,
+      "tag": "349_stoic_presence",
+      "startTime": 1079.71,
+      "duration": 3.28,
+      "anchorStart": 1079.71,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 349,
+      "tag": "350_mountain_ridge",
+      "startTime": 1082.99,
+      "duration": 2.59,
+      "anchorStart": 1082.99,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 350,
+      "tag": "351_river_crossing",
+      "startTime": 1085.58,
+      "duration": 2.78,
+      "anchorStart": 1085.58,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 351,
+      "tag": "352_orient_landmark",
+      "startTime": 1088.36,
+      "duration": 3.79,
+      "anchorStart": 1088.36,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 352,
+      "tag": "353_gathering_bands",
+      "startTime": 1092.15,
+      "duration": 3.02,
+      "anchorStart": 1092.15,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 353,
+      "tag": "354_dark_beast",
+      "startTime": 1095.17,
+      "duration": 1.44,
+      "anchorStart": 1095.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 354,
+      "tag": "355_reading_tracks",
+      "startTime": 1096.61,
+      "duration": 4.45,
+      "anchorStart": 1096.61,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 355,
+      "tag": "356_respectful_glance",
+      "startTime": 1101.06,
+      "duration": 2.43,
+      "anchorStart": 1101.06,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 356,
+      "tag": "357_sitting_quietly",
+      "startTime": 1103.49,
+      "duration": 2.89,
+      "anchorStart": 1103.49,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 357,
+      "tag": "358_knowledge_face",
+      "startTime": 1106.38,
+      "duration": 7.19,
+      "anchorStart": 1106.38,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 358,
+      "tag": "359_listening_hunters",
+      "startTime": 1113.57,
+      "duration": 3.51,
+      "anchorStart": 1113.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 359,
+      "tag": "360_scout_wisdom",
+      "startTime": 1117.08,
+      "duration": 1.45,
+      "anchorStart": 1117.08,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 360,
+      "tag": "361_daret_observation",
+      "startTime": 1118.53,
+      "duration": 2.78,
+      "anchorStart": 1118.53,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 361,
+      "tag": "362_survival_proof",
+      "startTime": 1121.31,
+      "duration": 3.14,
+      "anchorStart": 1121.31,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 362,
+      "tag": "363_facing_night",
+      "startTime": 1124.45,
+      "duration": 6.31,
+      "anchorStart": 1124.45,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 363,
+      "tag": "364_the_full_cost",
+      "startTime": 1130.76,
+      "duration": 2.08,
+      "anchorStart": 1130.76,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 364,
+      "tag": "365_recurrent_storytelling",
+      "startTime": 1132.84,
+      "duration": 1.54,
+      "anchorStart": 1132.84,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 365,
+      "tag": "366_missing_calm",
+      "startTime": 1134.38,
+      "duration": 3.05,
+      "anchorStart": 1134.38,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 366,
+      "tag": "367_dropped_torch",
+      "startTime": 1137.43,
+      "duration": 2.27,
+      "anchorStart": 1137.43,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 367,
+      "tag": "368_forest_terror",
+      "startTime": 1139.7,
+      "duration": 1.93,
+      "anchorStart": 1139.7,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 368,
+      "tag": "369_unreached_child",
+      "startTime": 1141.63,
+      "duration": 2.47,
+      "anchorStart": 1141.63,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 369,
+      "tag": "370_dark_mercy",
+      "startTime": 1144.1,
+      "duration": 6.8,
+      "anchorStart": 1144.1,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 370,
+      "tag": "371_listening_scouts",
+      "startTime": 1150.9,
+      "duration": 2.81,
+      "anchorStart": 1150.9,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 371,
+      "tag": "372_wide_eyed_fear",
+      "startTime": 1153.71,
+      "duration": 2.51,
+      "anchorStart": 1153.71,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 372,
+      "tag": "373_slow_blade_draw",
+      "startTime": 1156.22,
+      "duration": 1.71,
+      "anchorStart": 1156.22,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 373,
+      "tag": "374_scout_instinct",
+      "startTime": 1157.93,
+      "duration": 1.96,
+      "anchorStart": 1157.93,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 374,
+      "tag": "375_group_incomprehension",
+      "startTime": 1159.89,
+      "duration": 2.6,
+      "anchorStart": 1159.89,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 375,
+      "tag": "376_observing_the_unready",
+      "startTime": 1162.49,
+      "duration": 2.43,
+      "anchorStart": 1162.49,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 376,
+      "tag": "377_main_character_memory",
+      "startTime": 1164.92,
+      "duration": 2.95,
+      "anchorStart": 1164.92,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 377,
+      "tag": "378_flashback_fire",
+      "startTime": 1167.87,
+      "duration": 2.94,
+      "anchorStart": 1167.87,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 378,
+      "tag": "379_partial_understanding",
+      "startTime": 1170.81,
+      "duration": 3.92,
+      "anchorStart": 1170.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 379,
+      "tag": "380_scarred_hands_experience",
+      "startTime": 1174.73,
+      "duration": 5.57,
+      "anchorStart": 1174.73,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 380,
+      "tag": "381_growth_lesson",
+      "startTime": 1180.3,
+      "duration": 2.51,
+      "anchorStart": 1180.3,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 381,
+      "tag": "382_honesty_transfer",
+      "startTime": 1182.81,
+      "duration": 6.2400000000002365,
+      "anchorStart": 1182.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 382,
+      "tag": "383_sixty_four",
+      "startTime": 1189.0500000000002,
+      "duration": 4.7199999999997635,
+      "anchorStart": 1190.81,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 383,
+      "tag": "384_night_scouts",
+      "startTime": 1193.77,
+      "duration": 2.54,
+      "anchorStart": 1193.77,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 384,
+      "tag": "385_lost_precision",
+      "startTime": 1196.31,
+      "duration": 6.15,
+      "anchorStart": 1196.31,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 385,
+      "tag": "386_quiet_knowing",
+      "startTime": 1202.46,
+      "duration": 3.05,
+      "anchorStart": 1202.46,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 386,
+      "tag": "387_handing_spear",
+      "startTime": 1205.51,
+      "duration": 5.89,
+      "anchorStart": 1205.51,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 387,
+      "tag": "388_fen_teaching",
+      "startTime": 1211.4,
+      "duration": 3.57,
+      "anchorStart": 1211.4,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 388,
+      "tag": "389_unnamed_role",
+      "startTime": 1214.97,
+      "duration": 3.6,
+      "anchorStart": 1214.97,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 389,
+      "tag": "390_center_fire",
+      "startTime": 1218.57,
+      "duration": 7.56,
+      "anchorStart": 1218.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 390,
+      "tag": "391_children_gathering",
+      "startTime": 1226.13,
+      "duration": 2.3,
+      "anchorStart": 1226.13,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 391,
+      "tag": "392_young_hunters_fire",
+      "startTime": 1228.43,
+      "duration": 7.08,
+      "anchorStart": 1228.43,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 392,
+      "tag": "393_intense_speaker",
+      "startTime": 1235.51,
+      "duration": 2.57,
+      "anchorStart": 1235.51,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 393,
+      "tag": "394_passing_knowledge",
+      "startTime": 1238.08,
+      "duration": 2.16,
+      "anchorStart": 1238.08,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 394,
+      "tag": "395_darets_hand",
+      "startTime": 1240.24,
+      "duration": 4.94,
+      "anchorStart": 1240.24,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 395,
+      "tag": "396_forest_yaro",
+      "startTime": 1245.18,
+      "duration": 5.88,
+      "anchorStart": 1245.18,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 396,
+      "tag": "397_failed_rescue",
+      "startTime": 1251.06,
+      "duration": 4.82,
+      "anchorStart": 1251.06,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 397,
+      "tag": "398_carrying_on",
+      "startTime": 1255.88,
+      "duration": 3.38,
+      "anchorStart": 1255.88,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 398,
+      "tag": "399_fens_realization",
+      "startTime": 1259.26,
+      "duration": 7.489999999999964,
+      "anchorStart": 1259.26,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 399,
+      "tag": "400_endless_dark",
+      "startTime": 1266.75,
+      "duration": 2.8700000000000365,
+      "anchorStart": 1266.21,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 400,
+      "tag": "401_nightfall_encroaching",
+      "startTime": 1269.62,
+      "duration": 1.84,
+      "anchorStart": 1269.62,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 401,
+      "tag": "402_cyclical_darkness",
+      "startTime": 1271.46,
+      "duration": 2.099999999999845,
+      "anchorStart": 1271.46,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 402,
+      "tag": "403_vigilant_embers",
+      "startTime": 1273.56,
+      "duration": 5.900000000000155,
+      "anchorStart": 1273.14,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 403,
+      "tag": "404_the_fire_line",
+      "startTime": 1279.46,
+      "duration": 5.69,
+      "anchorStart": 1279.46,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 404,
+      "tag": "405_ancient_hearth",
+      "startTime": 1285.15,
+      "duration": 4.59,
+      "anchorStart": 1285.15,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 405,
+      "tag": "406_listening_darkness",
+      "startTime": 1289.74,
+      "duration": 4.55,
+      "anchorStart": 1289.74,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 406,
+      "tag": "407_shadow_movement",
+      "startTime": 1294.29,
+      "duration": 2.13,
+      "anchorStart": 1294.29,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 407,
+      "tag": "408_shifting_air",
+      "startTime": 1296.42,
+      "duration": 4.15,
+      "anchorStart": 1296.42,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 408,
+      "tag": "409_wise_gaze",
+      "startTime": 1300.57,
+      "duration": 3.11,
+      "anchorStart": 1300.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 409,
+      "tag": "410_internal_instinct",
+      "startTime": 1303.68,
+      "duration": 2.28,
+      "anchorStart": 1303.68,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 410,
+      "tag": "411_scout_transition",
+      "startTime": 1305.96,
+      "duration": 6.18,
+      "anchorStart": 1305.96,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 411,
+      "tag": "412_youngest_scout",
+      "startTime": 1312.14,
+      "duration": 2.13,
+      "anchorStart": 1312.14,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 412,
+      "tag": "413_fifteen_girl",
+      "startTime": 1314.27,
+      "duration": 1.42,
+      "anchorStart": 1314.27,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 413,
+      "tag": "414_past_firelight",
+      "startTime": 1315.69,
+      "duration": 3.06,
+      "anchorStart": 1315.69,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 414,
+      "tag": "415_watching_treeline",
+      "startTime": 1318.75,
+      "duration": 1.58,
+      "anchorStart": 1318.75,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 415,
+      "tag": "416_straight_posture",
+      "startTime": 1320.33,
+      "duration": 2.78,
+      "anchorStart": 1320.33,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 416,
+      "tag": "417_balanced_weight",
+      "startTime": 1323.11,
+      "duration": 1.59,
+      "anchorStart": 1323.11,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 417,
+      "tag": "418_eyes_sweep",
+      "startTime": 1324.7,
+      "duration": 4.55,
+      "anchorStart": 1324.7,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 418,
+      "tag": "419_spear_hand",
+      "startTime": 1329.25,
+      "duration": 2.65,
+      "anchorStart": 1329.25,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 419,
+      "tag": "420_silent_watch",
+      "startTime": 1331.9,
+      "duration": 3.67,
+      "anchorStart": 1331.9,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 420,
+      "tag": "421_hidden_observer_perspective",
+      "startTime": 1335.57,
+      "duration": 2.2,
+      "anchorStart": 1335.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 421,
+      "tag": "422_focused_work_detail",
+      "startTime": 1337.77,
+      "duration": 2.53,
+      "anchorStart": 1337.77,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 422,
+      "tag": "423_teaching_through_motion",
+      "startTime": 1340.3,
+      "duration": 10.8,
+      "anchorStart": 1340.3,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 423,
+      "tag": "424_generations_of_repetition",
+      "startTime": 1351.1,
+      "duration": 4.14,
+      "anchorStart": 1351.1,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 424,
+      "tag": "425_passing_the_torch",
+      "startTime": 1355.24,
+      "duration": 2.74,
+      "anchorStart": 1355.24,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 425,
+      "tag": "426_next_generation_teaching",
+      "startTime": 1357.98,
+      "duration": 2.49,
+      "anchorStart": 1357.98,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 426,
+      "tag": "427_knowledge_in_motion",
+      "startTime": 1360.47,
+      "duration": 3.72,
+      "anchorStart": 1360.47,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 427,
+      "tag": "428_through_the_living",
+      "startTime": 1364.19,
+      "duration": 1,
+      "anchorStart": 1364.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 428,
+      "tag": "429_night_after_night",
+      "startTime": 1365.19,
+      "duration": 1.3,
+      "anchorStart": 1365.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 429,
+      "tag": "430_edge_of_light_and_dark",
+      "startTime": 1366.49,
+      "duration": 4.27,
+      "anchorStart": 1366.49,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 430,
+      "tag": "431_child_huddling_mother",
+      "startTime": 1370.76,
+      "duration": 4.33,
+      "anchorStart": 1370.76,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 431,
+      "tag": "432_cave_entrance_vigil",
+      "startTime": 1375.09,
+      "duration": 2.21,
+      "anchorStart": 1375.09,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 432,
+      "tag": "433_child_eyes_firelight",
+      "startTime": 1377.3,
+      "duration": 2.79,
+      "anchorStart": 1377.3,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 433,
+      "tag": "434_tight_chest_anxiety",
+      "startTime": 1380.09,
+      "duration": 1.97,
+      "anchorStart": 1380.09,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 434,
+      "tag": "435_focused_attention_void",
+      "startTime": 1382.06,
+      "duration": 2.2,
+      "anchorStart": 1382.06,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 435,
+      "tag": "436_solemn_child_profile",
+      "startTime": 1384.26,
+      "duration": 3.25,
+      "anchorStart": 1384.26,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 436,
+      "tag": "437_glowing_eyes_shadows",
+      "startTime": 1387.51,
+      "duration": 3.19,
+      "anchorStart": 1387.51,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 437,
+      "tag": "438_child_standing_resolve",
+      "startTime": 1390.7,
+      "duration": 1.85,
+      "anchorStart": 1390.7,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 438,
+      "tag": "439_child_ear_listening",
+      "startTime": 1392.55,
+      "duration": 2.63,
+      "anchorStart": 1392.55,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 439,
+      "tag": "440_slow_silent_tread",
+      "startTime": 1395.18,
+      "duration": 2.52,
+      "anchorStart": 1395.18,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 440,
+      "tag": "441_scout_cold_post",
+      "startTime": 1397.7,
+      "duration": 5.86,
+      "anchorStart": 1397.7,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 441,
+      "tag": "442_scout_torch_wind",
+      "startTime": 1403.56,
+      "duration": 5.2,
+      "anchorStart": 1403.56,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 442,
+      "tag": "443_scout_cliff_edge",
+      "startTime": 1408.76,
+      "duration": 3.81,
+      "anchorStart": 1408.76,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 443,
+      "tag": "444_scout_past_watch",
+      "startTime": 1412.57,
+      "duration": 1.72,
+      "anchorStart": 1412.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 444,
+      "tag": "445_scout_future_watch",
+      "startTime": 1414.29,
+      "duration": 1.61,
+      "anchorStart": 1414.29,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 445,
+      "tag": "446_dark_landscape",
+      "startTime": 1415.9,
+      "duration": 1.22,
+      "anchorStart": 1415.9,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 446,
+      "tag": "447_scout_facing_dark",
+      "startTime": 1417.12,
+      "duration": 4.139,
+      "anchorStart": 1417.12,
+      "anchorSource": "forced-alignment",
+      "openDefect": true,
+      "earTarget": 1418.53
+    }
+  ]
+}

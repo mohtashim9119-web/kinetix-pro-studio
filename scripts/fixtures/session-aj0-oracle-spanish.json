@@ -1,0 +1,223 @@
+{
+  "sourceProjectId": "f19f3613-3ac7-47f0-a919-a85ce52aeae7",
+  "sourceSha256": "12a7c217149e31b360cdaa5b94d9f29e73775d85c9ffee4e8d457878d402a238",
+  "segmentCount": 27,
+  "boundaries": [
+    {
+      "index": 0,
+      "tag": "001_scylla_intro",
+      "startTime": 0,
+      "duration": 1.06,
+      "anchorStart": 0,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 1,
+      "tag": "002_scylla_cliff_passage",
+      "startTime": 1.06,
+      "duration": 4.99,
+      "anchorStart": 1.06,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 2,
+      "tag": "003_scylla_six_necks",
+      "startTime": 6.05,
+      "duration": 1.82,
+      "anchorStart": 6.05,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 3,
+      "tag": "004_scylla_mouth_teeth",
+      "startTime": 7.87,
+      "duration": 2.92,
+      "anchorStart": 7.87,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 4,
+      "tag": "005_scylla_twelve_legs",
+      "startTime": 10.79,
+      "duration": 2.08,
+      "anchorStart": 10.79,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 5,
+      "tag": "006_attack_setup",
+      "startTime": 12.87,
+      "duration": 1.83,
+      "anchorStart": 12.87,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 6,
+      "tag": "007_ship_approaching",
+      "startTime": 14.7,
+      "duration": 2.57,
+      "anchorStart": 14.7,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 7,
+      "tag": "008_heads_moving",
+      "startTime": 17.27,
+      "duration": 2.6,
+      "anchorStart": 17.27,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 8,
+      "tag": "009_grabbing_sailors",
+      "startTime": 19.87,
+      "duration": 3.14,
+      "anchorStart": 19.87,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 9,
+      "tag": "010_six_sailors_lost",
+      "startTime": 23.01,
+      "duration": 4.51,
+      "anchorStart": 23.01,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 10,
+      "tag": "011_scylla_limits",
+      "startTime": 27.52,
+      "duration": 4.68,
+      "anchorStart": 27.52,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 11,
+      "tag": "012_scylla_stays",
+      "startTime": 32.2,
+      "duration": 2.02,
+      "anchorStart": 32.2,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 12,
+      "tag": "013_no_fighting_strategy",
+      "startTime": 34.22,
+      "duration": 3.76,
+      "anchorStart": 34.22,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 13,
+      "tag": "014_keep_moving",
+      "startTime": 37.98,
+      "duration": 3.46,
+      "anchorStart": 37.98,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 14,
+      "tag": "015_odysseus_warning",
+      "startTime": 41.44,
+      "duration": 3.46,
+      "anchorStart": 41.44,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 15,
+      "tag": "016_prepares_weapons",
+      "startTime": 44.9,
+      "duration": 2.18,
+      "anchorStart": 44.9,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 16,
+      "tag": "017_useless_weapons",
+      "startTime": 47.08,
+      "duration": 1.6,
+      "anchorStart": 47.08,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 17,
+      "tag": "018_scylla_attacks",
+      "startTime": 48.68,
+      "duration": 4.38,
+      "anchorStart": 48.68,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 18,
+      "tag": "019_no_stopping",
+      "startTime": 53.06,
+      "duration": 2.76,
+      "anchorStart": 53.06,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 19,
+      "tag": "020_the_passage_layout",
+      "startTime": 55.82,
+      "duration": 2.9,
+      "anchorStart": 55.82,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 20,
+      "tag": "021_charybdis_whirlpool",
+      "startTime": 58.72,
+      "duration": 2.47,
+      "anchorStart": 58.72,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 21,
+      "tag": "022_ship_trapped",
+      "startTime": 61.19,
+      "duration": 3.93,
+      "anchorStart": 61.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 22,
+      "tag": "023_scylla_six_sailors",
+      "startTime": 65.12,
+      "duration": 3.22,
+      "anchorStart": 65.12,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 23,
+      "tag": "024_whirlpool_ship_wreck",
+      "startTime": 68.34,
+      "duration": 3.62,
+      "anchorStart": 68.34,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 24,
+      "tag": "025_odysseus_lesser_evil",
+      "startTime": 71.96,
+      "duration": 5.45,
+      "anchorStart": 71.96,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 25,
+      "tag": "026_messina_strait_map",
+      "startTime": 77.41,
+      "duration": 6.54,
+      "anchorStart": 77.41,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 26,
+      "tag": "027_idiom_visualized",
+      "startTime": 83.95,
+      "duration": 8.046,
+      "anchorStart": 83.95,
+      "anchorSource": "forced-alignment"
+    }
+  ]
+}

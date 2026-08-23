@@ -1,0 +1,1396 @@
+{
+  "sourceProjectId": "e334e104-b754-47e7-9e4e-2341442e783c",
+  "sourceSha256": "5d4aacd5ed7a253ad139ee1ab48e73fc616e25d4d7d743700ca46f1ddf8ca4c8",
+  "segmentCount": 173,
+  "boundaries": [
+    {
+      "index": 0,
+      "tag": "hostile_landscape",
+      "startTime": 0,
+      "duration": 4.18,
+      "anchorStart": 0,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 1,
+      "tag": "testing_parameters",
+      "startTime": 4.18,
+      "duration": 4.96,
+      "anchorStart": 4.18,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 2,
+      "tag": "military_collapse",
+      "startTime": 9.14,
+      "duration": 5.29,
+      "anchorStart": 9.14,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 3,
+      "tag": "grim_horizon",
+      "startTime": 14.43,
+      "duration": 3.45,
+      "anchorStart": 14.43,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 4,
+      "tag": "abysmal_opinion",
+      "startTime": 17.88,
+      "duration": 0.63,
+      "anchorStart": 17.88,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 5,
+      "tag": "lethal_nature_hazard",
+      "startTime": 18.51,
+      "duration": 4.65,
+      "anchorStart": 18.51,
+      "anchorSource": "forced-alignment",
+      "openDefect": true,
+      "earTarget": 19.27
+    },
+    {
+      "index": 6,
+      "tag": "rugged_survivalist",
+      "startTime": 23.16,
+      "duration": 1.77,
+      "anchorStart": 23.16,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 7,
+      "tag": "ancient_training_grounds",
+      "startTime": 24.93,
+      "duration": 5.13,
+      "anchorStart": 24.93,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 8,
+      "tag": "historical_visual",
+      "startTime": 30.06,
+      "duration": 2.59,
+      "anchorStart": 30.06,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 9,
+      "tag": "barren_ruin",
+      "startTime": 32.65,
+      "duration": 1.97,
+      "anchorStart": 32.65,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 10,
+      "tag": "ancient_nature_thriving",
+      "startTime": 34.62,
+      "duration": 3.11,
+      "anchorStart": 34.62,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 11,
+      "tag": "eternal_focus",
+      "startTime": 37.73,
+      "duration": 4.49,
+      "anchorStart": 37.73,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 12,
+      "tag": "fatal_surge",
+      "startTime": 42.22,
+      "duration": 3.84,
+      "anchorStart": 42.22,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 13,
+      "tag": "moist_short_circuit",
+      "startTime": 46.06,
+      "duration": 4.38,
+      "anchorStart": 46.06,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 14,
+      "tag": "energy_rust",
+      "startTime": 50.44,
+      "duration": 1.75,
+      "anchorStart": 50.44,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 15,
+      "tag": "sight_blur",
+      "startTime": 52.19,
+      "duration": 2.14,
+      "anchorStart": 52.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 16,
+      "tag": "signal_static_frustration",
+      "startTime": 54.33,
+      "duration": 5.26,
+      "anchorStart": 54.33,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 17,
+      "tag": "ancient_schematic_view",
+      "startTime": 59.59,
+      "duration": 4.32,
+      "anchorStart": 59.59,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 18,
+      "tag": "foliage_hostility",
+      "startTime": 63.91,
+      "duration": 3.98,
+      "anchorStart": 63.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 19,
+      "tag": "insect_corrosive",
+      "startTime": 67.89,
+      "duration": 4.78,
+      "anchorStart": 67.89,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 20,
+      "tag": "segmented_stalker",
+      "startTime": 72.67,
+      "duration": 3.910000000000002,
+      "anchorStart": 72.67,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 21,
+      "tag": "iron_bounce",
+      "startTime": 76.58,
+      "duration": 3.719999999999998,
+      "anchorStart": 75.66,
+      "anchorSource": "forced-alignment",
+      "knownMicroDrift": "ledger CORRECT value 76.59 vs export/regen 76.58 (10ms)"
+    },
+    {
+      "index": 22,
+      "tag": "vicious_growth",
+      "startTime": 80.3,
+      "duration": 5.95,
+      "anchorStart": 80.3,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 23,
+      "tag": "danger_soil",
+      "startTime": 86.25,
+      "duration": 3.21,
+      "anchorStart": 86.25,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 24,
+      "tag": "gloomy_hollow",
+      "startTime": 89.46,
+      "duration": 5.5,
+      "anchorStart": 89.46,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 25,
+      "tag": "vibrant_wilderness_contrast",
+      "startTime": 94.96,
+      "duration": 6.71,
+      "anchorStart": 94.96,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 26,
+      "tag": "silent_forest",
+      "startTime": 101.67,
+      "duration": 2.67,
+      "anchorStart": 101.67,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 27,
+      "tag": "futile_moment",
+      "startTime": 104.34,
+      "duration": 4.23,
+      "anchorStart": 104.34,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 28,
+      "tag": "tropical_wilderness_patrol",
+      "startTime": 108.57,
+      "duration": 2.29,
+      "anchorStart": 108.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 29,
+      "tag": "maintenance_blade",
+      "startTime": 110.86,
+      "duration": 6.4,
+      "anchorStart": 110.86,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 30,
+      "tag": "victory_jungle",
+      "startTime": 117.26,
+      "duration": 4.21,
+      "anchorStart": 117.26,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 31,
+      "tag": "wilderness_consumes",
+      "startTime": 121.47,
+      "duration": 2.24,
+      "anchorStart": 121.47,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 32,
+      "tag": "cosmic_debris",
+      "startTime": 123.71,
+      "duration": 2.23,
+      "anchorStart": 123.71,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 33,
+      "tag": "cosmic_wreckage_cluster",
+      "startTime": 125.94,
+      "duration": 4.23,
+      "anchorStart": 125.94,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 34,
+      "tag": "shifting_monolith",
+      "startTime": 130.17,
+      "duration": 8.37,
+      "anchorStart": 130.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 35,
+      "tag": "vessel_access",
+      "startTime": 138.54,
+      "duration": 2.86,
+      "anchorStart": 138.54,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 36,
+      "tag": "logic_failed_briefing",
+      "startTime": 141.4,
+      "duration": 4.53,
+      "anchorStart": 141.4,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 37,
+      "tag": "unformed_abyss_gap",
+      "startTime": 145.93,
+      "duration": 1.7,
+      "anchorStart": 145.93,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 38,
+      "tag": "metallic_fusion",
+      "startTime": 147.63,
+      "duration": 4.94,
+      "anchorStart": 147.63,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 39,
+      "tag": "spatial_jolt",
+      "startTime": 152.57,
+      "duration": 3.56,
+      "anchorStart": 152.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 40,
+      "tag": "inverted_gravity_path",
+      "startTime": 156.13,
+      "duration": 2.84,
+      "anchorStart": 156.13,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 41,
+      "tag": "orientation_conflict",
+      "startTime": 158.97,
+      "duration": 3.4899999999999953,
+      "anchorStart": 158.97,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 42,
+      "tag": "wall_split_path",
+      "startTime": 162.46,
+      "duration": 3.4500000000000046,
+      "anchorStart": 161.33,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 43,
+      "tag": "industrial_gas_leak",
+      "startTime": 165.91,
+      "duration": 4.1,
+      "anchorStart": 165.91,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 44,
+      "tag": "pungent_vapor",
+      "startTime": 170.01,
+      "duration": 4.73,
+      "anchorStart": 170.01,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 45,
+      "tag": "vessel_damage_clue",
+      "startTime": 174.74,
+      "duration": 4.58,
+      "anchorStart": 174.74,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 46,
+      "tag": "creature_flexibility",
+      "startTime": 179.32,
+      "duration": 6.08,
+      "anchorStart": 179.32,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 47,
+      "tag": "weightless_physics_defiance",
+      "startTime": 185.4,
+      "duration": 1.85,
+      "anchorStart": 185.4,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 48,
+      "tag": "rapid_duct_transit",
+      "startTime": 187.25,
+      "duration": 4.18,
+      "anchorStart": 187.25,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 49,
+      "tag": "listening_error",
+      "startTime": 191.43,
+      "duration": 2.58,
+      "anchorStart": 191.43,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 50,
+      "tag": "tight_blind_bend",
+      "startTime": 194.01,
+      "duration": 7.88,
+      "anchorStart": 194.01,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 51,
+      "tag": "perpendicular_structural_entry",
+      "startTime": 201.89,
+      "duration": 5.12,
+      "anchorStart": 201.89,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 52,
+      "tag": "heavy_suit",
+      "startTime": 207.01,
+      "duration": 4.68,
+      "anchorStart": 207.01,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 53,
+      "tag": "loss_statistic",
+      "startTime": 211.69,
+      "duration": 3.26,
+      "anchorStart": 211.69,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 54,
+      "tag": "hazard_endured",
+      "startTime": 214.95,
+      "duration": 3.53,
+      "anchorStart": 214.95,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 55,
+      "tag": "fatal_acceptance",
+      "startTime": 218.48,
+      "duration": 3.91,
+      "anchorStart": 218.48,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 56,
+      "tag": "trench_siege",
+      "startTime": 222.39,
+      "duration": 1.58,
+      "anchorStart": 222.39,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 57,
+      "tag": "duration_recollection",
+      "startTime": 223.97,
+      "duration": 1.4,
+      "anchorStart": 223.97,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 58,
+      "tag": "logic_comprehension_view",
+      "startTime": 225.37,
+      "duration": 3.11,
+      "anchorStart": 225.37,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 59,
+      "tag": "rugged_landscape",
+      "startTime": 228.48,
+      "duration": 3.44,
+      "anchorStart": 228.48,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 60,
+      "tag": "fortified_vault",
+      "startTime": 231.92,
+      "duration": 5.76,
+      "anchorStart": 231.92,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 61,
+      "tag": "grey_industrial_vista",
+      "startTime": 237.68,
+      "duration": 2.08,
+      "anchorStart": 237.68,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 62,
+      "tag": "subterranean_chambers",
+      "startTime": 239.76,
+      "duration": 1.42,
+      "anchorStart": 239.76,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 63,
+      "tag": "ruins_monument_view",
+      "startTime": 241.18,
+      "duration": 3.42,
+      "anchorStart": 241.18,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 64,
+      "tag": "sturdy_plating",
+      "startTime": 244.6,
+      "duration": 4.52,
+      "anchorStart": 244.6,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 65,
+      "tag": "combat_territory",
+      "startTime": 249.12,
+      "duration": 4.22,
+      "anchorStart": 249.12,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 66,
+      "tag": "mechanical_vigil",
+      "startTime": 253.34,
+      "duration": 2.99,
+      "anchorStart": 253.34,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 67,
+      "tag": "earthwork_corridor",
+      "startTime": 256.33,
+      "duration": 4.78,
+      "anchorStart": 256.33,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 68,
+      "tag": "hazard_fluid",
+      "startTime": 261.11,
+      "duration": 5.4,
+      "anchorStart": 261.11,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 69,
+      "tag": "liquid_hazard",
+      "startTime": 266.51,
+      "duration": 9.77,
+      "anchorStart": 266.51,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 70,
+      "tag": "poisonous_terrain_shift",
+      "startTime": 276.28,
+      "duration": 5.83,
+      "anchorStart": 276.28,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 71,
+      "tag": "fatigue_hazardous_travel",
+      "startTime": 282.11,
+      "duration": 7.23,
+      "anchorStart": 282.11,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 72,
+      "tag": "silent_stalking",
+      "startTime": 289.34,
+      "duration": 2.03,
+      "anchorStart": 289.34,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 73,
+      "tag": "ground_morph",
+      "startTime": 291.37,
+      "duration": 4.2,
+      "anchorStart": 291.37,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 74,
+      "tag": "unstable_land",
+      "startTime": 295.57,
+      "duration": 1.15,
+      "anchorStart": 295.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 75,
+      "tag": "unnatural_fungi_inspection",
+      "startTime": 296.72,
+      "duration": 5.68,
+      "anchorStart": 296.72,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 76,
+      "tag": "perilous_zone_blur",
+      "startTime": 302.4,
+      "duration": 3.03,
+      "anchorStart": 302.4,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 77,
+      "tag": "strategic_equivalence",
+      "startTime": 305.43,
+      "duration": 5.86,
+      "anchorStart": 305.43,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 78,
+      "tag": "casualty_landscape",
+      "startTime": 311.29,
+      "duration": 3.6,
+      "anchorStart": 311.29,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 79,
+      "tag": "clime_influence",
+      "startTime": 314.89,
+      "duration": 2.89,
+      "anchorStart": 314.89,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 80,
+      "tag": "strategy_predetermined",
+      "startTime": 317.78,
+      "duration": 3.06,
+      "anchorStart": 317.78,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 81,
+      "tag": "ancient_structure",
+      "startTime": 320.84,
+      "duration": 3.09,
+      "anchorStart": 320.84,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 82,
+      "tag": "ancient_mechanical_lure",
+      "startTime": 323.93,
+      "duration": 4.45,
+      "anchorStart": 323.93,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 83,
+      "tag": "celestial_behemoth",
+      "startTime": 328.38,
+      "duration": 2.21,
+      "anchorStart": 328.38,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 84,
+      "tag": "unseen_boundary",
+      "startTime": 330.59,
+      "duration": 2.2,
+      "anchorStart": 330.59,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 85,
+      "tag": "deep_void_tunnels",
+      "startTime": 332.79,
+      "duration": 6.21,
+      "anchorStart": 332.79,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 86,
+      "tag": "spatial_anomaly",
+      "startTime": 339,
+      "duration": 6.38,
+      "anchorStart": 339,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 87,
+      "tag": "glitch_check",
+      "startTime": 345.38,
+      "duration": 3.55,
+      "anchorStart": 345.38,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 88,
+      "tag": "rapid_skirmish_clash",
+      "startTime": 348.93,
+      "duration": 3.57,
+      "anchorStart": 348.93,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 89,
+      "tag": "recovery_formation",
+      "startTime": 352.5,
+      "duration": 3.25,
+      "anchorStart": 352.5,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 90,
+      "tag": "distinctive_property_highlight",
+      "startTime": 355.75,
+      "duration": 5.62,
+      "anchorStart": 355.75,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 91,
+      "tag": "safety_passage",
+      "startTime": 361.37,
+      "duration": 1.99,
+      "anchorStart": 361.37,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 92,
+      "tag": "combatants_defeat_scene",
+      "startTime": 363.36,
+      "duration": 1.41,
+      "anchorStart": 363.36,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 93,
+      "tag": "fixed_march",
+      "startTime": 364.77,
+      "duration": 4.52,
+      "anchorStart": 364.77,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 94,
+      "tag": "count_void",
+      "startTime": 369.29,
+      "duration": 4.25,
+      "anchorStart": 369.29,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 95,
+      "tag": "architectural_pivot",
+      "startTime": 373.54,
+      "duration": 8.66,
+      "anchorStart": 373.54,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 96,
+      "tag": "ancient_guardian_mechanism",
+      "startTime": 382.2,
+      "duration": 7.14,
+      "anchorStart": 382.2,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 97,
+      "tag": "reveal_secret_chamber",
+      "startTime": 389.34,
+      "duration": 3.84,
+      "anchorStart": 389.34,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 98,
+      "tag": "tactical_bypass",
+      "startTime": 393.18,
+      "duration": 6.11,
+      "anchorStart": 393.18,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 99,
+      "tag": "explosive_focus",
+      "startTime": 399.29,
+      "duration": 3.85,
+      "anchorStart": 399.29,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 100,
+      "tag": "vicious_wilds",
+      "startTime": 403.14,
+      "duration": 3.62,
+      "anchorStart": 403.14,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 101,
+      "tag": "heavy_effort",
+      "startTime": 406.76,
+      "duration": 4.8,
+      "anchorStart": 406.76,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 102,
+      "tag": "void_guardian_watch",
+      "startTime": 411.56,
+      "duration": 2.13,
+      "anchorStart": 411.56,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 103,
+      "tag": "void_boundary",
+      "startTime": 413.69,
+      "duration": 4.450000000000066,
+      "anchorStart": 413.69,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 104,
+      "tag": "logic_clash",
+      "startTime": 418.14000000000004,
+      "duration": 6.049999999999934,
+      "anchorStart": 417.15,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 105,
+      "tag": "void_vessel_steering",
+      "startTime": 424.19,
+      "duration": 3.29,
+      "anchorStart": 424.19,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 106,
+      "tag": "gadget_decay",
+      "startTime": 427.48,
+      "duration": 4.98,
+      "anchorStart": 427.48,
+      "anchorSource": "forced-alignment",
+      "openDefect": true,
+      "earTarget": 427.6
+    },
+    {
+      "index": 107,
+      "tag": "temporal_flux",
+      "startTime": 432.46,
+      "duration": 3.84,
+      "anchorStart": 432.46,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 108,
+      "tag": "unstable_path",
+      "startTime": 436.3,
+      "duration": 7.27,
+      "anchorStart": 436.3,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 109,
+      "tag": "shadow_loss",
+      "startTime": 443.57,
+      "duration": 1.39,
+      "anchorStart": 443.57,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 110,
+      "tag": "shirking_foundation",
+      "startTime": 444.96,
+      "duration": 7.68,
+      "anchorStart": 444.96,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 111,
+      "tag": "onslaught_epoch",
+      "startTime": 452.64,
+      "duration": 2.11,
+      "anchorStart": 452.64,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 112,
+      "tag": "malignant_swirl_weather",
+      "startTime": 454.75,
+      "duration": 7.62,
+      "anchorStart": 454.75,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 113,
+      "tag": "gear_halted",
+      "startTime": 462.37,
+      "duration": 3.32,
+      "anchorStart": 462.37,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 114,
+      "tag": "alien_topography",
+      "startTime": 465.69,
+      "duration": 6.57,
+      "anchorStart": 465.69,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 115,
+      "tag": "mystery_signal_lag",
+      "startTime": 472.26,
+      "duration": 5.27,
+      "anchorStart": 472.26,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 116,
+      "tag": "varied_battalions",
+      "startTime": 477.53,
+      "duration": 3.08,
+      "anchorStart": 477.53,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 117,
+      "tag": "resolute_stand",
+      "startTime": 480.61,
+      "duration": 1.72,
+      "anchorStart": 480.61,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 118,
+      "tag": "unprotected_exposure",
+      "startTime": 482.33,
+      "duration": 5.47,
+      "anchorStart": 482.33,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 119,
+      "tag": "military_origin",
+      "startTime": 487.8,
+      "duration": 4.57,
+      "anchorStart": 487.8,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 120,
+      "tag": "routine_protocol",
+      "startTime": 492.37,
+      "duration": 5.11,
+      "anchorStart": 492.37,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 121,
+      "tag": "extraordinary_divide",
+      "startTime": 497.48,
+      "duration": 3.47,
+      "anchorStart": 497.48,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 122,
+      "tag": "strike_encounter",
+      "startTime": 500.95,
+      "duration": 6.06,
+      "anchorStart": 500.95,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 123,
+      "tag": "fallen_regiment_site",
+      "startTime": 507.01,
+      "duration": 1.82,
+      "anchorStart": 507.01,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 124,
+      "tag": "policy_check",
+      "startTime": 508.83,
+      "duration": 3.77,
+      "anchorStart": 508.83,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 125,
+      "tag": "distorted_rift",
+      "startTime": 512.6,
+      "duration": 2.9,
+      "anchorStart": 512.6,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 126,
+      "tag": "purple_nebula",
+      "startTime": 515.5,
+      "duration": 5.08,
+      "anchorStart": 515.5,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 127,
+      "tag": "perilous_overpass_doom",
+      "startTime": 520.58,
+      "duration": 3.75,
+      "anchorStart": 520.58,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 128,
+      "tag": "mystic_corridor",
+      "startTime": 524.33,
+      "duration": 2.84,
+      "anchorStart": 524.33,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 129,
+      "tag": "void_entropy",
+      "startTime": 527.17,
+      "duration": 5.6,
+      "anchorStart": 527.17,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 130,
+      "tag": "craft_ward_vanishing",
+      "startTime": 532.77,
+      "duration": 2.35,
+      "anchorStart": 532.77,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 131,
+      "tag": "stable_shield",
+      "startTime": 535.12,
+      "duration": 8.35,
+      "anchorStart": 535.12,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 132,
+      "tag": "unstable_formation",
+      "startTime": 543.47,
+      "duration": 2.42,
+      "anchorStart": 543.47,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 133,
+      "tag": "pattern_chaos",
+      "startTime": 545.89,
+      "duration": 2.76,
+      "anchorStart": 545.89,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 134,
+      "tag": "strange_fate_occurs",
+      "startTime": 548.65,
+      "duration": 4.78,
+      "anchorStart": 548.65,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 135,
+      "tag": "chaotic_rot_witness",
+      "startTime": 553.43,
+      "duration": 6.91,
+      "anchorStart": 553.43,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 136,
+      "tag": "harsh_territory_evaluation",
+      "startTime": 560.34,
+      "duration": 3.16,
+      "anchorStart": 560.34,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 137,
+      "tag": "unbound_chaos",
+      "startTime": 563.5,
+      "duration": 2.93,
+      "anchorStart": 563.5,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 138,
+      "tag": "erratic_tide",
+      "startTime": 566.43,
+      "duration": 6.41,
+      "anchorStart": 566.43,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 139,
+      "tag": "chronal_drift",
+      "startTime": 572.84,
+      "duration": 6.87,
+      "anchorStart": 572.84,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 140,
+      "tag": "view_trapped_warrior",
+      "startTime": 579.71,
+      "duration": 6.57,
+      "anchorStart": 579.71,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 141,
+      "tag": "unstable_spirit_journey",
+      "startTime": 586.28,
+      "duration": 7.6,
+      "anchorStart": 586.28,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 142,
+      "tag": "broken_link",
+      "startTime": 593.88,
+      "duration": 3.95,
+      "anchorStart": 593.88,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 143,
+      "tag": "battle_network",
+      "startTime": 597.83,
+      "duration": 5.86,
+      "anchorStart": 597.83,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 144,
+      "tag": "protection_failure",
+      "startTime": 603.69,
+      "duration": 5.55,
+      "anchorStart": 603.69,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 145,
+      "tag": "entry_clash",
+      "startTime": 609.24,
+      "duration": 3.27,
+      "anchorStart": 609.24,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 146,
+      "tag": "unstable_energy_consequence",
+      "startTime": 612.51,
+      "duration": 4.42,
+      "anchorStart": 612.51,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 147,
+      "tag": "warp_lightning_entry",
+      "startTime": 616.93,
+      "duration": 2.01,
+      "anchorStart": 616.93,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 148,
+      "tag": "engine_flash_array",
+      "startTime": 618.94,
+      "duration": 5.74,
+      "anchorStart": 618.94,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 149,
+      "tag": "team_disperse",
+      "startTime": 624.68,
+      "duration": 4.57,
+      "anchorStart": 624.68,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 150,
+      "tag": "void_fission",
+      "startTime": 629.25,
+      "duration": 5.21,
+      "anchorStart": 629.25,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 151,
+      "tag": "hidden_zone_vacuum",
+      "startTime": 634.46,
+      "duration": 3.82,
+      "anchorStart": 634.46,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 152,
+      "tag": "hallway_warp",
+      "startTime": 638.28,
+      "duration": 3.68,
+      "anchorStart": 638.28,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 153,
+      "tag": "corrupted_frame",
+      "startTime": 641.96,
+      "duration": 4.76,
+      "anchorStart": 641.96,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 154,
+      "tag": "maelstrom_dawn",
+      "startTime": 646.72,
+      "duration": 5.4,
+      "anchorStart": 646.72,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 155,
+      "tag": "lost_legion_void",
+      "startTime": 652.12,
+      "duration": 5.64,
+      "anchorStart": 652.12,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 156,
+      "tag": "perilous_void_threshold",
+      "startTime": 657.76,
+      "duration": 5.22,
+      "anchorStart": 657.76,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 157,
+      "tag": "nature_hazard",
+      "startTime": 662.98,
+      "duration": 4.27,
+      "anchorStart": 662.98,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 158,
+      "tag": "strategic_void",
+      "startTime": 667.25,
+      "duration": 4.47,
+      "anchorStart": 667.25,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 159,
+      "tag": "boundary_failed",
+      "startTime": 671.72,
+      "duration": 2.26,
+      "anchorStart": 671.72,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 160,
+      "tag": "failing_defense_line",
+      "startTime": 673.98,
+      "duration": 1.62,
+      "anchorStart": 673.98,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 161,
+      "tag": "halted_progress",
+      "startTime": 675.6,
+      "duration": 2.29,
+      "anchorStart": 675.6,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 162,
+      "tag": "mental_persistence",
+      "startTime": 677.89,
+      "duration": 4.24,
+      "anchorStart": 677.89,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 163,
+      "tag": "uncertain_outcome",
+      "startTime": 682.13,
+      "duration": 1.4,
+      "anchorStart": 682.13,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 164,
+      "tag": "deadly_climate",
+      "startTime": 683.53,
+      "duration": 2.19,
+      "anchorStart": 683.53,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 165,
+      "tag": "strategic_collapse_disarray",
+      "startTime": 685.72,
+      "duration": 5.66,
+      "anchorStart": 685.72,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 166,
+      "tag": "strategic_metric_view",
+      "startTime": 691.38,
+      "duration": 4.66,
+      "anchorStart": 691.38,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 167,
+      "tag": "troop_deployment",
+      "startTime": 696.04,
+      "duration": 1.5,
+      "anchorStart": 696.04,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 168,
+      "tag": "logic_surplus",
+      "startTime": 697.54,
+      "duration": 4.7,
+      "anchorStart": 697.54,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 169,
+      "tag": "routine_occurrence",
+      "startTime": 702.24,
+      "duration": 1.25,
+      "anchorStart": 702.24,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 170,
+      "tag": "unyielding_terrain",
+      "startTime": 703.49,
+      "duration": 1.76,
+      "anchorStart": 703.49,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 171,
+      "tag": "perpetual_clash",
+      "startTime": 705.25,
+      "duration": 1.3,
+      "anchorStart": 705.25,
+      "anchorSource": "forced-alignment"
+    },
+    {
+      "index": 172,
+      "tag": "upcoming_assignment",
+      "startTime": 706.55,
+      "duration": 2.457,
+      "anchorStart": 706.55,
+      "anchorSource": "forced-alignment"
+    }
+  ]
+}
