@@ -159,6 +159,29 @@ export const EAR_SITTINGS = {
    *  guard, one true negative and one false negative; relaxing it is therefore
    *  not free, and this sitting does not authorise relaxing it. */
   'ear-verify-ag': 12,
+  /** WS1 Session AH — THE S1 COLLATERAL ADJUDICATION, and the project's first
+   *  NEGATIVE ground truth.
+   *
+   *  The operator worked through `stage1-session-ag-ear-list.md` — every v6
+   *  boundary S1 moved that carried no ear evidence, plus the ear-verified
+   *  control S1 moved off its verified value — and returned the same verdict on
+   *  all eighteen: THE CURRENT PRODUCTION CUT IS RIGHT AND S1'S PROPOSED VALUE
+   *  IS WRONG. Zero improvements. S1 was deleted from `faChunkPlan.ts` in this
+   *  session as a permanent negative result.
+   *
+   *  WHY THIS SITTING IS WORTH MORE THAN EIGHTEEN CONTROLS. Every prior sitting
+   *  scored values the pipeline had ALREADY COMMITTED, so the ledger has only
+   *  ever recorded what right sounds like. This one scored eighteen values a
+   *  candidate change PROPOSED, and rejected all of them — so for the first
+   *  time the project has a labelled WRONG-MOVE set (`S1_KNOWN_BAD_MOVES`
+   *  below) to validate a detector against, not just a correct-value set.
+   *  A detector that cannot separate these eighteen from the ear-verified
+   *  controls is not measuring anything.
+   *
+   *  The eighteen rows below are scored at the PRODUCTION (`before`) value,
+   *  because that is the instant the operator accepted. Each is therefore also
+   *  a new positive control. */
+  'ear-verify-ah': 13,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -693,6 +716,110 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
       '683.04-683.84 and segment 230\'s at 681.47-682.43, independently corroborating that the cut belongs ' +
       'after 682.43 and not at 681.63. Register row `classA-231-slowing-pace` STAYS OPEN: this sitting ' +
       'confirms the target, it does not move production onto it.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION AH — S1'S EIGHTEEN v6 COLLATERAL MOVES, ALL REJECTED.
+  //
+  // Scored at the PRODUCTION value, which the operator accepted in every case.
+  // The rejected S1 value for each is in `S1_KNOWN_BAD_MOVES` at the bottom of
+  // this file — kept out of `scoredValue` deliberately, because this ledger's
+  // contract is "the value the owner actually LISTENED TO and what they said
+  // about it", and a WRONG row here would read as "production commits this and
+  // it is wrong", which is the opposite of what was heard.
+  // -------------------------------------------------------------------------
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '318_scout_on_ridge', scoredValue: 969.300, verdict: 'CORRECT',
+    note: 'S1 proposed 969.760 (+0.460); the operator heard both and kept 969.300. A REGRESSION for S1 ' +
+      'and a new positive control. ALSO an `ear-12-h` control at this exact value. S1 moved it off ' +
+      'a verified value; the operator re-confirmed the verified value. Doubly attested.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '023_sleeping_mother_side', scoredValue: 65.770, verdict: 'CORRECT',
+    note: 'S1 proposed 66.590 (+0.820); the operator heard both and kept 65.770. A REGRESSION for S1 ' +
+      'and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '041_elder_lesson', scoredValue: 122.640, verdict: 'CORRECT',
+    note: 'S1 proposed 123.310 (+0.670); the operator heard both and kept 122.640. A REGRESSION for S1 ' +
+      'and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '057_root_trip', scoredValue: 171.750, verdict: 'CORRECT',
+    note: 'S1 proposed 172.470 (+0.720); the operator heard both and kept 171.750. A REGRESSION for S1 ' +
+      'and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '076_feeling_change', scoredValue: 228.200, verdict: 'CORRECT',
+    note: 'S1 proposed 228.650 (+0.450); the operator heard both and kept 228.200. A REGRESSION for S1 ' +
+      'and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '213_pensive_stare', scoredValue: 626.770, verdict: 'CORRECT',
+    note: 'S1 proposed 627.360 (+0.590); the operator heard both and kept 626.770. A REGRESSION for S1 ' +
+      'and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '216_chest_revelation', scoredValue: 638.380, verdict: 'CORRECT',
+    note: 'S1 proposed 639.250 (+0.870); the operator heard both and kept 638.380. A REGRESSION for S1 ' +
+      'and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '273_cold_grass', scoredValue: 820.310, verdict: 'CORRECT',
+    note: 'S1 proposed 820.600 (+0.290); the operator heard both and kept 820.310. A REGRESSION for S1 ' +
+      'and a new positive control. The SMALLEST S1 move on the sheet at +0.290 — the row most at ' +
+      'risk of being below audibility either way, and still called wrong.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '293_sitting_brooding', scoredValue: 881.000, verdict: 'CORRECT',
+    note: 'S1 proposed 881.530 (+0.530); the operator heard both and kept 881.000. A REGRESSION for S1 ' +
+      'and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '305_carrying_grief', scoredValue: 919.180, verdict: 'CORRECT',
+    note: 'S1 proposed 919.730 (+0.550); the operator heard both and kept 919.180. A REGRESSION for S1 ' +
+      'and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '325_contrasting_student', scoredValue: 995.150, verdict: 'CORRECT',
+    note: 'S1 proposed 996.480 (+1.330); the operator heard both and kept 995.150. A REGRESSION for S1 ' +
+      'and a new positive control. The LARGEST v6 S1 move at +1.330.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '364_the_full_cost', scoredValue: 1130.760, verdict: 'CORRECT',
+    note: 'S1 proposed 1131.410 (+0.650); the operator heard both and kept 1130.760. A REGRESSION for ' +
+      'S1 and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '367_dropped_torch', scoredValue: 1137.430, verdict: 'CORRECT',
+    note: 'S1 proposed 1137.930 (+0.500); the operator heard both and kept 1137.430. A REGRESSION for ' +
+      'S1 and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '380_scarred_hands_experience', scoredValue: 1174.730, verdict: 'CORRECT',
+    note: 'S1 proposed 1175.530 (+0.800); the operator heard both and kept 1174.730. A REGRESSION for ' +
+      'S1 and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '382_honesty_transfer', scoredValue: 1182.810, verdict: 'CORRECT',
+    note: 'S1 proposed 1183.190 (+0.380); the operator heard both and kept 1182.810. A REGRESSION for ' +
+      'S1 and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '402_cyclical_darkness', scoredValue: 1271.460, verdict: 'CORRECT',
+    note: 'S1 proposed 1271.790 (+0.330); the operator heard both and kept 1271.460. A REGRESSION for ' +
+      'S1 and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '421_hidden_observer_perspective', scoredValue: 1335.570, verdict: 'CORRECT',
+    note: 'S1 proposed 1336.030 (+0.460); the operator heard both and kept 1335.570. A REGRESSION for ' +
+      'S1 and a new positive control.' },
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '443_scout_cliff_edge', scoredValue: 1408.760, verdict: 'CORRECT',
+    note: 'S1 proposed 1409.210 (+0.450); the operator heard both and kept 1408.760. A REGRESSION for ' +
+      'S1 and a new positive control.' },
+
+  // -------------------------------------------------------------------------
+  // WS1 SESSION AH — the operator's four FIXED-row verdicts.
+  //
+  // These are ground-truth statements, not closures. Whether PRODUCTION commits
+  // each value is a separate, measured question — see
+  // `.work-phase4/session-ah/step1-rowstatus.md`, which reports three of the
+  // four as RULE-DEPENDENT (a patch rule moves the boundary onto the value; the
+  // row reopens if that rule is deleted) and one (`wall_split_path`) as NOT ON
+  // THE EAR VALUE AT ALL.
+  // -------------------------------------------------------------------------
+  { sitting: 'ear-verify-ah', corpus: 'v6', tag: '152_frozen_brush_mice', scoredValue: 451.03, verdict: 'CORRECT',
+    note: 'RE-CONFIRMS `ear-12` (order 1) at the same value, and settles the row against S1: S1\'s arm ' +
+      'left this boundary at 451.030 too, so nothing about the rollback moves it. PROVENANCE ' +
+      'CORRECTION, measured this session and contradicting Session AH\'s own brief: the superseded ' +
+      'value 450.99 is NOT S1-sourced. `git log -S"450.99"` puts its only introduction in `e7e4f9a` ' +
+      '(WS1 Session P, 2026-08-19) as a prose-table transcription slip, and Session AD (`d189e87`) ' +
+      'already marked it SUPERSEDED. It has never been an EAR_PASS_LEDGER row. 451.03 remains the ' +
+      'sole value this ledger has ever authorised for this row. STRUCTURALLY, production reaches it ' +
+      'only because R.14 fires (pre-rule 449.200); it is RULE-DEPENDENT, not structural.' },
+  { sitting: 'ear-verify-ah', corpus: '173', tag: 'iron_bounce', scoredValue: 76.59, verdict: 'CORRECT',
+    note: 'RE-CONFIRMS `ear-173-x`. Production commits 76.580 via R.15 — residual -0.010s, inside the ' +
+      '50ms tolerance, outside this ledger\'s 5ms pin tolerance. RULE-DEPENDENT (R.15): pre-rule is ' +
+      '75.660, which `ear-173-x` scored EARLY. Deleting R.15 reopens this row.' },
+  { sitting: 'ear-verify-ah', corpus: '173', tag: 'wall_split_path', scoredValue: 162.15, verdict: 'CORRECT',
+    note: 'RE-CONFIRMS `ear-173-x`. THE ONE ROW WHERE THE OPERATOR\'S "fixed" AND THE MEASUREMENT ' +
+      'DISAGREE, recorded rather than resolved: production commits 162.460 via R.15, which is +0.310s ' +
+      'from this value — far outside any tolerance in this project. The register\'s own standing note ' +
+      'says 162.15 is unreachable by ANY script-anchored placement, because it sits strictly inside ' +
+      'the outgoing segment\'s own last claimed word "competing" [161.96, 162.42] at confidence 1.000. ' +
+      'So either the operator accepted the committed 162.460 and the brief names the older target, or ' +
+      '162.15 is the target and the row is improved-not-closed. Under R-AM the register row CANNOT ' +
+      'close on this ledger row, because the ledger does not authorise the committed value. Needs one ' +
+      'line from the operator: was the instant you accepted 162.46 or 162.15?' },
+  { sitting: 'ear-verify-ah', corpus: '173', tag: 'logic_clash', scoredValue: 418.14, verdict: 'CORRECT',
+    note: 'RE-CONFIRMS `ear-173-x`. Production commits 418.140 exactly, via R.15. RULE-DEPENDENT ' +
+      '(R.15): pre-rule is 417.150, which `ear-173-x` scored EARLY. Deleting R.15 reopens this row.' },
 ];
 
 /** Default match tolerance — the Zero-Defect Register's own. */
@@ -742,4 +869,89 @@ export function describeEarHistory(corpus: Corpus, tag: string): string {
   const h = earHistory(corpus, tag);
   if (h.length === 0) return 'no ear pass has EVER scored this boundary';
   return h.map(r => `${r.sitting}: ${r.scoredValue ?? '(absent)'} -> ${r.verdict}`).join(' | ');
+}
+
+// ===========================================================================
+// WS1 SESSION AH -- THE KNOWN-BAD MOVE SET.
+//
+// The project's first labelled NEGATIVE ground truth: boundaries a candidate
+// change PROPOSED to move, which the operator's ears rejected. Everything else
+// in this file records what right sounds like; this records what wrong looks
+// like, which is the half a detector actually has to be scored against.
+//
+// PROVENANCE, per row, is not decoration -- the two kinds are not equally
+// strong:
+//   * 'ah-sitting' -- the operator listened to this specific A/B pair in
+//     Session AH and picked `correctValue`. Eighteen rows, all v6.
+//   * 'ledger-inherited' -- no Session AH sitting; `correctValue` is already
+//     authorised for this boundary by an EARLIER sitting, so S1 moving off it
+//     is a known-bad move by the standing verdict alone. One row, spanish.
+//
+// THE 19/18 RECONCILIATION, which the brief required before this set could be
+// used as a validation set. `stage1-session-ag-ear-list.md` was generated with
+// NINETEEN rows; the operator's audit reports EIGHTEEN. The difference is not a
+// lost row: the sheet is 18 v6 rows (1 moved ear-verified control + 17
+// unaudited) plus 1 spanish row, and the operator's report is explicitly scoped
+// to v6 ("every proposed S1 move on v6"). The unaccounted row is therefore
+// `spanish/023_scylla_six_sailors`, and it needs no fresh sitting: 65.120 is an
+// `ear-12` CORRECT value AND sits in `phase4-fa-replay.test.ts`'s
+// `CLOSED_BY_POSITIVE_ASSERTION` as item-9, so S1's +1.610s move off it is
+// known-bad on evidence that predates S1 by eleven sittings. It is included
+// below, labelled, and callers that want only the operator-attested set filter
+// on `provenance === 'ah-sitting'`.
+// ===========================================================================
+
+export interface KnownBadMove {
+  corpus: Corpus;
+  tag: string;
+  /** What production commits, and what the ears accepted. */
+  correctValue: number;
+  /** What S1 proposed instead. Rejected. */
+  proposedValue: number;
+  /** `proposedValue - correctValue`. Every S1 move was LATE (positive). */
+  deltaSec: number;
+  provenance: 'ah-sitting' | 'ledger-inherited';
+}
+
+/** S1's full collateral set, all rejected. See the header above for why this
+ *  is 19 rows against an 18-row operator report. */
+export const S1_KNOWN_BAD_MOVES: readonly KnownBadMove[] = [
+  { corpus: 'v6', tag: '318_scout_on_ridge', correctValue: 969.300, proposedValue: 969.760, deltaSec: 0.460, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '023_sleeping_mother_side', correctValue: 65.770, proposedValue: 66.590, deltaSec: 0.820, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '041_elder_lesson', correctValue: 122.640, proposedValue: 123.310, deltaSec: 0.670, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '057_root_trip', correctValue: 171.750, proposedValue: 172.470, deltaSec: 0.720, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '076_feeling_change', correctValue: 228.200, proposedValue: 228.650, deltaSec: 0.450, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '213_pensive_stare', correctValue: 626.770, proposedValue: 627.360, deltaSec: 0.590, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '216_chest_revelation', correctValue: 638.380, proposedValue: 639.250, deltaSec: 0.870, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '273_cold_grass', correctValue: 820.310, proposedValue: 820.600, deltaSec: 0.290, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '293_sitting_brooding', correctValue: 881.000, proposedValue: 881.530, deltaSec: 0.530, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '305_carrying_grief', correctValue: 919.180, proposedValue: 919.730, deltaSec: 0.550, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '325_contrasting_student', correctValue: 995.150, proposedValue: 996.480, deltaSec: 1.330, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '364_the_full_cost', correctValue: 1130.760, proposedValue: 1131.410, deltaSec: 0.650, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '367_dropped_torch', correctValue: 1137.430, proposedValue: 1137.930, deltaSec: 0.500, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '380_scarred_hands_experience', correctValue: 1174.730, proposedValue: 1175.530, deltaSec: 0.800, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '382_honesty_transfer', correctValue: 1182.810, proposedValue: 1183.190, deltaSec: 0.380, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '402_cyclical_darkness', correctValue: 1271.460, proposedValue: 1271.790, deltaSec: 0.330, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '421_hidden_observer_perspective', correctValue: 1335.570, proposedValue: 1336.030, deltaSec: 0.460, provenance: 'ah-sitting' },
+  { corpus: 'v6', tag: '443_scout_cliff_edge', correctValue: 1408.760, proposedValue: 1409.210, deltaSec: 0.450, provenance: 'ah-sitting' },
+  { corpus: 'spanish', tag: '023_scylla_six_sailors', correctValue: 65.120, proposedValue: 66.730, deltaSec: 1.610, provenance: 'ledger-inherited' },
+];
+
+/** Every boundary this ledger currently authorises as CORRECT -- the POSITIVE
+ *  half of the labelled set, i.e. the rows a detector must NOT flag. Computed
+ *  from the ledger rather than hardcoded, so it cannot drift from it: one entry
+ *  per (corpus, tag) whose LATEST sitting scored `'CORRECT'`. */
+export function earVerifiedControls(): Array<{ corpus: Corpus; tag: string; value: number; sitting: EarSitting }> {
+  const seen = new Set<string>();
+  const out: Array<{ corpus: Corpus; tag: string; value: number; sitting: EarSitting }> = [];
+  for (const r of EAR_PASS_LEDGER) {
+    const key = `${r.corpus} ${r.tag}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const latest = earHistory(r.corpus, r.tag)[0]!;
+    if (latest.verdict === 'CORRECT' && latest.scoredValue !== null) {
+      out.push({ corpus: latest.corpus, tag: latest.tag, value: latest.scoredValue, sitting: latest.sitting });
+    }
+  }
+  return out;
 }
