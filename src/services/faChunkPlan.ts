@@ -945,3 +945,268 @@ function applyFaTextNormalization(
     text: normalizeForForcedAlignment(chunk.text, languageCode, vocabChars).text,
   }));
 }
+
+// ---------------------------------------------------------------------------
+// S2 — SENTENCE-BOUNDED CHUNK PLAN (WS1 Session AI, MEASUREMENT ARM ONLY).
+//
+// S1 (WS1 Session AG/AH) tried to CLEAN UP the phantom-tail defect after the
+// fact, keyed on a ~7% precision detector, and was rejected 18/18 on ear
+// audit (ruling R-AS: `fa-chunk-phantom-root-cause.md` §8). S2 tries to
+// PREVENT it instead, at the layer where it is created: today's planner
+// (`computeFaChunkPlanWithAttribution` above) cuts the raw token stream at
+// `qi`-derived indices with no awareness of sentence structure, which is what
+// lets a chunk window end mid-sentence and hand a neighbour's silent tail
+// someone else's words (`fa-chunk-phantom-root-cause.md` §2).
+//
+// PRODUCTION DEFAULT UNCHANGED. This is a SEPARATE, explicitly-named function
+// — `computeFaChunkPlanS2` — not a flag on `computeFaChunkPlan`. No caller in
+// `App.tsx` or anywhere in the production path invokes it; it exists for the
+// Session AI measurement harness (`scripts/ws1-session-ai-step3-*`,
+// `scripts/ws1-session-ai-step4-*`) the same way `computeFaChunkPlanCoalesced`
+// exists for the Step-5 window-size-ladder harness. THE SHIP DECISION — ever
+// wiring this into `App.tsx`'s live FA path — is a separate, operator-signed
+// step this module does not take. Do not add a boolean default-true OR a
+// dead default-false flag to gate this: that indirection was exactly S1's
+// failure mode when it was rolled back (`faChunkPlan.ts`'s own S1 removal
+// note, above, on `attributeByIndex`).
+//
+// FIVE INVARIANTS, in this precedence order — a later one may only act where
+// an earlier one is silent:
+//   1. A chunk's text is a WHOLE NUMBER OF SCRIPT SEGMENTS. Never a fragment.
+//   2. A chunk edge NEVER falls inside a sentence, including one that spans a
+//      segment seam (173's segments 5-6 — "They're the worst" / "because the
+//      environment..." — one sentence, two segments — is the reason rule 1
+//      alone is insufficient; a segment-only cut could still separate two
+//      halves of the same sentence into different chunks).
+//   3. Whisper timestamps are EXCLUDED ENTIRELY from deciding which text
+//      belongs to which chunk (rules 1-2 are decided from `segment.text` and
+//      punctuation alone). They may still inform WHERE in time the audio is
+//      sliced (rule 4) — `CLAUDE.md`'s "timestamps may measure distance; they
+//      must never decide identity" applied at the layer S1 broke it at.
+//   4. The audio cut is taken at the detected silence nearest the chosen
+//      sentence seam's ESTIMATED time (`segment.startTime`, whatever timing
+//      stage supplied it — anchor-based estimate in every call site today) —
+//      informing WHERE, per rule 3, never WHICH TEXT.
+//   5. Target 10-30s (`S2_TARGET_MIN_SEC`/`S2_TARGET_MAX_SEC`, GEOMETRIC:
+//      operator-directed parameters from the WS1 Session AI brief, NOT
+//      derived from or fitted to any corpus row — see that session's Step 1
+//      dry run for the full distribution this band produces). A seam with no
+//      nearby silence never blocks rule 2 — `nearestSilenceCut` always finds
+//      SOME silence in every corpus measured (Session AI Step 1: zero corpus
+//      has an empty silence array) — so growing toward the cap only matters
+//      for an unbreakable group that is ALREADY oversize on its own, which
+//      rule 2 forbids splitting regardless of the cap. Every seam where
+//      invariant 2 cannot be satisfied cleanly (an oversize unbreakable group,
+//      or a chosen cut sitting outside `S2_SILENCE_SEARCH_WINDOW_SEC` of the
+//      ideal seam) emits a first-class `FaChunkPlanS2Violation` — never a
+//      silent mid-sentence split.
+//
+// EXPLICITLY OUT OF SCOPE THIS SESSION, named rather than silently absorbed:
+// R.5 unscripted-run excision (`exciseUnscriptedRuns` above) is NOT applied
+// to S2's output. `computeUnscriptedRuns`'s own bookkeeping is qi-indexed —
+// built from the SAME raw-token/anchor machinery invariant 3 asks this planner
+// to stay clear of — and folding it in is real, separable follow-on work, not
+// attempted here. v6 carries ~10 genuinely unscripted recitations
+// (`fa-chunk-phantom-root-cause.md`'s own R.5 section); a wide S2 chunk that
+// wholly contains one is therefore NOT excised and the recitation's audio
+// stays inside whatever chunk contains it, unlike the production path. This
+// is a real, measured gap (Session AI Step 4 checks the recitation-adjacent
+// controls specifically), not a claim that S2 is R.5-safe.
+// ---------------------------------------------------------------------------
+
+/** GEOMETRIC — operator-directed (WS1 Session AI brief), not fitted to any
+ *  corpus row. See that session's Step 1 dry run for the full distribution. */
+export const S2_TARGET_MIN_SEC = 10;
+/** GEOMETRIC — also the hard cap invariant 5 grows an unbreakable group
+ *  toward, never past. */
+export const S2_TARGET_MAX_SEC = 30;
+/** GEOMETRIC — the silence-search window a violation is classified against.
+ *  Never REJECTS a candidate cut (see invariant 5's own note: some silence
+ *  always exists in every corpus measured) — only reports one as suspect. */
+export const S2_SILENCE_SEARCH_WINDOW_SEC = 5.0;
+
+/** Sentence terminator: `.`/`!`/`?`/`…`, optionally followed by a run of
+ *  closing quotes/brackets. Punctuation-only, matching the WS1 Session AH/AI
+ *  dry-run harnesses exactly — the script is authored prose with real
+ *  punctuation, and any ML-based sentence guess would reintroduce exactly the
+ *  kind of inference S2 exists to remove (invariant 3). */
+const S2_SENTENCE_TERMINATOR = /[.!?…]["'”’)\]]*\s*$/;
+const s2EndsSentence = (text: string | undefined): boolean => S2_SENTENCE_TERMINATOR.test((text ?? '').trim());
+
+interface S2Group {
+  /** Indices into `segments`. Always contiguous, length >= 1. */
+  segIdx: number[];
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+}
+
+/** Invariants 1+2: the atoms a chunk edge may fall between. A seam is legal
+ *  only where the preceding segment ends a sentence (or is the corpus's last
+ *  segment). Whisper tokens never enter this decision — only `segment.text`'s
+ *  own punctuation and `segment.startTime`/`.duration` (the timing estimate,
+ *  used only for the group's own span, never to decide grouping). */
+function s2UnbreakableGroups(segments: readonly VideoSegment[]): S2Group[] {
+  const groups: S2Group[] = [];
+  let cur: number[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    cur.push(i);
+    if (s2EndsSentence(segments[i]!.text) || i === segments.length - 1) {
+      const first = segments[cur[0]!]!;
+      const last = segments[cur[cur.length - 1]!]!;
+      groups.push({
+        segIdx: cur,
+        startSec: first.startTime,
+        endSec: last.startTime + last.duration,
+        durationSec: (last.startTime + last.duration) - first.startTime,
+      });
+      cur = [];
+    }
+  }
+  return groups;
+}
+
+/** Greedy left-to-right packing over GROUPS, never segments — a group is
+ *  never split (invariant 2). Targets `[targetMinSec, targetMaxSec]`; an
+ *  already-oversize group is emitted alone (invariant 5's growth clause
+ *  cannot rescue a group that exceeds the cap by itself). */
+function s2PackGroups(groups: readonly S2Group[], targetMinSec: number, targetMaxSec: number): S2Group[][] {
+  const chunks: S2Group[][] = [];
+  let cur: S2Group[] = [];
+  let acc = 0;
+  for (const g of groups) {
+    if (cur.length > 0 && acc + g.durationSec > targetMaxSec && acc >= targetMinSec) {
+      chunks.push(cur); cur = []; acc = 0;
+    }
+    cur.push(g); acc += g.durationSec;
+  }
+  if (cur.length > 0) chunks.push(cur);
+  return chunks;
+}
+
+/** Invariant 4: the audio cut for an internal seam is the detected silence's
+ *  own `endSec` nearest the ideal (estimate-based) seam time — the same
+ *  landmark `faAnchors.ts` already uses for every anchor. Never returns
+ *  `undefined` in any corpus measured (Session AI Step 1: every silence array
+ *  is non-empty), but the caller still checks `silences.length` defensively
+ *  rather than assume that holds forever. */
+function s2NearestSilenceCut(idealSec: number, silences: readonly SilenceInterval[]): { cutSec: number; offsetSec: number } | undefined {
+  let best: { cutSec: number; offsetSec: number } | undefined;
+  for (const s of silences) {
+    const off = s.endSec - idealSec;
+    if (best === undefined || Math.abs(off) < Math.abs(best.offsetSec)) best = { cutSec: s.endSec, offsetSec: off };
+  }
+  return best;
+}
+
+/** A seam where invariant 2 could not be satisfied cleanly at the target
+ *  band, carrying enough to explain WHY and WHAT the planner did instead —
+ *  invariant 5's "first-class violation event", never a silent mid-sentence
+ *  split. */
+export interface FaChunkPlanS2Violation {
+  /** The script-segment index this seam sits immediately BEFORE (seam is
+   *  between `segIdx - 1` and `segIdx`), or the first segment of an oversize
+   *  group for the `'oversize-unbreakable-group'` cause. */
+  segIdx: number;
+  cause: 'oversize-unbreakable-group' | 'no-usable-silence-nearby';
+  /** The ideal (estimate-based) seam/group-start time in seconds. */
+  idealSec: number;
+  /** What the planner actually did about it, in words. */
+  fallback: string;
+}
+
+export interface FaChunkPlanS2Result {
+  chunks: FaChunk[];
+  violations: FaChunkPlanS2Violation[];
+}
+
+/**
+ * S2's own entry point — see the module section header above for the five
+ * invariants this implements and their precedence. `targetMinSec`/
+ * `targetMaxSec` default to the Session AI GEOMETRIC constants but are
+ * explicit parameters (not baked in) so the measurement harness can vary the
+ * band without editing this function, the same discipline
+ * `computeFaChunkPlanCoalesced`'s `coalesceTargetSec` already uses.
+ *
+ * NOT called by any production path (see module header). `languageCode`/
+ * `vocabChars`, when both supplied, apply the SAME post-assembly
+ * normalization pass `computeFaChunkPlanWithAttribution` does — see that
+ * function's own doc comment for why this happens after chunk text is fixed,
+ * never before.
+ */
+export function computeFaChunkPlanS2(
+  segments: readonly VideoSegment[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  targetMinSec: number = S2_TARGET_MIN_SEC,
+  targetMaxSec: number = S2_TARGET_MAX_SEC,
+  languageCode?: FaLanguageCode,
+  vocabChars?: ReadonlySet<string>,
+): FaChunkPlanS2Result {
+  if (segments.length === 0) return { chunks: [], violations: [] };
+
+  const groups = s2UnbreakableGroups(segments);
+  const packed = s2PackGroups(groups, targetMinSec, targetMaxSec);
+  const violations: FaChunkPlanS2Violation[] = [];
+
+  for (const g of groups) {
+    if (g.durationSec > targetMaxSec) {
+      violations.push({
+        segIdx: g.segIdx[0]!,
+        cause: 'oversize-unbreakable-group',
+        idealSec: g.startSec,
+        fallback: `emitted whole as one ${g.durationSec.toFixed(2)}s chunk (segments `
+          + `${g.segIdx[0]}-${g.segIdx[g.segIdx.length - 1]}); rule 2 forbids splitting a sentence group `
+          + `regardless of the ${targetMaxSec}s cap`,
+      });
+    }
+  }
+
+  const chunks: FaChunk[] = [];
+  for (let i = 0; i < packed.length; i++) {
+    const gs = packed[i]!;
+    const last = gs[gs.length - 1]!;
+    const startSec = i === 0 ? 0 : chunks[chunks.length - 1]!.endSec;
+
+    let endSec: number;
+    if (i === packed.length - 1) {
+      endSec = audioDuration;
+    } else {
+      const idealEnd = last.endSec;
+      const cut = s2NearestSilenceCut(idealEnd, silences);
+      if (cut === undefined) {
+        violations.push({
+          segIdx: last.segIdx[last.segIdx.length - 1]! + 1,
+          cause: 'no-usable-silence-nearby',
+          idealSec: idealEnd,
+          fallback: `no detected silence exists in this corpus's silence array at all; used the `
+            + `estimated seam time ${idealEnd.toFixed(3)} directly`,
+        });
+        endSec = idealEnd;
+      } else {
+        endSec = cut.cutSec;
+        if (Math.abs(cut.offsetSec) > S2_SILENCE_SEARCH_WINDOW_SEC) {
+          violations.push({
+            segIdx: last.segIdx[last.segIdx.length - 1]! + 1,
+            cause: 'no-usable-silence-nearby',
+            idealSec: idealEnd,
+            fallback: `nearest silence end is ${cut.offsetSec >= 0 ? '+' : ''}${cut.offsetSec.toFixed(3)}s from `
+              + `the ideal seam, outside the ${S2_SILENCE_SEARCH_WINDOW_SEC}s search window; accepted anyway `
+              + `per invariant 4 (some silence always exists) rather than split mid-sentence`,
+          });
+        }
+      }
+    }
+
+    const text = gs.flatMap(g => g.segIdx).map(idx => segments[idx]!.text ?? '').filter(t => t.length > 0).join(' ');
+    if (text.length === 0) continue; // Mirrors runsToChunks/attributeByIndex — never an empty-text chunk.
+    chunks.push({ startSec, endSec, text });
+  }
+
+  return {
+    chunks: languageCode !== undefined && vocabChars !== undefined
+      ? applyFaTextNormalization(chunks, languageCode, vocabChars)
+      : chunks,
+    violations,
+  };
+}

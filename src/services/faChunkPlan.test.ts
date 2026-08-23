@@ -9,7 +9,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
-import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced, computeFaChunkPlanWithAttribution, computeRuns, detectUnscriptedRuns } from './faChunkPlan';
+import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced, computeFaChunkPlanS2, computeFaChunkPlanWithAttribution, computeRuns, detectUnscriptedRuns } from './faChunkPlan';
 import type { FaRun } from './faAnchors';
 import { MAX_RUN_SEC } from './syncConstants';
 import { vocabCharsFromRawVocab } from './faTextNormalize';
@@ -872,5 +872,83 @@ describe('computeFaChunkPlan — R.5 unscripted-audio excision (WS1 Session D)',
 
   it('detectUnscriptedRuns is inert on an empty transcript', () => {
     expect(detectUnscriptedRuns([], [], [], [])).toEqual([]);
+  });
+});
+
+describe('computeFaChunkPlanS2 (WS1 Session AI — measurement arm, not called by production)', () => {
+  it('never places a chunk edge inside a sentence, including one spanning a segment seam', () => {
+    // s0+s1 are one sentence across two segments ("They're the worst" +
+    // "because...showed up.") — the exact 173 segments-5/6 shape. A
+    // segment-only cut (invariant 1 alone) could still separate them; S2
+    // must not.
+    const segments = [
+      seg('s0', 'They are the worst', 0, 2),
+      seg('s1', 'because the trap was already set.', 2, 3),
+      seg('s2', 'The second sentence stands alone.', 5, 3),
+      seg('s3', 'And so does the third one here.', 8, 3),
+    ];
+    const silences: SilenceInterval[] = [silence(2), silence(5), silence(8)];
+    const { chunks, violations } = computeFaChunkPlanS2(segments, silences, 11, 1, 30);
+    // No chunk boundary may fall between s0 and s1 (mid-sentence).
+    const cutTimes = new Set(chunks.slice(0, -1).map(c => c.endSec));
+    expect(cutTimes.has(2)).toBe(false);
+    expect(violations).toEqual([]);
+    // Every segment's text reaches exactly one chunk.
+    const all = chunks.map(c => c.text).join(' ');
+    for (const s of segments) expect(all).toContain(s.text);
+  });
+
+  it('a chunk is always a whole number of script segments — never a fragment', () => {
+    const segments = [
+      seg('s0', 'First sentence here.', 0, 2),
+      seg('s1', 'Second sentence here.', 2, 2),
+      seg('s2', 'Third sentence here.', 4, 2),
+    ];
+    const silences: SilenceInterval[] = [silence(2), silence(4)];
+    const { chunks } = computeFaChunkPlanS2(segments, silences, 6, 1, 30);
+    for (const c of chunks) {
+      for (const s of segments) {
+        // A segment's text is either wholly inside this chunk's text or
+        // wholly absent — never a partial-word overlap.
+        expect(c.text.includes(s.text) || !c.text.includes(s.text.split(' ')[0]!)).toBe(true);
+      }
+    }
+  });
+
+  it('emits a first-class violation, not a silent split, for an unbreakable group over the cap', () => {
+    const segments = [
+      seg('s0', 'A short lead-in sentence.', 0, 2),
+      // No terminator until segment 2 — s1+s2 form one unbreakable group
+      // whose span (2 to 40) is 38s, over a 30s cap.
+      seg('s1', 'A very long run-on clause that keeps going', 2, 20),
+      seg('s2', 'and keeps going until it finally ends.', 22, 18),
+    ];
+    const silences: SilenceInterval[] = [silence(2)];
+    const { chunks, violations } = computeFaChunkPlanS2(segments, silences, 40, 10, 30);
+    expect(violations.some(v => v.cause === 'oversize-unbreakable-group')).toBe(true);
+    // The oversize group is still emitted WHOLE, in one chunk — never split.
+    const bigChunk = chunks.find(c => c.text.includes('run-on clause'));
+    expect(bigChunk?.text).toContain('and keeps going until it finally ends.');
+  });
+
+  it('excludes Whisper timestamps entirely from the text-partition decision (no token/alignment argument exists)', () => {
+    // The function signature itself is the invariant: no TranscriptToken[]
+    // parameter exists to pass one. `.length` only counts params BEFORE the
+    // first one with a default (JS semantics), so this pins the three
+    // required params — segments, silences, audioDuration — none of which is
+    // a token/alignment array. Documented here as a standing check that a
+    // future edit does not quietly add one back.
+    expect(computeFaChunkPlanS2.length).toBe(3);
+  });
+
+  it('is a pure measurement arm: does not mutate its inputs', () => {
+    const segments = [
+      seg('s0', 'One sentence stands here.', 0, 3),
+      seg('s1', 'Another sentence follows it.', 3, 3),
+    ];
+    const silences: SilenceInterval[] = [silence(3)];
+    const before = JSON.stringify(segments);
+    computeFaChunkPlanS2(segments, silences, 6, 1, 30);
+    expect(JSON.stringify(segments)).toBe(before);
   });
 });
