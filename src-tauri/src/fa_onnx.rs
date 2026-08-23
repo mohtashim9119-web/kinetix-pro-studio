@@ -6099,6 +6099,12 @@ mod missing_dylib {
 //
 // Reads  `.work-phase4/replay/<corpus>/fa_live_chunks.json` + `audio_16k.wav`.
 // Writes `.work-phase4/replay/<corpus>/fa_live_words.json`.
+//
+// WS1 Session AG: both filenames are overridable — `FA_REGEN_PLAN` selects the
+// plan to align against and `FA_REGEN_OUT` the words file to write. Both
+// default to the names above, so the invocation recorded here is unchanged.
+// Session AG uses them to align the same audio against an S1-folded plan
+// WITHOUT overwriting the baseline arm the comparison is against.
 // ---------------------------------------------------------------------------
 #[cfg(test)]
 mod session_p_regen {
@@ -6183,7 +6189,16 @@ mod session_p_regen {
             return;
         }
         let dir = repo_root().join(".work-phase4/replay").join(&corpus);
-        let plan_path = dir.join("fa_live_chunks.json");
+        // WS1 Session AG: the plan IN and the words OUT are overridable by env
+        // var, defaulting to the Session P filenames so every existing
+        // invocation is byte-for-byte unchanged. Session AG needs to align the
+        // SAME audio against a DIFFERENT chunk plan (the S1 fold) and compare,
+        // which is impossible while both filenames are hardcoded — and
+        // overwriting `fa_live_words.json` to do it would destroy the very
+        // baseline the comparison is against.
+        let plan_file = std::env::var("FA_REGEN_PLAN").unwrap_or_else(|_| "fa_live_chunks.json".to_string());
+        let out_file = std::env::var("FA_REGEN_OUT").unwrap_or_else(|_| "fa_live_words.json".to_string());
+        let plan_path = dir.join(&plan_file);
         let audio_path = dir.join("audio_16k.wav");
         if !require_ort::path_exists_or_skip(CONTEXT, &plan_path)
             || !require_ort::path_exists_or_skip(CONTEXT, &audio_path)
@@ -6265,7 +6280,7 @@ mod session_p_regen {
                 "audio_duration_sec": plan.audio_duration,
                 "audio": audio_path.file_name().and_then(|s| s.to_str()),
                 "model": model_path.to_str(),
-                "chunk_plan": "fa_live_chunks.json",
+                "chunk_plan": plan_file,
                 "chunk_count": chunks.len(),
                 "word_count": dtos.len(),
                 "needs_review_count": needs_review,
@@ -6273,7 +6288,7 @@ mod session_p_regen {
             },
             "words": dtos,
         });
-        let out_path = dir.join("fa_live_words.json");
+        let out_path = dir.join(&out_file);
         std::fs::write(&out_path, format!("{}\n", serde_json::to_string_pretty(&out).expect("serialize")))
             .unwrap_or_else(|e| panic!("write {}: {e}", out_path.display()));
 
