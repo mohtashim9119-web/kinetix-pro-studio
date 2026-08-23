@@ -1108,7 +1108,7 @@ export interface FaChunkPlanS2Violation {
    *  between `segIdx - 1` and `segIdx`), or the first segment of an oversize
    *  group for the `'oversize-unbreakable-group'` cause. */
   segIdx: number;
-  cause: 'oversize-unbreakable-group' | 'no-usable-silence-nearby';
+  cause: 'oversize-unbreakable-group' | 'no-usable-silence-nearby' | 'unexcised-run';
   /** The ideal (estimate-based) seam/group-start time in seconds. */
   idealSec: number;
   /** What the planner actually did about it, in words. */
@@ -1200,6 +1200,281 @@ export function computeFaChunkPlanS2(
 
     const text = gs.flatMap(g => g.segIdx).map(idx => segments[idx]!.text ?? '').filter(t => t.length > 0).join(' ');
     if (text.length === 0) continue; // Mirrors runsToChunks/attributeByIndex — never an empty-text chunk.
+    chunks.push({ startSec, endSec, text });
+  }
+
+  return {
+    chunks: languageCode !== undefined && vocabChars !== undefined
+      ? applyFaTextNormalization(chunks, languageCode, vocabChars)
+      : chunks,
+    violations,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// S2 + R.5 EXCISION (WS1 Session AK, MEASUREMENT ARM ONLY).
+//
+// WHAT THIS CLOSES. `computeFaChunkPlanS2` above names R.5 unscripted-run
+// excision as EXPLICITLY OUT OF SCOPE, and WS1 Session AI measured the
+// consequence: S2 drives the phantom funnel to a structural zero on all three
+// corpora but regresses 30 ear-verified v6 controls with up to -27.7s of
+// systematic negative drift, while 173 and spanish show far less or none. v6 is
+// also the only corpus that carries recitations at all — MEASURED this session,
+// `computeUnscriptedRuns` finds TEN runs on v6 (41.31s, 2.91% of the audio) and
+// ZERO on both 173 and spanish. That correlation is what this arm tests.
+//
+// A SIBLING FUNCTION, NOT A FLAG ON `computeFaChunkPlanS2`. The S2 section
+// header forbids adding a boolean to gate a measurement arm, and the module
+// already establishes the sibling pattern (`computeFaChunkPlan` /
+// `computeFaChunkPlanCoalesced` / `computeFaChunkPlanS2`). A sibling also keeps
+// the un-excised arm REPRODUCIBLE at HEAD, which an in-place edit would have
+// destroyed — the Session AK ablation needs both arms computable from the same
+// commit or the comparison has a moving baseline.
+//
+// WHAT EXCISION ACTUALLY REMOVES, stated explicitly because getting this wrong
+// is precisely the shape of defect that produces cumulative drift:
+//
+//   AUDIO — YES. The run's `[startSec, endSec]` is left unclaimed by any chunk.
+//   SCRIPT TEXT — NOTHING. By R.5's own zero-hole rule a run has NO unmatched
+//     script word opposite it, so there is no script text belonging to the run
+//     to delete. `qiSplit` is a PARTITION POINT in the script, never a deletion:
+//     every script word before it stays with the preceding chunk and every word
+//     from it onward stays with the following one. Total word count across the
+//     plan is therefore IDENTICAL with and without excision.
+//   DOWNSTREAM BOUNDARY INDICES — NOTHING SHIFTS, and nothing needs to be
+//     "accounted for". `align_chunked` (`fa_onnx.rs`) aligns each chunk
+//     independently against its own audio slice and offsets the words it
+//     returns by that chunk's own `start_sec`, so every emitted word carries an
+//     ABSOLUTE time regardless of what the previous chunk covered. A hole in
+//     the plan is legal there (the R.5 section header states this directly) and
+//     costs no index correction: word ordinals are assigned in emission order
+//     over an unchanged text, so ordinal k means the same script word in both
+//     arms. This is why excision cannot itself introduce the cumulative drift
+//     it is being tested against.
+//
+// WHERE THE CUT GOES — DERIVED FROM TWO RULES ALREADY IN FORCE, NOT TUNED.
+// MEASURED this session: ZERO of v6's ten runs land cleanly between two
+// adjacent sentence groups, and five land strictly inside one group's ESTIMATED
+// span (which is itself displaced by the recitation, since the anchor-based
+// estimate distributes script text across audio that includes the recitation).
+// So the cut point cannot be read off the run's timestamps without violating S2
+// invariant 3, and it cannot be assumed to fall at a group seam. It is read off
+// R.5's own `qiSplit` instead — a SCRIPT-WORD index, i.e. exactly the
+// index-space quantity `CLAUDE.md` §4 requires for an identity decision — and
+// then moved to the start of the sentence group containing that word, because
+// S2 invariant 2 admits no other legal chunk edge. Both steps are consequences
+// of stated rules; neither introduces a constant.
+//
+// TEXT DENSITY. A group's packing weight is its span NET of any excised run
+// overlapping it, so a recitation's seconds never inflate the chunk the packer
+// builds around it — the brief's "never contribute to text density".
+//
+// NO NEW CONSTANTS. `S2_TARGET_MIN_SEC`/`S2_TARGET_MAX_SEC`/
+// `S2_SILENCE_SEARCH_WINDOW_SEC` are unchanged and remain GEOMETRIC
+// operator-directed parameters. This function adds none of its own.
+// ---------------------------------------------------------------------------
+
+/** One run's forced chunk break: the group that must START a new chunk, and the
+ *  run whose audio is excised at that seam. `trailing` marks a run with no
+ *  script after it at all — the plan's last chunk ends at the run instead. */
+interface S2ExcisionSeam {
+  groupIdx: number;
+  run: UnscriptedRun;
+  trailing: boolean;
+}
+
+/** Per-segment `queryWords` index ranges, rebuilt with the SAME construction
+ *  `computeRunContext` uses — so `qiSplit` is read in the index space that
+ *  produced it, not a lookalike. */
+function s2SegQiRanges(
+  segments: readonly VideoSegment[], languageCode?: FaLanguageCode,
+): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let qi = 0;
+  for (const seg of segments) {
+    const start = qi;
+    if (seg.text && seg.text.trim()) {
+      for (const w of normalizeSceneDoc(seg.text, languageCode)) if (w.length > 0) qi++;
+    }
+    ranges.push({ start, end: qi });
+  }
+  return ranges;
+}
+
+/** Total excised-run seconds overlapping `[a, b]`. */
+function s2ExcisedWithin(a: number, b: number, runs: readonly UnscriptedRun[]): number {
+  let acc = 0;
+  for (const u of runs) acc += Math.max(0, Math.min(b, u.endSec) - Math.max(a, u.startSec));
+  return acc;
+}
+
+/** Greedy packing, as `s2PackGroups` — plus the forced breaks excision
+ *  requires, and group weights taken NET of excised time. A forced break always
+ *  wins over the size target: it is an invariant, the band is a preference. */
+function s2PackGroupsExcised(
+  groups: readonly S2Group[],
+  runs: readonly UnscriptedRun[],
+  forcedBreakAt: ReadonlySet<number>,
+  targetMinSec: number,
+  targetMaxSec: number,
+): S2Group[][] {
+  const chunks: S2Group[][] = [];
+  let cur: S2Group[] = [];
+  let acc = 0;
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i]!;
+    const weight = Math.max(0, g.durationSec - s2ExcisedWithin(g.startSec, g.endSec, runs));
+    const mustBreak = forcedBreakAt.has(i);
+    if (cur.length > 0 && (mustBreak || (acc + weight > targetMaxSec && acc >= targetMinSec))) {
+      chunks.push(cur); cur = []; acc = 0;
+    }
+    cur.push(g); acc += weight;
+  }
+  if (cur.length > 0) chunks.push(cur);
+  return chunks;
+}
+
+/**
+ * S2 with R.5 unscripted-run excision folded in — see the section header above
+ * for what excision removes, what it does not, and why the cut point comes from
+ * `qiSplit` rather than from the run's timestamps.
+ *
+ * Takes `tokens` (the RAW Whisper array, the same one `computeUnscriptedRuns`
+ * is given everywhere else in the pipeline) in addition to
+ * `computeFaChunkPlanS2`'s arguments. NOT called by any production path.
+ *
+ * The returned plan is a partition of `[0, audioDuration)` MINUS the excised
+ * runs — deliberately NOT gapless, which is legal for a chunk plan (see the R.5
+ * section header) and is the entire mechanism.
+ */
+export function computeFaChunkPlanS2Excised(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  targetMinSec: number = S2_TARGET_MIN_SEC,
+  targetMaxSec: number = S2_TARGET_MAX_SEC,
+  languageCode?: FaLanguageCode,
+  vocabChars?: ReadonlySet<string>,
+): FaChunkPlanS2Result {
+  if (segments.length === 0) return { chunks: [], violations: [] };
+
+  const groups = s2UnbreakableGroups(segments);
+  const violations: FaChunkPlanS2Violation[] = [];
+
+  // R.5, reused unchanged — the shipped detector, not a reimplementation.
+  const runs = computeUnscriptedRuns(segments, tokens, silences, audioDuration);
+
+  // `qiSplit` -> segment -> group. This is the whole placement rule.
+  const qiRanges = s2SegQiRanges(segments, languageCode);
+  const totalQi = qiRanges[qiRanges.length - 1]?.end ?? 0;
+  const groupOfSeg = new Map<number, number>();
+  groups.forEach((g, gi) => { for (const si of g.segIdx) groupOfSeg.set(si, gi); });
+
+  const seams: S2ExcisionSeam[] = [];
+  for (const run of runs) {
+    if (run.qiSplit >= totalQi) { seams.push({ groupIdx: groups.length, run, trailing: true }); continue; }
+    const segIdx = qiRanges.findIndex(r => run.qiSplit >= r.start && run.qiSplit < r.end);
+    const gi = segIdx >= 0 ? groupOfSeg.get(segIdx) : undefined;
+    if (gi === undefined) {
+      violations.push({
+        segIdx: segIdx >= 0 ? segIdx : 0,
+        cause: 'unexcised-run',
+        idealSec: run.startSec,
+        fallback: `R.5 run [${run.startSec.toFixed(2)}, ${run.endSec.toFixed(2)}] has qiSplit ${run.qiSplit}, which `
+          + 'maps to no segment in this script; the run is left INSIDE whatever chunk contains it rather than '
+          + 'guessed at, matching production exciseUnscriptedRuns\'s own not-wholly-contained behaviour',
+      });
+      continue;
+    }
+    seams.push({ groupIdx: gi, run, trailing: false });
+  }
+
+  const forcedBreakAt = new Set(seams.filter(s => !s.trailing).map(s => s.groupIdx));
+  const packed = s2PackGroupsExcised(groups, runs, forcedBreakAt, targetMinSec, targetMaxSec);
+
+  for (const g of groups) {
+    if (g.durationSec > targetMaxSec) {
+      violations.push({
+        segIdx: g.segIdx[0]!,
+        cause: 'oversize-unbreakable-group',
+        idealSec: g.startSec,
+        fallback: `emitted whole as one ${g.durationSec.toFixed(2)}s chunk (segments `
+          + `${g.segIdx[0]}-${g.segIdx[g.segIdx.length - 1]}); rule 2 forbids splitting a sentence group `
+          + `regardless of the ${targetMaxSec}s cap`,
+      });
+    }
+  }
+
+  // A run whose seam group opens a packed chunk cuts that chunk's own start,
+  // and the PREVIOUS chunk's end, to the run's own edges — production's
+  // `exciseUnscriptedRuns` shape (`endSec = run.startSec`, `cursor = run.endSec`),
+  // with no silence search involved: the run's boundaries ARE the cut.
+  const runOpening = new Map<number, UnscriptedRun>();
+  for (let ci = 0; ci < packed.length; ci++) {
+    const firstGroupIdx = groups.indexOf(packed[ci]![0]!);
+    const seam = seams.find(s => !s.trailing && s.groupIdx === firstGroupIdx);
+    if (seam) runOpening.set(ci, seam.run);
+  }
+  const trailingRun = seams.find(s => s.trailing)?.run;
+
+  const chunks: FaChunk[] = [];
+  let cursor = runOpening.get(0)?.endSec ?? 0;
+  for (let i = 0; i < packed.length; i++) {
+    const gs = packed[i]!;
+    const startSec = cursor;
+
+    let endSec: number;
+    const nextOpening = runOpening.get(i + 1);
+    if (i === packed.length - 1) {
+      endSec = trailingRun !== undefined ? trailingRun.startSec : audioDuration;
+      cursor = endSec;
+    } else if (nextOpening !== undefined) {
+      endSec = nextOpening.startSec;
+      cursor = nextOpening.endSec;
+    } else {
+      const idealEnd = gs[gs.length - 1]!.endSec;
+      const cut = s2NearestSilenceCut(idealEnd, silences);
+      if (cut === undefined) {
+        violations.push({
+          segIdx: gs[gs.length - 1]!.segIdx[gs[gs.length - 1]!.segIdx.length - 1]! + 1,
+          cause: 'no-usable-silence-nearby',
+          idealSec: idealEnd,
+          fallback: `no detected silence exists in this corpus's silence array at all; used the `
+            + `estimated seam time ${idealEnd.toFixed(3)} directly`,
+        });
+        endSec = idealEnd;
+      } else {
+        endSec = cut.cutSec;
+        if (Math.abs(cut.offsetSec) > S2_SILENCE_SEARCH_WINDOW_SEC) {
+          violations.push({
+            segIdx: gs[gs.length - 1]!.segIdx[gs[gs.length - 1]!.segIdx.length - 1]! + 1,
+            cause: 'no-usable-silence-nearby',
+            idealSec: idealEnd,
+            fallback: `nearest silence end is ${cut.offsetSec >= 0 ? '+' : ''}${cut.offsetSec.toFixed(3)}s from `
+              + `the ideal seam, outside the ${S2_SILENCE_SEARCH_WINDOW_SEC}s search window; accepted anyway `
+              + `per invariant 4 (some silence always exists) rather than split mid-sentence`,
+          });
+        }
+      }
+      cursor = endSec;
+    }
+
+    const text = gs.flatMap(g => g.segIdx).map(idx => segments[idx]!.text ?? '').filter(t => t.length > 0).join(' ');
+    if (text.length === 0) continue; // Mirrors runsToChunks/attributeByIndex — never an empty-text chunk.
+    // A degenerate window (the excised run consumed it entirely) is dropped
+    // rather than emitted inverted; Rust would reject it and a zero-length
+    // window aligns nothing.
+    if (endSec <= startSec) {
+      violations.push({
+        segIdx: gs[0]!.segIdx[0]!,
+        cause: 'unexcised-run',
+        idealSec: startSec,
+        fallback: `excision collapsed this chunk's window to [${startSec.toFixed(3)}, ${endSec.toFixed(3)}]; `
+          + 'dropped rather than emitted inverted',
+      });
+      continue;
+    }
     chunks.push({ startSec, endSec, text });
   }
 
