@@ -160,6 +160,10 @@ const ALLOWLIST = new Set<string>([
   // `scripts/ws1-session-an-step2-budget.test.ts`. Same class as the AM
   // entries above — a single-run MEASUREMENT DUMP, not a status page.
   'docs/ws1-sync-pipeline/session-an-edge-budget.md',
+  // WS1 Session AN Step 3's arm H structural check and per-seam resolution
+  // table, written by `scripts/ws1-session-an-step3-armh.test.ts`. Same class
+  // as the entries above.
+  'docs/ws1-sync-pipeline/session-an-armh-inspection.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

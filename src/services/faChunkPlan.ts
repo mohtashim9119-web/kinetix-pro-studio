@@ -2249,6 +2249,20 @@ export type S2EdgePlacement =
   /** ARM F. */
   | { kind: 'anchor' }
   /**
+   * ARM H (WS1 Session AN). ONE VARIABLE FROM ARM F: identical to `{kind:
+   * 'anchor'}` in every respect, EXCEPT that when arm F's own immediate
+   * two-group window (`pickSeamAnchor`'s `[windowQiLo, windowQiHi)`, the
+   * closing group and the opening group only) admits no anchor, arm H makes
+   * exactly ONE additional attempt — the SAME search, widened by exactly one
+   * more sentence group on each side (the group immediately before the
+   * closing group, and the group immediately after the opening group) — before
+   * falling back to arm C's own silence cut. Still GEOMETRIC and zero
+   * numeric constants: "one more of the planner's own atoms" is not a
+   * millisecond radius. See `computeFaChunkPlanS2EdgeArm`'s arm-H branch for
+   * why the widening stops at one group rather than searching further.
+   */
+  | { kind: 'anchor-widened' }
+  /**
    * ARM G. DIAGNOSTIC ONLY — CONSUMES GROUND TRUTH AND CAN NEVER SHIP.
    * `attestedStartBySegIdx` maps a segment index to its attested boundary time;
    * a seam takes the attested start of the segment that OPENS the next chunk.
@@ -2265,8 +2279,10 @@ export interface FaChunkPlanEdgeArmInspection {
   segFrom: number;
   /** The segment whose end IS this chunk's closing seam. */
   segTo: number;
-  /** How this chunk's END was placed. */
-  cutKind: 'anchor' | 'attested' | 'detected-silence' | 'excision-run-edge' | 'corpus-end';
+  /** How this chunk's END was placed. `'anchor-widened'` (arm H only) means
+   *  the immediate two-group window found nothing and the one-group-wider
+   *  search is what actually supplied the anchor. */
+  cutKind: 'anchor' | 'anchor-widened' | 'attested' | 'detected-silence' | 'excision-run-edge' | 'corpus-end';
   /** The estimate-derived ideal seam this chunk would have been cut at under
    *  arm C — retained on EVERY row, including substituted ones, so the size of
    *  the substitution is visible per edge rather than only in aggregate. */
@@ -2402,7 +2418,7 @@ export function computeFaChunkPlanS2EdgeArm(
   // Anchors are computed ONCE, and only for the arm that needs them — arm C's
   // and arm G's plans must not pay for, or be perturbed by, a pass they do not
   // use.
-  const anchors: readonly FaAnchor[] = placement.kind === 'anchor'
+  const anchors: readonly FaAnchor[] = placement.kind === 'anchor' || placement.kind === 'anchor-widened'
     ? computeRunContext(segments, tokens, silences, audioDuration, languageCode).anchors
     : [];
 
@@ -2447,14 +2463,62 @@ export function computeFaChunkPlanS2EdgeArm(
       const openingSegIdx = nextPack[0]!.segIdx[0]!;
       let placed: { cutSec: number; kind: FaChunkPlanEdgeArmInspection['cutKind'] } | undefined;
 
-      if (placement.kind === 'anchor') {
+      if (placement.kind === 'anchor' || placement.kind === 'anchor-widened') {
         const seamQi = qiRanges[seamSegIdx]!.end;
         const windowQiLo = qiRanges[lastGroup.segIdx[0]!]!.start;
         const openingGroup = nextPack[0]!;
         const windowQiHi = qiRanges[openingGroup.segIdx[openingGroup.segIdx.length - 1]!]!.end;
-        const pick = pickSeamAnchor(anchors, seamQi, windowQiLo, windowQiHi);
+        let pick = pickSeamAnchor(anchors, seamQi, windowQiLo, windowQiHi);
+        let viaWidenedWindow = false;
+
+        // ==== ARM H'S ONE VARIABLE FROM ARM F ================================
+        // Tried ONLY when arm F's own immediate two-group window admits
+        // nothing — the 42 edges arm F already substitutes are reached by the
+        // line above, byte-identically, before this branch is ever entered.
+        // Widen by exactly ONE more sentence group on each side — the group
+        // immediately before the closing group, and the group immediately
+        // after the opening group — and search again. This is STILL the
+        // planner's own atoms, not a tolerance: `s2UnbreakableGroups` never
+        // splits a group, so "one group wider" is as structural a step as the
+        // two-group window itself, just one unit larger.
+        //
+        // WHY IT STOPS AT ONE GROUP. `s2SegQiRanges`/`qiRanges` is strictly
+        // increasing in segment order, so an anchor admitted by the widened
+        // window can, by construction, only ever sit BEFORE `windowQiLo` or
+        // AFTER `windowQiHi` — never behind this chunk's own `startSec`
+        // (`cursor`) in a way `pickSeamAnchor`'s nearest-by-|Δqi| rule would
+        // prefer over a nearer, admissible in-window anchor, because a
+        // same-or-closer candidate inside the original window would already
+        // have been picked above. Going a SECOND group wider would start
+        // admitting anchors from groups two seams away from the one being
+        // placed — i.e. anchors that legitimately belong to an ADJACENT
+        // chunk's OWN seam — which is exactly the failure `pickSeamAnchor`'s
+        // own doc comment names ("committing it here would place this
+        // chunk's edge at another chunk's boundary"). One group of slack is
+        // the largest widening that cannot yet cross a second seam; a further
+        // widening is REJECTED for that reason, not attempted and found
+        // wanting — the two-group-plus-one-slack bound is where the
+        // structural argument stops applying, so arm H does not iterate past
+        // it. Any residual `no-admissible-anchor` after this one extra try
+        // falls through to arm C's own silence cut exactly as arm F does.
+        if (pick === undefined) {
+          const closingGroupIdx = groups.indexOf(lastGroup);
+          const openingGroupIdx = groups.indexOf(openingGroup);
+          const widenedLo = closingGroupIdx > 0
+            ? qiRanges[groups[closingGroupIdx - 1]!.segIdx[0]!]!.start
+            : windowQiLo;
+          const widenedHi = openingGroupIdx >= 0 && openingGroupIdx < groups.length - 1
+            ? qiRanges[groups[openingGroupIdx + 1]!.segIdx[groups[openingGroupIdx + 1]!.segIdx.length - 1]!]!.end
+            : windowQiHi;
+          if (placement.kind === 'anchor-widened' && (widenedLo !== windowQiLo || widenedHi !== windowQiHi)) {
+            pick = pickSeamAnchor(anchors, seamQi, widenedLo, widenedHi);
+            viaWidenedWindow = pick !== undefined;
+          }
+        }
+        // ======================================================================
+
         if (pick !== undefined) {
-          placed = { cutSec: pick.timeSec, kind: 'anchor' };
+          placed = { cutSec: pick.timeSec, kind: viaWidenedWindow ? 'anchor-widened' : 'anchor' };
           deltaQi = pick.deltaQi;
           anchorQi = pick.qi;
         } else {
@@ -2463,9 +2527,12 @@ export function computeFaChunkPlanS2EdgeArm(
             cause: 'no-admissible-anchor',
             idealSec: idealEnd,
             fallback: `no three-source-agreement anchor lies inside the two sentence groups this seam `
-              + `separates (script-word window [${windowQiLo}, ${windowQiHi}), seam at qi ${seamQi}); fell back `
-              + 'to arm C\'s own nearest-detected-silence cut, so this edge is NOT substituted and remains an '
-              + 'arm-C edge',
+              + `separates (script-word window [${windowQiLo}, ${windowQiHi}), seam at qi ${seamQi})`
+              + (placement.kind === 'anchor-widened'
+                ? ', nor inside the one-group-wider search arm H also tries'
+                : '')
+              + '; fell back to arm C\'s own nearest-detected-silence cut, so this edge is NOT substituted '
+              + 'and remains an arm-C edge',
           });
         }
       } else if (placement.kind === 'attested') {
