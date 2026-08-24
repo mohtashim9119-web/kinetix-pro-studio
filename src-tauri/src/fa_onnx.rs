@@ -418,6 +418,38 @@ pub fn load_session(model_path: &Path) -> Result<Session, FaOnnxError> {
         .map_err(|e| FaOnnxError::OrtSession(e.to_string()))?
         .with_deterministic_compute(true)
         .map_err(|e| FaOnnxError::OrtSession(e.to_string()))?
+        // WS1 Session AO Step 4 — OOM fix. ORT's memory-pattern optimizer
+        // (`EnableMemPattern`, ON by default) caches a distinct allocation
+        // plan keyed by INPUT SHAPE, explicitly documented by `ort` itself
+        // ("disable it if the input size varies, i.e. dynamic batch") — see
+        // this crate's own `with_memory_pattern` doc comment. Every FA chunk
+        // has a different sample count (a different input shape), and this
+        // session is cached and reused across an entire app-process lifetime
+        // (`with_cached_session`, above) — MEASURED (Session AO Step 1,
+        // `.work-phase4/session-ao/rss_timeline.csv`) to accumulate a
+        // per-shape allocation without release: a shared, single-process,
+        // real-audio run of v6 -> 173 (cache HIT, same session) -> spanish
+        // (cache MISS, new session) -> v6-again (cache MISS, new session)
+        // rose monotonically for all but 1 of 1585 one-second RSS samples
+        // and JUMPED +771 MiB exactly at the spanish cache-miss boundary —
+        // a dropped `Session`'s memory was never released, only added to.
+        // Peak RSS for that one process (4.121 GiB, ps; 4220.0 MiB,
+        // `/usr/bin/time -l`) exceeded the highest SINGLE-corpus peak any
+        // prior one-process-per-corpus measurement had ever recorded (v6
+        // alone, 3205.3 MiB, Session AK) by ~1 GiB — a gap no earlier
+        // measurement could see, because none of them reused a session
+        // across corpora/languages in one process the way the live app
+        // does. Disabling memory-pattern optimization stops ORT from
+        // building this per-shape cache at all; it is a pure allocator-
+        // strategy change (this call does not touch the model graph, the
+        // emission matrix, or any of `with_intra_threads`/`with_inter_
+        // threads`/`with_parallel_execution`/`with_deterministic_compute`,
+        // already pinned above and left untouched here) and is expected to
+        // be output-neutral — verified separately (Session AO Step 5:
+        // exact boundary equality on v6/173/spanish, golden replay 6/6,
+        // oracle diff green, all 13 production pins reproducing).
+        .with_memory_pattern(false)
+        .map_err(|e| FaOnnxError::OrtSession(e.to_string()))?
         .commit_from_file(model_path)
         .map_err(|e| FaOnnxError::OrtSession(e.to_string()))
 }
@@ -6299,5 +6331,194 @@ mod session_p_regen {
             needs_review,
             elapsed
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WS1 Session AO Step 1 — cross-corpus, SAME-PROCESS session-lifetime RSS
+// timeline. DIAGNOSTIC ONLY: reads no chunking parameter, writes no chunking
+// parameter, changes no boundary — it re-runs the FROZEN production chunk
+// plans (`fa_production_chunks.json`, already committed by prior sessions)
+// through the real `align_chunked` and measures memory, nothing else.
+//
+// Every prior real-corpus memory measurement (`session_p_regen` above;
+// Sessions AK/AM/AL's `fa-run-resources.json`) runs exactly ONE corpus per
+// PROCESS, each independently wrapped in `/usr/bin/time -l` — confirmed by
+// reading `.work-phase4/session-ak/fa-run-resources.json`'s own per-corpus
+// entries (v6 3205.3 MB / 173 2227.6 MB / spanish 1938.1 MB, three separate
+// processes). That is NOT the shape of the live desktop app: `FaModelCache`
+// (`fa.rs`) is Tauri-managed `State` — ONE `Mutex<Option<CachedSession>>`
+// living for the WHOLE app-process lifetime, reused across every Apply Sync
+// click and every project opened without an app restart. This test
+// reproduces that shape instead: one process, one shared cache, driving
+// align_chunked across v6 -> 173 -> spanish -> v6-again. v6 and 173 share a
+// language ("en"), so v6 -> 173 is a cache HIT under `with_cached_session`'s
+// own key rule (repeated forward passes, session never reloaded) — isolating
+// whether ORT's arena grows across calls with no reload. 173 -> spanish and
+// spanish -> v6-again are language switches, i.e. cache MISSES that drop the
+// old `CachedSession` and load a fresh one — isolating whether a dropped
+// session's memory is actually released back to the OS (a dip in the RSS
+// timeline) or merely orphaned (RSS keeps climbing).
+//
+// A background thread samples this process's CURRENT RSS via `ps -o rss=`
+// once a second for the whole run — deliberately NOT `getrusage`'s
+// `ru_maxrss`, which is a cumulative peak that can only ever increase and so
+// cannot show a timeline SHAPE (monotone climb vs. sawtooth-with-rising-floor
+// vs. single spike), only a final number the existing `/usr/bin/time -l`
+// wrapper already gives us.
+//
+// Output: `.work-phase4/session-ao/rss_timeline.csv` (elapsed_sec,rss_kb)
+// and `.work-phase4/session-ao/stage_markers.json` (each corpus's own
+// [startSec, endSec] window into that timeline, plus chunk/word counts).
+//
+// RUN (debug profile, matching every prior session's own methodology — see
+// each `fa-run-resources.json` note field):
+//   ORT_DYLIB_PATH=<repo>/src-tauri/onnxruntime/libonnxruntime.1.23.2.dylib \
+//   FA_REQUIRE_ORT=1 cargo test --features fa-inference -- \
+//     --ignored --nocapture --exact \
+//     fa_onnx::session_ao_memory::cross_corpus_session_lifetime_rss
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod session_ao_memory {
+    use super::*;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("session_ao_memory's fa_models_dir() only reproduces the macOS mapping");
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+
+    #[derive(serde::Deserialize)]
+    struct PlanFile {
+        #[allow(dead_code)]
+        #[serde(rename = "audioDuration")]
+        audio_duration: f64,
+        chunks: Vec<PlanChunk>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PlanChunk {
+        #[serde(rename = "startSec")]
+        start_sec: f64,
+        #[serde(rename = "endSec")]
+        end_sec: f64,
+        text: String,
+    }
+
+    /// Reads the FROZEN production plan already committed by prior sessions
+    /// — computes nothing, mutates nothing.
+    fn load_production_plan(dir: &Path) -> Vec<crate::fa::FaChunkInput> {
+        let path = dir.join("fa_production_chunks.json");
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let plan: PlanFile = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        plan.chunks
+            .into_iter()
+            .map(|c| crate::fa::FaChunkInput { start_sec: c.start_sec, end_sec: c.end_sec, text: c.text })
+            .collect()
+    }
+
+    /// Current (not peak) resident set size in KB for THIS process, via
+    /// `ps -o rss=` — see this module's own doc comment for why current RSS,
+    /// not `getrusage`'s cumulative `ru_maxrss`, is what a timeline needs.
+    fn current_rss_kb() -> Option<u64> {
+        let pid = std::process::id();
+        let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &pid.to_string()]).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().ok()
+    }
+
+    #[test]
+    #[ignore]
+    fn cross_corpus_session_lifetime_rss() {
+        const CONTEXT: &str = "session_ao_memory";
+        if !require_ort::ort_dylib_or_skip(CONTEXT) {
+            return;
+        }
+        // v6 and 173 deliberately share "en" (a cache HIT on the second
+        // call); spanish ("es") and the final v6-again both force a cache
+        // MISS (language switch) — see module doc comment.
+        let corpora: [(&str, &str); 4] = [("v6", "en"), ("173", "en"), ("spanish", "es"), ("v6", "en")];
+        let replay_root = repo_root().join(".work-phase4/replay");
+        for (corpus, _lang) in &corpora {
+            let audio = replay_root.join(corpus).join("audio_16k.wav");
+            let plan = replay_root.join(corpus).join("fa_production_chunks.json");
+            if !require_ort::path_exists_or_skip(CONTEXT, &audio) || !require_ort::path_exists_or_skip(CONTEXT, &plan) {
+                return;
+            }
+        }
+
+        let out_dir = repo_root().join(".work-phase4/session-ao");
+        std::fs::create_dir_all(&out_dir).unwrap_or_else(|e| panic!("create {}: {e}", out_dir.display()));
+        let csv_path = out_dir.join("rss_timeline.csv");
+        let markers_path = out_dir.join("stage_markers.json");
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = stop.clone();
+        let csv_path2 = csv_path.clone();
+        let started = Instant::now();
+        std::fs::write(&csv_path, "elapsed_sec,rss_kb\n").unwrap_or_else(|e| panic!("init {}: {e}", csv_path.display()));
+        let sampler = std::thread::spawn(move || {
+            while !stop2.load(Ordering::Relaxed) {
+                if let Some(kb) = current_rss_kb() {
+                    let elapsed = started.elapsed().as_secs_f64();
+                    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).open(&csv_path2) {
+                        let _ = writeln!(f, "{elapsed:.2},{kb}");
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        });
+
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let mut markers: Vec<serde_json::Value> = Vec::new();
+        for (i, (corpus, lang)) in corpora.iter().enumerate() {
+            let dir = replay_root.join(corpus);
+            let model_path = fa_models_dir().join(lang).join("model.onnx");
+            let chunks = load_production_plan(&dir);
+            let audio_path = dir.join("audio_16k.wav");
+            let t0 = started.elapsed().as_secs_f64();
+            eprintln!("{CONTEXT}: [{i}] START corpus={corpus} lang={lang} chunks={} t={t0:.2}s", chunks.len());
+            let words = align_chunked(
+                &cache,
+                &model_path,
+                audio_path.to_str().expect("audio path is UTF-8"),
+                &chunks,
+                lang,
+                || false,
+                |_| {},
+            )
+            .unwrap_or_else(|e| panic!("{CONTEXT}: align_chunked({corpus}) failed: {e:?}"));
+            let t1 = started.elapsed().as_secs_f64();
+            eprintln!(
+                "{CONTEXT}: [{i}] DONE corpus={corpus} words={} t={t1:.2}s ({:.2}s elapsed for this stage)",
+                words.len(),
+                t1 - t0
+            );
+            markers.push(serde_json::json!({
+                "index": i, "corpus": corpus, "lang": lang, "startSec": t0, "endSec": t1,
+                "chunkCount": chunks.len(), "wordCount": words.len(),
+            }));
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        sampler.join().expect("sampler thread join");
+
+        std::fs::write(
+            &markers_path,
+            serde_json::to_string_pretty(&serde_json::json!({ "stages": markers })).expect("serialize"),
+        )
+        .unwrap_or_else(|e| panic!("write {}: {e}", markers_path.display()));
+        eprintln!("{CONTEXT}: wrote {} and {}", csv_path.display(), markers_path.display());
     }
 }
