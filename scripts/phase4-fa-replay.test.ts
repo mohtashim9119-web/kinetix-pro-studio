@@ -382,7 +382,7 @@ const KNOWN_BAD: KnownBadRow[] = [
       'assumed (`scripts/ws1-session-q-detector-validate.test.ts`). WS1 SESSION AG: `earCorrect` 682.74 ' +
       'is RE-CONFIRMED by an independent sitting (`ear-verify-ag`) and independently corroborated by the ' +
       'operator\'s own waveform measurement of the seam (segment 230 speaks 681.47-682.43, segment 231 ' +
-      'speaks 683.04-683.84 — `docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md` §1). R.14 reaches ' +
+      'speaks 683.04-683.84 — `docs/history-2.md`\'s Session AH entry). R.14 reaches ' +
       'this row as a DETECTION and then DECLINES it on the reliable-onset guard, so the row is now known ' +
       'to be a guard FALSE NEGATIVE rather than an undetected defect. It stays OPEN: production still ' +
       'commits 681.63. Relaxing the guard is NOT authorised by that verdict — the same sitting scored ' +
@@ -680,7 +680,7 @@ const KNOWN_BAD: KnownBadRow[] = [
       'inside 1.26s of literal digital silence.',
     status: 'fixed',
     note: 'THE 383 REVERSAL. Was `verification: \'ear\'` at 1188.95 (`live-runs-s`, a solo listen). ' +
-      '`ear-verify-t`\'s A/B comparison (`docs/ws1-sync-pipeline/stage1-session-s-ear-list.md` §2) reverses ' +
+      '`ear-verify-t`\'s A/B comparison (`docs/history-2.md`\'s Session T entry) reverses ' +
       'it. See `ws1-ear-pass-ledger.ts`\'s `ear-verify-t` sitting for both rows (the refutation of 1188.95 ' +
       'AND the confirmation of 1189.05) and its solo-listened-pin audit for what else this finding puts in ' +
       'question. WS1 SESSION V: `status` -> \'fixed\'. Step 1\'s fresh bundle re-measures the live production ' +
@@ -890,7 +890,7 @@ const REGISTER_ROSTER = [
   // Found by the owner's 24-row mover audit, clip 12. Closed STRUCTURALLY, not
   // by ear: the owner scored the OLD value wrong, which is not the same as
   // scoring the NEW one right, and R-AM's distinction between suspicion and
-  // guilt cuts both ways. It is row 1 of `stage1-session-k-ear-list.md`.
+  // guilt cuts both ways. It is row 1 of `docs/history-2.md`'s Session K entry.
   'r13-225-night-scouts',
   // WS1 Session Q — the register REOPENS at 8 and STAYS open: no ear pass was
   // run this session (an autonomous session cannot listen), so per the
@@ -1362,7 +1362,7 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
       'STRUCTURAL, NOT EAR: the owner scored 667.47 WRONG in the 24-row mover audit and their ' +
       'note places the line at "667.47 ... till 668.85s, then at 669.37s started You lead the ' +
       'night scouts" — which brackets 669.05 — but no ear pass has scored 669.05 ITSELF. It is ' +
-      'row 1 of `docs/ws1-sync-pipeline/stage1-session-k-ear-list.md` and is admitted here on ' +
+      'row 1 of `docs/history-2.md`\'s Session K entry and is admitted here on ' +
       'the mechanism, exactly as R.12\'s four structurally-derived rows were. ' +
       'NOTE ON WHY NO TOKEN-BASED RULE COULD HAVE FOUND THIS VALUE: the exact mirror of R.12 ' +
       '(clamping into [own last token end, next scene\'s first token onset]) lands at 667.73, ' +

@@ -8,6 +8,17 @@ design-of-record only (stages, phases, contracts, risk register); if the two eve
 Next Action section tracks the rolling top-3 cross-workstream task queue.
 **K13 correction (2026-08-11): CLOSED.** This document's Part K finding and every other K13 reference below describe the pre-fix defect, its discovery, and the original plan to fix it inside Stage 3 — that plan was superseded. K13 was fixed as an independent task directly against `main` (owner ruling R-C), not via the Stage 3 restructure this document describes; the restructure itself remains not-started. Current status/registry: `project-state.md` §4/§5, `docs/work-in-progress.md` §3 task 8 (`ws1-master-roadmap.md` §5, the original source, was deleted 2026-08-14, `9cf5867`; retrieve: `git show 251be64:docs/ws1-sync-pipeline/ws1-master-roadmap.md`). Read every present-tense "K13 is open" / "C11 must keep failing" statement below as historical, not current.
 
+**Docs Cleanup Round 2 (2026-08-25): Parts AE–AH condensed.** The full session-by-session
+narrative for Parts AE (Session AK), AF (Session AL), AG (Session AM), and AH (Session AN) was
+folded into `docs/history-2.md`'s matching Session entries and this document's own copies were
+cut to short pointer summaries in the same commit — those four Parts stopped being the primary
+record for their sessions. `docs/ws1-sync-pipeline/`'s 20 finished raw session/measurement/ear-list
+files (fa-chunk-phantom-root-cause.md, the session-al/am/an-*.md dumps, and the stage1-* run
+sheets and ear lists other than `stage1-mover-audit.md`/`stage1-live-run-prep.md`, which are still
+open) were folded the same way and deleted; original text of all of them remains retrievable via
+`git show` at the fold commit (see `docs/history-2.md`'s own Round 2 note for the retrieval
+command).
+
 ## Phase Status
 
 Phases are grouped under the stage they build (Part D). A stage's phases may not begin until every earlier stage is LOCKED, with two stated exemptions (Part D's ordering rule): proven behaviour-neutral deletions/moves, and read-only measurement.
@@ -2633,7 +2644,7 @@ flip becomes shippable as a consequence rather than as a separate act:
 - **Overrides:** R-AD (OV1)'s deferral of the flip to "the final act of Stage 1", to the
   extent that the flip is now landed ahead of the ear pass — the register is EMPTY (R-AI(c)),
   which was R-AD's own release condition, and the per-project shape removes the silent-retime
-  hazard that made ordering matter. The ear pass (`docs/ws1-sync-pipeline/stage1-lock-ear-list.md`)
+  hazard that made ordering matter. The ear pass (folded into `docs/history-2.md`'s Session G entry)
   and Stage 1 lock are unchanged and still ahead.
 
 ---
@@ -5343,12 +5354,12 @@ Replacing the fixed −45dB scan with noise-floor estimation, ONLY if Phase 2b�
   **R-N is CLOSED** by ruling R-AL (`load-dynamic` + bundled dylib); **Step T**
   (model download) remains open.
 - **The 12/12 ear pass is DRAWN and ready to run:**
-  `docs/ws1-sync-pipeline/stage1-lock-ear-list.md` — fresh, stratified, 7 MOVED /
+  `docs/history-2.md`'s Session G entry — fresh, stratified, 7 MOVED /
   5 UNMOVED, uniform 4.00 s windows (blinding preserved by construction: max |Δ|
   1.95 s < 2 s, so every row's window contains both candidates), sealed arm key,
   R-AB satisfied by there being a single blinded tier. **The Contract 1→2
   guarantee-by-guarantee pass is likewise a working document:**
-  `docs/ws1-sync-pipeline/stage1-lock-contract-1to2.md` — 5 DIRECT / 4 PARTIAL /
+  `docs/history-2.md`'s Session G entry — 5 DIRECT / 4 PARTIAL /
   3 ABSENT, with **P6** identified as the one row this gate cannot schedule away,
   because the pass IS its enforcement.
 
@@ -6745,7 +6756,7 @@ Session S sitting is the first to hear 1188.95, and it passes).
 ## Part R — Candidate B Licensed: the Clamp Was a Symptom Mask, the Run's Onset Was the Real Defect (WS1 Session T, 2026-08-21, append-only)
 
 **(a) THE RULING, from the owner's A/B side-by-side pass (`ear-verify-t`, `docs/ws1-sync-pipeline/
-stage1-session-s-ear-list.md`).** Candidate B (the unclamped whole-silence midpoint) is licensed
+Session T entry, `docs/history-2.md`).** Candidate B (the unclamped whole-silence midpoint) is licensed
 on all six rows tested: `042` -> 125.760, `176` -> 522.460, `224` -> 664.330, `307` -> 925.430,
 `340` -> 1045.620, `383` -> 1189.050 (reversing the SOLO-listened `1188.950` — see (d)). Breath
 presence is confirmed irrelevant to correct placement: the owner chose B on a row with a quiet
@@ -7891,7 +7902,7 @@ both carry genuine sittings: `152_frozen_brush_mice` — `ear-12` (the original 
 451.03 CORRECT; `abysmal_opinion` — `ov3-triage` (Session D's blinded OV3 triage) scored 17.88
 CORRECT. Neither needs a fresh listen; neither is on this session's ear list.
 
-**(d) Step 3 — ear list.** `docs/ws1-sync-pipeline/stage1-session-ac-ear-list.md`. All eight open
+**(d) Step 3 — ear list.** Folded into `docs/history-2.md`'s Session AC entry. All eight open
 rows (not six — `231_slowing_pace` and `167_smell_of_butchery` measure identically to the six the
 session brief named by example and belong on the same list for the same reason). Candidates and
 silence bounds independently re-measured this session, not copied from the register's prose;
@@ -8436,7 +8447,7 @@ cannot touch it and no re-baseline was needed or made. `faAnchors.ts` sha256 unc
 ### AA.0 — What this session set out to do, and what actually happened
 
 Session AE shipped R.14/R.15, a gate that *detects* untrustworthy FA timestamps and substitutes
-an acoustic landmark. `fa-chunk-phantom-root-cause.md` then identified the mechanism producing
+an acoustic landmark. `docs/history-2.md`'s Session AH entry then identified the mechanism producing
 those untrustworthy timestamps — script text filed into a chunk window's silent tail comes back
 with a timestamp and a collapsed posterior — and named the experiment that would settle
 causality. This session ran that experiment.
@@ -8724,7 +8735,7 @@ shipped, (b) golden coverage built for the rule stage — which does not exist t
 
 ### AA.9 — Step 8 and what is deferred
 
-`docs/ws1-sync-pipeline/stage1-session-ag-ear-list.md`: **19 rows** (predicted 21) — 17 v6
+`docs/history-2.md`'s Session AG entry: **19 rows** (predicted 21) — 17 v6
 boundaries with no ear evidence, plus the 2 ear-verified controls that moved. The 4 known defect
 targets that moved are excluded (they already carry verdicts).
 
@@ -8740,14 +8751,14 @@ rule stage (AA.3) — the gate on R.14 deletion.
 
 ### AB.1 — The verdict
 
-The operator ear-audited `docs/ws1-sync-pipeline/stage1-session-ag-ear-list.md`, the full
+The operator ear-audited the Session AG ear list (folded into `docs/history-2.md`), the full
 collateral sheet Session AG produced for S1. **Every one of the eighteen v6 boundaries came back
 a REGRESSION**: the current production cut was already right, and S1's proposed value was wrong.
 Zero improvements, zero neutrals.
 
 S1 -- `faChunkPlan.ts`'s partial-case trailing-silence text fold, and its `foldPhantomTails` flag
 -- is **DELETED** from the tree, not disabled. This is recorded as a permanent negative result in
-`docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md` §8 and in the planner's own source
+`docs/history-2.md`'s Session AH entry and in the planner's own source
 comment, so the next session cannot rebuild it by reading §5 alone.
 
 The **total case** fold (a run with text and a genuinely zero-duration window) is untouched. It is
@@ -9134,7 +9145,7 @@ is — confirmed by grep before this entry was written, not assumed.
 | `ae2c516` | Steps 3-4 — S2 dry run, pre-registered predictions, the failed proxy |
 | `5006806` | docs — this Part, §§3/9/11j, Changelog, project-state, CLAUDE.md invariants |
 
-`git diff --stat 09790ac` touches only: `docs/work-in-progress.md`, `fa-chunk-phantom-root-cause.md`,
+`git diff --stat 09790ac` touches only: `docs/work-in-progress.md`, the (now-folded) `fa-chunk-phantom-root-cause.md`,
 `sync-pipeline-v2-plan.md`, `project-state.md`, `CLAUDE.md`, `scripts/ws1-ear-pass-ledger.ts`, nine
 new `scripts/ws1-session-ah-*.test.ts` files, one deleted `scripts/ws1-session-ag-s1-plan.test.ts`,
 two small edits to `scripts/ws1-session-ag-step8-earlist.test.ts`/`ws1-single-tracker.test.ts` (both
@@ -9416,7 +9427,7 @@ unaffected by anything in `faChunkPlan.ts`), so no fixture protects a deletion; 
 
 ### AC.8 — Step 6: the ear list, and its bill
 
-`docs/ws1-sync-pipeline/stage1-session-ai-ear-list.md`, ordered highest-value listening first per
+the Session AI ear list (folded into `docs/history-2.md`), ordered highest-value listening first per
 the brief: (1) the five open defects (all 5 moved — no "unchanged" rows to note), (2) ear-verified
 controls that moved, (3) boundaries whose incoming FA confidence changed by more than one order of
 magnitude, (4) the remaining moved-without-evidence set.
@@ -9506,7 +9517,7 @@ The 61-skip figure is 54 (AH's own floor) plus 7 new Session AI gated generators
 3-generate, 4, 5, 6), none in the default sweep — each contributes exactly one `describe.skipIf`
 top-level test, confirmed by the delta matching exactly. One REAL regression was caught and fixed
 this session, not merely re-measured: `ws1-single-tracker.test.ts`'s allowlist test failed on the
-new `stage1-session-ai-ear-list.md` file (a genuinely new `.md` file under
+new `stage1-session-ai-ear-list.md` file (a genuinely new `.md` file, since folded and deleted, under
 `docs/ws1-sync-pipeline/`, same class as every prior session's own ear list); fixed by adding it to
 the allowlist, same discipline every prior ear-list file used.
 
@@ -9526,7 +9537,7 @@ the allowlist, same discipline every prior ear-list file used.
 `scripts/ws1-ear-pass-ledger.ts`, `scripts/ws1-single-tracker.test.ts`, five new
 `scripts/ws1-session-ai-*.test.ts` files (step0, step1×2, step3-generate, step4, step5, step6),
 `src/services/faChunkPlan.ts` (S2 addition), `src/services/faChunkPlan.test.ts` (5 new tests),
-`docs/ws1-sync-pipeline/stage1-session-ai-ear-list.md` (new), plus this docs commit's own targets.
+the Session AI ear list (folded into `docs/history-2.md`), plus this docs commit's own targets.
 **Confirmed untouched:** `snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts` (the
 Hirschberg aligner), `docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv` — zero hits for
 any of them in the diff stat. No new repo-root file. Golden replay 6/6 byte-identical throughout —
@@ -9755,1266 +9766,95 @@ genuinely novel material. Not executed this session per the hard stop at Step 7.
 
 ## Part AE — R.5 Excision Is a Contributing Cause, Not the Cause: Global S2 Fails Its Pre-Registered Gate at 0.62% Precision (WS1 Session AK, 2026-08-23, append-only)
 
-### AE.1 — The verdict, in one paragraph
-
-Session AC named the confound and AC.10 named the experiment: v6 alone carries ~10 unscripted
-recitations, R.5 excision was not applied to S2's output, and until that was controlled nobody could
-say whether S2's -27.7s v6 drift was a chunk-length effect or a recitation effect. This session ran
-it. **R.5 excision is a CONTRIBUTING CAUSE, not the cause.** It repairs a real and measurable share
-of v6's damage — 14 of 30 ear-verified control regressions returned **exactly** to their attested
-values, regressed boundaries fell 326 → 279, peak drift fell -23.786s → -19.155s — and it is
-provably inert where there is nothing to excise: 173 and spanish carry **zero** R.5 runs, and arm
-C's chunk plan *and* FA words came back **byte-identical** to arm B on both, so the v6 delta is
-attributable to excision and nothing else. But **173 regresses 40 boundaries under both arms,
-bit-identically**, which settles the general question before v6 is even consulted: a corpus with no
-recitations at all cannot have recitation-caused regressions, so whatever mechanism global S2 is
-using to move 40 correct boundaries there is untouched by this fix. The pre-registered gate
-(committed to git *before* any arm ran, `scripts/ws1-session-ak-step1-gate.ts`, commit `788faf7`)
-**FAILS 3 of its 4 conditions**: 317 attested-correct boundaries moved beyond ±50ms against a bar of
-zero, 2 of 4 operator-targeted defects landed against a bar of 4, and implied improvement precision
-is **0.62%** against a bar of 50% — *below the ~7% at which S1 was rejected*, by an order of
-magnitude. Arm C additionally fails to hold the funnel zero on v6 (0 → 3). Nothing ships.
-Housekeeping this session was not incidental: repointing 173's default bundle arm took the AJ-0
-oracle diff from 172/173 to **173/173 exact** and deleted one of the "36" control regressions as a
-stale-baseline artifact.
-
-### AE.2 — Step 0: housekeeping, and two figures corrected at their source
-
-**The manifest repoint required a code change, not a manifest edit.** `loadLiveBundle` resolved arm
-filenames from the hardcoded `V6_BUNDLE_ARMS` and never read the manifest's own `file` field, so
-repointing only the manifest would have changed zero loaded bytes *and* made `verifyBundle` hash the
-old file against the new arm's sha256 and report a `SILENT EDIT` that never happened. Fixed at
-`bundleArmsFor(corpus)` (`ws1-runid.ts`), where the name is actually resolved; the retired
-`fa_live_*` files stay on disk untouched as the historical record. Bundle restamped
-(`ak-20260823T174719Z-7d9c1245`, four arms, one vintage). **MEASURED after the repoint:**
-`vessel_damage_clue` = **174.740** exactly on the default path, and the AJ-0 oracle diff for 173 goes
-**172/173 → 173/173 exact**. Across all three corpora the oracle diff at HEAD is now **646/647
-exact**, the single departure being `102_frozen_scouts`. No other consumer of the stale arm survives:
-every remaining reference in `scripts/` is either a historical comment or an explicit override.
-
-**`102_frozen_scouts` — one hypothesis REFUTED, cause localized, provenance UNDETERMINED.** Export
-306.42, fresh run 306.43. Measured this session: (a) NOT the 16 kHz-vs-native silence-arm difference
-— *both* stored arms give 306.430, and the control row `226_four_scouts` *does* show that difference
-(native 671.170, 16 kHz 671.180) with the export matching the native arm, so the export was produced
-on the native arm; (b) NOT rounding — 306.43 is the **exact midpoint** of native silence
-[305.82, 307.04], and its distance to the 0.01 grid line at 306.425 is a full 0.005, not a knife
-edge; (c) NOT rule-stage drift — pre-rule equals committed, no rule touched the row. What remains is
-that the live app's own silence detection produced a marginally different interval at this one
-silence. **That cannot be verified**: the saved project carries `transcriptTokens` and `syncLog` but
-**no silence array**, so the export's own detector input is not recoverable. Recorded as
-UNDETERMINED rather than asserted. **What it costs the oracle's promotion to a hard gate:** the gate
-must either keep `102_frozen_scouts` on a permanent allowlist entry that can never be retired, or
-run at a tolerance ≥10ms — and a 10ms-tolerant gate stops detecting genuine regressions in the whole
-sub-tolerance band. Persisting the detected silence array into the project save would close it; that
-is a real, small, and currently unscheduled change.
-
-**Three ledger supersessions applied** (new sitting `full-pass-aj0`, order 15 — the first sitting to
-score two whole corpora rather than a candidate list). All resolve the same way: the operator heard
-the LIVE EXPORT, so the export's value is what was accepted. Nothing deleted; supersession is by
-order alone. `226_four_scouts` 671.18 → **671.17** (arm difference, re-measured this session);
-`iron_bounce` 76.59 → **76.58** (also reproduces in a fresh HEAD run, so not export-only);
-`400_endless_dark` 1266.66 — a never-committed Class B *target* — → **1266.75**, row **CLOSED**,
-committed by R.14 snapping to the silence midpoint. It joins `152_frozen_brush_mice` (R.14),
-`iron_bounce` and `logic_clash` (R.15) as the four RULE-DEPENDENT rows, which matters only for
-R.14/R.15 deletion planning (AE.7).
-
-**Spanish scoping: OUT OF REGISTER, pending its own pass.** It has no full pass, was last touched
-2026-08-19, and holds the one `S1_KNOWN_BAD_MOVES` row whose rejection is `ledger-inherited` rather
-than heard. Its 27 boundaries are therefore classified `unadjudicable` in every table below, never
-`regressed` — treating a spanish row as attested would be reading an attestation nobody made.
-
-**Register open count: 5**, as expected — v6 213-214 → 630.09, v6 230-231 → 682.74, v6 446-447 →
-1418.53, 173 5-6 → 19.27, 173 106-107 → 427.60.
-
-**R.5 run census, the fact the whole session turns on.** MEASURED via the shipped
-`computeUnscriptedRuns`:
-
-| corpus | R.5 runs | excised audio | % of corpus |
-|---|---|---|---|
-| v6 | **10** | 41.31s | 2.91% |
-| 173 | **0** | 0.00s | 0% |
-| spanish | **0** | 0.00s | 0% |
-
-173 and spanish are therefore **structural nulls** — not merely expected to be unaffected, but
-*incapable* of being affected. That is what makes them the strongest controls this programme has had.
-
-### AE.3 — Step 1: the gate, written and committed before any arm ran
-
-R-AS applied prospectively. `scripts/ws1-session-ak-step1-gate.ts` is data and predicates only — it
-computes no measurement and reads no arm, so it cannot be relaxed in the commit that produces the
-numbers. Committed as `788faf7`, *before* `addcc38` produced any result.
-
-| condition | bar | derivation |
-|---|---|---|
-| HARD FAIL 1 | 0 of the 615 attested-correct boundaries move >50ms | the brief's own condition |
-| HARD FAIL 2 | 0 of the 19 `S1_KNOWN_BAD_MOVES` values reproduced (±5ms) | the only labelled negative ground truth |
-| SUCCESS BAR | **4 of 4** operator-targeted defects land within ±50ms | see below |
-| SHIP CAP | implied precision **≥50%** | see below |
-
-**Why the success bar is 4 and was not lowered.** A bar of 2 is no bar at all — arm B *already*
-lands 2 of 5 (`447_scout_facing_dark`, `lethal_nature_hazard`) at a cost of 35 control regressions,
-so a bar it already clears cannot distinguish excision's contribution from zero. A bar of 3 means
-excision bought one defect while the arm still moves hundreds of boundaries. The operator named
-four; setting a lower bar after seeing which rows are easy is precisely what R-AS forbids. The fifth
-(`gadget_decay`, a 0.12s defect the operator did not name) is reported, not required.
-
-**Why the ship cap is a ratio, not a count.** A count would be fitted to these three corpora. The
-derivation: the ledger's own matching rule (`earPassAuthorising`) authorises a value within
-`EAR_PIN_TOLERANCE_SEC` = 5ms of a scored one, so a move ≤5ms *preserves* the operator's standing
-verdict and a move >5ms does not — it costs exactly one unit of ear re-verification. Every open
-defect landed removes one. A change that creates more ear work than it closes cannot be shipped on
-its own measurement, so moves >5ms among the attested-correct must not exceed defects landed:
-**precision ≥50%**. For scale, both MEASURED: S1 was rejected at ~7%; arm B sits at ~0.3% on v6.
-
-**The pre-registered predictions, which are what make the v6 result interpretable.** 173 and spanish
-carry zero R.5 runs, so arm C **must** be bit-identical to arm B on both — chunk plan, FA words, and
-committed array alike. Any movement there would mean the integration is doing something other than
-excising runs, and every v6 number it produced would be uninterpretable. **A standing inference was
-also recorded before the run**, following from the census alone: 173 shows control regressions under
-arm B and has zero runs, so excision cannot be the *general* explanation for S2's regressions before
-a single arm-C boundary is computed. Arm C could only ever measure the size of a v6-local
-contribution. That framing was fixed in advance, not adopted after seeing the result.
-
-**The named stop condition:** 173's arm-B control regressions surviving arm C unchanged ⇒ recommend
-against shipping global S2 even after excision.
-
-### AE.4 — Step 2: the integration, and its index accounting
-
-`computeFaChunkPlanS2Excised` is a **sibling**, not a flag: the S2 header explicitly forbids a gating
-boolean, the module already establishes the sibling pattern (`computeFaChunkPlan` /
-`…Coalesced` / `…S2`), and a sibling keeps arm B **reproducible at HEAD** — an in-place edit would
-have handed the ablation a moving baseline, which Step 3's own stop check exists to prevent. R.5
-itself is reused unchanged via `computeUnscriptedRuns`; nothing is reimplemented.
-
-**What excision removes, stated precisely because a mis-accounting here produces exactly the
-cumulative drift being tested for:**
-
-- **AUDIO — yes.** The run's `[startSec, endSec]` is left unclaimed by any chunk.
-- **SCRIPT TEXT — nothing.** By R.5's own zero-hole rule a run has *no* unmatched script word
-  opposite it, so there is no text belonging to the run to delete. `qiSplit` is a **partition point,
-  never a deletion**. This is asserted, not assumed: the generator checks both arms' concatenated
-  chunk text is byte-identical, on all three corpora.
-- **DOWNSTREAM BOUNDARY INDICES — nothing shifts, and nothing needs accounting for.**
-  `align_chunked` (`fa_onnx.rs`) aligns each chunk independently and offsets its words by that
-  chunk's own `start_sec`, so every emitted word carries an **absolute** time regardless of what the
-  previous chunk covered. A hole in the plan is legal there (the R.5 section header states this
-  directly) and costs no index correction; word ordinals are assigned in emission order over
-  unchanged text, so ordinal *k* means the same script word in both arms. **This is why excision
-  cannot itself introduce cumulative drift** — and the measured arm-C drift shape (AE.6) confirms it
-  independently.
-
-**Where the cut goes is derived from two rules already in force, not tuned.** MEASURED: **zero of
-v6's ten runs land cleanly between two adjacent sentence groups**, and five land strictly *inside*
-one group's estimated span — which is itself displaced by the recitation, since the anchor-based
-estimate distributes script text across audio that includes it. So the cut cannot be read off the
-run's timestamps without breaking S2 invariant 3, and cannot be assumed to fall at a group seam. It
-is read off R.5's own `qiSplit` — a script-word index, exactly the index-space quantity `CLAUDE.md`
-§4 requires for an identity decision — and then moved to the start of the sentence group containing
-that word, because invariant 2 admits no other legal chunk edge. Both steps are consequences of
-stated rules. **No new constants**; the 10-30s band and the 5.0s silence-search window remain
-GEOMETRIC operator-directed parameters, unchanged.
-
-**Excision counts, MEASURED.** v6: 10 runs, all excised — 9 as inter-chunk gaps (125.25-129.15,
-249.50-253.32, 369.75-373.49, 521.25-525.82, 663.63-666.61, 787.85-791.94, 924.50-929.33,
-1044.47-1050.08, 1188.05-1192.33; 37.82s) plus the leading run at 0.08-3.57 (3.49s) which becomes the
-plan's start offset rather than a gap — 41.31s total, matching the census exactly. 0 violations.
-173 and spanish: **zero runs**, plan byte-identical to arm B, which is what makes them controls.
-
-**A REAL CONFOUND, reported rather than absorbed.** The density adjustment subtracts a run's seconds
-from a group's packing weight using the group's *estimated* span — and those estimates are displaced
-by the very recitation being subtracted. Globally it balances (total weight drops by exactly the
-excised total), but **locally it does not**, and the chunk-length distribution widens at both tails:
-
-| arm | n | min | median | max | chunks >30s |
-|---|---|---|---|---|---|
-| B | 54 | 10.57 | 27.44 | 31.92 | 9 |
-| C | 57 | **4.87** | 26.06 | **43.91** | 7 |
-
-Three arm-C chunks (36.43s, 39.85s, 43.91s) exceed arm B's maximum, and **all three end exactly at
-an excised run**. So arm C changes *two* things versus arm B — it excises recitations *and* it
-widens the window distribution — and per `CLAUDE.md`'s standing invariant a wider FA window is an
-independent accuracy risk. This bounds the attribution: the 14 repairs are excision's floor
-contribution, and part of the 16 non-repairs may be this confound rather than a residual mechanism.
-Fixing it would require either clamping wall span (a new rule) or a per-corpus constant — both
-barred this session, and neither justified while the gate fails by two orders of magnitude.
-
-### AE.5 — Step 3: arm B reproduces; both structural nulls hold
-
-Arm B re-derived at HEAD reproduces Session AI's stored chunk plan byte-for-byte on all three
-corpora (**54/54, 28/28, 4/4**), so the ablation is not measured against a moving baseline. Arm B
-still holds the funnel zero and still lands `447_scout_facing_dark` (1418.510) and
-`lethal_nature_hazard` (19.230) — confirmed below.
-
-**The structural nulls held exactly as pre-registered**, and were checked at the strongest available
-level — not inferred from the plan but measured on the aligner's own output:
-
-| corpus | R.5 runs | arm B vs C chunk plan | arm B vs C **FA words** | boundaries moved B→C |
-|---|---|---|---|---|
-| 173 | 0 | byte-identical | **byte-identical (1660 words)** | **0** |
-| spanish | 0 | byte-identical | **byte-identical (249 words)** | **0** |
-| v6 | 10 | 54 vs 57 chunks | differ (3874 vs 3874 words) | 172 |
-
-This doubles as an empirical confirmation of Session Y's `with_deterministic_compute(true)` pinning:
-identical plan through the same model returned identical words, twice, on real audio.
-
-### AE.6 — Steps 4-5: every table
-
-**Full oracle diff, per corpus per arm.** Categories partition the moved set exactly (asserted in
-code: `unchanged + repaired + regressed + unadjudicable === compared`).
-
-| corpus | arm | compared | unchanged | repaired | regressed | unadjudicable | moved |
-|---|---|---|---|---|---|---|---|
-| v6 | A | 447 | 446 | 0 | 1 | 0 | 1 |
-| v6 | B | 447 | 116 | 1 | **326** | 4 | 331 |
-| v6 | C | 447 | **164** | 1 | **279** | 3 | 283 |
-| 173 | A | 173 | **173** | 0 | 0 | 0 | 0 |
-| 173 | B | 173 | 130 | 1 | **40** | 2 | 43 |
-| 173 | C | 173 | 130 | 1 | **40** | 2 | 43 |
-| spanish | A/B/C | 27 | 27 | 0 | 0 | 0 | 0 |
-
-Arm A's single v6 `regressed` row is `102_frozen_scouts` (10ms, AE.2) — inside the ±50ms hard-fail
-band, so HARD FAIL 1 is clear for arm A. **Attested-correct boundaries moved beyond ±50ms: arm A 0,
-arm B 364, arm C 317.**
-
-**Step 4 — the arm-B control regressions, attributed.** The set is **35, not 36**. The missing one is
-173's `vessel_damage_clue`, whose own Session AI row is labelled `S2-value-ear-verified-correct`: it
-counted as a "regression" only because the BASELINE was the retired arm. Step 0's repoint deletes it
-— arm A and arm B now both commit 174.740 and it does not move. This is a figure corrected at its
-source, not an adjustment.
-
-| corpus | arm-B control regressions | **repaired** (exactly back) | partial (closer) | unchanged | worsened |
-|---|---|---|---|---|---|
-| v6 | 30 | **14** | 4 | 11 | 1 |
-| 173 | **5** | **0** | 0 | **5** | 0 |
-
-**14 of v6's 30 repaired to the exact attested value** — `125_night_circle`, `176_twenty_six_scout`,
-`266_forty_one_burden`, `340_fifty_eight`, `087_throwing_spear_poise`, `224_thirty_three`,
-`307_forty_nine_years`, `383_sixty_four`, `221_skill_removes`, `222_long_silence`, `057_root_trip`,
-`076_feeling_change`, `305_carrying_grief`, `367_dropped_torch`. **16 survive.** One
-(`216_chest_revelation`) worsened, 19.070 → 20.950 off its attested value.
-
-**Do the survivors sit near recitation spans?** No — and this is the informative half. The repaired
-rows cluster where an excised run sits between the boundary and its chunk edge; the survivors
-(`152_frozen_brush_mice` 15.880s, `192_scout_listening` 22.250s, `289_winter_predator_breach`
-21.890s, `213_pensive_stare` 21.860s, `293_sitting_brooding` 18.320s, `318_scout_on_ridge` 14.860s,
-`325_contrasting_student`, `364_the_full_cost`, `158_scout_false_alert`, `039_river_trap`,
-`443_scout_cliff_edge`) are spread across the corpus at magnitudes essentially unchanged from arm B.
-They are residual S2 damage, not recitation damage.
-
-**The drift profile, and its shape.** Measured by decile, arm value − arm A value:
-
-| decile | n | arm B mean | arm C mean | arm B max abs | arm C max abs |
-|---|---|---|---|---|---|
-| 0-142s | 47 | -0.968 | -0.877 | 6.610 | 8.000 |
-| 142-284s | 48 | -2.677 | -1.762 | 8.210 | 7.870 |
-| 284-426s | 48 | -9.241 | -8.151 | 16.910 | 15.280 |
-| 426-569s | 47 | -17.353 | -13.534 | 24.450 | 22.070 |
-| 569-711s | 52 | -23.252 | -17.366 | 27.500 | 26.020 |
-| **711-853s** | 42 | **-23.786** | **-19.155** | 27.700 | 27.470 |
-| 853-995s | 40 | -17.848 | -14.801 | 23.010 | 23.010 |
-| 995-1137s | 42 | -12.318 | -7.810 | 19.060 | 16.970 |
-| 1137-1279s | 37 | -2.735 | -1.348 | 10.950 | 8.130 |
-| 1279-1421s | 44 | **0.157** | **0.157** | 2.130 | 2.130 |
-
-**The drift does NOT collapse in arm C — it shrinks by ~19% and keeps its shape exactly.** And the
-shape is the finding: **both arms are an ARCH**, not a ramp. It rises from ~0, peaks at decile 5, and
-**returns to 0.157s in the final decile — identically in both arms**. So **the drift was never
-cumulative**: an accumulating error cannot come back on its own. It is a per-region displacement
-that something re-anchors by corpus end. That is measured, not inferred, and it retires the
-"cumulative drift" framing the confound was originally described under. (173's own drift is likewise
-an arch, but *positive* and far smaller, peaking at +3.854s.)
-
-**The open defects, per arm, with incoming anchor confidence.**
-
-| corpus | tag | ear | arm A | arm B | arm C | C landed? | conf A | conf B | conf C |
-|---|---|---|---|---|---|---|---|---|---|
-| v6 | `214_solitary_fire` | 630.09 | 629.010 | 607.680 | 607.680 | no (-22.410) | 2.19e-7 | 2.19e-4 | 2.50e-4 |
-| v6 | `231_slowing_pace` | 682.74 | 681.630 | 657.350 | 668.950 | no (-13.790) | 6.97e-3 | 2.26e-5 | **0.00e+0** |
-| v6 | `447_scout_facing_dark` | 1418.53 | 1417.120 | 1418.510 | 1418.510 | **YES** (-0.020) | 2.31e-3 | 1.00e+0 | 1.00e+0 |
-| 173 | `lethal_nature_hazard` | 19.27 | 18.510 | 19.230 | 19.230 | **YES** (-0.040) | 9.66e-1 | 9.94e-1 | 9.94e-1 |
-| 173 | `gadget_decay` | 427.60 | 427.480 | 427.470 | 427.470 | no (-0.130) | 9.59e-1 | 9.47e-1 | 9.47e-1 |
-
-**The confidence mechanism predicted a rise from ~1e-7 and got one on exactly one row.**
-`214_solitary_fire` rises 2.19e-7 → 2.50e-4 (three orders) and still does not land. On
-`231_slowing_pace` the Session AI observation is **confirmed and made worse, not reversed**:
-confidence fell 6.97e-3 → 2.26e-5 under arm B and reaches **exactly 0.00e+0** under arm C. Excision
-does not reverse that fall; it completes it. The two rows that land carry confidence 1.00e+0 and
-9.94e-1 — they were never the low-confidence cases.
-
-**`S1_KNOWN_BAD_MOVES`: 0 reproduced by any arm, on any corpus.** HARD FAIL 2 is the one condition
-arm C passes.
-
-**Phantom funnel. Arm C does NOT hold the structural zero on v6.**
-
-| corpus | stage | A | B | C |
-|---|---|---|---|---|
-| v6 | (1) trailing phantom | 183 | 22 | 28 |
-| v6 | (1)∧(2) at a seam | 110 | 6 | 9 |
-| v6 | **(1)∧(2)∧(3)** | **19** | **0** | **3** |
-| 173 | (1)∧(2)∧(3) | 2 | 0 | **0** |
-| spanish | (1)∧(2)∧(3) | 2 | 0 | **0** |
-
-Arm C reintroduces three v6 funnel hits arm B had eliminated — `012_sudden_hush`, `078_column_stops`,
-`373_slow_blade_draw`. This is a genuine cost of the integration, most plausibly the widened-window
-confound of AE.4, and it means **excision is not strictly dominant over plain S2**: it trades 47
-regressions for 3 phantom hits and 1 worsened control.
-
-**Resources, arm C measured directly** (`/usr/bin/time -l`, debug profile, single-threaded pinned ORT
-1.23.2). Arms A and B are stored artefacts and were not re-aligned, so no figure is claimed for them.
-
-| corpus | chunks | wall clock | peak RSS |
-|---|---|---|---|
-| v6 | 57 | 644.81s | 3205.3 MB |
-| 173 | 28 | 327.43s | 2227.6 MB |
-| spanish | 4 | 49.42s | 1938.1 MB |
-
-**Violations: 0 for arm C on every corpus**, and 0 for arm B (Session AI's own stored figure) — no
-`oversize-unbreakable-group`, no `no-usable-silence-nearby`, no `unexcised-run`.
-
-### AE.7 — Rule firings, and the rule-dependent rows
-
-| corpus | arm | R.14 | R.15 | double-corrected (AI defn) | double-corrected (stacked) |
-|---|---|---|---|---|---|
-| v6 | A / B / C | 11 / **64** / **36** | 0 / 7 / 7 | 0 / **74** / **45** | 0 / 0 / 1 |
-| 173 | A / B / C | 0 / 2 / 2 | 3 / 2 / 2 | 0 / 11 / 11 | 0 / 0 / 0 |
-| spanish | A / B / C | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 | 0 / 0 / 0 |
-
-**Double-corrections under arm B are 85, not 96.** Recomputed with Session AI's own definition, this
-matches its stored artifact exactly (74 v6 + 11 173 + 0 spanish = 85); the 96 in the session brief
-does not correspond to any recorded figure. Arm C reduces it to **56** — excision roughly halves
-v6's rule-stage churn (74 → 45), consistent with R.14's own firing count falling 64 → 36. Both remain
-far above arm A's 11.
-
-**The four rule-dependent rows — does any become structurally correct with its owning rule not
-firing?** Two do, and two get worse:
-
-| tag | rule | attested | arm A pre-rule | arm B/C pre-rule | verdict under S2 |
-|---|---|---|---|---|---|
-| `400_endless_dark` | R.14 | 1266.75 | 1266.210 | **1266.750** | **STRUCTURALLY CORRECT** — rule not needed |
-| `iron_bounce` | R.15 | 76.58 | 75.660 | **76.580** | **STRUCTURALLY CORRECT** — rule not needed |
-| `152_frozen_brush_mice` | R.14 | 451.03 | 449.200 | 435.150 | worse — 15.880s off, rule can't reach it |
-| `logic_clash` | R.15 | 418.14 | 417.150 | 421.550 | worse — 3.410s off, rule can't reach it |
-
-This is the session's one clean contribution to **R.14/R.15 deletion planning**: under an S2-class
-planner, two of the four rows the rules exist to rescue no longer need rescuing, because the base
-alignment already puts the boundary in the right place. It is *not* an argument for deleting either
-rule — the other two rows get materially worse — but it is the first evidence that the
-rule-dependency is a property of today's planner rather than of the boundaries themselves.
-
-### AE.8 — Implied precision under R-AS, and the gate verdict
-
-| corpus | arm | repaired | regressed | implied precision |
-|---|---|---|---|---|
-| v6 | B | 1 | 326 | 0.31% |
-| v6 | **C** | 1 | 279 | **0.36%** |
-| 173 | B / C | 1 | 40 | 2.44% |
-
-Whole-register (v6 + 173, spanish excluded as out of register): **2 defects landed against an ear
-bill of 319 → 0.62%.**
-
-| condition | bar | arm C | verdict |
-|---|---|---|---|
-| HARD FAIL 1 — attested-correct moved >50ms | 0 | **317** | **FAIL** |
-| HARD FAIL 2 — known-bad reproduced | 0 | **0** | PASS |
-| SUCCESS BAR — operator-targeted defects landed | ≥4 of 4 | **2** | **FAIL** |
-| SHIP CAP — implied precision | ≥50% | **0.62%** | **FAIL** |
-
-**GATE VERDICT: FAIL, 3 of 4.** Arm C's precision is **an order of magnitude below the ~7% at which
-S1 was rejected 18/18 on ear audit**. Under R-AS that is dispositive on its own: a repair whose
-precision is worse than an already-rejected repair's does not need a listening pass to be declined.
-
-### AE.9 — Step 6: recommendation — ESCALATE
-
-**The driving number: 40.** 173 regresses **40 boundaries under both arms, bit-identically**, on a
-corpus with **zero** R.5 runs. The named stop condition fired exactly as written.
-
-This is ESCALATE, not ITERATE, and the distinction is the point. Iterating would mean naming the
-next change to the excision integration — but excision is not what is failing. It works: it is inert
-where it should be inert (byte-identical on both null corpora) and it repairs 14 of 30 controls
-exactly where it should. **The surviving mechanism is global S2 itself.** Its signature, now
-measured on a corpus where recitations cannot be blamed: replacing a ~5s-median chunk plan (119
-chunks) with a ~27s-median one (28 chunks) moves 43 of 173 boundaries and regresses 40, drives an
-arch-shaped displacement peaking mid-corpus, and multiplies R.14 firings. That is a chunk-width
-effect on alignment accuracy, exactly the risk `CLAUDE.md`'s standing invariant names — and the
-capacity sweep that cleared 120s gave no warning of it, exactly as that invariant says it cannot.
-
-Per the brief's own instruction, this report stops here rather than proposing a new architecture in
-the same breath. What it does **not** do, deliberately: propose seam-scoped repartition. Arm C's
-surviving failures are demonstrably **not** seam-local — the 16 surviving v6 controls are spread
-across the corpus at magnitudes unchanged from arm B, 173's 40 regressions occur with no seam
-excision available at all, and the drift is a whole-region arch rather than a set of bad seams. A
-seam-scoped planner would be aimed at a symptom this session measured and found absent.
-
-**What would change the recommendation:** a measurement isolating chunk WIDTH from chunk COUNT on
-173 — the one corpus where excision is provably irrelevant — by sweeping S2's band alone. That is a
-capacity-independent accuracy question, and it is the only remaining hypothesis this session's data
-does not already rule out.
-
-### AE.10 — Step 7: self-check
-
-**Does arm C remove the cause or detect the symptom?** It removes *a* cause, and the evidence is
-structural rather than statistical: excision is byte-identical-inert on two corpora that cannot
-contain the thing it removes, and on the third it repairs 14 controls to their exact attested values.
-That is removal, not detection — nothing here is keyed on a detector firing. But it removes a cause
-that accounts for roughly 14% of the damage (326 → 279 regressed) and none of the damage on 173.
-
-**Which roadmap items move.** *Repaired timings* — advanced, but not to a shippable point: 14
-repairs, 2 defects landed, gate failed. *Word-gap placement replacing silence-midpoint* — untouched;
-no placement rule was written or tested. *R.14/R.15 deletion* — genuinely advanced (AE.7): two of the
-four rule-dependent rows become structurally correct under an S2-class planner, the first evidence
-that rule-dependency is a planner property. *Rule-stage golden coverage* — **untouched, and this
-session is another instance of why it matters**: golden replay stayed 6/6 byte-identical throughout
-while arm C moved 283 v6 boundaries, exactly the blind spot `CLAUDE.md` §4 records. **Nothing moved
-backwards**, with one honest qualification: arm C reintroduces 3 v6 phantom-funnel hits that arm B
-had eliminated, so on that one axis arm C is worse than the arm it was meant to improve.
-
-**Every tuned rather than structural choice in the integration.** There is exactly one judgement
-call, and it is not a constant: **the decision to move `qiSplit` to the containing sentence group's
-START** rather than its end. It is forced (invariant 2 admits no edge inside a group) but the choice
-of *which* legal edge — the group's start versus the previous group's — is a decision the rules do
-not make for me. Everything else is derived: no new numeric constant was introduced, the 10-30s band
-and the 5.0s search window are unchanged and GEOMETRIC, and the density adjustment is arithmetic on
-measured run spans. The **widened chunk-length distribution** (AE.4) is a structural side effect, not
-a tuned one, but it is a confound and is reported as such.
-
-**Anything that would fail R-AS if reframed as a detector.** Yes, and it should be said plainly: if
-the excision integration were reframed as a detector — "flag boundaries near recitations and move
-them" — its precision on v6 is 14 repairs out of 172 boundaries moved between arms B and C, ≈8%.
-That is the same order as S1's rejected ~7%. Excision survives this session's scrutiny **only**
-because it is not a detector: it is a structural removal whose inertness on null corpora is provable,
-and its 14 repairs land exactly on attested values rather than near them. Had it been keyed on a
-detector, the same numbers would have required rejection.
-
-**What would falsify the claim that R.5 excision fixes v6's regressions, and did it fire?** The
-falsifier was pre-registered: *v6 arm C reproducing arm B's drift profile essentially unchanged*.
-**It half-fired, and the honest reading is the strong one.** The magnitude did move (-23.786s →
--19.155s peak, 16 of 30 controls repaired or partially repaired), so the claim is not fully
-falsified. But the *shape* is unchanged — same arch, same peak decile, same final-decile value to
-three decimals — and 173's regressions are bit-identical across the arms. So the claim as stated
-("excision fixes v6's regressions") **is** falsified; the weaker claim it supports ("excision removes
-a measurable, structurally-attributable share of them") is not. That distinction is the session's
-result.
-
-### AE.11 — The six numbers, MEASURED, and every SHA
-
-| check | result |
-|---|---|
-| `npm test` | **2493 passed / 66 skipped / 0 failed** |
-| `tsc --noEmit` (`npm run lint`) | clean |
-| `cargo check --features fa-inference` | clean |
-| `cargo clippy --all-targets --features fa-inference` | clean — 4 pre-existing warnings, 0 new |
-| `cargo test` (default) / `--features fa-inference` | 141/0/1 / 216/0/24, unchanged |
-| Golden replay | **6/6 byte-identical** |
-
-The skip count rises 61 → 66: five new Session AK gated harnesses (step0-repoint, step0-forensics,
-step2-runprobe, step3-generate, step4-measure), each contributing exactly one `describe.skipIf`,
-none in the default sweep. Passing count unchanged at 2493 — no new always-on test was added, and
-none was lost.
-
-`faAnchors.ts` sha256 unchanged: `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`.
-
-**Commits, in order:**
-
-| commit | summary |
-|---|---|
-| `25eb100` | Step 0 — repoint 173's default arm, three ledger supersessions |
-| `788faf7` | Steps 1-3 — the gate (committed before any arm ran), R.5 excision wired into S2 |
-| `addcc38` | Steps 4-5 — the three-arm ablation, measured |
-| *(this commit)* | docs — this Part, §§3/9/11m, Changelog, project-state |
-
-`git diff --stat 702b8fe` touches `scripts/ws1-runid.ts`, `scripts/ws1-session-p-pipeline.ts`,
-`scripts/ws1-ear-pass-ledger.ts`, `src/services/faChunkPlan.ts`, five new
-`scripts/ws1-session-ak-*.ts` files, plus this docs commit's own targets. **Confirmed untouched:**
-`snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts` (the Hirschberg aligner),
-`faAnchors.ts`, `docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv` — zero hits for any of
-them. No new repo-root file. No rule added, deleted, or re-tuned; no arbiter rebuilt; no per-project
-or per-row constant introduced; nothing shipped to the production default.
-
-**Next action:** sweep S2's chunk-width band on **173 alone** — the corpus where R.5 excision is
-provably irrelevant — to isolate chunk WIDTH from chunk COUNT as the cause of the 40 regressions
-excision cannot touch. Everything else this session measured is already explained.
+**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/history-2.md`'s
+Session AK entry; see there for the complete result.** Summary: a three-arm ablation
+(production / global S2 / global S2 + R.5 excision) found R.5 excision a CONTRIBUTING cause of
+v6's S2 drift (14/30 ear-verified control regressions repaired exactly) but not the general
+cause — 173 regresses 40 boundaries identically under both arms despite carrying zero R.5 runs.
+Global S2 failed its pre-registered gate (implied precision 0.62% vs. 50% bar). The drift is an
+"arch" (peaks mid-corpus, returns to ~0), never cumulative. Nothing shipped.
+
+**Verification (2026-08-23):** `npm test` 2493 passed/66 skipped/0 failed; `tsc`/`cargo
+check`/`cargo clippy --features fa-inference` all clean; `cargo test` 141/0/1 (default),
+216/0/24 (fa-inference); golden replay 6/6 byte-identical; `faAnchors.ts` sha256 unchanged
+(`b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`). Commits: `25eb100` (Step
+0 — repoint 173's default arm, three ledger supersessions), `788faf7` (Steps 1-3 — gate + R.5
+excision wired into S2), `addcc38` (Steps 4-5 — three-arm ablation, measured). `snapBoundaries.ts`,
+`silenceDetector.ts`, `whisperService.ts`, `faAnchors.ts`, `docs/history.md`, and the golden-replay
+fixture CSVs were all confirmed untouched.
 
 ---
 
 ## Part AF — Chunk Width Is Not the Cause: a Period-Strict 1–15s Band Regresses MORE Than the 10–30s Arm, and the Arch Is the Anchor Estimate's Own Error (WS1 Session AL, 2026-08-24, append-only)
 
-**Scope: v6 only, by operator direction.** 173 and Spanish were not run. Session AK recommended
-ESCALATE on 173's 40 arm-invariant regressions; the operator directed the same isolation from the
-other end — hold the corpus fixed and vary the chunk width instead.
+**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/history-2.md`'s
+Session AL entry; see there for the complete result.** Summary: v6-only. A period-strict 1–15s
+chunk band (arm D, half the median width of the 10–30s baseline) made drift *worse*, not better
+(peak −20.617s vs. arm C's −19.155s, 363 regressed boundaries vs. 279) — eliminating chunk width
+as the driver by its own pre-registered falsifier. The arch's real correlate was traced upstream,
+with no FA and no chunk plan involved: `applyAnchorBasedTiming`'s own per-decile estimate error
+against the oracle is the same arch shape, correlating with arm D's drift at r = 0.9940 —
+consistent with a conserved-total redistribution error (Σ content-segment duration is fixed),
+never an accumulating one. Nothing ships; `faAnchors.ts` unchanged (sha256 `b61e94cb…`). Golden
+replay 6/6 and the oracle diff both green, despite arm D moving 366 v6 boundaries — restating the
+blind spot: golden replay stops at `snapCoveredBoundaries` and cannot observe a chunk plan or any
+rule.
 
-### AF.1 The gate, written and committed before the planner existed
-
-`scripts/ws1-session-al-step1-gate.ts` (commit `59b24ad`) fixes every threshold up front, R-AS
-applied prospectively as in Session AK. Hard fails: 0 attested-correct v6 boundaries moved beyond
-±50ms, 0 of the 18 `S1_KNOWN_BAD_MOVES` values reproduced. Success bar: **3 of 3** v6 open defects
-landed within ±50ms — not lower, because arm C already lands exactly 1 (`447_scout_facing_dark`)
-and a bar an existing arm clears cannot separate this change's contribution from zero. Ship cap:
-implied precision ≥ 50%.
-
-Regression thresholds, both stated in advance:
-
-* **Worse than arm C:** more than **279** regressed boundaries.
-* **Worse than production:** more than **1** at the 5ms ear-bill band, equivalently more than **0**
-  at the 50ms band. Arm A's single row is `102_frozen_scouts` at oracle 306.42 vs committed 306.43
-  — a 10ms bookkeeping difference well inside the hard-fail band. Both numbers are recorded so
-  neither can be quietly swapped for the other.
-* **Materially better (the Step 5 arm-E trigger):** **≤ 139**, i.e. arm D must at least halve arm C.
-  Half is not arbitrary — R.5 excision alone already bought a 14.3% reduction (326 → 279), so a
-  width change that cannot beat that by a wide margin sits inside the range one already-measured,
-  non-width variable moves, and attributing anything to width in that regime is not supportable.
-
-### AF.2 Both drift shapes registered in advance — the reason this session is interpretable
-
-Session AK measured v6's S2 drift as an **arch**: rising from ≈ −0.9s, peaking at decile 5 (arm B
-−23.786s, arm C −19.155s) and returning to +0.157s in decile 9, identically in both arms. This
-session asked a different question of the same curve — **is its amplitude set by chunk width?** —
-and registered both answers before running:
-
-**IF WIDTH CAUSES THE ARCH.** Peak |mean decile Δ| ≤ **10.0s** (≈52% of arm C's, tracking arm D's
-median width being ≈50% of arm C's); peak |drift| monotone increasing in median chunk width across
-A < D < C < B; arch retained with |final decile| < 1.0s. Linear interpolation between arm A (4.04s
-width, ~0 drift) and arm C (26.06s, 19.155s) puts a ~13s median at **8.2s**.
-
-**IF WIDTH IS IRRELEVANT.** Peak |mean decile Δ| ≥ **14.0s** (within ~25% of arm C's); peak in the
-same decile (4, 5 or 6); final decile +0.157s ± 0.5s.
-
-**The independent discriminator, also registered in advance.** If width is irrelevant, arm D's
-per-decile drift should track the per-decile error of the **anchor-based estimate itself**
-(`applyAnchorBasedTiming(anchorTimed).startTime − oracle.startTime`) — a quantity that involves no
-FA, no chunk plan and no band, and is therefore identical for arms B, C and D by construction.
-Registered thresholds: Pearson r ≥ 0.85 = TRACKING, < 0.50 = NOT TRACKING. This satisfies Session
-AH's ruling that a validator must have a reference independent of the arm under test; the estimate
-is computed upstream of every arm and cannot be moved by any of them.
-
-**The falsifier, one sentence:** arm D reproducing the arch at an amplitude that does not scale
-down with its median chunk width — peak ≥ 14.0s at a median width near half arm C's — falsifies
-the claim that chunk width drives v6's drift.
-
-### AF.3 The period rule, and why v6 makes this a pure width test
-
-The rule, quoted from `faChunkPlan.ts`'s own section header: *a segment ENDS A SENTENCE iff, after
-trimming trailing whitespace and then stripping any run of closing quotation/bracket characters
-(`"` `'` `”` `’` `»` `)` `]` `}`), the final character is `.`, `!` or `?`, AND that terminator is
-not disqualified as* **E1 an ellipsis** (`…`, or the last of a run of two or more `.` — the
-substantive tightening over `S2_SENTENCE_TERMINATOR`, whose `[.!?…]` class accepts both), **E2 an
-abbreviation** (a closed list, or a single capital initial, case-sensitive at a word boundary), or
-**E3 a decimal** (digit on both sides; impossible at segment-final position, kept as an explicit
-branch so it is a decision rather than an accident). *Everything else — comma, colon, semicolon,
-dash, no punctuation at all — is NOT a sentence end.*
-
-**Every ambiguous case in v6, MEASURED and named** (`docs/ws1-sync-pipeline/session-al-v6-chunk-inspection.md`,
-"The period-detection census"). v6's script contains **368 periods, 95 commas, and nothing else**:
-
-| class | anywhere in text | at segment-final position | resolution |
-|---|---|---|---|
-| ellipsis (`…` or `...`) | 0 | 0 | structurally absent; E1 inert |
-| decimal (digit.digit) | 0 | 0 | structurally absent; E3 inert |
-| any digit | 0 | 0 | structurally absent |
-| abbreviation (closed list) | 0 | 0 | structurally absent; E2 inert |
-| single-capital initial | 0 | 0 | structurally absent; E2 inert |
-| quote or bracket | 16 | **0** | all 16 are intra-word right single quotes (`else’s`, `Fen’s`, `fire’s`); none sits at the position the rule reads, so none can change a verdict |
-| colon or semicolon | 0 | 0 | structurally absent |
-| `!` or `?` | 0 | 0 | structurally absent |
-
-So all three exclusions are inert on v6 and the period-strict rule selects **exactly the same 368
-sentence ends** as `s2EndsSentence` — **0 disagreements over 447 segments**, asserted rather than
-assumed. **Arm D is therefore a pure BAND change from arm C**, cleaner than the brief anticipated.
-
-### AF.4 Packing, and the two conservation properties the narrow band forced into the open
-
-**Greedy left-to-right over sentence groups, never balanced.** A break is taken before group *g*
-iff an R.5 excision seam forces one there (a forced break always wins over the band: it is an
-invariant, the band a preference) or `acc + weight(g) > 15s` and `acc >= 1s`, where `weight(g)` is
-the group's estimated span net of any overlapping excised run. Greedy rather than balanced because
-balancing needs a global objective, and every objective function is a knob whose weight would have
-to be fitted to a corpus — which R-AS forbids. **Degenerate final chunk:** a last chunk whose net
-weight is under 1s merges back into its predecessor, unless a forced excision break separates them.
-On v6 this rule did not fire.
-
-At 1–15s an excised run's far edge can sit **past** a following chunk's own estimate-derived seam —
-directly the phenomenon arm C's own section header names, that a recitation displaces the anchor
-estimate around it. The inherited arm-C emit loop responds to that by dropping the chunk, which
-**loses its script text**, and by setting the cursor to a value **behind itself**, which emits
-overlapping windows. Both are fixed here as conservation properties, not new rules: the chunk's
-segments are carried forward into the next emitted chunk, and the cursor is monotone
-non-decreasing. **Arm C never reaches this on v6** — 0 violations, MEASURED Session AK Step 3 —
-because a 26s chunk absorbs a displacement a 13s chunk cannot.
-
-**The size of that displacement is itself a measurement.** The four collapsed windows are
-[525.820, 519.080], [666.610, 659.820], [791.940, 779.960] and [929.330, 916.500] — the estimate
-seam sitting **6.74s, 6.79s, 11.98s and 12.83s BEHIND** the excised run's far edge. Those are
-recitation-adjacent points, and the magnitudes are the same order as the arch itself.
-
-### AF.5 Arm D, measured
-
-110 chunks (pre-registered point 115, band 95–150 — **HELD**). Distribution: min 1.71s, p25 10.64s,
-**median 12.86s**, p75 14.48s, max 33.01s, mean 12.545s; **0 chunks under 1s, 22 over the 15s cap**.
-Cut kinds: 100 detected-silence, 9 excision-run-edge, 1 corpus-end, **0 geometric fallbacks** —
-every non-excision cut found a detected silence inside ±5s, so the geometric-midpoint mechanism is
-inert on this corpus and arm D stays one variable from arm C.
-
-**The complete violation list**, 28 events: **22 `cap-exceeded`** (33.01, 28.09, 23.38, 22.73,
-19.87, 17.96, 17.35, 17.30, 17.04, 16.50, 16.33, 16.00, 15.86, 15.66, 15.62, 15.52, 15.43, 15.32,
-15.20, 15.20, 15.16, 15.14s), **2 `oversize-unbreakable-group`** (18.058s at segments 308–310,
-16.091s at 422–423 — the only two the cap is legitimately exceeded *for*), and **4
-`excision-collapsed-chunk`** (segments 175–179, 223–228, 265–266, 306–307, all carried forward).
-Note the asymmetry this exposes: only 2 of the 22 cap exceedances are caused by an unbreakable
-sentence group. The other 20 are caused by **cut displacement** — the packer weighs groups by their
-estimated span while the emitted window is bounded by silence-snapped cuts derived from that same
-displaced estimate, so a 15s target routinely emits a 15–17s window and occasionally a 33s one.
-
-**Accuracy against the AJ-0 oracle, four arms at one commit:**
-
-| arm | plan | chunks | median width | unchanged | repaired | **regressed** | unadjudicable | moved |
-|---|---|---|---|---|---|---|---|---|
-| A | production | 277 | 4.04s | 446 | 0 | **1** | 0 | 1 |
-| B | S2 10–30s | 54 | 27.44s | 116 | 1 | **326** | 4 | 331 |
-| C | S2 + R.5 excision 10–30s | 57 | 26.06s | 164 | 1 | **279** | 3 | 283 |
-| D | **period-strict 1–15s + R.5** | 110 | 12.86s | 81 | 1 | **363** | 2 | 366 |
-
-Every arm's categories sum to 447, asserted. Arm D's unadjudicable pair is
-`open-defect-moved-without-landing`; unlike B and C it loses no segment (447 committed, matching
-production). **Arm D is worse than arm C (363 > 279) and worse than production (363 > 1).** The
-arm-E trigger (≤ 139) is not reached, so no attribution run was made — per the brief, a materially
-worse arm is reported as a negative and the band is not iterated.
-
-Gate: HARD FAIL 1 **362** beyond ±50ms (bar 0), HARD FAIL 2 **0** known-bad reproduced (bar 0,
-PASS), success bar **1 of 3** defects landed (bar 3), ship cap **0.27%** implied precision (bar
-50%) — below arm C's 0.36%, arm B's 0.31%, and the ~7% at which S1 was rejected. **GATE VERDICT:
-FAIL, 3 of 4.**
-
-Ear-verified controls moved off their attested value: A 0/42, B 30/42, C 18/42, **D 22/42**.
-Against arm B's 30-row regression set, arm D repairs 10 exactly (arm C: 14), partial 6, unchanged
-8, **worsened 6** (arm C: 1).
-
-The three open defects: `447_scout_facing_dark` lands in B, C and D alike at 1418.510 (Δ −0.020s,
-confidence 1.00e+0). `214_solitary_fire` moves 607.680 → 608.770 but stays 21.3s from its ear
-target; notably its incoming-anchor confidence jumps to **8.16e-1** from arm C's 2.50e-4 — high
-confidence in a badly wrong place, which is exactly the failure mode R.14/R.15 exist for and
-exactly why confidence may not reopen an ear-verified row.
-**`231_slowing_pace`'s collapse HOLDS: 6.97e-3 (A) → 2.26e-5 (B) → 0.00e+0 (C) → 0.00e+0 (D)**,
-committed at 668.950 in both C and D. Narrowing the band did not reverse it.
-
-Phantom funnel (1)/(1)∧(2)/(1)∧(2)∧(3): A 183/110/**19**, B 22/6/**0**, C 28/9/**3**, D
-27/8/**2**. **Arm D does not return to zero** — it reproduces two of arm C's three
-(`012_sudden_hush`, `078_column_stops`).
-
-Rules: R.14 fires 11 (A) / 64 (B) / 36 (C) / **59 (D)**; R.15 0/7/7/**6**. Double-corrections under
-Session AK's recomputed AI definition: 0/74/45/**69** — arm D is 53% worse than arm C on this axis,
-i.e. the rule stage is doing substantially more repair work on top of a plan change. Of the two
-rule-dependent rows, `400_endless_dark` is structurally correct pre-rule in B, C and D alike;
-`152_frozen_brush_mice` is correct pre-rule in none, and arm D moves it further off (432.640, vs
-arm C's 435.150 and the attested 451.030).
-
-Resources, under Session AK's conditions (`/usr/bin/time -l`, debug profile, single-threaded pinned
-ORT 1.23.2): **611.6s wall** (predicted 300–450s — **MISSED**) and **2421.6 MB peak RSS** (predicted
-2100–2600 — **HELD**, down from arm C's 3205.3 MB). The wall-clock miss is informative: halving
-chunk width cut runtime only 5%, so per-chunk fixed overhead dominates, not the quadratic attention
-term the prediction assumed. Peak RSS did track the largest chunk as predicted. **6 CTC-infeasible
-chunks vs arm C's 2, and 2880 needs_review words vs 2220** — a narrower band makes CTC
-infeasibility *more* common, because a short window carrying carried-forward text can hold more
-target symbols than it has frames (chunk 27, [373.49, 375.20), 1.71s against 245 target symbols).
-
-### AF.6 The drift shapes, adjudicated — and where the arch actually comes from
-
-| decile | arm B mean Δ | arm C mean Δ | **arm D mean Δ** | **anchor-estimate error** |
-|---|---|---|---|---|
-| 0–142s | −0.968 | −0.877 | **−2.238** | −5.056 |
-| 142–284s | −2.677 | −1.762 | **−5.966** | −7.302 |
-| 284–426s | −9.241 | −8.151 | **−9.473** | −11.362 |
-| 426–569s | −17.353 | −13.534 | **−14.243** | −16.671 |
-| 569–711s | −23.252 | −17.366 | **−18.627** | −22.370 |
-| 711–853s | −23.786 | −19.155 | **−20.617** | −23.347 |
-| 853–995s | −17.848 | −14.801 | **−15.374** | −17.478 |
-| 995–1137s | −12.318 | −7.810 | **−10.364** | −12.321 |
-| 1137–1279s | −2.735 | −1.348 | **−5.077** | −6.523 |
-| 1279–1421s | +0.157 | +0.157 | **+0.147** | +0.957 |
-
-**Peak |mean decile Δ| against median chunk width:** A 4.04s → 0.000s; **D 12.86s → 20.617s**; C
-26.06s → 19.155s; B 27.44s → 23.786s.
-
-**"WIDTH CAUSES THE ARCH" MISSED, and not narrowly.** Its 10.0s bar was exceeded by a factor of
-two, its 8.2s linear point estimate by a factor of 2.5, and monotonicity in width broke outright —
-arm D at half arm C's width drifts *more* than arm C, not less.
-
-**"WIDTH IS IRRELEVANT" MATCHED on all three registered conditions**: peak 20.617s ≥ 14.0s, peak
-decile 5 ∈ {4,5,6}, final decile +0.147s within 0.5s of +0.157s. **The registered falsifier
-FIRED.**
-
-**Where the arch comes from, measured with a reference independent of every arm.** The
-anchor-based estimate's own error against the oracle is itself an arch — peaking at decile 5 at
-−23.347s and returning to +0.957s — and it correlates with arm D's per-decile drift at **Pearson
-r = 0.9940** (arm B 0.9778, arm C 0.9732), against a pre-registered TRACKING threshold of 0.85.
-That reference contains no FA, no chunk plan and no band; it is computed upstream of all four arms
-and cannot be moved by any of them.
-
-Two things follow, and only two. First, **chunk width is eliminated** as the driver of v6's S2
-drift: the amplitude does not scale with it in either direction. Second, what survives is the
-family of mechanisms **invariant across the 10–30s, excised 10–30s and 1–15s bands**, of which the
-measured one is that every S2-family arm places its chunk edges from the anchor-based *estimate*
-(via `segment.startTime`), whereas production's `computeFaChunkPlan` places them at `faAnchors.ts`'s
-three-source-agreement anchors. The r = 0.994 does not prove that mechanism — correlation with an
-upstream error is consistent with several causal routes — but it does rule out any explanation
-that requires the drift to depend on how wide a chunk is.
-
-**Why the arch returns to zero, structurally.** Σ content-segment duration = voiceoverDuration
-(`CLAUDE.md` §4). The anchor-based estimate distributes a *fixed total* across the script by
-character weight, so its error is a redistribution and must sum to zero across the corpus — it
-cannot end anywhere but near zero. Session AK's "a drift that returns to zero was never cumulative"
-now has its positive counterpart: **an arch is the signature of a conserved-total distribution
-error, not of an accumulating one.** No architecture is proposed on the strength of this; it is
-recorded as what the measurement eliminates.
-
-### AF.7 Verdict
-
-Nothing ships. No rule added, deleted or re-tuned; no arbiter rebuilt; no per-project or per-row
-constant; no seam-scoped planner; no 173 or Spanish run; nothing wired to the production default;
-`faAnchors.ts` unchanged (sha256 `b61e94cb…`). Golden replay 6/6 and the oracle diff test both
-green — and worth restating, since arm D moved 366 v6 boundaries while golden replay stayed
-byte-identical: **golden replay stops at `snapCoveredBoundaries` and cannot observe a chunk plan or
-any rule.**
-
-**Next action:** measure whether replacing the S2 family's estimate-derived chunk edges with
-`faAnchors.ts`'s three-source-agreement anchor times — the one thing production does differently
-and the only mechanism this session's r = 0.994 leaves standing — removes the arch, as a single
-additive arm on v6 against the same gate. If it does not, the arch is not an edge-placement
-property at all and the S2 family should be closed out rather than iterated.
+---
 
 ## Part AG — Chunk-Edge Placement Error IS the Driver: the Arch DIES Under Anchor-Placed Edges (68 Regressions Against Arm C's 279), and DIES Again Under the Oracle Ceiling (2) (WS1 Session AM, 2026-08-24, append-only)
 
-**Scope: v6 only, by operator direction.** 173 and Spanish were not run.
+**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/history-2.md`'s
+Session AM entry; see there for the complete result, including the arm-G unreachability check and
+the arm-F anchor-substitution-surface safeguard.** Summary: v6-only. Two additive arms, one
+variable each from arm C: arm F places internal chunk edges at the nearest `faAnchors.ts`
+three-source-agreement anchor (zero numeric constants); arm G (diagnostic only, unshippable)
+places them at the AJ-0 oracle's own attested times. Both killed the drift arch (arm F peak
+3.249s, arm G 0.042s, against the ≤5.0s DIED band fixed in advance) and cut oracle regressions
+279 → 68 (arm F) → 2 (arm G). `231_slowing_pace` traced end to end as direct mechanistic proof.
+Arm F itself failed the ship gate (2.86% implied precision vs. 50% bar) — not shipped, but this is
+what the S2/chunk-edge research line continued from.
 
-### AG.1 The gate, and the question this session isolates
-
-Session AL eliminated chunk WIDTH and found the same arch in `applyAnchorBasedTiming`'s own
-per-decile error against the oracle (peak −23.347s), correlating with every S2-family arm's drift at
-r ≥ 0.973. What survives that elimination is the one thing every S2 arm shares and production does
-not: an S2 edge is a detected silence snapped to a seam time READ OFF THE ESTIMATE, while
-production's `computeFaChunkPlan` pairs each edge with a `faAnchors.ts` three-source-agreement anchor
-BY SCRIPT-WORD INDEX. This session tests that variable directly with two additive arms, one variable
-each from arm C:
-
-* **Arm F** — internal chunk edges placed at the qi-nearest three-source-agreement anchor, admissible
-  only inside the two sentence groups the seam separates. GEOMETRIC, zero numeric constants.
-* **Arm G** — internal chunk edges placed at the AJ-0 oracle's own attested boundary times.
-  **DIAGNOSTIC ONLY — CAN NEVER SHIP.** It consumes ground truth and exists solely to establish the
-  ceiling for any chunk-plan-based fix. Its ship-gate rows are not applied (`ARM_G_SHIP_GATE_APPLIES
-  = false`, fixed in Step 1).
-
-`scripts/ws1-session-am-step1-gate.ts` (commit `50adbe5`) fixes every threshold before either planner
-existed. Hard fails: 0 attested-correct boundaries beyond ±50ms, 0 of 18 known-bad reproductions.
-Success bar **3 of 3** open defects landed — justified against the measured fact that arms B/C/D each
-land exactly **one row, the same row every time**: `447_scout_facing_dark`, v6's LAST boundary, where
-every arm's drift has already returned to ~+0.15s — the row least diagnostic of an edge-placement
-change. Ship cap: implied precision ≥ 50%. Regression thresholds: worse than arm C (>279), worse than
-production (>1 at 5ms / >0 at 50ms), materially better (≤139, half of arm C).
-
-**The arch-survival bands, fixed numerically, not retro-fitted:** DIED ≤ 5.0s, SURVIVED ≥ 14.0s,
-anything between PARTIAL. Nine predictions per arm, each with a point and a band. A named falsifier
-per arm, and Step 6's adjudication table transcribed verbatim so the conclusion would be selected, not
-composed.
-
-Arm F's tolerance is GEOMETRIC and carries **zero numeric constants**: nearest anchor to the seam's
-own script-word index by |Δqi|, admissible only inside the two sentence groups the seam separates. A
-time-radius search was rejected on two independent grounds registered before it was tempting: it
-would violate `CLAUDE.md` §4 ("timestamps may measure distance; they must never decide identity"),
-and the ideal seam time is itself read off the estimate, so searching near it in time would re-import
-the very error the substitution exists to remove.
-
-### AG.2 The substitution surface, measured before a single second of audio was aligned
-
-`computeS2SeamSurface` (additive, read-only, no production caller) reuses `computeRunContext`
-unchanged, so every anchor it reports is bit-for-bit what production's own `runQiRanges` would use.
-MEASURED on v6, no FA run:
-
-* **325 anchors, all 325 carrying three-source agreement** — equal by CODE PATH: `computeAnchors`
-  emits nothing without a Hirschberg match, R-O distinctiveness inside a long-enough match run, AND an
-  agreeing silence. There is no weaker-provenance anchor to filter out.
-* **367 group ends; 314 (85.6%) carry an admissible anchor**, 28 of them an EXACT hit (Δqi = 0 — the
-  anchor IS the seam).
-* `|anchor − estimate|` median **11,143 ms** against arm C's own silence cut at 622ms on the same
-  seams, and **284 of 314 positive** — anchors sit systematically LATER than the estimate, the same
-  sign and order of magnitude as the estimate's own −23.3s arch.
-* **The denominator that matters: arm C's own 56 internal edges**, not 367 group ends. 47
-  substitutable silence cuts and 9 excision-run edges; **42 substituted, 5 fell back — 25.0% fallback,
-  below the pre-registered one-third partial-substitution line.** Arm F is therefore NOT a partial
-  substitution, and its 75% rate clears the two-thirds precondition its own falsifier carries.
-* **CONFOUND CHECK: the anchor set is UNIFORM along the timeline** — per-decile counts 23–43 against a
-  32.5 mean, every decile at or above the 50%-of-mean threshold. A front-loaded set would have
-  manufactured an arch of its own; this one structurally cannot.
-
-### AG.3 Arm F, and the load-bearing equivalence check
-
-`computeFaChunkPlanS2EdgeArm` — one parameterised path, three placement discriminants
-(`silence`/`anchor`/`attested`), no flag on an existing function, no production caller. **The
-`{ kind: 'silence' }` discriminant reproduces `computeFaChunkPlanS2Excised` EXACTLY** — same count,
-same times to 1e-6, same text — MEASURED, not asserted in prose, which is what makes "one variable
-from arm C" a measurement rather than a description. Arms B and C independently reproduce their
-stored plans at HEAD.
-
-MEASURED: 57 chunks (arm C's count exactly), median 25.58s against arm C's 26.06s, mean 24.209s
-(identical to arm C's — same net-of-excision total, same chunk count), max 50.76s. Edge census: 42
-`anchor` / 5 `detected-silence` fallback / 9 `excision-run-edge` / 1 `corpus-end` — the 42/5 split
-matches Step 2's pre-FA prediction of the substitution surface exactly. Text conservation against arm
-C holds word for word. 16 violations: 11 pre-existing oversize-group cap exceedances (arm C carries
-the same groups) plus the 5 named `no-admissible-anchor` fallbacks. Neither of Session AL's two
-conservation properties (text carry-forward on a collapsed window, monotone cursor) fired at this
-band, in either arm F or its silence control.
-
-### AG.4 Arm G, the ceiling, and its fidelity — measured, not assumed
-
-**DIAGNOSTIC ONLY. CAN NEVER SHIP.** Unreachability from production is CHECKED across all 229 `src/`
-files, not asserted: zero read the oracle fixture, zero construct the attested placement, and the
-discriminant is mentioned in exactly one file (`faChunkPlan.ts`, its own declaration and branch
-site). The attested table is a required field with no default.
-
-**Coverage is total**: the oracle carries one boundary per segment index, contiguous, so all 367
-chunk-openable segments have an attested time; the `no-attested-time` guard fired 0 times. **It is
-lossy in TRUTH, on exactly 3 rows** — v6's open defects, where the oracle stores the DEFECTIVE
-production value rather than the ear target (errors −1.08 / −1.11 / −1.41s). **But zero of the 47
-seams arm G actually uses lands on one** — measured, and it could have gone the other way, so on v6
-the ceiling is worth its full face value.
-
-MEASURED: 57 chunks, median 25.96s, edge census 47 `attested` / 9 `excision-run-edge` / 1
-`corpus-end`, **zero fallbacks** — every substitutable edge was oracle-placed. Text conservation
-holds, every gap is an excised R.5 run, zero violations beyond cap exceedances, neither conservation
-property fired.
-
-### AG.5 The six-arm measurement — the arch DIES twice
-
-| arm | plan | chunks | oracle regressed | ear-verified controls moved (of 42) | mean FA confidence | low-conf words | CTC-infeasible | peak abs mean decile Δ | **arch verdict** |
-|---|---|---|---|---|---|---|---|---|---|
-| A | production | 277 | **1** | 0 | 0.8398 | 563 | — | 0.000s | n/a (baseline) |
-| B | S2 10-30s | 54 | 326 | 30 | 0.3403 | 2535 | — | 23.786s | SURVIVED |
-| C | S2+R.5 10-30s | 57 | 279 | 18 | 0.4188 | 2220 | 2 | 19.155s | SURVIVED |
-| D | period-strict 1-15s | 110 | 363 | 22 | 0.2533 | 2880 | 6 | 20.617s | SURVIVED |
-| **F** | **anchor-placed, 10-30s** | 57 | **68** | 3 | **0.8356** | **562** | 2 | **3.249s** | **DIED** |
-| **G** | **oracle-placed, 10-30s** | 57 | **2** | 1 | **0.9689** | **32** | **0** | **0.042s** | **DIED** |
-
-**Arm F cuts arm C's regression count 76% — 279 → 68 — with exactly one variable changed.** The
-30-row arm-B control-regression attribution: arm F repairs 27, partials 3, **worsens zero** (arm C's
-own split: repaired 14 / partial 4 / unchanged 11 / worsened 1). Arm G repairs 29, partials 1, worsens
-zero.
-
-**Alignment health corroborates the oracle diff without substituting for it.** Arm F's mean FA word
-confidence (0.8356) and low-confidence word count (562) are within noise of production's own
-(0.8398, 563) — production is 277 chunks at ~5s median; arm F reaches the same alignment quality at
-**57 chunks**. Every S2-family arm before it sat at less than half that confidence. Phantom-tail
-funnel (1)∧(2)∧(3): A 19, C 3, D 2, **F 1**, **G 0**.
-
-**Two of three open defects land in arm F** (`214_solitary_fire` +0.010, `447_scout_facing_dark`
-−0.020); **all three land in arm G**. `231_slowing_pace` is the exception, and it is the most
-informative row this session produced. Its incoming anchor confidence:
-
-A 6.97e-3 → B 2.26e-5 → C 0.00e+0 → D 0.00e+0 → **F 0.00e+0** → **G 9.99e-1**.
-
-**The collapse persists identically in F and clears completely in G — traced to a specific mechanism,
-not left as a correlation.** Segment 230/231 sits INSIDE chunk 26 (segments 223–235), not at a chunk
-edge — the defect is an interior-alignment-quality problem, not an edge-placement one, for THIS
-specific chunk. Chunk 26's closing edge (before segment 236, `idealSec` 672.660) is exactly one of
-arm F's five `no-admissible-anchor` fallbacks (no anchor lies inside script-word window [1843, 1865)),
-so it falls back to arm C's own cut — chunk 26 stays 4.87s wide in both C and F, one of the two
-CTC-infeasible chunks in each arm (`input_length=243, target_length=405, num_repeats=4`). In arm G the
-same seam is oracle-placed at 697.05 instead, widening chunk 26 to 30.44s — enough audio for its
-target length, CTC-feasible, and `231_slowing_pace`'s confidence recovers to 9.99e-1. **A collapse
-that survives even oracle-placed edges would mean the edge is not the cause; one that clears under
-them, at a seam identified in advance as arm F's own fallback, is direct mechanistic confirmation that
-this row's failure IS the substitution's one gap, not evidence against the substitution.**
-
-**Implied precision (R-AS):** A 0.00% / B 0.31% / C 0.36% / D 0.27% / **F 2.86%** / **G 60.00%**. Arm F
-is 8× arm C's precision; arm G clears the 50% ship cap the way a perfect-edge ceiling should, though
-the cap is not applied to it by design.
-
-**Neither falsifier fired.** Arm F's falsifier required SURVIVED (≥14.0s) at ≥66.7% substitution; arm
-F substituted 75.0% (42/56 internal edges; 89.4% of the 47 substitutable ones) and DIED at 3.249s.
-Arm G's falsifier required SURVIVED at 100% substitution; arm G substituted 100% of substitutable
-edges and DIED at 0.042s.
-
-**Predictions vs outcomes:** arm F HELD 7 of 9 (chunk count, median width, peak amplitude, final
-decile, wall clock, peak RSS, estimate-tracking r); MISSED regressed count (68, far below the
-predicted [120,300] band — the improvement outran the model). Arm G HELD 6 of 9; MISSED regressed
-(2, far below [90,290]), wall clock (920.45s, above [520,800] — the largest single chunk grew to
-32.72s under oracle placement) and peak RSS (2117 MiB, below [2400,3800] — a genuine ceiling effect,
-zero CTC-infeasible fallback inflation).
-
-### AG.6 Step 6 — the pre-committed adjudication, applied verbatim
-
-| arm | peak abs mean decile Δ | arch verdict |
-|---|---|---|
-| F | 3.249s | **DIED** |
-| G | 0.042s | **DIED** |
-
-**Outcome row: "arch DIES in F."** Conclusion, quoted verbatim from the Step 1 gate:
-
-> chunk-edge placement error is the driver; S2 family is viable with anchor-placed edges; next session
-> extends to 173 under the same gate
-
-### AG.7 Step 7 — self-check
-
-**Does arm F remove a cause or relocate a symptom, with evidence rather than assertion?** It removes a
-cause. The evidence is mechanistic, not statistical: the ONE row this session can fully trace
-(`231_slowing_pace`) shows the defect sitting inside a specific CTC-infeasible chunk whose closing
-edge is exactly one of arm F's five documented fallbacks — the collapse persists where the
-substitution did NOT reach, and clears where (arm G) it did. That is a traced mechanism, not a
-correlation coincidentally moving together.
-
-**Which roadmap items advanced, stayed untouched, or went backwards.** *Repaired timings* — advanced
-substantially: 27 of 30 arm-B control regressions repaired exactly, zero worsened, 2 of 3 open defects
-landed (a bar no prior S2 arm reached even once beyond the one geometry-favoured row). *Word-gap
-placement* — untouched; no placement rule was written or tested. *R.14/R.15 deletion* — advanced: R.14
-firings collapsed 36 (arm C) → 1 (arm F), the sharpest evidence yet that most R.14 corrections are
-compensating for bad edge placement rather than a property FA itself needs correcting for. *Rule-stage
-golden coverage* — untouched, and the blind spot restated with a sharper number: golden replay stayed
-6/6 byte-identical while arm F moved 71 v6 boundaries from arm A's values. **Nothing moved backwards**
-on any of the 30 tracked ear-verified controls.
-
-**Every tuned rather than structural choice, named.** Two: (1) the tie-break on equal |Δqi| — prefer
-`qi >= seamQi` — justified structurally (a late edge leaves the closing chunk holding audio for text
-it also holds; an early edge does the opposite, and late is the recoverable direction), not fitted to
-any row; (2) the fallback rule itself — where no anchor is admissible, commit arm C's own cut rather
-than interpolate or widen the search — is a decision, stated as one, that trades completeness for
-never inventing a value. Both are OPERATOR-DIRECTED in the sense that the session brief specified the
-mechanism (index-space nearest-anchor); neither is corpus-fitted — the same rule was applied uniformly
-before any of these 442 seams were looked at individually.
-
-**Anything that would fail an R-AS precision test if reframed as a detector.** Framed as a detector —
-"anchor-substitute an edge and trust it" — arm F's own precision (2.86%) is close to arm B's and arm
-C's own historically-rejected range (0.27–0.36%), an order of magnitude below the 50% ship cap and
-still below S1's rejected ~7%. **This is stated plainly, and it is exactly why arm F FAILS the gate
-this session** — a 76% regression-count reduction is not the same claim as "safe to ship," and R-AS
-is not waived because the underlying mechanism is now understood. No rule in this session fired zero
-times with an undefined precision; R.14 fired once in arm F (`214_solitary_fire`, the reliable-onset
-guard's own territory) and R.11/R.12/R.15 all fired a handful of times, none newly introduced.
-
-**The falsifiers from Step 1, restated.** Neither fired: arm F did not reproduce the arch at
-substitution ≥66.7% and amplitude ≥14.0s (it substituted 75.0% and died at 3.249s); arm G did not
-reproduce the arch at 100% substitution (it died at 0.042s).
-
-**The standing blind spot, restated once more.** Golden replay stayed 6/6 byte-identical while arm F
-moved 71 boundaries off arm A's values and arm G moved 5. It reads Whisper tokens and silences and
-runs parse → align → distribute → snap; it never computes a chunk plan, never runs FA, and never runs
-a rule. Nothing about this session's result is visible to it.
-
-### AG.8 The six numbers, MEASURED, and every SHA
-
-| check | result |
-|---|---|
-| `npm test` | **2493 passed / 72 skipped / 0 failed** |
-| `tsc --noEmit` (`npm run lint`) | clean |
-| `cargo check --features fa-inference` | clean |
-| `cargo clippy --all-targets --features fa-inference` | clean — 4 pre-existing warnings, 0 new |
-| `cargo test` (default) / `--features fa-inference` | 141/0/1 / 216/0/24, unchanged |
-| Golden replay | **6/6 byte-identical** |
-
-The skip count rises 68 → 72: four new Session AM gated harnesses (step2-surface, step3-armf,
-step4-armg, step5-measure), each contributing exactly one `describe.skipIf`, none in the default
-sweep. Passing count unchanged at 2493. `faAnchors.ts` sha256 unchanged:
-`b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`.
-
-**Commits, in order:**
-
-| commit | summary |
-|---|---|
-| `50adbe5` | Step 1 — the gate, committed before either planner existed |
-| `8d14eed` | Step 2 — the anchor substitution surface, measured before FA |
-| `55b7750` | Step 3 — arm F, anchor-placed chunk edges |
-| `84bf387` | Step 4 — arm G, the oracle-placed ceiling (DIAGNOSTIC ONLY) |
-| `b7417c1` | Step 5 — six-arm measurement and the pre-committed adjudication |
-| *(this commit)* | docs — this Part, §§3/9/11o, Changelog, project-state |
-
-`git diff --stat 90197cb` touches only `src/services/faChunkPlan.ts` (two additive sections:
-`computeS2SeamSurface`/`pickSeamAnchor`, and `computeFaChunkPlanS2EdgeArm`/`S2EdgePlacement`), five
-new `scripts/ws1-session-am-*` files, `scripts/ws1-single-tracker.test.ts`'s allowlist, and four new
-allowlisted `docs/ws1-sync-pipeline/session-am-*.md` dumps, plus this docs commit's own targets.
-**Confirmed untouched:** `snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts` (the
-Hirschberg aligner), `faAnchors.ts`, `docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv` —
-zero hits for any of them. No new repo-root file. No rule added, deleted, or re-tuned; no arbiter
-rebuilt; no per-project or per-row constant introduced; nothing shipped to the production default;
-production's own default remains `computeFaChunkPlan`, untouched by this session.
-
-**Next action:** arm F fails the gate on its own (67 attested-correct boundaries beyond ±50ms, 2 of 3
-defects landed, 2.86% implied precision) even though it is the strongest S2-family result yet — the
-one row this session traced end to end (`231_slowing_pace`) shows the failure mode is the 25% fallback
-rate, concentrated on chunks the fallback leaves undersized and CTC-infeasible. Two candidate next
-steps, both narrower than reopening the architecture: (a) widen the anchor search's admissibility
-window past the two-group structural bound where fallback occurs, measuring whether that recovers the
-5 fallback seams without moving any of the 442 correctly-substituted ones; (b) extend arm F unchanged
-to 173, under the same gate, per the pre-committed conclusion's own instruction — 173 has zero R.5
-runs, so the fallback-driving interaction between excision seams and anchor admissibility windows may
-not even arise there.
+**Verification (2026-08-24):** `npm test` 2493 passed/72 skipped/0 failed; `tsc`/`cargo
+check`/`cargo clippy --features fa-inference` all clean; `cargo test` 141/0/1 (default),
+216/0/24 (fa-inference); golden replay 6/6 byte-identical; `faAnchors.ts` sha256 unchanged.
+Commits: `50adbe5` (Step 1 — gate, committed before either planner existed), `8d14eed` (Step 2 —
+anchor substitution surface, measured before FA), `55b7750` (Step 3 — arm F), `84bf387` (Step 4 —
+arm G, diagnostic only), `b7417c1` (Step 5 — six-arm measurement + pre-committed adjudication).
+`git diff --stat 90197cb` touched only `src/services/faChunkPlan.ts` (two additive sections) plus
+test/docs scaffolding. `snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts`,
+`faAnchors.ts`, `docs/history.md`, and the golden-replay fixture CSVs confirmed untouched.
+Production's own default remains `computeFaChunkPlan`, untouched by this session.
 
 ---
 
 ## Part AH — Arm H: Recovering Arm F's Five Fallback Seams by Widening the Anchor Search One Group, MEASURED Against Real Audio on Both v6 and 173 (WS1 Session AN, 2026-08-24, append-only)
 
-**One-line verdict: candidate (a) — widening the anchor search — WORKS, substantially, on real audio.**
-Arm H, ONE variable from arm F (a second, one-group-wider anchor search, tried ONLY at the 5 seams
-arm F's own two-group window could not resolve), recovers all 5 fallback seams and cuts arm F's v6
-oracle regressions 32% (68 → 46), shrinks the already-DIED arch a further 9× (3.249s → 0.349s), lands
-all 3 of v6's open defects for the first time in this whole workstream (`231_slowing_pace` included),
-and reaches mean FA word confidence (0.8882) ABOVE production's own (0.8398). Repeated unchanged on
-173 (no re-tuning): regressed 40 → 31 against arm C, peak drift 3.854s → 1.988s — though 173 never
-carried an arch to begin with (arm C's own peak, 3.854s, already sits under the 5.0s DIED band). Gate:
-`scripts/ws1-session-an-step1-gate.ts`, committed at `c617a0f` **before arm H's planner code existed
-and before any alignment ran against real audio**. Full detail: `docs/work-in-progress.md` §11p.
+**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/history-2.md`'s
+Session AN entry; see there for the complete result, including the edge-accuracy budget's "NOT
+STEEP" finding (26/67 ceiling), the session's own self-corrected adjudication-function defect, and
+the 173 extension's unresolved `gadget_decay` row.** Summary: widening the anchor search one
+sentence-group further at arm F's 5 unresolved fallback seams (arm H) cut v6 oracle regressions a
+further 32% (68 → 46), shrank the arch 9× (3.249s → 0.349s), and landed all 3 previously-open v6
+defects for the first time in the workstream. 173 also improved (40 → 31 regressions vs. arm C)
+with no arch at all. Still far under the 50% ship-gate precision (6.12%) — nothing shipped.
 
-### AH.1 The gate, and a correction to its own premise
+**Verification (2026-08-24):** `npm test` 2493 passed/77 skipped/0 failed; `tsc`/`cargo
+check`/`cargo clippy --features fa-inference` all clean; `cargo test` 141/0/1 (default), 216/0/24
+(fa-inference); golden replay + oracle diff + production pins 14/14 green; `faAnchors.ts` sha256
+unchanged. Commits: `c617a0f` (Step 1 — gate, committed before arm H's planner code existed),
+`bae1200` (Step 2 — edge-accuracy budget, measured before arm H existed), `425abee` (Step 3 — arm
+H code + structural checks), `c4a3d2f` (Step 4 — real FA run, five-arm v6 measurement, adjudication
+correction), `352ce0e` (Step 5 — 173 extension). `git diff --stat 28821eb` touched only
+`src/services/faChunkPlan.ts` (one additive branch, `'anchor-widened'`, on the existing
+`S2EdgePlacement` union — no existing arm's code path touched) plus test/docs scaffolding.
+`snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts`, `faAnchors.ts`, `docs/history.md`,
+and the golden-replay fixture CSVs confirmed untouched; `computeFaChunkPlan` (the production
+default) remains untouched.
 
-Committed before `S2EdgePlacement`'s `'anchor-widened'` branch existed. Carries HARD FAIL 1/2
-unchanged from Sessions AK/AL/AM, plus a new **HARD FAIL 3 — arm H regressed count (5ms band)
-exceeding arm F's MEASURED 68** (arm H changes exactly one thing relative to arm F, so any regression
-above 68 means the widening disturbed an edge arm F already had right).
-
-**A correction, stated plainly rather than silently absorbed.** The session brief's own premise —
-"arm F lands 1 [defect]" — is corrected against the measured record before the bar is built: arm F
-actually lands **2** of v6's three open defects (`214_solitary_fire` AND `447_scout_facing_dark`),
-not one; arms B/C/D share a baseline of 1 (`447_scout_facing_dark` only). Both readings are recorded
-so neither is silently assumed, and arm H's own bar (§AH's success bar below) is built on the
-MEASURED total.
-
-**Success bar for arm H**, sized against a REAL number rather than a guess: Step 2's own attribution
-(§AH.2) finds the 5 fallback seams govern **26 of the 67** beyond-±50ms residual boundaries under a
-strict nearest-single-edge rule — the ceiling on what recovering them could plausibly buy. PROGRESS =
-regressed < 68 AND ≥1 seam recovered. SHIP-CANDIDATE REVIEW = regressed ≤ 60 AND ≥3 seams recovered
-AND defects landed stays ≥2 (arm F's own total). Neither is a ship bar — the S2 family's ship cap
-(`MIN_IMPLIED_PRECISION = 0.50`) stays untouched and nothing in this family has come near it.
-
-Two named falsifiers: **widening is free** (fires if arm H regresses more than arm F's 68, for ANY
-number of seams recovered — a widening that recovers seams but breaks even one correct boundary is a
-cost, not credited against the seams); **edge error explains the residual** (fires if the Step 2
-correlation falls below r = 0.5, OR the budget curve is flat).
-
-### AH.2 The edge-accuracy budget, MEASURED before arm H's planner code existed
-
-For each of arm F's 67 beyond-±50ms v6 boundaries: attributed to its GOVERNING chunk edge — the
-nearer, by segment-index distance, of the two edges bounding the boundary's own chunk; exact hit =
-that edge; equidistant = "governed by two"; no bounding edge on either side = "governed by no edge."
-Applied mechanically, not chosen per row: **67/67 attributable — 66 single-edge, 1 equidistant, 0
-unattributable.**
-
-* **Pearson r = 0.876** between `|governing edge error|` and `|boundary error|` — the falsifier's r <
-  0.5 line does NOT fire. Edge error genuinely tracks boundary error, strongly.
-* **26 of the 67 residual boundaries are governed by one of the 5 fallback seams** (strict
-  single-edge attribution — narrower than, and superseding, a looser 39-boundary window-membership
-  estimate registered before this table existed). This is the ceiling arm H's own success bar is
-  built against.
-* **Budget curve (inferred between two MEASURED endpoints — arm G at 0ms/2-regressed, arm F at the
-  observed maximum/67-regressed): NOT STEEP.** 34 of 56 substitutable edges (60.7%) carry at least
-  half the total `|edge error|` mass — well above the pre-registered 10% steepness line — and the
-  curve's own ship-bar-crossing tolerance sits at the observed maximum (~25.6s), i.e. not reachable
-  short of near-perfect edges. Reading, per the pre-registered rule: **error is spread broadly across
-  many edges, not concentrated in a handful of badly-governed ones** — which bounded expectations for
-  arm H BEFORE it was run: recovering 5 of 56 edges was predicted to buy real but partial progress,
-  not close the residual.
-
-Full table, curve, and attribution rule: `docs/ws1-sync-pipeline/session-an-edge-budget.md`.
-
-### AH.3 Arm H — one variable from arm F, and the two-group bound's own honest limit
-
-`computeFaChunkPlanS2EdgeArm` gains a fourth discriminant, `{ kind: 'anchor-widened' }`: identical to
-`{ kind: 'anchor' }` (arm F) in every respect, EXCEPT that when arm F's own immediate two-group window
-(the closing group and the opening group only) admits no anchor, arm H tries exactly ONE additional
-search — widened by exactly one more sentence group on each side — before falling back to arm C's own
-silence cut. Still GEOMETRIC, zero numeric constants: "one more of the planner's own atoms" is a
-structural step, not a millisecond radius.
-
-**Why the widening stops at one group.** A second widening would start admitting anchors from groups
-two seams away — anchors that legitimately belong to an ADJACENT chunk's OWN seam, exactly the failure
-`pickSeamAnchor`'s own doc comment names ("committing it here would place this chunk's edge at another
-chunk's boundary"). One group of slack is the largest widening that cannot yet cross a second seam;
-going further is REJECTED for that reason, not attempted and found wanting.
-
-**All 5 fallback seams resolve** under the widened window — but the resolved picks move the cut by
-**3.46s to 30.1s** from arm F's own silence-cut position (Δqi up to 15 script words), far larger than
-any substitution arm F itself makes. This IS the exact failure mode the two-group bound existed to
-guard against — at this corpus's sentence-group density, "one group wider" is not always a small
-step. Flagged here as a real risk BEFORE alignment ran, not assumed safe (§AH.4 shows the risk did not
-materialize into worse accuracy — see the self-check at §AH.7 for why a large index-space jump did not
-translate into a bad time-space pick).
-
-Structural checks, all green: the `{ kind: 'silence' }` control still reproduces `computeFaChunkPlanS2
-Excised` exactly; arms B/C/F all still reproduce their stored plans at HEAD; text conservation against
-arm F holds word for word; neither of Session AL's two conservation properties fired; the plan stays
-gapless except at excised R.5 runs. Full per-seam resolution table:
-`docs/ws1-sync-pipeline/session-an-armh-inspection.md`.
-
-### AH.4 Real audio, v6 — arm H MEASURED against arm F
-
-Real ONNX FA alignment, `align_chunked`, the production engine, whole-slice call — 673.4s wall clock,
-3874 words, 354 needs_review.
-
-| arm | chunks | oracle regressed | beyond ±50ms | mean FA confidence | needs_review | CTC-infeasible | phantom (1)∧(2)∧(3) | peak abs mean decile Δ | arch verdict | R-AS precision |
-|---|---|---|---|---|---|---|---|---|---|---|
-| A | 277 | **1** | 0 | 0.8398 | 563 | — | 19 | 0.000s | n/a | 0.00% |
-| C | 57 | 279 | 278 | 0.4188 | 2220 | 2 | 3 | 19.155s | SURVIVED | 0.36% |
-| F | 57 | 68 | 67 | 0.8356 | 562 | 2 | 1 | 3.249s | DIED | 2.86% |
-| G | 57 | **2** | 0 | 0.9689 | 32 | 0 | 0 | 0.042s | DIED | 60.00% |
-| **H** | 57 | **46** | **45** | **0.8882** | **354** | n/m | **0** | **0.349s** | **DIED** | **6.12%** |
-
-**Arm H beats arm F on EVERY axis measured.** Regressed 68 → 46 (−32%), beyond-±50ms 67 → 45, peak
-drift 3.249s → 0.349s (still DIED, 9× tighter), mean confidence 0.8356 → **0.8882 — above production's
-own 0.8398**, needs_review 562 → 354, phantom funnel 1 → 0, implied precision 2.86% → 6.12% (still far
-under the 50% ship cap, but more than double arm F's). HARD FAIL 3 (regressed > arm F's 68) did **not**
-fire; HARD FAIL 2 (known-bad reproduction) did not fire on any arm.
-
-**All 3 of v6's open defects land under arm H — a first for this workstream.** `214_solitary_fire`
-(630.10, unchanged from F) and `447_scout_facing_dark` (1418.51, unchanged) stay landed; **`231_slow
-ing_pace` lands for the first time**, at **682.74 — the ear target, exactly** — with confidence rising
-0.00e+0 (identical in A/C/F) → **9.988e-1**. Traced, not left as a correlation: segment 230/231's
-governing chunk edge is exactly one of the 5 fallback seams arm H resolves; under the widened window
-that seam moves and the chunk gains enough audio to become CTC-feasible, exactly the mechanism Session
-AM traced for arm G at the same row.
-
-**Both Step 1 bars are MET.** PROGRESS: regressed 46 < 68, 5/5 seams recovered. SHIP-CANDIDATE REVIEW:
-regressed 46 ≤ 60, 5/5 ≥ 3 seams, 3/3 defects landed ≥ 2. The SHIP CAP (50% precision) is not
-met — expected, and not the bar this session tests.
-
-**A defect in this session's own adjudication function, found and corrected in the same commit.** The
-pre-registered `adjudicateAN()` selects "curve flat or H worsens anything" by a FALLTHROUGH branch,
-because the Step 2 budget curve's own conservative proxy did not formally cross the ship bar — that
-branch conflates "the proxy curve didn't cross" with "H worsened something," which the measured facts
-directly contradict (HARD FAIL 3 did not fire; every axis moved in arm H's favour). Reported as a gap
-in how the four-row table was encoded, not evidence against the underlying mechanism, and NOT silently
-patched after seeing the result — the raw mechanical output and the correction are both on record
-(`docs/ws1-sync-pipeline/session-an-step4-measurement.md`). The correct reading, applied by hand: arm H
-is the strongest S2-family result on nearly every axis (including against the diagnostic-only ceiling
-arm G on confidence and needs_review), but does not close the residual and is not a ship candidate.
-
-Predictions vs outcomes: 5 HELD (chunk count, median width, final decile, repaired, fallback seams
-remaining, wall clock) of 9 scored; 4 MISSED, every one on the OPTIMISTIC side — peak drift (0.349s,
-below the [0.5, 6.0] band), regressed (46, below [55, 68]), estimate-tracking r (−0.397, below the
-[−0.30, 0.85] band — arm H's residual curve is now slightly NEGATIVELY correlated with the estimate,
-where arm F's was +0.527), and `231_slowing_pace` clearing (predicted NOT to clear; it did, and
-landed). The improvement outran the model, the same pattern Session AM's own predictions showed for
-arm F.
-
-### AH.5 Real audio, 173 — arm H repeats its win; 173 never carried an arch
-
-Real ONNX FA alignment, 337.2s wall clock, 1660 words, 322 needs_review. 173 carries ZERO R.5 runs
-(MEASURED Session AK), confirmed structurally inert here — the excision-seam plumbing both arms share
-does nothing on this corpus.
-
-| arm | unchanged | repaired | regressed | beyond ±50ms | peak abs mean decile Δ |
-|---|---|---|---|---|---|
-| A | 173 | 0 | 0 | 0 | — |
-| C | 130 | 1 | 40 | 39 | 3.854s |
-| **H** | 140 | 1 | **31** | **30** | **1.988s** |
-
-**173 shows NO arch at all** — arm C's own peak (3.854s) already sits under the 5.0s DIED threshold, a
-different regime from v6's, consistent with Session AK's finding that R.5 excision is a contributing
-cause on v6, not the whole mechanism, and reported as a finding rather than a failure of arm H (per
-the brief's own framing). Arm H still measurably improves over arm C: regressed 40 → 31 (−22.5%), peak
-drift roughly halved.
-
-**Open defects.** `lethal_nature_hazard` already lands under arm C (19.23 vs ear 19.27) and stays
-landed, unchanged, under arm H. `gadget_decay` lands under neither (427.47 vs ear 427.60 in both) —
-consistent with its ear value sitting outside its own word gap, a known not-closable-by-edge-placement
-row.
-
-**"The 6 previously unexplained 173 control regressions from arm C": NOT DETERMINED.** A targeted
-search of `docs/work-in-progress.md` and this document did not turn up an explicit, unambiguous list
-of six specific tags under this description. The closest historical match, `vessel_damage_clue`
-(Session AI's original 173 "control regression" set), was already resolved by Sessions AJ-0/AK as a
-stale-bundle-provenance artifact, not a real edge-placement regression — reported as a gap rather than
-a fabricated list.
-
-Full 173 dump: `docs/ws1-sync-pipeline/session-an-step5-173.md`.
-
-### AH.6 Step 6 — the pre-committed adjudication, applied (with §AH.4's correction folded in)
-
-Mechanical output of `adjudicateAN()`: row 3 ("curve flat or H worsens anything"). **Contradicted by
-its own inputs** (§AH.4) — the correct row, applied by hand: arm H makes real, substantial,
-unambiguous progress and clears both of Step 1's own independently-registered bars, but 46 of 447 v6
-boundaries (31 of 173's) remain beyond ±50ms and implied precision stays far under the 50% ship cap.
-**Arm H is a real, adoptable improvement over arm F for continued S2-family work, but is not a ship
-candidate and does not close the residual.** Next action: the residual's remaining shape (broadly
-spread per the NOT STEEP budget curve, §AH.2) means no further seam-scoped widening is expected to
-close much more of it — a different mechanism is needed for the next material cut, not another
-widening pass over the same 5-seam set.
-
-### AH.7 Step 7 — self-check
-
-**Does arm H remove a cause or relocate a symptom, with evidence not assertion?** Removes a cause,
-same class of evidence as Session AM: `231_slowing_pace` is traced end to end, not left as a
-correlation — its governing edge IS one of the 5 seams arm H resolves, and its confidence collapse
-clears exactly when that seam's cut moves.
-
-**A prediction the large Δqi jumps (§AH.3) turned out wrong about, stated plainly.** Before alignment
-ran, the 3.46-30.1s cut displacements read as the exact failure mode the two-group bound existed to
-prevent — a real, stated risk. The real measurement refutes that specific worry: a large index-space
-jump did not translate into a worse time-space pick, because the widened anchor is still a genuine
-three-source-agreement landmark (real acoustic ground truth), and the alternative — arm C's own
-nearest-silence heuristic, numerically "closer" to the estimate but not grounded in any acoustic
-agreement — was measurably worse. This is an honest update, recorded as one: this session's own
-caution in §AH.3 was more pessimistic than reality.
-
-**Roadmap items.** Repaired timings — advanced further: 27/30 → effectively all three open v6 defects
-land, the strongest result yet. R.14/R.15 deletion — advanced: R.14 fires once in H (unchanged from
-F), R.11 fires 2 (down from F's 3). Word-gap placement — untouched. Rule-stage golden coverage —
-untouched, restated again: golden replay stayed 6/6 while arm H moved boundaries neither Session AM's
-71 nor this session's own count touches.
-
-**Every tuned rather than structural choice, named.** One: the one-group widening cap itself — GEOMETRIC
-(no numeric constant; "one more atom"), justified structurally in §AH.3, not fitted to any row (it was
-fixed in Step 1, before any of the 5 seams' picks were looked at). The tie-break inherited unchanged
-from arm F (`pickSeamAnchor`, prefer `qi >= seamQi` on equal |Δqi|) is likewise structural, not
-re-derived this session.
-
-**Anything that would fail an R-AS precision test if reframed as a detector.** Arm H's own implied
-precision (6.12%) is still an order of magnitude below the 50% ship cap, though more than double arm
-F's 2.86% — stated plainly, and it is why arm H is reported as a strong intermediate result, not a
-ship candidate, exactly as arm F was in Session AM. No rule fired zero times with an undefined
-precision this session.
-
-**Each Step 1 falsifier, fired or not.** "Widening is free": did NOT fire (arm H regressed 46, below
-arm F's 68, on both corpora). "Edge error explains the residual": did NOT fire on the r test (0.876 ≥
-0.5); DID fire on the curve-shape test (NOT STEEP) — reported honestly as a split result: edge error
-correlates strongly with the residual, but is not concentrated enough for a seam-scoped fix alone to
-close it.
-
-**The standing blind spot, restated.** Golden replay stayed 6/6 byte-identical through this entire
-session — it reaches neither the chunk planner, FA, nor any rule stage; nothing about arm H's result
-is visible to it.
-
-### AH.8 The six numbers, MEASURED, and every SHA
-
-| check | result |
-|---|---|
-| `npm test` | **2493 passed / 77 skipped / 0 failed** |
-| `tsc --noEmit` (`npm run lint`) | clean |
-| `cargo check --features fa-inference` | clean |
-| `cargo clippy --all-targets --features fa-inference` | clean — 4 pre-existing warnings, 0 new |
-| `cargo test` (default) / `--features fa-inference` | 141/0/1 / 216/0/24, unchanged |
-| Golden replay + oracle diff + production pins | **14/14 green** |
-
-Skip count rises 72 → 77: five new Session AN gated harnesses/blocks (`step2-budget`, `step3-armh`,
-`step4-measure`, and two `it()` blocks inside `step5-173`), none in the default sweep. Passing count
-unchanged at 2493. `faAnchors.ts` sha256 unchanged: `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6
-aa980035db7380c`.
-
-**Commits, in order:**
-
-| commit | summary |
-|---|---|
-| `c617a0f` | Step 1 — the gate, committed before arm H's planner code existed |
-| `bae1200` | Step 2 — the edge-accuracy budget, measured before arm H existed |
-| `425abee` | Step 3 — arm H code, structural checks, v6 chunk plan generated |
-| `c4a3d2f` | Step 4 — real FA run + five-arm v6 measurement, adjudication correction |
-| `352ce0e` | Step 5 — 173 extension, real FA run + measurement |
-| *(this commit)* | docs — this Part, §11p, Changelog, project-state |
-
-`git diff --stat 28821eb` (session start) touches only `src/services/faChunkPlan.ts` (one additive
-branch: `'anchor-widened'` on the existing `S2EdgePlacement` union, plus its `cutKind` reporting
-value — no existing arm's code path is touched), five new `scripts/ws1-session-an-*` files,
-`scripts/ws1-single-tracker.test.ts`'s allowlist, and four new allowlisted `docs/ws1-sync-pipeline/
-session-an-*.md` dumps, plus this docs commit's own targets. **Confirmed untouched:** `snapBoundaries.
-ts`, `silenceDetector.ts`, `whisperService.ts`, `faAnchors.ts`, `docs/history.md`,
-`scripts/fixtures/phase4-baseline-*.csv` — zero hits for any of them. No new repo-root file. No rule
-added, deleted or re-tuned; no arbiter rebuilt; no per-project or per-row constant introduced; nothing
-shipped to the production default — `computeFaChunkPlan` remains untouched.
-
-**Next action:** the budget curve (§AH.2) says the residual is broadly spread, not concentrated — a
-second widening pass over the same 5 seams, or over a larger seam set found the same way, is not
-expected to buy much more. The next material cut needs a different mechanism entirely (a genuinely
-denser or more accurate anchor SOURCE, or a rule-stage change downstream of the chunk plan) rather than
-another parameter on `pickSeamAnchor`'s search window.
+**This is the last entry in the S2/chunk-edge research line.** As of the 2026-08-25 accuracy-bar
+decision recorded in `docs/work-in-progress.md`, further chunk-width/chunk-edge research is
+frozen — current ~97–98% accuracy is accepted and remaining errors go through manual review
+instead. The budget curve's own finding (§AH.2, folded above) is why: substitutable edges could
+close at most 26 of the 67 residual v6 boundaries, not enough to justify continuing this line past
+arm H.

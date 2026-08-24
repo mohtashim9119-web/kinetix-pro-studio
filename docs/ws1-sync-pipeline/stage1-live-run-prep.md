@@ -375,7 +375,7 @@ at HEAD" columns above was read from
 - Expect **four** `owningRule: 'R.11'` entries (3 v6, 1 in 173) and **zero** rule entries of
   any kind on Spanish.
 - Preview plays correctly on all three — this is also what discharges **D-1 item 8**
-  (see `stage1-non-ear-remainder.md`, D4).
+  (see `docs/history-2.md`'s Session J entry, D4).
 
 **Capture the Sync Log's Copy export for each of the three runs.** That export is now the
 run's durable evidence; with the logging in place there is no longer any reason for the

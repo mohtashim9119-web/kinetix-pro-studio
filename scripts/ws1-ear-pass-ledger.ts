@@ -92,7 +92,7 @@ export const EAR_SITTINGS = {
    *  commits today. */
   'ear-verify-v': 8,
   /** WS1 Session X — the operator's full 173 listening pass (Method A/B):
-   *  Section A (9 rows, `docs/ws1-sync-pipeline/stage1-session-w-173-ear-list.md`
+   *  Section A (9 rows, `docs/history-2.md`'s Session W entry
    *  — the CSV numbers these 0-8, nine rows; the doc's own "8 rows" header is
    *  stale, left over from before row 0 (5-6) was added to the sitting) +
    *  Section B (12 rows) of that same capture-only run sheet, PLUS three
@@ -162,7 +162,7 @@ export const EAR_SITTINGS = {
   /** WS1 Session AH — THE S1 COLLATERAL ADJUDICATION, and the project's first
    *  NEGATIVE ground truth.
    *
-   *  The operator worked through `stage1-session-ag-ear-list.md` — every v6
+   *  The operator worked through the Session AG ear list (`docs/history-2.md`) — every v6
    *  boundary S1 moved that carried no ear evidence, plus the ear-verified
    *  control S1 moved off its verified value — and returned the same verdict on
    *  all eighteen: THE CURRENT PRODUCTION CUT IS RIGHT AND S1'S PROPOSED VALUE
@@ -455,8 +455,8 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
       '(order 7): the ear-verify-t A/B pass reverses this verdict — see that sitting\'s own note.' },
 
   // -------------------------------------------------------------------------
-  // WS1 SESSION T — A/B side-by-side pass (`docs/ws1-sync-pipeline/
-  // stage1-session-s-ear-list.md`'s five-row list, plus its own 383 question,
+  // WS1 SESSION T — A/B side-by-side pass (`docs/history-2.md`'s Session T
+  // entry's five-row list, plus its own 383 question,
   // plus a sixth row — L7/266 — carried over unchanged from the live app).
   // Six candidate-B confirmations and one refutation of a prior solo verdict.
   // -------------------------------------------------------------------------
@@ -666,7 +666,7 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
       'unchanged at 681.63.' },
   { sitting: 'ear-verify-ad', corpus: 'v6', tag: '231_slowing_pace', scoredValue: 682.74, verdict: 'CORRECT',
     note: 'Row 2 target. A/B-confirmed CORRECT — the THIRD option in a three-way choice ' +
-      '(`stage1-session-ac-ear-list.md` row 2: A=680.99 a naive nearest-silence detector\'s own ' +
+      '(Session AC ear list, `docs/history-2.md`, row 2: A=680.99 a naive nearest-silence detector\'s own ' +
       'proposal, B=681.63 committed, C=682.74 this target); the owner picked C.' },
   { sitting: 'ear-verify-ad', corpus: 'v6', tag: '447_scout_facing_dark', scoredValue: 1417.12, verdict: 'WRONG',
     note: 'Row 3. Confirmed wrong. Supersedes `session-p-live`\'s self-transcription of the same value ' +
@@ -759,7 +759,7 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
     note: 'THE GUARD\'S FALSE NEGATIVE, and an independent re-confirmation of `ear-verify-ad`\'s own target ' +
       'at the same value. R.14 DECLINED this row on the reliable-onset guard, so production still commits ' +
       '681.63 (heard WRONG by `ear-verify-ad`). The operator\'s own waveform measurement of this seam ' +
-      '(`docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md` §1) puts segment 231\'s speech at ' +
+      '(`docs/history-2.md`\'s Session AH entry) puts segment 231\'s speech at ' +
       '683.04-683.84 and segment 230\'s at 681.47-682.43, independently corroborating that the cut belongs ' +
       'after 682.43 and not at 681.63. Register row `classA-231-slowing-pace` STAYS OPEN: this sitting ' +
       'confirms the target, it does not move production onto it.' },
@@ -981,7 +981,7 @@ export function describeEarHistory(corpus: Corpus, tag: string): string {
 //     is a known-bad move by the standing verdict alone. One row, spanish.
 //
 // THE 19/18 RECONCILIATION, which the brief required before this set could be
-// used as a validation set. `stage1-session-ag-ear-list.md` was generated with
+// used as a validation set. The Session AG ear list (`docs/history-2.md`) was generated with
 // NINETEEN rows; the operator's audit reports EIGHTEEN. The difference is not a
 // lost row: the sheet is 18 v6 rows (1 moved ear-verified control + 17
 // unaudited) plus 1 spanish row, and the operator's report is explicitly scoped

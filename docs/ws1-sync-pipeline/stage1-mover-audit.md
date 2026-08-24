@@ -5,7 +5,7 @@
 > committed value any rule has ever changed — plus a blinded unmoved-control arm.
 > **Everything needed to run it is in this file.** No setup, no other document.
 >
-> **Drawn at HEAD `726112b`.** Superseded: `stage1-lock-ear-list.md`'s 12-row sample (scored
+> **Drawn at HEAD `726112b`.** Superseded: the Session G ear list's (`docs/history-2.md`) 12-row sample (scored
 > in Session H; all twelve re-verified against this HEAD in §5 below, no drift).
 >
 > **Scope (carried verbatim from R-AB..R-AF):** Stage 1's "zero defects" is **en/es only**.

@@ -87,7 +87,7 @@
 // v6 chunks against ~13 true defects — ~7% precision — so a repair keyed on it
 // moves ~13 right and ~170 wrong. Cleanup at the DETECTION layer is rejected;
 // prevention at the PARTITION layer (S2) is the successor. See
-// `docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md` §8.
+// `docs/history-2.md`'s Session AH entry (ruling R-AS).
 //
 // SO THIS GATE STAYS, AND NEITHER RULE IS SCOPED DOWN:
 //

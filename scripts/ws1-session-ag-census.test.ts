@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 // WS1 Session AG — STEP 1. THE SEAM-SCOPED PHANTOM CENSUS.
 //
-// WHY. `docs/ws1-sync-pipeline/fa-chunk-phantom-root-cause.md` §4 measured that
+// WHY. `docs/history-2.md`'s Session AH entry measured that
 // a phantom chunk tail is PERVASIVE (66% of v6's chunks) while the defect is
 // rare, and named the coincidence of three conditions as what separates them:
 //
@@ -65,7 +65,7 @@ const LABEL = process.env.WS1_AG_LABEL ?? 'baseline';
 const confOf = (t: TranscriptToken | undefined): number =>
   t === undefined ? 0 : ((t as { confidence?: number }).confidence ?? 0);
 
-/** The 13 rows `fa-chunk-phantom-root-cause.md` §3 ATTRIBUTES to the phantom
+/** The 13 rows `docs/history-2.md`'s Session AH entry ATTRIBUTES to the phantom
  *  mechanism — v6's ten Class A/B rows plus three of 173's five. The two it
  *  explicitly attributes elsewhere (`iron_bounce` wrong-silence selection,
  *  `gadget_decay` no chunk edge and no silence) are listed separately so the

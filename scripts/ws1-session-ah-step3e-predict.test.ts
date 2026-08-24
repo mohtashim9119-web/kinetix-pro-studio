@@ -14,7 +14,7 @@
 // a phantom.
 //
 // A phantom needs a chunk edge to exist. The mechanism (see
-// `fa-chunk-phantom-root-cause.md` §2) is: text filed into a window's silent
+// `docs/history-2.md`'s Session AH entry) is: text filed into a window's silent
 // tail. With NO edge at the seam, the seam sits in a chunk's interior, there is
 // no silent tail to file into, and the phantom cannot form BY CONSTRUCTION —
 // which is also why S2 cannot be credited with "fixing" such a row: it removes
@@ -133,7 +133,7 @@ describe.skipIf(!MEASURE)('WS1 Session AH Step 3e — pre-registered predictions
     L.push('');
     L.push('- **No chunk edge.** Today both segments sit inside one chunk `[417.30, 433.52]`; under S2');
     L.push('  the simulated partition likewise places no edge at this seam (measured above).');
-    L.push('- **No silence.** `fa-chunk-phantom-root-cause.md` §3 records no detected silence within');
+    L.push('- **No silence.** `docs/history-2.md`\'s Session AH entry records no detected silence within');
     L.push('  seconds of the true seam.');
     L.push('- **Its ear target lies outside its own word gap.** 427.60 sits 0.06s PAST the incoming');
     L.push('  segment\'s own first word onset (427.54), so no right-edge-minus-pre-roll placement can');

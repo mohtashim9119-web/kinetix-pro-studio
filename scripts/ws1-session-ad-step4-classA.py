@@ -6,7 +6,7 @@ truth (real amplitude/energy analysis, real 16kHz audio, real detected silences)
 Session AB (2026-08-22) ran this same style of search over only 2 of the 4
 Class A rows (`214_solitary_fire`, `447_scout_facing_dark`), against targets
 whose only backing was `session-p-live` — a same-session self-transcription,
-per Session AC's own finding (`docs/ws1-sync-pipeline/stage1-session-ac-ear-list.md`).
+per Session AC's own finding (`docs/history-2.md`'s Session AC entry).
 Session AD Step 0 ran a genuine operator A/B (side-by-side) listening pass over
 all 8 open rows plus the historical row-0/`152_frozen_brush_mice`/item-7, and
 every value it confirmed is IDENTICAL to what was already on record (see
