@@ -91,14 +91,20 @@ satisfied or accepted in writing.
 **Other active work (not part of Stage 1 lock)**
 
 - **OOM memory fix** — partly fixed. ORT's per-shape memory-pattern allocation cache was
-  disabled (`a6f2978`, WS1 Session AO Step 4, `src-tauri/src/fa_onnx.rs`), stopping it from
-  accumulating across a multi-corpus run held in one process. Measured before the fix (Session
-  AO Step 1): RSS rose monotonically across a v6 → 173 → spanish → v6-again run, jumping +771
-  MiB at the spanish cache-miss boundary and peaking ~1 GiB above the highest single-corpus
-  baseline any prior process-per-corpus measurement had recorded. Verified output-neutral after
-  the fix (exact boundary equality on v6/173/spanish, golden replay 6/6, oracle diff green, all
-  13 production pins reproducing). Open: no session record isolates what drives the remaining
-  single-corpus memory footprint itself; no one is currently on it.
+  disabled (`a6f2978`, WS1 Session AO Step 4, `src-tauri/src/fa_onnx.rs:421-452`). Cause: the
+  ONNX session is cached in `FaModelCache` (`src-tauri/src/fa.rs:113`), a Tauri-managed `State`
+  that lives for the whole app-process lifetime and is reused across every Apply Sync, so a
+  per-input-shape allocation plan accumulates without release. Every prior memory measurement
+  missed it by running one corpus per process (Sessions AK/AM/AL's `fa-run-resources.json`) —
+  never the shape the live app takes. Measured before the fix (Session AO Step 1,
+  `.work-phase4/session-ao/rss_timeline.csv`): across a v6 → 173 → spanish → v6-again run, RSS
+  rose monotonically for 1584 of 1585 one-second samples, jumped +771 MiB at the spanish
+  cache-miss boundary, and peaked at 4220.0 MiB — ~1 GiB above the highest single-corpus peak on
+  record (v6 alone, 3205.3 MiB, Session AK). Verified output-neutral after the fix (exact
+  boundary equality on v6/173/spanish, golden replay 6/6, oracle diff green, all 13 production
+  pins reproducing). Open: the fix's memory effect was never re-measured — no post-fix RSS run
+  exists — and no session record isolates what drives the single-corpus footprint itself. No
+  owner.
 
 ### Open bugs
 
@@ -111,11 +117,13 @@ satisfied or accepted in writing.
 - **FA chunk-plan generation is non-deterministic on the 173 corpus** — chunk counts of
   118/119/126 observed across repeated runs on the same input (Sessions AG/AH); root cause was
   never isolated, only re-baselined at 119. No owner.
-- **6 open Zero-Defect Register rows** — boundary-placement defects, ear-verified wrong, with no
+- **5 open Zero-Defect Register rows** — boundary-placement defects, ear-verified wrong, with no
   rule that fixes them yet: `214_solitary_fire`, `231_slowing_pace`, `447_scout_facing_dark`,
-  `400_endless_dark`, `173/lethal_nature_hazard`, `173/gadget_decay` (register source of truth:
-  `scripts/phase4-fa-replay.test.ts`'s `KNOWN_BAD` array). Accepted as residual defects under the
-  accuracy bar rather than pursued further; no owner.
+  `173/lethal_nature_hazard`, `173/gadget_decay` (live list:
+  `scripts/ws1-session-ak-step1-gate.ts:59`'s `OPEN_DEFECTS`, matching the AJ-0 oracle's
+  `openDefect` rows). `400_endless_dark` is closed at 1266.75, ear-verified by the `full-pass-aj0`
+  sitting (`scripts/ws1-ear-pass-ledger.ts:907`). Accepted as residual defects under the accuracy
+  bar rather than pursued further; no owner.
 - **Alignment cost has no enforced bound for real inputs** (Contract A4; `__ALIGN_INSTRUMENT__`
   dormant) — an unbounded input can hang the UI behind the loading overlay with no error
   surfaced. No owner; disposition deferred to Stage 2 lock.
@@ -132,6 +140,11 @@ satisfied or accepted in writing.
      segments.
   4. Edge confidence drop — flag if alignment confidence on boundary-adjacent words falls
      sharply against the segment median.
+
+  Measurable against the AJ-0 oracle's labelled boundaries (`scripts/fixtures/session-aj0-oracle-
+  {v6,173,spanish}.json`, `openDefect`/`earTarget` fields) with no listening required, and must
+  clear ruling R-AS's precision bar (`MIN_IMPLIED_PRECISION = 0.50`,
+  `scripts/ws1-session-ak-step1-gate.ts:124`) before any repair built on it ships.
 - **Sync log revamp** — strip developer telemetry from the sync log UI; replace with six
   collapsible groups, in this order:
   1. Skipped segments (no audio match) — audio with missing transcription, or text that never
@@ -159,12 +172,46 @@ satisfied or accepted in writing.
 - **Phase 7** (Stage 4 — Finalize & Report) — observability: log entries with plain-language fix
   hints for every clamp/floor/fallback/degenerate-boundary/estimated-timing decision; fix the
   `boundaryUsedFallback` argument-count bug (see Open bugs).
+- **Bounded-memory options for the residual OOM footprint** — a capped `FaModelCache` session
+  cache, or process isolation per sync. Unbuilt.
 
 Sequencing: Stage 1 lock → Phase 4 → Stage 2 lock → Phase 5 → Phase 6 → Phase 6b → Stage 3 lock
 → Phase 7 → Stage 4 lock.
 
 ### Standing constraints
 
+- **The oracle** — `scripts/fixtures/session-aj0-oracle-{v6,173,spanish}.json`, the operator's
+  own ear-verified live-app saves (no boundary ever manually dragged), 647 boundaries total (v6
+  447, 173 173, spanish 27), 5 labelled `openDefect` rows (v6 3, 173 2; spanish 0) carrying the
+  ear-correct `earTarget`. Enforced (structural invariants only — segment count, tag order; not a
+  per-boundary gate) by `scripts/ws1-session-aj0-oracle-diff.test.ts`. Also usable as a
+  no-listening precision evaluation set (see Pillar 2 spec, Not started).
+- **Golden replay does not observe the FA chunk plan or any rule stage** — it stops at
+  `snapCoveredBoundaries`/`headExtendFirstSegment` and imports neither `faChunkPlan.ts` nor
+  `faAnchorTrustGate.ts`. Measured: it stayed 6/6 while arm D moved 366 v6 boundaries (363
+  regressed) in the same session (`sync-pipeline-v2-plan.md`'s Part AF).
+- **`152_frozen_brush_mice`, `iron_bounce`, `logic_clash`** are RULE-DEPENDENT (R.14, R.15, R.15
+  respectively, `src/services/faAnchorTrustGate.ts`) — closed only because the rule fires;
+  deleting R.14/R.15 reopens them (`scripts/ws1-session-ah-step1-rowstatus.test.ts:14-19`).
+- **Do not re-investigate (dead ends, cont'd):** S1/`foldPhantomTails` — deleted outright after
+  scoring REGRESSION on 18 of 18 operator ear verdicts (Session AH); the phantom-tail existence
+  detector it was built on — ~7.1% precision (183/277 v6 chunks fire, ~13 real defects); global
+  S2 — rejected on 0.62% implied R-AS precision (36 ear-verified control regressions, up to
+  -27.7s v6 drift).
+- **`S1_KNOWN_BAD_MOVES`** (`scripts/ws1-ear-pass-ledger.ts:1011`, 19 values) — S1's full
+  collateral set, all operator-rejected; the project's negative ground truth for detector
+  validation, and a hard-fail if any future chunk-edge arm reproduces one.
+- **Spanish corpus acceptance has silently lapsed, unresolved** — accepted in writing unlistened
+  at Stage 1's lock-gate entry, with a reopening trigger voided "the moment any Spanish-specific
+  normalization/alignment code ships"; Phase 3b shipped Spanish cardinals on 2026-08-15, which
+  satisfies that trigger's literal text, but no session has ruled on whether it actually reopens
+  the acceptance. Flagged for the owner (`sync-pipeline-v2-plan.md:7918-7925`).
+- **Arms F/G/H** (`src/services/faChunkPlan.ts`'s `computeFaChunkPlanS2EdgeArm`,
+  `S2EdgePlacement` kinds `'anchor'`/`'attested'`/`'anchor-widened'`) are diagnostic-only with no
+  production caller — every call site is an env-gated Session AM/AN measurement test. Arm G
+  consumes ground truth directly (`attestedStartBySegIdx`, sourced only from the oracle fixture
+  in `ws1-session-am-step4-armg.test.ts`) and is unreachable from `src/` by construction, not
+  convention — the field has no default and nothing under `src/` reads the oracle fixture.
 - **Stage/Phase terminology:** Stage 1 = Prepare (phases 1b, 2a, 2b, 3, 3b, 3c, 3d); Stage 2 =
   Align & Select (phase 4); Stage 3 = Place (phases 5, 6, 6b); Stage 4 = Finalize & Report
   (phase 7). Task 5 = Phase 3, inside Stage 1.
