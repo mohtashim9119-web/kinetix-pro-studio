@@ -164,6 +164,11 @@ const ALLOWLIST = new Set<string>([
   // table, written by `scripts/ws1-session-an-step3-armh.test.ts`. Same class
   // as the entries above.
   'docs/ws1-sync-pipeline/session-an-armh-inspection.md',
+  // WS1 Session AN Step 4's five-arm (A/C/F/G/H) v6 measurement against the
+  // AJ-0 oracle and Step 6 adjudication, written by
+  // `scripts/ws1-session-an-step4-measure.test.ts`. Same class as the AM
+  // six-arm entry above.
+  'docs/ws1-sync-pipeline/session-an-step4-measurement.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
