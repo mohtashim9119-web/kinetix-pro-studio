@@ -9,8 +9,8 @@
 >
 > WS1's full session-by-session history (Sessions A through AN, the component/measurement
 > ledger, and the Changelog) moved to `docs/history-2.md` on 2026-08-25. This file tracks WS1's
-> current phase status (Finished / In progress / Not started) plus the constraints that still
-> bind it — full session detail lives in `docs/history-2.md`.
+> current phase status (Finished / In progress / Open bugs / Not started) plus the constraints
+> that still bind it — full session detail lives in `docs/history-2.md`.
 
 ---
 
@@ -50,8 +50,8 @@ Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met (
   accuracy-bar ruling below.
 - **Mover-audit dossier** (`stage1-mover-audit.md`) — owner-scored 22/24 (Session K,
   2026-08-18); the 2 failures were root-caused and fixed via R.13. The on-disk dossier file
-  itself was never updated to show the scored result — treat `docs/history-2.md`'s Session K
-  entry as the record of truth, not the blank table in `stage1-mover-audit.md`.
+  itself was never updated to show the scored result — `docs/history-2.md`'s Session K entry is
+  the record of truth, not the blank table in `stage1-mover-audit.md`.
 
 *Full detail for all of the above: `docs/history-2.md`.*
 
@@ -60,10 +60,11 @@ Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met (
 We're in Phase 3 (Task 5), past 3b/3c (closed) and 3d (skipped, dormant). Chunking and
 accuracy-improvement research is frozen under the 2026-08-25 accuracy-bar ruling (~97–98% of
 boundaries correct on first sync, ≥95% accepted; remaining errors go through manual review in
-the UI, not further pipeline changes — see Standing constraints). What's left is closing out
-Stage 1's own procedural gate, not further accuracy work.
+the UI, not further pipeline changes — see Standing constraints).
 
 *This section is updated at the end of every session.*
+
+**Stage 1 lock**
 
 **END GOAL:** Stage 1 locks once the live acceptance run (prepared, not yet executed —
 `stage1-live-run-prep.md`) has been run and passed by the owner; every other STAGE 1 LOCK GATE
@@ -87,8 +88,62 @@ satisfied or accepted in writing.
   correct by code reading).
 - [ ] Wire `FaEvent` to a UI progress consumer (no hook/component consumes it yet).
 
-### Not started — Phase 4 through 7
+**Other active work (not part of Stage 1 lock)**
 
+- **OOM memory fix** — partly fixed. ORT's per-shape memory-pattern allocation cache was
+  disabled (`a6f2978`, WS1 Session AO Step 4, `src-tauri/src/fa_onnx.rs`), stopping it from
+  accumulating across a multi-corpus run held in one process. Measured before the fix (Session
+  AO Step 1): RSS rose monotonically across a v6 → 173 → spanish → v6-again run, jumping +771
+  MiB at the spanish cache-miss boundary and peaking ~1 GiB above the highest single-corpus
+  baseline any prior process-per-corpus measurement had recorded. Verified output-neutral after
+  the fix (exact boundary equality on v6/173/spanish, golden replay 6/6, oracle diff green, all
+  13 production pins reproducing). Open: no session record isolates what drives the remaining
+  single-corpus memory footprint itself; no one is currently on it.
+
+### Open bugs
+
+- **OOM crash, partial fix** — see "Other active work" above for what's fixed and what's still
+  open. No owner on the remainder.
+- **`boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead of 5**
+  (`src/services/snapBoundaries.ts:381-382`; the correct 5-arg call exists at `:744-745`) —
+  defaults the seam exemption off, so every boundary-quality reading on a seam-exempted pair has
+  been wrong since it shipped. Slated for Phase 7; no one currently on it.
+- **FA chunk-plan generation is non-deterministic on the 173 corpus** — chunk counts of
+  118/119/126 observed across repeated runs on the same input (Sessions AG/AH); root cause was
+  never isolated, only re-baselined at 119. No owner.
+- **6 open Zero-Defect Register rows** — boundary-placement defects, ear-verified wrong, with no
+  rule that fixes them yet: `214_solitary_fire`, `231_slowing_pace`, `447_scout_facing_dark`,
+  `400_endless_dark`, `173/lethal_nature_hazard`, `173/gadget_decay` (register source of truth:
+  `scripts/phase4-fa-replay.test.ts`'s `KNOWN_BAD` array). Accepted as residual defects under the
+  accuracy bar rather than pursued further; no owner.
+- **Alignment cost has no enforced bound for real inputs** (Contract A4; `__ALIGN_INSTRUMENT__`
+  dormant) — an unbounded input can hang the UI behind the loading overlay with no error
+  surfaced. No owner; disposition deferred to Stage 2 lock.
+
+### Not started
+
+- **Pillar 2 passive detector** (`src/services/faDefectDetector.ts`) — a read-only
+  post-processor that flags suspect boundaries; it never moves a timestamp itself. Spec (4
+  rules, recorded here so they don't need re-deriving):
+  1. Boundary-to-anchor drift — flag if the cut sits more than 100ms from a reliable
+     three-source-agreement anchor.
+  2. Cut-on-speech — flag if speech energy is present at the cut line.
+  3. Cross-segment token overflow — flag if word timestamps cross the cut between adjacent
+     segments.
+  4. Edge confidence drop — flag if alignment confidence on boundary-adjacent words falls
+     sharply against the segment median.
+- **Sync log revamp** — strip developer telemetry from the sync log UI; replace with six
+  collapsible groups, in this order:
+  1. Skipped segments (no audio match) — audio with missing transcription, or text that never
+     matched.
+  2. Unscripted audio assigned — speech detected that isn't in the script.
+  3. Missing assets — script segments with no audio attached.
+  4. System info — engine status (e.g. FA on, sync succeeded, 444 of 447 segments clean).
+  5. Cuts landed on speech — boundaries that need a small silence adjustment.
+  6. Shifted words / low confidence — flagged directly by the Pillar 2 detector, for one-click
+     review in the UI. The important one.
+
+  Depends on the Pillar 2 detector existing first — Group 6 renders the detector's output.
 - **Phase 4** (Stage 2 — Align & Select) — restructure the pipeline into the four formal
   stages: Stage 2's return type becomes timing-free, Stage 1's output bundles into one object,
   `distributeSegmentTimes`/`applyAnchorBasedTiming` collapse into Stage 3. Structural only,
@@ -103,7 +158,7 @@ satisfied or accepted in writing.
   75.660 vs. target 76.470), likely resolved by Phase 5.
 - **Phase 7** (Stage 4 — Finalize & Report) — observability: log entries with plain-language fix
   hints for every clamp/floor/fallback/degenerate-boundary/estimated-timing decision; fix the
-  `boundaryUsedFallback` argument-count bug.
+  `boundaryUsedFallback` argument-count bug (see Open bugs).
 
 Sequencing: Stage 1 lock → Phase 4 → Stage 2 lock → Phase 5 → Phase 6 → Phase 6b → Stage 3 lock
 → Phase 7 → Stage 4 lock.
@@ -119,11 +174,10 @@ Sequencing: Stage 1 lock → Phase 4 → Stage 2 lock → Phase 5 → Phase 6 �
 - **fr/de/pt real narration-audio corpus does not exist** — only synthetic fleurs-audio engine-
   parity fixtures do. Accepted in writing (H.8 dormant-rules allowance); reopens only if
   fr/de/pt-specific code ships.
-- **Zero-Defect Register:** not driven to 0 — 6 rows remained open as of Session AN
-  (2026-08-24, the last WS1 session before the accuracy-bar freeze): `214_solitary_fire`,
-  `231_slowing_pace`, `447_scout_facing_dark`, `400_endless_dark`, `173/lethal_nature_hazard`,
-  `173/gadget_decay`. Accepted as residual defects under the accuracy bar rather than pursued
-  further.
+- **R.3/R.8/R.9** (clamp reference point, cascade-safety argument, case-by-case prevention
+  table — Step R's production windowing design): drafted, never built. Not required for Stage 1
+  lock — the STAGE 1 LOCK GATE criteria list never names them (only R.5/R.10 were added as
+  blocking criteria, by owner ruling). Candidate backlog for Phase 5.
 - **FA default toggle** (`Project.faHighPrecisionSync` / `FA_PROJECT_DEFAULT_ON`): currently
   **OFF**, pending the live acceptance run (see In progress checklist).
 - **Contract 1→2 compliance:** 6 of 8 requirements met. P4 (silence assertion) and P8 (bundled
