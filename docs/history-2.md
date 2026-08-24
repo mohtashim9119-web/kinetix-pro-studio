@@ -8,6 +8,19 @@
 > kept minimal. **Not a replacement for `docs/history.md`** — that file stays untouched and is
 > still the primary archive; this one exists because splitting the WS1 dump into it directly
 > was out of scope for this round. No line cap.
+>
+> **Docs Cleanup Round 2 (2026-08-25).** Folded and deleted the 20 finished raw session,
+> measurement, and ear-list files under `docs/ws1-sync-pipeline/` (`fa-chunk-phantom-root-
+> cause.md`, the `session-al/am/an-*.md` dumps, and the `stage1-*` run sheets/ear lists other
+> than `stage1-mover-audit.md`/`stage1-live-run-prep.md`, which stay — the mover-audit dossier
+> is still unscored, a live task named directly in `docs/work-in-progress.md`). Their content
+> that wasn't already captured above was appended into the matching dated Session entry below
+> (each addition is marked inline). `sync-pipeline-v2-plan.md`'s own Parts AE–AH (Sessions
+> AK–AN) were condensed to short pointers at the same time — this file is now their primary
+> record. Full original text of every deleted file remains retrievable: find the fold commit
+> with `git log --oneline -- docs/ws1-sync-pipeline/<filename>` (the newest commit touching a
+> now-deleted path is the fold commit, which still carries the file) and run `git show
+> <that-sha>:docs/ws1-sync-pipeline/<filename>`.
 
 ## Index
 
@@ -263,7 +276,11 @@ Rulings R-AK (per-project FA toggle, default ON) and R-AL (R-N: stay load-dynami
 onnxruntime dylib as a Tauri resource). Shipped `Project.faHighPrecisionSync`. Measured and
 fixed the fail-clean tax (uncached model-manifest hashing on every call: 76.51s debug/4.99s
 release first-call → 0.254ms/0.099ms cached repeat). Corrected the FA-recovery-set count to 5
-members (not 6/7). Tests: 86 files/2234 passed/1 skipped; golden replay 6/6.
+members (not 6/7). Tests: 86 files/2234 passed/1 skipped; golden replay 6/6. Also ran the
+Contract 1→2 guarantee-by-guarantee verification pass required for the Stage 1 lock: 5 of 12
+guarantees DIRECT, 4 PARTIAL, 3 ABSENT, and found `validate1to2` is never called from the
+`alignFromCache` commit path — an exposure the FA-default flip widened without changing the
+contract itself.
 
 ## Session H — R.12 shipped — 2026-08-18
 
@@ -288,7 +305,12 @@ Closed the rule-firing/engine/FA-fallback logging gap Session I flagged
 (`owningRule`/`ruleDetail` fields, new log entry types). Measured Contract 1→2's P6
 (normalizer-symmetry property) — passes, zero asymmetries; Stage 1 lock's blocking set is now
 empty on that row. Register unchanged: 19 roster/0 open; the four R.12 provisional closures
-remained provisional.
+remained provisional. The same session also closed Stage 1's nine non-ear-answerable lock items
+in one sitting: Step T (model distribution) deferred to the release phase (~10.5+1
+engineer-days, not blocking Task 5); Contract 1→2's A4 accepted unenforced; Contract IN's A3
+accepted; R-S(iii)/R7 accepted for the toggle, deferred for the default; and D.-1 items 4/5/8/9
+accepted as a documented subset or permanently unautomated — all nine ratified by the owner
+verbatim, no code change.
 
 ## Session K — 24-row audit, R.13 shipped — 2026-08-18
 
@@ -444,7 +466,9 @@ session, closing the long-standing `152_frozen_brush_mice` item among others.
 
 Confirmed the phantom-tail mechanism as causal via a fold (`foldPhantomTails`, S1): drops R.14
 v6 firings 11→1, fixes 10/13 attributed rows — but costs 2 ear-verified control regressions,
-so `foldPhantomTails` defaults false. Built, measured, deliberately not shipped.
+so `foldPhantomTails` defaults false. Built, measured, deliberately not shipped. Its listening
+gate drew 19 rows across three corpora (v6 21 moved / 173 1 / spanish 1) — close to but not
+identical to the pre-registered 21-row prediction, not itself a red flag.
 
 ## Session AH — S1 rejected and rolled back — 2026-08-23
 
@@ -454,14 +478,25 @@ a detector's precision must be measured before its repair ships (S1's underlying
 ~7% precision, should have blocked it). 173's long-standing chunk-plan discrepancy (126 vs.
 119) retired as undetermined cause, re-captured at 119. Ruling R-AT: a no-ears word-gap-
 containment validation proxy FAILS (negative separation margin) — any S2 validation needs real
-ears, no shortcut works.
+ears, no shortcut works. The rejected S1 fold's own root-cause analysis found the phantom-tail
+mechanism explains 10/13 attributed v6 defects via a measured waveform proof (e.g.
+`231/230_slowing_pace`: true silence 681.47–682.43s vs. FA's smeared 681.64–682.34s) and a
+10-row phantom-tail census (66.1% v6 / 38.7% 173 / 60.0% spanish of chunks carry a phantom
+tail). It also named two still-unsolved defect mechanisms outside S1's scope, for which no rule
+is designed: `iron_bounce` (173, wrong-silence-selection — a real silence exists but is the
+wrong one) and `gadget_decay` (173, no usable chunk edge or silence at all — its ear target
+sits 0.06s past its own segment's first-word onset, unreachable by any right-edge-minus-pre-roll
+placement). Both remain open; tracked at the class level in `project-state.md`'s Open Decisions §3(a)
+and by boundary id in that file's Current State table (173 5-6/106-107).
 
 ## Session AI — S2 built, not shipped — 2026-08-23
 
 Built `computeFaChunkPlanS2`: eliminates the phantom-tail funnel condition to 0 on all 3
 corpora, but causes severe alignment drift on v6 (up to -27.7s), regressing 36 ear-verified
 controls (30 v6 + 6 173) — a hard fail vs. the ship gate. Not shipped, not deleted; the defect
-is in FA quality on longer chunks, not in the planning logic itself.
+is in FA quality on longer chunks, not in the planning logic itself. (Its own 372-row listening
+bill tallies 35 control-moved rows rather than 36 — a minor unreconciled discrepancy in the raw
+count, not in the shipped conclusion, since S2 stays unshipped either way.)
 
 ## Session AJ-0 — machine oracle installed — 2026-08-23
 
@@ -485,7 +520,10 @@ A period-strict 1–15s chunk band (half the median width of the 10–30s baseli
 *worse*, not better (peak -20.617s vs. -19.155s) — eliminating chunk width as the driver.
 Traced the arch's real correlate to `applyAnchorBasedTiming`'s own per-decile estimate error
 (r=0.9940), consistent with a conserved-total redistribution error rather than an accumulating
-one. v6 only.
+one. v6 only. The supporting 110-row chunk census found arm D's own narrower band still blew
+its own cap 22 times (plus 2 oversize-unbreakable-groups, 4 excision-collapsed-chunks) —
+narrowing the band didn't buy structural cleanliness either. Period-detection census: 368
+sentence ends, 0 disagreements with `s2EndsSentence`.
 
 ## Session AM — chunk-edge placement identified as driver — 2026-08-24
 
@@ -495,6 +533,13 @@ agreement anchors for estimate-derived chunk edges (arm F) cut oracle regression
 oracle-placed-edge arm (G) went further (0.042s, 2 regressions) as the ceiling. `231_slowing_
 pace` traced end to end as direct mechanistic proof. Arm F itself failed the ship gate (2.86%
 implied precision vs. 50% bar) — not shipped, but the S2 research line continued from here.
+Arm G's 3-regression ceiling is not contaminated by its own oracle's 3 known-defective rows
+(`214_solitary_fire`, `231_slowing_pace`, `447_scout_facing_dark`) — none lands on a chunk seam
+arm G actually uses, confirmed by a 229-file scan showing arm G's attested-table lookup is
+structurally unreachable from any production path. The anchor set feeding arm F was
+independently measured GEOMETRIC (0 fitted numeric constants): 325 anchors, 100%
+three-source-agreement, 85.6% seam coverage, uniform across deciles (no front-loading
+confound) — ruling out the substitution being gamed to the target rows.
 
 ## Session AN — arm H widens the search, still not shippable — 2026-08-24
 
@@ -502,7 +547,16 @@ Widening the anchor search one sentence-group further at arm F's 5 unresolved fa
 (arm H) cut v6 oracle regressions a further 32% (68→46), shrank the arch 9× (3.249s→0.349s),
 and landed all 3 previously-open v6 defects for the first time in the workstream. 173 also
 improved (40→31 regressions vs. arm C) with no arch at all. Still far under the 50% ship-gate
-precision (6.12%) — nothing shipped. **This is the last entry in the S2/chunk-edge research
-line: as of the 2026-08-25 accuracy-bar decision recorded in `docs/work-in-progress.md`,
-further chunk-width/chunk-edge research is frozen — current ~97–98% accuracy is accepted and
-remaining errors go through manual review instead.**
+precision (6.12%) — nothing shipped. The pre-registered edge-accuracy budget found the
+edge/boundary error correlation real (Pearson r=0.876) but explicitly NOT STEEP — substitutable
+edges could close at most 26 of the 67 residual v6 boundaries, not the looser 39 first
+estimated, bounding how much further an arm-H-style widening could ever buy. The measurement's
+own automated adjudication function initially mis-scored this result as a failure (a hardcoded
+`false` conflating "proxy curve didn't cross" with "arm H worsened something"); caught and
+corrected in the same session, with HARD FAIL 3 confirmed not firing and both the internal
+PROGRESS and SHIP-CANDIDATE review bars met. On 173, arm H's peak drift fell to 1.988s from arm
+C's 3.854s (both already under the DIED band, so 173 shows no arch either way) — but
+`gadget_decay`, one of 173's two open defects, still does not land under arm H. **This is the
+last entry in the S2/chunk-edge research line: as of the 2026-08-25 accuracy-bar decision
+recorded in `docs/work-in-progress.md`, further chunk-width/chunk-edge research is frozen —
+current ~97–98% accuracy is accepted and remaining errors go through manual review instead.**
