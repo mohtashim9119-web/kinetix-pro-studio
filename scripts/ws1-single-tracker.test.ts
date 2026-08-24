@@ -154,6 +154,12 @@ const ALLOWLIST = new Set<string>([
   // predictions-vs-outcomes and the pre-committed conclusion quoted verbatim,
   // not a status page. Its STATUS lives in docs/work-in-progress.md §11o.
   'docs/ws1-sync-pipeline/session-am-six-arm-measurement.md',
+  // WS1 Session AN Step 2's edge-accuracy budget: the 67-residual attribution
+  // table, the |edge error| vs |boundary error| correlation, and the
+  // inferred budget curve, written by
+  // `scripts/ws1-session-an-step2-budget.test.ts`. Same class as the AM
+  // entries above — a single-run MEASUREMENT DUMP, not a status page.
+  'docs/ws1-sync-pipeline/session-an-edge-budget.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
