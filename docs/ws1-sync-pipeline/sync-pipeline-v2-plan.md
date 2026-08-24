@@ -10742,3 +10742,279 @@ window past the two-group structural bound where fallback occurs, measuring whet
 to 173, under the same gate, per the pre-committed conclusion's own instruction — 173 has zero R.5
 runs, so the fallback-driving interaction between excision seams and anchor admissibility windows may
 not even arise there.
+
+---
+
+## Part AH — Arm H: Recovering Arm F's Five Fallback Seams by Widening the Anchor Search One Group, MEASURED Against Real Audio on Both v6 and 173 (WS1 Session AN, 2026-08-24, append-only)
+
+**One-line verdict: candidate (a) — widening the anchor search — WORKS, substantially, on real audio.**
+Arm H, ONE variable from arm F (a second, one-group-wider anchor search, tried ONLY at the 5 seams
+arm F's own two-group window could not resolve), recovers all 5 fallback seams and cuts arm F's v6
+oracle regressions 32% (68 → 46), shrinks the already-DIED arch a further 9× (3.249s → 0.349s), lands
+all 3 of v6's open defects for the first time in this whole workstream (`231_slowing_pace` included),
+and reaches mean FA word confidence (0.8882) ABOVE production's own (0.8398). Repeated unchanged on
+173 (no re-tuning): regressed 40 → 31 against arm C, peak drift 3.854s → 1.988s — though 173 never
+carried an arch to begin with (arm C's own peak, 3.854s, already sits under the 5.0s DIED band). Gate:
+`scripts/ws1-session-an-step1-gate.ts`, committed at `c617a0f` **before arm H's planner code existed
+and before any alignment ran against real audio**. Full detail: `docs/work-in-progress.md` §11p.
+
+### AH.1 The gate, and a correction to its own premise
+
+Committed before `S2EdgePlacement`'s `'anchor-widened'` branch existed. Carries HARD FAIL 1/2
+unchanged from Sessions AK/AL/AM, plus a new **HARD FAIL 3 — arm H regressed count (5ms band)
+exceeding arm F's MEASURED 68** (arm H changes exactly one thing relative to arm F, so any regression
+above 68 means the widening disturbed an edge arm F already had right).
+
+**A correction, stated plainly rather than silently absorbed.** The session brief's own premise —
+"arm F lands 1 [defect]" — is corrected against the measured record before the bar is built: arm F
+actually lands **2** of v6's three open defects (`214_solitary_fire` AND `447_scout_facing_dark`),
+not one; arms B/C/D share a baseline of 1 (`447_scout_facing_dark` only). Both readings are recorded
+so neither is silently assumed, and arm H's own bar (§AH's success bar below) is built on the
+MEASURED total.
+
+**Success bar for arm H**, sized against a REAL number rather than a guess: Step 2's own attribution
+(§AH.2) finds the 5 fallback seams govern **26 of the 67** beyond-±50ms residual boundaries under a
+strict nearest-single-edge rule — the ceiling on what recovering them could plausibly buy. PROGRESS =
+regressed < 68 AND ≥1 seam recovered. SHIP-CANDIDATE REVIEW = regressed ≤ 60 AND ≥3 seams recovered
+AND defects landed stays ≥2 (arm F's own total). Neither is a ship bar — the S2 family's ship cap
+(`MIN_IMPLIED_PRECISION = 0.50`) stays untouched and nothing in this family has come near it.
+
+Two named falsifiers: **widening is free** (fires if arm H regresses more than arm F's 68, for ANY
+number of seams recovered — a widening that recovers seams but breaks even one correct boundary is a
+cost, not credited against the seams); **edge error explains the residual** (fires if the Step 2
+correlation falls below r = 0.5, OR the budget curve is flat).
+
+### AH.2 The edge-accuracy budget, MEASURED before arm H's planner code existed
+
+For each of arm F's 67 beyond-±50ms v6 boundaries: attributed to its GOVERNING chunk edge — the
+nearer, by segment-index distance, of the two edges bounding the boundary's own chunk; exact hit =
+that edge; equidistant = "governed by two"; no bounding edge on either side = "governed by no edge."
+Applied mechanically, not chosen per row: **67/67 attributable — 66 single-edge, 1 equidistant, 0
+unattributable.**
+
+* **Pearson r = 0.876** between `|governing edge error|` and `|boundary error|` — the falsifier's r <
+  0.5 line does NOT fire. Edge error genuinely tracks boundary error, strongly.
+* **26 of the 67 residual boundaries are governed by one of the 5 fallback seams** (strict
+  single-edge attribution — narrower than, and superseding, a looser 39-boundary window-membership
+  estimate registered before this table existed). This is the ceiling arm H's own success bar is
+  built against.
+* **Budget curve (inferred between two MEASURED endpoints — arm G at 0ms/2-regressed, arm F at the
+  observed maximum/67-regressed): NOT STEEP.** 34 of 56 substitutable edges (60.7%) carry at least
+  half the total `|edge error|` mass — well above the pre-registered 10% steepness line — and the
+  curve's own ship-bar-crossing tolerance sits at the observed maximum (~25.6s), i.e. not reachable
+  short of near-perfect edges. Reading, per the pre-registered rule: **error is spread broadly across
+  many edges, not concentrated in a handful of badly-governed ones** — which bounded expectations for
+  arm H BEFORE it was run: recovering 5 of 56 edges was predicted to buy real but partial progress,
+  not close the residual.
+
+Full table, curve, and attribution rule: `docs/ws1-sync-pipeline/session-an-edge-budget.md`.
+
+### AH.3 Arm H — one variable from arm F, and the two-group bound's own honest limit
+
+`computeFaChunkPlanS2EdgeArm` gains a fourth discriminant, `{ kind: 'anchor-widened' }`: identical to
+`{ kind: 'anchor' }` (arm F) in every respect, EXCEPT that when arm F's own immediate two-group window
+(the closing group and the opening group only) admits no anchor, arm H tries exactly ONE additional
+search — widened by exactly one more sentence group on each side — before falling back to arm C's own
+silence cut. Still GEOMETRIC, zero numeric constants: "one more of the planner's own atoms" is a
+structural step, not a millisecond radius.
+
+**Why the widening stops at one group.** A second widening would start admitting anchors from groups
+two seams away — anchors that legitimately belong to an ADJACENT chunk's OWN seam, exactly the failure
+`pickSeamAnchor`'s own doc comment names ("committing it here would place this chunk's edge at another
+chunk's boundary"). One group of slack is the largest widening that cannot yet cross a second seam;
+going further is REJECTED for that reason, not attempted and found wanting.
+
+**All 5 fallback seams resolve** under the widened window — but the resolved picks move the cut by
+**3.46s to 30.1s** from arm F's own silence-cut position (Δqi up to 15 script words), far larger than
+any substitution arm F itself makes. This IS the exact failure mode the two-group bound existed to
+guard against — at this corpus's sentence-group density, "one group wider" is not always a small
+step. Flagged here as a real risk BEFORE alignment ran, not assumed safe (§AH.4 shows the risk did not
+materialize into worse accuracy — see the self-check at §AH.7 for why a large index-space jump did not
+translate into a bad time-space pick).
+
+Structural checks, all green: the `{ kind: 'silence' }` control still reproduces `computeFaChunkPlanS2
+Excised` exactly; arms B/C/F all still reproduce their stored plans at HEAD; text conservation against
+arm F holds word for word; neither of Session AL's two conservation properties fired; the plan stays
+gapless except at excised R.5 runs. Full per-seam resolution table:
+`docs/ws1-sync-pipeline/session-an-armh-inspection.md`.
+
+### AH.4 Real audio, v6 — arm H MEASURED against arm F
+
+Real ONNX FA alignment, `align_chunked`, the production engine, whole-slice call — 673.4s wall clock,
+3874 words, 354 needs_review.
+
+| arm | chunks | oracle regressed | beyond ±50ms | mean FA confidence | needs_review | CTC-infeasible | phantom (1)∧(2)∧(3) | peak abs mean decile Δ | arch verdict | R-AS precision |
+|---|---|---|---|---|---|---|---|---|---|---|
+| A | 277 | **1** | 0 | 0.8398 | 563 | — | 19 | 0.000s | n/a | 0.00% |
+| C | 57 | 279 | 278 | 0.4188 | 2220 | 2 | 3 | 19.155s | SURVIVED | 0.36% |
+| F | 57 | 68 | 67 | 0.8356 | 562 | 2 | 1 | 3.249s | DIED | 2.86% |
+| G | 57 | **2** | 0 | 0.9689 | 32 | 0 | 0 | 0.042s | DIED | 60.00% |
+| **H** | 57 | **46** | **45** | **0.8882** | **354** | n/m | **0** | **0.349s** | **DIED** | **6.12%** |
+
+**Arm H beats arm F on EVERY axis measured.** Regressed 68 → 46 (−32%), beyond-±50ms 67 → 45, peak
+drift 3.249s → 0.349s (still DIED, 9× tighter), mean confidence 0.8356 → **0.8882 — above production's
+own 0.8398**, needs_review 562 → 354, phantom funnel 1 → 0, implied precision 2.86% → 6.12% (still far
+under the 50% ship cap, but more than double arm F's). HARD FAIL 3 (regressed > arm F's 68) did **not**
+fire; HARD FAIL 2 (known-bad reproduction) did not fire on any arm.
+
+**All 3 of v6's open defects land under arm H — a first for this workstream.** `214_solitary_fire`
+(630.10, unchanged from F) and `447_scout_facing_dark` (1418.51, unchanged) stay landed; **`231_slow
+ing_pace` lands for the first time**, at **682.74 — the ear target, exactly** — with confidence rising
+0.00e+0 (identical in A/C/F) → **9.988e-1**. Traced, not left as a correlation: segment 230/231's
+governing chunk edge is exactly one of the 5 fallback seams arm H resolves; under the widened window
+that seam moves and the chunk gains enough audio to become CTC-feasible, exactly the mechanism Session
+AM traced for arm G at the same row.
+
+**Both Step 1 bars are MET.** PROGRESS: regressed 46 < 68, 5/5 seams recovered. SHIP-CANDIDATE REVIEW:
+regressed 46 ≤ 60, 5/5 ≥ 3 seams, 3/3 defects landed ≥ 2. The SHIP CAP (50% precision) is not
+met — expected, and not the bar this session tests.
+
+**A defect in this session's own adjudication function, found and corrected in the same commit.** The
+pre-registered `adjudicateAN()` selects "curve flat or H worsens anything" by a FALLTHROUGH branch,
+because the Step 2 budget curve's own conservative proxy did not formally cross the ship bar — that
+branch conflates "the proxy curve didn't cross" with "H worsened something," which the measured facts
+directly contradict (HARD FAIL 3 did not fire; every axis moved in arm H's favour). Reported as a gap
+in how the four-row table was encoded, not evidence against the underlying mechanism, and NOT silently
+patched after seeing the result — the raw mechanical output and the correction are both on record
+(`docs/ws1-sync-pipeline/session-an-step4-measurement.md`). The correct reading, applied by hand: arm H
+is the strongest S2-family result on nearly every axis (including against the diagnostic-only ceiling
+arm G on confidence and needs_review), but does not close the residual and is not a ship candidate.
+
+Predictions vs outcomes: 5 HELD (chunk count, median width, final decile, repaired, fallback seams
+remaining, wall clock) of 9 scored; 4 MISSED, every one on the OPTIMISTIC side — peak drift (0.349s,
+below the [0.5, 6.0] band), regressed (46, below [55, 68]), estimate-tracking r (−0.397, below the
+[−0.30, 0.85] band — arm H's residual curve is now slightly NEGATIVELY correlated with the estimate,
+where arm F's was +0.527), and `231_slowing_pace` clearing (predicted NOT to clear; it did, and
+landed). The improvement outran the model, the same pattern Session AM's own predictions showed for
+arm F.
+
+### AH.5 Real audio, 173 — arm H repeats its win; 173 never carried an arch
+
+Real ONNX FA alignment, 337.2s wall clock, 1660 words, 322 needs_review. 173 carries ZERO R.5 runs
+(MEASURED Session AK), confirmed structurally inert here — the excision-seam plumbing both arms share
+does nothing on this corpus.
+
+| arm | unchanged | repaired | regressed | beyond ±50ms | peak abs mean decile Δ |
+|---|---|---|---|---|---|
+| A | 173 | 0 | 0 | 0 | — |
+| C | 130 | 1 | 40 | 39 | 3.854s |
+| **H** | 140 | 1 | **31** | **30** | **1.988s** |
+
+**173 shows NO arch at all** — arm C's own peak (3.854s) already sits under the 5.0s DIED threshold, a
+different regime from v6's, consistent with Session AK's finding that R.5 excision is a contributing
+cause on v6, not the whole mechanism, and reported as a finding rather than a failure of arm H (per
+the brief's own framing). Arm H still measurably improves over arm C: regressed 40 → 31 (−22.5%), peak
+drift roughly halved.
+
+**Open defects.** `lethal_nature_hazard` already lands under arm C (19.23 vs ear 19.27) and stays
+landed, unchanged, under arm H. `gadget_decay` lands under neither (427.47 vs ear 427.60 in both) —
+consistent with its ear value sitting outside its own word gap, a known not-closable-by-edge-placement
+row.
+
+**"The 6 previously unexplained 173 control regressions from arm C": NOT DETERMINED.** A targeted
+search of `docs/work-in-progress.md` and this document did not turn up an explicit, unambiguous list
+of six specific tags under this description. The closest historical match, `vessel_damage_clue`
+(Session AI's original 173 "control regression" set), was already resolved by Sessions AJ-0/AK as a
+stale-bundle-provenance artifact, not a real edge-placement regression — reported as a gap rather than
+a fabricated list.
+
+Full 173 dump: `docs/ws1-sync-pipeline/session-an-step5-173.md`.
+
+### AH.6 Step 6 — the pre-committed adjudication, applied (with §AH.4's correction folded in)
+
+Mechanical output of `adjudicateAN()`: row 3 ("curve flat or H worsens anything"). **Contradicted by
+its own inputs** (§AH.4) — the correct row, applied by hand: arm H makes real, substantial,
+unambiguous progress and clears both of Step 1's own independently-registered bars, but 46 of 447 v6
+boundaries (31 of 173's) remain beyond ±50ms and implied precision stays far under the 50% ship cap.
+**Arm H is a real, adoptable improvement over arm F for continued S2-family work, but is not a ship
+candidate and does not close the residual.** Next action: the residual's remaining shape (broadly
+spread per the NOT STEEP budget curve, §AH.2) means no further seam-scoped widening is expected to
+close much more of it — a different mechanism is needed for the next material cut, not another
+widening pass over the same 5-seam set.
+
+### AH.7 Step 7 — self-check
+
+**Does arm H remove a cause or relocate a symptom, with evidence not assertion?** Removes a cause,
+same class of evidence as Session AM: `231_slowing_pace` is traced end to end, not left as a
+correlation — its governing edge IS one of the 5 seams arm H resolves, and its confidence collapse
+clears exactly when that seam's cut moves.
+
+**A prediction the large Δqi jumps (§AH.3) turned out wrong about, stated plainly.** Before alignment
+ran, the 3.46-30.1s cut displacements read as the exact failure mode the two-group bound existed to
+prevent — a real, stated risk. The real measurement refutes that specific worry: a large index-space
+jump did not translate into a worse time-space pick, because the widened anchor is still a genuine
+three-source-agreement landmark (real acoustic ground truth), and the alternative — arm C's own
+nearest-silence heuristic, numerically "closer" to the estimate but not grounded in any acoustic
+agreement — was measurably worse. This is an honest update, recorded as one: this session's own
+caution in §AH.3 was more pessimistic than reality.
+
+**Roadmap items.** Repaired timings — advanced further: 27/30 → effectively all three open v6 defects
+land, the strongest result yet. R.14/R.15 deletion — advanced: R.14 fires once in H (unchanged from
+F), R.11 fires 2 (down from F's 3). Word-gap placement — untouched. Rule-stage golden coverage —
+untouched, restated again: golden replay stayed 6/6 while arm H moved boundaries neither Session AM's
+71 nor this session's own count touches.
+
+**Every tuned rather than structural choice, named.** One: the one-group widening cap itself — GEOMETRIC
+(no numeric constant; "one more atom"), justified structurally in §AH.3, not fitted to any row (it was
+fixed in Step 1, before any of the 5 seams' picks were looked at). The tie-break inherited unchanged
+from arm F (`pickSeamAnchor`, prefer `qi >= seamQi` on equal |Δqi|) is likewise structural, not
+re-derived this session.
+
+**Anything that would fail an R-AS precision test if reframed as a detector.** Arm H's own implied
+precision (6.12%) is still an order of magnitude below the 50% ship cap, though more than double arm
+F's 2.86% — stated plainly, and it is why arm H is reported as a strong intermediate result, not a
+ship candidate, exactly as arm F was in Session AM. No rule fired zero times with an undefined
+precision this session.
+
+**Each Step 1 falsifier, fired or not.** "Widening is free": did NOT fire (arm H regressed 46, below
+arm F's 68, on both corpora). "Edge error explains the residual": did NOT fire on the r test (0.876 ≥
+0.5); DID fire on the curve-shape test (NOT STEEP) — reported honestly as a split result: edge error
+correlates strongly with the residual, but is not concentrated enough for a seam-scoped fix alone to
+close it.
+
+**The standing blind spot, restated.** Golden replay stayed 6/6 byte-identical through this entire
+session — it reaches neither the chunk planner, FA, nor any rule stage; nothing about arm H's result
+is visible to it.
+
+### AH.8 The six numbers, MEASURED, and every SHA
+
+| check | result |
+|---|---|
+| `npm test` | **2493 passed / 77 skipped / 0 failed** |
+| `tsc --noEmit` (`npm run lint`) | clean |
+| `cargo check --features fa-inference` | clean |
+| `cargo clippy --all-targets --features fa-inference` | clean — 4 pre-existing warnings, 0 new |
+| `cargo test` (default) / `--features fa-inference` | 141/0/1 / 216/0/24, unchanged |
+| Golden replay + oracle diff + production pins | **14/14 green** |
+
+Skip count rises 72 → 77: five new Session AN gated harnesses/blocks (`step2-budget`, `step3-armh`,
+`step4-measure`, and two `it()` blocks inside `step5-173`), none in the default sweep. Passing count
+unchanged at 2493. `faAnchors.ts` sha256 unchanged: `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6
+aa980035db7380c`.
+
+**Commits, in order:**
+
+| commit | summary |
+|---|---|
+| `c617a0f` | Step 1 — the gate, committed before arm H's planner code existed |
+| `bae1200` | Step 2 — the edge-accuracy budget, measured before arm H existed |
+| `425abee` | Step 3 — arm H code, structural checks, v6 chunk plan generated |
+| `c4a3d2f` | Step 4 — real FA run + five-arm v6 measurement, adjudication correction |
+| `352ce0e` | Step 5 — 173 extension, real FA run + measurement |
+| *(this commit)* | docs — this Part, §11p, Changelog, project-state |
+
+`git diff --stat 28821eb` (session start) touches only `src/services/faChunkPlan.ts` (one additive
+branch: `'anchor-widened'` on the existing `S2EdgePlacement` union, plus its `cutKind` reporting
+value — no existing arm's code path is touched), five new `scripts/ws1-session-an-*` files,
+`scripts/ws1-single-tracker.test.ts`'s allowlist, and four new allowlisted `docs/ws1-sync-pipeline/
+session-an-*.md` dumps, plus this docs commit's own targets. **Confirmed untouched:** `snapBoundaries.
+ts`, `silenceDetector.ts`, `whisperService.ts`, `faAnchors.ts`, `docs/history.md`,
+`scripts/fixtures/phase4-baseline-*.csv` — zero hits for any of them. No new repo-root file. No rule
+added, deleted or re-tuned; no arbiter rebuilt; no per-project or per-row constant introduced; nothing
+shipped to the production default — `computeFaChunkPlan` remains untouched.
+
+**Next action:** the budget curve (§AH.2) says the residual is broadly spread, not concentrated — a
+second widening pass over the same 5 seams, or over a larger seam set found the same way, is not
+expected to buy much more. The next material cut needs a different mechanism entirely (a genuinely
+denser or more accurate anchor SOURCE, or a rule-stage change downstream of the chunk plan) rather than
+another parameter on `pickSeamAnchor`'s search window.

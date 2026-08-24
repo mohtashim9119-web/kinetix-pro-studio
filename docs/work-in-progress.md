@@ -6768,10 +6768,83 @@ default remains `computeFaChunkPlan`, untouched. Full six-arm dump (every row, n
 `docs/ws1-sync-pipeline/session-am-six-arm-measurement.md`, plus the substitution-surface and per-
 chunk inspection dumps for arms F and G, all allowlisted in their own commits.
 
+### §11p. WS1 Session AN — RESULTS
+
+**One-line verdict: candidate (a) — widening the anchor search past the two-group bound — WORKS,
+substantially, on real audio, on both corpora.** Arm H (one variable from arm F: a one-group-wider
+anchor search, tried ONLY at the 5 seams arm F's own two-group window could not resolve) recovers all
+5 fallback seams and, MEASURED against real ONNX FA output, cuts arm F's v6 oracle regressions 32%
+(68 → 46), shrinks the already-DIED arch a further 9× (3.249s → 0.349s), lands all 3 of v6's open
+defects for the first time in this workstream, and reaches mean FA confidence (0.8882) ABOVE
+production's own (0.8398). Repeated unchanged on 173: regressed 40 → 31 against arm C, though 173
+never carried an arch to begin with (arm C's own peak, 3.854s, already sits under the DIED band).
+Gate: `scripts/ws1-session-an-step1-gate.ts`, committed at `c617a0f` **before arm H's planner code
+existed and before any alignment ran against real audio**. Full detail: `sync-pipeline-v2-plan.md`
+Part AH.
+
+**The edge-accuracy budget, measured before arm H existed.** All 67 of arm F's beyond-±50ms v6
+boundaries attributed to a governing chunk edge (67/67 attributable). Pearson r = **0.876** between
+`|governing edge error|` and `|boundary error|` — strong. 26 of the 67 are governed by one of the 5
+fallback seams (the ceiling arm H's own success bar is built against). Budget curve, inferred between
+arm G's measured 0ms/2-regressed endpoint and arm F's measured observed-max/67-regressed endpoint:
+**NOT STEEP** — 60.7% of substitutable edges carry half the total error mass, well above the
+pre-registered 10% steepness line, and the ship-bar-crossing tolerance sits at the observed maximum.
+This bounded expectations for arm H before it ran: real, but partial, progress — not closure.
+
+**Arm H beats arm F on every axis measured, on real audio.** Regressed 68 → 46, beyond-±50ms 67 → 45,
+peak drift 3.249s → 0.349s (both DIED), mean confidence 0.8356 → 0.8882, needs_review 562 → 354,
+phantom-tail funnel 1 → 0, implied R-AS precision 2.86% → 6.12% (still far under the 50% ship cap).
+HARD FAIL 3 (regressed > arm F's 68) did not fire. `231_slowing_pace` lands for the first time in this
+whole workstream — 682.74, the ear target exactly, confidence 0.00e+0 → 9.99e-1 — traced to the same
+mechanism Session AM traced for arm G: its governing chunk edge is exactly one of the 5 fallback
+seams, and the widened window's cut moves the chunk from CTC-infeasible to feasible.
+
+**A defect in this session's own adjudication logic, found and corrected in the same commit.** The
+pre-registered `adjudicateAN()` mechanically selects "curve flat or H worsens anything," but only
+because a fallback branch conflates "the Step 2 proxy curve didn't formally cross the ship bar" with
+"H worsened something" — the measured facts directly contradict the second claim. Reported as a gap
+in the table's encoding, not silently patched after seeing the result: both the raw mechanical output
+and the by-hand correction are on record. Correct reading: **arm H is a real, adoptable improvement
+over arm F, the strongest S2-family result yet on nearly every axis, but does not close the residual
+and is not a ship candidate** (46/447 v6 boundaries still beyond ±50ms, precision far under 50%).
+
+**173, extended unchanged (Step 5's condition was met — arm H cleared the progress bar and worsened
+nothing on v6).** Real FA run, 337.2s wall clock. Regressed 40 → 31 against arm C, peak drift 3.854s
+→ 1.988s. **173 shows no arch at all** — arm C's own peak sits under the 5.0s DIED band, a different
+regime from v6's, consistent with Session AK's R.5-excision finding — reported as a finding, not a
+failure. `lethal_nature_hazard` lands under both C and H, unchanged; `gadget_decay` lands under
+neither (a known not-closable-by-edge-placement row). The "6 previously unexplained 173 control
+regressions from arm C" the brief asked about could not be located as an unambiguous named list —
+reported NOT DETERMINED rather than fabricated.
+
+**Nothing shipped.** No rule added, deleted or re-tuned; no arbiter rebuilt; no per-row constant;
+`faAnchors.ts` unchanged (sha256 `b61e94cb…`); production's default remains `computeFaChunkPlan`,
+untouched. Full dumps: `docs/ws1-sync-pipeline/session-an-edge-budget.md`,
+`session-an-armh-inspection.md`, `session-an-step4-measurement.md`, `session-an-step5-173.md`, all
+allowlisted in their own commits.
+
 
 ---
 
 ## Changelog
+
+- **2026-08-24 — WS1 Session AN: widening the anchor search one sentence group recovers arm F's five
+  fallback seams and beats it on every measured axis, on real audio, on both v6 and 173.** Arm H
+  (one variable from arm F) cuts v6 oracle regressions 32% (68 → 46), shrinks the already-DIED arch
+  9× (3.249s → 0.349s), lands all 3 open v6 defects for the first time in this workstream
+  (`231_slowing_pace` included, at its ear target exactly), and reaches mean FA confidence (0.8882)
+  above production's own (0.8398). Gate committed (`c617a0f`, `scripts/ws1-session-an-step1-gate.ts`)
+  before arm H's planner code existed and before any real alignment ran. Step 2's edge-accuracy
+  budget (measured first, no new planner): r = 0.876 between edge error and boundary error, but a
+  NOT STEEP curve — error is spread broadly, not concentrated, which correctly bounded expectations
+  to "real but partial progress," not closure. Repeated unchanged on 173 (Step 5's condition met):
+  regressed 40 → 31 against arm C, though 173 shows no arch at all to begin with. Found and corrected
+  a defect in this session's own pre-registered adjudication function (a fallback branch that
+  mechanically read a genuinely strong result as a negative) — reported plainly rather than silently
+  patched. **Not a shipping candidate** (implied precision 6.12% vs the 50% ship cap) but the
+  strongest S2-family result yet on nearly every axis. Nothing shipped; no rule added, deleted or
+  re-tuned; `faAnchors.ts` unchanged. Full detail: `sync-pipeline-v2-plan.md` Part AH,
+  `docs/work-in-progress.md` §11p.
 
 - **2026-08-24 — WS1 Session AM: chunk-edge PLACEMENT ERROR is the driver of v6's S2 drift arch —
   replacing the S2 family's estimate-derived internal edges with `faAnchors.ts` three-source-
