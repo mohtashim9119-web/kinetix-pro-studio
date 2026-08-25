@@ -560,3 +560,16 @@ C's 3.854s (both already under the DIED band, so 173 shows no arch either way) �
 last entry in the S2/chunk-edge research line: as of the 2026-08-25 accuracy-bar decision
 recorded in `docs/work-in-progress.md`, further chunk-width/chunk-edge research is frozen —
 current ~97–98% accuracy is accepted and remaining errors go through manual review instead.**
+
+## Audit — 2026-08-25 — Open-bugs audit closes the chunk-plan non-determinism bug as not applicable
+
+Re-examined `work-in-progress.md`'s "FA chunk-plan generation is non-deterministic on 173
+(118/119/126)" bug against current `main`. Already settled by Session AH's own bisection (Part
+AB.7 above): the three counts trace to three different commits/bundles, not three runs of
+identical code — every tree from `4b9bea9` through HEAD computes 119 deterministically
+(byte-identical `chunk[11]`), and the 126-chunk bundle was traced to code that never landed in the
+repository (an uncommitted Session P working state) and was RETIRED that session. No commit since
+has touched the production chunk-plan path — every `faChunkPlan.ts` commit after Session AH adds a
+diagnostic-only S2 arm with no production caller (Session AN's own verification line: "the
+production default remains untouched"). Removed from `work-in-progress.md`'s Open bugs. Full audit
+trail: `sync-pipeline-v2-plan.md` Part AI §3.

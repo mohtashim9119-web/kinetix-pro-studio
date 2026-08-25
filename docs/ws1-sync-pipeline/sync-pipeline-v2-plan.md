@@ -9858,3 +9858,311 @@ frozen — current ~97–98% accuracy is accepted and remaining errors go throug
 instead. The budget curve's own finding (§AH.2, folded above) is why: substitutable edges could
 close at most 26 of the 67 residual v6 boundaries, not enough to justify continuing this line past
 arm H.
+
+## Part AI — Open-Bugs Audit: Chunk-Plan Non-Determinism Retired, Four Bugs Confirmed and Designed, Sequenced, and the Two Standing Gaps Ruled On (Operator-Directed Audit, 2026-08-25, append-only)
+
+**Scope and method.** Read-only audit of the five bugs `docs/work-in-progress.md`'s Open bugs
+section carried as of this morning. Every claim below traces to a file/line read this session or a
+prior session's record cited by name — no code changed except a throwaway repro (reverted before
+this commit; see §AI.9). Worked alone, no sub-agents.
+
+### AI.1 — OOM crash, partial fix: STILL PARTIALLY OPEN, cannot tell the remainder without running it
+
+**What's fixed, confirmed by reading `src-tauri/src/fa_onnx.rs:405-455` (`load_session`) and
+`src-tauri/src/fa.rs:80-119` (`FaModelCache`).** `a6f2978` (2026-08-25, this morning) added
+`.with_memory_pattern(false)` at `fa_onnx.rs:451`, disabling ORT's per-input-shape allocation-plan
+cache. The mechanism it closes is real and load-bearing: `FaModelCache` (`fa.rs:113`) is a
+Tauri-managed `State`, constructed once and living for the whole app-process lifetime
+(`fa.rs:115-119`'s `Default` impl, wired via `.manage()` in `lib.rs`), and every FA chunk has a
+different sample count — a different input shape — so the now-disabled cache accumulated one
+allocation plan per shape, never released, across every corpus run in one process. Pre-fix
+measurement (`.work-phase4/session-ao/rss_timeline.csv`, confirmed present, 24,334 bytes, 1585
+rows): RSS rose monotonically for 1584 of 1585 one-second samples across a shared v6 → 173 →
+spanish → v6-again run and peaked at 4220.0 MiB, ~1 GiB above the highest single-corpus peak any
+prior process-per-corpus measurement had recorded.
+
+**The gap.** `.work-phase4/session-ao/` holds exactly two files — `rss_timeline.csv` and
+`stage_markers.json`, both timestamped before the fix landed (confirmed: `find
+.work-phase4/session-ao -type f`). No post-fix RSS timeline exists anywhere in the repo or the
+`.work-phase4` working tree. So: **the fix's own memory effect has never been measured.** Two
+distinct open questions, not one: (a) did disabling memory-pattern caching actually flatten the
+monotonic growth in a shared-process multi-corpus run, and by how much; (b) what drives the
+*single-corpus* footprint itself (v6 alone peaked 3205.3 MiB pre-fix, Session AK) — no session
+record isolates that, and this fix doesn't claim to touch it (it only stops the *per-shape cache
+accumulation*, not whatever allocates within one corpus's own run).
+
+**Verdict: cannot tell without running it.** What running it means: repeat the exact Session AO
+Step 1 protocol (same v6 → 173 → spanish → v6-again single-process sequence, same RSS-sampling
+harness) against the now-fixed build, produce a new `rss_timeline.csv`, and diff peak RSS +
+monotonicity against the pre-fix baseline above. This is a measurement, not a design task — it
+either confirms the fix worked as intended or it doesn't, and either answer is useful. Rough
+effort: low (the harness already exists from Session AO Step 1; this is a re-run, not a build).
+Risk: none to production code — it's an observational script run.
+
+### AI.2 — `boundaryUsedFallback` isBreathSilence arg-count bug: STILL REPRODUCES
+
+**Confirmed at `src/services/snapBoundaries.ts:378-384`.** `boundaryUsedFallback`'s own predicate
+(lines 378-384) calls `isBreathSilence(s, tokens, currFirstTokenIdx, currLastTokenIdx)` (line 381)
+and `isBreathSilence(s, tokens, nextFirstTokenIdx, nextLastTokenIdx)` (line 382) — both 4-argument
+calls. `isBreathSilence`'s real signature (`snapBoundaries.ts:560-570`) takes a 5th parameter,
+`otherSideLastTokenIdx: number = -1` — a **defaulted** parameter, which is exactly why this
+compiles clean and TypeScript never flags it. Because the default is `-1`, the 4-arg calls are
+equivalent to explicitly passing `-1` for BOTH sides — but the doc comment at lines 565-569 states
+the seam exemption is meaningful only on the NEXT side, where the real call should pass "curr's own
+lastTokenIdx." The correct 5-arg call exists 363 lines later, at `snapBoundaries.ts:741-747`
+(`snapCoveredBoundaries`'s own real Pass 2), which computes `currOtherSideLastTokenIdx = -1` and
+`nextOtherSideLastTokenIdx = currAlign.lastTokenIdx` (lines 738-739) before calling
+`isBreathSilence` with 5 args at lines 744-745. `boundaryUsedFallback` never threads the equivalent
+value through, so its next-side seam exemption is permanently disabled — every reading it produces
+for a seam-exempted pair is wrong, silently, since it shipped.
+
+**Blast radius, confirmed by grep.** `boundaryUsedFallback`'s only non-test caller is
+`src/services/syncContracts.ts:312` (`validateBoundaryQuality`), called from `src/App.tsx:3593`,
+`:3762`, `:3789` — real, live, in the Apply Sync path, feeding the sync log's boundary-quality
+`'info'` entries the user actually sees (downgraded from the validator's own `'warning'` typing to
+`'info'` at the `App.tsx` wiring, per that file's own Phase-1-observability-only comment,
+`App.tsx:3583-3590`) and `scripts/phase4-fa-replay.test.ts`'s Zero-Defect Register "FALLBACK
+boundary" mechanism label (`:407`, `:1046`). **It is read-only diagnostics only — it never touches
+`snapCoveredBoundaries` itself** (confirmed: `boundaryUsedFallback`'s own doc comment,
+`snapBoundaries.ts:357-365`, states this explicitly, and grep of `snapBoundaries.ts` shows the two
+functions' `isBreathSilence` call sites are structurally separate — `boundaryUsedFallback` at
+378-384, the real Pass 2 at 741-747 — with no call path from one into the other). So committed
+segment timing is unaffected; what's wrong is a user-visible log classification and a test-register
+mechanism label.
+
+**The permanent fix — smaller than the bug title implies, no signature change needed.**
+`boundaryUsedFallback` already receives `currLastTokenIdx` as its own 4th parameter — the exact
+value `snapCoveredBoundaries`'s Pass 2 assigns to `nextOtherSideLastTokenIdx` for this same pair
+(`currAlign.lastTokenIdx` at line 739 IS the caller's own `currLastTokenIdx`). So the fix is
+internal to the function body, no new parameters, no caller changes anywhere:
+
+```
+!isBreathSilence(s, tokens, currFirstTokenIdx, currLastTokenIdx, -1) &&
+!isBreathSilence(s, tokens, nextFirstTokenIdx, nextLastTokenIdx, currLastTokenIdx) &&
+```
+
+A quick patch would be to leave it broken and just rename the misleading default — rejected: the
+default parameter is correct behavior for a genuine curr-side call (it's *always* -1 by design,
+CURR-SIDE DISABLED per the doc comment above `isBreathSilence`); the bug is specifically that the
+next-side call never overrides it, so a rename fixes nothing.
+
+**What it touches:** `snapBoundaries.ts` only (2 lines) — no frozen or forbidden file (frozen list
+per CLAUDE.md is `textNormalize.ts`/`canonicalize`, not this file).
+
+**Can it change boundary output? No, structurally** — `boundaryUsedFallback` has no path back into
+`project.segments`' committed `startTime`/`duration` (see blast-radius paragraph above). What it
+*can* change is its own boolean return value for next-side seam-exempted pairs, which flows only
+into the sync-log 'info' entries and the register's mechanism label. **To prove nothing else moved:**
+(1) re-run `validateBoundaryQuality` across v6/173/spanish before/after, diff which pairs flip
+`usedFallback` true→false — the only expected diff is pairs where the multi-fragment breath branch
+would now correctly exempt a smeared next-side first token; (2) `snapCoveredBoundaries`'s own
+committed-boundary output must be byte-identical before/after on all three corpora (golden replay +
+oracle diff, both already regression floors) since this function is outside its call graph — a
+non-zero diff there would mean the audit's blast-radius claim above is wrong and needs redoing; (3)
+check `scripts/phase4-fa-replay.test.ts`'s FALLBACK-boundary mechanism assertions and
+`syncTiming.test.ts`'s `boundaryUsedFallback` describe block (`:3121-3181`) for any fixture string
+that flips — per CLAUDE.md's testing rule, a flipped assertion gets a deliberate per-case review,
+never a blind re-baseline, and the existing test block has no case that currently exercises the
+next-side seam-exemption path at all (worth adding one as part of the same change).
+
+**Effort: trivial code change (minutes); the verification pass is the real cost (roughly an hour)** —
+diffing three corpora's diagnostic output and reviewing whatever fixture assertions move. What
+could go wrong: a stale `phase4-fa-replay.test.ts` mechanism-label assertion written against the
+buggy (always-`-1`) behavior breaks and needs a considered update rather than a mechanical one.
+
+### AI.3 — FA chunk-plan non-determinism on 173: NO LONGER APPLICABLE — retired by Session AH, evidence already in the record
+
+**What changed, and where.** The "118/119/126" figure was never three runs of identical code — it
+was three different commits/bundles conflated as one number. `sync-pipeline-v2-plan.md` Part AB.7
+(Session AH, 2026-08-23, `docs/history-2.md`'s matching Session AH entry) bisected it directly:
+**"Every committed tree from `4b9bea9` — the commit that was HEAD when the [126-chunk] bundle was
+minted — through HEAD computes 119, with a byte-identical `chunk[11]`."** None of eight tested
+arm/attribution combinations reproduced 126; the silence arm was re-derived from the audio with
+zero elementwise differences; `faAnchors.ts` was untouched since before the mint; the corpus source
+files' mtimes predate it too. **Disposition: RETIRED, cause narrowed to one sentence — "The stored
+plan was produced by code that never landed in the repository — an uncommitted Session P working
+state."** The 118 figure is a third, separate stale bundle from the same era (Part U/AA, Session
+Z/AA), not a fourth data point for non-determinism — same class of explanation (stale
+capture vs. current code), never independently re-attributed because 119's reproducibility already
+settles the question either way.
+
+Confirmed still true at current HEAD: `git log --oneline --since=2026-08-23 -- faChunkPlan.ts`
+shows only Session AI/AK/AL/AM/AN commits, every one of which is diagnostic-only per this
+document's own Standing Constraints (`work-in-progress.md`) — arms F/G/H
+(`computeFaChunkPlanS2EdgeArm`, `S2EdgePlacement` kinds `'anchor'`/`'attested'`/`'anchor-widened'`)
+have no production caller, reachable only from env-gated Session AM/AN measurement tests. Part
+AH.60's own verification line for the most recent of these (Session AN) states plainly:
+"`computeFaChunkPlan` (the production default) remains untouched." So the reproducibly-119
+production chunk plan Session AH established has had no code path to regress since.
+
+**Closed.** Removed from `docs/work-in-progress.md`'s Open bugs; one-line closure note in
+`docs/history-2.md`.
+
+### AI.4 — 5 open Zero-Defect Register rows: STILL REPRODUCES, no rule reaches ship precision — this needs acceptance, not a design slot
+
+**Confirmed unchanged.** `scripts/ws1-session-ak-step1-gate.ts:64-68`'s `OPEN_DEFECTS` names
+exactly the five rows `work-in-progress.md` lists, matching the AJ-0 oracle's `openDefect` rows
+byte for byte. Part AD.4's own fresh-run diff (Session AJ-0, 2026-08-23) confirms all five
+reproduce EXACTLY at their `prod` values (629.01 / 681.63 / 1417.12 / 18.51 / 427.48), none at
+their `ear` target — "the export is not silently ahead of or behind the current pipeline at those
+seams; they are exactly as open as recorded." Nothing since has closed any of them. (Note for
+the reader: `project-state.md`'s Current State table separately tracks a **6**-open **code-fixture**
+register from `phase4-fa-replay.test.ts`, a different count from a different register — the bug in
+`work-in-progress.md` names the **5**-row operator-attested register specifically, and that is the
+one audited here.)
+
+**Mechanism, per row, from the existing record — not re-derived this session.** Three of five
+(`214_solitary_fire`, `231_slowing_pace`, `447_scout_facing_dark`, all v6) are chunk-edge-placement
+defects — the same class Sessions AL–AN spent nine sessions chasing (the "arch"). Two of five
+(173's `lethal_nature_hazard`, `gadget_decay`) are separately named and have no candidate mechanism
+at all: `gadget_decay`'s ear target sits 0.06s past its own segment's first-word onset, "unreachable
+by any right-edge-minus-pre-roll placement" (Session AH's own autopsy, `docs/history-2.md`'s
+Session AH entry), and it still doesn't land even under Session AN's own most-aggressive diagnostic
+arm (arm H) — the only one of the five that never landed under any tested arm.
+
+**A real fix candidate exists — and is deliberately not shippable.** Session AN's arm H
+(`faChunkPlan.ts`'s `'anchor-widened'` branch, diagnostic-only, no production caller) landed all
+three v6 rows for the first time in the workstream, `231_slowing_pace` at its exact ear target. But
+its own measured implied precision against ruling R-AS's 50% ship gate was **6.12%** — shipping it
+would move roughly 16 correct boundaries for every defective one it actually fixes. The 2026-08-25
+accuracy-bar ruling froze the entire chunk-width/chunk-edge research line on exactly this evidence
+(`work-in-progress.md`'s own text: "current ~97–98% of boundaries correct on first sync ...
+remaining errors go through manual review in the UI, not further pipeline changes").
+
+**So there is no fix to design here without contradicting a ruling already in force.** The honest
+answer for 3 of 5 rows is "a candidate exists (arm H) but is barred by a ruling this audit has no
+standing to override"; for the other 2 (`lethal_nature_hazard`, `gadget_decay`) it's "needs a new
+mechanism nobody has proposed yet — not a measurement gap, a genuine unsolved-defect gap." The
+**permanent path consistent with the standing ruling** is not a rule: it's the already-specced
+**Pillar 2 passive detector** (`work-in-progress.md`'s Not started section, 4 rules, gated on
+R-AS's own 50% precision bar) feeding the planned **sync log revamp**'s Group 6 — surfacing these
+five (and whatever else the detector catches) as a one-click manual-review item instead of chasing
+further automatic precision. That is scoped, sequenced work already recorded, not a new design.
+
+**Effort/risk:** N/A as a standalone task — folds into the already-planned Pillar 2 detector build,
+whose own precision gate this audit doesn't relax.
+
+### AI.5 — Alignment cost has no enforced bound: STILL REPRODUCES, needs a measurement before a fix can be designed
+
+**Confirmed by reading `src/services/whisperService.ts`.** `alignScenestoTranscript` (`:1328`)
+drives `hirschbergGlobal` (`:239`) / `alignQueryToSubject` (`:303`) — a synchronous Needleman-Wunsch
++ Hirschberg linear-space divide-and-conquer DP, O(n·m) time over the full script-word ×
+transcript-token sequence, run on the main thread inside every Apply Sync. `__ALIGN_INSTRUMENT__`
+(`:80-101`) is an opt-in devtools timer (`globalThis.__ALIGN_INSTRUMENT__ = true`, dormant by
+default) that logs pass duration and sequence lengths — **it observes cost, it does not bound it.**
+Grepped for any size cap, timeout, `AbortController`, or worker offload around the aligner: none
+found. No entry exists in Contract A4's own status table (`:5939`, "**UNENFORCED**") beyond the
+dormant instrument. So: unbounded input can freeze the main thread behind the loading overlay with
+no error path, exactly as the bug states, and this is directly verifiable from the code — no
+measurement needed to confirm the bug itself.
+
+**Designing the fix does need a measurement first, and none exists.** There is no wall-clock/memory
+curve anywhere in the repo relating alignment cost to `n·m` for realistic-to-worst-case script and
+transcript sizes (e.g. a multi-hour narration). Without that curve, any hard cap chosen now would
+be a guess, not a derived value — exactly the kind of corpus-fitted-not-measured constant
+`CLAUDE.md`'s own invariant list rejects ("A sync rule's threshold/offset must be derived from a
+measurable acoustic or structural property, never fitted"). **The measurement:** run
+`__ALIGN_INSTRUMENT__` (or a small dedicated script reusing `alignQueryToSubject`) across a range of
+synthetic script/transcript sizes from the three known corpora's own scale up through several
+multiples of the largest (v6, 447 segments), recording wall-clock and peak memory per size, on
+representative hardware — enough points to locate where cost crosses from imperceptible to
+UI-hang-dangerous.
+
+**Once that curve exists, two fix shapes, not one obviously correct:** (a) a hard `n·m` (or
+input-length) ceiling enforced before the DP starts, surfacing a typed error instead of hanging —
+small, but risks rejecting a legitimate large project if the cap is set too low, which the
+measurement is exactly what prevents; (b) move the DP into a Web Worker with a cancellation path —
+larger (new message-passing plumbing, cancellation wiring in the Apply Sync flow) but doesn't need
+to guess a cutoff and gives the user a way out of an in-flight long alignment rather than just
+failing fast at the door.
+
+**What it touches:** `whisperService.ts` (the DP or its caller), `syncContracts.ts` (Contract A4's
+own entry), and a UI surface for the new typed warning/error — none of it is
+`textNormalize.ts`/`canonicalize` (the one frozen file in this area) or any other listed frozen
+path.
+
+**Can it change boundary output?** Only for inputs that currently hang forever with no result — by
+definition, not a regression against any input that works today. To prove it: whatever cap is
+chosen must sit comfortably above all three production corpora's own `n·m` (with margin), then the
+golden replay + oracle diff (the existing regression floors) must stay byte-identical, confirming
+no in-bound input is affected.
+
+**Effort:** the measurement is the real cost (medium — needs a synthetic large-input generator and
+a small profiling harness, no existing tooling for this specific question); the gate-based fix
+itself is small once a threshold is chosen; the worker-based fix is a larger, separately-scoped
+change. **Disposition (already the standing decision, not changed here): deferred to Stage 2
+lock** — the live acceptance run only exercises the three already-known-safe corpora, so this bug
+poses no risk to that specific run.
+
+### AI.6 — Sequencing
+
+| Bug | Blocks Stage 1 lock's live acceptance run? | Reasoning |
+|---|---|---|
+| AI.1 OOM, partial fix | **Conditionally — verify before running, don't skip the check** | The live acceptance run is the exact single-process, multi-corpus shape (v6/173/spanish, possibly repeated) the pre-fix measurement showed accumulating growth in. The primary driver is now fixed but unmeasured; the check is cheap (a script re-run) and should happen before, not after, the live run that Stage 1 lock hinges on. |
+| AI.2 `boundaryUsedFallback` | **Defers** | Diagnostic-only; never touches committed segment timing (§AI.2). Wrong sync-log labeling is real but doesn't corrupt the acceptance run's readings. |
+| AI.4 5 open ZDR rows | **Defers** | Already accepted in writing under the 2026-08-25 accuracy-bar ruling — the Stage 1 lock gate's own "no Stage 1 defect deferred downstream" criterion reads this as satisfied by that acceptance, not violated by it. |
+| AI.5 Alignment cost unbounded | **Defers** | Already-decided disposition (Stage 2 lock). The three corpora the live run actually exercises are known-safe sizes; the risk is to future arbitrary user input, not this run. |
+
+**Work order recommended:**
+
+1. **AI.1's post-fix RSS re-measurement** — cheap, fast, and the one item that could still surprise
+   the live acceptance run if skipped. Do this first, before that run.
+2. **AI.2's 2-line fix** — trivial change, real (if low-severity) user-facing correctness bug in the
+   sync log today; no reason to sit on it once the verification pass (§AI.2) is budgeted.
+3. **AI.5's measurement** — no code follows until the curve exists; worth starting given it's
+   already blocking Stage 2 lock's own disposition, but it is independent of Stage 1 and can run in
+   parallel with Stage 1 lock's remaining checklist items.
+4. **AI.4** — no standalone action; proceeds only as part of the already-sequenced Pillar 2
+   detector build (Not started, unscheduled).
+
+### AI.7 — Gap 1: the OOM fix's post-fix measurement
+
+Covered fully in §AI.1. Restated for Part 4 of the operator's brief: **what measuring it would
+take** is a re-run of Session AO Step 1's own protocol (shared-process v6 → 173 → spanish →
+v6-again, RSS sampled once per second) against the current build, producing a new
+`rss_timeline.csv` to diff against the pre-fix baseline (4220.0 MiB peak, 1584/1585 monotonic
+samples, +771 MiB jump at the spanish cache-miss boundary). No new harness needs building — the one
+Session AO Step 1 used already exists and only needs re-running.
+
+### AI.8 — Gap 2: the Spanish acceptance lapse — options, not a decision
+
+**The situation, confirmed against the record (not re-derived).** Spanish's non-English-corpus
+written acceptance was granted unlistened, with an explicit reopening trigger: voided "the moment
+any Spanish-specific normalization or alignment code ships." Phase 3b shipped Spanish cardinal
+normalization (0-30) on 2026-08-15 (`work-in-progress.md`'s own Finished section, and
+`sync-pipeline-v2-plan.md`'s Phase-Status table row `3b`). Part X (Session AC, 2026-08-22) found
+the trigger's literal text is satisfied by that shipment, but that a separate passage in this same
+document asserting "no Spanish-specific code has shipped" predates Phase 3b entirely and was never
+revisited — and flagged the question rather than ruling on it. Nobody has ruled on it since; it is
+still flagged, not resolved, as of this audit (`work-in-progress.md`'s Standing constraints
+section, verbatim).
+
+**Three options, their costs, no recommendation forced — this is the owner's call by the
+brief's own instruction:**
+
+- **(a) Read the trigger literally — it fired.** Treat the acceptance as void; Spanish (27
+  boundaries) needs an actual ear-verification pass before Stage 1 lock can rely on it. Cost: low —
+  Spanish is the smallest of the three corpora by a wide margin (27 boundaries vs. 173's 173 and
+  v6's 447); a full listen-through is a short session, not a multi-day one. Benefit: removes the
+  lapse cleanly, no ambiguity left standing.
+- **(b) Read the trigger as scoped to Task 5/alignment code specifically**, narrower than its
+  literal wording — Phase 3b is text normalization feeding chunk-plan word counts
+  (`faTextNormalize.ts`), not the FA alignment path itself, and Part 3b's own record already traces
+  that its main risk items (ASCII-fold diacritic destruction, thousands-separator mangling) don't
+  reach the FA model's input text at all (`faChunkPlan.ts:360-371,628`, `chunk.text` is raw, never
+  routed through `canonicalize`). Cost: zero new work. Risk: this is exactly the ambiguity already
+  flagged as unresolved — choosing this reading without writing down *why* the narrower scope is
+  correct leaves the same lapse in place under a different name, and the next session to touch this
+  area inherits the same unresolved flag.
+  - **(c) Rule on it explicitly either way, in writing, today** — whichever reading is chosen, record
+  it as a ruling (alongside the existing Task 5 / R.1 rulings in `project-state.md` §5) so it stops
+  being a standing flagged lapse. This costs nothing beyond the decision itself and is the only
+  option of the three that actually closes the flag rather than either paying for or deferring past
+  it.
+
+### AI.9 — Verification note
+
+No source file was changed to produce this audit — every finding above was established by reading
+the code and grepping call graphs (`git status` confirms a clean tree), not by running a repro.
+`npm run lint` / `npm test` not re-run as part of this audit since no source changed; the next
+session that applies §AI.2's fix should run both as part of that change.

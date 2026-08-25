@@ -108,25 +108,33 @@ satisfied or accepted in writing.
 
 ### Open bugs
 
+Audited 2026-08-25 against current `main` — full mechanism/fix-design detail for every surviving
+row: `sync-pipeline-v2-plan.md` Part AI. One row (chunk-plan non-determinism) closed that session,
+see `docs/history-2.md`.
+
 - **OOM crash, partial fix** — see "Other active work" above for what's fixed and what's still
-  open. No owner on the remainder.
+  open. No owner on the remainder. Fix design: Part AI §1. **Conditionally blocks Stage 1's live
+  acceptance run** — do the cheap post-fix RSS re-measurement before that run, not a code blocker.
 - **`boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead of 5**
   (`src/services/snapBoundaries.ts:381-382`; the correct 5-arg call exists at `:744-745`) —
   defaults the seam exemption off, so every boundary-quality reading on a seam-exempted pair has
-  been wrong since it shipped. Slated for Phase 7; no one currently on it.
-- **FA chunk-plan generation is non-deterministic on the 173 corpus** — chunk counts of
-  118/119/126 observed across repeated runs on the same input (Sessions AG/AH); root cause was
-  never isolated, only re-baselined at 119. No owner.
+  been wrong since it shipped. Slated for Phase 7; no one currently on it. Fix design (2-line,
+  internal-only, no signature change): Part AI §2. **Defers** — diagnostic-only, never touches
+  committed segment timing.
 - **5 open Zero-Defect Register rows** — boundary-placement defects, ear-verified wrong, with no
   rule that fixes them yet: `214_solitary_fire`, `231_slowing_pace`, `447_scout_facing_dark`,
   `173/lethal_nature_hazard`, `173/gadget_decay` (live list:
   `scripts/ws1-session-ak-step1-gate.ts:59`'s `OPEN_DEFECTS`, matching the AJ-0 oracle's
   `openDefect` rows). `400_endless_dark` is closed at 1266.75, ear-verified by the `full-pass-aj0`
   sitting (`scripts/ws1-ear-pass-ledger.ts:907`). Accepted as residual defects under the accuracy
-  bar rather than pursued further; no owner.
+  bar rather than pursued further; no owner. Audit: Part AI §4 — no fixable design slot without
+  contradicting the accuracy-bar ruling; the permanent path is the already-planned Pillar 2
+  detector. **Defers** — already accepted in writing under that ruling.
 - **Alignment cost has no enforced bound for real inputs** (Contract A4; `__ALIGN_INSTRUMENT__`
   dormant) — an unbounded input can hang the UI behind the loading overlay with no error
-  surfaced. No owner; disposition deferred to Stage 2 lock.
+  surfaced. No owner; disposition deferred to Stage 2 lock. Needs a cost-vs-input-size measurement
+  before a fix can be designed: Part AI §5. **Defers** — the live run's 3 corpora are already
+  known-safe sizes.
 
 ### Not started
 
