@@ -1,16 +1,19 @@
 import type React from 'react';
 import type { TranscriptionStatus } from '../types';
+import { isModelMissingError } from '../services/modelDownload';
 
 interface TranscriptionBarProps {
   status: TranscriptionStatus;
   onCancel: () => void;
   onDismiss: () => void;
+  onDownloadModel: () => void;
 }
 
 export function TranscriptionBar({
   status,
   onCancel,
   onDismiss,
+  onDownloadModel,
 }: TranscriptionBarProps): React.ReactElement | null {
   if (status.phase === 'idle') return null;
 
@@ -79,12 +82,22 @@ export function TranscriptionBar({
         className="flex items-center justify-between gap-3 px-4 py-1.5 bg-red-950/90 border-b border-red-800/50 text-xs text-red-300"
       >
         <span className="truncate select-text">Transcription failed: {status.message}</span>
-        <button
-          onClick={onDismiss}
-          className="shrink-0 px-2 py-0.5 rounded border border-red-700 hover:bg-red-900/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-red-400 transition-colors"
-        >
-          Dismiss
-        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          {isModelMissingError(status.message) && (
+            <button
+              onClick={onDownloadModel}
+              className="px-2 py-0.5 rounded border border-red-700 bg-red-900/40 hover:bg-red-900/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-red-400 transition-colors font-bold uppercase tracking-widest"
+            >
+              Download Model
+            </button>
+          )}
+          <button
+            onClick={onDismiss}
+            className="px-2 py-0.5 rounded border border-red-700 hover:bg-red-900/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-red-400 transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
       </div>
     );
   }

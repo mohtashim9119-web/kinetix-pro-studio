@@ -49,6 +49,9 @@ interface Props {
    *  never accidentally render "no preference" as "off". */
   faEnabled: boolean;
   onFaEnabledChange: (v: boolean) => void;
+  /** Bug 4 fix — opens ModelDownloadPanel for the in-app whisper model
+   *  acquisition/status UI. */
+  onManageModel: () => void;
   onClose: () => void;
 }
 
@@ -62,6 +65,7 @@ export function ProjectSettingsModal({
   onLanguageChange,
   faEnabled,
   onFaEnabledChange,
+  onManageModel,
   onClose,
 }: Props): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
@@ -220,6 +224,12 @@ export function ProjectSettingsModal({
                 Not available outside the desktop app.
               </p>
             )}
+            <button
+              onClick={onManageModel}
+              className="text-[9px] uppercase tracking-widest text-gray-500 hover:text-[#F27D26] transition-colors underline underline-offset-2"
+            >
+              Manage sync model
+            </button>
           </div>
 
           {/* Section: Export Engine (WebCodecs export toggle — mirrors DropZonePanel's) */}

@@ -224,6 +224,7 @@ import { NewProjectModal } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { SyncLogPanel } from './components/SyncLogPanel';
 import { ExportSettingsModal } from './components/ExportSettingsModal';
+import { ModelDownloadPanel } from './components/ModelDownloadPanel';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, formatElapsed, formatElapsedLong, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { useWhisper } from './hooks/useWhisper';
@@ -1832,6 +1833,7 @@ export default function App() {
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   const [showExportSettingsModal, setShowExportSettingsModal] = useState(false);
+  const [showModelDownloadPanel, setShowModelDownloadPanel] = useState(false);
   const [devPanelOpen, setDevPanelOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const previewStageRef = useRef<PreviewStageHandle>(null);
@@ -4532,7 +4534,7 @@ export default function App() {
   shortcutsSuppressedRef.current =
     showStockSearch || showNewProjectModal || showProjectSettingsModal
     || showExportSettingsModal || showReviewMapping || devPanelOpen
-    || exportState.isExporting;
+    || showModelDownloadPanel || exportState.isExporting;
 
   const togglePlay = () => setIsPlaying(p => !p);
 
@@ -5102,6 +5104,7 @@ export default function App() {
                 status={transcriptionStatus}
                 onCancel={cancelTranscription}
                 onDismiss={dismissError}
+                onDownloadModel={() => setShowModelDownloadPanel(true)}
               />
             </div>
           )}
@@ -5588,8 +5591,17 @@ export default function App() {
           onLanguageChange={(v) => setProject(p => ({ ...p, language: v }))}
           faEnabled={isFaEnabledForProject(project)}
           onFaEnabledChange={(v) => setProject(p => ({ ...p, faHighPrecisionSync: v }))}
+          onManageModel={() => setShowModelDownloadPanel(true)}
           onClose={() => setShowProjectSettingsModal(false)}
         />
+      )}
+
+      {/* In-app whisper model acquisition (bug 4 fix) — reachable from
+          Project Settings' "Manage sync model" link and automatically from
+          TranscriptionBar's "Download model" action on a model-not-found
+          transcription error. */}
+      {showModelDownloadPanel && (
+        <ModelDownloadPanel onClose={() => setShowModelDownloadPanel(false)} />
       )}
 
       {/* Export Settings Modal — resolution + fps chosen at export time

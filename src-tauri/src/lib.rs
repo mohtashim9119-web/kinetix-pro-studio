@@ -15,6 +15,7 @@ mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;
 mod ffmpeg;
+mod model_download;
 mod project_mirror;
 mod sha256;
 mod whisper;
@@ -106,6 +107,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(whisper::WhisperState::default())
+        .manage(model_download::ModelDownloadState::default())
         .manage(ffmpeg::FfmpegProcessState::default())
         .manage(fa::FaState::default())
         .manage(fa::FaModelCache::default())
@@ -145,6 +147,9 @@ pub fn run() {
             whisper::whisper_transcribe,
             whisper::whisper_stage_audio_raw,
             whisper::whisper_cancel,
+            model_download::whisper_model_status,
+            model_download::whisper_model_download,
+            model_download::whisper_model_download_cancel,
             fa::fa_align,
             fa::fa_cancel,
             fa_dev::fa_align_dev,

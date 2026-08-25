@@ -58,9 +58,23 @@ pub enum WhisperEvent {
 // longer silently ignored (whisper-cli ignores -l auto on an .en-suffixed
 // model). Measured 2026-08-04: 1624555275 bytes (~1.51 GiB) on disk,
 // ~2.1-2.2 GiB resident during inference (docs/sync-pipeline-v2-plan.md H.9).
-const MODEL_FILENAME: &str = "ggml-large-v3-turbo.bin";
+pub(crate) const MODEL_FILENAME: &str = "ggml-large-v3-turbo.bin";
 
 fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    // In-app acquisition (bug 4 fix): the model is downloaded on demand into
+    // app_local_data_dir()/models/ (see model_download.rs) rather than bundled
+    // — tauri.conf.json's resources map no longer ships models/* at all. This
+    // is checked FIRST, ahead of every bundle/dev fallback below, so a user who
+    // has downloaded the model always gets it; every existing fallback is kept
+    // unchanged underneath for a hand-placed file (dev checkout, or a build
+    // from before this change).
+    if let Ok(local_data_dir) = app.path().app_local_data_dir() {
+        let model = local_data_dir.join("models").join(MODEL_FILENAME);
+        if model.exists() {
+            return Ok(model);
+        }
+    }
+
     // Production: resource_dir bundled by tauri
     if let Ok(resource_dir) = app.path().resource_dir() {
         let model = resource_dir.join("models").join(MODEL_FILENAME);
@@ -104,8 +118,8 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     }
 
     Err(format!(
-        "{MODEL_FILENAME} not found. \
-         Run: curl -L -o src-tauri/models/{MODEL_FILENAME} \
+        "{MODEL_FILENAME} not found. Use the model download panel in Settings, \
+         or for a dev checkout: curl -L -o src-tauri/models/{MODEL_FILENAME} \
          https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL_FILENAME}"
     ))
 }
