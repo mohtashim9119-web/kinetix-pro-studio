@@ -90,31 +90,28 @@ satisfied or accepted in writing.
 
 **Other active work (not part of Stage 1 lock)**
 
-- **OOM memory fix** — partly fixed. ORT's per-shape memory-pattern allocation cache was
-  disabled (`a6f2978`, WS1 Session AO Step 4, `src-tauri/src/fa_onnx.rs:421-452`). Cause: the
-  ONNX session is cached in `FaModelCache` (`src-tauri/src/fa.rs:113`), a Tauri-managed `State`
-  that lives for the whole app-process lifetime and is reused across every Apply Sync, so a
-  per-input-shape allocation plan accumulates without release. Every prior memory measurement
-  missed it by running one corpus per process (Sessions AK/AM/AL's `fa-run-resources.json`) —
-  never the shape the live app takes. Measured before the fix (Session AO Step 1,
-  `.work-phase4/session-ao/rss_timeline.csv`): across a v6 → 173 → spanish → v6-again run, RSS
-  rose monotonically for 1584 of 1585 one-second samples, jumped +771 MiB at the spanish
-  cache-miss boundary, and peaked at 4220.0 MiB — ~1 GiB above the highest single-corpus peak on
-  record (v6 alone, 3205.3 MiB, Session AK). Verified output-neutral after the fix (exact
-  boundary equality on v6/173/spanish, golden replay 6/6, oracle diff green, all 13 production
-  pins reproducing). Open: the fix's memory effect was never re-measured — no post-fix RSS run
-  exists — and no session record isolates what drives the single-corpus footprint itself. No
-  owner.
+- **OOM memory fix — CLOSED (WS1 Session AP, 2026-08-25 evening).** `a6f2978`'s memory-pattern
+  fix alone measured statistically indistinguishable from no fix (peak RSS 3844–4066 MiB across
+  three runs, same ~5.6% spread as run-to-run noise). Root cause found by code read:
+  `with_cached_session` (`fa_onnx.rs`) rebuilt the replacement ONNX session before dropping the
+  incumbent one (build-then-drop), briefly co-residing two sessions on every cache-miss reload —
+  ORT's allocator never returns those pages, so the transient became the new floor. Fixed by
+  swapping to drop-then-build (`6a1b939`): re-measured peak RSS 2743.7 / 2894.5 MiB (~30% lower),
+  spanish cache-miss jump fell from 763–1330 MiB to 137.2 MiB. Output-neutral (exact word-timing
+  and `needsReview`-flag equality on v6/173/spanish, golden replay 6/6, oracle diff green, 13
+  production pins, full npm/cargo suites). Guardrail test added (`c295cb3`,
+  `guardrail_multi_corpus_peak_rss_bounded`, 3500 MiB ceiling, `#[ignore]`d/`require_ort`-gated,
+  not in the default sweep). Real-app confirmation: a fresh ~21-minute project completed a real
+  FA-enabled Apply Sync via `npm run tauri:dev:fa`, no crash, process RSS ~2.58 GiB afterward.
+  Full detail: `sync-pipeline-v2-plan.md` Part AI's AI.1 Addendum. No longer blocks Stage 1's live
+  acceptance run.
 
 ### Open bugs
 
 Audited 2026-08-25 against current `main` — full mechanism/fix-design detail for every surviving
-row: `sync-pipeline-v2-plan.md` Part AI. One row (chunk-plan non-determinism) closed that session,
-see `docs/history-2.md`.
+row: `sync-pipeline-v2-plan.md` Part AI. Two rows closed that day (chunk-plan non-determinism,
+OOM crash — see `docs/history-2.md` and "Other active work" above respectively).
 
-- **OOM crash, partial fix** — see "Other active work" above for what's fixed and what's still
-  open. No owner on the remainder. Fix design: Part AI §1. **Conditionally blocks Stage 1's live
-  acceptance run** — do the cheap post-fix RSS re-measurement before that run, not a code blocker.
 - **`boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead of 5**
   (`src/services/snapBoundaries.ts:381-382`; the correct 5-arg call exists at `:744-745`) —
   defaults the seam exemption off, so every boundary-quality reading on a seam-exempted pair has

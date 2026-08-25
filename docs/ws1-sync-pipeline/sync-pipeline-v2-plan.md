@@ -9899,6 +9899,70 @@ either confirms the fix worked as intended or it doesn't, and either answer is u
 effort: low (the harness already exists from Session AO Step 1; this is a re-run, not a build).
 Risk: none to production code — it's an observational script run.
 
+**AI.1 Addendum — WS1 Session AP (2026-08-25 evening): measured, root-caused, fixed, closed.**
+
+Ran the Session AO Step 1 protocol against `a6f2978` (memory-pattern fix alone), three times
+(one recovered pre-existing run plus two fresh runs), all with the same ps-based 1s-RSS-sampling
+methodology: peak RSS measured **3844.2 / 3947.3 / 4065.8 MiB** — a ~220 MiB (~5.6%) run-to-run
+spread, and **statistically indistinguishable from a plain "no fix" baseline**. `a6f2978` alone
+did not measurably move peak RSS for the shared-process multi-corpus shape it targeted.
+
+**Root cause, found by code read.** `with_cached_session` (`fa_onnx.rs`, `with_cached_session`
+fn) rebuilt the replacement `Session` via `load_session()` and only replaced the cache slot
+afterward (`*guard = Some(CachedSession { .. })`) — build-then-drop. On every cache-miss reload
+(language switch), the old and new `Session` were briefly co-resident; ORT's allocator does not
+return freed pages to the OS, so that transient co-residency became the new floor. This explains
+both the large jump measured at each cache-miss boundary and the elevated second-pass floor.
+
+**ORT allocator-stats diagnostic: unreachable, not run.** `AllocatorGetStats` exists in
+`ort-sys` but is gated behind the `api-23` cfg feature; this crate's `ort` dependency
+(`Cargo.toml`: `default-features = false`, `features = ["std", "load-dynamic"]`) compiles no
+`api-*` feature at all, so the function pointer is never populated. Reading ORT's own
+retained-vs-released byte accounting would require adding an `api-23` feature and confirming the
+bundled 1.23.2 dylib actually implements it — out of scope for a diagnostic-only read. Recorded
+as unreachable rather than guessed at.
+
+**Fix: swap to drop-then-build** (`*guard = None;` before calling `load_session`, one-line
+change plus doc comment, `fa_onnx.rs`'s `with_cached_session`). Re-measured twice against the
+identical protocol: peak RSS **2743.7 MiB** and **2894.5 MiB** — a ~30% reduction from the
+pre-fix band, and the spanish cache-miss boundary jump fell from 763–1330 MiB to **137.2 MiB**.
+The ORT arena-allocator experiment (Step 3's second branch) was not attempted — it was gated on
+the allocator-stats diagnostic showing retention, which was unreachable, and the drop-then-build
+fix alone already closed the gap.
+
+**Bounded, not just smaller.** Post-fix, the climb across corpus/language switches is now
+65–137 MiB per switch (not compounding), and the whole 4-corpus sequence's peak (~2.7–2.9 GiB)
+sits close to a single corpus's own expected footprint (v6 alone, 3205.3 MiB, Session AK) rather
+than stacking corpora on top of each other. Step 4's bounded-cache/process-isolation option was
+therefore not built — the existing fix already produces a bounded profile.
+
+**Output-neutral, proven, not assumed.** Regenerated FA word output for v6/173/spanish against
+the frozen production chunk plans (`session_p_regen::regenerate_fa_against_live_plan`) post-fix
+and diffed against the pre-existing committed `fa_live_words.json` baselines: **zero** timing
+differences, **zero** word-text differences, **zero** `needsReview` flag differences across all
+3874 + 1660 + 249 words; only floating-point confidence noise up to 2.6e-5 (v6), 8.9e-5 (173),
+4.6e-6 (spanish) — never crossing the 0.3 `needsReview` threshold. Golden replay 6/6, the AJ-0
+oracle diff, the 13 production pins (`ws1-session-q-production-pins.test.ts`, 5/5), the full
+`cargo test --features fa-inference` suite (216 passed), and the full `npm test` suite (2493
+passed) all green, unchanged.
+
+**Guardrail added.** `fa_onnx.rs`'s `session_ao_memory::guardrail_multi_corpus_peak_rss_bounded`
+(`#[ignore]`d, `require_ort`-gated, same cost class as its siblings — not in the default sweep)
+re-runs the 4-corpus sequence and fails above a 3500 MiB ceiling (measured post-fix peak x 1.25
+margin, still well under the lowest pre-fix measurement of record). Verified passing: peak 2894.5
+MiB.
+
+**Real-app confirmation.** Owner ran a real, previously-untested ~21-minute project ("V8") through
+`npm run tauri:dev:fa` with FA enabled — genuine ONNX inference, not the harness — completing
+Apply Sync in ~10 minutes with real R.12/R.14/R.15 rule firings logged. The app process was still
+alive afterward at ~2.58 GiB RSS, consistent with the fix's measured envelope; no crash, no panic,
+no OOM kill. Two unrelated bugs surfaced by this run (a localStorage `QuotaExceededError` on
+project save, and a React "Maximum update depth exceeded" render loop) were flagged separately —
+neither touches the ORT/FA memory path this session fixed.
+
+**Verdict: CLOSED.** Commits: `6a1b939` (drop-then-build fix), `c295cb3` (guardrail test). Moved
+out of `docs/work-in-progress.md`'s Open bugs.
+
 ### AI.2 — `boundaryUsedFallback` isBreathSilence arg-count bug: STILL REPRODUCES
 
 **Confirmed at `src/services/snapBoundaries.ts:378-384`.** `boundaryUsedFallback`'s own predicate
