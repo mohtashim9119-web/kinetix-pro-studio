@@ -79,6 +79,8 @@
 - [Session AL — chunk width eliminated as cause](#session-al--chunk-width-eliminated-as-cause) — 2026-08-24
 - [Session AM — chunk-edge placement identified as driver](#session-am--chunk-edge-placement-identified-as-driver) — 2026-08-24
 - [Session AN — arm H widens the search, still not shippable](#session-an--arm-h-widens-the-search-still-not-shippable) — 2026-08-24
+- [Priority 2 — Multi-Project Dashboard storage/migration](#2026-08-25--ace07c7--ace07c7-multi-project-storage-migration) — 2026-06-11/12 (moved from `docs/history.md` 2026-08-25)
+- [FA session-cache OOM fix](#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix) — 2026-08-25
 
 ---
 
@@ -573,3 +575,79 @@ has touched the production chunk-plan path — every `faChunkPlan.ts` commit aft
 diagnostic-only S2 arm with no production caller (Session AN's own verification line: "the
 production default remains untouched"). Removed from `work-in-progress.md`'s Open bugs. Full audit
 trail: `sync-pipeline-v2-plan.md` Part AI §3.
+
+### 2026-08-25 · ace07c7 · ace07c7-multi-project-storage-migration
+Outcome: Multi-project dashboard's persistence/migration layer (localStorage registry +
+IndexedDB v2 scoping) — moved verbatim out of `docs/history.md`'s frozen "Priority 2" section,
+which now points here; original work merged 2026-06-11/12.
+Evidence: manual (pre-dates the gate ladder) — verified behaviours listed below were asserted
+in-app at merge time, not re-derived this session.
+Numbers: 3 commits (OPERATOR-DIRECTED selection of the storage/migration-relevant subset of the
+larger priority-2 commit run).
+Detail:
+**What was built**
+- Persistence layer (Task 2): project registry `kinetix:projects:v1` in localStorage holding
+  `ProjectMeta[]`; per-project storage `kinetix:project:{id}:v1` key per project; IndexedDB
+  assets store upgraded to v2 with projectId scoping and compound keyPath `['projectId', 'id']`;
+  `migrateLegacyIfNeeded()` copies v1 IDB assets and v1 localStorage project to new scoped keys
+  on first launch — the one-shot v1→v2 migration.
+- Multi-project picker (Task 5): full-screen dashboard, grid layout with thumbnail/name/scene
+  count/last-saved date, three-dot rename/delete menu, search bar, + New Project button, current-
+  project badge, ← Projects nav.
+- Session/launch behaviour: `sessionStorage` `lastOpenedProjectId` — reload reopens the last
+  active project, full app close+reopen shows the dashboard; `clearLastOpenedProjectId()` called
+  on all three user-initiated dashboard-navigation sites; `confirmed` flag on `Project` gates
+  autosave so an unconfirmed default project never pollutes the registry.
+- Thumbnails: `buildThumbnailBase64()` draws the blob URL onto a 320×180 offscreen canvas,
+  exports JPEG at 0.7 quality (~15–25 KB/project), written to meta immediately (not deferred to
+  the debounced save) — survives app restart as a plain-text base64 data URL.
+
+**Commits**
+- `ace07c7` — feat: multi-project dashboard + persistence scoping + manual save. Introduces the
+  registry pattern, `migrateLegacyIfNeeded` (v1→v2 migration), and the IDB v2 `assets-v2` store
+  (compound keyPath `[projectId, id]`, `byProject` index).
+- `c625561` — fix: dashboard duplicate project + remove back button + thumbnail meta. Closes the
+  phantom-duplicate-on-New-Project bug; deleting a project removes its card and all associated
+  localStorage + IDB data.
+- `a6c13dd` — fix: reload reopens last active project via lastOpenedProjectId. Adds
+  `setLastOpenedProjectId`/`getLastOpenedProjectId` (key `kinetix:lastOpenedProjectId`) and the
+  hydration-time skip-to-last-project path.
+
+**Key files (as of the original merge):** `src/types.ts` (`ProjectMeta`, `Project.confirmed`),
+`src/services/projectStore.ts` (registry, per-project keys, `lastOpenedProjectId` helpers),
+`src/services/assetStore.ts` (projectId scoping, v2 IDB upgrade, `getLegacyAssets()`),
+`src/hooks/usePersistProject.ts`, `src/components/ProjectDashboard.tsx`,
+`src/components/NewProjectModal.tsx` (new), `src/App.tsx` (hydration rewrite).
+
+**Verified behaviours (asserted at merge time):** dashboard appears on fresh launch, last
+project reopens on reload; no duplicate "Untitled Project" on creation; thumbnails load from
+base64 on fresh launch; deleting a project removes its card and all localStorage + IDB data;
+search filters in real time; confirmed flag prevents blank-project registry pollution.
+Superseded-by: none
+
+### 2026-08-25 · 6a1b939 · 6a1b939-fa-session-cache-oom-fix
+Outcome: WS1 Session AP's FA ONNX session-cache OOM closed — root cause (build-then-drop
+session eviction) fixed by swapping to drop-then-build; a memory-pattern fix landed earlier the
+same session (`a6f2978`) measured statistically indistinguishable from no fix and is superseded
+by this entry, not a separate cause. Moved out of `docs/work-in-progress.md`'s "Other active
+work" (now a one-line pointer there) per the 2026-08-25 audit.
+Evidence: rss-guardrail = PASS (peak RSS 2894.5 MiB, MEASURED `cargo test --features
+fa-inference -- --ignored guardrail_multi_corpus_peak_rss_bounded` @ `c295cb3`); golden replay
+6/6, oracle diff green, 13 production pins, full `npm test`/`cargo test --features fa-inference`
+suites all green (MEASURED, same SHA range).
+Numbers: peak RSS 3844–4066 MiB (`a6f2978` alone, 3-run spread) → 2743.7 / 2894.5 MiB
+post-fix (~30% reduction); spanish cache-miss jump 763–1330 MiB → 137.2 MiB (MEASURED,
+`6a1b939`/`c295cb3` commit messages). Real-app confirmation: ~21-minute V8 corpus project
+completed Apply Sync via `npm run tauri:dev:fa`, no crash, ~2.58 GiB RSS afterward
+(OPERATOR-ATTESTED).
+Detail: `with_cached_session` (`src-tauri/src/fa_onnx.rs`) rebuilt the replacement ONNX session
+before dropping the incumbent one (build-then-drop), briefly co-residing two sessions on every
+cache-miss reload (language switch) — ORT's allocator never returns those pages to the OS, so
+the transient became the new floor. Fixed by swapping to drop-then-build. Output-neutral: exact
+word-timing and `needsReview`-flag equality on v6/173/spanish, confidence drift up to 2.6e-5
+(v6)/8.9e-5 (173)/4.6e-6 (spanish), never crossing the 0.3 `needsReview` threshold. Guardrail
+test added (`c295cb3`, `guardrail_multi_corpus_peak_rss_bounded`, 3500 MiB ceiling,
+`#[ignore]`d/`require_ort`-gated, not in the default sweep) so this class of regression — it
+already regressed once, closed by the since-superseded `a6f2978` — has a test from here on.
+Full detail: `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` Part AI's AI.1 Addendum.
+Superseded-by: none

@@ -25,35 +25,16 @@ Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met (
 
 ### Finished
 
-- **Phase 1b** — built the dev-only `window.__transcriptInspector()` instrumentation (raw
-  Whisper token timestamps vs. detected silence), feeding the smear-baseline data behind Stage 1
-  lock's numeric thresholds.
-- **Phase 2a** — swapped Whisper to `ggml-large-v3-turbo.bin`, added `Project.language` + the
-  unsupported-language guard; gate passed against real-corpus resyncs (2026-08-05).
-- **Phase 2b** — measured DTW vs. raw Whisper timestamps as the timing source; DTW abandoned,
-  forced alignment chosen for Phase 3; finalized Stage 1 lock's four numeric thresholds
-  (2026-08-05).
-- **Phase 3b** — shipped 5 language-normalization rules (fr/es/de/pt cardinal & elision
-  handling) in `faTextNormalize.ts`; owner ruled single-word-output only, permanently. Closed
-  (2026-08-15).
-- **Phase 3c** — audited 19 compound-word (hyphen-asymmetry) cases; owner ear-tested both
-  candidates and ruled the unfixed timing correct. Closed as an accepted Stage 1 defect, no code
-  change (2026-08-15).
-- **Phase 3d** — evaluated per its own conditional trigger and skipped: Phase 2b's evidence
-  showed the fixed −45dB silence threshold wasn't the binding constraint (2026-08-05). Reopens
-  only if Phase 3's post-forced-alignment measurement later shows a silence-side cost — not
-  triggered as of the 2026-08-25 accuracy-bar freeze.
-- **Sessions A–AN** (Phase 3's forced-alignment research arc, 2026-08-15 to 2026-08-24) — a
-  rolling cycle of owner rulings, rule builds (R.5, R.10–R.15), Zero-Defect Register triage, and
-  ear-verification audits; the final sub-arc (Sessions AK–AN) chased chunk-edge placement as the
-  root cause of residual timing drift. Chunk-width/chunk-edge research is now frozen under the
-  accuracy-bar ruling below.
-- **Mover-audit dossier** (`stage1-mover-audit.md`) — owner-scored 22/24 (Session K,
-  2026-08-18); the 2 failures were root-caused and fixed via R.13. The on-disk dossier file
-  itself was never updated to show the scored result — `docs/history-2.md`'s Session K entry is
-  the record of truth, not the blank table in `stage1-mover-audit.md`.
+*One-liners only — full detail for every item below: `docs/history-2.md`.*
 
-*Full detail for all of the above: `docs/history-2.md`.*
+- **Phase 1b** — `window.__transcriptInspector()` dev instrumentation, feeding Stage 1's numeric thresholds.
+- **Phase 2a** — Whisper → `ggml-large-v3-turbo.bin` + `Project.language`/unsupported-language guard (2026-08-05).
+- **Phase 2b** — DTW measured and abandoned; forced alignment chosen; Stage 1's 4 thresholds finalized (2026-08-05).
+- **Phase 3b** — 5 fr/es/de/pt normalization rules shipped in `faTextNormalize.ts`; single-word-output ruled permanent (2026-08-15).
+- **Phase 3c** — 19 compound-word cases audited; unfixed timing ruled correct, accepted Stage 1 defect (2026-08-15).
+- **Phase 3d** — skipped per its own trigger (−45dB threshold not binding, 2026-08-05); dormant as of the 2026-08-25 freeze.
+- **Sessions A–AN** — Phase 3's forced-alignment research arc (2026-08-15–24): rulings, rules R.5/R.10–R.15, Zero-Defect Register triage; chunk-edge research now frozen under the accuracy-bar ruling below.
+- **Mover-audit dossier** — owner-scored 22/24 (Session K, 2026-08-18), both failures fixed via R.13; scored result recorded in `docs/history-2.md`, not the on-disk dossier file.
 
 ### In progress
 
@@ -66,7 +47,8 @@ the UI, not further pipeline changes — see Standing constraints).
 
 **Stage 1 lock**
 
-**END GOAL:** Stage 1 locks once the live acceptance run (prepared, not yet executed —
+* [IN-PROGRESS] Stage 1 lock
+- End Goal: Stage 1 locks once the live acceptance run (prepared, not yet executed —
 `stage1-live-run-prep.md`) has been run and passed by the owner; every other STAGE 1 LOCK GATE
 criterion (Contract IN / Contract 1→2 owner inspection, determinism, the non-English written
 acceptance, R.5/R.10, the mover-audit dossier, no Stage 1 defect deferred downstream) is already
@@ -90,21 +72,9 @@ satisfied or accepted in writing.
 
 **Other active work (not part of Stage 1 lock)**
 
-- **OOM memory fix — CLOSED (WS1 Session AP, 2026-08-25 evening).** `a6f2978`'s memory-pattern
-  fix alone measured statistically indistinguishable from no fix (peak RSS 3844–4066 MiB across
-  three runs, same ~5.6% spread as run-to-run noise). Root cause found by code read:
-  `with_cached_session` (`fa_onnx.rs`) rebuilt the replacement ONNX session before dropping the
-  incumbent one (build-then-drop), briefly co-residing two sessions on every cache-miss reload —
-  ORT's allocator never returns those pages, so the transient became the new floor. Fixed by
-  swapping to drop-then-build (`6a1b939`): re-measured peak RSS 2743.7 / 2894.5 MiB (~30% lower),
-  spanish cache-miss jump fell from 763–1330 MiB to 137.2 MiB. Output-neutral (exact word-timing
-  and `needsReview`-flag equality on v6/173/spanish, golden replay 6/6, oracle diff green, 13
-  production pins, full npm/cargo suites). Guardrail test added (`c295cb3`,
-  `guardrail_multi_corpus_peak_rss_bounded`, 3500 MiB ceiling, `#[ignore]`d/`require_ort`-gated,
-  not in the default sweep). Real-app confirmation: a fresh ~21-minute project completed a real
-  FA-enabled Apply Sync via `npm run tauri:dev:fa`, no crash, process RSS ~2.58 GiB afterward.
-  Full detail: `sync-pipeline-v2-plan.md` Part AI's AI.1 Addendum. No longer blocks Stage 1's live
-  acceptance run.
+* [COMPLETED] FA session-cache OOM fix — root-caused (build-then-drop ONNX session eviction),
+  fixed (drop-then-build, `6a1b939`), guardrail added (`c295cb3`), real-app confirmed. No longer
+  blocks Stage 1's live acceptance run. `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix`
 
 ### Open bugs
 
@@ -112,13 +82,13 @@ Audited 2026-08-25 against current `main` — full mechanism/fix-design detail f
 row: `sync-pipeline-v2-plan.md` Part AI. Two rows closed that day (chunk-plan non-determinism,
 OOM crash — see `docs/history-2.md` and "Other active work" above respectively).
 
-- **`boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead of 5**
+* [OPEN] `boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead of 5 —
   (`src/services/snapBoundaries.ts:381-382`; the correct 5-arg call exists at `:744-745`) —
   defaults the seam exemption off, so every boundary-quality reading on a seam-exempted pair has
   been wrong since it shipped. Slated for Phase 7; no one currently on it. Fix design (2-line,
   internal-only, no signature change): Part AI §2. **Defers** — diagnostic-only, never touches
   committed segment timing.
-- **5 open Zero-Defect Register rows** — boundary-placement defects, ear-verified wrong, with no
+* [OPEN] 5 open Zero-Defect Register rows — boundary-placement defects, ear-verified wrong, with no
   rule that fixes them yet: `214_solitary_fire`, `231_slowing_pace`, `447_scout_facing_dark`,
   `173/lethal_nature_hazard`, `173/gadget_decay` (live list:
   `scripts/ws1-session-ak-step1-gate.ts:59`'s `OPEN_DEFECTS`, matching the AJ-0 oracle's
@@ -127,11 +97,17 @@ OOM crash — see `docs/history-2.md` and "Other active work" above respectively
   bar rather than pursued further; no owner. Audit: Part AI §4 — no fixable design slot without
   contradicting the accuracy-bar ruling; the permanent path is the already-planned Pillar 2
   detector. **Defers** — already accepted in writing under that ruling.
-- **Alignment cost has no enforced bound for real inputs** (Contract A4; `__ALIGN_INSTRUMENT__`
+* [OPEN] Alignment cost has no enforced bound for real inputs — (Contract A4; `__ALIGN_INSTRUMENT__`
   dormant) — an unbounded input can hang the UI behind the loading overlay with no error
   surfaced. No owner; disposition deferred to Stage 2 lock. Needs a cost-vs-input-size measurement
   before a fix can be designed: Part AI §5. **Defers** — the live run's 3 corpora are already
   known-safe sizes.
+* [OPEN] React "Maximum update depth exceeded" render loop — surfaced during the 2026-08-25
+  real-app V8 corpus run (`npm run tauri:dev:fa`, see `sync-pipeline-v2-plan.md`'s AI.1 Addendum).
+  Not yet isolated to a specific effect: `src/hooks/usePlayback.ts:80-94`'s rAF tick already
+  carries a delta guard for this exact failure mode (QB2 fix), so this is a distinct, unlocated
+  trigger elsewhere in the render tree, not a QB2 regression. No owner. **Defers** — not a Stage 1
+  blocker; neither the OOM fix nor the live acceptance run touches this path.
 
 ### Not started
 

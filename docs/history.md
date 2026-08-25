@@ -477,54 +477,9 @@ Status: COMPLETE — merged to main
 - key={currentSegment.id} removed from motion.div wrapper
 
 ### Priority 2 — Multi-Project Dashboard
-Status: COMPLETE — merged to main
-
-#### What was built
-
-**Persistence layer (Task 2):**
-- Project registry: kinetix:projects:v1 in localStorage holding ProjectMeta[]
-- Per-project storage: kinetix:project:{id}:v1 key per project
-- IndexedDB assets store upgraded to v2 with projectId scoping and compound keyPath ['projectId', 'id']
-- migrateLegacyIfNeeded() copies v1 IDB assets and v1 localStorage project to new scoped keys on first launch
-
-**Multi-project picker (Task 5):**
-- Full-screen dashboard (not overlay): renders as top-level return swap, editor fully unmounted when dashboard is active
-- Grid layout: project cards with thumbnail, name, scene count, last saved date
-- Three-dot menu per card: rename, delete with confirmation dialog
-- Search bar: real-time filter by project name
-- + New Project button: top-right, opens NewProjectModal for name entry before project is created
-- Current project card: green "Current" badge
-- ← Projects button: top-left in editor, saves if confirmed then navigates to dashboard
-
-**Session and launch behaviour:**
-- sessionStorage lastOpenedProjectId: reload (Cmd+R) reopens last active project; full app close + reopen shows dashboard
-- clearLastOpenedProjectId() called on all three user-initiated dashboard navigation sites; hydration fallback intentionally excluded
-- confirmed flag on Project: gates usePersistProject debounce and saveNow; prevents unconfirmed makeDefaultProject() from auto-saving as "Untitled Project"
-- handleNewProjectConfirm: sets confirmed = true and calls saveProject immediately before setProject
-- handleSwitchProject: pre-switch save only if project.confirmed; loaded project marked confirmed = true
-
-**Thumbnails:**
-- buildThumbnailBase64(): draws blob URL onto 320×180 offscreen canvas, exports as JPEG at 0.7 quality (~15–25 KB per project)
-- Written to meta immediately via useEffect watching project.assets — not deferred to debounced save
-- image-type assets only (no audio/zip blobs as thumbnails)
-- Survives app restart because base64 data URL is plain text in localStorage
-
-#### Key files changed
-- src/types.ts — ProjectMeta (thumbnailUrl, thumbnailAssetId), Project.confirmed
-- src/services/projectStore.ts — registry, per-project keys, lastOpenedProjectId helpers (sessionStorage)
-- src/services/assetStore.ts — projectId scoping, v2 IDB upgrade, getLegacyAssets()
-- src/hooks/usePersistProject.ts — confirmed gate, buildThumbnailBase64 (exported), persistMeta async helper
-- src/components/ProjectDashboard.tsx — full redesign (grid, search, three-dot menu, badges)
-- src/components/NewProjectModal.tsx — new file
-- src/App.tsx — hydration rewrite, handleSwitchProject, handleNewProjectConfirm, ← Projects button, thumbnail useEffect
-
-#### Verified behaviours
-- Dashboard appears on fresh app launch; last project reopens on reload
-- No duplicate "Untitled Project" on new project creation
-- Thumbnails load correctly on fresh launch (base64, not blob URL)
-- Deleting a project removes card and all associated localStorage + IDB data
-- Search filters projects in real time
-- Confirmed flag prevents blank projects from polluting the registry
+Status: COMPLETE — merged to main. Full record (persistence layer, migration, key files,
+verified behaviours) moved to `docs/history-2.md` — see its "Priority 2 — Multi-Project
+Dashboard storage/migration" vault entry (2026-08-25, docs reorg; original work 2026-06-11/12).
 
 ### Priority 3 — Stock Footage APIs
 Status: COMPLETE — merged to main
