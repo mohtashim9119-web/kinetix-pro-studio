@@ -6537,4 +6537,101 @@ mod session_ao_memory {
         .unwrap_or_else(|e| panic!("write {}: {e}", markers_path.display()));
         eprintln!("{CONTEXT}: wrote {} and {}", csv_path.display(), markers_path.display());
     }
+
+    // -----------------------------------------------------------------------
+    // WS1 Session AP Step 5 — GUARDRAIL. This leak regressed once already
+    // (the per-shape memory-pattern cache, `a6f2978`) with no test to catch
+    // it; this is that test. Runs the identical v6 -> 173 -> spanish ->
+    // v6-again single-process sequence as `cross_corpus_session_lifetime_rss`
+    // above and fails if peak RSS crosses `PEAK_RSS_CEILING_MIB`.
+    //
+    // Ceiling derivation (WS1 Session AP, measured, not estimated):
+    //   - Post drop-then-build-fix (this session's Step 3 change) peak RSS
+    //     for this exact sequence measured 2743.7 MiB (single run,
+    //     `.work-phase4/session-ao-postfix-run1/` after Step 3 lands, see
+    //     `sync-pipeline-v2-plan.md` Part AI's AP addendum).
+    //   - Pre-fix peak RSS for the SAME sequence, same ps-based sampling
+    //     methodology, measured 3844.2 / 3947.3 / 4065.8 MiB across three
+    //     separate runs (`.work-phase4/session-ao-preexisting/`,
+    //     `-postfix-run1/`, `-postfix-run2-control/`) — a ~220 MiB
+    //     (~5.6% of the ~3952 MiB mean) run-to-run spread on unmodified code,
+    //     the only cross-run variance figure this workstream has measured.
+    //   - Ceiling = 2743.7 MiB x 1.25 (a margin over 4x the observed 5.6%
+    //     unmodified-code noise band, chosen because this is a single
+    //     post-fix run, not a characterized distribution) = 3429.6 MiB,
+    //     rounded up to 3500 MiB. This sits comfortably below every pre-fix
+    //     measurement on record (lowest observed: 3844.2 MiB) — a regression
+    //     back to build-then-drop or a reintroduced per-shape cache trips it.
+    //
+    // NOT in the default `cargo test` sweep: like every other real-audio/
+    // real-ORT test in this module, it needs the bundled onnxruntime dylib,
+    // the fa-inference feature, and the replay corpora, and costs ~25-30
+    // minutes wall-clock for the 4-stage sequence — gated `#[ignore]` +
+    // `require_ort`, matching every sibling test in this module. Run
+    // manually before a release or after any change to `with_cached_session`
+    // or `load_session`'s ORT session options.
+    //
+    // RUN:
+    //   ORT_DYLIB_PATH=<repo>/src-tauri/onnxruntime/libonnxruntime.1.23.2.dylib \
+    //   FA_REQUIRE_ORT=1 cargo test --features fa-inference -- \
+    //     --ignored --nocapture --exact \
+    //     fa_onnx::session_ao_memory::guardrail_multi_corpus_peak_rss_bounded
+    // -----------------------------------------------------------------------
+    #[test]
+    #[ignore]
+    fn guardrail_multi_corpus_peak_rss_bounded() {
+        const CONTEXT: &str = "session_ap_guardrail";
+        /// See derivation in this test's own doc comment above. Labelled
+        /// constant, not a magic number, per CLAUDE.md's testing rule.
+        const PEAK_RSS_CEILING_MIB: u64 = 3500;
+
+        if !require_ort::ort_dylib_or_skip(CONTEXT) {
+            return;
+        }
+        let corpora: [(&str, &str); 4] = [("v6", "en"), ("173", "en"), ("spanish", "es"), ("v6", "en")];
+        let replay_root = repo_root().join(".work-phase4/replay");
+        for (corpus, _lang) in &corpora {
+            let audio = replay_root.join(corpus).join("audio_16k.wav");
+            let plan = replay_root.join(corpus).join("fa_production_chunks.json");
+            if !require_ort::path_exists_or_skip(CONTEXT, &audio) || !require_ort::path_exists_or_skip(CONTEXT, &plan) {
+                return;
+            }
+        }
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let peak_kb = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let stop2 = stop.clone();
+        let peak_kb2 = peak_kb.clone();
+        let sampler = std::thread::spawn(move || {
+            while !stop2.load(Ordering::Relaxed) {
+                if let Some(kb) = current_rss_kb() {
+                    peak_kb2.fetch_max(kb, Ordering::Relaxed);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        });
+
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        for (corpus, lang) in &corpora {
+            let dir = replay_root.join(corpus);
+            let model_path = fa_models_dir().join(lang).join("model.onnx");
+            let chunks = load_production_plan(&dir);
+            let audio_path = dir.join("audio_16k.wav");
+            eprintln!("{CONTEXT}: running corpus={corpus} lang={lang} chunks={}", chunks.len());
+            align_chunked(&cache, &model_path, audio_path.to_str().expect("audio path is UTF-8"), &chunks, lang, || false, |_| {})
+                .unwrap_or_else(|e| panic!("{CONTEXT}: align_chunked({corpus}) failed: {e:?}"));
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        sampler.join().expect("sampler thread join");
+
+        let peak_mib = peak_kb.load(Ordering::Relaxed) as f64 / 1024.0;
+        eprintln!("{CONTEXT}: peak RSS = {peak_mib:.1} MiB (ceiling {PEAK_RSS_CEILING_MIB} MiB)");
+        assert!(
+            peak_mib <= PEAK_RSS_CEILING_MIB as f64,
+            "{CONTEXT}: peak RSS {peak_mib:.1} MiB exceeded the {PEAK_RSS_CEILING_MIB} MiB guardrail ceiling — \
+             this is the regression class a6f2978/WS1 Session AP fixed (per-shape memory-pattern cache, then \
+             build-before-drop session eviction); see this test's own doc comment for the ceiling's derivation."
+        );
+    }
 }
