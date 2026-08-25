@@ -10394,3 +10394,185 @@ of sync with the first. Unfreeze `whisperService.ts` for this one function; keep
 fallback only if the unfreeze is refused.
 
 No code was written for bug 1 this session, per the operator directive.
+
+### AJ.4 — Bug 1: Option 1 implemented, BLOCKED on a conflict with the WS6 rescue suite (WS2 Step 4, 2026-08-26)
+
+`whisperService.ts` was unfrozen for this one change (operator-granted). `computeBackwardBoundStartSec(si)`
+was implemented exactly as AJ.3's Option 1 specifies — scanning `sj` from `si - 1` down to `0`, returning
+the `startSec` of the LAST token the nearest earlier segment with a true global match claimed
+(`lastGlobalMatchSubjectOf`, the mirror-image of the existing `firstGlobalMatchSubjectOf`) — and wired into
+the same `violatesOrderingBound` predicate the forward check already used at all three rescue-adoption
+sites (windowed/global/concat). A new regression test
+(`src/services/syncTiming.test.ts`, "rescue backward-ordering bound (false-positive rejection, Bug 1)")
+reproduces the live incident's own numbers (segment ending 1501.240s; a decoy rescue claim at 544.400s)
+and is proven both ways: fails on `main` (git-stashed the code change, kept the test — claim wrongly
+adopted, `[align-recover]` log fired at the decoy position) and passes with the fix applied.
+
+**Blocking finding:** running the fix against the full `syncTiming.test.ts` suite (not just the new test)
+produces **13 failures**, all in the pre-existing, regression-locked "WS6 — per-segment temporal-bounding
+rescue" / "Bug C — contiguous-run survival" / "Pass 3 — concatenation" blocks — every one of them is the
+same shape, the "P-blocks-C" overflow trap WS6 was built to fix (comment at
+`syncTiming.test.ts:4279-4285`: "verified via now-removed temporary production instrumentation" — i.e.
+this is itself a closed production incident, not a synthetic edge case): a preceding segment P's own script
+genuinely continues past the disputed words with real trailing content that is spoken chronologically
+AFTER a later segment C's real content. P is therefore truly globally matched (its trailing content is
+real), but P's LAST true-matched token sits chronologically after C's real speech — so
+`computeBackwardBoundStartSec` returns a bound that is itself past C's legitimate rescue claim, and the new
+backward check rejects the very recovery WS6 exists to perform. Concretely (WS6 test 1): s152 (P) truly
+matches its own trailing "denim is durable" at 7.5–8.7s; s153 (C)'s legitimate rescue claim for "linen from
+flax" sits at 6.0s — before P's last true match — and the literal Option 1 predicate now rejects it.
+
+This is a real conflict, not an implementation slip: `computeForwardBoundStartSec`'s safety comes from the
+global alignment's monotonicity guarantee (any later truly-matched segment's FIRST matched token is
+provably `>=` every earlier truly-matched token, since the whole query is aligned to the whole subject as
+one monotonic mapping) — that guarantee has no backward-facing analog when the immediately preceding
+segment is itself the trapping "P," because P's own true match legitimately extends past the disputed
+region by construction of the trap. AJ.3's "mirror the forward bound" framing assumed the same
+monotonicity safety applies symmetrically; it does not, and this was not caught before AJ.3 was written
+because no code existed yet to run against the WS6 suite.
+
+**What was NOT done:** the golden-baseline replay (v6/173/spanish) was re-run against this implementation
+and is unaffected (6/6 passed — none of the three real corpora exercise a case where this specific
+conflict bites), and `gaplessInvariant.test.ts` is unaffected (36/36 — the file's current count, not the
+72/72 this document's own earlier draft assumed). But 13 hand-authored, regression-locked, previously
+production-verified unit tests fail, and per this codebase's own standing rule against ever weakening a
+test to make a change pass, none were touched. The change was left uncommitted. Candidate directions for a
+follow-up session (not evaluated further this session — needs explicit operator sign-off before any code
+changes, since `whisperService.ts` returns to frozen once this session ends):
+  - Refine the backward predicate to specifically exclude an immediately-preceding "trapping" segment
+    (one whose true match's own first token is itself unusually late relative to its neighbors) rather
+    than using any true-matched predecessor unconditionally — no principled, distance-free formulation of
+    this was found in the time available.
+  - Reconsider AJ.3's Option 2 (a post-hoc validator over the COMMITTED, already-gapless timeline rather
+    than raw token positions) — because gaplessness is enforced downstream regardless of the rescue's raw
+    match positions, Option 2 may not inherit this specific conflict the way Option 1 does, but this was
+    not verified this session.
+
+### AJ.5 — Bug 1 closed: pairwise bounds replaced by a trusted spine (WS2 Step 5, `2ae4d18`, 2026-08-26)
+
+AJ.4's discarded candidate direction ("refine the predicate to exclude a trapping predecessor")
+was correctly discarded — it is a special case on a broken formulation, not a fix. The actual
+defect in AJ.4's `computeBackwardBoundStartSec`: it consulted the NEAREST earlier segment with
+any genuine match unconditionally, which is sound only if that neighbor is itself trustworthy.
+Genuine global matches can never be inconsistent WITH EACH OTHER — `matchedSubjectOf` is the
+output of one monotonic Hirschberg alignment (`hirschbergGlobal`), so query index and subject
+index rise together by construction across the whole document, every segment included. This
+means a spine built ONLY from genuine (non-rescue) matches is mathematically a no-op: the full
+set of genuine matches is already the unique maximal order-consistent subset, so "select the
+largest order-consistent subset of genuine matches" always returns everyone, reproducing AJ.4's
+naive bound exactly and failing the same 13 tests. Confirmed empirically before writing any
+replacement code (re-derived the operator's own AJ.4-conflict conclusion independently, then
+confirmed it was accepted, not relitigated).
+
+**Refined formulation (operator-approved after the no-op finding was surfaced):** allow a
+segment's own rescue candidate to compete against a conflicting genuine predecessor, gated by
+locality, with a hard floor against macro-jumps:
+
+1. **Transparency.** Walking backward from the rescue candidate's segment, a genuine
+   predecessor whose own matched positions straddle the candidate (one true match strictly
+   before the candidate's earliest claimed time AND one strictly after its latest) is
+   TRANSPARENT — its real content is genuinely interleaved around the candidate's (the
+   P-overflow pattern every WS6 "P-blocks-C" fixture reproduces), so it cannot be used to argue
+   the candidate is out of order. The walk skips it and continues to the next-nearest genuine
+   predecessor. `isNestedWithin`.
+2. **Competition at the first real bound.** The first predecessor whose matches sit wholly to
+   one side (not straddling) is the real bound. If the candidate would violate it, the two
+   compete on evidence rather than the candidate losing unconditionally: `outranks`'s tie-break
+   chain is (1) higher raw matched-word count — NOT confidence-first, because confidence
+   (matchedCount/totalWords) is gameable by segment length (see the Row 8a finding below); (2)
+   tie -> higher confidence; (3) tie -> lower segment index; (4) tie -> lower leading matched
+   time. This is what lets a P-blocks-C candidate win (its own text is a complete match) while
+   still hard-rejecting a genuine macro-jump decoy (Bug 1's original regression: segment 313's
+   claim at 544.400s has no predecessor further back than segment 312 to make it transparent —
+   segment 312 is segment 0 — so it's a real, resolvable conflict, and loses on raw count: 5
+   words of genuine narration beats a 3-word decoy).
+
+Walking only to the FIRST non-transparent predecessor is sufficient: every genuine match further
+back is even less constraining (the same global-monotonicity fact above), so once the nearest
+real bound is satisfied or beaten, every farther one is automatically satisfied too — an O(n)
+walk per candidate, not a general DP.
+
+**The forward bound is untouched, deliberately asymmetric.** No WS6/Bug C fixture, and no known
+production shape, needs a forward-direction override — every "P-blocks-C" case is a
+predecessor overflowing FORWARD into a successor's slot, never the reverse. Three pre-existing
+tests (`rescue forward-ordering bound` describe block: a heading/decoy segment reaching past a
+genuine SUCCESSOR with fewer of its own matched words) affirmatively need the forward bound to
+reject unconditionally — MEASURED: treating both sides symmetrically regressed all three (a
+3-word heading candidate outranking a 2-word genuine successor purely on raw count, exactly the
+false positive the original forward bound existed to close). `computeForwardBoundStartSec`
+stays the original plain, unconditional check.
+
+**Row 8a finding (why confidence isn't the primary tie-break signal):** the first ranking
+attempt used confidence (matchedCount/totalWords) as primary. It passed all 13 target tests but
+broke `Row 8a — last-segment rescue window sized from the probed audioDuration`'s fallback case:
+verified directly (`alignQueryToSubject` called standalone on the exact fixture input) that the
+frozen global aligner's own semi-global infix selection does NOT always capture an "obviously
+matchable" leading word pair even when doing so would score higher under the DP's own metric —
+P's genuine 10-word script (`alpha bravo torque plexus quiver zircon nimbus krypton xenon
+argon`) came back with `alpha`/`bravo` UNMATCHED (matchedSubjectOf `[-1,-1,7,8,...,14]`,
+confidence 0.8 on 8/10), a real limitation of the existing (frozen, unchanged) aligner, not a
+decoy segment. Meanwhile a mixed decoy+real Pass-2 candidate for the rescued segment (one
+coincidental decoy word plus three real, ~46s-away words) scored a full 4/4 = 1.0 confidence by
+luck. Confidence-primary ranking let the decoy win outright. Switching to raw matched-word count
+as primary (P: 8 words of real evidence vs. the candidate's 4, mostly borrowed from elsewhere)
+fixed it without reopening any of the 13 target tests — verified by full re-run, not reasoning
+alone.
+
+**Tie-break determinism:** `outranks`'s 4-step chain (count, confidence, segment index, leading
+matched time) is total — no two distinct `SpineNode`s can tie all four, since `segIndex` alone
+already differs between a candidate and any genuine predecessor it could ever compete against.
+Step 4 is unreachable in `extractSegmentAlignments`'s own use but is specified and unit-tested
+(`syncTiming.test.ts`'s "Trusted spine primitives" describe block, forced twice to confirm
+stable output) so the chain has no latent iteration-order dependency if a future caller ever
+constructs a tie on the first three.
+
+**What changed, concretely:** `isNestedWithin`, `outranks`, `SpineNode`, and
+`backwardSpineRejects` are pulled out of `extractSegmentAlignments`'s closure into standalone,
+exported, module-level functions (next to `hasQualifyingRun`) — directly unit-testable against
+hand-built node arrays, no segments/tokens fixture required. `computeForwardBoundStartSec` and
+`spineRejectsCandidate` (the two-sided gate used by all three rescue passes) remain local
+closures, since they need `tokenWords`/`segRanges` from the enclosing call.
+
+**Removed:** AJ.4's `computeBackwardBoundStartSec`/`lastGlobalMatchSubjectOf` and the shared
+`violatesOrderingBound`/`earliestClaimStartSec` helpers — fully superseded, not layered under.
+
+**Evidence (MEASURED, `2ae4d18`):**
+- All 13 WS6/Bug C "P-blocks-C" tests pass UNMODIFIED (previously 13/13 failed under AJ.4).
+- The 3 Bug 1 regression tests (AJ.4's own, decoy-far-away rejection) pass unmodified; re-verified
+  they still fail against unmodified (pre-this-session) `whisperService.ts` before the fix, per
+  D2 (git-stash confirmed both states).
+- Full `src/services/syncTiming.test.ts`: 260/260 (240-test pre-WS2 baseline + 3 Bug 1
+  regression tests already added this workstream + 17 new "Trusted spine primitives"
+  table-driven tests added this session).
+- `gaplessInvariant.test.ts`: 36/36 (matches the corrected baseline, not the stale 72/72 figure).
+- Golden replay, `scripts/phase4-handoff-replay-sync.test.ts`: 6/6, v6/173/spanish byte-identical
+  (444/172/26 kept — zero delta, no segment-by-segment explanation needed since nothing moved).
+- Full `vitest run src scripts` (excluding a stale, unrelated `.claude/worktrees/elated-haibt-
+  ab90e1` git worktree checked out from an earlier, different session — its own copies of the
+  replay-input-dependent tests fail there for a missing `.work-phase4/replay/*` bundle that was
+  simply never regenerated in that worktree, unrelated to this change; confirmed by running the
+  identical suite with `--exclude "**/.claude/**"`): 2512 passed, 0 failed outside one single
+  timeout on `ws1-session-aj0-oracle-diff.test.ts`'s v6 case under full-suite CPU contention
+  (its own printed diff before the timeout: "447 compared, 446 exact, 1 allowlisted, 0
+  unexplained" — i.e. it had already finished the actual comparison correctly); that same file
+  run in isolation (no contention) passed twice, ~42-46s each, matching the pre-change baseline
+  (~42s) — NOT DETERMINED to be caused by this change, and not reproducible outside heavy
+  parallel load.
+- `cargo test` (from `src-tauri/`): 141 passed, 0 failed, 1 ignored — matches the stated baseline
+  exactly; no Rust file touched this session.
+- Real-corpus runtime: the golden replay's own 3-corpus run (which now exercises the O(n) spine
+  walk on every rescue candidate) completed in the same ~42-46s range as the pre-change baseline
+  — no measurable regression from the added walk.
+
+**Layer 2 (independent of the fix):** a permanent, detection-only diagnostic
+(`src/services/residualOrderingDetector.ts`, wired into `App.tsx` immediately before the single
+`setProject` commit) re-checks `keptAlignments` — each kept segment's own real matched-audio
+position, distinct from the gapless `startTime`/`duration` partition `distributeSegmentTimes`
+always produces by construction (which can never itself show an inversion, rescue-related or
+not) — for any adjacent pair whose real audio positions are out of chronological order. Logs a
+structured `[residual-ordering]` warning (segment indices, both sides' matched times, whether
+either side was rescued and via which pass) on detection; never mutates, repairs, re-anchors, or
+blocks — the export guard (`timelinePartition.ts`, untouched) remains the sole enforcement
+point. Zero behavioral change when clean (the expected case now that the spine gates every
+rescue adoption): the check is additive-only and only ever calls `console.warn`, never touching
+`pendingLogEntries`/`pendingLogSummary`/the committed `Project`.

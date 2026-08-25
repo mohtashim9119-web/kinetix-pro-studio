@@ -651,3 +651,35 @@ test added (`c295cb3`, `guardrail_multi_corpus_peak_rss_bounded`, 3500 MiB ceili
 already regressed once, closed by the since-superseded `a6f2978` — has a test from here on.
 Full detail: `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` Part AI's AI.1 Addendum.
 Superseded-by: none
+
+### 2026-08-26 · 2ae4d18 · 2ae4d18-ws2-bug1-trusted-spine
+Outcome: WS2 bug 1 (a low-confidence segment's rescue anchoring out of order vs. its neighbors)
+closed. AJ.4's naive backward ordering bound — nearest earlier segment with ANY genuine global
+match, unconditional reject on violation — is replaced with a trusted spine that treats an
+overflowing predecessor as transparent (skips it) and lets a genuine conflict resolve by
+evidence instead of an unconditional reject. Moved out of `docs/work-in-progress.md`'s "In
+progress" section (was `[OPEN] WS2 bug 1`) per this session's gate-verified pass.
+Evidence: gate_verified — all 13 previously-failing WS6/Bug C "P-blocks-C" tests pass
+UNMODIFIED (MEASURED, `2ae4d18`); the 3 Bug 1 regression tests from WS2 Step 4 pass unmodified,
+re-verified they fail on pre-fix `whisperService.ts` (git-stash both-states check); full
+`src/services/syncTiming.test.ts` 260/260; `gaplessInvariant.test.ts` 36/36; golden replay
+6/6, v6/173/spanish byte-identical (444/172/26 kept, zero delta); full `vitest run src scripts`
+2512 passed / 0 failed outside one CPU-contention timeout on an unrelated slow test (isolated
+re-run passed twice, ~42-46s, matching baseline — NOT DETERMINED to relate to this change);
+`cargo test` 141 passed / 0 failed (no Rust touched). Full design rationale, the AJ.4 no-op
+proof, the Row 8a confidence-vs-count finding, and the complete evidence table:
+`docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` Part AJ's AJ.5.
+Numbers: 13/13 target tests fixed; 0 regressions in 2512 measured passing tests; 3-corpus golden
+replay delta: 0 boundaries moved on any of 444/172/26 kept segments.
+Detail: root cause was that AJ.4's bound was mathematically a no-op wrapper around "consult the
+nearest genuine neighbor unconditionally" — genuine global matches can never be mutually
+inconsistent (one monotonic Hirschberg alignment), so no filtering of genuine-only matches can
+ever produce a different answer than the naive bound. The fix instead lets a segment's own
+rescue candidate compete against a conflicting genuine predecessor: transparent when the
+predecessor's own matches straddle the candidate (P-overflow), evidence-ranked (raw matched-word
+count primary — confidence alone is gameable by segment length, verified live via the Row 8a
+fixture) when not. Layer 2: a permanent, detection-only diagnostic
+(`src/services/residualOrderingDetector.ts`) added independently, logging (never correcting) any
+residual ordering violation in the committed anchor set immediately before the `setProject`
+commit in `App.tsx`.
+Superseded-by: none

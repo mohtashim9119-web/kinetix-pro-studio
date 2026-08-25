@@ -81,11 +81,11 @@ satisfied or accepted in writing.
   (`model_download.rs`, `ModelDownloadPanel.tsx`), resumable/checksummed; closed-gate Sync Log
   visibility added. Local build measured 135 MB `.app` / 47 MB `.dmg` (was 4.7 GB / 4.2 GB).
   Design + verification: `sync-pipeline-v2-plan.md` Part AJ. Not yet on `main` (unpushed).
-* [OPEN] WS2 bug 1 — a low-confidence segment match's global-fallback rescue
-  (`whisperService.ts`) can anchor out of order vs. its neighbors, violating the gapless
-  partition at export; live-reproduced (`.work-phase4/session-ws2-01/`). Fix design only
-  (2 options, Option 1 recommended) written up, no code yet — needs an owner decision to
-  unfreeze `whisperService.ts`. `sync-pipeline-v2-plan.md` Part AJ §AJ.3.
+* [COMPLETED] WS2 bug 1 — a rescued segment's anchor could land out of order vs. its neighbors;
+  fixed by replacing the pairwise ordering bounds with a trusted spine (evidence-ranked
+  predecessor competition, transparent for a genuine P-overflow). Gate-verified: 13/13 target
+  tests, 3/3 Bug 1 regression tests, golden replay byte-identical. `docs/history-2.md#2026-08-26
+  --2ae4d18--2ae4d18-ws2-bug1-trusted-spine`
 
 ### Open bugs
 

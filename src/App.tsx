@@ -93,6 +93,7 @@ import {
 } from './services/historyPersist';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
+import { detectResidualOrderingViolations, logResidualOrderingViolations } from './services/residualOrderingDetector';
 import {
   computeCoverageSummary,
   countTranscriptWords,
@@ -2911,6 +2912,14 @@ export default function App() {
     // committed run always leaves exactly one summary behind.
     let pendingLogEntries: SyncLogEntry[] = [];
     let pendingLogSummary: SyncRunSummary | undefined;
+    // Layer 2 permanent detector (WS2 Step 5, Bug 1) — `keptAlignments` only
+    // exists inside the audio-timed branch below (the character-based-timing
+    // fallback branch has no coverage data at all, hence no rescue and
+    // nothing to check); staged here, like `pendingLogEntries` above, so the
+    // single commit point downstream can read it regardless of which branch
+    // ran. Empty in the fallback branch — correctly reports zero violations,
+    // since a violation is only possible when a rescue was involved.
+    let residualCheckAlignments: SegmentAlignment[] = [];
     // WS1 Session J — rule-firing / engine / FA-fallback entries, staged
     // SEPARATELY from `pendingLogEntries` for one structural reason: the
     // audio-timed branch below ASSIGNS `pendingLogEntries` wholesale partway
@@ -3097,6 +3106,7 @@ export default function App() {
         coverageAfterR10,
         new Set(unspokenScript.map(f => f.segmentIndex)),
       );
+      residualCheckAlignments = keptAlignments;
 
       if (import.meta.env.DEV && skipped.length > 0) {
         console.warn(
@@ -3530,6 +3540,19 @@ export default function App() {
     const freezeFrameEntries = buildFreezeFrameEntries(syncRunId, lockRestoredSegments, allAssets, syncRunAt);
     if (freezeFrameEntries.length > 0) {
       pendingLogEntries = [...pendingLogEntries, ...freezeFrameEntries];
+    }
+
+    // Layer 2 permanent detector (WS2 Step 5, Bug 1) — re-checks `keptAlignments`
+    // (each kept segment's own REAL matched audio position, independent of the
+    // gapless partition `lockRestoredSegments` always produces by construction)
+    // for any ordering violation that survived the trusted-spine gate. Detection
+    // and DEV-console logging only — never mutates, repairs, re-anchors, or
+    // blocks; the export guard (timelinePartition.ts) remains the sole
+    // enforcement point. Zero behavioral change when the timeline is clean, the
+    // overwhelmingly common case. See residualOrderingDetector.ts.
+    if (import.meta.env.DEV) {
+      const residualViolations = detectResidualOrderingViolations(residualCheckAlignments);
+      if (residualViolations.length > 0) logResidualOrderingViolations(residualViolations);
     }
 
     // 8. Single atomic state update — segments are already final.
