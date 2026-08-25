@@ -713,6 +713,104 @@ export function hasQualifyingRun(totalWords: number, matchedCount: number, occ: 
   return isLocallyClustered(matchedSubjectIndices);
 }
 
+// ---------------------------------------------------------------------------
+// Trusted spine (WS2 Step 5, Bug 1 — see `extractSegmentAlignments`'s "Trusted
+// spine" block comment for the full root-cause writeup and worked examples).
+// A pure, standalone module so the walk/tie-break logic is unit-testable
+// directly against hand-built node arrays, without constructing full
+// segments/tokens fixtures.
+// ---------------------------------------------------------------------------
+
+/** One segment's trustworthy evidence for spine purposes: `ownTimes` is its
+ *  own matched transcript-word start times, sorted ascending; `conf` and
+ *  `count` are its confidence (matchedCount/totalWords) and raw matched-word
+ *  count; `segIndex` is its position in the segment array. A rescue
+ *  candidate is represented the same way (its own prospective match, not yet
+ *  adopted). */
+export interface SpineNode {
+  ownTimes: number[];
+  conf: number;
+  count: number;
+  segIndex: number;
+}
+
+/** True iff `ownTimes` (a genuine predecessor's own matched times) has at
+ *  least one entry strictly before `candMinTime` AND at least one strictly
+ *  after `candMaxTime` — the predecessor's real content straddles the
+ *  candidate's, so it is transparent (not a real ordering constraint): its
+ *  own script genuinely continues on both sides of the candidate's claimed
+ *  position (the P-overflow pattern WS6 tests 1/4/5/8/9/10 reproduce), so it
+ *  cannot be used to argue the candidate is out of order. */
+export function isNestedWithin(ownTimes: readonly number[], candMinTime: number, candMaxTime: number): boolean {
+  let hasBefore = false;
+  let hasAfter = false;
+  for (const t of ownTimes) {
+    if (t < candMinTime) hasBefore = true;
+    else if (t > candMaxTime) hasAfter = true;
+  }
+  return hasBefore && hasAfter;
+}
+
+/** Deterministic evidence ranking between a rescue candidate and the genuine
+ *  spine predecessor it conflicts with — returns true iff `a` outranks `b`.
+ *  Tie-break chain (WS2 Step 5, mandatory for golden-replay determinism): (1)
+ *  higher raw matched-word count wins — confidence (matchedCount/totalWords)
+ *  is NOT used as the primary signal because it's gameable by segment
+ *  length: a short rescue candidate can trivially hit 100% confidence on its
+ *  own few words (verified live — Row 8a's last-segment-fallback regression
+ *  test: a 4-word candidate that accidentally strings together one decoy
+ *  word plus three real, far-away words scores a full 4/4 confidence, while
+ *  its 10-word genuine predecessor — whose real content the frozen global
+ *  aligner only partially captured — sits at a lower 8/10 ratio despite
+ *  having 2x the actual matched evidence; confidence-primary ranking let the
+ *  decoy win) while a longer, well-evidenced genuine predecessor can easily
+ *  sit below 100% simply because its own script is longer; (2) tie -> higher
+ *  confidence wins; (3) tie -> LOWER segment index wins (earlier narration is
+ *  presumptively the real one); (4) tie -> LOWER leading matched time wins.
+ *  (4) can never actually decide between a candidate and a spine predecessor
+ *  in `extractSegmentAlignments`'s own use (they are always different
+ *  segments and (3) already resolves any distinct segIndex) — it exists
+ *  purely so the chain is total and provably stable under a forced tie (see
+ *  the unit tests, which force one directly). */
+export function outranks(a: SpineNode, b: SpineNode): boolean {
+  if (a.count !== b.count) return a.count > b.count;
+  if (a.conf !== b.conf) return a.conf > b.conf;
+  if (a.segIndex !== b.segIndex) return a.segIndex < b.segIndex;
+  const aFirst = a.ownTimes[0] ?? Infinity;
+  const bFirst = b.ownTimes[0] ?? Infinity;
+  return aFirst < bFirst;
+}
+
+/** The backward half of the false-positive rescue fix's gate: does the
+ *  trusted spine reject `candidate` for the segment at `candidate.segIndex`?
+ *  `nodes` is indexed by segment position — `nodes[sj]` is that segment's
+ *  `SpineNode` if the UNCHANGED global pass already trusts it outright
+ *  (qualifies without rescue), else `null`. Walks backward from
+ *  `candidate.segIndex`, skipping transparent predecessors
+ *  (`isNestedWithin`), and — at the first real (non-transparent) predecessor
+ *  — either accepts (no violation, or `candidate` `outranks` it) or rejects.
+ *  Walking only to the first real predecessor is sufficient, not a shortcut:
+ *  every genuine match further back is even less constraining (global
+ *  monotonicity — `matchedSubjectOf` is one monotonic alignment, so two
+ *  genuine matches can never themselves be inconsistent), so once the
+ *  nearest real bound is satisfied or beaten, every farther one is
+ *  automatically satisfied too. The forward side has no analog — see
+ *  `extractSegmentAlignments`'s "Trusted spine" block comment for why only
+ *  the backward direction needs this. */
+export function backwardSpineRejects(nodes: ReadonlyArray<SpineNode | null>, candidate: SpineNode): boolean {
+  const candMinTime = candidate.ownTimes[0]!;
+  const candMaxTime = candidate.ownTimes[candidate.ownTimes.length - 1]!;
+  for (let sj = candidate.segIndex - 1; sj >= 0; sj--) {
+    const node = nodes[sj];
+    if (!node) continue;
+    if (isNestedWithin(node.ownTimes, candMinTime, candMaxTime)) continue; // transparent — keep walking back
+    const boundLast = node.ownTimes[node.ownTimes.length - 1]!;
+    if (candMinTime <= boundLast && !outranks(candidate, node)) return true;
+    break; // nearest real bound resolved (satisfied, or candidate won) — farther ones are weaker
+  }
+  return false;
+}
+
 /**
  * Builds the scene-doc query, aligns it to the transcript with the Hirschberg
  * semi-global aligner, and reads per-segment results off the single global
@@ -817,74 +915,131 @@ export function extractSegmentAlignments(
     if (sj >= 0) globallyClaimed.add(sj);
   }
 
-  // --- Rescue forward-ordering bound (false-positive rescue fix) -----------
-  // Root cause of the production incident this closes: a segment whose text
-  // never occurs in the audio (e.g. a heading) still passes the rescue's gate
-  // (matchedCount===0 && anchorStart defined — true of every parsed segment,
-  // since applyAnchorBasedTiming forces the first segment's anchor to 0).
-  // Passes 2/3 below scan every unclaimed token with NO relation to the
-  // segment's own position, so they can claim a later segment's genuine words
-  // (left unclaimed because that segment's own true match consumed a
-  // different, textually-equal occurrence, or because the word only ever
-  // appears as a substitution/gap). That flips `matched` to true, defeats the
-  // skip-unmatched classification, and the far-away token indices then flow
-  // into distributeSegmentTimes/snapCoveredBoundaries as a real boundary —
-  // confirmed in production as a ~206s phantom first segment that collapsed
-  // its real successor. See docs/history.md for the full incident writeup.
+  // --- Trusted spine (WS2 Step 5, Bug 1) ------------------------------------
+  // Replaces the AJ.4 pairwise BACKWARD bound (`computeBackwardBoundStartSec`
+  // and its half of `violatesOrderingBound`) with a spine-aware mechanism.
+  // The FORWARD bound is untouched in spirit — kept below as a plain,
+  // unconditional check exactly like the original — because nothing in this
+  // codebase ever needs a forward bound overridden: the WS6/Bug C "P-blocks-C"
+  // family are all BACKWARD conflicts (an overflowing PREDECESSOR blocking a
+  // successor's earlier claim); no fixture exercises the symmetric forward
+  // shape, and the three pre-existing forward-bound tests (a heading/decoy
+  // segment reaching past a genuine SUCCESSOR with fewer of its own matched
+  // words) affirmatively need the forward bound to reject unconditionally —
+  // treating it symmetrically with backward regressed all three (a 3-word
+  // heading candidate outranking a 2-word genuine successor purely on word
+  // count, exactly the false positive the original bound existed to close).
   //
-  // The fix: a rescue claim's EARLIEST token must sit strictly before the
-  // first token any LATER segment truly matched in the (unchanged) global
-  // pass — skipping over intervening segments with no true match of their
-  // own, since those contribute no ordering information. This is exactly the
-  // axis that separates the legitimate rescue uses (an anchor drifted, but
-  // the claim still precedes the next segment's real speech — the "verified
-  // live at 7.6s off" case and the 44s-drift WS6 test 10) from the false
-  // positive (a claim landing AFTER a later segment's real speech, meaning it
-  // almost certainly belongs to that later segment, not this one). Order, not
-  // distance, is the correct signal — a distance/tolerance cap was considered
-  // and rejected: WS6 test 10 legitimately recovers a word 44s from a 3s
-  // slot, so no fixed or slot-scaled distance threshold could exclude the
-  // false positive (which can be arbitrarily far) without also excluding that
-  // legitimate case.
+  // Root cause of why the naive backward bound was unfixable by tuning: it
+  // asked whether a rescue claim is ordered relative to its NEAREST
+  // neighbor's own global match — sound only if that neighbor is itself
+  // trustworthy. In the "P-blocks-C" shape (WS6 tests 1/4/5/8/9/10 and the
+  // Bug C rescue-gate test) the immediate predecessor P is NOT trustworthy as
+  // a boundary: P's script overflows past its own slot with real trailing
+  // content genuinely spoken AFTER C's real content, so P's own last true
+  // match is not evidence that C's earlier claim is wrong — it's the anomaly.
   //
-  // Uses GLOBAL-pass true matches only (`firstGlobalMatchSubjectOf`, computed
-  // once here, before any rescue runs) — not other segments' own rescue
-  // outcomes. Rescues are resolved in segment order within the loop below, so
-  // consulting a later segment's (not-yet-computed) rescue result would be
-  // order-dependent and non-deterministic; the unchanged global pass is fixed
-  // before any rescue runs and gives every segment's bound the same answer
-  // regardless of processing order.
-  const firstGlobalMatchSubjectOf: number[] = segRanges.map(range => {
-    for (let qi = range.start; qi < range.end; qi++) {
-      const sj = matchedSubjectOf[qi]!;
-      if (sj >= 0) return sj;
-    }
-    return -1;
+  // A genuine global match can NEVER itself be inconsistent with another
+  // genuine global match: `matchedSubjectOf` is the output of one monotonic
+  // Hirschberg alignment (`hirschbergGlobal` above), so query index and
+  // subject index rise together by construction — every truly-matched pair,
+  // across every segment, is already one single ordered sequence. There is
+  // therefore no "outlier" to filter by looking at genuine matches alone
+  // (confirmed: doing so degrades back into the AJ.4 bound and reproduces all
+  // 13 failures unchanged). The actual conflict is always between a genuine
+  // neighbor's match and THIS segment's own rescue candidate — so the spine
+  // has to let a strong candidate compete on the backward side, not just
+  // consult a fixed neighbor.
+  //
+  // Two-part fix, backward only:
+  //  1. TRANSPARENCY — a predecessor whose own matched TIMES straddle the
+  //     candidate's (one true match sits before the candidate's earliest
+  //     claimed time AND another sits after its latest) is not a real
+  //     boundary at all: the predecessor's real content is genuinely
+  //     interleaved around the candidate's (the P-overflow pattern), so it's
+  //     skipped ("transparent") and the search continues to the
+  //     next-nearest genuine predecessor. `isNestedWithin`. Time, not subject
+  //     index, is the comparison axis: a transcript's tokens are ordinarily
+  //     chronological, but nothing here may assume it, and time is also what
+  //     the resulting boundary actually gates (a timeline position).
+  //  2. COMPETITION — the first predecessor that is NOT transparent (its
+  //     matches sit wholly before the candidate) is the real bound. If the
+  //     candidate would violate it, the two compete on evidence (`outranks`)
+  //     rather than the candidate losing unconditionally. This is what lets
+  //     WS6's P-blocks-C candidates win (their own text is a complete,
+  //     high-confidence match) while still hard-rejecting the original Bug 1
+  //     regression (segment 313's decoy at 544.400s loses to segment 312's
+  //     full 5/5 match on tie-broken evidence — no predecessor further back
+  //     exists to make 313's claim "transparent", so it's a genuine,
+  //     resolvable conflict, not a skip) and Row 8a's mixed decoy+real
+  //     candidate (loses to its 10-word genuine predecessor on raw matched
+  //     count, confidence being gameable by a short segment's own length —
+  //     see `outranks`'s doc comment).
+  //
+  // Walking only to the FIRST non-transparent predecessor is sufficient, not
+  // a shortcut: every genuine match further back is even less constraining
+  // (global monotonicity again — a genuine predecessor further away can only
+  // have an earlier position), so once the nearest real bound is satisfied or
+  // beaten, every farther one is automatically satisfied too.
+  //
+  // O(n) per candidate (a single backward walk) — deliberately a plain walk
+  // over `genuineSpineNodes` rather than a generic weighted-LIS DP: genuine
+  // matches can never conflict with each other (proved above), so the only
+  // real decision is a single candidate-vs-nearest-real-predecessor
+  // comparison, which this expresses directly. n is ~450 segments max, so
+  // this is fast and, being a simple linear walk with one clear branch, far
+  // more auditable than a general DP would be here.
+  const genuineSpineNodes: Array<SpineNode | null> = segRanges.map((range, si) => {
+    const totalWords = range.end - range.start;
+    if (totalWords === 0) return null;
+    const occForSpine = buildOccArrayFromGlobalMatches(matchedSubjectOf, range.start, totalWords);
+    const ownTimes: number[] = [];
+    for (const entry of occForSpine) if (entry) ownTimes.push(tokenWords[entry.start]!.startSec);
+    // Only a segment the UNCHANGED global pass already trusts outright
+    // (qualifies without any rescue) can anchor the spine — a segment that
+    // itself needs rescue is exactly as unproven as the candidate it would
+    // be bounding.
+    if (!hasQualifyingRun(totalWords, ownTimes.length, occForSpine)) return null;
+    ownTimes.sort((a, b) => a - b);
+    return { ownTimes, conf: ownTimes.length / totalWords, count: ownTimes.length, segIndex: si };
   });
 
   /** The startSec a rescue claim for segment `si` must stay strictly before —
-   *  the first token the nearest LATER segment with a true global match
-   *  actually matched. `undefined` when no later segment has one (nothing to
-   *  be inconsistent with — e.g. the last segment in the project). */
+   *  the first token the nearest LATER segment with a qualifying global
+   *  match actually matched. `undefined` when no later segment has one
+   *  (nothing to be inconsistent with — e.g. the last segment in the
+   *  project). Forward-only; see the module comment above for why this stays
+   *  a plain, unconditional bound rather than gaining the backward side's
+   *  transparency/competition machinery (`isNestedWithin`/`outranks`/
+   *  `backwardSpineRejects`, defined at module scope above, next to
+   *  `hasQualifyingRun`, so they're unit-testable directly). */
   function computeForwardBoundStartSec(si: number): number | undefined {
-    for (let sj = si + 1; sj < segRanges.length; sj++) {
-      const subjectIdx = firstGlobalMatchSubjectOf[sj]!;
-      if (subjectIdx >= 0) return tokenWords[subjectIdx]!.startSec;
+    for (let sj = si + 1; sj < genuineSpineNodes.length; sj++) {
+      const node = genuineSpineNodes[sj];
+      if (node) return node.ownTimes[0]!;
     }
     return undefined;
   }
 
-  /** Earliest (smallest) startSec among a set of claimed `tokenWords`
-   *  indices — "the claimed matches' first token", read as first in TIME, not
-   *  first in list order (Pass 1's Hirschberg output and Pass 2/3's document-
-   *  order scans don't guarantee those coincide). */
-  function earliestClaimStartSec(globalIdxs: readonly number[]): number {
-    let min = Infinity;
-    for (const idx of globalIdxs) {
-      const s = tokenWords[idx]!.startSec;
-      if (s < min) min = s;
-    }
-    return min;
+  /** Full two-sided gate used by all three rescue passes: forward bound is
+   *  the plain, unconditional check above; backward bound is the module-level
+   *  spine-aware `backwardSpineRejects`. Returns true iff the candidate
+   *  should be rejected. `candIdxs` are the raw subject-space indices
+   *  (globalIdx for Pass 1/2, tokenStartIdx for Pass 3) the candidate would
+   *  claim. */
+  function spineRejectsCandidate(si: number, candIdxs: readonly number[]): boolean {
+    const candTimes = candIdxs.map(idx => tokenWords[idx]!.startSec);
+    const forwardBoundStartSec = computeForwardBoundStartSec(si);
+    if (forwardBoundStartSec !== undefined && Math.min(...candTimes) >= forwardBoundStartSec) return true;
+
+    const totalWords = segRanges[si]!.end - segRanges[si]!.start;
+    const candidateNode: SpineNode = {
+      ownTimes: [...candTimes].sort((a, b) => a - b),
+      conf: candIdxs.length / totalWords,
+      count: candIdxs.length,
+      segIndex: si,
+    };
+    return backwardSpineRejects(genuineSpineNodes, candidateNode);
   }
 
   // Row 8a (Contract 1→2, assumption 8): the caller's probed `audioDuration`
@@ -966,12 +1121,6 @@ export function extractSegmentAlignments(
     // to change to get that, since the gate and `matched` share one function.
     const wasZeroMatch = matchedCount === 0;
     if (!hasQualifyingRun(totalWords, matchedCount, occ) && seg.anchorStart !== undefined) {
-      // Forward-ordering bound (false-positive rescue fix) — see the
-      // module-level comment by `computeForwardBoundStartSec` above.
-      // `undefined` when no later segment has a true global match of its own.
-      const forwardBoundStartSec = computeForwardBoundStartSec(si);
-      const exceedsForwardBound = (globalIdxs: readonly number[]): boolean =>
-        forwardBoundStartSec !== undefined && earliestClaimStartSec(globalIdxs) >= forwardBoundStartSec;
       const expectedStart = seg.anchorStart;
       const expectedEnd = segments[si + 1]?.anchorStart ?? rescueWindowAudioEnd;
       const rawDuration = Math.max(0, expectedEnd - expectedStart);
@@ -1032,14 +1181,14 @@ export function extractSegmentAlignments(
           localMatches = findExactSequentialMatches(segQueryWords, windowed);
         }
 
-        // Forward-ordering bound: Pass 1's window is anchored on THIS
-        // segment's own (possibly stale) anchorStart/expectedEnd, not on any
-        // later segment's real position, so it is not immune to the same
-        // inversion Pass 2/3 exist to guard against — a wide tolerance window
-        // (capped at 5s, but built from an already-drifted expectedEnd) can
-        // still reach past a later segment's true match. Reject exactly like
+        // Spine gate: Pass 1's window is anchored on THIS segment's own
+        // (possibly stale) anchorStart/expectedEnd, not on any neighbor's
+        // real position, so it is not immune to the same inversion Pass 2/3
+        // exist to guard against — a wide tolerance window (capped at 5s, but
+        // built from an already-drifted expectedStart/End) can still reach
+        // past a neighbor's true match on either side. Gate exactly like
         // Pass 2/3 rather than leaving Pass 1 unchecked.
-        if (localMatches.length > 0 && exceedsForwardBound(localMatches.map(m => m.globalIdx))) {
+        if (localMatches.length > 0 && spineRejectsCandidate(si, localMatches.map(m => m.globalIdx))) {
           localMatches = [];
         }
 
@@ -1062,12 +1211,11 @@ export function extractSegmentAlignments(
           allUnclaimed.push({ word: tokenWords[gi]!.word, globalIdx: gi });
         }
         const pass2Matches = findExactSequentialMatches(segQueryWords, allUnclaimed);
-        // Forward-ordering bound (false-positive rescue fix): reject a claim
-        // whose earliest token sits at/after the next true-matching segment's
-        // own first word — see computeForwardBoundStartSec's doc comment
-        // above. Pass 2 is the unbounded scan, so this is where the false
-        // positive this fix targets is actually caught.
-        if (pass2Matches.length > 0 && !exceedsForwardBound(pass2Matches.map(m => m.globalIdx))) {
+        // Spine gate (false-positive rescue fix): reject a claim the trusted
+        // spine rejects on either side — see `spineRejectsCandidate`'s doc
+        // comment above. Pass 2 is the unbounded scan, so this is where both
+        // false-positive directions this fix targets are actually caught.
+        if (pass2Matches.length > 0 && !spineRejectsCandidate(si, pass2Matches.map(m => m.globalIdx))) {
           localMatches = pass2Matches;
           candidateRecoveredVia = 'global';
         }
@@ -1093,10 +1241,9 @@ export function extractSegmentAlignments(
           segQueryWords, allUnclaimed, tokenWords, tokens,
           { maxConcatTokens: MAX_CONCAT_TOKENS, maxConcatGapSec: MAX_CONCAT_GAP_SEC },
         );
-        // Forward-ordering bound, same rule as Pass 2 — a concatenated span's
-        // start index is itself a tokenWords globalIdx, so the same helper
-        // applies unchanged.
-        if (pass3Matches.length > 0 && !exceedsForwardBound(pass3Matches.map(m => m.tokenStartIdx))) {
+        // Spine gate, same rule as Pass 2 — a concatenated span's start index
+        // is itself a tokenWords globalIdx, so the same gate applies unchanged.
+        if (pass3Matches.length > 0 && !spineRejectsCandidate(si, pass3Matches.map(m => m.tokenStartIdx))) {
           concatMatches = pass3Matches;
           candidateRecoveredVia = 'concat';
         }

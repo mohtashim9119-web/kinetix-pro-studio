@@ -16,8 +16,11 @@ import {
   hasQualifyingRun,
   isLocallyClustered,
   buildOccArrayFromGlobalMatches,
+  isNestedWithin,
+  outranks,
+  backwardSpineRejects,
 } from './whisperService';
-import type { SegmentAlignment, OccEntry } from './whisperService';
+import type { SegmentAlignment, OccEntry, SpineNode } from './whisperService';
 import {
   evaluateCoverageGate,
   filterToCoveredSegments,
@@ -5074,6 +5077,150 @@ describe('rescue forward-ordering bound (false-positive rejection)', () => {
     expect(results[2]!.matchedWords).toBe(3);
     expect(results[2]!.t0).toBeCloseTo(50.0, 3);
   });
+
+  // =========================================================================
+  // Backward-ordering bound (WS2 Step 4, Bug 1) — the forward bound above only
+  // ever checked a rescue claim against LATER segments. Nothing stopped a
+  // claim from landing BEFORE an EARLIER segment's own real speech. Live
+  // production case: segment 312's global pass truly matched through
+  // 1501.240s; segment 313 (no true match of its own, last segment in that
+  // project — no later segment to trip the forward bound) rescue-claimed a
+  // decoy occurrence of its own words sitting at 544.400s, behind its own
+  // predecessor. Mirrors the REGRESSION test above with the roles reversed in
+  // time: there, a query-FIRST segment's decoy sat physically LATER than its
+  // query-later neighbors' real matches; here, a query-LATER segment's decoy
+  // sits physically EARLIER than its query-earlier neighbor's real match. The
+  // same query/subject monotonicity argument applies with the sides swapped:
+  // the global pass cannot assign the decoy to s1 without making the subject
+  // index go backward relative to s0's real match, so s1 is genuinely
+  // zero-matched — exactly the shape the (missing) backward bound exists to
+  // catch in the rescue passes.
+  // =========================================================================
+  describe('rescue backward-ordering bound (false-positive rejection, Bug 1)', () => {
+    it('REGRESSION: a decoy occurrence sitting before the preceding segment\'s real match is no longer stolen; segment is left unmatched (live case: 312 ends 1501.240s, 313\'s decoy at 544.400s)', () => {
+      const segments: VideoSegment[] = [
+        // Deliberately 5 words (> s313's 3-word decoy below): the global
+        // pass's alignment maximizes TOTAL matched word count across the
+        // whole combined query/subject, so s312's longer chain must win over
+        // s313's shorter decoy chain — otherwise the DP would prefer
+        // matching the decoy instead, which isn't the scenario under test
+        // (that inversion is a distinct, unrelated failure mode).
+        makeSegment({ id: 's312', order: 0, text: 'alpha bravo charlie delta sierra', anchorStart: 1490 }),
+        makeSegment({ id: 's313', order: 1, text: 'kilo lima mike', anchorStart: 900 }),
+      ];
+      const tokens: TranscriptToken[] = [
+        // s313's own words — genuinely present, but only as a decoy occurrence
+        // physically EARLIER in the stream than s312's real match below.
+        // Assigning them to s313 (query-after-s312) would require the global
+        // pass's subject index to move backward relative to s312's match —
+        // monotonicity forbids it, so this decoy is left unclaimed by the
+        // (unchanged) global pass, exactly like the REGRESSION test's heading.
+        ...wordTokens('kilo lima mike', 544.400, 0.4),
+        // s312's real, truly matched content — ends (endSec) at exactly
+        // 1501.240s, the live incident's own number.
+        ...wordTokens('alpha bravo charlie delta sierra', 1499.24, 0.4),
+      ];
+
+      const results = extractSegmentAlignments(segments, tokens);
+
+      // Sanity: s312 truly matches its own words in full, ending at
+      // 1501.240s — this is the "segment 312 ends 1501.240s" half of the
+      // live case.
+      expect(results[0]!.matched).toBe(true);
+      expect(results[0]!.matchedWords).toBe(5);
+      expect(results[0]!.t1).toBeCloseTo(1501.240, 3);
+
+      // Sanity: the decoy really is unclaimed by the (unchanged) global
+      // pass — s313 enters the rescue block with zero matches of its own.
+      // (Confirmed indirectly below: recoveredVia stays null only when no
+      // rescue was ever adopted, whether because none ran or because the
+      // backward bound rejected it — the assertions below settle which.)
+
+      // The fix: s313's rescue claim's earliest token (544.400) sits at/before
+      // s312's own last true match (1500.24, the backward bound) — rejected.
+      // No forward bound applies here (s313 is the last segment, so
+      // computeForwardBoundStartSec returns undefined) — this isolates the
+      // backward half of the two-sided bound. Before this fix, nothing
+      // rejected this claim: results[1] would have matched=true, t0≈544.400.
+      expect(results[1]!.matched).toBe(false);
+      expect(results[1]!.matchedWords).toBe(0);
+      expect(results[1]!.confidence).toBe(0);
+      expect(results[1]!.recoveredVia).toBeUndefined();
+      expect(results[1]!.recoveredRegion).toBeUndefined();
+
+      // Gaplessness is preserved without inventing timeline data: the
+      // rejected segment anchors at the previous boundary (1501.240s), same
+      // placeholder treatment as any other genuinely-unmatched segment.
+      expect(results[1]!.t0).toBeCloseTo(1501.240, 3);
+      expect(results[1]!.t1).toBeCloseTo(1501.240, 3);
+
+      const { kept, skipped } = filterToCoveredSegments(segments, results);
+      expect(kept.map(s => s.id)).toEqual(['s312']);
+      expect(skipped).toHaveLength(1);
+      expect(skipped[0]).toMatchObject({ segmentIndex: 1, reason: 'no audio match' });
+    });
+
+    it('boundary: a claim whose earliest token startSec exactly equals the backward bound is rejected (<=, not <)', () => {
+      // Same decoy-before-predecessor shape, but the decoy's startSec is
+      // deliberately tied exactly to the predecessor's real match startSec —
+      // pins the "<=" (not "<") boundary semantics, mirroring the existing
+      // forward-bound boundary test's ">=" pin above.
+      const segments: VideoSegment[] = [
+        // 5 words (> s1's 3-word decoy) for the same reason as the
+        // REGRESSION test above — keeps the global pass's LCS preference on
+        // s0's chain rather than the decoy.
+        makeSegment({ id: 's0', order: 0, text: 'alpha bravo charlie delta sierra', anchorStart: 40 }),
+        makeSegment({ id: 's1', order: 1, text: 'kilo lima mike', anchorStart: 5 }),
+      ];
+      const tokens: TranscriptToken[] = [
+        // s1's decoy — array position before s0's real match (preserves the
+        // trap), startSec deliberately tied to s0's LAST matched word's
+        // startSec (50.0, the backward bound) below.
+        { text: 'kilo', startSec: 50.0, endSec: 50.4 },
+        { text: 'lima', startSec: 50.4, endSec: 50.8 },
+        { text: 'mike', startSec: 50.8, endSec: 51.2 },
+        // s0's real match, ending with the word whose startSec (50.0) is the
+        // backward bound, tied exactly to s1's decoy's earliest token above.
+        { text: 'alpha', startSec: 46.4, endSec: 46.8 },
+        { text: 'bravo', startSec: 47.2, endSec: 47.6 },
+        { text: 'charlie', startSec: 48.4, endSec: 48.8 },
+        { text: 'delta', startSec: 49.2, endSec: 49.6 },
+        { text: 'sierra', startSec: 50.0, endSec: 50.4 },
+      ];
+
+      const results = extractSegmentAlignments(segments, tokens);
+
+      expect(results[0]!.matched).toBe(true);
+      expect(results[0]!.matchedWords).toBe(5);
+
+      // s1's claim's earliest token (50.0) === the bound (50.0) — rejected.
+      expect(results[1]!.matched).toBe(false);
+      expect(results[1]!.matchedWords).toBe(0);
+      expect(results[1]!.recoveredVia).toBeUndefined();
+      expect(results[1]!.recoveredRegion).toBeUndefined();
+    });
+
+    it('a claim strictly after the backward bound (but with no forward bound to check it) is still legitimately recovered', () => {
+      // Confirms the backward bound doesn't over-reject: a genuine anchor-
+      // drift rescue whose claim sits strictly AFTER its predecessor's real
+      // match is unaffected, same spirit as the forward bound's own
+      // "preserves legitimate anchor-drift recovery" test above.
+      const segments: VideoSegment[] = [
+        makeSegment({ id: 's0', order: 0, text: 'sierra', anchorStart: 0 }),
+        makeSegment({ id: 's1', order: 1, text: 'kilo lima mike', anchorStart: 900 }),
+      ];
+      const tokens: TranscriptToken[] = [
+        ...wordTokens('sierra', 0.0, 0.4),                 // s0's real match
+        ...wordTokens('kilo lima mike', 1500.24, 0.4),      // s1's decoy, strictly after s0's match
+      ];
+
+      const results = extractSegmentAlignments(segments, tokens);
+      expect(results[0]!.matched).toBe(true);
+      expect(results[1]!.matched).toBe(true);
+      expect(results[1]!.matchedWords).toBe(3);
+      expect(results[1]!.t0).toBeCloseTo(1500.24, 3);
+    });
+  });
 });
 
 // Builds the three structures `findConcatenatingMatches` needs directly, one
@@ -5659,5 +5806,158 @@ describe('Bug C — contiguous-run survival requirement', () => {
     // 4 (s0) + 2 (s1, preserved despite matched=false) = 6 matched, out of
     // 4 + 5 = 9 total scene-doc words.
     expect(summary.sceneDocCoverage).toBeCloseTo(6 / 9, 5);
+  });
+});
+
+// =============================================================================
+// Trusted spine (WS2 Step 5, Bug 1) — direct, table-driven tests of the
+// standalone spine primitives (`isNestedWithin`, `outranks`,
+// `backwardSpineRejects`), independent of `extractSegmentAlignments`'s
+// segments/tokens machinery. See whisperService.ts's module comment above
+// `SpineNode` for the full root-cause writeup these exercise directly.
+// =============================================================================
+describe('Trusted spine primitives (WS2 Step 5, Bug 1)', () => {
+  const node = (segIndex: number, ownTimes: number[], totalWords: number): SpineNode => ({
+    ownTimes: [...ownTimes].sort((a, b) => a - b),
+    conf: ownTimes.length / totalWords,
+    count: ownTimes.length,
+    segIndex,
+  });
+
+  describe('isNestedWithin', () => {
+    it('is true when the neighbor has a match strictly before AND strictly after the candidate range', () => {
+      expect(isNestedWithin([0, 1, 10, 11], 5, 6)).toBe(true);
+    });
+    it('is false when the neighbor only has matches before the candidate range', () => {
+      expect(isNestedWithin([0, 1], 5, 6)).toBe(false);
+    });
+    it('is false when the neighbor only has matches after the candidate range', () => {
+      expect(isNestedWithin([10, 11], 5, 6)).toBe(false);
+    });
+    it('is false for an empty neighbor', () => {
+      expect(isNestedWithin([], 5, 6)).toBe(false);
+    });
+    it('boundary: a neighbor time exactly at candMin/candMax does not count as before/after (strict)', () => {
+      expect(isNestedWithin([5, 6], 5, 6)).toBe(false);
+    });
+  });
+
+  describe('outranks tie-break chain', () => {
+    it('(1) higher raw count wins outright, even at lower confidence', () => {
+      const a = node(0, [0, 1, 2, 3, 4], 10); // count 5, conf 0.5
+      const b = node(1, [10, 11, 12], 3);      // count 3, conf 1.0
+      expect(outranks(a, b)).toBe(true);
+      expect(outranks(b, a)).toBe(false);
+    });
+    it('(2) tie on count -> higher confidence wins', () => {
+      const a = node(0, [0, 1, 2], 3);  // count 3, conf 1.0
+      const b = node(1, [10, 11, 12], 8); // count 3, conf 0.375
+      expect(outranks(a, b)).toBe(true);
+      expect(outranks(b, a)).toBe(false);
+    });
+    it('(3) tie on count and confidence -> lower segment index wins', () => {
+      const a = node(2, [0, 1], 2); // count 2, conf 1.0
+      const b = node(5, [9, 10], 2); // count 2, conf 1.0
+      expect(outranks(a, b)).toBe(true);
+      expect(outranks(b, a)).toBe(false);
+    });
+    it('(4) explicit forced tie through the WHOLE chain (count, conf, segIndex all equal) -> lower leading time wins, deterministically stable across repeated calls', () => {
+      const a = node(3, [2.0], 1); // count 1, conf 1.0, segIndex 3, leading time 2.0
+      const b = node(3, [7.0], 1); // count 1, conf 1.0, segIndex 3 (forced tie), leading time 7.0
+      // Run twice to prove the tie resolves the same way every time (no
+      // iteration-order or float-equality dependence) — D1's mandated
+      // "explicit tie forced through the tie-break chain twice" check.
+      expect(outranks(a, b)).toBe(true);
+      expect(outranks(a, b)).toBe(true);
+      expect(outranks(b, a)).toBe(false);
+      expect(outranks(b, a)).toBe(false);
+    });
+  });
+
+  describe('backwardSpineRejects', () => {
+    it('empty: no predecessors at all -> never rejects (fully unbounded)', () => {
+      const nodes: Array<SpineNode | null> = [null, null];
+      const candidate = node(2, [5.0], 3);
+      expect(backwardSpineRejects(nodes, candidate)).toBe(false);
+    });
+
+    it('single element, real (non-nested) bound satisfied -> accepts', () => {
+      const nodes: Array<SpineNode | null> = [node(0, [0.0, 0.5], 2)];
+      const candidate = node(1, [10.0], 3); // strictly after the only predecessor's last match
+      expect(backwardSpineRejects(nodes, candidate)).toBe(false);
+    });
+
+    it('single element, real (non-nested) bound violated, candidate loses on evidence -> rejects', () => {
+      // All 5 of the predecessor's matches sit AFTER the candidate's claim
+      // (not straddling it) -> a real bound, not transparent.
+      const nodes: Array<SpineNode | null> = [node(0, [1.4, 1.6, 1.8, 2.0, 2.2], 5)]; // count 5
+      const candidate = node(1, [1.2], 3); // count 1, sits before the predecessor's last match (2.2)
+      expect(backwardSpineRejects(nodes, candidate)).toBe(true);
+    });
+
+    it('fully consistent input: candidate cleanly after a chain of real predecessors -> accepts', () => {
+      const nodes: Array<SpineNode | null> = [node(0, [0.0], 2), null, node(2, [5.0, 5.5], 2)];
+      const candidate = node(3, [20.0, 20.5, 21.0], 3);
+      expect(backwardSpineRejects(nodes, candidate)).toBe(false);
+    });
+
+    it('one late outlier: the nearest predecessor\'s real content straddles the candidate (P-overflow) -> transparent, skipped, accepts', () => {
+      // Predecessor has a leading match before the candidate AND a trailing
+      // match after it (isNestedWithin true) -> not a real bound at all.
+      const nodes: Array<SpineNode | null> = [node(0, [0.0, 0.5, 20.0, 20.5], 4)];
+      const candidate = node(1, [10.0], 1);
+      expect(backwardSpineRejects(nodes, candidate)).toBe(false);
+    });
+
+    it('one early outlier: a farther predecessor conflicts but the NEAREST one is satisfied -> the farther conflict is never consulted (accepts)', () => {
+      // Segment 0 (far back) would reject the candidate on its own (it's a
+      // real bound with more evidence, positioned after the candidate) — but
+      // segment 1 (nearest) is a real bound the candidate cleanly satisfies,
+      // so the walk stops there and never reaches segment 0's conflict.
+      const nodes: Array<SpineNode | null> = [
+        node(0, [0.0, 0.5, 1.0, 1.5, 100.0], 5), // far-back "outlier": would conflict if ever reached
+        node(1, [2.0, 2.5], 2),                   // nearest: real bound, satisfied trivially
+      ];
+      const candidate = node(2, [5.0], 1);
+      expect(backwardSpineRejects(nodes, candidate)).toBe(false);
+    });
+
+    it('the exact P-blocks-C shape (WS6 test 1): predecessor\'s only real match is its trailing content, entirely after the candidate -> real bound, candidate wins on evidence (full match beats predecessor\'s partial one) -> accepts', () => {
+      // P = "garbled overflow xyzzy plugh mumble denim is durable" (8 words,
+      // only "denim is durable" — 3 words — genuinely match, all AFTER C's
+      // real content). C = "linen from flax" (3/3, a complete match).
+      const nodes: Array<SpineNode | null> = [node(0, [7.5, 7.9, 8.3], 8)]; // count 3, conf 0.375
+      const candidate = node(1, [6.0, 6.4, 6.8], 3); // count 3, conf 1.0 -> outranks on tie-break (2)
+      expect(backwardSpineRejects(nodes, candidate)).toBe(false);
+    });
+
+    it('all-mutually-conflicting: every predecessor is a real (non-nested) bound the candidate would violate, but only the nearest is ever evaluated', () => {
+      // All three predecessors sit entirely after the candidate (real
+      // bounds, all violated) with STRONGER evidence than the candidate — if
+      // any of them were consulted, the candidate would be rejected. Proves
+      // the walk stops at the first real bound rather than aggregating.
+      const nodes: Array<SpineNode | null> = [
+        node(0, [50.0, 50.1, 50.2, 50.3, 50.4], 5),
+        node(1, [40.0, 40.1, 40.2, 40.3], 4),
+        node(2, [30.0, 30.1, 30.2], 3),
+      ];
+      const candidate = node(3, [1.0], 1); // count 1 — loses to any of the above on evidence
+      // Nearest (segment 2) is a real bound (30.x is after candidate 1.0)
+      // and outranks the 1-word candidate -> rejects. This confirms the
+      // NEAREST one decides, not some aggregate — flip segment 2 to nested
+      // below and the same nodes accept instead.
+      expect(backwardSpineRejects(nodes, candidate)).toBe(true);
+
+      const nodesWithNearestTransparent: Array<SpineNode | null> = [
+        nodes[0]!,
+        nodes[1]!,
+        node(2, [0.5, 30.0], 2), // now straddles the candidate (0.5 < 1.0 < 30.0) -> transparent
+      ];
+      // With segment 2 now transparent, the walk continues to segment 1 (a
+      // real bound, also violated, also stronger) -> still rejects. Only
+      // when EVERY predecessor is transparent or absent does it accept (see
+      // the "one late outlier" and "empty" cases above).
+      expect(backwardSpineRejects(nodesWithNearestTransparent, candidate)).toBe(true);
+    });
   });
 });
