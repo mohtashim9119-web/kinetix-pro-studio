@@ -121,9 +121,45 @@ jobs:
              "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-aarch64-apple-darwin"
           cp "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-universal-apple-darwin" \
              "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-x86_64-apple-darwin"
-          # Download base.en model
-          curl -L -o "$GITHUB_WORKSPACE/src-tauri/models/ggml-base.en.bin" \
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin"
+      - name: Provision onnxruntime dylib (macOS x86_64, for fa-inference)
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -euo pipefail
+          # Mirrors src-tauri/onnxruntime/README.md's re-provisioning recipe
+          # exactly. The bundled FA path (fa_onnx.rs's resolve_bundled_ort_dylib)
+          # hard-gates to macOS x86_64 only, so this single-arch dylib is correct
+          # for both matrix.target values built from this macOS job — the
+          # universal-apple-darwin bundle's arm64 slice has no dylib to load and
+          # fa_preflight reports that explicitly at runtime (see fa_onnx.rs:319).
+          EXPECTED_SHA256="8c9c78de65ea3786f987c0d980e9c1b13a3a5fbc6b3e2965ba05b450e6e4c054"
+          cd src-tauri/onnxruntime
+          curl -L -o onnxruntime-osx-x86_64-1.23.2.tgz \
+            https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-x86_64-1.23.2.tgz
+          tar -xzf onnxruntime-osx-x86_64-1.23.2.tgz
+          cp onnxruntime-osx-x86_64-1.23.2/lib/libonnxruntime.1.23.2.dylib .
+          rm -rf onnxruntime-osx-x86_64-1.23.2 onnxruntime-osx-x86_64-1.23.2.tgz
+          ACTUAL_SHA256="$(shasum -a 256 libonnxruntime.1.23.2.dylib | awk '{print $1}')"
+          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
+            echo "::error::onnxruntime dylib sha256 mismatch: expected $EXPECTED_SHA256, got $ACTUAL_SHA256"
+            exit 1
+          fi
+          cd "$GITHUB_WORKSPACE"
+
+      - name: Guard against stray dev models being bundled
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -euo pipefail
+          # Whisper's model is now acquired in-app (see whisper.rs's
+          # app_local_data_dir-first resolution) rather than bundled — nothing
+          # under src-tauri/models/ should ship. A dev machine's hand-placed
+          # ggml-*.bin left in this dir (the exact mistake that produced the
+          # 4.7 GB .app) must fail the build, not silently ship.
+          shopt -s nullglob
+          stray=(src-tauri/models/*.bin)
+          if [ ${#stray[@]} -gt 0 ]; then
+            echo "::error::src-tauri/models/ contains model file(s) that would be bundled: ${stray[*]}"
+            exit 1
+          fi
 
       - name: Provision ffmpeg sidecar (Windows)
         if: matrix.os == 'windows-latest'
@@ -181,13 +217,29 @@ jobs:
           cmake --build build-static --config Release --target whisper-cli
           Copy-Item -Path "C:\whisper-cpp\build-static\bin\Release\whisper-cli.exe" `
             -Destination "$env:GITHUB_WORKSPACE\src-tauri\binaries\whisper-x86_64-pc-windows-msvc.exe"
-          # Download base.en model
-          Invoke-WebRequest `
-            -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin" `
-            -OutFile "$env:GITHUB_WORKSPACE\src-tauri\models\ggml-base.en.bin"
+          # No model download here: the whisper model is acquired in-app (see
+          # whisper.rs's app_local_data_dir-first resolution), not bundled.
+
+      - name: Guard against stray dev models being bundled (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $stray = Get-ChildItem -Path "src-tauri/models" -Filter "*.bin" -ErrorAction SilentlyContinue
+          if ($stray) {
+            Write-Error "src-tauri/models/ contains model file(s) that would be bundled: $($stray.Name -join ', ')"
+            exit 1
+          }
 
       - name: Build Tauri app
-        run: npm run tauri:build -- --target ${{ matrix.target }}
+        # -f fa-inference: compile forced alignment in for the shipped
+        # installer (A1). Chosen over a Cargo.toml `default = [...]` feature
+        # so `cargo check`/`cargo test` from src-tauri/ and the fa-ort-matrix
+        # workflow's feature-off cell stay feature-off by default — only the
+        # release packaging path opts in, matching the existing
+        # `tauri:dev:fa` (`tauri dev -f fa-inference`) precedent in
+        # package.json. `ort`'s load-dynamic mode means this compiles cleanly
+        # on both targets with no onnxruntime dylib required at build time.
+        run: npm run tauri:build -- --target ${{ matrix.target }} -f fa-inference
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v6
