@@ -905,6 +905,22 @@ fn with_cached_session<T>(
     let mut guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let needs_reload = !matches!(&*guard, Some(cached) if cached.key == key);
     if needs_reload {
+        // WS1 Session AP Step 3 — drop the incumbent session BEFORE building
+        // the replacement, not after. The previous order (build-then-assign)
+        // left the old and new `Session` briefly co-resident on every
+        // cache-miss reload: `*guard = Some(..)` only drops the old value at
+        // the point of assignment, which is after `load_session` has already
+        // finished allocating the new one. A dropped ORT session's pages
+        // don't come back to the OS on this allocator, so that transient
+        // spike became the new floor. Explicitly clearing the slot first
+        // means the drop happens, and its (partial) memory effect lands,
+        // before the new session's allocation begins. Trade-off: if
+        // `load_session` now fails, the cache is left empty instead of
+        // retaining the old (still-valid, differently-keyed) session — an
+        // acceptable cost next to the OOM this exists to reduce; the caller
+        // already treats a `with_cached_session` failure as fatal for this
+        // call, and the following call simply reloads from disk.
+        *guard = None;
         let session = with_ort_env_lock(|| load_session(model_path))?;
         *guard = Some(CachedSession { key, session });
     }
