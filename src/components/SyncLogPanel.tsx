@@ -68,6 +68,10 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // severity (info when ready, warning when not) and detail line carry the
   // meaning. Emitted before inference so the user sees readiness up front.
   'fa-preflight': { label: 'FA PRE-FLIGHT', className: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' },
+  // WS2 Step 3 A5 — the FA gate was closed for this run (bug 2 visibility
+  // fix). Neutral/info, matching 'fa-preflight': nothing is wrong, the user
+  // just may not know high-precision sync is available to turn on.
+  'fa-gate-closed': { label: 'FA OFF', className: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be
@@ -144,6 +148,11 @@ function formatDetailLine(entry: SyncLogEntry): string | undefined {
     if (detail) parts.push(detail);
     if (fix) parts.push(fix);
     return parts.length > 0 ? parts.join(' — ') : undefined;
+  }
+  // WS2 Step 3 A5 — the gate-closed entry's action (`fixHint`); the summary
+  // already lives in `message`.
+  if (entry.type === 'fa-gate-closed') {
+    return entry.fixHint?.trim() || undefined;
   }
   return undefined;
 }

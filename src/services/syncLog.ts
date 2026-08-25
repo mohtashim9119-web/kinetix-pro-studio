@@ -480,6 +480,32 @@ export function buildFaPreflightEntry(
   );
 }
 
+/**
+ * THE FA GATE-CLOSED ENTRY (WS2 Step 3 A5, bug 2 visibility fix). Emitted
+ * once per Apply Sync when the project is FA-capable but the gate is closed
+ * (`FA_PROJECT_DEFAULT_ON` is false and the project hasn't opted in) — the
+ * case that previously produced no Sync Log signal at all, since `App.tsx`
+ * only ran the pre-flight/logged anything inside `if (faGateOpen)`. Purely
+ * informational: it names where to turn high-precision sync on and changes
+ * nothing about whether this run used it.
+ */
+export function buildFaGateClosedEntry(
+  syncRunId: string,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'fa-gate-closed',
+    'High-precision sync (forced alignment) is available but turned off for this project — this run used Whisper timing.',
+    {
+      owningRule: 'FA',
+      severity: 'info',
+      fixHint: 'Turn it on in Project Settings → Sync → High-Precision Auto-Sync.',
+    },
+    timestamp,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // THE ONE INDEX CONVENTION FOR RULE-CORRECTION ENTRIES (WS1 Session K, ruling
 // R-AO).

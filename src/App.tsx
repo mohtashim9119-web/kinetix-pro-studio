@@ -105,7 +105,7 @@ import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunk
 import { computeFaChunkPlan } from './services/faChunkPlan';
 import type { UnscriptedRun } from './services/faChunkPlan';
 import type { FaLanguageCode } from './services/faTextNormalize';
-import { isFaGateOpenForProject, isFaEnabledForProject, resolveFaLanguage } from './services/faGate';
+import { isFaGateOpenForProject, isFaEnabledForProject, isFaCapable, resolveFaLanguage } from './services/faGate';
 import { runForcedAlignmentForSync } from './services/forcedAlignmentRun';
 import { runFaPreflight } from './services/faPreflight';
 import {
@@ -164,6 +164,7 @@ import {
   buildSyncEngineEntry,
   buildFaFallbackEntry,
   buildFaPreflightEntry,
+  buildFaGateClosedEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -2958,6 +2959,13 @@ export default function App() {
       if (faGateOpen) {
         const preflight = await runFaPreflight(projectRef.current);
         ruleLogEntries.push(buildFaPreflightEntry(syncRunId, preflight, syncRunAt));
+      } else if (isFaCapable()) {
+        // WS2 Step 3 A5 (bug 2 visibility fix) — the gate being closed used to
+        // produce NO Sync Log signal at all (this whole block was skipped).
+        // FA_PROJECT_DEFAULT_ON stays false (WS1 Session H); this only makes
+        // the closed-gate state visible instead of silent. Skipped when not
+        // FA-capable (plain browser dev server) — there is nothing to turn on.
+        ruleLogEntries.push(buildFaGateClosedEntry(syncRunId, syncRunAt));
       }
       const faRun = faGateOpen
         ? await runForcedAlignmentForSync(

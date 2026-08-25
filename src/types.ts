@@ -581,7 +581,17 @@ export type SyncLogEntryType =
    *  first blocking cause (verbatim runtime/model detail) and `fixHint` the
    *  action. A gate-closed run emits no pre-flight entry at all — there is
    *  nothing to be ready for. */
-  | 'fa-preflight';
+  | 'fa-preflight'
+  /** 'fa-gate-closed' — WS2 Step 3 A5 (bug 2 visibility fix). Emitted ONCE per
+   *  Apply Sync when the FA gate is CLOSED (`isFaGateOpenForProject` false)
+   *  and the project is otherwise FA-capable (desktop runtime present) — i.e.
+   *  exactly the case that used to produce no signal at all, because
+   *  `App.tsx` only ran the pre-flight/logged anything `if (faGateOpen)`.
+   *  `FA_PROJECT_DEFAULT_ON` stays false; this is visibility only, not a
+   *  behavior change. severity:'info' — nothing is wrong, the user just may
+   *  not know the option exists. Never emitted when `isFaCapable()` is false
+   *  (plain browser dev server) — there is nothing to turn on there either. */
+  | 'fa-gate-closed';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */

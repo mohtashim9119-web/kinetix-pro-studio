@@ -75,6 +75,17 @@ satisfied or accepted in writing.
 * [COMPLETED] FA session-cache OOM fix — root-caused (build-then-drop ONNX session eviction),
   fixed (drop-then-build, `6a1b939`), guardrail added (`c295cb3`), real-app confirmed. No longer
   blocks Stage 1's live acceptance run. `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix`
+* [COMPLETED] WS2 bug 2 (FA never compiled/provisioned into the installer, closed gate silent) +
+  bug 4 (4.7 GB installer bloat, model must be placed by hand) — `build.yml` now compiles
+  `fa-inference` and provisions the onnxruntime dylib; whisper model acquisition moved in-app
+  (`model_download.rs`, `ModelDownloadPanel.tsx`), resumable/checksummed; closed-gate Sync Log
+  visibility added. Local build measured 135 MB `.app` / 47 MB `.dmg` (was 4.7 GB / 4.2 GB).
+  Design + verification: `sync-pipeline-v2-plan.md` Part AJ. Not yet on `main` (unpushed).
+* [OPEN] WS2 bug 1 — a low-confidence segment match's global-fallback rescue
+  (`whisperService.ts`) can anchor out of order vs. its neighbors, violating the gapless
+  partition at export; live-reproduced (`.work-phase4/session-ws2-01/`). Fix design only
+  (2 options, Option 1 recommended) written up, no code yet — needs an owner decision to
+  unfreeze `whisperService.ts`. `sync-pipeline-v2-plan.md` Part AJ §AJ.3.
 
 ### Open bugs
 

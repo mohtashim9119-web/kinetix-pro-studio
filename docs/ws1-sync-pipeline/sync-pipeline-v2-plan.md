@@ -10230,3 +10230,167 @@ No source file was changed to produce this audit — every finding above was est
 the code and grepping call graphs (`git status` confirms a clean tree), not by running a repro.
 `npm run lint` / `npm test` not re-run as part of this audit since no source changed; the next
 session that applies §AI.2's fix should run both as part of that change.
+
+## Part AJ — WS2 Step 3: Bugs 2+4 Fixed (FA Compiled + In-App Model Acquisition), Bug 1 Fix Design (No Code) (Operator-Directed, 2026-08-26, append-only)
+
+**Scope.** Continuation of `.work-phase4/session-ws2-01/WS2-audit-report.md`'s "WS2 Step 0-2"
+audit (bugs 2/4 = FA never compiled/provisioned into the installer + no in-app model acquisition;
+bug 1 = a rescue-ordering discontinuity that can violate the gapless partition at export). Phase A
+below fixed bugs 2 and 4; Phase B is bug 1's fix DESIGN only — `whisperService.ts` stays frozen
+this session, per the operator directive, so no code changed there.
+
+### AJ.1 — Bugs 2 + 4: what shipped
+
+- `.github/workflows/build.yml`: `-f fa-inference` added to both matrix targets' `tauri build`
+  invocation (chosen over a Cargo.toml `default` feature so a plain `cargo check`/`cargo test` and
+  the `fa-ort-matrix.yml` feature-off cell stay feature-off); a new step provisions
+  `libonnxruntime.1.23.2.dylib` on the macOS runner via the exact recipe already documented in
+  `src-tauri/onnxruntime/README.md`, with a `sha256` gate; the `ggml-base.en.bin` download (dead
+  weight — unreferenced since Phase 2a) is deleted on both runners; a new guard step fails the
+  build if `src-tauri/models/*.bin` is non-empty at bundle time.
+- `src-tauri/tauri.conf.json`: `resources` no longer globs `models/*` — the whisper model is never
+  bundled at all now (was the source of the reported 4.7 GB `.app`).
+- `src-tauri/src/whisper.rs`'s `model_path` checks `app_local_data_dir()/models/<MODEL_FILENAME>`
+  FIRST, ahead of every existing resource_dir/exe-dir fallback (all kept, for a hand-placed dev
+  file or a build predating this change).
+- New `src-tauri/src/model_download.rs`: `whisper_model_status` / `whisper_model_download` /
+  `whisper_model_download_cancel` commands — streamed download into a `.part` file, HTTP Range
+  resume, SHA-256 verification (reusing the crate's existing hand-rolled `sha256` module — no new
+  dependency) before an atomic rename, cancellable via an `Arc<AtomicBool>` flag mirroring
+  `WhisperState`'s shape. URL/size/hash are hardcoded constants cross-checked 2026-08-26: a local
+  copy's measured SHA-256 (`1fc70f77...e2bc69`) matched the Hugging Face API's `lfs.oid` for
+  `ggml-large-v3-turbo.bin` exactly, and the size (1,624,555,275 bytes) matched too.
+- New `src/components/ModelDownloadPanel.tsx` + `src/services/modelDownload.ts`: progress,
+  throughput, cancel, resume, retry-on-checksum-failure UI. Reachable manually from Project
+  Settings → Sync → "Manage sync model", and automatically — `TranscriptionBar.tsx` now detects a
+  model-not-found `whisper_transcribe` error (`isModelMissingError`) and offers a "Download Model"
+  action inline.
+- FA per-language `.onnx` models (`fa.rs:431-481`, `fa_model_candidate_paths`): **NOT
+  DETERMINED** — no canonical download source exists anywhere in the repo (`fa.rs:421-423`'s own
+  comment: "the on-demand downloader (Step T) is a separate, later task"). Per the operator
+  directive's instruction for this case, no downloader was built for these; the existing
+  manual-placement error message (`fa.rs`'s `no_model_found_error`, naming both candidate paths and
+  language code) already IS the guided manual-placement flow the directive asked for, and was left
+  as the only path — a fabricated URL here would be worse than the honest gap.
+- macOS arm64 (`fa_onnx.rs:319`'s hard gate): left unchanged — cannot be validated on this Intel
+  dev machine, and the directive is explicit that an unvalidated arch expansion must not ship. The
+  gate's existing error text ("no bundled onnxruntime C runtime for this target... Only macOS
+  x86_64 is bundled today") already flows through `fa_preflight.rs` → `faPreflight.ts` →
+  `buildFaPreflightEntry` into the Sync Log as a stated limitation whenever the gate is open on
+  arm64 — confirmed by reading `runFaPreflight`'s `runtimeDetail` plumbing; no code change was
+  needed to satisfy the "state it explicitly, don't half-implement it" instruction. Windows gets
+  the identical treatment (same gate, same message path) — no Windows ORT work this session, as
+  directed.
+- Bug 2's second layer (a closed gate producing no Sync Log signal at all): closed by a new
+  `'fa-gate-closed'` entry type, emitted from `App.tsx`'s sync flow in the `else` branch of
+  `if (faGateOpen)` when `isFaCapable()` — info severity, names where to turn the gate on.
+  `FA_PROJECT_DEFAULT_ON` is untouched (still `false`, WS1 Session H ruling stands) — this is
+  visibility only.
+
+Verification (measured): `npx tsc --noEmit` clean; `npx vitest run src scripts` — 4955 passed, 207
+test files passed, 0 failures outside a pre-existing, unrelated stray worktree
+(`.claude/worktrees/elated-haibt-ab90e1/`, a leftover checkout from an earlier session missing its
+own private replay corpora — confirmed by `git worktree list`, not part of this change);
+`gaplessInvariant.test.ts` 72/72 in isolation. `cargo test` (no feature) and
+`cargo check --features fa-inference` both clean; `cargo test` (default features) 141/141. The new
+onnxruntime CI step's exact shell commands were reproduced locally in a scratch dir — sha256
+matched. A real local `tauri build --target x86_64-apple-darwin -f fa-inference` was run to confirm
+bundle contents/size (see the commit-time report for its result — this doc doesn't duplicate a
+number that can go stale if that build is re-run later). NOT verified: the Windows leg, and the
+`universal-apple-darwin` arm64 slice (this dev machine has no `whisper-aarch64-apple-darwin`
+sidecar built) — both require the actual CI runners.
+
+### AJ.2 — Bug 1: root cause (recap, not re-derived — full mechanism in the WS2 audit report)
+
+`whisperService.ts`'s per-segment rescue (`extractSegmentAlignments`) already carries a
+**forward** ordering bound (`computeForwardBoundStartSec`, lines ~857-875): a rescue claim for
+segment `si` must land strictly before the first token any LATER segment with a genuine global
+match actually claimed. Reading that function during this session's diagnosis: it is
+**one-directional**. Nothing bounds a rescue claim from BELOW — there is no check that the claim
+also lands at or after wherever the nearest EARLIER segment's own true match (or accepted rescue)
+put it. The live repro (WS2 audit, reproduced against the teammate's real 1770.78s input with one
+scene tag removed) shows exactly that failure shape: segment 318, ~87% of the way through the
+timeline (its neighbor segment 312 ends at 1501.240s), got a "global fallback" rescue claim
+anchored at 544.400s — a claim from far in its own past, which the existing bound never catches
+because that bound only ever looks forward.
+
+### AJ.3 — Phase B: two fix-design options
+
+**Option 1 — extend the existing bound inside `whisperService.ts` (frozen; needs an explicit
+unfreeze decision).**
+
+- *Insertion point:* immediately alongside `computeForwardBoundStartSec` (`whisperService.ts`,
+  same block, ~line 869), a new `computeBackwardBoundStartSec(si)` mirroring its shape but scanning
+  `sj` from `si - 1` down to `0`, returning the LAST token time the nearest EARLIER segment with a
+  true global match or an already-adopted rescue claimed. The rescue-adoption loop (`for (let si =
+  0; si < segments.length; si++)`, ~line 905) already processes segments in order and already
+  tracks `results[si-1]` (`prevAnchor`), so the same in-order dependency the forward bound
+  documents as safe ("Rescues are resolved in segment order... consulting a later segment's
+  not-yet-computed rescue result would be order-dependent") applies here too, but in the *helpful*
+  direction: an earlier segment's rescue outcome IS already computed by the time `si` is reached, so
+  the backward bound can safely use `results[sj].t0`/`t1` rather than being restricted to the
+  frozen global pass the forward bound uses.
+- *Predicate, in precise terms:* a rescue claim for `si` (any of the three `recoveredVia` kinds —
+  windowed/global/concat share one adoption site) is valid only if
+  `earliestClaimStartSec(candidateGlobalIdxs) >= backwardBoundEndSec` AND the existing
+  `< forwardBoundStartSec` check — i.e. the claim must sit strictly between whatever the nearest
+  resolved earlier segment ends at and whatever the nearest true-matched later segment begins at.
+  This is the direct two-sided form of CLAUDE.md's standing invariant ("its earliest claimed token
+  must sit before the first token any later segment truly matched" — order, not distance) with the
+  symmetric earlier-side clause the invariant's own wording already implies but the shipped code
+  never encoded.
+- *Rejected-rescue disposition:* same as an already-rejected forward-bound claim today — the
+  segment falls through to `matched: false`, `recoveredVia: null`, and keeps whatever anchor-
+  estimate timing it had before the rescue was attempted (never left unmatched/dropped — the
+  existing skip/zero-match classification path already handles this uniformly).
+- *Blast radius:* every rescue site the corpora exercise is a call into the SAME adoption loop, so
+  this is a single guarded insertion, not three separate ones. Prove no regression by re-running the
+  golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`, v6/173/spanish) — but per
+  CLAUDE.md's §4 Testing invariant, golden replay's reach stops at `snapCoveredBoundaries` and
+  **does exercise this rescue path** (it is upstream of FA, inside the base alignment stage), so a
+  green 3/3 here is real evidence, unlike a rule-stage (R.5/R.10-15) change. Additionally re-run the
+  WS2 live repro (the modified `sync_file_modified_repro.txt` already in
+  `.work-phase4/session-ws2-01/`) and confirm `checkTimelineIsGapless` now reports zero violations
+  on it.
+
+**Option 2 — a post-hoc ordering validator, downstream of the rescue, upstream of the single
+atomic commit (`App.tsx:3525-3550`).**
+
+- *Insertion point:* a new pure function (e.g. `syncEngine.ts` or a new small module — outside the
+  freeze list) called from `handleApplySyncFromFiles` between wherever `RescuedSegmentRecord[]` is
+  available (the same data `buildRescueLogEntries`, ~`App.tsx:1378`, already consumes) and the
+  `setProject` call at `App.tsx:3525-3550`. It receives the about-to-be-committed segment array plus
+  the rescue records and re-validates.
+- *Predicate:* identical two-sided ordering test as Option 1, but expressed over the COMMITTED
+  array's own `startTime`s (post `snapCoveredBoundaries`) rather than raw token indices — a rescued
+  segment's committed `startTime` must fall strictly between its immediate committed neighbors'
+  `startTime + duration` (previous) and `startTime` (next). This is weaker/later evidence than
+  Option 1's token-index check (CLAUDE.md: "timestamps may measure distance; they must never decide
+  identity" — but here identity was already decided upstream by the rescue itself; this validator
+  only checks the CONSEQUENCE, i.e. did the already-identified rescue produce a partition-consistent
+  result, which is a distance/ordering question about a fixed, already-resolved array, not an
+  identity question).
+- *Rejected-rescue disposition:* cannot silently re-run the rescue (no token-level context left at
+  this stage) — the only safe option is to demote the flagged segment back to its pre-rescue
+  anchor-estimate timing (mirroring `snapCoveredBoundaries`'s existing "uncovered" path) and emit a
+  new Sync Log entry naming which segment was demoted and why, so the user isn't handed a silent
+  re-placement.
+- *Blast radius:* zero token-index risk (pure array validation, easy to unit test in isolation with
+  hand-built fixtures — no live corpus needed to exercise most cases) — but it is a SEPARATE code
+  path from the rescue itself, so a future change to the rescue's adoption logic could silently drift
+  out of sync with this validator's assumptions in a way Option 1 (same function, same loop) cannot.
+  Prove no regression the same way as Option 1 (golden replay 3/3 + WS2 live repro), plus new unit
+  tests directly on the validator with a hand-built out-of-order fixture (cheaper to write and
+  maintain than Option 1's, since it needs no real Whisper tokens).
+
+**Recommendation (under 150 words):** Option 1. The forward bound it extends already lives at
+exactly this decision point, already has the in-order dependency Option 1 needs, and already
+carries the design rationale (order-not-distance, per-kind uniformity) this fix must match — Option
+2 duplicates that predicate one layer downstream, over derived timestamps, in a codebase whose own
+standing invariant (CLAUDE.md §4) warns against timestamp-based identity decisions exactly because
+they drift from the token-index truth. Option 1's cost is real (an explicit unfreeze of
+`whisperService.ts`), but the alternative is a second, weaker copy of the same rule that can rot out
+of sync with the first. Unfreeze `whisperService.ts` for this one function; keep Option 2 as a
+fallback only if the unfreeze is refused.
+
+No code was written for bug 1 this session, per the operator directive.
