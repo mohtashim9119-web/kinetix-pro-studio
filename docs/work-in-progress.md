@@ -1,22 +1,17 @@
 # Work In Progress
 
 > **Purpose:** the active task ledger — one line per task, no narrative. **Line cap: 250.**
-> Chosen because, post-cleanup, live WS1 content is a short list of standing constraints and
-> open roadmap items, not a second history file — 250 gives headroom for a few more workstreams
-> without inviting narrative back in. When the cap is hit, move finished work to
-> `docs/history-2.md` (companion to `docs/history.md`, same append-only rule: never edited
-> mid-workstream, only appended to) and re-measure.
->
-> WS1's full session-by-session history (Sessions A through AN, the component/measurement
-> ledger, and the Changelog) moved to `docs/history-2.md` on 2026-08-25. This file tracks WS1's
-> current phase status (Finished / In progress / Open bugs / Not started) plus the constraints
-> that still bind it — full session detail lives in `docs/history-2.md`.
+> Full history: `docs/history-2.md` (append-only). Standing reference material (frozen rulings,
+> dead ends, not-yet-built specs): `sync-pipeline-v2-plan.md` Part AK. Overflow: move finished
+> work to `docs/history-2.md`, reference material to the plan doc, then re-measure. Original
+> header text: `sync-pipeline-v2-plan.md` Part AK.4.
 
 ---
 
-> ⚠ **SINGLE-TRACKER RULE:** No additional tracking or status files may be created for
-> Workstream 1. All task progress, open decisions, and roadmap steps must be recorded directly
-> in this file or appended to `sync-pipeline-v2-plan.md`.
+> ⚠ **SINGLE-TRACKER RULE (covers every workstream):** No additional tracking or status files
+> may be created for WS1, WS2, or any future workstream. All task progress, open decisions, and
+> roadmap steps go directly in this file — each workstream under its own top-level section — or
+> get appended to `sync-pipeline-v2-plan.md`.
 
 ---
 
@@ -35,6 +30,7 @@ Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met (
 - **Phase 3d** — skipped per its own trigger (−45dB threshold not binding, 2026-08-05); dormant as of the 2026-08-25 freeze.
 - **Sessions A–AN** — Phase 3's forced-alignment research arc (2026-08-15–24): rulings, rules R.5/R.10–R.15, Zero-Defect Register triage; chunk-edge research now frozen under the accuracy-bar ruling below.
 - **Mover-audit dossier** — owner-scored 22/24 (Session K, 2026-08-18), both failures fixed via R.13; scored result recorded in `docs/history-2.md`, not the on-disk dossier file.
+- **FA session-cache OOM fix** — root-caused (build-then-drop ONNX session eviction), fixed (drop-then-build, `6a1b939`), guardrail added (`c295cb3`), real-app confirmed. `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix`
 
 ### In progress
 
@@ -70,102 +66,50 @@ satisfied or accepted in writing.
   correct by code reading).
 - [ ] Wire `FaEvent` to a UI progress consumer (no hook/component consumes it yet).
 
-**Other active work (not part of Stage 1 lock)**
-
-* [COMPLETED] FA session-cache OOM fix — root-caused (build-then-drop ONNX session eviction),
-  fixed (drop-then-build, `6a1b939`), guardrail added (`c295cb3`), real-app confirmed. No longer
-  blocks Stage 1's live acceptance run. `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix`
-* [COMPLETED] WS2 bug 1 — rescued-segment anchor ordering; fixed via a trusted spine. CODE FIX,
-  MACHINE-VERIFIED (13/13+3/3 regression tests, golden replay byte-identical, gapless 36/36).
-  `2ae4d18`+`1e5deb7`, on `origin/main`. `docs/history-2.md#2026-08-26--2ae4d18--2ae4d18-ws2-bug1-trusted-spine`
-* [COMPLETED] WS2 bug 2 — FA silently unavailable/silent-gate in desktop builds. CODE FIX,
-  MACHINE-VERIFIED at build level; OPERATOR-ATTESTED on a 2026-08-26 local run, but that run
-  didn't exercise FA (default OFF) — the FA-runs claim stays unconfirmed. CI-installer
-  verification (arm64/Windows) NOT DETERMINED. `main`, `d8baef5`.
-  `docs/history-2.md#2026-08-26--d8baef5--d8baef5-ws2-bug2-fa-compiled-into-installer`
-* [COMPLETED] WS2 bug 4 — 4.7 GB installer bloat, model placed by hand. CODE FIX,
-  MACHINE-VERIFIED (135 MB `.app`/47 MB `.dmg`), plus a prior OPERATOR-ATTESTED live
-  download/cancel/resume verification (`8c6e4e8`) — today's Step 8 run didn't re-exercise it.
-  CI-installer verification NOT DETERMINED. `main`, `8c6e4e8`.
-  `docs/history-2.md#2026-08-26--8c6e4e8--8c6e4e8-ws2-bug4-in-app-model-download`
-* [OPEN] WS2 bug 3 — an externally-exported video imports and shows in the timeline but never
-  advances in preview; the same asset exports and plays correctly. NO CODE FIX EXISTS — DID NOT
-  REPRODUCE on a HEAD build (operator ran import/preview/export 2026-08-26, all worked; the
-  original report was 8 commits stale). Established as fact: elst ruled out by box inspection;
-  all 10 assets are uniformly H.264 High@4.2, 1920x1080, yuv420p, bt709, 120fps CFR, no audio,
-  5.0s; a code-level decode-ahead buffer overflow was reproduced in `videoDecoderPool.ts` (same
-  mechanism as the 120fps lag item below). Diagnosis: `docs/ws2-video-ingest/bug3-diagnosis.md`.
-* [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect:
-  `videoDecoderPool.ts`'s 90-frame decode-ahead cap is sized against a ~1.5s window tuned for
-  24-30fps; at 120fps the first batch needs ~180 frames, overflows, and the excess is dropped
-  PERMANENTLY (feed cursor already advanced past it). Candidates: backpressure vs. fps-
-  proportional sizing; any bound must be in BYTES not frame count (preserves the prior
-  4.0→2.8 GB / 1300→137 MB spike-memory work). Preview only — export is unaffected.
-* [OPEN] CI-installer verification of WS2 bugs 2 and 4 — `build.yml` is on `origin/main`; needs
-  only a workflow run, no code.
-
 ### Open bugs
 
-Audited 2026-08-25 against current `main` — full mechanism/fix-design detail for every surviving
-row: `sync-pipeline-v2-plan.md` Part AI. Two rows closed that day (chunk-plan non-determinism,
-OOM crash — see `docs/history-2.md` and "Other active work" above respectively).
+Audited 2026-08-25 against `main` — full mechanism/fix-design detail for every row: Part AI. Two
+rows closed that day (chunk-plan non-determinism, OOM crash — `docs/history-2.md` / "Finished").
 
-* [OPEN] `boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead of 5 —
-  (`src/services/snapBoundaries.ts:381-382`; the correct 5-arg call exists at `:744-745`) —
-  defaults the seam exemption off, so every boundary-quality reading on a seam-exempted pair has
-  been wrong since it shipped. Slated for Phase 7; no one currently on it. Fix design (2-line,
-  internal-only, no signature change): Part AI §2. **Defers** — diagnostic-only, never touches
-  committed segment timing.
-* [OPEN] 5 open Zero-Defect Register rows — boundary-placement defects, ear-verified wrong, with no
-  rule that fixes them yet: `214_solitary_fire`, `231_slowing_pace`, `447_scout_facing_dark`,
-  `173/lethal_nature_hazard`, `173/gadget_decay` (live list:
+**Tag vocabulary (file-wide):** `[OPEN]` = unresolved, no fix built. `[IN-PROGRESS]` = actively
+worked. `[DEFERRED]` = real defect, work explicitly paused by an operator decision.
+`[OPEN · NON-BLOCKING]` = real, confirmed-open defect that doesn't block the Stage 1 lock gate —
+NOT "accepted" or "not a bug"; see Part AI's sequencing table for why. `[CLAIM-UNVERIFIED]` = not
+a code defect — an operational task/claim not yet confirmed by direct evidence.
+
+* [OPEN · NON-BLOCKING] `boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead
+  of 5 — (`src/services/snapBoundaries.ts:381-382`; the correct 5-arg call exists at `:744-745`)
+  — defaults the seam exemption off, so every boundary-quality reading on a seam-exempted pair
+  has been wrong since it shipped. Slated for Phase 7; no one currently on it. Fix design
+  (2-line, internal-only, no signature change): Part AI §2. Non-blocking because diagnostic-only
+  — never touches committed segment timing.
+* [OPEN · NON-BLOCKING] 5 open Zero-Defect Register rows — boundary-placement defects,
+  ear-verified wrong, with no rule that fixes them yet: `214_solitary_fire`, `231_slowing_pace`,
+  `447_scout_facing_dark`, `173/lethal_nature_hazard`, `173/gadget_decay` (live list:
   `scripts/ws1-session-ak-step1-gate.ts:59`'s `OPEN_DEFECTS`, matching the AJ-0 oracle's
   `openDefect` rows). `400_endless_dark` is closed at 1266.75, ear-verified by the `full-pass-aj0`
   sitting (`scripts/ws1-ear-pass-ledger.ts:907`). Accepted as residual defects under the accuracy
   bar rather than pursued further; no owner. Audit: Part AI §4 — no fixable design slot without
   contradicting the accuracy-bar ruling; the permanent path is the already-planned Pillar 2
-  detector. **Defers** — already accepted in writing under that ruling.
-* [OPEN] Alignment cost has no enforced bound for real inputs — (Contract A4; `__ALIGN_INSTRUMENT__`
-  dormant) — an unbounded input can hang the UI behind the loading overlay with no error
-  surfaced. No owner; disposition deferred to Stage 2 lock. Needs a cost-vs-input-size measurement
-  before a fix can be designed: Part AI §5. **Defers** — the live run's 3 corpora are already
-  known-safe sizes.
-* [OPEN] React "Maximum update depth exceeded" render loop — surfaced during the 2026-08-25
-  real-app V8 corpus run (`npm run tauri:dev:fa`, see `sync-pipeline-v2-plan.md`'s AI.1 Addendum).
-  Not yet isolated to a specific effect: `src/hooks/usePlayback.ts:80-94`'s rAF tick already
-  carries a delta guard for this exact failure mode (QB2 fix), so this is a distinct, unlocated
-  trigger elsewhere in the render tree, not a QB2 regression. No owner. **Defers** — not a Stage 1
-  blocker; neither the OOM fix nor the live acceptance run touches this path.
+  detector. Non-blocking because already accepted in writing under that ruling.
+* [OPEN · NON-BLOCKING] Alignment cost has no enforced bound for real inputs — (Contract A4;
+  `__ALIGN_INSTRUMENT__` dormant) — an unbounded input can hang the UI behind the loading overlay
+  with no error surfaced. No owner; disposition deferred to Stage 2 lock. Needs a cost-vs-input-
+  size measurement before a fix can be designed: Part AI §5. Non-blocking because the live run's
+  3 corpora are already known-safe sizes.
+* [OPEN · NON-BLOCKING] React "Maximum update depth exceeded" render loop — surfaced during the
+  2026-08-25 real-app V8 corpus run (`npm run tauri:dev:fa`, see `sync-pipeline-v2-plan.md`'s
+  AI.1 Addendum). Not yet isolated to a specific effect: `src/hooks/usePlayback.ts:80-94`'s rAF
+  tick already carries a delta guard for this exact failure mode (QB2 fix), so this is a
+  distinct, unlocated trigger elsewhere in the render tree, not a QB2 regression. No owner.
+  Non-blocking because neither the OOM fix nor the live acceptance run touches this path.
 
 ### Not started
 
-- **Pillar 2 passive detector** (`src/services/faDefectDetector.ts`) — a read-only
-  post-processor that flags suspect boundaries; it never moves a timestamp itself. Spec (4
-  rules, recorded here so they don't need re-deriving):
-  1. Boundary-to-anchor drift — flag if the cut sits more than 100ms from a reliable
-     three-source-agreement anchor.
-  2. Cut-on-speech — flag if speech energy is present at the cut line.
-  3. Cross-segment token overflow — flag if word timestamps cross the cut between adjacent
-     segments.
-  4. Edge confidence drop — flag if alignment confidence on boundary-adjacent words falls
-     sharply against the segment median.
-
-  Measurable against the AJ-0 oracle's labelled boundaries (`scripts/fixtures/session-aj0-oracle-
-  {v6,173,spanish}.json`, `openDefect`/`earTarget` fields) with no listening required, and must
-  clear ruling R-AS's precision bar (`MIN_IMPLIED_PRECISION = 0.50`,
-  `scripts/ws1-session-ak-step1-gate.ts:124`) before any repair built on it ships.
-- **Sync log revamp** — strip developer telemetry from the sync log UI; replace with six
-  collapsible groups, in this order:
-  1. Skipped segments (no audio match) — audio with missing transcription, or text that never
-     matched.
-  2. Unscripted audio assigned — speech detected that isn't in the script.
-  3. Missing assets — script segments with no audio attached.
-  4. System info — engine status (e.g. FA on, sync succeeded, 444 of 447 segments clean).
-  5. Cuts landed on speech — boundaries that need a small silence adjustment.
-  6. Shifted words / low confidence — flagged directly by the Pillar 2 detector, for one-click
-     review in the UI. The important one.
-
-  Depends on the Pillar 2 detector existing first — Group 6 renders the detector's output.
+- **Pillar 2 passive detector** — read-only boundary-quality post-processor, 4 rules, gated on
+  R-AS's precision bar (`MIN_IMPLIED_PRECISION = 0.50`). Full spec: `sync-pipeline-v2-plan.md` Part AK.2.
+- **Sync log revamp** — 6 collapsible groups replacing dev telemetry; Group 6 depends on Pillar 2's
+  output. Full spec: `sync-pipeline-v2-plan.md` Part AK.3.
 - **Phase 4** (Stage 2 — Align & Select) — restructure the pipeline into the four formal
   stages: Stage 2's return type becomes timing-free, Stage 1's output bundles into one object,
   `distributeSegmentTimes`/`applyAnchorBasedTiming` collapse into Stage 3. Structural only,
@@ -182,69 +126,75 @@ OOM crash — see `docs/history-2.md` and "Other active work" above respectively
   hints for every clamp/floor/fallback/degenerate-boundary/estimated-timing decision; fix the
   `boundaryUsedFallback` argument-count bug (see Open bugs).
 - **Bounded-memory options for the residual OOM footprint** — a capped `FaModelCache` session
-  cache, or process isolation per sync. Unbuilt.
+  cache, or process isolation per sync. Unbuilt. **Flag for owner review:** `sync-pipeline-v2-plan.md`'s
+  AI.1 Addendum says the shipped drop-then-build fix already "produces a bounded profile" and this
+  option "was therefore not built" — may be superseded, not merely unbuilt; kept, not removed
+  unilaterally, pending an explicit owner call.
 
 Sequencing: Stage 1 lock → Phase 4 → Stage 2 lock → Phase 5 → Phase 6 → Phase 6b → Stage 3 lock
 → Phase 7 → Stage 4 lock.
 
 ### Standing constraints
 
-- **The oracle** — `scripts/fixtures/session-aj0-oracle-{v6,173,spanish}.json`, the operator's
-  own ear-verified live-app saves (no boundary ever manually dragged), 647 boundaries total (v6
-  447, 173 173, spanish 27), 5 labelled `openDefect` rows (v6 3, 173 2; spanish 0) carrying the
-  ear-correct `earTarget`. Enforced (structural invariants only — segment count, tag order; not a
-  per-boundary gate) by `scripts/ws1-session-aj0-oracle-diff.test.ts`. Also usable as a
-  no-listening precision evaluation set (see Pillar 2 spec, Not started).
-- **Golden replay does not observe the FA chunk plan or any rule stage** — it stops at
-  `snapCoveredBoundaries`/`headExtendFirstSegment` and imports neither `faChunkPlan.ts` nor
-  `faAnchorTrustGate.ts`. Measured: it stayed 6/6 while arm D moved 366 v6 boundaries (363
-  regressed) in the same session (`sync-pipeline-v2-plan.md`'s Part AF).
-- **`152_frozen_brush_mice`, `iron_bounce`, `logic_clash`** are RULE-DEPENDENT (R.14, R.15, R.15
-  respectively, `src/services/faAnchorTrustGate.ts`) — closed only because the rule fires;
-  deleting R.14/R.15 reopens them (`scripts/ws1-session-ah-step1-rowstatus.test.ts:14-19`).
-- **Do not re-investigate (dead ends, cont'd):** S1/`foldPhantomTails` — deleted outright after
-  scoring REGRESSION on 18 of 18 operator ear verdicts (Session AH); the phantom-tail existence
-  detector it was built on — ~7.1% precision (183/277 v6 chunks fire, ~13 real defects); global
-  S2 — rejected on 0.62% implied R-AS precision (36 ear-verified control regressions, up to
-  -27.7s v6 drift).
-- **`S1_KNOWN_BAD_MOVES`** (`scripts/ws1-ear-pass-ledger.ts:1011`, 19 values) — S1's full
-  collateral set, all operator-rejected; the project's negative ground truth for detector
-  validation, and a hard-fail if any future chunk-edge arm reproduces one.
-- **Spanish corpus acceptance has silently lapsed, unresolved** — accepted in writing unlistened
-  at Stage 1's lock-gate entry, with a reopening trigger voided "the moment any Spanish-specific
-  normalization/alignment code ships"; Phase 3b shipped Spanish cardinals on 2026-08-15, which
-  satisfies that trigger's literal text, but no session has ruled on whether it actually reopens
-  the acceptance. Flagged for the owner (`sync-pipeline-v2-plan.md:7918-7925`).
-- **Arms F/G/H** (`src/services/faChunkPlan.ts`'s `computeFaChunkPlanS2EdgeArm`,
-  `S2EdgePlacement` kinds `'anchor'`/`'attested'`/`'anchor-widened'`) are diagnostic-only with no
-  production caller — every call site is an env-gated Session AM/AN measurement test. Arm G
-  consumes ground truth directly (`attestedStartBySegIdx`, sourced only from the oracle fixture
-  in `ws1-session-am-step4-armg.test.ts`) and is unreachable from `src/` by construction, not
-  convention — the field has no default and nothing under `src/` reads the oracle fixture.
-- **Stage/Phase terminology:** Stage 1 = Prepare (phases 1b, 2a, 2b, 3, 3b, 3c, 3d); Stage 2 =
-  Align & Select (phase 4); Stage 3 = Place (phases 5, 6, 6b); Stage 4 = Finalize & Report
-  (phase 7). Task 5 = Phase 3, inside Stage 1.
-- **Stage lock status:** 0 of 4 stage locks passed.
-- **`textNormalize.ts`/`canonicalize` must never change** — frozen English alignment baseline;
-  non-English work goes through the separate `faTextNormalize.ts` path instead.
-- **fr/de/pt real narration-audio corpus does not exist** — only synthetic fleurs-audio engine-
-  parity fixtures do. Accepted in writing (H.8 dormant-rules allowance); reopens only if
-  fr/de/pt-specific code ships.
-- **R.3/R.8/R.9** (clamp reference point, cascade-safety argument, case-by-case prevention
-  table — Step R's production windowing design): drafted, never built. Not required for Stage 1
-  lock — the STAGE 1 LOCK GATE criteria list never names them (only R.5/R.10 were added as
-  blocking criteria, by owner ruling). Candidate backlog for Phase 5.
+* [OPEN] Spanish corpus acceptance lapse — **UNRESOLVED OWNER DECISION**, drifting since
+  2026-08-15: the acceptance's reopening trigger ("voids the moment Spanish-specific
+  normalization/alignment code ships") was satisfied in literal text by Phase 3b's Spanish
+  cardinals (2026-08-15); no session has ruled whether it actually reopens the acceptance. 3
+  options + costs: `sync-pipeline-v2-plan.md` Part AK.1 / AI §AI.8. **Flagged — needs a ruling.**
 - **FA default toggle** (`Project.faHighPrecisionSync` / `FA_PROJECT_DEFAULT_ON`): currently
   **OFF**, pending the live acceptance run (see In progress checklist).
-- **Contract 1→2 compliance:** 6 of 8 requirements met. P4 (silence assertion) and P8 (bundled
-  Stage-1 output object) are satisfied by Phase 4, not before.
-- **Do not re-investigate** (all confirmed dead ends): DTW (confirmed dead twice); `--vad`
-  (needs an unbundled model); the curr-side seam-exemption variant (disabled); FENCE/QUIET
-  word-shift fixes (both failed); the "246 PICK-WRONG" figure (debunked — overcounts by ≥45,
-  only 11 ear-verified cases are trustworthy).
-- **Boundary-quality watcher:** do not reintroduce as previously built — the prior attempt was
-  reverted for a safety-bound failure, a React render loop, and an uncalibrated formula.
+- **Stage lock status:** 0 of 4 stage locks passed.
+
+Full standing-constraints list (oracle, golden replay scope, rule-dependent closures, dead-end
+register, `S1_KNOWN_BAD_MOVES`, arms F/G/H, terminology glossary, frozen-file list, Contract 1→2
+compliance, R.3/R.8/R.9 backlog): relocated verbatim to `sync-pipeline-v2-plan.md` Part AK.1.
 
 ---
 
-*Full WS1 history: `docs/history-2.md`.*
+## WS2 — Video Ingest & Distribution Bugs
+Started: 2026-08-26 (Step 3) | Status: 3 of 4 bugs closed (1/2/4 code-fixed, machine-verified;
+3 closed did-not-reproduce, no code fix). CI-installer verification + 120fps decode lag remain open.
+
+### Finished
+
+*One-liners only — full detail for every item below: `docs/history-2.md`.*
+
+- **WS2 bug 1** — rescued-segment anchor ordering; fixed via a trusted spine. `2ae4d18`+`1e5deb7`,
+  on `origin/main`. `docs/history-2.md#2026-08-26--2ae4d18--2ae4d18-ws2-bug1-trusted-spine`
+- **WS2 bug 2** — FA silently unavailable/silent gate in desktop builds; compiled in + Sync Log
+  signal added. `main`, `d8baef5`.
+  `docs/history-2.md#2026-08-26--d8baef5--d8baef5-ws2-bug2-fa-compiled-into-installer`
+- **WS2 bug 4** — 4.7 GB installer bloat, model placed by hand; in-app resumable/checksummed
+  download. `main`, `8c6e4e8`.
+  `docs/history-2.md#2026-08-26--8c6e4e8--8c6e4e8-ws2-bug4-in-app-model-download`
+- **WS2 bug 3** — closed as DID-NOT-REPRODUCE on a HEAD build; no code fix exists.
+  `docs/history-2.md#2026-08-26--no-fix--ws2-bug3-closed-did-not-reproduce`
+
+### Open bugs
+
+Tag definitions: WS1's "Open bugs" section above (file-wide vocabulary).
+* [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect found
+  while diagnosing bug 3, not itself closed by bug 3's non-repro: `videoDecoderPool.ts`'s
+  90-frame decode-ahead cap (`MAX_BUFFERED_FRAMES_PER_SESSION`) is sized against a fixed ~1.5s
+  window (`WINDOW_AHEAD_SEC`) tuned for 24-30fps content; at 120fps the first decode-ahead batch
+  needs ~180 frames, overflows the cap, and the excess is dropped PERMANENTLY (`feedCursor` has
+  already advanced past those chunks, so they're never re-fed). Reproduced against the real,
+  unmodified `videoDecoderPool.ts` with the asset's actual measured profile (mock-`VideoDecoder`
+  harness); never confirmed on-screen in a live app (blocked twice — no UI driver reachable, then
+  `request_access` denied). Candidate directions: backpressure vs. fps-proportional sizing; any
+  bound must be in BYTES not frame count (preserves the prior 4.0→2.8 GB / 1300→137 MB
+  spike-memory work). Preview only — export uses a separate, non-windowed sequential decoder
+  (`sequentialDecode.ts`) and is unaffected. Full diagnosis: `docs/ws2-video-ingest/bug3-diagnosis.md`.
+
+### Operational / verification tasks (not code defects)
+
+* [CLAIM-UNVERIFIED] CI-installer verification of WS2 bugs 2+4, plus confirmation FA actually runs
+  end-to-end — neither proven on a CI-built artifact; `build.yml` carries both fixes on
+  `origin/main` but arm64/Windows have never been built (CI or local — Intel dev machine only).
+  Separately: FA has never been observed RUNNING in a desktop build — the 2026-08-26 operator run
+  had `FA_PROJECT_DEFAULT_ON` OFF by ruling, so it never invoked FA. Action: run `build.yml` on
+  both matrix targets, then a project with the FA gate manually flipped ON, and confirm FA executes.
+
+---
+
+*Full history: `docs/history-2.md`. Standing reference material: `sync-pipeline-v2-plan.md` Part AK.*

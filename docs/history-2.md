@@ -84,6 +84,7 @@
 - [WS2 bug 1 — trusted-spine rescue ordering](#2026-08-26--2ae4d18--2ae4d18-ws2-bug1-trusted-spine) — 2026-08-26
 - [WS2 bug 2 — FA compiled into the installer](#2026-08-26--d8baef5--d8baef5-ws2-bug2-fa-compiled-into-installer) — 2026-08-26
 - [WS2 bug 4 — in-app model acquisition](#2026-08-26--8c6e4e8--8c6e4e8-ws2-bug4-in-app-model-download) — 2026-08-26
+- [WS2 bug 3 — closed, did not reproduce](#2026-08-26--no-fix--ws2-bug3-closed-did-not-reproduce) — 2026-08-26
 
 ---
 
@@ -747,4 +748,41 @@ bytes). FA's own per-language `.onnx` models still have no downloader (NOT DETER
 canonical download source exists in the repo); the existing manual-placement error message is
 the accepted interim path, left unchanged by design. Design + full verification narrative:
 `sync-pipeline-v2-plan.md` Part AJ (AJ.1).
+Superseded-by: none
+
+### 2026-08-26 · no-fix · ws2-bug3-closed-did-not-reproduce
+Outcome: WS2 bug 3 (an externally-exported video imports and shows in the timeline but never
+advances in preview, while the same asset exports and plays correctly) closed as
+DID-NOT-REPRODUCE against a HEAD build. NO CODE FIX EXISTS. Operator ran import/preview/export
+against a current `main` build on 2026-08-26 and all three worked; the original bug report traced
+to an installer 8 commits stale. Moved out of `docs/work-in-progress.md`'s "Other active work"
+(was `[OPEN] WS2 bug 3`) per this session's Step 8/Step 9 close-out.
+Evidence: OPERATOR-ATTESTED — 2026-08-26 live run (import, preview, export) against a HEAD build,
+no freeze observed. The prior diagnosis session (`docs/ws2-video-ingest/bug3-diagnosis.md`,
+sessions `ws2-06`/`ws2-07`) established three facts by direct measurement, preserved here since
+they remain true regardless of the non-repro: (1) the `elst`/edit-list hypothesis is ruled out by
+direct ISOBMFF box inspection of the reported-failing asset — no `edts`/`elst` box exists in the
+file at all, and `mvhd`/`tkhd`/`mdhd` durations agree exactly at 5.0s; (2) all 10 assets in the
+operator's failed-export folder are uniformly H.264 High@4.2, 1920x1080, yuv420p, bt709, 120fps
+CFR, no audio track, 5.000000s duration (MEASURED via `ffprobe` on all 10 files,
+`.work-phase4/session-ws2-07/asset-probe.txt`); (3) a code-level decode-ahead buffer overflow was
+reproduced against the real, unmodified `videoDecoderPool.ts` (mock-`VideoDecoder` harness fed the
+asset's actual measured 120fps/600-frame profile) — `MAX_BUFFERED_FRAMES_PER_SESSION = 90` sized
+against `WINDOW_AHEAD_SEC = 1.5s` for ~24-30fps content overflows at 120fps within the first
+decode-ahead batch, permanently dropping the excess since `feedCursor` has already advanced past
+it. Live-app confirmation of THIS specific decode-overflow mechanism was never obtained (blocked
+twice: no Tauri UI driver reachable in session `ws2-06`; `request_access` for the native app
+denied by the user in session `ws2-07`) — the mechanism remains a code-level reproduction, not an
+on-screen observation, and the 2026-08-26 non-repro run does not itself rule the mechanism in or
+out (it was not instrumented to check for it).
+Numbers: 10/10 probed assets share the identical 120fps CFR profile; 0/3 (import/preview/export)
+reproduced the freeze on the 2026-08-26 HEAD-build run.
+Detail: the report that triggered the original diagnosis was 8 commits stale relative to the
+build used in the 2026-08-26 verification run — the underlying code may have changed in the
+interim (e.g. other WS2 fixes landing), or the original report's exact build/asset/environment
+combination may not have been reproduced. Because the reproduced buffer-overflow mechanism
+(§B3/B4 of the diagnosis doc) is a real, code-level defect independent of whether THIS bug report
+reproduces, it is tracked separately and NOT closed by this entry — see
+`docs/work-in-progress.md`'s `[DEFERRED] 120fps preview decode lag` row, the sole remaining
+record of that mechanism. Full diagnosis: `docs/ws2-video-ingest/bug3-diagnosis.md`.
 Superseded-by: none

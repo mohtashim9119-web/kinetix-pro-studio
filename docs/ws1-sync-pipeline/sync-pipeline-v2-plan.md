@@ -10576,3 +10576,118 @@ blocks — the export guard (`timelinePartition.ts`, untouched) remains the sole
 point. Zero behavioral change when clean (the expected case now that the spine gates every
 rescue adoption): the check is additive-only and only ever calls `console.warn`, never touching
 `pendingLogEntries`/`pendingLogSummary`/the committed `Project`.
+
+## Part AK — Docs Cleanup: Standing Constraints, Embedded Detector/Log-Revamp Specs, and the Spanish Acceptance Lapse Relocated from work-in-progress.md (WS2 Step 9, Operator-Directed, 2026-08-26, append-only)
+
+**Scope.** `docs/work-in-progress.md` hit its 250-line cap. Per its own header's overflow
+procedure, this Part relocates the reference material identified as such (frozen rulings, dead
+ends, and two fully-specced but not-yet-built items) out of the active task ledger and into this
+plan doc, verbatim, so the task ledger goes back to being one line per task. Nothing below is new
+— it is a verbatim move. `work-in-progress.md` keeps only the items that are a live gate someone
+must act on (the FA default-toggle status, the stage-lock count) or a one-line actionable pointer
+(the Spanish acceptance lapse, §AK.1 below) plus a pointer to this Part.
+
+### AK.1 — Standing constraints (relocated verbatim from work-in-progress.md's "Standing constraints" section)
+
+- **The oracle** — `scripts/fixtures/session-aj0-oracle-{v6,173,spanish}.json`, the operator's
+  own ear-verified live-app saves (no boundary ever manually dragged), 647 boundaries total (v6
+  447, 173 173, spanish 27), 5 labelled `openDefect` rows (v6 3, 173 2; spanish 0) carrying the
+  ear-correct `earTarget`. Enforced (structural invariants only — segment count, tag order; not a
+  per-boundary gate) by `scripts/ws1-session-aj0-oracle-diff.test.ts`. Also usable as a
+  no-listening precision evaluation set (see Pillar 2 spec, §AK.2 below).
+- **Golden replay does not observe the FA chunk plan or any rule stage** — it stops at
+  `snapCoveredBoundaries`/`headExtendFirstSegment` and imports neither `faChunkPlan.ts` nor
+  `faAnchorTrustGate.ts`. Measured: it stayed 6/6 while arm D moved 366 v6 boundaries (363
+  regressed) in the same session (`sync-pipeline-v2-plan.md`'s Part AF).
+- **`152_frozen_brush_mice`, `iron_bounce`, `logic_clash`** are RULE-DEPENDENT (R.14, R.15, R.15
+  respectively, `src/services/faAnchorTrustGate.ts`) — closed only because the rule fires;
+  deleting R.14/R.15 reopens them (`scripts/ws1-session-ah-step1-rowstatus.test.ts:14-19`).
+- **Do not re-investigate (dead ends, cont'd):** S1/`foldPhantomTails` — deleted outright after
+  scoring REGRESSION on 18 of 18 operator ear verdicts (Session AH); the phantom-tail existence
+  detector it was built on — ~7.1% precision (183/277 v6 chunks fire, ~13 real defects); global
+  S2 — rejected on 0.62% implied R-AS precision (36 ear-verified control regressions, up to
+  -27.7s v6 drift).
+- **`S1_KNOWN_BAD_MOVES`** (`scripts/ws1-ear-pass-ledger.ts:1011`, 19 values) — S1's full
+  collateral set, all operator-rejected; the project's negative ground truth for detector
+  validation, and a hard-fail if any future chunk-edge arm reproduces one.
+- **Spanish corpus acceptance has silently lapsed, unresolved** — accepted in writing unlistened
+  at Stage 1's lock-gate entry, with a reopening trigger voided "the moment any Spanish-specific
+  normalization/alignment code ships"; Phase 3b shipped Spanish cardinals on 2026-08-15, which
+  satisfies that trigger's literal text, but no session has ruled on whether it actually reopens
+  the acceptance. Flagged for the owner (`sync-pipeline-v2-plan.md:7918-7925`).
+- **Arms F/G/H** (`src/services/faChunkPlan.ts`'s `computeFaChunkPlanS2EdgeArm`,
+  `S2EdgePlacement` kinds `'anchor'`/`'attested'`/`'anchor-widened'`) are diagnostic-only with no
+  production caller — every call site is an env-gated Session AM/AN measurement test. Arm G
+  consumes ground truth directly (`attestedStartBySegIdx`, sourced only from the oracle fixture
+  in `ws1-session-am-step4-armg.test.ts`) and is unreachable from `src/` by construction, not
+  convention — the field has no default and nothing under `src/` reads the oracle fixture.
+- **Stage/Phase terminology:** Stage 1 = Prepare (phases 1b, 2a, 2b, 3, 3b, 3c, 3d); Stage 2 =
+  Align & Select (phase 4); Stage 3 = Place (phases 5, 6, 6b); Stage 4 = Finalize & Report
+  (phase 7). Task 5 = Phase 3, inside Stage 1.
+- **`textNormalize.ts`/`canonicalize` must never change** — frozen English alignment baseline;
+  non-English work goes through the separate `faTextNormalize.ts` path instead.
+- **fr/de/pt real narration-audio corpus does not exist** — only synthetic fleurs-audio engine-
+  parity fixtures do. Accepted in writing (H.8 dormant-rules allowance); reopens only if
+  fr/de/pt-specific code ships.
+- **R.3/R.8/R.9** (clamp reference point, cascade-safety argument, case-by-case prevention
+  table — Step R's production windowing design): drafted, never built. Not required for Stage 1
+  lock — the STAGE 1 LOCK GATE criteria list never names them (only R.5/R.10 were added as
+  blocking criteria, by owner ruling). Candidate backlog for Phase 5.
+- **Contract 1→2 compliance:** 6 of 8 requirements met. P4 (silence assertion) and P8 (bundled
+  Stage-1 output object) are satisfied by Phase 4, not before.
+- **Do not re-investigate** (all confirmed dead ends): DTW (confirmed dead twice); `--vad`
+  (needs an unbundled model); the curr-side seam-exemption variant (disabled); FENCE/QUIET
+  word-shift fixes (both failed); the "246 PICK-WRONG" figure (debunked — overcounts by ≥45,
+  only 11 ear-verified cases are trustworthy).
+- **Boundary-quality watcher:** do not reintroduce as previously built — the prior attempt was
+  reverted for a safety-bound failure, a React render loop, and an uncalibrated formula.
+
+### AK.2 — Pillar 2 passive detector spec (relocated verbatim from work-in-progress.md's "Not started" section)
+
+**Pillar 2 passive detector** (`src/services/faDefectDetector.ts`) — a read-only
+post-processor that flags suspect boundaries; it never moves a timestamp itself. Spec (4
+rules, recorded here so they don't need re-deriving):
+1. Boundary-to-anchor drift — flag if the cut sits more than 100ms from a reliable
+   three-source-agreement anchor.
+2. Cut-on-speech — flag if speech energy is present at the cut line.
+3. Cross-segment token overflow — flag if word timestamps cross the cut between adjacent
+   segments.
+4. Edge confidence drop — flag if alignment confidence on boundary-adjacent words falls
+   sharply against the segment median.
+
+Measurable against the AJ-0 oracle's labelled boundaries (`scripts/fixtures/session-aj0-oracle-
+{v6,173,spanish}.json`, `openDefect`/`earTarget` fields) with no listening required, and must
+clear ruling R-AS's precision bar (`MIN_IMPLIED_PRECISION = 0.50`,
+`scripts/ws1-session-ak-step1-gate.ts:124`) before any repair built on it ships.
+
+### AK.3 — Sync log revamp spec (relocated verbatim from work-in-progress.md's "Not started" section)
+
+**Sync log revamp** — strip developer telemetry from the sync log UI; replace with six
+collapsible groups, in this order:
+1. Skipped segments (no audio match) — audio with missing transcription, or text that never
+   matched.
+2. Unscripted audio assigned — speech detected that isn't in the script.
+3. Missing assets — script segments with no audio attached.
+4. System info — engine status (e.g. FA on, sync succeeded, 444 of 447 segments clean).
+5. Cuts landed on speech — boundaries that need a small silence adjustment.
+6. Shifted words / low confidence — flagged directly by the Pillar 2 detector, for one-click
+   review in the UI. The important one.
+
+Depends on the Pillar 2 detector existing first — Group 6 renders the detector's output.
+
+### AK.4 — Header rationale (compressed away from work-in-progress.md's purpose header)
+
+Original full header text, preserved verbatim (the live file now carries a 4-line compressed
+version pointing here):
+
+> **Purpose:** the active task ledger — one line per task, no narrative. **Line cap: 250.**
+> Chosen because, post-cleanup, live WS1 content is a short list of standing constraints and
+> open roadmap items, not a second history file — 250 gives headroom for a few more workstreams
+> without inviting narrative back in. When the cap is hit, move finished work to
+> `docs/history-2.md` (companion to `docs/history.md`, same append-only rule: never edited
+> mid-workstream, only appended to) and re-measure.
+>
+> WS1's full session-by-session history (Sessions A through AN, the component/measurement
+> ledger, and the Changelog) moved to `docs/history-2.md` on 2026-08-25. This file tracks WS1's
+> current phase status (Finished / In progress / Open bugs / Not started) plus the constraints
+> that still bind it — full session detail lives in `docs/history-2.md`.
