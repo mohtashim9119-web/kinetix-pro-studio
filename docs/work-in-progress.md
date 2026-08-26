@@ -194,7 +194,7 @@ Tag definitions: WS1's "Open bugs" section above (file-wide vocabulary).
   until the operator confirms. 8 other unguarded `fetch(asset.url)` call sites found with the same
   defect shape, NOT fixed this session (scope-limited to the reported sync-path failure) — full
   list: `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`.
-  `docs/history-2.md#2026-08-26--pending--ws2-step10-windows-voiceover-fetch`
+  `docs/history-2.md#2026-08-26--56e2116--56e2116-ws2-step10-windows-voiceover-fetch`
 * [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect found
   while diagnosing bug 3, not itself closed by bug 3's non-repro: `videoDecoderPool.ts`'s
   90-frame decode-ahead cap (`MAX_BUFFERED_FRAMES_PER_SESSION`) is sized against a fixed ~1.5s

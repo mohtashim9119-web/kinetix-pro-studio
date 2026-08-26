@@ -87,7 +87,7 @@
 - [WS2 bug 3 — closed, did not reproduce](#2026-08-26--no-fix--ws2-bug3-closed-did-not-reproduce) — 2026-08-26
 - [WS2 bug 2 — correction: Windows/arm64 ORT runtime still absent](#2026-08-26--correction--ws2-bug2-ort-runtime-platform-gap) — 2026-08-26
 - [WS2 Step 10 — FA error serialization fix](#2026-08-26--88ff701--88ff701-ws2-step10-error-serialization) — 2026-08-26
-- [WS2 Step 10 — Windows voiceover fetch fix](#2026-08-26--pending--ws2-step10-windows-voiceover-fetch) — 2026-08-26
+- [WS2 Step 10 — Windows voiceover fetch fix](#2026-08-26--56e2116--56e2116-ws2-step10-windows-voiceover-fetch) — 2026-08-26
 
 ---
 
@@ -857,7 +857,7 @@ correction note above) — the same garbled text would appear on any platform wh
 `fa_align_production` call rejects before its first `Channel` event.
 Superseded-by: none
 
-### 2026-08-26 · pending · ws2-step10-windows-voiceover-fetch
+### 2026-08-26 · 56e2116 · 56e2116-ws2-step10-windows-voiceover-fetch
 Outcome: Windows installer's Apply Sync run reported `[SILENCE] Silence detection failed... reason:
 voiceover fetch failed: Failed to fetch`, degrading every boundary to the token-midpoint fallback
 (the 117 "cuts landed on audio that's still playing" entries in the same run are a consequence of
