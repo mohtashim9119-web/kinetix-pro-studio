@@ -15,8 +15,8 @@ mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;
 mod ffmpeg;
-mod model_download;
-mod models;
+pub mod model_download;
+pub mod models;
 mod project_mirror;
 mod sha256;
 mod whisper;
@@ -155,6 +155,8 @@ pub fn run() {
             models::import_local_model,
             models::delete_installed_model,
             models::get_available_disk_space,
+            models::fa_model_download,
+            models::fa_model_download_cancel,
             fa::fa_align,
             fa::fa_cancel,
             fa_dev::fa_align_dev,

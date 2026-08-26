@@ -39,9 +39,141 @@ use tauri::Manager;
 
 use crate::fa::fa_model_candidate_paths;
 use crate::fa_dev::{manifest_byte_size_for, verify_model_manifest};
-use crate::model_download::{models_dir, GGML_MAGIC, MODEL_SHA256, MODEL_SIZE_BYTES};
+use crate::model_download::{
+    cancel_flag_for, models_dir, stream_download_verified, ModelDownloadEvent, ModelDownloadState,
+    GGML_MAGIC, MODEL_SHA256, MODEL_SIZE_BYTES,
+};
 use crate::sha256::hash_file;
 use crate::whisper::MODEL_FILENAME;
+
+// ---------------------------------------------------------------------------
+// FA download engine (WS2 Step 13 Phase 3) — a caller of
+// `model_download::stream_download_verified`, not a parallel download stack.
+// ---------------------------------------------------------------------------
+
+/// PUBLIC HuggingFace model repo (owner-confirmed, WS2 Step 13): unauthenticated
+/// GET, no token, no Authorization header, no netrc. MEASURED 2026-08-27: the
+/// repo exists and is public (`GET /api/models/mohtashim9/kinetix-fa-models`
+/// → `"private": false`), but at measurement time contained only
+/// `.gitattributes` at that point — every `<lang>/model.onnx` 404d. The
+/// owner's upload finished LATER in this same session: re-probed
+/// 2026-08-27, all 5 languages now 200, Content-Length and
+/// `X-Linked-ETag` (the LFS object's own sha256) matching
+/// `fa-onnx-manifest.json` EXACTLY for every language, Range resume
+/// confirmed (206 + correct `Content-Range` on a `bytes=0-1023` probe).
+const FA_MODEL_REPO_ID: &str = "mohtashim9/kinetix-fa-models";
+
+/// Revision used to build the download URL — pinned to the commit
+/// containing the real uploaded files, MEASURED 2026-08-27 via
+/// `GET /api/models/mohtashim9/kinetix-fa-models` (`"sha"` field) after the
+/// owner's upload completed. Earlier in this same session, before the
+/// upload finished, this constant was deliberately `"main"` rather than the
+/// pre-upload commit SHA (`7cab3961679235f84b716607560f221a115101b9`, which
+/// contained only `.gitattributes` — pinning to it would have made the
+/// files permanently unreachable at that revision once pushed in a later
+/// commit). Now that the upload is confirmed complete and stable, pinning
+/// protects against a future silent re-upload to `main` silently changing
+/// what a fresh download fetches without `fa_dev::verify_model_manifest`'s
+/// hash gate being the only thing standing between that and an install.
+/// ACTION NEEDED if the owner ever re-uploads/reorganizes this repo: re-run
+/// the HEAD/API probe and update this single constant — the URL builder,
+/// `stream_download_verified` call, and the manifest verification gate need
+/// no other change.
+const FA_MODEL_REVISION: &str = "f618960d71728eba5f12528d5571838a10d262bf";
+
+fn fa_model_download_url(lang: &str) -> String {
+    format!("https://huggingface.co/{FA_MODEL_REPO_ID}/resolve/{FA_MODEL_REVISION}/{lang}/model.onnx")
+}
+
+/// Free bytes on the volume containing `app_local_data_dir` must exceed
+/// `needed_bytes` plus a fixed safety margin, or the download is refused
+/// before any network request — never left to fail mid-stream with a less
+/// actionable "disk full" write error. Reuses `get_available_disk_space`'s
+/// own `fs4` call rather than a second disk-space code path.
+const DISK_SPACE_MARGIN_BYTES: u64 = 200 * 1024 * 1024; // 200 MiB
+
+fn ensure_disk_space(app: &tauri::AppHandle, needed_bytes: u64) -> Result<(), String> {
+    let dir = app
+        .path()
+        .app_local_data_dir()
+        .map_err(|e| format!("cannot resolve app_local_data_dir: {e}"))?;
+    let free = available_space_on(app)?;
+    let required = needed_bytes.saturating_add(DISK_SPACE_MARGIN_BYTES);
+    if free < required {
+        return Err(format!(
+            "not enough free disk space: {free} bytes free, need at least {required} bytes \
+             ({needed_bytes} for the model + {DISK_SPACE_MARGIN_BYTES} margin) on the volume \
+             containing {}",
+            dir.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Downloads the FA pack for `language` via the same resumable engine
+/// (`model_download::stream_download_verified`) the whisper downloader uses
+/// — `.part` + HTTP Range resume + progress `Channel` + cancel, reusing that
+/// module's `ModelDownloadEvent`/`ModelDownloadState` types unchanged (no
+/// second event shape for the frontend to handle). Verification runs
+/// `fa_dev::verify_model_manifest` against the `.part` file BEFORE the
+/// atomic rename — introduces no new pinned hash/size constant; a mismatch
+/// deletes the `.part` and leaves any previously-installed model at the
+/// target path untouched, and is reported with the manifest's own specific
+/// expected-vs-actual message (never a generic string).
+#[tauri::command]
+pub async fn fa_model_download(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ModelDownloadState>,
+    language: String,
+    on_event: tauri::ipc::Channel<ModelDownloadEvent>,
+) -> Result<(), String> {
+    let lang = FA_LANGUAGES
+        .iter()
+        .find(|&&l| l == language)
+        .copied()
+        .ok_or_else(|| format!("unsupported FA language \"{language}\" — expected one of: {}", FA_LANGUAGES.join(", ")))?;
+
+    let expected_size = manifest_byte_size_for(lang)
+        .ok_or_else(|| format!("no manifest entry for language \"{lang}\" in fa-onnx-manifest.json"))?;
+
+    ensure_disk_space(&app, expected_size)?;
+
+    let target = target_path(&app, ModelId::Fa(lang))?;
+    let dir = target.parent().ok_or_else(|| "invalid FA model target path".to_string())?;
+    fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let mut part_path = target.as_os_str().to_owned();
+    part_path.push(".part");
+    let part_path = PathBuf::from(part_path);
+
+    let cancel_key = format!("fa-{lang}");
+    let cancel_flag = cancel_flag_for(&state, &cancel_key);
+
+    let url = fa_model_download_url(lang);
+    let lang_owned = lang.to_string();
+    let result = stream_download_verified(url, target.clone(), part_path, expected_size, cancel_flag, on_event, {
+        let lang_owned = lang_owned.clone();
+        move |path: &Path| verify_model_manifest(path, &lang_owned).map_err(|e| e.message)
+    })
+    .await;
+
+    if result.is_ok() {
+        // Same post-install bookkeeping `import_to_target` does: a `.sha256`
+        // sidecar so the NEXT `check_installed_models` call is a stat, not a
+        // re-hash. `stream_download_verified` already verified the digest
+        // via `verify_model_manifest` above — this just persists it.
+        if let Ok(digest) = hash_file(&target) {
+            let _ = fs::write(sidecar_path(&target), digest);
+        }
+    }
+    result
+}
+
+#[tauri::command]
+pub fn fa_model_download_cancel(state: tauri::State<'_, ModelDownloadState>, language: String) {
+    if let Some(flag) = state.0.lock().unwrap().get(&format!("fa-{language}")) {
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 /// Canonical FA language allowlist. Mirrors `fa_onnx.rs::vocab_json_for`'s
 /// match arms and `fa_dev.rs`/`fa_onnx.rs`'s own test-loop literals — no
@@ -152,11 +284,11 @@ pub async fn check_installed_models(app: tauri::AppHandle) -> Result<InstalledMo
         let mut report = InstalledModelsReport::default();
 
         let whisper_path = target_path(&app, ModelId::Whisper)?;
-        report.whisper = status_for(&app, ModelId::Whisper, &whisper_path);
+        report.whisper = status_for(ModelId::Whisper, &whisper_path);
 
         for lang in FA_LANGUAGES {
             let path = target_path(&app, ModelId::Fa(lang))?;
-            if let Some(status) = status_for(&app, ModelId::Fa(lang), &path) {
+            if let Some(status) = status_for(ModelId::Fa(lang), &path) {
                 report.fa.insert(lang.to_string(), status);
             }
         }
@@ -166,10 +298,30 @@ pub async fn check_installed_models(app: tauri::AppHandle) -> Result<InstalledMo
     .map_err(|e| format!("check_installed_models: task join failed: {e}"))?
 }
 
-fn status_for(_app: &tauri::AppHandle, id: ModelId, path: &Path) -> Option<InstalledModelStatus> {
+/// Pure filesystem check — no `AppHandle` needed, only `path` (already
+/// resolved by the caller) — so it is directly unit-testable (WS2 Step 13
+/// Phase 1.5) without building a mock/live `AppHandle`.
+fn status_for(id: ModelId, path: &Path) -> Option<InstalledModelStatus> {
+    status_for_generic(path, expected_size(id), |p| match id {
+        ModelId::Whisper => hash_file(p).ok().map(|h| h == MODEL_SHA256).unwrap_or(false),
+        ModelId::Fa(lang) => verify_model_manifest(p, lang).is_ok(),
+    })
+}
+
+/// The size/sidecar/fallback-hash decision, parameterized over `expected_size`
+/// and a caller-supplied `verify` closure instead of a real `ModelId` — this
+/// is what makes the fallback-hash branch unit-testable without a
+/// multi-hundred-MB-to-multi-GB real/synthetic file: a test can pass a tiny
+/// `expected_size` and a cheap `verify` closure while still exercising the
+/// exact same size/sidecar/hash-fallback/sidecar-write control flow
+/// `status_for` uses in production.
+fn status_for_generic(
+    path: &Path,
+    expected: Option<u64>,
+    verify: impl FnOnce(&Path) -> bool,
+) -> Option<InstalledModelStatus> {
     let meta = fs::metadata(path).ok()?;
     let bytes = meta.len();
-    let expected = expected_size(id);
     let size_ok = expected.map(|e| e == bytes).unwrap_or(true);
 
     let sidecar_ok = fs::read_to_string(sidecar_path(path))
@@ -180,15 +332,15 @@ fn status_for(_app: &tauri::AppHandle, id: ModelId, path: &Path) -> Option<Insta
     let installed = if sidecar_ok {
         size_ok
     } else if size_ok {
-        // No sidecar yet (hand-placed model) — verify once and write one so
-        // the next call is cheap. Whisper: sha256 against the known
-        // constant. FA: the existing manifest check.
-        let verified = match id {
-            ModelId::Whisper => hash_file(path).ok().map(|h| h == MODEL_SHA256).unwrap_or(false),
-            ModelId::Fa(lang) => verify_model_manifest(path, lang).is_ok(),
-        };
+        // No sidecar yet (hand-placed model, or the FIRST check after a
+        // fresh install) — verify once and write one so the next call is
+        // cheap. HARD RULE (WS2 Step 13 Phase 1.4): the sidecar is a cache,
+        // never a requirement — its absence must fall back to this real
+        // verification, not to `false`.
+        let verified = verify(path);
         if verified {
-            let _ = fs::write(sidecar_path(path), whisper_or_fa_digest(id, path));
+            let digest = hash_file(path).unwrap_or_default();
+            let _ = fs::write(sidecar_path(path), digest);
         }
         verified
     } else {
@@ -198,12 +350,6 @@ fn status_for(_app: &tauri::AppHandle, id: ModelId, path: &Path) -> Option<Insta
     Some(InstalledModelStatus { installed, bytes })
 }
 
-fn whisper_or_fa_digest(id: ModelId, path: &Path) -> String {
-    match id {
-        ModelId::Whisper => MODEL_SHA256.to_string(),
-        ModelId::Fa(_) => hash_file(path).unwrap_or_default(),
-    }
-}
 
 // ---------------------------------------------------------------------------
 // import_local_model
@@ -410,6 +556,10 @@ pub async fn delete_installed_model(app: tauri::AppHandle, model_id: String) -> 
 /// points itself.
 #[tauri::command]
 pub fn get_available_disk_space(app: tauri::AppHandle) -> Result<u64, String> {
+    available_space_on(&app)
+}
+
+fn available_space_on(app: &tauri::AppHandle) -> Result<u64, String> {
     let dir = app
         .path()
         .app_local_data_dir()
@@ -446,6 +596,126 @@ mod tests {
         for id in bad {
             assert!(ModelId::parse(id).is_err(), "expected \"{id}\" to be rejected");
         }
+    }
+
+    // -- status_for (WS2 Step 13 Phase 1.5 — status-check bug regression) --
+    //
+    // A real model is ~1.2-1.6 GiB — too large to allocate/write as an
+    // in-memory `Vec` in a unit test. Every test below that needs a
+    // whisper-SIZED file uses `File::set_len` (a sparse file: the OS commits
+    // no real disk blocks and this process allocates no multi-GiB buffer,
+    // yet `fs::metadata().len()` and a full read both see the true size)
+    // rather than materializing real bytes.
+
+    fn sparse_file_of_len(path: &Path, len: u64) {
+        let f = File::create(path).unwrap();
+        f.set_len(len).unwrap();
+    }
+
+    /// A size-matching file WITH a `.sha256` sidecar reads installed from
+    /// the sidecar alone (no re-hash needed) — this is the fast path a
+    /// sparse all-zero file can stand in for, since the sidecar
+    /// short-circuits before any hashing happens.
+    #[test]
+    fn status_valid_model_with_sidecar_reads_installed_from_sidecar() {
+        let dir = std::env::temp_dir().join(format!("kinetix-status-sidecar-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ggml-large-v3-turbo.bin");
+        sparse_file_of_len(&path, MODEL_SIZE_BYTES);
+        fs::write(sidecar_path(&path), MODEL_SHA256).unwrap();
+
+        let status = status_for(ModelId::Whisper, &path).expect("file exists, must return Some");
+        assert!(status.installed, "a size-matching file with a present sidecar must read installed");
+        assert_eq!(status.bytes, MODEL_SIZE_BYTES);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// HARD RULE (WS2 Step 13 Phase 1.4): a MISSING sidecar must NOT mark a
+    /// valid model as not-installed — it is a cache, not a requirement. On a
+    /// cache miss with a file that genuinely passes verification, the
+    /// fallback must read installed=true AND write a sidecar for next time.
+    /// Uses `status_for_generic` (a tiny `expected_size` + a cheap `verify`
+    /// closure) rather than a real whisper/FA file — the production
+    /// `status_for` wrapper calls this exact function with the real
+    /// per-model constants, proven equivalent by the `status_for`-level
+    /// tests around this one; this one isolates the control flow from the
+    /// cost of hashing a multi-hundred-MB file.
+    #[test]
+    fn status_generic_valid_without_sidecar_falls_back_to_verify_and_writes_sidecar() {
+        let dir = std::env::temp_dir().join(format!("kinetix-status-nosidecar-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("small-model.bin");
+        let content: &[u8] = b"tiny stand-in content";
+        fs::write(&path, content).unwrap();
+        assert!(!sidecar_path(&path).exists());
+
+        let status = status_for_generic(&path, Some(content.len() as u64), |_p| true)
+            .expect("file exists, must return Some");
+        assert!(status.installed, "a size-matching file whose verify() succeeds must read installed");
+        assert!(sidecar_path(&path).exists(), "a successful fallback verify must write a sidecar");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The mirror case: a size-matching file whose `verify()` genuinely
+    /// fails (the fallback-hash-rejects-a-wrong-file case a hash-blind,
+    /// size-only implementation would get wrong) must read not-installed
+    /// and must NOT write a sidecar.
+    #[test]
+    fn status_generic_valid_size_but_failed_verify_reads_not_installed_no_sidecar() {
+        let dir = std::env::temp_dir().join(format!("kinetix-status-badverify-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("small-model.bin");
+        let content: &[u8] = b"tiny stand-in content";
+        fs::write(&path, content).unwrap();
+
+        let status = status_for_generic(&path, Some(content.len() as u64), |_p| false)
+            .expect("file exists, must return Some");
+        assert!(!status.installed, "size-correct but verify()-false must not read installed");
+        assert!(!sidecar_path(&path).exists(), "a failed fallback verify must not write a sidecar");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A truncated file (wrong size) must read not-installed regardless of
+    /// sidecar presence — the exact-size check is never bypassed.
+    #[test]
+    fn status_truncated_model_reads_not_installed_even_with_a_stale_sidecar() {
+        let dir = std::env::temp_dir().join(format!("kinetix-status-truncated-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ggml-large-v3-turbo.bin");
+        fs::write(&path, b"truncated, way too short").unwrap();
+        // A stale sidecar from a PREVIOUS good install must not resurrect a
+        // now-truncated file as installed — size is checked before the
+        // sidecar short-circuit is trusted.
+        fs::write(sidecar_path(&path), MODEL_SHA256).unwrap();
+
+        let status = status_for(ModelId::Whisper, &path).expect("file exists, must return Some");
+        assert!(!status.installed, "a wrong-size file must never read installed, sidecar or not");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A stale `.part` sitting alongside an already-valid final file must
+    /// not affect that file's own installed status — `status_for` is only
+    /// ever called with the FINAL (non-`.part`) path, and a `.part`'s
+    /// existence is irrelevant to it.
+    #[test]
+    fn status_stale_part_alongside_valid_model_does_not_affect_its_status() {
+        let dir = std::env::temp_dir().join(format!("kinetix-status-stalepart-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("ggml-large-v3-turbo.bin");
+        sparse_file_of_len(&path, MODEL_SIZE_BYTES);
+        fs::write(sidecar_path(&path), MODEL_SHA256).unwrap();
+        let mut part = path.as_os_str().to_owned();
+        part.push(".part");
+        fs::write(PathBuf::from(&part), b"leftover partial bytes from an interrupted retry").unwrap();
+
+        let status = status_for(ModelId::Whisper, &path).expect("file exists, must return Some");
+        assert!(status.installed, "a stale .part must not affect the final file's own installed status");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     // -- import atomicity ------------------------------------------------

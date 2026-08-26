@@ -103,3 +103,13 @@ fa-inference = ["dep:ort"]
 name = "fa_durable_wav_live"
 path = "tests/fa_durable_wav_live.rs"
 harness = false
+
+[[test]]
+name = "models_status_live"
+path = "tests/models_status_live.rs"
+harness = false
+
+[[test]]
+name = "fa_download_live"
+path = "tests/fa_download_live.rs"
+harness = false
