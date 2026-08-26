@@ -248,3 +248,44 @@ around 0.7-1.5s into playback, recovering briefly near 1.5s, stalling again) —
 (`videoDecoderPool.ts:1092`) to confirm real decoder output is actually being dropped there, not
 just in the mock. Only once that live confirmation lands should the fix (make the window/cap fps-aware) be designed and implemented — this session is diagnosis-only by the operator's own
 scope.
+
+## Session WS2-07 — Phase A attempt (live confirmation BLOCKED)
+
+**A3/A4 (MEASURED, `ffprobe`, all 10 assets in the operator's failed-export folder — command +
+output: `.work-phase4/session-ws2-07/asset-probe.txt`):**
+
+All 10 video assets (`1.mp4`-`10.mp4`) in
+`/Users/mohtashim/Downloads/Failed Export Project Data/Assets/` are **byte-for-byte identical in
+profile**: `h264 High@4.2`, `1920x1080`, `yuv420p`, `bt709`, `r_frame_rate=avg_frame_rate=120/1`,
+`nb_streams=1` (no audio track), `duration=5.000000`. There is no low-fps asset in the set to
+compare against and no asset that diverges from `1.mp4`'s profile — the failure set (per the
+operator's report that "all behave the same") and the high-fps set are the same 10 files, with no
+evidence of a second, distinct defect. **A4: the ceiling to size the fix against is 120fps @
+1920x1080 (1080p, not 4K)** — no higher fps or resolution exists anywhere in this asset set.
+
+**A1/A2 (BLOCKED, not performed):** Attempted to open `Kinetix Pro Studio` via computer-use to
+drive `npm run tauri:dev`'s native WKWebView window, import `1.mp4`, and watch preview playback
+directly. `request_access` for `Kinetix Pro Studio` (and `Finder`, needed to navigate the import
+file picker) was **denied by the user** in-session. No other tool in this environment can see or
+interact with a native macOS window — the Browser-pane preview tools drive a Chromium tab, not a
+Tauri/WKWebView app window; there is no headless/CLI path to `VideoDecoder` accept/reject or to
+watch the preview `<canvas>` update. Per the gate in this step's instructions, **Phase C
+(implementation) does not proceed** — the freeze mechanism remains a code-level reproduction
+against the real, unmodified `videoDecoderPool.ts` (§B4 above), not an on-screen observation, and
+whether `VideoDecoder` genuinely accepts this codec config in real WKWebView remains unmeasured.
+
+**Exact steps for the operator to run this manually:**
+1. `npm run tauri:dev` from the project root (leave it running).
+2. In the app window that opens, start/open a project and import
+   `/Users/mohtashim/Downloads/Failed Export Project Data/Assets/1.mp4` as an asset, then place it
+   on the timeline.
+3. Press play (or scrub) and watch the preview: does it stall ~0.7-1.5s in, briefly recover near
+   1.5s, then stall again periodically? Note actual timings if the pattern differs.
+4. Open the WKWebView dev console (right-click the preview → Inspect Element, or enable the Tauri
+   dev menu) and watch for any `VideoDecoder` `configure()`/`decode()` error — this settles A2
+   (accept vs. reject) directly; none was found in the code-level reproduction, but that used a
+   mock decoder, not the real one.
+5. Report back what was actually seen (or paste a screen recording) so this session can proceed to
+   Phase B/C fix design and implementation with a confirmed mechanism.
+
+**Bug 3 remains OPEN. Not closed this session — the Phase A gate was not met.**
