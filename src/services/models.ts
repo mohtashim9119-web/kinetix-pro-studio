@@ -12,7 +12,7 @@
 // `SUPPORTED_FA_LANGUAGES`/model-id helpers shared by `ManageModelsModal.tsx`.
 // ---------------------------------------------------------------------------
 
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, Channel } from '@tauri-apps/api/core';
 import { SUPPORTED_LANGUAGE_CODES } from '../constants';
 
 /** Mirrors `models.rs::FA_LANGUAGES` — every code `models.rs` will accept as
@@ -52,4 +52,53 @@ export function getAvailableDiskSpace(): Promise<number> {
 
 export function faModelId(languageCode: string): string {
   return `fa-${languageCode}`;
+}
+
+// ---------------------------------------------------------------------------
+// FA download (WS2 Step 13 Phase 3) — `models.rs::fa_model_download`, which
+// calls the SAME resumable engine `model_download.rs::stream_download_verified`
+// the whisper downloader uses. Event shape is `model_download.rs`'s existing
+// `ModelDownloadEvent` (Progress/Done/Cancelled/Error) — reused verbatim, not
+// duplicated, so this type mirrors `modelDownload.ts`'s own `ModelDownloadEvent`
+// exactly rather than declaring a second one.
+// ---------------------------------------------------------------------------
+
+type FaModelDownloadEvent =
+  | { event: 'Progress'; data: { downloadedBytes: number; totalBytes: number } }
+  | { event: 'Done'; data: null }
+  | { event: 'Cancelled'; data: null }
+  | { event: 'Error'; data: { message: string } };
+
+/** Starts (or resumes) the FA pack download for `languageCode`. Resolves once
+ *  `fa_dev::verify_model_manifest` has confirmed the downloaded file against
+ *  the committed manifest and the atomic rename has landed; rejects on any
+ *  failure (network, disk, cancellation, manifest mismatch) — the manifest
+ *  check already deleted a corrupt `.part` before rejecting, so a retry is
+ *  always the correct next action. */
+export function downloadFaModel(
+  languageCode: string,
+  onProgress: (downloadedBytes: number, totalBytes: number) => void,
+): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const channel = new Channel<FaModelDownloadEvent>();
+    channel.onmessage = (msg) => {
+      if (msg.event === 'Progress') {
+        onProgress(msg.data.downloadedBytes, msg.data.totalBytes);
+      } else if (msg.event === 'Done') {
+        resolve();
+      } else if (msg.event === 'Cancelled') {
+        reject(new DOMException('Aborted', 'AbortError'));
+      } else if (msg.event === 'Error') {
+        reject(new Error(msg.data.message));
+      }
+    };
+
+    invoke('fa_model_download', { language: languageCode, onEvent: channel }).catch((err: unknown) => {
+      reject(err instanceof Error ? err : new Error(String(err)));
+    });
+  });
+}
+
+export function cancelFaModelDownload(languageCode: string): void {
+  invoke('fa_model_download_cancel', { language: languageCode }).catch(() => {});
 }
