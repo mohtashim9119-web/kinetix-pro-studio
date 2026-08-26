@@ -81,6 +81,9 @@
 - [Session AN — arm H widens the search, still not shippable](#session-an--arm-h-widens-the-search-still-not-shippable) — 2026-08-24
 - [Priority 2 — Multi-Project Dashboard storage/migration](#2026-08-25--ace07c7--ace07c7-multi-project-storage-migration) — 2026-06-11/12 (moved from `docs/history.md` 2026-08-25)
 - [FA session-cache OOM fix](#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix) — 2026-08-25
+- [WS2 bug 1 — trusted-spine rescue ordering](#2026-08-26--2ae4d18--2ae4d18-ws2-bug1-trusted-spine) — 2026-08-26
+- [WS2 bug 2 — FA compiled into the installer](#2026-08-26--d8baef5--d8baef5-ws2-bug2-fa-compiled-into-installer) — 2026-08-26
+- [WS2 bug 4 — in-app model acquisition](#2026-08-26--8c6e4e8--8c6e4e8-ws2-bug4-in-app-model-download) — 2026-08-26
 
 ---
 
@@ -682,4 +685,66 @@ fixture) when not. Layer 2: a permanent, detection-only diagnostic
 (`src/services/residualOrderingDetector.ts`) added independently, logging (never correcting) any
 residual ordering violation in the committed anchor set immediately before the `setProject`
 commit in `App.tsx`.
+Superseded-by: none
+
+### 2026-08-26 · d8baef5 · d8baef5-ws2-bug2-fa-compiled-into-installer
+Outcome: WS2 bug 2 (forced alignment silently unavailable in every shipped desktop build, with no
+signal that it was off) closed at the build level. `build.yml` now passes `-f fa-inference` to
+both matrix targets' `tauri build` (a Cargo.toml default feature was rejected so `cargo
+check`/`cargo test` and the `fa-ort-matrix.yml` feature-off cell stay feature-off), provisions
+`libonnxruntime.1.23.2.dylib` on the macOS runner via the existing `src-tauri/onnxruntime/
+README.md` recipe with a sha256 gate, and a new guard step fails the build if `src-tauri/models/`
+holds a stray `*.bin` at bundle time. Layered with a new `'fa-gate-closed'` Sync Log entry
+(`App.tsx`) so a closed gate is visible in-app rather than silent. Moved out of
+`docs/work-in-progress.md`'s "Other active work" (now a one-line pointer there) per this
+session's close-out.
+Evidence: CODE FIX, MACHINE-VERIFIED — `npx tsc --noEmit` clean; `npx vitest run src scripts`
+(excluding the pre-existing, unrelated stray worktree `.claude/worktrees/elated-haibt-ab90e1/`,
+a leftover checkout missing its own private replay corpora, confirmed by `git worktree list`)
+2513 passed / 0 failed, 109 test files; `gaplessInvariant.test.ts` 36/36; golden replay 6/6;
+`cargo test` (default) 141/141, `cargo check --features fa-inference` clean. A real local `tauri
+build --target x86_64-apple-darwin -f fa-inference` was run to confirm bundle contents/size.
+Then OPERATOR-ATTESTED on a 2026-08-26 local-build run (import, preview, export all worked) —
+but that run did not specifically exercise forced alignment (`FA_PROJECT_DEFAULT_ON` is `false`
+by ruling, so a default sync never invokes FA at all): the FA-runs-in-a-real-build claim itself
+stays operator-attested only, not confirmed, and the arm64/Windows CI legs remain NOT
+DETERMINED — no arm64 or Windows runner was available to this session or to the operator's local
+build (Intel dev machine).
+Numbers: installer FA capability — OFF-and-silent → compiled-in with an explicit Sync Log
+signal when the per-project gate is still closed.
+Detail: bug 2 had two independent causes — (1) `fa-inference` was never passed to the release
+`tauri build` invocation at all, so no shipped binary could run FA regardless of the per-project
+toggle; (2) even with FA compiled in, a closed gate produced no user-visible signal. This entry
+closes both. Design + full verification narrative: `sync-pipeline-v2-plan.md` Part AJ (AJ.1).
+Superseded-by: none
+
+### 2026-08-26 · 8c6e4e8 · 8c6e4e8-ws2-bug4-in-app-model-download
+Outcome: WS2 bug 4 (the bundled `ggml-large-v3-turbo.bin` inflated the installer to 4.7 GB and
+required hand-placement) closed. `whisper.rs`'s `model_path` now checks `app_local_data_dir()/
+models/` first, ahead of every existing fallback; new `model_download.rs` streams the model into
+a `.part` file with HTTP Range resume and SHA-256 verification before an atomic rename; new
+`ModelDownloadPanel.tsx`/`modelDownload.ts` give it progress/cancel/resume/retry UI, reachable
+manually (Project Settings → Sync) and automatically (`TranscriptionBar`'s model-not-found
+prompt). `tauri.conf.json` no longer bundles `models/*` at all. Moved out of
+`docs/work-in-progress.md`'s "Other active work" (now a one-line pointer there) per this
+session's close-out.
+Evidence: CODE FIX, MACHINE-VERIFIED — same build-level suite as bug 2 above (`tsc` clean,
+`vitest` 2513/0 excluding the known stray worktree, `gaplessInvariant` 36/36, golden replay 6/6,
+`cargo test` 141/141), plus this commit's own prior, separately-recorded OPERATOR-ATTESTED live
+verification (2026-08-26, against a real built app): start, live progress, cancel-with-partial-
+kept, and resume-from-partial all confirmed working — a real bug was caught and fixed in that
+same pass (`ModelDownloadEvent`'s `rename_all` was on the enum instead of the `Progress` variant,
+so the UI stayed stuck at 0/0 while the `.part` file grew correctly on disk). Today's separate
+Step 8 operator run (import/preview/export) did NOT re-exercise the download path — that surface
+rests on the prior attestation above, not today's test. CI-installer verification (the actual
+compiled installer's bundle size and download flow on a CI-built artifact, arm64/Windows
+included) remains NOT DETERMINED.
+Numbers: installer size 4.7 GB → 135 MB `.app` / 4.2 GB → 47 MB `.dmg` (local build, MEASURED at
+commit time, not re-measured this session).
+Detail: URL/size/hash are hardcoded constants cross-checked against a real local copy's measured
+SHA-256 and the Hugging Face API's `lfs.oid` for the same file — matched exactly (1,624,555,275
+bytes). FA's own per-language `.onnx` models still have no downloader (NOT DETERMINED — no
+canonical download source exists in the repo); the existing manual-placement error message is
+the accepted interim path, left unchanged by design. Design + full verification narrative:
+`sync-pipeline-v2-plan.md` Part AJ (AJ.1).
 Superseded-by: none

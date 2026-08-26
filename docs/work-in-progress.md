@@ -75,31 +75,34 @@ satisfied or accepted in writing.
 * [COMPLETED] FA session-cache OOM fix — root-caused (build-then-drop ONNX session eviction),
   fixed (drop-then-build, `6a1b939`), guardrail added (`c295cb3`), real-app confirmed. No longer
   blocks Stage 1's live acceptance run. `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix`
-* [COMPLETED] WS2 bug 2 (FA never compiled/provisioned into the installer, closed gate silent) +
-  bug 4 (4.7 GB installer bloat, model must be placed by hand) — `build.yml` now compiles
-  `fa-inference` and provisions the onnxruntime dylib; whisper model acquisition moved in-app
-  (`model_download.rs`, `ModelDownloadPanel.tsx`), resumable/checksummed; closed-gate Sync Log
-  visibility added. Local build measured 135 MB `.app` / 47 MB `.dmg` (was 4.7 GB / 4.2 GB).
-  Design + verification: `sync-pipeline-v2-plan.md` Part AJ. Not yet on `main` (unpushed).
-* [COMPLETED] WS2 bug 1 — a rescued segment's anchor could land out of order vs. its neighbors;
-  fixed by replacing the pairwise ordering bounds with a trusted spine (evidence-ranked
-  predecessor competition, transparent for a genuine P-overflow). Gate-verified: 13/13 target
-  tests, 3/3 Bug 1 regression tests, golden replay byte-identical. `docs/history-2.md#2026-08-26
-  --2ae4d18--2ae4d18-ws2-bug1-trusted-spine`
-* [OPEN] WS2 bug 3 — a video exported by an external (browser/WebCodecs-based) tool imports and
-  shows in the timeline but never advances in preview ("looks like an image"); the same asset
-  exports and plays correctly. Root cause (diagnosed, not yet fixed): the failing asset is
-  genuine 120fps CFR H.264 (no elst, no VFR, no rotation, no HDR — all ruled out), and
-  `videoDecoderPool.ts`'s preview decode-ahead sizes its 90-frame buffer cap
-  (`MAX_BUFFERED_FRAMES_PER_SESSION`) against a fixed 1.5s time window (`WINDOW_AHEAD_SEC`)
-  tuned for ~24-30fps content, never reading the source's real fps — at 120fps the first
-  decode-ahead batch needs ~180 frames, overflows the cap, and permanently drops the excess
-  (```feedCursor``` has already moved past them), producing a periodic stale-frame freeze.
-  Export is unaffected because it uses a separate, non-windowed sequential decoder
-  (`sequentialDecode.ts`). Reproduced against the real, unmodified pool code with the asset's
-  measured profile; NOT yet confirmed in the live app (no UI driver available that session).
-  Recommended fix: make the decode-ahead window/buffer proportional to source fps — narrow,
-  no new subsystem. Full diagnosis: `docs/ws2-video-ingest/bug3-diagnosis.md`. No owner yet.
+* [COMPLETED] WS2 bug 1 — rescued-segment anchor ordering; fixed via a trusted spine. CODE FIX,
+  MACHINE-VERIFIED (13/13+3/3 regression tests, golden replay byte-identical, gapless 36/36).
+  `2ae4d18`+`1e5deb7`, on `origin/main`. `docs/history-2.md#2026-08-26--2ae4d18--2ae4d18-ws2-bug1-trusted-spine`
+* [COMPLETED] WS2 bug 2 — FA silently unavailable/silent-gate in desktop builds. CODE FIX,
+  MACHINE-VERIFIED at build level; OPERATOR-ATTESTED on a 2026-08-26 local run, but that run
+  didn't exercise FA (default OFF) — the FA-runs claim stays unconfirmed. CI-installer
+  verification (arm64/Windows) NOT DETERMINED. `main`, `d8baef5`.
+  `docs/history-2.md#2026-08-26--d8baef5--d8baef5-ws2-bug2-fa-compiled-into-installer`
+* [COMPLETED] WS2 bug 4 — 4.7 GB installer bloat, model placed by hand. CODE FIX,
+  MACHINE-VERIFIED (135 MB `.app`/47 MB `.dmg`), plus a prior OPERATOR-ATTESTED live
+  download/cancel/resume verification (`8c6e4e8`) — today's Step 8 run didn't re-exercise it.
+  CI-installer verification NOT DETERMINED. `main`, `8c6e4e8`.
+  `docs/history-2.md#2026-08-26--8c6e4e8--8c6e4e8-ws2-bug4-in-app-model-download`
+* [OPEN] WS2 bug 3 — an externally-exported video imports and shows in the timeline but never
+  advances in preview; the same asset exports and plays correctly. NO CODE FIX EXISTS — DID NOT
+  REPRODUCE on a HEAD build (operator ran import/preview/export 2026-08-26, all worked; the
+  original report was 8 commits stale). Established as fact: elst ruled out by box inspection;
+  all 10 assets are uniformly H.264 High@4.2, 1920x1080, yuv420p, bt709, 120fps CFR, no audio,
+  5.0s; a code-level decode-ahead buffer overflow was reproduced in `videoDecoderPool.ts` (same
+  mechanism as the 120fps lag item below). Diagnosis: `docs/ws2-video-ingest/bug3-diagnosis.md`.
+* [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect:
+  `videoDecoderPool.ts`'s 90-frame decode-ahead cap is sized against a ~1.5s window tuned for
+  24-30fps; at 120fps the first batch needs ~180 frames, overflows, and the excess is dropped
+  PERMANENTLY (feed cursor already advanced past it). Candidates: backpressure vs. fps-
+  proportional sizing; any bound must be in BYTES not frame count (preserves the prior
+  4.0→2.8 GB / 1300→137 MB spike-memory work). Preview only — export is unaffected.
+* [OPEN] CI-installer verification of WS2 bugs 2 and 4 — `build.yml` is on `origin/main`; needs
+  only a workflow run, no code.
 
 ### Open bugs
 
