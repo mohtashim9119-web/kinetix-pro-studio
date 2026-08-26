@@ -1007,3 +1007,72 @@ silence as a real assignable candidate (`boundaryUsedFallback` returns `false`) 
 call would have wrongly read it as a breath and reported fallback (`true`); both readings asserted
 directly via `isBreathSilence` with 4 vs. 5 args in the same test.
 Superseded-by: none
+
+### 2026-08-27 · WS2 Step 12 · ws2-step12-manage-models-modal-a3
+Outcome: shipped the Manage Models & Add-ons modal (A3), replacing the whisper-only "Manage sync
+model" dialog (`ModelDownloadPanel.tsx`, deleted) with one UI covering both the whisper
+transcription engine and the 5 per-language FA packs. New backend: `src-tauri/src/models.rs`
+(`check_installed_models`, `import_local_model`, `delete_installed_model`,
+`get_available_disk_space`), reusing rather than duplicating existing infrastructure — target-path
+resolution via `model_download.rs::models_dir`/`fa.rs::fa_model_candidate_paths` (widened to
+`pub(crate)`), and FA import validation via `fa_dev.rs::verify_model_manifest` (also widened),
+which does an EXACT sha256+size check against the already-committed, already-tested
+`fa-onnx-manifest.json` rather than a live ONNX graph/session inspection — deliberate: session
+creation needs `ORT_DYLIB_PATH` set (`fa_onnx.rs::load_session`), unavailable in the plain
+`tauri:dev`/`tauri:build` this modal must work in regardless of the `fa-inference` feature.
+Import uses `rfd::AsyncFileDialog` (the SAME crate `ffmpeg.rs::pick_save_path` already uses) —
+confirmed no `@tauri-apps/plugin-dialog` or capabilities/`tauri.conf.json` change was needed at
+all (the owner's Q4 pre-authorized a narrow unfreeze for this that turned out to be unnecessary;
+zero changes made to either file). Import is atomic: copy to `.part`, fsync, validate, rename;
+any failure (including validation) deletes the `.part` and leaves any prior installed model at
+`target` untouched — regression-tested directly against `import_to_target` (no `AppHandle` needed,
+split out specifically for this). `model_id` is allowlist-parsed (`"whisper"` or `"fa-<lang>"`
+for `lang` in a fixed 5-language array) via pure string comparison, never `Path::new`/`join` on
+the raw input — path-traversal payloads (`"fa-../../etc"`, `"fa-..%2f.."`, `"fa-"`, `"fa-EN"`)
+rejected before any filesystem call, asserted by a dedicated test. Disk-free-space uses a new
+`fs4` dependency (`available_space(path)` — statvfs/GetDiskFreeSpaceExW on the path's own volume,
+not `disks.list().first()`); no other new crate added.
+
+FA Download is NOT wired to a real network transfer in this build — the owner's Q1 answer
+("own-cdn, HuggingFace public model repo") and Q2 answer ("repo is private") conflict as recorded,
+and this session had neither a real repo id nor a bearer token to reconcile them with. Per Q3
+("if no host, Download should be always-enabled"), the button stays enabled rather than disabled
+forever, but clicking it surfaces an explainer pointing at the new
+`docs/ws2-fa-models/manage-models.md` page instead of attempting any request — Import (working,
+manifest-validated) is the only real acquisition path in this build. That doc records the exact
+per-language `scripts/export-fa-onnx.py` invocation, HF checkpoint ids/expected sizes (pulled
+from the committed manifest, not re-measured), and what a real Download command would still need
+(host URL, token env var, a `model_download.rs`-shaped resumable downloader).
+
+`check_installed_models` never uses a `len > 1_000_000` heuristic — exact size match against a
+known constant (whisper) or the manifest (FA), with a `.sha256` sidecar written on first successful
+verification so a hand-placed model (e.g. A5's 5 P2 dev-leftover FA models) is re-verified once,
+not on every check. `SyncLogPanel.tsx` gained an optional `onOpenModelsModal` prop and a deep-link
+button that renders only when an `fa-preflight`/`fa-fallback` entry's detail names a missing model
+(text-matched against `fa.rs:461`'s verbatim "No FA model found" message) and only when the modal
+handler is actually wired — wired from `App.tsx`'s `SyncLogPanel` usage. `ProjectSettingsModal.tsx`
+'s link relabeled "Manage models & add-ons"; `App.tsx`'s `showModelDownloadPanel` state renamed
+`showManageModelsModal` throughout.
+
+Verification: `tsc --noEmit` clean. `cargo test --lib`: 147 passed, 1 ignored, 0 failed
+(141 pre-existing + 6 new — 3 `ModelId` allowlist/parse tests, 2 import-atomicity tests, 1 FA
+wrong-manifest-match test; no regression). Golden replay (`scripts/phase4-handoff-replay-sync.test.ts`, run against the top-level
+copy only via `--exclude '**/.claude/worktrees/**'`) byte-identical 6/6 across v6/173/spanish —
+expected and required, since nothing in this session touches `snapCoveredBoundaries` or any FA
+rule stage. New component tests: `ManageModelsModal.test.tsx` (7 cases — jsdom + `react-dom/client`
++ `act`, the same pattern `BottomDrawer.trimDrag.test.tsx` already uses, no `@testing-library`
+dependency in this repo — installed-vs-missing rendering from a mocked `check_installed_models`,
+project-needed-language badge, Download-stays-enabled-but-explains on click, Import calling the
+real `importLocalModel('whisper')`, a rejected import's verbatim backend message surfacing in the
+row, and Cancel during a whisper download invoking the real `cancelWhisperModelDownload`) and 3
+new `SyncLogPanel.test.tsx` cases for the deep-link (renders when detail names a missing model and
+a handler is given; omitted with no handler; omitted for an unrelated preflight failure).
+
+NOT DETERMINED this session: which of Q1/Q2 (public vs. private FA-model repo) is actually correct
+— flagged rather than guessed; a real Download implementation is blocked on that answer plus a
+concrete repo id/token, not on any remaining code work (the downloader itself is a short,
+mechanical port of `model_download.rs`'s existing whisper downloader once those are supplied).
+Windows/arm64 FA ORT runtime provisioning is unchanged and still separately blocking — a model a
+Windows user imports via this modal still cannot run FA there (see `docs/work-in-progress.md`'s
+FA ORT item).
+Superseded-by: none

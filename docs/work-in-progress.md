@@ -221,29 +221,23 @@ Tag definitions: WS1's "Open bugs" section above (file-wide vocabulary).
 * [CLAIM-UNVERIFIED] CI-installer verification of WS2 bugs 2+4 — not proven on a CI-built
   artifact; `build.yml` carries both fixes on `origin/main` but arm64/Windows have never been
   built (CI or local — Intel dev machine only). Separately, MEASURED 2026-08-26 (WS2 Step 11, A5):
-  FA DOES run end-to-end on the operator's own local .app build with the gate manually flipped ON
-  (Sync Log: FA pre-flight ready, FA timing engine, 2181 aligned words) — superseding the prior
-  "never observed running" note — but the 5 per-language `model.onnx` files it used are a
-  **P2 hand-placed dev-session artifact** (`~/Library/Application Support/com.kinetix.pro-studio/
-  fa-models/<lang>/model.onnx`, birthtime 2026-08-12, 14 days BEFORE the `.app` bundle's own
-  2026-08-26 build date; zero `*.onnx` inside the `.app` itself; no `build.yml`/`tauri.conf.json`
-  resource ever stages `fa-models/`), produced by manually running `scripts/export-fa-onnx.py`
-  against the `jonatasgrosman/wav2vec2-large-xlsr-53-<lang>` HuggingFace checkpoints. **No
-  canonical hosted source for a pre-built `model.onnx` exists anywhere in this repo or its docs**
-  (`sync-pipeline-v2-plan.md:3295` flags hosting as an unresolved cost decision), and no
-  acquisition UI exists (the Settings "Manage Sync Model" dialog covers only the Whisper model).
-  Consequence: a fresh install — Windows or a clean macOS machine — has no FA model and FA claims
-  on such an install are CLAIM-UNVERIFIED, not proven by this session's result. Full A5 evidence
-  and P1/P2/P3 classification: `docs/history-2.md#2026-08-26--ws2-step11-fa-model-provenance-a5`.
-* [OPEN] FA onnxruntime runtime provisioning for Windows + macOS arm64, AND FA model acquisition
-  for any platform — compiled in on every target since bug 2 (`d8baef5`), but the ORT C runtime
-  library is bundled for macOS x86_64 only (`fa_onnx.rs:319`'s hard platform gate); Windows and
-  (unverified, no arm64 hardware available to date) Apple Silicon Macs fail the pre-flight cleanly
-  rather than crashing, but cannot run FA at all — and per the A5 finding above, no platform has a
-  real model-acquisition path either. Both gated on resolving A5's open question (a real hosted
-  source, or a proper guided manual-placement UI) before ORT provisioning is worth doing. Scoped
-  ORT plan: `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md` §B3. Correction note:
-  `docs/history-2.md#2026-08-26--correction--ws2-bug2-ort-runtime-platform-gap`.
+  FA DOES run end-to-end on the operator's own local .app build with the gate manually flipped ON,
+  but the 5 per-language `model.onnx` files it used were a **P2 hand-placed dev-session artifact**
+  with no canonical hosted source and no acquisition UI at the time. Full A5 evidence and
+  P1/P2/P3 classification: `docs/history-2.md#2026-08-26--ws2-step11-fa-model-provenance-a5`.
+* [IN-PROGRESS] Manage Models & Add-ons modal (WS2 Step 12, A3) — closes A5's "no acquisition UI"
+  gap: import (working, exact-manifest-validated) + a permanently-enabled but not-yet-network-wired
+  Download control for FA packs, replacing the old whisper-only "Manage sync model" dialog. Backend:
+  `src-tauri/src/models.rs`. Does NOT close A5's other two gaps: no canonical HOSTED source is
+  configured yet (Download explains this rather than failing silently — see
+  `docs/ws2-fa-models/manage-models.md`), and Windows/arm64 ORT runtime provisioning (below) is
+  untouched — a model a Windows user imports today still cannot run FA there.
+* [OPEN] FA onnxruntime runtime provisioning for Windows + macOS arm64 — compiled in on every
+  target since bug 2 (`d8baef5`), but the ORT C runtime library is bundled for macOS x86_64 only
+  (`fa_onnx.rs:319`'s hard platform gate); Windows and (unverified, no arm64 hardware available to
+  date) Apple Silicon Macs fail the pre-flight cleanly rather than crashing, but cannot run FA at
+  all. Scoped ORT plan: `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md` §B3. Correction
+  note: `docs/history-2.md#2026-08-26--correction--ws2-bug2-ort-runtime-platform-gap`.
 
 ---
 
