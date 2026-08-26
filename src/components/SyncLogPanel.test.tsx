@@ -213,6 +213,52 @@ describe('SyncLogPanel — WS4 entry kinds', () => {
 });
 
 // ---------------------------------------------------------------------------
+// WS2 Step 12 (A3) — Manage Models & Add-ons deep-link from a model-missing
+// fa-preflight entry.
+// ---------------------------------------------------------------------------
+
+describe('SyncLogPanel — models-modal deep-link', () => {
+  function makePreflightEntry(errorMessage: string): SyncLogEntry {
+    return {
+      id: 'e-preflight',
+      timestamp: AT,
+      syncRunId: 'run-1',
+      type: 'fa-preflight',
+      message: 'High-precision sync is not ready for this run.',
+      errorMessage,
+      fixHint: 'Install the alignment model for this language, then run Apply Sync again.',
+    };
+  }
+
+  it('renders a "Manage models & add-ons" link when the detail names a missing FA model and a handler is given', () => {
+    const html = renderToStaticMarkup(
+      <SyncLogPanel
+        syncLog={[makePreflightEntry('No FA model found for language "es". Tried: /a, /b.')]}
+        onClearLog={() => {}}
+        onOpenModelsModal={() => {}}
+      />,
+    );
+    expect(html).toContain('Manage models');
+  });
+
+  it('omits the link when no onOpenModelsModal handler is passed', () => {
+    const html = renderPanel([makePreflightEntry('No FA model found for language "es". Tried: /a, /b.')]);
+    expect(html).not.toContain('Manage models');
+  });
+
+  it('omits the link when the detail is not about a missing model', () => {
+    const html = renderToStaticMarkup(
+      <SyncLogPanel
+        syncLog={[makePreflightEntry('failed to initialize onnxruntime: ORT_DYLIB_PATH not set')]}
+        onClearLog={() => {}}
+        onOpenModelsModal={() => {}}
+      />,
+    );
+    expect(html).not.toContain('Manage models');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Log-grouping feature (2026-08-03) — grouped entries (groupedItems set)
 // ---------------------------------------------------------------------------
 

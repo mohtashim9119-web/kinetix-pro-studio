@@ -49,8 +49,8 @@ interface Props {
    *  never accidentally render "no preference" as "off". */
   faEnabled: boolean;
   onFaEnabledChange: (v: boolean) => void;
-  /** Bug 4 fix — opens ModelDownloadPanel for the in-app whisper model
-   *  acquisition/status UI. */
+  /** Opens ManageModelsModal (WS2 Step 12) — the in-app whisper +
+   *  forced-alignment model acquisition/status UI. */
   onManageModel: () => void;
   onClose: () => void;
 }
@@ -228,7 +228,7 @@ export function ProjectSettingsModal({
               onClick={onManageModel}
               className="text-[9px] uppercase tracking-widest text-gray-500 hover:text-[#F27D26] transition-colors underline underline-offset-2"
             >
-              Manage sync model
+              Manage models &amp; add-ons
             </button>
           </div>
 

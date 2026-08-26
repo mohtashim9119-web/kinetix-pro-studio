@@ -226,7 +226,7 @@ import { NewProjectModal } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { SyncLogPanel } from './components/SyncLogPanel';
 import { ExportSettingsModal } from './components/ExportSettingsModal';
-import { ModelDownloadPanel } from './components/ModelDownloadPanel';
+import { ManageModelsModal } from './components/ManageModelsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, formatElapsed, formatElapsedLong, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { useWhisper } from './hooks/useWhisper';
@@ -1835,7 +1835,7 @@ export default function App() {
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   const [showExportSettingsModal, setShowExportSettingsModal] = useState(false);
-  const [showModelDownloadPanel, setShowModelDownloadPanel] = useState(false);
+  const [showManageModelsModal, setShowManageModelsModal] = useState(false);
   const [devPanelOpen, setDevPanelOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const previewStageRef = useRef<PreviewStageHandle>(null);
@@ -4563,7 +4563,7 @@ export default function App() {
   shortcutsSuppressedRef.current =
     showStockSearch || showNewProjectModal || showProjectSettingsModal
     || showExportSettingsModal || showReviewMapping || devPanelOpen
-    || showModelDownloadPanel || exportState.isExporting;
+    || showManageModelsModal || exportState.isExporting;
 
   const togglePlay = () => setIsPlaying(p => !p);
 
@@ -5133,7 +5133,7 @@ export default function App() {
                 status={transcriptionStatus}
                 onCancel={cancelTranscription}
                 onDismiss={dismissError}
-                onDownloadModel={() => setShowModelDownloadPanel(true)}
+                onDownloadModel={() => setShowManageModelsModal(true)}
               />
             </div>
           )}
@@ -5424,6 +5424,7 @@ export default function App() {
             <SyncLogPanel
               syncLog={project.syncLog ?? []}
               onClearLog={handleClearSyncLog}
+              onOpenModelsModal={() => setShowManageModelsModal(true)}
             />
           </div>
 
@@ -5620,17 +5621,21 @@ export default function App() {
           onLanguageChange={(v) => setProject(p => ({ ...p, language: v }))}
           faEnabled={isFaEnabledForProject(project)}
           onFaEnabledChange={(v) => setProject(p => ({ ...p, faHighPrecisionSync: v }))}
-          onManageModel={() => setShowModelDownloadPanel(true)}
+          onManageModel={() => setShowManageModelsModal(true)}
           onClose={() => setShowProjectSettingsModal(false)}
         />
       )}
 
-      {/* In-app whisper model acquisition (bug 4 fix) — reachable from
-          Project Settings' "Manage sync model" link and automatically from
-          TranscriptionBar's "Download model" action on a model-not-found
-          transcription error. */}
-      {showModelDownloadPanel && (
-        <ModelDownloadPanel onClose={() => setShowModelDownloadPanel(false)} />
+      {/* Manage Models & Add-ons (WS2 Step 12, A3) — the one model UI,
+          reachable from Project Settings' "Manage models & add-ons" link
+          and automatically from TranscriptionBar's "Download model" action
+          on a model-not-found transcription error. Replaces the old
+          whisper-only ModelDownloadPanel. */}
+      {showManageModelsModal && (
+        <ManageModelsModal
+          onClose={() => setShowManageModelsModal(false)}
+          projectLanguage={project.language}
+        />
       )}
 
       {/* Export Settings Modal — resolution + fps chosen at export time

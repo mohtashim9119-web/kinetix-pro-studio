@@ -12,6 +12,19 @@ import type { SyncLogEntry, SyncLogEntryType } from '../types';
 interface Props {
   syncLog: SyncLogEntry[];
   onClearLog: () => void;
+  /** WS2 Step 12 (A3) — opens ManageModelsModal. Optional so a caller that
+   *  has no model UI wired (e.g. a future embedding) can omit it; the
+   *  deep-link button below simply doesn't render without it. */
+  onOpenModelsModal?: () => void;
+}
+
+/** True when an fa-preflight/fa-fallback entry's own detail names a missing
+ *  FA model — the one blocking cause ManageModelsModal can actually fix.
+ *  Text-matched against `fa.rs::no_model_found_error`'s verbatim message
+ *  ("No FA model found for language ...") rather than a new typed field,
+ *  since that string is already the log's source of truth for this cause. */
+function isMissingModelDetail(detail: string | undefined): boolean {
+  return !!detail && detail.includes('No FA model found');
 }
 
 /** Type → badge label + colors. Kept as one table so a new SyncLogEntryType is
@@ -191,7 +204,7 @@ export function formatEntryText(entry: SyncLogEntry): string {
   return lines.join('\n');
 }
 
-export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement {
+export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal }: Props): React.ReactElement {
   // Collapsed by default only when there's nothing to show — an empty section
   // shouldn't occupy the panel, but a run that just skipped scenes should be
   // visible without a click. `null` = the user hasn't expressed a preference,
@@ -384,6 +397,15 @@ export function SyncLogPanel({ syncLog, onClearLog }: Props): React.ReactElement
                         <p className="text-[9px] text-gray-600 mt-0.5 pl-1.5 leading-snug break-words">
                           {detailLine}
                         </p>
+                      )}
+                      {onOpenModelsModal && isMissingModelDetail(detailLine) && (
+                        <button
+                          type="button"
+                          onClick={onOpenModelsModal}
+                          className="mt-1 ml-1.5 text-[9px] font-bold uppercase tracking-widest text-[#FF7300] hover:underline"
+                        >
+                          Manage models &amp; add-ons →
+                        </button>
                       )}
                       {entry.segmentText && (
                         <p className="text-[9px] text-gray-600 mt-1 italic leading-snug break-words">
