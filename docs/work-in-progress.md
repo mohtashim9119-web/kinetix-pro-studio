@@ -86,6 +86,20 @@ satisfied or accepted in writing.
   predecessor competition, transparent for a genuine P-overflow). Gate-verified: 13/13 target
   tests, 3/3 Bug 1 regression tests, golden replay byte-identical. `docs/history-2.md#2026-08-26
   --2ae4d18--2ae4d18-ws2-bug1-trusted-spine`
+* [OPEN] WS2 bug 3 — a video exported by an external (browser/WebCodecs-based) tool imports and
+  shows in the timeline but never advances in preview ("looks like an image"); the same asset
+  exports and plays correctly. Root cause (diagnosed, not yet fixed): the failing asset is
+  genuine 120fps CFR H.264 (no elst, no VFR, no rotation, no HDR — all ruled out), and
+  `videoDecoderPool.ts`'s preview decode-ahead sizes its 90-frame buffer cap
+  (`MAX_BUFFERED_FRAMES_PER_SESSION`) against a fixed 1.5s time window (`WINDOW_AHEAD_SEC`)
+  tuned for ~24-30fps content, never reading the source's real fps — at 120fps the first
+  decode-ahead batch needs ~180 frames, overflows the cap, and permanently drops the excess
+  (```feedCursor``` has already moved past them), producing a periodic stale-frame freeze.
+  Export is unaffected because it uses a separate, non-windowed sequential decoder
+  (`sequentialDecode.ts`). Reproduced against the real, unmodified pool code with the asset's
+  measured profile; NOT yet confirmed in the live app (no UI driver available that session).
+  Recommended fix: make the decode-ahead window/buffer proportional to source fps — narrow,
+  no new subsystem. Full diagnosis: `docs/ws2-video-ingest/bug3-diagnosis.md`. No owner yet.
 
 ### Open bugs
 
