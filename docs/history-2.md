@@ -915,3 +915,95 @@ item: `docs/work-in-progress.md`'s `[IN-PROGRESS]` row for this bug names the sa
 Full diagnosis (candidate ruling, A1-A6, deviation note on the C1 test spec, B3 sizing):
 `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`.
 Superseded-by: none
+
+### 2026-08-26 · WS2 Step 11 · ws2-step11-fa-model-provenance-a5
+Outcome: operator ran Apply Sync on an Intel Mac install with High-Precision Auto-Sync (FA)
+manually flipped ON in Settings and English selected; Sync Log showed `[FA PRE-FLIGHT] FA
+pre-flight: ready — runtime loaded and model present for "en"` and `[INFO] Timing engine: forced
+alignment (2181 aligned word(s))` — FA ran genuinely end-to-end, MEASURED (operator-attested log,
+not re-derived). This supersedes `docs/work-in-progress.md`'s prior note that FA "has never been
+observed running in any packaged desktop build" — narrowed to: never observed running from a
+*fresh, unmodified* install.
+A5 provenance investigation (this session, before any Phase B/ORT work, per operator instruction
+to resolve provenance FIRST): `app_local_data_dir` for identifier `com.kinetix.pro-studio`
+resolves to `~/Library/Application Support/com.kinetix.pro-studio/` (macOS Tauri v2 convention,
+confirmed via `fa.rs:470`'s `app.path().app_local_data_dir()`). `fa-models/{en,es,fr,de,pt}/
+model.onnx` all exist there, each ~1.26 GiB, sha256 for `en` = `48a3c2e143a9741e92a7ccd7e0600af
+e498e2c42c3dc01f78bc0c335f916240f` — byte-identical to the sha `sync-pipeline-v2-plan.md:8994`
+already recorded for the "production model" during prior WS1 research. All 5 files' birthtime is
+2026-08-12 14:54-14:56 (a ~2-minute window, one export run) — **14 days before** the `.app`
+bundle's own install/creation date, 2026-08-26 13:55 (`mdls kMDItemFSCreationDate`). `find
+/Applications/Kinetix Pro Studio.app -iname '*.onnx'` returns nothing — zero ONNX files ship
+inside the bundle. Neither `tauri.conf.json`'s `bundle.resources` nor `build.yml` ever stages or
+references `fa-models/` (grep, zero hits outside `fa.rs`'s own path-builder and `fa_dev.rs:362`'s
+dev-only test-fixture path, which only READS the same location). No code path anywhere in
+`src-tauri/src/` or `src/` WRITES to `fa-models/` — the only writer that exists at all is
+`scripts/export-fa-onnx.py`, a standalone Python script never invoked by the app, CI, or the
+installer. Classification: **P2 — hand-placed / dev-session leftover.** The operator's own dev
+machine had these 5 files sitting in `app_local_data_dir` from an unrelated 2026-08-12 research
+session (this project has a local `.venv-phase4-fa` Python venv, corroborating a manual
+`export-fa-onnx.py` run) — not P1 (installer bundling, ruled out by the empty `.app` search and
+the 14-day birthtime gap) and not P3 (no download code exists anywhere). Consequence: the FA
+end-to-end claim is real for THIS machine's current state, but is **CLAIM-UNVERIFIED for any fresh
+install** — Windows, or a clean macOS machine with no `.venv-phase4-fa`/manual export history —
+which would hit `fa.rs`'s `no_model_found_error` (fa.rs:454-462) immediately. A5.8 (side finding):
+the wav2vec2 CTC vocab is NOT part of this gap — it is already compiled in per-language via
+`include_str!` (`fa_onnx.rs:625-631`) from committed `scripts/fixtures/fa-vocab-{en,es,fr,de,pt}
+.json` files, no acquisition needed. `docs/work-in-progress.md`'s FA-provisioning rows updated to
+reflect P2 and the still-open "no canonical model source" question. Phase B (Windows/arm64 ORT
+provisioning) NOT started this session per the operator's own instruction — gated on A5's
+classification landing first, and on a follow-up decision (real hosting vs. a real guided
+manual-placement UI) neither built nor authorized this session.
+Superseded-by: none
+
+### 2026-08-26 · WS2 Step 11 · ws2-step11-fetch-sites
+Outcome: fixed 6 of the 9 sibling `fetch(asset.url)` sites Step 10's A6 sweep found (that sweep's
+own "8 other" count undercounts its own bullet list by one — 9 sites are actually listed) with the
+identical `asset.file ??` guard as Step 10's `fetchAndDetectSilences` fix: `App.tsx:3781`/`:3901`
+(dev-only `[calibrate]`/`[inspector]` instrumentation), `segmentEncoder.ts:416`
+(`encodePlainVideoSegment`'s source-bytes pull), `exportPipeline.ts:277` (legacy export's
+voiceover mux), `webcodecsExport/exportPipelineWebCodecs.ts:1031` (WebCodecs export's voiceover
+mux), `webcodecsExport/exportWorker.ts:301` (image-asset `createImageBitmap` inside the Web
+Worker — confirmed `File`/`Blob` objects survive `postMessage`'s structured-clone algorithm, so
+the same-shape guard is valid there despite the different execution context A6 flagged as
+"materially different"). `waveformPipeline.ts:81` was found ALREADY guarded — A6's list was stale
+on that one (git history shows the guard predates this session). NOT fixed: `whisperService.ts
+:1686` is FROZEN this session (operator directive); `videoDemuxer.ts:66`'s `demux(url: string)`
+takes only a raw URL, and its sole production caller (`videoDecoderPool.ts`, also frozen) has no
+`Asset`/`File` to pass — fixing it would require changing a frozen file's call site, so left
+unfixed and flagged rather than forced.
+Verification: `tsc --noEmit` clean; new/updated regression tests in `segmentEncoder.test.ts`,
+`exportPipeline.test.ts` (new file), `exportPipelineWebCodecs.test.ts` — each asserts `fetch` is
+never called when `.file` is present and IS called with the exact `asset.url` when `.file` is
+absent (fallback preserved, macOS behavior unchanged). No test added for the two App.tsx dev-only
+sites (not independently unit-tested before this change either — they're closures inside a large
+component, dev-only, unreachable from the shipped sync path) or for `exportWorker.ts` (a Worker
+entry module with `self.onmessage` registered at import time; no existing test imports it, matches
+`CLAUDE.md`'s accepted DOM/worker-testing gap already cited for `usePlayback.ts`/`useGlPreview.ts`
+/`useExport.ts`) — verified by code inspection only for those three sites. Full vitest suite:
+2533 passed, 77 skipped, 0 failed (`npx vitest run --exclude "**/.claude/worktrees/**"` — an
+unrelated pre-existing worktree at `.claude/worktrees/elated-haibt-ab90e1` on branch
+`claude/elated-haibt-ab90e1` sits inside this repo and would otherwise double-run the suite
+against its own stale checkout; not created or touched this session).
+Superseded-by: none
+
+### 2026-08-26 · WS2 Step 11 · ws2-step11-boundaryUsedFallback-fix
+Outcome: fixed `boundaryUsedFallback`'s next-side `isBreathSilence` call
+(`snapBoundaries.ts:381`) from 4 args to 5, passing `currLastTokenIdx` as `otherSideLastTokenIdx`
+— matching the already-correct pattern at `snapBoundaries.ts:744-745`. The 4-arg form silently
+defaulted the seam exemption off for every next-side breath-silence check, so a genuine
+seam-exempted boundary candidate could be misread as an interior breath and excluded from
+candidacy, making `boundaryUsedFallback` over-report "fallback used" on affected pairs. Narrow
+unfreeze of `snapBoundaries.ts` for this one 2-line change only, per operator instruction — no
+signature change, no other edit to the file. Diagnostic-only by the function's own doc comment
+(never replays `snapCoveredBoundaries`'s Pass 2 contention-aware assignment; never touches
+committed segment timing) — confirmed, not assumed: golden replay
+(`scripts/phase4-handoff-replay-sync.test.ts`, after regenerating replay inputs via
+`scripts/phase4-restore-replay-inputs.py`) stayed byte-identical across v6/173/spanish, 6/6 passed.
+Regression test added (`syncTiming.test.ts`, new case in the `boundaryUsedFallback` describe
+block) reusing the real production V6 "seg 96→97 predator" fixture already committed for
+`isBreathSilence`'s own seam-exemption tests — proves the 5-arg call now reads the fixture's
+silence as a real assignable candidate (`boundaryUsedFallback` returns `false`) where the old 4-arg
+call would have wrongly read it as a breath and reported fallback (`true`); both readings asserted
+directly via `isBreathSilence` with 4 vs. 5 args in the same test.
+Superseded-by: none

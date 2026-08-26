@@ -77,12 +77,12 @@ worked. `[DEFERRED]` = real defect, work explicitly paused by an operator decisi
 NOT "accepted" or "not a bug"; see Part AI's sequencing table for why. `[CLAIM-UNVERIFIED]` = not
 a code defect — an operational task/claim not yet confirmed by direct evidence.
 
-* [OPEN · NON-BLOCKING] `boundaryUsedFallback` calls `isBreathSilence` with 4 arguments instead
-  of 5 — (`src/services/snapBoundaries.ts:381-382`; the correct 5-arg call exists at `:744-745`)
-  — defaults the seam exemption off, so every boundary-quality reading on a seam-exempted pair
-  has been wrong since it shipped. Slated for Phase 7; no one currently on it. Fix design
-  (2-line, internal-only, no signature change): Part AI §2. Non-blocking because diagnostic-only
-  — never touches committed segment timing.
+* [CLOSED] `boundaryUsedFallback`'s 4-arg `isBreathSilence` call fixed to 5-arg (WS2 Step 11,
+  `src/services/snapBoundaries.ts:381`), matching the correct pattern at `:744-745`. Diagnostic-
+  only, confirmed no committed-timing change: golden replay v6/173/spanish byte-identical
+  (`scripts/phase4-handoff-replay-sync.test.ts`, 6/6). Regression test:
+  `src/services/syncTiming.test.ts`'s seam-exemption case reusing the real V6 "predator" fixture.
+  `docs/history-2.md#2026-08-26--ws2-step11-boundaryUsedFallback-fix`.
 * [OPEN · NON-BLOCKING] 5 open Zero-Defect Register rows — boundary-placement defects,
   ear-verified wrong, with no rule that fixes them yet: `214_solitary_fire`, `231_slowing_pace`,
   `447_scout_facing_dark`, `173/lethal_nature_hazard`, `173/gadget_decay` (live list:
@@ -191,10 +191,18 @@ Tag definitions: WS1's "Open bugs" section above (file-wide vocabulary).
   `fetch(asset.url)` when `.file` is absent — the same precedented pattern `App.tsx`'s
   `resolveVoiceoverDuration` already used. Machine-verified (new regression test, `tsc`, full
   vitest, `cargo test`); **NOT YET verified on real Windows hardware** — tag stays IN-PROGRESS
-  until the operator confirms. 8 other unguarded `fetch(asset.url)` call sites found with the same
-  defect shape, NOT fixed this session (scope-limited to the reported sync-path failure) — full
-  list: `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`.
+  until the operator confirms. WS2 Step 11: Step 10's A6 sweep actually lists 9 sibling
+  `fetch(asset.url)` sites (its own "8 other" count is off by one) — 6 now fixed with the same
+  `asset.file ??` guard (`App.tsx` ×2 dev-only, `segmentEncoder.ts`, `exportPipeline.ts`,
+  `exportPipelineWebCodecs.ts`, `exportWorker.ts` — the last runs inside a Web Worker; `.file`
+  survives via structured clone). `waveformPipeline.ts:81` was already guarded (stale A6 entry).
+  `whisperService.ts:1686` untouched — FROZEN this session. `videoDemuxer.ts:66`'s `demux(url)` NOT
+  fixed — its only production caller, `videoDecoderPool.ts`, is also frozen and takes a bare URL
+  string; flagged, not forced. Regression tests added per fixed site except the two App.tsx
+  dev-only sites and exportWorker.ts (worker-entry module, same accepted DOM/worker-testing gap as
+  `usePlayback.ts`/`useGlPreview.ts`). Full list: `step10-windows-fetch-diagnosis.md`.
   `docs/history-2.md#2026-08-26--56e2116--56e2116-ws2-step10-windows-voiceover-fetch`
+  `docs/history-2.md#2026-08-26--ws2-step11-fetch-sites`
 * [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect found
   while diagnosing bug 3, not itself closed by bug 3's non-repro: `videoDecoderPool.ts`'s
   90-frame decode-ahead cap (`MAX_BUFFERED_FRAMES_PER_SESSION`) is sized against a fixed ~1.5s
@@ -210,19 +218,32 @@ Tag definitions: WS1's "Open bugs" section above (file-wide vocabulary).
 
 ### Operational / verification tasks (not code defects)
 
-* [CLAIM-UNVERIFIED] CI-installer verification of WS2 bugs 2+4, plus confirmation FA actually runs
-  end-to-end — neither proven on a CI-built artifact; `build.yml` carries both fixes on
-  `origin/main` but arm64/Windows have never been built (CI or local — Intel dev machine only).
-  Separately: FA has never been observed RUNNING in a desktop build — the 2026-08-26 operator run
-  had `FA_PROJECT_DEFAULT_ON` OFF by ruling, so it never invoked FA. Action: run `build.yml` on
-  both matrix targets, then a project with the FA gate manually flipped ON, and confirm FA executes.
-* [OPEN] FA onnxruntime runtime provisioning for Windows + macOS arm64 — compiled in on every
-  target since bug 2 (`d8baef5`), but the ORT C runtime library is bundled for macOS x86_64 only
-  (`fa_onnx.rs:319`'s hard platform gate); Windows and (unverified, no arm64 hardware available to
-  date) Apple Silicon Macs fail the pre-flight cleanly rather than crashing, but cannot run FA at
-  all. No code exists yet. Scoped plan (Windows DLL provisioning, generalizing the gate to a
-  per-platform table, an arm64 slice): `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`
-  §B3. Correction note: `docs/history-2.md#2026-08-26--correction--ws2-bug2-ort-runtime-platform-gap`.
+* [CLAIM-UNVERIFIED] CI-installer verification of WS2 bugs 2+4 — not proven on a CI-built
+  artifact; `build.yml` carries both fixes on `origin/main` but arm64/Windows have never been
+  built (CI or local — Intel dev machine only). Separately, MEASURED 2026-08-26 (WS2 Step 11, A5):
+  FA DOES run end-to-end on the operator's own local .app build with the gate manually flipped ON
+  (Sync Log: FA pre-flight ready, FA timing engine, 2181 aligned words) — superseding the prior
+  "never observed running" note — but the 5 per-language `model.onnx` files it used are a
+  **P2 hand-placed dev-session artifact** (`~/Library/Application Support/com.kinetix.pro-studio/
+  fa-models/<lang>/model.onnx`, birthtime 2026-08-12, 14 days BEFORE the `.app` bundle's own
+  2026-08-26 build date; zero `*.onnx` inside the `.app` itself; no `build.yml`/`tauri.conf.json`
+  resource ever stages `fa-models/`), produced by manually running `scripts/export-fa-onnx.py`
+  against the `jonatasgrosman/wav2vec2-large-xlsr-53-<lang>` HuggingFace checkpoints. **No
+  canonical hosted source for a pre-built `model.onnx` exists anywhere in this repo or its docs**
+  (`sync-pipeline-v2-plan.md:3295` flags hosting as an unresolved cost decision), and no
+  acquisition UI exists (the Settings "Manage Sync Model" dialog covers only the Whisper model).
+  Consequence: a fresh install — Windows or a clean macOS machine — has no FA model and FA claims
+  on such an install are CLAIM-UNVERIFIED, not proven by this session's result. Full A5 evidence
+  and P1/P2/P3 classification: `docs/history-2.md#2026-08-26--ws2-step11-fa-model-provenance-a5`.
+* [OPEN] FA onnxruntime runtime provisioning for Windows + macOS arm64, AND FA model acquisition
+  for any platform — compiled in on every target since bug 2 (`d8baef5`), but the ORT C runtime
+  library is bundled for macOS x86_64 only (`fa_onnx.rs:319`'s hard platform gate); Windows and
+  (unverified, no arm64 hardware available to date) Apple Silicon Macs fail the pre-flight cleanly
+  rather than crashing, but cannot run FA at all — and per the A5 finding above, no platform has a
+  real model-acquisition path either. Both gated on resolving A5's open question (a real hosted
+  source, or a proper guided manual-placement UI) before ORT provisioning is worth doing. Scoped
+  ORT plan: `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md` §B3. Correction note:
+  `docs/history-2.md#2026-08-26--correction--ws2-bug2-ort-runtime-platform-gap`.
 
 ---
 
