@@ -169,10 +169,32 @@ Started: 2026-08-26 (Step 3) | Status: 3 of 4 bugs closed (1/2/4 code-fixed, mac
   `docs/history-2.md#2026-08-26--8c6e4e8--8c6e4e8-ws2-bug4-in-app-model-download`
 - **WS2 bug 3** — closed as DID-NOT-REPRODUCE on a HEAD build; no code fix exists.
   `docs/history-2.md#2026-08-26--no-fix--ws2-bug3-closed-did-not-reproduce`
+- **WS2 Step 10 — FA error serialization** — `invoke()` rejections that are plain objects (any
+  `#[tauri::command]` returning `Err(struct)`) no longer stringify to `[object Object]` in the
+  Sync Log; new shared `describeInvokeError` helper, wired into `forcedAlignmentRun.ts` and
+  `faPreflight.ts`. `docs/history-2.md#2026-08-26--88ff701--88ff701-ws2-step10-error-serialization`
 
 ### Open bugs
 
 Tag definitions: WS1's "Open bugs" section above (file-wide vocabulary).
+* [IN-PROGRESS] Windows voiceover `fetch(blob:)` failure — Windows installer's Apply Sync run
+  reported `voiceover fetch failed: Failed to fetch` from `useWhisper.ts`'s
+  `fetchAndDetectSilences`, degrading every boundary to a token-midpoint fallback (117 cuts landed
+  on still-playing audio, a consequence, not a separate defect). Root cause NOT fully determined
+  down to the exact WebView2 mechanism (no Windows hardware this session) but narrowed hard: `Asset.url`
+  is always a `blob:` object URL, never the Tauri asset protocol or a filesystem path (ruled out
+  by grep — no `asset://`/`assetProtocol` capability exists anywhere in this codebase), and the
+  same-run video preview (`<video src={asset.url}>`) decoded fine on the identical URL scheme —
+  the concrete difference is DOM-native media loading vs. an explicit `fetch()` call. Fix applied:
+  `fetchAndDetectSilences` now prefers the already-in-memory `asset.file` (present for a
+  freshly-staged voiceover, the operator's exact scenario) and only falls back to
+  `fetch(asset.url)` when `.file` is absent — the same precedented pattern `App.tsx`'s
+  `resolveVoiceoverDuration` already used. Machine-verified (new regression test, `tsc`, full
+  vitest, `cargo test`); **NOT YET verified on real Windows hardware** — tag stays IN-PROGRESS
+  until the operator confirms. 8 other unguarded `fetch(asset.url)` call sites found with the same
+  defect shape, NOT fixed this session (scope-limited to the reported sync-path failure) — full
+  list: `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`.
+  `docs/history-2.md#2026-08-26--pending--ws2-step10-windows-voiceover-fetch`
 * [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect found
   while diagnosing bug 3, not itself closed by bug 3's non-repro: `videoDecoderPool.ts`'s
   90-frame decode-ahead cap (`MAX_BUFFERED_FRAMES_PER_SESSION`) is sized against a fixed ~1.5s
@@ -194,6 +216,13 @@ Tag definitions: WS1's "Open bugs" section above (file-wide vocabulary).
   Separately: FA has never been observed RUNNING in a desktop build — the 2026-08-26 operator run
   had `FA_PROJECT_DEFAULT_ON` OFF by ruling, so it never invoked FA. Action: run `build.yml` on
   both matrix targets, then a project with the FA gate manually flipped ON, and confirm FA executes.
+* [OPEN] FA onnxruntime runtime provisioning for Windows + macOS arm64 — compiled in on every
+  target since bug 2 (`d8baef5`), but the ORT C runtime library is bundled for macOS x86_64 only
+  (`fa_onnx.rs:319`'s hard platform gate); Windows and (unverified, no arm64 hardware available to
+  date) Apple Silicon Macs fail the pre-flight cleanly rather than crashing, but cannot run FA at
+  all. No code exists yet. Scoped plan (Windows DLL provisioning, generalizing the gate to a
+  per-platform table, an arm64 slice): `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`
+  §B3. Correction note: `docs/history-2.md#2026-08-26--correction--ws2-bug2-ort-runtime-platform-gap`.
 
 ---
 

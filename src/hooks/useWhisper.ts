@@ -20,15 +20,30 @@ import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken
  * A fetch failure is now reported as a structured error, exactly like a decode
  * failure, so the caller can tell "no silence found" apart from "the scan never
  * ran" — the two produce very different boundary placement.
+ *
+ * WS2 Step 10: prefers the already-in-memory `asset.file` over re-fetching
+ * `asset.url` (a `blob:` object URL), mirroring `App.tsx`'s
+ * `resolveVoiceoverDuration` precedent. `fetch()` against a same-session
+ * `blob:` URL was observed failing outright ("Failed to fetch") in a Windows
+ * WebView2 build while every DOM-native consumer of the identical URL (the
+ * `<video src>` element) kept working — `asset.file` is the same bytes
+ * without the extra round-trip through the browser's blob-URL registry.
+ * Falls back to `fetch(asset.url)` only when `.file` is absent (a project
+ * asset reconstructed from IndexedDB after a reload never carries a `File`
+ * reference — `projectStore.ts` strips it before persisting).
  */
-async function fetchAndDetectSilences(asset: Asset): Promise<SilenceDetectResult> {
+export async function fetchAndDetectSilences(asset: Asset): Promise<SilenceDetectResult> {
   let blob: Blob;
   try {
-    const resp = await fetch(asset.url);
-    if (!resp.ok) {
-      return { status: 'error', errorMessage: `voiceover fetch failed: ${resp.status} ${resp.statusText}` };
+    if (asset.file) {
+      blob = asset.file;
+    } else {
+      const resp = await fetch(asset.url);
+      if (!resp.ok) {
+        return { status: 'error', errorMessage: `voiceover fetch failed: ${resp.status} ${resp.statusText}` };
+      }
+      blob = await resp.blob();
     }
-    blob = await resp.blob();
   } catch (err) {
     const message = err instanceof Error ? err.message || err.name : String(err);
     return { status: 'error', errorMessage: `voiceover fetch failed: ${message}` };

@@ -85,6 +85,9 @@
 - [WS2 bug 2 — FA compiled into the installer](#2026-08-26--d8baef5--d8baef5-ws2-bug2-fa-compiled-into-installer) — 2026-08-26
 - [WS2 bug 4 — in-app model acquisition](#2026-08-26--8c6e4e8--8c6e4e8-ws2-bug4-in-app-model-download) — 2026-08-26
 - [WS2 bug 3 — closed, did not reproduce](#2026-08-26--no-fix--ws2-bug3-closed-did-not-reproduce) — 2026-08-26
+- [WS2 bug 2 — correction: Windows/arm64 ORT runtime still absent](#2026-08-26--correction--ws2-bug2-ort-runtime-platform-gap) — 2026-08-26
+- [WS2 Step 10 — FA error serialization fix](#2026-08-26--88ff701--88ff701-ws2-step10-error-serialization) — 2026-08-26
+- [WS2 Step 10 — Windows voiceover fetch fix](#2026-08-26--pending--ws2-step10-windows-voiceover-fetch) — 2026-08-26
 
 ---
 
@@ -785,4 +788,130 @@ combination may not have been reproduced. Because the reproduced buffer-overflow
 reproduces, it is tracked separately and NOT closed by this entry — see
 `docs/work-in-progress.md`'s `[DEFERRED] 120fps preview decode lag` row, the sole remaining
 record of that mechanism. Full diagnosis: `docs/ws2-video-ingest/bug3-diagnosis.md`.
+Superseded-by: none
+
+### 2026-08-26 · correction · ws2-bug2-ort-runtime-platform-gap
+**CORRECTION NOTE — does not edit the entry above (`d8baef5-ws2-bug2-fa-compiled-into-installer`),
+appended per this session's WS2 Step 10 diagnosis.** That entry's closure is about the *compiled*
+feature flag and the closed-gate Sync Log signal, and both remain true and unchanged. What needs
+qualifying: forced alignment is now compiled into **every** shipped target (`-f fa-inference`
+passed to both `build.yml` matrix legs), but the **onnxruntime C runtime it depends on at
+runtime is still bundled for macOS x86_64 only** — `fa_onnx.rs:319`'s `resolve_bundled_ort_dylib`
+hard-gates on `cfg!(all(target_os = "macos", target_arch = "x86_64"))` and fails loudly (never
+silently) on every other target. Confirmed this session: a Windows installer build's
+`[FA PRE-FLIGHT]` Sync Log entry read "not ready — the alignment runtime did not load for
+'en'... no bundled onnxruntime C runtime for this target (windows-x86_64)" — this is the gate
+firing **correctly**, not a regression, but it means bug 2's "FA compiled in" fix does not by
+itself make FA runnable on Windows. The operator's Mac is Intel (x86_64) per this session's Q1 —
+so Apple Silicon Macs carry the identical gap, unverified until now: `build.yml`'s macOS leg
+targets `universal-apple-darwin` (a fat binary spanning both architectures) but its ORT
+provisioning step fetches only the x86_64 `.dylib`, and no arm64 Mac has been available in any
+session to date to confirm what actually happens on that architecture at runtime.
+Evidence: MEASURED (Sync Log text quoted verbatim from the operator's Windows run, this session's
+operator report) for Windows; the arm64 gap is code-read (`fa_onnx.rs:319`'s `cfg!` condition)
+plus `build.yml:124-148`'s provisioning step fetching only `onnxruntime-osx-x86_64-1.23.2.tgz` —
+NOT independently confirmed on real arm64 hardware this session or any prior one.
+Detail: full scoped plan for closing this (Windows DLL provisioning, generalizing the
+`fa_onnx.rs:319` gate to a per-platform table, an arm64 macOS slice) sized but explicitly NOT
+built this session (out of scope by operator instruction) — `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`'s
+"B3" section. New WS2 open item tracking this: `docs/work-in-progress.md`'s
+"Operational / verification tasks" section (add: FA runtime provisioning for Windows + macOS
+arm64 — no code exists yet, unlike bug 2's compiled-in-but-gated state for macOS x86_64).
+Superseded-by: none
+
+### 2026-08-26 · 88ff701 · 88ff701-ws2-step10-error-serialization
+Outcome: a Tauri `invoke()` rejection that is a plain JSON object (any `#[tauri::command]`
+returning `Err(struct)`, e.g. `FaError { kind, message }`) was being stringified via the naive
+`err instanceof Error ? err.message : String(err)` pattern, which collapses a plain object to the
+literal text `"[object Object]"` — exactly what the operator's Windows Sync Log showed for the FA
+FALLBACK entry (`error: [object Object]`), discarding the actual backend message
+("failed to initialize onnxruntime: no bundled onnxruntime C runtime for this target
+(windows-x86_64)...") the user most needed to see. Root cause: `fa_align_production`
+(`fa_production.rs`) returns `Result<(), FaError>`; when it errors before ever emitting a
+`Channel<FaEvent>` event (e.g. the ONNX runtime failing to load), the JS-side `invoke()` promise
+rejects with the JSON-deserialized `FaError` object directly — not an `Error` instance, not a
+string — and `forcedAlignmentRun.ts`'s existing `.catch()` handler's `String(err)` call on that
+object produced the garbled text.
+Fix: new shared `src/services/invokeError.ts`'s `describeInvokeError()` — prefers an `Error`'s own
+message, a raw string, then an object's own `.message` field (the shape every serde-serialized
+Tauri command error in this codebase uses) before falling back to a JSON dump, never the bare
+`String(err)`. Wired into both places carrying the same defect class: `forcedAlignmentRun.ts`
+(the FA FALLBACK entry's `detail`, both the channel-error catch at what was line 183 and the
+outer catch at what was line 204) and `faPreflight.ts` (the FA PRE-FLIGHT entry's
+`blockingDetail`, for a rejected `fa_preflight` probe call).
+Evidence: CODE FIX, MACHINE-VERIFIED — new `src/services/invokeError.test.ts` (9 tests, including
+one asserting the fix directly: "never collapses an object rejection to '[object Object]'");
+`npx tsc --noEmit` clean; full `npx vitest run` outside the pre-existing stray worktree
+(`.claude/worktrees/elated-haibt-ab90e1/`, missing its own private replay corpora — the same
+documented exclusion as the `d8baef5`/`8c6e4e8` entries above) 4988 passed / 0 failed / 154
+skipped across 209 test files (30 failures, all inside the stray worktree only, none in `src/` or
+`scripts/`); `gaplessInvariant.test.ts` 36/36; `scripts/phase4-handoff-replay-sync.test.ts` (the
+real, non-worktree copy) 6/6, byte-identical committed totals for v6 (1421.29s),
+173 (709.01s), and spanish (92.04s); `cargo test` 141/141, 1 ignored (pre-existing, unrelated to
+this change).
+Numbers: `[object Object]` → the real backend message, for both the FA FALLBACK entry and the FA
+PRE-FLIGHT entry's blocking-detail line.
+Detail: this is a general JS defect (not Windows-specific in mechanism) that happened to surface
+first on Windows because that is the platform whose onnxruntime is unprovisioned (see the bug 2
+correction note above) — the same garbled text would appear on any platform whose
+`fa_align_production` call rejects before its first `Channel` event.
+Superseded-by: none
+
+### 2026-08-26 · pending · ws2-step10-windows-voiceover-fetch
+Outcome: Windows installer's Apply Sync run reported `[SILENCE] Silence detection failed... reason:
+voiceover fetch failed: Failed to fetch`, degrading every boundary to the token-midpoint fallback
+(the 117 "cuts landed on audio that's still playing" entries in the same run are a consequence of
+this, not a separate defect — confirmed structurally, not re-investigated individually per the
+operator's own framing). Root cause NOT fully determined down to the exact WebView2-internal
+mechanism (no Windows hardware available this session) but hard-narrowed: `useWhisper.ts`'s
+`fetchAndDetectSilences` called `fetch(asset.url)` unconditionally; `Asset.url` is always a
+`blob:` object URL from `URL.createObjectURL()` (never the Tauri asset protocol, never a
+filesystem path — confirmed by exhaustive grep, zero `asset://`/`assetProtocol`/`convertFileSrc`
+references anywhere in the codebase or its Tauri capabilities). The same-run video preview
+(`PreviewStage.tsx`'s `<video src={asset.url}>`) decoded the identical URL scheme successfully in
+the same build — the one concrete code-level difference between the two consumers is DOM-native
+media loading vs. an explicit Fetch API call.
+Fix: `fetchAndDetectSilences` now prefers the already-in-memory `asset.file` (present for a
+freshly-staged voiceover — the operator's exact scenario) and only falls back to
+`fetch(asset.url)` when `.file` is absent (a project asset reconstructed from IndexedDB after a
+reload never carries a `File` — `projectStore.ts` strips it before persisting). This mirrors an
+established, already-shipped pattern (`App.tsx`'s `resolveVoiceoverDuration`, introduced in
+`0aac444` for a different original reason — a reload losing the `File` reference — but the same
+shape of fix) that three other call sites already carried; this function did not.
+Evidence: CODE FIX, MACHINE-VERIFIED (macOS only — see below for what stays unverified). New
+`src/hooks/useWhisper.test.ts` (4 tests) is a genuine regression test: confirmed failing against
+the pre-fix code via `git stash`/`git stash pop` bisection (3 of 4 cases failed — the export
+didn't exist pre-fix, and the fetch-avoidance assertion failed since fetch was called
+unconditionally) and passing after. Same suite counts as the error-serialization entry above (one
+combined `npx vitest run`/`cargo test`/`tsc` pass covered both fixes): 4988/0/154 across 209 files
+outside the stray worktree, `gaplessInvariant` 36/36, golden replay 6/6 byte-identical (v6/173/
+spanish), `cargo test` 141/141. `npm run build` (frontend) succeeds cleanly and the built bundle
+contains the changed string literal (`voiceover fetch failed`), confirming the fix shipped into
+the artifact; a full `npm run tauri:build` installer was NOT produced this session (time/scope) —
+the operator's own local build is the next real installer build.
+**NOT DETERMINED, explicitly carried forward:** (1) the exact WebView2 mechanism behind the
+original failure — candidate ruled the strongest by cross-signal contrast (A4 in the diagnosis
+doc), not proven; (2) whether the 303/2855 filtered-token count is Windows-specific — needs the
+operator's promised macOS run on the identical project for comparison; (3) live confirmation on
+real Windows hardware — the operator must rebuild and re-run.
+**Windows verification steps for the operator:** rebuild via `build.yml` (or a local Windows
+`npm run tauri:build`), run the same project's Apply Sync, and check the Sync Log for: no
+`[SILENCE]` entry with a "voiceover fetch failed" reason (or, if one appears, that it names a
+different underlying cause than "Failed to fetch"); the `[INFO] N cuts landed on audio that's
+still playing` count should drop from 117 toward whatever a real silence-informed sync produces
+for this project (not necessarily zero — some loud-fallback boundaries can be legitimate even
+with working silence detection); no `[object Object]` text anywhere in the log (the separate
+error-serialization fix above should make the `[FA FALLBACK]` line, if it still appears because
+Windows ORT remains unprovisioned, show the real message instead).
+**Cross-platform blast radius, found but NOT fixed this session** (operator instruction — wants
+to review the list before authorizing further changes): 8 other unguarded `fetch(asset.url)` call
+sites carrying the identical defect shape (no `asset.file` fallback) — `App.tsx:3781`/`:3901`
+(dev-only instrumentation), `videoDemuxer.ts:66`, `waveformPipeline.ts:81`,
+`segmentEncoder.ts:416`, `whisperService.ts:1686`, `exportPipeline.ts:277`,
+`webcodecsExport/exportWorker.ts:301` (runs inside a Web Worker — a materially different, likely
+more fragile case), `webcodecsExport/exportPipelineWebCodecs.ts:1031`. Full list with per-site
+notes: `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`'s "A6" section. New WS2 open
+item: `docs/work-in-progress.md`'s `[IN-PROGRESS]` row for this bug names the same list.
+Full diagnosis (candidate ruling, A1-A6, deviation note on the C1 test spec, B3 sizing):
+`docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`.
 Superseded-by: none
