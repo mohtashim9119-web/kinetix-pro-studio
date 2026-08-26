@@ -1304,3 +1304,106 @@ written; this entry cites and supersedes each, per the append-only rule (nothing
 
 None of the corrections above touch `docs/history.md`, any frozen source file, or any fixture.
 Superseded-by: none
+
+### 2026-08-27 · WS2 Step 15 · ws2-step15-windows-operator-log-before-after
+**MEASURED-FROM-OPERATOR-LOG. Two separate runs, not merged: the 03:57:28 entries are one run on
+the FA path; the single trailing 03:39:00 line is a separate, earlier run on the Whisper-timing
+path. 303/2855 belongs to the 03:39:00 Whisper run, not the 03:57 FA run.** Same project
+("Failed Export Project Data", 229 segments), same Windows machine class, two builds — the
+19:38:19 BEFORE run predates the Step 10/11 fetch fix (`56e2116` + Step 11's 6-site sweep); the
+03:57:28 AFTER run postdates it.
+
+| metric | Windows BEFORE (19:38:19) | Windows AFTER (03:57:28) | macOS baseline |
+|---|---|---|---|
+| cuts on still-playing audio | 117 | 9 | 10 |
+| segments matched | 226 of 229 (3 skipped) | 228 of 229 (1 skipped) | 228 of 229 |
+| skipped segment ids | 152, 131, 1 | 52 | — |
+| scenes under 60% words | 6 (75,79,125,132,136,199) | 4 (8,69,79,102) | — |
+| tokens filtered | 303 of 2855 (10.6%), Whisper-path 03:39:00 run | 1 of 2181 (0.05%), FA path | 310/2823, Whisper path |
+| silence detection | FAILED: voiceover fetch | ran (cuts evaluated) | ran |
+| FA pre-flight | runtime not loaded | ready, model present "en" | ready |
+| timing engine | Whisper fallback | forced alignment, 2181 words | forced alignment, 2181 words |
+| error serialization | `[object Object]` | absent | absent |
+
+**Confirmation by absence (A2):** none of `voiceover fetch failed`, `Failed to fetch`,
+`[object Object]`, `runtime not loaded` appear anywhere in the 03:57:28 run. Absence of these four
+strings is the proof for the fetch fix (below) and the error-serialization fix (below).
+Superseded-by: none
+
+### 2026-08-27 · WS2 Step 15 · ws2-step15-windows-fetch-bug-closed
+**CLOSES** the `[IN-PROGRESS]` Windows voiceover `fetch(blob:)` failure
+(`56e2116-ws2-step10-windows-voiceover-fetch` + `ws2-step11-fetch-sites` above). Grade:
+MEASURED-FROM-OPERATOR-LOG. Evidence: 117 → 9 cuts on still-playing audio on the identical
+229-segment "Failed Export Project Data" project, silence detection restored (ran and evaluated
+cuts vs. FAILED before), all four failure-signature strings absent from the AFTER run
+(`ws2-step15-windows-operator-log-before-after` above). The residual 9/228 cuts on live audio are
+NOT attributed to this bug — see `ws2-step15-cut-placement-quality-open` below; they sit at macOS
+parity (10), a pre-existing cross-platform gap this fix does not touch.
+Superseded-by: none
+
+### 2026-08-27 · WS2 Step 15 · ws2-step15-error-serialization-closed
+**CLOSES** the B1 error-serialization defect (`88ff701-ws2-step10-error-serialization` above) on
+Windows specifically. Grade: MEASURED-FROM-OPERATOR-LOG. Evidence: `[object Object]` does not
+appear anywhere in the 03:57:28 AFTER run; it appears in the 19:38:19 BEFORE run per the A1 table.
+Superseded-by: none
+
+### 2026-08-27 · WS2 Step 15 · ws2-step15-bug2-fa-desktop-closed-ci-verified
+**CLOSES bug 2** (FA silently disabled on desktop, `d8baef5-ws2-bug2-fa-compiled-into-installer`
+above). Grade: **CI-VERIFIED BUILD + MEASURED RUNTIME**, per Q1 = "AFTER THE PUSH AFTER FIXING
+THESE ISSUES, THE BUILD WAS PRODUCED FROM GITHUB ACTIONS, BUILD DESKTOP INSTALLER" — the 03:57:28
+Windows build was produced by the `build.yml` "Build desktop installers" CI workflow, not a local
+build. Combined with `5adbbf4-ci-macos-globstar-fix` above (CI run `33017398678` producing the
+`kinetix-windows-x64` artifact), this is the first time a CI-produced Windows artifact has an
+operator-measured runtime result: FA pre-flight ready with model "en" present, forced alignment
+executed, **2181 aligned words — identical to the macOS production figure** (see
+`ws2-fa-acquisition-and-ort-gate-superseded` above, item 1, which this entry now upgrades from
+"NOT DETERMINED" to CI-VERIFIED + MEASURED for the Windows leg specifically). Moved out of
+`[OPEN]`/pending-verification; no remaining step.
+Superseded-by: none
+
+### 2026-08-27 · WS2 Step 15 · ws2-step15-bug4-acquisition-closed-end-to-end
+**CLOSES bug 4's acquisition-path half** (installer size already closed at
+`8c6e4e8-ws2-bug4-in-app-model-download` above; this entry closes the remaining acquisition-on-a-
+never-provisioned-machine question). Grade: **END-TO-END VERIFIED**, per Q2 = "Download button in
+Manage Models & Add-ons" — the "en" FA model on the 03:57:28 Windows machine was acquired through
+the in-app Download flow (`ws2-step13-fa-download-engine-ort-provisioning` above's engine), not
+hand-placed and not imported. This is the first proof the acquisition UI works end-to-end on a
+machine that never ran `export-fa-onnx.py` and never had operator-placed `model.onnx` files —
+directly retiring the A5 P2 finding's remaining scope (see the correction entry immediately below).
+Superseded-by: none
+
+### 2026-08-27 · correction · ws2-step15-a5-p2-fully-superseded
+**CORRECTION NOTE — supersedes the remaining NOT-DETERMINED scope left open by
+`ws2-fa-acquisition-and-ort-gate-superseded` item 3 above.** That entry closed P2's macOS half
+(real Download, real cancel/resume, on the operator's own already-provisioned dev machine) but left
+open "whether a genuinely fresh install completes this flow without operator intervention." The
+03:57:28 Windows run answers that for the Windows leg: per Q1 the build came from a CI artifact
+(never touched by `export-fa-onnx.py` or any hand-placement step) and per Q2 the "en" model reached
+it via the in-app Download button — a machine with zero prior FA provisioning, provisioned
+end-to-end through the shipped UI alone. **What survives of A5 P2:** nothing on the Windows leg;
+P2's original claim ("fresh installs of any platform have no FA model; macOS FA works only on this
+machine") is now refuted for both platforms this project ships (macOS: Download/Import path
+machine-verified; Windows: Download path end-to-end verified on a CI-built, never-hand-provisioned
+artifact). The only remaining unverified leg is macOS running from a **CI-built** artifact
+specifically (the macOS Download verification in `ws2-fa-acquisition-and-ort-gate-superseded` ran
+on the operator's local dev build, not the CI `universal-apple-darwin` artifact) — recorded as
+NOT DETERMINED, not rounded up.
+Superseded-by: none
+
+### 2026-08-27 · WS2 Step 15 · ws2-step15-token-filtering-resolved
+**MEASURED, resolving the token-filtering question permanently.** Whisper-timing path: Windows
+303/2855 (10.6%, 03:39:00 run) vs. macOS 310/2823 (11.0%) — confirmed twice now, not
+Windows-specific. FA path: 1/2181 (0.05%) on Windows (03:57:28 run), consistent with macOS FA's
+own near-zero filter rate. Recorded as MEASURED that Whisper-path filtering is materially higher
+than FA-path filtering across both platforms — the FA path structurally avoids most of what the
+Whisper path filters. **Mechanism: NOT DETERMINED.** No file:line evidence was gathered this
+session to show *why* FA avoids the filtering; the numeric contrast alone does not establish a
+mechanism, and none is asserted. Do not infer one from these figures without separate
+investigation.
+Superseded-by: none
+
+### 2026-08-27 · WS2 Step 15 · ws2-step15-r11-normal-firing-note
+Informational, no action: R.11 fired normally in the 03:57:28 run (scene 2, `002_kitchen_border`,
+0.73s → 1.43s, +0.7s) — expected rule operation, not a defect. Recorded per operator instruction,
+not flagged.
+Superseded-by: none
