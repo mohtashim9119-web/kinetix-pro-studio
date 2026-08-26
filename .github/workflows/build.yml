@@ -121,45 +121,123 @@ jobs:
              "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-aarch64-apple-darwin"
           cp "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-universal-apple-darwin" \
              "$GITHUB_WORKSPACE/src-tauri/binaries/whisper-x86_64-apple-darwin"
-      - name: Provision onnxruntime dylib (macOS x86_64, for fa-inference)
+      - name: Provision onnxruntime dylib (macOS universal x86_64+arm64, for fa-inference)
+        # WS2 Step 13 Phase 4.3: LIPO into one universal dylib, not "ship
+        # both and select at runtime" — this app's own bundle target for
+        # macOS is ALREADY universal-apple-darwin (one fat main executable
+        # covering both arches), so a fat onnxruntime dylib at the SAME
+        # single filename needs no new runtime arch-selection code: dyld
+        # picks the matching slice the same way it already does for the app
+        # binary itself. MEASURED locally (2026-08-27, not on this runner):
+        # `lipo -create` of the two per-arch v1.23.2 dylibs below produces a
+        # 2-slice fat Mach-O (`lipo -info`: "x86_64 arm64") that `dlopen()`s
+        # successfully on real Intel hardware; the arm64 slice's own load
+        # behavior is unverified (no Apple Silicon hardware available that
+        # session) — this CI step is what actually exercises it, since
+        # macos-latest GitHub runners are arm64.
         if: matrix.os == 'macos-latest'
         run: |
           set -euo pipefail
-          # Mirrors src-tauri/onnxruntime/README.md's re-provisioning recipe
-          # exactly. The bundled FA path (fa_onnx.rs's resolve_bundled_ort_dylib)
-          # hard-gates to macOS x86_64 only, so this single-arch dylib is correct
-          # for both matrix.target values built from this macOS job — the
-          # universal-apple-darwin bundle's arm64 slice has no dylib to load and
-          # fa_preflight reports that explicitly at runtime (see fa_onnx.rs:319).
-          EXPECTED_SHA256="8c9c78de65ea3786f987c0d980e9c1b13a3a5fbc6b3e2965ba05b450e6e4c054"
+          EXPECTED_SHA256_X64="8c9c78de65ea3786f987c0d980e9c1b13a3a5fbc6b3e2965ba05b450e6e4c054"
+          EXPECTED_SHA256_ARM64="d306d2bc768540766c7ed8a1e0ff05d2870c77a934ebeee4a7bafa1b732ef299"
+          # No EXPECTED_SHA256_UNIVERSAL hard gate — see the note below the
+          # lipo call for why the lipo OUTPUT's exact bytes aren't pinned.
           cd src-tauri/onnxruntime
           curl -L -o onnxruntime-osx-x86_64-1.23.2.tgz \
             https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-x86_64-1.23.2.tgz
+          curl -L -o onnxruntime-osx-arm64-1.23.2.tgz \
+            https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-arm64-1.23.2.tgz
           tar -xzf onnxruntime-osx-x86_64-1.23.2.tgz
-          cp onnxruntime-osx-x86_64-1.23.2/lib/libonnxruntime.1.23.2.dylib .
-          rm -rf onnxruntime-osx-x86_64-1.23.2 onnxruntime-osx-x86_64-1.23.2.tgz
-          ACTUAL_SHA256="$(shasum -a 256 libonnxruntime.1.23.2.dylib | awk '{print $1}')"
-          if [ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]; then
-            echo "::error::onnxruntime dylib sha256 mismatch: expected $EXPECTED_SHA256, got $ACTUAL_SHA256"
-            exit 1
-          fi
+          tar -xzf onnxruntime-osx-arm64-1.23.2.tgz
+
+          for pair in "onnxruntime-osx-x86_64-1.23.2:$EXPECTED_SHA256_X64" "onnxruntime-osx-arm64-1.23.2:$EXPECTED_SHA256_ARM64"; do
+            dir="${pair%%:*}"; expected="${pair##*:}"
+            actual="$(shasum -a 256 "$dir/lib/libonnxruntime.1.23.2.dylib" | awk '{print $1}')"
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::onnxruntime dylib sha256 mismatch for $dir: expected $expected, got $actual"
+              exit 1
+            fi
+          done
+
+          lipo -create \
+            onnxruntime-osx-x86_64-1.23.2/lib/libonnxruntime.1.23.2.dylib \
+            onnxruntime-osx-arm64-1.23.2/lib/libonnxruntime.1.23.2.dylib \
+            -output libonnxruntime.1.23.2.dylib
+          rm -rf onnxruntime-osx-x86_64-1.23.2 onnxruntime-osx-x86_64-1.23.2.tgz \
+                 onnxruntime-osx-arm64-1.23.2 onnxruntime-osx-arm64-1.23.2.tgz
+
+          # NOT hard-pinned against EXPECTED_SHA256_UNIVERSAL (measured
+          # locally, kept in onnxruntime.manifest.json for reference only):
+          # `lipo`'s exact output bytes are not guaranteed reproducible
+          # across Xcode/lipo tool versions even from byte-identical inputs,
+          # so treating that hash as a CI hard-gate risks failing a
+          # legitimate build over a toolchain difference rather than a real
+          # corruption. The two SOURCE dylibs above (Microsoft's own
+          # published artifacts) are the real integrity check; this step
+          # only verifies the lipo OUTPUT's structure, not its exact bytes.
+          ACTUAL_UNIVERSAL_SHA256="$(shasum -a 256 libonnxruntime.1.23.2.dylib | awk '{print $1}')"
+          echo "universal dylib sha256 (informational, not gated): $ACTUAL_UNIVERSAL_SHA256"
+          ARCHES="$(lipo -info libonnxruntime.1.23.2.dylib)"
+          echo "$ARCHES"
+          case "$ARCHES" in
+            *x86_64*arm64*|*arm64*x86_64*) ;;
+            *) echo "::error::lipo output does not report both x86_64 and arm64 slices: $ARCHES"; exit 1 ;;
+          esac
           cd "$GITHUB_WORKSPACE"
 
       - name: Guard against stray dev models being bundled
         if: matrix.os == 'macos-latest'
         run: |
           set -euo pipefail
-          # Whisper's model is now acquired in-app (see whisper.rs's
-          # app_local_data_dir-first resolution) rather than bundled — nothing
-          # under src-tauri/models/ should ship. A dev machine's hand-placed
-          # ggml-*.bin left in this dir (the exact mistake that produced the
-          # 4.7 GB .app) must fail the build, not silently ship.
-          shopt -s nullglob
-          stray=(src-tauri/models/*.bin)
+          # Whisper's model AND every FA model.onnx are acquired in-app
+          # (whisper.rs's app_local_data_dir-first resolution;
+          # models.rs::import_local_model / fa_model_download) rather than
+          # bundled — nothing under src-tauri/models/ or ANY *.onnx anywhere
+          # in the working tree that would be picked up by a resource glob
+          # should ship. A dev machine's hand-placed ggml-*.bin (the exact
+          # mistake that produced the 4.7 GB .app) or a stray model.onnx
+          # left under src-tauri/ must fail the build, not silently ship.
+          shopt -s nullglob globstar
+          stray=(src-tauri/models/*.bin src-tauri/**/*.onnx)
           if [ ${#stray[@]} -gt 0 ]; then
-            echo "::error::src-tauri/models/ contains model file(s) that would be bundled: ${stray[*]}"
+            echo "::error::stray model file(s) that would be bundled: ${stray[*]}"
             exit 1
           fi
+
+      - name: Provision onnxruntime DLLs (Windows x86_64, for fa-inference)
+        # No universal/multi-arch question on Windows (one target,
+        # x86_64-pc-windows-msvc) — just download+verify the two DLLs
+        # Microsoft's release zip ships (the engine plus its one
+        # same-directory dependency) into the SAME onnxruntime/ resources
+        # folder tauri.conf.json's existing `"onnxruntime/*": "onnxruntime/"`
+        # glob already bundles unconditionally — no tauri.conf.json change
+        # needed. UNVERIFIED beyond a checksum match: no Windows hardware
+        # available to confirm the dylib actually loads there (tracked in
+        # docs/ws2-fa-models/ort-provisioning.md alongside the MSVC
+        # redistributable prerequisite note).
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expectedEngine = "dec964ab1ee36cc9b0ae247d13b376627992fc57dec0454354017ab8fd84f1ea"
+          $expectedShared = "a2b3a50956aa75a9879c8472bc7df4f7a8072bcd2db19a1b7d988e7688f293ef"
+          New-Item -ItemType Directory -Force -Path src-tauri/onnxruntime | Out-Null
+          Invoke-WebRequest -Uri "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip" -OutFile "$env:TEMP\ort-win.zip"
+          Expand-Archive -Path "$env:TEMP\ort-win.zip" -DestinationPath "$env:TEMP\ort-windows" -Force
+          $engineSrc = Get-ChildItem -Path "$env:TEMP\ort-windows" -Filter "onnxruntime.dll" -Recurse | Select-Object -First 1
+          $sharedSrc = Get-ChildItem -Path "$env:TEMP\ort-windows" -Filter "onnxruntime_providers_shared.dll" -Recurse | Select-Object -First 1
+          Copy-Item -Path $engineSrc.FullName -Destination "src-tauri/onnxruntime/onnxruntime.dll"
+          Copy-Item -Path $sharedSrc.FullName -Destination "src-tauri/onnxruntime/onnxruntime_providers_shared.dll"
+          $actualEngine = (Get-FileHash "src-tauri/onnxruntime/onnxruntime.dll" -Algorithm SHA256).Hash.ToLower()
+          $actualShared = (Get-FileHash "src-tauri/onnxruntime/onnxruntime_providers_shared.dll" -Algorithm SHA256).Hash.ToLower()
+          if ($actualEngine -ne $expectedEngine) {
+            Write-Error "onnxruntime.dll sha256 mismatch: expected $expectedEngine, got $actualEngine"
+            exit 1
+          }
+          if ($actualShared -ne $expectedShared) {
+            Write-Error "onnxruntime_providers_shared.dll sha256 mismatch: expected $expectedShared, got $actualShared"
+            exit 1
+          }
 
       - name: Provision ffmpeg sidecar (Windows)
         if: matrix.os == 'windows-latest'
@@ -224,9 +302,11 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $stray = Get-ChildItem -Path "src-tauri/models" -Filter "*.bin" -ErrorAction SilentlyContinue
-          if ($stray) {
-            Write-Error "src-tauri/models/ contains model file(s) that would be bundled: $($stray.Name -join ', ')"
+          $strayBin = Get-ChildItem -Path "src-tauri/models" -Filter "*.bin" -ErrorAction SilentlyContinue
+          $strayOnnx = Get-ChildItem -Path "src-tauri" -Filter "*.onnx" -Recurse -ErrorAction SilentlyContinue
+          $stray = @($strayBin) + @($strayOnnx)
+          if ($stray.Count -gt 0) {
+            Write-Error "stray model file(s) that would be bundled: $($stray.Name -join ', ')"
             exit 1
           }
 

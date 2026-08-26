@@ -1076,3 +1076,128 @@ Windows/arm64 FA ORT runtime provisioning is unchanged and still separately bloc
 Windows user imports via this modal still cannot run FA there (see `docs/work-in-progress.md`'s
 FA ORT item).
 Superseded-by: none
+
+### 2026-08-27 · WS2 Step 13 · ws2-step13-fa-download-engine-ort-provisioning
+Outcome: four parts — a real status-check bug fix, modal UI busy/refresh fixes, a working FA
+download engine, and cross-platform onnxruntime provisioning.
+
+**Phase 0 (hard gate).** The owner's `mohtashim9/kinetix-fa-models` HF repo was PUBLIC but
+contained only `.gitattributes` at session start (all 5 `<lang>/model.onnx` 404'd) — upload
+genuinely in progress, not a Q1/Q2 conflict as flagged last session. Re-probed mid-session after
+building the download engine anyway: upload had completed — all 5 languages return 200, real LFS
+content (not pointer files), `Content-Length`/`X-Linked-ETag` matching `fa-onnx-manifest.json`
+exactly for every language, `Range: bytes=0-1023` returns 206 with correct `Content-Range`. Commit
+`f618960d71728eba5f12528d5571838a10d262bf` (MEASURED via the HF API's `sha` field) is pinned as
+`models.rs::FA_MODEL_REVISION` — NOT `"main"` (this session's earlier, pre-upload placeholder) and
+NOT the pre-upload commit `7cab396...` a literal reading of last session's "pin from 0.4" brief
+would have picked (that commit predates the files entirely and would have been permanently
+unreachable).
+
+**Phase 1 — status-check bug.** A live probe against the REAL `app_local_data_dir`
+(`src-tauri/tests/models_status_live.rs`, mirroring `fa_durable_wav_live.rs`'s
+`mock_context::<Wry,_>` pattern) proved `check_installed_models` correctly read every real model on
+this machine as installed — the backend was never wrong. The actual defect:
+`ManageModelsModal.tsx`'s `refresh()` silently swallowed a failed `checkInstalledModels()` call into
+`console.error`, leaving `report` at `null` forever with no visible signal — indistinguishable from
+the genuine "nothing installed yet" state the same rendering path also produces. Fixed with a
+`statusError` banner + retry action, never by weakening `status_for`'s exact-size/sidecar/hash-fallback
+logic (which was already correct per the HARD RULE). `status_for` was split into a pure,
+`AppHandle`-free `status_for_generic(path, expected_size, verify)` specifically so the fallback-hash
+branch could be regression-tested with a tiny synthetic file instead of a real ~1.2 GiB one — 5 new
+tests (`models.rs`): sidecar-present fast path, sidecar-absent-falls-back-and-writes-one,
+verify-fails-writes-no-sidecar, wrong-size-with-stale-sidecar, stale-`.part`-does-not-affect-status.
+
+**Phase 2 — modal UI.** Import/delete/download now show a spinner and disable the row while busy
+(`RowState` gained `deleting`; `isBusy()` gates every action button). `refresh()` now runs after
+EVERY completion path, not just success — successful import, failed import, delete, and download
+completion all re-invoke `check_installed_models`. New tests exercise the REAL command shape (a
+plain `{whisper, fa}` object matching what the live probe printed, not a shape hand-picked to pass)
+and assert `mockCheckInstalledModels` call COUNTS increase on each path — the class of test that
+would have caught the swallowed-error bug, per the session brief's own framing.
+
+**Phase 3 — FA download engine.** `model_download.rs`'s resumable download loop was generalized
+(`stream_download_verified`, taking a caller-supplied `verify` closure and URL/paths/expected-size)
+rather than copy-pasted — `whisper_model_download` now calls it too, unchanged behavior/wire format
+(`ModelDownloadEvent`/`ModelDownloadStatus` untouched, so `modelDownload.ts` needed no change).
+`models::fa_model_download` is the FA caller: verification is `fa_dev::verify_model_manifest` (no
+new pinned hash), disk space is precomputed via the existing `fs4` dependency
+(`ensure_disk_space`, 200 MiB margin), and `ModelDownloadState`'s cancel flag was widened from a
+single `Arc<AtomicBool>` to a `HashMap<String, Arc<AtomicBool>>` keyed by `"whisper"`/`"fa-<lang>"`
+so a whisper and an FA download can be cancelled independently. Frontend: `services/models.ts`
+gained `downloadFaModel`/`cancelFaModelDownload`, reusing the `ModelDownloadEvent` shape verbatim.
+The Step 12 "Download not yet configured" placeholder is gone — FA Download now performs a real
+transfer with live progress.
+
+REAL END-TO-END VERIFICATION (not simulated): ran `src-tauri/tests/fa_download_live.rs`
+(`FA_LIVE_DOWNLOAD=1`) against production `app_local_data_dir`, with the real pre-existing `en`
+model moved aside first. Pass 1 (fresh download): 1,262,512,711 bytes in 307.2s (3.92 MiB/s),
+`.sha256` sidecar written, `fa_dev::verify_model_manifest` passed before the atomic rename. Pass 2
+(cancel-then-resume): cancelled after 28,793,177 real bytes on disk (confirmed via `.part` file
+size, not just the progress-channel's own text), resumed from 29,907,289 bytes (NOT from zero —
+proves resume actually resumes) and completed to the exact expected size in 325.9s, manifest
+verification passing again before the second finalize. The freshly-downloaded file was confirmed
+byte-identical (sha256) to the original before cleanup; no data was lost.
+
+**Phase 4 — ORT provisioning.** `ort = "=2.0.0-rc.13"`'s required onnxruntime C-API version is 17
+(the floor, no `api-NN` feature enabled) — MEASURED against `Cargo.toml:41` and confirmed via the
+pre-existing `onnxruntime.manifest.json`'s own `apiVersionRationale`. `fa_onnx.rs::ORT_DYLIB_FILENAME`
+(a single hardcoded macOS-x86_64-only constant + a `cfg!` hard gate) became
+`SUPPORTED_ORT_TARGETS: &[OrtTarget]`, a table of (os, arch, filename) rows —
+`resolve_bundled_ort_dylib`'s refusal message is now generated FROM that table, and
+`onnxruntime.manifest.json` widened from one flat object to a `targets` array;
+`scripts/onnxruntimeBundle.guard.test.ts` rewritten to iterate it (34 tests, up from ~13, all
+passing) including a new cross-check that every `SUPPORTED_ORT_TARGETS` row has a matching manifest
+entry.
+
+macOS: chose LIPO into one universal (x86_64+arm64) dylib over shipping both and selecting at
+runtime — the app's own bundle target is already `universal-apple-darwin`, so a fat onnxruntime
+dylib needs zero new runtime arch-selection code (dyld already does it, same as for the main
+executable). MEASURED 2026-08-27: downloaded both official v1.23.2 per-arch dylibs
+(x86_64 sha256 `8c9c78de...` — matches the PRE-EXISTING pin exactly, confirming no drift;
+aarch64 sha256 `d306d2bc...`, newly measured), `lipo -create`d them (`lipo -info`: "x86_64 arm64",
+74,902,752 bytes), and confirmed the result `dlopen()`s successfully on this session's real Intel
+hardware via Python's `ctypes.CDLL` — real dynamic-linker proof, not just a well-formed-file check.
+The arm64 slice's own load/runtime behavior is UNVERIFIED (no Apple Silicon hardware this session).
+`build.yml`'s macOS ORT step downloads+verifies both per-arch dylibs against these hashes then lipos
+them; the lipo OUTPUT's own hash is recorded (informational) but deliberately NOT CI-gated — `lipo`
+doesn't guarantee byte-identical output across toolchain versions from identical inputs, so gating
+on it risks failing a legitimate build over a toolchain difference.
+
+Windows: downloaded and hashed Microsoft's `onnxruntime-win-x64-1.23.2.zip` — `onnxruntime.dll`
+(14,186,016 bytes, sha256 `dec964ab...`) and its same-directory dependency
+`onnxruntime_providers_shared.dll` (22,088 bytes, sha256 `a2b3a509...`), both MEASURED, neither
+previously provisioned anywhere in this repo (Windows shipped `-f fa-inference` compiled in since
+bug 2 but with ZERO runtime bytes — the hard `cfg!` gate made it permanently refuse regardless).
+`build.yml` gained a Windows ORT step downloading+sha256-verifying both into the existing
+`onnxruntime/` resource folder (`tauri.conf.json`'s `"onnxruntime/*": "onnxruntime/"` glob needed no
+change — already target-agnostic). FLAGGED, not fixed: Microsoft's prebuilt `onnxruntime.dll`
+needs the Microsoft Visual C++ Redistributable (x64) on the end-user machine — not bundled, not
+chain-installed by the NSIS/MSI installer, and (OPERATOR-ATTESTED, not independently confirmed — no
+Windows hardware) likely an existing, undocumented risk for the already-shipping `whisper-cli.exe`
+too, which this session did not introduce but did surface. Full options recorded, none implemented:
+`docs/ws2-fa-models/ort-provisioning.md`.
+
+Both `Guard against stray dev models being bundled` steps (macOS + Windows) extended from `*.bin`
+in `src-tauri/models/` only to also reject any `*.onnx` anywhere under `src-tauri/` — closes the
+gap where a Manage-Models-imported/downloaded FA pack accidentally left in a dev checkout's
+`src-tauri/` tree (never the actual install location, `app_local_data_dir`, but a plausible mistake)
+would have shipped silently.
+
+Verification: `tsc --noEmit` clean. `cargo test --lib`: 157 passed, 1 ignored, 0 failed (147 prior +
+10 new — 5 in `model_download.rs`'s first-ever tests, 5 in `models.rs`). `cargo check --features
+fa-inference` clean (generalized ORT table compiles under the feature). Full `vitest` (excluding the
+stray worktree, `npx vitest run --exclude '**/.claude/worktrees/**'`): 2561 passed / 77 skipped / 0
+failed, +18 over the prior session's 2543 — `ManageModelsModal.test.tsx` grew 7→15 tests, all
+green; `scripts/onnxruntimeBundle.guard.test.ts` grew to 34/34 (rewritten for the `targets` array;
+prior count not independently re-verified, so the exact split of the +18 between the two files is
+not claimed precisely — both are individually confirmed green at their new counts).
+Golden replay untouched by this session (no sync-timing file touched) — not re-run as a redundant
+check beyond the standing regression suite.
+
+NOT DETERMINED this session: whether the arm64 macOS dylib slice or either Windows DLL actually
+loads/runs FA inference (no matching hardware); whether `whisper-cli.exe` has ever actually hit the
+VC++ redistributable gap on a real end-user Windows machine; a full built installer's before/after
+size on any platform (component-level byte deltas only — macOS ORT +35.2 MB [39.7→74.9 MB dylib],
+Windows ORT +14.2 MB net-new [was 0 bytes bundled]; both comfortably under the "jump into GB range"
+concern the session brief flagged, neither an actual end-to-end installer build was run).
+Superseded-by: none

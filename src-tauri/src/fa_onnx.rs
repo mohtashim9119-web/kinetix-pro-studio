@@ -269,12 +269,55 @@ fn log_softmax_row(row: &mut [f32]) {
 // test) rests on that env var being the switch, and this must not disturb it.
 // ---------------------------------------------------------------------------
 
-/// Filename of the bundled onnxruntime C library. Kept in sync with
-/// `src-tauri/onnxruntime/onnxruntime.manifest.json` (`filename`) and the guard
-/// test `scripts/onnxruntimeBundle.guard.test.ts`. Only an osx-x86_64 build is
-/// bundled today; [`resolve_bundled_ort_dylib`] fails loudly on any other
-/// target rather than loading an incompatible binary.
-const ORT_DYLIB_FILENAME: &str = "libonnxruntime.1.23.2.dylib";
+/// One row per (OS, arch) this build can load a bundled onnxruntime C library
+/// for — the single source of truth [`resolve_bundled_ort_dylib`] resolves
+/// against AND the refusal message on an unsupported target is generated
+/// from (WS2 Step 13 Phase 4.5: "supported targets derived from one table,
+/// not hardcoded to macos-x86_64"). Kept in sync with
+/// `src-tauri/onnxruntime/onnxruntime.manifest.json` (one manifest entry per
+/// row) and the guard test `scripts/onnxruntimeBundle.guard.test.ts`.
+///
+/// macOS x86_64 AND aarch64 share ONE filename: `build.yml` `lipo`s the two
+/// per-arch dylibs Microsoft publishes into a single universal (fat) Mach-O
+/// at that filename, matching the app's own `universal-apple-darwin` bundle
+/// target — dyld picks the matching slice at load time with no code-level
+/// arch branch needed, the same way it already does for this app's main
+/// executable. MEASURED 2026-08-27: `lipo -create` on the two official
+/// v1.23.2 release dylibs (x86_64 sha256 `8c9c78de...` matching the
+/// pre-existing pin, aarch64 sha256 `d306d2bc...`) produces a 2-slice fat
+/// dylib (`lipo -info`: "x86_64 arm64") that `dlopen`s successfully on this
+/// session's real Intel (x86_64) machine — the arm64 slice's own runtime
+/// behavior is unverified (no Apple Silicon hardware available this
+/// session), covered instead by the `fa-ort-matrix` CI job once it gains an
+/// arm64 runner cell.
+struct OrtTarget {
+    os: &'static str,
+    arch: &'static str,
+    filename: &'static str,
+}
+
+const ORT_DYLIB_FILENAME_MACOS: &str = "libonnxruntime.1.23.2.dylib";
+/// Windows ships two files from Microsoft's release zip:
+/// `onnxruntime.dll` (the engine, named here — this is what
+/// `ORT_DYLIB_PATH` points at) and `onnxruntime_providers_shared.dll` (a
+/// same-directory dependency `onnxruntime.dll` loads implicitly via the
+/// Windows DLL search order — never referenced by path directly, just
+/// bundled alongside). Both must be present in the same `onnxruntime/`
+/// resource folder for the engine to actually load, not just the one this
+/// constant names.
+const ORT_DYLIB_FILENAME_WINDOWS: &str = "onnxruntime.dll";
+
+const SUPPORTED_ORT_TARGETS: &[OrtTarget] = &[
+    OrtTarget { os: "macos", arch: "x86_64", filename: ORT_DYLIB_FILENAME_MACOS },
+    OrtTarget { os: "macos", arch: "aarch64", filename: ORT_DYLIB_FILENAME_MACOS },
+    OrtTarget { os: "windows", arch: "x86_64", filename: ORT_DYLIB_FILENAME_WINDOWS },
+];
+
+fn ort_filename_for_current_target() -> Option<&'static str> {
+    let os = std::env::consts::OS;
+    let arch = std::env::consts::ARCH;
+    SUPPORTED_ORT_TARGETS.iter().find(|t| t.os == os && t.arch == arch).map(|t| t.filename)
+}
 
 /// Ensures `ORT_DYLIB_PATH` names a loadable onnxruntime C library before the
 /// first `ort::init_from`. Idempotent and cheap on repeat calls.
@@ -308,31 +351,34 @@ pub fn ensure_ort_dylib(app: &tauri::AppHandle) -> Result<(), FaOnnxError> {
 }
 
 /// Resolves the bundled onnxruntime C library's path, or returns a loud,
-/// actionable `OrtInit` error. Arch/OS is a HARD gate: only the target the
-/// bundled binary was built for (macOS x86_64) is accepted — any other target
-/// fails with a message naming the running target rather than silently loading
-/// an incompatible library (the explicit-architecture requirement in R-N).
+/// actionable `OrtInit` error. Arch/OS is a HARD gate, generated from
+/// [`SUPPORTED_ORT_TARGETS`] (WS2 Step 13 Phase 4.5) rather than a single
+/// hardcoded `cfg!` check — only a target with a table row is accepted; any
+/// other target fails with a message naming the running target AND the full
+/// supported list, rather than silently loading an incompatible library
+/// (the explicit-architecture requirement in R-N).
 fn resolve_bundled_ort_dylib(app: &tauri::AppHandle) -> Result<PathBuf, FaOnnxError> {
-    // Compile-time gate: a build for a target we have no bundled binary for must
-    // fail loudly at runtime, not fall through to a missing-file error that
-    // reads as "provision the dylib" when the real problem is "wrong platform".
-    if !cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+    let Some(filename) = ort_filename_for_current_target() else {
+        let supported = SUPPORTED_ORT_TARGETS
+            .iter()
+            .map(|t| format!("{}-{}", t.os, t.arch))
+            .collect::<Vec<_>>()
+            .join(", ");
         return Err(FaOnnxError::OrtInit(format!(
-            "no bundled onnxruntime C runtime for this target ({}-{}). Only macOS x86_64 is \
-             bundled today ({ORT_DYLIB_FILENAME}); high-precision sync cannot run here. Build/run \
-             on macOS x86_64, or set ORT_DYLIB_PATH to a compatible onnxruntime library for this \
-             target.",
+            "no bundled onnxruntime C runtime for this target ({}-{}). Supported targets today: \
+             {supported}. High-precision sync cannot run here. Build/run on a supported target, \
+             or set ORT_DYLIB_PATH to a compatible onnxruntime library for this target.",
             std::env::consts::OS,
             std::env::consts::ARCH,
         )));
-    }
+    };
 
     use tauri::Manager;
     let mut tried: Vec<PathBuf> = Vec::new();
 
     // Production: the Tauri-bundled resource directory.
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let cand = resource_dir.join("onnxruntime").join(ORT_DYLIB_FILENAME);
+        let cand = resource_dir.join("onnxruntime").join(filename);
         if cand.exists() {
             return Ok(cand);
         }
@@ -345,7 +391,7 @@ fn resolve_bundled_ort_dylib(app: &tauri::AppHandle) -> Result<PathBuf, FaOnnxEr
         let exe_dir = exe.parent().map(Path::to_path_buf).unwrap_or_else(|| exe.clone());
         // Production macOS bundle: <bundle>/Contents/MacOS/../Resources handled
         // above via resource_dir(); this covers a loose exe-adjacent layout.
-        let adj = exe_dir.join("onnxruntime").join(ORT_DYLIB_FILENAME);
+        let adj = exe_dir.join("onnxruntime").join(filename);
         if adj.exists() {
             return Ok(adj);
         }
@@ -355,7 +401,7 @@ fn resolve_bundled_ort_dylib(app: &tauri::AppHandle) -> Result<PathBuf, FaOnnxEr
             .parent().unwrap_or(&exe_dir)   // target/
             .parent().unwrap_or(&exe_dir)   // src-tauri/
             .join("onnxruntime")
-            .join(ORT_DYLIB_FILENAME);
+            .join(filename);
         if dev.exists() {
             return Ok(dev);
         }
@@ -363,7 +409,7 @@ fn resolve_bundled_ort_dylib(app: &tauri::AppHandle) -> Result<PathBuf, FaOnnxEr
     }
 
     Err(FaOnnxError::OrtInit(format!(
-        "bundled onnxruntime C runtime '{ORT_DYLIB_FILENAME}' not found (looked in: {}). \
+        "bundled onnxruntime C runtime '{filename}' not found (looked in: {}). \
          Re-provision it per src-tauri/onnxruntime/README.md, or set ORT_DYLIB_PATH to a \
          compatible onnxruntime library.",
         tried.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "),

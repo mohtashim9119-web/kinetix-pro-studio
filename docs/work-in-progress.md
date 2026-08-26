@@ -225,19 +225,25 @@ Tag definitions: WS1's "Open bugs" section above (file-wide vocabulary).
   but the 5 per-language `model.onnx` files it used were a **P2 hand-placed dev-session artifact**
   with no canonical hosted source and no acquisition UI at the time. Full A5 evidence and
   P1/P2/P3 classification: `docs/history-2.md#2026-08-26--ws2-step11-fa-model-provenance-a5`.
-* [IN-PROGRESS] Manage Models & Add-ons modal (WS2 Step 12, A3) — closes A5's "no acquisition UI"
-  gap: import (working, exact-manifest-validated) + a permanently-enabled but not-yet-network-wired
-  Download control for FA packs, replacing the old whisper-only "Manage sync model" dialog. Backend:
-  `src-tauri/src/models.rs`. Does NOT close A5's other two gaps: no canonical HOSTED source is
-  configured yet (Download explains this rather than failing silently — see
-  `docs/ws2-fa-models/manage-models.md`), and Windows/arm64 ORT runtime provisioning (below) is
-  untouched — a model a Windows user imports today still cannot run FA there.
-* [OPEN] FA onnxruntime runtime provisioning for Windows + macOS arm64 — compiled in on every
-  target since bug 2 (`d8baef5`), but the ORT C runtime library is bundled for macOS x86_64 only
-  (`fa_onnx.rs:319`'s hard platform gate); Windows and (unverified, no arm64 hardware available to
-  date) Apple Silicon Macs fail the pre-flight cleanly rather than crashing, but cannot run FA at
-  all. Scoped ORT plan: `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md` §B3. Correction
-  note: `docs/history-2.md#2026-08-26--correction--ws2-bug2-ort-runtime-platform-gap`.
+* [DONE] Manage Models & Add-ons modal (WS2 Step 12/13, A3) — closes A5's "no acquisition UI" gap
+  fully: import AND a REAL, working Download for both whisper and FA packs (WS2 Step 13 Phase 3
+  ported `model_download.rs`'s resumable engine rather than duplicating it), against the owner's
+  now-public `mohtashim9/kinetix-fa-models` HF repo, pinned to its post-upload commit. A real
+  end-to-end download + a real cancel-then-resume cycle were both run against production
+  (`en`, 1,262,512,711 bytes, 2026-08-27) — full detail:
+  `docs/history-2.md#2026-08-27--ws2-step13-fa-download-engine-ort-provisioning`. A genuine
+  status-check bug (a failed `check_installed_models` call was silently swallowed, rendering every
+  row as "missing" with no visible signal) was found and fixed in the same session — the backend
+  check itself was never wrong (LIVE-PROBE-CONFIRMED against real files:
+  `src-tauri/tests/models_status_live.rs`).
+* [OPEN] FA onnxruntime runtime provisioning for Windows + macOS arm64 — WS2 Step 13 Phase 4
+  provisioned and checksum-verified onnxruntime for BOTH gaps (`build.yml` now lipos a universal
+  macOS x86_64+arm64 dylib and downloads+verifies the two Windows DLLs;
+  `fa_onnx.rs::SUPPORTED_ORT_TARGETS` replaces the old macOS-x86_64-only hard gate), but NEITHER
+  is runtime-verified — no Apple Silicon or Windows hardware available. Windows additionally needs
+  the MSVC Visual C++ Redistributable on the end-user machine (not bundled, not yet chain-installed
+  by the installer) before `onnxruntime.dll` can load at all. Full detail, including what remains
+  unverified per target: `docs/ws2-fa-models/ort-provisioning.md`.
 
 ---
 

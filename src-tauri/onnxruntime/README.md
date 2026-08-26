@@ -6,12 +6,16 @@ the onnxruntime **C** library, loaded at runtime by the `ort` crate in
 describing it.
 
 - **`onnxruntime.manifest.json`** — committed. The source of truth for which
-  runtime version the app ships and what `ort` requires of it. A guard test
-  (`scripts/onnxruntimeBundle.guard.test.ts`) fails if it drifts from the pinned
-  `ort` in `src-tauri/Cargo.toml`.
-- **`libonnxruntime.*.dylib`** — gitignored (≈39 MB, platform-specific — same
-  policy as the whisper `.bin` models and the ffmpeg/whisper sidecars). Provision
-  it on a fresh checkout with the steps below.
+  runtime version the app ships and what `ort` requires of it, one entry per
+  supported (os, arch) target (WS2 Step 13 Phase 4 widened this from a single
+  macOS-x86_64 object to a `targets` array). A guard test
+  (`scripts/onnxruntimeBundle.guard.test.ts`) fails if any entry drifts from
+  the pinned `ort` in `src-tauri/Cargo.toml`, or from
+  `fa_onnx.rs::SUPPORTED_ORT_TARGETS`.
+- **`libonnxruntime.*.dylib` / `onnxruntime.dll` / `onnxruntime_providers_shared.dll`**
+  — gitignored (tens of MB, platform-specific — same policy as the whisper
+  `.bin` models and the ffmpeg/whisper sidecars). Provision on a fresh
+  checkout with the steps below.
 
 ## Why this exists (WS1 Session M)
 
@@ -40,20 +44,71 @@ binary was built for, and sets `ORT_DYLIB_PATH` to that path before the first
 `ort::init_from`. On a target with no matching bundled binary it fails **loudly**
 with actionable text rather than silently loading an incompatible library.
 
-## Re-provisioning on a fresh checkout (macOS x86_64)
+## Re-provisioning on a fresh checkout
+
+`fa_onnx.rs::SUPPORTED_ORT_TARGETS` accepts three targets (WS2 Step 13 Phase
+4). `build.yml` provisions all of them in CI; the recipes below reproduce
+that locally. **Only macOS x86_64 has been runtime-verified in this repo's
+own history** (real FA runs, real corpora) — the aarch64 and Windows recipes
+are checksum-verified downloads only; see
+`docs/ws2-fa-models/ort-provisioning.md` for what's still unverified on each.
+
+### macOS (universal x86_64+arm64 — matches this app's own bundle target)
 
 ```bash
 cd src-tauri/onnxruntime
 curl -L -o onnxruntime-osx-x86_64-1.23.2.tgz \
   https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-x86_64-1.23.2.tgz
+curl -L -o onnxruntime-osx-arm64-1.23.2.tgz \
+  https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-osx-arm64-1.23.2.tgz
 tar -xzf onnxruntime-osx-x86_64-1.23.2.tgz
-cp onnxruntime-osx-x86_64-1.23.2/lib/libonnxruntime.1.23.2.dylib .
-rm -rf onnxruntime-osx-x86_64-1.23.2 onnxruntime-osx-x86_64-1.23.2.tgz
-shasum -a 256 libonnxruntime.1.23.2.dylib
+tar -xzf onnxruntime-osx-arm64-1.23.2.tgz
+shasum -a 256 onnxruntime-osx-x86_64-1.23.2/lib/libonnxruntime.1.23.2.dylib
 # must print: 8c9c78de65ea3786f987c0d980e9c1b13a3a5fbc6b3e2965ba05b450e6e4c054
+shasum -a 256 onnxruntime-osx-arm64-1.23.2/lib/libonnxruntime.1.23.2.dylib
+# must print: d306d2bc768540766c7ed8a1e0ff05d2870c77a934ebeee4a7bafa1b732ef299
+lipo -create \
+  onnxruntime-osx-x86_64-1.23.2/lib/libonnxruntime.1.23.2.dylib \
+  onnxruntime-osx-arm64-1.23.2/lib/libonnxruntime.1.23.2.dylib \
+  -output libonnxruntime.1.23.2.dylib
+lipo -info libonnxruntime.1.23.2.dylib
+# must print both: x86_64 arm64
+rm -rf onnxruntime-osx-x86_64-1.23.2 onnxruntime-osx-x86_64-1.23.2.tgz \
+       onnxruntime-osx-arm64-1.23.2 onnxruntime-osx-arm64-1.23.2.tgz
 ```
 
-The SHA-256 must match `onnxruntime.manifest.json`'s `sha256`. If you provision a
-different onnxruntime version, update the manifest in the same commit — the guard
-test enforces that the manifest and the pinned `ort` agree, not that any
-particular file is present.
+The lipo OUTPUT's own sha256 is recorded in `onnxruntime.manifest.json`'s
+`"arch": "universal"` entry for reference, but is NOT gated on — `lipo`'s
+exact output bytes are not guaranteed reproducible across Xcode/lipo tool
+versions from the same inputs. Trust `lipo -info` reporting both
+architectures, not a byte-for-byte hash match against another machine's
+build.
+
+### Windows (x86_64) — one target, two DLLs
+
+```powershell
+cd src-tauri/onnxruntime
+Invoke-WebRequest -Uri "https://github.com/microsoft/onnxruntime/releases/download/v1.23.2/onnxruntime-win-x64-1.23.2.zip" -OutFile ort-win.zip
+Expand-Archive -Path ort-win.zip -DestinationPath ort-windows -Force
+Copy-Item ort-windows\onnxruntime-win-x64-1.23.2\lib\onnxruntime.dll .
+Copy-Item ort-windows\onnxruntime-win-x64-1.23.2\lib\onnxruntime_providers_shared.dll .
+Remove-Item -Recurse -Force ort-win.zip, ort-windows
+Get-FileHash onnxruntime.dll -Algorithm SHA256
+# must print: DEC964AB1EE36CC9B0AE247D13B376627992FC57DEC0454354017AB8FD84F1EA
+Get-FileHash onnxruntime_providers_shared.dll -Algorithm SHA256
+# must print: A2B3A50956AA75A9879C8472BC7DF4F7A8072BCD2DB19A1B7D988E7688F293EF
+```
+
+`onnxruntime_providers_shared.dll` is a same-directory dependency
+`onnxruntime.dll` loads implicitly via the Windows DLL search order — both
+files must sit in `onnxruntime/`, but only `onnxruntime.dll` is ever named by
+path in code. The Windows target also needs the Microsoft Visual C++
+Redistributable (x64) present on the END USER's machine — see
+`docs/ws2-fa-models/ort-provisioning.md` for what is and isn't verified about
+that.
+
+The SHA-256 of every provisioned file must match its
+`onnxruntime.manifest.json` entry. If you provision a different onnxruntime
+version, update the manifest in the same commit — the guard test enforces
+that the manifest and the pinned `ort` agree, not that any particular file is
+present.

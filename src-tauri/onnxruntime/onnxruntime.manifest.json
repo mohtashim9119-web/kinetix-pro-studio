@@ -1,13 +1,60 @@
 {
-  "_comment": "WS1 Session M — the onnxruntime C runtime the bundled FA path loads. This file is the COMMITTED source of truth for which runtime the app ships; the .dylib itself is gitignored (39 MB, platform-specific) and re-provisioned from README.md. The guard test scripts/onnxruntimeBundle.guard.test.ts asserts (a) apiVersion here == the ORT_API_VERSION the pinned `ort` in Cargo.toml computes, and (b) minorVersion >= apiVersion, so a future `ort` bump that raises the required C-API version fails loudly here instead of silently at runtime.",
-  "filename": "libonnxruntime.1.23.2.dylib",
-  "version": "1.23.2",
-  "minorVersion": 23,
-  "apiVersion": 17,
-  "os": "macos",
-  "arch": "x86_64",
-  "sha256": "8c9c78de65ea3786f987c0d980e9c1b13a3a5fbc6b3e2965ba05b450e6e4c054",
-  "sizeBytes": 39742608,
+  "_comment": "WS1 Session M — the onnxruntime C runtime the bundled FA path loads. This file is the COMMITTED source of truth for which runtime the app ships; the binaries themselves are gitignored (platform-specific) and re-provisioned from README.md. The guard test scripts/onnxruntimeBundle.guard.test.ts asserts (a) apiVersion here == the ORT_API_VERSION the pinned `ort` in Cargo.toml computes for every target entry, and (b) minorVersion >= apiVersion, so a future `ort` bump that raises the required C-API version fails loudly here instead of silently at runtime. WS2 Step 13 Phase 4 widened this from a single macOS-x86_64 object to a `targets` array — one entry per (os, arch) fa_onnx.rs::SUPPORTED_ORT_TARGETS accepts — when Windows x86_64 and macOS aarch64 provisioning were added.",
   "ortCrate": "ort =2.0.0-rc.13 (default-features = false, features = [\"std\", \"load-dynamic\"])",
-  "apiVersionRationale": "With no `api-NN` feature enabled, ort-sys rc.13's version.rs computes ORT_API_VERSION = 17 (the floor). onnxruntime's C API is backward-compatible, so any runtime whose minor version is >= 17 satisfies it; 1.23.2 (minor 23) is the newest osx-x86_64 build published and comfortably clears the floor."
+  "apiVersionRationale": "With no `api-NN` feature enabled, ort-sys rc.13's version.rs computes ORT_API_VERSION = 17 (the floor). onnxruntime's C API is backward-compatible, so any runtime whose minor version is >= 17 satisfies it; 1.23.2 is the version pinned for every target below.",
+  "targets": [
+    {
+      "os": "macos",
+      "arch": "x86_64",
+      "filename": "libonnxruntime.1.23.2.dylib",
+      "version": "1.23.2",
+      "minorVersion": 23,
+      "apiVersion": 17,
+      "sha256": "8c9c78de65ea3786f987c0d980e9c1b13a3a5fbc6b3e2965ba05b450e6e4c054",
+      "sizeBytes": 39742608,
+      "note": "Upstream per-arch dylib as published by Microsoft. Bundled by build.yml AFTER lipo'ing with the aarch64 dylib below into one universal file at this same filename/sha256-of-the-fat-binary — see the 'universal' entry for the actually-shipped artifact's own hash."
+    },
+    {
+      "os": "macos",
+      "arch": "aarch64",
+      "filename": "libonnxruntime.1.23.2.dylib",
+      "version": "1.23.2",
+      "minorVersion": 23,
+      "apiVersion": 17,
+      "sha256": "d306d2bc768540766c7ed8a1e0ff05d2870c77a934ebeee4a7bafa1b732ef299",
+      "sizeBytes": 33097728,
+      "note": "Upstream per-arch dylib as published by Microsoft (MEASURED 2026-08-27). Bundled by build.yml AFTER lipo'ing with the x86_64 dylib above into one universal file — see the 'universal' entry."
+    },
+    {
+      "os": "macos",
+      "arch": "universal",
+      "filename": "libonnxruntime.1.23.2.dylib",
+      "version": "1.23.2",
+      "minorVersion": 23,
+      "apiVersion": 17,
+      "sha256": "7864118376c19ecd74227dd0b652b3ad4e10419a6782f7e200b2e78cc73bcf68",
+      "sizeBytes": 74902752,
+      "note": "The ACTUALLY-SHIPPED artifact for the universal-apple-darwin bundle target: `lipo -create` of the x86_64 and aarch64 entries above. MEASURED 2026-08-27 by performing this lipo locally: `lipo -info` reports both 'x86_64 arm64' slices present, and the file `dlopen()`s successfully on this session's real Intel (x86_64) hardware via Python's ctypes.CDLL — the arm64 slice's own load/runtime behavior is UNVERIFIED (no Apple Silicon hardware available this session). Not a separate arch fa_onnx.rs's target table resolves against directly (macos-x86_64 and macos-aarch64 both resolve to this same filename) — recorded here so the exact shipped bytes have a committed hash independent of the two per-arch source hashes above."
+    },
+    {
+      "os": "windows",
+      "arch": "x86_64",
+      "filename": "onnxruntime.dll",
+      "version": "1.23.2",
+      "minorVersion": 23,
+      "apiVersion": 17,
+      "sha256": "dec964ab1ee36cc9b0ae247d13b376627992fc57dec0454354017ab8fd84f1ea",
+      "sizeBytes": 14186016,
+      "note": "MEASURED 2026-08-27 from Microsoft's onnxruntime-win-x64-1.23.2.zip release asset. Requires onnxruntime_providers_shared.dll (below) co-located in the same onnxruntime/ resource folder — onnxruntime.dll loads it implicitly via the Windows DLL search order, never referenced by path in code. UNVERIFIED at runtime — no Windows hardware available this session; also requires the Microsoft Visual C++ Redistributable (x64) to be present on the target machine (OPERATOR-ATTESTED from onnxruntime's published system requirements, not independently confirmed) — see build.yml's own comment on this and docs/ws2-fa-models/ort-provisioning.md."
+    },
+    {
+      "os": "windows",
+      "arch": "x86_64",
+      "filename": "onnxruntime_providers_shared.dll",
+      "version": "1.23.2",
+      "sha256": "a2b3a50956aa75a9879c8472bc7df4f7a8072bcd2db19a1b7d988e7688f293ef",
+      "sizeBytes": 22088,
+      "note": "MEASURED 2026-08-27, same release asset as onnxruntime.dll above. A dependency of onnxruntime.dll, not a second engine — has no independent apiVersion/minorVersion of its own (omitted rather than duplicated) and is not itself named by fa_onnx.rs's target table; only bundled alongside."
+    }
+  ]
 }

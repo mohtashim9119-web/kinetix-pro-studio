@@ -123,6 +123,20 @@ describe('GUARD 1 — no shipped runtime dependency resolves into throwaway scra
   });
 });
 
+// WS2 Step 13 Phase 4 — widened from a single flat manifest object to a
+// `targets` array, one row per (os, arch) `fa_onnx.rs::SUPPORTED_ORT_TARGETS`
+// accepts. `onnxruntime_providers_shared.dll` is a same-directory DEPENDENCY
+// of the Windows `onnxruntime.dll` row, not a second engine — it carries no
+// `apiVersion`/`minorVersion` of its own and is excluded from Guard 2's
+// per-engine version checks (still covered by the "fully specified" and
+// sha256-shape checks via a separate, narrower assertion).
+const ENGINE_TARGETS: Array<Record<string, unknown>> = (MANIFEST.targets ?? []).filter(
+  (t: Record<string, unknown>) => t.apiVersion !== undefined,
+);
+const DEPENDENCY_TARGETS: Array<Record<string, unknown>> = (MANIFEST.targets ?? []).filter(
+  (t: Record<string, unknown>) => t.apiVersion === undefined,
+);
+
 describe('GUARD 2 — the bundled onnxruntime version matches what the pinned ort requires', () => {
   /** The onnxruntime C-API version the pinned `ort` computes, replicating
    *  ort-sys `version.rs`: 17 (the floor) plus one per enabled `api-NN`
@@ -145,30 +159,67 @@ describe('GUARD 2 — the bundled onnxruntime version matches what the pinned or
     expect(CARGO_TOML).toMatch(/ort\s*=\s*\{\s*version\s*=\s*"=2\.0\.0-rc\.13"/);
   });
 
-  it('manifest.apiVersion equals the required onnxruntime C-API version', () => {
-    const required = requiredApiVersionFromCargo();
-    expect(MANIFEST.apiVersion).toBe(required);
+  it('at least one engine target is declared', () => {
+    expect(ENGINE_TARGETS.length).toBeGreaterThan(0);
   });
 
-  it('the bundled minor version clears the required API version', () => {
-    expect(MANIFEST.minorVersion).toBeGreaterThanOrEqual(MANIFEST.apiVersion);
-  });
+  it.each(ENGINE_TARGETS.map((t) => [`${t.os}-${t.arch}`, t] as const))(
+    '%s: apiVersion equals the required onnxruntime C-API version',
+    (_label, target) => {
+      const required = requiredApiVersionFromCargo();
+      expect(target.apiVersion).toBe(required);
+    },
+  );
 
-  it('manifest.minorVersion agrees with manifest.version', () => {
-    const minorFromVersion = Number(String(MANIFEST.version).split('.')[1]);
-    expect(MANIFEST.minorVersion).toBe(minorFromVersion);
-  });
+  it.each(ENGINE_TARGETS.map((t) => [`${t.os}-${t.arch}`, t] as const))(
+    '%s: the bundled minor version clears the required API version',
+    (_label, target) => {
+      expect(target.minorVersion as number).toBeGreaterThanOrEqual(target.apiVersion as number);
+    },
+  );
 
-  it('the resolver constant filename matches the manifest filename', () => {
-    const constMatch = /const ORT_DYLIB_FILENAME:\s*&str\s*=\s*"([^"]+)"/.exec(FA_ONNX_RS);
-    expect(constMatch, 'ORT_DYLIB_FILENAME constant not found in fa_onnx.rs').not.toBeNull();
-    expect(constMatch![1]).toBe(MANIFEST.filename);
+  it.each(ENGINE_TARGETS.map((t) => [`${t.os}-${t.arch}`, t] as const))(
+    '%s: minorVersion agrees with version',
+    (_label, target) => {
+      const minorFromVersion = Number(String(target.version).split('.')[1]);
+      expect(target.minorVersion).toBe(minorFromVersion);
+    },
+  );
+
+  it('every SUPPORTED_ORT_TARGETS row in fa_onnx.rs has a matching manifest engine target', () => {
+    // Mirrors extractFnBody's brace-matching approach to pull just the
+    // SUPPORTED_ORT_TARGETS array literal, so this doesn't need a full Rust
+    // parser — a regex over the whole file could false-match unrelated
+    // "os:"/"arch:" text elsewhere.
+    const tableMatch = /const SUPPORTED_ORT_TARGETS:[^=]*=\s*&\[([\s\S]*?)\];/.exec(FA_ONNX_RS);
+    expect(tableMatch, 'SUPPORTED_ORT_TARGETS not found in fa_onnx.rs').not.toBeNull();
+    const tableBody: string = tableMatch?.[1] ?? '';
+    const rows = [...tableBody.matchAll(/os:\s*"([^"]+)",\s*arch:\s*"([^"]+)",\s*filename:\s*([A-Z_]+)/g)];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const [, os, arch, filenameConst] of rows) {
+      const manifestRow = ENGINE_TARGETS.find((t) => t.os === os && t.arch === arch);
+      expect(manifestRow, `fa_onnx.rs declares ${os}-${arch} but the manifest has no engine target for it`).toBeDefined();
+      // The Rust side references a FILENAME CONSTANT (ORT_DYLIB_FILENAME_MACOS
+      // / _WINDOWS), not a literal — resolve it the same way, rather than
+      // regex-matching a filename string that isn't in this snippet.
+      const constDef = new RegExp(`const ${filenameConst}:\\s*&str\\s*=\\s*"([^"]+)"`).exec(FA_ONNX_RS);
+      expect(constDef, `${filenameConst} constant not found in fa_onnx.rs`).not.toBeNull();
+      expect(manifestRow!.filename).toBe(constDef![1]);
+    }
   });
 
   it('the manifest is fully specified (no silently-empty guard)', () => {
-    for (const key of ['filename', 'version', 'minorVersion', 'apiVersion', 'os', 'arch', 'sha256']) {
-      expect(MANIFEST[key], `manifest is missing ${key}`).toBeDefined();
+    for (const target of ENGINE_TARGETS) {
+      for (const key of ['filename', 'version', 'minorVersion', 'apiVersion', 'os', 'arch', 'sha256']) {
+        expect(target[key], `engine target ${target.os}-${target.arch} is missing ${key}`).toBeDefined();
+      }
+      expect(String(target.sha256)).toMatch(/^[0-9a-f]{64}$/);
     }
-    expect(String(MANIFEST.sha256)).toMatch(/^[0-9a-f]{64}$/);
+    for (const target of DEPENDENCY_TARGETS) {
+      for (const key of ['filename', 'os', 'arch', 'sha256']) {
+        expect(target[key], `dependency target ${target.os}-${target.arch}/${target.filename} is missing ${key}`).toBeDefined();
+      }
+      expect(String(target.sha256)).toMatch(/^[0-9a-f]{64}$/);
+    }
   });
 });
