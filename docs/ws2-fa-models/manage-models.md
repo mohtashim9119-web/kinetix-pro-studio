@@ -1,17 +1,31 @@
-# FA Model Acquisition (WS2 Step 12, A3)
+# FA Model Acquisition (WS2 Step 12/13, A3)
 
 > Linked from `ManageModelsModal.tsx`'s FA-pack Download explainer and from
 > `SyncLogPanel.tsx`'s model-missing deep-link. Explains how a per-language
-> `model.onnx` is produced today, what the modal's Import path validates it
-> against, and what is still missing before Download works over the network.
+> `model.onnx` is acquired today (Download, the real path, and Import, the
+> manual fallback) and what the modal validates either path against.
 
 ## Status
 
-**Import works today.** Download is present in the UI (always enabled, per
-the owner's ruling that a disabled-forever button is worse than an
-enabled-but-explaining one) but is NOT wired to a real network transfer in
-this build — clicking it surfaces an explainer pointing back to this page
-instead of attempting a request. See "What Download needs" below for why.
+**Both Import and Download work today.** WS2 Step 13 Phase 3 shipped a real,
+resumable FA download (`models::fa_model_download`, a generalization of
+`model_download.rs`'s existing whisper downloader — `stream_download_verified`
+— rather than a duplicate) against the owner's public HuggingFace repo
+`mohtashim9/kinetix-fa-models`, pinned to revision
+`f618960d71728eba5f12528d5571838a10d262bf` (`models.rs::FA_MODEL_REVISION`).
+No auth token is needed — the repo is public, plain unauthenticated `GET`.
+REAL END-TO-END VERIFICATION (`src-tauri/tests/fa_download_live.rs`,
+`FA_LIVE_DOWNLOAD=1`, against production `app_local_data_dir`, 2026-08-27):
+a fresh download of `en` completed at 1,262,512,711 bytes in 307.2s
+(3.92 MiB/s), `.sha256` sidecar written, manifest-verified before the atomic
+rename; a cancel-then-resume pass was cancelled at 28,793,177 real on-disk
+bytes and resumed from 29,907,289 bytes (not from zero), completing to the
+exact expected size in 325.9s with the resulting file confirmed
+sha256-identical to the original. Full detail:
+`docs/history-2.md#2026-08-27--ws2-step13-fa-download-engine-ort-provisioning`.
+Import (below) remains the manual fallback — still useful for an operator who
+already has a `model.onnx` from a prior `export-fa-onnx.py` run, or who needs
+to place a model without a network transfer.
 
 ## How to obtain a `model.onnx` file today (operator-run, not automated)
 
@@ -74,25 +88,20 @@ stronger than a structural check for THIS threat model (it catches a
 byte-identical-shape wrong-language file the structural check would miss)
 and needs no ORT runtime, so it runs unconditionally.
 
-## What Download needs before it can work
+## How Download works
 
-A real "Download" button needs, at minimum:
+`services/models.ts`'s `downloadFaModel`/`cancelFaModelDownload` call
+`models::fa_model_download`, which streams from the pinned HF revision above
+via `stream_download_verified` (`.part` file, HTTP Range resume, sha256
+verification against `fa-onnx-manifest.json` via the pre-existing
+`fa_dev::verify_model_manifest`, atomic rename on success, disk-space
+precheck via `fs4` with a 200 MiB margin). Cancellation is per-model
+(`ModelDownloadState`'s cancel flag is keyed by `"whisper"`/`"fa-<lang>"`),
+so a whisper and an FA download can be cancelled independently. The wire
+format (`ModelDownloadEvent`/`ModelDownloadStatus`) is unchanged from the
+existing whisper downloader, so `modelDownload.ts`'s consumer code needed no
+change to support FA packs.
 
-1. A real host URL per language. Q1's answer names "own-cdn (HuggingFace
-   public model repo)" while Q2 names the repo **private** — these two
-   answers conflict as recorded, and this session did not have a real repo
-   id or bearer token to reconcile them with, so nothing was wired.
-2. If the repo is private (Q2), a bearer token read from an environment
-   variable at request time — never hardcoded, never baked into the client
-   bundle (`CLAUDE.md`'s secret-handling rule). No such variable is defined
-   yet.
-3. A resumable-download command mirroring `model_download.rs`'s existing
-   whisper downloader (`.part` + HTTP Range + sha256-against-manifest +
-   atomic rename + progress `Channel` + cancel) — structurally this is a
-   short, mechanical port once (1) and (2) are resolved, since
-   `verify_model_manifest` already provides the exact per-language
-   size/hash the downloader would verify against.
-
-Until an operator supplies (1)/(2) and confirms which of Q1/Q2 is correct,
-Import via a manually-run `export-fa-onnx.py` (above) is the only working
-acquisition path.
+**Fallback path.** If the HF repo is ever unreachable or its content
+changes shape, Import via a manually-run `export-fa-onnx.py` (above) remains
+a working acquisition path independent of the network.

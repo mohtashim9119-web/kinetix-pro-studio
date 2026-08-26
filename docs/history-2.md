@@ -88,6 +88,14 @@
 - [WS2 bug 2 — correction: Windows/arm64 ORT runtime still absent](#2026-08-26--correction--ws2-bug2-ort-runtime-platform-gap) — 2026-08-26
 - [WS2 Step 10 — FA error serialization fix](#2026-08-26--88ff701--88ff701-ws2-step10-error-serialization) — 2026-08-26
 - [WS2 Step 10 — Windows voiceover fetch fix](#2026-08-26--56e2116--56e2116-ws2-step10-windows-voiceover-fetch) — 2026-08-26
+- [WS2 Step 11 — FA model provenance (A5)](#2026-08-26--ws2-step11-fa-model-provenance-a5) — 2026-08-26
+- [WS2 Step 11 — remaining fetch(asset.url) sites fixed](#2026-08-26--ws2-step11-fetch-sites) — 2026-08-26
+- [WS2 Step 11 — boundaryUsedFallback 4-arg bug fixed](#2026-08-26--ws2-step11-boundaryUsedFallback-fix) — 2026-08-26
+- [WS2 Step 12 — Manage Models & Add-ons modal (A3)](#2026-08-27--ws2-step12-manage-models-modal-a3) — 2026-08-27
+- [WS2 Step 13 — FA download engine + ORT provisioning](#2026-08-27--ws2-step13-fa-download-engine-ort-provisioning) — 2026-08-27
+- [CI fix — macOS stray-.onnx guard globstar](#2026-08-27--fix--5adbbf4-ci-macos-globstar-fix) — 2026-08-27
+- [Correction — CI installer artifacts now exist](#2026-08-27--correction--ws2-ci-installer-artifacts-now-exist) — 2026-08-27
+- [Correction — FA acquisition + ORT gate superseded](#2026-08-27--correction--ws2-fa-acquisition-and-ort-gate-superseded) — 2026-08-27
 
 ---
 
@@ -1200,4 +1208,99 @@ VC++ redistributable gap on a real end-user Windows machine; a full built instal
 size on any platform (component-level byte deltas only — macOS ORT +35.2 MB [39.7→74.9 MB dylib],
 Windows ORT +14.2 MB net-new [was 0 bytes bundled]; both comfortably under the "jump into GB range"
 concern the session brief flagged, neither an actual end-to-end installer build was run).
+Superseded-by: none
+
+### 2026-08-27 · fix · 5adbbf4-ci-macos-globstar-fix
+Outcome: the "Build desktop installers" workflow's macOS leg broke on `4f31d38`'s new stray-model
+guard step (WS2 Step 13 Phase 4): `shopt -s globstar` (needed for the `src-tauri/**/*.onnx` glob)
+fails outright on macOS runners' default `/bin/bash` 3.2 (Apple has never shipped GPLv3 bash 4+,
+which is the first version with a `globstar` shell option at all). Fixed by replacing the glob with
+`find src-tauri -type f -name '*.onnx'`, which needs no shell option to recurse on any bash
+version; the `*.bin` half of the guard (a plain non-recursive glob) was unaffected and unchanged.
+Evidence: CI-VERIFIED — GitHub Actions run `33017398678` (triggered 2026-08-26T21:53:41Z, ~5 min
+after this commit) built `head_sha` `5adbbf46436db3f3eb2259dd92d413c1da716319` on branch `main` and
+both matrix legs succeeded: `windows-latest`/`x86_64-pc-windows-msvc` (`kinetix-windows-x64`
+artifact, 8m42s) and `macos-latest`/`universal-apple-darwin` (`kinetix-macos-universal` artifact,
+6m52s). Also verified locally per the commit message (guard still fails on a tree with stray files,
+passes on a clean one). This is the first CI run since Step 13 Phase 4 (`4f31d38`) to actually
+complete on both targets — the immediately prior run (`33015069184`, same day, 21:22:42Z) failed on
+exactly the globstar defect this commit fixes.
+Detail: this run proves the *build* succeeds on both targets with FA compiled in and ORT
+provisioned per `SUPPORTED_ORT_TARGETS` — it does not run the app, does not run FA, and is not
+evidence that forced alignment executes correctly on either artifact. See the correction entry
+below for what this does and does not close.
+Superseded-by: none
+
+### 2026-08-27 · correction · ws2-ci-installer-artifacts-now-exist
+**CORRECTION NOTE — supersedes the "arm64/Windows have never been built (CI or local...)" half of
+`docs/work-in-progress.md`'s `[CLAIM-UNVERIFIED] CI-installer verification of WS2 bugs 2+4` row,
+and the equivalent "NOT DETERMINED"/"never been built" language in the
+`8c6e4e8-ws2-bug4-in-app-model-download` and `d8baef5-ws2-bug2-fa-compiled-into-installer` entries
+above.** Those entries are correct that CI-installer verification of bugs 2/4 was NOT DETERMINED
+at the time they were written (2026-08-26) — no arm64 or Windows CI run had ever completed. That
+specific fact changed the next day: run `33017398678` (see the entry immediately above) built BOTH
+`windows-x86_64-pc-windows-msvc` and `universal-apple-darwin` installer artifacts successfully at
+`5adbbf4`, the first time either has been built anywhere other than the operator's own Intel
+dev machine.
+What this DOES close: "have CI-built installer artifacts for Windows and macOS-universal ever been
+produced" — yes, CI-VERIFIED, run `33017398678`.
+What this does NOT close, and stays exactly as NOT DETERMINED as before: whether forced alignment
+(or anything else in the app) actually runs correctly when launched from either of those two
+specific artifacts. No operator report of installing and running either CI-built artifact exists in
+this repo's records as of this entry. In particular, the question of which machine/install type
+produced any working Windows FA run — a fresh CI-built installer, a fresh locally-built installer,
+or a dev machine with hand-placed models — was posed to the owner this session (WS2 Step 14 Q1) and
+came back **blank/not answered**; per that session's own instruction, an unanswered question records
+as NOT DETERMINED and does not upgrade any grade. Bug 2 and bug 4 therefore stay graded
+OPERATOR-ATTESTED (dev-machine only), not END-TO-END VERIFIED, despite the CI artifacts now
+existing — artifact existence and runtime correctness are separate claims. Full evidence table:
+`docs/work-in-progress.md`'s WS2 section (added WS2 Step 14).
+Superseded-by: none
+
+### 2026-08-27 · correction · ws2-fa-acquisition-and-ort-gate-superseded
+**CORRECTION NOTE — several statements made true-at-the-time in earlier entries are now false as
+written; this entry cites and supersedes each, per the append-only rule (nothing below is edited).**
+
+1. **"FA cannot run on Windows / no bundled onnxruntime C runtime for windows-x86_64 / only macOS
+   x86_64 bundled."** True when written (`2026-08-26--correction--ws2-bug2-ort-runtime-platform-gap`,
+   above): `fa_onnx.rs:319`'s `resolve_bundled_ort_dylib` hard-gated on
+   `cfg!(all(target_os = "macos", target_arch = "x86_64"))`. Superseded by WS2 Step 13 Phase 4
+   (`4f31d38`, 2026-08-27, entry `ws2-step13-fa-download-engine-ort-provisioning` above):
+   `fa_onnx.rs:310` now defines `SUPPORTED_ORT_TARGETS: &[OrtTarget]`, a table covering
+   macos-x86_64, macos-aarch64 (served by the same lipo'd universal dylib), and windows-x86_64;
+   `fa_onnx.rs:319` is now the table lookup
+   (`SUPPORTED_ORT_TARGETS.iter().find(|t| t.os == os && t.arch == arch)`), not a single hard `cfg!`
+   gate. New evidence grade: CODE-FIX MACHINE-VERIFIED (`cargo test --lib` 157/0/1,
+   `scripts/onnxruntimeBundle.guard.test.ts` 34/34) for compile/table correctness; DLL/dylib
+   presence and hash-verification is CI-VERIFIED as of run `33017398678` (both targets' ORT
+   provisioning steps ran and passed); actual runtime dlopen/inference on Windows or Apple Silicon
+   remains NOT DETERMINED (no matching hardware in any session; Q1/Q2 this session came back blank,
+   so this stays the weaker grade, not upgraded).
+2. **"fa_onnx.rs:319 refusal-message" as a single hardcoded string.** Superseded by the same Step 13
+   Phase 4 change — the refusal message is now generated FROM `SUPPORTED_ORT_TARGETS` inside
+   `resolve_bundled_ort_dylib` (`fa_onnx.rs:360`), not a fixed string. Any doc quoting the old
+   verbatim Windows refusal text (`docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md:16`,
+   `docs/history-2.md`'s Step 10 correction entry) is quoting a real, MEASURED log line from
+   2026-08-26 — historically accurate and left as-is — but should not be read as still describing
+   current gate behavior; this entry is the pointer forward.
+3. **"Fresh installs of any platform have no FA model; macOS FA works only on this machine"**
+   (A5 finding P2, `ws2-step11-fa-model-provenance-a5` above, 2026-08-26). True when written — no
+   acquisition UI existed at all, and the 5 working `model.onnx` files on the operator's machine
+   were a P2 hand-placed dev-session leftover. Superseded by WS2 Step 12's Manage Models & Add-ons
+   modal (`ws2-step12-manage-models-modal-a3`, Import path, real end-to-end) and WS2 Step 13 Phase 3
+   (`ws2-step13-fa-download-engine-ort-provisioning`, real Download, REAL END-TO-END VERIFICATION
+   against production `app_local_data_dir`: fresh download 1,262,512,711 bytes/307.2s, cancel-then-
+   resume from a real partial file, both manifest-verified). New evidence grade: MACHINE-VERIFIED for
+   the download engine's mechanics (a real network transfer, on the operator's own machine); still
+   NOT DETERMINED whether a genuinely fresh install (no prior `app_local_data_dir` state) completes
+   this flow without operator intervention, since no fresh-install session has run it — this is
+   narrower than P2's original claim, not equivalent to it.
+4. **`docs/ws2-fa-models/manage-models.md`'s "Download is NOT wired to a real network transfer in
+   this build" status line** (WS2 Step 12, 2026-08-27 morning). Superseded same-day by WS2 Step 13
+   Phase 3, same session arc. The page itself is rewritten in this pass (WS2 Step 14) to describe the
+   real flow — public HF repo `mohtashim9/kinetix-fa-models`, pinned revision
+   `f618960d71728eba5f12528d5571838a10d262bf`, unauthenticated GET, resumable, manifest-gated
+   verification before install — rather than carry a superseded status line forward.
+
+None of the corrections above touch `docs/history.md`, any frozen source file, or any fixture.
 Superseded-by: none

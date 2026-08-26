@@ -218,13 +218,13 @@ Tag definitions: WS1's "Open bugs" section above (file-wide vocabulary).
 
 ### Operational / verification tasks (not code defects)
 
-* [CLAIM-UNVERIFIED] CI-installer verification of WS2 bugs 2+4 — not proven on a CI-built
-  artifact; `build.yml` carries both fixes on `origin/main` but arm64/Windows have never been
-  built (CI or local — Intel dev machine only). Separately, MEASURED 2026-08-26 (WS2 Step 11, A5):
-  FA DOES run end-to-end on the operator's own local .app build with the gate manually flipped ON,
-  but the 5 per-language `model.onnx` files it used were a **P2 hand-placed dev-session artifact**
-  with no canonical hosted source and no acquisition UI at the time. Full A5 evidence and
-  P1/P2/P3 classification: `docs/history-2.md#2026-08-26--ws2-step11-fa-model-provenance-a5`.
+* [CLAIM-UNVERIFIED] CI-installer *runtime* verification of WS2 bugs 2+4 — CI run `33017398678`
+  (`5adbbf4`) built both installer artifacts (windows-x86_64-pc-windows-msvc, universal-apple-darwin)
+  for the first time, so artifact-existence is now CI-VERIFIED, not "never built." Still unverified:
+  whether FA runs correctly from either CI-built artifact — no operator report exists; WS2 Step
+  14's Q1 came back blank, so this grade is not upgraded. A5 provenance + corrections:
+  `docs/history-2.md#2026-08-26--ws2-step11-fa-model-provenance-a5`,
+  `docs/history-2.md#2026-08-27--correction--ws2-ci-installer-artifacts-now-exist`.
 * [DONE] Manage Models & Add-ons modal (WS2 Step 12/13, A3) — closes A5's "no acquisition UI" gap
   fully: import AND a REAL, working Download for both whisper and FA packs (WS2 Step 13 Phase 3
   ported `model_download.rs`'s resumable engine rather than duplicating it), against the owner's

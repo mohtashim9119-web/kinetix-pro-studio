@@ -107,14 +107,27 @@ No option was implemented this session — this is the concrete blocker
 recorded as still open for Windows FA, separate from and in addition to the
 DLL provisioning itself (which IS complete and checksum-verified).
 
+## CI build status (WS2 Step 14, 2026-08-27)
+
+CI run `33017398678` (commit `5adbbf4`, the day after Phase 4 landed) built
+BOTH matrix legs successfully for the first time: `windows-latest`/
+`x86_64-pc-windows-msvc` and `macos-latest`/`universal-apple-darwin`. This is
+CI-VERIFIED evidence that the ORT provisioning steps above (download, hash
+check, lipo) complete cleanly in CI on both targets — it is NOT evidence that
+either DLL/dylib loads or that FA runs correctly at runtime; no Windows or
+Apple Silicon hardware has run the built artifact. See
+`docs/history-2.md#2026-08-27--correction--ws2-ci-installer-artifacts-now-exist`.
+
 ## What Phase 4 did NOT verify
 
-- The Windows DLLs loading at all (no Windows hardware).
+- The Windows DLLs loading at all (build succeeds in CI; no report of running
+  the built artifact on Windows hardware exists in this repo — WS2 Step 14's
+  Q1/Q2 came back blank/NOT DETERMINED rather than confirming one).
 - The arm64 macOS slice loading or running real inference (no Apple Silicon
   hardware).
 - A real forced-alignment run on either target — only the pre-existing
   macOS x86_64 path has ever been exercised end-to-end with real audio
   (WS2 Step 11, A5).
-- A full built installer's size on Windows (no Windows CI run performed this
-  session — see `docs/history-2.md`'s WS2 Step 13 entry for the component
-  byte deltas that were measured instead).
+- A full built installer's size on Windows (no Windows hardware to install
+  and measure it on — see `docs/history-2.md`'s WS2 Step 13 entry for the
+  component byte deltas that were measured instead).
