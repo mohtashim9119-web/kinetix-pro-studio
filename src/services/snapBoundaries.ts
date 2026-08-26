@@ -379,7 +379,7 @@ export function boundaryUsedFallback(
     !fillsTokenGapWithinSpan(s, tokens, currFirstTokenIdx, currLastTokenIdx) &&
     !fillsTokenGapWithinSpan(s, tokens, nextFirstTokenIdx, nextLastTokenIdx) &&
     !isBreathSilence(s, tokens, currFirstTokenIdx, currLastTokenIdx) &&
-    !isBreathSilence(s, tokens, nextFirstTokenIdx, nextLastTokenIdx) &&
+    !isBreathSilence(s, tokens, nextFirstTokenIdx, nextLastTokenIdx, currLastTokenIdx) &&
     isBoundarySilenceCandidate(s, window.searchStart, window.searchEnd),
   );
   return !hasCandidate;

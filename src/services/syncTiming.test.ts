@@ -3183,6 +3183,46 @@ describe('boundaryUsedFallback — recomputed candidacy (boundary-quality checke
     expect(out[1]!.startTime).toBeCloseTo(1.5, 6); // plain spoken-edge midpoint
     expect(boundaryUsedFallback(t, [], window, 0, 1, 2, 3)).toBe(true);
   });
+
+  // WS2 Step 11 regression — boundaryUsedFallback's next-side isBreathSilence
+  // call was passing only 4 args (implicit otherSideLastTokenIdx=-1), which
+  // disables the index-based seam exemption entirely — even for the next-side
+  // call, where the correct 5-arg pattern (snapCoveredBoundaries itself, this
+  // file's `overlapping` filter) always passes curr's own lastTokenIdx as the
+  // 5th arg. Reuses the exact real-production fixture from "isBreathSilence —
+  // index-based seam exemption (V6 production autopsy, 2026-08-03)" above
+  // (seg 96→97, "predator" case): a high-coverage (ratio 1.0), multi-fragment
+  // silence that a 4-arg (unexempted) call wrongly reads as curr's own breath,
+  // even though it sits cleanly after the seam by token index.
+  it('the next-side isBreathSilence call is exempted by the seam (5-arg, not 4-arg) — a real assignable boundary silence is NOT misread as a breath', () => {
+    const tokens: TranscriptToken[] = [
+      { text: 'look',      startSec: 288.750, endSec: 289.090 }, // seamAnchor = currLastTokenIdx (0)
+      { text: 'A',         startSec: 289.200, endSec: 289.260 }, // nextFirstTokenIdx
+      { text: 'predator',  startSec: 289.260, endSec: 289.800 },
+      { text: "'s",        startSec: 289.800, endSec: 289.930 },
+      { text: 'presence',  startSec: 289.930, endSec: 290.470 },
+      { text: 'reaches',   startSec: 290.470, endSec: 290.980 },
+      { text: 'your',      startSec: 290.980, endSec: 291.280 },
+      { text: 'nose',      startSec: 291.280, endSec: 291.830 },
+      { text: 'before',    startSec: 291.830, endSec: 292.020 },
+      { text: 'your',      startSec: 292.020, endSec: 292.250 },
+      { text: 'mind',      startSec: 292.250, endSec: 292.480 },
+      { text: 'names',     startSec: 292.480, endSec: 292.920 },
+      { text: 'it',        startSec: 292.920, endSec: 293.000 }, // nextLastTokenIdx
+    ];
+    const silences: SilenceInterval[] = [{ startSec: 289.380, endSec: 289.960 }];
+    const seamWindow = computeBoundarySearchWindow(289.090, 289.200, 288.750, 293.000);
+
+    // Confirmed via the standalone isBreathSilence fixture above: the 5-arg,
+    // seam-exempted call reads this silence as NOT a breath.
+    expect(isBreathSilence(silences[0]!, tokens, 1, 12, 0)).toBe(false);
+    // The 4-arg (pre-fix) call — no seam exemption — misreads it as a breath.
+    expect(isBreathSilence(silences[0]!, tokens, 1, 12)).toBe(true);
+
+    // boundaryUsedFallback must follow the exempted (false) reading: a real
+    // candidate silence is assignable, so this pair is NOT a fallback.
+    expect(boundaryUsedFallback(tokens, silences, seamWindow, 0, 0, 1, 12)).toBe(false);
+  });
 });
 
 // ===========================================================================
