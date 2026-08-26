@@ -47,6 +47,14 @@ ort = { version = "=2.0.0-rc.13", optional = true, default-features = false, fea
 # this crate now depends on directly — this adds no new package to
 # Cargo.lock, only a direct edge to an already-present one.
 serde_json = "1.0"
+# Free-space-on-volume for the Manage Models modal's storage line (WS2 Step
+# 12, A3). std has no stable cross-platform disk-space API; fs4's
+# `available_space(path)` wraps statvfs (Unix) / GetDiskFreeSpaceExW
+# (Windows) directly — no vendored binary, no async runtime pulled in with
+# default-features off. Resolves free space on the path's OWN volume (not
+# `disks.list().first()`), which is what `get_available_disk_space` needs
+# since `app_local_data_dir` is not always on the boot volume.
+fs4 = { version = "0.9", default-features = false, features = ["sync"] }
 
 [dev-dependencies]
 # WS1 Task 5 Slice D25 A1 — `tauri::test::mock_context`/`noop_assets` build a

@@ -16,6 +16,7 @@ mod fa_viterbi;
 mod fa_onnx;
 mod ffmpeg;
 mod model_download;
+mod models;
 mod project_mirror;
 mod sha256;
 mod whisper;
@@ -150,6 +151,10 @@ pub fn run() {
             model_download::whisper_model_status,
             model_download::whisper_model_download,
             model_download::whisper_model_download_cancel,
+            models::check_installed_models,
+            models::import_local_model,
+            models::delete_installed_model,
+            models::get_available_disk_space,
             fa::fa_align,
             fa::fa_cancel,
             fa_dev::fa_align_dev,

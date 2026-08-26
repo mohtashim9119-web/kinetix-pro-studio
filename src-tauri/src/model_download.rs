@@ -35,8 +35,15 @@ use crate::whisper::MODEL_FILENAME;
 /// both are hardcoded here rather than trusted from either source alone.
 const MODEL_URL: &str =
     "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin";
-const MODEL_SIZE_BYTES: u64 = 1_624_555_275;
-const MODEL_SHA256: &str = "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69";
+pub(crate) const MODEL_SIZE_BYTES: u64 = 1_624_555_275;
+pub(crate) const MODEL_SHA256: &str = "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69";
+/// ggml's own file-format magic (`GGML_FILE_MAGIC` upstream), little-endian
+/// bytes of `0x67676d6c` — measured against the real local model
+/// (`ggml-large-v3-turbo.bin`'s first 4 bytes: `6c 6d 67 67`). Cheap
+/// first-line-of-defense precheck for `import_local_model` before paying for
+/// a full stream hash, mirroring `fa_dev.rs::verify_model_manifest`'s own
+/// size-precheck-before-hash structure.
+pub(crate) const GGML_MAGIC: [u8; 4] = [0x6c, 0x6d, 0x67, 0x67];
 
 pub struct ModelDownloadState(pub Mutex<Arc<AtomicBool>>);
 
@@ -74,7 +81,7 @@ pub struct ModelDownloadStatus {
     pub total_bytes: u64,
 }
 
-fn models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app
         .path()
         .app_local_data_dir()

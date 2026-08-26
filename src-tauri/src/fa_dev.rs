@@ -49,7 +49,7 @@ fn manifest_sha256_for(language: &str) -> Option<String> {
 /// `fa-onnx-manifest.json` (written by `scripts/export-fa-onnx.py` alongside
 /// the sha256), so this costs nothing new to record and is an EXACT expected
 /// value, not a heuristic bound.
-fn manifest_byte_size_for(language: &str) -> Option<u64> {
+pub(crate) fn manifest_byte_size_for(language: &str) -> Option<u64> {
     let v: serde_json::Value = serde_json::from_str(FA_ONNX_MANIFEST_JSON).ok()?;
     v["models"][language]["byteSize"].as_u64()
 }
@@ -114,7 +114,7 @@ pub(crate) fn reset_verified_digest_cache_for_tests() {
 ///      and brings the repeat same-size-corruption case (tier B) under
 ///      budget. The comparison against the manifest still runs on every
 ///      call — the memo caches the digest, never the verdict.
-fn verify_model_manifest(path: &Path, language: &str) -> Result<(), FaError> {
+pub(crate) fn verify_model_manifest(path: &Path, language: &str) -> Result<(), FaError> {
     let expected = manifest_sha256_for(language).ok_or_else(|| FaError {
         kind: FaErrorKind::ModelHashMismatch,
         message: format!("no manifest entry for language \"{language}\" in fa-onnx-manifest.json"),

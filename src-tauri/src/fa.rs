@@ -428,7 +428,7 @@ const FA_MODEL_FILENAME: &str = "model.onnx";
 /// [`fa_model_path`] below; still unused (and `dead_code`-allowed) when that
 /// feature is off.
 #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
-fn fa_model_candidate_paths(
+pub(crate) fn fa_model_candidate_paths(
     local_data_dir: Option<&Path>,
     exe_dir: Option<&Path>,
     language_code: &str,
