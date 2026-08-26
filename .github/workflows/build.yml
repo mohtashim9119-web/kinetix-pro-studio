@@ -197,10 +197,19 @@ jobs:
           # should ship. A dev machine's hand-placed ggml-*.bin (the exact
           # mistake that produced the 4.7 GB .app) or a stray model.onnx
           # left under src-tauri/ must fail the build, not silently ship.
-          shopt -s nullglob globstar
-          stray=(src-tauri/models/*.bin src-tauri/**/*.onnx)
-          if [ ${#stray[@]} -gt 0 ]; then
-            echo "::error::stray model file(s) that would be bundled: ${stray[*]}"
+          #
+          # `find`, not a `**` glob: macos-latest's default /bin/bash is 3.2
+          # (Apple has never shipped GPLv3 bash 4+), and bash 3.2 has no
+          # `globstar` shell option at all — `shopt -s globstar` itself fails
+          # with "invalid shell option name" there, which is what actually
+          # broke this step (confirmed: GitHub's own runner-images docs list
+          # macOS runners' default shell as bash 3.2; `find -type f` needs no
+          # shell option to recurse on any bash version).
+          shopt -s nullglob
+          stray_bin=(src-tauri/models/*.bin)
+          stray_onnx="$(find src-tauri -type f -name '*.onnx')"
+          if [ ${#stray_bin[@]} -gt 0 ] || [ -n "$stray_onnx" ]; then
+            echo "::error::stray model file(s) that would be bundled: ${stray_bin[*]} $stray_onnx"
             exit 1
           fi
 
