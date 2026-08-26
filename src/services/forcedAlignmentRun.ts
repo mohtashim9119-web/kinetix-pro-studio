@@ -33,6 +33,7 @@
 
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { detectSilences } from './silenceDetector';
+import { describeInvokeError } from './invokeError';
 import { computeFaChunkPlan, computeUnscriptedRuns, type UnscriptedRun } from './faChunkPlan';
 import { faWordSpansToTranscriptTokens, type FaEvent, type FaWordSpan } from './faBoundaryTypes';
 import type { FaLanguageCode } from './faTextNormalize';
@@ -180,7 +181,7 @@ export async function runForcedAlignmentForSync(
         chunks,
         language,
         onEvent: channel,
-      }).catch((err: unknown) => reject(err instanceof Error ? err : new Error(String(err))));
+      }).catch((err: unknown) => reject(err instanceof Error ? err : new Error(describeInvokeError(err))));
     });
 
     if (words.length === 0) {
@@ -201,7 +202,7 @@ export async function runForcedAlignmentForSync(
     return {
       status: 'fallback',
       reason: 'inference-error',
-      detail: err instanceof Error ? err.message : String(err),
+      detail: describeInvokeError(err),
     };
   }
 }

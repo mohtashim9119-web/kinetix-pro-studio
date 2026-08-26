@@ -26,6 +26,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { isFaCapable, resolveFaLanguage } from './faGate';
+import { describeInvokeError } from './invokeError';
 import { FA_SUPPORTED_LANGUAGES } from './forcedAlignmentRun';
 import type { FaLanguageCode } from './faTextNormalize';
 import type { Project } from '../types';
@@ -118,7 +119,7 @@ export async function runFaPreflight(
   try {
     report = await invoke<FaPreflightReport>('fa_preflight', { language: resolvedLanguage });
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
+    const detail = describeInvokeError(err);
     return {
       ready: false,
       resolvedLanguage,
