@@ -1,5 +1,7 @@
-import { describe, it, expect } from 'vitest';
-import { resolveBlendFrameParams } from './segmentEncoder';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { resolveBlendFrameParams, encodePlainVideoSegment, type FfmpegLike } from './segmentEncoder';
+import { TransitionType, AnimationType } from '../types';
+import type { Asset, VideoSegment } from '../types';
 
 /**
  * Pure-function tests for the export-side centered blend-window math —
@@ -78,5 +80,64 @@ describe('resolveBlendFrameParams', () => {
     expect(resolveBlendFrameParams(segmentDuration - half, segmentDuration, transitionDuration)).not.toBeNull();
     expect(resolveBlendFrameParams(segmentDuration + half - 1e-9, segmentDuration, transitionDuration)).not.toBeNull();
     expect(resolveBlendFrameParams(segmentDuration + half, segmentDuration, transitionDuration)).toBeNull();
+  });
+});
+
+/**
+ * WS2 Step 11 regression — `encodePlainVideoSegment` must prefer an
+ * already-in-memory `asset.file` over `fetch(asset.url)`, same defect
+ * shape/fix as WS2 Step 10's `fetchAndDetectSilences` (a `blob:`-URL
+ * `fetch()` fails on Windows WebView2 where DOM-native consumption of the
+ * identical URL does not — `docs/history-2.md`).
+ */
+describe('encodePlainVideoSegment — fetch-avoidance (WS2 Step 11)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function makeFakeFfmpeg(): FfmpegLike {
+    return {
+      writeFile: vi.fn(async () => undefined),
+      exec: vi.fn(async () => 0),
+      readFile: vi.fn(async () => new Uint8Array([9, 9, 9])),
+      deleteFile: vi.fn(async () => undefined),
+    } as unknown as FfmpegLike;
+  }
+
+  function makeSegment(): VideoSegment {
+    return {
+      id: 's0',
+      text: '',
+      startTime: 0,
+      duration: 1,
+      trimStart: 0,
+      transition: TransitionType.NONE,
+      animation: AnimationType.NONE,
+      order: 0,
+    };
+  }
+
+  it('uses asset.file directly and never calls fetch when a File is present', async () => {
+    const file = new File(['fake-video-bytes'], 'clip.mp4', { type: 'video/mp4' });
+    const asset: Asset = { id: 'a0', name: 'clip.mp4', url: 'blob:a0', type: 'video', file };
+    const ffmpeg = makeFakeFfmpeg();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    await encodePlainVideoSegment(makeSegment(), asset, ffmpeg);
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(ffmpeg.writeFile).toHaveBeenCalledWith('tier1_src_s0.mp4', expect.any(Uint8Array));
+  });
+
+  it('falls back to fetch(asset.url) when .file is absent', async () => {
+    const asset: Asset = { id: 'a0', name: 'clip.mp4', url: 'blob:a0', type: 'video' };
+    const ffmpeg = makeFakeFfmpeg();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      arrayBuffer: async () => new ArrayBuffer(4),
+    } as unknown as Response);
+
+    await encodePlainVideoSegment(makeSegment(), asset, ffmpeg);
+
+    expect(fetchSpy).toHaveBeenCalledWith('blob:a0');
   });
 });

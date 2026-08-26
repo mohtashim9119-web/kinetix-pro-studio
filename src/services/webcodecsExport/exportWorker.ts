@@ -298,9 +298,13 @@ class RunState {
     if (asset.type === 'image') {
       let bmp = this.imageBitmaps.get(asset.id);
       if (!bmp) {
-        const resp = await fetch(asset.url);
-        if (!resp.ok) throw new Error(`exportWorker: fetch failed (${resp.status}) for image asset ${asset.id} (${asset.url})`);
-        bmp = await createImageBitmap(await resp.blob());
+        if (asset.file) {
+          bmp = await createImageBitmap(asset.file);
+        } else {
+          const resp = await fetch(asset.url);
+          if (!resp.ok) throw new Error(`exportWorker: fetch failed (${resp.status}) for image asset ${asset.id} (${asset.url})`);
+          bmp = await createImageBitmap(await resp.blob());
+        }
         this.imageBitmaps.set(asset.id, bmp);
       }
       return { source: bmp, w: bmp.width, h: bmp.height };

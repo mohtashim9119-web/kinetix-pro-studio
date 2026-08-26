@@ -1028,8 +1028,9 @@ export async function exportProjectWebCodecs(
   try {
     if (voiceoverAsset?.url) {
       audioFile = 'voiceover_audio';
-      const audioResp = await fetch(voiceoverAsset.url);
-      const audioBytes = new Uint8Array(await audioResp.arrayBuffer());
+      const audioBytes = voiceoverAsset.file
+        ? new Uint8Array(await voiceoverAsset.file.arrayBuffer())
+        : new Uint8Array(await (await fetch(voiceoverAsset.url)).arrayBuffer());
       await ffmpeg.writeFile(audioFile, audioBytes);
     }
   } catch (err) {

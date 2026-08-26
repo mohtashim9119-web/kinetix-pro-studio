@@ -412,9 +412,11 @@ export async function encodePlainVideoSegment(
 
   // Pull the source bytes out of the blob URL and into the session FS so the
   // native ffmpeg process can read the file directly (same fetch→writeFile
-  // pattern the audio-mux step uses in exportPipeline).
-  const resp = await fetch(asset.url);
-  const srcBytes = new Uint8Array(await resp.arrayBuffer());
+  // pattern the audio-mux step uses in exportPipeline). Prefers the
+  // already-in-memory File — a bare `fetch(blob:)` fails on Windows WebView2.
+  const srcBytes = asset.file
+    ? new Uint8Array(await asset.file.arrayBuffer())
+    : new Uint8Array(await (await fetch(asset.url)).arrayBuffer());
   await ffmpeg.writeFile(srcFile, srcBytes);
 
   const trimStart = segment.trimStart ?? 0;

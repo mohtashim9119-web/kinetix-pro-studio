@@ -149,3 +149,53 @@ describe('exportProjectWebCodecs — native AnnexB concat wiring', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// WS2 Step 11 regression — the voiceover audio mux step must prefer an
+// already-in-memory `voiceoverAsset.file` over `fetch(voiceoverAsset.url)`,
+// same defect shape/fix as WS2 Step 10's `fetchAndDetectSilences` (a
+// `blob:`-URL `fetch()` fails on Windows WebView2 where DOM-native consumption
+// of the identical URL does not).
+// ---------------------------------------------------------------------------
+describe('exportProjectWebCodecs — voiceover mux fetch-avoidance (WS2 Step 11)', () => {
+  beforeEach(() => {
+    muxOnlyMock.mockClear();
+  });
+
+  function makeProjectWithVoiceover(voiceoverAsset: Asset): Project {
+    const project = makeProject();
+    return { ...project, assets: [...project.assets, voiceoverAsset], voiceoverId: voiceoverAsset.id };
+  }
+
+  it('uses voiceoverAsset.file directly and never calls fetch when a File is present', async () => {
+    const file = new File(['fake-audio-bytes'], 'voiceover.mp3', { type: 'audio/mpeg' });
+    const voiceoverAsset: Asset = { id: 'vo1', name: 'voiceover.mp3', url: 'blob:vo1', type: 'audio', file };
+    const project = makeProjectWithVoiceover(voiceoverAsset);
+    const ffmpeg = makeFakeFfmpeg();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+    const result = await exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
+
+    expect(result.ok).toBe(true);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(muxOnlyMock).toHaveBeenCalledTimes(1);
+    const call = muxOnlyMock.mock.calls[0]!;
+    expect(call[3]).toBe('voiceover_audio'); // audioFile, not null
+    fetchSpy.mockRestore();
+  });
+
+  it('falls back to fetch(voiceoverAsset.url) when .file is absent', async () => {
+    const voiceoverAsset: Asset = { id: 'vo1', name: 'voiceover.mp3', url: 'blob:vo1', type: 'audio' };
+    const project = makeProjectWithVoiceover(voiceoverAsset);
+    const ffmpeg = makeFakeFfmpeg();
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      arrayBuffer: async () => new ArrayBuffer(4),
+    } as unknown as Response);
+
+    const result = await exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
+
+    expect(result.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledWith('blob:vo1');
+    fetchSpy.mockRestore();
+  });
+});

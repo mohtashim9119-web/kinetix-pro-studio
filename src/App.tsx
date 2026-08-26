@@ -3778,8 +3778,7 @@ export default function App() {
 
       let silences: SilenceInterval[] = [];
       try {
-        const resp = await fetch(voiceoverAsset.url);
-        const blob = await resp.blob();
+        const blob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
         const silenceResult = await detectSilences(blob);
         if (silenceResult.status === 'ok') silences = silenceResult.silences;
         else console.warn('[calibrate] silence detection failed, sweeping with zero silences:', silenceResult.errorMessage);
@@ -3898,8 +3897,7 @@ export default function App() {
 
       let silences: SilenceInterval[] = [];
       try {
-        const resp = await fetch(voiceoverAsset.url);
-        const blob = await resp.blob();
+        const blob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
         const silenceResult = await detectSilences(blob);
         if (silenceResult.status === 'ok') silences = silenceResult.silences;
         else console.warn('[inspector] silence detection failed, inspecting with zero silences:', silenceResult.errorMessage);
