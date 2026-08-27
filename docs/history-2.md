@@ -1815,7 +1815,9 @@ reused as-is.
   `localStorage` fallback key (`kinetix:project:<id>:v1`) was written, footer showed "Saved" (not
   "Save failed" — confirms `saveError` wiring), reloaded, project reopened intact with zero
   console errors.
-- NOT verified this session: a live `npm run tauri:dev` round trip confirming
-  `app_local_data_dir()/projects/<id>/project.json` is actually written by the real Tauri IPC
-  bridge — no native macOS app control tool was available. Recorded in
-  `docs/work-in-progress.md` WS2 §1 as `[CLAIM-UNVERIFIED]` pending that manual check.
+- OPERATOR-ATTESTED (2026-08-27, following session): live `npm run tauri:dev` round trip on the
+  physical build — synced an existing project, quit the app completely, reopened it; project data
+  and synced state persisted and reloaded correctly from the OS file store. This was the one gap
+  the implementing session couldn't close itself (no native macOS app control tool available to
+  it) and closes T1.3 fully verified. Branch `ws2-t13-os-project-store` merged to `main`
+  immediately after.

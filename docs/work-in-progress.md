@@ -137,21 +137,13 @@ runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code f
 sync-pipeline defects surfaced by WS2 Step 15's Windows operator log (non-ASCII matching,
 cut-placement quality) were relocated to WS1 §4 — see that section. macOS CI-artifact/arm64 FA
 platform verification and MSVC redistributable are both closed (OPERATOR-ATTESTED); the
-autosave-quota bug is deferred. Phase 1 (project data durability & foundations) now in progress.
+autosave-quota bug is fixed (T1.3, OPERATOR-ATTESTED live `tauri:dev` verification, see
+`docs/history-2.md`). Phase 1 (project data durability & foundations): T1.1/T1.3 closed, T1.2
+in progress.
 
 ### 1. Finished but pending verification
 
-[CLAIM-UNVERIFIED] T1.3 File-backed versioned project store: `project_mirror.rs` promoted from
-  backup-mirror to primary store (`app_local_data_dir()/projects/<id>/project.json`, atomic
-  temp+fsync+rename+backup-rotation reused unchanged); `projectStore.ts` async-refactored per
-  `preserve/indexeddb-project-store`'s shape (cherry-picked, backend swapped from IndexedDB to
-  the Rust store), `isTauri()`-gated `localStorage` fallback for plain `npm run dev`, boot
-  migration (`migrateLocalStorageProjectsToOsStore`) additive per-origin. `npm run lint`/`npm
-  test` (2560 passed) / `cargo test` (161 passed, 1 unrelated live-network test ignored) / golden
-  replay 6/6 all clean; `npm run dev` fallback path manually verified in-browser (create → save →
-  reload → reopens intact, no console errors). NOT verified: a live `tauri:dev` round trip
-  actually writing `projects/<id>/project.json` to disk — no native-app control tool was
-  available this session. Full record: `docs/history-2.md`.
+(none)
 
 ### 2. In progress
 
