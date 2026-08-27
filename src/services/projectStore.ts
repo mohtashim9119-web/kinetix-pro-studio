@@ -728,6 +728,10 @@ export async function migrateLegacyIfNeeded(): Promise<{ project: Project; saved
       return null;
     }
 
+    // WS2 T1.2 — backfill stable content-derived ids before re-saving, same
+    // as `loadProjectDetailed` does for the normal load path.
+    stored.project.segments = backfillSegmentIds(stored.project.segments);
+
     // Re-save under the new per-project key and update registry
     await saveProject(stored.project);
 

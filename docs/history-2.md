@@ -1821,3 +1821,57 @@ reused as-is.
   the implementing session couldn't close itself (no native macOS app control tool available to
   it) and closes T1.3 fully verified. Branch `ws2-t13-os-project-store` merged to `main`
   immediately after.
+
+## WS2 T1.2 — Stable Content-Derived Segment IDs (2026-08-27, branch ws2-t12-stable-segment-ids)
+
+**Context.** `VideoSegment.id` predated this task but was minted fresh with `crypto.randomUUID()`
+on every Apply Sync — useless as a cross-run identity, only a per-render React key. T2.2's planned
+operator-override layer (keep/hide/manually add/delete a segment, persisted by id) needs an id
+that survives a re-sync of the same script, which random UUIDs cannot provide.
+
+**Chosen hybrid semantics (owner-selected, WS2 session ws2-21).** Two building blocks:
+- `computeContentKey(text, ordinal)` — a PURE function of (normalized text, ordinal), where
+  ordinal is the segment's 0-based rank among prior segments in the same array that normalize to
+  identical text, assigned in document order. Two parses of the same script always produce the
+  same keys; this is what makes an id "content-derived."
+- `assignSegmentIds(segments, previousSegments?)` — the JOIN that makes an id "persisted, assign-
+  once" rather than a pure hash: a freshly-parsed segment whose content key matches one from
+  `previousSegments` (the project's segments before this Apply Sync run) carries forward that
+  previous segment's persisted `id`; a segment with no match (new text, or the first-ever parse)
+  gets its freshly-computed content key as its id instead. The join compares content keys only,
+  never the id values themselves — so a previous id that isn't itself content-shaped (e.g. a
+  backfilled pre-T1.2 UUID) still joins correctly on its segment's text.
+
+**`SEGMENT_ID_NORM_V1` freeze note.** `normalizeForSegmentId` (`src/services/segmentId.ts`) is
+frozen and versioned independently of `textNormalize.ts`'s alignment-tuned pipeline — it only
+collapses cosmetic differences (NFKC, case, whitespace, punctuation), not spoken-audio matching
+rules. It must never be edited in place, including by T3.1's canonical-match-form work: any future
+change to id-derivation normalization ships as a new `SEGMENT_ID_NORM_V2` function alongside V1,
+with its own version tag, so a rotation is a detectable event (`id.startsWith('segv2_')`) rather
+than a silent id change for every existing project on its next load. The version tag
+(`SEGMENT_ID_NORM_VERSION = 'segv1'`) is embedded in every id produced by this module.
+
+**Implementation.**
+- `src/services/segmentId.ts` (new): `normalizeForSegmentId`, `computeContentKey`,
+  `assignSegmentIds`, and `backfillSegmentIds` (one-time load-path backfill — replaces any id
+  that's missing or predates this module with its content key; idempotent, a segment already
+  carrying a current-version id is left untouched).
+- `App.tsx`'s `parseProjectData` now calls `assignSegmentIds(finalSegments, previousSegments)`
+  once per whole array instead of minting `crypto.randomUUID()` per segment.
+- `projectStore.ts`: on-disk schema version bumped to 3; `loadProjectDetailed` calls
+  `backfillSegmentIds` on every load. `migrateLegacyIfNeeded` (the single-project legacy-key path)
+  was found NOT to call it during this close-out pass — a legacy project re-saved through that path
+  would keep pre-T1.2 ids instead of being backfilled. Fixed as a one-line addition
+  (`stored.project.segments = backfillSegmentIds(stored.project.segments);` before the re-save),
+  same call style as `loadProjectDetailed`.
+- Three pre-existing tests (`faGate.test.ts`, `faWordTimingsSchema.test.ts`) used legacy-shaped
+  fixture ids (`s1`/`seg-N`) in byte-for-byte round-trip assertions; updated to strip `id` before
+  comparing, since those ids are now intentionally backfilled on load — a deliberate migration, not
+  a retime. New `projectStoreSegmentId.test.ts` covers the backfill/load path directly.
+
+**Verified (post-fix, full branch close-out):**
+- `npm run lint` (tsc --noEmit) clean.
+- `npm test`: 2581 passed, 77 skipped (unrelated, pre-existing gate), 0 failed — full suite.
+- Golden replay (`scripts/phase4-handoff-replay-sync.test.ts`): 6/6.
+- `gaplessInvariant.test.ts`: 36/36.
+- Merged to `main`, fast-forward push (no divergence — `main` matched `origin/main` before merge).

@@ -138,8 +138,8 @@ sync-pipeline defects surfaced by WS2 Step 15's Windows operator log (non-ASCII 
 cut-placement quality) were relocated to WS1 §4 — see that section. macOS CI-artifact/arm64 FA
 platform verification and MSVC redistributable are both closed (OPERATOR-ATTESTED); the
 autosave-quota bug is fixed (T1.3, OPERATOR-ATTESTED live `tauri:dev` verification, see
-`docs/history-2.md`). Phase 1 (project data durability & foundations): T1.1/T1.3 closed, T1.2
-in progress.
+`docs/history-2.md`). Phase 1 (project data durability & foundations) is fully closed —
+T1.1/T1.2/T1.3 all done; Phase 2 is now in progress.
 
 ### 1. Finished but pending verification
 
@@ -147,25 +147,19 @@ in progress.
 
 ### 2. In progress
 
-[IN-PROGRESS] Phase 1 — Project data durability & foundations
-  T1.1 Diagnose storage loss: bundle identifier change across versions, WebView2 user-data
-       folder location on Windows, and localStorage origin in dev vs production. CLOSED — see
-       `docs/history-2.md` (T1.1 storage audit, WS2 session ws2-20): identifier never changed,
-       WebView2 confirmed under %LOCALAPPDATA% (not install-dir) on the operator's machine, dev/
-       release origin split confirmed and already mitigated by the mirror-adoption path.
-  T1.2 Stable content-derived segment IDs (normalized text hash + ordinal) that survive
-       re-running Apply Sync.
-
-**END GOAL:** No project data survives loss across app close, crash, or version upgrade; every
-launch opens the dashboard; opening a project restores its last saved position.
-
-### 3. Next tasks
-
-[OPEN] Phase 2 — Never-drop segments & operator override
+[IN-PROGRESS] Phase 2 — Never-drop segments & operator override
   T2.1 Place unmatched segments at interpolated timestamps with timingSource/confidence
        flags and a sync-log warning, instead of dropping them.
   T2.2 Operator override layer: keep / hide / manually add or delete a segment, persisted
        by stable segment ID.
+
+**END GOAL:** No project data survives loss across app close, crash, or version upgrade; every
+launch opens the dashboard; opening a project restores its last saved position. (Phase 1's goal —
+carried here as the still-relevant durability bar Phase 2 builds on; Phase 2 additionally ends
+at: no segment is ever silently dropped from the timeline without an operator-visible flag and
+recovery path.)
+
+### 3. Next tasks
 
 [OPEN] Phase 3 — Text and number normalization
   T3.1 Canonical match form: Unicode NFC/NFD normalization, punctuation folding, tiered
@@ -183,7 +177,7 @@ launch opens the dashboard; opening a project restores its last saved position.
        only; fix the stale blurred previous project by unmounting the editor and clearing
        activeProjectId on close.
 
-(WS2's numbered-bug backlog is closed; remaining work beyond Phases 1-4 above is the two
+(WS2's numbered-bug backlog is closed; remaining work beyond Phases 2-4 above is the two
 deferred items below.)
 
 ### 4. Open bugs
