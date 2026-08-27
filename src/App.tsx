@@ -193,6 +193,7 @@ import {
   loadAllMetas,
   deleteProjectData,
   migrateLegacyIfNeeded,
+  migrateLocalStorageProjectsToOsStore,
   upsertProjectMeta,
   setLastOpenedProjectId,
   getLastOpenedProjectId,
@@ -1993,7 +1994,7 @@ export default function App() {
       //    If migration ran, copy assets from the v1 IDB store to the new v2
       //    store scoped by projectId.
       // -----------------------------------------------------------------------
-      const migrated = migrateLegacyIfNeeded();
+      const migrated = await migrateLegacyIfNeeded();
       if (migrated) {
         const legacyBlobs = await getLegacyAssets();
         await Promise.all(
@@ -2010,6 +2011,16 @@ export default function App() {
           `[kinetix] Migrated legacy project "${migrated.project.name}" (id: ${migrated.project.id})`,
         );
       }
+
+      // -----------------------------------------------------------------------
+      // 1a. WS2 T1.3 — one-time migration of any project still sitting under
+      //     the old per-project localStorage keys into the primary OS file
+      //     store, freeing the shared ~5-10 MB origin budget that was causing
+      //     QuotaExceededError on large projects. A no-op outside Tauri. Must
+      //     run BEFORE mirror adoption below, whose "already present locally"
+      //     check now looks at the OS store.
+      // -----------------------------------------------------------------------
+      await migrateLocalStorageProjectsToOsStore();
 
       // -----------------------------------------------------------------------
       // 2. Route on launch:
@@ -2065,7 +2076,29 @@ export default function App() {
     })();
   }, []);
 
-  const { saveNow, lastSavedAt } = usePersistProject(project, !isHydrating);
+  const { saveNow, lastSavedAt, saveError } = usePersistProject(project, !isHydrating);
+
+  // Surface a save failure the moment it happens — a debounced autosave
+  // failing (e.g. QuotaExceededError) must never be silent: previously
+  // `lastSavedAt` was stamped regardless of outcome, so the footer's
+  // "Saved" label looked identical whether or not the write actually landed.
+  // Toast once per distinct failure (by reason) rather than once per 500 ms
+  // retry, since the underlying condition (e.g. storage still full) can
+  // easily persist across several autosave ticks.
+  const lastToastedSaveErrorReasonRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!saveError) {
+      lastToastedSaveErrorReasonRef.current = null;
+      return;
+    }
+    if (lastToastedSaveErrorReasonRef.current === saveError.reason) return;
+    lastToastedSaveErrorReasonRef.current = saveError.reason;
+    showToast(
+      saveError.reason === 'quota-exceeded'
+        ? "Couldn't save — storage is full. Free up space (delete an unused project) or your latest edits won't persist."
+        : `Couldn't save your project (${saveError.reason}). Your latest edits may be lost if you close the app now.`,
+    );
+  }, [saveError, showToast]);
 
   const updateSegment = (idx: number, updates: Partial<VideoSegment>): void => {
     setProject(prev => ({
@@ -4813,7 +4846,7 @@ export default function App() {
     setShowNewProjectModal(true);
   };
 
-  const handleNewProjectConfirm = (name: string, aspectRatio: AspectRatio, resolutionTier: ResolutionTier): void => {
+  const handleNewProjectConfirm = async (name: string, aspectRatio: AspectRatio, resolutionTier: ResolutionTier): Promise<void> => {
     setShowNewProjectModal(false);
     // Discard any staging-time voiceover transcription left over from the
     // outgoing project — otherwise effectiveVoiceoverId keeps pointing at its
@@ -4833,7 +4866,10 @@ export default function App() {
     fresh.resolutionTier = resolutionTier;
     // Mark as confirmed so auto-save and saveNow will persist it going forward.
     fresh.confirmed = true;
-    saveProject(fresh); // persist full project JSON
+    const outcome = await saveProject(fresh); // persist full project JSON
+    if (!outcome.ok) {
+      showToast(`Couldn't save the new project (${outcome.reason}). Try again, or check available storage.`);
+    }
     setLastOpenedProjectId(fresh.id);
     upsertProjectMeta({ // ensure registry entry exists right away
       id: fresh.id,
@@ -4875,7 +4911,7 @@ export default function App() {
     // has already recorded a poison flag for this id, which makes `saveProject`
     // refuse every subsequent write to it, so the unreadable raw bytes stay on
     // disk exactly as they are rather than being autosaved over.
-    const outcome = loadProjectDetailed(id);
+    const outcome = await loadProjectDetailed(id);
     if (outcome === null) {
       console.error('[kinetix] Cannot switch to project — not found in storage:', id);
       showToast('That project could not be found in storage.');
@@ -5393,8 +5429,11 @@ export default function App() {
             {/* Project name + save status */}
             <div className="flex-shrink-0 px-3 pt-3 pb-2 border-b border-[#1A1A1A]">
               <p className="text-xs text-zinc-400 truncate">{project.name}</p>
-              <p className="text-[10px] text-zinc-600 mt-0.5">
-                {lastSavedAt ? `Saved` : `Unsaved`}
+              <p
+                className={`text-[10px] mt-0.5 ${saveError ? 'text-red-400 font-medium' : 'text-zinc-600'}`}
+                title={saveError ? saveError.message : undefined}
+              >
+                {saveError ? 'Save failed' : lastSavedAt ? 'Saved' : 'Unsaved'}
               </p>
             </div>
 

@@ -1,12 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Project } from '../types';
-import { saveProject, upsertProjectMeta } from '../services/projectStore';
+import { saveProject, upsertProjectMeta, type SaveOutcome } from '../services/projectStore';
 
 export interface PersistHandle {
-  /** Immediately writes the project to localStorage (bypasses the 500 ms debounce). */
+  /** Immediately writes the project (bypasses the 500 ms debounce). */
   saveNow: () => void;
   /** Unix timestamp of the last successful save, or null if not yet saved this session. */
   lastSavedAt: number | null;
+  /**
+   * The most recent FAILED save outcome, or null if the last save (if any)
+   * succeeded. Cleared the moment a save succeeds again. `lastSavedAt` is
+   * intentionally NOT updated while this is set — a failed save must never
+   * look like a successful one to the caller.
+   */
+  saveError: SaveOutcome & { ok: false } | null;
 }
 
 /**
@@ -67,10 +74,33 @@ async function persistMeta(project: Project, savedAt: number): Promise<void> {
 export function usePersistProject(project: Project, enabled = true): PersistHandle {
   const isFirstRender = useRef(true);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState<SaveOutcome & { ok: false } | null>(null);
 
   // Keep a ref so saveNow always sees the latest project without deps churn.
   const projectRef = useRef(project);
   projectRef.current = project;
+
+  // Guards against an in-flight save's result landing after a LATER save has
+  // already resolved (saveNow + the debounced effect can both fire close
+  // together) — only the most recently STARTED attempt is allowed to write
+  // lastSavedAt/saveError.
+  const latestAttemptRef = useRef(0);
+
+  const runSave = useCallback((proj: Project) => {
+    const attempt = ++latestAttemptRef.current;
+    const ts = Date.now();
+    void saveProject(proj).then(outcome => {
+      if (latestAttemptRef.current !== attempt) return; // superseded by a newer save
+      if (!outcome.ok) {
+        setSaveError(outcome);
+        return;
+      }
+      setSaveError(null);
+      void persistMeta(proj, ts).then(() => {
+        if (latestAttemptRef.current === attempt) setLastSavedAt(ts);
+      });
+    });
+  }, []);
 
   // saveNow is typed () => void so callers can fire-and-forget; the async
   // work happens inside without blocking the caller.
@@ -78,10 +108,8 @@ export function usePersistProject(project: Project, enabled = true): PersistHand
     if (!enabled) return;
     // Never persist a project the user hasn't explicitly named yet.
     if (!projectRef.current.confirmed) return;
-    const ts = Date.now();
-    saveProject(projectRef.current);
-    void persistMeta(projectRef.current, ts).then(() => setLastSavedAt(ts));
-  }, [enabled]);
+    runSave(projectRef.current);
+  }, [enabled, runSave]);
 
   // Debounced auto-save: fires 500 ms after any project change.
   useEffect(() => {
@@ -93,13 +121,9 @@ export function usePersistProject(project: Project, enabled = true): PersistHand
     // Never auto-save a project the user hasn't explicitly named yet —
     // prevents blank "Untitled Project" entries appearing in the registry.
     if (!project.confirmed) return;
-    const timer = setTimeout(() => {
-      const ts = Date.now();
-      saveProject(project);
-      void persistMeta(project, ts).then(() => setLastSavedAt(ts));
-    }, 500);
+    const timer = setTimeout(() => runSave(project), 500);
     return () => clearTimeout(timer);
-  }, [project, enabled]);
+  }, [project, enabled, runSave]);
 
-  return { saveNow, lastSavedAt };
+  return { saveNow, lastSavedAt, saveError };
 }

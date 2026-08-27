@@ -137,7 +137,9 @@ runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code f
 sync-pipeline defects surfaced by WS2 Step 15's Windows operator log (non-ASCII matching,
 cut-placement quality) were relocated to WS1 §4 — see that section. macOS CI-artifact/arm64 FA
 platform verification and MSVC redistributable are both closed (OPERATOR-ATTESTED); the
-autosave-quota bug is deferred. Phase 1 (project data durability & foundations) now in progress.
+autosave-quota bug is fixed (T1.3, OPERATOR-ATTESTED live `tauri:dev` verification, see
+`docs/history-2.md`). Phase 1 (project data durability & foundations): T1.1/T1.3 closed, T1.2
+in progress.
 
 ### 1. Finished but pending verification
 
@@ -147,13 +149,12 @@ autosave-quota bug is deferred. Phase 1 (project data durability & foundations) 
 
 [IN-PROGRESS] Phase 1 — Project data durability & foundations
   T1.1 Diagnose storage loss: bundle identifier change across versions, WebView2 user-data
-       folder location on Windows, and localStorage origin in dev vs production.
+       folder location on Windows, and localStorage origin in dev vs production. CLOSED — see
+       `docs/history-2.md` (T1.1 storage audit, WS2 session ws2-20): identifier never changed,
+       WebView2 confirmed under %LOCALAPPDATA% (not install-dir) on the operator's machine, dev/
+       release origin split confirmed and already mitigated by the mirror-adoption path.
   T1.2 Stable content-derived segment IDs (normalized text hash + ordinal) that survive
        re-running Apply Sync.
-  T1.3 File-backed versioned project store written from Rust (atomic temp + fsync + rename,
-       rotating snapshot ring, schema version); rebase the async plumbing and "Save failed"
-       UI from preserve/indexeddb-project-store and swap the adapter to a Tauri invoke;
-       separate route state from project state so boot always lands on the dashboard.
 
 **END GOAL:** No project data survives loss across app close, crash, or version upgrade; every
 launch opens the dashboard; opening a project restores its last saved position.
@@ -191,17 +192,6 @@ deferred items below.)
 
 ### 5. Deferred tasks
 
-* [DEFERRED] Autosave quota failure is invisible — `saveProject()` (`src/services/projectStore.ts:152`)
-  returns a typed `SaveOutcome` including `quota-exceeded`, but every call site discards it and
-  `usePersistProject.ts` stamps `lastSavedAt` regardless of outcome, so a failed write is
-  indistinguishable from a successful one in the footer. Root cause is structural:
-  `localStorage` (`src/services/projectStore.ts:9`'s `kinetix:project:<id>:v1` key) is one
-  ~5-10 MB origin-wide budget shared across every project body, the registry, and thumbnail data
-  URLs; observed `QuotaExceededError` at ~915,000 chars of serialized project JSON on a
-  ~21-minute-audio project. Not a sync-pipeline defect — placed here in WS2 (parallel to the
-  existing non-sync `videoDecoderPool.ts` bug in §5) rather than WS1. A candidate fix (full
-  IndexedDB migration) exists unreviewed and un-rebased on branch
-  `preserve/indexeddb-project-store` (WS2 Step 17 Part 0).
 - [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect found
   while diagnosing bug 3, not itself closed by bug 3's non-repro: `videoDecoderPool.ts`'s 90-frame
   decode-ahead cap (`MAX_BUFFERED_FRAMES_PER_SESSION`) is sized against a fixed ~1.5s window

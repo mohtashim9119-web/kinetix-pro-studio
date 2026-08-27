@@ -1634,3 +1634,190 @@ sync and confirmed 100% timing accuracy across all boundaries. Full ruling text:
 Evidence: OPERATOR-ATTESTED (owner ear-verification pass, 27/27 boundaries).
 Numbers: 27 Spanish corpus boundaries, 27/27 (100%) confirmed correct.
 Superseded-by: none
+boundary). `cargo test` 31 passed, 0 failed (19 -> 31, +12, exactly the tests added). `npm test`
+74 files / 1857 passed / 1 skipped / 0 failed (unchanged). `npm run lint` clean. Golden replay 6/6
+(unchanged). `git diff --stat` on `Cargo.toml`/`Cargo.lock`: empty (no dependency added).
+
+## Project Persistence — localStorage QuotaExceededError (2026-08-25)
+
+**Report.** A real desktop run (V8 project, ~21 min audio) hit `QuotaExceededError` repeatedly
+on `projectStore.ts`'s debounced autosave once the serialized project reached ~915,000 chars —
+logged (`[Kinetix] FAILED to save project ... QuotaExceededError`) but every edit since the last
+successful save was silently unpersisted from the user's point of view.
+
+**Root cause, confirmed by reading the code rather than reproducing the exact byte count.**
+Two independent defects, both real:
+
+1. **The reporting plumbing already existed and was already discarded.** `saveProject` (WS1
+   Session O) already returned a typed `SaveOutcome` distinguishing `quota-exceeded` from success
+   — but every call site (`usePersistProject.ts`'s debounced autosave and `saveNow`, `App.tsx`'s
+   `handleNewProjectConfirm`) discarded the return value. Worse: `usePersistProject.ts`
+   unconditionally called `setLastSavedAt(ts)` after firing `saveProject`, regardless of whether
+   it succeeded — so the footer's "Saved" label was driven by "a save was attempted," not "a save
+   landed." A failed autosave was **indistinguishable in the UI from a successful one.**
+2. **`localStorage` is a single ~5-10 MB budget shared across every project's JSON, the registry,
+   and per-project thumbnail data URLs on the origin** (the same ceiling already measured
+   elsewhere in this codebase — 20 history snapshots of the largest known corpus project alone is
+   6.02 MB, see the "history persistence" ruling above). A single ~915,000-char project is not
+   itself near that ceiling; it is the write that tips an origin already holding several other
+   projects over the edge. The threshold that actually mattered was never "how big is one
+   project" — it was "how much is already on this origin," which nothing surfaced to the user
+   either.
+
+**Fix — full localStorage → IndexedDB migration for project bodies**, scoped per owner decision
+(the alternative — a visible-warning-only fix — was explicitly declined in favor of removing the
+shared-budget problem at its root, matching the fix already applied to assets (`assetStore.ts`)
+and waveform peaks (`waveformStore.ts`)):
+
+- New `src/services/projectDataStore.ts` — an IndexedDB store (`kinetix-projects` DB,
+  `projects-v1` object store, keyed by project id), mirroring `assetStore.ts`'s existing
+  open/transaction pattern. `projectStore.ts`'s `saveProject`/`loadProject`/`loadProjectDetailed`/
+  `deleteProjectData`/`migrateLegacyIfNeeded`/`adoptMirroredProjects` all became `async`, backed
+  by this store instead of `localStorage.setItem(kinetix:project:<id>:v1, ...)`. The registry
+  (`ProjectMeta[]`, small — no segment/heading bodies) and `kinetix:lastOpenedProjectId` stay in
+  `localStorage`, synchronous, unchanged — they were never the problem.
+- **`migrateLocalStorageProjectsToIndexedDB()`** (new, `projectStore.ts`) — a one-time,
+  idempotent boot-time migration for projects an existing installed build already saved under the
+  old per-project `localStorage` keys: copies each into IndexedDB, then removes the `localStorage`
+  key, freeing exactly the budget that was going stale. A per-id failure (bad JSON, wrong shape)
+  leaves that id's `localStorage` copy untouched for a retry on the next boot, matching this
+  module's existing "never destroy unreadable evidence" posture. Runs in `App.tsx`'s boot effect,
+  before mirror adoption (whose own "already present locally" check now looks at IndexedDB, not
+  `localStorage`).
+- **The UI wiring gap is closed.** `usePersistProject.ts` now tracks the latest in-flight save
+  attempt and only stamps `lastSavedAt` on a genuine success; a failure is exposed as `saveError`
+  instead. `App.tsx` shows a red "Save failed" label (replacing "Saved"/"Unsaved") with the
+  failure reason as a tooltip, plus a one-shot toast per distinct failure reason (not once per
+  500 ms retry, since the underlying condition typically persists across several autosave ticks).
+- `saveProject`'s Guard 3 (write verified by reading it back, not merely trusted) was kept in the
+  IndexedDB form — a transaction resolving is normally durability itself, but the read-back is one
+  cheap indexed lookup and preserves the same "verified, not trusted" posture Session O
+  established for `localStorage`. The `parse-error` `StoreFailureReason` is now effectively
+  unreachable via `loadProjectDetailed` (IndexedDB records are structured, not JSON text to
+  `JSON.parse`) — left in the union rather than removed, since `adoptMirroredProjects` still
+  parses JSON text arriving from the Rust-side durable mirror.
+
+**Verified:**
+- `npm run lint` (tsc --noEmit) clean.
+- `npm test`: the 5 directly-touched suites (`projectStoreGuard.test.ts` — rewritten to mock
+  `projectDataStore.ts` with a Map-backed fake plus injectable put/get failures rather than
+  simulating real IndexedDB quota enforcement (`fake-indexeddb` does not enforce one);
+  `projectMirrorAdoption.test.ts`, `faGate.test.ts`, `faWordTimingsSchema.test.ts`,
+  `d1RegressionChecklist.test.ts` — updated for the new `async` signatures, polyfilled via
+  `fake-indexeddb/auto`) — 87/87 passing. Full `npm test`: 29 pre-existing failures, all in
+  `scripts/ws1-*` FA-pipeline replay suites failing on a missing local fixture
+  (`Missing replay input: .../audio_16k.wav` — needs `python3
+  scripts/phase4-restore-replay-inputs.py`), unrelated to this change and unchanged by it.
+- Manual verification in the running dev app (`npm run dev`, browser preview): a new project
+  saves and reloads correctly with its data confirmed to live in the `kinetix-projects` IndexedDB
+  database and NOT in any `kinetix:project:*` `localStorage` key. A simulated quota failure
+  (monkey-patched `IDBObjectStore.prototype.put` to throw `QuotaExceededError`) produced the red
+  "Save failed" footer label and the expected toast; un-patching and retrying recovered cleanly.
+  A simulated pre-migration project (seeded directly into the legacy `kinetix:project:<id>:v1`
+  `localStorage` key + registry, as an already-installed build would have it) was migrated into
+  IndexedDB on the next boot, its `localStorage` key removed, and the project opened from the
+  dashboard with its segment intact.
+
+## WS2 T1.1 — Storage Loss Diagnosis (2026-08-27, session ws2-20)
+
+**Question.** Whether "lost on upgrade" data was (a) never persisted (sync state missing from
+the save payload), (b) a storage-backend/lifecycle failure, or (c) genuinely destroyed by an
+installer/bundle-identifier change. Full write-up: `.work-phase4/session-ws2-20/t11-storage-audit.md`.
+
+**Findings, repo-audited (MEASURED) then corroborated on-machine (OPERATOR-ATTESTED):**
+- `saveProject()` (`projectStore.ts:152` at the time) serializes the entire `Project` object,
+  `segments[]` included — sync/timing state was never excluded from the payload. Ruled out as
+  the cause.
+- Bundle identifier/productName (`com.kinetix.pro-studio`) never changed since introduction
+  (`git log -p --follow` on `tauri.conf.json`, commit `30847f2`, 2026-05-25) — ruled out.
+- No `beforeunload`/Tauri `CloseRequested` handler exists anywhere in the codebase — the 500ms
+  autosave debounce has no forced flush on exit (real, narrow gap, not the reported symptom).
+- Dev (`http://localhost:3000`) vs. release (`tauri://localhost`) origin split is real and
+  already the subject of WS1 Session O's `project_mirror.rs`/`adoptMirroredProjects()` mitigation.
+- WebView2 data-folder location (the one item not settled by repo code alone): operator ran the
+  Part B read-only scripts on both machines. Windows install-dir scan (`Program Files`/`Program
+  Files (x86)` for `*.WebView2`) came back EMPTY; `EBWebView` (586 MB) lives inside the
+  identifier-keyed `%LOCALAPPDATA%\com.kinetix.pro-studio` tree (3.37 GB total) — ruling out the
+  install-dir-wipe-on-upgrade hypothesis. macOS: 11 GB `Application Support` /
+  `com.kinetix.pro-studio`, 1.2 GB dev-origin WebKit, 829 MB release-origin WebKit. Gigabyte-scale
+  figures are consistent with `assetStore.ts`'s separate IndexedDB video/image blob store sharing
+  the identifier-keyed tree, not project JSON (not independently re-derived from the reported
+  numbers — flagged as inference, not measured).
+- `preserve/indexeddb-project-store` (commit `0386542`) verified rebase-clean via `git merge-tree`
+  against `main` — 12 of 14 touched files byte-identical to their merge-base version; `App.tsx`
+  and `docs/history.md` diverged (37 commits ahead) but auto-merge cleanly (no conflict markers).
+
+**Operator decision (owner, in-session):** run the Part B evidence scripts before choosing a
+recovery-vs-rebuild path; results above closed the one open question (A5), so proceeded straight
+to T1.3 rather than a separate pre-upgrade-data recovery task.
+
+## WS2 T1.3 — OS-Backed Project Store (2026-08-27, session ws2-20)
+
+**Context.** T1.1 above found the quota/lifecycle defect (`work-in-progress.md`'s now-closed
+`[DEFERRED]` entry — `QuotaExceededError` at ~915,000 chars, `localStorage`'s shared ~5-10 MB
+origin budget) was the real gap, not data ever being excluded from saves. The prior session's
+`preserve/indexeddb-project-store` candidate (see the entry immediately above this one) targeted
+IndexedDB; this task's brief specified an OS-backed file store instead
+(`app_local_data_dir()/projects/<id>/project.json`, Rust-written), so the backend differs from
+that preserved branch even though its async-refactor/race-dedup/UI-error-surfacing work was
+reused as-is.
+
+**Design decisions (owner-confirmed via AskUserQuestion before implementation):**
+1. Promote `project_mirror.rs` into the primary store rather than build a parallel Rust module —
+   its `write_atomic`/`safe_id`/`rotate_backup` were already the crate's most rigorous atomic-write
+   implementation and are reused unchanged.
+2. Keep a `localStorage` fallback behind `isTauri()` for plain `npm run dev` (no Tauri IPC bridge
+   there) rather than breaking that preview mode.
+3. Registry (`kinetix:projects:v1`), thumbnails, and `kinetix:lastOpenedProjectId` stay in
+   `localStorage` — out of scope, not the source of the quota cliff.
+
+**Implementation.**
+- `project_mirror.rs`: new `project_store_{read,write,delete,list_ids}` `#[tauri::command]`s,
+  writing to `app_local_data_dir()/projects/<id>/project.json` (separate tree from
+  `project-mirror/`'s existing backup path), with their own `project-store-backups/<id>/`
+  rotation tree (`rotate_backup` generalized to take an explicit `backups_root` parameter so both
+  trees share the logic without contending over one directory). 5 new unit tests (path shape,
+  backup-tree separation, write/read/delete round trip incl. empty-dir pruning, `list_ids`
+  filtering) — 161/162 `cargo test` passing (1 unrelated pre-existing live-network test ignored).
+  Registered in `lib.rs`'s `invoke_handler`.
+- `src/services/projectStoreClient.ts` (new): thin `invoke()` wrappers for the 4 commands,
+  throwing (not swallowing) on failure — unlike `projectMirror.ts`'s best-effort mirror client,
+  this is the primary path and `saveProject`/`loadProjectDetailed` need the real error.
+- `projectStore.ts`: cherry-picked `preserve/indexeddb-project-store`'s `0386542` verbatim first
+  (`git merge-tree` confirmed zero-conflict), then swapped every `projectDataStore.ts`
+  (IndexedDB) call for the new client + an `isTauri()` branch falling back to the original
+  `localStorage.setItem/getItem/removeItem(projectKey(id))` behavior. `projectDataStore.ts`
+  deleted (unused). Migration renamed `migrateLocalStorageProjectsToIndexedDB` →
+  `migrateLocalStorageProjectsToOsStore` (no-ops outside Tauri), targeting the OS store.
+  `adoptMirroredProjects()` modified in place to adopt into the OS store rather than back into
+  `localStorage` — simpler than the plan's originally-sketched separate adoption pass, since the
+  function already did exactly this job, just against the wrong backend.
+- `docs/history.md`: the cherry-picked commit's 83-line append relocated here (this file) per its
+  own note and the current docs split, since `main`'s `docs/history.md` had already collapsed
+  that region to a pointer.
+- Test suites updated: `projectStoreGuard.test.ts` and `projectMirrorAdoption.test.ts` rewritten
+  to mock `isTauri()` true + `projectStoreClient.ts` (Map-backed fake, string-in/string-out,
+  matching the real client's contract) instead of IndexedDB/`fake-indexeddb`; `faGate.test.ts`'s
+  "G1 proof" block (the only describe block there stubbing `window.__TAURI_INTERNALS__` while
+  calling `saveProject`/`loadProject`) given the same client mock.
+  `faWordTimingsSchema.test.ts`/`d1RegressionChecklist.test.ts` needed no changes — they never
+  stub Tauri, so `isTauri()` resolves false and they already exercised the (unchanged)
+  `localStorage` fallback path.
+
+**Verified:**
+- `npm run lint` (tsc --noEmit) clean.
+- `npm test`: 2560 passed, 77 skipped (unrelated, pre-existing gate), 0 failed — full suite, not
+  just the 5 touched files (which are 87/87 on their own).
+- `cargo test` (src-tauri): 161 passed, 1 ignored (unrelated live-network test), 0 failed.
+- Golden replay (`scripts/phase4-handoff-replay-sync.test.ts`): 6/6, run as the standing sanity
+  check (this change doesn't touch sync timing).
+- Manual browser verification (`npm run dev`, Browser pane): created a project, confirmed the
+  `localStorage` fallback key (`kinetix:project:<id>:v1`) was written, footer showed "Saved" (not
+  "Save failed" — confirms `saveError` wiring), reloaded, project reopened intact with zero
+  console errors.
+- OPERATOR-ATTESTED (2026-08-27, following session): live `npm run tauri:dev` round trip on the
+  physical build — synced an existing project, quit the app completely, reopened it; project data
+  and synced state persisted and reloaded correctly from the OS file store. This was the one gap
+  the implementing session couldn't close itself (no native macOS app control tool available to
+  it) and closes T1.3 fully verified. Branch `ws2-t13-os-project-store` merged to `main`
+  immediately after.
