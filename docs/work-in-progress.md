@@ -16,30 +16,11 @@
 
 ---
 
-> ⚠ **STRUCTURE CONTRACT (WS2 Step 15, permanent):** every workstream in this file has exactly
-> these six sections, in this exact order, with these exact names:
-> 1. **FINISHED TASKS** (complete AND verified — one-line pointers into `docs/history-2.md`, never
->    full entries)
-> 2. **FINISHED BUT PENDING VERIFICATION** (complete, a proof step still outstanding)
-> 3. **IN PROGRESS** (actively worked; required tasks listed FIRST, one **END GOAL:** line at the
->    BOTTOM stating what's achieved once every listed task is done — mandatory even when the
->    section body is `(none)`)
-> 4. **NEXT TASKS** (planned, not started)
-> 5. **OPEN BUGS** (defects found during development)
-> 6. **DEFERRED TASKS** (not urgent, non-blocking)
->
-> Sections are never renamed, reordered, or omitted — a new workstream is created with all six
-> headings present even if empty. Mirrored in `CLAUDE.md` §5 so future sessions can't drift.
->
-> **Tag vocabulary (file-wide):** `[OPEN]` = unresolved, no fix built. `[IN-PROGRESS]` = actively
-> worked. `[DEFERRED]` = real defect, work explicitly paused by an operator decision.
-> `[OPEN · NON-BLOCKING]` = real, confirmed-open defect that doesn't block a lock/release gate —
-> NOT "accepted" or "not a bug." `[CLAIM-UNVERIFIED]` = not a code defect — an operational
-> task/claim not yet confirmed by direct evidence. Tags describe an item's state; the section
-> describes where it lives. FINISHED and FINISHED-BUT-PENDING-VERIFICATION entries carry no
-> bracket tag (pointer format only) — tags apply to IN PROGRESS / NEXT / OPEN BUGS / DEFERRED.
-> If a tag would contradict its new section, the section wins; every tag WS2 Step 15 changed for
-> that reason is listed at the end of the WS2 block.
+> ⚠ STRUCTURE CONTRACT: Every workstream has 6 mandatory sections in exact order:
+> 1. FINISHED TASKS  2. FINISHED BUT PENDING VERIFICATION  3. IN PROGRESS  4. NEXT TASKS  5. OPEN BUGS  6. DEFERRED TASKS.
+> Sections are never renamed, reordered, or omitted. Mirrored in CLAUDE.md §5.
+> Tag vocabulary: [OPEN], [IN-PROGRESS], [DEFERRED], [OPEN · NON-BLOCKING], [CLAIM-UNVERIFIED].
+> FINISHED and PENDING VERIFICATION entries use one-line pointer format with no tags.
 
 ---
 
@@ -48,24 +29,11 @@ Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met.
 
 ### 1. Finished tasks
 
-- Phase 1b — `window.__transcriptInspector()` dev instrumentation. `docs/history-2.md`
-- Phase 2a — Whisper → `ggml-large-v3-turbo.bin` + `Project.language`/unsupported-language guard
-  (2026-08-05). `docs/history-2.md`
-- Phase 2b — DTW measured/abandoned; forced alignment chosen; Stage 1's 4 thresholds finalized
-  (2026-08-05). `docs/history-2.md`
-- Phase 3b — 5 fr/es/de/pt normalization rules shipped in `faTextNormalize.ts` (2026-08-15).
-  `docs/history-2.md`
-- Phase 3c — 19 compound-word cases audited; unfixed timing ruled correct (2026-08-15).
-  `docs/history-2.md`
-- Phase 3d — skipped per its own trigger, dormant since 2026-08-25 freeze. `docs/history-2.md`
-- Sessions A–AN — forced-alignment research arc (2026-08-15–24): rules R.5/R.10–R.15, Zero-Defect
-  Register triage. Frozen under the accuracy-bar ruling below. `sync-pipeline-v2-plan.md`
-- Mover-audit dossier — owner-scored 22/24, both failures fixed via R.13 (Session K, 2026-08-18).
-  `docs/history-2.md`
-- FA session-cache OOM fix — root-caused, fixed, guardrailed, real-app confirmed —
-  `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix` (`6a1b939`, `c295cb3`)
-- `boundaryUsedFallback` 4-arg → 5-arg call-site fix, golden replay 6/6 unchanged (WS2 Step 11) —
-  `docs/history-2.md#2026-08-26--ws2-step11-boundaryUsedFallback-fix`
+- Phase 1b–3d groundwork (dev instrumentation, Whisper/FA setup, DTW abandoned, 5 fr/es/de/pt normalization rules, compound-word audit, 3d skipped) — see `docs/history-2.md` (2026-08-05–2026-08-25)
+- Sessions A–AN — forced-alignment research arc (rules R.5/R.10–R.15, Zero-Defect Register triage), frozen under the accuracy-bar ruling below — see `sync-pipeline-v2-plan.md`
+- Mover-audit dossier — owner-scored 22/24, both failures fixed via R.13 (Session K, 2026-08-18) — `docs/history-2.md#session-i--r-am-ruled-mover-audit-dossier`
+- FA session-cache OOM fix — root-caused, fixed, guardrailed, real-app confirmed — `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix` (`6a1b939`, `c295cb3`)
+- `boundaryUsedFallback` 4-arg → 5-arg call-site fix, golden replay 6/6 unchanged (WS2 Step 11) — `docs/history-2.md#2026-08-26--ws2-step11-boundaryUsedFallback-fix`
 
 ### 2. Finished but pending verification
 
@@ -142,6 +110,23 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
   code ships") was satisfied in literal text by Phase 3b's Spanish cardinals (2026-08-15); no
   session has ruled whether it actually reopens the acceptance. 3 options + costs:
   `sync-pipeline-v2-plan.md` Part AK.1 / AI §AI.8. **Needs a ruling.**
+* [OPEN] Non-ASCII proper-noun matching — every remaining low-match-rate failure in the WS2 Step
+  15 03:57:28 Windows run involves diacritics or foreign place names: segment 52 skipped entirely
+  ("Llívia", 0 of 2 words, confidence 0.00); segment 69 ("Llívia stayed Spanish." 2 of 4, 50%);
+  segment 79 ("Peñón de Vélez de la Gomera" 4 of 8, 50%); segment 8 ("The complexity originates in
+  1198" 4 of 7, 57%); segment 102 ("300 American residents." 2 of 4, 50%). Segment 79 failed in
+  BOTH the before and after runs — not a Windows issue, not fixed by FA. Hypotheses, all
+  UNVERIFIED: Unicode normalization (NFC vs NFD) mismatch between transcript and script; the
+  en-language CTC vocab (measured 33 symbols) may lack glyphs for í/ñ/é; numeral-to-word expansion
+  for "1198"/"300". No fix attempted. `docs/history-2.md`'s Step 15 entries. Rationale: a
+  sync-pipeline matching defect, not a distribution defect — relocated from WS2 §5, provenance
+  preserved (surfaced by the WS2 Step 15 Windows operator log, 03:57:28 run).
+* [OPEN · NON-BLOCKING] Cut-placement quality — 9 of 228 cuts land on live audio in the WS2 Step
+  15 Windows AFTER run (~96.1%, vs. the ~97-98% bar): segment pairs 53/54, 68/69, 101/102,
+  109/110, 123/124, 138/139, 195/196, 202/203, 218/219. At macOS parity (10) — a pre-existing
+  cross-platform quality gap, not a Windows regression, not closed by this workstream's fixes.
+  Rationale: a sync-pipeline boundary-placement defect, not a distribution defect — relocated from
+  WS2 §5, provenance preserved (surfaced by the WS2 Step 15 Windows operator log, 03:57:28 run).
 
 ### 6. Deferred tasks
 
@@ -157,46 +142,21 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 
 ## WS2 — Video Ingest & Distribution Bugs
 Started: 2026-08-26 (Step 3) | Status: all 4 numbered bugs closed (1/2/4 code-fixed and now
-runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code fix). Two new
-open items surfaced by WS2 Step 15's Windows operator log (non-ASCII matching, cut-placement
-quality) and the pre-existing macOS-arm64/MSVC-redistributable gaps remain.
+runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code fix). Two
+sync-pipeline defects surfaced by WS2 Step 15's Windows operator log (non-ASCII matching,
+cut-placement quality) were relocated to WS1 §5 — see that section. The pre-existing
+macOS-arm64/MSVC-redistributable gaps remain here.
 
 ### 1. Finished tasks
 
-- WS2 bug 1 — rescued-segment anchor ordering, fixed via a trusted spine —
-  `docs/history-2.md#2026-08-26--2ae4d18--2ae4d18-ws2-bug1-trusted-spine` (`2ae4d18`, `1e5deb7`)
-- WS2 bug 3 — DID-NOT-REPRODUCE on a HEAD build; **no code fix exists, not relabeled "fixed"** —
-  `docs/history-2.md#2026-08-26--no-fix--ws2-bug3-closed-did-not-reproduce`
-- WS2 Step 10 — FA error serialization (`[object Object]` → real messages), general fix —
-  `docs/history-2.md#2026-08-26--88ff701--88ff701-ws2-step10-error-serialization` (`88ff701`)
-- WS2 Step 10/11 — Windows voiceover `fetch(blob:)` fix, 6 further call sites guarded —
-  `docs/history-2.md#2026-08-26--56e2116--56e2116-ws2-step10-windows-voiceover-fetch` (`56e2116`),
-  `docs/history-2.md#2026-08-26--ws2-step11-fetch-sites`
-- WS2 Step 11 — `boundaryUsedFallback` diagnostic-only arg-count fix, golden replay unchanged —
-  `docs/history-2.md#2026-08-26--ws2-step11-boundaryUsedFallback-fix`
-- WS2 Step 12/13 — Manage Models & Add-ons modal: real Import + real resumable/checksummed
-  Download, status-check bug fixed —
-  `docs/history-2.md#2026-08-27--ws2-step12-manage-models-modal-a3`,
-  `docs/history-2.md#2026-08-27--ws2-step13-fa-download-engine-ort-provisioning` (`4a50680`, `63cd717`)
-- WS2 Step 13 Phase 4 — cross-platform ORT provisioning, table-driven + checksum-verified —
-  `docs/history-2.md#2026-08-27--fix--5adbbf4-ci-macos-globstar-fix` (`4f31d38`, `5adbbf4`)
-- **WS2 Step 15 — MEASURED-FROM-OPERATOR-LOG before/after (117→9 cuts, 3.39/03:57 runs kept
-  separate)** —
-  `docs/history-2.md#2026-08-27--ws2-step-15--ws2-step15-windows-operator-log-before-after`
-- WS2 Step 15 — Windows voiceover fetch bug CLOSED against real Windows hardware —
-  `docs/history-2.md#2026-08-27--ws2-step-15--ws2-step15-windows-fetch-bug-closed`
-- WS2 Step 15 — error-serialization defect CLOSED against real Windows hardware —
-  `docs/history-2.md#2026-08-27--ws2-step-15--ws2-step15-error-serialization-closed`
-- **WS2 Step 15 — bug 2 (FA silently disabled on desktop) CLOSED, CI-VERIFIED BUILD + MEASURED
-  RUNTIME** (Q1: build came from GitHub Actions "Build desktop installers"; FA ran, 2181 aligned
-  words, matching macOS) —
-  `docs/history-2.md#2026-08-27--ws2-step-15--ws2-step15-bug2-fa-desktop-closed-ci-verified`
-- **WS2 Step 15 — bug 4's acquisition path CLOSED, END-TO-END VERIFIED** (Q2: "en" model reached
-  the machine via the Download button in Manage Models & Add-ons) —
-  `docs/history-2.md#2026-08-27--ws2-step-15--ws2-step15-bug4-acquisition-closed-end-to-end`
-- WS2 Step 15 — token filtering resolved as a Whisper-path-vs-FA-path property (Whisper 10.6%/
-  11.0% Windows/macOS, FA 0.05% both); mechanism NOT DETERMINED —
-  `docs/history-2.md#2026-08-27--ws2-step-15--ws2-step15-token-filtering-resolved`
+- WS2 bug 1 — rescued-segment anchor ordering, fixed via a trusted spine — `docs/history-2.md#2026-08-26--2ae4d18--2ae4d18-ws2-bug1-trusted-spine` (`2ae4d18`, `1e5deb7`)
+- WS2 bug 3 — DID-NOT-REPRODUCE on a HEAD build; no code fix exists, not relabeled "fixed" — `docs/history-2.md#2026-08-26--no-fix--ws2-bug3-closed-did-not-reproduce`
+- WS2 Step 10 — FA error serialization (`[object Object]` → real messages), general fix — `docs/history-2.md#2026-08-26--88ff701--88ff701-ws2-step10-error-serialization` (`88ff701`)
+- WS2 Step 10/11 — Windows voiceover `fetch(blob:)` fix, 6 further call sites guarded — `docs/history-2.md#2026-08-26--56e2116--56e2116-ws2-step10-windows-voiceover-fetch` (`56e2116`)
+- WS2 Step 11 — `boundaryUsedFallback` diagnostic-only arg-count fix, golden replay unchanged — `docs/history-2.md#2026-08-26--ws2-step11-boundaryUsedFallback-fix`
+- WS2 Step 12/13 — Manage Models & Add-ons modal: real Import + real resumable/checksummed Download, status-check bug fixed — `docs/history-2.md#2026-08-27--ws2-step12-manage-models-modal-a3` (`4a50680`, `63cd717`)
+- WS2 Step 13 Phase 4 — cross-platform ORT provisioning, table-driven + checksum-verified — `docs/history-2.md#2026-08-27--fix--5adbbf4-ci-macos-globstar-fix` (`4f31d38`, `5adbbf4`)
+- WS2 Step 15 — Windows operator-log closures (voiceover fetch, error-serialization, bug 2 FA-desktop CI-verified, bug 4 acquisition end-to-end, token-filtering resolved) + MEASURED-FROM-OPERATOR-LOG before/after (117→9 cuts) — `docs/history-2.md#2026-08-27--ws2-step-15--ws2-step15-windows-operator-log-before-after`
 
 ### 2. Finished but pending verification
 
@@ -226,23 +186,21 @@ the two open bugs and two deferred items below.)
 
 ### 5. Open bugs
 
-* [OPEN] Non-ASCII proper-noun matching — every remaining low-match-rate failure in the WS2 Step
-  15 03:57:28 Windows run involves diacritics or foreign place names: segment 52 skipped entirely
-  ("Llívia", 0 of 2 words, confidence 0.00); segment 69 ("Llívia stayed Spanish." 2 of 4, 50%);
-  segment 79 ("Peñón de Vélez de la Gomera" 4 of 8, 50%); segment 8 ("The complexity originates in
-  1198" 4 of 7, 57%); segment 102 ("300 American residents." 2 of 4, 50%). Segment 79 failed in
-  BOTH the before and after runs — not a Windows issue, not fixed by FA. Hypotheses, all
-  UNVERIFIED: Unicode normalization (NFC vs NFD) mismatch between transcript and script; the
-  en-language CTC vocab (measured 33 symbols) may lack glyphs for í/ñ/é; numeral-to-word expansion
-  for "1198"/"300". No fix attempted. `docs/history-2.md`'s Step 15 entries.
-* [OPEN · NON-BLOCKING] Cut-placement quality — 9 of 228 cuts land on live audio in the WS2 Step
-  15 Windows AFTER run (~96.1%, vs. the ~97-98% bar): segment pairs 53/54, 68/69, 101/102,
-  109/110, 123/124, 138/139, 195/196, 202/203, 218/219. At macOS parity (10) — a pre-existing
-  cross-platform quality gap, not a Windows regression, not closed by this workstream's fixes.
 * [OPEN] MSVC Visual C++ Redistributable — `onnxruntime.dll` on Windows needs it present on the
   end-user machine; not bundled and not yet chain-installed by the installer. Unresolved even
   though Step 15 confirmed FA runs on the (already-provisioned) test machine.
   `docs/ws2-fa-models/ort-provisioning.md`
+* [OPEN] Autosave quota failure is invisible — `saveProject()` (`src/services/projectStore.ts:152`)
+  returns a typed `SaveOutcome` including `quota-exceeded`, but every call site discards it and
+  `usePersistProject.ts` stamps `lastSavedAt` regardless of outcome, so a failed write is
+  indistinguishable from a successful one in the footer. Root cause is structural:
+  `localStorage` (`src/services/projectStore.ts:9`'s `kinetix:project:<id>:v1` key) is one
+  ~5-10 MB origin-wide budget shared across every project body, the registry, and thumbnail data
+  URLs; observed `QuotaExceededError` at ~915,000 chars of serialized project JSON on a
+  ~21-minute-audio project. Not a sync-pipeline defect — placed here in WS2 (parallel to the
+  existing non-sync `videoDecoderPool.ts` bug in §6) rather than WS1. A candidate fix (full
+  IndexedDB migration) exists unreviewed and un-rebased on branch
+  `preserve/indexeddb-project-store` (WS2 Step 17 Part 0).
 
 ### 6. Deferred tasks
 
@@ -257,18 +215,6 @@ the two open bugs and two deferred items below.)
   peak / 1300 MB → 137 MB spike-memory work. Preview only — export uses a separate, non-windowed
   sequential decoder (`sequentialDecode.ts`) and is unaffected. Full diagnosis:
   `docs/ws2-video-ingest/bug3-diagnosis.md`.
-- [OPEN · NON-BLOCKING] Stray worktree housekeeping — `.claude/worktrees/elated-haibt-ab90e1`
-  should be removed once confirmed unneeded; not urgent, doesn't block any WS2 task.
-
-**Tags changed this restructure (WS2 Step 15, per the structure contract's "section wins" rule):**
-Windows voiceover fetch bug: `[IN-PROGRESS]` → moved to Finished (closed, no tag). Bug 2 (FA
-silently disabled): was untagged in the old "Finished" list pending CI/runtime proof — now a
-plain Finished pointer, fully closed. Bug 4 acquisition half: was `[CLAIM-UNVERIFIED]` — now a
-plain Finished pointer, fully closed. CI-installer runtime verification: was one
-`[CLAIM-UNVERIFIED]` row covering both platforms — split; Windows closed (Finished), macOS
-narrowed and moved to Finished-but-pending-verification. FA onnxruntime provisioning: was `[OPEN]`
-covering both Windows and macOS arm64 — split; Windows closed (Finished), macOS arm64 moved to
-Finished-but-pending-verification (no bracket tag, per the no-tag convention for that section).
 
 ---
 

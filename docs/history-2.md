@@ -1407,3 +1407,20 @@ Informational, no action: R.11 fired normally in the 03:57:28 run (scene 2, `002
 0.73s → 1.43s, +0.7s) — expected rule operation, not a defect. Recorded per operator instruction,
 not flagged.
 Superseded-by: none
+
+### 2026-08-27 · WS2 Step 17 Part 0 · stray-worktree-preserved-and-removed
+**CLOSED.** `.claude/worktrees/elated-haibt-ab90e1` (branch `claude/elated-haibt-ab90e1`, tip
+`2f699ab`, already fully merged into `origin/main`) carried 597 lines of uncommitted working-tree
+changes across 13 tracked files plus one untracked file (`src/services/projectDataStore.ts`) — a
+complete, self-consistent, already-manually-verified fix for a real reported bug (autosave
+`QuotaExceededError`, see WS2 §5's new `[OPEN]` entry for the underlying bug, still open on
+`main`). Per the STOP-before-remove rule, this was never simply discarded. Preserved verbatim on
+`preserve/indexeddb-project-store` (commit `0386542`, based on `2f699ab`), pushed to origin;
+committed-tree-vs-backup diff confirmed byte-identical (MEASURED, zero differences) before the
+worktree was removed. `git worktree remove --force` + `git worktree prune` + `git branch -D
+claude/elated-haibt-ab90e1` all ran clean, no errors. The preserved branch is unreviewed, un-rebased
+onto current `main`, and NOT merged — evaluating/rebasing it is separate future work per owner
+decision. Its own `docs/history.md` hunk was left as-is on that side branch (predates the
+`docs/history.md`/`docs/history-2.md` split still in use on `main`); relocating it to
+`docs/history-2.md` is a prerequisite for any future merge, not done here.
+Superseded-by: none
