@@ -248,6 +248,99 @@ jobs:
             exit 1
           }
 
+      - name: Provision MSVC C++ runtime DLLs app-local (Windows x86_64, WS2 Step 17 Part 1)
+        # PE import inspection this session (`pefile` against the real, hash-verified
+        # onnxruntime-win-x64-1.23.2 release) found onnxruntime.dll imports
+        # VCRUNTIME140.dll, VCRUNTIME140_1.dll, MSVCP140.dll, MSVCP140_1.dll (plus
+        # OS-provided ADVAPI32/KERNEL32/SETUPAPI/dbghelp/dxgi and Universal-CRT
+        # api-ms-win-crt-*.dll, both present on any Windows 10+ box already);
+        # onnxruntime_providers_shared.dll additionally needs VCRUNTIME140.dll. A
+        # clean Windows machine that never installed VS or the redistributable is
+        # missing exactly those 4 files, so `ort::init_from` fails to load
+        # onnxruntime.dll and FA silently falls back to Whisper timing (the 117-cut
+        # regression Step 15 closed) — this step closes the gap.
+        #
+        # Chosen: APP-LOCAL DEPLOYMENT, not an NSIS chain-install of the full
+        # redistributable. Microsoft's own docs (learn.microsoft.com/en-us/cpp/
+        # windows/redistributing-visual-cpp-files, "Install individual redistributable
+        # files") say directly: "It's also possible to directly install the
+        # Redistributable DLLs in the application local folder" — explicitly
+        # sanctioned, just not their top recommendation (no auto-servicing of
+        # security updates, a real tradeoff accepted here for a ~1.5 MB, no-elevation,
+        # no-reboot fix over Option B's ~25 MB elevated installer step). License term:
+        # learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution's
+        # "Distributable Code Files for Visual Studio 2022" → "Visual C++ Runtime
+        # Files" section: "you may copy and distribute with your program any of the
+        # files within the following folder and its subfolders... [VisualStudioFolder]
+        # \VC\redist" (the same tree `vc_redist.x64.exe` installs from) — these 4
+        # files are Distributable Code under the VS2022 Microsoft Software License
+        # Terms.
+        #
+        # Mechanism: the bootstrapper (`vc_redist.x64.exe`) wraps its payload MSIs in
+        # a nested-cab structure with no stable, CI-friendly "just extract the DLLs"
+        # switch on a non-Windows host (confirmed this session — 7z on macOS surfaces
+        # only the outer Burn UI cab, not the payload MSIs). Simplest robust path on
+        # an actual Windows runner: really install it (`/quiet /install`, no reboot)
+        # on the disposable CI VM, then copy the 4 files it just placed in
+        # System32 — this is what the redistributable's own installer does with the
+        # exact files we need, so there is no separate "did we get the right build"
+        # question. Source URL is the literal resolved target of the versioned
+        # `https://aka.ms/vs/17/release/vc_redist.x64.exe` redirect (VS2022 "release"
+        # channel), pinned by both URL and sha256 — the download's own hash appears
+        # inside its CDN path, confirmed MEASURED against the actual downloaded bytes
+        # this session (not copied from a third-party page).
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $expectedRedist = "cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b"
+          $redistUrl = "https://download.visualstudio.microsoft.com/download/pr/9d270333-8b7b-4f96-9458-6fcdb2ec0b25/CC0FF0EB1DC3F5188AE6300FAEF32BF5BEEBA4BDD6E8E445A9184072096B713B/VC_redist.x64.exe"
+          Invoke-WebRequest -Uri $redistUrl -OutFile "$env:TEMP\vc_redist.x64.exe"
+          $actualRedist = (Get-FileHash "$env:TEMP\vc_redist.x64.exe" -Algorithm SHA256).Hash.ToLower()
+          if ($actualRedist -ne $expectedRedist) {
+            Write-Error "vc_redist.x64.exe sha256 mismatch: expected $expectedRedist, got $actualRedist"
+            exit 1
+          }
+          $proc = Start-Process -FilePath "$env:TEMP\vc_redist.x64.exe" -ArgumentList "/install", "/quiet", "/norestart" -Wait -NoNewWindow -PassThru
+          # 0 = installed; 1638/3010 = an equal-or-newer runtime is already present
+          # on the runner image (both benign per Microsoft's own docs on this exact
+          # package: "a more recent version is found, the package isn't installed").
+          if ($proc.ExitCode -notin @(0, 1638, 3010)) {
+            Write-Error "vc_redist.x64.exe /install failed with exit code $($proc.ExitCode)"
+            exit 1
+          }
+          New-Item -ItemType Directory -Force -Path src-tauri/onnxruntime | Out-Null
+          $requiredDlls = @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp140_1.dll")
+          foreach ($dll in $requiredDlls) {
+            $src = Join-Path "$env:SystemRoot\System32" $dll
+            if (-not (Test-Path $src)) {
+              Write-Error "expected MSVC runtime file missing from System32 after redistributable install: $src"
+              exit 1
+            }
+            Copy-Item -Path $src -Destination "src-tauri/onnxruntime/$dll" -Force
+          }
+
+      - name: Guard against missing app-local MSVC runtime DLLs (Windows, WS2 Step 17 Part 1.4)
+        # A silent extraction/copy failure above must fail the build, not ship an
+        # installer that reproduces the exact 117-cut FA-silently-falls-back
+        # regression Step 15 closed. PowerShell only (no bash-3.2 globstar concern
+        # on this leg, but kept consistent with the macOS guard's explicit-list style
+        # per the 5adbbf4 precedent: enumerate, don't glob-and-hope).
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $requiredDlls = @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp140_1.dll", "onnxruntime.dll", "onnxruntime_providers_shared.dll")
+          $missing = @()
+          foreach ($dll in $requiredDlls) {
+            $p = Join-Path "src-tauri/onnxruntime" $dll
+            if (-not (Test-Path $p)) { $missing += $p }
+          }
+          if ($missing.Count -gt 0) {
+            Write-Error "missing required onnxruntime/MSVC runtime file(s) before packaging: $($missing -join ', ')"
+            exit 1
+          }
+
       - name: Provision ffmpeg sidecar (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh

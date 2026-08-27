@@ -416,6 +416,35 @@ fn resolve_bundled_ort_dylib(app: &tauri::AppHandle) -> Result<PathBuf, FaOnnxEr
     )))
 }
 
+/// WS2 Step 17 Part 1.6: `ort::init_from`'s underlying error, on a Windows
+/// `LoadLibrary` failure, is an opaque OS error (typically "The specified
+/// module could not be found. (os error 126)") that does not say WHICH
+/// dependency is missing — `onnxruntime.dll` itself and each of its 4
+/// MSVC-runtime dependents (`vcruntime140.dll`, `vcruntime140_1.dll`,
+/// `msvcp140.dll`, `msvcp140_1.dll` — measured via `pefile` against the real
+/// signed release, WS2 Step 17 Part 1.1) produce the identical error 126, so a
+/// user with a missing VC++ runtime sees the same message as a corrupted
+/// bundle and has no actionable next step. This is the exact failure mode
+/// that made bug 2's 117-cut FA-silently-falls-back regression invisible
+/// (Step 15) — the fallback path logged a generic failure, not a named cause.
+/// Appends a concrete, named-DLL hint on Windows only; every other target's
+/// error is returned unchanged.
+#[cfg(target_os = "windows")]
+fn augment_ort_load_error(msg: String) -> String {
+    format!(
+        "{msg} — on Windows this usually means one of the Microsoft Visual C++ Runtime files \
+         onnxruntime.dll requires is missing: vcruntime140.dll, vcruntime140_1.dll, \
+         msvcp140.dll, or msvcp140_1.dll. This installer bundles those 4 files app-locally next \
+         to onnxruntime.dll (WS2 Step 17 Part 1); if they are absent, either re-run the \
+         installer or install the Microsoft Visual C++ Redistributable (x64) from \
+         https://aka.ms/vs/17/release/vc_redist.x64.exe."
+    )
+}
+#[cfg(not(target_os = "windows"))]
+fn augment_ort_load_error(msg: String) -> String {
+    msg
+}
+
 /// Pre-flight runtime probe (WS1 Session M): resolve + actually load-and-init
 /// the onnxruntime C library WITHOUT touching any model, returning the resolved
 /// dylib path on success. This is the "runtime library load" line of the FA
@@ -428,7 +457,8 @@ pub fn probe_ort_runtime(app: &tauri::AppHandle) -> Result<String, FaOnnxError> 
     ensure_ort_dylib(app)?;
     let dylib_path = std::env::var("ORT_DYLIB_PATH")
         .map_err(|_| FaOnnxError::OrtInit("ORT_DYLIB_PATH unset after ensure_ort_dylib".to_string()))?;
-    let builder = ort::init_from(&dylib_path).map_err(|e| FaOnnxError::OrtInit(e.to_string()))?;
+    let builder = ort::init_from(&dylib_path)
+        .map_err(|e| FaOnnxError::OrtInit(augment_ort_load_error(e.to_string())))?;
     builder.commit();
     Ok(dylib_path)
 }
@@ -451,7 +481,8 @@ pub fn probe_ort_runtime(app: &tauri::AppHandle) -> Result<String, FaOnnxError> 
 pub fn load_session(model_path: &Path) -> Result<Session, FaOnnxError> {
     let dylib_path = std::env::var("ORT_DYLIB_PATH")
         .map_err(|_| FaOnnxError::OrtInit("ORT_DYLIB_PATH not set".to_string()))?;
-    let builder = ort::init_from(dylib_path).map_err(|e| FaOnnxError::OrtInit(e.to_string()))?;
+    let builder = ort::init_from(dylib_path)
+        .map_err(|e| FaOnnxError::OrtInit(augment_ort_load_error(e.to_string())))?;
     builder.commit();
 
     Session::builder()
