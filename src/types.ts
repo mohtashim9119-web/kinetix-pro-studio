@@ -727,6 +727,13 @@ export interface SyncLogEntry {
      *  own terms (the fit deviation, the confidence, the run index). */
     reason: string;
   };
+  /** WS2 T2.1 (gap-absorption revision) — the stable content-derived id
+   *  (segmentId.ts) of the committed segment this entry is about, when the
+   *  entry concerns one specific segment (e.g. the neighbour that absorbed a
+   *  dropped scene's gap). Undefined on entries with no single owning
+   *  segment. Lets a future override/restore UI act on the entry directly
+   *  without re-deriving an index. */
+  segmentId?: string;
 }
 
 /** One violation's worth of detail inside a grouped `SyncLogEntry` — a
