@@ -1,7 +1,6 @@
 # Work In Progress
 
-> **Purpose:** the active task ledger — one line per task, no narrative. **Line cap: 300**
-> (raised from 250, WS2 Step 15, to fit the six-section structure below across two workstreams).
+> **Purpose:** the active task ledger — one line per task, no narrative. **Line cap: 300**.
 > Full history: `docs/history-2.md` (append-only). Standing reference material (frozen rulings,
 > dead ends, not-yet-built specs): `sync-pipeline-v2-plan.md` Part AK. Overflow: move finished
 > work to `docs/history-2.md`, reference material to the plan doc, then re-measure. Original
@@ -16,32 +15,20 @@
 
 ---
 
-> ⚠ STRUCTURE CONTRACT: Every workstream has 6 mandatory sections in exact order:
-> 1. FINISHED TASKS  2. FINISHED BUT PENDING VERIFICATION  3. IN PROGRESS  4. NEXT TASKS  5. OPEN BUGS  6. DEFERRED TASKS.
-> Sections are never renamed, reordered, or omitted. Mirrored in CLAUDE.md §5.
+> ⚠ STRUCTURE CONTRACT: Every workstream has 5 mandatory sections in exact order:
+> 1. FINISHED BUT PENDING VERIFICATION  2. IN PROGRESS  3. NEXT TASKS  4. OPEN BUGS  5. DEFERRED TASKS.
 > Tag vocabulary: [OPEN], [IN-PROGRESS], [DEFERRED], [OPEN · NON-BLOCKING], [CLAIM-UNVERIFIED].
-> FINISHED and PENDING VERIFICATION entries use one-line pointer format with no tags.
 
 ---
 
 ## WS1 — Sync Pipeline Rewrite
 Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met.
 
-### 1. Finished tasks
-
-- Phase 1b–3d groundwork (dev instrumentation, Whisper/FA setup, DTW abandoned, 5 fr/es/de/pt normalization rules, compound-word audit, 3d skipped) — see `docs/history-2.md` (2026-08-05–2026-08-25)
-- Sessions A–AN — forced-alignment research arc (rules R.5/R.10–R.15, Zero-Defect Register triage), frozen under the accuracy-bar ruling below — see `sync-pipeline-v2-plan.md`
-- Mover-audit dossier — 24/24: Session K scored 22/24 (2026-08-18, 1 control cleared, 1 fixed via R.13), 5 stale rows live-reconfirmed 2026-08-27 — `docs/ws1-sync-pipeline/stage1-mover-audit.md`, `docs/history-2.md#2026-08-27--operator-attested--ws1-mover-audit-24-of-24-closed`
-- FA session-cache OOM fix — root-caused, fixed, guardrailed, real-app confirmed — `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix` (`6a1b939`, `c295cb3`)
-- `boundaryUsedFallback` 4-arg → 5-arg call-site fix, golden replay 6/6 unchanged (WS2 Step 11) — `docs/history-2.md#2026-08-26--ws2-step11-boundaryUsedFallback-fix`
-- Spanish-corpus acceptance lapse — owner ear-verified all 27 boundaries, 100% accurate, ruling recorded 2026-08-27 — `project-state.md` §5
-- R.12 boundaries 224/307/383 + 085 re-confirmed on live current `main`, 2026-08-27 (already A/B-verified/production-pinned since Session T; 085 confirmed not R.12-owned) — `docs/history-2.md#2026-08-27--operator-attested--ws1-r12-live-reconfirmation`
-
-### 2. Finished but pending verification
+### 1. Finished but pending verification
 
 (none)
 
-### 3. In progress
+### 2. In progress
 
 Phase 3 (Task 5), past 3b/3c (closed) and 3d (skipped, dormant). Chunking/accuracy research is
 frozen under the 2026-08-25 accuracy-bar ruling (~97–98% of boundaries correct on first sync,
@@ -49,7 +36,7 @@ frozen under the 2026-08-25 accuracy-bar ruling (~97–98% of boundaries correct
 FA default toggle (`FA_PROJECT_DEFAULT_ON`) is explicitly NOT closed — this is a gated ruling,
 never a one-line toggle. Three preconditions, none satisfied: (1) two further disjoint 12/12
 blind ear-pass verdicts (fresh listening lists, not reusing any list already scored); (2) an
-EMPTY Zero-Defect Register (currently 5 open rows, WS1 §5's first bullet); (3) a runtime ruling
+EMPTY Zero-Defect Register (currently 5 open rows, WS1 §4's first bullet); (3) a runtime ruling
 on the FA-enabled Apply Sync wall-clock cost, separately accepted for a change that would run on
 every sync rather than an opt-in one. 0 of 4 stage locks passed.
 
@@ -72,7 +59,7 @@ passed by the owner, Contract IN / Contract 1→2 inspection, determinism, non-E
 acceptance, R.5/R.10, mover-audit dossier, no Stage 1 defect deferred downstream) — and
 `FA_PROJECT_DEFAULT_ON` flips to ON.
 
-### 4. Next tasks
+### 3. Next tasks
 
 - Pillar 2 passive detector — read-only boundary-quality post-processor, 4 rules, gated on
   R-AS's precision bar (`MIN_IMPLIED_PRECISION = 0.50`). Spec: `sync-pipeline-v2-plan.md` Part AK.2.
@@ -91,7 +78,7 @@ acceptance, R.5/R.10, mover-audit dossier, no Stage 1 defect deferred downstream
 Sequencing: Stage 1 lock → Phase 4 → Stage 2 lock → Phase 5 → Phase 6 → Phase 6b → Stage 3 lock
 → Phase 7 → Stage 4 lock.
 
-### 5. Open bugs
+### 4. Open bugs
 
 Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 
@@ -117,7 +104,7 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
   UNVERIFIED: Unicode normalization (NFC vs NFD) mismatch between transcript and script; the
   en-language CTC vocab (measured 33 symbols) may lack glyphs for í/ñ/é; numeral-to-word expansion
   for "1198"/"300". No fix attempted. `docs/history-2.md`'s Step 15 entries. Rationale: a
-  sync-pipeline matching defect, not a distribution defect — relocated from WS2 §5, provenance
+  sync-pipeline matching defect, not a distribution defect — relocated from WS2 §4, provenance
   preserved (surfaced by the WS2 Step 15 Windows operator log, 03:57:28 run). **Third occurrence,
   WS2 Step 18 (2026-08-27):** segment 8 ("The complexity originates in 1198") failed identically
   a third time (4 of 7, 57%) on an unrelated 33-segment operator project — now reproducible on a
@@ -130,9 +117,9 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
   109/110, 123/124, 138/139, 195/196, 202/203, 218/219. At macOS parity (10) — a pre-existing
   cross-platform quality gap, not a Windows regression, not closed by this workstream's fixes.
   Rationale: a sync-pipeline boundary-placement defect, not a distribution defect — relocated from
-  WS2 §5, provenance preserved (surfaced by the WS2 Step 15 Windows operator log, 03:57:28 run).
+  WS2 §4, provenance preserved (surfaced by the WS2 Step 15 Windows operator log, 03:57:28 run).
 
-### 6. Deferred tasks
+### 5. Deferred tasks
 
 - Bounded-memory options for the residual OOM footprint — a capped `FaModelCache` session cache,
   or process isolation per sync. Unbuilt. **Flag for owner review:** the shipped drop-then-build
@@ -148,43 +135,63 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 Started: 2026-08-26 (Step 3) | Status: all 4 numbered bugs closed (1/2/4 code-fixed and now
 runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code fix). Two
 sync-pipeline defects surfaced by WS2 Step 15's Windows operator log (non-ASCII matching,
-cut-placement quality) were relocated to WS1 §5 — see that section. macOS CI-artifact/arm64 FA
+cut-placement quality) were relocated to WS1 §4 — see that section. macOS CI-artifact/arm64 FA
 platform verification and MSVC redistributable are both closed (OPERATOR-ATTESTED); the
-autosave-quota bug remains open.
+autosave-quota bug is deferred. Phase 1 (project data durability & foundations) now in progress.
 
-### 1. Finished tasks
-
-- WS2 bug 1 — rescued-segment anchor ordering, fixed via a trusted spine — `docs/history-2.md#2026-08-26--2ae4d18--2ae4d18-ws2-bug1-trusted-spine` (`2ae4d18`, `1e5deb7`)
-- WS2 bug 3 — DID-NOT-REPRODUCE on a HEAD build; no code fix exists, not relabeled "fixed" — `docs/history-2.md#2026-08-26--no-fix--ws2-bug3-closed-did-not-reproduce`
-- WS2 Step 10 — FA error serialization (`[object Object]` → real messages), general fix — `docs/history-2.md#2026-08-26--88ff701--88ff701-ws2-step10-error-serialization` (`88ff701`)
-- WS2 Step 10/11 — Windows voiceover `fetch(blob:)` fix, 6 further call sites guarded — `docs/history-2.md#2026-08-26--56e2116--56e2116-ws2-step10-windows-voiceover-fetch` (`56e2116`)
-- WS2 Step 11 — `boundaryUsedFallback` diagnostic-only arg-count fix, golden replay unchanged — `docs/history-2.md#2026-08-26--ws2-step11-boundaryUsedFallback-fix`
-- WS2 Step 12/13 — Manage Models & Add-ons modal: real Import + real resumable/checksummed Download, status-check bug fixed — `docs/history-2.md#2026-08-27--ws2-step12-manage-models-modal-a3` (`4a50680`, `63cd717`)
-- WS2 Step 13 Phase 4 — cross-platform ORT provisioning, table-driven + checksum-verified — `docs/history-2.md#2026-08-27--fix--5adbbf4-ci-macos-globstar-fix` (`4f31d38`, `5adbbf4`)
-- WS2 Step 15 — Windows operator-log closures (voiceover fetch, error-serialization, bug 2 FA-desktop CI-verified, bug 4 acquisition end-to-end, token-filtering resolved) + MEASURED-FROM-OPERATOR-LOG before/after (117→9 cuts) — `docs/history-2.md#2026-08-27--ws2-step-15--ws2-step15-windows-operator-log-before-after`
-- macOS platform FA verification, OPERATOR-ATTESTED 2026-08-26: CI-built `universal-apple-darwin` artifact runs FA, and onnxruntime dlopen/inference confirmed on real Apple Silicon hardware — `docs/history-2.md#2026-08-26--operator-attested--ws2-macos-ci-artifact-fa-verified`, `docs/history-2.md#2026-08-26--operator-attested--ws2-macos-arm64-fa-dlopen-inference-verified`
-- WS2 Step 18 — MSVC C++ runtime app-local deployment CLOSED, OPERATOR-ATTESTED on a Windows machine reporting a recent fresh install; CI-VERIFIED that the provisioning+guard steps run and pass — `docs/history-2.md#2026-08-27--ws2-step-18--ws2-step18-msvc-crt-closed` (`6b22231`, `e1103ac`)
-
-### 2. Finished but pending verification
+### 1. Finished but pending verification
 
 (none)
 
-### 3. In progress
+### 2. In progress
+
+[IN-PROGRESS] Phase 1 — Project data durability & foundations
+  T1.1 Diagnose storage loss: bundle identifier change across versions, WebView2 user-data
+       folder location on Windows, and localStorage origin in dev vs production.
+  T1.2 Stable content-derived segment IDs (normalized text hash + ordinal) that survive
+       re-running Apply Sync.
+  T1.3 File-backed versioned project store written from Rust (atomic temp + fsync + rename,
+       rotating snapshot ring, schema version); rebase the async plumbing and "Save failed"
+       UI from preserve/indexeddb-project-store and swap the adapter to a Tauri invoke;
+       separate route state from project state so boot always lands on the dashboard.
+
+**END GOAL:** No project data survives loss across app close, crash, or version upgrade; every
+launch opens the dashboard; opening a project restores its last saved position.
+
+### 3. Next tasks
+
+[OPEN] Phase 2 — Never-drop segments & operator override
+  T2.1 Place unmatched segments at interpolated timestamps with timingSource/confidence
+       flags and a sync-log warning, instead of dropping them.
+  T2.2 Operator override layer: keep / hide / manually add or delete a segment, persisted
+       by stable segment ID.
+
+[OPEN] Phase 3 — Text and number normalization
+  T3.1 Canonical match form: Unicode NFC/NFD normalization, punctuation folding, tiered
+       diacritic fallback, and number/date/currency value tokens; match on canonical form,
+       render from the original surface form.
+  T3.2 Locale verbalizer for the FA pass (digits → words, en/es/fr/de/pt) with token
+       provenance so aligned groups collapse back to exact source-token boundaries;
+       single shared implementation for the TS matcher and the Rust FA runtime.
+
+[OPEN] Phase 4 — Settings & project creation
+  T4.1 App Settings page owning Models & Add-ons (machine-global); Project Settings shows a
+       read-only requirement row that deep-links to it; missing-model check moved into
+       faPreflight.ts and surfaced in the sync log.
+  T4.2 New-project flow: language dropdown, FA sync ON by default, project-scoped settings
+       only; fix the stale blurred previous project by unmounting the editor and clearing
+       activeProjectId on close.
+
+(WS2's numbered-bug backlog is closed; remaining work beyond Phases 1-4 above is the two
+deferred items below.)
+
+### 4. Open bugs
 
 (none)
 
-**END GOAL:** every platform this project ships (Windows CI-built, macOS CI-built universal,
-macOS local) runs forced alignment correctly end-to-end from a fresh, never-hand-provisioned
-install, with no known-open code defect blocking a release build.
+### 5. Deferred tasks
 
-### 4. Next tasks
-
-(none beyond the deferred items below — WS2's numbered-bug backlog is closed; remaining work is
-the two open bugs and two deferred items below.)
-
-### 5. Open bugs
-
-* [OPEN] Autosave quota failure is invisible — `saveProject()` (`src/services/projectStore.ts:152`)
+* [DEFERRED] Autosave quota failure is invisible — `saveProject()` (`src/services/projectStore.ts:152`)
   returns a typed `SaveOutcome` including `quota-exceeded`, but every call site discards it and
   `usePersistProject.ts` stamps `lastSavedAt` regardless of outcome, so a failed write is
   indistinguishable from a successful one in the footer. Root cause is structural:
@@ -192,12 +199,9 @@ the two open bugs and two deferred items below.)
   ~5-10 MB origin-wide budget shared across every project body, the registry, and thumbnail data
   URLs; observed `QuotaExceededError` at ~915,000 chars of serialized project JSON on a
   ~21-minute-audio project. Not a sync-pipeline defect — placed here in WS2 (parallel to the
-  existing non-sync `videoDecoderPool.ts` bug in §6) rather than WS1. A candidate fix (full
+  existing non-sync `videoDecoderPool.ts` bug in §5) rather than WS1. A candidate fix (full
   IndexedDB migration) exists unreviewed and un-rebased on branch
   `preserve/indexeddb-project-store` (WS2 Step 17 Part 0).
-
-### 6. Deferred tasks
-
 - [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect found
   while diagnosing bug 3, not itself closed by bug 3's non-repro: `videoDecoderPool.ts`'s 90-frame
   decode-ahead cap (`MAX_BUFFERED_FRAMES_PER_SESSION`) is sized against a fixed ~1.5s window

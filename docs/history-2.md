@@ -100,6 +100,8 @@
 - [OPERATOR-ATTESTED — macOS arm64 FA dlopen/inference verified](#2026-08-26--operator-attested--ws2-macos-arm64-fa-dlopen-inference-verified) — 2026-08-26
 - [OPERATOR-ATTESTED — WS1 R.12 live re-confirmation (085/224/307/383)](#2026-08-27--operator-attested--ws1-r12-live-reconfirmation) — 2026-08-27
 - [OPERATOR-ATTESTED — WS1 mover-audit dossier closed 24/24](#2026-08-27--operator-attested--ws1-mover-audit-24-of-24-closed) — 2026-08-27
+- [WS1 Phase 1b–3d groundwork closed](#2026-08-05-08-25--ws1-phase1b-3d-groundwork) — 2026-08-05–08-25
+- [OPERATOR-ATTESTED — WS1 Spanish-corpus acceptance lapse closed](#2026-08-27--operator-attested--ws1-spanish-corpus-acceptance-lapse-closed) — 2026-08-27
 
 ---
 
@@ -1610,4 +1612,25 @@ recorded as an observation (zero such cuts on this specific 33-segment project),
 the separate cut-placement-quality bug (WS1 §5) is fixed; a 33-segment project is not a test of a
 defect rate measured in parts-per-228 on a much larger corpus.
 
+Superseded-by: none
+
+### 2026-08-05–08-25 · ws1-phase1b-3d-groundwork
+Outcome: WS1 Phase 1b–3d groundwork closed — dev instrumentation, Whisper/FA setup, a
+Dynamic-Time-Warping per-token timestamp approach abandoned in favor of forced alignment
+(`docs/history.md` line 407 for the earlier DTW mention), the 5 fr/es/de/pt language-keyed
+normalization rules (Phase 3b, see `phase-3b--language-keyed-normalization-rules-15` above),
+compound-word/hyphen-asymmetry audit (Phase 3c, see `phase-3c--hyphen-asymmetry-closed` above),
+and Phase 3d explicitly skipped. Moved out of `docs/work-in-progress.md`'s WS1 Finished Tasks
+line, which had pointed here generically without a specific anchor.
+Superseded-by: none
+
+### 2026-08-27 · operator-attested · ws1-spanish-corpus-acceptance-lapse-closed
+Outcome: Spanish-corpus non-English-corpus written-acceptance reopening trigger (fired in literal
+text when Phase 3b shipped Spanish cardinal normalization, 2026-08-15; unruled since Session AC
+flagged it 2026-08-22) ruled CLOSED via Option (a) of `sync-pipeline-v2-plan.md` Part AI.8: the
+owner personally ear-verified all 27 Spanish corpus boundaries following a live forced-alignment
+sync and confirmed 100% timing accuracy across all boundaries. Full ruling text:
+`project-state.md` §5 ("Spanish-corpus acceptance ruling (2026-08-27)").
+Evidence: OPERATOR-ATTESTED (owner ear-verification pass, 27/27 boundaries).
+Numbers: 27 Spanish corpus boundaries, 27/27 (100%) confirmed correct.
 Superseded-by: none
