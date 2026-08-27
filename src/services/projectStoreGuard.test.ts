@@ -11,19 +11,64 @@
  * both origin stores hydrated cleanly through the production `loadProject`
  * path (12/12, registry `segmentCount` matching hydrated `segments.length`),
  * so NOTHING here is regression-locking a measured corruption — there was
- * none. What these tests lock is the guard that makes the three SILENT failure
+ * none. What these tests lock is the guard that makes the silent failure
  * modes the store previously had impossible to hit silently again:
  *
  *   1. a zero-segment project overwriting a stored non-empty one,
- *   2. a quota/write failure swallowed by a bare `catch {}`,
- *   3. a parse failure indistinguishable from "no such project", followed by
- *      an autosave over the very bytes that failed to parse.
+ *   2. a quota/write failure swallowed instead of reported,
+ *   3. a malformed stored record indistinguishable from "no such project",
+ *      followed by an autosave over the very record that failed to load.
+ *
+ * 2026-08-25 — project bodies moved from `localStorage` (a shared ~5-10 MB
+ * origin budget that a real 21-min-audio project's ~915,000-char JSON started
+ * blowing through) to IndexedDB (`projectDataStore.ts`). This suite now mocks
+ * that module directly with a Map-backed fake plus per-test failure
+ * injection, rather than a `localStorage` stub — it is testing `saveProject`
+ * / `loadProjectDetailed`'s GUARD LOGIC (poisoning, empty-over-nonempty,
+ * quota/verify reporting), not IndexedDB itself.
  *
  * The `faHighPrecisionSync` round trip and the pre-change fixture cover the
  * schema-change half of Step 3(c).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { ProjectRecord } from './projectDataStore';
+
+// ---------------------------------------------------------------------------
+// Fake `projectDataStore` — a Map-backed IndexedDB stand-in with injectable
+// failures, so quota/verify-failure paths can be tested deterministically
+// without depending on a real engine's quota enforcement (fake-indexeddb
+// does not enforce one).
+// ---------------------------------------------------------------------------
+
+let idbBacking: Map<string, ProjectRecord>;
+let putFailure: (() => Error) | null = null;
+let getFailure: (() => Error) | null = null;
+/** When set, `getProjectRecord` returns this instead of the real backing entry — for the verify-failed path. */
+let getOverride: ((id: string) => ProjectRecord | null) | null = null;
+
+function clone<T>(v: T): T {
+  return JSON.parse(JSON.stringify(v)) as T;
+}
+
+vi.mock('./projectDataStore', () => ({
+  putProjectRecord: (record: ProjectRecord) => {
+    if (putFailure) return Promise.reject(putFailure());
+    idbBacking.set(record.id, clone(record));
+    return Promise.resolve();
+  },
+  getProjectRecord: (id: string) => {
+    if (getFailure) return Promise.reject(getFailure());
+    if (getOverride) return Promise.resolve(getOverride(id));
+    return Promise.resolve(idbBacking.has(id) ? clone(idbBacking.get(id)!) : null);
+  },
+  deleteProjectRecord: (id: string) => {
+    idbBacking.delete(id);
+    return Promise.resolve();
+  },
+  getAllProjectIds: () => Promise.resolve([...idbBacking.keys()]),
+}));
+
 import {
   saveProject,
   loadProject,
@@ -39,22 +84,18 @@ import { AnimationType, TransitionType } from '../types';
 // Harness
 // ---------------------------------------------------------------------------
 
-let backing: Map<string, string>;
+let registryBacking: Map<string, string>;
 
-function installLocalStorage(opts: { throwOnSet?: () => Error | null } = {}): void {
-  backing = new Map<string, string>();
+function installLocalStorage(): void {
+  registryBacking = new Map<string, string>();
   vi.stubGlobal('localStorage', {
-    getItem: (k: string) => (backing.has(k) ? backing.get(k)! : null),
-    setItem: (k: string, v: string) => {
-      const err = opts.throwOnSet?.();
-      if (err) throw err;
-      backing.set(k, String(v));
-    },
-    removeItem: (k: string) => void backing.delete(k),
-    clear: () => backing.clear(),
-    key: (i: number) => [...backing.keys()][i] ?? null,
+    getItem: (k: string) => (registryBacking.has(k) ? registryBacking.get(k)! : null),
+    setItem: (k: string, v: string) => registryBacking.set(k, String(v)),
+    removeItem: (k: string) => void registryBacking.delete(k),
+    clear: () => registryBacking.clear(),
+    key: (i: number) => [...registryBacking.keys()][i] ?? null,
     get length() {
-      return backing.size;
+      return registryBacking.size;
     },
   } as Storage);
   vi.stubGlobal('sessionStorage', {
@@ -98,11 +139,13 @@ function projectWith(segments: number, over: Partial<Project> = {}): Project {
   } as Project;
 }
 
-const KEY = 'kinetix:project:p-guard:v1';
-
 beforeEach(() => {
   __resetStoreGuardsForTests();
   installLocalStorage();
+  idbBacking = new Map();
+  putFailure = null;
+  getFailure = null;
+  getOverride = null;
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -119,7 +162,8 @@ describe('pre-change project fixture', () => {
    * carries the retired `playbackSpeed`/`sourceDuration` per-segment fields,
    * carries no `headings` layer, and carries no `faHighPrecisionSync`.
    */
-  const PRE_CHANGE = JSON.stringify({
+  const PRE_CHANGE: ProjectRecord = {
+    id: 'p-guard',
     version: 2,
     savedAt: 1_700_000_000_000,
     project: {
@@ -142,11 +186,11 @@ describe('pre-change project fixture', () => {
       aspectRatio: '16:9',
       resolutionTier: '1080p',
     },
-  });
+  };
 
-  it('hydrates fully — every segment survives, retired fields are stripped, headings default to []', () => {
-    backing.set(KEY, PRE_CHANGE);
-    const loaded = loadProject('p-guard');
+  it('hydrates fully — every segment survives, retired fields are stripped, headings default to []', async () => {
+    idbBacking.set('p-guard', PRE_CHANGE);
+    const loaded = await loadProject('p-guard');
     expect(loaded).not.toBeNull();
     expect(loaded!.project.segments).toHaveLength(3);
     expect(loaded!.project.segments.map(s => s.text)).toEqual(['a', 'b', 'c']);
@@ -160,17 +204,17 @@ describe('pre-change project fixture', () => {
     expect(loaded!.project.segments.map(s => s.duration)).toEqual([2, 2, 2]);
   });
 
-  it('a subsequent empty-project autosave does NOT write back over it', () => {
-    backing.set(KEY, PRE_CHANGE);
-    const before = backing.get(KEY)!;
+  it('a subsequent empty-project autosave does NOT write back over it', async () => {
+    idbBacking.set('p-guard', PRE_CHANGE);
+    const before = clone(idbBacking.get('p-guard')!);
 
-    const outcome = saveProject(projectWith(0));
+    const outcome = await saveProject(projectWith(0));
 
     expect(outcome.ok).toBe(false);
     expect(outcome.ok === false && outcome.reason).toBe('empty-over-nonempty');
-    // The decisive assertion: the stored bytes are byte-for-byte unchanged.
-    expect(backing.get(KEY)).toBe(before);
-    expect(loadProject('p-guard')!.project.segments).toHaveLength(3);
+    // The decisive assertion: the stored record is byte-for-byte unchanged.
+    expect(idbBacking.get('p-guard')).toEqual(before);
+    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(3);
   });
 });
 
@@ -179,22 +223,22 @@ describe('pre-change project fixture', () => {
 // ---------------------------------------------------------------------------
 
 describe('empty-over-nonempty guard', () => {
-  it('refuses a 0-segment write over a stored 447-segment project', () => {
-    saveProject(projectWith(447));
-    expect(loadProject('p-guard')!.project.segments).toHaveLength(447);
-    const before = backing.get(KEY)!;
+  it('refuses a 0-segment write over a stored 447-segment project', async () => {
+    await saveProject(projectWith(447));
+    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(447);
+    const before = clone(idbBacking.get('p-guard')!);
 
-    const outcome = saveProject(projectWith(0));
+    const outcome = await saveProject(projectWith(0));
 
     expect(outcome).toEqual({ ok: false, reason: 'empty-over-nonempty', message: expect.any(String) });
-    expect(backing.get(KEY)).toBe(before);
-    expect(loadProject('p-guard')!.project.segments).toHaveLength(447);
+    expect(idbBacking.get('p-guard')).toEqual(before);
+    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(447);
   });
 
-  it('logs loudly, naming both counts, so the refusal is never silent', () => {
+  it('logs loudly, naming both counts, so the refusal is never silent', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    saveProject(projectWith(447));
-    saveProject(projectWith(0));
+    await saveProject(projectWith(447));
+    await saveProject(projectWith(0));
     expect(err).toHaveBeenCalled();
     const msg = err.mock.calls.map(c => String(c[0])).join('\n');
     expect(msg).toMatch(/REFUSING/);
@@ -203,66 +247,66 @@ describe('empty-over-nonempty guard', () => {
     err.mockRestore();
   });
 
-  it('ALLOWS an empty first save — a brand-new project is not an overwrite', () => {
-    expect(saveProject(projectWith(0)).ok).toBe(true);
-    expect(loadProject('p-guard')!.project.segments).toHaveLength(0);
+  it('ALLOWS an empty first save — a brand-new project is not an overwrite', async () => {
+    expect((await saveProject(projectWith(0))).ok).toBe(true);
+    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(0);
   });
 
-  it('allows a deliberate emptying through the explicit opt-in', () => {
-    saveProject(projectWith(447));
-    expect(saveProject(projectWith(0), { allowEmptying: true }).ok).toBe(true);
-    expect(loadProject('p-guard')!.project.segments).toHaveLength(0);
+  it('allows a deliberate emptying through the explicit opt-in', async () => {
+    await saveProject(projectWith(447));
+    expect((await saveProject(projectWith(0), { allowEmptying: true })).ok).toBe(true);
+    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(0);
   });
 
-  it('a non-empty write over a non-empty project is unaffected', () => {
-    saveProject(projectWith(447));
-    expect(saveProject(projectWith(448)).ok).toBe(true);
-    expect(loadProject('p-guard')!.project.segments).toHaveLength(448);
+  it('a non-empty write over a non-empty project is unaffected', async () => {
+    await saveProject(projectWith(447));
+    expect((await saveProject(projectWith(448))).ok).toBe(true);
+    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(448);
   });
 });
 
 // ---------------------------------------------------------------------------
-// 3. Corrupt / truncated / partial JSON — loud AND non-destructive
+// 3. Malformed stored records — loud AND non-destructive
 // ---------------------------------------------------------------------------
 
-describe('corrupt stored values', () => {
-  const CASES: [string, string][] = [
-    ['truncated mid-object', '{"version":2,"savedAt":1,"project":{"id":"p-guard","segments":[{"id":"s0"'],
-    ['empty string body', '{'],
-    ['garbage', 'not json at all'],
-    ['partial write / trailing cut', '{"version":2,"savedAt":1,"project":{"segments":[]}'],
+describe('malformed stored records', () => {
+  const CASES: [string, unknown][] = [
+    ['missing project entirely', { id: 'p-guard', version: 2, savedAt: 1 }],
+    ['project present but no segments array', { id: 'p-guard', version: 2, savedAt: 1, project: { id: 'p-guard' } }],
+    ['segments is not an array', { id: 'p-guard', version: 2, savedAt: 1, project: { id: 'p-guard', segments: 'nope' } }],
   ];
 
   for (const [label, bad] of CASES) {
-    it(`${label}: raw bytes survive, the error is reported, and nothing is rewritten`, () => {
+    it(`${label}: the stored record survives, the error is reported, and nothing is rewritten`, async () => {
       const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-      backing.set(KEY, bad);
+      idbBacking.set('p-guard', bad as ProjectRecord);
 
-      const outcome = loadProjectDetailed('p-guard');
+      const outcome = await loadProjectDetailed('p-guard');
 
       expect(outcome).not.toBeNull();
       expect(outcome!.ok).toBe(false);
-      expect(outcome!.ok === false && outcome!.reason).toBe('parse-error');
-      expect(outcome!.ok === false && outcome!.rawLength).toBe(bad.length);
-      // Non-destructive: the exact bytes are still there.
-      expect(backing.get(KEY)).toBe(bad);
+      expect(outcome!.ok === false && outcome!.reason).toBe('shape-invalid');
+      // Non-destructive: the exact record is still there.
+      expect(idbBacking.get('p-guard')).toEqual(bad);
       expect(err).toHaveBeenCalled();
       err.mockRestore();
     });
   }
 
-  it('valid JSON of the wrong shape is reported as shape-invalid, not silently accepted', () => {
+  it('a genuinely unreadable store (IndexedDB open/read throws) is reported as storage-unavailable', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const wrong = JSON.stringify({ version: 2, savedAt: 1, project: { id: 'p-guard' } });
-    backing.set(KEY, wrong);
-    const outcome = loadProjectDetailed('p-guard');
-    expect(outcome!.ok === false && outcome!.reason).toBe('shape-invalid');
-    expect(backing.get(KEY)).toBe(wrong);
+    getFailure = () => new Error('IndexedDB is not available');
+
+    const outcome = await loadProjectDetailed('p-guard');
+
+    expect(outcome!.ok).toBe(false);
+    expect(outcome!.ok === false && outcome!.reason).toBe('storage-unavailable');
+    expect(err).toHaveBeenCalled();
     err.mockRestore();
   });
 
-  it('an ABSENT project stays distinguishable from a broken one', () => {
-    expect(loadProjectDetailed('p-guard')).toBeNull();
+  it('an ABSENT project stays distinguishable from a broken one', async () => {
+    expect(await loadProjectDetailed('p-guard')).toBeNull();
     expect(getLoadFailure('p-guard')).toBeUndefined();
   });
 });
@@ -272,53 +316,53 @@ describe('corrupt stored values', () => {
 // ---------------------------------------------------------------------------
 
 describe('load failure blocks the autosave that follows it', () => {
-  it('a failed load poisons the id, and the next save is refused with the raw bytes intact', () => {
+  it('a failed load poisons the id, and the next save is refused with the stored record intact', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const corrupt = '{"version":2,"project":{"segments":[{"id"';
-    backing.set(KEY, corrupt);
+    const corrupt = { id: 'p-guard', version: 2, savedAt: 1, project: { id: 'p-guard' } } as ProjectRecord;
+    idbBacking.set('p-guard', corrupt);
 
     // The app tries to open it and fails...
-    const outcome = loadProjectDetailed('p-guard');
+    const outcome = await loadProjectDetailed('p-guard');
     expect(outcome!.ok).toBe(false);
     expect(getLoadFailure('p-guard')).toBeDefined();
 
     // ...and 500 ms later the debounced autosave fires with whatever the app
     // has in memory. THIS is the write that used to destroy the evidence.
-    const saved = saveProject(projectWith(0));
+    const saved = await saveProject(projectWith(0));
     expect(saved.ok).toBe(false);
     expect(saved.ok === false && saved.reason).toBe('blocked-by-load-failure');
-    expect(backing.get(KEY)).toBe(corrupt);
+    expect(idbBacking.get('p-guard')).toEqual(corrupt);
 
     // Even a well-populated project is refused — the id stays poisoned until
     // the user acts, because the app cannot know the in-memory state is right.
-    const savedFull = saveProject(projectWith(447));
+    const savedFull = await saveProject(projectWith(447));
     expect(savedFull.ok === false && savedFull.reason).toBe('blocked-by-load-failure');
-    expect(backing.get(KEY)).toBe(corrupt);
+    expect(idbBacking.get('p-guard')).toEqual(corrupt);
 
     err.mockRestore();
   });
 
-  it('clearLoadFailure is the escape hatch, and un-poisons the id', () => {
+  it('clearLoadFailure is the escape hatch, and un-poisons the id', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    backing.set(KEY, 'broken{');
-    loadProjectDetailed('p-guard');
-    expect(saveProject(projectWith(447)).ok).toBe(false);
+    idbBacking.set('p-guard', { id: 'p-guard', version: 2, savedAt: 1, project: {} } as ProjectRecord);
+    await loadProjectDetailed('p-guard');
+    expect((await saveProject(projectWith(447))).ok).toBe(false);
 
     clearLoadFailure('p-guard');
-    expect(saveProject(projectWith(447)).ok).toBe(true);
-    expect(loadProject('p-guard')!.project.segments).toHaveLength(447);
+    expect((await saveProject(projectWith(447))).ok).toBe(true);
+    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(447);
     err.mockRestore();
   });
 
-  it('a later CLEAN load of the same id un-poisons it automatically', () => {
+  it('a later CLEAN load of the same id un-poisons it automatically', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    backing.set(KEY, 'broken{');
-    loadProjectDetailed('p-guard');
+    idbBacking.set('p-guard', { id: 'p-guard', version: 2, savedAt: 1, project: {} } as ProjectRecord);
+    await loadProjectDetailed('p-guard');
     expect(getLoadFailure('p-guard')).toBeDefined();
 
     // Repaired out-of-band (e.g. adopted from the mirror).
-    backing.set(KEY, JSON.stringify({ version: 2, savedAt: 5, project: projectWith(3) }));
-    const good = loadProjectDetailed('p-guard');
+    idbBacking.set('p-guard', { id: 'p-guard', version: 2, savedAt: 5, project: projectWith(3) } as unknown as ProjectRecord);
+    const good = await loadProjectDetailed('p-guard');
     expect(good!.ok).toBe(true);
     expect(getLoadFailure('p-guard')).toBeUndefined();
     err.mockRestore();
@@ -330,13 +374,14 @@ describe('load failure blocks the autosave that follows it', () => {
 // ---------------------------------------------------------------------------
 
 describe('write failures are reported', () => {
-  it('a QuotaExceededError is surfaced as quota-exceeded instead of being swallowed', () => {
+  it('a QuotaExceededError is surfaced as quota-exceeded instead of being swallowed', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const quota = new Error('The quota has been exceeded.');
-    quota.name = 'QuotaExceededError';
-    installLocalStorage({ throwOnSet: () => quota });
+    putFailure = () => {
+      const e = new DOMException('The quota has been exceeded.', 'QuotaExceededError');
+      return e as unknown as Error;
+    };
 
-    const outcome = saveProject(projectWith(10));
+    const outcome = await saveProject(projectWith(10));
 
     expect(outcome.ok).toBe(false);
     expect(outcome.ok === false && outcome.reason).toBe('quota-exceeded');
@@ -344,22 +389,12 @@ describe('write failures are reported', () => {
     err.mockRestore();
   });
 
-  it('a write that silently does not land is caught by read-back verification', () => {
+  it('a write that resolves but does not land is caught by read-back verification', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    installLocalStorage();
-    // A store that accepts writes but drops project payloads on the floor.
-    const real = localStorage.setItem.bind(localStorage);
-    vi.stubGlobal('localStorage', {
-      ...localStorage,
-      getItem: (k: string) => (backing.has(k) ? backing.get(k)! : null),
-      setItem: (k: string, v: string) => {
-        if (k.startsWith('kinetix:project:')) return;
-        real(k, v);
-      },
-      removeItem: (k: string) => void backing.delete(k),
-    } as unknown as Storage);
+    // put() "succeeds" (does nothing) but get() reports the record is not there.
+    getOverride = () => null;
 
-    const outcome = saveProject(projectWith(10));
+    const outcome = await saveProject(projectWith(10));
     expect(outcome.ok).toBe(false);
     expect(outcome.ok === false && outcome.reason).toBe('verify-failed');
     err.mockRestore();
@@ -371,30 +406,30 @@ describe('write failures are reported', () => {
 // ---------------------------------------------------------------------------
 
 describe('faHighPrecisionSync round trip', () => {
-  it('round-trips true', () => {
-    saveProject(projectWith(3, { faHighPrecisionSync: true }));
-    expect(loadProject('p-guard')!.project.faHighPrecisionSync).toBe(true);
+  it('round-trips true', async () => {
+    await saveProject(projectWith(3, { faHighPrecisionSync: true }));
+    expect((await loadProject('p-guard'))!.project.faHighPrecisionSync).toBe(true);
   });
 
-  it('round-trips false (an explicit opt-out is not lost)', () => {
-    saveProject(projectWith(3, { faHighPrecisionSync: false }));
-    expect(loadProject('p-guard')!.project.faHighPrecisionSync).toBe(false);
+  it('round-trips false (an explicit opt-out is not lost)', async () => {
+    await saveProject(projectWith(3, { faHighPrecisionSync: false }));
+    expect((await loadProject('p-guard'))!.project.faHighPrecisionSync).toBe(false);
   });
 
-  it('an ABSENT key stays absent — "no preference" is never written back as a value', () => {
+  it('an ABSENT key stays absent — "no preference" is never written back as a value', async () => {
     const p = projectWith(3);
     delete (p as { faHighPrecisionSync?: boolean }).faHighPrecisionSync;
-    saveProject(p);
-    const back = loadProject('p-guard')!.project;
+    await saveProject(p);
+    const back = (await loadProject('p-guard'))!.project;
     expect('faHighPrecisionSync' in back).toBe(false);
     expect(back.faHighPrecisionSync).toBeUndefined();
   });
 
-  it('survives a save→load→save→load double round trip unchanged', () => {
-    saveProject(projectWith(3, { faHighPrecisionSync: true }));
-    const once = loadProject('p-guard')!.project;
-    saveProject(once);
-    const twice = loadProject('p-guard')!.project;
+  it('survives a save→load→save→load double round trip unchanged', async () => {
+    await saveProject(projectWith(3, { faHighPrecisionSync: true }));
+    const once = (await loadProject('p-guard'))!.project;
+    await saveProject(once);
+    const twice = (await loadProject('p-guard'))!.project;
     expect(twice.faHighPrecisionSync).toBe(true);
     expect(twice.segments).toHaveLength(3);
   });

@@ -9661,3 +9661,83 @@ separate row allocations.
 boundary). `cargo test` 31 passed, 0 failed (19 -> 31, +12, exactly the tests added). `npm test`
 74 files / 1857 passed / 1 skipped / 0 failed (unchanged). `npm run lint` clean. Golden replay 6/6
 (unchanged). `git diff --stat` on `Cargo.toml`/`Cargo.lock`: empty (no dependency added).
+
+## Project Persistence — localStorage QuotaExceededError (2026-08-25)
+
+**Report.** A real desktop run (V8 project, ~21 min audio) hit `QuotaExceededError` repeatedly
+on `projectStore.ts`'s debounced autosave once the serialized project reached ~915,000 chars —
+logged (`[Kinetix] FAILED to save project ... QuotaExceededError`) but every edit since the last
+successful save was silently unpersisted from the user's point of view.
+
+**Root cause, confirmed by reading the code rather than reproducing the exact byte count.**
+Two independent defects, both real:
+
+1. **The reporting plumbing already existed and was already discarded.** `saveProject` (WS1
+   Session O) already returned a typed `SaveOutcome` distinguishing `quota-exceeded` from success
+   — but every call site (`usePersistProject.ts`'s debounced autosave and `saveNow`, `App.tsx`'s
+   `handleNewProjectConfirm`) discarded the return value. Worse: `usePersistProject.ts`
+   unconditionally called `setLastSavedAt(ts)` after firing `saveProject`, regardless of whether
+   it succeeded — so the footer's "Saved" label was driven by "a save was attempted," not "a save
+   landed." A failed autosave was **indistinguishable in the UI from a successful one.**
+2. **`localStorage` is a single ~5-10 MB budget shared across every project's JSON, the registry,
+   and per-project thumbnail data URLs on the origin** (the same ceiling already measured
+   elsewhere in this codebase — 20 history snapshots of the largest known corpus project alone is
+   6.02 MB, see the "history persistence" ruling above). A single ~915,000-char project is not
+   itself near that ceiling; it is the write that tips an origin already holding several other
+   projects over the edge. The threshold that actually mattered was never "how big is one
+   project" — it was "how much is already on this origin," which nothing surfaced to the user
+   either.
+
+**Fix — full localStorage → IndexedDB migration for project bodies**, scoped per owner decision
+(the alternative — a visible-warning-only fix — was explicitly declined in favor of removing the
+shared-budget problem at its root, matching the fix already applied to assets (`assetStore.ts`)
+and waveform peaks (`waveformStore.ts`)):
+
+- New `src/services/projectDataStore.ts` — an IndexedDB store (`kinetix-projects` DB,
+  `projects-v1` object store, keyed by project id), mirroring `assetStore.ts`'s existing
+  open/transaction pattern. `projectStore.ts`'s `saveProject`/`loadProject`/`loadProjectDetailed`/
+  `deleteProjectData`/`migrateLegacyIfNeeded`/`adoptMirroredProjects` all became `async`, backed
+  by this store instead of `localStorage.setItem(kinetix:project:<id>:v1, ...)`. The registry
+  (`ProjectMeta[]`, small — no segment/heading bodies) and `kinetix:lastOpenedProjectId` stay in
+  `localStorage`, synchronous, unchanged — they were never the problem.
+- **`migrateLocalStorageProjectsToIndexedDB()`** (new, `projectStore.ts`) — a one-time,
+  idempotent boot-time migration for projects an existing installed build already saved under the
+  old per-project `localStorage` keys: copies each into IndexedDB, then removes the `localStorage`
+  key, freeing exactly the budget that was going stale. A per-id failure (bad JSON, wrong shape)
+  leaves that id's `localStorage` copy untouched for a retry on the next boot, matching this
+  module's existing "never destroy unreadable evidence" posture. Runs in `App.tsx`'s boot effect,
+  before mirror adoption (whose own "already present locally" check now looks at IndexedDB, not
+  `localStorage`).
+- **The UI wiring gap is closed.** `usePersistProject.ts` now tracks the latest in-flight save
+  attempt and only stamps `lastSavedAt` on a genuine success; a failure is exposed as `saveError`
+  instead. `App.tsx` shows a red "Save failed" label (replacing "Saved"/"Unsaved") with the
+  failure reason as a tooltip, plus a one-shot toast per distinct failure reason (not once per
+  500 ms retry, since the underlying condition typically persists across several autosave ticks).
+- `saveProject`'s Guard 3 (write verified by reading it back, not merely trusted) was kept in the
+  IndexedDB form — a transaction resolving is normally durability itself, but the read-back is one
+  cheap indexed lookup and preserves the same "verified, not trusted" posture Session O
+  established for `localStorage`. The `parse-error` `StoreFailureReason` is now effectively
+  unreachable via `loadProjectDetailed` (IndexedDB records are structured, not JSON text to
+  `JSON.parse`) — left in the union rather than removed, since `adoptMirroredProjects` still
+  parses JSON text arriving from the Rust-side durable mirror.
+
+**Verified:**
+- `npm run lint` (tsc --noEmit) clean.
+- `npm test`: the 5 directly-touched suites (`projectStoreGuard.test.ts` — rewritten to mock
+  `projectDataStore.ts` with a Map-backed fake plus injectable put/get failures rather than
+  simulating real IndexedDB quota enforcement (`fake-indexeddb` does not enforce one);
+  `projectMirrorAdoption.test.ts`, `faGate.test.ts`, `faWordTimingsSchema.test.ts`,
+  `d1RegressionChecklist.test.ts` — updated for the new `async` signatures, polyfilled via
+  `fake-indexeddb/auto`) — 87/87 passing. Full `npm test`: 29 pre-existing failures, all in
+  `scripts/ws1-*` FA-pipeline replay suites failing on a missing local fixture
+  (`Missing replay input: .../audio_16k.wav` — needs `python3
+  scripts/phase4-restore-replay-inputs.py`), unrelated to this change and unchanged by it.
+- Manual verification in the running dev app (`npm run dev`, browser preview): a new project
+  saves and reloads correctly with its data confirmed to live in the `kinetix-projects` IndexedDB
+  database and NOT in any `kinetix:project:*` `localStorage` key. A simulated quota failure
+  (monkey-patched `IDBObjectStore.prototype.put` to throw `QuotaExceededError`) produced the red
+  "Save failed" footer label and the expected toast; un-patching and retrying recovered cleanly.
+  A simulated pre-migration project (seeded directly into the legacy `kinetix:project:<id>:v1`
+  `localStorage` key + registry, as an already-installed build would have it) was migrated into
+  IndexedDB on the next boot, its `localStorage` key removed, and the project opened from the
+  dashboard with its segment intact.

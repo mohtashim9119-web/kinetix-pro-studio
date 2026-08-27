@@ -51,7 +51,7 @@ export function ProjectDashboard({
   async function handleDelete(id: string): Promise<void> {
     await deleteAllAssets(id);
     await deleteAllWaveforms(id);
-    deleteProjectData(id);
+    await deleteProjectData(id);
     setMetas(prev => prev.filter(m => m.id !== id));
     setConfirmDeleteId(null);
     setMenuOpenId(null);
@@ -86,7 +86,7 @@ export function ProjectDashboard({
     for (const id of ids) {
       await deleteAllAssets(id);
       await deleteAllWaveforms(id);
-      deleteProjectData(id);
+      await deleteProjectData(id);
     }
     setMetas(prev => prev.filter(m => !selectedIds.has(m.id)));
     setSelectedIds(new Set());

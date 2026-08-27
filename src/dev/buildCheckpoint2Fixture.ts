@@ -78,7 +78,7 @@ export async function buildSingleSegmentFixture(): Promise<{ projectId: string }
     confirmed: true,
   };
 
-  saveProject(project);
+  await saveProject(project);
   setLastOpenedProjectId(projectId);
   return { projectId };
 }
@@ -125,7 +125,7 @@ export async function buildBoundaryFixture(): Promise<{ projectId: string }> {
     confirmed: true,
   };
 
-  saveProject(project);
+  await saveProject(project);
   setLastOpenedProjectId(projectId);
   return { projectId };
 }

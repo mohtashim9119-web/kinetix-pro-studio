@@ -29,6 +29,7 @@
 // are NOT decidable here, which is exactly why they are not claimed.
 // ---------------------------------------------------------------------------
 
+import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
@@ -310,28 +311,28 @@ describe('D.-1 item 7 — PERSISTENCE/RELOAD: timeline identical, no re-transcri
     } as unknown as Project;
   }
 
-  it('every segment startTime/duration survives a save→load round-trip bit-identically', () => {
+  it('every segment startTime/duration survives a save→load round-trip bit-identically', async () => {
     const p = realProject();
-    saveProject(p);
-    const back = loadProject('d1-item7')!;
+    await saveProject(p);
+    const back = (await loadProject('d1-item7'))!;
     expect(back.project.segments.length).toBe(p.segments.length);
     expect(back.project.segments.map(s => [s.startTime, s.duration]))
       .toEqual(p.segments.map(s => [s.startTime, s.duration]));
   });
 
-  it('`lastTranscribedFileIdentity` survives the round-trip intact — the thing that prevents a re-transcription', () => {
-    saveProject(realProject());
-    const back = loadProject('d1-item7')!;
+  it('`lastTranscribedFileIdentity` survives the round-trip intact — the thing that prevents a re-transcription', async () => {
+    await saveProject(realProject());
+    const back = (await loadProject('d1-item7'))!;
     expect(back.project.lastTranscribedFileIdentity).toBe(IDENTITY);
     expect(back.project.transcriptTokens?.length).toBe(1);
   });
 
-  it('the identity a reloaded file produces MATCHES the stored one, so no re-transcription is triggered', () => {
+  it('the identity a reloaded file produces MATCHES the stored one, so no re-transcription is triggered', async () => {
     // The real production key-builder, not a restatement of its format.
     const file = { name: 'voice.m4a', size: 8123456, lastModified: 1750000000000 } as unknown as File;
     expect(getFileIdentity(file)).toBe(IDENTITY);
-    saveProject(realProject());
-    expect(loadProject('d1-item7')!.project.lastTranscribedFileIdentity).toBe(getFileIdentity(file));
+    await saveProject(realProject());
+    expect((await loadProject('d1-item7'))!.project.lastTranscribedFileIdentity).toBe(getFileIdentity(file));
   });
 
   it('a DIFFERENT file does not match — proving the check above is discriminating, not constant-true', () => {
@@ -339,12 +340,12 @@ describe('D.-1 item 7 — PERSISTENCE/RELOAD: timeline identical, no re-transcri
     expect(getFileIdentity(other)).not.toBe(IDENTITY);
   });
 
-  it('reload does not resurrect the retired per-segment legacy fields', () => {
+  it('reload does not resurrect the retired per-segment legacy fields', async () => {
     const p = realProject();
     (p.segments[0] as unknown as { playbackSpeed?: number }).playbackSpeed = 2;
     (p.segments[0] as unknown as { sourceDuration?: number }).sourceDuration = 9;
-    saveProject(p);
-    const back = loadProject('d1-item7')!;
+    await saveProject(p);
+    const back = (await loadProject('d1-item7'))!;
     expect('playbackSpeed' in back.project.segments[0]!).toBe(false);
     expect('sourceDuration' in back.project.segments[0]!).toBe(false);
     // ...and stripping them did not disturb the timeline.
