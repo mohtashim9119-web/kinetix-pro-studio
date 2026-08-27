@@ -10610,11 +10610,12 @@ must act on (the FA default-toggle status, the stage-lock count) or a one-line a
 - **`S1_KNOWN_BAD_MOVES`** (`scripts/ws1-ear-pass-ledger.ts:1011`, 19 values) — S1's full
   collateral set, all operator-rejected; the project's negative ground truth for detector
   validation, and a hard-fail if any future chunk-edge arm reproduces one.
-- **Spanish corpus acceptance has silently lapsed, unresolved** — accepted in writing unlistened
-  at Stage 1's lock-gate entry, with a reopening trigger voided "the moment any Spanish-specific
-  normalization/alignment code ships"; Phase 3b shipped Spanish cardinals on 2026-08-15, which
-  satisfies that trigger's literal text, but no session has ruled on whether it actually reopens
-  the acceptance. Flagged for the owner (`sync-pipeline-v2-plan.md:7918-7925`).
+- **Spanish corpus acceptance lapse — RULED, CLOSED (2026-08-27).** Was: accepted in writing
+  unlistened at Stage 1's lock-gate entry, with a reopening trigger voided "the moment any
+  Spanish-specific normalization/alignment code ships"; Phase 3b shipped Spanish cardinals on
+  2026-08-15, satisfying that trigger's literal text. Ruled via Option (a) of §AI.8's three
+  options: the owner ear-verified all 27 Spanish corpus boundaries following a live FA sync,
+  100% accurate. Ruling recorded `project-state.md` §5.
 - **Arms F/G/H** (`src/services/faChunkPlan.ts`'s `computeFaChunkPlanS2EdgeArm`,
   `S2EdgePlacement` kinds `'anchor'`/`'attested'`/`'anchor-widened'`) are diagnostic-only with no
   production caller — every call site is an env-gated Session AM/AN measurement test. Arm G

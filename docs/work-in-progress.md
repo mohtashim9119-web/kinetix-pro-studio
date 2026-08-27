@@ -34,6 +34,7 @@ Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met.
 - Mover-audit dossier — owner-scored 22/24, both failures fixed via R.13 (Session K, 2026-08-18) — `docs/history-2.md#session-i--r-am-ruled-mover-audit-dossier`
 - FA session-cache OOM fix — root-caused, fixed, guardrailed, real-app confirmed — `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix` (`6a1b939`, `c295cb3`)
 - `boundaryUsedFallback` 4-arg → 5-arg call-site fix, golden replay 6/6 unchanged (WS2 Step 11) — `docs/history-2.md#2026-08-26--ws2-step11-boundaryUsedFallback-fix`
+- Spanish-corpus acceptance lapse — owner ear-verified all 27 boundaries, 100% accurate, ruling recorded 2026-08-27 — `project-state.md` §5
 
 ### 2. Finished but pending verification
 
@@ -105,11 +106,6 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
   2026-08-25 real-app V8 corpus run (`npm run tauri:dev:fa`). `usePlayback.ts:80-94`'s rAF tick
   already guards this failure mode (QB2 fix), so this is a distinct, unlocated trigger elsewhere
   in the render tree. No owner.
-* [OPEN] Spanish-corpus acceptance lapse — unresolved owner decision, drifting since 2026-08-15:
-  the acceptance's reopening trigger ("voids the moment Spanish-specific normalization/alignment
-  code ships") was satisfied in literal text by Phase 3b's Spanish cardinals (2026-08-15); no
-  session has ruled whether it actually reopens the acceptance. 3 options + costs:
-  `sync-pipeline-v2-plan.md` Part AK.1 / AI §AI.8. **Needs a ruling.**
 * [OPEN] Non-ASCII proper-noun matching — every remaining low-match-rate failure in the WS2 Step
   15 03:57:28 Windows run involves diacritics or foreign place names: segment 52 skipped entirely
   ("Llívia", 0 of 2 words, confidence 0.00); segment 69 ("Llívia stayed Spanish." 2 of 4, 50%);

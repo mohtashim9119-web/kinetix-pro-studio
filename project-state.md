@@ -82,6 +82,16 @@ One line each — full record in `docs/history.md`'s "Decisions Log — Dissolve
 - **R-M — `ort` (ONNX Runtime) is the forced-alignment runtime.** `candle` is rejected — no wav2vec2/CTC implementation exists in `candle-transformers`, and hand-writing the forward pass is out of scope. Accepted cost: a from-source onnxruntime build for `x86_64-apple-darwin` in CI, following the existing whisper-cli from-source pattern in the same workflow. Detail: runtime-spike measurement file, G3/G4.
 - **R-N — R-L's packaging reading is DEFERRED, not decided.** R-L's "compiled into the binary" has two readings for `ort` specifically: static-link (single fat binary) vs. default/load-dynamic (in-process, but bundles a separate onnxruntime dylib). R-K means no build is being cut, and load-dynamic already compiles — both readings satisfy R-L's in-process requirement, so this is not urgent yet. Must be decided before Step T and before any release build — recorded as a blocker on both. (Detail was roadmap §13 — source deleted, see note above; `sync-pipeline-v2-plan.md`'s own Step T entry still stands.)
 
+**Spanish-corpus acceptance ruling (2026-08-27).** WS1-scoped, registered here by explicit owner
+instruction (same precedent as the Task 5 and R.1 ruling blocks above). The non-English-corpus
+written acceptance's reopening trigger — void "the moment any Spanish-specific normalization or
+alignment code ships" — fired in literal text when Phase 3b shipped Spanish cardinal normalization
+(2026-08-15); unruled since Session AC flagged it (2026-08-22). Ruled via Option (a) of the three
+options recorded at `sync-pipeline-v2-plan.md` Part AI.8: the owner personally ear-verified all 27
+Spanish corpus boundaries following a live forced-alignment sync and confirmed 100% timing
+accuracy across all boundaries. This satisfies the non-English-corpus acceptance criteria in full;
+the lapse is closed.
+
 **R.1 spec-hole rulings (2026-08-12).** WS1-scoped, registered here by the same explicit owner instruction as the Task 5 rulings above — full detail lives in `sync-pipeline-v2-plan.md` at R.1/R.4.
 
 - **R-O — "Distinctive" (R.1(a)) is a measurable admissibility test: length ≥ `MIN_ANCHOR_WORD_CHARS` (3, seeded from C10's own ≥3-char definition) AND first canonicalized character not in `GLIDE_INITIAL_CHARS` (`{w, y}`, seeded from Step B's measured glide-initial finding). No stopword list, for any of the 5 supported languages. Resolves a conflict in R.1(a)'s own text: its justification cites Step B's PHONETIC glide-initial measurement, but its rule text said "not a function word" — LEXICAL, C10's definition. This ruling picks the phonetic reading; C10's lexical definition governs C10 only. Biased toward rejection deliberately: a rejected anchor only costs a longer run (bounded by `MAX_RUN_SEC`); a wrong anchor corrupts timing — the costs are not symmetric. Detail: `sync-pipeline-v2-plan.md` at R.1.
