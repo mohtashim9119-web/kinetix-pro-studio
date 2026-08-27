@@ -12,12 +12,14 @@
  * older build silently roll a project backwards. Adoption may only ever add
  * project ids this origin does not already have.
  *
- * Project bodies now live in IndexedDB (`projectDataStore.ts`, polyfilled here
- * via `fake-indexeddb/auto` — see `projectStore.ts`'s 2026-08-25 note for why);
- * the registry stays in localStorage and is still exercised via a real mock.
+ * Project bodies now live on the OS-backed primary store
+ * (`project_mirror.rs`'s `project_store_*` commands, reached via
+ * `projectStoreClient.ts` — see `projectStore.ts`'s WS2 T1.3 note for why).
+ * This suite mocks `isTauri()` true and fakes that client with a
+ * Map-backed store; the registry stays in localStorage and is still
+ * exercised via a real mock.
  */
 
-import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const readMirror = vi.fn();
@@ -27,8 +29,17 @@ vi.mock('./projectMirror', () => ({
   deleteMirroredProject: vi.fn(async () => {}),
 }));
 
+vi.mock('./tauriFfmpeg', () => ({ isTauri: () => true }));
+
+let osBacking: Map<string, string>;
+vi.mock('./projectStoreClient', () => ({
+  osStoreWrite: (id: string, contents: string) => { osBacking.set(id, contents); return Promise.resolve(); },
+  osStoreRead: (id: string) => Promise.resolve(osBacking.has(id) ? osBacking.get(id)! : null),
+  osStoreDelete: (id: string) => { osBacking.delete(id); return Promise.resolve(); },
+  osStoreListIds: () => Promise.resolve([...osBacking.keys()]),
+}));
+
 import { adoptMirroredProjects, loadProject, loadAllMetas, __resetStoreGuardsForTests } from './projectStore';
-import { putProjectRecord } from './projectDataStore';
 
 let backing: Map<string, string>;
 function installLocalStorage(): void {
@@ -70,15 +81,15 @@ function storedProjectJson(id: string, name: string, segments: number, savedAt =
   return JSON.stringify(storedProject(id, name, segments, savedAt));
 }
 
-/** Seeds IndexedDB as if `id` had already been saved locally (pre-adoption). */
-async function seedLocal(id: string, name: string, segments: number, savedAt = 1000): Promise<void> {
-  const fixture = storedProject(id, name, segments, savedAt);
-  await putProjectRecord({ id, ...fixture });
+/** Seeds the fake OS store as if `id` had already been saved locally (pre-adoption). */
+function seedLocal(id: string, name: string, segments: number, savedAt = 1000): void {
+  osBacking.set(id, storedProjectJson(id, name, segments, savedAt));
 }
 
 beforeEach(() => {
   __resetStoreGuardsForTests();
   installLocalStorage();
+  osBacking = new Map();
   readMirror.mockReset();
 });
 afterEach(() => vi.unstubAllGlobals());

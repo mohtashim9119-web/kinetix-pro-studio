@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   isFaCapable,
@@ -16,8 +15,19 @@ import {
   LEGACY_GLOBAL_FA_TOGGLE_KEY,
 } from './faGate';
 import { saveProject, loadProject } from './projectStore';
-import { putProjectRecord } from './projectDataStore';
 import type { Project, VideoSegment } from '../types';
+
+// `saveProject`/`loadProject` (used only by the "G1 proof" describe block
+// below, which stubs `window.__TAURI_INTERNALS__`) route through the OS
+// store when `isTauri()` is true — fake that store with a Map so this file
+// doesn't need a real Tauri IPC bridge.
+let osBacking: Map<string, string>;
+vi.mock('./projectStoreClient', () => ({
+  osStoreWrite: (id: string, contents: string) => { osBacking.set(id, contents); return Promise.resolve(); },
+  osStoreRead: (id: string) => Promise.resolve(osBacking.has(id) ? osBacking.get(id)! : null),
+  osStoreDelete: (id: string) => { osBacking.delete(id); return Promise.resolve(); },
+  osStoreListIds: () => Promise.resolve([...osBacking.keys()]),
+}));
 
 function installLocalStorage(): void {
   const store = new Map<string, string>();
@@ -271,9 +281,9 @@ describe('G1 proof — loading a pre-change project neither retimes nor acquires
   beforeEach(async () => {
     installLocalStorage();
     __resetFaCapabilityForTests();
+    osBacking = new Map();
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
-    const stored = JSON.parse(preChangeProjectJson());
-    await putProjectRecord({ id: 'pre-change-1', ...stored });
+    osBacking.set('pre-change-1', preChangeProjectJson());
   });
   afterEach(() => {
     vi.unstubAllGlobals();

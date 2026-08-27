@@ -22,6 +22,17 @@
 //! would ripple through every `App.tsx` caller). Every write here is
 //! best-effort and asynchronous — a mirror failure must never block or fail a
 //! local save.
+//!
+//! WS2 T1.3 — PRIMARY STORE. This module now also exposes `project_store_*`
+//! commands (`app_local_data_dir()/projects/<id>/project.json`) which are the
+//! PRIMARY project-body store as of this change — `localStorage` is deprecated
+//! for the project payload (kept only as a plain-browser-dev fallback outside
+//! Tauri; see `projectStore.ts`'s `isTauri()` branch). The `project_store_*`
+//! commands are a separate directory tree from `project_mirror_*`'s
+//! `project-mirror/` tree on purpose: the two are allowed to serve different
+//! roles (primary vs. legacy backup/cross-origin-adoption source) without one
+//! write path fighting the other's backup rotation. Both reuse `write_atomic`/
+//! `safe_id`/`rotate_backup` unchanged.
 
 use std::fs;
 use std::io::Write;
@@ -115,12 +126,15 @@ fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
     })
 }
 
-/// Step 5 item 4 — rotate the CURRENT contents of `src` into the backup
-/// directory before it is overwritten, then prune to the newest
-/// [`BACKUP_RETAIN`]. Best-effort throughout: a backup failure must not stop
-/// the save it precedes, so every error here is returned to the caller only
-/// for logging, never propagated as a write failure.
-fn rotate_backup(root: &Path, id: &str, src: &Path) -> Result<(), String> {
+/// Step 5 item 4 — rotate the CURRENT contents of `src` into `backups_root/<id>/`
+/// before it is overwritten, then prune to the newest [`BACKUP_RETAIN`].
+/// Best-effort throughout: a backup failure must not stop the save it
+/// precedes, so every error here is returned to the caller only for logging,
+/// never propagated as a write failure. Takes the backups root directly
+/// (rather than deriving it internally) so both the legacy mirror and the
+/// primary store can share this logic while keeping their backup trees
+/// separate.
+fn rotate_backup(backups_root: &Path, id: &str, src: &Path) -> Result<(), String> {
     if !src.exists() {
         return Ok(());
     }
@@ -128,7 +142,7 @@ fn rotate_backup(root: &Path, id: &str, src: &Path) -> Result<(), String> {
     if previous.trim().is_empty() {
         return Ok(());
     }
-    let dir = backups_dir(root).join(id);
+    let dir = backups_root.join(id);
     fs::create_dir_all(&dir).map_err(|e| format!("create_dir_all {}: {e}", dir.display()))?;
     write_atomic(&dir.join(format!("{}.json", now_millis())), &previous)?;
 
@@ -195,7 +209,7 @@ pub fn project_mirror_write_project(
     let id = safe_id(&id)?;
     let dest = projects_dir(&root).join(format!("{id}.json"));
 
-    if let Err(e) = rotate_backup(&root, id, &dest) {
+    if let Err(e) = rotate_backup(&backups_dir(&root), id, &dest) {
         // Non-fatal by design — see rotate_backup's contract.
         log::warn!("[project_mirror] backup rotation failed for {id}: {e}");
     }
@@ -218,7 +232,7 @@ pub fn project_mirror_delete_project(
     let root = mirror_root(&app)?;
     let id = safe_id(&id)?;
     let dest = projects_dir(&root).join(format!("{id}.json"));
-    if let Err(e) = rotate_backup(&root, id, &dest) {
+    if let Err(e) = rotate_backup(&backups_dir(&root), id, &dest) {
         log::warn!("[project_mirror] backup rotation failed for {id}: {e}");
     }
     if dest.exists() {
@@ -228,6 +242,113 @@ pub fn project_mirror_delete_project(
         write_atomic(&root.join("registry.json"), &registry)?;
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// WS2 T1.3 — primary project-body store.
+//
+// Directory layout: `app_local_data_dir()/projects/<id>/project.json`, kept
+// separate from `project_mirror_*`'s `project-mirror/` tree above. Backups for
+// the primary store rotate into `app_local_data_dir()/project-store-backups/<id>/`
+// — a distinct tree from the mirror's own `project-mirror/backups/`, so the two
+// write paths never contend over the same backup directory.
+// ---------------------------------------------------------------------------
+
+fn store_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_local_data_dir()
+        .map_err(|e| format!("cannot resolve app_local_data_dir for the project store: {e}"))
+}
+
+fn store_project_file(root: &Path, id: &str) -> PathBuf {
+    root.join("projects").join(id).join("project.json")
+}
+
+fn store_backups_dir(root: &Path) -> PathBuf {
+    root.join("project-store-backups")
+}
+
+/// Reads one project's JSON from the primary store. `Ok(None)` for "no such
+/// project" — kept distinguishable from an error, mirroring `loadProject`'s
+/// existing "absent is not a failure" contract on the JS side.
+#[tauri::command]
+pub fn project_store_read(app: tauri::AppHandle, id: String) -> Result<Option<String>, String> {
+    let root = store_root(&app)?;
+    let id = safe_id(&id)?;
+    let path = store_project_file(&root, id);
+    match fs::read_to_string(&path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("read {}: {e}", path.display())),
+    }
+}
+
+/// Writes one project's JSON to the primary store, atomically, rotating the
+/// previous contents into the backup tree first (same non-fatal contract as
+/// `project_mirror_write_project`).
+#[tauri::command]
+pub fn project_store_write(app: tauri::AppHandle, id: String, contents: String) -> Result<(), String> {
+    let root = store_root(&app)?;
+    let id = safe_id(&id)?;
+    let dest = store_project_file(&root, id);
+
+    if let Err(e) = rotate_backup(&store_backups_dir(&root), id, &dest) {
+        log::warn!("[project_store] backup rotation failed for {id}: {e}");
+    }
+    write_atomic(&dest, &contents)
+}
+
+/// Removes a project from the primary store. Backups are retained, same
+/// rationale as `project_mirror_delete_project`.
+#[tauri::command]
+pub fn project_store_delete(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let root = store_root(&app)?;
+    let id = safe_id(&id)?;
+    let dest = store_project_file(&root, id);
+    if let Err(e) = rotate_backup(&store_backups_dir(&root), id, &dest) {
+        log::warn!("[project_store] backup rotation failed for {id}: {e}");
+    }
+    if dest.exists() {
+        fs::remove_file(&dest).map_err(|e| format!("remove {}: {e}", dest.display()))?;
+        // Prune the now-empty `projects/<id>/` directory. Best-effort — a
+        // failure here (e.g. the dir isn't actually empty for some reason)
+        // must not fail the delete itself.
+        if let Some(parent) = dest.parent() {
+            let _ = fs::remove_dir(parent);
+        }
+    }
+    Ok(())
+}
+
+/// Lists every project id currently present in the primary store. Used by the
+/// boot-time migration to skip ids it has already adopted.
+#[tauri::command]
+pub fn project_store_list_ids(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let root = store_root(&app)?;
+    let dir = root.join("projects");
+    let mut ids = Vec::new();
+    match fs::read_dir(&dir) {
+        Ok(rd) => {
+            for entry in rd.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                if !path.is_dir() {
+                    continue;
+                }
+                let Some(name) = path.file_name().map(|n| n.to_string_lossy().to_string()) else {
+                    continue;
+                };
+                if safe_id(&name).is_err() {
+                    continue;
+                }
+                if path.join("project.json").is_file() {
+                    ids.push(name);
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(format!("read_dir {}: {e}", dir.display())),
+    }
+    Ok(ids)
 }
 
 #[cfg(test)]
@@ -293,7 +414,7 @@ mod tests {
         let dest = projects_dir(&d).join(format!("{id}.json"));
         for i in 0..(BACKUP_RETAIN + 5) {
             write_atomic(&dest, &format!("{{\"n\":{i}}}")).unwrap();
-            rotate_backup(&d, id, &dest).unwrap();
+            rotate_backup(&backups_dir(&d), id, &dest).unwrap();
             // Distinct millisecond stamps — the backup filename is the clock.
             std::thread::sleep(std::time::Duration::from_millis(2));
         }
@@ -359,8 +480,108 @@ mod tests {
     #[test]
     fn rotate_backup_is_a_noop_when_there_is_nothing_to_back_up() {
         let d = tmpdir("noop");
-        rotate_backup(&d, "abc", &projects_dir(&d).join("abc.json")).unwrap();
+        rotate_backup(&backups_dir(&d), "abc", &projects_dir(&d).join("abc.json")).unwrap();
         assert!(!backups_dir(&d).join("abc").exists());
+        fs::remove_dir_all(&d).ok();
+    }
+
+    // -----------------------------------------------------------------------
+    // WS2 T1.3 — primary store path/backup shape. The `#[tauri::command]`
+    // wrappers (`project_store_read`/`write`/`delete`/`list_ids`) need a real
+    // `tauri::AppHandle` to resolve `app_local_data_dir()`, which a unit test
+    // can't construct — so these tests exercise the same private helpers
+    // (`store_project_file`, `store_backups_dir`, `write_atomic`,
+    // `rotate_backup`) the commands are thin wrappers around, on a tmpdir
+    // standing in for `store_root()`'s result. That's the same style already
+    // used above for the mirror's own commands.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn store_project_file_uses_the_id_as_a_directory_not_a_filename() {
+        let d = tmpdir("store-path-shape");
+        let path = store_project_file(&d, "abc-123");
+        assert_eq!(path, d.join("projects").join("abc-123").join("project.json"));
+    }
+
+    #[test]
+    fn store_backups_dir_is_a_separate_tree_from_the_mirrors_backups_dir() {
+        let d = tmpdir("store-vs-mirror-backups");
+        assert_ne!(store_backups_dir(&d), backups_dir(&d));
+    }
+
+    #[test]
+    fn primary_store_write_read_delete_round_trip_and_prunes_the_empty_dir() {
+        let d = tmpdir("store-round-trip");
+        let id = "fd77f95e-b339-4463-810c-6eaf3539c58b";
+        let dest = store_project_file(&d, id);
+
+        // Write (mirrors project_store_write's body minus the AppHandle).
+        if let Err(e) = rotate_backup(&store_backups_dir(&d), id, &dest) {
+            panic!("unexpected rotate_backup error on first write: {e}");
+        }
+        write_atomic(&dest, r#"{"version":2,"project":{"segments":[1]}}"#).unwrap();
+        assert_eq!(
+            fs::read_to_string(&dest).unwrap(),
+            r#"{"version":2,"project":{"segments":[1]}}"#
+        );
+
+        // A second write rotates the first version into the store's own
+        // (separate) backup tree.
+        rotate_backup(&store_backups_dir(&d), id, &dest).unwrap();
+        write_atomic(&dest, r#"{"version":2,"project":{"segments":[1,2]}}"#).unwrap();
+        let backup_dir = store_backups_dir(&d).join(id);
+        assert!(backup_dir.exists(), "expected a rotated backup for the primary store");
+
+        // Delete removes the file and prunes the now-empty `<id>/` directory,
+        // but leaves the backup tree (and the id's history) alone.
+        if let Err(e) = rotate_backup(&store_backups_dir(&d), id, &dest) {
+            panic!("unexpected rotate_backup error before delete: {e}");
+        }
+        fs::remove_file(&dest).unwrap();
+        if let Some(parent) = dest.parent() {
+            let _ = fs::remove_dir(parent);
+        }
+        assert!(!dest.exists());
+        assert!(!dest.parent().unwrap().exists(), "the now-empty <id>/ dir should be pruned");
+        assert!(backup_dir.exists(), "backups must survive a delete");
+
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn store_list_ids_only_reports_dirs_with_a_project_json_and_a_safe_id() {
+        let d = tmpdir("store-list-ids");
+        let projects = d.join("projects");
+        // A real project: dir + project.json.
+        fs::create_dir_all(projects.join("real-id")).unwrap();
+        write_atomic(&projects.join("real-id").join("project.json"), "{}").unwrap();
+        // A leftover empty dir (e.g. after a delete's prune failed once) — no
+        // project.json, must not be reported as present.
+        fs::create_dir_all(projects.join("empty-id")).unwrap();
+        // An unsafe name — must never be reachable via list_ids either.
+        fs::create_dir_all(projects.join("unsafe.id")).unwrap();
+        write_atomic(&projects.join("unsafe.id").join("project.json"), "{}").unwrap();
+
+        // Inline the same filter list_ids uses, since the command itself
+        // needs an AppHandle.
+        let mut ids: Vec<String> = fs::read_dir(&projects)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter_map(|e| {
+                let path = e.path();
+                if !path.is_dir() {
+                    return None;
+                }
+                let name = path.file_name()?.to_string_lossy().to_string();
+                if safe_id(&name).is_err() {
+                    return None;
+                }
+                path.join("project.json").is_file().then_some(name)
+            })
+            .collect();
+        ids.sort();
+        assert_eq!(ids, vec!["real-id".to_string()]);
+
         fs::remove_dir_all(&d).ok();
     }
 }

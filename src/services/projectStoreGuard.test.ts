@@ -19,54 +19,54 @@
  *   3. a malformed stored record indistinguishable from "no such project",
  *      followed by an autosave over the very record that failed to load.
  *
- * 2026-08-25 — project bodies moved from `localStorage` (a shared ~5-10 MB
+ * WS2 T1.3 — project bodies moved from `localStorage` (a shared ~5-10 MB
  * origin budget that a real 21-min-audio project's ~915,000-char JSON started
- * blowing through) to IndexedDB (`projectDataStore.ts`). This suite now mocks
- * that module directly with a Map-backed fake plus per-test failure
- * injection, rather than a `localStorage` stub — it is testing `saveProject`
- * / `loadProjectDetailed`'s GUARD LOGIC (poisoning, empty-over-nonempty,
- * quota/verify reporting), not IndexedDB itself.
+ * blowing through) to the OS-backed primary store
+ * (`project_mirror.rs`'s `project_store_*` commands, reached from JS via
+ * `projectStoreClient.ts`). This suite mocks `isTauri()` true and
+ * `projectStoreClient.ts` directly with a Map-backed fake (raw JSON-string
+ * values, matching the real client's `string`-in/`string`-out contract) plus
+ * per-test failure injection, rather than a `localStorage` stub — it is
+ * testing `saveProject`/`loadProjectDetailed`'s GUARD LOGIC (poisoning,
+ * empty-over-nonempty, quota/verify reporting), not the OS store itself
+ * (that's `project_mirror.rs`'s own `#[cfg(test)]` module).
  *
  * The `faHighPrecisionSync` round trip and the pre-change fixture cover the
  * schema-change half of Step 3(c).
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { ProjectRecord } from './projectDataStore';
 
 // ---------------------------------------------------------------------------
-// Fake `projectDataStore` — a Map-backed IndexedDB stand-in with injectable
+// Fake `projectStoreClient` — a Map-backed OS-store stand-in with injectable
 // failures, so quota/verify-failure paths can be tested deterministically
-// without depending on a real engine's quota enforcement (fake-indexeddb
-// does not enforce one).
+// without a real Tauri IPC bridge.
 // ---------------------------------------------------------------------------
 
-let idbBacking: Map<string, ProjectRecord>;
+let osBacking: Map<string, string>;
 let putFailure: (() => Error) | null = null;
 let getFailure: (() => Error) | null = null;
-/** When set, `getProjectRecord` returns this instead of the real backing entry — for the verify-failed path. */
-let getOverride: ((id: string) => ProjectRecord | null) | null = null;
+/** When set, `osStoreRead` returns this instead of the real backing entry — for the verify-failed path. */
+let getOverride: ((id: string) => string | null) | null = null;
 
-function clone<T>(v: T): T {
-  return JSON.parse(JSON.stringify(v)) as T;
-}
+vi.mock('./tauriFfmpeg', () => ({ isTauri: () => true }));
 
-vi.mock('./projectDataStore', () => ({
-  putProjectRecord: (record: ProjectRecord) => {
+vi.mock('./projectStoreClient', () => ({
+  osStoreWrite: (id: string, contents: string) => {
     if (putFailure) return Promise.reject(putFailure());
-    idbBacking.set(record.id, clone(record));
+    osBacking.set(id, contents);
     return Promise.resolve();
   },
-  getProjectRecord: (id: string) => {
+  osStoreRead: (id: string) => {
     if (getFailure) return Promise.reject(getFailure());
     if (getOverride) return Promise.resolve(getOverride(id));
-    return Promise.resolve(idbBacking.has(id) ? clone(idbBacking.get(id)!) : null);
+    return Promise.resolve(osBacking.has(id) ? osBacking.get(id)! : null);
   },
-  deleteProjectRecord: (id: string) => {
-    idbBacking.delete(id);
+  osStoreDelete: (id: string) => {
+    osBacking.delete(id);
     return Promise.resolve();
   },
-  getAllProjectIds: () => Promise.resolve([...idbBacking.keys()]),
+  osStoreListIds: () => Promise.resolve([...osBacking.keys()]),
 }));
 
 import {
@@ -108,6 +108,17 @@ function installLocalStorage(): void {
   } as unknown as Storage);
 }
 
+/** Sets a raw record into the fake OS store — the test-side equivalent of a value already on disk. */
+function setStored(id: string, record: unknown): void {
+  osBacking.set(id, JSON.stringify(record));
+}
+
+/** Reads a raw record back out of the fake OS store, parsed, for equality assertions. */
+function getStored(id: string): unknown {
+  const raw = osBacking.get(id);
+  return raw === undefined ? undefined : JSON.parse(raw);
+}
+
 function seg(i: number): VideoSegment {
   return {
     id: `seg-${i}`,
@@ -142,7 +153,7 @@ function projectWith(segments: number, over: Partial<Project> = {}): Project {
 beforeEach(() => {
   __resetStoreGuardsForTests();
   installLocalStorage();
-  idbBacking = new Map();
+  osBacking = new Map();
   putFailure = null;
   getFailure = null;
   getOverride = null;
@@ -162,7 +173,7 @@ describe('pre-change project fixture', () => {
    * carries the retired `playbackSpeed`/`sourceDuration` per-segment fields,
    * carries no `headings` layer, and carries no `faHighPrecisionSync`.
    */
-  const PRE_CHANGE: ProjectRecord = {
+  const PRE_CHANGE = {
     id: 'p-guard',
     version: 2,
     savedAt: 1_700_000_000_000,
@@ -189,7 +200,7 @@ describe('pre-change project fixture', () => {
   };
 
   it('hydrates fully — every segment survives, retired fields are stripped, headings default to []', async () => {
-    idbBacking.set('p-guard', PRE_CHANGE);
+    setStored('p-guard', PRE_CHANGE);
     const loaded = await loadProject('p-guard');
     expect(loaded).not.toBeNull();
     expect(loaded!.project.segments).toHaveLength(3);
@@ -205,15 +216,15 @@ describe('pre-change project fixture', () => {
   });
 
   it('a subsequent empty-project autosave does NOT write back over it', async () => {
-    idbBacking.set('p-guard', PRE_CHANGE);
-    const before = clone(idbBacking.get('p-guard')!);
+    setStored('p-guard', PRE_CHANGE);
+    const before = getStored('p-guard');
 
     const outcome = await saveProject(projectWith(0));
 
     expect(outcome.ok).toBe(false);
     expect(outcome.ok === false && outcome.reason).toBe('empty-over-nonempty');
     // The decisive assertion: the stored record is byte-for-byte unchanged.
-    expect(idbBacking.get('p-guard')).toEqual(before);
+    expect(getStored('p-guard')).toEqual(before);
     expect((await loadProject('p-guard'))!.project.segments).toHaveLength(3);
   });
 });
@@ -226,12 +237,12 @@ describe('empty-over-nonempty guard', () => {
   it('refuses a 0-segment write over a stored 447-segment project', async () => {
     await saveProject(projectWith(447));
     expect((await loadProject('p-guard'))!.project.segments).toHaveLength(447);
-    const before = clone(idbBacking.get('p-guard')!);
+    const before = getStored('p-guard');
 
     const outcome = await saveProject(projectWith(0));
 
     expect(outcome).toEqual({ ok: false, reason: 'empty-over-nonempty', message: expect.any(String) });
-    expect(idbBacking.get('p-guard')).toEqual(before);
+    expect(getStored('p-guard')).toEqual(before);
     expect((await loadProject('p-guard'))!.project.segments).toHaveLength(447);
   });
 
@@ -279,7 +290,7 @@ describe('malformed stored records', () => {
   for (const [label, bad] of CASES) {
     it(`${label}: the stored record survives, the error is reported, and nothing is rewritten`, async () => {
       const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-      idbBacking.set('p-guard', bad as ProjectRecord);
+      setStored('p-guard', bad);
 
       const outcome = await loadProjectDetailed('p-guard');
 
@@ -287,15 +298,15 @@ describe('malformed stored records', () => {
       expect(outcome!.ok).toBe(false);
       expect(outcome!.ok === false && outcome!.reason).toBe('shape-invalid');
       // Non-destructive: the exact record is still there.
-      expect(idbBacking.get('p-guard')).toEqual(bad);
+      expect(getStored('p-guard')).toEqual(bad);
       expect(err).toHaveBeenCalled();
       err.mockRestore();
     });
   }
 
-  it('a genuinely unreadable store (IndexedDB open/read throws) is reported as storage-unavailable', async () => {
+  it('a genuinely unreadable store (the OS store read throws) is reported as storage-unavailable', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    getFailure = () => new Error('IndexedDB is not available');
+    getFailure = () => new Error('the primary project store is not available');
 
     const outcome = await loadProjectDetailed('p-guard');
 
@@ -318,8 +329,8 @@ describe('malformed stored records', () => {
 describe('load failure blocks the autosave that follows it', () => {
   it('a failed load poisons the id, and the next save is refused with the stored record intact', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const corrupt = { id: 'p-guard', version: 2, savedAt: 1, project: { id: 'p-guard' } } as ProjectRecord;
-    idbBacking.set('p-guard', corrupt);
+    const corrupt = { id: 'p-guard', version: 2, savedAt: 1, project: { id: 'p-guard' } };
+    setStored('p-guard', corrupt);
 
     // The app tries to open it and fails...
     const outcome = await loadProjectDetailed('p-guard');
@@ -331,20 +342,20 @@ describe('load failure blocks the autosave that follows it', () => {
     const saved = await saveProject(projectWith(0));
     expect(saved.ok).toBe(false);
     expect(saved.ok === false && saved.reason).toBe('blocked-by-load-failure');
-    expect(idbBacking.get('p-guard')).toEqual(corrupt);
+    expect(getStored('p-guard')).toEqual(corrupt);
 
     // Even a well-populated project is refused — the id stays poisoned until
     // the user acts, because the app cannot know the in-memory state is right.
     const savedFull = await saveProject(projectWith(447));
     expect(savedFull.ok === false && savedFull.reason).toBe('blocked-by-load-failure');
-    expect(idbBacking.get('p-guard')).toEqual(corrupt);
+    expect(getStored('p-guard')).toEqual(corrupt);
 
     err.mockRestore();
   });
 
   it('clearLoadFailure is the escape hatch, and un-poisons the id', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    idbBacking.set('p-guard', { id: 'p-guard', version: 2, savedAt: 1, project: {} } as ProjectRecord);
+    setStored('p-guard', { id: 'p-guard', version: 2, savedAt: 1, project: {} });
     await loadProjectDetailed('p-guard');
     expect((await saveProject(projectWith(447))).ok).toBe(false);
 
@@ -356,12 +367,12 @@ describe('load failure blocks the autosave that follows it', () => {
 
   it('a later CLEAN load of the same id un-poisons it automatically', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    idbBacking.set('p-guard', { id: 'p-guard', version: 2, savedAt: 1, project: {} } as ProjectRecord);
+    setStored('p-guard', { id: 'p-guard', version: 2, savedAt: 1, project: {} });
     await loadProjectDetailed('p-guard');
     expect(getLoadFailure('p-guard')).toBeDefined();
 
     // Repaired out-of-band (e.g. adopted from the mirror).
-    idbBacking.set('p-guard', { id: 'p-guard', version: 2, savedAt: 5, project: projectWith(3) } as unknown as ProjectRecord);
+    setStored('p-guard', { id: 'p-guard', version: 2, savedAt: 5, project: projectWith(3) });
     const good = await loadProjectDetailed('p-guard');
     expect(good!.ok).toBe(true);
     expect(getLoadFailure('p-guard')).toBeUndefined();
@@ -391,7 +402,7 @@ describe('write failures are reported', () => {
 
   it('a write that resolves but does not land is caught by read-back verification', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
-    // put() "succeeds" (does nothing) but get() reports the record is not there.
+    // write() "succeeds" (does nothing) but read() reports the record is not there.
     getOverride = () => null;
 
     const outcome = await saveProject(projectWith(10));

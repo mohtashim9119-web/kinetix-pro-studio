@@ -193,7 +193,7 @@ import {
   loadAllMetas,
   deleteProjectData,
   migrateLegacyIfNeeded,
-  migrateLocalStorageProjectsToIndexedDB,
+  migrateLocalStorageProjectsToOsStore,
   upsertProjectMeta,
   setLastOpenedProjectId,
   getLastOpenedProjectId,
@@ -2013,13 +2013,14 @@ export default function App() {
       }
 
       // -----------------------------------------------------------------------
-      // 1a. 2026-08-25 — one-time migration of any project still sitting under
-      //     the old per-project localStorage keys into IndexedDB, freeing the
-      //     shared ~5-10 MB origin budget that was causing QuotaExceededError
-      //     on large projects. Must run BEFORE mirror adoption below, whose
-      //     "already present locally" check now looks at IndexedDB.
+      // 1a. WS2 T1.3 — one-time migration of any project still sitting under
+      //     the old per-project localStorage keys into the primary OS file
+      //     store, freeing the shared ~5-10 MB origin budget that was causing
+      //     QuotaExceededError on large projects. A no-op outside Tauri. Must
+      //     run BEFORE mirror adoption below, whose "already present locally"
+      //     check now looks at the OS store.
       // -----------------------------------------------------------------------
-      await migrateLocalStorageProjectsToIndexedDB();
+      await migrateLocalStorageProjectsToOsStore();
 
       // -----------------------------------------------------------------------
       // 2. Route on launch:

@@ -1,18 +1,24 @@
 import type { Asset, Project, ProjectMeta, VideoSegment } from '../types';
 import { writeMirroredProject, deleteMirroredProject, readMirror } from './projectMirror';
-import {
-  putProjectRecord,
-  getProjectRecord,
-  deleteProjectRecord,
-  type ProjectRecord,
-} from './projectDataStore';
+import { osStoreRead, osStoreWrite, osStoreDelete } from './projectStoreClient';
+import { isTauri } from './tauriFfmpeg';
 
 /** Registry key — stores ProjectMeta[] (newest-first sorted on write). */
 const REGISTRY_KEY = 'kinetix:projects:v1';
 
-/** Legacy per-project localStorage key prefix/suffix — `kinetix:project:<id>:v1`, read once during the IndexedDB migration below, then removed. */
-const LEGACY_PROJECT_KEY_PREFIX = 'kinetix:project:';
-const LEGACY_PROJECT_KEY_SUFFIX = ':v1';
+/**
+ * Per-project localStorage key prefix/suffix — `kinetix:project:<id>:v1`.
+ * Two roles as of WS2 T1.3: (a) the plain-browser-dev (`!isTauri()`) fallback
+ * store, since there is no Tauri IPC bridge there; (b) the source format the
+ * one-time boot migration scans to move an already-installed build's data
+ * into the primary OS file store.
+ */
+const PROJECT_KEY_PREFIX = 'kinetix:project:';
+const PROJECT_KEY_SUFFIX = ':v1';
+
+function projectKey(id: string): string {
+  return `${PROJECT_KEY_PREFIX}${id}${PROJECT_KEY_SUFFIX}`;
+}
 
 /** Legacy single-project key (pre-multi-project format) — read-once for migration then removed. */
 const LEGACY_KEY = 'kinetix:project:v1';
@@ -71,11 +77,16 @@ function stripAsset(asset: Asset): StoredAsset {
 // is structural, not a threshold bug: `localStorage` is a single ~5-10 MB
 // budget SHARED across every project's JSON + the registry + thumbnails on
 // this origin, so any one project can be the write that tips an origin
-// already holding several others over the edge. This module now stores each
-// project's JSON in IndexedDB (`projectDataStore.ts`) instead — the same fix
-// already applied to assets (`assetStore.ts`) and waveform peaks
-// (`waveformStore.ts`). `localStorage` keeps only the registry and
-// last-opened-id, both of which are cheap and were never the problem.
+// already holding several others over the edge.
+//
+// WS2 T1.3 (later) — a project's JSON now lives on an OS-backed file store
+// (`app_local_data_dir()/projects/<id>/project.json`, atomic writes via
+// `project_mirror.rs`'s `project_store_*` commands) whenever `isTauri()` is
+// true, which structurally removes the shared-origin-quota ceiling — a real
+// filesystem has no ~5-10 MB shared budget. `localStorage` is kept ONLY as
+// the fallback store for plain `npm run dev` (no Tauri IPC bridge exists
+// there), and still holds the registry + last-opened-id in every mode, both
+// of which are cheap and were never the problem.
 
 /** Why a save was refused, or why a load failed. */
 export type StoreFailureReason =
@@ -136,8 +147,10 @@ export function __resetStoreGuardsForTests(): void {
 /** Reads the CURRENTLY stored segment count for `id`, or null if unknown. */
 async function storedSegmentCount(id: string): Promise<number | null> {
   try {
-    const record = await getProjectRecord(id);
-    const segs = (record?.project as StoredProjectData['project'] | undefined)?.segments;
+    const raw = isTauri() ? await osStoreRead(id) : localStorage.getItem(projectKey(id));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredProjectData;
+    const segs = parsed?.project?.segments;
     return Array.isArray(segs) ? segs.length : null;
   } catch {
     // Unreadable stored value — the empty-over-nonempty guard cannot make a
@@ -161,10 +174,12 @@ export interface SaveOptions {
 }
 
 /**
- * Persists a project (into IndexedDB — see the 2026-08-25 note above) and
- * upserts its registry entry (`localStorage`, unaffected by that move).
+ * Persists a project — to the OS-backed file store when `isTauri()` (see the
+ * WS2 T1.3 note above), else to `localStorage` as a plain-browser-dev
+ * fallback — and upserts its registry entry (`localStorage`, unaffected by
+ * either path).
  *
- * Returns a `SaveOutcome` rather than `void`: a refusal or a quota failure is
+ * Returns a `SaveOutcome` rather than `void`: a refusal or a write failure is
  * reported instead of swallowed. Callers MUST check it — nothing here retries
  * or queues a failed write, and no UI updates that imply success (a "Saved"
  * label, a cleared dirty flag) may be driven off anything but this return
@@ -203,13 +218,15 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
     savedAt,
     project: { ...project, assets: project.assets.map(stripAsset) },
   };
-  // Still computed: (a) the durable Rust-side mirror wants a JSON string, and
-  // (b) it is the one honest measure of "how big is this write" for logging.
   const payload = JSON.stringify(storedData);
-  const record: ProjectRecord = { id: project.id, ...storedData };
+  const tauri = isTauri();
 
   try {
-    await putProjectRecord(record);
+    if (tauri) {
+      await osStoreWrite(project.id, payload);
+    } else {
+      localStorage.setItem(projectKey(project.id), payload);
+    }
   } catch (err) {
     const name = err instanceof DOMException ? err.name : (err instanceof Error ? err.name : '');
     const quota = /quota/i.test(name) || /quota|exceeded/i.test(String(err));
@@ -220,15 +237,16 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
     return { ok: false, reason: quota ? 'quota-exceeded' : 'storage-unavailable', message };
   }
 
-  // Verified, not trusted — an IndexedDB transaction resolving is normally
-  // durability itself, but this is the same "read it back rather than assume
-  // it landed" posture Guard 3 originally applied to `localStorage`, and it is
-  // cheap enough (one indexed key lookup) to keep.
-  const readBack = await getProjectRecord(project.id).catch(() => null);
-  if (readBack === null || readBack.savedAt !== savedAt) {
+  // Verified, not trusted — a successful write to a real filesystem or to
+  // `localStorage` is normally durability itself, but this is the same "read
+  // it back rather than assume it landed" posture Guard 3 has always applied.
+  const readBack = tauri
+    ? await osStoreRead(project.id).catch(() => null)
+    : localStorage.getItem(projectKey(project.id));
+  if (readBack === null || readBack.length !== payload.length) {
     const message =
       `[kinetix] Save verification FAILED for project ${project.id} ("${project.name}"): wrote ` +
-      `savedAt ${savedAt}, read back ${readBack === null ? 'nothing' : readBack.savedAt}.`;
+      `${payload.length} chars, read back ${readBack === null ? 'nothing' : `${readBack.length} chars`}.`;
     console.error(message);
     return { ok: false, reason: 'verify-failed', message };
   }
@@ -274,11 +292,11 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
  * stored value is never modified, deleted, or rewritten by this function.
  */
 export async function loadProjectDetailed(id: string): Promise<LoadOutcome | null> {
-  let record: ProjectRecord | null;
+  let raw: string | null;
   try {
-    record = await getProjectRecord(id);
+    raw = isTauri() ? await osStoreRead(id) : localStorage.getItem(projectKey(id));
   } catch (err) {
-    const message = `IndexedDB unavailable while reading project ${id}: ${String(err)}`;
+    const message = `Project store unavailable while reading project ${id}: ${String(err)}`;
     console.error(`[kinetix] ${message}`);
     const failure: LoadFailure = { id, reason: 'storage-unavailable', message, rawLength: 0, at: Date.now() };
     loadFailures.set(id, failure);
@@ -287,14 +305,27 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
 
   // Genuinely absent is NOT a failure — it is the "no such project" answer, and
   // must stay distinguishable from "present but broken".
-  if (!record) return null;
+  if (!raw) return null;
 
-  const rawLength = JSON.stringify(record).length;
-
-  if (!record.project || typeof record.project !== 'object' || !Array.isArray((record.project as { segments?: unknown }).segments)) {
+  let stored: StoredProjectData;
+  try {
+    stored = JSON.parse(raw) as StoredProjectData;
+  } catch (err) {
     const message =
-      `Project ${id} is present in storage but does not have the expected shape (missing ` +
-      `\`project\` or \`project.segments\`). The stored record has been left untouched; ` +
+      `Project ${id} is present in storage (${raw.length} chars) but is not valid JSON: ${String(err)}. ` +
+      `The raw bytes have been left untouched; autosave is blocked for this project.`;
+    console.error(`[kinetix] ${message}`);
+    const failure: LoadFailure = { id, reason: 'parse-error', message, rawLength: raw.length, at: Date.now() };
+    loadFailures.set(id, failure);
+    return { ok: false, reason: 'parse-error', message, rawLength: raw.length };
+  }
+
+  const rawLength = raw.length;
+
+  if (!stored || typeof stored !== 'object' || !stored.project || !Array.isArray(stored.project.segments)) {
+    const message =
+      `Project ${id} parsed as JSON but does not have the expected shape (missing ` +
+      `\`project\` or \`project.segments\`). The raw ${rawLength} bytes have been left untouched; ` +
       `autosave is blocked for this project.`;
     console.error(`[kinetix] ${message}`);
     const failure: LoadFailure = { id, reason: 'shape-invalid', message, rawLength, at: Date.now() };
@@ -302,7 +333,7 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
     return { ok: false, reason: 'shape-invalid', message, rawLength };
   }
 
-  const storedProject = record.project as StoredProjectData['project'];
+  const storedProject = stored.project;
 
   // Path B heading layer (Decision 5): no migration — just default to [] when
   // absent, for projects saved before the `headings` field existed.
@@ -331,7 +362,7 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
 
   // A previously-poisoned id that now loads cleanly is un-poisoned.
   loadFailures.delete(id);
-  return { ok: true, project, savedAt: record.savedAt };
+  return { ok: true, project, savedAt: stored.savedAt };
 }
 
 /**
@@ -388,9 +419,8 @@ export function upsertProjectMeta(meta: ProjectMeta): void {
 
 /** Removes a project's stored record and its registry entry. */
 export async function deleteProjectData(id: string): Promise<void> {
-  await deleteProjectRecord(id).catch(err =>
-    console.error(`[kinetix] Failed to delete stored project ${id}:`, err),
-  );
+  const remove = isTauri() ? osStoreDelete(id) : Promise.resolve(localStorage.removeItem(projectKey(id)));
+  await remove.catch(err => console.error(`[kinetix] Failed to delete stored project ${id}:`, err));
   clearLoadFailure(id);
   const metas = loadAllMetas().filter(m => m.id !== id);
   let registryJson: string | undefined;
@@ -432,9 +462,18 @@ export interface AdoptionReport {
  * a project backwards.
  *
  * Call once at boot, before `loadAllMetas()`, and after
- * `migrateLocalStorageProjectsToIndexedDB()` so "already present locally"
- * checks IndexedDB rather than a `localStorage` key this migration may have
- * already drained.
+ * `migrateLocalStorageProjectsToOsStore()` so "already present locally"
+ * checks the primary OS store rather than a `localStorage` key this
+ * migration may have already drained.
+ *
+ * WS2 T1.3: "this origin's storage" is now the OS-backed primary store when
+ * `isTauri()` (the common case — the mirror itself only exists inside
+ * Tauri, so `readMirror()` returns null and this whole function is a no-op
+ * otherwise). It stays largely a steady-state no-op post-migration: nothing
+ * is left in the mirror that isn't already in the primary store once
+ * `migrateLocalStorageProjectsToOsStore()` and a prior boot's adoption have
+ * run, but it remains the safety net for the case a project's mirror write
+ * succeeded while its primary-store write did not.
  */
 export async function adoptMirroredProjects(): Promise<AdoptionReport> {
   const report: AdoptionReport = {
@@ -460,7 +499,7 @@ export async function adoptMirroredProjects(): Promise<AdoptionReport> {
 
   for (const [id, contents] of snapshot.projects) {
     try {
-      if ((await getProjectRecord(id)) !== null) {
+      if ((await osStoreRead(id)) !== null) {
         report.skippedAlreadyLocal.push(id);
         continue;
       }
@@ -471,7 +510,7 @@ export async function adoptMirroredProjects(): Promise<AdoptionReport> {
         report.failed.push({ id, message: 'mirrored value has the wrong shape' });
         continue;
       }
-      await putProjectRecord({ id, ...parsed });
+      await osStoreWrite(id, contents);
 
       const metas = loadAllMetas();
       if (!metas.some(m => m.id === id)) {
@@ -502,11 +541,11 @@ export async function adoptMirroredProjects(): Promise<AdoptionReport> {
 }
 
 // ---------------------------------------------------------------------------
-// 2026-08-25 — localStorage → IndexedDB migration for existing per-project data
+// WS2 T1.3 — localStorage → OS file store migration for existing per-project data
 // ---------------------------------------------------------------------------
 
 export interface StorageMigrationReport {
-  /** Ids successfully copied into IndexedDB and removed from localStorage. */
+  /** Ids successfully copied into the OS store and removed from localStorage. */
   migrated: string[];
   /** Ids whose localStorage value could not be migrated — LEFT IN localStorage untouched. */
   failed: { id: string; message: string }[];
@@ -514,24 +553,36 @@ export interface StorageMigrationReport {
 
 /**
  * One-time migration for a build that has already saved projects under the
- * old `kinetix:project:<id>:v1` localStorage keys. Copies each into
- * IndexedDB, then removes the localStorage key — freeing exactly the budget
- * that was going stale and shared across every other project on this origin.
+ * old `kinetix:project:<id>:v1` localStorage keys. Copies each into the
+ * primary OS file store, then removes the localStorage key — freeing exactly
+ * the budget that was going stale and shared across every other project on
+ * this origin.
  *
- * Idempotent and safe to call on every boot: an id already present in
- * IndexedDB is skipped without inspecting its localStorage copy, so a second
- * run after a successful first one is a no-op scan. A per-id failure (bad
- * JSON, wrong shape) leaves that id's localStorage key exactly as it was —
+ * A no-op outside Tauri: plain `npm run dev` keeps `localStorage` as its
+ * primary store (see `isTauri()` throughout this module), so there is
+ * nothing to migrate away from there.
+ *
+ * Idempotent and safe to call on every boot: an id already present in the OS
+ * store is skipped without inspecting its localStorage copy, so a second run
+ * after a successful first one is a no-op scan. A per-id failure (bad JSON,
+ * wrong shape) leaves that id's localStorage key exactly as it was —
  * mirroring the rest of this module's "never destroy unreadable evidence"
  * posture — so it is retried on the next boot rather than silently dropped.
+ *
+ * Known limitation (not fixed by retrying — inherent to `localStorage` being
+ * origin-scoped): this only scans the CURRENT origin's `localStorage`. A
+ * project saved only under the other origin (`tauri dev` vs. a release
+ * build) whose mirror write never ran needs that origin launched at least
+ * once post-migration to be picked up here.
  */
-export async function migrateLocalStorageProjectsToIndexedDB(): Promise<StorageMigrationReport> {
+export async function migrateLocalStorageProjectsToOsStore(): Promise<StorageMigrationReport> {
   const report: StorageMigrationReport = { migrated: [], failed: [] };
+  if (!isTauri()) return report;
 
   let keys: string[];
   try {
     keys = Object.keys(localStorage).filter(
-      k => k.startsWith(LEGACY_PROJECT_KEY_PREFIX) && k.endsWith(LEGACY_PROJECT_KEY_SUFFIX) && k !== LEGACY_KEY,
+      k => k.startsWith(PROJECT_KEY_PREFIX) && k.endsWith(PROJECT_KEY_SUFFIX) && k !== LEGACY_KEY,
     );
   } catch (err) {
     console.warn('[kinetix] localStorage unavailable during project migration scan:', err);
@@ -540,11 +591,11 @@ export async function migrateLocalStorageProjectsToIndexedDB(): Promise<StorageM
 
   for (const key of keys) {
     // `kinetix:project:<id>:v1` — id is a crypto.randomUUID(), never contains ':'.
-    const id = key.slice(LEGACY_PROJECT_KEY_PREFIX.length, key.length - LEGACY_PROJECT_KEY_SUFFIX.length);
+    const id = key.slice(PROJECT_KEY_PREFIX.length, key.length - PROJECT_KEY_SUFFIX.length);
     if (!id) continue;
 
     try {
-      if ((await getProjectRecord(id)) !== null) {
+      if ((await osStoreRead(id)) !== null) {
         // Already migrated (or adopted from the mirror this boot) — just
         // drop the now-redundant localStorage copy.
         localStorage.removeItem(key);
@@ -559,7 +610,7 @@ export async function migrateLocalStorageProjectsToIndexedDB(): Promise<StorageM
         continue;
       }
 
-      await putProjectRecord({ id, ...parsed });
+      await osStoreWrite(id, raw);
       localStorage.removeItem(key);
       report.migrated.push(id);
     } catch (err) {
@@ -569,7 +620,7 @@ export async function migrateLocalStorageProjectsToIndexedDB(): Promise<StorageM
 
   if (report.migrated.length > 0) {
     console.info(
-      `[kinetix] Migrated ${report.migrated.length} project(s) from localStorage to IndexedDB: ` +
+      `[kinetix] Migrated ${report.migrated.length} project(s) from localStorage to the OS file store: ` +
         `${report.migrated.join(', ')}`,
     );
   }
