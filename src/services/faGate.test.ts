@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import 'fake-indexeddb/auto';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   isFaCapable,
@@ -15,6 +16,7 @@ import {
   LEGACY_GLOBAL_FA_TOGGLE_KEY,
 } from './faGate';
 import { saveProject, loadProject } from './projectStore';
+import { putProjectRecord } from './projectDataStore';
 import type { Project, VideoSegment } from '../types';
 
 function installLocalStorage(): void {
@@ -266,20 +268,21 @@ function preChangeProjectJson(): string {
 }
 
 describe('G1 proof — loading a pre-change project neither retimes nor acquires a preference', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     installLocalStorage();
     __resetFaCapabilityForTests();
     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
-    localStorage.setItem('kinetix:project:pre-change-1:v1', preChangeProjectJson());
+    const stored = JSON.parse(preChangeProjectJson());
+    await putProjectRecord({ id: 'pre-change-1', ...stored });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
     __resetFaCapabilityForTests();
   });
 
-  it('loads every segment timing BYTE-IDENTICALLY to what was stored — loading is not a retime', () => {
+  it('loads every segment timing BYTE-IDENTICALLY to what was stored — loading is not a retime', async () => {
     const before = JSON.parse(preChangeProjectJson()).project.segments;
-    const loaded = loadProject('pre-change-1');
+    const loaded = await loadProject('pre-change-1');
     expect(loaded).not.toBeNull();
     expect(loaded!.project.segments).toEqual(before);
     // Spelled out, because this is the claim G1 actually makes: every
@@ -289,39 +292,39 @@ describe('G1 proof — loading a pre-change project neither retimes nor acquires
     expect(loaded!.project.segments.every(s => s.anchorSource === 'whisper')).toBe(true);
   });
 
-  it('does not acquire a stored `faHighPrecisionSync` on load — "no preference" survives', () => {
-    const loaded = loadProject('pre-change-1')!;
+  it('does not acquire a stored `faHighPrecisionSync` on load — "no preference" survives', async () => {
+    const loaded = (await loadProject('pre-change-1'))!;
     expect(Object.prototype.hasOwnProperty.call(loaded.project, 'faHighPrecisionSync')).toBe(false);
     expect(loaded.project.faHighPrecisionSync).toBeUndefined();
   });
 
-  it('resolves to the (OFF) default WITHOUT writing it back — reading the gate is not a migration', () => {
-    const loaded = loadProject('pre-change-1')!;
+  it('resolves to the (OFF) default WITHOUT writing it back — reading the gate is not a migration', async () => {
+    const loaded = (await loadProject('pre-change-1'))!;
     expect(isFaGateOpenForProject(loaded.project)).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(loaded.project, 'faHighPrecisionSync')).toBe(false);
     // and nothing was persisted either
-    const reloaded = loadProject('pre-change-1')!;
+    const reloaded = (await loadProject('pre-change-1'))!;
     expect(Object.prototype.hasOwnProperty.call(reloaded.project, 'faHighPrecisionSync')).toBe(false);
   });
 
-  it('survives a save/load round-trip still preference-free and still un-retimed', () => {
-    const loaded = loadProject('pre-change-1')!;
+  it('survives a save/load round-trip still preference-free and still un-retimed', async () => {
+    const loaded = (await loadProject('pre-change-1'))!;
     isFaGateOpenForProject(loaded.project);
-    saveProject(loaded.project);
-    const again = loadProject('pre-change-1')!;
+    await saveProject(loaded.project);
+    const again = (await loadProject('pre-change-1'))!;
     expect(Object.prototype.hasOwnProperty.call(again.project, 'faHighPrecisionSync')).toBe(false);
     expect(again.project.segments.map(s => [s.startTime, s.duration]))
       .toEqual([[0, 5.64], [5.64, 4.11], [9.75, 3.02]]);
   });
 
-  it('an explicit OFF written by the user round-trips and is never overwritten by the default', () => {
-    const loaded = loadProject('pre-change-1')!;
-    saveProject({ ...loaded.project, faHighPrecisionSync: false } as Project);
-    const again = loadProject('pre-change-1')!;
+  it('an explicit OFF written by the user round-trips and is never overwritten by the default', async () => {
+    const loaded = (await loadProject('pre-change-1'))!;
+    await saveProject({ ...loaded.project, faHighPrecisionSync: false } as Project);
+    const again = (await loadProject('pre-change-1'))!;
     expect(again.project.faHighPrecisionSync).toBe(false);
     expect(isFaGateOpenForProject(again.project)).toBe(false);
     // reading it again must not "repair" it towards the default
     isFaEnabledForProject(again.project);
-    expect(loadProject('pre-change-1')!.project.faHighPrecisionSync).toBe(false);
+    expect((await loadProject('pre-change-1'))!.project.faHighPrecisionSync).toBe(false);
   });
 });

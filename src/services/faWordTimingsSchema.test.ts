@@ -25,6 +25,7 @@
  * it to match.
  */
 
+import 'fake-indexeddb/auto';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -138,12 +139,12 @@ describe('Project.faWordTimings — real-scale schema round trip (WS1 Task 5 Sli
     }
   });
 
-  it('survives a real saveProject/loadProject round trip byte-for-byte, at full 1645-entry scale', () => {
+  it('survives a real saveProject/loadProject round trip byte-for-byte, at full 1645-entry scale', async () => {
     const faWordTimings = load173RealFaWordTimings();
     const project = buildProject(faWordTimings);
 
-    saveProject(project);
-    const loaded = loadProject(project.id);
+    await saveProject(project);
+    const loaded = await loadProject(project.id);
 
     expect(loaded).not.toBeNull();
     expect(loaded!.project.faWordTimings).toEqual(faWordTimings);
@@ -161,11 +162,11 @@ describe('Project.faWordTimings — real-scale schema round trip (WS1 Task 5 Sli
     expect(roundTripped).toEqual(faWordTimings);
   });
 
-  it('a Project WITHOUT faWordTimings still round-trips identically (field stays fully optional)', () => {
+  it('a Project WITHOUT faWordTimings still round-trips identically (field stays fully optional)', async () => {
     const project = buildProject(load173RealFaWordTimings());
     const { faWordTimings: _drop, ...withoutField } = project;
-    saveProject(withoutField as Project);
-    const loaded = loadProject(withoutField.id);
+    await saveProject(withoutField as Project);
+    const loaded = await loadProject(withoutField.id);
     expect(loaded!.project.faWordTimings).toBeUndefined();
     expect(loaded!.project.segments).toEqual(withoutField.segments);
   });

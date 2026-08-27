@@ -113,7 +113,7 @@ export async function buildScaleFixture(segmentCount = 500): Promise<ScaleFixtur
     confirmed: true,
   };
 
-  saveProject(project);
+  await saveProject(project);
   setLastOpenedProjectId(projectId);
 
   const totalTimelineDurationSec = segmentCount * SEGMENT_TIMELINE_DURATION_SEC;

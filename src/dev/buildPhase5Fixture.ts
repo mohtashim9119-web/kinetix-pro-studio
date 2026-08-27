@@ -155,7 +155,7 @@ export async function buildPhase5Fixture(): Promise<{ projectId: string }> {
     confirmed: true,
   };
 
-  saveProject(project);
+  await saveProject(project);
   setLastOpenedProjectId(projectId);
   return { projectId };
 }
