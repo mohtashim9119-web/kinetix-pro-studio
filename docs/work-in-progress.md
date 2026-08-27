@@ -144,8 +144,9 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 Started: 2026-08-26 (Step 3) | Status: all 4 numbered bugs closed (1/2/4 code-fixed and now
 runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code fix). Two
 sync-pipeline defects surfaced by WS2 Step 15's Windows operator log (non-ASCII matching,
-cut-placement quality) were relocated to WS1 §5 — see that section. The pre-existing
-macOS-arm64/MSVC-redistributable gaps remain here.
+cut-placement quality) were relocated to WS1 §5 — see that section. macOS CI-artifact/arm64 FA
+platform verification is closed (OPERATOR-ATTESTED, 2026-08-26); MSVC redistributable and the
+autosave-quota bug remain open.
 
 ### 1. Finished tasks
 
@@ -157,19 +158,11 @@ macOS-arm64/MSVC-redistributable gaps remain here.
 - WS2 Step 12/13 — Manage Models & Add-ons modal: real Import + real resumable/checksummed Download, status-check bug fixed — `docs/history-2.md#2026-08-27--ws2-step12-manage-models-modal-a3` (`4a50680`, `63cd717`)
 - WS2 Step 13 Phase 4 — cross-platform ORT provisioning, table-driven + checksum-verified — `docs/history-2.md#2026-08-27--fix--5adbbf4-ci-macos-globstar-fix` (`4f31d38`, `5adbbf4`)
 - WS2 Step 15 — Windows operator-log closures (voiceover fetch, error-serialization, bug 2 FA-desktop CI-verified, bug 4 acquisition end-to-end, token-filtering resolved) + MEASURED-FROM-OPERATOR-LOG before/after (117→9 cuts) — `docs/history-2.md#2026-08-27--ws2-step-15--ws2-step15-windows-operator-log-before-after`
+- macOS platform FA verification, OPERATOR-ATTESTED 2026-08-26: CI-built `universal-apple-darwin` artifact runs FA, and onnxruntime dlopen/inference confirmed on real Apple Silicon hardware — `docs/history-2.md#2026-08-26--operator-attested--ws2-macos-ci-artifact-fa-verified`, `docs/history-2.md#2026-08-26--operator-attested--ws2-macos-arm64-fa-dlopen-inference-verified`
 
 ### 2. Finished but pending verification
 
-- [CLAIM-UNVERIFIED → narrowed] Whether FA runs correctly from a **CI-built macOS** installer
-  artifact specifically — the Windows leg closed via WS2 Step 15 (CI-built, measured runtime);
-  the macOS Download/Import verification on record ran on the operator's local dev build, not the
-  CI `universal-apple-darwin` artifact. Remaining step: an operator run of the CI-built macOS
-  artifact with FA. `docs/history-2.md#2026-08-27--correction--ws2-step15-a5-p2-fully-superseded`
-- FA onnxruntime dlopen/inference on **macOS arm64 (Apple Silicon)** — Windows dlopen/inference is
-  now MEASURED (Step 15); the macOS universal dylib is built and lipo'd but has never executed on
-  real Apple Silicon hardware. No such hardware available in any session to date. Remaining step:
-  run the built app on an Apple Silicon Mac and confirm FA executes.
-  `docs/ws2-fa-models/ort-provisioning.md`
+(none)
 
 ### 3. In progress
 

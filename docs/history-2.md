@@ -96,6 +96,8 @@
 - [CI fix — macOS stray-.onnx guard globstar](#2026-08-27--fix--5adbbf4-ci-macos-globstar-fix) — 2026-08-27
 - [Correction — CI installer artifacts now exist](#2026-08-27--correction--ws2-ci-installer-artifacts-now-exist) — 2026-08-27
 - [Correction — FA acquisition + ORT gate superseded](#2026-08-27--correction--ws2-fa-acquisition-and-ort-gate-superseded) — 2026-08-27
+- [OPERATOR-ATTESTED — macOS CI-built artifact FA verified](#2026-08-26--operator-attested--ws2-macos-ci-artifact-fa-verified) — 2026-08-26
+- [OPERATOR-ATTESTED — macOS arm64 FA dlopen/inference verified](#2026-08-26--operator-attested--ws2-macos-arm64-fa-dlopen-inference-verified) — 2026-08-26
 
 ---
 
@@ -1423,4 +1425,23 @@ onto current `main`, and NOT merged — evaluating/rebasing it is separate futur
 decision. Its own `docs/history.md` hunk was left as-is on that side branch (predates the
 `docs/history.md`/`docs/history-2.md` split still in use on `main`); relocating it to
 `docs/history-2.md` is a prerequisite for any future merge, not done here.
+Superseded-by: none
+
+### 2026-08-26 · operator-attested · ws2-macos-ci-artifact-fa-verified
+**OPERATOR-ATTESTED, 2026-08-26.** Operator ran the CI-built `universal-apple-darwin` installer
+artifact (GitHub Actions "Build desktop installers") and confirmed forced alignment executes
+successfully from it — this was the last remaining unverified leg named by
+`ws2-step15-a5-p2-fully-superseded` above ("the only remaining unverified leg is macOS running
+from a CI-built artifact specifically"). No artifact in this repository reproduces this run;
+graded OPERATOR-ATTESTED, never MEASURED or CI-VERIFIED. Hardware/build identifiers beyond "the
+CI-built universal-apple-darwin artifact" were not recorded by the operator.
+Superseded-by: none
+
+### 2026-08-26 · operator-attested · ws2-macos-arm64-fa-dlopen-inference-verified
+**OPERATOR-ATTESTED, 2026-08-26.** Operator ran the built app on real Apple Silicon (macOS arm64)
+hardware and confirmed the onnxruntime universal dylib dlopen's and forced-alignment inference
+executes correctly on it — closing the gap tracked in `docs/ws2-fa-models/ort-provisioning.md`
+("the macOS universal dylib is built and lipo'd but has never executed on real Apple Silicon
+hardware"). No artifact in this repository reproduces this run; graded OPERATOR-ATTESTED, never
+MEASURED or CI-VERIFIED. Specific hardware model was not recorded by the operator.
 Superseded-by: none
