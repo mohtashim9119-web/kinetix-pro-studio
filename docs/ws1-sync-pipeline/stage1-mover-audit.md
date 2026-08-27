@@ -45,32 +45,63 @@ no rule proposes at HEAD.
 
 | # | project | segment | boundary | what it separates | listen | YES / NO |
 |---|---|---|---|---|---|---|
-| 1 | 173 | `protection_failure` | **603.69** | …Supply lines, reinforcements, intelligence, e… **‖** for sustained operation, ceases to function t… | `ffplay -ss 600.79 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | |
-| 2 | 173 | `team_disperse` | **624.68** | …the most controlled form of Warp-adjacent tra… **‖** The loyalist strike force scattered across a … | `ffplay -ss 621.78 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | |
-| 3 | 173 | `battle_network` | **597.83** | …Communication with anything outside the hull … **‖** Supply lines, reinforcements, intelligence, e… | `ffplay -ss 594.93 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | |
-| 4 | v6 | `242_fen_excited_run` | **710.11** | …Your youngest scout is Fen. **‖** He has the instincts but his feet carry his e… | `ffplay -ss 707.21 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 5 | spanish | `006_attack_setup` | **12.87** | …y 12 patas debajo de su cuerpo. **‖** Su ataque es sencillo. | `ffplay -ss 9.97 -t 5.80 -autoexit .work-phase4/replay/spanish/audio_16k.wav` | |
-| 6 | v6 | `332_fading_sound` | **1020.65** | …A smell change at the base of a slope. **‖** A sound she had not consciously registered un… | `ffplay -ss 1017.75 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 7 | 173 | `vessel_access` | **138.54** | …and debris, fused by warp transit into a stru… **‖** Boarding one isn’t a tactical challenge. | `ffplay -ss 135.64 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | |
-| 8 | 173 | `unstable_spirit_journey` | **586.28** | …as measured by external observers, and some h… **‖** Crew psychological integrity declines in prop… | `ffplay -ss 583.38 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | |
-| 9 | v6 | `036_outward_sentry` | **105.55** | …The band has a shape at night it does not hav… **‖** Certain men always face outward. | `ffplay -ss 102.65 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 10 | v6 | `412_youngest_scout` | **1312.15** | …the place a thing moves to when it stops bein… **‖** Fen’s youngest scout | `ffplay -ss 1309.25 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 11 | v6 | `060_reassuring_hand` | **184.02** | …But Daret, the rear guard **‖** moves up beside you and puts his hand flat on… | `ffplay -ss 181.12 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 12 | v6 | `225_night_scouts` | **667.47** | …You are thirty-three. **‖** You lead the night scouts now. | `ffplay -ss 664.57 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 13 | v6 | `307_forty_nine_years` | **924.92** | …You carry it alongside everything else and yo… **‖** You are forty-nine. | `ffplay -ss 922.02 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 14 | v6 | `383_sixty_four` | **1188.95** | …All you can do is be honest and let them take… **‖** You are sixty-four. | `ffplay -ss 1186.05 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 15 | 173 | `unstable_energy_consequence` | **612.51** | …The final boarding of the Vengeful Spirit ill… **‖** what even partial Warp exposure does at close… | `ffplay -ss 609.61 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | |
-| 16 | 173 | `broken_link` | **593.88** | …Crew psychological integrity declines in prop… **‖** Communication with anything outside the hull … | `ffplay -ss 590.98 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | |
-| 17 | spanish | `014_keep_moving` | **37.98** | …Eso significa que la estrategia más segura no… **‖** Es seguir moviéndose antes de que pueda ataca… | `ffplay -ss 35.08 -t 5.80 -autoexit .work-phase4/replay/spanish/audio_16k.wav` | |
-| 18 | 173 | `entry_clash` | **609.24** | …for sustained operation, ceases to function t… **‖** The final boarding of the Vengeful Spirit ill… | `ffplay -ss 606.34 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | |
-| 19 | 173 | `safety_passage` | **361.37** | …That single feature separates this from every… **‖** A fire lane is cleared. | `ffplay -ss 358.47 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | |
-| 20 | v6 | `133_wake_man` | **399.79** | …You guard your stretch **‖** wake the next man | `ffplay -ss 396.89 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 21 | v6 | `245_seasonal_contrast` | **719.91** | …You watch him for two full seasons and say al… **‖** You let him see the contrast. | `ffplay -ss 717.01 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 22 | 173 | `eternal_focus` | **37.73** | …The jungle didn’t evolve around human warfare. **‖** It spent millions of years optimizing toward … | `ffplay -ss 34.83 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | |
-| 23 | v6 | `085_the_spear_bearer` | **250.69** | …Your body made that choice without asking. **‖** You are sixteen and you carry your own spear. | `ffplay -ss 247.79 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
-| 24 | v6 | `224_thirty_three` | **663.785** | …You carry it. **‖** You are thirty-three. | `ffplay -ss 660.88 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | |
+| 1 | 173 | `protection_failure` | **603.69** | …Supply lines, reinforcements, intelligence, e… **‖** for sustained operation, ceases to function t… | `ffplay -ss 600.79 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | YES |
+| 2 | 173 | `team_disperse` | **624.68** | …the most controlled form of Warp-adjacent tra… **‖** The loyalist strike force scattered across a … | `ffplay -ss 621.78 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | YES |
+| 3 | 173 | `battle_network` | **597.83** | …Communication with anything outside the hull … **‖** Supply lines, reinforcements, intelligence, e… | `ffplay -ss 594.93 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | YES |
+| 4 | v6 | `242_fen_excited_run` | **710.11** | …Your youngest scout is Fen. **‖** He has the instincts but his feet carry his e… | `ffplay -ss 707.21 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 5 | spanish | `006_attack_setup` | **12.87** | …y 12 patas debajo de su cuerpo. **‖** Su ataque es sencillo. | `ffplay -ss 9.97 -t 5.80 -autoexit .work-phase4/replay/spanish/audio_16k.wav` | YES |
+| 6 | v6 | `332_fading_sound` | **1020.65** | …A smell change at the base of a slope. **‖** A sound she had not consciously registered un… | `ffplay -ss 1017.75 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 7 | 173 | `vessel_access` | **138.54** | …and debris, fused by warp transit into a stru… **‖** Boarding one isn’t a tactical challenge. | `ffplay -ss 135.64 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | YES |
+| 8 | 173 | `unstable_spirit_journey` | **586.28** | …as measured by external observers, and some h… **‖** Crew psychological integrity declines in prop… | `ffplay -ss 583.38 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | YES |
+| 9 | v6 | `036_outward_sentry` | **105.55** | …The band has a shape at night it does not hav… **‖** Certain men always face outward. | `ffplay -ss 102.65 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 10 | v6 | `412_youngest_scout` | **1312.15** | …the place a thing moves to when it stops bein… **‖** Fen’s youngest scout | `ffplay -ss 1309.25 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 11 | v6 | `060_reassuring_hand` | **184.02** | …But Daret, the rear guard **‖** moves up beside you and puts his hand flat on… | `ffplay -ss 181.12 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 12 | v6 | `225_night_scouts` | **667.47** | …You are thirty-three. **‖** You lead the night scouts now. | `ffplay -ss 664.57 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 13 | v6 | `307_forty_nine_years` | **924.92** | …You carry it alongside everything else and yo… **‖** You are forty-nine. | `ffplay -ss 922.02 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 14 | v6 | `383_sixty_four` | **1188.95** | …All you can do is be honest and let them take… **‖** You are sixty-four. | `ffplay -ss 1186.05 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 15 | 173 | `unstable_energy_consequence` | **612.51** | …The final boarding of the Vengeful Spirit ill… **‖** what even partial Warp exposure does at close… | `ffplay -ss 609.61 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | YES |
+| 16 | 173 | `broken_link` | **593.88** | …Crew psychological integrity declines in prop… **‖** Communication with anything outside the hull … | `ffplay -ss 590.98 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | YES |
+| 17 | spanish | `014_keep_moving` | **37.98** | …Eso significa que la estrategia más segura no… **‖** Es seguir moviéndose antes de que pueda ataca… | `ffplay -ss 35.08 -t 5.80 -autoexit .work-phase4/replay/spanish/audio_16k.wav` | YES |
+| 18 | 173 | `entry_clash` | **609.24** | …for sustained operation, ceases to function t… **‖** The final boarding of the Vengeful Spirit ill… | `ffplay -ss 606.34 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | YES |
+| 19 | 173 | `safety_passage` | **361.37** | …That single feature separates this from every… **‖** A fire lane is cleared. | `ffplay -ss 358.47 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | YES |
+| 20 | v6 | `133_wake_man` | **399.79** | …You guard your stretch **‖** wake the next man | `ffplay -ss 396.89 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 21 | v6 | `245_seasonal_contrast` | **719.91** | …You watch him for two full seasons and say al… **‖** You let him see the contrast. | `ffplay -ss 717.01 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 22 | 173 | `eternal_focus` | **37.73** | …The jungle didn’t evolve around human warfare. **‖** It spent millions of years optimizing toward … | `ffplay -ss 34.83 -t 5.80 -autoexit .work-phase4/replay/173/audio_16k.wav` | YES |
+| 23 | v6 | `085_the_spear_bearer` | **250.69** | …Your body made that choice without asking. **‖** You are sixteen and you carry your own spear. | `ffplay -ss 247.79 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
+| 24 | v6 | `224_thirty_three` | **663.785** | …You carry it. **‖** You are thirty-three. | `ffplay -ss 660.88 -t 5.80 -autoexit .work-phase4/replay/v6/audio_16k.wav` | YES |
 
-**Score: ____ / 24**
+**Score: 24 / 24.**
+
+**Scoring provenance.** Rows scored across two sittings, not one — see `docs/history-2.md`'s
+Session K entry and `scripts/ws1-ear-pass-ledger.ts`'s `mover-audit-k` sitting for the original
+record: Session K (2026-08-18, same HEAD this table was drawn at) scored 22/24 directly against
+this table (its ledger notes cite "Audit clip 1" and "Audit clip 12", i.e. rows 1 and 12 above);
+row 1 (`protection_failure`) was initially flagged NO, then owner-verified CORRECT in-app and
+ruled a permanent control; row 12 (`225_night_scouts`) was genuinely WRONG and fixed same-day via
+R.13 (667.47 → 669.05, `verification: 'structural'`, no ear pass has scored 669.05 itself against
+this exact table). The other 22 rows passed YES on first listen and were not individually
+transcribed into this file at the time — this is why the table above sat blank for over a week
+despite Session K's own log recording the result; that gap is closed now, not evidence the pass
+never happened.
+
+**Live re-confirmation, 2026-08-27.** Five rows have moved since this table was drawn (Session
+T/Q, 2026-08-21, superseded the values below with A/B-verified corrections — see
+`docs/history-2.md#2026-08-27--operator-attested--ws1-r12-live-reconfirmation`) and were
+therefore stale relative to current `main` regardless of Session K's scoring. Owner re-verified
+all 24 boundaries against current `main` on this date; the five with a different live value are
+recorded here rather than silently overwritten above, preserving this table's own historical
+draw-time record intact:
+
+| # | tag | drawn value (HEAD `726112b`) | live value (current `main`, 2026-08-27) | owner |
+|---|---|---|---|---|
+| 12 | `225_night_scouts` | 667.47 (pre-R.13) | 669.06 (R.13; pinned register value 669.05, 10ms arm difference) | VERIFIED PERFECT |
+| 13 | `307_forty_nine_years` | 924.92 | 925.43 (R.12, Session T A/B value) | VERIFIED PERFECT |
+| 14 | `383_sixty_four` | 1188.95 | 1189.05 (R.12, Session T A/B reversal value) | VERIFIED PERFECT |
+| 23 | `085_the_spear_bearer` | 250.69 | 250.81 (not R.12-owned — Whisper's better-evidenced value) | VERIFIED PERFECT |
+| 24 | `224_thirty_three` | 663.785 | 664.33 (R.12, Session T A/B value) | VERIFIED PERFECT |
+
+The remaining 19 rows are unaffected by any rule change since the draw and were re-confirmed at
+their original drawn values.
 
 ---
 

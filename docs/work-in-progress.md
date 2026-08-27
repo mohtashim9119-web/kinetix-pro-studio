@@ -31,7 +31,7 @@ Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met.
 
 - Phase 1b–3d groundwork (dev instrumentation, Whisper/FA setup, DTW abandoned, 5 fr/es/de/pt normalization rules, compound-word audit, 3d skipped) — see `docs/history-2.md` (2026-08-05–2026-08-25)
 - Sessions A–AN — forced-alignment research arc (rules R.5/R.10–R.15, Zero-Defect Register triage), frozen under the accuracy-bar ruling below — see `sync-pipeline-v2-plan.md`
-- Mover-audit dossier — owner-scored 22/24, both failures fixed via R.13 (Session K, 2026-08-18) — `docs/history-2.md#session-i--r-am-ruled-mover-audit-dossier`
+- Mover-audit dossier — 24/24: Session K scored 22/24 (2026-08-18, 1 control cleared, 1 fixed via R.13), 5 stale rows live-reconfirmed 2026-08-27 — `docs/ws1-sync-pipeline/stage1-mover-audit.md`, `docs/history-2.md#2026-08-27--operator-attested--ws1-mover-audit-24-of-24-closed`
 - FA session-cache OOM fix — root-caused, fixed, guardrailed, real-app confirmed — `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix` (`6a1b939`, `c295cb3`)
 - `boundaryUsedFallback` 4-arg → 5-arg call-site fix, golden replay 6/6 unchanged (WS2 Step 11) — `docs/history-2.md#2026-08-26--ws2-step11-boundaryUsedFallback-fix`
 - Spanish-corpus acceptance lapse — owner ear-verified all 27 boundaries, 100% accurate, ruling recorded 2026-08-27 — `project-state.md` §5
@@ -60,7 +60,6 @@ FA default toggle (`FA_PROJECT_DEFAULT_ON`) is OFF pending the live acceptance r
   `main` (deliberately breaks golden replay — needs per-boundary review, never a blind re-baseline).
 - [ ] Task 3 — a dedicated test for stale-anchor scroll degradation (currently code-read only).
 - [ ] Wire `FaEvent` to a UI progress consumer (no hook/component consumes it yet).
-- [ ] Owner scoring of the 24-row mover audit dossier (`docs/ws1-sync-pipeline/stage1-mover-audit.md`).
 - [ ] Give the rule stage its own fixture-backed regression coverage — golden replay stops at
   `snapCoveredBoundaries` and never reaches chunk plan/FA/any rule (`CLAUDE.md` §4 Testing).
 

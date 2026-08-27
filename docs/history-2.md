@@ -99,6 +99,7 @@
 - [OPERATOR-ATTESTED — macOS CI-built artifact FA verified](#2026-08-26--operator-attested--ws2-macos-ci-artifact-fa-verified) — 2026-08-26
 - [OPERATOR-ATTESTED — macOS arm64 FA dlopen/inference verified](#2026-08-26--operator-attested--ws2-macos-arm64-fa-dlopen-inference-verified) — 2026-08-26
 - [OPERATOR-ATTESTED — WS1 R.12 live re-confirmation (085/224/307/383)](#2026-08-27--operator-attested--ws1-r12-live-reconfirmation) — 2026-08-27
+- [OPERATOR-ATTESTED — WS1 mover-audit dossier closed 24/24](#2026-08-27--operator-attested--ws1-mover-audit-24-of-24-closed) — 2026-08-27
 
 ---
 
@@ -1469,4 +1470,33 @@ the standing rule that fixture regeneration is a deliberate, separate action, ne
 existing pins, on a genuinely fresh live sync against current `main` — a determinism/regression
 check, not a new ear-verification of previously-unscored numbers. WS1 §3's checklist item removed
 as already-closed by Session T/Q; no code or fixture changed.
+Superseded-by: none
+
+### 2026-08-27 · operator-attested · ws1-mover-audit-24-of-24-closed
+**OPERATOR-ATTESTED, 2026-08-27.** `docs/ws1-sync-pipeline/stage1-mover-audit.md`'s 24-row blind
+mover-audit dossier (WS1 Session I, drawn 2026-08-18 at HEAD `726112b`) is closed 24/24. It was
+never actually unscored — its own blind table sat blank for over a week because Session K
+(2026-08-18, same HEAD) recorded its result in `scripts/ws1-ear-pass-ledger.ts`'s `mover-audit-k`
+sitting and this file's own entry above instead of writing the verdicts back into the table
+itself. Session K's own log said "scored 22/24 mover-audit rows; the 2 failures root-caused and
+fixed" — three separate places nonetheless kept calling the dossier "still unscored" after that
+date without cross-checking Session K's record: this file's own Docs Cleanup Round 2 note above
+(2026-08-25), `project-state.md` §4's Next Action item 1, and a comment in
+`scripts/ws1-single-tracker.test.ts` (that file's comment is pre-Session-K, 2026-08-15, and
+merely never updated — not touched here, source file, out of scope for a docs session).
+
+The table itself is now filled in: `docs/ws1-sync-pipeline/stage1-mover-audit.md`'s §1 records
+YES for all 24 rows and Score 24/24, with a **Scoring provenance** note explaining the two-sitting
+history above, and a **Live re-confirmation, 2026-08-27** note/table for the 5 rows (12, 13, 14,
+23, 24) whose committed value moved after the dossier was drawn (Session T/Q, 2026-08-21 — see
+`#2026-08-27--operator-attested--ws1-r12-live-reconfirmation` above for 4 of them) — the owner
+re-verified all 24 boundaries against current `main` on this date, all VERIFIED PERFECT, and the
+5 moved rows' live values are recorded alongside the original drawn values rather than
+overwriting them, preserving the table's own historical provenance.
+
+**Net effect on Stage 1 lock:** this closes the mover-audit-dossier criterion named in WS1 §3's
+END GOAL. `work-in-progress.md` WS1 §3's separate "Owner scoring of the 24-row mover audit
+dossier" checklist line is removed as already covered by this closure (it had drifted out of
+sync with the actual WS1 §1 "Mover-audit dossier" pointer, which already claimed 22/24 done — this
+entry reconciles both to the same 24/24 fact). No code or fixture changed.
 Superseded-by: none
