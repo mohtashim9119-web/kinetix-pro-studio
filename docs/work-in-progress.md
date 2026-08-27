@@ -141,8 +141,9 @@ Started: 2026-08-26 (Step 3) | Status: all 4 numbered bugs closed (1/2/4 code-fi
 runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code fix). Two
 sync-pipeline defects surfaced by WS2 Step 15's Windows operator log (non-ASCII matching,
 cut-placement quality) were relocated to WS1 §5 — see that section. macOS CI-artifact/arm64 FA
-platform verification is closed (OPERATOR-ATTESTED, 2026-08-26); MSVC redistributable and the
-autosave-quota bug remain open.
+platform verification is closed (OPERATOR-ATTESTED, 2026-08-26); MSVC redistributable is
+code-fixed pending a clean-machine operator run (WS2 Step 17 Part 1); the autosave-quota bug
+remains open.
 
 ### 1. Finished tasks
 
@@ -158,7 +159,11 @@ autosave-quota bug remain open.
 
 ### 2. Finished but pending verification
 
-(none)
+- MSVC Visual C++ Redistributable — WS2 Step 17 Part 1: app-local deployment of the 4 measured
+  CRT DLLs, CI provisioning + build guard + named-dependency Sync Log error, docs. Remaining step:
+  the operator checklist in `docs/ws2-fa-models/ort-provisioning.md` on a genuinely clean Windows
+  machine (never installed Visual Studio or the redistributable) — not run this session, no
+  Windows hardware available. `docs/ws2-fa-models/ort-provisioning.md`
 
 ### 3. In progress
 
@@ -175,10 +180,6 @@ the two open bugs and two deferred items below.)
 
 ### 5. Open bugs
 
-* [OPEN] MSVC Visual C++ Redistributable — `onnxruntime.dll` on Windows needs it present on the
-  end-user machine; not bundled and not yet chain-installed by the installer. Unresolved even
-  though Step 15 confirmed FA runs on the (already-provisioned) test machine.
-  `docs/ws2-fa-models/ort-provisioning.md`
 * [OPEN] Autosave quota failure is invisible — `saveProject()` (`src/services/projectStore.ts:152`)
   returns a typed `SaveOutcome` including `quota-exceeded`, but every call site discards it and
   `usePersistProject.ts` stamps `lastSavedAt` regardless of outcome, so a failed write is

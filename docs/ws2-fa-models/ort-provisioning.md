@@ -70,42 +70,131 @@ INPUT dylibs (Microsoft's own signed release artifacts) are what's actually
 integrity-checked; the lipo step only checks the output's *structure*
 (`lipo -info` reports both architectures).
 
-## Windows: MSVC redistributable prerequisite (OPERATOR-ATTESTED, not verified)
+## Windows: MSVC redistributable prerequisite (WS2 Step 17 Part 1 — CI-VERIFIED provisioning, runtime NOT DETERMINED)
 
-Microsoft's prebuilt `onnxruntime.dll` for Windows is built with MSVC and
-dynamically links against the Visual C++ runtime (`vcruntime140.dll`,
-`msvcp140.dll`, etc.) — these are **not** included in the release zip and
-are **not** guaranteed present on a fresh Windows 10/11 install. This is
-stated from onnxruntime's own published Windows system requirements, not
-independently confirmed by running the DLL on a machine without the
-redistributable installed (no Windows hardware available this session).
+**MEASURED this session** (`pefile` against the real, hash-verified
+`onnxruntime-win-x64-1.23.2` release — `.work-phase4/session-ws2-17/`):
 
-This is not a new risk this phase introduces in isolation: `build.yml`
-already builds `whisper-cli.exe` with MSVC for the exact same Windows target
-(`Provision whisper sidecar (Windows)` step), and that binary very likely
-carries the identical prerequisite — whether it has ever actually failed on
-an end-user machine without the redistributable is **NOT DETERMINED**; this
-repo's history contains no report either way.
+| Binary | Non-OS-provided imports |
+|---|---|
+| `onnxruntime.dll` | `VCRUNTIME140.dll`, `VCRUNTIME140_1.dll`, `MSVCP140.dll`, `MSVCP140_1.dll` |
+| `onnxruntime_providers_shared.dll` | `VCRUNTIME140.dll` |
 
-**What this means concretely:** a fresh Windows install that has never
-installed anything requiring the VC++ runtime may fail to load
-`onnxruntime.dll` (and possibly `whisper-cli.exe`) even after this phase's
-provisioning is otherwise correct. Closing this gap needs one of:
+(Both also import `api-ms-win-crt-*.dll` — Universal CRT, part of Windows
+10+ itself since 1607 — and OS-provided `KERNEL32`/`ADVAPI32`/`SETUPAPI`/
+`dbghelp`/`dxgi`; those need no action.) `whisper-cli.exe`, `ffmpeg.exe`,
+`ffprobe.exe`, and the app's own `.exe` were **NOT DETERMINED** — no Windows
+build of any of them was available to inspect this session (all are produced
+by Windows-hosted CI steps or a Windows-only toolchain). `ffmpeg.exe`/
+`ffprobe.exe` are gyan.dev "essentials" builds, documented as GCC/MinGW-w64
+and typically not MSVC-CRT-dependent, but this is unverified against the
+actual shipped binary. `whisper-cli.exe` is built by our own CI via CMake
+with MSVC and no `CMAKE_MSVC_RUNTIME_LIBRARY` override, so it defaults to
+`/MD` (dynamic CRT) — plausibly the same dependency, not measured. The app's
+own Rust `.exe` targets `x86_64-pc-windows-msvc` without `crt-static`, which
+also defaults to dynamic CRT linkage per Rust's own platform docs — also
+plausible, not measured.
 
-1. Bundle/chain-install the redistributable from the installer (a custom
-   NSIS `!include` step running `vc_redist.x64.exe /quiet /norestart`, or
-   the WiX MSI's `Bundle` chaining support) — the standard fix for this
-   class of problem, not yet implemented.
-2. Statically link the CRT into a custom onnxruntime build instead of using
-   Microsoft's prebuilt DLL — a much larger undertaking (build onnxruntime
-   from source with `/MT`), not attempted this session.
-3. Ship as-is and treat "install the VC++ redistributable" as an
-   end-user/support instruction — the same posture (implicitly) already
-   taken for `whisper-cli.exe`.
+**Resolved (WS2 Step 17 Part 1): Option A, app-local deployment.**
+`build.yml`'s `Provision MSVC C++ runtime DLLs app-local (Windows x86_64,
+WS2 Step 17 Part 1)` step downloads the official `vc_redist.x64.exe` (pinned
+URL + sha256 `cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b`,
+the literal resolved target of `https://aka.ms/vs/17/release/vc_redist.x64.exe`,
+MEASURED — the hash is embedded in the download's own CDN path and was
+confirmed against the actual downloaded bytes), installs it on the disposable
+CI runner (`/install /quiet /norestart`), and copies the 4 files above out of
+`System32` into `src-tauri/onnxruntime/` — the same folder `onnxruntime.dll`
+already ships from, which `tauri.conf.json`'s existing `"onnxruntime/*":
+"onnxruntime/"` resource glob bundles with **no `tauri.conf.json` change
+needed**. Windows resolves a loaded DLL's own dependent-DLL imports starting
+from that DLL's own directory (standard search order — this is the whole
+mechanism app-local CRT deployment relies on), so co-locating the 4 files
+with `onnxruntime.dll` is sufficient; they do not need to sit next to the
+main `.exe`.
 
-No option was implemented this session — this is the concrete blocker
-recorded as still open for Windows FA, separate from and in addition to the
-DLL provisioning itself (which IS complete and checksum-verified).
+**Why Option A over Option B (NSIS chain-install):** (1) no elevation/UAC
+prompt or reboot, vs. Option B's `vc_redist.x64.exe` install requiring
+admin rights; (2) ~1.5 MB delta vs. Option B's ~25 MB bundled payload or a
+network dependency at install time; (3) Microsoft's own docs explicitly
+sanction this exact deployment: learn.microsoft.com/en-us/cpp/windows/
+redistributing-visual-cpp-files, "Install individual redistributable files"
+— *"It's also possible to directly install the Redistributable DLLs in the
+application local folder... For servicing reasons, we don't recommend that
+you use this installation location"* (fetched and quoted verbatim this
+session) — sanctioned with a known, accepted tradeoff (no automatic security
+updates to these 4 files; a future OS-level VC++ CVE would need a new app
+release, not a background OS update).
+
+**License term cited:** learn.microsoft.com/en-us/visualstudio/releases/2022/
+redistribution, "Distributable Code Files for Visual Studio 2022" →
+"Visual C++ Runtime Files": *"Subject to the License Terms for the software,
+you may copy and distribute with your program any of the files within the
+following folder and its subfolders... [VisualStudioFolder]\VC\redist"* —
+the same file tree `vc_redist.x64.exe` installs from contains
+`vcruntime140.dll`, `vcruntime140_1.dll`, `msvcp140.dll`, `msvcp140_1.dll`
+as Distributable Code under the VS2022 Microsoft Software License Terms.
+Fetched and quoted verbatim this session (not copied from a summary).
+
+**Build guard (Part 1.4):** `Guard against missing app-local MSVC runtime
+DLLs` (`build.yml`, Windows leg) fails the build if any of the 4 CRT files
+or the 2 onnxruntime files are absent from `src-tauri/onnxruntime/` before
+`tauri:build` runs — PowerShell `Test-Path` enumeration, no bash-3.2
+globstar risk (the 5adbbf4 precedent). CI-VERIFIED status: NOT YET RUN (no
+CI execution this session — the workflow is `workflow_dispatch`-only and was
+not triggered, per this session's "do not trigger the installer workflow"
+constraint). Locally confirmed only: the YAML parses (`python3 -c "import
+yaml..."`), the step is correctly ordered before `Build Tauri app`, and the
+guard's `Test-Path` logic mirrors the already-CI-proven "stray dev models"
+guard pattern in the same file.
+
+**Runtime failure diagnosis (Part 1.6):** `src-tauri/src/fa_onnx.rs`'s
+`augment_ort_load_error` (`fa_onnx.rs:433`, added this session;
+`probe_ort_runtime` at `fa_onnx.rs:460` and `load_session` at
+`fa_onnx.rs:484` both route through it) appends the 4 file names and a
+redistributable download link to
+any `ort::init_from` failure on Windows — a raw Windows `LoadLibrary`
+failure (error 126, "the specified module could not be found") does not
+name which dependency is missing, so before this change a missing CRT file
+and a corrupted bundle were indistinguishable in the Sync Log. This is the
+diagnostic that would have caught bug 2's 117-cut regression (Step 15) on
+day one instead of requiring a real Windows operator log to root-cause.
+
+**Installer size:** NOT DETERMINED — no Windows hardware to run
+`tauri:build` and measure a real installer this session. Expected delta is
+~1.5 MB (4 files, each 100 KB–1.2 MB per typical VC++ 14.x redistributable
+DLL sizes) added to whatever `src-tauri/onnxruntime/` already contributes;
+this must be measured against a real CI-built artifact before the claim can
+move past NOT DETERMINED.
+
+### Operator checklist: verifying on a genuinely clean Windows machine
+
+**Cannot be run this session — no Windows hardware available.** This is the
+verification WS2 Step 17 Part 1 could not itself perform; run it verbatim on
+a Windows 10/11 VM or PC that has **never** had Visual Studio, the VC++
+Redistributable, or any other software bundling `vcruntime140.dll`/
+`msvcp140.dll` installed (a fresh VM image, not a dev machine — a dev
+machine almost certainly already has the redistributable from some other
+install, which is exactly what silently masked this bug through Step 15).
+
+1. Confirm the machine is clean: open PowerShell, run
+   `Test-Path "$env:SystemRoot\System32\vcruntime140.dll"` — expect `False`.
+   If `True`, this machine is not a valid test and another must be found.
+2. Download and run the built installer (`.msi` or NSIS `.exe`, from a CI
+   artifact of the `windows-latest` / `x86_64-pc-windows-msvc` matrix leg).
+   Complete installation normally.
+3. Launch the app. Open a project (or create one) and start Apply Sync with
+   a language whose FA model is installed.
+4. Open the Sync Log. Expect a line reading **"FA pre-flight: ready"** (or
+   equivalent per current UI wording) — NOT a fallback-to-Whisper message,
+   and NOT a raw `os error 126` with no named cause (if this still appears,
+   Part 1.6's error augmentation did not reach this build — report as a
+   regression, not as "expected until verified").
+5. Confirm the sync actually used forced-alignment timing, not Whisper
+   fallback — check the Sync Log for FA-specific entries (chunk plan,
+   ONNX session, or equivalent) rather than inferring from output quality
+   alone (timestamps alone don't reliably distinguish the two paths).
+6. Report pass/fail plainly. A pass here is what moves this bug from
+   Finished-but-pending-verification to Finished — nothing else does.
 
 ## CI build status (WS2 Step 14, 2026-08-27)
 
@@ -118,11 +207,19 @@ either DLL/dylib loads or that FA runs correctly at runtime; no Windows or
 Apple Silicon hardware has run the built artifact. See
 `docs/history-2.md#2026-08-27--correction--ws2-ci-installer-artifacts-now-exist`.
 
-## What Phase 4 did NOT verify
+## What Phase 4 / Step 17 Part 1 did NOT verify
 
-- The Windows DLLs loading at all (build succeeds in CI; no report of running
-  the built artifact on Windows hardware exists in this repo — WS2 Step 14's
-  Q1/Q2 came back blank/NOT DETERMINED rather than confirming one).
+- The Windows DLLs loading on a genuinely clean machine (never installed the
+  VC++ redistributable) — WS2 Step 15 confirmed FA runs on the test
+  machine, but that machine was already provisioned; the operator checklist
+  above is the remaining, not-yet-run step for Part 1's app-local fix.
+- The `Provision MSVC C++ runtime DLLs app-local` and its guard step have
+  never executed in CI (the workflow is `workflow_dispatch`-only, not
+  triggered this session) — YAML-valid and correctly ordered, confirmed
+  locally; CI-VERIFIED status pending an actual run.
+- `whisper-cli.exe`, `ffmpeg.exe`/`ffprobe.exe`, and the app's own `.exe`'s
+  MSVC-CRT dependency — no Windows binary available to inspect (see the
+  per-binary table above).
 - The arm64 macOS slice loading or running real inference (no Apple Silicon
   hardware).
 - A real forced-alignment run on either target — only the pre-existing
