@@ -46,12 +46,16 @@ Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met.
 Phase 3 (Task 5), past 3b/3c (closed) and 3d (skipped, dormant). Chunking/accuracy research is
 frozen under the 2026-08-25 accuracy-bar ruling (~97–98% of boundaries correct on first sync,
 ≥95% accepted; remaining errors go through manual UI review, not further pipeline changes).
-FA default toggle (`FA_PROJECT_DEFAULT_ON`) is OFF pending the live acceptance run below;
-0 of 4 stage locks passed.
+FA default toggle (`FA_PROJECT_DEFAULT_ON`) is explicitly NOT closed — this is a gated ruling,
+never a one-line toggle. Three preconditions, none satisfied: (1) two further disjoint 12/12
+blind ear-pass verdicts (fresh listening lists, not reusing any list already scored); (2) an
+EMPTY Zero-Defect Register (currently 5 open rows, WS1 §5's first bullet); (3) a runtime ruling
+on the FA-enabled Apply Sync wall-clock cost, separately accepted for a change that would run on
+every sync rather than an opt-in one. 0 of 4 stage locks passed.
 
 - [ ] Execute the live acceptance run and get an owner pass/fail verdict
   (`stage1-live-run-prep.md`).
-- [ ] Flip `FA_PROJECT_DEFAULT_ON` once the live run passes.
+- [ ] Flip `FA_PROJECT_DEFAULT_ON` once all three preconditions above are met.
 - [ ] Ratify R.7 confidence-flag handling; build its two unbuilt failure paths (skip-and-flag,
   force-split).
 - [ ] Produce real `fa-vocab-<lang>.json` production files; wire `project.language`/`vocabChars`
@@ -114,7 +118,13 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
   en-language CTC vocab (measured 33 symbols) may lack glyphs for í/ñ/é; numeral-to-word expansion
   for "1198"/"300". No fix attempted. `docs/history-2.md`'s Step 15 entries. Rationale: a
   sync-pipeline matching defect, not a distribution defect — relocated from WS2 §5, provenance
-  preserved (surfaced by the WS2 Step 15 Windows operator log, 03:57:28 run).
+  preserved (surfaced by the WS2 Step 15 Windows operator log, 03:57:28 run). **Third occurrence,
+  WS2 Step 18 (2026-08-27):** segment 8 ("The complexity originates in 1198") failed identically
+  a third time (4 of 7, 57%) on an unrelated 33-segment operator project — now reproducible on a
+  small project, cheap to debug. Contains no diacritics, so this run corroborates only the
+  numeral-expansion hypothesis (now best-supported of the three), leaving NFC/NFD and CTC-vocab
+  glyph coverage still UNVERIFIED against the Llívia/Peñón cases. Still no fix attempted. Detail:
+  `docs/history-2.md#2026-08-27--ws2-step-18--ws1-nonascii-segment8-third-occurrence`.
 * [OPEN · NON-BLOCKING] Cut-placement quality — 9 of 228 cuts land on live audio in the WS2 Step
   15 Windows AFTER run (~96.1%, vs. the ~97-98% bar): segment pairs 53/54, 68/69, 101/102,
   109/110, 123/124, 138/139, 195/196, 202/203, 218/219. At macOS parity (10) — a pre-existing
@@ -139,9 +149,8 @@ Started: 2026-08-26 (Step 3) | Status: all 4 numbered bugs closed (1/2/4 code-fi
 runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code fix). Two
 sync-pipeline defects surfaced by WS2 Step 15's Windows operator log (non-ASCII matching,
 cut-placement quality) were relocated to WS1 §5 — see that section. macOS CI-artifact/arm64 FA
-platform verification is closed (OPERATOR-ATTESTED, 2026-08-26); MSVC redistributable is
-code-fixed pending a clean-machine operator run (WS2 Step 17 Part 1); the autosave-quota bug
-remains open.
+platform verification and MSVC redistributable are both closed (OPERATOR-ATTESTED); the
+autosave-quota bug remains open.
 
 ### 1. Finished tasks
 
@@ -154,14 +163,11 @@ remains open.
 - WS2 Step 13 Phase 4 — cross-platform ORT provisioning, table-driven + checksum-verified — `docs/history-2.md#2026-08-27--fix--5adbbf4-ci-macos-globstar-fix` (`4f31d38`, `5adbbf4`)
 - WS2 Step 15 — Windows operator-log closures (voiceover fetch, error-serialization, bug 2 FA-desktop CI-verified, bug 4 acquisition end-to-end, token-filtering resolved) + MEASURED-FROM-OPERATOR-LOG before/after (117→9 cuts) — `docs/history-2.md#2026-08-27--ws2-step-15--ws2-step15-windows-operator-log-before-after`
 - macOS platform FA verification, OPERATOR-ATTESTED 2026-08-26: CI-built `universal-apple-darwin` artifact runs FA, and onnxruntime dlopen/inference confirmed on real Apple Silicon hardware — `docs/history-2.md#2026-08-26--operator-attested--ws2-macos-ci-artifact-fa-verified`, `docs/history-2.md#2026-08-26--operator-attested--ws2-macos-arm64-fa-dlopen-inference-verified`
+- WS2 Step 18 — MSVC C++ runtime app-local deployment CLOSED, OPERATOR-ATTESTED on a Windows machine reporting a recent fresh install; CI-VERIFIED that the provisioning+guard steps run and pass — `docs/history-2.md#2026-08-27--ws2-step-18--ws2-step18-msvc-crt-closed` (`6b22231`, `e1103ac`)
 
 ### 2. Finished but pending verification
 
-- MSVC Visual C++ Redistributable — WS2 Step 17 Part 1: app-local deployment of the 4 measured
-  CRT DLLs, CI provisioning + build guard + named-dependency Sync Log error, docs. Remaining step:
-  the operator checklist in `docs/ws2-fa-models/ort-provisioning.md` on a genuinely clean Windows
-  machine (never installed Visual Studio or the redistributable) — not run this session, no
-  Windows hardware available. `docs/ws2-fa-models/ort-provisioning.md`
+(none)
 
 ### 3. In progress
 

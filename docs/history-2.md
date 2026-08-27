@@ -1500,3 +1500,114 @@ dossier" checklist line is removed as already covered by this closure (it had dr
 sync with the actual WS1 §1 "Mover-audit dossier" pointer, which already claimed 22/24 done — this
 entry reconciles both to the same 24/24 fact). No code or fixture changed.
 Superseded-by: none
+
+### 2026-08-27 · WS2 Step 18 · ws2-step18-msvc-crt-closed
+**OPERATOR-ATTESTED closure.** The MSVC C++ runtime bug (WS2 Step 17 Part 1, commits `6b22231`/
+`e1103ac`) moves from Finished-but-pending-verification to Finished.
+
+**What was built (Step 17 recap, for a self-contained closure record):** MEASURED per-binary
+import list (`pefile` against the real, hash-verified `onnxruntime-win-x64-1.23.2` release,
+`docs/ws2-fa-models/ort-provisioning.md`) — `onnxruntime.dll` needs `VCRUNTIME140.dll`,
+`VCRUNTIME140_1.dll`, `MSVCP140.dll`, `MSVCP140_1.dll`; `onnxruntime_providers_shared.dll` needs
+`VCRUNTIME140.dll`. Option A (app-local deployment) shipped over Option B (NSIS chain-install):
+`build.yml`'s Windows leg downloads the official `vc_redist.x64.exe` (pinned URL, sha256
+`cc0ff0eb1dc3f5188ae6300faef32bf5beeba4bdd6e8e445a9184072096b713b`), installs it on the disposable
+CI runner, and copies the 4 resulting `System32` files into `src-tauri/onnxruntime/` alongside
+`onnxruntime.dll` — sanctioned by Microsoft's own docs ("Install individual redistributable
+files": *"It's also possible to directly install the Redistributable DLLs in the application
+local folder"*) and licensed as Distributable Code under the VS2022 Microsoft Software License
+Terms ("Visual C++ Runtime Files": *"you may copy and distribute with your program any of the
+files within the following folder and its subfolders... [VisualStudioFolder]\VC\redist"*), both
+fetched and quoted verbatim in `docs/ws2-fa-models/ort-provisioning.md`. Build guard: "Guard
+against missing app-local MSVC runtime DLLs" fails the build if any of the 4 CRT files or 2
+onnxruntime files are absent from `src-tauri/onnxruntime/` before `tauri:build` runs. Diagnostic:
+`src-tauri/src/fa_onnx.rs:433`'s `augment_ort_load_error` names the missing dependency on a
+Windows `ort::init_from` load failure instead of surfacing a raw, ambiguous `os error 126`.
+
+**Closing evidence (OPERATOR-ATTESTED, this session).** Installer built by "Build desktop
+installers" from commit `6b22231`, installed and run on a Windows machine the operator reports
+had recently had a fresh Windows installation. Grade note: "recently had a fresh Windows
+installation" is a strong attestation, not a provable never-had-Visual-Studio machine — this is
+the evidence ceiling for this class of check, not inflated to MEASURED and not discounted. Sync
+Log: `[17:50:09] FA PRE-FLIGHT: ready — runtime loaded and model present for "en"` and
+`[17:50:09] Timing engine: forced alignment (312 aligned word(s))` — FA loaded and produced
+timing, not a fallback to Whisper (the failure mode Step 15's 117-cut regression exhibited before
+this fix). This project is a different, smaller project (33 segments) than the 229-segment
+corpus WS2 Step 15 closed against — it does not re-verify Step 15's findings, only this fix's own
+runtime behavior on a clean-ish machine. Satisfies `docs/ws2-fa-models/ort-provisioning.md`'s
+"Operator checklist" steps 3-6 in substance (FA pre-flight ready, sync used FA timing, pass
+reported); step 1's explicit `Test-Path` clean-machine confirmation was not separately run or
+reported by name.
+
+**Three NOT DETERMINED items this run retires (from `ort-provisioning.md`'s "What Phase 4/Step 17
+Part 1 did NOT verify"):**
+- **CI execution of the provisioning + guard steps: CI-VERIFIED.** Run `33068050720`
+  (https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/33068050720), headSha
+  `e1103ac` (a descendant commit carrying `6b22231`'s full diff, confirmed via `git log`),
+  conclusion `success`. Job step list (`gh api .../jobs`, this session): both "Provision MSVC C++
+  runtime DLLs app-local (Windows x86_64, WS2 Step 17 Part 1)" and "Guard against missing
+  app-local MSVC runtime DLLs (Windows, WS2 Step 17 Part 1.4)" show `conclusion: success`.
+- **`whisper-cli.exe` CRT dependency: RESOLVED BY OBSERVATION (OPERATOR-ATTESTED).** The operator
+  log's 33/33-segment match with real transcript tokens requires `whisper-cli.exe` to have loaded
+  and executed successfully on this machine — it loaded.
+- **`ffmpeg.exe` / `ffprobe.exe`: `ffmpeg.exe` exercised (code + operator log); `ffprobe.exe` is
+  not a real open question.** `src-tauri/src/whisper.rs:216`'s `transcode_to_wav` runs
+  unconditionally before `whisper-cli` ever sees a file (`whisper.rs:293`'s "Universal
+  pre-transcode" call site) — every successful Whisper transcription on this machine, including
+  this run's 33/33-segment match, therefore required `ffmpeg.exe` to load and exit 0 first.
+  CORRECTION to `ort-provisioning.md`'s per-binary table: this codebase ships no separate
+  `ffprobe` binary at all — `src-tauri/tauri.conf.json:39`'s `externalBin` lists only
+  `binaries/ffmpeg`/`binaries/whisper`, `src-tauri/binaries/` contains no ffprobe file, and
+  `src-tauri/src/ffmpeg.rs:539`'s own comment states it directly: "the bundled build ships ffmpeg
+  only (no separate ffprobe binary)" — duration probing reuses the `ffmpeg` sidecar
+  (`ffmpeg_probe_duration_secs`). `ort-provisioning.md`'s NOT DETERMINED line naming `ffprobe.exe`
+  as an open question is a documentation error, not a real gap — there is nothing to determine.
+
+**Installer size delta: MEASURED (CI build-artifact zip, not confirmed as the isolated installer
+file alone).** Comparing the last pre-MSVC Windows CI artifact (run `33017398678`, headSha
+`5adbbf4`, `kinetix-windows-x64` 84,262,143 bytes) against the first post-MSVC run (`33068050720`,
+headSha `e1103ac`, 84,815,772 bytes): **+553,629 bytes (~540.7 KiB / ~0.53 MB).** Sanity check:
+the same two runs' `kinetix-macos-universal` artifact moved only 14 bytes (82,297,900 →
+82,297,886), consistent with the change being Windows-only and the delta above being
+attributable to it rather than noise. Kept labeled as an artifact-zip delta, not upgraded to
+"installer size," because no Windows hardware separated the `.msi`/NSIS `.exe` from the rest of
+the CI artifact's contents this session.
+
+Superseded-by: none
+
+### 2026-08-27 · WS2 Step 18 · ws1-nonascii-segment8-third-occurrence
+**Corroborating evidence, WS1 §5's open non-ASCII/numeral-matching bug — no fix attempted.**
+Segment 8, "The complexity originates in 1198," matched 4 of 7 words (57%) in this session's
+33-segment operator run — the third time this exact segment has failed, now including a
+33-segment project structurally unrelated to the 229-segment corpus the first two failures came
+from (WS2 Step 15's before/after Windows runs). Practical consequence: the bug is now
+reproducible on a small (33-segment) project, which is materially cheaper to debug than the
+229-segment corpus it was previously confined to.
+
+Of the bug's three standing hypotheses (Unicode NFC/NFD normalization mismatch; en-language CTC
+vocab glyph coverage for í/ñ/é; numeral-to-word expansion), this run speaks only to the third:
+segment 8 contains a bare numeral ("1198") and no diacritics, so it cannot corroborate or refute
+the NFC/NFD or CTC-vocab hypotheses (those remain evidenced only by the Llívia/Peñón segments,
+still UNVERIFIED). Numeral-expansion is now the best-supported of the three hypotheses on
+available evidence — three independent failures, all numeral-bearing, none diacritic-bearing —
+but this is a corroboration count, not a diagnosis; no fix attempted, no code touched.
+
+**Token-filtering figure, recorded alongside the existing platform-comparison figures.** This
+run's Sync Log: `[17:47:03] TOKENS Filtered 47 of 411 tokens (42 empty text, 5 zero/inverted)` —
+47/411 = 11.4%, Whisper path. Alongside the existing measurements (Windows 303/2855 = 10.6%,
+macOS 310/2823 = 11.0%, both Whisper path, `#2026-08-27--ws2-step-15--ws2-step15-token-filtering-resolved`
+above), this is a third data point in the same 10-11% band, further confirming token filtering is
+a Whisper-path property, not platform-specific. **Mechanism remains NOT DETERMINED** — same
+standing caveat as the prior entry: the numeric contrast alone does not establish why, and none
+is asserted. Per this session's handling rules for this log: no arithmetic relationship between
+411, 47, and this run's separately-reported 312-aligned-word FA figure is derived or implied —
+they do not reconcile (411 − 47 = 364 ≠ 312) and the provenance of the 17:47 TOKENS line relative
+to the 17:50 sync-completion line is unresolved; both figures are recorded as stated, nothing
+more.
+
+No "cuts landed on audio that's still playing" line appears anywhere in this run's Sync Log —
+recorded as an observation (zero such cuts on this specific 33-segment project), not as evidence
+the separate cut-placement-quality bug (WS1 §5) is fixed; a 33-segment project is not a test of a
+defect rate measured in parts-per-228 on a much larger corpus.
+
+Superseded-by: none
