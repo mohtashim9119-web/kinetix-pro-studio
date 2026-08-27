@@ -2,6 +2,7 @@ import type { Asset, Project, ProjectMeta, VideoSegment } from '../types';
 import { writeMirroredProject, deleteMirroredProject, readMirror } from './projectMirror';
 import { osStoreRead, osStoreWrite, osStoreDelete } from './projectStoreClient';
 import { isTauri } from './tauriFfmpeg';
+import { backfillSegmentIds } from './segmentId';
 
 /** Registry key — stores ProjectMeta[] (newest-first sorted on write). */
 const REGISTRY_KEY = 'kinetix:projects:v1';
@@ -32,7 +33,7 @@ interface StoredAsset extends Omit<Asset, 'url' | 'file'> {
 }
 
 interface StoredProjectData {
-  version: 2;
+  version: 2 | 3;
   savedAt: number;
   project: Omit<Project, 'assets'> & { assets: StoredAsset[] };
 }
@@ -214,7 +215,10 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
 
   const savedAt = Date.now();
   const storedData: StoredProjectData = {
-    version: 2,
+    // WS2 T1.2 — bumped from 2 to 3: segments now carry a stable
+    // content-derived id (segmentId.ts) instead of a per-save random UUID.
+    // No structural migration needed on load — see backfillSegmentIds below.
+    version: 3,
     savedAt,
     project: { ...project, assets: project.assets.map(stripAsset) },
   };
@@ -359,6 +363,12 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
     } = s as VideoSegment & { playbackSpeed?: number; sourceDuration?: number };
     return rest;
   });
+
+  // WS2 T1.2 — backfill stable content-derived ids for any segment loaded
+  // with a missing or pre-T1.2 (random-UUID) id. Idempotent: a segment
+  // already carrying a current-version id is left untouched, so re-loading
+  // an already-backfilled project is a no-op here.
+  project.segments = backfillSegmentIds(project.segments);
 
   // A previously-poisoned id that now loads cleanly is un-poisoned.
   loadFailures.delete(id);

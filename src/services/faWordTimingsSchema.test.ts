@@ -117,6 +117,17 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+/**
+ * WS2 T1.2 — `load173Segments()`'s `seg-${i}` ids are a legacy (pre-T1.2)
+ * shape, so `loadProject` intentionally backfills them to stable
+ * content-derived ids (segmentId.ts) — a deliberate migration, not a retime,
+ * and covered separately by projectStoreSegmentId.test.ts. Strip `id` before
+ * asserting the rest of a segment round-trips byte-for-byte.
+ */
+function stripIds(segments: VideoSegment[]): Omit<VideoSegment, 'id'>[] {
+  return segments.map(({ id: _id, ...rest }) => rest);
+}
+
 describe('Project.faWordTimings — real-scale schema round trip (WS1 Task 5 Slice D18)', () => {
   it('the committed 173-corpus FA fixture is at the scale this slice targets (~1,616 entries)', () => {
     const faWordTimings = load173RealFaWordTimings();
@@ -151,7 +162,7 @@ describe('Project.faWordTimings — real-scale schema round trip (WS1 Task 5 Sli
     // Every OTHER field is unperturbed by this field's presence — the schema
     // addition doesn't silently reshape the rest of the persisted project.
     expect(loaded!.project.segments.length).toBe(project.segments.length);
-    expect(loaded!.project.segments).toEqual(project.segments);
+    expect(stripIds(loaded!.project.segments)).toEqual(stripIds(project.segments));
     expect(loaded!.project.name).toBe(project.name);
     expect(loaded!.project.globalOverlayConfig).toEqual(project.globalOverlayConfig);
   });
@@ -168,6 +179,6 @@ describe('Project.faWordTimings — real-scale schema round trip (WS1 Task 5 Sli
     await saveProject(withoutField as Project);
     const loaded = await loadProject(withoutField.id);
     expect(loaded!.project.faWordTimings).toBeUndefined();
-    expect(loaded!.project.segments).toEqual(withoutField.segments);
+    expect(stripIds(loaded!.project.segments)).toEqual(stripIds(withoutField.segments));
   });
 });

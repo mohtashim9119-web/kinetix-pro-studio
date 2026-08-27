@@ -178,6 +178,7 @@ import type { WaveformSource } from './services/waveformPeaks';
 import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform, peekWaveform } from './services/waveformStore';
 import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadingOnBoundary, DEFAULT_HEADING_DURATION } from './services/headingLayer';
 import { stripRtfIfNeeded } from './services/textUtils';
+import { assignSegmentIds, type SegmentIdSource } from './services/segmentId';
 import {
   putAsset,
   deleteAsset,
@@ -398,6 +399,7 @@ export const parseProjectData = async (
   sceneDetails: string,
   assets: Asset[],
   voiceoverDuration: number = 0,
+  previousSegments?: readonly SegmentIdSource[],
 ): Promise<VideoSegment[]> => {
   // Split on the start of each bracketed tag so blank lines between a tag and its
   // description text stay within the same block (not treated as a scene boundary).
@@ -593,7 +595,9 @@ export const parseProjectData = async (
     // stale length behind (see Asset.duration's doc).
     const segment: VideoSegment = {
       ...s,
-      id: crypto.randomUUID(),
+      // Overwritten below by assignSegmentIds (WS2 T1.2) — a placeholder here
+      // only satisfies VideoSegment's required `id: string` field mid-loop.
+      id: '',
       startTime: Number(currentTimeAccumulator.toFixed(3)),
       duration: Number(targetDuration.toFixed(3)),
       anchorStart: Number(currentTimeAccumulator.toFixed(3)), // character-weight bootstrap anchor
@@ -613,6 +617,14 @@ export const parseProjectData = async (
     finalSegments.push(segment);
     currentTimeAccumulator += segment.duration;
   }
+
+  // WS2 T1.2 — stable content-derived ids, assigned once per whole array so
+  // duplicate-text disambiguation sees full document order. Joins against
+  // previousSegments (the project's segments before this Apply Sync run) so
+  // an unedited segment's id survives the resync; a segment with no content
+  // match (new or edited text) gets a fresh content-derived id.
+  const idAssigned = assignSegmentIds(finalSegments, previousSegments);
+  idAssigned.forEach((seg, i) => { finalSegments[i] = seg; });
 
   // Detect segments sharing the same assetId — can happen when the
   // unused-asset pool is exhausted after a deletion and re-sync.
@@ -2878,7 +2890,7 @@ export default function App() {
 
     // 5. Parse project data with the fresh, complete data
     syncMark('assets+duration:done');
-    const newSegmentsRaw = await parseProjectData(scriptText, sceneText, allAssets, audioDuration);
+    const newSegmentsRaw = await parseProjectData(scriptText, sceneText, allAssets, audioDuration, previousSegments);
     syncMark('parseProjectData:done');
 
     // WS1b — empty scene-doc hard abort (doc §3.4/§3.11, S15). Always aborts

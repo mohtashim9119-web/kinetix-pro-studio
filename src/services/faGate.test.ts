@@ -294,7 +294,13 @@ describe('G1 proof — loading a pre-change project neither retimes nor acquires
     const before = JSON.parse(preChangeProjectJson()).project.segments;
     const loaded = await loadProject('pre-change-1');
     expect(loaded).not.toBeNull();
-    expect(loaded!.project.segments).toEqual(before);
+    // WS2 T1.2 — legacy `s1`/`s2`/`s3` ids are intentionally backfilled to
+    // stable content-derived ids on load (segmentId.ts); that's a separate,
+    // deliberate migration covered by projectStoreSegmentId.test.ts, not a
+    // retime, so it's excluded here — every OTHER field must still match
+    // byte-for-byte, which is G1's actual claim.
+    const stripId = (s: VideoSegment) => { const { id: _id, ...rest } = s; return rest; };
+    expect(loaded!.project.segments.map(stripId)).toEqual(before.map(stripId));
     // Spelled out, because this is the claim G1 actually makes: every
     // startTime and duration survives the load unchanged.
     expect(loaded!.project.segments.map(s => [s.startTime, s.duration]))
