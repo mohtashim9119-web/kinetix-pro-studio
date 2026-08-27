@@ -98,6 +98,7 @@
 - [Correction — FA acquisition + ORT gate superseded](#2026-08-27--correction--ws2-fa-acquisition-and-ort-gate-superseded) — 2026-08-27
 - [OPERATOR-ATTESTED — macOS CI-built artifact FA verified](#2026-08-26--operator-attested--ws2-macos-ci-artifact-fa-verified) — 2026-08-26
 - [OPERATOR-ATTESTED — macOS arm64 FA dlopen/inference verified](#2026-08-26--operator-attested--ws2-macos-arm64-fa-dlopen-inference-verified) — 2026-08-26
+- [OPERATOR-ATTESTED — WS1 R.12 live re-confirmation (085/224/307/383)](#2026-08-27--operator-attested--ws1-r12-live-reconfirmation) — 2026-08-27
 
 ---
 
@@ -1444,4 +1445,28 @@ executes correctly on it — closing the gap tracked in `docs/ws2-fa-models/ort-
 ("the macOS universal dylib is built and lipo'd but has never executed on real Apple Silicon
 hardware"). No artifact in this repository reproduces this run; graded OPERATOR-ATTESTED, never
 MEASURED or CI-VERIFIED. Specific hardware model was not recorded by the operator.
+Superseded-by: none
+
+### 2026-08-27 · operator-attested · ws1-r12-live-reconfirmation
+**OPERATOR-ATTESTED, 2026-08-27.** Owner ran a live Apply Sync with forced alignment enabled on
+current `main` (v6 corpus) and ear-verified all four boundaries WS1 §3 had listed as "provisional
+R.12 closures" (085, 224, 307, 383), scoring all four VERIFIED PERFECT: `085_the_spear_bearer`
+250.81, `224_thirty_three` 664.33, `307_forty_nine_years` 925.43, `383_sixty_four` 1189.05.
+**This is a re-confirmation, not new ground truth — the WIP checklist item's own framing was
+stale.** Three of the four were already independently ear-verified via a Session T (2026-08-21)
+side-by-side A/B pass and are locked into a production regression pin
+(`scripts/ws1-session-q-production-pins.test.ts:106-109`, `pinEarVerified` at exactly 664.33 /
+925.43 / 1189.05); 383's value in particular is the *reversal* value from that A/B pass (Session T
+overturned a prior SOLO verdict of 1188.95 in favor of 1189.05 — CLAUDE.md's own standing
+"side-by-side overturns solo" invariant). **085 is not R.12-owned at all** — confirmed by
+`scripts/ws1-ear-pass-ledger.ts:434-436` ("`085_the_spear_bearer` already commits outside the
+run, so R.12 does not fire") and `scripts/phase4-fa-replay.test.ts:1289-1299`'s register entry:
+R.12's own FA-derived value (252.74, later fixture-pinned 250.69) is wrong, Whisper independently
+commits 250.81 "correctly outside the run," and that file's own caveat already flagged 250.81 as
+"the BETTER-evidenced value, not a regression" pending fixture regeneration — not done here, per
+the standing rule that fixture regeneration is a deliberate, separate action, never hand-patched.
+**What this session confirms, freshly:** all four values still hold, byte-identical to the
+existing pins, on a genuinely fresh live sync against current `main` — a determinism/regression
+check, not a new ear-verification of previously-unscored numbers. WS1 §3's checklist item removed
+as already-closed by Session T/Q; no code or fixture changed.
 Superseded-by: none

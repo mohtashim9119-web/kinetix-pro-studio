@@ -35,6 +35,7 @@ Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met.
 - FA session-cache OOM fix — root-caused, fixed, guardrailed, real-app confirmed — `docs/history-2.md#2026-08-25--6a1b939--6a1b939-fa-session-cache-oom-fix` (`6a1b939`, `c295cb3`)
 - `boundaryUsedFallback` 4-arg → 5-arg call-site fix, golden replay 6/6 unchanged (WS2 Step 11) — `docs/history-2.md#2026-08-26--ws2-step11-boundaryUsedFallback-fix`
 - Spanish-corpus acceptance lapse — owner ear-verified all 27 boundaries, 100% accurate, ruling recorded 2026-08-27 — `project-state.md` §5
+- R.12 boundaries 224/307/383 + 085 re-confirmed on live current `main`, 2026-08-27 (already A/B-verified/production-pinned since Session T; 085 confirmed not R.12-owned) — `docs/history-2.md#2026-08-27--operator-attested--ws1-r12-live-reconfirmation`
 
 ### 2. Finished but pending verification
 
@@ -51,8 +52,6 @@ FA default toggle (`FA_PROJECT_DEFAULT_ON`) is OFF pending the live acceptance r
 - [ ] Execute the live acceptance run and get an owner pass/fail verdict
   (`stage1-live-run-prep.md`).
 - [ ] Flip `FA_PROJECT_DEFAULT_ON` once the live run passes.
-- [ ] Ear-verify the 4 provisional R.12 closures (v6 boundaries 085, 224, 307, 383) — move from
-  structurally-correct to ear-verified.
 - [ ] Ratify R.7 confidence-flag handling; build its two unbuilt failure paths (skip-and-flag,
   force-split).
 - [ ] Produce real `fa-vocab-<lang>.json` production files; wire `project.language`/`vocabChars`
