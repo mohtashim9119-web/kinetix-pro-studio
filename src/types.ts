@@ -468,6 +468,19 @@ export interface Project {
    *  at MAX_LOG_ENTRIES (services/syncConstants.ts); older entries are pruned
    *  from the front. Undefined on projects saved before WS-logs — treat as []. */
   syncLog?: SyncLogEntry[];
+  /** WS2 T2.2 (minimal override store) — dropped-scene ids the user has
+   *  explicitly restored (`'keep'`) via the T2.1 restore UI. Clean-slate
+   *  re-sync (§4 invariant) never carries a segment's own timing forward,
+   *  but a segment id here IS re-applied after every Apply Sync run: if that
+   *  same content is dropped again, `restoreSegmentsByGapId`
+   *  (absorbedGapRestore.ts) re-materializes it from the run's own freshly
+   *  computed `absorbedGaps`, so a restore survives a re-sync instead of
+   *  needing to be redone by hand every time. Removing an entry (e.g.
+   *  deleting the restored segment again, Commit 4) lets the next re-sync
+   *  drop it like any other unrestored gap. Keyed by the dropped scene's own
+   *  stable content-derived id (segmentId.ts) — NOT by the hosting
+   *  segment's id, which can change across a re-sync. */
+  segmentOverrides?: Record<string, 'keep'>;
   /** WS-logs — per-run rollups, same append/prune discipline, capped at
    *  MAX_SYNC_RUN_SUMMARIES. Undefined on pre-WS-logs projects — treat as []. */
   syncRunSummaries?: SyncRunSummary[];
@@ -767,6 +780,14 @@ export interface SyncLogEntry {
    *  segment. Lets a future override/restore UI act on the entry directly
    *  without re-deriving an index. */
   segmentId?: string;
+  /** WS2 T2.1 Commit 3 — skip entries only, when the drop is restorable: the
+   *  DROPPED scene's own stable content-derived id (distinct from
+   *  `segmentId` above, which on a skip entry names the absorbing
+   *  neighbour). This is the id `restoreSegmentsByGapId`
+   *  (absorbedGapRestore.ts) and `Project.segmentOverrides` key on — a UI
+   *  restore control reads this field, never `segmentId`, to know what to
+   *  restore. */
+  restoreGapId?: string;
 }
 
 /** One violation's worth of detail inside a grouped `SyncLogEntry` — a

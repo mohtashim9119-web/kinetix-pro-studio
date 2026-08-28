@@ -21,6 +21,10 @@ interface Props {
    *  gap). Optional so a caller with no seek wiring can omit it; the
    *  deep-link control below simply doesn't render without it. */
   onSeekToSegment?: (segmentId: string) => void;
+  /** WS2 T2.1 Commit 3 — restores one or more dropped scenes named by their
+   *  own `restoreGapId`s. Optional; the per-entry restore checkbox and the
+   *  "Restore selected" bar below simply don't render without it. */
+  onRestoreSegments?: (gapSegmentIds: string[]) => void;
 }
 
 /** True when an fa-preflight/fa-fallback entry's own detail names a missing
@@ -209,7 +213,7 @@ export function formatEntryText(entry: SyncLogEntry): string {
   return lines.join('\n');
 }
 
-export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToSegment }: Props): React.ReactElement {
+export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToSegment, onRestoreSegments }: Props): React.ReactElement {
   // Collapsed by default only when there's nothing to show — an empty section
   // shouldn't occupy the panel, but a run that just skipped scenes should be
   // visible without a click. `null` = the user hasn't expressed a preference,
@@ -228,6 +232,19 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToS
     setExpandedIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  // WS2 T2.1 Commit 3 — multi-select for "Restore selected", keyed by each
+  // entry's own `restoreGapId` (the dropped scene's stable id), not by the
+  // SyncLogEntry's own id — two entries never share a restoreGapId, so this
+  // doubles as a simple id set with no extra indirection.
+  const [selectedGapIds, setSelectedGapIds] = useState<Set<string>>(new Set());
+  const toggleGapSelected = (gapId: string): void => {
+    setSelectedGapIds(prev => {
+      const next = new Set(prev);
+      if (next.has(gapId)) next.delete(gapId); else next.add(gapId);
       return next;
     });
   };
@@ -300,6 +317,31 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToS
         )}
       </div>
 
+      {!collapsed && onRestoreSegments && selectedGapIds.size > 0 && (
+        <div className="mx-3 mb-2 flex items-center justify-between gap-2 bg-[#1A1A1A] rounded-lg px-2 py-1.5">
+          <span className="text-[9px] text-gray-400">{selectedGapIds.size} selected</span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedGapIds(new Set())}
+              className="text-[9px] text-gray-500 hover:text-gray-300"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onRestoreSegments(Array.from(selectedGapIds));
+                setSelectedGapIds(new Set());
+              }}
+              className="text-[9px] font-semibold text-white bg-[#F27D26] hover:bg-[#E06A15] rounded px-2 py-0.5"
+            >
+              Restore selected
+            </button>
+          </div>
+        </div>
+      )}
+
       {!collapsed && (
         <div className="px-3 pb-2 space-y-1 max-h-64 overflow-y-auto custom-scrollbar">
           {entries.length === 0 ? (
@@ -363,15 +405,28 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToS
                           {matchLine}
                         </p>
                       )}
-                      {entry.segmentId && onSeekToSegment && (
-                        <button
-                          type="button"
-                          onClick={() => onSeekToSegment(entry.segmentId!)}
-                          className="text-[9px] text-[#F27D26] hover:text-[#E06A15] mt-0.5 pl-1.5 leading-snug underline underline-offset-2"
-                        >
-                          Jump to absorbing scene
-                        </button>
-                      )}
+                      <div className="flex items-center gap-3 mt-0.5 pl-1.5">
+                        {entry.segmentId && onSeekToSegment && (
+                          <button
+                            type="button"
+                            onClick={() => onSeekToSegment(entry.segmentId!)}
+                            className="text-[9px] text-[#F27D26] hover:text-[#E06A15] leading-snug underline underline-offset-2"
+                          >
+                            Jump to absorbing scene
+                          </button>
+                        )}
+                        {entry.restoreGapId && onRestoreSegments && (
+                          <label className="flex items-center gap-1 text-[9px] text-gray-400 leading-snug cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={selectedGapIds.has(entry.restoreGapId)}
+                              onChange={() => toggleGapSelected(entry.restoreGapId!)}
+                              className="h-2.5 w-2.5"
+                            />
+                            Select to restore
+                          </label>
+                        )}
+                      </div>
                     </>
                   ) : isGrouped ? (
                     <>

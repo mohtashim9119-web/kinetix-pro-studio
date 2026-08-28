@@ -130,6 +130,14 @@ import {
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { computeAbsorbedGaps, applyAbsorbedGaps } from './services/absorbedGaps';
+import { restoreSegmentsByGapId } from './services/absorbedGapRestore';
+
+/** WS2 T2.1/T2.2 — fps used ONLY for the restore sub-frame merge check when
+ *  re-hydrating a user's past restores during Apply Sync (a re-sync has no
+ *  meaningful "current export fps" of its own to read); the interactive
+ *  restore UI uses the session's real `exportFps` instead. A conservative,
+ *  common default — not derived from any project setting. */
+const GAP_RESTORE_REHYDRATION_FPS = 24;
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
 import {
@@ -1206,6 +1214,9 @@ export interface AbsorbedGapLogInfo {
   hostDisplayIndex: number;
   span: { start: number; end: number };
   gapAudio: 'silent' | 'speech' | 'unknown';
+  /** The DROPPED scene's own stable id — what a restore control acts on
+   *  (`SyncLogEntry.restoreGapId`), distinct from `hostSegmentId` above. */
+  droppedSegmentId: string;
 }
 
 /**
@@ -1250,6 +1261,7 @@ export function buildSkipLogEntries(
         confidence: record.confidence,
         longestRun: record.longestRun,
         segmentId: absorbed?.hostSegmentId,
+        restoreGapId: absorbed?.droppedSegmentId,
       },
       timestamp,
     );
@@ -3243,6 +3255,7 @@ export default function App() {
           if (skipRecord) {
             absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
               hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
+              droppedSegmentId: gap.segmentId,
             });
           }
         }
@@ -3344,6 +3357,24 @@ export default function App() {
       // retile) ran, and regardless of anything upstream having reordered
       // `kept` (it hasn't — this is defense-in-depth, not a known reorder).
       finalTimedSegments = applyAbsorbedGaps(finalTimedSegments, absorbedGapsByHostId);
+
+      // WS2 T2.2 (minimal override store) — clean-slate re-sync (§4
+      // invariant) never carries a segment's own timing forward, but a
+      // segment the user previously restored (`Project.segmentOverrides`)
+      // IS re-applied here if this run dropped it again, so a restore
+      // survives a re-sync instead of needing to be redone by hand every
+      // time. Uses a fixed fps for the sub-frame merge check rather than the
+      // session's export-fps UI state — this runs deep inside the sync
+      // commit path, which does not (and should not) depend on that
+      // unrelated setting.
+      const keepOverrideIds = new Set(
+        Object.entries(projectRef.current.segmentOverrides ?? {})
+          .filter(([, action]) => action === 'keep')
+          .map(([segId]) => segId),
+      );
+      if (keepOverrideIds.size > 0) {
+        finalTimedSegments = restoreSegmentsByGapId(finalTimedSegments, keepOverrideIds, GAP_RESTORE_REHYDRATION_FPS);
+      }
 
       // WS1 R.11 (faSeamFitGate.ts) — CHUNK-FIT BOUNDARY CORRECTION. Runs
       // ONLY when FA actually produced the tokens (mirrors R.10's own
@@ -4267,6 +4298,34 @@ export default function App() {
   const handleClearSyncLog = useCallback(() => {
     setProject(prev => clearSyncLog(prev));
   }, []);
+
+  // WS2 T2.1 Commit 3 — restores one or more dropped scenes (named by their
+  // own stable id, `SyncLogEntry.restoreGapId`) back onto the timeline, and
+  // records each as `'keep'` in `Project.segmentOverrides` (T2.2) so a
+  // future re-sync that drops the same content again re-restores it
+  // automatically instead of silently reverting the user's choice. Goes
+  // through `setProject` (never `setProjectSilent`), so this is undoable
+  // like any other timeline edit.
+  const handleRestoreAbsorbedSegments = useCallback((gapSegmentIds: string[]): void => {
+    if (gapSegmentIds.length === 0) return;
+    setProject(prev => {
+      const ids = new Set(gapSegmentIds);
+      const segments = restoreSegmentsByGapId(prev.segments, ids, exportFps);
+      const segmentOverrides = { ...(prev.segmentOverrides ?? {}) };
+      for (const id of ids) segmentOverrides[id] = 'keep';
+      return { ...prev, segments, segmentOverrides };
+    });
+  }, [exportFps]);
+
+  // WS2 T2.1 Commit 3 — Timeline's right-click "Restore absorbed segments"
+  // menu item restores EVERY cluster hosted on one clip in one action (the
+  // sync-log panel's checkbox multi-select above is what a selective, one-
+  // cluster-at-a-time restore goes through).
+  const handleRestoreAllGapsOnSegment = useCallback((hostSegmentId: string): void => {
+    const host = projectRef.current.segments.find(s => s.id === hostSegmentId);
+    const gapIds = host?.absorbedGaps?.map(g => g.segmentId) ?? [];
+    handleRestoreAbsorbedSegments(gapIds);
+  }, [handleRestoreAbsorbedSegments]);
 
   // Shared delete handler — used by DropZonePanel post-sync assets list
   const handleDeleteAsset = useCallback((assetId: string) => {
@@ -5421,6 +5480,7 @@ export default function App() {
                 resizingType={resizingType}
                 voiceoverName={voiceover?.name}
                 waveformSource={waveformSource}
+                onRestoreAbsorbedGaps={handleRestoreAllGapsOnSegment}
                 onTogglePlay={togglePlay}
                 onSeek={(time) => {
                   setCurrentTime(time);
@@ -5547,6 +5607,7 @@ export default function App() {
               onClearLog={handleClearSyncLog}
               onOpenModelsModal={() => setShowManageModelsModal(true)}
               onSeekToSegment={handleSegmentClick}
+              onRestoreSegments={handleRestoreAbsorbedSegments}
             />
           </div>
 

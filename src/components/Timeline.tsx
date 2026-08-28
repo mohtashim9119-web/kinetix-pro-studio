@@ -82,6 +82,10 @@ interface Props {
   onSelectSegment?: (id: string) => void;
   onHeadingResizeCommit?: (id: string, next: { time: number; duration: number }) => void;
   initialScrollLeft?: number;
+  /** WS2 T2.1 Commit 3 — restores every absorbed-gap cluster hosted on the
+   *  named segment. Optional; the right-click "Restore absorbed segments"
+   *  menu item simply doesn't render without it. */
+  onRestoreAbsorbedGaps?: (segmentId: string) => void;
 }
 
 export function Timeline({
@@ -108,8 +112,25 @@ export function Timeline({
   onSelectSegment,
   onHeadingResizeCommit,
   initialScrollLeft,
+  onRestoreAbsorbedGaps,
 }: Props) {
   const totalDuration = useMemo(() => computeTotalDuration(segments), [segments]);
+
+  // WS2 T2.1 Commit 3 — right-click context menu, restore-only for now. Not
+  // a general-purpose reusable menu component: scoped to this one action,
+  // dismissed on outside click or Escape.
+  const [gapContextMenu, setGapContextMenu] = useState<{ segmentId: string; gapCount: number; x: number; y: number } | null>(null);
+  useEffect(() => {
+    if (!gapContextMenu) return;
+    const close = (): void => setGapContextMenu(null);
+    const closeOnEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape') close(); };
+    window.addEventListener('click', close);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('click', close);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [gapContextMenu]);
 
   const [containerWidth, setContainerWidth] = useState(0);
 
@@ -642,6 +663,12 @@ export function Timeline({
                       if (resizingId) return;
                       onSeek(s.startTime);
                     }}
+                    onContextMenu={(e) => {
+                      if (!s.absorbedGaps || s.absorbedGaps.length === 0 || !onRestoreAbsorbedGaps) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setGapContextMenu({ segmentId: s.id, gapCount: s.absorbedGaps.length, x: e.clientX, y: e.clientY });
+                    }}
                     style={{
                       position: 'absolute',
                       left: `${segLayout.left}px`,
@@ -850,6 +877,25 @@ export function Timeline({
           </div>
         )}
       </div>
+
+      {gapContextMenu && (
+        <div
+          style={{ position: 'fixed', left: gapContextMenu.x, top: gapContextMenu.y, zIndex: 200 }}
+          className="bg-[#151515] border border-[#2A2A2A] rounded-lg shadow-xl py-1 min-w-[220px]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            onClick={() => {
+              onRestoreAbsorbedGaps?.(gapContextMenu.segmentId);
+              setGapContextMenu(null);
+            }}
+            className="w-full text-left px-3 py-1.5 text-[11px] text-gray-200 hover:bg-[#F27D26]/15 hover:text-[#F27D26]"
+          >
+            Restore absorbed segments ({gapContextMenu.gapCount})
+          </button>
+        </div>
+      )}
     </div>
   );
 }

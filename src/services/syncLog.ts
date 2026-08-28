@@ -49,7 +49,7 @@ export function makeSyncLogEntry(
     SyncLogEntry,
     'segmentIndex' | 'segmentText' | 'reason' | 'segmentTag' | 'matchedWords' | 'totalWords' | 'confidence'
     | 'longestRun' | 'errorMessage' | 'skippedTokenCount' | 'totalTokenCount' | 'severity' | 'fixHint'
-    | 'groupedItems' | 'owningRule' | 'ruleDetail' | 'segmentId'
+    | 'groupedItems' | 'owningRule' | 'ruleDetail' | 'segmentId' | 'restoreGapId'
   >,
   timestamp: number = Date.now(),
 ): SyncLogEntry {
