@@ -44,6 +44,44 @@
 
 export const SEGMENT_ID_NORM_VERSION = 'segv1';
 
+// ---------------------------------------------------------------------------
+// Slice ids (WS2 T2.1, gap-absorption restore/split).
+//
+// A restored or split segment is not a fresh content-derived segment — it is
+// a portion of one, carved out of a parent segment's span (an absorbing
+// neighbour being split back apart, or a user-initiated timeline split). Its
+// identity must survive a re-sync exactly like any other segment id, but it
+// must NOT be computed from `computeContentKey` (that would collide with — or
+// be indistinguishable from — a fresh segment that happens to have the same
+// text) and it must NOT be treated as "missing/legacy" by `backfillSegmentIds`
+// (which would blow away the slice relationship on the very next load).
+//
+// A slice id is therefore its own frozen, independently-versioned shape:
+// `SLICE_ID_PREFIX` + the parent's id + a separator + a 0-based ordinal among
+// its siblings. It carries no content hash — the parent id plus ordinal is
+// already a stable, collision-free join key for as long as the parent id
+// itself doesn't change. `isCurrentVersionSegmentId` accepts both shapes so a
+// slice id is never mistaken for a legacy/foreign id and rewritten out from
+// under it; `SEGMENT_ID_NORM_V1`'s own content-hash path is untouched.
+// ---------------------------------------------------------------------------
+
+export const SLICE_ID_PREFIX = 'slice1_';
+
+/** Separator between the parent id and the ordinal. Chosen to not collide
+ *  with any character `computeContentKey`/UUID ids produce, so a slice id is
+ *  unambiguously splittable back into (parentId, ordinal) if ever needed. */
+const SLICE_ID_SEPARATOR = '::';
+
+/** Builds a frozen, deterministic id for the `ordinal`-th slice of `parentId`. */
+export function makeSliceSegmentId(parentId: string, ordinal: number): string {
+  return `${SLICE_ID_PREFIX}${parentId}${SLICE_ID_SEPARATOR}${ordinal}`;
+}
+
+/** True when `id` was produced by `makeSliceSegmentId` (any parent/ordinal). */
+export function isSliceSegmentId(id: string): boolean {
+  return id.startsWith(SLICE_ID_PREFIX);
+}
+
 /**
  * Frozen normalization for id derivation ONLY. Deliberately simpler and
  * independent from `textNormalize.ts`'s alignment-tuned pipeline (contraction
@@ -140,9 +178,12 @@ export function assignSegmentIds<T extends SegmentIdInput>(
   });
 }
 
-/** True when `id` was produced (or backfilled) by this module's current version. */
+/** True when `id` was produced (or backfilled) by this module's current
+ *  content-hash version, OR is a slice id (`makeSliceSegmentId`) — both are
+ *  "current, do not touch" shapes for `backfillSegmentIds` purposes; only a
+ *  missing/legacy (e.g. pre-T1.2 `crypto.randomUUID()`) id fails this check. */
 export function isCurrentVersionSegmentId(id: string): boolean {
-  return id.startsWith(`${SEGMENT_ID_NORM_VERSION}_`);
+  return id.startsWith(`${SEGMENT_ID_NORM_VERSION}_`) || isSliceSegmentId(id);
 }
 
 /**

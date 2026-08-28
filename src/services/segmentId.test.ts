@@ -11,6 +11,8 @@ import {
   assignSegmentIds,
   isCurrentVersionSegmentId,
   backfillSegmentIds,
+  makeSliceSegmentId,
+  isSliceSegmentId,
 } from './segmentId';
 
 describe('normalizeForSegmentId', () => {
@@ -166,5 +168,41 @@ describe('backfillSegmentIds', () => {
     expect(backfilled[0]!.id).toBe(alreadyGoodForFirst);
     expect(backfilled[1]!.id).toBe(computeContentKey('Repeat me.', 1));
     expect(backfilled[0]!.id).not.toBe(backfilled[1]!.id);
+  });
+});
+
+describe('slice segment ids (WS2 T2.1)', () => {
+  it('makeSliceSegmentId is recognized by isSliceSegmentId and isCurrentVersionSegmentId', () => {
+    const parentId = computeContentKey('A restored gap neighbour.', 0);
+    const sliceId = makeSliceSegmentId(parentId, 1);
+    expect(isSliceSegmentId(sliceId)).toBe(true);
+    expect(isCurrentVersionSegmentId(sliceId)).toBe(true);
+  });
+
+  it('does not mistake a plain content-key id for a slice id', () => {
+    const contentId = computeContentKey('Not a slice.', 0);
+    expect(isSliceSegmentId(contentId)).toBe(false);
+  });
+
+  it('does not mistake a legacy/foreign id for a slice id', () => {
+    expect(isSliceSegmentId('123e4567-e89b-12d3-a456-426614174000')).toBe(false);
+    expect(isSliceSegmentId('')).toBe(false);
+  });
+
+  it('a project containing slice ids survives two consecutive load cycles with ids unchanged', () => {
+    const parentId = computeContentKey('Absorbing neighbour text.', 0);
+    const segments = [
+      { id: parentId, text: 'Absorbing neighbour text.' },
+      { id: makeSliceSegmentId(parentId, 0), text: 'Restored slice one.' },
+      { id: makeSliceSegmentId(parentId, 1), text: 'Restored slice two.' },
+    ];
+
+    // Simulates two consecutive `loadProjectDetailed` calls, each of which
+    // runs `backfillSegmentIds` on the stored project unconditionally.
+    const firstLoad = backfillSegmentIds(segments);
+    const secondLoad = backfillSegmentIds(firstLoad);
+
+    expect(firstLoad.map(s => s.id)).toEqual(segments.map(s => s.id));
+    expect(secondLoad.map(s => s.id)).toEqual(segments.map(s => s.id));
   });
 });
