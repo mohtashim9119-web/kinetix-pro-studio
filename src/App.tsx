@@ -2373,6 +2373,21 @@ export default function App() {
   const currentTimeRef = useRef(currentTime);
   currentTimeRef.current = currentTime;
 
+  // WS2 session ws2-23 (bug 4) — S/D were gated on `selectedSegmentId` ALONE,
+  // documented as "a click on a clip is what sets selectedSegmentId". That is
+  // not true of Timeline.tsx: a clip's `onClick` only seeks; `onSelectSegment`
+  // fires on DOUBLE-click. So the natural gesture (click a clip, press S)
+  // never armed either key — verified live, 173 corpus, S/D no-ops after a
+  // single click. The playhead segment is the fallback target: clicking a clip
+  // seeks to its start, which makes it `currentSegment` and paints it with the
+  // existing orange active-clip border, so the affordance is already visible
+  // and needs no new state or chrome. Selection still wins when present, so
+  // nothing about the previous behaviour changes — this only adds a target
+  // where there was none.
+  const playheadSegmentIdRef = useRef<string | null>(null);
+  const resolveShortcutTargetSegmentId = (): string | null =>
+    selectedSegmentIdRef.current ?? playheadSegmentIdRef.current;
+
   // App-level shortcuts (reload / devtools, 2026-08-08). Same ref pattern and
   // the same reason: the keydown effect below keeps its empty dep array.
   const isExportingRef = useRef(false);
@@ -4344,7 +4359,7 @@ export default function App() {
   // why a merged restore slot (a slice id) is deliberately NOT included and
   // stays covered by the ordinary last-remaining-slice rule instead.
   const handleSplitSelectedSegment = useCallback((): void => {
-    const id = selectedSegmentIdRef.current;
+    const id = resolveShortcutTargetSegmentId();
     if (!id) return;
     setProject(prev => {
       const index = prev.segments.findIndex(s => s.id === id);
@@ -4355,7 +4370,7 @@ export default function App() {
   }, []);
 
   const handleDeleteSelectedSegment = useCallback((): void => {
-    const id = selectedSegmentIdRef.current;
+    const id = resolveShortcutTargetSegmentId();
     if (!id) return;
     let didDelete = false;
     setProject(prev => {
@@ -4541,6 +4556,10 @@ export default function App() {
     return seg;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTime, project.segments, resizeSettleTick]);
+
+  // WS2 ws2-23 (bug 4) — kept in step every render, for the S/D fallback
+  // target above; the keydown effect's dep array is deliberately empty.
+  playheadSegmentIdRef.current = currentSegment?.id ?? null;
 
   // LIVE AUTO-FOLLOW — while playback is running and the segment drawer is
   // already open, the drawer retargets to whichever segment the playhead is in,
@@ -4895,19 +4914,21 @@ export default function App() {
           previewStageRef.current?.toggleFullscreen();
         }
       } else if (
-        // WS2 T2.1 Commit 4 — S/D require a selected segment (the "timeline
-        // focus" precondition: a click on a clip is what sets
-        // selectedSegmentId, so this reads as "the user is interacting with
-        // the timeline" without new DOM focus plumbing) and are refused, same
-        // as every other bare-key shortcut here, while a text field has focus.
+        // WS2 T2.1 Commit 4, corrected in ws2-23 — S/D require a TARGET
+        // segment: the explicitly selected one, else the one under the
+        // playhead (`resolveShortcutTargetSegmentId`). The original gate read
+        // `selectedSegmentId` alone on the belief that clicking a clip sets
+        // it; Timeline.tsx only sets it on DOUBLE-click, which made both keys
+        // dead on the natural gesture. Refused, same as every other bare-key
+        // shortcut here, while a text field has focus.
         (e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey && !e.altKey
-        && !isTextEntryElement(document.activeElement) && selectedSegmentIdRef.current
+        && !isTextEntryElement(document.activeElement) && resolveShortcutTargetSegmentId()
       ) {
         e.preventDefault();
         handleSplitSelectedSegment();
       } else if (
         (e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey && !e.altKey
-        && !isTextEntryElement(document.activeElement) && selectedSegmentIdRef.current
+        && !isTextEntryElement(document.activeElement) && resolveShortcutTargetSegmentId()
       ) {
         e.preventDefault();
         handleDeleteSelectedSegment();
@@ -5519,8 +5540,17 @@ export default function App() {
             }}
           />
 
-          {/* Timeline — fills remaining height */}
-          <div className="flex-1 min-h-0 pb-2">
+          {/* Timeline — fills remaining height.
+              WS2 ws2-23 (bug 5): `relative z-[45]` puts the timeline ABOVE the
+              drawer's click-outside-to-dismiss backdrop (z-40, below) and
+              below the drawer itself (z-50). Without it, `elementFromPoint` at
+              a clip's centre returned the backdrop whenever the drawer was
+              open — verified live — so the clip's own `onContextMenu` (the
+              "Restore absorbed segments" menu) and every other clip pointer
+              handler were unreachable in exactly the state a user is in after
+              opening a scene. Clicking a clip now retargets the drawer instead
+              of dismissing it; clicking the PREVIEW area still dismisses. */}
+          <div className="relative z-[45] flex-1 min-h-0 pb-2">
             <ErrorBoundary fallback={(err, reset) => (
               <PanelFallback label="Timeline" error={err} reset={reset} />
             )}>
@@ -5574,6 +5604,19 @@ export default function App() {
                 onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
                 onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
                 onSelectSegment={(id) => setSelectedSegmentId(id)}
+                // WS2 ws2-23 (bugs 4/6) — a single click RETARGETS an already-
+                // open scene drawer and never opens a closed one, exactly the
+                // rule LIVE AUTO-FOLLOW above already uses for playback. Before
+                // the z-[45] fix a clip was unclickable while the drawer was
+                // open, so this case could not arise; now that it can, a stale
+                // drawer selection would otherwise keep overriding the clip the
+                // user is actually pointing at for S/D
+                // (`resolveShortcutTargetSegmentId` prefers selection) — that
+                // is what made D look broken on a freshly restored segment.
+                // `selectedSegmentId === null` also covers "the heading editor
+                // is open" (the two ids are mutually exclusive), so a heading
+                // being edited is never yanked away by a timeline click.
+                onClipClick={(id) => setSelectedSegmentId(prev => (prev === null ? null : id))}
                 onHeadingResizeCommit={(id, next) => {
                   setProject(prev => ({
                     ...prev,
