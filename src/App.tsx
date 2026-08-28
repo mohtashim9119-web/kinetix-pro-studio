@@ -131,6 +131,7 @@ import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './service
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { computeAbsorbedGaps, applyAbsorbedGaps } from './services/absorbedGaps';
 import { restoreSegmentsByGapId } from './services/absorbedGapRestore';
+import { splitSegmentAtTime, deleteSegment } from './services/segmentSplitDelete';
 
 /** WS2 T2.1/T2.2 — fps used ONLY for the restore sub-frame merge check when
  *  re-hydrating a user's past restores during Apply Sync (a re-sync has no
@@ -2363,6 +2364,15 @@ export default function App() {
   handleUndoRef.current = handleUndo;
   handleRedoRef.current = handleRedo;
 
+  // WS2 T2.1 Commit 4 — S/D (split/delete) read the CURRENTLY selected
+  // segment and playhead time through refs for the same reason as
+  // handleUndoRef/handleRedoRef above: the global keydown effect's dep array
+  // is deliberately empty.
+  const selectedSegmentIdRef = useRef(selectedSegmentId);
+  selectedSegmentIdRef.current = selectedSegmentId;
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
+
   // App-level shortcuts (reload / devtools, 2026-08-08). Same ref pattern and
   // the same reason: the keydown effect below keeps its empty dep array.
   const isExportingRef = useRef(false);
@@ -4327,6 +4337,39 @@ export default function App() {
     handleRestoreAbsorbedSegments(gapIds);
   }, [handleRestoreAbsorbedSegments]);
 
+  // WS2 T2.1 Commit 4 — S (split the selected segment at the playhead) and
+  // D (delete a split slice or restored segment). Both go through
+  // setProject (undoable). `restoredIds` for the delete guard is every key
+  // of `Project.segmentOverrides` — see segmentSplitDelete.ts's header for
+  // why a merged restore slot (a slice id) is deliberately NOT included and
+  // stays covered by the ordinary last-remaining-slice rule instead.
+  const handleSplitSelectedSegment = useCallback((): void => {
+    const id = selectedSegmentIdRef.current;
+    if (!id) return;
+    setProject(prev => {
+      const index = prev.segments.findIndex(s => s.id === id);
+      if (index < 0) return prev;
+      const { segments, split } = splitSegmentAtTime(prev.segments, index, currentTimeRef.current);
+      return split ? { ...prev, segments } : prev;
+    });
+  }, []);
+
+  const handleDeleteSelectedSegment = useCallback((): void => {
+    const id = selectedSegmentIdRef.current;
+    if (!id) return;
+    let didDelete = false;
+    setProject(prev => {
+      const index = prev.segments.findIndex(s => s.id === id);
+      if (index < 0) return prev;
+      const restoredIds = new Set(Object.keys(prev.segmentOverrides ?? {}));
+      const { segments, deleted } = deleteSegment(prev.segments, index, restoredIds);
+      if (!deleted) return prev;
+      didDelete = true;
+      return { ...prev, segments };
+    });
+    if (didDelete) setSelectedSegmentId(null);
+  }, []);
+
   // Shared delete handler — used by DropZonePanel post-sync assets list
   const handleDeleteAsset = useCallback((assetId: string) => {
     setProject(prev => {
@@ -4851,6 +4894,23 @@ export default function App() {
           e.preventDefault();
           previewStageRef.current?.toggleFullscreen();
         }
+      } else if (
+        // WS2 T2.1 Commit 4 — S/D require a selected segment (the "timeline
+        // focus" precondition: a click on a clip is what sets
+        // selectedSegmentId, so this reads as "the user is interacting with
+        // the timeline" without new DOM focus plumbing) and are refused, same
+        // as every other bare-key shortcut here, while a text field has focus.
+        (e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !isTextEntryElement(document.activeElement) && selectedSegmentIdRef.current
+      ) {
+        e.preventDefault();
+        handleSplitSelectedSegment();
+      } else if (
+        (e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !isTextEntryElement(document.activeElement) && selectedSegmentIdRef.current
+      ) {
+        e.preventDefault();
+        handleDeleteSelectedSegment();
       } else if (import.meta.env.DEV && (e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
         e.preventDefault();
         setDevPanelOpen(prev => !prev);
