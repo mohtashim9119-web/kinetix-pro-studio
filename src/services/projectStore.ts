@@ -33,7 +33,7 @@ interface StoredAsset extends Omit<Asset, 'url' | 'file'> {
 }
 
 interface StoredProjectData {
-  version: 2 | 3;
+  version: 2 | 3 | 4;
   savedAt: number;
   project: Omit<Project, 'assets'> & { assets: StoredAsset[] };
 }
@@ -217,8 +217,12 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
   const storedData: StoredProjectData = {
     // WS2 T1.2 — bumped from 2 to 3: segments now carry a stable
     // content-derived id (segmentId.ts) instead of a per-save random UUID.
-    // No structural migration needed on load — see backfillSegmentIds below.
-    version: 3,
+    // WS2 T2.1 — bumped from 3 to 4: a segment may now carry `absorbedGaps`
+    // (types.ts) recording what Apply Sync dropped and folded into its own
+    // span. Additive-optional field, same as every VideoSegment field before
+    // it — no structural migration needed on load, an old project simply
+    // has no absorbed-gap segments to restore.
+    version: 4,
     savedAt,
     project: { ...project, assets: project.assets.map(stripAsset) },
   };

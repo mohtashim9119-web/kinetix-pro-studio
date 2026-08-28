@@ -129,6 +129,7 @@ import {
 } from './services/faRunPlacementGate';
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
+import { computeAbsorbedGaps, applyAbsorbedGaps } from './services/absorbedGaps';
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
 import {
@@ -1190,22 +1191,55 @@ function previewSegmentText(text: string): string {
     : trimmed;
 }
 
+/** Per-skip-record absorption info (WS2 T2.1) — resolved once at the call
+ *  site from `computeAbsorbedGaps`'s host map, keyed back to each skipped
+ *  record's own PRE-filter `segmentIndex` so `buildSkipLogEntries` doesn't
+ *  need to re-derive the dropped segment's id itself. Every entry in one
+ *  absorbed cluster carries the SAME `hostSegmentId`/`hostDisplayIndex`/
+ *  `span` — that shared value is what "groups" them: a reader (or a future
+ *  UI) can cluster skip entries by `segmentId` even though each still
+ *  renders as its own `SyncLogEntry`. */
+export interface AbsorbedGapLogInfo {
+  hostSegmentId: string;
+  /** 0-based index into `kept` (the committed/survivor array) — the scene
+   *  number the timeline shows for the absorbing neighbour. */
+  hostDisplayIndex: number;
+  span: { start: number; end: number };
+  gapAudio: 'silent' | 'speech' | 'unknown';
+}
+
 /**
  * One 'skip' entry per SkippedSegmentRecord. `segmentIndex` is carried through
  * as the record's PRE-filter index (see SkippedSegmentRecord) — the scene the
  * user wrote, not a position on the committed timeline, which by definition no
  * longer contains it. The displayed index is 1-based; the stored one is not.
+ *
+ * WS2 T2.1 — when `absorbedInfoBySkipIndex` names this record's absorbing
+ * neighbour, the message additionally reports the true reclaimable region
+ * (previous survivor's last spoken word end → its duration → next survivor's
+ * first spoken word start, per A1) and the audio label (A2), and the entry's
+ * `segmentId` is set to the absorbing neighbour's own id — never the dropped
+ * segment's — so a click can deep-link the playhead to a COMMITTED,
+ * on-timeline position (`SyncLogEntry.segmentId`'s own doc comment).
  */
 export function buildSkipLogEntries(
   syncRunId: string,
   skipped: SkippedSegmentRecord[],
   timestamp: number = Date.now(),
+  absorbedInfoBySkipIndex?: ReadonlyMap<number, AbsorbedGapLogInfo>,
 ): SyncLogEntry[] {
-  return skipped.map(record =>
-    makeSyncLogEntry(
+  return skipped.map(record => {
+    const absorbed = absorbedInfoBySkipIndex?.get(record.segmentIndex);
+    let message = `Scene ${record.segmentIndex + 1} skipped — ${record.reason}.`;
+    if (absorbed) {
+      const gapDuration = absorbed.span.end - absorbed.span.start;
+      message += ` Absorbed by scene ${absorbed.hostDisplayIndex + 1} `
+        + `(${absorbed.span.start.toFixed(3)}s → ${gapDuration.toFixed(3)}s → ${absorbed.span.end.toFixed(3)}s, ${absorbed.gapAudio}).`;
+    }
+    return makeSyncLogEntry(
       syncRunId,
       'skip',
-      `Scene ${record.segmentIndex + 1} skipped — ${record.reason}.`,
+      message,
       {
         segmentIndex: record.segmentIndex,
         segmentText: previewSegmentText(record.segmentText),
@@ -1215,10 +1249,11 @@ export function buildSkipLogEntries(
         totalWords: record.totalWords,
         confidence: record.confidence,
         longestRun: record.longestRun,
+        segmentId: absorbed?.hostSegmentId,
       },
       timestamp,
-    ),
-  );
+    );
+  });
 }
 
 /**
@@ -3160,6 +3195,16 @@ export default function App() {
         );
       }
 
+      // WS2 T2.1 (gap-absorption) — computed here (right after the filter
+      // that produced `skipped`) rather than after the boundary snap below,
+      // so the SAME map can feed both the sync-log entries (which need it
+      // immediately, for the grouped skip message) and the later merge onto
+      // `finalTimedSegments` — one computation, two consumers, never two
+      // computations that could silently disagree.
+      const absorbedGapsByHostId = computeAbsorbedGaps(
+        aligned.segments, skipped, kept.map(s => s.id), keptAlignments, aligned.tokens, aligned.silences,
+      );
+
       // Rescue observability (false-positive rescue fix, 2026-07-31) — every
       // coverage entry the per-segment temporal-bounding rescue recovered
       // (`recoveredVia` set only for an ACCEPTED claim — see AlignResult's
@@ -3183,6 +3228,23 @@ export default function App() {
             recoveredRegion: cov.recoveredRegion,
             anchorStart: aligned.segments[i]?.anchorStart,
           });
+        }
+      }
+
+      // WS2 T2.1 — resolve `absorbedGapsByHostId` (computed just above, right
+      // after `filterToCoveredSegments`) back to each skip record's own
+      // PRE-filter `segmentIndex`, for `buildSkipLogEntries` below.
+      const absorbedInfoBySkipIndex = new Map<number, AbsorbedGapLogInfo>();
+      for (const [hostId, gaps] of absorbedGapsByHostId) {
+        const hostDisplayIndex = kept.findIndex(s => s.id === hostId);
+        if (hostDisplayIndex < 0) continue;
+        for (const gap of gaps) {
+          const skipRecord = skipped.find(r => aligned.segments[r.segmentIndex]?.id === gap.segmentId);
+          if (skipRecord) {
+            absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
+              hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
+            });
+          }
         }
       }
 
@@ -3221,7 +3283,7 @@ export default function App() {
         ...(aligned.malformedTokenCount > 0
           ? [buildMalformedTokenEntry(syncRunId, aligned.malformedTokenCount, aligned.totalTokenCount, syncRunAt)]
           : []),
-        ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt) : []),
+        ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt, absorbedInfoBySkipIndex) : []),
         ...(rescued.length > 0 ? buildRescueLogEntries(syncRunId, rescued, syncRunAt) : []),
         ...(wordCoverageEntry ? [wordCoverageEntry] : []),
         buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, syncRunAt),
@@ -3274,6 +3336,14 @@ export default function App() {
       // wherever the aligner's matched span put it — the first spoken word,
       // not necessarily 0). Stretch it back to 0 the same way.
       finalTimedSegments = headExtendFirstSegment(finalTimedSegments);
+
+      // WS2 T2.1 (gap-absorption) — merges the map computed right after
+      // `filterToCoveredSegments` above onto the final committed segments,
+      // BEFORE any WS1 rule below can move a boundary again. Keyed by id, so
+      // this reads identically regardless of which timing branch (snap vs.
+      // retile) ran, and regardless of anything upstream having reordered
+      // `kept` (it hasn't — this is defense-in-depth, not a known reorder).
+      finalTimedSegments = applyAbsorbedGaps(finalTimedSegments, absorbedGapsByHostId);
 
       // WS1 R.11 (faSeamFitGate.ts) — CHUNK-FIT BOUNDARY CORRECTION. Runs
       // ONLY when FA actually produced the tokens (mirrors R.10's own
@@ -5476,6 +5546,7 @@ export default function App() {
               syncLog={project.syncLog ?? []}
               onClearLog={handleClearSyncLog}
               onOpenModelsModal={() => setShowManageModelsModal(true)}
+              onSeekToSegment={handleSegmentClick}
             />
           </div>
 

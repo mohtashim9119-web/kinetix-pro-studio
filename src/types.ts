@@ -254,6 +254,39 @@ export interface VideoSegment {
    *  Undefined for an untagged scene (empty `[]`). Display-only — nothing
    *  downstream branches on it. */
   tag?: string;
+  /** WS2 T2.1 (gap-absorption) — scenes R4-1/R.10 dropped during the Apply
+   *  Sync run that produced this segment's current boundaries, because the
+   *  audio never gave them a committable span, whose reclaimable time this
+   *  segment (the "absorbing neighbour") is hosting. Each entry's `span` is
+   *  the TRUE reclaimable region — the previous survivor's own last spoken
+   *  word end to the next survivor's own first spoken word start — NOT this
+   *  segment's post-`snapCoveredBoundaries` boundary, which only ever lands
+   *  somewhere inside that region. `gapAudio` is computed once at absorption
+   *  time from that run's live silence-detection intervals and persisted
+   *  here because those intervals are never themselves saved with the
+   *  project. Additive-only; absent on every segment from before this field
+   *  existed and on any segment that absorbed nothing. See
+   *  `absorbedGaps.ts`. */
+  absorbedGaps?: AbsorbedGap[];
+}
+
+/** One scene dropped by Apply Sync (R4-1 "no audio match" or R.10 "scripted
+ *  text never spoken") whose text and stable id are recorded on the
+ *  `VideoSegment` hosting its reclaimable span, so a later restore
+ *  (WS2 T2.1) can recreate it without re-running sync. `segmentId` is the
+ *  DROPPED scene's own stable content-derived id (segmentId.ts) — assigned
+ *  before it was ever dropped — not the hosting segment's id. */
+export interface AbsorbedGap {
+  segmentId: string;
+  text: string;
+  span: { start: number; end: number };
+  /** Whether the reclaimable region was mostly silence, mostly real speech
+   *  (e.g. a rescued utterance too short/uncertain to commit its own
+   *  segment), or unclassifiable (no silence-detection data available for
+   *  this run — the no-transcript/no-tokens fallback path). Computed once,
+   *  at absorption time, from a majority-overlap test against that run's own
+   *  detected silences — see `absorbedGaps.ts`'s `classifyGapAudio`. */
+  gapAudio: 'silent' | 'speech' | 'unknown';
 }
 
 /**

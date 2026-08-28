@@ -16,6 +16,11 @@ interface Props {
    *  has no model UI wired (e.g. a future embedding) can omit it; the
    *  deep-link button below simply doesn't render without it. */
   onOpenModelsModal?: () => void;
+  /** WS2 T2.1 — deep-links the playhead to the COMMITTED segment named by an
+   *  entry's `segmentId` (e.g. the neighbour that absorbed a dropped scene's
+   *  gap). Optional so a caller with no seek wiring can omit it; the
+   *  deep-link control below simply doesn't render without it. */
+  onSeekToSegment?: (segmentId: string) => void;
 }
 
 /** True when an fa-preflight/fa-fallback entry's own detail names a missing
@@ -204,7 +209,7 @@ export function formatEntryText(entry: SyncLogEntry): string {
   return lines.join('\n');
 }
 
-export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal }: Props): React.ReactElement {
+export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToSegment }: Props): React.ReactElement {
   // Collapsed by default only when there's nothing to show — an empty section
   // shouldn't occupy the panel, but a run that just skipped scenes should be
   // visible without a click. `null` = the user hasn't expressed a preference,
@@ -357,6 +362,15 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal }: Props):
                         <p className="text-[9px] text-gray-600 mt-0.5 pl-1.5 leading-snug break-words">
                           {matchLine}
                         </p>
+                      )}
+                      {entry.segmentId && onSeekToSegment && (
+                        <button
+                          type="button"
+                          onClick={() => onSeekToSegment(entry.segmentId!)}
+                          className="text-[9px] text-[#F27D26] hover:text-[#E06A15] mt-0.5 pl-1.5 leading-snug underline underline-offset-2"
+                        >
+                          Jump to absorbing scene
+                        </button>
                       )}
                     </>
                   ) : isGrouped ? (
