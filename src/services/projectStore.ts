@@ -33,7 +33,7 @@ interface StoredAsset extends Omit<Asset, 'url' | 'file'> {
 }
 
 interface StoredProjectData {
-  version: 2 | 3 | 4;
+  version: 2 | 3 | 4 | 5;
   savedAt: number;
   project: Omit<Project, 'assets'> & { assets: StoredAsset[] };
 }
@@ -222,7 +222,12 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
     // span. Additive-optional field, same as every VideoSegment field before
     // it — no structural migration needed on load, an old project simply
     // has no absorbed-gap segments to restore.
-    version: 4,
+    // WS2 ws2-26 Commit 2 — bumped from 4 to 5: a segment may now carry
+    // `isForceRestored` (types.ts), and `Project.segmentOverrides` may now
+    // carry `'force-keep'` alongside `'keep'`. Same additive-optional
+    // convention as every field above — no structural migration on load, an
+    // old project simply has no force-restored segments/overrides.
+    version: 5,
     savedAt,
     project: { ...project, assets: project.assets.map(stripAsset) },
   };

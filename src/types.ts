@@ -268,6 +268,18 @@ export interface VideoSegment {
    *  existed and on any segment that absorbed nothing. See
    *  `absorbedGaps.ts`. */
   absorbedGaps?: AbsorbedGap[];
+  /** WS2 ws2-26 Commit 2 — set on a segment restored via the Forced Restore
+   *  override: a human confirmed the restore despite the automatic path
+   *  refusing it for zero orphan-token evidence (Commit 1). Never set by the
+   *  automatic evidence-gated restore path. Purely additive/optional, like
+   *  every other WS2 T2.1 restore-metadata field on this type — absent means
+   *  "not force-restored" (not restored at all, restored normally with
+   *  evidence, or a plain native segment). Survives a re-sync the same way
+   *  any other restore does, via `Project.segmentOverrides`'s `'force-keep'`
+   *  action re-applying it — this field itself is never carried forward
+   *  across a re-sync (clean-slate re-sync invariant, §4), only re-derived
+   *  fresh each time the same content drops again. */
+  isForceRestored?: boolean;
 }
 
 /** One scene dropped by Apply Sync (R4-1 "no text match" or R.10 "scripted
@@ -520,8 +532,16 @@ export interface Project {
    *  deleting the restored segment again, Commit 4) lets the next re-sync
    *  drop it like any other unrestored gap. Keyed by the dropped scene's own
    *  stable content-derived id (segmentId.ts) — NOT by the hosting
-   *  segment's id, which can change across a re-sync. */
-  segmentOverrides?: Record<string, 'keep'>;
+   *  segment's id, which can change across a re-sync.
+   *
+   *  `'force-keep'` (WS2 ws2-26 Commit 2) — same rehydration contract, but
+   *  the ORIGINAL restore was a Forced Restore: the user confirmed it despite
+   *  zero orphan-token evidence (`absorbedGapRestore.ts`'s refusal rule).
+   *  Recorded so a later re-sync that drops the same content again
+   *  re-applies the FORCE path automatically (`forceRestoreSegmentsByGapId`)
+   *  instead of either silently guessing again or re-prompting the user for
+   *  a choice they already made once. */
+  segmentOverrides?: Record<string, 'keep' | 'force-keep'>;
   /** WS-logs — per-run rollups, same append/prune discipline, capped at
    *  MAX_SYNC_RUN_SUMMARIES. Undefined on pre-WS-logs projects — treat as []. */
   syncRunSummaries?: SyncRunSummary[];

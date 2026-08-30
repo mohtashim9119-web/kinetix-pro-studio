@@ -804,6 +804,20 @@ export function Timeline({
                                 Slip: {(s.trimStart ?? 0).toFixed(1)}s
                               </span>
                             )}
+                            {/* WS2 ws2-26 Commit 2 — a Forced Restore is visually
+                                distinguishable from an evidence-backed restore
+                                (which gets no badge at all): the badge names
+                                exactly what makes it different — a human
+                                confirmed it despite no evidence, not the sync
+                                engine deriving it. */}
+                            {s.isForceRestored && (
+                              <span
+                                title="Restored by human override — 0 matched words, no timestamp data"
+                                className="px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded-sm text-[6px] font-mono uppercase tracking-wide"
+                              >
+                                Forced
+                              </span>
+                            )}
                           </div>
                           <button
                             onClick={(e) => { e.stopPropagation(); onOpenStockSearch(s.id); }}

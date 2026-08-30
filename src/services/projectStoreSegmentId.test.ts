@@ -103,6 +103,23 @@ describe('round trip through save/load', () => {
     expect(loaded.project.segments[0]!.id).toBe(id);
   });
 
+  it('preserves isForceRestored and a force-keep segmentOverrides entry across a save/load cycle (ws2-26 Commit 2)', async () => {
+    const id = computeContentKey('Force-restored line.', 0);
+    const project = baseProject(
+      [{ id, text: 'Force-restored line.', startTime: 0, duration: 2, showOverlay: true, isForceRestored: true } as VideoSegment],
+      { segmentOverrides: { [id]: 'force-keep' } },
+    );
+
+    const outcome = await saveProject(project);
+    expect(outcome.ok).toBe(true);
+
+    const loaded = await loadProjectDetailed('p-t12');
+    expect(loaded?.ok).toBe(true);
+    if (!loaded || !loaded.ok) throw new Error('load failed');
+    expect(loaded.project.segments[0]!.isForceRestored).toBe(true);
+    expect(loaded.project.segmentOverrides).toEqual({ [id]: 'force-keep' });
+  });
+
   it('bumps the on-disk schema version to (at least) 3', async () => {
     const id = computeContentKey('Version check.', 0);
     const project = baseProject([

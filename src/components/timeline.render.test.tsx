@@ -118,6 +118,30 @@ describe('Timeline static markup — selection highlight (Commit 4)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// WS2 ws2-26 Commit 2 — a Forced Restore must be visually distinguishable
+// from an evidence-backed restore, which gets no badge at all. Pins the
+// "Forced" badge to `VideoSegment.isForceRestored` specifically.
+// ---------------------------------------------------------------------------
+describe('Timeline static markup — Forced Restore badge (Commit 2)', () => {
+  it('renders a "Forced" badge only on a segment with isForceRestored: true', () => {
+    const forced = { ...makeSeg('s1', 0, 5), isForceRestored: true };
+    const plain = makeSeg('s2', 5, 5);
+    const html = renderToStaticMarkup(
+      <Timeline {...makeTimelineProps({ segments: [forced, plain], sliderT: 1 })} />,
+    );
+    expect((html.match(/>Forced</g) ?? []).length).toBe(1);
+  });
+
+  it('renders no "Forced" badge on an ordinary or evidence-backed-restored segment', () => {
+    const segments = [makeSeg('s1', 0, 5), makeSeg('s2', 5, 5)];
+    const html = renderToStaticMarkup(
+      <Timeline {...makeTimelineProps({ segments, sliderT: 1 })} />,
+    );
+    expect(html).not.toContain('>Forced<');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test 7 — isSynced=true -> segments.length-1 boundary markers;
 // isSynced=false -> zero.
 // ---------------------------------------------------------------------------

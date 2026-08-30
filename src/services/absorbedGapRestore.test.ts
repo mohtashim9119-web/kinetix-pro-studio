@@ -5,8 +5,8 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  planRestoreCluster, applyRestoreToSegments, restoreSegmentsByGapId, subFrameFloorSeconds,
-  resolveRestoreRegion, RESTORE_REFUSAL_MESSAGE, collectRefusedRestoreReasons,
+  planRestoreCluster, planForcedRestoreCluster, applyRestoreToSegments, restoreSegmentsByGapId, subFrameFloorSeconds,
+  resolveRestoreRegion, RESTORE_REFUSAL_MESSAGE, collectRefusedRestoreReasons, collectPendingForceRestores,
 } from './absorbedGapRestore';
 import { isSliceSegmentId } from './segmentId';
 
@@ -342,6 +342,117 @@ describe('restore refusal — evidence only, any width (ws2-26 Commit 1)', () =>
     const reasons = collectRefusedRestoreReasons(segments, ids, 24);
     expect(reasons).toHaveLength(1);
     expect(reasons[0]).toContain('gap 0.24s');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 ws2-26 Commit 2 — FORCED RESTORE (human override).
+// ---------------------------------------------------------------------------
+describe('planForcedRestoreCluster — never refuses, always tags isForceRestored', () => {
+  it('restores a zero-orphan-token cluster the automatic path refuses (blue_monkey shape)', () => {
+    const gaps: AbsorbedGap[] = [{ ...gap('d1', '"The blue monkey jumped over the moon".', 37.06, 37.94), orphanCount: 0 }];
+    expect(planRestoreCluster(gaps, 'host', 24).refused).toBe(true); // sanity: the automatic path really would refuse this
+
+    const plan = planForcedRestoreCluster(gaps, 'host', 24);
+    expect(plan.refused).toBeFalsy();
+    expect(plan.segments).toHaveLength(1);
+    expect(plan.segments[0]!.isForceRestored).toBe(true);
+    expect(plan.segments[0]!.duration).toBeCloseTo(0.88, 3);
+  });
+
+  it('restores a legacy (orphanCount undefined) cluster identically to the automatic path, but tagged', () => {
+    const legacy = [gap('d1', 'Recorded before orphanCount existed.', 78.73, 78.97)];
+    const auto = planRestoreCluster(legacy, 'host', 24);
+    const forced = planForcedRestoreCluster(legacy, 'host', 24);
+    expect(auto.refused).toBeFalsy();
+    expect(auto.segments[0]!.isForceRestored).toBeUndefined();
+    expect(forced.segments[0]!.startTime).toBe(auto.segments[0]!.startTime);
+    expect(forced.segments[0]!.duration).toBe(auto.segments[0]!.duration);
+    expect(forced.segments[0]!.isForceRestored).toBe(true);
+  });
+
+  it('does not tag isForceRestored on an evidence-backed restore (planRestoreCluster)', () => {
+    const gaps = [spokenGap('d1', 'Some don’t emerge.', 442.94, 445.36, 443.82, 445.36)];
+    const plan = planRestoreCluster(gaps, 'host', 24);
+    expect(plan.segments[0]!.isForceRestored).toBeUndefined();
+  });
+
+  it('applies the merge rule identically under force — a sub-floor multi-piece cluster still merges into one slot', () => {
+    const gaps: AbsorbedGap[] = [
+      { ...gap('d1', 'But something stayed in you.', 78.73, 78.97), orphanCount: 0 },
+      { ...gap('d2', 'Small and permanent.', 78.73, 78.97), orphanCount: 0 },
+      { ...gap('d3', 'A new understanding of what the night actually is.', 78.73, 78.97), orphanCount: 0 },
+    ];
+    const plan = planForcedRestoreCluster(gaps, 'host', 24);
+    expect(plan.refused).toBeFalsy();
+    expect(plan.merged).toBe(true);
+    expect(plan.segments).toHaveLength(1);
+    expect(plan.segments[0]!.isForceRestored).toBe(true);
+    expect(plan.segments[0]!.text).toContain('But something stayed in you.');
+  });
+});
+
+describe('applyRestoreToSegments / restoreSegmentsByGapId — force option', () => {
+  it('force:true restores a zero-evidence cluster onto the real timeline, force:false (default) leaves it untouched', () => {
+    const segments = [seg('host', 70, 8.97), seg('after', 78.97, 11.17)];
+    const gaps: AbsorbedGap[] = [{ ...gap('d1', 'Unheard line.', 78.73, 78.97), orphanCount: 0 }];
+
+    const untouched = applyRestoreToSegments(segments, 0, gaps, 24);
+    expect(untouched).toEqual(segments);
+
+    const forced = applyRestoreToSegments(segments, 0, gaps, 24, { force: true });
+    expect(forced).toHaveLength(3);
+    const inserted = forced.find(s => s.id === 'd1')!;
+    expect(inserted.isForceRestored).toBe(true);
+    assertGapless(forced);
+  });
+
+  it('restoreSegmentsByGapId({ force: true }) forces every named cluster regardless of evidence', () => {
+    const segments = [
+      seg('host', 70, 8.97, { absorbedGaps: [{ ...gap('d1', 'Unheard.', 78.73, 78.97), orphanCount: 0 }] }),
+      seg('after', 78.97, 11.17),
+    ];
+    const out = restoreSegmentsByGapId(segments, new Set(['d1']), 24, { force: true });
+    const piece = out.find(s => s.id === 'd1');
+    expect(piece).toBeDefined();
+    expect(piece!.isForceRestored).toBe(true);
+    assertGapless(out);
+  });
+});
+
+describe('collectPendingForceRestores', () => {
+  it('reports one entry per zero-evidence cluster, with every gap id and its text', () => {
+    const segments = [
+      seg('host', 70, 8.97, { absorbedGaps: narrowNoWidthNote() }),
+      seg('after', 78.97, 11.17),
+    ];
+    function narrowNoWidthNote(): AbsorbedGap[] {
+      return [
+        { ...gap('d1', 'But something stayed in you.', 78.73, 78.97), orphanCount: 0 },
+        { ...gap('d2', 'Small and permanent.', 78.73, 78.97), orphanCount: 0 },
+      ];
+    }
+    const ids = new Set(['d1', 'd2']);
+    const pending = collectPendingForceRestores(segments, ids, 24);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.hostId).toBe('host');
+    expect(pending[0]!.gapSegmentIds).toEqual(['d1', 'd2']);
+    expect(pending[0]!.items).toEqual([
+      { segmentId: 'd1', text: 'But something stayed in you.' },
+      { segmentId: 'd2', text: 'Small and permanent.' },
+    ]);
+  });
+
+  it('is empty when every requested cluster has evidence', () => {
+    const segments = [
+      seg('host', 440, 5, { absorbedGaps: [spokenGap('d1', 'Some don’t emerge.', 442.94, 445.36, 443.82, 445.36)] }),
+      seg('after', 445, 5),
+    ];
+    expect(collectPendingForceRestores(segments, new Set(['d1']), 24)).toEqual([]);
+  });
+
+  it('is empty for an empty id set', () => {
+    expect(collectPendingForceRestores([seg('host', 0, 5)], new Set(), 24)).toEqual([]);
   });
 });
 

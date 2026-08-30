@@ -390,3 +390,60 @@ describe('SyncLogPanel — S/Clip numbering and longestRun annotation', () => {
     expect(html).not.toContain('no audio match');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WS2 ws2-26 Commit 2 — the sync log records whether a restore was
+// human-forced or engine-derived, not just that a restore happened.
+// ---------------------------------------------------------------------------
+describe('SyncLogPanel — restore status vs checkbox (Commit 2)', () => {
+  it('shows the restore checkbox when the gap has no recorded override yet', () => {
+    const html = renderToStaticMarkup(
+      <SyncLogPanel
+        syncLog={[makeSkipEntry({ restoreGapId: 'd1' })]}
+        onClearLog={() => {}}
+        onRestoreSegments={() => {}}
+      />,
+    );
+    expect(html).toContain('Select to restore');
+    expect(html).not.toContain('Force-restored');
+  });
+
+  it('replaces the checkbox with "Force-restored (human override)" for a force-keep override', () => {
+    const html = renderToStaticMarkup(
+      <SyncLogPanel
+        syncLog={[makeSkipEntry({ restoreGapId: 'd1' })]}
+        onClearLog={() => {}}
+        onRestoreSegments={() => {}}
+        segmentOverrides={{ d1: 'force-keep' }}
+      />,
+    );
+    expect(html).toContain('Force-restored (human override)');
+    expect(html).not.toContain('Select to restore');
+  });
+
+  it('replaces the checkbox with plain "Restored" for an evidence-backed keep override', () => {
+    const html = renderToStaticMarkup(
+      <SyncLogPanel
+        syncLog={[makeSkipEntry({ restoreGapId: 'd1' })]}
+        onClearLog={() => {}}
+        onRestoreSegments={() => {}}
+        segmentOverrides={{ d1: 'keep' }}
+      />,
+    );
+    expect(html).toContain('>Restored<');
+    expect(html).not.toContain('Force-restored');
+    expect(html).not.toContain('Select to restore');
+  });
+
+  it('an unrelated override for a different gap id does not affect this entry\'s checkbox', () => {
+    const html = renderToStaticMarkup(
+      <SyncLogPanel
+        syncLog={[makeSkipEntry({ restoreGapId: 'd1' })]}
+        onClearLog={() => {}}
+        onRestoreSegments={() => {}}
+        segmentOverrides={{ 'd-other': 'force-keep' }}
+      />,
+    );
+    expect(html).toContain('Select to restore');
+  });
+});

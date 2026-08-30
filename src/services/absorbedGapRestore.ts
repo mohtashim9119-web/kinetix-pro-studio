@@ -122,7 +122,9 @@ export function subFrameFloorSeconds(fps: number): number {
  *  scene is a fresh segment, not a copy of its absorbing neighbour. Callers
  *  needing defaults should apply them the same way any newly-created
  *  segment gets them elsewhere in the app. */
-function makeRestoredSegment(id: string, text: string, startTime: number, duration: number): VideoSegment {
+function makeRestoredSegment(
+  id: string, text: string, startTime: number, duration: number, isForceRestored: boolean,
+): VideoSegment {
   return {
     id,
     text,
@@ -141,6 +143,10 @@ function makeRestoredSegment(id: string, text: string, startTime: number, durati
     transition: 'none',
     animation: 'none',
     order: 0,
+    // WS2 ws2-26 Commit 2 — omitted entirely (not `false`) on an
+    // evidence-backed restore, matching every other optional VideoSegment
+    // flag's additive convention.
+    ...(isForceRestored ? { isForceRestored: true } : {}),
   } as VideoSegment;
 }
 
@@ -185,10 +191,67 @@ export function resolveRestoreRegion(gaps: readonly AbsorbedGap[]): { start: num
 }
 
 /**
- * Plans the restored segment(s) for one shared-span cluster. `gaps` must all
- * carry the identical `span` (a precondition — `computeAbsorbedGaps` only
- * ever produces same-span clusters together) and must be non-empty, in their
- * original document order.
+ * The actual geometry — shared by the evidence-gated automatic path
+ * (`planRestoreCluster`) and the Forced Restore engine
+ * (`planForcedRestoreCluster`), which differ ONLY in whether the refusal
+ * check upstream of this ran at all. `gaps` must all carry the identical
+ * `span` (a precondition — `computeAbsorbedGaps` only ever produces
+ * same-span clusters together) and must be non-empty, in their original
+ * document order. `forced` marks every produced segment `isForceRestored`
+ * (Commit 2) — it does not change the geometry itself, only the metadata.
+ */
+function buildRestorePieces(
+  gaps: readonly AbsorbedGap[], hostId: string, fps: number, forced: boolean,
+): RestoreClusterPlan {
+  const region = resolveRestoreRegion(gaps);
+  const start = region.start;
+  const end = region.end;
+  const floor = subFrameFloorSeconds(fps);
+
+  // Prefer each entry's own token-derived interval; character-weighted
+  // division of the same region when the transcript attributed nothing (the
+  // ONLY way to reach this branch post-Commit-1 is `forced` — an
+  // evidence-gated cluster with zero orphans never gets here at all, see
+  // `planRestoreCluster`).
+  const haveSpoken = gaps.every(g => !!g.spokenSpan);
+  const pieces = haveSpoken
+    ? gaps.map((g, i) => {
+        const st = i === 0 ? start : g.spokenSpan!.start;
+        const en = i === gaps.length - 1 ? end : gaps[i + 1]!.spokenSpan!.start;
+        return { startTime: round3(st), duration: round3(Math.max(0, en - st)) };
+      })
+    : splitRegionByCharCount(gaps.map(g => ({ text: g.text })), start, end);
+
+  // 3b — THE MERGE RULE, decided on the ACTUAL pieces. If any one piece would
+  // land below the frame floor, the whole cluster becomes a single slot rather
+  // than emitting a mix of usable segments and unselectable slivers. Tested
+  // here, after the pieces exist, rather than on an estimated per-piece share:
+  // a share can clear the floor while a real piece does not (character
+  // weighting and token attribution both divide unevenly), and it is the real
+  // piece the user has to click on.
+  if (gaps.length > 1 && pieces.some(pc => pc.duration < floor)) {
+    return {
+      merged: true,
+      region,
+      segments: [makeRestoredSegment(
+        makeSliceSegmentId(hostId, MERGE_SLOT_ORDINAL), gaps.map(g => g.text).join(' '), start, end - start, forced,
+      )],
+    };
+  }
+
+  return {
+    merged: false,
+    region,
+    segments: gaps.map((g, i) => makeRestoredSegment(g.segmentId, g.text, pieces[i]!.startTime, pieces[i]!.duration, forced)),
+  };
+}
+
+/**
+ * Plans the restored segment(s) for one shared-span cluster via the
+ * AUTOMATIC, evidence-gated path (ws2-26 Commit 1). Refuses outright — no
+ * `segments`, `refused: true` — when the cluster has zero orphan-token
+ * evidence, at any span width. See `planForcedRestoreCluster` for the human
+ * override this refusal exists to require.
  *
  * Pure. Does not know about the host segment or the rest of the timeline —
  * see `applyRestoreToSegments` for that.
@@ -213,41 +276,30 @@ export function planRestoreCluster(
     };
   }
 
-  const start = region.start;
-  const end = region.end;
-  const floor = subFrameFloorSeconds(fps);
+  return buildRestorePieces(gaps, hostId, fps, false);
+}
 
-  // Prefer each entry's own token-derived interval; character-weighted
-  // division of the same region when the transcript attributed nothing.
-  const haveSpoken = gaps.every(g => !!g.spokenSpan);
-  const pieces = haveSpoken
-    ? gaps.map((g, i) => {
-        const st = i === 0 ? start : g.spokenSpan!.start;
-        const en = i === gaps.length - 1 ? end : gaps[i + 1]!.spokenSpan!.start;
-        return { startTime: round3(st), duration: round3(Math.max(0, en - st)) };
-      })
-    : splitRegionByCharCount(gaps.map(g => ({ text: g.text })), start, end);
-
-  // 3b — THE MERGE RULE, decided on the ACTUAL pieces. If any one piece would
-  // land below the frame floor, the whole cluster becomes a single slot rather
-  // than emitting a mix of usable segments and unselectable slivers. Tested
-  // here, after the pieces exist, rather than on an estimated per-piece share:
-  // a share can clear the floor while a real piece does not (character
-  // weighting and token attribution both divide unevenly), and it is the real
-  // piece the user has to click on.
-  if (gaps.length > 1 && pieces.some(pc => pc.duration < floor)) {
-    return {
-      merged: true,
-      region,
-      segments: [makeRestoredSegment(makeSliceSegmentId(hostId, MERGE_SLOT_ORDINAL), gaps.map(g => g.text).join(' '), start, end - start)],
-    };
-  }
-
-  return {
-    merged: false,
-    region,
-    segments: gaps.map((g, i) => makeRestoredSegment(g.segmentId, g.text, pieces[i]!.startTime, pieces[i]!.duration)),
-  };
+/**
+ * WS2 ws2-26 Commit 2 — THE FORCED RESTORE ENGINE.
+ *
+ * Identical geometry to `planRestoreCluster` (same `buildRestorePieces`
+ * call), but skips the evidence gate entirely — this is what the automatic
+ * path's zero-orphan-token refusal exists to require an explicit human
+ * confirmation before reaching. Never refuses: `segments` is always
+ * non-empty for a non-empty `gaps`. Every produced segment carries
+ * `isForceRestored: true`, so it is visually and structurally distinguishable
+ * from an evidence-backed restore.
+ *
+ * Callers must obtain confirmation BEFORE calling this — it performs no
+ * confirmation of its own. See `collectPendingForceRestores` for detecting
+ * which requested clusters need that confirmation in the first place.
+ */
+export function planForcedRestoreCluster(
+  gaps: readonly AbsorbedGap[],
+  hostId: string,
+  fps: number,
+): RestoreClusterPlan {
+  return buildRestorePieces(gaps, hostId, fps, true);
 }
 
 /**
@@ -284,6 +336,11 @@ export function planRestoreCluster(
  * host to zero duration: `region.start - host.startTime` is <= 0 there, so the
  * host's own duration floored to 0 and the pieces were inserted after it.
  *
+ * `options.force` (ws2-26 Commit 2) — routes through `planForcedRestoreCluster`
+ * instead, so a cluster the automatic path would refuse is restored anyway
+ * (with `isForceRestored: true`). Callers must have already obtained human
+ * confirmation before setting this; this function itself never asks.
+ *
  * Pure — returns a new array; does not mutate `segments`.
  */
 export function applyRestoreToSegments(
@@ -291,12 +348,15 @@ export function applyRestoreToSegments(
   hostIndex: number,
   gapsToRestore: readonly AbsorbedGap[],
   fps: number,
+  options?: { force?: boolean },
 ): VideoSegment[] {
   if (gapsToRestore.length === 0) return segments as VideoSegment[];
   const host = segments[hostIndex];
   if (!host) return segments as VideoSegment[];
 
-  const plan = planRestoreCluster(gapsToRestore, host.id, fps);
+  const plan = options?.force
+    ? planForcedRestoreCluster(gapsToRestore, host.id, fps)
+    : planRestoreCluster(gapsToRestore, host.id, fps);
   if (plan.refused) return segments as VideoSegment[];
   const { end } = plan.region;
   let { start } = plan.region;
@@ -373,11 +433,19 @@ export function applyRestoreToSegments(
  *
  * Processes hosts from the END of the array backwards, so an earlier host's
  * insert never invalidates a not-yet-processed host's own index. Pure.
+ *
+ * `options.force` (ws2-26 Commit 2) — every named cluster restores via the
+ * Forced Restore engine regardless of evidence. Only ever pass this after
+ * the caller has already obtained human confirmation (interactively) or is
+ * re-applying a PREVIOUSLY forced restore recorded in
+ * `Project.segmentOverrides` as `'force-keep'` (rehydration) — never as a
+ * blanket "restore everything" flag.
  */
 export function restoreSegmentsByGapId(
   segments: readonly VideoSegment[],
   gapSegmentIds: ReadonlySet<string>,
   fps: number,
+  options?: { force?: boolean },
 ): VideoSegment[] {
   if (gapSegmentIds.size === 0) return segments as VideoSegment[];
 
@@ -386,7 +454,7 @@ export function restoreSegmentsByGapId(
     for (const clusterGaps of clustersOf(out[hostIndex]!)) {
       const toRestore = clusterGaps.filter(g => gapSegmentIds.has(g.segmentId));
       if (toRestore.length > 0) {
-        out = applyRestoreToSegments(out, hostIndex, toRestore, fps);
+        out = applyRestoreToSegments(out, hostIndex, toRestore, fps, options);
       }
     }
   }
@@ -435,4 +503,49 @@ export function collectRefusedRestoreReasons(
     }
   }
   return reasons;
+}
+
+/** One cluster the automatic path would refuse — the confirmation modal's
+ *  own display data. `items` is in the cluster's original document order,
+ *  one row per dropped scene sharing this host/span. */
+export interface PendingForceRestoreCluster {
+  hostId: string;
+  /** Every `AbsorbedGap.segmentId` in this cluster — the exact set a
+   *  `restoreSegmentsByGapId(..., { force: true })` call needs to force just
+   *  this cluster. */
+  gapSegmentIds: string[];
+  items: { segmentId: string; text: string }[];
+}
+
+/**
+ * WS2 ws2-26 Commit 2 — every cluster in `gapSegmentIds` that the AUTOMATIC
+ * path (`planRestoreCluster`) would refuse, as structured data for a
+ * confirmation modal ("0 matched words and no timestamp data") rather than
+ * `collectRefusedRestoreReasons`'s plain log strings. Called on the
+ * pre-restore array, same convention as that function and
+ * `countRefusedRestores`'s original design — an empty result means every
+ * requested id either doesn't exist, isn't a gap, or has evidence and will
+ * restore automatically. Pure; changes nothing.
+ */
+export function collectPendingForceRestores(
+  segments: readonly VideoSegment[],
+  gapSegmentIds: ReadonlySet<string>,
+  fps: number,
+): PendingForceRestoreCluster[] {
+  if (gapSegmentIds.size === 0) return [];
+  const out: PendingForceRestoreCluster[] = [];
+  for (const host of segments) {
+    for (const clusterGaps of clustersOf(host)) {
+      const toRestore = clusterGaps.filter(g => gapSegmentIds.has(g.segmentId));
+      if (toRestore.length === 0) continue;
+      if (planRestoreCluster(toRestore, host.id, fps).refused) {
+        out.push({
+          hostId: host.id,
+          gapSegmentIds: toRestore.map(g => g.segmentId),
+          items: toRestore.map(g => ({ segmentId: g.segmentId, text: g.text })),
+        });
+      }
+    }
+  }
+  return out;
 }

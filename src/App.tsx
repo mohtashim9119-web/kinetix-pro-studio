@@ -130,7 +130,9 @@ import {
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { computeAbsorbedGaps, applyAbsorbedGaps } from './services/absorbedGaps';
-import { restoreSegmentsByGapId, collectRefusedRestoreReasons, RESTORE_REFUSAL_MESSAGE } from './services/absorbedGapRestore';
+import { restoreSegmentsByGapId, collectPendingForceRestores } from './services/absorbedGapRestore';
+import type { PendingForceRestoreCluster } from './services/absorbedGapRestore';
+import { ForceRestoreConfirmModal } from './components/ForceRestoreConfirmModal';
 import { splitSegmentAtTime, deleteSegment } from './services/segmentSplitDelete';
 
 /** WS2 T2.1/T2.2 — fps used ONLY for the restore sub-frame merge check when
@@ -1935,6 +1937,10 @@ export default function App() {
   // later, different one.
   const [languageBannerDismissed, setLanguageBannerDismissed] = useState(false);
   const [showDashboard, setShowDashboard] = useState(true);
+  // WS2 ws2-26 Commit 2 — clusters from the most recent restore request that
+  // the automatic (evidence-gated) path refused, awaiting an explicit human
+  // Force Restore / Cancel decision. `null` when the modal isn't showing.
+  const [pendingForceRestore, setPendingForceRestore] = useState<PendingForceRestoreCluster[] | null>(null);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   const [showExportSettingsModal, setShowExportSettingsModal] = useState(false);
@@ -3446,6 +3452,23 @@ export default function App() {
       if (keepOverrideIds.size > 0) {
         finalTimedSegments = restoreSegmentsByGapId(finalTimedSegments, keepOverrideIds, GAP_RESTORE_REHYDRATION_FPS);
       }
+      // WS2 ws2-26 Commit 2 — a PREVIOUSLY force-restored scene rehydrates via
+      // the force path, not the evidence-gated one: the human already
+      // confirmed this exact restore once, so re-applying it automatically on
+      // every future re-sync that drops the same content again must not
+      // silently drop it (the automatic path would refuse it again, having no
+      // way to know it was ever forced) NOR re-prompt for a decision already
+      // made. `{ force: true }` never refuses, so this always re-materializes.
+      const forceKeepOverrideIds = new Set(
+        Object.entries(projectRef.current.segmentOverrides ?? {})
+          .filter(([, action]) => action === 'force-keep')
+          .map(([segId]) => segId),
+      );
+      if (forceKeepOverrideIds.size > 0) {
+        finalTimedSegments = restoreSegmentsByGapId(
+          finalTimedSegments, forceKeepOverrideIds, GAP_RESTORE_REHYDRATION_FPS, { force: true },
+        );
+      }
 
       // WS2 ws2-25 Commit 5 — THE OFF-BY-ONE FIX. `absorbedInfoBySkipIndex`
       // (and therefore the skip log's "Clip N" label) must be resolved
@@ -4418,34 +4441,65 @@ export default function App() {
   // automatically instead of silently reverting the user's choice. Goes
   // through `setProject` (never `setProjectSilent`), so this is undoable
   // like any other timeline edit.
+  //
+  // WS2 ws2-26 Commit 2 — a request can name a MIX of evidence-backed and
+  // zero-evidence gaps (e.g. a sync-log multi-select restore). The
+  // evidence-backed ones restore immediately, below, exactly as before.
+  // The zero-evidence ones are never silently refused (Commit 1) and never
+  // silently restored (that would be the exact fabrication Commit 1
+  // removed) — they wait in `pendingForceRestore` for an explicit human
+  // Force Restore or Cancel via `ForceRestoreConfirmModal`, reachable from
+  // both entry points (sync-log restore and the Timeline context menu)
+  // because both call this same handler.
   const handleRestoreAbsorbedSegments = useCallback((gapSegmentIds: string[]): void => {
     if (gapSegmentIds.length === 0) return;
-    // WS2 ws2-26 Commit 1 — a cluster with no orphan-token evidence (zero, or
-    // no recorded count at all) is REFUSED rather than restored via
-    // character-weighted guesswork, at ANY gap width. Report it instead of
-    // failing silently: from the user's side an ignored restore and a broken
-    // one look identical. Each refusal's measured evidence goes to the
-    // console, not just the generic toast — see `buildRefusalReason`.
-    let refusedReasons: string[] = [];
+    const pending = collectPendingForceRestores(projectRef.current.segments, new Set(gapSegmentIds), exportFps);
+    const pendingIds = new Set(pending.flatMap(c => c.gapSegmentIds));
+    const autoIds = gapSegmentIds.filter(id => !pendingIds.has(id));
+
+    if (autoIds.length > 0) {
+      setProject(prev => {
+        const ids = new Set(autoIds);
+        const segments = restoreSegmentsByGapId(prev.segments, ids, exportFps);
+        // Only record an override for what actually landed — marking a
+        // refused scene `'keep'` would promise a re-restore on the next
+        // sync that this same rule would refuse again.
+        const restoredIds = new Set(
+          segments.filter(sg => ids.has(sg.id)).map(sg => sg.id),
+        );
+        const segmentOverrides = { ...(prev.segmentOverrides ?? {}) };
+        for (const id of restoredIds) segmentOverrides[id] = 'keep';
+        return { ...prev, segments, segmentOverrides };
+      });
+    }
+    if (pending.length > 0) setPendingForceRestore(pending);
+  }, [exportFps]);
+
+  // WS2 ws2-26 Commit 2 — human confirmed Force Restore for every cluster
+  // currently pending, in ONE batch (one undo step covers the whole
+  // confirmation, not one per row). Records `'force-keep'`, not `'keep'`, so
+  // a future re-sync that drops the same content again re-applies the FORCE
+  // path automatically instead of either guessing silently or re-prompting
+  // for a choice already made once.
+  const handleConfirmForceRestore = useCallback((): void => {
+    if (!pendingForceRestore || pendingForceRestore.length === 0) return;
+    const ids = new Set(pendingForceRestore.flatMap(c => c.gapSegmentIds));
     setProject(prev => {
-      const ids = new Set(gapSegmentIds);
-      const segments = restoreSegmentsByGapId(prev.segments, ids, exportFps);
-      refusedReasons = collectRefusedRestoreReasons(prev.segments, ids, exportFps);
-      // Only record an override for what actually landed — marking a refused
-      // scene `'keep'` would promise a re-restore on the next sync that this
-      // same rule would refuse again.
-      const restoredIds = new Set(
-        segments.filter(sg => ids.has(sg.id)).map(sg => sg.id),
-      );
+      const segments = restoreSegmentsByGapId(prev.segments, ids, exportFps, { force: true });
+      const restoredIds = new Set(segments.filter(sg => ids.has(sg.id)).map(sg => sg.id));
       const segmentOverrides = { ...(prev.segmentOverrides ?? {}) };
-      for (const id of restoredIds) segmentOverrides[id] = 'keep';
+      for (const id of restoredIds) segmentOverrides[id] = 'force-keep';
       return { ...prev, segments, segmentOverrides };
     });
-    if (refusedReasons.length > 0) {
-      for (const reason of refusedReasons) console.warn('[gap-restore] refused:', reason);
-      showToast(RESTORE_REFUSAL_MESSAGE);
-    }
-  }, [exportFps, showToast]);
+    setPendingForceRestore(null);
+  }, [pendingForceRestore, exportFps]);
+
+  // Cancel leaves the timeline completely untouched — the pending clusters
+  // are simply forgotten, exactly as if the restore had never been
+  // requested. No `setProject` call at all.
+  const handleCancelForceRestore = useCallback((): void => {
+    setPendingForceRestore(null);
+  }, []);
 
   // WS2 T2.1 Commit 3 — Timeline's right-click "Restore absorbed segments"
   // menu item restores EVERY cluster hosted on one clip in one action (the
@@ -4936,7 +4990,11 @@ export default function App() {
   shortcutsSuppressedRef.current =
     showStockSearch || showNewProjectModal || showProjectSettingsModal
     || showExportSettingsModal || showReviewMapping || devPanelOpen
-    || showManageModelsModal || exportState.isExporting;
+    || showManageModelsModal || exportState.isExporting
+    // WS2 ws2-26 Commit 2 — Force Restore confirmation runs its own
+    // click-only UI (Cancel/Force Restore); S/D/undo must not act on
+    // whatever's still selected on the timeline underneath it.
+    || !!(pendingForceRestore && pendingForceRestore.length > 0);
 
   const togglePlay = () => setIsPlaying(p => !p);
 
@@ -5852,6 +5910,7 @@ export default function App() {
               onOpenModelsModal={() => setShowManageModelsModal(true)}
               onSeekToSegment={handleSegmentClick}
               onRestoreSegments={handleRestoreAbsorbedSegments}
+              segmentOverrides={project.segmentOverrides}
             />
           </div>
 
@@ -6027,6 +6086,18 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* WS2 ws2-26 Commit 2 — Force Restore confirmation. One modal for the
+          whole pending batch, reachable from both the sync-log restore and
+          the Timeline context menu (both funnel into
+          handleRestoreAbsorbedSegments). */}
+      {pendingForceRestore && pendingForceRestore.length > 0 && (
+        <ForceRestoreConfirmModal
+          clusters={pendingForceRestore}
+          onCancel={handleCancelForceRestore}
+          onConfirm={handleConfirmForceRestore}
+        />
+      )}
 
       {/* New Project Modal */}
       {showNewProjectModal && (

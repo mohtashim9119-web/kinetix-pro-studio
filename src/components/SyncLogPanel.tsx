@@ -25,6 +25,15 @@ interface Props {
    *  own `restoreGapId`s. Optional; the per-entry restore checkbox and the
    *  "Restore selected" bar below simply don't render without it. */
   onRestoreSegments?: (gapSegmentIds: string[]) => void;
+  /** WS2 ws2-26 Commit 2 — `Project.segmentOverrides`, the durable record of
+   *  every restore decision. When an entry's own `restoreGapId` has an
+   *  override recorded, its checkbox is replaced with a status line —
+   *  "Force-restored (human override)" for `'force-keep'`, "Restored" for
+   *  plain `'keep'` — so the log records whether a restore was engine-derived
+   *  (evidence-backed) or a human override of the automatic refusal, not just
+   *  that a restore happened. Optional; omitting it falls back to the
+   *  checkbox always showing, same as before this field existed. */
+  segmentOverrides?: Readonly<Record<string, 'keep' | 'force-keep'>>;
 }
 
 /** True when an fa-preflight/fa-fallback entry's own detail names a missing
@@ -239,7 +248,7 @@ export function formatEntryText(entry: SyncLogEntry): string {
   return lines.join('\n');
 }
 
-export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToSegment, onRestoreSegments }: Props): React.ReactElement {
+export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToSegment, onRestoreSegments, segmentOverrides }: Props): React.ReactElement {
   // Collapsed by default only when there's nothing to show — an empty section
   // shouldn't occupy the panel, but a run that just skipped scenes should be
   // visible without a click. `null` = the user hasn't expressed a preference,
@@ -442,15 +451,23 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToS
                           </button>
                         )}
                         {entry.restoreGapId && onRestoreSegments && (
-                          <label className="flex items-center gap-1 text-[9px] text-gray-400 leading-snug cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={selectedGapIds.has(entry.restoreGapId)}
-                              onChange={() => toggleGapSelected(entry.restoreGapId!)}
-                              className="h-2.5 w-2.5"
-                            />
-                            Select to restore
-                          </label>
+                          segmentOverrides?.[entry.restoreGapId] ? (
+                            <span className="text-[9px] text-gray-500 leading-snug">
+                              {segmentOverrides[entry.restoreGapId] === 'force-keep'
+                                ? 'Force-restored (human override)'
+                                : 'Restored'}
+                            </span>
+                          ) : (
+                            <label className="flex items-center gap-1 text-[9px] text-gray-400 leading-snug cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={selectedGapIds.has(entry.restoreGapId)}
+                                onChange={() => toggleGapSelected(entry.restoreGapId!)}
+                                className="h-2.5 w-2.5"
+                              />
+                              Select to restore
+                            </label>
+                          )
                         )}
                       </div>
                     </>

@@ -35,7 +35,7 @@ import {
 import { detectUnspokenScriptSegmentsFromWhisper, applyUnspokenScriptGate } from '../src/services/faUnspokenGate';
 import { computeAbsorbedGaps, applyAbsorbedGaps } from '../src/services/absorbedGaps';
 import {
-  planRestoreCluster, restoreSegmentsByGapId,
+  planRestoreCluster, restoreSegmentsByGapId, collectPendingForceRestores,
 } from '../src/services/absorbedGapRestore';
 import { deleteSegment } from '../src/services/segmentSplitDelete';
 import { CORPORA, loadLiveBundle, tagOf } from './ws1-session-p-pipeline';
@@ -242,6 +242,25 @@ describe('ws2-restore-corpus — 173 blue_monkey (ws2-26 Commit 1, the decoy lea
     const afterAttemptedRestore = restoreSegmentsByGapId(whisper.committed, gapIds, RESTORE_FPS);
     expect(afterAttemptedRestore).toEqual(whisper.committed);
     expect(timelineSum(afterAttemptedRestore)).toBeCloseTo(709.01, 2);
+  });
+
+  it('surfaces as a pending Force Restore, and force-restoring it lands a tagged clip while holding the 709.01 sum (ws2-26 Commit 2)', async () => {
+    const { whisper } = await getRuns('173');
+    const host = whisper.committed.find(s => tagOf(s) === 'ancient_nature_thriving')!;
+    const gapIds = new Set(host.absorbedGaps!.map(g => g.segmentId));
+
+    const pending = collectPendingForceRestores(whisper.committed, gapIds, RESTORE_FPS);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.items).toEqual([
+      { segmentId: host.absorbedGaps![0]!.segmentId, text: '"The blue monkey jumped over the moon".' },
+    ]);
+
+    const forced = restoreSegmentsByGapId(whisper.committed, gapIds, RESTORE_FPS, { force: true });
+    const piece = forced.find(s => s.id === host.absorbedGaps![0]!.segmentId);
+    expect(piece).toBeDefined();
+    expect(piece!.isForceRestored).toBe(true);
+    expect(timelineSum(forced)).toBeCloseTo(709.01, 2);
+    assertGapless(forced);
   });
 });
 
