@@ -4441,7 +4441,10 @@ export default function App() {
       for (const id of restoredIds) segmentOverrides[id] = 'keep';
       return { ...prev, segments, segmentOverrides };
     });
-    if (refusedCount > 0) showToast(RESTORE_REFUSAL_MESSAGE);
+    if (refusedReasons.length > 0) {
+      for (const reason of refusedReasons) console.warn('[gap-restore] refused:', reason);
+      showToast(RESTORE_REFUSAL_MESSAGE);
+    }
   }, [exportFps, showToast]);
 
   // WS2 T2.1 Commit 3 — Timeline's right-click "Restore absorbed segments"
@@ -4487,7 +4490,20 @@ export default function App() {
       didDelete = true;
       return { ...prev, segments };
     });
-    if (didDelete) setSelectedSegmentId(null);
+    // WS2 ws2-26 Commit 3 — clear selection only when the DELETED segment is
+    // the one currently selected. This used to clear unconditionally on any
+    // successful delete, so deleting an unrelated clip (e.g. the Timeline
+    // context menu's "Delete segment" on a different clip, or the D shortcut
+    // targeting the playhead segment) while a DIFFERENT segment's caption was
+    // open in the drawer (BottomDrawer -> SegmentControls's "Overlay text"
+    // input, driven by `selectedSegment`, App.tsx's own memo) unmounted that
+    // drawer out from under the user — the segment's own `text` was never
+    // touched (`deleteSegment` doesn't touch survivor text), only its EDITOR
+    // vanished, which is what read as "the text disappeared" on a split
+    // segment's surviving neighbour. Reads the ref (not the `id` param) so a
+    // stale closure in this `useCallback([])` can't compare against a
+    // selection that has since changed.
+    if (didDelete && selectedSegmentIdRef.current === id) setSelectedSegmentId(null);
   }, []);
 
   const handleDeleteSelectedSegment = useCallback((): void => {
@@ -5695,6 +5711,7 @@ export default function App() {
                 onRestoreAbsorbedGaps={handleRestoreAllGapsOnSegment}
                 onDeleteSegment={handleDeleteSegmentById}
                 restoredSegmentIds={restoredSegmentIdsMemo}
+                selectedSegmentId={selectedSegmentId ?? undefined}
                 onTogglePlay={togglePlay}
                 onSeek={(time) => {
                   setCurrentTime(time);
