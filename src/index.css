@@ -67,24 +67,6 @@ textarea,
   user-select: text;
 }
 
-/* ─── WS2 ws2-26 Commit 5 (Issue 11) ──────────────────────────────────
-   Hypothesis: WKWebView never fires the native `contextmenu` event on an
-   element that has `-webkit-user-select: none` as an ancestor (a real
-   right-click on a Timeline clip in the built Tauri app never opened the
-   restore/delete menu, though the identical click worked in a normal
-   browser dev server). #root above is exactly such an ancestor for every
-   clip. This exempts ONLY the clip cards (`.kx-timeline-clip`,
-   Timeline.tsx) rather than relaxing #root itself, which still needs to
-   block drag-selection during scrubbing everywhere else. The clip's own
-   text label is already `pointer-events-none` (Timeline.tsx), so this
-   does not reopen the drag-selection problem #root exists to prevent.
-   UNVERIFIED in this session — no real WKWebView shell available here;
-   needs a live macOS `tauri:dev` check. */
-.kx-timeline-clip {
-  -webkit-user-select: auto;
-  user-select: auto;
-}
-
 .custom-scrollbar::-webkit-scrollbar {
   width: 9px;
   height: 10px;

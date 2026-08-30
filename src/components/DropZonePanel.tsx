@@ -301,12 +301,6 @@ function SaveConfirmDialog({ onConfirm, onCancel }: { onConfirm: () => void; onC
 
 interface Props {
   segments: VideoSegment[];
-  /** WS2 ws2-25 Commit 4 — ids of every individually-restored absorbed-gap
-   *  segment (`Project.segmentOverrides`'s own keys), so the title fallback
-   *  can tell a restore apart from an ordinary segment that just has no
-   *  asset yet. A split slice is detected structurally instead
-   *  (`isSliceSegmentId`) and needs nothing passed in for it. */
-  restoredSegmentIds?: ReadonlySet<string>;
   /** Path B (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — top-level heading overlays,
    *  interleaved into the segments-tab list by `interleaveHeadingRows`. */
   headings: HeadingOverlay[];
@@ -437,7 +431,6 @@ interface Props {
 
 export function DropZonePanel({
   segments,
-  restoredSegmentIds,
   headings,
   assets,
   voiceoverId,
@@ -1510,8 +1503,7 @@ export function DropZonePanel({
               const seg = row.segment;
               const segIdx = row.index;
               const asset = seg.assetId ? assetsById.get(seg.assetId) : undefined;
-              const isRestoredOrSplit = isSliceSegmentId(seg.id) || !!restoredSegmentIds?.has(seg.id);
-              const title = computeSegmentDisplayTitle(seg, asset, isRestoredOrSplit);
+              const title = computeSegmentDisplayTitle(seg, asset, isSliceSegmentId(seg.id));
               if (segmentSearch && !matchesSegmentQuery(segmentSearch, {
                 displayTitle: title,
                 description: seg.text ?? '',

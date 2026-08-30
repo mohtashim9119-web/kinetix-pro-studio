@@ -12,7 +12,6 @@ import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
 import { isDragEdgeLocked } from '../services/dragCascade';
-import { isSliceSegmentId } from '../services/segmentId';
 import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
 import {
@@ -89,30 +88,6 @@ interface Props {
   onClipClick?: (id: string) => void;
   onHeadingResizeCommit?: (id: string, next: { time: number; duration: number }) => void;
   initialScrollLeft?: number;
-  /** WS2 T2.1 Commit 3 — restores every absorbed-gap cluster hosted on the
-   *  named segment. Optional; the right-click "Restore absorbed segments"
-   *  menu item simply doesn't render without it. */
-  onRestoreAbsorbedGaps?: (segmentId: string) => void;
-  /** WS2 ws2-25 Commit 4 — deletes a split slice or individually-restored
-   *  segment. Optional; the right-click "Delete segment" menu item simply
-   *  doesn't render without it. Applies the same eligibility rule as the D
-   *  shortcut (segmentSplitDelete.ts's `deleteSegment`) — a native segment
-   *  right-clicked here shows no delete entry. */
-  onDeleteSegment?: (segmentId: string) => void;
-  /** WS2 ws2-25 Commit 4 — ids of every individually-restored absorbed-gap
-   *  segment (`Project.segmentOverrides`'s own keys). A split slice is
-   *  detected structurally instead (`isSliceSegmentId`) and needs nothing
-   *  passed in for it — see DropZonePanel's identical prop for the same
-   *  reasoning. */
-  restoredSegmentIds?: ReadonlySet<string>;
-  /** WS2 ws2-26 Commit 4 — the segment `App.tsx`'s `selectedSegmentId` state
-   *  currently names (the scene drawer's target — see `onClipClick`'s own
-   *  doc comment for how a click sets this). Purely for the clip's own
-   *  selected-look border; distinct from `currentSegmentId` (the playhead),
-   *  which the two can independently agree or disagree with. Never read for
-   *  anything but styling — this prop changes NOTHING about what a click
-   *  does. */
-  selectedSegmentId?: string;
 }
 
 export function Timeline({
@@ -140,31 +115,8 @@ export function Timeline({
   onClipClick,
   onHeadingResizeCommit,
   initialScrollLeft,
-  onRestoreAbsorbedGaps,
-  onDeleteSegment,
-  restoredSegmentIds,
-  selectedSegmentId,
 }: Props) {
   const totalDuration = useMemo(() => computeTotalDuration(segments), [segments]);
-
-  // WS2 T2.1 Commit 3 — right-click context menu. Not a general-purpose
-  // reusable menu component: scoped to these two actions (restore, and —
-  // WS2 ws2-25 Commit 4 — delete), dismissed on outside click or Escape.
-  // Holds only the id; which action(s) apply is recomputed at render time
-  // from the current segment/props, so it can never disagree with the
-  // eligibility check the click handler itself just ran.
-  const [gapContextMenu, setGapContextMenu] = useState<{ segmentId: string; x: number; y: number } | null>(null);
-  useEffect(() => {
-    if (!gapContextMenu) return;
-    const close = (): void => setGapContextMenu(null);
-    const closeOnEscape = (e: KeyboardEvent): void => { if (e.key === 'Escape') close(); };
-    window.addEventListener('click', close);
-    window.addEventListener('keydown', closeOnEscape);
-    return () => {
-      window.removeEventListener('click', close);
-      window.removeEventListener('keydown', closeOnEscape);
-    };
-  }, [gapContextMenu]);
 
   const [containerWidth, setContainerWidth] = useState(0);
 
@@ -683,12 +635,6 @@ export function Timeline({
               {segments.map((s, i) => {
                 const asset = assets.find(a => a.id === s.assetId);
                 const isActive = currentSegmentId === s.id;
-                // WS2 ws2-26 Commit 4 — the click at `onClick` below already set
-                // `selectedSegmentId` in App.tsx; this clip simply never read it
-                // back for styling (Timeline had no such prop at all — see
-                // `selectedSegmentId`'s own doc comment). Independent of
-                // `isActive` (the playhead), which the two can agree or not.
-                const isSelected = selectedSegmentId === s.id;
                 const isMissing = !asset && !!s.text;
                 const segLayout = computeSegmentLayout(s, pixelsPerSecond);
 
@@ -703,15 +649,6 @@ export function Timeline({
                       if (resizingId) return;
                       onSeek(s.startTime);
                     }}
-                    onContextMenu={(e) => {
-                      const canRestore = !!s.absorbedGaps?.length && !!onRestoreAbsorbedGaps;
-                      const canDelete = !!onDeleteSegment
-                        && (isSliceSegmentId(s.id) || !!restoredSegmentIds?.has(s.id));
-                      if (!canRestore && !canDelete) return;
-                      e.preventDefault();
-                      e.stopPropagation();
-                      setGapContextMenu({ segmentId: s.id, x: e.clientX, y: e.clientY });
-                    }}
                     style={{
                       position: 'absolute',
                       left: `${segLayout.left}px`,
@@ -723,20 +660,14 @@ export function Timeline({
                       // The undo/redo flash uses boxShadow rather than a
                       // competing outline — the card already transitions
                       // box-shadow, so the flash inherits that easing for free.
-                      // Selection (Commit 4) is a plain white ring, layered
-                      // beneath the flash so an undo/redo flash on the
-                      // currently-selected clip still reads as a flash, not a
-                      // blended color.
                       boxShadow: flashSegmentId === s.id
                         ? '0 0 0 2px #F27D26, 0 0 36px rgba(242,125,38,0.55)'
-                        : isSelected
-                          ? '0 0 0 2px rgba(255,255,255,0.85)'
-                          : 'none',
+                        : 'none',
                       zIndex: flashSegmentId === s.id
                         ? 60
-                        : (isActive ? 10 : (isSelected ? 5 : 1)),
+                        : (isActive ? 10 : 1),
                     }}
-                    className={`kx-timeline-clip rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'}`}
+                    className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'}`}
                   >
                     {/* K16 — pointer events + pointer capture, not mousedown.
                         Capture guarantees this element keeps receiving
@@ -802,20 +733,6 @@ export function Timeline({
                             {(s.trimStart ?? 0) > 0 && (
                               <span className="px-1 py-0.5 bg-blue-500/20 text-blue-400 rounded-sm text-[6px] font-mono">
                                 Slip: {(s.trimStart ?? 0).toFixed(1)}s
-                              </span>
-                            )}
-                            {/* WS2 ws2-26 Commit 2 — a Forced Restore is visually
-                                distinguishable from an evidence-backed restore
-                                (which gets no badge at all): the badge names
-                                exactly what makes it different — a human
-                                confirmed it despite no evidence, not the sync
-                                engine deriving it. */}
-                            {s.isForceRestored && (
-                              <span
-                                title="Restored by human override — 0 matched words, no timestamp data"
-                                className="px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded-sm text-[6px] font-mono uppercase tracking-wide"
-                              >
-                                Forced
                               </span>
                             )}
                           </div>
@@ -941,46 +858,6 @@ export function Timeline({
         )}
       </div>
 
-      {gapContextMenu && (() => {
-        const target = segments.find(s => s.id === gapContextMenu.segmentId);
-        if (!target) return null;
-        const gapCount = target.absorbedGaps?.length ?? 0;
-        const canDelete = !!onDeleteSegment
-          && (isSliceSegmentId(target.id) || !!restoredSegmentIds?.has(target.id));
-        if (gapCount === 0 && !canDelete) return null;
-        return (
-          <div
-            style={{ position: 'fixed', left: gapContextMenu.x, top: gapContextMenu.y, zIndex: 200 }}
-            className="bg-[#151515] border border-[#2A2A2A] rounded-lg shadow-xl py-1 min-w-[220px]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {gapCount > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  onRestoreAbsorbedGaps?.(gapContextMenu.segmentId);
-                  setGapContextMenu(null);
-                }}
-                className="w-full text-left px-3 py-1.5 text-[11px] text-gray-200 hover:bg-[#F27D26]/15 hover:text-[#F27D26]"
-              >
-                Restore absorbed segments ({gapCount})
-              </button>
-            )}
-            {canDelete && (
-              <button
-                type="button"
-                onClick={() => {
-                  onDeleteSegment?.(gapContextMenu.segmentId);
-                  setGapContextMenu(null);
-                }}
-                className="w-full text-left px-3 py-1.5 text-[11px] text-gray-200 hover:bg-[#F27D26]/15 hover:text-[#F27D26]"
-              >
-                Delete segment
-              </button>
-            )}
-          </div>
-        );
-      })()}
     </div>
   );
 }

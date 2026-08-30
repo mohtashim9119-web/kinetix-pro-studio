@@ -138,15 +138,14 @@ describe('computeSegmentDisplayTitle', () => {
 });
 
 // ---------------------------------------------------------------------------
-// WS2 session ws2-25, Commit 4 — restored/split segments keep their own
-// script title, never the positional "Scene N" fallback. A restore
-// (makeRestoredSegment, absorbedGapRestore.ts) never sets assetId and always
-// shares order: 0, so without this every restored segment would display
-// "Scene 1".
+// WS2 session ws2-25, Commit 4 — split segments keep their own script title,
+// never the positional "Scene N" fallback. A split slice can share its
+// parent's order/no-asset shape, so without this every slice would display
+// the same "Scene N" as its sibling.
 // ---------------------------------------------------------------------------
-describe('computeSegmentDisplayTitle — restored/split segments', () => {
-  const restoredSeg: VideoSegment = {
-    id: 'restored-1',
+describe('computeSegmentDisplayTitle — split segments', () => {
+  const splitSeg: VideoSegment = {
+    id: 'split-1',
     text: 'Some don’t emerge.',
     startTime: 443.82,
     duration: 1.54,
@@ -155,24 +154,24 @@ describe('computeSegmentDisplayTitle — restored/split segments', () => {
     order: 0,
   };
 
-  it('shows the segment\'s own script text, not "Scene N", when restored and unassigned', () => {
-    expect(computeSegmentDisplayTitle(restoredSeg, undefined, true)).toBe('Some don’t emerge.');
+  it('shows the segment\'s own script text, not "Scene N", when split and unassigned', () => {
+    expect(computeSegmentDisplayTitle(splitSeg, undefined, true)).toBe('Some don’t emerge.');
   });
 
-  it('does NOT change the fallback for an ordinary (non-restored) segment', () => {
-    // Same shape (no asset, order 0) but not flagged as restored — must still
+  it('does NOT change the fallback for an ordinary (non-split) segment', () => {
+    // Same shape (no asset, order 0) but not flagged as split — must still
     // fall back to the positional label, unchanged from before this commit.
-    expect(computeSegmentDisplayTitle(restoredSeg, undefined, false)).toBe('Scene 1');
-    expect(computeSegmentDisplayTitle(restoredSeg, undefined)).toBe('Scene 1'); // default param
+    expect(computeSegmentDisplayTitle(splitSeg, undefined, false)).toBe('Scene 1');
+    expect(computeSegmentDisplayTitle(splitSeg, undefined)).toBe('Scene 1'); // default param
   });
 
-  it('still prefers an assigned asset\'s name over the restored flag', () => {
+  it('still prefers an assigned asset\'s name over the split flag', () => {
     const asset: Asset = { id: 'a1', name: '009_civic_stats.jpeg', url: '', type: 'image' };
-    expect(computeSegmentDisplayTitle(restoredSeg, asset, true)).toBe('Civic Stats');
+    expect(computeSegmentDisplayTitle(splitSeg, asset, true)).toBe('Civic Stats');
   });
 
-  it('falls through to "Scene N" if a restored segment somehow has no text', () => {
-    expect(computeSegmentDisplayTitle({ ...restoredSeg, text: '' }, undefined, true)).toBe('Scene 1');
-    expect(computeSegmentDisplayTitle({ ...restoredSeg, text: '   ' }, undefined, true)).toBe('Scene 1');
+  it('falls through to "Scene N" if a split segment somehow has no text', () => {
+    expect(computeSegmentDisplayTitle({ ...splitSeg, text: '' }, undefined, true)).toBe('Scene 1');
+    expect(computeSegmentDisplayTitle({ ...splitSeg, text: '   ' }, undefined, true)).toBe('Scene 1');
   });
 });

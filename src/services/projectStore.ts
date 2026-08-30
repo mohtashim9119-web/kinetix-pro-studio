@@ -33,7 +33,7 @@ interface StoredAsset extends Omit<Asset, 'url' | 'file'> {
 }
 
 interface StoredProjectData {
-  version: 2 | 3 | 4 | 5;
+  version: 2 | 3 | 4;
   savedAt: number;
   project: Omit<Project, 'assets'> & { assets: StoredAsset[] };
 }
@@ -217,17 +217,16 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
   const storedData: StoredProjectData = {
     // WS2 T1.2 — bumped from 2 to 3: segments now carry a stable
     // content-derived id (segmentId.ts) instead of a per-save random UUID.
-    // WS2 T2.1 — bumped from 3 to 4: a segment may now carry `absorbedGaps`
-    // (types.ts) recording what Apply Sync dropped and folded into its own
-    // span. Additive-optional field, same as every VideoSegment field before
-    // it — no structural migration needed on load, an old project simply
-    // has no absorbed-gap segments to restore.
-    // WS2 ws2-26 Commit 2 — bumped from 4 to 5: a segment may now carry
-    // `isForceRestored` (types.ts), and `Project.segmentOverrides` may now
-    // carry `'force-keep'` alongside `'keep'`. Same additive-optional
-    // convention as every field above — no structural migration on load, an
-    // old project simply has no force-restored segments/overrides.
-    version: 5,
+    // WS2 T2.1 — bumped from 3 to 4: a segment could carry `absorbedGaps`
+    // (types.ts), restore-UI bookkeeping. WS2 ws2-26 (round 1 of the
+    // operator's revert request) removed that field again along with the
+    // whole restore feature it supported — nothing currently on `Project` or
+    // `VideoSegment` actually needs version 4 any more, but the marker is
+    // left at 4 rather than rolled back: it was never read/branched on
+    // (additive-optional fields need no structural migration either way),
+    // and un-bumping a shipped marker would misrepresent history more than
+    // a now-purposeless one does.
+    version: 4,
     savedAt,
     project: { ...project, assets: project.assets.map(stripAsset) },
   };

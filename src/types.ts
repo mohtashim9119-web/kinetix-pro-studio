@@ -254,92 +254,6 @@ export interface VideoSegment {
    *  Undefined for an untagged scene (empty `[]`). Display-only — nothing
    *  downstream branches on it. */
   tag?: string;
-  /** WS2 T2.1 (gap-absorption) — scenes R4-1/R.10 dropped during the Apply
-   *  Sync run that produced this segment's current boundaries, because the
-   *  audio never gave them a committable span, whose reclaimable time this
-   *  segment (the "absorbing neighbour") is hosting. Each entry's `span` is
-   *  the TRUE reclaimable region — the previous survivor's own last spoken
-   *  word end to the next survivor's own first spoken word start — NOT this
-   *  segment's post-`snapCoveredBoundaries` boundary, which only ever lands
-   *  somewhere inside that region. `gapAudio` is computed once at absorption
-   *  time from that run's live silence-detection intervals and persisted
-   *  here because those intervals are never themselves saved with the
-   *  project. Additive-only; absent on every segment from before this field
-   *  existed and on any segment that absorbed nothing. See
-   *  `absorbedGaps.ts`. */
-  absorbedGaps?: AbsorbedGap[];
-  /** WS2 ws2-26 Commit 2 — set on a segment restored via the Forced Restore
-   *  override: a human confirmed the restore despite the automatic path
-   *  refusing it for zero orphan-token evidence (Commit 1). Never set by the
-   *  automatic evidence-gated restore path. Purely additive/optional, like
-   *  every other WS2 T2.1 restore-metadata field on this type — absent means
-   *  "not force-restored" (not restored at all, restored normally with
-   *  evidence, or a plain native segment). Survives a re-sync the same way
-   *  any other restore does, via `Project.segmentOverrides`'s `'force-keep'`
-   *  action re-applying it — this field itself is never carried forward
-   *  across a re-sync (clean-slate re-sync invariant, §4), only re-derived
-   *  fresh each time the same content drops again. */
-  isForceRestored?: boolean;
-}
-
-/** One scene dropped by Apply Sync (R4-1 "no text match" or R.10 "scripted
- *  text never spoken") whose text and stable id are recorded on the
- *  `VideoSegment` hosting its reclaimable span, so a later restore
- *  (WS2 T2.1) can recreate it without re-running sync. `segmentId` is the
- *  DROPPED scene's own stable content-derived id (segmentId.ts) — assigned
- *  before it was ever dropped — not the hosting segment's id. */
-export interface AbsorbedGap {
-  segmentId: string;
-  text: string;
-  span: { start: number; end: number };
-  /** Whether the reclaimable region was mostly silence, mostly real speech
-   *  (e.g. a rescued utterance too short/uncertain to commit its own
-   *  segment), or unclassifiable (no silence-detection data available for
-   *  this run — the no-transcript/no-tokens fallback path). Computed once,
-   *  at absorption time, from a majority-overlap test against that run's own
-   *  detected silences — see `absorbedGaps.ts`'s `classifyGapAudio`. */
-  gapAudio: 'silent' | 'speech' | 'unknown';
-  /** WS2 session ws2-25 Commit 2 — THE ORPHAN-TOKEN REGION FOR THIS SCENE.
-   *
-   *  `span` above is the distance between the two SURVIVORS' own token edges.
-   *  That is not free time: real transcript tokens can sit inside it, and when
-   *  they do they are this dropped scene's own speech, not reclaimable
-   *  neighbour time. `spokenSpan` is the sub-interval of `span` covered by the
-   *  ORPHAN tokens (transcript tokens strictly between the two survivors'
-   *  matched token indices — index space, never timestamp proximity) that were
-   *  attributed to THIS scene. A restore sizes the recreated segment from this,
-   *  not from `span`, so the neighbours only give back time that was actually
-   *  spoken.
-   *
-   *  Undefined when the cluster had no orphan tokens at all — the gap is a hole
-   *  in the transcript, not recorded speech, and `span` is the only bound left.
-   *  See `absorbedGaps.ts`'s `computeOrphanRegions`. */
-  spokenSpan?: { start: number; end: number };
-  /** How many orphan tokens the whole CLUSTER had (shared by every entry in
-   *  one cluster, like `span`). Zero means the transcript recorded nothing at
-   *  all between the two survivors — the restore-refusal input, kept as a
-   *  count rather than re-derived later because the token array is a live
-   *  artifact of one sync run and is never persisted with the project.
-   *
-   *  OPTIONAL, and `undefined` means UNKNOWN — never zero. A gap recorded by a
-   *  build before this field existed carries no count, and the transcript it
-   *  was measured against is long gone; treating that silence as "nothing was
-   *  spoken" would refuse restores on evidence nobody ever collected. Only an
-   *  explicit `0` licenses the refusal rule in `absorbedGapRestore.ts`. */
-  orphanCount?: number;
-  /** WS2 session ws2-25 Commit 3 — WHICH SIDE OF THE HOST THIS GAP SITS ON.
-   *
-   *  A gap is normally hosted by the survivor BEFORE it (`'after'`: the gap
-   *  follows the host, and a restore inserts after the host and shrinks the
-   *  host's END). A LEADING run of drops has no survivor before it, so it is
-   *  hosted by the survivor AFTER it (`'before'`: the restore inserts before
-   *  the host and moves the host's START forward).
-   *
-   *  Recorded rather than re-derived, because by restore time the pre-filter
-   *  array that made the distinction is gone. Absent on a gap recorded before
-   *  this field existed; treat `undefined` as `'after'`, which is what every
-   *  such gap was written assuming. */
-  hostSide?: 'before' | 'after';
 }
 
 /**
@@ -521,27 +435,6 @@ export interface Project {
    *  at MAX_LOG_ENTRIES (services/syncConstants.ts); older entries are pruned
    *  from the front. Undefined on projects saved before WS-logs — treat as []. */
   syncLog?: SyncLogEntry[];
-  /** WS2 T2.2 (minimal override store) — dropped-scene ids the user has
-   *  explicitly restored (`'keep'`) via the T2.1 restore UI. Clean-slate
-   *  re-sync (§4 invariant) never carries a segment's own timing forward,
-   *  but a segment id here IS re-applied after every Apply Sync run: if that
-   *  same content is dropped again, `restoreSegmentsByGapId`
-   *  (absorbedGapRestore.ts) re-materializes it from the run's own freshly
-   *  computed `absorbedGaps`, so a restore survives a re-sync instead of
-   *  needing to be redone by hand every time. Removing an entry (e.g.
-   *  deleting the restored segment again, Commit 4) lets the next re-sync
-   *  drop it like any other unrestored gap. Keyed by the dropped scene's own
-   *  stable content-derived id (segmentId.ts) — NOT by the hosting
-   *  segment's id, which can change across a re-sync.
-   *
-   *  `'force-keep'` (WS2 ws2-26 Commit 2) — same rehydration contract, but
-   *  the ORIGINAL restore was a Forced Restore: the user confirmed it despite
-   *  zero orphan-token evidence (`absorbedGapRestore.ts`'s refusal rule).
-   *  Recorded so a later re-sync that drops the same content again
-   *  re-applies the FORCE path automatically (`forceRestoreSegmentsByGapId`)
-   *  instead of either silently guessing again or re-prompting the user for
-   *  a choice they already made once. */
-  segmentOverrides?: Record<string, 'keep' | 'force-keep'>;
   /** WS-logs — per-run rollups, same append/prune discipline, capped at
    *  MAX_SYNC_RUN_SUMMARIES. Undefined on pre-WS-logs projects — treat as []. */
   syncRunSummaries?: SyncRunSummary[];
@@ -838,30 +731,13 @@ export interface SyncLogEntry {
    *  (segmentId.ts) of the committed segment this entry is about, when the
    *  entry concerns one specific segment (e.g. the neighbour that absorbed a
    *  dropped scene's gap). Undefined on entries with no single owning
-   *  segment. Lets a future override/restore UI act on the entry directly
-   *  without re-deriving an index. */
+   *  segment. Lets a click deep-link the playhead straight to it
+   *  (`onSeekToSegment`, SyncLogPanel's "Jump to absorbing scene"). */
   segmentId?: string;
-  /** WS2 T2.1 Commit 3 — skip entries only, when the drop is restorable: the
-   *  DROPPED scene's own stable content-derived id (distinct from
-   *  `segmentId` above, which on a skip entry names the absorbing
-   *  neighbour). This is the id `restoreSegmentsByGapId`
-   *  (absorbedGapRestore.ts) and `Project.segmentOverrides` key on — a UI
-   *  restore control reads this field, never `segmentId`, to know what to
-   *  restore. */
-  restoreGapId?: string;
   /** WS2 ws2-25 Commit 5 — skip entries only, when the drop is absorbed: the
    *  ABSORBING NEIGHBOUR's own 0-based position in the FINAL committed array
    *  — the number the Timeline actually renders for that clip (`#{i+1}`,
    *  Timeline.tsx's own segment-card index over `project.segments`).
-   *
-   *  Resolved AFTER the T2.2 override-rehydration pass (`restoreSegmentsByGapId`
-   *  re-inserting any of the user's OWN earlier restores, App.tsx), not from
-   *  the earlier `kept` snapshot — a run with any prior restore positioned
-   *  before this host silently shifts every later index, and `kept`'s own
-   *  count predates that insertion. Mirrors `syncLog.ts`'s `committedIndexOf`,
-   *  the same id-resolved-against-the-final-array pattern R.11-R.13's own
-   *  entries already use; this field brings skip entries onto that same
-   *  pattern instead of a separate, stale, pre-rehydration count.
    *
    *  Named distinctly from `segmentIndex` (the DROPPED scene's own PRE-FILTER
    *  script position — a different numbering space) precisely so a reader

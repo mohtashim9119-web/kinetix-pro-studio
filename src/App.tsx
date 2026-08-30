@@ -129,18 +129,9 @@ import {
 } from './services/faRunPlacementGate';
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
-import { computeAbsorbedGaps, applyAbsorbedGaps } from './services/absorbedGaps';
-import { restoreSegmentsByGapId, collectPendingForceRestores } from './services/absorbedGapRestore';
-import type { PendingForceRestoreCluster } from './services/absorbedGapRestore';
-import { ForceRestoreConfirmModal } from './components/ForceRestoreConfirmModal';
+import { computeAbsorbedGaps } from './services/absorbedGaps';
 import { splitSegmentAtTime, deleteSegment } from './services/segmentSplitDelete';
 
-/** WS2 T2.1/T2.2 — fps used ONLY for the restore sub-frame merge check when
- *  re-hydrating a user's past restores during Apply Sync (a re-sync has no
- *  meaningful "current export fps" of its own to read); the interactive
- *  restore UI uses the session's real `exportFps` instead. A conservative,
- *  common default — not derived from any project setting. */
-const GAP_RESTORE_REHYDRATION_FPS = 24;
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
 import {
@@ -1211,25 +1202,22 @@ function previewSegmentText(text: string): string {
 /** Per-skip-record absorption info (WS2 T2.1) — resolved once at the call
  *  site from `computeAbsorbedGaps`'s host map, keyed back to each skipped
  *  record's own PRE-filter `segmentIndex` so `buildSkipLogEntries` doesn't
- *  need to re-derive the dropped segment's id itself. Every entry in one
+ *  need to re-derive the absorbing segment's id itself. Every entry in one
  *  absorbed cluster carries the SAME `hostSegmentId`/`hostDisplayIndex`/
- *  `span` — that shared value is what "groups" them: a reader (or a future
- *  UI) can cluster skip entries by `segmentId` even though each still
- *  renders as its own `SyncLogEntry`. */
+ *  `span` — that shared value is what "groups" them: a reader can cluster
+ *  skip entries by `segmentId` even though each still renders as its own
+ *  `SyncLogEntry`. Read-only reporting data — see `absorbedGaps.ts`'s own
+ *  header for why nothing here is persisted onto a segment any more. */
 export interface AbsorbedGapLogInfo {
   hostSegmentId: string;
-  /** WS2 ws2-25 Commit 5 — 0-based index into the FINAL COMMITTED array
-   *  (post-rehydration — see the call site's own comment for why "post" is
-   *  load-bearing here), the number the Timeline actually renders for the
-   *  absorbing neighbour's clip. Mirrors `SyncLogEntry.absorbedByDisplayIndex`'s
-   *  own doc comment; kept as its own field here rather than only inside the
-   *  entry so the sync-log summary line can use it too if ever needed. */
+  /** 0-based index into the FINAL COMMITTED array, the number the Timeline
+   *  actually renders for the absorbing neighbour's clip. Mirrors
+   *  `SyncLogEntry.absorbedByDisplayIndex`'s own doc comment; kept as its own
+   *  field here rather than only inside the entry so the sync-log summary
+   *  line can use it too if ever needed. */
   hostDisplayIndex: number;
   span: { start: number; end: number };
   gapAudio: 'silent' | 'speech' | 'unknown';
-  /** The DROPPED scene's own stable id — what a restore control acts on
-   *  (`SyncLogEntry.restoreGapId`), distinct from `hostSegmentId` above. */
-  droppedSegmentId: string;
 }
 
 /**
@@ -1305,7 +1293,6 @@ export function buildSkipLogEntries(
           longestRun: record.longestRun,
         }),
         segmentId: absorbed?.hostSegmentId,
-        restoreGapId: absorbed?.droppedSegmentId,
         absorbedByDisplayIndex: absorbed?.hostDisplayIndex,
       },
       timestamp,
@@ -1937,10 +1924,6 @@ export default function App() {
   // later, different one.
   const [languageBannerDismissed, setLanguageBannerDismissed] = useState(false);
   const [showDashboard, setShowDashboard] = useState(true);
-  // WS2 ws2-26 Commit 2 — clusters from the most recent restore request that
-  // the automatic (evidence-gated) path refused, awaiting an explicit human
-  // Force Restore / Cancel decision. `null` when the modal isn't showing.
-  const [pendingForceRestore, setPendingForceRestore] = useState<PendingForceRestoreCluster[] | null>(null);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   const [showExportSettingsModal, setShowExportSettingsModal] = useState(false);
@@ -3297,7 +3280,7 @@ export default function App() {
       // exactly this array, so substituting any other token array resolves to the
       // WRONG tokens and silently mis-measures every absorbed span. Locked by
       // `absorbedGaps.test.ts`'s "reads spans from the token array it is given"
-      // suite and by `scripts/ws2-restore-corpus.test.ts`'s two-arm check.
+      // suite.
       const absorbedGapsByHostId = computeAbsorbedGaps(
         aligned.segments, skipped, kept.map(s => s.id), keptAlignments, aligned.tokens, aligned.silences,
       );
@@ -3427,62 +3410,14 @@ export default function App() {
       // not necessarily 0). Stretch it back to 0 the same way.
       finalTimedSegments = headExtendFirstSegment(finalTimedSegments);
 
-      // WS2 T2.1 (gap-absorption) — merges the map computed right after
-      // `filterToCoveredSegments` above onto the final committed segments,
-      // BEFORE any WS1 rule below can move a boundary again. Keyed by id, so
-      // this reads identically regardless of which timing branch (snap vs.
-      // retile) ran, and regardless of anything upstream having reordered
-      // `kept` (it hasn't — this is defense-in-depth, not a known reorder).
-      finalTimedSegments = applyAbsorbedGaps(finalTimedSegments, absorbedGapsByHostId);
-
-      // WS2 T2.2 (minimal override store) — clean-slate re-sync (§4
-      // invariant) never carries a segment's own timing forward, but a
-      // segment the user previously restored (`Project.segmentOverrides`)
-      // IS re-applied here if this run dropped it again, so a restore
-      // survives a re-sync instead of needing to be redone by hand every
-      // time. Uses a fixed fps for the sub-frame merge check rather than the
-      // session's export-fps UI state — this runs deep inside the sync
-      // commit path, which does not (and should not) depend on that
-      // unrelated setting.
-      const keepOverrideIds = new Set(
-        Object.entries(projectRef.current.segmentOverrides ?? {})
-          .filter(([, action]) => action === 'keep')
-          .map(([segId]) => segId),
-      );
-      if (keepOverrideIds.size > 0) {
-        finalTimedSegments = restoreSegmentsByGapId(finalTimedSegments, keepOverrideIds, GAP_RESTORE_REHYDRATION_FPS);
-      }
-      // WS2 ws2-26 Commit 2 — a PREVIOUSLY force-restored scene rehydrates via
-      // the force path, not the evidence-gated one: the human already
-      // confirmed this exact restore once, so re-applying it automatically on
-      // every future re-sync that drops the same content again must not
-      // silently drop it (the automatic path would refuse it again, having no
-      // way to know it was ever forced) NOR re-prompt for a decision already
-      // made. `{ force: true }` never refuses, so this always re-materializes.
-      const forceKeepOverrideIds = new Set(
-        Object.entries(projectRef.current.segmentOverrides ?? {})
-          .filter(([, action]) => action === 'force-keep')
-          .map(([segId]) => segId),
-      );
-      if (forceKeepOverrideIds.size > 0) {
-        finalTimedSegments = restoreSegmentsByGapId(
-          finalTimedSegments, forceKeepOverrideIds, GAP_RESTORE_REHYDRATION_FPS, { force: true },
-        );
-      }
-
-      // WS2 ws2-25 Commit 5 — THE OFF-BY-ONE FIX. `absorbedInfoBySkipIndex`
-      // (and therefore the skip log's "Clip N" label) must be resolved
-      // against `finalTimedSegments` HERE — after rehydration has finished
-      // inserting the user's own prior restores — never against the earlier
-      // `kept` snapshot. `kept`'s own count is fixed before rehydration ever
-      // runs; any restore positioned before this host that rehydration
-      // re-inserts shifts every later clip's real Timeline position by one
-      // (or more) without `kept`'s count ever reflecting it. Mirrors
-      // `syncLog.ts`'s `committedIndexOf` — the same id-resolved-against-the-
-      // final-array pattern R.11/R.12/R.13's own log entries already use one
-      // block below (`buildSeamFitLogEntries` etc. are all given
-      // `finalTimedSegments`, never `kept`) — this brings skip entries onto
-      // that same, already-correct pattern instead of a separate stale one.
+      // WS2 ws2-25 Commit 5 — `absorbedInfoBySkipIndex` (and therefore the
+      // skip log's "Clip N" label) is resolved against `finalTimedSegments`
+      // HERE, the final committed array, never against the earlier `kept`
+      // snapshot. Mirrors `syncLog.ts`'s `committedIndexOf` — the same
+      // id-resolved-against-the-final-array pattern R.11/R.12/R.13's own log
+      // entries already use one block below (`buildSeamFitLogEntries` etc.
+      // are all given `finalTimedSegments`, never `kept`) — this brings skip
+      // entries onto that same pattern instead of a separate stale one.
       // Provisional skip entries were already staged into `pendingLogEntries`
       // above (built before this array was final); patched in place below
       // rather than rebuilding the whole array, so nothing else about their
@@ -3497,7 +3432,6 @@ export default function App() {
             if (skipRecord) {
               absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
                 hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
-                droppedSegmentId: gap.segmentId,
               });
             }
           }
@@ -4434,89 +4368,8 @@ export default function App() {
     setProject(prev => clearSyncLog(prev));
   }, []);
 
-  // WS2 T2.1 Commit 3 — restores one or more dropped scenes (named by their
-  // own stable id, `SyncLogEntry.restoreGapId`) back onto the timeline, and
-  // records each as `'keep'` in `Project.segmentOverrides` (T2.2) so a
-  // future re-sync that drops the same content again re-restores it
-  // automatically instead of silently reverting the user's choice. Goes
-  // through `setProject` (never `setProjectSilent`), so this is undoable
-  // like any other timeline edit.
-  //
-  // WS2 ws2-26 Commit 2 — a request can name a MIX of evidence-backed and
-  // zero-evidence gaps (e.g. a sync-log multi-select restore). The
-  // evidence-backed ones restore immediately, below, exactly as before.
-  // The zero-evidence ones are never silently refused (Commit 1) and never
-  // silently restored (that would be the exact fabrication Commit 1
-  // removed) — they wait in `pendingForceRestore` for an explicit human
-  // Force Restore or Cancel via `ForceRestoreConfirmModal`, reachable from
-  // both entry points (sync-log restore and the Timeline context menu)
-  // because both call this same handler.
-  const handleRestoreAbsorbedSegments = useCallback((gapSegmentIds: string[]): void => {
-    if (gapSegmentIds.length === 0) return;
-    const pending = collectPendingForceRestores(projectRef.current.segments, new Set(gapSegmentIds), exportFps);
-    const pendingIds = new Set(pending.flatMap(c => c.gapSegmentIds));
-    const autoIds = gapSegmentIds.filter(id => !pendingIds.has(id));
-
-    if (autoIds.length > 0) {
-      setProject(prev => {
-        const ids = new Set(autoIds);
-        const segments = restoreSegmentsByGapId(prev.segments, ids, exportFps);
-        // Only record an override for what actually landed — marking a
-        // refused scene `'keep'` would promise a re-restore on the next
-        // sync that this same rule would refuse again.
-        const restoredIds = new Set(
-          segments.filter(sg => ids.has(sg.id)).map(sg => sg.id),
-        );
-        const segmentOverrides = { ...(prev.segmentOverrides ?? {}) };
-        for (const id of restoredIds) segmentOverrides[id] = 'keep';
-        return { ...prev, segments, segmentOverrides };
-      });
-    }
-    if (pending.length > 0) setPendingForceRestore(pending);
-  }, [exportFps]);
-
-  // WS2 ws2-26 Commit 2 — human confirmed Force Restore for every cluster
-  // currently pending, in ONE batch (one undo step covers the whole
-  // confirmation, not one per row). Records `'force-keep'`, not `'keep'`, so
-  // a future re-sync that drops the same content again re-applies the FORCE
-  // path automatically instead of either guessing silently or re-prompting
-  // for a choice already made once.
-  const handleConfirmForceRestore = useCallback((): void => {
-    if (!pendingForceRestore || pendingForceRestore.length === 0) return;
-    const ids = new Set(pendingForceRestore.flatMap(c => c.gapSegmentIds));
-    setProject(prev => {
-      const segments = restoreSegmentsByGapId(prev.segments, ids, exportFps, { force: true });
-      const restoredIds = new Set(segments.filter(sg => ids.has(sg.id)).map(sg => sg.id));
-      const segmentOverrides = { ...(prev.segmentOverrides ?? {}) };
-      for (const id of restoredIds) segmentOverrides[id] = 'force-keep';
-      return { ...prev, segments, segmentOverrides };
-    });
-    setPendingForceRestore(null);
-  }, [pendingForceRestore, exportFps]);
-
-  // Cancel leaves the timeline completely untouched — the pending clusters
-  // are simply forgotten, exactly as if the restore had never been
-  // requested. No `setProject` call at all.
-  const handleCancelForceRestore = useCallback((): void => {
-    setPendingForceRestore(null);
-  }, []);
-
-  // WS2 T2.1 Commit 3 — Timeline's right-click "Restore absorbed segments"
-  // menu item restores EVERY cluster hosted on one clip in one action (the
-  // sync-log panel's checkbox multi-select above is what a selective, one-
-  // cluster-at-a-time restore goes through).
-  const handleRestoreAllGapsOnSegment = useCallback((hostSegmentId: string): void => {
-    const host = projectRef.current.segments.find(s => s.id === hostSegmentId);
-    const gapIds = host?.absorbedGaps?.map(g => g.segmentId) ?? [];
-    handleRestoreAbsorbedSegments(gapIds);
-  }, [handleRestoreAbsorbedSegments]);
-
   // WS2 T2.1 Commit 4 — S (split the selected segment at the playhead) and
-  // D (delete a split slice or restored segment). Both go through
-  // setProject (undoable). `restoredIds` for the delete guard is every key
-  // of `Project.segmentOverrides` — see segmentSplitDelete.ts's header for
-  // why a merged restore slot (a slice id) is deliberately NOT included and
-  // stays covered by the ordinary last-remaining-slice rule instead.
+  // D (delete a split slice). Both go through setProject (undoable).
   const handleSplitSelectedSegment = useCallback((): void => {
     const id = resolveShortcutTargetSegmentId();
     if (!id) return;
@@ -4538,8 +4391,7 @@ export default function App() {
     setProject(prev => {
       const index = prev.segments.findIndex(s => s.id === id);
       if (index < 0) return prev;
-      const restoredIds = new Set(Object.keys(prev.segmentOverrides ?? {}));
-      const { segments, deleted } = deleteSegment(prev.segments, index, restoredIds);
+      const { segments, deleted } = deleteSegment(prev.segments, index);
       if (!deleted) return prev;
       didDelete = true;
       return { ...prev, segments };
@@ -4725,16 +4577,6 @@ export default function App() {
     if (!file) return;
     await processZipFile(file);
   };
-
-  // WS2 ws2-25 Commit 4 — every individually-restored absorbed-gap segment's
-  // own id (segmentOverrides' keys), for DropZonePanel's title fallback. A
-  // merged restore slot's slice id is deliberately excluded here — it's
-  // detected structurally (isSliceSegmentId) at the call site instead, same
-  // as segmentSplitDelete.ts's own split-vs-restore split.
-  const restoredSegmentIdsMemo = useMemo(
-    () => new Set(Object.keys(project.segmentOverrides ?? {})),
-    [project.segmentOverrides],
-  );
 
   const currentSegment = useMemo(() => {
     if (isResizingRef.current) {
@@ -4990,11 +4832,7 @@ export default function App() {
   shortcutsSuppressedRef.current =
     showStockSearch || showNewProjectModal || showProjectSettingsModal
     || showExportSettingsModal || showReviewMapping || devPanelOpen
-    || showManageModelsModal || exportState.isExporting
-    // WS2 ws2-26 Commit 2 — Force Restore confirmation runs its own
-    // click-only UI (Cancel/Force Restore); S/D/undo must not act on
-    // whatever's still selected on the timeline underneath it.
-    || !!(pendingForceRestore && pendingForceRestore.length > 0);
+    || showManageModelsModal || exportState.isExporting;
 
   const togglePlay = () => setIsPlaying(p => !p);
 
@@ -5491,7 +5329,6 @@ export default function App() {
         >
           <DropZonePanel
             segments={project.segments}
-            restoredSegmentIds={restoredSegmentIdsMemo}
             assets={project.assets}
             voiceoverId={project.voiceoverId}
             script={project.script}
@@ -5766,10 +5603,6 @@ export default function App() {
                 resizingType={resizingType}
                 voiceoverName={voiceover?.name}
                 waveformSource={waveformSource}
-                onRestoreAbsorbedGaps={handleRestoreAllGapsOnSegment}
-                onDeleteSegment={handleDeleteSegmentById}
-                restoredSegmentIds={restoredSegmentIdsMemo}
-                selectedSegmentId={selectedSegmentId ?? undefined}
                 onTogglePlay={togglePlay}
                 onSeek={(time) => {
                   setCurrentTime(time);
@@ -5909,8 +5742,6 @@ export default function App() {
               onClearLog={handleClearSyncLog}
               onOpenModelsModal={() => setShowManageModelsModal(true)}
               onSeekToSegment={handleSegmentClick}
-              onRestoreSegments={handleRestoreAbsorbedSegments}
-              segmentOverrides={project.segmentOverrides}
             />
           </div>
 
@@ -6086,18 +5917,6 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
-
-      {/* WS2 ws2-26 Commit 2 — Force Restore confirmation. One modal for the
-          whole pending batch, reachable from both the sync-log restore and
-          the Timeline context menu (both funnel into
-          handleRestoreAbsorbedSegments). */}
-      {pendingForceRestore && pendingForceRestore.length > 0 && (
-        <ForceRestoreConfirmModal
-          clusters={pendingForceRestore}
-          onCancel={handleCancelForceRestore}
-          onConfirm={handleConfirmForceRestore}
-        />
-      )}
 
       {/* New Project Modal */}
       {showNewProjectModal && (

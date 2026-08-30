@@ -338,7 +338,6 @@ describe('buildSkipLogEntries', () => {
       hostDisplayIndex,
       span: { start: 442.94, end: 445.36 },
       gapAudio: 'speech',
-      droppedSegmentId: 'dropped-1',
       ...overrides,
     };
   }

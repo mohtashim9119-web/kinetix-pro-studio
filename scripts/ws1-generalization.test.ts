@@ -78,12 +78,6 @@ const PROVENANCE_ALLOWLIST = new Set([
   // exists to preserve, and tiers 1 and 2 (no ear-list timestamp, no corpus
   // identifier in executable code) both pass on this file unaided.
   'src/services/faAnchorTrustGate.ts',
-  // WS2 session ws2-26 Commit 1. The refusal-rule header names `blue_monkey`
-  // (173) as the measured decoy row the old width clause let through — a 0.88s
-  // gap, 0 orphan tokens — against `perilous_realms` (173) and v6 027-029 as
-  // the nearest correctly-refused controls with the identical zero-orphan
-  // evidence. That comparison is the provenance tier 3 exists to preserve.
-  'src/services/absorbedGapRestore.ts',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
