@@ -270,7 +270,7 @@ export interface VideoSegment {
   absorbedGaps?: AbsorbedGap[];
 }
 
-/** One scene dropped by Apply Sync (R4-1 "no audio match" or R.10 "scripted
+/** One scene dropped by Apply Sync (R4-1 "no text match" or R.10 "scripted
  *  text never spoken") whose text and stable id are recorded on the
  *  `VideoSegment` hosting its reclaimable span, so a later restore
  *  (WS2 T2.1) can recreate it without re-running sync. `segmentId` is the
@@ -829,6 +829,25 @@ export interface SyncLogEntry {
    *  restore control reads this field, never `segmentId`, to know what to
    *  restore. */
   restoreGapId?: string;
+  /** WS2 ws2-25 Commit 5 — skip entries only, when the drop is absorbed: the
+   *  ABSORBING NEIGHBOUR's own 0-based position in the FINAL committed array
+   *  — the number the Timeline actually renders for that clip (`#{i+1}`,
+   *  Timeline.tsx's own segment-card index over `project.segments`).
+   *
+   *  Resolved AFTER the T2.2 override-rehydration pass (`restoreSegmentsByGapId`
+   *  re-inserting any of the user's OWN earlier restores, App.tsx), not from
+   *  the earlier `kept` snapshot — a run with any prior restore positioned
+   *  before this host silently shifts every later index, and `kept`'s own
+   *  count predates that insertion. Mirrors `syncLog.ts`'s `committedIndexOf`,
+   *  the same id-resolved-against-the-final-array pattern R.11-R.13's own
+   *  entries already use; this field brings skip entries onto that same
+   *  pattern instead of a separate, stale, pre-rehydration count.
+   *
+   *  Named distinctly from `segmentIndex` (the DROPPED scene's own PRE-FILTER
+   *  script position — a different numbering space) precisely so a reader
+   *  never conflates the two, the confusion this field exists to end: see
+   *  `buildSkipLogEntries`'s "S{n} / Clip {n}" message format. */
+  absorbedByDisplayIndex?: number;
 }
 
 /** One violation's worth of detail inside a grouped `SyncLogEntry` — a

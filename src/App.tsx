@@ -1018,7 +1018,13 @@ export function evaluateCoverageGate(
  *  firing set is a subset of the segments Whisper alone already refuses, so
  *  this member can only ever re-label a skip that would have happened anyway
  *  on the FA-gate-off default path. */
-export type SegmentSkipReason = 'no audio match' | typeof R10_SKIP_REASON;
+// WS2 ws2-25 Commit 5 — renamed from 'no audio match'. Nothing in this skip
+// path reads acoustic data: the skip/matched decision is `hasQualifyingRun`
+// (whisperService.ts), pure query-word-position vs. matched-transcript-index
+// comparison; `alignScenestoTranscript`'s own `silences` parameter is
+// declared (whisperService.ts:1478) and never read in that function's body.
+// "No audio match" claimed a signal this path never inspects.
+export type SegmentSkipReason = 'no text match' | typeof R10_SKIP_REASON;
 
 /**
  * One skipped segment, recorded for the sync log. `segmentIndex` is 0-based
@@ -1117,7 +1123,7 @@ export function filterToCoveredSegments(
     skipped.push({
       segmentIndex: i,
       segmentText: seg.text ?? '',
-      reason: unspokenScriptIndices?.has(i) ? R10_SKIP_REASON : 'no audio match',
+      reason: unspokenScriptIndices?.has(i) ? R10_SKIP_REASON : 'no text match',
       segmentTag: seg.tag || undefined,
       matchedWords: cov?.matchedWords,
       totalWords: cov?.totalWords,
@@ -1210,8 +1216,12 @@ function previewSegmentText(text: string): string {
  *  renders as its own `SyncLogEntry`. */
 export interface AbsorbedGapLogInfo {
   hostSegmentId: string;
-  /** 0-based index into `kept` (the committed/survivor array) — the scene
-   *  number the timeline shows for the absorbing neighbour. */
+  /** WS2 ws2-25 Commit 5 — 0-based index into the FINAL COMMITTED array
+   *  (post-rehydration — see the call site's own comment for why "post" is
+   *  load-bearing here), the number the Timeline actually renders for the
+   *  absorbing neighbour's clip. Mirrors `SyncLogEntry.absorbedByDisplayIndex`'s
+   *  own doc comment; kept as its own field here rather than only inside the
+   *  entry so the sync-log summary line can use it too if ever needed. */
   hostDisplayIndex: number;
   span: { start: number; end: number };
   gapAudio: 'silent' | 'speech' | 'unknown';
@@ -1242,11 +1252,40 @@ export function buildSkipLogEntries(
 ): SyncLogEntry[] {
   return skipped.map(record => {
     const absorbed = absorbedInfoBySkipIndex?.get(record.segmentIndex);
-    let message = `Scene ${record.segmentIndex + 1} skipped — ${record.reason}.`;
+    // WS2 ws2-25 Commit 5 — TWO NUMBERING SPACES, both named explicitly.
+    // "S{n}" is record.segmentIndex+1, the ORIGINAL SCRIPT POSITION (the scene
+    // the user wrote — this record has no other index, since a dropped scene
+    // has no committed position). "Clip {n}" is the ABSORBING NEIGHBOUR's
+    // position in the array the Timeline actually renders
+    // (absorbed.hostDisplayIndex+1 — see AbsorbedGapLogInfo's own doc comment
+    // for why that must be resolved post-rehydration). The two used to share
+    // the word "scene" for both, which is exactly what made a genuine
+    // off-by-one (a prior restore shifting every later clip index)
+    // unreadable as a bug: both numbers looked like the same kind of thing.
+    const sTag = `S${record.segmentIndex + 1}`;
+    const clipTag = absorbed ? ` / Clip ${absorbed.hostDisplayIndex + 1}` : '';
+    let message = `${sTag}${clipTag} skipped — ${record.reason}.`;
     if (absorbed) {
       const gapDuration = absorbed.span.end - absorbed.span.start;
-      message += ` Absorbed by scene ${absorbed.hostDisplayIndex + 1} `
-        + `(${absorbed.span.start.toFixed(3)}s → ${gapDuration.toFixed(3)}s → ${absorbed.span.end.toFixed(3)}s, ${absorbed.gapAudio}).`;
+      message += ` Absorbed ${absorbed.span.start.toFixed(3)}s → ${gapDuration.toFixed(3)}s → `
+        + `${absorbed.span.end.toFixed(3)}s (${absorbed.gapAudio}).`;
+    }
+    // WS2 ws2-25 Commit 5 — R.10-reason skips carry FA-ARM RERUN match
+    // stats, not Whisper's. On the FA path, `filterToCoveredSegments`'s
+    // `coverage` comes from re-running the plain text matcher against FA's
+    // OWN per-word output, which places essentially every query word by
+    // construction (faUnspokenGate.ts:20 — CTC has no drop path). So
+    // "matched 7/9, confidence 0.778" beside an R.10 skip does not mean 7 of
+    // 9 words were heard; it means the text matcher found 7 of 9 words
+    // SOMEWHERE in FA's forced placement of the whole script, including a
+    // title that was never spoken. Suppressed here rather than shown next to
+    // a skip it doesn't actually support; the real basis for an R.10 skip is
+    // stated in `record.reason` and the absorbed span above, not these
+    // numbers. Kept as-is (real Whisper-arm signal) for every other skip
+    // reason.
+    const isR10 = record.reason === R10_SKIP_REASON;
+    if (isR10) {
+      message += ' (FA places every word by construction — match stats withheld; not evidence this scene was spoken.)';
     }
     return makeSyncLogEntry(
       syncRunId,
@@ -1257,12 +1296,15 @@ export function buildSkipLogEntries(
         segmentText: previewSegmentText(record.segmentText),
         reason: record.reason,
         segmentTag: record.segmentTag,
-        matchedWords: record.matchedWords,
-        totalWords: record.totalWords,
-        confidence: record.confidence,
-        longestRun: record.longestRun,
+        ...(isR10 ? {} : {
+          matchedWords: record.matchedWords,
+          totalWords: record.totalWords,
+          confidence: record.confidence,
+          longestRun: record.longestRun,
+        }),
         segmentId: absorbed?.hostSegmentId,
         restoreGapId: absorbed?.droppedSegmentId,
+        absorbedByDisplayIndex: absorbed?.hostDisplayIndex,
       },
       timestamp,
     );
@@ -1273,7 +1315,7 @@ export function buildSkipLogEntries(
  * The summary line for a successful sync (Bug 1 fix). Built on EVERY successful
  * run now — clean or with skips — not only the 0-skip case. `matchedSegments`
  * is how many landed on the timeline, `totalSegments` the pre-filter count, and
- * `skippedSegments` how many were dropped for having no audio match.
+ * `skippedSegments` how many were dropped for having no text match.
  */
 export function buildSyncInfoMessage(
   totalSegments: number,
@@ -3280,23 +3322,15 @@ export default function App() {
         }
       }
 
-      // WS2 T2.1 — resolve `absorbedGapsByHostId` (computed just above, right
-      // after `filterToCoveredSegments`) back to each skip record's own
-      // PRE-filter `segmentIndex`, for `buildSkipLogEntries` below.
-      const absorbedInfoBySkipIndex = new Map<number, AbsorbedGapLogInfo>();
-      for (const [hostId, gaps] of absorbedGapsByHostId) {
-        const hostDisplayIndex = kept.findIndex(s => s.id === hostId);
-        if (hostDisplayIndex < 0) continue;
-        for (const gap of gaps) {
-          const skipRecord = skipped.find(r => aligned.segments[r.segmentIndex]?.id === gap.segmentId);
-          if (skipRecord) {
-            absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
-              hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
-              droppedSegmentId: gap.segmentId,
-            });
-          }
-        }
-      }
+      // WS2 ws2-25 Commit 5 — `absorbedInfoBySkipIndex` (the map
+      // `buildSkipLogEntries` needs for its "Clip N" label) is resolved
+      // LATER, after the T2.2 override-rehydration pass below has finished
+      // inserting any of the user's OWN prior restores — see that block's
+      // own comment for why resolving it here, against `kept`, silently
+      // undercounts the displayed clip whenever an earlier restore sits
+      // before this host. The skip log entries built below are provisional
+      // (no "Clip N" label yet) and get patched with the correct one once
+      // the final array is known.
 
       // Word-coverage validator (Stage-4 output validation, Contract 3→4,
       // rule 'low-word-coverage', 2026-08-03) — a KEPT (survived, matched:
@@ -3333,7 +3367,7 @@ export default function App() {
         ...(aligned.malformedTokenCount > 0
           ? [buildMalformedTokenEntry(syncRunId, aligned.malformedTokenCount, aligned.totalTokenCount, syncRunAt)]
           : []),
-        ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt, absorbedInfoBySkipIndex) : []),
+        ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt) : []),
         ...(rescued.length > 0 ? buildRescueLogEntries(syncRunId, rescued, syncRunAt) : []),
         ...(wordCoverageEntry ? [wordCoverageEntry] : []),
         buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, syncRunAt),
@@ -3411,6 +3445,47 @@ export default function App() {
       );
       if (keepOverrideIds.size > 0) {
         finalTimedSegments = restoreSegmentsByGapId(finalTimedSegments, keepOverrideIds, GAP_RESTORE_REHYDRATION_FPS);
+      }
+
+      // WS2 ws2-25 Commit 5 — THE OFF-BY-ONE FIX. `absorbedInfoBySkipIndex`
+      // (and therefore the skip log's "Clip N" label) must be resolved
+      // against `finalTimedSegments` HERE — after rehydration has finished
+      // inserting the user's own prior restores — never against the earlier
+      // `kept` snapshot. `kept`'s own count is fixed before rehydration ever
+      // runs; any restore positioned before this host that rehydration
+      // re-inserts shifts every later clip's real Timeline position by one
+      // (or more) without `kept`'s count ever reflecting it. Mirrors
+      // `syncLog.ts`'s `committedIndexOf` — the same id-resolved-against-the-
+      // final-array pattern R.11/R.12/R.13's own log entries already use one
+      // block below (`buildSeamFitLogEntries` etc. are all given
+      // `finalTimedSegments`, never `kept`) — this brings skip entries onto
+      // that same, already-correct pattern instead of a separate stale one.
+      // Provisional skip entries were already staged into `pendingLogEntries`
+      // above (built before this array was final); patched in place below
+      // rather than rebuilding the whole array, so nothing else about their
+      // position or the surrounding entries changes.
+      if (skipped.length > 0 && absorbedGapsByHostId.size > 0) {
+        const absorbedInfoBySkipIndex = new Map<number, AbsorbedGapLogInfo>();
+        for (const [hostId, gaps] of absorbedGapsByHostId) {
+          const hostDisplayIndex = finalTimedSegments.findIndex(s => s.id === hostId);
+          if (hostDisplayIndex < 0) continue;
+          for (const gap of gaps) {
+            const skipRecord = skipped.find(r => aligned.segments[r.segmentIndex]?.id === gap.segmentId);
+            if (skipRecord) {
+              absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
+                hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
+                droppedSegmentId: gap.segmentId,
+              });
+            }
+          }
+        }
+        const correctedSkipEntries = buildSkipLogEntries(syncRunId, skipped, syncRunAt, absorbedInfoBySkipIndex);
+        const correctedByIndex = new Map(correctedSkipEntries.map(e => [e.segmentIndex, e]));
+        pendingLogEntries = pendingLogEntries.map(e =>
+          e.type === 'skip' && e.segmentIndex !== undefined && correctedByIndex.has(e.segmentIndex)
+            ? correctedByIndex.get(e.segmentIndex)!
+            : e
+        );
       }
 
       // WS1 R.11 (faSeamFitGate.ts) — CHUNK-FIT BOUNDARY CORRECTION. Runs

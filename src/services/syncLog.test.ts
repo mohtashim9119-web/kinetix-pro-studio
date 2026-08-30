@@ -15,7 +15,9 @@ import {
   SYNC_LOG_TEXT_PREVIEW_CHARS,
   type SkippedSegmentRecord,
   type RescuedSegmentRecord,
+  type AbsorbedGapLogInfo,
 } from '../App';
+import { R10_SKIP_REASON } from './faUnspokenGate';
 import {
   appendSyncLogEntries,
   buildSilenceErrorEntry,
@@ -229,10 +231,10 @@ describe('clearSyncLog', () => {
 describe('buildSkipLogEntries', () => {
   // Bug 2 fix: 'low confidence' is no longer a possible SegmentSkipReason —
   // matched-but-weak segments are kept, not skipped — so both fixtures below
-  // use the sole remaining reason, 'no audio match'.
+  // use the sole remaining reason, 'no text match'.
   const skipped: SkippedSegmentRecord[] = [
-    { segmentIndex: 2, segmentText: 'The harbour at dawn.', reason: 'no audio match' },
-    { segmentIndex: 5, segmentText: 'A wide shot of the valley.', reason: 'no audio match' },
+    { segmentIndex: 2, segmentText: 'The harbour at dawn.', reason: 'no text match' },
+    { segmentIndex: 5, segmentText: 'A wide shot of the valley.', reason: 'no text match' },
   ];
 
   it('emits one entry per skipped segment, carrying index, text and reason', () => {
@@ -245,18 +247,18 @@ describe('buildSkipLogEntries', () => {
       type: 'skip',
       segmentIndex: 2,
       segmentText: 'The harbour at dawn.',
-      reason: 'no audio match',
+      reason: 'no text match',
     });
     expect(entries[1]).toMatchObject({
       type: 'skip',
       segmentIndex: 5,
-      reason: 'no audio match',
+      reason: 'no text match',
     });
   });
 
-  it('renders a 1-based scene number in the message while storing the 0-based index', () => {
+  it('renders a 1-based S{n} label in the message while storing the 0-based index', () => {
     const [first] = buildSkipLogEntries(RUN_ID, skipped, AT);
-    expect(first!.message).toBe('Scene 3 skipped — no audio match.');
+    expect(first!.message).toBe('S3 skipped — no text match.');
     expect(first!.segmentIndex).toBe(2);
   });
 
@@ -264,7 +266,7 @@ describe('buildSkipLogEntries', () => {
     const long = 'x'.repeat(SYNC_LOG_TEXT_PREVIEW_CHARS + 40);
     const [entry] = buildSkipLogEntries(
       RUN_ID,
-      [{ segmentIndex: 0, segmentText: long, reason: 'no audio match' }],
+      [{ segmentIndex: 0, segmentText: long, reason: 'no text match' }],
       AT,
     );
     expect(entry!.segmentText).toHaveLength(SYNC_LOG_TEXT_PREVIEW_CHARS + 1); // + the ellipsis
@@ -274,7 +276,7 @@ describe('buildSkipLogEntries', () => {
   it('leaves short text untouched (trimmed, no ellipsis)', () => {
     const [entry] = buildSkipLogEntries(
       RUN_ID,
-      [{ segmentIndex: 0, segmentText: '  Short scene.  ', reason: 'no audio match' }],
+      [{ segmentIndex: 0, segmentText: '  Short scene.  ', reason: 'no text match' }],
       AT,
     );
     expect(entry!.segmentText).toBe('Short scene.');
@@ -298,7 +300,7 @@ describe('buildSkipLogEntries', () => {
       [{
         segmentIndex: 0,
         segmentText: 'This is a test missing segment.',
-        reason: 'no audio match',
+        reason: 'no text match',
         segmentTag: 'missing1',
         matchedWords: 2,
         totalWords: 8,
@@ -317,13 +319,111 @@ describe('buildSkipLogEntries', () => {
   it('leaves the new fields undefined when the record does not carry them (backward compat)', () => {
     const [entry] = buildSkipLogEntries(
       RUN_ID,
-      [{ segmentIndex: 0, segmentText: 'Old-style skip record.', reason: 'no audio match' }],
+      [{ segmentIndex: 0, segmentText: 'Old-style skip record.', reason: 'no text match' }],
       AT,
     );
     expect(entry!.segmentTag).toBeUndefined();
     expect(entry!.matchedWords).toBeUndefined();
     expect(entry!.totalWords).toBeUndefined();
     expect(entry!.confidence).toBeUndefined();
+  });
+
+  // -------------------------------------------------------------------------
+  // WS2 session ws2-25, Commit 5 — honest numbering (S{n} / Clip {n}) and the
+  // R.10 FA-noise suppression.
+  // -------------------------------------------------------------------------
+  function absorbedInfo(hostDisplayIndex: number, overrides: Partial<AbsorbedGapLogInfo> = {}): AbsorbedGapLogInfo {
+    return {
+      hostSegmentId: 'host-1',
+      hostDisplayIndex,
+      span: { start: 442.94, end: 445.36 },
+      gapAudio: 'speech',
+      droppedSegmentId: 'dropped-1',
+      ...overrides,
+    };
+  }
+
+  it('prints BOTH numbering spaces explicitly — "S{n} / Clip {n}" — never sharing one word for both', () => {
+    const [entry] = buildSkipLogEntries(
+      RUN_ID,
+      [{ segmentIndex: 111, segmentText: 'Some don’t emerge.', reason: 'no text match' }],
+      AT,
+      new Map([[111, absorbedInfo(109)]]),
+    );
+    expect(entry!.message).toBe(
+      'S112 / Clip 110 skipped — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech).',
+    );
+    expect(entry!.absorbedByDisplayIndex).toBe(109);
+  });
+
+  it('prints only S{n} — no Clip suffix — when the drop has no absorbing host', () => {
+    const [entry] = buildSkipLogEntries(
+      RUN_ID,
+      [{ segmentIndex: 2, segmentText: 'Untethered scene.', reason: 'no text match' }],
+      AT,
+    );
+    expect(entry!.message).toBe('S3 skipped — no text match.');
+    expect(entry!.absorbedByDisplayIndex).toBeUndefined();
+  });
+
+  it('uses the hostDisplayIndex it is GIVEN, not a re-derived one — the off-by-one fix lives at the call site', () => {
+    // buildSkipLogEntries itself is a pure formatter: it prints whatever
+    // hostDisplayIndex the caller resolved. The actual fix (App.tsx) is
+    // resolving that index against the FINAL, post-rehydration committed
+    // array rather than the earlier `kept` snapshot — this test only pins
+    // that the formatter faithfully reports whatever it's handed, so a
+    // caller-side regression shows up as a wrong printed number, not as this
+    // function silently re-deriving something different.
+    const [entry] = buildSkipLogEntries(
+      RUN_ID,
+      [{ segmentIndex: 110, segmentText: 'Host scene.', reason: 'no text match' }],
+      AT,
+      new Map([[110, absorbedInfo(109)]]), // pre-rehydration count (WRONG, per the audit)
+    );
+    expect(entry!.message).toContain('Clip 110'); // 109 + 1, exactly what was given
+    expect(entry!.message).not.toContain('Clip 111');
+  });
+
+  it('withholds matchedWords/totalWords/confidence/longestRun on an R.10 skip — FA-arm rerun noise, not audio evidence', () => {
+    const [entry] = buildSkipLogEntries(
+      RUN_ID,
+      [{
+        segmentIndex: 0,
+        segmentText: 'The Hardest Warhammer 40K Environments to Fight In',
+        reason: R10_SKIP_REASON,
+        matchedWords: 7,
+        totalWords: 9,
+        confidence: 0.778,
+        longestRun: 9,
+      }],
+      AT,
+    );
+    expect(entry!.matchedWords).toBeUndefined();
+    expect(entry!.totalWords).toBeUndefined();
+    expect(entry!.confidence).toBeUndefined();
+    expect(entry!.longestRun).toBeUndefined();
+    expect(entry!.message).toContain('FA places every word by construction');
+  });
+
+  it('keeps matchedWords/totalWords/confidence/longestRun on an ordinary (non-R.10) skip — real Whisper-arm signal', () => {
+    const [entry] = buildSkipLogEntries(
+      RUN_ID,
+      [{
+        segmentIndex: 4,
+        segmentText: 'Some don’t emerge.',
+        reason: 'no text match',
+        matchedWords: 1,
+        totalWords: 4,
+        confidence: 0.25,
+        longestRun: 1,
+      }],
+      AT,
+    );
+    expect(entry!.matchedWords).toBe(1);
+    expect(entry!.totalWords).toBe(4);
+    expect(entry!.confidence).toBe(0.25);
+    expect(entry!.longestRun).toBe(1);
+    expect(entry!.message).not.toContain('FA places every word');
   });
 });
 
@@ -532,7 +632,7 @@ describe('buildNoAssetSummaryEntry (WS3 Batch B, Piece 1 — the single merged "
     const skipRecord: SkippedSegmentRecord = {
       segmentIndex: 0,
       segmentText: 'unmatched scene',
-      reason: 'no audio match',
+      reason: 'no text match',
     };
     const next = appendSyncLogEntries(
       project,

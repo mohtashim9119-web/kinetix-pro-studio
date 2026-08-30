@@ -353,6 +353,6 @@ describe('R.10 — Model P survives the drop (contiguity, no gaps, sigma)', () =
     const segments = build();
     const alignments: SegmentAlignment[] = [align(false, 0), align(true, 1), align(false, 0), align(true, 1)];
     const { skipped } = filterToCoveredSegments(segments, alignments, new Set([2]));
-    expect(skipped.map(s => s.reason)).toEqual(['no audio match', R10_SKIP_REASON]);
+    expect(skipped.map(s => s.reason)).toEqual(['no text match', R10_SKIP_REASON]);
   });
 });
