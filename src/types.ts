@@ -287,6 +287,34 @@ export interface AbsorbedGap {
    *  at absorption time, from a majority-overlap test against that run's own
    *  detected silences — see `absorbedGaps.ts`'s `classifyGapAudio`. */
   gapAudio: 'silent' | 'speech' | 'unknown';
+  /** WS2 session ws2-25 Commit 2 — THE ORPHAN-TOKEN REGION FOR THIS SCENE.
+   *
+   *  `span` above is the distance between the two SURVIVORS' own token edges.
+   *  That is not free time: real transcript tokens can sit inside it, and when
+   *  they do they are this dropped scene's own speech, not reclaimable
+   *  neighbour time. `spokenSpan` is the sub-interval of `span` covered by the
+   *  ORPHAN tokens (transcript tokens strictly between the two survivors'
+   *  matched token indices — index space, never timestamp proximity) that were
+   *  attributed to THIS scene. A restore sizes the recreated segment from this,
+   *  not from `span`, so the neighbours only give back time that was actually
+   *  spoken.
+   *
+   *  Undefined when the cluster had no orphan tokens at all — the gap is a hole
+   *  in the transcript, not recorded speech, and `span` is the only bound left.
+   *  See `absorbedGaps.ts`'s `computeOrphanRegions`. */
+  spokenSpan?: { start: number; end: number };
+  /** How many orphan tokens the whole CLUSTER had (shared by every entry in
+   *  one cluster, like `span`). Zero means the transcript recorded nothing at
+   *  all between the two survivors — the restore-refusal input, kept as a
+   *  count rather than re-derived later because the token array is a live
+   *  artifact of one sync run and is never persisted with the project.
+   *
+   *  OPTIONAL, and `undefined` means UNKNOWN — never zero. A gap recorded by a
+   *  build before this field existed carries no count, and the transcript it
+   *  was measured against is long gone; treating that silence as "nothing was
+   *  spoken" would refuse restores on evidence nobody ever collected. Only an
+   *  explicit `0` licenses the refusal rule in `absorbedGapRestore.ts`. */
+  orphanCount?: number;
 }
 
 /**

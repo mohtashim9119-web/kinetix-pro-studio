@@ -46,6 +46,31 @@ const MIN_SEGMENT_DURATION = 0.1;
  *  project's fps is restored as one merged slot instead of N slivers. */
 export const RESTORE_SUB_FRAME_FLOOR_FRAMES = 2;
 
+/**
+ * WS2 session ws2-25 Commit 2 — the refusal floor.
+ *
+ * A cluster whose transcript recorded NOTHING between the two survivors
+ * (`orphanCount === 0`) and whose whole span is narrower than this is refused
+ * rather than restored: there is no evidence of speech to size a segment from,
+ * and the span is too small to be anything but the seam between two adjacent
+ * words. Restoring it can only produce slivers carved out of neighbours that
+ * legitimately own that time.
+ *
+ * NOT a sync-timing constant and deliberately not in `syncConstants.ts`: it
+ * decides whether a USER-INITIATED restore proceeds, and moves no boundary the
+ * sync pipeline placed. It is an operator-specified UI floor (WS2 session
+ * ws2-25), not a value derived from an acoustic property — stated plainly here
+ * so it is never mistaken for one.
+ */
+export const RESTORE_MIN_SILENT_GAP_SECONDS = 0.25;
+
+/** Why a restore was refused — surfaced to the user verbatim. Worded for what
+ *  was actually tested: the TRANSCRIPT recorded no words here. It does not
+ *  claim the audio is silent (nothing in this path listens to audio), and on
+ *  the Whisper arm it is entirely possible for real speech to exist that
+ *  Whisper failed to transcribe — measured, v6 78.7-90.1s. */
+export const RESTORE_REFUSAL_MESSAGE = 'Nothing spoken here — the transcript recorded no words in this gap.';
+
 function round3(v: number): number {
   return Number(v.toFixed(3));
 }
@@ -76,8 +101,39 @@ export interface RestoreClusterPlan {
    *  segment per gap entry. */
   merged: boolean;
   /** The new segment(s) to insert, in time order, already contiguous and
-   *  spanning exactly `[span.start, span.end)`. */
+   *  spanning exactly `[region.start, region.end)`. Empty when `refused`. */
   segments: VideoSegment[];
+  /** WS2 ws2-25 Commit 2 — the interval the restore actually occupies. This is
+   *  the cluster's ORPHAN-TOKEN region when the transcript recorded words
+   *  inside the absorbed span, and the full span only when it did not. The
+   *  host shrinks to `region.start` and the following survivor resumes at
+   *  `region.end`, so neighbours give back only time that was spoken. */
+  region: { start: number; end: number };
+  /** Set when the cluster was refused outright (no recorded speech, span below
+   *  `RESTORE_MIN_SILENT_GAP_SECONDS`). `segments` is empty and the caller must
+   *  leave the timeline untouched and surface `refusedReason`. */
+  refused?: boolean;
+  refusedReason?: string;
+}
+
+/** The interval a cluster's restore should occupy: the union of its entries'
+ *  own `spokenSpan`s when the transcript recorded words inside the absorbed
+ *  span, else the absorbed span itself.
+ *
+ *  THE SPAN BETWEEN NEIGHBOURS IS NOT FREE TIME. `span` measures the distance
+ *  between two survivors' token edges; when real tokens sit inside it, that
+ *  time is the dropped scene's own speech and the rest still belongs to the
+ *  neighbours. Sizing from `spokenSpan` is what keeps a restore from taking
+ *  more than was actually spoken — measured, 173 `shadow_loss` occupies 1.54s
+ *  of speech inside a 2.42s span, so the host keeps 0.63s and the following
+ *  survivor keeps 0.25s that the span-sized restore used to take from them. */
+export function resolveRestoreRegion(gaps: readonly AbsorbedGap[]): { start: number; end: number } {
+  const spoken = gaps.map(g => g.spokenSpan).filter((x): x is { start: number; end: number } => !!x);
+  if (spoken.length === 0) return { ...gaps[0]!.span };
+  return {
+    start: round3(Math.min(...spoken.map(s => s.start))),
+    end: round3(Math.max(...spoken.map(s => s.end))),
+  };
 }
 
 /**
@@ -94,22 +150,52 @@ export function planRestoreCluster(
   hostId: string,
   fps: number,
 ): RestoreClusterPlan {
-  const { start, end } = gaps[0]!.span;
+  const span = gaps[0]!.span;
+  const region = resolveRestoreRegion(gaps);
+
+  // REFUSAL — nothing was recorded here and the seam is too narrow to be
+  // anything else. Only an explicit 0 counts: `undefined` is a gap recorded
+  // before the count existed, and refusing on absent evidence would be a
+  // guess (see AbsorbedGap.orphanCount).
+  const orphanCount = gaps[0]!.orphanCount;
+  if (orphanCount === 0 && span.end - span.start < RESTORE_MIN_SILENT_GAP_SECONDS) {
+    return { merged: false, segments: [], region, refused: true, refusedReason: RESTORE_REFUSAL_MESSAGE };
+  }
+
+  const start = region.start;
+  const end = region.end;
   const floor = subFrameFloorSeconds(fps);
-  const perPieceShare = (end - start) / gaps.length;
-  const wouldBeSubFrame = gaps.length > 1 && perPieceShare < floor;
+
+  // Each entry's own spoken share drives the merge test when the transcript
+  // attributed one; the flat per-piece share is the fallback.
+  const shares = gaps.map(g =>
+    g.spokenSpan ? g.spokenSpan.end - g.spokenSpan.start : (end - start) / gaps.length,
+  );
+  const wouldBeSubFrame = gaps.length > 1 && shares.some(sh => sh < floor);
 
   if (wouldBeSubFrame) {
     const mergedText = gaps.map(g => g.text).join(' ');
     return {
       merged: true,
+      region,
       segments: [makeRestoredSegment(makeSliceSegmentId(hostId, 0), mergedText, start, end - start)],
     };
   }
 
-  const pieces = splitRegionByCharCount(gaps.map(g => ({ text: g.text })), start, end);
+  // Prefer each entry's own token-derived interval; character-weighted
+  // division of the same region when the transcript attributed nothing.
+  const haveSpoken = gaps.every(g => !!g.spokenSpan);
+  const pieces = haveSpoken
+    ? gaps.map((g, i) => {
+        const st = i === 0 ? start : g.spokenSpan!.start;
+        const en = i === gaps.length - 1 ? end : gaps[i + 1]!.spokenSpan!.start;
+        return { startTime: round3(st), duration: round3(Math.max(0, en - st)) };
+      })
+    : splitRegionByCharCount(gaps.map(g => ({ text: g.text })), start, end);
+
   return {
     merged: false,
+    region,
     segments: gaps.map((g, i) => makeRestoredSegment(g.segmentId, g.text, pieces[i]!.startTime, pieces[i]!.duration)),
   };
 }
@@ -143,8 +229,9 @@ export function applyRestoreToSegments(
   const host = segments[hostIndex];
   if (!host) return segments as VideoSegment[];
 
-  const { start, end } = gapsToRestore[0]!.span;
   const plan = planRestoreCluster(gapsToRestore, host.id, fps);
+  if (plan.refused) return segments as VideoSegment[];
+  const { start, end } = plan.region;
 
   const out = segments.map(s => ({ ...s }));
   const newHost = out[hostIndex]!;
@@ -202,17 +289,7 @@ export function restoreSegmentsByGapId(
 
   let out = segments as VideoSegment[];
   for (let hostIndex = out.length - 1; hostIndex >= 0; hostIndex--) {
-    const gaps = out[hostIndex]!.absorbedGaps;
-    if (!gaps || gaps.length === 0) continue;
-
-    const bySpanKey = new Map<string, AbsorbedGap[]>();
-    for (const g of gaps) {
-      const key = `${g.span.start}|${g.span.end}`;
-      const arr = bySpanKey.get(key);
-      if (arr) arr.push(g); else bySpanKey.set(key, [g]);
-    }
-
-    for (const clusterGaps of bySpanKey.values()) {
+    for (const clusterGaps of clustersOf(out[hostIndex]!)) {
       const toRestore = clusterGaps.filter(g => gapSegmentIds.has(g.segmentId));
       if (toRestore.length > 0) {
         out = applyRestoreToSegments(out, hostIndex, toRestore, fps);
@@ -220,4 +297,41 @@ export function restoreSegmentsByGapId(
     }
   }
   return out;
+}
+
+/** Groups one host's `absorbedGaps` into same-span clusters, in host order. A
+ *  host can carry more than one independent cluster (different drop runs over
+ *  the project's lifetime), and restoring one must never disturb another. */
+function clustersOf(host: VideoSegment): AbsorbedGap[][] {
+  const gaps = host.absorbedGaps;
+  if (!gaps || gaps.length === 0) return [];
+  const bySpanKey = new Map<string, AbsorbedGap[]>();
+  for (const g of gaps) {
+    const key = `${g.span.start}|${g.span.end}`;
+    const arr = bySpanKey.get(key);
+    if (arr) arr.push(g); else bySpanKey.set(key, [g]);
+  }
+  return [...bySpanKey.values()];
+}
+
+/**
+ * How many clusters a `restoreSegmentsByGapId` call would REFUSE. Called on
+ * the pre-restore array (the same one handed to that function) so the caller
+ * can tell the user why nothing moved — an ignored restore and a broken one
+ * are indistinguishable from the outside otherwise. Pure; changes nothing.
+ */
+export function countRefusedRestores(
+  segments: readonly VideoSegment[],
+  gapSegmentIds: ReadonlySet<string>,
+  fps: number,
+): number {
+  if (gapSegmentIds.size === 0) return 0;
+  let refused = 0;
+  for (const host of segments) {
+    for (const clusterGaps of clustersOf(host)) {
+      const toRestore = clusterGaps.filter(g => gapSegmentIds.has(g.segmentId));
+      if (toRestore.length > 0 && planRestoreCluster(toRestore, host.id, fps).refused) refused++;
+    }
+  }
+  return refused;
 }

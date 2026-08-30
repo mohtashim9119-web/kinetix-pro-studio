@@ -130,7 +130,7 @@ import {
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { computeAbsorbedGaps, applyAbsorbedGaps } from './services/absorbedGaps';
-import { restoreSegmentsByGapId } from './services/absorbedGapRestore';
+import { restoreSegmentsByGapId, countRefusedRestores, RESTORE_REFUSAL_MESSAGE } from './services/absorbedGapRestore';
 import { splitSegmentAtTime, deleteSegment } from './services/segmentSplitDelete';
 
 /** WS2 T2.1/T2.2 — fps used ONLY for the restore sub-frame merge check when
@@ -4345,14 +4345,28 @@ export default function App() {
   // like any other timeline edit.
   const handleRestoreAbsorbedSegments = useCallback((gapSegmentIds: string[]): void => {
     if (gapSegmentIds.length === 0) return;
+    // WS2 ws2-25 Commit 2 — a cluster whose transcript recorded nothing, in a
+    // gap too narrow to be anything but a word seam, is REFUSED rather than
+    // restored as slivers carved out of neighbours that own that time. Report
+    // it instead of failing silently: from the user's side an ignored restore
+    // and a broken one look identical.
+    let refusedCount = 0;
     setProject(prev => {
       const ids = new Set(gapSegmentIds);
       const segments = restoreSegmentsByGapId(prev.segments, ids, exportFps);
+      refusedCount = countRefusedRestores(prev.segments, ids, exportFps);
+      // Only record an override for what actually landed — marking a refused
+      // scene `'keep'` would promise a re-restore on the next sync that this
+      // same rule would refuse again.
+      const restoredIds = new Set(
+        segments.filter(sg => ids.has(sg.id)).map(sg => sg.id),
+      );
       const segmentOverrides = { ...(prev.segmentOverrides ?? {}) };
-      for (const id of ids) segmentOverrides[id] = 'keep';
+      for (const id of restoredIds) segmentOverrides[id] = 'keep';
       return { ...prev, segments, segmentOverrides };
     });
-  }, [exportFps]);
+    if (refusedCount > 0) showToast(RESTORE_REFUSAL_MESSAGE);
+  }, [exportFps, showToast]);
 
   // WS2 T2.1 Commit 3 — Timeline's right-click "Restore absorbed segments"
   // menu item restores EVERY cluster hosted on one clip in one action (the

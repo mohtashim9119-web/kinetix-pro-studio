@@ -4,7 +4,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { classifyGapAudio, computeAbsorbedGaps, applyAbsorbedGaps } from './absorbedGaps';
+import {
+  classifyGapAudio, computeAbsorbedGaps, applyAbsorbedGaps,
+  collectOrphanTokens, attributeOrphansByText, computeOrphanRegions,
+} from './absorbedGaps';
 import type { SegmentAlignment } from './whisperService';
 import type { VideoSegment, TranscriptToken } from '../types';
 import type { SilenceInterval } from './silenceDetector';
@@ -208,5 +211,135 @@ describe('computeAbsorbedGaps — word source', () => {
     // No token to dereference on either side => the dropped run's own bounds.
     expect(none.get('a')![0]!.span).toEqual({ start: 1, end: 2 });
     expect(none.get('a')![0]!.gapAudio).toBe('unknown');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 session ws2-25, Commit 2 — ORPHAN TOKENS.
+//
+// The span between two survivors is not free time. Tokens that sit inside it —
+// claimed by neither survivor's alignment — are the DROPPED scene's own
+// speech, and they, not the span width, are what a restore should be sized
+// from. Measured on 173 `shadow_loss`: 4 orphan tokens spanning 1.54s inside a
+// 2.42s span, so the span-sized restore was taking 0.88s of neighbour time
+// that no one ever spoke into.
+// ---------------------------------------------------------------------------
+describe('collectOrphanTokens', () => {
+  const tokens = [tok(0, 1, 'a'), tok(1, 2, 'b'), tok(2, 3, 'c'), tok(3, 4, 'd'), tok(4, 5, 'e')];
+
+  it('takes the tokens strictly between the two survivors, by INDEX not by time', () => {
+    expect(collectOrphanTokens(tokens, 0, 4).map(t => t.text)).toEqual(['b', 'c', 'd']);
+  });
+
+  it('scans from token 0 for a leading run (no previous survivor)', () => {
+    expect(collectOrphanTokens(tokens, undefined, 2).map(t => t.text)).toEqual(['a', 'b']);
+  });
+
+  it('scans to the end of the array for a trailing run (no next survivor)', () => {
+    expect(collectOrphanTokens(tokens, 2, undefined).map(t => t.text)).toEqual(['d', 'e']);
+  });
+
+  it('is empty when the survivors are adjacent in index space', () => {
+    expect(collectOrphanTokens(tokens, 1, 2)).toEqual([]);
+  });
+
+  it('is empty with no tokens at all', () => {
+    expect(collectOrphanTokens([], 0, 5)).toEqual([]);
+  });
+});
+
+describe('attributeOrphansByText', () => {
+  it('gives every orphan to the only scene in a single-scene cluster', () => {
+    const orphans = [tok(1, 2, 'don'), tok(2, 3, 'emerge')];
+    expect(attributeOrphansByText(orphans, ['Some don’t emerge.'])).toEqual([0, 0]);
+  });
+
+  it('splits monotonically when each scene\'s own words appear in order', () => {
+    const orphans = [tok(0, 1, 'but'), tok(1, 2, 'something'), tok(2, 3, 'small'), tok(3, 4, 'permanent')];
+    const got = attributeOrphansByText(orphans, ['But something stayed.', 'Small and permanent.']);
+    expect(got).toEqual([0, 0, 1, 1]);
+  });
+
+  it('declines when a scene would be left with no tokens at all', () => {
+    const orphans = [tok(0, 1, 'but')];
+    expect(attributeOrphansByText(orphans, ['But something stayed.', 'Small and permanent.'])).toBeNull();
+  });
+
+  it('declines when not one orphan matches the script — a positional chop is not an attribution', () => {
+    const orphans = [tok(0, 1, 'zzz'), tok(1, 4, 'qqq')];
+    expect(attributeOrphansByText(orphans, ['abcd', 'efgh'])).toBeNull();
+  });
+
+  it('declines with no orphans', () => {
+    expect(attributeOrphansByText([], ['anything'])).toBeNull();
+  });
+});
+
+describe('computeOrphanRegions', () => {
+  it('covers exactly the first orphan onset to the last orphan end', () => {
+    const orphans = [tok(443.82, 444.1, 'don'), tok(444.2, 445.36, 'emerge')];
+    const regions = computeOrphanRegions(orphans, ['Some don’t emerge.']);
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.start).toBe(443.82);
+    expect(regions[0]!.end).toBe(445.36);
+  });
+
+  it('cuts a multi-scene cluster at the NEXT scene\'s first token onset', () => {
+    const orphans = [tok(0, 1, 'but'), tok(1, 2, 'something'), tok(3, 4, 'small'), tok(4, 5, 'permanent')];
+    const regions = computeOrphanRegions(orphans, ['But something stayed.', 'Small and permanent.']);
+    expect(regions[0]).toMatchObject({ start: 0, end: 3 });
+    expect(regions[1]).toMatchObject({ start: 3, end: 5 });
+  });
+
+  it('is contiguous and exact — pieces tile the whole orphan region with no seam', () => {
+    const orphans = [tok(10, 11, 'alpha'), tok(12, 13, 'beta'), tok(14, 15.5, 'gamma')];
+    const regions = computeOrphanRegions(orphans, ['alpha beta', 'gamma']);
+    for (let i = 0; i + 1 < regions.length; i++) {
+      expect(regions[i]!.end).toBe(regions[i + 1]!.start);
+    }
+    expect(regions[0]!.start).toBe(10);
+    expect(regions[regions.length - 1]!.end).toBe(15.5);
+  });
+
+  it('falls back to character weighting when the text cannot be attributed', () => {
+    const orphans = [tok(0, 1, 'zzz'), tok(1, 4, 'qqq')];
+    const regions = computeOrphanRegions(orphans, ['abcd', 'efgh']);
+    // Equal char counts => equal halves of [0, 4).
+    expect(regions[0]).toMatchObject({ start: 0, end: 2 });
+    expect(regions[1]).toMatchObject({ start: 2, end: 4 });
+  });
+
+  it('returns nothing at all when there are no orphan tokens', () => {
+    expect(computeOrphanRegions([], ['anything'])).toEqual([]);
+  });
+});
+
+describe('computeAbsorbedGaps — orphan recording', () => {
+  it('records the orphan count and each scene\'s own spoken span', () => {
+    const preFilter = [seg('a', 'one', 0, 1), seg('b', 'dropped', 1, 1), seg('c', 'two', 2, 1)];
+    const tokens = [
+      tok(440, 442.94, 'course'), tok(443.82, 444.0, 'don'), tok(444.0, 444.2, 'emerge'),
+      tok(445.36, 446, 'ground'),
+    ];
+    const gaps = computeAbsorbedGaps(
+      preFilter, [{ segmentIndex: 1, segmentText: 'Some don’t emerge.' }],
+      ['a', 'c'], [align(0, 0), align(3, 3)], tokens, [],
+    );
+    const g = gaps.get('a')![0]!;
+    expect(g.span).toEqual({ start: 442.94, end: 445.36 });
+    expect(g.orphanCount).toBe(2);
+    expect(g.spokenSpan).toEqual({ start: 443.82, end: 444.2 });
+  });
+
+  it('records orphanCount 0 and no spokenSpan when the transcript is empty there', () => {
+    const preFilter = [seg('a', 'one', 0, 1), seg('b', 'dropped', 1, 1), seg('c', 'two', 2, 1)];
+    const tokens = [tok(78.18, 78.73, 'happened'), tok(78.97, 80.57, 'You')];
+    const gaps = computeAbsorbedGaps(
+      preFilter, [{ segmentIndex: 1, segmentText: 'But something stayed in you.' }],
+      ['a', 'c'], [align(0, 0), align(1, 1)], tokens, [],
+    );
+    const g = gaps.get('a')![0]!;
+    expect(g.orphanCount).toBe(0);
+    expect(g.spokenSpan).toBeUndefined();
   });
 });

@@ -39,6 +39,7 @@
 // ---------------------------------------------------------------------------
 
 import type { AbsorbedGap, TranscriptToken, VideoSegment } from '../types';
+import { canonicalize } from './textNormalize';
 import type { SegmentAlignment } from './whisperService';
 import type { SilenceInterval } from './silenceDetector';
 
@@ -82,6 +83,176 @@ export function classifyGapAudio(
     if (oe > os) overlap += oe - os;
   }
   return overlap / spanDuration >= 0.5 ? 'silent' : 'speech';
+}
+
+/** One dropped scene's own share of a cluster's orphan-token region. */
+export interface OrphanRegion {
+  /** Index into the cluster's own `runRecords` order. */
+  pieceIndex: number;
+  start: number;
+  end: number;
+}
+
+/**
+ * WS2 session ws2-25 Commit 2 — THE ORPHAN TOKENS INSIDE ONE ABSORBED SPAN.
+ *
+ * "Orphan" = a transcript token strictly between the previous survivor's LAST
+ * matched token and the next survivor's FIRST matched token. Selected in INDEX
+ * space (`lastTokenIdx + 1 .. firstTokenIdx - 1`), never by timestamp
+ * proximity to the span bounds — CLAUDE.md's standing rule: timestamps may
+ * measure distance, they must never decide identity. A token's membership in
+ * the gap is settled by the alignment's own ordinals, which is exactly what
+ * makes it an orphan (no segment's alignment claimed it).
+ *
+ * With no previous survivor (a LEADING run of drops) the scan starts at token
+ * 0; with no next survivor (a TRAILING run) it runs to the end of the array.
+ */
+export function collectOrphanTokens(
+  tokens: readonly TranscriptToken[],
+  prevLastTokenIdx: number | undefined,
+  nextFirstTokenIdx: number | undefined,
+): TranscriptToken[] {
+  if (tokens.length === 0) return [];
+  const from = prevLastTokenIdx === undefined ? 0 : prevLastTokenIdx + 1;
+  const to = nextFirstTokenIdx === undefined ? tokens.length : nextFirstTokenIdx;
+  const out: TranscriptToken[] = [];
+  for (let t = Math.max(0, from); t < Math.min(tokens.length, to); t++) {
+    const tok = tokens[t];
+    if (tok) out.push(tok);
+  }
+  return out;
+}
+
+/**
+ * Attributes each orphan token to one of the cluster's dropped scenes by
+ * MATCHING TOKEN TEXT TO SCRIPT TEXT, monotonically: scene i's tokens must all
+ * precede scene i+1's. Returns `null` when a clean monotone attribution cannot
+ * be made (any scene would get zero tokens, or the texts simply do not line
+ * up) — the caller then falls back to character-weighted division of the same
+ * orphan region, which is the honest answer when the transcript does not say
+ * which scene owns what.
+ *
+ * A single-scene cluster is the trivial case and always succeeds: every orphan
+ * token belongs to the one scene there is.
+ */
+export function attributeOrphansByText(
+  orphans: readonly TranscriptToken[],
+  pieceTexts: readonly string[],
+): number[] | null {
+  if (orphans.length === 0 || pieceTexts.length === 0) return null;
+  if (pieceTexts.length === 1) return orphans.map(() => 0);
+
+  // One canonical word list per scene, and one canonical form per orphan token.
+  const pieceWords = pieceTexts.map(t => canonicalize(t));
+  const orphanWords = orphans.map(o => canonicalize(o.text)[0] ?? '');
+
+  const assignment: number[] = new Array(orphans.length).fill(-1);
+  let piece = 0;
+  let wordCursor = 0;
+  let assignedInPiece = 0;
+  let textHits = 0;
+
+  for (let i = 0; i < orphans.length; i++) {
+    const w = orphanWords[i];
+    if (!w) { assignment[i] = piece; continue; }
+
+    // Advance past scenes this token cannot belong to, but only once the
+    // current scene has actually taken something — never skip a scene empty.
+    while (piece < pieceWords.length - 1) {
+      const remaining = pieceWords[piece]!.slice(wordCursor);
+      if (remaining.includes(w)) break;
+      if (assignedInPiece === 0) break; // would leave this scene with nothing
+      piece++;
+      wordCursor = 0;
+      assignedInPiece = 0;
+    }
+
+    const remaining = pieceWords[piece]!.slice(wordCursor);
+    const hit = remaining.indexOf(w);
+    if (hit >= 0) {
+      wordCursor += hit + 1;
+      textHits++;
+    }
+    assignment[i] = piece;
+    assignedInPiece++;
+  }
+
+  // At least one orphan token must genuinely match the script. Without a
+  // single hit this walk has only chopped the tokens by POSITION and calling
+  // that a text attribution would overstate what the transcript said — the
+  // caller's character-weighted fallback is the honest answer instead.
+  if (textHits === 0) return null;
+
+  // Every scene must have received at least one token for this to be an
+  // attribution rather than a guess.
+  const counts = new Array(pieceTexts.length).fill(0) as number[];
+  for (const a of assignment) {
+    if (a < 0) return null;
+    counts[a] = (counts[a] ?? 0) + 1;
+  }
+  if (counts.some(c => c === 0)) return null;
+  return assignment;
+}
+
+/**
+ * Divides a cluster's orphan-token region among its dropped scenes, producing
+ * one contiguous `[start, end)` per scene covering exactly
+ * `[firstOrphanStart, lastOrphanEnd)`. Text attribution first (above);
+ * character-weighted division of the same region when that declines.
+ *
+ * Returns `[]` when there are no orphan tokens — the caller must then decide
+ * what to do with a gap the transcript says nothing about (see
+ * `absorbedGapRestore.ts`'s refusal rule), rather than inventing a duration.
+ */
+export function computeOrphanRegions(
+  orphans: readonly TranscriptToken[],
+  pieceTexts: readonly string[],
+): OrphanRegion[] {
+  if (orphans.length === 0 || pieceTexts.length === 0) return [];
+  const regionStart = orphans[0]!.startSec;
+  const regionEnd = Math.max(regionStart, orphans[orphans.length - 1]!.endSec);
+
+  const assignment = attributeOrphansByText(orphans, pieceTexts);
+  if (assignment) {
+    // Scene boundaries land on the ONSET of the first token of the next scene,
+    // so no scene is credited with speech that is audibly the next scene's.
+    const firstTokenOf = new Map<number, number>();
+    for (let i = 0; i < assignment.length; i++) {
+      const p = assignment[i]!;
+      if (!firstTokenOf.has(p)) firstTokenOf.set(p, i);
+    }
+    const out: OrphanRegion[] = [];
+    for (let p = 0; p < pieceTexts.length; p++) {
+      const startIdx = firstTokenOf.get(p);
+      if (startIdx === undefined) return charWeightedOrphanRegions(pieceTexts, regionStart, regionEnd);
+      const nextIdx = firstTokenOf.get(p + 1);
+      const start = p === 0 ? regionStart : orphans[startIdx]!.startSec;
+      const end = nextIdx === undefined ? regionEnd : orphans[nextIdx]!.startSec;
+      out.push({ pieceIndex: p, start: round3(start), end: round3(Math.max(start, end)) });
+    }
+    return out;
+  }
+
+  return charWeightedOrphanRegions(pieceTexts, regionStart, regionEnd);
+}
+
+function charWeightedOrphanRegions(
+  pieceTexts: readonly string[], regionStart: number, regionEnd: number,
+): OrphanRegion[] {
+  const counts = pieceTexts.map(t => t.length);
+  const total = counts.reduce((a, b) => a + b, 0);
+  const width = Math.max(0, regionEnd - regionStart);
+  const out: OrphanRegion[] = [];
+  let cursor = regionStart;
+  for (let p = 0; p < pieceTexts.length; p++) {
+    const isLast = p === pieceTexts.length - 1;
+    const share = total > 0 ? width * (counts[p]! / total) : width / pieceTexts.length;
+    const start = cursor;
+    const end = isLast ? regionEnd : start + share;
+    out.push({ pieceIndex: p, start: round3(start), end: round3(Math.max(start, end)) });
+    cursor = end;
+  }
+  return out;
 }
 
 /**
@@ -160,12 +331,24 @@ export function computeAbsorbedGaps(
     const gapAudio = classifyGapAudio(spanStart, spanEnd, silences);
     const span = { start: round3(spanStart), end: round3(Math.max(spanStart, spanEnd)) };
 
-    const gaps: AbsorbedGap[] = runRecords.map(r => ({
-      segmentId: preFilterSegments[r.segmentIndex]!.id,
-      text: r.segmentText,
-      span,
-      gapAudio,
-    }));
+    // WS2 session ws2-25 Commit 2 — what the transcript actually recorded
+    // inside this span, and which dropped scene owns each part of it. Selected
+    // by TOKEN INDEX (see `collectOrphanTokens`), so a token that merely sits
+    // near a span bound in time is never mistaken for one inside it.
+    const orphans = collectOrphanTokens(tokens, prevAlign?.lastTokenIdx, nextAlign?.firstTokenIdx);
+    const orphanRegions = computeOrphanRegions(orphans, runRecords.map(r => r.segmentText));
+
+    const gaps: AbsorbedGap[] = runRecords.map((r, pieceIndex) => {
+      const region = orphanRegions[pieceIndex];
+      return {
+        segmentId: preFilterSegments[r.segmentIndex]!.id,
+        text: r.segmentText,
+        span,
+        gapAudio,
+        orphanCount: orphans.length,
+        ...(region ? { spokenSpan: { start: region.start, end: region.end } } : {}),
+      };
+    });
 
     const existing = result.get(hostId);
     result.set(hostId, existing ? [...existing, ...gaps] : gaps);

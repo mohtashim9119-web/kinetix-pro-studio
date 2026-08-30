@@ -4,7 +4,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { planRestoreCluster, applyRestoreToSegments, restoreSegmentsByGapId, subFrameFloorSeconds } from './absorbedGapRestore';
+import {
+  planRestoreCluster, applyRestoreToSegments, restoreSegmentsByGapId, subFrameFloorSeconds,
+  resolveRestoreRegion, RESTORE_REFUSAL_MESSAGE, RESTORE_MIN_SILENT_GAP_SECONDS,
+} from './absorbedGapRestore';
 import { isSliceSegmentId } from './segmentId';
 import type { AbsorbedGap, VideoSegment } from '../types';
 
@@ -14,6 +17,18 @@ function seg(id: string, startTime: number, duration: number, extra?: Partial<Vi
 
 function gap(segmentId: string, text: string, start: number, end: number, gapAudio: AbsorbedGap['gapAudio'] = 'silent'): AbsorbedGap {
   return { segmentId, text, span: { start, end }, gapAudio };
+}
+
+/** A gap whose transcript DID record speech — `spokenSpan` is the sub-interval
+ *  of `span` the orphan tokens actually cover. */
+function spokenGap(
+  segmentId: string, text: string, start: number, end: number,
+  spokenStart: number, spokenEnd: number, orphanCount = 4,
+): AbsorbedGap {
+  return {
+    segmentId, text, span: { start, end }, gapAudio: 'speech',
+    spokenSpan: { start: spokenStart, end: spokenEnd }, orphanCount,
+  };
 }
 
 function assertGapless(segments: readonly VideoSegment[]): void {
@@ -206,5 +221,107 @@ describe('restoreSegmentsByGapId', () => {
   it('is a no-op for an empty id set', () => {
     const segments = [seg('a', 0, 2)];
     expect(restoreSegmentsByGapId(segments, new Set(), 24)).toEqual(segments);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 session ws2-25, Commit 2 — RESTORE FROM ORPHAN TOKENS, NOT GAP WIDTH.
+//
+// The span between two survivors measures the distance between their own token
+// edges. It is not free time to hand back: when transcript tokens sit inside
+// it, that time is the dropped scene's speech and the remainder still belongs
+// to the neighbours. Sizing from `spokenSpan` means a restore takes only what
+// was spoken.
+//
+// The real row this is built against (173 `shadow_loss`, "Some don't emerge."):
+// span 442.940 -> 445.360 (2.42s), orphan tokens `don 't emerge Fore` spanning
+// 443.820 -> 445.360 (1.54s). The host keeps the 0.88s nobody spoke into.
+// ---------------------------------------------------------------------------
+describe('restore sizing from orphan tokens', () => {
+  it('sizes the restored segment from the spoken span, not the gap width (173 shadow_loss)', () => {
+    const gaps = [spokenGap('d1', 'Some don’t emerge.', 442.94, 445.36, 443.82, 445.36)];
+    const plan = planRestoreCluster(gaps, 'host', 24);
+    expect(plan.refused).toBeFalsy();
+    expect(plan.region).toEqual({ start: 443.82, end: 445.36 });
+    expect(plan.segments).toHaveLength(1);
+    expect(plan.segments[0]!.startTime).toBe(443.82);
+    expect(plan.segments[0]!.duration).toBe(1.54);
+    // The span-sized answer this replaces would have been 2.42s.
+    expect(plan.segments[0]!.duration).not.toBe(2.42);
+  });
+
+  it('leaves the host the time nobody spoke into', () => {
+    const segments = [
+      seg('host', 440, 5),      // 440 -> 445
+      seg('after', 445, 5),     // 445 -> 450
+    ];
+    const gaps = [spokenGap('d1', 'Some don’t emerge.', 442.94, 445.36, 443.82, 445.36)];
+    const out = applyRestoreToSegments(segments, 0, gaps, 24);
+    // Host now ends at the SPOKEN start (443.82), not at the span start (442.94):
+    // it keeps the 0.88s of its own span the transcript never filled.
+    expect(out[0]!.startTime + out[0]!.duration).toBeCloseTo(443.82, 3);
+    expect(out[1]!.id).toBe('d1');
+    expect(out[1]!.duration).toBe(1.54);
+    assertGapless(out);
+  });
+
+  it('falls back to the full span when the transcript recorded nothing but the gap is wide', () => {
+    const gaps: AbsorbedGap[] = [{ ...gap('d1', 'Unheard line.', 37.06, 37.94), orphanCount: 0 }];
+    const plan = planRestoreCluster(gaps, 'host', 24);
+    expect(plan.refused).toBeFalsy();
+    expect(plan.region).toEqual({ start: 37.06, end: 37.94 });
+    expect(plan.segments[0]!.duration).toBeCloseTo(0.88, 3);
+  });
+
+  it('divides a multi-scene cluster at its own spoken boundaries', () => {
+    const gaps = [
+      spokenGap('d1', 'But something stayed.', 78, 90, 79.0, 80.3),
+      spokenGap('d2', 'Small and permanent.', 78, 90, 81.34, 82.86),
+    ];
+    const plan = planRestoreCluster(gaps, 'host', 24);
+    expect(plan.merged).toBe(false);
+    expect(plan.region).toEqual({ start: 79, end: 82.86 });
+    expect(plan.segments[0]!.startTime).toBe(79);
+    expect(plan.segments[1]!.startTime).toBe(81.34);
+    expect(plan.segments[1]!.duration).toBeCloseTo(1.52, 3);
+    // Contiguous, covering exactly the spoken region.
+    expect(plan.segments[0]!.startTime + plan.segments[0]!.duration).toBeCloseTo(81.34, 3);
+  });
+});
+
+describe('restore refusal — no recorded speech in a narrow gap', () => {
+  const narrow = (): AbsorbedGap[] => [
+    { ...gap('d1', 'But something stayed in you.', 78.73, 78.97), orphanCount: 0 },
+    { ...gap('d2', 'Small and permanent.', 78.73, 78.97), orphanCount: 0 },
+    { ...gap('d3', 'A new understanding of what the night actually is.', 78.73, 78.97), orphanCount: 0 },
+  ];
+
+  it('refuses rather than minting sub-frame slivers (v6 26-28)', () => {
+    const plan = planRestoreCluster(narrow(), 'host', 24);
+    expect(plan.refused).toBe(true);
+    expect(plan.segments).toEqual([]);
+    expect(plan.refusedReason).toBe(RESTORE_REFUSAL_MESSAGE);
+  });
+
+  it('leaves the timeline byte-identical when refused', () => {
+    const segments = [seg('host', 70, 8.97), seg('after', 78.97, 11.17)];
+    const out = applyRestoreToSegments(segments, 0, narrow(), 24);
+    expect(out).toEqual(segments);
+  });
+
+  it('does not refuse when the transcript DID record words, however narrow the gap', () => {
+    const gaps = [spokenGap('d1', 'Yes.', 10.0, 10.2, 10.05, 10.18, 1)];
+    expect(planRestoreCluster(gaps, 'host', 24).refused).toBeFalsy();
+  });
+
+  it('does not refuse on a legacy gap with no recorded count — undefined is unknown, not zero', () => {
+    const legacy = [gap('d1', 'Recorded before orphanCount existed.', 78.73, 78.97)];
+    expect(legacy[0]!.orphanCount).toBeUndefined();
+    expect(planRestoreCluster(legacy, 'host', 24).refused).toBeFalsy();
+  });
+
+  it('does not refuse a wide silent gap — the floor is narrowness AND no speech', () => {
+    const wide = [{ ...gap('d1', 'Long unheard line.', 10, 12), orphanCount: 0 }];
+    expect(planRestoreCluster(wide, 'host', 24).refused).toBeFalsy();
   });
 });
