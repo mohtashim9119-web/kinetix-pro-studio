@@ -6,7 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   planRestoreCluster, applyRestoreToSegments, restoreSegmentsByGapId, subFrameFloorSeconds,
-  resolveRestoreRegion, RESTORE_REFUSAL_MESSAGE, RESTORE_MIN_SILENT_GAP_SECONDS,
+  resolveRestoreRegion, RESTORE_REFUSAL_MESSAGE, collectRefusedRestoreReasons,
 } from './absorbedGapRestore';
 import { isSliceSegmentId } from './segmentId';
 
@@ -269,12 +269,15 @@ describe('restore sizing from orphan tokens', () => {
     assertGapless(out);
   });
 
-  it('falls back to the full span when the transcript recorded nothing but the gap is wide', () => {
-    const gaps: AbsorbedGap[] = [{ ...gap('d1', 'Unheard line.', 37.06, 37.94), orphanCount: 0 }];
+  it('refuses rather than fabricating a clip from a wide gap with zero orphan tokens (173 blue_monkey shape)', () => {
+    // ws2-26 Commit 1 — this is the decoy leak: 0 orphan tokens in a 0.88s
+    // gap used to clear the old 0.25s width floor and fall through to
+    // character-weighted division of pure silence. Width is no longer part
+    // of the rule.
+    const gaps: AbsorbedGap[] = [{ ...gap('d1', '"The blue monkey jumped over the moon".', 37.06, 37.94), orphanCount: 0 }];
     const plan = planRestoreCluster(gaps, 'host', 24);
-    expect(plan.refused).toBeFalsy();
-    expect(plan.region).toEqual({ start: 37.06, end: 37.94 });
-    expect(plan.segments[0]!.duration).toBeCloseTo(0.88, 3);
+    expect(plan.refused).toBe(true);
+    expect(plan.segments).toEqual([]);
   });
 
   it('divides a multi-scene cluster at its own spoken boundaries', () => {
@@ -293,18 +296,20 @@ describe('restore sizing from orphan tokens', () => {
   });
 });
 
-describe('restore refusal — no recorded speech in a narrow gap', () => {
+describe('restore refusal — evidence only, any width (ws2-26 Commit 1)', () => {
   const narrow = (): AbsorbedGap[] => [
     { ...gap('d1', 'But something stayed in you.', 78.73, 78.97), orphanCount: 0 },
     { ...gap('d2', 'Small and permanent.', 78.73, 78.97), orphanCount: 0 },
     { ...gap('d3', 'A new understanding of what the night actually is.', 78.73, 78.97), orphanCount: 0 },
   ];
 
-  it('refuses rather than minting sub-frame slivers (v6 26-28)', () => {
+  it('refuses rather than minting sub-frame slivers (v6 27-29)', () => {
     const plan = planRestoreCluster(narrow(), 'host', 24);
     expect(plan.refused).toBe(true);
     expect(plan.segments).toEqual([]);
-    expect(plan.refusedReason).toBe(RESTORE_REFUSAL_MESSAGE);
+    expect(plan.refusedReason).toContain(RESTORE_REFUSAL_MESSAGE);
+    expect(plan.refusedReason).toContain('0 orphan tokens');
+    expect(plan.refusedReason).toContain('host');
   });
 
   it('leaves the timeline byte-identical when refused', () => {
@@ -318,15 +323,25 @@ describe('restore refusal — no recorded speech in a narrow gap', () => {
     expect(planRestoreCluster(gaps, 'host', 24).refused).toBeFalsy();
   });
 
-  it('does not refuse on a legacy gap with no recorded count — undefined is unknown, not zero', () => {
+  it('does not refuse on a legacy gap with no recorded count — undefined is unknown, not zero (ws2-25 carve-out, unchanged)', () => {
+    // ws2-26 Commit 1 removes the WIDTH half of the old refusal AND; it does
+    // not touch this UNKNOWN carve-out. Only an explicit 0 licenses refusal.
     const legacy = [gap('d1', 'Recorded before orphanCount existed.', 78.73, 78.97)];
     expect(legacy[0]!.orphanCount).toBeUndefined();
     expect(planRestoreCluster(legacy, 'host', 24).refused).toBeFalsy();
   });
 
-  it('does not refuse a wide silent gap — the floor is narrowness AND no speech', () => {
+  it('refuses a wide gap with zero orphan tokens exactly as it refuses a narrow one — width is not part of the rule', () => {
     const wide = [{ ...gap('d1', 'Long unheard line.', 10, 12), orphanCount: 0 }];
-    expect(planRestoreCluster(wide, 'host', 24).refused).toBeFalsy();
+    expect(planRestoreCluster(wide, 'host', 24).refused).toBe(true);
+  });
+
+  it('collectRefusedRestoreReasons reports one evidence-bearing reason per refused cluster', () => {
+    const segments = [seg('host', 70, 8.97), seg('after', 78.97, 11.17, { absorbedGaps: narrow() })];
+    const ids = new Set(narrow().map(g => g.segmentId));
+    const reasons = collectRefusedRestoreReasons(segments, ids, 24);
+    expect(reasons).toHaveLength(1);
+    expect(reasons[0]).toContain('gap 0.24s');
   });
 });
 
@@ -482,9 +497,16 @@ describe('3a — narrow band where the old double-floor bug is NOT masked by 3b\
     // makeRestoredSegment re-floored every 0.09s piece up to 0.1s WITHOUT
     // recomputing the next piece\'s startTime, overlapping each piece\'s end
     // 0.01s into its successor\'s start.
+    //
+    // orphanCount is 1 (not 0) purely to clear ws2-26 Commit 1's
+    // evidence-only refusal gate and reach this geometry — these gaps have no
+    // `spokenSpan` (constructed directly, bypassing `computeAbsorbedGaps`),
+    // so `planRestoreCluster` still falls through to the SAME
+    // `splitRegionByCharCount` call this test exercises; only the refusal
+    // check upstream of it changed.
     const texts = ['aaaaaaaaaa', 'bbbbbbbbbb', 'cccccccccc', 'dddddddddd'];
     const gaps: AbsorbedGap[] = texts.map((text, i) => ({
-      segmentId: `d${i}`, text, span: { start: 10, end: 10.36 }, gapAudio: 'silent', orphanCount: 0,
+      segmentId: `d${i}`, text, span: { start: 10, end: 10.36 }, gapAudio: 'silent', orphanCount: 1,
     }));
     const plan = planRestoreCluster(gaps, 'host', 24);
     expect(plan.merged).toBe(false); // confirms 3b did not intervene here
@@ -507,13 +529,15 @@ describe('3a — no double floor application (root cause of the reported overlap
     // makeRestoredSegment then silently bumped each piece back up to 0.1
     // WITHOUT recomputing later pieces' startTimes — producing exactly the
     // reported pattern (a piece's end running past its neighbour's start).
+    //
+    // orphanCount is 1 (not 0) purely to clear ws2-26 Commit 1's
+    // evidence-only refusal gate — see the sibling describe block above for
+    // why that doesn't change what this test exercises.
     const gaps: AbsorbedGap[] = [
-      { segmentId: 'd1', text: 'But something stayed in you.', span: { start: 78.7, end: 79.0 }, gapAudio: 'silent', orphanCount: 0 },
-      { segmentId: 'd2', text: 'Small and permanent.', span: { start: 78.7, end: 79.0 }, gapAudio: 'silent', orphanCount: 0 },
-      { segmentId: 'd3', text: 'A new understanding of what the night actually is.', span: { start: 78.7, end: 79.0 }, gapAudio: 'silent', orphanCount: 0 },
+      { segmentId: 'd1', text: 'But something stayed in you.', span: { start: 78.7, end: 79.0 }, gapAudio: 'silent', orphanCount: 1 },
+      { segmentId: 'd2', text: 'Small and permanent.', span: { start: 78.7, end: 79.0 }, gapAudio: 'silent', orphanCount: 1 },
+      { segmentId: 'd3', text: 'A new understanding of what the night actually is.', span: { start: 78.7, end: 79.0 }, gapAudio: 'silent', orphanCount: 1 },
     ];
-    // Not refused: span (0.3s) >= RESTORE_MIN_SILENT_GAP_SECONDS (0.25s).
-    expect(0.3).toBeGreaterThanOrEqual(RESTORE_MIN_SILENT_GAP_SECONDS);
     const plan = planRestoreCluster(gaps, 'host', 24);
     expect(plan.refused).toBeFalsy();
 

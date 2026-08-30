@@ -130,7 +130,7 @@ import {
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { computeAbsorbedGaps, applyAbsorbedGaps } from './services/absorbedGaps';
-import { restoreSegmentsByGapId, countRefusedRestores, RESTORE_REFUSAL_MESSAGE } from './services/absorbedGapRestore';
+import { restoreSegmentsByGapId, collectRefusedRestoreReasons, RESTORE_REFUSAL_MESSAGE } from './services/absorbedGapRestore';
 import { splitSegmentAtTime, deleteSegment } from './services/segmentSplitDelete';
 
 /** WS2 T2.1/T2.2 — fps used ONLY for the restore sub-frame merge check when
@@ -4420,16 +4420,17 @@ export default function App() {
   // like any other timeline edit.
   const handleRestoreAbsorbedSegments = useCallback((gapSegmentIds: string[]): void => {
     if (gapSegmentIds.length === 0) return;
-    // WS2 ws2-25 Commit 2 — a cluster whose transcript recorded nothing, in a
-    // gap too narrow to be anything but a word seam, is REFUSED rather than
-    // restored as slivers carved out of neighbours that own that time. Report
-    // it instead of failing silently: from the user's side an ignored restore
-    // and a broken one look identical.
-    let refusedCount = 0;
+    // WS2 ws2-26 Commit 1 — a cluster with no orphan-token evidence (zero, or
+    // no recorded count at all) is REFUSED rather than restored via
+    // character-weighted guesswork, at ANY gap width. Report it instead of
+    // failing silently: from the user's side an ignored restore and a broken
+    // one look identical. Each refusal's measured evidence goes to the
+    // console, not just the generic toast — see `buildRefusalReason`.
+    let refusedReasons: string[] = [];
     setProject(prev => {
       const ids = new Set(gapSegmentIds);
       const segments = restoreSegmentsByGapId(prev.segments, ids, exportFps);
-      refusedCount = countRefusedRestores(prev.segments, ids, exportFps);
+      refusedReasons = collectRefusedRestoreReasons(prev.segments, ids, exportFps);
       // Only record an override for what actually landed — marking a refused
       // scene `'keep'` would promise a re-restore on the next sync that this
       // same rule would refuse again.

@@ -214,6 +214,37 @@ describe('ws2-restore-corpus — 173 index 111 (orphan-token duration)', () => {
   });
 });
 
+describe('ws2-restore-corpus — 173 blue_monkey (ws2-26 Commit 1, the decoy leak)', () => {
+  it('has zero orphan tokens in a gap wide enough to have cleared the old 0.25s width floor', async () => {
+    const { whisper } = await getRuns('173');
+    const host = whisper.committed.find(s => tagOf(s) === 'ancient_nature_thriving');
+    expect(host).toBeDefined();
+    const gaps = host!.absorbedGaps ?? [];
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]!.text).toBe('"The blue monkey jumped over the moon".');
+    expect(gaps[0]!.orphanCount).toBe(0);
+    const width = gaps[0]!.span.end - gaps[0]!.span.start;
+    expect(width).toBeGreaterThan(0.25); // would have PASSED ws2-25's width floor
+  });
+
+  it('is refused, not restored — no clip is fabricated from silence', async () => {
+    const { whisper } = await getRuns('173');
+    const host = whisper.committed.find(s => tagOf(s) === 'ancient_nature_thriving')!;
+    const plan = planRestoreCluster(host.absorbedGaps!, host.id, RESTORE_FPS);
+    expect(plan.refused).toBe(true);
+    expect(plan.segments).toEqual([]);
+  });
+
+  it('an attempted restore is a true no-op and the 709.01 timeline sum holds', async () => {
+    const { whisper } = await getRuns('173');
+    const host = whisper.committed.find(s => tagOf(s) === 'ancient_nature_thriving')!;
+    const gapIds = new Set(host.absorbedGaps!.map(g => g.segmentId));
+    const afterAttemptedRestore = restoreSegmentsByGapId(whisper.committed, gapIds, RESTORE_FPS);
+    expect(afterAttemptedRestore).toEqual(whisper.committed);
+    expect(timelineSum(afterAttemptedRestore)).toBeCloseTo(709.01, 2);
+  });
+});
+
 describe('ws2-restore-corpus — v6 26-30 cluster', () => {
   it('is a single 3-scene cluster with zero orphan tokens in a sub-0.25s span', async () => {
     const { whisper } = await getRuns('v6');

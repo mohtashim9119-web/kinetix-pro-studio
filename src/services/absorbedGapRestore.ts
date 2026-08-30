@@ -47,32 +47,70 @@ const MIN_SEGMENT_DURATION = 0.1;
 export const RESTORE_SUB_FRAME_FLOOR_FRAMES = 2;
 
 /**
- * WS2 session ws2-25 Commit 2 — the refusal floor.
+ * WS2 session ws2-26 Commit 1 — THE REFUSAL RULE IS EVIDENCE, NOT WIDTH.
  *
- * A cluster whose transcript recorded NOTHING between the two survivors
- * (`orphanCount === 0`) and whose whole span is narrower than this is refused
- * rather than restored: there is no evidence of speech to size a segment from,
- * and the span is too small to be anything but the seam between two adjacent
- * words. Restoring it can only produce slivers carved out of neighbours that
- * legitimately own that time.
+ * Session ws2-25's rule (`RESTORE_MIN_SILENT_GAP_SECONDS`, now removed)
+ * refused only when a cluster had zero orphan tokens AND its span was
+ * narrower than a fixed 0.25s floor. That width clause let a real decoy
+ * through: 173's `blue_monkey` line ("The blue monkey jumped over the moon")
+ * has 0 orphan tokens — the transcript recorded no words there at all — but
+ * sits in a 0.88s gap, wide enough to clear the old floor, so it fell through
+ * to character-weighted division of pure silence and minted a fabricated
+ * ~0.88s clip. v6 027-029 sit in a 0.240s gap with the IDENTICAL evidence
+ * (zero orphan tokens) and were correctly refused. Same evidence, opposite
+ * outcomes, decided only by gap width — width never told you whether anything
+ * was said; only the transcript's own token count does.
  *
- * NOT a sync-timing constant and deliberately not in `syncConstants.ts`: it
- * decides whether a USER-INITIATED restore proceeds, and moves no boundary the
- * sync pipeline placed. It is an operator-specified UI floor (WS2 session
- * ws2-25), not a value derived from an acoustic property — stated plainly here
- * so it is never mistaken for one.
+ * The rule is now evidence-only: an automatic restore requires at least one
+ * ORPHAN TOKEN, at any gap width. "Orphan token" already means whichever
+ * array produced `keptAlignments` — FA's own tokens on the FA arm, Whisper's
+ * on the Whisper arm (`absorbedGaps.ts`'s WORD SOURCE CONTRACT) — so a
+ * genuine FA timestamp for this scene already counts as evidence through this
+ * same field; there is no separate FA carve-out to add. `matchedWords` /
+ * `confidence` (the sync log's own per-segment fields, computed upstream by
+ * `whisperService.ts`) play NO part in this decision: FA's CTC objective
+ * places every scripted word by construction (`faUnspokenGate.ts:20`), so a
+ * planted decoy line can score a perfect word-count match while carrying no
+ * real timing evidence at all. Only the ORPHAN-TOKEN count — physical
+ * evidence that something sits in the gap, in index space, never timestamp
+ * proximity — may greenlight an automatic restore.
+ *
+ * `undefined` still means UNKNOWN, not zero — ws2-25 Commit 2's own carve-out,
+ * unchanged here: a gap recorded before `orphanCount` existed (or with no
+ * transcript at all) carries no count, and refusing on evidence nobody ever
+ * collected would be a guess in the other direction. Only an explicit `0`
+ * licenses this rule; this commit's fix is removing the WIDTH half of the old
+ * AND, not touching the UNKNOWN carve-out.
+ *
+ * A refused cluster is never lost. Character-weighted division of an
+ * unverified span survives only as the Forced Restore engine (WS2 session
+ * ws2-26 Commit 2), reachable exclusively after an explicit human
+ * confirmation naming exactly what evidence is missing.
  */
-export const RESTORE_MIN_SILENT_GAP_SECONDS = 0.25;
 
-/** Why a restore was refused — surfaced to the user verbatim. Worded for what
- *  was actually tested: the TRANSCRIPT recorded no words here. It does not
- *  claim the audio is silent (nothing in this path listens to audio), and on
- *  the Whisper arm it is entirely possible for real speech to exist that
- *  Whisper failed to transcribe — measured, v6 78.7-90.1s. */
+/** Why a restore was refused — surfaced to the user verbatim (the toast). It
+ *  does not claim the audio is silent (nothing in this path listens to
+ *  audio), and on the Whisper arm it is entirely possible for real speech to
+ *  exist that Whisper failed to transcribe — measured, v6 78.7-90.1s. */
 export const RESTORE_REFUSAL_MESSAGE = 'Nothing spoken here — the transcript recorded no words in this gap.';
 
 function round3(v: number): number {
   return Number(v.toFixed(3));
+}
+
+/** WS2 ws2-26 Commit 1 — the refusal reason WITH the measured evidence, for
+ *  logging (`console.warn` at the call site) rather than the short toast
+ *  text above. Only ever called with an explicit `orphanCount === 0` (see
+ *  `hasRestoreEvidence` — `undefined` never reaches a refusal). Names the
+ *  exact count, the gap's own span/width, and which host segment absorbed
+ *  it, so a refusal is diagnosable from the console without re-running the
+ *  sync pipeline. */
+function buildRefusalReason(
+  orphanCount: number, span: { start: number; end: number }, hostId: string,
+): string {
+  const width = round3(span.end - span.start);
+  return `${RESTORE_REFUSAL_MESSAGE} Measured: the transcript recorded ${orphanCount} orphan tokens; `
+    + `gap ${width}s [${round3(span.start)}s–${round3(span.end)}s]; host ${hostId}.`;
 }
 
 export function subFrameFloorSeconds(fps: number): number {
@@ -119,9 +157,9 @@ export interface RestoreClusterPlan {
    *  host shrinks to `region.start` and the following survivor resumes at
    *  `region.end`, so neighbours give back only time that was spoken. */
   region: { start: number; end: number };
-  /** Set when the cluster was refused outright (no recorded speech, span below
-   *  `RESTORE_MIN_SILENT_GAP_SECONDS`). `segments` is empty and the caller must
-   *  leave the timeline untouched and surface `refusedReason`. */
+  /** Set when the cluster was refused outright (zero orphan-token evidence, at
+   *  any span width — ws2-26 Commit 1). `segments` is empty and the caller
+   *  must leave the timeline untouched and surface `refusedReason`. */
   refused?: boolean;
   refusedReason?: string;
 }
@@ -163,13 +201,16 @@ export function planRestoreCluster(
   const span = gaps[0]!.span;
   const region = resolveRestoreRegion(gaps);
 
-  // REFUSAL — nothing was recorded here and the seam is too narrow to be
-  // anything else. Only an explicit 0 counts: `undefined` is a gap recorded
-  // before the count existed, and refusing on absent evidence would be a
-  // guess (see AbsorbedGap.orphanCount).
+  // REFUSAL — evidence, not width (ws2-26 Commit 1). Only an explicit 0
+  // licenses this: `undefined` is a gap recorded before the count existed,
+  // and refusing on absent evidence would be a guess (see
+  // AbsorbedGap.orphanCount). No width clause any more, at any span width.
   const orphanCount = gaps[0]!.orphanCount;
-  if (orphanCount === 0 && span.end - span.start < RESTORE_MIN_SILENT_GAP_SECONDS) {
-    return { merged: false, segments: [], region, refused: true, refusedReason: RESTORE_REFUSAL_MESSAGE };
+  if (orphanCount === 0) {
+    return {
+      merged: false, segments: [], region, refused: true,
+      refusedReason: buildRefusalReason(orphanCount, span, hostId),
+    };
   }
 
   const start = region.start;
@@ -368,23 +409,30 @@ function clustersOf(host: VideoSegment): AbsorbedGap[][] {
 }
 
 /**
- * How many clusters a `restoreSegmentsByGapId` call would REFUSE. Called on
- * the pre-restore array (the same one handed to that function) so the caller
- * can tell the user why nothing moved — an ignored restore and a broken one
- * are indistinguishable from the outside otherwise. Pure; changes nothing.
+ * Every refusal reason a `restoreSegmentsByGapId` call over the SAME
+ * `gapSegmentIds` would produce (one string per refused cluster, each naming
+ * its measured evidence — see `buildRefusalReason`). Called on the
+ * pre-restore array (the same one handed to that function) so the caller can
+ * both tell the user why nothing moved (an ignored restore and a broken one
+ * are indistinguishable from the outside otherwise) and log the specifics
+ * (WS2 ws2-26 Commit 1 — "log the refusal with the reason and the measured
+ * evidence, not just the generic message"). `.length` is the refused count.
+ * Pure; changes nothing.
  */
-export function countRefusedRestores(
+export function collectRefusedRestoreReasons(
   segments: readonly VideoSegment[],
   gapSegmentIds: ReadonlySet<string>,
   fps: number,
-): number {
-  if (gapSegmentIds.size === 0) return 0;
-  let refused = 0;
+): string[] {
+  if (gapSegmentIds.size === 0) return [];
+  const reasons: string[] = [];
   for (const host of segments) {
     for (const clusterGaps of clustersOf(host)) {
       const toRestore = clusterGaps.filter(g => gapSegmentIds.has(g.segmentId));
-      if (toRestore.length > 0 && planRestoreCluster(toRestore, host.id, fps).refused) refused++;
+      if (toRestore.length === 0) continue;
+      const plan = planRestoreCluster(toRestore, host.id, fps);
+      if (plan.refused) reasons.push(plan.refusedReason ?? RESTORE_REFUSAL_MESSAGE);
     }
   }
-  return refused;
+  return reasons;
 }
