@@ -4395,9 +4395,12 @@ export default function App() {
     });
   }, []);
 
-  const handleDeleteSelectedSegment = useCallback((): void => {
-    const id = resolveShortcutTargetSegmentId();
-    if (!id) return;
+  // WS2 ws2-25 Commit 4 — id-parameterized so the D shortcut (which resolves
+  // its own target) and the Timeline right-click "Delete segment" entry (which
+  // already knows exactly which clip was clicked) share one code path rather
+  // than the context menu re-deriving selection state to call the shortcut
+  // handler indirectly.
+  const handleDeleteSegmentById = useCallback((id: string): void => {
     let didDelete = false;
     setProject(prev => {
       const index = prev.segments.findIndex(s => s.id === id);
@@ -4410,6 +4413,12 @@ export default function App() {
     });
     if (didDelete) setSelectedSegmentId(null);
   }, []);
+
+  const handleDeleteSelectedSegment = useCallback((): void => {
+    const id = resolveShortcutTargetSegmentId();
+    if (!id) return;
+    handleDeleteSegmentById(id);
+  }, [handleDeleteSegmentById]);
 
   // Shared delete handler — used by DropZonePanel post-sync assets list
   const handleDeleteAsset = useCallback((assetId: string) => {
@@ -4570,6 +4579,16 @@ export default function App() {
     if (!file) return;
     await processZipFile(file);
   };
+
+  // WS2 ws2-25 Commit 4 — every individually-restored absorbed-gap segment's
+  // own id (segmentOverrides' keys), for DropZonePanel's title fallback. A
+  // merged restore slot's slice id is deliberately excluded here — it's
+  // detected structurally (isSliceSegmentId) at the call site instead, same
+  // as segmentSplitDelete.ts's own split-vs-restore split.
+  const restoredSegmentIdsMemo = useMemo(
+    () => new Set(Object.keys(project.segmentOverrides ?? {})),
+    [project.segmentOverrides],
+  );
 
   const currentSegment = useMemo(() => {
     if (isResizingRef.current) {
@@ -5322,6 +5341,7 @@ export default function App() {
         >
           <DropZonePanel
             segments={project.segments}
+            restoredSegmentIds={restoredSegmentIdsMemo}
             assets={project.assets}
             voiceoverId={project.voiceoverId}
             script={project.script}
@@ -5597,6 +5617,8 @@ export default function App() {
                 voiceoverName={voiceover?.name}
                 waveformSource={waveformSource}
                 onRestoreAbsorbedGaps={handleRestoreAllGapsOnSegment}
+                onDeleteSegment={handleDeleteSegmentById}
+                restoredSegmentIds={restoredSegmentIdsMemo}
                 onTogglePlay={togglePlay}
                 onSeek={(time) => {
                   setCurrentTime(time);

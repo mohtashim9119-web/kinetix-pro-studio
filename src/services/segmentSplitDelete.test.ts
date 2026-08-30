@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { splitSegmentAtTime, deleteSegment, parentIdFromSliceId } from './segmentSplitDelete';
-import { makeSliceSegmentId, isSliceSegmentId } from './segmentId';
+import { makeSliceSegmentId, isSliceSegmentId, MERGE_SLOT_ORDINAL, isMergeSlotSegmentId } from './segmentId';
 import type { VideoSegment } from '../types';
 
 function seg(id: string, startTime: number, duration: number, text = '', extra?: Partial<VideoSegment>): VideoSegment {
@@ -153,5 +153,66 @@ describe('deleteSegment', () => {
     const snapshot = JSON.parse(JSON.stringify(segments));
     deleteSegment(segments, 0, new Set());
     expect(segments).toEqual(snapshot);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 session ws2-25, Commit 4 — restored/split segment lifecycle.
+// ---------------------------------------------------------------------------
+describe('deleteSegment — text follows a stretching sibling (3-way split)', () => {
+  it('keeps part 2\'s own text when deleting part 3 stretches part 2 into the vacated slot', () => {
+    const orig = [seg('ORIG', 0, 6, 'You start watching the older hunters differently.')];
+    const s1 = splitSegmentAtTime(orig, 0, 2);       // "You start watching" | "the older hunters differently."
+    const s2 = splitSegmentAtTime(s1.segments, 1, 3.5); // splits piece 2 -> "the older" | "hunters differently."
+    expect(s2.segments).toHaveLength(3);
+    expect(s2.segments[0]!.text).toBe('You start watching');
+    expect(s2.segments[1]!.text).toBe('the older');
+    expect(s2.segments[2]!.text).toBe('hunters differently.');
+
+    const del = deleteSegment(s2.segments, 2, new Set());
+    expect(del.deleted).toBe(true);
+    expect(del.segments).toHaveLength(2);
+    // Part 2 stretched to absorb part 3's freed time — but its OWN text,
+    // never part 3's or part 1's, must be what's attached to it afterward.
+    expect(del.segments[1]!.text).toBe('the older');
+    expect(del.segments[1]!.startTime).toBe(2);
+    expect(del.segments[1]!.duration).toBeCloseTo(4, 3);
+    assertGapless(del.segments);
+  });
+
+  it('keeps the correct text when the FIRST of a pair is deleted (next stretches backward)', () => {
+    const orig = [seg('ORIG', 0, 6, 'You start watching the older hunters differently.')];
+    const s1 = splitSegmentAtTime(orig, 0, 2);
+    const del = deleteSegment(s1.segments, 0, new Set());
+    expect(del.deleted).toBe(true);
+    expect(del.segments).toHaveLength(1);
+    expect(del.segments[0]!.text).toBe('the older hunters differently.');
+    expect(del.segments[0]!.startTime).toBe(0);
+  });
+});
+
+describe('deleteSegment — merged restore slot (3b/isMergeSlotSegmentId)', () => {
+  it('is always deletable despite having no sibling — the old last-slice rule no longer applies to it', () => {
+    const segments = [
+      seg('host', 0, 5),
+      seg(makeSliceSegmentId('host', MERGE_SLOT_ORDINAL), 5, 2, 'Merged restore text.'),
+      seg('after', 7, 3),
+    ];
+    expect(isMergeSlotSegmentId(segments[1]!.id)).toBe(true);
+    const del = deleteSegment(segments, 1, new Set());
+    expect(del.deleted).toBe(true);
+    expect(del.segments).toHaveLength(2);
+  });
+
+  it('an ordinary split\'s last remaining slice is still refused (unaffected by the merge-slot exception)', () => {
+    const orig = [seg('ORIG', 0, 6, 'Some text here now.')];
+    const s1 = splitSegmentAtTime(orig, 0, 2);
+    const firstDelete = deleteSegment(s1.segments, 0, new Set());
+    expect(firstDelete.deleted).toBe(true);
+    expect(firstDelete.segments).toHaveLength(1);
+    expect(isMergeSlotSegmentId(firstDelete.segments[0]!.id)).toBe(false);
+    // Now only one slice remains from the original split pair — must be refused.
+    const secondDelete = deleteSegment(firstDelete.segments, 0, new Set());
+    expect(secondDelete.deleted).toBe(false);
   });
 });

@@ -78,8 +78,22 @@ export function matchesSegmentQuery(query: string, ctx: SegmentSearchContext): b
  * filename/sceneLine field of its own — the filename lives on the looked-up
  * Asset. The search predicate matches against this exact title, so both must
  * come from one function.
+ *
+ * `isRestoredOrSplit` (WS2 ws2-25 Commit 4) — a restored (absorbed-gap) or
+ * split segment. Such a segment carries no asset until the user assigns one
+ * (`makeRestoredSegment` deliberately leaves `assetId` unset — see
+ * absorbedGapRestore.ts's header — and a split slice keeps its parent's
+ * asset, so this only ever changes anything for a restore). Every restored
+ * segment shares `order: 0` (also by that same constructor), so falling
+ * through to "Scene N" here would show "Scene 1" for every one of them.
+ * With no asset, such a segment falls back to its OWN SCRIPT TEXT — the
+ * content it was created from — never the positional label, which describes
+ * nothing true about it. An asset still takes precedence once the user
+ * assigns one; only the empty-asset fallback changes.
  */
-export function computeSegmentDisplayTitle(seg: VideoSegment, asset: Asset | undefined): string {
+export function computeSegmentDisplayTitle(
+  seg: VideoSegment, asset: Asset | undefined, isRestoredOrSplit = false,
+): string {
   if (asset?.name) {
     const cleaned = asset.name
       .replace(/\.[a-zA-Z0-9]+$/, '')      // extension
@@ -88,6 +102,10 @@ export function computeSegmentDisplayTitle(seg: VideoSegment, asset: Asset | und
       .replace(/[_-]+/g, ' ')
       .trim();
     if (cleaned) return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  if (isRestoredOrSplit) {
+    const text = seg.text?.trim();
+    if (text) return text;
   }
   return `Scene ${seg.order + 1}`;
 }

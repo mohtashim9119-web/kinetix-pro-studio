@@ -21,18 +21,22 @@
 // `restoredIds`) is always deletable with no "last remaining" restriction:
 // deleting it is equivalent to un-restoring it (the time and text simply
 // return to the neighbour that absorbs it, exactly as before the restore),
-// which never destroys content that has no other representation. A MERGED
-// restore slot (a slice id, `makeSliceSegmentId(hostId, 0)`, from the
-// sub-frame-cluster rule) is, by this module's own last-remaining-slice
-// rule, NOT independently deletable via D — it has no sibling slice by
-// construction, so the rule that protects a split's last piece also
-// (deliberately, not by omission) protects a merged restore from D; use
-// undo to remove one. Documented here as a known, considered simplification
-// rather than re-derived per call.
+// which never destroys content that has no other representation.
+//
+// A MERGED restore slot (a slice id, `makeSliceSegmentId(hostId,
+// MERGE_SLOT_ORDINAL)`, from the sub-frame-cluster rule) is ALSO always
+// deletable, for the same reason: it has no sibling slice by construction —
+// it was never a pair to begin with — so it is not "the last remaining
+// slice of a group" in the sense that rule protects, even though it shares
+// the sibling-less SHAPE a split's last-remaining piece has. WS2 ws2-25
+// Commit 4 lifted the earlier (considered, but wrong) simplification of
+// reusing the split rule's shape test verbatim for this case; the two are
+// now told apart structurally via `isMergeSlotSegmentId`
+// (`MERGE_SLOT_ORDINAL`, segmentId.ts), not by the caller.
 // ---------------------------------------------------------------------------
 
 import type { VideoSegment } from '../types';
-import { makeSliceSegmentId, isSliceSegmentId } from './segmentId';
+import { makeSliceSegmentId, isSliceSegmentId, isMergeSlotSegmentId } from './segmentId';
 
 const MIN_SEGMENT_DURATION = 0.1;
 
@@ -158,7 +162,16 @@ export function deleteSegment(
   if (parentId === null && !isIndividuallyRestored) {
     return { segments: segments as VideoSegment[], deleted: false }; // unsplit native segment
   }
-  if (parentId !== null) {
+  // WS2 ws2-25 Commit 4 — the "last remaining slice" rule protects a SPLIT
+  // pair's last piece (there IS no other representation of that content once
+  // it's gone). A MERGED RESTORE SLOT has no sibling by construction — it was
+  // never a pair to begin with — so the same "no sibling" shape must not
+  // refuse it here. See segmentId.ts's MERGE_SLOT_ORDINAL doc for why shape
+  // alone can't distinguish the two, and this module's header for why
+  // deleting a restored/merged segment is always safe: the time and text
+  // simply return to the neighbour that absorbs it, exactly as before the
+  // restore.
+  if (parentId !== null && !isMergeSlotSegmentId(target.id)) {
     const hasSibling = segments.some((s, i) => i !== index && parentIdFromSliceId(s.id) === parentId);
     if (!hasSibling) {
       return { segments: segments as VideoSegment[], deleted: false }; // last remaining slice

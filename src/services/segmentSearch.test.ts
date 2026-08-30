@@ -136,3 +136,43 @@ describe('computeSegmentDisplayTitle', () => {
     expect(computeSegmentDisplayTitle(baseSeg, undefined)).toBe('Scene 4');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WS2 session ws2-25, Commit 4 — restored/split segments keep their own
+// script title, never the positional "Scene N" fallback. A restore
+// (makeRestoredSegment, absorbedGapRestore.ts) never sets assetId and always
+// shares order: 0, so without this every restored segment would display
+// "Scene 1".
+// ---------------------------------------------------------------------------
+describe('computeSegmentDisplayTitle — restored/split segments', () => {
+  const restoredSeg: VideoSegment = {
+    id: 'restored-1',
+    text: 'Some don’t emerge.',
+    startTime: 443.82,
+    duration: 1.54,
+    transition: TransitionType.NONE,
+    animation: AnimationType.NONE,
+    order: 0,
+  };
+
+  it('shows the segment\'s own script text, not "Scene N", when restored and unassigned', () => {
+    expect(computeSegmentDisplayTitle(restoredSeg, undefined, true)).toBe('Some don’t emerge.');
+  });
+
+  it('does NOT change the fallback for an ordinary (non-restored) segment', () => {
+    // Same shape (no asset, order 0) but not flagged as restored — must still
+    // fall back to the positional label, unchanged from before this commit.
+    expect(computeSegmentDisplayTitle(restoredSeg, undefined, false)).toBe('Scene 1');
+    expect(computeSegmentDisplayTitle(restoredSeg, undefined)).toBe('Scene 1'); // default param
+  });
+
+  it('still prefers an assigned asset\'s name over the restored flag', () => {
+    const asset: Asset = { id: 'a1', name: '009_civic_stats.jpeg', url: '', type: 'image' };
+    expect(computeSegmentDisplayTitle(restoredSeg, asset, true)).toBe('Civic Stats');
+  });
+
+  it('falls through to "Scene N" if a restored segment somehow has no text', () => {
+    expect(computeSegmentDisplayTitle({ ...restoredSeg, text: '' }, undefined, true)).toBe('Scene 1');
+    expect(computeSegmentDisplayTitle({ ...restoredSeg, text: '   ' }, undefined, true)).toBe('Scene 1');
+  });
+});

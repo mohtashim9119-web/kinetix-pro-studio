@@ -12,6 +12,7 @@ import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { patchUiState } from '../services/uiStateStore';
 import { resizeHeading } from '../services/headingLayer';
 import { isDragEdgeLocked } from '../services/dragCascade';
+import { isSliceSegmentId } from '../services/segmentId';
 import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
 import {
@@ -92,6 +93,18 @@ interface Props {
    *  named segment. Optional; the right-click "Restore absorbed segments"
    *  menu item simply doesn't render without it. */
   onRestoreAbsorbedGaps?: (segmentId: string) => void;
+  /** WS2 ws2-25 Commit 4 — deletes a split slice or individually-restored
+   *  segment. Optional; the right-click "Delete segment" menu item simply
+   *  doesn't render without it. Applies the same eligibility rule as the D
+   *  shortcut (segmentSplitDelete.ts's `deleteSegment`) — a native segment
+   *  right-clicked here shows no delete entry. */
+  onDeleteSegment?: (segmentId: string) => void;
+  /** WS2 ws2-25 Commit 4 — ids of every individually-restored absorbed-gap
+   *  segment (`Project.segmentOverrides`'s own keys). A split slice is
+   *  detected structurally instead (`isSliceSegmentId`) and needs nothing
+   *  passed in for it — see DropZonePanel's identical prop for the same
+   *  reasoning. */
+  restoredSegmentIds?: ReadonlySet<string>;
 }
 
 export function Timeline({
@@ -120,13 +133,18 @@ export function Timeline({
   onHeadingResizeCommit,
   initialScrollLeft,
   onRestoreAbsorbedGaps,
+  onDeleteSegment,
+  restoredSegmentIds,
 }: Props) {
   const totalDuration = useMemo(() => computeTotalDuration(segments), [segments]);
 
-  // WS2 T2.1 Commit 3 — right-click context menu, restore-only for now. Not
-  // a general-purpose reusable menu component: scoped to this one action,
-  // dismissed on outside click or Escape.
-  const [gapContextMenu, setGapContextMenu] = useState<{ segmentId: string; gapCount: number; x: number; y: number } | null>(null);
+  // WS2 T2.1 Commit 3 — right-click context menu. Not a general-purpose
+  // reusable menu component: scoped to these two actions (restore, and —
+  // WS2 ws2-25 Commit 4 — delete), dismissed on outside click or Escape.
+  // Holds only the id; which action(s) apply is recomputed at render time
+  // from the current segment/props, so it can never disagree with the
+  // eligibility check the click handler itself just ran.
+  const [gapContextMenu, setGapContextMenu] = useState<{ segmentId: string; x: number; y: number } | null>(null);
   useEffect(() => {
     if (!gapContextMenu) return;
     const close = (): void => setGapContextMenu(null);
@@ -671,10 +689,13 @@ export function Timeline({
                       onSeek(s.startTime);
                     }}
                     onContextMenu={(e) => {
-                      if (!s.absorbedGaps || s.absorbedGaps.length === 0 || !onRestoreAbsorbedGaps) return;
+                      const canRestore = !!s.absorbedGaps?.length && !!onRestoreAbsorbedGaps;
+                      const canDelete = !!onDeleteSegment
+                        && (isSliceSegmentId(s.id) || !!restoredSegmentIds?.has(s.id));
+                      if (!canRestore && !canDelete) return;
                       e.preventDefault();
                       e.stopPropagation();
-                      setGapContextMenu({ segmentId: s.id, gapCount: s.absorbedGaps.length, x: e.clientX, y: e.clientY });
+                      setGapContextMenu({ segmentId: s.id, x: e.clientX, y: e.clientY });
                     }}
                     style={{
                       position: 'absolute',
@@ -885,24 +906,46 @@ export function Timeline({
         )}
       </div>
 
-      {gapContextMenu && (
-        <div
-          style={{ position: 'fixed', left: gapContextMenu.x, top: gapContextMenu.y, zIndex: 200 }}
-          className="bg-[#151515] border border-[#2A2A2A] rounded-lg shadow-xl py-1 min-w-[220px]"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            type="button"
-            onClick={() => {
-              onRestoreAbsorbedGaps?.(gapContextMenu.segmentId);
-              setGapContextMenu(null);
-            }}
-            className="w-full text-left px-3 py-1.5 text-[11px] text-gray-200 hover:bg-[#F27D26]/15 hover:text-[#F27D26]"
+      {gapContextMenu && (() => {
+        const target = segments.find(s => s.id === gapContextMenu.segmentId);
+        if (!target) return null;
+        const gapCount = target.absorbedGaps?.length ?? 0;
+        const canDelete = !!onDeleteSegment
+          && (isSliceSegmentId(target.id) || !!restoredSegmentIds?.has(target.id));
+        if (gapCount === 0 && !canDelete) return null;
+        return (
+          <div
+            style={{ position: 'fixed', left: gapContextMenu.x, top: gapContextMenu.y, zIndex: 200 }}
+            className="bg-[#151515] border border-[#2A2A2A] rounded-lg shadow-xl py-1 min-w-[220px]"
+            onClick={(e) => e.stopPropagation()}
           >
-            Restore absorbed segments ({gapContextMenu.gapCount})
-          </button>
-        </div>
-      )}
+            {gapCount > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  onRestoreAbsorbedGaps?.(gapContextMenu.segmentId);
+                  setGapContextMenu(null);
+                }}
+                className="w-full text-left px-3 py-1.5 text-[11px] text-gray-200 hover:bg-[#F27D26]/15 hover:text-[#F27D26]"
+              >
+                Restore absorbed segments ({gapCount})
+              </button>
+            )}
+            {canDelete && (
+              <button
+                type="button"
+                onClick={() => {
+                  onDeleteSegment?.(gapContextMenu.segmentId);
+                  setGapContextMenu(null);
+                }}
+                className="w-full text-left px-3 py-1.5 text-[11px] text-gray-200 hover:bg-[#F27D26]/15 hover:text-[#F27D26]"
+              >
+                Delete segment
+              </button>
+            )}
+          </div>
+        );
+      })()}
     </div>
   );
 }

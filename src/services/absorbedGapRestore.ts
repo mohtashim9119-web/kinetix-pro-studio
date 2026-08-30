@@ -34,7 +34,7 @@
 // ---------------------------------------------------------------------------
 
 import type { AbsorbedGap, VideoSegment } from '../types';
-import { makeSliceSegmentId } from './segmentId';
+import { makeSliceSegmentId, MERGE_SLOT_ORDINAL } from './segmentId';
 import { splitRegionByCharCount } from './charWeightedSplit';
 
 /** Mirrors snapBoundaries.ts's/charWeightedSplit.ts's own ENGINE floor — see
@@ -198,7 +198,7 @@ export function planRestoreCluster(
     return {
       merged: true,
       region,
-      segments: [makeRestoredSegment(makeSliceSegmentId(hostId, 0), gaps.map(g => g.text).join(' '), start, end - start)],
+      segments: [makeRestoredSegment(makeSliceSegmentId(hostId, MERGE_SLOT_ORDINAL), gaps.map(g => g.text).join(' '), start, end - start)],
     };
   }
 

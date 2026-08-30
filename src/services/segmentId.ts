@@ -82,6 +82,23 @@ export function isSliceSegmentId(id: string): boolean {
   return id.startsWith(SLICE_ID_PREFIX);
 }
 
+/** WS2 ws2-25 Commit 3/4 — the ordinal `planRestoreCluster`'s sub-frame merge
+ *  rule (absorbedGapRestore.ts) uses for a MERGED restore slot, as opposed to
+ *  the 0/1 ordinals `splitSegmentAtTime` (segmentSplitDelete.ts) uses for an
+ *  ordinary two-piece split. Negative, so it can never collide with a real
+ *  split ordinal (always 0-based). The distinction matters for delete
+ *  eligibility: a merged slot has no sibling by construction and must stay
+ *  independently deletable regardless, while a split slice's "last remaining
+ *  sibling" is deliberately protected — same "no sibling" shape, opposite
+ *  rule, so shape alone can't tell them apart. */
+export const MERGE_SLOT_ORDINAL = -1;
+
+/** True when `id` is specifically a MERGED restore slot's slice id — not just
+ *  any slice id. See `MERGE_SLOT_ORDINAL`. */
+export function isMergeSlotSegmentId(id: string): boolean {
+  return isSliceSegmentId(id) && id.endsWith(`${SLICE_ID_SEPARATOR}${MERGE_SLOT_ORDINAL}`);
+}
+
 /**
  * Frozen normalization for id derivation ONLY. Deliberately simpler and
  * independent from `textNormalize.ts`'s alignment-tuned pipeline (contraction
