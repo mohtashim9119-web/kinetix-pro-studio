@@ -1887,47 +1887,64 @@ brief as `ws2-t21-never-drop-segments`) was abandoned before landing on `main` o
 reachable from this repository's local history — this entry cannot cite its specific commits or
 diagnose why it stalled, only record that it existed and was not carried forward. What actually
 shipped on `ws2-t21-gap-absorption` instead keeps R4-1/R.10's existing drop behavior unchanged
-and adds a RECOVERY layer on top: `computeAbsorbedGaps` (`absorbedGaps.ts`) records exactly which
-survivor absorbed a dropped scene's reclaimable span at Apply Sync time, and a restore UI
-(context menu + sync-log multi-select) recreates the dropped scene from that record on request.
+and, across sessions ws2-19 through the first half of ws2-26, added a RECOVERY layer on top:
+`computeAbsorbedGaps` (`absorbedGaps.ts`) records exactly which survivor absorbed a dropped
+scene's reclaimable span at Apply Sync time, and a restore UI (context menu + sync-log
+multi-select) recreated the dropped scene from that record on request — first automatically
+(evidence-gated), then via an explicit Forced Restore human override for the zero-evidence case.
 The rationale for the pivot, as best reconstructed from the shipped design: interpolating a
 timestamp for a scene the transcript never recorded is the same fabrication problem restore
 Commits 1/2 later had to solve explicitly (character-weighting a span with no acoustic evidence
 behind it) — never-drop would have shipped that fabrication silently and automatically for EVERY
-unmatched scene, where the shipped design instead makes it an explicit, evidence-gated, opt-in
+unmatched scene, where the shipped design instead made it an explicit, evidence-gated, opt-in
 recovery action.
 
+**Round 1 of 2 — the operator reverted the whole restore UI, later the same session (ws2-26).**
+Both the automatic and the Forced Restore paths still ultimately sized a recreated segment either
+from real orphan tokens (when they existed) or from character-weighted guesswork (when they
+didn't) — and even the orphan-token case only approximates real word timing. The operator found
+these durations inaccurate enough in practice to require manual adjustment anyway, making the
+whole automated/semi-automated reconstruction a wasted step rather than a real convenience.
+Decision: remove restoration entirely — automatic, Forced, and the context menu that triggered
+either — and make recovery fully manual (jump to the drop via the sync log's existing
+"Jump to absorbing scene" link, then split (`S`) the absorbing clip and retype). The read-only
+half of the design (`computeAbsorbedGaps` feeding the skip-log's warning message and the jump
+link) was kept — that part was never a fabrication, only a report of what the sync pipeline
+already decided.
+
 **Commits, `8ed1d51` (salvage — `SyncLogEntry.segmentId` + char-weighted split helper) through
-this session's close (`087b5cc`):**
+the round 1 revert (`2d773e8`):**
 
 | Commit | Session | What it did |
 |---|---|---|
 | `8ed1d51` | ws2-19 (salvage) | `SyncLogEntry.segmentId` field; `charWeightedSplit.ts` helper |
-| `8fd15f9` | ws2-19 | Slice segment ids for restored/split absorbed-gap segments |
-| `f4ebf82` | ws2-19 | Absorbed-gap metadata, telemetry, sync-log deep link |
-| `f6dd6af` | ws2-19 | Restore absorbed segments (context menu + sync-log multi-select) |
-| `a61ac33` | ws2-19 | Split (S) / delete (D) for restored/split segments |
-| `b340f8d` | ws2-19 | Made the restore/split/delete UI actually reachable (bugs 4/5/6) |
+| `8fd15f9` | ws2-19 | Slice segment ids for restored/split absorbed-gap segments *(reverted)* |
+| `f4ebf82` | ws2-19 | Absorbed-gap metadata, telemetry, sync-log deep link *(metadata/telemetry reverted; deep link kept)* |
+| `f6dd6af` | ws2-19 | Restore absorbed segments (context menu + sync-log multi-select) *(reverted)* |
+| `a61ac33` | ws2-19 | Split (S) / delete (D) for restored/split segments *(split kept; restored-segment delete path reverted)* |
+| `b340f8d` | ws2-19 | Made the restore/split/delete UI actually reachable (bugs 4/5/6) *(restore-UI part reverted)* |
 | `b69c14c` | ws2-25 | Pinned the absorbed-gap word source (Commit 1 — audit found the premise already refuted: `App.tsx` already passed the alignment engine's own word array, not a stale one) |
-| `c17d7b6` | ws2-25 | Size a restore from its own orphan tokens, not the raw gap width |
-| `00bf03d` | ws2-25 | Fixed restore geometry — double-floor bug, leading-run direction, merge rule (Commit 3) |
-| `75ac55b` | ws2-25 | Restored/split segment lifecycle — titles, deletability, text (Commit 4) |
-| `0fa341d` | ws2-25 | Honest sync-log numbering and wording (Commit 5) |
-| `cac9658` | ws2-25 | Real-corpus regression tests for the whole restore path (Commit 6) |
-| `37f6fde` | ws2-26 | Evidence-only refusal — removed the 0.25s width clause that let 173's `blue_monkey` (0 orphan tokens, 0.88s gap) fabricate a clip while v6 027-029 (identical evidence, 0.24s gap) was correctly refused (Commit 1) |
-| `c6480b1` | ws2-26 | Fixed a live-app text-loss bug: deleting an unrelated segment unconditionally cleared `selectedSegmentId`, unmounting the caption drawer of whatever OTHER segment was open (Commit 3) |
-| `84fdc57` | ws2-26 | Single-click selection highlight on Timeline clips — `selectedSegmentId` was never threaded into `Timeline.tsx` at all (Commit 4) |
-| `225da76` | ws2-26 | WKWebView Timeline-clip context-menu fix, `.kx-timeline-clip` CSS exemption (Commit 5, unverified — needs a live macOS check) |
-| `087b5cc` | ws2-26 | Forced Restore — human override for a zero-evidence gap, `isForceRestored`/`'force-keep'`, `ForceRestoreConfirmModal` (Commit 2) |
+| `c17d7b6` | ws2-25 | Size a restore from its own orphan tokens, not the raw gap width *(reverted — the whole sizing problem this solved no longer exists)* |
+| `00bf03d` | ws2-25 | Fixed restore geometry — double-floor bug, leading-run direction, merge rule (Commit 3) *(reverted)* |
+| `75ac55b` | ws2-25 | Restored/split segment lifecycle — titles, deletability, text (Commit 4) *(restored-segment half reverted; plain split lifecycle kept)* |
+| `0fa341d` | ws2-25 | Honest sync-log numbering and wording (Commit 5) *(kept — this is the numbering later found still off by one, see Open bugs)* |
+| `cac9658` | ws2-25 | Real-corpus regression tests for the whole restore path (Commit 6) *(deleted with the restore path it tested)* |
+| `37f6fde` | ws2-26 | Evidence-only refusal — removed the 0.25s width clause that let 173's `blue_monkey` (0 orphan tokens, 0.88s gap) fabricate a clip while v6 027-029 (identical evidence, 0.24s gap) was correctly refused (Commit 1) *(moot — reverted along with the restore path it gated)* |
+| `c6480b1` | ws2-26 | Fixed a live-app text-loss bug: deleting an unrelated segment unconditionally cleared `selectedSegmentId`, unmounting the caption drawer of whatever OTHER segment was open (Commit 3) *(kept — but the operator reports the underlying symptom still reproduces; see Open bugs)* |
+| `84fdc57` | ws2-26 | Single-click selection highlight on Timeline clips — `selectedSegmentId` was never threaded into `Timeline.tsx` at all (Commit 4) *(reverted — operator found the ring "looked weird")* |
+| `225da76` | ws2-26 | WKWebView Timeline-clip context-menu fix, `.kx-timeline-clip` CSS exemption (Commit 5, unverified — needs a live macOS check) *(reverted along with the context menu it existed to make clickable)* |
+| `087b5cc` | ws2-26 | Forced Restore — human override for a zero-evidence gap, `isForceRestored`/`'force-keep'`, `ForceRestoreConfirmModal` (Commit 2) *(reverted)* |
+| `2d773e8` | ws2-26 (round 1) | THE REVERT. Deletes `absorbedGapRestore.ts`/test, `ForceRestoreConfirmModal.tsx`/test, `scripts/ws2-restore-corpus.test.ts`; removes `VideoSegment.absorbedGaps`/`isForceRestored`, `Project.segmentOverrides`, `SyncLogEntry.restoreGapId`; removes Timeline's right-click context menu and its `.kx-timeline-clip` CSS exemption; removes the Timeline selection ring (separately requested — "looked weird"); trims `absorbedGaps.ts` down to read-only reporting (`computeAbsorbedGaps` minus orphan-token/spokenSpan/hostSide computation, `applyAbsorbedGaps` gone); simplifies `segmentSplitDelete.ts`'s `deleteSegment` to drop the `restoredIds` parameter and the merged-restore-slot carve-out; reverts `projectStore.ts`'s on-disk schema version 5 -> 4. |
 
-**State at close of this session (ws2-26).** Code-complete; two items need an operator's live-app
-pass before Phase 2 is fully closed (tracked in `docs/work-in-progress.md` §1): the WKWebView
-context-menu CSS fix (`225da76`, no way to exercise real WKWebView from this sandbox) and the
-split-text-retention fix (`c6480b1`, no `App.tsx` component test harness — accepted gap per
-CLAUDE.md's testing conventions). Full gate state at close: `npx tsc --noEmit` clean, `npm run
-lint` clean, `npm test` 2731 passed / 77 skipped / 0 failed (one transient `beforeAll` hook
-timeout in `scripts/ws2-restore-corpus.test.ts` under full-suite parallel load on a contended
-machine, reproduced as a clean pass both standalone and on a full-suite rerun — not a logic
-regression), golden replay (`scripts/phase4-handoff-replay-sync.test.ts`) 6/6 byte-identical,
-`gaplessInvariant` (`dragSession.test.ts`) 36/36. `docs/history.md` untouched throughout this
-session (verified with an empty `git diff -- docs/history.md`).
+**State at close of round 1 (ws2-26).** Phase 2 (T2.1/T2.2) is closed at a much smaller scope
+than any point in its history above: gap-absorption tracking survives ONLY as read-only sync-log
+reporting (the skip warning's "Absorbed X -> Y -> Z" message and the "Jump to absorbing scene"
+link); every restore/recovery mechanism — automatic, Forced, and the context menu that triggered
+either — is gone. Two real bugs surfaced during this work remain open (`docs/work-in-progress.md`
+§4, not fixed in round 1): the sync-log's "Clip N" numbering is off by one on both real corpora
+(v6 and 173, operator-confirmed), and the split-then-delete caption-loss symptom still reproduces
+live despite `c6480b1`'s fix landing. Full gate state at round 1's close: `npx tsc --noEmit`
+clean, `npm run lint` clean, `npm test` 2627 passed / 77 skipped / 0 failed, golden replay
+(`scripts/phase4-handoff-replay-sync.test.ts`) 6/6 byte-identical, `gaplessInvariant`
+(`dragSession.test.ts`) 36/36 — sync pipeline untouched throughout. `docs/history.md` untouched
+throughout this session (verified with an empty `git diff -- docs/history.md`).

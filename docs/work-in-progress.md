@@ -139,19 +139,20 @@ cut-placement quality) were relocated to WS1 §4 — see that section. macOS CI-
 platform verification and MSVC redistributable are both closed (OPERATOR-ATTESTED); the
 autosave-quota bug is fixed (T1.3, OPERATOR-ATTESTED live `tauri:dev` verification, see
 `docs/history-2.md`). Phase 1 (project data durability & foundations) is fully closed —
-T1.1/T1.2/T1.3 all done. Phase 2 (T2.1/T2.2) is code-complete, pivoted from its original
-never-drop design to gap-absorption + restore (session ws2-t21, `docs/history-2.md`) — see
-§1 below for its two outstanding verification items. Phase 3 is next.
+T1.1/T1.2/T1.3 all done. Phase 2 closed at a MUCH SMALLER scope than originally planned: T2.1
+pivoted from its original never-drop design through a full gap-absorption restore UI
+(automatic + a Forced Restore human override) to, finally, visibility-only reporting — the
+restore UI produced inaccurate micro-durations in silent gaps that needed manual correction
+anyway, so the operator had it removed entirely (session ws2-26, round 1 of 2,
+`docs/history-2.md`'s ws2-t21 entry). T2.2 (the operator-override persistence layer the restore
+UI needed) is closed as not-building — there is nothing left for it to persist. Recovering a
+dropped scene is now fully manual: jump to it via the sync log's "Jump to absorbing scene" link,
+then split (`S`) the absorbing clip and retype. Two real bugs surfaced by that same removal pass
+are open — see §4. Phase 3 is next.
 
 ### 1. Finished but pending verification
 
-- Phase 2 (T2.1/T2.2, gap-absorption restore, `docs/history-2.md`'s ws2-t21 entry) — code-complete
-  across sessions ws2-19 through ws2-26, two items still need an operator's live-app pass before
-  full close: (a) the WKWebView Timeline-clip context-menu fix (`.kx-timeline-clip` in
-  `index.css`) — untestable in this sandbox, needs a real macOS `npm run tauri:dev` right-click
-  check; (b) the split-then-delete caption-loss fix (`App.tsx`'s `handleDeleteSegmentById`) — no
-  App.tsx component test harness exists (accepted gap, CLAUDE.md §6 Testing), needs a manual
-  split/select/delete click-through.
+(none)
 
 ### 2. In progress
 
@@ -183,7 +184,21 @@ items below.)
 
 ### 4. Open bugs
 
-(none)
+- [OPEN] Sync-log skip entry "Clip N" mislabels which clip actually absorbed the drop, off by
+  one. Operator-confirmed live on two corpora: v6 showed "S27/Clip 26 skipped" when scripted
+  scene 27 was the one dropped and clip 27 — not 26 — is what actually absorbed it (S27/28/29 all
+  drop as one run, so clip 30 becomes clip 27 after the shift); 173 showed "S112/Clip 109" when
+  clip 110 is the real absorber. ws2-25 Commit 5's "off-by-one fix" (`buildSkipLogEntries`,
+  App.tsx) evidently didn't fix this case, or fixed a different one. `computeAbsorbedGaps`/
+  `AbsorbedGapLogInfo` (the reporting machinery this depends on) were kept, unmodified, through
+  the ws2-26 restore removal — this is a pre-existing indexing defect, not a regression from that
+  removal. Needs re-diagnosis. No owner.
+- [OPEN] Split-then-delete caption/text loss still reproduces live, unchanged by the attempted
+  fix (ws2-26 Commit 3, `App.tsx`'s `handleDeleteSegmentById` — only cleared `selectedSegmentId`
+  when the deleted id matched it). Operator confirmed "same issue" persists after that fix
+  shipped. The fixed mechanism was real (verified by code trace) but is evidently not the whole
+  story, or not the operative one for the actual repro path. Needs re-diagnosis against the live
+  app, not just the code trace. No owner.
 
 ### 5. Deferred tasks
 
