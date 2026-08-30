@@ -81,6 +81,43 @@ describe('Timeline static markup — segment cards (Test 6)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// WS2 ws2-26 Commit 4 — a single click on a clip already set `App.tsx`'s
+// `selectedSegmentId` in state (via `onClipClick`), but Timeline never had a
+// `selectedSegmentId` prop at all, so nothing rendered any highlight — the
+// state change had nowhere to go. This pins the fix: the prop is now
+// threaded through and read back as a selection ring, independent of
+// `currentSegmentId` (the playhead).
+// ---------------------------------------------------------------------------
+describe('Timeline static markup — selection highlight (Commit 4)', () => {
+  const segments = [makeSeg('s1', 0, 5), makeSeg('s2', 5, 5)];
+
+  function firstStyleBySegId(html: string): Map<string, string> {
+    const first = new Map<string, string>();
+    for (const m of html.matchAll(/data-seg-id="([^"]+)"\s+style="([^"]*)"/g)) {
+      const [, id, style] = m;
+      if (!first.has(id!)) first.set(id!, style!);
+    }
+    return first;
+  }
+
+  it('renders a selection ring on the selected clip only', () => {
+    const html = renderToStaticMarkup(
+      <Timeline {...makeTimelineProps({ segments, sliderT: 1, selectedSegmentId: 's2' })} />,
+    );
+    const first = firstStyleBySegId(html);
+    expect(first.get('s1')).not.toContain('rgba(255,255,255,0.85)');
+    expect(first.get('s2')).toContain('rgba(255,255,255,0.85)');
+  });
+
+  it('renders no selection ring when nothing is selected', () => {
+    const html = renderToStaticMarkup(
+      <Timeline {...makeTimelineProps({ segments, sliderT: 1, selectedSegmentId: undefined })} />,
+    );
+    expect(html).not.toContain('rgba(255,255,255,0.85)');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Test 7 — isSynced=true -> segments.length-1 boundary markers;
 // isSynced=false -> zero.
 // ---------------------------------------------------------------------------

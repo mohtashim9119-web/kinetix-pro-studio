@@ -105,6 +105,14 @@ interface Props {
    *  passed in for it — see DropZonePanel's identical prop for the same
    *  reasoning. */
   restoredSegmentIds?: ReadonlySet<string>;
+  /** WS2 ws2-26 Commit 4 — the segment `App.tsx`'s `selectedSegmentId` state
+   *  currently names (the scene drawer's target — see `onClipClick`'s own
+   *  doc comment for how a click sets this). Purely for the clip's own
+   *  selected-look border; distinct from `currentSegmentId` (the playhead),
+   *  which the two can independently agree or disagree with. Never read for
+   *  anything but styling — this prop changes NOTHING about what a click
+   *  does. */
+  selectedSegmentId?: string;
 }
 
 export function Timeline({
@@ -135,6 +143,7 @@ export function Timeline({
   onRestoreAbsorbedGaps,
   onDeleteSegment,
   restoredSegmentIds,
+  selectedSegmentId,
 }: Props) {
   const totalDuration = useMemo(() => computeTotalDuration(segments), [segments]);
 
@@ -674,6 +683,12 @@ export function Timeline({
               {segments.map((s, i) => {
                 const asset = assets.find(a => a.id === s.assetId);
                 const isActive = currentSegmentId === s.id;
+                // WS2 ws2-26 Commit 4 — the click at `onClick` below already set
+                // `selectedSegmentId` in App.tsx; this clip simply never read it
+                // back for styling (Timeline had no such prop at all — see
+                // `selectedSegmentId`'s own doc comment). Independent of
+                // `isActive` (the playhead), which the two can agree or not.
+                const isSelected = selectedSegmentId === s.id;
                 const isMissing = !asset && !!s.text;
                 const segLayout = computeSegmentLayout(s, pixelsPerSecond);
 
@@ -708,14 +723,20 @@ export function Timeline({
                       // The undo/redo flash uses boxShadow rather than a
                       // competing outline — the card already transitions
                       // box-shadow, so the flash inherits that easing for free.
+                      // Selection (Commit 4) is a plain white ring, layered
+                      // beneath the flash so an undo/redo flash on the
+                      // currently-selected clip still reads as a flash, not a
+                      // blended color.
                       boxShadow: flashSegmentId === s.id
                         ? '0 0 0 2px #F27D26, 0 0 36px rgba(242,125,38,0.55)'
-                        : 'none',
+                        : isSelected
+                          ? '0 0 0 2px rgba(255,255,255,0.85)'
+                          : 'none',
                       zIndex: flashSegmentId === s.id
                         ? 60
-                        : (isActive ? 10 : 1),
+                        : (isActive ? 10 : (isSelected ? 5 : 1)),
                     }}
-                    className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'}`}
+                    className={`kx-timeline-clip rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'}`}
                   >
                     {/* K16 — pointer events + pointer capture, not mousedown.
                         Capture guarantees this element keeps receiving
