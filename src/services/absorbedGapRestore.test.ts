@@ -9,6 +9,10 @@ import {
   resolveRestoreRegion, RESTORE_REFUSAL_MESSAGE, RESTORE_MIN_SILENT_GAP_SECONDS,
 } from './absorbedGapRestore';
 import { isSliceSegmentId } from './segmentId';
+
+function round3(v: number): number {
+  return Number(v.toFixed(3));
+}
 import type { AbsorbedGap, VideoSegment } from '../types';
 
 function seg(id: string, startTime: number, duration: number, extra?: Partial<VideoSegment>): VideoSegment {
@@ -323,5 +327,207 @@ describe('restore refusal — no recorded speech in a narrow gap', () => {
   it('does not refuse a wide silent gap — the floor is narrowness AND no speech', () => {
     const wide = [{ ...gap('d1', 'Long unheard line.', 10, 12), orphanCount: 0 }];
     expect(planRestoreCluster(wide, 'host', 24).refused).toBeFalsy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 session ws2-25, Commit 3 — GEOMETRY.
+//
+// Order: 3a (drop the double floor), 1 (bidirectional insert), 3b (merge on
+// any sub-floor piece). Real-corpus note: 173's only leading run (index 0,
+// "The Hardest Warhammer 40K...") has zero orphan tokens in a 0.16s span, so
+// Commit 2's refusal rule fires on it before this geometry ever runs — these
+// cases are therefore synthetic, built to the same shape (a leading run hosted
+// by the survivor AFTER it) but with recorded speech so the restore proceeds.
+// ---------------------------------------------------------------------------
+describe('applyRestoreToSegments — hostSide (Bug 1, leading run)', () => {
+  function beforeGap(segmentId: string, text: string, start: number, end: number): AbsorbedGap {
+    return {
+      segmentId, text, span: { start, end }, gapAudio: 'speech',
+      spokenSpan: { start, end }, orphanCount: 3, hostSide: 'before',
+    };
+  }
+
+  it('does NOT collapse the host to zero duration (the bug this fixes)', () => {
+    // The host is the survivor AFTER the leading run — exactly 173 index 0's
+    // shape: nothing precedes the gap, and the host's own start (0.16) is
+    // LESS than the region it must give up (region.start would be 0 under the
+    // old span-based math), which is what floored the host's duration to 0.
+    const segments = [seg('host', 0.16, 5)]; // 0.16 -> 5.16
+    const gaps = [beforeGap('d1', 'Leading line.', 0, 0.16)];
+    const out = applyRestoreToSegments(segments, 0, gaps, 24);
+
+    expect(out).toHaveLength(2);
+    expect(out[0]!.id).toBe('d1');
+    expect(out[0]!.startTime).toBe(0);
+    expect(out[0]!.duration).toBeCloseTo(0.16, 3);
+    // The host itself is untouched — the SAME duration as it had before
+    // restoring the gap in front of it, not floored to 0.
+    expect(out[1]!.id).toBe('host');
+    expect(out[1]!.startTime).toBeCloseTo(0.16, 3);
+    expect(out[1]!.duration).toBeCloseTo(5, 3);
+    assertGapless(out);
+  });
+
+  it('inserts BEFORE the host, not after it', () => {
+    const segments = [seg('before', 0, 1), seg('host', 3, 2)];
+    const gaps = [beforeGap('d1', 'Line.', 1, 3)];
+    const out = applyRestoreToSegments(segments, 1, gaps, 24);
+    expect(out.map(s => s.id)).toEqual(['before', 'd1', 'host']);
+    expect(out[0]!.duration).toBeCloseTo(1, 3); // preceding segment shrinks to region.start
+    assertGapless(out);
+  });
+
+  it('shrinks the PRECEDING segment (not the host) to region.start when one exists', () => {
+    const segments = [seg('before', 0, 2), seg('host', 3, 2)]; // before: 0->2, gap 2->3, host: 3->5
+    const gaps = [beforeGap('d1', 'Line.', 2, 3)];
+    const out = applyRestoreToSegments(segments, 1, gaps, 24);
+    expect(out[0]!.startTime + out[0]!.duration).toBeCloseTo(2, 3);
+    expect(out[2]!.id).toBe('host');
+    expect(out[2]!.startTime).toBeCloseTo(3, 3);
+    expect(out[2]!.duration).toBeCloseTo(2, 3); // host's own end (5) untouched
+    assertGapless(out);
+  });
+
+  it('holds the timeline start at 0 when nothing precedes a leading restore', () => {
+    const segments = [seg('host', 0.5, 4)];
+    const gaps = [beforeGap('d1', 'Line.', 0, 0.5)];
+    const out = applyRestoreToSegments(segments, 0, gaps, 24);
+    expect(out[0]!.startTime).toBe(0);
+    assertGapless(out);
+  });
+
+  it('defaults to \'after\' semantics for a gap recorded before hostSide existed', () => {
+    const segments = [seg('host', 0, 5), seg('after', 5, 5)];
+    const g: AbsorbedGap = { segmentId: 'd1', text: 'Line.', span: { start: 4, end: 5 }, gapAudio: 'speech', spokenSpan: { start: 4, end: 5 }, orphanCount: 2 };
+    expect(g.hostSide).toBeUndefined();
+    const out = applyRestoreToSegments(segments, 0, [g], 24);
+    expect(out.map(s => s.id)).toEqual(['host', 'd1', 'after']);
+  });
+});
+
+describe('planRestoreCluster — merge rule decided on real pieces (3b)', () => {
+  it('merges the whole cluster when ANY piece — not just the average share — lands below the floor', () => {
+    // Two pieces with very unequal token-derived shares: one comfortably clears
+    // 2 frames at 24fps (2/24 ≈ 0.083s), the other does not, even though a flat
+    // per-piece average of the total region would have cleared it.
+    const gaps = [
+      spokenGap('d1', 'Short.', 10, 10.5, 10.0, 10.04),   // 0.04s piece — sub-floor
+      spokenGap('d2', 'Longer piece here.', 10, 10.5, 10.04, 10.5), // 0.46s piece — fine
+    ];
+    const avgShare = 0.5 / 2; // 0.25s — would have cleared the floor under a flat estimate
+    expect(avgShare).toBeGreaterThan(2 / 24);
+    const plan = planRestoreCluster(gaps, 'host', 24);
+    expect(plan.merged).toBe(true);
+    expect(plan.segments).toHaveLength(1);
+    expect(plan.segments[0]!.text).toBe('Short. Longer piece here.');
+  });
+
+  it('does not merge a single-entry cluster regardless of its own duration', () => {
+    const gaps = [spokenGap('d1', 'Tiny.', 10, 10.02, 10.0, 10.02)];
+    const plan = planRestoreCluster(gaps, 'host', 24);
+    expect(plan.merged).toBe(false);
+  });
+});
+
+describe('geometry — no overlap regardless of piece order (Commit 3 assertion)', () => {
+  // Reproduces the shape of the reported defect (i26 ending 78.830 while i27
+  // started 78.799, a +0.082s overlap that reversed sign with piece order) —
+  // built with orphan tokens present so the cluster is NOT refused by Commit 2,
+  // letting the geometry itself be exercised.
+  function threeWaySpokenGaps(reverseOrder: boolean): AbsorbedGap[] {
+    const texts = ['But something stayed in you.', 'Small and permanent.', 'A new understanding of what the night actually is.'];
+    const spoken = [
+      { start: 79.0, end: 80.26 },
+      { start: 81.34, end: 82.86 },
+      { start: 84.2, end: 86.54 },
+    ];
+    const order = reverseOrder ? [2, 1, 0] : [0, 1, 2];
+    return order.map((idx, i) => spokenGap(`d${i}`, texts[idx]!, 78.7, 87.0, spoken[idx]!.start, spoken[idx]!.end));
+  }
+
+  function worstOverlap(segments: readonly VideoSegment[]): number {
+    let worst = 0;
+    for (let i = 0; i + 1 < segments.length; i++) {
+      const end = Number((segments[i]!.startTime + segments[i]!.duration).toFixed(3));
+      const overlap = Number((end - segments[i + 1]!.startTime).toFixed(3));
+      if (overlap > worst) worst = overlap;
+    }
+    return worst;
+  }
+
+  it('produces zero overlap in forward order', () => {
+    const segments = [seg('host', 70, 8.7), seg('after', 87.0, 5)];
+    const out = applyRestoreToSegments(segments, 0, threeWaySpokenGaps(false), 24);
+    expect(worstOverlap(out)).toBe(0);
+    assertGapless(out);
+  });
+
+  it('produces zero overlap in reversed order too', () => {
+    const segments = [seg('host', 70, 8.7), seg('after', 87.0, 5)];
+    const out = applyRestoreToSegments(segments, 0, threeWaySpokenGaps(true), 24);
+    expect(worstOverlap(out)).toBe(0);
+    assertGapless(out);
+  });
+});
+
+
+describe('3a — narrow band where the old double-floor bug is NOT masked by 3b\'s merge', () => {
+  it('does not overlap when every piece independently clears the 2-frame merge floor but not the old 0.1s re-floor', () => {
+    // 4 equal-length texts over a 0.36s span: canApplyFloor is false
+    // (4*0.1 > 0.36), so splitRegionByCharCount deliberately leaves each
+    // piece at its true 0.09s share. 0.09s clears the 2-frame merge floor
+    // (2/24 \u2248 0.0833s) so 3b does NOT fold this into one slot \u2014 which
+    // means this case exercises 3a in isolation. Under the OLD code,
+    // makeRestoredSegment re-floored every 0.09s piece up to 0.1s WITHOUT
+    // recomputing the next piece\'s startTime, overlapping each piece\'s end
+    // 0.01s into its successor\'s start.
+    const texts = ['aaaaaaaaaa', 'bbbbbbbbbb', 'cccccccccc', 'dddddddddd'];
+    const gaps: AbsorbedGap[] = texts.map((text, i) => ({
+      segmentId: `d${i}`, text, span: { start: 10, end: 10.36 }, gapAudio: 'silent', orphanCount: 0,
+    }));
+    const plan = planRestoreCluster(gaps, 'host', 24);
+    expect(plan.merged).toBe(false); // confirms 3b did not intervene here
+    expect(plan.segments).toHaveLength(4);
+    for (const p of plan.segments) expect(p.duration).toBeCloseTo(0.09, 3);
+    for (let i = 0; i + 1 < plan.segments.length; i++) {
+      const end = Number((plan.segments[i]!.startTime + plan.segments[i]!.duration).toFixed(3));
+      expect(end).toBeLessThanOrEqual(plan.segments[i + 1]!.startTime);
+    }
+    const last = plan.segments[3]!;
+    expect(round3(last.startTime + last.duration)).toBeCloseTo(10.36, 3);
+  });
+});
+
+describe('3a — no double floor application (root cause of the reported overlap)', () => {
+  it('does not re-apply MIN_SEGMENT_DURATION on top of splitRegionByCharCount\'s own floor decision', () => {
+    // A region too small to afford the floor for every piece (3 * 0.1 > 0.3),
+    // so splitRegionByCharCount deliberately skips the floor and lets pieces
+    // stay sub-floor rather than overshoot the region end. The OLD
+    // makeRestoredSegment then silently bumped each piece back up to 0.1
+    // WITHOUT recomputing later pieces' startTimes — producing exactly the
+    // reported pattern (a piece's end running past its neighbour's start).
+    const gaps: AbsorbedGap[] = [
+      { segmentId: 'd1', text: 'But something stayed in you.', span: { start: 78.7, end: 79.0 }, gapAudio: 'silent', orphanCount: 0 },
+      { segmentId: 'd2', text: 'Small and permanent.', span: { start: 78.7, end: 79.0 }, gapAudio: 'silent', orphanCount: 0 },
+      { segmentId: 'd3', text: 'A new understanding of what the night actually is.', span: { start: 78.7, end: 79.0 }, gapAudio: 'silent', orphanCount: 0 },
+    ];
+    // Not refused: span (0.3s) >= RESTORE_MIN_SILENT_GAP_SECONDS (0.25s).
+    expect(0.3).toBeGreaterThanOrEqual(RESTORE_MIN_SILENT_GAP_SECONDS);
+    const plan = planRestoreCluster(gaps, 'host', 24);
+    expect(plan.refused).toBeFalsy();
+
+    if (plan.merged) {
+      // 3b may legitimately collapse this into one slot — either resolution
+      // must still be non-overlapping and exact.
+      expect(plan.segments[0]!.startTime + plan.segments[0]!.duration).toBeCloseTo(79.0, 3);
+    } else {
+      for (let i = 0; i + 1 < plan.segments.length; i++) {
+        const end = Number((plan.segments[i]!.startTime + plan.segments[i]!.duration).toFixed(3));
+        expect(end).toBeLessThanOrEqual(plan.segments[i + 1]!.startTime + 1e-9);
+      }
+      const last = plan.segments[plan.segments.length - 1]!;
+      expect(round3(last.startTime + last.duration)).toBeCloseTo(79.0, 3);
+    }
   });
 });

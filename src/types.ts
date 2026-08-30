@@ -315,6 +315,19 @@ export interface AbsorbedGap {
    *  spoken" would refuse restores on evidence nobody ever collected. Only an
    *  explicit `0` licenses the refusal rule in `absorbedGapRestore.ts`. */
   orphanCount?: number;
+  /** WS2 session ws2-25 Commit 3 — WHICH SIDE OF THE HOST THIS GAP SITS ON.
+   *
+   *  A gap is normally hosted by the survivor BEFORE it (`'after'`: the gap
+   *  follows the host, and a restore inserts after the host and shrinks the
+   *  host's END). A LEADING run of drops has no survivor before it, so it is
+   *  hosted by the survivor AFTER it (`'before'`: the restore inserts before
+   *  the host and moves the host's START forward).
+   *
+   *  Recorded rather than re-derived, because by restore time the pre-filter
+   *  array that made the distinction is gone. Absent on a gap recorded before
+   *  this field existed; treat `undefined` as `'after'`, which is what every
+   *  such gap was written assuming. */
+  hostSide?: 'before' | 'after';
 }
 
 /**

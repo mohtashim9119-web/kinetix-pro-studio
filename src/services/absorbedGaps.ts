@@ -315,6 +315,12 @@ export function computeAbsorbedGaps(
     const nextKeptIdx = keptCursor < keptIds.length ? keptCursor : -1;
     const hostKeptIdx = prevKeptIdx >= 0 ? prevKeptIdx : nextKeptIdx;
     if (hostKeptIdx < 0) continue; // no survivor exists at all — nothing to host this gap.
+    // WS2 ws2-25 Commit 3 — which side of the host the gap sits on. A LEADING
+    // run (no survivor before it) is hosted by the survivor AFTER it, and a
+    // restore there must insert BEFORE the host and move the host's start
+    // forward. Recorded now because the pre-filter array that makes this
+    // distinction does not survive to restore time.
+    const hostSide: 'before' | 'after' = prevKeptIdx >= 0 ? 'after' : 'before';
 
     const hostId = keptIds[hostKeptIdx]!;
     const prevAlign = prevKeptIdx >= 0 ? keptAlignments[prevKeptIdx] : undefined;
@@ -346,6 +352,7 @@ export function computeAbsorbedGaps(
         span,
         gapAudio,
         orphanCount: orphans.length,
+        hostSide,
         ...(region ? { spokenSpan: { start: region.start, end: region.end } } : {}),
       };
     });

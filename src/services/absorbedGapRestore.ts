@@ -89,7 +89,17 @@ function makeRestoredSegment(id: string, text: string, startTime: number, durati
     id,
     text,
     startTime: round3(startTime),
-    duration: round3(Math.max(MIN_SEGMENT_DURATION, duration)),
+    // WS2 ws2-25 Commit 3 (3a) — NO FLOOR HERE. `splitRegionByCharCount` is the
+    // one place MIN_SEGMENT_DURATION is applied, and it applies it only when the
+    // region can afford it for every piece, precisely so the pieces still tile
+    // the region exactly. Re-applying the floor here raised individual durations
+    // WITHOUT moving the startTimes they were computed against, which is what
+    // made restored pieces overlap: v6 26/27/28 committed i26 ending at 78.830
+    // against i27 starting at 78.799, a 0.031-0.082s overlap that reversed sign
+    // with piece order. A piece below the floor is now handled by merging the
+    // whole cluster (3b below), never by silently stretching one piece past its
+    // neighbour's onset.
+    duration: round3(Math.max(0, duration)),
     transition: 'none',
     animation: 'none',
     order: 0,
@@ -166,22 +176,6 @@ export function planRestoreCluster(
   const end = region.end;
   const floor = subFrameFloorSeconds(fps);
 
-  // Each entry's own spoken share drives the merge test when the transcript
-  // attributed one; the flat per-piece share is the fallback.
-  const shares = gaps.map(g =>
-    g.spokenSpan ? g.spokenSpan.end - g.spokenSpan.start : (end - start) / gaps.length,
-  );
-  const wouldBeSubFrame = gaps.length > 1 && shares.some(sh => sh < floor);
-
-  if (wouldBeSubFrame) {
-    const mergedText = gaps.map(g => g.text).join(' ');
-    return {
-      merged: true,
-      region,
-      segments: [makeRestoredSegment(makeSliceSegmentId(hostId, 0), mergedText, start, end - start)],
-    };
-  }
-
   // Prefer each entry's own token-derived interval; character-weighted
   // division of the same region when the transcript attributed nothing.
   const haveSpoken = gaps.every(g => !!g.spokenSpan);
@@ -192,6 +186,21 @@ export function planRestoreCluster(
         return { startTime: round3(st), duration: round3(Math.max(0, en - st)) };
       })
     : splitRegionByCharCount(gaps.map(g => ({ text: g.text })), start, end);
+
+  // 3b — THE MERGE RULE, decided on the ACTUAL pieces. If any one piece would
+  // land below the frame floor, the whole cluster becomes a single slot rather
+  // than emitting a mix of usable segments and unselectable slivers. Tested
+  // here, after the pieces exist, rather than on an estimated per-piece share:
+  // a share can clear the floor while a real piece does not (character
+  // weighting and token attribution both divide unevenly), and it is the real
+  // piece the user has to click on.
+  if (gaps.length > 1 && pieces.some(pc => pc.duration < floor)) {
+    return {
+      merged: true,
+      region,
+      segments: [makeRestoredSegment(makeSliceSegmentId(hostId, 0), gaps.map(g => g.text).join(' '), start, end - start)],
+    };
+  }
 
   return {
     merged: false,
@@ -204,18 +213,35 @@ export function planRestoreCluster(
  * Applies a restore for one cluster hosted on `segments[hostIndex]` to the
  * FULL committed segments array, returning a new array. `gapsToRestore` must
  * be a subset (or all) of `segments[hostIndex].absorbedGaps` sharing one
- * span. Preserves Model P (gapless partition) around the edit:
- *   - the host shrinks to end exactly at `span.start`;
- *   - the restored piece(s) are contiguous and span exactly
- *     `[span.start, span.end)` (`splitRegionByCharCount`'s own exactness
- *     guarantee);
+ * span. Preserves Model P (gapless partition) around the edit.
+ *
+ * TWO DIRECTIONS (WS2 ws2-25 Commit 3, Bug 1). Which one applies is the
+ * cluster's own recorded `hostSide`, not an assumption:
+ *
+ * `'after'` — the ordinary case. The gap follows its host:
+ *   - the host shrinks to end exactly at `region.start`;
+ *   - the restored piece(s) tile exactly `[region.start, region.end)`;
  *   - the FOLLOWING segment (if any) is pushed to start exactly at
- *     `span.end`, its own duration shrunk by the same delta so its end does
+ *     `region.end`, its own duration shrunk by the same delta so its end does
  *     not move (see this module's header for the known floor-collision
  *     limitation);
- *   - with no following segment (the host was the last segment), the LAST
- *     restored piece is stretched to the host's pre-restore end instead,
- *     mirroring the "last segment runs to audioDuration" rule.
+ *   - with no following segment (the host was last), the LAST restored piece
+ *     is stretched to the host's pre-restore end instead, mirroring the "last
+ *     segment runs to audioDuration" rule.
+ *
+ * `'before'` — a LEADING run of drops, which has no survivor before it and is
+ * therefore hosted by the survivor AFTER it:
+ *   - the restored piece(s) are inserted BEFORE the host;
+ *   - the host's START moves forward to `region.end`, its duration shrinking
+ *     by the same delta so its own end does not move;
+ *   - the piece(s) begin at the host's original start when nothing precedes it
+ *     (the timeline must still begin at 0 — a leading restore cannot open a
+ *     hole in front of itself), otherwise the preceding segment shrinks to end
+ *     at `region.start`.
+ *
+ * Handling `'before'` as if it were `'after'` is what collapsed a leading-run
+ * host to zero duration: `region.start - host.startTime` is <= 0 there, so the
+ * host's own duration floored to 0 and the pieces were inserted after it.
  *
  * Pure — returns a new array; does not mutate `segments`.
  */
@@ -231,12 +257,11 @@ export function applyRestoreToSegments(
 
   const plan = planRestoreCluster(gapsToRestore, host.id, fps);
   if (plan.refused) return segments as VideoSegment[];
-  const { start, end } = plan.region;
+  const { end } = plan.region;
+  let { start } = plan.region;
 
   const out = segments.map(s => ({ ...s }));
   const newHost = out[hostIndex]!;
-  const oldHostEnd = round3(newHost.startTime + newHost.duration);
-  newHost.duration = round3(Math.max(0, start - newHost.startTime));
 
   const restoredIds = new Set(gapsToRestore.map(g => g.segmentId));
   const remainingGaps = (newHost.absorbedGaps ?? []).filter(g => !restoredIds.has(g.segmentId));
@@ -246,8 +271,36 @@ export function applyRestoreToSegments(
     delete newHost.absorbedGaps;
   }
 
-  const nextIndex = hostIndex + 1;
+  // `undefined` means a gap recorded before hostSide existed, all of which
+  // were written assuming the gap follows its host.
+  const hostSide = gapsToRestore[0]!.hostSide ?? 'after';
   let restored = plan.segments;
+
+  if (hostSide === 'before') {
+    const oldHostStart = newHost.startTime;
+    const prev = hostIndex > 0 ? out[hostIndex - 1] : undefined;
+    if (prev) {
+      prev.duration = round3(Math.max(0, start - prev.startTime));
+    } else if (start > oldHostStart) {
+      // Nothing precedes the host, so the pieces must begin where it began —
+      // the timeline cannot start with a hole.
+      const shift = round3(start - oldHostStart);
+      restored = restored.map((r, i) => (i === 0
+        ? { ...r, startTime: round3(oldHostStart), duration: round3(r.duration + shift) }
+        : r));
+      start = oldHostStart;
+    }
+    const delta = round3(end - oldHostStart);
+    newHost.startTime = round3(end);
+    newHost.duration = round3(Math.max(MIN_SEGMENT_DURATION, newHost.duration - delta));
+    out.splice(hostIndex, 0, ...restored);
+    return out;
+  }
+
+  const oldHostEnd = round3(newHost.startTime + newHost.duration);
+  newHost.duration = round3(Math.max(0, start - newHost.startTime));
+
+  const nextIndex = hostIndex + 1;
   if (nextIndex < out.length) {
     const next = out[nextIndex]!;
     const delta = round3(end - next.startTime);
