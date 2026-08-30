@@ -3238,6 +3238,18 @@ export default function App() {
       // immediately, for the grouped skip message) and the later merge onto
       // `finalTimedSegments` — one computation, two consumers, never two
       // computations that could silently disagree.
+      //
+      // WORD SOURCE — `aligned.tokens`, NEVER `projectRef.current.transcriptTokens`.
+      // `aligned.tokens` is `filterMalformedTokens(faTokens ?? transcriptTokens)`
+      // (useWhisper.ts:107-108,139), so it is FA's word list on the FA arm and
+      // Whisper's on the Whisper arm — the alignment engine's OWN words, matching
+      // whichever arm produced the timings above. This is load-bearing, not
+      // incidental: `keptAlignments[i].firstTokenIdx`/`lastTokenIdx` (what
+      // `computeAbsorbedGaps` dereferences to build each span) are indices into
+      // exactly this array, so substituting any other token array resolves to the
+      // WRONG tokens and silently mis-measures every absorbed span. Locked by
+      // `absorbedGaps.test.ts`'s "reads spans from the token array it is given"
+      // suite and by `scripts/ws2-restore-corpus.test.ts`'s two-arm check.
       const absorbedGapsByHostId = computeAbsorbedGaps(
         aligned.segments, skipped, kept.map(s => s.id), keptAlignments, aligned.tokens, aligned.silences,
       );

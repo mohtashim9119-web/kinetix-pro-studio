@@ -98,6 +98,15 @@ export function classifyGapAudio(
  * the span then falls back to the dropped run's own recorded start/end and
  * `gapAudio` reports 'unknown'.
  *
+ * WORD SOURCE CONTRACT — `tokens` must be THE SAME ARRAY the alignment that
+ * produced `keptAlignments` ran against (App.tsx passes `aligned.tokens`,
+ * which is FA's words on the FA arm and Whisper's on the Whisper arm). Every
+ * span below is built by dereferencing `keptAlignments[i].lastTokenIdx` /
+ * `.firstTokenIdx` INTO `tokens`; those are positional indices into that one
+ * array and carry no identity of their own, so handing this function a
+ * different token array (even the unfiltered original of the same arm) reads
+ * the wrong tokens and mis-measures every span without erroring.
+ *
  * Pure — no I/O, does not mutate any input.
  */
 export function computeAbsorbedGaps(
