@@ -112,12 +112,6 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
   numeral-expansion hypothesis (now best-supported of the three), leaving NFC/NFD and CTC-vocab
   glyph coverage still UNVERIFIED against the Llívia/Peñón cases. Still no fix attempted. Detail:
   `docs/history-2.md#2026-08-27--ws2-step-18--ws1-nonascii-segment8-third-occurrence`.
-* [OPEN · NON-BLOCKING] Cut-placement quality — 9 of 228 cuts land on live audio in the WS2 Step
-  15 Windows AFTER run (~96.1%, vs. the ~97-98% bar): segment pairs 53/54, 68/69, 101/102,
-  109/110, 123/124, 138/139, 195/196, 202/203, 218/219. At macOS parity (10) — a pre-existing
-  cross-platform quality gap, not a Windows regression, not closed by this workstream's fixes.
-  Rationale: a sync-pipeline boundary-placement defect, not a distribution defect — relocated from
-  WS2 §4, provenance preserved (surfaced by the WS2 Step 15 Windows operator log, 03:57:28 run).
 
 ### 5. Deferred tasks
 
@@ -133,9 +127,9 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 
 ## WS2 — Video Ingest & Distribution Bugs
 Started: 2026-08-26 (Step 3) | Status: all 4 numbered bugs closed (1/2/4 code-fixed and now
-runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code fix). Two
-sync-pipeline defects surfaced by WS2 Step 15's Windows operator log (non-ASCII matching,
-cut-placement quality) were relocated to WS1 §4 — see that section. macOS CI-artifact/arm64 FA
+runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code fix). A
+sync-pipeline defect surfaced by WS2 Step 15's Windows operator log (non-ASCII matching) was
+relocated to WS1 §4 — see that section. macOS CI-artifact/arm64 FA
 platform verification and MSVC redistributable are both closed (OPERATOR-ATTESTED); the
 autosave-quota bug is fixed (T1.3, OPERATOR-ATTESTED live `tauri:dev` verification, see
 `docs/history-2.md`). Phase 1 (project data durability & foundations) is fully closed —
@@ -190,33 +184,20 @@ items below.)
 
 ### 5. Deferred tasks
 
-- [DEFERRED] Six cuts landing on live audio in 173 with FA ON (segment pairs 34-35, 88-89,
-  96-97, 106-107, 133-134, 144-145) — reported in ws2-26, not independently re-measured against
-  the corpus by this audit itself. Re-checked this session (ws2-t21 Commits A/B/C): the
-  gap-absorbing boundary policy was implemented to spec then reverted back to silence-midpoint in
-  the same uncommitted working tree, so `git log` shows the round trip never reached a commit —
-  `snapBoundaries.ts` and every other sync-timing file are untouched (comment-only) across the
-  whole ws2-26→ws2-t21 arc. The boundary-computation code that produced this defect is therefore
-  byte-identical to when it was filed, so it is still expected to reproduce; this was NOT
-  re-confirmed via a fresh live-audio ear pass this session. A distinct boundary-placement defect
-  from WS1 §4's existing FA-related open items (different corpus rows, FA-arm-specific), needing
-  its own dedicated audit before a fix is attempted — CLAUDE.md's standing rule against
-  corpus-fitted thresholds applies here too. No owner yet.
-- [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect found
-  while diagnosing bug 3, not itself closed by bug 3's non-repro: `videoDecoderPool.ts`'s 90-frame
-  decode-ahead cap (`MAX_BUFFERED_FRAMES_PER_SESSION`) is sized against a fixed ~1.5s window
-  (`WINDOW_AHEAD_SEC`) tuned for 24-30fps content; at 120fps the first decode-ahead batch needs
-  ~180 frames, overflows the cap, and the excess is dropped PERMANENTLY (`feedCursor` has already
-  advanced past those chunks). Reproduced against the real, unmodified `videoDecoderPool.ts` with
-  the asset's actual measured profile (mock-`VideoDecoder` harness); never confirmed on-screen in
-  a live app. Any bound must be in BYTES not frame count — preserves the prior 4.0 GB → 2.8 GB
-  peak / 1300 MB → 137 MB spike-memory work. Preview only — export uses a separate, non-windowed
-  sequential decoder (`sequentialDecode.ts`) and is unaffected. Full diagnosis:
-  `docs/ws2-video-ingest/bug3-diagnosis.md`.
+- [DEFERRED] 120fps preview decode lag — the decode-ahead cap must be expressed in bytes, not
+  frame count; the formula is already derived but full implementation is deferred. On the Windows
+  build the preview shows a frozen frame; export (a separate, non-windowed sequential decoder) is
+  unaffected. Full diagnosis: `docs/ws2-video-ingest/bug3-diagnosis.md`.
 - [DEFERRED] Arbitrary frame rate support — some assets are 24fps but the app assumes a single
-  project frame rate throughout; no owner.
-- [DEFERRED] Part B storage scripts unrun on Windows and macOS — A5 unresolved; no owner.
-- [DEFERRED] S/D hotkey scope is "a segment is selected" rather than true timeline focus; no owner.
+  project frame rate throughout; rests on the same single-project-frame-rate assumption as the
+  120fps item above. No owner.
+- [DEFERRED] S/D hotkey scope is gated on a selected/targeted segment plus the text-entry guard,
+  not true timeline focus. Checked 2026-08-31: the blocker is clip focusability, not the guard —
+  Timeline's clip elements and its scroll container carry no tabIndex/role (deliberately removed
+  in 299f014), and the container's mousedown-capture handler actively suppresses the browser's own
+  focus-shift on click. Gating S/D on focus-within the timeline needs tabIndex plumbing across clip
+  elements plus revisiting that suppression, which touches selection and scrubbing — out of scope
+  here. No owner.
 
 ---
 

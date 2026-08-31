@@ -2072,3 +2072,11 @@ undo/redo selection orphaning). Gate state: `npx tsc --noEmit` clean, `npm run l
 commits (the boundary-policy experiment never reached a commit; `snapBoundaries.ts`'s only
 committed change this round is a documentation comment). `docs/history.md` untouched throughout
 this round (verified with an empty `git diff -- docs/history.md`).
+
+**A5 (WebView2 user-data folder location) leaves the ledger as superseded, not re-investigated.**
+T1.1 (session ws2-20, entry above) already ran the Part B read-only scripts on both Windows and
+macOS and answered A5's original question directly from that evidence. T1.3's later OS-backed
+project store — writing through Tauri fs to `app_data_dir/projects/<id>/project.json` — then made
+the WebView2 user-data-folder question moot for project persistence regardless of that answer, so
+the WIP ledger's "Part B storage scripts unrun" line (stale relative to this record) is removed
+rather than re-run or re-verified.
