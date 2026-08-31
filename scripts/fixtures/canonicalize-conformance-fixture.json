@@ -1,0 +1,775 @@
+{
+  "_generatedBy": "scripts/generate-canonicalize-conformance-fixture.ts (run via `npx tsx`) — driven from src/services/textNormalize.ts's canonicalize(), directly, not through the sync pipeline. Locks CURRENT behavior, not desired behavior — see knownLossy/notDetermined per entry.",
+  "entries": [
+    {
+      "language": "es",
+      "input": "café",
+      "note": "accented vowel, single word",
+      "tokens": [
+        "café"
+      ],
+      "tokensUndefined": [
+        "cafe"
+      ],
+      "tokensEn": [
+        "cafe"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "es",
+      "input": "año",
+      "note": "ñ, single word",
+      "tokens": [
+        "año"
+      ],
+      "tokensUndefined": [
+        "ano"
+      ],
+      "tokensEn": [
+        "ano"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "es",
+      "input": "político-económico",
+      "note": "hyphenated compound (both parts well-formed words)",
+      "tokens": [
+        "político-económico"
+      ],
+      "tokensUndefined": [
+        "politico-economico"
+      ],
+      "tokensEn": [
+        "politico-economico"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "es",
+      "input": "¿Cómo estás?",
+      "note": "punctuation: inverted question mark + trailing question mark",
+      "tokens": [
+        "cómo",
+        "estás"
+      ],
+      "tokensUndefined": [
+        "como",
+        "estas"
+      ],
+      "tokensEn": [
+        "como",
+        "estas"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "es",
+      "input": "año 2024",
+      "note": "digit token inside an es phrase",
+      "tokens": [
+        "año",
+        "twenty",
+        "twenty",
+        "four"
+      ],
+      "tokensUndefined": [
+        "ano",
+        "twenty",
+        "twenty",
+        "four"
+      ],
+      "tokensEn": [
+        "ano",
+        "twenty",
+        "twenty",
+        "four"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": "digitTokenToWords (textNormalize.ts) always reads a digit run as ENGLISH cardinal/year words, uninformed by languageCode — \"2024\" -> \"twenty twenty four\", not a Spanish reading. Documented, unstarted gap: canonicalize()'s own doc comment and CLAUDE.md's Sync/Whisper invariants both name this as sync-pipeline-v2-plan.md H.5, out of scope for WS2 T3.1.",
+      "notDetermined": null
+    },
+    {
+      "language": "es",
+      "input": "El médico atendió a través del área difícil ayer",
+      "note": "real sentence, multiple accented vowels",
+      "tokens": [
+        "el",
+        "médico",
+        "atendió",
+        "a",
+        "través",
+        "del",
+        "área",
+        "difícil",
+        "ayer"
+      ],
+      "tokensUndefined": [
+        "el",
+        "medico",
+        "atendio",
+        "a",
+        "traves",
+        "del",
+        "area",
+        "dificil",
+        "ayer"
+      ],
+      "tokensEn": [
+        "el",
+        "medico",
+        "atendio",
+        "a",
+        "traves",
+        "del",
+        "area",
+        "dificil",
+        "ayer"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "es",
+      "input": "Después de años, volvió al pueblo con su corazón tranquilo",
+      "note": "real sentence, ñ + accented vowels + comma punctuation",
+      "tokens": [
+        "después",
+        "de",
+        "años",
+        "volvió",
+        "al",
+        "pueblo",
+        "con",
+        "su",
+        "corazón",
+        "tranquilo"
+      ],
+      "tokensUndefined": [
+        "despues",
+        "de",
+        "anos",
+        "volvio",
+        "al",
+        "pueblo",
+        "con",
+        "su",
+        "corazon",
+        "tranquilo"
+      ],
+      "tokensEn": [
+        "despues",
+        "de",
+        "anos",
+        "volvio",
+        "al",
+        "pueblo",
+        "con",
+        "su",
+        "corazon",
+        "tranquilo"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "es",
+      "input": "d'agua",
+      "note": "word-internal apostrophe (not a real Spanish elision, probes the generic apostrophe-strip path)",
+      "tokens": [
+        "d",
+        "agua"
+      ],
+      "tokensUndefined": [
+        "d",
+        "agua"
+      ],
+      "tokensEn": [
+        "d",
+        "agua"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": "canonicalize() strips ANY apostrophe to a space on every branch (en included — only a fixed set of English contractions in CONTRACTIONS survive as one token, by expansion, not preservation) — \"d'agua\" -> [\"d\",\"agua\"], two tokens. Unlike faTextNormalize.ts (a DIFFERENT module), canonicalize() has no French-elision-style apostrophe handling for any language. Whether this is an accepted scope boundary or a real gap for es/fr/pt elision-heavy text is NOT DETERMINED by this step — recorded, not fixed."
+    },
+    {
+      "language": "fr",
+      "input": "élève",
+      "note": "accented vowel, single word",
+      "tokens": [
+        "élève"
+      ],
+      "tokensUndefined": [
+        "eleve"
+      ],
+      "tokensEn": [
+        "eleve"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "fr",
+      "input": "garçon",
+      "note": "ç, single word",
+      "tokens": [
+        "garçon"
+      ],
+      "tokensUndefined": [
+        "garcon"
+      ],
+      "tokensEn": [
+        "garcon"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "fr",
+      "input": "grand-mère",
+      "note": "hyphenated compound (both parts well-formed words)",
+      "tokens": [
+        "grand-mère"
+      ],
+      "tokensUndefined": [
+        "grand-mere"
+      ],
+      "tokensEn": [
+        "grand-mere"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "fr",
+      "input": "«Bonjour, ça va ?»",
+      "note": "punctuation: guillemets + comma + spaced question mark",
+      "tokens": [
+        "bonjour",
+        "ça",
+        "va"
+      ],
+      "tokensUndefined": [
+        "bonjour",
+        "ca",
+        "va"
+      ],
+      "tokensEn": [
+        "bonjour",
+        "ca",
+        "va"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "fr",
+      "input": "23 ans",
+      "note": "digit token inside a fr phrase",
+      "tokens": [
+        "twenty",
+        "three",
+        "ans"
+      ],
+      "tokensUndefined": [
+        "twenty",
+        "three",
+        "ans"
+      ],
+      "tokensEn": [
+        "twenty",
+        "three",
+        "ans"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": "Same digitTokenToWords gap as the es case above — \"23\" -> \"twenty three\" (English words), not \"vingt-trois\". sync-pipeline-v2-plan.md H.5, out of scope for WS2 T3.1.",
+      "notDetermined": null
+    },
+    {
+      "language": "fr",
+      "input": "Le café est très près de la forêt cet été",
+      "note": "real sentence, multiple accented vowels",
+      "tokens": [
+        "le",
+        "café",
+        "est",
+        "très",
+        "près",
+        "de",
+        "la",
+        "forêt",
+        "cet",
+        "été"
+      ],
+      "tokensUndefined": [
+        "le",
+        "cafe",
+        "est",
+        "tres",
+        "pres",
+        "de",
+        "la",
+        "foret",
+        "cet",
+        "ete"
+      ],
+      "tokensEn": [
+        "le",
+        "cafe",
+        "est",
+        "tres",
+        "pres",
+        "de",
+        "la",
+        "foret",
+        "cet",
+        "ete"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "fr",
+      "input": "L'élève étudie à Noël même où il était né",
+      "note": "real sentence, word-initial elision apostrophe + accented vowels",
+      "tokens": [
+        "l",
+        "élève",
+        "étudie",
+        "à",
+        "noël",
+        "même",
+        "où",
+        "il",
+        "était",
+        "né"
+      ],
+      "tokensUndefined": [
+        "l",
+        "eleve",
+        "etudie",
+        "a",
+        "noel",
+        "meme",
+        "ou",
+        "il",
+        "etait",
+        "ne"
+      ],
+      "tokensEn": [
+        "l",
+        "eleve",
+        "etudie",
+        "a",
+        "noel",
+        "meme",
+        "ou",
+        "il",
+        "etait",
+        "ne"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": "\"L'élève\" -> [\"l\",\"élève\"], split into two tokens — canonicalize() has no French-elision handling (see the es d'agua case above for the general apostrophe-strip behavior this follows). NOT DETERMINED whether this is a real gap for fr text specifically."
+    },
+    {
+      "language": "fr",
+      "input": "ćčšș",
+      "note": "loanword/non-French Latin letters, preserved by \\p{L} (regression witness shared with fa-text-normalize-fixture.json)",
+      "tokens": [
+        "ćčšș"
+      ],
+      "tokensUndefined": [
+        "ccss"
+      ],
+      "tokensEn": [
+        "ccss"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "de",
+      "input": "über",
+      "note": "accented vowel (umlaut), single word",
+      "tokens": [
+        "über"
+      ],
+      "tokensUndefined": [
+        "uber"
+      ],
+      "tokensEn": [
+        "uber"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "de",
+      "input": "straße",
+      "note": "ß, single word",
+      "tokens": [
+        "straße"
+      ],
+      "tokensUndefined": [
+        "stra",
+        "e"
+      ],
+      "tokensEn": [
+        "stra",
+        "e"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "de",
+      "input": "Süd-Amerika",
+      "note": "hyphenated compound (both parts well-formed words), mixed case",
+      "tokens": [
+        "süd-amerika"
+      ],
+      "tokensUndefined": [
+        "sud-amerika"
+      ],
+      "tokensEn": [
+        "sud-amerika"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "de",
+      "input": "Wir müssen morgen früh nach Köln fahren, oder?",
+      "note": "punctuation: comma + trailing question mark, real sentence",
+      "tokens": [
+        "wir",
+        "müssen",
+        "morgen",
+        "früh",
+        "nach",
+        "köln",
+        "fahren",
+        "oder"
+      ],
+      "tokensUndefined": [
+        "wir",
+        "mussen",
+        "morgen",
+        "fruh",
+        "nach",
+        "koln",
+        "fahren",
+        "oder"
+      ],
+      "tokensEn": [
+        "wir",
+        "mussen",
+        "morgen",
+        "fruh",
+        "nach",
+        "koln",
+        "fahren",
+        "oder"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "de",
+      "input": "23 Jahre",
+      "note": "digit token inside a de phrase",
+      "tokens": [
+        "twenty",
+        "three",
+        "jahre"
+      ],
+      "tokensUndefined": [
+        "twenty",
+        "three",
+        "jahre"
+      ],
+      "tokensEn": [
+        "twenty",
+        "three",
+        "jahre"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": "Same digitTokenToWords gap as the es/fr cases above — \"23\" -> \"twenty three\" (English words), not \"dreiundzwanzig\". sync-pipeline-v2-plan.md H.5, out of scope for WS2 T3.1.",
+      "notDetermined": null
+    },
+    {
+      "language": "de",
+      "input": "Die Grüße waren schön, aber die Straße war groß und weiß",
+      "note": "real sentence, ß (lowercase) + umlauts + comma punctuation",
+      "tokens": [
+        "die",
+        "grüße",
+        "waren",
+        "schön",
+        "aber",
+        "die",
+        "straße",
+        "war",
+        "groß",
+        "und",
+        "weiß"
+      ],
+      "tokensUndefined": [
+        "die",
+        "gru",
+        "e",
+        "waren",
+        "schon",
+        "aber",
+        "die",
+        "stra",
+        "e",
+        "war",
+        "gro",
+        "und",
+        "wei"
+      ],
+      "tokensEn": [
+        "die",
+        "gru",
+        "e",
+        "waren",
+        "schon",
+        "aber",
+        "die",
+        "stra",
+        "e",
+        "war",
+        "gro",
+        "und",
+        "wei"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "de",
+      "input": "Hallo, wie geht's?",
+      "note": "word-internal apostrophe in colloquial German (geht's)",
+      "tokens": [
+        "hallo",
+        "wie",
+        "geht",
+        "s"
+      ],
+      "tokensUndefined": [
+        "hallo",
+        "wie",
+        "geht",
+        "s"
+      ],
+      "tokensEn": [
+        "hallo",
+        "wie",
+        "geht",
+        "s"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": "\"geht's\" -> [\"geht\",\"s\"] — same generic apostrophe-strip behavior as the es/fr cases above (canonicalize() has no German-specific apostrophe handling either). NOT DETERMINED whether this is a real gap for de colloquial text specifically."
+    },
+    {
+      "language": "pt",
+      "input": "ação",
+      "note": "ç + ã, single word",
+      "tokens": [
+        "ação"
+      ],
+      "tokensUndefined": [
+        "acao"
+      ],
+      "tokensEn": [
+        "acao"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "pt",
+      "input": "não",
+      "note": "ã, single word",
+      "tokens": [
+        "não"
+      ],
+      "tokensUndefined": [
+        "nao"
+      ],
+      "tokensEn": [
+        "nao"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "pt",
+      "input": "razões",
+      "note": "õ, single word",
+      "tokens": [
+        "razões"
+      ],
+      "tokensUndefined": [
+        "razoes"
+      ],
+      "tokensEn": [
+        "razoes"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "pt",
+      "input": "guarda-chuva",
+      "note": "hyphenated compound (both parts well-formed words)",
+      "tokens": [
+        "guarda-chuva"
+      ],
+      "tokensUndefined": [
+        "guarda-chuva"
+      ],
+      "tokensEn": [
+        "guarda-chuva"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "pt",
+      "input": "«Olá, tudo bem?»",
+      "note": "punctuation: guillemets + comma + trailing question mark",
+      "tokens": [
+        "olá",
+        "tudo",
+        "bem"
+      ],
+      "tokensUndefined": [
+        "ola",
+        "tudo",
+        "bem"
+      ],
+      "tokensEn": [
+        "ola",
+        "tudo",
+        "bem"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "pt",
+      "input": "3 gatos",
+      "note": "digit token inside a pt phrase",
+      "tokens": [
+        "three",
+        "gatos"
+      ],
+      "tokensUndefined": [
+        "three",
+        "gatos"
+      ],
+      "tokensEn": [
+        "three",
+        "gatos"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": "Same digitTokenToWords gap as the es/fr/de cases above — \"3\" -> \"three\" (English word), not \"três\". sync-pipeline-v2-plan.md H.5, out of scope for WS2 T3.1.",
+      "notDetermined": null
+    },
+    {
+      "language": "pt",
+      "input": "A informação sobre a construção não é fácil de entender",
+      "note": "real sentence, ç/ã/õ family + accented vowels",
+      "tokens": [
+        "a",
+        "informação",
+        "sobre",
+        "a",
+        "construção",
+        "não",
+        "é",
+        "fácil",
+        "de",
+        "entender"
+      ],
+      "tokensUndefined": [
+        "a",
+        "informacao",
+        "sobre",
+        "a",
+        "construcao",
+        "nao",
+        "e",
+        "facil",
+        "de",
+        "entender"
+      ],
+      "tokensEn": [
+        "a",
+        "informacao",
+        "sobre",
+        "a",
+        "construcao",
+        "nao",
+        "e",
+        "facil",
+        "de",
+        "entender"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": null
+    },
+    {
+      "language": "pt",
+      "input": "d'água",
+      "note": "word-internal apostrophe (real Portuguese elision-like contraction, e.g. \"copo d'água\")",
+      "tokens": [
+        "d",
+        "água"
+      ],
+      "tokensUndefined": [
+        "d",
+        "agua"
+      ],
+      "tokensEn": [
+        "d",
+        "agua"
+      ],
+      "undefinedEqualsEn": true,
+      "knownLossy": null,
+      "notDetermined": "\"d'água\" -> [\"d\",\"água\"] — same generic apostrophe-strip behavior as the other language cases above. NOT DETERMINED whether this is a real gap for pt text specifically."
+    }
+  ]
+}
