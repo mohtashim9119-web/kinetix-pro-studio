@@ -3479,6 +3479,42 @@ describe('contention-aware silence claiming (no starvation cascade)', () => {
   });
 });
 
+describe('snapCoveredBoundaries — a pair flanking a dropped run still splits by silence-centre/midpoint (100%-to-next policy reverted)', () => {
+  // Two survivors flanking a dropped middle run: 'alpha bravo' spoken
+  // 0.0-1.0, 'charlie delta' spoken 3.0-4.0 — a wide 2.0s reclaimable span
+  // (the shape a dropped scene's whole duration + surrounding silence leaves
+  // behind). A prior session tried pinning this boundary to lastSpokenEnd
+  // (100% forward extension for the next survivor) — reverted: it produced
+  // jarring cuts and ate the preceding segment's trailing room tone. This
+  // pair gets no special treatment at all — same silence-centre/spoken-
+  // midpoint rule as every other pair.
+  it('lands on the detected silence centre, not on lastSpokenEnd', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'prev', order: 0, text: 'alpha bravo', startTime: 0, duration: 3, anchorStart: 0, anchorSource: 'whisper' }),
+      makeSegment({ id: 'next', order: 1, text: 'charlie delta', startTime: 3, duration: 2, anchorStart: 3, anchorSource: 'whisper' }),
+    ];
+    const tokens = [...wordTokens('alpha bravo', 0, 0.5), ...wordTokens('charlie delta', 3.0, 0.5)];
+    const alignments = extractSegmentAlignments(segments, tokens);
+    expect(alignments.every(a => a.matched)).toBe(true);
+    const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
+
+    const out = snapCoveredBoundaries(segments, alignments, tokens, silences, 5);
+    expect(out[1]!.startTime).toBeCloseTo(1.75, 6); // silence centre, not lastSpokenEnd (1.0)
+    expect(out[0]!.startTime + out[0]!.duration).toBeCloseTo(out[1]!.startTime, 6);
+  });
+
+  it('falls back to the spoken-edge midpoint with no silence data', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'prev', order: 0, text: 'alpha bravo', startTime: 0, duration: 3, anchorStart: 0, anchorSource: 'whisper' }),
+      makeSegment({ id: 'next', order: 1, text: 'charlie delta', startTime: 3, duration: 2, anchorStart: 3, anchorSource: 'whisper' }),
+    ];
+    const tokens = [...wordTokens('alpha bravo', 0, 0.5), ...wordTokens('charlie delta', 3.0, 0.5)];
+    const alignments = extractSegmentAlignments(segments, tokens);
+    const out = snapCoveredBoundaries(segments, alignments, tokens, [], 5);
+    expect(out[1]!.startTime).toBeCloseTo(2.0, 6); // (lastSpokenEnd 1.0 + nextSpokenStart 3.0) / 2
+  });
+});
+
 describe('filterToCoveredSegments — keptAlignments', () => {
   it('returns the kept segments’ alignments, in the same order and the same length as kept', () => {
     const segments: VideoSegment[] = [

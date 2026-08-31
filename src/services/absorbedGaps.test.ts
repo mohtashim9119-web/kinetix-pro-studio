@@ -4,7 +4,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { classifyGapAudio, computeAbsorbedGaps } from './absorbedGaps';
+import {
+  classifyGapAudio,
+  computeAbsorbedGaps,
+  measureOtherNeighborGain,
+} from './absorbedGaps';
 import type { SegmentAlignment } from './whisperService';
 import type { TranscriptToken } from '../types';
 import type { SilenceInterval } from './silenceDetector';
@@ -52,8 +56,10 @@ describe('computeAbsorbedGaps', () => {
     expect(result.size).toBe(0);
   });
 
-  it('hosts a single dropped middle segment on the PREVIOUS survivor, with the true reclaimable span', () => {
-    // pre-filter: [survivor0, dropped1, survivor2]
+  it('hosts a single dropped middle segment on the NEXT survivor, with the true reclaimable span, naming the PREVIOUS as otherNeighborId', () => {
+    // pre-filter: [survivor0, dropped1, survivor2]. WS2 ws2-27 — the next
+    // survivor is the majority absorber measured against real corpora (v6,
+    // 173); "previous survivor hosts" was the bug, not a valid alternative.
     const pre = [seg('s0', 0, 2), seg('d1', 2, 1), seg('s2', 3, 2)];
     const tokens = [tok(0, 1.8, 'kept'), tok(3.4, 4.9, 'kept2')];
     const skipped = [{ segmentIndex: 1 }];
@@ -64,12 +70,13 @@ describe('computeAbsorbedGaps', () => {
     const result = computeAbsorbedGaps(pre, skipped, ['s0', 's2'], keptAlignments, tokens, silences);
 
     expect(result.size).toBe(1);
-    const gaps = result.get('s0');
+    const gaps = result.get('s2');
     expect(gaps).toBeDefined();
     expect(gaps).toHaveLength(1);
     expect(gaps![0]!.segmentId).toBe('d1');
     expect(gaps![0]!.span).toEqual({ start: 1.8, end: 3.4 });
     expect(gaps![0]!.gapAudio).toBe('silent');
+    expect(gaps![0]!.otherNeighborId).toBe('s0');
   });
 
   it('groups a run of consecutive drops into one shared span, one entry each, same host', () => {
@@ -79,15 +86,16 @@ describe('computeAbsorbedGaps', () => {
     const keptAlignments = [align(0, 0), align(1, 1)];
 
     const result = computeAbsorbedGaps(pre, skipped, ['s0', 's3'], keptAlignments, tokens, []);
-    const gaps = result.get('s0')!;
+    const gaps = result.get('s3')!;
     expect(gaps).toHaveLength(2);
     expect(gaps[0]!.span).toEqual(gaps[1]!.span);
     expect(gaps[0]!.span).toEqual({ start: 0.9, end: 2.1 });
     expect(gaps.map(g => g.segmentId)).toEqual(['d1', 'd2']);
     expect(gaps.every(g => g.gapAudio === 'unknown')).toBe(true); // no silence data supplied
+    expect(gaps.every(g => g.otherNeighborId === 's0')).toBe(true);
   });
 
-  it('hosts a LEADING drop (before the first survivor) on the NEXT survivor', () => {
+  it('hosts a LEADING drop (before the first survivor) on the NEXT survivor, with no otherNeighborId', () => {
     const pre = [seg('d0', 0, 1), seg('s1', 1, 2)];
     const tokens = [tok(1.2, 2.5)];
     const skipped = [{ segmentIndex: 0 }];
@@ -96,9 +104,10 @@ describe('computeAbsorbedGaps', () => {
     const result = computeAbsorbedGaps(pre, skipped, ['s1'], keptAlignments, tokens, []);
     expect(result.get('s1')).toHaveLength(1);
     expect(result.get('s1')![0]!.span.end).toBe(1.2);
+    expect(result.get('s1')![0]!.otherNeighborId).toBeUndefined();
   });
 
-  it('hosts a TRAILING drop (after the last survivor) on the PREVIOUS survivor', () => {
+  it('hosts a TRAILING drop (after the last survivor) on the PREVIOUS survivor (fallback — no next exists), with no otherNeighborId', () => {
     const pre = [seg('s0', 0, 2), seg('d1', 2, 1)];
     const tokens = [tok(0.1, 1.7)];
     const skipped = [{ segmentIndex: 1 }];
@@ -107,6 +116,7 @@ describe('computeAbsorbedGaps', () => {
     const result = computeAbsorbedGaps(pre, skipped, ['s0'], keptAlignments, tokens, []);
     expect(result.get('s0')).toHaveLength(1);
     expect(result.get('s0')![0]!.span.start).toBe(1.7);
+    expect(result.get('s0')![0]!.otherNeighborId).toBeUndefined();
   });
 
   it('falls back to the dropped run\'s own recorded start/end when no token data is available', () => {
@@ -115,8 +125,8 @@ describe('computeAbsorbedGaps', () => {
     const keptAlignments: SegmentAlignment[] = [];
 
     const result = computeAbsorbedGaps(pre, skipped, ['s0', 's2'], keptAlignments, [], []);
-    expect(result.get('s0')![0]!.span).toEqual({ start: 2, end: 3 });
-    expect(result.get('s0')![0]!.gapAudio).toBe('unknown');
+    expect(result.get('s2')![0]!.span).toEqual({ start: 2, end: 3 });
+    expect(result.get('s2')![0]!.gapAudio).toBe('unknown');
   });
 
   it('is pure — does not mutate any input array or object', () => {
@@ -158,8 +168,10 @@ describe('computeAbsorbedGaps — word source', () => {
     const fromWhisper = computeAbsorbedGaps(preFilter, skipped, keptIds, keptAlignments, whisperish, []);
     const fromFa = computeAbsorbedGaps(preFilter, skipped, keptIds, keptAlignments, faish, []);
 
-    expect(fromWhisper.get('a')![0]!.span).toEqual({ start: 78.73, end: 78.97 });
-    expect(fromFa.get('a')![0]!.span).toEqual({ start: 78.56, end: 79 });
+    // Host is 'c' (the next survivor) post-ws2-27; the middle-run drop sits
+    // between keptIds ['a', 'c'].
+    expect(fromWhisper.get('c')![0]!.span).toEqual({ start: 78.73, end: 78.97 });
+    expect(fromFa.get('c')![0]!.span).toEqual({ start: 78.56, end: 79 });
   });
 
   it('produces a materially different span per arm for the same drop', () => {
@@ -170,7 +182,7 @@ describe('computeAbsorbedGaps — word source', () => {
     const f = computeAbsorbedGaps(preFilter, skipped, keptIds, keptAlignments, faish, []);
 
     const width = (m: Map<string, { span: { start: number; end: number } }[]>) => {
-      const g = m.get('a')![0]!.span;
+      const g = m.get('c')![0]!.span;
       return Number((g.end - g.start).toFixed(3));
     };
     expect(width(w)).toBe(2.42);
@@ -181,7 +193,49 @@ describe('computeAbsorbedGaps — word source', () => {
   it('falls back to the dropped run\'s own extent when given no tokens at all', () => {
     const none = computeAbsorbedGaps(preFilter, skipped, keptIds, keptAlignments, [], []);
     // No token to dereference on either side => the dropped run's own bounds.
-    expect(none.get('a')![0]!.span).toEqual({ start: 1, end: 2 });
-    expect(none.get('a')![0]!.gapAudio).toBe('unknown');
+    expect(none.get('c')![0]!.span).toEqual({ start: 1, end: 2 });
+    expect(none.get('c')![0]!.gapAudio).toBe('unknown');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 session ws2-27 — measureOtherNeighborGain. Pinned against the real
+// pre-snap/post-snap numbers measured off the actual v6/173 corpora
+// (.work-phase4/session-ws2-27/measure-{v6,173}.json), not synthetic values,
+// so a future change to the gain formula is checked against what really
+// happens on real drop runs, not just a hand-built fixture.
+// ---------------------------------------------------------------------------
+describe('measureOtherNeighborGain', () => {
+  it('v6 S27-29: prev is a NET LOSER (-0.17s) — below the note threshold, no material gain', () => {
+    // 026_frosty_morning_run (prev) / 030_watching_older_hunters (next, host).
+    const preSnap = [seg('prev', 73.55, 5.18), seg('next', 78.97, 10.74)];
+    const postSnap = [seg('prev', 73.96, 4.60), seg('next', 78.56, 11.58)];
+    const gain = measureOtherNeighborGain('next', 'prev', preSnap, postSnap);
+    expect(gain).toBe(-0.17);
+  });
+
+  it('173 S112: prev gains +0.63s — a real, material amount, over MIN_SEGMENT_DURATION', () => {
+    // unstable_path (prev) / shirking_foundation (next, host).
+    const preSnap = [seg('prev', 436.73, 6.21), seg('next', 445.36, 7.08)];
+    const postSnap = [seg('prev', 436.30, 7.27), seg('next', 443.57, 9.03)];
+    const gain = measureOtherNeighborGain('next', 'prev', preSnap, postSnap);
+    expect(gain).toBe(0.63);
+  });
+
+  it('measures the gain isolated to the shared edge — the other neighbour\'s own far edge moving independently does not contaminate it', () => {
+    // 'next''s own end (its pair with a THIRD segment further down the
+    // array) drifts by an unrelated 0.16s in the real 173 data; only the
+    // start edge it shares with the host is what gainSec must reflect.
+    const preSnap = [seg('prev', 436.73, 6.21), seg('next', 445.36, 7.08)];
+    const postSnap = [seg('prev', 436.30, 7.27), seg('next', 443.57, 9.03)]; // next end drifted 452.44->452.60
+    const gain = measureOtherNeighborGain('next', 'prev', preSnap, postSnap);
+    expect(gain).toBe(0.63); // unaffected by next's own unrelated end-edge drift
+  });
+
+  it('returns undefined when a snapshot is missing either id (defensive)', () => {
+    const preSnap = [seg('prev', 0, 1)];
+    const postSnap = [seg('prev', 0, 1)];
+    expect(measureOtherNeighborGain('missing-host', 'prev', preSnap, postSnap)).toBeUndefined();
+    expect(measureOtherNeighborGain('prev', 'missing-other', preSnap, postSnap)).toBeUndefined();
   });
 });

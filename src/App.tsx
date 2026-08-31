@@ -129,7 +129,7 @@ import {
 } from './services/faRunPlacementGate';
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
-import { computeAbsorbedGaps } from './services/absorbedGaps';
+import { computeAbsorbedGaps, measureOtherNeighborGain } from './services/absorbedGaps';
 import { splitSelectedSegment, deleteSelectedSegment } from './services/segmentSplitDelete';
 
 import { detectSilences } from './services/silenceDetector';
@@ -1218,6 +1218,16 @@ export interface AbsorbedGapLogInfo {
   hostDisplayIndex: number;
   span: { start: number; end: number };
   gapAudio: 'silent' | 'speech' | 'unknown';
+  /** WS2 ws2-27 — set only when `snapCoveredBoundaries`'s shared-split-point
+   *  boundary (WS2 ws2-22) gave the OTHER (non-host) neighbour a materially
+   *  sized share too (> MIN_SEGMENT_DURATION, dragCascade.ts) — e.g. 173's
+   *  S112, where the host (Clip 110) takes 1.79s but Clip 109 still gains a
+   *  real, visible 0.63s. `displayIndex` is 0-based over the same final
+   *  committed array `hostDisplayIndex` is; `gainSec` is that neighbour's own
+   *  measured duration change from the boundary write, isolated to the edge
+   *  it shares with the host (never its other, unrelated edge). Message text
+   *  only — this never grows a second jump target. */
+  otherNeighbor?: { displayIndex: number; gainSec: number };
 }
 
 /**
@@ -1259,6 +1269,14 @@ export function buildSkipLogEntries(
       const gapDuration = absorbed.span.end - absorbed.span.start;
       message += ` Absorbed ${absorbed.span.start.toFixed(3)}s → ${gapDuration.toFixed(3)}s → `
         + `${absorbed.span.end.toFixed(3)}s (${absorbed.gapAudio}).`;
+      // WS2 ws2-27 — the other neighbour also moved by a material amount
+      // (option (a) + gated note, per the operator's Step 2 decision): say so
+      // in plain text rather than silently hiding it behind the single
+      // majority-absorber host. No second jump target, no second link.
+      if (absorbed.otherNeighbor) {
+        message += ` Clip ${absorbed.otherNeighbor.displayIndex + 1} also holds `
+          + `${absorbed.otherNeighbor.gainSec.toFixed(2)}s.`;
+      }
     }
     // WS2 ws2-25 Commit 5 — R.10-reason skips carry FA-ARM RERUN match
     // stats, not Whisper's. On the FA path, `filterToCoveredSegments`'s
@@ -3427,11 +3445,29 @@ export default function App() {
         for (const [hostId, gaps] of absorbedGapsByHostId) {
           const hostDisplayIndex = finalTimedSegments.findIndex(s => s.id === hostId);
           if (hostDisplayIndex < 0) continue;
+          // WS2 ws2-27, option (a) + gated note — every gap in `gaps` shares
+          // the same `otherNeighborId` (absorbedGaps.ts's own invariant, same
+          // as `span`/`gapAudio` above), so this is resolved once per host,
+          // not once per skipped record. `kept` (pre-boundary-snap) and
+          // `finalTimedSegments` (post-snap) are the same before/after pair
+          // `measureOtherNeighborGain` needs; only a gain that exceeds
+          // MIN_SEGMENT_DURATION becomes a note — the operator's own decision
+          // for what counts as "the other clip visibly moved too".
+          const otherNeighborId = gaps[0]?.otherNeighborId;
+          let otherNeighbor: AbsorbedGapLogInfo['otherNeighbor'];
+          if (otherNeighborId) {
+            const otherDisplayIndex = finalTimedSegments.findIndex(s => s.id === otherNeighborId);
+            const gainSec = measureOtherNeighborGain(hostId, otherNeighborId, kept, finalTimedSegments);
+            if (otherDisplayIndex >= 0 && gainSec !== undefined && gainSec > MIN_SEGMENT_DURATION) {
+              otherNeighbor = { displayIndex: otherDisplayIndex, gainSec };
+            }
+          }
           for (const gap of gaps) {
             const skipRecord = skipped.find(r => aligned.segments[r.segmentIndex]?.id === gap.segmentId);
             if (skipRecord) {
               absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
                 hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
+                otherNeighbor,
               });
             }
           }

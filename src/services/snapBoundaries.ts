@@ -648,6 +648,14 @@ export function isBreathSilence(
  * and a locked last segment keeps its duration. This mirrors the lock handling
  * in `alignScenestoTranscript` and `applyAnchorBasedTiming`.
  *
+ * A pair flanking a dropped/skipped run (`absorbedGaps.ts` reports these for
+ * the sync log) gets NO special boundary treatment — a dropped scene's
+ * reclaimable span is split by the same silence-centre/spoken-midpoint rule
+ * as every other pair, cutting cleanly in the middle of whatever natural
+ * pause covers it rather than handing one neighbour the whole span. (A prior
+ * 100%-to-next policy was tried and reverted — it produced jarring cuts and
+ * ate the preceding segment's trailing room tone.)
+ *
  * Pure — no I/O, no mutation of the input array (segments are copied).
  */
 export function snapCoveredBoundaries(

@@ -18,6 +18,9 @@ import {
   type AbsorbedGapLogInfo,
 } from '../App';
 import { R10_SKIP_REASON } from './faUnspokenGate';
+import { computeAbsorbedGaps } from './absorbedGaps';
+import type { SegmentAlignment } from './whisperService';
+import type { TranscriptToken } from '../types';
 import {
   appendSyncLogEntries,
   buildSilenceErrorEntry,
@@ -42,6 +45,16 @@ import type { ContractViolation } from './syncContracts';
 
 const RUN_ID = 'run-1';
 const AT = 1_700_000_000_000;
+
+function tok(startSec: number, endSec: number, text = 'x'): TranscriptToken {
+  return { startSec, endSec, text };
+}
+function align(firstTokenIdx: number, lastTokenIdx: number): SegmentAlignment {
+  return {
+    t0: 0, t1: 0, firstTokenIdx, lastTokenIdx, confidence: 1, matched: true,
+    matchedWords: 1, totalWords: 1, longestRun: 1,
+  } as SegmentAlignment;
+}
 
 function makeProject(partial: Partial<Project> = {}): Project {
   return {
@@ -381,6 +394,104 @@ describe('buildSkipLogEntries', () => {
     );
     expect(entry!.message).toContain('Clip 110'); // 109 + 1, exactly what was given
     expect(entry!.message).not.toContain('Clip 111');
+  });
+
+  // -------------------------------------------------------------------------
+  // WS2 session ws2-27 — gated "other neighbour" note (option (a) + note,
+  // per the operator's Step 2 decision). Real 173 S112 numbers: host
+  // (shirking_foundation) is Clip 110, the other neighbour
+  // (unstable_path, Clip 109) also gained a material 0.63s.
+  // -------------------------------------------------------------------------
+  it('appends a factual note naming the other neighbour when its gain is material (173 S112 shape)', () => {
+    const [entry] = buildSkipLogEntries(
+      RUN_ID,
+      [{ segmentIndex: 111, segmentText: 'Some don’t emerge.', reason: 'no text match' }],
+      AT,
+      new Map([[111, absorbedInfo(109, { otherNeighbor: { displayIndex: 108, gainSec: 0.63 } })]]),
+    );
+    expect(entry!.message).toBe(
+      'S112 / Clip 110 skipped — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech). '
+      + 'Clip 109 also holds 0.63s.',
+    );
+  });
+
+  it('says nothing about the other neighbour when it is absent (v6 S27-29 shape — the other side is a net loser, not material)', () => {
+    const [entry] = buildSkipLogEntries(
+      RUN_ID,
+      [{ segmentIndex: 26, segmentText: 'But something stayed in you.', reason: 'no text match' }],
+      AT,
+      new Map([[26, absorbedInfo(26, { span: { start: 78.73, end: 78.97 }, gapAudio: 'speech' })]]),
+    );
+    expect(entry!.message).toBe(
+      'S27 / Clip 27 skipped — no text match. Absorbed 78.730s → 0.240s → 78.970s (speech).',
+    );
+    expect(entry!.message).not.toContain('also holds');
+  });
+
+  it('adds no second jump target or link when the note fires — segmentId still names only the host', () => {
+    const [entry] = buildSkipLogEntries(
+      RUN_ID,
+      [{ segmentIndex: 111, segmentText: 'Some don’t emerge.', reason: 'no text match' }],
+      AT,
+      new Map([[111, absorbedInfo(109, {
+        hostSegmentId: 'shirking_foundation',
+        otherNeighbor: { displayIndex: 108, gainSec: 0.63 },
+      })]]),
+    );
+    expect(entry!.segmentId).toBe('shirking_foundation');
+  });
+
+  // -------------------------------------------------------------------------
+  // WS2 session ws2-27 — end-to-end shape coverage: computeAbsorbedGaps'
+  // real host map fed straight into buildSkipLogEntries, for the two shapes
+  // no real corpus example demonstrates (trailing-run fallback, everything
+  // dropped) plus a synthetic middle-run sanity check.
+  // -------------------------------------------------------------------------
+  it('trailing-run drop falls back to the previous survivor — no crash, no empty/NaN Clip number', () => {
+    // pre-filter: [survivor0, dropped1] — nothing exists after the drop.
+    const pre = [
+      { id: 's0', startTime: 0, duration: 2 },
+      { id: 'd1', startTime: 2, duration: 1 },
+    ];
+    const keptAlignments: SegmentAlignment[] = [align(0, 0)];
+    const tokens = [tok(0.1, 1.7)];
+    const gapsByHost = computeAbsorbedGaps(pre, [{ segmentIndex: 1 }], ['s0'], keptAlignments, tokens, []);
+
+    const absorbedInfoBySkipIndex = new Map<number, AbsorbedGapLogInfo>([
+      [1, { hostSegmentId: 's0', hostDisplayIndex: 0, span: gapsByHost.get('s0')![0]!.span, gapAudio: 'unknown' }],
+    ]);
+    const [entry] = buildSkipLogEntries(
+      RUN_ID,
+      [{ segmentIndex: 1, segmentText: 'Trailing drop.', reason: 'no text match' }],
+      AT,
+      absorbedInfoBySkipIndex,
+    );
+    expect(entry!.message).toBe('S2 / Clip 1 skipped — no text match. Absorbed 1.700s → 1.300s → 3.000s (unknown).');
+    expect(entry!.message).not.toContain('NaN');
+    expect(entry!.message).not.toMatch(/Clip\s*(?:undefined)?$/);
+    expect(entry!.segmentId).toBe('s0');
+    expect(gapsByHost.get('s0')![0]!.otherNeighborId).toBeUndefined(); // no next survivor to note
+  });
+
+  it('every segment dropped — no survivor at all: no gap, no label, no throw', () => {
+    const pre = [{ id: 'd0', startTime: 0, duration: 1 }, { id: 'd1', startTime: 1, duration: 1 }];
+    const gapsByHost = computeAbsorbedGaps(
+      pre, [{ segmentIndex: 0 }, { segmentIndex: 1 }], [], [], [], [],
+    );
+    expect(gapsByHost.size).toBe(0);
+
+    const [e0, e1] = buildSkipLogEntries(
+      RUN_ID,
+      [
+        { segmentIndex: 0, segmentText: 'Only scene.', reason: 'no text match' },
+        { segmentIndex: 1, segmentText: 'Also dropped.', reason: 'no text match' },
+      ],
+      AT,
+    );
+    expect(e0!.message).toBe('S1 skipped — no text match.');
+    expect(e1!.message).toBe('S2 skipped — no text match.');
+    expect(e0!.segmentId).toBeUndefined();
+    expect(e1!.segmentId).toBeUndefined();
   });
 
   it('withholds matchedWords/totalWords/confidence/longestRun on an R.10 skip — FA-arm rerun noise, not audio evidence', () => {

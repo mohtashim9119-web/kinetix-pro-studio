@@ -99,6 +99,15 @@ export interface AbsorbedGap {
    *  segment), or unclassifiable (no silence-detection data available for
    *  this run — the no-transcript/no-tokens fallback path). */
   gapAudio: 'silent' | 'speech' | 'unknown';
+  /** The id of the survivor on the OTHER side of the gap from `hostId` (the
+   *  Map key this entry sits under) — undefined for a leading/trailing run,
+   *  where only one survivor exists at all. `snapCoveredBoundaries` actually
+   *  writes ONE boundary shared by both neighbours (WS2 ws2-22's
+   *  shared-split-point finding), so a "middle" gap's reclaimable span can
+   *  end up split across both — this is who the minority side is, purely so
+   *  the caller can decide whether that split is worth a note. Reporting-only,
+   *  same as every other field here; carries no timing of its own. */
+  otherNeighborId?: string;
 }
 
 /**
@@ -160,8 +169,21 @@ export function computeAbsorbedGaps(
 
     const prevKeptIdx = keptCursor - 1;
     const nextKeptIdx = keptCursor < keptIds.length ? keptCursor : -1;
-    const hostKeptIdx = prevKeptIdx >= 0 ? prevKeptIdx : nextKeptIdx;
+    // WS2 ws2-27 — the NEXT survivor hosts a middle run, not the previous one.
+    // Measured directly against both real corpora (v6 S27-29, 173 S112): the
+    // previous survivor is often a NET LOSER of duration once
+    // snapCoveredBoundaries writes its shared boundary (v6: -0.17s), while the
+    // next survivor is the one that actually gains materially in every
+    // observed case (v6 +0.41s, 173 +1.79s) — "prev absorbed it" was simply
+    // the wrong guess, not an equally-valid alternative convention. A leading
+    // run (no prev) already resolved to next; this only changes the middle-run
+    // case. A trailing run (no next) still falls back to prev — that's the
+    // only survivor that exists.
+    const hostKeptIdx = nextKeptIdx >= 0 ? nextKeptIdx : prevKeptIdx;
     if (hostKeptIdx < 0) continue; // no survivor exists at all — nothing to host this gap.
+
+    const otherKeptIdx = hostKeptIdx === nextKeptIdx ? prevKeptIdx : nextKeptIdx;
+    const otherNeighborId = otherKeptIdx >= 0 ? keptIds[otherKeptIdx] : undefined;
 
     const hostId = keptIds[hostKeptIdx]!;
     const prevAlign = prevKeptIdx >= 0 ? keptAlignments[prevKeptIdx] : undefined;
@@ -182,6 +204,7 @@ export function computeAbsorbedGaps(
       segmentId: preFilterSegments[idx]!.id,
       span,
       gapAudio,
+      otherNeighborId,
     }));
 
     const existing = result.get(hostId);
@@ -189,4 +212,37 @@ export function computeAbsorbedGaps(
   }
 
   return result;
+}
+
+/**
+ * Measures how much duration the OTHER (non-host) neighbour actually gained
+ * from `snapCoveredBoundaries`'s single shared boundary write for this gap —
+ * isolated to the one edge it shares with the host, never its own unrelated
+ * far edge (which can move independently, from ITS own next-door pair's snap,
+ * and would otherwise contaminate this measurement).
+ *
+ * `preSnap`/`postSnap` are the same segment shape before/after that boundary
+ * write — App.tsx's `kept` (pre-`snapCoveredBoundaries`) and
+ * `finalTimedSegments` (post-`snapCoveredBoundaries`/`headExtendFirstSegment`).
+ * Returns undefined when either snapshot is missing one of the two ids
+ * (defensive only — both should always be present for an id this module
+ * itself produced from the same run's `kept` array).
+ *
+ * Pure — no I/O, does not mutate any input.
+ */
+export function measureOtherNeighborGain(
+  hostId: string,
+  otherNeighborId: string,
+  preSnap: readonly { id: string; startTime: number; duration: number }[],
+  postSnap: readonly { id: string; startTime: number; duration: number }[],
+): number | undefined {
+  const hostPre = preSnap.find(s => s.id === hostId);
+  const otherPre = preSnap.find(s => s.id === otherNeighborId);
+  const otherPost = postSnap.find(s => s.id === otherNeighborId);
+  if (!hostPre || !otherPre || !otherPost) return undefined;
+
+  const otherIsBeforeHost = otherPre.startTime < hostPre.startTime;
+  return otherIsBeforeHost
+    ? round3((otherPost.startTime + otherPost.duration) - (otherPre.startTime + otherPre.duration))
+    : round3(otherPre.startTime - otherPost.startTime);
 }
