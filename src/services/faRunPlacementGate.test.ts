@@ -1342,3 +1342,26 @@ describe('R.12 — WS1 Session T: the placement value is UNCLAMPED', () => {
     expect(findings).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// WS2 T3.1 Phase 3 Step 3b — this file's `isSubstantiveToken` called
+// `normalize(t.text)` with no `languageCode`, unlike every other caller in the
+// sync/FA pipeline. `acousticRunExtent` (exported, and the shared read
+// R.12/R.13/R-AP all use) now threads one through. Proof mirrors
+// `whisperService.languageThread.test.ts`'s own: a Greek letter has no NFD
+// ASCII decomposition, so it normalizes to empty (non-substantive) under the
+// default/'en' fold but survives (substantive) under 'es', which preserves
+// any Unicode letter via `\p{L}`.
+// ---------------------------------------------------------------------------
+describe('acousticRunExtent — languageCode reaches isSubstantiveToken', () => {
+  it('a Greek-letter-only leading token is skipped as non-substantive under undefined/\'en\' but counted under \'es\'', () => {
+    const run = { tokenLo: 0, tokenHi: 1, startSec: 0, endSec: 1, qiSplit: 0 };
+    const tokens = [tok('π', 0.0, 0.2), tok('hello', 0.3, 0.8)];
+
+    const withoutLang = acousticRunExtent(run, tokens, []);
+    expect(withoutLang.onsetIndex).toBe(1); // 'π' normalizes to empty -> skipped.
+
+    const withEs = acousticRunExtent(run, tokens, [], 'es');
+    expect(withEs.onsetIndex).toBe(0); // 'π' survives under 'es' -> counted.
+  });
+});

@@ -162,8 +162,8 @@ export interface RunPlacementFinding {
  *  what `filterMalformedTokens` drops with reason `empty-text`, for the reason
  *  stated at its own drop site: "its timestamps can still be picked as a
  *  segment edge". */
-const isSubstantiveToken = (t: TranscriptToken | undefined): boolean =>
-  t !== undefined && normalize(t.text).length > 0;
+const isSubstantiveToken = (t: TranscriptToken | undefined, languageCode?: AlignmentLanguageCode): boolean =>
+  t !== undefined && normalize(t.text, languageCode).length > 0;
 
 /** An unscripted run's ACOUSTIC extent: first to last token in it that carries
  *  speech, rather than the raw token span's own edges.
@@ -260,11 +260,12 @@ export function acousticRunExtent(
   run: UnscriptedRun,
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[] = [],
+  languageCode?: AlignmentLanguageCode,
 ): { startSec: number; endSec: number; onsetIndex: number } {
   let lo = run.tokenLo;
-  while (lo <= run.tokenHi && !isSubstantiveToken(tokens[lo])) lo++;
+  while (lo <= run.tokenHi && !isSubstantiveToken(tokens[lo], languageCode)) lo++;
   let hi = run.tokenHi;
-  while (hi >= run.tokenLo && !isSubstantiveToken(tokens[hi])) hi--;
+  while (hi >= run.tokenLo && !isSubstantiveToken(tokens[hi], languageCode)) hi--;
   const onset = tokens[lo];
   const offset = tokens[hi];
   if (!onset || !offset || lo > hi) {
@@ -272,7 +273,7 @@ export function acousticRunExtent(
   }
   return {
     startSec: correctOnsetAgainstPause(
-      onset.startSec, offset.endSec, precedingSpeechEnd(run, tokens), silences,
+      onset.startSec, offset.endSec, precedingSpeechEnd(run, tokens, languageCode), silences,
     ),
     endSec: offset.endSec,
     onsetIndex: lo,
@@ -288,9 +289,10 @@ export function acousticRunExtent(
 function precedingSpeechEnd(
   run: UnscriptedRun,
   tokens: readonly TranscriptToken[],
+  languageCode?: AlignmentLanguageCode,
 ): number | undefined {
   let i = run.tokenLo - 1;
-  while (i >= 0 && !isSubstantiveToken(tokens[i])) i--;
+  while (i >= 0 && !isSubstantiveToken(tokens[i], languageCode)) i--;
   return tokens[i]?.endSec;
 }
 
@@ -360,6 +362,7 @@ export function detectRunPlacementDefects(
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  languageCode?: AlignmentLanguageCode,
 ): RunPlacementFinding[] {
   if (parsedSegments.length === 0 || committedSegments.length === 0 || tokens.length === 0) return [];
 
@@ -370,7 +373,7 @@ export function detectRunPlacementDefects(
   // why the raw token span's own edges cannot be used here. Both the interior
   // test and the H7 guard below read THIS view, not `run.startSec`/`endSec`;
   // mixing the two is what made the rule reject its own correct output.
-  const extents = runs.map(run => acousticRunExtent(run, tokens, silences));
+  const extents = runs.map(run => acousticRunExtent(run, tokens, silences, languageCode));
 
   const findings: RunPlacementFinding[] = [];
 
@@ -386,7 +389,7 @@ export function detectRunPlacementDefects(
     // (not simply `tokens[run.tokenLo - 1]`) is the same content-not-adjacency
     // rule `acousticRunExtent` applies at the other end of the gap.
     let prevIndex = run.tokenLo - 1;
-    while (prevIndex >= 0 && !isSubstantiveToken(tokens[prevIndex])) prevIndex--;
+    while (prevIndex >= 0 && !isSubstantiveToken(tokens[prevIndex], languageCode)) prevIndex--;
     const prevToken = tokens[prevIndex];
     if (!prevToken) continue;
 
@@ -709,7 +712,7 @@ export function detectUtterancePlacementDefects(
   // R.12 already had to make this same correction for its own placement gap;
   // R.13's carrier lookup below needed the identical fix for a different
   // reason — see that lookup's own comment.
-  const extents = runs.map(run => acousticRunExtent(run, tokens, silences));
+  const extents = runs.map(run => acousticRunExtent(run, tokens, silences, languageCode));
 
   const findings: UtterancePlacementFinding[] = [];
 

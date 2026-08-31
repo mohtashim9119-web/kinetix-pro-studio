@@ -1593,10 +1593,10 @@ export function classifyCoverage(alignments: SegmentAlignment[]): SegmentCoverag
  * can compute transcript coverage without re-deriving the aligner's subject
  * sequence itself.
  */
-export function countTranscriptWords(tokens: TranscriptToken[]): number {
+export function countTranscriptWords(tokens: TranscriptToken[], languageCode?: AlignmentLanguageCode): number {
   let count = 0;
   for (const t of tokens) {
-    for (const w of normalize(t.text)) if (w.length > 0) count++;
+    for (const w of normalize(t.text, languageCode)) if (w.length > 0) count++;
   }
   return count;
 }

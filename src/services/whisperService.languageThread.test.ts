@@ -47,6 +47,7 @@ import {
   extractSegmentAlignments,
   alignScenestoTranscript,
   filterMalformedTokens,
+  countTranscriptWords,
 } from './whisperService';
 import type { VideoSegment, TranscriptToken } from '../types';
 
@@ -184,5 +185,21 @@ describe('filterMalformedTokens — languageCode reaches the empty-text check', 
     const withoutLang = filterMalformedTokens(tokens, 1.0, undefined);
     expect(withoutLang.tokens).toHaveLength(1);
     expect(withoutLang.skippedCount).toBe(0);
+  });
+});
+
+describe('countTranscriptWords — languageCode reaches the coverage-gate word count (WS2 T3.1 Step 3b)', () => {
+  // Same proof shape as filterMalformedTokens above: a non-Latin Unicode
+  // letter has no NFD ASCII decomposition, so it counts as zero words under
+  // the default/'en' fold but as one word under 'es' (\p{L} preserves it).
+  // Previously this function always called normalize(t.text) with no
+  // languageCode at all, unlike every other caller in the coverage-gate path.
+  it('a Greek-letter-only token contributes 0 words under undefined/\'en\' but 1 word under \'es\'', () => {
+    const tokens = [tok('π', 0.0, 0.5), tok('hello', 0.6, 1.0)];
+
+    expect(countTranscriptWords(tokens)).toBe(1);
+    expect(countTranscriptWords(tokens, undefined)).toBe(1);
+    expect(countTranscriptWords(tokens, 'en')).toBe(1);
+    expect(countTranscriptWords(tokens, 'es')).toBe(2);
   });
 });

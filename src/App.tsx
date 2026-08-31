@@ -3227,7 +3227,10 @@ export default function App() {
       // abort — the pre-sync project state is untouched (we return before
       // setProject). The gate's only remaining case is full mismatch (R4-3);
       // internal gaps are skipped below, not aborted (R4-1).
-      const totalTranscriptWords = countTranscriptWords(projectRef.current.transcriptTokens!);
+      const totalTranscriptWords = countTranscriptWords(
+        projectRef.current.transcriptTokens!,
+        toAlignmentLanguageCode(projectRef.current.language),
+      );
 
       const gate = evaluateCoverageGate(aligned.segments, aligned.coverage, totalTranscriptWords);
 
@@ -3523,6 +3526,7 @@ export default function App() {
         const preRuleSegments = finalTimedSegments.map(s => ({ ...s }));
         const runExtents = computeRunExtents(
           anchorTimed, projectRef.current.transcriptTokens!, aligned.silences, audioDuration,
+          toAlignmentLanguageCode(projectRef.current.language),
         );
         const originById = new Map(preRuleSegments.map(s => [s.id, s.startTime]));
 
@@ -3577,6 +3581,7 @@ export default function App() {
           projectRef.current.transcriptTokens!,
           aligned.silences,
           audioDuration,
+          toAlignmentLanguageCode(projectRef.current.language),
         );
         if (runPlacementFindings.length > 0) {
           console.warn(

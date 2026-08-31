@@ -86,6 +86,7 @@
 
 import { computeUnscriptedRuns } from './faChunkPlan';
 import { acousticRunExtent } from './faRunPlacementGate';
+import type { AlignmentLanguageCode } from './whisperService';
 import type { SilenceInterval } from './silenceDetector';
 import type { TranscriptToken, VideoSegment } from '../types';
 
@@ -112,9 +113,10 @@ export function computeRunExtents(
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  languageCode?: AlignmentLanguageCode,
 ): RunExtent[] {
   return computeUnscriptedRuns(parsedSegments, tokens, silences, audioDuration).map((run, runIndex) => {
-    const e = acousticRunExtent(run, tokens, silences);
+    const e = acousticRunExtent(run, tokens, silences, languageCode);
     return { runIndex, startSec: e.startSec, endSec: e.endSec };
   });
 }
