@@ -254,6 +254,21 @@ export interface VideoSegment {
    *  Undefined for an untagged scene (empty `[]`). Display-only — nothing
    *  downstream branches on it. */
   tag?: string;
+  /** Id of the original NATIVE segment this one is ultimately descended
+   *  from — itself for a native segment (set to `id` by parseProjectData on
+   *  every parse/re-sync, never carried forward from a stale prior split),
+   *  and propagated unchanged to both children on every `S` split
+   *  (`segmentSplitDelete.ts`), no matter how many times a piece is split
+   *  again. This is what lets `deleteSegment`'s "last remaining slice"/
+   *  sibling checks recognise TWO segments as siblings of the same original
+   *  even after a CHAINED split has separated them by more than one level —
+   *  `parentSegmentId`-style immediate-parent comparison (or parsing it back
+   *  out of a slice id) only sees one level up and is fooled by nesting.
+   *  Undefined for a segment created before this field existed (an old saved
+   *  project, or a dev fixture/script) — callers fall back to walking the
+   *  slice-id chain (`segmentSplitDelete.ts`'s `parentIdFromSliceId`) rather
+   *  than assume one. */
+  rootSegmentId?: string;
 }
 
 /**

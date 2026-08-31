@@ -57,12 +57,46 @@ function joinAbsorbedText(before: string, after: string): string {
 }
 
 /** Extracts the parent id from a slice id (`slice1_<parentId>::<ordinal>`),
- *  or `null` if `id` is not a slice id. */
+ *  or `null` if `id` is not a slice id. Only the IMMEDIATE parent — for a
+ *  slice produced by splitting an already-split piece, that parent is itself
+ *  a slice id, not the original native segment. See `rootIdFromSliceId` for
+ *  the full walk. */
 export function parentIdFromSliceId(id: string): string | null {
   if (!isSliceSegmentId(id)) return null;
   const withoutPrefix = id.slice('slice1_'.length);
   const sepIdx = withoutPrefix.lastIndexOf('::');
   return sepIdx < 0 ? null : withoutPrefix.slice(0, sepIdx);
+}
+
+/**
+ * Walks a slice id's parent chain all the way up to the original NATIVE
+ * segment id — unlike `parentIdFromSliceId`, which only ever sees one level.
+ * A CHAINED split (splitting a piece that was itself already split, any
+ * number of times) nests slice ids arbitrarily deep; the immediate parent of
+ * a deep slice is another slice id that no longer exists as a real segment
+ * once it's been split again, which is exactly what let a middle slice's
+ * `hasSibling` check false-negative before `rootSegmentId` existed.
+ *
+ * Fallback only — a segment carrying its own `rootSegmentId` (every segment
+ * created since that field was added) never needs this; it exists for a
+ * segment that predates the field (an old saved project, a dev fixture).
+ *
+ * Returns `id` itself unchanged when it is not a slice id at all.
+ */
+export function rootIdFromSliceId(id: string): string {
+  let current = id;
+  for (let parent = parentIdFromSliceId(current); parent !== null; parent = parentIdFromSliceId(current)) {
+    current = parent;
+  }
+  return current;
+}
+
+/** The id of the original native segment `seg` is ultimately descended
+ *  from — `seg.rootSegmentId` when present, else derived by walking its own
+ *  slice-id chain (see `rootIdFromSliceId`'s doc comment for why that walk,
+ *  not `parentIdFromSliceId`'s single-level lookup, is the correct fallback). */
+function effectiveRootId(seg: Pick<VideoSegment, 'id' | 'rootSegmentId'>): string {
+  return seg.rootSegmentId ?? rootIdFromSliceId(seg.id);
 }
 
 /** Splits `text` into two pieces at the WHITESPACE RUN nearest
@@ -130,8 +164,14 @@ export function splitSegmentAtTime(
   const durationA = round3(clampedSplit - start);
   const durationB = round3(end - clampedSplit);
 
-  const a: VideoSegment = { ...target, id: makeSliceSegmentId(target.id, 0), text: textA, startTime: start, duration: durationA };
-  const b: VideoSegment = { ...target, id: makeSliceSegmentId(target.id, 1), text: textB, startTime: clampedSplit, duration: durationB };
+  // Both children carry `target`'s own root forward unchanged — a split of
+  // an already-split piece (a chained split) must still trace back to the
+  // ORIGINAL native segment, not to `target` itself, or a later delete's
+  // sibling check loses track of pieces more than one split apart (see
+  // `effectiveRootId`'s doc comment).
+  const rootSegmentId = effectiveRootId(target);
+  const a: VideoSegment = { ...target, id: makeSliceSegmentId(target.id, 0), text: textA, startTime: start, duration: durationA, rootSegmentId };
+  const b: VideoSegment = { ...target, id: makeSliceSegmentId(target.id, 1), text: textB, startTime: clampedSplit, duration: durationB, rootSegmentId };
 
   const out = segments.map(s => ({ ...s }));
   out.splice(index, 1, a, b);
@@ -160,13 +200,15 @@ export interface DeleteResult {
  * segment, and never the last remaining slice of a split pair/group (see
  * this module's header).
  *
- * The freed time goes to a same-cluster sibling (an adjacent segment
- * sharing the same slice parent id) when one exists, preferring the
- * PREVIOUS one; otherwise to the "downstream absorber" — the next segment,
- * or the previous segment if this was the last one on the timeline. A
- * sibling absorber's TEXT is reunited with the deleted slice's own text
- * (chronological order, `joinAbsorbedText`); a downstream/non-sibling
- * absorber's text is left untouched.
+ * The freed time goes to a same-cluster sibling (another segment descended
+ * from the same original native segment — `rootSegmentId`, not just an
+ * IMMEDIATE slice parent, so a CHAINED split still recognises siblings more
+ * than one level apart) when one exists, preferring the PREVIOUS one;
+ * otherwise to the "downstream absorber" — the next segment, or the previous
+ * segment if this was the last one on the timeline. A sibling absorber's
+ * TEXT is reunited with the deleted slice's own text (chronological order,
+ * `joinAbsorbedText`); a downstream/non-sibling absorber's text is left
+ * untouched.
  *
  * Pure — returns a new array; does not mutate `segments`.
  */
@@ -177,13 +219,16 @@ export function deleteSegment(
   const target = segments[index];
   if (!target) return { segments: segments as VideoSegment[], deleted: false, absorbedById: null };
 
-  const parentId = parentIdFromSliceId(target.id);
-  if (parentId === null) {
+  if (parentIdFromSliceId(target.id) === null) {
     return { segments: segments as VideoSegment[], deleted: false, absorbedById: null }; // unsplit native segment
   }
+  const rootId = effectiveRootId(target);
   // The "last remaining slice" rule protects a SPLIT pair's last piece —
-  // there IS no other representation of that content once it's gone.
-  const hasSibling = segments.some((s, i) => i !== index && parentIdFromSliceId(s.id) === parentId);
+  // there IS no other representation of that content once it's gone. Root
+  // comparison (not immediate-parent) is what lets this see a sibling that a
+  // chained split separated by more than one level.
+  const areSiblings = (a: VideoSegment, b: VideoSegment): boolean => effectiveRootId(a) === effectiveRootId(b);
+  const hasSibling = segments.some((s, i) => i !== index && effectiveRootId(s) === rootId);
   if (!hasSibling) {
     return { segments: segments as VideoSegment[], deleted: false, absorbedById: null }; // last remaining slice
   }
@@ -194,8 +239,8 @@ export function deleteSegment(
 
   const prev = index > 0 ? out[index - 1] : undefined;
   const next = index < out.length - 1 ? out[index + 1] : undefined;
-  const prevIsSibling = !!prev && parentIdFromSliceId(prev.id) === parentId;
-  const nextIsSibling = !!next && parentIdFromSliceId(next.id) === parentId;
+  const prevIsSibling = !!prev && areSiblings(prev, target);
+  const nextIsSibling = !!next && areSiblings(next, target);
 
   let absorbedById: string | null = null;
   if (prevIsSibling && prev) {

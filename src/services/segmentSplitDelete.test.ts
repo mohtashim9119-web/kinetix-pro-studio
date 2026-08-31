@@ -8,6 +8,7 @@ import {
   splitSegmentAtTime,
   deleteSegment,
   parentIdFromSliceId,
+  rootIdFromSliceId,
   splitSelectedSegment,
   deleteSelectedSegment,
 } from './segmentSplitDelete';
@@ -453,5 +454,86 @@ describe('undo after a selection-redirecting split/delete', () => {
     const traversal = undo(history, result.segments);
     expect(traversal).not.toBeNull();
     expect(traversal!.entry.state).toEqual(s1.segments); // both slices' text/timing back exactly
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Chained splits — rootSegmentId. Splitting a segment's own tail repeatedly
+// (the natural way to carve one segment into N pieces) nests slice ids
+// arbitrarily deep. `parentIdFromSliceId` only ever recovers ONE level, so
+// an interior piece's true sibling (also split further away) no longer
+// matches on immediate parent id — `hasSibling` false-negatives and refuses
+// a delete that is clearly not "the last remaining slice" (three other
+// pieces of the same original are still on the timeline). `rootSegmentId`
+// (propagated through every split, native segment's own id as its root)
+// fixes this by comparing against the true original ancestor instead of one
+// level up.
+// ---------------------------------------------------------------------------
+describe('chained splits — rootSegmentId fixes nested-parent sibling detection', () => {
+  /** Splits ORIG's own tail three times in a row (the natural way a user
+   *  carves one segment into 4 pieces by repeatedly splitting what's left),
+   *  producing 4 slices nested at increasing depth: S1 (depth 1), S2 (depth
+   *  2), S3/S4 (depth 3) — S2 and S3 are the ones whose true sibling
+   *  (S1's/S4's own split partner) was split away before this fix. */
+  function splitIntoFourViaChainedTailSplits(): VideoSegment[] {
+    const orig = [seg('ORIG', 0, 8, 'alpha bravo charlie delta echo foxtrot golf hotel')];
+    const r1 = splitSegmentAtTime(orig, 0, 2); // [S1, Tail1]
+    const r2 = splitSegmentAtTime(r1.segments, 1, 4); // [S1, S2, Tail2]
+    const r3 = splitSegmentAtTime(r2.segments, 2, 6); // [S1, S2, S3, S4]
+    expect(r3.segments).toHaveLength(4);
+    return r3.segments;
+  }
+
+  it('rootSegmentId is the SAME original id for all 4 chained slices, no matter the nesting depth', () => {
+    const segments = splitIntoFourViaChainedTailSplits();
+    expect(segments.every(s => s.rootSegmentId === 'ORIG')).toBe(true);
+  });
+
+  it('deletes slice 2 (interior, deepest-nested immediate parent no longer exists) — was blocked pre-fix', () => {
+    const segments = splitIntoFourViaChainedTailSplits();
+    const result = deleteSegment(segments, 1); // slice 2 (0-based index 1)
+    expect(result.deleted).toBe(true);
+    expect(result.segments).toHaveLength(3);
+    assertGapless(result.segments);
+  });
+
+  it('deletes slice 3 (interior) too — was blocked pre-fix for the same reason', () => {
+    const segments = splitIntoFourViaChainedTailSplits();
+    const result = deleteSegment(segments, 2); // slice 3 (0-based index 2)
+    expect(result.deleted).toBe(true);
+    expect(result.segments).toHaveLength(3);
+    assertGapless(result.segments);
+  });
+
+  it('sequentially deletes slices 2 and 3, leaving only the two outer pieces — never refused', () => {
+    let segments = splitIntoFourViaChainedTailSplits();
+    const del2 = deleteSegment(segments, 1);
+    expect(del2.deleted).toBe(true);
+    segments = del2.segments;
+    // The former slice 3 is now at index 1 post-delete.
+    const del3 = deleteSegment(segments, 1);
+    expect(del3.deleted).toBe(true);
+    expect(del3.segments).toHaveLength(2);
+    assertGapless(del3.segments);
+  });
+
+  it('still refuses to delete the LAST remaining slice once every other chained sibling is gone', () => {
+    let segments = splitIntoFourViaChainedTailSplits();
+    segments = deleteSegment(segments, 1).segments; // delete slice 2
+    segments = deleteSegment(segments, 1).segments; // delete slice 3 (now at index 1)
+    segments = deleteSegment(segments, 1).segments; // delete slice 4 (now at index 1) -> one left
+    expect(segments).toHaveLength(1);
+    const result = deleteSegment(segments, 0);
+    expect(result.deleted).toBe(false); // last remaining slice of ORIG's cluster
+  });
+
+  it('rootIdFromSliceId walks a multi-level slice id back to its true root (the pure fallback, no field involved)', () => {
+    const segments = splitIntoFourViaChainedTailSplits();
+    // Strip rootSegmentId to exercise the legacy (pre-field) fallback path.
+    for (const s of segments) delete s.rootSegmentId;
+    expect(segments.map(s => rootIdFromSliceId(s.id))).toEqual(['ORIG', 'ORIG', 'ORIG', 'ORIG']);
+
+    const result = deleteSegment(segments, 1); // still works via the string-walk fallback
+    expect(result.deleted).toBe(true);
   });
 });

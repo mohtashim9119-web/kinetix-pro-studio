@@ -627,7 +627,11 @@ export const parseProjectData = async (
   // an unedited segment's id survives the resync; a segment with no content
   // match (new or edited text) gets a fresh content-derived id.
   const idAssigned = assignSegmentIds(finalSegments, previousSegments);
-  idAssigned.forEach((seg, i) => { finalSegments[i] = seg; });
+  // A parsed/re-synced segment is always a NATIVE (root) segment — splitting
+  // only ever happens later, via the user's own manual `S` action — so its
+  // root is itself. Re-derived fresh every Apply Sync, same as anchorStart:
+  // a re-sync never carries a rootSegmentId forward from a stale prior split.
+  idAssigned.forEach((seg, i) => { finalSegments[i] = { ...seg, rootSegmentId: seg.id }; });
 
   // Detect segments sharing the same assetId — can happen when the
   // unused-asset pool is exhausted after a deletion and re-sync.
