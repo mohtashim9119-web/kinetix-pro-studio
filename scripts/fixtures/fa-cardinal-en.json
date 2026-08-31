@@ -157,7 +157,14 @@
       "pair",
       "compound"
     ],
-    "selectionPolicy": null,
-    "note": "NOT DETERMINED - both readings are genuinely idiomatic English ('nineteen ninety-eight' vs 'one thousand nine hundred ninety-eight'). Left unset deliberately, per this step's instruction not to pick a reading convention unilaterally - needs operator sign-off before Step 3 wires this in."
+    "selectionPolicy": {
+      "name": "modFloorThreshold",
+      "threshold": 10,
+      "atOrAboveThreshold": "pair",
+      "belowThreshold": "compound"
+    },
+    "rationale": "mirrors matcher convention including its x00–x09 quirk; changeable as data.",
+    "matcherParityNote": "The x00–x09 cardinal fallback (n % 100 < threshold, e.g. 1900-1909, 2000-2009) is a known matcher defect (textNormalize.ts's digitTokenToWords, textNormalize.ts:91) being deliberately mirrored here, not independently corrected - if the matcher's threshold or behavior is ever corrected, this policy must be updated in the same change. The two sides must not be fixed independently.",
+    "note": "DETERMINED (operator ruling, Step 3b-ii, per t32-step3b-i-year-reading-measurement.md's option 1): selectionPolicy now encodes the matcher's full conditional rule as data (n % 100 >= threshold -> 'pair', else -> 'compound'), matching the matcher value-by-value across the whole 1100-2999 range instead of a single blanket constant. 'pair' = digit-pair reading (e.g. 'nineteen ninety-eight'); 'compound' = literal arithmetic cardinal (e.g. 'one thousand nine hundred ninety-eight'). Still consumed by nothing - Step 3b-iii wires this into faTextNormalize.ts/fa/text.rs."
   }
 }

@@ -160,7 +160,14 @@
       "hundertgruppe",
       "compound"
     ],
-    "selectionPolicy": null,
-    "note": "NOT DETERMINED. Both candidates fuse into a single concatenated word regardless of which is picked (no representability difference, unlike en/es/fr/pt) - 'hundertgruppe' = hundred-grouped colloquial year reading ('neunzehnhundertachtundneunzig'), 'compound' = literal arithmetic decomposition ('eintausendneunhundertachtundneunzig'). Left unset deliberately, per this step's instruction not to pick a reading convention unilaterally."
+    "selectionPolicy": {
+      "name": "modFloorThreshold",
+      "threshold": 10,
+      "atOrAboveThreshold": "hundertgruppe",
+      "belowThreshold": "compound"
+    },
+    "rationale": "The matcher is not language-gated - it applies the same n % 100 >= threshold rule to every language's digit tokens regardless of content language (confirmed in t32-step3b-i-year-reading-measurement.md). This mirrors that structure only, not a German-specific reading convention verified against a real corpus - revisitable when a real de corpus exists.",
+    "matcherParityNote": "The x00–x09 cardinal fallback (n % 100 < threshold, e.g. 1900-1909, 2000-2009) is a known matcher defect being deliberately mirrored here, not independently corrected - if the matcher's threshold or behavior is ever corrected, this policy must be updated in the same change. The two sides must not be fixed independently.",
+    "note": "DETERMINED (operator ruling, Step 3b-ii): selectionPolicy now encodes the same conditional-rule shape as en's (n % 100 >= threshold -> 'hundertgruppe', else -> 'compound'). Both candidates fuse into a single concatenated word regardless of which is picked (no representability difference, unlike en/es/fr/pt) - 'hundertgruppe' = hundred-grouped colloquial year reading ('neunzehnhundertachtundneunzig'), 'compound' = literal arithmetic decomposition ('eintausendneunhundertachtundneunzig'). Still consumed by nothing - Step 3b-iii wires this into faTextNormalize.ts/fa/text.rs."
   }
 }
