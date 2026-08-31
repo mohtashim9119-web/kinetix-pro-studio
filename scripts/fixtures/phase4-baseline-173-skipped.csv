@@ -1,4 +1,4 @@
-segmentIndex,segmentTag,segmentText,matchedWords,totalWords,confidence,longestRun
-0,perilous_realms,The Hardest Warhammer 40K Environments to Fight In,0,9,0,0
-12,blue_monkey,"""The blue monkey jumped over the moon"".",0,7,0,0
-111,shadow_loss,Some don’t emerge.,1,4,0.25,1
+segmentIndex,segmentTag,segmentText,matchedWords,totalWords,confidence,longestRun,tokenHash
+0,perilous_realms,The Hardest Warhammer 40K Environments to Fight In,0,9,0,0,bb3ef0917ef8e59f
+12,blue_monkey,"""The blue monkey jumped over the moon"".",0,7,0,0,f6d1a1d7a6cdd398
+111,shadow_loss,Some don’t emerge.,1,4,0.25,1,588fac093a3f1210

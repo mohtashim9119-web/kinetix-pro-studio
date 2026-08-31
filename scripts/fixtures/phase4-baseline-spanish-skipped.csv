@@ -1,2 +1,2 @@
-segmentIndex,segmentTag,segmentText,matchedWords,totalWords,confidence,longestRun
-0,001_scylla_intro,Scylla.,0,1,0,0
+segmentIndex,segmentTag,segmentText,matchedWords,totalWords,confidence,longestRun,tokenHash
+0,001_scylla_intro,Scylla.,0,1,0,0,6ed9a044ed8dd11f

@@ -37,16 +37,38 @@ const OUT_DIR = '.work-phase4';
 const OUT = `${OUT_DIR}/step-w-c11-live-repro.json`;
 const AUDIO_DURATION = 709.01;
 
+/** Quote-aware single-row split — `text` can itself contain commas. */
+function splitCsvRow(line: string): string[] {
+  const fields: string[] = [];
+  let field = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (line[i + 1] === '"') { field += '"'; i++; } else { inQuotes = false; }
+      } else { field += c; }
+    } else if (c === '"') { inQuotes = true; }
+    else if (c === ',') { fields.push(field); field = ''; }
+    else { field += c; }
+  }
+  fields.push(field);
+  return fields;
+}
+
 function loadBaselineSegments(): VideoSegment[] {
-  const lines = readFileSync(BASELINE, 'utf8').trim().split('\n');
-  // Columns are order,tag,text,startTime,duration,endTime,anchorSource. `text`
-  // can itself contain commas, so the numeric columns are read from the END of
-  // the row (the last four fields are fixed and comma-free), not by index from
-  // the front.
+  const lines = readFileSync(BASELINE, 'utf8').trim().split('\n').map(l => l.replace(/\r$/, ''));
+  // Columns are order,tag,text,startTime,duration,endTime,anchorSource[,tokenHash].
+  // Read by HEADER NAME, not by fixed offset from either end: `text` can itself
+  // contain commas, and a later column (WS2 T3.1 Step 4's `tokenHash`) can be
+  // appended after `anchorSource` without shifting anything this file reads.
+  const header = splitCsvRow(lines[0]!);
+  const startIdx = header.indexOf('startTime');
+  const durIdx = header.indexOf('duration');
   return lines.slice(1).map((line, i) => {
-    const parts = line.split(',');
-    const start = parseFloat(parts[parts.length - 4]!);
-    const dur = parseFloat(parts[parts.length - 3]!);
+    const parts = splitCsvRow(line);
+    const start = parseFloat(parts[startIdx]!);
+    const dur = parseFloat(parts[durIdx]!);
     return {
       id: `seg-${i}`,
       startTime: start,

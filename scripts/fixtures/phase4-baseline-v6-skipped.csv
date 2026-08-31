@@ -1,4 +1,4 @@
-segmentIndex,segmentTag,segmentText,matchedWords,totalWords,confidence,longestRun
-26,027_internal_change_face,But something stayed in you.,0,5,0,0
-27,028_small_permanent_flake,Small and permanent.,0,3,0,0
-28,029_night_understanding,A new understanding of what the night actually is.,0,9,0,0
+segmentIndex,segmentTag,segmentText,matchedWords,totalWords,confidence,longestRun,tokenHash
+26,027_internal_change_face,But something stayed in you.,0,5,0,0,6f02b2183c7b8817
+27,028_small_permanent_flake,Small and permanent.,0,3,0,0,501f8e83f66973fe
+28,029_night_understanding,A new understanding of what the night actually is.,0,9,0,0,28a6421fe25f7606

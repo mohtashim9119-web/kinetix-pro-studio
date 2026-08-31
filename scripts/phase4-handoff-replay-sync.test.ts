@@ -40,6 +40,7 @@ import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
+import { createHash } from 'crypto';
 import { parseProjectData, evaluateCoverageGate, filterToCoveredSegments } from '../src/App';
 import {
   alignScenestoTranscript,
@@ -51,8 +52,26 @@ import {
 } from '../src/services/whisperService';
 import { applyAnchorBasedTiming, headExtendFirstSegment } from '../src/services/syncEngine';
 import { snapCoveredBoundaries } from '../src/services/snapBoundaries';
+import { canonicalize } from '../src/services/textNormalize';
 import type { TranscriptToken, VideoSegment, Asset } from '../src/types';
 import type { SilenceInterval } from '../src/services/silenceDetector';
+
+/**
+ * WS2 T3.1 Step 4 — a per-segment identity signature for the canonical token
+ * stream, independent of every other committed column. `text`/`anchorSource`/
+ * timing can all stay byte-identical across a `canonicalize()` change whose
+ * fold is symmetric on both sides of the aligner (WS2 T3.1 Steps 2/3 measured
+ * exactly this on the Spanish corpus) — this hash is the one column that
+ * actually moves when the token CONTENT changes, so a future canonicalize
+ * edit that is truly a no-op stays provably a no-op, and one that isn't gets
+ * caught here instead of nowhere. Sha256 (not a toy checksum) over the JSON
+ * array form (not the joined string) so token-boundary shifts can never
+ * alias into the same hash as a different split of the same characters.
+ */
+function tokenStreamHash(text: string, languageCode: AlignmentLanguageCode | undefined): string {
+  const tokens = canonicalize(text, languageCode);
+  return createHash('sha256').update(JSON.stringify(tokens)).digest('hex').slice(0, 16);
+}
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 /** Durable, gitignored artifact root. Deliberately NOT /tmp — see the K8 note above. */
@@ -264,6 +283,10 @@ describe('Phase 3->4 handoff Step M — golden baseline replay', () => {
             drifted.push(`seg ${i} (${want.tag}) ${name}: replay=${a} baseline=${b} (Δ${(a - b).toFixed(6)}s)`);
           }
         }
+        const gotHash = tokenStreamHash(got.text, spec.languageCode);
+        if (gotHash !== want.tokenHash) {
+          drifted.push(`seg ${i} (${want.tag}) tokenHash: replay=${gotHash} baseline=${want.tokenHash}`);
+        }
       }
       expect(
         drifted,
@@ -288,6 +311,11 @@ describe('Phase 3->4 handoff Step M — golden baseline replay', () => {
         expect(gotSkip.segmentTag).toBe(wantSkip.segmentTag);
         expect(gotSkip.matchedWords).toBe(Number(wantSkip.matchedWords));
         expect(gotSkip.totalWords).toBe(Number(wantSkip.totalWords));
+        // A skipped segment's matchedWords/totalWords/confidence/longestRun are
+        // ALL downstream of canonicalize() too, but only as counts/ratios — the
+        // same blind spot the segments-fixture hash above exists to close (a
+        // token-content change can leave a count unchanged, WS2 T3.1 Step 3).
+        expect(tokenStreamHash(gotSkip.segmentText, spec.languageCode)).toBe(wantSkip.tokenHash);
       }
 
       // The coverage gate must not abort on real narration (R13).
