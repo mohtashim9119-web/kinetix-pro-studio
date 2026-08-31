@@ -80,7 +80,7 @@ export interface AlignFromCacheResult {
  * call. Shared by the live Option-A fast-path below and the Option C direct
  * pre-commit call from handleApplySyncFromFiles (App.tsx).
  */
-async function alignSegmentsFromCachedTranscript(
+export async function alignSegmentsFromCachedTranscript(
   audioAsset: Asset,
   segments: VideoSegment[],
   tokens: TranscriptToken[],
