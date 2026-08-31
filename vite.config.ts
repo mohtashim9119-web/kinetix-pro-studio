@@ -25,6 +25,6 @@ export default defineConfig({
     // node_modules-adjacent source tree) from having its test files picked
     // up by a plain `vitest run`'s glob — the stray-worktree incident
     // closed in WS2 Step 17 Part 0.
-    exclude: ['**/node_modules/**', '**/.git/**', '.claude/worktrees/**'],
+    exclude: ['**/node_modules/**', '**/.git/**', '.claude/worktrees/**', '.work-phase4/**'],
   },
 });
