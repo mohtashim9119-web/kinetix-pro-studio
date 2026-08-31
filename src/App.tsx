@@ -2392,12 +2392,18 @@ export default function App() {
   }, [showToast, setProjectSilent]);
 
   const handleUndo = useCallback((): void => {
-    performUndo({ isResizingRef, history, liveProjectRef, blockedByLock, setHistory, applyRestoredState, setHistoryAnchor });
-  }, [history, applyRestoredState, blockedByLock]);
+    performUndo({
+      isResizingRef, history, liveProjectRef, blockedByLock, setHistory, applyRestoredState, setHistoryAnchor,
+      selectedSegmentId, setSelectedSegmentId,
+    });
+  }, [history, applyRestoredState, blockedByLock, selectedSegmentId]);
 
   const handleRedo = useCallback((): void => {
-    performRedo({ isResizingRef, history, liveProjectRef, blockedByLock, setHistory, applyRestoredState, setHistoryAnchor });
-  }, [history, applyRestoredState, blockedByLock]);
+    performRedo({
+      isResizingRef, history, liveProjectRef, blockedByLock, setHistory, applyRestoredState, setHistoryAnchor,
+      selectedSegmentId, setSelectedSegmentId,
+    });
+  }, [history, applyRestoredState, blockedByLock, selectedSegmentId]);
 
   const undoLabel = peekUndo(history)?.label;
   const redoLabel = peekRedo(history)?.label;
