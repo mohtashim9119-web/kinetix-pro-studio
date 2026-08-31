@@ -148,7 +148,9 @@ anyway, so the operator had it removed entirely (session ws2-26, round 1 of 2,
 UI needed) is closed as not-building — there is nothing left for it to persist. Recovering a
 dropped scene is now fully manual: jump to it via the sync log's "Jump to absorbing scene" link,
 then split (`S`) the absorbing clip and retype. Two real bugs surfaced by that same removal pass
-are open — see §4. Phase 3 is next.
+(sync-log host-numbering off-by-one, split-then-delete text loss) are fixed and
+operator-verified (`docs/history-2.md`'s ws2-t21 round-2 record). Phase 3 (Text and number
+normalization) is in progress.
 
 ### 1. Finished but pending verification
 
@@ -184,29 +186,21 @@ items below.)
 
 ### 4. Open bugs
 
-- [OPEN] Sync-log skip entry "Clip N" mislabels which clip actually absorbed the drop, off by
-  one. Operator-confirmed live on two corpora: v6 showed "S27/Clip 26 skipped" when scripted
-  scene 27 was the one dropped and clip 27 — not 26 — is what actually absorbed it (S27/28/29 all
-  drop as one run, so clip 30 becomes clip 27 after the shift); 173 showed "S112/Clip 109" when
-  clip 110 is the real absorber. ws2-25 Commit 5's "off-by-one fix" (`buildSkipLogEntries`,
-  App.tsx) evidently didn't fix this case, or fixed a different one. `computeAbsorbedGaps`/
-  `AbsorbedGapLogInfo` (the reporting machinery this depends on) were kept, unmodified, through
-  the ws2-26 restore removal — this is a pre-existing indexing defect, not a regression from that
-  removal. Needs re-diagnosis. No owner.
-- [OPEN] Split-then-delete caption/text loss still reproduces live, unchanged by the attempted
-  fix (ws2-26 Commit 3, `App.tsx`'s `handleDeleteSegmentById` — only cleared `selectedSegmentId`
-  when the deleted id matched it). Operator confirmed "same issue" persists after that fix
-  shipped. The fixed mechanism was real (verified by code trace) but is evidently not the whole
-  story, or not the operative one for the actual repro path. Needs re-diagnosis against the live
-  app, not just the code trace. No owner.
+(none)
 
 ### 5. Deferred tasks
 
 - [DEFERRED] Six cuts landing on live audio in 173 with FA ON (segment pairs 34-35, 88-89,
-  96-97, 106-107, 133-134, 144-145) — reported this session (ws2-26), not independently
-  re-measured against the corpus by this audit itself. A distinct boundary-placement defect from
-  WS1 §4's existing FA-related open items (different corpus rows, FA-arm-specific), needing its
-  own dedicated audit before a fix is attempted — CLAUDE.md's standing rule against
+  96-97, 106-107, 133-134, 144-145) — reported in ws2-26, not independently re-measured against
+  the corpus by this audit itself. Re-checked this session (ws2-t21 Commits A/B/C): the
+  gap-absorbing boundary policy was implemented to spec then reverted back to silence-midpoint in
+  the same uncommitted working tree, so `git log` shows the round trip never reached a commit —
+  `snapBoundaries.ts` and every other sync-timing file are untouched (comment-only) across the
+  whole ws2-26→ws2-t21 arc. The boundary-computation code that produced this defect is therefore
+  byte-identical to when it was filed, so it is still expected to reproduce; this was NOT
+  re-confirmed via a fresh live-audio ear pass this session. A distinct boundary-placement defect
+  from WS1 §4's existing FA-related open items (different corpus rows, FA-arm-specific), needing
+  its own dedicated audit before a fix is attempted — CLAUDE.md's standing rule against
   corpus-fitted thresholds applies here too. No owner yet.
 - [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect found
   while diagnosing bug 3, not itself closed by bug 3's non-repro: `videoDecoderPool.ts`'s 90-frame
@@ -219,6 +213,10 @@ items below.)
   peak / 1300 MB → 137 MB spike-memory work. Preview only — export uses a separate, non-windowed
   sequential decoder (`sequentialDecode.ts`) and is unaffected. Full diagnosis:
   `docs/ws2-video-ingest/bug3-diagnosis.md`.
+- [DEFERRED] Arbitrary frame rate support — some assets are 24fps but the app assumes a single
+  project frame rate throughout; no owner.
+- [DEFERRED] Part B storage scripts unrun on Windows and macOS — A5 unresolved; no owner.
+- [DEFERRED] S/D hotkey scope is "a segment is selected" rather than true timeline focus; no owner.
 
 ---
 
