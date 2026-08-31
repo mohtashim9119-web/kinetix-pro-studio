@@ -130,7 +130,7 @@ import {
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { computeAbsorbedGaps } from './services/absorbedGaps';
-import { splitSegmentAtTime, deleteSegment } from './services/segmentSplitDelete';
+import { splitSelectedSegment, deleteSelectedSegment } from './services/segmentSplitDelete';
 
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
@@ -4370,46 +4370,62 @@ export default function App() {
 
   // WS2 T2.1 Commit 4 — S (split the selected segment at the playhead) and
   // D (delete a split slice). Both go through setProject (undoable).
+  //
+  // WS2 ws2-28 Commit 2 — both handlers used to leave `selectedSegmentId`
+  // dangling (split: never touched, so it kept pointing at the now-replaced
+  // pre-split id) or null it unconditionally (delete: ws2-25's fix below).
+  // Either way, an open drawer whose target segment vanished had no path back
+  // to a valid segment — see `split-text-diagnosis.md` (session ws2-28) for
+  // the full trace of how that read as "the surviving neighbour's text
+  // vanished." `splitSelectedSegment`/`deleteSelectedSegment`
+  // (segmentSplitDelete.ts) now decide the post-op `selectedSegmentId` as
+  // part of the same pure computation as the segment mutation itself, so
+  // these handlers are pure plumbing — read the target, call the pure
+  // function, commit both results. Reads `selectedSegmentIdRef` (not a
+  // closed-over `selectedSegmentId`) so a stale closure in either
+  // `useCallback([])` can't compare against a selection that has since
+  // changed.
   const handleSplitSelectedSegment = useCallback((): void => {
     const id = resolveShortcutTargetSegmentId();
     if (!id) return;
+    let didSplit = false;
+    let nextSelectedId: string | null = null;
     setProject(prev => {
-      const index = prev.segments.findIndex(s => s.id === id);
-      if (index < 0) return prev;
-      const { segments, split } = splitSegmentAtTime(prev.segments, index, currentTimeRef.current);
-      return split ? { ...prev, segments } : prev;
+      const result = splitSelectedSegment(prev.segments, id, currentTimeRef.current, selectedSegmentIdRef.current);
+      didSplit = result.split;
+      nextSelectedId = result.selectedSegmentId;
+      return result.split ? { ...prev, segments: result.segments } : prev;
     });
+    if (didSplit) setSelectedSegmentId(nextSelectedId);
   }, []);
 
   // WS2 ws2-25 Commit 4 — id-parameterized so the D shortcut (which resolves
   // its own target) and the Timeline right-click "Delete segment" entry (which
   // already knows exactly which clip was clicked) share one code path rather
   // than the context menu re-deriving selection state to call the shortcut
-  // handler indirectly.
+  // handler indirectly. (That context menu no longer exists — WS2 ws2-26
+  // round 1 removed it — but D still resolves its own target the same way, so
+  // this stays the one delete entry point.)
   const handleDeleteSegmentById = useCallback((id: string): void => {
     let didDelete = false;
+    let nextSelectedId: string | null = null;
     setProject(prev => {
-      const index = prev.segments.findIndex(s => s.id === id);
-      if (index < 0) return prev;
-      const { segments, deleted } = deleteSegment(prev.segments, index);
-      if (!deleted) return prev;
-      didDelete = true;
-      return { ...prev, segments };
+      const result = deleteSelectedSegment(prev.segments, id, selectedSegmentIdRef.current);
+      didDelete = result.deleted;
+      nextSelectedId = result.selectedSegmentId;
+      return result.deleted ? { ...prev, segments: result.segments } : prev;
     });
-    // WS2 ws2-26 Commit 3 — clear selection only when the DELETED segment is
-    // the one currently selected. This used to clear unconditionally on any
-    // successful delete, so deleting an unrelated clip (e.g. the Timeline
-    // context menu's "Delete segment" on a different clip, or the D shortcut
-    // targeting the playhead segment) while a DIFFERENT segment's caption was
-    // open in the drawer (BottomDrawer -> SegmentControls's "Overlay text"
-    // input, driven by `selectedSegment`, App.tsx's own memo) unmounted that
-    // drawer out from under the user — the segment's own `text` was never
-    // touched (`deleteSegment` doesn't touch survivor text), only its EDITOR
-    // vanished, which is what read as "the text disappeared" on a split
-    // segment's surviving neighbour. Reads the ref (not the `id` param) so a
-    // stale closure in this `useCallback([])` can't compare against a
-    // selection that has since changed.
-    if (didDelete && selectedSegmentIdRef.current === id) setSelectedSegmentId(null);
+    // WS2 ws2-28 Commit 2 (operator-approved reversal of ws2-25's
+    // clear-to-null): when the deleted segment WAS the open selection,
+    // `deleteSelectedSegment` redirects it to `absorbedById` — the neighbour
+    // that just absorbed the freed span — instead of closing the editor.
+    // Closing a caption editor because a neighbouring slice was deleted was
+    // never correct on its own terms. When the deleted segment was NOT the
+    // selection, `nextSelectedId` comes back equal to the selection that was
+    // already there, so this is a no-op re-render-wise — ws2-25's original
+    // guarantee (an unrelated delete never disturbs an open editor) still
+    // holds.
+    if (didDelete) setSelectedSegmentId(nextSelectedId);
   }, []);
 
   const handleDeleteSelectedSegment = useCallback((): void => {
