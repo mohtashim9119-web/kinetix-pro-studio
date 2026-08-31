@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { motion } from 'motion/react';
 import { X, Lock, Unlock, ArrowLeftRight, Sparkles, Layers } from 'lucide-react';
 import { VideoSegment, Asset, HeadingOverlay } from '../types';
 import { SegmentControls } from './SegmentControls';
@@ -122,19 +122,37 @@ export function BottomDrawer({
   // at, never a copy cached on the segment — see Asset.duration's own doc.
   const srcDur = asset?.duration ?? 0;
 
+  // WS2 ws2-28 Commit 1 — this used to be an AnimatePresence mount/unmount:
+  // `{(s || h) && <motion.div exit={...}>...</motion.div>}`. When `s`/`h`
+  // went from a real target to null (the open segment got split or deleted
+  // out from under the drawer), AnimatePresence held the LAST COMMITTED
+  // subtree on screen for the whole exit transition — meaning
+  // `SegmentControls` kept rendering with a segment object that was already
+  // gone from `project.segments`, indefinitely in at least one measured case
+  // (split-text-diagnosis.md, session ws2-28: still showing stale text 3+
+  // seconds later, and reproduced even on a plain manual close, not just
+  // split/delete). Restructured so `motion.div` is ALWAYS mounted and the
+  // slide is driven by `animate` variants instead of presence — nothing ever
+  // "exits" holding stale props, because nothing ever unmounts. The content
+  // below is gated on the live `isOpen` (derived from the live `s`/`h`
+  // props, freshly evaluated every render), so it goes blank the instant the
+  // selection is gone rather than freezing on old data. The animation itself
+  // is kept — this is a mechanism change, not a removal.
+  const isOpen = !!(s || h);
+
   return (
-    <AnimatePresence>
-      {(s || h) && (
-        <motion.div
-          initial={{ y: '100%', x: '-50%' }}
-          animate={{ y: 0, x: '-50%' }}
-          exit={{ y: '100%', x: '-50%' }}
-          transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-          className="fixed bottom-0 z-50
-                     bg-[#0A0A0A] border-t border-[#1A1A1A]
-                     rounded-t-3xl shadow-2xl"
-          style={{ maxHeight: '45vh', left: '50%', width: '50vw' }}
-        >
+    <motion.div
+      initial={false}
+      animate={{ y: isOpen ? 0 : '100%', x: '-50%' }}
+      transition={{ type: 'spring', damping: 30, stiffness: 300 }}
+      className="fixed bottom-0 z-50
+                 bg-[#0A0A0A] border-t border-[#1A1A1A]
+                 rounded-t-3xl shadow-2xl"
+      style={{ maxHeight: '45vh', left: '50%', width: '50vw', pointerEvents: isOpen ? 'auto' : 'none' }}
+      aria-hidden={!isOpen}
+    >
+      {isOpen && (
+        <>
           {/* Header */}
           <div className="grid grid-cols-3 items-center px-6 py-3 border-b border-[#1A1A1A]">
             <div className="flex items-center gap-3 justify-self-start">
@@ -368,8 +386,8 @@ export function BottomDrawer({
             )}
 
           </div>
-        </motion.div>
+        </>
       )}
-    </AnimatePresence>
+    </motion.div>
   );
 }

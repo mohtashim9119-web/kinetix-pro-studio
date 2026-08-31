@@ -4701,6 +4701,24 @@ export default function App() {
   const selectedSegmentIndex = project.segments.findIndex(s => s.id === selectedSegmentId);
   const selectedHeading = (project.headings ?? []).find(h => h.id === selectedHeadingId) ?? null;
 
+  // WS2 ws2-28 Commit 1 — a dangling `selectedSegmentId` (pointing at a
+  // segment split/deleted out from under an open drawer) used to silently
+  // degrade to a blank/stale editor. Commit 2 closes the two ways this
+  // happens today (split, delete); this is the backstop for any FUTURE path
+  // that orphans the selection the same way — loud in dev, and inert in
+  // prod since `selectedSegment` already resolves to `null` correctly either
+  // way (`BottomDrawer.tsx`'s content is now gated on that live value, not a
+  // stale one — see Commit 1).
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    if (selectedSegmentId === null) return;
+    if (project.segments.some(s => s.id === selectedSegmentId)) return;
+    console.warn(
+      `[kinetix] selectedSegmentId "${selectedSegmentId}" is not present in project.segments — ` +
+      `the editor drawer has an orphaned selection and will render blank.`,
+    );
+  }, [selectedSegmentId, project.segments]);
+
   // Sync volatile values into refs on every render so async handlers and stable
   // callbacks can read the live state without stale closures.
   // Intentionally no dependency array — must run after every render to stay fresh.
