@@ -2,6 +2,7 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import type { Asset, VideoSegment, TranscriptToken } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 import { canonicalize, canonicalizeSceneDoc } from './textNormalize';
+import { SUPPORTED_LANGUAGE_CODES } from '../constants';
 import {
   ALIGN_MATCH_SCORE, ALIGN_MISMATCH_SCORE, ALIGN_GAP_SCORE,
   LOW_CONFIDENCE_RATIO, MALFORMED_TOKEN_DURATION_TOLERANCE_SEC,
@@ -44,6 +45,36 @@ type WhisperEvent =
  */
 export function canonicalizeForAlignment(s: string, languageCode?: 'en' | 'es' | 'fr' | 'de' | 'pt'): string[] {
   return canonicalize(s, languageCode);
+}
+
+/** The literal union `canonicalize()`/`normalize()` accept — identical in
+ *  content to `constants.ts`'s `SUPPORTED_LANGUAGES` codes and to
+ *  `faTextNormalize.ts`'s `FaLanguageCode`; kept as its own alias here so this
+ *  module doesn't need a runtime import of either (the FA module chain
+ *  imports back into this file — see `faChunkPlan.ts` — and `constants.ts`'s
+ *  array is a plain string list, not this literal type). */
+export type AlignmentLanguageCode = 'en' | 'es' | 'fr' | 'de' | 'pt';
+
+/**
+ * Narrows a project's stored `language` (or `undefined`, on a project from
+ * before language storage existed) to the literal union the alignment
+ * canonicalizer accepts. WS2 T3.1: every `extractSegmentAlignments`/
+ * `alignScenestoTranscript`/`filterMalformedTokens` call site threads
+ * `project.language` through this function rather than passing the raw
+ * string, so an unset or unsupported value (a whisper-cli code outside the
+ * five languages sync accuracy is verified for, `constants.ts`'s
+ * `SUPPORTED_LANGUAGE_CODES`) resolves to `undefined` — `canonicalize()`'s own
+ * default, and byte-for-byte the ASCII-fold behavior every project got before
+ * this parameter existed. This is a deliberate default, not an omission: an
+ * unrecognized code has no non-English canonicalization rules to apply
+ * anyway (`textNormalize.ts`'s `NON_ENGLISH_CANONICALIZE_LANGUAGES` only
+ * covers the same five), so falling back to the English path is the only
+ * behavior defined for it.
+ */
+export function toAlignmentLanguageCode(language: string | undefined): AlignmentLanguageCode | undefined {
+  return language !== undefined && SUPPORTED_LANGUAGE_CODES.includes(language)
+    ? (language as AlignmentLanguageCode)
+    : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -866,6 +897,7 @@ export function extractSegmentAlignments(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
   audioDuration?: number,
+  languageCode?: AlignmentLanguageCode,
 ): AlignResult[] {
   if (!tokens.length || !segments.length) {
     return segments.map(() => ({
@@ -882,7 +914,7 @@ export function extractSegmentAlignments(
   // precision.
   const tokenWords: Array<{ word: string; tokenIdx: number; startSec: number }> = [];
   for (let i = 0; i < tokens.length; i++) {
-    const words = normalize(tokens[i]!.text);
+    const words = normalize(tokens[i]!.text, languageCode);
     for (const word of words) {
       if (word.length > 0) tokenWords.push({ word, tokenIdx: i, startSec: tokens[i]!.startSec });
     }
@@ -899,7 +931,7 @@ export function extractSegmentAlignments(
     // WS4 Feature 1 — the scene-doc side is stripped of stage directions before
     // tokenizing (normalizeSceneDoc). `seg.text` itself is untouched: only this
     // ALIGNMENT VIEW of it changes, so the editor still shows what the author wrote.
-    const words = seg?.text && seg.text.trim() ? normalizeSceneDoc(seg.text) : [];
+    const words = seg?.text && seg.text.trim() ? normalizeSceneDoc(seg.text, languageCode) : [];
     for (const w of words) if (w.length > 0) queryWords.push(w);
     segRanges.push({ start, end: queryWords.length });
   }
@@ -1421,6 +1453,7 @@ export interface MalformedTokenFilterResult {
 export function filterMalformedTokens(
   tokens: TranscriptToken[],
   audioDuration: number,
+  languageCode?: AlignmentLanguageCode,
 ): MalformedTokenFilterResult {
   const checkAgainstEnd = Number.isFinite(audioDuration) && audioDuration > 0;
   const maxEnd = audioDuration + MALFORMED_TOKEN_DURATION_TOLERANCE_SEC;
@@ -1456,7 +1489,7 @@ export function filterMalformedTokens(
     // Text that normalizes to nothing (punctuation-only, whitespace-only) can
     // never match a scene-doc word, but its timestamps can still be picked as a
     // segment edge. Drop it here rather than letting it anchor a boundary.
-    if (normalize(text).length === 0) {
+    if (normalize(text, languageCode).length === 0) {
       drop('empty-text');
       continue;
     }
@@ -1477,6 +1510,7 @@ export function alignScenestoTranscript(
   tokens: TranscriptToken[],
   silences: SilenceInterval[] = [],
   audioDuration?: number,
+  languageCode?: AlignmentLanguageCode,
 ): SegmentAlignment[] {
   const _instrOn = alignInstrEnabled();
   const _passT0 = _instrOn ? performance.now() : 0;
@@ -1489,7 +1523,7 @@ export function alignScenestoTranscript(
   }
 
   // Hirschberg semi-global alignment + per-segment extraction (doc §3.1/§3.1.1).
-  const results = extractSegmentAlignments(segments, tokens, audioDuration);
+  const results = extractSegmentAlignments(segments, tokens, audioDuration, languageCode);
 
   // Step 2 — override t1 from neighbor anchors.
   // Each unlocked segment's right boundary is set to the next segment's t0 anchor

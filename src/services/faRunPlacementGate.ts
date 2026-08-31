@@ -117,6 +117,7 @@
 
 import { computeUnscriptedRuns } from './faChunkPlan';
 import { alignScenestoTranscript, normalize } from './whisperService';
+import type { AlignmentLanguageCode } from './whisperService';
 import type { UnscriptedRun } from './faChunkPlan';
 import { R12_MIN_CORRECTION_SEC } from './syncConstants';
 import type { SilenceInterval } from './silenceDetector';
@@ -681,6 +682,7 @@ export function detectUtterancePlacementDefects(
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  languageCode?: AlignmentLanguageCode,
 ): UtterancePlacementFinding[] {
   if (parsedSegments.length === 0 || committedSegments.length === 0 || tokens.length === 0) return [];
 
@@ -695,6 +697,7 @@ export function detectUtterancePlacementDefects(
     tokens as TranscriptToken[],
     silences as SilenceInterval[],
     audioDuration,
+    languageCode,
   );
   const alignById = new Map<string, (typeof alignments)[number]>();
   parsedSegments.forEach((s, i) => { const a = alignments[i]; if (a) alignById.set(s.id, a); });

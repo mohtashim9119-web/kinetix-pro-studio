@@ -100,6 +100,7 @@ import {
   filterMalformedTokens,
   extractSegmentAlignments,
   alignScenestoTranscript,
+  toAlignmentLanguageCode,
   type SegmentAlignment,
 } from './services/whisperService';
 import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunkInput as FaDevChunkInput, type FaWordSpan as FaDevWordSpan } from './services/faBoundaryTypes';
@@ -3217,6 +3218,7 @@ export default function App() {
         faTokens ?? projectRef.current.transcriptTokens!,
         audioDuration,
         anchorSourceForRun,
+        toAlignmentLanguageCode(projectRef.current.language),
       );
 
       // WS1b — bidirectional coverage metric (§3.3) + two-signal abort gate
@@ -3261,6 +3263,7 @@ export default function App() {
             faTokens,
             aligned.silences,
             audioDuration,
+            toAlignmentLanguageCode(projectRef.current.language),
           )
         : [];
       const coverageAfterR10 = applyUnspokenScriptGate(aligned.coverage, unspokenScript);
@@ -3600,6 +3603,7 @@ export default function App() {
           projectRef.current.transcriptTokens!,
           aligned.silences,
           audioDuration,
+          toAlignmentLanguageCode(projectRef.current.language),
         );
         // R-AP applies to R.13 too — it is not R.12, and the invariant is
         // universal. On every committed corpus R.13's one firing is already
@@ -4034,8 +4038,9 @@ export default function App() {
         return;
       }
 
-      const filtered = filterMalformedTokens(rawTokens, waveformSource.totalDuration);
-      const alignments = extractSegmentAlignments(segments, filtered.tokens);
+      const calibrateLanguageCode = toAlignmentLanguageCode(project.language);
+      const filtered = filterMalformedTokens(rawTokens, waveformSource.totalDuration, calibrateLanguageCode);
+      const alignments = extractSegmentAlignments(segments, filtered.tokens, undefined, calibrateLanguageCode);
 
       let silences: SilenceInterval[] = [];
       try {
@@ -4154,7 +4159,7 @@ export default function App() {
       }
 
       const audioDurationSec = waveformSource.totalDuration;
-      const filterResult = filterMalformedTokens(rawTokens, audioDurationSec);
+      const filterResult = filterMalformedTokens(rawTokens, audioDurationSec, toAlignmentLanguageCode(project.language));
 
       let silences: SilenceInterval[] = [];
       try {
@@ -4363,7 +4368,7 @@ export default function App() {
       // never runs the full commit pipeline (applyAnchorBasedTiming ->
       // snapCoveredBoundaries -> headExtendFirstSegment), so `t0` is
       // reported directly rather than a literal `segment.anchorStart` write.
-      const alignments = alignScenestoTranscript(project.segments, tokens, [], audioDuration);
+      const alignments = alignScenestoTranscript(project.segments, tokens, [], audioDuration, language);
 
       const rows = project.segments.map((seg, i) => {
         const faAnchorStart = alignments[i]?.t0;

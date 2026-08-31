@@ -62,7 +62,7 @@
 
 import { filterMalformedTokens, alignScenestoTranscript } from './whisperService';
 import { R10_MAX_WORD_CONF, R10_MIN_WORD_COUNT } from './syncConstants';
-import type { SegmentAlignment } from './whisperService';
+import type { SegmentAlignment, AlignmentLanguageCode } from './whisperService';
 import type { SilenceInterval } from './silenceDetector';
 import type { TranscriptToken, VideoSegment } from '../types';
 
@@ -162,11 +162,12 @@ export function detectUnspokenScriptSegmentsFromWhisper(
   faTokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  languageCode?: AlignmentLanguageCode,
 ): UnspokenScriptFinding[] {
   if (segments.length === 0 || faTokens.length === 0 || whisperTokens.length === 0) return [];
-  const usable = filterMalformedTokens([...whisperTokens], audioDuration).tokens;
+  const usable = filterMalformedTokens([...whisperTokens], audioDuration, languageCode).tokens;
   if (usable.length === 0) return [];
-  const alignments = alignScenestoTranscript([...segments], usable, [...silences], audioDuration);
+  const alignments = alignScenestoTranscript([...segments], usable, [...silences], audioDuration, languageCode);
   return detectUnspokenScriptSegments(segments, alignments, faTokens);
 }
 

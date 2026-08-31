@@ -4,7 +4,9 @@ import {
   alignScenestoTranscript,
   distributeSegmentTimes,
   filterMalformedTokens,
+  toAlignmentLanguageCode,
   type SegmentAlignment,
+  type AlignmentLanguageCode,
 } from '../services/whisperService';
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval, SilenceDetectResult } from '../services/silenceDetector';
@@ -90,6 +92,11 @@ async function alignSegmentsFromCachedTranscript(
   // cachedTokensReady block) passes 'forced-alignment' explicitly when it
   // substitutes FA-derived tokens for `tokens` above.
   anchorSource: 'whisper' | 'forced-alignment' = 'whisper',
+  // WS2 T3.1 — the project's stored/detected language, narrowed by the
+  // caller via `toAlignmentLanguageCode` (or passed already-narrowed).
+  // `undefined` (unset/unsupported) reproduces this function's pre-T3.1
+  // behavior exactly — see `toAlignmentLanguageCode`'s doc comment.
+  languageCode?: AlignmentLanguageCode,
 ): Promise<AlignFromCacheResult> {
   const silenceResult = await fetchAndDetectSilences(audioAsset);
   // Fail-loud, but never fail-stop: a silence-scan failure degrades boundary
@@ -104,7 +111,7 @@ async function alignSegmentsFromCachedTranscript(
   // WS4 Feature 4 — filter BEFORE alignment, once. Everything downstream (the
   // aligner here, and App.tsx's own snap) uses `usableTokens`; see
   // AlignFromCacheResult.tokens for why that consistency is load-bearing.
-  const filtered = filterMalformedTokens(tokens, durationSecs);
+  const filtered = filterMalformedTokens(tokens, durationSecs, languageCode);
   const usableTokens = filtered.tokens;
   if (filtered.skippedCount > 0) {
     console.warn(
@@ -112,7 +119,7 @@ async function alignSegmentsFromCachedTranscript(
     );
   }
 
-  const alignments = alignScenestoTranscript(segments, usableTokens, silences, durationSecs);
+  const alignments = alignScenestoTranscript(segments, usableTokens, silences, durationSecs, languageCode);
   const updated = distributeSegmentTimes(segments, alignments, anchorSource);
   // Re-derive every segment's span from its (now whisper-tagged) anchor — the
   // same normalization click 2 currently gets for free in App.tsx before
@@ -183,6 +190,7 @@ export interface UseWhisperApi {
     tokens: TranscriptToken[],
     durationSecs: number,
     anchorSource?: 'whisper' | 'forced-alignment',
+    languageCode?: AlignmentLanguageCode,
   ) => Promise<AlignFromCacheResult>;
 }
 
@@ -292,7 +300,8 @@ export function useWhisper(): UseWhisperApi {
             silenceResult.errorMessage,
           );
         }
-        const filtered = filterMalformedTokens(tokens, durationSecs);
+        const languageCode = toAlignmentLanguageCode(language);
+        const filtered = filterMalformedTokens(tokens, durationSecs, languageCode);
         if (filtered.skippedCount > 0) {
           console.warn(
             `[whisper] filtered ${filtered.skippedCount} of ${filtered.totalTokens} malformed transcript token(s) before alignment`,
@@ -313,7 +322,7 @@ export function useWhisper(): UseWhisperApi {
           ...violations.map(v => buildContractViolationEntry(syncRunId, v, syncRunAt)),
         ];
 
-        const alignments = alignScenestoTranscript(segments, filtered.tokens, silences, durationSecs);
+        const alignments = alignScenestoTranscript(segments, filtered.tokens, silences, durationSecs, languageCode);
         const finalSegments = distributeSegmentTimes(segments, alignments);
 
         // Store transcript tokens before the segment gate — the transcript is valid
