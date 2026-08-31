@@ -151,6 +151,42 @@ imported/passed in, not read from disk in production code).
 |---|---|
 | `fa-vocab-{en,es,fr,de,pt}.json` | `{ "_provenance": { "modelId", "source" }, "vocab": { <token>: <index>, ... } }` — the model's own vocab.json contents verbatim (special tokens `<pad>`/`<s>`/`</s>`/`<unk>` and the `\|` word-delimiter token included; the normalizer's caller distinguishes literal characters from those). |
 
+## Forced-alignment cardinal-number data (WS2 T3.2 Step 2)
+
+Per-language compositional cardinal-number data, landed 2026-09-01 as a
+reviewable checkpoint **before any behavior moves** — not yet read by
+`faTextNormalize.ts`, `fa/text.rs`, or any test. Replaces the plan of
+extending `faTextNormalize.ts`'s existing capped 0-30 lookup tables
+(`expandSpanishCardinal`/`expandGermanCardinal`/`expandPortugueseCardinal`/
+`expandFrenchCardinal`) with a data-driven design: a closed, fully-spelled
+0-99 table per language (the linguistic joint every language here lexicalizes
+irregularly, matched to the existing tables' own 0-30 values verbatim where
+they overlap) plus open-ended, genuinely compositional hundred/thousand/
+million rules (multiplier word, combining word, fusion vs. space-vs-hyphen
+joiner type, plural/one-drop quirks) so adding a magnitude tier is a data
+edit, not new per-language code. Also carries each language's year-shaped
+(1100-2999) reading-ambiguity `candidates` and a `selectionPolicy` field —
+left `null` for en/de pending an explicit operator decision (see
+`.work-phase4/session-ws2-34/t32-step1-alternates-precheck.md`); es/fr/pt
+have only one real candidate (no pair-style year convention in those
+languages) so `selectionPolicy` is already set.
+
+**Known limitation, not resolved by this data alone**: any composed reading
+containing a literal space (most values ≥31 for es/pt, six French "et"
+values, all of en/es/fr/pt ≥100 except round hundreds/thousands) is not yet
+representable by the FA tokenizer — no language's vocab has a space
+character, and `fa_onnx.rs`'s `words_per_chunk`/`check_words_within_own_chunk`
+(`:1745`, `:1308-1319`) currently assume exactly one `WordSpan` per
+representable `FaWordResult`. A multi-word tokenizer extension is scoped in
+alongside this task (`t32-step2-precheck-multiword-wall.md`) but not yet
+built; this data file's `hundred`/`scale` joiner-type fields are what that
+extension (and the compositional generator itself) will consume once it
+lands.
+
+| File pattern | Purpose |
+|---|---|
+| `fa-cardinal-{en,es,fr,de,pt}.json` | `{ "_provenance": {...}, "cardinals0to99": { "0": "...", ..., "99": "..." }, "hundred": {...}, "scale": [ { "value", "word", "pluralWord", "dropsOneMultiplier", "joiner", ... }, ... ], "yearReading": { "rangeMin", "rangeMax", "modFloor", "candidates", "selectionPolicy", "note" } }` — see each file's own `_provenance.notes` for language-specific grammar quirks (French "cent"/"cents" pluralization, Portuguese's context-sensitive "e"-placement across magnitude levels not fully modeled here, German's Million+ space wall, etc). |
+
 ## ONNX export manifest — five shipping FA models
 
 `fa-onnx-manifest.json` — provenance for `scripts/export-fa-onnx.py`'s verified
