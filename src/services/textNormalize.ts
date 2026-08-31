@@ -278,9 +278,20 @@ export function canonicalize(text: string, languageCode?: 'en' | 'es' | 'fr' | '
   // es/fr/de/pt additionally preserve native Unicode letters (diacritics) —
   // "café" stays "café" rather than folding to "caf " — instead of the
   // ASCII-only `a-z0-9` class English uses.
+  //
+  // WS1 §4 / WS2 T3.1 — English/default branch only: a loanword or foreign
+  // proper noun carrying a diacritic (e.g. "Llívia", "café") must not
+  // SHATTER into ASCII fragments the way the bare ASCII strip below would
+  // ("ll" + "via"). NFD-decomposing first splits each accented letter into
+  // its base letter + a combining mark (U+0300-U+036F), so stripping the
+  // combining marks folds the letter to its base ASCII form IN PLACE ("é" ->
+  // "e") before the ASCII-only filter runs — one token survives instead of
+  // two garbage fragments. es/fr/de/pt are untouched: they already preserve
+  // the native diacritic via `\p{L}` above, so folding it away here would be
+  // a regression for them, not a fix.
   t = nonEnglish
     ? t.replace(/[^\p{L}0-9\s-]/gu, ' ')
-    : t.replace(/[^a-z0-9\s-]/g, ' ');
+    : t.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\s-]/g, ' ');
 
   // Step 11 — whitespace tokenize.
   const rawTokens = t.split(/\s+/).filter(Boolean);

@@ -254,8 +254,14 @@ describe('canonicalize — languageCode omitted stays byte-identical (English ba
     expect(canonicalize('3.5')).toEqual(['three', 'point', 'five']);
   });
 
-  it('still ASCII-folds a diacritic away with no languageCode', () => {
-    expect(canonicalize('café')).toEqual(['caf']);
+  // WS1 §4 / WS2 T3.1 Step 2 (`.work-phase4/session-ws2-30/phase3-t31-step2-report.md`):
+  // this used to assert `['caf']` — the ASCII-only strip below dropped "é"
+  // entirely rather than folding it, shattering the word. The English/default
+  // branch now NFD-decomposes first and strips only the combining mark, so
+  // the base letter survives in place ("café" -> "cafe", one token) instead
+  // of the accented letter vanishing and splitting the word.
+  it('NFD-folds a diacritic to its base letter (in place) with no languageCode', () => {
+    expect(canonicalize('café')).toEqual(['cafe']);
   });
 
   it('stays unchanged when languageCode is explicitly "en"', () => {
