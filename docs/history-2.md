@@ -1875,3 +1875,200 @@ than a silent id change for every existing project on its next load. The version
 - Golden replay (`scripts/phase4-handoff-replay-sync.test.ts`): 6/6.
 - `gaplessInvariant.test.ts`: 36/36.
 - Merged to `main`, fast-forward push (no divergence — `main` matched `origin/main` before merge).
+
+## WS2 T2.1/T2.2 — Gap-Absorption Restore, and the Abandoned Never-Drop Design (branch ws2-t21-gap-absorption, sessions ws2-19 through ws2-26)
+
+**The pivot.** Phase 2's ORIGINAL spec (`docs/work-in-progress.md`, still titled this at the
+start of the branch) was "Never-drop segments & operator override": T2.1 was to place every
+unmatched segment at an interpolated timestamp with a `timingSource`/`confidence` flag and a
+sync-log warning, so nothing Apply Sync couldn't match would ever leave the timeline — dropping
+was to be eliminated, not tracked. A branch toward that design (referenced in this session's own
+brief as `ws2-t21-never-drop-segments`) was abandoned before landing on `main` or anywhere
+reachable from this repository's local history — this entry cannot cite its specific commits or
+diagnose why it stalled, only record that it existed and was not carried forward. What actually
+shipped on `ws2-t21-gap-absorption` instead keeps R4-1/R.10's existing drop behavior unchanged
+and, across sessions ws2-19 through the first half of ws2-26, added a RECOVERY layer on top:
+`computeAbsorbedGaps` (`absorbedGaps.ts`) records exactly which survivor absorbed a dropped
+scene's reclaimable span at Apply Sync time, and a restore UI (context menu + sync-log
+multi-select) recreated the dropped scene from that record on request — first automatically
+(evidence-gated), then via an explicit Forced Restore human override for the zero-evidence case.
+The rationale for the pivot, as best reconstructed from the shipped design: interpolating a
+timestamp for a scene the transcript never recorded is the same fabrication problem restore
+Commits 1/2 later had to solve explicitly (character-weighting a span with no acoustic evidence
+behind it) — never-drop would have shipped that fabrication silently and automatically for EVERY
+unmatched scene, where the shipped design instead made it an explicit, evidence-gated, opt-in
+recovery action.
+
+**Round 1 of 2 — the operator reverted the whole restore UI, later the same session (ws2-26).**
+Both the automatic and the Forced Restore paths still ultimately sized a recreated segment either
+from real orphan tokens (when they existed) or from character-weighted guesswork (when they
+didn't) — and even the orphan-token case only approximates real word timing. The operator found
+these durations inaccurate enough in practice to require manual adjustment anyway, making the
+whole automated/semi-automated reconstruction a wasted step rather than a real convenience.
+Decision: remove restoration entirely — automatic, Forced, and the context menu that triggered
+either — and make recovery fully manual (jump to the drop via the sync log's existing
+"Jump to absorbing scene" link, then split (`S`) the absorbing clip and retype). The read-only
+half of the design (`computeAbsorbedGaps` feeding the skip-log's warning message and the jump
+link) was kept — that part was never a fabrication, only a report of what the sync pipeline
+already decided.
+
+**Commits, `8ed1d51` (salvage — `SyncLogEntry.segmentId` + char-weighted split helper) through
+the round 1 revert (`2d773e8`):**
+
+| Commit | Session | What it did |
+|---|---|---|
+| `8ed1d51` | ws2-19 (salvage) | `SyncLogEntry.segmentId` field; `charWeightedSplit.ts` helper |
+| `8fd15f9` | ws2-19 | Slice segment ids for restored/split absorbed-gap segments *(reverted)* |
+| `f4ebf82` | ws2-19 | Absorbed-gap metadata, telemetry, sync-log deep link *(metadata/telemetry reverted; deep link kept)* |
+| `f6dd6af` | ws2-19 | Restore absorbed segments (context menu + sync-log multi-select) *(reverted)* |
+| `a61ac33` | ws2-19 | Split (S) / delete (D) for restored/split segments *(split kept; restored-segment delete path reverted)* |
+| `b340f8d` | ws2-19 | Made the restore/split/delete UI actually reachable (bugs 4/5/6) *(restore-UI part reverted)* |
+| `b69c14c` | ws2-25 | Pinned the absorbed-gap word source (Commit 1 — audit found the premise already refuted: `App.tsx` already passed the alignment engine's own word array, not a stale one) |
+| `c17d7b6` | ws2-25 | Size a restore from its own orphan tokens, not the raw gap width *(reverted — the whole sizing problem this solved no longer exists)* |
+| `00bf03d` | ws2-25 | Fixed restore geometry — double-floor bug, leading-run direction, merge rule (Commit 3) *(reverted)* |
+| `75ac55b` | ws2-25 | Restored/split segment lifecycle — titles, deletability, text (Commit 4) *(restored-segment half reverted; plain split lifecycle kept)* |
+| `0fa341d` | ws2-25 | Honest sync-log numbering and wording (Commit 5) *(kept — this is the numbering later found still off by one, see Open bugs)* |
+| `cac9658` | ws2-25 | Real-corpus regression tests for the whole restore path (Commit 6) *(deleted with the restore path it tested)* |
+| `37f6fde` | ws2-26 | Evidence-only refusal — removed the 0.25s width clause that let 173's `blue_monkey` (0 orphan tokens, 0.88s gap) fabricate a clip while v6 027-029 (identical evidence, 0.24s gap) was correctly refused (Commit 1) *(moot — reverted along with the restore path it gated)* |
+| `c6480b1` | ws2-26 | Fixed a live-app text-loss bug: deleting an unrelated segment unconditionally cleared `selectedSegmentId`, unmounting the caption drawer of whatever OTHER segment was open (Commit 3) *(kept — but the operator reports the underlying symptom still reproduces; see Open bugs)* |
+| `84fdc57` | ws2-26 | Single-click selection highlight on Timeline clips — `selectedSegmentId` was never threaded into `Timeline.tsx` at all (Commit 4) *(reverted — operator found the ring "looked weird")* |
+| `225da76` | ws2-26 | WKWebView Timeline-clip context-menu fix, `.kx-timeline-clip` CSS exemption (Commit 5, unverified — needs a live macOS check) *(reverted along with the context menu it existed to make clickable)* |
+| `087b5cc` | ws2-26 | Forced Restore — human override for a zero-evidence gap, `isForceRestored`/`'force-keep'`, `ForceRestoreConfirmModal` (Commit 2) *(reverted)* |
+| `2d773e8` | ws2-26 (round 1) | THE REVERT. Deletes `absorbedGapRestore.ts`/test, `ForceRestoreConfirmModal.tsx`/test, `scripts/ws2-restore-corpus.test.ts`; removes `VideoSegment.absorbedGaps`/`isForceRestored`, `Project.segmentOverrides`, `SyncLogEntry.restoreGapId`; removes Timeline's right-click context menu and its `.kx-timeline-clip` CSS exemption; removes the Timeline selection ring (separately requested — "looked weird"); trims `absorbedGaps.ts` down to read-only reporting (`computeAbsorbedGaps` minus orphan-token/spokenSpan/hostSide computation, `applyAbsorbedGaps` gone); simplifies `segmentSplitDelete.ts`'s `deleteSegment` to drop the `restoredIds` parameter and the merged-restore-slot carve-out; reverts `projectStore.ts`'s on-disk schema version 5 -> 4. |
+
+**State at close of round 1 (ws2-26).** Phase 2 (T2.1/T2.2) is closed at a much smaller scope
+than any point in its history above: gap-absorption tracking survives ONLY as read-only sync-log
+reporting (the skip warning's "Absorbed X -> Y -> Z" message and the "Jump to absorbing scene"
+link); every restore/recovery mechanism — automatic, Forced, and the context menu that triggered
+either — is gone. Two real bugs surfaced during this work remain open (`docs/work-in-progress.md`
+§4, not fixed in round 1): the sync-log's "Clip N" numbering is off by one on both real corpora
+(v6 and 173, operator-confirmed), and the split-then-delete caption-loss symptom still reproduces
+live despite `c6480b1`'s fix landing. Full gate state at round 1's close: `npx tsc --noEmit`
+clean, `npm run lint` clean, `npm test` 2627 passed / 77 skipped / 0 failed, golden replay
+(`scripts/phase4-handoff-replay-sync.test.ts`) 6/6 byte-identical, `gaplessInvariant`
+(`dragSession.test.ts`) 36/36 — sync pipeline untouched throughout. `docs/history.md` untouched
+throughout this session (verified with an empty `git diff -- docs/history.md`).
+
+---
+
+## WS2 T2.1/T2.2 — Round 2: host attribution, the boundary-policy round trip, and the two real bugs closed (branch ws2-t21-gap-absorption, session ws2-27 through this session, 2026-08-31)
+
+**Host attribution (`computeAbsorbedGaps`) was wrong, not "off by one."** Round 1's Open Bugs
+entry explained the mislabelled "Clip N" as a rehydration/renumbering shift — the theory being
+that S27/28/29 dropping as one run shifts every later clip number, so "clip 30 becomes clip 27"
+and the log's arithmetic just hadn't caught up. That explanation was wrong. S-numbers are the
+scripted scene's ORIGINAL position and never renumber, no matter what drops; clip numbers are
+positions in the COMMITTED (post-drop) array and do renumber every time something upstream is
+skipped — the two are different axes entirely, not the same number seen before and after a shift.
+The actual defect was in `computeAbsorbedGaps` itself (`absorbedGaps.ts`): `hostKeptIdx` preferred
+the survivor BEFORE a dropped run (`prevKeptIdx`) over the one after it, so both the printed label
+and the sync log's "Jump to absorbing scene" link named the wrong clip — not a numbering-shift bug
+at all. Measured directly against both real corpora once the real cause was suspected: v6 S27-29
+showed the previous survivor is a NET LOSER of duration once `snapCoveredBoundaries` writes its
+shared boundary (-0.17s), while the next survivor gains materially in every observed case (v6
++0.41s, 173 +1.79s) — "prev absorbed it" was simply the wrong guess, not an equally-valid
+alternative convention. Fixed by flipping the preference to `nextKeptIdx` (falling back to
+`prevKeptIdx` only for a trailing run with no next survivor, which is unaffected). A gated
+"Clip N also holds X.XXs" note (`otherNeighborId`/`measureOtherNeighborGain`) reports when the
+non-host neighbour also gained a material share, so the read-only report stays honest about both
+sides of a shared boundary rather than silently crediting only the majority absorber.
+
+**The boundary-policy round trip.** A 100%-to-next gap-absorbing boundary policy (the next
+survivor absorbs the WHOLE reclaimable span; the previous survivor is pinned exactly at its own
+last spoken word, `lastSpokenEnd`) was implemented to spec this round — and failed live testing:
+pinning the previous segment at its last spoken word chopped off its trailing room tone and the
+natural breathing pause after it, producing audible hard cuts on playback. Reverted back to the
+pre-existing balanced silence-centre/spoken-edge-midpoint rule for every adjacent pair, including
+pairs flanking a skipped scene — that pair now gets no special treatment at all, same as every
+other boundary in `snapCoveredBoundaries`. The whole implement-then-revert cycle happened inside
+one uncommitted working tree and never reached a commit of its own; `git log` shows no commit
+between `2d773e8` and `main` that touches `snapBoundaries.ts` for anything but this round's
+docstring update. **Standing constraint, not just history: a future gap-absorption boundary
+change must not pin either side of a covered pair to `lastSpokenEnd`/`nextSpokenStart` — the
+silence-centre/spoken-midpoint rule is the one that survives contact with real audio.**
+
+**Consequence of restoring silence-midpoint: split absorption is normal, not exceptional.** With
+the 100%-to-next policy gone, `snapCoveredBoundaries` writes ONE boundary shared by both
+neighbours of a dropped run (the pre-existing WS2 ws2-22 finding), and that shared write routinely
+gives BOTH sides a real, nonzero share of the reclaimed span — not just the declared host. Of the
+four rows checked directly against real corpus numbers this round (v6 S27-29, 173 S112, plus two
+more), two were splits large enough to trip the `MIN_SEGMENT_DURATION` note gate; row S13 was not
+anticipated going in and only surfaced once real pre/post-snap numbers were pulled. The practical
+upshot: the gated "Clip N also holds X.XXs" note is the ROUTINE case for a middle-run drop under
+silence-midpoint, not a rare edge case — any future work on this reporting path should expect it
+to fire often, not treat a fired note as evidence of something unusual.
+
+**Split-text retention took three attempts because the first two verified the pure functions,
+not the app.** Both `c6480b1` (round 1) and the round-2 pair `4f5e09d`+`16b0643` shipped with
+passing unit tests against `segmentSplitDelete.ts`'s pure functions, and the live symptom
+persisted through all of them — because the pure-function tests could not see either of the two
+real defects, which lived elsewhere:
+1. **A stale-render defect** (`4f5e09d`, ws2-28 Commit 1) — `BottomDrawer`'s editor was an
+   `AnimatePresence` mount/unmount keyed on `segment || heading`. When the open segment was split
+   or deleted out from under it, `AnimatePresence` held the last-committed subtree on screen for
+   the whole exit transition, so `SegmentControls` kept rendering a segment object already absent
+   from `project.segments` — measured directly against the real app's committed React props,
+   still stale 3+ seconds later. Fixed by keeping the drawer's `motion.div` always mounted and
+   driving the slide with `animate` variants instead of presence, so nothing ever "exits" holding
+   stale props; a dev-only console warning now fires whenever `selectedSegmentId` points at a
+   segment absent from `project.segments`, so a future path that orphans the selection the same
+   way is loud instead of silently degrading to a blank drawer.
+2. **A text-merge omission, found only after 1 was fixed** (`054d154`, ws2-28 Commit 3) — with
+   the stale-render bug gone, the operator reported a second, genuinely distinct symptom: the
+   surviving slice visually stretches to fill the deleted slice's full span, but its caption still
+   only covers its own original half of the sentence. `deleteSegment` had, correctly for the
+   render bug under investigation at the time, never touched a sibling absorber's text — but that
+   was wrong as a STANDING behavior once a clip visually re-spans its whole original duration.
+   Fixed by reuniting a SIBLING absorber's text with the deleted slice's own text in chronological
+   order (`joinAbsorbedText`), reconstructing the pre-split sentence exactly for the common
+   2-slice case; the downstream (non-sibling) absorption fallback is deliberately left untouched
+   — merging captions across unrelated segments would not make sense there.
+`16b0643` (ws2-28 Commit 2, see below) landed between these two and is a real fix in its own
+right, but is not one of the two text-loss defects itself — it is the selection-integrity fix the
+text-merge defect's own symptom depended on being visible correctly.
+
+**Selection integrity across split/delete/undo/redo — three related fixes, one theme.**
+`16b0643` (ws2-28 Commit 2) reversed ws2-25's "clear `selectedSegmentId` to null on delete" — the
+operator's ruling was that closing the caption editor because a NEIGHBOURING slice was deleted is
+wrong on its own terms, not just a workaround for a bug. `splitSegmentAtTime`/`deleteSegment`
+already decide which segment inherits a split/deleted one's role; that decision was surfaced
+(`deleteSegment` gained `absorbedById`) and reused by two new wrappers,
+`splitSelectedSegment`/`deleteSelectedSegment`, so a split moves the selection to the first
+resulting slice and a delete moves it to the absorbing neighbour, with an unrelated delete/split
+still leaving an unrelated selection untouched. This session's own two fixes extend the same
+theme to the two remaining places a selection could still go stale:
+- **Chained-split sibling detection** (`dfbd093`, this session's Commit C) — repeated tail splits
+  nest slice ids arbitrarily deep (`slice1_slice1_ORIG::1::1::0`), and `parentIdFromSliceId` only
+  ever recovers ONE level, so an interior slice's true sibling (split away at a different
+  generation) no longer matched on immediate parent id and `deleteSegment`'s "last remaining
+  slice" refusal fired wrongly. `VideoSegment` gained an optional `rootSegmentId`, set to a
+  native segment's own id by `parseProjectData` and propagated unchanged through every split at
+  any depth; `deleteSegment` now compares `effectiveRootId` (falling back to the new
+  `rootIdFromSliceId` string-walk for a segment saved before the field existed) so same-root
+  slices delete in any order regardless of nesting depth.
+- **Synchronous undo/redo selection guard** (`c4b6de5`, this session's Commit B) — a traversal
+  that made the selected segment disappear still fired the dev warning `4f5e09d` added, because
+  `applyRestoredStateImpl`'s async repair updater ran too late to beat the render. `performUndo`/
+  `performRedo` (`historySession.ts`) now null `selectedSegmentId` synchronously, in the same
+  handler invocation that restores the project, before anything can render the drawer against the
+  stale id.
+
+**Commits this round (chronological):** `2d773e8` (ws2-26 round-1 revert, prior entry above) →
+`0fa341d` (ws2-25 Commit 5, "honest sync-log numbering and wording" — the numbering fix that
+turned out not to be the real host-attribution fix; kept, prior entry above) → `4f5e09d` (ws2-28
+Commit 1, stale-render fix) → `16b0643` (ws2-28 Commit 2, selection-redirect on split/delete) →
+`054d154` (ws2-28 Commit 3, sibling text reunification) → `4250081` (this session's Commit A,
+gap-absorbing boundary policy reverted to silence-midpoint + the real host-attribution/numbering
+fix) → `c4b6de5` (this session's Commit B, synchronous undo/redo selection guard) → `dfbd093`
+(this session's Commit C, chained-split delete via `rootSegmentId`).
+
+**State at close of this round.** Both real bugs left open at round 1's close (sync-log clip
+mislabelling, split-then-delete text loss) are fixed and operator-verified live in `tauri:dev`,
+along with two more issues found in the course of closing them (chained-split delete refusal,
+undo/redo selection orphaning). Gate state: `npx tsc --noEmit` clean, `npm run lint` clean,
+`npm test` 2670 passed / 77 skipped / 0 failed, golden replay
+(`scripts/phase4-handoff-replay-sync.test.ts`) 6/6 byte-identical, `gaplessInvariant`
+(`src/services/gaplessInvariant.test.ts`) 36/36 — sync pipeline untouched by this round's actual
+commits (the boundary-policy experiment never reached a commit; `snapBoundaries.ts`'s only
+committed change this round is a documentation comment). `docs/history.md` untouched throughout
+this round (verified with an empty `git diff -- docs/history.md`).

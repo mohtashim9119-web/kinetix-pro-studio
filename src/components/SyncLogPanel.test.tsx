@@ -14,10 +14,10 @@ function makeSkipEntry(partial: Partial<SyncLogEntry> = {}): SyncLogEntry {
     timestamp: AT,
     syncRunId: 'run-1',
     type: 'skip',
-    message: 'Scene 135 skipped — no audio match.',
+    message: 'S135 skipped — no text match.',
     segmentIndex: 134,
     segmentText: 'This is a test missing segment.',
-    reason: 'no audio match',
+    reason: 'no text match',
     ...partial,
   };
 }
@@ -30,7 +30,7 @@ describe('SyncLogPanel — skip entry 3-line format', () => {
         onClearLog={() => {}}
       />,
     );
-    expect(html).toContain('Segment 135 skipped — no audio match');
+    expect(html).toContain('S135 skipped — no text match');
     expect(html).toContain('[missing1]');
     expect(html).toContain('This is a test missing segment.');
     expect(html).toContain('matched 2 of 8 words (confidence 0.25)');
@@ -68,7 +68,7 @@ describe('SyncLogPanel — skip entry 3-line format', () => {
     expect(html).not.toContain('matched');
     expect(html).not.toContain('confidence');
     // The rest of the entry still renders without crashing.
-    expect(html).toContain('Segment 135 skipped — no audio match');
+    expect(html).toContain('S135 skipped — no text match');
     expect(html).toContain('This is a test missing segment.');
   });
 
@@ -341,5 +341,52 @@ describe('formatEntryText — Copy button export (grouped entries)', () => {
       message: 'Sync completed: 8 of 8 segments matched.',
     });
     expect(text).not.toContain('  - ');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 session ws2-25, Commit 5 — honest numbering ("S{n} / Clip {n}") and the
+// longestRun hole-bridging annotation, as actually rendered by the panel
+// (not just the message string App.tsx built — SyncLogPanel reconstructs its
+// own skip-line text from segmentIndex/absorbedByDisplayIndex/reason, so the
+// live render needs its own coverage independent of syncLog.test.ts).
+// ---------------------------------------------------------------------------
+describe('SyncLogPanel — S/Clip numbering and longestRun annotation', () => {
+  it('renders "S{n} / Clip {n}" for a skip with an absorbing host', () => {
+    const html = renderPanel([makeSkipEntry({
+      segmentIndex: 111,
+      absorbedByDisplayIndex: 109,
+      reason: 'no text match',
+    })]);
+    expect(html).toContain('S112 / Clip 110 skipped');
+    expect(html).not.toContain('Segment 112');
+  });
+
+  it('renders plain "S{n}" with no Clip suffix when there is no absorbing host', () => {
+    const html = renderPanel([makeSkipEntry({ segmentIndex: 2, absorbedByDisplayIndex: undefined })]);
+    expect(html).toContain('S3 skipped');
+    expect(html).not.toContain('Clip');
+  });
+
+  it('annotates longestRun when it exceeds matchedWords — the hole-bridging note', () => {
+    const html = renderPanel([makeSkipEntry({
+      segmentIndex: 0, matchedWords: 7, totalWords: 9, confidence: 0.778, longestRun: 9,
+    })]);
+    expect(html).toContain('longest run 9');
+    expect(html).toContain('bridged holes');
+  });
+
+  it('does not annotate longestRun when it does not exceed matchedWords', () => {
+    const html = renderPanel([makeSkipEntry({
+      segmentIndex: 0, matchedWords: 4, totalWords: 4, confidence: 1, longestRun: 4,
+    })]);
+    expect(html).toContain('longest run 4');
+    expect(html).not.toContain('bridged holes');
+  });
+
+  it('falls back to "no text match" (not the old wording) when reason is missing', () => {
+    const html = renderPanel([makeSkipEntry({ reason: undefined, matchedWords: undefined, totalWords: undefined, confidence: undefined })]);
+    expect(html).toContain('no text match');
+    expect(html).not.toContain('no audio match');
   });
 });

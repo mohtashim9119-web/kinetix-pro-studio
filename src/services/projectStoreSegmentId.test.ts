@@ -103,7 +103,7 @@ describe('round trip through save/load', () => {
     expect(loaded.project.segments[0]!.id).toBe(id);
   });
 
-  it('bumps the on-disk schema version to 3', async () => {
+  it('bumps the on-disk schema version to (at least) 3', async () => {
     const id = computeContentKey('Version check.', 0);
     const project = baseProject([
       { id, text: 'Version check.', startTime: 0, duration: 2, showOverlay: true } as VideoSegment,
@@ -113,7 +113,10 @@ describe('round trip through save/load', () => {
     const raw = osBacking.get('p-t12');
     expect(raw).toBeDefined();
     const parsed = JSON.parse(raw!) as { version: number };
-    expect(parsed.version).toBe(3);
+    // T1.2 bumped 2 -> 3; a later additive bump (e.g. WS2 T2.1's 3 -> 4 for
+    // `absorbedGaps`) is a real, deliberate schema advance, not a regression
+    // of this test's own concern (T1.2's own id round-trip, verified above).
+    expect(parsed.version).toBeGreaterThanOrEqual(3);
   });
 });
 

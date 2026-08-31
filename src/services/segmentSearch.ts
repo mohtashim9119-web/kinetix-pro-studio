@@ -78,8 +78,18 @@ export function matchesSegmentQuery(query: string, ctx: SegmentSearchContext): b
  * filename/sceneLine field of its own — the filename lives on the looked-up
  * Asset. The search predicate matches against this exact title, so both must
  * come from one function.
+ *
+ * `isSplit` (WS2 ws2-25 Commit 4) — a split slice (`isSliceSegmentId`). A
+ * split slice keeps its parent's asset, so this only ever changes anything
+ * for a slice whose parent had none. With no asset, such a segment falls
+ * back to its OWN SCRIPT TEXT — the content it was created from — never the
+ * positional label, which describes nothing true about it. An asset still
+ * takes precedence once the user assigns one; only the empty-asset fallback
+ * changes.
  */
-export function computeSegmentDisplayTitle(seg: VideoSegment, asset: Asset | undefined): string {
+export function computeSegmentDisplayTitle(
+  seg: VideoSegment, asset: Asset | undefined, isSplit = false,
+): string {
   if (asset?.name) {
     const cleaned = asset.name
       .replace(/\.[a-zA-Z0-9]+$/, '')      // extension
@@ -88,6 +98,10 @@ export function computeSegmentDisplayTitle(seg: VideoSegment, asset: Asset | und
       .replace(/[_-]+/g, ' ')
       .trim();
     if (cleaned) return cleaned.replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+  if (isSplit) {
+    const text = seg.text?.trim();
+    if (text) return text;
   }
   return `Scene ${seg.order + 1}`;
 }

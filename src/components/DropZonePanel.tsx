@@ -38,6 +38,7 @@ import { useFocusTrap } from '../hooks/useFocusTrap';
 import { interleaveHeadingRows, boundaryTimeForGap, segmentGapIndexForRow, centerHeadingOnBoundary } from '../services/headingLayer';
 import { formatTime } from '../services/timeFormat';
 import { matchesSegmentQuery, computeSegmentDisplayTitle } from '../services/segmentSearch';
+import { isSliceSegmentId } from '../services/segmentId';
 import { computeDurationBarHeightPx, resolveDropGapIndex } from '../services/timelineLayout';
 
 // ---------------------------------------------------------------------------
@@ -1502,7 +1503,7 @@ export function DropZonePanel({
               const seg = row.segment;
               const segIdx = row.index;
               const asset = seg.assetId ? assetsById.get(seg.assetId) : undefined;
-              const title = computeSegmentDisplayTitle(seg, asset);
+              const title = computeSegmentDisplayTitle(seg, asset, isSliceSegmentId(seg.id));
               if (segmentSearch && !matchesSegmentQuery(segmentSearch, {
                 displayTitle: title,
                 description: seg.text ?? '',

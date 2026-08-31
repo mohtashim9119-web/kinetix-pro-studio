@@ -197,6 +197,8 @@ export class HistorySessionHarness {
       setHistory: (h) => { this.callCounts.setHistory++; this.history = h; },
       applyRestoredState: this.applyRestoredStateBound,
       setHistoryAnchor: (v) => { this.callCounts.setHistoryAnchor++; this.historyAnchor = v; },
+      selectedSegmentId: this.selectedSegmentId,
+      setSelectedSegmentId: (id) => { this.callCounts.setSelectedSegmentId++; this.selectedSegmentId = id; },
     });
     return this;
   }
@@ -210,6 +212,8 @@ export class HistorySessionHarness {
       setHistory: (h) => { this.callCounts.setHistory++; this.history = h; },
       applyRestoredState: this.applyRestoredStateBound,
       setHistoryAnchor: (v) => { this.callCounts.setHistoryAnchor++; this.historyAnchor = v; },
+      selectedSegmentId: this.selectedSegmentId,
+      setSelectedSegmentId: (id) => { this.callCounts.setSelectedSegmentId++; this.selectedSegmentId = id; },
     });
     return this;
   }

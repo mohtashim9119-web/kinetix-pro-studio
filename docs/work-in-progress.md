@@ -139,7 +139,18 @@ cut-placement quality) were relocated to WS1 §4 — see that section. macOS CI-
 platform verification and MSVC redistributable are both closed (OPERATOR-ATTESTED); the
 autosave-quota bug is fixed (T1.3, OPERATOR-ATTESTED live `tauri:dev` verification, see
 `docs/history-2.md`). Phase 1 (project data durability & foundations) is fully closed —
-T1.1/T1.2/T1.3 all done; Phase 2 is now in progress.
+T1.1/T1.2/T1.3 all done. Phase 2 closed at a MUCH SMALLER scope than originally planned: T2.1
+pivoted from its original never-drop design through a full gap-absorption restore UI
+(automatic + a Forced Restore human override) to, finally, visibility-only reporting — the
+restore UI produced inaccurate micro-durations in silent gaps that needed manual correction
+anyway, so the operator had it removed entirely (session ws2-26, round 1 of 2,
+`docs/history-2.md`'s ws2-t21 entry). T2.2 (the operator-override persistence layer the restore
+UI needed) is closed as not-building — there is nothing left for it to persist. Recovering a
+dropped scene is now fully manual: jump to it via the sync log's "Jump to absorbing scene" link,
+then split (`S`) the absorbing clip and retype. Two real bugs surfaced by that same removal pass
+(sync-log host-numbering off-by-one, split-then-delete text loss) are fixed and
+operator-verified (`docs/history-2.md`'s ws2-t21 round-2 record). Phase 3 (Text and number
+normalization) is in progress.
 
 ### 1. Finished but pending verification
 
@@ -147,27 +158,20 @@ T1.1/T1.2/T1.3 all done; Phase 2 is now in progress.
 
 ### 2. In progress
 
-[IN-PROGRESS] Phase 2 — Never-drop segments & operator override
-  T2.1 Place unmatched segments at interpolated timestamps with timingSource/confidence
-       flags and a sync-log warning, instead of dropping them.
-  T2.2 Operator override layer: keep / hide / manually add or delete a segment, persisted
-       by stable segment ID.
-
-**END GOAL:** No project data survives loss across app close, crash, or version upgrade; every
-launch opens the dashboard; opening a project restores its last saved position. (Phase 1's goal —
-carried here as the still-relevant durability bar Phase 2 builds on; Phase 2 additionally ends
-at: no segment is ever silently dropped from the timeline without an operator-visible flag and
-recovery path.)
-
-### 3. Next tasks
-
-[OPEN] Phase 3 — Text and number normalization
+[IN-PROGRESS] Phase 3 — Text and number normalization
   T3.1 Canonical match form: Unicode NFC/NFD normalization, punctuation folding, tiered
        diacritic fallback, and number/date/currency value tokens; match on canonical form,
        render from the original surface form.
   T3.2 Locale verbalizer for the FA pass (digits → words, en/es/fr/de/pt) with token
        provenance so aligned groups collapse back to exact source-token boundaries;
        single shared implementation for the TS matcher and the Rust FA runtime.
+
+**END GOAL:** Script text and the FA pass agree on one canonical match form across all five
+supported languages — a diacritic, a written-out number, and a digit sequence all match their
+spoken counterpart on first sync, with the original surface form still what renders on the
+timeline.
+
+### 3. Next tasks
 
 [OPEN] Phase 4 — Settings & project creation
   T4.1 App Settings page owning Models & Add-ons (machine-global); Project Settings shows a
@@ -177,8 +181,8 @@ recovery path.)
        only; fix the stale blurred previous project by unmounting the editor and clearing
        activeProjectId on close.
 
-(WS2's numbered-bug backlog is closed; remaining work beyond Phases 2-4 above is the two
-deferred items below.)
+(WS2's numbered-bug backlog is closed; remaining work beyond Phases 3-4 above is the deferred
+items below.)
 
 ### 4. Open bugs
 
@@ -186,6 +190,18 @@ deferred items below.)
 
 ### 5. Deferred tasks
 
+- [DEFERRED] Six cuts landing on live audio in 173 with FA ON (segment pairs 34-35, 88-89,
+  96-97, 106-107, 133-134, 144-145) — reported in ws2-26, not independently re-measured against
+  the corpus by this audit itself. Re-checked this session (ws2-t21 Commits A/B/C): the
+  gap-absorbing boundary policy was implemented to spec then reverted back to silence-midpoint in
+  the same uncommitted working tree, so `git log` shows the round trip never reached a commit —
+  `snapBoundaries.ts` and every other sync-timing file are untouched (comment-only) across the
+  whole ws2-26→ws2-t21 arc. The boundary-computation code that produced this defect is therefore
+  byte-identical to when it was filed, so it is still expected to reproduce; this was NOT
+  re-confirmed via a fresh live-audio ear pass this session. A distinct boundary-placement defect
+  from WS1 §4's existing FA-related open items (different corpus rows, FA-arm-specific), needing
+  its own dedicated audit before a fix is attempted — CLAUDE.md's standing rule against
+  corpus-fitted thresholds applies here too. No owner yet.
 - [DEFERRED] 120fps preview decode lag — operator-deprioritised, real code-level defect found
   while diagnosing bug 3, not itself closed by bug 3's non-repro: `videoDecoderPool.ts`'s 90-frame
   decode-ahead cap (`MAX_BUFFERED_FRAMES_PER_SESSION`) is sized against a fixed ~1.5s window
@@ -197,6 +213,10 @@ deferred items below.)
   peak / 1300 MB → 137 MB spike-memory work. Preview only — export uses a separate, non-windowed
   sequential decoder (`sequentialDecode.ts`) and is unaffected. Full diagnosis:
   `docs/ws2-video-ingest/bug3-diagnosis.md`.
+- [DEFERRED] Arbitrary frame rate support — some assets are 24fps but the app assumes a single
+  project frame rate throughout; no owner.
+- [DEFERRED] Part B storage scripts unrun on Windows and macOS — A5 unresolved; no owner.
+- [DEFERRED] S/D hotkey scope is "a segment is selected" rather than true timeline focus; no owner.
 
 ---
 

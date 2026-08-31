@@ -254,6 +254,21 @@ export interface VideoSegment {
    *  Undefined for an untagged scene (empty `[]`). Display-only — nothing
    *  downstream branches on it. */
   tag?: string;
+  /** Id of the original NATIVE segment this one is ultimately descended
+   *  from — itself for a native segment (set to `id` by parseProjectData on
+   *  every parse/re-sync, never carried forward from a stale prior split),
+   *  and propagated unchanged to both children on every `S` split
+   *  (`segmentSplitDelete.ts`), no matter how many times a piece is split
+   *  again. This is what lets `deleteSegment`'s "last remaining slice"/
+   *  sibling checks recognise TWO segments as siblings of the same original
+   *  even after a CHAINED split has separated them by more than one level —
+   *  `parentSegmentId`-style immediate-parent comparison (or parsing it back
+   *  out of a slice id) only sees one level up and is fooled by nesting.
+   *  Undefined for a segment created before this field existed (an old saved
+   *  project, or a dev fixture/script) — callers fall back to walking the
+   *  slice-id chain (`segmentSplitDelete.ts`'s `parentIdFromSliceId`) rather
+   *  than assume one. */
+  rootSegmentId?: string;
 }
 
 /**
@@ -727,6 +742,23 @@ export interface SyncLogEntry {
      *  own terms (the fit deviation, the confidence, the run index). */
     reason: string;
   };
+  /** WS2 T2.1 (gap-absorption revision) — the stable content-derived id
+   *  (segmentId.ts) of the committed segment this entry is about, when the
+   *  entry concerns one specific segment (e.g. the neighbour that absorbed a
+   *  dropped scene's gap). Undefined on entries with no single owning
+   *  segment. Lets a click deep-link the playhead straight to it
+   *  (`onSeekToSegment`, SyncLogPanel's "Jump to absorbing scene"). */
+  segmentId?: string;
+  /** WS2 ws2-25 Commit 5 — skip entries only, when the drop is absorbed: the
+   *  ABSORBING NEIGHBOUR's own 0-based position in the FINAL committed array
+   *  — the number the Timeline actually renders for that clip (`#{i+1}`,
+   *  Timeline.tsx's own segment-card index over `project.segments`).
+   *
+   *  Named distinctly from `segmentIndex` (the DROPPED scene's own PRE-FILTER
+   *  script position — a different numbering space) precisely so a reader
+   *  never conflates the two, the confusion this field exists to end: see
+   *  `buildSkipLogEntries`'s "S{n} / Clip {n}" message format. */
+  absorbedByDisplayIndex?: number;
 }
 
 /** One violation's worth of detail inside a grouped `SyncLogEntry` — a

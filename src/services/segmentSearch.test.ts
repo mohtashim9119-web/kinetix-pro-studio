@@ -136,3 +136,42 @@ describe('computeSegmentDisplayTitle', () => {
     expect(computeSegmentDisplayTitle(baseSeg, undefined)).toBe('Scene 4');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WS2 session ws2-25, Commit 4 — split segments keep their own script title,
+// never the positional "Scene N" fallback. A split slice can share its
+// parent's order/no-asset shape, so without this every slice would display
+// the same "Scene N" as its sibling.
+// ---------------------------------------------------------------------------
+describe('computeSegmentDisplayTitle — split segments', () => {
+  const splitSeg: VideoSegment = {
+    id: 'split-1',
+    text: 'Some don’t emerge.',
+    startTime: 443.82,
+    duration: 1.54,
+    transition: TransitionType.NONE,
+    animation: AnimationType.NONE,
+    order: 0,
+  };
+
+  it('shows the segment\'s own script text, not "Scene N", when split and unassigned', () => {
+    expect(computeSegmentDisplayTitle(splitSeg, undefined, true)).toBe('Some don’t emerge.');
+  });
+
+  it('does NOT change the fallback for an ordinary (non-split) segment', () => {
+    // Same shape (no asset, order 0) but not flagged as split — must still
+    // fall back to the positional label, unchanged from before this commit.
+    expect(computeSegmentDisplayTitle(splitSeg, undefined, false)).toBe('Scene 1');
+    expect(computeSegmentDisplayTitle(splitSeg, undefined)).toBe('Scene 1'); // default param
+  });
+
+  it('still prefers an assigned asset\'s name over the split flag', () => {
+    const asset: Asset = { id: 'a1', name: '009_civic_stats.jpeg', url: '', type: 'image' };
+    expect(computeSegmentDisplayTitle(splitSeg, asset, true)).toBe('Civic Stats');
+  });
+
+  it('falls through to "Scene N" if a split segment somehow has no text', () => {
+    expect(computeSegmentDisplayTitle({ ...splitSeg, text: '' }, undefined, true)).toBe('Scene 1');
+    expect(computeSegmentDisplayTitle({ ...splitSeg, text: '   ' }, undefined, true)).toBe('Scene 1');
+  });
+});

@@ -16,6 +16,11 @@ interface Props {
    *  has no model UI wired (e.g. a future embedding) can omit it; the
    *  deep-link button below simply doesn't render without it. */
   onOpenModelsModal?: () => void;
+  /** WS2 T2.1 — deep-links the playhead to the COMMITTED segment named by an
+   *  entry's `segmentId` (e.g. the neighbour that absorbed a dropped scene's
+   *  gap). Optional so a caller with no seek wiring can omit it; the
+   *  deep-link control below simply doesn't render without it. */
+  onSeekToSegment?: (segmentId: string) => void;
 }
 
 /** True when an fa-preflight/fa-fallback entry's own detail names a missing
@@ -99,11 +104,20 @@ function formatTime(timestamp: number): string {
 /** Line 3 of a skip entry — "matched X of Y words (confidence Z.ZZ)", or the
  *  no-content variant when the segment had nothing to match. `undefined` when
  *  any of matchedWords/totalWords/confidence is missing (older entries,
- *  logged before these fields existed) — the caller omits the line entirely
- *  in that case. `longestRun` (Bug C, consecutive-run survival requirement,
- *  2026-08-02) is appended as ", longest run N" when present — display-only,
- *  no threshold logic here — and simply omitted when absent (older entries),
- *  same as the other optional fields. */
+ *  logged before these fields existed, OR — WS2 ws2-25 Commit 5 — an R.10
+ *  skip, where App.tsx withholds all three: they'd be FA's own forced-
+ *  placement rerun stats, not evidence the audio was heard) — the caller
+ *  omits the line entirely in that case.
+ *
+ *  `longestRun` (Bug C, consecutive-run survival requirement, 2026-08-02) is
+ *  appended as ", longest run N" when present — display-only, no threshold
+ *  logic here — and simply omitted when absent (older entries), same as the
+ *  other optional fields. WS2 ws2-25 Commit 5 — when it EXCEEDS matchedWords,
+ *  a short parenthetical explains why: `computeLongestRunWithHoles`
+ *  (whisperService.ts:595) counts every position a run SPANS, including up
+ *  to 2 bridged holes, not just the positions actually matched — without
+ *  this, "longest run 9" beside "matched 7 of 9" reads as an impossible
+ *  number rather than the documented, intentional hole-bridging it is. */
 function formatMatchLine(
   matchedWords: number | undefined,
   totalWords: number | undefined,
@@ -113,11 +127,28 @@ function formatMatchLine(
   if (matchedWords === undefined || totalWords === undefined || confidence === undefined) {
     return undefined;
   }
-  const runSuffix = longestRun !== undefined ? `, longest run ${longestRun}` : '';
+  const bridged = longestRun !== undefined && longestRun > matchedWords;
+  const runSuffix = longestRun !== undefined
+    ? `, longest run ${longestRun}${bridged ? ' (spans up to 2 bridged holes, not just matches)' : ''}`
+    : '';
   if (totalWords === 0) {
     return `matched 0 of 0 words (no content to match)${runSuffix}`;
   }
   return `matched ${matchedWords} of ${totalWords} words (confidence ${confidence.toFixed(2)})${runSuffix}`;
+}
+
+/** WS2 ws2-25 Commit 5 — the skip-line label, printing BOTH numbering spaces
+ *  explicitly: "S{n}" (the dropped scene's own original script position —
+ *  `entry.segmentIndex`, PRE-filter, this record's only index) and, when the
+ *  drop was absorbed, "Clip {n}" (the absorbing neighbour's position in the
+ *  FINAL committed array — `entry.absorbedByDisplayIndex`, the number the
+ *  Timeline actually renders for that clip; see `SyncLogEntry`'s own doc
+ *  comment for why it must be resolved post-rehydration). The two used to
+ *  share the word "scene" for both, which is what made a real off-by-one
+ *  (an earlier restore shifting every later clip index) unreadable as a bug. */
+function skipEntryLabel(entry: SyncLogEntry): string {
+  const s = `S${entry.segmentIndex! + 1}`;
+  return entry.absorbedByDisplayIndex !== undefined ? `${s} / Clip ${entry.absorbedByDisplayIndex + 1}` : s;
 }
 
 /** The optional second line for WS4's run-level entries. Every field access is
@@ -181,7 +212,7 @@ export function formatEntryText(entry: SyncLogEntry): string {
   const isSkip = entry.type === 'skip' && entry.segmentIndex !== undefined;
 
   if (isSkip) {
-    const lines = [`${header} Segment ${entry.segmentIndex! + 1} skipped — ${entry.reason ?? 'no audio match'}`];
+    const lines = [`${header} ${skipEntryLabel(entry)} skipped — ${entry.reason ?? 'no text match'}`];
     if (entry.segmentText) {
       const tag = entry.segmentTag ? `[${entry.segmentTag}] ` : '';
       lines.push(`${tag}${entry.segmentText}`);
@@ -204,7 +235,7 @@ export function formatEntryText(entry: SyncLogEntry): string {
   return lines.join('\n');
 }
 
-export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal }: Props): React.ReactElement {
+export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToSegment }: Props): React.ReactElement {
   // Collapsed by default only when there's nothing to show — an empty section
   // shouldn't occupy the panel, but a run that just skipped scenes should be
   // visible without a click. `null` = the user hasn't expressed a preference,
@@ -343,7 +374,7 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal }: Props):
                   {isSkip ? (
                     <>
                       <p className="text-[10px] text-gray-300 mt-1 leading-snug break-words">
-                        Segment {entry.segmentIndex! + 1} skipped — {entry.reason ?? 'no audio match'}
+                        {skipEntryLabel(entry)} skipped — {entry.reason ?? 'no text match'}
                       </p>
                       {entry.segmentText && (
                         <p className="text-[9px] text-gray-500 mt-0.5 pl-1.5 leading-snug break-words">
@@ -358,6 +389,17 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal }: Props):
                           {matchLine}
                         </p>
                       )}
+                      <div className="flex items-center gap-3 mt-0.5 pl-1.5">
+                        {entry.segmentId && onSeekToSegment && (
+                          <button
+                            type="button"
+                            onClick={() => onSeekToSegment(entry.segmentId!)}
+                            className="text-[9px] text-[#F27D26] hover:text-[#E06A15] leading-snug underline underline-offset-2"
+                          >
+                            Jump to absorbing scene
+                          </button>
+                        )}
+                      </div>
                     </>
                   ) : isGrouped ? (
                     <>

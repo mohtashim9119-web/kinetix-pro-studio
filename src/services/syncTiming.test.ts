@@ -1219,7 +1219,7 @@ describe('R4-1 — middle gaps SKIP instead of aborting', () => {
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
     expect(kept.map(s => s.id)).toEqual(['s0', 's1', 's4']);
     expect(skipped.map(r => r.segmentIndex)).toEqual([2, 3]);
-    expect(skipped.map(r => r.reason)).toEqual(['no audio match', 'no audio match']);
+    expect(skipped.map(r => r.reason)).toEqual(['no text match', 'no text match']);
     expect(skipped.map(r => r.segmentText)).toEqual(['echo foxtrot', 'golf hotel']);
   });
 
@@ -1369,7 +1369,7 @@ describe('R4-1 — middle gaps SKIP instead of aborting', () => {
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
     expect(kept.map(s => s.id)).toEqual(['s0', 's3']);
     expect(skipped.map(r => r.segmentIndex)).toEqual([1, 2]);
-    expect(skipped.map(r => r.reason)).toEqual(['no audio match', 'no audio match']);
+    expect(skipped.map(r => r.reason)).toEqual(['no text match', 'no text match']);
   });
 });
 
@@ -1651,10 +1651,10 @@ describe('R4-2 — filterToCoveredSegments', () => {
 
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
     expect(kept.map(s => s.id)).toEqual(['s0', 's1']);
-    expect(skipped).toMatchObject([{ segmentIndex: 2, reason: 'no audio match' }]);
+    expect(skipped).toMatchObject([{ segmentIndex: 2, reason: 'no text match' }]);
   });
 
-  it('a matched=false, confidence=0 segment is still skipped with reason "no audio match" (Bug 2)', () => {
+  it('a matched=false, confidence=0 segment is still skipped with reason "no text match" (Bug 2)', () => {
     const segments: VideoSegment[] = [
       makeSegment({ id: 's0', order: 0, text: 'alpha bravo' }),
       makeSegment({ id: 's1', order: 1, text: 'never spoken words here' }),
@@ -1670,7 +1670,7 @@ describe('R4-2 — filterToCoveredSegments', () => {
     // fields (segmentTag/matchedWords/totalWords/confidence) — asserted separately
     // above, not the concern of this Bug-2 regression guard.
     expect(skipped).toMatchObject([
-      { segmentIndex: 1, segmentText: 'never spoken words here', reason: 'no audio match' },
+      { segmentIndex: 1, segmentText: 'never spoken words here', reason: 'no text match' },
     ]);
   });
 
@@ -1678,7 +1678,7 @@ describe('R4-2 — filterToCoveredSegments', () => {
     // updated 2026-08-02: run-based survival (Bug C fix) — s1's one spoken
     // word ("charlie", isolated, no adjacent match) no longer clears the
     // consecutive-run requirement (longest run 1, required 3 for 5 words),
-    // so it now ALSO skips — 'no audio match' is still the only reason
+    // so it now ALSO skips — 'no text match' is still the only reason
     // used, which is this guard's actual point: regardless of how MANY
     // segments end up skipped, or WHY (zero matches vs. an insufficient
     // run), 'low confidence' must never appear as a skip reason.
@@ -1693,8 +1693,8 @@ describe('R4-2 — filterToCoveredSegments', () => {
 
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
     expect(kept.map(s => s.id)).toEqual(['s0']);
-    expect(skipped.map(r => r.reason)).toEqual(['no audio match', 'no audio match']);
-    expect(skipped.every(r => r.reason === 'no audio match')).toBe(true);
+    expect(skipped.map(r => r.reason)).toEqual(['no text match', 'no text match']);
+    expect(skipped.every(r => r.reason === 'no text match')).toBe(true);
   });
 
   it('294-segment-like fixture: a weakly-matched segment (confidence 0.33, mirroring the reported segment 135) is KEPT again (matched-not-covered) via the recalibrated 1-3-word band, while R13 still passes on the strongly-covered majority', () => {
@@ -1823,7 +1823,7 @@ describe('R13 gate is unaffected by the Bug 2 skip-filter change', () => {
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
     expect(kept).toHaveLength(0);
     expect(skipped).toHaveLength(5);
-    expect(skipped.every(r => r.reason === 'no audio match')).toBe(true);
+    expect(skipped.every(r => r.reason === 'no text match')).toBe(true);
   });
 });
 
@@ -3479,6 +3479,42 @@ describe('contention-aware silence claiming (no starvation cascade)', () => {
   });
 });
 
+describe('snapCoveredBoundaries — a pair flanking a dropped run still splits by silence-centre/midpoint (100%-to-next policy reverted)', () => {
+  // Two survivors flanking a dropped middle run: 'alpha bravo' spoken
+  // 0.0-1.0, 'charlie delta' spoken 3.0-4.0 — a wide 2.0s reclaimable span
+  // (the shape a dropped scene's whole duration + surrounding silence leaves
+  // behind). A prior session tried pinning this boundary to lastSpokenEnd
+  // (100% forward extension for the next survivor) — reverted: it produced
+  // jarring cuts and ate the preceding segment's trailing room tone. This
+  // pair gets no special treatment at all — same silence-centre/spoken-
+  // midpoint rule as every other pair.
+  it('lands on the detected silence centre, not on lastSpokenEnd', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'prev', order: 0, text: 'alpha bravo', startTime: 0, duration: 3, anchorStart: 0, anchorSource: 'whisper' }),
+      makeSegment({ id: 'next', order: 1, text: 'charlie delta', startTime: 3, duration: 2, anchorStart: 3, anchorSource: 'whisper' }),
+    ];
+    const tokens = [...wordTokens('alpha bravo', 0, 0.5), ...wordTokens('charlie delta', 3.0, 0.5)];
+    const alignments = extractSegmentAlignments(segments, tokens);
+    expect(alignments.every(a => a.matched)).toBe(true);
+    const silences: SilenceInterval[] = [{ startSec: 1.6, endSec: 1.9 }];
+
+    const out = snapCoveredBoundaries(segments, alignments, tokens, silences, 5);
+    expect(out[1]!.startTime).toBeCloseTo(1.75, 6); // silence centre, not lastSpokenEnd (1.0)
+    expect(out[0]!.startTime + out[0]!.duration).toBeCloseTo(out[1]!.startTime, 6);
+  });
+
+  it('falls back to the spoken-edge midpoint with no silence data', () => {
+    const segments: VideoSegment[] = [
+      makeSegment({ id: 'prev', order: 0, text: 'alpha bravo', startTime: 0, duration: 3, anchorStart: 0, anchorSource: 'whisper' }),
+      makeSegment({ id: 'next', order: 1, text: 'charlie delta', startTime: 3, duration: 2, anchorStart: 3, anchorSource: 'whisper' }),
+    ];
+    const tokens = [...wordTokens('alpha bravo', 0, 0.5), ...wordTokens('charlie delta', 3.0, 0.5)];
+    const alignments = extractSegmentAlignments(segments, tokens);
+    const out = snapCoveredBoundaries(segments, alignments, tokens, [], 5);
+    expect(out[1]!.startTime).toBeCloseTo(2.0, 6); // (lastSpokenEnd 1.0 + nextSpokenStart 3.0) / 2
+  });
+});
+
 describe('filterToCoveredSegments — keptAlignments', () => {
   it('returns the kept segments’ alignments, in the same order and the same length as kept', () => {
     const segments: VideoSegment[] = [
@@ -4118,7 +4154,7 @@ describe('WS5 — LOW_CONFIDENCE_RATIO boundary is inclusive', () => {
     const { kept, skipped } = filterToCoveredSegments(segments, cov);
     expect(kept.map(s => s.id)).toEqual(['s0', 's1']);
     expect(skipped.map(r => r.segmentIndex)).toEqual([2, 3]);
-    expect(skipped.every(r => r.reason === 'no audio match')).toBe(true);
+    expect(skipped.every(r => r.reason === 'no text match')).toBe(true);
   });
 
   it('the same threshold governs the covered-run scan inside computeCoverageSummary', () => {
@@ -4827,7 +4863,7 @@ describe('Row 8a — last-segment rescue window sized from the probed audioDurat
 // legitimate case.
 // ===========================================================================
 describe('rescue forward-ordering bound (false-positive rejection)', () => {
-  it('REGRESSION: a no-audio heading (first segment) no longer steals a later true match\'s substitution material; it is skipped with "no audio match"', () => {
+  it('REGRESSION: a no-audio heading (first segment) no longer steals a later true match\'s substitution material; it is skipped with "no text match"', () => {
     // able-baker-charlie-delta-style trap, but shaped exactly like the
     // production incident: a first segment (heading) whose words never occur
     // near its own position, two genuinely-spoken segments right after it,
@@ -4871,11 +4907,11 @@ describe('rescue forward-ordering bound (false-positive rejection)', () => {
 
     // filterToCoveredSegments must therefore skip it — this is the actual
     // user-visible behavior the fix restores (no giant phantom duration, a
-    // real "no audio match" log entry instead).
+    // real "no text match" log entry instead).
     const { kept, skipped } = filterToCoveredSegments(segments, results);
     expect(kept.map(s => s.id)).toEqual(['s1', 's2']);
     expect(skipped).toHaveLength(1);
-    expect(skipped[0]).toMatchObject({ segmentIndex: 0, reason: 'no audio match' });
+    expect(skipped[0]).toMatchObject({ segmentIndex: 0, reason: 'no text match' });
   });
 
   it('preserves legitimate anchor-drift recovery when the claim still precedes the next true match (mirrors WS6 test 10\'s shape)', () => {
@@ -5197,7 +5233,7 @@ describe('rescue forward-ordering bound (false-positive rejection)', () => {
       const { kept, skipped } = filterToCoveredSegments(segments, results);
       expect(kept.map(s => s.id)).toEqual(['s312']);
       expect(skipped).toHaveLength(1);
-      expect(skipped[0]).toMatchObject({ segmentIndex: 1, reason: 'no audio match' });
+      expect(skipped[0]).toMatchObject({ segmentIndex: 1, reason: 'no text match' });
     });
 
     it('boundary: a claim whose earliest token startSec exactly equals the backward bound is rejected (<=, not <)', () => {
@@ -5447,7 +5483,7 @@ describe('Bug C — contiguous-run survival requirement', () => {
     expect(skipped).toHaveLength(1);
     expect(skipped[0]).toMatchObject({
       segmentIndex: 0,
-      reason: 'no audio match',
+      reason: 'no text match',
       matchedWords: 2,
       totalWords: 9,
       longestRun: 1,

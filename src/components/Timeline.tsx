@@ -80,6 +80,12 @@ interface Props {
   onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
   onOpenStockSearch: (segmentId: string) => void;
   onSelectSegment?: (id: string) => void;
+  /** WS2 ws2-23 (bugs 4/6) — a SINGLE click on a clip. Distinct from
+   *  `onSelectSegment` (double-click, which OPENS the scene drawer): this
+   *  only tells App which clip the pointer landed on, so an ALREADY-open
+   *  drawer can retarget to it. A plain seek-click on a closed drawer must
+   *  not pop one open, which is why this is a separate signal. */
+  onClipClick?: (id: string) => void;
   onHeadingResizeCommit?: (id: string, next: { time: number; duration: number }) => void;
   initialScrollLeft?: number;
 }
@@ -106,6 +112,7 @@ export function Timeline({
   onSegmentUpdate,
   onOpenStockSearch,
   onSelectSegment,
+  onClipClick,
   onHeadingResizeCommit,
   initialScrollLeft,
 }: Props) {
@@ -635,7 +642,7 @@ export function Timeline({
                   <div
                     key={s.id}
                     data-seg-id={s.id}
-                    onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); }}
+                    onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); onClipClick?.(s.id); }}
                     onDoubleClick={(e) => { e.stopPropagation(); onSeek(s.startTime); onSelectSegment?.(s.id); }}
                     onMouseDown={(e) => {
                       e.stopPropagation();
@@ -850,6 +857,7 @@ export function Timeline({
           </div>
         )}
       </div>
+
     </div>
   );
 }

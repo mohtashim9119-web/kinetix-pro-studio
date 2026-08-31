@@ -129,6 +129,9 @@ import {
 } from './services/faRunPlacementGate';
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
+import { computeAbsorbedGaps, measureOtherNeighborGain } from './services/absorbedGaps';
+import { splitSelectedSegment, deleteSelectedSegment } from './services/segmentSplitDelete';
+
 import { detectSilences } from './services/silenceDetector';
 import type { SilenceInterval } from './services/silenceDetector';
 import {
@@ -624,7 +627,11 @@ export const parseProjectData = async (
   // an unedited segment's id survives the resync; a segment with no content
   // match (new or edited text) gets a fresh content-derived id.
   const idAssigned = assignSegmentIds(finalSegments, previousSegments);
-  idAssigned.forEach((seg, i) => { finalSegments[i] = seg; });
+  // A parsed/re-synced segment is always a NATIVE (root) segment — splitting
+  // only ever happens later, via the user's own manual `S` action — so its
+  // root is itself. Re-derived fresh every Apply Sync, same as anchorStart:
+  // a re-sync never carries a rootSegmentId forward from a stale prior split.
+  idAssigned.forEach((seg, i) => { finalSegments[i] = { ...seg, rootSegmentId: seg.id }; });
 
   // Detect segments sharing the same assetId — can happen when the
   // unused-asset pool is exhausted after a deletion and re-sync.
@@ -1008,7 +1015,13 @@ export function evaluateCoverageGate(
  *  firing set is a subset of the segments Whisper alone already refuses, so
  *  this member can only ever re-label a skip that would have happened anyway
  *  on the FA-gate-off default path. */
-export type SegmentSkipReason = 'no audio match' | typeof R10_SKIP_REASON;
+// WS2 ws2-25 Commit 5 — renamed from 'no audio match'. Nothing in this skip
+// path reads acoustic data: the skip/matched decision is `hasQualifyingRun`
+// (whisperService.ts), pure query-word-position vs. matched-transcript-index
+// comparison; `alignScenestoTranscript`'s own `silences` parameter is
+// declared (whisperService.ts:1478) and never read in that function's body.
+// "No audio match" claimed a signal this path never inspects.
+export type SegmentSkipReason = 'no text match' | typeof R10_SKIP_REASON;
 
 /**
  * One skipped segment, recorded for the sync log. `segmentIndex` is 0-based
@@ -1107,7 +1120,7 @@ export function filterToCoveredSegments(
     skipped.push({
       segmentIndex: i,
       segmentText: seg.text ?? '',
-      reason: unspokenScriptIndices?.has(i) ? R10_SKIP_REASON : 'no audio match',
+      reason: unspokenScriptIndices?.has(i) ? R10_SKIP_REASON : 'no text match',
       segmentTag: seg.tag || undefined,
       matchedWords: cov?.matchedWords,
       totalWords: cov?.totalWords,
@@ -1190,42 +1203,130 @@ function previewSegmentText(text: string): string {
     : trimmed;
 }
 
+/** Per-skip-record absorption info (WS2 T2.1) — resolved once at the call
+ *  site from `computeAbsorbedGaps`'s host map, keyed back to each skipped
+ *  record's own PRE-filter `segmentIndex` so `buildSkipLogEntries` doesn't
+ *  need to re-derive the absorbing segment's id itself. Every entry in one
+ *  absorbed cluster carries the SAME `hostSegmentId`/`hostDisplayIndex`/
+ *  `span` — that shared value is what "groups" them: a reader can cluster
+ *  skip entries by `segmentId` even though each still renders as its own
+ *  `SyncLogEntry`. Read-only reporting data — see `absorbedGaps.ts`'s own
+ *  header for why nothing here is persisted onto a segment any more. */
+export interface AbsorbedGapLogInfo {
+  hostSegmentId: string;
+  /** 0-based index into the FINAL COMMITTED array, the number the Timeline
+   *  actually renders for the absorbing neighbour's clip. Mirrors
+   *  `SyncLogEntry.absorbedByDisplayIndex`'s own doc comment; kept as its own
+   *  field here rather than only inside the entry so the sync-log summary
+   *  line can use it too if ever needed. */
+  hostDisplayIndex: number;
+  span: { start: number; end: number };
+  gapAudio: 'silent' | 'speech' | 'unknown';
+  /** WS2 ws2-27 — set only when `snapCoveredBoundaries`'s shared-split-point
+   *  boundary (WS2 ws2-22) gave the OTHER (non-host) neighbour a materially
+   *  sized share too (> MIN_SEGMENT_DURATION, dragCascade.ts) — e.g. 173's
+   *  S112, where the host (Clip 110) takes 1.79s but Clip 109 still gains a
+   *  real, visible 0.63s. `displayIndex` is 0-based over the same final
+   *  committed array `hostDisplayIndex` is; `gainSec` is that neighbour's own
+   *  measured duration change from the boundary write, isolated to the edge
+   *  it shares with the host (never its other, unrelated edge). Message text
+   *  only — this never grows a second jump target. */
+  otherNeighbor?: { displayIndex: number; gainSec: number };
+}
+
 /**
  * One 'skip' entry per SkippedSegmentRecord. `segmentIndex` is carried through
  * as the record's PRE-filter index (see SkippedSegmentRecord) — the scene the
  * user wrote, not a position on the committed timeline, which by definition no
  * longer contains it. The displayed index is 1-based; the stored one is not.
+ *
+ * WS2 T2.1 — when `absorbedInfoBySkipIndex` names this record's absorbing
+ * neighbour, the message additionally reports the true reclaimable region
+ * (previous survivor's last spoken word end → its duration → next survivor's
+ * first spoken word start, per A1) and the audio label (A2), and the entry's
+ * `segmentId` is set to the absorbing neighbour's own id — never the dropped
+ * segment's — so a click can deep-link the playhead to a COMMITTED,
+ * on-timeline position (`SyncLogEntry.segmentId`'s own doc comment).
  */
 export function buildSkipLogEntries(
   syncRunId: string,
   skipped: SkippedSegmentRecord[],
   timestamp: number = Date.now(),
+  absorbedInfoBySkipIndex?: ReadonlyMap<number, AbsorbedGapLogInfo>,
 ): SyncLogEntry[] {
-  return skipped.map(record =>
-    makeSyncLogEntry(
+  return skipped.map(record => {
+    const absorbed = absorbedInfoBySkipIndex?.get(record.segmentIndex);
+    // WS2 ws2-25 Commit 5 — TWO NUMBERING SPACES, both named explicitly.
+    // "S{n}" is record.segmentIndex+1, the ORIGINAL SCRIPT POSITION (the scene
+    // the user wrote — this record has no other index, since a dropped scene
+    // has no committed position). "Clip {n}" is the ABSORBING NEIGHBOUR's
+    // position in the array the Timeline actually renders
+    // (absorbed.hostDisplayIndex+1 — see AbsorbedGapLogInfo's own doc comment
+    // for why that must be resolved post-rehydration). The two used to share
+    // the word "scene" for both, which is exactly what made a genuine
+    // off-by-one (a prior restore shifting every later clip index)
+    // unreadable as a bug: both numbers looked like the same kind of thing.
+    const sTag = `S${record.segmentIndex + 1}`;
+    const clipTag = absorbed ? ` / Clip ${absorbed.hostDisplayIndex + 1}` : '';
+    let message = `${sTag}${clipTag} skipped — ${record.reason}.`;
+    if (absorbed) {
+      const gapDuration = absorbed.span.end - absorbed.span.start;
+      message += ` Absorbed ${absorbed.span.start.toFixed(3)}s → ${gapDuration.toFixed(3)}s → `
+        + `${absorbed.span.end.toFixed(3)}s (${absorbed.gapAudio}).`;
+      // WS2 ws2-27 — the other neighbour also moved by a material amount
+      // (option (a) + gated note, per the operator's Step 2 decision): say so
+      // in plain text rather than silently hiding it behind the single
+      // majority-absorber host. No second jump target, no second link.
+      if (absorbed.otherNeighbor) {
+        message += ` Clip ${absorbed.otherNeighbor.displayIndex + 1} also holds `
+          + `${absorbed.otherNeighbor.gainSec.toFixed(2)}s.`;
+      }
+    }
+    // WS2 ws2-25 Commit 5 — R.10-reason skips carry FA-ARM RERUN match
+    // stats, not Whisper's. On the FA path, `filterToCoveredSegments`'s
+    // `coverage` comes from re-running the plain text matcher against FA's
+    // OWN per-word output, which places essentially every query word by
+    // construction (faUnspokenGate.ts:20 — CTC has no drop path). So
+    // "matched 7/9, confidence 0.778" beside an R.10 skip does not mean 7 of
+    // 9 words were heard; it means the text matcher found 7 of 9 words
+    // SOMEWHERE in FA's forced placement of the whole script, including a
+    // title that was never spoken. Suppressed here rather than shown next to
+    // a skip it doesn't actually support; the real basis for an R.10 skip is
+    // stated in `record.reason` and the absorbed span above, not these
+    // numbers. Kept as-is (real Whisper-arm signal) for every other skip
+    // reason.
+    const isR10 = record.reason === R10_SKIP_REASON;
+    if (isR10) {
+      message += ' (FA places every word by construction — match stats withheld; not evidence this scene was spoken.)';
+    }
+    return makeSyncLogEntry(
       syncRunId,
       'skip',
-      `Scene ${record.segmentIndex + 1} skipped — ${record.reason}.`,
+      message,
       {
         segmentIndex: record.segmentIndex,
         segmentText: previewSegmentText(record.segmentText),
         reason: record.reason,
         segmentTag: record.segmentTag,
-        matchedWords: record.matchedWords,
-        totalWords: record.totalWords,
-        confidence: record.confidence,
-        longestRun: record.longestRun,
+        ...(isR10 ? {} : {
+          matchedWords: record.matchedWords,
+          totalWords: record.totalWords,
+          confidence: record.confidence,
+          longestRun: record.longestRun,
+        }),
+        segmentId: absorbed?.hostSegmentId,
+        absorbedByDisplayIndex: absorbed?.hostDisplayIndex,
       },
       timestamp,
-    ),
-  );
+    );
+  });
 }
 
 /**
  * The summary line for a successful sync (Bug 1 fix). Built on EVERY successful
  * run now — clean or with skips — not only the 0-skip case. `matchedSegments`
  * is how many landed on the timeline, `totalSegments` the pre-filter count, and
- * `skippedSegments` how many were dropped for having no audio match.
+ * `skippedSegments` how many were dropped for having no text match.
  */
 export function buildSyncInfoMessage(
   totalSegments: number,
@@ -2295,12 +2396,18 @@ export default function App() {
   }, [showToast, setProjectSilent]);
 
   const handleUndo = useCallback((): void => {
-    performUndo({ isResizingRef, history, liveProjectRef, blockedByLock, setHistory, applyRestoredState, setHistoryAnchor });
-  }, [history, applyRestoredState, blockedByLock]);
+    performUndo({
+      isResizingRef, history, liveProjectRef, blockedByLock, setHistory, applyRestoredState, setHistoryAnchor,
+      selectedSegmentId, setSelectedSegmentId,
+    });
+  }, [history, applyRestoredState, blockedByLock, selectedSegmentId]);
 
   const handleRedo = useCallback((): void => {
-    performRedo({ isResizingRef, history, liveProjectRef, blockedByLock, setHistory, applyRestoredState, setHistoryAnchor });
-  }, [history, applyRestoredState, blockedByLock]);
+    performRedo({
+      isResizingRef, history, liveProjectRef, blockedByLock, setHistory, applyRestoredState, setHistoryAnchor,
+      selectedSegmentId, setSelectedSegmentId,
+    });
+  }, [history, applyRestoredState, blockedByLock, selectedSegmentId]);
 
   const undoLabel = peekUndo(history)?.label;
   const redoLabel = peekRedo(history)?.label;
@@ -2315,6 +2422,30 @@ export default function App() {
   const handleRedoRef = useRef(handleRedo);
   handleUndoRef.current = handleUndo;
   handleRedoRef.current = handleRedo;
+
+  // WS2 T2.1 Commit 4 — S/D (split/delete) read the CURRENTLY selected
+  // segment and playhead time through refs for the same reason as
+  // handleUndoRef/handleRedoRef above: the global keydown effect's dep array
+  // is deliberately empty.
+  const selectedSegmentIdRef = useRef(selectedSegmentId);
+  selectedSegmentIdRef.current = selectedSegmentId;
+  const currentTimeRef = useRef(currentTime);
+  currentTimeRef.current = currentTime;
+
+  // WS2 session ws2-23 (bug 4) — S/D were gated on `selectedSegmentId` ALONE,
+  // documented as "a click on a clip is what sets selectedSegmentId". That is
+  // not true of Timeline.tsx: a clip's `onClick` only seeks; `onSelectSegment`
+  // fires on DOUBLE-click. So the natural gesture (click a clip, press S)
+  // never armed either key — verified live, 173 corpus, S/D no-ops after a
+  // single click. The playhead segment is the fallback target: clicking a clip
+  // seeks to its start, which makes it `currentSegment` and paints it with the
+  // existing orange active-clip border, so the affordance is already visible
+  // and needs no new state or chrome. Selection still wins when present, so
+  // nothing about the previous behaviour changes — this only adds a target
+  // where there was none.
+  const playheadSegmentIdRef = useRef<string | null>(null);
+  const resolveShortcutTargetSegmentId = (): string | null =>
+    selectedSegmentIdRef.current ?? playheadSegmentIdRef.current;
 
   // App-level shortcuts (reload / devtools, 2026-08-08). Same ref pattern and
   // the same reason: the keydown effect below keeps its empty dep array.
@@ -3160,6 +3291,28 @@ export default function App() {
         );
       }
 
+      // WS2 T2.1 (gap-absorption) — computed here (right after the filter
+      // that produced `skipped`) rather than after the boundary snap below,
+      // so the SAME map can feed both the sync-log entries (which need it
+      // immediately, for the grouped skip message) and the later merge onto
+      // `finalTimedSegments` — one computation, two consumers, never two
+      // computations that could silently disagree.
+      //
+      // WORD SOURCE — `aligned.tokens`, NEVER `projectRef.current.transcriptTokens`.
+      // `aligned.tokens` is `filterMalformedTokens(faTokens ?? transcriptTokens)`
+      // (useWhisper.ts:107-108,139), so it is FA's word list on the FA arm and
+      // Whisper's on the Whisper arm — the alignment engine's OWN words, matching
+      // whichever arm produced the timings above. This is load-bearing, not
+      // incidental: `keptAlignments[i].firstTokenIdx`/`lastTokenIdx` (what
+      // `computeAbsorbedGaps` dereferences to build each span) are indices into
+      // exactly this array, so substituting any other token array resolves to the
+      // WRONG tokens and silently mis-measures every absorbed span. Locked by
+      // `absorbedGaps.test.ts`'s "reads spans from the token array it is given"
+      // suite.
+      const absorbedGapsByHostId = computeAbsorbedGaps(
+        aligned.segments, skipped, kept.map(s => s.id), keptAlignments, aligned.tokens, aligned.silences,
+      );
+
       // Rescue observability (false-positive rescue fix, 2026-07-31) — every
       // coverage entry the per-segment temporal-bounding rescue recovered
       // (`recoveredVia` set only for an ACCEPTED claim — see AlignResult's
@@ -3185,6 +3338,16 @@ export default function App() {
           });
         }
       }
+
+      // WS2 ws2-25 Commit 5 — `absorbedInfoBySkipIndex` (the map
+      // `buildSkipLogEntries` needs for its "Clip N" label) is resolved
+      // LATER, after the T2.2 override-rehydration pass below has finished
+      // inserting any of the user's OWN prior restores — see that block's
+      // own comment for why resolving it here, against `kept`, silently
+      // undercounts the displayed clip whenever an earlier restore sits
+      // before this host. The skip log entries built below are provisional
+      // (no "Clip N" label yet) and get patched with the correct one once
+      // the final array is known.
 
       // Word-coverage validator (Stage-4 output validation, Contract 3→4,
       // rule 'low-word-coverage', 2026-08-03) — a KEPT (survived, matched:
@@ -3274,6 +3437,59 @@ export default function App() {
       // wherever the aligner's matched span put it — the first spoken word,
       // not necessarily 0). Stretch it back to 0 the same way.
       finalTimedSegments = headExtendFirstSegment(finalTimedSegments);
+
+      // WS2 ws2-25 Commit 5 — `absorbedInfoBySkipIndex` (and therefore the
+      // skip log's "Clip N" label) is resolved against `finalTimedSegments`
+      // HERE, the final committed array, never against the earlier `kept`
+      // snapshot. Mirrors `syncLog.ts`'s `committedIndexOf` — the same
+      // id-resolved-against-the-final-array pattern R.11/R.12/R.13's own log
+      // entries already use one block below (`buildSeamFitLogEntries` etc.
+      // are all given `finalTimedSegments`, never `kept`) — this brings skip
+      // entries onto that same pattern instead of a separate stale one.
+      // Provisional skip entries were already staged into `pendingLogEntries`
+      // above (built before this array was final); patched in place below
+      // rather than rebuilding the whole array, so nothing else about their
+      // position or the surrounding entries changes.
+      if (skipped.length > 0 && absorbedGapsByHostId.size > 0) {
+        const absorbedInfoBySkipIndex = new Map<number, AbsorbedGapLogInfo>();
+        for (const [hostId, gaps] of absorbedGapsByHostId) {
+          const hostDisplayIndex = finalTimedSegments.findIndex(s => s.id === hostId);
+          if (hostDisplayIndex < 0) continue;
+          // WS2 ws2-27, option (a) + gated note — every gap in `gaps` shares
+          // the same `otherNeighborId` (absorbedGaps.ts's own invariant, same
+          // as `span`/`gapAudio` above), so this is resolved once per host,
+          // not once per skipped record. `kept` (pre-boundary-snap) and
+          // `finalTimedSegments` (post-snap) are the same before/after pair
+          // `measureOtherNeighborGain` needs; only a gain that exceeds
+          // MIN_SEGMENT_DURATION becomes a note — the operator's own decision
+          // for what counts as "the other clip visibly moved too".
+          const otherNeighborId = gaps[0]?.otherNeighborId;
+          let otherNeighbor: AbsorbedGapLogInfo['otherNeighbor'];
+          if (otherNeighborId) {
+            const otherDisplayIndex = finalTimedSegments.findIndex(s => s.id === otherNeighborId);
+            const gainSec = measureOtherNeighborGain(hostId, otherNeighborId, kept, finalTimedSegments);
+            if (otherDisplayIndex >= 0 && gainSec !== undefined && gainSec > MIN_SEGMENT_DURATION) {
+              otherNeighbor = { displayIndex: otherDisplayIndex, gainSec };
+            }
+          }
+          for (const gap of gaps) {
+            const skipRecord = skipped.find(r => aligned.segments[r.segmentIndex]?.id === gap.segmentId);
+            if (skipRecord) {
+              absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
+                hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
+                otherNeighbor,
+              });
+            }
+          }
+        }
+        const correctedSkipEntries = buildSkipLogEntries(syncRunId, skipped, syncRunAt, absorbedInfoBySkipIndex);
+        const correctedByIndex = new Map(correctedSkipEntries.map(e => [e.segmentIndex, e]));
+        pendingLogEntries = pendingLogEntries.map(e =>
+          e.type === 'skip' && e.segmentIndex !== undefined && correctedByIndex.has(e.segmentIndex)
+            ? correctedByIndex.get(e.segmentIndex)!
+            : e
+        );
+      }
 
       // WS1 R.11 (faSeamFitGate.ts) — CHUNK-FIT BOUNDARY CORRECTION. Runs
       // ONLY when FA actually produced the tokens (mirrors R.10's own
@@ -4198,6 +4414,72 @@ export default function App() {
     setProject(prev => clearSyncLog(prev));
   }, []);
 
+  // WS2 T2.1 Commit 4 — S (split the selected segment at the playhead) and
+  // D (delete a split slice). Both go through setProject (undoable).
+  //
+  // WS2 ws2-28 Commit 2 — both handlers used to leave `selectedSegmentId`
+  // dangling (split: never touched, so it kept pointing at the now-replaced
+  // pre-split id) or null it unconditionally (delete: ws2-25's fix below).
+  // Either way, an open drawer whose target segment vanished had no path back
+  // to a valid segment — see `split-text-diagnosis.md` (session ws2-28) for
+  // the full trace of how that read as "the surviving neighbour's text
+  // vanished." `splitSelectedSegment`/`deleteSelectedSegment`
+  // (segmentSplitDelete.ts) now decide the post-op `selectedSegmentId` as
+  // part of the same pure computation as the segment mutation itself, so
+  // these handlers are pure plumbing — read the target, call the pure
+  // function, commit both results. Reads `selectedSegmentIdRef` (not a
+  // closed-over `selectedSegmentId`) so a stale closure in either
+  // `useCallback([])` can't compare against a selection that has since
+  // changed.
+  const handleSplitSelectedSegment = useCallback((): void => {
+    const id = resolveShortcutTargetSegmentId();
+    if (!id) return;
+    let didSplit = false;
+    let nextSelectedId: string | null = null;
+    setProject(prev => {
+      const result = splitSelectedSegment(prev.segments, id, currentTimeRef.current, selectedSegmentIdRef.current);
+      didSplit = result.split;
+      nextSelectedId = result.selectedSegmentId;
+      return result.split ? { ...prev, segments: result.segments } : prev;
+    });
+    if (didSplit) setSelectedSegmentId(nextSelectedId);
+  }, []);
+
+  // WS2 ws2-25 Commit 4 — id-parameterized so the D shortcut (which resolves
+  // its own target) and the Timeline right-click "Delete segment" entry (which
+  // already knows exactly which clip was clicked) share one code path rather
+  // than the context menu re-deriving selection state to call the shortcut
+  // handler indirectly. (That context menu no longer exists — WS2 ws2-26
+  // round 1 removed it — but D still resolves its own target the same way, so
+  // this stays the one delete entry point.)
+  const handleDeleteSegmentById = useCallback((id: string): void => {
+    let didDelete = false;
+    let nextSelectedId: string | null = null;
+    setProject(prev => {
+      const result = deleteSelectedSegment(prev.segments, id, selectedSegmentIdRef.current);
+      didDelete = result.deleted;
+      nextSelectedId = result.selectedSegmentId;
+      return result.deleted ? { ...prev, segments: result.segments } : prev;
+    });
+    // WS2 ws2-28 Commit 2 (operator-approved reversal of ws2-25's
+    // clear-to-null): when the deleted segment WAS the open selection,
+    // `deleteSelectedSegment` redirects it to `absorbedById` — the neighbour
+    // that just absorbed the freed span — instead of closing the editor.
+    // Closing a caption editor because a neighbouring slice was deleted was
+    // never correct on its own terms. When the deleted segment was NOT the
+    // selection, `nextSelectedId` comes back equal to the selection that was
+    // already there, so this is a no-op re-render-wise — ws2-25's original
+    // guarantee (an unrelated delete never disturbs an open editor) still
+    // holds.
+    if (didDelete) setSelectedSegmentId(nextSelectedId);
+  }, []);
+
+  const handleDeleteSelectedSegment = useCallback((): void => {
+    const id = resolveShortcutTargetSegmentId();
+    if (!id) return;
+    handleDeleteSegmentById(id);
+  }, [handleDeleteSegmentById]);
+
   // Shared delete handler — used by DropZonePanel post-sync assets list
   const handleDeleteAsset = useCallback((assetId: string) => {
     setProject(prev => {
@@ -4370,6 +4652,10 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTime, project.segments, resizeSettleTick]);
 
+  // WS2 ws2-23 (bug 4) — kept in step every render, for the S/D fallback
+  // target above; the keydown effect's dep array is deliberately empty.
+  playheadSegmentIdRef.current = currentSegment?.id ?? null;
+
   // LIVE AUTO-FOLLOW — while playback is running and the segment drawer is
   // already open, the drawer retargets to whichever segment the playhead is in,
   // so its text/timing/rule indicators track the video across boundaries.
@@ -4476,6 +4762,24 @@ export default function App() {
   const selectedSegment = project.segments.find(s => s.id === selectedSegmentId) ?? null;
   const selectedSegmentIndex = project.segments.findIndex(s => s.id === selectedSegmentId);
   const selectedHeading = (project.headings ?? []).find(h => h.id === selectedHeadingId) ?? null;
+
+  // WS2 ws2-28 Commit 1 — a dangling `selectedSegmentId` (pointing at a
+  // segment split/deleted out from under an open drawer) used to silently
+  // degrade to a blank/stale editor. Commit 2 closes the two ways this
+  // happens today (split, delete); this is the backstop for any FUTURE path
+  // that orphans the selection the same way — loud in dev, and inert in
+  // prod since `selectedSegment` already resolves to `null` correctly either
+  // way (`BottomDrawer.tsx`'s content is now gated on that live value, not a
+  // stale one — see Commit 1).
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    if (selectedSegmentId === null) return;
+    if (project.segments.some(s => s.id === selectedSegmentId)) return;
+    console.warn(
+      `[kinetix] selectedSegmentId "${selectedSegmentId}" is not present in project.segments — ` +
+      `the editor drawer has an orphaned selection and will render blank.`,
+    );
+  }, [selectedSegmentId, project.segments]);
 
   // Sync volatile values into refs on every render so async handlers and stable
   // callbacks can read the live state without stale closures.
@@ -4722,6 +5026,25 @@ export default function App() {
           e.preventDefault();
           previewStageRef.current?.toggleFullscreen();
         }
+      } else if (
+        // WS2 T2.1 Commit 4, corrected in ws2-23 — S/D require a TARGET
+        // segment: the explicitly selected one, else the one under the
+        // playhead (`resolveShortcutTargetSegmentId`). The original gate read
+        // `selectedSegmentId` alone on the belief that clicking a clip sets
+        // it; Timeline.tsx only sets it on DOUBLE-click, which made both keys
+        // dead on the natural gesture. Refused, same as every other bare-key
+        // shortcut here, while a text field has focus.
+        (e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !isTextEntryElement(document.activeElement) && resolveShortcutTargetSegmentId()
+      ) {
+        e.preventDefault();
+        handleSplitSelectedSegment();
+      } else if (
+        (e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !isTextEntryElement(document.activeElement) && resolveShortcutTargetSegmentId()
+      ) {
+        e.preventDefault();
+        handleDeleteSelectedSegment();
       } else if (import.meta.env.DEV && (e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
         e.preventDefault();
         setDevPanelOpen(prev => !prev);
@@ -5330,8 +5653,17 @@ export default function App() {
             }}
           />
 
-          {/* Timeline — fills remaining height */}
-          <div className="flex-1 min-h-0 pb-2">
+          {/* Timeline — fills remaining height.
+              WS2 ws2-23 (bug 5): `relative z-[45]` puts the timeline ABOVE the
+              drawer's click-outside-to-dismiss backdrop (z-40, below) and
+              below the drawer itself (z-50). Without it, `elementFromPoint` at
+              a clip's centre returned the backdrop whenever the drawer was
+              open — verified live — so the clip's own `onContextMenu` (the
+              "Restore absorbed segments" menu) and every other clip pointer
+              handler were unreachable in exactly the state a user is in after
+              opening a scene. Clicking a clip now retargets the drawer instead
+              of dismissing it; clicking the PREVIEW area still dismisses. */}
+          <div className="relative z-[45] flex-1 min-h-0 pb-2">
             <ErrorBoundary fallback={(err, reset) => (
               <PanelFallback label="Timeline" error={err} reset={reset} />
             )}>
@@ -5384,6 +5716,19 @@ export default function App() {
                 onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
                 onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
                 onSelectSegment={(id) => setSelectedSegmentId(id)}
+                // WS2 ws2-23 (bugs 4/6) — a single click RETARGETS an already-
+                // open scene drawer and never opens a closed one, exactly the
+                // rule LIVE AUTO-FOLLOW above already uses for playback. Before
+                // the z-[45] fix a clip was unclickable while the drawer was
+                // open, so this case could not arise; now that it can, a stale
+                // drawer selection would otherwise keep overriding the clip the
+                // user is actually pointing at for S/D
+                // (`resolveShortcutTargetSegmentId` prefers selection) — that
+                // is what made D look broken on a freshly restored segment.
+                // `selectedSegmentId === null` also covers "the heading editor
+                // is open" (the two ids are mutually exclusive), so a heading
+                // being edited is never yanked away by a timeline click.
+                onClipClick={(id) => setSelectedSegmentId(prev => (prev === null ? null : id))}
                 onHeadingResizeCommit={(id, next) => {
                   setProject(prev => ({
                     ...prev,
@@ -5476,6 +5821,7 @@ export default function App() {
               syncLog={project.syncLog ?? []}
               onClearLog={handleClearSyncLog}
               onOpenModelsModal={() => setShowManageModelsModal(true)}
+              onSeekToSegment={handleSegmentClick}
             />
           </div>
 

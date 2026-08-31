@@ -67,7 +67,7 @@ import type { SilenceInterval } from './silenceDetector';
 import type { TranscriptToken, VideoSegment } from '../types';
 
 /** The skip reason an R.10 drop carries into the sync log. Distinct from the
- *  plain 'no audio match' so a user reading the log can tell "the audio never
+ *  plain 'no text match' so a user reading the log can tell "the audio never
  *  said this" from "the aligner could not find it". */
 export const R10_SKIP_REASON = 'scripted text never spoken';
 

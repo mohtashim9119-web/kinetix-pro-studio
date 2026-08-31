@@ -197,6 +197,22 @@ export interface UndoRedoDeps {
   setHistory: (h: History<Project>) => void;
   applyRestoredState: (restored: Project, what: string) => void;
   setHistoryAnchor: (v: { segmentId: string; nonce: number } | null) => void;
+  /** Current `selectedSegmentId` React state — read here (rather than left
+   *  entirely to `applyRestoredState`'s own internal repair) so a traversal
+   *  that orphans the selection nulls it out synchronously, in the same
+   *  handler invocation that restores the project, before anything renders
+   *  the drawer against the stale id. */
+  selectedSegmentId: string | null;
+  setSelectedSegmentId: (id: string | null) => void;
+}
+
+/** Nulls `deps.selectedSegmentId` when it no longer names a segment in
+ *  `restoredProject` — the drawer must never render against a segment a
+ *  traversal just made disappear. */
+function repairSelectedSegmentIdSync(restoredProject: Project, deps: UndoRedoDeps): void {
+  if (deps.selectedSegmentId !== null && !restoredProject.segments.some(sg => sg.id === deps.selectedSegmentId)) {
+    deps.setSelectedSegmentId(null);
+  }
 }
 
 export function performUndo(deps: UndoRedoDeps): void {
@@ -209,6 +225,7 @@ export function performUndo(deps: UndoRedoDeps): void {
   if (!t) return;
   if (deps.blockedByLock(t.entry.state)) return;
   deps.setHistory(t.history);
+  repairSelectedSegmentIdSync(t.entry.state, deps);
   deps.applyRestoredState(t.entry.state, `Undo ${t.entry.label}`);
   if (t.entry.anchorSegmentId) {
     deps.setHistoryAnchor({ segmentId: t.entry.anchorSegmentId, nonce: Date.now() });
@@ -221,6 +238,7 @@ export function performRedo(deps: UndoRedoDeps): void {
   if (!t) return;
   if (deps.blockedByLock(t.entry.state)) return;
   deps.setHistory(t.history);
+  repairSelectedSegmentIdSync(t.entry.state, deps);
   deps.applyRestoredState(t.entry.state, `Redo ${t.entry.label}`);
   if (t.entry.anchorSegmentId) {
     deps.setHistoryAnchor({ segmentId: t.entry.anchorSegmentId, nonce: Date.now() });
