@@ -47,6 +47,7 @@ import {
   filterMalformedTokens,
   countTranscriptWords,
   type SegmentAlignment,
+  type AlignmentLanguageCode,
 } from '../src/services/whisperService';
 import { applyAnchorBasedTiming, headExtendFirstSegment } from '../src/services/syncEngine';
 import { snapCoveredBoundaries } from '../src/services/snapBoundaries';
@@ -63,6 +64,11 @@ interface ProjectSpec {
   sceneDetailsPath: string;
   scriptPath: string;
   audioDuration: number;
+  /** The corpus project's real `project.language`, threaded through exactly as
+   *  `App.tsx` threads `toAlignmentLanguageCode(projectRef.current.language)` —
+   *  this harness previously ran every corpus through the language-blind
+   *  (`undefined`) branch regardless of the project's actual language. */
+  languageCode: AlignmentLanguageCode;
 }
 
 const PROJECTS: ProjectSpec[] = [
@@ -71,18 +77,21 @@ const PROJECTS: ProjectSpec[] = [
     sceneDetailsPath: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Sync.txt',
     scriptPath: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Script.txt',
     audioDuration: 1421.29,
+    languageCode: 'en',
   },
   {
     key: '173',
     sceneDetailsPath: '/Users/mohtashim/Downloads/All Projects Test Data/173 Segs Project/sync.txt',
     scriptPath: '/Users/mohtashim/Downloads/All Projects Test Data/173 Segs Project/script.txt',
     audioDuration: 709.01,
+    languageCode: 'en',
   },
   {
     key: 'spanish',
     sceneDetailsPath: '/Users/mohtashim/Downloads/All Projects Test Data/Spanish Project/Spanish Sync.txt',
     scriptPath: '/Users/mohtashim/Downloads/All Projects Test Data/Spanish Project/Spanish Script.txt',
     audioDuration: 92.04,
+    languageCode: 'es',
   },
 ];
 
@@ -162,9 +171,9 @@ describe('Phase 3->4 handoff Step M — golden baseline replay', () => {
       // 3. useWhisper.ts's alignSegmentsFromCachedTranscript, inlined verbatim
       //    (filterMalformedTokens -> alignScenestoTranscript ->
       //    distributeSegmentTimes -> applyAnchorBasedTiming).
-      const filtered = filterMalformedTokens(tokens, spec.audioDuration);
+      const filtered = filterMalformedTokens(tokens, spec.audioDuration, spec.languageCode);
       const usableTokens = filtered.tokens;
-      const alignments: SegmentAlignment[] = alignScenestoTranscript(anchorTimed, usableTokens, silences, spec.audioDuration);
+      const alignments: SegmentAlignment[] = alignScenestoTranscript(anchorTimed, usableTokens, silences, spec.audioDuration, spec.languageCode);
       const updated = distributeSegmentTimes(anchorTimed, alignments);
       const alignedSegments = applyAnchorBasedTiming(updated, spec.audioDuration);
 
