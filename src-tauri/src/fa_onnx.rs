@@ -46,7 +46,7 @@
 // ---------------------------------------------------------------------------
 #![cfg(feature = "fa-inference")]
 
-use crate::fa::text::{normalize_for_forced_alignment, Language};
+use crate::fa::text::{normalize_for_forced_alignment, Language, WordResult};
 use crate::fa_viterbi::{forced_align, merge_tokens, AlignError, TokenSpan};
 use ort::session::Session;
 use ort::value::Tensor;
@@ -736,37 +736,105 @@ fn load_vocab(language: &str) -> Result<Vocab, FaOnnxError> {
     Ok(Vocab { char_to_id, chars, blank_id, word_delim_id })
 }
 
-/// Vocab-aware text-to-token-id mapping: normalizes `text` via
-/// `crate::fa::text::normalize_for_forced_alignment` (diacritic-preserving,
-/// German ß->ss, digit-bearing/unspellable words dropped) and maps each
-/// representable word's characters to `vocab`'s ids, inserting a single
-/// word-delimiter id strictly BETWEEN representable words (never leading or
-/// trailing — there is nothing to trim, unlike the old naive tokenizer,
-/// since normalization already produces a single-space-joined, edge-trimmed
-/// `text`). An unrepresentable word (dropped by normalization) contributes
-/// no ids at all, not a delimiter placeholder.
-fn text_to_token_ids(text: &str, language: Language, vocab: &Vocab) -> Vec<i64> {
-    let normalized = normalize_for_forced_alignment(text, language, &vocab.chars);
+/// The flat CTC target-id sequence for one chunk's text, plus the
+/// bookkeeping [`collapse_word_fragments`] needs to reverse
+/// [`tokenize_normalized_words`]'s own expansion after alignment. See that
+/// function's doc comment for what `fragment_counts` means and why it keeps
+/// `words_per_chunk` (`fa_onnx.rs:1745`) correct without any change there.
+struct TokenizedTargets {
+    ids: Vec<i64>,
+    fragment_counts: Vec<usize>,
+}
 
+/// Vocab-aware CTC target-id tokenization over an ALREADY-NORMALIZED word
+/// list (WS2 T3.2 Step 3a-ii — the multi-word tokenizer capability). Pulled
+/// out of [`tokenize_for_alignment`] as its own pure function so a test can
+/// drive a SYNTHETIC multi-word [`WordResult`] through it directly, without
+/// needing a real normalizer that emits an internal space (none does yet —
+/// see this function's own neutrality note below).
+///
+/// For every REPRESENTABLE word, its `mapped` text is split on whitespace
+/// into one or more FRAGMENTS — today always exactly one, since no
+/// normalizer output contains internal whitespace (`fragment_counts`'s own
+/// note below) — and each fragment's characters are mapped to `vocab`'s
+/// ids, with a single word-delimiter id inserted strictly BETWEEN every
+/// fragment, INCLUDING between two fragments of the SAME source word,
+/// exactly as between two DIFFERENT source words. `merge_char_spans_to_words`
+/// (below) cannot tell the two kinds of delimiter apart, and isn't meant to
+/// — [`collapse_word_fragments`] is what puts one word's fragments back
+/// together afterward, using `fragment_counts` to know where.
+///
+/// `fragment_counts[i]` is representable word `i`'s (0-based, in
+/// `words.iter().filter(|w| w.representable)` order) fragment count: `1`
+/// for a `mapped` string with no internal whitespace (every word today), `N`
+/// for one compositionally generated as N space-linked pieces (WS2 T3.2 Step
+/// 3b, not yet wired — no normalizer calls this with such a `mapped` value
+/// yet). `fragment_counts.len()` always equals the representable-word count,
+/// so `words_per_chunk`'s existing "one count per representable
+/// `FaWordResult`" formula (`fa_onnx.rs:1745`) and `check_words_within_own_
+/// chunk`'s slicing (`:1308-1332`) stay correct UNCHANGED once
+/// [`collapse_word_fragments`] has run on this function's output — they
+/// count/slice by REPRESENTABLE WORDS, not fragments, and collapsing
+/// guarantees exactly one `WordSpan` survives per representable word by the
+/// time anything downstream counts them.
+///
+/// NEUTRALITY: for the input this codebase produces today (every `mapped`
+/// string is a single whitespace-free token), every `fragments` vec below
+/// has length 1, so no delimiter is ever inserted that today's
+/// one-delimiter-between-words code didn't already insert, and the emitted
+/// `ids` sequence is byte-identical to the pre-Step-3a `text_to_token_ids`
+/// body this function replaces internally.
+fn tokenize_normalized_words(words: &[WordResult], vocab: &Vocab) -> TokenizedTargets {
     let mut ids = Vec::new();
+    let mut fragment_counts = Vec::new();
     let mut first = true;
-    for word in normalized.words.iter().filter(|w| w.representable) {
-        if !first {
-            if let Some(delim) = vocab.word_delim_id {
-                ids.push(delim);
+    for word in words.iter().filter(|w| w.representable) {
+        let mapped = word.mapped.as_deref().expect("representable word must have `mapped` set");
+        let fragments: Vec<&str> = mapped.split_whitespace().collect();
+        assert!(
+            !fragments.is_empty(),
+            "representable word \"{mapped}\" (input {:?}) produced zero whitespace fragments — \
+             `mapped` must be non-empty for a representable word",
+            word.input,
+        );
+        fragment_counts.push(fragments.len());
+        for fragment in fragments {
+            if !first {
+                if let Some(delim) = vocab.word_delim_id {
+                    ids.push(delim);
+                }
+            }
+            first = false;
+            for ch in fragment.chars() {
+                let id = *vocab
+                    .char_to_id
+                    .get(&ch)
+                    .unwrap_or_else(|| panic!("normalized fragment \"{fragment}\" contains char {ch:?} absent from vocab — normalize_for_forced_alignment invariant violated"));
+                ids.push(id);
             }
         }
-        first = false;
-        let mapped = word.mapped.as_deref().expect("representable word must have `mapped` set");
-        for ch in mapped.chars() {
-            let id = *vocab
-                .char_to_id
-                .get(&ch)
-                .unwrap_or_else(|| panic!("normalized word \"{mapped}\" contains char {ch:?} absent from vocab — normalize_for_forced_alignment invariant violated"));
-            ids.push(id);
-        }
     }
-    ids
+    TokenizedTargets { ids, fragment_counts }
+}
+
+/// Normalizes `text` via `crate::fa::text::normalize_for_forced_alignment`
+/// (diacritic-preserving, German ß->ss, digit-bearing/unspellable words
+/// dropped) then tokenizes it — see [`tokenize_normalized_words`] for the
+/// real per-word/per-fragment tokenization logic this delegates to.
+fn tokenize_for_alignment(text: &str, language: Language, vocab: &Vocab) -> TokenizedTargets {
+    let normalized = normalize_for_forced_alignment(text, language, &vocab.chars);
+    tokenize_normalized_words(&normalized.words, vocab)
+}
+
+/// Vocab-aware text-to-token-id mapping: the flat id sequence only, for
+/// every existing caller that doesn't need [`tokenize_for_alignment`]'s
+/// per-word fragment bookkeeping (only [`align_chunk_samples`], via
+/// [`collapse_word_fragments`], does). Thin wrapper, unchanged signature and
+/// behavior from before WS2 T3.2 Step 3a-ii — see [`tokenize_normalized_
+/// words`]'s NEUTRALITY note.
+#[cfg_attr(not(test), allow(dead_code))]
+fn text_to_token_ids(text: &str, language: Language, vocab: &Vocab) -> Vec<i64> {
+    tokenize_for_alignment(text, language, vocab).ids
 }
 
 // ---------------------------------------------------------------------------
@@ -899,6 +967,106 @@ fn flush_word<'a>(current: &mut Vec<&'a TokenSpan>, id_to_char: &HashMap<i64, ch
     current.clear();
 }
 
+/// Collapses `fragment_words` — the FLAT, per-space-delimited-fragment
+/// `WordSpan`s `merge_char_spans_to_words` just produced for one chunk, via
+/// `tokenize_normalized_words`'s delimiter placement — back to exactly one
+/// `WordSpan` per REPRESENTABLE source [`WordResult`], per `fragment_counts`
+/// (same order, one entry per source word — see `tokenize_normalized_
+/// words`'s own doc comment). This is the other half of the multi-word
+/// tokenization capability (WS2 T3.2 Step 3a-ii): that function expands one
+/// word's `mapped` text into N space-delimited fragments, each getting its
+/// own CTC target run and therefore its own `WordSpan` out of the merge;
+/// this function puts them back together so every OTHER consumer —
+/// `words_per_chunk`'s per-chunk count (`fa_onnx.rs:1745`),
+/// `check_words_within_own_chunk`'s slicing (`:1308-1332`), `fa.rs`'s
+/// `word_index` script-word join key, `faBoundaryTypes.ts`'s documented
+/// "an `FaWordSpan` is already exactly one word" contract (`:120-125`) —
+/// keeps seeing exactly one `WordSpan` per source word, same as before this
+/// capability existed. Called once per chunk, from [`align_chunk_samples`]
+/// below, before that chunk's words are ever handed to its caller.
+///
+/// TIMING ATTRIBUTION (WS2 T3.2 Step 3a): a collapsed word's
+/// `start_seconds` is its FIRST fragment's own `start_seconds`;
+/// `end_seconds` is its LAST fragment's own `end_seconds` — the source
+/// token's span runs first-fragment-start to last-fragment-end, never a sum
+/// or an average of parts. `text` is every fragment's text rejoined with a
+/// single space (undoing exactly the `split_whitespace` `tokenize_
+/// normalized_words` performed). `score` is the DURATION-weighted mean
+/// across fragments — the same weighting rule `flush_word` (above) already
+/// applies one level down, char-spans into one fragment; this applies it one
+/// level up, fragments into one collapsed word. `flush_word` weights by
+/// FRAME count directly; here only `WordSpan.{start,end}_seconds` are
+/// available (already converted via `frame_to_seconds`, a FIXED linear
+/// scale: `frame_to_seconds(f) = f * FA_FRAME_STRIDE_SAMPLES /
+/// FA_SAMPLE_RATE_HZ`), so `end_seconds - start_seconds` is exactly
+/// proportional to frame count and weighting by it produces the identical
+/// result up to that shared constant factor, which cancels out of the
+/// ratio.
+///
+/// STRADDLE INVARIANT — the reason this function is well-defined at all: a
+/// group `fragment_words[lo..lo+count]` is guaranteed to be every fragment
+/// of ONE source word, in order, with nothing from a neighboring CHUNK mixed
+/// in, only because a chunk boundary can never fall between two fragments of
+/// the same source word. This is NOT enforced by anything in this function
+/// or this file — it depends entirely on `faChunkPlan.ts` (TypeScript)
+/// deciding every chunk's TEXT over RAW, pre-normalization script tokens
+/// (`RawScriptToken`, one atomic unit per whitespace-delimited script word,
+/// assigned WHOLE to exactly one chunk by `attributeByIndex`) strictly
+/// BEFORE this module's own `normalize_for_forced_alignment` — the only
+/// place expansion happens — ever runs on that chunk's text. `align_chunked`
+/// (below) calls it fresh, once, per already-finalized `FaChunkInput`, with
+/// no state shared across chunks, so expansion can only ever act on a
+/// word that already belongs wholly to the one chunk being processed.
+/// Proved in full in WS2 T3.2 Step 3a-i
+/// (`.work-phase4/session-ws2-35/t32-step3a-i-chunk-straddle-precheck.md`).
+/// If chunk assignment ever started operating on FA-normalized
+/// (post-expansion) text instead of raw text, that guarantee would no
+/// longer hold and this function's grouping could silently misattribute
+/// fragments across a chunk seam. **The standing code-level guard for this
+/// precondition is `faChunkPlan.test.ts`'s "chunk boundaries are
+/// independent of FA text normalization" test** (WS2 T3.2 Step 3a-ii) — it
+/// asserts chunk count and every `startSec`/`endSec` stay byte-identical
+/// whether or not FA normalization is applied, even when normalization
+/// changes representable-word count, and fails first if a future change
+/// ever lets normalized text influence chunk-boundary decisions, before
+/// this function could ever observe a straddle.
+fn collapse_word_fragments(fragment_words: Vec<WordSpan>, fragment_counts: &[usize]) -> Vec<WordSpan> {
+    let total: usize = fragment_counts.iter().sum();
+    assert_eq!(
+        fragment_words.len(),
+        total,
+        "collapse_word_fragments: merge produced {} WordSpan(s) but tokenization recorded {} \
+         fragment(s) across {} source word(s) — delimiter placement and fragment counting have \
+         desynchronized",
+        fragment_words.len(),
+        total,
+        fragment_counts.len(),
+    );
+
+    let mut collapsed = Vec::with_capacity(fragment_counts.len());
+    let mut idx = 0usize;
+    for &count in fragment_counts {
+        assert!(count >= 1, "collapse_word_fragments: a representable source word must produce at least one fragment");
+        let group = &fragment_words[idx..idx + count];
+        idx += count;
+        if count == 1 {
+            collapsed.push(group[0].clone());
+            continue;
+        }
+        let text = group.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+        let start_seconds = group[0].start_seconds;
+        let end_seconds = group[count - 1].end_seconds;
+        let total_duration: f64 = group.iter().map(|w| w.end_seconds - w.start_seconds).sum();
+        let score = if total_duration > 0.0 {
+            (group.iter().map(|w| w.score as f64 * (w.end_seconds - w.start_seconds)).sum::<f64>() / total_duration) as f32
+        } else {
+            (group.iter().map(|w| w.score as f64).sum::<f64>() / group.len() as f64) as f32
+        };
+        collapsed.push(WordSpan { text, start_seconds, end_seconds, score });
+    }
+    collapsed
+}
+
 // ---------------------------------------------------------------------------
 // Session cache (WS1 Task 5 Slice D11)
 //
@@ -1026,9 +1194,12 @@ fn chunk_sample_range(total_samples: usize, start_sec: f64, end_sec: f64) -> (us
 /// already-loaded `session`. Returns word spans in CHUNK-LOCAL seconds — the
 /// caller ([`align_chunked`]) adds the chunk's own `start_sec` to get
 /// absolute audio time. Shares every step (`normalize` -> forward pass ->
-/// tokenize -> Viterbi -> word merge) with the pre-D11 single-pass path; the
-/// only change is that `session`/`chunk_samples`/`chunk_text` are now
-/// per-chunk parameters instead of whole-file state.
+/// tokenize -> Viterbi -> word merge -> fragment collapse) with the pre-D11
+/// single-pass path; the only D11 change was that `session`/`chunk_samples`/
+/// `chunk_text` became per-chunk parameters instead of whole-file state. WS2
+/// T3.2 Step 3a-ii added the final collapse step — see
+/// [`collapse_word_fragments`]'s own doc comment for why it's safe to do
+/// per-chunk like this (the straddle invariant).
 fn align_chunk_samples(
     session: &mut Session,
     vocab: &Vocab,
@@ -1039,14 +1210,15 @@ fn align_chunk_samples(
     let normed = zero_mean_unit_var_norm(chunk_samples);
     let emission = run_forward_pass_with_session(session, &normed)?;
 
-    let target_ids = text_to_token_ids(chunk_text, lang_enum, vocab);
-    if target_ids.is_empty() {
+    let tokenized = tokenize_for_alignment(chunk_text, lang_enum, vocab);
+    if tokenized.ids.is_empty() {
         return Err(FaOnnxError::EmptyTokenization);
     }
 
-    let result = forced_align(&emission, &target_ids, vocab.blank_id).map_err(FaOnnxError::Align)?;
+    let result = forced_align(&emission, &tokenized.ids, vocab.blank_id).map_err(FaOnnxError::Align)?;
     let char_spans = merge_tokens(&result.path, &result.scores, vocab.blank_id);
-    Ok(merge_char_spans_to_words(&char_spans, vocab))
+    let fragment_words = merge_char_spans_to_words(&char_spans, vocab);
+    Ok(collapse_word_fragments(fragment_words, &tokenized.fragment_counts))
 }
 
 /// Thin wrapper resolving `language`'s model path via a live `AppHandle`
@@ -4678,6 +4850,201 @@ mod tests {
         let delim_count = ids.iter().filter(|&&id| id == delim).count();
         assert_eq!(delim_count, 1);
         assert_eq!(ids.len(), 3 + 1 + 3); // "cat" + delim + "dog"
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-word tokenizer capability (WS2 T3.2 Step 3a-ii) unit tests. No real
+// normalizer produces a multi-fragment `mapped` string yet (Step 3b, not
+// wired) — every `WordResult` driven through these tests is HAND-BUILT, the
+// same "synthetic, not fabricated-as-real" convention `ctc_infeasibility_
+// fallback` below uses real captured data for and `invariants` above uses
+// hand-built `WordSpan`s for. These tests are the only thing exercising this
+// capability until Step 3b supplies real input — see `collapse_word_
+// fragments`'s own doc comment for the design these tests verify.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod multi_word_fragment_capability {
+    use super::*;
+
+    fn w(text: &str, start: f64, end: f64, score: f32) -> WordSpan {
+        WordSpan { text: text.to_string(), start_seconds: start, end_seconds: end, score }
+    }
+
+    // -- collapse_word_fragments, unit-level (hand-built WordSpans, no
+    //    tokenization/alignment involved) --------------------------------
+
+    #[test]
+    fn collapse_is_identity_when_every_source_word_has_exactly_one_fragment() {
+        // Today's real shape: `fragment_counts` is always all-1s, so
+        // collapsing must be a byte-identical no-op — this is what makes
+        // Step 3a-ii behavior-neutral for every real input that exists
+        // today.
+        let fragment_words = vec![w("cat", 0.0, 0.1, -0.05), w("dog", 0.2, 0.3, -0.07)];
+        let collapsed = collapse_word_fragments(fragment_words.clone(), &[1, 1]);
+        assert_eq!(collapsed, fragment_words);
+    }
+
+    #[test]
+    fn collapse_merges_a_multi_fragment_group_with_first_start_last_end_and_duration_weighted_score() {
+        // Hand-computable: group [wow(1.0-1.5, score -0.4), zap(1.5-2.5,
+        // score -1.0)] — durations 0.5 and 1.0 — collapses to
+        // start=1.0 (wow's own start), end=2.5 (zap's own end), text
+        // "wow zap", score = ((-0.4)*0.5 + (-1.0)*1.0) / 1.5 = -0.8.
+        // Surrounding single-fragment words ("cat", "dog") must pass
+        // through untouched, proving the index bookkeeping doesn't leak
+        // across group boundaries.
+        let fragment_words = vec![
+            w("cat", 0.0, 0.1, -0.05),
+            w("wow", 1.0, 1.5, -0.4),
+            w("zap", 1.5, 2.5, -1.0),
+            w("dog", 3.0, 3.2, -0.05),
+        ];
+        let collapsed = collapse_word_fragments(fragment_words, &[1, 2, 1]);
+        assert_eq!(collapsed.len(), 3);
+        assert_eq!(collapsed[0], w("cat", 0.0, 0.1, -0.05));
+        assert_eq!(collapsed[1].text, "wow zap");
+        assert!((collapsed[1].start_seconds - 1.0).abs() < 1e-9);
+        assert!((collapsed[1].end_seconds - 2.5).abs() < 1e-9);
+        assert!((collapsed[1].score - (-0.8)).abs() < 1e-5, "got {}", collapsed[1].score);
+        assert_eq!(collapsed[2], w("dog", 3.0, 3.2, -0.05));
+    }
+
+    #[test]
+    #[should_panic(expected = "desynchronized")]
+    fn collapse_panics_on_a_fragment_count_total_mismatch() {
+        // Non-vacuity: the consistency guard must actually fire, not just be
+        // present. 2 words in `fragment_words` but `fragment_counts` claims
+        // 3 total fragments.
+        let fragment_words = vec![w("cat", 0.0, 0.1, -0.05), w("dog", 0.2, 0.3, -0.07)];
+        collapse_word_fragments(fragment_words, &[1, 2]);
+    }
+
+    // -- tokenize_normalized_words: fragment expansion + counting --------
+
+    /// A hand-built 3-word list whose MIDDLE word is a multi-fragment
+    /// `WordResult` — the shape WS2 T3.2 Step 3b's compositional generator
+    /// will eventually produce for a space-linked reading (e.g. a year-shaped
+    /// cardinal), authored directly here since no real normalizer emits one
+    /// yet. Letters are chosen with no adjacent-repeat characters anywhere
+    /// in the concatenated sequence (verified by assertion below, not just
+    /// claimed) — the premise the deterministic emission matrix in the
+    /// end-to-end test further down depends on.
+    fn synthetic_words() -> Vec<WordResult> {
+        vec![
+            WordResult { input: "cat".to_string(), representable: true, mapped: Some("cat".to_string()), reason: None },
+            WordResult { input: "98".to_string(), representable: true, mapped: Some("wow zap".to_string()), reason: None },
+            WordResult { input: "dog".to_string(), representable: true, mapped: Some("dog".to_string()), reason: None },
+        ]
+    }
+
+    #[test]
+    fn tokenize_normalized_words_expands_a_multi_fragment_word_and_counts_it_correctly() {
+        let vocab = load_vocab("en").unwrap();
+        let tokenized = tokenize_normalized_words(&synthetic_words(), &vocab);
+
+        // 3 source words -> fragment_counts has 3 entries; the middle one
+        // (2 space-delimited fragments) is 2, the other two are 1.
+        assert_eq!(tokenized.fragment_counts, vec![1, 2, 1]);
+
+        // 4 delimiter-bounded runs total ("cat" | "wow" | "zap" | "dog") ->
+        // exactly 3 delimiters in the flat id stream (between cat/wow,
+        // wow/zap, zap/dog) — one MORE than the 2 a naive one-delimiter-
+        // per-source-word scheme would emit, because the intra-word
+        // fragment boundary gets a delimiter too.
+        let delim = vocab.word_delim_id.unwrap();
+        let delim_count = tokenized.ids.iter().filter(|&&id| id == delim).count();
+        assert_eq!(delim_count, 3);
+    }
+
+    #[test]
+    fn tokenize_normalized_words_is_unaffected_by_expansion_for_every_single_fragment_word() {
+        // Neutrality at the tokenizer layer: a word list with no internal
+        // spaces anywhere produces fragment_counts of all 1s, i.e. this
+        // function's new code path (the inner fragments loop) executes with
+        // exactly one iteration per word — same delimiter placement as
+        // before this capability existed.
+        let vocab = load_vocab("en").unwrap();
+        let words = vec![
+            WordResult { input: "cat".to_string(), representable: true, mapped: Some("cat".to_string()), reason: None },
+            WordResult { input: "dog".to_string(), representable: true, mapped: Some("dog".to_string()), reason: None },
+        ];
+        let tokenized = tokenize_normalized_words(&words, &vocab);
+        assert_eq!(tokenized.fragment_counts, vec![1, 1]);
+        assert_eq!(tokenized.ids, text_to_token_ids("cat dog", Language::En, &vocab));
+    }
+
+    // -- end-to-end: tokenize -> forced_align -> merge -> collapse -------
+
+    #[test]
+    fn multi_fragment_word_tokenizes_aligns_and_collapses_to_one_word_span_per_source_word() {
+        let vocab = load_vocab("en").unwrap();
+        let words = synthetic_words();
+        let tokenized = tokenize_normalized_words(&words, &vocab);
+        assert_eq!(tokenized.fragment_counts, vec![1, 2, 1]);
+
+        // Test premise this deterministic-alignment trick depends on: no
+        // adjacent-repeat target ids anywhere in the flat sequence (R=0).
+        for pair in tokenized.ids.windows(2) {
+            assert_ne!(pair[0], pair[1], "test premise violated: adjacent-repeat target id would break T==L determinism");
+        }
+
+        // T == L, zero slack — `fa_viterbi.rs`'s own established property
+        // (`t_exactly_equals_l_plus_r`/`aabbc_canonical_repeat_case_minimal_
+        // t`): with R=0 and T==L, the Viterbi path is FORCED to be exactly
+        // the target sequence, one frame per id, no blanks anywhere,
+        // regardless of the emission matrix's own values — so a uniform
+        // matrix is sufficient to make this test fully deterministic.
+        let vocab_size = vocab
+            .char_to_id
+            .values()
+            .copied()
+            .chain(std::iter::once(vocab.blank_id))
+            .chain(vocab.word_delim_id)
+            .max()
+            .unwrap() as usize
+            + 1;
+        let t = tokenized.ids.len();
+        let log_probs = vec![vec![-1.0f32; vocab_size]; t];
+
+        let result = forced_align(&log_probs, &tokenized.ids, vocab.blank_id)
+            .expect("T == L with zero slack must always succeed");
+        assert_eq!(result.path, tokenized.ids, "zero-slack alignment must reproduce the target sequence exactly");
+
+        let char_spans = merge_tokens(&result.path, &result.scores, vocab.blank_id);
+        let fragment_words = merge_char_spans_to_words(&char_spans, &vocab);
+        // Pre-collapse: 4 separate WordSpans — proof the tokenizer's
+        // expansion really did split "wow zap" into two independently
+        // CTC-aligned fragments, not one.
+        assert_eq!(fragment_words.len(), 4);
+        assert_eq!(fragment_words.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec!["cat", "wow", "zap", "dog"]);
+
+        let collapsed = collapse_word_fragments(fragment_words.clone(), &tokenized.fragment_counts);
+
+        // THE CAPABILITY: exactly one WordSpan per SOURCE word (3, matching
+        // `words.len()`), not one per fragment (4).
+        assert_eq!(collapsed.len(), words.len());
+        assert_eq!(collapsed.iter().map(|s| s.text.as_str()).collect::<Vec<_>>(), vec!["cat", "wow zap", "dog"]);
+
+        // TIMING ATTRIBUTION: the collapsed multi-fragment word's span runs
+        // first-fragment-start ("wow") to last-fragment-end ("zap") —
+        // strictly wider than either fragment alone, proving this is a real
+        // union rather than accidentally equal to one fragment's span.
+        assert_eq!(collapsed[1].start_seconds, fragment_words[1].start_seconds);
+        assert_eq!(collapsed[1].end_seconds, fragment_words[2].end_seconds);
+        assert!(collapsed[1].end_seconds > fragment_words[1].end_seconds);
+        assert!(collapsed[1].start_seconds < fragment_words[2].start_seconds);
+
+        // INTERNAL FRAGMENT BOUNDARY NOT OBSERVABLE DOWNSTREAM: `collapsed`
+        // carries no 4th entry, no marker, and no way to recover that "wow
+        // zap" was ever two separate CTC targets — exactly the
+        // `faBoundaryTypes.ts:120-125` / `fa.rs` `word_index` "already
+        // exactly one word" contract this capability must preserve. A
+        // consumer iterating `collapsed` by position sees source-word index
+        // 1 map to "wow zap" as a single unit, the same shape it would see
+        // for any ordinary single-fragment word.
+        assert_eq!(collapsed[0].text, words[0].mapped.as_deref().unwrap());
+        assert_eq!(collapsed[2].text, words[2].mapped.as_deref().unwrap());
     }
 }
 

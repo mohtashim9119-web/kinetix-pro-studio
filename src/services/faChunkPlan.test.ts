@@ -640,6 +640,75 @@ describe('computeFaChunkPlan / computeFaChunkPlanWithAttribution — Phase 3b Sl
   });
 });
 
+// ---------------------------------------------------------------------------
+// STRADDLE-INVARIANT GUARD (WS2 T3.2 Step 3a-ii). `fa_onnx.rs`'s
+// `collapse_word_fragments` (the Rust-side half of the multi-word tokenizer
+// capability) depends on a chunk boundary NEVER being able to fall between
+// two fragments of one FA-expanded source word. Proved structurally in WS2
+// T3.2 Step 3a-i (`.work-phase4/session-ws2-35/
+// t32-step3a-i-chunk-straddle-precheck.md`) because chunk assignment
+// (`attributeByIndex`/`runsToChunks` above) is computed entirely from RAW,
+// pre-normalization script tokens, and FA text normalization
+// (`applyFaTextNormalization` above) is applied strictly AFTER chunks are
+// already built — it can never feed back into `qi`/boundary arithmetic.
+//
+// This test is the STANDING CODE-LEVEL GUARD for that precondition — not
+// just a session artifact, which isn't durable enough for something this
+// load-bearing (a session directory can be deleted; this test cannot be,
+// without deliberately removing a passing regression test). If a future
+// change ever moved chunk-boundary decisions to run AFTER normalization —
+// so a chunk's window could depend on which words normalization drops or
+// expands — this test fails FIRST, before `fa_onnx.rs`'s collapse could
+// ever silently misattribute a straddling fragment across a chunk seam.
+// ---------------------------------------------------------------------------
+describe('computeFaChunkPlanWithAttribution — chunk boundaries are independent of FA text normalization (WS2 T3.2 Step 3a-ii straddle-invariant guard)', () => {
+  const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const EN_VOCAB: ReadonlySet<string> = (() => {
+    const raw = JSON.parse(
+      readFileSync(resolve(REPO, 'scripts', 'fixtures', 'fa-vocab-en.json'), 'utf-8'),
+    ) as { vocab: Record<string, number> };
+    return vocabCharsFromRawVocab(raw.vocab);
+  })();
+
+  it('chunk count and every startSec/endSec are byte-identical with and without FA normalization applied, even when normalization changes representable-word count', () => {
+    // "42"/"7" are digit-bearing and English has no cardinal-expansion table
+    // (faTextNormalize.ts's normalizeWord: cardinalExpansion is undefined
+    // for 'en'), so FA normalization DROPS them entirely — this fixture
+    // deliberately changes representable-word count under normalization,
+    // the case where boundary-derivation leaking into normalized text would
+    // most plausibly show up as a moved window.
+    const segments = [
+      seg('s0', 'Kittens Likes 42 Purple Hats', 0, 2),
+      seg('s1', 'Dragons Chase Silver Moons', 2, 2),
+      seg('s2', 'Wizards Brew 7 Golden Potions', 4, 2),
+      seg('s3', 'Falcons Guard Hidden Castles', 6, 2),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
+
+    const raw = computeFaChunkPlanWithAttribution(segments, tokens, silences, 8, 'script-word-index');
+    const normalized = computeFaChunkPlanWithAttribution(
+      segments, tokens, silences, 8, 'script-word-index', undefined, 'en', EN_VOCAB,
+    );
+
+    // Sanity: normalization actually dropped the digit tokens, so this test
+    // is exercising the word-count-changing case it claims to, not a no-op.
+    expect(raw.some(c => /\d/.test(c.text))).toBe(true);
+    expect(normalized.some(c => /\d/.test(c.text))).toBe(false);
+
+    // THE GUARD: chunk windows never move and chunk count never changes,
+    // regardless of what normalization did to the TEXT inside them —
+    // boundary decisions are made before, and independently of, whatever
+    // this pass drops or expands.
+    expect(normalized.length).toBe(raw.length);
+    for (let i = 0; i < raw.length; i++) {
+      expect(normalized[i]!.startSec).toBe(raw[i]!.startSec);
+      expect(normalized[i]!.endSec).toBe(raw[i]!.endSec);
+    }
+  });
+});
+
 // Phase 3c (sync-pipeline-v2-plan.md H.5/:3821-3839 scope addition) — the
 // `languageCode` argument also threads into `computeRunContext`'s qi
 // bookkeeping (textNormalize.ts's `canonicalize`), not just the post-cut
