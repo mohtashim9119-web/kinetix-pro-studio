@@ -147,10 +147,16 @@ describe('deleteSegment', () => {
 });
 
 // ---------------------------------------------------------------------------
-// WS2 session ws2-25, Commit 4 — split segment lifecycle.
+// WS2 session ws2-25, Commit 4 — split segment lifecycle. WS2 ws2-28 Commit 3
+// (operator-approved) reverses ws2-25's original "never touch survivor text"
+// rule for the SIBLING-absorption case: a clip that visually re-spans its
+// whole original duration must not caption only half of what's spoken, so
+// the absorbing sibling's text is now reunited with the deleted slice's own
+// text, in chronological order. The non-sibling (downstream) absorption case
+// is unchanged — see the next describe block.
 // ---------------------------------------------------------------------------
-describe('deleteSegment — text follows a stretching sibling (3-way split)', () => {
-  it('keeps part 2\'s own text when deleting part 3 stretches part 2 into the vacated slot', () => {
+describe('deleteSegment — sibling absorption REUNITES text (3-way split)', () => {
+  it('deleting part 3 stretches part 2 into the vacated slot, and part 2\'s text is reunited with part 3\'s (its PREVIOUS sibling absorbs)', () => {
     const orig = [seg('ORIG', 0, 6, 'You start watching the older hunters differently.')];
     const s1 = splitSegmentAtTime(orig, 0, 2);       // "You start watching" | "the older hunters differently."
     const s2 = splitSegmentAtTime(s1.segments, 1, 3.5); // splits piece 2 -> "the older" | "hunters differently."
@@ -162,22 +168,48 @@ describe('deleteSegment — text follows a stretching sibling (3-way split)', ()
     const del = deleteSegment(s2.segments, 2);
     expect(del.deleted).toBe(true);
     expect(del.segments).toHaveLength(2);
-    // Part 2 stretched to absorb part 3's freed time — but its OWN text,
-    // never part 3's or part 1's, must be what's attached to it afterward.
-    expect(del.segments[1]!.text).toBe('the older');
+    // Part 2 stretched to absorb part 3's freed time — and REUNITES with
+    // part 3's words (part 2 was chronologically first), reconstructing
+    // exactly the pre-second-split text. Never part 1's text, which is a
+    // separate, non-sibling segment.
+    expect(del.segments[1]!.text).toBe('the older hunters differently.');
     expect(del.segments[1]!.startTime).toBe(2);
     expect(del.segments[1]!.duration).toBeCloseTo(4, 3);
     assertGapless(del.segments);
   });
 
-  it('keeps the correct text when the FIRST of a pair is deleted (next stretches backward)', () => {
+  it('deleting the FIRST of a pair (next stretches backward) reunites the NEXT sibling\'s text with the deleted one\'s, reconstructing the original sentence', () => {
     const orig = [seg('ORIG', 0, 6, 'You start watching the older hunters differently.')];
     const s1 = splitSegmentAtTime(orig, 0, 2);
     const del = deleteSegment(s1.segments, 0);
     expect(del.deleted).toBe(true);
     expect(del.segments).toHaveLength(1);
-    expect(del.segments[0]!.text).toBe('the older hunters differently.');
+    expect(del.segments[0]!.text).toBe('You start watching the older hunters differently.');
     expect(del.segments[0]!.startTime).toBe(0);
+  });
+});
+
+describe('deleteSegment — non-sibling (downstream) absorption leaves text untouched', () => {
+  it('an absorber that is NOT a sibling of the deleted slice keeps its own text — no merge across unrelated content', () => {
+    const p = 'parent';
+    // P's two slices are NOT adjacent — an unrelated segment sits between
+    // them, so deleting P's slice 0 has a non-sibling `next` (the unrelated
+    // segment) even though P's slice 1 elsewhere satisfies `hasSibling`.
+    const segments = [
+      seg(makeSliceSegmentId(p, 0), 0, 2, 'first half'),
+      seg('unrelated', 2, 1, 'Unrelated middle scene.'),
+      seg(makeSliceSegmentId(p, 1), 3, 1, 'second half'),
+    ];
+    const del = deleteSegment(segments, 0);
+    expect(del.deleted).toBe(true);
+    expect(del.absorbedById).toBe('unrelated');
+    // The unrelated segment absorbed the freed TIME, but its text is
+    // untouched — merging "first half" into "Unrelated middle scene." would
+    // be nonsensical.
+    const absorber = del.segments.find(s => s.id === 'unrelated')!;
+    expect(absorber.text).toBe('Unrelated middle scene.');
+    expect(absorber.startTime).toBe(0);
+    expect(absorber.duration).toBeCloseTo(3, 3);
   });
 });
 
@@ -294,7 +326,9 @@ describe('deleteSelectedSegment', () => {
     expect(result.deleted).toBe(true);
     expect(result.absorbedById).toBe(slice2Id);
     expect(result.selectedSegmentId).toBe(slice2Id);
-    expect(result.segments.find(s => s.id === slice2Id)!.text).toBe('the older');
+    // WS2 ws2-28 Commit 3 — sibling absorption reunites text; slice 2 was
+    // chronologically first, so its text now leads.
+    expect(result.segments.find(s => s.id === slice2Id)!.text).toBe('the older hunters differently.');
     expect(selectionIsCoherent(result.selectedSegmentId, result.segments)).toBe(true);
   });
 
@@ -311,6 +345,10 @@ describe('deleteSelectedSegment', () => {
     expect(result.absorbedById).toBe(slice1Id);
     expect(result.selectedSegmentId).toBe(slice1Id);
     expect(selectionIsCoherent(result.selectedSegmentId, result.segments)).toBe(true);
+    // This is the operator's exact ws2-28 repro shape (split in 2, delete
+    // the second half): the survivor now spans the full original duration
+    // AND captions the full original sentence, not just its own half.
+    expect(result.segments[0]!.text).toBe('Alpha bravo charlie delta echo foxtrot');
   });
 
   it('deleting slice 1 (not the last) while selected — selection follows to whichever sibling absorbs', () => {
@@ -328,6 +366,7 @@ describe('deleteSelectedSegment', () => {
     expect(result.absorbedById).toBe(slice2Id);
     expect(result.selectedSegmentId).toBe(slice2Id);
     expect(selectionIsCoherent(result.selectedSegmentId, result.segments)).toBe(true);
+    expect(result.segments[0]!.text).toBe('Alpha bravo charlie delta echo foxtrot');
   });
 
   it('deleting a slice that is NOT selected leaves the open editor untouched (guards the ws2-25 fix from regressing)', () => {

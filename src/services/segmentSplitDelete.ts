@@ -15,7 +15,14 @@
 // of a split pair/group (deleting every slice a split produced would
 // silently erase real timeline content with nothing left to represent it;
 // Ctrl+Z/undo is the intended way back from a split, not deleting down to
-// zero slices).
+// zero slices). When the absorbing neighbour is a SIBLING (came from the
+// same split as the deleted slice), its text is REUNITED with the deleted
+// slice's text in chronological order (`joinAbsorbedText`) — WS2 ws2-28
+// Commit 3, operator-approved: a clip that visually re-spans its whole
+// original duration must not caption only half of what's spoken. When the
+// absorber is NOT a sibling (the downstream/prev fallback, absorbing time
+// from an unrelated neighbour), its text is left untouched — concatenating
+// two unrelated captions would not make sense.
 //
 // REMOVED (WS2 ws2-26, round 1 of the operator's revert request): this used
 // to also cover restored (absorbed-gap) segments and merged restore slots,
@@ -32,6 +39,21 @@ const MIN_SEGMENT_DURATION = 0.1;
 
 function round3(v: number): number {
   return Number(v.toFixed(3));
+}
+
+/**
+ * Joins two adjacent slices' text back together in chronological order
+ * (`before` = the earlier one) when a delete reunites a SPLIT pair —
+ * `deleteSegment`'s sibling-absorption branches only. Trims each side and
+ * skips an empty one rather than leaving a stray space, so an empty-text
+ * fixture (tests) or a genuinely blank slice never produces `" "`.
+ */
+function joinAbsorbedText(before: string, after: string): string {
+  const a = before.trim();
+  const b = after.trim();
+  if (!a) return b;
+  if (!b) return a;
+  return `${a} ${b}`;
 }
 
 /** Extracts the parent id from a slice id (`slice1_<parentId>::<ordinal>`),
@@ -141,7 +163,10 @@ export interface DeleteResult {
  * The freed time goes to a same-cluster sibling (an adjacent segment
  * sharing the same slice parent id) when one exists, preferring the
  * PREVIOUS one; otherwise to the "downstream absorber" — the next segment,
- * or the previous segment if this was the last one on the timeline.
+ * or the previous segment if this was the last one on the timeline. A
+ * sibling absorber's TEXT is reunited with the deleted slice's own text
+ * (chronological order, `joinAbsorbedText`); a downstream/non-sibling
+ * absorber's text is left untouched.
  *
  * Pure — returns a new array; does not mutate `segments`.
  */
@@ -175,10 +200,16 @@ export function deleteSegment(
   let absorbedById: string | null = null;
   if (prevIsSibling && prev) {
     prev.duration = round3(prev.duration + freedDuration);
+    // `prev` is chronologically BEFORE the deleted slice — its own words
+    // first, then the deleted slice's.
+    prev.text = joinAbsorbedText(prev.text, target.text);
     absorbedById = prev.id;
   } else if (nextIsSibling && next) {
     next.startTime = round3(freedStart);
     next.duration = round3(next.duration + freedDuration);
+    // `next` is chronologically AFTER the deleted slice — the deleted
+    // slice's words first, then `next`'s own.
+    next.text = joinAbsorbedText(target.text, next.text);
     absorbedById = next.id;
   } else if (next) {
     next.startTime = round3(freedStart);
