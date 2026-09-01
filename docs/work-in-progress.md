@@ -126,6 +126,20 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
   operator's real transcript spelling matches the script's — only that the shattering defect,
   once the dominant confirmed mechanism, no longer occurs. Retire this entry once operator
   verification against the real transcript tokens confirms an actual match, not before.
+  **Update, WS2 T4.1 Step 0a (2026-09-02) — the retire-gate is now a ONE-ROW gate, and that row
+  is 52.** Measured: rows 69 and 79 cannot test the fold at all — run through the real
+  `extractSegmentAlignments`, both report `matched: true` whether or not `llivia`/`penon` match
+  anything (69 on `stayed`/`spanish`; 79 on `de`/`de`/`la`/`gomera`, 4 of 6, `penon` and `velez`
+  matching nothing). Row 69 is WEAKER evidence post-fix than pre-fix (4 tokens needing a run of 2
+  → 3 tokens needing a run of 1). Only row 52 discriminates: one token, nothing to survive on, so
+  its confidence reads 1.00 or 0.00 directly. Also measured: the transcript data is absent from
+  this machine, not un-consulted — a 3,245-file sweep of the whole tree, including the extracted
+  operator projects under `.work-phase4/forensics-20260819-033211/`, returns zero hits. Disposition
+  stays `NOT DETERMINED — data absent`. **Retire only on an operator pull showing row 52 at 1/1,
+  confidence 1.00**; rows 69/79 reporting `matched: true` is not evidence and must not be counted
+  as any. If the pull shows a phonetically divergent spelling, that is ASR divergence, not
+  normalization — file the spellings and stop; fuzzy/phonetic matching is a separate unscoped
+  decision. Full record: `docs/history-2.md`'s 2026-09-02 T4.1 Step 0a entry.
 
 ### 5. Deferred tasks
 
@@ -185,7 +199,26 @@ carries a real `project.language`).
 
 ### 3. Next tasks
 
-(none) — WS2's numbered-bug backlog is closed and Phase 3 is done; no phase is queued after
+- [OPEN] Re-examine ruling C3 (dual TS+Rust implementation of the shared normalization surface,
+  kept honest by a conformance fixture) — it was never revisited after the surface changed shape,
+  and the reason to revisit is not that the surface got bigger. **The surface acquired a POLICY.**
+  C3 was ruled when the shared surface was a small lookup: two implementations of a table are
+  cheap to keep honest, and a conformance fixture is an adequate guard because a table entry is
+  either right or wrong on its face. By the close of Phase 3 the shared surface was a
+  compositional cardinal generator, five per-language data files, and a year-reading selection
+  policy with a named threshold, in two languages. A conformance fixture over a THRESHOLD RULE
+  tests that the two implementations **agree**, not that either is **correct** — and both can
+  satisfy it while both are wrong. That is not hypothetical here: the propagated x00-x09 quirk is
+  the standing example, deliberately mirrored into both sides so `1905` reads as a cardinal. The
+  fixture is green, parity is real and was the right priority, and both sides are confidently
+  wrong together. A fixture catches drift; it does not prevent it, and it cannot see a defect that
+  is symmetric across the two arms (see `CLAUDE.md` §4 Testing's fixture-reach rule — this is the
+  same failure mode at ruling scale). Re-examination should ask what C3 costs now that the shared
+  surface carries policy rather than data, and what independent-of-both-arms check, if any, could
+  catch a symmetric error. Not a decision to reverse C3 — a decision to re-derive it against the
+  surface that actually exists. No owner.
+
+Beyond that: WS2's numbered-bug backlog is closed and Phase 3 is done; no phase is queued after
 Phase 4. Remaining work beyond Phase 4 is the deferred items in section 5.
 
 ### 4. Open bugs
@@ -213,9 +246,19 @@ Phase 4. Remaining work beyond Phase 4 is the deferred items in section 5.
   `"veintitrés"`). Real, confirmed (T3.2 diagnosis; `sync-pipeline-v2-plan.md` H.5). Currently
   invisible in all three golden corpora because the only real non-English digit content
   (`spanish`'s `"12"`) folds to the same wrong word on both sides of the aligner (a symmetric-fold
-  coincidence, not evidence the behavior is correct). **Revisit trigger:** a real es/fr/de/pt
-  corpus whose script or transcript contains digit content beyond what happens to coincide with
-  the English reading — without one, a fix can't be measured against real content. No owner.
+  coincidence, not evidence the behavior is correct). **Reframed after T3.2 landed (2026-09-02):
+  T3.2 closed the English half of a two-sided divergence and left the other four languages
+  diverging in a NEW way — this is not "the same gap, still deferred."** Before T3.2 both sides
+  were wrong in the same direction: FA and the matcher each emitted the English reading, so the
+  divergence was uniform and one fix would have closed it. After T3.2 the FA side emits
+  `veintitrés` for Spanish while the matcher still emits `twenty three`, because
+  `digitTokenToWords` is not language-gated. The two sides now fail DIFFERENTLY, which means the
+  observed failure signature depends on which side you read — a diagnosis that reads only one arm
+  will mis-attribute it. **English is genuinely closed; es/fr/pt/de are not, and that wrongness
+  ships today.** Deferring remains correct (zero non-English digit corpora — a fix cannot be
+  measured against real content), but "T3.2 is done" overstates it: only the English half is.
+  **Revisit trigger:** a real es/fr/de/pt corpus whose script or transcript contains digit content
+  beyond what happens to coincide with the English reading. No owner.
 - [DEFERRED] fr/pt/de elision (`l'élève`-class apostrophe handling) — `canonicalize()` splits any
   apostrophe not in the English-only `CONTRACTIONS` map into two tokens on every branch, every
   language; `faTextNormalize.ts` keeps it one token. Whether this is a real match defect is

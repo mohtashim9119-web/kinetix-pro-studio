@@ -2275,3 +2275,64 @@ by language — not a restoration of these four.
 not re-measured here): `npx vitest run` 2845 passed / 77 skipped / 0 failed; `gaplessInvariant.
 test.ts` 36/36; golden replay 6/6; K13 3/3; `cargo test --features fa-inference` 211 passed / 0
 failed / 26 ignored. `docs/history.md` untouched throughout this workstream.
+
+---
+
+## WS2 T4.1 Step 0a — the WS1 §4 retire-gate, settled by measurement to a one-row gate (2026-09-02, branch ws2-t41-app-settings)
+
+**Diagnostic only. No source changed.** Full artifact:
+`.work-phase4/session-ws2-38/step0a-retire-gate-report.md`.
+
+**The gate does not open, and the reason is data absence rather than a disproven fold.** The five
+WS1 §4 rows come from the WS2 Step 15 03:57:28 Windows operator run, and that project was never
+committed. Swept, not assumed: `livia`/`gomera`/`velez`/`peñón`/`penon`/`vélez` across 3,245
+`*.json`/`*.csv`/`*.txt`/`*.log` files spanning the whole tree minus `node_modules`, the two
+Python venvs, `.git` and `spike-runtime` — including the extracted operator projects under
+`.work-phase4/forensics-20260819-033211/` and `.work-phase4/session-w/live/projects/`. Zero hits
+(sole match: a `uroman` ISO-639-3 language list). `scripts/fixtures/` and
+`docs/ws1-sync-pipeline/measurements/` contain none of them either — no inspector CSV, no golden
+fixture, no oracle. Neither branch of the operator's instruction was therefore reachable: there is
+no Whisper output for these words in reach to call convergent or divergent. Disposition is
+`NOT DETERMINED — data absent`, not `NOT DETERMINED — analysis inconclusive`.
+
+**The finding that changes how the gate is read: two of the three rows cannot test the fold at
+all.** Script-side tokenization post-`69d7cfc` is `52 → ["llivia"]` (1 token,
+`requiredRunLength` 1), `69 → ["llivia","stayed","spanish"]` (3 tokens, threshold 1), and
+`79 → ["penon","de","velez","de","la","gomera"]` (6 tokens, threshold 2). Run through the real
+production `extractSegmentAlignments` under two arms — arm A spelling the diacritic word on the
+transcript side exactly as the script does, arm B making it match nothing while every other word
+is spelled identically (a stand-in for any divergent spelling, requiring no invented ASR output):
+
+| row | arm A (fold converges) | arm B (diacritic word matches nothing) | discriminating? |
+|---|---|---|---|
+| 52 | 1/1, conf 1.00, run 1, `matched: true` | 0/1, conf 0.00, run 0, **`matched: false`** | **YES** |
+| 69 | 3/3, conf 1.00, run 3, `matched: true` | 2/3, conf 0.67, run 2, `matched: true` | NO |
+| 79 | 6/6, conf 1.00, run 6, `matched: true` | 4/6, conf 0.67, run 3, `matched: true` | NO |
+
+The operator's stated suspicion about row 79 is confirmed exactly: it syncs on `de`/`de`/`la`/
+`gomera` with `penon` and `velez` matching nothing at all. Row 69 is *weaker* evidence after the
+fix than before it — pre-fix it was 4 tokens (`ll`,`via`,`stayed`,`spanish`) needing a run of 2;
+post-fix it is 3 tokens needing a run of **1**, so a single matched word carries it. Row 52 is
+decisive for the same reason it was skipped originally: with one token and nothing else to survive
+on, its confidence is a direct readout of whether `llivia` matched.
+
+**Retire-gate, restated:** retire WS1 §4 only on an operator pull of `project.transcriptTokens`
+showing **row 52 at 1/1, confidence 1.00**. Rows 69/79 reporting `matched: true` is not evidence
+and must not be counted as any; if consulted, only their per-token detail is informative.
+
+**Both existing proofs of the fold are symmetric fixtures, and that is the whole of what they
+measure.** `69d7cfc`'s T3.1 measurement ran "each row's exact quoted text" — the *script* text —
+through `canonicalize()`, deriving both sides of the comparison from the script. The regression
+lock in `whisperService.languageThread.test.ts` has the same shape, authoring `tok('más')` against
+`seg('más')`. Each is a correct test of the fold and structurally incapable of detecting ASR
+divergence, because the divergence is what the fixture authors away. Generalized into
+`CLAUDE.md` §4 Testing this session as the fixture-reach rule (destructive probe, not green run).
+
+**Also recorded this session, docs-only:** the `digitTokenToWords` deferred entry reframed
+(T3.2 closed the English half of a two-sided divergence and left es/fr/pt/de diverging in a *new*
+way — the two sides now fail differently rather than uniformly, so the failure signature depends
+on which arm you read; deferring stays correct, "T3.2 is done" overstates it); and ruling C3
+queued for re-examination on the ground that the shared surface acquired a *policy* rather than
+merely growing — a conformance fixture over a threshold rule tests agreement, not correctness, and
+both arms can satisfy it while both are wrong, the propagated x00-x09 quirk being the standing
+example.
