@@ -2181,8 +2181,19 @@ export default function App() {
 
       if (lastId && allMetas.some(m => m.id === lastId)) {
         // Reload case — reopen the last active project directly.
+        //
+        // NO VIEW FLIP HERE — the fourth site, deleted in Step 2c. On the
+        // success path `handleSwitchProject` already flips adjacent to its own
+        // `setProjectSilent`, so a flip here was redundant. On its two early
+        // returns (registry entry present but the project is missing from
+        // storage, or present-but-broken) it deliberately does NOT flip and
+        // leaves `project` as the empty default — so flipping here unmounted
+        // the dashboard and dropped the user into an editor holding no project,
+        // with only a toast to explain it. Leaving `showDashboard` at its
+        // initial `true` keeps the dashboard up, which is the same rule the
+        // other three sites now follow: the view changes where the project
+        // state changes, and nowhere else.
         await handleSwitchProjectRef.current(lastId, { preserveUiState: true });
-        setShowDashboard(false);
         setIsHydrating(false);
         return;
       }

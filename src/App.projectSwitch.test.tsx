@@ -51,6 +51,7 @@ const mockLoadProjectDetailed = vi.fn();
 const mockGetAllAssetsForProject = vi.fn();
 const mockLoadAllMetas = vi.fn();
 const mockSaveProject = vi.fn();
+const mockGetLastOpenedProjectId = vi.fn<() => string | null>();
 
 vi.mock('./services/projectStore', async () => {
   const actual = await vi.importActual<typeof import('./services/projectStore')>('./services/projectStore');
@@ -62,7 +63,7 @@ vi.mock('./services/projectStore', async () => {
     upsertProjectMeta: vi.fn(),
     setLastOpenedProjectId: vi.fn(),
     clearLastOpenedProjectId: vi.fn(),
-    getLastOpenedProjectId: () => null,
+    getLastOpenedProjectId: () => mockGetLastOpenedProjectId(),
     migrateLegacyIfNeeded: async () => null,
     migrateLocalStorageProjectsToOsStore: async () => ({ migrated: [], failed: [] }),
     adoptMirroredProjects: async () => ({ adopted: [], skipped: [], failed: [] }),
@@ -112,6 +113,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockLoadAllMetas.mockReturnValue([meta(OUTGOING_ID, 'Outgoing'), meta(TARGET_ID, 'Target')]);
   mockSaveProject.mockResolvedValue({ ok: true });
+  mockGetLastOpenedProjectId.mockReturnValue(null);
   mockGetAllAssetsForProject.mockResolvedValue([]);
 });
 
@@ -225,5 +227,72 @@ describe('WS2 T4.1 — dashboard/editor view flip', () => {
     expect(document.body.textContent).toContain('New Project');
     expect(view().view).toBe('dashboard');
     expect(container.querySelector('[data-testid="editor-root"]')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 T4.1 Step 2c — the FOURTH view-flip site: the mount hydration effect's
+// reload branch.
+//
+// It used to flip unconditionally after awaiting `handleSwitchProject`. That
+// handler flips for itself on success and deliberately does NOT flip on either
+// of its early returns (project id in the registry but absent from storage, or
+// present-but-unreadable), leaving `project` as the empty default. The extra
+// flip therefore unmounted the dashboard and left the user staring at an editor
+// with no project loaded.
+//
+// The load promise is again held open so the assertion can be taken at the
+// await boundary rather than only after everything settles.
+// ---------------------------------------------------------------------------
+describe('WS2 T4.1 — mount hydration of the last-opened project', () => {
+  it('leaves the dashboard mounted when the last-opened project is MISSING from storage', async () => {
+    mockGetLastOpenedProjectId.mockReturnValue(TARGET_ID);
+    const load = deferred<unknown>();
+    mockLoadProjectDetailed.mockReturnValue(load.promise);
+
+    await mountApp();
+    // Boundary: hydration is still in flight — neither view has committed yet.
+    expect(view().view).toBe('none');
+
+    // `loadProjectDetailed` resolving to null is the "registry says it exists,
+    // storage disagrees" case.
+    load.resolve(null);
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(view()).toEqual({ view: 'dashboard', projectId: null });
+    expect(container.querySelector('[data-testid="editor-root"]')).toBeNull();
+  });
+
+  it('leaves the dashboard mounted when the last-opened project is present but BROKEN', async () => {
+    mockGetLastOpenedProjectId.mockReturnValue(TARGET_ID);
+    const load = deferred<unknown>();
+    mockLoadProjectDetailed.mockReturnValue(load.promise);
+
+    await mountApp();
+    load.resolve({ ok: false, reason: 'corrupt', rawLength: 4096 });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(view()).toEqual({ view: 'dashboard', projectId: null });
+    expect(container.querySelector('[data-testid="editor-root"]')).toBeNull();
+  });
+
+  it('still opens the editor on the last-opened project when the load SUCCEEDS', async () => {
+    // The success path must be byte-for-byte unchanged by the deletion: the
+    // handler's own flip, adjacent to its state swap, is what mounts the editor.
+    mockGetLastOpenedProjectId.mockReturnValue(TARGET_ID);
+    const load = deferred<unknown>();
+    const assets = deferred<unknown[]>();
+    mockLoadProjectDetailed.mockReturnValue(load.promise);
+    mockGetAllAssetsForProject.mockReturnValue(assets.promise);
+
+    await mountApp();
+    load.resolve({ ok: true, project: storedProject(TARGET_ID, 'Target'), savedAt: Date.now() });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    // Boundary: load resolved, state not yet swapped — still no editor.
+    expect(container.querySelector('[data-testid="editor-root"]')).toBeNull();
+
+    assets.resolve([]);
+    await act(async () => { await assets.promise; await Promise.resolve(); });
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
   });
 });
