@@ -2080,3 +2080,198 @@ project store — writing through Tauri fs to `app_data_dir/projects/<id>/projec
 the WebView2 user-data-folder question moot for project persistence regardless of that answer, so
 the WIP ledger's "Part B storage scripts unrun" line (stale relative to this record) is removed
 rather than re-run or re-verified.
+
+## WS2 T3.1/T3.2 — Phase 3 close-out: canonical text matching and a compositional FA
+cardinal-number generator (branch `ws2-t31-language-thread`, sessions ws2-28 through ws2-36,
+2026-08-31/2026-09-01)
+
+**T3.1 opened on a language-threading gap that made the whole non-ASCII investigation moot for
+the specific rows it was chasing.** `extractSegmentAlignments`/`alignScenestoTranscript` (the
+Whisper-matcher functions that actually produce the operator-visible match percentages) had no
+`languageCode` parameter at all — every call site normalized script and transcript text with the
+English/default fold regardless of `project.language`, even though `useWhisper.ts` already had
+the project's real language in scope a few lines above each call (session ws2-29's diagnosis).
+Commit `5b439f3` threaded a new `toAlignmentLanguageCode` helper into all six call sites plus
+`filterMalformedTokens`'s five. The fix's own measurement (session ws2-30) surfaced a
+load-bearing identity: **`canonicalize(text, 'en')` and `canonicalize(text, undefined)` are
+byte-identical**, because `textNormalize.ts`'s `NON_ENGLISH_CANONICALIZE_LANGUAGES` set is
+`{'es','fr','de','pt'}` — `'en'` never takes the non-English branch. Every real corpus and every
+real operator project behind the WS1 §4 rows is `'en'`-tagged, so `'en' ≡ undefined` held
+throughout this workstream: golden replay stayed 6/6 byte-identical after the language-threading
+commit (not the 0/6 the diagnosis's own worst case predicted), and the WS1 §4 rows' match rates
+were measured to be literally unchanged by Commit 1 alone.
+
+**The real fix for WS1 §4's diacritic rows (52/69/79) was a separate defect the diagnosis found
+underneath the language-threading gap — an ASCII-strip-to-space bug that split words instead of
+folding them.** `canonicalize()`'s English/default branch replaced any non-ASCII character with a
+space rather than removing the accent, so `"Llívia"` → `"ll via"` → tokenized as two garbage
+fragments `["ll","via"]`, and `"Peñón de Vélez de la Gomera"` → 8 tokens, 4 of them garbage —
+reproducing the WIP's reported "4 of 8, 50%" almost exactly. Commit `69d7cfc` added an
+NFD-decompose-and-strip-combining-marks step ahead of the existing ASCII strip, on the
+English/default branch only (the non-English branch already preserves diacritics via `\p{L}` and
+was deliberately left untouched, to protect `fa/text.rs` parity). Measured directly against all
+five WS1 §4 rows' exact quoted text: 52/69/79 now tokenize as clean whole words (`"llivia"`,
+`"penon"`/`"velez"`); rows 8/102 (numeral rows) were unaffected, as expected, and were separately
+measured (session ws2-30) to already produce identical tokens under any plausible transcript
+spelling — no code change was needed there. This closed the confirmed mechanism; whether the
+operator's real Whisper transcript actually spells these words the way the script does remains
+open pending real `project.transcriptTokens` data (`docs/work-in-progress.md` §4, not retired).
+
+**A `tokenHash` identity column was added to all six golden-replay fixtures as a prospective
+guard, and was proven, not assumed, to be currently unable to move on any of the three in-repo
+corpora.** Session ws2-31's own measurement of `058ccaa` (closing the last two `languageCode`
+gaps, in R.12/R.13/R-AP and `countTranscriptWords`) found zero movement in every rule-stage
+metric on v6/173/spanish — v6 confirmed the `'en' ≡ undefined` equivalence on real content (8
+defect rows, byte-identical); 173 and spanish were structural nulls (zero unscripted runs to
+evaluate). Session ws2-32 then added `sha256(JSON.stringify(canonicalize(text, languageCode)))`
+(16 hex chars) to both the segments and skipped fixtures — the skipped fixture needed it too
+because a skipped segment's `matchedWords`/`totalWords`/`confidence` are counts and ratios, not
+content, and a content-changing-but-match-preserving edit (exactly what `69d7cfc`'s fold turned
+out to be, symmetrically, on the Spanish corpus) leaves all of them unchanged. Deliberately broke
+the NFD-fold and confirmed the hash column would have caught it (all three of
+`Llívia`/`café`/`Peñón...`'s hashes moved when hashed directly) — but on the three actual golden
+corpora, the probe showed zero hash movement, for a structural reason confirmed, not assumed:
+v6/173 contain zero diacritic-bearing text and spanish takes the untouched non-English branch.
+The column is a real, working guard with nothing in the current fixtures for it to catch yet.
+
+**Adding the hash column broke an unrelated regression guard by fixed-offset assumption, and the
+fix generalizes past this one column.** `scripts/phase4-step-w-k13-repro.test.ts` (the K13
+lock-preservation guard) read `startTime`/`duration` by counting backward from the end of each
+CSV row, on the documented assumption that the last four fields never change. Appending
+`tokenHash` shifted that offset by one and made the reader silently swap `duration` into
+`startTime`, surfacing as a real, bisection-confirmed test failure (`900.0000000000003 < 1`).
+`loadBaselineSegments()` was rewritten to parse the header row and look up columns by name
+through a quote-aware splitter, fixed in the same commit per `CLAUDE.md`'s own rule for a
+hardcoded-path fixture consumer — a fresh sweep for any other column-position-dependent reader
+across the fixture group found none.
+
+**T3.2 opened with a scope correction: English was never missing a cardinal table on the matcher
+side, only on the FA side.** The premise "English lacks a cardinal table" conflated two
+independent modules — `textNormalize.ts`'s `canonicalize()` (matcher) has always had a
+language-blind `digitTokenToWords` that emits English words for every language's digits;
+`faTextNormalize.ts`/`fa/text.rs` (FA) genuinely has zero cardinal-table coverage for English and
+a 0-30 cap for es/fr/de (0-20+30 for pt). Session ws2-33's real-corpus measurement found the two
+sides can never agree on a digit-bearing token's string, in any language, by design (different
+consumers, deliberately not shared) — fixing one closes nothing for the other. Given real-corpus
+content (`"2024"`/`"1198"`/`"300"`-shaped values) is the FA side's live, production-path gap (via
+the Rust port, not the TS mirror — see below) and doesn't trigger the standing sign-off gate the
+matcher-side fix would, the operator scoped T3.2 to **Option 2: FA side only**. The matcher-side
+gap (`digitTokenToWords` never gated by `languageCode`) was recorded as deferred, not fixed —
+`docs/work-in-progress.md` §5.
+
+**A blocking pre-check found the FA path strictly one-to-one at every layer, before any code was
+written.** Session ws2-34 traced normalization (`FaWordResult.mapped`: one string, never
+candidates) through tokenization (one flat `Vec<i64>`), alignment (`forced_align`'s Viterbi DP
+sized to exactly one fixed `targets` sequence, no lattice/beam/OR-node), and merge (assumes the
+one sequence that was aligned) — the pipeline's own only failure-handling path (`TooManyRepeats`
+→ whole-chunk placeholder) confirms rather than mitigates this: even it doesn't retry with an
+alternate reading, it surrenders the chunk. A same-session pre-check (also ws2-34) found the wall
+was broader than the existing 21-99/multi-word documentation implied: **any composed reading
+whose joiner is a space is structurally unrepresentable**, because no language's CTC vocab
+contains a literal space character — this affects "300"/"2024"/"1198" in 4 of 5 languages even
+under a fully correct unbounded generator, unless the tokenizer itself is extended to carry
+multiple `WordSpan`s per source word.
+
+**The multi-word tokenizer extension shipped as its own, behavior-neutral capability, gated
+behind a proven straddle invariant.** Session ws2-35's precheck proved a chunk boundary can never
+fall between two fragments of the same source word — not by a runtime guard, but as an
+architectural sequencing fact: chunk boundaries are fully decided in TypeScript over whole,
+unsplit raw tokens (`faChunkPlan.ts`'s `attributeByIndex`) before the resulting chunks ever cross
+into Rust, and FA-side expansion only ever sees one already-finished chunk's text at a time with
+no memory of how its boundaries were chosen. This is what makes the fragment-collapse
+(first-fragment-start to last-fragment-end) always have a coherent single-chunk span to
+reassemble; it's enforced going forward by a locked test (`faChunkPlan.test.ts`'s
+chunk-boundary-independent-of-FA-normalization assertion), named explicitly in
+`collapse_word_fragments`'s own doc comment as the thing this proof depends on staying green.
+Commit `e7377db` landed `tokenize_normalized_words`/`collapse_word_fragments` in `fa_onnx.rs`,
+confirmed behavior-neutral (every gate byte-identical, including the real-ONNX suites) because no
+`mapped` string contained whitespace before this step.
+
+**The year-reading policy was measured off the matcher's own live behavior, then mirrored into
+FA's data — including a quirk the matcher wasn't designed to have.** Session ws2-35 ran the
+matcher's `digitTokenToWords` across the full 1100-2999 range and found it is NOT a single
+convention: 1100-1999 splits into "pair" (90%, e.g. 1998 → "nineteen ninety-eight") and
+"cardinal" (the 10% whose last two digits are <10, i.e. every xx00-xx09 year — e.g. 1900 → "one
+thousand nine hundred", not "nineteen hundred"), while 2000-2009 is 100% cardinal and 2010-2099
+is 100% pair — a deterministic, exact function of `n % 100 >= 10`, not an inconsistency, but not
+a single blanket reading either. The operator ruled to mirror this exact conditional into FA's
+`yearReading.selectionPolicy` for en/de (the two languages with a real two-candidate choice),
+rather than pick a single constant that would silently disagree with the matcher on part of the
+range. `fa-cardinal-en.json`/`fa-cardinal-de.json` carry the policy as a `{name, threshold,
+atOrAboveThreshold, belowThreshold}` object with a `matcherParityNote` stating explicitly that
+the x00-x09 cardinal fallback is a known matcher quirk being deliberately mirrored, not
+independently corrected, and that the two sides must not diverge if the matcher's own threshold
+is ever revisited.
+
+**The compositional generator itself (`a2754bb`) replaced all four capped 0-30 tables with a
+shared, unbounded, data-driven implementation in both `faTextNormalize.ts` and `fa/text.rs`,
+reading the `fa-cardinal-<lang>.json` files — and found two real, independent bugs in the Step 2
+data during implementation, both the same class of apocope/count-word irregularity already
+established by the existing German-million precedent.** German `hundred`/`thousand` were missing
+`countWordOverride: "ein"` (would have composed "einshundert" instead of "einhundert"); Spanish
+`million` was missing `countWordOverride: "un"` (would have composed "uno millón" instead of the
+correct apocopated "un millón"). Both were caught and fixed before the commit landed, verified
+against a live run of the generator before and after. `es/fr/de/pt/en` fixture regeneration (124
+entries) passed the hard-gate Rust parity test on the first attempt post-fix.
+
+**The standing inference that a wrong number reading only costs local mis-timing was traced end
+to end and found false as a categorical claim — then measured for how much real exposure that
+creates.** `forced_align` requires `T ≥ L+R` (frame budget ≥ target-sequence length + adjacent-
+repeat count) for the WHOLE chunk's text, and `align_chunked`'s only failure-handling path
+replaces the ENTIRE chunk's words with evenly-spaced placeholder timing on violation — there is
+no per-word fallback. So a wrong reading that pushes a chunk's own margin negative doesn't stay
+local; it can flatten every word in that chunk. Session ws2-36 measured this against all three
+corpora's real, currently-shipped production chunk plans, deriving frame counts from the real
+ONNX model graph's conv-layer kernel/stride values (not assumed) and cross-checked once against
+real ONNX inference on 173 (zero `TooManyRepeats` signature at production margins, matching the
+derived numbers exactly). Result: **no real chunk is infeasible today**, but margins are not
+uniformly wide — 173's worst real chunk sits at margin 9 (chunk 84), and a plausible English year
+misread (picking "compound" where "pair" is correct) costs `delta(L+R) = +16`, enough to flip 2
+of 173's 118 chunks (both already the corpus's only near-miss chunks) from feasible to
+whole-chunk placeholder timing. v6 (280 chunks) and spanish (5 chunks) have zero exposure at this
+delta. No corpus currently contains a year-shaped token, so this is unreachable today — recorded
+as a deferred exposure with an explicit revisit trigger (`docs/work-in-progress.md` §5), not
+fixed.
+
+**The durability pass (`7901c27`) added cargo-side isolation guards, encoded the French
+cent-pluralization gap and the CTC margin finding as fixture-level data, and documented that
+`faTextNormalize.ts`'s generator has no production caller.** The isolation test
+(`cardinal_generator_uses_each_languages_own_data_no_cross_contamination`) guards a different,
+still-live property than the four obsolete gating tests below: that each language's dispatch
+(`cardinal_json_for`) actually pairs with THAT language's own `fa-cardinal-<lang>.json`, not a
+cross-wired one — a mutation this test catches that the pre-existing non-emptiness check does
+not. The French "cent"-before-a-numeral-scale-word pluralization gap (`composeHundred` has no
+signal for whether its result is about to feed a further NUMERAL scale word like "mille" vs. a
+NOUN scale word like "million", so it pluralizes unconditionally and produces "deux cents mille"
+for 200000 where correct French is "deux cent mille") and the CTC margin finding above were both
+encoded as fixture-level data (a `knownLossy` entry on `fa-cardinal-fr.json`'s `hundred` config;
+a note alongside `fa-cardinal-en.json`'s `yearReading` policy) — previously recorded only in this
+workstream's own scratch session artifacts under `.work-phase4/`. Neither behavior changed. The
+commit also documents explicitly, in `faTextNormalize.ts`'s own header, that **the TS generator
+has no production caller today** — `computeFaChunkPlan*`'s `languageCode`/`vocabChars`/
+`cardinalData` gate is never fully supplied by any current call site — and exists as the parity
+reference `fa/text.rs` is hand-ported against and proven byte-identical to via the fixture-parity
+gate, not as a shipping code path itself. The live production path is entirely the Rust side,
+via `fa_onnx.rs`.
+
+**`cargo test`'s count moved from 242 (after the multi-word tokenizer capability, `e7377db`) to
+210 (after the generator, `a2754bb`) to 211 (after the durability pass, `7901c27`), and every one
+of the 32 tests dropped between the first two points is accounted for, not lost.** All 32 lived
+in `fa/text.rs`'s old per-language capped-table blocks (English never had this style of test — it
+had no cardinal rule to test before this step). 23 positive-value assertions survive verbatim
+inside the new table-driven `<language>_cardinal_generator` tests; 8 negative "stays dropped for
+decimal/leading-zero" tests consolidated into 1 cross-language test that is a strict superset
+(adds English, which had none before); 6 negative "past the old scope cap" tests were
+deliberately inverted — the same value, now re-asserted with the new, correct, representable
+outcome, since removing the cap was the literal point of this step; and 4 "expansion is
+language-gated" tests (which used English as the unaffected control) are genuinely retired with
+no survivor, for a structural reason: this same step gave English its own cardinal generator, so
+there is no language left in the current five-language set that can serve as an "unaffected"
+witness for that property. The durability pass's own new cross-language isolation test (above) is
+a different guard entirely — reading a fixture from your own dispatch arm, not gating expansion
+by language — not a restoration of these four.
+
+**Gate state at close of Phase 3** (final state at `7901c27`, per the operator's stated baseline,
+not re-measured here): `npx vitest run` 2845 passed / 77 skipped / 0 failed; `gaplessInvariant.
+test.ts` 36/36; golden replay 6/6; K13 3/3; `cargo test --features fa-inference` 211 passed / 0
+failed / 26 ignored. `docs/history.md` untouched throughout this workstream.

@@ -112,6 +112,20 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
   numeral-expansion hypothesis (now best-supported of the three), leaving NFC/NFD and CTC-vocab
   glyph coverage still UNVERIFIED against the Llívia/Peñón cases. Still no fix attempted. Detail:
   `docs/history-2.md#2026-08-27--ws2-step-18--ws1-nonascii-segment8-third-occurrence`.
+  **Update, WS2 T3.1 (2026-09-01):** the mechanism behind rows 52/69/79 is now fixed and proven,
+  not merely hypothesized — `69d7cfc`'s NFD-fold on the English/default `canonicalize()` branch
+  closes the ASCII-shattering that produced the reported garbage-fragment tokens ("Llívia" was
+  `["ll","via"]`, now `["llivia"]`; "Peñón de Vélez..." was 8 tokens/4 garbage, now 6 clean
+  tokens), measured directly against each row's exact quoted text
+  (`.work-phase4/session-ws2-30/phase3-t31-step2-report.md` §3). Rows 8/102's numeral
+  tokenization was independently measured to already converge under every plausible transcript
+  spelling (`.work-phase4/session-ws2-30/phase3-t31-step1-report.md` §5) — no code change was
+  needed or made there. **Not retired**: this session was not supplied the real Whisper
+  transcript tokens for these five rows (`project.transcriptTokens`, pullable via
+  `__transcriptInspector`), and the fix's own measurement explicitly could not confirm the
+  operator's real transcript spelling matches the script's — only that the shattering defect,
+  once the dominant confirmed mechanism, no longer occurs. Retire this entry once operator
+  verification against the real transcript tokens confirms an actual match, not before.
 
 ### 5. Deferred tasks
 
@@ -144,7 +158,11 @@ dropped scene is now fully manual: jump to it via the sync log's "Jump to absorb
 then split (`S`) the absorbing clip and retype. Two real bugs surfaced by that same removal pass
 (sync-log host-numbering off-by-one, split-then-delete text loss) are fixed and
 operator-verified (`docs/history-2.md`'s ws2-t21 round-2 record). Phase 3 (Text and number
-normalization) is in progress.
+normalization, T3.1+T3.2) is now closed — canonical-form matching (T3.1: language-threaded
+matcher, NFD diacritic fold, tokenHash identity column, es/fr/de/pt conformance fixture) and a
+compositional FA-side cardinal-number generator (T3.2, TS+Rust atomic) both landed on
+`ws2-t31-language-thread`, sessions ws2-28 through ws2-36; full record in `docs/history-2.md`.
+Phase 4 (Settings & project creation) is now in progress.
 
 ### 1. Finished but pending verification
 
@@ -152,22 +170,7 @@ normalization) is in progress.
 
 ### 2. In progress
 
-[IN-PROGRESS] Phase 3 — Text and number normalization
-  T3.1 Canonical match form: Unicode NFC/NFD normalization, punctuation folding, tiered
-       diacritic fallback, and number/date/currency value tokens; match on canonical form,
-       render from the original surface form.
-  T3.2 Locale verbalizer for the FA pass (digits → words, en/es/fr/de/pt) with token
-       provenance so aligned groups collapse back to exact source-token boundaries;
-       single shared implementation for the TS matcher and the Rust FA runtime.
-
-**END GOAL:** Script text and the FA pass agree on one canonical match form across all five
-supported languages — a diacritic, a written-out number, and a digit sequence all match their
-spoken counterpart on first sync, with the original surface form still what renders on the
-timeline.
-
-### 3. Next tasks
-
-[OPEN] Phase 4 — Settings & project creation
+[IN-PROGRESS] Phase 4 — Settings & project creation
   T4.1 App Settings page owning Models & Add-ons (machine-global); Project Settings shows a
        read-only requirement row that deep-links to it; missing-model check moved into
        faPreflight.ts and surfaced in the sync log.
@@ -175,8 +178,15 @@ timeline.
        only; fix the stale blurred previous project by unmounting the editor and clearing
        activeProjectId on close.
 
-(WS2's numbered-bug backlog is closed; remaining work beyond Phases 3-4 above is the deferred
-items below.)
+**END GOAL:** A new project can be created with an explicit language choice and FA sync on by
+default, and the machine-global model/add-on requirement is surfaced and satisfiable from
+Settings before a sync ever needs it — closing the gap Phase 3 assumed (a project always
+carries a real `project.language`).
+
+### 3. Next tasks
+
+(none) — WS2's numbered-bug backlog is closed and Phase 3 is done; no phase is queued after
+Phase 4. Remaining work beyond Phase 4 is the deferred items in section 5.
 
 ### 4. Open bugs
 
@@ -198,6 +208,47 @@ items below.)
   focus-shift on click. Gating S/D on focus-within the timeline needs tabIndex plumbing across clip
   elements plus revisiting that suppression, which touches selection and scrubbing — out of scope
   here. No owner.
+- [DEFERRED] `textNormalize.ts`'s `digitTokenToWords` emits English cardinal/year words for every
+  language's digit tokens — never gated by `languageCode` (e.g. es `"23"` → `"twenty three"`, not
+  `"veintitrés"`). Real, confirmed (T3.2 diagnosis; `sync-pipeline-v2-plan.md` H.5). Currently
+  invisible in all three golden corpora because the only real non-English digit content
+  (`spanish`'s `"12"`) folds to the same wrong word on both sides of the aligner (a symmetric-fold
+  coincidence, not evidence the behavior is correct). **Revisit trigger:** a real es/fr/de/pt
+  corpus whose script or transcript contains digit content beyond what happens to coincide with
+  the English reading — without one, a fix can't be measured against real content. No owner.
+- [DEFERRED] fr/pt/de elision (`l'élève`-class apostrophe handling) — `canonicalize()` splits any
+  apostrophe not in the English-only `CONTRACTIONS` map into two tokens on every branch, every
+  language; `faTextNormalize.ts` keeps it one token. Whether this is a real match defect is
+  genuinely **NOT DETERMINED** — no fr/pt/de corpus in this repo contains elision content to
+  measure against (`.work-phase4/session-ws2-33/t32-numeral-diagnosis.md` §2.3). Structurally
+  separate from T3.2 (apostrophe handling, not digit handling) and from T3.1 (would touch the
+  es/fr/de/pt branch of `canonicalize()`, which needs its own standing-ruling sign-off) — do not
+  fold into either. **Revisit trigger:** a real fr/pt/de corpus, or an explicit operator decision
+  to scope it as its own task. No owner.
+- [DEFERRED] French `composeHundred` pluralizes "cent" unconditionally whenever its local
+  remainder is 0, with no signal for whether a further NUMERAL scale word ("mille") follows —
+  produces "deux cents mille" for 200000 where correct French is "deux cent mille". Encoded as a
+  `knownLossy` fixture entry on `fa-cardinal-fr.json`'s `hundred` config (`7901c27`), not fixed —
+  needs a new schema signal threaded from `composeScaleLevel` into `composeHundred`. **Revisit
+  trigger:** any corpus containing a French number ≥200,000 where a numeral scale word follows a
+  plural-hundreds group; also worth revisiting once a real fr corpus exists (see below). No owner.
+- [DEFERRED] CTC margin exposure — the standing inference that a wrong number reading costs only
+  local mis-timing is refuted: `align_chunked`'s `TooManyRepeats` fallback is per-CHUNK, and a
+  misread English year (the "compound" reading picked where "pair" was correct) adds
+  `delta(L+R) = +16` to a chunk's CTC target length. Measured against real production chunk plans:
+  173's worst real margin is 9 (chunk 84), with 2 of 403 real chunks across all three corpora
+  (both in 173) close enough to flip to whole-chunk placeholder timing under that delta.
+  Unreachable today — no corpus contains a year-shaped digit token to actually trigger it.
+  **Revisit trigger:** any corpus containing a year-shaped (4-digit, in-range) numeral — at that
+  point this finding becomes live risk, not a bound. No owner.
+- [DEFERRED] No fr/de/pt golden corpus exists in this repo — the common prerequisite behind
+  several items above (the digit-cardinal language-gating item can't be measured against real
+  content; the elision question is genuinely undetermined without one; T3.2 Option 1's four-
+  language linguistic design work was scoped only against the one real es corpus). T3.1's own
+  conformance fixture (`canonicalize-conformance-fixture.json`) had to work around this by testing
+  `canonicalize()` directly rather than through a corpus. **Revisit trigger:** acquiring a real fr,
+  de, or pt script+transcript+audio corpus — unblocks the digit-cardinal item, the elision
+  question, and any future fr/de/pt T3.2 Option-1 work simultaneously. No owner.
 
 ---
 
