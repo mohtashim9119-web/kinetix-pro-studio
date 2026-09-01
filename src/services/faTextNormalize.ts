@@ -485,7 +485,20 @@ function selectYearCandidate(n: number, policy: FaYearReading['selectionPolicy']
 
 /** Entry point replacing the four former per-language `expand*Cardinal`
  *  functions — now shared across all five languages (English included,
- *  previously unhandled) and fully data-driven. `stripped` must be entirely
+ *  previously unhandled) and fully data-driven.
+ *
+ *  NO PRODUCTION CALLER TODAY: every real call site of `computeFaChunkPlan`
+ *  (`App.tsx`'s dev path, `faSeamFitGate.ts`, `forcedAlignmentRun.ts`) omits
+ *  the `languageCode`/`vocabChars`/`cardinalData` trio, which is the only
+ *  way `normalizeForForcedAlignment` — and therefore this function — is
+ *  ever reached (see `computeFaChunkPlanWithAttribution`'s own doc comment
+ *  in `faChunkPlan.ts`). This function exists as the PARITY REFERENCE the
+ *  Rust port (`expand_cardinal_token`, `src-tauri/src/fa/text.rs`) is
+ *  ported byte-identically against and pinned to via the shared
+ *  `fa-text-normalize-fixture.json` fixture — not as a shipping code path.
+ *  Do not mistake test/fixture coverage here for production behavior.
+ *
+ *  `stripped` must be entirely
  *  digits, no sign, no separators, no leading zero other than a bare "0" —
  *  anything else returns `undefined` and the caller falls through to the
  *  pre-existing digit-drop path, exactly as every former per-language

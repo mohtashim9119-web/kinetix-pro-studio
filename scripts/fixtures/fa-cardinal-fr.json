@@ -129,6 +129,12 @@
     "remainderJoiner": {
       "type": "space",
       "text": null
+    },
+    "knownLossy": {
+      "gap": "pluralizesWhenExactMultiple/pluralSuffix only look at the REMAINDER within composeHundred's own 0-999 block (remainder===0 && multiplier>1) to decide whether 'cent' pluralizes. They have no signal for whether this hundred value is itself about to be used as a scale-level MULTIPLIER for a further NUMERAL scale word ('mille') vs. standing alone or feeding a NOUN scale word ('million'). Real French grammar blocks the plural only in the former case: 'deux cent mille' (200000, no s on cent) but 'deux cents' (200 alone, s stays correct) and 'deux cents millions' (200000000, s stays correct because 'million' is a noun, not a bare numeral). The generator currently pluralizes unconditionally whenever the local remainder is 0, so it produces 'deux cents mille' for 200000, which is wrong.",
+      "example": { "n": 200000, "produces": "deux cents mille", "correct": "deux cent mille" },
+      "owningTask": "WS2 T3.2 follow-up (unscheduled) - needs a new schema signal (e.g. a suppressPluralBeforeNumeralScaleWord flag on FaHundredConfig) threaded from composeScaleLevel's multiplier-count call into composeHundred so it knows a numeral scale word follows. Deliberately not built in WS2 T3.2 Step 3 (durability pass) or the Step 3b-iii session that first found it (.work-phase4/session-ws2-35/t32-step3b-iii-generator.md, NOT DETERMINED #3) - several orders of magnitude past any digit token measured in any real corpus content to date (WS2 T3.2 Step 2's own margin measurement found nothing past 2-3 digits in v6/173/spanish), and fixing it needs a new schema field on top of an already-large change.",
+      "doNotFix": "confirmed scope boundary, not an oversight - recorded here for discoverability, not scheduled."
     }
   },
   "scale": [

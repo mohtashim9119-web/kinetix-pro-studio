@@ -4815,6 +4815,60 @@ mod tests {
         }
     }
 
+    /// WS2 T3.2 Step 3 (durability pass) — new coverage, not count
+    /// restoration for the four `negative_*_cardinal_expansion_is_language_
+    /// gated` tests retired in Step 3b-iii (those proved digits stayed
+    /// dropped under an unaffected-language witness that no longer exists
+    /// now that all five languages expand cardinals; see
+    /// `.work-phase4/session-ws2-36/step1-cargo-drop-accounting.md` category
+    /// D). This test protects a different, still-live property: that
+    /// `load_cardinal_data`'s per-language dispatch (`cardinal_json_for`
+    /// above) actually pairs each language code with THAT language's own
+    /// `fa-cardinal-<lang>.json`, not another's. `loads_all_five_embedded_
+    /// vocabs` above only checks non-emptiness, which a swapped file would
+    /// still pass. Mutation this test catches: a copy/paste or reordering
+    /// mistake in `cardinal_json_for`'s match arms (e.g. `"de" =>
+    /// include_str!(".../fa-cardinal-fr.json")`) or in any future
+    /// replacement of that dispatch — the affected language's generator
+    /// output would silently become another language's word instead of a
+    /// missing-file/parse error, since every fixture parses to the same
+    /// `FaCardinalData` shape.
+    #[test]
+    fn cardinal_generator_uses_each_languages_own_data_no_cross_contamination() {
+        // n=23 read through each language's own `cardinals0to99` table
+        // directly (verified against each fa-cardinal-<lang>.json fixture) —
+        // chosen because all five languages' words for it are mutually
+        // distinct, so a contaminated pairing produces a WRONG, not merely
+        // divergent-looking, result.
+        let expected: [(&str, &str); 5] = [
+            ("en", "twenty-three"),
+            ("es", "veintitrés"),
+            ("fr", "vingt-trois"),
+            ("de", "dreiundzwanzig"),
+            ("pt", "vinte e três"),
+        ];
+
+        for i in 0..expected.len() {
+            for j in (i + 1)..expected.len() {
+                assert_ne!(
+                    expected[i].1, expected[j].1,
+                    "fixture design error: {} and {} share a word for 23 — this table can no longer detect a cross-language swap",
+                    expected[i].0, expected[j].0
+                );
+            }
+        }
+
+        for (lang, want) in expected {
+            let vocab = load_vocab(lang).unwrap();
+            let language = Language::from_code(lang).unwrap();
+            let result = normalize_for_forced_alignment("23", language, &vocab.chars, &vocab.cardinal_data);
+            assert_eq!(
+                result.text, want,
+                "{lang}'s cardinal generator produced a word belonging to a different language's data file"
+            );
+        }
+    }
+
     #[test]
     fn unsupported_language_is_typed_error() {
         let err = load_vocab("zz").unwrap_err();
