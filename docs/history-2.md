@@ -2336,3 +2336,42 @@ queued for re-examination on the ground that the shared surface acquired a *poli
 merely growing — a conformance fixture over a threshold rule tests agreement, not correctness, and
 both arms can satisfy it while both are wrong, the propagated x00-x09 quirk being the standing
 example.
+
+## WS2 status narrative displaced from the tracker (2026-09-02, branch ws2-t41-app-settings)
+
+`docs/work-in-progress.md` crossed its own 300-line cap (315), so its remedy was applied: WS2's
+multi-paragraph `Status:` block was cut to the single line the five-section structure contract
+calls for, and the displaced prose is preserved here VERBATIM. Nothing was reworded or dropped;
+no deferred entry was touched. This is the Phase 1/2/3 close-out narrative that stood at the top
+of the WS2 section immediately before Phase 4 began — its constituent records live in this file's
+own `WS2 T1.x`, `WS2 T2.1/T2.2`, and `WS2 T3.1/T3.2` sections above, of which this was the
+running summary.
+
+Tracker line after the cut:
+`Started: 2026-08-26 (Step 3) | Status: active — all 4 numbered bugs and Phases 1-3 closed; Phase 4 (Settings & project creation) in progress.`
+
+Displaced text, exactly as it stood:
+
+> Started: 2026-08-26 (Step 3) | Status: all 4 numbered bugs closed (1/2/4 code-fixed and now
+> runtime-verified on real Windows hardware; 3 closed did-not-reproduce, no code fix). A
+> sync-pipeline defect surfaced by WS2 Step 15's Windows operator log (non-ASCII matching) was
+> relocated to WS1 §4 — see that section. macOS CI-artifact/arm64 FA
+> platform verification and MSVC redistributable are both closed (OPERATOR-ATTESTED); the
+> autosave-quota bug is fixed (T1.3, OPERATOR-ATTESTED live `tauri:dev` verification, see
+> `docs/history-2.md`). Phase 1 (project data durability & foundations) is fully closed —
+> T1.1/T1.2/T1.3 all done. Phase 2 closed at a MUCH SMALLER scope than originally planned: T2.1
+> pivoted from its original never-drop design through a full gap-absorption restore UI
+> (automatic + a Forced Restore human override) to, finally, visibility-only reporting — the
+> restore UI produced inaccurate micro-durations in silent gaps that needed manual correction
+> anyway, so the operator had it removed entirely (session ws2-26, round 1 of 2,
+> `docs/history-2.md`'s ws2-t21 entry). T2.2 (the operator-override persistence layer the restore
+> UI needed) is closed as not-building — there is nothing left for it to persist. Recovering a
+> dropped scene is now fully manual: jump to it via the sync log's "Jump to absorbing scene" link,
+> then split (`S`) the absorbing clip and retype. Two real bugs surfaced by that same removal pass
+> (sync-log host-numbering off-by-one, split-then-delete text loss) are fixed and
+> operator-verified (`docs/history-2.md`'s ws2-t21 round-2 record). Phase 3 (Text and number
+> normalization, T3.1+T3.2) is now closed — canonical-form matching (T3.1: language-threaded
+> matcher, NFD diacritic fold, tokenHash identity column, es/fr/de/pt conformance fixture) and a
+> compositional FA-side cardinal-number generator (T3.2, TS+Rust atomic) both landed on
+> `ws2-t31-language-thread`, sessions ws2-28 through ws2-36; full record in `docs/history-2.md`.
+> Phase 4 (Settings & project creation) is now in progress.
