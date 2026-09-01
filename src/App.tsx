@@ -1947,6 +1947,9 @@ export default function App() {
   // later, different one.
   const [languageBannerDismissed, setLanguageBannerDismissed] = useState(false);
   const [showDashboard, setShowDashboard] = useState(true);
+  // Id of the project whose async open is in flight. Not a view state — the
+  // dashboard stays the single mounted view; this only marks the clicked card.
+  const [openingProjectId, setOpeningProjectId] = useState<string | null>(null);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   const [showExportSettingsModal, setShowExportSettingsModal] = useState(false);
@@ -5185,14 +5188,7 @@ export default function App() {
 
   // (Canvas mirror removed — export now uses ffmpeg.wasm frame renderer, not MediaRecorder)
 
-  const handleNewProject = (): void => {
-    // Save current project first, then show the name-picking modal.
-    saveNow();
-    setShowNewProjectModal(true);
-  };
-
   const handleNewProjectConfirm = async (name: string, aspectRatio: AspectRatio, resolutionTier: ResolutionTier): Promise<void> => {
-    setShowNewProjectModal(false);
     // Discard any staging-time voiceover transcription left over from the
     // outgoing project — otherwise effectiveVoiceoverId keeps pointing at its
     // ephemeral asset id, which can never match the new project's
@@ -5226,7 +5222,13 @@ export default function App() {
     // could restore the OUTGOING project's segments onto this one's assets.
     // Silent, because the write itself is not a user edit of this project.
     const outgoingId = liveProjectRef.current.id;
+    // VIEW FLIP — adjacent to the project-state swap, never to the resolution
+    // of the load/save promise above. Until this line runs, `project` is still
+    // the OUTGOING project, so unmounting the dashboard any earlier renders the
+    // editor over the wrong project for the duration of the await.
     setProjectSilent(fresh);
+    setShowDashboard(false);
+    setShowNewProjectModal(false);
     setHistory(emptyHistory<Project>());
     void clearPersistedHistory(outgoingId);
     setIsSynced(false);
@@ -5237,134 +5239,152 @@ export default function App() {
   };
 
   const handleSwitchProject = async (id: string, opts?: { preserveUiState?: boolean }): Promise<void> => {
-    setShowDashboard(false);
-    if (id === project.id) return;
-
-    // Discard any staging-time voiceover transcription left over from the
-    // outgoing project — otherwise effectiveVoiceoverId keeps pointing at its
-    // ephemeral asset id, which can never match the target project's
-    // lastTranscribedAssetId, leaving Apply Sync stuck disabled forever.
-    handleVoiceoverUnstaged();
-
-    // Save current project before switching — only if it was confirmed by the user.
-    if (project.confirmed) {
-      saveNow();
-    }
-
-    // WS1 Session O — distinguish "no such project" from "present but broken",
-    // and surface the latter instead of failing silently. `loadProjectDetailed`
-    // has already recorded a poison flag for this id, which makes `saveProject`
-    // refuse every subsequent write to it, so the unreadable raw bytes stay on
-    // disk exactly as they are rather than being autosaved over.
-    const outcome = await loadProjectDetailed(id);
-    if (outcome === null) {
-      console.error('[kinetix] Cannot switch to project — not found in storage:', id);
-      showToast('That project could not be found in storage.');
+    // Re-opening the project already loaded changes no project state, so the
+    // view flip is immediate and there is nothing to indicate as pending.
+    if (id === project.id) {
+      setShowDashboard(false);
       return;
     }
-    if (!outcome.ok) {
-      console.error('[kinetix] Cannot switch to project — load failed:', id, outcome);
-      showToast(
-        `This project could not be opened (${outcome.reason}). Its ${outcome.rawLength} bytes of saved data have been left untouched, and saving is blocked for it so nothing overwrites them.`,
-      );
-      return;
-    }
-    const saved = { project: outcome.project, savedAt: outcome.savedAt };
 
-    // Revoke current project's blob URLs.
-    project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
+    // Pending indicator for the clicked card. The dashboard stays mounted and
+    // interactive-but-inert for the whole async load; cleared in `finally` so
+    // the error/not-found early returns below release it too.
+    setOpeningProjectId(id);
+    try {
+      // Discard any staging-time voiceover transcription left over from the
+      // outgoing project — otherwise effectiveVoiceoverId keeps pointing at its
+      // ephemeral asset id, which can never match the target project's
+      // lastTranscribedAssetId, leaving Apply Sync stuck disabled forever.
+      handleVoiceoverUnstaged();
 
-    // Rehydrate the target project's assets from IndexedDB.
-    const storedAssets = await getAllAssetsForProject(saved.project.id);
-    const blobMap = new Map(storedAssets.map(a => [a.id, a]));
-
-    const droppedIds = new Set<string>();
-    const rehydratedAssets = (await Promise.all(
-      saved.project.assets.map(async asset => {
-        const stored = blobMap.get(asset.id);
-        if (!stored) {
-          console.warn(
-            `[kinetix] Dropping orphaned asset on switch — id: ${asset.id}, name: ${asset.name}`,
-          );
-          droppedIds.add(asset.id);
-          return null;
-        }
-        const rehydratedUrl = URL.createObjectURL(stored.blob);
-        const rehydratedFile = new File([stored.blob], asset.name, { type: stored.blob.type });
-        // Back-compat backfill: a project saved before Asset.duration existed
-        // carries no clip length. This is the one place every stored asset's
-        // blob URL is recreated, so probing here is what keeps the trim bar
-        // and the source-time clamps working on an older project instead of
-        // declining for the whole session.
-        const duration = asset.type === 'video' && asset.duration === undefined
-          ? await getMediaDuration(rehydratedUrl, 'video')
-          : asset.duration;
-        return { ...asset, url: rehydratedUrl, file: rehydratedFile, duration };
-      }),
-    )).filter((a): a is NonNullable<typeof a> => a !== null);
-
-    const rehydratedSegments = saved.project.segments.map(seg => {
-      if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
-        return { ...seg, assetId: undefined };
+      // Save current project before switching — only if it was confirmed by the user.
+      if (project.confirmed) {
+        saveNow();
       }
-      return seg;
-    });
 
-    let rehydratedVoiceoverId = saved.project.voiceoverId;
-    if (rehydratedVoiceoverId !== undefined && droppedIds.has(rehydratedVoiceoverId)) {
-      rehydratedVoiceoverId = undefined;
-    }
+      // WS1 Session O — distinguish "no such project" from "present but broken",
+      // and surface the latter instead of failing silently. `loadProjectDetailed`
+      // has already recorded a poison flag for this id, which makes `saveProject`
+      // refuse every subsequent write to it, so the unreadable raw bytes stay on
+      // disk exactly as they are rather than being autosaved over.
+      const outcome = await loadProjectDetailed(id);
+      if (outcome === null) {
+        console.error('[kinetix] Cannot switch to project — not found in storage:', id);
+        showToast('That project could not be found in storage.');
+        return;
+      }
+      if (!outcome.ok) {
+        console.error('[kinetix] Cannot switch to project — load failed:', id, outcome);
+        showToast(
+          `This project could not be opened (${outcome.reason}). Its ${outcome.rawLength} bytes of saved data have been left untouched, and saving is blocked for it so nothing overwrites them.`,
+        );
+        return;
+      }
+      const saved = { project: outcome.project, savedAt: outcome.savedAt };
 
-    // SILENT, and history is cleared. This is the ONE write that serves both
-    // "the user opened a different project" and "the page reloaded and we are
-    // restoring the same one" — the two cases the owner ruled must behave
-    // DIFFERENTLY (§6.0: a switch clears, a reload keeps). They are told apart
-    // by `opts.preserveUiState`, which is already set only on the reload path
-    // (see the mount effect's handleSwitchProjectRef call). The reload branch's
-    // history restore lands in the persistence commit; here, both paths clear,
-    // so a switch is correct today and a reload is merely not-yet-restoring
-    // rather than wrong.
-    setProjectSilent({
-      ...saved.project,
-      assets: rehydratedAssets,
-      segments: rehydratedSegments,
-      voiceoverId: rehydratedVoiceoverId,
-      // Any project loaded from storage was previously confirmed by the user,
-      // so mark it as confirmed to enable auto-save going forward.
-      confirmed: true,
-    });
-    // HISTORY (design §6.0). A genuine project switch CLEARS; a page RELOAD of
-    // the same project RESTORES. `opts.preserveUiState` is already set only on
-    // the reload path (the mount effect passes it; no user-initiated switch
-    // does), so it is the existing, load-bearing discriminator rather than a new
-    // flag that could drift out of step with it.
-    //
-    // `loadHistory` applies the real gate — a per-app-process token — so even
-    // here an APP RESTART restores nothing. Both conditions must hold: the same
-    // project reopened by a reload, AND the same app process.
-    if (opts?.preserveUiState) {
-      void loadHistory(saved.project.id, rehydratedAssets).then(restored => {
-        if (restored) setHistory(restored);
+      // Revoke current project's blob URLs.
+      project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
+
+      // Rehydrate the target project's assets from IndexedDB.
+      const storedAssets = await getAllAssetsForProject(saved.project.id);
+      const blobMap = new Map(storedAssets.map(a => [a.id, a]));
+
+      const droppedIds = new Set<string>();
+      const rehydratedAssets = (await Promise.all(
+        saved.project.assets.map(async asset => {
+          const stored = blobMap.get(asset.id);
+          if (!stored) {
+            console.warn(
+              `[kinetix] Dropping orphaned asset on switch — id: ${asset.id}, name: ${asset.name}`,
+            );
+            droppedIds.add(asset.id);
+            return null;
+          }
+          const rehydratedUrl = URL.createObjectURL(stored.blob);
+          const rehydratedFile = new File([stored.blob], asset.name, { type: stored.blob.type });
+          // Back-compat backfill: a project saved before Asset.duration existed
+          // carries no clip length. This is the one place every stored asset's
+          // blob URL is recreated, so probing here is what keeps the trim bar
+          // and the source-time clamps working on an older project instead of
+          // declining for the whole session.
+          const duration = asset.type === 'video' && asset.duration === undefined
+            ? await getMediaDuration(rehydratedUrl, 'video')
+            : asset.duration;
+          return { ...asset, url: rehydratedUrl, file: rehydratedFile, duration };
+        }),
+      )).filter((a): a is NonNullable<typeof a> => a !== null);
+
+      const rehydratedSegments = saved.project.segments.map(seg => {
+        if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
+          return { ...seg, assetId: undefined };
+        }
+        return seg;
       });
-    } else {
-      setHistory(emptyHistory<Project>());
-      void clearPersistedHistory(saved.project.id);
-    }
-    setLastOpenedProjectId(saved.project.id);
-    setIsSynced(rehydratedSegments.length > 0);
-    setIsPlaying(false);
-    if (opts?.preserveUiState) {
-      // Reload of the last-open project: keep the user's playhead + selection,
-      // already restored from kinetix:ui:v1 by the useState initializers. Only
-      // clear a dangling selection whose segment no longer exists.
-      setSelectedSegmentId(prev =>
-        prev && rehydratedSegments.some(s => s.id === prev) ? prev : null,
-      );
-    } else {
-      // Explicit switch to a (possibly different) project: reset to the start.
-      setCurrentTime(0);
-      setGlobalPlaybackSpeed(1);
-      setSelectedSegmentId(null);
+
+      let rehydratedVoiceoverId = saved.project.voiceoverId;
+      if (rehydratedVoiceoverId !== undefined && droppedIds.has(rehydratedVoiceoverId)) {
+        rehydratedVoiceoverId = undefined;
+      }
+
+      // VIEW FLIP — adjacent to the project-state swap, NOT to the resolution
+      // of `loadProjectDetailed`/`getAllAssetsForProject` above. Between those
+      // awaits and this line, `project` is still the OUTGOING project; flipping
+      // on promise resolution would render the editor over it.
+      setShowDashboard(false);
+
+      // SILENT, and history is cleared. This is the ONE write that serves both
+      // "the user opened a different project" and "the page reloaded and we are
+      // restoring the same one" — the two cases the owner ruled must behave
+      // DIFFERENTLY (§6.0: a switch clears, a reload keeps). They are told apart
+      // by `opts.preserveUiState`, which is already set only on the reload path
+      // (see the mount effect's handleSwitchProjectRef call). The reload branch's
+      // history restore lands in the persistence commit; here, both paths clear,
+      // so a switch is correct today and a reload is merely not-yet-restoring
+      // rather than wrong.
+      setProjectSilent({
+        ...saved.project,
+        assets: rehydratedAssets,
+        segments: rehydratedSegments,
+        voiceoverId: rehydratedVoiceoverId,
+        // Any project loaded from storage was previously confirmed by the user,
+        // so mark it as confirmed to enable auto-save going forward.
+        confirmed: true,
+      });
+      // HISTORY (design §6.0). A genuine project switch CLEARS; a page RELOAD of
+      // the same project RESTORES. `opts.preserveUiState` is already set only on
+      // the reload path (the mount effect passes it; no user-initiated switch
+      // does), so it is the existing, load-bearing discriminator rather than a new
+      // flag that could drift out of step with it.
+      //
+      // `loadHistory` applies the real gate — a per-app-process token — so even
+      // here an APP RESTART restores nothing. Both conditions must hold: the same
+      // project reopened by a reload, AND the same app process.
+      if (opts?.preserveUiState) {
+        void loadHistory(saved.project.id, rehydratedAssets).then(restored => {
+          if (restored) setHistory(restored);
+        });
+      } else {
+        setHistory(emptyHistory<Project>());
+        void clearPersistedHistory(saved.project.id);
+      }
+      setLastOpenedProjectId(saved.project.id);
+      setIsSynced(rehydratedSegments.length > 0);
+      setIsPlaying(false);
+      if (opts?.preserveUiState) {
+        // Reload of the last-open project: keep the user's playhead + selection,
+        // already restored from kinetix:ui:v1 by the useState initializers. Only
+        // clear a dangling selection whose segment no longer exists.
+        setSelectedSegmentId(prev =>
+          prev && rehydratedSegments.some(s => s.id === prev) ? prev : null,
+        );
+      } else {
+        // Explicit switch to a (possibly different) project: reset to the start.
+        setCurrentTime(0);
+        setGlobalPlaybackSpeed(1);
+        setSelectedSegmentId(null);
+      }
+    } finally {
+      setOpeningProjectId(null);
     }
   };
 
@@ -5392,17 +5412,19 @@ export default function App() {
   const mainContent = showDashboard ? (
     <ProjectDashboard
       currentProjectId={project.confirmed ? project.id : null}
-      onSelectProject={(id) => {
-        void handleSwitchProject(id);
-        setShowDashboard(false);
-      }}
-      onNewProject={() => {
-        setShowDashboard(false);
-        setShowNewProjectModal(true);
-      }}
+      openingProjectId={openingProjectId}
+      onSelectProject={(id) => { void handleSwitchProject(id); }}
+      onNewProject={() => setShowNewProjectModal(true)}
     />
   ) : (
-    <div className="min-h-screen bg-[var(--kx-bg)] text-[#E4E3E0] font-sans selection:bg-[var(--kx-accent)] selection:text-white flex overflow-hidden h-screen">
+    /* `data-project-id` is the editor's rendered project IDENTITY. It exists so
+       a test can assert the pair (view, project) at every await boundary of an
+       async switch — the outgoing project must never appear here. */
+    <div
+      data-testid="editor-root"
+      data-project-id={project.id}
+      className="min-h-screen bg-[var(--kx-bg)] text-[#E4E3E0] font-sans selection:bg-[var(--kx-accent)] selection:text-white flex overflow-hidden h-screen"
+    >
 
       {/* Body — 3 columns, full height */}
       <div className="flex flex-1 overflow-hidden h-full">
@@ -6008,14 +6030,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* New Project Modal */}
-      {showNewProjectModal && (
-        <NewProjectModal
-          onConfirm={handleNewProjectConfirm}
-          onCancel={() => { setShowNewProjectModal(false); setShowDashboard(true); }}
-        />
-      )}
-
       {/* Project Settings Modal (docs/project-settings-plan.md §2.1-2.3) */}
       {showProjectSettingsModal && (
         <ProjectSettingsModal
@@ -6246,6 +6260,16 @@ export default function App() {
   return (
     <>
       {mainContent}
+      {/* New Project Modal — rendered OUTSIDE `mainContent` so it overlays
+          whichever view is up. The dashboard stays mounted behind it and is
+          only unmounted once `handleNewProjectConfirm` swaps in the new
+          project, so cancelling needs no view restore. */}
+      {showNewProjectModal && (
+        <NewProjectModal
+          onConfirm={handleNewProjectConfirm}
+          onCancel={() => setShowNewProjectModal(false)}
+        />
+      )}
       {import.meta.env.DEV && devPanelOpen && (
         <Suspense fallback={null}>
           <DevTestPanel

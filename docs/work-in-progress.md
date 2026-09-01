@@ -227,6 +227,23 @@ Phase 4. Remaining work beyond Phase 4 is the deferred items in section 5.
 
 ### 5. Deferred tasks
 
+- [DEFERRED] Duplicate asset blob set — `FINAL TEST V8` holds 798 IndexedDB asset rows for a
+  project carrying 399 `project.assets` entries (exactly 2x). Separate defect from T4.1; not
+  investigated. Every switch pays a double `getAllAssetsForProject` read and the orphan-drop pass
+  silently tolerates the extras, so it is invisible in the UI. **Trigger:** any project where
+  `getAllAssetsForProject` returns more rows than the project has assets. No owner.
+- [DEFERRED · NOT DETERMINED] Cold-start switch outlier — one observed project-open was far
+  slower than the rest of the sample. Whether it is a real class of slow open or a one-off
+  (first IDB connection, OS page cache) is undetermined: there is no corpus of timed opens to
+  measure against, and a single observation cannot separate the two. **Revisit trigger:** a
+  reproducible repeat, or timing instrumentation across many opens. No owner.
+- [DEFERRED · NOT DETERMINED] `getMediaDuration` back-compat backfill on switch — the
+  rehydration pass in `handleSwitchProject` probes every video asset whose `Asset.duration` is
+  undefined, serially inside a `Promise.all` of `createObjectURL`+`<video>` loads. Whether this
+  measurably costs anything depends on how many pre-`Asset.duration` projects still exist and how
+  many video assets each carries — not measurable here (no corpus of legacy projects). Correct as
+  written; the open question is cost, not behavior. **Revisit trigger:** a timed open of a real
+  legacy project with many video assets. No owner.
 - [DEFERRED] 120fps preview decode lag — the decode-ahead cap must be expressed in bytes, not
   frame count; the formula is already derived but full implementation is deferred. On the Windows
   build the preview shows a frozen frame; export (a separate, non-windowed sequential decoder) is

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Plus, Trash2, FolderOpen, MoreVertical, Search, Film, Check } from 'lucide-react';
+import { Plus, Trash2, FolderOpen, MoreVertical, Search, Film, Check, Loader2 } from 'lucide-react';
 import type { ProjectMeta } from '../types';
 import { loadAllMetas, deleteProjectData } from '../services/projectStore';
 import { deleteAllAssets } from '../services/assetStore';
@@ -7,12 +7,20 @@ import { deleteAllWaveforms } from '../services/waveformStore';
 
 interface Props {
   currentProjectId: string | null;
+  /**
+   * Id of the project whose open is currently in flight, or null. The
+   * dashboard stays mounted for the whole async load (App.tsx flips the view
+   * at the project-state swap, not at promise resolution), so this is what
+   * tells the user their click registered.
+   */
+  openingProjectId?: string | null;
   onSelectProject: (id: string) => void;
   onNewProject: () => void;
 }
 
 export function ProjectDashboard({
   currentProjectId,
+  openingProjectId = null,
   onSelectProject,
   onNewProject,
 }: Props): React.ReactElement {
@@ -171,12 +179,20 @@ export function ProjectDashboard({
           </div>
         )}
 
-        {/* Project grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
+        {/* Project grid — inert for the duration of an in-flight open, so a
+            second click can't start a competing switch while the first is
+            still awaiting storage. */}
+        <div
+          data-testid="project-grid"
+          style={openingProjectId ? { pointerEvents: 'none' } : undefined}
+          className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5"
+        >
           {filtered.map(meta => (
             <div
               key={meta.id}
+              data-testid={`project-card-${meta.id}`}
               onClick={() => onSelectProject(meta.id)}
+              aria-busy={meta.id === openingProjectId ? true : undefined}
               className={`group relative bg-zinc-900 rounded-xl overflow-hidden cursor-pointer
                 border-2 transition-all duration-200
                 ${meta.id === currentProjectId
@@ -185,6 +201,15 @@ export function ProjectDashboard({
                 }
                 ${selectedIds.has(meta.id) ? 'ring-2 ring-blue-500' : ''}`}
             >
+              {/* Opening spinner */}
+              {meta.id === openingProjectId && (
+                <div
+                  data-testid={`project-card-spinner-${meta.id}`}
+                  className="absolute inset-0 z-30 bg-black/60 flex items-center justify-center"
+                >
+                  <Loader2 size={28} className="text-[#F27D26] animate-spin" />
+                </div>
+              )}
               {/* Selection checkbox — visible on hover or when selected */}
               <button
                 onClick={e => {
