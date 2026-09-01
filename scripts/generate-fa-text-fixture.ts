@@ -28,6 +28,7 @@ import {
   normalizeForForcedAlignment,
   vocabCharsFromRawVocab,
   type FaLanguageCode,
+  type FaCardinalData,
 } from '../src/services/faTextNormalize';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,6 +44,12 @@ function loadRawVocab(lang: FaLanguageCode): RawVocab {
   ) as RawVocab;
 }
 
+function loadCardinalData(lang: FaLanguageCode): FaCardinalData {
+  return JSON.parse(
+    readFileSync(resolve(REPO, 'scripts', 'fixtures', `fa-cardinal-${lang}.json`), 'utf-8'),
+  ) as FaCardinalData;
+}
+
 const LANGUAGES: FaLanguageCode[] = ['en', 'es', 'fr', 'de', 'pt'];
 const RAW_VOCABS: Record<FaLanguageCode, RawVocab> = Object.fromEntries(
   LANGUAGES.map(lang => [lang, loadRawVocab(lang)]),
@@ -50,6 +57,9 @@ const RAW_VOCABS: Record<FaLanguageCode, RawVocab> = Object.fromEntries(
 const VOCAB_CHARS: Record<FaLanguageCode, Set<string>> = Object.fromEntries(
   LANGUAGES.map(lang => [lang, vocabCharsFromRawVocab(RAW_VOCABS[lang].vocab)]),
 ) as Record<FaLanguageCode, Set<string>>;
+const CARDINAL_DATA: Record<FaLanguageCode, FaCardinalData> = Object.fromEntries(
+  LANGUAGES.map(lang => [lang, loadCardinalData(lang)]),
+) as Record<FaLanguageCode, FaCardinalData>;
 
 // -- corpus -------------------------------------------------------------
 // Every entry: { lang, input, note }. `note` documents which required
@@ -143,66 +153,100 @@ const CORPUS: CorpusCase[] = [
   { lang: 'fr', input: 'j`veux', note: 'fr elision negative: prefix+backtick before a consonant, not a grammatical elision shape' },
   { lang: 'en', input: 'l`oiseau', note: 'fr elision negative: the backtick fold is French-only, untouched under en' },
 
-  // -- Spanish cardinal numbers 0-30 (Part H.5 Rule 2) ---------------------
-  { lang: 'es', input: '23', note: 'es cardinal 0-30: bare digit expands to a spelled word' },
-  { lang: 'es', input: '0', note: 'es cardinal 0-30: lower boundary value' },
-  { lang: 'es', input: '30', note: 'es cardinal 0-30: upper boundary value' },
-  { lang: 'es', input: 'cumplí 23 años', note: 'es cardinal 0-30: expansion survives inside a phrase' },
-  { lang: 'es', input: '31', note: 'es cardinal negative: 31 is a multi-word "y" compound, out of scope, stays dropped' },
+  // -- Spanish cardinal numbers, WS2 T3.2 Step 3b-iii compositional generator
+  //    (supersedes the former capped 0-30 table, Part H.5 Rule 2) ---------
+  { lang: 'es', input: '23', note: 'es cardinal: bare digit 0-30 range expands to a spelled word' },
+  { lang: 'es', input: '0', note: 'es cardinal: lower boundary value' },
+  { lang: 'es', input: '30', note: 'es cardinal: former table upper boundary value' },
+  { lang: 'es', input: 'cumplí 23 años', note: 'es cardinal: expansion survives inside a phrase' },
+  { lang: 'es', input: '31', note: 'es cardinal: former cap boundary (used to stay dropped as a multi-word "y" compound) — now representable' },
+  { lang: 'es', input: '234', note: 'es cardinal: arbitrary magnitude, hundreds + "y" compound (doscientos treinta y cuatro)' },
+  { lang: 'es', input: '1000000', note: 'es cardinal: arbitrary magnitude, million-level with the "un millón" apocope fix' },
+  { lang: 'es', input: '1998', note: 'es cardinal: year-shaped value, always the plain "compound" reading (no pair-style policy for es)' },
   { lang: 'es', input: '2.5', note: 'es cardinal negative: decimal stays dropped, out of scope' },
   { lang: 'es', input: '05', note: 'es cardinal negative: leading zero is not a bare cardinal, stays dropped' },
-  { lang: 'en', input: '23', note: 'es cardinal 0-30 unaffected-language control: en digit word still drops exactly as before' },
 
-  // -- German cardinal numbers 0-30 (Part H.5 Rule 3, Phase 3b remainder) --
-  { lang: 'de', input: '23', note: 'de cardinal 0-30: bare digit expands to a spelled word' },
-  { lang: 'de', input: '0', note: 'de cardinal 0-30: lower boundary value' },
-  { lang: 'de', input: '30', note: 'de cardinal 0-30: upper boundary value (dreissig, pre-substituted ss)' },
-  { lang: 'de', input: 'ich bin 23 jahre alt', note: 'de cardinal 0-30: expansion survives inside a phrase' },
-  { lang: 'de', input: '31', note: 'de cardinal negative: 31 is past the scope cap, stays dropped' },
+  // -- German cardinal numbers, WS2 T3.2 Step 3b-iii compositional generator
+  //    (supersedes the former capped 0-30 table, Part H.5 Rule 3) --------
+  { lang: 'de', input: '23', note: 'de cardinal: bare digit 0-30 range expands to a spelled word' },
+  { lang: 'de', input: '0', note: 'de cardinal: lower boundary value' },
+  { lang: 'de', input: '30', note: 'de cardinal: former table upper boundary value (dreissig, pre-substituted ss)' },
+  { lang: 'de', input: 'ich bin 23 jahre alt', note: 'de cardinal: expansion survives inside a phrase' },
+  { lang: 'de', input: '31', note: 'de cardinal: former cap boundary (used to stay dropped) — now representable' },
+  { lang: 'de', input: '100', note: 'de cardinal: einhundert, not einshundert (countWordOverride fix, WS2 T3.2 Step 3b-iii)' },
+  { lang: 'de', input: '234', note: 'de cardinal: space-wall case — fully concatenated into one word, unlike en/es/fr/pt at the same value' },
+  { lang: 'de', input: '1000', note: 'de cardinal: eintausend, not einstausend (countWordOverride fix)' },
+  { lang: 'de', input: '1998', note: 'de yearReading: n % 100 = 98 >= threshold (10) -> "hundertgruppe" (neunzehnhundertachtundneunzig)' },
+  { lang: 'de', input: '1905', note: 'de yearReading: n % 100 = 5 < threshold (10), x00-x09 quirk mirrored from the matcher -> "compound"' },
+  { lang: 'de', input: '2000', note: 'de yearReading: x00-x09 quirk, another century' },
+  { lang: 'de', input: '2010', note: 'de yearReading: n % 100 = 10 >= threshold, boundary value itself' },
   { lang: 'de', input: '2.5', note: 'de cardinal negative: decimal stays dropped, out of scope' },
   { lang: 'de', input: '05', note: 'de cardinal negative: leading zero is not a bare cardinal, stays dropped' },
-  { lang: 'en', input: '23', note: 'de cardinal 0-30 unaffected-language control: en digit word still drops exactly as before' },
 
-  // -- Portuguese cardinal numbers 0-20 and 30 (Part H.5 Rule 4, Phase 3b
-  //    remainder; PT-BR spelling per owner decision 2026-08-15) --
-  { lang: 'pt', input: '3', note: 'pt cardinal 0-20/30: bare digit expands to a spelled word' },
-  { lang: 'pt', input: '0', note: 'pt cardinal 0-20/30: lower boundary value' },
-  { lang: 'pt', input: '14', note: 'pt cardinal 0-20/30: PT-BR variant value (quatorze, not catorze)' },
-  { lang: 'pt', input: '16', note: 'pt cardinal 0-20/30: PT-BR variant value (dezesseis, not dezasseis)' },
-  { lang: 'pt', input: '17', note: 'pt cardinal 0-20/30: PT-BR variant value (dezessete, not dezassete)' },
-  { lang: 'pt', input: '19', note: 'pt cardinal 0-20/30: PT-BR variant value (dezenove, not dezanove)' },
-  { lang: 'pt', input: '20', note: 'pt cardinal 0-20/30: upper boundary of the contiguous single-word range' },
-  { lang: 'pt', input: '30', note: 'pt cardinal 0-20/30: the one value past 20 that is still a single word' },
-  { lang: 'pt', input: 'tenho 3 gatos', note: 'pt cardinal 0-20/30: expansion survives inside a phrase' },
-  { lang: 'pt', input: '21', note: 'pt cardinal negative: 21 is inside the permanent "vinte e X" three-word wall, stays dropped' },
-  { lang: 'pt', input: '29', note: 'pt cardinal negative: 29 is the other end of the "vinte e X" wall, stays dropped' },
-  { lang: 'pt', input: '31', note: 'pt cardinal negative: 31 is past the scope cap, stays dropped' },
+  // -- Portuguese cardinal numbers, WS2 T3.2 Step 3b-iii compositional
+  //    generator (supersedes the former capped 0-20/30 table, Part H.5 Rule 4;
+  //    PT-BR spelling per owner decision 2026-08-15) ----------------------
+  { lang: 'pt', input: '3', note: 'pt cardinal: bare digit expands to a spelled word' },
+  { lang: 'pt', input: '0', note: 'pt cardinal: lower boundary value' },
+  { lang: 'pt', input: '14', note: 'pt cardinal: PT-BR variant value (quatorze, not catorze)' },
+  { lang: 'pt', input: '16', note: 'pt cardinal: PT-BR variant value (dezesseis, not dezasseis)' },
+  { lang: 'pt', input: '17', note: 'pt cardinal: PT-BR variant value (dezessete, not dezassete)' },
+  { lang: 'pt', input: '19', note: 'pt cardinal: PT-BR variant value (dezenove, not dezanove)' },
+  { lang: 'pt', input: '20', note: 'pt cardinal: former table upper boundary of the contiguous single-word range' },
+  { lang: 'pt', input: '30', note: 'pt cardinal: former table\'s one value past 20 that was still a single word' },
+  { lang: 'pt', input: 'tenho 3 gatos', note: 'pt cardinal: expansion survives inside a phrase' },
+  { lang: 'pt', input: '21', note: 'pt cardinal: former permanent "vinte e X" wall value (used to stay dropped) — now representable' },
+  { lang: 'pt', input: '29', note: 'pt cardinal: the other end of the former "vinte e X" wall — now representable' },
+  { lang: 'pt', input: '31', note: 'pt cardinal: former cap boundary (used to stay dropped) — now representable' },
+  { lang: 'pt', input: '234', note: 'pt cardinal: arbitrary magnitude, hundreds + "e" compound (duzentos e trinta e quatro)' },
+  { lang: 'pt', input: '1998', note: 'pt cardinal: year-shaped value, always the plain "compound" reading (no pair-style policy for pt)' },
   { lang: 'pt', input: '2.5', note: 'pt cardinal negative: decimal stays dropped, out of scope' },
   { lang: 'pt', input: '05', note: 'pt cardinal negative: leading zero is not a bare cardinal, stays dropped' },
-  { lang: 'en', input: '3', note: 'pt cardinal 0-20/30 unaffected-language control: en digit word still drops exactly as before' },
 
-  // -- French cardinal numbers 0-30 minus 21 (Part H.5 Rule 5, Phase 3b
-  //    close, 2026-08-15) --
-  { lang: 'fr', input: '0', note: 'fr cardinal 0-30: lower boundary value' },
-  { lang: 'fr', input: '1', note: 'fr cardinal 0-30: bare digit expands to a spelled word' },
-  { lang: 'fr', input: '16', note: 'fr cardinal 0-30: last non-hyphenated teen (seize)' },
-  { lang: 'fr', input: '17', note: 'fr cardinal 0-30: hyphenated teen, one token in/out (dix-sept)' },
-  { lang: 'fr', input: '18', note: 'fr cardinal 0-30: hyphenated teen, one token in/out (dix-huit)' },
-  { lang: 'fr', input: '19', note: 'fr cardinal 0-30: hyphenated teen, one token in/out (dix-neuf)' },
-  { lang: 'fr', input: '20', note: 'fr cardinal 0-30: boundary value (vingt)' },
-  { lang: 'fr', input: '22', note: 'fr cardinal 0-30: hyphenated "vingt-X" shape, one token in/out (vingt-deux)' },
-  { lang: 'fr', input: '29', note: 'fr cardinal 0-30: upper end of the hyphenated "vingt-X" shape (vingt-neuf)' },
-  { lang: 'fr', input: '30', note: 'fr cardinal 0-30: upper boundary value (trente)' },
-  { lang: 'fr', input: 'il a 17 ans', note: 'fr cardinal 0-30: expansion survives inside a phrase' },
-  { lang: 'fr', input: '21', note: 'fr cardinal negative: 21 is the permanent "vingt et un" three-word wall, stays dropped' },
-  { lang: 'fr', input: '31', note: 'fr cardinal negative: 31 is past the scope cap, stays dropped' },
+  // -- French cardinal numbers, WS2 T3.2 Step 3b-iii compositional generator
+  //    (supersedes the former capped 0-30-minus-21 table, Part H.5 Rule 5) --
+  { lang: 'fr', input: '0', note: 'fr cardinal: lower boundary value' },
+  { lang: 'fr', input: '1', note: 'fr cardinal: bare digit expands to a spelled word' },
+  { lang: 'fr', input: '16', note: 'fr cardinal: last non-hyphenated teen (seize)' },
+  { lang: 'fr', input: '17', note: 'fr cardinal: hyphenated teen, one token in/out (dix-sept)' },
+  { lang: 'fr', input: '18', note: 'fr cardinal: hyphenated teen, one token in/out (dix-huit)' },
+  { lang: 'fr', input: '19', note: 'fr cardinal: hyphenated teen, one token in/out (dix-neuf)' },
+  { lang: 'fr', input: '20', note: 'fr cardinal: boundary value (vingt)' },
+  { lang: 'fr', input: '22', note: 'fr cardinal: hyphenated "vingt-X" shape, one token in/out (vingt-deux)' },
+  { lang: 'fr', input: '29', note: 'fr cardinal: upper end of the hyphenated "vingt-X" shape (vingt-neuf)' },
+  { lang: 'fr', input: '30', note: 'fr cardinal: former table upper boundary value (trente)' },
+  { lang: 'fr', input: 'il a 17 ans', note: 'fr cardinal: expansion survives inside a phrase' },
+  { lang: 'fr', input: '21', note: 'fr cardinal: former permanent "vingt et un" wall value (used to stay dropped) — now representable' },
+  { lang: 'fr', input: '31', note: 'fr cardinal: former cap boundary (used to stay dropped) — now representable' },
+  { lang: 'fr', input: '100', note: 'fr cardinal: exactly 100, "cent" with no leading "un" (dropsOneMultiplier)' },
+  { lang: 'fr', input: '200', note: 'fr cardinal: exact multiple of 100 pluralizes "cent" -> "cents" (deux cents)' },
+  { lang: 'fr', input: '234', note: 'fr cardinal: NOT an exact multiple, "cent" does not pluralize (deux cent trente-quatre)' },
+  { lang: 'fr', input: '1998', note: 'fr cardinal: year-shaped value, always the plain "compound" reading (no pair-style policy for fr)' },
   { lang: 'fr', input: '2.5', note: 'fr cardinal negative: decimal stays dropped, out of scope' },
   { lang: 'fr', input: '05', note: 'fr cardinal negative: leading zero is not a bare cardinal, stays dropped' },
-  { lang: 'en', input: '17', note: 'fr cardinal 0-30 unaffected-language control: en digit word still drops exactly as before' },
 
   // -- Rule 1 x Rule 5 co-fire: French elision + cardinal expansion --------
-  { lang: 'fr', input: 'j`ai 17 ans', note: 'fr elision + fr cardinal 0-30 co-fire: backtick elision fold and cardinal expansion both fire in one phrase' },
-  { lang: 'fr', input: 'qu`il a 22 ans', note: 'fr elision + fr cardinal 0-30 co-fire: backtick elision fold and a hyphenated cardinal both survive together' },
+  { lang: 'fr', input: 'j`ai 17 ans', note: 'fr elision + fr cardinal co-fire: backtick elision fold and cardinal expansion both fire in one phrase' },
+  { lang: 'fr', input: 'qu`il a 22 ans', note: 'fr elision + fr cardinal co-fire: backtick elision fold and a hyphenated cardinal both survive together' },
+
+  // -- English cardinal numbers, WS2 T3.2 Step 3b-iii compositional
+  //    generator (NEW — no FA-side cardinal expansion existed for English
+  //    before this step; every digit token was unconditionally dropped) --
+  { lang: 'en', input: '23', note: 'en cardinal: bare digit expands to a spelled word (previously always dropped, this is the "unaffected-language control" value from every other language\'s old cardinal test)' },
+  { lang: 'en', input: '3', note: 'en cardinal: bare digit, another former unaffected-language-control value' },
+  { lang: 'en', input: '17', note: 'en cardinal: bare digit, another former unaffected-language-control value' },
+  { lang: 'en', input: '31', note: 'en cardinal: former cap boundary value under other languages\' old tables — now representable under en too' },
+  { lang: 'en', input: '234', note: 'en cardinal: space-wall case — three words (two hundred thirty-four), unlike German at the same value' },
+  { lang: 'en', input: '1000000', note: 'en cardinal: arbitrary magnitude, million level' },
+  { lang: 'en', input: 'I turned 23 years old', note: 'en cardinal: expansion survives inside a phrase' },
+  { lang: 'en', input: '1998', note: 'en yearReading: n % 100 = 98 >= threshold (10) -> "pair" (nineteen ninety-eight)' },
+  { lang: 'en', input: '1905', note: 'en yearReading: n % 100 = 5 < threshold (10), the x00-x09 quirk mirrored from the matcher\'s own textNormalize.ts -> "compound" (one thousand nine hundred five)' },
+  { lang: 'en', input: '2000', note: 'en yearReading: x00-x09 quirk, another century (two thousand)' },
+  { lang: 'en', input: '2010', note: 'en yearReading: n % 100 = 10 >= threshold, boundary value itself (twenty ten)' },
+  { lang: 'en', input: '2024', note: 'en yearReading: pair reading, another value (twenty twenty-four)' },
+  { lang: 'en', input: '998', note: 'en yearReading negative: a 3-digit token never takes the year-reading branch even though 1998 is in range — plain cardinal (nine hundred ninety-eight)' },
+  { lang: 'en', input: '2.5', note: 'en cardinal negative: decimal stays dropped, out of scope' },
+  { lang: 'en', input: '05', note: 'en cardinal negative: leading zero is not a bare cardinal, stays dropped' },
 ];
 
 // Coverage cross-check — fails loudly (not silently) if a required bucket
@@ -223,10 +267,14 @@ const REQUIRED_NOTE_SUBSTRINGS = [
   'mixed case',
   'genuine OOV',
   'fr elision',
-  'es cardinal 0-30',
-  'de cardinal 0-30',
-  'pt cardinal 0-20/30',
-  'fr cardinal 0-30',
+  'es cardinal',
+  'de cardinal',
+  'pt cardinal',
+  'fr cardinal',
+  'en cardinal',
+  'yearReading',
+  'space-wall',
+  'former cap boundary',
 ];
 for (const needle of REQUIRED_NOTE_SUBSTRINGS) {
   if (!CORPUS.some(c => c.note.includes(needle))) {
@@ -254,13 +302,31 @@ interface FixtureEntry {
 }
 
 function wordTokenIds(mapped: string, vocab: Record<string, number>): number[] {
-  return [...mapped].map(ch => {
-    const id = vocab[ch];
-    if (id === undefined) {
-      throw new Error(`representable word "${mapped}" contains char "${ch}" absent from vocab — invariant violated`);
+  // A multi-word compositional cardinal reading (WS2 T3.2 Step 3b-iii) may
+  // contain internal whitespace — split into fragments and insert the
+  // word-delimiter id between them too, mirroring `fa_onnx.rs`'s
+  // `tokenize_normalized_words` (a fragment delimiter is indistinguishable
+  // from a between-word delimiter at the CTC level; no normalizer emitted
+  // internal whitespace before this step, so this is a strict extension —
+  // every pre-existing single-fragment `mapped` value tokenizes identically
+  // to before).
+  const delim = vocab['|'];
+  const fragments = mapped.split(/\s+/).filter(f => f.length > 0);
+  const ids: number[] = [];
+  fragments.forEach((fragment, i) => {
+    if (i > 0) {
+      if (delim === undefined) throw new Error('vocab missing "|" word-delimiter token');
+      ids.push(delim);
     }
-    return id;
+    for (const ch of fragment) {
+      const id = vocab[ch];
+      if (id === undefined) {
+        throw new Error(`representable word "${mapped}" contains char "${ch}" absent from vocab — invariant violated`);
+      }
+      ids.push(id);
+    }
   });
+  return ids;
 }
 
 function textTokenIds(text: string, vocab: Record<string, number>): number[] {
@@ -278,7 +344,7 @@ function textTokenIds(text: string, vocab: Record<string, number>): number[] {
 
 const entries: FixtureEntry[] = CORPUS.map(({ lang, input, note }) => {
   const vocab = RAW_VOCABS[lang].vocab;
-  const result = normalizeForForcedAlignment(input, lang, VOCAB_CHARS[lang]);
+  const result = normalizeForForcedAlignment(input, lang, VOCAB_CHARS[lang], CARDINAL_DATA[lang]);
   const words: FixtureWord[] = result.words.map(w => ({
     input: w.input,
     representable: w.representable,

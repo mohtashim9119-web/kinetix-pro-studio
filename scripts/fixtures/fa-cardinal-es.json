@@ -151,10 +151,12 @@
       "word": "millón",
       "pluralWord": "millones",
       "dropsOneMultiplier": false,
+      "countWordOverride": "un",
       "joiner": {
         "type": "space",
         "text": null
-      }
+      },
+      "note": "countWordOverride 'un' (STEP 3b-iii fix, generator implementation): dropsOneMultiplier is false (count=1 IS shown, per 'un millón'), but cardinals0to99['1'] is the bare-citation form 'uno', not the apocopated form 'un' Spanish requires directly before a masculine singular noun - without this override the generator would compose 'uno millón', not 'un millón'. Same countWordOverride mechanism German's hundred/thousand/million entries already use for their own count=1 combining-form corrections."
     }
   ],
   "yearReading": {

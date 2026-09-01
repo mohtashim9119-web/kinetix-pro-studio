@@ -43,7 +43,7 @@ import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 import { alignQueryToSubject, normalize, normalizeSceneDoc } from './whisperService';
 import { computeFaAnchors, type FaAnchor, type FaRun } from './faAnchors';
-import { normalizeForForcedAlignment, type FaLanguageCode } from './faTextNormalize';
+import { normalizeForForcedAlignment, type FaLanguageCode, type FaCardinalData } from './faTextNormalize';
 
 /** One forced-alignment chunk: an audio time window (raw, unpadded — R.2
  *  padding is out of scope for this slice) and the script text to align
@@ -508,9 +508,10 @@ export function computeFaChunkPlan(
   attribution: FaTextAttribution = 'script-word-index',
   languageCode?: FaLanguageCode,
   vocabChars?: ReadonlySet<string>,
+  cardinalData?: FaCardinalData,
 ): FaChunk[] {
   return computeFaChunkPlanWithAttribution(
-    segments, tokens, silences, audioDuration, attribution, undefined, languageCode, vocabChars,
+    segments, tokens, silences, audioDuration, attribution, undefined, languageCode, vocabChars, cardinalData,
   );
 }
 
@@ -873,17 +874,18 @@ function attributeByIndex(
  * whole module stays production-inert either way. `coalesceTargetSec` is
  * optional; omitting it runs the unmerged R.0 plan.
  *
- * `languageCode`/`vocabChars` (Phase 3b Slice 1, plumbing only): when BOTH are
- * supplied, each emitted chunk's `text` is additionally passed through
- * `faTextNormalize.ts`'s `normalizeForForcedAlignment` — the vocab-aware
- * normalizer that preserves native diacritics, as opposed to this module's
- * pre-existing raw-text passthrough (Rust's own `normalize_for_forced_alignment`
- * port already normalizes raw chunk text safely today — see
- * `docs/work-in-progress.md` §10 — so this is an additive JS-side capability,
- * not a fix to a live bug). Omitting either parameter (every call site today,
- * `App.tsx`'s dev path included) leaves `runsToChunks`/`attributeByIndex`'s
- * output completely untouched — this parameter pair has no effect unless a
- * caller opts in.
+ * `languageCode`/`vocabChars`/`cardinalData` (Phase 3b Slice 1, plumbing
+ * only): when ALL THREE are supplied, each emitted chunk's `text` is
+ * additionally passed through `faTextNormalize.ts`'s
+ * `normalizeForForcedAlignment` — the vocab-aware normalizer that preserves
+ * native diacritics and (WS2 T3.2 Step 3b-iii) expands bare cardinal-number
+ * tokens, as opposed to this module's pre-existing raw-text passthrough
+ * (Rust's own `normalize_for_forced_alignment` port already normalizes raw
+ * chunk text safely today — see `docs/work-in-progress.md` §10 — so this is
+ * an additive JS-side capability, not a fix to a live bug). Omitting any of
+ * the three (every call site today, `App.tsx`'s dev path included) leaves
+ * `runsToChunks`/`attributeByIndex`'s output completely untouched — this
+ * parameter trio has no effect unless a caller opts in to all of it.
  */
 export function computeFaChunkPlanWithAttribution(
   segments: readonly VideoSegment[],
@@ -894,6 +896,7 @@ export function computeFaChunkPlanWithAttribution(
   coalesceTargetSec?: number,
   languageCode?: FaLanguageCode,
   vocabChars?: ReadonlySet<string>,
+  cardinalData?: FaCardinalData,
 ): FaChunk[] {
   // `languageCode` also drives `computeRunContext`'s qi bookkeeping (Phase 3c) —
   // not just `applyFaTextNormalization` below, which is a separate, later step
@@ -924,25 +927,27 @@ export function computeFaChunkPlanWithAttribution(
     );
   }
 
-  return languageCode !== undefined && vocabChars !== undefined
-    ? applyFaTextNormalization(chunks, languageCode, vocabChars)
+  return languageCode !== undefined && vocabChars !== undefined && cardinalData !== undefined
+    ? applyFaTextNormalization(chunks, languageCode, vocabChars, cardinalData)
     : chunks;
 }
 
 /** Post-processes an already-built chunk plan's `text` through
  *  `normalizeForForcedAlignment`, leaving `startSec`/`endSec` untouched — see
- *  `computeFaChunkPlanWithAttribution`'s `languageCode`/`vocabChars` doc
- *  comment. Applied after chunk assembly so it can never influence the `qi`
- *  index arithmetic (`computeRunContext`/`runQiRanges`), which is computed
- *  entirely from raw text beforehand and stays untouched by this step. */
+ *  `computeFaChunkPlanWithAttribution`'s `languageCode`/`vocabChars`/
+ *  `cardinalData` doc comment. Applied after chunk assembly so it can never
+ *  influence the `qi` index arithmetic (`computeRunContext`/`runQiRanges`),
+ *  which is computed entirely from raw text beforehand and stays untouched
+ *  by this step. */
 function applyFaTextNormalization(
   chunks: readonly FaChunk[],
   languageCode: FaLanguageCode,
   vocabChars: ReadonlySet<string>,
+  cardinalData: FaCardinalData,
 ): FaChunk[] {
   return chunks.map(chunk => ({
     ...chunk,
-    text: normalizeForForcedAlignment(chunk.text, languageCode, vocabChars).text,
+    text: normalizeForForcedAlignment(chunk.text, languageCode, vocabChars, cardinalData).text,
   }));
 }
 
@@ -1143,6 +1148,7 @@ export function computeFaChunkPlanS2(
   targetMaxSec: number = S2_TARGET_MAX_SEC,
   languageCode?: FaLanguageCode,
   vocabChars?: ReadonlySet<string>,
+  cardinalData?: FaCardinalData,
 ): FaChunkPlanS2Result {
   if (segments.length === 0) return { chunks: [], violations: [] };
 
@@ -1205,8 +1211,8 @@ export function computeFaChunkPlanS2(
   }
 
   return {
-    chunks: languageCode !== undefined && vocabChars !== undefined
-      ? applyFaTextNormalization(chunks, languageCode, vocabChars)
+    chunks: languageCode !== undefined && vocabChars !== undefined && cardinalData !== undefined
+      ? applyFaTextNormalization(chunks, languageCode, vocabChars, cardinalData)
       : chunks,
     violations,
   };
@@ -1357,6 +1363,7 @@ export function computeFaChunkPlanS2Excised(
   targetMaxSec: number = S2_TARGET_MAX_SEC,
   languageCode?: FaLanguageCode,
   vocabChars?: ReadonlySet<string>,
+  cardinalData?: FaCardinalData,
 ): FaChunkPlanS2Result {
   if (segments.length === 0) return { chunks: [], violations: [] };
 
@@ -1480,8 +1487,8 @@ export function computeFaChunkPlanS2Excised(
   }
 
   return {
-    chunks: languageCode !== undefined && vocabChars !== undefined
-      ? applyFaTextNormalization(chunks, languageCode, vocabChars)
+    chunks: languageCode !== undefined && vocabChars !== undefined && cardinalData !== undefined
+      ? applyFaTextNormalization(chunks, languageCode, vocabChars, cardinalData)
       : chunks,
     violations,
   };
@@ -1764,6 +1771,7 @@ export function computeFaChunkPlanPeriodStrict(
   silenceWindowSec: number,
   languageCode?: FaLanguageCode,
   vocabChars?: ReadonlySet<string>,
+  cardinalData?: FaCardinalData,
 ): FaChunkPlanPeriodStrictResult {
   if (segments.length === 0) return { chunks: [], violations: [], inspection: [] };
 
@@ -1994,8 +2002,8 @@ export function computeFaChunkPlanPeriodStrict(
   }
 
   return {
-    chunks: languageCode !== undefined && vocabChars !== undefined
-      ? applyFaTextNormalization(chunks, languageCode, vocabChars)
+    chunks: languageCode !== undefined && vocabChars !== undefined && cardinalData !== undefined
+      ? applyFaTextNormalization(chunks, languageCode, vocabChars, cardinalData)
       : chunks,
     violations,
     inspection,
@@ -2358,6 +2366,7 @@ export function computeFaChunkPlanS2EdgeArm(
   targetMaxSec: number,
   languageCode?: FaLanguageCode,
   vocabChars?: ReadonlySet<string>,
+  cardinalData?: FaCardinalData,
 ): FaChunkPlanEdgeArmResult {
   const empty: FaChunkPlanEdgeArmResult = { chunks: [], violations: [], inspection: [], edgeCensus: {} };
   if (segments.length === 0) return empty;
@@ -2641,8 +2650,8 @@ export function computeFaChunkPlanS2EdgeArm(
   }
 
   return {
-    chunks: languageCode !== undefined && vocabChars !== undefined
-      ? applyFaTextNormalization(chunks, languageCode, vocabChars)
+    chunks: languageCode !== undefined && vocabChars !== undefined && cardinalData !== undefined
+      ? applyFaTextNormalization(chunks, languageCode, vocabChars, cardinalData)
       : chunks,
     violations,
     inspection,

@@ -119,6 +119,7 @@
     "multiplierForm": "concatenate",
     "multiplierWords": null,
     "dropsOneMultiplier": false,
+    "countWordOverride": "ein",
     "regularMultiplierJoiner": {
       "type": "concatenate",
       "text": null
@@ -126,7 +127,8 @@
     "remainderJoiner": {
       "type": "concatenate",
       "text": null
-    }
+    },
+    "note": "countWordOverride 'ein' (STEP 3b-iii fix, generator implementation): dropsOneMultiplier is false (count=1 IS shown, per 'einhundert'), but cardinals0to99['1'] is the bare-citation form 'eins', not the combining form 'ein' this position needs (same eins->ein rule cardinals0to99's own 21/31/.../91 entries already bake in internally) - without this override the generator would compose 'einshundert', not 'einhundert'. Mirrors the pattern million's own countWordOverride ('eine') already established for the same count=1/dropsOneMultiplier=false combination."
   },
   "scale": [
     {
@@ -134,10 +136,12 @@
       "word": "tausend",
       "pluralWord": "tausend",
       "dropsOneMultiplier": false,
+      "countWordOverride": "ein",
       "joiner": {
         "type": "concatenate",
         "text": null
-      }
+      },
+      "note": "countWordOverride 'ein', same reason and precedent as hundred's own note above - without it the generator would compose 'einstausend', not 'eintausend' (and the yearReading 'compound' candidate's own documented example, 'eintausendneunhundertachtundneunzig', would come out wrong)."
     },
     {
       "value": 1000000,

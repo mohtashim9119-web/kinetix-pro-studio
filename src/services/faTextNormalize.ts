@@ -207,202 +207,321 @@ function foldFrenchElisionBacktick(word: string, vocabChars: ReadonlySet<string>
 }
 
 // ---------------------------------------------------------------------------
-// Spanish cardinal numbers 0-30 (Part H.5 Rule 2, sync-pipeline-v2-plan.md:4074,
-// scope narrowed per Slice 1 sign-off — docs/work-in-progress.md 2026-08-15).
+// Compositional cardinal-number generation (WS2 T3.2 Step 3b-iii).
 //
-// SCOPE: bare cardinal integers 0-30, Spanish only. Every one of these is a
-// SINGLE Spanish orthographic word ("dieciséis", "veintitrés", "treinta") —
-// from 31 on, Spanish requires a space-linked "y" compound ("treinta y
-// uno"), which is one INPUT token expanding into MULTIPLE output words. That
-// would break an invariant several `fa_onnx.rs` consumers already rely on
-// (one `FaWordResult` <-> one CTC-aligned word — see `word_merge_e2e`/
-// `words_per_chunk`), so 31-99, decimals, thousands separators, currency,
-// percent, ordinals, negative numbers, and every language other than Spanish
-// stay OUT OF SCOPE and continue to drop exactly as before this change.
+// Replaces the four former per-language CAPPED 0-30 tables (Spanish/German/
+// Portuguese/French — the scope-narrowed Phase 3b Slice 1 shape, superseded
+// here) and adds English, which had NO FA-side cardinal expansion at all
+// before this step (English digits were unconditionally dropped — the
+// `textNormalize.ts` matcher-side English cardinal reader is a completely
+// separate module, never shared with this one). The former 31+ cap existed
+// only because a bare lookup table couldn't express a multi-word
+// composition without breaking the one-`FaWordResult`-per-input-token
+// contract; that contract has since been satisfied structurally by the
+// multi-word tokenizer capability (`fa_onnx.rs`'s `tokenize_normalized_words`/
+// `collapse_word_fragments`, WS2 T3.2 Step 3a-ii) — a `mapped` string MAY
+// now contain internal whitespace and still collapses to exactly one
+// `WordSpan` after alignment, so a space-linked compound (Spanish "treinta y
+// cuatro", French "vingt et un", English "one thousand nine hundred
+// ninety-eight") is no longer disqualified by that invariant.
+//
+// Reads its data from `scripts/fixtures/fa-cardinal-<lang>.json` (WS2 T3.2
+// Step 2 landed 0-99/hundred/scale/yearReading; Step 3b-ii extended
+// `yearReading.selectionPolicy` with a named threshold policy for en/de) —
+// CALLER-supplied, exactly like `vocabChars` above: this module still never
+// reads a file itself (module doc comment, top of file). `fa/text.rs` below
+// is ported byte-identically, reading the SAME five JSON files (embedded via
+// `include_str!`) — neither side hardcodes a cardinal-word table of its own
+// any more; the data lives in exactly one place, consumed identically by
+// both.
+//
+// NO MAGNITUDE CAP: composition walks `scale` (thousand, million, ...) from
+// the largest applicable level down, recursing into itself for both a
+// level's own multiplier count (itself possibly >= that level's own value —
+// e.g. a number past 999,999,999 recurses into "N million" for however many
+// millions it takes, composing the multiplier itself the same way) and its
+// remainder. The practical ceiling is JS's safe-integer range and however
+// many scale levels a language's data file ships (today: thousand, million)
+// — a value past what "million" can express composes as a repeated multiple
+// of "million" rather than inventing an unshipped "billion"-class word; not
+// linguistically idiomatic past that point, but arithmetically well-formed
+// and a real, deliberate, documented scope boundary — no real video-
+// narration digit token needs more than this.
 // ---------------------------------------------------------------------------
 
-/** Index `n` -> its Spanish spelling, for `n` in 0..=30. */
-const SPANISH_CARDINALS_0_30: readonly string[] = [
-  'cero', 'uno', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve',
-  'diez', 'once', 'doce', 'trece', 'catorce', 'quince', 'dieciséis', 'diecisiete',
-  'dieciocho', 'diecinueve', 'veinte', 'veintiuno', 'veintidós', 'veintitrés',
-  'veinticuatro', 'veinticinco', 'veintiséis', 'veintisiete', 'veintiocho',
-  'veintinueve', 'treinta',
-];
-
-/** `stripped` must be ENTIRELY digits, no leading zero (other than a bare
- *  "0"), no sign, no separators — anything else returns `undefined` and the
- *  caller falls through to the pre-existing digit-drop path unchanged. */
-function expandSpanishCardinal(stripped: string): string | undefined {
-  if (!/^[0-9]+$/.test(stripped)) return undefined;
-  if (stripped.length > 1 && stripped[0] === '0') return undefined;
-  const n = Number(stripped);
-  if (n > 30) return undefined;
-  return SPANISH_CARDINALS_0_30[n];
+/** One multiplier/remainder join point's spacing rule — `{type:
+ *  "concatenate"}` inserts nothing (German fuses every level into one
+ *  orthographic word); `{type: "space", text: null}` inserts a bare space;
+ *  `{type: "space", text: "e"}` (Portuguese's hundred-remainder join) inserts
+ *  `" e "`. */
+export interface FaJoiner {
+  type: 'space' | 'concatenate';
+  text: string | null;
 }
 
-// ---------------------------------------------------------------------------
-// German cardinal numbers 0-30 (Part H.5 Rule 3, Phase 3b remainder audit,
-// 2026-08-15 — sync-pipeline-v2-plan.md's H.5 decision block).
-//
-// Found empirically (not from spec): German cardinal digits were dropped
-// wholesale like every other language before this rule, but unlike Spanish
-// German has NO structural wall at 30 — every German cardinal, arbitrarily
-// large, is a single concatenated orthographic word ("einunddreißig",
-// "zweihundertfünfzig", ...), so it never needs multi-word output and is
-// unaffected by the permanent single-word-output decision (b). The cap at 30
-// here is a deliberate SCOPE choice, not a structural one: a flat lookup
-// table mirrors Rule 2's already-reviewed shape exactly, while numbers past
-// 30 need algorithmic compound generation (hundreds/thousands rules), which
-// is real design work deferred to a future slice, not a same-pattern
-// extension.
-//
-// Values below are the PRE-substitution vocab-safe spelling (German vocab
-// has no `ß` — spike G1, `applyLanguageSpecificSubstitutions` above) since
-// `expandGermanCardinal`'s output bypasses that step entirely (it substitutes
-// for `stripped`, which already ran through it on the ORIGINAL input, not on
-// a freshly generated candidate): "dreissig", not "dreißig".
-// ---------------------------------------------------------------------------
-
-/** Index `n` -> its German spelling (bare-cardinal reading, e.g. "eins" not
- *  the adjectival "ein"), for `n` in 0..=30. */
-const GERMAN_CARDINALS_0_30: readonly string[] = [
-  'null', 'eins', 'zwei', 'drei', 'vier', 'fünf', 'sechs', 'sieben', 'acht', 'neun',
-  'zehn', 'elf', 'zwölf', 'dreizehn', 'vierzehn', 'fünfzehn', 'sechzehn', 'siebzehn',
-  'achtzehn', 'neunzehn', 'zwanzig', 'einundzwanzig', 'zweiundzwanzig', 'dreiundzwanzig',
-  'vierundzwanzig', 'fünfundzwanzig', 'sechsundzwanzig', 'siebenundzwanzig',
-  'achtundzwanzig', 'neunundzwanzig', 'dreissig',
-];
-
-/** `stripped` must be ENTIRELY digits, no leading zero (other than a bare
- *  "0"), no sign, no separators — anything else returns `undefined` and the
- *  caller falls through to the pre-existing digit-drop path unchanged.
- *  Mirrors `expandSpanishCardinal`'s contract exactly. */
-function expandGermanCardinal(stripped: string): string | undefined {
-  if (!/^[0-9]+$/.test(stripped)) return undefined;
-  if (stripped.length > 1 && stripped[0] === '0') return undefined;
-  const n = Number(stripped);
-  if (n > 30) return undefined;
-  return GERMAN_CARDINALS_0_30[n];
+/** `scripts/fixtures/fa-cardinal-<lang>.json`'s `hundred` object — the one
+ *  block that has to model three structurally different hundred-grammars:
+ *  `"compound"` (en: multiplier count + "hundred" as two space-joined
+ *  words; de: the same shape but concatenated), `"fused"` (es/pt: each
+ *  multiple of 100 is its OWN irregular single word — "doscientos", never
+ *  "dos cientos" — looked up in `multiplierWords` by the full value `"200"`,
+ *  `"300"`, ... `"900"`), and French's own conditional pluralization
+ *  (`pluralizesWhenExactMultiple`/`pluralSuffix`: "cent" pluralizes to
+ *  "cents" only when it's an EXACT multiple of 100 with no remainder —
+ *  "deux cents" but "deux cent trois"). `countWordOverride` supplies the
+ *  count=1 combining-form word when `dropsOneMultiplier` is false but the
+ *  bare `cardinals0to99["1"]` citation form is wrong in this position (e.g.
+ *  German "ein" vs. the citation form "eins" — see `fa-cardinal-de.json`'s
+ *  own note on this field). */
+export interface FaHundredConfig {
+  word: string;
+  combiningWord: string;
+  multiplierForm: 'compound' | 'concatenate' | 'fused';
+  multiplierWords: Record<string, string> | null;
+  dropsOneMultiplier: boolean;
+  countWordOverride?: string;
+  regularMultiplierJoiner: FaJoiner | null;
+  remainderJoiner: FaJoiner;
+  pluralizesWhenExactMultiple?: boolean;
+  pluralSuffix?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Portuguese cardinal numbers 0-20 and 30 (Part H.5 Rule 4, Phase 3b
-// remainder, 2026-08-15 — sync-pipeline-v2-plan.md's H.5 PT-PT/PT-BR fork).
-//
-// Unlike Spanish's 21-29 (a single concatenated "veinti-" word, e.g.
-// "veintitrés") and German's arbitrarily-far compounding, Portuguese 21-29
-// is a THREE-WORD space-linked "e" compound ("vinte e três") — the same
-// permanent single-word-output wall as Spanish 31+ and French "et"-numbers
-// under decision (b). 21-29 is therefore PERMANENTLY excluded here, not
-// deferred; 0-20 and 30 have no such wall (each a single orthographic
-// word) and are covered by this rule.
-//
-// 14/16/17/19 fork by variant (PT-PT catorze/dezasseis/dezassete/dezanove
-// vs. PT-BR quatorze/dezesseis/dezessete/dezenove) — nothing in this repo's
-// vocab or corpus fixtures settled the choice (checked, not assumed; see
-// `docs/work-in-progress.md` §7 item 6). Owner decision, 2026-08-15:
-// PT-BR. The other 27 of 31 values in the 0-30 range are identical in both
-// variants.
-// ---------------------------------------------------------------------------
-
-/** Index `n` -> its Portuguese (PT-BR) spelling, for `n` in 0..=20 and
- *  n == 30. `undefined` at indices 21-29: no single-word spelling exists
- *  ("vinte e X" is 3 words), permanently blocked by decision (b) — not a
- *  missing table entry. */
-const PORTUGUESE_CARDINALS_0_30: readonly (string | undefined)[] = [
-  'zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito', 'nove',
-  'dez', 'onze', 'doze', 'treze', 'quatorze', 'quinze', 'dezesseis', 'dezessete',
-  'dezoito', 'dezenove', 'vinte',
-  undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined,
-  'trinta',
-];
-
-/** `stripped` must be ENTIRELY digits, no leading zero (other than a bare
- *  "0"), no sign, no separators — anything else returns `undefined` and the
- *  caller falls through to the pre-existing digit-drop path unchanged.
- *  Also returns `undefined` for 21-29 (in range but structurally excluded —
- *  see module comment above). Mirrors `expandSpanishCardinal`'s contract. */
-function expandPortugueseCardinal(stripped: string): string | undefined {
-  if (!/^[0-9]+$/.test(stripped)) return undefined;
-  if (stripped.length > 1 && stripped[0] === '0') return undefined;
-  const n = Number(stripped);
-  if (n > 30) return undefined;
-  return PORTUGUESE_CARDINALS_0_30[n];
+/** One entry of `scripts/fixtures/fa-cardinal-<lang>.json`'s `scale` array
+ *  (thousand, million, ...) — same `countWordOverride` role as
+ *  `FaHundredConfig`'s (German million's own "eine" vs. the generic "ein"
+ *  combining form is the shipped example). `pluralWord` is used whenever the
+ *  multiplier count isn't exactly 1 (covers both "pluralizes" languages —
+ *  Spanish "millón"/"millones" — and ones where `word`/`pluralWord` are
+ *  identical because the word never pluralizes as a count noun — English/
+ *  German "thousand"/"tausend"). */
+export interface FaScaleLevel {
+  value: number;
+  word: string;
+  pluralWord: string;
+  dropsOneMultiplier: boolean;
+  countWordOverride?: string;
+  joiner: FaJoiner;
 }
 
-// ---------------------------------------------------------------------------
-// French cardinal numbers 0-30 minus 21 (Part H.5 Rule 5, Phase 3b close,
-// 2026-08-15 — sync-pipeline-v2-plan.md's H.5 decision block, scope call
-// recorded in docs/work-in-progress.md's changelog).
-//
-// French 17-19 and 22-29 are HYPHENATED single words ("dix-sept",
-// "vingt-trois") — verified harmless to the one-`FaWordResult`-per-input-
-// token contract before this rule was scoped: word splitting is whitespace-
-// only (this module's own `/\s+/`, mirrored by the Rust port's
-// `is_js_whitespace`), never on hyphen, so a hyphenated cardinal is one
-// token in and one token out, exactly like Spanish's "veintitrés" or
-// Portuguese's "dezenove". `fa_onnx.rs`'s `merge_char_spans_to_words` (the
-// other half of the contract) splits only on the vocab's `|` word-delimiter
-// id, and `-` is an ordinary character in the fr vocab — so a hyphenated
-// cardinal merges back into a single `WordSpan` too. No blast radius on
-// chunk `qi` attribution either: that's derived from `canonicalize`/
-// `normalizeSceneDoc` on RAW segment text, never from this module's output
-// (`faChunkPlan.ts`'s own doc comment, cross-checked directly this pass).
-//
-// 21 is the one value in 0-30 that is NOT single-word: "vingt et un" is a
-// space-linked 3-word compound, the same permanent wall as Spanish 31+ and
-// Portuguese 21-29 under decision (b) — excluded here as a table hole, not
-// a missing entry. (The post-1990 reform spelling "vingt-et-un" IS a single
-// hyphenated token and would be representable, but this project has no
-// existing convention favoring reform orthography anywhere else in this
-// module, so traditional "vingt et un" — and therefore exclusion — is what
-// ships; owner call, 2026-08-15.)
-//
-// No PT-PT/PT-BR-style regional spelling fork exists anywhere in 0-30 for
-// French (Belgian/Swiss "septante"/"huitante"/"nonante" only diverge at
-// 70/80/90, well outside this scope). "un" is the bare-cardinal citation
-// form, mirroring Rule 2's "uno" and Rule 4's "um" — not the feminine
-// agreement form "une".
-// ---------------------------------------------------------------------------
+/** The data-driven form of `yearReading.selectionPolicy` landed in WS2 T3.2
+ *  Step 3b-ii: `n % 100 >= threshold` selects `atOrAboveThreshold`,
+ *  otherwise `belowThreshold` — both candidate NAMES from the same
+ *  `yearReading.candidates` array. Replaces a single-constant policy string
+ *  for languages (en, de) whose matcher-mirrored convention is genuinely
+ *  conditional, not a single reading; es/fr/pt keep the plain-string form
+ *  (`"compound"`) since they have only one real candidate. */
+export interface FaYearReadingPolicy {
+  name: string;
+  threshold: number;
+  atOrAboveThreshold: string;
+  belowThreshold: string;
+}
 
-/** Index `n` -> its French spelling, for `n` in 0..=30. `undefined` at index
- *  21: no single-word spelling exists under traditional orthography ("vingt
- *  et un" is 3 words), permanently blocked by decision (b) — not a missing
- *  table entry. */
-const FRENCH_CARDINALS_0_30: readonly (string | undefined)[] = [
-  'zéro', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf',
-  'dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize', 'dix-sept',
-  'dix-huit', 'dix-neuf', 'vingt',
-  undefined,
-  'vingt-deux', 'vingt-trois', 'vingt-quatre', 'vingt-cinq', 'vingt-six', 'vingt-sept', 'vingt-huit', 'vingt-neuf',
-  'trente',
-];
+export interface FaYearReading {
+  rangeMin: number;
+  rangeMax: number;
+  modFloor: number;
+  candidates: string[];
+  selectionPolicy: string | FaYearReadingPolicy | null;
+}
 
-/** `stripped` must be ENTIRELY digits, no leading zero (other than a bare
- *  "0"), no sign, no separators — anything else returns `undefined` and the
- *  caller falls through to the pre-existing digit-drop path unchanged.
- *  Also returns `undefined` for 21 (in range but structurally excluded —
- *  see module comment above). Mirrors `expandPortugueseCardinal`'s contract. */
-function expandFrenchCardinal(stripped: string): string | undefined {
+/** The full shape of one `scripts/fixtures/fa-cardinal-<lang>.json` file (its
+ *  `_provenance`/`rationale`/`matcherParityNote`/`note` metadata fields are
+ *  intentionally not modeled here — this generator reads only the fields it
+ *  composes with). */
+export interface FaCardinalData {
+  cardinals0to99: Record<string, string>;
+  hundred: FaHundredConfig;
+  scale: FaScaleLevel[];
+  yearReading: FaYearReading;
+}
+
+/** `null`/`undefined` and `{type: "concatenate"}` both insert nothing;
+ *  `{type: "space", text: null}` inserts a bare space; `{type: "space",
+ *  text: "e"}` inserts `" e "`. */
+function joinerSeparator(joiner: FaJoiner | null | undefined): string {
+  if (!joiner || joiner.type === 'concatenate') return '';
+  return joiner.text ? ` ${joiner.text} ` : ' ';
+}
+
+/** Direct lookup into the data file's own 0-99 table — already the full,
+ *  correct spelling for every value in range, INCLUDING language-specific
+ *  space-linked/hyphenated compounds (Spanish "treinta y cuatro", French
+ *  "vingt et un", Portuguese "trinta e quatro") — this function never
+ *  re-derives those, only looks them up. Throws on a missing entry (a data
+ *  file integrity bug, not a runtime input-shape question — every value
+ *  0-99 is required to be present). */
+function cardinal0to99(n: number, data: FaCardinalData): string {
+  const word = data.cardinals0to99[String(n)];
+  if (word === undefined) {
+    throw new Error(`fa cardinal data: cardinals0to99 missing entry for ${n}`);
+  }
+  return word;
+}
+
+/** Composes 100-999 per `data.hundred`'s configuration — see
+ *  `FaHundredConfig`'s own doc comment for the three hundred-grammar shapes
+ *  this models. */
+function composeHundred(n: number, data: FaCardinalData): string {
+  const hundred = data.hundred;
+  const multiplier = Math.floor(n / 100);
+  const remainder = n % 100;
+
+  let head: string;
+  if (hundred.multiplierForm === 'fused') {
+    if (multiplier === 1) {
+      head = remainder === 0 ? hundred.word : hundred.combiningWord;
+    } else {
+      const fused = hundred.multiplierWords?.[String(multiplier * 100)];
+      if (fused === undefined) {
+        throw new Error(`fa cardinal data: hundred.multiplierWords missing entry for ${multiplier * 100}`);
+      }
+      head = fused;
+    }
+  } else {
+    let multiplierPart = '';
+    if (!(multiplier === 1 && hundred.dropsOneMultiplier)) {
+      multiplierPart = (multiplier === 1 ? hundred.countWordOverride : undefined)
+        ?? hundred.multiplierWords?.[String(multiplier)]
+        ?? cardinal0to99(multiplier, data);
+    }
+    let hundredWord = hundred.word;
+    if (hundred.pluralizesWhenExactMultiple && hundred.pluralSuffix && remainder === 0 && multiplier > 1) {
+      hundredWord += hundred.pluralSuffix;
+    }
+    if (multiplierPart === '') {
+      head = hundredWord;
+    } else if (hundred.multiplierForm === 'concatenate') {
+      head = multiplierPart + hundredWord;
+    } else {
+      head = multiplierPart + joinerSeparator(hundred.regularMultiplierJoiner) + hundredWord;
+    }
+  }
+
+  if (remainder === 0) return head;
+  const tail = cardinal0to99(remainder, data);
+  return head + joinerSeparator(hundred.remainderJoiner) + tail;
+}
+
+/** Composes `n` at and above one scale level (thousand, million, ...),
+ *  recursing into `cardinalToWords` for both the level's own multiplier
+ *  count (unbounded — module comment above) and its remainder. Reuses the
+ *  level's own `joiner` for both the multiplier->word attachment and the
+ *  word->remainder attachment (the data file has no separate field for the
+ *  latter; every shipped language's spacing convention at a scale boundary
+ *  is uniform across both — space-separated for en/es/fr/pt, fully
+ *  concatenated for de — so one field correctly covers both joins). */
+function composeScaleLevel(n: number, level: FaScaleLevel, data: FaCardinalData): string {
+  const multiplier = Math.floor(n / level.value);
+  const remainder = n % level.value;
+
+  let multiplierPart = '';
+  if (!(multiplier === 1 && level.dropsOneMultiplier)) {
+    multiplierPart = (multiplier === 1 ? level.countWordOverride : undefined)
+      ?? cardinalToWords(multiplier, data);
+  }
+  const scaleWord = multiplier === 1 ? level.word : level.pluralWord;
+  const head = multiplierPart === ''
+    ? scaleWord
+    : level.joiner.type === 'concatenate'
+      ? multiplierPart + scaleWord
+      : multiplierPart + joinerSeparator(level.joiner) + scaleWord;
+
+  if (remainder === 0) return head;
+  const tail = cardinalToWords(remainder, data);
+  return level.joiner.type === 'concatenate' ? head + tail : `${head} ${tail}`;
+}
+
+/** Full literal/arithmetic cardinal reading of any non-negative integer, per
+ *  `data`'s own composition rules. This IS the year-reading "compound"
+ *  candidate (called directly, not re-derived) and the fallback for every
+ *  non-year digit token. No magnitude cap — module comment above. */
+function cardinalToWords(n: number, data: FaCardinalData): string {
+  if (n < 100) return cardinal0to99(n, data);
+  if (n < 1000) return composeHundred(n, data);
+  const levels = [...data.scale].sort((a, b) => b.value - a.value);
+  for (const level of levels) {
+    if (n >= level.value) return composeScaleLevel(n, level, data);
+  }
+  // Unreachable: `data.scale`'s smallest shipped value is 1000 and n >= 1000
+  // was already established by the `n < 1000` check above.
+  throw new Error(`fa cardinal data: no scale level applies to ${n}`);
+}
+
+/** The "pair"/"hundertgruppe" year-reading shapes: split into a two-digit
+ *  high/low half (`floor(n/100)`, `n%100`) and read each half via
+ *  `cardinal0to99` directly — NOT via `composeHundred` (the high half is a
+ *  literal two-digit citation, e.g. "nineteen", not a count of hundreds).
+ *  "pair" space-joins the halves (en: "nineteen ninety-eight");
+ *  "hundertgruppe" (the only other candidate name any shipped language
+ *  uses) joins them through an explicit hundred-word using `hundred`'s own
+ *  concatenation style (de: "neunzehn" + "hundert" + "achtundneunzig", fully
+ *  concatenated). "compound" delegates to the plain arithmetic reading.
+ *  Throws on any other candidate name — an unrecognized reading strategy is
+ *  a data-file/schema mismatch, not a silently-ignorable input. */
+function composeYearReading(n: number, candidate: string, data: FaCardinalData): string {
+  if (candidate === 'compound') return cardinalToWords(n, data);
+  const high = cardinal0to99(Math.floor(n / 100), data);
+  const low = cardinal0to99(n % 100, data);
+  if (candidate === 'pair') return `${high} ${low}`;
+  if (candidate === 'hundertgruppe') {
+    return data.hundred.multiplierForm === 'concatenate'
+      ? `${high}${data.hundred.word}${low}`
+      : `${high} ${data.hundred.word} ${low}`;
+  }
+  throw new Error(`fa cardinal data: unknown yearReading candidate "${candidate}"`);
+}
+
+/** Resolves `yearReading.selectionPolicy` (a plain candidate-name string for
+ *  es/fr/pt, or the `n % 100 >= threshold` object form for en/de — WS2 T3.2
+ *  Step 3b-ii) to the candidate name that applies to this specific `n`. */
+function selectYearCandidate(n: number, policy: FaYearReading['selectionPolicy']): string {
+  if (policy === null) {
+    throw new Error('fa cardinal data: yearReading.selectionPolicy is unset (null) for this language');
+  }
+  if (typeof policy === 'string') return policy;
+  return (n % 100) >= policy.threshold ? policy.atOrAboveThreshold : policy.belowThreshold;
+}
+
+/** Entry point replacing the four former per-language `expand*Cardinal`
+ *  functions — now shared across all five languages (English included,
+ *  previously unhandled) and fully data-driven. `stripped` must be entirely
+ *  digits, no sign, no separators, no leading zero other than a bare "0" —
+ *  anything else returns `undefined` and the caller falls through to the
+ *  pre-existing digit-drop path, exactly as every former per-language
+ *  function did. A 4-character token numerically inside
+ *  `yearReading.rangeMin..rangeMax` takes the year-reading branch (mirroring
+ *  the matcher's own `tok.length === 4 && n >= rangeMin && n <= rangeMax`
+ *  gate, `textNormalize.ts:91` — same structural condition, independently
+ *  re-expressed here since this module shares no code with that one);
+ *  everything else gets the plain arithmetic cardinal reading. */
+function expandCardinalToken(stripped: string, data: FaCardinalData): string | undefined {
   if (!/^[0-9]+$/.test(stripped)) return undefined;
   if (stripped.length > 1 && stripped[0] === '0') return undefined;
   const n = Number(stripped);
-  if (n > 30) return undefined;
-  return FRENCH_CARDINALS_0_30[n];
+  if (!Number.isSafeInteger(n)) return undefined;
+  const yr = data.yearReading;
+  if (stripped.length === 4 && n >= yr.rangeMin && n <= yr.rangeMax) {
+    return composeYearReading(n, selectYearCandidate(n, yr.selectionPolicy), data);
+  }
+  return cardinalToWords(n, data);
 }
 
 /** Normalizes one already-whitespace-isolated word: NFC + lowercase, the
  *  German ß->ss substitution, zero-width stripping, typographic folding,
- *  boundary-punctuation stripping, then (Spanish only) a bare-0-30-cardinal
- *  expansion, then a digit check and a per-character vocab membership
- *  check. A word surviving fold+strip with any character still absent from
- *  the vocab is unrepresentable — dropped and recorded, never partially
+ *  boundary-punctuation stripping, then a data-driven cardinal-number
+ *  expansion (`expandCardinalToken`, all five languages), then a digit check
+ *  and a per-character vocab membership check (skipping the space character,
+ *  which a multi-word compositional reading may now contain structurally —
+ *  it is a fragment delimiter, not a spellable vocab character). A word
+ *  surviving fold+strip with any non-space character still absent from the
+ *  vocab is unrepresentable — dropped and recorded, never partially
  *  mangled. */
 function normalizeWord(
   rawWord: string,
   languageCode: FaLanguageCode,
   vocabChars: ReadonlySet<string>,
+  cardinalData: FaCardinalData,
 ): FaWordResult {
   const lowered = rawWord.normalize('NFC').toLowerCase();
   const substituted = applyLanguageSpecificSubstitutions(lowered, languageCode);
@@ -421,15 +540,7 @@ function normalizeWord(
     };
   }
 
-  const cardinalExpansion = languageCode === 'es'
-    ? expandSpanishCardinal(stripped)
-    : languageCode === 'de'
-      ? expandGermanCardinal(stripped)
-      : languageCode === 'pt'
-        ? expandPortugueseCardinal(stripped)
-        : languageCode === 'fr'
-          ? expandFrenchCardinal(stripped)
-          : undefined;
+  const cardinalExpansion = expandCardinalToken(stripped, cardinalData);
   const candidate = cardinalExpansion ?? stripped;
 
   if (cardinalExpansion === undefined && DIGIT_RE.test(stripped)) {
@@ -441,6 +552,7 @@ function normalizeWord(
   }
 
   for (const ch of candidate) {
+    if (ch === ' ') continue; // fragment delimiter of a multi-word compositional reading, not a spellable vocab character
     if (!vocabChars.has(ch)) {
       return {
         input: rawWord,
@@ -458,14 +570,19 @@ function normalizeWord(
  * vocab. `vocabChars` is the set from `vocabCharsFromRawVocab` (or an
  * equivalent hand-built set) for `languageCode` — this function does not
  * validate that the two agree, since the caller owns that pairing.
+ * `cardinalData` is the parsed contents of that language's
+ * `fa-cardinal-<lang>.json` (WS2 T3.2 Step 3b-iii) — caller-supplied, same as
+ * `vocabChars`, for the same reason (module doc comment, top of file: this
+ * module never reads a file itself).
  */
 export function normalizeForForcedAlignment(
   input: string,
   languageCode: FaLanguageCode,
   vocabChars: ReadonlySet<string>,
+  cardinalData: FaCardinalData,
 ): FaNormalizeResult {
   const rawWords = input.split(/\s+/).filter(w => w.length > 0);
-  const words = rawWords.map(w => normalizeWord(w, languageCode, vocabChars));
+  const words = rawWords.map(w => normalizeWord(w, languageCode, vocabChars, cardinalData));
   const text = words
     .filter((w): w is FaWordResult & { mapped: string } => w.representable)
     .map(w => w.mapped)

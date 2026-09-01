@@ -42,6 +42,7 @@ import {
   normalizeForForcedAlignment,
   vocabCharsFromRawVocab,
   type FaLanguageCode,
+  type FaCardinalData,
 } from '../src/services/faTextNormalize';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -55,6 +56,12 @@ function loadRawVocab(lang: FaLanguageCode): RawVocab {
   return JSON.parse(
     readFileSync(resolve(REPO, 'scripts', 'fixtures', `fa-vocab-${lang}.json`), 'utf-8'),
   ) as RawVocab;
+}
+
+function loadCardinalData(lang: FaLanguageCode): FaCardinalData {
+  return JSON.parse(
+    readFileSync(resolve(REPO, 'scripts', 'fixtures', `fa-cardinal-${lang}.json`), 'utf-8'),
+  ) as FaCardinalData;
 }
 
 // -- the three D2/D3 fixture windows (same texts as `_provenance.text` in
@@ -90,28 +97,37 @@ function textToTokenIds(
   language: FaLanguageCode,
   vocab: Record<string, number>,
   vocabChars: Set<string>,
+  cardinalData: FaCardinalData,
 ): { targetTokenIds: number[]; blankId: number; normalizedText: string } {
   const blankId = vocab['<pad>'];
   const wordDelimId = vocab['|'];
   if (blankId === undefined || wordDelimId === undefined) {
     throw new Error('vocab is missing "<pad>" or "|"');
   }
-  const result = normalizeForForcedAlignment(text, language, vocabChars);
+  const result = normalizeForForcedAlignment(text, language, vocabChars, cardinalData);
 
   const ids: number[] = [];
   let first = true;
   for (const word of result.words) {
     if (!word.representable) continue;
-    if (!first) ids.push(wordDelimId);
-    first = false;
-    for (const ch of word.mapped as string) {
-      const id = vocab[ch];
-      if (id === undefined) {
-        throw new Error(
-          `normalized word "${word.mapped}" contains char ${JSON.stringify(ch)} absent from vocab`,
-        );
+    // A multi-word compositional cardinal reading (WS2 T3.2 Step 3b-iii) may
+    // contain internal whitespace — split into fragments and insert the
+    // word-delimiter id between them too, exactly like `fa_onnx.rs`'s
+    // `tokenize_normalized_words` does (a fragment delimiter is
+    // indistinguishable from a between-word delimiter at the CTC level).
+    const fragments = (word.mapped as string).split(/\s+/).filter(f => f.length > 0);
+    for (const fragment of fragments) {
+      if (!first) ids.push(wordDelimId);
+      first = false;
+      for (const ch of fragment) {
+        const id = vocab[ch];
+        if (id === undefined) {
+          throw new Error(
+            `normalized word "${word.mapped}" contains char ${JSON.stringify(ch)} absent from vocab`,
+          );
+        }
+        ids.push(id);
       }
-      ids.push(id);
     }
   }
   return { targetTokenIds: ids, blankId, normalizedText: result.text };
@@ -120,7 +136,8 @@ function textToTokenIds(
 const output = CASES.map(({ file, language, text }) => {
   const raw = loadRawVocab(language);
   const vocabChars = vocabCharsFromRawVocab(raw.vocab);
-  const { targetTokenIds, blankId, normalizedText } = textToTokenIds(text, language, raw.vocab, vocabChars);
+  const cardinalData = loadCardinalData(language);
+  const { targetTokenIds, blankId, normalizedText } = textToTokenIds(text, language, raw.vocab, vocabChars, cardinalData);
   return { file, language, text, normalizedText, targetTokenIds, blankId };
 });
 

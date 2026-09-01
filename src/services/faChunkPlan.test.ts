@@ -12,7 +12,7 @@ import type { SilenceInterval } from './silenceDetector';
 import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced, computeFaChunkPlanS2, computeFaChunkPlanWithAttribution, computeRuns, detectUnscriptedRuns } from './faChunkPlan';
 import type { FaRun } from './faAnchors';
 import { MAX_RUN_SEC } from './syncConstants';
-import { vocabCharsFromRawVocab } from './faTextNormalize';
+import { vocabCharsFromRawVocab, type FaCardinalData } from './faTextNormalize';
 
 function seg(id: string, text: string, startTime: number, duration: number): VideoSegment {
   return {
@@ -578,6 +578,9 @@ describe('computeFaChunkPlan / computeFaChunkPlanWithAttribution — Phase 3b Sl
     ) as { vocab: Record<string, number> };
     return vocabCharsFromRawVocab(raw.vocab);
   })();
+  const EN_CARDINAL_DATA = JSON.parse(
+    readFileSync(resolve(REPO, 'scripts', 'fixtures', 'fa-cardinal-en.json'), 'utf-8'),
+  ) as FaCardinalData;
 
   // Mixed case + trailing punctuation, unlike every fixture above — chosen so
   // a normalization pass (lowercase, boundary-punctuation strip) is visibly
@@ -620,7 +623,7 @@ describe('computeFaChunkPlan / computeFaChunkPlanWithAttribution — Phase 3b Sl
     const { segments, tokens, silences, audioDuration } = englishFixture();
     const raw = computeFaChunkPlanWithAttribution(segments, tokens, silences, audioDuration, 'script-word-index');
     const normalized = computeFaChunkPlanWithAttribution(
-      segments, tokens, silences, audioDuration, 'script-word-index', undefined, 'en', EN_VOCAB,
+      segments, tokens, silences, audioDuration, 'script-word-index', undefined, 'en', EN_VOCAB, EN_CARDINAL_DATA,
     );
 
     // Windows (startSec/endSec) are untouched — only text changes.
@@ -669,14 +672,19 @@ describe('computeFaChunkPlanWithAttribution — chunk boundaries are independent
     ) as { vocab: Record<string, number> };
     return vocabCharsFromRawVocab(raw.vocab);
   })();
+  const EN_CARDINAL_DATA = JSON.parse(
+    readFileSync(resolve(REPO, 'scripts', 'fixtures', 'fa-cardinal-en.json'), 'utf-8'),
+  ) as FaCardinalData;
 
   it('chunk count and every startSec/endSec are byte-identical with and without FA normalization applied, even when normalization changes representable-word count', () => {
-    // "42"/"7" are digit-bearing and English has no cardinal-expansion table
-    // (faTextNormalize.ts's normalizeWord: cardinalExpansion is undefined
-    // for 'en'), so FA normalization DROPS them entirely — this fixture
-    // deliberately changes representable-word count under normalization,
-    // the case where boundary-derivation leaking into normalized text would
-    // most plausibly show up as a moved window.
+    // "42"/"7" are digit-bearing. Before WS2 T3.2 Step 3b-iii, English had no
+    // cardinal-expansion table at all, so FA normalization DROPPED them
+    // entirely; since Step 3b-iii it EXPANDS them ("42" -> "forty-two") —
+    // either way the digit CHARACTERS disappear from the text (dropped or
+    // spelled out), which is what this fixture actually needs: a case where
+    // normalization visibly changes chunk TEXT, to prove boundary
+    // derivation doesn't leak into (or depend on) whatever this pass does to
+    // it.
     const segments = [
       seg('s0', 'Kittens Likes 42 Purple Hats', 0, 2),
       seg('s1', 'Dragons Chase Silver Moons', 2, 2),
@@ -689,11 +697,12 @@ describe('computeFaChunkPlanWithAttribution — chunk boundaries are independent
 
     const raw = computeFaChunkPlanWithAttribution(segments, tokens, silences, 8, 'script-word-index');
     const normalized = computeFaChunkPlanWithAttribution(
-      segments, tokens, silences, 8, 'script-word-index', undefined, 'en', EN_VOCAB,
+      segments, tokens, silences, 8, 'script-word-index', undefined, 'en', EN_VOCAB, EN_CARDINAL_DATA,
     );
 
-    // Sanity: normalization actually dropped the digit tokens, so this test
-    // is exercising the word-count-changing case it claims to, not a no-op.
+    // Sanity: normalization actually changed the digit tokens (expanded to
+    // words), so this test is exercising the text-changing case it claims
+    // to, not a no-op.
     expect(raw.some(c => /\d/.test(c.text))).toBe(true);
     expect(normalized.some(c => /\d/.test(c.text))).toBe(false);
 

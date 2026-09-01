@@ -51,6 +51,7 @@
 // module level here since the entire public surface is in the same boat.
 #![cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::fmt;
 use std::path::Path;
@@ -159,6 +160,307 @@ pub fn vocab_chars_from_path(path: &Path) -> Result<HashSet<char>, TextError> {
         .and_then(|v| v.as_object())
         .ok_or(TextError::MissingVocabField)?;
     Ok(vocab_chars_from_raw_vocab(vocab_obj))
+}
+
+// ---------------------------------------------------------------------------
+// Compositional cardinal-number generation (WS2 T3.2 Step 3b-iii) — byte-
+// identical port of `faTextNormalize.ts`'s equivalent section (see that
+// file's own module comment above `FaJoiner` for the full design and its
+// no-magnitude-cap rationale). Replaces the four former per-language capped
+// 0-30 tables below (Spanish/German/Portuguese/French) and adds English
+// (previously unhandled on the FA side). Reads the SAME five
+// `scripts/fixtures/fa-cardinal-<lang>.json` files the TS side reads —
+// embedded via `include_str!` (mirroring `fa_onnx.rs`'s own vocab-embedding
+// pattern, `vocab_json_for`/`load_vocab`) so this crate never hardcodes a
+// cardinal-word table of its own either.
+// ---------------------------------------------------------------------------
+
+/// Mirrors `FaJoiner`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FaJoiner {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub text: Option<String>,
+}
+
+/// Mirrors `FaHundredConfig`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FaHundredConfig {
+    pub word: String,
+    #[serde(rename = "combiningWord")]
+    pub combining_word: String,
+    #[serde(rename = "multiplierForm")]
+    pub multiplier_form: String,
+    #[serde(rename = "multiplierWords")]
+    pub multiplier_words: Option<HashMap<String, String>>,
+    #[serde(rename = "dropsOneMultiplier")]
+    pub drops_one_multiplier: bool,
+    #[serde(rename = "countWordOverride")]
+    pub count_word_override: Option<String>,
+    #[serde(rename = "regularMultiplierJoiner")]
+    pub regular_multiplier_joiner: Option<FaJoiner>,
+    #[serde(rename = "remainderJoiner")]
+    pub remainder_joiner: FaJoiner,
+    #[serde(rename = "pluralizesWhenExactMultiple")]
+    pub pluralizes_when_exact_multiple: Option<bool>,
+    #[serde(rename = "pluralSuffix")]
+    pub plural_suffix: Option<String>,
+}
+
+/// Mirrors `FaScaleLevel`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FaScaleLevel {
+    pub value: u64,
+    pub word: String,
+    #[serde(rename = "pluralWord")]
+    pub plural_word: String,
+    #[serde(rename = "dropsOneMultiplier")]
+    pub drops_one_multiplier: bool,
+    #[serde(rename = "countWordOverride")]
+    pub count_word_override: Option<String>,
+    pub joiner: FaJoiner,
+}
+
+/// Mirrors `FaYearReadingPolicy`/`FaYearReading["selectionPolicy"]`'s
+/// `string | object | null` union — `#[serde(untagged)]` picks the object
+/// form when the JSON value is an object, the plain-string form when it's a
+/// string; a JSON `null` deserializes as `None` on the wrapping
+/// `Option<FaYearSelectionPolicy>` field in [`FaYearReading`] rather than a
+/// variant of this enum.
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(untagged)]
+pub enum FaYearSelectionPolicy {
+    Threshold {
+        #[allow(dead_code)]
+        name: String,
+        threshold: u64,
+        #[serde(rename = "atOrAboveThreshold")]
+        at_or_above_threshold: String,
+        #[serde(rename = "belowThreshold")]
+        below_threshold: String,
+    },
+    Named(String),
+}
+
+/// Mirrors `FaYearReading`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FaYearReading {
+    #[serde(rename = "rangeMin")]
+    pub range_min: u64,
+    #[serde(rename = "rangeMax")]
+    pub range_max: u64,
+    #[allow(dead_code)]
+    #[serde(rename = "modFloor")]
+    pub mod_floor: u64,
+    #[allow(dead_code)]
+    pub candidates: Vec<String>,
+    #[serde(rename = "selectionPolicy")]
+    pub selection_policy: Option<FaYearSelectionPolicy>,
+}
+
+/// Mirrors `FaCardinalData` — the full shape of one
+/// `scripts/fixtures/fa-cardinal-<lang>.json` file (its `_provenance`/
+/// `rationale`/`matcherParityNote`/`note` metadata fields are intentionally
+/// not modeled here, same as the TS side).
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct FaCardinalData {
+    #[serde(rename = "cardinals0to99")]
+    pub cardinals_0_to_99: HashMap<String, String>,
+    pub hundred: FaHundredConfig,
+    pub scale: Vec<FaScaleLevel>,
+    #[serde(rename = "yearReading")]
+    pub year_reading: FaYearReading,
+}
+
+/// Reads and parses a `fa-cardinal-<lang>.json` file at `path` (caller-
+/// supplied — this function performs no path resolution of its own). Test-
+/// only, mirroring [`vocab_chars_from_path`]'s own role: this crate's tests
+/// load the real fixture directly; `fa_onnx.rs`'s production path embeds its
+/// copy via `include_str!` instead (`cardinal_json_for` below) and never
+/// calls this.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn cardinal_data_from_path(path: &Path) -> Result<FaCardinalData, TextError> {
+    let contents = std::fs::read_to_string(path).map_err(|e| TextError::Io(e.to_string()))?;
+    serde_json::from_str(&contents).map_err(|e| TextError::Json(e.to_string()))
+}
+
+/// `null`/absent and `{"type": "concatenate"}` both insert nothing;
+/// `{"type": "space", "text": null}` inserts a bare space; `{"type":
+/// "space", "text": "e"}` inserts `" e "`. Mirrors `joinerSeparator`.
+fn joiner_separator(joiner: Option<&FaJoiner>) -> String {
+    match joiner {
+        None => String::new(),
+        Some(j) if j.kind == "concatenate" => String::new(),
+        Some(j) => match &j.text {
+            Some(t) => format!(" {t} "),
+            None => " ".to_string(),
+        },
+    }
+}
+
+/// Direct lookup into the data file's own 0-99 table. Mirrors
+/// `cardinal0to99`.
+fn cardinal_0_to_99(n: u64, data: &FaCardinalData) -> String {
+    data.cardinals_0_to_99
+        .get(&n.to_string())
+        .unwrap_or_else(|| panic!("fa cardinal data: cardinals0to99 missing entry for {n}"))
+        .clone()
+}
+
+/// Composes 100-999 per `data.hundred`'s configuration. Mirrors
+/// `composeHundred` — see that function's own doc comment (and
+/// `FaHundredConfig`'s, in faTextNormalize.ts) for the three hundred-grammar
+/// shapes this models.
+fn compose_hundred(n: u64, data: &FaCardinalData) -> String {
+    let hundred = &data.hundred;
+    let multiplier = n / 100;
+    let remainder = n % 100;
+
+    let head: String = if hundred.multiplier_form == "fused" {
+        if multiplier == 1 {
+            if remainder == 0 { hundred.word.clone() } else { hundred.combining_word.clone() }
+        } else {
+            hundred
+                .multiplier_words
+                .as_ref()
+                .and_then(|m| m.get(&(multiplier * 100).to_string()))
+                .unwrap_or_else(|| panic!("fa cardinal data: hundred.multiplierWords missing entry for {}", multiplier * 100))
+                .clone()
+        }
+    } else {
+        let multiplier_part: String = if multiplier == 1 && hundred.drops_one_multiplier {
+            String::new()
+        } else if multiplier == 1 && hundred.count_word_override.is_some() {
+            hundred.count_word_override.clone().unwrap()
+        } else if let Some(word) = hundred.multiplier_words.as_ref().and_then(|m| m.get(&multiplier.to_string())) {
+            word.clone()
+        } else {
+            cardinal_0_to_99(multiplier, data)
+        };
+
+        let mut hundred_word = hundred.word.clone();
+        if hundred.pluralizes_when_exact_multiple.unwrap_or(false)
+            && hundred.plural_suffix.is_some()
+            && remainder == 0
+            && multiplier > 1
+        {
+            hundred_word.push_str(hundred.plural_suffix.as_deref().unwrap());
+        }
+
+        if multiplier_part.is_empty() {
+            hundred_word
+        } else if hundred.multiplier_form == "concatenate" {
+            format!("{multiplier_part}{hundred_word}")
+        } else {
+            format!("{multiplier_part}{}{hundred_word}", joiner_separator(hundred.regular_multiplier_joiner.as_ref()))
+        }
+    };
+
+    if remainder == 0 {
+        return head;
+    }
+    let tail = cardinal_0_to_99(remainder, data);
+    format!("{head}{}{tail}", joiner_separator(Some(&hundred.remainder_joiner)))
+}
+
+/// Composes `n` at and above one scale level (thousand, million, ...).
+/// Mirrors `composeScaleLevel`.
+fn compose_scale_level(n: u64, level: &FaScaleLevel, data: &FaCardinalData) -> String {
+    let multiplier = n / level.value;
+    let remainder = n % level.value;
+
+    let multiplier_part: String = if multiplier == 1 && level.drops_one_multiplier {
+        String::new()
+    } else if multiplier == 1 && level.count_word_override.is_some() {
+        level.count_word_override.clone().unwrap()
+    } else {
+        cardinal_to_words(multiplier, data)
+    };
+    let scale_word = if multiplier == 1 { level.word.clone() } else { level.plural_word.clone() };
+    let head = if multiplier_part.is_empty() {
+        scale_word
+    } else if level.joiner.kind == "concatenate" {
+        format!("{multiplier_part}{scale_word}")
+    } else {
+        format!("{multiplier_part}{}{scale_word}", joiner_separator(Some(&level.joiner)))
+    };
+
+    if remainder == 0 {
+        return head;
+    }
+    let tail = cardinal_to_words(remainder, data);
+    if level.joiner.kind == "concatenate" { format!("{head}{tail}") } else { format!("{head} {tail}") }
+}
+
+/// Full literal/arithmetic cardinal reading of any non-negative integer, per
+/// `data`'s own composition rules. Mirrors `cardinalToWords`.
+fn cardinal_to_words(n: u64, data: &FaCardinalData) -> String {
+    if n < 100 {
+        return cardinal_0_to_99(n, data);
+    }
+    if n < 1000 {
+        return compose_hundred(n, data);
+    }
+    let mut levels: Vec<&FaScaleLevel> = data.scale.iter().collect();
+    levels.sort_by(|a, b| b.value.cmp(&a.value));
+    for level in levels {
+        if n >= level.value {
+            return compose_scale_level(n, level, data);
+        }
+    }
+    panic!("fa cardinal data: no scale level applies to {n}");
+}
+
+/// The "pair"/"hundertgruppe" year-reading shapes. Mirrors
+/// `composeYearReading`.
+fn compose_year_reading(n: u64, candidate: &str, data: &FaCardinalData) -> String {
+    if candidate == "compound" {
+        return cardinal_to_words(n, data);
+    }
+    let high = cardinal_0_to_99(n / 100, data);
+    let low = cardinal_0_to_99(n % 100, data);
+    if candidate == "pair" {
+        return format!("{high} {low}");
+    }
+    if candidate == "hundertgruppe" {
+        return if data.hundred.multiplier_form == "concatenate" {
+            format!("{high}{}{low}", data.hundred.word)
+        } else {
+            format!("{high} {} {low}", data.hundred.word)
+        };
+    }
+    panic!("fa cardinal data: unknown yearReading candidate \"{candidate}\"");
+}
+
+/// Resolves `yearReading.selectionPolicy` to the candidate name that applies
+/// to this specific `n`. Mirrors `selectYearCandidate`.
+fn select_year_candidate(n: u64, policy: &Option<FaYearSelectionPolicy>) -> String {
+    match policy {
+        None => panic!("fa cardinal data: yearReading.selectionPolicy is unset (null) for this language"),
+        Some(FaYearSelectionPolicy::Named(name)) => name.clone(),
+        Some(FaYearSelectionPolicy::Threshold { threshold, at_or_above_threshold, below_threshold, .. }) => {
+            if (n % 100) >= *threshold { at_or_above_threshold.clone() } else { below_threshold.clone() }
+        }
+    }
+}
+
+/// Entry point replacing the four former per-language `expand_*_cardinal`
+/// functions below — now shared across all five languages and fully data-
+/// driven. Mirrors `expandCardinalToken`.
+fn expand_cardinal_token(stripped: &str, data: &FaCardinalData) -> Option<String> {
+    if stripped.is_empty() || !stripped.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    if stripped.len() > 1 && stripped.starts_with('0') {
+        return None;
+    }
+    let n: u64 = stripped.parse().ok()?;
+    let yr = &data.year_reading;
+    if stripped.len() == 4 && n >= yr.range_min && n <= yr.range_max {
+        let candidate = select_year_candidate(n, &yr.selection_policy);
+        return Some(compose_year_reading(n, &candidate, data));
+    }
+    Some(cardinal_to_words(n, data))
 }
 
 // ---------------------------------------------------------------------------
@@ -408,175 +710,6 @@ fn fold_french_elision_backtick(word: &str, vocab_chars: &HashSet<char>) -> Stri
 }
 
 // ---------------------------------------------------------------------------
-// Spanish cardinal numbers 0-30 (Part H.5 Rule 2) - mirrors
-// `SPANISH_CARDINALS_0_30`/`expandSpanishCardinal` in faTextNormalize.ts.
-// Scope: bare cardinal integers 0-30, Spanish only — every one of these is a
-// SINGLE Spanish orthographic word; 31+ requires a space-linked "y" compound
-// (one input token -> multiple output words), which would break the
-// one-`WordResult`-per-CTC-word invariant `word_merge_e2e`/`words_per_chunk`
-// already rely on, so 31-99, decimals, thousands separators, currency,
-// percent, ordinals, negative numbers, and every other language stay OUT OF
-// SCOPE and continue to drop exactly as before this change.
-// ---------------------------------------------------------------------------
-
-/// Index `n` -> its Spanish spelling, for `n` in 0..=30. Mirrors
-/// `SPANISH_CARDINALS_0_30`.
-const SPANISH_CARDINALS_0_30: &[&str] = &[
-    "cero", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez", "once", "doce",
-    "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte", "veintiuno",
-    "veintidós", "veintitrés", "veinticuatro", "veinticinco", "veintiséis", "veintisiete", "veintiocho",
-    "veintinueve", "treinta",
-];
-
-/// `stripped` must be ENTIRELY digits, no leading zero (other than a bare
-/// "0"), no sign, no separators — anything else returns `None` and the
-/// caller falls through to the pre-existing digit-drop path unchanged.
-/// Mirrors `expandSpanishCardinal`.
-fn expand_spanish_cardinal(stripped: &str) -> Option<&'static str> {
-    if stripped.is_empty() || !stripped.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    if stripped.len() > 1 && stripped.starts_with('0') {
-        return None;
-    }
-    let n: u32 = stripped.parse().ok()?;
-    if n > 30 {
-        return None;
-    }
-    SPANISH_CARDINALS_0_30.get(n as usize).copied()
-}
-
-// ---------------------------------------------------------------------------
-// German cardinal numbers 0-30 (Part H.5 Rule 3, Phase 3b remainder audit,
-// 2026-08-15) - mirrors `GERMAN_CARDINALS_0_30`/`expandGermanCardinal` in
-// faTextNormalize.ts. Unlike Spanish, German has no structural wall at 30 —
-// every German cardinal is a single concatenated word arbitrarily far up —
-// so it is unaffected by the permanent single-word-output decision (b); the
-// cap at 30 here is a scope choice mirroring Rule 2's reviewed shape, not a
-// structural one. Values are the PRE-substitution vocab-safe spelling
-// (German vocab has no `ß`): "dreissig", not "dreißig".
-// ---------------------------------------------------------------------------
-
-/// Index `n` -> its German spelling (bare-cardinal reading), for `n` in
-/// 0..=30. Mirrors `GERMAN_CARDINALS_0_30`.
-const GERMAN_CARDINALS_0_30: &[&str] = &[
-    "null", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn", "elf", "zwölf",
-    "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn", "achtzehn", "neunzehn", "zwanzig", "einundzwanzig",
-    "zweiundzwanzig", "dreiundzwanzig", "vierundzwanzig", "fünfundzwanzig", "sechsundzwanzig", "siebenundzwanzig",
-    "achtundzwanzig", "neunundzwanzig", "dreissig",
-];
-
-/// `stripped` must be ENTIRELY digits, no leading zero (other than a bare
-/// "0"), no sign, no separators — anything else returns `None` and the
-/// caller falls through to the pre-existing digit-drop path unchanged.
-/// Mirrors `expandGermanCardinal`.
-fn expand_german_cardinal(stripped: &str) -> Option<&'static str> {
-    if stripped.is_empty() || !stripped.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    if stripped.len() > 1 && stripped.starts_with('0') {
-        return None;
-    }
-    let n: u32 = stripped.parse().ok()?;
-    if n > 30 {
-        return None;
-    }
-    GERMAN_CARDINALS_0_30.get(n as usize).copied()
-}
-
-// ---------------------------------------------------------------------------
-// Portuguese cardinal numbers 0-20 and 30 (Part H.5 Rule 4, Phase 3b
-// remainder, 2026-08-15) - mirrors `PORTUGUESE_CARDINALS_0_30`/
-// `expandPortugueseCardinal` in faTextNormalize.ts. Unlike Spanish's 21-29
-// (a single concatenated "veinti-" word) and German's arbitrarily-far
-// compounding, Portuguese 21-29 is a THREE-WORD space-linked "e" compound
-// ("vinte e três") - the same permanent single-word-output wall as Spanish
-// 31+ and French "et"-numbers under decision (b). 21-29 is therefore
-// PERMANENTLY excluded (`None` in the table below), not a missing entry.
-// 14/16/17/19 fork PT-PT/PT-BR; owner decision 2026-08-15 chose PT-BR
-// (quatorze/dezesseis/dezessete/dezenove).
-// ---------------------------------------------------------------------------
-
-/// Index `n` -> its Portuguese (PT-BR) spelling, for `n` in 0..=20 and
-/// n == 30. `None` at indices 21-29: no single-word spelling exists.
-/// Mirrors `PORTUGUESE_CARDINALS_0_30`.
-const PORTUGUESE_CARDINALS_0_30: &[Option<&str>] = &[
-    Some("zero"), Some("um"), Some("dois"), Some("três"), Some("quatro"), Some("cinco"), Some("seis"),
-    Some("sete"), Some("oito"), Some("nove"), Some("dez"), Some("onze"), Some("doze"), Some("treze"),
-    Some("quatorze"), Some("quinze"), Some("dezesseis"), Some("dezessete"), Some("dezoito"), Some("dezenove"),
-    Some("vinte"), None, None, None, None, None, None, None, None, None, Some("trinta"),
-];
-
-/// `stripped` must be ENTIRELY digits, no leading zero (other than a bare
-/// "0"), no sign, no separators — anything else returns `None` and the
-/// caller falls through to the pre-existing digit-drop path unchanged.
-/// Also returns `None` for 21-29 (in range but structurally excluded — see
-/// module comment above). Mirrors `expandPortugueseCardinal`.
-fn expand_portuguese_cardinal(stripped: &str) -> Option<&'static str> {
-    if stripped.is_empty() || !stripped.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    if stripped.len() > 1 && stripped.starts_with('0') {
-        return None;
-    }
-    let n: u32 = stripped.parse().ok()?;
-    if n > 30 {
-        return None;
-    }
-    PORTUGUESE_CARDINALS_0_30.get(n as usize).copied().flatten()
-}
-
-// ---------------------------------------------------------------------------
-// French cardinal numbers 0-30 minus 21 (Part H.5 Rule 5, Phase 3b close,
-// 2026-08-15) - mirrors `FRENCH_CARDINALS_0_30`/`expandFrenchCardinal` in
-// faTextNormalize.ts. French 17-19 and 22-29 are HYPHENATED single words
-// ("dix-sept", "vingt-trois") — verified harmless to the one-`WordResult`-
-// per-input-token contract before this rule was scoped: word splitting is
-// whitespace-only (`is_js_whitespace`, never hyphen), and
-// `fa_onnx.rs::merge_char_spans_to_words` splits only on the vocab `|`
-// delimiter id (`-` is an ordinary fr vocab member) — so a hyphenated
-// cardinal is one token in, one `WordResult`/`WordSpan` out, same as
-// Spanish's "veintitrés" or Portuguese's "dezenove". 21 ("vingt et un", a
-// space-linked 3-word compound under traditional orthography) is the one
-// value in 0-30 that is NOT single-word — excluded here as a table hole,
-// same permanent wall as Spanish 31+ and Portuguese 21-29 under decision
-// (b). "un" is the bare-cardinal citation form (mirrors "uno"/"um"), not
-// the feminine "une". No PT-PT/PT-BR-style regional fork exists in French
-// 0-30 (Belgian/Swiss forks only diverge at 70/80/90).
-// ---------------------------------------------------------------------------
-
-/// Index `n` -> its French spelling, for `n` in 0..=30. `None` at index 21:
-/// no single-word spelling exists under traditional orthography ("vingt et
-/// un" is 3 words), permanently blocked by decision (b) — not a missing
-/// table entry. Mirrors `FRENCH_CARDINALS_0_30`.
-const FRENCH_CARDINALS_0_30: &[Option<&str>] = &[
-    Some("zéro"), Some("un"), Some("deux"), Some("trois"), Some("quatre"), Some("cinq"), Some("six"),
-    Some("sept"), Some("huit"), Some("neuf"), Some("dix"), Some("onze"), Some("douze"), Some("treize"),
-    Some("quatorze"), Some("quinze"), Some("seize"), Some("dix-sept"), Some("dix-huit"), Some("dix-neuf"),
-    Some("vingt"), None, Some("vingt-deux"), Some("vingt-trois"), Some("vingt-quatre"), Some("vingt-cinq"),
-    Some("vingt-six"), Some("vingt-sept"), Some("vingt-huit"), Some("vingt-neuf"), Some("trente"),
-];
-
-/// `stripped` must be ENTIRELY digits, no leading zero (other than a bare
-/// "0"), no sign, no separators — anything else returns `None` and the
-/// caller falls through to the pre-existing digit-drop path unchanged.
-/// Also returns `None` for 21 (in range but structurally excluded — see
-/// module comment above). Mirrors `expandFrenchCardinal`.
-fn expand_french_cardinal(stripped: &str) -> Option<&'static str> {
-    if stripped.is_empty() || !stripped.chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    if stripped.len() > 1 && stripped.starts_with('0') {
-        return None;
-    }
-    let n: u32 = stripped.parse().ok()?;
-    if n > 30 {
-        return None;
-    }
-    FRENCH_CARDINALS_0_30.get(n as usize).copied().flatten()
-}
-
-// ---------------------------------------------------------------------------
 // Word / phrase normalization
 // ---------------------------------------------------------------------------
 
@@ -603,9 +736,13 @@ pub struct NormalizeResult {
 
 /// Normalizes one already-whitespace-isolated word: scoped-NFC + lowercase,
 /// the German ß->ss substitution, zero-width stripping, typographic folding,
-/// boundary-punctuation stripping, then a digit check and a per-character
-/// vocab membership check. Mirrors `normalizeWord`.
-pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<char>) -> WordResult {
+/// boundary-punctuation stripping, then a data-driven cardinal-number
+/// expansion (`expand_cardinal_token`, all five languages, WS2 T3.2 Step
+/// 3b-iii), then a digit check and a per-character vocab membership check
+/// (skipping the space character, which a multi-word compositional reading
+/// may now contain structurally — a fragment delimiter, not a spellable
+/// vocab character). Mirrors `normalizeWord`.
+pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<char>, cardinal_data: &FaCardinalData) -> WordResult {
     let nfc = compose_scoped_nfc(raw_word);
     let lowered = nfc.to_lowercase();
     let substituted = apply_language_specific_substitutions(&lowered, language);
@@ -629,14 +766,8 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
         };
     }
 
-    let cardinal_expansion = match language {
-        Language::Es => expand_spanish_cardinal(stripped),
-        Language::De => expand_german_cardinal(stripped),
-        Language::Pt => expand_portuguese_cardinal(stripped),
-        Language::Fr => expand_french_cardinal(stripped),
-        _ => None,
-    };
-    let candidate: &str = cardinal_expansion.unwrap_or(stripped);
+    let cardinal_expansion = expand_cardinal_token(stripped, cardinal_data);
+    let candidate: String = cardinal_expansion.clone().unwrap_or_else(|| stripped.to_string());
 
     if cardinal_expansion.is_none() && stripped.chars().any(|c| c.is_ascii_digit()) {
         return WordResult {
@@ -650,6 +781,9 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
     }
 
     for ch in candidate.chars() {
+        if ch == ' ' {
+            continue; // fragment delimiter of a multi-word compositional reading, not a spellable vocab character
+        }
         if !vocab_chars.contains(&ch) {
             return WordResult {
                 input: raw_word.to_string(),
@@ -663,14 +797,20 @@ pub fn normalize_word(raw_word: &str, language: Language, vocab_chars: &HashSet<
         }
     }
 
-    WordResult { input: raw_word.to_string(), representable: true, mapped: Some(candidate.to_string()), reason: None }
+    WordResult { input: raw_word.to_string(), representable: true, mapped: Some(candidate), reason: None }
 }
 
 /// Normalizes a word or whitespace-separated phrase against one language's
-/// CTC vocab. Mirrors `normalizeForForcedAlignment`.
-pub fn normalize_for_forced_alignment(input: &str, language: Language, vocab_chars: &HashSet<char>) -> NormalizeResult {
+/// CTC vocab. `cardinal_data` is that language's parsed `fa-cardinal-
+/// <lang>.json` (WS2 T3.2 Step 3b-iii). Mirrors `normalizeForForcedAlignment`.
+pub fn normalize_for_forced_alignment(
+    input: &str,
+    language: Language,
+    vocab_chars: &HashSet<char>,
+    cardinal_data: &FaCardinalData,
+) -> NormalizeResult {
     let raw_words = split_js_whitespace(input);
-    let words: Vec<WordResult> = raw_words.iter().map(|w| normalize_word(w, language, vocab_chars)).collect();
+    let words: Vec<WordResult> = raw_words.iter().map(|w| normalize_word(w, language, vocab_chars, cardinal_data)).collect();
     let text = words
         .iter()
         .filter(|w| w.representable)
@@ -690,6 +830,34 @@ mod tests {
 
     fn vocab(chars: &[char]) -> HashSet<char> {
         chars.iter().copied().collect()
+    }
+
+    /// Loads a language's REAL `fa-cardinal-<lang>.json` fixture (WS2 T3.2
+    /// Step 3b-iii) — used by every test in this module that needs a
+    /// `cardinal_data` argument, whether or not that specific test exercises
+    /// cardinal expansion (mirrors `faTextNormalize.test.ts`'s
+    /// `loadCardinalData`, which does the same for the TS-side tests).
+    fn cardinal_data_for(lang: Language) -> FaCardinalData {
+        let path = std::path::PathBuf::from(format!(
+            "{}/../scripts/fixtures/fa-cardinal-{}.json",
+            env!("CARGO_MANIFEST_DIR"),
+            lang.code()
+        ));
+        cardinal_data_from_path(&path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()))
+    }
+
+    /// Loads a language's REAL `fa-vocab-<lang>.json` fixture — used by the
+    /// compositional cardinal-number generator tests below, which (unlike
+    /// this module's other narrow hand-built vocabs) need arbitrary-
+    /// magnitude coverage (hundreds/thousands/millions), not just a fixed
+    /// 0-30 letter set.
+    fn real_vocab_for(lang: Language) -> HashSet<char> {
+        let path = std::path::PathBuf::from(format!(
+            "{}/../scripts/fixtures/fa-vocab-{}.json",
+            env!("CARGO_MANIFEST_DIR"),
+            lang.code()
+        ));
+        vocab_chars_from_path(&path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()))
     }
 
     #[test]
@@ -729,7 +897,7 @@ mod tests {
     #[test]
     fn german_eszett_maps_to_ss_before_vocab_check() {
         let v = vocab(&['s', 't', 'r', 'a', 'e']);
-        let result = normalize_word("straße", Language::De, &v);
+        let result = normalize_word("straße", Language::De, &v, &cardinal_data_for(Language::De));
         assert!(result.representable);
         assert_eq!(result.mapped.as_deref(), Some("strasse"));
     }
@@ -737,7 +905,7 @@ mod tests {
     #[test]
     fn uppercase_eszett_lowercases_then_maps_to_ss() {
         let v = vocab(&['g', 'r', 'o', 's']);
-        let result = normalize_word("GROẞ", Language::De, &v);
+        let result = normalize_word("GROẞ", Language::De, &v, &cardinal_data_for(Language::De));
         assert!(result.representable);
         assert_eq!(result.mapped.as_deref(), Some("gross"));
     }
@@ -745,7 +913,7 @@ mod tests {
     #[test]
     fn digit_bearing_word_is_unrepresentable_with_recorded_reason() {
         let v = vocab(&['a', 'v', 'l', 'b', 'e']);
-        let result = normalize_word("room101", Language::En, &v);
+        let result = normalize_word("room101", Language::En, &v, &cardinal_data_for(Language::En));
         assert!(!result.representable);
         assert!(result.mapped.is_none());
         assert!(result.reason.as_deref().unwrap().contains("digit"));
@@ -754,8 +922,9 @@ mod tests {
     #[test]
     fn empty_and_whitespace_only_input_yield_no_words() {
         let v = vocab(&['a']);
-        assert_eq!(normalize_for_forced_alignment("", Language::En, &v).words.len(), 0);
-        assert_eq!(normalize_for_forced_alignment("   \t\n  ", Language::En, &v).words.len(), 0);
+        let cd = cardinal_data_for(Language::En);
+        assert_eq!(normalize_for_forced_alignment("", Language::En, &v, &cd).words.len(), 0);
+        assert_eq!(normalize_for_forced_alignment("   \t\n  ", Language::En, &v, &cd).words.len(), 0);
     }
 
     #[test]
@@ -764,7 +933,7 @@ mod tests {
         // the real en vocab) — proves the port did not become permissive.
         let v = vocab(&['h', 'e', 'l', 'o']);
         assert!(!v.contains(&'п'), "test premise: п must be absent from the vocab");
-        let result = normalize_word("привет", Language::En, &v);
+        let result = normalize_word("привет", Language::En, &v, &cardinal_data_for(Language::En));
         assert!(!result.representable);
         assert!(result.reason.as_deref().unwrap().contains("is not in the en vocab"));
     }
@@ -772,7 +941,7 @@ mod tests {
     #[test]
     fn fold_then_strip_recovers_a_quoted_contraction() {
         let v = vocab(&['d', 'o', 'n', 't', '\'']);
-        let result = normalize_word("\u{201C}don\u{2019}t.\u{201D}", Language::En, &v);
+        let result = normalize_word("\u{201C}don\u{2019}t.\u{201D}", Language::En, &v, &cardinal_data_for(Language::En));
         assert!(result.representable);
         assert_eq!(result.mapped.as_deref(), Some("don't"));
     }
@@ -780,7 +949,7 @@ mod tests {
     #[test]
     fn zero_width_space_removed_mid_word() {
         let v = vocab(&['h', 'e', 'l', 'o']);
-        let result = normalize_word("hel\u{200B}lo", Language::En, &v);
+        let result = normalize_word("hel\u{200B}lo", Language::En, &v, &cardinal_data_for(Language::En));
         assert!(result.representable);
         assert_eq!(result.mapped.as_deref(), Some("hello"));
     }
@@ -803,14 +972,14 @@ mod tests {
 
     #[test]
     fn elision_stays_one_token_straight_apostrophe_unchanged() {
-        let result = normalize_word("l'oiseau", Language::Fr, &fr_vocab());
+        let result = normalize_word("l'oiseau", Language::Fr, &fr_vocab(), &cardinal_data_for(Language::Fr));
         assert!(result.representable);
         assert_eq!(result.mapped.as_deref(), Some("l'oiseau"));
     }
 
     #[test]
     fn elision_mute_h_backtick_folds_to_apostrophe() {
-        let result = normalize_word("l`homme", Language::Fr, &fr_vocab());
+        let result = normalize_word("l`homme", Language::Fr, &fr_vocab(), &cardinal_data_for(Language::Fr));
         assert!(result.representable);
         assert_eq!(result.mapped.as_deref(), Some("l'homme"));
     }
@@ -818,7 +987,7 @@ mod tests {
     #[test]
     fn aspirate_h_word_is_not_elided_stays_two_separate_tokens() {
         let v = fr_vocab();
-        let result = normalize_for_forced_alignment("le hibou", Language::Fr, &v);
+        let result = normalize_for_forced_alignment("le hibou", Language::Fr, &v, &cardinal_data_for(Language::Fr));
         assert_eq!(result.text, "le hibou");
         assert_eq!(result.words.len(), 2);
         assert!(result.words[0].representable && result.words[1].representable);
@@ -827,16 +996,16 @@ mod tests {
     #[test]
     fn curly_apostrophe_variant_matches_straight_and_backtick_results() {
         let v = fr_vocab();
-        let straight = normalize_word("l'oiseau", Language::Fr, &v);
-        let curly = normalize_word("l\u{2019}oiseau", Language::Fr, &v);
-        let backtick = normalize_word("l`oiseau", Language::Fr, &v);
+        let straight = normalize_word("l'oiseau", Language::Fr, &v, &cardinal_data_for(Language::Fr));
+        let curly = normalize_word("l\u{2019}oiseau", Language::Fr, &v, &cardinal_data_for(Language::Fr));
+        let backtick = normalize_word("l`oiseau", Language::Fr, &v, &cardinal_data_for(Language::Fr));
         assert_eq!(straight.mapped, curly.mapped);
         assert_eq!(straight.mapped, backtick.mapped);
     }
 
     #[test]
     fn two_letter_prefix_qu_folds_before_vowel() {
-        let result = normalize_word("qu`il", Language::Fr, &fr_vocab());
+        let result = normalize_word("qu`il", Language::Fr, &fr_vocab(), &cardinal_data_for(Language::Fr));
         assert!(result.representable);
         assert_eq!(result.mapped.as_deref(), Some("qu'il"));
     }
@@ -847,7 +1016,7 @@ mod tests {
         // "d'" substring is not word-initial, so the fold must not fire.
         // The backtick then simply isn't a vocab member and is rejected.
         let v = vocab(&['a', 'u', 'j', 'o', 'r', 'd', 'h', 'i']); // deliberately no apostrophe
-        let result = normalize_word("aujourd`hui", Language::Fr, &v);
+        let result = normalize_word("aujourd`hui", Language::Fr, &v, &cardinal_data_for(Language::Fr));
         assert!(!result.representable);
         assert!(result.reason.as_deref().unwrap().contains('`'));
     }
@@ -857,7 +1026,7 @@ mod tests {
         // "j`veux": prefix "j" + backtick + a consonant ("v"), not a vowel
         // or mute h — not a grammatical elision shape, must not fold.
         let v = fr_vocab();
-        let result = normalize_word("j`veux", Language::Fr, &v);
+        let result = normalize_word("j`veux", Language::Fr, &v, &cardinal_data_for(Language::Fr));
         assert!(!result.representable);
         assert!(result.reason.as_deref().unwrap().contains('`'));
     }
@@ -865,457 +1034,307 @@ mod tests {
     #[test]
     fn negative_backtick_is_language_gated_and_never_folds_outside_french() {
         let v = vocab(&['l', 'o', 'i', 's', 'e', 'a', 'u']); // no apostrophe, no backtick
-        let result = normalize_word("l`oiseau", Language::En, &v);
+        let result = normalize_word("l`oiseau", Language::En, &v, &cardinal_data_for(Language::En));
         assert!(!result.representable);
         assert!(result.reason.as_deref().unwrap().contains('`'));
     }
 
-    // -- Spanish cardinal numbers 0-30 (Part H.5 Rule 2) --------------------
+    // -- Compositional cardinal-number generation (WS2 T3.2 Step 3b-iii) ----
     //
-    // SCOPE: bare cardinal integers 0-30, Spanish only — see
-    // `expand_spanish_cardinal`'s own doc comment for why 31+ (a multi-word
-    // "y" compound) is a separate, later slice, not this one.
-
-    fn es_vocab() -> HashSet<char> {
-        // Every letter needed to spell "cero".."treinta" plus the accents
-        // dieciséis/veintidós/veintitrés/veintiséis require.
-        vocab(&['c', 'e', 'r', 'o', 'u', 'n', 'd', 's', 't', 'v', 'i', 'a', 'z', 'h', 'q', 'g', 'é', 'ó'])
-    }
-
-    #[test]
-    fn spanish_cardinal_boundary_zero_expands() {
-        let result = normalize_word("0", Language::Es, &es_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("cero"));
-    }
+    // Replaces the four former per-language CAPPED 0-30 tables (Spanish/
+    // German/Portuguese/French, Part H.5 Rules 2-5) with a shared, data-
+    // driven, unbounded generator. Every former "negative: N is past the
+    // scope cap, stays dropped" case here is INVERTED on purpose — see
+    // `faTextNormalize.test.ts`'s mirror-image rewrite for the same
+    // corpus. Uses `real_vocab_for` (the actual shipped vocab), not a
+    // narrow hand-built one, since these tests exercise arbitrary-magnitude
+    // output.
 
     #[test]
-    fn spanish_cardinal_bare_digit_expands() {
-        let result = normalize_word("23", Language::Es, &es_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("veintitrés"));
-    }
-
-    #[test]
-    fn spanish_cardinal_boundary_thirty_expands() {
-        let result = normalize_word("30", Language::Es, &es_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("treinta"));
-    }
-
-    #[test]
-    fn spanish_cardinal_survives_inside_a_phrase() {
-        let v = es_vocab();
-        let result = normalize_for_forced_alignment("cumplí 23 años", Language::Es, &v);
-        // "cumplí"/"años" aren't in this narrow test vocab — only the digit
-        // word matters here, so check its own entry directly.
-        let digit_word = result.words.iter().find(|w| w.input == "23").unwrap();
-        assert!(digit_word.representable);
-        assert_eq!(digit_word.mapped.as_deref(), Some("veintitrés"));
-    }
-
-    #[test]
-    fn negative_spanish_cardinal_31_is_a_multiword_compound_out_of_scope() {
-        let result = normalize_word("31", Language::Es, &es_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    #[test]
-    fn negative_spanish_cardinal_decimal_stays_dropped() {
-        let result = normalize_word("2.5", Language::Es, &es_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    #[test]
-    fn negative_spanish_cardinal_leading_zero_stays_dropped() {
-        let result = normalize_word("05", Language::Es, &es_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    #[test]
-    fn negative_spanish_cardinal_expansion_is_language_gated() {
-        // Other languages are unaffected: the same bare digit under "en"
-        // still drops exactly as it did before this rule. NOTE: was "fr"
-        // until Rule 5 (French cardinals) shipped — "23" under fr now
-        // expands to "vingt-trois", so fr stopped being a valid
-        // unaffected-language witness; "en" has no cardinal rule and
-        // structurally never will.
-        let v = vocab(&['v', 'e', 'i', 'n', 't', 'r', 's']);
-        let result = normalize_word("23", Language::En, &v);
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    // -- German cardinal numbers 0-30 (Part H.5 Rule 3, Phase 3b remainder) -
-    //
-    // SCOPE: bare cardinal integers 0-30, German only — unlike Spanish,
-    // German has no structural multi-word wall at 30; the cap here mirrors
-    // Rule 2's reviewed shape as a scope choice, not a structural one — see
-    // `expand_german_cardinal`'s own doc comment.
-
-    fn de_vocab() -> HashSet<char> {
-        // Every letter needed to spell "null".."dreissig" (pre-substituted
-        // ss, not ß) plus ü/ö.
-        vocab(&[
-            'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'l', 'n', 'o', 'r', 's', 't', 'u', 'v', 'w', 'z', 'ü', 'ö',
-        ])
-    }
-
-    #[test]
-    fn german_cardinal_boundary_zero_expands() {
-        let result = normalize_word("0", Language::De, &de_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("null"));
-    }
-
-    #[test]
-    fn german_cardinal_bare_digit_expands() {
-        let result = normalize_word("23", Language::De, &de_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("dreiundzwanzig"));
-    }
-
-    #[test]
-    fn german_cardinal_boundary_thirty_expands() {
-        let result = normalize_word("30", Language::De, &de_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("dreissig"));
-    }
-
-    #[test]
-    fn german_cardinal_survives_inside_a_phrase() {
-        let v = de_vocab();
-        let result = normalize_for_forced_alignment("ich bin 23 jahre alt", Language::De, &v);
-        let digit_word = result.words.iter().find(|w| w.input == "23").unwrap();
-        assert!(digit_word.representable);
-        assert_eq!(digit_word.mapped.as_deref(), Some("dreiundzwanzig"));
-    }
-
-    #[test]
-    fn negative_german_cardinal_31_is_past_the_scope_cap() {
-        let result = normalize_word("31", Language::De, &de_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    #[test]
-    fn negative_german_cardinal_decimal_stays_dropped() {
-        let result = normalize_word("2.5", Language::De, &de_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    #[test]
-    fn negative_german_cardinal_leading_zero_stays_dropped() {
-        let result = normalize_word("05", Language::De, &de_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    #[test]
-    fn negative_german_cardinal_expansion_is_language_gated() {
-        // Other languages are unaffected: the same bare digit under "en"
-        // still drops exactly as it did before this rule. NOTE: was "fr"
-        // until Rule 5 (French cardinals) shipped — see the Spanish variant
-        // of this test above for the full explanation.
-        let v = vocab(&['d', 'r', 'e', 'i', 'u', 'n', 'z', 'a', 'g']);
-        let result = normalize_word("23", Language::En, &v);
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    // -- Portuguese cardinal numbers 0-20 and 30 (Part H.5 Rule 4, Phase 3b
-    // remainder) -
-    //
-    // SCOPE: bare cardinal integers 0-20 and 30, Portuguese (PT-BR) only.
-    // 21-29 is permanently excluded (three-word "vinte e X" compound,
-    // blocked by decision (b)) — see `expand_portuguese_cardinal`'s own doc
-    // comment.
-
-    fn pt_vocab() -> HashSet<char> {
-        // Every letter needed to spell "zero".."trinta" (PT-BR spelling).
-        vocab(&[
-            'a', 'c', 'd', 'e', 'g', 'i', 'l', 'm', 'n', 'o', 'q', 'r', 's', 't', 'u', 'v', 'z', 'ê',
-        ])
-    }
-
-    #[test]
-    fn portuguese_cardinal_boundary_zero_expands() {
-        let result = normalize_word("0", Language::Pt, &pt_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("zero"));
-    }
-
-    #[test]
-    fn portuguese_cardinal_bare_digit_expands() {
-        let result = normalize_word("3", Language::Pt, &pt_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("três"));
-    }
-
-    #[test]
-    fn portuguese_cardinal_boundary_twenty_expands() {
-        let result = normalize_word("20", Language::Pt, &pt_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("vinte"));
-    }
-
-    #[test]
-    fn portuguese_cardinal_boundary_thirty_expands() {
-        let result = normalize_word("30", Language::Pt, &pt_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("trinta"));
-    }
-
-    #[test]
-    fn portuguese_cardinal_pt_br_variant_14_is_quatorze_not_catorze() {
-        let result = normalize_word("14", Language::Pt, &pt_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("quatorze"));
-    }
-
-    #[test]
-    fn portuguese_cardinal_pt_br_variant_16_is_dezesseis_not_dezasseis() {
-        let result = normalize_word("16", Language::Pt, &pt_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("dezesseis"));
-    }
-
-    #[test]
-    fn portuguese_cardinal_pt_br_variant_17_is_dezessete_not_dezassete() {
-        let result = normalize_word("17", Language::Pt, &pt_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("dezessete"));
-    }
-
-    #[test]
-    fn portuguese_cardinal_pt_br_variant_19_is_dezenove_not_dezanove() {
-        let result = normalize_word("19", Language::Pt, &pt_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("dezenove"));
-    }
-
-    #[test]
-    fn portuguese_cardinal_survives_inside_a_phrase() {
-        let v = pt_vocab();
-        let result = normalize_for_forced_alignment("tenho 3 gatos", Language::Pt, &v);
-        let digit_word = result.words.iter().find(|w| w.input == "3").unwrap();
-        assert!(digit_word.representable);
-        assert_eq!(digit_word.mapped.as_deref(), Some("três"));
-    }
-
-    #[test]
-    fn negative_portuguese_cardinal_21_to_29_is_the_permanent_three_word_wall() {
-        // 21-29 ("vinte e X") needs 3 output words, blocked by decision (b)
-        // — same permanent wall as Spanish 31+ and French "et"-numbers, not
-        // a missing table entry. Spot-checked at both ends of the gap.
-        let v = pt_vocab();
-        for n in ["21", "29"] {
-            let result = normalize_word(n, Language::Pt, &v);
-            assert!(!result.representable, "{n} should be blocked");
-            assert!(result.reason.as_deref().unwrap().contains("digit"));
+    fn spanish_cardinal_generator() {
+        let data = cardinal_data_for(Language::Es);
+        let v = real_vocab_for(Language::Es);
+        let cases: &[(&str, &str)] = &[
+            ("0", "cero"),
+            ("5", "cinco"),
+            ("16", "dieciséis"),
+            ("20", "veinte"),
+            ("23", "veintitrés"),
+            ("30", "treinta"),
+            ("31", "treinta y uno"), // former scope cap — now representable
+            ("99", "noventa y nueve"),
+            ("100", "cien"),
+            ("101", "ciento uno"),
+            ("105", "ciento cinco"),
+            ("200", "doscientos"),
+            ("234", "doscientos treinta y cuatro"),
+            ("1000", "mil"),
+            ("1500", "mil quinientos"),
+            ("1000000", "un millón"),
+            ("2000000", "dos millones"),
+        ];
+        for (input, want) in cases {
+            let result = normalize_word(input, Language::Es, &v, &data);
+            assert!(result.representable, "{input} should be representable");
+            assert_eq!(result.mapped.as_deref(), Some(*want), "input {input}");
         }
     }
 
     #[test]
-    fn negative_portuguese_cardinal_31_is_past_the_scope_cap() {
-        let result = normalize_word("31", Language::Pt, &pt_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    fn spanish_cardinal_survives_inside_a_phrase() {
+        let v = real_vocab_for(Language::Es);
+        let data = cardinal_data_for(Language::Es);
+        let result = normalize_for_forced_alignment("cumplí 23 años", Language::Es, &v, &data);
+        assert_eq!(result.text, "cumplí veintitrés años");
+        assert!(result.words.iter().all(|w| w.representable));
     }
 
     #[test]
-    fn negative_portuguese_cardinal_decimal_stays_dropped() {
-        let result = normalize_word("2.5", Language::Pt, &pt_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    fn german_cardinal_generator() {
+        let data = cardinal_data_for(Language::De);
+        let v = real_vocab_for(Language::De);
+        let cases: &[(&str, &str)] = &[
+            ("0", "null"),
+            ("5", "fünf"),
+            ("16", "sechzehn"),
+            ("20", "zwanzig"),
+            ("23", "dreiundzwanzig"),
+            ("30", "dreissig"),
+            ("31", "einunddreissig"), // former scope cap — now representable
+            ("99", "neunundneunzig"),
+            ("100", "einhundert"), // not "einshundert" — countWordOverride fix, Step 3b-iii
+            ("101", "einhunderteins"),
+            ("105", "einhundertfünf"),
+            ("200", "zweihundert"),
+            ("234", "zweihundertvierunddreissig"), // space-wall case: fully concatenated (see English at the same value below)
+            ("1000", "eintausend"),                // not "einstausend" — same countWordOverride fix
+            ("1500", "eintausendfünfhundert"),
+        ];
+        for (input, want) in cases {
+            let result = normalize_word(input, Language::De, &v, &data);
+            assert!(result.representable, "{input} should be representable");
+            assert_eq!(result.mapped.as_deref(), Some(*want), "input {input}");
+        }
     }
 
     #[test]
-    fn negative_portuguese_cardinal_leading_zero_stays_dropped() {
-        let result = normalize_word("05", Language::Pt, &pt_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
+    fn german_cardinal_survives_inside_a_phrase() {
+        let v = real_vocab_for(Language::De);
+        let data = cardinal_data_for(Language::De);
+        let result = normalize_for_forced_alignment("ich bin 23 jahre alt", Language::De, &v, &data);
+        assert_eq!(result.text, "ich bin dreiundzwanzig jahre alt");
+        assert!(result.words.iter().all(|w| w.representable));
     }
 
     #[test]
-    fn negative_portuguese_cardinal_expansion_is_language_gated() {
-        // Other languages are unaffected: the same bare digit under "en"
-        // still drops exactly as it did before this rule. NOTE: was "fr"
-        // until Rule 5 (French cardinals) shipped — see the Spanish variant
-        // of this test above for the full explanation.
-        let v = vocab(&['t', 'r', 'e', 's']);
-        let result = normalize_word("3", Language::En, &v);
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    // -- French cardinal numbers 0-30 minus 21 (Part H.5 Rule 5, Phase 3b
-    // close) -
-    //
-    // SCOPE: bare cardinal integers 0-30 EXCLUDING 21, French only. 17-19
-    // and 22-29 are hyphenated single words ("dix-sept", "vingt-trois") —
-    // one token in, one token out; see `expand_french_cardinal`'s own doc
-    // comment for why the multi-token-output worry that stalled this rule
-    // doesn't apply. 21 ("vingt et un", 3 words under traditional
-    // orthography) is the sole excluded value, permanently blocked by
-    // decision (b).
-
-    fn fr_cardinal_vocab() -> HashSet<char> {
-        // Every letter needed to spell "zéro".."trente" plus the hyphen
-        // 17-19/22-29 need. Deliberately separate from fr_vocab() above
-        // (Rule 1's elision-test helper), which is scoped only to Rule 1's
-        // own words and lacks c/f/g/p/r/z/é/- entirely.
-        vocab(&[
-            'z', 'é', 'r', 'o', 'u', 'n', 'd', 'e', 'x', 't', 'q', 'a', 'c', 'i', 's', 'h', 'v', 'g', 'f', 'p', '-',
-        ])
-    }
-
-    #[test]
-    fn french_cardinal_boundary_zero_expands() {
-        let result = normalize_word("0", Language::Fr, &fr_cardinal_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("zéro"));
+    fn portuguese_cardinal_generator() {
+        let data = cardinal_data_for(Language::Pt);
+        let v = real_vocab_for(Language::Pt);
+        let cases: &[(&str, &str)] = &[
+            ("0", "zero"),
+            ("3", "três"),
+            ("14", "quatorze"), // PT-BR variant
+            ("16", "dezesseis"),
+            ("17", "dezessete"),
+            ("19", "dezenove"),
+            ("20", "vinte"),
+            ("21", "vinte e um"), // former permanent "vinte e X" wall — now representable
+            ("29", "vinte e nove"),
+            ("30", "trinta"),
+            ("31", "trinta e um"), // former scope cap — now representable
+            ("100", "cem"),
+            ("101", "cento e um"),
+            ("105", "cento e cinco"),
+            ("200", "duzentos"),
+            ("234", "duzentos e trinta e quatro"),
+            ("1000", "mil"),
+            ("1500", "mil quinhentos"),
+            ("1000000", "um milhão"),
+            ("2000000", "dois milhões"),
+        ];
+        for (input, want) in cases {
+            let result = normalize_word(input, Language::Pt, &v, &data);
+            assert!(result.representable, "{input} should be representable");
+            assert_eq!(result.mapped.as_deref(), Some(*want), "input {input}");
+        }
     }
 
     #[test]
-    fn french_cardinal_bare_digit_expands() {
-        let result = normalize_word("1", Language::Fr, &fr_cardinal_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("un"));
+    fn portuguese_cardinal_survives_inside_a_phrase() {
+        let v = real_vocab_for(Language::Pt);
+        let data = cardinal_data_for(Language::Pt);
+        let result = normalize_for_forced_alignment("tenho 3 gatos", Language::Pt, &v, &data);
+        assert_eq!(result.text, "tenho três gatos");
+        assert!(result.words.iter().all(|w| w.representable));
     }
 
     #[test]
-    fn french_cardinal_hyphenated_teen_17_is_one_word_dix_sept() {
-        let result = normalize_word("17", Language::Fr, &fr_cardinal_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("dix-sept"));
-    }
-
-    #[test]
-    fn french_cardinal_hyphenated_teen_18_is_one_word_dix_huit() {
-        let result = normalize_word("18", Language::Fr, &fr_cardinal_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("dix-huit"));
-    }
-
-    #[test]
-    fn french_cardinal_hyphenated_teen_19_is_one_word_dix_neuf() {
-        let result = normalize_word("19", Language::Fr, &fr_cardinal_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("dix-neuf"));
-    }
-
-    #[test]
-    fn french_cardinal_boundary_twenty_expands() {
-        let result = normalize_word("20", Language::Fr, &fr_cardinal_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("vingt"));
-    }
-
-    #[test]
-    fn french_cardinal_hyphenated_vingt_deux_22_is_one_word() {
-        let result = normalize_word("22", Language::Fr, &fr_cardinal_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("vingt-deux"));
-    }
-
-    #[test]
-    fn french_cardinal_hyphenated_vingt_neuf_29_is_one_word() {
-        let result = normalize_word("29", Language::Fr, &fr_cardinal_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("vingt-neuf"));
-    }
-
-    #[test]
-    fn french_cardinal_boundary_thirty_expands() {
-        let result = normalize_word("30", Language::Fr, &fr_cardinal_vocab());
-        assert!(result.representable);
-        assert_eq!(result.mapped.as_deref(), Some("trente"));
+    fn french_cardinal_generator() {
+        let data = cardinal_data_for(Language::Fr);
+        let v = real_vocab_for(Language::Fr);
+        let cases: &[(&str, &str)] = &[
+            ("0", "zéro"),
+            ("1", "un"),
+            ("17", "dix-sept"), // hyphenated teen, one token in/out
+            ("18", "dix-huit"),
+            ("19", "dix-neuf"),
+            ("20", "vingt"),
+            ("21", "vingt et un"), // former permanent "vingt et un" wall — now representable
+            ("22", "vingt-deux"),
+            ("29", "vingt-neuf"),
+            ("30", "trente"),
+            ("31", "trente et un"), // former scope cap — now representable
+            ("100", "cent"),       // dropsOneMultiplier: no leading "un"
+            ("101", "cent un"),
+            ("105", "cent cinq"),
+            ("200", "deux cents"),               // exact multiple of 100 pluralizes "cent"
+            ("234", "deux cent trente-quatre"),  // NOT an exact multiple: no 's' on "cent"
+            ("1000", "mille"),
+            ("1500", "mille cinq cents"),
+            ("1000000", "un million"),
+            ("2000000", "deux millions"),
+        ];
+        for (input, want) in cases {
+            let result = normalize_word(input, Language::Fr, &v, &data);
+            assert!(result.representable, "{input} should be representable");
+            assert_eq!(result.mapped.as_deref(), Some(*want), "input {input}");
+        }
     }
 
     #[test]
     fn french_cardinal_hyphenated_expansion_stays_one_word_result_not_two() {
-        // The specific worry that stalled this rule: does one hyphenated
-        // input token produce two WordResults? It does not.
-        let v = fr_cardinal_vocab();
-        let result = normalize_for_forced_alignment("dix-sept sont ici", Language::Fr, &v);
+        // The specific worry that stalled the old capped Rule 5: does one
+        // hyphenated input token produce two WordResults? It does not.
+        let v = real_vocab_for(Language::Fr);
+        let data = cardinal_data_for(Language::Fr);
+        let result = normalize_for_forced_alignment("dix-sept sont ici", Language::Fr, &v, &data);
         assert_eq!(result.words.len(), 3);
         assert_eq!(result.words[0].mapped.as_deref(), Some("dix-sept"));
     }
 
     #[test]
     fn french_cardinal_survives_inside_a_phrase() {
-        let v = fr_cardinal_vocab();
-        let result = normalize_for_forced_alignment("il a 17 ans", Language::Fr, &v);
-        let digit_word = result.words.iter().find(|w| w.input == "17").unwrap();
-        assert!(digit_word.representable);
-        assert_eq!(digit_word.mapped.as_deref(), Some("dix-sept"));
-    }
-
-    #[test]
-    fn negative_french_cardinal_21_is_the_permanent_three_word_wall() {
-        let result = normalize_word("21", Language::Fr, &fr_cardinal_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    #[test]
-    fn negative_french_cardinal_31_is_past_the_scope_cap() {
-        let result = normalize_word("31", Language::Fr, &fr_cardinal_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    #[test]
-    fn negative_french_cardinal_decimal_stays_dropped() {
-        let result = normalize_word("2.5", Language::Fr, &fr_cardinal_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    #[test]
-    fn negative_french_cardinal_leading_zero_stays_dropped() {
-        let result = normalize_word("05", Language::Fr, &fr_cardinal_vocab());
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    #[test]
-    fn negative_french_cardinal_expansion_is_language_gated() {
-        let v = vocab(&['d', 'i', 'x', 's', 'e', 'p', 't']);
-        let result = normalize_word("17", Language::En, &v);
-        assert!(!result.representable);
-        assert!(result.reason.as_deref().unwrap().contains("digit"));
-    }
-
-    // -- Rule 1 x Rule 5 co-fire (elision + cardinal expansion) -------------
-
-    fn fr_elision_and_cardinal_vocab() -> HashSet<char> {
-        // Union of fr_vocab()'s elision letters and fr_cardinal_vocab()'s
-        // cardinal letters, plus the apostrophe the elision fold needs.
-        vocab(&[
-            'j', 'a', 'i', 'q', 'u', 'l', 'n', 's', 'd', 'x', 't', 'e', 'p', 'v', 'g', '-', '\'',
-        ])
+        let v = real_vocab_for(Language::Fr);
+        let data = cardinal_data_for(Language::Fr);
+        let result = normalize_for_forced_alignment("il a 17 ans", Language::Fr, &v, &data);
+        assert_eq!(result.text, "il a dix-sept ans");
+        assert!(result.words.iter().all(|w| w.representable));
     }
 
     #[test]
     fn elision_backtick_fold_and_cardinal_expansion_both_fire_in_one_phrase() {
-        let v = fr_elision_and_cardinal_vocab();
-        let result = normalize_for_forced_alignment("j`ai 17 ans", Language::Fr, &v);
+        let v = real_vocab_for(Language::Fr);
+        let data = cardinal_data_for(Language::Fr);
+        let result = normalize_for_forced_alignment("j`ai 17 ans", Language::Fr, &v, &data);
         assert_eq!(result.text, "j'ai dix-sept ans");
         assert!(result.words.iter().all(|w| w.representable));
     }
 
     #[test]
     fn elision_backtick_fold_and_a_hyphenated_cardinal_both_survive_together() {
-        let v = fr_elision_and_cardinal_vocab();
-        let result = normalize_for_forced_alignment("qu`il a 22 ans", Language::Fr, &v);
+        let v = real_vocab_for(Language::Fr);
+        let data = cardinal_data_for(Language::Fr);
+        let result = normalize_for_forced_alignment("qu`il a 22 ans", Language::Fr, &v, &data);
         assert_eq!(result.text, "qu'il a vingt-deux ans");
         assert!(result.words.iter().all(|w| w.representable));
+    }
+
+    #[test]
+    fn english_cardinal_generator() {
+        // NEW — no FA-side cardinal expansion existed for English before
+        // this step; every digit token was unconditionally dropped.
+        let data = cardinal_data_for(Language::En);
+        let v = real_vocab_for(Language::En);
+        let cases: &[(&str, &str)] = &[
+            ("0", "zero"),
+            ("5", "five"),
+            ("16", "sixteen"),
+            ("20", "twenty"),
+            ("23", "twenty-three"), // former "unaffected-language control" value under every other language's old test
+            ("30", "thirty"),
+            ("31", "thirty-one"),
+            ("99", "ninety-nine"),
+            ("100", "one hundred"),
+            ("101", "one hundred one"),
+            ("200", "two hundred"),
+            ("234", "two hundred thirty-four"), // space-wall case (see German's single-word counterpart above)
+            ("1000", "one thousand"),
+            ("1500", "one thousand five hundred"),
+            ("1000000", "one million"),
+            ("2000000", "two million"),
+        ];
+        for (input, want) in cases {
+            let result = normalize_word(input, Language::En, &v, &data);
+            assert!(result.representable, "{input} should be representable");
+            assert_eq!(result.mapped.as_deref(), Some(*want), "input {input}");
+        }
+    }
+
+    #[test]
+    fn english_cardinal_survives_inside_a_phrase() {
+        let v = real_vocab_for(Language::En);
+        let data = cardinal_data_for(Language::En);
+        let result = normalize_for_forced_alignment("I turned 23 years old", Language::En, &v, &data);
+        assert_eq!(result.text, "i turned twenty-three years old");
+        assert!(result.words.iter().all(|w| w.representable));
+    }
+
+    #[test]
+    fn negative_cardinal_decimal_and_leading_zero_stay_dropped_all_languages() {
+        // Unaffected by Step 3b-iii — still out of `expand_cardinal_token`'s
+        // scope regardless of language.
+        for lang in [Language::En, Language::Es, Language::Fr, Language::De, Language::Pt] {
+            let v = real_vocab_for(lang);
+            let data = cardinal_data_for(lang);
+            for input in ["2.5", "05"] {
+                let result = normalize_word(input, lang, &v, &data);
+                assert!(!result.representable, "{lang:?} {input} should stay dropped");
+                assert!(result.reason.as_deref().unwrap().contains("digit"));
+            }
+        }
+    }
+
+    // -- yearReading (WS2 T3.2 Step 3b-ii's selectionPolicy, consumed here
+    // for the first time) -----------------------------------------------
+    //
+    // en/de: the modFloorThreshold policy — n % 100 >= 10 selects the
+    // "pair"/"hundertgruppe" candidate, else the "compound" (plain cardinal)
+    // fallback — mirroring the matcher's (`textNormalize.ts`) own x00-x09
+    // quirk on purpose. es/fr/pt: a plain "compound" string policy — always
+    // the full cardinal.
+
+    #[test]
+    fn year_reading_generator() {
+        let cases: &[(Language, &str, &str)] = &[
+            (Language::En, "1998", "nineteen ninety-eight"), // >= threshold: "pair"
+            (Language::En, "1905", "one thousand nine hundred five"), // < threshold (x00-x09 quirk): "compound"
+            (Language::En, "2010", "twenty ten"),
+            (Language::En, "2004", "two thousand four"),
+            (Language::De, "1998", "neunzehnhundertachtundneunzig"), // >= threshold: "hundertgruppe"
+            (Language::De, "1905", "eintausendneunhundertfünf"),     // < threshold: "compound"
+            (Language::Es, "1998", "mil novecientos noventa y ocho"), // plain "compound" policy, always
+            (Language::Fr, "1998", "mille neuf cent quatre-vingt-dix-huit"),
+            (Language::Pt, "1998", "mil novecentos e noventa e oito"),
+        ];
+        for (lang, input, want) in cases {
+            let v = real_vocab_for(*lang);
+            let data = cardinal_data_for(*lang);
+            let result = normalize_word(input, *lang, &v, &data);
+            assert!(result.representable, "{lang:?} {input} should be representable");
+            assert_eq!(result.mapped.as_deref(), Some(*want), "{lang:?} {input}");
+        }
+    }
+
+    #[test]
+    fn year_reading_does_not_apply_to_a_3_digit_token_even_inside_the_numeric_range() {
+        // yearReading only applies to a 4-CHARACTER token (mirrors the
+        // matcher's own `tok.length === 4` gate) — "998" doesn't qualify
+        // even though 1998 itself is in range.
+        let v = real_vocab_for(Language::En);
+        let data = cardinal_data_for(Language::En);
+        let result = normalize_word("998", Language::En, &v, &data);
+        assert!(result.representable);
+        assert_eq!(result.mapped.as_deref(), Some("nine hundred ninety-eight")); // plain cardinal, not year-pair
     }
 }
 
@@ -1372,10 +1391,21 @@ mod fixture_parity {
         map
     }
 
+    fn load_all_cardinal_data() -> HashMap<Language, FaCardinalData> {
+        let mut map = HashMap::new();
+        for lang in [Language::En, Language::Es, Language::Fr, Language::De, Language::Pt] {
+            let path = fixtures_dir().join(format!("fa-cardinal-{}.json", lang.code()));
+            let data = cardinal_data_from_path(&path).unwrap_or_else(|e| panic!("failed to load {}: {e}", path.display()));
+            map.insert(lang, data);
+        }
+        map
+    }
+
     #[test]
     fn fixture_matches_rust_port_for_every_entry_all_five_languages() {
         let fixture = load_fixture();
         let vocabs = load_all_vocabs();
+        let cardinal_data = load_all_cardinal_data();
         assert!(!fixture.entries.is_empty(), "fixture must not be empty");
 
         let mut seen_languages: HashSet<&str> = HashSet::new();
@@ -1387,7 +1417,7 @@ mod fixture_parity {
                 .unwrap_or_else(|| panic!("fixture entry has unknown language code: {}", entry.language));
             let vocab_chars = &vocabs[&language];
 
-            let got = normalize_for_forced_alignment(&entry.input, language, vocab_chars);
+            let got = normalize_for_forced_alignment(&entry.input, language, vocab_chars, &cardinal_data[&language]);
 
             if got.text != entry.text {
                 mismatches.push(format!(
@@ -1443,6 +1473,7 @@ mod fixture_parity {
         // accident.
         let fixture = load_fixture();
         let vocabs = load_all_vocabs();
+        let cardinal_data = load_all_cardinal_data();
 
         let oov_entry = fixture
             .entries
@@ -1460,7 +1491,7 @@ mod fixture_parity {
         let oov_word = oov_entry.words.iter().find(|w| w.input.contains('п')).unwrap();
         assert!(!oov_word.representable, "fixture premise: TS reference must reject the OOV word");
 
-        let got = normalize_word(&oov_word.input, language, &vocabs[&language]);
+        let got = normalize_word(&oov_word.input, language, &vocabs[&language], &cardinal_data[&language]);
         assert!(!got.representable, "Rust port must also reject the OOV word — port must not be permissive");
         assert_eq!(got.reason, oov_word.reason);
     }

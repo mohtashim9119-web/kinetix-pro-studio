@@ -30,6 +30,7 @@ import {
   normalizeForForcedAlignment,
   vocabCharsFromRawVocab,
   type FaLanguageCode,
+  type FaCardinalData,
 } from './faTextNormalize';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -60,10 +61,19 @@ function loadVocabChars(lang: FaLanguageCode): Set<string> {
   return vocabCharsFromRawVocab(raw.vocab);
 }
 
+function loadCardinalData(lang: FaLanguageCode): FaCardinalData {
+  return JSON.parse(
+    readFileSync(resolve(REPO, 'scripts', 'fixtures', `fa-cardinal-${lang}.json`), 'utf-8'),
+  ) as FaCardinalData;
+}
+
 const LANGUAGES: FaLanguageCode[] = ['en', 'es', 'fr', 'de', 'pt'];
 const VOCABS: Record<FaLanguageCode, Set<string>> = Object.fromEntries(
   LANGUAGES.map(lang => [lang, loadVocabChars(lang)]),
 ) as Record<FaLanguageCode, Set<string>>;
+const CARDINAL_DATA: Record<FaLanguageCode, FaCardinalData> = Object.fromEntries(
+  LANGUAGES.map(lang => [lang, loadCardinalData(lang)]),
+) as Record<FaLanguageCode, FaCardinalData>;
 
 const fixture: FixtureFile = JSON.parse(
   readFileSync(resolve(REPO, 'scripts', 'fixtures', 'fa-text-normalize-fixture.json'), 'utf-8'),
@@ -80,7 +90,7 @@ describe('fa-text-normalize-fixture.json — drift guard against the live TS mod
 
   for (const entry of fixture.entries) {
     it(`${entry.language}: ${JSON.stringify(entry.input)} (${entry.note}) matches the committed fixture`, () => {
-      const result = normalizeForForcedAlignment(entry.input, entry.language, VOCABS[entry.language]);
+      const result = normalizeForForcedAlignment(entry.input, entry.language, VOCABS[entry.language], CARDINAL_DATA[entry.language]);
 
       expect(result.text).toBe(entry.text);
       expect(result.words).toHaveLength(entry.words.length);

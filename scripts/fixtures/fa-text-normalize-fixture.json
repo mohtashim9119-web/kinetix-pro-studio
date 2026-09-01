@@ -645,14 +645,28 @@
       "words": [
         {
           "input": "12",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"12\")",
-          "tokenIds": null
+          "representable": true,
+          "mapped": "twelve",
+          "reason": null,
+          "tokenIds": [
+            26,
+            29,
+            11,
+            18,
+            28,
+            11
+          ]
         }
       ],
-      "text": "",
-      "textTokenIds": []
+      "text": "twelve",
+      "textTokenIds": [
+        26,
+        29,
+        11,
+        18,
+        28,
+        11
+      ]
     },
     {
       "language": "en",
@@ -1819,7 +1833,7 @@
     {
       "language": "es",
       "input": "23",
-      "note": "es cardinal 0-30: bare digit expands to a spelled word",
+      "note": "es cardinal: bare digit 0-30 range expands to a spelled word",
       "words": [
         {
           "input": "23",
@@ -1857,7 +1871,7 @@
     {
       "language": "es",
       "input": "0",
-      "note": "es cardinal 0-30: lower boundary value",
+      "note": "es cardinal: lower boundary value",
       "words": [
         {
           "input": "0",
@@ -1883,7 +1897,7 @@
     {
       "language": "es",
       "input": "30",
-      "note": "es cardinal 0-30: upper boundary value",
+      "note": "es cardinal: former table upper boundary value",
       "words": [
         {
           "input": "30",
@@ -1915,7 +1929,7 @@
     {
       "language": "es",
       "input": "cumplí 23 años",
-      "note": "es cardinal 0-30: expansion survives inside a phrase",
+      "note": "es cardinal: expansion survives inside a phrase",
       "words": [
         {
           "input": "cumplí",
@@ -1991,18 +2005,232 @@
     {
       "language": "es",
       "input": "31",
-      "note": "es cardinal negative: 31 is a multi-word \"y\" compound, out of scope, stays dropped",
+      "note": "es cardinal: former cap boundary (used to stay dropped as a multi-word \"y\" compound) — now representable",
       "words": [
         {
           "input": "31",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"31\")",
-          "tokenIds": null
+          "representable": true,
+          "mapped": "treinta y uno",
+          "reason": null,
+          "tokenIds": [
+            26,
+            24,
+            11,
+            15,
+            20,
+            26,
+            7,
+            4,
+            31,
+            4,
+            27,
+            20,
+            21
+          ]
         }
       ],
-      "text": "",
-      "textTokenIds": []
+      "text": "treinta y uno",
+      "textTokenIds": [
+        26,
+        24,
+        11,
+        15,
+        20,
+        26,
+        7,
+        4,
+        31,
+        4,
+        27,
+        20,
+        21
+      ]
+    },
+    {
+      "language": "es",
+      "input": "234",
+      "note": "es cardinal: arbitrary magnitude, hundreds + \"y\" compound (doscientos treinta y cuatro)",
+      "words": [
+        {
+          "input": "234",
+          "representable": true,
+          "mapped": "doscientos treinta y cuatro",
+          "reason": null,
+          "tokenIds": [
+            10,
+            21,
+            25,
+            9,
+            15,
+            11,
+            20,
+            26,
+            21,
+            25,
+            4,
+            26,
+            24,
+            11,
+            15,
+            20,
+            26,
+            7,
+            4,
+            31,
+            4,
+            9,
+            27,
+            7,
+            26,
+            24,
+            21
+          ]
+        }
+      ],
+      "text": "doscientos treinta y cuatro",
+      "textTokenIds": [
+        10,
+        21,
+        25,
+        9,
+        15,
+        11,
+        20,
+        26,
+        21,
+        25,
+        4,
+        26,
+        24,
+        11,
+        15,
+        20,
+        26,
+        7,
+        4,
+        31,
+        4,
+        9,
+        27,
+        7,
+        26,
+        24,
+        21
+      ]
+    },
+    {
+      "language": "es",
+      "input": "1000000",
+      "note": "es cardinal: arbitrary magnitude, million-level with the \"un millón\" apocope fix",
+      "words": [
+        {
+          "input": "1000000",
+          "representable": true,
+          "mapped": "un millón",
+          "reason": null,
+          "tokenIds": [
+            27,
+            20,
+            4,
+            19,
+            15,
+            18,
+            18,
+            37,
+            20
+          ]
+        }
+      ],
+      "text": "un millón",
+      "textTokenIds": [
+        27,
+        20,
+        4,
+        19,
+        15,
+        18,
+        18,
+        37,
+        20
+      ]
+    },
+    {
+      "language": "es",
+      "input": "1998",
+      "note": "es cardinal: year-shaped value, always the plain \"compound\" reading (no pair-style policy for es)",
+      "words": [
+        {
+          "input": "1998",
+          "representable": true,
+          "mapped": "mil novecientos noventa y ocho",
+          "reason": null,
+          "tokenIds": [
+            19,
+            15,
+            18,
+            4,
+            20,
+            21,
+            28,
+            11,
+            9,
+            15,
+            11,
+            20,
+            26,
+            21,
+            25,
+            4,
+            20,
+            21,
+            28,
+            11,
+            20,
+            26,
+            7,
+            4,
+            31,
+            4,
+            21,
+            9,
+            14,
+            21
+          ]
+        }
+      ],
+      "text": "mil novecientos noventa y ocho",
+      "textTokenIds": [
+        19,
+        15,
+        18,
+        4,
+        20,
+        21,
+        28,
+        11,
+        9,
+        15,
+        11,
+        20,
+        26,
+        21,
+        25,
+        4,
+        20,
+        21,
+        28,
+        11,
+        20,
+        26,
+        7,
+        4,
+        31,
+        4,
+        21,
+        9,
+        14,
+        21
+      ]
     },
     {
       "language": "es",
@@ -2037,25 +2265,9 @@
       "textTokenIds": []
     },
     {
-      "language": "en",
-      "input": "23",
-      "note": "es cardinal 0-30 unaffected-language control: en digit word still drops exactly as before",
-      "words": [
-        {
-          "input": "23",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"23\")",
-          "tokenIds": null
-        }
-      ],
-      "text": "",
-      "textTokenIds": []
-    },
-    {
       "language": "de",
       "input": "23",
-      "note": "de cardinal 0-30: bare digit expands to a spelled word",
+      "note": "de cardinal: bare digit 0-30 range expands to a spelled word",
       "words": [
         {
           "input": "23",
@@ -2101,7 +2313,7 @@
     {
       "language": "de",
       "input": "0",
-      "note": "de cardinal 0-30: lower boundary value",
+      "note": "de cardinal: lower boundary value",
       "words": [
         {
           "input": "0",
@@ -2127,7 +2339,7 @@
     {
       "language": "de",
       "input": "30",
-      "note": "de cardinal 0-30: upper boundary value (dreissig, pre-substituted ss)",
+      "note": "de cardinal: former table upper boundary value (dreissig, pre-substituted ss)",
       "words": [
         {
           "input": "30",
@@ -2161,7 +2373,7 @@
     {
       "language": "de",
       "input": "ich bin 23 jahre alt",
-      "note": "de cardinal 0-30: expansion survives inside a phrase",
+      "note": "de cardinal: expansion survives inside a phrase",
       "words": [
         {
           "input": "ich",
@@ -2271,18 +2483,432 @@
     {
       "language": "de",
       "input": "31",
-      "note": "de cardinal negative: 31 is past the scope cap, stays dropped",
+      "note": "de cardinal: former cap boundary (used to stay dropped) — now representable",
       "words": [
         {
           "input": "31",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"31\")",
-          "tokenIds": null
+          "representable": true,
+          "mapped": "einunddreissig",
+          "reason": null,
+          "tokenIds": [
+            11,
+            15,
+            20,
+            27,
+            20,
+            10,
+            10,
+            24,
+            11,
+            15,
+            25,
+            25,
+            15,
+            13
+          ]
         }
       ],
-      "text": "",
-      "textTokenIds": []
+      "text": "einunddreissig",
+      "textTokenIds": [
+        11,
+        15,
+        20,
+        27,
+        20,
+        10,
+        10,
+        24,
+        11,
+        15,
+        25,
+        25,
+        15,
+        13
+      ]
+    },
+    {
+      "language": "de",
+      "input": "100",
+      "note": "de cardinal: einhundert, not einshundert (countWordOverride fix, WS2 T3.2 Step 3b-iii)",
+      "words": [
+        {
+          "input": "100",
+          "representable": true,
+          "mapped": "einhundert",
+          "reason": null,
+          "tokenIds": [
+            11,
+            15,
+            20,
+            14,
+            27,
+            20,
+            10,
+            11,
+            24,
+            26
+          ]
+        }
+      ],
+      "text": "einhundert",
+      "textTokenIds": [
+        11,
+        15,
+        20,
+        14,
+        27,
+        20,
+        10,
+        11,
+        24,
+        26
+      ]
+    },
+    {
+      "language": "de",
+      "input": "234",
+      "note": "de cardinal: space-wall case — fully concatenated into one word, unlike en/es/fr/pt at the same value",
+      "words": [
+        {
+          "input": "234",
+          "representable": true,
+          "mapped": "zweihundertvierunddreissig",
+          "reason": null,
+          "tokenIds": [
+            32,
+            29,
+            11,
+            15,
+            14,
+            27,
+            20,
+            10,
+            11,
+            24,
+            26,
+            28,
+            15,
+            11,
+            24,
+            27,
+            20,
+            10,
+            10,
+            24,
+            11,
+            15,
+            25,
+            25,
+            15,
+            13
+          ]
+        }
+      ],
+      "text": "zweihundertvierunddreissig",
+      "textTokenIds": [
+        32,
+        29,
+        11,
+        15,
+        14,
+        27,
+        20,
+        10,
+        11,
+        24,
+        26,
+        28,
+        15,
+        11,
+        24,
+        27,
+        20,
+        10,
+        10,
+        24,
+        11,
+        15,
+        25,
+        25,
+        15,
+        13
+      ]
+    },
+    {
+      "language": "de",
+      "input": "1000",
+      "note": "de cardinal: eintausend, not einstausend (countWordOverride fix)",
+      "words": [
+        {
+          "input": "1000",
+          "representable": true,
+          "mapped": "eintausend",
+          "reason": null,
+          "tokenIds": [
+            11,
+            15,
+            20,
+            26,
+            7,
+            27,
+            25,
+            11,
+            20,
+            10
+          ]
+        }
+      ],
+      "text": "eintausend",
+      "textTokenIds": [
+        11,
+        15,
+        20,
+        26,
+        7,
+        27,
+        25,
+        11,
+        20,
+        10
+      ]
+    },
+    {
+      "language": "de",
+      "input": "1998",
+      "note": "de yearReading: n % 100 = 98 >= threshold (10) -> \"hundertgruppe\" (neunzehnhundertachtundneunzig)",
+      "words": [
+        {
+          "input": "1998",
+          "representable": true,
+          "mapped": "neunzehnhundertachtundneunzig",
+          "reason": null,
+          "tokenIds": [
+            20,
+            11,
+            27,
+            20,
+            32,
+            11,
+            14,
+            20,
+            14,
+            27,
+            20,
+            10,
+            11,
+            24,
+            26,
+            7,
+            9,
+            14,
+            26,
+            27,
+            20,
+            10,
+            20,
+            11,
+            27,
+            20,
+            32,
+            15,
+            13
+          ]
+        }
+      ],
+      "text": "neunzehnhundertachtundneunzig",
+      "textTokenIds": [
+        20,
+        11,
+        27,
+        20,
+        32,
+        11,
+        14,
+        20,
+        14,
+        27,
+        20,
+        10,
+        11,
+        24,
+        26,
+        7,
+        9,
+        14,
+        26,
+        27,
+        20,
+        10,
+        20,
+        11,
+        27,
+        20,
+        32,
+        15,
+        13
+      ]
+    },
+    {
+      "language": "de",
+      "input": "1905",
+      "note": "de yearReading: n % 100 = 5 < threshold (10), x00-x09 quirk mirrored from the matcher -> \"compound\"",
+      "words": [
+        {
+          "input": "1905",
+          "representable": true,
+          "mapped": "eintausendneunhundertfünf",
+          "reason": null,
+          "tokenIds": [
+            11,
+            15,
+            20,
+            26,
+            7,
+            27,
+            25,
+            11,
+            20,
+            10,
+            20,
+            11,
+            27,
+            20,
+            14,
+            27,
+            20,
+            10,
+            11,
+            24,
+            26,
+            12,
+            37,
+            20,
+            12
+          ]
+        }
+      ],
+      "text": "eintausendneunhundertfünf",
+      "textTokenIds": [
+        11,
+        15,
+        20,
+        26,
+        7,
+        27,
+        25,
+        11,
+        20,
+        10,
+        20,
+        11,
+        27,
+        20,
+        14,
+        27,
+        20,
+        10,
+        11,
+        24,
+        26,
+        12,
+        37,
+        20,
+        12
+      ]
+    },
+    {
+      "language": "de",
+      "input": "2000",
+      "note": "de yearReading: x00-x09 quirk, another century",
+      "words": [
+        {
+          "input": "2000",
+          "representable": true,
+          "mapped": "zweitausend",
+          "reason": null,
+          "tokenIds": [
+            32,
+            29,
+            11,
+            15,
+            26,
+            7,
+            27,
+            25,
+            11,
+            20,
+            10
+          ]
+        }
+      ],
+      "text": "zweitausend",
+      "textTokenIds": [
+        32,
+        29,
+        11,
+        15,
+        26,
+        7,
+        27,
+        25,
+        11,
+        20,
+        10
+      ]
+    },
+    {
+      "language": "de",
+      "input": "2010",
+      "note": "de yearReading: n % 100 = 10 >= threshold, boundary value itself",
+      "words": [
+        {
+          "input": "2010",
+          "representable": true,
+          "mapped": "zwanzighundertzehn",
+          "reason": null,
+          "tokenIds": [
+            32,
+            29,
+            7,
+            20,
+            32,
+            15,
+            13,
+            14,
+            27,
+            20,
+            10,
+            11,
+            24,
+            26,
+            32,
+            11,
+            14,
+            20
+          ]
+        }
+      ],
+      "text": "zwanzighundertzehn",
+      "textTokenIds": [
+        32,
+        29,
+        7,
+        20,
+        32,
+        15,
+        13,
+        14,
+        27,
+        20,
+        10,
+        11,
+        24,
+        26,
+        32,
+        11,
+        14,
+        20
+      ]
     },
     {
       "language": "de",
@@ -2317,25 +2943,9 @@
       "textTokenIds": []
     },
     {
-      "language": "en",
-      "input": "23",
-      "note": "de cardinal 0-30 unaffected-language control: en digit word still drops exactly as before",
-      "words": [
-        {
-          "input": "23",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"23\")",
-          "tokenIds": null
-        }
-      ],
-      "text": "",
-      "textTokenIds": []
-    },
-    {
       "language": "pt",
       "input": "3",
-      "note": "pt cardinal 0-20/30: bare digit expands to a spelled word",
+      "note": "pt cardinal: bare digit expands to a spelled word",
       "words": [
         {
           "input": "3",
@@ -2361,7 +2971,7 @@
     {
       "language": "pt",
       "input": "0",
-      "note": "pt cardinal 0-20/30: lower boundary value",
+      "note": "pt cardinal: lower boundary value",
       "words": [
         {
           "input": "0",
@@ -2387,7 +2997,7 @@
     {
       "language": "pt",
       "input": "14",
-      "note": "pt cardinal 0-20/30: PT-BR variant value (quatorze, not catorze)",
+      "note": "pt cardinal: PT-BR variant value (quatorze, not catorze)",
       "words": [
         {
           "input": "14",
@@ -2421,7 +3031,7 @@
     {
       "language": "pt",
       "input": "16",
-      "note": "pt cardinal 0-20/30: PT-BR variant value (dezesseis, not dezasseis)",
+      "note": "pt cardinal: PT-BR variant value (dezesseis, not dezasseis)",
       "words": [
         {
           "input": "16",
@@ -2457,7 +3067,7 @@
     {
       "language": "pt",
       "input": "17",
-      "note": "pt cardinal 0-20/30: PT-BR variant value (dezessete, not dezassete)",
+      "note": "pt cardinal: PT-BR variant value (dezessete, not dezassete)",
       "words": [
         {
           "input": "17",
@@ -2493,7 +3103,7 @@
     {
       "language": "pt",
       "input": "19",
-      "note": "pt cardinal 0-20/30: PT-BR variant value (dezenove, not dezanove)",
+      "note": "pt cardinal: PT-BR variant value (dezenove, not dezanove)",
       "words": [
         {
           "input": "19",
@@ -2527,7 +3137,7 @@
     {
       "language": "pt",
       "input": "20",
-      "note": "pt cardinal 0-20/30: upper boundary of the contiguous single-word range",
+      "note": "pt cardinal: former table upper boundary of the contiguous single-word range",
       "words": [
         {
           "input": "20",
@@ -2555,7 +3165,7 @@
     {
       "language": "pt",
       "input": "30",
-      "note": "pt cardinal 0-20/30: the one value past 20 that is still a single word",
+      "note": "pt cardinal: former table's one value past 20 that was still a single word",
       "words": [
         {
           "input": "30",
@@ -2585,7 +3195,7 @@
     {
       "language": "pt",
       "input": "tenho 3 gatos",
-      "note": "pt cardinal 0-20/30: expansion survives inside a phrase",
+      "note": "pt cardinal: expansion survives inside a phrase",
       "words": [
         {
           "input": "tenho",
@@ -2649,50 +3259,272 @@
     {
       "language": "pt",
       "input": "21",
-      "note": "pt cardinal negative: 21 is inside the permanent \"vinte e X\" three-word wall, stays dropped",
+      "note": "pt cardinal: former permanent \"vinte e X\" wall value (used to stay dropped) — now representable",
       "words": [
         {
           "input": "21",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"21\")",
-          "tokenIds": null
+          "representable": true,
+          "mapped": "vinte e um",
+          "reason": null,
+          "tokenIds": [
+            28,
+            15,
+            20,
+            26,
+            11,
+            4,
+            11,
+            4,
+            27,
+            19
+          ]
         }
       ],
-      "text": "",
-      "textTokenIds": []
+      "text": "vinte e um",
+      "textTokenIds": [
+        28,
+        15,
+        20,
+        26,
+        11,
+        4,
+        11,
+        4,
+        27,
+        19
+      ]
     },
     {
       "language": "pt",
       "input": "29",
-      "note": "pt cardinal negative: 29 is the other end of the \"vinte e X\" wall, stays dropped",
+      "note": "pt cardinal: the other end of the former \"vinte e X\" wall — now representable",
       "words": [
         {
           "input": "29",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"29\")",
-          "tokenIds": null
+          "representable": true,
+          "mapped": "vinte e nove",
+          "reason": null,
+          "tokenIds": [
+            28,
+            15,
+            20,
+            26,
+            11,
+            4,
+            11,
+            4,
+            20,
+            21,
+            28,
+            11
+          ]
         }
       ],
-      "text": "",
-      "textTokenIds": []
+      "text": "vinte e nove",
+      "textTokenIds": [
+        28,
+        15,
+        20,
+        26,
+        11,
+        4,
+        11,
+        4,
+        20,
+        21,
+        28,
+        11
+      ]
     },
     {
       "language": "pt",
       "input": "31",
-      "note": "pt cardinal negative: 31 is past the scope cap, stays dropped",
+      "note": "pt cardinal: former cap boundary (used to stay dropped) — now representable",
       "words": [
         {
           "input": "31",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"31\")",
-          "tokenIds": null
+          "representable": true,
+          "mapped": "trinta e um",
+          "reason": null,
+          "tokenIds": [
+            26,
+            24,
+            15,
+            20,
+            26,
+            7,
+            4,
+            11,
+            4,
+            27,
+            19
+          ]
         }
       ],
-      "text": "",
-      "textTokenIds": []
+      "text": "trinta e um",
+      "textTokenIds": [
+        26,
+        24,
+        15,
+        20,
+        26,
+        7,
+        4,
+        11,
+        4,
+        27,
+        19
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "234",
+      "note": "pt cardinal: arbitrary magnitude, hundreds + \"e\" compound (duzentos e trinta e quatro)",
+      "words": [
+        {
+          "input": "234",
+          "representable": true,
+          "mapped": "duzentos e trinta e quatro",
+          "reason": null,
+          "tokenIds": [
+            10,
+            27,
+            32,
+            11,
+            20,
+            26,
+            21,
+            25,
+            4,
+            11,
+            4,
+            26,
+            24,
+            15,
+            20,
+            26,
+            7,
+            4,
+            11,
+            4,
+            23,
+            27,
+            7,
+            26,
+            24,
+            21
+          ]
+        }
+      ],
+      "text": "duzentos e trinta e quatro",
+      "textTokenIds": [
+        10,
+        27,
+        32,
+        11,
+        20,
+        26,
+        21,
+        25,
+        4,
+        11,
+        4,
+        26,
+        24,
+        15,
+        20,
+        26,
+        7,
+        4,
+        11,
+        4,
+        23,
+        27,
+        7,
+        26,
+        24,
+        21
+      ]
+    },
+    {
+      "language": "pt",
+      "input": "1998",
+      "note": "pt cardinal: year-shaped value, always the plain \"compound\" reading (no pair-style policy for pt)",
+      "words": [
+        {
+          "input": "1998",
+          "representable": true,
+          "mapped": "mil novecentos e noventa e oito",
+          "reason": null,
+          "tokenIds": [
+            19,
+            15,
+            18,
+            4,
+            20,
+            21,
+            28,
+            11,
+            9,
+            11,
+            20,
+            26,
+            21,
+            25,
+            4,
+            11,
+            4,
+            20,
+            21,
+            28,
+            11,
+            20,
+            26,
+            7,
+            4,
+            11,
+            4,
+            21,
+            15,
+            26,
+            21
+          ]
+        }
+      ],
+      "text": "mil novecentos e noventa e oito",
+      "textTokenIds": [
+        19,
+        15,
+        18,
+        4,
+        20,
+        21,
+        28,
+        11,
+        9,
+        11,
+        20,
+        26,
+        21,
+        25,
+        4,
+        11,
+        4,
+        20,
+        21,
+        28,
+        11,
+        20,
+        26,
+        7,
+        4,
+        11,
+        4,
+        21,
+        15,
+        26,
+        21
+      ]
     },
     {
       "language": "pt",
@@ -2727,25 +3559,9 @@
       "textTokenIds": []
     },
     {
-      "language": "en",
-      "input": "3",
-      "note": "pt cardinal 0-20/30 unaffected-language control: en digit word still drops exactly as before",
-      "words": [
-        {
-          "input": "3",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"3\")",
-          "tokenIds": null
-        }
-      ],
-      "text": "",
-      "textTokenIds": []
-    },
-    {
       "language": "fr",
       "input": "0",
-      "note": "fr cardinal 0-30: lower boundary value",
+      "note": "fr cardinal: lower boundary value",
       "words": [
         {
           "input": "0",
@@ -2771,7 +3587,7 @@
     {
       "language": "fr",
       "input": "1",
-      "note": "fr cardinal 0-30: bare digit expands to a spelled word",
+      "note": "fr cardinal: bare digit expands to a spelled word",
       "words": [
         {
           "input": "1",
@@ -2793,7 +3609,7 @@
     {
       "language": "fr",
       "input": "16",
-      "note": "fr cardinal 0-30: last non-hyphenated teen (seize)",
+      "note": "fr cardinal: last non-hyphenated teen (seize)",
       "words": [
         {
           "input": "16",
@@ -2821,7 +3637,7 @@
     {
       "language": "fr",
       "input": "17",
-      "note": "fr cardinal 0-30: hyphenated teen, one token in/out (dix-sept)",
+      "note": "fr cardinal: hyphenated teen, one token in/out (dix-sept)",
       "words": [
         {
           "input": "17",
@@ -2855,7 +3671,7 @@
     {
       "language": "fr",
       "input": "18",
-      "note": "fr cardinal 0-30: hyphenated teen, one token in/out (dix-huit)",
+      "note": "fr cardinal: hyphenated teen, one token in/out (dix-huit)",
       "words": [
         {
           "input": "18",
@@ -2889,7 +3705,7 @@
     {
       "language": "fr",
       "input": "19",
-      "note": "fr cardinal 0-30: hyphenated teen, one token in/out (dix-neuf)",
+      "note": "fr cardinal: hyphenated teen, one token in/out (dix-neuf)",
       "words": [
         {
           "input": "19",
@@ -2923,7 +3739,7 @@
     {
       "language": "fr",
       "input": "20",
-      "note": "fr cardinal 0-30: boundary value (vingt)",
+      "note": "fr cardinal: boundary value (vingt)",
       "words": [
         {
           "input": "20",
@@ -2951,7 +3767,7 @@
     {
       "language": "fr",
       "input": "22",
-      "note": "fr cardinal 0-30: hyphenated \"vingt-X\" shape, one token in/out (vingt-deux)",
+      "note": "fr cardinal: hyphenated \"vingt-X\" shape, one token in/out (vingt-deux)",
       "words": [
         {
           "input": "22",
@@ -2989,7 +3805,7 @@
     {
       "language": "fr",
       "input": "29",
-      "note": "fr cardinal 0-30: upper end of the hyphenated \"vingt-X\" shape (vingt-neuf)",
+      "note": "fr cardinal: upper end of the hyphenated \"vingt-X\" shape (vingt-neuf)",
       "words": [
         {
           "input": "29",
@@ -3027,7 +3843,7 @@
     {
       "language": "fr",
       "input": "30",
-      "note": "fr cardinal 0-30: upper boundary value (trente)",
+      "note": "fr cardinal: former table upper boundary value (trente)",
       "words": [
         {
           "input": "30",
@@ -3057,7 +3873,7 @@
     {
       "language": "fr",
       "input": "il a 17 ans",
-      "note": "fr cardinal 0-30: expansion survives inside a phrase",
+      "note": "fr cardinal: expansion survives inside a phrase",
       "words": [
         {
           "input": "il",
@@ -3130,34 +3946,304 @@
     {
       "language": "fr",
       "input": "21",
-      "note": "fr cardinal negative: 21 is the permanent \"vingt et un\" three-word wall, stays dropped",
+      "note": "fr cardinal: former permanent \"vingt et un\" wall value (used to stay dropped) — now representable",
       "words": [
         {
           "input": "21",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"21\")",
-          "tokenIds": null
+          "representable": true,
+          "mapped": "vingt et un",
+          "reason": null,
+          "tokenIds": [
+            28,
+            15,
+            20,
+            13,
+            26,
+            4,
+            11,
+            26,
+            4,
+            27,
+            20
+          ]
         }
       ],
-      "text": "",
-      "textTokenIds": []
+      "text": "vingt et un",
+      "textTokenIds": [
+        28,
+        15,
+        20,
+        13,
+        26,
+        4,
+        11,
+        26,
+        4,
+        27,
+        20
+      ]
     },
     {
       "language": "fr",
       "input": "31",
-      "note": "fr cardinal negative: 31 is past the scope cap, stays dropped",
+      "note": "fr cardinal: former cap boundary (used to stay dropped) — now representable",
       "words": [
         {
           "input": "31",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"31\")",
-          "tokenIds": null
+          "representable": true,
+          "mapped": "trente et un",
+          "reason": null,
+          "tokenIds": [
+            26,
+            24,
+            11,
+            20,
+            26,
+            11,
+            4,
+            11,
+            26,
+            4,
+            27,
+            20
+          ]
         }
       ],
-      "text": "",
-      "textTokenIds": []
+      "text": "trente et un",
+      "textTokenIds": [
+        26,
+        24,
+        11,
+        20,
+        26,
+        11,
+        4,
+        11,
+        26,
+        4,
+        27,
+        20
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "100",
+      "note": "fr cardinal: exactly 100, \"cent\" with no leading \"un\" (dropsOneMultiplier)",
+      "words": [
+        {
+          "input": "100",
+          "representable": true,
+          "mapped": "cent",
+          "reason": null,
+          "tokenIds": [
+            9,
+            11,
+            20,
+            26
+          ]
+        }
+      ],
+      "text": "cent",
+      "textTokenIds": [
+        9,
+        11,
+        20,
+        26
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "200",
+      "note": "fr cardinal: exact multiple of 100 pluralizes \"cent\" -> \"cents\" (deux cents)",
+      "words": [
+        {
+          "input": "200",
+          "representable": true,
+          "mapped": "deux cents",
+          "reason": null,
+          "tokenIds": [
+            10,
+            11,
+            27,
+            30,
+            4,
+            9,
+            11,
+            20,
+            26,
+            25
+          ]
+        }
+      ],
+      "text": "deux cents",
+      "textTokenIds": [
+        10,
+        11,
+        27,
+        30,
+        4,
+        9,
+        11,
+        20,
+        26,
+        25
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "234",
+      "note": "fr cardinal: NOT an exact multiple, \"cent\" does not pluralize (deux cent trente-quatre)",
+      "words": [
+        {
+          "input": "234",
+          "representable": true,
+          "mapped": "deux cent trente-quatre",
+          "reason": null,
+          "tokenIds": [
+            10,
+            11,
+            27,
+            30,
+            4,
+            9,
+            11,
+            20,
+            26,
+            4,
+            26,
+            24,
+            11,
+            20,
+            26,
+            11,
+            6,
+            23,
+            27,
+            7,
+            26,
+            24,
+            11
+          ]
+        }
+      ],
+      "text": "deux cent trente-quatre",
+      "textTokenIds": [
+        10,
+        11,
+        27,
+        30,
+        4,
+        9,
+        11,
+        20,
+        26,
+        4,
+        26,
+        24,
+        11,
+        20,
+        26,
+        11,
+        6,
+        23,
+        27,
+        7,
+        26,
+        24,
+        11
+      ]
+    },
+    {
+      "language": "fr",
+      "input": "1998",
+      "note": "fr cardinal: year-shaped value, always the plain \"compound\" reading (no pair-style policy for fr)",
+      "words": [
+        {
+          "input": "1998",
+          "representable": true,
+          "mapped": "mille neuf cent quatre-vingt-dix-huit",
+          "reason": null,
+          "tokenIds": [
+            19,
+            15,
+            18,
+            18,
+            11,
+            4,
+            20,
+            11,
+            27,
+            12,
+            4,
+            9,
+            11,
+            20,
+            26,
+            4,
+            23,
+            27,
+            7,
+            26,
+            24,
+            11,
+            6,
+            28,
+            15,
+            20,
+            13,
+            26,
+            6,
+            10,
+            15,
+            30,
+            6,
+            14,
+            27,
+            15,
+            26
+          ]
+        }
+      ],
+      "text": "mille neuf cent quatre-vingt-dix-huit",
+      "textTokenIds": [
+        19,
+        15,
+        18,
+        18,
+        11,
+        4,
+        20,
+        11,
+        27,
+        12,
+        4,
+        9,
+        11,
+        20,
+        26,
+        4,
+        23,
+        27,
+        7,
+        26,
+        24,
+        11,
+        6,
+        28,
+        15,
+        20,
+        13,
+        26,
+        6,
+        10,
+        15,
+        30,
+        6,
+        14,
+        27,
+        15,
+        26
+      ]
     },
     {
       "language": "fr",
@@ -3192,25 +4278,9 @@
       "textTokenIds": []
     },
     {
-      "language": "en",
-      "input": "17",
-      "note": "fr cardinal 0-30 unaffected-language control: en digit word still drops exactly as before",
-      "words": [
-        {
-          "input": "17",
-          "representable": false,
-          "mapped": null,
-          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"17\")",
-          "tokenIds": null
-        }
-      ],
-      "text": "",
-      "textTokenIds": []
-    },
-    {
       "language": "fr",
       "input": "j`ai 17 ans",
-      "note": "fr elision + fr cardinal 0-30 co-fire: backtick elision fold and cardinal expansion both fire in one phrase",
+      "note": "fr elision + fr cardinal co-fire: backtick elision fold and cardinal expansion both fire in one phrase",
       "words": [
         {
           "input": "j`ai",
@@ -3276,7 +4346,7 @@
     {
       "language": "fr",
       "input": "qu`il a 22 ans",
-      "note": "fr elision + fr cardinal 0-30 co-fire: backtick elision fold and a hyphenated cardinal both survive together",
+      "note": "fr elision + fr cardinal co-fire: backtick elision fold and a hyphenated cardinal both survive together",
       "words": [
         {
           "input": "qu`il",
@@ -3355,6 +4425,734 @@
         20,
         25
       ]
+    },
+    {
+      "language": "en",
+      "input": "23",
+      "note": "en cardinal: bare digit expands to a spelled word (previously always dropped, this is the \"unaffected-language control\" value from every other language's old cardinal test)",
+      "words": [
+        {
+          "input": "23",
+          "representable": true,
+          "mapped": "twenty-three",
+          "reason": null,
+          "tokenIds": [
+            26,
+            29,
+            11,
+            20,
+            26,
+            31,
+            6,
+            26,
+            14,
+            24,
+            11,
+            11
+          ]
+        }
+      ],
+      "text": "twenty-three",
+      "textTokenIds": [
+        26,
+        29,
+        11,
+        20,
+        26,
+        31,
+        6,
+        26,
+        14,
+        24,
+        11,
+        11
+      ]
+    },
+    {
+      "language": "en",
+      "input": "3",
+      "note": "en cardinal: bare digit, another former unaffected-language-control value",
+      "words": [
+        {
+          "input": "3",
+          "representable": true,
+          "mapped": "three",
+          "reason": null,
+          "tokenIds": [
+            26,
+            14,
+            24,
+            11,
+            11
+          ]
+        }
+      ],
+      "text": "three",
+      "textTokenIds": [
+        26,
+        14,
+        24,
+        11,
+        11
+      ]
+    },
+    {
+      "language": "en",
+      "input": "17",
+      "note": "en cardinal: bare digit, another former unaffected-language-control value",
+      "words": [
+        {
+          "input": "17",
+          "representable": true,
+          "mapped": "seventeen",
+          "reason": null,
+          "tokenIds": [
+            25,
+            11,
+            28,
+            11,
+            20,
+            26,
+            11,
+            11,
+            20
+          ]
+        }
+      ],
+      "text": "seventeen",
+      "textTokenIds": [
+        25,
+        11,
+        28,
+        11,
+        20,
+        26,
+        11,
+        11,
+        20
+      ]
+    },
+    {
+      "language": "en",
+      "input": "31",
+      "note": "en cardinal: former cap boundary value under other languages' old tables — now representable under en too",
+      "words": [
+        {
+          "input": "31",
+          "representable": true,
+          "mapped": "thirty-one",
+          "reason": null,
+          "tokenIds": [
+            26,
+            14,
+            15,
+            24,
+            26,
+            31,
+            6,
+            21,
+            20,
+            11
+          ]
+        }
+      ],
+      "text": "thirty-one",
+      "textTokenIds": [
+        26,
+        14,
+        15,
+        24,
+        26,
+        31,
+        6,
+        21,
+        20,
+        11
+      ]
+    },
+    {
+      "language": "en",
+      "input": "234",
+      "note": "en cardinal: space-wall case — three words (two hundred thirty-four), unlike German at the same value",
+      "words": [
+        {
+          "input": "234",
+          "representable": true,
+          "mapped": "two hundred thirty-four",
+          "reason": null,
+          "tokenIds": [
+            26,
+            29,
+            21,
+            4,
+            14,
+            27,
+            20,
+            10,
+            24,
+            11,
+            10,
+            4,
+            26,
+            14,
+            15,
+            24,
+            26,
+            31,
+            6,
+            12,
+            21,
+            27,
+            24
+          ]
+        }
+      ],
+      "text": "two hundred thirty-four",
+      "textTokenIds": [
+        26,
+        29,
+        21,
+        4,
+        14,
+        27,
+        20,
+        10,
+        24,
+        11,
+        10,
+        4,
+        26,
+        14,
+        15,
+        24,
+        26,
+        31,
+        6,
+        12,
+        21,
+        27,
+        24
+      ]
+    },
+    {
+      "language": "en",
+      "input": "1000000",
+      "note": "en cardinal: arbitrary magnitude, million level",
+      "words": [
+        {
+          "input": "1000000",
+          "representable": true,
+          "mapped": "one million",
+          "reason": null,
+          "tokenIds": [
+            21,
+            20,
+            11,
+            4,
+            19,
+            15,
+            18,
+            18,
+            15,
+            21,
+            20
+          ]
+        }
+      ],
+      "text": "one million",
+      "textTokenIds": [
+        21,
+        20,
+        11,
+        4,
+        19,
+        15,
+        18,
+        18,
+        15,
+        21,
+        20
+      ]
+    },
+    {
+      "language": "en",
+      "input": "I turned 23 years old",
+      "note": "en cardinal: expansion survives inside a phrase",
+      "words": [
+        {
+          "input": "I",
+          "representable": true,
+          "mapped": "i",
+          "reason": null,
+          "tokenIds": [
+            15
+          ]
+        },
+        {
+          "input": "turned",
+          "representable": true,
+          "mapped": "turned",
+          "reason": null,
+          "tokenIds": [
+            26,
+            27,
+            24,
+            20,
+            11,
+            10
+          ]
+        },
+        {
+          "input": "23",
+          "representable": true,
+          "mapped": "twenty-three",
+          "reason": null,
+          "tokenIds": [
+            26,
+            29,
+            11,
+            20,
+            26,
+            31,
+            6,
+            26,
+            14,
+            24,
+            11,
+            11
+          ]
+        },
+        {
+          "input": "years",
+          "representable": true,
+          "mapped": "years",
+          "reason": null,
+          "tokenIds": [
+            31,
+            11,
+            7,
+            24,
+            25
+          ]
+        },
+        {
+          "input": "old",
+          "representable": true,
+          "mapped": "old",
+          "reason": null,
+          "tokenIds": [
+            21,
+            18,
+            10
+          ]
+        }
+      ],
+      "text": "i turned twenty-three years old",
+      "textTokenIds": [
+        15,
+        4,
+        26,
+        27,
+        24,
+        20,
+        11,
+        10,
+        4,
+        26,
+        29,
+        11,
+        20,
+        26,
+        31,
+        6,
+        26,
+        14,
+        24,
+        11,
+        11,
+        4,
+        31,
+        11,
+        7,
+        24,
+        25,
+        4,
+        21,
+        18,
+        10
+      ]
+    },
+    {
+      "language": "en",
+      "input": "1998",
+      "note": "en yearReading: n % 100 = 98 >= threshold (10) -> \"pair\" (nineteen ninety-eight)",
+      "words": [
+        {
+          "input": "1998",
+          "representable": true,
+          "mapped": "nineteen ninety-eight",
+          "reason": null,
+          "tokenIds": [
+            20,
+            15,
+            20,
+            11,
+            26,
+            11,
+            11,
+            20,
+            4,
+            20,
+            15,
+            20,
+            11,
+            26,
+            31,
+            6,
+            11,
+            15,
+            13,
+            14,
+            26
+          ]
+        }
+      ],
+      "text": "nineteen ninety-eight",
+      "textTokenIds": [
+        20,
+        15,
+        20,
+        11,
+        26,
+        11,
+        11,
+        20,
+        4,
+        20,
+        15,
+        20,
+        11,
+        26,
+        31,
+        6,
+        11,
+        15,
+        13,
+        14,
+        26
+      ]
+    },
+    {
+      "language": "en",
+      "input": "1905",
+      "note": "en yearReading: n % 100 = 5 < threshold (10), the x00-x09 quirk mirrored from the matcher's own textNormalize.ts -> \"compound\" (one thousand nine hundred five)",
+      "words": [
+        {
+          "input": "1905",
+          "representable": true,
+          "mapped": "one thousand nine hundred five",
+          "reason": null,
+          "tokenIds": [
+            21,
+            20,
+            11,
+            4,
+            26,
+            14,
+            21,
+            27,
+            25,
+            7,
+            20,
+            10,
+            4,
+            20,
+            15,
+            20,
+            11,
+            4,
+            14,
+            27,
+            20,
+            10,
+            24,
+            11,
+            10,
+            4,
+            12,
+            15,
+            28,
+            11
+          ]
+        }
+      ],
+      "text": "one thousand nine hundred five",
+      "textTokenIds": [
+        21,
+        20,
+        11,
+        4,
+        26,
+        14,
+        21,
+        27,
+        25,
+        7,
+        20,
+        10,
+        4,
+        20,
+        15,
+        20,
+        11,
+        4,
+        14,
+        27,
+        20,
+        10,
+        24,
+        11,
+        10,
+        4,
+        12,
+        15,
+        28,
+        11
+      ]
+    },
+    {
+      "language": "en",
+      "input": "2000",
+      "note": "en yearReading: x00-x09 quirk, another century (two thousand)",
+      "words": [
+        {
+          "input": "2000",
+          "representable": true,
+          "mapped": "two thousand",
+          "reason": null,
+          "tokenIds": [
+            26,
+            29,
+            21,
+            4,
+            26,
+            14,
+            21,
+            27,
+            25,
+            7,
+            20,
+            10
+          ]
+        }
+      ],
+      "text": "two thousand",
+      "textTokenIds": [
+        26,
+        29,
+        21,
+        4,
+        26,
+        14,
+        21,
+        27,
+        25,
+        7,
+        20,
+        10
+      ]
+    },
+    {
+      "language": "en",
+      "input": "2010",
+      "note": "en yearReading: n % 100 = 10 >= threshold, boundary value itself (twenty ten)",
+      "words": [
+        {
+          "input": "2010",
+          "representable": true,
+          "mapped": "twenty ten",
+          "reason": null,
+          "tokenIds": [
+            26,
+            29,
+            11,
+            20,
+            26,
+            31,
+            4,
+            26,
+            11,
+            20
+          ]
+        }
+      ],
+      "text": "twenty ten",
+      "textTokenIds": [
+        26,
+        29,
+        11,
+        20,
+        26,
+        31,
+        4,
+        26,
+        11,
+        20
+      ]
+    },
+    {
+      "language": "en",
+      "input": "2024",
+      "note": "en yearReading: pair reading, another value (twenty twenty-four)",
+      "words": [
+        {
+          "input": "2024",
+          "representable": true,
+          "mapped": "twenty twenty-four",
+          "reason": null,
+          "tokenIds": [
+            26,
+            29,
+            11,
+            20,
+            26,
+            31,
+            4,
+            26,
+            29,
+            11,
+            20,
+            26,
+            31,
+            6,
+            12,
+            21,
+            27,
+            24
+          ]
+        }
+      ],
+      "text": "twenty twenty-four",
+      "textTokenIds": [
+        26,
+        29,
+        11,
+        20,
+        26,
+        31,
+        4,
+        26,
+        29,
+        11,
+        20,
+        26,
+        31,
+        6,
+        12,
+        21,
+        27,
+        24
+      ]
+    },
+    {
+      "language": "en",
+      "input": "998",
+      "note": "en yearReading negative: a 3-digit token never takes the year-reading branch even though 1998 is in range — plain cardinal (nine hundred ninety-eight)",
+      "words": [
+        {
+          "input": "998",
+          "representable": true,
+          "mapped": "nine hundred ninety-eight",
+          "reason": null,
+          "tokenIds": [
+            20,
+            15,
+            20,
+            11,
+            4,
+            14,
+            27,
+            20,
+            10,
+            24,
+            11,
+            10,
+            4,
+            20,
+            15,
+            20,
+            11,
+            26,
+            31,
+            6,
+            11,
+            15,
+            13,
+            14,
+            26
+          ]
+        }
+      ],
+      "text": "nine hundred ninety-eight",
+      "textTokenIds": [
+        20,
+        15,
+        20,
+        11,
+        4,
+        14,
+        27,
+        20,
+        10,
+        24,
+        11,
+        10,
+        4,
+        20,
+        15,
+        20,
+        11,
+        26,
+        31,
+        6,
+        11,
+        15,
+        13,
+        14,
+        26
+      ]
+    },
+    {
+      "language": "en",
+      "input": "2.5",
+      "note": "en cardinal negative: decimal stays dropped, out of scope",
+      "words": [
+        {
+          "input": "2.5",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"2.5\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
+    },
+    {
+      "language": "en",
+      "input": "05",
+      "note": "en cardinal negative: leading zero is not a bare cardinal, stays dropped",
+      "words": [
+        {
+          "input": "05",
+          "representable": false,
+          "mapped": null,
+          "reason": "contains a digit — number expansion is Phase 3b, out of scope (word: \"05\")",
+          "tokenIds": null
+        }
+      ],
+      "text": "",
+      "textTokenIds": []
     }
   ]
 }

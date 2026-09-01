@@ -697,6 +697,10 @@ struct Vocab {
     chars: HashSet<char>,
     blank_id: i64,
     word_delim_id: Option<i64>,
+    /// This language's parsed `fa-cardinal-<lang>.json` (WS2 T3.2 Step
+    /// 3b-iii) — loaded alongside the vocab since every real caller needs
+    /// both together to call `normalize_for_forced_alignment`.
+    cardinal_data: crate::fa::text::FaCardinalData,
 }
 
 fn vocab_json_for(language: &str) -> Result<&'static str, FaOnnxError> {
@@ -708,6 +712,25 @@ fn vocab_json_for(language: &str) -> Result<&'static str, FaOnnxError> {
         "pt" => Ok(include_str!("../../scripts/fixtures/fa-vocab-pt.json")),
         other => Err(FaOnnxError::UnsupportedLanguage(other.to_string())),
     }
+}
+
+/// Mirrors `vocab_json_for` — the compositional cardinal-number generator's
+/// data source (WS2 T3.2 Step 3b-iii), embedded the same way for the same
+/// reason (see that function's own precedent).
+fn cardinal_json_for(language: &str) -> Result<&'static str, FaOnnxError> {
+    match language {
+        "en" => Ok(include_str!("../../scripts/fixtures/fa-cardinal-en.json")),
+        "es" => Ok(include_str!("../../scripts/fixtures/fa-cardinal-es.json")),
+        "fr" => Ok(include_str!("../../scripts/fixtures/fa-cardinal-fr.json")),
+        "de" => Ok(include_str!("../../scripts/fixtures/fa-cardinal-de.json")),
+        "pt" => Ok(include_str!("../../scripts/fixtures/fa-cardinal-pt.json")),
+        other => Err(FaOnnxError::UnsupportedLanguage(other.to_string())),
+    }
+}
+
+fn load_cardinal_data(language: &str) -> Result<crate::fa::text::FaCardinalData, FaOnnxError> {
+    let json_str = cardinal_json_for(language)?;
+    Ok(serde_json::from_str(json_str).expect("embedded fa-cardinal-*.json must parse"))
 }
 
 fn load_vocab(language: &str) -> Result<Vocab, FaOnnxError> {
@@ -733,7 +756,8 @@ fn load_vocab(language: &str) -> Result<Vocab, FaOnnxError> {
         // "<unk>") are not targetable by `text_to_token_ids` — normalized
         // text never needs to align to them directly.
     }
-    Ok(Vocab { char_to_id, chars, blank_id, word_delim_id })
+    let cardinal_data = load_cardinal_data(language)?;
+    Ok(Vocab { char_to_id, chars, blank_id, word_delim_id, cardinal_data })
 }
 
 /// The flat CTC target-id sequence for one chunk's text, plus the
@@ -822,7 +846,7 @@ fn tokenize_normalized_words(words: &[WordResult], vocab: &Vocab) -> TokenizedTa
 /// dropped) then tokenizes it — see [`tokenize_normalized_words`] for the
 /// real per-word/per-fragment tokenization logic this delegates to.
 fn tokenize_for_alignment(text: &str, language: Language, vocab: &Vocab) -> TokenizedTargets {
-    let normalized = normalize_for_forced_alignment(text, language, &vocab.chars);
+    let normalized = normalize_for_forced_alignment(text, language, &vocab.chars, &vocab.cardinal_data);
     tokenize_normalized_words(&normalized.words, vocab)
 }
 
@@ -1295,7 +1319,7 @@ const CTC_INFEASIBLE_FALLBACK_SCORE: f32 = f32::NEG_INFINITY;
 /// representable words — the same "no empty output" contract
 /// `merge_char_spans_to_words` already holds for real alignment.
 fn fallback_words_for_infeasible_chunk(chunk: &crate::fa::FaChunkInput, lang: Language, vocab: &Vocab) -> Vec<WordSpan> {
-    let normalized = normalize_for_forced_alignment(&chunk.text, lang, &vocab.chars);
+    let normalized = normalize_for_forced_alignment(&chunk.text, lang, &vocab.chars, &vocab.cardinal_data);
     let words: Vec<&str> =
         normalized.words.iter().filter(|w| w.representable).filter_map(|w| w.mapped.as_deref()).collect();
     if words.is_empty() {
@@ -1516,8 +1540,9 @@ fn check_word_count_matches_normalizer(
     full_text: &str,
     vocab_chars: &HashSet<char>,
     language: Language,
+    cardinal_data: &crate::fa::text::FaCardinalData,
 ) -> Result<(), InvariantViolation> {
-    let normalized = normalize_for_forced_alignment(full_text, language, vocab_chars);
+    let normalized = normalize_for_forced_alignment(full_text, language, vocab_chars, cardinal_data);
     let want = normalized.words.iter().filter(|w| w.representable).count();
     if words.len() != want {
         return Err(InvariantViolation::WordCountMismatch { got: words.len(), want });
@@ -1647,17 +1672,21 @@ mod invariants {
     fn word_count_matches_normalizer_passes_when_counts_agree() {
         let vocab = load_vocab("en").unwrap();
         let words = vec![w("cat", 0.0, 0.1, -0.1), w("dog", 0.1, 0.2, -0.1)];
-        assert!(check_word_count_matches_normalizer(&words, "cat dog", &vocab.chars, Language::En).is_ok());
+        assert!(check_word_count_matches_normalizer(&words, "cat dog", &vocab.chars, Language::En, &vocab.cardinal_data).is_ok());
     }
 
     #[test]
     fn word_count_matches_normalizer_catches_a_dropped_word() {
         let vocab = load_vocab("en").unwrap();
-        // Real text has 2 representable words ("cat", "dog" — "5" is
-        // digit-bearing and dropped by the normalizer, D3/D5's contract),
-        // but only 1 word is present in the (deliberately wrong) output.
+        // Real text has 2 representable words ("cat", "dog" — "5x" is a
+        // mixed alnum word, still digit-bearing-and-dropped by the
+        // normalizer regardless of WS2 T3.2 Step 3b-iii's cardinal-number
+        // generator, since it isn't a bare digit string), but only 1 word is
+        // present in the (deliberately wrong) output. (A bare "5" would no
+        // longer serve this test — Step 3b-iii made it representable
+        // ("five") under English too.)
         let words = vec![w("cat", 0.0, 0.1, -0.1)];
-        let err = check_word_count_matches_normalizer(&words, "cat 5 dog", &vocab.chars, Language::En).unwrap_err();
+        let err = check_word_count_matches_normalizer(&words, "cat 5x dog", &vocab.chars, Language::En, &vocab.cardinal_data).unwrap_err();
         assert_eq!(err, InvariantViolation::WordCountMismatch { got: 1, want: 2 });
     }
 
@@ -1913,7 +1942,7 @@ mod real_corpus_measurement {
                 if failed_set.contains(&i) {
                     continue;
                 }
-                let normalized = normalize_for_forced_alignment(&c.text, lang, &vocab.chars);
+                let normalized = normalize_for_forced_alignment(&c.text, lang, &vocab.chars, &vocab.cardinal_data);
                 words_per_chunk[i] = normalized.words.iter().filter(|w| w.representable).count();
             }
         }
@@ -4841,11 +4870,14 @@ mod tests {
 
     #[test]
     fn tokenize_skips_delimiter_around_a_dropped_middle_word() {
-        // "cat 5 dog" — the middle word is digit-only and dropped; the
-        // surviving words get exactly one delimiter between them, not two
-        // (no delimiter placeholder for the dropped word).
+        // "cat 5x dog" — the middle word is digit-bearing (not a bare digit
+        // string, so WS2 T3.2 Step 3b-iii's cardinal generator does not
+        // expand it) and dropped; the surviving words get exactly one
+        // delimiter between them, not two (no delimiter placeholder for the
+        // dropped word). A bare "5" would no longer serve this test — Step
+        // 3b-iii made it representable ("five") under English too.
         let vocab = load_vocab("en").unwrap();
-        let ids = text_to_token_ids("cat 5 dog", Language::En, &vocab);
+        let ids = text_to_token_ids("cat 5x dog", Language::En, &vocab);
         let delim = vocab.word_delim_id.unwrap();
         let delim_count = ids.iter().filter(|&&id| id == delim).count();
         assert_eq!(delim_count, 1);
@@ -5116,7 +5148,7 @@ mod ctc_infeasibility_fallback {
     fn fallback_covers_every_representable_word_evenly_spaced_within_the_window() {
         let vocab = load_vocab("en").unwrap();
         for chunk in [real_chunk_4(), real_chunk_52()] {
-            let normalized = normalize_for_forced_alignment(&chunk.text, Language::En, &vocab.chars);
+            let normalized = normalize_for_forced_alignment(&chunk.text, Language::En, &vocab.chars, &vocab.cardinal_data);
             let want_count = normalized.words.iter().filter(|w| w.representable).count();
 
             let words = fallback_words_for_infeasible_chunk(&chunk, Language::En, &vocab);
@@ -5169,9 +5201,15 @@ mod ctc_infeasibility_fallback {
     #[test]
     fn fallback_on_empty_representable_text_returns_empty_not_a_panic() {
         let vocab = load_vocab("en").unwrap();
-        let chunk = crate::fa::FaChunkInput { start_sec: 1.0, end_sec: 2.0, text: "42 99".to_string() };
+        // "1st"/"2nd" are digit-BEARING but not bare digit strings (ordinal
+        // suffix letters), so they stay unrepresentable regardless of WS2
+        // T3.2 Step 3b-iii's cardinal-number generator (which only expands a
+        // token that is ENTIRELY digits) — a bare "42 99" would no longer
+        // serve this test, since Step 3b-iii made bare digits representable
+        // under English too.
+        let chunk = crate::fa::FaChunkInput { start_sec: 1.0, end_sec: 2.0, text: "1st 2nd".to_string() };
         let words = fallback_words_for_infeasible_chunk(&chunk, Language::En, &vocab);
-        assert!(words.is_empty(), "digit-only text has zero representable words — expected empty, not a panic");
+        assert!(words.is_empty(), "digit-bearing text has zero representable words — expected empty, not a panic");
     }
 }
 
@@ -5346,18 +5384,22 @@ mod word_merge {
 
     #[test]
     fn unrepresentable_middle_word_is_dropped_with_correct_neighbours_and_no_stray_delimiter() {
-        // "cat 5 dog": the real production tokenizer (`text_to_token_ids`,
-        // vocab-aware, same path `align_chunk_samples` uses) drops "5"
-        // wholesale — D5's documented contract-only drop path. This test
-        // drives that REAL tokenizer output through a SYNTHETIC
-        // `forced_align` call (uniform, heavily-favored per-frame log-probs,
-        // T == L exactly so the path is fully forced — the same technique
-        // `fa_viterbi.rs`'s own `aabbc_canonical_repeat_case_minimal_t` test
-        // uses) to get REAL character-level TokenSpans out of the actual DP,
-        // not hand-fabricated ones, then merges them into words.
+        // "cat 5x dog": the real production tokenizer (`text_to_token_ids`,
+        // vocab-aware, same path `align_chunk_samples` uses) drops "5x"
+        // wholesale — a digit-bearing (not bare-digit) word stays out of WS2
+        // T3.2 Step 3b-iii's cardinal generator's scope, so it still hits
+        // D5's documented contract-only drop path (a bare "5" would no
+        // longer serve this test — Step 3b-iii made it representable
+        // ("five") under English too). This test drives that REAL tokenizer
+        // output through a SYNTHETIC `forced_align` call (uniform, heavily-
+        // favored per-frame log-probs, T == L exactly so the path is fully
+        // forced — the same technique `fa_viterbi.rs`'s own
+        // `aabbc_canonical_repeat_case_minimal_t` test uses) to get REAL
+        // character-level TokenSpans out of the actual DP, not hand-
+        // fabricated ones, then merges them into words.
         let vocab = load_vocab("en").unwrap();
-        let target_ids = text_to_token_ids("cat 5 dog", Language::En, &vocab);
-        // Sanity: the tokenizer already dropped "5" — one delimiter, 6 letters.
+        let target_ids = text_to_token_ids("cat 5x dog", Language::En, &vocab);
+        // Sanity: the tokenizer already dropped "5x" — one delimiter, 6 letters.
         assert_eq!(target_ids.len(), 7, "test premise: \"cat\"+delim+\"dog\" must be 7 ids");
 
         let l = target_ids.len();
@@ -6031,7 +6073,7 @@ mod word_merge_e2e {
 
         // 1) Word text vs. the normalizer's OWN representable-word output —
         // NOT a naive whitespace split (see module doc comment for why).
-        let normalized = normalize_for_forced_alignment(source_text, lang_enum, &vocab.chars);
+        let normalized = normalize_for_forced_alignment(source_text, lang_enum, &vocab.chars, &vocab.cardinal_data);
         let expected_words: Vec<String> = normalized
             .words
             .iter()
