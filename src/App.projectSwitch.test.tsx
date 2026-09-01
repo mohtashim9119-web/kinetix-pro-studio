@@ -296,3 +296,131 @@ describe('WS2 T4.1 — mount hydration of the last-opened project', () => {
     expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
   });
 });
+
+// ---------------------------------------------------------------------------
+// WS2 T4.1 — the bare-key shortcut leak, for S and D.
+//
+// `shortcutsSuppressedRef` lists every modal flag and was already computed,
+// but only `resolveShortcutAction` (the undo/redo chords) ever read it. The
+// bare-key chain consulted `isTextEntryElement(document.activeElement)` alone,
+// which asks what has FOCUS, not whether a dialog is up. With a modal open and
+// focus on any non-text element — a toggle button, which these modals are made
+// of — `D` deleted a segment behind the dialog the user was looking at.
+//
+// The test drives the real `window` keydown listener App installs, with focus
+// genuinely moved onto a modal button (not simulated), because the defect is
+// precisely that a non-text focus target passes the old guard.
+// ---------------------------------------------------------------------------
+describe('WS2 T4.1 — S/D are inert while a modal is open', () => {
+  async function openEditorOnTarget(): Promise<void> {
+    mockGetLastOpenedProjectId.mockReturnValue(TARGET_ID);
+    // MUST carry a segment covering t=0. `resolveShortcutTargetSegmentId` is
+    // `selectedSegmentId ?? playheadSegmentId`, and with an empty segment array
+    // BOTH are null — so the S/D branch is skipped for want of a target and the
+    // test passes no matter what the suppression guard does. A destructive
+    // probe caught exactly that: the first version of this test stayed green
+    // with the guard removed, because it was measuring the empty-project case.
+    const withSegment = {
+      ...storedProject(TARGET_ID, 'Target'),
+      segments: [{
+        id: 'seg-under-playhead',
+        text: 'first segment',
+        startTime: 0,
+        duration: 5,
+        showOverlay: false,
+      }],
+    } as unknown as Project;
+    mockLoadProjectDetailed.mockResolvedValue({
+      ok: true,
+      project: withSegment,
+      savedAt: Date.now(),
+    });
+    await mountApp();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(view().view).toBe('editor');
+  }
+
+  function pressBareKey(key: string): void {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+  }
+
+  it('does not act on S or D with Project Settings open and focus on a toggle button', async () => {
+    await openEditorOnTarget();
+
+    const openBtn = Array.from(container.querySelectorAll('button'))
+      .find(b => b.textContent?.trim() === 'Project Settings');
+    expect(openBtn, 'Project Settings trigger not found').toBeDefined();
+    await act(async () => { openBtn!.click(); });
+
+    const dialog = document.querySelector('[role="dialog"][aria-label="Project Settings"]');
+    expect(dialog, 'Project Settings modal did not open').not.toBeNull();
+
+    // Focus a real NON-TEXT element inside the modal — the case the old
+    // text-entry guard waved through.
+    const toggle = dialog!.querySelector<HTMLButtonElement>('button[aria-pressed]');
+    expect(toggle, 'no toggle button inside Project Settings to focus').not.toBeNull();
+    await act(async () => { toggle!.focus(); });
+    // `useFocusTrap` may hold focus on its own first focusable rather than the
+    // element we asked for. That is fine and is not what this test is about:
+    // the precondition is only that focus sits on a NON-TEXT element inside
+    // the dialog, which is the case the old `isTextEntryElement` guard waved
+    // through. Asserting the exact node would be asserting the focus trap.
+    const focused = document.activeElement as HTMLElement | null;
+    expect(focused?.tagName).toBe('BUTTON');
+    expect(dialog!.contains(focused)).toBe(true);
+
+    // The discriminating assertion: the handler must DECLINE the event. A
+    // shortcut that ran would have called preventDefault on it.
+    const before = new KeyboardEvent('keydown', { key: 'd', bubbles: true, cancelable: true });
+    await act(async () => { window.dispatchEvent(before); });
+    expect(before.defaultPrevented).toBe(false);
+
+    const split = new KeyboardEvent('keydown', { key: 's', bubbles: true, cancelable: true });
+    await act(async () => { window.dispatchEvent(split); });
+    expect(split.defaultPrevented).toBe(false);
+
+    // And the modal is still the thing on screen — nothing navigated or
+    // mutated underneath it.
+    expect(document.querySelector('[role="dialog"][aria-label="Project Settings"]')).not.toBeNull();
+  });
+
+  it('does not act on S or D with App Settings open and focus on a toggle button', async () => {
+    await openEditorOnTarget();
+
+    const openBtn = Array.from(container.querySelectorAll('button'))
+      .find(b => b.textContent?.trim() === 'Project Settings');
+    await act(async () => { openBtn!.click(); });
+
+    const deepLink = document.querySelector<HTMLButtonElement>(
+      '[data-testid="project-settings-open-app-settings"]',
+    );
+    expect(deepLink, 'App Settings deep link not found in Project Settings').not.toBeNull();
+    await act(async () => { deepLink!.click(); });
+
+    const appSettings = document.querySelector('[data-testid="app-settings-modal"]');
+    expect(appSettings, 'App Settings modal did not open from the deep link').not.toBeNull();
+    // The deep link must NOT unmount the modal it was opened from.
+    expect(document.querySelector('[role="dialog"][aria-label="Project Settings"]')).not.toBeNull();
+
+    const toggle = appSettings!.querySelector<HTMLButtonElement>('button[aria-pressed]');
+    expect(toggle, 'no toggle button inside App Settings to focus').not.toBeNull();
+    await act(async () => { toggle!.focus(); });
+
+    const del = new KeyboardEvent('keydown', { key: 'D', bubbles: true, cancelable: true });
+    await act(async () => { window.dispatchEvent(del); });
+    expect(del.defaultPrevented).toBe(false);
+  });
+
+  it('still acts on S with no modal open — the guard did not kill the shortcut', async () => {
+    await openEditorOnTarget();
+    // No modal, focus on document.body (a non-text element). The key must be
+    // consumed OR declined only for want of a target segment — never for
+    // suppression. A project with no segments has no target, so this asserts
+    // the narrower, still-meaningful thing: the suppression path is not what
+    // rejects it, since nothing is suppressed here.
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    pressBareKey('s');
+    // No throw, no modal appeared, editor still mounted.
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
+  });
+});

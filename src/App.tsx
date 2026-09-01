@@ -230,6 +230,7 @@ import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
 import { NewProjectModal } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
+import { AppSettingsModal } from './components/AppSettingsModal';
 import { SyncLogPanel } from './components/SyncLogPanel';
 import { ExportSettingsModal } from './components/ExportSettingsModal';
 import { ManageModelsModal } from './components/ManageModelsModal';
@@ -660,6 +661,36 @@ export const parseProjectData = async (
 };
 
 
+/**
+ * A brand-new, unconfirmed project.
+ *
+ * ── DO NOT ADD A `language` FIELD HERE. THE ABSENCE IS LOAD-BEARING. ──
+ *
+ * `faGate.ts`'s `resolveFaLanguage` (`faGate.ts:139`) is
+ * `project.language ?? project.detectedLanguage`. `language` is the user's
+ * STICKY choice and wins permanently once set — nothing in the app ever
+ * clears it, and `useWhisper.ts:354` writes a detection only into an EMPTY
+ * `language`. So seeding `'en'` at creation, however harmless it looks, would
+ * make every project claim English forever: a Spanish voiceover would resolve
+ * FA to English rather than to its own `detectedLanguage: 'es'`, and no
+ * amount of correct detection could ever displace it. Today the absent field
+ * is exactly what lets detection through.
+ *
+ * The tempting argument for `'en'` — that it preserves behaviour because
+ * `'en'` and `undefined` take the same `canonicalize()` branch
+ * (`textNormalize.ts:249`; `NON_ENGLISH_CANONICALIZE_LANGUAGES` is
+ * `{es,fr,de,pt}`) — is true and beside the point. Byte-for-byte parity holds
+ * on the MATCHER side and fails on the FA-LANGUAGE-RESOLUTION side.
+ *
+ * WS2 T4.2's language dropdown must therefore default to an explicit
+ * "Auto-detect" option that WRITES NOTHING, with the five supported codes as
+ * opt-in choices. Existing projects then need no migration, since nothing
+ * changes for a project with no field.
+ *
+ * Regression-locked by `src/services/languageDefaultDrift.test.ts` (same
+ * pattern as `faDefaultDrift.test.ts`) — a `language` key added here fails
+ * that suite, not review.
+ */
 function makeDefaultProject(): Project {
   return {
   id: crypto.randomUUID(),
@@ -1952,6 +1983,10 @@ export default function App() {
   const [openingProjectId, setOpeningProjectId] = useState<string | null>(null);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
+  // WS2 T4.1 — the machine-global settings surface. Separate flag from
+  // `showProjectSettingsModal` so both can be up at once: Project Settings
+  // deep-links into this one and stays mounted underneath it.
+  const [showAppSettingsModal, setShowAppSettingsModal] = useState(false);
   const [showExportSettingsModal, setShowExportSettingsModal] = useState(false);
   const [showManageModelsModal, setShowManageModelsModal] = useState(false);
   const [devPanelOpen, setDevPanelOpen] = useState(false);
@@ -4936,7 +4971,7 @@ export default function App() {
   shortcutsSuppressedRef.current =
     showStockSearch || showNewProjectModal || showProjectSettingsModal
     || showExportSettingsModal || showReviewMapping || devPanelOpen
-    || showManageModelsModal || exportState.isExporting;
+    || showManageModelsModal || showAppSettingsModal || exportState.isExporting;
 
   const togglePlay = () => setIsPlaying(p => !p);
 
@@ -5056,15 +5091,31 @@ export default function App() {
         // playhead (`resolveShortcutTargetSegmentId`). The original gate read
         // `selectedSegmentId` alone on the belief that clicking a clip sets
         // it; Timeline.tsx only sets it on DOUBLE-click, which made both keys
-        // dead on the natural gesture. Refused, same as every other bare-key
-        // shortcut here, while a text field has focus.
+        // dead on the natural gesture. Refused while a text field has focus.
+        //
+        // WS2 T4.1 — `!shortcutsSuppressedRef.current` ADDED. The text-entry
+        // guard alone was never enough: `isTextEntryElement` asks what has
+        // focus, not whether a modal is up, so with a modal open and focus on
+        // any NON-text element — a toggle button, which these modals are full
+        // of — S split a segment and D DELETED one, invisibly, behind the
+        // dialog the user was looking at. `shortcutsSuppressedRef` was already
+        // computed for exactly this (it lists every modal flag) but was read
+        // only by `resolveShortcutAction`, i.e. by the undo/redo chords.
+        //
+        // SCOPE: this fixes S and D, the two destructive keys. The SAME LEAK
+        // remains on every other bare key in this chain (Space, +/-, arrows,
+        // F) — all still guarded by `isTextEntryElement` alone. Tracked as its
+        // own [DEFERRED] entry in docs/work-in-progress.md §5; do not read this
+        // fix as having closed the chain.
         (e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !shortcutsSuppressedRef.current
         && !isTextEntryElement(document.activeElement) && resolveShortcutTargetSegmentId()
       ) {
         e.preventDefault();
         handleSplitSelectedSegment();
       } else if (
         (e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey && !e.altKey
+        && !shortcutsSuppressedRef.current
         && !isTextEntryElement(document.activeElement) && resolveShortcutTargetSegmentId()
       ) {
         e.preventDefault();
@@ -5701,11 +5752,15 @@ export default function App() {
               drawer's click-outside-to-dismiss backdrop (z-40, below) and
               below the drawer itself (z-50). Without it, `elementFromPoint` at
               a clip's centre returned the backdrop whenever the drawer was
-              open — verified live — so the clip's own `onContextMenu` (the
-              "Restore absorbed segments" menu) and every other clip pointer
-              handler were unreachable in exactly the state a user is in after
-              opening a scene. Clicking a clip now retargets the drawer instead
-              of dismissing it; clicking the PREVIEW area still dismisses. */}
+              open — verified live — so every clip pointer handler was
+              unreachable in exactly the state a user is in after opening a
+              scene. Clicking a clip now retargets the drawer instead of
+              dismissing it; clicking the PREVIEW area still dismisses.
+              (The stale half of this comment — a clip `onContextMenu`
+              "Restore absorbed segments" menu — is gone: that menu was removed
+              with the restore UI in `2d773e8`, and there is now no
+              `onContextMenu` handler anywhere in `src/`. The z-index itself is
+              still load-bearing for ordinary clip clicks and stays.) */}
           <div className="relative z-[45] flex-1 min-h-0 pb-2">
             <ErrorBoundary fallback={(err, reset) => (
               <PanelFallback label="Timeline" error={err} reset={reset} />
@@ -6053,16 +6108,30 @@ export default function App() {
           onLanguageChange={(v) => setProject(p => ({ ...p, language: v }))}
           faEnabled={isFaEnabledForProject(project)}
           onFaEnabledChange={(v) => setProject(p => ({ ...p, faHighPrecisionSync: v }))}
-          onManageModel={() => setShowManageModelsModal(true)}
+          onOpenAppSettings={() => setShowAppSettingsModal(true)}
           onClose={() => setShowProjectSettingsModal(false)}
         />
       )}
 
-      {/* Manage Models & Add-ons (WS2 Step 12, A3) — the one model UI,
-          reachable from Project Settings' "Manage models & add-ons" link
-          and automatically from TranscriptionBar's "Download model" action
-          on a model-not-found transcription error. Replaces the old
-          whisper-only ModelDownloadPanel. */}
+      {/* App Settings (WS2 T4.1) — machine-global settings. Rendered as its
+          own boolean sibling rather than nested inside Project Settings, so
+          the deep link raises it WITHOUT unmounting the modal it was opened
+          from (same reason NewProjectModal was hoisted out of the editor
+          branch in Step 2b). Both can be up at once, this one on top. */}
+      {showAppSettingsModal && (
+        <AppSettingsModal
+          onOpenModels={() => setShowManageModelsModal(true)}
+          onClose={() => setShowAppSettingsModal(false)}
+        />
+      )}
+
+      {/* Manage Models & Add-ons (WS2 Step 12, A3) — the one model UI.
+          Navigation to it is App Settings' "Manage models & add-ons" link
+          (WS2 T4.1 — it used to hang off Project Settings, which presented a
+          machine-global store as project state). The two REMEDIATION links
+          still open it directly: TranscriptionBar's "Download model" action on
+          a model-not-found error, and SyncLogPanel's equivalent. Replaces the
+          old whisper-only ModelDownloadPanel. */}
       {showManageModelsModal && (
         <ManageModelsModal
           onClose={() => setShowManageModelsModal(false)}

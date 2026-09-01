@@ -163,41 +163,30 @@ Started: 2026-08-26 (Step 3) | Status: active — all 4 numbered bugs and Phases
 ### 2. In progress
 
 [IN-PROGRESS] Phase 4 — Settings & project creation
-  T4.1 App Settings page owning Models & Add-ons (machine-global); Project Settings shows a
-       read-only requirement row that deep-links to it; missing-model check moved into
-       faPreflight.ts and surfaced in the sync log.
-  T4.2 New-project flow: language dropdown, FA sync ON by default, project-scoped settings
-       only; fix the stale blurred previous project by unmounting the editor and clearing
-       activeProjectId on close.
+  T4.1 App Settings page owning Models & Add-ons (machine-global); Project Settings deep-links
+       to it; missing-model check moved into faPreflight.ts and surfaced in the sync log.
+       Scaffold landed (AppSettingsModal, Export Engine moved, deep link, S/D suppression fix);
+       remaining: the read-only requirement row and the faPreflight/sync-log half.
+       CANNOT CLOSE while §5's `fa-inference` entry is open.
+  T4.2 New-project flow: language dropdown defaulting to "Auto-detect", which WRITES NOTHING (the
+       absent `Project.language` is load-bearing — `resolveFaLanguage` is `language ??
+       detectedLanguage`, so a seeded 'en' shadows detection forever; locked by
+       `src/services/languageDefaultDrift.test.ts`). FA sync ON by default; project-scoped only.
 
-**END GOAL:** A new project can be created with an explicit language choice and FA sync on by
-default, and the machine-global model/add-on requirement is surfaced and satisfiable from
-Settings before a sync ever needs it — closing the gap Phase 3 assumed (a project always
-carries a real `project.language`).
+**END GOAL:** A new project can be created with an explicit language choice (or a deliberate
+Auto-detect that stores nothing) and FA sync on by default, and the machine-global model/add-on
+requirement is surfaced and satisfiable from Settings before a sync ever needs it.
 
 ### 3. Next tasks
 
-- [OPEN] Re-examine ruling C3 (dual TS+Rust implementation of the shared normalization surface,
-  kept honest by a conformance fixture) — it was never revisited after the surface changed shape,
-  and the reason to revisit is not that the surface got bigger. **The surface acquired a POLICY.**
-  C3 was ruled when the shared surface was a small lookup: two implementations of a table are
-  cheap to keep honest, and a conformance fixture is an adequate guard because a table entry is
-  either right or wrong on its face. By the close of Phase 3 the shared surface was a
-  compositional cardinal generator, five per-language data files, and a year-reading selection
-  policy with a named threshold, in two languages. A conformance fixture over a THRESHOLD RULE
-  tests that the two implementations **agree**, not that either is **correct** — and both can
-  satisfy it while both are wrong. That is not hypothetical here: the propagated x00-x09 quirk is
-  the standing example, deliberately mirrored into both sides so `1905` reads as a cardinal. The
-  fixture is green, parity is real and was the right priority, and both sides are confidently
-  wrong together. A fixture catches drift; it does not prevent it, and it cannot see a defect that
-  is symmetric across the two arms (see `CLAUDE.md` §4 Testing's fixture-reach rule — this is the
-  same failure mode at ruling scale). Re-examination should ask what C3 costs now that the shared
-  surface carries policy rather than data, and what independent-of-both-arms check, if any, could
-  catch a symmetric error. Not a decision to reverse C3 — a decision to re-derive it against the
-  surface that actually exists. No owner.
+- [OPEN] Re-examine ruling C3 (dual TS+Rust normalization surface kept honest by a conformance
+  fixture) — the surface acquired a POLICY, not merely more data: a conformance fixture over a
+  threshold rule tests that the two arms AGREE, not that either is CORRECT, and both can satisfy it
+  while both are wrong (standing example: the deliberately propagated x00-x09 quirk). Re-derive C3
+  against the surface that exists, and ask what check independent of BOTH arms could catch a
+  symmetric error. Not a reversal. Full argument: `docs/history-2.md`, WS2 T4.1 Step 0a. No owner.
 
-Beyond that: WS2's numbered-bug backlog is closed and Phase 3 is done; no phase is queued after
-Phase 4. Remaining work beyond Phase 4 is the deferred items in section 5.
+Beyond that: no phase is queued after Phase 4; remaining work is section 5's deferred items.
 
 ### 4. Open bugs
 
@@ -205,6 +194,17 @@ Phase 4. Remaining work beyond Phase 4 is the deferred items in section 5.
 
 ### 5. Deferred tasks
 
+- [DEFERRED · BLOCKS T4.1 CLOSE] `fa-inference` is OFF by default, so a shipped build cannot run
+  forced alignment at all. `src-tauri/Cargo.toml`'s `[features]` declares `fa-inference =
+  ["dep:ort"]` with **no `default = [...]` key**; only `tauri:dev:fa` passes `-f fa-inference`.
+  `fa.rs:817` gates the inference arm and `fa.rs:847`'s `#[cfg(not(...))]` arm returns
+  `not_implemented` — so in `tauri:dev`/`tauri:build` EVERY FA run rejects and falls back to
+  Whisper timing. Fail-clean, but the whole FA feature (including T3.2's cardinal generator, whose
+  only production consumer is the gated `fa_onnx`) is unreachable in a shipped binary.
+  **T4.1 MUST NOT CLOSE WHILE THIS IS OPEN**: an App Settings surface offering FA model downloads
+  in a binary that cannot run FA is a worse defect than the one T4.1 fixes. Full diagnosis:
+  `.work-phase4/session-ws2-38/step4-cardinaldata-reachability.md`. **Revisit trigger:** before any
+  shipped build advertises FA. Owner: operator.
 - [DEFERRED] Duplicate asset blob set — `FINAL TEST V8` holds 798 IndexedDB asset rows for a
   project carrying 399 `project.assets` entries (exactly 2x). Separate defect from T4.1; not
   investigated. Every switch pays a double `getAllAssetsForProject` read and the orphan-drop pass
@@ -229,13 +229,20 @@ Phase 4. Remaining work beyond Phase 4 is the deferred items in section 5.
 - [DEFERRED] Arbitrary frame rate support — some assets are 24fps but the app assumes a single
   project frame rate throughout; rests on the same single-project-frame-rate assumption as the
   120fps item above. No owner.
-- [DEFERRED] S/D hotkey scope is gated on a selected/targeted segment plus the text-entry guard,
-  not true timeline focus. Checked 2026-08-31: the blocker is clip focusability, not the guard —
-  Timeline's clip elements and its scroll container carry no tabIndex/role (deliberately removed
-  in 299f014), and the container's mousedown-capture handler actively suppresses the browser's own
-  focus-shift on click. Gating S/D on focus-within the timeline needs tabIndex plumbing across clip
-  elements plus revisiting that suppression, which touches selection and scrubbing — out of scope
-  here. No owner.
+- [OPEN · NON-BLOCKING] Bare-key shortcut chain ignores `shortcutsSuppressedRef` — the leak spans
+  the WHOLE chain, not only timeline focus. `App.tsx`'s keydown handler guards Space, `+`/`-`,
+  arrows and `F` with `isTextEntryElement(document.activeElement)` alone, which asks what has FOCUS,
+  not whether a modal is up; `shortcutsSuppressedRef` (which lists every modal flag) is read only by
+  `resolveShortcutAction`, the undo/redo chords. So with any modal open and focus on a non-text
+  element those keys still act behind the dialog. **S and D were FIXED in WS2 T4.1** (the
+  destructive pair); the rest of the chain still leaks. No owner.
+- [DEFERRED] S/D hotkey scope is gated on a selected/targeted segment plus the text-entry guard and
+  (since T4.1) modal suppression — but still not on true TIMELINE focus. Checked 2026-08-31: the
+  blocker is clip focusability, not the guard — Timeline's clip elements and its scroll container
+  carry no tabIndex/role (deliberately removed in 299f014), and the container's mousedown-capture
+  handler actively suppresses the browser's own focus-shift on click. Gating S/D on focus-within the
+  timeline needs tabIndex plumbing across clip elements plus revisiting that suppression, which
+  touches selection and scrubbing — out of scope here. No owner.
 - [DEFERRED] `textNormalize.ts`'s `digitTokenToWords` emits English cardinal/year words for every
   language's digit tokens — never gated by `languageCode` (e.g. es `"23"` → `"twenty three"`, not
   `"veintitrés"`). Real, confirmed (T3.2 diagnosis; `sync-pipeline-v2-plan.md` H.5). Currently

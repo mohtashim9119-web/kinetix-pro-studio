@@ -498,6 +498,22 @@ function selectYearCandidate(n: number, policy: FaYearReading['selectionPolicy']
  *  `fa-text-normalize-fixture.json` fixture — not as a shipping code path.
  *  Do not mistake test/fixture coverage here for production behavior.
  *
+ *  THE TRIO STAYS OMITTED PERMANENTLY (WS2 T4.1 Step 4, owner ruling). This is
+ *  not "not wired yet" — wiring it would be a DEFECT, and here is the
+ *  mechanism. Both arms normalizing is idempotent on the STRING and NOT on the
+ *  WORD COUNT. `fa_onnx.rs`'s `tokenize_normalized_words` records
+ *  `fragment_counts` per SOURCE word and `collapse_word_fragments` merges each
+ *  group back to exactly one `WordSpan` per source word, which is what keeps
+ *  `wordIndex` 1:1 with the RAW words of `chunk.text`. If this side
+ *  pre-normalized, `"2024"` would reach Rust as `"twenty twenty-four"` — TWO
+ *  raw source words, two `WordSpan`s — desynchronizing `wordIndex` against the
+ *  script-word attribution for the rest of the chunk. The trio is optional
+ *  precisely so the production path never supplies it.
+ *
+ *  Separately, and not to be confused with the above: the RUST arm's own
+ *  reachability is gated by the `fa-inference` Cargo feature, which is OFF in
+ *  `tauri:dev`/`tauri:build`. See `docs/work-in-progress.md` §5.
+ *
  *  `stripped` must be entirely
  *  digits, no sign, no separators, no leading zero other than a bare "0" —
  *  anything else returns `undefined` and the caller falls through to the

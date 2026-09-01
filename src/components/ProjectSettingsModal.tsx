@@ -9,12 +9,19 @@
  * Export Quality (resolution/fps) moved out to ExportSettingsModal.tsx —
  * those are chosen at export time, not here. All edits are local draft
  * state until Save; Cancel/Escape discard everything.
+ *
+ * WS2 T4.1 — Export Engine MOVED OUT to `AppSettingsModal.tsx`, and the
+ * models link with it. Both were machine-global settings wearing a
+ * project-scoped modal: the WebCodecs toggle is a `localStorage` key
+ * (`useExport.ts`'s `webcodecsExportEnabled`) and the model store is
+ * `app_local_data_dir/models`, so editing either here changed every project
+ * on the machine while appearing to change one. What remains in this modal is
+ * exactly what is stored on the `Project` and travels with it.
  */
 
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import type { AspectRatio, ResolutionTier, VideoSegment } from '../types';
-import { isWebCodecsExportCapable, isWebCodecsExportToggleOn, setWebCodecsExportToggle } from '../hooks/useExport';
 import { isFaCapable, shouldPersistFaChoice } from '../services/faGate';
 import { resolveDimensions } from '../services/resolutionConfig';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -49,9 +56,13 @@ interface Props {
    *  never accidentally render "no preference" as "off". */
   faEnabled: boolean;
   onFaEnabledChange: (v: boolean) => void;
-  /** Opens ManageModelsModal (WS2 Step 12) — the in-app whisper +
-   *  forced-alignment model acquisition/status UI. */
-  onManageModel: () => void;
+  /** WS2 T4.1 deep link — opens `AppSettingsModal`, which owns Models &
+   *  Add-ons now that the model store is correctly presented as
+   *  machine-global. Mirrors the `onManageModel` prop it replaces: App holds
+   *  the boolean, this modal stays mounted underneath. The two contextual
+   *  "download the missing model" links (TranscriptionBar, SyncLogPanel) still
+   *  open the models modal directly — those are remediation, not navigation. */
+  onOpenAppSettings: () => void;
   onClose: () => void;
 }
 
@@ -65,7 +76,7 @@ export function ProjectSettingsModal({
   onLanguageChange,
   faEnabled,
   onFaEnabledChange,
-  onManageModel,
+  onOpenAppSettings,
   onClose,
 }: Props): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
@@ -73,7 +84,6 @@ export function ProjectSettingsModal({
   // ── Draft state — all four sections. Committed atomically on Save;
   // Cancel/Escape discard everything below (§2.2). ──────────────────────────
   const [draftNativeTier, setDraftNativeTier] = useState<ResolutionTier>(resolutionTier);
-  const [draftWebcodecsEnabled, setDraftWebcodecsEnabled] = useState<boolean>(() => isWebCodecsExportToggleOn());
   const [draftOverlayOn, setDraftOverlayOn] = useState<boolean>(() => segments.every((s) => s.showOverlay));
   const [draftLanguage, setDraftLanguage] = useState<string>(() => language ?? AUTO_DETECT_VALUE);
   // WS1 Session G (owner ruling R-AK) made this PER-PROJECT; WS1 Session H
@@ -85,7 +95,6 @@ export function ProjectSettingsModal({
   // actually do.
   const [draftFaEnabled, setDraftFaEnabled] = useState<boolean>(() => faEnabled);
 
-  const webcodecsCapable = isWebCodecsExportCapable();
   const faCapable = isFaCapable();
 
   // Escape = Cancel (no exact precedent in this codebase, per plan §2.2 —
@@ -100,7 +109,6 @@ export function ProjectSettingsModal({
 
   const handleSave = (): void => {
     onResolutionTierChange(draftNativeTier);
-    setWebCodecsExportToggle(draftWebcodecsEnabled);
     // WS1 Session G — write ONLY on an actual change. The retired global
     // toggle was written unconditionally by this very handler, which is
     // exactly why its stored `false` carried no recoverable intent
@@ -225,39 +233,12 @@ export function ProjectSettingsModal({
               </p>
             )}
             <button
-              onClick={onManageModel}
+              onClick={onOpenAppSettings}
+              data-testid="project-settings-open-app-settings"
               className="text-[9px] uppercase tracking-widest text-gray-500 hover:text-[#F27D26] transition-colors underline underline-offset-2"
             >
-              Manage models &amp; add-ons
+              Models &amp; add-ons are in App Settings
             </button>
-          </div>
-
-          {/* Section: Export Engine (WebCodecs export toggle — mirrors DropZonePanel's) */}
-          <div className="space-y-2 pt-4 border-t border-[#222]">
-            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Export Engine</p>
-            <label className="flex items-center justify-between text-[10px] uppercase tracking-widest text-gray-500 font-bold">
-              <span>Use WebCodecs export (faster, beta)</span>
-              <button
-                onClick={() => setDraftWebcodecsEnabled((v) => !v)}
-                disabled={!webcodecsCapable}
-                aria-label={draftWebcodecsEnabled ? 'Disable WebCodecs export' : 'Enable WebCodecs export'}
-                aria-pressed={draftWebcodecsEnabled}
-                className={`w-10 h-5 rounded-full transition-colors relative ${
-                  !webcodecsCapable
-                    ? 'bg-[#1A1A1A] border border-[#282828] opacity-40 cursor-not-allowed'
-                    : draftWebcodecsEnabled
-                      ? 'bg-[#F27D26]'
-                      : 'bg-[#1A1A1A] border border-[#282828]'
-                }`}
-              >
-                <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${draftWebcodecsEnabled && webcodecsCapable ? 'translate-x-5' : ''}`} />
-              </button>
-            </label>
-            {!webcodecsCapable && (
-              <p className="text-[8px] leading-snug text-gray-600">
-                Not available on this device — requires WebCodecs, WebGL2, and module worker support.
-              </p>
-            )}
           </div>
 
           {/* Section: Text Overlay (mirrors DropZonePanel's showOverlay cascade) */}
