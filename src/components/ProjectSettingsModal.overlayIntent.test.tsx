@@ -92,7 +92,6 @@ async function renderModal(initialSegments: VideoSegment[]): Promise<Harness> {
         onLanguageChange={() => {}}
         faEnabled={false}
         onFaEnabledChange={() => {}}
-        onOpenAppSettings={() => {}}
         onClose={() => {}}
       />,
     );

@@ -17,6 +17,15 @@
  * `app_local_data_dir/models`, so editing either here changed every project
  * on the machine while appearing to change one. What remains in this modal is
  * exactly what is stored on the `Project` and travels with it.
+ *
+ * WS2 T4.1 Step 1 — THIS MODAL HAS NO LINK TO APP SETTINGS AND NO MODELS
+ * ENTRY POINT OF ANY KIND. The deep-link button that briefly stood in the Sync
+ * section is gone, along with its `onOpenAppSettings` prop. A project-scoped
+ * surface that offers a door into machine-global model management re-creates
+ * the confusion the T4.1 split exists to remove: the user arrives expecting to
+ * change this project and leaves having changed every project. Models are
+ * reached from the dashboard gear only. `ProjectSettingsModal.test.tsx` and
+ * `App.appSettings.test.tsx` both assert the absence.
  */
 
 import React, { useEffect, useState } from 'react';
@@ -56,13 +65,6 @@ interface Props {
    *  never accidentally render "no preference" as "off". */
   faEnabled: boolean;
   onFaEnabledChange: (v: boolean) => void;
-  /** WS2 T4.1 deep link — opens `AppSettingsModal`, which owns Models &
-   *  Add-ons now that the model store is correctly presented as
-   *  machine-global. Mirrors the `onManageModel` prop it replaces: App holds
-   *  the boolean, this modal stays mounted underneath. The two contextual
-   *  "download the missing model" links (TranscriptionBar, SyncLogPanel) still
-   *  open the models modal directly — those are remediation, not navigation. */
-  onOpenAppSettings: () => void;
   onClose: () => void;
 }
 
@@ -76,7 +78,6 @@ export function ProjectSettingsModal({
   onLanguageChange,
   faEnabled,
   onFaEnabledChange,
-  onOpenAppSettings,
   onClose,
 }: Props): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
@@ -258,13 +259,6 @@ export function ProjectSettingsModal({
                 Not available outside the desktop app.
               </p>
             )}
-            <button
-              onClick={onOpenAppSettings}
-              data-testid="project-settings-open-app-settings"
-              className="text-[9px] uppercase tracking-widest text-gray-500 hover:text-[#F27D26] transition-colors underline underline-offset-2"
-            >
-              Models &amp; add-ons are in App Settings
-            </button>
           </div>
 
           {/* Section: Text Overlay (mirrors DropZonePanel's showOverlay cascade) */}

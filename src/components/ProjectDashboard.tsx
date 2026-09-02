@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { Plus, Trash2, FolderOpen, MoreVertical, Search, Film, Check, Loader2 } from 'lucide-react';
+import { Plus, Trash2, FolderOpen, MoreVertical, Search, Film, Check, Loader2, Settings } from 'lucide-react';
 import type { ProjectMeta } from '../types';
 import { loadAllMetas, deleteProjectData } from '../services/projectStore';
 import { deleteAllAssets } from '../services/assetStore';
@@ -16,6 +16,15 @@ interface Props {
   openingProjectId?: string | null;
   onSelectProject: (id: string) => void;
   onNewProject: () => void;
+  /**
+   * Opens App Settings (WS2 T4.1 Step 1). THE ONLY entry point to it, and it
+   * lives here rather than in the editor for a reason: App Settings is
+   * machine-global, so it must be reachable with no project loaded — including
+   * on a fresh install where the user's first task is downloading a model
+   * before any project exists to open. App renders the modal in its outer
+   * fragment so this can raise it over the dashboard.
+   */
+  onOpenAppSettings: () => void;
 }
 
 export function ProjectDashboard({
@@ -23,6 +32,7 @@ export function ProjectDashboard({
   openingProjectId = null,
   onSelectProject,
   onNewProject,
+  onOpenAppSettings,
 }: Props): React.ReactElement {
   const [metas, setMetas] = useState<ProjectMeta[]>([]);
   const [search, setSearch] = useState('');
@@ -150,6 +160,17 @@ export function ProjectDashboard({
           >
             <Trash2 size={14} />
             Delete Selected ({selectedIds.size})
+          </button>
+          {/* App Settings — the one entry point, reachable with no project. */}
+          <button
+            onClick={onOpenAppSettings}
+            data-testid="dashboard-open-app-settings"
+            aria-label="App Settings"
+            title="App Settings"
+            className="bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded-lg
+                       p-2.5 text-zinc-200 hover:text-[#F27D26] transition-colors"
+          >
+            <Settings size={16} />
           </button>
           {/* New Project button */}
           <button

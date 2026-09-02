@@ -384,23 +384,23 @@ describe('WS2 T4.1 — S/D are inert while a modal is open', () => {
     expect(document.querySelector('[role="dialog"][aria-label="Project Settings"]')).not.toBeNull();
   });
 
+  // REWRITTEN in WS2 T4.1 Step 1. This used to reach App Settings through
+  // Project Settings' deep link; that link is gone by ruling (a project-scoped
+  // surface must offer no door into machine-global model management), so the
+  // route here is now the DASHBOARD GEAR — the only entry point there is.
+  // App's keydown handler lives on App, not in the editor subtree, so it is
+  // still live while the dashboard is the mounted view; suppression therefore
+  // still has something to suppress.
   it('does not act on S or D with App Settings open and focus on a toggle button', async () => {
-    await openEditorOnTarget();
+    await mountApp();
+    expect(view().view).toBe('dashboard');
 
-    const openBtn = Array.from(container.querySelectorAll('button'))
-      .find(b => b.textContent?.trim() === 'Project Settings');
-    await act(async () => { openBtn!.click(); });
-
-    const deepLink = document.querySelector<HTMLButtonElement>(
-      '[data-testid="project-settings-open-app-settings"]',
-    );
-    expect(deepLink, 'App Settings deep link not found in Project Settings').not.toBeNull();
-    await act(async () => { deepLink!.click(); });
+    const gear = container.querySelector<HTMLButtonElement>('[data-testid="dashboard-open-app-settings"]');
+    expect(gear, 'dashboard gear not found').not.toBeNull();
+    await act(async () => { gear!.click(); });
 
     const appSettings = document.querySelector('[data-testid="app-settings-modal"]');
-    expect(appSettings, 'App Settings modal did not open from the deep link').not.toBeNull();
-    // The deep link must NOT unmount the modal it was opened from.
-    expect(document.querySelector('[role="dialog"][aria-label="Project Settings"]')).not.toBeNull();
+    expect(appSettings, 'App Settings modal did not open from the dashboard gear').not.toBeNull();
 
     const toggle = appSettings!.querySelector<HTMLButtonElement>('button[aria-pressed]');
     expect(toggle, 'no toggle button inside App Settings to focus').not.toBeNull();
@@ -409,6 +409,10 @@ describe('WS2 T4.1 — S/D are inert while a modal is open', () => {
     const del = new KeyboardEvent('keydown', { key: 'D', bubbles: true, cancelable: true });
     await act(async () => { window.dispatchEvent(del); });
     expect(del.defaultPrevented).toBe(false);
+
+    const split = new KeyboardEvent('keydown', { key: 'S', bubbles: true, cancelable: true });
+    await act(async () => { window.dispatchEvent(split); });
+    expect(split.defaultPrevented).toBe(false);
   });
 
   it('still acts on S with no modal open — the guard did not kill the shortcut', async () => {

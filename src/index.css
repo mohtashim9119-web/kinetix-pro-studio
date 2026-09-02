@@ -27,6 +27,7 @@
   --kx-line-2:     rgba(255,255,255,.11);    /* hover border */
 
   /* Text */
+  --kx-text-base:  #E4E3E0;   /* app-wide INHERITED base — see #root below */
   --kx-text:       #eef1f6;   /* primary (titles, active labels) */
   --kx-muted:      #8a93a2;   /* secondary (filenames, timecodes, button labels) */
   --kx-faint:      #59616f;   /* tertiary (empty-state copy, decorative labels) */
@@ -56,6 +57,21 @@
    accidental text selection. Selection is re-enabled below for inputs and
    editable text so typing/copy still works. */
 #root {
+  /* WS2 T4.1 Step 1 — the app's BASE text colour, declared once at the root.
+     Until this line, the only thing setting an inherited colour was the EDITOR
+     root div's own `text-[#E4E3E0]`, so any component rendered as a sibling of
+     it in App's outer fragment inherited nothing and fell back to the UA
+     default — black on this app's near-black surfaces. That is not
+     hypothetical: `NewProjectModal` was hoisted into that fragment in Step 2b
+     (8797651) so it could overlay the dashboard, and its heading, name input
+     and resolution select have rendered black-on-#111 ever since. App Settings
+     becomes exactly such a component in this step, so a per-element patch
+     would have reintroduced the same bug within the round.
+
+     The value is the editor root's own former literal, unchanged, so nothing
+     moves visually; `App.tsx`'s `text-[#E4E3E0]` was removed in the same
+     commit rather than left as a second source of truth. */
+  color: var(--kx-text-base);
   -webkit-user-select: none;
   user-select: none;
 }

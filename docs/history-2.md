@@ -2472,3 +2472,76 @@ same time; its full argument was already in this file's Step 0a section.
 
 **Files.** `src/hooks/useExport.ts`, `src/hooks/webcodecsDefaultDrift.test.ts` (new, 10 tests),
 `src/components/AppSettingsModal.tsx`, `CLAUDE.md`, `docs/work-in-progress.md`.
+
+## WS2 T4.1 Step 1 — the App Settings surface: dashboard gear, three flat blocks, inline models (2026-09-03, branch ws2-t41-app-settings)
+
+**Entry point.** A gear in the dashboard header, and nothing else. It has to live there rather
+than in the editor because App Settings is machine-global: the state in which a user most needs
+it is a fresh install with no project to open, where an editor-only entry point can never be
+reached. `AppSettingsModal` therefore moved out of `mainContent`'s editor branch into App's outer
+fragment, beside `NewProjectModal` — the same hoist, for the same reason, as Step 2b's.
+
+**Three blocks, one flat scrolling surface, hairline dividers, no nested modal.** Block 1
+Rendering Engine (renamed by D6). Block 2 Models & Add-ons rendered INLINE. Block 3 New Project
+Defaults.
+
+**The Models extraction.** `ManageModelsModal`'s body became `src/components/ModelsSection.tsx`;
+the modal kept only its chrome (dialog role, focus trap, Escape, Done) and now renders the section.
+The behaviour is not a rendering detail — it owns an `InstalledModelsReport` refresh cycle, a
+per-row state machine, two cancellable download channels, and the Step 13 Phase 1 status-probe
+failure banner — so a parallel implementation would have drifted on the first one-sided bug fix.
+Filtering for Step 3 is a PROP (`faLanguages`, `includeWhisper`), not a fork, so the filtered
+surface is the same code path with a shorter list. The chrome survives because the two REMEDIATION
+links (TranscriptionBar, SyncLogPanel) must still open a models UI directly from inside a failing
+flow. Evidence the extraction is behaviour-preserving: `ManageModelsModal.test.tsx`'s 15 existing
+tests pass unchanged against it.
+
+**Project Settings has no models entry point of any kind** — the deep-link button and its
+`onOpenAppSettings` prop are gone. A project-scoped surface offering a door into machine-global
+model management re-creates exactly the confusion the T4.1 split exists to remove.
+
+**The base text colour, fixed at the root.** `#root` now declares `color: var(--kx-text-base)`
+(`#E4E3E0`, the editor root's own former literal), and `App.tsx`'s `text-[#E4E3E0]` was removed in
+the same commit so there is one source of truth rather than two. Measured in the running app, not
+inferred — computed `color` on the New Project modal, before and after:
+
+| Element | Before | After |
+|---|---|---|
+| `<h2>New Project</h2>` | `rgb(0,0,0)` on `#111` | `rgb(228,227,224)` |
+| name `<input>` | `rgb(48,48,48)` on `#1A1A1A` | `rgb(228,227,224)` |
+| resolution `<select>` | `rgb(48,48,48)` on `#1A1A1A` | `rgb(228,227,224)` |
+
+Form controls are covered by the root declaration because Tailwind's preflight sets
+`color: inherit` on `button, input, select, optgroup, textarea` (verified in
+`node_modules/tailwindcss/preflight.css`), which is why no per-element patch was needed. One
+measurement note worth keeping: an in-page probe that set `#root { color: initial }` reported the
+form controls as still light, and an HMR-only CSS swap reported them as still black — both
+disagreed with a full reload. The before/after table above is from full page loads only.
+
+**Reach, by destructive probe** (CLAUDE.md §4 Testing) — 6 probes over the 10 new tests in
+`src/App.appSettings.test.tsx`:
+
+| Probe | Mutation | Result |
+|---|---|---|
+| P1 | App Settings rendered back inside the editor branch | 7 red — every test that needs it over the dashboard |
+| P2 | dashboard gear removed | 8 red |
+| P3 | block 2 reverted to a link instead of the inline section | 2 red (inline-ness, pack list) |
+| P4 | App Settings deep link restored in Project Settings | 2 red |
+| P5 | the immediate-side-effect copy removed from block 2 | 1 red |
+| P6 | hairline dividers replaced with per-block cards | 1 red |
+
+**Deviation from the stated step split, reported rather than made silently.** Block 3's persisted
+store (`src/services/appDefaults.ts`) landed in THIS commit rather than in Step 2. Step 1 was asked
+to render all three blocks; a block whose Save silently discards everything the user typed is a
+defect, and shipping one for the length of a commit is worse than moving ~90 lines of store
+forward. Step 2 keeps the rest of its scope: the New Project modal's pre-fill, its language
+dropdown and FA toggle, and the Save/Cancel unification.
+
+**Files.** `src/components/ModelsSection.tsx` (new), `src/components/ManageModelsModal.tsx`
+(reduced to chrome), `src/components/AppSettingsModal.tsx` (rewritten),
+`src/components/ProjectSettingsModal.tsx`, `src/components/ProjectDashboard.tsx`,
+`src/services/appDefaults.ts` (new), `src/App.tsx`, `src/index.css`,
+`src/App.appSettings.test.tsx` (new, 10 tests), `src/App.projectSwitch.test.tsx` (the S/D App
+Settings case rewritten to the gear route, the deep link it used being gone).
+Gates: tsc/lint clean; vitest 2888 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden
+replay 6/6; K13 3/3. Nothing in `src-tauri/` moved.

@@ -5477,6 +5477,7 @@ export default function App() {
       openingProjectId={openingProjectId}
       onSelectProject={(id) => { void handleSwitchProject(id); }}
       onNewProject={() => setShowNewProjectModal(true)}
+      onOpenAppSettings={() => setShowAppSettingsModal(true)}
     />
   ) : (
     /* `data-project-id` is the editor's rendered project IDENTITY. It exists so
@@ -5485,7 +5486,7 @@ export default function App() {
     <div
       data-testid="editor-root"
       data-project-id={project.id}
-      className="min-h-screen bg-[var(--kx-bg)] text-[#E4E3E0] font-sans selection:bg-[var(--kx-accent)] selection:text-white flex overflow-hidden h-screen"
+      className="min-h-screen bg-[var(--kx-bg)] font-sans selection:bg-[var(--kx-accent)] selection:text-white flex overflow-hidden h-screen"
     >
 
       {/* Body — 3 columns, full height */}
@@ -6108,20 +6109,7 @@ export default function App() {
           onLanguageChange={(v) => setProject(p => ({ ...p, language: v }))}
           faEnabled={isFaEnabledForProject(project)}
           onFaEnabledChange={(v) => setProject(p => ({ ...p, faHighPrecisionSync: v }))}
-          onOpenAppSettings={() => setShowAppSettingsModal(true)}
           onClose={() => setShowProjectSettingsModal(false)}
-        />
-      )}
-
-      {/* App Settings (WS2 T4.1) — machine-global settings. Rendered as its
-          own boolean sibling rather than nested inside Project Settings, so
-          the deep link raises it WITHOUT unmounting the modal it was opened
-          from (same reason NewProjectModal was hoisted out of the editor
-          branch in Step 2b). Both can be up at once, this one on top. */}
-      {showAppSettingsModal && (
-        <AppSettingsModal
-          onOpenModels={() => setShowManageModelsModal(true)}
-          onClose={() => setShowAppSettingsModal(false)}
         />
       )}
 
@@ -6349,6 +6337,15 @@ export default function App() {
           onConfirm={handleNewProjectConfirm}
           onCancel={() => setShowNewProjectModal(false)}
         />
+      )}
+      {/* App Settings (WS2 T4.1 Step 1) — machine-global settings, rendered
+          OUTSIDE `mainContent` for the same reason NewProjectModal is: its
+          entry point is the DASHBOARD gear, which is up when no project is
+          loaded at all. Inside the editor branch it could never render there.
+          It is a flat three-block surface that raises no nested modal, so
+          nothing needs to stay mounted underneath it. */}
+      {showAppSettingsModal && (
+        <AppSettingsModal onClose={() => setShowAppSettingsModal(false)} />
       )}
       {import.meta.env.DEV && devPanelOpen && (
         <Suspense fallback={null}>
