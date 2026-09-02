@@ -107,7 +107,13 @@ import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunk
 import { computeFaChunkPlan } from './services/faChunkPlan';
 import type { UnscriptedRun } from './services/faChunkPlan';
 import type { FaLanguageCode } from './services/faTextNormalize';
-import { isFaGateOpenForProject, isFaEnabledForProject, isFaCapable, resolveFaLanguage } from './services/faGate';
+import {
+  isFaGateOpenForProject, isFaEnabledForProject, isFaCapable, resolveFaLanguage,
+  shouldPersistFaChoice, FA_PROJECT_DEFAULT_ON,
+} from './services/faGate';
+import {
+  AUTO_DETECT, readNewProjectDefaults, NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON,
+} from './services/appDefaults';
 import { runForcedAlignmentForSync } from './services/forcedAlignmentRun';
 import { runFaPreflight } from './services/faPreflight';
 import {
@@ -228,7 +234,7 @@ import { Timeline } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './components/PreviewStage';
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
 import { ProjectDashboard } from './components/ProjectDashboard';
-import { NewProjectModal } from './components/NewProjectModal';
+import { NewProjectModal, type NewProjectChoices } from './components/NewProjectModal';
 import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
 import { SyncLogPanel } from './components/SyncLogPanel';
@@ -405,6 +411,13 @@ export const parseProjectData = async (
   assets: Asset[],
   voiceoverDuration: number = 0,
   previousSegments?: readonly SegmentIdSource[],
+  /** WS2 T4.1 Step 2 — what a freshly minted segment's `showOverlay` starts
+   *  at. Comes from `Project.defaultTextOverlay`, which is seeded once at
+   *  creation from App Settings' New Project Defaults and then never re-read
+   *  from that global. Optional and defaulting to `false`, so every existing
+   *  caller — including the golden replay and `syncTiming.test.ts` — is
+   *  byte-identical to before this parameter existed. */
+  defaultTextOverlay: boolean = false,
 ): Promise<VideoSegment[]> => {
   // Split on the start of each bracketed tag so blank lines between a tag and its
   // description text stay within the same block (not treated as a scene boundary).
@@ -611,7 +624,7 @@ export const parseProjectData = async (
       order: i,
       transition: TransitionType.NONE,
       animation: AnimationType.NONE,
-      showOverlay: false,
+      showOverlay: defaultTextOverlay,
       extraOverlays: [],
     };
 
@@ -3071,7 +3084,10 @@ export default function App() {
 
     // 5. Parse project data with the fresh, complete data
     syncMark('assets+duration:done');
-    const newSegmentsRaw = await parseProjectData(scriptText, sceneText, allAssets, audioDuration, previousSegments);
+    const newSegmentsRaw = await parseProjectData(
+      scriptText, sceneText, allAssets, audioDuration, previousSegments,
+      projectRef.current.defaultTextOverlay ?? false,
+    );
     syncMark('parseProjectData:done');
 
     // WS1b — empty scene-doc hard abort (doc §3.4/§3.11, S15). Always aborts
@@ -5250,7 +5266,13 @@ export default function App() {
 
   // (Canvas mirror removed — export now uses ffmpeg.wasm frame renderer, not MediaRecorder)
 
-  const handleNewProjectConfirm = async (name: string, aspectRatio: AspectRatio, resolutionTier: ResolutionTier): Promise<void> => {
+  const handleNewProjectConfirm = async ({
+    name,
+    aspectRatio,
+    resolutionTier,
+    language,
+    faHighPrecisionSync,
+  }: NewProjectChoices): Promise<void> => {
     // Discard any staging-time voiceover transcription left over from the
     // outgoing project — otherwise effectiveVoiceoverId keeps pointing at its
     // ephemeral asset id, which can never match the new project's
@@ -5261,12 +5283,37 @@ export default function App() {
     // Build the new project and register it immediately — don't wait for the
     // debounced hook so the registry always reflects this project by the time
     // the dashboard next renders.
+    const newProjectDefaults = readNewProjectDefaults();
     const fresh = makeDefaultProject();
     fresh.name = name;
     // Locked forever at creation (aspectRatio) / editable later in Project
     // Settings (resolutionTier) — Project Settings + Aspect Ratio Step 3.
     fresh.aspectRatio = aspectRatio;
     fresh.resolutionTier = resolutionTier;
+    // LANGUAGE — `AUTO_DETECT` writes NOTHING. The absent field is what lets
+    // `resolveFaLanguage` (`language ?? detectedLanguage`) fall through to
+    // Whisper's own detection; any stored code, `'en'` included, shadows that
+    // detection permanently because `useWhisper.ts` only ever writes into an
+    // EMPTY `language`. See `languageDefaultDrift.test.ts`'s header.
+    if (language !== AUTO_DETECT) fresh.language = language;
+    // FA — write ONLY on a real divergence from the read-time default, exactly
+    // as `ProjectSettingsModal`'s Save does via `shouldPersistFaChoice`. An
+    // absent `faHighPrecisionSync` means "no preference" and must keep meaning
+    // that: seeing the control at creation and leaving it alone is not a
+    // choice, and persisting it anyway would put this project permanently out
+    // of reach of a future `FA_PROJECT_DEFAULT_ON` change.
+    if (shouldPersistFaChoice(faHighPrecisionSync, FA_PROJECT_DEFAULT_ON)) {
+      fresh.faHighPrecisionSync = faHighPrecisionSync;
+    }
+    // TEXT OVERLAY — stored on the project rather than read from App Settings
+    // at sync time, for the same seeds-only reason: `parseProjectData` runs on
+    // every Apply Sync, so reading the live app default there would let a
+    // preference changed today reach a project created last month. Written
+    // only when it diverges from the value `parseProjectData` already falls
+    // back to, so an untouched default stores nothing.
+    if (newProjectDefaults.textOverlay !== NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON) {
+      fresh.defaultTextOverlay = newProjectDefaults.textOverlay;
+    }
     // Mark as confirmed so auto-save and saveNow will persist it going forward.
     fresh.confirmed = true;
     const outcome = await saveProject(fresh); // persist full project JSON

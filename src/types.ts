@@ -470,6 +470,25 @@ export interface Project {
    *  Undefined on every project until whichever later slice adds the first
    *  real writer. */
   faWordTimings?: TranscriptToken[];
+  /** WS2 T4.1 Step 2 — what THIS project's freshly minted segments start their
+   *  `showOverlay` at, seeded ONCE at creation from App Settings' New Project
+   *  Defaults (`services/appDefaults.ts`) and never re-read from that global
+   *  afterwards.
+   *
+   *  WHY IT IS STORED HERE RATHER THAN READ FROM APP SETTINGS AT SYNC TIME.
+   *  `parseProjectData` runs on every Apply Sync, for any project, at any time.
+   *  Reading the live machine-global default there would let a preference the
+   *  user changed today silently re-style a project created months ago on its
+   *  next re-sync — the exact "a global reaches backward into existing work"
+   *  failure that made the old per-machine FA toggle unshippable (WS1 Session
+   *  F, finding F6). A New Project Default is a SEED; a seed that keeps
+   *  applying is not a seed.
+   *
+   *  Absent means "no divergence from the built-in `false`" and is never
+   *  written back — `handleNewProjectConfirm` stores it only when the user's
+   *  default actually differs, matching `faHighPrecisionSync`'s discipline.
+   *  Undefined on every project created before this field existed. */
+  defaultTextOverlay?: boolean;
 }
 
 // ---------------------------------------------------------------------------

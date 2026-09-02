@@ -2545,3 +2545,60 @@ dropdown and FA toggle, and the Save/Cancel unification.
 Settings case rewritten to the gear route, the deep link it used being gone).
 Gates: tsc/lint clean; vitest 2888 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden
 replay 6/6; K13 3/3. Nothing in `src-tauri/` moved.
+
+## WS2 T4.1 Step 2 — New Project Defaults wired, and Save/Cancel unified (2026-09-03, branch ws2-t41-app-settings)
+
+**The New Project modal now has five fields, every one pre-filled from App Settings' block 3.**
+Language and a High-Precision Auto-Sync toggle are new. Defaults are read ONCE, lazily, at mount:
+an App Settings edit must not reach into a New Project dialog already on screen.
+
+**Two of the five write conditionally, and the condition is the point.**
+
+- *Language.* `AUTO_DETECT` writes NOTHING — a project created under it carries no `language` key
+  at all. `resolveFaLanguage` is `language ?? detectedLanguage` and `useWhisper.ts` writes a
+  detection only into an EMPTY `language`, so any stored code (`'en'` included) shadows detection
+  permanently: a Spanish voiceover would resolve FA to English forever.
+- *FA.* Written only when it diverges from `FA_PROJECT_DEFAULT_ON`, through the same
+  `shouldPersistFaChoice` Project Settings uses. **Seeing a control at creation and leaving it
+  alone is not a choice** — persisting an untouched default would convert "no preference" into an
+  explicit one and put the project permanently out of reach of a future default flip.
+
+**`Project.defaultTextOverlay` — a new optional field, and the reasoning for it.** Block 3's
+text-overlay default had no consumer: `parseProjectData` hardcoded `showOverlay: false`. Reading
+the machine-global default there instead would have been wrong, because `parseProjectData` runs on
+every Apply Sync for any project — a preference changed today would silently re-style a project
+created months ago on its next re-sync, the same "a global reaches backward into existing work"
+failure that made the old per-machine FA toggle unshippable (WS1 Session F, F6). So the choice is
+seeded onto the project at creation and read from there. `parseProjectData` gained an OPTIONAL 6th
+parameter defaulting to `false`, so every existing caller — golden replay and `syncTiming.test.ts`
+included — is byte-identical to before it existed (measured: golden replay 6/6 unchanged).
+
+**Save/Cancel unification is a REFACTOR, not a defect fix, and the record says so.** The Step 0
+sweep asked whether Export Engine, the FA toggle or language wrote on interaction. Read against
+source, all three already held draft state and wrote only inside `handleSave` — Cancel was not
+lying. What was missing was anything asserting it, which is exactly how the one genuine defect in
+that family (D4's overlay cascade, `da2d255`) sat next to them unnoticed.
+`settingsCommitSemantics.test.tsx` now states the rule once for both surfaces: a control's value
+reaches storage only through that surface's Save; interaction, Cancel and Escape write nothing.
+Block 2's model install/delete is the stated exemption (owner ruling) and is deliberately not
+covered there.
+
+**Text visibility: already fixed, at the root, in Step 1** — see that entry's before/after table.
+No per-element patch was applied, and none is needed.
+
+**Reach, by destructive probe** — 6 probes over the 23 new tests:
+
+| Probe | Mutation | Result |
+|---|---|---|
+| P1 | Auto-detect seeds `'en'` onto the project | 2 red |
+| P2 | FA written unconditionally at creation | 2 red |
+| P3 | modal ignores the stored defaults (hardcoded seeds) | 3 red |
+| P4 | App Settings' renderer toggle writes on interaction | 3 red |
+| P5 | App Settings' defaults dropdown writes on interaction | 2 red |
+| P6 | Project Settings' Cancel routed to `handleSave` | 1 red |
+
+**Files.** `src/components/NewProjectModal.tsx` (rewritten), `src/App.tsx`, `src/types.ts`,
+`src/App.newProjectDefaults.test.tsx` (new, 13 tests),
+`src/components/settingsCommitSemantics.test.tsx` (new, 10 tests).
+Gates: tsc/lint clean; vitest 2911 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden
+replay 6/6; K13 3/3. Nothing in `src-tauri/` moved.
