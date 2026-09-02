@@ -163,15 +163,14 @@ Started: 2026-08-26 (Step 3) | Status: active — all 4 numbered bugs and Phases
 ### 2. In progress
 
 [IN-PROGRESS] Phase 4 — Settings & project creation
-  T4.1 App Settings page owning Models & Add-ons (machine-global); Project Settings deep-links
-       to it; missing-model check moved into faPreflight.ts and surfaced in the sync log.
-       Scaffold landed (AppSettingsModal, Export Engine moved, deep link, S/D suppression fix);
-       remaining: the read-only requirement row and the faPreflight/sync-log half.
+  T4.1 App Settings owns Models & Add-ons inline (machine-global); Project Settings keeps only
+       project-scoped controls and no models entry point; per-language FA pack detector.
+       Landed so far: the settings inventory, the D4 overlay-cascade fix, D6/D3.
        CANNOT CLOSE while §5's `fa-inference` entry is open.
-  T4.2 New-project flow: language dropdown defaulting to "Auto-detect", which WRITES NOTHING (the
-       absent `Project.language` is load-bearing — `resolveFaLanguage` is `language ??
-       detectedLanguage`, so a seeded 'en' shadows detection forever; locked by
-       `src/services/languageDefaultDrift.test.ts`). FA sync ON by default; project-scoped only.
+  T4.2 New-project flow: New Project Defaults as machine-global state; the modal's language
+       dropdown defaults to "Auto-detect", which WRITES NOTHING (the absent `Project.language`
+       is load-bearing — `resolveFaLanguage` is `language ?? detectedLanguage`, so a seeded 'en'
+       shadows detection forever; locked by `src/services/languageDefaultDrift.test.ts`).
 
 **END GOAL:** A new project can be created with an explicit language choice (or a deliberate
 Auto-detect that stores nothing) and FA sync on by default, and the machine-global model/add-on
@@ -180,11 +179,9 @@ requirement is surfaced and satisfiable from Settings before a sync ever needs i
 ### 3. Next tasks
 
 - [OPEN] Re-examine ruling C3 (dual TS+Rust normalization surface kept honest by a conformance
-  fixture) — the surface acquired a POLICY, not merely more data: a conformance fixture over a
-  threshold rule tests that the two arms AGREE, not that either is CORRECT, and both can satisfy it
-  while both are wrong (standing example: the deliberately propagated x00-x09 quirk). Re-derive C3
-  against the surface that exists, and ask what check independent of BOTH arms could catch a
-  symmetric error. Not a reversal. Full argument: `docs/history-2.md`, WS2 T4.1 Step 0a. No owner.
+  fixture): the surface acquired a POLICY, and a conformance fixture tests that two arms AGREE,
+  not that either is CORRECT. Ask what check independent of BOTH arms catches a symmetric error.
+  Not a reversal. Full argument: `docs/history-2.md`, WS2 T4.1 Step 0a. No owner.
 
 Beyond that: no phase is queued after Phase 4; remaining work is section 5's deferred items.
 
@@ -205,6 +202,15 @@ Beyond that: no phase is queued after Phase 4; remaining work is section 5's def
   in a binary that cannot run FA is a worse defect than the one T4.1 fixes. Full diagnosis:
   `.work-phase4/session-ws2-38/step4-cardinaldata-reachability.md`. **Revisit trigger:** before any
   shipped build advertises FA. Owner: operator.
+- [DEFERRED · OUT OF SCOPE BY RULING] Two groups of persisted state are deliberately NOT on a
+  settings surface, excluded by CLAUDE.md §5's live-feedback criterion (a control belongs in
+  Settings only when it has no live visual feedback where it is used): (a) style presets and look
+  presets (`kinetix:stylePresets:v1`, `kinetix:lookPresets:v1`) — a machine-global content
+  library, authored and previewed in the Effects tab; (b) the five per-project global effects
+  fields (`globalTransition`, `globalTransitionDuration`, `globalAnimation`, `globalOverlayFilter`,
+  `globalOverlayConfig`) — they render into the preview the instant they change. Both found by
+  T4.1's Step 0 sweep. **Revisit trigger:** an overturn of the criterion itself, not a fresh
+  argument about either group. Owner: operator.
 - [DEFERRED] Duplicate asset blob set — `FINAL TEST V8` holds 798 IndexedDB asset rows for a
   project carrying 399 `project.assets` entries (exactly 2x). Separate defect from T4.1; not
   investigated. Every switch pays a double `getAllAssetsForProject` read and the orphan-drop pass
@@ -244,23 +250,14 @@ Beyond that: no phase is queued after Phase 4; remaining work is section 5's def
   timeline needs tabIndex plumbing across clip elements plus revisiting that suppression, which
   touches selection and scrubbing — out of scope here. No owner.
 - [DEFERRED] `textNormalize.ts`'s `digitTokenToWords` emits English cardinal/year words for every
-  language's digit tokens — never gated by `languageCode` (e.g. es `"23"` → `"twenty three"`, not
-  `"veintitrés"`). Real, confirmed (T3.2 diagnosis; `sync-pipeline-v2-plan.md` H.5). Currently
-  invisible in all three golden corpora because the only real non-English digit content
-  (`spanish`'s `"12"`) folds to the same wrong word on both sides of the aligner (a symmetric-fold
-  coincidence, not evidence the behavior is correct). **Reframed after T3.2 landed (2026-09-02):
-  T3.2 closed the English half of a two-sided divergence and left the other four languages
-  diverging in a NEW way — this is not "the same gap, still deferred."** Before T3.2 both sides
-  were wrong in the same direction: FA and the matcher each emitted the English reading, so the
-  divergence was uniform and one fix would have closed it. After T3.2 the FA side emits
-  `veintitrés` for Spanish while the matcher still emits `twenty three`, because
-  `digitTokenToWords` is not language-gated. The two sides now fail DIFFERENTLY, which means the
-  observed failure signature depends on which side you read — a diagnosis that reads only one arm
-  will mis-attribute it. **English is genuinely closed; es/fr/pt/de are not, and that wrongness
-  ships today.** Deferring remains correct (zero non-English digit corpora — a fix cannot be
-  measured against real content), but "T3.2 is done" overstates it: only the English half is.
-  **Revisit trigger:** a real es/fr/de/pt corpus whose script or transcript contains digit content
-  beyond what happens to coincide with the English reading. No owner.
+  language's digit tokens — never gated by `languageCode` (es `"23"` → `"twenty three"`). T3.2
+  closed the ENGLISH half only and left es/fr/pt/de diverging in a NEW way: FA now emits
+  `veintitrés` while the matcher still emits `twenty three`, so the two arms fail DIFFERENTLY and
+  a diagnosis reading one arm will mis-attribute it. That wrongness ships today; "T3.2 is done"
+  overstates it. Invisible in all three golden corpora only by a symmetric-fold coincidence
+  (`spanish`'s `"12"`). Full statement of the reframing: `docs/history-2.md`, WS2 T4.1 D6/D3 entry.
+  **Revisit trigger:** a real es/fr/de/pt corpus with digit content that does not coincide with the
+  English reading. No owner.
 - [DEFERRED] fr/pt/de elision (`l'élève`-class apostrophe handling) — `canonicalize()` splits any
   apostrophe not in the English-only `CONTRACTIONS` map into two tokens on every branch, every
   language; `faTextNormalize.ts` keeps it one token. Whether this is a real match defect is

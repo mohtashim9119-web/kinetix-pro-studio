@@ -194,6 +194,10 @@ App.tsx                 — top-level state + orchestration only
   hooks/                  — usePlayback.ts, useExport.ts, and siblings
 ```
 
+**What belongs on a settings surface — the live-feedback criterion (owner ruling, WS2 T4.1).** A control belongs in App Settings or Project Settings when it has **no live visual feedback at its point of use**: the user cannot tell what it did by looking, so it needs a named home, a label, and Save/Cancel. A control that shows its effect immediately where it already lives **stays there** — moving it into a modal removes the feedback loop that made it usable and makes the control strictly worse. The criterion is about the control's feedback, not about its storage scope: a machine-global persisted value is not automatically a setting.
+
+Ruled OUT by this criterion, deliberately and not by oversight: **style presets and look presets** (`kinetix:stylePresets:v1`, `kinetix:lookPresets:v1`) are a machine-global *content library*, authored and previewed in the Effects tab, not a setting; and the **five per-project global effects fields** (`globalTransition`, `globalTransitionDuration`, `globalAnimation`, `globalOverlayFilter`, `globalOverlayConfig`) render into the preview the instant they change. Both groups were found by WS2 T4.1's Step 0 settings-inventory sweep and excluded on this rule — do not re-litigate either without overturning the criterion itself.
+
 **Audit/investigation reports must be persisted into `docs/`**, not left to live only in a chat transcript — implementation work must never depend on recalling a prior conversation.
 
 **Do-not list.**

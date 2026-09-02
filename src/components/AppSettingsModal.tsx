@@ -9,11 +9,13 @@
  * stored on the project and travels with it.
  *
  * Two things live here today:
- *   • Export Engine (the WebCodecs toggle) — MOVED out of Project Settings this
- *     commit. It was never project state: `useExport.ts`'s
- *     `webcodecsExportEnabled` is a `localStorage` key read through
- *     `uiStateStore.ts`, so editing it in Project Settings changed every other
- *     project too while looking as though it changed one.
+ *   • Rendering Engine (the WebCodecs toggle) — MOVED out of Project Settings.
+ *     It was never project state: `useExport.ts`'s `webcodecsExportEnabled` is
+ *     a `localStorage` key read through `uiStateStore.ts`, so editing it in
+ *     Project Settings changed every other project too while looking as though
+ *     it changed one. Named "Export Engine" until WS2 T4.1's D6 finding — it
+ *     also selects the WebGL2 PREVIEW renderer (`PreviewStage.tsx:399`), so an
+ *     export-only label described only half of what it does.
  *   • Models & Add-ons — the entry point into `ManageModelsModal`, whose
  *     contents (`app_local_data_dir/models`) are per-machine by construction.
  *
@@ -88,16 +90,28 @@ export function AppSettingsModal({ onOpenModels, onClose }: Props): React.ReactE
         </p>
 
         <div className="space-y-5">
-          {/* Section: Export Engine — MOVED from ProjectSettingsModal. Stored in
-              localStorage via uiStateStore, i.e. per-machine all along. */}
+          {/* Section: Rendering Engine — MOVED from ProjectSettingsModal. Stored in
+              localStorage via uiStateStore, i.e. per-machine all along.
+
+              WS2 T4.1 (D6) — RENAMED from "Export Engine", which was
+              measurably wrong, not merely narrow. The same toggle value is
+              read by `PreviewStage.tsx:399` as
+              `glPathActive = useWebCodecsPath && webgl2Supported`, selecting
+              the WebGL2 preview renderer — so turning this off changes what
+              the user sees while editing, not just how the file is encoded.
+              A control whose label names one of its two consumers is a
+              control the user cannot reason about. The STORAGE KEY keeps its
+              old name (`webcodecsExportEnabled`) by ruling: a migration
+              across every existing profile buys nothing but a tidier string.
+              See `useExport.ts`'s gate header. */}
           <div className="space-y-2">
-            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Export Engine</p>
+            <p className="text-[9px] font-black uppercase tracking-widest text-[#F27D26]">Rendering Engine</p>
             <label className="flex items-center justify-between text-[10px] uppercase tracking-widest text-gray-500 font-bold">
-              <span>Use WebCodecs export (faster, beta)</span>
+              <span>Use the WebCodecs renderer (faster, beta)</span>
               <button
                 onClick={() => setDraftWebcodecsEnabled((v) => !v)}
                 disabled={!webcodecsCapable}
-                aria-label={draftWebcodecsEnabled ? 'Disable WebCodecs export' : 'Enable WebCodecs export'}
+                aria-label={draftWebcodecsEnabled ? 'Disable the WebCodecs renderer' : 'Enable the WebCodecs renderer'}
                 aria-pressed={draftWebcodecsEnabled}
                 className={`w-10 h-5 rounded-full transition-colors relative ${
                   !webcodecsCapable
@@ -110,6 +124,10 @@ export function AppSettingsModal({ onOpenModels, onClose }: Props): React.ReactE
                 <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${draftWebcodecsEnabled && webcodecsCapable ? 'translate-x-5' : ''}`} />
               </button>
             </label>
+            <p className="text-[9px] text-gray-600 leading-snug">
+              Governs both the editor preview and the export encoder — one engine drives
+              the picture you edit against and the file you render out, so they always match.
+            </p>
             {!webcodecsCapable && (
               <p className="text-[8px] leading-snug text-gray-600">
                 Not available on this device — requires WebCodecs, WebGL2, and module worker support.

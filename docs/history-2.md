@@ -2411,3 +2411,64 @@ callback with a matching value. Three probes, each reddening exactly the intende
 `src/components/ProjectSettingsModal.overlayIntent.test.tsx` (new, 7 tests).
 Gates: tsc/lint clean; vitest 2868 passed / 77 skipped / 0 failed (2861 + 7); gaplessInvariant
 36/36; golden replay 6/6; K13 3/3. Nothing in `src-tauri/` moved.
+
+## WS2 T4.1 (D6/D3) — the toggle that named half of what it does, and the default that had no name (2026-09-03, branch ws2-t41-app-settings)
+
+Both found by the Step 0 settings-inventory sweep.
+
+**D6 — "Export Engine" was measurably wrong, not merely narrow.** `PreviewStage.tsx:399`
+computes `glPathActive = useWebCodecsPath && webgl2Supported`, so `webcodecsExportEnabled` also
+selects the WebGL2 **preview** renderer (`useGlPreview.ts`). Turning the toggle off changes what
+the user sees while editing, not just how the file is encoded — a control whose label names one
+of its two consumers is a control the user cannot reason about. Renamed to **Rendering Engine**
+in App Settings, with copy stating it governs both; the internal constant became
+`WEBCODECS_TOGGLE_KEY`. **The storage key string is deliberately unchanged**
+(`webcodecsExportEnabled`): it is already written into every existing profile's `kinetix:ui:v1`,
+and a migration across real user state for a tidier string is the same trade `faGate.ts`'s
+`LEGACY_GLOBAL_FA_TOGGLE_KEY` declined. A key is a storage address, not a description.
+
+**D3 — the same class of default as `FA_PROJECT_DEFAULT_ON`, with no name and no guard.**
+`isWebCodecsExportToggleOn()` resolved an absent preference with a bare `true`, written twice in
+one function (the `??` arm and the `catch` arm) with a third statement of the value in the doc
+comment above it. Three copies, none named, none answerable to each other — the exact shape that
+let `types.ts`'s FA comment sit wrong for two sessions with nothing failing. Now
+`WEBCODECS_TOGGLE_DEFAULT_ON`, pinned by `src/hooks/webcodecsDefaultDrift.test.ts` (a deliberate
+sibling copy of `faDefaultDrift.test.ts`, not a generalisation of it — two guards pin different
+constants with different prose forms, and a shared abstraction would need re-probing every time a
+third default appears).
+
+**The guard's own first draft was broken, and the probe is what caught it.** Probe P3 — flip the
+constant, leave the prose behind, i.e. the literal FA failure the pattern exists to catch — came
+back **GREEN**. Cause: the same edit that introduced the named constant had reworded the doc
+comment out of `DEFAULTS_PROSE`'s reach, so the prose arm was scanning **zero** occurrences and
+could not fail. A prose guard with no prose to scan passes forever and is indistinguishable from
+one that works. Fixed on both sides: the doc comment carries the canonical machine-checkable
+phrasing, and a floor assertion fails if that phrasing ever disappears. Final probe results:
+
+| Probe | Mutation | Result |
+|---|---|---|
+| P1 | `??` arm reverted to a bare literal (the verbatim pre-fix code) | red |
+| P2 | only the `catch` arm reverted (the arm a casual edit forgets) | red |
+| P3 | constant flipped, prose left behind | red (green before the reach fix) |
+| P4 | prose reworded out of the regex's reach | red (the reach gap itself) |
+
+**D1/D2 excluded, with the criterion recorded.** CLAUDE.md §5 now carries the live-feedback rule:
+a control belongs on a settings surface only when it has **no live visual feedback at its point of
+use**. Style/look presets are a machine-global *content library* previewed in the Effects tab; the
+five per-project global effects fields render into the preview the instant they change. Both stay
+where they are. Recorded so the boundary is not re-argued in Phase 5.
+
+**Displaced from `docs/work-in-progress.md` to pay for the new deferred entry (300-line cap):**
+the `digitTokenToWords` item's post-T3.2 reframing narrative, preserved here in full. Before T3.2
+both arms were wrong in the same direction — FA and the matcher each emitted the English reading —
+so the divergence was uniform and one fix would have closed it. After T3.2 the FA side emits
+`veintitrés` for Spanish while the matcher still emits `twenty three`, because `digitTokenToWords`
+is not language-gated. The two sides now fail DIFFERENTLY, so the observed failure signature
+depends on which arm you read, and a diagnosis that reads only one will mis-attribute it. English
+is genuinely closed; es/fr/pt/de are not, and that wrongness ships today. Deferring remains correct
+(zero non-English digit corpora, so a fix cannot be measured against real content), but "T3.2 is
+done" overstates it: only the English half is. The C3 re-examination entry was compressed at the
+same time; its full argument was already in this file's Step 0a section.
+
+**Files.** `src/hooks/useExport.ts`, `src/hooks/webcodecsDefaultDrift.test.ts` (new, 10 tests),
+`src/components/AppSettingsModal.tsx`, `CLAUDE.md`, `docs/work-in-progress.md`.

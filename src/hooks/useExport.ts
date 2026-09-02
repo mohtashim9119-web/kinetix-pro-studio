@@ -28,12 +28,54 @@ export type ExportFps = 24 | 30 | 60;
 export type { ExportError } from '../services/exportPipeline';
 
 // ---------------------------------------------------------------------------
-// WebCodecs export gate — capability probe + persisted user toggle
+// WebCodecs gate — capability probe + persisted user toggle
 // (docs/webcodecs-export-plan.md §4.4/§6). The new path only runs when BOTH
 // are true; either one being false is byte-identical to today (legacy path).
+//
+// WS2 T4.1 (D6) — WHAT THIS TOGGLE ACTUALLY GOVERNS, recorded because the
+// file, the key and the App Settings block all named only export while the
+// toggle had a second, unnamed consumer. `PreviewStage.tsx:399` computes
+// `glPathActive = useWebCodecsPath && webgl2Supported`, so this same value
+// also selects the WebGL2 PREVIEW renderer (`useGlPreview.ts`) — turning it
+// off changes what the user sees while editing, not just how the file is
+// encoded. Names here and the App Settings copy now say so.
+//
+// THE STORAGE KEY IS DELIBERATELY NOT RENAMED. `webcodecsExportEnabled` is
+// already written into every existing profile's `kinetix:ui:v1`; a migration
+// that buys nothing but a tidier string is a destructive run against real
+// user state for a cosmetic gain (owner ruling, this round — same trade
+// `faGate.ts`'s LEGACY_GLOBAL_FA_TOGGLE_KEY declined for the same reason).
+// The key is a storage address, not a description.
 // ---------------------------------------------------------------------------
 
-const WEBCODECS_EXPORT_TOGGLE_KEY = 'webcodecsExportEnabled';
+const WEBCODECS_TOGGLE_KEY = 'webcodecsExportEnabled';
+
+/**
+ * What `kinetix:ui:v1`'s toggle key resolves to for a user who has never
+ * touched the control: it defaults ON for users who have never touched it
+ * (macOS Intel verified; macOS arm64/Windows unverified but accepted risk).
+ *
+ * That sentence is deliberately phrased to be MACHINE-CHECKABLE — it is the
+ * canonical prose form `webcodecsDefaultDrift.test.ts` scans for, and that
+ * file asserts at least one such statement exists in `src/`. Rewording it out
+ * of the guard's reach fails the build rather than silently emptying the
+ * scan (which is what a destructive probe caught this guard doing on its
+ * first draft; see that file's header).
+ *
+ * WHY THIS IS A NAMED CONSTANT AND NOT THE BARE `true` IT REPLACES (WS2 T4.1,
+ * D3). It is the same class of thing as `faGate.ts`'s `FA_PROJECT_DEFAULT_ON`:
+ * a default for an ABSENT stored preference, restated in prose directly above
+ * the code that applied it. That is the exact two-places shape
+ * `faDefaultDrift.test.ts` was built to catch, and this default had neither a
+ * name to scan for nor a guard — measured, the literal appeared twice in one
+ * function (the `??` arm and the `catch` arm) with a third statement of it in
+ * the doc comment. `webcodecsDefaultDrift.test.ts` now pins all three.
+ *
+ * As with FA, this is a READ-TIME fallback and must stay one: nothing writes
+ * it back, so "never chosen" stays "never chosen" and a future flip still
+ * reaches those users.
+ */
+export const WEBCODECS_TOGGLE_DEFAULT_ON = true;
 
 let cachedWebCodecsExportCapability: boolean | null = null;
 
@@ -75,19 +117,22 @@ export function __resetWebCodecsExportCapabilityForTests(): void {
 }
 
 /**
- * Persisted user toggle — defaults ON for users who have never touched it
- * (macOS Intel verified; macOS arm64/Windows unverified but accepted risk).
- * An explicit prior choice (stored true or false) is always respected.
+ * The persisted user toggle. An explicit prior choice (stored `true` or
+ * `false`) is always respected; anything else — absent, wrong-typed, or an
+ * unreadable store — resolves to `WEBCODECS_TOGGLE_DEFAULT_ON`.
+ *
+ * Governs BOTH the export encoder and the WebGL2 preview renderer — see this
+ * section's header for why that is worth saying out loud.
  */
 export function isWebCodecsExportToggleOn(): boolean {
   try {
-    const stored = readUiState()[WEBCODECS_EXPORT_TOGGLE_KEY];
-    return typeof stored === 'boolean' ? stored : true;
-  } catch { return true; }
+    const stored = readUiState()[WEBCODECS_TOGGLE_KEY];
+    return typeof stored === 'boolean' ? stored : WEBCODECS_TOGGLE_DEFAULT_ON;
+  } catch { return WEBCODECS_TOGGLE_DEFAULT_ON; }
 }
 
 export function setWebCodecsExportToggle(enabled: boolean): void {
-  patchUiState({ [WEBCODECS_EXPORT_TOGGLE_KEY]: enabled });
+  patchUiState({ [WEBCODECS_TOGGLE_KEY]: enabled });
 }
 
 /** The gate itself — capability AND user toggle both required. */
