@@ -85,6 +85,12 @@ export function ProjectSettingsModal({
   // Cancel/Escape discard everything below (§2.2). ──────────────────────────
   const [draftNativeTier, setDraftNativeTier] = useState<ResolutionTier>(resolutionTier);
   const [draftOverlayOn, setDraftOverlayOn] = useState<boolean>(() => segments.every((s) => s.showOverlay));
+  // The value the overlay control OPENED with, captured once and never
+  // updated. It is what makes Save's write conditional below — see the
+  // `handleSave` comment for the defect that required it. A lazy `useState`
+  // (not `useRef`) so the `segments.every` scan runs exactly once per mount,
+  // matching the draft seed directly above it.
+  const [initialOverlayOn] = useState<boolean>(() => segments.every((s) => s.showOverlay));
   const [draftLanguage, setDraftLanguage] = useState<string>(() => language ?? AUTO_DETECT_VALUE);
   // WS1 Session G (owner ruling R-AK) made this PER-PROJECT; WS1 Session H
   // flipped the resolved DEFAULT back to OFF (`faGate.ts`'s
@@ -117,7 +123,27 @@ export function ProjectSettingsModal({
     // expressed no preference still has none after the user edits their
     // resolution tier — and still follows the default.
     if (shouldPersistFaChoice(draftFaEnabled, faEnabled)) onFaEnabledChange(draftFaEnabled);
-    onSetAllOverlay(draftOverlayOn);
+    // WS2 T4.1 (D4) — write ONLY on an actual change, the same discipline the
+    // FA line above already applies, for the same reason (`faGate.ts`'s
+    // LEGACY_GLOBAL_FA_TOGGLE_KEY comment: an unconditional write from a
+    // shared Save carries no recoverable intent).
+    //
+    // THE DEFECT THIS CLOSES, stated as the measured behaviour rather than a
+    // principle. `onSetAllOverlay` is a CASCADE — `App.tsx`'s
+    // `handleSetAllOverlay` maps EVERY segment to the value it is given. The
+    // draft seeds from `segments.every(s => s.showOverlay)`, which is `false`
+    // whenever the project's per-segment overlay state is MIXED. So on a mixed
+    // project, opening this modal to change the resolution tier and pressing
+    // Save silently turned every segment's overlay OFF — destroying
+    // per-segment state the user set deliberately, from a control they never
+    // touched, with no undo entry naming what happened.
+    //
+    // `segments.every(...)` is a lossy summary of an N-valued fact: it cannot
+    // round-trip a mixed project, so re-writing its own seed is never a no-op
+    // there. Gating on the seed is what makes "the user did not touch this
+    // control" mean "nothing is written", which is the only reading under
+    // which the cascade is safe to keep.
+    if (draftOverlayOn !== initialOverlayOn) onSetAllOverlay(draftOverlayOn);
     onLanguageChange(draftLanguage === AUTO_DETECT_VALUE ? undefined : draftLanguage);
     onClose();
   };

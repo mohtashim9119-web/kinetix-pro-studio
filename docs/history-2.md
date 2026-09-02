@@ -2375,3 +2375,39 @@ Displaced text, exactly as it stood:
 > compositional FA-side cardinal-number generator (T3.2, TS+Rust atomic) both landed on
 > `ws2-t31-language-thread`, sessions ws2-28 through ws2-36; full record in `docs/history-2.md`.
 > Phase 4 (Settings & project creation) is now in progress.
+
+## WS2 T4.1 (D4) — the overlay cascade that fired on an untouched control (2026-09-03, branch ws2-t41-app-settings)
+
+Found by the Step 0 settings-inventory sweep (`.work-phase4/session-ws2-39/step0-settings-inventory.md`),
+not by a bug report — nothing in either target settings list mentioned it.
+
+**Defect.** `ProjectSettingsModal.handleSave` called `onSetAllOverlay(draftOverlayOn)`
+unconditionally. That callback is a CASCADE: `App.tsx`'s `handleSetAllOverlay` (`:2287`) maps
+*every* segment to the value it is handed. The draft seeded from
+`segments.every(s => s.showOverlay)`, which is `false` on any project whose per-segment overlay
+state is MIXED. So on a mixed project, opening the modal to change the resolution tier and
+pressing Save silently turned every segment's overlay off — from a control the user never
+touched, with no undo entry naming it.
+
+**Why the seed cannot be re-written safely.** `every()` is a lossy summary of an N-valued fact:
+it cannot round-trip a mixed project, so writing its own seed back is never a no-op there. This
+is the same shape the codebase had already diagnosed and fixed once, for the retired global FA
+key (`faGate.ts:44-56` — an unconditional write from a shared Save carries no recoverable
+intent), and the fix is the same shape: capture the opening value once and gate on
+`draft !== initial`, mirroring `shouldPersistFaChoice`.
+
+**Reach, measured by destructive probe, not by a green run** (CLAUDE.md §4 Testing). The
+assertion is on the segment array — `onSetAllOverlay` is wired to a reducer with the same body
+as `App.tsx:2287` — because a spy-only assertion would pass a refactor that still calls the
+callback with a matching value. Three probes, each reddening exactly the intended subset of 7:
+
+| Probe | Mutation | Result |
+|---|---|---|
+| P1 | gate removed (the verbatim pre-fix line) | 4 red / 3 green — the three greens are the two genuine-change cases and Cancel, which the gate does not govern |
+| P2 | gate hard-muted (`if (false)`) | 2 red — both genuine-change cases; the "writes nothing" cases stay green, so the suite distinguishes a gate from a mute |
+| P3 | `initialOverlayOn` aliased to the live draft instead of a captured seed | 2 red — same two, confirming the seed's capture-once semantics are load-bearing and not incidental |
+
+**Files.** `src/components/ProjectSettingsModal.tsx`,
+`src/components/ProjectSettingsModal.overlayIntent.test.tsx` (new, 7 tests).
+Gates: tsc/lint clean; vitest 2868 passed / 77 skipped / 0 failed (2861 + 7); gaplessInvariant
+36/36; golden replay 6/6; K13 3/3. Nothing in `src-tauri/` moved.
