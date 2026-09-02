@@ -164,9 +164,10 @@ Started: 2026-08-26 (Step 3) | Status: active — all 4 numbered bugs and Phases
 
 [IN-PROGRESS] Phase 4 — Settings & project creation
   T4.1 App Settings owns Models & Add-ons inline (machine-global); Project Settings keeps only
-       project-scoped controls and no models entry point; per-language FA pack detector.
-       Landed so far: the settings inventory, the D4 overlay-cascade fix, D6/D3.
-       CANNOT CLOSE while §5's `fa-inference` entry is open.
+       project-scoped controls and no models management; per-language FA pack detector.
+       Steps 0-3 landed (inventory, D4, D6/D3, the three-block surface, defaults wiring, the
+       detector). CANNOT CLOSE while §5's `fa-inference` entry is open — the detector's
+       `unbuilt` state now SAYS so to the user instead of promising a pack would help.
   T4.2 New-project flow: New Project Defaults as machine-global state; the modal's language
        dropdown defaults to "Auto-detect", which WRITES NOTHING (the absent `Project.language`
        is load-bearing — `resolveFaLanguage` is `language ?? detectedLanguage`, so a seeded 'en'

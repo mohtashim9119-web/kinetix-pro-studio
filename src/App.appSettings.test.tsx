@@ -250,10 +250,17 @@ describe('WS2 T4.1 Step 1 — Project Settings exposes no models entry point', (
     expect(dialog.textContent).not.toMatch(/app settings/i);
   });
 
-  it('has no models section, models link, or download control of any kind', async () => {
+  it('has no models MANAGEMENT — no section, no list, no whisper engine, no dialog', async () => {
+    // NARROWED in Step 3, deliberately and with the reason recorded. Step 1
+    // asserted the absence of the words "models/add-ons/download" anywhere in
+    // this dialog. Step 3 then added, by instruction, a targeted single-pack
+    // affordance for the selected language — so the guarded property is not
+    // "the word models never appears" but "no general models MANAGEMENT
+    // surface is reachable from here". A word blocklist would have had to be
+    // relaxed on any copy change; this asserts the structures instead.
     const dialog = await openProjectSettings();
     expect(dialog.querySelector('[data-testid="models-section"]')).toBeNull();
-    expect(dialog.textContent).not.toMatch(/models|add-ons|download/i);
+    expect(dialog.textContent).not.toMatch(/whisper|transcription engine|manage models/i);
     // And opening it raised no models dialog anywhere on the page.
     expect(document.querySelector('[aria-label="Manage Models & Add-ons"]')).toBeNull();
   });

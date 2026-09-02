@@ -32,7 +32,7 @@ import type { FaLanguageCode } from './faTextNormalize';
 import type { Project } from '../types';
 
 /** Mirrors `fa_preflight.rs`'s `FaPreflightReport` (serde camelCase). */
-interface FaPreflightReport {
+export interface FaPreflightReport {
   featureCompiled: boolean;
   runtimeOk: boolean;
   runtimeDetail: string;
@@ -176,4 +176,44 @@ export async function runFaPreflight(
     blockingDetail,
     fixHint,
   };
+}
+
+// ---------------------------------------------------------------------------
+// WS2 T4.1 Step 3 — the raw, per-language probe, for UI that needs the backend
+// facts WITHOUT the project-shaped verdict `runFaPreflight` computes.
+//
+// WHY PROJECT SETTINGS' PACK DETECTOR CANNOT USE `isFaCapable()` ALONE.
+// `faGate.ts`'s `isFaCapable()` is `isTauri()` and nothing more — it answers
+// "is the IPC bridge present", which is necessary and nowhere near sufficient.
+// `fa-inference` is NOT in `Cargo.toml`'s default feature set, so in a plain
+// `tauri:dev`/`tauri:build` binary the bridge is present, `isFaCapable()`
+// returns true, and `fa_align` returns `NotImplemented` for every run
+// (`src-tauri/src/fa.rs`'s `#[cfg(not(feature = "fa-inference"))]` arm). A
+// detector built on `isFaCapable()` would therefore report an installed pack
+// as USABLE in the exact binary that ships today, which is a worse lie than
+// reporting nothing.
+//
+// NO NEW PROBE WAS NEEDED, and no `not_implemented` round-trip either.
+// `fa_preflight` already returns `featureCompiled` straight from a
+// `#[cfg(feature = "fa-inference")]`, so it reports the BUILD FACT directly
+// rather than inferring it from a failed alignment. It is cheap by
+// construction (a path stat plus a dlopen + ort env init; it explicitly does
+// NOT hash the ~1.2 GiB model) because it was designed to run before every FA
+// sync. This is that same command, called with an explicit language instead of
+// one resolved from a project.
+// ---------------------------------------------------------------------------
+
+/**
+ * Runs the backend readiness probe for one language. Returns `null` — never
+ * throws — when the runtime is not Tauri-capable at all or the IPC call is
+ * rejected; callers render "unknown", which is honestly distinct from both
+ * "ready" and "the pack is missing".
+ */
+export async function probeFaReadiness(language: string): Promise<FaPreflightReport | null> {
+  if (!isFaCapable()) return null;
+  try {
+    return await invoke<FaPreflightReport>('fa_preflight', { language });
+  } catch {
+    return null;
+  }
 }

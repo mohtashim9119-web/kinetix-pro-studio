@@ -2602,3 +2602,70 @@ No per-element patch was applied, and none is needed.
 `src/components/settingsCommitSemantics.test.tsx` (new, 10 tests).
 Gates: tsc/lint clean; vitest 2911 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden
 replay 6/6; K13 3/3. Nothing in `src-tauri/` moved.
+
+## WS2 T4.1 Step 3 — the per-project FA pack detector, and the capability-probe verdict (2026-09-03, branch ws2-t41-app-settings)
+
+**Capability verdict: no new probe was needed, and no `not_implemented` round-trip either.** The
+concern was correct — `isFaCapable()` (`faGate.ts:96`) is `isTauri()` and nothing more, so in a
+plain `tauri:dev`/`tauri:build` binary it returns `true` while `fa_align` returns `NotImplemented`
+for every run (`src-tauri/src/fa.rs`'s `#[cfg(not(feature = "fa-inference"))]` arm). A detector
+built on it would report an installed pack as usable in the exact binary that ships today. But
+`fa_preflight` already exists (`src-tauri/src/fa_preflight.rs`, registered `lib.rs:165`, TS wrapper
+`src/services/faPreflight.ts`, already invoked at `App.tsx:3195`) and returns `featureCompiled`
+straight from a `#[cfg(feature = "fa-inference")]` — the build fact reported **directly**, not
+inferred from a failed alignment. It is cheap by construction (path stat + dlopen/ort env init;
+explicitly no 1.2 GiB hash) because it was designed to run before every FA sync. Step 3 therefore
+stayed **one commit** and needed no Rust change: `probeFaReadiness(language)` is a thin wrapper
+calling the same command with an explicit language.
+
+**Five states, not two.** The two that a naive detector collapses:
+
+- **Auto-detect** renders neither indicator and no download prompt, and probes nothing at all. The
+  project stores no language and the pack it will need is chosen by Whisper on the first
+  transcription — "missing" would be false (nothing is missing) and "installed" would be false too
+  (nothing was checked). It states the condition and what would resolve it.
+- **`featureCompiled: false`** renders a warning and **no install affordance**, and short-circuits
+  before consulting disk. The pack's presence is irrelevant: this build returns `not_implemented`
+  for every alignment no matter what is on disk. Offering a 1.2 GiB download there would promise
+  precision the binary cannot deliver.
+
+The other three are `unsupported` (outside the five packs), `unavailable` (no desktop runtime, or
+the probe was rejected — status unknown, stated as unknown), and the ordinary `installed`/`missing`.
+Check order is build → runtime → disk, the order the real run fails in. A **failed** disk check
+degrades to `unavailable`, never to `missing`: that conflation is the WS2 Step 13 Phase 1 defect in
+a new place.
+
+Pack presence reads from `checkInstalledModels`, the same source the Models section renders from,
+so the detector and the list it links to can never disagree about what is on disk.
+
+**The install affordance is `ModelsSection` filtered to one language** (`faLanguages={[lang]}`,
+`includeWhisper={false}`) — the same component, the same download engine, the same progress and
+completion refresh as App Settings' block 2, because it is that code path with a shorter list.
+
+**Reach, by destructive probe** — and one probe found a real gap rather than confirming coverage:
+
+| Probe | Mutation | Result |
+|---|---|---|
+| P1 | `featureCompiled` ignored (the `isFaCapable`-only detector) | 2 red |
+| P2 | Auto-detect rendered as `missing` with a download prompt | 2 red |
+| P3 | installer not filtered (full pack list) | 1 red |
+| P4 | a failed disk check reported as `missing` | 1 red |
+| P5 | stale-probe guard removed | 1 red |
+| P6 | detector rebound from `draftLanguage` to the SAVED `language` | **GREEN — a real gap** |
+
+P6 is the useful one. Every other test drives `FaPackStatus` directly and therefore cannot see
+which value the modal hands it, so nothing guarded "live as the dropdown changes rather than on
+Save" — the property the step was specified around. A 13th test now renders `ProjectSettingsModal`
+itself, changes the dropdown, and asserts the detector follows without any Save; P6 reddens it.
+
+**Narrowed, with the reason recorded:** Step 1's "Project Settings mentions no models" assertion
+was a word blocklist (`/models|add-ons|download/i`). Step 3 adds, by instruction, a targeted
+single-pack affordance, so the guarded property is not "the word never appears" but "no general
+models MANAGEMENT surface is reachable from here" — now asserted structurally (no `models-section`,
+no whisper row, no models dialog) instead of by wording.
+
+**Files.** `src/components/FaPackStatus.tsx` (new), `src/services/faPreflight.ts`,
+`src/components/ProjectSettingsModal.tsx`, `src/components/FaPackStatus.test.tsx` (new, 13 tests),
+`src/App.appSettings.test.tsx` (one assertion narrowed).
+Gates: tsc/lint clean; vitest 2924 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden
+replay 6/6; K13 3/3. Nothing in `src-tauri/` moved.

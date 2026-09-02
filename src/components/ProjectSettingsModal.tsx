@@ -34,6 +34,7 @@ import type { AspectRatio, ResolutionTier, VideoSegment } from '../types';
 import { isFaCapable, shouldPersistFaChoice } from '../services/faGate';
 import { resolveDimensions } from '../services/resolutionConfig';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { FaPackStatus } from './FaPackStatus';
 import { SUPPORTED_LANGUAGES } from '../constants';
 
 const RESOLUTION_TIER_OPTIONS: ResolutionTier[] = ['720p', '1080p'];
@@ -259,6 +260,14 @@ export function ProjectSettingsModal({
                 Not available outside the desktop app.
               </p>
             )}
+            {/* WS2 T4.1 Step 3 — the per-project pack detector, driven by the
+                DRAFT language above (`draftLanguage`, not the saved
+                `language`), so it answers "would this language work?" while
+                the user is still deciding rather than after they commit. It is
+                the only thing in this modal that mentions models, and it is
+                scoped to exactly one pack. See `FaPackStatus.tsx` for the five
+                states and why `featureCompiled` has one of its own. */}
+            <FaPackStatus language={draftLanguage} />
           </div>
 
           {/* Section: Text Overlay (mirrors DropZonePanel's showOverlay cascade) */}
