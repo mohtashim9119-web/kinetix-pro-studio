@@ -22,7 +22,7 @@
 ---
 
 ## WS1 — Sync Pipeline Rewrite
-Started: 2026-08-04 | Status: active — Phase 3 in progress, accuracy bar met.
+Started: 2026-08-04 | Status: active — the primary workstream as of 2026-09-03 (WS2 closed). Phase 3 in progress, accuracy bar met.
 
 ### 1. Finished but pending verification
 
@@ -53,6 +53,18 @@ every sync rather than an opt-in one. 0 of 4 stage locks passed.
 - [ ] Wire `FaEvent` to a UI progress consumer (no hook/component consumes it yet).
 - [ ] Give the rule stage its own fixture-backed regression coverage — golden replay stops at
   `snapCoveredBoundaries` and never reaches chunk plan/FA/any rule (`CLAUDE.md` §4 Testing).
+- [ ] Make forced alignment reachable in a shipped build. The FA **user interface is complete**:
+      the per-project toggle, the per-language pack detector and its inline installer all ship, and
+      in a non-FA build the detector states that this build cannot run high-precision sync rather
+      than offering a pack that would not help. What is pending is the **backend wiring**:
+      `fa-inference` is a non-default Cargo feature (`src-tauri/Cargo.toml` declares
+      `fa-inference = ["dep:ort"]` with no `default = [...]` key; only `tauri:dev:fa` passes
+      `-f fa-inference`), so `tauri:build` compiles `fa.rs:847`'s `#[cfg(not(...))]` fallback arm
+      and every FA run returns `not_implemented` and falls back to Whisper timing. Making it
+      default-on is a WS1 call, gated behind the same Stage 1 preconditions as
+      `FA_PROJECT_DEFAULT_ON` above — and T3.2's cardinal generator becoming production-reachable
+      is a consequence of that flip, not a separate task. Diagnosis:
+      `.work-phase4/session-ws2-38/step4-cardinaldata-reachability.md`.
 
 **END GOAL:** Stage 1 locks — every STAGE 1 LOCK GATE criterion satisfied (live acceptance run
 passed by the owner, Contract IN / Contract 1→2 inspection, determinism, non-English written
@@ -95,54 +107,23 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
   2026-08-25 real-app V8 corpus run (`npm run tauri:dev:fa`). `usePlayback.ts:80-94`'s rAF tick
   already guards this failure mode (QB2 fix), so this is a distinct, unlocated trigger elsewhere
   in the render tree. No owner.
-* [OPEN] Non-ASCII proper-noun matching — every remaining low-match-rate failure in the WS2 Step
-  15 03:57:28 Windows run involves diacritics or foreign place names: segment 52 skipped entirely
-  ("Llívia", 0 of 2 words, confidence 0.00); segment 69 ("Llívia stayed Spanish." 2 of 4, 50%);
-  segment 79 ("Peñón de Vélez de la Gomera" 4 of 8, 50%); segment 8 ("The complexity originates in
-  1198" 4 of 7, 57%); segment 102 ("300 American residents." 2 of 4, 50%). Segment 79 failed in
-  BOTH the before and after runs — not a Windows issue, not fixed by FA. Hypotheses, all
-  UNVERIFIED: Unicode normalization (NFC vs NFD) mismatch between transcript and script; the
-  en-language CTC vocab (measured 33 symbols) may lack glyphs for í/ñ/é; numeral-to-word expansion
-  for "1198"/"300". No fix attempted. `docs/history-2.md`'s Step 15 entries. Rationale: a
-  sync-pipeline matching defect, not a distribution defect — relocated from WS2 §4, provenance
-  preserved (surfaced by the WS2 Step 15 Windows operator log, 03:57:28 run). **Third occurrence,
-  WS2 Step 18 (2026-08-27):** segment 8 ("The complexity originates in 1198") failed identically
-  a third time (4 of 7, 57%) on an unrelated 33-segment operator project — now reproducible on a
-  small project, cheap to debug. Contains no diacritics, so this run corroborates only the
-  numeral-expansion hypothesis (now best-supported of the three), leaving NFC/NFD and CTC-vocab
-  glyph coverage still UNVERIFIED against the Llívia/Peñón cases. Still no fix attempted. Detail:
-  `docs/history-2.md#2026-08-27--ws2-step-18--ws1-nonascii-segment8-third-occurrence`.
-  **Update, WS2 T3.1 (2026-09-01):** the mechanism behind rows 52/69/79 is now fixed and proven,
-  not merely hypothesized — `69d7cfc`'s NFD-fold on the English/default `canonicalize()` branch
-  closes the ASCII-shattering that produced the reported garbage-fragment tokens ("Llívia" was
-  `["ll","via"]`, now `["llivia"]`; "Peñón de Vélez..." was 8 tokens/4 garbage, now 6 clean
-  tokens), measured directly against each row's exact quoted text
-  (`.work-phase4/session-ws2-30/phase3-t31-step2-report.md` §3). Rows 8/102's numeral
-  tokenization was independently measured to already converge under every plausible transcript
-  spelling (`.work-phase4/session-ws2-30/phase3-t31-step1-report.md` §5) — no code change was
-  needed or made there. **Not retired**: this session was not supplied the real Whisper
-  transcript tokens for these five rows (`project.transcriptTokens`, pullable via
-  `__transcriptInspector`), and the fix's own measurement explicitly could not confirm the
-  operator's real transcript spelling matches the script's — only that the shattering defect,
-  once the dominant confirmed mechanism, no longer occurs. Retire this entry once operator
-  verification against the real transcript tokens confirms an actual match, not before.
-  **Update, WS2 T4.1 Step 0a (2026-09-02) — the retire-gate is now a ONE-ROW gate, and that row
-  is 52.** Measured: rows 69 and 79 cannot test the fold at all — run through the real
-  `extractSegmentAlignments`, both report `matched: true` whether or not `llivia`/`penon` match
-  anything (69 on `stayed`/`spanish`; 79 on `de`/`de`/`la`/`gomera`, 4 of 6, `penon` and `velez`
-  matching nothing). Row 69 is WEAKER evidence post-fix than pre-fix (4 tokens needing a run of 2
-  → 3 tokens needing a run of 1). Only row 52 discriminates: one token, nothing to survive on, so
-  its confidence reads 1.00 or 0.00 directly. Also measured: the transcript data is absent from
-  this machine, not un-consulted — a 3,245-file sweep of the whole tree, including the extracted
-  operator projects under `.work-phase4/forensics-20260819-033211/`, returns zero hits. Disposition
-  stays `NOT DETERMINED — data absent`. **Retire only on an operator pull showing row 52 at 1/1,
-  confidence 1.00**; rows 69/79 reporting `matched: true` is not evidence and must not be counted
-  as any. If the pull shows a phonetically divergent spelling, that is ASR divergence, not
-  normalization — file the spellings and stop; fuzzy/phonetic matching is a separate unscoped
-  decision. Full record: `docs/history-2.md`'s 2026-09-02 T4.1 Step 0a entry.
 
 ### 5. Deferred tasks
 
+- [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia", one script word, 0 of 2 transcript words,
+  confidence 0.00) is the single surviving row of the five-row non-ASCII/numeral cluster from the
+  WS2 Step 15 Windows run, and it is failing **for a cause outside this pipeline**: Whisper did not
+  transcribe the isolated token at all, so there was never a token for the confidence gate
+  (`LOW_CONFIDENCE_RATIO`, `syncConstants.ts:92`) to match against. Normalization is not the
+  mechanism and no normalization change can reach it. **Do not patch** (owner ruling, 2026-09-03).
+  The other four rows are CLOSED: 69 and 79 by `69d7cfc`'s NFD fold on the English/default
+  `canonicalize()` branch, with 69 the row that verifies the fold; 8 ("The complexity originates in
+  1198") and 102 ("300 American residents.") by measurement — their numeral tokenization converges
+  under every plausible transcript spelling, so no code change was ever indicated and none was made
+  (`.work-phase4/session-ws2-30/phase3-t31-step1-report.md` §5), and the T4.1 Step 0a retire-gate
+  had already narrowed to row 52 alone. Operator confirmed all ledger rows syncing correctly
+  2026-09-03. **Revisit trigger:** an ASR/G2P change (a different model, or phonetic matching —
+  itself unscoped), never a normalization change. No owner.
 - Bounded-memory options for the residual OOM footprint — a capped `FaModelCache` session cache,
   or process isolation per sync. Unbuilt. **Flag for owner review:** the shipped drop-then-build
   fix already "produces a bounded profile" per `sync-pipeline-v2-plan.md`'s AI.1 Addendum, so this
@@ -154,7 +135,7 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 ---
 
 ## WS2 — Video Ingest & Distribution Bugs
-Started: 2026-08-26 (Step 3) | Status: active — all 4 numbered bugs and Phases 1-3 closed; Phase 4 (Settings & project creation) in progress.
+Started: 2026-08-26 (Step 3) | Status: **CLOSED 2026-09-03.** All 4 numbered bugs and all four phases are done — Phase 4 (Settings & project creation) closed with T4.1 and T4.2. No phase is queued after it; section 5 is the residual backlog, none of it owned. Attention moves to WS1.
 
 ### 1. Finished but pending verification
 
@@ -162,29 +143,16 @@ Started: 2026-08-26 (Step 3) | Status: active — all 4 numbered bugs and Phases
 
 ### 2. In progress
 
-[IN-PROGRESS] Phase 4 — Settings & project creation
-  T4.1 App Settings owns Models & Add-ons inline (machine-global); Project Settings keeps only
-       project-scoped controls and no models management; per-language FA pack detector.
-       Steps 0-3 landed (inventory, D4, D6/D3, the three-block surface, defaults wiring, the
-       detector). CANNOT CLOSE while §5's `fa-inference` entry is open — the detector's
-       `unbuilt` state now SAYS so to the user instead of promising a pack would help.
-  T4.2 New-project flow: New Project Defaults as machine-global state; the modal's language
-       dropdown defaults to "Auto-detect", which WRITES NOTHING (the absent `Project.language`
-       is load-bearing — `resolveFaLanguage` is `language ?? detectedLanguage`, so a seeded 'en'
-       shadows detection forever; locked by `src/services/languageDefaultDrift.test.ts`).
+(none)
 
-**END GOAL:** A new project can be created with an explicit language choice (or a deliberate
-Auto-detect that stores nothing) and FA sync on by default, and the machine-global model/add-on
-requirement is surfaced and satisfiable from Settings before a sync ever needs it.
+**END GOAL:** (none — WS2 is closed. T4.1 and T4.2 both met the goal that stood here: a new project
+can be created with an explicit language choice or a deliberate Auto-detect that stores nothing, and
+the machine-global model/add-on requirement is surfaced and satisfiable from App Settings before a
+sync ever needs it.)
 
 ### 3. Next tasks
 
-- [OPEN] Re-examine ruling C3 (dual TS+Rust normalization surface kept honest by a conformance
-  fixture): the surface acquired a POLICY, and a conformance fixture tests that two arms AGREE,
-  not that either is CORRECT. Ask what check independent of BOTH arms catches a symmetric error.
-  Not a reversal. Full argument: `docs/history-2.md`, WS2 T4.1 Step 0a. No owner.
-
-Beyond that: no phase is queued after Phase 4; remaining work is section 5's deferred items.
+(none) — no phase is queued after Phase 4. Everything remaining is section 5's deferred backlog.
 
 ### 4. Open bugs
 
@@ -192,17 +160,18 @@ Beyond that: no phase is queued after Phase 4; remaining work is section 5's def
 
 ### 5. Deferred tasks
 
-- [DEFERRED · BLOCKS T4.1 CLOSE] `fa-inference` is OFF by default, so a shipped build cannot run
-  forced alignment at all. `src-tauri/Cargo.toml`'s `[features]` declares `fa-inference =
-  ["dep:ort"]` with **no `default = [...]` key**; only `tauri:dev:fa` passes `-f fa-inference`.
-  `fa.rs:817` gates the inference arm and `fa.rs:847`'s `#[cfg(not(...))]` arm returns
-  `not_implemented` — so in `tauri:dev`/`tauri:build` EVERY FA run rejects and falls back to
-  Whisper timing. Fail-clean, but the whole FA feature (including T3.2's cardinal generator, whose
-  only production consumer is the gated `fa_onnx`) is unreachable in a shipped binary.
-  **T4.1 MUST NOT CLOSE WHILE THIS IS OPEN**: an App Settings surface offering FA model downloads
-  in a binary that cannot run FA is a worse defect than the one T4.1 fixes. Full diagnosis:
-  `.work-phase4/session-ws2-38/step4-cardinaldata-reachability.md`. **Revisit trigger:** before any
-  shipped build advertises FA. Owner: operator.
+- [DEFERRED] Re-examine ruling C3 (the dual TS+Rust normalization surface, kept honest by a
+  conformance fixture): the surface acquired a POLICY, and a conformance fixture tests that two arms
+  AGREE, not that either is CORRECT. The open question is what check independent of BOTH arms catches
+  a symmetric error. Not a reversal of C3. Full argument: `docs/history-2.md`, WS2 T4.1 Step 0a.
+  **Revisit trigger:** any change to either normalization arm's policy, or a real divergence report.
+  No owner.
+- [DEFERRED · NOT DETERMINED] FA pack detector `unsupported` state (manual row E8) is not
+  user-reachable and was therefore never observed. The project language dropdown is built from
+  `SUPPORTED_LANGUAGES`, which is exactly the five FA languages, so no selection can produce the
+  "No alignment pack exists for '<code>'" copy. The branch is correct as written and correctly
+  unreachable; whether it renders is untested, not broken. **Revisit trigger:** a sixth whisper
+  language entering `SUPPORTED_LANGUAGES` without a pack. No owner.
 - [DEFERRED · OUT OF SCOPE BY RULING] Two groups of persisted state are deliberately NOT on a
   settings surface, excluded by CLAUDE.md §5's live-feedback criterion (a control belongs in
   Settings only when it has no live visual feedback where it is used): (a) style presets and look

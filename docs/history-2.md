@@ -102,6 +102,7 @@
 - [OPERATOR-ATTESTED — WS1 mover-audit dossier closed 24/24](#2026-08-27--operator-attested--ws1-mover-audit-24-of-24-closed) — 2026-08-27
 - [WS1 Phase 1b–3d groundwork closed](#2026-08-05-08-25--ws1-phase1b-3d-groundwork) — 2026-08-05–08-25
 - [OPERATOR-ATTESTED — WS1 Spanish-corpus acceptance lapse closed](#2026-08-27--operator-attested--ws1-spanish-corpus-acceptance-lapse-closed) — 2026-08-27
+- [WS2 Phase 4 close-out (T4.1/T4.2) and the four false-greens](#2026-09-03--ws2-phase-4-close-out-t41--t42-and-the-four-false-greens) — 2026-09-03
 
 ---
 
@@ -2669,3 +2670,170 @@ no whisper row, no models dialog) instead of by wording.
 `src/App.appSettings.test.tsx` (one assertion narrowed).
 Gates: tsc/lint clean; vitest 2924 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden
 replay 6/6; K13 3/3. Nothing in `src-tauri/` moved.
+
+---
+
+## 2026-09-03 — WS2 Phase 4 close-out (T4.1 / T4.2), and the four false-greens
+
+Closes WS2. Phase 4 was "Settings & project creation": give the machine-global settings a named
+home, stop Project Settings from editing machine state behind a project-scoped title, and make the
+FA model requirement visible before a sync needs it. What follows is the record of what shipped and,
+more usefully, of what the suite failed to see.
+
+### The four-site view-flip fix
+
+The gear had to raise App Settings from the dashboard with no project loaded, which meant the modal
+could not live inside `App.tsx`'s editor branch. Four call sites flipped the view before raising a
+modal; each one individually looked correct and the set of them was the defect — a modal raised from
+the dashboard would flip into an editor with no project. Fixed by moving the render into the outer
+fragment and adding `showAppSettingsModal` to `shortcutsSuppressedRef`, so the surface is reachable
+over an empty install and bare-key shortcuts do not fire behind it.
+
+### The settings re-partition, and the criterion that made it decidable
+
+Project Settings had accumulated two machine-global controls wearing a project-scoped title: the
+WebCodecs toggle (a `localStorage` key) and the models link (`app_local_data_dir/models`). Both moved
+to App Settings — one flat scrolling surface, three blocks (Export Engine, Models & Add-ons rendered
+INLINE rather than behind a nested dialog, New Project Defaults), hairlines rather than cards.
+
+The Step 0 inventory sweep is what made the split decidable rather than a matter of taste. It found
+every persisted value in the app and forced a per-value ruling, which produced CLAUDE.md §5's
+**live-feedback criterion**: a control belongs on a settings surface when it has no live visual
+feedback at its point of use. Two groups were excluded by it and must not be re-litigated without
+overturning the criterion — style/look presets (`kinetix:stylePresets:v1`, `kinetix:lookPresets:v1`),
+a machine-global *content library* authored in the Effects tab, and the five per-project global
+effects fields, which render into the preview the instant they change. The criterion is about the
+control's feedback, not its storage scope: a machine-global persisted value is not automatically a
+setting.
+
+### D4 — the changed-intent gate
+
+The global overlay cascade fired on every Save, overwriting per-segment overlay choices whenever the
+modal was opened and closed without touching them. Gated on changed intent: the cascade runs only
+when the global field's value actually differs from what was loaded.
+
+### The base-colour fix
+
+Grade base colours were restated in more than one place; the restatements were dropped so the value
+has one home. Landed with the two repo-operation rules below.
+
+### The `fa_preflight`-backed detector
+
+The per-language FA pack detector reports from a real Rust-side pre-flight rather than from a disk
+guess, and — the part worth keeping — in a **non-FA build it says the build cannot run high-precision
+sync** instead of offering a pack that would not help. That honesty is why T4.1 could close while the
+backend wiring is still pending: the UI does not advertise a capability the binary lacks.
+
+### The four false-greens, and what each one taught
+
+Every one of these was a suite that was green and blind at the same time. They are the substance of
+this phase.
+
+**1. D3 — the WebCodecs default, three unnamed copies.** `isWebCodecsExportToggleOn()` resolved an
+absent preference with a bare `true` written twice inside one function, with a third statement of it
+in the doc comment. Three copies, none answerable to each other — the exact shape that let a wrong FA
+comment stand for two sessions. Fixed by naming it `WEBCODECS_TOGGLE_DEFAULT_ON` and pinning all
+three with `webcodecsDefaultDrift.test.ts`.
+
+**2. That guard's own first draft was itself a false-green.** Probe P3 — flip the constant, leave the
+prose behind, the literal failure the pattern exists to catch — came back GREEN, because the same
+edit that introduced the constant had rewritten the doc comment out of the prose regex's reach. *A
+prose guard with no prose to scan passes forever and is indistinguishable from one that works.* Fixed
+on both sides, and the floor assertion that fails on an empty sweep is now standard in this family of
+guards.
+
+**3. D6 — a rationale written from a line number.** D6 recorded that the WebCodecs toggle had a
+second consumer, citing `PreviewStage.tsx:399`'s
+`glPathActive = useWebCodecsPath && webgl2Supported`, and three prose surfaces were rewritten to
+match, including a block rename to "Rendering Engine". The claim was false:
+`PreviewStage.tsx:380` binds its `useWebCodecsPath` from `isWebCodecsPreviewSupported()`, a
+`'VideoDecoder' in window` capability probe that never reads `kinetix:ui:v1`. The two files share a
+**local variable name** and nothing else. Corrected in C4 (below).
+
+**4. Step 3's detector tests, P6.** Twelve of thirteen probes against the new `FaPackStatus` drove
+the component directly and therefore could not see which value the modal handed it — nothing guarded
+the property the step was specified around ("live as the dropdown changes, not on Save"). Only the
+13th test, which renders `ProjectSettingsModal` itself, reddens under P6.
+
+The through-line is CLAUDE.md §4's probe rule, earned four separate times in one phase: **a passing
+gate is compatible with two indistinguishable worlds — the change is safe, or the gate cannot see
+it.** Green never separates them.
+
+### C4 — correct the copy, do not invent the wiring
+
+The disposition of D6. Two options were live: wire the preview to the toggle so the shipped sentence
+becomes true, or correct the sentence. **Ruling: correct the copy.** The Canvas2D/CSS preview path
+was DELETED at the WebGL2 cutover rather than gated, so wiring the preview to a user-facing toggle
+would ship a switch that disables the only preview renderer that exists — promoting a copy error into
+a way to break the editor.
+
+Block 1's title reverts to **Export Engine** (it was renamed solely on the false finding and has no
+independent justification); the label and aria strings say "encoder"; the body says only that the
+toggle chooses the export encoder and that the preview is unaffected. `useExport.ts`'s gate header
+carries the measurement, including that D6's rationale was written from a line number and a same-named
+identifier rather than from the value flowing through it.
+
+The guard that was missing is `src/hooks/webcodecsToggleConsumers.test.ts`: the set of non-test source
+files whose **code** (comments stripped — prose about the toggle is exactly what a file may carry)
+reaches the persisted toggle must be exactly `useExport.ts`, `AppSettingsModal.tsx`, and the dev-only
+`src/dev` spike harness, plus a direct assertion that `PreviewStage.tsx` does not reference it.
+Destructive probe: adding `isWebCodecsExportToggleOn()` to `PreviewStage.tsx`'s path selection turned
+the new guard RED on 2 of 5 assertions and named the path, while the full pre-existing suite under the
+same mutation returned **2924 passed / 77 skipped / 0 failed — baseline exactly, entirely blind.**
+
+### The two repo-operation rules
+
+Both landed in CLAUDE.md §4 with the same standing as the probe rule, because both are about not
+trusting an operation that *looks* like it succeeded.
+
+**Stage named paths only** — never `git add -A` / `.` / `-u`. This repo carries standing untracked,
+deliberately out-of-scope directories (`public/` since Phase 3); a wildcard stage sweeps them in
+silently, the commit looks correct because the diff is only inspected for the intended files, and the
+stray path is found later. Worked instance: `public/ws2-23-seed.json`, committed that way and
+untracked in Step 4. Care at the keyboard cannot make a wildcard safe in a repo shaped like this —
+the fix is the mechanism, not the vigilance.
+
+**Never redirect into an existing file with `>`** — read it, write the replacement to a temp path,
+`mv` it into place. A shell redirect truncates before the writer runs, so a mistake destroys the
+original with no undo and no git history when the path is gitignored. Worked instance:
+`.claude/launch.json`, overwritten this way and recovered only because its content happened to still
+be in the session's context. Recovery-by-luck is not a property of the process.
+
+### Row 52 and the non-ASCII cluster, closed
+
+The five-row cluster from the WS2 Step 15 Windows run is settled. Rows 69 and 79 closed on `69d7cfc`'s
+NFD fold, with 69 the row that verifies it. Rows **8** ("The complexity originates in 1198") and
+**102** ("300 American residents.") closed by measurement and never needed a code change: their
+numeral tokenization converges under every plausible transcript spelling
+(`.work-phase4/session-ws2-30/phase3-t31-step1-report.md` §5), and T4.1 Step 0a had already narrowed
+the retire-gate away from them to row 52 alone. The standing "segments 8 and 102 remain mine"
+reservation that had been carried in operator prompts is retired permanently with this entry.
+
+Row **52** ("Llívia") is deferred as an **ASR engine limitation**, not a pipeline defect: Whisper did
+not transcribe the isolated token at all, so there was never a token for the confidence gate to match
+against, and no normalization change can reach it. Owner ruling: do not patch. Revisit only on an
+ASR/G2P change.
+
+### The fa-inference blocker, reclassified
+
+The `[DEFERRED · BLOCKS T4.1 CLOSE]` entry was deleted from WS2 rather than carried: it was never a
+Phase 4 item. The FA **user interface is complete** — toggle, per-language detector, inline installer,
+and honest copy in a non-FA build. What is pending is **backend wiring**: `fa-inference` is a
+non-default Cargo feature, so `tauri:build` compiles the fallback arm and FA runs return
+`not_implemented`. Making it default-on — and T3.2's cardinal generator becoming production-reachable
+as a consequence of that flip — belongs to WS1, gated behind the same Stage 1 preconditions as
+`FA_PROJECT_DEFAULT_ON`. The FA project toggle's shipped default **stays OFF** (owner, A3), which is
+the honest state of a non-FA production build.
+
+### Verification and disposition
+
+All 45 rows of `docs/ws2-t41-phase4-manual-checklist.md` passed under operator observation, which
+makes groups G3 and G4 operator-observed and closes the replica-inheritance gap. `launch.json` is
+permanently **NOT DETERMINED** and is not to be pursued again. The `fa-inference` build measurement
+was cancelled by the operator; `src-tauri/` did not move this phase.
+
+`docs/work-in-progress.md`: 298 lines before, 267 after (cap 300). WS2 is CLOSED; WS1 is the active
+workstream.
+
+Gates on every commit and on `main` after merge: tsc clean, lint clean, vitest 2929 passed / 77
+skipped / 0 failed, gaplessInvariant 36/36, golden replay 6/6, K13 3/3.
