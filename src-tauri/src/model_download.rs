@@ -444,6 +444,16 @@ pub(crate) fn part_path_for(target: &Path) -> PathBuf {
     PathBuf::from(p)
 }
 
+/// `<target>.sha256` — mirrors `models.rs`'s own (private) `sidecar_path`,
+/// which now delegates here rather than keeping a second independent
+/// implementation. Lives in THIS module because `finalize_verified_download`
+/// writes it directly (WS2 T4.8) — see that function's doc comment.
+pub(crate) fn sidecar_path_for(target: &Path) -> PathBuf {
+    let mut p = target.as_os_str().to_owned();
+    p.push(".sha256");
+    PathBuf::from(p)
+}
+
 /// `<target>.part.meta` — the resume-validator sidecar introduced by WS2
 /// T4.3. Kept OUT of the existing `.sha256` companion deliberately (owner
 /// ruling A2/Q2): `.sha256` is the completed model's cryptographic digest and
@@ -947,7 +957,7 @@ pub async fn whisper_model_download(
                     "downloaded model failed checksum verification (expected {MODEL_SHA256}, got {digest})"
                 ));
             }
-            Ok(())
+            Ok(digest)
         },
     )
     .await
@@ -976,6 +986,11 @@ enum AttemptOutcome {
 /// previously-good installed model. `url` is re-requested from scratch on
 /// every attempt (including a resume) — see this module's own doc comment
 /// for why that makes signed-URL expiry a non-issue.
+///
+/// `verify` returns the file's digest on success (WS2 T4.8), not `()` — see
+/// `finalize_verified_download`'s doc comment for why: it is what lets the
+/// `.sha256` sidecar be written from a hash that was going to be computed
+/// anyway, rather than by hashing the file a second time afterward.
 pub(crate) async fn stream_download_verified(
     url: String,
     final_path: PathBuf,
@@ -983,7 +998,7 @@ pub(crate) async fn stream_download_verified(
     expected_size: u64,
     cancel_flag: Arc<AtomicBool>,
     on_event: Channel<ModelDownloadEvent>,
-    verify: impl FnOnce(&Path) -> Result<(), String> + Send + 'static,
+    verify: impl FnOnce(&Path) -> Result<String, String> + Send + 'static,
 ) -> Result<(), String> {
     if final_path.exists() {
         let _ = on_event.send(ModelDownloadEvent::Done);
@@ -1348,36 +1363,58 @@ async fn run_stream_attempt(
 /// (and its validator sidecar) and return its specific error. Split out from
 /// the network loop above so it is directly testable without a real HTTP
 /// download — a test only needs to place bytes at `part_path` itself.
+///
+/// WS2 T4.8: writes the `.sha256` sidecar itself, right after the rename,
+/// from the digest `verify` returns — MEASURED root cause of a repeat
+/// operator report ("Unverified" after a completed download, then every row
+/// stuck on "Checking…" on reload): `fa_model_download`'s old post-success
+/// step re-hashed the SAME file `verify` had just hashed moments earlier, a
+/// second full ~1.2 GiB read that, competing with macOS Spotlight indexing
+/// the just-downloaded file, was measured hanging PAST 90 SECONDS on the
+/// operator's machine — not merely slow (WS2 T4.6's "wrong thread" framing
+/// undersold it; this fix doesn't move that read, it deletes it). Whisper had
+/// the identical gap, latent: `whisper_model_download`'s `verify` closure
+/// already computed a digest to check against `MODEL_SHA256` and threw it
+/// away, leaving the FIRST post-download status check to hash the whole
+/// ~1.6 GiB file cold. One digest, computed once, is now the sidecar for
+/// both paths — there is no second read to contend with anything.
 async fn finalize_verified_download(
     part_path: PathBuf,
     meta_path: PathBuf,
     final_path: PathBuf,
     expected_size: u64,
     sink: Arc<EventSink>,
-    verify: impl FnOnce(&Path) -> Result<(), String> + Send + 'static,
+    verify: impl FnOnce(&Path) -> Result<String, String> + Send + 'static,
 ) -> Result<(), String> {
     let verify_path = part_path.clone();
     let verify_result =
         tauri::async_runtime::spawn_blocking(move || verify(&verify_path)).await.map_err(|e| e.to_string())?;
 
-    if let Err(msg) = verify_result {
-        // Retaining rejected bytes would guarantee the next attempt
-        // reproduces the failure, so the partial goes — and the message says
-        // so instead of promising a resume that cannot work.
-        discard_partial(&part_path, &meta_path);
-        let full_msg = format!(
-            "{msg} — the partial download at {} was deleted; the next download starts from zero",
-            part_path.display()
-        );
-        sink.send(ModelDownloadEvent::Error { message: full_msg.clone() });
-        return Err(full_msg);
-    }
+    let digest = match verify_result {
+        Ok(digest) => digest,
+        Err(msg) => {
+            // Retaining rejected bytes would guarantee the next attempt
+            // reproduces the failure, so the partial goes — and the message
+            // says so instead of promising a resume that cannot work.
+            discard_partial(&part_path, &meta_path);
+            let full_msg = format!(
+                "{msg} — the partial download at {} was deleted; the next download starts from zero",
+                part_path.display()
+            );
+            sink.send(ModelDownloadEvent::Error { message: full_msg.clone() });
+            return Err(full_msg);
+        }
+    };
 
     fs::rename(&part_path, &final_path)
         .map_err(|e| format!("cannot finalize {}: {e}", final_path.display()))?;
     let _ = fs::remove_file(&meta_path);
+    // Best-effort: a failed sidecar write costs the NEXT status check one
+    // hash, exactly the pre-T4.8 behaviour — it must never fail the download
+    // that already succeeded.
+    let _ = fs::write(sidecar_path_for(&final_path), &digest);
 
-        sink.send(ModelDownloadEvent::Progress { downloaded_bytes: expected_size, total_bytes: expected_size });
+    sink.send(ModelDownloadEvent::Progress { downloaded_bytes: expected_size, total_bytes: expected_size });
     sink.send(ModelDownloadEvent::Done);
     Ok(())
 }
@@ -1474,13 +1511,21 @@ mod tests {
             final_path.clone(),
             10,
             test_sink(),
-            |_path| Ok(()),
+            |_path| Ok("deadbeef".to_string()),
         ));
 
         assert!(result.is_ok(), "verify success must finalize, got {result:?}");
         assert!(!part.exists(), ".part must be gone after a successful rename");
         assert!(!meta.exists(), ".part.meta must not outlive the transfer it describes");
         assert_eq!(fs::read(&final_path).unwrap(), b"good bytes");
+        // WS2 T4.8: the sidecar comes from the digest `verify` returned, not
+        // from an independent re-hash — "deadbeef" is not `good bytes`'s real
+        // sha256, so finding it proves no second hash happened.
+        assert_eq!(
+            fs::read_to_string(sidecar_path_for(&final_path)).unwrap(),
+            "deadbeef",
+            "the sidecar must be written from verify()'s returned digest, not re-derived"
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -2072,7 +2117,11 @@ mod tests {
                 }
                 let got = fs::read(p).map_err(|e| e.to_string())?;
                 if got == expected {
-                    Ok(())
+                    Ok(hex_digest(&{
+                        let mut h = Sha256::new();
+                        h.update(&got);
+                        h.finish()
+                    }))
                 } else {
                     Err(format!("bytes differ: got {} of {} bytes", got.len(), expected.len()))
                 }
@@ -2161,7 +2210,11 @@ mod tests {
             move |p: &Path| {
                 let got = fs::read(p).map_err(|e| e.to_string())?;
                 if got == expected {
-                    Ok(())
+                    Ok(hex_digest(&{
+                        let mut h = Sha256::new();
+                        h.update(&got);
+                        h.finish()
+                    }))
                 } else {
                     Err(format!("bytes differ: got {} of {}", got.len(), expected.len()))
                 }
