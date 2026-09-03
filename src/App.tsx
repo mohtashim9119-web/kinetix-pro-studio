@@ -63,6 +63,7 @@ import {
 } from './services/dragCascade';
 import { startDragSession } from './services/dragSession';
 import { resolveShortcutAction } from './services/undoShortcut';
+import { resolveBareKeyAction } from './services/bareKeyShortcut';
 import { resolveAppShortcut } from './services/appShortcuts';
 import { computeSlipBarGeometry } from './services/slipBarGeometry';
 import {
@@ -5063,45 +5064,47 @@ export default function App() {
         else if (shortcut === 'redo') handleRedoRef.current();
         return;
       }
-      if (e.code === 'Space') {
-        if (!isTextEntryElement(document.activeElement)) {
-          e.preventDefault();
+      // BARE-KEY CHAIN (Space, +/-, arrows, F). The DECISION lives in
+      // `services/bareKeyShortcut.ts`, a pure sibling of `undoShortcut.ts` and
+      // `appShortcuts.ts`, so each key is swept by its own unit test rather
+      // than inspected by eye inside this handler.
+      //
+      // WS2 T4.2 — this chain now reads `shortcutsSuppressedRef` too. It used
+      // to be guarded by `isTextEntryElement` alone, which asks what has FOCUS,
+      // not whether a modal owns the keyboard: with any modal open and focus on
+      // a non-text element these keys all still fired behind the dialog. T4.1
+      // fixed only S and D (the destructive pair) and said so explicitly; this
+      // closes the rest of the chain on the same predicate.
+      const bare = resolveBareKeyAction(e, {
+        isTextEntry: isTextEntryElement(document.activeElement),
+        suppressed: shortcutsSuppressedRef.current,
+      });
+      if (bare !== 'ignore') {
+        e.preventDefault();
+        if (bare === 'toggle-play') {
           setIsPlaying(p => !p);
-        }
-      } else if (e.key === '+' || e.key === '=') {
-        if (!isTextEntryElement(document.activeElement)) {
-          e.preventDefault();
+        } else if (bare === 'slider-up') {
           setSliderT(t => Math.min(1, Math.round((t + 0.1) * 100) / 100));
-        }
-      } else if (e.key === '-' || e.key === '_') {
-        if (!isTextEntryElement(document.activeElement)) {
-          e.preventDefault();
+        } else if (bare === 'slider-down') {
           setSliderT(t => Math.max(0, Math.round((t - 0.1) * 100) / 100));
-        }
-      } else if (e.key === 'ArrowRight') {
-        if (!isTextEntryElement(document.activeElement)) {
-          e.preventDefault();
+        } else if (bare === 'speed-up') {
           setGlobalPlaybackSpeed(prev => {
             const idx = SPEED_LADDER.indexOf(prev as typeof SPEED_LADDER[number]);
             if (idx === -1 || idx === SPEED_LADDER.length - 1) return prev;
             return SPEED_LADDER[idx + 1] ?? prev;
           });
-        }
-      } else if (e.key === 'ArrowLeft') {
-        if (!isTextEntryElement(document.activeElement)) {
-          e.preventDefault();
+        } else if (bare === 'speed-down') {
           setGlobalPlaybackSpeed(prev => {
             const idx = SPEED_LADDER.indexOf(prev as typeof SPEED_LADDER[number]);
             if (idx <= 0) return prev;
             return SPEED_LADDER[idx - 1] ?? prev;
           });
-        }
-      } else if (e.key === 'f' || e.key === 'F') {
-        if (!isTextEntryElement(document.activeElement)) {
-          e.preventDefault();
+        } else {
           previewStageRef.current?.toggleFullscreen();
         }
-      } else if (
+        return;
+      }
+      if (
         // WS2 T2.1 Commit 4, corrected in ws2-23 — S/D require a TARGET
         // segment: the explicitly selected one, else the one under the
         // playhead (`resolveShortcutTargetSegmentId`). The original gate read
@@ -5118,11 +5121,11 @@ export default function App() {
         // computed for exactly this (it lists every modal flag) but was read
         // only by `resolveShortcutAction`, i.e. by the undo/redo chords.
         //
-        // SCOPE: this fixes S and D, the two destructive keys. The SAME LEAK
-        // remains on every other bare key in this chain (Space, +/-, arrows,
-        // F) — all still guarded by `isTextEntryElement` alone. Tracked as its
-        // own [DEFERRED] entry in docs/work-in-progress.md §5; do not read this
-        // fix as having closed the chain.
+        // SCOPE, as of WS2 T4.2: the chain IS now closed. T4.1 fixed only S
+        // and D (the destructive pair) and the rest of the chain kept leaking;
+        // Space, +/-, the arrows and F now read the same predicate, via
+        // `services/bareKeyShortcut.ts` above. S and D keep their guard inline
+        // because they alone also require a target segment.
         (e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey && !e.altKey
         && !shortcutsSuppressedRef.current
         && !isTextEntryElement(document.activeElement) && resolveShortcutTargetSegmentId()
