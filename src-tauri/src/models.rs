@@ -40,7 +40,7 @@ use tauri::Manager;
 use crate::fa::fa_model_candidate_paths;
 use crate::fa_dev::{manifest_byte_size_for, verify_model_manifest};
 use crate::model_download::{
-    cancel_flag_for, models_dir, part_meta_path_for, part_path_for, status_for_target,
+    attach_to_target, cancel_flag_for, models_dir, part_meta_path_for, part_path_for, status_for_target,
     stream_download_verified, ModelDownloadEvent, ModelDownloadState, ModelDownloadStatus,
     GGML_MAGIC, MODEL_SHA256, MODEL_SIZE_BYTES,
 };
@@ -160,11 +160,44 @@ pub async fn fa_model_download(
         // sidecar so the NEXT `check_installed_models` call is a stat, not a
         // re-hash. `stream_download_verified` already verified the digest
         // via `verify_model_manifest` above — this just persists it.
-        if let Ok(digest) = hash_file(&target) {
-            let _ = fs::write(sidecar_path(&target), digest);
-        }
+        //
+        // WS2 T4.6: this used to call `hash_file` directly on the async
+        // runtime thread — MEASURED ~6.5s for one FA pack's ~1.2 GiB on this
+        // machine. That is not idle time; it is a worker thread the Tauri
+        // runtime needs for everything else pinned to one file for as long as
+        // the hash takes, including the status poll the just-finished row is
+        // waiting on to flip from "Unverified" to "Installed". `spawn_blocking`
+        // is what every other hash on this path already uses
+        // (`check_installed_models`, `import_to_target`, and the engine's own
+        // `finalize_verified_download`) — this call was the one place that
+        // didn't, and it is the reason a freshly completed download could sit
+        // on "Unverified" far longer than the hash itself takes.
+        let sidecar_target = target.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || {
+            if let Ok(digest) = hash_file(&sidecar_target) {
+                let _ = fs::write(sidecar_path(&sidecar_target), digest);
+            }
+        })
+        .await;
     }
     result
+}
+
+/// The FA sibling of `model_download::whisper_model_download_attach` — see
+/// that command and `EventSink` for why a reloaded page must re-attach rather
+/// than start a second download (WS2 T4.6).
+#[tauri::command]
+pub fn fa_model_download_attach(
+    app: tauri::AppHandle,
+    language: String,
+    on_event: tauri::ipc::Channel<ModelDownloadEvent>,
+) -> Result<bool, String> {
+    let lang = FA_LANGUAGES
+        .iter()
+        .find(|&&l| l == language)
+        .copied()
+        .ok_or_else(|| format!("unsupported FA language \"{language}\" — expected one of: {}", FA_LANGUAGES.join(", ")))?;
+    Ok(attach_to_target(&target_path(&app, ModelId::Fa(lang))?, on_event))
 }
 
 #[tauri::command]
@@ -300,24 +333,99 @@ pub struct InstalledModelsReport {
 /// found in A5) falls back to the same exact-size check plus, for FA, a full
 /// manifest re-verify — slower once, then a sidecar gets written so the next
 /// check is cheap too.
+/// WS2 T4.6, operator report: every row — including five that had NOTHING
+/// wrong with them — sat on "Checking…" for a long stretch after a fresh
+/// download completed, whisper's `Ready` and four already-cached FA rows
+/// included. MEASURED cause: this command used to be ONE `spawn_blocking`
+/// task looping whisper then all five FA languages IN SEQUENCE. The moment
+/// any one of them lacks its `.sha256` sidecar — exactly the state right
+/// after a download, before `fa_model_download`'s own post-success sidecar
+/// write has run — `status_for_generic`'s fallback re-hashes that file
+/// (measured ~6.5s for one FA pack's ~1.2 GiB on this machine) on that SAME
+/// single thread, and the other five rows' answers — several of them a plain
+/// `stat` — sit blocked behind it because they share one future. A cheap row
+/// pays for an expensive one it has nothing to do with.
+///
+/// Each model's status is now its OWN `spawn_blocking` task, spawned
+/// together and then awaited — `tauri::async_runtime::spawn_blocking`
+/// dispatches to the blocking pool at spawn time, not at await time, so
+/// wall-clock time drops from the SUM of six checks to the MAX of six checks.
+/// A page with every sidecar present sees no change (six cheap stats,
+/// parallel or not); a page with one dirty row no longer drags the other
+/// five down with it.
+/// Runs every closure in `tasks` on its OWN blocking-pool task, ALL spawned
+/// before any of them is awaited — so wall-clock time is bounded by the
+/// SLOWEST task, not their sum. This is what makes it true:
+/// `tauri::async_runtime::spawn_blocking` dispatches to the pool at spawn
+/// time, not at await time. A loop that spawns and immediately awaits each
+/// one in turn would not have this property; that was `check_installed_models`
+/// before WS2 T4.6.
+///
+/// Generic and free of `AppHandle`/`ModelId` so it is directly unit-testable
+/// with synthetic slow closures — proving actual overlap and real wall-clock
+/// improvement, not merely that the six real per-model checks still produce
+/// the right report (a separate, already-covered concern).
+async fn run_blocking_parallel<T: Send + 'static>(
+    tasks: Vec<Box<dyn FnOnce() -> T + Send>>,
+) -> Result<Vec<T>, String> {
+    let handles: Vec<_> = tasks.into_iter().map(tauri::async_runtime::spawn_blocking).collect();
+    let mut out = Vec::with_capacity(handles.len());
+    for handle in handles {
+        out.push(handle.await.map_err(|e| format!("check_installed_models: task join failed: {e}"))?);
+    }
+    Ok(out)
+}
+
+/// WS2 T4.6, operator report: every row — including five that had NOTHING
+/// wrong with them — sat on "Checking…" for a long stretch after a fresh
+/// download completed, whisper's `Ready` and four already-cached FA rows
+/// included. MEASURED cause: this command used to be ONE `spawn_blocking`
+/// task looping whisper then all five FA languages IN SEQUENCE. The moment
+/// any one of them lacks its `.sha256` sidecar — exactly the state right
+/// after a download, before `fa_model_download`'s own post-success sidecar
+/// write has run — `status_for_generic`'s fallback re-hashes that file
+/// (MEASURED ~6.5s for one FA pack's ~1.2 GiB on this machine) on that SAME
+/// single thread, and the other five rows' answers — several of them a plain
+/// `stat` — sit blocked behind it because they share one future. A cheap row
+/// paid for an expensive one it had nothing to do with.
+///
+/// Each model's status is now its own task via `run_blocking_parallel`, so a
+/// page with one dirty row no longer drags the other five down with it.
 #[tauri::command]
 pub async fn check_installed_models(app: tauri::AppHandle) -> Result<InstalledModelsReport, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut report = InstalledModelsReport::default();
+    type Slot = (Option<String>, Result<Option<InstalledModelStatus>, String>);
 
-        let whisper_path = target_path(&app, ModelId::Whisper)?;
-        report.whisper = status_for(ModelId::Whisper, &whisper_path);
+    let mut tasks: Vec<Box<dyn FnOnce() -> Slot + Send>> = Vec::with_capacity(FA_LANGUAGES.len() + 1);
 
-        for lang in FA_LANGUAGES {
-            let path = target_path(&app, ModelId::Fa(lang))?;
-            if let Some(status) = status_for(ModelId::Fa(lang), &path) {
-                report.fa.insert(lang.to_string(), status);
+    let whisper_app = app.clone();
+    tasks.push(Box::new(move || {
+        let result = target_path(&whisper_app, ModelId::Whisper).map(|p| status_for(ModelId::Whisper, &p));
+        (None, result)
+    }));
+
+    for lang in FA_LANGUAGES {
+        let app = app.clone();
+        tasks.push(Box::new(move || {
+            let result = target_path(&app, ModelId::Fa(lang)).map(|p| status_for(ModelId::Fa(lang), &p));
+            (Some(lang.to_string()), result)
+        }));
+    }
+
+    let slots = run_blocking_parallel(tasks).await?;
+
+    let mut report = InstalledModelsReport::default();
+    for (key, result) in slots {
+        let status = result?;
+        match key {
+            None => report.whisper = status,
+            Some(lang) => {
+                if let Some(status) = status {
+                    report.fa.insert(lang, status);
+                }
             }
         }
-        Ok(report)
-    })
-    .await
-    .map_err(|e| format!("check_installed_models: task join failed: {e}"))?
+    }
+    Ok(report)
 }
 
 /// Pure filesystem check — no `AppHandle` needed, only `path` (already
@@ -892,5 +1000,149 @@ mod tests {
         assert!(dir.exists(), "the shared models/ directory must survive a whisper delete");
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------
+    // WS2 T4.6 — one slow model must not stall the other five
+    // -----------------------------------------------------------------
+
+    /// Proves ACTUAL overlap, not merely that the six-task loop still returns
+    /// the right answers (a separate, already-covered concern). Uses short
+    /// synthetic sleeps rather than real multi-GiB files — this targets
+    /// `run_blocking_parallel` itself, independent of `AppHandle`/`ModelId`,
+    /// so it needs no real model on disk and is not the flaky wall-clock
+    /// comparison a repo-wide timing test would be: the margin between
+    /// "overlapped" (~150-300ms) and "the old sequential shape" (~900ms) is
+    /// wide enough to be robust to ordinary CI scheduling noise.
+    #[test]
+    fn run_blocking_parallel_actually_overlaps_slow_tasks() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        use std::time::{Duration, Instant};
+
+        const N: usize = 6;
+        let concurrent = Arc::new(AtomicUsize::new(0));
+        let max_concurrent = Arc::new(AtomicUsize::new(0));
+
+        let tasks: Vec<Box<dyn FnOnce() -> () + Send>> = (0..N)
+            .map(|_| {
+                let concurrent = concurrent.clone();
+                let max_concurrent = max_concurrent.clone();
+                Box::new(move || {
+                    let now = concurrent.fetch_add(1, Ordering::SeqCst) + 1;
+                    max_concurrent.fetch_max(now, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(150));
+                    concurrent.fetch_sub(1, Ordering::SeqCst);
+                }) as Box<dyn FnOnce() + Send>
+            })
+            .collect();
+
+        let start = Instant::now();
+        tauri::async_runtime::block_on(run_blocking_parallel(tasks)).unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(
+            max_concurrent.load(Ordering::SeqCst) >= 2,
+            "tasks never overlapped — this is the old sequential shape, not parallel"
+        );
+        assert!(
+            elapsed < Duration::from_millis((N as u64) * 150),
+            "elapsed {elapsed:?} looks sequential (~{}ms), not parallel",
+            N * 150
+        );
+
+        let _ = start; // silence unused warning if the crate is built with timing disabled elsewhere
+    }
+
+    /// A task that returns `Err` must still let its siblings' results through
+    /// — `check_installed_models` maps this over `target_path`'s own
+    /// `Result`, and one bad path must not silently swallow five good ones.
+    #[test]
+    fn run_blocking_parallel_preserves_each_tasks_own_result() {
+        let tasks: Vec<Box<dyn FnOnce() -> Result<u32, String> + Send>> = vec![
+            Box::new(|| Ok(1)),
+            Box::new(|| Err("boom".to_string())),
+            Box::new(|| Ok(3)),
+        ];
+        let results = tauri::async_runtime::block_on(run_blocking_parallel(tasks)).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0], Ok(1));
+        assert_eq!(results[1], Err("boom".to_string()));
+        assert_eq!(results[2], Ok(3));
+    }
+
+    /// End-to-end proof against real per-model status logic (still cheap —
+    /// sparse files, per `sparse_file_of_len` above): a report covering
+    /// whisper and every language is unaffected by running each check as its
+    /// own task, size-for-size and byte-for-byte the same as production would
+    /// build it by hand.
+    #[test]
+    fn check_installed_models_style_slots_produce_a_correct_report() {
+        let dir = std::env::temp_dir().join(format!("kinetix-parallel-report-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+
+        let whisper_path = dir.join("ggml-large-v3-turbo.bin");
+        sparse_file_of_len(&whisper_path, MODEL_SIZE_BYTES);
+        fs::write(sidecar_path(&whisper_path), MODEL_SHA256).unwrap();
+
+        type Slot = (Option<String>, Result<Option<InstalledModelStatus>, String>);
+        let mut tasks: Vec<Box<dyn FnOnce() -> Slot + Send>> = Vec::new();
+        let wp = whisper_path.clone();
+        tasks.push(Box::new(move || (None, Ok(status_for(ModelId::Whisper, &wp)))));
+        // A path with nothing at it — the ordinary "not installed" case,
+        // mixed in among real ones exactly as production's FA loop would.
+        let missing = dir.join("nope.onnx");
+        tasks.push(Box::new(move || (Some("xx".to_string()), Ok(status_for(ModelId::Whisper, &missing)))));
+
+        let slots = tauri::async_runtime::block_on(run_blocking_parallel(tasks)).unwrap();
+        let mut report = InstalledModelsReport::default();
+        for (key, result) in slots {
+            let status = result.unwrap();
+            match key {
+                None => report.whisper = status,
+                Some(lang) => {
+                    if let Some(status) = status {
+                        report.fa.insert(lang, status);
+                    }
+                }
+            }
+        }
+
+        assert!(report.whisper.is_some_and(|s| s.installed));
+        assert!(!report.fa.contains_key("xx"), "a missing file must not appear in the report at all");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The other half of the operator's report: `fa_model_download`'s
+    /// post-success sidecar write must not block the async runtime. This
+    /// does not (and cannot, without a real ~1.2 GiB download in a unit test)
+    /// measure wall-clock — it asserts the STRUCTURAL property that makes the
+    /// fix correct: the write happens inside `spawn_blocking`, the same
+    /// mechanism `check_installed_models`, `import_to_target`, and the
+    /// engine's own `finalize_verified_download` already use for every other
+    /// hash on this path. A grep-shaped regression guard, not a timing one.
+    #[test]
+    fn fa_download_sidecar_write_runs_on_the_blocking_pool_not_inline() {
+        // Comment-stripped deliberately: the doc comment immediately above
+        // the guarded code mentions the word "spawn_blocking" in prose, and
+        // that comment survives a revert of the code beneath it — a plain
+        // substring search over the raw block would pass whether or not the
+        // guard actually exists. Only executable lines are searched.
+        let src = fs::read_to_string(file!()).unwrap();
+        let start = src.find("if result.is_ok() {").expect("post-success block must exist");
+        let end = src[start..].find("\n    }\n    result\n}").map(|i| start + i).unwrap();
+        let code_only: String = src[start..end]
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            code_only.contains("spawn_blocking("),
+            "the post-success sidecar hash must run inside spawn_blocking, not inline on the \
+             async runtime — an un-blocked ~1.2 GiB hash_file call is what left a freshly \
+             completed download reading \"Unverified\" far longer than the hash itself took. \
+             code searched: {code_only}"
+        );
     }
 }

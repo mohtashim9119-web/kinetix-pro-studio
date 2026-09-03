@@ -53,14 +53,17 @@ import {
   deleteInstalledModel,
   getAvailableDiskSpace,
   downloadFaModel,
+  attachFaModelDownload,
   cancelFaModelDownload,
   faModelStatus,
   faModelId,
   FA_MODEL_LANGUAGES,
   type InstalledModelsReport,
 } from '../services/models';
+import type { ModelDownloadStatus } from '../services/modelDownload';
 import {
   downloadWhisperModel,
+  attachWhisperModelDownload,
   cancelWhisperModelDownload,
   getWhisperModelStatus,
   type RetryNotice,
@@ -227,11 +230,35 @@ export function ModelsSection({
    *  swallowed per-row on purpose: not knowing whether a partial exists must
    *  degrade to "offer Download", never to an error banner — the download
    *  itself resumes correctly either way. */
+  /** Adopts a transfer that is running in Rust but has no record in this
+   *  page's store — the state left by a webview reload, which destroys the JS
+   *  side while the Rust task keeps going (WS2 T4.6). Without this the row
+   *  reads the `.part` off disk, offers Resume, and the click is refused by
+   *  the Rust single-flight guard: the "blocked" message. */
+  /** `startDownload` already refuses a second start for a model already in
+   *  flight (`modelDownloadStore.ts`'s own `isDownloadInFlight` check) — a
+   *  second guard here would be unverified defense in depth, not a real one,
+   *  so this relies on that single guard rather than duplicating it. Matters
+   *  because `refreshResumable` re-runs on every settled download, not just
+   *  once: a second, unrelated transfer finishing while this one is still
+   *  mid-flight must not re-attach it a second time. */
+  const adoptInFlight = useCallback((id: string, lang: string | null, startedAt: number) => {
+    startDownload(
+      id,
+      (onProgress, onRetry) =>
+        lang === null
+          ? attachWhisperModelDownload(onProgress, onRetry)
+          : attachFaModelDownload(lang, onProgress, onRetry),
+      startedAt,
+    );
+  }, []);
+
   const refreshResumable = useCallback(() => {
-    const rows: Array<[string, Promise<{ partialBytes: number; present: boolean }>]> =
-      faLanguages.map((lang) => [faModelId(lang), faModelStatus(lang)]);
-    if (includeWhisper) rows.push(['whisper', getWhisperModelStatus()]);
-    rows.forEach(([id, pending]) => {
+    const rows: Array<[string, string | null, Promise<ModelDownloadStatus>]> = faLanguages.map(
+      (lang) => [faModelId(lang), lang, faModelStatus(lang)],
+    );
+    if (includeWhisper) rows.push(['whisper', null, getWhisperModelStatus()]);
+    rows.forEach(([id, lang, pending]) => {
       pending
         .then((st) => {
           setResumableBytes((prev) => ({ ...prev, [id]: st.partialBytes }));
@@ -241,13 +268,14 @@ export function ModelsSection({
           // since WS2 T4.4 so a failure survives the dialog being closed —
           // would sit under a finished row forever.
           if (st.present) clearDownloadRecord(id);
+          if (st.inFlight) adoptInFlight(id, lang, st.partialBytes);
         })
         .catch(() => {
           setResumableBytes((prev) => ({ ...prev, [id]: 0 }));
           setPresentOnDisk((prev) => ({ ...prev, [id]: false }));
         });
     });
-  }, [faLanguages, includeWhisper]);
+  }, [faLanguages, includeWhisper, adoptInFlight]);
 
   useEffect(() => {
     refresh();
