@@ -28,6 +28,15 @@
  * same completion refresh — and the only way to guarantee that is for it to be
  * the same code path with a shorter list.
  *
+ * DOWNLOAD STATE IS NOT IN THIS COMPONENT (WS2 T4.4). It lives in
+ * `services/modelDownloadStore.ts`, because a transfer is owned by the Rust
+ * side and outlives any mount of this section — three of which can exist at
+ * once. Holding it here meant closing the dialog destroyed the only record of
+ * a running download, so a reopened dialog offered "Resume" over a live
+ * transfer and a click started a second writer on the same `.part`. Only
+ * import and delete state (`whisperLocal`/`faLocal`) is genuinely local;
+ * `rowStateFor` overlays the two, download winning.
+ *
  * MODEL INSTALL AND DELETE ARE IMMEDIATE FILESYSTEM SIDE EFFECTS and are
  * deliberately exempt from the draft-then-commit discipline the settings
  * modals use elsewhere (owner ruling, WS2 T4.1): a download that "pends until
@@ -35,7 +44,7 @@
  * component may render as pending-until-Save.
  */
 
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useSyncExternalStore } from 'react';
 import { Download, FolderOpen, Trash2, AlertCircle, CheckCircle2, Loader2, RefreshCw } from 'lucide-react';
 import { SUPPORTED_LANGUAGES } from '../constants';
 import {
@@ -56,6 +65,14 @@ import {
   getWhisperModelStatus,
   type RetryNotice,
 } from '../services/modelDownload';
+import {
+  startDownload,
+  clearDownloadRecord,
+  getDownloadRecord,
+  getDownloadsVersion,
+  subscribeDownloads,
+  subscribeDownloadSettled,
+} from '../services/modelDownloadStore';
 
 type RowState =
   | { phase: 'idle' }
@@ -161,15 +178,24 @@ export function ModelsSection({
   // banner rather than only a console.error (WS2 Step 13 Phase 1 fix).
   const [statusError, setStatusError] = useState<string | null>(null);
   const [diskFreeBytes, setDiskFreeBytes] = useState<number | null | 'unavailable'>(null);
-  const [whisperState, setWhisperState] = useState<RowState>({ phase: 'idle' });
-  const [faRowState, setFaRowState] = useState<Record<string, RowState>>({});
+  /** Only the phases this component genuinely owns: import and delete are
+   *  modal-scoped operations with no background life. DOWNLOAD state is NOT
+   *  here — it lives in `modelDownloadStore` so it survives unmount (WS2
+   *  T4.4, Defect B) — and `rowStateFor` overlays the two. */
+  const [whisperLocal, setWhisperLocal] = useState<RowState>({ phase: 'idle' });
+  const [faLocal, setFaLocal] = useState<Record<string, RowState>>({});
   /** Resumable `.part` bytes per model id, from `fa_model_status` /
    *  `whisper_model_status`. Already filtered by the Rust side to what the
    *  download engine would actually accept as a resume point, so a non-zero
    *  value here is a promise the engine can keep — it is never a raw file
    *  size. Absent/failed lookups simply render as a plain Download. */
   const [resumableBytes, setResumableBytes] = useState<Record<string, number>>({});
-  const lastTickRef = useRef<{ time: number; bytes: number } | null>(null);
+
+  // One subscription for every row: the store's snapshot is a version number,
+  // so it is referentially stable and `getDownloadRecord` can then be read
+  // freely during render — including inside the `faLanguages.map` below,
+  // where a per-row hook would be illegal.
+  useSyncExternalStore(subscribeDownloads, getDownloadsVersion, getDownloadsVersion);
 
   const refresh = useCallback(() => {
     checkInstalledModels()
@@ -209,126 +235,103 @@ export function ModelsSection({
       .catch(() => setDiskFreeBytes('unavailable'));
   }, [refresh, refreshResumable]);
 
+  // A transfer can finish while this section is unmounted. Re-reading on
+  // mount (above) covers the reopen-after-completion case; this covers the
+  // opposite one — the section is open when a transfer it did not start
+  // settles — so the row flips to INSTALLED without the user touching
+  // anything, whether or not the dialog was open at the moment it landed.
+  useEffect(
+    () =>
+      subscribeDownloadSettled(() => {
+        refresh();
+        refreshResumable();
+      }),
+    [refresh, refreshResumable],
+  );
+
+  /** The row's phase, download state winning over local state. A download
+   *  outlives this component; an import or a delete does not. */
+  const rowStateFor = (modelId: string, local: RowState): RowState => {
+    const record = getDownloadRecord(modelId);
+    if (record?.phase === 'downloading') {
+      return {
+        phase: 'downloading',
+        downloadedBytes: record.downloadedBytes,
+        totalBytes: record.totalBytes,
+        retry: record.retry,
+      };
+    }
+    if (record?.phase === 'error') {
+      return { phase: 'error', message: record.message ?? 'the download failed' };
+    }
+    return local;
+  };
+
+  const whisperState = rowStateFor('whisper', whisperLocal);
+
   // NOTE: the Escape-to-close listener that used to sit here stayed with the
   // CHROME (`ManageModelsModal`). Inline in App Settings there is nothing for
   // Escape to close at this level, and a stray window listener here would have
   // closed the host modal from inside a section that does not own it.
 
   const startWhisperDownload = (): void => {
-    lastTickRef.current = null;
-    setWhisperState({ phase: 'downloading', downloadedBytes: resumableBytes.whisper ?? 0, totalBytes: 0 });
-    downloadWhisperModel(
-      (downloadedBytes, totalBytes) => {
-        // A Progress event means bytes moved, so any "reconnecting" notice is
-        // stale by definition and is dropped here rather than timed out.
-        setWhisperState({ phase: 'downloading', downloadedBytes, totalBytes });
-      },
-      (retry) => {
-        setWhisperState((prev) =>
-          prev.phase === 'downloading' ? { ...prev, retry } : prev,
-        );
-      },
-    )
-      .then(() => {
-        setWhisperState({ phase: 'idle' });
-        refresh();
-        refreshResumable();
-      })
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === 'AbortError') {
-          setWhisperState({ phase: 'idle' });
-          refresh();
-          refreshResumable();
-          return;
-        }
-        setWhisperState({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
-        refresh();
-        // The engine may have kept a resumable partial (retries exhausted) or
-        // deleted it (verification failed); re-reading is the only way the row
-        // can offer the right affordance, and the two cases are not
-        // distinguishable from the message alone.
-        refreshResumable();
-      });
+    // A stale error row must not survive the click that retries it.
+    clearDownloadRecord('whisper');
+    setWhisperLocal({ phase: 'idle' });
+    startDownload(
+      'whisper',
+      (onProgress, onRetry) => downloadWhisperModel(onProgress, onRetry),
+      resumableBytes.whisper ?? 0,
+    );
   };
 
   const importWhisper = (): void => {
-    setWhisperState({ phase: 'importing' });
+    setWhisperLocal({ phase: 'importing' });
     importLocalModel('whisper')
       .then((r) => {
-        setWhisperState({ phase: 'idle' });
+        setWhisperLocal({ phase: 'idle' });
         if (!r.cancelled) refresh();
       })
       .catch((err: unknown) => {
-        setWhisperState({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
+        setWhisperLocal({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
         refresh();
       });
   };
 
   const deleteWhisper = (): void => {
-    setWhisperState({ phase: 'deleting' });
+    setWhisperLocal({ phase: 'deleting' });
     deleteInstalledModel('whisper')
       .then(() => {
-        setWhisperState({ phase: 'idle' });
+        setWhisperLocal({ phase: 'idle' });
         refresh();
         refreshResumable();
       })
       .catch((err: unknown) => {
-        setWhisperState({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
+        setWhisperLocal({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
         refresh();
       });
   };
 
   const startFaDownload = (lang: string): void => {
-    setFaRowState((prev) => ({
-      ...prev,
-      [lang]: {
-        phase: 'downloading',
-        downloadedBytes: resumableBytes[faModelId(lang)] ?? 0,
-        totalBytes: 0,
-      },
-    }));
-    downloadFaModel(
-      lang,
-      (downloadedBytes, totalBytes) => {
-        setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'downloading', downloadedBytes, totalBytes } }));
-      },
-      (retry) => {
-        setFaRowState((prev) => {
-          const row = prev[lang];
-          return row?.phase === 'downloading' ? { ...prev, [lang]: { ...row, retry } } : prev;
-        });
-      },
-    )
-      .then(() => {
-        setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'idle' } }));
-        refresh();
-        refreshResumable();
-      })
-      .catch((err: unknown) => {
-        if (err instanceof DOMException && err.name === 'AbortError') {
-          setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'idle' } }));
-          refresh();
-          refreshResumable();
-          return;
-        }
-        setFaRowState((prev) => ({
-          ...prev,
-          [lang]: { phase: 'error', message: err instanceof Error ? err.message : String(err) },
-        }));
-        refresh();
-        refreshResumable();
-      });
+    const id = faModelId(lang);
+    clearDownloadRecord(id);
+    setFaLocal((prev) => ({ ...prev, [lang]: { phase: 'idle' } }));
+    startDownload(
+      id,
+      (onProgress, onRetry) => downloadFaModel(lang, onProgress, onRetry),
+      resumableBytes[id] ?? 0,
+    );
   };
 
   const importFa = (lang: string): void => {
-    setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'importing' } }));
+    setFaLocal((prev) => ({ ...prev, [lang]: { phase: 'importing' } }));
     importLocalModel(faModelId(lang))
       .then((r) => {
-        setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'idle' } }));
+        setFaLocal((prev) => ({ ...prev, [lang]: { phase: 'idle' } }));
         if (!r.cancelled) refresh();
       })
       .catch((err: unknown) => {
-        setFaRowState((prev) => ({
+        setFaLocal((prev) => ({
           ...prev,
           [lang]: { phase: 'error', message: err instanceof Error ? err.message : String(err) },
         }));
@@ -337,15 +340,15 @@ export function ModelsSection({
   };
 
   const deleteFa = (lang: string): void => {
-    setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'deleting' } }));
+    setFaLocal((prev) => ({ ...prev, [lang]: { phase: 'deleting' } }));
     deleteInstalledModel(faModelId(lang))
       .then(() => {
-        setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'idle' } }));
+        setFaLocal((prev) => ({ ...prev, [lang]: { phase: 'idle' } }));
         refresh();
         refreshResumable();
       })
       .catch((err: unknown) => {
-        setFaRowState((prev) => ({
+        setFaLocal((prev) => ({
           ...prev,
           [lang]: { phase: 'error', message: err instanceof Error ? err.message : String(err) },
         }));
@@ -511,7 +514,7 @@ export function ModelsSection({
             const label = SUPPORTED_LANGUAGES.find((l) => l.code === lang)?.label ?? lang;
             const status = report?.fa[lang];
             const installed = status?.installed ?? false;
-            const rowState = faRowState[lang] ?? { phase: 'idle' as const };
+            const rowState = rowStateFor(faModelId(lang), faLocal[lang] ?? { phase: 'idle' as const });
             const busy = isBusy(rowState);
             const isNeeded = projectLanguage === lang;
             return (

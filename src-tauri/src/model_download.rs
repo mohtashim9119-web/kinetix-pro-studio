@@ -80,13 +80,51 @@
 // Retaining the `.part` on a transient failure is deliberate and unchanged —
 // it is the thing that makes resume work. The only retention that was ever
 // wrong is the 416 path above.
+//
+// -- WS2 T4.4: one writer, honest progress, no silent stalls -------------
+//
+// Three defects, one root. MEASURED, from the operator's own app log
+// (`.work-phase4/session-ws2-43/operator-app.log`): this module's discard
+// logger recorded a `.part` of 1_754_528_449 bytes against a 1_262_619_311-
+// byte object. No single writer here can overshoot — a fresh attempt
+// truncates and stops at Content-Length, a resumed one is admitted only by
+// `validate_resume_response`'s exact start/total check, and there is no
+// `seek` or `set_len` in the module at all. Two writers on one `.part` is the
+// only explanation, and it explains the headline symptom exactly: the bar
+// reached 1.18 GiB / 1.18 GiB while verification found 81_926_489 bytes,
+// because `discard_partial` unlinks a file the other writer still holds open
+// and that writer goes on filling an orphaned inode, every `write_all`
+// returning `Ok`.
+//
+//   1. SINGLE-FLIGHT (`try_acquire_in_flight`, keyed by `.part` path). The
+//      cause. A UI guard cannot substitute: `ModelsSection` has three mounts,
+//      each with its own state.
+//
+//   2. PROGRESS IS BOUNDED BY BYTES ON DISK (`reportable_progress`). The
+//      symptom, made unrepresentable. A `Progress` event now reports
+//      `min(counter, metadata(part).len())`, so the bar physically cannot
+//      reach 100 % over a short file — for this cause or any future one. The
+//      in-attempt discard at the top of `run_stream_attempt` also resets
+//      `high_water`, which it did not before (a second, independent route to
+//      the same lie).
+//
+//   3. A STALLED SOCKET IS A TIMEOUT, NOT A HANG (`READ_TIMEOUT`). With no
+//      per-read deadline, Wi-Fi dropping mid-body left `response.chunk()`
+//      awaiting forever: no error, no `Retrying`, a frozen bar and no way
+//      forward but closing the dialog. `is_timeout()` was ALREADY classified
+//      `Transient`; nothing was ever producing one.
+//
+// `sync_all` before `Completed` is added alongside — it is not what caused
+// this (the writer is unbuffered, so `metadata()` was never stale), but the
+// `.part`-then-rename contract is only crash-atomic if the bytes are down.
 // ---------------------------------------------------------------------------
 
+use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use tauri::ipc::Channel;
@@ -129,6 +167,140 @@ pub(crate) fn backoff_before_attempt(attempt: u32) -> Duration {
         return Duration::from_secs(0);
     }
     Duration::from_secs(1u64 << (attempt - 2))
+}
+
+/// No `Client`-wide `timeout` is set — that is a deadline for the WHOLE
+/// request including the body, and a legitimate 1.26 GiB transfer on a slow
+/// link would trip it. These two bound the two ways a transfer can go silent
+/// instead:
+///
+///   * `CONNECT_TIMEOUT` — the TCP/TLS handshake never completes (Wi-Fi
+///     dropped before the request went out).
+///   * `READ_TIMEOUT` — reqwest 0.12's per-read inactivity deadline: the
+///     connection is established but no byte has arrived for this long.
+///
+/// Without the second one, a Wi-Fi drop mid-body is a black hole: the socket
+/// is neither closed nor readable, `response.chunk().await` never returns,
+/// and the retry loop below never runs — which is exactly the "bar hangs
+/// forever with no status update" the operator reported (WS2 T4.4). With it,
+/// the stall surfaces as a `reqwest::Error` whose `is_timeout()` is true,
+/// which `classify_stream_error` already calls `Transient`, so it flows into
+/// the existing `Retrying` → backoff → resume path and the UI says
+/// "Reconnecting… (attempt 2 of 3)" instead of nothing.
+///
+/// 60s is deliberately far above any plausible inter-chunk gap on a working
+/// link (chunks arrive in milliseconds) and far below the user's patience for
+/// a frozen bar.
+pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// 60s in the shipped app; 2s under `cargo test`, so the stall test can
+/// actually reach the timeout inside a test run. Scaled here, at the single
+/// definition, rather than by giving the test a private client — a test that
+/// built its own client would be testing its own timeout wiring instead of
+/// the engine's.
+pub(crate) const READ_TIMEOUT_SECS: u64 = if cfg!(test) { 2 } else { 60 };
+pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(READ_TIMEOUT_SECS);
+
+// ---------------------------------------------------------------------------
+// Single-flight (WS2 T4.4)
+// ---------------------------------------------------------------------------
+
+/// Every `.part` path with a download currently writing to it.
+///
+/// WHY THIS EXISTS, precisely. Before it, nothing stopped two
+/// `stream_download_verified` calls from targeting one `.part`, and the UI
+/// guard could not stand in for it: `ModelsSection` is mounted in THREE
+/// independent places (App Settings inline, the Manage Models modal, the
+/// Project Settings FA detector), each with its own React state, and until
+/// WS2 T4.4 that state was lost on unmount — so closing and reopening the
+/// modal offered "Resume" for a transfer that was still running.
+///
+/// The damage two writers do is not merely duplicated work. `discard_partial`
+/// is `remove_file`, and unlinking a file another task holds open does not
+/// stop that task: on APFS its descriptor keeps writing to a now-nameless
+/// inode that is freed when the descriptor closes. Every write returns `Ok`,
+/// so the loser's byte counter climbs to 100 % while the bytes reachable at
+/// the path are somebody else's. MEASURED on the operator's machine
+/// (`.work-phase4/session-ws2-43/operator-app.log`): a `.part` observed at
+/// 1_754_528_449 bytes against a 1_262_619_311-byte object — 491_909_138
+/// bytes MORE than the file being downloaded, which one writer cannot
+/// produce, followed by a verification that read 81_926_489 bytes at the path
+/// while the bar showed 1.18 GiB / 1.18 GiB.
+///
+/// Keyed by `.part` path rather than by the caller's model-id string on
+/// purpose: the path is the resource actually being contended for, and it is
+/// the one key both callers (`whisper_model_download`, `models::
+/// fa_model_download`) already derive from the same `part_path_for`. A
+/// second, id-shaped key could drift from it; this one cannot.
+static IN_FLIGHT: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+fn in_flight() -> &'static Mutex<HashSet<PathBuf>> {
+    IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Releases its claim on drop — including on an early `return`, a `?`, or a
+/// panic — so a failed download can never leave a target permanently
+/// un-downloadable. That is the whole reason this is a guard and not a
+/// matched acquire/release pair.
+pub(crate) struct InFlightGuard(PathBuf);
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        if let Ok(mut set) = in_flight().lock() {
+            set.remove(&self.0);
+        }
+    }
+}
+
+/// `Some(guard)` if nothing else is writing `part_path`; `None` if one is.
+/// The insert and the test are one critical section, so two simultaneous
+/// callers cannot both observe "free".
+pub(crate) fn try_acquire_in_flight(part_path: &Path) -> Option<InFlightGuard> {
+    let mut set = in_flight().lock().ok()?;
+    if set.insert(part_path.to_path_buf()) {
+        Some(InFlightGuard(part_path.to_path_buf()))
+    } else {
+        None
+    }
+}
+
+/// The refusal a second download for an already-in-flight target gets.
+/// Phrased as a statement about the transfer that IS running, not as a
+/// failure of the one being refused — the user's download is not lost, it is
+/// already happening.
+pub(crate) fn in_flight_refusal(part_path: &Path) -> String {
+    format!(
+        "a download for this model is already running (writing to {}); \
+         watch its progress or press Cancel to stop it — starting a second one \
+         would corrupt the first",
+        part_path.display()
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Progress accounting (WS2 T4.4)
+// ---------------------------------------------------------------------------
+
+/// Bytes actually reachable at `part_path` right now. `std::fs::File` is
+/// unbuffered — there is no `BufWriter` anywhere in this module — so a size
+/// read straight after a `write_all` already reflects that write; this needs
+/// no flush to be honest about what a reader would find.
+pub(crate) fn bytes_on_disk(part_path: &Path) -> u64 {
+    fs::metadata(part_path).map(|m| m.len()).unwrap_or(0)
+}
+
+/// What a `Progress` event is allowed to claim.
+///
+/// `counter` is what this task believes it wrote — a property of its file
+/// DESCRIPTOR. `on_disk` is what is reachable at the PATH. The two are the
+/// same number only while nothing else has touched the path, and the whole of
+/// Defect A is the gap between them. Reporting the minimum makes
+/// "progress > bytes on disk" unrepresentable, so the bar cannot reach 100 %
+/// on a short file no matter what goes wrong upstream — including failure
+/// modes not yet imagined, which is the point of putting the guarantee here
+/// rather than in each caller.
+pub(crate) fn reportable_progress(counter: u64, on_disk: u64) -> u64 {
+    counter.min(on_disk)
 }
 
 /// One cancel flag per in-flight download. Keyed by an opaque caller-chosen
@@ -680,9 +852,25 @@ pub(crate) async fn stream_download_verified(
         return Ok(());
     }
 
+    // Claimed BEFORE anything is opened or written, and held for the whole
+    // call (including `finalize_verified_download`, which renames the file
+    // out from under any second writer). A refusal is an `Error` event as
+    // well as an `Err`, so a caller that only listens on the channel still
+    // learns why nothing happened.
+    let _in_flight = match try_acquire_in_flight(&part_path) {
+        Some(g) => g,
+        None => {
+            let msg = in_flight_refusal(&part_path);
+            let _ = on_event.send(ModelDownloadEvent::Error { message: msg.clone() });
+            return Err(msg);
+        }
+    };
+
     let meta_path = part_meta_path_for(&part_path);
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (compatible; KinetixPro/1.0)")
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(READ_TIMEOUT)
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -833,6 +1021,13 @@ async fn run_stream_attempt(
                 refusal.describe()
             );
             discard_partial(part_path, meta_path);
+            // This attempt is about to stream from byte 0 into a file that no
+            // longer exists, so the previous attempt's high-water mark is no
+            // longer a claim about anything. Leaving it standing was a real
+            // second route to "the bar says 100 % over a short file" — the
+            // outer loop resets `high_water` on `RestartFromZero`, but this
+            // discard does not go through that arm.
+            *high_water = 0;
         }
     }
     let resume_from = planned.ok();
@@ -945,7 +1140,7 @@ async fn run_stream_attempt(
     }
     let mut last_emit = std::time::Instant::now();
     let _ = on_event.send(ModelDownloadEvent::Progress {
-        downloaded_bytes: *high_water,
+        downloaded_bytes: reportable_progress(*high_water, bytes_on_disk(part_path)),
         total_bytes: expected_size,
     });
 
@@ -967,14 +1162,33 @@ async fn run_stream_attempt(
                     *high_water = downloaded;
                 }
                 if last_emit.elapsed().as_millis() >= 150 {
+                    // Deliberately a fresh `metadata()` per emit, not the
+                    // in-memory counter: the counter describes this task's
+                    // file descriptor, and a descriptor can outlive the name
+                    // it was opened under. Once every 150 ms a stat costs
+                    // nothing against a multi-hundred-megabyte transfer.
                     let _ = on_event.send(ModelDownloadEvent::Progress {
-                        downloaded_bytes: *high_water,
+                        downloaded_bytes: reportable_progress(*high_water, bytes_on_disk(part_path)),
                         total_bytes: expected_size,
                     });
                     last_emit = std::time::Instant::now();
                 }
             }
-            Ok(None) => return AttemptOutcome::Completed,
+            Ok(None) => {
+                // The body ended. Flush to stable storage before anyone
+                // stats or hashes this file: `finalize_verified_download`
+                // decides on its CONTENT, and the `.part`-then-rename dance
+                // only buys crash-atomicity if the bytes are actually down
+                // (the import path already does this — `models.rs`'s
+                // `import_to_target` — this one did not).
+                if let Err(e) = file.sync_all() {
+                    return AttemptOutcome::Permanent {
+                        cause: format!("could not flush {} to disk: {e}", part_path.display()),
+                        partial_discarded: false,
+                    };
+                }
+                return AttemptOutcome::Completed;
+            }
             Err(e) => {
                 let cause = cause_chain(&e);
                 return match classify_stream_error(&e) {
@@ -1393,6 +1607,14 @@ mod tests {
             /// Answer a Range request with a 206 whose `Content-Range` starts
             /// `back` bytes earlier than asked.
             RangeShiftedBy(u64),
+            /// Write headers and `n` body bytes, then hold the connection
+            /// open forever without sending another byte and without closing
+            /// it. This is what a Wi-Fi drop looks like from the client's
+            /// side: not an error, not an EOF — silence. Distinguishing it
+            /// from `Truncate` matters, because `Truncate` hangs up and so
+            /// produces an error on its own; only this one requires a
+            /// timeout to ever surface.
+            Stall(u64),
         }
 
         pub fn body_byte(i: u64) -> u8 {
@@ -1472,6 +1694,37 @@ mod tests {
                         None,
                         Some(format!("Content-Range: bytes {}-{}/{}\r\n", shifted, total - 1, total)),
                     )
+                }
+                Step::Stall(n) => {
+                    let full_body = body(total);
+                    let start = range_start.unwrap_or(0);
+                    let slice = &full_body[start.min(total) as usize..];
+                    let status_line = if range_start.is_some() {
+                        format!(
+                            "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {}-{}/{}\r\n",
+                            start,
+                            total - 1,
+                            total
+                        )
+                    } else {
+                        "HTTP/1.1 200 OK\r\n".to_string()
+                    };
+                    let head = format!(
+                        "{status_line}Content-Length: {}\r\nAccept-Ranges: bytes\r\nETag: {etag}\r\nConnection: close\r\n\r\n",
+                        slice.len()
+                    );
+                    let _ = stream.write_all(head.as_bytes());
+                    let _ = stream.write_all(&slice[..(n as usize).min(slice.len())]);
+                    let _ = stream.flush();
+                    // Hold the socket open and silent, on a DETACHED thread —
+                    // the accept loop must stay free to answer the retry, or
+                    // the retry would be testing a refused connection rather
+                    // than a second stall.
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_secs(120));
+                        drop(stream);
+                    });
+                    return;
                 }
                 Step::Truncate(n) => match range_start {
                     Some(s) => (
@@ -1988,6 +2241,272 @@ mod tests {
         assert_eq!(st.partial_bytes, 4096);
         assert_eq!(st.total_bytes, MODEL_SIZE_BYTES);
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------
+    // WS2 T4.4 — single flight, honest progress, no silent stalls
+    // -----------------------------------------------------------------
+
+    /// Defect A's guarantee, stated as arithmetic. Every `Progress` event
+    /// goes through this function, so if it cannot report more than is on
+    /// disk, neither can the bar.
+    #[test]
+    fn progress_can_never_exceed_bytes_on_disk() {
+        // The operator's exact numbers: the counter believed the transfer was
+        // complete while the path held 81_926_489 bytes.
+        assert_eq!(reportable_progress(1_262_619_311, 81_926_489), 81_926_489);
+        // The ordinary case is unaffected — a healthy transfer's counter and
+        // its file agree, and reporting the min changes nothing.
+        assert_eq!(reportable_progress(500, 500), 500);
+        // A file larger than the counter (the two-writer overshoot the log
+        // recorded) still reports only what this task claims to have written.
+        assert_eq!(reportable_progress(500, 1_754_528_449), 500);
+        assert_eq!(reportable_progress(0, 0), 0);
+    }
+
+    /// The half of the same guarantee that reads the filesystem.
+    #[test]
+    fn bytes_on_disk_reads_the_path_and_treats_a_missing_file_as_zero() {
+        let dir = temp_dir_named("t44-bytes-on-disk");
+        let part = dir.join("model.onnx.part");
+        assert_eq!(bytes_on_disk(&part), 0, "a missing .part is zero, never an error");
+        fs::write(&part, vec![0u8; 1234]).unwrap();
+        assert_eq!(bytes_on_disk(&part), 1234);
+        // Unlinked out from under a holder: the path is what is measured.
+        fs::remove_file(&part).unwrap();
+        assert_eq!(bytes_on_disk(&part), 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A second download for a target already being written is refused at the
+    /// Rust layer — not merely discouraged in the UI. This is the fix for the
+    /// cause of Defect A.
+    #[test]
+    fn a_second_download_for_an_in_flight_target_is_refused() {
+        let dir = temp_dir_named("t44-single-flight");
+        let part = dir.join("model.onnx.part");
+
+        let first = try_acquire_in_flight(&part).expect("the first claim must succeed");
+        assert!(
+            try_acquire_in_flight(&part).is_none(),
+            "a second writer for the same .part must be refused while the first holds it"
+        );
+        drop(first);
+        assert!(
+            try_acquire_in_flight(&part).is_some(),
+            "the claim must be released on drop, or a failed download makes the model permanently un-downloadable"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Refusal is per-target, so a whisper download and an FA download (or two
+    /// different languages) still run concurrently — the property the old
+    /// per-key cancel map was introduced to preserve.
+    #[test]
+    fn single_flight_is_per_target_not_global() {
+        let dir = temp_dir_named("t44-single-flight-per-target");
+        let fr = dir.join("fr.onnx.part");
+        let de = dir.join("de.onnx.part");
+        let _a = try_acquire_in_flight(&fr).expect("fr");
+        let _b = try_acquire_in_flight(&de).expect("de must not be blocked by fr");
+        assert!(try_acquire_in_flight(&fr).is_none());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The guard must also release when the holder panics or returns early,
+    /// which is why it is a `Drop` type rather than a matched pair of calls.
+    #[test]
+    fn an_in_flight_claim_is_released_even_if_the_holder_panics() {
+        let dir = temp_dir_named("t44-single-flight-panic");
+        let part = dir.join("model.onnx.part");
+        let p = part.clone();
+        let outcome = std::panic::catch_unwind(move || {
+            let _guard = try_acquire_in_flight(&p).expect("claim");
+            panic!("simulated download task panic");
+        });
+        assert!(outcome.is_err());
+        assert!(
+            try_acquire_in_flight(&part).is_some(),
+            "a panicking download must not leave the target claimed forever"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// End to end through the real engine: while one download holds a target,
+    /// a second call for that same target returns without touching the file
+    /// and says why.
+    #[test]
+    fn the_engine_refuses_a_concurrent_download_for_the_same_part_file() {
+        let dir = temp_dir_named("t44-engine-single-flight");
+        let target = dir.join("model.onnx");
+        let part = part_path_for(&target);
+        fs::write(&part, vec![9u8; 777]).unwrap();
+
+        let _held = try_acquire_in_flight(&part).expect("stand in for the running download");
+
+        let (ch, log) = recording_channel();
+        let result = tauri::async_runtime::block_on(stream_download_verified(
+            "http://127.0.0.1:1/never-requested".to_string(),
+            target.clone(),
+            part.clone(),
+            TOTAL,
+            Arc::new(AtomicBool::new(false)),
+            ch,
+            |_p: &Path| panic!("verification must never run for a refused download"),
+        ));
+
+        let err = result.expect_err("a second download for an in-flight target must not start");
+        assert!(err.contains("already running"), "{err}");
+        assert_eq!(
+            fs::metadata(&part).unwrap().len(),
+            777,
+            "the refused call must not have opened, truncated or written the .part"
+        );
+        let errors: Vec<_> =
+            log.lock().unwrap().iter().filter(|v| v["event"] == "Error").cloned().collect();
+        assert_eq!(errors.len(), 1, "the refusal must reach the channel too: {errors:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A status poll is what the modal does on every open and every refresh,
+    /// while a transfer is running. It must be pure observation.
+    #[test]
+    fn a_status_poll_during_an_active_download_leaves_the_part_size_unchanged() {
+        let dir = temp_dir_named("t44-status-is-readonly");
+        let target = dir.join("model.onnx");
+        let part = part_path_for(&target);
+        let meta = part_meta_path_for(&part);
+        seed_partial(&part, &meta, 120_000, "http://origin/model.onnx", Some("\"v1\""));
+
+        let before = fs::metadata(&part).unwrap().len();
+        let meta_before = fs::read(&meta).unwrap();
+
+        for _ in 0..25 {
+            let st = status_for_target(&target, TOTAL);
+            assert!(!st.present);
+            assert_eq!(st.partial_bytes, 120_000);
+        }
+
+        assert_eq!(
+            fs::metadata(&part).unwrap().len(),
+            before,
+            "polling status must never truncate, extend or rewrite the .part the writer holds open"
+        );
+        assert_eq!(fs::read(&meta).unwrap(), meta_before, "nor its sidecar");
+        assert!(
+            try_acquire_in_flight(&part).is_some(),
+            "and it must not take the in-flight claim either"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The third issue: Wi-Fi drops mid-body. The socket is not closed and
+    /// not readable, so without a per-read deadline `chunk()` awaits forever
+    /// and the UI sees nothing at all. With one, the stall becomes a
+    /// `Retrying` event the modal can render as "Reconnecting… (attempt 2 of
+    /// 3)", and then an explicit `Error` when the attempts run out.
+    #[test]
+    fn a_stalled_connection_emits_reconnecting_then_an_explicit_error() {
+        let dir = temp_dir_named("t44-stall");
+        let origin = fake_origin::spawn(TOTAL, "\"v1\"", vec![Step::Stall(40_000)]);
+        let (result, _target, part, _meta, log) = run_engine(origin.url.clone(), &dir, true);
+
+        let err = result.expect_err("a permanently silent socket must not resolve as success");
+
+        let retries = retry_events(&log);
+        assert_eq!(
+            retries.len(),
+            (MAX_STREAM_ATTEMPTS - 1) as usize,
+            "every stalled attempt must announce a reconnect rather than freezing: {retries:?}"
+        );
+        assert_eq!(retries[0]["data"]["attempt"], 2);
+        assert_eq!(retries[0]["data"]["maxAttempts"], MAX_STREAM_ATTEMPTS);
+
+        let errors: Vec<_> =
+            log.lock().unwrap().iter().filter(|v| v["event"] == "Error").cloned().collect();
+        assert_eq!(errors.len(), 1, "the failure must be pushed to the UI, not only returned: {errors:?}");
+        let message = errors[0]["data"]["message"].as_str().unwrap_or_default();
+        assert_eq!(message, err, "the channel error and the returned error must be the same text");
+        assert!(
+            message.contains("resumes from there"),
+            "a kept partial must be described as resumable so the row offers Resume: {message}"
+        );
+        assert!(part.exists(), "the partial must be kept — that is what makes Resume real");
+
+        // And the progress the UI was given never outran the file.
+        let on_disk = fs::metadata(&part).unwrap().len();
+        for value in progress_series(&log) {
+            assert!(value <= on_disk, "progress {value} exceeded the {on_disk} bytes on disk");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The engine-level form of the same guarantee, reproducing Defect A's
+    /// actual shape: the `.part` is unlinked out from under a running
+    /// transfer (which is exactly what a second writer's `discard_partial`
+    /// does), and the bar must stop claiming the bytes that went with it.
+    ///
+    /// This is the test that separates the two implementations. With progress
+    /// taken from the in-memory counter, the next attempt's first `Progress`
+    /// still reports the pre-unlink high-water mark — the lie the operator
+    /// saw at full scale. With it taken from the file, it reports 0, because
+    /// 0 is what is there.
+    #[test]
+    fn progress_stops_claiming_bytes_once_the_part_file_is_unlinked_underneath_it() {
+        let dir = temp_dir_named("t44-unlinked-underneath");
+        let origin = fake_origin::spawn(TOTAL, "\"v1\"", vec![Step::Stall(40_000)]);
+        let part = part_path_for(&dir.join("model.onnx"));
+
+        let doomed = part.clone();
+        std::thread::spawn(move || {
+            // After the first attempt has written its 40_000 bytes and gone
+            // silent, but well before its 2s read deadline.
+            std::thread::sleep(Duration::from_millis(700));
+            let _ = fs::remove_file(&doomed);
+        });
+
+        let (result, _target, _part, _meta, log) = run_engine(origin.url.clone(), &dir, true);
+        assert!(result.is_err(), "a stalled transfer cannot succeed");
+
+        let events = log.lock().unwrap().clone();
+        let first_retry = events
+            .iter()
+            .position(|v| v["event"] == "Retrying")
+            .expect("the stall must have produced a retry");
+        let next_progress = events[first_retry..]
+            .iter()
+            .find(|v| v["event"] == "Progress")
+            .and_then(|v| v["data"]["downloadedBytes"].as_u64())
+            .expect("the next attempt must emit its starting progress");
+
+        assert_eq!(
+            next_progress, 0,
+            "after the .part was unlinked the bar must report 0, not the bytes that went with it"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Progress is bounded by the file for a whole ordinary download, not
+    /// just at the end — including across a truncation and its resume.
+    #[test]
+    fn every_progress_event_of_a_real_download_is_backed_by_bytes_on_disk() {
+        let dir = temp_dir_named("t44-progress-backed");
+        let origin = fake_origin::spawn(TOTAL, "\"v1\"", vec![Step::Truncate(50_000), Step::Full]);
+        let (result, target, _part, _meta, log) = run_engine(origin.url.clone(), &dir, true);
+        assert!(result.is_ok(), "{result:?}");
+
+        let series = progress_series(&log);
+        // The terminal event is emitted after the rename, when the bytes are
+        // at `target` rather than at `.part`; every earlier one must have been
+        // covered by the file at the time, and the final total is the real
+        // file's real size.
+        assert_eq!(series.last().copied(), Some(TOTAL));
+        assert_eq!(fs::metadata(&target).unwrap().len(), TOTAL);
+        assert!(
+            series.iter().all(|&v| v <= TOTAL),
+            "no event may claim more than the object's own size: {series:?}"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 }
