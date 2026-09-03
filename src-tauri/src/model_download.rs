@@ -119,7 +119,7 @@
 // `.part`-then-rename contract is only crash-atomic if the bytes are down.
 // ---------------------------------------------------------------------------
 
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -232,10 +232,71 @@ pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(READ_TIMEOUT_SECS)
 /// the one key both callers (`whisper_model_download`, `models::
 /// fa_model_download`) already derive from the same `part_path_for`. A
 /// second, id-shaped key could drift from it; this one cannot.
-static IN_FLIGHT: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+static IN_FLIGHT: OnceLock<Mutex<HashMap<PathBuf, Arc<EventSink>>>> = OnceLock::new();
 
-fn in_flight() -> &'static Mutex<HashSet<PathBuf>> {
-    IN_FLIGHT.get_or_init(|| Mutex::new(HashSet::new()))
+fn in_flight() -> &'static Mutex<HashMap<PathBuf, Arc<EventSink>>> {
+    IN_FLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The channel a running download emits through, behind a swap point.
+///
+/// WHY A SWAP POINT AND NOT JUST A `Channel` (WS2 T4.6). A `Channel` belongs
+/// to the page that created it. Reloading the webview — Cmd+R, or the dev
+/// server's own refresh — destroys that page while the Rust task keeps
+/// running: `tauri::async_runtime` does not cancel a spawned command future
+/// when a page goes away. MEASURED, from the operator's own report: after a
+/// refresh, a second download attempt was refused with "already running",
+/// which is only possible if the first task was still alive and still holding
+/// its `InFlightGuard`.
+///
+/// So after a reload the transfer is running and completely invisible: its
+/// events go to a dead page, the new page's store is empty, and the row
+/// offers Resume for a download that is already in progress. Clicking it is
+/// the refusal the operator hit. Quitting worked only because it killed the
+/// task outright, leaving an ordinary `.part` to resume from.
+///
+/// Making the sink swappable lets a fresh page take over the SAME transfer
+/// (`attach_to_in_flight`) instead of racing it. There is exactly one event
+/// path either way — no second progress mechanism to drift from this one.
+pub(crate) struct EventSink(Mutex<Channel<ModelDownloadEvent>>);
+
+impl EventSink {
+    pub(crate) fn new(channel: Channel<ModelDownloadEvent>) -> Self {
+        Self(Mutex::new(channel))
+    }
+
+    /// Send is best-effort and always has been: a channel whose page is gone
+    /// errors, and a download must not fail because nobody was watching.
+    pub(crate) fn send(&self, event: ModelDownloadEvent) {
+        if let Ok(channel) = self.0.lock() {
+            let _ = channel.send(event);
+        }
+    }
+
+    /// Point the running transfer at a new page's channel.
+    pub(crate) fn replace(&self, channel: Channel<ModelDownloadEvent>) {
+        if let Ok(mut slot) = self.0.lock() {
+            *slot = channel;
+        }
+    }
+}
+
+/// The sink of the download currently writing `part_path`, if there is one.
+///
+/// Returned under the same lock the guard removes itself under, so a download
+/// that finishes concurrently either hands back a live sink (and will emit its
+/// terminal event through it) or hands back `None` — never a sink that is
+/// about to be dropped with the caller waiting on it.
+pub(crate) fn attach_to_in_flight(part_path: &Path) -> Option<Arc<EventSink>> {
+    in_flight().lock().ok()?.get(part_path).cloned()
+}
+
+/// Whether a download is writing this target right now. Cheap, and the only
+/// thing that can tell a fresh page "this is in progress" rather than "this
+/// has a partial on disk" — two states that look identical from the
+/// filesystem alone.
+pub(crate) fn is_part_in_flight(part_path: &Path) -> bool {
+    in_flight().lock().map(|set| set.contains_key(part_path)).unwrap_or(false)
 }
 
 /// Releases its claim on drop — including on an early `return`, a `?`, or a
@@ -255,13 +316,16 @@ impl Drop for InFlightGuard {
 /// `Some(guard)` if nothing else is writing `part_path`; `None` if one is.
 /// The insert and the test are one critical section, so two simultaneous
 /// callers cannot both observe "free".
-pub(crate) fn try_acquire_in_flight(part_path: &Path) -> Option<InFlightGuard> {
+pub(crate) fn try_acquire_in_flight(
+    part_path: &Path,
+    sink: Arc<EventSink>,
+) -> Option<InFlightGuard> {
     let mut set = in_flight().lock().ok()?;
-    if set.insert(part_path.to_path_buf()) {
-        Some(InFlightGuard(part_path.to_path_buf()))
-    } else {
-        None
+    if set.contains_key(part_path) {
+        return None;
     }
+    set.insert(part_path.to_path_buf(), sink);
+    Some(InFlightGuard(part_path.to_path_buf()))
 }
 
 /// The refusal a second download for an already-in-flight target gets.
@@ -351,6 +415,14 @@ pub struct ModelDownloadStatus {
     pub present: bool,
     pub partial_bytes: u64,
     pub total_bytes: u64,
+    /// A download is writing this target RIGHT NOW, in this process.
+    ///
+    /// The filesystem cannot answer this (WS2 T4.6): a growing `.part` and an
+    /// abandoned one look identical to a `stat`, so a page that has just
+    /// loaded cannot tell "resume this" from "this is already running" without
+    /// asking the registry. Getting it wrong is what put a Resume button over
+    /// a live transfer after a webview refresh.
+    pub in_flight: bool,
 }
 
 pub(crate) fn models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -765,6 +837,7 @@ pub(crate) fn status_for_target(target: &Path, expected_size: u64) -> ModelDownl
                 present: true,
                 partial_bytes: 0,
                 total_bytes: expected_size,
+                in_flight: false,
             };
         }
     }
@@ -777,7 +850,12 @@ pub(crate) fn status_for_target(target: &Path, expected_size: u64) -> ModelDownl
     // property of the pending request, not of the target), so this uses the
     // URL-free half of the same decision table rather than a second copy.
     let partial_bytes = plan_resume_without_url(on_disk, expected_size, meta.as_ref()).unwrap_or(0);
-    ModelDownloadStatus { present: false, partial_bytes, total_bytes: expected_size }
+    ModelDownloadStatus {
+        present: false,
+        partial_bytes,
+        total_bytes: expected_size,
+        in_flight: is_part_in_flight(&part_path),
+    }
 }
 
 /// Reports whether the model is already present, and how much of a resumable
@@ -788,6 +866,42 @@ pub(crate) fn status_for_target(target: &Path, expected_size: u64) -> ModelDownl
 pub fn whisper_model_status(app: tauri::AppHandle) -> Result<ModelDownloadStatus, String> {
     let dir = models_dir(&app)?;
     Ok(status_for_target(&dir.join(MODEL_FILENAME), MODEL_SIZE_BYTES))
+}
+
+/// Hands a freshly loaded page the event stream of a download that is already
+/// running, instead of leaving it to guess from the filesystem.
+///
+/// Returns `false` when nothing is in flight for this target — which the
+/// caller must treat as "read the status normally", not as an error: a
+/// transfer can legitimately finish in the gap between a status poll and this
+/// call, and that is a completed download, not a failure.
+///
+/// The old page's channel is replaced, not duplicated. There is one transfer
+/// and one place its events go; a fan-out would mean deciding what to do when
+/// one of several listeners is dead, which is the problem this exists to
+/// avoid.
+pub(crate) fn attach_to_target(
+    target: &Path,
+    on_event: Channel<ModelDownloadEvent>,
+) -> bool {
+    let part_path = part_path_for(target);
+    match attach_to_in_flight(&part_path) {
+        Some(sink) => {
+            sink.replace(on_event);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Re-attaches to an in-progress whisper download after a page reload.
+#[tauri::command]
+pub fn whisper_model_download_attach(
+    app: tauri::AppHandle,
+    on_event: Channel<ModelDownloadEvent>,
+) -> Result<bool, String> {
+    let dir = models_dir(&app)?;
+    Ok(attach_to_target(&dir.join(MODEL_FILENAME), on_event))
 }
 
 pub(crate) fn cancel_flag_for(state: &tauri::State<'_, ModelDownloadState>, key: &str) -> Arc<AtomicBool> {
@@ -881,11 +995,15 @@ pub(crate) async fn stream_download_verified(
     // out from under any second writer). A refusal is an `Error` event as
     // well as an `Err`, so a caller that only listens on the channel still
     // learns why nothing happened.
-    let _in_flight = match try_acquire_in_flight(&part_path) {
+    // The caller's channel becomes a swappable sink BEFORE the claim, so the
+    // claim and the sink are registered together and a page that attaches
+    // immediately after cannot find a claim with no sink behind it.
+    let sink = Arc::new(EventSink::new(on_event));
+    let _in_flight = match try_acquire_in_flight(&part_path, sink.clone()) {
         Some(g) => g,
         None => {
             let msg = in_flight_refusal(&part_path);
-            let _ = on_event.send(ModelDownloadEvent::Error { message: msg.clone() });
+            sink.send(ModelDownloadEvent::Error { message: msg.clone() });
             return Err(msg);
         }
     };
@@ -910,7 +1028,7 @@ pub(crate) async fn stream_download_verified(
 
     loop {
         if cancel_flag.load(Ordering::SeqCst) {
-            let _ = on_event.send(ModelDownloadEvent::Cancelled);
+            sink.send(ModelDownloadEvent::Cancelled);
             return Err("download cancelled — partial download kept for resume".to_string());
         }
 
@@ -922,7 +1040,7 @@ pub(crate) async fn stream_download_verified(
             expected_size,
             force_from_zero,
             &cancel_flag,
-            &on_event,
+            &sink,
             &mut high_water,
         )
         .await;
@@ -930,7 +1048,7 @@ pub(crate) async fn stream_download_verified(
         match outcome {
             AttemptOutcome::Completed => break,
             AttemptOutcome::Cancelled => {
-                let _ = on_event.send(ModelDownloadEvent::Cancelled);
+                sink.send(ModelDownloadEvent::Cancelled);
                 return Err("download cancelled — partial download kept for resume".to_string());
             }
             AttemptOutcome::Permanent { cause, partial_discarded } => {
@@ -941,7 +1059,7 @@ pub(crate) async fn stream_download_verified(
                 // cannot work.
                 let discarded = partial_discarded || !part_path.exists();
                 let msg = permanent_message(&cause, &part_path, discarded);
-                let _ = on_event.send(ModelDownloadEvent::Error { message: msg.clone() });
+                sink.send(ModelDownloadEvent::Error { message: msg.clone() });
                 return Err(msg);
             }
             AttemptOutcome::RestartFromZero { cause } => {
@@ -957,14 +1075,14 @@ pub(crate) async fn stream_download_verified(
                         &part_path,
                         true,
                     );
-                    let _ = on_event.send(ModelDownloadEvent::Error { message: msg.clone() });
+                    sink.send(ModelDownloadEvent::Error { message: msg.clone() });
                     return Err(msg);
                 }
                 restarted_from_zero = true;
                 force_from_zero = true;
                 discard_partial(&part_path, &meta_path);
                 high_water = 0;
-                let _ = on_event.send(ModelDownloadEvent::Retrying {
+                sink.send(ModelDownloadEvent::Retrying {
                     attempt,
                     max_attempts: MAX_STREAM_ATTEMPTS,
                     reason: format!("{cause} — starting over from the beginning"),
@@ -981,11 +1099,11 @@ pub(crate) async fn stream_download_verified(
                 if attempt >= MAX_STREAM_ATTEMPTS {
                     let msg =
                         exhausted_message(&cause, attempt, &part_path, have, expected_size);
-                    let _ = on_event.send(ModelDownloadEvent::Error { message: msg.clone() });
+                    sink.send(ModelDownloadEvent::Error { message: msg.clone() });
                     return Err(msg);
                 }
                 let next = attempt + 1;
-                let _ = on_event.send(ModelDownloadEvent::Retrying {
+                sink.send(ModelDownloadEvent::Retrying {
                     attempt: next,
                     max_attempts: MAX_STREAM_ATTEMPTS,
                     reason: cause,
@@ -1006,7 +1124,7 @@ pub(crate) async fn stream_download_verified(
         }
     }
 
-    finalize_verified_download(part_path, meta_path, final_path, expected_size, on_event, verify).await
+    finalize_verified_download(part_path, meta_path, final_path, expected_size, sink, verify).await
 }
 
 /// One attempt: decide the resume offset, make the request, gate the
@@ -1022,7 +1140,7 @@ async fn run_stream_attempt(
     expected_size: u64,
     force_from_zero: bool,
     cancel_flag: &Arc<AtomicBool>,
-    on_event: &Channel<ModelDownloadEvent>,
+    sink: &EventSink,
     high_water: &mut u64,
 ) -> AttemptOutcome {
     let existing_len = fs::metadata(part_path).map(|m| m.len()).unwrap_or(0);
@@ -1163,7 +1281,7 @@ async fn run_stream_attempt(
         *high_water = downloaded;
     }
     let mut last_emit = std::time::Instant::now();
-    let _ = on_event.send(ModelDownloadEvent::Progress {
+    sink.send(ModelDownloadEvent::Progress {
         downloaded_bytes: reportable_progress(*high_water, bytes_on_disk(part_path)),
         total_bytes: expected_size,
     });
@@ -1191,7 +1309,7 @@ async fn run_stream_attempt(
                     // file descriptor, and a descriptor can outlive the name
                     // it was opened under. Once every 150 ms a stat costs
                     // nothing against a multi-hundred-megabyte transfer.
-                    let _ = on_event.send(ModelDownloadEvent::Progress {
+                    sink.send(ModelDownloadEvent::Progress {
                         downloaded_bytes: reportable_progress(*high_water, bytes_on_disk(part_path)),
                         total_bytes: expected_size,
                     });
@@ -1235,7 +1353,7 @@ async fn finalize_verified_download(
     meta_path: PathBuf,
     final_path: PathBuf,
     expected_size: u64,
-    on_event: Channel<ModelDownloadEvent>,
+    sink: Arc<EventSink>,
     verify: impl FnOnce(&Path) -> Result<(), String> + Send + 'static,
 ) -> Result<(), String> {
     let verify_path = part_path.clone();
@@ -1251,7 +1369,7 @@ async fn finalize_verified_download(
             "{msg} — the partial download at {} was deleted; the next download starts from zero",
             part_path.display()
         );
-        let _ = on_event.send(ModelDownloadEvent::Error { message: full_msg.clone() });
+        sink.send(ModelDownloadEvent::Error { message: full_msg.clone() });
         return Err(full_msg);
     }
 
@@ -1259,9 +1377,8 @@ async fn finalize_verified_download(
         .map_err(|e| format!("cannot finalize {}: {e}", final_path.display()))?;
     let _ = fs::remove_file(&meta_path);
 
-    let _ =
-        on_event.send(ModelDownloadEvent::Progress { downloaded_bytes: expected_size, total_bytes: expected_size });
-    let _ = on_event.send(ModelDownloadEvent::Done);
+        sink.send(ModelDownloadEvent::Progress { downloaded_bytes: expected_size, total_bytes: expected_size });
+    sink.send(ModelDownloadEvent::Done);
     Ok(())
 }
 
@@ -1295,6 +1412,10 @@ mod tests {
         Channel::new(|_body| Ok(()))
     }
 
+    fn test_sink() -> Arc<EventSink> {
+        Arc::new(EventSink::new(noop_channel()))
+    }
+
     fn temp_dir_named(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "kinetix-{tag}-{}-{:?}",
@@ -1325,7 +1446,7 @@ mod tests {
             meta.clone(),
             final_path.clone(),
             21,
-            noop_channel(),
+            test_sink(),
             |_path| Err("expected size mismatch: got 21, wanted 999".to_string()),
         ));
 
@@ -1352,7 +1473,7 @@ mod tests {
             meta.clone(),
             final_path.clone(),
             10,
-            noop_channel(),
+            test_sink(),
             |_path| Ok(()),
         ));
 
@@ -2383,14 +2504,14 @@ mod tests {
         let dir = temp_dir_named("t44-single-flight");
         let part = dir.join("model.onnx.part");
 
-        let first = try_acquire_in_flight(&part).expect("the first claim must succeed");
+        let first = try_acquire_in_flight(&part, test_sink()).expect("the first claim must succeed");
         assert!(
-            try_acquire_in_flight(&part).is_none(),
+            try_acquire_in_flight(&part, test_sink()).is_none(),
             "a second writer for the same .part must be refused while the first holds it"
         );
         drop(first);
         assert!(
-            try_acquire_in_flight(&part).is_some(),
+            try_acquire_in_flight(&part, test_sink()).is_some(),
             "the claim must be released on drop, or a failed download makes the model permanently un-downloadable"
         );
         let _ = fs::remove_dir_all(&dir);
@@ -2404,9 +2525,9 @@ mod tests {
         let dir = temp_dir_named("t44-single-flight-per-target");
         let fr = dir.join("fr.onnx.part");
         let de = dir.join("de.onnx.part");
-        let _a = try_acquire_in_flight(&fr).expect("fr");
-        let _b = try_acquire_in_flight(&de).expect("de must not be blocked by fr");
-        assert!(try_acquire_in_flight(&fr).is_none());
+        let _a = try_acquire_in_flight(&fr, test_sink()).expect("fr");
+        let _b = try_acquire_in_flight(&de, test_sink()).expect("de must not be blocked by fr");
+        assert!(try_acquire_in_flight(&fr, test_sink()).is_none());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -2418,12 +2539,12 @@ mod tests {
         let part = dir.join("model.onnx.part");
         let p = part.clone();
         let outcome = std::panic::catch_unwind(move || {
-            let _guard = try_acquire_in_flight(&p).expect("claim");
+            let _guard = try_acquire_in_flight(&p, test_sink()).expect("claim");
             panic!("simulated download task panic");
         });
         assert!(outcome.is_err());
         assert!(
-            try_acquire_in_flight(&part).is_some(),
+            try_acquire_in_flight(&part, test_sink()).is_some(),
             "a panicking download must not leave the target claimed forever"
         );
         let _ = fs::remove_dir_all(&dir);
@@ -2439,7 +2560,7 @@ mod tests {
         let part = part_path_for(&target);
         fs::write(&part, vec![9u8; 777]).unwrap();
 
-        let _held = try_acquire_in_flight(&part).expect("stand in for the running download");
+        let _held = try_acquire_in_flight(&part, test_sink()).expect("stand in for the running download");
 
         let (ch, log) = recording_channel();
         let result = tauri::async_runtime::block_on(stream_download_verified(
@@ -2491,7 +2612,7 @@ mod tests {
         );
         assert_eq!(fs::read(&meta).unwrap(), meta_before, "nor its sidecar");
         assert!(
-            try_acquire_in_flight(&part).is_some(),
+            try_acquire_in_flight(&part, test_sink()).is_some(),
             "and it must not take the in-flight claim either"
         );
         let _ = fs::remove_dir_all(&dir);
@@ -2603,6 +2724,120 @@ mod tests {
             series.iter().all(|&v| v <= TOTAL),
             "no event may claim more than the object's own size: {series:?}"
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -----------------------------------------------------------------
+    // WS2 T4.6 — a page reload must re-attach, not start a second download
+    // -----------------------------------------------------------------
+
+    /// The operator's sequence: start a download, reload the webview, press
+    /// Resume. The Rust task survives the reload (their "already running"
+    /// refusal is the proof it does), so what the fresh page needs is the
+    /// running transfer's event stream — not a second transfer.
+    #[test]
+    fn a_reloaded_page_attaches_to_the_running_download_and_receives_its_events() {
+        let dir = temp_dir_named("t46-attach");
+        let target = dir.join("model.onnx");
+        let part = part_path_for(&target);
+
+        // The first page's channel, and the transfer it started.
+        let (first_page, first_log) = recording_channel();
+        let sink = Arc::new(EventSink::new(first_page));
+        let _guard = try_acquire_in_flight(&part, sink.clone()).expect("claim");
+
+        sink.send(ModelDownloadEvent::Progress { downloaded_bytes: 10, total_bytes: 100 });
+        assert_eq!(progress_series(&first_log), vec![10]);
+
+        // The page reloads. A fresh page asks to attach.
+        let (second_page, second_log) = recording_channel();
+        assert!(attach_to_target(&target, second_page), "an in-flight target must be attachable");
+
+        // The SAME transfer's later events land on the new page…
+        sink.send(ModelDownloadEvent::Progress { downloaded_bytes: 60, total_bytes: 100 });
+        sink.send(ModelDownloadEvent::Done);
+        assert_eq!(progress_series(&second_log), vec![60]);
+        assert!(second_log.lock().unwrap().iter().any(|v| v["event"] == "Done"));
+
+        // …and NOT on the dead one. One transfer, one destination: a fan-out
+        // would leave the engine deciding what a dead listener means.
+        assert_eq!(progress_series(&first_log), vec![10], "the replaced channel must stop receiving");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Attaching to a target with nothing running is a plain `false`, never an
+    /// error. A transfer can finish between a status poll and the attach call,
+    /// and that is a completed download — the caller must read status again,
+    /// not show a failure.
+    #[test]
+    fn attaching_to_a_target_with_no_download_running_reports_false() {
+        let dir = temp_dir_named("t46-attach-nothing");
+        let target = dir.join("model.onnx");
+        let (ch, log) = recording_channel();
+        assert!(!attach_to_target(&target, ch));
+        assert!(log.lock().unwrap().is_empty(), "a no-op attach must emit nothing");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Once the transfer ends, its claim and its sink go together — an attach
+    /// after that must not hand back a sink nothing will ever send through,
+    /// which would hang the caller's promise forever.
+    #[test]
+    fn a_finished_download_is_no_longer_attachable() {
+        let dir = temp_dir_named("t46-attach-after-finish");
+        let target = dir.join("model.onnx");
+        let part = part_path_for(&target);
+
+        let guard = try_acquire_in_flight(&part, test_sink()).expect("claim");
+        assert!(attach_to_target(&target, noop_channel()));
+        drop(guard);
+        assert!(!attach_to_target(&target, noop_channel()), "a dropped guard takes its sink with it");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// What a freshly loaded page reads to decide between "Resume" and "this
+    /// is already running". The filesystem cannot tell those apart — a growing
+    /// `.part` and an abandoned one are the same `stat` — so this flag is the
+    /// only thing that can, and it is what stopped the operator's Resume
+    /// button from appearing over a live transfer.
+    #[test]
+    fn status_reports_a_running_download_as_in_flight() {
+        let dir = temp_dir_named("t46-status-in-flight");
+        let target = dir.join("model.onnx");
+        let part = part_path_for(&target);
+        let meta = part_meta_path_for(&part);
+        seed_partial(&part, &meta, 120_000, "http://origin/model.onnx", Some("\"v1\""));
+
+        // Same bytes on disk, both times. Only the registry differs.
+        let idle = status_for_target(&target, TOTAL);
+        assert!(!idle.in_flight, "a partial nobody is writing is a resume point");
+        assert_eq!(idle.partial_bytes, 120_000);
+
+        let guard = try_acquire_in_flight(&part, test_sink()).expect("claim");
+        let live = status_for_target(&target, TOTAL);
+        assert!(live.in_flight, "an identical .part IS distinguishable — by the registry, not by stat");
+        assert_eq!(live.partial_bytes, 120_000, "the byte count is still true, it is just not an offer");
+
+        drop(guard);
+        assert!(!status_for_target(&target, TOTAL).in_flight);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// An installed model is never in flight — the engine returns `Done`
+    /// before claiming anything, so the early-exit branch must not report a
+    /// state it cannot be in.
+    #[test]
+    fn an_installed_model_is_never_reported_in_flight() {
+        let dir = temp_dir_named("t46-installed-not-in-flight");
+        let target = dir.join("model.onnx");
+        fs::write(&target, vec![1u8; 1000]).unwrap();
+        let s = status_for_target(&target, 1000);
+        assert!(s.present);
+        assert!(!s.in_flight);
+        assert_eq!(s.partial_bytes, 0);
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -14,6 +14,7 @@
 
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { SUPPORTED_LANGUAGE_CODES } from '../constants';
+import { attachDownload } from './modelDownload';
 import type { ModelDownloadEvent, ModelDownloadStatus, RetryNotice } from './modelDownload';
 
 /** Mirrors `models.rs::FA_LANGUAGES` — every code `models.rs` will accept as
@@ -119,6 +120,17 @@ export function downloadFaModel(
       reject(err instanceof Error ? err : new Error(String(err)));
     });
   });
+}
+
+/** Re-attaches to an FA download already running in Rust — the FA sibling of
+ *  `attachWhisperModelDownload`. See that function for why a reloaded page
+ *  must attach rather than start a second transfer. */
+export function attachFaModelDownload(
+  languageCode: string,
+  onProgress: (downloadedBytes: number, totalBytes: number) => void,
+  onRetry?: (notice: RetryNotice) => void,
+): Promise<void> {
+  return attachDownload('fa_model_download_attach', { language: languageCode }, onProgress, onRetry);
 }
 
 export function cancelFaModelDownload(languageCode: string): void {
