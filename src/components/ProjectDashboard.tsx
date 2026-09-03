@@ -1,9 +1,18 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Plus, Trash2, FolderOpen, MoreVertical, Search, Film, Check, Loader2, Settings } from 'lucide-react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, Image as ImageIcon } from 'lucide-react';
 import type { ProjectMeta } from '../types';
 import { loadAllMetas, deleteProjectData } from '../services/projectStore';
 import { deleteAllAssets } from '../services/assetStore';
 import { deleteAllWaveforms } from '../services/waveformStore';
+import './ProjectDashboard.css';
+
+/**
+ * Project ids this process has already shown in the dashboard grid. The
+ * dashboard unmounts whenever the editor is up, so a per-component ref could
+ * never tell a genuinely new project from a remount — every card would animate
+ * on every return to the grid. Module scope is what outlives the unmount.
+ */
+const seenProjectIds = new Set<string>();
 
 interface Props {
   currentProjectId: string | null;
@@ -27,6 +36,18 @@ interface Props {
   onOpenAppSettings: () => void;
 }
 
+function formatDate(ts: number): string {
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`;
+  if (bytes >= 1e6) return `${Math.round(bytes / 1e6)} MB`;
+  return `${Math.round(bytes / 1e3)} KB`;
+}
+
+const PERFORATIONS = Array.from({ length: 8 }, (_, i) => i);
+
 export function ProjectDashboard({
   currentProjectId,
   openingProjectId = null,
@@ -36,65 +57,71 @@ export function ProjectDashboard({
 }: Props): React.ReactElement {
   const [metas, setMetas] = useState<ProjectMeta[]>([]);
   const [search, setSearch] = useState('');
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
-  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [showBulkConfirm, setShowBulkConfirm] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [storage, setStorage] = useState<{ usage: number; quota: number } | null>(null);
+
+  const searchRef = useRef<HTMLInputElement>(null);
+  const profileRef = useRef<HTMLDivElement>(null);
+  /** Ids that were absent last time this process rendered the grid. */
+  const enteringIds = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const data = loadAllMetas();
-    // Sort by lastOpened descending
     data.sort((a, b) => (b.savedAt ?? 0) - (a.savedAt ?? 0));
+    enteringIds.current = new Set(data.filter(m => !seenProjectIds.has(m.id)).map(m => m.id));
+    data.forEach(m => seenProjectIds.add(m.id));
     setMetas(data);
   }, []);
 
-  // Close menu on outside click
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpenId(null);
-      }
+    void navigator.storage?.estimate?.().then(({ usage, quota }) => {
+      if (usage !== undefined && quota) setStorage({ usage, quota });
+    });
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent): void => {
+      if (profileRef.current && !profileRef.current.contains(e.target as Node)) setProfileOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const filtered = metas.filter(m =>
-    m.name.toLowerCase().includes(search.toLowerCase())
-  );
+  useEffect(() => {
+    const handler = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      } else if (e.key === 'Escape') {
+        setProfileOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
+  const filtered = metas.filter(m => m.name.toLowerCase().includes(search.trim().toLowerCase()));
   const visibleIds = filtered.map(m => m.id);
   const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selectedIds.has(id));
+  const selectedCount = selectedIds.size;
 
-  async function handleDelete(id: string): Promise<void> {
-    await deleteAllAssets(id);
-    await deleteAllWaveforms(id);
-    await deleteProjectData(id);
-    setMetas(prev => prev.filter(m => m.id !== id));
-    setConfirmDeleteId(null);
-    setMenuOpenId(null);
-  }
-
-  function toggleSelect(id: string): void {
+  const toggleSelect = useCallback((id: string): void => {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       return next;
     });
-  }
+  }, []);
 
   function handleSelectAllToggle(): void {
     setSelectedIds(prev => {
       const next = new Set(prev);
-      if (allVisibleSelected) {
-        visibleIds.forEach(id => next.delete(id));
-      } else {
-        visibleIds.forEach(id => next.add(id));
-      }
+      if (allVisibleSelected) visibleIds.forEach(id => next.delete(id));
+      else visibleIds.forEach(id => next.add(id));
       return next;
     });
   }
@@ -111,262 +138,261 @@ export function ProjectDashboard({
     setShowBulkConfirm(false);
   }
 
-  function formatDate(ts: number): string {
-    const d = new Date(ts);
-    return d.toLocaleDateString('en-US', {
-      month: 'short', day: 'numeric', year: 'numeric',
-    });
-  }
-
   return (
-    <div className="fixed inset-0 z-[200] bg-[#0A0A0A] flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between px-8 py-5 border-b border-zinc-800">
-        <div className="flex items-center gap-3">
-          <Film size={22} className="text-[#F27D26]" />
-          <span className="text-white font-bold text-lg tracking-widest uppercase">
-            Kinetix Pro Studio
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          {/* Search */}
-          <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
-            <input
-              type="text"
-              placeholder="Search projects..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              className="bg-zinc-900 border border-zinc-700 rounded-lg pl-8 pr-4 py-2
-                         text-sm text-zinc-200 placeholder-zinc-500
-                         focus:outline-none focus:border-[#F27D26] w-52"
-            />
+    <div className="kxd-root fixed inset-0 z-[200]">
+      <header className="kxd-topbar">
+        <div className="kxd-brand">
+          <div className="kxd-brand-mark">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="3" y="5" width="18" height="14" rx="2" stroke="currentColor" strokeWidth="1.8" />
+              <path d="M3 9h18M8 5v4M16 5v4M8 15v4M16 15v4" stroke="currentColor" strokeWidth="1.6" />
+            </svg>
           </div>
-          {/* Select All / Deselect All */}
-          <button
-            onClick={handleSelectAllToggle}
-            className="bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded-lg
-                       px-4 py-2 text-sm text-zinc-200 transition-colors"
-          >
-            {allVisibleSelected ? 'Deselect All' : 'Select All'}
-          </button>
-          {/* Delete Selected */}
-          <button
-            onClick={() => setShowBulkConfirm(true)}
-            disabled={selectedIds.size === 0}
-            className="flex items-center gap-2 bg-red-600/80 hover:bg-red-500
-                       disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-red-600/80
-                       text-white font-semibold text-sm px-4 py-2 rounded-lg transition-colors"
-          >
-            <Trash2 size={14} />
-            Delete Selected ({selectedIds.size})
-          </button>
-          {/* App Settings — the one entry point, reachable with no project. */}
-          <button
-            onClick={onOpenAppSettings}
-            data-testid="dashboard-open-app-settings"
-            aria-label="App Settings"
-            title="App Settings"
-            className="bg-zinc-900 border border-zinc-700 hover:border-zinc-500 rounded-lg
-                       p-2.5 text-zinc-200 hover:text-[#F27D26] transition-colors"
-          >
-            <Settings size={16} />
-          </button>
-          {/* New Project button */}
-          <button
-            onClick={onNewProject}
-            className="flex items-center gap-2 bg-[#F27D26] hover:bg-[#e06d1a]
-                       text-white font-semibold text-sm px-4 py-2 rounded-lg
-                       transition-colors"
-          >
-            <Plus size={16} />
+          <span className="kxd-brand-name">Kinetix<span>.</span></span>
+          <span className="kxd-brand-sub">PRO&nbsp;STUDIO</span>
+        </div>
+
+        <div className="kxd-search">
+          <Search size={15} aria-hidden="true" />
+          <input
+            ref={searchRef}
+            type="text"
+            placeholder="Search projects"
+            autoComplete="off"
+            aria-label="Search projects"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+          <kbd>⌘K</kbd>
+        </div>
+
+        <div className="kxd-actions">
+          <button className="kxd-btn kxd-btn-accent" onClick={onNewProject}>
+            <Plus size={14} strokeWidth={2.2} aria-hidden="true" />
             New Project
           </button>
-        </div>
-      </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-8 py-8">
-        <h2 className="text-zinc-400 text-xs font-semibold uppercase tracking-widest mb-6">
-          Recent Projects
-        </h2>
-
-        {filtered.length === 0 && (
-          <div className="flex flex-col items-center justify-center h-64 gap-4">
-            <FolderOpen size={48} className="text-zinc-700" />
-            <p className="text-zinc-500 text-sm">
-              {search ? 'No projects match your search' : 'No projects yet — create your first one'}
-            </p>
-          </div>
-        )}
-
-        {/* Project grid — inert for the duration of an in-flight open, so a
-            second click can't start a competing switch while the first is
-            still awaiting storage. */}
-        <div
-          data-testid="project-grid"
-          style={openingProjectId ? { pointerEvents: 'none' } : undefined}
-          className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5"
-        >
-          {filtered.map(meta => (
-            <div
-              key={meta.id}
-              data-testid={`project-card-${meta.id}`}
-              onClick={() => onSelectProject(meta.id)}
-              aria-busy={meta.id === openingProjectId ? true : undefined}
-              className={`group relative bg-zinc-900 rounded-xl overflow-hidden cursor-pointer
-                border-2 transition-all duration-200
-                ${meta.id === currentProjectId
-                  ? 'border-[#F27D26]'
-                  : 'border-transparent hover:border-zinc-600'
-                }
-                ${selectedIds.has(meta.id) ? 'ring-2 ring-blue-500' : ''}`}
+          <div className="kxd-profile" ref={profileRef}>
+            <button
+              className="kxd-profile-trigger"
+              aria-haspopup="menu"
+              aria-expanded={profileOpen}
+              aria-label="Workspace menu"
+              onClick={() => setProfileOpen(o => !o)}
             >
-              {/* Opening spinner */}
-              {meta.id === openingProjectId && (
-                <div
-                  data-testid={`project-card-spinner-${meta.id}`}
-                  className="absolute inset-0 z-30 bg-black/60 flex items-center justify-center"
-                >
-                  <Loader2 size={28} className="text-[#F27D26] animate-spin" />
+              <span className="kxd-avatar">KX</span>
+              <ChevronDown className="kxd-chev" size={13} aria-hidden="true" />
+            </button>
+
+            {/* Kept mounted so the open/close transition can run; `inert` is what
+                keeps the closed menu out of the tab order and off the a11y tree. */}
+            <div className={`kxd-profile-menu${profileOpen ? ' is-open' : ''}`} role="menu" inert={!profileOpen}>
+              <div className="kxd-profile-menu-header">
+                <span className="kxd-avatar kxd-avatar-lg">KX</span>
+                <div>
+                  <div className="kxd-profile-name">Local workspace</div>
+                  <div className="kxd-profile-sub">Stored on this device</div>
                 </div>
-              )}
-              {/* Selection checkbox — visible on hover or when selected */}
+                <span className="kxd-plan-badge">OFFLINE</span>
+              </div>
+
+              <div className="kxd-menu-divider" />
+
               <button
-                onClick={e => {
-                  e.stopPropagation();
-                  toggleSelect(meta.id);
+                className="kxd-menu-item"
+                role="menuitem"
+                data-testid="dashboard-open-app-settings"
+                onClick={() => {
+                  setProfileOpen(false);
+                  onOpenAppSettings();
                 }}
-                className={`absolute top-2 left-2 z-20 w-5 h-5 rounded flex items-center justify-center
-                            border transition-opacity
-                            ${selectedIds.has(meta.id)
-                              ? 'bg-[#F27D26] border-[#F27D26] opacity-100'
-                              : 'bg-black/60 border-zinc-500 opacity-0 group-hover:opacity-100'
-                            }`}
-                aria-label={selectedIds.has(meta.id) ? `Deselect "${meta.name}"` : `Select "${meta.name}"`}
               >
-                {selectedIds.has(meta.id) && <Check size={12} className="text-white" />}
+                <Settings size={16} aria-hidden="true" />
+                App Settings
+              </button>
+              <button
+                className="kxd-menu-item"
+                role="menuitem"
+                onClick={() => {
+                  setProfileOpen(false);
+                  searchRef.current?.focus();
+                }}
+              >
+                <Search size={16} aria-hidden="true" />
+                Search projects
+                <span className="kxd-menu-shortcut">⌘K</span>
               </button>
 
-              {/* Thumbnail */}
-              <div className="aspect-video bg-zinc-800 flex items-center justify-center overflow-hidden">
-                {meta.thumbnailUrl ? (
-                  <img
-                    src={meta.thumbnailUrl}
-                    alt={meta.name}
-                    draggable={false}
-                    className="w-full h-full object-cover"
+              <div className="kxd-menu-divider" />
+
+              <div className="kxd-menu-storage">
+                <div className="kxd-menu-storage-row">
+                  <span>Storage</span>
+                  <span>
+                    {storage
+                      ? `${formatBytes(storage.usage)} / ${formatBytes(storage.quota)}`
+                      : 'Unavailable'}
+                  </span>
+                </div>
+                <div className="kxd-menu-storage-bar">
+                  <div
+                    className="kxd-menu-storage-fill"
+                    style={{ width: storage ? `${Math.min(100, (storage.usage / storage.quota) * 100)}%` : '0%' }}
                   />
-                ) : (
-                  <FolderOpen size={32} className="text-zinc-600" />
-                )}
+                </div>
               </div>
+            </div>
+          </div>
+        </div>
+      </header>
 
-              {/* Info */}
-              <div className="px-3 py-3">
-                <p className="text-white text-sm font-medium truncate">{meta.name}</p>
-                <p className="text-zinc-500 text-xs mt-0.5">
-                  {meta.segmentCount ?? 0} scene{(meta.segmentCount ?? 0) !== 1 ? 's' : ''}
-                </p>
-                <p className="text-zinc-600 text-xs mt-0.5">
-                  {meta.savedAt ? formatDate(meta.savedAt) : '—'}
-                </p>
-              </div>
-
-              {/* Three-dot menu button — visible on hover */}
-              <button
-                onClick={e => {
-                  e.stopPropagation();
-                  setMenuOpenId(prev => prev === meta.id ? null : meta.id);
-                }}
-                className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60
-                           text-zinc-400 hover:text-white opacity-0 group-hover:opacity-100
-                           transition-opacity"
-                aria-label={`Options for "${meta.name}"`}
-              >
-                <MoreVertical size={14} />
-              </button>
-
-              {/* Dropdown menu */}
-              {menuOpenId === meta.id && (
-                <div
-                  ref={menuRef}
-                  className="absolute top-8 right-2 z-10 bg-zinc-800 border border-zinc-700
-                             rounded-lg shadow-xl py-1 min-w-32"
-                  onClick={e => e.stopPropagation()}
-                >
-                  <button
-                    onClick={() => setConfirmDeleteId(meta.id)}
-                    className="w-full flex items-center gap-2 px-3 py-2 text-sm
-                               text-red-400 hover:bg-zinc-700 transition-colors"
-                  >
-                    <Trash2 size={13} />
+      <main className="kxd-main custom-scrollbar">
+        <div className="kxd-main-inner">
+          <div className="kxd-section-head">
+            <h1>Recent projects</h1>
+            <div>
+              {selectedCount > 0 ? (
+                <div className="kxd-selection-bar">
+                  <span className="kxd-selection-count">
+                    <span>{selectedCount}</span> selected
+                  </span>
+                  <div className="kxd-selection-divider" />
+                  <button className="kxd-text-btn" onClick={handleSelectAllToggle}>
+                    {allVisibleSelected ? 'Deselect all' : 'Select all'}
+                  </button>
+                  <button className="kxd-btn-sm-danger" onClick={() => setShowBulkConfirm(true)}>
+                    <Trash2 size={13} aria-hidden="true" />
                     Delete
                   </button>
                 </div>
-              )}
-
-              {/* Current project badge */}
-              {meta.id === currentProjectId && (
-                <span className="absolute top-2 left-9 text-[10px] bg-green-600/80 text-white px-1.5 py-0.5 rounded-full font-medium">
-                  Current
+              ) : (
+                <span className="kxd-project-count">
+                  {metas.length === 1 ? '1 project' : `${metas.length} projects`}
                 </span>
               )}
             </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Delete confirmation overlay */}
-      {confirmDeleteId && (
-        <div className="fixed inset-0 z-[300] bg-black/70 flex items-center justify-center">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-sm w-full mx-4">
-            <h3 className="text-white font-semibold mb-2">Delete Project</h3>
-            <p className="text-zinc-400 text-sm mb-6">
-              &ldquo;{metas.find(m => m.id === confirmDeleteId)?.name}&rdquo; will be permanently
-              deleted. This cannot be undone.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setConfirmDeleteId(null)}
-                className="px-4 py-2 text-sm text-zinc-400 hover:text-white
-                           rounded-lg hover:bg-zinc-800 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => handleDelete(confirmDeleteId)}
-                className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500
-                           text-white rounded-lg transition-colors font-medium"
-              >
-                Delete
-              </button>
-            </div>
           </div>
-        </div>
-      )}
 
-      {/* Bulk delete confirmation overlay */}
+          {/* Project grid — inert for the duration of an in-flight open, so a
+              second click can't start a competing switch while the first is
+              still awaiting storage. */}
+          <div
+            data-testid="project-grid"
+            className="kxd-grid"
+            style={openingProjectId ? { pointerEvents: 'none' } : undefined}
+          >
+            {filtered.map(meta => {
+              const isSelected = selectedIds.has(meta.id);
+              const isCurrent = meta.id === currentProjectId;
+              const scenes = meta.segmentCount ?? 0;
+              const classes = [
+                'kxd-card',
+                isSelected ? 'is-selected' : '',
+                isCurrent ? 'is-current' : '',
+                enteringIds.current.has(meta.id) ? 'is-entering' : '',
+              ].filter(Boolean).join(' ');
+
+              return (
+                <article
+                  key={meta.id}
+                  data-testid={`project-card-${meta.id}`}
+                  aria-busy={meta.id === openingProjectId ? true : undefined}
+                  className={classes}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Open "${meta.name}"`}
+                  onClick={() => onSelectProject(meta.id)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onSelectProject(meta.id);
+                    }
+                  }}
+                >
+                  <div className="kxd-thumb">
+                    {meta.id === openingProjectId && (
+                      <div className="kxd-card-spinner" data-testid={`project-card-spinner-${meta.id}`}>
+                        <Loader2 size={28} className="animate-spin" aria-hidden="true" />
+                      </div>
+                    )}
+
+                    <button
+                      className="kxd-select-toggle"
+                      aria-label={isSelected ? `Deselect "${meta.name}"` : `Select "${meta.name}"`}
+                      aria-pressed={isSelected}
+                      onClick={e => {
+                        e.stopPropagation();
+                        toggleSelect(meta.id);
+                      }}
+                    >
+                      <Check size={12} strokeWidth={3} aria-hidden="true" />
+                    </button>
+
+                    <div className="kxd-perf kxd-perf-top">
+                      {PERFORATIONS.map(i => <span key={i} />)}
+                    </div>
+                    <div className="kxd-perf kxd-perf-bottom">
+                      {PERFORATIONS.map(i => <span key={i} />)}
+                    </div>
+
+                    {meta.thumbnailUrl ? (
+                      <img src={meta.thumbnailUrl} alt="" draggable={false} />
+                    ) : (
+                      <div className="kxd-art-empty">
+                        <ImageIcon size={26} strokeWidth={1.5} aria-hidden="true" />
+                      </div>
+                    )}
+
+                    <div className="kxd-play-hint">
+                      <div className="kxd-play-hint-circle">
+                        <Play size={15} fill="currentColor" aria-hidden="true" />
+                      </div>
+                    </div>
+
+                    {scenes > 0 && (
+                      <div className="kxd-scene-badge">{scenes} scene{scenes !== 1 ? 's' : ''}</div>
+                    )}
+                    {isCurrent && <span className="kxd-current-badge">CURRENT</span>}
+                  </div>
+
+                  <div className="kxd-card-body">
+                    <h3 className="kxd-card-title">{meta.name}</h3>
+                    <div className="kxd-card-date">
+                      {scenes === 0 ? '0 scenes · ' : ''}
+                      {meta.savedAt ? formatDate(meta.savedAt) : '—'}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          {filtered.length === 0 && (
+            <div className="kxd-empty-state">
+              <Search size={34} strokeWidth={1.5} aria-hidden="true" />
+              <p>
+                {search.trim()
+                  ? 'No projects match your search.'
+                  : 'No projects yet — create your first one.'}
+              </p>
+            </div>
+          )}
+        </div>
+      </main>
+
       {showBulkConfirm && (
-        <div className="fixed inset-0 z-[300] bg-black/70 flex items-center justify-center">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 max-w-sm w-full mx-4">
-            <h3 className="text-white font-semibold mb-2">Delete Projects</h3>
-            <p className="text-zinc-400 text-sm mb-6">
-              Delete {selectedIds.size} project{selectedIds.size !== 1 ? 's' : ''}? This cannot be undone.
+        <div className="kxd-dialog-scrim">
+          <div className="kxd-dialog" role="dialog" aria-modal="true" aria-label="Delete projects">
+            <h3>Delete {selectedCount === 1 ? 'project' : 'projects'}</h3>
+            <p>
+              {selectedCount} project{selectedCount !== 1 ? 's' : ''} will be permanently deleted,
+              along with all imported media. This cannot be undone.
             </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setShowBulkConfirm(false)}
-                className="px-4 py-2 text-sm text-zinc-400 hover:text-white
-                           rounded-lg hover:bg-zinc-800 transition-colors"
-              >
+            <div className="kxd-dialog-actions">
+              <button className="kxd-dialog-cancel" onClick={() => setShowBulkConfirm(false)}>
                 Cancel
               </button>
-              <button
-                onClick={() => void handleBulkDelete()}
-                className="px-4 py-2 text-sm bg-red-600 hover:bg-red-500
-                           text-white rounded-lg transition-colors font-medium"
-              >
+              <button className="kxd-dialog-confirm" onClick={() => void handleBulkDelete()}>
                 Delete
               </button>
             </div>
