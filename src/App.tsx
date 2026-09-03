@@ -5507,7 +5507,7 @@ export default function App() {
   if (isHydrating) {
     return (
       <div className="min-h-screen bg-[#0A0A0A] flex items-center justify-center">
-        <span className="text-[#E4E3E0] text-sm font-mono tracking-widest uppercase">Loading…</span>
+        <span className="text-sm font-mono tracking-widest uppercase">Loading…</span>
       </div>
     );
   }

@@ -27,7 +27,7 @@ export function SyncLoadingOverlay({
     >
       <div className="flex flex-col items-center gap-4 bg-[var(--kx-panel)] border border-[var(--kx-line)] rounded-xl px-8 py-6">
         <div className="w-8 h-8 rounded-full border-2 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent animate-spin" />
-        <span className="text-[#E4E3E0] text-sm font-medium tracking-wide">
+        <span className="text-sm font-medium tracking-wide">
           Preparing your project…
         </span>
       </div>

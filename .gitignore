@@ -26,6 +26,11 @@ src-tauri/onnxruntime/onnxruntime-osx-*
 # WebCodecs Phase 0 spike — throwaway test asset, never committed (see docs/webcodecs-architecture-plan.md)
 public/_spike/
 
+# WS2-23 dev seed fixture — a local scratch project used to hand-load a test
+# project into the dashboard. Swept into the repo by a wildcard `git add -A`;
+# public/ has been out of scope since Phase 3 and stays untracked.
+public/ws2-23-seed.json
+
 # Python bytecode cache — scripts/ has measurement tooling (measure-word-onset.py, measure-forced-alignment.py)
 __pycache__/
 *.pyc
