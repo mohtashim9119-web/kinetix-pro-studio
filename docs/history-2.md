@@ -2837,3 +2837,149 @@ workstream.
 
 Gates on every commit and on `main` after merge: tsc clean, lint clean, vitest 2929 passed / 77
 skipped / 0 failed, gaplessInvariant 36/36, golden replay 6/6, K13 3/3.
+
+---
+
+## WS2 T4.2 — backlog hygiene on the closed workstream, plus the bare-key fix (2026-09-03)
+
+Branch off `main` @ `261562b`. Artifacts: `.work-phase4/session-ws2-41/`.
+
+### Step 1 — six deletion premises, verified before deleting
+
+Six §5 entries were proposed for deletion. Each rested on a premise nobody had checked. Verdicts:
+
+**DELETED — 3.**
+
+1. **Presets / global-effects exclusion.** Premise held completely. `CLAUDE.md:202` states the
+   live-feedback criterion and `:204` names BOTH excluded groups verbatim — the two storage keys
+   (`kinetix:stylePresets:v1`, `kinetix:lookPresets:v1`) and all five global effects fields — plus
+   the "do not re-litigate without overturning the criterion" clause. The ledger entry was a strict
+   subset of the durable manual, so deleting it deletes nothing.
+2. **Cold-start switch outlier.** No measurement artifact contradicts the noise reading.
+   `.work-phase4/session-ws2-38/step2a-sweep-and-load-measurement.md` §2.3 shows one cold r0
+   (V6: 1051 ms `loadProjectDetailed`, 1177 ms total) against warm 44-160 ms, with the other three
+   projects' r0 warm; §5 records it as not isolated to a cause. One wording correction: the
+   artifact says "seen once per session", slightly stronger than the entry's "one observed
+   project-open" — not enough to change the verdict, since neither establishes a class.
+3. **`getMediaDuration` back-compat backfill.** Artifact §2.3 is explicit: "No video asset in any
+   project is missing `Asset.duration`, so the back-compat probe leg cost **zero** everywhere."
+   The open question (cost on a legacy project) is unmeasurable — §5 records that no such project
+   exists on this machine. Correct as written; nothing to track.
+
+**NOT DELETED — 3.**
+
+4. **E8 / FA pack `unsupported`.** Two findings, both against the entry. Its claim that "whether it
+   renders is untested" is **wrong** — `FaPackStatus.test.tsx:156` renders the branch with `'ja'`.
+   Its load-bearing claim, that `SUPPORTED_LANGUAGES` is exactly the five FA packs, was guarded by
+   **nothing**: `models.ts:21` derives `FA_MODEL_LANGUAGES` as `SUPPORTED_LANGUAGE_CODES`
+   intersected with a hardcoded five-code literal, and `models.rs:182` hardcodes the same five a
+   third time, tied only by a comment. Adding a sixth language compiled clean, passed every test,
+   and made the branch reachable from the dropdown on the same commit — with the Rust side
+   rejecting the `fa-<lang>` id, so the inline installer would offer a download the backend
+   refuses. Cheap guard added (`faPackLanguageParity.test.ts`, `a6e7529`), reach established
+   destructively: adding `it` to `SUPPORTED_LANGUAGES` turns 2 of 3 red
+   (`.work-phase4/session-ws2-41/step1-e8-probe.txt`); `constants.ts` restored byte-identical.
+   Entry kept and corrected.
+5. **S/D timeline focus.** A **distinct leak**, not subsumed by Step 2. Step 2 answers "does a
+   modal own the keyboard" (`shortcutsSuppressedRef`); this asks "does the TIMELINE own it", and
+   needs no modal open at all — a click anywhere outside a text field leaves S/D live. The blocker
+   is unchanged and structural: no tabIndex/role on clips or the scroll container (removed in
+   `299f014`) and `Timeline.tsx:433-446`'s `onMouseDownCapture` `preventDefault()` actively
+   suppressing the native focus-shift. Kept.
+6. **CTC margin exposure.** Not deleted — relocated (below).
+
+### CTC margin relocation
+
+Moved from WS2 §5 onto WS1 §2's "Make forced alignment reachable in a shipped build" bullet, so
+whoever flips `fa-inference` reads it at the flip rather than finding it after. Numbers and trigger
+carried intact and verified after the move: per-CHUNK `TooManyRepeats` fallback; misread-year
+`delta(L+R) = +16`; 173's worst real margin **9** (chunk 84); **2 of 403** real chunks across all
+three corpora, both in 173; trigger = any corpus with a year-shaped (4-digit, in-range) numeral.
+
+### Step 2 — the bare-key shortcut leak (`e071149`)
+
+T4.1 fixed only S and D (destructive) and said in-code that the rest of the chain still leaked. It
+did. Space, `+`/`-`, arrows and `F` were guarded by `isTextEntryElement(document.activeElement)`
+alone — which asks what has FOCUS, not whether a modal owns the keyboard — so with any of the eight
+suppressing surfaces up and focus on a non-text element (a toggle button, which those modals are
+full of) every one still fired behind the dialog.
+
+Extracted to `services/bareKeyShortcut.ts`, a pure sibling of `undoShortcut.ts`/`appShortcuts.ts`,
+reading the same `shortcutsSuppressedRef`. Behaviour otherwise carried across unchanged, including
+the inline chain's asymmetric modifier handling — a leak fix must not quietly become a rebinding.
+The stale in-code SCOPE note on the S/D block was corrected in the same commit.
+
+**Per-key probe (the point of the step).** One `it` per key, and each probed by reverting the guard
+for that key ALONE. 6/6 probes failed exactly their own key's test and left the other five green —
+no test covers for another. Full transcript: `.work-phase4/session-ws2-41/step2-perkey-probe.txt`.
+
+| probe | own test | other five |
+|---|---|---|
+| Space | × | ✓✓✓✓✓ |
+| `+` | × | ✓✓✓✓✓ |
+| `-` | × | ✓✓✓✓✓ |
+| ArrowRight | × | ✓✓✓✓✓ |
+| ArrowLeft | × | ✓✓✓✓✓ |
+| `F` | × | ✓✓✓✓✓ |
+
+(The one deliberately broad assertion also fails on every probe, as designed.)
+
+### Step 3 — orphaned asset blobs: diagnosis only, and it is an ACTIVE write bug
+
+Full report: `.work-phase4/session-ws2-41/step3-duplicate-asset-blobs.md`. Headlines:
+
+- **Not duplicates.** `assets-v2`'s key is compound `['projectId','id']` (`assetStore.ts:47`) and
+  `put` replaces, so the same pair cannot occupy two rows. 798 rows = 798 DISTINCT ids under one
+  project, ~399 of them orphans. A de-duplicator would find nothing to collapse.
+- **Ongoing, not historical.** `App.tsx:4677` writes the blob to IndexedDB; `App.tsx:4696`'s "final
+  dedup (catches concurrent adds)" then drops by name and never calls `deleteAsset`. The
+  compensation for one race leaks a blob every time it fires. The race is structural — all file
+  promises run concurrently off one `assetsRef.current` snapshot, so two archive entries with the
+  same basename both pass the `4670` pre-check. Filed as its own `[OPEN]` item per operator ruling
+  A1, not patched here.
+- **NOT DETERMINED:** whether this produced V8's specific 798/399. Needs the live app and that
+  IndexedDB. A full re-stage by the user also yields 2× (per `CLAUDE.md`'s "every file-stage event
+  mints a fresh `Asset` id"), and that is a user action, not a bug. Repro recipe is in the report.
+- **The naive `id-not-in-project.assets` rule is disqualified.** Eight asset-id holders enumerated;
+  the fatal one is `historyPersist.ts:170`, which stores whole `Project` snapshots — an undo state
+  legitimately references assets the current `project.assets` does not, so deleting their blobs
+  turns a working undo into silent data loss. Also unsafe: `lastTranscribedAssetId`
+  (`types.ts:349`), the staged-voiceover window (`App.tsx:351`→`3019`), and the second asset-id
+  keyed store `waveformStore.ts:114`. Report-only classifier and its four go/no-go conditions are
+  specified in §§4-5 of the report.
+
+### Step 4 — consolidation
+
+**Frame-rate merge REFUSED, on evidence.** Both halves of the shared-cause claim are individually
+true — the preview cap is a frame COUNT (`videoDecoderPool.ts:107`, `MAX_BUFFERED_FRAMES_PER_SESSION
+= 90`, with `MAX_TOTAL_BUFFERED_FRAMES = 150` at `:130`), and a single project frame rate IS assumed
+(`ExportFps = 24 | 30 | 60`, `useExport.ts:27`, applied per-run at `:190`/`:490`, with
+`Asset.nativeFps` "used only to auto-suggest exportFps", `types.ts:134-136`). But two true facts are
+not one cause. `bug3-diagnosis.md:124` and `:199-200` locate the 120fps defect in the preview pool
+never reading the SOURCE ASSET's rate, and `:212` records export as unaffected; the arbitrary-frame-
+rate item is an export/project-model question. Different subsystems, neither fix advancing the
+other. Kept as two entries — a shared label over two unshared causes is the false-green pattern this
+phase was cleaning up.
+
+**Non-English four merged into one entry**, sharing the fr/de/pt corpus prerequisite as their
+parent, with each retained as a named sub-item carrying its own file:line and its own distinct fix:
+(a) `digitTokenToWords` language gating, (b) fr/pt/de elision, (c) French `composeHundred`
+pluralization (which keeps its own independent trigger), (d) the corpus gap itself.
+
+**Where WS2's deferred entries live.** The structure contract rules on closed ITEMS (drop from the
+section, fold into the workstream `Status:` line plus `docs/history-2.md`) but is **silent on a
+closed workstream's still-OPEN ones**. Nothing was moved: the single-tracker rule puts task state in
+`docs/work-in-progress.md` under its own workstream section or nowhere, and relocating open defects
+into an append-only archive would make them unfindable as work. Recorded on the WS2 `Status:` line.
+
+### Counts
+
+WS2 §5 deferred entries: **15 before → 8 after.** 3 deleted (content in `CLAUDE.md:202-204` and the
+Step 2a measurement artifact), 1 closed by the Step 2 fix, 1 relocated to WS1, 4 merged into 1, 1
+new entry filed (the active write bug). `docs/work-in-progress.md`: **267 lines before → 275 after**
+(cap 300) — the file grows slightly because entries gained file:line evidence and refuted claims
+gained their refutations, which is the point of the pass.
+
+Gates on every commit: tsc clean, lint clean, vitest 2954 passed / 77 skipped / 0 failed (2929
+baseline + 22 bare-key + 3 parity), gaplessInvariant 36/36, golden replay 6/6, K13 3/3. `src-tauri/`
+untouched throughout, so `cargo test` was not required.
