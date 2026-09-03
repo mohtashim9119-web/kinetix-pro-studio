@@ -7,6 +7,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import { ManageModelsModal } from './ManageModelsModal';
+import { __resetDownloadStoreForTests } from '../services/modelDownloadStore';
 
 const mockCheckInstalledModels = vi.fn();
 const mockImportLocalModel = vi.fn();
@@ -56,6 +57,10 @@ function realShapedReport() {
 }
 
 beforeEach(() => {
+  // Download state is module-level now (WS2 T4.4) so it survives unmount —
+  // which also means it survives a test. A test that leaves a transfer
+  // pending must not hand it to the next one.
+  __resetDownloadStoreForTests();
   container = document.createElement('div');
   document.body.appendChild(container);
   mockCheckInstalledModels.mockResolvedValue(realShapedReport());
