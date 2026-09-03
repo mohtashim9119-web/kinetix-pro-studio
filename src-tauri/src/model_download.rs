@@ -2130,6 +2130,93 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// WS2 T4.7 — cancel, then immediately start again for the SAME target,
+    /// through the REAL engine (no manual guard manipulation). This exact
+    /// sequence — cancel mid-transfer, click Resume right away — was never
+    /// exercised end-to-end before; every prior cancel test only checked the
+    /// UI's own bookkeeping against a mocked download. If cancellation left
+    /// the `InFlightGuard` held (e.g. a code path that returns `Cancelled`
+    /// without the guard's scope actually ending), the second call would be
+    /// refused with the T4.4 single-flight message — the "duplicate download
+    /// blocked" the operator asked about by name.
+    #[test]
+    fn cancel_then_immediate_resume_is_not_blocked_and_completes() {
+        let dir = temp_dir_named("t47-cancel-then-resume");
+        // First connection stalls after 60_000 bytes (giving the cancel
+        // flag time to land mid-transfer); the second connection — made by
+        // the resumed attempt below — serves the rest normally.
+        let origin = fake_origin::spawn(TOTAL, "\"v1\"", vec![Step::Stall(60_000), Step::Full]);
+        let target = dir.join("model.onnx");
+        let part = part_path_for(&target);
+        let expected = fake_origin::body(TOTAL);
+
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let cancel_flag_thread = cancel_flag.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            cancel_flag_thread.store(true, Ordering::SeqCst);
+        });
+
+        let verify_of = |expected: Vec<u8>| {
+            move |p: &Path| {
+                let got = fs::read(p).map_err(|e| e.to_string())?;
+                if got == expected {
+                    Ok(())
+                } else {
+                    Err(format!("bytes differ: got {} of {}", got.len(), expected.len()))
+                }
+            }
+        };
+
+        let (ch1, log1) = recording_channel();
+        let result1 = tauri::async_runtime::block_on(stream_download_verified(
+            origin.url.clone(),
+            target.clone(),
+            part.clone(),
+            TOTAL,
+            cancel_flag,
+            ch1,
+            verify_of(expected.clone()),
+        ));
+        assert!(result1.is_err(), "a cancelled download must not resolve Ok");
+        assert!(
+            log1.lock().unwrap().iter().any(|v| v["event"] == "Cancelled"),
+            "the UI must see an explicit Cancelled event, not silence"
+        );
+        let bytes_at_cancel = fs::metadata(&part).unwrap().len();
+        assert!(
+            bytes_at_cancel > 0 && bytes_at_cancel < TOTAL,
+            "the test setup must land the cancel mid-transfer, got {bytes_at_cancel}"
+        );
+
+        // Immediately — no delay, nothing manually released — start again
+        // for the exact same target. This is the operator's "Resume" click.
+        let (ch2, log2) = recording_channel();
+        let result2 = tauri::async_runtime::block_on(stream_download_verified(
+            origin.url.clone(),
+            target.clone(),
+            part.clone(),
+            TOTAL,
+            Arc::new(AtomicBool::new(false)),
+            ch2,
+            verify_of(expected.clone()),
+        ));
+
+        assert!(result2.is_ok(), "resume immediately after cancel must not be refused: {result2:?}");
+        let errors2: Vec<_> = log2.lock().unwrap().iter().filter(|v| v["event"] == "Error").cloned().collect();
+        assert!(errors2.is_empty(), "must not show the single-flight \"already running\" refusal: {errors2:?}");
+        assert_eq!(fs::read(&target).unwrap(), expected, "the completed file must be byte-correct");
+
+        let first_progress = progress_series(&log2).first().copied().unwrap_or(0);
+        assert!(
+            first_progress >= bytes_at_cancel,
+            "resume must continue from where cancel left off ({bytes_at_cancel}), \
+             not restart from zero (first progress reported was {first_progress})"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     /// Retries are bounded, each one resumes rather than restarting (so the
     /// `.part` grows across attempts), and the final message states the kept
     /// byte count against the total.
