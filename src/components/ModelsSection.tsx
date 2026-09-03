@@ -45,6 +45,7 @@ import {
   getAvailableDiskSpace,
   downloadFaModel,
   cancelFaModelDownload,
+  faModelStatus,
   faModelId,
   FA_MODEL_LANGUAGES,
   type InstalledModelsReport,
@@ -52,11 +53,23 @@ import {
 import {
   downloadWhisperModel,
   cancelWhisperModelDownload,
+  getWhisperModelStatus,
+  type RetryNotice,
 } from '../services/modelDownload';
 
 type RowState =
   | { phase: 'idle' }
-  | { phase: 'downloading'; downloadedBytes: number; totalBytes: number }
+  | {
+      phase: 'downloading';
+      downloadedBytes: number;
+      totalBytes: number;
+      /** Set while the Rust engine is between attempts of its bounded retry
+       *  (WS2 T4.3, owner ruling A4/Q4). A silent backoff reads as a frozen
+       *  bar and provokes premature cancels, so the row says
+       *  "Reconnecting… (attempt 2 of 3)" instead of nothing. Cleared by the
+       *  next Progress event, i.e. as soon as bytes move again. */
+      retry?: RetryNotice;
+    }
   | { phase: 'importing' }
   | { phase: 'deleting' }
   | { phase: 'error'; message: string };
@@ -71,6 +84,47 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
   if (bytes <= 0) return '—';
   return `${(bytes / 1024).toFixed(0)} KiB`;
+}
+
+/** "Download" vs "Resume 1.02 GiB". A row only says Resume when the Rust side
+ *  reported bytes it would actually accept as a resume point — see
+ *  `model_download.rs::status_for_target`, which filters a `.part` with no
+ *  validator sidecar (or a sidecar disagreeing on the expected size) down to
+ *  zero. Before WS2 T4.3 the FA row had no status command at all and showed a
+ *  bare Download over a 1.02 GiB resumable partial. */
+/** Percent complete, floored — never rounded.
+ *
+ *  Rounding displayed "100%" for anything at or past 99.5 %, i.e. while up to
+ *  ~6.3 MiB of a 1.18 GiB pack was still missing, so a failure in that last
+ *  half-percent read as a failure AFTER completion. `totalBytes` here is
+ *  always the committed manifest size (the Rust engine sends `expected_size`,
+ *  never a `Content-Length` from the response), and the engine emits an exact
+ *  `downloaded == total` Progress just before `Done` — so flooring reaches
+ *  100% exactly when the transfer is actually complete, and not one byte
+ *  earlier.
+ *
+ *  This is NOT an explanation of the WS2 T4.3 operator report: that partial
+ *  was 84.87 % (1_071_567_076 of 1_262_619_311), far outside the band this
+ *  affects. It is a real "reads complete while short" path found while looking
+ *  for that one, and closed on its own merits. */
+function percentComplete(downloadedBytes: number, totalBytes: number): number {
+  if (totalBytes <= 0) return 0;
+  return Math.floor((downloadedBytes / totalBytes) * 100);
+}
+
+function downloadLabel(resumable: number | undefined): string {
+  return resumable && resumable > 0 ? `Resume ${formatBytes(resumable)}` : 'Download';
+}
+
+/** The between-attempts line (owner ruling A4/Q4). Silent backoff reads as a
+ *  frozen bar; this says what is happening without turning a recoverable blip
+ *  into an error state. */
+function RetryNoticeLine({ retry }: { retry: RetryNotice }): React.ReactElement {
+  return (
+    <p className="text-[9px] text-amber-400 pl-1.5" data-testid="retry-notice">
+      Reconnecting… (attempt {retry.attempt} of {retry.maxAttempts}) — {retry.reason}
+    </p>
+  );
 }
 
 const SURFACE = '#121214';
@@ -109,6 +163,12 @@ export function ModelsSection({
   const [diskFreeBytes, setDiskFreeBytes] = useState<number | null | 'unavailable'>(null);
   const [whisperState, setWhisperState] = useState<RowState>({ phase: 'idle' });
   const [faRowState, setFaRowState] = useState<Record<string, RowState>>({});
+  /** Resumable `.part` bytes per model id, from `fa_model_status` /
+   *  `whisper_model_status`. Already filtered by the Rust side to what the
+   *  download engine would actually accept as a resume point, so a non-zero
+   *  value here is a promise the engine can keep — it is never a raw file
+   *  size. Absent/failed lookups simply render as a plain Download. */
+  const [resumableBytes, setResumableBytes] = useState<Record<string, number>>({});
   const lastTickRef = useRef<{ time: number; bytes: number } | null>(null);
 
   const refresh = useCallback(() => {
@@ -124,12 +184,30 @@ export function ModelsSection({
       });
   }, []);
 
+  /** Refreshes the resume affordance for every listed row. Failures are
+   *  swallowed per-row on purpose: not knowing whether a partial exists must
+   *  degrade to "offer Download", never to an error banner — the download
+   *  itself resumes correctly either way. */
+  const refreshResumable = useCallback(() => {
+    const rows: Array<[string, Promise<{ partialBytes: number }>]> = faLanguages.map((lang) => [
+      faModelId(lang),
+      faModelStatus(lang),
+    ]);
+    if (includeWhisper) rows.push(['whisper', getWhisperModelStatus()]);
+    rows.forEach(([id, pending]) => {
+      pending
+        .then((st) => setResumableBytes((prev) => ({ ...prev, [id]: st.partialBytes })))
+        .catch(() => setResumableBytes((prev) => ({ ...prev, [id]: 0 })));
+    });
+  }, [faLanguages, includeWhisper]);
+
   useEffect(() => {
     refresh();
+    refreshResumable();
     getAvailableDiskSpace()
       .then(setDiskFreeBytes)
       .catch(() => setDiskFreeBytes('unavailable'));
-  }, [refresh]);
+  }, [refresh, refreshResumable]);
 
   // NOTE: the Escape-to-close listener that used to sit here stayed with the
   // CHROME (`ManageModelsModal`). Inline in App Settings there is nothing for
@@ -138,22 +216,38 @@ export function ModelsSection({
 
   const startWhisperDownload = (): void => {
     lastTickRef.current = null;
-    setWhisperState({ phase: 'downloading', downloadedBytes: 0, totalBytes: 0 });
-    downloadWhisperModel((downloadedBytes, totalBytes) => {
-      setWhisperState({ phase: 'downloading', downloadedBytes, totalBytes });
-    })
+    setWhisperState({ phase: 'downloading', downloadedBytes: resumableBytes.whisper ?? 0, totalBytes: 0 });
+    downloadWhisperModel(
+      (downloadedBytes, totalBytes) => {
+        // A Progress event means bytes moved, so any "reconnecting" notice is
+        // stale by definition and is dropped here rather than timed out.
+        setWhisperState({ phase: 'downloading', downloadedBytes, totalBytes });
+      },
+      (retry) => {
+        setWhisperState((prev) =>
+          prev.phase === 'downloading' ? { ...prev, retry } : prev,
+        );
+      },
+    )
       .then(() => {
         setWhisperState({ phase: 'idle' });
         refresh();
+        refreshResumable();
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === 'AbortError') {
           setWhisperState({ phase: 'idle' });
           refresh();
+          refreshResumable();
           return;
         }
         setWhisperState({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
         refresh();
+        // The engine may have kept a resumable partial (retries exhausted) or
+        // deleted it (verification failed); re-reading is the only way the row
+        // can offer the right affordance, and the two cases are not
+        // distinguishable from the message alone.
+        refreshResumable();
       });
   };
 
@@ -176,6 +270,7 @@ export function ModelsSection({
       .then(() => {
         setWhisperState({ phase: 'idle' });
         refresh();
+        refreshResumable();
       })
       .catch((err: unknown) => {
         setWhisperState({ phase: 'error', message: err instanceof Error ? err.message : String(err) });
@@ -184,18 +279,36 @@ export function ModelsSection({
   };
 
   const startFaDownload = (lang: string): void => {
-    setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'downloading', downloadedBytes: 0, totalBytes: 0 } }));
-    downloadFaModel(lang, (downloadedBytes, totalBytes) => {
-      setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'downloading', downloadedBytes, totalBytes } }));
-    })
+    setFaRowState((prev) => ({
+      ...prev,
+      [lang]: {
+        phase: 'downloading',
+        downloadedBytes: resumableBytes[faModelId(lang)] ?? 0,
+        totalBytes: 0,
+      },
+    }));
+    downloadFaModel(
+      lang,
+      (downloadedBytes, totalBytes) => {
+        setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'downloading', downloadedBytes, totalBytes } }));
+      },
+      (retry) => {
+        setFaRowState((prev) => {
+          const row = prev[lang];
+          return row?.phase === 'downloading' ? { ...prev, [lang]: { ...row, retry } } : prev;
+        });
+      },
+    )
       .then(() => {
         setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'idle' } }));
         refresh();
+        refreshResumable();
       })
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === 'AbortError') {
           setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'idle' } }));
           refresh();
+          refreshResumable();
           return;
         }
         setFaRowState((prev) => ({
@@ -203,6 +316,7 @@ export function ModelsSection({
           [lang]: { phase: 'error', message: err instanceof Error ? err.message : String(err) },
         }));
         refresh();
+        refreshResumable();
       });
   };
 
@@ -228,6 +342,7 @@ export function ModelsSection({
       .then(() => {
         setFaRowState((prev) => ({ ...prev, [lang]: { phase: 'idle' } }));
         refresh();
+        refreshResumable();
       })
       .catch((err: unknown) => {
         setFaRowState((prev) => ({
@@ -331,7 +446,7 @@ export function ModelsSection({
                         style={{ background: ACCENT }}
                       >
                         <Download size={11} />
-                        Download
+                        {downloadLabel(resumableBytes.whisper)}
                       </button>
                     </>
                   )}
@@ -362,7 +477,7 @@ export function ModelsSection({
                   <span>
                     {formatBytes(whisperState.downloadedBytes)} / {formatBytes(whisperState.totalBytes)}
                     {whisperState.totalBytes > 0
-                      ? ` (${Math.round((whisperState.downloadedBytes / whisperState.totalBytes) * 100)}%)`
+                      ? ` (${percentComplete(whisperState.downloadedBytes, whisperState.totalBytes)}%)`
                       : ''}
                   </span>
                   <button
@@ -373,6 +488,7 @@ export function ModelsSection({
                     Cancel
                   </button>
                 </div>
+                {whisperState.retry && <RetryNoticeLine retry={whisperState.retry} />}
               </div>
             )}
             {whisperState.phase === 'error' && (
@@ -464,7 +580,7 @@ export function ModelsSection({
                             style={{ background: ACCENT }}
                           >
                             <Download size={11} />
-                            Download
+                            {downloadLabel(resumableBytes[faModelId(lang)])}
                           </button>
                         </>
                       )}
@@ -495,7 +611,7 @@ export function ModelsSection({
                       <span>
                         {formatBytes(rowState.downloadedBytes)} / {formatBytes(rowState.totalBytes)}
                         {rowState.totalBytes > 0
-                          ? ` (${Math.round((rowState.downloadedBytes / rowState.totalBytes) * 100)}%)`
+                          ? ` (${percentComplete(rowState.downloadedBytes, rowState.totalBytes)}%)`
                           : ''}
                       </span>
                       <button
@@ -506,6 +622,7 @@ export function ModelsSection({
                         Cancel
                       </button>
                     </div>
+                    {rowState.retry && <RetryNoticeLine retry={rowState.retry} />}
                   </div>
                 )}
                 {rowState.phase === 'error' && (

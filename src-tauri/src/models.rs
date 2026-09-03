@@ -40,7 +40,8 @@ use tauri::Manager;
 use crate::fa::fa_model_candidate_paths;
 use crate::fa_dev::{manifest_byte_size_for, verify_model_manifest};
 use crate::model_download::{
-    cancel_flag_for, models_dir, stream_download_verified, ModelDownloadEvent, ModelDownloadState,
+    cancel_flag_for, models_dir, part_meta_path_for, part_path_for, status_for_target,
+    stream_download_verified, ModelDownloadEvent, ModelDownloadState, ModelDownloadStatus,
     GGML_MAGIC, MODEL_SHA256, MODEL_SIZE_BYTES,
 };
 use crate::sha256::hash_file;
@@ -141,9 +142,7 @@ pub async fn fa_model_download(
     let target = target_path(&app, ModelId::Fa(lang))?;
     let dir = target.parent().ok_or_else(|| "invalid FA model target path".to_string())?;
     fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let mut part_path = target.as_os_str().to_owned();
-    part_path.push(".part");
-    let part_path = PathBuf::from(part_path);
+    let part_path = part_path_for(&target);
 
     let cancel_key = format!("fa-{lang}");
     let cancel_flag = cancel_flag_for(&state, &cancel_key);
@@ -173,6 +172,29 @@ pub fn fa_model_download_cancel(state: tauri::State<'_, ModelDownloadState>, lan
     if let Some(flag) = state.0.lock().unwrap().get(&format!("fa-{language}")) {
         flag.store(true, std::sync::atomic::Ordering::SeqCst);
     }
+}
+
+/// The FA sibling of `model_download::whisper_model_status` (WS2 T4.3).
+///
+/// Before this existed the FA row could only ask `check_installed_models`,
+/// which reports the FINAL file and nothing else — so a language with a
+/// perfectly resumable partial on disk rendered as "0 B" with a bare
+/// "Download" button, giving the user no way to know that clicking it would
+/// resume rather than re-fetch 1.26 GiB. Both commands share
+/// `status_for_target`, so "resumable" cannot come to mean two different
+/// things on the two rows: a `.part` with no validator sidecar, or one whose
+/// sidecar disagrees on the expected size, reports 0 resumable bytes because
+/// `plan_resume` would refuse it.
+#[tauri::command]
+pub fn fa_model_status(app: tauri::AppHandle, language: String) -> Result<ModelDownloadStatus, String> {
+    let lang = FA_LANGUAGES
+        .iter()
+        .find(|&&l| l == language)
+        .copied()
+        .ok_or_else(|| format!("unsupported FA language \"{language}\" — expected one of: {}", FA_LANGUAGES.join(", ")))?;
+    let expected = manifest_byte_size_for(lang)
+        .ok_or_else(|| format!("no manifest entry for language \"{lang}\" in fa-onnx-manifest.json"))?;
+    Ok(status_for_target(&target_path(&app, ModelId::Fa(lang))?, expected))
 }
 
 /// Canonical FA language allowlist. Mirrors `fa_onnx.rs::vocab_json_for`'s
@@ -520,29 +542,44 @@ pub async fn delete_installed_model(app: tauri::AppHandle, model_id: String) -> 
     let id = ModelId::parse(&model_id)?;
     tauri::async_runtime::spawn_blocking(move || {
         let target = target_path(&app, id)?;
-        let mut part = target.as_os_str().to_owned();
-        part.push(".part");
-        let part = PathBuf::from(part);
-
-        for p in [&target, &sidecar_path(&target), &part] {
-            if p.exists() {
-                fs::remove_file(p).map_err(|e| format!("cannot delete {}: {e}", p.display()))?;
-            }
-        }
-
-        // Remove the now-empty language directory for an FA model
-        // ("fa-models/<lang>/") — never for whisper, whose directory
-        // ("models/") is shared with nothing else here but is also not this
-        // module's to remove (pre-existing, owned by `model_download.rs`).
-        if matches!(id, ModelId::Fa(_)) {
-            if let Some(dir) = target.parent() {
-                let _ = fs::remove_dir(dir); // no-op / fails silently if non-empty or absent
-            }
-        }
-        Ok(())
+        delete_artifacts_at(&target, matches!(id, ModelId::Fa(_)))
     })
     .await
     .map_err(|e| format!("delete_installed_model: task join failed: {e}"))?
+}
+
+/// The app-independent half of a delete: every on-disk artifact belonging to
+/// one model, removed together. Split out from the command (mirroring
+/// `import_to_target`'s own split) so the completeness of the list is
+/// directly testable without an `AppHandle`.
+///
+/// The list is the whole point. A redownload must always start from a state
+/// this function alone determines, so anything the download path can create
+/// beside the target belongs here — currently the model, its `.sha256`
+/// digest sidecar, the `.part`, and (new in WS2 T4.3) the `.part.meta`
+/// resume-validator sidecar. Leaving a `.part.meta` behind would be worse
+/// than never writing one: a later partial would inherit a validator
+/// describing bytes that no longer exist.
+fn delete_artifacts_at(target: &Path, remove_parent_dir: bool) -> Result<(), String> {
+    let part = part_path_for(target);
+    let part_meta = part_meta_path_for(&part);
+
+    for p in [target, &sidecar_path(target), &part, &part_meta] {
+        if p.exists() {
+            fs::remove_file(p).map_err(|e| format!("cannot delete {}: {e}", p.display()))?;
+        }
+    }
+
+    // Remove the now-empty language directory for an FA model
+    // ("fa-models/<lang>/") — never for whisper, whose directory
+    // ("models/") is shared with nothing else here but is also not this
+    // module's to remove (pre-existing, owned by `model_download.rs`).
+    if remove_parent_dir {
+        if let Some(dir) = target.parent() {
+            let _ = fs::remove_dir(dir); // no-op / fails silently if non-empty or absent
+        }
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -806,5 +843,54 @@ mod tests {
         let _ = ModelId::parse("fa-../../etc/passwd");
         let after = std::env::temp_dir();
         assert_eq!(before, after);
+    }
+
+    /// Delete must leave NO artifact for the pack behind — including the
+    /// `.part.meta` resume-validator sidecar this round introduced. A
+    /// surviving sidecar is not inert: it is precisely what would let a
+    /// later, unrelated partial present itself as resumable.
+    #[test]
+    fn delete_purges_model_sidecar_part_and_part_meta_together() {
+        let dir = std::env::temp_dir().join(format!("kinetix-delete-artifacts-{}", std::process::id()));
+        let lang_dir = dir.join("fr");
+        fs::create_dir_all(&lang_dir).unwrap();
+        let target = lang_dir.join("model.onnx");
+        let part = crate::model_download::part_path_for(&target);
+        let meta = crate::model_download::part_meta_path_for(&part);
+        let sha = sidecar_path(&target);
+
+        for p in [&target, &part, &meta, &sha] {
+            fs::write(p, b"x").unwrap();
+        }
+
+        delete_artifacts_at(&target, true).unwrap();
+
+        assert!(!target.exists(), "the model must be deleted");
+        assert!(!sha.exists(), "the .sha256 sidecar must be deleted");
+        assert!(!part.exists(), "the .part must be deleted");
+        assert!(!meta.exists(), "the .part.meta validator sidecar must be deleted");
+        assert!(!lang_dir.exists(), "the emptied FA language directory must be removed");
+
+        // Idempotent: deleting a pack that is already gone is not an error.
+        delete_artifacts_at(&target, true).unwrap();
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The whisper arm must NOT remove its parent directory — `models/` is
+    /// shared and pre-existing.
+    #[test]
+    fn delete_leaves_the_shared_whisper_directory_in_place() {
+        let dir = std::env::temp_dir().join(format!("kinetix-delete-whisper-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let target = dir.join("ggml-large-v3-turbo.bin");
+        fs::write(&target, b"x").unwrap();
+
+        delete_artifacts_at(&target, false).unwrap();
+
+        assert!(!target.exists());
+        assert!(dir.exists(), "the shared models/ directory must survive a whisper delete");
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }

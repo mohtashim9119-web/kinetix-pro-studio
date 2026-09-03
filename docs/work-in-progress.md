@@ -145,7 +145,14 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 ---
 
 ## WS2 — Video Ingest & Distribution Bugs
-Started: 2026-08-26 (Step 3) | Status: **CLOSED 2026-09-03.** All 4 numbered bugs and all four phases are done — Phase 4 (Settings & project creation) closed with T4.1 and T4.2. T4.2 also closed the bare-key shortcut leak (Space, `+`/`-`, arrows, `F` now read `shortcutsSuppressedRef` via `services/bareKeyShortcut.ts`, per-key probed) and ran the §5 hygiene pass, 15 entries → 8. No phase is queued after it; section 5 is the residual backlog, none of it owned. **Its entries stay here under the closed workstream:** the structure contract rules on closed ITEMS (fold into this line + `docs/history-2.md`) but is silent on a closed workstream's still-open ones, and the single-tracker rule puts them in this file under their own workstream section or nowhere. Attention moves to WS1.
+Started: 2026-08-26 (Step 3) | Status: **CLOSED 2026-09-03**, reopened for T4.3 and re-closed the same day.
+T4.3 (model-download transfer resilience) fixed an operator-reported FA pack failure: bounded retry with
+exponential backoff around the stream loop, conditional resume gated on a new `.part.meta` validator
+sidecar (URL + expected size + ETag/`X-Linked-ETag`/Last-Modified) plus a 206 `Content-Range` start/total
+check, the 416 permanent-stick discharged (discard once, restart, then permanent), three distinct error
+forms that never promise an impossible resume, and a new `fa_model_status` command so an FA row offers
+"Resume <bytes>" instead of a bare Download. Whisper shares the engine and was verified by destructive
+probe, not inference. Full record: `docs/history-2.md`. Original text follows. **CLOSED 2026-09-03.** All 4 numbered bugs and all four phases are done — Phase 4 (Settings & project creation) closed with T4.1 and T4.2. T4.2 also closed the bare-key shortcut leak (Space, `+`/`-`, arrows, `F` now read `shortcutsSuppressedRef` via `services/bareKeyShortcut.ts`, per-key probed) and ran the §5 hygiene pass, 15 entries → 8. No phase is queued after it; section 5 is the residual backlog, none of it owned. **Its entries stay here under the closed workstream:** the structure contract rules on closed ITEMS (fold into this line + `docs/history-2.md`) but is silent on a closed workstream's still-open ones, and the single-tracker rule puts them in this file under their own workstream section or nowhere. Attention moves to WS1.
 
 ### 1. Finished but pending verification
 

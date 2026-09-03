@@ -2983,3 +2983,57 @@ gained their refutations, which is the point of the pass.
 Gates on every commit: tsc clean, lint clean, vitest 2954 passed / 77 skipped / 0 failed (2929
 baseline + 22 bare-key + 3 parity), gaplessInvariant 36/36, golden replay 6/6, K13 3/3. `src-tauri/`
 untouched throughout, so `cargo test` was not required.
+
+---
+
+## WS2 T4.3 — model download transfer resilience (2026-09-03)
+
+Operator report: deleting the French FA pack and redownloading it failed on completion with
+`download interrupted: error decoding response body (partial download kept at
+.../fa-models/fr/model.onnx.part for resume)`.
+
+**Step 1 (diagnosis) refuted the brief's own hypothesis on three independent grounds**, all
+measured:
+1. `delete_installed_model` already purged the `.part` — corroborated by the operator's own
+   `fa-models/fr/` directory mtime (Sep 3 15:43), i.e. the directory had been removed and recreated.
+2. The retained partial was a byte-exact prefix: 1_071_567_076 of 1_262_619_311 (84.87 %), with
+   local-vs-server `cmp` MATCHing at offsets 0, 123_456_789, 536_870_912, 800_000_000, 999_999_999
+   and the 1 KiB before its own tail — 5 of 5. The server answered `Range: bytes=1071566076-` with
+   206 and a correct `Content-Range`, and sent no `Content-Encoding`.
+3. The error string was the transport-stage message, not the verification-stage one; verification
+   never ran.
+
+So the partial was recoverable the whole time and "for resume" was true. `error decoding response
+body` is reqwest 0.12's `Kind::Decode` Display — not a decompression failure, since
+`cargo tree -e features -i reqwest@0.12.28` shows no `gzip`/`brotli`/`deflate`/`zstd`. The real
+defect was the absence of retry, plus `{e}` discarding the `source()` chain. **This was a transfer
+bug, not a recovery bug.** Manifest checksums were already present and enforced
+(`fa-onnx-manifest.json`, `sha256` + `byteSize` per language, `fa_dev.rs:40`), so none was invented.
+
+**Step 2 (fix, one commit).** Bounded retry (3 attempts, 1s/2s exponential backoff) resuming from
+the partial's new length each time; conditional resume gated on a new `<target>.part.meta` sidecar
+(URL, expected size, `X-Linked-ETag`/`ETag`/`Last-Modified`) plus a 206 `Content-Range`
+start-and-total check, any disagreement discarding rather than splicing; the 416 permanent-stick
+discharged (discard once, restart from zero, second 416 permanent); `cause_chain` walking `source()`;
+three distinct message forms, none of which promises a resume that cannot work; `fa_model_status`
+sharing `status_for_target` with `whisper_model_status`; and a UI that offers "Resume <bytes>" and a
+"Reconnecting… (attempt N of 3)" line. Delete gained the `.part.meta` purge — the round's only
+delete-path change, and only because the round introduced the file.
+
+**Two probe findings, both fixed.** (a) The sidecar test was a FALSE GREEN: it asserted connection
+COUNT, and a successful resume and a successful fresh fetch are both one connection, so it stayed
+green with its own guard reverted. It now records and asserts the `Range` header of every request.
+(b) `plan_resume` carried an unreachable duplicate sidecar check, so reverting either copy alone left
+the other standing and neither could be shown load-bearing; the redundancy was removed.
+
+**Whisper** shares the engine and was verified by destructive probe rather than call-graph inference:
+breaking the retry classifier, the shared status helper, or the resume-416 restart each turns a
+whisper-filename test red.
+
+**Also fixed, unrelated to the report:** the download percentage used `Math.round`, displaying "100%"
+from 99.5 % onward while up to ~6.3 MiB was still missing. Now floored. It does NOT explain the
+operator's perception of completion at 84.87 %, which remains **unreproduced**.
+
+Gates: tsc clean, lint clean, vitest 2954 → 2960 passed / 77 skipped / 0 failed, cargo 129 → 153
+(default) and 211 → 235 (`--features fa-inference`), 0 failed both, gaplessInvariant 36/36, golden
+replay 6/6, K13 3/3. Full record: `.work-phase4/session-ws2-42/` (gitignored, local).

@@ -20,11 +20,31 @@ export interface ModelDownloadStatus {
   totalBytes: number;
 }
 
-type ModelDownloadEvent =
+/** Mirrors `model_download.rs::ModelDownloadEvent`. `Retrying` is new in WS2
+ *  T4.3: the engine now retries a transient stream failure up to
+ *  `maxAttempts` times, resuming from `downloadedBytes` each time, and says so
+ *  rather than letting the bar sit frozen through the backoff. */
+export type ModelDownloadEvent =
   | { event: 'Progress'; data: { downloadedBytes: number; totalBytes: number } }
+  | {
+      event: 'Retrying';
+      data: {
+        attempt: number;
+        maxAttempts: number;
+        reason: string;
+        downloadedBytes: number;
+        totalBytes: number;
+      };
+    }
   | { event: 'Done'; data: null }
   | { event: 'Cancelled'; data: null }
   | { event: 'Error'; data: { message: string } };
+
+export interface RetryNotice {
+  attempt: number;
+  maxAttempts: number;
+  reason: string;
+}
 
 export async function getWhisperModelStatus(): Promise<ModelDownloadStatus> {
   return invoke<ModelDownloadStatus>('whisper_model_status');
@@ -37,20 +57,32 @@ export function cancelWhisperModelDownload(): void {
 /**
  * Starts (or resumes) the whisper model download. Resolves once the model is
  * fully verified and in place; rejects with an `Error` on any failure
- * (network, disk, cancellation, checksum mismatch) — the caller decides
- * whether/how to offer a retry. A checksum mismatch's message is
- * intentionally undifferentiated from other failures here: `model_download.rs`
- * already deleted the corrupt `.part` file, so a retry is always the correct
- * next action regardless of which failure fired.
+ * (network, disk, cancellation, checksum mismatch).
+ *
+ * WS2 T4.3: transient stream failures are now retried inside the Rust engine
+ * before this rejects, so a rejection means the engine gave up — `onRetry`
+ * fires for each attempt in between. The rejection message now states which
+ * of the three outcomes occurred (retries exhausted with the partial kept and
+ * resumable / verification failed with the partial deleted / permanent), so
+ * unlike before it is NOT safe to paraphrase as a generic "try again" — show
+ * the message.
  */
 export function downloadWhisperModel(
   onProgress: (downloadedBytes: number, totalBytes: number) => void,
+  onRetry?: (notice: RetryNotice) => void,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const channel = new Channel<ModelDownloadEvent>();
     channel.onmessage = (msg) => {
       if (msg.event === 'Progress') {
         onProgress(msg.data.downloadedBytes, msg.data.totalBytes);
+      } else if (msg.event === 'Retrying') {
+        onProgress(msg.data.downloadedBytes, msg.data.totalBytes);
+        onRetry?.({
+          attempt: msg.data.attempt,
+          maxAttempts: msg.data.maxAttempts,
+          reason: msg.data.reason,
+        });
       } else if (msg.event === 'Done') {
         resolve();
       } else if (msg.event === 'Cancelled') {

@@ -14,6 +14,7 @@
 
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { SUPPORTED_LANGUAGE_CODES } from '../constants';
+import type { ModelDownloadEvent, ModelDownloadStatus, RetryNotice } from './modelDownload';
 
 /** Mirrors `models.rs::FA_LANGUAGES` — every code `models.rs` will accept as
  *  a `"fa-<lang>"` model id. Filtered from the app's own supported-language
@@ -63,27 +64,48 @@ export function faModelId(languageCode: string): string {
 // exactly rather than declaring a second one.
 // ---------------------------------------------------------------------------
 
-type FaModelDownloadEvent =
-  | { event: 'Progress'; data: { downloadedBytes: number; totalBytes: number } }
-  | { event: 'Done'; data: null }
-  | { event: 'Cancelled'; data: null }
-  | { event: 'Error'; data: { message: string } };
+/** `models.rs::fa_model_download` emits `model_download.rs`'s own
+ *  `ModelDownloadEvent`, so this path imports that type rather than declaring
+ *  a second copy that could drift from it (the previous local duplicate did
+ *  not carry `Retrying`). */
+type FaModelDownloadEvent = ModelDownloadEvent;
+
+/** `models.rs::fa_model_status` — the FA sibling of `whisper_model_status`.
+ *  Reports resumable `.part` bytes so the row can offer "Resume 1.02 GiB"
+ *  instead of a bare "Download" that silently resumes. `partialBytes` is
+ *  already filtered to what the engine would actually accept as a resume
+ *  point, so it never needs a second opinion here. */
+export function faModelStatus(languageCode: string): Promise<ModelDownloadStatus> {
+  return invoke<ModelDownloadStatus>('fa_model_status', { language: languageCode });
+}
 
 /** Starts (or resumes) the FA pack download for `languageCode`. Resolves once
  *  `fa_dev::verify_model_manifest` has confirmed the downloaded file against
  *  the committed manifest and the atomic rename has landed; rejects on any
- *  failure (network, disk, cancellation, manifest mismatch) — the manifest
- *  check already deleted a corrupt `.part` before rejecting, so a retry is
- *  always the correct next action. */
+ *  failure (network, disk, cancellation, manifest mismatch).
+ *
+ *  WS2 T4.3: transient stream failures are retried inside the engine (up to
+ *  three attempts, resuming from the partial each time) before this rejects,
+ *  with `onRetry` firing in between. The rejection message distinguishes
+ *  retries-exhausted (partial kept, resumable) from verification-failed
+ *  (partial deleted) from permanent, so show it rather than paraphrasing. */
 export function downloadFaModel(
   languageCode: string,
   onProgress: (downloadedBytes: number, totalBytes: number) => void,
+  onRetry?: (notice: RetryNotice) => void,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     const channel = new Channel<FaModelDownloadEvent>();
     channel.onmessage = (msg) => {
       if (msg.event === 'Progress') {
         onProgress(msg.data.downloadedBytes, msg.data.totalBytes);
+      } else if (msg.event === 'Retrying') {
+        onProgress(msg.data.downloadedBytes, msg.data.totalBytes);
+        onRetry?.({
+          attempt: msg.data.attempt,
+          maxAttempts: msg.data.maxAttempts,
+          reason: msg.data.reason,
+        });
       } else if (msg.event === 'Done') {
         resolve();
       } else if (msg.event === 'Cancelled') {

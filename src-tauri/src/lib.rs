@@ -157,6 +157,7 @@ pub fn run() {
             models::get_available_disk_space,
             models::fa_model_download,
             models::fa_model_download_cancel,
+            models::fa_model_status,
             fa::fa_align,
             fa::fa_cancel,
             fa_dev::fa_align_dev,

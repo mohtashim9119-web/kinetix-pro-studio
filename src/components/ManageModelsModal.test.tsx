@@ -14,6 +14,7 @@ const mockDeleteInstalledModel = vi.fn();
 const mockGetAvailableDiskSpace = vi.fn();
 const mockDownloadFaModel = vi.fn();
 const mockCancelFaModelDownload = vi.fn();
+const mockFaModelStatus = vi.fn();
 
 vi.mock('../services/models', async () => {
   const actual = await vi.importActual<typeof import('../services/models')>('../services/models');
@@ -25,6 +26,7 @@ vi.mock('../services/models', async () => {
     getAvailableDiskSpace: (...args: unknown[]) => mockGetAvailableDiskSpace(...args),
     downloadFaModel: (...args: unknown[]) => mockDownloadFaModel(...args),
     cancelFaModelDownload: (...args: unknown[]) => mockCancelFaModelDownload(...args),
+    faModelStatus: (...args: unknown[]) => mockFaModelStatus(...args),
   };
 });
 
@@ -59,6 +61,7 @@ beforeEach(() => {
   mockCheckInstalledModels.mockResolvedValue(realShapedReport());
   mockGetAvailableDiskSpace.mockResolvedValue(50 * 1024 ** 3);
   mockGetWhisperModelStatus.mockResolvedValue({ present: false, partialBytes: 0, totalBytes: 1_624_555_275 });
+  mockFaModelStatus.mockResolvedValue({ present: false, partialBytes: 0, totalBytes: 1_262_545_511 });
 });
 
 afterEach(() => {
@@ -217,7 +220,8 @@ describe('ManageModelsModal — FA download is real (WS2 Step 13 Phase 3.7)', ()
     await act(async () => {
       downloadButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(mockDownloadFaModel).toHaveBeenCalledWith('es', expect.any(Function));
+    // Third argument (WS2 T4.3) is the between-attempts retry callback.
+    expect(mockDownloadFaModel).toHaveBeenCalledWith('es', expect.any(Function), expect.any(Function));
     expect(container.textContent).toContain('%');
     resolveDownload();
   });
@@ -315,6 +319,150 @@ describe('ManageModelsModal — cancel and import wire to the real service calls
       cancelButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(mockCancelWhisperModelDownload).toHaveBeenCalled();
+    resolveDownload();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 T4.3 — resume affordance + between-attempts notice.
+//
+// The defect these lock: an FA row had no status command at all, so a pack
+// with 1.02 GiB of resumable `.part` on disk rendered as "0 B" with a bare
+// "Download", and a bounded retry inside the Rust engine looked from here like
+// a frozen progress bar.
+// ---------------------------------------------------------------------------
+
+describe('ModelsSection — resume affordance (WS2 T4.3)', () => {
+  function faButton(): HTMLButtonElement | undefined {
+    return Array.from(container.querySelectorAll('button')).find(
+      (b) =>
+        (b.textContent?.includes('Download') || b.textContent?.includes('Resume')) &&
+        b.closest('section')?.textContent?.includes('Forced Alignment'),
+    );
+  }
+
+  it('offers Resume with the resumable byte count when fa_model_status reports a partial', async () => {
+    mockFaModelStatus.mockResolvedValue({
+      present: false,
+      partialBytes: 1_071_567_076,
+      totalBytes: 1_262_619_311,
+    });
+    await renderModal();
+    expect(mockFaModelStatus).toHaveBeenCalledWith('es');
+    const btn = faButton();
+    expect(btn?.textContent).toContain('Resume');
+    // 1_071_567_076 B is 0.998 GiB, so `formatBytes` renders MiB — this is
+    // the operator's real French partial, kept as the fixture value.
+    expect(btn?.textContent).toContain('1021.9 MiB');
+  });
+
+  it('offers a plain Download when the Rust side reports no resumable bytes', async () => {
+    mockFaModelStatus.mockResolvedValue({ present: false, partialBytes: 0, totalBytes: 1_262_619_311 });
+    await renderModal();
+    const btn = faButton();
+    expect(btn?.textContent).toContain('Download');
+    expect(btn?.textContent).not.toContain('Resume');
+  });
+
+  it('falls back to Download rather than an error banner when the status lookup fails', async () => {
+    mockFaModelStatus.mockRejectedValue(new Error('IPC channel not available'));
+    await renderModal();
+    expect(faButton()?.textContent).toContain('Download');
+    // Not knowing whether a partial exists must never surface as an error —
+    // the download resumes correctly either way.
+    expect(container.textContent).not.toContain('IPC channel not available');
+  });
+
+  it('shows a Reconnecting line while the engine is between retry attempts, and clears it when bytes move again', async () => {
+    let fireRetry: (n: { attempt: number; maxAttempts: number; reason: string }) => void = () => {};
+    let fireProgress: (d: number, t: number) => void = () => {};
+    let resolveDownload: () => void = () => {};
+    mockDownloadFaModel.mockImplementation(
+      (
+        _lang: string,
+        onProgress: (d: number, t: number) => void,
+        onRetry: (n: { attempt: number; maxAttempts: number; reason: string }) => void,
+      ) =>
+        new Promise<void>((resolve) => {
+          resolveDownload = resolve;
+          fireProgress = onProgress;
+          fireRetry = onRetry;
+          onProgress(50_000, 1_262_619_311);
+        }),
+    );
+    await renderModal();
+    await act(async () => {
+      faButton()!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(container.querySelector('[data-testid="retry-notice"]')).toBeNull();
+
+    await act(async () => {
+      fireRetry({ attempt: 2, maxAttempts: 3, reason: 'error decoding response body' });
+    });
+    const notice = container.querySelector('[data-testid="retry-notice"]');
+    expect(notice).toBeTruthy();
+    expect(notice?.textContent).toContain('attempt 2 of 3');
+    expect(notice?.textContent).toContain('error decoding response body');
+
+    // A Progress event means bytes moved, so the notice is stale.
+    await act(async () => {
+      fireProgress(60_000, 1_262_619_311);
+    });
+    expect(container.querySelector('[data-testid="retry-notice"]')).toBeNull();
+    resolveDownload();
+  });
+
+  it('re-reads the resume affordance after a failed download, since the engine may have kept or deleted the partial', async () => {
+    mockFaModelStatus.mockResolvedValue({ present: false, partialBytes: 0, totalBytes: 1_262_619_311 });
+    mockDownloadFaModel.mockRejectedValue(
+      new Error('download interrupted after 3 attempts: connection reset — kept 1.00 GiB of 1.18 GiB'),
+    );
+    await renderModal();
+    const callsBefore = mockFaModelStatus.mock.calls.length;
+    await act(async () => {
+      faButton()!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockFaModelStatus.mock.calls.length).toBeGreaterThan(callsBefore);
+    expect(container.textContent).toContain('kept 1.00 GiB');
+  });
+});
+
+describe('ModelsSection — progress never reads complete while bytes are short (WS2 T4.3)', () => {
+  it('floors the percentage, so 99.9% of a pack does not display as 100%', async () => {
+    const TOTAL = 1_262_619_311;
+    let resolveDownload: () => void = () => {};
+    let fireProgress: (d: number, t: number) => void = () => {};
+    mockDownloadFaModel.mockImplementation(
+      (_lang: string, onProgress: (d: number, t: number) => void) =>
+        new Promise<void>((resolve) => {
+          resolveDownload = resolve;
+          fireProgress = onProgress;
+          onProgress(1, TOTAL);
+        }),
+    );
+    await renderModal();
+    const btn = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('Download') && b.closest('section')?.textContent?.includes('Forced Alignment'),
+    );
+    await act(async () => {
+      btn!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    // 99.9% — `Math.round` reported this as "100%" while ~1.2 MiB was still
+    // missing, so a failure here read as a failure after completion.
+    await act(async () => {
+      fireProgress(Math.floor(TOTAL * 0.999), TOTAL);
+    });
+    expect(container.textContent).toContain('(99%)');
+    expect(container.textContent).not.toContain('(100%)');
+
+    // 100% only at the exact byte count the engine sends just before Done.
+    await act(async () => {
+      fireProgress(TOTAL, TOTAL);
+    });
+    expect(container.textContent).toContain('(100%)');
     resolveDownload();
   });
 });
