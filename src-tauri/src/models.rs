@@ -149,38 +149,25 @@ pub async fn fa_model_download(
 
     let url = fa_model_download_url(lang);
     let lang_owned = lang.to_string();
-    let result = stream_download_verified(url, target.clone(), part_path, expected_size, cancel_flag, on_event, {
+    // WS2 T4.8: the `.sha256` sidecar is now written by `finalize_verified_
+    // download` ITSELF, from the digest this closure returns — no second
+    // hash happens here at all. It used to (a fresh `hash_file` call, once
+    // merely un-blocked in WS2 T4.6, then removed outright here): the same
+    // ~1.2 GiB file `verify_model_manifest` had just hashed, read a second
+    // time, MEASURED hanging past 90 seconds on the operator's machine while
+    // competing with macOS Spotlight indexing the file it had just finished
+    // writing. `verify_model_manifest` already caches its digest by file
+    // identity (`fa_dev.rs`'s `verified_digest_cache`) for this EXACT path,
+    // so `digest_for_sidecar` below is a guaranteed cache hit, not a second
+    // read under a different name.
+    stream_download_verified(url, target.clone(), part_path, expected_size, cancel_flag, on_event, {
         let lang_owned = lang_owned.clone();
-        move |path: &Path| verify_model_manifest(path, &lang_owned).map_err(|e| e.message)
+        move |path: &Path| {
+            verify_model_manifest(path, &lang_owned).map_err(|e| e.message)?;
+            crate::fa_dev::digest_for_sidecar(path).map_err(|e| e.to_string())
+        }
     })
-    .await;
-
-    if result.is_ok() {
-        // Same post-install bookkeeping `import_to_target` does: a `.sha256`
-        // sidecar so the NEXT `check_installed_models` call is a stat, not a
-        // re-hash. `stream_download_verified` already verified the digest
-        // via `verify_model_manifest` above — this just persists it.
-        //
-        // WS2 T4.6: this used to call `hash_file` directly on the async
-        // runtime thread — MEASURED ~6.5s for one FA pack's ~1.2 GiB on this
-        // machine. That is not idle time; it is a worker thread the Tauri
-        // runtime needs for everything else pinned to one file for as long as
-        // the hash takes, including the status poll the just-finished row is
-        // waiting on to flip from "Unverified" to "Installed". `spawn_blocking`
-        // is what every other hash on this path already uses
-        // (`check_installed_models`, `import_to_target`, and the engine's own
-        // `finalize_verified_download`) — this call was the one place that
-        // didn't, and it is the reason a freshly completed download could sit
-        // on "Unverified" far longer than the hash itself takes.
-        let sidecar_target = target.clone();
-        let _ = tauri::async_runtime::spawn_blocking(move || {
-            if let Ok(digest) = hash_file(&sidecar_target) {
-                let _ = fs::write(sidecar_path(&sidecar_target), digest);
-            }
-        })
-        .await;
-    }
-    result
+    .await
 }
 
 /// The FA sibling of `model_download::whisper_model_download_attach` — see
@@ -290,10 +277,12 @@ fn target_path(app: &tauri::AppHandle, id: ModelId) -> Result<PathBuf, String> {
     }
 }
 
+/// Delegates to `model_download::sidecar_path_for` — that module now WRITES
+/// this path directly (WS2 T4.8's `finalize_verified_download`), so it owns
+/// the canonical definition; this stays a thin alias so every existing
+/// `sidecar_path(...)` call site in this file needs no change.
 fn sidecar_path(target: &Path) -> PathBuf {
-    let mut p = target.as_os_str().to_owned();
-    p.push(".sha256");
-    PathBuf::from(p)
+    crate::model_download::sidecar_path_for(target)
 }
 
 fn expected_size(id: ModelId) -> Option<u64> {
@@ -1114,35 +1103,38 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// The other half of the operator's report: `fa_model_download`'s
-    /// post-success sidecar write must not block the async runtime. This
-    /// does not (and cannot, without a real ~1.2 GiB download in a unit test)
-    /// measure wall-clock — it asserts the STRUCTURAL property that makes the
-    /// fix correct: the write happens inside `spawn_blocking`, the same
-    /// mechanism `check_installed_models`, `import_to_target`, and the
-    /// engine's own `finalize_verified_download` already use for every other
-    /// hash on this path. A grep-shaped regression guard, not a timing one.
+    /// WS2 T4.8, replacing the WS2 T4.6-era `fa_download_sidecar_write_
+    /// runs_on_the_blocking_pool_not_inline` test: that one asserted the
+    /// sidecar hash ran inside `spawn_blocking` rather than inline on the
+    /// async runtime. It was still wrong — the operator hit the exact same
+    /// class of stall again, because moving a redundant ~1.2 GiB re-hash to a
+    /// different thread does not make it fast; it was competing with macOS
+    /// Spotlight indexing the just-downloaded file and was MEASURED hanging
+    /// past 90 seconds regardless of which thread ran it. The actual fix
+    /// deletes that second read: `fa_model_download`'s closure now returns
+    /// the digest `verify_model_manifest` already computed
+    /// (`fa_dev::digest_for_sidecar`, a cache hit under the SAME file
+    /// identity), and `finalize_verified_download` writes the sidecar from
+    /// it directly. Structural proof this file no longer calls the raw
+    /// hasher a second time for this purpose — `hash_file` appears in this
+    /// file only inside `status_for`'s OWN independent verification, never
+    /// again after a download's own `result` succeeds.
     #[test]
-    fn fa_download_sidecar_write_runs_on_the_blocking_pool_not_inline() {
-        // Comment-stripped deliberately: the doc comment immediately above
-        // the guarded code mentions the word "spawn_blocking" in prose, and
-        // that comment survives a revert of the code beneath it — a plain
-        // substring search over the raw block would pass whether or not the
-        // guard actually exists. Only executable lines are searched.
+    fn fa_model_download_never_calls_hash_file_a_second_time_after_its_own_verify_succeeds() {
         let src = fs::read_to_string(file!()).unwrap();
-        let start = src.find("if result.is_ok() {").expect("post-success block must exist");
-        let end = src[start..].find("\n    }\n    result\n}").map(|i| start + i).unwrap();
-        let code_only: String = src[start..end]
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let start = src.find("pub async fn fa_model_download(").expect("fa_model_download must exist");
+        let end = src[start..].find("\n#[tauri::command]\npub fn fa_model_download_cancel").map(|i| start + i).unwrap();
+        let body = &src[start..end];
         assert!(
-            code_only.contains("spawn_blocking("),
-            "the post-success sidecar hash must run inside spawn_blocking, not inline on the \
-             async runtime — an un-blocked ~1.2 GiB hash_file call is what left a freshly \
-             completed download reading \"Unverified\" far longer than the hash itself took. \
-             code searched: {code_only}"
+            !body.contains("hash_file("),
+            "fa_model_download must not hash the file itself at all — the digest comes from \
+             verify_model_manifest via fa_dev::digest_for_sidecar, never a fresh hash_file call. \
+             body searched: {body}"
+        );
+        assert!(
+            body.contains("digest_for_sidecar"),
+            "the digest must be sourced from the cache-aware digest_for_sidecar, not invented \
+             some other way"
         );
     }
 }

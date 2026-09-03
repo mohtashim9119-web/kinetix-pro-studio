@@ -90,6 +90,40 @@ pub(crate) fn reset_verified_digest_cache_for_tests() {
     }
 }
 
+/// The digest for `path`, from `verified_digest_cache` if a hash for this
+/// EXACT file identity (path + size + mtime) is already there, computed and
+/// cached otherwise. Deliberately NOT refactored to share code with
+/// `verify_model_manifest` (below), which inlines the identical cache
+/// check-then-hash-then-insert sequence — that function sits on a heavily
+/// tested, sensitive verification path and touching its internals for this
+/// wasn't worth the risk. The two cannot disagree regardless: both read and
+/// write the SAME `verified_digest_cache`, so a value either one caches is
+/// found by the other — consistency comes from the shared cache, not from
+/// shared code.
+///
+/// WS2 T4.8: this is the function that makes `models::fa_model_download`'s
+/// post-success sidecar write free. `verify_model_manifest` runs during
+/// every download's finalize step and populates this cache for the `.part`
+/// path at that moment; calling this again immediately after — same path,
+/// same size, same mtime, nothing has touched the file since — is a
+/// guaranteed cache hit: a `stat`, not a second ~1.2 GiB read. Before this
+/// existed, `fa_model_download` hashed the file a second time under a
+/// different name to get a digest for the sidecar, and that second read,
+/// competing with macOS Spotlight indexing the file it had just finished
+/// writing, was MEASURED hanging past 90 seconds on the operator's machine.
+pub(crate) fn digest_for_sidecar(path: &Path) -> std::io::Result<String> {
+    let meta = std::fs::metadata(path)?;
+    let identity: ModelIdentity = (path.to_path_buf(), meta.len(), meta.modified().ok());
+    if let Some(digest) = verified_digest_cache().lock().ok().and_then(|m| m.get(&identity).cloned()) {
+        return Ok(digest);
+    }
+    let digest = crate::sha256::hash_file(path)?;
+    if let Ok(mut m) = verified_digest_cache().lock() {
+        m.insert(identity, digest.clone());
+    }
+    Ok(digest)
+}
+
 /// Hashes `path` and compares against the committed manifest's recorded
 /// SHA-256 for `language`. Never panics — a missing manifest entry, an I/O
 /// failure, and a genuine hash mismatch are all reported as a typed
@@ -339,6 +373,58 @@ mod tests {
     fn manifest_sha256_for_known_language_matches_committed_manifest() {
         let hash = manifest_sha256_for("en").expect("en must be in the manifest");
         assert_eq!(hash.len(), 64, "sha256 hex digest must be 64 chars");
+    }
+
+    /// WS2 T4.8: `digest_for_sidecar` must reuse whatever `verify_model_
+    /// manifest` already cached for this exact file identity, not re-hash.
+    /// Proven the same way `model_download.rs`'s finalize test proves it: seed
+    /// the cache with a digest that is NOT the file's real sha256 (a real
+    /// re-hash would never produce it), then confirm `digest_for_sidecar`
+    /// returns exactly that value — a cache hit, not a second read.
+    #[test]
+    fn digest_for_sidecar_reuses_verify_model_manifests_cache_not_a_re_hash() {
+        reset_verified_digest_cache_for_tests();
+        let dir = std::env::temp_dir().join(format!("fa-dev-digest-sidecar-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model.onnx");
+        std::fs::write(&path, b"whatever bytes are actually here").unwrap();
+
+        let meta = std::fs::metadata(&path).unwrap();
+        let identity: ModelIdentity = (path.clone(), meta.len(), meta.modified().ok());
+        let planted = "not-the-real-sha256-just-a-marker".to_string();
+        verified_digest_cache().lock().unwrap().insert(identity, planted.clone());
+
+        let got = digest_for_sidecar(&path).expect("cache hit must not touch the filesystem for a hash");
+        assert_eq!(got, planted, "must return the CACHED digest, proving no independent re-hash ran");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The cold path — no prior cache entry — still produces the real digest
+    /// and populates the cache for next time, same as `verify_model_manifest`
+    /// itself does.
+    #[test]
+    fn digest_for_sidecar_computes_and_caches_on_a_cold_call() {
+        reset_verified_digest_cache_for_tests();
+        let dir = std::env::temp_dir().join(format!("fa-dev-digest-sidecar-cold-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model.onnx");
+        let content = b"some real content to hash";
+        std::fs::write(&path, content).unwrap();
+
+        let expected = crate::sha256::hash_file(&path).unwrap();
+        let got = digest_for_sidecar(&path).unwrap();
+        assert_eq!(got, expected);
+
+        let meta = std::fs::metadata(&path).unwrap();
+        let identity: ModelIdentity = (path.clone(), meta.len(), meta.modified().ok());
+        assert_eq!(
+            verified_digest_cache().lock().unwrap().get(&identity),
+            Some(&expected),
+            "a cold call must populate the cache for the next caller"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// WS1 Session G — the REAL fail-clean budget measurement, against a real
