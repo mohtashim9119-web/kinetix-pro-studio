@@ -32,13 +32,27 @@ export type { ExportError } from '../services/exportPipeline';
 // (docs/webcodecs-export-plan.md §4.4/§6). The new path only runs when BOTH
 // are true; either one being false is byte-identical to today (legacy path).
 //
-// WS2 T4.1 (D6) — WHAT THIS TOGGLE ACTUALLY GOVERNS, recorded because the
-// file, the key and the App Settings block all named only export while the
-// toggle had a second, unnamed consumer. `PreviewStage.tsx:399` computes
-// `glPathActive = useWebCodecsPath && webgl2Supported`, so this same value
-// also selects the WebGL2 PREVIEW renderer (`useGlPreview.ts`) — turning it
-// off changes what the user sees while editing, not just how the file is
-// encoded. Names here and the App Settings copy now say so.
+// WS2 T4.1 (D6, CORRECTED BY C4) — WHAT THIS TOGGLE ACTUALLY GOVERNS: the
+// export encoder, and nothing else.
+//
+// D6 claimed a second consumer and was WRONG. Its reasoning was that
+// `PreviewStage.tsx:399` computes `glPathActive = useWebCodecsPath &&
+// webgl2Supported`, therefore the preview reads this value. It does not.
+// `PreviewStage.tsx:380` binds its `useWebCodecsPath` from
+// `isWebCodecsPreviewSupported()` (`services/webcodecsSupport.ts`), which is
+// `'VideoDecoder' in window && 'EncodedVideoChunk' in window` — a capability
+// probe that never touches `kinetix:ui:v1`. The two files share a LOCAL
+// VARIABLE NAME. D6's rationale was written from a line number and a
+// same-named identifier rather than from the value flowing through it, and
+// three surfaces (this header, the toggle's doc comment, and the App Settings
+// block title and body) were rewritten to match a relationship that did not
+// exist. C4 corrected the copy on all three and DID NOT wire the preview to
+// the toggle: the Canvas2D/CSS preview path was deleted at the WebGL2
+// cutover rather than gated, so making the claim true would mean shipping a
+// switch that disables the only preview renderer in the app.
+//
+// `webcodecsToggleConsumers.test.ts` now pins the consumer set, so the next
+// version of this paragraph cannot outrun the wiring the way D6's did.
 //
 // THE STORAGE KEY IS DELIBERATELY NOT RENAMED. `webcodecsExportEnabled` is
 // already written into every existing profile's `kinetix:ui:v1`; a migration
@@ -121,8 +135,9 @@ export function __resetWebCodecsExportCapabilityForTests(): void {
  * `false`) is always respected; anything else — absent, wrong-typed, or an
  * unreadable store — resolves to `WEBCODECS_TOGGLE_DEFAULT_ON`.
  *
- * Governs BOTH the export encoder and the WebGL2 preview renderer — see this
- * section's header for why that is worth saying out loud.
+ * Governs the export encoder ONLY. The editor preview selects its renderer
+ * from a capability probe and never reads this value — see this section's
+ * header for the measurement, and for why the copy was wrong for one round.
  */
 export function isWebCodecsExportToggleOn(): boolean {
   try {

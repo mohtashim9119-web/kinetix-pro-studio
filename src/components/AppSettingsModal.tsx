@@ -13,9 +13,10 @@
  * ONE FLAT SCROLLING SURFACE, THREE BLOCKS, NO NESTED MODAL (Step 1). The
  * blocks are separated by near-invisible hairlines, not by cards or tabs:
  *
- *   1. Rendering Engine — the WebCodecs toggle. Named for both of its
- *      consumers since the D6 finding: `PreviewStage.tsx:399` reads the same
- *      value to select the WebGL2 preview renderer, so it is not export-only.
+ *   1. Export Engine — the WebCodecs toggle. Named for the one thing it
+ *      actually selects: which encoder an export run uses. It was briefly
+ *      titled "Rendering Engine" on the D6 finding that the preview read the
+ *      same value; that finding was wrong (C4) and the title is back.
  *   2. Models & Add-ons — rendered INLINE via `ModelsSection`, the component
  *      extracted from `ManageModelsModal`'s body. Not a link, not a nested
  *      dialog. Its install/delete actions are IMMEDIATE filesystem side
@@ -154,28 +155,42 @@ export function AppSettingsModal({ onClose }: Props): React.ReactElement {
           project live in Project Settings.
         </p>
 
-        {/* ── Block 1: Rendering Engine ───────────────────────────────────
-            RENAMED from "Export Engine" (WS2 T4.1, D6). The same toggle value
-            is read by `PreviewStage.tsx:399` as
-            `glPathActive = useWebCodecsPath && webgl2Supported`, selecting the
-            WebGL2 preview renderer — so an export-only label described half of
-            what it does. The STORAGE KEY keeps its old name by ruling; see
-            `useExport.ts`'s gate header. */}
+        {/* ── Block 1: Export Engine ──────────────────────────────
+            TITLE REVERTED from "Rendering Engine" (WS2 T4.1, C4). D6 renamed
+            this block on the claim that `PreviewStage.tsx:399` read the same
+            stored value; it does not. That line's `useWebCodecsPath` comes
+            from `isWebCodecsPreviewSupported()`
+            (`services/webcodecsSupport.ts`) — a pure `'VideoDecoder' in window`
+            capability probe with no `localStorage` read anywhere in it. The
+            two files share a LOCAL VARIABLE NAME and nothing else. The stored
+            toggle selects the export encoder and only that;
+            `webcodecsToggleConsumers.test.ts` now holds that claim answerable
+            to the wiring.
+
+            NOT WIRED TO THE PREVIEW, deliberately (owner ruling, C4). The
+            Canvas2D/CSS preview path was DELETED at the WebGL2 cutover, not
+            gated (see `PreviewStage.tsx`'s "deliberately NO fallback" note),
+            so routing the preview through this toggle would hand the user a
+            switch that turns off the only preview renderer that exists. The
+            copy gets corrected; the wiring does not get invented to match it.
+
+            The STORAGE KEY keeps its old name by ruling — see `useExport.ts`'s
+            gate header. */}
         <section data-testid="app-settings-block-rendering" className="space-y-2">
-          <p className={BLOCK_TITLE}>Rendering Engine</p>
+          <p className={BLOCK_TITLE}>Export Engine</p>
           <label className="flex items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-gray-500 font-bold">
-            <span>Use the WebCodecs renderer (faster, beta)</span>
+            <span>Use the WebCodecs encoder (faster, beta)</span>
             <Toggle
               on={draftWebcodecsEnabled}
               onToggle={() => setDraftWebcodecsEnabled((v) => !v)}
               disabled={!webcodecsCapable}
-              label={draftWebcodecsEnabled ? 'Disable the WebCodecs renderer' : 'Enable the WebCodecs renderer'}
+              label={draftWebcodecsEnabled ? 'Disable the WebCodecs encoder' : 'Enable the WebCodecs encoder'}
               testId="app-settings-webcodecs-toggle"
             />
           </label>
           <p className="text-[9px] text-gray-600 leading-snug">
-            Governs both the editor preview and the export encoder — one engine drives the picture
-            you edit against and the file you render out, so they always match.
+            Chooses which encoder an export run uses. Turning it off falls back to the older
+            frame-by-frame encoder, which is slower. The editor preview is not affected either way.
           </p>
           {!webcodecsCapable && (
             <p className="text-[8px] leading-snug text-gray-600">

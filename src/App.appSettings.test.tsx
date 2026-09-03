@@ -157,7 +157,7 @@ describe('WS2 T4.1 Step 1 — App Settings opens from the dashboard with no proj
 });
 
 describe('WS2 T4.1 Step 1 — all three blocks render on one flat surface', () => {
-  it('renders Rendering Engine, Models & Add-ons and New Project Defaults', async () => {
+  it('renders Export Engine, Models & Add-ons and New Project Defaults', async () => {
     await mountApp();
     const modal = await openAppSettings();
     expect(modal.querySelector('[data-testid="app-settings-block-rendering"]')).not.toBeNull();
