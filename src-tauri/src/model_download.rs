@@ -737,12 +737,36 @@ pub(crate) fn permanent_message(cause: &str, part_path: &Path, partial_discarded
 /// that a `.part` at or past `expected_size`, which `plan_resume` refuses,
 /// must NOT be advertised as resumable bytes.
 pub(crate) fn status_for_target(target: &Path, expected_size: u64) -> ModelDownloadStatus {
-    if target.exists() {
-        return ModelDownloadStatus {
-            present: true,
-            partial_bytes: expected_size,
-            total_bytes: expected_size,
-        };
+    // A completed target's own byte count is NOT a resumable partial, and
+    // saying otherwise is what put "RESUME 1.51 GiB" on a fully installed
+    // whisper row and "RESUME 1.18 GiB" on every installed FA pack (WS2 T4.5,
+    // operator report — both numbers are `formatBytes(expected_size)` exactly,
+    // which is how this line was identified as their single source). The
+    // engine's own first statement settles what the right answer is:
+    // `stream_download_verified` returns `Done` immediately when
+    // `final_path.exists()`, so there is nothing to resume onto a completed
+    // target and 0 is the only number that describes what a download would
+    // actually do.
+    //
+    // `present` requires the SIZE to match too, not merely that a file is
+    // there. A wrong-size file at the target path is not something to
+    // suppress the Download button over — the user would be left with a row
+    // offering no way to repair itself short of a delete. Such a file falls
+    // through to the `.part` branch below, which reports the partial's bytes
+    // and never the target's.
+    //
+    // `present` remains a CHEAP probe — a stat, not a hash. Whether an
+    // existing file is genuinely the right model is `models::
+    // check_installed_models`'s question, and the badge is still rendered
+    // from its answer, never from this one.
+    if let Ok(meta) = fs::metadata(target) {
+        if meta.len() == expected_size {
+            return ModelDownloadStatus {
+                present: true,
+                partial_bytes: 0,
+                total_bytes: expected_size,
+            };
+        }
     }
     let part_path = part_path_for(target);
     let on_disk = fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
@@ -1568,12 +1592,84 @@ mod tests {
         assert_eq!(status_for_target(&target, 1000).partial_bytes, 0);
         fs::write(&part, vec![0u8; 400]).unwrap();
 
-        // An installed model reports present and ignores any stray partial.
+        // A file at the target path whose SIZE IS WRONG is not an installed
+        // model. It must not suppress the row's Download button — a row that
+        // offers nothing has no way to repair itself — so the partial beside
+        // it is still reported.
+        //
+        // The previous version of this assertion expected `present == true`
+        // and `partial_bytes == 1000` for this same 10-byte file. That was
+        // this defect written down as a fixture: it locked in both halves of
+        // the bug (a wrong-size file counted as installed, and a size that is
+        // not a partial's size reported as resumable bytes) and would have
+        // stayed green through it forever.
         fs::write(&target, vec![1u8; 10]).unwrap();
         let s = status_for_target(&target, 1000);
-        assert!(s.present);
-        assert_eq!(s.partial_bytes, 1000);
+        assert!(!s.present, "a 10-byte file is not a 1000-byte model");
+        assert_eq!(s.partial_bytes, 400, "the real partial is still the resume point");
 
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// WS2 T4.5, the operator's report: every installed row rendered
+    /// "RESUME <full size>". Both numbers they saw — 1.51 GiB and 1.18 GiB —
+    /// are `formatBytes(expected_size)` exactly, which is what identified
+    /// this function's `present` branch as their single source.
+    #[test]
+    fn a_completed_model_reports_installed_with_zero_resumable_bytes() {
+        let dir = temp_dir_named("t45-completed-model");
+        let target = dir.join("model.onnx");
+        let part = part_path_for(&target);
+        let meta = part_meta_path_for(&part);
+
+        fs::write(&target, vec![1u8; 1000]).unwrap();
+        let s = status_for_target(&target, 1000);
+        assert!(s.present, "a full-size model on disk is present");
+        assert_eq!(
+            s.partial_bytes, 0,
+            "a completed target's own byte count is not a resume point — \
+             stream_download_verified returns Done the moment the target exists"
+        );
+        assert_eq!(s.total_bytes, 1000);
+
+        // A leftover partial beside a completed model changes nothing: the
+        // download would never run, so nothing is resumable.
+        fs::write(&part, vec![0u8; 400]).unwrap();
+        write_part_meta(&meta, &meta_for("https://example.invalid/m", 1000, Some("\"v\"")));
+        let s = status_for_target(&target, 1000);
+        assert!(s.present);
+        assert_eq!(s.partial_bytes, 0, "a stray partial beside an installed model is not offered");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The whisper row and the FA rows go through this one function, so the
+    /// operator's two numbers are pinned against the two real constants
+    /// rather than against a convenient small one.
+    #[test]
+    fn neither_real_model_size_is_ever_reported_as_resumable_bytes() {
+        let dir = temp_dir_named("t45-real-sizes");
+        const FR_MANIFEST_BYTES: u64 = 1_262_619_311;
+
+        for (name, size) in [
+            (MODEL_FILENAME, MODEL_SIZE_BYTES),
+            ("model.onnx", FR_MANIFEST_BYTES),
+        ] {
+            let target = dir.join(name);
+            // A sparse file of the real size, so this costs no disk: the
+            // function only ever stats.
+            let f = std::fs::File::create(&target).unwrap();
+            f.set_len(size).unwrap();
+            drop(f);
+
+            let s = status_for_target(&target, size);
+            assert!(s.present, "{name} at its exact size must read as present");
+            assert_eq!(
+                s.partial_bytes, 0,
+                "{name} reported {} resumable bytes — this is the RESUME 1.51/1.18 GiB defect",
+                s.partial_bytes
+            );
+        }
         let _ = fs::remove_dir_all(&dir);
     }
 

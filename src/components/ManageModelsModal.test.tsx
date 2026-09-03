@@ -7,7 +7,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import { ManageModelsModal } from './ManageModelsModal';
-import { __resetDownloadStoreForTests } from '../services/modelDownloadStore';
+import { __resetDownloadStoreForTests, startDownload } from '../services/modelDownloadStore';
 
 const mockCheckInstalledModels = vi.fn();
 const mockImportLocalModel = vi.fn();
@@ -469,5 +469,140 @@ describe('ModelsSection — progress never reads complete while bytes are short 
     });
     expect(container.textContent).toContain('(100%)');
     resolveDownload();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 T4.5 — a completed model must never render as "RESUME <full size>".
+//
+// The operator saw every installed row — Whisper and all five FA packs —
+// offering "RESUME 1.51 GiB" / "RESUME 1.18 GiB". Those are
+// `formatBytes(MODEL_SIZE_BYTES)` and `formatBytes(the fr manifest byteSize)`
+// exactly, which is what identified the source: `status_for_target` returned
+// `partial_bytes: expected_size` on its target-exists branch, and
+// `refreshResumable` fed that straight to the Resume label without ever
+// consulting `present`.
+//
+// Two independent guards are asserted here, because the row was wrong on both
+// halves: the Rust side no longer reports a completed target's own size as
+// resumable, AND the row withholds Download/Resume whenever a full-size file
+// occupies the target path — a download there would be a no-op, since
+// `stream_download_verified` returns Done on `final_path.exists()`.
+// ---------------------------------------------------------------------------
+describe('ModelsSection — an installed model never offers Resume (WS2 T4.5)', () => {
+  const WHISPER_BYTES = 1_624_555_275;
+  const FA_BYTES = 1_262_619_311;
+
+  /** All six rows installed — the state the operator's machine was actually
+   *  in (five FA packs at their exact manifest sizes plus the whisper model),
+   *  so "not one row offers Resume" is a claim about every row rendered, not
+   *  about one row surrounded by four that were never installed. */
+  function installedReport() {
+    return {
+      whisper: { installed: true, bytes: WHISPER_BYTES },
+      fa: Object.fromEntries(
+        ['en', 'es', 'fr', 'de', 'pt'].map((l) => [l, { installed: true, bytes: FA_BYTES }]),
+      ),
+    };
+  }
+
+  it('renders READY / INSTALLED with no Resume button when both probes agree the model is complete', async () => {
+    mockCheckInstalledModels.mockResolvedValue(installedReport());
+    mockGetWhisperModelStatus.mockResolvedValue({ present: true, partialBytes: 0, totalBytes: WHISPER_BYTES });
+    mockFaModelStatus.mockResolvedValue({ present: true, partialBytes: 0, totalBytes: FA_BYTES });
+    await renderModal();
+
+    expect(container.textContent).toContain('Ready');
+    expect(container.querySelectorAll('[aria-label="INSTALLED"]')).toHaveLength(5);
+    expect(container.textContent).not.toContain('Resume');
+    expect(container.textContent).not.toContain('Checking');
+    expect(container.textContent).not.toContain('Unverified');
+    expect(container.textContent).not.toContain('1.51 GiB / ');
+    const labels = Array.from(container.querySelectorAll('button')).map((b) => b.textContent ?? '');
+    expect(labels.some((t) => t.includes('Resume') || t.includes('Download'))).toBe(false);
+    expect(labels.some((t) => t.includes('Import'))).toBe(false);
+  });
+
+  it('withholds Resume for a complete model while the authoritative check is still running', async () => {
+    // `check_installed_models` is one blocking call across every row and pays
+    // a full file hash for any row without its `.sha256` cache, so this window
+    // is real and can last seconds. It is the window the operator was looking
+    // at: nothing had reported `installed` yet, so every row fell through to
+    // its download affordance.
+    mockCheckInstalledModels.mockReturnValue(new Promise(() => {}));
+    mockGetWhisperModelStatus.mockResolvedValue({ present: true, partialBytes: 0, totalBytes: WHISPER_BYTES });
+    mockFaModelStatus.mockResolvedValue({ present: true, partialBytes: 0, totalBytes: FA_BYTES });
+    await renderModal();
+
+    expect(container.textContent).not.toContain('Resume');
+    expect(container.textContent).not.toContain('Download');
+    // …and says so, rather than silently rendering an empty row.
+    expect(container.querySelector('[data-testid="whisper-target-occupied"]')?.textContent).toBe('Checking…');
+    expect(container.querySelector('[data-testid="fa-target-occupied-es"]')?.textContent).toBe('Checking…');
+  });
+
+  it('offers Delete, not Download, for a full-size file the authoritative check rejects', async () => {
+    // Right size, failed verification. A Download button here is a trap: the
+    // engine returns Done the instant the target exists, so clicking it would
+    // appear to succeed and change nothing. Delete is the only action that can
+    // move this row forward.
+    mockCheckInstalledModels.mockResolvedValue({
+      whisper: { installed: false, bytes: WHISPER_BYTES },
+      fa: { es: { installed: false, bytes: FA_BYTES } },
+    });
+    mockGetWhisperModelStatus.mockResolvedValue({ present: true, partialBytes: 0, totalBytes: WHISPER_BYTES });
+    mockFaModelStatus.mockResolvedValue({ present: true, partialBytes: 0, totalBytes: FA_BYTES });
+    await renderModal();
+
+    expect(container.querySelector('[data-testid="whisper-target-occupied"]')?.textContent).toBe('Unverified');
+    const labels = Array.from(container.querySelectorAll('button')).map((b) => b.textContent ?? '');
+    expect(labels.some((t) => t.includes('Resume') || t.includes('Download'))).toBe(false);
+    expect(
+      Array.from(container.querySelectorAll('button')).some(
+        (b) => b.getAttribute('aria-label') === 'Delete whisper model',
+      ),
+    ).toBe(true);
+  });
+
+  it('still offers Download when the target path holds no complete file', async () => {
+    // The guard must not swallow the ordinary missing-model case, or every row
+    // becomes un-downloadable.
+    mockGetWhisperModelStatus.mockResolvedValue({ present: false, partialBytes: 0, totalBytes: WHISPER_BYTES });
+    mockFaModelStatus.mockResolvedValue({ present: false, partialBytes: 0, totalBytes: FA_BYTES });
+    await renderModal();
+    const labels = Array.from(container.querySelectorAll('button')).map((b) => b.textContent ?? '');
+    expect(labels.some((t) => t.includes('Download'))).toBe(true);
+  });
+
+  it('still offers Resume for a genuine partial, which is what the Resume label is for', async () => {
+    mockGetWhisperModelStatus.mockResolvedValue({ present: false, partialBytes: 0, totalBytes: WHISPER_BYTES });
+    mockFaModelStatus.mockResolvedValue({
+      present: false,
+      partialBytes: 1_071_567_076,
+      totalBytes: FA_BYTES,
+    });
+    await renderModal();
+    const btn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Resume'),
+    );
+    expect(btn?.textContent).toContain('1021.9 MiB');
+  });
+
+  it('clears a stale download error once the model is on disk', async () => {
+    // The store keeps a failure across an unmount (WS2 T4.4), which is right —
+    // but not once the thing it failed to fetch is sitting there installed.
+    mockCheckInstalledModels.mockResolvedValue(installedReport());
+    mockFaModelStatus.mockResolvedValue({ present: true, partialBytes: 0, totalBytes: FA_BYTES });
+    mockGetWhisperModelStatus.mockResolvedValue({ present: true, partialBytes: 0, totalBytes: WHISPER_BYTES });
+    startDownload('fa-es', () => Promise.reject(new Error('download interrupted after 3 attempts')));
+    // (rejection is handled inside the store; nothing here observes it)
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await renderModal();
+    expect(container.textContent).not.toContain('download interrupted');
+    expect(container.textContent).toContain('Installed');
   });
 });

@@ -190,6 +190,19 @@ export function ModelsSection({
    *  value here is a promise the engine can keep — it is never a raw file
    *  size. Absent/failed lookups simply render as a plain Download. */
   const [resumableBytes, setResumableBytes] = useState<Record<string, number>>({});
+  /** Whether a full-size file already sits at each model's TARGET path, from
+   *  the same cheap probe as `resumableBytes`.
+   *
+   *  This is not a duplicate of `report`'s `installed`, and the difference is
+   *  the point (WS2 T4.5). `installed` is the authoritative answer and can
+   *  take seconds — `check_installed_models` is one blocking call covering
+   *  every row, and any row lacking its `.sha256` cache pays a full
+   *  multi-hundred-megabyte hash inside it. This one is a stat. It is used
+   *  ONLY to withhold Download/Resume, never to claim a model is verified:
+   *  `stream_download_verified` returns `Done` the moment the target exists,
+   *  so a Download button over an existing target is an offer the engine
+   *  cannot honour. The badge still comes from `report`. */
+  const [presentOnDisk, setPresentOnDisk] = useState<Record<string, boolean>>({});
 
   // One subscription for every row: the store's snapshot is a version number,
   // so it is referentially stable and `getDownloadRecord` can then be read
@@ -215,15 +228,24 @@ export function ModelsSection({
    *  degrade to "offer Download", never to an error banner — the download
    *  itself resumes correctly either way. */
   const refreshResumable = useCallback(() => {
-    const rows: Array<[string, Promise<{ partialBytes: number }>]> = faLanguages.map((lang) => [
-      faModelId(lang),
-      faModelStatus(lang),
-    ]);
+    const rows: Array<[string, Promise<{ partialBytes: number; present: boolean }>]> =
+      faLanguages.map((lang) => [faModelId(lang), faModelStatus(lang)]);
     if (includeWhisper) rows.push(['whisper', getWhisperModelStatus()]);
     rows.forEach(([id, pending]) => {
       pending
-        .then((st) => setResumableBytes((prev) => ({ ...prev, [id]: st.partialBytes })))
-        .catch(() => setResumableBytes((prev) => ({ ...prev, [id]: 0 })));
+        .then((st) => {
+          setResumableBytes((prev) => ({ ...prev, [id]: st.partialBytes }));
+          setPresentOnDisk((prev) => ({ ...prev, [id]: st.present }));
+          // A model that is now on disk cannot still be failing to download.
+          // Without this, a rejected attempt's message — kept in the store
+          // since WS2 T4.4 so a failure survives the dialog being closed —
+          // would sit under a finished row forever.
+          if (st.present) clearDownloadRecord(id);
+        })
+        .catch(() => {
+          setResumableBytes((prev) => ({ ...prev, [id]: 0 }));
+          setPresentOnDisk((prev) => ({ ...prev, [id]: false }));
+        });
     });
   }, [faLanguages, includeWhisper]);
 
@@ -356,7 +378,22 @@ export function ModelsSection({
       });
   };
 
+  /** What the row may offer. A file already sitting at the target path means
+   *  a download would be a no-op (`stream_download_verified` returns `Done`
+   *  on `final_path.exists()`), so Download/Resume/Import are withheld and
+   *  Delete — the only action that can actually change that state — is what
+   *  is left. Verified or not, the affordance is the same; only the badge
+   *  differs, and the badge is `report`'s to decide. */
+  const occupiesTarget = (modelId: string, installed: boolean): boolean =>
+    installed || (presentOnDisk[modelId] ?? false);
+
+  /** The authoritative check has not answered yet, so a row holding a
+   *  full-size file is neither confirmed nor denied. Said out loud rather
+   *  than guessed either way. */
+  const awaitingVerification = report === null && statusError === null;
+
   const whisperInstalled = report?.whisper?.installed ?? false;
+  const whisperOccupied = occupiesTarget('whisper', whisperInstalled);
   const whisperBytes = report?.whisper?.bytes ?? 0;
   const whisperBusy = isBusy(whisperState);
 
@@ -410,11 +447,19 @@ export function ModelsSection({
                     Ready
                   </span>
                 )}
+                {!whisperInstalled && whisperOccupied && (
+                  <span
+                    className="text-[8px] px-1.5 py-0.5 rounded uppercase tracking-widest font-bold text-gray-400"
+                    data-testid="whisper-target-occupied"
+                  >
+                    {awaitingVerification ? 'Checking…' : 'Unverified'}
+                  </span>
+                )}
                 <span className="text-gray-500">{formatBytes(whisperBytes || 1_624_555_275)}</span>
               </div>
               {whisperState.phase !== 'downloading' && (
                 <div className="flex items-center gap-2">
-                  {whisperInstalled ? (
+                  {whisperOccupied ? (
                     <button
                       onClick={deleteWhisper}
                       disabled={whisperBusy}
@@ -514,6 +559,7 @@ export function ModelsSection({
             const label = SUPPORTED_LANGUAGES.find((l) => l.code === lang)?.label ?? lang;
             const status = report?.fa[lang];
             const installed = status?.installed ?? false;
+            const occupied = occupiesTarget(faModelId(lang), installed);
             const rowState = rowStateFor(faModelId(lang), faLocal[lang] ?? { phase: 'idle' as const });
             const busy = isBusy(rowState);
             const isNeeded = projectLanguage === lang;
@@ -536,6 +582,14 @@ export function ModelsSection({
                         Installed
                       </span>
                     )}
+                    {!installed && occupied && (
+                      <span
+                        className="text-[8px] px-1.5 py-0.5 rounded uppercase tracking-widest font-bold text-gray-400"
+                        data-testid={`fa-target-occupied-${lang}`}
+                      >
+                        {awaitingVerification ? 'Checking…' : 'Unverified'}
+                      </span>
+                    )}
                     {isNeeded && (
                       <span
                         className="text-[8px] px-1.5 py-0.5 rounded uppercase tracking-widest font-bold"
@@ -548,7 +602,7 @@ export function ModelsSection({
                   </div>
                   {rowState.phase !== 'downloading' && (
                     <div className="flex items-center gap-2">
-                      {installed ? (
+                      {occupied ? (
                         <button
                           onClick={() => deleteFa(lang)}
                           disabled={busy}
