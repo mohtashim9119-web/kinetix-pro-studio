@@ -3268,3 +3268,25 @@ nowhere. Relocating open defects into an append-only archive would make them unf
 This question is now moot: WS2 is simply open as a general non-sync workstream with no finite scope
 to close.
 
+---
+
+## WS2 — tooling tracking decision (2026-09-05)
+
+**Measured sizes (this machine).** `.work-phase4/session-ws2-49/` = 44K on disk
+(`measure_orphans.py` 24K, `idbkey.py` 4K, plus run output). `.work-phase4/replay/` = 85M on disk.
+
+**Gitignore rule.** Both paths are excluded by `.gitignore:45` (`.work-phase4/` — single blanket rule).
+
+**Test behaviour without replay fixtures (fresh worktree, no `.work-phase4/replay/`).**
+- `scripts/phase4-handoff-replay-sync.test.ts` — **fails hard** (3/6): `requireInput` throws with
+  `python3 scripts/phase4-restore-replay-inputs.py` in the message; not skipped, not silent pass.
+- `scripts/phase4-fa-replay.test.ts` — passes (50/50): uses committed `scripts/fixtures/` only.
+- ~35 other `scripts/*.test.ts` files reference `REPLAY_ROOT`; most throw or use `skipIf` when
+  inputs are absent — golden replay is the named gate that fails without regeneration.
+
+**Decision.**
+- **Tracked:** `scripts/ws2-49-measurement/{measure_orphans.py,idbkey.py,README.md}` — small text
+  files; audit numbers are unreproducible without them.
+- **Not tracked:** `.work-phase4/replay/` (~85M). Reproduction gap recorded explicitly in
+  `docs/work-in-progress.md` §3 (replay fixture reproduction gap entry).
+

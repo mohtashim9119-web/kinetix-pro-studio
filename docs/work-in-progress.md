@@ -167,7 +167,7 @@ Baselines (f28a012): vitest 3121 passed / 77 skipped / 0 failed; gaplessInvarian
 - [OPEN] tauriFfmpeg.ts:45-72 Base64 IPC: brief-estimated ~2.33× peak inflation on ~73MiB voiceover (not measured here). Pass raw paths. Dupes: App.tsx:3168/3399; fa-dev:4846.
 - [OPEN] Legacy v1 assets Store Purge: 266 rows, 166.6MiB. Migration App.tsx:2231 copies to v2 and never deletes. Shipping defect; no reference check required.
 - [OPEN · NON-BLOCKING] Dev-Profile IDB Cleanup: orphan pool 15 rows plus V8 399 duplicate rows, 469MiB reclaimable. V8 rows need the four-reference check each.
-- [OPEN · NON-BLOCKING] Tooling Tracking Decision: whether .work-phase4/session-ws2-49/ scripts and .work-phase4/replay/ fixtures should be git-tracked for reproducibility.
+- [OPEN · NON-BLOCKING] Replay fixture reproduction gap: `.work-phase4/replay/` (~85M, gitignored) is required by golden replay (3 corpus tests) and ~35 WS1 measurement scripts; a fresh clone fails those until `python3 scripts/phase4-restore-replay-inputs.py` is run locally. Tracking the bundle is unreasonable at this size.
 
 ### 4. Open bugs
 
