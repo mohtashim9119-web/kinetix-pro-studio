@@ -294,7 +294,7 @@ describe('R.11 — detectSeamFitDefects, real corpus fixtures', () => {
     expect(f!.committedValue).toBeCloseTo(16.50, 2);
     expect(f!.correctedValue).toBeCloseTo(17.88, 2); // ear-correct
     expect(f!.fitDeviation).toBeCloseTo(1.5, 4);
-  });
+  }, V6_TIMEOUT_MS);
 
   it("173: does NOT fire on hostile_landscape (item 10, R.10's own scope — mutual exclusion)", () => {
     // hostile_landscape sits at pre-filter index 1 in the complete parse
@@ -315,7 +315,7 @@ describe('R.11 — detectSeamFitDefects, real corpus fixtures', () => {
     // what matters, and what is asserted below (apply-time), is that R.10's
     // already-correct 0.00 is never disturbed.
     if (f) expect(f.segmentIndex).not.toBe(0); // still pre-filter index 1 here.
-  });
+  }, V6_TIMEOUT_MS);
 
   it("spanish: never fires on 001_scylla_intro — segment 0 is structurally excluded regardless of fit", () => {
     const { segments, tokens, silences } = loadCorpus('spanish');
