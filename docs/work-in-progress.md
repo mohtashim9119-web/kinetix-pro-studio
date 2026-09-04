@@ -191,12 +191,24 @@ in `docs/history-2.md`.
     first (read `dedupedNew`, not `newAssets`). Reachability is narrow: the drop needs a concurrent
     add mid-extraction (`assetsRef.current` only updates in an effect at `App.tsx:4865`). Site A
     (`extractZipToAssets` consumer) closed at `a2e2b26` (`services/zipAssetMerge.ts`).
-  - **Audit Task:** `FINAL TEST V8` holds 798 DB rows for 399 assets (`assetStore.ts:47`). Any
-    cleanup rule must preserve assets referenced in undo history (`historyPersist.ts:170`),
-    `lastTranscribedAssetId`, staged voiceovers, and `waveformStore.ts:114`. Neither dedup site
-    explains an exact 2× — one fires only on genuine name collisions, the other needs a race.
-  - **Trigger:** Fixing `processZipFile`'s `voiceoverId` derivation, or executing the report-only
-    classifier script.
+  - **Audit Task — DIAGNOSED, not closed (WS2-49, 2026-09-04):** the 798/399 count is a one-time
+    event, not a systemic write-path pattern — every other project on disk measures exactly 1:1.
+    All 399 orphans sit in one contiguous recordID block written 2026-08-25, byte-identical to
+    exactly one referenced asset in a second block written 2026-08-27, with no successful project
+    save between the batches — matching this project's `QuotaExceededError` incident already
+    documented at `projectStore.ts:71` for that date. 398 of 399 are reachable from none of
+    `historyPersist.ts`, `lastTranscribedAssetId`, a staged voiceover, or `waveformStore.ts`; one
+    stale `waveformStore` peaks entry survives for the old voiceover id. Stays open as cleanup
+    (delete contract unbuilt), not diagnosis. **NOT DETERMINED:** whether the abort was
+    `QuotaExceededError`, a crash, or a cancel — no console output from that session persists.
+  - **Standing verdict (WS2-49):** the eager asset-write path may proceed without that mechanism
+    being known, given a probe-verified delete contract plus a before/after row-count check
+    against this baseline.
+  - **Measurement artifacts:** `.work-phase4/session-ws2-49/` (gitignored). **NOT DETERMINED:**
+    whether to promote it to a tracked path — an unrepeatable baseline is worth less than the
+    number it produced.
+  - **Trigger:** Fixing `processZipFile`'s `voiceoverId` derivation, or building the delete
+    contract above.
 - [DEFERRED] Non-English Localization & Corpora Gap
   - **Parent Prerequisite:** Missing real `fr`, `de`, and `pt` golden audio/transcript corpora.
   - **Sub-Items:**
@@ -261,6 +273,25 @@ in `docs/history-2.md`.
   stays correct and its job is only to fail loudly if a sixth language ever makes the branch
   reachable (`models.ts:21` / `models.rs:182` still hardcode the same five-code list three times,
   independently). **Trigger:** that guard going red.
+- [OPEN · NON-BLOCKING] WebKit profile split (WS2-49): the dev binary sets no
+  `CFBundleIdentifier`, so WebKit falls back to `~/Library/WebKit/app/` instead of the folder
+  matching `tauri.conf.json`'s bundle id — that bundle-id folder holds a stale profile with no V8
+  (IndexedDB) in it. Any IndexedDB measurement or cleanup must target the dev binary's actual
+  profile, not the bundle-id path config implies. No owner.
+- [OPEN] Two further IndexedDB leaks found in passing (WS2-49, unexamined, different mechanism
+  from the 798/399 entry above, unscoped, no cost read): a 266-row legacy pre-v2 assets store
+  with no `projectId`, and at least one fully orphaned project pool (asset rows, no
+  `project.json`). No owner.
+- [OPEN] `tauriFfmpeg.ts`'s duration/fps probes (`probeAudioDuration`/`probeVideoFps`,
+  `tauriFfmpeg.ts:45-72`) base64-encode the entire blob over Tauri IPC before either sidecar
+  runs — the pattern this repo's `CLAUDE.md` §4 invariant prohibits (raw-body precedent:
+  `ffmpeg_write_file_raw`/`whisper_stage_audio_raw`/`fa_stage_audio_raw`), same IPC/disk cost
+  class as the T4.8 incident. Not fixed; no cost measurement taken. No owner.
+- [OPEN] `emptySceneDocAbortMessage` (`App.tsx:1009`, message `App.tsx:1002`, checked
+  `App.tsx:3319`) always reports "no scenes to sync," but in the staged-files path
+  (`App.tsx:3223-3225`) a 0-segment parse can equally mean no scene file was ever staged and
+  `project.sceneDetails` was never committed — not a real doc parsing to zero. Misleading for
+  that case. Not changed this round — `App.tsx` is Cursor-owned. No owner.
 
 ---
 
