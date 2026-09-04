@@ -161,6 +161,7 @@ function makeDropZonePanelProps(overrides: Partial<DropZonePanelProps> = {}): Dr
     onStagedFilesChange: noop,
     onVoiceoverStaged: noop,
     onVoiceoverUnstaged: noop,
+    onVoiceoverRestored: () => true,
     applySyncDisabled: false,
     onSegmentClick: noop,
     onToggleLock: noop,

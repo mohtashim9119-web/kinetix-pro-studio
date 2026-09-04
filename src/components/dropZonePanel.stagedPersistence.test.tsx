@@ -40,6 +40,8 @@ import type { ComponentProps } from 'react';
 import { DropZonePanel, type StagedFiles } from './DropZonePanel';
 import { TransitionType } from '../types';
 import { countStagedFiles, deleteAllStagedForProject, getStagedFilesForProject } from '../services/stagedFilesStore';
+import { ALL_PERSISTED_SLOTS, planStagedReconcile, toStoredRow } from '../services/stagedFilesPersist';
+import { putStagedFile } from '../services/stagedFilesStore';
 
 // React 19 requires this to be set before `act` will drive effects rather than
 // warning and running them out of band.
@@ -61,6 +63,7 @@ function makeProps(overrides: Partial<DropZonePanelProps> = {}): DropZonePanelPr
     onDeleteAsset: noop, onDeleteAllAssets: noop, onDeleteVoiceover: noop,
     onApplySync: noop, onStagedFilesChange: noop,
     onVoiceoverStaged: noop, onVoiceoverUnstaged: noop, applySyncDisabled: false,
+    onVoiceoverRestored: () => true,
     onSegmentClick: noop, onToggleLock: noop, onLockAll: noop, onUnlockAll: noop,
     allLocked: false, onOpenReviewMapping: noop, onInsertHeading: noop,
     selectedSegmentId: undefined, currentSegmentId: undefined,
@@ -210,5 +213,106 @@ describe('WS2-50 — a staged slot survives a dashboard round trip and a reload'
     expect(other.published()?.scriptFile, 'staged slots leaked across projects').toBeFalsy();
     other.unmount();
     await deleteAllStagedForProject('a-different-project');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2-50 Commit 3 — the voiceover slot is OFFERED to the app, never assumed.
+//
+// Adoption runs App.tsx's `handleVoiceoverStaged`, whose only non-destructive
+// branch is the same-file-with-cached-tokens early return. Every other branch
+// clears `transcriptTokens` and launches whisper-cli, which on app load is an
+// unrequested transcription that destroys the cache the recovery banner
+// depends on. So the panel asks, and a refusal must leave NOTHING behind — not
+// a populated-looking slot, and not a row that would re-offer the same file on
+// every future mount.
+// ---------------------------------------------------------------------------
+
+const VO_PROJECT = 'staged-voiceover-project';
+
+/** Seeds the store directly, standing in for "the user staged this before the
+ *  reload" without needing the panel's audio-detection path. */
+async function seedStaged(projectId: string, files: Partial<{
+  script: File; scene: File; voiceover: File; asset: File; zip: File;
+}>): Promise<void> {
+  let n = 0;
+  const mk = (f: File) => ({ file: f, key: `seed-${(n += 1)}` });
+  const next = {
+    scriptFile: files.script ? mk(files.script) : null,
+    sceneFile: files.scene ? mk(files.scene) : null,
+    voiceoverFile: files.voiceover ? mk(files.voiceover) : null,
+    assetFiles: files.asset ? [mk(files.asset)] : [],
+    zipFiles: files.zip ? [mk(files.zip)] : [],
+  };
+  const plan = planStagedReconcile(
+    { scriptFile: null, sceneFile: null, voiceoverFile: null, assetFiles: [], zipFiles: [] },
+    next,
+    ALL_PERSISTED_SLOTS,
+  );
+  for (const e of plan.write) await putStagedFile(await toStoredRow(projectId, e));
+}
+
+describe('WS2-50 — a restored voiceover is offered, and a refusal leaves nothing', () => {
+  beforeEach(async () => { await deleteAllStagedForProject(VO_PROJECT); });
+
+  it('an ADOPTED voiceover is restored into the slot', async () => {
+    await seedStaged(VO_PROJECT, {
+      voiceover: new File(['AUDIO'], 'vo.m4a', { type: 'audio/mp4', lastModified: 42 }),
+    });
+    const offered: string[] = [];
+    const panel = mountPanel({
+      projectId: VO_PROJECT,
+      onVoiceoverRestored: (f: File) => { offered.push(f.name); return true; },
+    });
+    await settle();
+    expect(offered, 'the panel never offered the restored voiceover to the app').toEqual(['vo.m4a']);
+    expect(panel.published()?.voiceoverFile?.file.name).toBe('vo.m4a');
+    expect(await countStagedFiles(VO_PROJECT)).toBe(1);
+    panel.unmount();
+  });
+
+  it('a REFUSED voiceover leaves the slot empty AND deletes its row', async () => {
+    // The row must go too. Leaving it would re-offer the same unusable file on
+    // every future mount, and would keep bytes on disk for a slot the user is
+    // never shown.
+    await seedStaged(VO_PROJECT, {
+      voiceover: new File(['AUDIO'], 'vo.m4a', { type: 'audio/mp4', lastModified: 42 }),
+      script: new File(['S'], 'script.txt', { type: 'text/plain' }),
+    });
+    expect(await countStagedFiles(VO_PROJECT)).toBe(2);
+    const panel = mountPanel({
+      projectId: VO_PROJECT,
+      onVoiceoverRestored: () => false,
+    });
+    await settle();
+    expect(
+      panel.published()?.voiceoverFile,
+      'a refused voiceover was restored into the slot anyway — it would look staged and fail ' +
+        'on use, or start an unrequested transcription.',
+    ).toBeNull();
+    // The other slots are unaffected: a refusal is scoped to the voiceover.
+    expect(panel.published()?.scriptFile?.file.name).toBe('script.txt');
+    const rows = await getStagedFilesForProject(VO_PROJECT);
+    expect(
+      rows.map(r => r.slotKey),
+      'the refused voiceover row survived — it will be re-offered on every mount.',
+    ).toEqual(['script']);
+    panel.unmount();
+  });
+
+  it('media and zip slots restore alongside the text slots', async () => {
+    await seedStaged(VO_PROJECT, {
+      script: new File(['S'], 'script.txt', { type: 'text/plain' }),
+      asset: new File(['IMG'], 'a.png', { type: 'image/png' }),
+      zip: new File(['ZIP'], 'pack.zip', { type: 'application/zip' }),
+    });
+    const panel = mountPanel({ projectId: VO_PROJECT, onVoiceoverRestored: () => true });
+    await settle();
+    const p = panel.published();
+    expect(p?.scriptFile?.file.name).toBe('script.txt');
+    expect(p?.assetFiles.map(f => f.file.name)).toEqual(['a.png']);
+    expect(p?.zipFiles.map(f => f.file.name)).toEqual(['pack.zip']);
+    expect(await countStagedFiles(VO_PROJECT)).toBe(3);
+    panel.unmount();
   });
 });

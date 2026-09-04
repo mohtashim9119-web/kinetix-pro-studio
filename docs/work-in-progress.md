@@ -146,13 +146,14 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 
 ## WS2 — Video Ingest & Distribution Bugs
 Started: 2026-08-26 (Step 3) | Status: **CLOSED 2026-09-03**, reopened for T4.3 and re-closed the same day.
-T4.3 (model-download transfer resilience) fixed an operator-reported FA pack failure: bounded retry with
-exponential backoff around the stream loop, conditional resume gated on a new `.part.meta` validator
-sidecar (URL + expected size + ETag/`X-Linked-ETag`/Last-Modified) plus a 206 `Content-Range` start/total
-check, the 416 permanent-stick discharged (discard once, restart, then permanent), three distinct error
-forms that never promise an impossible resume, and a new `fa_model_status` command so an FA row offers
-"Resume <bytes>" instead of a bare Download. Whisper shares the engine and was verified by destructive
-probe, not inference. Full record: `docs/history-2.md`. Original text follows. **CLOSED 2026-09-03.** All 4 numbered bugs and all four phases are done — Phase 4 (Settings & project creation) closed with T4.1 and T4.2. T4.2 also closed the bare-key shortcut leak (Space, `+`/`-`, arrows, `F` now read `shortcutsSuppressedRef` via `services/bareKeyShortcut.ts`, per-key probed) and ran the §5 hygiene pass, 15 entries → 8. No phase is queued after it; section 5 is the residual backlog, none of it owned. **Its entries stay here under the closed workstream:** the structure contract rules on closed ITEMS (fold into this line + `docs/history-2.md`) but is silent on a closed workstream's still-open ones, and the single-tracker rule puts them in this file under their own workstream section or nowhere. Attention moves to WS1.
+All 4 numbered bugs and all four phases are done. T4.3 (model-download transfer resilience), T4.1 and
+T4.2 (Settings & project creation, plus the bare-key shortcut leak and a §5 hygiene pass, 15 entries → 8)
+closed it; WS2-50 reopened it briefly for the Apply Sync entry point and staged-slot persistence. Full
+records for all of them: `docs/history-2.md`. No phase is queued after Phase 4; section 5 is the residual
+backlog, none of it owned. **Its entries stay here under the closed workstream:** the structure contract
+rules on closed ITEMS (fold into this line + `docs/history-2.md`) but is silent on a closed workstream's
+still-open ones, and the single-tracker rule puts them in this file under their own workstream section or
+nowhere. Attention moves to WS1.
 
 ### 1. Finished but pending verification
 
@@ -192,21 +193,13 @@ in `docs/history-2.md`.
     add mid-extraction (`assetsRef.current` only updates in an effect at `App.tsx:4865`). Site A
     (`extractZipToAssets` consumer) closed at `a2e2b26` (`services/zipAssetMerge.ts`).
   - **Audit Task — DIAGNOSED, not closed (WS2-49, 2026-09-04):** the 798/399 count is a one-time
-    event, not a systemic write-path pattern — every other project on disk measures exactly 1:1.
-    All 399 orphans sit in one contiguous recordID block written 2026-08-25, byte-identical to
-    exactly one referenced asset in a second block written 2026-08-27, with no successful project
-    save between the batches — matching this project's `QuotaExceededError` incident already
-    documented at `projectStore.ts:71` for that date. 398 of 399 are reachable from none of
-    `historyPersist.ts`, `lastTranscribedAssetId`, a staged voiceover, or `waveformStore.ts`; one
-    stale `waveformStore` peaks entry survives for the old voiceover id. Stays open as cleanup
-    (delete contract unbuilt), not diagnosis. **NOT DETERMINED:** whether the abort was
-    `QuotaExceededError`, a crash, or a cancel — no console output from that session persists.
-  - **Standing verdict (WS2-49):** the eager asset-write path may proceed without that mechanism
-    being known, given a probe-verified delete contract plus a before/after row-count check
-    against this baseline.
-  - **Measurement artifacts:** `.work-phase4/session-ws2-49/` (gitignored). **NOT DETERMINED:**
-    whether to promote it to a tracked path — an unrepeatable baseline is worth less than the
-    number it produced.
+    event, not a systemic write-path pattern — every other project measures exactly 1:1, and all
+    399 orphans sit in one contiguous block matching this project's documented
+    `QuotaExceededError` incident (`projectStore.ts:71`, 2026-08-25). Stays open as cleanup
+    (delete contract unbuilt for `kinetix-assets`), not diagnosis. Full evidence and the standing
+    verdict permitting the eager write path: `docs/history-2.md`; artifacts in
+    `.work-phase4/session-ws2-49/`. Re-measured unchanged at WS2-50. **NOT DETERMINED:** whether
+    the abort was `QuotaExceededError`, a crash, or a cancel.
   - **Trigger:** Fixing `processZipFile`'s `voiceoverId` derivation, or building the delete
     contract above.
 - [DEFERRED] Non-English Localization & Corpora Gap
@@ -261,10 +254,9 @@ in `docs/history-2.md`.
     vitest harness allowances, not in-test performance assertions.
     `scripts/ws1-session-s-exclusion.test.ts` (6/6 isolated; **unconfirmed at current main** —
     named from session-ws2-06 at `bc3a156`, not reproduced under load at `a8e22c1`).
-  - **Measured profiles (3059 total):** suite is green only sometimes. Flake profiles under load:
-    **2980 / 2 / 77** (`bc3a156`, session-ws2-06) and **2979 / 3 / 77** (`a8e22c1`, pre-fix,
-    back-to-back runs) — both failures are timeout budgets, not logic failures. Green when
-    uncontended: **2982 / 77 / 0**.
+  - **Measured profiles:** green when uncontended (**3110 / 77 / 0** at WS2-50). Historical flake
+    profiles under load, both timeout budgets rather than logic failures: 2980/2/77 (`bc3a156`)
+    and 2979/3/77 (`a8e22c1`). Full numbers: `docs/history-2.md`.
   - **Trigger:** dedicated CI pool or further harness headroom — not silencing individual failures
     without measuring isolation cost.
 - [DEFERRED] FA pack detector `unsupported` state (manual row E8) is not user-reachable from the
@@ -287,11 +279,20 @@ in `docs/history-2.md`.
   runs — the pattern this repo's `CLAUDE.md` §4 invariant prohibits (raw-body precedent:
   `ffmpeg_write_file_raw`/`whisper_stage_audio_raw`/`fa_stage_audio_raw`), same IPC/disk cost
   class as the T4.8 incident. Not fixed; no cost measurement taken. No owner.
-- [OPEN] `emptySceneDocAbortMessage` (`App.tsx:1009`, message `App.tsx:1002`, checked
-  `App.tsx:3319`) always reports "no scenes to sync," but in the staged-files path
-  (`App.tsx:3223-3225`) a 0-segment parse can equally mean no scene file was ever staged and
-  `project.sceneDetails` was never committed — not a real doc parsing to zero. Misleading for
-  that case. Not changed this round — `App.tsx` is Cursor-owned. No owner.
+- [OPEN · NON-BLOCKING] A voiceover staged but never successfully transcribed does not survive
+  a reload (WS2-50, deliberate). Restoring it means running `handleVoiceoverStaged`, whose only
+  non-destructive branch is the same-file-with-cached-tokens early return; every other branch
+  clears `transcriptTokens` and launches whisper-cli, which on app load is an unrequested
+  transcription that wipes the cache the recovery banner depends on. `canAdoptRestoredVoiceover`
+  (`stagedFilesPersist.ts`) refuses those, and the panel drops both the slot and its row. Closing
+  this needs a deliberate "transcribe this restored file" affordance, not a looser gate. No owner.
+- [OPEN] Apply Sync builds a zero-duration timeline when no voiceover resolves. `App.tsx:3354`
+  falls back to `audioRef.current?.duration || 0`, and with no voiceover asset neither the
+  duration abort (`:3357`, guarded on `voiceoverAsset`) nor the empty-transcript abort (`:3407`,
+  guarded on `!!voiceoverAsset`) fires — `parseProjectData` then proportions every segment against
+  0. Pre-existing and reachable today from the panel's own button; WS2-50 makes the banner path
+  reach it too. Not fixed: the right behaviour (abort vs. character-timed fallback) is a policy
+  call. No owner.
 
 ---
 

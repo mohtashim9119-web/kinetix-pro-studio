@@ -42,9 +42,22 @@ import type { StoredStagedFile } from './stagedFilesStore';
  *  for: the text slots carry no blob risk, the media slots do. */
 export type StagedSlotKind = 'script' | 'scene' | 'voiceover' | 'asset' | 'zip';
 
-/** Text-only. `voiceover`/`asset`/`zip` are deliberately absent — see the
- *  WS2-50 design report and the voiceover hazard it records. */
+/** Text-only. Kept as a named set because the two text slots carry no blob
+ *  cost and no transcription interaction — the distinction the WS2-50 commits
+ *  were split on. */
 export const TEXT_SLOTS: readonly StagedSlotKind[] = ['script', 'scene'] as const;
+
+/** Every slot this build persists (WS2-50 Commit 3).
+ *
+ *  `voiceover` is persisted, but restoring it is NOT unconditional — see
+ *  `App.tsx`'s `handleVoiceoverRestored`. Adopting a restored voiceover runs
+ *  `handleVoiceoverStaged`, and every branch of that function except the
+ *  same-file-cached-tokens early return clears `transcriptTokens` and launches
+ *  whisper-cli. On app load that is an unrequested transcription that destroys
+ *  the very cache the recovery banner exists to protect, so a voiceover is
+ *  restored only when the safe branch is provably the one that will run. */
+export const ALL_PERSISTED_SLOTS: readonly StagedSlotKind[] =
+  ['script', 'scene', 'voiceover', 'asset', 'zip'] as const;
 
 /** The singleton slots address by kind, so replacing one overwrites its row in
  *  place and cannot leave a predecessor behind. The multi-file slots address by
@@ -183,4 +196,39 @@ export function restoreStagedFiles(rows: readonly StoredStagedFile[]): StagedFil
 export function isStagedEmpty(staged: StagedFiles): boolean {
   return !staged.scriptFile && !staged.sceneFile && !staged.voiceoverFile
     && staged.assetFiles.length === 0 && staged.zipFiles.length === 0;
+}
+
+/**
+ * WS2-50 — may a voiceover recovered from the staged store be adopted on mount?
+ *
+ * ADOPTION MEANS RUNNING `App.tsx`'s `handleVoiceoverStaged`, and only one of
+ * its branches is non-destructive: the early return taken when this exact file
+ * is already the transcribed one AND its tokens are still cached, which mints
+ * the pending asset and re-points `lastTranscribedAssetId` without touching
+ * Whisper. Every other branch clears `transcriptTokens` and launches
+ * whisper-cli — on app load that is an unrequested transcription that destroys
+ * the very cache the recovery banner exists to protect.
+ *
+ * So this predicate is deliberately the SAME condition as that early return,
+ * not an approximation of it. It lives here, as a pure function, rather than
+ * inline in `App.tsx`, because a source scan cannot tell a disjunction from
+ * either of its halves — measured: destructive probes C2 and C3 each deleted
+ * one clause from an inline `if` and the scan-based guard stayed GREEN, because
+ * the clause's text was still present in the declaration above it.
+ *
+ * BOTH clauses are load-bearing and fail differently. Without the same-file
+ * clause, a DIFFERENT audio file is adopted against another file's tokens.
+ * Without the cached-tokens clause, the same file is adopted with nothing to
+ * skip the transcription, so Whisper runs anyway.
+ */
+export function canAdoptRestoredVoiceover(input: {
+  /** `getFileIdentity(file)` for the restored file. */
+  fileIdentity: string;
+  /** `Project.lastTranscribedFileIdentity`. */
+  lastTranscribedFileIdentity: string | undefined;
+  /** `Project.transcriptTokens?.length ?? 0`. */
+  cachedTokenCount: number;
+}): boolean {
+  return input.lastTranscribedFileIdentity === input.fileIdentity
+    && input.cachedTokenCount > 0;
 }

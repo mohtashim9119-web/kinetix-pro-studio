@@ -32,7 +32,9 @@ import { fileURLToPath } from 'url';
 import type { StagedFile, StagedFiles } from '../components/DropZonePanel';
 import {
   TEXT_SLOTS,
+  ALL_PERSISTED_SLOTS,
   planStagedReconcile,
+  canAdoptRestoredVoiceover,
   enumerateStagedSlots,
   restoreStagedFiles,
   slotKeyFor,
@@ -77,7 +79,7 @@ async function applyPlan(
   projectId: string,
   prev: StagedFiles,
   next: StagedFiles,
-  enabled: readonly StagedSlotKind[] = TEXT_SLOTS,
+  enabled: readonly StagedSlotKind[] = ALL_PERSISTED_SLOTS,
 ): Promise<void> {
   const plan = planStagedReconcile(prev, next, enabled);
   for (const slotKey of plan.remove) await deleteStagedFile(projectId, slotKey);
@@ -190,16 +192,31 @@ describe('WS2-50 — staged-slot delete contract', () => {
   });
 
   it('TEXT_SLOTS restricts persistence to script and scene', async () => {
-    // Commit 2's scope, asserted rather than assumed: a voiceover or media
-    // file staged in this build writes nothing.
+    // The enabled-set mechanism itself, asserted rather than assumed — it is
+    // what let WS2-50 ship the text slots before paying the blob slots' cost.
     const p = freshProject();
     const staged: StagedFiles = {
       scriptFile: sf('s.txt'), sceneFile: null,
       voiceoverFile: sf('vo.mp3'), assetFiles: [sf('a.png')], zipFiles: [sf('z.zip')],
     };
-    await applyPlan(p, EMPTY, staged);
+    await applyPlan(p, EMPTY, staged, TEXT_SLOTS);
     const rows = await getStagedFilesForProject(p);
     expect(rows.map(r => r.slotKey)).toEqual(['script']);
+  });
+
+  it('ALL_PERSISTED_SLOTS covers every slot the panel can hold', async () => {
+    // Commit 3's scope. A slot missing from this set silently does not persist,
+    // which looks exactly like a slot that persists and fails to restore.
+    const p = freshProject();
+    const staged: StagedFiles = {
+      scriptFile: sf('s.txt'), sceneFile: sf('d.txt'), voiceoverFile: sf('vo.mp3'),
+      assetFiles: [sf('a.png')], zipFiles: [sf('z.zip')],
+    };
+    await applyPlan(p, EMPTY, staged, ALL_PERSISTED_SLOTS);
+    const rows = await getStagedFilesForProject(p);
+    expect(rows.map(r => r.slotKey).sort()).toEqual(
+      ['asset:' + staged.assetFiles[0]!.key, 'scene', 'script', 'voiceover', 'zip:' + staged.zipFiles[0]!.key].sort(),
+    );
   });
 });
 
@@ -290,6 +307,7 @@ describe('WS2-50 — staged-slot restore roundtrip', () => {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PANEL_SRC = readFileSync(resolve(HERE, '..', 'components', 'DropZonePanel.tsx'), 'utf-8');
 const DASHBOARD_SRC = readFileSync(resolve(HERE, '..', 'components', 'ProjectDashboard.tsx'), 'utf-8');
+const APP_SRC = readFileSync(resolve(HERE, '..', 'App.tsx'), 'utf-8');
 
 describe('WS2-50 — the delete contract is actually invoked', () => {
   it('updateStaged reconciles persistence at the single choke point', () => {
@@ -340,5 +358,95 @@ describe('WS2-50 — the delete contract is actually invoked', () => {
       'ProjectDashboard no longer clears staged rows on delete — they outlive the only thing ' +
         'that could ever restore them.',
     ).toContain('await deleteAllStagedForProject(id);');
+  });
+});
+
+describe('WS2-50 — a restored voiceover never starts a transcription', () => {
+  /** `handleVoiceoverRestored`'s body. */
+  function restoredBody(): string {
+    const marker = 'const handleVoiceoverRestored = useCallback((file: File): boolean => {';
+    const start = APP_SRC.indexOf(marker);
+    expect(start, 'handleVoiceoverRestored not found — this guard has lost its target')
+      .toBeGreaterThan(-1);
+    const rest = APP_SRC.slice(start + marker.length);
+    return rest.slice(0, rest.indexOf('\n  },'));
+  }
+
+  // The predicate itself is a pure function, tested behaviourally below, so
+  // this scan only has to prove App.tsx DELEGATES to it. That split exists
+  // because destructive probes C2 and C3 each deleted one clause from the
+  // former inline `if` and a scan-based guard stayed GREEN — the clause's text
+  // was still present in the declaration above it. A scan cannot tell a
+  // disjunction from either of its halves.
+  it('App.tsx delegates the decision to the shared predicate', () => {
+    const body = restoredBody();
+    expect(
+      body,
+      'handleVoiceoverRestored no longer calls canAdoptRestoredVoiceover — the gate has been ' +
+        'reinlined, where a source scan cannot see a missing clause.',
+    ).toContain('canAdoptRestoredVoiceover({');
+    expect(body, 'the gate no longer refuses anything').toContain('if (!adoptable) return false;');
+  });
+
+  describe('canAdoptRestoredVoiceover — the full truth table', () => {
+    const ID = 'vo.m4a|31354992|1784882086000';
+
+    it('adopts only when the file matches AND tokens are cached', () => {
+      expect(canAdoptRestoredVoiceover({
+        fileIdentity: ID, lastTranscribedFileIdentity: ID, cachedTokenCount: 4618,
+      })).toBe(true);
+    });
+
+    it('refuses a DIFFERENT file even with tokens cached', () => {
+      // Adopting here would bind one audio file to another file's tokens.
+      expect(canAdoptRestoredVoiceover({
+        fileIdentity: ID, lastTranscribedFileIdentity: 'other.m4a|1|1', cachedTokenCount: 4618,
+      })).toBe(false);
+    });
+
+    it('refuses the SAME file when no tokens are cached', () => {
+      // handleVoiceoverStaged would have nothing to skip the transcription
+      // with, so whisper-cli launches on app load.
+      expect(canAdoptRestoredVoiceover({
+        fileIdentity: ID, lastTranscribedFileIdentity: ID, cachedTokenCount: 0,
+      })).toBe(false);
+    });
+
+    it('refuses when nothing was ever transcribed', () => {
+      expect(canAdoptRestoredVoiceover({
+        fileIdentity: ID, lastTranscribedFileIdentity: undefined, cachedTokenCount: 0,
+      })).toBe(false);
+      // And an undefined identity must never be treated as a wildcard match.
+      expect(canAdoptRestoredVoiceover({
+        fileIdentity: ID, lastTranscribedFileIdentity: undefined, cachedTokenCount: 4618,
+      })).toBe(false);
+    });
+  });
+
+  it('the refusal path is reachable before any adoption', () => {
+    // Ordering matters: the guard must return BEFORE handleVoiceoverStaged is
+    // called, not after it.
+    const body = restoredBody();
+    const refuse = body.indexOf('if (!adoptable) return false;');
+    const adopt = body.indexOf('handleVoiceoverStaged(file);');
+    expect(refuse, 'no refusal in handleVoiceoverRestored').toBeGreaterThan(-1);
+    expect(adopt, 'handleVoiceoverRestored never adopts').toBeGreaterThan(-1);
+    expect(
+      refuse < adopt,
+      'handleVoiceoverStaged is called before the refusal gate — the destructive branch runs ' +
+        'on app load regardless of what the gate then decides.',
+    ).toBe(true);
+  });
+
+  it('the panel drops both the slot and the row on a refusal', () => {
+    expect(
+      PANEL_SRC,
+      'a refused voiceover is no longer cleared from the restored slot — it would look staged ' +
+        'and fail on use.',
+    ).toContain('restored.voiceoverFile = null;');
+    expect(
+      PANEL_SRC,
+      'a refused voiceover’s row is no longer deleted — it will be re-offered on every mount.',
+    ).toContain("void deleteStagedFile(projectId, 'voiceover');");
   });
 });

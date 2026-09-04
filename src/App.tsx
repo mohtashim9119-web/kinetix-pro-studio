@@ -230,6 +230,7 @@ import { armRecoveryBannerFromPersistedProject } from './services/recoveryBanner
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, SUPPORTED_LANGUAGE_CODES } from './constants';
 import { DropZonePanel, EMPTY_STAGED, type StagedFiles } from './components/DropZonePanel';
+import { canAdoptRestoredVoiceover } from './services/stagedFilesPersist';
 import { NEUTRAL_GRADE, type ApplyEvent, type ApplyScope, type AutoGradeResult } from './components/EffectsPanel';
 import { capRateForDuration } from './services/zoomScale';
 import { resolvePresetScaleRate } from './services/lookPresetService';
@@ -3246,6 +3247,41 @@ export default function App() {
    * prop type is `(s) => Promise<void>`, which accepts it), so abort paths
    * keep behaving for that caller exactly as they did.
    */
+  /**
+   * WS2-50 — a voiceover recovered from the staged store, offered back on
+   * mount. Returns whether it was adopted.
+   *
+   * THE HAZARD THIS GATE EXISTS FOR. Adoption means calling
+   * `handleVoiceoverStaged`, and only ONE of its branches is non-destructive:
+   * the early return taken when this exact file is already the transcribed one
+   * and its tokens are still cached, which mints the pending asset and
+   * re-points `lastTranscribedAssetId` without touching Whisper. Every other
+   * branch clears `transcriptTokens` and launches whisper-cli. Running that on
+   * app load would start a long transcription nobody asked for AND wipe the
+   * live token cache — in the exact scenario this workstream exists to fix, a
+   * reload holding an unapplied transcript.
+   *
+   * So the predicate below is deliberately the SAME condition as that early
+   * return, read off the same ref, rather than an approximation of it: adopt
+   * only when the safe branch is provably the one that will run.
+   *
+   * A refusal is not a silent downgrade. The panel drops the slot and deletes
+   * its row, so the user sees an empty voiceover slot — the honest state — and
+   * re-dropping the file starts transcription on their action, where it
+   * belongs. Named degradation: a voiceover staged but never successfully
+   * transcribed does not survive a reload.
+   */
+  const handleVoiceoverRestored = useCallback((file: File): boolean => {
+    const adoptable = canAdoptRestoredVoiceover({
+      fileIdentity: getFileIdentity(file),
+      lastTranscribedFileIdentity: projectRef.current.lastTranscribedFileIdentity,
+      cachedTokenCount: projectRef.current.transcriptTokens?.length ?? 0,
+    });
+    if (!adoptable) return false;
+    handleVoiceoverStaged(file);
+    return true;
+  }, [handleVoiceoverStaged]);
+
   const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {
     // THE ONE READ OF THE LIVE STAGED STATE, and it is the first statement on
     // purpose. Everything below uses this local snapshot, so the panel is free
@@ -6013,6 +6049,7 @@ export default function App() {
             onStagedFilesChange={handleStagedFilesChange}
             onVoiceoverStaged={handleVoiceoverStaged}
             onVoiceoverUnstaged={handleVoiceoverUnstaged}
+            onVoiceoverRestored={handleVoiceoverRestored}
             applySyncDisabled={applySyncDisabled}
             onUndo={handleUndo}
             onRedo={handleRedo}

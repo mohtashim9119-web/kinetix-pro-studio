@@ -3093,3 +3093,81 @@ the T4.1/T4.2 close-out entry above. Key outcomes preserved:
 - **E8:** `unsupported` FA-pack state still deferred — dropdown built from five supported codes only.
 
 Full row text retrievable: `git show bc3a156:docs/ws2-t41-phase4-manual-checklist.md`.
+
+---
+
+## WS2-50 — Apply Sync entry point + staged-slot persistence (2026-09-05)
+
+Branch `ws2-50-staged-slot-persistence`, three commits off `eb10bef`.
+
+**The operator-reported defect.** After a reload, the recovery banner's Apply Sync failed with
+the empty-scene-doc abort even with all four slots re-populated, while the main bottom Apply
+Sync button worked on the same project in the same session. Cause: both buttons shared
+`handleApplySyncFromFiles` but diverged on its INPUT. The panel passed its live staged files;
+the banner passed a hand-written all-`null` `StagedFiles` literal, written on the reasoning
+that a returning user has nothing staged and every staged field falls back to its committed
+project value. The second half only holds once something has been committed — after a reload
+of a project whose first Apply Sync never completed, `project.sceneDetails` is `''`. Predicted
+verbatim in the WS2-47 report.
+
+**Fix (`f9a99d0`).** Structural rather than "pass the right argument": `handleApplySyncFromFiles`
+takes no staged argument and reads a shared `App`-level ref as its first synchronous statement,
+so no call site retains the ability to invent an input. `DropZonePanel` publishes that ref from
+`updateStaged` — the one choke point every staged mutation already passes through — and
+republishes on mount, because the panel unmounts on the `showDashboard` ternary. `updateStaged`
+now derives its next value from the ref rather than from `setState`'s `prev`; the previous form
+assigned the ref inside the state updater, which React is free to defer.
+
+Also closed the §5 misleading-message entry: `emptySceneDocAbortMessage` now takes the resolved
+scene text and distinguishes "a real doc with no scene tags" (`EMPTY_SCENE_DOC_MESSAGE`) from
+"no scene doc at all" (`NO_SCENE_DOC_MESSAGE`), which classifies `transcript_unrelated` like its
+sibling.
+
+**Storage design (`b2a415f`, `4d1e...` for slots 3-4).** A dedicated IndexedDB database
+`kinetix-staged`, NOT a field on `Project`. Reasons in descending order of force: (1) undo would
+resurrect it — `history.ts` snapshots the whole `Project`, so a staged slot there becomes
+undoable and an undo past a file swap re-stages a file the user already replaced; (2) a `File`
+cannot round-trip a `Project` snapshot, since `projectStore`/`historyPersist` both strip `blob:`
+URLs and `File` handles by design; (3) payload multiplication. Separate from `kinetix-assets`
+deliberately: WS2-49's orphan accounting there is "rows == `project.assets` references", and
+staged rows are referenced by no such entry, so co-locating them would make every staged file
+read as an orphan and destroy that measurement.
+
+**Correction to a premise carried into this round.** The brief stated that "the pattern this repo
+already settled for transcription drafts was a dedicated store rather than a field on Project."
+That is inverted: `unappliedTranscript` IS a field on `Project` (`types.ts:556`), persisted with
+the project JSON and present in history snapshots. The design above reaches the same destination
+by different reasoning, and the accurate half of the premise — staged state stays distinct from
+the committed fields, as `unappliedTranscript` is distinct from `transcriptTokens` — is honoured.
+
+**Delete contract.** A pure set diff (`stagedFilesPersist.ts`) reconciled at `updateStaged`, so
+persisted rows always equal currently-staged slots. Covers replace, clear, remove-one, Apply and
+Discard without any of them remembering to call a delete, plus `deleteAllStagedForProject` on
+project deletion. Avoids `processZipFile`'s shape: `next` is the decided membership and only keys
+present in it are written, so no blob is written before its membership is decided. Singleton slots
+address by kind (a replace overwrites in place); multi-file slots by React key.
+
+**Raw bytes: required, all four slots.** `App.tsx:3285/3288` read `.text()`; `:3306` and
+`:3333-3339` pass the `File` to `persistFileToAsset`; `:3340` unzips it; the duration probe does
+`blob.arrayBuffer()`. Restoring references without bytes would satisfy the UI and break the
+action. `lastModified` is preserved because `getFileIdentity` is `name|size|lastModified` and is
+the transcription cache key.
+
+**The voiceover hazard, and the gate built for it.** `handleVoiceoverStaged` has exactly one
+non-destructive branch — the same-file-with-cached-tokens early return. Every other branch clears
+`transcriptTokens` and launches whisper-cli, so restoring a voiceover unconditionally would start
+an unrequested transcription ON APP LOAD and wipe the cache the recovery banner depends on, in
+precisely the scenario this workstream exists to fix. `canAdoptRestoredVoiceover` is therefore the
+same condition as that early return, extracted as a pure function; a refusal drops both the slot
+and its row. **Named degradation:** a voiceover staged but never successfully transcribed does not
+survive a reload — the user re-drops it, starting transcription on their action.
+
+**Measurements.** Orphan row counts before/after identical across all 9 projects (1:1 everywhere
+except FINAL TEST V8's diagnosed 2.0 write-off and two pre-existing anomalies already in §5).
+Eager-write cost: zero IPC/base64 (structured clone only, guarded structurally); worst-case text
+payload 58,023 B on the largest corpus. Full artefacts: `.work-phase4/session-ws2-50/`.
+
+**NOT DETERMINED:** real WebKit IndexedDB write throughput — every timing figure here is either a
+sequential read of the store's backing files or `fake-indexeddb` in memory. No live-app run was
+performed this round; the orphan evidence is store-level row-count assertions plus an unchanged
+disk snapshot, not an observed app session.

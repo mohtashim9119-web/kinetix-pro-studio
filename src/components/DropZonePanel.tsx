@@ -41,7 +41,7 @@ import { matchesSegmentQuery, computeSegmentDisplayTitle } from '../services/seg
 import { isSliceSegmentId } from '../services/segmentId';
 import { computeDurationBarHeightPx, resolveDropGapIndex } from '../services/timelineLayout';
 import {
-  TEXT_SLOTS,
+  ALL_PERSISTED_SLOTS,
   planStagedReconcile,
   restoreStagedFiles,
   toStoredRow,
@@ -356,6 +356,12 @@ interface Props {
   onVoiceoverStaged: (file: File) => void;
   /** Fired when a staged-but-uncommitted voiceover is removed or replaced. */
   onVoiceoverUnstaged: () => void;
+  /** WS2-50 — offers a voiceover recovered from the staged store back to the
+   *  app on mount. Returns whether it was ADOPTED. A refusal means the app
+   *  cannot use this file without starting an unrequested transcription, so
+   *  the slot is left empty and its row dropped rather than shown as populated
+   *  and failing on use. See `App.tsx`'s `handleVoiceoverRestored`. */
+  onVoiceoverRestored: (file: File) => boolean;
   /** True while Apply Sync should be inert — voiceover staged/persisted but not yet transcribed. */
   applySyncDisabled: boolean;
   /** Undo/redo (Phase 2, 2026-08-08). Placed here — immediately left of Apply
@@ -477,6 +483,7 @@ export function DropZonePanel({
   onStagedFilesChange,
   onVoiceoverStaged,
   onVoiceoverUnstaged,
+  onVoiceoverRestored,
   applySyncDisabled,
   onUndo,
   onRedo,
@@ -651,7 +658,7 @@ export function DropZonePanel({
   projectIdRef.current = projectId;
 
   const reconcileStagedPersistence = (prev: StagedFiles, next: StagedFiles): void => {
-    const plan = planStagedReconcile(prev, next, TEXT_SLOTS);
+    const plan = planStagedReconcile(prev, next, ALL_PERSISTED_SLOTS);
     if (plan.write.length === 0 && plan.remove.length === 0) return;
     const owner = projectIdRef.current;
     persistChainRef.current = persistChainRef.current
@@ -715,6 +722,20 @@ export function DropZonePanel({
         // Never clobber a file the user staged while the load was in flight.
         if (!stagedIsEmpty(stagedRef.current)) return;
         const restored = restoreStagedFiles(rows);
+
+        // A restored voiceover is OFFERED, not assumed. Adoption runs
+        // App.tsx's handleVoiceoverStaged, whose only non-destructive branch
+        // is the same-file-with-cached-tokens early return; every other branch
+        // clears transcriptTokens and starts whisper-cli, which on app load is
+        // an unrequested transcription that destroys the cache the recovery
+        // banner depends on. A refusal drops the slot AND its row: a voiceover
+        // that cannot be used without that side effect must not sit in the UI
+        // looking staged.
+        if (restored.voiceoverFile && !onVoiceoverRestored(restored.voiceoverFile.file)) {
+          restored.voiceoverFile = null;
+          void deleteStagedFile(projectId, 'voiceover');
+        }
+
         stagedRef.current = restored;
         onStagedFilesChange(restored);
         setStaged(restored);
@@ -723,7 +744,7 @@ export function DropZonePanel({
       }
     })();
     return () => { cancelled = true; };
-  }, [projectId, onStagedFilesChange]);
+  }, [projectId, onStagedFilesChange, onVoiceoverRestored]);
 
   // `script` retained for compatibility; Apply Sync no longer gates on it.
   void script;
