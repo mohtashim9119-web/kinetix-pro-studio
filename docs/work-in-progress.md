@@ -144,9 +144,8 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 
 ---
 
-## WS2 — Video Ingest & Distribution Bugs
-Started: 2026-08-26 | Status: active — WS2-50 verified 2026-09-05 (staged slots, banner parity, staged-slot clear at f28a012).
-Full closed-phase records: `docs/history-2.md`.
+## WS2 — Non-Sync Work
+Status: OPEN — the general workstream for all development outside the sync pipeline (WS1). Active tasks live in the five sections below; completed items are recorded in `docs/history-2.md`.
 
 Baselines (f28a012): vitest 3121 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden replay 6/6; K13 3/3 (measured this tree); cargo 182/0/1 default and 264/0/26 with `--features fa-inference` (carried — `src-tauri/` unchanged since f28a012).
 

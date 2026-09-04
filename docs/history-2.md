@@ -3255,3 +3255,16 @@ vitest 3121/77/0, gaplessInvariant 36/36, golden replay 6/6, K13 3/3); required-
 constructor sweep found only the two f28a012 sites plus one source-text regex test with no props
 object.
 
+---
+
+## WS2 — closed-workstream open-items placement (2026-09-05)
+
+**Where a closed workstream's still-open items belong.** Its entries stay here under the closed
+workstream: the structure contract rules on closed ITEMS (fold into the workstream `Status:` line
+plus `docs/history-2.md`) but is silent on a closed workstream's still-open ones, and the
+single-tracker rule puts them in `docs/work-in-progress.md` under their own workstream section or
+nowhere. Relocating open defects into an append-only archive would make them unfindable as work.
+
+This question is now moot: WS2 is simply open as a general non-sync workstream with no finite scope
+to close.
+
