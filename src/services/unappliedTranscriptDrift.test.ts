@@ -124,7 +124,7 @@ describe('WS2 T4.7 — App.tsx apply-ordering wiring (probe-driven source guards
 
   /** `handleApplySyncFromFiles`'s body, signature to its closing `  };`. */
   function applySyncBody(): string {
-    const marker = 'const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<ApplySyncResult> => {';
+    const marker = 'const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {';
     const start = APP_SRC.indexOf(marker);
     expect(start, `'${marker}' not found — this guard has lost its target`).toBeGreaterThan(-1);
     const rest = APP_SRC.slice(start + marker.length);

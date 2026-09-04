@@ -229,7 +229,7 @@ import {
 import { armRecoveryBannerFromPersistedProject } from './services/recoveryBannerVisibility';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, SUPPORTED_LANGUAGE_CODES } from './constants';
-import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
+import { DropZonePanel, EMPTY_STAGED, type StagedFiles } from './components/DropZonePanel';
 import { NEUTRAL_GRADE, type ApplyEvent, type ApplyScope, type AutoGradeResult } from './components/EffectsPanel';
 import { capRateForDuration } from './services/zoomScale';
 import { resolvePresetScaleRate } from './services/lookPresetService';
@@ -1008,14 +1008,32 @@ export function preserveSegmentLocks(
 // ---------------------------------------------------------------------------
 
 export const EMPTY_SCENE_DOC_MESSAGE = 'Your scene doc has no scenes to sync. Add scene tags and try again.';
+/** WS2-50 — the OTHER way a sync parses zero segments: there is no scene doc at
+ *  all. `EMPTY_SCENE_DOC_MESSAGE` tells that user to "add scene tags", which is
+ *  advice about a document they do not have; the honest instruction is to load
+ *  one. Filed as misleading in `docs/work-in-progress.md` §5 and corrected here
+ *  because this round owns `App.tsx`. */
+export const NO_SCENE_DOC_MESSAGE = 'No scene doc is loaded, so there is nothing to sync. Add a scene details file and try again.';
 export const EMPTY_TRANSCRIPT_MESSAGE = 'No speech was found in the audio. No timeline will be created.';
 export const FULL_MISMATCH_MESSAGE = "This voiceover doesn't match your scene doc. No timeline will be created.";
 
 /** doc §3.11(b) — empty scene doc: a hard abort regardless of whether a
  *  previous sync's segments still exist (also covers the fresh-project case,
- *  which used to fall through silently). */
-export function emptySceneDocAbortMessage(parsedSegmentCount: number): string | null {
-  return parsedSegmentCount === 0 ? EMPTY_SCENE_DOC_MESSAGE : null;
+ *  which used to fall through silently).
+ *
+ *  `sceneDocText` is the resolved scene-doc text the parse actually ran on —
+ *  the staged file's contents when one was staged, otherwise the committed
+ *  `project.sceneDetails`. Supplying it splits zero-parsed-segments into its
+ *  two genuinely different causes: a real document that yielded no scene tags,
+ *  and no document at all. Optional so the predicate keeps its original
+ *  one-argument meaning for callers that only have the count. */
+export function emptySceneDocAbortMessage(
+  parsedSegmentCount: number,
+  sceneDocText?: string,
+): string | null {
+  if (parsedSegmentCount !== 0) return null;
+  if (sceneDocText !== undefined && sceneDocText.trim() === '') return NO_SCENE_DOC_MESSAGE;
+  return EMPTY_SCENE_DOC_MESSAGE;
 }
 
 /** doc §3.11(b) — empty transcript: only an error when a voiceover was
@@ -2036,6 +2054,34 @@ export default function App() {
   // Ref that mirrors project.id so stable useCallback([]) closures can pass the
   // correct projectId to IndexedDB calls without project.id in their dep arrays.
   const projectIdRef = useRef<string>(project.id);
+
+  // ── The single live staged-files source (WS2-50 Commit 1) ─────────────────
+  //
+  // WHY THIS LIVES IN App.tsx AND NOT ONLY IN DropZonePanel. There are two
+  // buttons that start an Apply Sync — the panel's own "Apply Sync" and the
+  // unapplied-transcript recovery banner's "Apply" — and before this ref they
+  // read DIFFERENT inputs. The panel passed its live staged files; the banner
+  // passed a hand-written all-empty `StagedFiles` literal on the theory that
+  // "every field falls back to the committed project value". That theory is
+  // false whenever nothing was ever committed: after a reload of a project
+  // whose first Apply Sync never succeeded, `project.sceneDetails` is '', so
+  // the banner's apply parsed zero segments and aborted — while the panel's
+  // button, holding the very same re-staged files, succeeded. Operator-
+  // reported, and predicted by the WS2-47 report.
+  //
+  // The fix is structural rather than "pass the right argument at the banner
+  // call site": `handleApplySyncFromFiles` now takes NO staged argument at all
+  // and reads this ref itself, so there is exactly one apply entry point and
+  // no call site retains the ability to invent an input for it.
+  // `applySyncEntryPoint.test.ts` fails the build if either property is lost.
+  //
+  // A ref, not state: nothing renders from it, and Apply Sync must read the
+  // value the user last dropped rather than one a batched render has yet to
+  // flush. `DropZonePanel` writes it synchronously from `updateStaged`.
+  const stagedFilesRef = useRef<StagedFiles>(EMPTY_STAGED);
+  const handleStagedFilesChange = useCallback((next: StagedFiles): void => {
+    stagedFilesRef.current = next;
+  }, []);
   // Option C: ephemeral voiceover staged before Apply Sync is clicked — minted by
   // handleVoiceoverStaged, consumed (id/url reused) by handleApplySyncFromFiles.
   // Not part of project state; never persisted until commit.
@@ -3200,7 +3246,12 @@ export default function App() {
    * prop type is `(s) => Promise<void>`, which accepts it), so abort paths
    * keep behaving for that caller exactly as they did.
    */
-  const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<ApplySyncResult> => {
+  const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {
+    // THE ONE READ OF THE LIVE STAGED STATE, and it is the first statement on
+    // purpose. Everything below uses this local snapshot, so the panel is free
+    // to clear its slots the instant it hands control over here (it does —
+    // `triggerSync`) without the awaits further down observing the clear.
+    const staged: StagedFiles = stagedFilesRef.current;
     syncMark('applySync:entry', { reset: true });
     setIsProcessing(true);
 
@@ -3329,7 +3380,7 @@ export default function App() {
     // WS1b — empty scene-doc hard abort (doc §3.4/§3.11, S15). Always aborts
     // on zero parsed segments now, not only when previous segments existed —
     // the fresh-project case used to fall through silently.
-    const sceneDocAbortMsg = emptySceneDocAbortMessage(newSegmentsRaw.length);
+    const sceneDocAbortMsg = emptySceneDocAbortMessage(newSegmentsRaw.length, sceneText);
     if (sceneDocAbortMsg) {
       console.warn('[sync] parseProjectData returned 0 segments — aborting sync');
       showToast(sceneDocAbortMsg);
@@ -4314,10 +4365,17 @@ export default function App() {
    * cleared by a later voiceover re-stage, so a sync that aborted would leave
    * the user with neither copy and no banner to tell them.
    *
-   * Staged files are empty on purpose. There are none to stage — the user is
-   * returning to a saved project, not dropping files — and every field
-   * `handleApplySyncFromFiles` would have read from a staged file falls back to
-   * the committed project value.
+   * STAGED FILES ARE NOT EMPTIED HERE, AND THAT IS THE WS2-50 FIX. This handler
+   * used to pass an all-`null` `StagedFiles` literal, on the reasoning that a
+   * user returning to a saved project has nothing staged and every staged field
+   * falls back to its committed project value. The second half is only true
+   * when something was ever committed. After a reload of a project whose first
+   * Apply Sync never completed, `project.script`/`sceneDetails` are '' and
+   * `project.assets` is empty, so the literal made this path parse zero
+   * segments and abort — with the panel's own button, holding the very files
+   * the user had just re-dropped, succeeding on the same project in the same
+   * session. `handleApplySyncFromFiles` now reads `stagedFilesRef` itself, so
+   * this call site cannot supply an input at all.
    */
   const handleApplyUnappliedTranscript = useCallback(async (): Promise<boolean> => {
     const record = liveProjectRef.current.unappliedTranscript;
@@ -4332,13 +4390,7 @@ export default function App() {
     // Step 2 — the real timeline write.
     let result: ApplySyncResult = { ok: false, message: '' };
     try {
-      result = await handleApplySyncFromFiles({
-        scriptFile: null,
-        sceneFile: null,
-        voiceoverFile: null,
-        assetFiles: [],
-        zipFiles: [],
-      });
+      result = await handleApplySyncFromFiles();
     } catch (err) {
       console.error('[recovery] Apply Sync from a recovered transcript threw:', err);
       result = { ok: false, message: '' };
@@ -5957,6 +6009,7 @@ export default function App() {
             onDeleteAllAssets={handleDeleteAllAssets}
             onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
             onApplySync={handleApplySyncFromFiles}
+            onStagedFilesChange={handleStagedFilesChange}
             onVoiceoverStaged={handleVoiceoverStaged}
             onVoiceoverUnstaged={handleVoiceoverUnstaged}
             applySyncDisabled={applySyncDisabled}

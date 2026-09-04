@@ -28,6 +28,7 @@ import {
   emptySceneDocAbortMessage,
   emptyTranscriptAbortMessage,
   EMPTY_SCENE_DOC_MESSAGE,
+  NO_SCENE_DOC_MESSAGE,
   EMPTY_TRANSCRIPT_MESSAGE,
   FULL_MISMATCH_MESSAGE,
 } from '../App';
@@ -1837,6 +1838,23 @@ describe('WS1b — empty-input hard aborts', () => {
 
   it('a non-empty parse does not trigger the empty-scene abort', () => {
     expect(emptySceneDocAbortMessage(3)).toBeNull();
+  });
+
+  // WS2-50 — zero parsed segments has two genuinely different causes, and the
+  // one-argument form could only name one of them. "Add scene tags and try
+  // again" is advice about a document the second user does not have.
+  it('WS2-50 — zero segments from a real doc still names the scene-tag cause', () => {
+    expect(emptySceneDocAbortMessage(0, 'a document with prose but no scene tags'))
+      .toBe(EMPTY_SCENE_DOC_MESSAGE);
+  });
+
+  it('WS2-50 — zero segments with no scene doc at all names THAT cause instead', () => {
+    expect(emptySceneDocAbortMessage(0, '')).toBe(NO_SCENE_DOC_MESSAGE);
+    expect(emptySceneDocAbortMessage(0, '   \n  ')).toBe(NO_SCENE_DOC_MESSAGE);
+  });
+
+  it('WS2-50 — a non-empty parse is null whatever the doc text was', () => {
+    expect(emptySceneDocAbortMessage(3, '')).toBeNull();
   });
 
   it('empty transcript (0 tokens) with a voiceover staged aborts with the empty-transcript message', () => {

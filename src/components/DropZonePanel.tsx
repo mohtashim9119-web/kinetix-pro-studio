@@ -58,7 +58,7 @@ export interface StagedFiles {
   zipFiles: StagedFile[];
 }
 
-const EMPTY_STAGED: StagedFiles = {
+export const EMPTY_STAGED: StagedFiles = {
   scriptFile: null,
   sceneFile: null,
   voiceoverFile: null,
@@ -328,7 +328,15 @@ interface Props {
   onDeleteAllAssets: () => void;
   onDeleteVoiceover: () => void;
   // File actions
-  onApplySync: (staged: StagedFiles) => void;
+  /** Starts an Apply Sync. Takes NO argument on purpose (WS2-50): the staged
+   *  files are read by `App.tsx`'s single entry point from the shared live ref
+   *  this panel publishes through `onStagedFilesChange`, so neither this panel
+   *  nor the recovery banner can hand the sync an input of its own invention.
+   *  See `applySyncEntryPoint.test.ts`. */
+  onApplySync: () => void;
+  /** Publishes this panel's staged files upward on every change, synchronously.
+   *  App.tsx mirrors it into a ref that Apply Sync reads. */
+  onStagedFilesChange: (staged: StagedFiles) => void;
   /** Fired the moment a voiceover file is staged (dropped/browsed), before Apply Sync is clicked. */
   onVoiceoverStaged: (file: File) => void;
   /** Fired when a staged-but-uncommitted voiceover is removed or replaced. */
@@ -450,6 +458,7 @@ export function DropZonePanel({
   onDeleteAllAssets,
   onDeleteVoiceover,
   onApplySync,
+  onStagedFilesChange,
   onVoiceoverStaged,
   onVoiceoverUnstaged,
   applySyncDisabled,
@@ -610,12 +619,27 @@ export function DropZonePanel({
   }, [isSynced]);
 
   const updateStaged = (updater: (prev: StagedFiles) => StagedFiles) => {
-    setStaged(prev => {
-      const next = updater(prev);
-      stagedRef.current = next;
-      return next;
-    });
+    // Derived from the REF, not from setState's `prev`, so the ref, the parent
+    // and React state all advance in the same synchronous turn. The previous
+    // form assigned the ref from inside the state updater, which React is free
+    // to defer (and, in StrictMode, to run twice) — so a handler that staged a
+    // file and then read `stagedRef` in the same turn could read the pre-update
+    // value. `handleConfirmSaveScene` now does exactly that.
+    const next = updater(stagedRef.current);
+    stagedRef.current = next;
+    onStagedFilesChange(next);
+    setStaged(next);
   };
+
+  // Publish on mount. This panel unmounts whenever the dashboard is shown
+  // (App.tsx's `showDashboard` ternary) and remounts with empty local state, so
+  // without this the parent's ref would keep serving `File` handles for slots
+  // the user can no longer see — the panel would read empty and Apply Sync
+  // would read the stale set. Republishing what this panel actually holds keeps
+  // the two definitionally equal at every mount.
+  useEffect(() => {
+    onStagedFilesChange(stagedRef.current);
+  }, [onStagedFilesChange]);
 
   // `script` retained for compatibility; Apply Sync no longer gates on it.
   void script;
@@ -748,15 +772,19 @@ export function DropZonePanel({
   // Shared by the Apply Sync button and the Scene Details save-confirm flow —
   // runs the sync with an explicit snapshot, clears staged files, and switches
   // to the Segments tab so the result is immediately visible.
-  const triggerSync = (snapshot: StagedFiles) => {
-    onApplySync(snapshot);
+  const triggerSync = () => {
+    // No snapshot argument: App.tsx's single entry point reads the shared live
+    // ref, whose current value this panel has already published. The clear
+    // below is still safe because that entry point snapshots the ref into a
+    // local on its first synchronous statement.
+    onApplySync();
     // Clear staged so slots immediately switch to the green persisted indicator.
     updateStaged(() => EMPTY_STAGED);
     setActiveTab('segments');
   };
 
   const handleApplySync = () => {
-    triggerSync(stagedRef.current);
+    triggerSync();
   };
 
   // Commits an edited Scene Details draft by staging it as a synthetic file —
@@ -772,7 +800,10 @@ export function DropZonePanel({
     };
     setIsEditingScene(false);
     setShowSaveConfirm(false);
-    triggerSync({ ...stagedRef.current, sceneFile });
+    // Stage it for real rather than passing a one-off snapshot past the shared
+    // ref — the ref must be the only thing the sync can read.
+    updateStaged(prev => ({ ...prev, sceneFile }));
+    triggerSync();
   };
 
   const allStagedAssets = [...staged.assetFiles, ...staged.zipFiles];

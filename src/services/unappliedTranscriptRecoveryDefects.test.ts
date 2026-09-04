@@ -10,6 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   EMPTY_SCENE_DOC_MESSAGE,
+  NO_SCENE_DOC_MESSAGE,
   EMPTY_TRANSCRIPT_MESSAGE,
   FULL_MISMATCH_MESSAGE,
 } from '../App';
@@ -75,6 +76,10 @@ describe('Defect A — recovery banner visibility', () => {
 describe('Defect B — abort classification and fallback', () => {
   it('classifies empty scene doc as transcript-unrelated', () => {
     expect(classifySyncAbortMessage(EMPTY_SCENE_DOC_MESSAGE)).toBe('transcript_unrelated');
+    // WS2-50 — the no-scene-doc-at-all message is the same class: a scene-doc
+    // precondition, nothing to do with the transcript, so the tokens are
+    // salvaged and the banner dismissed rather than the record retained.
+    expect(classifySyncAbortMessage(NO_SCENE_DOC_MESSAGE)).toBe('transcript_unrelated');
   });
 
   it('classifies voiceover duration probe failure as transcript-unrelated', () => {

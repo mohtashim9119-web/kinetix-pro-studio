@@ -157,6 +157,7 @@ function makeDropZonePanelProps(overrides: Partial<DropZonePanelProps> = {}): Dr
     onDeleteAllAssets: noop,
     onDeleteVoiceover: noop,
     onApplySync: noop,
+    onStagedFilesChange: noop,
     onVoiceoverStaged: noop,
     onVoiceoverUnstaged: noop,
     applySyncDisabled: false,
