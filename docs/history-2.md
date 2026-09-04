@@ -3171,3 +3171,61 @@ payload 58,023 B on the largest corpus. Full artefacts: `.work-phase4/session-ws
 sequential read of the store's backing files or `fake-indexeddb` in memory. No live-app run was
 performed this round; the orphan evidence is store-level row-count assertions plus an unchanged
 disk snapshot, not an observed app session.
+
+---
+
+## WS2 docs restructure — items moved from work-in-progress (2026-09-05)
+
+Restructured WS2 to the five-section contract at base `f28a012`. Current baselines at that SHA:
+vitest 3121 passed / 77 skipped / 0 failed; cargo 182/0/1 default and 264/0/26 with
+`--features fa-inference`; gaplessInvariant 36/36; golden replay 6/6; K13 3/3.
+
+### Vitest timeout flakes (order-dependent, not a code defect)
+
+Harness budgets raised: `faSeamFitGate.test.ts` `V6_TIMEOUT_MS = 120_000` at `:241` (was 5s
+default); `scripts/ws1-session-aj0-oracle-diff.test.ts` `:98` raised to 180s. Flakes appeared
+only under two parallel suites — not reproduced uncontended across three runs at `d9e2c24` and
+three at `eb10bef`. Raises landed; cause not fixed. `scripts/ws1-session-s-exclusion.test.ts`
+stays recorded as unconfirmed (named from session-ws2-06 at `bc3a156`, not reproduced under load
+at `a8e22c1`). Historical flake profiles under contention (timeout budgets, not logic failures):
+2980/2/77 at `bc3a156`, 2979/3/77 at `a8e22c1`.
+
+### WebKit profile split (WS2-49)
+
+Expected dev behaviour, not an end-user defect. The dev binary sets no `CFBundleIdentifier`, so
+WebKit falls back to `~/Library/WebKit/app/` instead of the folder matching
+`tauri.conf.json`'s bundle id — that bundle-id folder holds a stale profile with no V8
+(IndexedDB) in it. Any IndexedDB measurement or cleanup must target the dev binary's actual
+profile, not the bundle-id path config implies.
+
+### Transcription Requirement 3 (merged at `eb10bef`)
+
+Shipped `Project.unappliedTranscript { tokens, assetId, fileIdentity, completedAt }`. Staleness
+via `name|size|lastModified` against `lastTranscribedFileIdentity`; banner on mount only;
+Discard clears both stored field and staged whisper state. Soft spot: `assetId` is
+diagnostics-only, so the banner could not rebind a file — WS2-50 addresses that.
+
+### Lane C inventory correction
+
+`unappliedTranscript` IS a `Project` field at `types.ts:556`, persisted with project JSON and
+present in history snapshots. The dedicated-store recommendation applied to `transcriptionDraft`
+only — not to `unappliedTranscript`.
+
+### 798/399 IndexedDB orphan diagnosis (WS2-49)
+
+399 orphan rows written 2026-08-25, byte-identical to the referenced batch of 2026-08-27;
+mechanism was re-commit with fresh UUIDs after a quota failure logged in `projectStore.ts:71`.
+Historical accident, not a live bug — all other projects measure 1:1. Normal UI project delete
+DOES purge asset rows (`ProjectDashboard.tsx:133` calls `deleteAllAssets`;
+`assetStore.ts:129-147`), so this is one-time cleanup, not an active leak. **NOT DETERMINED:**
+whether the abort was `QuotaExceededError`, a crash, or a cancel.
+
+### Zero-duration timeline — operator decision (2026-09-05)
+
+Operator chose **abort with error** (explicit error/toast requiring a voiceover track) rather
+than generating a 0-duration timeline or a character-timed fallback. Mechanism: `App.tsx:3396`
+falls back to `audioRef.current?.duration || 0`; with no voiceover asset neither the duration
+abort (`App.tsx:3397`, guarded on `voiceoverAsset`) nor the empty-transcript abort
+(`App.tsx:3449`, guarded on `!!voiceoverAsset`) fires — `parseProjectData` proportions every
+segment against 0.
+

@@ -145,154 +145,44 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 ---
 
 ## WS2 — Video Ingest & Distribution Bugs
-Started: 2026-08-26 (Step 3) | Status: **CLOSED 2026-09-03**, reopened for T4.3 and re-closed the same day.
-All 4 numbered bugs and all four phases are done. T4.3 (model-download transfer resilience), T4.1 and
-T4.2 (Settings & project creation, plus the bare-key shortcut leak and a §5 hygiene pass, 15 entries → 8)
-closed it; WS2-50 reopened it briefly for the Apply Sync entry point and staged-slot persistence. Full
-records for all of them: `docs/history-2.md`. No phase is queued after Phase 4; section 5 is the residual
-backlog, none of it owned. **Its entries stay here under the closed workstream:** the structure contract
-rules on closed ITEMS (fold into this line + `docs/history-2.md`) but is silent on a closed workstream's
-still-open ones, and the single-tracker rule puts them in this file under their own workstream section or
-nowhere. Attention moves to WS1.
+Started: 2026-08-26 | Status: active — WS2-50 landed at f28a012; section 1 pending operator verification.
+Full closed-phase records: `docs/history-2.md`.
+
+Baselines (f28a012): vitest 3121/77/0; cargo 182/0/1 default, 264/0/26 fa-inference; gaplessInvariant 36/36; golden replay 6/6; K13 3/3.
 
 ### 1. Finished but pending verification
 
-(none)
+- [CLAIM-UNVERIFIED] Staged Slot Persistence: dedicated kinetix-staged IndexedDB, pure set-diff delete contract at updateStaged, canAdoptRestoredVoiceover gate. Commits f9a99d0/b2a415f/0f10575. Row counts unchanged across nine projects.
+- [CLAIM-UNVERIFIED] Banner Apply Sync Parity: handleApplySyncFromFiles reads stagedFilesRef.current, zero StagedFiles literals remain in App.tsx. NO_SCENE_DOC_MESSAGE replaces misleading abort text, classified transcript_unrelated.
 
 ### 2. In progress
 
-(none)
+(none — next round blocked until the operator verifies section 1)
 
-**END GOAL:** (none — WS2 is closed. T4.1 and T4.2 both met the goal that stood here: a new project
-can be created with an explicit language choice or a deliberate Auto-detect that stores nothing, and
-the machine-global model/add-on requirement is surfaced and satisfiable from App Settings before a
-sync ever needs it.)
+**END GOAL:** (blocked on section 1 operator verification)
 
 ### 3. Next tasks
 
-(none) — no phase is queued after Phase 4. Everything remaining is section 5's deferred backlog.
+- [OPEN] Transcription Req 2: incremental draft save every three seconds to a dedicated draft store, not a Project field.
+- [OPEN] EventSink/IN_FLIGHT Generalization: lands as its own commit before Requirement 1, per operator decision.
+- [OPEN] Transcription Req 1: native TranscriptionManager so Whisper survives Cmd+R, project switch, and dashboard navigation.
+- [OPEN] tauriFfmpeg.ts:45-72 Base64 IPC: probes peak 2.33x blob size, 73MiB measured. Pass paths. Duplicate probes at App.tsx:3168/3399; fa-dev at App.tsx:4846.
+- [OPEN] Legacy v1 assets Store Purge: 266 rows, 166.6MiB. Migration App.tsx:2231 copies to v2 and never deletes. Shipping defect; no reference check required.
+- [OPEN · NON-BLOCKING] Dev-Profile IDB Cleanup: orphan pool 15 rows plus V8 399 duplicate rows, 469MiB reclaimable. V8 rows need the four-reference check each.
+- [OPEN · NON-BLOCKING] Tooling Tracking Decision: whether .work-phase4/session-ws2-49/ scripts and .work-phase4/replay/ fixtures should be git-tracked for reproducibility.
 
 ### 4. Open bugs
 
-(none)
+- [OPEN] Zero-Duration Timeline: App.tsx:3396 falls back to zero when no voiceover resolves. Operator decision: abort with error/toast requiring voiceover; not yet implemented.
+- [OPEN] processZipFile voiceoverId: App.tsx:5160 derives voiceoverId from the undeduplicated array, so project.voiceoverId can reference a dropped asset. Data-integrity defect.
+- [OPEN] Voiceover Restore Degradation: untranscribed staged voiceover does not survive reload; canAdoptRestoredVoiceover refuses it. Needs an explicit transcribe-restored-file affordance, not a looser gate.
+- [OPEN · NON-BLOCKING] FA Pack Detector (E8): unsupported state unreachable from Project Settings; models.ts:21 and models.rs:182 hardcode the five-code list.
+- [OPEN · NON-BLOCKING] Timeline Clip Focus: Timeline.tsx:433 S and D hotkey scope is wrong.
 
 ### 5. Deferred tasks
 
-Hygiene pass 2026-09-03 (T4.2): 15 entries → 8. WS2-45 pass (2026-09-04): Site B zip data-integrity
-scope, French/C3/fixture corrections, vitest flake inventory, E8 tightened — **seven entries**
-remain. No entry's content was dropped without a named destination — see T4.2 and WS2-45 records
-in `docs/history-2.md`.
-
-- [DEFERRED] IndexedDB Orphaned Asset Blobs (`processZipFile` data integrity & cleanup audit)
-  - **Active Bug (Site B):** `processZipFile`'s dedup (`App.tsx:4697`) drops a duplicate without
-    `deleteAsset` AND without `URL.revokeObjectURL`, leaking both a DB row and a blob URL. NOT
-    safely fixable as delete alone: `voiceoverId` (`App.tsx:4703`) derives from the UNDEDUPLICATED
-    `newAssets`, so when the dropped duplicate is the audio file its id becomes `project.voiceoverId`
-    while its row is absent from `project.assets` — a dangling `voiceoverId` that must be fixed
-    first (read `dedupedNew`, not `newAssets`). Reachability is narrow: the drop needs a concurrent
-    add mid-extraction (`assetsRef.current` only updates in an effect at `App.tsx:4865`). Site A
-    (`extractZipToAssets` consumer) closed at `a2e2b26` (`services/zipAssetMerge.ts`).
-  - **Audit Task — DIAGNOSED, not closed (WS2-49, 2026-09-04):** the 798/399 count is a one-time
-    event, not a systemic write-path pattern — every other project measures exactly 1:1, and all
-    399 orphans sit in one contiguous block matching this project's documented
-    `QuotaExceededError` incident (`projectStore.ts:71`, 2026-08-25). Stays open as cleanup
-    (delete contract unbuilt for `kinetix-assets`), not diagnosis. Full evidence and the standing
-    verdict permitting the eager write path: `docs/history-2.md`; artifacts in
-    `.work-phase4/session-ws2-49/`. Re-measured unchanged at WS2-50. **NOT DETERMINED:** whether
-    the abort was `QuotaExceededError`, a crash, or a cancel.
-  - **Trigger:** Fixing `processZipFile`'s `voiceoverId` derivation, or building the delete
-    contract above.
-- [DEFERRED] Non-English Localization & Corpora Gap
-  - **Parent Prerequisite:** Missing real `fr`, `de`, and `pt` golden audio/transcript corpora.
-  - **Sub-Items:**
-    a) **Digit Cardinals:** `digitTokenToWords` (`textNormalize.ts`) emits English words for all languages.
-    b) **Elisions:** `canonicalize()` splits non-English apostrophes (e.g., `l'élève`).
-    c) **French Grammar:** *cent* and *quatre-vingt* wrongly keep their `-s` before a bare numeral
-       scale word — measured: `200000` → `"deux cents mille"` and `80000` → `"quatre-vingts mille"`
-       (correct: `"deux cent mille"`, `"quatre-vingt mille"`). `200000000` → `"deux cents millions"`
-       is correct and must not regress (*million* is a noun). NOT `composeHundred`-only: the
-       `quatre-vingts` case is a literal `cardinals0to99["80"]` lookup via `composeScaleLevel`, so
-       suppression belongs at `composeScaleLevel`'s multiplier call, covering both the
-       `composeHundred` plural and the 0-99 table. Needs a new
-       `hundred.suppressPluralBeforeNumeralScaleWord` schema field in `fa-cardinal-fr.json` plus
-       both arms (`faTextNormalize.ts:276`, `fa/text.rs`), and fr fixture rows for
-       200000/300000/80000/200000000 — `fa-text-normalize-fixture.json` tops out at 1998, so it
-       currently cannot see this defect in either arm, and a TS-only fix would leave it GREEN with
-       the arms diverged.
-    d) **Corpus Gap:** Four-language linguistic design is unvalidated for `fr`/`de`/`pt`.
-  - **Note (WS2-44):** (c) is NOT corpus-blocked and NOT reachable in the default build.
-    `composeHundred` is dead in the TS arm permanently by owner ruling — every
-    `computeFaChunkPlan` call site (`App.tsx:4395`, `faSeamFitGate.ts:190`,
-    `forcedAlignmentRun.ts:142`) omits the `languageCode`/`vocabChars`/`cardinalData` trio and
-    `faTextNormalize.ts:501-511` rules that it stays omitted (wiring it would desync `wordIndex`).
-    The live arm is `fa/text.rs:314` via `fa_onnx.rs:848`/`:1321`/`:1538`, gated on the
-    non-default `fa-inference` feature. So a TS-side fix is a `gates-guarding-nothing` change and
-    should move only as C3 parity ballast alongside the Rust fix. By contrast (a),
-    `digitTokenToWords` (`textNormalize.ts:88`), IS live via `canonicalize`
-    (`textNormalize.ts:195`/`:206`) and is genuinely corpus-blocked.
-  - **Trigger:** Acquiring real French, German, or Portuguese test corpora; (c) also has its own
-    numeral-scale trigger independent of the corpus gap.
-- [DEFERRED] Video Engine & Frame Rate Limitations
-  - **Sub-Items:**
-    a) **120fps Preview Lag:** `MAX_BUFFERED_FRAMES_PER_SESSION = 90` (`videoDecoderPool.ts:107`) caps by frame count instead of byte budget, freezing 120fps preview playback. Export is unaffected.
-    b) **Arbitrary Frame Rate:** `useExport.ts:27` hardcodes a single project frame rate, ignoring native asset frame rates (`Asset.nativeFps`).
-  - **Trigger:** Media engine / preview buffer refactor.
-- [DEFERRED] Timeline Clip Focus & S/D Hotkey Scope
-  - **Issue:** Single-key shortcuts (`S`/`D`) do not check for true timeline DOM focus because clip elements lack `tabIndex` and `Timeline.tsx:433` suppresses focus-shift on click.
-  - **Trigger:** Reworking timeline clip focusability and keyboard navigation.
-- [DEFERRED] C3 Normalization Dual-Implementation Policy
-  - **Issue:** Dual TS/Rust normalization relies on a conformance fixture that tests agreement rather than absolute correctness against independent standards.
-  - **Fixture ceiling:** `scripts/fixtures/fa-text-normalize-fixture.json` tops out at **1998** — the
-    arms can diverge above that with the fixture still green (French *cent*/*quatre-vingt* before a
-    bare numeral scale word is the measured example; see the localization entry's sub-item (c)).
-  - **Trigger:** Policy changes to either normalization arm or a real divergence report.
-- [DEFERRED] Order-dependent vitest timeout flakes (not a code defect)
-  - **Inventory:** Two files confirmed under full-suite CPU contention (pass in isolation):
-    `faSeamFitGate.test.ts` (**16/16 isolated**; 173 rows at lines 288/299 had vitest's default
-    5s harness budget — raised to 120s this round), `scripts/ws1-session-aj0-oracle-diff.test.ts`
-    (3/3 isolated; v6 `runProductionPath` exceeded 120s under load — raised to 180s). Both are
-    vitest harness allowances, not in-test performance assertions.
-    `scripts/ws1-session-s-exclusion.test.ts` (6/6 isolated; **unconfirmed at current main** —
-    named from session-ws2-06 at `bc3a156`, not reproduced under load at `a8e22c1`).
-  - **Measured profiles:** green when uncontended (**3110 / 77 / 0** at WS2-50). Historical flake
-    profiles under load, both timeout budgets rather than logic failures: 2980/2/77 (`bc3a156`)
-    and 2979/3/77 (`a8e22c1`). Full numbers: `docs/history-2.md`.
-  - **Trigger:** dedicated CI pool or further harness headroom — not silencing individual failures
-    without measuring isolation cost.
-- [DEFERRED] FA pack detector `unsupported` state (manual row E8) is not user-reachable from the
-  Project Settings dropdown, which is built from `SUPPORTED_LANGUAGES`. Verified 2026-09-03: still
-  open, not superseded by `faPackLanguageParity.test.ts` — that test's own header says the deferral
-  stays correct and its job is only to fail loudly if a sixth language ever makes the branch
-  reachable (`models.ts:21` / `models.rs:182` still hardcode the same five-code list three times,
-  independently). **Trigger:** that guard going red.
-- [OPEN · NON-BLOCKING] WebKit profile split (WS2-49): the dev binary sets no
-  `CFBundleIdentifier`, so WebKit falls back to `~/Library/WebKit/app/` instead of the folder
-  matching `tauri.conf.json`'s bundle id — that bundle-id folder holds a stale profile with no V8
-  (IndexedDB) in it. Any IndexedDB measurement or cleanup must target the dev binary's actual
-  profile, not the bundle-id path config implies. No owner.
-- [OPEN] Two further IndexedDB leaks found in passing (WS2-49, unexamined, different mechanism
-  from the 798/399 entry above, unscoped, no cost read): a 266-row legacy pre-v2 assets store
-  with no `projectId`, and at least one fully orphaned project pool (asset rows, no
-  `project.json`). No owner.
-- [OPEN] `tauriFfmpeg.ts`'s duration/fps probes (`probeAudioDuration`/`probeVideoFps`,
-  `tauriFfmpeg.ts:45-72`) base64-encode the entire blob over Tauri IPC before either sidecar
-  runs — the pattern this repo's `CLAUDE.md` §4 invariant prohibits (raw-body precedent:
-  `ffmpeg_write_file_raw`/`whisper_stage_audio_raw`/`fa_stage_audio_raw`), same IPC/disk cost
-  class as the T4.8 incident. Not fixed; no cost measurement taken. No owner.
-- [OPEN · NON-BLOCKING] A voiceover staged but never successfully transcribed does not survive
-  a reload (WS2-50, deliberate). Restoring it means running `handleVoiceoverStaged`, whose only
-  non-destructive branch is the same-file-with-cached-tokens early return; every other branch
-  clears `transcriptTokens` and launches whisper-cli, which on app load is an unrequested
-  transcription that wipes the cache the recovery banner depends on. `canAdoptRestoredVoiceover`
-  (`stagedFilesPersist.ts`) refuses those, and the panel drops both the slot and its row. Closing
-  this needs a deliberate "transcribe this restored file" affordance, not a looser gate. No owner.
-- [OPEN] Apply Sync builds a zero-duration timeline when no voiceover resolves. `App.tsx:3354`
-  falls back to `audioRef.current?.duration || 0`, and with no voiceover asset neither the
-  duration abort (`:3357`, guarded on `voiceoverAsset`) nor the empty-transcript abort (`:3407`,
-  guarded on `!!voiceoverAsset`) fires — `parseProjectData` then proportions every segment against
-  0. Pre-existing and reachable today from the panel's own button; WS2-50 makes the banner path
-  reach it too. Not fixed: the right behaviour (abort vs. character-timed fallback) is a policy
-  call. No owner.
+- [DEFERRED] [CONSOLIDATED] Non-English Localization & C3 Policy: French cardinal and elision rules plus C3 fixture ceiling beyond 1,998.
+- [DEFERRED] [CONSOLIDATED] Video Engine: 120fps preview buffer byte-capping plus native asset export frame rates.
 
 ---
 
