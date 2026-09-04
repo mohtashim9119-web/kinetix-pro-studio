@@ -216,6 +216,10 @@ export interface UseWhisperApi {
   ) => Promise<StartTranscriptionOutcome>;
   cancelTranscription: () => void;
   dismissError: () => void;
+  /** Clears a terminal transcription status (`done` / `warning`) without
+   *  touching an in-flight run. Used when the user discards an unapplied
+   *  transcript whose completion state would otherwise keep Apply Sync live. */
+  clearTerminalTranscriptionStatus: () => void;
   /**
    * Re-times segments from already-cached tokens — no network/IPC call.
    * WS1b: also returns the per-segment `coverage` (matched/confidence/
@@ -542,5 +546,20 @@ export function useWhisper(): UseWhisperApi {
     setTranscriptionStatus({ phase: 'idle' });
   }, []);
 
-  return { transcriptionStatus, startTranscription, cancelTranscription, dismissError, alignFromCache: alignSegmentsFromCachedTranscript };
+  const clearTerminalTranscriptionStatus = useCallback(() => {
+    setTranscriptionStatus(prev =>
+      prev.phase === 'done' || prev.phase === 'warning'
+        ? { phase: 'idle' }
+        : prev,
+    );
+  }, []);
+
+  return {
+    transcriptionStatus,
+    startTranscription,
+    cancelTranscription,
+    dismissError,
+    clearTerminalTranscriptionStatus,
+    alignFromCache: alignSegmentsFromCachedTranscript,
+  };
 }

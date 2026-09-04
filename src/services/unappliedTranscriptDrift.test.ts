@@ -124,7 +124,7 @@ describe('WS2 T4.7 — App.tsx apply-ordering wiring (probe-driven source guards
 
   /** `handleApplySyncFromFiles`'s body, signature to its closing `  };`. */
   function applySyncBody(): string {
-    const marker = 'const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<boolean> => {';
+    const marker = 'const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<ApplySyncResult> => {';
     const start = APP_SRC.indexOf(marker);
     expect(start, `'${marker}' not found — this guard has lost its target`).toBeGreaterThan(-1);
     const rest = APP_SRC.slice(start + marker.length);
@@ -151,7 +151,7 @@ describe('WS2 T4.7 — App.tsx apply-ordering wiring (probe-driven source guards
 
   it('P11 — every abort path reports failure, so no aborted sync can clear the record', () => {
     // `handleApplySyncFromFiles` returns whether step 8 was reached. An abort
-    // that returned `true` would tell the recovery caller the timeline was
+    // that returned `{ ok: true }` would tell the recovery caller the timeline was
     // written and license it to discard the transcript.
     const body = applySyncBody();
     const aborts = body.split('\n')
@@ -159,10 +159,13 @@ describe('WS2 T4.7 — App.tsx apply-ordering wiring (probe-driven source guards
       .filter(x => x.line === 'setIsProcessing(false);' && x.next.startsWith('return'));
     expect(aborts.length, 'no abort paths found — this guard has lost its target').toBeGreaterThan(0);
     for (const a of aborts) {
-      expect(a.next, `an abort path returns "${a.next}" instead of "return false;"`).toBe('return false;');
+      expect(
+        a.next,
+        `an abort path returns "${a.next}" instead of "{ ok: false, message: ... }"`,
+      ).toMatch(/^return \{ ok: false, message:/);
     }
-    // Exactly one `return true;` — the single success path at the very end.
-    const successes = body.split('\n').filter(l => l.trim() === 'return true;');
+    // Exactly one success path at the very end.
+    const successes = body.split('\n').filter(l => l.trim() === 'return { ok: true };');
     expect(successes).toHaveLength(1);
   });
 
@@ -178,7 +181,7 @@ describe('WS2 T4.7 — App.tsx apply-ordering wiring (probe-driven source guards
       'clearUnappliedTranscript gained a call site. The only non-import caller may be the ' +
         'Discard handler; Apply clears through the atomic commit, never directly.',
     ).toHaveLength(2);
-    const inDiscard = APP_SRC.indexOf('setProjectSilent(clearUnappliedTranscript)');
+    const inDiscard = APP_SRC.indexOf('clearDiscardedTranscriptCache(clearUnappliedTranscript');
     expect(inDiscard, 'the Discard handler no longer clears the record').toBeGreaterThan(-1);
   });
 });

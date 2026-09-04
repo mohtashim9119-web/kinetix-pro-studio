@@ -77,6 +77,65 @@ export function clearUnappliedTranscript(project: Project): Project {
   return next;
 }
 
+/** Toast copy for the recovery fallback when scene structure blocks a timeline write. */
+export const TRANSCRIPT_SAVED_NEED_SCENE_TAGS_TOAST =
+  'Transcript saved. Add scene tags to your scene doc, then run Apply Sync to build the timeline.';
+
+/**
+ * Fallback when Apply Sync aborts for a reason unrelated to the transcript:
+ * persist the tokens to the ordinary cache, clear the unspent record, and let
+ * the caller dismiss the banner.
+ *
+ * Does NOT re-arm the recovery banner — that is gated separately in App.tsx.
+ */
+export function salvageTranscriptWithoutTimeline(
+  project: Project,
+  record: UnappliedTranscript,
+): Project {
+  return clearUnappliedTranscript({
+    ...project,
+    transcriptTokens: [...record.tokens],
+    lastTranscribedFileIdentity: record.fileIdentity !== ''
+      ? record.fileIdentity
+      : project.lastTranscribedFileIdentity,
+  });
+}
+
+/** True when `live` holds the same token sequence as `record` (shallow text/times). */
+export function transcriptTokensMatchRecord(
+  live: readonly TranscriptToken[] | undefined,
+  record: UnappliedTranscript,
+): boolean {
+  if (!live || live.length !== record.tokens.length) return false;
+  return live.every((t, i) => {
+    const r = record.tokens[i]!;
+    return t.text === r.text && t.startSec === r.startSec && t.endSec === r.endSec;
+  });
+}
+
+/**
+ * Clears the live token cache when it still holds the discarded record's tokens.
+ * Leaves unrelated cached tokens intact (e.g. a separately completed live run).
+ */
+export function clearDiscardedTranscriptCache(
+  project: Project,
+  record: UnappliedTranscript,
+): Project {
+  if (!transcriptTokensMatchRecord(project.transcriptTokens, record)) return project;
+  const next: Project = {
+    ...project,
+    transcriptTokens: undefined,
+    lastTranscribedAssetId: undefined,
+  };
+  if (
+    record.fileIdentity !== ''
+    && project.lastTranscribedFileIdentity === record.fileIdentity
+  ) {
+    next.lastTranscribedFileIdentity = undefined;
+  }
+  return next;
+}
+
 /**
  * Puts the recovered transcript back into the live token cache so the ordinary
  * Apply Sync path can consume it, WITHOUT clearing the record.
