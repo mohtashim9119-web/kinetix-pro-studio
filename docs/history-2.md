@@ -3065,9 +3065,10 @@ T4.7 shipped tests only; T4.8 shipped no TS changes. Reconciled vitest baseline 
 **2982 passed / 77 skipped / 0 failed** (3059 total) — first full-suite run on merged main after
 T4.4/T4.6 store/UI changes.
 
-**Unresolved (separate entry):** why `fa_model_download`'s **original** sidecar write never landed
-for **`de` at all** — as distinct from landing slowly — was never separately diagnosed. It is only
-plausibly covered by removing the redundant read class in T4.8, not proven as the same defect.
+**Operator-verified closed (2026-09-04):** the `de` FA pack's missing sidecar — sidecar never
+landed at all, not merely slowly — matched the T4.8 redundant-read class; a fresh `de` download in
+the real app after `08caf5f` lands the sidecar and clears status correctly. No separate `de`-only
+root-cause trace was written, but the symptom is closed.
 
 ---
 
