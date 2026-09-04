@@ -3308,3 +3308,13 @@ missing was a guard that notices when that premise stops holding — `faPackLang
 Adding a sixth language to `constants.ts` turns 2 of 3 tests red (measured in session ws2-41).
 Entry removed from `docs/work-in-progress.md` §4.
 
+---
+
+## WS2 — Timeline Clip Focus closed (2026-09-05)
+
+S/D split/delete were global window shortcuts: any click outside a text field left them live
+whenever a playhead or selection target existed (Preview, Effects, left panel). Fix:
+`timelineShortcutsArmedRef` in `App.tsx` — set true on capture-phase `pointerdown` inside
+`#timeline-scroll-area`, false elsewhere; both S and D require it. No tabIndex/focus redesign;
+`Timeline.tsx:433` preventDefault unchanged. Guard: `timelineShortcutScope.test.ts`.
+

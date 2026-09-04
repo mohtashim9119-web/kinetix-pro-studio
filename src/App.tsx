@@ -2776,6 +2776,14 @@ export default function App() {
   const resolveShortcutTargetSegmentId = (): string | null =>
     selectedSegmentIdRef.current ?? playheadSegmentIdRef.current;
 
+  // WS2 quick-close — S/D scope: the destructive pair is timeline-local. A
+  // global keydown listener plus `isTextEntryElement` alone left S/D live after
+  // a click anywhere outside a text field (Preview, Effects, left panel) as
+  // long as a playhead/selection target existed. Armed on pointerdown inside
+  // `#timeline-scroll-area`, disarmed everywhere else — no tabIndex/focus
+  // redesign; Timeline.tsx's capture-phase preventDefault stays for the ring.
+  const timelineShortcutsArmedRef = useRef(false);
+
   // App-level shortcuts (reload / devtools, 2026-08-08). Same ref pattern and
   // the same reason: the keydown effect below keeps its empty dep array.
   const isExportingRef = useRef(false);
@@ -5477,6 +5485,20 @@ export default function App() {
 
   const togglePlay = () => setIsPlaying(p => !p);
 
+  useEffect(() => {
+    const armFromPointerDown = (e: PointerEvent): void => {
+      const target = e.target;
+      if (!(target instanceof Node)) {
+        timelineShortcutsArmedRef.current = false;
+        return;
+      }
+      timelineShortcutsArmedRef.current =
+        document.getElementById('timeline-scroll-area')?.contains(target) ?? false;
+    };
+    window.addEventListener('pointerdown', armFromPointerDown, true);
+    return () => window.removeEventListener('pointerdown', armFromPointerDown, true);
+  }, []);
+
   const handleSpeedClick = useCallback(() => {
     setGlobalPlaybackSpeed(prev => {
       const idx = SPEED_LADDER.indexOf(prev as typeof SPEED_LADDER[number]);
@@ -5621,13 +5643,12 @@ export default function App() {
         // computed for exactly this (it lists every modal flag) but was read
         // only by `resolveShortcutAction`, i.e. by the undo/redo chords.
         //
-        // SCOPE, as of WS2 T4.2: the chain IS now closed. T4.1 fixed only S
-        // and D (the destructive pair) and the rest of the chain kept leaking;
-        // Space, +/-, the arrows and F now read the same predicate, via
-        // `services/bareKeyShortcut.ts` above. S and D keep their guard inline
-        // because they alone also require a target segment.
+        // SCOPE, as of WS2 T4.2: the bare-key chain IS now closed. S and D keep
+        // extra guards inline: a target segment AND a recent pointerdown inside
+        // `#timeline-scroll-area` (`timelineShortcutsArmedRef`).
         (e.key === 's' || e.key === 'S') && !e.ctrlKey && !e.metaKey && !e.altKey
         && !shortcutsSuppressedRef.current
+        && timelineShortcutsArmedRef.current
         && !isTextEntryElement(document.activeElement) && resolveShortcutTargetSegmentId()
       ) {
         e.preventDefault();
@@ -5635,6 +5656,7 @@ export default function App() {
       } else if (
         (e.key === 'd' || e.key === 'D') && !e.ctrlKey && !e.metaKey && !e.altKey
         && !shortcutsSuppressedRef.current
+        && timelineShortcutsArmedRef.current
         && !isTextEntryElement(document.activeElement) && resolveShortcutTargetSegmentId()
       ) {
         e.preventDefault();

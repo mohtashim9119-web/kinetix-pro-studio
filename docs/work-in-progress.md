@@ -172,7 +172,6 @@ Baselines (f28a012): vitest 3121 passed / 77 skipped / 0 failed; gaplessInvarian
 ### 4. Open bugs
 
 - [OPEN] Voiceover Restore Degradation: untranscribed staged voiceover does not survive reload; canAdoptRestoredVoiceover refuses it. Needs an explicit transcribe-restored-file affordance, not a looser gate.
-- [OPEN · NON-BLOCKING] Timeline Clip Focus: Timeline.tsx:433 S and D hotkey scope is wrong.
 
 ### 5. Deferred tasks
 
