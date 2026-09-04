@@ -105,6 +105,7 @@
 - [WS2 Phase 4 close-out (T4.1/T4.2) and the four false-greens](#2026-09-03--ws2-phase-4-close-out-t41--t42-and-the-four-false-greens) — 2026-09-03
 - [WS2 T4.4–T4.8 — model download arc closed](#ws2-t4t8--model-download-arc-closed-2026-09-04) — 2026-09-04
 - [WS2-45 — Phase 4 manual checklist retired](#ws2-45--phase-4-manual-checklist-retired-2026-09-04) — 2026-09-04
+- [WS2-46 — teardown flush on reload, close, and quit](#ws2-46--teardown-flush-on-reload-close-and-quit-2026-09-04) — 2026-09-04
 
 ---
 
@@ -3038,7 +3039,10 @@ operator's perception of completion at 84.87 %, which remains **unreproduced**.
 
 Gates: tsc clean, lint clean, vitest 2954 → 2960 passed / 77 skipped / 0 failed, cargo 129 → 153
 (default) and 211 → 235 (`--features fa-inference`), 0 failed both, gaplessInvariant 36/36, golden
-replay 6/6, K13 3/3. Full record: `.work-phase4/session-ws2-42/` (gitignored, local).
+replay 6/6, K13 3/3. Full record: `.work-phase4/session-ws2-42/` (gitignored, local). *(Those cargo
+counts were point-in-time at T4.3 close; current truth on `d9e2c24` is **182/0/1** default and
+**264/0/26** with `--features fa-inference` — the 153/235 figures were stale readings from older
+trees, not regressions.)*
 
 ---
 
@@ -3061,11 +3065,13 @@ sidecar write (`finalize_verified_download`, `model_download.rs`).
 | **T4.7** (`1787c29`) | Operator scenarios untested | Added cancel-then-resume, sibling-pack isolation, reload-reattach coverage — sibling test found that asserting **only settled DOM** passes with the T4.6 "all rows Checking" bug reintroduced |
 | **T4.8** (`08caf5f`) | Post-download verify hangs (de pack) | Deleted the redundant post-download re-hash; verify returns the digest and the sidecar writer reuses it — no second `hash_file` on the finished ONNX |
 
-T4.7 shipped tests only; T4.8 shipped no TS changes. Full-suite vitest at `bc3a156` (3059 total) is
-green only sometimes under CPU load — not a single reconciled number. Measured flake profiles (both
-timeout-budget failures under contention, not logic failures): **2980 / 2 / 77** (session-ws2-06 at
-`bc3a156`) and **2979 / 3 / 77** (back-to-back load at `a8e22c1`, pre-timeout-fix). Green profile
-when uncontended: **2982 / 77 / 0**.
+T4.7 shipped tests only; T4.8 shipped no TS changes. Full-suite vitest at `bc3a156` (3059 total) was
+green only sometimes under CPU load — measured flake profiles (timeout-budget failures under
+contention, not logic failures): **2980 / 2 / 77** (session-ws2-06 at `bc3a156`) and **2979 / 3 / 77**
+(back-to-back load at `a8e22c1`, pre-timeout-fix). Harness budget raises on `faSeamFitGate.test.ts`
+and `scripts/ws1-session-aj0-oracle-diff.test.ts` landed on `d9e2c24`; uncontended baseline there is
+**3010 / 77 / 0** (3087 total), measured three consecutive times — flakes have not reproduced in
+uncontended runs since.
 
 **Operator-verified closed (2026-09-04):** the `de` FA pack's missing sidecar — operator verified
 in the real app post-T4.8, symptom closed; no separate de-only root-cause trace was performed, and
@@ -3093,3 +3099,48 @@ the T4.1/T4.2 close-out entry above. Key outcomes preserved:
 - **E8:** `unsupported` FA-pack state still deferred — dropdown built from five supported codes only.
 
 Full row text retrievable: `git show bc3a156:docs/ws2-t41-phase4-manual-checklist.md`.
+
+---
+
+## WS2-46 — teardown flush on reload, close, and quit (2026-09-04)
+
+Shipped at merge `d9e2c24` (`63888b1` reload/window-close flush, `9393d66` deferred Cmd+Q). Problem:
+edits inside the 500 ms autosave debounce were lost on ordinary exit paths because nothing awaited
+persistence before the webview tore down.
+
+**Mechanism — one bounded primitive, three covered paths.** `services/teardownFlush.ts`'s
+`flushWithBudget` runs the caller's flush and **always settles within 2000 ms**, never rejects, and
+never blocks teardown past the budget — a wedged save must not make the app unclosable. Covered paths:
+
+| Path | Trigger | What flushes | Budget owner |
+|---|---|---|---|
+| Reload | Cmd+R / Ctrl+R / F5 (`App.tsx` shortcut handler) | Project **and** undo history (`saveNow` + `saveHistory`) | JS (`flushWithBudget`) |
+| Window close | Cmd+W, red close button (`onCloseRequested`) | Project only (`flushProjectOnly`); then `win.destroy()` | JS (`flushWithBudget`) |
+| Quit | Cmd+Q (`app-quit-requested` from Rust menu swap) | Project only; frontend calls `quit_flush_complete` when done | Rust (`await_flush`, same 2 s deadline) |
+
+Reload is the only path that also persists history — a reload stays in the same Rust process with
+the same app token, so `historyPersist.ts`'s stack survives; window close and quit do not flush
+history by design.
+
+**Rust-side deadline.** Cmd+Q cannot be intercepted in JS (macOS routes it through AppKit
+`terminate:`). `src-tauri/src/lib.rs` replaces the Quit menu item, emits `app-quit-requested`, and
+spawns a thread that polls `QUIT_FLUSH_DONE` for up to **2000 ms** (`QUIT_FLUSH_BUDGET_MS`) before
+calling `app.exit(0)`. A second Cmd+Q while pending is an immediate exit (escape hatch). The JS
+budget is deliberately **not** used for quit — a renderer-side timeout is worthless when the
+renderer is what hung.
+
+**Tauri permission finding.** Completing a held close requires `getCurrentWindow().destroy()` after
+`preventDefault()` on `onCloseRequested`. `destroy()` requires **`core:window:allow-destroy`** in
+`src-tauri/capabilities/default.json` — **`core:window:default` does not grant it.** Without that
+capability the handler holds the close and then cannot finish it, leaving the window **unclosable**.
+No automated test catches this: `App.teardownFlush.test.tsx` mocks the window API, so the permission
+is verified in the real Tauri shell only.
+
+**Honest scope.** Force-quit, `SIGKILL`, crashes, and power loss still bypass every path above — the
+loss window is **narrowed, not zero**. The budget also does not cancel an in-flight write; it only
+stops waiting. On reload/close the write may still land after teardown; on quit the process dies
+first.
+
+**Gates at `d9e2c24`:** tsc clean, lint clean, vitest **3010 / 77 / 0** (3087 total, three
+consecutive uncontended runs), `cargo test` **182/0/1** (default), `cargo test --features
+fa-inference` **264/0/26**.
