@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, Image as ImageIcon } from 'lucide-react';
 import type { ProjectMeta } from '../types';
 import { loadAllMetas, deleteProjectData } from '../services/projectStore';
+import { deleteAllStagedForProject } from '../services/stagedFilesStore';
 import { deleteAllAssets } from '../services/assetStore';
 import { deleteAllWaveforms } from '../services/waveformStore';
 import './ProjectDashboard.css';
@@ -131,6 +132,9 @@ export function ProjectDashboard({
     for (const id of ids) {
       await deleteAllAssets(id);
       await deleteAllWaveforms(id);
+      // WS2-50 — a deleted project's staged slots go with it. Without this the
+      // rows outlive the only thing that could ever restore them.
+      await deleteAllStagedForProject(id);
       await deleteProjectData(id);
     }
     setMetas(prev => prev.filter(m => !selectedIds.has(m.id)));

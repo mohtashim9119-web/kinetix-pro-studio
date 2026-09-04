@@ -5990,6 +5990,7 @@ export default function App() {
           className="flex-shrink-0 flex flex-col h-full border-r border-[var(--kx-line)] bg-[var(--kx-panel)] overflow-hidden transition-[width] duration-300 ease-in-out"
         >
           <DropZonePanel
+            projectId={project.id}
             segments={project.segments}
             assets={project.assets}
             voiceoverId={project.voiceoverId}

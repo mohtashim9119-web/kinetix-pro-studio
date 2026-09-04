@@ -156,6 +156,7 @@ function makeDropZonePanelProps(overrides: Partial<DropZonePanelProps> = {}): Dr
     onDeleteAsset: noop,
     onDeleteAllAssets: noop,
     onDeleteVoiceover: noop,
+    projectId: 'render-test-project',
     onApplySync: noop,
     onStagedFilesChange: noop,
     onVoiceoverStaged: noop,

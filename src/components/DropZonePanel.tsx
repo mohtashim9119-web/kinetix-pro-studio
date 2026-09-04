@@ -40,6 +40,18 @@ import { formatTime } from '../services/timeFormat';
 import { matchesSegmentQuery, computeSegmentDisplayTitle } from '../services/segmentSearch';
 import { isSliceSegmentId } from '../services/segmentId';
 import { computeDurationBarHeightPx, resolveDropGapIndex } from '../services/timelineLayout';
+import {
+  TEXT_SLOTS,
+  planStagedReconcile,
+  restoreStagedFiles,
+  toStoredRow,
+  isStagedEmpty as stagedIsEmpty,
+} from '../services/stagedFilesPersist';
+import {
+  putStagedFile,
+  deleteStagedFile,
+  getStagedFilesForProject,
+} from '../services/stagedFilesStore';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -300,6 +312,9 @@ function SaveConfirmDialog({ onConfirm, onCancel }: { onConfirm: () => void; onC
 // ---------------------------------------------------------------------------
 
 interface Props {
+  /** Owning project. Staged rows are keyed by it, so a slot staged in one
+   *  project can never restore into another. */
+  projectId: string;
   segments: VideoSegment[];
   /** Path B (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — top-level heading overlays,
    *  interleaved into the segments-tab list by `interleaveHeadingRows`. */
@@ -438,6 +453,7 @@ interface Props {
 // ---------------------------------------------------------------------------
 
 export function DropZonePanel({
+  projectId,
   segments,
   headings,
   assets,
@@ -618,6 +634,42 @@ export function DropZonePanel({
     if (isSynced) setIsEditingScene(false);
   }, [isSynced]);
 
+  // ── Staged-slot persistence (WS2-50) ──────────────────────────────────────
+  //
+  // Reconciliation runs at THIS one choke point because every staged mutation
+  // in this file already funnels through `updateStaged`. The persisted rows for
+  // a project are kept exactly equal to its currently staged slots, so replace,
+  // clear, remove-one, Apply and Discard are all covered without any of them
+  // having to remember to call a delete — the failure mode `processZipFile`
+  // demonstrates. See `stagedFilesPersist.ts` for the contract itself.
+  //
+  // Serialized on one promise chain: `updateStaged` is synchronous (the ref
+  // discipline requires it) while the store is not, so two rapid changes could
+  // otherwise interleave a write for a slot behind a delete for the same slot.
+  const persistChainRef = useRef<Promise<void>>(Promise.resolve());
+  const projectIdRef = useRef(projectId);
+  projectIdRef.current = projectId;
+
+  const reconcileStagedPersistence = (prev: StagedFiles, next: StagedFiles): void => {
+    const plan = planStagedReconcile(prev, next, TEXT_SLOTS);
+    if (plan.write.length === 0 && plan.remove.length === 0) return;
+    const owner = projectIdRef.current;
+    persistChainRef.current = persistChainRef.current
+      .then(async () => {
+        // Deletes first: a replaced singleton slot writes to the same compound
+        // key anyway, and doing removals up front means a failed write can
+        // never leave the previous file masquerading as the current one.
+        for (const slotKey of plan.remove) await deleteStagedFile(owner, slotKey);
+        for (const entry of plan.write) await putStagedFile(await toStoredRow(owner, entry));
+      })
+      .catch(err => {
+        // Persistence is a convenience over the in-memory staged state, which
+        // stays correct either way. A failure costs the slot its restore after
+        // the next reload; it must not take the staging interaction down.
+        console.error('[kinetix] staged-slot persistence failed:', err);
+      });
+  };
+
   const updateStaged = (updater: (prev: StagedFiles) => StagedFiles) => {
     // Derived from the REF, not from setState's `prev`, so the ref, the parent
     // and React state all advance in the same synchronous turn. The previous
@@ -625,10 +677,12 @@ export function DropZonePanel({
     // to defer (and, in StrictMode, to run twice) — so a handler that staged a
     // file and then read `stagedRef` in the same turn could read the pre-update
     // value. `handleConfirmSaveScene` now does exactly that.
-    const next = updater(stagedRef.current);
+    const prev = stagedRef.current;
+    const next = updater(prev);
     stagedRef.current = next;
     onStagedFilesChange(next);
     setStaged(next);
+    reconcileStagedPersistence(prev, next);
   };
 
   // Publish on mount. This panel unmounts whenever the dashboard is shown
@@ -640,6 +694,36 @@ export function DropZonePanel({
   useEffect(() => {
     onStagedFilesChange(stagedRef.current);
   }, [onStagedFilesChange]);
+
+  // Restore persisted staged slots (WS2-50). Runs per project: the panel
+  // remounts on every project change (every one routes through the dashboard,
+  // which unmounts it), and re-keying on `projectId` covers the case anyway.
+  //
+  // Deliberately does NOT go through `updateStaged` — that would reconcile the
+  // just-loaded rows straight back into the store as writes. The restore is the
+  // one place staged state moves without the persistence layer needing to hear
+  // about it, because the store is already the source it came from.
+  //
+  // `cancelled` guards the async gap: a project switch mid-load must not drop
+  // the outgoing project's rows into the incoming project's panel.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await getStagedFilesForProject(projectId);
+        if (cancelled || rows.length === 0) return;
+        // Never clobber a file the user staged while the load was in flight.
+        if (!stagedIsEmpty(stagedRef.current)) return;
+        const restored = restoreStagedFiles(rows);
+        stagedRef.current = restored;
+        onStagedFilesChange(restored);
+        setStaged(restored);
+      } catch (err) {
+        console.error('[kinetix] staged-slot restore failed:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [projectId, onStagedFilesChange]);
 
   // `script` retained for compatibility; Apply Sync no longer gates on it.
   void script;

@@ -177,9 +177,19 @@ describe('WS2-50 — DropZonePanel supplies live staged state, never a literal',
       'const updateStaged = (updater: (prev: StagedFiles) => StagedFiles) => {',
     );
     // Derived from the ref rather than setState's `prev`, so the ref, the
-    // parent and React state advance in one synchronous turn.
-    expect(body, 'updateStaged no longer derives the next value from the ref')
-      .toContain('const next = updater(stagedRef.current);');
+    // parent and React state advance in one synchronous turn. WS2-50 Commit 2
+    // split the read into a named `prev` (the reconciler needs the before
+    // state); the property asserted is unchanged — the source is the ref.
+    expect(body, 'updateStaged no longer reads the previous value from the ref')
+      .toContain('const prev = stagedRef.current;');
+    expect(body, 'updateStaged no longer derives the next value from that read')
+      .toContain('const next = updater(prev);');
+    expect(
+      body,
+      'updateStaged derives its next value inside a setStaged updater again. React may defer '
+        + 'that callback, so a handler that stages a file and then reads the ref in the same '
+        + 'turn reads the pre-update value — handleConfirmSaveScene does exactly that.',
+    ).not.toMatch(/setStaged\(\s*prev\s*=>/);
     expect(body, 'updateStaged no longer writes the ref').toContain('stagedRef.current = next;');
     expect(
       body,
