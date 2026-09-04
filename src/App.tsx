@@ -2476,6 +2476,15 @@ export default function App() {
   // budget has elapsed. `destroy()` rather than `close()` deliberately —
   // `close()` re-emits close-requested and would re-enter this handler.
   //
+  // `destroy()` REQUIRES `core:window:allow-destroy` in
+  // `src-tauri/capabilities/default.json`, and `core:window:default` does NOT
+  // include it — it grants the read-only window getters plus `set-fullscreen`
+  // and little else. Without that line this handler holds the close with
+  // `preventDefault()` and is then denied the call that completes it, i.e. the
+  // window becomes UNCLOSABLE. No test in this repo can catch that: the window
+  // API is mocked in `App.teardownFlush.test.tsx`, so the permission is not
+  // consulted. It is verified in the real shell instead.
+  //
   // The `closing` latch makes a second Cmd+W during the (at most 2 s) flush a
   // no-op rather than a second flush, so the window cannot be left waiting on a
   // queue of them.
@@ -2504,6 +2513,64 @@ export default function App() {
         // A missing window API must degrade to "close is not intercepted",
         // never to a broken app. That is exactly today's behaviour.
         console.warn('[teardown] close-requested listener unavailable:', err);
+      }
+    })();
+
+    return () => { disposed = true; unlisten?.(); };
+  }, [isHydrating, flushProjectOnly]);
+
+  // CMD+Q — the JS half of the deferred quit.
+  //
+  // Cmd+Q cannot be intercepted from here at all: macOS builds the predefined
+  // Quit item with the AppKit `terminate:` selector, so the keystroke never
+  // reaches the webview. `src-tauri/src/lib.rs` therefore replaces that one menu
+  // item with a normal one, and emits `app-quit-requested` instead of
+  // terminating; this listener is what it is talking to.
+  //
+  // NOTE THE ASYMMETRY WITH EVERY OTHER PATH IN THIS FILE: there is deliberately
+  // NO budget here. The 2 s wait lives in Rust, because a timeout implemented in
+  // the renderer is worth nothing in the one case a timeout exists for — a
+  // wedged renderer, whose timers do not fire either. Rust quits on its own
+  // schedule whether or not this listener ever answers. All this side has to do
+  // is answer as soon as it can, INCLUDING when the flush failed: reporting a
+  // failure shortens the wait, and there is nothing better to do with the
+  // remaining budget.
+  useEffect(() => {
+    if (isHydrating) return;
+    if (!('__TAURI_INTERNALS__' in window)) return;
+
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+
+    void (async () => {
+      try {
+        const [{ listen }, { invoke }] = await Promise.all([
+          import('@tauri-apps/api/event'),
+          import('@tauri-apps/api/core'),
+        ]);
+        const stop = await listen('app-quit-requested', () => {
+          void (async () => {
+            try {
+              await flushProjectOnly();
+            } catch (err) {
+              console.warn('[quit] flush failed; quitting anyway:', err);
+            } finally {
+              // Must run on EVERY path, or the user waits out the full budget
+              // for a quit that could have happened immediately.
+              try {
+                await invoke('quit_flush_complete');
+              } catch (err) {
+                console.warn('[quit] could not report flush completion:', err);
+              }
+            }
+          })();
+        });
+        if (disposed) { stop(); return; }
+        unlisten = stop;
+      } catch (err) {
+        // No listener means Rust's budget elapses and the app quits ~2 s later
+        // without flushing — degraded, but never stuck.
+        console.warn('[quit] quit-requested listener unavailable:', err);
       }
     })();
 
@@ -5169,11 +5236,15 @@ export default function App() {
       // measurement this design rests on, and what remains unverified.
       //
       // `preventDefault()` on 'consume' as well as on undo/redo is deliberate:
-      // this app configures no menu, so Tauri's default macOS Edit menu is live
-      // (it was observed to FLASH on both chords) and its Cmd+Z is bound to the
-      // OS text responder. Leaving the event alone while a modal is open would
-      // let that responder perform a text undo behind the modal the user is
-      // looking at.
+      // Tauri's default macOS Edit menu is live (it was observed to FLASH on
+      // both chords) and its Cmd+Z is bound to the OS text responder. Leaving
+      // the event alone while a modal is open would let that responder perform
+      // a text undo behind the modal the user is looking at.
+      //
+      // (WS2 T4.6 note: the app now DOES install a menu, but it is
+      // `Menu::default` with the single predefined Quit item swapped — see
+      // `src-tauri/src/lib.rs`. The Edit submenu, and therefore everything this
+      // comment describes, is untouched.)
       const shortcut = resolveShortcutAction(e, {
         isTextEntry: isTextEntryElement(document.activeElement),
         suppressed: shortcutsSuppressedRef.current,

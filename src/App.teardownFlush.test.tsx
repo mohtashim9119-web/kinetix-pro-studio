@@ -106,6 +106,21 @@ vi.mock('@tauri-apps/api/window', () => ({
   }),
 }));
 
+// The Cmd+Q path's JS half: Rust emits `app-quit-requested`, this side flushes
+// and then reports back through the `quit_flush_complete` command. Both ends are
+// captured here so the round trip can be driven without a Rust process.
+let quitHandler: (() => unknown) | null = null;
+const mockInvoke = vi.fn(async () => {});
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: async (name: string, h: () => unknown) => {
+    if (name === 'app-quit-requested') quitHandler = h;
+    return () => {};
+  },
+}));
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (...a: unknown[]) => mockInvoke(...(a as [])),
+}));
+
 // Imported AFTER the mocks are registered.
 const { default: App } = await import('./App');
 
@@ -136,6 +151,8 @@ async function pressReloadChord(): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   closeHandler = null;
+  quitHandler = null;
+  mockInvoke.mockResolvedValue(undefined);
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   mockLoadAllMetas.mockReturnValue([meta(PROJECT_ID, 'Teardown')]);
   mockSaveProject.mockResolvedValue({ ok: true });
@@ -308,5 +325,63 @@ describe('WS2 T4.6 — window close flush (Cmd+W / red button)', () => {
     await act(async () => { void closeHandler!({ preventDefault: vi.fn() }); });
 
     expect(mockSaveProject).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('WS2 T4.6 — Cmd+Q, the JS half of the deferred quit', () => {
+  // Rust cannot know when to stop waiting unless this side answers. These tests
+  // are about the ANSWER always being sent, never about the wait — the wait is
+  // Rust's, and is covered by `lib.rs`'s `await_flush` tests.
+  it('listens for the quit request Rust emits', async () => {
+    await mountEditor();
+    expect(quitHandler).not.toBeNull();
+  });
+
+  it('flushes, then reports completion back to Rust', async () => {
+    const write = deferred<{ ok: true }>();
+    mockSaveProject.mockReturnValue(write.promise);
+
+    await mountEditor();
+    mockSaveProject.mockClear();
+    mockInvoke.mockClear();
+
+    await act(async () => { void quitHandler!(); });
+    expect(mockSaveProject).toHaveBeenCalledTimes(1);
+    // Reporting before the write lands would defeat the whole mechanism.
+    expect(mockInvoke).not.toHaveBeenCalledWith('quit_flush_complete');
+
+    await act(async () => { write.resolve({ ok: true }); await Promise.resolve(); });
+    expect(mockInvoke).toHaveBeenCalledWith('quit_flush_complete');
+  });
+
+  // THE HAZARD, on this side. A failed flush that stayed silent would cost the
+  // user the full 2 s budget for a quit that could have happened at once.
+  it('still reports completion when the flush REJECTS', async () => {
+    mockSaveProject.mockRejectedValue(new Error('bridge gone'));
+    await mountEditor();
+    mockInvoke.mockClear();
+
+    await act(async () => {
+      await quitHandler!();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith('quit_flush_complete');
+  });
+
+  // Undo history dies with the session (owner ruling, Q3) — the quit path uses
+  // the same project-only flush the close path does.
+  it('does NOT flush undo history on quit', async () => {
+    await mountEditor();
+    mockSaveHistory.mockClear();
+
+    await act(async () => {
+      await quitHandler!();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mockSaveHistory).not.toHaveBeenCalled();
   });
 });
