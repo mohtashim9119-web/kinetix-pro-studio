@@ -1018,6 +1018,18 @@ export const NO_SCENE_DOC_MESSAGE = 'No scene doc is loaded, so there is nothing
 export const EMPTY_TRANSCRIPT_MESSAGE = 'No speech was found in the audio. No timeline will be created.';
 export const FULL_MISMATCH_MESSAGE = "This voiceover doesn't match your scene doc. No timeline will be created.";
 
+/** After ZIP import dedup, derive `voiceoverId` from the asset that actually
+ *  landed in `allAssets`, not from a row in `newAssets` that dedup dropped. */
+export function resolveZipImportVoiceoverId(
+  newAssets: Asset[],
+  allAssets: Asset[],
+  prevVoiceoverId: string | undefined,
+): string | undefined {
+  const zipAudio = newAssets.find(a => a.type === 'audio');
+  if (!zipAudio) return prevVoiceoverId;
+  return allAssets.find(a => a.type === 'audio' && a.name === zipAudio.name)?.id ?? prevVoiceoverId;
+}
+
 /** doc §3.11(b) — empty scene doc: a hard abort regardless of whether a
  *  previous sync's segments still exist (also covers the fresh-project case,
  *  which used to fall through silently).
@@ -5157,7 +5169,7 @@ export default function App() {
           ...prev,
           assets: allAssets,
           segments: autoMatchSegments(allAssets, prev.segments),
-          voiceoverId: newAssets.find(a => a.type === 'audio')?.id || prev.voiceoverId,
+          voiceoverId: resolveZipImportVoiceoverId(newAssets, allAssets, prev.voiceoverId),
         };
       });
     } catch (err) {
