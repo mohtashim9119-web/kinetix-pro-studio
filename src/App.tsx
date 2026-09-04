@@ -216,9 +216,17 @@ import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProje
 import { UnappliedTranscriptBanner } from './components/UnappliedTranscriptBanner';
 import {
   clearUnappliedTranscript,
+  clearDiscardedTranscriptCache,
   restoreUnappliedTranscriptTokens,
+  salvageTranscriptWithoutTimeline,
+  TRANSCRIPT_SAVED_NEED_SCENE_TAGS_TOAST,
   unappliedTranscriptStaleness,
 } from './services/unappliedTranscript';
+import {
+  classifySyncAbortMessage,
+  type ApplySyncResult,
+} from './services/applySyncAbort';
+import { armRecoveryBannerFromPersistedProject } from './services/recoveryBannerVisibility';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, SUPPORTED_LANGUAGE_CODES } from './constants';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
@@ -1998,6 +2006,11 @@ export default function App() {
   // a NEW unsupported value, so dismissing one warning can't silently hide a
   // later, different one.
   const [languageBannerDismissed, setLanguageBannerDismissed] = useState(false);
+  // WS2 T4.7 Defect A — recovery banner visibility is armed only when a
+  // persisted project open finds `unappliedTranscript`, never when the field
+  // becomes truthy mid-session (live transcription). Re-armed on every reload
+  // via `handleSwitchProject` reading persistence.
+  const [recoveryBannerArmed, setRecoveryBannerArmed] = useState(false);
   const [showDashboard, setShowDashboard] = useState(true);
   // Id of the project whose async open is in flight. Not a view state — the
   // dashboard stays the single mounted view; this only marks the clicked card.
@@ -3029,7 +3042,7 @@ export default function App() {
     }
   }, [project.assets]);
 
-  const { transcriptionStatus, startTranscription, cancelTranscription, dismissError, alignFromCache } = useWhisper();
+  const { transcriptionStatus, startTranscription, cancelTranscription, dismissError, clearTerminalTranscriptionStatus, alignFromCache } = useWhisper();
 
   // --------------------------------------------------------------------------
   // Option C — staging-time transcription trigger. Fires the moment a
@@ -3180,14 +3193,14 @@ export default function App() {
    * abort path (unreadable voiceover duration, empty scene doc, empty
    * transcript, coverage-gate rejection) returns `false`, and a throw
    * propagates. The unapplied-transcript recovery path (Requirement 3) clears
-   * the stored transcript ONLY on `true` — a `false` or a throw must leave it
-   * on disk, since an aborted sync consumed nothing.
+   * the stored transcript ONLY on `{ ok: true }` — a failed outcome or a throw
+   * must leave it on disk, since an aborted sync consumed nothing.
    *
    * The value is ignored by the ordinary Apply Sync button (`onApplySync`'s
-   * prop type is `(s) => Promise<void>`, which accepts it), so the four abort
-   * paths keep behaving for that caller exactly as they did.
+   * prop type is `(s) => Promise<void>`, which accepts it), so abort paths
+   * keep behaving for that caller exactly as they did.
    */
-  const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<boolean> => {
+  const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<ApplySyncResult> => {
     syncMark('applySync:entry', { reset: true });
     setIsProcessing(true);
 
@@ -3301,7 +3314,7 @@ export default function App() {
         // parsed yet at this point in the sequence.
         logSyncAbort(msg, 0);
         setIsProcessing(false);
-        return false;
+        return { ok: false, message: msg };
       }
     }
 
@@ -3322,7 +3335,7 @@ export default function App() {
       showToast(sceneDocAbortMsg);
       logSyncAbort(sceneDocAbortMsg, newSegmentsRaw.length);
       setIsProcessing(false);
-      return false;
+      return { ok: false, message: sceneDocAbortMsg };
     }
 
     // 7. Option C — resolve final timing BEFORE the commit, never after.
@@ -3348,7 +3361,7 @@ export default function App() {
       showToast(transcriptAbortMsg);
       logSyncAbort(transcriptAbortMsg, newSegmentsRaw.length);
       setIsProcessing(false);
-      return false;
+      return { ok: false, message: transcriptAbortMsg };
     }
 
     let finalTimedSegments: VideoSegment[];
@@ -3527,7 +3540,7 @@ export default function App() {
         showToast(gate.message);
         logSyncAbort(gate.message, aligned.segments.length);
         setIsProcessing(false);
-        return false;
+        return { ok: false, message: gate.message };
       }
 
       // WS1 R.10 (faUnspokenGate.ts) — SCRIPTED TEXT NEVER SPOKEN. Forced
@@ -4248,21 +4261,17 @@ export default function App() {
     // fact written. That asymmetry is deliberate: a retained transcript is
     // visible and one click from being discarded, while a wrongly-cleared one
     // is gone. The conservative direction is the recoverable one.
-    return true;
+    return { ok: true };
   };
 
   // -------------------------------------------------------------------------
   // WS2 T4.7 Requirement 3 — unapplied-transcript recovery.
   //
-  // The banner is a PLAIN DERIVED RENDER off `project.unappliedTranscript`
-  // (see the JSX far below), not an effect that fires on mount. That is what
-  // makes "opening or returning to the project" work without either of them
-  // being an event this component can observe: hydration, a project switch and
-  // a fresh transcription all end with the field either present or absent, and
-  // the banner follows the field. There is no dismissed-for-now state — the
-  // only two ways it goes away are the two buttons, because a third,
-  // session-only dismissal would quietly reintroduce the "your transcript is
-  // somewhere but nothing tells you" condition this requirement closes.
+  // Visibility is gated by `recoveryBannerArmed`, set when a persisted project
+  // open finds `unappliedTranscript` (reload / switch / hydration). Live
+  // transcription writes the field but never arms the banner — see
+  // `recoveryBannerVisibility.ts`. Dismissal is always user-initiated (Apply,
+  // Discard, or transcript-unrelated fallback).
   // -------------------------------------------------------------------------
 
   /** Discard — the ONLY destructive action in this feature, and it is always
@@ -4272,11 +4281,24 @@ export default function App() {
    *  user has since re-synced would be restoring a claim that is no longer
    *  true. */
   const handleDiscardUnappliedTranscript = useCallback((): void => {
-    if (!liveProjectRef.current.unappliedTranscript) return;
-    setProjectSilent(clearUnappliedTranscript);
+    const record = liveProjectRef.current.unappliedTranscript;
+    if (!record) return;
+
+    // Defect C — drop the live token cache and terminal whisper status when
+    // they still describe the discarded record. A separately cached transcript
+    // (different token sequence) is left intact.
+    if (
+      record.fileIdentity !== ''
+      && liveProjectRef.current.lastTranscribedFileIdentity === record.fileIdentity
+    ) {
+      clearTerminalTranscriptionStatus();
+    }
+
+    setProjectSilent(p => clearDiscardedTranscriptCache(clearUnappliedTranscript(p), record));
+    setRecoveryBannerArmed(false);
     void saveSnapshot(liveProjectRef.current);
     showToast('Unapplied transcription discarded.');
-  }, [saveSnapshot, showToast, setProjectSilent]);
+  }, [clearTerminalTranscriptionStatus, saveSnapshot, showToast, setProjectSilent]);
 
   /**
    * Apply — restore the recovered tokens, run a real Apply Sync against the
@@ -4308,9 +4330,9 @@ export default function App() {
     });
 
     // Step 2 — the real timeline write.
-    let committed = false;
+    let result: ApplySyncResult = { ok: false, message: '' };
     try {
-      committed = await handleApplySyncFromFiles({
+      result = await handleApplySyncFromFiles({
         scriptFile: null,
         sceneFile: null,
         voiceoverFile: null,
@@ -4319,20 +4341,29 @@ export default function App() {
       });
     } catch (err) {
       console.error('[recovery] Apply Sync from a recovered transcript threw:', err);
-      committed = false;
+      result = { ok: false, message: '' };
     }
 
-    // Step 3 — and only now.
-    if (!committed) {
-      showToast('Couldn’t apply the recovered transcription — it has been kept so you can try again.');
-      return false;
+    // Step 3 — success clears via the atomic commit; transcript-unrelated abort
+    // salvages tokens and dismisses; everything else retains the record.
+    if (result.ok) {
+      setRecoveryBannerArmed(false);
+      void saveSnapshot(liveProjectRef.current);
+      return true;
     }
-    // `handleApplySyncFromFiles`'s own atomic commit already cleared the record
-    // as part of the same update that wrote the segments. Nothing to clear
-    // here; the flush below is what makes that clear durable without waiting
-    // out the autosave debounce.
-    void saveSnapshot(liveProjectRef.current);
-    return true;
+
+    if (!result.ok && classifySyncAbortMessage(result.message) === 'transcript_unrelated') {
+      setProject(p => salvageTranscriptWithoutTimeline(p, record), {
+        label: 'salvage recovered transcription',
+      });
+      setRecoveryBannerArmed(false);
+      void saveSnapshot(liveProjectRef.current);
+      showToast(TRANSCRIPT_SAVED_NEED_SCENE_TAGS_TOAST);
+      return true;
+    }
+
+    showToast('Couldn’t apply the recovered transcription — it has been kept so you can try again.');
+    return false;
   }, [saveSnapshot, showToast]);
 
   // MODEL P — dev-only gapless-partition assertion (ruling §6.1 step 1,
@@ -5306,6 +5337,8 @@ export default function App() {
   const isLanguageUnsupported =
     project.language !== undefined && !SUPPORTED_LANGUAGE_CODES.includes(project.language);
 
+  const showRecoveryBanner = recoveryBannerArmed && project.unappliedTranscript !== undefined;
+
   // Shortcut suppression (design §7). Undo/redo must stand down whenever another
   // surface legitimately owns the keyboard: any of the five modals that run their
   // own keydown listeners, the DEV panel, or an export in flight (undoing a
@@ -5685,6 +5718,7 @@ export default function App() {
     // the OUTGOING project, so unmounting the dashboard any earlier renders the
     // editor over the wrong project for the duration of the await.
     setProjectSilent(fresh);
+    setRecoveryBannerArmed(false);
     setShowDashboard(false);
     setShowNewProjectModal(false);
     setHistory(emptyHistory<Project>());
@@ -5810,6 +5844,9 @@ export default function App() {
         // so mark it as confirmed to enable auto-save going forward.
         confirmed: true,
       });
+      setRecoveryBannerArmed(
+        armRecoveryBannerFromPersistedProject(saved.project.unappliedTranscript !== undefined),
+      );
       // HISTORY (design §6.0). A genuine project switch CLEARS; a page RELOAD of
       // the same project RESTORES. `opts.preserveUiState` is already set only on
       // the reload path (the mount effect passes it; no user-initiated switch
@@ -6016,6 +6053,41 @@ export default function App() {
 
         {/* Center — preview + timeline stacked */}
         <div className="flex-1 flex flex-col overflow-hidden bg-[#020202] min-w-0 relative" ref={centerColRef}>
+
+          {/* Top banner stack — in-flow below the editor chrome, above the
+              preview pane. Keeps recovery and language banners out of the
+              PreviewStage overlay layer (WebCodecs badge, GL diagnostics). */}
+          {(showRecoveryBanner || (isLanguageUnsupported && !languageBannerDismissed)) && (
+            <div
+              className="flex-shrink-0 flex flex-col gap-2 px-3 pt-2 z-20"
+              data-testid="editor-top-banner-stack"
+            >
+              {isLanguageUnsupported && !languageBannerDismissed && (
+                <div className="flex items-center gap-3 bg-red-900/90 border border-red-500/50 text-red-200 text-sm font-medium px-5 py-3 rounded-2xl shadow-xl backdrop-blur-md max-w-2xl mx-auto w-full">
+                  <AlertCircle size={16} className="shrink-0 text-red-400" />
+                  <span className="flex-1">
+                    Project language &quot;{project.language}&quot; is outside the supported set (English, Spanish, French,
+                    Portuguese, German) — sync accuracy is not guaranteed.
+                  </span>
+                  <button
+                    onClick={() => setLanguageBannerDismissed(true)}
+                    aria-label="Dismiss language warning"
+                    className="shrink-0 text-red-400 hover:text-white transition-colors"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              )}
+              {showRecoveryBanner && project.unappliedTranscript && (
+                <UnappliedTranscriptBanner
+                  record={project.unappliedTranscript}
+                  staleness={unappliedTranscriptStaleness(project, project.unappliedTranscript)}
+                  onApply={handleApplyUnappliedTranscript}
+                  onDiscard={handleDiscardUnappliedTranscript}
+                />
+              )}
+            </div>
+          )}
 
           {/* Preview — height-driven, draggable divider below */}
           <div
@@ -6638,45 +6710,6 @@ export default function App() {
           <button
             onClick={() => setStockError(null)}
             aria-label="Dismiss error"
-            className="shrink-0 text-red-400 hover:text-white transition-colors"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      )}
-
-      {/* WS2 T4.7 Requirement 3 — unapplied-transcript recovery banner.
-          A plain derived render: present exactly while the open project carries
-          the record, gone the moment Apply's commit or Discard removes it. No
-          auto-apply and no auto-discard — see UnappliedTranscriptBanner.tsx. */}
-      {project.unappliedTranscript && (
-        <UnappliedTranscriptBanner
-          record={project.unappliedTranscript}
-          staleness={unappliedTranscriptStaleness(project, project.unappliedTranscript)}
-          onApply={handleApplyUnappliedTranscript}
-          onDiscard={handleDiscardUnappliedTranscript}
-          // Sits below the unsupported-language banner when that one is also
-          // up — both are `fixed` and top-anchored, so they need an explicit
-          // stacking offset or they occupy the same strip.
-          topPx={isLanguageUnsupported && !languageBannerDismissed ? 80 : 16}
-        />
-      )}
-
-      {/* Unsupported-language banner (Phase 2a, H.4 guard) — persistent while
-          project.language stays outside the supported set; dismissible for
-          the session, re-shown if the language changes to a new unsupported
-          value. Top-anchored (not the bottom toast lane above) since this is
-          ongoing project state, not a one-off action result. */}
-      {isLanguageUnsupported && !languageBannerDismissed && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-3 bg-red-900/90 border border-red-500/50 text-red-200 text-sm font-medium px-5 py-3 rounded-2xl shadow-xl backdrop-blur-md max-w-lg">
-          <AlertCircle size={16} className="shrink-0 text-red-400" />
-          <span className="flex-1">
-            Project language &quot;{project.language}&quot; is outside the supported set (English, Spanish, French,
-            Portuguese, German) — sync accuracy is not guaranteed.
-          </span>
-          <button
-            onClick={() => setLanguageBannerDismissed(true)}
-            aria-label="Dismiss language warning"
             className="shrink-0 text-red-400 hover:text-white transition-colors"
           >
             <X size={16} />

@@ -39,12 +39,6 @@ export interface UnappliedTranscriptBannerProps {
    *  `true`; the banner only stops rendering because the record went away. */
   onApply: () => Promise<boolean>;
   onDiscard: () => void;
-  /** Distance from the top of the viewport, in px. The caller owns this
-   *  because App.tsx renders a second top-anchored banner (the H.4
-   *  unsupported-language warning) that can be on screen at the same time;
-   *  both are `position: fixed`, so without an offset the two would occupy the
-   *  same 3 rem and the lower one would be unreadable and unclickable. */
-  topPx?: number;
 }
 
 /** "1,204 words · 4 Sept 2026, 14:02" — falls back gracefully on an
@@ -61,7 +55,6 @@ export function UnappliedTranscriptBanner({
   staleness,
   onApply,
   onDiscard,
-  topPx = 16,
 }: UnappliedTranscriptBannerProps): React.JSX.Element {
   const [busy, setBusy] = useState(false);
   const stale = staleness === 'stale';
@@ -93,9 +86,8 @@ export function UnappliedTranscriptBanner({
     <div
       role="status"
       data-testid="unapplied-transcript-banner"
-      style={{ top: topPx }}
-      className={`fixed left-1/2 -translate-x-1/2 z-[200] flex items-center gap-3 text-sm font-medium
-                  px-5 py-3 rounded-2xl shadow-xl backdrop-blur-md max-w-2xl border
+      className={`w-full flex items-center gap-3 text-sm font-medium
+                  px-5 py-3 rounded-2xl shadow-xl backdrop-blur-md max-w-2xl mx-auto border
                   ${stale
                     ? 'bg-amber-900/90 border-amber-500/50 text-amber-100'
                     : 'bg-sky-900/90 border-sky-500/50 text-sky-100'}`}
