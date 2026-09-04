@@ -103,6 +103,8 @@
 - [WS1 Phase 1b–3d groundwork closed](#2026-08-05-08-25--ws1-phase1b-3d-groundwork) — 2026-08-05–08-25
 - [OPERATOR-ATTESTED — WS1 Spanish-corpus acceptance lapse closed](#2026-08-27--operator-attested--ws1-spanish-corpus-acceptance-lapse-closed) — 2026-08-27
 - [WS2 Phase 4 close-out (T4.1/T4.2) and the four false-greens](#2026-09-03--ws2-phase-4-close-out-t41--t42-and-the-four-false-greens) — 2026-09-03
+- [WS2 T4.4–T4.8 — model download arc closed](#ws2-t4t8--model-download-arc-closed-2026-09-04) — 2026-09-04
+- [WS2-45 — Phase 4 manual checklist retired](#ws2-45--phase-4-manual-checklist-retired-2026-09-04) — 2026-09-04
 
 ---
 
@@ -3037,3 +3039,55 @@ operator's perception of completion at 84.87 %, which remains **unreproduced**.
 Gates: tsc clean, lint clean, vitest 2954 → 2960 passed / 77 skipped / 0 failed, cargo 129 → 153
 (default) and 211 → 235 (`--features fa-inference`), 0 failed both, gaplessInvariant 36/36, golden
 replay 6/6, K13 3/3. Full record: `.work-phase4/session-ws2-42/` (gitignored, local).
+
+---
+
+## WS2 T4.4–T4.8 — model download arc closed (2026-09-04)
+
+Phase 4 (Settings & project creation) closed with T4.1 and T4.2 on 2026-09-03. The download
+resilience arc T4.3 through T4.8 closed the same workstream on 2026-09-04 at merge `bc3a156`.
+
+**Root finding (T4.8 retrospective):** every round was a different symptom of one redundant
+**second read** of the just-downloaded file, competing with macOS Spotlight indexing on the same
+bytes, until the read was deleted and the existing cached verify digest was reused for the `.sha256`
+sidecar write (`finalize_verified_download`, `model_download.rs`).
+
+| Round | Symptom class | Mechanism fixed or surfaced |
+|---|---|---|
+| **T4.3** (`946223e`) | Transfer interrupted mid-stream | No retry; resume sidecar + honest errors — prerequisite, not the root read |
+| **T4.4** (`f9ed1b6`) | Silent stalls, duplicate writers | Two concurrent writers on one `.part` with no single-flight guard (`IN_FLIGHT`, `try_acquire_in_flight`) |
+| **T4.5** (`74f8faf`) | Installed FA rows offer "Resume \<full size\>" | `status_for_target` reported a **completed** target's own on-disk bytes as `partial_bytes` |
+| **T4.6** (`aa797f6`) | Reload leaves download invisible; all rows "Checking…" | Tauri does **not** cancel a spawned command future on webview reload — the event `Channel` belonged to the dead page until `EventSink.replace` + `*_download_attach` re-attached a fresh page to the live native job |
+| **T4.7** (`1787c29`) | Operator scenarios untested | Added cancel-then-resume, sibling-pack isolation, reload-reattach coverage — sibling test found that asserting **only settled DOM** passes with the T4.6 "all rows Checking" bug reintroduced |
+| **T4.8** (`08caf5f`) | Post-download verify hangs (de pack) | Deleted the redundant post-download re-hash; verify returns the digest and the sidecar writer reuses it — no second `hash_file` on the finished ONNX |
+
+T4.7 shipped tests only; T4.8 shipped no TS changes. Reconciled vitest baseline at `bc3a156`:
+**2982 passed / 77 skipped / 0 failed** (3059 total) — first full-suite run on merged main after
+T4.4/T4.6 store/UI changes.
+
+**Unresolved (separate entry):** why `fa_model_download`'s **original** sidecar write never landed
+for **`de` at all** — as distinct from landing slowly — was never separately diagnosed. It is only
+plausibly covered by removing the redundant read class in T4.8, not proven as the same defect.
+
+---
+
+## WS2-45 — Phase 4 manual checklist retired (2026-09-04)
+
+`docs/ws2-t41-phase4-manual-checklist.md` was written at T4.1 Step 5 as a one-time Phase 4
+observability runbook. Every actionable row carries a **RESOLVED** annotation or lives under §Z as
+NOT OBSERVABLE — the checklist did its job and is not a standing repeated procedure (contrast
+`docs/wkwebview-drag-checklist.md`, which stays tracked because drag regressions are re-run every
+release).
+
+**Decision:** fold outcomes into this file and **untrack** the checklist. Keeping a tracked doc
+full of spent RESOLVED rows would imply live work remains; the durable record belongs here and in
+the T4.1/T4.2 close-out entry above. Key outcomes preserved:
+
+- **C4 / Z1:** Export Engine toggle governs export encoder only — preview deliberately unwired;
+  `webcodecsToggleConsumers.test.ts` pins the consumer set.
+- **D4 / F-rows:** Overlay cascade gates on changed intent, not modal open alone.
+- **E2 / Z6:** Default `tauri:dev` build reports `unbuilt` — no pack download offer when FA cannot run.
+- **A6 / Z4:** Bare-key leak (Space, arrows, `F`) closed in T4.2; S/D timeline-focus scope stays deferred in §5.
+- **E8:** `unsupported` FA-pack state still deferred — dropdown built from five supported codes only.
+
+Full row text retrievable: `git show bc3a156:docs/ws2-t41-phase4-manual-checklist.md`.

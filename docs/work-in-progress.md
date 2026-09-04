@@ -177,105 +177,87 @@ sync ever needs it.)
 
 ### 5. Deferred tasks
 
-Hygiene pass 2026-09-03 (T4.2): 15 entries → 8. Three deleted as fully relocated or measured
-noise, one closed by the Step 2 fix, CTC margin moved onto WS1's FA task line, four non-English
-items merged. No entry's content was dropped without a named destination — see the T4.2 record
+Hygiene pass 2026-09-03 (T4.2): 15 entries → 8. WS2-45 pass (2026-09-04): Site B zip data-integrity
+scope, French/C3/fixture corrections, vitest flake inventory, E8 tightened — **seven entries**
+remain. No entry's content was dropped without a named destination — see T4.2 and WS2-45 records
 in `docs/history-2.md`.
 
-- [DEFERRED] Re-examine ruling C3 (the dual TS+Rust normalization surface, kept honest by a
-  conformance fixture): the surface acquired a POLICY, and a conformance fixture tests that two arms
-  AGREE, not that either is CORRECT. The open question is what check independent of BOTH arms catches
-  a symmetric error. Not a reversal of C3. Full argument: `docs/history-2.md`, WS2 T4.1 Step 0a.
-  **Revisit trigger:** any change to either normalization arm's policy, or a real divergence report.
-  No owner.
+- [DEFERRED] IndexedDB Orphaned Asset Blobs (`processZipFile` data integrity & cleanup audit)
+  - **Active Bug (Site B):** `processZipFile`'s dedup (`App.tsx:4697`) drops a duplicate without
+    `deleteAsset` AND without `URL.revokeObjectURL`, leaking both a DB row and a blob URL. NOT
+    safely fixable as delete alone: `voiceoverId` (`App.tsx:4703`) derives from the UNDEDUPLICATED
+    `newAssets`, so when the dropped duplicate is the audio file its id becomes `project.voiceoverId`
+    while its row is absent from `project.assets` — a dangling `voiceoverId` that must be fixed
+    first (read `dedupedNew`, not `newAssets`). Reachability is narrow: the drop needs a concurrent
+    add mid-extraction (`assetsRef.current` only updates in an effect at `App.tsx:4865`). Site A
+    (`extractZipToAssets` consumer) closed at `a2e2b26` (`services/zipAssetMerge.ts`).
+  - **Audit Task:** `FINAL TEST V8` holds 798 DB rows for 399 assets (`assetStore.ts:47`). Any
+    cleanup rule must preserve assets referenced in undo history (`historyPersist.ts:170`),
+    `lastTranscribedAssetId`, staged voiceovers, and `waveformStore.ts:114`. Neither dedup site
+    explains an exact 2× — one fires only on genuine name collisions, the other needs a race.
+  - **Trigger:** Fixing `processZipFile`'s `voiceoverId` derivation, or executing the report-only
+    classifier script.
+- [DEFERRED] Non-English Localization & Corpora Gap
+  - **Parent Prerequisite:** Missing real `fr`, `de`, and `pt` golden audio/transcript corpora.
+  - **Sub-Items:**
+    a) **Digit Cardinals:** `digitTokenToWords` (`textNormalize.ts`) emits English words for all languages.
+    b) **Elisions:** `canonicalize()` splits non-English apostrophes (e.g., `l'élève`).
+    c) **French Grammar:** *cent* and *quatre-vingt* wrongly keep their `-s` before a bare numeral
+       scale word — measured: `200000` → `"deux cents mille"` and `80000` → `"quatre-vingts mille"`
+       (correct: `"deux cent mille"`, `"quatre-vingt mille"`). `200000000` → `"deux cents millions"`
+       is correct and must not regress (*million* is a noun). NOT `composeHundred`-only: the
+       `quatre-vingts` case is a literal `cardinals0to99["80"]` lookup via `composeScaleLevel`, so
+       suppression belongs at `composeScaleLevel`'s multiplier call, covering both the
+       `composeHundred` plural and the 0-99 table. Needs a new
+       `hundred.suppressPluralBeforeNumeralScaleWord` schema field in `fa-cardinal-fr.json` plus
+       both arms (`faTextNormalize.ts:276`, `fa/text.rs`), and fr fixture rows for
+       200000/300000/80000/200000000 — `fa-text-normalize-fixture.json` tops out at 1998, so it
+       currently cannot see this defect in either arm, and a TS-only fix would leave it GREEN with
+       the arms diverged.
+    d) **Corpus Gap:** Four-language linguistic design is unvalidated for `fr`/`de`/`pt`.
+  - **Note (WS2-44):** (c) is NOT corpus-blocked and NOT reachable in the default build.
+    `composeHundred` is dead in the TS arm permanently by owner ruling — every
+    `computeFaChunkPlan` call site (`App.tsx:4395`, `faSeamFitGate.ts:190`,
+    `forcedAlignmentRun.ts:142`) omits the `languageCode`/`vocabChars`/`cardinalData` trio and
+    `faTextNormalize.ts:501-511` rules that it stays omitted (wiring it would desync `wordIndex`).
+    The live arm is `fa/text.rs:314` via `fa_onnx.rs:848`/`:1321`/`:1538`, gated on the
+    non-default `fa-inference` feature. So a TS-side fix is a `gates-guarding-nothing` change and
+    should move only as C3 parity ballast alongside the Rust fix. By contrast (a),
+    `digitTokenToWords` (`textNormalize.ts:88`), IS live via `canonicalize`
+    (`textNormalize.ts:195`/`:206`) and is genuinely corpus-blocked.
+  - **Trigger:** Acquiring real French, German, or Portuguese test corpora; (c) also has its own
+    numeral-scale trigger independent of the corpus gap.
+- [DEFERRED] Video Engine & Frame Rate Limitations
+  - **Sub-Items:**
+    a) **120fps Preview Lag:** `MAX_BUFFERED_FRAMES_PER_SESSION = 90` (`videoDecoderPool.ts:107`) caps by frame count instead of byte budget, freezing 120fps preview playback. Export is unaffected.
+    b) **Arbitrary Frame Rate:** `useExport.ts:27` hardcodes a single project frame rate, ignoring native asset frame rates (`Asset.nativeFps`).
+  - **Trigger:** Media engine / preview buffer refactor.
+- [DEFERRED] Timeline Clip Focus & S/D Hotkey Scope
+  - **Issue:** Single-key shortcuts (`S`/`D`) do not check for true timeline DOM focus because clip elements lack `tabIndex` and `Timeline.tsx:433` suppresses focus-shift on click.
+  - **Trigger:** Reworking timeline clip focusability and keyboard navigation.
+- [DEFERRED] C3 Normalization Dual-Implementation Policy
+  - **Issue:** Dual TS/Rust normalization relies on a conformance fixture that tests agreement rather than absolute correctness against independent standards.
+  - **Fixture ceiling:** `scripts/fixtures/fa-text-normalize-fixture.json` tops out at **1998** — the
+    arms can diverge above that with the fixture still green (French *cent*/*quatre-vingt* before a
+    bare numeral scale word is the measured example; see the localization entry's sub-item (c)).
+  - **Trigger:** Policy changes to either normalization arm or a real divergence report.
+- [DEFERRED] Order-dependent vitest timeout flakes (not a code defect)
+  - **Inventory:** Three files fail under full-suite CPU contention but pass in isolation:
+    `faSeamFitGate.test.ts` (**16/16 isolated**; 173 rows at lines 288/299 use vitest's default
+    5s budget, not the file's 120s v6 budget — two tests in this file),
+    `scripts/ws1-session-aj0-oracle-diff.test.ts` (3/3 isolated; v6 `runProductionPath` can exceed
+    120s under load), `scripts/ws1-session-s-exclusion.test.ts` (6/6 isolated; not reproduced at
+    `bc3a156` but named from session-ws2-06 — same timeout class). Reconciled baseline at
+    `bc3a156`: **2982 / 77 / 0** (3059 total); **2980 / 2 / 77** is the flake profile, not a
+    regression.
+  - **Trigger:** raising per-test timeouts or a dedicated CI pool — not silencing individual failures
+    without measuring isolation cost.
 - [DEFERRED] FA pack detector `unsupported` state (manual row E8) is not user-reachable from the
-  Project Settings dropdown, which is built from `SUPPORTED_LANGUAGES`. Two corrections from
-  T4.2's verification pass. (1) The branch **is** tested — `FaPackStatus.test.tsx:156` renders it
-  with `'ja'`; the old "whether it renders is untested" was wrong. (2) The unreachability premise
-  was enforced by **nothing**: `models.ts:21` intersects `SUPPORTED_LANGUAGE_CODES` with a
-  hardcoded five-code literal and `models.rs:182` hardcodes the same five a third time, so a sixth
-  language compiled clean and made the branch reachable on the same commit. Now guarded by
-  `faPackLanguageParity.test.ts` (reach probed destructively, not assumed). The deferral stands;
-  the guard is what will announce its premise failing. **Revisit trigger:** that guard going red.
-  No owner.
-- [OPEN] Zip import writes asset blobs to IndexedDB BEFORE the dedup that decides whether to keep
-  them, and the discard path never calls `deleteAsset` — an **active write bug on `main`**, not a
-  legacy artifact. `App.tsx:4677` writes; `App.tsx:4696`'s "final dedup (catches concurrent adds)"
-  then drops by name, and every asset it drops is a permanently orphaned blob. The race it
-  compensates for is structural: all file promises run concurrently off one `assetsRef.current`
-  snapshot, so two archive entries with the same basename (`filename.split('/').pop()`) both pass
-  the `4670` pre-check. `extractZipToAssets` (`App.tsx:365`) has the same write-then-return shape.
-  Filed as its own item per operator ruling A1 rather than patched inside the hygiene pass. Full
-  diagnosis: `.work-phase4/session-ws2-41/step3-duplicate-asset-blobs.md` §2. No owner.
-- [DEFERRED · NOT DETERMINED] Orphaned asset rows — diagnosis task, NOT a fix. `FINAL TEST V8`
-  returns 798 rows for 399 `project.assets` entries. T4.2 established these are **not duplicates**:
-  `assets-v2`'s key is compound `['projectId','id']` (`assetStore.ts:47`) and `put` replaces, so
-  798 rows are 798 DISTINCT ids — ~399 orphans. Whether the entry above produced V8's specific
-  split is **NOT DETERMINED** (needs the live app + that IndexedDB; a full re-stage by the user
-  would also produce 2×, and that is a user action, not a bug). An `id-not-in-project.assets`
-  deletion rule is **disqualified as written**: it would delete rows reachable from persisted undo
-  snapshots (`historyPersist.ts:170` stores whole `Project`s), from `lastTranscribedAssetId`
-  (`types.ts:349`), and from the staged-voiceover window (`App.tsx:351`→`3019`), and would
-  desynchronise the second asset-id-keyed store (`waveformStore.ts:114`). Next step is the
-  report-only classifier and its four go/no-go conditions, both specified in
-  `.work-phase4/session-ws2-41/step3-duplicate-asset-blobs.md` §§4-5. No owner.
-- [DEFERRED] S/D hotkey scope is gated on a selected/targeted segment plus the text-entry guard and
-  (since T4.1) modal suppression — but still not on true TIMELINE focus. Confirmed by T4.2 as a
-  DISTINCT leak, not covered by that round's bare-key fix: that fix answers "does a modal own the
-  keyboard", this asks "does the timeline own it", and no modal need be open for this one. The
-  blocker is clip focusability, not the guard — Timeline's clip elements and its scroll container
-  carry no tabIndex/role (deliberately removed in `299f014`) and `Timeline.tsx:433-446`'s
-  mousedown-capture handler actively suppresses the browser's own focus-shift on click. Gating S/D
-  on focus-within needs tabIndex plumbing plus revisiting that suppression, which touches selection
-  and scrubbing. No owner.
-- [DEFERRED] 120fps preview decode lag — the decode-ahead cap must be expressed in bytes, not
-  frame count; the formula is already derived but full implementation is deferred. Cause confirmed
-  by T4.2: `MAX_BUFFERED_FRAMES_PER_SESSION = 90` (`videoDecoderPool.ts:107`) is a frame COUNT
-  sized against assumed 24-30fps content, and nothing reads the source's actual rate, so at 120fps
-  90 frames = 0.75s and the fixed `WINDOW_AHEAD_SEC = 1.5` window (`:76`) can never fill. On the
-  Windows build the preview shows a frozen frame; export is unaffected (a separate, non-windowed
-  sequential decoder). **Deliberately NOT merged with the item below** — see it. Full diagnosis:
-  `docs/ws2-video-ingest/bug3-diagnosis.md`.
-- [DEFERRED] Arbitrary frame rate support — one frame rate is assumed for the whole timeline
-  (`ExportFps = 24 | 30 | 60`, `useExport.ts:27`, applied per-run at `:190`/`:490`), with
-  `Asset.nativeFps` used "only to auto-suggest exportFps" (`types.ts:134-136`); some assets are
-  24fps. **T4.2 checked the standing claim that this shares a cause with the 120fps item and
-  REFUTED it.** Both halves are individually true, but they are two mechanisms in two subsystems:
-  the 120fps defect is a preview-pool constant that never reads the SOURCE ASSET's rate
-  (`bug3-diagnosis.md:124`, `:199-200`) and that diagnosis records export as unaffected (`:212`),
-  while this item is an export/project-model question. Neither fix advances the other, so they
-  stay separate entries. No owner.
-- [DEFERRED · NOT DETERMINED] Non-English correctness, four items sharing ONE prerequisite — **no
-  fr/de/pt golden corpus exists in this repo.** That gap is the parent, not a fifth item:
-  acquiring one real fr, de or pt script+transcript+audio corpus unblocks (a) and (b) together,
-  and T3.1's conformance fixture had to work around it by testing `canonicalize()` directly rather
-  than through a corpus. Each sub-item keeps its own pointer and its own distinct fix:
-  - **(a) digit cardinals are never language-gated.** `textNormalize.ts`'s `digitTokenToWords`
-    emits English cardinal/year words for every language (es `"23"` → `"twenty three"`), never
-    gated by `languageCode`. T3.2 closed the ENGLISH half only and left es/fr/pt/de diverging in a
-    NEW way: FA now emits `veintitrés` while the matcher still emits `twenty three`, so the two
-    arms fail DIFFERENTLY and a diagnosis reading one arm will mis-attribute it. That wrongness
-    ships today; "T3.2 is done" overstates it. Invisible in all three golden corpora only by a
-    symmetric-fold coincidence (`spanish`'s `"12"`). Fix: gate on `languageCode`. Full reframing:
-    `docs/history-2.md`, WS2 T4.1 D6/D3.
-  - **(b) fr/pt/de elision (`l'élève`-class).** `canonicalize()` splits any apostrophe not in the
-    English-only `CONTRACTIONS` map into two tokens on every branch, every language;
-    `faTextNormalize.ts` keeps it one token. Whether this is a real match defect is genuinely NOT
-    DETERMINED — no corpus here contains elision content
-    (`.work-phase4/session-ws2-33/t32-numeral-diagnosis.md` §2.3). Fix touches the es/fr/de/pt
-    branch of `canonicalize()`, which needs its own standing-ruling sign-off. Structurally
-    separate from (a) — apostrophes, not digits — and from T3.1; do not fold into either.
-  - **(c) French `composeHundred` pluralizes "cent" unconditionally** whenever its local remainder
-    is 0, with no signal for whether a further NUMERAL scale word ("mille") follows — "deux cents
-    mille" for 200000 where correct French is "deux cent mille". Encoded as a `knownLossy` fixture
-    entry on `fa-cardinal-fr.json`'s `hundred` config (`7901c27`), not fixed. Fix: thread a new
-    schema signal from `composeScaleLevel` into `composeHundred`. Has its OWN trigger independent
-    of the corpus: any corpus with a French number ≥200,000 followed by a numeral scale word.
-  - **(d) the corpus gap itself** — T3.2 Option 1's four-language linguistic design work was
-    scoped only against the one real es corpus, so it is unvalidated for fr/de/pt.
-
-  **Revisit trigger:** acquiring a real fr, de or pt corpus (unblocks a, b and d at once), or (c)'s
-  own numeral trigger. No owner.
+  Project Settings dropdown, which is built from `SUPPORTED_LANGUAGES`. Verified 2026-09-03: still
+  open, not superseded by `faPackLanguageParity.test.ts` — that test's own header says the deferral
+  stays correct and its job is only to fail loudly if a sixth language ever makes the branch
+  reachable (`models.ts:21` / `models.rs:182` still hardcode the same five-code list three times,
+  independently). **Trigger:** that guard going red.
 
 ---
 
