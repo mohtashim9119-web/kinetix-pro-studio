@@ -174,7 +174,6 @@ Baselines (f28a012): vitest 3121 passed / 77 skipped / 0 failed; gaplessInvarian
 - [OPEN] Zero-Duration Timeline: App.tsx:3396 falls back to zero when no voiceover resolves. Operator decision: abort with error/toast requiring voiceover; not yet implemented.
 - [OPEN] processZipFile voiceoverId: App.tsx:5160 derives voiceoverId from the undeduplicated array, so project.voiceoverId can reference a dropped asset. Data-integrity defect.
 - [OPEN] Voiceover Restore Degradation: untranscribed staged voiceover does not survive reload; canAdoptRestoredVoiceover refuses it. Needs an explicit transcribe-restored-file affordance, not a looser gate.
-- [OPEN · NON-BLOCKING] FA Pack Detector (E8): unsupported state unreachable from Project Settings; models.ts:21 and models.rs:182 hardcode the five-code list.
 - [OPEN · NON-BLOCKING] Timeline Clip Focus: Timeline.tsx:433 S and D hotkey scope is wrong.
 
 ### 5. Deferred tasks

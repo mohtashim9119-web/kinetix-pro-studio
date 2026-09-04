@@ -3290,3 +3290,22 @@ to close.
 - **Not tracked:** `.work-phase4/replay/` (~85M). Reproduction gap recorded explicitly in
   `docs/work-in-progress.md` §3 (replay fixture reproduction gap entry).
 
+---
+
+## WS2 — FA Pack Detector E8 closed (2026-09-05)
+
+**Verdict:** CLOSED — unreachable by construction, guarded against drift; no code change warranted.
+
+The deferral in `FaPackStatus.tsx:81` remains correct: the Project Settings language dropdown is
+built from `SUPPORTED_LANGUAGES`, and those five codes are exactly the five FA packs. What was
+missing was a guard that notices when that premise stops holding — `faPackLanguageParity.test.ts`
+(WST2 T4.2 Step 1) now provides it.
+
+**Assertions (will fail on drift):**
+- Set equality: `expect([...FA_MODEL_LANGUAGES].sort()).toEqual([...SUPPORTED_LANGUAGE_CODES].sort());`
+- Per-code: `for (const code of SUPPORTED_LANGUAGE_CODES) { expect(FA_MODEL_LANGUAGES.includes(code), code).toBe(true); }`
+- Rust mirror: `expect([...FA_MODEL_LANGUAGES].sort()).toEqual(['de', 'en', 'es', 'fr', 'pt']);`
+
+Adding a sixth language to `constants.ts` turns 2 of 3 tests red (measured in session ws2-41).
+Entry removed from `docs/work-in-progress.md` §4.
+
