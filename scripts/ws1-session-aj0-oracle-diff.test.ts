@@ -95,5 +95,5 @@ describe.each(['v6', '173', 'spanish'] as const)('AJ-0 oracle diff (reporting on
     // structural ones above (segment count, tag order). Every value delta —
     // allowlisted or not — is printed above for a human to read; this check
     // does not fail the suite on an unexplained delta, by design.
-  }, 120000);
+  }, 180_000); // vitest harness only — v6 runProductionPath can exceed 120s under full-suite CPU load
 });

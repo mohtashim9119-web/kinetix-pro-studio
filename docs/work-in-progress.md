@@ -242,15 +242,18 @@ in `docs/history-2.md`.
     bare numeral scale word is the measured example; see the localization entry's sub-item (c)).
   - **Trigger:** Policy changes to either normalization arm or a real divergence report.
 - [DEFERRED] Order-dependent vitest timeout flakes (not a code defect)
-  - **Inventory:** Three files fail under full-suite CPU contention but pass in isolation:
-    `faSeamFitGate.test.ts` (**16/16 isolated**; 173 rows at lines 288/299 use vitest's default
-    5s budget, not the file's 120s v6 budget — two tests in this file),
-    `scripts/ws1-session-aj0-oracle-diff.test.ts` (3/3 isolated; v6 `runProductionPath` can exceed
-    120s under load), `scripts/ws1-session-s-exclusion.test.ts` (6/6 isolated; not reproduced at
-    `bc3a156` but named from session-ws2-06 — same timeout class). Reconciled baseline at
-    `bc3a156`: **2982 / 77 / 0** (3059 total); **2980 / 2 / 77** is the flake profile, not a
-    regression.
-  - **Trigger:** raising per-test timeouts or a dedicated CI pool — not silencing individual failures
+  - **Inventory:** Two files confirmed under full-suite CPU contention (pass in isolation):
+    `faSeamFitGate.test.ts` (**16/16 isolated**; 173 rows at lines 288/299 had vitest's default
+    5s harness budget — raised to 120s this round), `scripts/ws1-session-aj0-oracle-diff.test.ts`
+    (3/3 isolated; v6 `runProductionPath` exceeded 120s under load — raised to 180s). Both are
+    vitest harness allowances, not in-test performance assertions.
+    `scripts/ws1-session-s-exclusion.test.ts` (6/6 isolated; **unconfirmed at current main** —
+    named from session-ws2-06 at `bc3a156`, not reproduced under load at `a8e22c1`).
+  - **Measured profiles (3059 total):** suite is green only sometimes. Flake profiles under load:
+    **2980 / 2 / 77** (`bc3a156`, session-ws2-06) and **2979 / 3 / 77** (`a8e22c1`, pre-fix,
+    back-to-back runs) — both failures are timeout budgets, not logic failures. Green when
+    uncontended: **2982 / 77 / 0**.
+  - **Trigger:** dedicated CI pool or further harness headroom — not silencing individual failures
     without measuring isolation cost.
 - [DEFERRED] FA pack detector `unsupported` state (manual row E8) is not user-reachable from the
   Project Settings dropdown, which is built from `SUPPORTED_LANGUAGES`. Verified 2026-09-03: still

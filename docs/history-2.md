@@ -3061,14 +3061,15 @@ sidecar write (`finalize_verified_download`, `model_download.rs`).
 | **T4.7** (`1787c29`) | Operator scenarios untested | Added cancel-then-resume, sibling-pack isolation, reload-reattach coverage — sibling test found that asserting **only settled DOM** passes with the T4.6 "all rows Checking" bug reintroduced |
 | **T4.8** (`08caf5f`) | Post-download verify hangs (de pack) | Deleted the redundant post-download re-hash; verify returns the digest and the sidecar writer reuses it — no second `hash_file` on the finished ONNX |
 
-T4.7 shipped tests only; T4.8 shipped no TS changes. Reconciled vitest baseline at `bc3a156`:
-**2982 passed / 77 skipped / 0 failed** (3059 total) — first full-suite run on merged main after
-T4.4/T4.6 store/UI changes.
+T4.7 shipped tests only; T4.8 shipped no TS changes. Full-suite vitest at `bc3a156` (3059 total) is
+green only sometimes under CPU load — not a single reconciled number. Measured flake profiles (both
+timeout-budget failures under contention, not logic failures): **2980 / 2 / 77** (session-ws2-06 at
+`bc3a156`) and **2979 / 3 / 77** (back-to-back load at `a8e22c1`, pre-timeout-fix). Green profile
+when uncontended: **2982 / 77 / 0**.
 
-**Operator-verified closed (2026-09-04):** the `de` FA pack's missing sidecar — sidecar never
-landed at all, not merely slowly — matched the T4.8 redundant-read class; a fresh `de` download in
-the real app after `08caf5f` lands the sidecar and clears status correctly. No separate `de`-only
-root-cause trace was written, but the symptom is closed.
+**Operator-verified closed (2026-09-04):** the `de` FA pack's missing sidecar — operator verified
+in the real app post-T4.8, symptom closed; no separate de-only root-cause trace was performed, and
+the symptom matches the redundant-read class removed by T4.8.
 
 ---
 
