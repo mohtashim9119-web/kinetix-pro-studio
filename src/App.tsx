@@ -2030,6 +2030,12 @@ export default function App() {
   // becomes truthy mid-session (live transcription). Re-armed on every reload
   // via `handleSwitchProject` reading persistence.
   const [recoveryBannerArmed, setRecoveryBannerArmed] = useState(false);
+  // Bumped after a successful banner-triggered Apply Sync so DropZonePanel
+  // clears its own staged slots. The banner calls handleApplySyncFromFiles
+  // directly, bypassing the panel's triggerSync (which is what clears staged
+  // state for the main Apply Sync button) — without this signal the left
+  // panel keeps showing "Pending" on slots the sync already committed.
+  const [stagedFilesClearSignal, setStagedFilesClearSignal] = useState(0);
   const [showDashboard, setShowDashboard] = useState(true);
   // Id of the project whose async open is in flight. Not a view state — the
   // dashboard stays the single mounted view; this only marks the clicked card.
@@ -4436,6 +4442,7 @@ export default function App() {
     // salvages tokens and dismisses; everything else retains the record.
     if (result.ok) {
       setRecoveryBannerArmed(false);
+      setStagedFilesClearSignal(s => s + 1);
       void saveSnapshot(liveProjectRef.current);
       return true;
     }
@@ -6046,6 +6053,7 @@ export default function App() {
             onDeleteAllAssets={handleDeleteAllAssets}
             onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
             onApplySync={handleApplySyncFromFiles}
+            stagedFilesClearSignal={stagedFilesClearSignal}
             onStagedFilesChange={handleStagedFilesChange}
             onVoiceoverStaged={handleVoiceoverStaged}
             onVoiceoverUnstaged={handleVoiceoverUnstaged}

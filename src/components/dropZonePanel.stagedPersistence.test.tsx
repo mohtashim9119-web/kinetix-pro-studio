@@ -61,7 +61,7 @@ function makeProps(overrides: Partial<DropZonePanelProps> = {}): DropZonePanelPr
     persistedVoiceoverName: '', persistedAssetCount: 0, isSynced: true,
     onClearScript: noop, onClearSceneDetails: noop,
     onDeleteAsset: noop, onDeleteAllAssets: noop, onDeleteVoiceover: noop,
-    onApplySync: noop, onStagedFilesChange: noop,
+    onApplySync: noop, onStagedFilesChange: noop, stagedFilesClearSignal: 0,
     onVoiceoverStaged: noop, onVoiceoverUnstaged: noop, applySyncDisabled: false,
     onVoiceoverRestored: () => true,
     onSegmentClick: noop, onToggleLock: noop, onLockAll: noop, onUnlockAll: noop,

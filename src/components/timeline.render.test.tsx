@@ -159,6 +159,7 @@ function makeDropZonePanelProps(overrides: Partial<DropZonePanelProps> = {}): Dr
     projectId: 'render-test-project',
     onApplySync: noop,
     onStagedFilesChange: noop,
+    stagedFilesClearSignal: 0,
     onVoiceoverStaged: noop,
     onVoiceoverUnstaged: noop,
     onVoiceoverRestored: () => true,

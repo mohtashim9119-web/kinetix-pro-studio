@@ -352,6 +352,12 @@ interface Props {
   /** Publishes this panel's staged files upward on every change, synchronously.
    *  App.tsx mirrors it into a ref that Apply Sync reads. */
   onStagedFilesChange: (staged: StagedFiles) => void;
+  /** Incremented by App.tsx after a successful banner-triggered Apply Sync
+   *  (the recovery banner calls the shared entry point directly, bypassing
+   *  this panel's own `triggerSync`). A change clears this panel's staged
+   *  slots the same way `triggerSync` does, so a sync applied from the banner
+   *  flips the left-panel slots from "Pending" to "Ready" too. */
+  stagedFilesClearSignal: number;
   /** Fired the moment a voiceover file is staged (dropped/browsed), before Apply Sync is clicked. */
   onVoiceoverStaged: (file: File) => void;
   /** Fired when a staged-but-uncommitted voiceover is removed or replaced. */
@@ -481,6 +487,7 @@ export function DropZonePanel({
   onDeleteVoiceover,
   onApplySync,
   onStagedFilesChange,
+  stagedFilesClearSignal,
   onVoiceoverStaged,
   onVoiceoverUnstaged,
   onVoiceoverRestored,
@@ -701,6 +708,18 @@ export function DropZonePanel({
   useEffect(() => {
     onStagedFilesChange(stagedRef.current);
   }, [onStagedFilesChange]);
+
+  // Mirrors `triggerSync`'s clear for a sync applied from the recovery banner
+  // instead of this panel's own Apply Sync button — the banner calls
+  // App.tsx's shared entry point directly, so this panel never learns the
+  // sync happened unless told. Skips the initial mount (ref starts equal to
+  // the incoming prop) so a fresh mount can't wipe slots just restored above.
+  const stagedFilesClearSignalRef = useRef(stagedFilesClearSignal);
+  useEffect(() => {
+    if (stagedFilesClearSignal === stagedFilesClearSignalRef.current) return;
+    stagedFilesClearSignalRef.current = stagedFilesClearSignal;
+    updateStaged(() => EMPTY_STAGED);
+  }, [stagedFilesClearSignal]);
 
   // Restore persisted staged slots (WS2-50). Runs per project: the panel
   // remounts on every project change (every one routes through the dashboard,
