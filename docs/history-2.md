@@ -3229,3 +3229,29 @@ abort (`App.tsx:3397`, guarded on `voiceoverAsset`) nor the empty-transcript abo
 (`App.tsx:3449`, guarded on `!!voiceoverAsset`) fires — `parseProjectData` proportions every
 segment against 0.
 
+### Section 1 verification close-out (2026-09-05)
+
+Operator manually verified all three items; entries removed from `docs/work-in-progress.md`
+section 1. Full staged-slot design: [WS2-50 section above](#ws2-50--apply-sync-entry-point--staged-slot-persistence-2026-09-05).
+
+**Staged slot persistence** (f9a99d0 / b2a415f / 0f10575): dedicated `kinetix-staged`
+IndexedDB, deliberately not a `Project` field — undo would resurrect staged slots and `File`
+cannot round-trip a history snapshot. Pure set-diff delete contract reconciled at
+`DropZonePanel`'s `updateStaged` choke point; `deleteAllStagedForProject` on project
+deletion; `canAdoptRestoredVoiceover` gate; structured clone only, no IPC or base64. Row
+counts identical before and after across all nine corpus projects.
+
+**Banner Apply Sync parity** (f9a99d0): `handleApplySyncFromFiles` takes no argument and reads
+`stagedFilesRef.current`; zero `StagedFiles` literals remain in `App.tsx`. `NO_SCENE_DOC_MESSAGE`
+replaced the misleading "no scenes to sync" text and is classified `transcript_unrelated`.
+
+**Banner staged-slot clear** (f28a012): the banner path called `handleApplySyncFromFiles`
+directly and bypassed `DropZonePanel`'s `triggerSync`, the only place that cleared local staged
+state, so slots stayed Pending after a successful banner sync. Fixed with a
+`stagedFilesClearSignal` counter prop — bump at `App.tsx:4445`, consumed by the effect at
+`DropZonePanel.tsx:717-722` (`updateStaged(() => EMPTY_STAGED)` at `:721`). Pushed to `main` on
+partial gates (tsc plus five targeted files); retroactively fully green afterwards (tsc, lint,
+vitest 3121/77/0, gaplessInvariant 36/36, golden replay 6/6, K13 3/3); required-prop
+constructor sweep found only the two f28a012 sites plus one source-text regex test with no props
+object.
+

@@ -145,28 +145,27 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 ---
 
 ## WS2 — Video Ingest & Distribution Bugs
-Started: 2026-08-26 | Status: active — WS2-50 landed at f28a012; section 1 pending operator verification.
+Started: 2026-08-26 | Status: active — WS2-50 verified 2026-09-05 (staged slots, banner parity, staged-slot clear at f28a012).
 Full closed-phase records: `docs/history-2.md`.
 
-Baselines (f28a012): vitest 3121/77/0; cargo 182/0/1 default, 264/0/26 fa-inference; gaplessInvariant 36/36; golden replay 6/6; K13 3/3.
+Baselines (f28a012): vitest 3121 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden replay 6/6; K13 3/3 (measured this tree); cargo 182/0/1 default and 264/0/26 with `--features fa-inference` (carried — `src-tauri/` unchanged since f28a012).
 
 ### 1. Finished but pending verification
 
-- [CLAIM-UNVERIFIED] Staged Slot Persistence: dedicated kinetix-staged IndexedDB, pure set-diff delete contract at updateStaged, canAdoptRestoredVoiceover gate. Commits f9a99d0/b2a415f/0f10575. Row counts unchanged across nine projects.
-- [CLAIM-UNVERIFIED] Banner Apply Sync Parity: handleApplySyncFromFiles reads stagedFilesRef.current, zero StagedFiles literals remain in App.tsx. NO_SCENE_DOC_MESSAGE replaces misleading abort text, classified transcript_unrelated.
+(none)
 
 ### 2. In progress
 
-(none — next round blocked until the operator verifies section 1)
+(none)
 
-**END GOAL:** (blocked on section 1 operator verification)
+**END GOAL:** Next implementation from section 3 — transcription lifecycle (Req 1/2, EventSink), raw IPC for ffmpeg probes, legacy v1 store purge.
 
 ### 3. Next tasks
 
 - [OPEN] Transcription Req 2: incremental draft save every three seconds to a dedicated draft store, not a Project field.
 - [OPEN] EventSink/IN_FLIGHT Generalization: lands as its own commit before Requirement 1, per operator decision.
 - [OPEN] Transcription Req 1: native TranscriptionManager so Whisper survives Cmd+R, project switch, and dashboard navigation.
-- [OPEN] tauriFfmpeg.ts:45-72 Base64 IPC: probes peak 2.33x blob size, 73MiB measured. Pass paths. Duplicate probes at App.tsx:3168/3399; fa-dev at App.tsx:4846.
+- [OPEN] tauriFfmpeg.ts:45-72 Base64 IPC: brief-estimated ~2.33× peak inflation on ~73MiB voiceover (not measured here). Pass raw paths. Dupes: App.tsx:3168/3399; fa-dev:4846.
 - [OPEN] Legacy v1 assets Store Purge: 266 rows, 166.6MiB. Migration App.tsx:2231 copies to v2 and never deletes. Shipping defect; no reference check required.
 - [OPEN · NON-BLOCKING] Dev-Profile IDB Cleanup: orphan pool 15 rows plus V8 399 duplicate rows, 469MiB reclaimable. V8 rows need the four-reference check each.
 - [OPEN · NON-BLOCKING] Tooling Tracking Decision: whether .work-phase4/session-ws2-49/ scripts and .work-phase4/replay/ fixtures should be git-tracked for reproducibility.
