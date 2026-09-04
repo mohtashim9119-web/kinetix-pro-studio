@@ -42,9 +42,9 @@ function project(over: Partial<Project> = {}): Project {
     sceneDetails: '',
     segments: [],
     assets: [],
-    globalTransition: TransitionType.None,
+    globalTransition: TransitionType.NONE,
     globalTransitionDuration: 0.5,
-    globalAnimation: AnimationType.None,
+    globalAnimation: AnimationType.NONE,
     globalOverlayConfig: { color: '#fff', backgroundColor: '#000', fontFamily: 'sans-serif' },
     ...over,
   };

@@ -99,3 +99,86 @@ describe('WS2 T4.7 — the recovery path must never auto-apply', () => {
     expect(refs).toHaveLength(2); // the import, and the one call in the handler
   });
 });
+
+// ---------------------------------------------------------------------------
+// The App.tsx WIRING guards below were added because destructive probes found
+// them missing, not because they looked prudent. Probes P7, P10 and P11 (this
+// session's `.work-phase4/session-ws2-47/probe-results.txt`) each introduced a
+// real defect in `handleApplySyncFromFiles`/`handleApplyUnappliedTranscript`
+// and the whole T4.7 fixture set stayed GREEN.
+//
+// THEY ARE SOURCE SCANS, AND THAT IS A WEAKER GUARANTEE THAN A BEHAVIOURAL
+// TEST — say so rather than let the file's green tick imply otherwise. They
+// assert that specific lines are in specific places; they cannot observe what
+// the running app does with them. The reason they are scans anyway is the same
+// reason `languageDefaultDrift.test.ts` is one: the functions are private to a
+// 6,600-line component whose orchestration this repo verifies manually by
+// standing convention (CLAUDE.md §6, Testing). What they DO buy is the exact
+// failure mode probes P7/P10/P11 demonstrated: a later edit that moves the
+// clear, drops it, or makes an abort path claim success now has something
+// executable objecting to it.
+// ---------------------------------------------------------------------------
+
+describe('WS2 T4.7 — App.tsx apply-ordering wiring (probe-driven source guards)', () => {
+  const APP_SRC = readFileSync(APP_TSX, 'utf-8');
+
+  /** `handleApplySyncFromFiles`'s body, signature to its closing `  };`. */
+  function applySyncBody(): string {
+    const marker = 'const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<boolean> => {';
+    const start = APP_SRC.indexOf(marker);
+    expect(start, `'${marker}' not found — this guard has lost its target`).toBeGreaterThan(-1);
+    const rest = APP_SRC.slice(start + marker.length);
+    const end = rest.indexOf('\n  };');
+    expect(end).toBeGreaterThan(-1);
+    return rest.slice(0, end);
+  }
+
+  it('P10 — the atomic commit clears the record inside itself, not in a follow-up update', () => {
+    // The record means "a finished transcript no timeline write has consumed",
+    // so it must stop being true in the very update that consumes it. A
+    // separate follow-up setProject leaves a window where the timeline is
+    // already written and the banner still offers to write it again.
+    const body = applySyncBody();
+    const commitStart = body.indexOf('// 8. Single atomic state update');
+    expect(commitStart, 'step 8 marker not found').toBeGreaterThan(-1);
+    const commit = body.slice(commitStart, body.indexOf("syncMark('setProject:called')", commitStart));
+    expect(
+      commit,
+      'the step-8 commit no longer clears unappliedTranscript — an applied transcript would ' +
+        'stay on offer in the recovery banner after the timeline had already consumed it.',
+    ).toContain('unappliedTranscript: undefined');
+  });
+
+  it('P11 — every abort path reports failure, so no aborted sync can clear the record', () => {
+    // `handleApplySyncFromFiles` returns whether step 8 was reached. An abort
+    // that returned `true` would tell the recovery caller the timeline was
+    // written and license it to discard the transcript.
+    const body = applySyncBody();
+    const aborts = body.split('\n')
+      .map((line, i, all) => ({ line: line.trim(), next: (all[i + 1] ?? '').trim() }))
+      .filter(x => x.line === 'setIsProcessing(false);' && x.next.startsWith('return'));
+    expect(aborts.length, 'no abort paths found — this guard has lost its target').toBeGreaterThan(0);
+    for (const a of aborts) {
+      expect(a.next, `an abort path returns "${a.next}" instead of "return false;"`).toBe('return false;');
+    }
+    // Exactly one `return true;` — the single success path at the very end.
+    const successes = body.split('\n').filter(l => l.trim() === 'return true;');
+    expect(successes).toHaveLength(1);
+  });
+
+  it('P7 — the apply handler never clears the record itself; only the commit does', () => {
+    // Clearing alongside the RESTORE is the tempting shortcut ("the tokens are
+    // in transcriptTokens now anyway") and is exactly the bug: a sync that then
+    // aborted would leave the user with neither copy and no banner.
+    const refs = APP_SRC.split('\n').filter(l => l.includes('clearUnappliedTranscript'));
+    // The import, and the one call in the DISCARD handler. Any third reference
+    // is a clear that is not user-initiated and not inside the atomic commit.
+    expect(
+      refs,
+      'clearUnappliedTranscript gained a call site. The only non-import caller may be the ' +
+        'Discard handler; Apply clears through the atomic commit, never directly.',
+    ).toHaveLength(2);
+    const inDiscard = APP_SRC.indexOf('setProjectSilent(clearUnappliedTranscript)');
+    expect(inDiscard, 'the Discard handler no longer clears the record').toBeGreaterThan(-1);
+  });
+});

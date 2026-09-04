@@ -79,9 +79,9 @@ function project(over: Partial<Project> = {}): Project {
     sceneDetails: '',
     segments: [],
     assets: [],
-    globalTransition: TransitionType.None,
+    globalTransition: TransitionType.NONE,
     globalTransitionDuration: 0.5,
-    globalAnimation: AnimationType.None,
+    globalAnimation: AnimationType.NONE,
     globalOverlayConfig: { color: '#fff', backgroundColor: '#000', fontFamily: 'sans-serif' },
     ...over,
   };
@@ -320,7 +320,7 @@ describe('Requirement 4 — duplicate-run refusal', () => {
 
     expect(second!.started).toBe(false);
     expect(second).toMatchObject({ reason: 'already-running' });
-    expect((second as { message: string }).message).toMatch(/already running/i);
+    expect((second as unknown as { message: string }).message).toMatch(/already running/i);
     h.unmount();
   });
 
