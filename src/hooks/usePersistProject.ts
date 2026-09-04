@@ -28,6 +28,28 @@ export interface PersistHandle {
    * the promise.
    */
   saveNow: () => Promise<void>;
+  /**
+   * WS2 T4.7 — `saveNow` for an EXPLICITLY SUPPLIED project snapshot, instead
+   * of whatever the last render committed.
+   *
+   * WHY IT HAD TO EXIST. `saveNow` reads `projectRef.current`, which this hook
+   * advances during render. A caller that has just called `setProject(...)` and
+   * wants that exact write on disk NOW is one render behind: React has not
+   * re-rendered yet, so `saveNow` would faithfully persist the state from
+   * BEFORE the update and report success. For an autosave a render's lag is
+   * invisible; for a durability flush whose entire purpose is to close the
+   * window between "the result exists" and "the result is on disk", persisting
+   * the pre-update project is not a smaller window, it is the wrong bytes.
+   *
+   * Callers pass `App.tsx`'s `liveProjectRef.current` — the synchronous mirror
+   * `setProject` advances inside the wrapper itself (see its own note there) —
+   * so the snapshot handed here is the one the update just produced.
+   *
+   * Same contract as `saveNow` otherwise: honours the `enabled` flag and the
+   * `confirmed` gate, resolves rather than rejects, and resolving is not
+   * success (read `saveError`).
+   */
+  saveSnapshot: (project: Project) => Promise<void>;
   /** Unix timestamp of the last successful save, or null if not yet saved this session. */
   lastSavedAt: number | null;
   /**
@@ -159,5 +181,11 @@ export function usePersistProject(project: Project, enabled = true): PersistHand
     return () => clearTimeout(timer);
   }, [project, enabled, runSave]);
 
-  return { saveNow, lastSavedAt, saveError };
+  const saveSnapshot = useCallback(async (snapshot: Project): Promise<void> => {
+    if (!enabled) return;
+    if (!snapshot.confirmed) return;
+    await runSave(snapshot);
+  }, [enabled, runSave]);
+
+  return { saveNow, saveSnapshot, lastSavedAt, saveError };
 }

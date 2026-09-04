@@ -294,6 +294,56 @@ export interface HeadingOverlay {
   needsReview?: boolean;
 }
 
+/**
+ * WS2 T4.7 (Requirement 3) — a COMPLETED Whisper transcription that the user
+ * has not yet committed to the timeline via Apply Sync.
+ *
+ * WHY IT EXISTS. Between "transcription reached 100%" and "the user clicked
+ * Apply Sync" the result lived only in React state. A reload, a crash, or a
+ * Cmd+Q in that window threw away minutes of whisper-cli work with nothing on
+ * disk to recover from — `Project.transcriptTokens` is written on that path
+ * too, but it is INDISTINGUISHABLE from tokens an earlier Apply Sync already
+ * consumed, so nothing could tell a returning user that they had an unspent
+ * result waiting. This record is exactly that distinction, and it is the only
+ * job it has: its presence means "a finished transcript exists that no
+ * timeline write has consumed."
+ *
+ * IT IS NOT A DRAFT. Requirement 2's incremental/partial transcription drafts
+ * are a separate mechanism with a separate store; nothing partial is ever
+ * written here. A record appears at 100% or not at all.
+ *
+ * IT IS NEVER AUTO-APPLIED. Recovery always asks (App.tsx's recovery banner) —
+ * see `services/unappliedTranscript.ts` for the apply/discard/staleness rules
+ * and for why staleness downgrades the banner rather than discarding the
+ * record.
+ */
+export interface UnappliedTranscript {
+  /** The completed Whisper token array, verbatim — the same value written to
+   *  `Project.transcriptTokens` in the same update. Deliberately a copy and
+   *  not a reference into that field: `transcriptTokens` is cleared on a
+   *  voiceover re-stage (App.tsx's `handleVoiceoverStaged`), and the whole
+   *  point of this record is to outlive edits to the live token cache. */
+  tokens: TranscriptToken[];
+  /** `Asset.id` of the audio asset that was transcribed. Ephemeral by nature —
+   *  a staging-time asset id does not survive Apply Sync's commit, let alone a
+   *  reload — so it is recorded for diagnostics and never used as the identity
+   *  test. `fileIdentity` is. */
+  assetId: string;
+  /** `${file.name}|${file.size}|${file.lastModified}` (`syncEngine.ts`'s
+   *  `getFileIdentity`) of the file this transcript describes — the SAME
+   *  identity notion `Project.lastTranscribedFileIdentity` uses, and for the
+   *  same reason: every file-stage event mints a fresh `Asset` id even when
+   *  the user re-picks the identical file, so an id comparison answers the
+   *  wrong question. Empty string when the transcribed asset carried no
+   *  `File` reference to compute one from (a post-reload asset), which is a
+   *  real "unknown", not a mismatch — see `unappliedTranscript.ts`. */
+  fileIdentity: string;
+  /** ISO-8601 completion instant, for the banner's "recorded at" line. A
+   *  string rather than an epoch number so the persisted JSON stays readable
+   *  when a user is asked to hand over a project file for diagnosis. */
+  completedAt: string;
+}
+
 export interface TranscriptToken {
   startSec: number;
   endSec: number;
@@ -489,6 +539,21 @@ export interface Project {
    *  default actually differs, matching `faHighPrecisionSync`'s discipline.
    *  Undefined on every project created before this field existed. */
   defaultTextOverlay?: boolean;
+  /** WS2 T4.7 (Requirement 3) — a finished transcription no Apply Sync has
+   *  consumed yet. Written the moment Whisper reaches 100% (`useWhisper.ts`)
+   *  and flushed past the 500 ms autosave debounce immediately; cleared ONLY
+   *  by an explicit user Discard, or by an Apply Sync whose timeline write
+   *  actually completed. A failed/aborted apply leaves it in place — see
+   *  `services/unappliedTranscript.ts`.
+   *
+   *  NOT SET BY `makeDefaultProject` (App.tsx) and never back-filled on load:
+   *  absent means "nothing unapplied", the same convention every other
+   *  optional field here uses. `unappliedTranscriptDrift.test.ts` fails the
+   *  build if the default project ever grows this key, for the same reason
+   *  `languageDefaultDrift.test.ts` guards `language`'s absence — a present
+   *  key would make every brand-new project open with a recovery banner
+   *  offering to apply nothing. */
+  unappliedTranscript?: UnappliedTranscript;
 }
 
 // ---------------------------------------------------------------------------

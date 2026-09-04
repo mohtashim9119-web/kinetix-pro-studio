@@ -213,6 +213,12 @@ import {
   clearLastOpenedProjectId,
 } from './services/projectStore';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
+import { UnappliedTranscriptBanner } from './components/UnappliedTranscriptBanner';
+import {
+  clearUnappliedTranscript,
+  restoreUnappliedTranscriptTokens,
+  unappliedTranscriptStaleness,
+} from './services/unappliedTranscript';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, SUPPORTED_LANGUAGE_CODES } from './constants';
 import { DropZonePanel, type StagedFiles } from './components/DropZonePanel';
@@ -2254,7 +2260,7 @@ export default function App() {
     })();
   }, []);
 
-  const { saveNow, lastSavedAt, saveError } = usePersistProject(project, !isHydrating);
+  const { saveNow, saveSnapshot, lastSavedAt, saveError } = usePersistProject(project, !isHydrating);
 
   // Surface a save failure the moment it happens — a debounced autosave
   // failing (e.g. QuotaExceededError) must never be silent: previously
@@ -3108,7 +3114,7 @@ export default function App() {
       // file the user has since moved past.
       if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
       transcriptionTargetIdRef.current = asset.id;
-      startTranscription(
+      const outcome = await startTranscription(
         asset,
         duration,
         [],
@@ -3123,9 +3129,33 @@ export default function App() {
           if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
           setProject(updater);
         },
+        {
+          // WS2 T4.7 Requirement 4 — scope the single-flight gate to this
+          // project, so a duplicate attempt for the SAME project is refused
+          // while switching projects still cancels-and-restarts.
+          projectId: projectIdRef.current,
+          // WS2 T4.7 Requirement 3 — flush the just-written
+          // `unappliedTranscript` immediately, past `usePersistProject`'s
+          // 500 ms debounce.
+          //
+          // `liveProjectRef.current`, NOT `saveNow()`. `saveNow` reads a ref
+          // this hook advances during RENDER, and the `setProject` two lines
+          // above has not rendered yet at this point — it would faithfully
+          // persist the project as it was BEFORE the transcript was recorded
+          // and report success. `liveProjectRef` is the synchronous mirror
+          // `setProject` advances inside the wrapper itself (see its note at
+          // the undo/redo seam), so it already holds the update.
+          onCompleted: () => saveSnapshot(liveProjectRef.current),
+        },
       );
+      if (!outcome.started) {
+        // Requirement 4's refusal is reported, never silent: a user who
+        // triggered a second run and saw nothing happen would reasonably
+        // conclude the app had missed the click.
+        showToast(outcome.message);
+      }
     })();
-  }, [cancelTranscription, startTranscription, showToast]);
+  }, [cancelTranscription, startTranscription, showToast, saveSnapshot]);
 
   // Cancels an in-flight staging-time transcription and discards the
   // ephemeral asset — used when the user removes or replaces a staged
@@ -3142,7 +3172,22 @@ export default function App() {
   // Atomic Apply Sync handler — persists ALL staged files, then runs sync in
   // a single setProject call so finalizeSync never reads stale state.
   // --------------------------------------------------------------------------
-  const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<void> => {
+  /**
+   * Runs a full Apply Sync.
+   *
+   * WS2 T4.7 — RETURNS WHETHER THE TIMELINE WRITE ACTUALLY HAPPENED. `true`
+   * only from the single path that reaches step 8's atomic `setProject`; every
+   * abort path (unreadable voiceover duration, empty scene doc, empty
+   * transcript, coverage-gate rejection) returns `false`, and a throw
+   * propagates. The unapplied-transcript recovery path (Requirement 3) clears
+   * the stored transcript ONLY on `true` — a `false` or a throw must leave it
+   * on disk, since an aborted sync consumed nothing.
+   *
+   * The value is ignored by the ordinary Apply Sync button (`onApplySync`'s
+   * prop type is `(s) => Promise<void>`, which accepts it), so the four abort
+   * paths keep behaving for that caller exactly as they did.
+   */
+  const handleApplySyncFromFiles = async (staged: StagedFiles): Promise<boolean> => {
     syncMark('applySync:entry', { reset: true });
     setIsProcessing(true);
 
@@ -3256,7 +3301,7 @@ export default function App() {
         // parsed yet at this point in the sequence.
         logSyncAbort(msg, 0);
         setIsProcessing(false);
-        return;
+        return false;
       }
     }
 
@@ -3277,7 +3322,7 @@ export default function App() {
       showToast(sceneDocAbortMsg);
       logSyncAbort(sceneDocAbortMsg, newSegmentsRaw.length);
       setIsProcessing(false);
-      return;
+      return false;
     }
 
     // 7. Option C — resolve final timing BEFORE the commit, never after.
@@ -3303,7 +3348,7 @@ export default function App() {
       showToast(transcriptAbortMsg);
       logSyncAbort(transcriptAbortMsg, newSegmentsRaw.length);
       setIsProcessing(false);
-      return;
+      return false;
     }
 
     let finalTimedSegments: VideoSegment[];
@@ -3482,7 +3527,7 @@ export default function App() {
         showToast(gate.message);
         logSyncAbort(gate.message, aligned.segments.length);
         setIsProcessing(false);
-        return;
+        return false;
       }
 
       // WS1 R.10 (faUnspokenGate.ts) — SCRIPTED TEXT NEVER SPOKEN. Forced
@@ -4093,6 +4138,21 @@ export default function App() {
       // leaving stale word indices attached to a segment structure they no
       // longer describe.
       faWordTimings: faWordTimingsResult,
+      // WS2 T4.7 Requirement 3 — the ONLY success-side clear of the
+      // unapplied-transcript record, and it sits inside the atomic commit
+      // rather than after it on purpose: the record means "a finished
+      // transcript that no timeline write has consumed", so it must stop being
+      // true in the very same update that consumes it. A separate follow-up
+      // setProject would leave a window in which the timeline is already
+      // written and the banner still offers to write it again.
+      //
+      // Every abort path above returns before reaching here, so an aborted sync
+      // leaves the record untouched by construction — the retention rule is a
+      // property of WHERE this line is, not of a condition that could be got
+      // wrong. Always `undefined`, never conditional: a run that reaches this
+      // commit has consumed whatever was pending, including on the ordinary
+      // Apply Sync path where the user never saw a banner at all.
+      unappliedTranscript: undefined,
     }));
     syncMark('setProject:called');
     // Post-commit paint boundary: rAF fires after React commits + the browser
@@ -4179,7 +4239,101 @@ export default function App() {
     }
 
     setIsProcessing(false);
+    // The timeline write at step 8 committed. Reached only from that single
+    // path — see this function's doc comment.
+    //
+    // A THROW BETWEEN STEP 8 AND HERE (the waveform build, the boundary-quality
+    // pass) propagates instead of returning, so the recovery caller treats it
+    // as a failure and RETAINS the transcript even though the timeline was in
+    // fact written. That asymmetry is deliberate: a retained transcript is
+    // visible and one click from being discarded, while a wrongly-cleared one
+    // is gone. The conservative direction is the recoverable one.
+    return true;
   };
+
+  // -------------------------------------------------------------------------
+  // WS2 T4.7 Requirement 3 — unapplied-transcript recovery.
+  //
+  // The banner is a PLAIN DERIVED RENDER off `project.unappliedTranscript`
+  // (see the JSX far below), not an effect that fires on mount. That is what
+  // makes "opening or returning to the project" work without either of them
+  // being an event this component can observe: hydration, a project switch and
+  // a fresh transcription all end with the field either present or absent, and
+  // the banner follows the field. There is no dismissed-for-now state — the
+  // only two ways it goes away are the two buttons, because a third,
+  // session-only dismissal would quietly reintroduce the "your transcript is
+  // somewhere but nothing tells you" condition this requirement closes.
+  // -------------------------------------------------------------------------
+
+  /** Discard — the ONLY destructive action in this feature, and it is always
+   *  user-initiated. Silent (`setProjectSilent`) and therefore not undoable,
+   *  matching lock/unlock's precedent: this edits recovery bookkeeping, not the
+   *  timeline, and an undo that resurrected a transcript into a project the
+   *  user has since re-synced would be restoring a claim that is no longer
+   *  true. */
+  const handleDiscardUnappliedTranscript = useCallback((): void => {
+    if (!liveProjectRef.current.unappliedTranscript) return;
+    setProjectSilent(clearUnappliedTranscript);
+    void saveSnapshot(liveProjectRef.current);
+    showToast('Unapplied transcription discarded.');
+  }, [saveSnapshot, showToast, setProjectSilent]);
+
+  /**
+   * Apply — restore the recovered tokens, run a real Apply Sync against the
+   * project's already-committed script/scenes/voiceover, and clear the record
+   * ONLY if that sync reported a completed timeline write.
+   *
+   * THE ORDER IS THE REQUIREMENT. Restore-then-write-then-clear means every
+   * failure mode leaves the record on disk: an abort inside
+   * `handleApplySyncFromFiles` returns `false`, a throw is caught below, and
+   * both fall through to the same "keep it" outcome. The tempting shortcut —
+   * clearing alongside the restore, since the tokens are now in
+   * `transcriptTokens` anyway — is exactly the bug: `transcriptTokens` is
+   * cleared by a later voiceover re-stage, so a sync that aborted would leave
+   * the user with neither copy and no banner to tell them.
+   *
+   * Staged files are empty on purpose. There are none to stage — the user is
+   * returning to a saved project, not dropping files — and every field
+   * `handleApplySyncFromFiles` would have read from a staged file falls back to
+   * the committed project value.
+   */
+  const handleApplyUnappliedTranscript = useCallback(async (): Promise<boolean> => {
+    const record = liveProjectRef.current.unappliedTranscript;
+    if (!record) return false;
+
+    // Step 1 — put the tokens back where Apply Sync's `cachedTokensReady` gate
+    // looks for them. Deliberately does NOT clear the record (see above).
+    setProject(p => restoreUnappliedTranscriptTokens(p, record), {
+      label: 'apply recovered transcription',
+    });
+
+    // Step 2 — the real timeline write.
+    let committed = false;
+    try {
+      committed = await handleApplySyncFromFiles({
+        scriptFile: null,
+        sceneFile: null,
+        voiceoverFile: null,
+        assetFiles: [],
+        zipFiles: [],
+      });
+    } catch (err) {
+      console.error('[recovery] Apply Sync from a recovered transcript threw:', err);
+      committed = false;
+    }
+
+    // Step 3 — and only now.
+    if (!committed) {
+      showToast('Couldn’t apply the recovered transcription — it has been kept so you can try again.');
+      return false;
+    }
+    // `handleApplySyncFromFiles`'s own atomic commit already cleared the record
+    // as part of the same update that wrote the segments. Nothing to clear
+    // here; the flush below is what makes that clear durable without waiting
+    // out the autosave debounce.
+    void saveSnapshot(liveProjectRef.current);
+    return true;
+  }, [saveSnapshot, showToast]);
 
   // MODEL P — dev-only gapless-partition assertion (ruling §6.1 step 1,
   // compliance backlog item 3, 2026-08-07).
@@ -6489,6 +6643,23 @@ export default function App() {
             <X size={16} />
           </button>
         </div>
+      )}
+
+      {/* WS2 T4.7 Requirement 3 — unapplied-transcript recovery banner.
+          A plain derived render: present exactly while the open project carries
+          the record, gone the moment Apply's commit or Discard removes it. No
+          auto-apply and no auto-discard — see UnappliedTranscriptBanner.tsx. */}
+      {project.unappliedTranscript && (
+        <UnappliedTranscriptBanner
+          record={project.unappliedTranscript}
+          staleness={unappliedTranscriptStaleness(project, project.unappliedTranscript)}
+          onApply={handleApplyUnappliedTranscript}
+          onDiscard={handleDiscardUnappliedTranscript}
+          // Sits below the unsupported-language banner when that one is also
+          // up — both are `fixed` and top-anchored, so they need an explicit
+          // stacking offset or they occupy the same strip.
+          topPx={isLanguageUnsupported && !languageBannerDismissed ? 80 : 16}
+        />
       )}
 
       {/* Unsupported-language banner (Phase 2a, H.4 guard) — persistent while
