@@ -488,3 +488,23 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+// WHY THERE IS NO AUTOMATED TEST OF THE MENU SWAP, recorded so the next person
+// does not spend the same hour discovering it. `build_menu_with_deferred_quit`
+// was covered by a `tauri::test::mock_app()` test asserting the whole thing the
+// owner asked to have confirmed — replacement at the same index, label still
+// reading "Quit ...", no predefined Quit surviving, About/Services/Hide/Hide
+// Others untouched. It cannot run: muda panics with "`muda::MenuChild` can only
+// be created on the main thread" (its macOS backend takes a `MainThreadMarker`),
+// and Rust's test harness runs every test on a spawned thread. No amount of
+// `--test-threads=1` changes that; the harness still does not use the process
+// main thread.
+//
+// The established pattern in this repo for the same constraint is a separate
+// `harness = false` integration crate under `tests/` — see
+// `tests/fa_durable_wav_live.rs`, which exists precisely because the real Wry
+// `EventLoop::new()` must run on the process main thread. A menu-swap probe
+// could be built that way. Until it is, the menu's APPEARANCE and BINDING are
+// verified by hand in the shell, while the behaviour behind it (the bounded
+// wait, and quit proceeding regardless) is covered by `deferred_quit_tests`
+// above — which is the half that can make the app unquittable.
