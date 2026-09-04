@@ -3,8 +3,31 @@ import type { Project } from '../types';
 import { saveProject, upsertProjectMeta, type SaveOutcome } from '../services/projectStore';
 
 export interface PersistHandle {
-  /** Immediately writes the project (bypasses the 500 ms debounce). */
-  saveNow: () => void;
+  /**
+   * Immediately writes the project (bypasses the 500 ms debounce).
+   *
+   * AWAITABLE (WS2 T4.6). The returned promise settles when the project's own
+   * bytes are written AND read back verified by `saveProject` — i.e. when the
+   * durable part is durable. Existing fire-and-forget callers are unaffected;
+   * they simply ignore the promise. A teardown path (reload, window close,
+   * Cmd+Q) MUST await it, and must do so through
+   * `services/teardownFlush.ts`'s `flushWithBudget` rather than bare — see the
+   * two notes below for what this promise does and does not guarantee.
+   *
+   * IT DOES NOT COVER THE THUMBNAIL/REGISTRY-META PASS, deliberately.
+   * `persistMeta` renders the first image asset through an `Image()` whose
+   * `onload`/`onerror` may never fire for a blob URL that is already being torn
+   * down — awaiting it would hand the teardown path an unbounded wait for a
+   * purely cosmetic dashboard thumbnail. The registry row itself (id, name,
+   * savedAt, segmentCount) is written inside `saveProject`, so what is skipped
+   * on a teardown is the thumbnail refresh alone.
+   *
+   * IT RESOLVES, NEVER REJECTS, AND RESOLVING IS NOT SUCCESS. A refused or
+   * failed write resolves the same as a successful one; the outcome is reported
+   * through `saveError` as it always was. Callers that care must read that, not
+   * the promise.
+   */
+  saveNow: () => Promise<void>;
   /** Unix timestamp of the last successful save, or null if not yet saved this session. */
   lastSavedAt: number | null;
   /**
@@ -86,29 +109,38 @@ export function usePersistProject(project: Project, enabled = true): PersistHand
   // lastSavedAt/saveError.
   const latestAttemptRef = useRef(0);
 
-  const runSave = useCallback((proj: Project) => {
+  // Returns a promise that settles once the PROJECT bytes are written and
+  // verified. The trailing `persistMeta` pass is intentionally left off that
+  // promise (see `PersistHandle.saveNow`'s note) — it is fire-and-forget here
+  // exactly as it was before, so the debounced autosave's behaviour is
+  // unchanged and only the teardown path gains something to await.
+  const runSave = useCallback(async (proj: Project): Promise<void> => {
     const attempt = ++latestAttemptRef.current;
     const ts = Date.now();
-    void saveProject(proj).then(outcome => {
-      if (latestAttemptRef.current !== attempt) return; // superseded by a newer save
-      if (!outcome.ok) {
-        setSaveError(outcome);
-        return;
-      }
-      setSaveError(null);
-      void persistMeta(proj, ts).then(() => {
-        if (latestAttemptRef.current === attempt) setLastSavedAt(ts);
-      });
+    const outcome = await saveProject(proj);
+    if (latestAttemptRef.current !== attempt) return; // superseded by a newer save
+    if (!outcome.ok) {
+      setSaveError(outcome);
+      return;
+    }
+    setSaveError(null);
+    void persistMeta(proj, ts).then(() => {
+      if (latestAttemptRef.current === attempt) setLastSavedAt(ts);
     });
   }, []);
 
-  // saveNow is typed () => void so callers can fire-and-forget; the async
-  // work happens inside without blocking the caller.
-  const saveNow = useCallback(() => {
+  // Awaitable since WS2 T4.6. Fire-and-forget callers are unchanged — they just
+  // drop the promise — but a teardown path now has something to wait on.
+  //
+  // The two early returns resolve immediately, which is correct in both cases:
+  // persistence is disabled (mid-hydration), or the project has never been
+  // named and must not enter the registry. Neither is a state a teardown should
+  // stall for, and neither is a state where anything is pending.
+  const saveNow = useCallback(async (): Promise<void> => {
     if (!enabled) return;
     // Never persist a project the user hasn't explicitly named yet.
     if (!projectRef.current.confirmed) return;
-    runSave(projectRef.current);
+    await runSave(projectRef.current);
   }, [enabled, runSave]);
 
   // Debounced auto-save: fires 500 ms after any project change.
@@ -121,7 +153,9 @@ export function usePersistProject(project: Project, enabled = true): PersistHand
     // Never auto-save a project the user hasn't explicitly named yet —
     // prevents blank "Untitled Project" entries appearing in the registry.
     if (!project.confirmed) return;
-    const timer = setTimeout(() => runSave(project), 500);
+    // `void`: the debounced autosave is fire-and-forget, exactly as before
+    // `runSave` gained a return value. Only the teardown path awaits.
+    const timer = setTimeout(() => { void runSave(project); }, 500);
     return () => clearTimeout(timer);
   }, [project, enabled, runSave]);
 

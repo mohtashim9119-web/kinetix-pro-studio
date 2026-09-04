@@ -92,6 +92,7 @@ import {
   loadHistory,
   saveHistory,
 } from './services/historyPersist';
+import { flushWithBudget } from './services/teardownFlush';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
 import { syncMark } from './services/syncInstrument';
 import { detectResidualOrderingViolations, logResidualOrderingViolations } from './services/residualOrderingDetector';
@@ -2399,6 +2400,115 @@ export default function App() {
     const t = setTimeout(() => { void saveHistory(id, history); }, 400);
     return () => clearTimeout(t);
   }, [history, isHydrating]);
+
+  // -------------------------------------------------------------------------
+  // TEARDOWN FLUSH (WS2 T4.6). Persist before the page or the process goes away.
+  //
+  // THE PROBLEM. Both the debounced writers above — `usePersistProject`'s 500 ms
+  // project autosave and the 400 ms history save — are *pending timers*. A page
+  // that goes away cancels them, so an edit made inside that window is simply
+  // lost. There is no `beforeunload` net under them, and there deliberately is
+  // not one now either: `beforeunload` is synchronous, and every writer this app
+  // has is async (an OS file write over the Tauri IPC bridge, an IndexedDB
+  // transaction), so a `beforeunload` handler could only *start* the write it
+  // could never wait for. That is the trap this replaces, not a variant of it.
+  //
+  // WHAT IS COVERED, AND WHAT IS NOT. Reload (Cmd+R, below) and window close
+  // (Cmd+W / the red button, the effect below that) are covered here; Cmd+Q is
+  // covered from the Rust side, because macOS routes the predefined Quit item
+  // straight to AppKit's `terminate:` where no JS listener can be reached
+  // (`src-tauri/src/lib.rs`). Force-quit, `SIGKILL`, a webview crash and a power
+  // loss are covered by NONE of it and cannot be — this narrows the window in
+  // which an edit can be lost, it does not close it.
+  //
+  // EVERY WAIT IS BOUNDED. See `services/teardownFlush.ts` for why that is the
+  // load-bearing property rather than a nicety.
+  // -------------------------------------------------------------------------
+
+  // `history` is read by the flush below, which must see the CURRENT stack
+  // without the flush itself being re-created (and the close listener
+  // re-registered) on every undoable edit.
+  const historyRef = useRef(history);
+  historyRef.current = history;
+
+  /**
+   * The canonical-project flush. Used by every teardown path.
+   *
+   * History is NOT included, per the owner ruling that undo history dies with
+   * the session: on both paths that use this — a window close and Cmd+Q — the
+   * Rust process ends, which mints a new `app_session_token`, which makes any
+   * history written here unreadable by construction (`historyPersist.ts`'s
+   * gate). Writing it would cost teardown time to produce bytes nothing can
+   * ever load.
+   */
+  const flushProjectOnly = useCallback(async (): Promise<void> => {
+    await saveNow();
+  }, [saveNow]);
+
+  /**
+   * The reload flush: project AND history.
+   *
+   * History is included here and only here, because a reload is precisely the
+   * case `historyPersist.ts` exists to serve — same Rust process, same token, so
+   * the stack does come back. Losing it to a 400 ms debounce would contradict
+   * that module's own stated contract, which is why this is in scope this round
+   * while the Cmd+Q behaviour is deliberately left alone.
+   *
+   * `Promise.all`, not sequential: the two writers touch different stores (OS
+   * file / IndexedDB) and neither orders against the other, so serialising them
+   * would only spend more of the budget.
+   */
+  const flushForReload = useCallback(async (): Promise<void> => {
+    await Promise.all([
+      saveNow(),
+      saveHistory(liveProjectRef.current.id, historyRef.current),
+    ]);
+  }, [saveNow]);
+
+  const flushForReloadRef = useRef(flushForReload);
+  flushForReloadRef.current = flushForReload;
+
+  // WINDOW CLOSE — Cmd+W and the red traffic-light button.
+  //
+  // Tauri only blocks the native close while a JS `onCloseRequested` listener is
+  // registered, and the listener must call `preventDefault()` to hold it; we
+  // then close explicitly via `destroy()` once the flush has settled or its
+  // budget has elapsed. `destroy()` rather than `close()` deliberately —
+  // `close()` re-emits close-requested and would re-enter this handler.
+  //
+  // The `closing` latch makes a second Cmd+W during the (at most 2 s) flush a
+  // no-op rather than a second flush, so the window cannot be left waiting on a
+  // queue of them.
+  useEffect(() => {
+    if (isHydrating) return;
+    if (!('__TAURI_INTERNALS__' in window)) return; // plain `npm run dev`: no window API
+
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    let closing = false;
+
+    void (async () => {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window');
+        const win = getCurrentWindow();
+        const stop = await win.onCloseRequested(async (event) => {
+          if (closing) return; // already flushing — let the in-flight one finish
+          closing = true;
+          event.preventDefault();
+          await flushWithBudget(flushProjectOnly);
+          await win.destroy();
+        });
+        if (disposed) { stop(); return; }
+        unlisten = stop;
+      } catch (err) {
+        // A missing window API must degrade to "close is not intercepted",
+        // never to a broken app. That is exactly today's behaviour.
+        console.warn('[teardown] close-requested listener unavailable:', err);
+      }
+    })();
+
+    return () => { disposed = true; unlisten?.(); };
+  }, [isHydrating, flushProjectOnly]);
 
   // -------------------------------------------------------------------------
   // UNDO / REDO TRAVERSAL (Phase 2, 2026-08-08). Design §4, §5.
@@ -5016,7 +5126,18 @@ export default function App() {
       if (appAction !== 'ignore') {
         e.preventDefault();
         if (appAction === 'reload') {
-          window.location.reload();
+          // WS2 T4.6 — flush BEFORE the reload, never alongside it. The app owns
+          // this call site, so unlike a browser's own reload there is a moment
+          // here in which persistence can actually complete; both debounced
+          // writers (500 ms project, 400 ms history) would otherwise be
+          // cancelled with the page, losing any edit newer than their timers.
+          //
+          // Bounded (2 s) and unconditional: a wedged write must not cost the
+          // user their reload, which is often the thing they are reaching for
+          // BECAUSE something is wedged.
+          void flushWithBudget(flushForReloadRef.current).then(() => {
+            window.location.reload();
+          });
         } else if (appAction === 'reload-blocked') {
           // THE ONE PLACE THESE SHORTCUTS DECLINE TO DO WHAT THE KEY SAYS, and
           // deliberately: a reload during an export destroys minutes of
@@ -5370,8 +5491,10 @@ export default function App() {
       handleVoiceoverUnstaged();
 
       // Save current project before switching — only if it was confirmed by the user.
+      // Fire-and-forget, unchanged by WS2 T4.6's awaitable `saveNow`: the page is
+      // not going away here, so the write has all the time it needs.
       if (project.confirmed) {
-        saveNow();
+        void saveNow();
       }
 
       // WS1 Session O — distinguish "no such project" from "present but broken",
@@ -5628,7 +5751,7 @@ export default function App() {
             onApplyOverlayFilterPreset={(v) => setProject(p => ({ ...p, globalOverlayFilter: v as string }))}
             onApplyOverlayConfigPreset={(v) => setProject(p => ({ ...p, globalOverlayConfig: { ...p.globalOverlayConfig, ...v } }))}
             onBackToProjects={() => {
-              if (project.confirmed) saveNow();
+              if (project.confirmed) void saveNow();
               clearLastOpenedProjectId();
               // Owner ruling 2026-08-08: returning to the dashboard clears
               // history, and re-opening a project starts fresh — so the
