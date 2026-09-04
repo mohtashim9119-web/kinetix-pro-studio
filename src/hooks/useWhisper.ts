@@ -13,6 +13,7 @@ import type { SilenceInterval, SilenceDetectResult } from '../services/silenceDe
 import { applyAnchorBasedTiming, getFileIdentity } from '../services/syncEngine';
 import { validate1to2 } from '../services/syncContracts';
 import { buildSilenceErrorEntry, buildMalformedTokenEntry, buildContractViolationEntry, appendSyncLogEntries } from '../services/syncLog';
+import { buildUnappliedTranscript } from '../services/unappliedTranscript';
 import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken, SyncLogEntry } from '../types';
 
 /**
@@ -150,6 +151,51 @@ export async function alignSegmentsFromCachedTranscript(
   };
 }
 
+/**
+ * WS2 T4.7 Requirement 4 — what `startTranscription` reports back to its
+ * caller.
+ *
+ * A REFUSAL IS A RETURN VALUE, NOT A STATUS. It deliberately does not travel
+ * through `transcriptionStatus`: the only situation that produces one is "a run
+ * is already going," and that run owns the status field — writing a refusal
+ * into it would replace a live progress percentage with an error the user did
+ * not cause, i.e. the refusal would look exactly like the failure of the run it
+ * was protecting. The caller surfaces `message` however it surfaces transient
+ * messages (App.tsx: a toast) while the real run keeps its progress bar.
+ */
+export type StartTranscriptionOutcome =
+  | { started: true }
+  | { started: false; reason: 'already-running'; message: string };
+
+export interface StartTranscriptionOptions {
+  /**
+   * `Project.id` this run belongs to. Requirement 4's single-flight gate is
+   * scoped to it, and the scoping is the point: a second attempt for the SAME
+   * project is a duplicate and is refused, while a run for a DIFFERENT project
+   * (the user switched projects mid-transcription) keeps the pre-existing
+   * cancel-then-start behaviour — refusing there would strand the new project
+   * behind a job whose result it can never use.
+   *
+   * Omitted (`undefined`) reproduces the pre-T4.7 behaviour exactly: no
+   * identity to compare, so no refusal is possible and every call cancels the
+   * previous run and starts. Existing callers and tests are unaffected.
+   */
+  projectId?: string;
+  /**
+   * Fired once, immediately after the completion `onProjectUpdated` write, on
+   * the 100%-with-tokens path ONLY — not on the empty-token warning path, not
+   * on cancel, not on error. Requirement 3's durability hook: App.tsx uses it
+   * to flush the just-written `unappliedTranscript` past the 500 ms autosave
+   * debounce, so the window in which a finished transcript exists only in
+   * React state is closed rather than merely shortened.
+   *
+   * Awaited, so a caller that returns a promise (a real disk write) is
+   * sequenced before this call resolves; a throw is swallowed and logged —
+   * a failed flush must not turn a successful transcription into an error.
+   */
+  onCompleted?: () => void | Promise<void>;
+}
+
 export interface UseWhisperApi {
   transcriptionStatus: TranscriptionStatus;
   startTranscription: (
@@ -164,7 +210,10 @@ export interface UseWhisperApi {
     language: string | undefined,
     onSegmentsUpdated: (segments: VideoSegment[]) => void,
     onProjectUpdated: (updater: (p: Project) => Project) => void,
-  ) => Promise<void>;
+    /** WS2 T4.7 — single-flight scoping + the completion flush hook. Optional;
+     *  omitting it reproduces the pre-T4.7 behaviour exactly. */
+    opts?: StartTranscriptionOptions,
+  ) => Promise<StartTranscriptionOutcome>;
   cancelTranscription: () => void;
   dismissError: () => void;
   /**
@@ -203,6 +252,20 @@ export function useWhisper(): UseWhisperApi {
   const generationRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
 
+  // WS2 T4.7 Requirement 4 — the single-flight gate's whole state: the
+  // `Project.id` of the run currently in flight, or null when nothing is
+  // running. A REF AND NOT STATE, deliberately: the gate must be readable and
+  // writable synchronously within one `startTranscription` call so two calls in
+  // the same tick cannot both pass it, and a `useState` value is stale for
+  // exactly that long. Nothing renders from it.
+  //
+  // Cleared in the `finally` below rather than at each exit, so an abort, a
+  // throw, an empty-token warning and a clean finish all release the gate —
+  // a gate that leaks on one exit path locks the user out of transcribing that
+  // project for the rest of the session, which is a worse failure than the
+  // duplicate run it was stopping.
+  const inFlightProjectIdRef = useRef<string | null>(null);
+
   const startTranscription = useCallback(
     async (
       audioAsset: Asset,
@@ -211,7 +274,23 @@ export function useWhisper(): UseWhisperApi {
       language: string | undefined,
       onSegmentsUpdated: (segments: VideoSegment[]) => void,
       onProjectUpdated: (updater: (p: Project) => Project) => void,
-    ) => {
+      opts?: StartTranscriptionOptions,
+    ): Promise<StartTranscriptionOutcome> => {
+      // WS2 T4.7 Requirement 4 — duplicate-run refusal, BEFORE any state is
+      // touched. Checked first so a refused call is a true no-op: it must not
+      // abort the running job, must not bump the generation counter, and must
+      // not overwrite `transcriptionStatus` (see StartTranscriptionOutcome).
+      // Scoped to the project id, and only when one was supplied — see
+      // StartTranscriptionOptions.projectId.
+      const projectId = opts?.projectId;
+      if (projectId !== undefined && inFlightProjectIdRef.current === projectId) {
+        return {
+          started: false,
+          reason: 'already-running',
+          message: 'A transcription is already running for this project — wait for it to finish or cancel it first.',
+        };
+      }
+
       // Capture expected segment IDs at entry — before any async work or Option A branch.
       // Gates onSegmentsUpdated so a stale alignment result is discarded if the scene
       // structure changed (e.g. user removed a scene and re-synced) while Whisper ran.
@@ -225,8 +304,15 @@ export function useWhisper(): UseWhisperApi {
         return true;
       };
 
-      // Cancel any job already running.
+      // Cancel any job already running. Reached only when the gate above did
+      // NOT refuse, i.e. this is a run for a different project (or an
+      // id-less legacy caller) — never a duplicate for the same one.
       abortRef.current?.abort();
+
+      // Claim the gate. Only when an id was supplied: an id-less caller has no
+      // identity to be a duplicate OF, and claiming `undefined` would make the
+      // next id-less call refuse itself.
+      if (projectId !== undefined) inFlightProjectIdRef.current = projectId;
 
       const jobId = crypto.randomUUID();
       const generation = ++generationRef.current;
@@ -247,7 +333,7 @@ export function useWhisper(): UseWhisperApi {
           controller.signal,
         );
 
-        if (generationRef.current !== generation) return;
+        if (generationRef.current !== generation) return { started: true };
 
         if (tokens.length === 0) {
           // Whisper returned no tokens — keep the existing character-weight
@@ -274,11 +360,11 @@ export function useWhisper(): UseWhisperApi {
               setTranscriptionStatus({ phase: 'idle' });
             }
           }, 8000);
-          return;
+          return { started: true };
         }
 
         const silenceResult = await fetchAndDetectSilences(audioAsset);
-        if (generationRef.current !== generation) return;
+        if (generationRef.current !== generation) return { started: true };
 
         // WS4 Features 3 + 4 on the fresh-transcription path, plus the R11
         // staging-run-id mechanism (Pipeline Contract Program, Pair 1, Step 7,
@@ -359,7 +445,46 @@ export function useWhisper(): UseWhisperApi {
           // nothing, leaving `detectedLanguage` undefined here) — the prior
           // detection still describes the current transcript.
           detectedLanguage: detectedLanguage ?? p.detectedLanguage,
+          // WS2 T4.7 Requirement 3 — the durable "finished but unspent" record,
+          // written in the SAME atomic update as the tokens it copies so no
+          // observer can see one without the other.
+          //
+          // WHY IT IS NOT REDUNDANT WITH `transcriptTokens` ABOVE. That field
+          // is written on this path and is also what an already-applied sync
+          // leaves behind, so its presence answers "are tokens cached?" and
+          // cannot answer "is there a result the user has not spent yet?" —
+          // the question the recovery banner asks. This record answers only the
+          // second, and is cleared by Apply Sync's own commit.
+          //
+          // It writes NO language field of its own: `language` /
+          // `detectedLanguage` above are this update's established, separately
+          // reasoned writers (H.7 stickiness), and `buildUnappliedTranscript`
+          // touches neither — see `unappliedTranscript.ts`'s
+          // `withUnappliedTranscript` note.
+          unappliedTranscript: buildUnappliedTranscript(
+            tokens,
+            audioAsset.id,
+            audioAsset.file ? getFileIdentity(audioAsset.file) : p.lastTranscribedFileIdentity,
+          ),
         }));
+
+        // Requirement 3's durability step. Awaited BEFORE the terminal status
+        // is set, so "done" on screen means the transcript is on disk and not
+        // merely in a React state update racing a reload. Fire-and-forget would
+        // reduce the loss window; awaiting closes it.
+        //
+        // A flush failure is logged and swallowed: the transcription itself
+        // succeeded, its result is in memory, and reporting a save problem as a
+        // transcription error would send the user to re-run whisper-cli for a
+        // fault that re-running cannot fix. `usePersistProject`'s `saveError`
+        // is the surface for that, and it is already wired.
+        if (opts?.onCompleted) {
+          try {
+            await opts.onCompleted();
+          } catch (flushErr) {
+            console.error('[whisper] unapplied-transcript flush failed:', flushErr);
+          }
+        }
 
         if (segmentSetStillValid(finalSegments)) {
           onSegmentsUpdated(finalSegments);
@@ -376,14 +501,28 @@ export function useWhisper(): UseWhisperApi {
           }
         }, 3000);
       } catch (err) {
-        if (generationRef.current !== generation) return;
+        if (generationRef.current !== generation) return { started: true };
         if (err instanceof DOMException && err.name === 'AbortError') {
           setTranscriptionStatus({ phase: 'idle' });
-          return;
+          return { started: true };
         }
         const message = err instanceof Error ? err.message : String(err);
         setTranscriptionStatus({ phase: 'error', message, jobId });
+      } finally {
+        // Release the single-flight gate on EVERY exit — clean finish, empty
+        // tokens, cancel, throw. One un-released path would lock the user out
+        // of transcribing this project for the rest of the session, a strictly
+        // worse failure than the duplicate run the gate exists to stop.
+        //
+        // Guarded by an identity check rather than an unconditional null: if a
+        // run for a DIFFERENT project has since claimed the gate (the user
+        // switched projects, which aborts this run), the ref is that run's to
+        // release, not ours.
+        if (projectId !== undefined && inFlightProjectIdRef.current === projectId) {
+          inFlightProjectIdRef.current = null;
+        }
       }
+      return { started: true };
     },
     [],
   );
@@ -391,6 +530,11 @@ export function useWhisper(): UseWhisperApi {
   const cancelTranscription = useCallback(() => {
     abortRef.current?.abort();
     generationRef.current++;
+    // Release the gate synchronously as well as in the run's own `finally`.
+    // The `finally` runs a microtask later (the aborted `await` has to reject
+    // first), and a user who cancels and immediately re-clicks inside that
+    // window would otherwise be refused for a run they just stopped.
+    inFlightProjectIdRef.current = null;
     setTranscriptionStatus({ phase: 'idle' });
   }, []);
 
