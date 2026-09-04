@@ -23,6 +23,9 @@ const EMPTY_SCENE_DOC_MESSAGE =
  *  the transcript — so it classifies identically. */
 const NO_SCENE_DOC_MESSAGE =
   'No scene doc is loaded, so there is nothing to sync. Add a scene details file and try again.';
+/** Must match `App.tsx`'s `NO_VOICEOVER_MESSAGE` (WS2 quick-close). */
+const NO_VOICEOVER_MESSAGE =
+  'A voiceover track is required to build the timeline. Add a voiceover file and try again.';
 /** Must match `App.tsx`'s `EMPTY_TRANSCRIPT_MESSAGE`. */
 const EMPTY_TRANSCRIPT_MESSAGE =
   'No speech was found in the audio. No timeline will be created.';
@@ -40,6 +43,7 @@ export type ApplySyncResult = { ok: true } | { ok: false; message: string };
 export function classifySyncAbortMessage(message: string): SyncAbortClassification {
   if (message === EMPTY_SCENE_DOC_MESSAGE) return 'transcript_unrelated';
   if (message === NO_SCENE_DOC_MESSAGE) return 'transcript_unrelated';
+  if (message === NO_VOICEOVER_MESSAGE) return 'transcript_unrelated';
   if (message.startsWith(VOICEOVER_DURATION_ABORT_PREFIX)) return 'transcript_unrelated';
   if (message === EMPTY_TRANSCRIPT_MESSAGE) return 'timeline_failure';
   if (message === FULL_MISMATCH_MESSAGE) return 'timeline_failure';

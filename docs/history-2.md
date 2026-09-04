@@ -3223,11 +3223,10 @@ whether the abort was `QuotaExceededError`, a crash, or a cancel.
 ### Zero-duration timeline — operator decision (2026-09-05)
 
 Operator chose **abort with error** (explicit error/toast requiring a voiceover track) rather
-than generating a 0-duration timeline or a character-timed fallback. Mechanism: `App.tsx:3396`
-falls back to `audioRef.current?.duration || 0`; with no voiceover asset neither the duration
-abort (`App.tsx:3397`, guarded on `voiceoverAsset`) nor the empty-transcript abort
-(`App.tsx:3449`, guarded on `!!voiceoverAsset`) fires — `parseProjectData` proportions every
-segment against 0.
+than generating a 0-duration timeline or a character-timed fallback. **Implemented** in
+`handleApplySyncFromFiles`: `NO_VOICEOVER_MESSAGE` aborts before `parseProjectData` when no
+voiceover asset resolves; classified `transcript_unrelated` in `applySyncAbort.ts` so the banner
+salvage path retains tokens and dismisses the banner.
 
 ### Section 1 verification close-out (2026-09-05)
 

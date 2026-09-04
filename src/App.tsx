@@ -1015,6 +1015,10 @@ export const EMPTY_SCENE_DOC_MESSAGE = 'Your scene doc has no scenes to sync. Ad
  *  one. Filed as misleading in `docs/work-in-progress.md` §5 and corrected here
  *  because this round owns `App.tsx`. */
 export const NO_SCENE_DOC_MESSAGE = 'No scene doc is loaded, so there is nothing to sync. Add a scene details file and try again.';
+/** WS2 quick-close — no voiceover means no timeline. Does not imply the user
+ *  ever supplied one; states the requirement to build a timeline. */
+export const NO_VOICEOVER_MESSAGE =
+  'A voiceover track is required to build the timeline. Add a voiceover file and try again.';
 export const EMPTY_TRANSCRIPT_MESSAGE = 'No speech was found in the audio. No timeline will be created.';
 export const FULL_MISMATCH_MESSAGE = "This voiceover doesn't match your scene doc. No timeline will be created.";
 
@@ -3403,10 +3407,20 @@ export default function App() {
       }
     }
 
-    // 3. Get audio duration from the voiceover asset we just created (or existing)
+    // WS2 quick-close — operator ruling (2026-09-05): no resolvable voiceover
+    // means abort; never proportion segments against audioDuration 0.
     const voiceoverAsset = allAssets.find(a => a.id === newVoiceoverId);
+    if (!voiceoverAsset) {
+      console.warn('[sync] no voiceover asset — aborting sync');
+      showToast(NO_VOICEOVER_MESSAGE);
+      logSyncAbort(NO_VOICEOVER_MESSAGE, 0);
+      setIsProcessing(false);
+      return { ok: false, message: NO_VOICEOVER_MESSAGE };
+    }
+
+    // 3. Get audio duration from the voiceover asset we just created (or existing)
     let audioDuration = audioRef.current?.duration || 0;
-    if (voiceoverAsset && (!audioRef.current || audioRef.current.src !== voiceoverAsset.url)) {
+    if (!audioRef.current || audioRef.current.src !== voiceoverAsset.url) {
       try {
         audioDuration = await resolveVoiceoverDuration(voiceoverAsset);
       } catch (err) {
