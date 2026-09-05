@@ -3329,3 +3329,14 @@ Extracted `src-tauri/src/event_sink.rs`: generic `InFlightRegistry<K, T>` and `E
 module; observable download behaviour unchanged. Removes the WS2 §3 blocker that Req 1 must land
 EventSink first — Req 1 can declare `static InFlightRegistry<K, WhisperEvent>` directly.
 
+---
+
+## WS2 — Voiceover restore held + explicit transcribe (2026-09-05)
+
+**Verdict:** CLOSED — untranscribed staged voiceover survives reload without auto-running Whisper.
+
+**Mechanism.** `canAdoptRestoredVoiceover` gate unchanged. On refusal, `DropZonePanel` no longer
+nulls the slot or deletes the IndexedDB row; `stagedVoiceoverNeedsExplicitTranscribe` gates Apply
+Sync and shows a user-initiated Transcribe button that calls `handleVoiceoverStaged`. Recovery
+banner and `transcriptTokens` cache untouched on load.
+

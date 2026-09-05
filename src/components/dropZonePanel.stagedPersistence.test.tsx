@@ -64,6 +64,8 @@ function makeProps(overrides: Partial<DropZonePanelProps> = {}): DropZonePanelPr
     onApplySync: noop, onStagedFilesChange: noop, stagedFilesClearSignal: 0,
     onVoiceoverStaged: noop, onVoiceoverUnstaged: noop, applySyncDisabled: false,
     onVoiceoverRestored: () => true,
+    onVoiceoverTranscribeRequested: noop,
+    voiceoverNeedsExplicitTranscribe: false,
     onSegmentClick: noop, onToggleLock: noop, onLockAll: noop, onUnlockAll: noop,
     allLocked: false, onOpenReviewMapping: noop, onInsertHeading: noop,
     selectedSegmentId: undefined, currentSegmentId: undefined,
@@ -271,10 +273,9 @@ describe('WS2-50 — a restored voiceover is offered, and a refusal leaves nothi
     panel.unmount();
   });
 
-  it('a REFUSED voiceover leaves the slot empty AND deletes its row', async () => {
-    // The row must go too. Leaving it would re-offer the same unusable file on
-    // every future mount, and would keep bytes on disk for a slot the user is
-    // never shown.
+  it('a REFUSED voiceover stays in the slot AND keeps its row', async () => {
+    // The row must survive so the user sees the restored file and can tap
+    // Transcribe explicitly — nothing auto-runs on mount.
     await seedStaged(VO_PROJECT, {
       voiceover: new File(['AUDIO'], 'vo.m4a', { type: 'audio/mp4', lastModified: 42 }),
       script: new File(['S'], 'script.txt', { type: 'text/plain' }),
@@ -283,20 +284,45 @@ describe('WS2-50 — a restored voiceover is offered, and a refusal leaves nothi
     const panel = mountPanel({
       projectId: VO_PROJECT,
       onVoiceoverRestored: () => false,
+      voiceoverNeedsExplicitTranscribe: true,
     });
     await settle();
     expect(
-      panel.published()?.voiceoverFile,
-      'a refused voiceover was restored into the slot anyway — it would look staged and fail ' +
-        'on use, or start an unrequested transcription.',
-    ).toBeNull();
-    // The other slots are unaffected: a refusal is scoped to the voiceover.
-    expect(panel.published()?.scriptFile?.file.name).toBe('script.txt');
+      panel.published()?.voiceoverFile?.file.name,
+      'a refused voiceover was not restored into the slot.',
+    ).toBe('vo.m4a');
+    expect(
+      panel.container.querySelector('[data-testid="voiceover-transcribe-restored"]'),
+      'the explicit transcribe affordance is missing.',
+    ).toBeTruthy();
     const rows = await getStagedFilesForProject(VO_PROJECT);
     expect(
       rows.map(r => r.slotKey),
-      'the refused voiceover row survived — it will be re-offered on every mount.',
-    ).toEqual(['script']);
+      'the refused voiceover row was deleted.',
+    ).toEqual(expect.arrayContaining(['script', 'voiceover']));
+    panel.unmount();
+  });
+
+  it('Transcribe fires only on user click, not on restore', async () => {
+    const transcribeCalls: string[] = [];
+    await seedStaged(VO_PROJECT, {
+      voiceover: new File(['AUDIO'], 'vo.m4a', { type: 'audio/mp4', lastModified: 42 }),
+    });
+    const panel = mountPanel({
+      projectId: VO_PROJECT,
+      onVoiceoverRestored: () => false,
+      voiceoverNeedsExplicitTranscribe: true,
+      onVoiceoverTranscribeRequested: (f: File) => { transcribeCalls.push(f.name); },
+      onVoiceoverStaged: (f: File) => { transcribeCalls.push(`staged:${f.name}`); },
+    });
+    await settle();
+    expect(transcribeCalls, 'restore must not auto-start transcription').toEqual([]);
+    const btn = panel.container.querySelector<HTMLButtonElement>(
+      '[data-testid="voiceover-transcribe-restored"]',
+    );
+    expect(btn).toBeTruthy();
+    await act(async () => { btn!.click(); });
+    expect(transcribeCalls).toEqual(['vo.m4a']);
     panel.unmount();
   });
 

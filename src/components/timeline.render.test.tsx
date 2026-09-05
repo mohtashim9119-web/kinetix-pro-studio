@@ -163,6 +163,8 @@ function makeDropZonePanelProps(overrides: Partial<DropZonePanelProps> = {}): Dr
     onVoiceoverStaged: noop,
     onVoiceoverUnstaged: noop,
     onVoiceoverRestored: () => true,
+    onVoiceoverTranscribeRequested: noop,
+    voiceoverNeedsExplicitTranscribe: false,
     applySyncDisabled: false,
     onSegmentClick: noop,
     onToggleLock: noop,

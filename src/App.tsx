@@ -230,7 +230,7 @@ import { armRecoveryBannerFromPersistedProject } from './services/recoveryBanner
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, SUPPORTED_LANGUAGE_CODES } from './constants';
 import { DropZonePanel, EMPTY_STAGED, type StagedFiles } from './components/DropZonePanel';
-import { canAdoptRestoredVoiceover } from './services/stagedFilesPersist';
+import { canAdoptRestoredVoiceover, stagedVoiceoverNeedsExplicitTranscribe } from './services/stagedFilesPersist';
 import { NEUTRAL_GRADE, type ApplyEvent, type ApplyScope, type AutoGradeResult } from './components/EffectsPanel';
 import { capRateForDuration } from './services/zoomScale';
 import { resolvePresetScaleRate } from './services/lookPresetService';
@@ -2102,8 +2102,10 @@ export default function App() {
   // value the user last dropped rather than one a batched render has yet to
   // flush. `DropZonePanel` writes it synchronously from `updateStaged`.
   const stagedFilesRef = useRef<StagedFiles>(EMPTY_STAGED);
+  const [stagedVoiceoverFile, setStagedVoiceoverFile] = useState<File | null>(null);
   const handleStagedFilesChange = useCallback((next: StagedFiles): void => {
     stagedFilesRef.current = next;
+    setStagedVoiceoverFile(next.voiceoverFile?.file ?? null);
   }, []);
   // Option C: ephemeral voiceover staged before Apply Sync is clicked — minted by
   // handleVoiceoverStaged, consumed (id/url reused) by handleApplySyncFromFiles.
@@ -3295,11 +3297,8 @@ export default function App() {
    * return, read off the same ref, rather than an approximation of it: adopt
    * only when the safe branch is provably the one that will run.
    *
-   * A refusal is not a silent downgrade. The panel drops the slot and deletes
-   * its row, so the user sees an empty voiceover slot — the honest state — and
-   * re-dropping the file starts transcription on their action, where it
-   * belongs. Named degradation: a voiceover staged but never successfully
-   * transcribed does not survive a reload.
+   * A refusal keeps the slot and IndexedDB row intact; the panel shows an
+   * explicit Transcribe action instead of auto-running Whisper on load.
    */
   const handleVoiceoverRestored = useCallback((file: File): boolean => {
     const adoptable = canAdoptRestoredVoiceover({
@@ -3310,6 +3309,10 @@ export default function App() {
     if (!adoptable) return false;
     handleVoiceoverStaged(file);
     return true;
+  }, [handleVoiceoverStaged]);
+
+  const handleVoiceoverTranscribeRequested = useCallback((file: File): void => {
+    handleVoiceoverStaged(file);
   }, [handleVoiceoverStaged]);
 
   const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {
@@ -5424,7 +5427,16 @@ export default function App() {
     || (pendingVoiceover !== null
         && project.lastTranscribedFileIdentity === getFileIdentity(pendingVoiceover.file)
         && (project.transcriptTokens?.length ?? 0) > 0);
-  const applySyncDisabled = effectiveVoiceoverId !== undefined && !transcriptionReady;
+  const voiceoverNeedsExplicitTranscribe = stagedVoiceoverNeedsExplicitTranscribe({
+    hasStagedVoiceover: stagedVoiceoverFile !== null,
+    hasPendingVoiceover: pendingVoiceover !== null,
+    fileIdentity: stagedVoiceoverFile ? getFileIdentity(stagedVoiceoverFile) : null,
+    lastTranscribedFileIdentity: project.lastTranscribedFileIdentity,
+    cachedTokenCount: project.transcriptTokens?.length ?? 0,
+  });
+  const applySyncDisabled =
+    (effectiveVoiceoverId !== undefined && !transcriptionReady)
+    || voiceoverNeedsExplicitTranscribe;
 
   usePlayback({
     isPlaying,
@@ -6106,6 +6118,8 @@ export default function App() {
             onVoiceoverStaged={handleVoiceoverStaged}
             onVoiceoverUnstaged={handleVoiceoverUnstaged}
             onVoiceoverRestored={handleVoiceoverRestored}
+            onVoiceoverTranscribeRequested={handleVoiceoverTranscribeRequested}
+            voiceoverNeedsExplicitTranscribe={voiceoverNeedsExplicitTranscribe}
             applySyncDisabled={applySyncDisabled}
             onUndo={handleUndo}
             onRedo={handleRedo}

@@ -232,3 +232,29 @@ export function canAdoptRestoredVoiceover(input: {
   return input.lastTranscribedFileIdentity === input.fileIdentity
     && input.cachedTokenCount > 0;
 }
+
+/**
+ * WS2 — a restored voiceover was kept in the slot but not auto-adopted.
+ *
+ * True when a staged voiceover is visible and Whisper must not run until the
+ * user explicitly requests it — the inverse of `canAdoptRestoredVoiceover`'s
+ * safe auto-adopt path, plus the pending-voiceover guard (staging already
+ * started transcription).
+ */
+export function stagedVoiceoverNeedsExplicitTranscribe(input: {
+  hasStagedVoiceover: boolean;
+  hasPendingVoiceover: boolean;
+  /** `getFileIdentity(stagedVoiceoverFile)` when staged. */
+  fileIdentity: string | null;
+  lastTranscribedFileIdentity: string | undefined;
+  cachedTokenCount: number;
+}): boolean {
+  if (!input.hasStagedVoiceover || input.hasPendingVoiceover || !input.fileIdentity) {
+    return false;
+  }
+  return !canAdoptRestoredVoiceover({
+    fileIdentity: input.fileIdentity,
+    lastTranscribedFileIdentity: input.lastTranscribedFileIdentity,
+    cachedTokenCount: input.cachedTokenCount,
+  });
+}

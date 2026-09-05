@@ -363,11 +363,14 @@ interface Props {
   /** Fired when a staged-but-uncommitted voiceover is removed or replaced. */
   onVoiceoverUnstaged: () => void;
   /** WS2-50 — offers a voiceover recovered from the staged store back to the
-   *  app on mount. Returns whether it was ADOPTED. A refusal means the app
-   *  cannot use this file without starting an unrequested transcription, so
-   *  the slot is left empty and its row dropped rather than shown as populated
-   *  and failing on use. See `App.tsx`'s `handleVoiceoverRestored`. */
+   *  app on mount. When adoptable, App.tsx runs `handleVoiceoverStaged`; when
+   *  not, the slot and row stay put and the user must tap Transcribe. */
   onVoiceoverRestored: (file: File) => boolean;
+  /** User-initiated transcription for a restored-but-unadopted voiceover. */
+  onVoiceoverTranscribeRequested: (file: File) => void;
+  /** True when a staged voiceover is visible but Whisper must not run until
+   *  the user explicitly requests it. */
+  voiceoverNeedsExplicitTranscribe: boolean;
   /** True while Apply Sync should be inert — voiceover staged/persisted but not yet transcribed. */
   applySyncDisabled: boolean;
   /** Undo/redo (Phase 2, 2026-08-08). Placed here — immediately left of Apply
@@ -491,6 +494,8 @@ export function DropZonePanel({
   onVoiceoverStaged,
   onVoiceoverUnstaged,
   onVoiceoverRestored,
+  onVoiceoverTranscribeRequested,
+  voiceoverNeedsExplicitTranscribe,
   applySyncDisabled,
   onUndo,
   onRedo,
@@ -743,16 +748,14 @@ export function DropZonePanel({
         const restored = restoreStagedFiles(rows);
 
         // A restored voiceover is OFFERED, not assumed. Adoption runs
-        // App.tsx's handleVoiceoverStaged, whose only non-destructive branch
-        // is the same-file-with-cached-tokens early return; every other branch
-        // clears transcriptTokens and starts whisper-cli, which on app load is
-        // an unrequested transcription that destroys the cache the recovery
-        // banner depends on. A refusal drops the slot AND its row: a voiceover
-        // that cannot be used without that side effect must not sit in the UI
-        // looking staged.
-        if (restored.voiceoverFile && !onVoiceoverRestored(restored.voiceoverFile.file)) {
-          restored.voiceoverFile = null;
-          void deleteStagedFile(projectId, 'voiceover');
+        // App.tsx's handleVoiceoverStaged only when `canAdoptRestoredVoiceover`
+        // is true; otherwise the slot and row stay so the user can tap
+        // Transcribe explicitly — nothing auto-runs on load.
+        if (restored.voiceoverFile) {
+          const adopted = onVoiceoverRestored(restored.voiceoverFile.file);
+          if (!adopted) {
+            setExpanded('voiceover');
+          }
         }
 
         stagedRef.current = restored;
@@ -1238,6 +1241,23 @@ export function DropZonePanel({
                       <span className="text-[var(--kx-muted)]">{value}</span>
                     </div>
                   ))}
+                </div>
+              ) : staged.voiceoverFile ? (
+                <div className="space-y-2">
+                  <p className="text-[12px] text-[var(--kx-muted)]">
+                    {staged.voiceoverFile.file.name} — staged, not yet transcribed.
+                  </p>
+                  {voiceoverNeedsExplicitTranscribe && (
+                    <button
+                      type="button"
+                      data-testid="voiceover-transcribe-restored"
+                      onClick={() => onVoiceoverTranscribeRequested(staged.voiceoverFile!.file)}
+                      className="text-[12px] font-medium text-[var(--kx-accent-2)] hover:text-[var(--kx-accent)]
+                                 border border-[var(--kx-accent-line)] rounded-[8px] px-2.5 py-1.5 transition-colors"
+                    >
+                      Transcribe this file
+                    </button>
+                  )}
                 </div>
               ) : (
                 <p className="text-[12px] text-[var(--kx-faint)] italic">No voiceover loaded.</p>

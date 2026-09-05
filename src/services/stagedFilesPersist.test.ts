@@ -35,6 +35,7 @@ import {
   ALL_PERSISTED_SLOTS,
   planStagedReconcile,
   canAdoptRestoredVoiceover,
+  stagedVoiceoverNeedsExplicitTranscribe,
   enumerateStagedSlots,
   restoreStagedFiles,
   slotKeyFor,
@@ -438,15 +439,52 @@ describe('WS2-50 — a restored voiceover never starts a transcription', () => {
     ).toBe(true);
   });
 
-  it('the panel drops both the slot and the row on a refusal', () => {
+  it('the panel keeps the slot and row when adoption is refused', () => {
     expect(
       PANEL_SRC,
-      'a refused voiceover is no longer cleared from the restored slot — it would look staged ' +
-        'and fail on use.',
-    ).toContain('restored.voiceoverFile = null;');
+      'a refused voiceover is cleared from the restored slot — the user cannot see it after reload.',
+    ).not.toContain('restored.voiceoverFile = null;');
     expect(
       PANEL_SRC,
-      'a refused voiceover’s row is no longer deleted — it will be re-offered on every mount.',
-    ).toContain("void deleteStagedFile(projectId, 'voiceover');");
+      'a refused voiceover row is deleted — the staged bytes are lost on reload.',
+    ).not.toContain("void deleteStagedFile(projectId, 'voiceover');");
+    expect(
+      PANEL_SRC,
+      'the explicit transcribe affordance is missing from the voiceover slot.',
+    ).toContain('data-testid="voiceover-transcribe-restored"');
+  });
+
+  describe('stagedVoiceoverNeedsExplicitTranscribe', () => {
+    const ID = 'vo.m4a|31354992|1784882086000';
+
+    it('is true for a staged untranscribed voiceover with no pending job', () => {
+      expect(stagedVoiceoverNeedsExplicitTranscribe({
+        hasStagedVoiceover: true,
+        hasPendingVoiceover: false,
+        fileIdentity: ID,
+        lastTranscribedFileIdentity: undefined,
+        cachedTokenCount: 0,
+      })).toBe(true);
+    });
+
+    it('is false when the safe auto-adopt path applies', () => {
+      expect(stagedVoiceoverNeedsExplicitTranscribe({
+        hasStagedVoiceover: true,
+        hasPendingVoiceover: false,
+        fileIdentity: ID,
+        lastTranscribedFileIdentity: ID,
+        cachedTokenCount: 4618,
+      })).toBe(false);
+    });
+
+    it('is false once staging has already minted a pending voiceover', () => {
+      expect(stagedVoiceoverNeedsExplicitTranscribe({
+        hasStagedVoiceover: true,
+        hasPendingVoiceover: true,
+        fileIdentity: ID,
+        lastTranscribedFileIdentity: undefined,
+        cachedTokenCount: 0,
+      })).toBe(false);
+    });
   });
 });
