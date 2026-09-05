@@ -15,6 +15,7 @@ mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;
 mod ffmpeg;
+mod event_sink;
 pub mod model_download;
 pub mod models;
 mod project_mirror;

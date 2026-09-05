@@ -119,12 +119,11 @@
 // `.part`-then-rename contract is only crash-atomic if the bytes are down.
 // ---------------------------------------------------------------------------
 
-use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::ipc::Channel;
@@ -232,11 +231,13 @@ pub(crate) const READ_TIMEOUT: Duration = Duration::from_secs(READ_TIMEOUT_SECS)
 /// the one key both callers (`whisper_model_download`, `models::
 /// fa_model_download`) already derive from the same `part_path_for`. A
 /// second, id-shaped key could drift from it; this one cannot.
-static IN_FLIGHT: OnceLock<Mutex<HashMap<PathBuf, Arc<EventSink>>>> = OnceLock::new();
-
-fn in_flight() -> &'static Mutex<HashMap<PathBuf, Arc<EventSink>>> {
-    IN_FLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
-}
+///
+/// `InFlightRegistry`/`EventSink` themselves are payload-agnostic
+/// (`event_sink.rs`) — this `static` is what makes THIS registry the
+/// download engine's own, isolated from any other consumer that might later
+/// declare its own `InFlightRegistry<K, T>` with a different key/payload.
+static IN_FLIGHT: crate::event_sink::InFlightRegistry<PathBuf, ModelDownloadEvent> =
+    crate::event_sink::InFlightRegistry::new();
 
 /// The channel a running download emits through, behind a swap point.
 ///
@@ -258,28 +259,11 @@ fn in_flight() -> &'static Mutex<HashMap<PathBuf, Arc<EventSink>>> {
 /// Making the sink swappable lets a fresh page take over the SAME transfer
 /// (`attach_to_in_flight`) instead of racing it. There is exactly one event
 /// path either way — no second progress mechanism to drift from this one.
-pub(crate) struct EventSink(Mutex<Channel<ModelDownloadEvent>>);
-
-impl EventSink {
-    pub(crate) fn new(channel: Channel<ModelDownloadEvent>) -> Self {
-        Self(Mutex::new(channel))
-    }
-
-    /// Send is best-effort and always has been: a channel whose page is gone
-    /// errors, and a download must not fail because nobody was watching.
-    pub(crate) fn send(&self, event: ModelDownloadEvent) {
-        if let Ok(channel) = self.0.lock() {
-            let _ = channel.send(event);
-        }
-    }
-
-    /// Point the running transfer at a new page's channel.
-    pub(crate) fn replace(&self, channel: Channel<ModelDownloadEvent>) {
-        if let Ok(mut slot) = self.0.lock() {
-            *slot = channel;
-        }
-    }
-}
+/// This module's own instantiation of the generic sink (`event_sink.rs`) —
+/// every method call below (`::new`, `.send`, `.replace`) resolves through
+/// this alias to the generic impl unchanged, so this refactor moves the type
+/// without moving its behaviour.
+pub(crate) type EventSink = crate::event_sink::EventSink<ModelDownloadEvent>;
 
 /// The sink of the download currently writing `part_path`, if there is one.
 ///
@@ -288,7 +272,7 @@ impl EventSink {
 /// terminal event through it) or hands back `None` — never a sink that is
 /// about to be dropped with the caller waiting on it.
 pub(crate) fn attach_to_in_flight(part_path: &Path) -> Option<Arc<EventSink>> {
-    in_flight().lock().ok()?.get(part_path).cloned()
+    IN_FLIGHT.attach(part_path)
 }
 
 /// Whether a download is writing this target right now. Cheap, and the only
@@ -296,22 +280,17 @@ pub(crate) fn attach_to_in_flight(part_path: &Path) -> Option<Arc<EventSink>> {
 /// has a partial on disk" — two states that look identical from the
 /// filesystem alone.
 pub(crate) fn is_part_in_flight(part_path: &Path) -> bool {
-    in_flight().lock().map(|set| set.contains_key(part_path)).unwrap_or(false)
+    IN_FLIGHT.is_in_flight(part_path)
 }
 
 /// Releases its claim on drop — including on an early `return`, a `?`, or a
 /// panic — so a failed download can never leave a target permanently
-/// un-downloadable. That is the whole reason this is a guard and not a
-/// matched acquire/release pair.
-pub(crate) struct InFlightGuard(PathBuf);
-
-impl Drop for InFlightGuard {
-    fn drop(&mut self) {
-        if let Ok(mut set) = in_flight().lock() {
-            set.remove(&self.0);
-        }
-    }
-}
+/// un-downloadable. Thin newtype over `event_sink::InFlightGuard`: the struct
+/// has no `Drop` impl of its own, so the compiler-generated drop glue drops
+/// the inner guard, which is where the actual release logic lives — the
+/// field is never read directly, only dropped, hence the `allow`.
+#[allow(dead_code)]
+pub(crate) struct InFlightGuard(crate::event_sink::InFlightGuard<PathBuf, ModelDownloadEvent>);
 
 /// `Some(guard)` if nothing else is writing `part_path`; `None` if one is.
 /// The insert and the test are one critical section, so two simultaneous
@@ -320,12 +299,7 @@ pub(crate) fn try_acquire_in_flight(
     part_path: &Path,
     sink: Arc<EventSink>,
 ) -> Option<InFlightGuard> {
-    let mut set = in_flight().lock().ok()?;
-    if set.contains_key(part_path) {
-        return None;
-    }
-    set.insert(part_path.to_path_buf(), sink);
-    Some(InFlightGuard(part_path.to_path_buf()))
+    IN_FLIGHT.try_acquire(part_path.to_path_buf(), sink).map(InFlightGuard)
 }
 
 /// The refusal a second download for an already-in-flight target gets.
