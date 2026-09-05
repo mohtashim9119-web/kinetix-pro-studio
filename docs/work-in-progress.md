@@ -147,7 +147,7 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 ## WS2 — Non-Sync Work
 Status: OPEN — the general workstream for all development outside the sync pipeline (WS1). Active tasks live in the five sections below; completed items are recorded in `docs/history-2.md`.
 
-Baselines (f28a012): vitest 3121 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden replay 6/6; K13 3/3 (measured this tree); cargo 182/0/1 default and 264/0/26 with `--features fa-inference` (carried — `src-tauri/` unchanged since f28a012).
+Baselines (83f20ec): vitest 3132 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden replay 6/6; K13 3/3 (measured this tree); cargo 182/0/1 default and 264/0/26 with `--features fa-inference` (carried — `src-tauri/` unchanged since f28a012).
 
 ### 1. Finished but pending verification
 
@@ -157,20 +157,19 @@ Baselines (f28a012): vitest 3121 passed / 77 skipped / 0 failed; gaplessInvarian
 
 (none)
 
-**END GOAL:** Next implementation from section 3 — transcription lifecycle (Req 1/2, EventSink), raw IPC for ffmpeg probes.
+**END GOAL:** Next implementation from section 3 — transcription lifecycle (Req 1 then Req 2), raw IPC for ffmpeg probes.
 
 ### 3. Next tasks
 
-- [OPEN] Transcription Req 2: incremental draft save every three seconds to a dedicated draft store, not a Project field.
-- [OPEN] EventSink/IN_FLIGHT Generalization: lands as its own commit before Requirement 1, per operator decision.
-- [OPEN] Transcription Req 1: native TranscriptionManager so Whisper survives Cmd+R, project switch, and dashboard navigation.
+- [OPEN] Transcription Req 1: attach to existing whisper.rs:373-474 loop. Key by projectId (not per-call audio_path). Static InFlightRegistry<K, WhisperEvent>; swap whisper.rs:279-285 kill-on-start for is_in_flight/attach so Cmd+R reattaches.
+- [OPEN · BLOCKED] Transcription Req 2: incremental draft save — blocked on Rust WhisperEvent partial-token variant; loop emits Progress only until Done. No TS segments until completion. May be moot once Req 1 survives reload.
 - [OPEN] tauriFfmpeg.ts:45-72 Base64 IPC: brief-estimated ~2.33× peak inflation on ~73MiB voiceover (not measured here). Pass raw paths. Dupes: App.tsx:3168/3399; fa-dev:4846.
 - [OPEN · NON-BLOCKING] Dev-Profile IDB Cleanup: dev WebKit 469 MB (291+12+167 MB); packaged 5 v1/15.7 MB. V8 four-ref; v1 STOP 58/266. Non-shipping. `.work-phase4/session-ws2-49-legacy-v1/findings.md`.
 - [OPEN · NON-BLOCKING] Replay fixture reproduction gap: `.work-phase4/replay/` (~85M, gitignored) is required by golden replay (3 corpus tests) and ~35 WS1 measurement scripts; a fresh clone fails those until `python3 scripts/phase4-restore-replay-inputs.py` is run locally. Tracking the bundle is unreasonable at this size.
 
 ### 4. Open bugs
 
-- [OPEN] Voiceover Restore Degradation: untranscribed staged voiceover does not survive reload; canAdoptRestoredVoiceover refuses it. Needs an explicit transcribe-restored-file affordance, not a looser gate.
+- [OPEN] Whisper duplicate kill: WhisperState (whisper.rs:14) Mutex<Option<CommandChild>>; whisper.rs:279-285 kills prior child on second start — silent replacement. Operator: refuse with error. Req 1 closes.
 
 ### 5. Deferred tasks
 

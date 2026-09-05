@@ -3318,3 +3318,14 @@ whenever a playhead or selection target existed (Preview, Effects, left panel). 
 `#timeline-scroll-area`, false elsewhere; both S and D require it. No tabIndex/focus redesign;
 `Timeline.tsx:433` preventDefault unchanged. Guard: `timelineShortcutScope.test.ts`.
 
+---
+
+## WS2 — EventSink/IN_FLIGHT generalization merged (2026-09-05)
+
+**Verdict:** CLOSED at `83f20ec` — merged from branch `eventsink-inflight-generalize` (`00a698e`).
+
+Extracted `src-tauri/src/event_sink.rs`: generic `InFlightRegistry<K, T>` and `EventSink<T>`
+(`T: Clone + serde::Serialize`). `model_download.rs` now aliases its download path through this
+module; observable download behaviour unchanged. Removes the WS2 §3 blocker that Req 1 must land
+EventSink first — Req 1 can declare `static InFlightRegistry<K, WhisperEvent>` directly.
+
