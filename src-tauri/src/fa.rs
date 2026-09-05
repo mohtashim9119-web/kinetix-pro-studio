@@ -909,21 +909,86 @@ pub(crate) async fn fa_align_with_prefix(
 
     #[cfg(feature = "fa-inference")]
     {
-        let total = chunks.len() as u32;
-        let on_progress = |index: u32| {
-            let _ = on_event.send(FaEvent::Progress { index, total });
+        // OFFLOAD (WS3 fa-perf-foundation). `align_chunked_for_language` is
+        // fully synchronous and, on a real corpus, runs for MINUTES — a live
+        // 3-chunk window of the 173 corpus measured 12.4 s of forward pass
+        // alone. Running that directly in this `async fn` body parks a Tauri
+        // async-runtime worker thread for the whole alignment, during which
+        // every other IPC command scheduled onto that worker — `fa_cancel`
+        // included — waits. `spawn_blocking` moves it onto the blocking pool,
+        // mirroring `models.rs`'s `import_local_model` and
+        // `model_download.rs`'s `finalize_verified_download`.
+        //
+        // MOVING THE `State` BORROWS. `tauri::State<'r, T>` carries the
+        // lifetime of the borrow it was resolved from, so neither `state` nor
+        // `model_cache` can cross into a `move` closure that must be
+        // `Send + 'static`. An `AppHandle` can: it is `Clone`, `Send` and
+        // `'static` by construction. So the closure captures a CLONE of the
+        // handle and re-resolves both pieces of managed state from it on the
+        // blocking thread (`app.state::<T>()`), producing `State` values whose
+        // lifetimes are local to the closure. Both resolve to the very same
+        // `Mutex`es the async side holds — `.manage()` stores one instance per
+        // type for the process — so this is a re-BORROW, not a copy: nothing
+        // is duplicated and no state can diverge between the two threads.
+        //
+        // CANCELLATION still works, and works better than before. `fa_cancel`
+        // is a separate command that flips that same managed `FaState` mutex;
+        // `align_chunked` polls `is_cancelled` at every chunk boundary from
+        // the blocking thread and returns `Err(Cancelled)` before starting the
+        // next chunk. Previously a cancel issued mid-alignment could not even
+        // be SERVICED until the alignment released the async worker; now the
+        // async runtime is free the whole time the blocking thread is busy.
+        //
+        // THE `with_cached_session` MUTEX INVARIANT SURVIVES, and is in fact
+        // strengthened. That function holds the model-cache lock across `f`,
+        // which is sound only if `f` never `.await`s. Here `f` runs inside a
+        // synchronous `FnOnce` on a blocking thread, where an `.await` is not
+        // merely absent but syntactically impossible — there is no async
+        // context to await in. `fa_timing`'s `no_await_*` guards assert both
+        // halves of that in the source.
+        let app_for_blocking = app.clone();
+        let audio_path_for_blocking = audio_path.clone();
+        let chunks_for_blocking = chunks.clone();
+        let language_for_blocking = language.clone();
+        let events_for_blocking = on_event.clone();
+        let joined = tauri::async_runtime::spawn_blocking(move || {
+            let blocking_state = app_for_blocking.state::<FaState>();
+            let blocking_cache = app_for_blocking.state::<FaModelCache>();
+            let total = chunks_for_blocking.len() as u32;
+            let on_progress = |index: u32| {
+                let _ = events_for_blocking.send(FaEvent::Progress { index, total });
+            };
+            let mut inference = crate::fa_timing::FaInferenceTimings::default();
+            let result = crate::fa_onnx::align_chunked_for_language(
+                &app_for_blocking,
+                &blocking_cache.0,
+                &audio_path_for_blocking,
+                &chunks_for_blocking,
+                &language_for_blocking,
+                || is_cancelled(&blocking_state),
+                on_progress,
+                &mut inference,
+            );
+            (result, inference)
+        })
+        .await;
+
+        // A join failure means the blocking task panicked or the pool shut
+        // down. `finish_run` first, unconditionally: the run state must return
+        // to Idle whatever happened, or the next run inherits a stale
+        // `Running`/`Cancelled`. Reported as `InferenceFailed` rather than
+        // being allowed to propagate as a panic across the IPC boundary.
+        let (result, inference) = match joined {
+            Ok(pair) => pair,
+            Err(e) => {
+                finish_run(&state)?;
+                let err = FaError::inference_failed(format!(
+                    "forced alignment task failed to complete on the blocking pool: {e}"
+                ));
+                let _ = on_event.send(FaEvent::Error { message: err.message.clone() });
+                return Err(err);
+            }
         };
-        let mut inference = crate::fa_timing::FaInferenceTimings::default();
-        let result = crate::fa_onnx::align_chunked_for_language(
-            &app,
-            &model_cache.0,
-            &audio_path,
-            &chunks,
-            &language,
-            || is_cancelled(&state),
-            on_progress,
-            &mut inference,
-        );
         finish_run(&state)?;
         // Sent before the terminal event on BOTH arms — an inference that
         // failed at chunk 180 of 200 still reports the 180 chunks it timed.
@@ -2065,6 +2130,95 @@ mod tests {
     }
 
     // -- FaEvent::Progress shape (WS1 Task 5 Slice D11) --------------------
+
+    // -- offload to the blocking pool (WS3 fa-perf-foundation) ------------
+    //
+    // The alignment call now runs under `tauri::async_runtime::spawn_blocking`
+    // instead of inline in an `async fn`. The one behaviour that has to
+    // survive that move is cancellation: `fa_cancel` runs on the async
+    // runtime and flips `FaState`, while the run polls `is_cancelled` from a
+    // blocking-pool thread. These prove the signal actually crosses that
+    // thread boundary — which is the genuinely new thing here, and is not
+    // implied by any of the existing single-threaded state-machine tests
+    // above.
+
+    /// Stands in for `align_chunked`'s chunk-boundary cancellation poll:
+    /// checks `is_cancelled` repeatedly, returns `true` the moment it sees
+    /// the flag, and gives up at `deadline` otherwise.
+    fn poll_until_cancelled_or(state: &FaState, deadline: std::time::Duration) -> bool {
+        let started = std::time::Instant::now();
+        while started.elapsed() < deadline {
+            if is_cancelled(state) {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        false
+    }
+
+    #[test]
+    fn cancellation_lands_on_a_run_already_executing_on_the_blocking_pool() {
+        let state = std::sync::Arc::new(FaState::default());
+        start_run(&state).unwrap();
+
+        let (running_tx, running_rx) = std::sync::mpsc::channel::<()>();
+        let polling_state = state.clone();
+        let handle = tauri::async_runtime::spawn_blocking(move || {
+            // Only signal once we are genuinely executing on the pool, so the
+            // cancel below cannot land before the run started and pass for the
+            // wrong reason.
+            running_tx.send(()).expect("receiver is alive");
+            poll_until_cancelled_or(&polling_state, std::time::Duration::from_secs(10))
+        });
+
+        running_rx.recv().expect("the blocking task must reach its poll loop");
+        // This is `fa_cancel`'s side: a DIFFERENT thread from the one running
+        // the alignment, touching the same managed `FaState`.
+        cancel_run(&state).unwrap();
+
+        let observed = tauri::async_runtime::block_on(handle).expect("blocking task must join");
+        assert!(
+            observed,
+            "a cancel issued while the run is on the blocking pool must be observed by the run's own              chunk-boundary poll — otherwise fa_cancel is inert once the offload starts"
+        );
+    }
+
+    #[test]
+    fn a_run_on_the_blocking_pool_that_is_never_cancelled_reports_no_cancellation() {
+        // Non-vacuity for the test above: the poll must be capable of
+        // returning `false`, or "observed a cancel" proves nothing.
+        let state = std::sync::Arc::new(FaState::default());
+        start_run(&state).unwrap();
+        let polling_state = state.clone();
+        let handle = tauri::async_runtime::spawn_blocking(move || {
+            poll_until_cancelled_or(&polling_state, std::time::Duration::from_millis(50))
+        });
+        let observed = tauri::async_runtime::block_on(handle).expect("blocking task must join");
+        assert!(!observed, "nothing cancelled this run, so its poll must never report a cancellation");
+    }
+
+    #[test]
+    fn a_cancelled_run_still_returns_to_idle_after_the_blocking_task_joins() {
+        // `finish_run` runs after the join on every path, so a cancelled run's
+        // transient signal cannot bleed into the next run — the same guarantee
+        // `cancelled_run_resets_to_idle_and_no_longer_reads_as_cancelled`
+        // proves for the inline path, re-proved across the thread boundary.
+        let state = std::sync::Arc::new(FaState::default());
+        start_run(&state).unwrap();
+        let (running_tx, running_rx) = std::sync::mpsc::channel::<()>();
+        let polling_state = state.clone();
+        let handle = tauri::async_runtime::spawn_blocking(move || {
+            running_tx.send(()).unwrap();
+            poll_until_cancelled_or(&polling_state, std::time::Duration::from_secs(10))
+        });
+        running_rx.recv().unwrap();
+        cancel_run(&state).unwrap();
+        assert!(tauri::async_runtime::block_on(handle).unwrap());
+
+        finish_run(&state).unwrap();
+        assert_eq!(*state.0.lock().unwrap(), FaRunState::Idle);
+        assert!(!is_cancelled(&state));
+    }
 
     // -- FaEvent::Timing wire shape (WS3 fa-perf-foundation) --------------
 

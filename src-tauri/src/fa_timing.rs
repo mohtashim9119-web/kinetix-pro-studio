@@ -590,6 +590,98 @@ mod tests {
         );
     }
 
+    // -- offload / mutex-invariant guards (WS3 fa-perf-foundation) ------
+    //
+    // `fa_onnx::with_cached_session` holds the model-cache mutex across the
+    // whole closure it is given. That is sound ONLY because the closure never
+    // `.await`s — its own doc comment says so, and the WS3 offload's
+    // correctness argument leans on it directly. Nothing in the type system
+    // enforces it: a `std::sync::MutexGuard` held across an `.await` compiles
+    // fine in a non-`Send` future and merely deadlocks or blocks a runtime
+    // worker at runtime, potentially only under load. These read the source
+    // and turn a future violation into a suite failure.
+    //
+    // Same "must run in both Cargo configurations" reason as the ORT guard
+    // above: `fa_onnx.rs` is feature-gated, `include_str!` is not.
+
+    const FA_SOURCE: &str = include_str!("fa.rs");
+
+    /// The text of the braced block that starts at the first `{` at or after
+    /// `from`, matched by brace counting so a nested block cannot end it
+    /// early. Naive `find("}")` would stop at the first inner closure.
+    fn braced_block_after(source: &str, marker: &str) -> String {
+        let start = source
+            .find(marker)
+            .unwrap_or_else(|| panic!("source guard can no longer find `{marker}` — re-point it"));
+        let rest = &source[start..];
+        let open = rest.find('{').expect("marker must be followed by a block");
+        let bytes = rest.as_bytes();
+        let mut depth = 0usize;
+        for i in open..bytes.len() {
+            match bytes[i] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return rest[open..=i].to_string();
+                    }
+                }
+                _ => {}
+            }
+        }
+        panic!("unbalanced braces after `{marker}`");
+    }
+
+    #[test]
+    fn with_cached_session_still_holds_its_mutex_across_no_await() {
+        let body = braced_block_after(FA_ONNX_SOURCE, "fn with_cached_session<T>(");
+        assert!(
+            !body.contains(".await"),
+            "fa_onnx::with_cached_session now contains an `.await` while holding the model-cache              mutex across its closure. That lock is held for the whole alignment run; awaiting              under it can park a runtime worker holding it. Restructure so the await happens              outside the guard."
+        );
+    }
+
+    #[test]
+    fn the_inference_offload_uses_the_blocking_pool_not_the_async_runtime() {
+        // The regression this exists for: swapping `spawn_blocking` for
+        // `spawn`. Both compile, both "offload", and the suite would stay
+        // green — but `spawn` puts an await-capable future around a
+        // synchronous, minutes-long, mutex-holding call, which is the exact
+        // shape the offload was written to eliminate.
+        assert!(
+            FA_SOURCE.contains("tauri::async_runtime::spawn_blocking(move ||"),
+            "fa.rs no longer offloads the alignment call via spawn_blocking"
+        );
+        assert!(
+            !FA_SOURCE.contains("async_runtime::spawn("),
+            "fa.rs must not schedule the alignment onto the async runtime — `spawn_blocking` is              the whole point: the call is synchronous, runs for minutes, and holds the model-cache              mutex throughout"
+        );
+    }
+
+    #[test]
+    fn the_offloaded_closure_re_resolves_managed_state_rather_than_capturing_a_borrow() {
+        // `tauri::State<'r, T>` is lifetime-bound and cannot cross into a
+        // `Send + 'static` closure. The supported move is to capture a cloned
+        // `AppHandle` and re-resolve both pieces of state on the blocking
+        // thread. If someone later finds a way to smuggle the borrow across
+        // instead, these markers go missing and this fails.
+        let body = braced_block_after(FA_SOURCE, "tauri::async_runtime::spawn_blocking(move ||");
+        for marker in ["app_for_blocking.state::<FaState>()", "app_for_blocking.state::<FaModelCache>()"] {
+            assert!(
+                body.contains(marker),
+                "the offloaded closure must re-resolve managed state via `{marker}`"
+            );
+        }
+        assert!(
+            body.contains("is_cancelled(&blocking_state)"),
+            "the offloaded run must poll cancellation against the state it re-resolved on the              blocking thread, or fa_cancel becomes inert once the offload starts"
+        );
+        assert!(
+            !body.contains(".await"),
+            "a synchronous blocking closure cannot contain an `.await` — if one appears, this is no              longer spawn_blocking and the mutex invariant no longer holds by construction"
+        );
+    }
+
     // -- overhead ------------------------------------------------------
 
     /// MEASURED, not asserted-by-argument: the per-sample cost of the two
