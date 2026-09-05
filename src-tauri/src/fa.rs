@@ -118,9 +118,18 @@ impl Default for FaModelCache {
     }
 }
 
-/// Unconditionally moves the state to `Running`, mirroring `whisper_transcribe`'s
-/// own "kill any previously running job, then start" permissiveness
-/// (`whisper.rs:188-193`) rather than rejecting a concurrent start.
+/// Moves the state to `Running`.
+///
+/// WS3 fa-perf-foundation: this used to be described as deliberately
+/// permissive, mirroring `whisper_transcribe`'s old kill-and-replace shape.
+/// That is no longer the policy. Concurrency is now refused UPSTREAM of here,
+/// at the single-flight claim in `fa_dev::resolve_wav_and_align` (see
+/// [`IN_FLIGHT`]) — taken before any expensive work and released on every
+/// exit by `Drop`. This function stays an unconditional write on purpose:
+/// duplicating the in-flight test here would be a second, independently
+/// racy mechanism guarding the same thing, which is exactly what
+/// `event_sink.rs` exists to prevent. The claim is the gate; this is the
+/// state transition the gate admits.
 fn start_run(state: &FaState) -> Result<(), FaError> {
     let mut lock = state.0.lock().map_err(|_| FaError::state_lock_poisoned())?;
     *lock = FaRunState::Running;
@@ -194,6 +203,11 @@ pub enum FaErrorKind {
     // `Done` — so a cancelled run can never be mistaken for a completed one.
     #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
     Cancelled,
+    // WS3 fa-perf-foundation: a run is already in flight for this key, and
+    // this one is REFUSED rather than allowed to clobber it. Distinct from
+    // `Cancelled` (that run was stopped; this one never started) and from
+    // `InferenceFailed` (nothing failed — the request was declined).
+    AlreadyRunning,
 }
 
 #[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
@@ -232,6 +246,98 @@ impl FaError {
     pub(crate) fn cancelled(message: impl Into<String>) -> Self {
         FaError { kind: FaErrorKind::Cancelled, message: message.into() }
     }
+    pub(crate) fn already_running(message: impl Into<String>) -> Self {
+        FaError { kind: FaErrorKind::AlreadyRunning, message: message.into() }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Single-flight registry (WS3 fa-perf-foundation)
+// ---------------------------------------------------------------------------
+
+/// The forced-alignment runs currently in flight, keyed by run key.
+///
+/// The SAME machinery `whisper.rs` and `model_download.rs` use
+/// (`event_sink::InFlightRegistry`), instantiated with this module's own
+/// key/payload types. A separate `static` is what keeps this registry
+/// isolated from theirs: an FA run and a transcription can never collide on
+/// a key, because they are different maps.
+///
+/// WHAT THIS REPLACES. [`start_run`] used to write `FaRunState::Running`
+/// unconditionally, with no in-flight check at all — its own doc comment
+/// described that as deliberately mirroring `whisper_transcribe`'s old
+/// kill-and-replace permissiveness. Whisper has since abandoned that shape
+/// (Transcription Requirement 1) for exactly the reason it bites here: two
+/// concurrent runs both proceed, the second's `start_run` overwrites a
+/// `Cancelled` the first was about to observe, and the first's `finish_run`
+/// writes `Idle` while the second is still going. Neither caller is told.
+///
+/// KEY CHOICE — `input_path`. It is the only per-run string available at the
+/// `fa_align_production` boundary (the others are `chunks`, `language`, and
+/// the channel), and unlike whisper's `audio_path` it is genuinely stable:
+/// `fa_stage_audio_raw` writes to a CONTENT-ADDRESSED path,
+/// `<namespace>/<sha256-of-bytes>.<ext>`, so the same audio content yields
+/// the same path on every call and across a page reload. Whisper's key had to
+/// come from the frontend precisely because `whisper_stage_audio_raw` mints a
+/// fresh `kinetix-whisper-<uuid>/` directory per call; that failure mode does
+/// not apply here.
+///
+/// WHAT THIS KEY DOES NOT COVER, stated rather than glossed:
+///   * Two DIFFERENT projects sharing one voiceover file hash to one key, so
+///     the second is refused even though it is not a duplicate. A false
+///     refusal is the safe direction of that error (the caller is told, and
+///     the real contended resources below are global anyway), but it is a
+///     wrong answer.
+///   * The genuinely contended resources — `FaState` and `FaModelCache` —
+///     are process-global, NOT per-key. So two DISTINCT-key runs, which this
+///     registry admits concurrently by design, still share one
+///     `FaRunState`: B's `start_run` can erase a `Cancelled` meant for A.
+///     The registry cannot fix that; only a per-key run state can. Today
+///     nothing triggers it — `fa_cancel` is not invoked from anywhere in
+///     `src/` (grepped) — but it is real.
+/// Both want the same fix, and it needs a TS change this round is scoped out
+/// of: pass the project id as a `jobKey` to `fa_align_production` AND to
+/// `fa_cancel`, exactly as `useWhisper.ts` already passes `projectId`, then
+/// key both this registry and `FaState` by it.
+static IN_FLIGHT: crate::event_sink::InFlightRegistry<String, FaEvent> =
+    crate::event_sink::InFlightRegistry::new();
+
+/// Machine-readable prefix on the duplicate-run refusal, so the frontend can
+/// tell "a run is already in flight for this key" apart from a missing model,
+/// a hash mismatch, or an inference error. Mirrors `whisper.rs`'s
+/// `IN_FLIGHT_REFUSAL_PREFIX` (`"whisper:already-running:"`) convention
+/// exactly — same shape, this module's own namespace. `FaError` carries a
+/// typed `kind` too (`AlreadyRunning`), but the prefix is what an existing TS
+/// consumer can match today with no change: `describeInvokeError` already
+/// surfaces `FaError.message` verbatim.
+pub(crate) const IN_FLIGHT_REFUSAL_PREFIX: &str = "fa:already-running:";
+
+/// This module's instantiation of the generic sink.
+pub(crate) type FaSink = crate::event_sink::EventSink<FaEvent>;
+
+/// Phrased as a statement about the run that IS in flight, not as a failure
+/// of the one being refused — mirroring `whisper::in_flight_refusal`.
+pub(crate) fn in_flight_refusal(key: &str) -> String {
+    format!(
+        "{IN_FLIGHT_REFUSAL_PREFIX} a forced-alignment run is already in progress for this audio          (run key {key}) — watch its progress or cancel it before starting another"
+    )
+}
+
+/// Whether an FA run is in flight for this key right now.
+///
+/// Read-only, and deliberately NOT called before a claim: a test-then-acquire
+/// pair is a race, and `try_acquire` already does both inside one critical
+/// section. Its callers are this module's tests.
+#[cfg(test)]
+pub(crate) fn is_fa_run_in_flight(key: &str) -> bool {
+    IN_FLIGHT.is_in_flight(key)
+}
+
+pub(crate) fn try_acquire_fa_run(
+    key: &str,
+    sink: std::sync::Arc<FaSink>,
+) -> Option<crate::event_sink::InFlightGuard<String, FaEvent>> {
+    IN_FLIGHT.try_acquire(key.to_string(), sink)
 }
 
 // ---------------------------------------------------------------------------
@@ -2090,7 +2196,8 @@ mod tests {
                 | FaErrorKind::StateLockPoisoned
                 | FaErrorKind::InferenceFailed
                 | FaErrorKind::ModelHashMismatch
-                | FaErrorKind::Cancelled => {}
+                | FaErrorKind::Cancelled
+                | FaErrorKind::AlreadyRunning => {}
             }
         }
 
@@ -2112,6 +2219,15 @@ mod tests {
             (FaErrorKind::InferenceFailed, "inferenceFailed"),
             (FaErrorKind::ModelHashMismatch, "modelHashMismatch"),
             (FaErrorKind::Cancelled, "cancelled"),
+            // WS3 fa-perf-foundation. NOTE, deliberately recorded rather than
+            // silently accepted: `faBoundaryTypes.ts`'s `FaErrorKind` union
+            // does NOT yet carry `'alreadyRunning'`. This round is scoped to
+            // `src-tauri/` and cannot add it. The drift is one-way and inert
+            // at runtime (nothing in `src/` switches on `FaError.kind`; both
+            // FA consumers read `message`, which carries
+            // `IN_FLIGHT_REFUSAL_PREFIX` and is what `describeInvokeError`
+            // surfaces), but it IS drift, and this comment is the record.
+            (FaErrorKind::AlreadyRunning, "alreadyRunning"),
         ];
         for (kind, expected) in cases {
             assert_exhaustive(*kind);
@@ -2130,6 +2246,140 @@ mod tests {
     }
 
     // -- FaEvent::Progress shape (WS1 Task 5 Slice D11) --------------------
+
+    // -- single flight (WS3 fa-perf-foundation) ---------------------------
+    //
+    // `start_run` used to write `Running` unconditionally with no in-flight
+    // check, so two concurrent runs both proceeded and the second clobbered
+    // the first's cancel state. The gate is now a claim on `IN_FLIGHT`, taken
+    // in `resolve_wav_and_align` before any expensive work.
+
+    fn noop_sink() -> std::sync::Arc<FaSink> {
+        std::sync::Arc::new(FaSink::new(Channel::new(|_body| Ok(()))))
+    }
+
+    #[test]
+    fn a_second_run_for_the_same_key_is_refused_while_the_first_holds_it() {
+        let key = "/tmp/kinetix-fa-production-inputs/aaaa.wav";
+        let first = try_acquire_fa_run(key, noop_sink()).expect("the first claim must succeed");
+        assert!(is_fa_run_in_flight(key));
+        assert!(
+            try_acquire_fa_run(key, noop_sink()).is_none(),
+            "a second run over the same staged audio must be REFUSED, not allowed to proceed and              clobber the first run's cancel state"
+        );
+        drop(first);
+        assert!(
+            try_acquire_fa_run(key, noop_sink()).is_some(),
+            "the key must be reclaimable once the first run releases it"
+        );
+    }
+
+    #[test]
+    fn the_refusal_message_carries_the_exact_machine_readable_prefix() {
+        let msg = in_flight_refusal("/tmp/x.wav");
+        assert!(
+            msg.starts_with("fa:already-running:"),
+            "the frontend distinguishes a duplicate-run refusal by this prefix — mirroring              whisper's `whisper:already-running:` convention. Got: {msg}"
+        );
+        assert!(msg.contains("/tmp/x.wav"), "the refusal must name the key it is about");
+    }
+
+    #[test]
+    fn the_refusal_is_typed_as_already_running_and_is_not_mistakable_for_another_failure() {
+        let err = FaError::already_running(in_flight_refusal("/tmp/x.wav"));
+        assert_eq!(err.kind, FaErrorKind::AlreadyRunning);
+        assert!(err.message.starts_with(IN_FLIGHT_REFUSAL_PREFIX));
+        // Non-vacuity: no OTHER FaError this module builds may collide with
+        // the prefix, or the frontend's match would fire on the wrong thing.
+        for other in [
+            FaError::inference_failed("onnx blew up"),
+            FaError::cancelled("user cancelled"),
+            FaError::model_not_found("no model"),
+            FaError::state_lock_poisoned(),
+        ] {
+            assert!(
+                !other.message.starts_with(IN_FLIGHT_REFUSAL_PREFIX),
+                "{:?} must not be mistaken for an already-running refusal",
+                other.kind
+            );
+        }
+    }
+
+    #[test]
+    fn distinct_keys_stay_concurrent() {
+        // Two different staged inputs are two different runs; single flight
+        // must not serialize them at the registry. (They still serialize on
+        // the model-cache mutex once inside `align_chunked` — that is a
+        // separate, deliberate mechanism, asserted in `fa_timing`'s source
+        // guards, not here.)
+        let a = try_acquire_fa_run("/tmp/kinetix-fa-production-inputs/aa.wav", noop_sink()).expect("a");
+        let b = try_acquire_fa_run("/tmp/kinetix-fa-production-inputs/bb.wav", noop_sink())
+            .expect("a different staged input must not be blocked by an unrelated run");
+        assert!(is_fa_run_in_flight("/tmp/kinetix-fa-production-inputs/aa.wav"));
+        assert!(is_fa_run_in_flight("/tmp/kinetix-fa-production-inputs/bb.wav"));
+        drop(a);
+        drop(b);
+    }
+
+    #[test]
+    fn the_claim_releases_on_all_four_exit_paths() {
+        // The four exits `resolve_wav_and_align` actually has. Each is
+        // modelled by a scope holding a real guard, because the release
+        // mechanism under test is `Drop` — which is why there is no explicit
+        // release call in the command body at all.
+        let key = "/tmp/kinetix-fa-production-inputs/release.wav";
+
+        // 1. Success: the tail call returns Ok and the guard drops with it.
+        {
+            let _g = try_acquire_fa_run(key, noop_sink()).expect("claim");
+        }
+        assert!(!is_fa_run_in_flight(key), "released on the success path");
+
+        // 2. Error: an early `?` (no model, hash mismatch, transcode failure).
+        fn errors_out(key: &str) -> Result<(), FaError> {
+            let _g = try_acquire_fa_run(key, noop_sink()).ok_or_else(FaError::state_lock_poisoned)?;
+            Err(FaError::inference_failed("model missing"))
+        }
+        assert!(errors_out(key).is_err());
+        assert!(!is_fa_run_in_flight(key), "released on the error path");
+
+        // 3. Cancel: `fa_cancel` flips FaState, align_chunked returns
+        //    Err(Cancelled), that propagates out through the tail call and the
+        //    guard drops — cancel never removes the entry itself.
+        fn cancelled_run(key: &str) -> Result<(), FaError> {
+            let _g = try_acquire_fa_run(key, noop_sink()).ok_or_else(FaError::state_lock_poisoned)?;
+            Err(FaError::cancelled("forced alignment was cancelled"))
+        }
+        assert_eq!(cancelled_run(key).unwrap_err().kind, FaErrorKind::Cancelled);
+        assert!(!is_fa_run_in_flight(key), "released on the cancel path");
+
+        // 4. Panic: an unwind must not leave the key permanently unclaimable.
+        let unwound = std::panic::catch_unwind(|| {
+            let _g = try_acquire_fa_run(key, noop_sink()).expect("claim");
+            panic!("boom");
+        });
+        assert!(unwound.is_err());
+        assert!(!is_fa_run_in_flight(key), "released on the panic path");
+
+        assert!(
+            try_acquire_fa_run(key, noop_sink()).is_some(),
+            "the key must be reclaimable after every one of those four exits"
+        );
+    }
+
+    #[test]
+    fn a_refused_run_does_not_disturb_the_claim_it_was_refused_for() {
+        // The bug this whole commit exists for, stated as an assertion: the
+        // loser must change nothing about the winner.
+        let key = "/tmp/kinetix-fa-production-inputs/undisturbed.wav";
+        let winner = try_acquire_fa_run(key, noop_sink()).expect("claim");
+        for _ in 0..5 {
+            assert!(try_acquire_fa_run(key, noop_sink()).is_none());
+            assert!(is_fa_run_in_flight(key), "a refused duplicate must leave the running claim intact");
+        }
+        drop(winner);
+        assert!(!is_fa_run_in_flight(key));
+    }
 
     // -- offload to the blocking pool (WS3 fa-perf-foundation) ------------
     //

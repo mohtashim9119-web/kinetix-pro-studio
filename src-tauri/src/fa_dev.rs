@@ -439,6 +439,38 @@ pub(crate) async fn resolve_wav_and_align(
     // two most expensive prefix stages rather than beginning after them.
     let run_started = std::time::Instant::now();
 
+    // SINGLE FLIGHT (WS3 fa-perf-foundation). Claimed BEFORE the ~1.26 GiB
+    // manifest hash, before the durable-WAV transcode, and before any model
+    // is loaded — a refused duplicate must cost nothing, exactly as
+    // `whisper_transcribe` takes its claim before writing a file or spawning
+    // a process.
+    //
+    // Held for the whole call by `_in_flight`, whose `Drop` releases it on
+    // EVERY exit: the `?` on `fa_model_path`/`verify_model_manifest`/
+    // `ensure_durable_wav_timed`, the `Err(Cancelled)` a cancelled run
+    // returns through the tail call, the normal `Ok`, and a panic. There is
+    // no explicit release anywhere in this function, and there must not be
+    // one.
+    //
+    // The sink is built BEFORE the claim, mirroring the ordering
+    // `whisper.rs` and `model_download::stream_download_verified` establish:
+    // a claim must never be visible in the registry with no sink behind it.
+    let key = input_path.clone();
+    let sink = std::sync::Arc::new(crate::fa::FaSink::new(on_event.clone()));
+    let _in_flight = match crate::fa::try_acquire_fa_run(&key, sink.clone()) {
+        Some(guard) => guard,
+        None => {
+            let message = crate::fa::in_flight_refusal(&key);
+            // Both an event AND an `Err`: a caller watching only the channel
+            // still learns why nothing happened. `sink.send` rather than any
+            // retained-terminal-event mechanism — this is not this key's
+            // terminal event, it is a statement about a run that is still
+            // ALIVE under that key and about to report its own real result.
+            sink.send(FaEvent::Error { message: message.clone() });
+            return Err(FaError::already_running(message));
+        }
+    };
+
     // Claimed (and removed) rather than merely read: this run owns the
     // staging measurement for the path it was handed. `None` when this
     // process never staged that path — reported as unknown, not as zero.

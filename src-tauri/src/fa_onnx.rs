@@ -4440,6 +4440,38 @@ mod phase1_determinism {
             words_cold, words_warm,
             "timing instrumentation must be output-neutral: two runs over the same audio/chunks must              still be byte-identical"
         );
+
+        // -- a language switch still evicts (WS3 fa-perf-foundation) -------
+        // Eviction is what stops an `es` run silently reusing the `en`
+        // session and producing wrong alignments with no error anywhere.
+        // Asserted on the TIMING report rather than on the alignment result
+        // precisely because the result does not matter here: `timings` is an
+        // out-parameter, so it is populated whether the run succeeds or
+        // fails, and this stays a clean assertion about the cache even
+        // though English chunk text against a Spanish vocab may well error.
+        let es_model = fa_models_dir().join("es").join("model.onnx");
+        if es_model.exists() {
+            let mut switched = crate::fa_timing::FaInferenceTimings::default();
+            let _ = align_chunked_timed(
+                &cache, &es_model, audio_path_str, &chunks, "es", || false, |_| {}, &mut switched,
+            );
+            assert!(
+                !switched.model.cache_hit,
+                "a language switch must MISS the session cache — a hit here means an `es` run is reusing the `en` session"
+            );
+            eprintln!("{CONTEXT}: language switch en -> es evicted correctly (cache MISS)");
+
+            // ...and switching back also misses, so eviction is symmetric and
+            // the cache genuinely holds only one entry.
+            let mut back = crate::fa_timing::FaInferenceTimings::default();
+            align_chunked_timed(
+                &cache, &model_path, audio_path_str, &chunks, "en", || false, |_| {}, &mut back,
+            )
+            .unwrap_or_else(|e| panic!("{CONTEXT}: switch back to en failed: {e:?}"));
+            assert!(!back.model.cache_hit, "switching back must also MISS — the cache holds one entry");
+        } else {
+            eprintln!("{CONTEXT}: SKIP language-switch leg — no es model at {}", es_model.display());
+        }
     }
 
     /// PHASE 1 CORE PROOF: three independent pinned-session runs each on

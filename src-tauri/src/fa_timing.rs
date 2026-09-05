@@ -641,6 +641,97 @@ mod tests {
         );
     }
 
+    const FA_DEV_SOURCE: &str = include_str!("fa_dev.rs");
+
+    #[test]
+    fn the_single_flight_claim_is_actually_wired_into_the_run_entry_point() {
+        // `fa.rs`'s own tests prove the registry REFUSES a duplicate. None of
+        // them can prove `resolve_wav_and_align` ever calls it: that function
+        // needs a live AppHandle, an ffmpeg sidecar and a 1.2 GiB model, so
+        // nothing in the suite executes it. Deleting the claim from it would
+        // leave every single-flight test green while the command it guards ran
+        // unprotected. This reads the source instead.
+        let body = braced_block_after(FA_DEV_SOURCE, "pub(crate) async fn resolve_wav_and_align(");
+        let claim_at = body.find("try_acquire_fa_run(&key, sink.clone())").expect(
+            "resolve_wav_and_align no longer takes a single-flight claim — two concurrent              fa_align_production calls would both proceed and the second would clobber the first's              cancel state, which is the exact bug this guard exists for",
+        );
+
+        // The claim must come BEFORE every expensive step, so a refused
+        // duplicate costs nothing.
+        for (step, what) in [
+            ("verify_model_manifest(&model_path", "the ~1.26 GiB manifest hash"),
+            ("ensure_durable_wav_timed(", "the ffmpeg durable-WAV transcode"),
+            ("fa_align_with_prefix(", "the alignment itself"),
+        ] {
+            let at = body.find(step).unwrap_or_else(|| panic!("re-point this guard: `{step}` not found"));
+            assert!(claim_at < at, "the single-flight claim must be taken before {what}");
+        }
+
+        // It must be bound to a live local for the rest of the function —
+        // `let _ = ...` would drop the guard immediately and release the claim
+        // before the run even starts, which compiles and looks correct.
+        assert!(
+            body.contains("let _in_flight = match crate::fa::try_acquire_fa_run"),
+            "the claim must be bound to a named `_in_flight` local so `Drop` releases it at the end              of the call — `let _ = ...` drops it instantly and disables single flight silently"
+        );
+        // ...and never released by hand: `Drop` is the mechanism, on all four
+        // exit paths including panic.
+        assert!(
+            !body.contains("drop(_in_flight)"),
+            "the claim must be released only by `Drop` at end of scope, never explicitly"
+        );
+    }
+
+    #[test]
+    fn distinct_runs_still_serialize_on_the_model_cache_mutex() {
+        // Single flight admits two DISTINCT-key runs concurrently by design.
+        // What keeps them from running two ONNX sessions at once is that
+        // `with_cached_session` holds the model-cache lock across the entire
+        // closure — the whole chunk loop. This asserts the three structural
+        // facts that make that true, none of which the type system enforces:
+        // the lock is taken, the closure is invoked while the guard is still
+        // alive, and nothing releases the guard early.
+        let body = braced_block_after(FA_ONNX_SOURCE, "fn with_cached_session<T>(");
+        assert!(body.contains("cache.lock()"), "with_cached_session must take the model-cache lock");
+        assert!(
+            !body.contains("drop(guard)") && !body.contains("std::mem::drop(guard)"),
+            "the model-cache guard must not be released before the closure runs — that would let two              distinct-key runs hold two ONNX sessions at once"
+        );
+        let lock_at = body.find("cache.lock()").expect("checked above");
+        let call_at = body.find("f(&mut cached.session)").expect(
+            "with_cached_session no longer invokes its closure as `f(&mut cached.session)` —              re-point this guard",
+        );
+        assert!(lock_at < call_at, "the lock must be acquired BEFORE the closure is invoked");
+        // The closure call is the function's tail expression, so the guard
+        // lives until the function returns.
+        assert!(
+            body[call_at..].trim_end().trim_end_matches('}').trim().ends_with("f(&mut cached.session)"),
+            "the closure call must remain the tail expression, so the guard is held for its whole              duration rather than being dropped mid-run"
+        );
+    }
+
+    #[test]
+    fn the_session_cache_key_still_includes_language_so_a_switch_evicts() {
+        // `fa_onnx.rs`'s eviction-on-language-change is entirely a property of
+        // `CacheKey` carrying `language`: drop that field and an `es` run
+        // silently reuses the `en` session, producing wrong alignments with no
+        // error anywhere. Asserted on the struct definition because
+        // constructing a real `CachedSession` needs a 1.2 GiB model and an ORT
+        // runtime; the live `stage_timing` test proves the behaviour itself.
+        let key_struct = braced_block_after(FA_ONNX_SOURCE, "pub(crate) struct CacheKey");
+        for field in ["language: String", "path: PathBuf", "size: u64", "mtime:"] {
+            assert!(
+                key_struct.contains(field),
+                "CacheKey must still carry `{field}` — dropping it makes the session cache serve a                  stale or wrong model without erroring"
+            );
+        }
+        let ctor = braced_block_after(FA_ONNX_SOURCE, "fn for_model(language: &str, path: &Path)");
+        assert!(
+            ctor.contains("language: language.to_string()"),
+            "CacheKey::for_model must populate `language` from its argument, or every language keys              to the same cache entry"
+        );
+    }
+
     #[test]
     fn the_inference_offload_uses_the_blocking_pool_not_the_async_runtime() {
         // The regression this exists for: swapping `spawn_blocking` for
