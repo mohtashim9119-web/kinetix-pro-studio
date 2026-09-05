@@ -1168,11 +1168,21 @@ fn with_cached_session<T>(
     cache: &Mutex<Option<CachedSession>>,
     model_path: &Path,
     language: &str,
+    report: &mut crate::fa_timing::ModelLoadReport,
     f: impl FnOnce(&mut Session) -> Result<T, FaOnnxError>,
 ) -> Result<T, FaOnnxError> {
     let key = CacheKey::for_model(language, model_path)?;
     let mut guard = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let needs_reload = !matches!(&*guard, Some(cached) if cached.key == key);
+    // WS3 (fa-perf-foundation): report hit/miss and, on a miss, what the
+    // ~1.2 GiB `load_session` actually cost. Recorded here rather than at the
+    // call site because `needs_reload` is the only place in the program that
+    // knows which of the two happened — a caller can only guess by timing the
+    // whole closure, which on a hit is dominated by the alignment run itself.
+    // Two `Instant::now()` reads on a path that is either a map-key compare
+    // or a multi-second model load; the measurement cannot perturb either.
+    report.cache_hit = !needs_reload;
+    report.load_nanos = 0;
     if needs_reload {
         // WS1 Session AP Step 3 — drop the incumbent session BEFORE building
         // the replacement, not after. The previous order (build-then-assign)
@@ -1190,7 +1200,9 @@ fn with_cached_session<T>(
         // already treats a `with_cached_session` failure as fatal for this
         // call, and the following call simply reloads from disk.
         *guard = None;
+        let load_started = std::time::Instant::now();
         let session = with_ort_env_lock(|| load_session(model_path))?;
+        report.load_nanos = u64::try_from(load_started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         *guard = Some(CachedSession { key, session });
     }
     let cached = guard.as_mut().expect("just inserted above, or already present and key-matched");
@@ -1224,6 +1236,7 @@ fn chunk_sample_range(total_samples: usize, start_sec: f64, end_sec: f64) -> (us
 /// T3.2 Step 3a-ii added the final collapse step — see
 /// [`collapse_word_fragments`]'s own doc comment for why it's safe to do
 /// per-chunk like this (the straddle invariant).
+#[cfg_attr(not(test), allow(dead_code))]
 fn align_chunk_samples(
     session: &mut Session,
     vocab: &Vocab,
@@ -1231,15 +1244,51 @@ fn align_chunk_samples(
     chunk_samples: &[f32],
     chunk_text: &str,
 ) -> Result<Vec<WordSpan>, FaOnnxError> {
-    let normed = zero_mean_unit_var_norm(chunk_samples);
-    let emission = run_forward_pass_with_session(session, &normed)?;
+    align_chunk_samples_timed(
+        session,
+        vocab,
+        lang_enum,
+        chunk_samples,
+        chunk_text,
+        &mut crate::fa_timing::FaChunkAccumulators::default(),
+    )
+}
 
+/// [`align_chunk_samples`] with per-stage timing recorded into `acc` (WS3
+/// fa-perf-foundation). Every arithmetic step, every argument, and every
+/// order of operations is IDENTICAL to the untimed wrapper above — the only
+/// additions are `Instant::now()` reads either side of the three stages the
+/// production timing surface reports separately (forward pass, tokenization,
+/// Viterbi). Nothing here touches tensor shape, chunk width, batch size, or
+/// any session option, so a run's emitted word boundaries are bit-for-bit
+/// what they were before this instrumentation existed.
+///
+/// `acc` is a `Copy`, scalar-only accumulator (`fa_timing.rs`): `record`
+/// allocates nothing and takes no lock, which is what makes it safe to call
+/// three times per chunk from inside [`align_chunked_timed`]'s loop.
+fn align_chunk_samples_timed(
+    session: &mut Session,
+    vocab: &Vocab,
+    lang_enum: Language,
+    chunk_samples: &[f32],
+    chunk_text: &str,
+    acc: &mut crate::fa_timing::FaChunkAccumulators,
+) -> Result<Vec<WordSpan>, FaOnnxError> {
+    let normed = zero_mean_unit_var_norm(chunk_samples);
+    let forward_started = std::time::Instant::now();
+    let emission = run_forward_pass_with_session(session, &normed)?;
+    acc.forward.record(forward_started.elapsed());
+
+    let tokenize_started = std::time::Instant::now();
     let tokenized = tokenize_for_alignment(chunk_text, lang_enum, vocab);
+    acc.tokenize.record(tokenize_started.elapsed());
     if tokenized.ids.is_empty() {
         return Err(FaOnnxError::EmptyTokenization);
     }
 
+    let viterbi_started = std::time::Instant::now();
     let result = forced_align(&emission, &tokenized.ids, vocab.blank_id).map_err(FaOnnxError::Align)?;
+    acc.viterbi.record(viterbi_started.elapsed());
     let char_spans = merge_tokens(&result.path, &result.scores, vocab.blank_id);
     let fragment_words = merge_char_spans_to_words(&char_spans, vocab);
     Ok(collapse_word_fragments(fragment_words, &tokenized.fragment_counts))
@@ -1252,6 +1301,18 @@ fn align_chunk_samples(
 /// with an already-known `model_path`, without a live `tauri::AppHandle`
 /// (nothing in this crate's test suite constructs one — see
 /// `onnx_fixture_parity`/`e2e_parity`'s own `fa_models_dir()` doc comments).
+/// Model-load and per-chunk stage timing are recorded into `timings` (WS3
+/// fa-perf-foundation) — an `&mut` OUT-PARAMETER rather than an extra return
+/// value, deliberately: a run that fails at chunk 40 of 200 must still report
+/// the 40 chunks it measured, and folding the timings into `Result::Ok` would
+/// discard exactly the measurements a slow-then-failing run most needs in
+/// order to explain itself.
+///
+/// There is no untimed sibling of this function. `fa_align` is its only
+/// caller and always wants the timings, so a zero-caller passthrough wrapper
+/// would be dead weight — unlike [`align_chunked`] below, which keeps its
+/// untimed shape because ~25 existing tests call it that way.
+#[allow(clippy::too_many_arguments)]
 pub fn align_chunked_for_language(
     app: &tauri::AppHandle,
     cache: &Mutex<Option<CachedSession>>,
@@ -1260,6 +1321,7 @@ pub fn align_chunked_for_language(
     language: &str,
     is_cancelled: impl Fn() -> bool,
     on_progress: impl FnMut(u32),
+    timings: &mut crate::fa_timing::FaInferenceTimings,
 ) -> Result<Vec<WordSpan>, FaOnnxError> {
     // WS1 Session M (R-N): make the bundled onnxruntime C runtime loadable
     // before any `load_session` runs. In production this sets `ORT_DYLIB_PATH`
@@ -1270,7 +1332,7 @@ pub fn align_chunked_for_language(
     // resolution — nothing resolves into `.work-phase4/` or any gitignored dir.
     ensure_ort_dylib(app)?;
     let model_path = crate::fa::fa_model_path(app, language).map_err(FaOnnxError::ModelNotFound)?;
-    align_chunked(cache, &model_path, audio_path, chunks, language, is_cancelled, on_progress)
+    align_chunked_timed(cache, &model_path, audio_path, chunks, language, is_cancelled, on_progress, timings)
 }
 
 /// A CTC-infeasible chunk's placeholder score (WS1 Task 5 Slice D20):
@@ -1370,6 +1432,7 @@ fn fallback_words_for_infeasible_chunk(chunk: &crate::fa::FaChunkInput, lang: La
 /// this fallback has no basis to paper over. `eprintln!` marks the event
 /// (never a silent skip) in addition to the per-word `needs_review` flag
 /// every consumer of the returned words already gets.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn align_chunked(
     cache: &Mutex<Option<CachedSession>>,
     model_path: &Path,
@@ -1377,7 +1440,42 @@ pub fn align_chunked(
     chunks: &[crate::fa::FaChunkInput],
     language: &str,
     is_cancelled: impl Fn() -> bool,
+    on_progress: impl FnMut(u32),
+) -> Result<Vec<WordSpan>, FaOnnxError> {
+    align_chunked_timed(
+        cache,
+        model_path,
+        audio_path,
+        chunks,
+        language,
+        is_cancelled,
+        on_progress,
+        &mut crate::fa_timing::FaInferenceTimings::default(),
+    )
+}
+
+/// [`align_chunked`] with timing (WS3 fa-perf-foundation) — see
+/// [`align_chunked_for_language_timed`] for why `timings` is an out-parameter.
+///
+/// NOTHING INSIDE THE LOOP ALLOCATES FOR TIMING. The three per-chunk stage
+/// samples land in a `Copy`, scalar-only accumulator threaded down into
+/// [`align_chunk_samples_timed`]; there is no `Vec` push, no map insert, no
+/// string formatting and no channel send added to the loop, and no lock is
+/// taken that the loop was not already holding (the model-cache mutex, held
+/// across the whole closure exactly as before). The per-chunk numbers are
+/// AGGREGATED — count/total/mean/max — and reported once at the end of the
+/// run: one `FaEvent::Timing` per run, never one per chunk, which on a
+/// 1400-second corpus would be 200+ IPC sends the frontend has no use for.
+#[allow(clippy::too_many_arguments)]
+pub fn align_chunked_timed(
+    cache: &Mutex<Option<CachedSession>>,
+    model_path: &Path,
+    audio_path: &str,
+    chunks: &[crate::fa::FaChunkInput],
+    language: &str,
+    is_cancelled: impl Fn() -> bool,
     mut on_progress: impl FnMut(u32),
+    timings: &mut crate::fa_timing::FaInferenceTimings,
 ) -> Result<Vec<WordSpan>, FaOnnxError> {
     if is_cancelled() {
         return Err(FaOnnxError::Cancelled);
@@ -1388,7 +1486,12 @@ pub fn align_chunked(
         Language::from_code(language).ok_or_else(|| FaOnnxError::UnsupportedLanguage(language.to_string()))?;
     let samples = read_wav_mono_16k(Path::new(audio_path)).map_err(FaOnnxError::Wav)?;
 
-    with_cached_session(cache, model_path, language, |session| {
+    // Disjoint field borrows of one `timings` struct: `&mut .model` is
+    // consumed by `with_cached_session` before the closure runs, `&mut
+    // .chunks` is captured by the closure. The borrow checker splits these
+    // per-field, so no `RefCell`, no clone-and-merge, and no second lock.
+    let chunk_acc = &mut timings.chunks;
+    with_cached_session(cache, model_path, language, &mut timings.model, move |session| {
         let mut all_words = Vec::new();
         for (i, chunk) in chunks.iter().enumerate() {
             if is_cancelled() {
@@ -1396,7 +1499,7 @@ pub fn align_chunked(
             }
             let (start_sample, end_sample) = chunk_sample_range(samples.len(), chunk.start_sec, chunk.end_sec);
             let chunk_samples = &samples[start_sample..end_sample];
-            match align_chunk_samples(session, &vocab, lang_enum, chunk_samples, &chunk.text) {
+            match align_chunk_samples_timed(session, &vocab, lang_enum, chunk_samples, &chunk.text, chunk_acc) {
                 Ok(words) => {
                     for w in words {
                         all_words.push(WordSpan {
@@ -4253,6 +4356,90 @@ mod phase1_determinism {
     fn assert_byte_identical(corpus: &str, run1: &[super::WordSpan], run2: &[super::WordSpan], run3: &[super::WordSpan]) {
         assert_eq!(run1, run2, "{corpus}: run 1 vs run 2 diverged under the PINNED session — determinism NOT achieved");
         assert_eq!(run2, run3, "{corpus}: run 2 vs run 3 diverged under the PINNED session — determinism NOT achieved");
+    }
+
+    /// WS3 fa-perf-foundation — LIVE proof that the in-loop stage timing is
+    /// actually wired, not merely defined.
+    ///
+    /// WHY THIS TEST HAS TO EXIST. `fa_timing.rs`'s own unit tests prove the
+    /// accumulator arithmetic and the DTO assembly; `fa.rs`'s prove the wire
+    /// shape. NONE of them can prove that `align_chunk_samples_timed` calls
+    /// `acc.viterbi.record` at all — deleting that one line leaves every
+    /// other test in the suite green, because a forward pass needs a real
+    /// `Session` and none of those tests has one. This is the only test that
+    /// executes the instrumented loop against a real model and real audio and
+    /// asserts each of the three stages recorded a sample.
+    ///
+    /// `#[ignore]`, same convention as every other real-inference test here:
+    /// `cargo test --features fa-inference --lib
+    ///  phase1_determinism::stage_timing -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn stage_timing_records_every_per_chunk_stage_and_both_model_cache_paths() {
+        const CONTEXT: &str = "stage_timing_records_every_per_chunk_stage_and_both_model_cache_paths";
+        let Some((model_path, audio_path)) = common_setup(CONTEXT, "173") else { return };
+        let audio_path_str = audio_path.to_str().unwrap();
+        let chunks = load_production_chunks_windowed("173", 161.46, 194.22);
+        assert!(!chunks.is_empty(), "window matched no production chunks");
+
+        // Run 1 — empty cache, so this MUST be a model-load miss.
+        let cache: Mutex<Option<CachedSession>> = Mutex::new(None);
+        let mut cold = crate::fa_timing::FaInferenceTimings::default();
+        let words_cold = align_chunked_timed(
+            &cache, &model_path, audio_path_str, &chunks, "en", || false, |_| {}, &mut cold,
+        )
+        .unwrap_or_else(|e| panic!("{CONTEXT}: cold run failed: {e:?}"));
+
+        // Run 2 — same cache, same key, so this MUST be a model-load hit.
+        let mut warm = crate::fa_timing::FaInferenceTimings::default();
+        let words_warm = align_chunked_timed(
+            &cache, &model_path, audio_path_str, &chunks, "en", || false, |_| {}, &mut warm,
+        )
+        .unwrap_or_else(|e| panic!("{CONTEXT}: warm run failed: {e:?}"));
+
+        eprintln!(
+            "{CONTEXT}: {} chunks | COLD model_load={:.1}ms | forward total={:.1}ms mean={:.1}ms max={:.1}ms              | viterbi total={:.1}ms | tokenize total={:.3}ms",
+            cold.chunks.forward.count,
+            cold.model.load_nanos as f64 / 1e6,
+            cold.chunks.forward.total_nanos as f64 / 1e6,
+            cold.chunks.forward.mean_nanos() as f64 / 1e6,
+            cold.chunks.forward.max_nanos as f64 / 1e6,
+            cold.chunks.viterbi.total_nanos as f64 / 1e6,
+            cold.chunks.tokenize.total_nanos as f64 / 1e6,
+        );
+
+        // -- the three per-chunk stages are each genuinely recorded --------
+        assert_eq!(
+            cold.chunks.forward.count as usize, chunks.len(),
+            "the forward pass must record one sample per chunk"
+        );
+        assert_eq!(cold.chunks.tokenize.count as usize, chunks.len(), "tokenization must record one sample per chunk");
+        assert_eq!(cold.chunks.viterbi.count as usize, chunks.len(), "Viterbi must record one sample per chunk");
+        assert!(cold.chunks.forward.total_nanos > 0, "forward-pass timing is wired but recorded nothing");
+        assert!(cold.chunks.viterbi.total_nanos > 0, "Viterbi timing is wired but recorded nothing");
+        assert!(cold.chunks.tokenize.total_nanos > 0, "tokenization timing is wired but recorded nothing");
+
+        // -- the three stages are measured SEPARATELY, not one number ------
+        // A copy-paste that recorded the same elapsed into all three would
+        // produce three identical totals; real stages never tie exactly.
+        assert_ne!(cold.chunks.forward.total_nanos, cold.chunks.viterbi.total_nanos);
+        assert_ne!(cold.chunks.viterbi.total_nanos, cold.chunks.tokenize.total_nanos);
+
+        // -- max >= mean, and both within total, on real data --------------
+        assert!(cold.chunks.forward.max_nanos >= cold.chunks.forward.mean_nanos());
+        assert!(cold.chunks.forward.total_nanos >= cold.chunks.forward.max_nanos);
+
+        // -- model-load cache miss vs hit ---------------------------------
+        assert!(!cold.model.cache_hit, "an empty cache must report a MISS");
+        assert!(cold.model.load_nanos > 0, "a miss must report the real load duration");
+        assert!(warm.model.cache_hit, "the second run against the same cache must report a HIT");
+        assert_eq!(warm.model.load_nanos, 0, "a hit loads nothing and must report no load duration");
+
+        // -- and the instrumentation changed no output ---------------------
+        assert_eq!(
+            words_cold, words_warm,
+            "timing instrumentation must be output-neutral: two runs over the same audio/chunks must              still be byte-identical"
+        );
     }
 
     /// PHASE 1 CORE PROOF: three independent pinned-session runs each on

@@ -24,7 +24,7 @@
 // reimplementation of either.
 // ---------------------------------------------------------------------------
 
-use crate::fa::{fa_align, fa_model_path, FaChunkInput, FaError, FaErrorKind, FaEvent, FaModelCache, FaState};
+use crate::fa::{fa_model_path, FaChunkInput, FaError, FaErrorKind, FaEvent, FaModelCache, FaState};
 use std::fs;
 use std::path::Path;
 use tauri::ipc::Channel;
@@ -122,6 +122,30 @@ pub(crate) fn digest_for_sidecar(path: &Path) -> std::io::Result<String> {
         m.insert(identity, digest.clone());
     }
     Ok(digest)
+}
+
+/// Whether `verified_digest_cache` already holds a digest for `path`'s EXACT
+/// current identity — i.e. whether the very next [`verify_model_manifest`]
+/// call for it would be a map lookup rather than a full ~1.26 GiB stream
+/// hash (WS3 fa-perf-foundation).
+///
+/// A read-only PROBE, called immediately before `verify_model_manifest` so
+/// the production timing surface can label that stage `manifestDigestCacheHit
+/// true/false`. Deliberately a separate function rather than a new return
+/// value on `verify_model_manifest` itself: that function's own doc comment
+/// records the standing decision not to touch its internals for
+/// instrumentation ("sits on a heavily tested, sensitive verification path"),
+/// and this probe honours it — it hashes nothing, decides nothing, and cannot
+/// change what `verify_model_manifest` then does.
+///
+/// A `false` here can only ever UNDER-report a hit (if something populated
+/// the memo between this probe and the call), never over-report one: the
+/// probe runs first, and nothing removes entries from the memo except
+/// `reset_verified_digest_cache_for_tests`.
+pub(crate) fn digest_is_memoized(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else { return false };
+    let identity: ModelIdentity = (path.to_path_buf(), meta.len(), meta.modified().ok());
+    verified_digest_cache().lock().map(|m| m.contains_key(&identity)).unwrap_or(false)
 }
 
 /// Hashes `path` and compares against the committed manifest's recorded
@@ -257,8 +281,65 @@ fn extension_for(hint: &str) -> &'static str {
 /// where the base64+JSON round trip's ~5-8x peak memory multiplication
 /// across the JS heap and the WKWebView IPC bridge is far more likely to
 /// matter.
+/// How many staging records to retain. `fa_stage_audio_raw` and
+/// `fa_align_production` are two SEPARATE IPC commands — the frontend calls
+/// the first, gets a path back, and passes it to the second — so the staging
+/// duration cannot be reported on the alignment run's own `Channel<FaEvent>`
+/// unless it is parked somewhere in between. This is that somewhere.
+///
+/// Bounded, and small on purpose: a record is claimed (and removed) by the
+/// alignment run that consumes its path, so in the normal flow at most one is
+/// live at a time. The cap exists for the abnormal flow — a caller that
+/// stages audio and then never aligns it leaks one record, and without a cap
+/// a long-running process could accumulate them without limit. Eight is
+/// generous headroom over the one the normal flow needs, and an entry evicted
+/// because it aged out reports `stagingMs: null` (unknown), never a wrong
+/// number.
+const STAGING_RECORD_CAPACITY: usize = 8;
+
+fn staging_durations() -> &'static std::sync::Mutex<std::collections::VecDeque<(std::path::PathBuf, u64)>> {
+    static RECORDS: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::VecDeque<(std::path::PathBuf, u64)>>,
+    > = std::sync::OnceLock::new();
+    RECORDS.get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()))
+}
+
+/// Parks how long staging `path` took, for the alignment run that will be
+/// handed that path to claim.
+pub(crate) fn record_staging_duration(path: &Path, nanos: u64) {
+    let Ok(mut records) = staging_durations().lock() else { return };
+    // Same path staged twice (the content-addressed hit case) replaces rather
+    // than duplicates, so a claim always reads the most recent measurement.
+    records.retain(|(p, _)| p != path);
+    while records.len() >= STAGING_RECORD_CAPACITY {
+        records.pop_front();
+    }
+    records.push_back((path.to_path_buf(), nanos));
+}
+
+/// Claims and REMOVES the staging record for `path`, if this process has one.
+///
+/// `None` means "this process has no record for that path" — a hand-passed
+/// path, a path staged before an eviction, or a path staged by nothing at
+/// all. That is genuinely unknown and is reported as `null`, not as zero.
+/// Removing on claim is what keeps a one-shot record from being re-attributed
+/// to a later, differently-timed run against the same content-addressed path.
+pub(crate) fn take_staging_duration(path: &Path) -> Option<u64> {
+    let mut records = staging_durations().lock().ok()?;
+    let index = records.iter().position(|(p, _)| p == path)?;
+    records.remove(index).map(|(_, nanos)| nanos)
+}
+
+#[cfg(test)]
+pub(crate) fn reset_staging_durations_for_tests() {
+    if let Ok(mut records) = staging_durations().lock() {
+        records.clear();
+    }
+}
+
 #[tauri::command]
 pub fn fa_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+    let staging_started = std::time::Instant::now();
     let headers = request.headers();
     let cache_dir_name = headers
         .get("cache-dir")
@@ -286,6 +367,11 @@ pub fn fa_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<String, St
         fs::write(&input_path, bytes).map_err(|e| format!("write audio: {e}"))?;
     }
 
+    // Measured across the SHA-256 of the whole body plus the write — the two
+    // things this command actually costs. Recorded only on success: a failed
+    // staging returns `Err` and no alignment run will ever claim a record for
+    // a path it was never given.
+    record_staging_duration(&input_path, crate::fa::elapsed_nanos(staging_started));
     Ok(input_path.to_string_lossy().to_string())
 }
 
@@ -348,13 +434,43 @@ pub(crate) async fn resolve_wav_and_align(
     language: String,
     on_event: Channel<FaEvent>,
 ) -> Result<(), FaError> {
-    let model_path = fa_model_path(&app, &language)?;
-    verify_model_manifest(&model_path, &language)?;
+    // WS3 fa-perf-foundation — the run clock starts HERE, before the manifest
+    // hash and the durable-WAV transcode, so `FaRunTiming::totalMs` covers the
+    // two most expensive prefix stages rather than beginning after them.
+    let run_started = std::time::Instant::now();
 
-    let wav_path = crate::fa::ensure_durable_wav(&app, Path::new(&input_path)).await?;
+    // Claimed (and removed) rather than merely read: this run owns the
+    // staging measurement for the path it was handed. `None` when this
+    // process never staged that path — reported as unknown, not as zero.
+    let staging_nanos = take_staging_duration(Path::new(&input_path));
+
+    let model_path = fa_model_path(&app, &language)?;
+    // Probe BEFORE the call: only the state of the memo beforehand
+    // distinguishes a map lookup from a full ~1.26 GiB stream hash, and after
+    // `verify_model_manifest` returns, both cases look identical.
+    let manifest_digest_cache_hit = digest_is_memoized(&model_path);
+    let manifest_started = std::time::Instant::now();
+    verify_model_manifest(&model_path, &language)?;
+    let manifest_verify_nanos = crate::fa::elapsed_nanos(manifest_started);
+
+    let wav_started = std::time::Instant::now();
+    let (wav_path, durable_wav_cache_hit) =
+        crate::fa::ensure_durable_wav_timed(&app, Path::new(&input_path)).await?;
+    let durable_wav_nanos = crate::fa::elapsed_nanos(wav_started);
+
+    let prefix = crate::fa_timing::FaStagePrefix {
+        staging_nanos,
+        durable_wav_nanos,
+        durable_wav_cache_hit,
+        manifest_verify_nanos,
+        manifest_digest_cache_hit,
+    };
 
     let audio_path = wav_path.to_string_lossy().to_string();
-    fa_align(app, state, model_cache, audio_path, chunks, language, on_event).await
+    crate::fa::fa_align_with_prefix(
+        app, state, model_cache, audio_path, chunks, language, on_event, prefix, run_started,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -367,6 +483,124 @@ mod tests {
         assert_eq!(extension_for("mp3"), "mp3");
         assert_eq!(extension_for("audio/mp4"), "m4a");
         assert_eq!(extension_for("something-unknown"), "bin");
+    }
+
+    // -- staging-duration hand-off (WS3 fa-perf-foundation) ---------------
+    //
+    // `staging_durations()` is one process-global table and `cargo test` runs
+    // these in parallel threads, so each test below takes this lock for its
+    // whole body. Without it, one test's `reset_staging_durations_for_tests`
+    // erases another's record mid-flight and the failure looks like a bug in
+    // the code under test rather than in the fixture — observed exactly once
+    // while writing these. Poison is recovered rather than propagated: a
+    // panic in one test must not cascade into failing every sibling.
+    static STAGING_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn staging_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        let guard = STAGING_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_staging_durations_for_tests();
+        guard
+    }
+
+    //
+    // `fa_stage_audio_raw` and `fa_align_production` are two separate IPC
+    // commands, so the staging measurement has to survive the gap between
+    // them. These prove the hand-off, its bound, and — most importantly —
+    // that an absent record reads as UNKNOWN rather than as zero.
+
+    #[test]
+    fn a_staged_path_hands_its_duration_to_the_run_that_claims_it() {
+        let _guard = staging_test_guard();
+        let path = std::path::PathBuf::from("/tmp/kinetix-fa-test/abc.wav");
+        record_staging_duration(&path, 4_200_000);
+        assert_eq!(take_staging_duration(&path), Some(4_200_000));
+    }
+
+    #[test]
+    fn a_claim_removes_the_record_so_a_later_run_cannot_reuse_a_stale_measurement() {
+        let _guard = staging_test_guard();
+        let path = std::path::PathBuf::from("/tmp/kinetix-fa-test/once.wav");
+        record_staging_duration(&path, 999);
+        assert_eq!(take_staging_duration(&path), Some(999));
+        assert_eq!(
+            take_staging_duration(&path),
+            None,
+            "a second run against the same content-addressed path did no staging of its own — it              must report unknown, not inherit the first run's number"
+        );
+    }
+
+    #[test]
+    fn an_unstaged_path_reports_unknown_not_zero() {
+        let _guard = staging_test_guard();
+        assert_eq!(take_staging_duration(std::path::Path::new("/tmp/never-staged.wav")), None);
+    }
+
+    #[test]
+    fn restaging_the_same_path_replaces_rather_than_duplicating_its_record() {
+        let _guard = staging_test_guard();
+        let path = std::path::PathBuf::from("/tmp/kinetix-fa-test/again.wav");
+        record_staging_duration(&path, 100);
+        record_staging_duration(&path, 200);
+        assert_eq!(take_staging_duration(&path), Some(200), "the most recent measurement wins");
+        assert_eq!(take_staging_duration(&path), None, "and there is only ever one record per path");
+    }
+
+    #[test]
+    fn the_record_table_is_bounded_and_evicts_oldest_first() {
+        let _guard = staging_test_guard();
+        for i in 0..(STAGING_RECORD_CAPACITY + 4) {
+            record_staging_duration(&std::path::PathBuf::from(format!("/tmp/kinetix-fa-test/{i}.wav")), i as u64);
+        }
+        // The four oldest are gone; an evicted record reports unknown.
+        for i in 0..4 {
+            assert_eq!(
+                take_staging_duration(std::path::Path::new(&format!("/tmp/kinetix-fa-test/{i}.wav"))),
+                None,
+                "record {i} must have been evicted by the cap"
+            );
+        }
+        // The most recent survives with its real value.
+        let last = STAGING_RECORD_CAPACITY + 3;
+        assert_eq!(
+            take_staging_duration(std::path::Path::new(&format!("/tmp/kinetix-fa-test/{last}.wav"))),
+            Some(last as u64)
+        );
+    }
+
+    // -- manifest digest hit/miss probe (WS3 fa-perf-foundation) -----------
+
+    #[test]
+    fn digest_probe_distinguishes_a_memo_hit_from_a_cold_full_hash() {
+        // Deliberately does NOT call `reset_verified_digest_cache_for_tests`.
+        // That memo is process-global and two sibling tests here already
+        // reset it; a third resetter clobbers them mid-flight under parallel
+        // execution. MEASURED: adding a reset here turned
+        // `digest_for_sidecar_computes_and_caches_on_a_cold_call` and
+        // `digest_memo_caches_by_identity_and_resets_cleanly` red on one run
+        // in six. A UUID-unique path is cold by construction and needs no
+        // reset to prove it.
+        let dir = std::env::temp_dir().join(format!("kinetix-fa-digest-probe-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model.onnx");
+        fs::write(&path, b"not a real model, but a real file identity").unwrap();
+
+        assert!(
+            !digest_is_memoized(&path),
+            "cold: the next verify would pay the full stream hash, so the probe must say MISS"
+        );
+        // `digest_for_sidecar` populates the SAME memo `verify_model_manifest`
+        // reads — that shared cache is the whole reason this probe works
+        // without touching the verification function's internals.
+        digest_for_sidecar(&path).unwrap();
+        assert!(digest_is_memoized(&path), "warm: the next verify is a map lookup, so the probe must say HIT");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn digest_probe_reports_miss_for_a_path_that_does_not_exist() {
+        // Must not panic, and must not claim a hit it cannot have.
+        assert!(!digest_is_memoized(std::path::Path::new("/definitely/not/here/model.onnx")));
     }
 
     #[test]

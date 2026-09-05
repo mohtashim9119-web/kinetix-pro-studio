@@ -400,6 +400,35 @@ pub enum FaEvent {
     #[allow(dead_code)]
     Done { words: Vec<FaWordSpan> },
     Error { message: String },
+    /// Permanent production stage timing for the run (WS3 fa-perf-
+    /// foundation), emitted exactly ONCE per run, immediately before that
+    /// run's terminal `Done` or `Error`. Not `#[cfg(test)]`, not behind a
+    /// Cargo feature — a real Apply Sync reports where its wall clock went.
+    ///
+    /// A SEPARATE VARIANT, not a field appended to `Done`. Three reasons, in
+    /// order of weight:
+    ///
+    ///   1. `Done` is sent only on success. The runs whose timing matters
+    ///      most are the slow ones that then FAIL — a manifest mismatch after
+    ///      a full ~1.26 GiB hash, an inference error at chunk 180 of 200.
+    ///      Hanging timing off `Done` would report nothing for exactly those.
+    ///      This variant is emitted on the success path, the error path, and
+    ///      the `fa-inference`-off not-implemented path alike.
+    ///   2. Timing is telemetry about the run; `Done`'s payload is the run's
+    ///      RESULT. Keeping a fixed-size diagnostic beside a payload that can
+    ///      carry thousands of words keeps the two independently readable.
+    ///   3. It is additively safe at the TS boundary. Both existing consumers
+    ///      (`forcedAlignmentRun.ts`, `App.tsx`'s `__faDevAlign`) dispatch on
+    ///      `msg.event` with an if/else chain and no exhaustiveness check, so
+    ///      an unrecognized tag is ignored rather than mishandled — whereas a
+    ///      new REQUIRED field inside `Done` would silently be dropped by a
+    ///      TS type that does not declare it, with nothing marking the drift.
+    ///      `faBoundaryTypes.ts`'s `FaEvent` union still needs this variant
+    ///      added by hand; see this round's report for that follow-up.
+    ///
+    /// `FaEvent` already derived `Clone` before this variant existed, and
+    /// `FaRunTiming` is `Clone` — no derive change was needed.
+    Timing { timing: crate::fa_timing::FaRunTiming },
 }
 
 // ---------------------------------------------------------------------------
@@ -746,15 +775,34 @@ fn finalize_cache_write(tmp_path: &Path, final_path: &Path, cache_dir: &Path) ->
 /// wiring proof. A compile-time-only visibility widening — zero runtime
 /// effect, same as the `mod fa`/`mod fa_dev` widening in `lib.rs`.
 pub async fn ensure_durable_wav(app: &tauri::AppHandle, source_path: &Path) -> Result<PathBuf, FaError> {
+    ensure_durable_wav_timed(app, source_path).await.map(|(path, _hit)| path)
+}
+
+/// [`ensure_durable_wav`] plus the one bit its caller cannot infer: whether
+/// the durable WAV was already on disk (`true`) or had to be transcoded by a
+/// full ffmpeg sidecar run (`false`). WS3 fa-perf-foundation — a cache hit
+/// and a miss differ by seconds on a long voiceover, and a timing report
+/// that could not tell them apart would attribute a hit's near-zero cost and
+/// a miss's multi-second transcode to the same stage with no way to read the
+/// difference.
+///
+/// The body is byte-for-byte the pre-WS3 [`ensure_durable_wav`], with the
+/// hit/miss flag added to each arm's return; the public wrapper above keeps
+/// the old signature so `tests/fa_durable_wav_live.rs` and every other
+/// existing caller are untouched.
+pub async fn ensure_durable_wav_timed(
+    app: &tauri::AppHandle,
+    source_path: &Path,
+) -> Result<(PathBuf, bool), FaError> {
     let cache_dir = fa_audio_cache_dir(app)?;
     match resolve_cache_entry(&cache_dir, source_path)? {
-        CacheLookup::Hit(path) => Ok(path),
+        CacheLookup::Hit(path) => Ok((path, true)),
         CacheLookup::Miss { tmp_path, final_path } => {
             if let Err(e) = crate::whisper::transcode_to_wav(app, source_path, &tmp_path).await {
                 let _ = std::fs::remove_file(&tmp_path);
                 return Err(FaError::inference_failed(format!("transcode to durable WAV failed: {e}")));
             }
-            finalize_cache_write(&tmp_path, &final_path, &cache_dir)
+            finalize_cache_write(&tmp_path, &final_path, &cache_dir).map(|p| (p, false))
         }
     }
 }
@@ -812,6 +860,51 @@ pub async fn fa_align(
     language: String,
     on_event: Channel<FaEvent>,
 ) -> Result<(), FaError> {
+    // A direct `fa_align` call did no staging, no manifest verification and
+    // no durable-WAV resolution of its own, so its prefix stages are genuinely
+    // zero/unknown — `FaStagePrefix::default()` says exactly that (a `None`
+    // `staging_nanos`, not a fabricated 0 ms). `resolve_wav_and_align` is the
+    // caller that has real numbers for those, and it passes them.
+    fa_align_with_prefix(
+        app,
+        state,
+        model_cache,
+        audio_path,
+        chunks,
+        language,
+        on_event,
+        crate::fa_timing::FaStagePrefix::default(),
+        std::time::Instant::now(),
+    )
+    .await
+}
+
+/// [`fa_align`]'s real body, plus the pre-`fa_align` stage measurements its
+/// caller already made (WS3 fa-perf-foundation).
+///
+/// `run_started` is the caller's OWN run clock, not one minted here: for a
+/// production run the wall clock that matters starts at
+/// `resolve_wav_and_align`'s first statement, before the ~1.26 GiB manifest
+/// hash and the durable-WAV transcode, so `totalMs` covers those rather than
+/// beginning after the two most expensive prefix stages have already
+/// finished.
+///
+/// `FaEvent::Timing` is emitted on EVERY exit path — success, inference
+/// error, and the `fa-inference`-off not-implemented arm — always immediately
+/// before the terminal `Done`/`Error`, so a consumer that has seen a terminal
+/// event has already seen this run's timing.
+#[allow(unused_variables, clippy::too_many_arguments)]
+pub(crate) async fn fa_align_with_prefix(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, FaState>,
+    model_cache: tauri::State<'_, FaModelCache>,
+    audio_path: String,
+    chunks: Vec<FaChunkInput>,
+    language: String,
+    on_event: Channel<FaEvent>,
+    prefix: crate::fa_timing::FaStagePrefix,
+    run_started: std::time::Instant,
+) -> Result<(), FaError> {
     start_run(&state)?;
 
     #[cfg(feature = "fa-inference")]
@@ -820,6 +913,7 @@ pub async fn fa_align(
         let on_progress = |index: u32| {
             let _ = on_event.send(FaEvent::Progress { index, total });
         };
+        let mut inference = crate::fa_timing::FaInferenceTimings::default();
         let result = crate::fa_onnx::align_chunked_for_language(
             &app,
             &model_cache.0,
@@ -828,8 +922,18 @@ pub async fn fa_align(
             &language,
             || is_cancelled(&state),
             on_progress,
+            &mut inference,
         );
         finish_run(&state)?;
+        // Sent before the terminal event on BOTH arms — an inference that
+        // failed at chunk 180 of 200 still reports the 180 chunks it timed.
+        let _ = on_event.send(FaEvent::Timing {
+            timing: crate::fa_timing::FaRunTiming::assemble(
+                prefix,
+                inference,
+                elapsed_nanos(run_started),
+            ),
+        });
         return match result {
             Ok(word_spans) => {
                 let words: Vec<FaWordSpan> = word_spans_to_dtos(word_spans);
@@ -851,11 +955,31 @@ pub async fn fa_align(
              boundary (state, cancellation, progress channel, argument shape) that a future native \
              inference engine will drop into — no model, no inference, no ML dependency added.",
         );
+        // Emitted even here: with the feature off there are no inference
+        // stages to report, but the prefix stages (staging, durable WAV,
+        // manifest verification) genuinely ran and genuinely cost time, and a
+        // build that reported nothing at all would make the timing surface
+        // feature-conditional — which this one deliberately is not.
+        let _ = on_event.send(FaEvent::Timing {
+            timing: crate::fa_timing::FaRunTiming::assemble(
+                prefix,
+                crate::fa_timing::FaInferenceTimings::default(),
+                elapsed_nanos(run_started),
+            ),
+        });
         let _ = on_event.send(FaEvent::Error { message: err.message.clone() });
 
         finish_run(&state)?;
         Err(err)
     }
+}
+
+/// `Instant::elapsed` as saturating whole nanoseconds — the one conversion
+/// every timing call site in this module shares. Saturating rather than
+/// wrapping for the same reason `fa_timing::StageAccumulator::record`
+/// saturates: telemetry must never be able to fail the run it measures.
+pub(crate) fn elapsed_nanos(since: std::time::Instant) -> u64 {
+    u64::try_from(since.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
 /// Cancels a running FA job. Mirrors `whisper_cancel` (`whisper.rs:432-441`):
@@ -1941,6 +2065,123 @@ mod tests {
     }
 
     // -- FaEvent::Progress shape (WS1 Task 5 Slice D11) --------------------
+
+    // -- FaEvent::Timing wire shape (WS3 fa-perf-foundation) --------------
+
+    #[test]
+    fn fa_event_timing_serializes_the_tagged_shape_the_other_variants_use() {
+        let event = FaEvent::Timing { timing: crate::fa_timing::FaRunTiming::default() };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["event"], serde_json::json!("Timing"), "tag stays PascalCase, like Progress/Done/Error");
+        assert!(json["data"]["timing"].is_object(), "payload must sit under `data`, matching the enum's serde attrs");
+    }
+
+    #[test]
+    fn fa_event_timing_reports_every_requested_stage_on_a_fully_populated_run() {
+        // The "every stage populated" gate. A synthetic run in which every
+        // stage genuinely cost something, asserted field by field — a stage
+        // wired to a hardcoded zero, or omitted from the DTO entirely, fails
+        // here rather than shipping as a silently missing column.
+        let prefix = crate::fa_timing::FaStagePrefix {
+            staging_nanos: Some(121_000_000),
+            durable_wav_nanos: 3_400_000_000,
+            durable_wav_cache_hit: false,
+            manifest_verify_nanos: 5_250_000_000,
+            manifest_digest_cache_hit: false,
+        };
+        let mut inference = crate::fa_timing::FaInferenceTimings {
+            model: crate::fa_timing::ModelLoadReport { cache_hit: false, load_nanos: 880_000_000 },
+            chunks: Default::default(),
+        };
+        for i in 1..=3u64 {
+            inference.chunks.forward.record(std::time::Duration::from_millis(40 * i));
+            inference.chunks.viterbi.record(std::time::Duration::from_millis(5 * i));
+            inference.chunks.tokenize.record(std::time::Duration::from_micros(300 * i));
+        }
+        let event = FaEvent::Timing {
+            timing: crate::fa_timing::FaRunTiming::assemble(prefix, inference, 12_000_000_000),
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        let t = &json["data"]["timing"];
+
+        // 1. raw-body staging
+        assert_eq!(t["stagingMs"], serde_json::json!(121.0));
+        // 2. durable WAV transcode, with hit/miss
+        assert_eq!(t["durableWavMs"], serde_json::json!(3400.0));
+        assert_eq!(t["durableWavCacheHit"], serde_json::json!(false));
+        // 3. manifest SHA-256 verification, with memo-hit vs full hash
+        assert_eq!(t["manifestVerifyMs"], serde_json::json!(5250.0));
+        assert_eq!(t["manifestDigestCacheHit"], serde_json::json!(false));
+        // 4. model load, with hit/miss and a duration on the miss
+        assert_eq!(t["modelCacheHit"], serde_json::json!(false));
+        assert_eq!(t["modelLoadMs"], serde_json::json!(880.0));
+        // 5/6/7. per-chunk forward pass, Viterbi, tokenization — AGGREGATED
+        assert_eq!(t["chunks"]["chunkCount"], serde_json::json!(3));
+        assert_eq!(t["chunks"]["forward"]["totalMs"], serde_json::json!(240.0), "40+80+120");
+        assert_eq!(t["chunks"]["forward"]["meanMs"], serde_json::json!(80.0), "240 / 3");
+        assert_eq!(t["chunks"]["forward"]["maxMs"], serde_json::json!(120.0));
+        assert_eq!(t["chunks"]["viterbi"]["totalMs"], serde_json::json!(30.0), "5+10+15");
+        assert_eq!(t["chunks"]["tokenize"]["totalMs"], serde_json::json!(1.8), "0.3+0.6+0.9");
+        // run total
+        assert_eq!(t["totalMs"], serde_json::json!(12_000.0));
+
+        // Non-vacuity: nothing above may have been satisfied by a default.
+        let defaulted = serde_json::to_value(&FaEvent::Timing {
+            timing: crate::fa_timing::FaRunTiming::default(),
+        })
+        .unwrap();
+        assert_ne!(t, &defaulted["data"]["timing"]);
+    }
+
+    #[test]
+    fn fa_event_timing_emits_one_aggregate_not_one_event_per_chunk() {
+        // The flood guard. 250 chunks must still produce ONE payload whose
+        // size does not grow with the chunk count — the reason the per-chunk
+        // numbers are aggregated to count/total/mean/max in the first place.
+        let mut inference = crate::fa_timing::FaInferenceTimings::default();
+        for _ in 0..250 {
+            inference.chunks.forward.record(std::time::Duration::from_millis(10));
+            inference.chunks.viterbi.record(std::time::Duration::from_millis(1));
+            inference.chunks.tokenize.record(std::time::Duration::from_micros(100));
+        }
+        let small = serde_json::to_string(&FaEvent::Timing {
+            timing: crate::fa_timing::FaRunTiming::assemble(
+                Default::default(),
+                crate::fa_timing::FaInferenceTimings::default(),
+                1,
+            ),
+        })
+        .unwrap();
+        let big = serde_json::to_string(&FaEvent::Timing {
+            timing: crate::fa_timing::FaRunTiming::assemble(Default::default(), inference, 1),
+        })
+        .unwrap();
+        assert_eq!(
+            big.len().abs_diff(small.len()) < 200,
+            true,
+            "a 250-chunk run's timing payload must not scale with chunk count (0 chunks: {} bytes, \
+             250 chunks: {} bytes)",
+            small.len(),
+            big.len()
+        );
+        // ...and it must still be a real aggregate of all 250.
+        let json = serde_json::to_value(&big.parse::<serde_json::Value>().unwrap()).unwrap();
+        assert_eq!(json["data"]["timing"]["chunks"]["chunkCount"], serde_json::json!(250));
+        assert_eq!(json["data"]["timing"]["chunks"]["forward"]["totalMs"], serde_json::json!(2500.0));
+    }
+
+    #[test]
+    fn fa_align_direct_call_reports_unknown_staging_rather_than_a_fabricated_zero() {
+        // `fa_align` invoked directly did no staging of its own. Its prefix
+        // must say "unknown", so a dashboard cannot average a fabricated
+        // 0 ms staging step into a real one's.
+        let t = crate::fa_timing::FaRunTiming::assemble(
+            crate::fa_timing::FaStagePrefix::default(),
+            crate::fa_timing::FaInferenceTimings::default(),
+            5_000_000,
+        );
+        assert_eq!(t.staging_ms, None);
+    }
 
     #[test]
     fn fa_event_progress_carries_index_and_total() {
