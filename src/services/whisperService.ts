@@ -1703,6 +1703,16 @@ export interface TranscribeResult {
  * force, or `undefined` to let whisper-cli auto-detect — the caller passes
  * `project.language` directly, which is exactly this undefined-means-auto
  * convention (see types.ts's `Project.language` doc comment).
+ *
+ * ATTACH BEFORE START (Transcription Requirement 1's frontend half). The native
+ * side keys running jobs by `jobKey` and REFUSES a second job for a key it
+ * already holds — it does not kill and replace. A whisper-cli child outlives a
+ * Cmd+R, because it is a separate process and only the webview reloads, so a
+ * fresh page that just invoked `whisper_transcribe` would be refused by the job
+ * it cannot see. This tries `whisper_transcribe_attach` first: a hit re-points
+ * the running job's event stream at this page's channel and the promise below
+ * settles from that job's own `Done`, with no second child spawned and no audio
+ * re-staged. A miss (nothing in flight for the key) starts a job normally.
  */
 export async function transcribeWithProgress(
   audioAsset: Asset,
@@ -1710,58 +1720,93 @@ export async function transcribeWithProgress(
   language: string | undefined,
   onProgress: (percent: number) => void,
   signal: AbortSignal,
+  jobKey?: string,
 ): Promise<TranscribeResult> {
-  let buffer: ArrayBuffer;
-  if (audioAsset.file) {
-    // Prefer the raw File object — avoids blob URL fetch restrictions in WebView2 (Windows)
-    buffer = await audioAsset.file.arrayBuffer();
-  } else {
-    // Fallback: fetch blob URL (works on macOS WebView, may fail on Windows)
-    const response = await fetch(audioAsset.url);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch audio: ${response.statusText}`);
-    }
-    buffer = await response.arrayBuffer();
-  }
-  // Raw IPC body (Uint8Array), not base64 — whisper_stage_audio_raw writes it
-  // straight to a temp file and hands back the path. A long voiceover as
-  // base64 JSON inflates ~5-8x across the JS heap and the WKWebView IPC
-  // bridge before Rust ever sees it; this avoids that entirely, mirroring
-  // ffmpeg.rs's ffmpeg_write_file_raw precedent on the export path.
-  const audioPath = await invoke<string>('whisper_stage_audio_raw', new Uint8Array(buffer));
-
   return new Promise<TranscribeResult>((resolve, reject) => {
     if (signal.aborted) {
       reject(new DOMException('Aborted', 'AbortError'));
       return;
     }
 
-    const channel = new Channel<WhisperEvent>();
-
-    channel.onmessage = (msg) => {
-      if (msg.event === 'Progress') {
-        onProgress(msg.data.percent);
-      } else if (msg.event === 'Done') {
-        resolve({ tokens: msg.data.tokens, detectedLanguage: msg.data.detectedLanguage });
-      } else if (msg.event === 'Error') {
-        reject(new Error(msg.data.message));
-      }
+    // ONE CHANNEL PER INVOKE — NEVER REUSED ACROSS TWO.
+    //
+    // A `Channel` passed into a command is deserialized into a Rust-side
+    // `Channel` whose `Drop` evals `{ end: true, index: N }` back into this
+    // page (tauri's `ipc/channel.rs`). The JS `Channel` treats that marker as
+    // end-of-stream and calls `cleanupCallback()`, which UNREGISTERS the
+    // callback for that channel id permanently. So handing the same channel
+    // object to a second `invoke` yields a channel that is already dead by the
+    // time the second command sends anything: every event is discarded
+    // silently, the promise below never settles, and the UI sits at 0% with no
+    // error. (Regression, caught in manual testing: the attach probe below ran
+    // first, returned false, and its dropped Rust-side channel killed the
+    // channel that `whisper_transcribe` was about to stream through.)
+    //
+    // Hence `newChannel()`: the probe gets its own, and the start path gets a
+    // fresh one. Only the channel belonging to the command that actually owns
+    // the job ever carries events.
+    const newChannel = (): Channel<WhisperEvent> => {
+      const channel = new Channel<WhisperEvent>();
+      channel.onmessage = (msg) => {
+        if (msg.event === 'Progress') {
+          onProgress(msg.data.percent);
+        } else if (msg.event === 'Done') {
+          resolve({ tokens: msg.data.tokens, detectedLanguage: msg.data.detectedLanguage });
+        } else if (msg.event === 'Error') {
+          reject(new Error(msg.data.message));
+        }
+      };
+      return channel;
     };
 
     const onAbort = () => {
-      invoke('whisper_cancel').catch(() => {});
+      invoke('whisper_cancel', { jobKey }).catch(() => {});
       reject(new DOMException('Aborted', 'AbortError'));
     };
     signal.addEventListener('abort', onAbort, { once: true });
 
-    invoke('whisper_transcribe', {
-      audioPath,
-      durationSecs,
-      language: language ?? 'auto',
-      onEvent: channel,
-    }).catch((err: unknown) => {
-      signal.removeEventListener('abort', onAbort);
-      reject(err instanceof Error ? err : new Error(String(err)));
-    });
+    void (async () => {
+      try {
+        if (jobKey !== undefined) {
+          const attached = await invoke<boolean>('whisper_transcribe_attach', {
+            jobKey,
+            onEvent: newChannel(),
+          });
+          // On a hit that probe channel IS the job's sink now, so its events
+          // resolve the promise above; on a miss it is dropped unused.
+          if (attached) return;
+        }
+
+        let buffer: ArrayBuffer;
+        if (audioAsset.file) {
+          // Prefer the raw File object — avoids blob URL fetch restrictions in WebView2 (Windows)
+          buffer = await audioAsset.file.arrayBuffer();
+        } else {
+          // Fallback: fetch blob URL (works on macOS WebView, may fail on Windows)
+          const response = await fetch(audioAsset.url);
+          if (!response.ok) {
+            throw new Error(`Failed to fetch audio: ${response.statusText}`);
+          }
+          buffer = await response.arrayBuffer();
+        }
+        // Raw IPC body (Uint8Array), not base64 — whisper_stage_audio_raw writes it
+        // straight to a temp file and hands back the path. A long voiceover as
+        // base64 JSON inflates ~5-8x across the JS heap and the WKWebView IPC
+        // bridge before Rust ever sees it; this avoids that entirely, mirroring
+        // ffmpeg.rs's ffmpeg_write_file_raw precedent on the export path.
+        const audioPath = await invoke<string>('whisper_stage_audio_raw', new Uint8Array(buffer));
+
+        await invoke('whisper_transcribe', {
+          audioPath,
+          durationSecs,
+          language: language ?? 'auto',
+          onEvent: newChannel(),
+          jobKey,
+        });
+      } catch (err) {
+        signal.removeEventListener('abort', onAbort);
+        reject(err instanceof Error ? err : new Error(String(err)));
+      }
+    })();
   });
 }

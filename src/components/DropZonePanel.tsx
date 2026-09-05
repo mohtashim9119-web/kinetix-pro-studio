@@ -347,8 +347,11 @@ interface Props {
    *  files are read by `App.tsx`'s single entry point from the shared live ref
    *  this panel publishes through `onStagedFilesChange`, so neither this panel
    *  nor the recovery banner can hand the sync an input of its own invention.
-   *  See `applySyncEntryPoint.test.ts`. */
-  onApplySync: () => void;
+   *  See `applySyncEntryPoint.test.ts`.
+   *
+   *  Returns the run's promise so `triggerSync` can clear staged slots only
+   *  once the sync has finished READING them — see the note there. */
+  onApplySync: () => void | Promise<unknown>;
   /** Publishes this panel's staged files upward on every change, synchronously.
    *  App.tsx mirrors it into a ref that Apply Sync reads. */
   onStagedFilesChange: (staged: StagedFiles) => void;
@@ -901,12 +904,26 @@ export function DropZonePanel({
   // to the Segments tab so the result is immediately visible.
   const triggerSync = () => {
     // No snapshot argument: App.tsx's single entry point reads the shared live
-    // ref, whose current value this panel has already published. The clear
-    // below is still safe because that entry point snapshots the ref into a
-    // local on its first synchronous statement.
-    onApplySync();
-    // Clear staged so slots immediately switch to the green persisted indicator.
-    updateStaged(() => EMPTY_STAGED);
+    // ref, whose current value this panel has already published.
+    //
+    // THE CLEAR MUST WAIT FOR THE SYNC TO FINISH READING THE FILES.
+    // Clearing snapshots the ref safely — the sync keeps its own `staged`
+    // object — but `updateStaged(EMPTY_STAGED)` also reconciles the staged
+    // STORE, which deletes every slot's IndexedDB row. A restored file is a
+    // `File` built over that row's blob (`restoreStagedFiles`), so deleting the
+    // row releases the backing store and every later read of that handle fails
+    // ("The object can not be found here" — WebKit), even though the object
+    // itself is still there. The sync is async and reads its files throughout
+    // (script/scene text, asset persistence, zip extraction, the voiceover
+    // duration probe), so a synchronous clear here raced every one of those
+    // reads and killed the bytes underneath them mid-run. Snapshotting the ref
+    // preserves the handle, not the data it points at.
+    void Promise.resolve(onApplySync()).finally(() => {
+      // Slots switch to the green persisted indicator once the run is done with
+      // them. Runs on failure too: an aborted sync must not strand the panel
+      // holding rows it will never consume.
+      updateStaged(() => EMPTY_STAGED);
+    });
     setActiveTab('segments');
   };
 

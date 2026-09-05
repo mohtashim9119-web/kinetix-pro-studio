@@ -154,11 +154,14 @@ describe('WS2-50 — a single Apply Sync entry point', () => {
 
 describe('WS2-50 — DropZonePanel supplies live staged state, never a literal', () => {
   it('the onApplySync prop takes no argument', () => {
+    // The guarded property is the EMPTY ARGUMENT LIST, not the return type:
+    // the return type widened to `void | Promise<unknown>` so `triggerSync` can
+    // await the run before clearing staged rows out from under it.
     expect(
       PANEL_SRC,
       'onApplySync accepts a staged snapshot again, which lets this panel hand Apply Sync an ' +
         'input that differs from the ref the recovery banner’s path reads.',
-    ).toContain('onApplySync: () => void;');
+    ).toContain('onApplySync: () =>');
     expect(PANEL_SRC).not.toContain('onApplySync: (staged');
   });
 

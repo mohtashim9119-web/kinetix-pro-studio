@@ -167,6 +167,41 @@ export type StartTranscriptionOutcome =
   | { started: true }
   | { started: false; reason: 'already-running'; message: string };
 
+/** Mirrors `whisper.rs`'s `IN_FLIGHT_REFUSAL_PREFIX`. */
+const NATIVE_IN_FLIGHT_REFUSAL_PREFIX = 'whisper:already-running:';
+
+/**
+ * The key the NATIVE single-flight registry files this job under, or
+ * `undefined` when the caller supplied no project id (which leaves the native
+ * side on its own shared-bucket default, exactly as before).
+ *
+ * WHY IT CARRIES THE AUDIO'S IDENTITY AND NOT JUST `Project.id`. The native key
+ * decides two different things at once: which job a duplicate is refused
+ * against, and which job a reloaded page RE-ATTACHES to. Project id alone is
+ * right for the first and wrong for the second — a whisper-cli child survives a
+ * Cmd+R, so a page that reloads and then transcribes a DIFFERENT file for the
+ * same project would attach to the old file's job and adopt its tokens as
+ * though they described the new audio. Naming the audio in the key makes that
+ * misattribution unrepresentable rather than merely unlikely.
+ *
+ * It does not reintroduce the flaw that ruled out keying by `audio_path`
+ * (whisper.rs's key-choice note): a fresh temp path is minted per call and so
+ * never collides with itself, whereas `getFileIdentity` is stable for the same
+ * bytes across calls AND across reloads — two attempts at the same audio still
+ * land on one key and the second is still refused.
+ *
+ * Same-project/different-file duplicates stay covered: the in-page gate above
+ * refuses those on `projectId` before this key is ever built.
+ */
+function nativeJobKey(projectId: string | undefined, audioAsset: Asset): string | undefined {
+  if (projectId === undefined) return undefined;
+  // `.file` is absent for a project asset rehydrated from IndexedDB (its File
+  // is stripped before persisting), so fall back to the asset id — also stable
+  // for the same audio, and the only identity such a call has.
+  const audioIdentity = audioAsset.file ? getFileIdentity(audioAsset.file) : audioAsset.id;
+  return `${projectId}::${audioIdentity}`;
+}
+
 export interface StartTranscriptionOptions {
   /**
    * `Project.id` this run belongs to. Requirement 4's single-flight gate is
@@ -335,6 +370,7 @@ export function useWhisper(): UseWhisperApi {
             setTranscriptionStatus({ phase: 'transcribing', percent, jobId });
           },
           controller.signal,
+          nativeJobKey(projectId, audioAsset),
         );
 
         if (generationRef.current !== generation) return { started: true };
@@ -510,7 +546,15 @@ export function useWhisper(): UseWhisperApi {
           setTranscriptionStatus({ phase: 'idle' });
           return { started: true };
         }
-        const message = err instanceof Error ? err.message : String(err);
+        const raw = err instanceof Error ? err.message : String(err);
+        // The native refusal is machine-tagged precisely so it can be told
+        // apart from a spawn/model/ffmpeg failure (whisper.rs's
+        // IN_FLIGHT_REFUSAL_PREFIX). Reached only in the narrow race where a
+        // job terminates between this run's attach probe and its start; the
+        // user gets a sentence about what is happening rather than the tag.
+        const message = raw.startsWith(NATIVE_IN_FLIGHT_REFUSAL_PREFIX)
+          ? 'A transcription for this audio is already running — wait for it to finish or cancel it first.'
+          : raw;
         setTranscriptionStatus({ phase: 'error', message, jobId });
       } finally {
         // Release the single-flight gate on EVERY exit — clean finish, empty

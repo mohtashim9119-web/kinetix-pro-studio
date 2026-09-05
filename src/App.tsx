@@ -193,6 +193,7 @@ import { stripRtfIfNeeded } from './services/textUtils';
 import { assignSegmentIds, type SegmentIdSource } from './services/segmentId';
 import {
   putAsset,
+  getAsset,
   deleteAsset,
   getAllAssetsForProject,
   deleteAllAssets,
@@ -293,14 +294,37 @@ const getMediaDuration = (url: string, type: 'video' | 'audio'): Promise<number>
  *
  * Replaces the old hidden-`<audio>` probe, which was WebView-codec-dependent
  * (OGG silently failed on macOS WKWebView) and fell back to a hardcoded 60 s —
- * mis-proportioning every segment. Prefers the raw `File`; falls back to
- * fetching the blob URL (a committed asset reconstructed on reload may have lost
- * its File reference). THROWS on failure — callers surface the error and abort
- * rather than syncing against a fake duration.
+ * mis-proportioning every segment. THROWS on failure — callers surface the
+ * error and abort rather than syncing against a fake duration.
+ *
+ * THE FALLBACK IS INDEXEDDB, NOT `fetch(asset.url)`. A committed asset
+ * reconstructed on reload has lost its `File` — that much the old fallback got
+ * right — but `asset.url` is a `blob:` URL minted by the PREVIOUS page, and a
+ * blob URL dies with the tab that created it. Only the project-switch path
+ * re-mints one; a plain Cmd+R does not, so the old fallback could only ever
+ * fail in exactly the case it existed to cover. IndexedDB is the durable copy,
+ * and every asset in `project.assets` is written there before it is added
+ * (the putAsset-before-assets invariant), so this reaches the same bytes.
+ *
+ * A PRESENT `File` IS NOT A READABLE ONE. A staged file is built over an
+ * IndexedDB-backed blob (`restoreStagedFiles`), and when that backing store is
+ * released the handle stays truthy but its read fails ("The object can not be
+ * found here" in WebKit). Presence therefore cannot be tested for and trusted —
+ * the read has to be attempted, and a failure routed to the stored copy.
  */
-const resolveVoiceoverDuration = async (asset: Asset): Promise<number> => {
-  const blob: Blob = asset.file ?? (await (await fetch(asset.url)).blob());
-  return probeAudioDuration(blob);
+const resolveVoiceoverDuration = async (asset: Asset, projectId: string): Promise<number> => {
+  if (asset.file) {
+    try {
+      return await probeAudioDuration(asset.file);
+    } catch (err) {
+      console.warn('[voiceover] staged File unreadable — falling back to the stored blob:', err);
+    }
+  }
+  const stored = (await getAsset(projectId, asset.id))?.blob;
+  if (!stored) {
+    throw new Error(`voiceover asset ${asset.id} has no readable File and no stored blob`);
+  }
+  return probeAudioDuration(stored);
 };
 
 /**
@@ -3191,7 +3215,7 @@ export default function App() {
     void (async () => {
       let duration: number;
       try {
-        duration = await resolveVoiceoverDuration(asset);
+        duration = await resolveVoiceoverDuration(asset, projectRef.current.id);
       } catch (err) {
         // Ownership recheck first — don't surface an error for a file the user
         // already moved past while the probe was running.
@@ -3205,6 +3229,13 @@ export default function App() {
       // have already superseded this file. Don't start a transcription for a
       // file the user has since moved past.
       if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
+      // Carry the duration we just measured, so Apply Sync does not read these
+      // same bytes a second time to recompute a number we already have. Beyond
+      // the wasted base64 round trip, the second read is not reliably possible:
+      // a staged `File` is built over an IndexedDB-backed blob, and once that
+      // backing store is released WebKit fails the read outright ("The object
+      // can not be found here") on a handle that worked minutes earlier.
+      setPendingVoiceoverSync({ file, asset: { ...asset, duration } });
       transcriptionTargetIdRef.current = asset.id;
       const outcome = await startTranscription(
         asset,
@@ -3431,9 +3462,15 @@ export default function App() {
 
     // 3. Get audio duration from the voiceover asset we just created (or existing)
     let audioDuration = audioRef.current?.duration || 0;
-    if (!audioRef.current || audioRef.current.src !== voiceoverAsset.url) {
+    // A duration measured at staging time is authoritative and already paid
+    // for: re-probing here would re-read the whole file to recompute the same
+    // number, and for a staged file that read can no longer be guaranteed to
+    // succeed (see resolveVoiceoverDuration's note on released blob stores).
+    if (voiceoverAsset.duration !== undefined && voiceoverAsset.duration > 0) {
+      audioDuration = voiceoverAsset.duration;
+    } else if (!audioRef.current || audioRef.current.src !== voiceoverAsset.url) {
       try {
-        audioDuration = await resolveVoiceoverDuration(voiceoverAsset);
+        audioDuration = await resolveVoiceoverDuration(voiceoverAsset, projectRef.current.id);
       } catch (err) {
         // No fake-duration fallback (the old code silently used 60 s). Abort the
         // sync and tell the user rather than proportioning every segment wrong.
@@ -3442,7 +3479,13 @@ export default function App() {
         showToast(msg);
         // totalSegments is 0 here by necessity — the scene doc hasn't been
         // parsed yet at this point in the sequence.
-        logSyncAbort(msg, 0);
+        //
+        // The CAUSE goes in the log line, not just the console. This abort has
+        // several very different causes — an unreadable File, a missing ffmpeg
+        // sidecar, a codec ffmpeg rejects, an IPC failure — and they need
+        // different fixes, but the user-facing sentence is identical for all of
+        // them. Without the cause here the log says only that the probe failed.
+        logSyncAbort(`${msg} (cause: ${err instanceof Error ? err.message : String(err)})`, 0);
         setIsProcessing(false);
         return { ok: false, message: msg };
       }

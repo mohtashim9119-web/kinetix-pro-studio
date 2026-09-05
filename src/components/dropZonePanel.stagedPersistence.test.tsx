@@ -342,3 +342,67 @@ describe('WS2-50 — a restored voiceover is offered, and a refusal leaves nothi
     panel.unmount();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Apply Sync must not delete the staged rows it is still reading from.
+//
+// THE DEFECT. `triggerSync` called `onApplySync()` and then cleared staged
+// slots synchronously, on the reasoning that the sync had already snapshotted
+// the live ref. It had — but the clear also reconciles the staged STORE, and
+// deleting a row releases the IndexedDB blob that a RESTORED `File` is built
+// over (`restoreStagedFiles`). The sync is async and keeps reading those files
+// for the rest of the run, so the bytes were pulled out from under it: the
+// voiceover duration probe failed with WebKit's "The object can not be found
+// here" on a handle that had worked moments earlier, and Apply Sync aborted.
+// The snapshot preserved the handle, not the data behind it.
+//
+// WHY IT IS ASSERTED MID-FLIGHT. Settled state cannot see this: the rows are
+// deleted either way, and only WHEN differs. So the sync is held unresolved and
+// the store inspected while it is still running — the same reason WS2 T4.7's
+// download test holds a row mid-download instead of asserting the end state.
+// ---------------------------------------------------------------------------
+describe('Apply Sync — staged rows outlive the run that reads them', () => {
+  const SYNC_PROJECT = 'staged-apply-sync-project';
+  beforeEach(async () => { await deleteAllStagedForProject(SYNC_PROJECT); });
+
+  it('keeps the staged rows until the sync settles, then clears them', async () => {
+    await seedStaged(SYNC_PROJECT, {
+      voiceover: new File(['AUDIO'], 'vo.m4a', { type: 'audio/mp4', lastModified: 42 }),
+    });
+
+    let finishSync: () => void = () => {};
+    const syncRunning = new Promise<void>(resolve => { finishSync = resolve; });
+
+    const panel = mountPanel({
+      projectId: SYNC_PROJECT,
+      onVoiceoverRestored: () => true,
+      onApplySync: () => syncRunning,
+    });
+    await settle();
+    expect(await countStagedFiles(SYNC_PROJECT)).toBe(1);
+
+    const applyButton = [...panel.container.querySelectorAll('button')]
+      .find(b => b.textContent?.toLowerCase().includes('apply sync'));
+    expect(applyButton, 'no Apply Sync button rendered').toBeDefined();
+    await act(async () => {
+      applyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 25));
+    });
+
+    // MID-FLIGHT: the run has not finished reading these files yet.
+    expect(
+      await countStagedFiles(SYNC_PROJECT),
+      'staged rows were deleted while Apply Sync was still reading them — a restored ' +
+        'File over a deleted row is unreadable, which is the abort this guards',
+    ).toBe(1);
+
+    finishSync();
+    await settle();
+
+    expect(
+      await countStagedFiles(SYNC_PROJECT),
+      'staged rows were never cleared after the sync finished',
+    ).toBe(0);
+    panel.unmount();
+  });
+});
