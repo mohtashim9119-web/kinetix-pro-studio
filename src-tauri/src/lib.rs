@@ -11,7 +11,7 @@ pub mod fa;
 pub mod fa_dev;
 pub mod fa_timing;
 mod fa_preflight;
-mod fa_production;
+pub mod fa_production;
 mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;

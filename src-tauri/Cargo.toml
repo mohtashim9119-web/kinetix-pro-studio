@@ -105,6 +105,11 @@ path = "tests/fa_durable_wav_live.rs"
 harness = false
 
 [[test]]
+name = "fa_timing_live"
+path = "tests/fa_timing_live.rs"
+harness = false
+
+[[test]]
 name = "models_status_live"
 path = "tests/models_status_live.rs"
 harness = false
