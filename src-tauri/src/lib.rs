@@ -456,6 +456,7 @@ pub fn run() {
             whisper::whisper_transcribe,
             whisper::whisper_stage_audio_raw,
             whisper::whisper_cancel,
+            whisper::whisper_transcribe_attach,
             model_download::whisper_model_status,
             model_download::whisper_model_download,
             model_download::whisper_model_download_cancel,
