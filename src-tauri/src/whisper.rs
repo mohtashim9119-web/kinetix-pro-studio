@@ -190,9 +190,26 @@ const TERMINAL_BUFFER_TTL: Duration = Duration::from_secs(30);
 /// worst-case retention.
 const TERMINAL_BUFFER_MAX_ENTRIES: usize = 16;
 
-/// A terminal event held for a page that may not have attached yet.
-struct RetainedTerminal {
-    event: WhisperEvent,
+/// What is retained for one job key across a page reload.
+///
+/// TWO FIELDS AND NOT TWO MAPS. The terminal event and the last progress
+/// percent have the same key, the same TTL, the same cap and one strict
+/// ordering rule between them (a terminal event supersedes progress — see
+/// `buffer_terminal_at`). Two parallel maps would have to keep all four of
+/// those agreeing by hand; one entry makes them agree by construction.
+struct Retained {
+    /// The most recent `Progress` percent, while the job is still running.
+    ///
+    /// WHY THE NATIVE SIDE HOLDS THIS AT ALL. A reloaded page cannot supply
+    /// it: progress is not persisted anywhere on the frontend (not in the
+    /// project, not in localStorage), and a reload is a brand-new JS context,
+    /// so there is no "last visible percentage" for it to keep. This process
+    /// is the only thing that still knows the number — without it, a
+    /// reattached page has nothing to show until whisper-cli happens to emit
+    /// its next progress line.
+    progress: Option<u8>,
+    /// The terminal event, once one has been emitted.
+    terminal: Option<WhisperEvent>,
     stored_at: Instant,
     /// Insertion order, for the eviction-oldest rule. A monotone counter and
     /// not `stored_at`: two entries can share an `Instant` on a coarse clock,
@@ -200,28 +217,18 @@ struct RetainedTerminal {
     seq: u64,
 }
 
-static TERMINAL_BUFFER: OnceLock<Mutex<HashMap<String, RetainedTerminal>>> = OnceLock::new();
+static TERMINAL_BUFFER: OnceLock<Mutex<HashMap<String, Retained>>> = OnceLock::new();
 static TERMINAL_SEQ: AtomicU64 = AtomicU64::new(0);
 
-fn terminal_buffer() -> &'static Mutex<HashMap<String, RetainedTerminal>> {
+fn terminal_buffer() -> &'static Mutex<HashMap<String, Retained>> {
     TERMINAL_BUFFER.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// Drops everything older than the TTL. Called on every insert and every take,
-/// so an expired entry is never observable and never counts against the cap.
-fn prune_expired(map: &mut HashMap<String, RetainedTerminal>, now: Instant) {
-    map.retain(|_key, held| now.duration_since(held.stored_at) < TERMINAL_BUFFER_TTL);
-}
-
-/// `buffer_terminal` with the clock injected, so a TTL test can place an entry
-/// in the past instead of sleeping for 30 real seconds.
-fn buffer_terminal_at(key: &str, event: WhisperEvent, stored_at: Instant, now: Instant) {
-    let Ok(mut map) = terminal_buffer().lock() else { return };
-    prune_expired(&mut map, now);
-    let seq = TERMINAL_SEQ.fetch_add(1, Ordering::Relaxed);
-    map.insert(key.to_string(), RetainedTerminal { event, stored_at, seq });
-    // Evict oldest-first until the cap holds. A loop and not a single removal:
-    // the cap must hold even if it were ever lowered with entries already in.
+/// Applies the cap, oldest-first. Shared by every insert path so no writer can
+/// forget it.
+fn enforce_cap(map: &mut HashMap<String, Retained>) {
+    // A loop and not a single removal: the cap must hold even if it were ever
+    // lowered with entries already in.
     while map.len() > TERMINAL_BUFFER_MAX_ENTRIES {
         let Some(oldest) = map
             .iter()
@@ -232,6 +239,29 @@ fn buffer_terminal_at(key: &str, event: WhisperEvent, stored_at: Instant, now: I
         };
         map.remove(&oldest);
     }
+}
+
+/// Drops everything older than the TTL. Called on every insert and every take,
+/// so an expired entry is never observable and never counts against the cap.
+fn prune_expired(map: &mut HashMap<String, Retained>, now: Instant) {
+    map.retain(|_key, held| now.duration_since(held.stored_at) < TERMINAL_BUFFER_TTL);
+}
+
+/// `buffer_terminal` with the clock injected, so a TTL test can place an entry
+/// in the past instead of sleeping for 30 real seconds.
+fn buffer_terminal_at(key: &str, event: WhisperEvent, stored_at: Instant, now: Instant) {
+    let Ok(mut map) = terminal_buffer().lock() else { return };
+    prune_expired(&mut map, now);
+    let seq = TERMINAL_SEQ.fetch_add(1, Ordering::Relaxed);
+    // `progress: None` — the terminal event SUPERSEDES any retained percent.
+    // Replaying a stale 58% to a page that is simultaneously being handed the
+    // job's Done would drive the bar backwards from finished, and for a job
+    // that ended in Error it would show progress for a run that failed.
+    map.insert(
+        key.to_string(),
+        Retained { progress: None, terminal: Some(event), stored_at, seq },
+    );
+    enforce_cap(&mut map);
 }
 
 /// Retains a job's terminal event so a page that attaches after it fired still
@@ -263,7 +293,15 @@ fn buffer_terminal(key: &str, event: WhisperEvent) {
 fn take_buffered_terminal_at(key: &str, now: Instant) -> Option<WhisperEvent> {
     let mut map = terminal_buffer().lock().ok()?;
     prune_expired(&mut map, now);
-    map.remove(key).map(|held| held.event)
+    // Removes the ENTRY only when it actually carries a terminal event. A
+    // plain `map.remove(key)` here would also discard a live job's retained
+    // progress on every attach that found no terminal — silently reintroducing
+    // the 0%-flicker this retention exists to prevent, on exactly the path
+    // that is supposed to fix it.
+    if map.get(key).map(|held| held.terminal.is_some()) != Some(true) {
+        return None;
+    }
+    map.remove(key).and_then(|held| held.terminal)
 }
 
 /// Claims the retained terminal event for `key`, if one is still live.
@@ -273,6 +311,72 @@ fn take_buffered_terminal_at(key: &str, now: Instant) -> Option<WhisperEvent> {
 /// attach for the same key sees nothing and correctly reports "no live job".
 fn take_buffered_terminal(key: &str) -> Option<WhisperEvent> {
     take_buffered_terminal_at(key, Instant::now())
+}
+
+/// `record_progress` with the clock injected (see `buffer_terminal_at`).
+fn record_progress_at(key: &str, percent: u8, now: Instant) {
+    let Ok(mut map) = terminal_buffer().lock() else { return };
+    prune_expired(&mut map, now);
+    match map.get_mut(key) {
+        // A job that has already emitted its terminal event never goes back to
+        // reporting progress; ignoring a late Progress here keeps that
+        // one-directional, rather than resurrecting a finished entry.
+        Some(held) if held.terminal.is_some() => {}
+        Some(held) => {
+            held.progress = Some(percent);
+            // `stored_at` is refreshed on every update, so a running job's
+            // entry cannot age out from under it — the TTL measures silence,
+            // not total job length. A long transcription is not a stale entry.
+            held.stored_at = now;
+        }
+        None => {
+            let seq = TERMINAL_SEQ.fetch_add(1, Ordering::Relaxed);
+            map.insert(
+                key.to_string(),
+                Retained { progress: Some(percent), terminal: None, stored_at: now, seq },
+            );
+            enforce_cap(&mut map);
+        }
+    }
+}
+
+/// Retains the latest progress percent for `key`.
+fn record_progress(key: &str, percent: u8) {
+    record_progress_at(key, percent, Instant::now());
+}
+
+/// `last_progress` with the clock injected (see `buffer_terminal_at`).
+fn last_progress_at(key: &str, now: Instant) -> Option<u8> {
+    let mut map = terminal_buffer().lock().ok()?;
+    prune_expired(&mut map, now);
+    map.get(key).and_then(|held| held.progress)
+}
+
+/// The most recent progress percent for `key`, if one is still retained.
+///
+/// PEEKED, NOT TAKEN, unlike the terminal event: the job is still running and
+/// will keep updating this, and a second page attaching needs the same answer
+/// the first got. Deliver-once is a property of the terminal event, where
+/// re-delivery would be wrong; a progress percent is idempotent.
+fn last_progress(key: &str) -> Option<u8> {
+    last_progress_at(key, Instant::now())
+}
+
+/// Drops everything retained for `key`.
+fn forget_retained(key: &str) {
+    if let Ok(mut map) = terminal_buffer().lock() {
+        map.remove(key);
+    }
+}
+
+/// Emits a progress update: retained first, then sent.
+///
+/// Retaining BEFORE the send, for the same reason `emit_terminal` does — the
+/// send is best-effort and races the webview teardown, so its outcome says
+/// nothing about whether a page saw the number.
+fn emit_progress(sink: &WhisperSink, key: &str, percent: u8) {
+    record_progress(key, percent);
+    sink.send(WhisperEvent::Progress { percent });
 }
 
 /// Emits a job's terminal event: retained first, then sent.
@@ -313,7 +417,15 @@ fn dispatch_terminal(
         // a failure for a job the user deliberately stopped, instead of the
         // "no live job" that lets it start fresh. The early return is
         // load-bearing, not an omission.
-        130 | 143 => return false,
+        //
+        // The retained PROGRESS is dropped here rather than left to expire:
+        // the job is over, so a percent for it is dead state, and clearing it
+        // at the moment of cancellation is what makes "a cancelled job retains
+        // nothing" true immediately instead of TTL-eventually.
+        130 | 143 => {
+            forget_retained(key);
+            return false;
+        }
         // -1073741795 == 0xC000001D == STATUS_ILLEGAL_INSTRUCTION (Windows):
         // the whisper binary executed a CPU instruction (e.g. AVX2/FMA) this
         // machine doesn't support. Surface a human-readable cause instead of
@@ -372,8 +484,25 @@ pub(crate) fn attach_transcription(key: &str, on_event: Channel<WhisperEvent>) -
         None => match live {
             Some(sink) => {
                 sink.replace(on_event);
+                // IMMEDIATELY RESUME AT THE REAL PERCENT. Without this the
+                // reattached page has no number at all until whisper-cli emits
+                // its next progress line, so the UI shows its initial 0% in
+                // the meantime and then jumps. The frontend cannot supply the
+                // value itself — progress is persisted nowhere, and a reload
+                // is a fresh JS context — so this process replaying it is the
+                // only way a resumed bar can start where the job actually is.
+                //
+                // Sent AFTER the swap, so it lands on the new page's channel
+                // and not the dead one it replaced.
+                if let Some(percent) = last_progress(key) {
+                    sink.send(WhisperEvent::Progress { percent });
+                }
                 true
             }
+            // No live job and no retained terminal: any progress still sitting
+            // here is orphaned (a panic mid-loop), and replaying it would show
+            // a moving bar for a job that is gone. Report no-live-job and let
+            // the frontend start fresh.
             None => false,
         },
     }
@@ -813,7 +942,7 @@ pub async fn whisper_transcribe(
                         } else {
                             0
                         };
-                        sink.send(WhisperEvent::Progress { percent });
+                        emit_progress(&sink, &job_key, percent);
                     }
                     if !line.is_empty() {
                         accumulated.push(line);
@@ -1415,6 +1544,211 @@ mod in_flight_tests {
             "and they must be the NEWEST ones — evicting newest-first would \
              drop the entry a page is most likely about to attach for"
         );
+    }
+
+    // -----------------------------------------------------------------
+    // Resuming a reattached page at the real percent (the 0% flicker)
+    // -----------------------------------------------------------------
+
+    /// The percent carried by the single event a channel recorded.
+    fn recorded_percent(raw: &str) -> Option<u8> {
+        let marker = "\"percent\":";
+        let start = raw.find(marker)? + marker.len();
+        let rest = &raw[start..];
+        let end = rest.find(|c: char| !c.is_ascii_digit())?;
+        rest[..end].parse().ok()
+    }
+
+    #[test]
+    fn a_reattached_page_resumes_at_the_last_known_percent() {
+        // THE DEFECT THIS PINS. Reload at 37%, click Transcribe: the page has
+        // no percent of its own (progress is persisted nowhere and a reload is
+        // a fresh JS context), so it painted its initial 0% and sat there
+        // until whisper-cli's next progress line jumped it to 58%. Attach must
+        // hand it the real number straight away.
+        let key = "proj-resume";
+        let sink = noop_sink();
+        let _guard = try_acquire_transcription(key, sink.clone()).expect("claim");
+
+        emit_progress(&sink, key, 37);
+        emit_progress(&sink, key, 58);
+
+        let (page, log) = recording_channel();
+        assert!(attach_transcription(key, page), "the job is live");
+
+        let received = log.lock().unwrap().clone();
+        assert_eq!(
+            received.len(),
+            1,
+            "the reattached page must be given a percent immediately, without \
+             waiting for whisper-cli's next progress line — got {received:?}"
+        );
+        assert_eq!(
+            recorded_percent(&received[0]),
+            Some(58),
+            "and it must be the LATEST percent, not the first one seen"
+        );
+    }
+
+    #[test]
+    fn a_job_with_no_progress_yet_replays_nothing() {
+        // The complement: during whisper-cli's model load no progress line has
+        // been printed, so there is genuinely nothing to resume from.
+        // Inventing a 0 here would be indistinguishable from the flicker.
+        let key = "proj-resume-none";
+        let _guard = try_acquire_transcription(key, noop_sink()).expect("claim");
+
+        let (page, log) = recording_channel();
+        assert!(attach_transcription(key, page), "still a live job");
+        assert!(
+            log.lock().unwrap().is_empty(),
+            "no progress seen yet means no progress replayed"
+        );
+    }
+
+    #[test]
+    fn a_terminal_event_supersedes_a_retained_percent() {
+        // Ordering rule. A page attaching after the job finished must receive
+        // the Done ALONE — replaying a stale 58% alongside it would drive the
+        // bar backwards from finished, and for an Error would show progress
+        // for a run that failed.
+        let key = "proj-resume-superseded";
+        let sink = noop_sink();
+        let guard = try_acquire_transcription(key, sink.clone()).expect("claim");
+        emit_progress(&sink, key, 58);
+        assert_eq!(last_progress(key), Some(58), "retained while running");
+        assert!(dispatch_terminal(&sink, key, 0, &stdout_lines(), Some("en".into())));
+        assert_eq!(
+            last_progress(key),
+            None,
+            "the terminal event must clear the retained percent"
+        );
+        drop(guard);
+
+        let (page, log) = recording_channel();
+        assert!(attach_transcription(key, page));
+        let received = log.lock().unwrap().clone();
+        assert_eq!(received.len(), 1, "exactly the terminal event, nothing else");
+        assert!(received[0].contains("Done"));
+    }
+
+    #[test]
+    fn a_late_progress_cannot_resurrect_a_finished_job() {
+        // Provenance is one-directional: once terminal, always terminal. A
+        // straggling Progress arriving after Done must not put the entry back
+        // into a running-looking state, or the next attach would resume a
+        // finished job's bar instead of handing over its result.
+        let key = "proj-resume-late";
+        let sink = noop_sink();
+        let guard = try_acquire_transcription(key, sink.clone()).expect("claim");
+        assert!(dispatch_terminal(&sink, key, 0, &stdout_lines(), Some("en".into())));
+        emit_progress(&sink, key, 99);
+        assert_eq!(last_progress(key), None, "the late percent must be ignored");
+        drop(guard);
+
+        let (page, log) = recording_channel();
+        assert!(attach_transcription(key, page));
+        let received = log.lock().unwrap().clone();
+        assert_eq!(received.len(), 1);
+        assert!(received[0].contains("Done"), "still the terminal event");
+    }
+
+    #[test]
+    fn a_retained_percent_is_peeked_not_consumed() {
+        // Unlike the terminal event, progress is idempotent: two pages
+        // attaching in succession (a double reload) must both resume at the
+        // real percent. Consuming it would leave the second at 0%.
+        let key = "proj-resume-twice";
+        let sink = noop_sink();
+        let _guard = try_acquire_transcription(key, sink.clone()).expect("claim");
+        emit_progress(&sink, key, 42);
+
+        for attempt in 1..=2 {
+            let (page, log) = recording_channel();
+            assert!(attach_transcription(key, page));
+            let received = log.lock().unwrap().clone();
+            assert_eq!(
+                recorded_percent(&received[0]),
+                Some(42),
+                "attach #{attempt} must also resume at the real percent"
+            );
+        }
+    }
+
+    #[test]
+    fn an_orphaned_percent_is_never_replayed_without_a_live_job() {
+        // A job that died without reaching an emission site (a panic mid-loop)
+        // leaves a percent behind with no claim and no terminal event.
+        // Replaying it would animate a bar for a job that is gone; the caller
+        // must be told there is nothing running so it starts fresh.
+        let key = "proj-resume-orphan";
+        {
+            let _guard = try_acquire_transcription(key, noop_sink()).expect("claim");
+            record_progress(key, 71);
+        }
+        assert!(!is_transcription_in_flight(key));
+        assert_eq!(last_progress(key), Some(71), "the orphan is still in the map");
+
+        let (page, log) = recording_channel();
+        assert!(
+            !attach_transcription(key, page),
+            "no live job and no terminal event means no live job"
+        );
+        assert!(log.lock().unwrap().is_empty(), "and nothing is replayed");
+    }
+
+    #[test]
+    fn a_cancelled_job_retains_no_percent_either() {
+        let key = "proj-resume-cancelled";
+        let sink = noop_sink();
+        let guard = try_acquire_transcription(key, sink.clone()).expect("claim");
+        emit_progress(&sink, key, 58);
+        assert_eq!(last_progress(key), Some(58));
+        assert!(!dispatch_terminal(&sink, key, 143, &stdout_lines(), None));
+        assert_eq!(
+            last_progress(key),
+            None,
+            "cancelling must drop the percent immediately, not leave it to expire"
+        );
+        drop(guard);
+    }
+
+    #[test]
+    fn a_running_jobs_entry_does_not_age_out_while_it_reports() {
+        // The TTL measures SILENCE, not total job length: a transcription can
+        // legitimately run far longer than the window, and its percent must
+        // still be there for a reload at minute ten. Each update refreshes
+        // `stored_at`, so only a job that has gone quiet for the whole TTL
+        // ages out.
+        // THE STEPS MUST BE SHORTER THAN THE TTL AND SUM TO LONGER THAN IT.
+        // Measured, not assumed: an earlier version of this test jumped
+        // straight to 4x the TTL and stayed GREEN when the refresh was
+        // deleted, because at that distance `record_progress_at` prunes the
+        // stale entry and re-inserts a fresh one — so it exercised the insert
+        // path and never the refresh it names. Each step here stays inside the
+        // window (so nothing is pruned and the update must do the refreshing),
+        // while two of them exceed it (so an un-refreshed entry is expired by
+        // the time it is read).
+        let key = "proj-resume-long";
+        let step = TERMINAL_BUFFER_TTL * 3 / 5;
+        let t0 = Instant::now();
+        record_progress_at(key, 10, t0);
+
+        let t1 = t0 + step;
+        record_progress_at(key, 20, t1);
+
+        let t2 = t1 + step;
+        assert_eq!(
+            last_progress_at(key, t2),
+            Some(20),
+            "a job that kept reporting must keep its percent past the TTL — \
+             the window measures SILENCE, not total job length, or a reload at \
+             minute ten of a long transcription would resume at nothing"
+        );
+
+        // ...but one that goes silent for a full window does expire.
+        let silent = t2 + TERMINAL_BUFFER_TTL + Duration::from_secs(1);
+        assert_eq!(last_progress_at(key, silent), None);
     }
 
     #[test]
