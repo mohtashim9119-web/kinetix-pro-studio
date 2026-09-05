@@ -21,6 +21,11 @@
 
 ---
 
+## WS3 — TEAM RELEASE BLOCKERS
+Goal: Clear high-impact rendering and alignment performance bottlenecks to ship an unblocked internal build.
+1. [OPEN] Export Watchdog Timeout: Heavy or long export projects (>100 segments @ 1080p) stall worker processing enough to trigger the 30s watchdog abort. Needs threshold bumped from 30s to 90s, plus active progress heartbeat pings injected inside frame-rendering loops to maintain watchdog reset activity.
+2. [OPEN] Forced Alignment (FA) Performance: Running FA ON sync currently takes ~1.5x total audio duration due to heavy IPC serialization overhead and redundant PCM buffer decoding. Needs direct filesystem path IPC in fa_inference.rs and tauriFfmpeg.ts to bypass Base64 encoding and eliminate duplicate disk reads.
+
 ## WS1 — Sync Pipeline Rewrite
 Started: 2026-08-04 | Status: active — the primary workstream as of 2026-09-03 (WS2 closed). Phase 3 in progress, accuracy bar met.
 
@@ -147,7 +152,7 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 ## WS2 — Non-Sync Work
 Status: OPEN — the general workstream for all development outside the sync pipeline (WS1). Active tasks live in the five sections below; completed items are recorded in `docs/history-2.md`.
 
-Baselines (76e99b6): vitest 3143 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden replay 6/6; K13 3/3; cargo 185/0/1 superseded — now 192/0/1 default and 274/0/26 with `--features fa-inference`.
+Baselines (d0855df): vitest 3143 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden replay 6/6; K13 3/3; cargo 208/0/1 default and 290/0/26 with --features fa-inference.
 
 ### 1. Finished but pending verification
 
@@ -168,7 +173,8 @@ Baselines (76e99b6): vitest 3143 passed / 77 skipped / 0 failed; gaplessInvarian
 
 ### 4. Open bugs
 
-(none)
+* [OPEN · NON-BLOCKING] Stale-Replay Window: Attach within 30s TTL replays buffered terminal event from Rust memory rather than starting a new job. Harmless for same file, un-ackable across IPC.
+* [OPEN · NON-BLOCKING] Whisper Panic-Path Gap: If Rust panics prior to event emission, claim drops without buffering. Job promise rejects in-page; reloading frontend sees false and starts fresh.
 
 ### 5. Deferred tasks
 
