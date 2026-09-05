@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tauri::ipc::Channel;
 use tauri::Manager;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
@@ -153,6 +155,182 @@ pub(crate) fn try_acquire_transcription(
     IN_FLIGHT.try_acquire(key.to_string(), sink)
 }
 
+// ---------------------------------------------------------------------------
+// Retained terminal events (the reload hole)
+// ---------------------------------------------------------------------------
+
+/// How long a terminal event is retained for a page that has not attached yet.
+///
+/// WHY A TTL AND NOT ONLY AN LRU. The thing being covered is one specific,
+/// short interval: a WKWebView tearing down and a fresh page mounting and
+/// running its attach probe. That is sub-second in practice and a couple of
+/// seconds at worst, so 30s is roughly an order of magnitude of headroom over
+/// the event this buffer exists for. It is deliberately not longer: a retained
+/// event is also a STALENESS window (see `buffer_terminal`'s note on the
+/// already-delivered case), and every second past what a reload actually needs
+/// buys nothing and widens that.
+const TERMINAL_BUFFER_TTL: Duration = Duration::from_secs(30);
+
+/// Hard cap on retained entries, enforced on every insert.
+///
+/// WHY BOTH A TTL AND A CAP. The TTL bounds how LONG an entry lives; it does
+/// not by itself bound how MANY exist, because expiry is only noticed when
+/// something touches the map. A `Done` carries a full `Vec<TranscriptToken>` —
+/// thousands of tokens for a long voiceover — so "bounded eventually" is not
+/// good enough for the memory question and the cap answers it unconditionally:
+/// the map can never hold more than this many entries at any instant,
+/// regardless of how many jobs terminate or whether anything ever attaches.
+///
+/// WHY 16. An entry exists only for a job that has TERMINATED and not yet been
+/// claimed, keyed by `${projectId}::${fileIdentity}` — so reaching the cap
+/// means 16 distinct project/file pairs finishing inside one 30s window with
+/// no page attaching to any of them. The app transcribes one voiceover at a
+/// time and the registry above refuses a duplicate per key, so real
+/// concurrency is 1-2; 16 is far above anything reachable and still a trivial
+/// worst-case retention.
+const TERMINAL_BUFFER_MAX_ENTRIES: usize = 16;
+
+/// A terminal event held for a page that may not have attached yet.
+struct RetainedTerminal {
+    event: WhisperEvent,
+    stored_at: Instant,
+    /// Insertion order, for the eviction-oldest rule. A monotone counter and
+    /// not `stored_at`: two entries can share an `Instant` on a coarse clock,
+    /// and an eviction that cannot break a tie is not a total order.
+    seq: u64,
+}
+
+static TERMINAL_BUFFER: OnceLock<Mutex<HashMap<String, RetainedTerminal>>> = OnceLock::new();
+static TERMINAL_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn terminal_buffer() -> &'static Mutex<HashMap<String, RetainedTerminal>> {
+    TERMINAL_BUFFER.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Drops everything older than the TTL. Called on every insert and every take,
+/// so an expired entry is never observable and never counts against the cap.
+fn prune_expired(map: &mut HashMap<String, RetainedTerminal>, now: Instant) {
+    map.retain(|_key, held| now.duration_since(held.stored_at) < TERMINAL_BUFFER_TTL);
+}
+
+/// `buffer_terminal` with the clock injected, so a TTL test can place an entry
+/// in the past instead of sleeping for 30 real seconds.
+fn buffer_terminal_at(key: &str, event: WhisperEvent, stored_at: Instant, now: Instant) {
+    let Ok(mut map) = terminal_buffer().lock() else { return };
+    prune_expired(&mut map, now);
+    let seq = TERMINAL_SEQ.fetch_add(1, Ordering::Relaxed);
+    map.insert(key.to_string(), RetainedTerminal { event, stored_at, seq });
+    // Evict oldest-first until the cap holds. A loop and not a single removal:
+    // the cap must hold even if it were ever lowered with entries already in.
+    while map.len() > TERMINAL_BUFFER_MAX_ENTRIES {
+        let Some(oldest) = map
+            .iter()
+            .min_by_key(|(_k, held)| held.seq)
+            .map(|(k, _held)| k.clone())
+        else {
+            break;
+        };
+        map.remove(&oldest);
+    }
+}
+
+/// Retains a job's terminal event so a page that attaches after it fired still
+/// receives it.
+///
+/// CALLED FROM THE EMISSION SITES ONLY, AND BEFORE THE SEND. Buffering first
+/// is what makes this cover the case it exists for: the send races the webview
+/// teardown and `EventSink::send` is best-effort by design, so its success
+/// tells us nothing about whether a page actually observed the event. Writing
+/// the buffer first means the event is retained no matter which way that race
+/// lands.
+///
+/// THE COST, STATED. On the ordinary path the page IS alive, receives the
+/// event, and the retained copy is never claimed — it simply expires. Until it
+/// does, a fresh attach for the SAME key inside the TTL is answered from the
+/// buffer instead of starting a new job. The key is
+/// `${projectId}::${fileIdentity}`, so that can only ever replay the transcript
+/// of the identical file for the identical project — the same result a rerun
+/// would produce — and the window is bounded by `TERMINAL_BUFFER_TTL`.
+///
+/// NOT CALLED FOR A CANCELLED JOB, and not for the duplicate-job refusal — see
+/// both call sites in `whisper_transcribe` for why each of those must stay out.
+fn buffer_terminal(key: &str, event: WhisperEvent) {
+    let now = Instant::now();
+    buffer_terminal_at(key, event, now, now);
+}
+
+/// `take_buffered_terminal` with the clock injected (see `buffer_terminal_at`).
+fn take_buffered_terminal_at(key: &str, now: Instant) -> Option<WhisperEvent> {
+    let mut map = terminal_buffer().lock().ok()?;
+    prune_expired(&mut map, now);
+    map.remove(key).map(|held| held.event)
+}
+
+/// Claims the retained terminal event for `key`, if one is still live.
+///
+/// DELIVER-ONCE, by removal under the same lock the expiry check runs under:
+/// the first caller to observe the entry takes it out of the map, so a second
+/// attach for the same key sees nothing and correctly reports "no live job".
+fn take_buffered_terminal(key: &str) -> Option<WhisperEvent> {
+    take_buffered_terminal_at(key, Instant::now())
+}
+
+/// Emits a job's terminal event: retained first, then sent.
+fn emit_terminal(sink: &WhisperSink, key: &str, event: WhisperEvent) {
+    buffer_terminal(key, event.clone());
+    sink.send(event);
+}
+
+/// Decides and emits the terminal event for a finished whisper-cli process.
+/// Returns whether anything was emitted — `false` is the silent cancel arm.
+///
+/// EXTRACTED FROM `whisper_transcribe`'S EVENT LOOP RATHER THAN LEFT INLINE,
+/// for reach. `whisper_transcribe` is an async command needing an `AppHandle`
+/// and a real sidecar, so no unit test can drive its `Terminated` arm; with
+/// the decision inline, a test could only reach `emit_terminal` by calling it
+/// directly, and would then keep passing if the call site were changed back to
+/// a plain `sink.send` — measured, not assumed: that exact mutation left the
+/// first version of this module's buffer tests green. Everything that decides
+/// WHICH terminal event a exit code produces, and whether it is retained,
+/// therefore lives here, where `terminal_dispatch_tests` can mutate-test it.
+fn dispatch_terminal(
+    sink: &WhisperSink,
+    key: &str,
+    code: i32,
+    accumulated: &[String],
+    detected_language: Option<String>,
+) -> bool {
+    let event = match code {
+        0 => WhisperEvent::Done {
+            tokens: parse_stdout_tokens(accumulated),
+            detected_language,
+        },
+        // SIGINT (130) or SIGTERM (143) — user cancelled; silent.
+        //
+        // SILENT MEANS NOT RETAINED EITHER. A cancellation is the one terminal
+        // exit with no terminal EVENT, and retaining something for it would
+        // invent one: the next page to attach would be handed a completion or
+        // a failure for a job the user deliberately stopped, instead of the
+        // "no live job" that lets it start fresh. The early return is
+        // load-bearing, not an omission.
+        130 | 143 => return false,
+        // -1073741795 == 0xC000001D == STATUS_ILLEGAL_INSTRUCTION (Windows):
+        // the whisper binary executed a CPU instruction (e.g. AVX2/FMA) this
+        // machine doesn't support. Surface a human-readable cause instead of
+        // the raw code.
+        -1073741795 => WhisperEvent::Error {
+            message: "Transcription failed: your CPU may not support required \
+                      instructions. This should be fixed by a future update."
+                .to_string(),
+        },
+        other => WhisperEvent::Error {
+            message: format!("whisper exited with code {other}"),
+        },
+    };
+    emit_terminal(sink, key, event);
+    true
+}
+
 /// Points a running job's event stream at a freshly loaded page's channel.
 ///
 /// Returns `false` when nothing is in flight for this key, which the caller
@@ -162,12 +340,42 @@ pub(crate) fn try_acquire_transcription(
 /// The old page's channel is REPLACED, not duplicated — one job, one place
 /// its events go, exactly as on the download path.
 pub(crate) fn attach_transcription(key: &str, on_event: Channel<WhisperEvent>) -> bool {
-    match IN_FLIGHT.attach(key) {
-        Some(sink) => {
-            sink.replace(on_event);
+    let live = IN_FLIGHT.attach(key);
+
+    // THE BUFFER IS CONSULTED AFTER THE LOOKUP, NEVER BEFORE — and that
+    // ordering is what closes the narrowest form of the reload hole.
+    // `IN_FLIGHT.attach` clones the `Arc` out from under the registry lock and
+    // hands it back; the swap happens afterwards, on the sink's own mutex. So
+    // a job can emit its terminal event into the OLD channel in the gap
+    // between those two steps and then drop its guard: the lookup already
+    // succeeded, the swap lands on a sink nobody will send through again, and
+    // the fresh page would be told `true` having received nothing. Taking the
+    // retained event here, after the swap, covers that interleaving as well as
+    // the ordinary "the job finished before the page came back" one, because
+    // in both the event is in the buffer by the time this line runs.
+    match take_buffered_terminal(key) {
+        Some(event) => {
+            match live {
+                // Terminated-but-not-yet-released: swap first so nothing the
+                // job still emits goes to the dead page, then hand over the
+                // retained event.
+                Some(sink) => {
+                    sink.replace(on_event);
+                    sink.send(event);
+                }
+                // Fully finished and released. There is no sink left to swap,
+                // so the event goes straight down this page's own channel.
+                None => WhisperSink::new(on_event).send(event),
+            }
             true
         }
-        None => false,
+        None => match live {
+            Some(sink) => {
+                sink.replace(on_event);
+                true
+            }
+            None => false,
+        },
     }
 }
 
@@ -180,12 +388,41 @@ pub(crate) fn attach_transcription(key: &str, on_event: Channel<WhisperEvent>) -
 /// delta), so events missed while no page was attached cost nothing — the next
 /// one carries the full state.
 ///
-/// The gap is a job that TERMINATES in the window between the reload and this
-/// call: the claim is gone, this returns `false`, and `Done`'s token payload
-/// is not recoverable, because nothing buffers a terminal event. That is not a
-/// regression (before this change a reload lost the job entirely) but it is
-/// also not fixed here — unlike a model download, whose completion is
-/// observable on disk afterwards, a transcript exists only in the event.
+/// A job that TERMINATES in the window between the reload and this call used
+/// to be the gap: the claim was gone, this returned `false`, and `Done`'s
+/// token payload was unrecoverable, because nothing retained a terminal event
+/// — unlike a model download, whose completion is observable on disk
+/// afterwards, a transcript exists only in the event. That is what
+/// `buffer_terminal`/`take_buffered_terminal` above now close. Such a call
+/// returns `true` AND delivers the retained event down the channel it was
+/// handed, so the caller settles rather than sitting at whatever percent it
+/// last saw.
+///
+/// THIS THEREFORE RETURNS `true` FOR AN ALREADY-FINISHED JOB, which is a real
+/// change in what the boolean means: it now says "this page has been connected
+/// to that job's outcome", not "a process is still running". The frontend's
+/// `attach false -> start a transcribe` sequence is unaffected because the two
+/// answers stay disjoint and exhaustive — `true` is only ever returned
+/// together with either a live sink or a delivered terminal event, so there is
+/// no path on which a caller is told `true` and then hears nothing.
+///
+/// WHAT STILL RETURNS `false`, correctly:
+///   * a key that never ran;
+///   * a job cancelled by the user (exit 130/143), which emits and retains
+///     nothing by design;
+///   * a second attach for a key whose retained event the first already
+///     claimed (deliver-once);
+///   * an attach later than `TERMINAL_BUFFER_TTL` after the job finished.
+/// In every one of those the caller starts a fresh transcription, exactly as
+/// before this change.
+///
+/// KNOWN GAP. A job that dies WITHOUT reaching an emission site — a panic in
+/// the event loop, or the `?` on `model_path`/the state lock — releases its
+/// claim through `InFlightGuard::drop` and retains nothing, so the key is both
+/// absent from the registry and unbuffered. That is not a hang: `whisper_
+/// transcribe`'s `Err` rejects the in-page promise, and a page that reloads
+/// past it is told `false` and starts a new job. The state is only reachable
+/// with no page attached, and its resolution is the correct one.
 #[tauri::command]
 pub fn whisper_transcribe_attach(
     job_key: Option<String>,
@@ -460,6 +697,13 @@ pub async fn whisper_transcribe(
             let msg = in_flight_refusal(&job_key);
             // Both an event AND an `Err`: a caller watching only the channel
             // still learns why nothing happened.
+            //
+            // DELIBERATELY `sink.send` AND NOT `emit_terminal`. This is not
+            // this key's terminal event — it is a statement about a job that
+            // is still RUNNING under that key. Retaining it would hand the
+            // next page to attach an "already running" Error for a job that is
+            // alive and about to report its own real result, turning a
+            // successful reattach into a spurious failure.
             sink.send(WhisperEvent::Error { message: msg.clone() });
             return Err(msg);
         }
@@ -478,7 +722,7 @@ pub async fn whisper_transcribe(
     let wav_path = tmp_dir.join("input_16k.wav");
     if let Err(e) = transcode_to_wav(&app, &audio_path, &wav_path).await {
         let _ = fs::remove_dir_all(&tmp_dir);
-        sink.send(WhisperEvent::Error { message: e });
+        emit_terminal(&sink, &job_key, WhisperEvent::Error { message: e });
         return Ok(());
     }
 
@@ -625,32 +869,17 @@ pub async fn whisper_transcribe(
                 }
                 let _ = fs::remove_dir_all(&tmp_dir);
 
-                let code = status.code.unwrap_or(-1);
-                match code {
-                    0 => {
-                        let tokens = parse_stdout_tokens(&accumulated);
-                        sink.send(WhisperEvent::Done { tokens, detected_language });
-                    }
-                    // SIGINT (130) or SIGTERM (143) — user cancelled; silent.
-                    130 | 143 => {}
-                    // -1073741795 == 0xC000001D == STATUS_ILLEGAL_INSTRUCTION
-                    // (Windows): the whisper binary executed a CPU instruction
-                    // (e.g. AVX2/FMA) this machine doesn't support. Surface a
-                    // human-readable cause instead of the raw code.
-                    -1073741795 => {
-                        sink.send(WhisperEvent::Error {
-                            message: "Transcription failed: your CPU may not support \
-                                      required instructions. This should be fixed by a \
-                                      future update."
-                                .to_string(),
-                        });
-                    }
-                    other => {
-                        sink.send(WhisperEvent::Error {
-                            message: format!("whisper exited with code {other}"),
-                        });
-                    }
-                }
+                // Every decision this arm used to make inline now lives in
+                // `dispatch_terminal`, so it can be unit-tested — see its doc
+                // comment for why that extraction was necessary rather than
+                // cosmetic.
+                dispatch_terminal(
+                    &sink,
+                    &job_key,
+                    status.code.unwrap_or(-1),
+                    &accumulated,
+                    detected_language,
+                );
                 break;
             }
             _ => {}
@@ -944,6 +1173,311 @@ mod in_flight_tests {
         assert!(
             try_acquire_transcription(key, noop_sink()).is_some(),
             "the key must be reclaimable after every one of those exits"
+        );
+    }
+
+    // -----------------------------------------------------------------
+    // Retained terminal events (the reload hole)
+    // -----------------------------------------------------------------
+    //
+    // Every test below drives the real `attach_transcription` — the function
+    // `whisper_transcribe_attach` is a one-line wrapper over — and asserts on
+    // what a recording channel ACTUALLY received, not merely on the boolean.
+    // A test that checked only the return value would pass on the exact bug
+    // this buffer exists to fix: attach saying `true` while the page hears
+    // nothing and hangs at its last percent.
+
+    /// whisper-cli stdout for one token, in the `-ml 1` bracketed form
+    /// `parse_stdout_tokens` consumes — real input, so a `Done` built from it
+    /// carries a real payload rather than an empty vector that would make the
+    /// "did the tokens survive" assertions vacuous.
+    fn stdout_lines() -> Vec<String> {
+        vec!["[00:00:00.000 --> 00:00:01.000]   hello".to_string()]
+    }
+
+    /// Runs one job to a given whisper-cli EXIT CODE through the same
+    /// `dispatch_terminal` the command's event loop calls, then releases the
+    /// claim — i.e. leaves exactly the state a reloading page finds.
+    ///
+    /// Deliberately NOT a direct `emit_terminal` call: going through the real
+    /// decision point is what makes these tests notice if the emission site
+    /// stops retaining. (Measured — with the helper calling `emit_terminal`
+    /// directly, reverting the `Done` site to a plain `sink.send` left all of
+    /// them green.)
+    fn run_job_to_exit(key: &str, code: i32) -> bool {
+        let guard = try_acquire_transcription(key, noop_sink()).expect("claim");
+        let emitted =
+            dispatch_terminal(&noop_sink(), key, code, &stdout_lines(), Some("en".into()));
+        drop(guard);
+        emitted
+    }
+
+    /// The common case: a job that finished successfully.
+    fn run_job_to_done(key: &str) {
+        assert!(run_job_to_exit(key, 0), "exit 0 must emit a terminal event");
+    }
+
+    /// A `Done` as `dispatch_terminal` would build it, for the tests that need
+    /// to seed the buffer directly (the TTL and cap ones, which are about the
+    /// retention policy rather than the emission site).
+    fn done_event() -> WhisperEvent {
+        WhisperEvent::Done {
+            tokens: parse_stdout_tokens(&stdout_lines()),
+            detected_language: Some("en".into()),
+        }
+    }
+
+    #[test]
+    fn a_page_attaching_after_done_fired_receives_the_retained_done() {
+        // THE DEFECT THIS PINS. The terminal event fires while the webview is
+        // tearing down; the fresh page attaches to a job whose claim is
+        // already gone. Before the buffer this returned `false` with the
+        // transcript unrecoverable, and the UI sat at its last percent
+        // forever.
+        let key = "proj-late-attach";
+        run_job_to_done(key);
+        assert!(
+            !is_transcription_in_flight(key),
+            "the job must be fully terminated and released — otherwise this \
+             test is exercising the live-sink path, not the buffer"
+        );
+
+        let (page, log) = recording_channel();
+        assert!(attach_transcription(key, page), "a retained Done must be attachable");
+
+        let received = log.lock().unwrap().clone();
+        assert_eq!(received.len(), 1, "expected exactly the retained terminal event");
+        assert!(
+            received[0].contains("Done") && received[0].contains("hello"),
+            "the page must receive the Done WITH its token payload — a bare \
+             `true` with no event is the hang this fixes; got {:?}",
+            received[0]
+        );
+    }
+
+    #[test]
+    fn a_retained_event_is_delivered_exactly_once() {
+        // Deliver-once, stated as the frontend sees it: the first attach is a
+        // reattach, the second is "nothing running" and must lead to a fresh
+        // transcribe rather than a replay.
+        let key = "proj-deliver-once";
+        run_job_to_done(key);
+
+        let (first_page, first_log) = recording_channel();
+        assert!(attach_transcription(key, first_page));
+        assert_eq!(first_log.lock().unwrap().len(), 1);
+
+        let (second_page, second_log) = recording_channel();
+        assert!(
+            !attach_transcription(key, second_page),
+            "the second attach for a claimed key must report NO LIVE JOB — \
+             returning true here would strand the page: the event is gone, so \
+             nothing would ever arrive on that channel"
+        );
+        assert!(
+            second_log.lock().unwrap().is_empty(),
+            "and it must receive nothing at all"
+        );
+    }
+
+    #[test]
+    fn a_retained_event_expires_and_then_reports_no_live_job() {
+        // The bound must produce "start a fresh job", never a hang. The clock
+        // is injected rather than slept through — a 30s sleep in the suite
+        // would be its own defect.
+        let key = "proj-ttl";
+        let now = Instant::now();
+        let stale = now
+            .checked_sub(TERMINAL_BUFFER_TTL + Duration::from_secs(1))
+            .expect("clock far enough from its epoch to place an entry in the past");
+
+        buffer_terminal_at(key, done_event(), stale, now);
+        assert!(
+            take_buffered_terminal_at(key, now).is_none(),
+            "an entry older than the TTL must not be observable"
+        );
+
+        let (page, log) = recording_channel();
+        assert!(
+            !attach_transcription(key, page),
+            "past the window the answer is no-live-job, so the frontend starts \
+             a new transcription"
+        );
+        assert!(log.lock().unwrap().is_empty());
+
+        // The complement, so this test cannot pass by the buffer being broken
+        // outright: inside the window the same entry IS delivered.
+        let fresh_key = "proj-ttl-inside";
+        buffer_terminal_at(fresh_key, done_event(), now, now);
+        assert!(
+            take_buffered_terminal_at(fresh_key, now).is_some(),
+            "an entry inside the TTL must still be claimable"
+        );
+    }
+
+    #[test]
+    fn an_error_terminal_event_is_retained_and_replayed_like_done() {
+        // A failed run must reach the reloaded page too: a page told `false`
+        // for a job that already failed starts a second one that fails the
+        // same way, instead of reporting the failure it could have had.
+        let key = "proj-late-error";
+        assert!(run_job_to_exit(key, 3), "a nonzero exit must emit an Error");
+
+        let (page, log) = recording_channel();
+        assert!(attach_transcription(key, page));
+        let received = log.lock().unwrap().clone();
+        assert_eq!(received.len(), 1);
+        assert!(
+            received[0].contains("Error") && received[0].contains("code 3"),
+            "the failure text must survive the replay — got {:?}",
+            received[0]
+        );
+
+        // And it is deliver-once on this path too.
+        let (again, again_log) = recording_channel();
+        assert!(!attach_transcription(key, again));
+        assert!(again_log.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_cancelled_job_retains_nothing() {
+        // Exit 143 (SIGTERM, `whisper_cancel`) and 130 (SIGINT) take the
+        // silent arm of the terminal `match`: no event is emitted, so
+        // `emit_terminal` is never reached and nothing can be retained. The
+        // test asserts the OUTCOME rather than the arm — a future refactor
+        // that routed cancellation through an event would fail here, which is
+        // the point.
+        for code in [143, 130] {
+            let key = format!("proj-cancelled-{code}");
+            let (watching, watching_log) = recording_channel();
+            let sink = sink_for(watching);
+            let guard = try_acquire_transcription(&key, sink.clone()).expect("claim");
+
+            assert!(
+                !dispatch_terminal(&sink, &key, code, &stdout_lines(), Some("en".into())),
+                "exit {code} must emit NOTHING — it is the user's own cancel"
+            );
+            assert!(
+                watching_log.lock().unwrap().is_empty(),
+                "not even to the page that was watching"
+            );
+            drop(guard);
+
+            let (page, log) = recording_channel();
+            assert!(
+                !attach_transcription(&key, page),
+                "a deliberately cancelled job must look like no job at all — \
+                 replaying a completion or a failure for it would contradict \
+                 the user's own cancel"
+            );
+            assert!(log.lock().unwrap().is_empty());
+            assert!(take_buffered_terminal(&key).is_none(), "and nothing is retained");
+        }
+
+        // The control: the SAME helper with a non-cancel code does retain, so
+        // this test cannot pass by retention being broken for every code.
+        let control = "proj-cancelled-control";
+        run_job_to_done(control);
+        assert!(take_buffered_terminal(control).is_some());
+    }
+
+    #[test]
+    fn the_retention_cap_evicts_oldest_and_never_grows_past_the_bound() {
+        // Memory bound, asserted directly on the map. Keys are namespaced to
+        // this test, but the cap is global, so the assertion is on the count
+        // of THIS test's surviving keys against the cap, and on the identity
+        // of which ones survived.
+        let overflow = 5;
+        let total = TERMINAL_BUFFER_MAX_ENTRIES + overflow;
+        let now = Instant::now();
+        let key_at = |i: usize| format!("proj-cap-{i}");
+
+        for i in 0..total {
+            buffer_terminal_at(&key_at(i), done_event(), now, now);
+            assert!(
+                terminal_buffer().lock().unwrap().len() <= TERMINAL_BUFFER_MAX_ENTRIES,
+                "the map must be at or under the cap after EVERY insert, not \
+                 merely at the end — an over-cap intermediate state is a real \
+                 memory spike"
+            );
+        }
+
+        let survivors: Vec<usize> =
+            (0..total).filter(|i| take_buffered_terminal_at(&key_at(*i), now).is_some()).collect();
+        assert_eq!(
+            survivors.len(),
+            TERMINAL_BUFFER_MAX_ENTRIES,
+            "exactly the cap's worth must survive"
+        );
+        assert_eq!(
+            survivors,
+            (overflow..total).collect::<Vec<usize>>(),
+            "and they must be the NEWEST ones — evicting newest-first would \
+             drop the entry a page is most likely about to attach for"
+        );
+    }
+
+    #[test]
+    fn retained_events_for_distinct_keys_stay_independent() {
+        // Regression guard on the existing concurrency property, now that a
+        // second per-key map exists alongside the registry: two projects'
+        // retained events must not consume or evict one another.
+        let (a, b) = ("proj-buf-indep-a", "proj-buf-indep-b");
+        run_job_to_done(a);
+        run_job_to_done(b);
+
+        let (page_a, log_a) = recording_channel();
+        assert!(attach_transcription(a, page_a));
+        assert_eq!(log_a.lock().unwrap().len(), 1);
+
+        let (page_b, log_b) = recording_channel();
+        assert!(
+            attach_transcription(b, page_b),
+            "claiming a's retained event must not consume b's"
+        );
+        assert_eq!(log_b.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_live_job_is_still_reattached_and_a_duplicate_still_refused() {
+        // Regression guard: the buffer must not have changed either behaviour
+        // of the live path. A retained event exists for this key at the same
+        // time, so this also pins the interleaving the ordering in
+        // `attach_transcription` exists for — a job that emitted its terminal
+        // event but has NOT yet dropped its guard.
+        let key = "proj-live-plus-buffer";
+        let sink = noop_sink();
+        let guard = try_acquire_transcription(key, sink.clone()).expect("claim");
+
+        assert!(
+            try_acquire_transcription(key, noop_sink()).is_none(),
+            "single-flight must still refuse a duplicate while the job holds the key"
+        );
+        assert!(
+            in_flight_refusal(key).starts_with(IN_FLIGHT_REFUSAL_PREFIX),
+            "and the refusal must still carry the prefix the frontend keys off"
+        );
+
+        // Terminal event fired; the guard has not dropped yet.
+        assert!(dispatch_terminal(&sink, key, 0, &stdout_lines(), Some("en".into())));
+        assert!(is_transcription_in_flight(key), "still claimed at this instant");
+
+        let (page, log) = recording_channel();
+        assert!(attach_transcription(key, page));
+        let received = log.lock().unwrap().clone();
+        assert_eq!(
+            received.len(),
+            1,
+            "the page must get the terminal event it would otherwise have \
+             missed in this exact gap"
+        );
+        assert!(received[0].contains("Done"));
+
+        drop(guard);
+        assert!(!is_transcription_in_flight(key));
+        assert!(
+            try_acquire_transcription(key, noop_sink()).is_some(),
+            "and the key must be reclaimable afterwards"
         );
     }
 
