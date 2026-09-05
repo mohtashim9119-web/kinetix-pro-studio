@@ -3333,10 +3333,58 @@ EventSink first — Req 1 can declare `static InFlightRegistry<K, WhisperEvent>`
 
 ## WS2 — Voiceover restore held + explicit transcribe (2026-09-05)
 
-**Verdict:** CLOSED — untranscribed staged voiceover survives reload without auto-running Whisper.
+**Verdict:** CLOSED and operator-verified live — untranscribed staged voiceover survives reload
+without auto-running Whisper.
+
+**Commit:** `55a7249` — `fix(ws2): hold restored voiceover and add explicit transcribe action`.
 
 **Mechanism.** `canAdoptRestoredVoiceover` gate unchanged. On refusal, `DropZonePanel` no longer
-nulls the slot or deletes the IndexedDB row; `stagedVoiceoverNeedsExplicitTranscribe` gates Apply
-Sync and shows a user-initiated Transcribe button that calls `handleVoiceoverStaged`. Recovery
-banner and `transcriptTokens` cache untouched on load.
+nulls the slot or deletes the IndexedDB row. `stagedVoiceoverNeedsExplicitTranscribe`
+(`stagedFilesPersist.ts:244`) gates Apply Sync in `App.tsx:5473-5482` and drives an explicit
+"Transcribe this file" button (`DropZonePanel.tsx:1270`, `data-testid="voiceover-transcribe-restored"`)
+that calls `handleVoiceoverStaged`. No auto-transcribe on load; `transcriptTokens` cache untouched.
+Recovery banner behaviour unchanged.
+
+---
+
+## WS2 — Transcription Requirement 1 closed (2026-09-05)
+
+**Verdict:** CLOSED — attach to a surviving whisper-cli job, refuse duplicates, survive Cmd+R.
+
+Shipped in two halves:
+
+1. **Rust native registry** — merge `80e94af` (`whisper-inflight-registry`). Replaced
+   `WhisperState(pub Mutex<Option<CommandChild>>)` (one global slot whose old body at
+   `whisper.rs:279-285` on the pre-merge parent called `child.kill()` on every second start,
+   silently killing the first job) with `WhisperState(pub Mutex<HashMap<String, CommandChild>>)`
+   (`whisper.rs:30`) so distinct job keys run concurrently. Duplicate key refusal uses
+   `InFlightRegistry<String, WhisperEvent>` (`whisper.rs:92`, `event_sink.rs`) via
+   `try_acquire_transcription` (`whisper.rs:149`): claim before spawn, release on drop. Refusal
+   contract: `IN_FLIGHT_REFUSAL_PREFIX = "whisper:already-running:"` (`whisper.rs:113`), full
+   message from `in_flight_refusal` (`whisper.rs:127-131`), surfaced as both `WhisperEvent::Error`
+   and `Err(String)`. Added `whisper_transcribe_attach` (`whisper.rs:190`) so a reloaded page can
+   re-point a surviving job's sink.
+
+2. **TS frontend wiring** — `76e99b6`. Shipped job key is `${projectId}::${fileIdentity}`
+   (`useWhisper.ts:196-202` via `getFileIdentity`, not `projectId` alone). `transcribeWithProgress`
+   passes `jobKey` through IPC (`whisperService.ts:1771-1804`), attach probe on mount before start,
+   and one `Channel` per invoke (shared channel dropped the start path's callback).
+
+**Line corrections at `76e99b6`:** old kill-on-start lived at `whisper.rs:279-285` on parent
+`80e94af^`; those lines are now `audio_extension_from_bytes`. Progress emits at `whisper.rs:572`;
+Done (token payload) at `whisper.rs:632` (enum variants at `whisper.rs:56-63`).
+
+---
+
+## WS2 — Whisper duplicate-kill open bug closed (2026-09-05)
+
+**Verdict:** CLOSED — resolved by Transcription Requirement 1's registry refusal (`80e94af` /
+`76e99b6`), not a separate fix.
+
+**Was:** `[OPEN]` in `docs/work-in-progress.md` §4 — `WhisperState` held one
+`Mutex<Option<CommandChild>>`; a second `whisper_transcribe` call killed the prior child with no
+user-visible error (pre-merge `whisper.rs:279-285`).
+
+**Now:** duplicate key returns `whisper:already-running:` refusal; distinct keys stay concurrent.
+Entry removed from `docs/work-in-progress.md` §4.
 
