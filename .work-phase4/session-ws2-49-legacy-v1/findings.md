@@ -66,9 +66,23 @@ Results: **208** matched only via **content_hash** (never same_id, name+size, or
 
 Unmatched bytes total: **~8.44 MiB** (of 166.6 MiB). The two large unmatched rows are unique content with no byte-identical v2 row on this profile.
 
-### 2b. Rows with hash-only v2 counterparts (208)
+### 2b. Rows with hash-only v2 counterparts (208) — **208-vs-15 reconciliation**
 
-All 208 hash matches point at v2 rows under project id `5df5050d-f470-4e57-871b-40922f31940e`, which has **no** `project.json` on disk (15 orphaned v2 rows). Counterparts use **different** asset ids than v1 (confirmed: 0 same_id matches). These are duplicate bytes under new keys, not id-preserving migration copies.
+The **15-row orphan-pool figure was correct.** Under deleted project `5df5050d-f470-4e57-871b-40922f31940e` there are exactly **15 v2 rows** (11,924,034 bytes), with **15 distinct blob hashes**.
+
+The prior claim that “all 208 hash matches point at v2 rows under 5df5050d” was **wrong**. Re-measured (2026-09-05, commit 2):
+
+| Metric | Count |
+|---|---|
+| V1 rows with any v2 hash match | **208** |
+| **Distinct content hashes** among those 208 v1 rows | **15** |
+| V2 rows hit by ≥1 matched v1 row (all projects) | **48** |
+| Orphan-pool v2 rows hit (5df5050d) | **15** (all 15) |
+| V1 matches spanning >1 projectId | **150** |
+
+**Many-to-one:** 208 v1 rows collapse to **15 unique blob hashes**. Each hash appears as one orphan-pool v2 row plus copies under live projects (e.g. `246f16d6`, `9e9203ec`, `e138c371`). Fan-in per orphan-pool v2 id: **11 ids × 15 v1 rows**, **3 ids × 14**, **1 id × 1** — because several v1 rows share the same hash as one orphan-pool row. Example: v2 `18cd27ef-…` (859,725 bytes) matches **15** distinct v1 ids.
+
+Counterparts always use **different** asset ids than v1 (0/266 same_id). These are duplicate bytes under new keys, not id-preserving migration copies.
 
 ### 2c. UI reachability
 
@@ -123,7 +137,17 @@ export function getLegacyAssets(): Promise<LegacyStoredAsset[]> {
 - Migration re-copy: **No** — `LEGACY_KEY` is already removed on upgraded profiles; boot will not call `getLegacyAssets()` again.
 - **NOT DETERMINED:** whether a user who still has `kinetix:project:v1` in localStorage (never opened app since upgrade) would re-populate v2 from v1 on first launch after a v1-only purge. That scenario needs a fresh-profile test; this dev profile no longer has the legacy key.
 
-**Packaged profile note:** the separate `com.kinetix.pro-studio` WebKit origin holds **5** legacy v1 rows (not 266). Counts are origin-specific.
+**Packaged profile (`com.kinetix.pro-studio` WebKit origin):** **5** legacy v1 rows, **15,672,865 bytes (15.7 MB)** total — not 266. **0/5** hash-match any v2 row on that origin. This is **not a shipping defect** for upgraded packaged users; the 266-row / 166.6 MiB problem is **dev-profile (`WebKit/app`) only**.
+
+| Packaged v1 id | Bytes |
+|---|---|
+| `4ccce102-2308-431b-af0c-bd1cd864d9d1` | 3,433,984 |
+| `698f6c84-286b-4141-a0e4-b571efc72bd1` | 3,618,568 |
+| `1901573c-fae0-46b0-868e-1f2574fd0446` | 3,807,747 |
+| `c089d38a-f4b6-4a75-9aac-a71180657611` | 4,623,187 |
+| `e1e7f3c6-dbbf-4552-ae7d-04567e051ee1` | 189,379 |
+
+**Reclassification:** fold into the existing Dev-Profile IDB Cleanup ledger entry (not a separate §3 priority item) — same dev-machine IndexedDB scope, and the reclaimable total already includes legacy v1 bytes (see §9).
 
 ---
 
@@ -156,6 +180,21 @@ If Phase 2 is ever unblocked, runtime must verify **per row** (e.g. SHA-256 of v
 | gaplessInvariant / golden replay / K13 | **Not run** (Phase 1 stop) |
 
 Baseline at eb5e517 (for future Phase 2): vitest 3132 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden replay 6/6; K13 3/3.
+
+---
+
+## 9. Dev-profile reclaimable total (double-count correction)
+
+The Dev-Profile IDB Cleanup entry’s **469 MiB** figure already **includes** legacy v1. Components on the tauri:dev WebKit profile (measured 2026-09-05):
+
+| Component | Rows | Bytes |
+|---|---|---|
+| V8 unreferenced v2 duplicates | 399 | 290,874,821 |
+| Orphan-pool v2 (`5df5050d…`) | 15 | 11,924,034 |
+| Legacy v1 store | 266 | 166,628,614 |
+| **Total** | | **469,427,469 (469.4 MB)** |
+
+Arithmetic: 290,874,821 + 11,924,034 + 166,628,614 = **469,427,469** exactly. Stating legacy v1 both as its own §3 item **and** inside the 469 MiB total was double-counting the same bytes in the tracker narrative.
 
 ---
 

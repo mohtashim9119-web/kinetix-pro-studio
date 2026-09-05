@@ -157,7 +157,7 @@ Baselines (f28a012): vitest 3121 passed / 77 skipped / 0 failed; gaplessInvarian
 
 (none)
 
-**END GOAL:** Next implementation from section 3 — transcription lifecycle (Req 1/2, EventSink), raw IPC for ffmpeg probes, legacy v1 store purge.
+**END GOAL:** Next implementation from section 3 — transcription lifecycle (Req 1/2, EventSink), raw IPC for ffmpeg probes.
 
 ### 3. Next tasks
 
@@ -165,8 +165,7 @@ Baselines (f28a012): vitest 3121 passed / 77 skipped / 0 failed; gaplessInvarian
 - [OPEN] EventSink/IN_FLIGHT Generalization: lands as its own commit before Requirement 1, per operator decision.
 - [OPEN] Transcription Req 1: native TranscriptionManager so Whisper survives Cmd+R, project switch, and dashboard navigation.
 - [OPEN] tauriFfmpeg.ts:45-72 Base64 IPC: brief-estimated ~2.33× peak inflation on ~73MiB voiceover (not measured here). Pass raw paths. Dupes: App.tsx:3168/3399; fa-dev:4846.
-- [OPEN · DIAGNOSIS-GATED] Legacy v1 assets store purge — **Phase 1 STOP (2026-09-05, eb5e517).** Measured on tauri:dev WebKit profile: 266 v1 rows / 166.6 MiB; migration `App.tsx:2257` **preserves ids** (`putAsset(..., a.id, ...)`); **0/266 id overlap** with v2 ⇒ these rows were not copied by the migration path on this profile. Counterpart check: **208/266** have a v2 row with matching blob SHA-256 (always under **different** ids); **58/266 have no v2 counterpart** (56×211-byte quarantine sidecars + 2 unique ~4 MiB media blobs) — **deleting those 58 is data loss.** `getLegacyAssets()` is only called during one-time `kinetix:project:v1` localStorage migration; v1 is not read on normal project load. No write path to v1 in current code; purge would not repopulate v1. Findings: `.work-phase4/session-ws2-49-legacy-v1/findings.md`. Phase 2 blocked until every row has a runtime-verified v2 counterpart; recommend **explicit user action**, not automatic delete. Prior note "no reference check required" **withdrawn**.
-- [OPEN · NON-BLOCKING] Dev-Profile IDB Cleanup: orphan pool 15 rows plus V8 399 duplicate rows, 469MiB reclaimable. V8 rows need the four-reference check each.
+- [OPEN · NON-BLOCKING] Dev-Profile IDB Cleanup: dev WebKit 469 MB (291+12+167 MB); packaged 5 v1/15.7 MB. V8 four-ref; v1 STOP 58/266. Non-shipping. `.work-phase4/session-ws2-49-legacy-v1/findings.md`.
 - [OPEN · NON-BLOCKING] Replay fixture reproduction gap: `.work-phase4/replay/` (~85M, gitignored) is required by golden replay (3 corpus tests) and ~35 WS1 measurement scripts; a fresh clone fails those until `python3 scripts/phase4-restore-replay-inputs.py` is run locally. Tracking the bundle is unreasonable at this size.
 
 ### 4. Open bugs
