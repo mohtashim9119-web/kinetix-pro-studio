@@ -8327,4 +8327,155 @@ mod intra_thread_sweep {
             }
         }
     }
+
+    /// ONE ARM, full v6 corpus (447 segments / 1421.29s — the WHOLE production
+    /// chunk plan, not the 120s window `intra_thread_sweep_arm_173` uses).
+    /// Byte-identical to `intra_thread_sweep_arm_173` except the corpus name
+    /// and an unbounded window (`window_end = f64::MAX`, so every chunk in
+    /// `fa_production_chunks.json` is included regardless of the corpus's
+    /// own duration) — see that function's doc comment for the `FA_SWEEP_INTRA`/
+    /// `FA_SWEEP_PROBE_SHIFT_SEC`/`FA_SWEEP_DET`/`FA_SWEEP_OUT_DIR` contract,
+    /// which applies here unchanged. Run with a SEPARATE `FA_SWEEP_OUT_DIR`
+    /// from the 173 sweep so `intra_thread_sweep_compare` (unmodified, reused
+    /// as-is) never mixes arms from the two corpora in one baseline diff.
+    #[test]
+    #[ignore]
+    fn intra_thread_sweep_arm_v6() {
+        const CONTEXT: &str = "intra_thread_sweep_arm_v6";
+        let Some((model_path, audio_path)) = bench::common_setup(CONTEXT, "v6") else { return };
+
+        let intra_var = std::env::var("FA_SWEEP_INTRA")
+            .expect("FA_SWEEP_INTRA must be set (intra-op thread count, or `prod` for real load_session)");
+        let use_production = intra_var == "prod";
+        let intra: usize = if use_production {
+            1
+        } else {
+            intra_var.parse().expect("FA_SWEEP_INTRA must be a positive integer or `prod`")
+        };
+        assert!(intra >= 1, "FA_SWEEP_INTRA must be >= 1");
+        let probe_shift: f64 =
+            std::env::var("FA_SWEEP_PROBE_SHIFT_SEC").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let deterministic = std::env::var("FA_SWEEP_DET").map(|v| v != "0").unwrap_or(true);
+
+        let chunks = bench::load_production_chunks_windowed("v6", 0.0, f64::MAX);
+        assert!(!chunks.is_empty(), "full-corpus window matched no production chunks");
+        let covered_start = chunks.first().expect("non-empty").start_sec;
+        let covered_end = chunks.last().expect("non-empty").end_sec;
+        let audio_secs = covered_end - covered_start;
+
+        let arm_chunks: Vec<crate::fa::FaChunkInput> = if probe_shift == 0.0 {
+            chunks.clone()
+        } else {
+            chunks
+                .iter()
+                .map(|c| crate::fa::FaChunkInput {
+                    start_sec: c.start_sec + probe_shift,
+                    end_sec: c.end_sec + probe_shift,
+                    text: c.text.clone(),
+                })
+                .collect()
+        };
+
+        let base_label = if use_production {
+            "prod".to_string()
+        } else if deterministic {
+            format!("n{intra}")
+        } else {
+            format!("n{intra}_detoff")
+        };
+        let label =
+            if probe_shift == 0.0 { base_label.clone() } else { format!("{base_label}_probe{probe_shift}s") };
+
+        eprintln!("=== {CONTEXT} | arm {label} ===");
+        if use_production {
+            eprintln!("  REAL production load_session (fa_onnx.rs:490-528), unmodified");
+        } else {
+            eprintln!(
+                "  intra_threads={intra} inter=1 parallel=false deterministic={} memory_pattern=false",
+                if deterministic { "TRUE" } else { "FALSE (diagnostic arm)" }
+            );
+        }
+        eprintln!("  chunks={} covered=[{covered_start:.2},{covered_end:.2}) = {audio_secs:.2}s", chunks.len());
+        eprintln!("  host logical cores: {}", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0));
+        if probe_shift != 0.0 {
+            eprintln!("  *** DESTRUCTIVE PROBE ACTIVE: this arm's windows shifted +{probe_shift}s ***");
+        }
+
+        let vocab = load_vocab("en").expect("load_vocab en");
+        let samples = read_wav_mono_16k(&audio_path).expect("read_wav_mono_16k");
+
+        let peak_kb = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sampler = {
+            let peak_kb = std::sync::Arc::clone(&peak_kb);
+            let stop = std::sync::Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(kb) = current_rss_kb() {
+                        peak_kb.fetch_max(kb, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            })
+        };
+
+        let build_started = Instant::now();
+        let mut session = if use_production {
+            load_session(&model_path).expect("production load_session")
+        } else {
+            load_session_intra(&model_path, intra, deterministic)
+        };
+        let build_ms = build_started.elapsed().as_secs_f64() * 1e3;
+        let arm = bench::run_arm(&mut session, &vocab, &samples, &arm_chunks);
+        drop(session);
+
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        sampler.join().expect("sampler thread");
+        let sampled_peak_rss_mib = peak_kb.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1024.0;
+
+        let forward_total_ms = arm.forward_ms();
+        eprintln!(
+            "  session build={build_ms:.1}ms | forward total={forward_total_ms:.1}ms n={} mean={:.1}ms max={:.1}ms",
+            arm.acc.forward.count,
+            arm.acc.forward.mean_nanos() as f64 / 1e6,
+            arm.acc.forward.max_nanos as f64 / 1e6,
+        );
+        eprintln!(
+            "  viterbi={:.1}ms tokenize={:.3}ms loop wall={:.1}ms | throughput={:.3} audio-s/forward-s",
+            arm.viterbi_ms(),
+            arm.tokenize_ms(),
+            arm.wall_ms,
+            audio_secs / (forward_total_ms / 1e3),
+        );
+        eprintln!("  sampled peak RSS = {sampled_peak_rss_mib:.1} MiB (advisory; /usr/bin/time -l is authoritative)");
+        eprintln!("  words = {}", arm.words.len());
+
+        let record = ArmRecord {
+            label: label.clone(),
+            intra_threads: intra,
+            probe_shift_sec: probe_shift,
+            chunks: chunks.len(),
+            audio_secs,
+            forward_total_ms,
+            forward_count: arm.acc.forward.count,
+            forward_mean_ms: arm.acc.forward.mean_nanos() as f64 / 1e6,
+            forward_max_ms: arm.acc.forward.max_nanos as f64 / 1e6,
+            viterbi_total_ms: arm.viterbi_ms(),
+            tokenize_total_ms: arm.tokenize_ms(),
+            loop_wall_ms: arm.wall_ms,
+            sampled_peak_rss_mib,
+            words: arm
+                .words
+                .iter()
+                .map(|w| SerWord { text: w.text.clone(), start: w.start_seconds, end: w.end_seconds })
+                .collect(),
+        };
+
+        let dir = out_dir();
+        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create {}: {e}", dir.display()));
+        let path = dir.join(format!("arm_{label}.json"));
+        std::fs::write(&path, serde_json::to_string(&record).expect("serialize ArmRecord"))
+            .unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+        eprintln!("  wrote {}", path.display());
+    }
 }
