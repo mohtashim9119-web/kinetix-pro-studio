@@ -55,6 +55,18 @@ serde_json = "1.0"
 # `disks.list().first()`), which is what `get_available_disk_space` needs
 # since `app_local_data_dir` is not always on the boot volume.
 fs4 = { version = "0.9", default-features = false, features = ["sync"] }
+# Physical (not logical) core count for forced alignment's ORT intra-op thread
+# pool — see `fa_onnx::intra_op_thread_count`. std's
+# `available_parallelism()` reports LOGICAL CPUs (16 on this project's Intel
+# i9-9980HK reference host, against 8 physical), which would oversubscribe
+# ORT's GEMM threads 2:1 onto hyperthread siblings that share one physical
+# core's FMA units and L1/L2. num_cpus is the standard crate for the physical
+# count (sysctl hw.physicalcpu on macOS, /proc/cpuinfo core-id dedup on Linux,
+# GetLogicalProcessorInformationEx on Windows). Adds exactly ONE package to
+# Cargo.lock — both of its dependencies (`libc`, `hermit-abi`) were already
+# resolved in this workspace's graph, and `hermit-abi` is cfg-gated to a
+# target this project does not build.
+num_cpus = "1.16"
 
 [dev-dependencies]
 # WS1 Task 5 Slice D25 A1 — `tauri::test::mock_context`/`noop_assets` build a

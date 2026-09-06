@@ -463,8 +463,54 @@ pub fn probe_ort_runtime(app: &tauri::AppHandle) -> Result<String, FaOnnxError> 
     Ok(dylib_path)
 }
 
-/// WS1 Session Y, Phase 1: pinned to single-threaded, sequential, deterministic
-/// execution. Left at ORT's own defaults, `SetIntraOpNumThreads`/
+/// Floors a detected physical-core count at 1.
+///
+/// Split out from [`intra_op_thread_count`] purely so the fallback is
+/// REACHABLE FROM A TEST. `num_cpus::get_physical()` cannot be made to return
+/// 0 on demand, so a test calling only the public wrapper would exercise the
+/// success path on every machine it ever runs on and silently assert nothing
+/// about the fallback — a test that cannot fail is not coverage (CLAUDE.md
+/// §4 Testing, destructive-probe rule).
+fn clamp_intra_op_threads(detected: usize) -> usize {
+    if detected == 0 {
+        1
+    } else {
+        detected
+    }
+}
+
+/// The intra-op thread count [`load_session`] asks ORT for: the host's
+/// PHYSICAL core count, floored at 1.
+///
+/// WHY PHYSICAL, NOT LOGICAL. `std::thread::available_parallelism()` reports
+/// LOGICAL CPUs — 16 on this project's Intel i9-9980HK reference host against
+/// 8 physical. ORT's intra-op pool runs dense GEMM kernels, and two SMT
+/// siblings share one physical core's FMA units and its L1/L2, so scheduling
+/// 16 GEMM threads onto 8 cores contends for the very units the work is
+/// bound on rather than adding throughput. onnxruntime's own default
+/// intra-op heuristic uses the physical count for this reason; this restates
+/// that default explicitly rather than inheriting it, because every other
+/// option in `load_session` is explicitly pinned and an unset knob here would
+/// be indistinguishable from an overlooked one.
+///
+/// WHY THE FLOOR IS 1. A detection failure degrades to exactly the value this
+/// call site carried before (`with_intra_threads(1)`) — the configuration
+/// WS1 Session Y measured as bit-exact and that
+/// `phase1_determinism::pinned_session_is_byte_identical_173_and_v6` still
+/// covers. The failure mode is therefore "slow but known-correct", never
+/// "fast but unverified".
+///
+/// NO CEILING IS APPLIED, deliberately and pending an owner ruling. Bit-
+/// exactness was verified at N=1..32, so a host reporting more than 32
+/// physical cores (a Threadripper/EPYC/Xeon class machine) would run this
+/// session outside the measured envelope. That is a PERFORMANCE question, not
+/// a correctness one — see this change's report for the recommendation.
+pub(crate) fn intra_op_thread_count() -> usize {
+    clamp_intra_op_threads(num_cpus::get_physical())
+}
+
+/// WS1 Session Y, Phase 1: pinned to sequential, deterministic execution.
+/// Left at ORT's own defaults, `SetIntraOpNumThreads`/
 /// `SetInterOpNumThreads` are unset (ORT picks a thread count from the host's
 /// core count) and `SetDeterministicCompute` is off (ORT's default kernels
 /// trade run-to-run bit-reproducibility for speed) — Session X
@@ -478,6 +524,17 @@ pub fn probe_ort_runtime(app: &tauri::AppHandle) -> Result<String, FaOnnxError> 
 /// run-to-run variance, so disabling them would cost inference speed without
 /// affecting determinism. The actual knob for numeric run-to-run
 /// reproducibility is `with_deterministic_compute`.
+///
+/// WS3 fa-threads-production: `with_intra_threads` is no longer pinned to 1 —
+/// it now asks for the host's PHYSICAL core count via
+/// [`intra_op_thread_count`]. The other four options remain pinned exactly as
+/// Session Y and Session AO left them. This is safe for bit-exactness because
+/// intra-op thread count was measured NOT to be a source of run-to-run
+/// numeric variance in this session's configuration: the WS3 sweep found
+/// n1-vs-n8 BitExact at 3874/3874 words with 0.000ms max drift on the full v6
+/// corpus, against a deliberately-shifted probe arm the same comparator
+/// red-flagged (562/3874) — so that zero is not vacuous. `fa_timing.rs`'s
+/// source guard asserts this new intended configuration.
 pub fn load_session(model_path: &Path) -> Result<Session, FaOnnxError> {
     let dylib_path = std::env::var("ORT_DYLIB_PATH")
         .map_err(|_| FaOnnxError::OrtInit("ORT_DYLIB_PATH not set".to_string()))?;
@@ -487,7 +544,7 @@ pub fn load_session(model_path: &Path) -> Result<Session, FaOnnxError> {
 
     Session::builder()
         .map_err(|e| FaOnnxError::OrtSession(e.to_string()))?
-        .with_intra_threads(1)
+        .with_intra_threads(intra_op_thread_count())
         .map_err(|e| FaOnnxError::OrtSession(e.to_string()))?
         .with_inter_threads(1)
         .map_err(|e| FaOnnxError::OrtSession(e.to_string()))?
@@ -4236,6 +4293,76 @@ mod d22_measurement {
 // real-inference test in this file: run with
 // `cargo test --features fa-inference --lib phase1_determinism -- --ignored --nocapture`.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// WS3 fa-threads-production — intra-op thread sizing.
+//
+// These live under `--features fa-inference` with the rest of `fa_onnx.rs`.
+// The companion guard that runs in BOTH Cargo configurations (asserting
+// `load_session` still asks for this count at all) is
+// `fa_timing.rs`'s `ort_session_options_stay_pinned_*`.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod intra_op_thread_sizing {
+    use super::*;
+
+    #[test]
+    fn load_session_asks_for_the_hosts_physical_core_count() {
+        // The production value, against the platform's own answer. Not
+        // hardcoded to 8: this must hold on whatever machine runs the suite.
+        let physical = num_cpus::get_physical();
+        assert!(physical >= 1, "num_cpus::get_physical() returned 0 — the fallback below is load-bearing");
+        assert_eq!(
+            intra_op_thread_count(),
+            physical,
+            "load_session must size the ORT intra-op pool to the PHYSICAL core count"
+        );
+    }
+
+    #[test]
+    fn the_physical_count_is_not_silently_the_logical_count() {
+        // NON-VACUITY on a hyperthreaded host, and the actual regression this
+        // guards: swapping `num_cpus::get_physical()` for
+        // `available_parallelism()` would still pass the test above on a
+        // machine WITHOUT SMT, so assert the distinction where it is
+        // observable. On a non-SMT host the two legitimately coincide and
+        // this asserts nothing — which is stated, not hidden.
+        let physical = num_cpus::get_physical();
+        let logical = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(physical);
+        assert!(physical <= logical, "physical cores cannot exceed logical CPUs");
+        if logical > physical {
+            assert_ne!(
+                intra_op_thread_count(),
+                logical,
+                "this host is hyperthreaded ({logical} logical / {physical} physical) and                  load_session must NOT be asking for the logical count"
+            );
+        } else {
+            eprintln!(
+                "note: host reports {physical} physical == {logical} logical (no SMT) — this test                  cannot separate the two counts here"
+            );
+        }
+    }
+
+    #[test]
+    fn detection_failure_falls_back_to_one_not_zero() {
+        // The fallback path, reached directly. `num_cpus::get_physical()`
+        // cannot be forced to 0 on a real host, so the clamp is tested as the
+        // pure function it was split out to be — otherwise this branch would
+        // never execute on any machine and the fallback would be an untested
+        // claim.
+        assert_eq!(clamp_intra_op_threads(0), 1, "a failed/zero detection must degrade to the old pinned 1");
+    }
+
+    #[test]
+    fn the_clamp_is_identity_for_every_real_core_count() {
+        // The clamp must ONLY rescue 0 — a clamp that also floored small
+        // counts, or that capped large ones, would silently change the
+        // configuration on real hardware.
+        for n in [1usize, 2, 4, 8, 16, 32, 64, 128, 192] {
+            assert_eq!(clamp_intra_op_threads(n), n, "clamp must pass {n} through unchanged");
+        }
+    }
+}
+
 #[cfg(test)]
 mod phase1_determinism {
     use super::*;

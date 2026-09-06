@@ -535,19 +535,79 @@ mod tests {
         &rest[..end]
     }
 
+    /// The exact builder calls `load_session` must contain, each with the
+    /// reason it is load-bearing.
+    ///
+    /// `intra_op_thread_count()` is the ONE entry that changed in WS3
+    /// fa-threads-production; the other four are the Session Y / Session AO
+    /// pins, unchanged. Kept as data rather than inlined into the assertion so
+    /// [`missing_pinned_options`] can be run against a MUTATED body by
+    /// `guard_fires_on_each_unchanged_option` below — a guard nobody has ever
+    /// seen go red has unmeasured reach (CLAUDE.md §4 Testing).
+    const REQUIRED_SESSION_OPTIONS: [(&str, &str); 5] = [
+        (
+            "with_intra_threads(intra_op_thread_count())",
+            "intra-op pool sized to the host's PHYSICAL core count (WS3 fa-threads-production). A \
+             literal `1` here is the OLD pin and costs ~4.4x on the forward pass; a literal \
+             anything-else, or `available_parallelism()` (which reports LOGICAL cores), is an \
+             unmeasured configuration",
+        ),
+        ("with_inter_threads(1)", "single inter-op thread — pinned for run-to-run bit-exactness"),
+        ("with_parallel_execution(false)", "sequential execution — pinned for run-to-run bit-exactness"),
+        ("with_deterministic_compute(true)", "the actual numeric-reproducibility knob (WS1 Session Y)"),
+        ("with_memory_pattern(false)", "per-shape allocation-plan cache OFF (WS1 Session AO OOM fix)"),
+    ];
+
+    /// Which of [`REQUIRED_SESSION_OPTIONS`] are absent from `body`. Pure over
+    /// its input so it can be pointed at a deliberately-broken body in a test.
+    fn missing_pinned_options(body: &str) -> Vec<&'static str> {
+        REQUIRED_SESSION_OPTIONS
+            .iter()
+            .filter(|(call, _)| !body.contains(call))
+            .map(|(call, _)| *call)
+            .collect()
+    }
+
     #[test]
     fn ort_session_options_stay_pinned_exactly_as_the_determinism_work_left_them() {
         let body = load_session_body();
-        for (call, why) in [
-            ("with_intra_threads(1)", "single intra-op thread — pinned for run-to-run bit-exactness"),
-            ("with_inter_threads(1)", "single inter-op thread — pinned for run-to-run bit-exactness"),
-            ("with_parallel_execution(false)", "sequential execution — pinned for run-to-run bit-exactness"),
-            ("with_deterministic_compute(true)", "the actual numeric-reproducibility knob (WS1 Session Y)"),
-            ("with_memory_pattern(false)", "per-shape allocation-plan cache OFF (WS1 Session AO OOM fix)"),
-        ] {
+        for (call, why) in REQUIRED_SESSION_OPTIONS {
             assert!(
                 body.contains(call),
                 "fa_onnx::load_session no longer calls `{call}` — {why}. Changing it would break                  `phase1_determinism::pinned_session_is_byte_identical_173_and_v6`, which is                  `#[ignore]`d and therefore CANNOT catch this in a normal test run. If this change                  is deliberate, re-run that ignored test against the real corpora first."
+            );
+        }
+    }
+
+    #[test]
+    fn guard_fires_on_each_unchanged_option_and_on_the_new_intra_count() {
+        // NON-VACUITY / REACH. The guard above is green today; green alone
+        // cannot distinguish "the pins are intact" from "the guard cannot see
+        // them" (CLAUDE.md §4 Testing, destructive-probe rule). This performs
+        // the destructive probe IN-TEST, once per option, by mutating the real
+        // body the way a future performance round plausibly would and
+        // asserting the guard reports exactly that option missing.
+        let real = load_session_body().to_string();
+        assert!(missing_pinned_options(&real).is_empty(), "the real body must satisfy the guard");
+
+        // Each mutation is a REALISTIC silent unpinning, not a nonsense edit:
+        // re-enabling inter-op threads, turning parallel execution back on,
+        // dropping determinism for speed, restoring ORT's default memory
+        // pattern, and reverting intra to the old hardcoded 1.
+        for (call, mutated_to) in [
+            ("with_intra_threads(intra_op_thread_count())", "with_intra_threads(1)"),
+            ("with_inter_threads(1)", "with_inter_threads(4)"),
+            ("with_parallel_execution(false)", "with_parallel_execution(true)"),
+            ("with_deterministic_compute(true)", "with_deterministic_compute(false)"),
+            ("with_memory_pattern(false)", "with_memory_pattern(true)"),
+        ] {
+            let broken = real.replace(call, mutated_to);
+            assert_ne!(broken, real, "mutation for `{call}` did not change the body — probe is vacuous");
+            let missing = missing_pinned_options(&broken);
+            assert_eq!(
+                missing,
+                vec![call],
+                "mutating `{call}` -> `{mutated_to}` must make the guard report exactly that one                  option missing, but it reported {missing:?}"
             );
         }
     }
@@ -562,7 +622,7 @@ mod tests {
         let mut chained = 0;
         for line in body.lines() {
             let t = line.trim();
-            if t.starts_with(".with_intra_threads(1)")
+            if t.starts_with(".with_intra_threads(intra_op_thread_count())")
                 || t.starts_with(".with_inter_threads(1)")
                 || t.starts_with(".with_parallel_execution(false)")
                 || t.starts_with(".with_deterministic_compute(true)")
