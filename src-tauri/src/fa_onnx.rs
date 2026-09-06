@@ -7394,3 +7394,501 @@ mod session_ao_memory {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// WS3 fa-perf-foundation — SINGLE- vs MULTI-THREADED ONNX EXECUTION BENCHMARK.
+//
+// `load_session` (above) is pinned single-threaded/sequential/deterministic
+// (WS1 Session Y, Phase 1). That pinning bought reproducibility at an UNKNOWN
+// price in wall clock, and no measurement in this repo has ever paired the
+// speed cost with the timing cost: `phase1_determinism` proves the pinned
+// path is byte-identical and reports that forced-parallel runs *were also*
+// byte-identical on this hardware, but it measures no durations at all, and
+// "byte-identical" over one 33-second window is not the same claim as "the
+// boundaries move by less than a video frame" over two minutes of audio.
+//
+// This module answers both halves at once, over the same real 173-corpus
+// audio and the same real production chunk plan:
+//   PASS 1  production `load_session` (intra=1, inter=1, sequential, det=on)
+//   PASS 2  a multi-threaded session (intra=logical cores, parallel, det=off)
+//   PASS 3  PASS 2's session re-run, state intact — run-to-run jitter
+//
+// SYMMETRY IS THE POINT. All three passes execute the SAME loop
+// (`run_arm`), against the SAME pre-read `samples` and the SAME pre-loaded
+// `vocab`, over the SAME chunk slice. WAV decode, vocab load and model load
+// all happen OUTSIDE the measured region. The only variable between PASS 1
+// and PASS 2 is the `Session` handed in, so a difference in the reported
+// forward-pass total is attributable to session configuration and nothing
+// else. PASS 1 constructs its session by calling the REAL, UNMODIFIED
+// `load_session` — not a local re-spelling of it — so this benchmark cannot
+// drift away from production configuration without failing to compile.
+//
+// THE MEASURED NUMBER IS THE FORWARD PASS ONLY. `align_chunk_samples_timed`
+// separates the ONNX forward pass from tokenization and from the Viterbi DP;
+// only the first of those three is threaded by ORT, so reporting whole-loop
+// wall clock would dilute the speedup with two stages the change cannot
+// touch. Both are reported alongside, precisely so the dilution is visible
+// rather than assumed.
+//
+// WHY THE DRIFT TABLE IS BUCKETED BY FRAME DURATION. This app composites a
+// video timeline; a word boundary that moves is only a defect if a human can
+// see it move. 1/60s = 16.667ms and 1/30s = 33.333ms are the two thresholds
+// that matter, so the histogram is cut there rather than at round decimal
+// milliseconds.
+//
+// `#[ignore]`, same convention as every other real-inference test in this
+// file:
+//   ORT_DYLIB_PATH=<dylib> cargo test --release --features fa-inference --lib \
+//     thread_scaling_bench -- --ignored --nocapture
+//
+// DESTRUCTIVE PROBE. Setting `FA_PERF_PROBE_SHIFT_SEC=<seconds>` shifts
+// PASS 2/3's chunk time windows by that many seconds while leaving their
+// text alone, so the multi-threaded arm aligns the SAME script against
+// DIFFERENT audio. The delta computer must then report gross drift and
+// refuse the comparison. This is an env-var switch rather than a temporary
+// source mutation on purpose: the probe is reproducible by anyone later,
+// and reverting it cannot lose an uncommitted edit (CLAUDE.md, "Repo
+// operations").
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod thread_scaling_bench {
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::Instant;
+
+    /// The 120s window the objective names, over the 173 corpus.
+    const WINDOW_START: f64 = 0.0;
+    const WINDOW_END: f64 = 120.0;
+
+    /// One frame at 60fps / at 30fps, in milliseconds — the two perceptual
+    /// thresholds the drift histogram is cut at.
+    const FRAME_60_MS: f64 = 1000.0 / 60.0;
+    const FRAME_30_MS: f64 = 1000.0 / 30.0;
+
+    /// A shift this large is not "drift" — it is evidence the two arms did
+    /// not align the same audio at all. The delta computer red-flags rather
+    /// than reporting it as a timing statistic. Half a second is ~15 frames
+    /// at 30fps: far past any threading effect, comfortably below the
+    /// multi-second displacement a deliberately mismatched window produces.
+    const GROSS_MISMATCH_MS: f64 = 500.0;
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
+    }
+
+    #[cfg(target_os = "macos")]
+    fn fa_models_dir() -> PathBuf {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
+    }
+    #[cfg(not(target_os = "macos"))]
+    fn fa_models_dir() -> PathBuf {
+        panic!("thread_scaling_bench's fa_models_dir() only reproduces the macOS mapping");
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ChunkPlanFile {
+        #[allow(dead_code)]
+        #[serde(rename = "audioDuration")]
+        audio_duration: f64,
+        chunks: Vec<PlanChunk>,
+    }
+    #[derive(serde::Deserialize)]
+    struct PlanChunk {
+        #[serde(rename = "startSec")]
+        start_sec: f64,
+        #[serde(rename = "endSec")]
+        end_sec: f64,
+        text: String,
+    }
+
+    /// The REAL production chunk plan for `corpus`, keeping only chunks
+    /// overlapping `[window_start, window_end)` — real boundaries and real
+    /// text, a bounded slice of them, never a synthetic re-chunking.
+    fn load_production_chunks_windowed(corpus: &str, window_start: f64, window_end: f64) -> Vec<crate::fa::FaChunkInput> {
+        let path = repo_root().join(format!(".work-phase4/replay/{corpus}/fa_production_chunks.json"));
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let plan: ChunkPlanFile = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
+        let _ = plan.audio_duration;
+        plan.chunks
+            .into_iter()
+            .filter(|c| c.end_sec > window_start && c.start_sec < window_end)
+            .map(|c| crate::fa::FaChunkInput { start_sec: c.start_sec, end_sec: c.end_sec, text: c.text })
+            .collect()
+    }
+
+    /// The multi-threaded arm's session. Deliberately the mirror image of
+    /// production `load_session` on every threading knob and IDENTICAL to it
+    /// on every non-threading one (`with_memory_pattern(false)` is carried
+    /// over verbatim — it is an allocator-strategy option, not a threading
+    /// option, and leaving it on here would confound an OOM difference with
+    /// a speed difference).
+    fn load_session_multithreaded(model_path: &Path, intra: usize) -> Session {
+        let dylib_path = std::env::var("ORT_DYLIB_PATH").expect("ORT_DYLIB_PATH must be set (checked by common_setup)");
+        ort::init_from(dylib_path).expect("ort::init_from").commit();
+        Session::builder()
+            .expect("Session::builder")
+            .with_intra_threads(intra)
+            .expect("with_intra_threads")
+            .with_inter_threads(1)
+            .expect("with_inter_threads")
+            .with_parallel_execution(true)
+            .expect("with_parallel_execution")
+            .with_deterministic_compute(false)
+            .expect("with_deterministic_compute")
+            .with_memory_pattern(false)
+            .expect("with_memory_pattern")
+            .commit_from_file(model_path)
+            .expect("commit_from_file")
+    }
+
+    /// One measured arm. `wall_ms` is the whole chunk loop; the three stage
+    /// accumulators break it down. Only `forward` is threaded by ORT.
+    struct ArmResult {
+        words: Vec<super::WordSpan>,
+        acc: crate::fa_timing::FaChunkAccumulators,
+        wall_ms: f64,
+    }
+
+    impl ArmResult {
+        fn forward_ms(&self) -> f64 {
+            self.acc.forward.total_nanos as f64 / 1e6
+        }
+        fn viterbi_ms(&self) -> f64 {
+            self.acc.viterbi.total_nanos as f64 / 1e6
+        }
+        fn tokenize_ms(&self) -> f64 {
+            self.acc.tokenize.total_nanos as f64 / 1e6
+        }
+    }
+
+    /// THE shared loop. Every pass runs exactly this, so the session is the
+    /// only variable. `samples` and `vocab` are borrowed already-loaded:
+    /// WAV decode and vocab parse are outside every measurement.
+    fn run_arm(
+        session: &mut Session,
+        vocab: &Vocab,
+        samples: &[f32],
+        chunks: &[crate::fa::FaChunkInput],
+    ) -> ArmResult {
+        let mut acc = crate::fa_timing::FaChunkAccumulators::default();
+        let mut words = Vec::new();
+        let started = Instant::now();
+        for chunk in chunks {
+            let (start_sample, end_sample) = chunk_sample_range(samples.len(), chunk.start_sec, chunk.end_sec);
+            let chunk_samples = &samples[start_sample..end_sample];
+            let chunk_words =
+                align_chunk_samples_timed(session, vocab, Language::En, chunk_samples, &chunk.text, &mut acc)
+                    .unwrap_or_else(|e| panic!("run_arm: align_chunk_samples_timed failed: {e}"));
+            for w in chunk_words {
+                words.push(super::WordSpan {
+                    text: w.text,
+                    start_seconds: w.start_seconds + chunk.start_sec,
+                    end_seconds: w.end_seconds + chunk.start_sec,
+                    score: w.score,
+                });
+            }
+        }
+        let wall_ms = started.elapsed().as_secs_f64() * 1e3;
+        ArmResult { words, acc, wall_ms }
+    }
+
+    // -- delta computer ----------------------------------------------------
+
+    /// The comparison's own verdict. `RedFlagStructural`/`RedFlagGross` mean
+    /// the two arms did not describe the same content, so no timing number
+    /// derived from them is meaningful — the destructive probe's expected
+    /// outcome.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Verdict {
+        BitExact,
+        SubFrame60,
+        OneFrame30,
+        VisibleDrift,
+        RedFlagStructural,
+        RedFlagGross,
+    }
+
+    struct Drift {
+        len_a: usize,
+        len_b: usize,
+        text_mismatches: usize,
+        compared: usize,
+        max_start_ms: f64,
+        mean_start_ms: f64,
+        p95_start_ms: f64,
+        max_end_ms: f64,
+        bucket_exact: usize,
+        bucket_sub_60: usize,
+        bucket_frame_30: usize,
+        bucket_multi_frame: usize,
+        verdict: Verdict,
+    }
+
+    /// Nearest-rank 95th percentile over an already-ascending slice.
+    fn p95(sorted: &[f64]) -> f64 {
+        if sorted.is_empty() {
+            return 0.0;
+        }
+        let rank = ((0.95 * sorted.len() as f64).ceil() as usize).max(1);
+        sorted[rank.min(sorted.len()) - 1]
+    }
+
+    /// Compares two word arrays position-by-position. Correspondence is by
+    /// INDEX and confirmed by TEXT — never by timestamp proximity, which
+    /// this repo's own invariant forbids as an identity test (CLAUDE.md §4,
+    /// "Timestamps may measure distance; they must never decide identity").
+    /// A length or text disagreement is therefore a structural red flag, not
+    /// something to paper over by re-matching on time.
+    fn compute_drift(a: &[super::WordSpan], b: &[super::WordSpan]) -> Drift {
+        let compared = a.len().min(b.len());
+        let mut text_mismatches = 0usize;
+        let mut starts: Vec<f64> = Vec::with_capacity(compared);
+        let mut max_end_ms = 0.0f64;
+        let (mut bucket_exact, mut bucket_sub_60, mut bucket_frame_30, mut bucket_multi_frame) = (0, 0, 0, 0);
+
+        for i in 0..compared {
+            if a[i].text != b[i].text {
+                text_mismatches += 1;
+            }
+            let d_start = ((b[i].start_seconds - a[i].start_seconds) * 1e3).abs();
+            let d_end = ((b[i].end_seconds - a[i].end_seconds) * 1e3).abs();
+            if d_end > max_end_ms {
+                max_end_ms = d_end;
+            }
+            if d_start == 0.0 {
+                bucket_exact += 1;
+            } else if d_start <= FRAME_60_MS {
+                bucket_sub_60 += 1;
+            } else if d_start <= FRAME_30_MS {
+                bucket_frame_30 += 1;
+            } else {
+                bucket_multi_frame += 1;
+            }
+            starts.push(d_start);
+        }
+
+        starts.sort_by(|x, y| x.partial_cmp(y).expect("no NaN in a timing delta"));
+        let max_start_ms = starts.last().copied().unwrap_or(0.0);
+        let mean_start_ms = if starts.is_empty() { 0.0 } else { starts.iter().sum::<f64>() / starts.len() as f64 };
+        let p95_start_ms = p95(&starts);
+
+        let verdict = if a.len() != b.len() || text_mismatches > 0 {
+            Verdict::RedFlagStructural
+        } else if max_start_ms > GROSS_MISMATCH_MS {
+            Verdict::RedFlagGross
+        } else if bucket_exact == compared {
+            Verdict::BitExact
+        } else if max_start_ms <= FRAME_60_MS {
+            Verdict::SubFrame60
+        } else if max_start_ms <= FRAME_30_MS {
+            Verdict::OneFrame30
+        } else {
+            Verdict::VisibleDrift
+        };
+
+        Drift {
+            len_a: a.len(),
+            len_b: b.len(),
+            text_mismatches,
+            compared,
+            max_start_ms,
+            mean_start_ms,
+            p95_start_ms,
+            max_end_ms,
+            bucket_exact,
+            bucket_sub_60,
+            bucket_frame_30,
+            bucket_multi_frame,
+            verdict,
+        }
+    }
+
+    fn report_drift(label: &str, d: &Drift) {
+        eprintln!("--- {label} ---");
+        eprintln!("  words: A={} B={} compared={} text mismatches={}", d.len_a, d.len_b, d.compared, d.text_mismatches);
+        eprintln!(
+            "  start-time shift: max={:.3}ms mean={:.3}ms p95={:.3}ms | max end-time shift={:.3}ms",
+            d.max_start_ms, d.mean_start_ms, d.p95_start_ms, d.max_end_ms
+        );
+        let pct = |n: usize| if d.compared == 0 { 0.0 } else { 100.0 * n as f64 / d.compared as f64 };
+        eprintln!("  bucket  0ms (bit-exact)          : {:>5}  ({:.2}%)", d.bucket_exact, pct(d.bucket_exact));
+        eprintln!("  bucket >0ms  <= 16.667ms (<1f@60): {:>5}  ({:.2}%)", d.bucket_sub_60, pct(d.bucket_sub_60));
+        eprintln!("  bucket >16.667 <= 33.333ms (1f@30): {:>5}  ({:.2}%)", d.bucket_frame_30, pct(d.bucket_frame_30));
+        eprintln!("  bucket >33.333ms (multi-frame)   : {:>5}  ({:.2}%)", d.bucket_multi_frame, pct(d.bucket_multi_frame));
+        eprintln!("  VERDICT: {:?}", d.verdict);
+    }
+
+    fn common_setup(context: &str, corpus: &str) -> Option<(PathBuf, PathBuf)> {
+        if !super::require_ort::ort_dylib_or_skip(context) {
+            return None;
+        }
+        let model_path = fa_models_dir().join("en").join("model.onnx");
+        if !super::require_ort::path_exists_or_skip(context, &model_path) {
+            return None;
+        }
+        let audio_path = repo_root().join(format!(".work-phase4/replay/{corpus}/audio_16k.wav"));
+        if !audio_path.exists() {
+            eprintln!("SKIP {context}: real audio not found at {}", audio_path.display());
+            return None;
+        }
+        Some((model_path, audio_path))
+    }
+
+    /// THE BENCHMARK. See this module's header for the design rationale.
+    #[test]
+    #[ignore]
+    fn single_vs_multi_threaded_speed_and_boundary_drift_173() {
+        const CONTEXT: &str = "single_vs_multi_threaded_speed_and_boundary_drift_173";
+        let Some((model_path, audio_path)) = common_setup(CONTEXT, "173") else { return };
+
+        let chunks = load_production_chunks_windowed("173", WINDOW_START, WINDOW_END);
+        assert!(!chunks.is_empty(), "window [{WINDOW_START},{WINDOW_END}) matched no production chunks");
+        let covered_start = chunks.first().expect("non-empty").start_sec;
+        let covered_end = chunks.last().expect("non-empty").end_sec;
+        let audio_secs = covered_end - covered_start;
+
+        // The destructive probe: shift the MULTI-threaded arm's windows so it
+        // aligns the same script text against different audio.
+        let probe_shift: f64 = std::env::var("FA_PERF_PROBE_SHIFT_SEC").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        let multi_chunks: Vec<crate::fa::FaChunkInput> = if probe_shift == 0.0 {
+            chunks.clone()
+        } else {
+            chunks
+                .iter()
+                .map(|c| crate::fa::FaChunkInput {
+                    start_sec: c.start_sec + probe_shift,
+                    end_sec: c.end_sec + probe_shift,
+                    text: c.text.clone(),
+                })
+                .collect()
+        };
+
+        let logical_cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+
+        eprintln!("=== {CONTEXT} ===");
+        eprintln!("  corpus 173 | window [{WINDOW_START}, {WINDOW_END}) -> {} production chunks", chunks.len());
+        eprintln!("  covered audio: [{covered_start:.2}, {covered_end:.2}) = {audio_secs:.2}s");
+        eprintln!("  host logical cores: {logical_cores}");
+        if probe_shift != 0.0 {
+            eprintln!("  *** DESTRUCTIVE PROBE ACTIVE: multi-threaded arm shifted +{probe_shift}s ***");
+        }
+
+        // Shared, outside every measurement.
+        let vocab = load_vocab("en").expect("load_vocab en");
+        let samples = read_wav_mono_16k(&audio_path).expect("read_wav_mono_16k");
+
+        // ORDER CONTROL. PASS 1 runs first by default, which makes it the
+        // arm that pays for every first-touch cost the two share: the OS
+        // page-cache warming of a 1.2 GiB model file, the allocator growing
+        // to a working set neither arm has yet reached, and a CPU package
+        // still at idle clock. Any of those would inflate PASS 1 and inflate
+        // the reported speedup with it. `FA_PERF_REVERSE_ORDER=1` runs the
+        // multi-threaded arm first instead, so the ordering confound can be
+        // MEASURED rather than argued away — if the speedup survives the
+        // reversal, first-touch cost is not what produced it.
+        let reversed = std::env::var("FA_PERF_REVERSE_ORDER").map(|v| v == "1").unwrap_or(false);
+        eprintln!("  arm order: {}", if reversed { "MULTI first, then SINGLE (order control)" } else { "SINGLE first, then MULTI (default)" });
+
+        let (p1, p2, p3) = if reversed {
+            let mut s2 = load_session_multithreaded(&model_path, logical_cores);
+            let p2 = run_arm(&mut s2, &vocab, &samples, &multi_chunks);
+            let p3 = run_arm(&mut s2, &vocab, &samples, &multi_chunks);
+            drop(s2);
+            let mut s1 = load_session(&model_path).expect("production load_session");
+            let p1 = run_arm(&mut s1, &vocab, &samples, &chunks);
+            drop(s1);
+            (p1, p2, p3)
+        } else {
+            // -- PASS 1: production `load_session`, verbatim ---------------
+            let mut s1 = load_session(&model_path).expect("production load_session");
+            let p1 = run_arm(&mut s1, &vocab, &samples, &chunks);
+            drop(s1);
+
+            // -- PASS 2: multi-threaded ------------------------------------
+            let mut s2 = load_session_multithreaded(&model_path, logical_cores);
+            let p2 = run_arm(&mut s2, &vocab, &samples, &multi_chunks);
+
+            // -- PASS 3: PASS 2's session again, state intact ---------------
+            let p3 = run_arm(&mut s2, &vocab, &samples, &multi_chunks);
+            drop(s2);
+            (p1, p2, p3)
+        };
+
+        // -- A. speed ------------------------------------------------------
+        let speedup = p1.forward_ms() / p2.forward_ms();
+        let speedup_wall = p1.wall_ms / p2.wall_ms;
+        eprintln!();
+        eprintln!("=== A. SPEED ===");
+        for (label, p) in [("PASS 1 single-threaded (production)", &p1), ("PASS 2 multi-threaded", &p2), ("PASS 3 multi-threaded rerun", &p3)] {
+            eprintln!(
+                "  {label:<36} forward={:>9.1}ms (n={} mean={:>7.1}ms max={:>7.1}ms) | viterbi={:>8.1}ms | tokenize={:>6.3}ms | loop wall={:>9.1}ms",
+                p.forward_ms(),
+                p.acc.forward.count,
+                p.acc.forward.mean_nanos() as f64 / 1e6,
+                p.acc.forward.max_nanos as f64 / 1e6,
+                p.viterbi_ms(),
+                p.tokenize_ms(),
+                p.wall_ms,
+            );
+            eprintln!(
+                "  {:<36} forward throughput = {:.3} audio-s/forward-s ({:.4} audio-s per forward-ms)",
+                "", audio_secs / (p.forward_ms() / 1e3), audio_secs / p.forward_ms(),
+            );
+        }
+        eprintln!("  SPEEDUP (forward pass only) = {speedup:.3}x");
+        eprintln!("  SPEEDUP (whole chunk loop)  = {speedup_wall:.3}x");
+
+        // -- B. single vs multi drift --------------------------------------
+        eprintln!();
+        eprintln!("=== B. SINGLE vs MULTI DRIFT (V1 vs V2) ===");
+        let d12 = compute_drift(&p1.words, &p2.words);
+        report_drift("V1 (single) vs V2 (multi)", &d12);
+
+        // -- C. multi-thread run-to-run jitter -----------------------------
+        eprintln!();
+        eprintln!("=== C. MULTI-THREADED RUN-TO-RUN JITTER (V2 vs V3) ===");
+        let d23 = compute_drift(&p2.words, &p3.words);
+        report_drift("V2 vs V3 (same session, same window)", &d23);
+        let mismatched_boundaries = d23.compared - d23.bucket_exact;
+        eprintln!(
+            "  mismatched boundary timestamps between identical multi-threaded passes: {mismatched_boundaries} / {}",
+            d23.compared
+        );
+
+        // -- verdict -------------------------------------------------------
+        eprintln!();
+        eprintln!("=== CONCLUSION ===");
+        match d12.verdict {
+            Verdict::RedFlagStructural | Verdict::RedFlagGross => eprintln!(
+                "  COMPARISON REFUSED ({:?}): the two arms did not align the same content, so no \
+                 timing statistic above is interpretable.",
+                d12.verdict
+            ),
+            Verdict::BitExact => eprintln!("  Multi-threading is BIT-EXACT against production on this window — zero perceptual risk."),
+            Verdict::SubFrame60 => eprintln!("  Multi-threading drifts SUB-FRAME at 60fps (max {:.3}ms < 16.667ms) — imperceptible.", d12.max_start_ms),
+            Verdict::OneFrame30 => eprintln!("  Multi-threading drifts up to ONE FRAME at 30fps (max {:.3}ms) — perceptible at 60fps.", d12.max_start_ms),
+            Verdict::VisibleDrift => eprintln!("  Multi-threading drifts MULTI-FRAME (max {:.3}ms > 33.333ms) — visible editing drift.", d12.max_start_ms),
+        }
+
+        // The probe must be red-flagged; a clean run must not be.
+        if probe_shift != 0.0 {
+            assert!(
+                matches!(d12.verdict, Verdict::RedFlagStructural | Verdict::RedFlagGross),
+                "DESTRUCTIVE PROBE FAILED: a {probe_shift}s audio-window mismatch was NOT red-flagged \
+                 (verdict {:?}, max shift {:.3}ms) — the delta computer cannot tell corresponding \
+                 content from non-corresponding content, so its clean-run numbers prove nothing",
+                d12.verdict,
+                d12.max_start_ms
+            );
+            eprintln!("  DESTRUCTIVE PROBE PASSED: the mismatch was red-flagged as {:?}.", d12.verdict);
+        } else {
+            assert!(
+                !matches!(d12.verdict, Verdict::RedFlagStructural | Verdict::RedFlagGross),
+                "V1/V2 disagree structurally on the SAME window ({:?}) — the two arms produced \
+                 different word sequences, which is a defect in the harness or in the model, not drift",
+                d12.verdict
+            );
+        }
+    }
+}
