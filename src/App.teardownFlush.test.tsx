@@ -106,7 +106,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 // and then reports back through the `quit_flush_complete` command. Both ends are
 // captured here so the round trip can be driven without a Rust process.
 let quitHandler: (() => unknown) | null = null;
-const mockInvoke = vi.fn(async () => {});
+const mockInvoke = vi.fn(async (_cmd: string, ..._args: unknown[]): Promise<unknown> => undefined);
 vi.mock('@tauri-apps/api/event', () => ({
   listen: async (name: string, h: () => unknown) => {
     if (name === 'app-quit-requested') quitHandler = h;
@@ -114,7 +114,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   },
 }));
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...a: unknown[]) => mockInvoke(...(a as [])),
+  invoke: (cmd: string, ...args: unknown[]) => mockInvoke(cmd, ...args),
 }));
 
 // Imported AFTER the mocks are registered.
