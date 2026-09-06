@@ -9,7 +9,7 @@ import { runTickProbe } from './runTickProbe';
 import { runLiveExport } from './runLiveExport';
 import { runCeilingBisect } from './runCeilingBisect';
 
-const LOCK = 'ws3-r3-live-export-lock-v1';
+const LOCK = 'ws3-r3-bisect-remainder-lock-v1';
 
 void (async () => {
   try {
@@ -27,10 +27,8 @@ void (async () => {
     // eslint-disable-next-line no-console
     console.info('[ws3-liveness] autorun starting part1 + live export');
     await runTickProbe();
-    const live = await runLiveExport();
-    persistLivenessReport('round3-live', live);
-    const bisect = await runCeilingBisect(['baseline-30fps-1080p-4assets', '15fps-same-timeline', '720p-30fps', 'longer-timeline-same-frames', '1-unique-video']);
-    persistLivenessReport('round3-bisect', bisect);
+    const bisect = await runCeilingBisect(['longer-timeline-same-frames', '1-unique-video']);
+    persistLivenessReport('round3-bisect-remainder', bisect);
   } catch (e) {
     persistLivenessReport('autorun-error', { message: e instanceof Error ? e.message : String(e), t: Date.now() });
     // eslint-disable-next-line no-console
