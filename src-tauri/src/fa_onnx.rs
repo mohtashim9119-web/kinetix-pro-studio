@@ -7457,32 +7457,32 @@ mod thread_scaling_bench {
     use std::time::Instant;
 
     /// The 120s window the objective names, over the 173 corpus.
-    const WINDOW_START: f64 = 0.0;
-    const WINDOW_END: f64 = 120.0;
+    pub(super) const WINDOW_START: f64 = 0.0;
+    pub(super) const WINDOW_END: f64 = 120.0;
 
     /// One frame at 60fps / at 30fps, in milliseconds — the two perceptual
     /// thresholds the drift histogram is cut at.
-    const FRAME_60_MS: f64 = 1000.0 / 60.0;
-    const FRAME_30_MS: f64 = 1000.0 / 30.0;
+    pub(super) const FRAME_60_MS: f64 = 1000.0 / 60.0;
+    pub(super) const FRAME_30_MS: f64 = 1000.0 / 30.0;
 
     /// A shift this large is not "drift" — it is evidence the two arms did
     /// not align the same audio at all. The delta computer red-flags rather
     /// than reporting it as a timing statistic. Half a second is ~15 frames
     /// at 30fps: far past any threading effect, comfortably below the
     /// multi-second displacement a deliberately mismatched window produces.
-    const GROSS_MISMATCH_MS: f64 = 500.0;
+    pub(super) const GROSS_MISMATCH_MS: f64 = 500.0;
 
-    fn repo_root() -> PathBuf {
+    pub(super) fn repo_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..")
     }
 
     #[cfg(target_os = "macos")]
-    fn fa_models_dir() -> PathBuf {
+    pub(super) fn fa_models_dir() -> PathBuf {
         let home = std::env::var("HOME").expect("HOME must be set");
         PathBuf::from(home).join("Library/Application Support/com.kinetix.pro-studio/fa-models")
     }
     #[cfg(not(target_os = "macos"))]
-    fn fa_models_dir() -> PathBuf {
+    pub(super) fn fa_models_dir() -> PathBuf {
         panic!("thread_scaling_bench's fa_models_dir() only reproduces the macOS mapping");
     }
 
@@ -7505,7 +7505,7 @@ mod thread_scaling_bench {
     /// The REAL production chunk plan for `corpus`, keeping only chunks
     /// overlapping `[window_start, window_end)` — real boundaries and real
     /// text, a bounded slice of them, never a synthetic re-chunking.
-    fn load_production_chunks_windowed(corpus: &str, window_start: f64, window_end: f64) -> Vec<crate::fa::FaChunkInput> {
+    pub(super) fn load_production_chunks_windowed(corpus: &str, window_start: f64, window_end: f64) -> Vec<crate::fa::FaChunkInput> {
         let path = repo_root().join(format!(".work-phase4/replay/{corpus}/fa_production_chunks.json"));
         let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
         let plan: ChunkPlanFile = serde_json::from_str(&text).unwrap_or_else(|e| panic!("parse {}: {e}", path.display()));
@@ -7544,20 +7544,20 @@ mod thread_scaling_bench {
 
     /// One measured arm. `wall_ms` is the whole chunk loop; the three stage
     /// accumulators break it down. Only `forward` is threaded by ORT.
-    struct ArmResult {
-        words: Vec<super::WordSpan>,
-        acc: crate::fa_timing::FaChunkAccumulators,
-        wall_ms: f64,
+    pub(super) struct ArmResult {
+        pub(super) words: Vec<super::WordSpan>,
+        pub(super) acc: crate::fa_timing::FaChunkAccumulators,
+        pub(super) wall_ms: f64,
     }
 
     impl ArmResult {
-        fn forward_ms(&self) -> f64 {
+        pub(super) fn forward_ms(&self) -> f64 {
             self.acc.forward.total_nanos as f64 / 1e6
         }
-        fn viterbi_ms(&self) -> f64 {
+        pub(super) fn viterbi_ms(&self) -> f64 {
             self.acc.viterbi.total_nanos as f64 / 1e6
         }
-        fn tokenize_ms(&self) -> f64 {
+        pub(super) fn tokenize_ms(&self) -> f64 {
             self.acc.tokenize.total_nanos as f64 / 1e6
         }
     }
@@ -7565,7 +7565,7 @@ mod thread_scaling_bench {
     /// THE shared loop. Every pass runs exactly this, so the session is the
     /// only variable. `samples` and `vocab` are borrowed already-loaded:
     /// WAV decode and vocab parse are outside every measurement.
-    fn run_arm(
+    pub(super) fn run_arm(
         session: &mut Session,
         vocab: &Vocab,
         samples: &[f32],
@@ -7600,7 +7600,7 @@ mod thread_scaling_bench {
     /// derived from them is meaningful — the destructive probe's expected
     /// outcome.
     #[derive(Debug, PartialEq, Eq)]
-    enum Verdict {
+    pub(super) enum Verdict {
         BitExact,
         SubFrame60,
         OneFrame30,
@@ -7609,24 +7609,24 @@ mod thread_scaling_bench {
         RedFlagGross,
     }
 
-    struct Drift {
-        len_a: usize,
-        len_b: usize,
-        text_mismatches: usize,
-        compared: usize,
-        max_start_ms: f64,
-        mean_start_ms: f64,
-        p95_start_ms: f64,
-        max_end_ms: f64,
-        bucket_exact: usize,
-        bucket_sub_60: usize,
-        bucket_frame_30: usize,
-        bucket_multi_frame: usize,
-        verdict: Verdict,
+    pub(super) struct Drift {
+        pub(super) len_a: usize,
+        pub(super) len_b: usize,
+        pub(super) text_mismatches: usize,
+        pub(super) compared: usize,
+        pub(super) max_start_ms: f64,
+        pub(super) mean_start_ms: f64,
+        pub(super) p95_start_ms: f64,
+        pub(super) max_end_ms: f64,
+        pub(super) bucket_exact: usize,
+        pub(super) bucket_sub_60: usize,
+        pub(super) bucket_frame_30: usize,
+        pub(super) bucket_multi_frame: usize,
+        pub(super) verdict: Verdict,
     }
 
     /// Nearest-rank 95th percentile over an already-ascending slice.
-    fn p95(sorted: &[f64]) -> f64 {
+    pub(super) fn p95(sorted: &[f64]) -> f64 {
         if sorted.is_empty() {
             return 0.0;
         }
@@ -7640,7 +7640,7 @@ mod thread_scaling_bench {
     /// "Timestamps may measure distance; they must never decide identity").
     /// A length or text disagreement is therefore a structural red flag, not
     /// something to paper over by re-matching on time.
-    fn compute_drift(a: &[super::WordSpan], b: &[super::WordSpan]) -> Drift {
+    pub(super) fn compute_drift(a: &[super::WordSpan], b: &[super::WordSpan]) -> Drift {
         let compared = a.len().min(b.len());
         let mut text_mismatches = 0usize;
         let mut starts: Vec<f64> = Vec::with_capacity(compared);
@@ -7704,7 +7704,7 @@ mod thread_scaling_bench {
         }
     }
 
-    fn report_drift(label: &str, d: &Drift) {
+    pub(super) fn report_drift(label: &str, d: &Drift) {
         eprintln!("--- {label} ---");
         eprintln!("  words: A={} B={} compared={} text mismatches={}", d.len_a, d.len_b, d.compared, d.text_mismatches);
         eprintln!(
@@ -7719,7 +7719,7 @@ mod thread_scaling_bench {
         eprintln!("  VERDICT: {:?}", d.verdict);
     }
 
-    fn common_setup(context: &str, corpus: &str) -> Option<(PathBuf, PathBuf)> {
+    pub(super) fn common_setup(context: &str, corpus: &str) -> Option<(PathBuf, PathBuf)> {
         if !super::require_ort::ort_dylib_or_skip(context) {
             return None;
         }
@@ -7889,6 +7889,442 @@ mod thread_scaling_bench {
                  different word sequences, which is a defect in the harness or in the model, not drift",
                 d12.verdict
             );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WS3 fa-perf-foundation — INTRA-OP THREAD-COUNT SWEEP (one knob, isolated).
+//
+// WHY THIS EXISTS SEPARATELY FROM `thread_scaling_bench` ABOVE. That module's
+// multi-threaded arm moves FOUR knobs at once relative to production:
+// `intra_threads` 1 -> logical cores, `parallel_execution` false -> true,
+// `deterministic_compute` true -> false, and (only incidentally) the thread
+// pool that follows from the first. Whatever speedup it reports is therefore
+// UNATTRIBUTED — it cannot say whether the time came from intra-op
+// parallelism, from giving up determinism, or from the parallel executor, and
+// it cannot say which of those bought the drift. A four-knob result is not an
+// input a production pin can be changed on.
+//
+// This module moves ONE knob. Every arm is byte-identical to production
+// `load_session` except `with_intra_threads(N)`:
+//     with_inter_threads(1)              same as production
+//     with_parallel_execution(false)     same as production
+//     with_deterministic_compute(true)   same as production — KEPT ON, the point
+//     with_memory_pattern(false)         same as production — Session AO's OOM fix
+// so a difference between arms is attributable to intra-op thread count and to
+// nothing else. `deterministic_compute` staying ON is the substance of the
+// experiment, not an oversight: the question is whether ORT's determinism
+// guarantee survives a widened intra-op pool, and an arm that switched it off
+// could not answer that.
+//
+// ONE ARM PER PROCESS, AND WHY IT MUST BE. Peak RSS is a REQUIRED output here,
+// and a single process cannot produce a per-arm one. WS1 Session AO measured
+// (`.work-phase4/session-ao/rss_timeline.csv`) that a dropped `Session`'s
+// memory is not returned to the OS — RSS rose monotonically for all but 1 of
+// 1585 samples across a multi-corpus run. In a five-arm single process, arm 5's
+// "peak" would therefore be arm 1-4's residue plus its own, and the five
+// numbers would be a cumulative staircase that says nothing about any arm's
+// cost. So this test runs exactly ONE arm, chosen by `FA_SWEEP_INTRA`, and the
+// driver invokes it five times under `/usr/bin/time -l` — the same
+// process-per-rung/external-`time -l` shape `d12_measurement` above already
+// documents for exactly this reason. It also makes "fresh session per arm"
+// structural rather than a promise: a new process cannot reuse a cached
+// session, so `with_cached_session` is not in the picture at all.
+//
+// THE ARMS ARE COMPARED IN A SEPARATE STEP, from persisted words. Each arm
+// writes its own words and stage timings to `$FA_SWEEP_OUT_DIR/arm_<label>.json`;
+// `intra_thread_sweep_compare` then reads them all and diffs every arm against
+// the N=1 arm. The comparison uses `thread_scaling_bench::compute_drift`
+// UNMODIFIED — the same comparator the `FA_PERF_PROBE_SHIFT_SEC` destructive
+// probe exercises — so a zero-drift result here is backed by a comparator that
+// has been shown, by deliberate mismatch, to be capable of reporting non-zero.
+// Correspondence is by index and confirmed by text, never by timestamp
+// proximity (CLAUDE.md §4).
+//
+// Run (driver: `.work-phase4/session-fa-perf/run_sweep.sh`):
+//   ORT_DYLIB_PATH=<dylib> FA_SWEEP_OUT_DIR=<dir> FA_SWEEP_INTRA=<N> \
+//     /usr/bin/time -l cargo test --release --features fa-inference --lib \
+//     -- --ignored --nocapture --exact \
+//     fa_onnx::intra_thread_sweep::intra_thread_sweep_arm_173
+//   … once per N, then:
+//   FA_SWEEP_OUT_DIR=<dir> cargo test --release --features fa-inference --lib \
+//     -- --ignored --nocapture --exact \
+//     fa_onnx::intra_thread_sweep::intra_thread_sweep_compare
+//
+// DESTRUCTIVE PROBE. `FA_SWEEP_PROBE_SHIFT_SEC=<seconds>` shifts THIS arm's
+// chunk windows while leaving its text alone, so the arm aligns the same
+// script against different audio. Its label is suffixed `_probe<sec>s`, and
+// the comparator must red-flag it. Same env-var rather than source-mutation
+// discipline as the sibling module, for the same reason (CLAUDE.md, "Repo
+// operations": a reverted probe mutation is how uncommitted work gets lost).
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod intra_thread_sweep {
+    use super::thread_scaling_bench as bench;
+    use super::*;
+    use std::path::PathBuf;
+    use std::time::Instant;
+
+    /// One arm's persisted result. Serialized so the comparison step is a
+    /// separate process from every measured arm.
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct ArmRecord {
+        label: String,
+        intra_threads: usize,
+        probe_shift_sec: f64,
+        chunks: usize,
+        audio_secs: f64,
+        forward_total_ms: f64,
+        forward_count: u32,
+        forward_mean_ms: f64,
+        forward_max_ms: f64,
+        viterbi_total_ms: f64,
+        tokenize_total_ms: f64,
+        loop_wall_ms: f64,
+        /// Sampled in-process; the AUTHORITATIVE peak comes from the external
+        /// `/usr/bin/time -l` wrapper the driver applies (this one cannot see
+        /// allocation between two samples, and starts after process init).
+        sampled_peak_rss_mib: f64,
+        words: Vec<SerWord>,
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize, Clone)]
+    struct SerWord {
+        text: String,
+        start: f64,
+        end: f64,
+    }
+
+    fn out_dir() -> PathBuf {
+        PathBuf::from(
+            std::env::var("FA_SWEEP_OUT_DIR")
+                .expect("FA_SWEEP_OUT_DIR must be set (the directory arm JSONs are written to/read from)"),
+        )
+    }
+
+    /// Production `load_session`'s configuration with EXACTLY ONE substitution:
+    /// `with_intra_threads(intra)` in place of the pinned `1`. Every other
+    /// option below is a verbatim copy of `load_session` (fa_onnx.rs:490-528).
+    /// It is a copy rather than a call because `load_session` hardcodes the
+    /// pinned value and this module must not modify it (scope lock); the arm
+    /// at `intra == 1` therefore doubles as the check that the copy is faithful
+    /// — it must reproduce production's words exactly, and the comparison step
+    /// treats it as the baseline every other arm is diffed against.
+    ///
+    /// `deterministic` is `true` for every sweep arm; the ONE exception is the
+    /// `FA_SWEEP_DET=0` diagnostic arm, which exists to answer whether
+    /// `with_deterministic_compute(true)` is doing any work at all on this CPU
+    /// path. onnxruntime's own C API scopes the flag to GPU kernels
+    /// (onnxruntime_c_api.h: "this will enable deterministic compute for GPU
+    /// kernels where possible"), which — if accurate for 1.23.2 — would make it
+    /// inert for a CPU-execution-provider session like this one. That is a
+    /// claim about a shipped binary, so it is settled by running the arm rather
+    /// than by reading the header.
+    fn load_session_intra(model_path: &Path, intra: usize, deterministic: bool) -> Session {
+        let dylib_path = std::env::var("ORT_DYLIB_PATH").expect("ORT_DYLIB_PATH must be set (checked by common_setup)");
+        ort::init_from(dylib_path).expect("ort::init_from").commit();
+        Session::builder()
+            .expect("Session::builder")
+            .with_intra_threads(intra)
+            .expect("with_intra_threads")
+            .with_inter_threads(1)
+            .expect("with_inter_threads")
+            .with_parallel_execution(false)
+            .expect("with_parallel_execution")
+            .with_deterministic_compute(deterministic)
+            .expect("with_deterministic_compute")
+            .with_memory_pattern(false)
+            .expect("with_memory_pattern")
+            .commit_from_file(model_path)
+            .expect("commit_from_file")
+    }
+
+    /// Current (not peak) RSS in KB for this process, via `ps -o rss=` — the
+    /// same mechanism `session_ao_memory` above uses, and for the same reason
+    /// (`getrusage`'s `ru_maxrss` is cumulative and cannot be reset per arm).
+    fn current_rss_kb() -> Option<u64> {
+        let pid = std::process::id();
+        let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &pid.to_string()]).output().ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse::<u64>().ok()
+    }
+
+    /// ONE ARM. See this module's header for why it is one arm per process.
+    #[test]
+    #[ignore]
+    fn intra_thread_sweep_arm_173() {
+        const CONTEXT: &str = "intra_thread_sweep_arm_173";
+        let Some((model_path, audio_path)) = bench::common_setup(CONTEXT, "173") else { return };
+
+        // `FA_SWEEP_INTRA=prod` runs the REAL, UNMODIFIED production
+        // `load_session` instead of this module's one-knob copy. It is the
+        // copy's own faithfulness check: `load_session_intra(.., 1)` claims to
+        // be production's configuration with the single documented
+        // substitution, and the only way to establish that rather than assert
+        // it is to run the real thing over the same window and diff the words.
+        // A `prod` arm that is not bit-exact with the `n1` arm means the copy
+        // has drifted and every number in the sweep is measuring the wrong
+        // baseline.
+        let intra_var = std::env::var("FA_SWEEP_INTRA")
+            .expect("FA_SWEEP_INTRA must be set (intra-op thread count, or `prod` for real load_session)");
+        let use_production = intra_var == "prod";
+        let intra: usize = if use_production {
+            1
+        } else {
+            intra_var.parse().expect("FA_SWEEP_INTRA must be a positive integer or `prod`")
+        };
+        assert!(intra >= 1, "FA_SWEEP_INTRA must be >= 1");
+        let probe_shift: f64 =
+            std::env::var("FA_SWEEP_PROBE_SHIFT_SEC").ok().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+        // Defaults to production's `true`; only `FA_SWEEP_DET=0` turns it off.
+        let deterministic = std::env::var("FA_SWEEP_DET").map(|v| v != "0").unwrap_or(true);
+
+        let chunks = bench::load_production_chunks_windowed("173", bench::WINDOW_START, bench::WINDOW_END);
+        assert!(!chunks.is_empty(), "window matched no production chunks");
+        let covered_start = chunks.first().expect("non-empty").start_sec;
+        let covered_end = chunks.last().expect("non-empty").end_sec;
+        let audio_secs = covered_end - covered_start;
+
+        let arm_chunks: Vec<crate::fa::FaChunkInput> = if probe_shift == 0.0 {
+            chunks.clone()
+        } else {
+            chunks
+                .iter()
+                .map(|c| crate::fa::FaChunkInput {
+                    start_sec: c.start_sec + probe_shift,
+                    end_sec: c.end_sec + probe_shift,
+                    text: c.text.clone(),
+                })
+                .collect()
+        };
+
+        let base_label = if use_production {
+            "prod".to_string()
+        } else if deterministic {
+            format!("n{intra}")
+        } else {
+            format!("n{intra}_detoff")
+        };
+        let label =
+            if probe_shift == 0.0 { base_label.clone() } else { format!("{base_label}_probe{probe_shift}s") };
+
+        eprintln!("=== {CONTEXT} | arm {label} ===");
+        if use_production {
+            eprintln!("  REAL production load_session (fa_onnx.rs:490-528), unmodified");
+        } else {
+            eprintln!(
+                "  intra_threads={intra} inter=1 parallel=false deterministic={} memory_pattern=false",
+                if deterministic { "TRUE" } else { "FALSE (diagnostic arm)" }
+            );
+        }
+        eprintln!("  chunks={} covered=[{covered_start:.2},{covered_end:.2}) = {audio_secs:.2}s", chunks.len());
+        eprintln!("  host logical cores: {}", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(0));
+        if probe_shift != 0.0 {
+            eprintln!("  *** DESTRUCTIVE PROBE ACTIVE: this arm's windows shifted +{probe_shift}s ***");
+        }
+
+        // Shared setup, outside the measured region.
+        let vocab = load_vocab("en").expect("load_vocab en");
+        let samples = read_wav_mono_16k(&audio_path).expect("read_wav_mono_16k");
+
+        // In-process RSS sampler. Advisory only — the driver's external
+        // `/usr/bin/time -l` is the authoritative peak (see `ArmRecord`).
+        let peak_kb = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sampler = {
+            let peak_kb = std::sync::Arc::clone(&peak_kb);
+            let stop = std::sync::Arc::clone(&stop);
+            std::thread::spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Some(kb) = current_rss_kb() {
+                        peak_kb.fetch_max(kb, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            })
+        };
+
+        let build_started = Instant::now();
+        let mut session = if use_production {
+            load_session(&model_path).expect("production load_session")
+        } else {
+            load_session_intra(&model_path, intra, deterministic)
+        };
+        let build_ms = build_started.elapsed().as_secs_f64() * 1e3;
+        let arm = bench::run_arm(&mut session, &vocab, &samples, &arm_chunks);
+        drop(session);
+
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        sampler.join().expect("sampler thread");
+        let sampled_peak_rss_mib = peak_kb.load(std::sync::atomic::Ordering::Relaxed) as f64 / 1024.0;
+
+        let forward_total_ms = arm.forward_ms();
+        eprintln!(
+            "  session build={build_ms:.1}ms | forward total={forward_total_ms:.1}ms n={} mean={:.1}ms max={:.1}ms",
+            arm.acc.forward.count,
+            arm.acc.forward.mean_nanos() as f64 / 1e6,
+            arm.acc.forward.max_nanos as f64 / 1e6,
+        );
+        eprintln!(
+            "  viterbi={:.1}ms tokenize={:.3}ms loop wall={:.1}ms | throughput={:.3} audio-s/forward-s",
+            arm.viterbi_ms(),
+            arm.tokenize_ms(),
+            arm.wall_ms,
+            audio_secs / (forward_total_ms / 1e3),
+        );
+        eprintln!("  sampled peak RSS = {sampled_peak_rss_mib:.1} MiB (advisory; /usr/bin/time -l is authoritative)");
+        eprintln!("  words = {}", arm.words.len());
+
+        let record = ArmRecord {
+            label: label.clone(),
+            intra_threads: intra,
+            probe_shift_sec: probe_shift,
+            chunks: chunks.len(),
+            audio_secs,
+            forward_total_ms,
+            forward_count: arm.acc.forward.count,
+            forward_mean_ms: arm.acc.forward.mean_nanos() as f64 / 1e6,
+            forward_max_ms: arm.acc.forward.max_nanos as f64 / 1e6,
+            viterbi_total_ms: arm.viterbi_ms(),
+            tokenize_total_ms: arm.tokenize_ms(),
+            loop_wall_ms: arm.wall_ms,
+            sampled_peak_rss_mib,
+            words: arm
+                .words
+                .iter()
+                .map(|w| SerWord { text: w.text.clone(), start: w.start_seconds, end: w.end_seconds })
+                .collect(),
+        };
+
+        let dir = out_dir();
+        std::fs::create_dir_all(&dir).unwrap_or_else(|e| panic!("create {}: {e}", dir.display()));
+        let path = dir.join(format!("arm_{label}.json"));
+        std::fs::write(&path, serde_json::to_string(&record).expect("serialize ArmRecord"))
+            .unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
+        eprintln!("  wrote {}", path.display());
+    }
+
+    /// THE COMPARISON. Reads every `arm_*.json` in `$FA_SWEEP_OUT_DIR` and
+    /// diffs each against the `n1` arm using the sibling module's unmodified
+    /// comparator.
+    #[test]
+    #[ignore]
+    fn intra_thread_sweep_compare() {
+        const CONTEXT: &str = "intra_thread_sweep_compare";
+        let dir = out_dir();
+        let mut records: Vec<ArmRecord> = std::fs::read_dir(&dir)
+            .unwrap_or_else(|e| panic!("read_dir {}: {e}", dir.display()))
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name().and_then(|n| n.to_str()).map(|n| n.starts_with("arm_") && n.ends_with(".json")).unwrap_or(false)
+            })
+            .map(|p| {
+                let t = std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("read {}: {e}", p.display()));
+                serde_json::from_str::<ArmRecord>(&t).unwrap_or_else(|e| panic!("parse {}: {e}", p.display()))
+            })
+            .collect();
+        assert!(!records.is_empty(), "{CONTEXT}: no arm_*.json found in {}", dir.display());
+        // Clean arms ascending by thread count; probe arms last.
+        records.sort_by(|a, b| {
+            (a.probe_shift_sec != 0.0, a.intra_threads)
+                .partial_cmp(&(b.probe_shift_sec != 0.0, b.intra_threads))
+                .expect("total order")
+        });
+
+        // By LABEL, not by thread count: a `prod` arm also reports
+        // `intra_threads == 1`, and the baseline must be the one-knob copy so
+        // that `prod` is diffed AGAINST it rather than standing in for it.
+        let baseline_idx = records
+            .iter()
+            .position(|r| r.label == "n1")
+            .unwrap_or_else(|| panic!("{CONTEXT}: no clean n1 baseline arm in {}", dir.display()));
+        let base_forward = records[baseline_idx].forward_total_ms;
+        let base_words: Vec<super::WordSpan> = records[baseline_idx]
+            .words
+            .iter()
+            .map(|w| super::WordSpan { text: w.text.clone(), start_seconds: w.start, end_seconds: w.end, score: 0.0 })
+            .collect();
+
+        eprintln!("=== {CONTEXT} ===");
+        eprintln!("  baseline: arm {} ({} words, forward {:.1}ms)", records[baseline_idx].label, base_words.len(), base_forward);
+        eprintln!();
+        eprintln!(
+            "{:<18} {:>6} {:>10} {:>9} {:>9} {:>10} {:>8} {:>10} {:>10} {:>10} {:>7} {:>9}",
+            "arm", "intra", "fwdTotMs", "meanMs", "maxMs", "audioS/s", "speedup", "maxDrMs", "meanDrMs", "p95DrMs", "exact", "RSS MiB"
+        );
+
+        let mut verdicts: Vec<(String, bench::Verdict, usize, usize)> = Vec::new();
+        for r in &records {
+            let words: Vec<super::WordSpan> = r
+                .words
+                .iter()
+                .map(|w| super::WordSpan { text: w.text.clone(), start_seconds: w.start, end_seconds: w.end, score: 0.0 })
+                .collect();
+            let d = bench::compute_drift(&base_words, &words);
+            eprintln!(
+                "{:<18} {:>6} {:>10.1} {:>9.1} {:>9.1} {:>10.3} {:>7.3}x {:>10.3} {:>10.3} {:>10.3} {:>3}/{:<3} {:>9.1}",
+                r.label,
+                r.intra_threads,
+                r.forward_total_ms,
+                r.forward_mean_ms,
+                r.forward_max_ms,
+                r.audio_secs / (r.forward_total_ms / 1e3),
+                base_forward / r.forward_total_ms,
+                d.max_start_ms,
+                d.mean_start_ms,
+                d.p95_start_ms,
+                d.bucket_exact,
+                d.compared,
+                r.sampled_peak_rss_mib,
+            );
+            verdicts.push((r.label.clone(), d.verdict, d.bucket_exact, d.compared));
+        }
+
+        eprintln!();
+        for r in &records {
+            let words: Vec<super::WordSpan> = r
+                .words
+                .iter()
+                .map(|w| super::WordSpan { text: w.text.clone(), start_seconds: w.start, end_seconds: w.end, score: 0.0 })
+                .collect();
+            let d = bench::compute_drift(&base_words, &words);
+            bench::report_drift(&format!("n1 baseline vs arm {}", r.label), &d);
+        }
+
+        eprintln!();
+        eprintln!("=== VERDICTS ===");
+        for (label, v, exact, compared) in &verdicts {
+            eprintln!("  {label:<18} {v:?}  (bit-exact {exact}/{compared})");
+        }
+
+        // A probe arm MUST be red-flagged; a clean arm MUST NOT be structurally
+        // broken. Both directions are asserted so the table cannot be read as
+        // certifying anything the comparator did not actually check.
+        for r in &records {
+            let words: Vec<super::WordSpan> = r
+                .words
+                .iter()
+                .map(|w| super::WordSpan { text: w.text.clone(), start_seconds: w.start, end_seconds: w.end, score: 0.0 })
+                .collect();
+            let d = bench::compute_drift(&base_words, &words);
+            let flagged = matches!(d.verdict, bench::Verdict::RedFlagStructural | bench::Verdict::RedFlagGross);
+            if r.probe_shift_sec != 0.0 {
+                assert!(
+                    flagged,
+                    "DESTRUCTIVE PROBE FAILED: arm {} (shift {}s) was NOT red-flagged (verdict {:?}, max {:.3}ms) — \
+                     the comparator cannot distinguish corresponding from non-corresponding content, so every \
+                     zero-drift number in the table above is vacuous",
+                    r.label, r.probe_shift_sec, d.verdict, d.max_start_ms
+                );
+            } else {
+                assert!(
+                    !flagged,
+                    "arm {} disagrees STRUCTURALLY with the n1 baseline ({:?}) — different word sequences, \
+                     which is a harness or model defect, not drift",
+                    r.label, d.verdict
+                );
+            }
         }
     }
 }
