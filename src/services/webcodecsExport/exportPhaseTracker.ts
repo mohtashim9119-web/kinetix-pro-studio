@@ -51,8 +51,9 @@ export interface ExportPhaseBreakdown {
 export class ExportPhaseTracker {
   private seq = 0;
   private lastPostedAt = Number.NEGATIVE_INFINITY;
-  private current: string | null = null;
-  private currentStartedAt = 0;
+  /** Nested phase stack — innermost active phase is the top entry. */
+  private readonly stack: string[] = [];
+  private phaseStartedAt = 0;
   private readonly totals = new Map<string, number>();
   private instrumentationMs = 0;
   private framesEncoded = 0;
@@ -62,6 +63,10 @@ export class ExportPhaseTracker {
   private readonly phaseLog: ExportPhaseLogEntry[] = [];
   private readonly runStartedAt: number;
   private lastPhaseName: string | null = null;
+
+  private currentPhase(): string | null {
+    return this.stack.length > 0 ? this.stack[this.stack.length - 1]! : null;
+  }
 
   constructor(
     private readonly post: (msg: ExportPhaseToken) => void,
@@ -84,13 +89,24 @@ export class ExportPhaseTracker {
     this.instrumentationMs += this.now() - t0;
   }
 
-  /** Ends the previous phase (if any) and starts `phase`. Posts immediately. */
+  /** Push `phase` onto the stack (nested inside the current phase, if any). Posts immediately. */
   enter(phase: string): void {
     const t0 = this.now();
     this.flushCurrent(t0);
-    this.current = phase;
-    this.currentStartedAt = t0;
+    this.stack.push(phase);
+    this.phaseStartedAt = t0;
     this.postNow(phase, t0, 'enter');
+    this.instrumentationMs += this.now() - t0;
+  }
+
+  /** Pop the innermost phase and resume timing on the parent. Posts the parent phase. */
+  leave(): void {
+    const t0 = this.now();
+    this.flushCurrent(t0);
+    if (this.stack.length > 0) this.stack.pop();
+    this.phaseStartedAt = t0;
+    const parent = this.currentPhase();
+    if (parent) this.postNow(parent, t0, 'enter');
     this.instrumentationMs += this.now() - t0;
   }
 
@@ -117,8 +133,9 @@ export class ExportPhaseTracker {
    */
   pulse(): void {
     const t0 = this.now();
-    if (this.current && t0 - this.lastPostedAt >= PHASE_THROTTLE_MS) {
-      this.postNow(this.current, t0, 'pulse');
+    const phase = this.currentPhase();
+    if (phase && t0 - this.lastPostedAt >= PHASE_THROTTLE_MS) {
+      this.postNow(phase, t0, 'pulse');
     }
     this.instrumentationMs += this.now() - t0;
   }
@@ -126,7 +143,7 @@ export class ExportPhaseTracker {
   finish(): ExportPhaseBreakdown {
     const t0 = this.now();
     this.flushCurrent(t0);
-    this.current = null;
+    this.stack.length = 0;
     const phaseMs: Record<string, number> = {};
     for (const [k, v] of this.totals) phaseMs[k] = v;
     this.instrumentationMs += this.now() - t0;
@@ -145,9 +162,10 @@ export class ExportPhaseTracker {
     const t0 = this.now();
     const phaseMs: Record<string, number> = {};
     for (const [k, v] of this.totals) phaseMs[k] = v;
-    if (this.current) {
-      const elapsed = t0 - this.currentStartedAt;
-      phaseMs[this.current] = (phaseMs[this.current] ?? 0) + elapsed;
+    const live = this.currentPhase();
+    if (live) {
+      const elapsed = t0 - this.phaseStartedAt;
+      phaseMs[live] = (phaseMs[live] ?? 0) + elapsed;
     }
     this.instrumentationMs += this.now() - t0;
     return {
@@ -155,15 +173,16 @@ export class ExportPhaseTracker {
       instrumentationMs: this.instrumentationMs,
       demuxSplit: this.demuxSplit.slice(),
       phaseLog: this.phaseLog.slice(),
-      lastPhase: this.lastPhaseName ?? this.current,
+      lastPhase: this.lastPhaseName ?? live,
       framesEncoded: this.framesEncoded,
     };
   }
 
   private flushCurrent(now: number): void {
-    if (!this.current) return;
-    const elapsed = now - this.currentStartedAt;
-    this.totals.set(this.current, (this.totals.get(this.current) ?? 0) + elapsed);
+    const live = this.currentPhase();
+    if (!live) return;
+    const elapsed = now - this.phaseStartedAt;
+    this.totals.set(live, (this.totals.get(live) ?? 0) + elapsed);
   }
 
   private postNow(phase: string, now: number, kind: 'enter' | 'pulse'): void {

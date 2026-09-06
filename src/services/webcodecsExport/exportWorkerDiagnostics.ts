@@ -55,6 +55,12 @@ export interface ExportWorkerDiagnosticsPayload {
   failure: ExportFailureIdentity | null;
   demuxCacheSize: number | null;
   workerHeapBytes: number | null;
+  /** Cumulative decoded source VideoFrames handed to the compositor this run. */
+  decodedSourceFrames: number;
+  /** Encoded output chunks emitted by VideoEncoder this run. */
+  encodedChunkCount: number;
+  encodedKeyframeCount: number;
+  encodedChunkBytes: number;
 }
 
 export interface WatchdogOutputEvent {
@@ -97,32 +103,58 @@ export function framesAtTime(log: readonly ExportPhaseLogEntry[], atMs: number):
   return frames;
 }
 
+function pushSilentGap(
+  out: SilentIntervalAttribution[],
+  startMs: number,
+  endMs: number,
+  phaseLog: readonly ExportPhaseLogEntry[],
+  minDurationMs: number,
+): void {
+  const durationMs = endMs - startMs;
+  if (durationMs < minDurationMs) return;
+  const frames = framesAtTime(phaseLog, startMs);
+  out.push({
+    startMs,
+    endMs,
+    durationMs,
+    phase: phaseAtTime(phaseLog, startMs),
+    framesEncodedAtStart: frames,
+    frameIndexAtStart: frames > 0 ? frames - 1 : null,
+  });
+}
+
 /**
  * Given watchdog-resetting output events on the main thread, list silent gaps
  * and attribute each to the phase that was live for the gap duration.
+ *
+ * When `endMs` is supplied (failure / watchdog paths), the terminal gap from
+ * the last output event through `endMs` is always recorded — not folded into
+ * `maxSilentMs` alone.
  */
 export function attributeSilentIntervals(
   outputEvents: readonly WatchdogOutputEvent[],
   phaseLog: readonly ExportPhaseLogEntry[],
   minDurationMs = 0,
+  endMs?: number,
 ): SilentIntervalAttribution[] {
-  if (outputEvents.length < 2) return [];
   const out: SilentIntervalAttribution[] = [];
+
+  if (outputEvents.length === 0) {
+    if (endMs !== undefined) pushSilentGap(out, 0, endMs, phaseLog, minDurationMs);
+    return out;
+  }
+
   for (let i = 1; i < outputEvents.length; i++) {
     const prev = outputEvents[i - 1]!;
     const cur = outputEvents[i]!;
-    const durationMs = cur.atMs - prev.atMs;
-    if (durationMs < minDurationMs) continue;
-    const phase = phaseAtTime(phaseLog, prev.atMs);
-    out.push({
-      startMs: prev.atMs,
-      endMs: cur.atMs,
-      durationMs,
-      phase,
-      framesEncodedAtStart: framesAtTime(phaseLog, prev.atMs),
-      frameIndexAtStart: framesAtTime(phaseLog, prev.atMs) > 0 ? framesAtTime(phaseLog, prev.atMs) - 1 : null,
-    });
+    pushSilentGap(out, prev.atMs, cur.atMs, phaseLog, minDurationMs);
   }
+
+  if (endMs !== undefined) {
+    const last = outputEvents[outputEvents.length - 1]!;
+    pushSilentGap(out, last.atMs, endMs, phaseLog, minDurationMs);
+  }
+
   return out;
 }
 

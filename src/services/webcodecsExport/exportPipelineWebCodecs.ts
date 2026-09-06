@@ -466,6 +466,8 @@ export interface WebCodecsGlPieceDiagnostics extends ExportWorkerDiagnosticsPayl
   appendDrainMs: number;
   silentIntervals: SilentIntervalAttribution[];
   aborted: boolean;
+  appendCallCount: number;
+  appendBytes: number;
 }
 
 export interface WebCodecsRunDiagnostics {
@@ -521,8 +523,17 @@ type RunDriveResult =
       maxSilentMs: number;
       appendDrainMs: number;
       silentIntervals: SilentIntervalAttribution[];
+      appendCallCount: number;
+      appendBytes: number;
     }
-  | { ok: false; error: ExportError; diagnostics: ExportWorkerDiagnosticsPayload | null; silentIntervals: SilentIntervalAttribution[] };
+  | {
+      ok: false;
+      error: ExportError;
+      diagnostics: ExportWorkerDiagnosticsPayload | null;
+      silentIntervals: SilentIntervalAttribution[];
+      appendCallCount: number;
+      appendBytes: number;
+    };
 
 /** Unchanged 30s bound — exported so tests can assert the value and drive
  *  fake timers against the same constant the production path uses. */
@@ -577,7 +588,8 @@ export function driveGlRun(
 
     let appendQueue: Promise<void> = Promise.resolve();
     let appendError: Error | null = null;
-    let framesAppended = 0;
+    let appendCallCount = 0;
+    let appendBytes = 0;
     let settled = false;
     let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
     let lastPhase: string | null = 'init';
@@ -624,11 +636,15 @@ export function driveGlRun(
         failure: null,
         demuxCacheSize: null,
         workerHeapBytes: null,
+        decodedSourceFrames: 0,
+        encodedChunkCount: 0,
+        encodedKeyframeCount: 0,
+        encodedChunkBytes: 0,
       };
     };
 
     const silentIntervals = (): SilentIntervalAttribution[] =>
-      attributeSilentIntervals(outputEvents, phaseLog, 0);
+      attributeSilentIntervals(outputEvents, phaseLog, 0, relMs());
 
     const snapshotLiveness = (): ExportLivenessSnapshot => ({
       lastPhase,
@@ -684,6 +700,8 @@ export function driveGlRun(
           error: errorFromDiagnostics('unknown', diagnostics, 'Export worker produced no output for 30s — aborting (watchdog).'),
           diagnostics,
           silentIntervals: silentIntervals(),
+          appendCallCount,
+          appendBytes,
         });
       }, 50);
     };
@@ -705,8 +723,9 @@ export function driveGlRun(
             if (appendError || settled) return;
             try {
               await ffmpeg.appendFileRaw(runFile, bytes);
-              framesAppended++;
-              onFrameProgress(framesAppended, totalExpectedFrames);
+              appendCallCount++;
+              appendBytes += bytes.byteLength;
+              onFrameProgress(appendCallCount, totalExpectedFrames);
             } catch (err) {
               appendError = err instanceof Error ? err : new Error(causeString(err));
             }
@@ -741,6 +760,8 @@ export function driveGlRun(
                   error: errorFromDiagnostics('encode', failDiag, 'Failed to append an encoded chunk to disk.'),
                   diagnostics: failDiag,
                   silentIntervals: intervals,
+                  appendCallCount,
+                  appendBytes,
                 });
                 return;
               }
@@ -751,6 +772,8 @@ export function driveGlRun(
                 maxSilentMs,
                 appendDrainMs,
                 silentIntervals: intervals,
+                appendCallCount,
+                appendBytes,
               });
             });
           }
@@ -763,6 +786,8 @@ export function driveGlRun(
             error: errorFromDiagnostics('encode', data.diagnostics, 'Export worker error.'),
             diagnostics: data.diagnostics,
             silentIntervals: silentIntervals(),
+            appendCallCount,
+            appendBytes,
           });
           break;
         case 'cancelled':
@@ -773,6 +798,8 @@ export function driveGlRun(
             error: errorFromDiagnostics('cancelled', data.diagnostics, 'Export cancelled.'),
             diagnostics: data.diagnostics,
             silentIntervals: silentIntervals(),
+            appendCallCount,
+            appendBytes,
           });
           break;
         case 'diagnostics-snapshot':
@@ -825,6 +852,8 @@ export function driveGlRun(
         },
         diagnostics,
         silentIntervals: silentIntervals(),
+        appendCallCount,
+        appendBytes,
       });
     };
 
@@ -1250,11 +1279,17 @@ export async function exportProjectWebCodecs(
             failure: null,
             demuxCacheSize: null,
             workerHeapBytes: null,
+            decodedSourceFrames: 0,
+            encodedChunkCount: 0,
+            encodedKeyframeCount: 0,
+            encodedChunkBytes: 0,
           }),
           maxSilentMs: driveResult.error.liveness?.maxSilentMs ?? 0,
           appendDrainMs: 0,
           silentIntervals: driveResult.silentIntervals,
           aborted: true,
+          appendCallCount: driveResult.appendCallCount,
+          appendBytes: driveResult.appendBytes,
         });
         diag.watchdogFired = watchdogFired;
         diag.watchdogPhase = driveResult.error.liveness?.lastPhase ?? null;
@@ -1275,6 +1310,8 @@ export async function exportProjectWebCodecs(
         appendDrainMs: driveResult.appendDrainMs,
         silentIntervals: driveResult.silentIntervals,
         aborted: false,
+        appendCallCount: driveResult.appendCallCount,
+        appendBytes: driveResult.appendBytes,
       });
       // eslint-disable-next-line no-console
       console.info('[ws3-liveness] gl-piece done', JSON.stringify({

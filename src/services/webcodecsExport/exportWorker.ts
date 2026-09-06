@@ -189,6 +189,8 @@ function buildDiagnostics(
   pieceIndex: number,
   breakdown: ReturnType<ExportPhaseTracker['snapshot']>,
   failure: ExportFailureIdentity | null,
+  encodeStats: EncodeStats,
+  decodedSourceFrames: number,
 ): ExportWorkerDiagnosticsPayload {
   return {
     phaseMs: breakdown.phaseMs,
@@ -201,13 +203,31 @@ function buildDiagnostics(
     failure,
     demuxCacheSize: demuxCacheSize(),
     workerHeapBytes: workerHeapBytes(),
+    decodedSourceFrames,
+    encodedChunkCount: encodeStats.chunkCount,
+    encodedKeyframeCount: encodeStats.keyframeCount,
+    encodedChunkBytes: encodeStats.chunkBytes,
   };
+}
+
+class EncodeStats {
+  chunkCount = 0;
+  keyframeCount = 0;
+  chunkBytes = 0;
+
+  noteChunk(chunk: EncodedVideoChunk): void {
+    this.chunkCount++;
+    if (chunk.type === 'key') this.keyframeCount++;
+    this.chunkBytes += chunk.byteLength;
+  }
 }
 
 /** Active export state — readable on request-diagnostics before terminate. */
 let activeTracker: ExportPhaseTracker | null = null;
 let activeFailure: RunFailureState | null = null;
 let activePieceIndex = 0;
+let activeEncodeStats: EncodeStats | null = null;
+let activeRunState: RunState | null = null;
 
 // ---------------------------------------------------------------------------
 // Segment-local <-> source-time mapping.
@@ -317,7 +337,11 @@ function openCursor(
  *  parity baseline rather than inventing new behavior. Once `current` is
  *  set for the first time, every later call reverts to strict at-or-before
  *  selection. */
-async function frameAt(cursor: DecodeCursor, targetSec: number): Promise<VideoFrame | null> {
+async function frameAt(
+  cursor: DecodeCursor,
+  targetSec: number,
+  onNewDecode?: () => void,
+): Promise<VideoFrame | null> {
   for (;;) {
     if (cursor.pending) {
       const pendingSec = cursor.pending.timestamp / 1e6;
@@ -338,6 +362,7 @@ async function frameAt(cursor: DecodeCursor, targetSec: number): Promise<VideoFr
       break;
     }
     cursor.pending = value;
+    onNewDecode?.();
   }
   return cursor.current;
 }
@@ -373,6 +398,7 @@ class RunState {
   private tracker: ExportPhaseTracker;
   private startIndex: number;
   private segments: readonly VideoSegment[];
+  decodedSourceFrames = 0;
 
   constructor(
     assets: readonly Asset[],
@@ -403,8 +429,10 @@ class RunState {
         cursor = openCursor(seg, asset.url, asset.duration, this.tracker, asset.id);
         this.cursors.set(seg.id, cursor);
         const targetSec = toSourceTime(seg, currentTime, asset.duration);
-        const frame = await frameAt(cursor, targetSec);
-        this.tracker.enter('frame-loop');
+        const frame = await frameAt(cursor, targetSec, () => {
+          this.decodedSourceFrames++;
+        });
+        this.tracker.leave();
         if (!frame) return null;
         const w = frame.displayWidth;
         const h = frame.displayHeight;
@@ -412,7 +440,9 @@ class RunState {
         return { source: frame, w, h };
       }
       const targetSec = toSourceTime(seg, currentTime, asset.duration);
-      const frame = await frameAt(cursor, targetSec);
+      const frame = await frameAt(cursor, targetSec, () => {
+        this.decodedSourceFrames++;
+      });
       if (!frame) return null;
       const w = frame.displayWidth;
       const h = frame.displayHeight;
@@ -432,7 +462,7 @@ class RunState {
           bmp = await createImageBitmap(await resp.blob());
         }
         this.imageBitmaps.set(asset.id, bmp);
-        this.tracker.enter('frame-loop');
+        this.tracker.leave();
       }
       return { source: bmp, w: bmp.width, h: bmp.height };
     }
@@ -602,11 +632,14 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   activePieceIndex = pieceIndex;
   const failState = new RunFailureState();
   activeFailure = failState;
+  const encodeStats = new EncodeStats();
+  activeEncodeStats = encodeStats;
 
   const postTerminal = (
     kind: 'done' | 'error' | 'cancelled',
     frameCount: number,
     failureOverride?: ExportFailureIdentity | null,
+    runState?: RunState,
   ): void => {
     const breakdown = tracker.finish();
     const diagnostics = buildDiagnostics(
@@ -614,6 +647,8 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       pieceIndex,
       breakdown,
       failureOverride !== undefined ? failureOverride : failState.failure,
+      encodeStats,
+      runState?.decodedSourceFrames ?? 0,
     );
     if (kind === 'done') {
       postOut({ type: 'run-done', runId, frameCount });
@@ -692,6 +727,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       height,
       fps,
       (chunk) => {
+        encodeStats.noteChunk(chunk);
         const buf = new ArrayBuffer(chunk.byteLength);
         chunk.copyTo(buf);
         postOut({ type: 'chunk', runId, bytes: buf, chunkType: chunk.type, timestamp: chunk.timestamp }, [buf]);
@@ -717,6 +753,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   }
 
   const runState = new RunState(assets, tracker, startIndex, segments);
+  activeRunState = runState;
   const first = segments[0]!;
   const last = segments[segments.length - 1]!;
   const runStartSec = first.startTime;
@@ -829,21 +866,23 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       encoder.reset();
       encoder.close();
       failState.setFailure('cancel', new DOMException('Export cancelled.', 'AbortError'));
-      postTerminal('cancelled', framesEmitted);
+      postTerminal('cancelled', framesEmitted, undefined, runState);
       return;
     }
 
     tracker.enter('encoder-flush');
     await encoder.flush();
-    postTerminal('done', framesEmitted, null);
+    postTerminal('done', framesEmitted, null, runState);
   } catch (e) {
     if (!failState.failure) {
       failState.setFailure('thrown', e);
     }
-    postTerminal('error', framesEmitted);
+    postTerminal('error', framesEmitted, undefined, runState);
   } finally {
     activeTracker = null;
     activeFailure = null;
+    activeEncodeStats = null;
+    activeRunState = null;
     await runState.disposeAll();
     // Single close point for every path (success, error, cancel already
     // closed it itself and this is then a guarded no-op) — flush() does not
@@ -876,6 +915,8 @@ self.onmessage = (ev: MessageEvent<ExportWorkerInboundMessage>) => {
       activePieceIndex,
       breakdown,
       activeFailure?.failure ?? null,
+      activeEncodeStats ?? new EncodeStats(),
+      activeRunState?.decodedSourceFrames ?? 0,
     );
     postOut({ type: 'diagnostics-snapshot', diagnostics });
     return;

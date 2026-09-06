@@ -43,6 +43,25 @@ describe('exportWorkerDiagnostics', () => {
     expect(gaps[0]!.framesEncodedAtStart).toBe(100);
   });
 
+  it('attributeSilentIntervals records the terminal gap through endMs (destructive probe)', () => {
+    const log = [logEntry(0, 'frame-loop', 1, 1800), logEntry(50_000, 'demux', 2, 1841)];
+    const events = [{ atMs: 0, kind: 'chunk' as const }];
+    const gaps = attributeSilentIntervals(events, log, 0, 15_148);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]!.startMs).toBe(0);
+    expect(gaps[0]!.endMs).toBe(15_148);
+    expect(gaps[0]!.durationMs).toBe(15_148);
+    expect(gaps[0]!.phase).toBe('frame-loop');
+  });
+
+  it('attributeSilentIntervals records a zero-output failure as one interval', () => {
+    const log = [logEntry(0, 'init', 1, 0)];
+    const gaps = attributeSilentIntervals([], log, 0, 30_000);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]!.durationMs).toBe(30_000);
+    expect(gaps[0]!.phase).toBe('init');
+  });
+
   it('pushPhaseLogEntry drops oldest entries at PHASE_LOG_CAP (destructive probe)', () => {
     const log: ExportPhaseLogEntry[] = [];
     for (let i = 0; i < PHASE_LOG_CAP + 50; i++) {

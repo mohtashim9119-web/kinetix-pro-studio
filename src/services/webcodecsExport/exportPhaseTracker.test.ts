@@ -81,6 +81,22 @@ describe('ExportPhaseTracker', () => {
     tracker.enter('shader-compile');
     expect(posted.map((p) => p.phase)).toEqual(['gl-context', 'shader-compile']);
   });
+
+  it('nests demux inside frame-loop and reports innermost phase (destructive probe)', () => {
+    const now = { t: 0 };
+    const { posted, tracker } = collect(now);
+    tracker.enter('frame-loop');
+    now.t = 100;
+    tracker.enter('demux');
+    expect(posted[posted.length - 1]!.phase).toBe('demux');
+    now.t = 500;
+    tracker.leave();
+    expect(posted[posted.length - 1]!.phase).toBe('frame-loop');
+    now.t = 600;
+    const breakdown = tracker.finish();
+    expect(breakdown.phaseMs['frame-loop']).toBe(200);
+    expect(breakdown.phaseMs['demux']).toBe(400);
+  });
 });
 
 describe('ExportPhaseTracker instrumentation overhead', () => {

@@ -130,6 +130,10 @@ function diagnostics(
     failure: null,
     demuxCacheSize: 2,
     workerHeapBytes: 1_000_000,
+    decodedSourceFrames: 0,
+    encodedChunkCount: 1,
+    encodedKeyframeCount: 1,
+    encodedChunkBytes: 8,
     ...overrides,
   };
 }
@@ -307,5 +311,21 @@ describe('driveGlRun fake-worker harness', () => {
     if (result.ok) return;
     expect(result.error.message).toContain('30s');
     expect(result.error.liveness?.lastPhase).toBe('frame-loop');
+  });
+
+  it('watchdog failure includes terminal silent interval with phase attribution (destructive probe)', async () => {
+    vi.useFakeTimers();
+    const fake = new FakeWorker();
+    const p = startDrive(fake);
+    fake.emit(chunkMsg(0));
+    fake.emit(phase('frame-loop', 1));
+    await vi.advanceTimersByTimeAsync(WATCHDOG_MS + 60);
+    const result = await p;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.silentIntervals.length).toBeGreaterThanOrEqual(1);
+    const terminal = result.silentIntervals[result.silentIntervals.length - 1]!;
+    expect(terminal.durationMs).toBeGreaterThanOrEqual(WATCHDOG_MS);
+    expect(terminal.phase).toBe('frame-loop');
   });
 });
