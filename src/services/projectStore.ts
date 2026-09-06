@@ -712,6 +712,53 @@ export function clearLastOpenedProjectId(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Editor session resume — distinguishes in-session reload from cold boot
+// ---------------------------------------------------------------------------
+
+/** sessionStorage key holding the app-process token from when the user last
+ *  had a project open in the editor. Survives Cmd+R; dies with the browsing
+ *  session. Compared against `getAppSessionToken()` (Rust process token in
+ *  Tauri) so a cold app launch lands on the dashboard even though
+ *  `lastOpenedProjectId` remains in localStorage. */
+const EDITOR_RESUME_TOKEN_KEY = 'kinetix:editorResumeToken';
+
+/** Call when the editor mounts over a confirmed project — reload may resume. */
+export function markEditorSessionActive(sessionToken: string): void {
+  try {
+    sessionStorage.setItem(EDITOR_RESUME_TOKEN_KEY, sessionToken);
+  } catch {
+    // private browsing / quota — skip; reload will fall back to dashboard
+  }
+}
+
+/** Call when the user returns to the dashboard — reload must not reopen. */
+export function clearEditorSessionActive(): void {
+  try {
+    sessionStorage.removeItem(EDITOR_RESUME_TOKEN_KEY);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * True only when this page load is an in-session reload of an editor the user
+ * already had open — same discriminator family as history persistence
+ * (`historyPersist.ts`'s app-process token gate).
+ */
+export async function shouldResumeLastOpenedProject(): Promise<boolean> {
+  if (!getLastOpenedProjectId()) return false;
+  let stored: string | null = null;
+  try {
+    stored = sessionStorage.getItem(EDITOR_RESUME_TOKEN_KEY);
+  } catch {
+    return false;
+  }
+  if (!stored) return false;
+  const { getAppSessionToken } = await import('./historyPersist');
+  return stored === await getAppSessionToken();
+}
+
 /**
  * Detects the legacy single-project key (`kinetix:project:v1`) and migrates it
  * to the new multi-project format.  Call once at app boot before reading the

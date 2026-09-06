@@ -212,7 +212,11 @@ import {
   setLastOpenedProjectId,
   getLastOpenedProjectId,
   clearLastOpenedProjectId,
+  markEditorSessionActive,
+  clearEditorSessionActive,
+  shouldResumeLastOpenedProject,
 } from './services/projectStore';
+import { getAppSessionToken } from './services/historyPersist';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { UnappliedTranscriptBanner } from './components/UnappliedTranscriptBanner';
 import {
@@ -2306,10 +2310,11 @@ export default function App() {
       // -----------------------------------------------------------------------
       // 2. Route on launch:
       //    • No projects yet  → new-project modal (first ever launch).
-      //    • Has a lastOpenedProjectId that still exists in the registry →
-      //      reopen that project directly (normal reload case).
-      //    • Has projects but no last-opened id (e.g. first launch after
-      //      migration) → show the dashboard so the user picks one.
+      //    • In-session reload with a matching editor-resume token AND a
+      //      lastOpenedProjectId still in the registry → reopen that project
+      //      directly (Cmd+R while editing).
+      //    • Cold boot (new app process) OR dashboard return → dashboard,
+      //      even when lastOpenedProjectId is still persisted in localStorage.
       // -----------------------------------------------------------------------
       // -----------------------------------------------------------------------
       // 1b. WS1 Session O — adopt anything the durable mirror holds that this
@@ -2343,8 +2348,12 @@ export default function App() {
         return;
       }
 
-      if (lastId && allMetas.some(m => m.id === lastId)) {
-        // Reload case — reopen the last active project directly.
+      if (
+        lastId
+        && allMetas.some(m => m.id === lastId)
+        && await shouldResumeLastOpenedProject()
+      ) {
+        // In-session reload — reopen the last active project directly.
         //
         // NO VIEW FLIP HERE — the fourth site, deleted in Step 2c. On the
         // success path `handleSwitchProject` already flips adjacent to its own
@@ -5918,6 +5927,7 @@ export default function App() {
     setProjectSilent(fresh);
     setRecoveryBannerArmed(false);
     setShowDashboard(false);
+    markEditorSessionActive(await getAppSessionToken());
     setShowNewProjectModal(false);
     setHistory(emptyHistory<Project>());
     void clearPersistedHistory(outgoingId);
@@ -6063,6 +6073,7 @@ export default function App() {
         void clearPersistedHistory(saved.project.id);
       }
       setLastOpenedProjectId(saved.project.id);
+      markEditorSessionActive(await getAppSessionToken());
       setIsSynced(rehydratedSegments.length > 0);
       setIsPlaying(false);
       if (opts?.preserveUiState) {
@@ -6219,6 +6230,7 @@ export default function App() {
             onBackToProjects={() => {
               if (project.confirmed) void saveNow();
               clearLastOpenedProjectId();
+              clearEditorSessionActive();
               // Owner ruling 2026-08-08: returning to the dashboard clears
               // history, and re-opening a project starts fresh — so the
               // persisted copy goes too, not just the in-memory stack.

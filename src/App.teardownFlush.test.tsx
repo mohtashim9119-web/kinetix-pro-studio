@@ -51,7 +51,6 @@ const mockLoadProjectDetailed = vi.fn();
 const mockGetAllAssetsForProject = vi.fn();
 const mockLoadAllMetas = vi.fn();
 const mockSaveProject = vi.fn();
-const mockGetLastOpenedProjectId = vi.fn<() => string | null>();
 const mockSaveHistory = vi.fn();
 
 vi.mock('./services/projectStore', async () => {
@@ -62,9 +61,6 @@ vi.mock('./services/projectStore', async () => {
     loadProjectDetailed: (id: string) => mockLoadProjectDetailed(id),
     saveProject: (...a: unknown[]) => mockSaveProject(...a),
     upsertProjectMeta: vi.fn(),
-    setLastOpenedProjectId: vi.fn(),
-    clearLastOpenedProjectId: vi.fn(),
-    getLastOpenedProjectId: () => mockGetLastOpenedProjectId(),
     migrateLegacyIfNeeded: async () => null,
     migrateLocalStorageProjectsToOsStore: async () => ({ migrated: [], failed: [] }),
     adoptMirroredProjects: async () => ({ adopted: [], skipped: [], failed: [] }),
@@ -123,12 +119,18 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 // Imported AFTER the mocks are registered.
 const { default: App } = await import('./App');
+const { setLastOpenedProjectId, markEditorSessionActive } = await import('./services/projectStore');
+const { getAppSessionToken } = await import('./services/historyPersist');
 
 let container: HTMLDivElement;
 let root: Root;
 let reloadSpy: ReturnType<typeof vi.fn>;
 
 async function mountEditor(): Promise<void> {
+  localStorage.clear();
+  sessionStorage.clear();
+  setLastOpenedProjectId(PROJECT_ID);
+  markEditorSessionActive(await getAppSessionToken());
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -152,12 +154,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   closeHandler = null;
   quitHandler = null;
-  mockInvoke.mockResolvedValue(undefined);
+  mockInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'app_session_token') return 'teardown-session-token';
+    return undefined;
+  });
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   mockLoadAllMetas.mockReturnValue([meta(PROJECT_ID, 'Teardown')]);
   mockSaveProject.mockResolvedValue({ ok: true });
   mockSaveHistory.mockResolvedValue(undefined);
-  mockGetLastOpenedProjectId.mockReturnValue(PROJECT_ID);
   mockLoadProjectDetailed.mockResolvedValue({
     ok: true, project: storedProject(PROJECT_ID, 'Teardown'), savedAt: Date.now(),
   });

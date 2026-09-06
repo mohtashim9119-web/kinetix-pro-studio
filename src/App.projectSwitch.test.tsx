@@ -51,7 +51,6 @@ const mockLoadProjectDetailed = vi.fn();
 const mockGetAllAssetsForProject = vi.fn();
 const mockLoadAllMetas = vi.fn();
 const mockSaveProject = vi.fn();
-const mockGetLastOpenedProjectId = vi.fn<() => string | null>();
 
 vi.mock('./services/projectStore', async () => {
   const actual = await vi.importActual<typeof import('./services/projectStore')>('./services/projectStore');
@@ -61,9 +60,6 @@ vi.mock('./services/projectStore', async () => {
     loadProjectDetailed: (id: string) => mockLoadProjectDetailed(id),
     saveProject: (...a: unknown[]) => mockSaveProject(...a),
     upsertProjectMeta: vi.fn(),
-    setLastOpenedProjectId: vi.fn(),
-    clearLastOpenedProjectId: vi.fn(),
-    getLastOpenedProjectId: () => mockGetLastOpenedProjectId(),
     migrateLegacyIfNeeded: async () => null,
     migrateLocalStorageProjectsToOsStore: async () => ({ migrated: [], failed: [] }),
     adoptMirroredProjects: async () => ({ adopted: [], skipped: [], failed: [] }),
@@ -86,6 +82,13 @@ vi.mock('./services/historyPersist', async () => {
 
 // Imported AFTER the mocks are registered.
 const { default: App } = await import('./App');
+const { setLastOpenedProjectId, markEditorSessionActive } = await import('./services/projectStore');
+const { getAppSessionToken } = await import('./services/historyPersist');
+
+async function armInSessionReload(projectId: string): Promise<void> {
+  setLastOpenedProjectId(projectId);
+  markEditorSessionActive(await getAppSessionToken());
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -111,9 +114,10 @@ async function mountApp(): Promise<void> {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
+  sessionStorage.clear();
   mockLoadAllMetas.mockReturnValue([meta(OUTGOING_ID, 'Outgoing'), meta(TARGET_ID, 'Target')]);
   mockSaveProject.mockResolvedValue({ ok: true });
-  mockGetLastOpenedProjectId.mockReturnValue(null);
   mockGetAllAssetsForProject.mockResolvedValue([]);
 });
 
@@ -246,7 +250,7 @@ describe('WS2 T4.1 — dashboard/editor view flip', () => {
 // ---------------------------------------------------------------------------
 describe('WS2 T4.1 — mount hydration of the last-opened project', () => {
   it('leaves the dashboard mounted when the last-opened project is MISSING from storage', async () => {
-    mockGetLastOpenedProjectId.mockReturnValue(TARGET_ID);
+    await armInSessionReload(TARGET_ID);
     const load = deferred<unknown>();
     mockLoadProjectDetailed.mockReturnValue(load.promise);
 
@@ -264,7 +268,7 @@ describe('WS2 T4.1 — mount hydration of the last-opened project', () => {
   });
 
   it('leaves the dashboard mounted when the last-opened project is present but BROKEN', async () => {
-    mockGetLastOpenedProjectId.mockReturnValue(TARGET_ID);
+    await armInSessionReload(TARGET_ID);
     const load = deferred<unknown>();
     mockLoadProjectDetailed.mockReturnValue(load.promise);
 
@@ -279,7 +283,7 @@ describe('WS2 T4.1 — mount hydration of the last-opened project', () => {
   it('still opens the editor on the last-opened project when the load SUCCEEDS', async () => {
     // The success path must be byte-for-byte unchanged by the deletion: the
     // handler's own flip, adjacent to its state swap, is what mounts the editor.
-    mockGetLastOpenedProjectId.mockReturnValue(TARGET_ID);
+    await armInSessionReload(TARGET_ID);
     const load = deferred<unknown>();
     const assets = deferred<unknown[]>();
     mockLoadProjectDetailed.mockReturnValue(load.promise);
@@ -313,7 +317,7 @@ describe('WS2 T4.1 — mount hydration of the last-opened project', () => {
 // ---------------------------------------------------------------------------
 describe('WS2 T4.1 — S/D are inert while a modal is open', () => {
   async function openEditorOnTarget(): Promise<void> {
-    mockGetLastOpenedProjectId.mockReturnValue(TARGET_ID);
+    await armInSessionReload(TARGET_ID);
     // MUST carry a segment covering t=0. `resolveShortcutTargetSegmentId` is
     // `selectedSegmentId ?? playheadSegmentId`, and with an empty segment array
     // BOTH are null — so the S/D branch is skipped for want of a target and the

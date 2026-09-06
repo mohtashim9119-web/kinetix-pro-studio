@@ -32,7 +32,6 @@ const mockLoadAllMetas = vi.fn();
 const mockLoadProjectDetailed = vi.fn();
 const mockGetAllAssetsForProject = vi.fn();
 const mockSaveProject = vi.fn();
-const mockGetLastOpenedProjectId = vi.fn<() => string | null>();
 
 vi.mock('./services/projectStore', async () => {
   const actual = await vi.importActual<typeof import('./services/projectStore')>('./services/projectStore');
@@ -42,9 +41,6 @@ vi.mock('./services/projectStore', async () => {
     loadProjectDetailed: (id: string) => mockLoadProjectDetailed(id),
     saveProject: (...a: unknown[]) => mockSaveProject(...a),
     upsertProjectMeta: vi.fn(),
-    setLastOpenedProjectId: vi.fn(),
-    clearLastOpenedProjectId: vi.fn(),
-    getLastOpenedProjectId: () => mockGetLastOpenedProjectId(),
     migrateLegacyIfNeeded: async () => null,
     migrateLocalStorageProjectsToOsStore: async () => ({ migrated: [], failed: [] }),
     adoptMirroredProjects: async () => ({ adopted: [], skipped: [], failed: [] }),
@@ -83,6 +79,8 @@ vi.mock('./services/modelDownload', () => ({
 }));
 
 const { default: App } = await import('./App');
+const { setLastOpenedProjectId, markEditorSessionActive } = await import('./services/projectStore');
+const { getAppSessionToken } = await import('./services/historyPersist');
 
 const TARGET_ID = 'target-project-id';
 
@@ -110,9 +108,9 @@ async function openAppSettings(): Promise<HTMLElement> {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  sessionStorage.clear();
   mockLoadAllMetas.mockReturnValue([]);
   mockSaveProject.mockResolvedValue({ ok: true });
-  mockGetLastOpenedProjectId.mockReturnValue(null);
   mockGetAllAssetsForProject.mockResolvedValue([]);
 });
 
@@ -222,11 +220,12 @@ describe('WS2 T4.1 Step 1 — all three blocks render on one flat surface', () =
 
 describe('WS2 T4.1 Step 1 — Project Settings exposes no models entry point', () => {
   async function openProjectSettings(): Promise<HTMLElement> {
-    // Restored via `getLastOpenedProjectId`, the same route
+    // Restored via in-session reload resume, the same route
     // `App.projectSwitch.test.tsx`'s `openEditorOnTarget` uses — the load
     // result is a `{ ok, project, savedAt }` envelope, not a bare Project.
     mockLoadAllMetas.mockReturnValue([meta(TARGET_ID, 'Target')]);
-    mockGetLastOpenedProjectId.mockReturnValue(TARGET_ID);
+    setLastOpenedProjectId(TARGET_ID);
+    markEditorSessionActive(await getAppSessionToken());
     mockLoadProjectDetailed.mockResolvedValue({
       ok: true,
       project: storedProject(TARGET_ID, 'Target'),
