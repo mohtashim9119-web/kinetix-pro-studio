@@ -91,6 +91,10 @@ const ALLOWED: ReadonlyArray<{ path: string; why: string }> = [
     path: 'dev/exportLivenessProbe/runCeilingBisect.ts',
     why: 'dev-only Round 3 ceiling-bisect harness under src/dev/, same reach as runLiveExport',
   },
+  {
+    path: 'dev/exportLivenessProbe/runVariantQuantities.ts',
+    why: 'dev-only Round 4 variant-quantity harness under src/dev/, same reach as runCeilingBisect',
+  },
 ];
 
 const ALLOWED_PATHS = new Set(ALLOWED.map((a) => a.path));

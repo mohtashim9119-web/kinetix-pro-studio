@@ -7,6 +7,8 @@ import { generateGlWatchdogFixture } from './generateGlWatchdogFixture';
 import { runLiveExport } from './runLiveExport';
 import { isTauri } from '../../services/tauriFfmpeg';
 import { runTickProbe } from './runTickProbe';
+import { runEncoderIsolationSuite } from './runEncoderIsolation';
+import { runVariantQuantities } from './runVariantQuantities';
 
 const EXFIL_URL = 'http://127.0.0.1:8799/result';
 
@@ -76,6 +78,21 @@ async function main(): Promise<void> {
     log(`  ok=${live.resultOk} watchdog=${live.watchdogString} elapsedMs=${live.elapsedMs.toFixed(0)}`);
     log(`  error=${live.errorMessage}`);
     log(`  actual=${JSON.stringify(live.actual)}`);
+
+    log('Part 4 — encoder isolation (200s target)…');
+    const enc = await runEncoderIsolationSuite();
+    for (const r of enc) {
+      log(`  ${r.mode}: frames=${r.framesEncoded}/${r.framesTarget} t=${r.timelineSec.toFixed(1)}s wall=${r.wallSec.toFixed(1)}s fail=${r.failure}`);
+    }
+    if (enc[0]?.failure === null && enc[0]?.framesEncoded >= enc[0]?.framesTarget) {
+      log('STOP — encoder-only reached 200s clean; ceiling is pipeline not platform.');
+    } else {
+      log('Part 5 — variant quantities (all 5 bisect variants)…');
+      const q = await runVariantQuantities();
+      for (const row of q) {
+        log(`  ${row.variant.id}: t=${row.timelineSec} chunks=${row.encodedChunkCount} bytes=${row.encodedChunkBytes} decoded=${row.decodedSourceFrames}`);
+      }
+    }
   } else {
     log('Part 3 skipped — not Tauri. Use autorun from tauri:dev for the live export.');
     await exfil('part3-skipped', { reason: 'not-tauri', part1 });
