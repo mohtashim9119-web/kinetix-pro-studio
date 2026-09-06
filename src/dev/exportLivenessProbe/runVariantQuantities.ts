@@ -33,6 +33,11 @@ export interface VariantQuantityRow {
   appendBytes: number | null;
   uniqueDemuxCount: number | null;
   decodedSourceFrames: number | null;
+  decodersCreated: number | null;
+  decodersOpen: number | null;
+  cursorsCreated: number | null;
+  openCursors: number | null;
+  openImageBitmaps: number | null;
   workerHeapBytes: number | null;
   terminalSilentInterval: { durationMs: number; phase: string | null } | null;
   /** 1-asset outlier fields */
@@ -135,6 +140,11 @@ export async function runVariantQuantities(variantIds?: string[]): Promise<Varia
       appendBytes: gl?.appendBytes ?? null,
       uniqueDemuxCount: gl?.demuxCacheSize ?? demuxCacheSize(),
       decodedSourceFrames: gl?.decodedSourceFrames ?? null,
+      decodersCreated: gl?.decodersCreated ?? null,
+      decodersOpen: gl?.decodersOpen ?? null,
+      cursorsCreated: gl?.cursorsCreated ?? null,
+      openCursors: gl?.openCursors ?? null,
+      openImageBitmaps: gl?.openImageBitmaps ?? null,
       workerHeapBytes: gl?.workerHeapBytes ?? null,
       terminalSilentInterval: terminal
         ? { durationMs: terminal.durationMs, phase: terminal.phase }
