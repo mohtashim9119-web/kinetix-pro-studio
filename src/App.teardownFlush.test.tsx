@@ -51,7 +51,6 @@ const mockLoadProjectDetailed = vi.fn();
 const mockGetAllAssetsForProject = vi.fn();
 const mockLoadAllMetas = vi.fn();
 const mockSaveProject = vi.fn();
-const mockGetLastOpenedProjectId = vi.fn<() => string | null>();
 const mockSaveHistory = vi.fn();
 
 vi.mock('./services/projectStore', async () => {
@@ -62,9 +61,6 @@ vi.mock('./services/projectStore', async () => {
     loadProjectDetailed: (id: string) => mockLoadProjectDetailed(id),
     saveProject: (...a: unknown[]) => mockSaveProject(...a),
     upsertProjectMeta: vi.fn(),
-    setLastOpenedProjectId: vi.fn(),
-    clearLastOpenedProjectId: vi.fn(),
-    getLastOpenedProjectId: () => mockGetLastOpenedProjectId(),
     migrateLegacyIfNeeded: async () => null,
     migrateLocalStorageProjectsToOsStore: async () => ({ migrated: [], failed: [] }),
     adoptMirroredProjects: async () => ({ adopted: [], skipped: [], failed: [] }),
@@ -110,7 +106,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 // and then reports back through the `quit_flush_complete` command. Both ends are
 // captured here so the round trip can be driven without a Rust process.
 let quitHandler: (() => unknown) | null = null;
-const mockInvoke = vi.fn(async () => {});
+const mockInvoke = vi.fn(async (_cmd: string, ..._args: unknown[]): Promise<unknown> => undefined);
 vi.mock('@tauri-apps/api/event', () => ({
   listen: async (name: string, h: () => unknown) => {
     if (name === 'app-quit-requested') quitHandler = h;
@@ -118,17 +114,23 @@ vi.mock('@tauri-apps/api/event', () => ({
   },
 }));
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: (...a: unknown[]) => mockInvoke(...(a as [])),
+  invoke: (cmd: string, ...args: unknown[]) => mockInvoke(cmd, ...args),
 }));
 
 // Imported AFTER the mocks are registered.
 const { default: App } = await import('./App');
+const { setLastOpenedProjectId, markEditorSessionActive } = await import('./services/projectStore');
+const { getAppSessionToken } = await import('./services/historyPersist');
 
 let container: HTMLDivElement;
 let root: Root;
 let reloadSpy: ReturnType<typeof vi.fn>;
 
 async function mountEditor(): Promise<void> {
+  localStorage.clear();
+  sessionStorage.clear();
+  setLastOpenedProjectId(PROJECT_ID);
+  markEditorSessionActive(await getAppSessionToken());
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -152,12 +154,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   closeHandler = null;
   quitHandler = null;
-  mockInvoke.mockResolvedValue(undefined);
+  mockInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'app_session_token') return 'teardown-session-token';
+    return undefined;
+  });
   (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
   mockLoadAllMetas.mockReturnValue([meta(PROJECT_ID, 'Teardown')]);
   mockSaveProject.mockResolvedValue({ ok: true });
   mockSaveHistory.mockResolvedValue(undefined);
-  mockGetLastOpenedProjectId.mockReturnValue(PROJECT_ID);
   mockLoadProjectDetailed.mockResolvedValue({
     ok: true, project: storedProject(PROJECT_ID, 'Teardown'), savedAt: Date.now(),
   });
