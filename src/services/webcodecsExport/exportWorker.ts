@@ -49,7 +49,7 @@ import { GlCompositor, type TextureSlot, type UploadSource } from '../gl/glCompo
 import { deriveCompositeParams, deriveSlotPlan, type ProjectEffectConfig } from '../gl/compositeParams';
 import { acquireOffscreenGlContext } from '../gl/glContext';
 import { computeObjectCoverUvRect } from '../gl/uvRect';
-import { decodeSegmentFrames } from './sequentialDecode';
+import { decodeSegmentFrames, decodeResourceCounts } from './sequentialDecode';
 import { GLTextRenderer, type FontConfig, type TextRenderGlobalConfig } from './textRenderer';
 import { ExportPhaseTracker, type ExportDemuxSplit } from './exportPhaseTracker';
 import { demuxCacheSize } from '../videoDemuxer';
@@ -191,6 +191,7 @@ function buildDiagnostics(
   failure: ExportFailureIdentity | null,
   encodeStats: EncodeStats,
   decodedSourceFrames: number,
+  resourceCounts: ReturnType<RunState['resourceSnapshot']>,
 ): ExportWorkerDiagnosticsPayload {
   return {
     phaseMs: breakdown.phaseMs,
@@ -207,6 +208,11 @@ function buildDiagnostics(
     encodedChunkCount: encodeStats.chunkCount,
     encodedKeyframeCount: encodeStats.keyframeCount,
     encodedChunkBytes: encodeStats.chunkBytes,
+    decodersCreated: resourceCounts.decodersCreated,
+    decodersOpen: resourceCounts.decodersOpen,
+    cursorsCreated: resourceCounts.cursorsCreated,
+    openCursors: resourceCounts.openCursors,
+    openImageBitmaps: resourceCounts.openImageBitmaps,
   };
 }
 
@@ -399,6 +405,8 @@ class RunState {
   private startIndex: number;
   private segments: readonly VideoSegment[];
   decodedSourceFrames = 0;
+  cursorsCreated = 0;
+  private decodersCreatedAtStart = 0;
 
   constructor(
     assets: readonly Asset[],
@@ -410,6 +418,24 @@ class RunState {
     this.tracker = tracker;
     this.startIndex = startIndex;
     this.segments = segments;
+    this.decodersCreatedAtStart = decodeResourceCounts().decodersCreated;
+  }
+
+  resourceSnapshot(): {
+    decodersCreated: number;
+    decodersOpen: number;
+    cursorsCreated: number;
+    openCursors: number;
+    openImageBitmaps: number;
+  } {
+    const { decodersCreated, decodersOpen } = decodeResourceCounts();
+    return {
+      decodersCreated: decodersCreated - this.decodersCreatedAtStart,
+      decodersOpen,
+      cursorsCreated: this.cursorsCreated,
+      openCursors: this.cursors.size,
+      openImageBitmaps: this.imageBitmaps.size,
+    };
   }
 
   private projectSegmentIndex(seg: VideoSegment): number {
@@ -428,6 +454,7 @@ class RunState {
         this.tracker.enter('demux');
         cursor = openCursor(seg, asset.url, asset.duration, this.tracker, asset.id);
         this.cursors.set(seg.id, cursor);
+        this.cursorsCreated++;
         const targetSec = toSourceTime(seg, currentTime, asset.duration);
         const frame = await frameAt(cursor, targetSec, () => {
           this.decodedSourceFrames++;
@@ -649,6 +676,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       failureOverride !== undefined ? failureOverride : failState.failure,
       encodeStats,
       runState?.decodedSourceFrames ?? 0,
+      runState?.resourceSnapshot() ?? {
+        decodersCreated: 0,
+        decodersOpen: decodeResourceCounts().decodersOpen,
+        cursorsCreated: 0,
+        openCursors: 0,
+        openImageBitmaps: 0,
+      },
     );
     if (kind === 'done') {
       postOut({ type: 'run-done', runId, frameCount });
@@ -917,6 +951,13 @@ self.onmessage = (ev: MessageEvent<ExportWorkerInboundMessage>) => {
       activeFailure?.failure ?? null,
       activeEncodeStats ?? new EncodeStats(),
       activeRunState?.decodedSourceFrames ?? 0,
+      activeRunState?.resourceSnapshot() ?? {
+        decodersCreated: 0,
+        decodersOpen: decodeResourceCounts().decodersOpen,
+        cursorsCreated: 0,
+        openCursors: 0,
+        openImageBitmaps: 0,
+      },
     );
     postOut({ type: 'diagnostics-snapshot', diagnostics });
     return;

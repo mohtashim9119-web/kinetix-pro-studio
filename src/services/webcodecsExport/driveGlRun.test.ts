@@ -134,6 +134,11 @@ function diagnostics(
     encodedChunkCount: 1,
     encodedKeyframeCount: 1,
     encodedChunkBytes: 8,
+    decodersCreated: 0,
+    decodersOpen: 0,
+    cursorsCreated: 0,
+    openCursors: 0,
+    openImageBitmaps: 0,
     ...overrides,
   };
 }

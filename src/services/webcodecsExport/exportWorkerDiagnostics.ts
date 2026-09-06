@@ -61,6 +61,16 @@ export interface ExportWorkerDiagnosticsPayload {
   encodedChunkCount: number;
   encodedKeyframeCount: number;
   encodedChunkBytes: number;
+  /** VideoDecoder instances created this run (one per open decode cursor). */
+  decodersCreated: number;
+  /** VideoDecoder instances still open at terminal snapshot. */
+  decodersOpen: number;
+  /** Per-segment decode cursors opened this run. */
+  cursorsCreated: number;
+  /** Decode cursors still resident at terminal snapshot. */
+  openCursors: number;
+  /** Cached ImageBitmaps still open at terminal snapshot. */
+  openImageBitmaps: number;
 }
 
 export interface WatchdogOutputEvent {

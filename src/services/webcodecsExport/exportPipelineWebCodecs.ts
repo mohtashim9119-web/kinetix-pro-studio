@@ -640,6 +640,11 @@ export function driveGlRun(
         encodedChunkCount: 0,
         encodedKeyframeCount: 0,
         encodedChunkBytes: 0,
+        decodersCreated: 0,
+        decodersOpen: 0,
+        cursorsCreated: 0,
+        openCursors: 0,
+        openImageBitmaps: 0,
       };
     };
 
@@ -1283,6 +1288,11 @@ export async function exportProjectWebCodecs(
             encodedChunkCount: 0,
             encodedKeyframeCount: 0,
             encodedChunkBytes: 0,
+            decodersCreated: 0,
+            decodersOpen: 0,
+            cursorsCreated: 0,
+            openCursors: 0,
+            openImageBitmaps: 0,
           }),
           maxSilentMs: driveResult.error.liveness?.maxSilentMs ?? 0,
           appendDrainMs: 0,

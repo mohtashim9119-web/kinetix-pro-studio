@@ -42,6 +42,20 @@ import { findChunkRange } from '../videoDecoderPool';
  *  internal queue. Chosen per plan §4.2 ("≤ 8 undelivered frames"). */
 const DECODE_AHEAD_CAP = 8;
 
+/** Module-level decode resource counters — observable from export diagnostics. */
+let decodersCreated = 0;
+let decodersOpen = 0;
+
+export function decodeResourceCounts(): { decodersCreated: number; decodersOpen: number } {
+  return { decodersCreated, decodersOpen };
+}
+
+/** Test / harness only — resets module counters between isolated runs. */
+export function resetDecodeResourceCounts(): void {
+  decodersCreated = 0;
+  decodersOpen = 0;
+}
+
 export interface DecodeSegmentFramesOptions {
   /** Called once per frame actually yielded, with the running count and an
    *  approximate total (see `estimateFrameCount` below) — a hint for
@@ -163,6 +177,8 @@ export async function* decodeSegmentFrames(
     }
   }
 
+  decodersCreated++;
+  decodersOpen++;
   const decoder = new VideoDecoder({
     output: (frame) => {
       if (stopped) {
@@ -195,6 +211,7 @@ export async function* decodeSegmentFrames(
     } catch {
       // Configure failed before any state change that would make close() unsafe — best-effort only.
     }
+    if (decodersOpen > 0) decodersOpen--;
     throw new Error(
       `sequentialDecode: VideoDecoder.configure failed for ${assetUrl} (codec=${config.codec}): ${(err as Error).message}`,
     );
@@ -273,6 +290,7 @@ export async function* decodeSegmentFrames(
     } catch {
       // Already closed (e.g. the decoder's own error callback path) — safe to ignore.
     }
+    if (decodersOpen > 0) decodersOpen--;
     // No per-asset demux release: getOrCreateDemux's cache has no
     // ref-counted "release" API (only a global clearDemuxCache, which
     // would be wrong to call here — it's a shared, long-lived cache also
