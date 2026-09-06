@@ -17,14 +17,47 @@
 
 > ⚠ STRUCTURE CONTRACT: Every workstream has 5 mandatory sections in exact order:
 > 1. FINISHED BUT PENDING VERIFICATION  2. IN PROGRESS  3. NEXT TASKS  4. OPEN BUGS  5. DEFERRED TASKS.
+> The file also ends with BACKLOG ITEMS (cross-workstream, ≤30 words each).
 > Tag vocabulary: [OPEN], [IN-PROGRESS], [DEFERRED], [OPEN · NON-BLOCKING], [CLAIM-UNVERIFIED].
 
 ---
 
 ## WS3 — TEAM RELEASE BLOCKERS
-Goal: Clear high-impact rendering and alignment performance bottlenecks to ship an unblocked internal build.
+Goal: Export watchdog timeout on heavy/long exports (>100 segments @ 1080p) — the sole remaining blocker for the internal team build.
 1. [OPEN] Export Watchdog Timeout: Heavy or long export projects (>100 segments @ 1080p) stall worker processing enough to trigger the 30s watchdog abort. Needs threshold bumped from 30s to 90s, plus active progress heartbeat pings injected inside frame-rendering loops to maintain watchdog reset activity.
-2. [OPEN] Forced Alignment (FA) Performance: Running FA ON sync currently takes ~1.5x total audio duration due to heavy IPC serialization overhead and redundant PCM buffer decoding. Needs direct filesystem path IPC in fa_inference.rs and tauriFfmpeg.ts to bypass Base64 encoding and eliminate duplicate disk reads.
+
+---
+
+## WS2 — Non-Sync Work
+Status: OPEN — the general workstream for all development outside the sync pipeline (WS1). Active tasks live in the five sections below; completed items are recorded in `docs/history-2.md`.
+
+Baselines (8dbbcea): vitest 3148 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden replay 6/6; K13 3/3; cargo 264/0/2 default and 350/0/32 with --features fa-inference.
+
+### 1. Finished but pending verification
+
+(none)
+
+### 2. In progress
+
+(none)
+
+**END GOAL:** Next implementation from section 3 — transcription Req 2, raw IPC for ffmpeg probes.
+
+### 3. Next tasks
+
+- [OPEN · BLOCKED] Transcription Req 2: incremental draft save — blocked on Rust WhisperEvent partial-token IPC variant; Progress percent-only (whisper.rs:572), tokens only on Done (whisper.rs:632).
+- [OPEN] tauriFfmpeg.ts:45-72 Base64 IPC: brief-estimated ~2.33× peak inflation on ~73MiB voiceover (not measured here). Pass raw paths. Dupes: App.tsx:3168/3399; fa-dev:4846.
+
+### 4. Open bugs
+
+(none)
+
+### 5. Deferred tasks
+
+- [DEFERRED] [CONSOLIDATED] Non-English Localization & C3 Policy: French cardinal and elision rules plus C3 fixture ceiling beyond 1,998.
+- [DEFERRED] [CONSOLIDATED] Video Engine: 120fps preview buffer byte-capping plus native asset export frame rates.
+
+---
 
 ## WS1 — Sync Pipeline Rewrite
 Started: 2026-08-04 | Status: active — the primary workstream as of 2026-09-03 (WS2 closed). Phase 3 in progress, accuracy bar met.
@@ -118,10 +151,6 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 * [OPEN · NON-BLOCKING] Alignment cost has no enforced bound for real inputs (Contract A4,
   `__ALIGN_INSTRUMENT__` dormant) — an unbounded input can hang the UI with no error surfaced. No
   owner; deferred to Stage 2 lock; needs a cost-vs-input-size measurement first (Part AI §5).
-* [OPEN · NON-BLOCKING] React "Maximum update depth exceeded" render loop — surfaced during the
-  2026-08-25 real-app V8 corpus run (`npm run tauri:dev:fa`). `usePlayback.ts:80-94`'s rAF tick
-  already guards this failure mode (QB2 fix), so this is a distinct, unlocated trigger elsewhere
-  in the render tree. No owner.
 
 ### 5. Deferred tasks
 
@@ -149,37 +178,17 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 
 ---
 
-## WS2 — Non-Sync Work
-Status: OPEN — the general workstream for all development outside the sync pipeline (WS1). Active tasks live in the five sections below; completed items are recorded in `docs/history-2.md`.
+## Backlog Items
 
-Baselines (d0855df): vitest 3143 passed / 77 skipped / 0 failed; gaplessInvariant 36/36; golden replay 6/6; K13 3/3; cargo 208/0/1 default and 290/0/26 with --features fa-inference.
-
-### 1. Finished but pending verification
-
-(none)
-
-### 2. In progress
-
-(none)
-
-**END GOAL:** Next implementation from section 3 — transcription Req 2, raw IPC for ffmpeg probes.
-
-### 3. Next tasks
-
-- [OPEN · BLOCKED] Transcription Req 2: incremental draft save — blocked on Rust WhisperEvent partial-token IPC variant; Progress percent-only (whisper.rs:572), tokens only on Done (whisper.rs:632).
-- [OPEN] tauriFfmpeg.ts:45-72 Base64 IPC: brief-estimated ~2.33× peak inflation on ~73MiB voiceover (not measured here). Pass raw paths. Dupes: App.tsx:3168/3399; fa-dev:4846.
-- [OPEN · NON-BLOCKING] Dev-Profile IDB Cleanup: dev WebKit 469 MB (291+12+167 MB); packaged 5 v1/15.7 MB. V8 four-ref; v1 STOP 58/266. Non-shipping. `.work-phase4/session-ws2-49-legacy-v1/findings.md`.
-- [OPEN · NON-BLOCKING] Replay fixture reproduction gap: `.work-phase4/replay/` (~85M, gitignored) is required by golden replay (3 corpus tests) and ~35 WS1 measurement scripts; a fresh clone fails those until `python3 scripts/phase4-restore-replay-inputs.py` is run locally. Tracking the bundle is unreasonable at this size.
-
-### 4. Open bugs
-
-* [OPEN · NON-BLOCKING] Stale-Replay Window: Attach within 30s TTL replays buffered terminal event from Rust memory rather than starting a new job. Harmless for same file, un-ackable across IPC.
-* [OPEN · NON-BLOCKING] Whisper Panic-Path Gap: If Rust panics prior to event emission, claim drops without buffering. Job promise rejects in-page; reloading frontend sees false and starts fresh.
-
-### 5. Deferred tasks
-
-- [DEFERRED] [CONSOLIDATED] Non-English Localization & C3 Policy: French cardinal and elision rules plus C3 fixture ceiling beyond 1,998.
-- [DEFERRED] [CONSOLIDATED] Video Engine: 120fps preview buffer byte-capping plus native asset export frame rates.
+- [OPEN · NON-BLOCKING] ORT intra-op thread ceiling undecided; 32 recommended, not applied. `fa_onnx.rs:503`
+- [OPEN · NON-BLOCKING] `fa_cancel` has zero frontend callers, so FA cancellation is unreachable from the UI. `fa.rs:296`
+- [OPEN · NON-BLOCKING] `faBoundaryTypes.ts` missing one-way drift entries for Timing and `alreadyRunning`. `faBoundaryTypes.ts:64`
+- [OPEN · NON-BLOCKING] `.digest.json` files not removed by `models.rs` on model delete. `models.rs:664`
+- [OPEN · NON-BLOCKING] Two `fa_dev` digest tests share a process-global memo and are latently racy. `fa_dev.rs:731`
+- [OPEN · NON-BLOCKING] Whisper attach buffer has a 30 s stale-replay window and its panic path can orphan a registry key. `whisper.rs:172`
+- [OPEN · NON-BLOCKING] React maximum update depth exceeded during V8 FA run; distinct from guarded `usePlayback.ts:80-94` rAF tick. Trigger unlocated.
+- [OPEN · NON-BLOCKING] Dev-profile WebKit IDB holds 469 MB legacy v1 data; packaged build is 15.7 MB. Non-shipping cleanup.
+- [OPEN · NON-BLOCKING] Fresh clone lacks gitignored `.work-phase4/replay/` (~85M); golden replay fails until restore script runs. `scripts/phase4-restore-replay-inputs.py`
 
 ---
 

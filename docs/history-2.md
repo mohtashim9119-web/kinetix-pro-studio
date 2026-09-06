@@ -3388,3 +3388,69 @@ user-visible error (pre-merge `whisper.rs:279-285`).
 **Now:** duplicate key returns `whisper:already-running:` refusal; distinct keys stay concurrent.
 Entry removed from `docs/work-in-progress.md` §4.
 
+---
+
+## WS3 — FA throughput fix (2026-09-06, merge `8dbbcea`)
+
+**Verdict:** CLOSED — forward-pass wall time on the full v6 corpus dropped from 498,743.8 ms to
+112,970.6 ms (4.415×), with output bit-exact across all 3874/3874 words and 0 ms max/mean/p95
+drift; peak RSS fell from 2297 MiB to 2261 MiB. Corpus: 447 segments, ~1421.29 s audio.
+
+**Root cause:** deliberate session pinning from commit `6def0b3` (2026-08-22), not the model.
+`with_intra_threads(1)` cost roughly 2.4× throughput alone; measured audio-duration ratio was
+0.460× pinned vs 0.111× unpinned.
+
+**Fix:** size the ORT intra-op pool to the host's physical core count via `num_cpus` 1.16.0,
+clamping 0 → 1; `inter_threads=1`, `parallel_execution=false`, `deterministic_compute=true`, and
+`memory_pattern=false` all unchanged and guarded at `fa_timing.rs:550`. `deterministic_compute`
+was found inert on CPU (the actual reproducibility knob is sequential execution + single
+inter-op thread). ORT does not clamp N to core count — a host reporting more physical cores than
+32 would run outside the measured N=1..32 envelope (performance question, not correctness).
+
+**Commits:** `b2d6d93`, `6419388`, `71aa02f`.
+
+Entry removed from `docs/work-in-progress.md` WS3 §2 (Forced Alignment Performance).
+
+---
+
+## WS3 — Manifest digest persistence (2026-09-06, merge `8dbbcea`)
+
+**Verdict:** CLOSED — verified SHA-256 is now cached in `<model>.onnx.digest.json` beside the
+model, keyed by path/size/mtime (`fa_dev.rs:181-196`). A corrupt or unreadable cache returns
+`None` and re-hashes; verification is never skipped. Warm-hit probe: 0.03 s vs 247 s cold.
+
+**Commits:** `b2d6d93`, `6419388`, `71aa02f` (same WS3 perf round).
+
+---
+
+## WS3 — FA entry corrections (2026-09-06, merge `8dbbcea`)
+
+**Verdict:** RECORDED — the original WS3 Forced Alignment Performance entry was wrong on four
+counts and is retracted here; the throughput fix above is the real story.
+
+1. **`fa_inference.rs` does not exist.** Real FA Rust modules: `fa.rs`, `fa_dev.rs`,
+   `fa_onnx.rs`, `fa_production.rs`, `fa_viterbi.rs`, `fa_preflight.rs`, `fa/text.rs`.
+2. **`tauriFfmpeg.ts` is not the FA entry point.** Production FA is invoked from
+   `src/services/forcedAlignmentRun.ts:116` (`runForcedAlignmentForSync`).
+3. **Base64 IPC was already bypassed.** `forcedAlignmentRun.ts:163` stages audio via
+   `fa_stage_audio_raw`; `fa_dev.rs:261` reads `InvokeBody::Raw` and rejects JSON bodies at
+   `fa_dev.rs:275`.
+4. **The headline "~1.5×" figure has no source in docs** — it was never measured or cited.
+
+Entry removed from `docs/work-in-progress.md` WS3.
+
+---
+
+## WS3 — UI quickfixes (2026-09-06, merge `8dbbcea`)
+
+**Verdict:** CLOSED — three small UI/test fixes landed at merge `8dbbcea`.
+
+**Cold boot lands on Dashboard, not last-open project** (`7e533b9`): `src/services/projectStore.ts`
+and `src/App.tsx` — app startup no longer auto-restores the previous project.
+
+**New Project modal gained Text Overlay field** (`a3c1bd9`): `src/components/NewProjectModal.tsx`.
+
+**Stale zero-arg `vi.fn` mock broke tsc** (`6a9b10d`): `App.teardownFlush.test.tsx:109` — the
+mock signature was wrong at merge; production `getAppSessionToken()` / `invoke` signatures were
+never wrong.
+
