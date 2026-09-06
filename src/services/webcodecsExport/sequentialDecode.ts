@@ -31,7 +31,7 @@
  * worker and on `window` on the main thread.
  */
 
-import { getOrCreateDemux } from '../videoDemuxer';
+import { getOrCreateDemux, demuxCacheHas } from '../videoDemuxer';
 import { findChunkRange } from '../videoDecoderPool';
 
 /** Bounds how many decoded-but-not-yet-yielded VideoFrames this generator
@@ -49,6 +49,9 @@ export interface DecodeSegmentFramesOptions {
    *  margin can make the real yielded count differ slightly from this
    *  estimate. */
   onProgress?: (decoded: number, total: number) => void;
+  /** Fired once, after the demux await, with cache-hit vs first-fetch
+   *  timings. Fetch/parse are 0 on a cache hit (the work already ran). */
+  onDemuxTiming?: (info: { cacheHit: boolean; fetchMs: number; parseMs: number }) => void;
 }
 
 /**
@@ -104,6 +107,7 @@ export async function* decodeSegmentFrames(
   options: DecodeSegmentFramesOptions = {},
 ): AsyncGenerator<VideoFrame> {
   let demuxed;
+  const cacheHit = demuxCacheHas(assetUrl);
   try {
     demuxed = await getOrCreateDemux(assetUrl);
   } catch (err) {
@@ -111,6 +115,11 @@ export async function* decodeSegmentFrames(
       `sequentialDecode: demux failed for ${assetUrl} [${startSec}s-${endSec}s]: ${(err as Error).message}`,
     );
   }
+  options.onDemuxTiming?.({
+    cacheHit,
+    fetchMs: cacheHit ? 0 : (demuxed.fetchMs ?? 0),
+    parseMs: cacheHit ? 0 : (demuxed.parseMs ?? 0),
+  });
   const { chunks, config } = demuxed;
 
   // findChunkRange backs startIndex up to the keyframe at or before

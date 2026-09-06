@@ -6692,8 +6692,15 @@ export default function App() {
                   {exportState.error.kind !== 'cancelled' && (
                     <button
                       onClick={() => {
+                        const err = exportState.error;
+                        if (!err) return;
                         const diagnostics = {
-                          error: exportState.error,
+                          error: err,
+                          liveness: err.liveness ?? null,
+                          lastPhase: err.liveness?.lastPhase ?? null,
+                          msSinceLastPhaseChange: err.liveness?.msSinceLastPhaseChange ?? null,
+                          pieceIndex: err.liveness?.pieceIndex ?? null,
+                          framesEncoded: err.liveness?.framesEncoded ?? null,
                           projectMeta: {
                             segmentCount: project.segments.length,
                             hasVoiceover: !!project.voiceoverId,

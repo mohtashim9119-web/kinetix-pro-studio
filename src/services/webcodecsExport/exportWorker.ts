@@ -51,6 +51,7 @@ import { acquireOffscreenGlContext } from '../gl/glContext';
 import { computeObjectCoverUvRect } from '../gl/uvRect';
 import { decodeSegmentFrames } from './sequentialDecode';
 import { GLTextRenderer, type FontConfig, type TextRenderGlobalConfig } from './textRenderer';
+import { ExportPhaseTracker, type ExportDemuxSplit } from './exportPhaseTracker';
 
 // ---------------------------------------------------------------------------
 // Message protocol
@@ -96,6 +97,11 @@ export interface ExportWorkerInitMessage {
   globalOverlayConfig?: { color: string; backgroundColor: string; fontFamily: string; fontSize?: number };
   textLayers?: TextOverlay[];
   headings?: HeadingOverlay[];
+  /** Orchestrator piece index — echoed on every phase token. Default 0. */
+  pieceIndex?: number;
+  /** Absolute index of `segments[0]` in the project — used to report
+   *  project-level segmentIndex on phase tokens. Default 0. */
+  startIndex?: number;
 }
 
 export type ExportWorkerInboundMessage = ExportWorkerInitMessage | { type: 'cancel' };
@@ -110,14 +116,33 @@ export type ExportWorkerOutboundMessage =
   // actually needs; the extra fields are additive, never required.
   | { type: 'chunk'; runId: string; bytes: ArrayBuffer; chunkType: EncodedVideoChunkType; timestamp: number }
   | { type: 'run-done'; runId: string; frameCount: number }
-  | { type: 'done'; frameCount: number }
+  | {
+      type: 'done';
+      frameCount: number;
+      phaseMs: Record<string, number>;
+      instrumentationMs: number;
+      demuxSplit: ExportDemuxSplit[];
+    }
   | { type: 'error'; message: string }
   | { type: 'cancelled' }
   // Diagnostic-only, sampled periodically (not every frame, to keep message
   // volume sane on a long real export) — lets a caller (this step's own
   // spike) chart the backpressure trajectory. No orchestrator depends on
   // this; safe to ignore.
-  | { type: 'queue-sample'; frameIndex: number; size: number };
+  | { type: 'queue-sample'; frameIndex: number; size: number }
+  // Work-token / phase heartbeat. Does NOT reset the main-thread watchdog
+  // (the set of resetting messages is unchanged: `chunk` and `queue-sample`
+  // only). Throttled to ≤1 per 250 ms inside a phase; posted immediately
+  // on phase change.
+  | {
+      type: 'phase';
+      phase: string;
+      pieceIndex: number;
+      segmentIndex: number;
+      assetId: string | null;
+      framesEncoded: number;
+      seq: number;
+    };
 
 function postOut(message: ExportWorkerOutboundMessage, transfer?: Transferable[]): void {
   if (transfer) self.postMessage(message, transfer);
@@ -196,9 +221,27 @@ interface DecodeCursor {
   exhausted: boolean;
 }
 
-function openCursor(segment: VideoSegment, assetUrl: string, sourceDuration: number | undefined): DecodeCursor {
+function openCursor(
+  segment: VideoSegment,
+  assetUrl: string,
+  sourceDuration: number | undefined,
+  tracker: ExportPhaseTracker,
+  assetId: string,
+): DecodeCursor {
   const { start, end } = sourceRange(segment, sourceDuration);
-  return { gen: decodeSegmentFrames(assetUrl, start, end), pending: null, current: null, exhausted: false };
+  return {
+    gen: decodeSegmentFrames(assetUrl, start, end, {
+      onDemuxTiming: (info) => {
+        if (info.cacheHit) return;
+        tracker.recordDemuxSplit(assetId, info.fetchMs, info.parseMs);
+        tracker.add('demux-fetch', info.fetchMs);
+        tracker.add('demux-parse', info.parseMs);
+      },
+    }),
+    pending: null,
+    current: null,
+    exhausted: false,
+  };
 }
 
 /** Advances `cursor` until the latest decoded frame at-or-before `targetSec`
@@ -271,20 +314,46 @@ class RunState {
   private cursors = new Map<string, DecodeCursor>();
   private imageBitmaps = new Map<string, ImageBitmap>();
   private assetById: Map<string, Asset>;
+  private tracker: ExportPhaseTracker;
+  private startIndex: number;
+  private segments: readonly VideoSegment[];
 
-  constructor(assets: readonly Asset[]) {
+  constructor(
+    assets: readonly Asset[],
+    tracker: ExportPhaseTracker,
+    startIndex: number,
+    segments: readonly VideoSegment[],
+  ) {
     this.assetById = new Map(assets.map((a) => [a.id, a]));
+    this.tracker = tracker;
+    this.startIndex = startIndex;
+    this.segments = segments;
+  }
+
+  private projectSegmentIndex(seg: VideoSegment): number {
+    const local = this.segments.findIndex((s) => s.id === seg.id);
+    return local >= 0 ? this.startIndex + local : this.startIndex;
   }
 
   async resolveSlotSource(seg: VideoSegment, currentTime: number): Promise<SlotSource | null> {
     const asset = seg.assetId ? this.assetById.get(seg.assetId) : undefined;
     if (!asset) return null;
+    this.tracker.setContext(this.projectSegmentIndex(seg), asset.id);
 
     if (asset.type === 'video') {
       let cursor = this.cursors.get(seg.id);
       if (!cursor) {
-        cursor = openCursor(seg, asset.url, asset.duration);
+        this.tracker.enter('demux');
+        cursor = openCursor(seg, asset.url, asset.duration, this.tracker, asset.id);
         this.cursors.set(seg.id, cursor);
+        const targetSec = toSourceTime(seg, currentTime, asset.duration);
+        const frame = await frameAt(cursor, targetSec);
+        this.tracker.enter('frame-loop');
+        if (!frame) return null;
+        const w = frame.displayWidth;
+        const h = frame.displayHeight;
+        if (!w || !h) return null;
+        return { source: frame, w, h };
       }
       const targetSec = toSourceTime(seg, currentTime, asset.duration);
       const frame = await frameAt(cursor, targetSec);
@@ -298,6 +367,7 @@ class RunState {
     if (asset.type === 'image') {
       let bmp = this.imageBitmaps.get(asset.id);
       if (!bmp) {
+        this.tracker.enter('image-bitmap');
         if (asset.file) {
           bmp = await createImageBitmap(asset.file);
         } else {
@@ -306,6 +376,7 @@ class RunState {
           bmp = await createImageBitmap(await resp.blob());
         }
         this.imageBitmaps.set(asset.id, bmp);
+        this.tracker.enter('frame-loop');
       }
       return { source: bmp, w: bmp.width, h: bmp.height };
     }
@@ -468,6 +539,19 @@ function resolveTextSegment(
 
 async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   const { runId, segments, assets, config, width, height, fps } = payload;
+  const pieceIndex = payload.pieceIndex ?? 0;
+  const startIndex = payload.startIndex ?? 0;
+  const tracker = new ExportPhaseTracker((msg) => postOut(msg), pieceIndex);
+  const emptyDone = (): { type: 'done'; frameCount: number; phaseMs: Record<string, number>; instrumentationMs: number; demuxSplit: ExportDemuxSplit[] } => {
+    const breakdown = tracker.finish();
+    return {
+      type: 'done',
+      frameCount: 0,
+      phaseMs: breakdown.phaseMs,
+      instrumentationMs: breakdown.instrumentationMs,
+      demuxSplit: breakdown.demuxSplit,
+    };
+  };
   const textGlobalConfig: TextRenderGlobalConfig = {
     overlayConfig: payload.globalOverlayConfig,
     textLayers: payload.textLayers,
@@ -476,10 +560,11 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
 
   if (segments.length === 0) {
     postOut({ type: 'run-done', runId, frameCount: 0 });
-    postOut({ type: 'done', frameCount: 0 });
+    postOut(emptyDone());
     return;
   }
 
+  tracker.enter('gl-context');
   const canvas = new OffscreenCanvas(width, height);
   let contextLost = false;
   const gl = acquireOffscreenGlContext(canvas, {
@@ -497,6 +582,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
 
   let compositor: GlCompositor;
   try {
+    tracker.enter('shader-compile');
     compositor = new GlCompositor(gl);
   } catch (e) {
     postOut({ type: 'error', message: `exportWorker: GlCompositor construction failed: ${errMessage(e)}` });
@@ -505,7 +591,9 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
 
   let textRenderer: GLTextRenderer;
   try {
+    tracker.enter('shader-compile');
     textRenderer = new GLTextRenderer(gl);
+    tracker.enter('font-init');
     await textRenderer.init(payload.fontConfigs ?? []);
   } catch (e) {
     postOut({ type: 'error', message: `exportWorker: GLTextRenderer construction/init failed: ${errMessage(e)}` });
@@ -520,6 +608,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   let encoderFatalError: Error | null = null;
   let encoder: VideoEncoder;
   try {
+    tracker.enter('encoder-ladder');
     encoder = await createEncoder(
       width,
       height,
@@ -548,7 +637,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     return;
   }
 
-  const runState = new RunState(assets);
+  const runState = new RunState(assets, tracker, startIndex, segments);
   const first = segments[0]!;
   const last = segments[segments.length - 1]!;
   const runStartSec = first.startTime;
@@ -569,6 +658,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   let framesEmitted = 0;
   let cancelled = false;
   try {
+    tracker.enter('frame-loop');
     for (let i = 0; i < totalFrames; i++) {
       if (cancelRequested) {
         cancelled = true;
@@ -625,7 +715,9 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       // unboundedly. Checked AFTER compositing (so the GL work for this tick
       // is already done) and BEFORE constructing/encoding this tick's frame.
       if (encoder.encodeQueueSize > BACKPRESSURE_HIGH_WATER) {
+        const waitStarted = performance.now();
         await waitForDequeue(encoder);
+        tracker.add('wait-dequeue', performance.now() - waitStarted);
       }
       if (encoderFatalError) throw encoderFatalError as Error;
 
@@ -641,6 +733,8 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
         frame.close();
       }
       framesEmitted++;
+      tracker.setFramesEncoded(framesEmitted);
+      tracker.pulse();
       if (i % 5 === 0) postOut({ type: 'queue-sample', frameIndex: i, size: encoder.encodeQueueSize });
     }
 
@@ -654,9 +748,17 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       return;
     }
 
+    tracker.enter('encoder-flush');
     await encoder.flush();
+    const breakdown = tracker.finish();
     postOut({ type: 'run-done', runId, frameCount: framesEmitted });
-    postOut({ type: 'done', frameCount: framesEmitted });
+    postOut({
+      type: 'done',
+      frameCount: framesEmitted,
+      phaseMs: breakdown.phaseMs,
+      instrumentationMs: breakdown.instrumentationMs,
+      demuxSplit: breakdown.demuxSplit,
+    });
   } catch (e) {
     postOut({ type: 'error', message: errMessage(e) });
   } finally {

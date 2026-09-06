@@ -44,9 +44,23 @@ export interface DemuxedVideo {
   chunks: EncodedVideoChunk[];
   /** Track duration in seconds. */
   durationSec: number;
+  /** Wall ms of `fetch` + `arrayBuffer` for this URL (first demux only). */
+  fetchMs?: number;
+  /** Wall ms of mp4box `appendBuffer`/parse until onSamples resolves. */
+  parseMs?: number;
 }
 
 const demuxCache = new Map<string, Promise<DemuxedVideo>>();
+
+/** True when `url` already has an in-flight or resolved cache entry. */
+export function demuxCacheHas(url: string): boolean {
+  return demuxCache.has(url);
+}
+
+/** Number of unique-URL demuxers currently resident in the module cache. */
+export function demuxCacheSize(): number {
+  return demuxCache.size;
+}
 
 function getDescription(isoFile: ReturnType<typeof createFile>, track: VideoTrack): Uint8Array {
   const trak = isoFile.getTrackById(track.id);
@@ -63,9 +77,11 @@ function getDescription(isoFile: ReturnType<typeof createFile>, track: VideoTrac
 }
 
 async function demux(url: string): Promise<DemuxedVideo> {
+  const fetchStarted = performance.now();
   const resp = await fetch(url);
   if (!resp.ok) throw new Error(`videoDemuxer: fetch failed (${resp.status}) for ${url}`);
   const buf = await resp.arrayBuffer();
+  const fetchMs = performance.now() - fetchStarted;
 
   // Fix (b) — see file header. Required for a single whole-file appendBuffer().
   const mp4boxFile = createFile(true);
@@ -74,6 +90,7 @@ async function demux(url: string): Promise<DemuxedVideo> {
   let config: VideoDecoderConfig | null = null;
   let received = 0;
 
+  const parseStarted = performance.now();
   await new Promise<void>((resolve, reject) => {
     mp4boxFile.onError = (module: string, msg: string) => {
       reject(new Error(`mp4box error [${module}]: ${msg}`));
@@ -124,6 +141,7 @@ async function demux(url: string): Promise<DemuxedVideo> {
     const mp4boxBuf = MP4BoxBuffer.fromArrayBuffer(buf, 0);
     mp4boxFile.appendBuffer(mp4boxBuf);
   });
+  const parseMs = performance.now() - parseStarted;
 
   if (!config || !videoTrack) {
     throw new Error('videoDemuxer: failed to extract a valid track config');
@@ -134,6 +152,8 @@ async function demux(url: string): Promise<DemuxedVideo> {
     config,
     chunks,
     durationSec: track.duration / track.timescale,
+    fetchMs,
+    parseMs,
   };
 }
 

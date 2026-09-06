@@ -78,11 +78,7 @@ import { resolveEffectiveTransition } from '../transitionResolver';
 import { isPlainVideoSegment, isPlainImageSegment } from '../plainSegment';
 import { checkTimelineIsGapless } from '../timelinePartition';
 import { isGlCompositableSegment, GL_TRANSITION_SLUGS } from './glCompositable';
-import type {
-  ExportError,
-  ExportResult,
-  ProgressCallback,
-} from '../exportPipeline';
+import type { ExportError, ExportLivenessSnapshot, ExportResult, ProgressCallback } from '../exportPipeline';
 import type { ProjectEffectConfig } from '../gl/compositeParams';
 import type {
   ExportWorkerInboundMessage,
@@ -449,12 +445,31 @@ function buildPiecePlans(
 // ---------------------------------------------------------------------------
 
 type RunDriveResult =
-  | { ok: true; frameCount: number }
+  | { ok: true; frameCount: number; phaseMs: Record<string, number>; instrumentationMs: number }
   | { ok: false; error: ExportError };
 
-const WATCHDOG_MS = 30_000;
+/** Unchanged 30s bound — exported so tests can assert the value and drive
+ *  fake timers against the same constant the production path uses. */
+export const WATCHDOG_MS = 30_000;
 
-function driveGlRun(
+/**
+ * Minimal Worker surface `driveGlRun` needs. Production uses a real module
+ * Worker; tests inject a fake so this function can run in node/vitest
+ * without constructing `exportWorker.ts`.
+ */
+export interface ExportWorkerHandle {
+  postMessage(message: unknown): void;
+  terminate(): void;
+  onmessage: ((ev: MessageEvent<ExportWorkerOutboundMessage>) => void) | null;
+  onerror: ((ev: ErrorEvent) => void) | null;
+}
+
+export interface DriveGlRunDeps {
+  createWorker?: () => ExportWorkerHandle;
+  now?: () => number;
+}
+
+export function driveGlRun(
   ffmpeg: WebCodecsFfmpeg,
   runId: string,
   runFile: string,
@@ -472,16 +487,38 @@ function driveGlRun(
     textLayers: TextOverlay[];
     headings: HeadingOverlay[];
   },
+  pieceIndex: number,
+  startIndex: number,
+  deps: DriveGlRunDeps = {},
 ): Promise<RunDriveResult> {
   return new Promise((resolve) => {
-    const worker = new Worker(new URL('./exportWorker.ts', import.meta.url), { type: 'module' });
-    activeWorker = worker;
+    const worker = deps.createWorker
+      ? deps.createWorker()
+      : new Worker(new URL('./exportWorker.ts', import.meta.url), { type: 'module' });
+    activeWorker = worker as Worker;
+    const now = deps.now ?? (() => performance.now());
 
     let appendQueue: Promise<void> = Promise.resolve();
     let appendError: Error | null = null;
     let framesAppended = 0;
     let settled = false;
     let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+    let lastPhase: string | null = 'init';
+    let lastPhaseAt = now();
+    let lastPieceIndex = pieceIndex;
+    let lastFramesEncoded = 0;
+
+    const snapshotLiveness = (): ExportLivenessSnapshot => ({
+      lastPhase,
+      msSinceLastPhaseChange: now() - lastPhaseAt,
+      pieceIndex: lastPieceIndex,
+      framesEncoded: lastFramesEncoded,
+    });
+
+    const withLiveness = (error: ExportError): ExportError => ({
+      ...error,
+      liveness: snapshotLiveness(),
+    });
 
     const clearWatchdog = (): void => {
       if (watchdogTimer) {
@@ -494,7 +531,10 @@ function driveGlRun(
       watchdogTimer = setTimeout(() => {
         finish({
           ok: false,
-          error: { kind: 'unknown', message: 'Export worker produced no output for 30s — aborting (watchdog).' },
+          error: withLiveness({
+            kind: 'unknown',
+            message: 'Export worker produced no output for 30s — aborting (watchdog).',
+          }),
         });
       }, WATCHDOG_MS);
     };
@@ -545,23 +585,43 @@ function driveGlRun(
             if (appendError) {
               finish({
                 ok: false,
-                error: { kind: 'encode', message: 'Failed to append an encoded chunk to disk.', cause: appendError.message },
+                error: withLiveness({
+                  kind: 'encode',
+                  message: 'Failed to append an encoded chunk to disk.',
+                  cause: appendError.message,
+                }),
               });
               return;
             }
-            finish({ ok: true, frameCount: data.frameCount });
+            finish({
+              ok: true,
+              frameCount: data.frameCount,
+              phaseMs: data.phaseMs,
+              instrumentationMs: data.instrumentationMs,
+            });
           });
           break;
         case 'error':
-          finish({ ok: false, error: { kind: 'encode', message: 'Export worker reported an error.', cause: data.message } });
+          finish({
+            ok: false,
+            error: withLiveness({ kind: 'encode', message: 'Export worker reported an error.', cause: data.message }),
+          });
           break;
         case 'cancelled':
-          finish({ ok: false, error: { kind: 'cancelled', message: 'Export cancelled.' } });
+          finish({ ok: false, error: withLiveness({ kind: 'cancelled', message: 'Export cancelled.' }) });
           break;
         case 'queue-sample':
           // Diagnostic-only (exportWorker.ts's own doc comment) — still a
           // liveness signal for the watchdog.
           resetWatchdog();
+          break;
+        case 'phase':
+          // Work-token: recorded for diagnostics. Does NOT reset the
+          // watchdog — the resetting set remains {chunk, queue-sample}.
+          if (data.phase !== lastPhase) lastPhaseAt = now();
+          lastPhase = data.phase;
+          lastPieceIndex = data.pieceIndex;
+          lastFramesEncoded = data.framesEncoded;
           break;
       }
     };
@@ -569,7 +629,11 @@ function driveGlRun(
     worker.onerror = (ev: ErrorEvent) => {
       finish({
         ok: false,
-        error: { kind: 'encode', message: 'Export worker crashed.', cause: `${ev.message} at ${ev.filename}:${ev.lineno}` },
+        error: withLiveness({
+          kind: 'encode',
+          message: 'Export worker crashed.',
+          cause: `${ev.message} at ${ev.filename}:${ev.lineno}`,
+        }),
       });
     };
 
@@ -586,6 +650,8 @@ function driveGlRun(
       globalOverlayConfig: textConfig.globalOverlayConfig,
       textLayers: textConfig.textLayers,
       headings: textConfig.headings,
+      pieceIndex,
+      startIndex,
     };
     resetWatchdog();
     worker.postMessage(initMsg);
@@ -953,6 +1019,8 @@ export async function exportProjectWebCodecs(
           textLayers: project.textLayers ?? [],
           headings: project.headings ?? [],
         },
+        pieceIndex,
+        plan.startIndex,
       );
       if (!driveResult.ok) {
         activeFfmpeg = null;

@@ -33,11 +33,24 @@ export type ExportErrorKind =
   | 'timeline_gap'
   | 'unknown';
 
+/**
+ * Last-known worker phase, attached to a WebCodecs-path ExportError so the
+ * Copy-diagnostics blob can name where the pipeline was when it died.
+ * Absent on the legacy canvas path, which has no phase tokens.
+ */
+export interface ExportLivenessSnapshot {
+  lastPhase: string | null;
+  msSinceLastPhaseChange: number | null;
+  pieceIndex: number | null;
+  framesEncoded: number | null;
+}
+
 export interface ExportError {
   kind: ExportErrorKind;
   message: string;
   segmentIndex?: number;
   cause?: string;
+  liveness?: ExportLivenessSnapshot;
 }
 
 export type ExportResult =
