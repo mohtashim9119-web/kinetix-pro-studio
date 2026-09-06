@@ -148,6 +148,115 @@ pub(crate) fn digest_is_memoized(path: &Path) -> bool {
     verified_digest_cache().lock().map(|m| m.contains_key(&identity)).unwrap_or(false)
 }
 
+// ---------------------------------------------------------------------------
+// PERSISTED digest cache (WS3 fa-threads-production).
+//
+// `verified_digest_cache` above is in-process only, by an explicit earlier
+// decision ("every app start re-hashes the model in full"). That decision
+// bought safety with ~5.25s of release-build wall clock on EVERY COLD LAUNCH
+// (WS1 Session F, ~1.26 GiB streamed), paid before the first Apply Sync can
+// run. This layer persists the same digest to disk so a restart is a `stat`
+// plus a small JSON read instead.
+//
+// KEY. Identical to the in-process memo's: (path, size, mtime). Any mismatch
+// in ANY of the three — and any missing/short/garbled/unparseable file — is a
+// MISS, and a miss re-hashes in full. There is no path through this module
+// that skips the hash without a key match, and none that skips the
+// comparison against the manifest at all: `verify_model_manifest` compares
+// `actual != expected` unconditionally, on cache hits exactly as on cold
+// runs. A cache can therefore make verification FAST or make it REDUNDANT; it
+// cannot make it ABSENT.
+//
+// TRUST DELTA, stated plainly. A persisted cache is trusted-on-read in one
+// specific sense the in-process memo was not: a file whose recorded digest is
+// the manifest's correct value, whose (size, mtime) match a model that has
+// been corrupted in place without changing either, would be accepted without
+// re-hashing. That is inherent to persisting anything, and it grants no new
+// capability here: the cache lives in the SAME DIRECTORY as the model, so
+// anyone able to forge it is already able to replace the model itself. It is
+// a cache beside the artifact it describes, not a security boundary.
+// ---------------------------------------------------------------------------
+
+/// Where the persisted digest for `model_path` lives: the model's own path
+/// with `.digest.json` appended (`model.onnx` -> `model.onnx.digest.json`).
+///
+/// NEXT TO THE MODEL, deliberately. `verify_model_manifest` is a plain
+/// function taking a `&Path` — it has no `AppHandle`, so `app_local_data_dir`
+/// is not reachable from here without threading one through a "heavily
+/// tested, sensitive verification path" this module has a standing decision
+/// not to disturb. Beside the model is also self-scoping: deleting or
+/// re-downloading the model directory takes its caches with it, and it
+/// matches the existing `.sha256` sidecar convention already written into
+/// this same directory by `models::fa_model_download`.
+///
+/// Appends rather than using `Path::with_extension`, which would REPLACE
+/// `.onnx` and collide across differently-typed files in one directory.
+fn digest_cache_path(model_path: &Path) -> std::path::PathBuf {
+    let mut name = model_path.as_os_str().to_os_string();
+    name.push(".digest.json");
+    std::path::PathBuf::from(name)
+}
+
+/// `mtime` as integer nanoseconds since the UNIX epoch, the form written to
+/// and read back from the cache file.
+///
+/// A pre-epoch mtime (`duration_since` errors) yields `None`, which callers
+/// treat as "not cacheable" — a miss, never a wrong hit. Stored as a JSON
+/// STRING: an f64-backed JSON number cannot hold nanosecond precision past
+/// 2^53, so a numeric round-trip could silently equate two different mtimes.
+fn mtime_nanos(mtime: Option<std::time::SystemTime>) -> Option<u128> {
+    mtime?.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_nanos())
+}
+
+/// The persisted digest for this EXACT identity, or `None`.
+///
+/// EVERY failure mode returns `None` and is therefore a full re-hash: the
+/// file is absent, unreadable (permissions, a directory in its place), not
+/// valid UTF-8, not valid JSON, missing any of the four fields, or records a
+/// path/size/mtime that does not match what is on disk right now. Nothing in
+/// here can panic on hostile input — every step is a `?` on an `Option`.
+fn read_persisted_digest(model_path: &Path, size: u64, mtime: Option<std::time::SystemTime>) -> Option<String> {
+    let raw = fs::read_to_string(digest_cache_path(model_path)).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+
+    // The recorded path must match, so a cache file copied alongside a
+    // different model (or a model moved into a new directory) is a miss.
+    if v["path"].as_str()? != model_path.to_string_lossy() {
+        return None;
+    }
+    if v["size"].as_u64()? != size {
+        return None;
+    }
+    // Written as a string; parsed back to the same u128 it was derived from.
+    let recorded_mtime: u128 = v["mtimeNanos"].as_str()?.parse().ok()?;
+    if recorded_mtime != mtime_nanos(mtime)? {
+        return None;
+    }
+
+    let digest = v["sha256"].as_str()?;
+    // A truncated write would leave a syntactically valid but short digest;
+    // a sha-256 hex digest is exactly 64 lowercase hex characters.
+    if digest.len() != 64 || !digest.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(digest.to_string())
+}
+
+/// Best-effort persist. Every error is swallowed: a read-only or full model
+/// directory must cost the next launch a re-hash, never fail a verification
+/// that has already SUCCEEDED by the time this is called.
+fn write_persisted_digest(model_path: &Path, size: u64, mtime: Option<std::time::SystemTime>, digest: &str) {
+    let Some(nanos) = mtime_nanos(mtime) else { return };
+    let body = serde_json::json!({
+        "path": model_path.to_string_lossy(),
+        "size": size,
+        "mtimeNanos": nanos.to_string(),
+        "sha256": digest,
+    });
+    let Ok(text) = serde_json::to_string(&body) else { return };
+    let _ = fs::write(digest_cache_path(model_path), text);
+}
+
 /// Hashes `path` and compares against the committed manifest's recorded
 /// SHA-256 for `language`. Never panics — a missing manifest entry, an I/O
 /// failure, and a genuine hash mismatch are all reported as a typed
@@ -199,21 +308,38 @@ pub(crate) fn verify_model_manifest(path: &Path, language: &str) -> Result<(), F
         }
     }
 
-    let identity: ModelIdentity = (path.to_path_buf(), actual_size, meta.modified().ok());
+    let mtime = meta.modified().ok();
+    let identity: ModelIdentity = (path.to_path_buf(), actual_size, mtime);
     let cached = verified_digest_cache()
         .lock()
         .ok()
         .and_then(|m| m.get(&identity).cloned());
 
+    // Three tiers, cheapest first: in-process memo, on-disk cache, full hash.
+    // Tier 2 is what makes a RESTART cheap (the memo dies with the process);
+    // tier 3 is reached whenever the on-disk key does not match exactly, and
+    // on any read/parse failure whatsoever (see `read_persisted_digest`).
     let actual = match cached {
         Some(digest) => digest,
         None => {
-            let digest = crate::sha256::hash_file(path).map_err(|e| FaError {
-                kind: FaErrorKind::ModelHashMismatch,
-                message: format!("failed to hash model at {}: {e}", path.display()),
-            })?;
+            let (digest, from_disk) = match read_persisted_digest(path, actual_size, mtime) {
+                Some(digest) => (digest, true),
+                None => {
+                    let digest = crate::sha256::hash_file(path).map_err(|e| FaError {
+                        kind: FaErrorKind::ModelHashMismatch,
+                        message: format!("failed to hash model at {}: {e}", path.display()),
+                    })?;
+                    (digest, false)
+                }
+            };
             if let Ok(mut m) = verified_digest_cache().lock() {
                 m.insert(identity, digest.clone());
+            }
+            // Only write back what we actually computed. Re-writing a value
+            // just read from that same file would be a pointless rewrite (and
+            // would refresh nothing — the key is the file's own identity).
+            if !from_disk {
+                write_persisted_digest(path, actual_size, mtime, &digest);
             }
             digest
         }
@@ -888,5 +1014,340 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(err.kind, FaErrorKind::ModelHashMismatch);
         assert!(err.message.contains("no manifest entry"));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// WS3 fa-threads-production — persisted digest cache.
+//
+// SPLIT, and why. The four required scenarios (cold miss hashes, warm hit
+// skips, mtime change re-hashes, corrupt file re-hashes) are asserted at
+// `read_persisted_digest`, which IS the decision point — it is the only thing
+// that decides hash-vs-skip, and it is pure over small files. They are then
+// tied to production by ONE fast end-to-end test through the real
+// `verify_model_manifest`.
+//
+// The expensive direction (proving an end-to-end MISS really streams the
+// file) needs a manifest-SIZED file, because `verify_model_manifest`'s size
+// precheck rejects anything smaller before the cache is ever consulted.
+// MEASURED on the reference host: 117.9s for that one test under the DEBUG
+// profile `cargo test` uses (19.4s for the same 1.26 GiB at release/`shasum`
+// speed) — against ~9s for the entire rest of the suite. So it is
+// `#[ignore]`d, named here, and run explicitly rather than silently making
+// every `cargo test` thirteen times slower.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod persisted_digest_cache {
+    use super::*;
+
+    /// sha256 of `EN_SIZE` zero bytes — the TRUE digest of the sparse stand-in
+    /// the end-to-end tests use. Deliberately NOT the manifest's digest for
+    /// "en", which is what makes the warm-hit test conclusive: if
+    /// verification succeeds against a file whose real content hashes to
+    /// this, the hash cannot have been recomputed.
+    const SPARSE_EN_SHA256: &str = "5ad848b8b6ef48d3e41bcbec49e35a448a0c3242e134132bad2f1fd27e3eecd9";
+
+    fn en_size() -> u64 {
+        manifest_byte_size_for("en").expect("manifest must carry byteSize for en")
+    }
+    fn en_expected() -> String {
+        manifest_sha256_for("en").expect("manifest must carry sha256 for en")
+    }
+
+    /// A UUID-unique directory: cold by construction, so no test here has to
+    /// reset the process-global in-process memo and race its siblings (the
+    /// reason spelled out in `digest_probe_distinguishes_a_memo_hit_from_a_
+    /// cold_full_hash`).
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("kinetix-fa-persist-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn small_file(dir: &Path, contents: &[u8]) -> std::path::PathBuf {
+        let p = dir.join("model.onnx");
+        fs::write(&p, contents).unwrap();
+        p
+    }
+
+    fn identity_of(p: &Path) -> (u64, Option<std::time::SystemTime>) {
+        let m = fs::metadata(p).unwrap();
+        (m.len(), m.modified().ok())
+    }
+
+    // -- 1. COLD MISS ------------------------------------------------------
+
+    #[test]
+    fn cold_no_cache_file_is_a_miss() {
+        let dir = temp_dir();
+        let p = small_file(&dir, b"model bytes");
+        let (size, mtime) = identity_of(&p);
+        assert!(!digest_cache_path(&p).exists(), "precondition: no cache file yet");
+        assert_eq!(
+            read_persisted_digest(&p, size, mtime),
+            None,
+            "with no cache file on disk the caller must fall through to a full hash"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cold_verify_writes_the_cache_file_it_will_later_hit() {
+        // The write half of "cold miss hashes": after a full hash, the digest
+        // must be persisted, or every launch stays cold forever.
+        let dir = temp_dir();
+        let p = small_file(&dir, b"model bytes");
+        let (size, mtime) = identity_of(&p);
+        let digest = crate::sha256::hash_file(&p).unwrap();
+
+        write_persisted_digest(&p, size, mtime, &digest);
+
+        assert!(digest_cache_path(&p).exists(), "a cold hash must leave a cache file behind");
+        assert_eq!(
+            read_persisted_digest(&p, size, mtime).as_deref(),
+            Some(digest.as_str()),
+            "the persisted value must read back as the digest that was written"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -- 2. WARM HIT -------------------------------------------------------
+
+    #[test]
+    fn warm_matching_identity_is_a_hit() {
+        let dir = temp_dir();
+        let p = small_file(&dir, b"model bytes");
+        let (size, mtime) = identity_of(&p);
+        write_persisted_digest(&p, size, mtime, &"a".repeat(64));
+
+        assert_eq!(
+            read_persisted_digest(&p, size, mtime).as_deref(),
+            Some("a".repeat(64).as_str()),
+            "an exact (path, size, mtime) match must return the persisted digest without hashing"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -- 3. KEY MISMATCH ---------------------------------------------------
+
+    #[test]
+    fn an_mtime_change_re_hashes() {
+        let dir = temp_dir();
+        let p = small_file(&dir, b"model bytes");
+        let (size, mtime) = identity_of(&p);
+        write_persisted_digest(&p, size, mtime, &"a".repeat(64));
+        assert!(read_persisted_digest(&p, size, mtime).is_some(), "precondition: warm");
+
+        // Rewrite with IDENTICAL bytes: size is unchanged, only mtime moves.
+        // That isolates mtime as the field under test.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&p, b"model bytes").unwrap();
+        let (size2, mtime2) = identity_of(&p);
+        assert_eq!(size2, size, "this probe must move ONLY mtime");
+        assert_ne!(mtime2, mtime, "filesystem mtime resolution too coarse to run this probe");
+
+        assert_eq!(
+            read_persisted_digest(&p, size2, mtime2),
+            None,
+            "a changed mtime must invalidate the cache and force a re-hash"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_size_change_re_hashes() {
+        let dir = temp_dir();
+        let p = small_file(&dir, b"model bytes");
+        let (size, mtime) = identity_of(&p);
+        write_persisted_digest(&p, size, mtime, &"a".repeat(64));
+
+        assert_eq!(
+            read_persisted_digest(&p, size + 1, mtime),
+            None,
+            "a changed size must invalidate the cache"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_cache_file_recorded_against_another_path_re_hashes() {
+        // The copied-cache-file case: someone moves or duplicates a model
+        // directory. The recorded path no longer matches, so it is a miss.
+        let dir = temp_dir();
+        let p = small_file(&dir, b"model bytes");
+        let (size, mtime) = identity_of(&p);
+        write_persisted_digest(&p, size, mtime, &"a".repeat(64));
+
+        let other = dir.join("other.onnx");
+        fs::copy(&p, &other).unwrap();
+        fs::copy(digest_cache_path(&p), digest_cache_path(&other)).unwrap();
+        let (osize, omtime) = identity_of(&other);
+
+        assert_eq!(
+            read_persisted_digest(&other, osize, omtime),
+            None,
+            "a cache file naming a DIFFERENT path must not be honoured for this one"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -- 4. CORRUPT / UNREADABLE ------------------------------------------
+
+    #[test]
+    fn every_corrupt_cache_shape_re_hashes_and_never_panics() {
+        let dir = temp_dir();
+        let p = small_file(&dir, b"model bytes");
+        let (size, mtime) = identity_of(&p);
+        let good = serde_json::json!({
+            "path": p.to_string_lossy(),
+            "size": size,
+            "mtimeNanos": mtime_nanos(mtime).unwrap().to_string(),
+            "sha256": "a".repeat(64),
+        })
+        .to_string();
+
+        // Sanity: the well-formed shape IS a hit, so a `None` below is
+        // attributable to the corruption and not to a broken fixture.
+        fs::write(digest_cache_path(&p), &good).unwrap();
+        assert!(read_persisted_digest(&p, size, mtime).is_some(), "the well-formed control must hit");
+
+        for (label, body) in [
+            ("empty", String::new()),
+            ("not json", "}{ this is not json".to_string()),
+            ("truncated json", good[..good.len() / 2].to_string()),
+            ("json but not an object", "[1,2,3]".to_string()),
+            ("null", "null".to_string()),
+            ("missing sha256", serde_json::json!({"path": p.to_string_lossy(), "size": size, "mtimeNanos": "1"}).to_string()),
+            ("missing mtime", serde_json::json!({"path": p.to_string_lossy(), "size": size, "sha256": "a".repeat(64)}).to_string()),
+            ("mtime as a number, not a string", good.replace(&format!("\"{}\"", mtime_nanos(mtime).unwrap()), "12345")),
+            ("mtime unparseable", good.replace(&mtime_nanos(mtime).unwrap().to_string(), "not-a-number")),
+            ("digest too short", good.replace(&"a".repeat(64), "abc")),
+            ("digest not hex", good.replace(&"a".repeat(64), &"z".repeat(64))),
+            ("nul bytes", "\0\0\0\0".to_string()),
+        ] {
+            fs::write(digest_cache_path(&p), &body).unwrap();
+            assert_eq!(
+                read_persisted_digest(&p, size, mtime),
+                None,
+                "a {label} cache file must be treated as a MISS (re-hash), never honoured"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn an_unreadable_cache_path_re_hashes() {
+        // A DIRECTORY where the cache file should be: `fs::read_to_string`
+        // errors rather than returning bytes. Stands in for the general
+        // unreadable case (permissions, a dangling symlink) with something a
+        // test can create portably and without root.
+        let dir = temp_dir();
+        let p = small_file(&dir, b"model bytes");
+        let (size, mtime) = identity_of(&p);
+        fs::create_dir_all(digest_cache_path(&p)).unwrap();
+
+        assert_eq!(
+            read_persisted_digest(&p, size, mtime),
+            None,
+            "an unreadable cache path must degrade to a re-hash, not an error and not a skip"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_write_is_swallowed_and_leaves_no_cache() {
+        // A read-only or otherwise unwritable location must not fail a
+        // verification that has already succeeded.
+        let dir = temp_dir();
+        let p = small_file(&dir, b"model bytes");
+        let (size, mtime) = identity_of(&p);
+        fs::create_dir_all(digest_cache_path(&p)).unwrap(); // write target is a dir
+
+        write_persisted_digest(&p, size, mtime, &"a".repeat(64)); // must not panic
+        assert_eq!(read_persisted_digest(&p, size, mtime), None, "and still reads as a miss");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // -- 5. END-TO-END through the real verify_model_manifest --------------
+
+    /// A sparse file of `len` bytes: `set_len` commits no blocks, so a
+    /// manifest-sized stand-in costs no disk. Same technique, and same
+    /// reason, as `models.rs`'s `sparse_file_of_len`.
+    fn sparse_file_of_len(path: &Path, len: u64) {
+        let f = std::fs::File::create(path).unwrap();
+        f.set_len(len).unwrap();
+    }
+
+    #[test]
+    fn a_warm_cache_lets_verify_skip_the_hash_entirely() {
+        // THE WIRING TEST, and the conclusive form of "warm hit skips".
+        // The file on disk is 1.26 GiB of zeros, whose real digest is
+        // SPARSE_EN_SHA256 — NOT the manifest's. A forged-but-well-keyed
+        // cache claims the manifest's digest. Verification can only succeed
+        // if it read the cache and did not hash the file, and it completes in
+        // milliseconds rather than the measured 19.4s a real hash costs.
+        let dir = temp_dir();
+        let p = dir.join("model.onnx");
+        sparse_file_of_len(&p, en_size());
+        let (size, mtime) = identity_of(&p);
+        assert_ne!(en_expected(), SPARSE_EN_SHA256, "the premise of this test is that these differ");
+        write_persisted_digest(&p, size, mtime, &en_expected());
+
+        let started = std::time::Instant::now();
+        let result = verify_model_manifest(&p, "en");
+        let elapsed = started.elapsed();
+
+        assert!(result.is_ok(), "a warm, well-keyed cache must satisfy verification: {result:?}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(5),
+            "took {elapsed:?} — that is long enough to have streamed the file, so the cache was              NOT actually consulted"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_size_precheck_still_runs_before_the_cache_is_consulted() {
+        // Ordering guard: a wrong-SIZED file must be rejected on its `stat`,
+        // without the cache getting a chance to vouch for it. A cache that
+        // was consulted first could admit a truncated model.
+        let dir = temp_dir();
+        let p = small_file(&dir, b"far too small to be a model");
+        let (size, mtime) = identity_of(&p);
+        write_persisted_digest(&p, size, mtime, &en_expected());
+
+        let err = verify_model_manifest(&p, "en").expect_err("a wrong-sized file must be rejected");
+        assert_eq!(err.kind, FaErrorKind::ModelHashMismatch);
+        assert!(
+            err.message.contains("wrong or truncated file"),
+            "must fail at the SIZE precheck, not via the digest cache: {}",
+            err.message
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// EXPENSIVE (117.9s measured under the debug test profile): streams a
+    /// 1.26 GiB sparse file. See this module's header for why it is
+    /// `#[ignore]`d. Last run green on the WS3 fa-threads-production branch.
+    ///
+    ///   cargo test --features fa-inference -- --ignored --exact \
+    ///     fa_dev::persisted_digest_cache::a_corrupt_cache_forces_a_real_re_hash_end_to_end
+    #[test]
+    #[ignore]
+    fn a_corrupt_cache_forces_a_real_re_hash_end_to_end() {
+        // The conclusive form of "corrupt file re-hashes": the error must
+        // name the digest of what is ACTUALLY on disk, which is obtainable
+        // only by streaming it.
+        let dir = temp_dir();
+        let p = dir.join("model.onnx");
+        sparse_file_of_len(&p, en_size());
+        fs::write(digest_cache_path(&p), "}{ corrupt").unwrap();
+
+        let err = verify_model_manifest(&p, "en").expect_err("all-zero content cannot match the manifest");
+        assert!(
+            err.message.contains(SPARSE_EN_SHA256),
+            "the failure must report the file's REAL digest, proving it was re-hashed rather than              trusted: {}",
+            err.message
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 }
