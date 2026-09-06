@@ -232,7 +232,7 @@ function runWorkerOnce(init: ExportWorkerInitMessage, opts: { cancelAfterChunks?
         if (settled) return;
         settled = true;
         worker.terminate();
-        reject(new Error('exportWorker posted error: ' + data.message));
+        reject(new Error('exportWorker posted error: ' + (data.diagnostics.failure?.message ?? 'unknown')));
       } else if (data.type === 'cancelled') {
         if (settled) return;
         settled = true;

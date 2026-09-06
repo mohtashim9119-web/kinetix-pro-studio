@@ -1,0 +1,24 @@
+<!--
+  THROWAWAY — Round 2 export-liveness measurement harness.
+  Not linked from the real app. Served only by Vite dev (`npm run dev` /
+  `npm run tauri:dev`). Production `vite build` uses index.html as the sole
+  entry, so this page and src/dev/exportLivenessProbe/ are not in the bundle.
+-->
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>WS3 export liveness probe (throwaway)</title>
+    <style>
+      body { font-family: monospace; background: #111; color: #eee; padding: 16px; }
+      #log { white-space: pre-wrap; background: #000; padding: 8px; max-height: 80vh; overflow-y: auto; font-size: 12px; }
+      h1 { font-size: 15px; }
+    </style>
+  </head>
+  <body>
+    <h1>WS3 export liveness — tick probe + GL fixture + live export (throwaway)</h1>
+    <p><button id="rerun">Re-run</button></p>
+    <pre id="log">(starting…)</pre>
+    <script type="module" src="/src/dev/exportLivenessProbe/main.ts"></script>
+  </body>
+</html>
