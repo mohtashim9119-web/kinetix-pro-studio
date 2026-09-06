@@ -17,6 +17,7 @@ import {
 } from './exportPipelineWebCodecs';
 import type { ExportWorkerOutboundMessage } from './exportWorker';
 import type { ProjectEffectConfig } from '../gl/compositeParams';
+import type { ExportWorkerDiagnosticsPayload } from './exportWorkerDiagnostics';
 
 class FakeWorker implements ExportWorkerHandle {
   onmessage: ((ev: MessageEvent<ExportWorkerOutboundMessage>) => void) | null = null;
@@ -114,6 +115,25 @@ function phase(
   };
 }
 
+function diagnostics(
+  phaseMs: Record<string, number>,
+  overrides: Partial<ExportWorkerDiagnosticsPayload> = {},
+): ExportWorkerDiagnosticsPayload {
+  return {
+    phaseMs,
+    instrumentationMs: 0.05,
+    demuxSplit: [],
+    framesEncoded: 3,
+    pieceIndex: 0,
+    lastPhase: 'frame-loop',
+    phaseLog: [{ seq: 1, atMs: 0, phase: 'frame-loop', pieceIndex: 0, segmentIndex: 0, assetId: 'a0', framesEncoded: 3, kind: 'enter' }],
+    failure: null,
+    demuxCacheSize: 2,
+    workerHeapBytes: 1_000_000,
+    ...overrides,
+  };
+}
+
 function doneMsg(
   phaseMs: Record<string, number>,
   frameCount = 3,
@@ -121,9 +141,7 @@ function doneMsg(
   return {
     type: 'done',
     frameCount,
-    phaseMs,
-    instrumentationMs: 0.05,
-    demuxSplit: [],
+    diagnostics: diagnostics(phaseMs, { framesEncoded: frameCount }),
   };
 }
 
@@ -137,6 +155,16 @@ function chunkMsg(timestamp = 0): Extract<ExportWorkerOutboundMessage, { type: '
   };
 }
 
+function expectPopulatedDiagnostics(d: ExportWorkerDiagnosticsPayload | null): void {
+  expect(d).not.toBeNull();
+  if (!d) return;
+  expect(d.phaseMs).toBeDefined();
+  expect(d.pieceIndex).toBe(0);
+  expect(typeof d.framesEncoded).toBe('number');
+  expect(Array.isArray(d.phaseLog)).toBe(true);
+  expect(d.lastPhase).not.toBeUndefined();
+}
+
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -146,7 +174,7 @@ describe('driveGlRun fake-worker harness', () => {
     expect(WATCHDOG_MS).toBe(30_000);
   });
 
-  it('receives phase messages in expected order and returns per-phase totals on done', async () => {
+  it('receives phase messages in expected order and returns diagnostics on done', async () => {
     const fake = new FakeWorker();
     const received: string[] = [];
     const original = fake.emit.bind(fake);
@@ -175,26 +203,80 @@ describe('driveGlRun fake-worker harness', () => {
     expect(received).toEqual([...order]);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.phaseMs['gl-context']).toBe(4);
-    expect(result.phaseMs['shader-compile']).toBe(12);
-    expect(result.phaseMs['font-init']).toBe(20);
-    expect(result.phaseMs['encoder-ladder']).toBe(30);
-    expect(result.phaseMs['frame-loop']).toBe(100);
+    expectPopulatedDiagnostics(result.diagnostics);
+    expect(result.diagnostics.phaseMs['frame-loop']).toBe(100);
     expect(result.frameCount).toBe(3);
     expect(fake.terminated).toBe(true);
   });
 
-  it('fires the watchdog on a worker that goes silent', async () => {
+  it('fires the watchdog on a worker that goes silent and requests diagnostics', async () => {
     vi.useFakeTimers();
     const fake = new FakeWorker();
     const p = startDrive(fake);
-    await vi.advanceTimersByTimeAsync(WATCHDOG_MS);
+    await vi.advanceTimersByTimeAsync(WATCHDOG_MS + 60);
     const result = await p;
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.message).toContain('30s');
     expect(result.error.liveness?.lastPhase).toBe('init');
+    expect(result.error.liveness?.maxSilentMs).toBeGreaterThanOrEqual(WATCHDOG_MS);
+    expect(fake.inbound.some((m) => (m as { type?: string }).type === 'request-diagnostics')).toBe(true);
+    expectPopulatedDiagnostics(result.diagnostics);
+    expect(result.diagnostics?.failure?.via).toBe('watchdog');
     expect(fake.terminated).toBe(true);
+  });
+
+  it('worker error path returns populated diagnostics with failure identity (destructive probe)', async () => {
+    const fake = new FakeWorker();
+    const p = startDrive(fake);
+    fake.emit({
+      type: 'error',
+      diagnostics: diagnostics({}, {
+        framesEncoded: 42,
+        failure: {
+          name: 'EncodingError',
+          message: 'Hardware encoder reset',
+          via: 'encoder-callback',
+          frameIndex: 41,
+          timelineSec: 1.367,
+        },
+      }),
+    });
+    const result = await p;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('encoder-callback');
+    expect(result.error.message).toContain('EncodingError');
+    expect(result.error.message).toContain('frame 41');
+    expectPopulatedDiagnostics(result.diagnostics);
+    expect(result.diagnostics?.failure?.via).toBe('encoder-callback');
+  });
+
+  it('cancelled path returns populated diagnostics', async () => {
+    const fake = new FakeWorker();
+    const p = startDrive(fake);
+    fake.emit({
+      type: 'cancelled',
+      diagnostics: diagnostics({ 'frame-loop': 10 }, {
+        failure: { name: 'AbortError', message: 'Export cancelled.', via: 'cancel', frameIndex: 5, timelineSec: 0.167 },
+      }),
+    });
+    const result = await p;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('cancelled');
+    expectPopulatedDiagnostics(result.diagnostics);
+  });
+
+  it('worker crash path returns populated diagnostics', async () => {
+    const fake = new FakeWorker();
+    const p = startDrive(fake);
+    fake.onerror?.({ message: 'boom', filename: 'worker.ts', lineno: 1 } as ErrorEvent);
+    const result = await p;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('worker-crash');
+    expectPopulatedDiagnostics(result.diagnostics);
   });
 
   it('does not fire the watchdog on a normal chunk stream', async () => {
@@ -219,7 +301,7 @@ describe('driveGlRun fake-worker harness', () => {
     fake.emit(phase('gl-context', 1));
     fake.emit(phase('shader-compile', 2));
     fake.emit(phase('frame-loop', 3));
-    await vi.advanceTimersByTimeAsync(WATCHDOG_MS);
+    await vi.advanceTimersByTimeAsync(WATCHDOG_MS + 60);
     const result = await p;
     expect(result.ok).toBe(false);
     if (result.ok) return;

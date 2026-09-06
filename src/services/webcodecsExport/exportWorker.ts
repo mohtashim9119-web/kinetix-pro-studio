@@ -52,6 +52,13 @@ import { computeObjectCoverUvRect } from '../gl/uvRect';
 import { decodeSegmentFrames } from './sequentialDecode';
 import { GLTextRenderer, type FontConfig, type TextRenderGlobalConfig } from './textRenderer';
 import { ExportPhaseTracker, type ExportDemuxSplit } from './exportPhaseTracker';
+import { demuxCacheSize } from '../videoDemuxer';
+import {
+  failureFromUnknown,
+  type ExportFailureIdentity,
+  type ExportFailureVia,
+  type ExportWorkerDiagnosticsPayload,
+} from './exportWorkerDiagnostics';
 
 // ---------------------------------------------------------------------------
 // Message protocol
@@ -104,7 +111,10 @@ export interface ExportWorkerInitMessage {
   startIndex?: number;
 }
 
-export type ExportWorkerInboundMessage = ExportWorkerInitMessage | { type: 'cancel' };
+export type ExportWorkerInboundMessage =
+  | ExportWorkerInitMessage
+  | { type: 'cancel' }
+  | { type: 'request-diagnostics' };
 
 export type ExportWorkerOutboundMessage =
   // chunkType/timestamp are diagnostic additions beyond the plan's minimal
@@ -119,12 +129,11 @@ export type ExportWorkerOutboundMessage =
   | {
       type: 'done';
       frameCount: number;
-      phaseMs: Record<string, number>;
-      instrumentationMs: number;
-      demuxSplit: ExportDemuxSplit[];
+      diagnostics: ExportWorkerDiagnosticsPayload;
     }
-  | { type: 'error'; message: string }
-  | { type: 'cancelled' }
+  | { type: 'error'; diagnostics: ExportWorkerDiagnosticsPayload }
+  | { type: 'cancelled'; diagnostics: ExportWorkerDiagnosticsPayload }
+  | { type: 'diagnostics-snapshot'; diagnostics: ExportWorkerDiagnosticsPayload }
   // Diagnostic-only, sampled periodically (not every frame, to keep message
   // volume sane on a long real export) — lets a caller (this step's own
   // spike) chart the backpressure trajectory. No orchestrator depends on
@@ -152,6 +161,53 @@ function postOut(message: ExportWorkerOutboundMessage, transfer?: Transferable[]
 function errMessage(e: unknown): string {
   return e instanceof Error ? (e.stack ?? e.message) : String(e);
 }
+
+function workerHeapBytes(): number | null {
+  const mem = (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory;
+  return typeof mem?.usedJSHeapSize === 'number' ? mem.usedJSHeapSize : null;
+}
+
+class RunFailureState {
+  failure: ExportFailureIdentity | null = null;
+  frameIndex = 0;
+  runStartSec = 0;
+  fps = 30;
+
+  timelineSec(): number | null {
+    if (this.frameIndex < 0) return null;
+    return this.runStartSec + this.frameIndex / this.fps;
+  }
+
+  setFailure(via: ExportFailureVia, err: unknown): void {
+    if (this.failure) return;
+    this.failure = failureFromUnknown(err, via, this.frameIndex, this.timelineSec());
+  }
+}
+
+function buildDiagnostics(
+  tracker: ExportPhaseTracker,
+  pieceIndex: number,
+  breakdown: ReturnType<ExportPhaseTracker['snapshot']>,
+  failure: ExportFailureIdentity | null,
+): ExportWorkerDiagnosticsPayload {
+  return {
+    phaseMs: breakdown.phaseMs,
+    instrumentationMs: breakdown.instrumentationMs,
+    demuxSplit: breakdown.demuxSplit,
+    framesEncoded: breakdown.framesEncoded,
+    pieceIndex,
+    lastPhase: breakdown.lastPhase,
+    phaseLog: breakdown.phaseLog,
+    failure,
+    demuxCacheSize: demuxCacheSize(),
+    workerHeapBytes: workerHeapBytes(),
+  };
+}
+
+/** Active export state — readable on request-diagnostics before terminate. */
+let activeTracker: ExportPhaseTracker | null = null;
+let activeFailure: RunFailureState | null = null;
+let activePieceIndex = 0;
 
 // ---------------------------------------------------------------------------
 // Segment-local <-> source-time mapping.
@@ -542,15 +598,35 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   const pieceIndex = payload.pieceIndex ?? 0;
   const startIndex = payload.startIndex ?? 0;
   const tracker = new ExportPhaseTracker((msg) => postOut(msg), pieceIndex);
-  const emptyDone = (): { type: 'done'; frameCount: number; phaseMs: Record<string, number>; instrumentationMs: number; demuxSplit: ExportDemuxSplit[] } => {
+  activeTracker = tracker;
+  activePieceIndex = pieceIndex;
+  const failState = new RunFailureState();
+  activeFailure = failState;
+
+  const postTerminal = (
+    kind: 'done' | 'error' | 'cancelled',
+    frameCount: number,
+    failureOverride?: ExportFailureIdentity | null,
+  ): void => {
     const breakdown = tracker.finish();
-    return {
-      type: 'done',
-      frameCount: 0,
-      phaseMs: breakdown.phaseMs,
-      instrumentationMs: breakdown.instrumentationMs,
-      demuxSplit: breakdown.demuxSplit,
-    };
+    const diagnostics = buildDiagnostics(
+      tracker,
+      pieceIndex,
+      breakdown,
+      failureOverride !== undefined ? failureOverride : failState.failure,
+    );
+    if (kind === 'done') {
+      postOut({ type: 'run-done', runId, frameCount });
+      postOut({ type: 'done', frameCount, diagnostics });
+    } else if (kind === 'cancelled') {
+      postOut({ type: 'cancelled', diagnostics });
+    } else {
+      postOut({ type: 'error', diagnostics });
+    }
+  };
+
+  const emptyDone = (): void => {
+    postTerminal('done', 0, null);
   };
   const textGlobalConfig: TextRenderGlobalConfig = {
     overlayConfig: payload.globalOverlayConfig,
@@ -560,7 +636,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
 
   if (segments.length === 0) {
     postOut({ type: 'run-done', runId, frameCount: 0 });
-    postOut(emptyDone());
+    emptyDone();
     return;
   }
 
@@ -576,7 +652,8 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     },
   });
   if (!gl) {
-    postOut({ type: 'error', message: 'exportWorker: WebGL2 context unavailable in worker (acquireOffscreenGlContext returned null)' });
+    failState.setFailure('init-error', new Error('exportWorker: WebGL2 context unavailable in worker (acquireOffscreenGlContext returned null)'));
+    postTerminal('error', 0);
     return;
   }
 
@@ -585,7 +662,8 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     tracker.enter('shader-compile');
     compositor = new GlCompositor(gl);
   } catch (e) {
-    postOut({ type: 'error', message: `exportWorker: GlCompositor construction failed: ${errMessage(e)}` });
+    failState.setFailure('init-error', e);
+    postTerminal('error', 0);
     return;
   }
 
@@ -596,7 +674,8 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     tracker.enter('font-init');
     await textRenderer.init(payload.fontConfigs ?? []);
   } catch (e) {
-    postOut({ type: 'error', message: `exportWorker: GLTextRenderer construction/init failed: ${errMessage(e)}` });
+    failState.setFailure('init-error', e);
+    postTerminal('error', 0);
     try {
       compositor.dispose();
     } catch {
@@ -605,7 +684,6 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     return;
   }
 
-  let encoderFatalError: Error | null = null;
   let encoder: VideoEncoder;
   try {
     tracker.enter('encoder-ladder');
@@ -619,11 +697,12 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
         postOut({ type: 'chunk', runId, bytes: buf, chunkType: chunk.type, timestamp: chunk.timestamp }, [buf]);
       },
       (e) => {
-        if (!encoderFatalError) encoderFatalError = new Error(`exportWorker: VideoEncoder error: ${e.message}`);
+        failState.setFailure('encoder-callback', e);
       },
     );
   } catch (e) {
-    postOut({ type: 'error', message: errMessage(e) });
+    failState.setFailure('init-error', e);
+    postTerminal('error', 0);
     try {
       compositor.dispose();
     } catch {
@@ -655,18 +734,26 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     return segmentStartFrames.has(i) || i % gop === 0;
   }
 
+  failState.runStartSec = runStartSec;
+  failState.fps = fps;
+
   let framesEmitted = 0;
   let cancelled = false;
   try {
     tracker.enter('frame-loop');
     for (let i = 0; i < totalFrames; i++) {
+      failState.frameIndex = i;
       if (cancelRequested) {
         cancelled = true;
         break;
       }
-      if (encoderFatalError) throw encoderFatalError as Error;
+      if (failState.failure) throw failState.failure;
       if (contextLost) {
-        throw new Error('exportWorker: WebGL2 context lost mid-export — aborting (no restore attempted, per plan §4.1)');
+        failState.setFailure(
+          'gl-context-lost',
+          new Error('exportWorker: WebGL2 context lost mid-export — aborting (no restore attempted, per plan §4.1)'),
+        );
+        throw failState.failure;
       }
 
       // Absolute-index timestamps (plan §7.1): rounding the PRODUCT, not the
@@ -719,7 +806,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
         await waitForDequeue(encoder);
         tracker.add('wait-dequeue', performance.now() - waitStarted);
       }
-      if (encoderFatalError) throw encoderFatalError as Error;
+      if (failState.failure) throw failState.failure;
 
       const frame = new VideoFrame(canvas, {
         timestamp: Math.round((i * 1_000_000) / fps),
@@ -739,29 +826,24 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     }
 
     if (cancelled) {
-      // Cancel primitive (plan §9.1): reset() drops all queued/in-flight
-      // encoder work synchronously — NEVER flush() on cancel, which would
-      // instead wait for that work to finish (the opposite of cancel).
       encoder.reset();
       encoder.close();
-      postOut({ type: 'cancelled' });
+      failState.setFailure('cancel', new DOMException('Export cancelled.', 'AbortError'));
+      postTerminal('cancelled', framesEmitted);
       return;
     }
 
     tracker.enter('encoder-flush');
     await encoder.flush();
-    const breakdown = tracker.finish();
-    postOut({ type: 'run-done', runId, frameCount: framesEmitted });
-    postOut({
-      type: 'done',
-      frameCount: framesEmitted,
-      phaseMs: breakdown.phaseMs,
-      instrumentationMs: breakdown.instrumentationMs,
-      demuxSplit: breakdown.demuxSplit,
-    });
+    postTerminal('done', framesEmitted, null);
   } catch (e) {
-    postOut({ type: 'error', message: errMessage(e) });
+    if (!failState.failure) {
+      failState.setFailure('thrown', e);
+    }
+    postTerminal('error', framesEmitted);
   } finally {
+    activeTracker = null;
+    activeFailure = null;
     await runState.disposeAll();
     // Single close point for every path (success, error, cancel already
     // closed it itself and this is then a guarded no-op) — flush() does not
@@ -786,12 +868,26 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
 
 self.onmessage = (ev: MessageEvent<ExportWorkerInboundMessage>) => {
   const data = ev.data;
+  if (data.type === 'request-diagnostics') {
+    if (!activeTracker) return;
+    const breakdown = activeTracker.snapshot();
+    const diagnostics = buildDiagnostics(
+      activeTracker,
+      activePieceIndex,
+      breakdown,
+      activeFailure?.failure ?? null,
+    );
+    postOut({ type: 'diagnostics-snapshot', diagnostics });
+    return;
+  }
   if (data.type === 'init') {
     if (running) return; // single export at a time (plan §9.3) — ignore a second init while one run is active
     running = true;
     cancelRequested = false;
     void runExport(data).finally(() => {
       running = false;
+      activeTracker = null;
+      activeFailure = null;
     });
   } else if (data.type === 'cancel') {
     cancelRequested = true;

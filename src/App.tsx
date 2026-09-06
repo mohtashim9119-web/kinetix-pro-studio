@@ -6701,6 +6701,7 @@ export default function App() {
                           msSinceLastPhaseChange: err.liveness?.msSinceLastPhaseChange ?? null,
                           pieceIndex: err.liveness?.pieceIndex ?? null,
                           framesEncoded: err.liveness?.framesEncoded ?? null,
+                          maxSilentMs: err.liveness?.maxSilentMs ?? null,
                           projectMeta: {
                             segmentCount: project.segments.length,
                             hasVoiceover: !!project.voiceoverId,

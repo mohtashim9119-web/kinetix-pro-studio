@@ -89,6 +89,15 @@ import type { FontConfig } from './textRenderer';
 import { resolveFontBytes } from './fontResolver';
 import { muxOnly } from './muxOnly';
 import { FONT_FAMILIES } from '../../constants';
+import type { ExportDemuxSplit } from './exportPhaseTracker';
+import {
+  attributeSilentIntervals,
+  formatFailureMessage,
+  pushPhaseLogEntry,
+  type ExportPhaseLogEntry,
+  type ExportWorkerDiagnosticsPayload,
+  type SilentIntervalAttribution,
+} from './exportWorkerDiagnostics';
 
 export interface ExportOptionsWebCodecs {
   width?: number;
@@ -437,6 +446,66 @@ function buildPiecePlans(
   return pieces;
 }
 
+export type WebCodecsTier = 'plain' | 'gl' | 'canvas';
+
+export interface WebCodecsPieceSummary {
+  tier: WebCodecsTier;
+  startIndex: number;
+  segmentCount: number;
+  expectedFrames: number;
+}
+
+export interface WebCodecsRoutingSummary {
+  pieces: WebCodecsPieceSummary[];
+  segmentCounts: { plain: number; gl: number; canvas: number };
+  pieceCounts: { plain: number; gl: number; canvas: number };
+}
+
+export interface WebCodecsGlPieceDiagnostics extends ExportWorkerDiagnosticsPayload {
+  maxSilentMs: number;
+  appendDrainMs: number;
+  silentIntervals: SilentIntervalAttribution[];
+  aborted: boolean;
+}
+
+export interface WebCodecsRunDiagnostics {
+  routing: WebCodecsRoutingSummary;
+  glPieces: WebCodecsGlPieceDiagnostics[];
+  concatMs: number | null;
+  muxMs: number | null;
+  watchdogFired: boolean;
+  watchdogPhase: string | null;
+}
+
+/** Last WebCodecs export's measurement blob — read by the throwaway liveness probe. */
+export let lastWebCodecsRunDiagnostics: WebCodecsRunDiagnostics | null = null;
+
+function countTiers(tiers: readonly WebCodecsTier[]): { plain: number; gl: number; canvas: number } {
+  const counts = { plain: 0, gl: 0, canvas: 0 };
+  for (const t of tiers) counts[t]++;
+  return counts;
+}
+
+/** Pure routing preview — same predicates the live orchestrator uses. */
+export function planWebCodecsExport(project: Project, fps: number): WebCodecsRoutingSummary | { error: ExportError } {
+  const assetMap = new Map<string, Asset>(project.assets.map((a) => [a.id, a]));
+  const routing = routeSegments(project, assetMap);
+  if ('error' in routing) return routing;
+  const pieces = buildPiecePlans(project, routing.tiers, fps, assetMap);
+  const pieceCounts = { plain: 0, gl: 0, canvas: 0 };
+  for (const p of pieces) pieceCounts[p.tier]++;
+  return {
+    pieces: pieces.map((p) => ({
+      tier: p.tier,
+      startIndex: p.startIndex,
+      segmentCount: p.segments.length,
+      expectedFrames: p.expectedFrames,
+    })),
+    segmentCounts: countTiers(routing.tiers),
+    pieceCounts,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Part 3 — Driving a GL piece (unchanged from Step 4 — the worker driving,
 // chunk-append serialization, and watchdog logic below are exactly Step 4's
@@ -445,8 +514,15 @@ function buildPiecePlans(
 // ---------------------------------------------------------------------------
 
 type RunDriveResult =
-  | { ok: true; frameCount: number; phaseMs: Record<string, number>; instrumentationMs: number }
-  | { ok: false; error: ExportError };
+  | {
+      ok: true;
+      frameCount: number;
+      diagnostics: ExportWorkerDiagnosticsPayload;
+      maxSilentMs: number;
+      appendDrainMs: number;
+      silentIntervals: SilentIntervalAttribution[];
+    }
+  | { ok: false; error: ExportError; diagnostics: ExportWorkerDiagnosticsPayload | null; silentIntervals: SilentIntervalAttribution[] };
 
 /** Unchanged 30s bound — exported so tests can assert the value and drive
  *  fake timers against the same constant the production path uses. */
@@ -497,6 +573,7 @@ export function driveGlRun(
       : new Worker(new URL('./exportWorker.ts', import.meta.url), { type: 'module' });
     activeWorker = worker as Worker;
     const now = deps.now ?? (() => performance.now());
+    const runStartedAt = now();
 
     let appendQueue: Promise<void> = Promise.resolve();
     let appendError: Error | null = null;
@@ -507,36 +584,79 @@ export function driveGlRun(
     let lastPhaseAt = now();
     let lastPieceIndex = pieceIndex;
     let lastFramesEncoded = 0;
+    let lastOutputAt = now();
+    let maxSilentMs = 0;
+    let lastWorkerDiagnostics: ExportWorkerDiagnosticsPayload | null = null;
+    const phaseLog: ExportPhaseLogEntry[] = [];
+    const outputEvents: { atMs: number; kind: 'chunk' | 'queue-sample' }[] = [];
+
+    const relMs = (): number => now() - runStartedAt;
+
+    const recordOutput = (kind: 'chunk' | 'queue-sample'): void => {
+      const t = relMs();
+      outputEvents.push({ atMs: t, kind });
+      maxSilentMs = Math.max(maxSilentMs, t - (outputEvents.length > 1 ? outputEvents[outputEvents.length - 2]!.atMs : 0));
+      lastOutputAt = now();
+    };
+
+    const noteWatchdogOutput = (): void => {
+      const t = now();
+      maxSilentMs = Math.max(maxSilentMs, t - lastOutputAt);
+      lastOutputAt = t;
+    };
+
+    const mergePhaseFromWorker = (entries: readonly ExportPhaseLogEntry[]): void => {
+      for (const e of entries) {
+        pushPhaseLogEntry(phaseLog, e);
+      }
+    };
+
+    const reconstructDiagnostics = (): ExportWorkerDiagnosticsPayload => {
+      if (lastWorkerDiagnostics) return lastWorkerDiagnostics;
+      return {
+        phaseMs: {},
+        instrumentationMs: 0,
+        demuxSplit: [],
+        framesEncoded: lastFramesEncoded,
+        pieceIndex: lastPieceIndex,
+        lastPhase,
+        phaseLog: phaseLog.slice(),
+        failure: null,
+        demuxCacheSize: null,
+        workerHeapBytes: null,
+      };
+    };
+
+    const silentIntervals = (): SilentIntervalAttribution[] =>
+      attributeSilentIntervals(outputEvents, phaseLog, 0);
 
     const snapshotLiveness = (): ExportLivenessSnapshot => ({
       lastPhase,
       msSinceLastPhaseChange: now() - lastPhaseAt,
       pieceIndex: lastPieceIndex,
       framesEncoded: lastFramesEncoded,
+      maxSilentMs: Math.max(maxSilentMs, now() - lastOutputAt),
     });
 
-    const withLiveness = (error: ExportError): ExportError => ({
-      ...error,
-      liveness: snapshotLiveness(),
-    });
+    const errorFromDiagnostics = (
+      kind: ExportError['kind'],
+      diagnostics: ExportWorkerDiagnosticsPayload,
+      fallbackMessage: string,
+    ): ExportError => {
+      const msg = diagnostics.failure ? formatFailureMessage(diagnostics.failure) : fallbackMessage;
+      return {
+        kind,
+        message: msg,
+        cause: diagnostics.failure?.message,
+        liveness: snapshotLiveness(),
+      };
+    };
 
     const clearWatchdog = (): void => {
       if (watchdogTimer) {
         clearTimeout(watchdogTimer);
         watchdogTimer = null;
       }
-    };
-    const resetWatchdog = (): void => {
-      clearWatchdog();
-      watchdogTimer = setTimeout(() => {
-        finish({
-          ok: false,
-          error: withLiveness({
-            kind: 'unknown',
-            message: 'Export worker produced no output for 30s — aborting (watchdog).',
-          }),
-        });
-      }, WATCHDOG_MS);
     };
 
     const finish = (result: RunDriveResult): void => {
@@ -548,18 +668,39 @@ export function driveGlRun(
       resolve(result);
     };
 
+    const finishWatchdog = (): void => {
+      worker.postMessage({ type: 'request-diagnostics' });
+      setTimeout(() => {
+        const diagnostics = reconstructDiagnostics();
+        diagnostics.failure = {
+          name: null,
+          message: 'Export worker produced no output for 30s — aborting (watchdog).',
+          via: 'watchdog',
+          frameIndex: diagnostics.framesEncoded > 0 ? diagnostics.framesEncoded - 1 : null,
+          timelineSec: null,
+        };
+        finish({
+          ok: false,
+          error: errorFromDiagnostics('unknown', diagnostics, 'Export worker produced no output for 30s — aborting (watchdog).'),
+          diagnostics,
+          silentIntervals: silentIntervals(),
+        });
+      }, 50);
+    };
+
+    const resetWatchdog = (): void => {
+      clearWatchdog();
+      watchdogTimer = setTimeout(finishWatchdog, WATCHDOG_MS);
+    };
+
     worker.onmessage = (ev: MessageEvent<ExportWorkerOutboundMessage>) => {
       const data = ev.data;
       switch (data.type) {
         case 'chunk': {
+          recordOutput('chunk');
+          noteWatchdogOutput();
           resetWatchdog();
           const bytes = new Uint8Array(data.bytes);
-          // Serialized append queue (plan §4.4): each appendFileRaw call is
-          // awaited before the next chunk's is issued, so on-disk append
-          // order matches encode order — appendFileRaw itself makes no such
-          // guarantee across concurrent calls (tauriFfmpeg.ts's own doc
-          // comment: "the caller is responsible for awaiting each call
-          // before issuing the next").
           appendQueue = appendQueue.then(async () => {
             if (appendError || settled) return;
             try {
@@ -573,67 +714,117 @@ export function driveGlRun(
           break;
         }
         case 'run-done':
-          // A worker call in this step is always exactly one run — `done`
-          // always follows immediately, so there is nothing to do here
-          // beyond what `done` already handles.
           break;
         case 'done':
-          // Must wait for the append queue to fully drain — the worker
-          // finishing its encode says nothing about whether every chunk has
-          // actually landed on disk yet.
-          void appendQueue.then(() => {
-            if (appendError) {
+          {
+            lastWorkerDiagnostics = data.diagnostics;
+            mergePhaseFromWorker(data.diagnostics.phaseLog);
+            const appendDrainStarted = now();
+            void appendQueue.then(() => {
+              const appendDrainMs = now() - appendDrainStarted;
+              maxSilentMs = Math.max(maxSilentMs, now() - lastOutputAt);
+              const diagnostics = data.diagnostics;
+              const intervals = silentIntervals();
+              if (appendError) {
+                const failDiag = {
+                  ...diagnostics,
+                  failure: {
+                    name: appendError.name || null,
+                    message: appendError.message,
+                    via: 'append-error' as const,
+                    frameIndex: diagnostics.framesEncoded > 0 ? diagnostics.framesEncoded - 1 : null,
+                    timelineSec: null,
+                  },
+                };
+                finish({
+                  ok: false,
+                  error: errorFromDiagnostics('encode', failDiag, 'Failed to append an encoded chunk to disk.'),
+                  diagnostics: failDiag,
+                  silentIntervals: intervals,
+                });
+                return;
+              }
               finish({
-                ok: false,
-                error: withLiveness({
-                  kind: 'encode',
-                  message: 'Failed to append an encoded chunk to disk.',
-                  cause: appendError.message,
-                }),
+                ok: true,
+                frameCount: data.frameCount,
+                diagnostics,
+                maxSilentMs,
+                appendDrainMs,
+                silentIntervals: intervals,
               });
-              return;
-            }
-            finish({
-              ok: true,
-              frameCount: data.frameCount,
-              phaseMs: data.phaseMs,
-              instrumentationMs: data.instrumentationMs,
             });
-          });
+          }
           break;
         case 'error':
+          lastWorkerDiagnostics = data.diagnostics;
+          mergePhaseFromWorker(data.diagnostics.phaseLog);
           finish({
             ok: false,
-            error: withLiveness({ kind: 'encode', message: 'Export worker reported an error.', cause: data.message }),
+            error: errorFromDiagnostics('encode', data.diagnostics, 'Export worker error.'),
+            diagnostics: data.diagnostics,
+            silentIntervals: silentIntervals(),
           });
           break;
         case 'cancelled':
-          finish({ ok: false, error: withLiveness({ kind: 'cancelled', message: 'Export cancelled.' }) });
+          lastWorkerDiagnostics = data.diagnostics;
+          mergePhaseFromWorker(data.diagnostics.phaseLog);
+          finish({
+            ok: false,
+            error: errorFromDiagnostics('cancelled', data.diagnostics, 'Export cancelled.'),
+            diagnostics: data.diagnostics,
+            silentIntervals: silentIntervals(),
+          });
+          break;
+        case 'diagnostics-snapshot':
+          lastWorkerDiagnostics = data.diagnostics;
+          mergePhaseFromWorker(data.diagnostics.phaseLog);
+          lastPhase = data.diagnostics.lastPhase;
+          lastFramesEncoded = data.diagnostics.framesEncoded;
+          lastPieceIndex = data.diagnostics.pieceIndex;
           break;
         case 'queue-sample':
-          // Diagnostic-only (exportWorker.ts's own doc comment) — still a
-          // liveness signal for the watchdog.
+          recordOutput('queue-sample');
+          noteWatchdogOutput();
           resetWatchdog();
           break;
         case 'phase':
-          // Work-token: recorded for diagnostics. Does NOT reset the
-          // watchdog — the resetting set remains {chunk, queue-sample}.
           if (data.phase !== lastPhase) lastPhaseAt = now();
           lastPhase = data.phase;
           lastPieceIndex = data.pieceIndex;
           lastFramesEncoded = data.framesEncoded;
+          pushPhaseLogEntry(phaseLog, {
+            seq: data.seq,
+            atMs: relMs(),
+            phase: data.phase,
+            pieceIndex: data.pieceIndex,
+            segmentIndex: data.segmentIndex,
+            assetId: data.assetId,
+            framesEncoded: data.framesEncoded,
+            kind: 'pulse',
+          });
           break;
       }
     };
 
     worker.onerror = (ev: ErrorEvent) => {
+      const diagnostics = reconstructDiagnostics();
+      diagnostics.failure = {
+        name: null,
+        message: `${ev.message} at ${ev.filename}:${ev.lineno}`,
+        via: 'worker-crash',
+        frameIndex: lastFramesEncoded > 0 ? lastFramesEncoded - 1 : null,
+        timelineSec: null,
+      };
       finish({
         ok: false,
-        error: withLiveness({
+        error: {
           kind: 'encode',
-          message: 'Export worker crashed.',
-          cause: `${ev.message} at ${ev.filename}:${ev.lineno}`,
-        }),
+          message: formatFailureMessage(diagnostics.failure),
+          cause: diagnostics.failure.message,
+          liveness: snapshotLiveness(),
+        },
+        diagnostics,
+        silentIntervals: silentIntervals(),
       });
     };
 
@@ -946,6 +1137,28 @@ export async function exportProjectWebCodecs(
 
   const pieces = buildPiecePlans(project, routing.tiers, fps, assetMap);
   const totalExpectedFramesOverall = pieces.reduce((sum, p) => sum + p.expectedFrames, 0);
+  const pieceCounts = { plain: 0, gl: 0, canvas: 0 };
+  for (const p of pieces) pieceCounts[p.tier]++;
+  const diag: WebCodecsRunDiagnostics = {
+    routing: {
+      pieces: pieces.map((p) => ({
+        tier: p.tier,
+        startIndex: p.startIndex,
+        segmentCount: p.segments.length,
+        expectedFrames: p.expectedFrames,
+      })),
+      segmentCounts: countTiers(routing.tiers),
+      pieceCounts,
+    },
+    glPieces: [],
+    concatMs: null,
+    muxMs: null,
+    watchdogFired: false,
+    watchdogPhase: null,
+  };
+  lastWebCodecsRunDiagnostics = diag;
+  // eslint-disable-next-line no-console
+  console.info('[ws3-liveness] routing', JSON.stringify(diag.routing));
 
   const config: ProjectEffectConfig = {
     globalTransition: project.globalTransition,
@@ -1023,9 +1236,54 @@ export async function exportProjectWebCodecs(
         plan.startIndex,
       );
       if (!driveResult.ok) {
+        const watchdogFired = driveResult.error.message.includes('no output for 30s');
+        const d = driveResult.diagnostics;
+        diag.glPieces.push({
+          ...(d ?? {
+            phaseMs: {},
+            instrumentationMs: 0,
+            demuxSplit: [],
+            framesEncoded: driveResult.error.liveness?.framesEncoded ?? 0,
+            pieceIndex,
+            lastPhase: driveResult.error.liveness?.lastPhase ?? null,
+            phaseLog: [],
+            failure: null,
+            demuxCacheSize: null,
+            workerHeapBytes: null,
+          }),
+          maxSilentMs: driveResult.error.liveness?.maxSilentMs ?? 0,
+          appendDrainMs: 0,
+          silentIntervals: driveResult.silentIntervals,
+          aborted: true,
+        });
+        diag.watchdogFired = watchdogFired;
+        diag.watchdogPhase = driveResult.error.liveness?.lastPhase ?? null;
+        // eslint-disable-next-line no-console
+        console.info('[ws3-liveness] gl-piece abort', JSON.stringify({
+          pieceIndex,
+          error: driveResult.error.message,
+          liveness: driveResult.error.liveness,
+          diagnostics: d,
+        }));
         activeFfmpeg = null;
         return { ok: false, error: driveResult.error };
       }
+      const d = driveResult.diagnostics;
+      diag.glPieces.push({
+        ...d,
+        maxSilentMs: driveResult.maxSilentMs,
+        appendDrainMs: driveResult.appendDrainMs,
+        silentIntervals: driveResult.silentIntervals,
+        aborted: false,
+      });
+      // eslint-disable-next-line no-console
+      console.info('[ws3-liveness] gl-piece done', JSON.stringify({
+        pieceIndex,
+        diagnostics: d,
+        maxSilentMs: driveResult.maxSilentMs,
+        appendDrainMs: driveResult.appendDrainMs,
+        silentIntervals: driveResult.silentIntervals,
+      }));
       pieceFiles.push(runFile);
     } else if (plan.tier === 'plain') {
       const segment = plan.segments[0]!;
@@ -1058,8 +1316,11 @@ export async function exportProjectWebCodecs(
       // A single piece needs no concat call at all — but still goes through
       // the SAME frame-count guard below via a plain rename-by-reference
       // (ffmpeg's own file, reused directly as `video_all.h264`'s stand-in).
+      diag.concatMs = 0;
     } else {
+      const concatStarted = performance.now();
       await ffmpeg.concatAnnexbPieces(pieceFiles, videoAllFile);
+      diag.concatMs = performance.now() - concatStarted;
     }
   } catch (err) {
     activeFfmpeg = null;
@@ -1113,7 +1374,9 @@ export async function exportProjectWebCodecs(
     // TauriFfmpeg's real session id is private (not exposed to callers) —
     // `project.id` identifies this export run in muxOnly's error messages
     // instead; see muxOnly.ts's own doc comment on the `sessionId` param.
+    const muxStarted = performance.now();
     await muxOnly(ffmpeg, project.id, finalVideoFile, audioFile, outputFile, fps);
+    diag.muxMs = performance.now() - muxStarted;
   } catch (err) {
     activeFfmpeg = null;
     return { ok: false, error: { kind: 'mux', message: 'Failed to mux the encoded output with audio.', cause: causeString(err) } };

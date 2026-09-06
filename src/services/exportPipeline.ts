@@ -43,6 +43,8 @@ export interface ExportLivenessSnapshot {
   msSinceLastPhaseChange: number | null;
   pieceIndex: number | null;
   framesEncoded: number | null;
+  /** Longest gap between watchdog-resetting messages (`chunk` / `queue-sample`). */
+  maxSilentMs?: number | null;
 }
 
 export interface ExportError {

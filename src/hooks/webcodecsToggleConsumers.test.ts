@@ -83,6 +83,10 @@ const ALLOWED: ReadonlyArray<{ path: string; why: string }> = [
     path: 'dev/webcodecsStep2Spike/main.ts',
     why: 'dev-only spike harness under src/dev/, reachable from no product route and in no bundle',
   },
+  {
+    path: 'dev/exportLivenessProbe/runLiveExport.ts',
+    why: 'dev-only Round 2 export-liveness harness under src/dev/, reachable from no product route and in no bundle',
+  },
 ];
 
 const ALLOWED_PATHS = new Set(ALLOWED.map((a) => a.path));

@@ -15,6 +15,12 @@
  * worker calls it around existing work; it does not replace any of it.
  */
 
+import {
+  PHASE_LOG_CAP,
+  pushPhaseLogEntry,
+  type ExportPhaseLogEntry,
+} from './exportWorkerDiagnostics';
+
 export const PHASE_THROTTLE_MS = 250;
 
 export interface ExportPhaseToken {
@@ -37,6 +43,9 @@ export interface ExportPhaseBreakdown {
   phaseMs: Record<string, number>;
   instrumentationMs: number;
   demuxSplit: ExportDemuxSplit[];
+  phaseLog: ExportPhaseLogEntry[];
+  lastPhase: string | null;
+  framesEncoded: number;
 }
 
 export class ExportPhaseTracker {
@@ -50,12 +59,17 @@ export class ExportPhaseTracker {
   private segmentIndex = 0;
   private assetId: string | null = null;
   private readonly demuxSplit: ExportDemuxSplit[] = [];
+  private readonly phaseLog: ExportPhaseLogEntry[] = [];
+  private readonly runStartedAt: number;
+  private lastPhaseName: string | null = null;
 
   constructor(
     private readonly post: (msg: ExportPhaseToken) => void,
     private readonly pieceIndex: number,
     private readonly now: () => number = () => performance.now(),
-  ) {}
+  ) {
+    this.runStartedAt = this.now();
+  }
 
   setContext(segmentIndex: number, assetId: string | null): void {
     const t0 = this.now();
@@ -76,7 +90,7 @@ export class ExportPhaseTracker {
     this.flushCurrent(t0);
     this.current = phase;
     this.currentStartedAt = t0;
-    this.postNow(phase, t0);
+    this.postNow(phase, t0, 'enter');
     this.instrumentationMs += this.now() - t0;
   }
 
@@ -104,7 +118,7 @@ export class ExportPhaseTracker {
   pulse(): void {
     const t0 = this.now();
     if (this.current && t0 - this.lastPostedAt >= PHASE_THROTTLE_MS) {
-      this.postNow(this.current, t0);
+      this.postNow(this.current, t0, 'pulse');
     }
     this.instrumentationMs += this.now() - t0;
   }
@@ -120,6 +134,29 @@ export class ExportPhaseTracker {
       phaseMs,
       instrumentationMs: this.instrumentationMs,
       demuxSplit: this.demuxSplit.slice(),
+      phaseLog: this.phaseLog.slice(),
+      lastPhase: this.lastPhaseName,
+      framesEncoded: this.framesEncoded,
+    };
+  }
+
+  /** Live snapshot without closing the run — for request-diagnostics / abort. */
+  snapshot(): ExportPhaseBreakdown {
+    const t0 = this.now();
+    const phaseMs: Record<string, number> = {};
+    for (const [k, v] of this.totals) phaseMs[k] = v;
+    if (this.current) {
+      const elapsed = t0 - this.currentStartedAt;
+      phaseMs[this.current] = (phaseMs[this.current] ?? 0) + elapsed;
+    }
+    this.instrumentationMs += this.now() - t0;
+    return {
+      phaseMs,
+      instrumentationMs: this.instrumentationMs,
+      demuxSplit: this.demuxSplit.slice(),
+      phaseLog: this.phaseLog.slice(),
+      lastPhase: this.lastPhaseName ?? this.current,
+      framesEncoded: this.framesEncoded,
     };
   }
 
@@ -129,9 +166,20 @@ export class ExportPhaseTracker {
     this.totals.set(this.current, (this.totals.get(this.current) ?? 0) + elapsed);
   }
 
-  private postNow(phase: string, now: number): void {
+  private postNow(phase: string, now: number, kind: 'enter' | 'pulse'): void {
     this.lastPostedAt = now;
+    this.lastPhaseName = phase;
     this.seq += 1;
+    pushPhaseLogEntry(this.phaseLog, {
+      seq: this.seq,
+      atMs: now - this.runStartedAt,
+      phase,
+      pieceIndex: this.pieceIndex,
+      segmentIndex: this.segmentIndex,
+      assetId: this.assetId,
+      framesEncoded: this.framesEncoded,
+      kind,
+    });
     this.post({
       type: 'phase',
       phase,
