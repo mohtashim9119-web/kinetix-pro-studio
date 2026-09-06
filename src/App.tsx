@@ -5861,6 +5861,7 @@ export default function App() {
     resolutionTier,
     language,
     faHighPrecisionSync,
+    textOverlay,
   }: NewProjectChoices): Promise<void> => {
     // Discard any staging-time voiceover transcription left over from the
     // outgoing project — otherwise effectiveVoiceoverId keeps pointing at its
@@ -5872,7 +5873,6 @@ export default function App() {
     // Build the new project and register it immediately — don't wait for the
     // debounced hook so the registry always reflects this project by the time
     // the dashboard next renders.
-    const newProjectDefaults = readNewProjectDefaults();
     const fresh = makeDefaultProject();
     fresh.name = name;
     // Locked forever at creation (aspectRatio) / editable later in Project
@@ -5900,8 +5900,8 @@ export default function App() {
     // preference changed today reach a project created last month. Written
     // only when it diverges from the value `parseProjectData` already falls
     // back to, so an untouched default stores nothing.
-    if (newProjectDefaults.textOverlay !== NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON) {
-      fresh.defaultTextOverlay = newProjectDefaults.textOverlay;
+    if (textOverlay !== NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON) {
+      fresh.defaultTextOverlay = textOverlay;
     }
     // Mark as confirmed so auto-save and saveNow will persist it going forward.
     fresh.confirmed = true;

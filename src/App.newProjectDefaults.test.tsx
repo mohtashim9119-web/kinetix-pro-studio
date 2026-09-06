@@ -36,7 +36,6 @@ const mockLoadAllMetas = vi.fn();
 const mockLoadProjectDetailed = vi.fn();
 const mockGetAllAssetsForProject = vi.fn();
 const mockSaveProject = vi.fn();
-const mockGetLastOpenedProjectId = vi.fn<() => string | null>();
 
 vi.mock('./services/projectStore', async () => {
   const actual = await vi.importActual<typeof import('./services/projectStore')>('./services/projectStore');
@@ -46,9 +45,6 @@ vi.mock('./services/projectStore', async () => {
     loadProjectDetailed: (id: string) => mockLoadProjectDetailed(id),
     saveProject: (...a: unknown[]) => mockSaveProject(...a),
     upsertProjectMeta: vi.fn(),
-    setLastOpenedProjectId: vi.fn(),
-    clearLastOpenedProjectId: vi.fn(),
-    getLastOpenedProjectId: () => mockGetLastOpenedProjectId(),
     migrateLegacyIfNeeded: async () => null,
     migrateLocalStorageProjectsToOsStore: async () => ({ migrated: [], failed: [] }),
     adoptMirroredProjects: async () => ({ adopted: [], skipped: [], failed: [] }),
@@ -66,6 +62,8 @@ vi.mock('./services/historyPersist', async () => {
 });
 
 const { default: App } = await import('./App');
+const { setLastOpenedProjectId, markEditorSessionActive } = await import('./services/projectStore');
+const { getAppSessionToken } = await import('./services/historyPersist');
 
 let container: HTMLDivElement;
 let root: Root;
@@ -111,11 +109,11 @@ async function create(dialog: HTMLElement): Promise<Project> {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  sessionStorage.clear();
   fakeTauri = true;
   __resetFaCapabilityForTests();
   mockLoadAllMetas.mockReturnValue([]);
   mockSaveProject.mockResolvedValue({ ok: true });
-  mockGetLastOpenedProjectId.mockReturnValue(null);
   mockGetAllAssetsForProject.mockResolvedValue([]);
 });
 
@@ -136,7 +134,7 @@ describe('WS2 T4.1 Step 2 — the modal pre-fills from New Project Defaults', ()
     expect(selectedRatio!.textContent!.trim()).toBe(SHIPPED_NEW_PROJECT_DEFAULTS.aspectRatio);
   });
 
-  it('stored defaults pre-fill every one of the four modal fields', async () => {
+  it('stored defaults pre-fill every modal field including text overlay', async () => {
     writeNewProjectDefaults({
       aspectRatio: '9:16',
       resolutionTier: '720p',
@@ -151,6 +149,8 @@ describe('WS2 T4.1 Step 2 — the modal pre-fills from New Project Defaults', ()
     expect(dialog.querySelector('[data-testid="new-project-fa-toggle"]')!.getAttribute('aria-pressed'))
       .toBe(String(!FA_PROJECT_DEFAULT_ON));
     expect(dialog.querySelector('[role="radio"][aria-checked="true"]')!.textContent!.trim()).toBe('9:16');
+    expect(dialog.querySelector('[data-testid="new-project-text-overlay-toggle"]')!.getAttribute('aria-pressed'))
+      .toBe('true');
   });
 
   it('the language dropdown offers Auto-detect plus exactly the five supported codes', async () => {
@@ -222,7 +222,17 @@ describe('WS2 T4.1 Step 2 — what actually gets written to the saved project', 
     expect(saved.resolutionTier).toBe('720p');
   });
 
-  it('a text-overlay default of true is stored on the project, not left in the global', async () => {
+  it('turning the text-overlay toggle ON in the modal stores defaultTextOverlay on the project', async () => {
+    await mountApp();
+    const dialog = await openNewProject();
+    const toggle = dialog.querySelector<HTMLButtonElement>('[data-testid="new-project-text-overlay-toggle"]')!;
+    expect(toggle.getAttribute('aria-pressed')).toBe('false');
+    await act(async () => { toggle.click(); });
+    const saved = await create(dialog);
+    expect(saved.defaultTextOverlay).toBe(true);
+  });
+
+  it('a text-overlay default of true is stored when the seeded toggle is left ON', async () => {
     writeNewProjectDefaults({ ...SHIPPED_NEW_PROJECT_DEFAULTS, textOverlay: true });
     await mountApp();
     const saved = await create(await openNewProject());
@@ -233,6 +243,28 @@ describe('WS2 T4.1 Step 2 — what actually gets written to the saved project', 
     await mountApp();
     const saved = await create(await openNewProject());
     expect(Object.prototype.hasOwnProperty.call(saved, 'defaultTextOverlay')).toBe(false);
+  });
+
+  it('a legacy project without defaultTextOverlay loads without the field', async () => {
+    const legacy = {
+      id: 'legacy-no-overlay',
+      name: 'Legacy',
+      script: '',
+      segments: [],
+      assets: [],
+      headings: [],
+      confirmed: true,
+    } as unknown as Project;
+    mockLoadAllMetas.mockReturnValue([{ id: legacy.id, name: legacy.name, savedAt: Date.now(), segmentCount: 0 }]);
+    mockLoadProjectDetailed.mockResolvedValue({ ok: true, project: legacy, savedAt: Date.now() });
+    setLastOpenedProjectId(legacy.id);
+    markEditorSessionActive(await getAppSessionToken());
+    await mountApp();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(mockLoadProjectDetailed).toHaveBeenCalledWith(legacy.id);
+    const loaded = mockLoadProjectDetailed.mock.results[0]?.value;
+    await act(async () => { await loaded; await Promise.resolve(); });
+    expect(Object.prototype.hasOwnProperty.call(legacy, 'defaultTextOverlay')).toBe(false);
   });
 });
 

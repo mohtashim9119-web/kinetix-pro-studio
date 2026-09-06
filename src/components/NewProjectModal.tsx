@@ -46,6 +46,10 @@ export interface NewProjectChoices {
    *  invents a code of its own. */
   language: string;
   faHighPrecisionSync: boolean;
+  /** Per-segment text overlay default for this project. Written to
+   *  `Project.defaultTextOverlay` only when it diverges from the built-in
+   *  `false` — same discipline as the FA toggle. */
+  textOverlay: boolean;
 }
 
 interface Props {
@@ -67,6 +71,7 @@ export function NewProjectModal({ onConfirm, onCancel }: Props): React.ReactElem
   const [resolutionTier, setResolutionTier] = useState<ResolutionTier>(defaults.resolutionTier);
   const [language, setLanguage] = useState<string>(defaults.language);
   const [faEnabled, setFaEnabled] = useState<boolean>(defaults.faHighPrecisionSync);
+  const [textOverlayEnabled, setTextOverlayEnabled] = useState<boolean>(defaults.textOverlay);
 
   const faCapable = isFaCapable();
 
@@ -77,6 +82,7 @@ export function NewProjectModal({ onConfirm, onCancel }: Props): React.ReactElem
       resolutionTier,
       language,
       faHighPrecisionSync: faEnabled,
+      textOverlay: textOverlayEnabled,
     });
   };
 
@@ -214,6 +220,24 @@ export function NewProjectModal({ onConfirm, onCancel }: Props): React.ReactElem
               Not available outside the desktop app.
             </p>
           )}
+
+          <label className="flex items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-gray-500 font-bold">
+            <span>Segment Text Overlay</span>
+            <button
+              type="button"
+              onClick={() => setTextOverlayEnabled((v) => !v)}
+              aria-label={textOverlayEnabled ? 'Hide segment text overlay on new segments' : 'Show segment text overlay on new segments'}
+              aria-pressed={textOverlayEnabled}
+              data-testid="new-project-text-overlay-toggle"
+              className={`w-10 h-5 rounded-full transition-colors relative shrink-0 ${
+                textOverlayEnabled
+                  ? 'bg-[#F27D26]'
+                  : 'bg-[#1A1A1A] border border-[#282828]'
+              }`}
+            >
+              <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${textOverlayEnabled ? 'translate-x-5' : ''}`} />
+            </button>
+          </label>
 
           <p className="text-[9px] text-gray-600 uppercase tracking-widest">
             The current project will be saved automatically before switching.
