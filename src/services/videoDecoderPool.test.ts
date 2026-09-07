@@ -1465,9 +1465,8 @@ describe('VideoDecoderPool — single-keyframe clips reach targets past the buff
       peakLive = Math.max(peakLive, live);
     }
 
-    // MAX_BUFFERED_FRAMES_PER_SESSION is 90 and not exported; the walk decodes
-    // all 240 frames, so an unbounded buffer would sit far above this.
-    expect(peakLive).toBeLessThanOrEqual(90);
+    // 2.0s window at 24fps ≈ 48 frames; allow slack for displayed + rounding.
+    expect(peakLive).toBeLessThanOrEqual(60);
 
     pool.dispose();
     expect(MockVideoFrame.instances.every((f) => f.closed)).toBe(true);
@@ -1528,7 +1527,7 @@ function makeCfrDemuxed(fps: number, totalFrames: number, width = 1920, height =
 }
 
 describe('VideoDecoderPool — 120fps buffer-cap drop confirmation (WS3 Step 1)', () => {
-  it('drops frames on the first 120fps batch when the fps-blind cap is exceeded', async () => {
+  it('drops zero frames on the first 120fps batch under the time-based cap', async () => {
     const demuxed = makeCfrDemuxed(120, 600);
     (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
 
@@ -1538,22 +1537,9 @@ describe('VideoDecoderPool — 120fps buffer-cap drop confirmation (WS3 Step 1)'
     await pool.getFrameAt('seg', 0);
 
     const stats = pool.getDevDropStats()!;
-    expect(stats.framesDropped).toBe(91);
-    expect(stats.framesAdmitted).toBe(90);
-    expect(stats.drops.every((d) => d.sourceFps !== null && Math.abs(d.sourceFps! - 120) < 0.01)).toBe(true);
-    expect(stats.drops.every((d) => d.windowTargetUs === 0)).toBe(true);
-    expect(stats.drops.every((d) => !d.refedLater)).toBe(true);
-
-    const droppedTs = new Set(stats.drops.map((d) => d.timestampSec));
-    pool.resetDevDropStats();
-    const deliveredTs: number[] = [];
-    for (let t = 0; t <= 2.0; t += 1 / 120) {
-      const frame = await pool.getFrameAt('seg', t);
-      if (frame) deliveredTs.push(frame.timestamp / 1e6);
-    }
-    for (const ts of droppedTs) {
-      expect(deliveredTs.some((d) => Math.abs(d - ts) < 1e-9)).toBe(false);
-    }
+    expect(stats.framesDropped).toBe(0);
+    expect(stats.framesAdmitted).toBe(181);
+    expect(stats.drops).toHaveLength(0);
 
     pool.dispose();
   });

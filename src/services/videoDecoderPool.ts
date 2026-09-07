@@ -69,65 +69,18 @@
  */
 
 import { getOrCreateDemux } from './videoDemuxer';
+import {
+  WINDOW_AHEAD_SEC,
+  RETAIN_BEHIND_SEC,
+  PREVIEW_BUFFER_MAX_BYTES_GLOBAL,
+  PREVIEW_BUFFER_MAX_BYTES_PER_SESSION,
+  MAX_CACHED_SESSIONS,
+  admittedWindowSec,
+  effectiveFeedAheadSec,
+  estimateFrameBytes,
+} from './previewBufferBudget';
 
-/** Section 4.2's "small time-buffer ahead" — how far past the last
- *  requested target a session decodes proactively. Chosen at the middle of
- *  the plan's stated 1-2s range. */
-export const WINDOW_AHEAD_SEC = 1.5;
-
-/** Leading half of the sliding window (WS3 sparse-keyframe fix, see
- *  handleDecoderOutput): how much already-passed material a session keeps
- *  buffered behind its current target instead of discarding it the instant
- *  the playhead moves on.
- *
- *  0.5s is ~12 frames at 24fps / ~15 at 30fps — small enough that the whole
- *  live window (0.5s behind + WINDOW_AHEAD_SEC=1.5s ahead = 2.0s, ~48-60
- *  frames) still sits comfortably under MAX_BUFFERED_FRAMES_PER_SESSION, and
- *  large enough to absorb the short backward movements that actually happen
- *  in this app: a frame-step back, scrub jitter inside one gesture, and a
- *  transition blend reading slightly behind the playhead. Retaining anything
- *  at all matters much more here than the exact number, because on a
- *  single-keyframe clip (the common case — see the WS3 audit's library scan)
- *  a backward target below the retained floor costs a full re-decode from
- *  t=0, so a one-frame nudge backwards must not trigger one. */
-const RETAIN_BEHIND_SEC = 0.5;
-
-/** Per-session cap on simultaneously-buffered (decoded, unconsumed)
- *  VideoFrames. Bounds this session's real memory — a VideoFrame is a live
- *  GPU/CPU buffer, not a handle — at roughly 3s of 30fps content.
- *
- *  WS3 sparse-keyframe fix: this is a genuine safety net again (a decoder
- *  emitting faster than getFrameAt consumes), NOT a limit on how deep into a
- *  clip a target may sit. It used to be both, because a full buffer dropped
- *  every newly-decoded frame — which silently capped reachable depth at
- *  90 frames past the seeding keyframe (3.75s at 24fps) and was the root
- *  cause of the WS3 preview stall. handleDecoderOutput now slides the window
- *  forward instead of dropping, so reachable depth is unbounded while the
- *  memory ceiling this constant sets is unchanged. */
-const MAX_BUFFERED_FRAMES_PER_SESSION = 90;
-
-/** Section 4.3 starting point for the pool-wide session-count ceiling:
- *  "decoded frames for at most 3 segments' worth of window at any time."
- *  Tune from the Phase 6 500-segment measurement (see the architecture
- *  doc's progress tracker for the actual measured numbers this was
- *  confirmed/refined against). */
-export const MAX_CACHED_SESSIONS = 3;
-
-/** Section 4.3's frame-count ceiling — roughly MAX_CACHED_SESSIONS sessions
- *  each holding one window's worth of buffered frames (~45 @ 30fps) plus
- *  slack. Same tuning note as above.
- *
- *  Soft ceiling for protected sessions, by design: enforceBudget() only ever
- *  evicts non-protected sessions (see evictionCandidates), so this can
- *  already be transiently exceeded today with just {current, next}
- *  protected (2 sessions x MAX_BUFFERED_FRAMES_PER_SESSION=90 = 180 > 150
- *  in the worst case). transitionProtectedIds (below) adds a third
- *  simultaneously-protected slot for the item-4 transition fix
- *  (docs/webcodecs-architecture-plan.md) — that stretches the same
- *  already-soft ceiling a bit further (3 x 90 = 270 worst-case), not a new
- *  category of risk. MAX_CACHED_SESSIONS=3 already anticipates exactly this
- *  {current, next, outgoing-during-transition} triple. */
-export const MAX_TOTAL_BUFFERED_FRAMES = 150;
+export { WINDOW_AHEAD_SEC, MAX_CACHED_SESSIONS } from './previewBufferBudget';
 
 /** Bounds the idle decoder-handle free list kept per asset URL for reuse —
  *  small on purpose: reuse only needs to cover "the next session for this
@@ -252,6 +205,13 @@ interface DecodeSession {
    *  already passed and may therefore be slid out to make room; never used
    *  to select a frame to return. */
   windowTargetUs: number;
+
+  /** Bytes per decoded frame at this session's resolution (I420 estimate). */
+  frameBytes: number;
+  /** Admitted source-time span for buffered frames (time cap, byte-clamped). */
+  admittedWindowSec: number;
+  /** Decode-ahead horizon used by feedWindow (may be below WINDOW_AHEAD_SEC). */
+  feedAheadSec: number;
 
   frames: BufferedFrame[]; // ascending by timestampSec (decoder output order)
   displayedFrame: VideoFrame | null; // currently checked-out frame; also present in `frames` until superseded
@@ -434,6 +394,9 @@ export class VideoDecoderPool {
       feedFrontierUs: -Infinity,
       retainedFloorUs: -Infinity,
       windowTargetUs: -Infinity,
+      feedAheadSec: WINDOW_AHEAD_SEC,
+      frameBytes: 0,
+      admittedWindowSec: 0,
       frames: [],
       displayedFrame: null,
       ready: Promise.resolve(),
@@ -477,6 +440,18 @@ export class VideoDecoderPool {
     session.chunks = demuxed.chunks;
     session.config = demuxed.config;
     session.sourceFps = estimateSourceFps(demuxed.chunks);
+    session.frameBytes = estimateFrameBytes(
+      demuxed.config.codedWidth ?? 0,
+      demuxed.config.codedHeight ?? 0,
+    );
+    session.admittedWindowSec = admittedWindowSec(
+      demuxed.config.codedWidth ?? 0,
+      demuxed.config.codedHeight ?? 0,
+    );
+    session.feedAheadSec = effectiveFeedAheadSec(
+      demuxed.config.codedWidth ?? 0,
+      demuxed.config.codedHeight ?? 0,
+    );
 
     const handle = this.acquireHandle(assetUrl);
     if (session.closed) {
@@ -532,7 +507,7 @@ export class VideoDecoderPool {
   private needsReset(session: DecodeSession, targetSec: number): boolean {
     const targetUs = targetSec * 1e6;
     if (targetUs < session.retainedFloorUs) return true;
-    if (!session.fullyFed && targetUs > session.feedFrontierUs + WINDOW_AHEAD_SEC * 1e6) return true;
+    if (!session.fullyFed && targetUs > session.feedFrontierUs + session.feedAheadSec * 1e6) return true;
     return false;
   }
 
@@ -618,7 +593,7 @@ export class VideoDecoderPool {
   private feedWindow(session: DecodeSession, targetSec: number): Promise<void> {
     const handle = session.handle;
     if (!handle || session.closed) return Promise.resolve();
-    const boundaryUs = (targetSec + WINDOW_AHEAD_SEC) * 1e6;
+    const boundaryUs = (targetSec + session.feedAheadSec) * 1e6;
 
     // Secondary safety net only, not the primary defense (see the flush
     // strategy above): with routine batches no longer flushing, decode() is
@@ -1123,6 +1098,49 @@ export class VideoDecoderPool {
     return freed;
   }
 
+  private sessionBufferedBytes(session: DecodeSession, extraFrames = 0): number {
+    return (session.frames.length + extraFrames) * session.frameBytes;
+  }
+
+  private totalBufferedBytes(): number {
+    let total = 0;
+    for (const session of this.sessions.values()) {
+      total += this.sessionBufferedBytes(session);
+    }
+    return total;
+  }
+
+  private isOutsideAdmittedHorizon(session: DecodeSession, timestampSec: number): boolean {
+    const aheadUs = session.feedAheadSec * 1e6;
+    return timestampSec * 1e6 > session.windowTargetUs + aheadUs + 1;
+  }
+
+  private isOverByteBudget(session: DecodeSession, extraFrames = 1): boolean {
+    if (this.sessionBufferedBytes(session, extraFrames) > PREVIEW_BUFFER_MAX_BYTES_PER_SESSION) return true;
+    return this.totalBufferedBytes() + session.frameBytes * extraFrames > PREVIEW_BUFFER_MAX_BYTES_GLOBAL;
+  }
+
+  /** Evicts passed or oldest frames until under byte budget, or returns false. */
+  private makeRoomForFrame(session: DecodeSession): boolean {
+    if (this.slideWindowForward(session)) return true;
+    if (session.frames.length === 0) return false;
+    const oldest = session.frames[0]!;
+    if (oldest.timestampSec * 1e6 >= session.windowTargetUs) return false;
+    return this.evictOldestFrame(session);
+  }
+
+  /** Evicts the oldest buffered frame. Returns false when the buffer is empty. */
+  private evictOldestFrame(session: DecodeSession): boolean {
+    if (session.frames.length === 0) return false;
+    const evicted = session.frames.shift()!;
+    if (evicted.frame === session.displayedFrame) session.displayedFrame = null;
+    evicted.frame.close();
+    session.retainedFloorUs = session.frames[0]
+      ? session.frames[0].timestampSec * 1e6
+      : session.windowTargetUs - RETAIN_BEHIND_SEC * 1e6;
+    return true;
+  }
+
   /** Dev-only — returns null outside DEV builds. */
   getDevDropStats(): PreviewDropStats | null {
     return this.devDropStats;
@@ -1173,16 +1191,22 @@ export class VideoDecoderPool {
       frame.close();
       return;
     }
-    if (session.frames.length >= MAX_BUFFERED_FRAMES_PER_SESSION && !this.slideWindowForward(session)) {
-      // Genuinely full of frames the target has NOT passed — the decoder is
-      // racing ahead of consumption, which is the case this cap was always
-      // meant to contain. Dropping the newest is correct here: everything
-      // buffered is closer to the target than this frame is.
-      this.recordDevDrop(session, frame.timestamp / 1e6);
+    const timestampSec = frame.timestamp / 1e6;
+
+    if (this.isOutsideAdmittedHorizon(session, timestampSec)) {
+      this.recordDevDrop(session, timestampSec);
       frame.close();
       return;
     }
-    const timestampSec = frame.timestamp / 1e6;
+
+    while (this.isOverByteBudget(session, 1)) {
+      if (!this.makeRoomForFrame(session)) {
+        this.recordDevDrop(session, timestampSec);
+        frame.close();
+        return;
+      }
+    }
+
     this.recordDevAdmit(timestampSec);
     session.frames.push({ frame, timestampSec });
     if (session.waiters.length > 0) {
@@ -1261,7 +1285,7 @@ export class VideoDecoderPool {
       if (!victim) break;
       this.releaseSession(victim);
     }
-    while (this.totalBufferedFrames() > MAX_TOTAL_BUFFERED_FRAMES) {
+    while (this.totalBufferedBytes() > PREVIEW_BUFFER_MAX_BYTES_GLOBAL) {
       const victim = this.evictionCandidates()[0];
       if (!victim) break;
       this.releaseSession(victim);
