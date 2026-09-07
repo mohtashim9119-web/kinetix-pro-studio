@@ -372,4 +372,118 @@ describe('driveGlRun fake-worker harness', () => {
     expect(fake.terminated).toBe(true);
     expect(hangingAppend).toHaveBeenCalled();
   });
+
+  // WS3 export-liveness-occlusion round (docs/ws3-silent-gaps-diagnosis.md
+  // Step 1/4): both bounds above are ALSO evaluated on every worker message
+  // via `checkLivenessBounds` (exportPipelineWebCodecs.ts), not solely via
+  // their own `setTimeout` deadline — because that `setTimeout` lives on this
+  // document's main-thread context, which the diagnosis found WebKit
+  // throttles/defers for an occluded window, while the worker's own
+  // `setInterval`-sourced 'heartbeat' message (exportWorker.ts) kept arriving
+  // in the one live run that reproduced the failure. The two tests below
+  // exercise that new path directly.
+  it('a fully silent worker (heartbeat-only, no chunk/queue-sample ever) terminates at WATCHDOG_MS with a populated diagnostics payload', async () => {
+    vi.useFakeTimers();
+    const fake = new FakeWorker();
+    const p = startDrive(fake);
+
+    // Exactly the run-5 shape: the frame loop produces zero chunk/
+    // queue-sample/phase output for the whole gap — only the worker's
+    // wall-clock heartbeat keeps arriving, on its own ~5s cadence.
+    let elapsed = 0;
+    while (elapsed < WATCHDOG_MS + 100) {
+      await vi.advanceTimersByTimeAsync(5_000);
+      elapsed += 5_000;
+      fake.emit({ type: 'heartbeat', atMs: elapsed });
+    }
+
+    const result = await p;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('30s');
+    expect(result.error.liveness?.lastPhase).toBe('init');
+    expectPopulatedDiagnostics(result.diagnostics);
+    expect(result.diagnostics?.failure?.via).toBe('watchdog');
+    expect(fake.terminated).toBe(true);
+  });
+
+  it('the forward-progress bound fires from the message-driven check even when its own setTimeout deadline never invokes its callback (throttled-scheduler simulation)', async () => {
+    // Simulate a WebKit-occluded document whose long-lived DOMTimer deadlines
+    // are scheduled but never serviced: any setTimeout armed for >= WATCHDOG_MS
+    // silently never calls back, while short (<1s) setTimeouts — the 50ms
+    // grace period finishWatchdog/finishProgressBound themselves use once
+    // actually invoked — still work, so the run can still settle and this
+    // test can still observe the outcome.
+    const realSetTimeout = global.setTimeout;
+    const setTimeoutSpy = vi
+      .spyOn(global, 'setTimeout')
+      .mockImplementation(((fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+        if (typeof ms === 'number' && ms >= WATCHDOG_MS) {
+          return 0 as unknown as ReturnType<typeof setTimeout>;
+        }
+        return realSetTimeout(fn as never, ms, ...args);
+      }) as typeof setTimeout);
+
+    try {
+      let simulatedNow = 1_000_000;
+      const fake = new FakeWorker();
+      const hangingAppend = vi.fn(() => new Promise<void>(() => { /* never resolves */ }));
+      const ffmpeg = makeFfmpeg({ appendFileRaw: hangingAppend });
+      const p = driveGlRun(
+        ffmpeg,
+        'run_0',
+        'piece_0.h264',
+        [segment],
+        [asset],
+        config,
+        1920,
+        1080,
+        30,
+        30,
+        () => undefined,
+        textConfig,
+        0,
+        0,
+        { createWorker: () => fake, now: () => simulatedNow },
+      );
+
+      // Starts the hanging append — its own resetProgressBound's setTimeout
+      // is now a permanent no-op per the mock above, exactly like a document
+      // timer starved by occlusion. `appendQueue.then(...)` schedules a
+      // microtask, so flush one before asserting it ran.
+      fake.emit(chunkMsg(0));
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(hangingAppend).toHaveBeenCalled();
+
+      // Two more chunks (< WATCHDOG_MS apart) keep resetting ONLY the
+      // watchdog's own anchor (`lastOutputAt`, via 'chunk''s synchronous
+      // noteWatchdogOutput/resetWatchdog — the append itself stays queued
+      // behind the first, hung call and never actually completes) — isolating
+      // FORWARD_PROGRESS_BOUND_MS as the signal under test, same shape as
+      // the existing real-timer version of this scenario above.
+      simulatedNow += 20_000;
+      fake.emit(chunkMsg(1));
+      simulatedNow += 20_000;
+      fake.emit(chunkMsg(2));
+
+      // Jump the clock past FORWARD_PROGRESS_BOUND_MS (measured from the
+      // never-reset lastRealProgressAt, still anchored at run start) without
+      // ever advancing any fake-timer queue — nothing here depends on a
+      // scheduled deadline firing. Only a heartbeat message gives the
+      // message-driven check a chance to notice.
+      simulatedNow += FORWARD_PROGRESS_BOUND_MS - 40_000 + 100;
+      fake.emit({ type: 'heartbeat', atMs: simulatedNow });
+
+      const result = await p;
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.diagnostics?.failure?.via).toBe('stall');
+      expect(result.error.message).toContain('forward progress');
+      expectPopulatedDiagnostics(result.diagnostics);
+      expect(fake.terminated).toBe(true);
+    } finally {
+      setTimeoutSpy.mockRestore();
+    }
+  });
 });

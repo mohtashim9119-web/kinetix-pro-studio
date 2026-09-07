@@ -627,6 +627,13 @@ export function driveGlRun(
     let lastPieceIndex = pieceIndex;
     let lastFramesEncoded = 0;
     let lastOutputAt = now();
+    /** WS3 export-liveness-occlusion round: monotonic-clock anchor mirroring
+     *  FORWARD_PROGRESS_BOUND_MS's own reset condition exactly (set only
+     *  where `resetProgressBound` is called, i.e. only after a real append
+     *  completes) — lets `checkLivenessBounds` evaluate "time since real
+     *  progress" from a message receipt instead of waiting on
+     *  `progressBoundTimer`'s own `setTimeout` to fire on schedule. */
+    let lastRealProgressAt = now();
     let maxSilentMs = 0;
     let lastWorkerDiagnostics: ExportWorkerDiagnosticsPayload | null = null;
     const phaseLog: ExportPhaseLogEntry[] = [];
@@ -731,6 +738,7 @@ export function driveGlRun(
     };
 
     const finishWatchdog = (): void => {
+      if (settled) return;
       worker.postMessage({ type: 'request-diagnostics' });
       setTimeout(() => {
         const diagnostics = reconstructDiagnostics();
@@ -758,6 +766,7 @@ export function driveGlRun(
     };
 
     const finishProgressBound = (): void => {
+      if (settled) return;
       worker.postMessage({ type: 'request-diagnostics' });
       setTimeout(() => {
         const diagnostics = reconstructDiagnostics();
@@ -787,8 +796,49 @@ export function driveGlRun(
      *  never on bare message arrival. See FORWARD_PROGRESS_BOUND_MS's own doc
      *  comment. */
     const resetProgressBound = (): void => {
+      lastRealProgressAt = now();
       clearProgressBound();
       progressBoundTimer = setTimeout(finishProgressBound, FORWARD_PROGRESS_BOUND_MS);
+    };
+
+    /**
+     * WS3 export-liveness-occlusion round — the mechanism fix. Both bounds
+     * above are ALSO still enforced by their own `setTimeout` deadline
+     * (unchanged, kept as a backstop), but a `setTimeout` living on this
+     * document's main-thread context is exactly what WebKit throttles/defers
+     * for an occluded/non-visible window (docs/ws3-silent-gaps-diagnosis.md's
+     * Step 1 finding) — so a deadline that depends solely on its own callback
+     * firing on schedule can be starved for the entire duration of an
+     * occlusion, independent of whether real work has stalled.
+     *
+     * This function evaluates the SAME two bounds from a monotonic clock
+     * (`now()`, `performance.now()` by default — unaffected by throttling
+     * itself, see the class doc above) every time ANY worker message is
+     * received (message dispatch is not the thing found to be throttled;
+     * only this document's own scheduled timers were) — including the new
+     * 'heartbeat' message (exportWorker.ts), which is sourced from a
+     * `setInterval` living in the EXPORT WORKER's own realm, a thread the
+     * diagnosis found kept executing (however slowly) through the run-5
+     * occlusion that starved this document's timers. So even when the frame
+     * loop produces zero chunk/queue-sample/phase output for a long stretch,
+     * the heartbeat still gives this check a ~5s-cadence opportunity to catch
+     * up and fire the bound immediately, rather than waiting on a
+     * possibly-deferred `setTimeout` callback.
+     *
+     * Neither bound's RESET condition changes here — this only changes when
+     * elapsed time against the existing anchors (`lastOutputAt`,
+     * `lastRealProgressAt`) gets checked, never what resets those anchors.
+     */
+    const checkLivenessBounds = (): void => {
+      if (settled) return;
+      const t = now();
+      if (t - lastOutputAt >= WATCHDOG_MS) {
+        finishWatchdog();
+        return;
+      }
+      if (t - lastRealProgressAt >= FORWARD_PROGRESS_BOUND_MS) {
+        finishProgressBound();
+      }
     };
 
     worker.onmessage = (ev: MessageEvent<ExportWorkerOutboundMessage>) => {
@@ -910,6 +960,19 @@ export function driveGlRun(
             framesEncoded: data.framesEncoded,
             kind: 'pulse',
           });
+          // Does not reset either bound (unchanged reset sets — see each
+          // bound's own doc comment) — only a message-receipt opportunity to
+          // check them against the monotonic clock. See checkLivenessBounds.
+          checkLivenessBounds();
+          break;
+        case 'heartbeat':
+          // Never resets WATCHDOG_MS or FORWARD_PROGRESS_BOUND_MS — see
+          // checkLivenessBounds's doc comment and this message's own doc
+          // comment in exportWorker.ts. Its entire purpose is to guarantee
+          // this document's main thread gets a monotonic-clock check-in on a
+          // ~5s cadence even during a stretch where the worker produces no
+          // other message at all.
+          checkLivenessBounds();
           break;
       }
     };

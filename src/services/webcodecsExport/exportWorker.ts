@@ -159,12 +159,34 @@ export type ExportWorkerOutboundMessage =
       assetId: string | null;
       framesEncoded: number;
       seq: number;
-    };
+    }
+  // WS3 export-liveness-occlusion round: a wall-clock heartbeat, independent
+  // of frame/phase progress, so the main thread gets a fresh monotonic-clock
+  // check-in even when the frame loop itself produces zero chunk/queue-sample/
+  // phase messages for a long stretch (exactly the run-5 profile — see
+  // docs/ws3-silent-gaps-diagnosis.md). Sourced from a `setInterval` living in
+  // THIS worker's own realm, not the main document's — the diagnosis found the
+  // worker kept executing (however slowly) through the 223.6s freeze that
+  // neither WATCHDOG_MS nor FORWARD_PROGRESS_BOUND_MS caught, while both
+  // bounds' own `setTimeout`s live on the main-thread document context that
+  // WebKit throttles for an occluded window. Does NOT reset either bound —
+  // same non-resetting contract as `phase` above — it only gives the main
+  // thread's `checkLivenessBounds` an cheap, frequent opportunity to compare
+  // its own monotonic clock against `lastOutputAt`/`lastRealProgressAt`
+  // without waiting on a scheduled deadline to fire.
+  | { type: 'heartbeat'; atMs: number };
 
 function postOut(message: ExportWorkerOutboundMessage, transfer?: Transferable[]): void {
   if (transfer) self.postMessage(message, transfer);
   else self.postMessage(message);
 }
+
+/** WS3 export-liveness-occlusion round: cadence of the wall-clock heartbeat
+ *  (see `ExportWorkerOutboundMessage`'s `'heartbeat'` case). Well under both
+ *  WATCHDOG_MS (30s) and FORWARD_PROGRESS_BOUND_MS (45s) so a stall gets
+ *  several check-in opportunities before either bound elapses — a scheduling
+ *  cadence, not one of the two frozen bounds themselves. */
+const HEARTBEAT_INTERVAL_MS = 5_000;
 
 function errMessage(e: unknown): string {
   return e instanceof Error ? (e.stack ?? e.message) : String(e);
@@ -965,6 +987,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
 
   let framesEmitted = 0;
   let cancelled = false;
+  // WS3 export-liveness-occlusion round: independent wall-clock heartbeat for
+  // the duration of the frame loop only — see HEARTBEAT_INTERVAL_MS and the
+  // 'heartbeat' message case above for why this exists and what it does (and
+  // does not) reset on the main thread.
+  const heartbeatTimer: ReturnType<typeof setInterval> = setInterval(() => {
+    postOut({ type: 'heartbeat', atMs: performance.now() });
+  }, HEARTBEAT_INTERVAL_MS);
   try {
     tracker.enter('frame-loop');
     for (let i = 0; i < totalFrames; i++) {
@@ -1037,6 +1066,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     }
     postTerminal('error', framesEmitted, undefined, runState);
   } finally {
+    clearInterval(heartbeatTimer);
     activeTracker = null;
     activeFailure = null;
     activeEncodeStats = null;
