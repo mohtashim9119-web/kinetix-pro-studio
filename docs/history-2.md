@@ -3454,3 +3454,95 @@ and `src/App.tsx` — app startup no longer auto-restores the previous project.
 mock signature was wrong at merge; production `getAppSessionToken()` / `invoke` signatures were
 never wrong.
 
+---
+
+## WS3 — Export liveness: decode-cursor leak closed, intermittent stall still open (2026-09-07, merge `af6a300`)
+
+**Verdict:** the decode-cursor resource leak that used to kill long/transitioned exports around
+wall-clock ~62s is CLOSED — 3/3 live 200s/1080p/6000-frame transitioned+animated runs completed
+today with `peakOpenCursors: 2` held throughout. A separate, smaller intermittent stall
+(multi-second silent gaps mid-run, never crossing either watchdog) is NOT closed — reproduced in
+1 of the 3 live runs below — and is carried forward as an open bug, not resolved.
+
+**Root cause (Round 5→6, `5f61941` prod-instrumentation / `6af661a` fix, both pre-dating this
+session):** the WebCodecs GL export path opened one `VideoDecoder` cursor per segment and never
+released it. A long/transitioned export accumulated up to ~155 simultaneous open decode cursors
+before exhausting a platform resource, dying around wall-clock ~62s. Round 5's decode-resource
+counters (`5f61941`) attributed the death point to accumulating cursor count, not elapsed time.
+Round 6 (`6af661a`) added `decodeCursorLifetime.ts`'s `DecodeCursorRegistry`, releasing a
+segment's cursor once the playhead passes `cursorLastNeededSec` (its own end, or the outgoing
+half of a centered GL transition's window), capping simultaneous open cursors at
+`MAX_SIMULTANEOUS_OPEN_DECODE_CURSORS = 2`.
+
+**Refuted: "~62s platform limit" hypothesis.** The pre-Round-5 working theory treated the ~62s
+death point as a fixed platform/encoder ceiling. It was not: it was the wall-clock instant the
+unreleased-cursor count first exhausted the resource, which tracks segment rate/complexity, not
+elapsed time. Proof: today's Part C live runs (200s timeline, 500 segments, a real GL transition
+on every boundary and a real GL animation on every segment) complete in 135-267s — 2-4x the old
+"ceiling" — with `peakOpenCursors: 2` held for all 3 runs.
+
+**Invalid gate: `pieceSha256` byte comparison on macOS (`5709075`, pre-dating this session).**
+Two runs of identical code over an identical 40s fixture shared only 76/1200 annexb chunks
+(6.3%); `encodedBytes` varied 35.76-38.93 MB across 4 runs while `keyframeCount` held at 110
+every time — deterministic GOP structure, non-deterministic scheduler-dependent rate control.
+`pieceSha256` over encoded output cannot serve as an output-neutrality gate on this platform — it
+moves on its own between identical runs. The valid gate is `FrameContentDigest`: a rolling
+SHA-256 over the RGBA handed to `VideoEncoder.encode()`, computed pre-encode so it is immune to
+the encoder's own non-reproducibility.
+
+**`FORWARD_PROGRESS_BOUND_MS` design (`af6a300`, this session's starting commit).**
+`WATCHDOG_MS` (30s, unchanged) resets on any worker message, including `'queue-sample'` (proof a
+frame was *submitted* to the encoder, not that it *completed*). A worker that keeps submitting
+frames into a stalled composite/encode step can keep resetting `WATCHDOG_MS` forever — reproduced
+live: a 500-segment transitioned run stalled at frame 93 yet accumulated a 131.8s silent gap
+(4.4x `WATCHDOG_MS`) before the message-based watchdog finally saw a true gap in every message
+and fired. Fix: a second, independent timer, `FORWARD_PROGRESS_BOUND_MS = 45_000`, resetting only
+on `'chunk'` (a completed `ffmpeg.appendFileRaw` — real on-disk progress), never on bare message
+arrival. `WATCHDOG_MS`, its own reset set (`chunk`, `queue-sample`), and its test are unchanged.
+
+**Autorun phase-gate bug fixed, this session (`6930b1d`):** `maybeAutorunRound6.ts`'s
+`readPhase()` fell through to `'all'` for any unrecognized (or absent) `phase` value, running
+both the equivalence and ceiling export suites concurrently and racing them over the
+module-level `lastWebCodecsRunDiagnostics` singleton — a contamination risk for any measurement
+taken while this was live (its sibling `maybeAutorunPartC.ts` already had the correct hard-no-op
+guard). Fixed to warn + `return null` for any unrecognized phase. 3 new tests
+(`maybeAutorunRound6.test.ts`: known/unknown/absent phase); destructive probe (revert guard → 2/3
+red → restore → 3/3 green) confirmed the tests exercise the fix.
+
+**Part C 500-segment live result, this session (2026-09-07, real hardware via `npm run
+tauri:dev`, each run an isolated fresh process — no other probe running):**
+
+| Run | resultOk | frames | wallSec | peakOpenCursors | openAtEnd | intervals >5s | longest silent |
+|---|---|---|---|---|---|---|---|
+| 1 | true | 6000/6000 | 266.93 | 2 | 1 | 15 | 10.74s (phase: null) |
+| 2 | true | 6000/6000 | 135.27 | 2 | 1 | 0 | 0.28s |
+| 3 | true | 6000/6000 | 136.53 | 2 | 1 | 0 | 0.26s |
+
+All 3 pass the hard bar (`resultOk:true`, exactly 6000 frames, `peakOpenCursors:2`) — the
+decode-cursor leak stays fixed. But run 1 disagrees materially with runs 2-3: 15 silent gaps >5s
+(none crossing `WATCHDOG_MS` or `FORWARD_PROGRESS_BOUND_MS` — every one recovered on its own) vs
+zero. 2 of 3 clean is weaker evidence than 3 of 3 for an intermittent fault, and this is 1-of-3
+stalling, not 3-of-3 clean — **the intermittent stall is judged still open**, not closed, and is
+carried in `docs/work-in-progress.md` WS3 §4 (Open bugs). 13 of run 1's 15 intervals carry
+`phase: null` (no attribution); only the trailing two resolved to `frame-loop` and `demux`.
+
+**`openAtEnd: 1` resolved — by design, not a leak.** The surviving cursor at every run's end is
+the final segment's: `cursorLastNeededSec` (`decodeCursorLifetime.ts:53-65`) returns a segment's
+own `end` when it has no successor (`findNextSegment` returns `undefined`, line 60), and the
+frame loop's playhead never reaches or exceeds a segment's own `end` while still inside that
+segment's own frames — so `releaseStaleCursors` (called every tick, `exportWorker.ts:800-802`)
+never closes the last segment's cursor mid-run, by construction. The diagnostics snapshot that
+becomes the reported `openAtEnd` is taken in `postTerminal` (`exportWorker.ts:833`) before
+`runExport`'s outer `finally` calls `runState.disposeAll()` (`exportWorker.ts:1044`), which is
+what actually closes it, immediately afterward. No fix made — none needed.
+
+**Test counts archived**, superseding `docs/work-in-progress.md` WS2's stale
+`Baselines (8dbbcea): vitest 3148 passed / 77 skipped / 0 failed`: as of `af6a300` plus this
+session's `6930b1d`, `npx tsc --noEmit` clean, `npm run lint` clean (same command as tsc on this
+project), `npm test` → 3193 passed / 77 skipped / 0 failed (3190 baseline + 3 new from
+`maybeAutorunRound6.test.ts`).
+
+**Commits this session:** `6930b1d` (autorun phase-gate fix + tests). Builds on pre-session
+`af6a300` (forward-progress bound), `5709075` (frame-content digest gate), `eef6eeb`/PR #7 merge
+(release stale decode cursors), `1cea32f` (Part C fixture + harness).
+

@@ -24,7 +24,15 @@
 
 ## WS3 — TEAM RELEASE BLOCKERS
 Goal: Export watchdog timeout on heavy/long exports (>100 segments @ 1080p) — the sole remaining blocker for the internal team build.
-1. [OPEN] Export Watchdog Timeout: Heavy or long export projects (>100 segments @ 1080p) stall worker processing enough to trigger the 30s watchdog abort. Needs threshold bumped from 30s to 90s, plus active progress heartbeat pings injected inside frame-rendering loops to maintain watchdog reset activity.
+Status (2026-09-07, `af6a300`/`6930b1d`): the decode-cursor leak that caused exports to die around
+wall-clock ~62s is CLOSED — 3/3 live 200s/1080p/6000-frame transitioned+animated runs completed
+with `peakOpenCursors:2` held throughout. `FORWARD_PROGRESS_BOUND_MS` (45s) landed alongside the
+unchanged 30s `WATCHDOG_MS`, not the originally-proposed 30s→90s bump. Full writeup:
+`docs/history-2.md`'s "Export liveness" entry.
+1. [OPEN] Part C 500-segment live export (200s/1080p, transition+animation on every
+   boundary/segment) shows intermittent multi-second silent gaps mid-run — reproduced in 1 of 3
+   live runs 2026-09-07 (15 intervals >5s, longest 10.74s), never crossing either watchdog so the
+   export still completes. Root cause not isolated; most intervals lack phase attribution.
 
 ---
 
@@ -189,6 +197,10 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 - [OPEN · NON-BLOCKING] React maximum update depth exceeded during V8 FA run; distinct from guarded `usePlayback.ts:80-94` rAF tick. Trigger unlocated.
 - [OPEN · NON-BLOCKING] Dev-profile WebKit IDB holds 469 MB legacy v1 data; packaged build is 15.7 MB. Non-shipping cleanup.
 - [OPEN · NON-BLOCKING] Fresh clone lacks gitignored `.work-phase4/replay/` (~85M); golden replay fails until restore script runs. `scripts/phase4-restore-replay-inputs.py`
+- [OPEN · NON-BLOCKING] Export ffmpeg concat/mux paths outside the annexb-piece path (legacy `exportPipeline.ts`'s concat demuxer, the video/audio mux step) are unbounded/unaudited, unlike `TauriFfmpeg.concatAnnexbPieces`. `exportPipeline.ts:263`
+- [OPEN · NON-BLOCKING] macOS `VideoEncoder` output is not byte-reproducible run to run (76/1200 annexb chunks matched across 2 identical runs) — `pieceSha256` cannot gate output equivalence; use `FrameContentDigest` instead. `docs/history-2.md`
+- [OPEN · NON-BLOCKING] Part C live export's longest silent interval (10.26s) lacks phase attribution — diagnostics report `phase:null` for most intervals >5s. `exportWorkerDiagnostics.ts`
+- [OPEN · NON-BLOCKING] `GL_TRANSITION_SLUGS` is duplicated instead of sharing one source. `compositeParams.ts:34`, `decodeCursorLifetime.ts:26`
 
 ---
 
