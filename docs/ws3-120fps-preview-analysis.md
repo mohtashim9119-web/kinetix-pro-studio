@@ -1,7 +1,158 @@
 # WS3 — 120fps preview vs export analysis
 
+> **Branch:** `ws3-120fps-preview` · base `main` @ `4d4922c`
+> **Latest round:** Windows field diagnostics (2026-09-08)
+
+---
+
+## FIELD REFUTATION — buffer-budget hypothesis (2026-09-08)
+
+**Verdict:** The preview buffer-budget / frame-cap drop hypothesis is **REFUTED** as the cause of the Windows 120fps preview symptom.
+
+**Field evidence:** Operator tested the buffer-budget fix build on Windows. **120fps assets still do not play in preview.** Export of the same assets still succeeds.
+
+**What stays:** The buffer-budget fix remains landed — it corrected a **real latent defect** (synthetic confirmation + regression tests on Mac; digest-neutral vs pre-change export). It is **not** the answer to the Windows preview freeze.
+
+**Root cause status:** **UNKNOWN** — pending Windows diagnostic JSON from the build below.
+
+---
+
+## Windows capture procedure (zero-context operator)
+
+Use a **packaged Windows installer** built from this branch (not `npm run dev` in a browser).
+
+### Enable diagnostics
+
+1. Launch Kinetix Pro Studio.
+2. Open **App Settings** (gear on dashboard or editor).
+3. Under **Preview diagnostics (field capture)**, turn **Show preview decode diagnostics panel** **ON**.
+4. Click **Save**. The panel appears at the bottom-left of the preview stage.
+
+### Capture 120fps repro (primary)
+
+1. Import operator `1.mp4` (H.264 High@4.2, 1920×1080, **120 fps** CFR, 5 s, no audio).
+2. Place on timeline; click the segment so it is selected.
+3. Press **Play** for 0–5 s (note whether preview is frozen / shows wrong asset).
+4. In the diagnostics panel, set **Tag capture** → **120fps repro**.
+5. Click **Copy JSON**. Paste into a text file; send to engineering.
+
+### Capture 30fps control (same machine)
+
+1. Import any **30fps** video asset (or transcode a short control clip).
+2. Repeat play/select steps on the 30fps clip.
+3. Set **Tag capture** → **30fps control**.
+4. Click **Copy JSON** again (separate file).
+
+### Optional: stale-texture repro
+
+If clicking a 120fps segment after sync shows the **previous segment's image**:
+
+1. Reproduce the click → wrong texture → Play frozen sequence once.
+2. Copy JSON **without** resetting counters (or reset first for a clean capture — note which in the filename).
+
+### JSON contents (what engineering reads)
+
+| Field | Meaning |
+|---|---|
+| `configureAttempts[].isConfigSupported` | Verbatim `VideoDecoder.isConfigSupported()` result |
+| `configureAttempts[].config` | Exact config passed to `configure()` |
+| `configureAttempts[].configureThrew` / `configureError` | Whether `configure()` threw (DOMException name + message) |
+| `sessions[].decoderStateTransitions` | Decoder state over time |
+| `sessions[].chunksDecoded` | Chunks fed to `decode()` |
+| `sessions[].decoderOutputCallbacks` | Output callback invocations |
+| `sessions[].framesAdmitted` / `framesDropped` / `framesPresented` | Buffer + presentation counters |
+| `presentation.rafTicksPerSec` / `achievedPresentFps` | Clock vs present rate |
+| `selectionEvents[]` | Segment vs compositor texture binding |
+| `firstError` | First error with stack |
+| `userAgent` | Platform string |
+
+---
+
+## Part 1 — Preview vs export asymmetry (static, current code)
+
+### (a) Thread
+
+| Path | Thread | File:line |
+|---|---|---|
+| **Preview** | **Main thread** (React hook → `VideoDecoderPool` on `window`) | `useWebCodecsPreview.ts:495-496` (pool ref); `videoDecoderPool.ts:1013-1014` (`new VideoDecoder` on main) |
+| **Export** | **Dedicated Worker** | `exportWorker.ts` (worker entry); `sequentialDecode.ts:182` (`new VideoDecoder` on `self`) |
+
+**WebView2 note:** Chromium exposes `VideoDecoder` on both main thread and dedicated workers in WebView2. There is **no documented** WebView2 restriction that would allow worker decode but forbid main-thread decode for the same codec. Worker vs main is a **plausible** Windows timing/isolation difference, not a proven configure rejection. **NOT DETERMINED** without diagnostic JSON.
+
+### (b) `configure()` — side-by-side config dump
+
+Both paths call `getOrCreateDemux(url)` → identical `VideoDecoderConfig` object:
+
+| Field | Preview | Export | Differs? |
+|---|---|---|---|
+| `codec` | `videoTrack.codec` from mp4box | Same demux cache | **No** |
+| `codedWidth` / `codedHeight` | track video dimensions | Same | **No** |
+| `description` (avcC/hvcC) | `getDescription()` bytes | Same | **No** |
+| `hardwareAcceleration` | **omitted** (default `no-preference`) | **omitted** | **No** |
+| `optimizeForLatency` | **omitted** | **omitted** | **No** |
+
+Build site: `videoDemuxer.ts:124-129`. Preview configure: `videoDecoderPool.ts:465-478`. Export configure: `sequentialDecode.ts:207`.
+
+**Part 4 conclusion:** No config divergence — **alignment fix NOT justified** (export proves the same config works on Windows).
+
+### (c) Presentation clock
+
+| Item | Preview | Export |
+|---|---|---|
+| Master clock | Voiceover: `usePlayback.ts:69-120` rAF reads `audio.currentTime` (~60 Hz). No-voiceover: 100 ms `setInterval` (`usePlayback.ts:133-150`) | Monotone export timeline in worker (`exportWorker.ts:993`) — no display |
+| Frame pull | `useWebCodecsPreview.ts:633-721` — `getFrameAt` on each `currentTime` tick | `sequentialDecode.ts` generator — consumer-paced |
+| GL present | `useGlPreview.ts:412-534` — `useLayoutEffect` per `currentTime` | N/A (encode, not display) |
+
+**120fps source on 60 Hz display:** rAF/audio clock updates ~60×/s. Preview selects **latest frame at-or-before** source time (`videoDecoderPool.ts:876-880`). Expected: ~60 presents/s showing every other 120fps frame — **judder OK, permanent freeze NOT OK**. rAF clamp **ruled out** as root cause of total freeze.
+
+### (d) Input bytes
+
+Both use `getOrCreateDemux(assetUrl)` → `fetch(url)` → whole-file `arrayBuffer()` → mp4box (`videoDemuxer.ts:79-84`, `166-177`). Export WebCodecs path: `sequentialDecode.ts:126`. **Identical** blob URL and demux cache.
+
+### (e) Ranked differences (Windows likelihood) + best bet
+
+| Rank | Difference | Windows-specific? | Likelihood |
+|---:|---|---|---|
+| 1 | **Main-thread vs Worker** decode context | Plausible (WebView2 GPU process / scheduling) | **Highest untested** |
+| 2 | **Presentation + GL texture upload** on main thread | Yes (preview-only path) | High if decode counters healthy |
+| 3 | **Segment/texture invalidation** on selection change | Yes (field: stale previous asset) | High for wrong-image symptom |
+| 4 | Pooled decoder reuse + windowed feed vs fresh sequential decoder | Code divergence | Medium — export proves decode works, pool logic differs |
+| 5 | Config / demux / bytes | Ruled out (identical) | Low |
+
+**Single best bet:** **Main-thread preview decode + GL presentation stack** — export proves demux+configure+decode on Worker; preview adds main-thread pool, rAF clock, and `useGlPreview` texture bind (`useGlPreview.ts:509-528`) without a separate worker isolation. Confirm via diagnostics: if `configure()` succeeds and `framesAdmitted > 0` but `framesPresented == 0`, suspect presentation/compositor; if `chunksDecoded > 0` and output callbacks == 0, suspect main-thread decode stall.
+
+---
+
+## Part 3 — Decision tree (Windows JSON → next step)
+
+| Capture pattern | Conclusion | Change first |
+|---|---|---|
+| `isConfigSupported.supported === false` OR `configureThrew === true` | WebView2 cannot decode 1080p120 High@L4.2 with this config | `videoDemuxer.ts` / `videoDecoderPool.ts` — software decode or fallback config ladder |
+| `configure()` OK but `decoderOutputCallbacks === 0` after play | Decode stall — main-thread or feed path | `videoDecoderPool.ts` (`feedWindow`, `startSession`) |
+| Output callbacks > 0 but `framesPresented === 0` | Presentation / hook layer, not decode | `useWebCodecsPreview.ts` (frame pull), then `useGlPreview.ts` |
+| `framesPresented > 0` but `achievedPresentFps` ≪ 30 | Pacing / 60 Hz clamp — playable but wrong rate | `usePlayback.ts`, `useWebCodecsPreview.ts` chase coalescing |
+| All counters healthy, operator sees frozen/wrong image | Compositing / texture invalidate | `PreviewStage.tsx` or `useGlPreview.ts` / `glCompositor.ts` |
+| **Click segment → previous asset texture** | Compositor missing invalidate on segment change | `PreviewStage.tsx` or `useGlPreview.ts` (`lastTextureUploadRef`, upload path) |
+| **Toggle asset restores poster, Play still frozen** | Decode session init failure (not UI selection) | `videoDecoderPool.ts` + `useWebCodecsPreview.ts` `ensureSession` |
+
+---
+
+## Part 4 — Speculative config alignment
+
+**NOT SHIPPED.** Preview and export already pass the **identical** `VideoDecoderConfig` from `videoDemuxer.ts`. Export success on Windows refutes a config mismatch hypothesis. No `hardwareAcceleration` or missing `description` divergence exists to align.
+
+---
+
+## Confirmed unrelated fix (retained)
+
+Preview buffer budget (`previewBufferBudget.ts` + `videoDecoderPool.ts` time/byte caps): **CONFIRMED** latent Mac defect; **digest-neutral**; **REFUTED** as Windows root cause per field test above.
+
+---
+
+## Prior analysis (archive)
+
 > **Session:** analysis-only on branch `ws3-120fps-preview` @ `2703850` (doc move), base `main` @ `4d4922c`.
-> **Scope:** map preview vs export decode paths, evaluate the buffer-cap hypothesis, rank Windows-specific factors, measure what Mac can, design the permanent fix. **No `src/` or `src-tauri/` changes this round.**
+> **Scope:** map preview vs export decode paths, evaluate the buffer-cap hypothesis, rank Windows-specific factors, measure what Mac can, design the permanent fix.
 
 ---
 
