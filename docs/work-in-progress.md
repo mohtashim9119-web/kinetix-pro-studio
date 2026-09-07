@@ -23,13 +23,17 @@
 ---
 
 ## WS3 — TEAM RELEASE BLOCKERS
-Goal: Export watchdog timeout on heavy/long exports (>100 segments @ 1080p) — the sole remaining blocker for the internal team build.
-Status (2026-09-07, `af6a300`/`6930b1d`): the decode-cursor leak that caused exports to die around
-wall-clock ~62s is CLOSED — 3/3 live 200s/1080p/6000-frame transitioned+animated runs completed
-with `peakOpenCursors:2` held throughout. `FORWARD_PROGRESS_BOUND_MS` (45s) landed alongside the
-unchanged 30s `WATCHDOG_MS`, not the originally-proposed 30s→90s bump. Full writeup:
-`docs/history-2.md`'s "Export liveness" entry.
-1. [OPEN] Part C 500-segment live export (200s/1080p, transition+animation on every
+Goal: Ship the internal team build — export liveness is largely closed; **120fps preview on Windows** is now the primary media-engine blocker alongside the intermittent Part C export stall.
+Status (2026-09-07, analysis round on `4d4922c`): decode-cursor leak CLOSED (`af6a300`/`6930b1d`).
+`FORWARD_PROGRESS_BOUND_MS` (45s) landed alongside unchanged 30s `WATCHDOG_MS`. Full export writeup:
+`docs/history-2.md`'s "Export liveness" entry. 120fps preview moved here from WS2 — see
+`docs/ws3-120fps-preview-analysis.md`.
+1. [IN-PROGRESS] **120fps preview on Windows** — H.264 120fps CFR assets (e.g. operator's
+   `~/Downloads/Failed Export Project Data/Assets/*.mp4`) play correctly after export through this
+   app and in external players, but preview on the **Windows build** shows a static/frozen frame
+   (not advancing). Export of the same asset succeeds. Mac behaviour unconfirmed this round; fix
+   design: `docs/ws3-120fps-preview-analysis.md`. Branch: `ws3-120fps-preview`.
+2. [OPEN] Part C 500-segment live export (200s/1080p, transition+animation on every
    boundary/segment) shows intermittent multi-second silent gaps mid-run — reproduced in 1 of 3
    live runs 2026-09-07 (15 intervals >5s, longest 10.74s), never crossing either watchdog so the
    export still completes. Root cause not isolated; most intervals lack phase attribution.
@@ -63,7 +67,6 @@ Baselines (8dbbcea): vitest 3148 passed / 77 skipped / 0 failed; gaplessInvarian
 ### 5. Deferred tasks
 
 - [DEFERRED] [CONSOLIDATED] Non-English Localization & C3 Policy: French cardinal and elision rules plus C3 fixture ceiling beyond 1,998.
-- [DEFERRED] [CONSOLIDATED] Video Engine: 120fps preview buffer byte-capping plus native asset export frame rates.
 
 ---
 

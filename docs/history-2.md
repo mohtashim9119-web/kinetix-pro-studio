@@ -3546,3 +3546,6 @@ project), `npm test` → 3193 passed / 77 skipped / 0 failed (3190 baseline + 3 
 `af6a300` (forward-progress bound), `5709075` (frame-content digest gate), `eef6eeb`/PR #7 merge
 (release stale decode cursors), `1cea32f` (Part C fixture + harness).
 
+### 2026-09-07 · bookkeeping · ws3-120fps-preview-task-move
+Moved `[CONSOLIDATED] Video Engine: 120fps preview buffer byte-capping plus native asset export frame rates` from WS2 §5 (Deferred) to WS3 as an active `[IN-PROGRESS]` blocker — Windows preview frozen on 120fps assets while export succeeds; analysis on branch `ws3-120fps-preview` (`docs/ws3-120fps-preview-analysis.md`).
+
