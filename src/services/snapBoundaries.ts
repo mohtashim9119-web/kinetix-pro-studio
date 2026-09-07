@@ -218,6 +218,10 @@ import {
   BREATH_MAX_SPEECH_COVERAGE_RATIO,
   BREATH_TOKEN_OVERLAP_FLOOR_SEC,
 } from './syncConstants';
+// WS3 Defect 4 (Pass 4) — the SAME epsilon `findPartitionViolations` and the
+// export preflight use, imported rather than re-declared so the repair and the
+// checker that refuses an export can never disagree on what "adjacent" means.
+import { PARTITION_EPSILON_SEC } from './timelinePartition';
 
 /** The pipeline's uniform 3-decimal rounding (matches distributeSegmentTimes /
  *  applyAnchorBasedTiming / retileCoveredSegments). */
@@ -899,6 +903,57 @@ export function snapCoveredBoundaries(
       next.anchorStart = contiguousStart;
     }
     prevBoundary = boundary;
+  }
+
+  // --- Pass 4 — contiguity repair for pairs Pass 3 SKIPPED -----------------
+  //
+  // WS3 Defect 4. Pass 3 has two `continue` paths — a null `plan` (a locked
+  // segment on either side, or missing alignment data) and the degenerate-pair
+  // guard. Both are documented as leaving the pair's segments "exactly as the
+  // caller supplied them", and that is what the intent was, but it is not what
+  // the code does: `out[i].startTime` may ALREADY have been overwritten in
+  // place by pair i-1's own write, while `out[i].duration` and
+  // `out[i+1].startTime` still hold their pre-snap values. The pair's
+  // adjacency is then broken by exactly the distance pair i-1 moved segment
+  // i's start — a hole (or overlap) of arbitrary size that nothing downstream
+  // closes, that survives into the saved project, and that both export paths
+  // then refuse at preflight (`checkTimelineIsGapless`). Field evidence: a
+  // 0.200s gap before segment 99 of a 424-segment project.
+  //
+  // This pass is a NO-OP for every pair Pass 3 actually wrote: that path
+  // maintains `startTime[i] + duration[i] === startTime[i+1]` exactly (see the
+  // contiguity block above), so `delta` is 0 there and nothing is touched. It
+  // therefore only ever repairs what Pass 3's own skips broke.
+  //
+  // Which side moves: never a LOCKED one. A locked segment's startTime and
+  // duration are authoritative (this function's whole lock contract), so the
+  // repair adjusts the unlocked side — `curr`'s duration where curr is free
+  // (its start is already committed), otherwise `next`'s start. Two ADJACENT
+  // locks with space between them is the one shape that cannot be satisfied at
+  // all, and it is refused upstream at lock-toggle time (`canLockSegment`,
+  // timelinePartition.ts); if one somehow reaches here, the pair is left as it
+  // stands rather than silently moving a lock.
+  for (let i = 0; i < out.length - 1; i++) {
+    const curr = out[i]!;
+    const next = out[i + 1]!;
+    const delta = round3(next.startTime - (curr.startTime + curr.duration));
+    if (Math.abs(delta) <= PARTITION_EPSILON_SEC) continue;
+
+    if (!curr.locked) {
+      curr.duration = round3(Math.max(MIN_SEGMENT_DURATION, next.startTime - curr.startTime));
+      // If the MIN floor pushed curr past next's start, next must yield —
+      // unless next is locked, in which case both are pinned and only the
+      // refused-upstream double-lock shape remains.
+      const contiguousStart = round3(curr.startTime + curr.duration);
+      if (contiguousStart > next.startTime && !next.locked) {
+        next.startTime = contiguousStart;
+        next.anchorStart = contiguousStart;
+      }
+    } else if (!next.locked) {
+      const contiguousStart = round3(curr.startTime + curr.duration);
+      next.startTime = contiguousStart;
+      next.anchorStart = contiguousStart;
+    }
   }
 
   // Last survivor runs to the end of the audio (unless locked — locked

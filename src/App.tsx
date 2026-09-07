@@ -184,7 +184,7 @@ import {
   buildRunPlacementLogEntries,
   buildUtterancePlacementLogEntries,
 } from './services/syncLog';
-import { canLockSegment, findPartitionViolations, PARTITION_EPSILON_SEC } from './services/timelinePartition';
+import { canLockSegment, findPartitionViolations, repairTimelineGaps, MAX_REPAIRABLE_GAP_SEC, PARTITION_EPSILON_SEC } from './services/timelinePartition';
 import { buildWaveformPipeline } from './services/waveformPipeline';
 import type { WaveformSource } from './services/waveformPeaks';
 import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWaveform, deleteWaveform as deletePersistedWaveform, peekWaveform } from './services/waveformStore';
@@ -2206,6 +2206,52 @@ export default function App() {
     setToast({ message, action });
     toastTimerRef.current = setTimeout(() => setToast(null), TOAST_DURATION);
   }, []);
+
+  /**
+   * WS3 Defect 4d — the explicit, user-invoked timeline repair.
+   *
+   * Offered ONLY on the `timeline_gap` export failure, and only as a button the
+   * user presses. Never automatic, never silent: every change and every refusal
+   * is reported back through the toast, and the whole thing goes through
+   * `setProject` so it is one undoable history entry like any other edit.
+   *
+   * `repairTimelineGaps` writes segment DURATIONS only and never a `startTime`,
+   * so no segment after a repaired hole moves — see its own doc comment for the
+   * A/V-sync argument.
+   */
+  const handleRepairTimelineGaps = useCallback(() => {
+    const result = repairTimelineGaps(liveProjectRef.current.segments);
+    if (result.changes.length === 0 && result.refusals.length === 0) {
+      showToast('The timeline is already continuous — nothing to repair.');
+      return;
+    }
+    if (result.changes.length > 0) {
+      setProject(prev => ({ ...prev, segments: result.segments }));
+    }
+    const fixed = result.changes.length;
+    const parts: string[] = [];
+    if (fixed > 0) {
+      const total = result.changes.reduce((n, c) => n + c.amountSec, 0);
+      parts.push(
+        `Closed ${fixed} timeline ${fixed === 1 ? 'discontinuity' : 'discontinuities'} `
+        + `(${total.toFixed(3)}s total) by adjusting ${fixed === 1 ? 'one segment\u2019s' : 'those segments\u2019'} duration. `
+        + 'No segment start time was moved, so nothing after them shifted.',
+      );
+    }
+    if (result.refusals.length > 0) {
+      const first = result.refusals[0]!;
+      const reason = first.reason === 'too-large'
+        ? `larger than the ${MAX_REPAIRABLE_GAP_SEC}s repair limit`
+        : first.reason === 'locked'
+          ? 'on a locked segment'
+          : 'too small to close without shrinking a segment below its minimum';
+      parts.push(
+        `${result.refusals.length} left untouched \u2014 the first is ${first.amountSec.toFixed(3)}s `
+        + `before segment ${first.index + 2} and is ${reason}.`,
+      );
+    }
+    showToast(parts.join(' '));
+  }, [showToast, setProject]);
 
   /**
    * Applies a duration change for one segment with the same cascade semantics
@@ -6688,7 +6734,15 @@ export default function App() {
                     <p className="text-xs text-gray-600">{exportState.error.message}</p>
                   )}
                 </div>
-                <div className="flex gap-3 justify-center">
+                <div className="flex gap-3 justify-center flex-wrap">
+                  {exportState.error.kind === 'timeline_gap' && (
+                    <button
+                      onClick={handleRepairTimelineGaps}
+                      className="px-4 py-2 text-xs font-bold bg-[#F27D26] text-black rounded-xl hover:bg-orange-400 transition-colors"
+                    >
+                      Repair timeline
+                    </button>
+                  )}
                   {exportState.error.kind !== 'cancelled' && (
                     <button
                       onClick={() => {

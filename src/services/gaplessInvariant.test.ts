@@ -7,6 +7,8 @@ import {
 } from './dragCascade';
 import { applyAnchorBasedTiming } from './syncEngine';
 import { findPartitionViolations, checkTimelineIsGapless, PARTITION_EPSILON_SEC } from './timelinePartition';
+import { snapCoveredBoundaries } from './snapBoundaries';
+import { extractSegmentAlignments } from './whisperService';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
 
@@ -381,5 +383,161 @@ describe('restackWindow locality precondition — a full editor session stays ga
       AUDIO,
     );
     assertGapless(unlocked, 'after unlocking');
+  });
+});
+
+// ===========================================================================
+// WS3 Defect 4 — the THIRD boundary writer.
+//
+// Everything above sweeps `computeDragCascade` and `applyAnchorBasedTiming`.
+// `snapCoveredBoundaries` (services/snapBoundaries.ts) also writes
+// `startTime`/`duration` — it is the Whisper path's boundary writer, and
+// CLAUDE.md's §4 invariant asserts adjacency "holds unconditionally after
+// snapCoveredBoundaries". It was not in this net at all, which is why 36/36
+// green shipped alongside a real 0.200s hole at segment 99 of a 424-segment
+// project.
+//
+// THE UNCOVERED CASE, precisely: `snapCoveredBoundaries` SKIPS a pair whose
+// `plans[i]` is null — a locked segment on either side, or missing alignment
+// data (snapBoundaries.ts:705) — and skips the degenerate-pair case
+// (snapBoundaries.ts:829). Its comment says a skipped pair is left "exactly as
+// the caller supplied them", but that is not what happens: the PREVIOUS pair
+// has already overwritten `out[i].startTime` in place, while `out[i].duration`
+// and `out[i+1].startTime` still hold their pre-snap values. The adjacency is
+// then broken by exactly the distance the previous pair moved segment i's
+// start. The contiguity repair at snapBoundaries.ts:896-900 only ever runs on
+// the WRITE path, never for a skipped pair.
+// ===========================================================================
+
+const snapSeg = (
+  id: string,
+  text: string,
+  startTime: number,
+  duration: number,
+  extra: Partial<VideoSegment> = {},
+): VideoSegment => ({
+  id,
+  text,
+  startTime,
+  duration,
+  transition: TransitionType.NONE,
+  animation: AnimationType.NONE,
+  order: 0,
+  anchorStart: startTime,
+  anchorSource: 'whisper',
+  ...extra,
+});
+
+/** One token per word, `dur` long, starting at `from` on 1s centres. */
+function wordTokensAt(text: string, from: number, dur: number): TranscriptToken[] {
+  return text.split(' ').map((w, i) => ({
+    startSec: Number((from + i).toFixed(3)),
+    endSec: Number((from + i + dur).toFixed(3)),
+    text: w,
+  }));
+}
+
+describe('gapless invariant — the Whisper path (snapCoveredBoundaries)', () => {
+  it('a pair skipped for a LOCKED neighbour, right after a written pair, leaves a real hole', () => {
+    // s0/s1 are an ordinary written pair. s2 is LOCKED, so pair (1,2) is
+    // skipped. The silence at [1.7, 1.9] puts the (0,1) boundary at 1.8 —
+    // 0.200s earlier than s1's pre-snap start of 2.0 — so the hole this
+    // produces is exactly the 0.200s the field report named.
+    const segments = [
+      snapSeg('s0', 'alpha bravo', 0, 2),
+      snapSeg('s1', 'charlie delta', 2, 2),
+      snapSeg('s2', 'echo foxtrot', 4, 2, { locked: true }),
+    ];
+    const toks = [
+      ...wordTokensAt('alpha bravo', 0, 0.5),
+      ...wordTokensAt('charlie delta', 2, 0.5),
+      ...wordTokensAt('echo foxtrot', 4, 0.5),
+    ];
+    const alignments = extractSegmentAlignments(segments, toks);
+    expect(alignments.every(a => a.matched)).toBe(true);
+
+    const out = snapCoveredBoundaries(segments, alignments, toks, [{ startSec: 1.7, endSec: 1.9 }], 6);
+
+    // The written pair moved s1's start back by exactly 0.200s...
+    expect(out[1]!.startTime).toBeCloseTo(1.8, 6);
+    // ...and the locked segment is correctly untouched.
+    expect(out[2]!.startTime).toBeCloseTo(4, 6);
+    // The invariant must still hold across BOTH pairs.
+    assertGapless(out, 'snapCoveredBoundaries with a locked third segment');
+  });
+
+  it('a 0.200s hole at segment 99 of 424 — the field shape, at field scale', () => {
+    // 424 contiguous 2s segments, three spoken words each on 1s centres;
+    // segment index 99 (the 100th) is LOCKED, so pair (98, 99) is skipped
+    // while pair (97, 98) is written. `checkTimelineIsGapless` is the export
+    // preflight that refused the operator's project, so it is asserted here
+    // directly alongside the arithmetic.
+    const N = 424;
+    const LOCKED_INDEX = 99;
+    const segments: VideoSegment[] = [];
+    const toks: TranscriptToken[] = [];
+    for (let i = 0; i < N; i++) {
+      const start = i * 2;
+      segments.push(
+        snapSeg(`s${i}`, `w${i}a w${i}b`, start, 2, i === LOCKED_INDEX ? { locked: true } : {}),
+      );
+      toks.push(...wordTokensAt(`w${i}a w${i}b`, start, 0.5));
+    }
+    const alignments = extractSegmentAlignments(segments, toks);
+    expect(alignments.every(a => a.matched)).toBe(true);
+
+    // One silence, positioned to pull the (98, 99) boundary 0.200s earlier
+    // than segment 99's pre-snap start (198.0). The resulting hole is the same
+    // CLASS as the field 0.200s, not necessarily the same magnitude — what is
+    // pinned is that a skipped pair beside a written one leaves one at all.
+    const silences = [{ startSec: 197.7, endSec: 197.9 }];
+    const out = snapCoveredBoundaries(segments, alignments, toks, silences, N * 2);
+
+    expect(out[LOCKED_INDEX]!.startTime).toBeCloseTo(LOCKED_INDEX * 2, 6); // lock honoured
+    assertGapless(out, '424 segments, lock at 99');
+    expect(checkTimelineIsGapless(out)).toBeNull();
+  });
+
+  it('a pair skipped for MISSING alignment data is repaired the same way', () => {
+    // The other `plans[i] === null` branch (snapBoundaries.ts:705): a caller
+    // that hands in fewer alignments than segments. Same skip, same hole.
+    const segments = [
+      snapSeg('s0', 'alpha bravo', 0, 2),
+      snapSeg('s1', 'charlie delta', 2, 2),
+      snapSeg('s2', 'echo foxtrot', 4, 2),
+    ];
+    const toks = [
+      ...wordTokensAt('alpha bravo', 0, 0.5),
+      ...wordTokensAt('charlie delta', 2, 0.5),
+      ...wordTokensAt('echo foxtrot', 4, 0.5),
+    ];
+    const alignments = extractSegmentAlignments(segments, toks);
+    // Drop the LAST alignment so pair (1,2) has no `nextAlign` and is skipped.
+    const truncated = alignments.slice(0, 2);
+
+    const out = snapCoveredBoundaries(segments, truncated, toks, [{ startSec: 1.7, endSec: 1.9 }], 6);
+
+    expect(out[1]!.startTime).toBeCloseTo(1.8, 6);
+    assertGapless(out, 'snapCoveredBoundaries with a truncated alignments array');
+  });
+
+  it('an ordinary all-written run is untouched by the repair (no output change)', () => {
+    // The repair must be a no-op wherever Pass 3 already wrote a boundary —
+    // Pass 3 maintains contiguity exactly, so there is nothing to repair. This
+    // is what keeps the change confined to the skip paths.
+    const segments = [
+      snapSeg('s0', 'alpha bravo', 0, 2),
+      snapSeg('s1', 'charlie delta', 2, 3),
+    ];
+    const toks = [...wordTokensAt('alpha bravo', 0, 0.5), ...wordTokensAt('charlie delta', 2, 0.5)];
+    const alignments = extractSegmentAlignments(segments, toks);
+
+    const out = snapCoveredBoundaries(segments, alignments, toks, [{ startSec: 1.6, endSec: 1.9 }], 5);
+
+    // Byte-for-byte the values the pre-repair implementation produced.
+    expect(out[1]!.startTime).toBeCloseTo(1.75, 6);
+    expect(out[0]!.duration).toBeCloseTo(1.75, 6);
+    expect(out[1]!.duration).toBeCloseTo(3.25, 6);
+    assertGapless(out, 'all-written run');
   });
 });

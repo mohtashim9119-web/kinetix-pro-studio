@@ -231,3 +231,124 @@ export function canLockSegment(
 
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// WS3 Defect 4d — deterministic repair for an ALREADY-SAVED broken partition.
+//
+// The producer fix (snapBoundaries.ts Pass 4) prevents new holes. It does
+// nothing for a project that already has one saved: that project is refused at
+// export preflight and there is no way through it, and hand-repairing 424
+// segments is not a thing anyone should be asked to do.
+//
+// WHAT THIS DOES, AND WHY IT IS SAFE.
+//
+// It writes exactly ONE field: the DURATION of the segment BEFORE each hole.
+// It never writes a `startTime` anywhere. That is the whole safety argument,
+// and it is worth being precise about:
+//
+//   - Every segment's `startTime` is where the sync pipeline put it against
+//     the voiceover. Leaving all of them untouched means every segment after
+//     the repaired one stays exactly where the audio put it. A repair cannot
+//     shift the timeline, cannot accumulate, and cannot move a heading (which
+//     `headingLayer.ts` selects by absolute `startTime`).
+//   - The only audible/visible change is that ONE segment holds for up to
+//     `maxGapSec` longer (a gap) or shorter (an overlap) than it did. Nothing
+//     downstream of it moves at all.
+//   - A LOCKED segment is never written. A hole whose earlier side is locked
+//     is REPORTED, not repaired.
+//
+// THRESHOLD. `maxGapSec` does not exist because a larger repair would be
+// unsafe by the argument above — it exists to separate residue from damage. A
+// sub-second discontinuity is skip/rounding residue of the class Pass 4 now
+// prevents; a multi-second one means a scene's worth of time is unassigned,
+// which is a different problem and must not be silently absorbed into a
+// neighbour. Anything over the threshold is reported untouched so the user can
+// look at it.
+//
+// EXPLICIT AND REPORTED. This function is pure and returns a full record of
+// every change and every refusal. It is never called automatically anywhere —
+// the caller must be a deliberate user action, and must show the record.
+// ---------------------------------------------------------------------------
+
+/** Largest discontinuity this repair will close. See the threshold note above. */
+export const MAX_REPAIRABLE_GAP_SEC = 1.0;
+
+export interface TimelineRepairChange {
+  /** Index of the segment whose duration was rewritten (the EARLIER side). */
+  index: number;
+  segmentId: string;
+  kind: 'gap' | 'overlap';
+  amountSec: number;
+  fromDuration: number;
+  toDuration: number;
+}
+
+export interface TimelineRepairRefusal {
+  index: number;
+  segmentId: string;
+  kind: 'gap' | 'overlap';
+  amountSec: number;
+  reason:
+    /** Bigger than MAX_REPAIRABLE_GAP_SEC — damage, not residue. */
+    | 'too-large'
+    /** The earlier segment is locked; its duration is authoritative. */
+    | 'locked'
+    /** Closing it would drive the earlier segment below MIN_SEGMENT_DURATION. */
+    | 'would-underflow';
+}
+
+export interface TimelineRepairResult {
+  segments: VideoSegment[];
+  changes: TimelineRepairChange[];
+  refusals: TimelineRepairRefusal[];
+  /** True when `segments` is a clean gapless partition afterwards. */
+  gapless: boolean;
+}
+
+/** Mirrors `MIN_SEGMENT_DURATION` as the sync engine uses it (0.1s). Declared
+ *  here rather than imported to keep this module dependency-light and
+ *  worker-safe, matching its own header. */
+const MIN_REPAIRED_DURATION_SEC = 0.1;
+
+/**
+ * Closes every sub-threshold discontinuity in `segments` by rewriting the
+ * DURATION of the segment before it. Pure — returns a new array; never mutates
+ * the input.
+ */
+export function repairTimelineGaps(
+  segments: readonly VideoSegment[],
+  maxGapSec: number = MAX_REPAIRABLE_GAP_SEC,
+): TimelineRepairResult {
+  const out = segments.map(s => ({ ...s }));
+  const changes: TimelineRepairChange[] = [];
+  const refusals: TimelineRepairRefusal[] = [];
+
+  for (let i = 0; i < out.length - 1; i++) {
+    const curr = out[i]!;
+    const next = out[i + 1]!;
+    const delta = round3(next.startTime - (curr.startTime + curr.duration));
+    if (Math.abs(delta) <= PARTITION_EPSILON_SEC) continue;
+
+    const kind: 'gap' | 'overlap' = delta > 0 ? 'gap' : 'overlap';
+    const amountSec = round3(Math.abs(delta));
+
+    if (amountSec > maxGapSec) {
+      refusals.push({ index: i, segmentId: curr.id, kind, amountSec, reason: 'too-large' });
+      continue;
+    }
+    if (curr.locked) {
+      refusals.push({ index: i, segmentId: curr.id, kind, amountSec, reason: 'locked' });
+      continue;
+    }
+    const target = round3(next.startTime - curr.startTime);
+    if (target < MIN_REPAIRED_DURATION_SEC) {
+      refusals.push({ index: i, segmentId: curr.id, kind, amountSec, reason: 'would-underflow' });
+      continue;
+    }
+
+    changes.push({ index: i, segmentId: curr.id, kind, amountSec, fromDuration: curr.duration, toDuration: target });
+    curr.duration = target;
+  }
+
+  return { segments: out, changes, refusals, gapless: checkTimelineIsGapless(out) === null };
+}
