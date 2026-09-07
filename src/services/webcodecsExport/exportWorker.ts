@@ -50,6 +50,7 @@ import { deriveCompositeParams, deriveSlotPlan, type ProjectEffectConfig } from 
 import { acquireOffscreenGlContext } from '../gl/glContext';
 import { computeObjectCoverUvRect } from '../gl/uvRect';
 import { decodeSegmentFrames, decodeResourceCounts } from './sequentialDecode';
+import { DecodeCursorRegistry } from './decodeCursorLifetime';
 import { GLTextRenderer, type FontConfig, type TextRenderGlobalConfig } from './textRenderer';
 import { ExportPhaseTracker, type ExportDemuxSplit } from './exportPhaseTracker';
 import { demuxCacheSize } from '../videoDemuxer';
@@ -212,6 +213,7 @@ function buildDiagnostics(
     decodersOpen: resourceCounts.decodersOpen,
     cursorsCreated: resourceCounts.cursorsCreated,
     openCursors: resourceCounts.openCursors,
+    peakOpenCursors: resourceCounts.peakOpenCursors,
     openImageBitmaps: resourceCounts.openImageBitmaps,
   };
 }
@@ -398,14 +400,14 @@ interface SlotSource {
 }
 
 class RunState {
-  private cursors = new Map<string, DecodeCursor>();
+  private cursors = new DecodeCursorRegistry<DecodeCursor>();
   private imageBitmaps = new Map<string, ImageBitmap>();
   private assetById: Map<string, Asset>;
   private tracker: ExportPhaseTracker;
   private startIndex: number;
   private segments: readonly VideoSegment[];
+  private config: ProjectEffectConfig;
   decodedSourceFrames = 0;
-  cursorsCreated = 0;
   private decodersCreatedAtStart = 0;
 
   constructor(
@@ -413,11 +415,13 @@ class RunState {
     tracker: ExportPhaseTracker,
     startIndex: number,
     segments: readonly VideoSegment[],
+    config: ProjectEffectConfig,
   ) {
     this.assetById = new Map(assets.map((a) => [a.id, a]));
     this.tracker = tracker;
     this.startIndex = startIndex;
     this.segments = segments;
+    this.config = config;
     this.decodersCreatedAtStart = decodeResourceCounts().decodersCreated;
   }
 
@@ -426,16 +430,24 @@ class RunState {
     decodersOpen: number;
     cursorsCreated: number;
     openCursors: number;
+    peakOpenCursors: number;
     openImageBitmaps: number;
   } {
     const { decodersCreated, decodersOpen } = decodeResourceCounts();
     return {
       decodersCreated: decodersCreated - this.decodersCreatedAtStart,
       decodersOpen,
-      cursorsCreated: this.cursorsCreated,
+      cursorsCreated: this.cursors.cursorsCreated,
       openCursors: this.cursors.size,
+      peakOpenCursors: this.cursors.peakOpenCursors,
       openImageBitmaps: this.imageBitmaps.size,
     };
+  }
+
+  /** Close every cursor the playhead has definitively left. Safe: lastNeeded
+   *  is exclusive-end, matching deriveSlotPlan, so a later frame cannot read it. */
+  async releaseStaleCursors(currentTime: number): Promise<void> {
+    await this.cursors.releaseStale(currentTime, this.segments, this.config, closeCursor);
   }
 
   private projectSegmentIndex(seg: VideoSegment): number {
@@ -453,8 +465,7 @@ class RunState {
       if (!cursor) {
         this.tracker.enter('demux');
         cursor = openCursor(seg, asset.url, asset.duration, this.tracker, asset.id);
-        this.cursors.set(seg.id, cursor);
-        this.cursorsCreated++;
+        this.cursors.open(seg.id, cursor);
         const targetSec = toSourceTime(seg, currentTime, asset.duration);
         const frame = await frameAt(cursor, targetSec, () => {
           this.decodedSourceFrames++;
@@ -498,8 +509,7 @@ class RunState {
   }
 
   async disposeAll(): Promise<void> {
-    for (const cursor of this.cursors.values()) await closeCursor(cursor);
-    this.cursors.clear();
+    await this.cursors.disposeAll(closeCursor);
     for (const bmp of this.imageBitmaps.values()) bmp.close();
     this.imageBitmaps.clear();
   }
@@ -681,6 +691,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
         decodersOpen: decodeResourceCounts().decodersOpen,
         cursorsCreated: 0,
         openCursors: 0,
+        peakOpenCursors: 0,
         openImageBitmaps: 0,
       },
     );
@@ -786,7 +797,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     return;
   }
 
-  const runState = new RunState(assets, tracker, startIndex, segments);
+  const runState = new RunState(assets, tracker, startIndex, segments, config);
   activeRunState = runState;
   const first = segments[0]!;
   const last = segments[segments.length - 1]!;
@@ -837,6 +848,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       // exactly as well as a whole-project index would.
       const currentTime = runStartSec + i / fps;
 
+      try {
       const rawParams = deriveCompositeParams(segments, currentTime, config);
       const plan = deriveSlotPlan(segments, currentTime, rawParams.transition, config);
 
@@ -894,6 +906,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       tracker.setFramesEncoded(framesEmitted);
       tracker.pulse();
       if (i % 5 === 0) postOut({ type: 'queue-sample', frameIndex: i, size: encoder.encodeQueueSize });
+      } finally {
+        // Release after this tick's slot reads (or an early continue / throw)
+        // so a transition pair stays live through compositing, then the
+        // outgoing cursor closes once currentTime has passed its lastNeeded.
+        // cancel / error / success also hit disposeAll in the outer finally.
+        await runState.releaseStaleCursors(currentTime);
+      }
     }
 
     if (cancelled) {
@@ -956,6 +975,7 @@ self.onmessage = (ev: MessageEvent<ExportWorkerInboundMessage>) => {
         decodersOpen: decodeResourceCounts().decodersOpen,
         cursorsCreated: 0,
         openCursors: 0,
+        peakOpenCursors: 0,
         openImageBitmaps: 0,
       },
     );

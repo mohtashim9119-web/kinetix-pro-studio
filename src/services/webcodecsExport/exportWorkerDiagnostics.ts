@@ -69,6 +69,8 @@ export interface ExportWorkerDiagnosticsPayload {
   cursorsCreated: number;
   /** Decode cursors still resident at terminal snapshot. */
   openCursors: number;
+  /** High-water mark of simultaneously open decode cursors this run. */
+  peakOpenCursors: number;
   /** Cached ImageBitmaps still open at terminal snapshot. */
   openImageBitmaps: number;
 }

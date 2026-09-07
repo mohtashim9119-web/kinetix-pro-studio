@@ -138,6 +138,7 @@ function diagnostics(
     decodersOpen: 0,
     cursorsCreated: 0,
     openCursors: 0,
+    peakOpenCursors: 0,
     openImageBitmaps: 0,
     ...overrides,
   };

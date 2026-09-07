@@ -644,6 +644,7 @@ export function driveGlRun(
         decodersOpen: 0,
         cursorsCreated: 0,
         openCursors: 0,
+        peakOpenCursors: 0,
         openImageBitmaps: 0,
       };
     };
@@ -1292,6 +1293,7 @@ export async function exportProjectWebCodecs(
             decodersOpen: 0,
             cursorsCreated: 0,
             openCursors: 0,
+            peakOpenCursors: 0,
             openImageBitmaps: 0,
           }),
           maxSilentMs: driveResult.error.liveness?.maxSilentMs ?? 0,
