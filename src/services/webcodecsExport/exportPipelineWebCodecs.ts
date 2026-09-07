@@ -540,6 +540,35 @@ type RunDriveResult =
 export const WATCHDOG_MS = 30_000;
 
 /**
+ * Forward-progress bound (WS3 Part D) — a SECOND, independent timer alongside
+ * WATCHDOG_MS, not a replacement for it. WATCHDOG_MS resets on ANY worker
+ * message, including 'queue-sample' (exportWorker.ts's per-5-frames
+ * `encoder.encodeQueueSize` ping, posted right after `encoder.encode()` is
+ * CALLED — proof a frame was submitted, not proof its output was ever
+ * produced or reached disk). A worker that keeps submitting frames into a
+ * stalling encode/composite pipeline can keep resetting WATCHDOG_MS
+ * indefinitely while real forward progress has stopped — reproduced live: a
+ * 500-segment transitioned/animated run stalled at frame 93 yet accumulated a
+ * 131.8s silent gap (4.4x WATCHDOG_MS) before the message-based watchdog
+ * finally saw a true gap in ALL messages and fired.
+ *
+ * This timer resets ONLY on an actual completed append (`appendCallCount`
+ * incrementing, immediately after a successful `ffmpeg.appendFileRaw` —
+ * see the 'chunk' case below) — a real byte-for-byte increment of on-disk
+ * export progress, never a bare message arrival.
+ *
+ * 45s (1.5x WATCHDOG_MS): the measured no-transition baseline (200s timeline,
+ * 6000 frames, 126s wall — docs/history.md Round 6) runs at ~21ms/frame.
+ * Transitioned/animated frames composite two textures + a zoom transform
+ * instead of one and are measurably slower, but nowhere near 45s/frame under
+ * any non-hung condition — this bound is sized to absorb that slowdown many
+ * times over (including backpressure waits, `waitForDequeue`) while still
+ * firing far faster than the un-bounded message-based watchdog does when
+ * trickling non-progress messages keep deferring it.
+ */
+export const FORWARD_PROGRESS_BOUND_MS = 45_000;
+
+/**
  * Minimal Worker surface `driveGlRun` needs. Production uses a real module
  * Worker; tests inject a fake so this function can run in node/vitest
  * without constructing `exportWorker.ts`.
@@ -592,6 +621,7 @@ export function driveGlRun(
     let appendBytes = 0;
     let settled = false;
     let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
+    let progressBoundTimer: ReturnType<typeof setTimeout> | null = null;
     let lastPhase: string | null = 'init';
     let lastPhaseAt = now();
     let lastPieceIndex = pieceIndex;
@@ -683,10 +713,18 @@ export function driveGlRun(
       }
     };
 
+    const clearProgressBound = (): void => {
+      if (progressBoundTimer) {
+        clearTimeout(progressBoundTimer);
+        progressBoundTimer = null;
+      }
+    };
+
     const finish = (result: RunDriveResult): void => {
       if (settled) return;
       settled = true;
       clearWatchdog();
+      clearProgressBound();
       if (activeWorker === worker) activeWorker = null;
       worker.terminate();
       resolve(result);
@@ -719,6 +757,40 @@ export function driveGlRun(
       watchdogTimer = setTimeout(finishWatchdog, WATCHDOG_MS);
     };
 
+    const finishProgressBound = (): void => {
+      worker.postMessage({ type: 'request-diagnostics' });
+      setTimeout(() => {
+        const diagnostics = reconstructDiagnostics();
+        diagnostics.failure = {
+          name: null,
+          message: `Export made no forward progress (no append completed) for ${FORWARD_PROGRESS_BOUND_MS / 1000}s — aborting (stall guard).`,
+          via: 'stall',
+          frameIndex: diagnostics.framesEncoded > 0 ? diagnostics.framesEncoded - 1 : null,
+          timelineSec: null,
+        };
+        finish({
+          ok: false,
+          error: errorFromDiagnostics(
+            'unknown',
+            diagnostics,
+            `Export made no forward progress (no append completed) for ${FORWARD_PROGRESS_BOUND_MS / 1000}s — aborting (stall guard).`,
+          ),
+          diagnostics,
+          silentIntervals: silentIntervals(),
+          appendCallCount,
+          appendBytes,
+        });
+      }, 50);
+    };
+
+    /** Reset ONLY on real forward progress (an append actually completing) —
+     *  never on bare message arrival. See FORWARD_PROGRESS_BOUND_MS's own doc
+     *  comment. */
+    const resetProgressBound = (): void => {
+      clearProgressBound();
+      progressBoundTimer = setTimeout(finishProgressBound, FORWARD_PROGRESS_BOUND_MS);
+    };
+
     worker.onmessage = (ev: MessageEvent<ExportWorkerOutboundMessage>) => {
       const data = ev.data;
       switch (data.type) {
@@ -733,6 +805,7 @@ export function driveGlRun(
               await ffmpeg.appendFileRaw(runFile, bytes);
               appendCallCount++;
               appendBytes += bytes.byteLength;
+              resetProgressBound();
               onFrameProgress(appendCallCount, totalExpectedFrames);
             } catch (err) {
               appendError = err instanceof Error ? err : new Error(causeString(err));
@@ -883,6 +956,7 @@ export function driveGlRun(
       frameContentDigest: frameContentDigestEnabled,
     };
     resetWatchdog();
+    resetProgressBound();
     worker.postMessage(initMsg);
   });
 }

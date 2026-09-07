@@ -12,6 +12,7 @@ import type { Asset, HeadingOverlay, TextOverlay, VideoSegment } from '../../typ
 import {
   driveGlRun,
   WATCHDOG_MS,
+  FORWARD_PROGRESS_BOUND_MS,
   type ExportWorkerHandle,
   type WebCodecsFfmpeg,
 } from './exportPipelineWebCodecs';
@@ -335,5 +336,40 @@ describe('driveGlRun fake-worker harness', () => {
     const terminal = result.silentIntervals[result.silentIntervals.length - 1]!;
     expect(terminal.durationMs).toBeGreaterThanOrEqual(WATCHDOG_MS);
     expect(terminal.phase).toBe('frame-loop');
+  });
+
+  // WS3 Part D: the message-based WATCHDOG_MS resets on ANY worker message
+  // (including 'chunk' — a real live evidence run stalled for 131.8s, 4.4x
+  // WATCHDOG_MS, while trickling messages kept resetting it). This test
+  // reproduces that shape directly: a hung `ffmpeg.appendFileRaw` that never
+  // resolves, with chunk messages still arriving often enough that WATCHDOG_MS
+  // itself never lapses — proving FORWARD_PROGRESS_BOUND_MS is a genuinely
+  // independent signal (armed on real append completion only, never on bare
+  // message arrival), not just a slower copy of the same watchdog.
+  it('fires the forward-progress bound when an append hangs even though messages keep arriving (destructive probe target)', async () => {
+    vi.useFakeTimers();
+    const fake = new FakeWorker();
+    const hangingAppend = vi.fn(() => new Promise<void>(() => { /* never resolves */ }));
+    const ffmpeg = makeFfmpeg({ appendFileRaw: hangingAppend });
+    const p = startDrive(fake, ffmpeg);
+
+    // Feed the message-based watchdog every 20s (< WATCHDOG_MS) so it never
+    // fires on its own — isolating the forward-progress bound as the signal
+    // under test.
+    fake.emit(chunkMsg(0));
+    await vi.advanceTimersByTimeAsync(20_000);
+    fake.emit(chunkMsg(1));
+    await vi.advanceTimersByTimeAsync(20_000);
+    fake.emit(chunkMsg(2));
+    await vi.advanceTimersByTimeAsync(FORWARD_PROGRESS_BOUND_MS - 40_000 + 100);
+
+    const result = await p;
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics?.failure?.via).toBe('stall');
+    expect(result.error.message).toContain('forward progress');
+    expectPopulatedDiagnostics(result.diagnostics);
+    expect(fake.terminated).toBe(true);
+    expect(hangingAppend).toHaveBeenCalled();
   });
 });

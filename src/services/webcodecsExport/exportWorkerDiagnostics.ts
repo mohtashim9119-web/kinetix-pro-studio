@@ -34,7 +34,13 @@ export type ExportFailureVia =
   | 'init-error'
   | 'watchdog'
   | 'worker-crash'
-  | 'append-error';
+  | 'append-error'
+  /** Forward-progress bound (exportPipelineWebCodecs.ts's FORWARD_PROGRESS_BOUND_MS)
+   *  fired: no append actually completed for the bound, even though worker
+   *  messages (chunk/queue-sample) may have kept arriving and resetting the
+   *  message-based WATCHDOG_MS timer in the meantime — see that constant's
+   *  own doc comment for why message arrival alone is not proof of progress. */
+  | 'stall';
 
 export interface ExportFailureIdentity {
   name: string | null;
