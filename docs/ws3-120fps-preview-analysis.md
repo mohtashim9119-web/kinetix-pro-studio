@@ -769,6 +769,150 @@ presented Mac preview fps under live WKWebView (synthetic harness only).
 
 ---
 
+## Steps 1–5 round (2026-09-08, branch `ws3-120fps-preview`)
+
+Worktree: `4.kinetix-pro-studio-ws3-120fps-preview` @ post-round commits (base `main` @ `4d4922c`).
+
+### Step 1 — 4K behind-playhead retention (report + decision)
+
+**(a) Effective retain-behind after the feed-horizon fix**
+
+Policy target remains `RETAIN_BEHIND_SEC = 0.5` (`previewBufferBudget.ts:11`, enforced in `videoDecoderPool.ts:891`, `1084`). When the byte ceiling binds at 4K, the **admitted** span is `64/120 = 0.5333333333333333` s (`previewBufferBudget.ts:54-59`) and the feed horizon is `0.525` s (`previewBufferBudget.ts:65-70`, `effectiveFeedAheadSec`). The trailing share that fits inside the admitted window is:
+
+`effectiveRetainBehindSec(3840,2160) = min(0.5, admitted − feed) = 0.008333333333333304` s
+
+= **`1/120` s = `FEED_BYTE_BUDGET_MARGIN_SEC`** — **identical at 4K30, 4K60, and 4K120** (budget math is fps-independent; only frame *count* in the window differs).
+
+In source frames at each fps: **0.25 frame @ 30**, **0.5 frame @ 60**, **1 frame @ 120**. This is near-zero for practical backward-scrub caching.
+
+**(b) Synthetic backward-scrub measurement @ 4K120**
+
+Harness: `videoDecoderPool.test.ts` “4K backward scrub retain collapse”. After warming to `t=0.4` s:
+
+- One-frame nudge (`0.4 − 1/120`): **re-seek + full re-decode** (`resetCalls` increments).
+- Scrub to `0.1` s (beyond any retain tail): **re-seek + full re-decode**.
+
+**Verdict:** at 4K, backward scrub **re-decodes** for essentially every nudge beyond the current frame — there is no usable 0.5 s retain tail.
+
+**(c) Decision: accept degraded 4K backward scrub (backlog item)**
+
+Options considered:
+
+| Option | Memory cost | Rationale |
+|---|---:|---|
+| Raise per-session byte budget for 4K to hold full 2.0 s window | **+2,189,918,592 B** per warm 4K120 session (2,985,984,000 − 796,262,400 theoretical full window vs current 4K120 peak) | Operator assets are **1080p120 only**; 4K is out-of-scope for the reported defect |
+| Split admitted budget into explicit ahead/behind shares | At 0.533 s admitted, any split still caps one side ≈0.27 s — backward scrub remains degraded | Does not restore 0.5 s retain without raising total bytes |
+| **Accept + document (chosen)** | **0 B additional** — keep 768 MiB/session, 1536 MiB global | Correctness preserved (re-seek completes); cost is extra decode latency on 4K scrub only |
+
+**Backlog (for merge into `docs/work-in-progress.md`):** `[OPEN · NON-BLOCKING] WS3 — 4K preview backward scrub is degraded (effective retain ≈1/120 s under byte cap); accept or raise 4K session budget if product adds 4K preview.`
+
+**(d) Forward margin under eviction**
+
+`FEED_BYTE_BUDGET_MARGIN_SEC = 1/120` s (**8.333 ms**) is the gap between admitted (0.5333 s) and feed (0.525 s). It is **not** the forward decode lead — forward lead is **0.525 s** (~63 frames @ 120 fps). Evidence from 4K lead-time harness (`videoDecoderPool.test.ts` “4K feed horizon lead time”): `minLeadSec > 0.4`, `feedAheadSec ≈ 0.525`, **0 drops** on first batch (16 frames @ 4K30, 64 @ 4K120). The one-frame margin is sufficient for first-batch admission under byte eviction; forward playback slack is the full 0.525 s feed horizon, not 8.33 ms.
+
+### Step 2 — Preview release during export (implemented)
+
+**Gate:** `isWebCodecsPreviewEnabled(useWebCodecsPath, isExporting)` → `enabled && !isExporting` (`useWebCodecsPreview.ts:72-74`). Wired from `App.tsx:6337` → `PreviewStage.tsx:541` → hook.
+
+**Teardown on disable (`previewActive` false):**
+
+| Site | File:line | Action |
+|---|---|---|
+| Session release effect | `useWebCodecsPreview.ts:556-561` | `releaseAllPreviewSessions(pool)` |
+| Protected-id clear + per-session close | `useWebCodecsPreview.ts:77-80` → `videoDecoderPool.ts:938-942` | `releaseSession` → `closeSession` |
+| Frame buffer close | `videoDecoderPool.ts:946-948` | `entry.frame.close()` for every buffered frame |
+| Decoder handle close/return | `videoDecoderPool.ts:975-1067` | idle pool or `decoder.close()` on error |
+| Displayed frame cleared | `videoDecoderPool.ts:948-949` | session.frames emptied |
+| UI frame null | `useWebCodecsPreview.ts:634-644`, `760-763` | `setFrame(null)`, return null frame |
+| Chase/generation invalidate | `useWebCodecsPreview.ts:638-639` | stops in-flight paint |
+| Decode-ahead / ensureSession | `useWebCodecsPreview.ts:576`, `633` | early return — no new sessions |
+| Unmount dispose (unchanged) | `useWebCodecsPreview.ts:735-740` | `pool.dispose()` |
+
+Export **failure** and **cancel** both set `isExporting: false` (`useExport.ts:349`, `417`, `440`, `535`); preview **automatically re-warms** on the next render when export ends — no user action. UX: preview canvas goes blank for export duration; first post-export frame pays cold `ensureSession` + `getFrameAt` cost (~one feed batch). Memory win outweighs brief blank — **recommend ship**.
+
+**Measured bytes released** (synthetic harness, one warm 1080p120 session walked to 2.0 s):
+
+- **749,606,400 bytes** released (241 live frames × 3,110,400 B/frame)
+- Theoretical full 2.0 s window = **746,496,000 bytes** (~712 MiB); measured peak is **+1 frame** (displayed slot)
+- Matches ~712 MiB estimate within one frame
+
+**Peak live `VideoFrame` count:** 241 before export flip → **0** after (`useWebCodecsPreview.exportRelease.test.ts`).
+
+**Tests added:** `useWebCodecsPreview.exportRelease.test.ts` (6). Destructive probe: skip release when `isExporting=true` leaves bytes live (simulates removed guard — would fail a “bytes must be 0” assertion); restore path green.
+
+### Step 3 — GPU vs system memory + HANDOFF to `ws3-export-liveness-occlusion`
+
+**(a) VideoFrame backing store**
+
+| Platform | Determination |
+|---|---|
+| **macOS WKWebView** | WebCodecs `VideoFrame` from hardware decode is typically **IOSurface-backed** (GPU-accessible unified memory). Code comment: `videoDecoderPool.ts:9-11` (“GPU/CPU-backed buffer”). No per-frame probe in-repo — **platform docs + WebCodecs spec imply GPU-visible surfaces; exact heap vs VRAM split on Apple Silicon is NOT DETERMINED.** |
+| **Windows WebView2** | **NOT DETERMINED** — Chromium D3D11 zero-copy vs readback varies by codec/GPU; no measurement in this workstream. |
+
+**(b) What Step 2 relieves**
+
+Step 2 closes every retained `VideoFrame` and decoder session → releases **IOSurface/GPU-visible decode buffers and their associated decoder state**. On macOS unified memory this reduces pressure on the **same pool** GL uses for `createTexture()`. It is **not** a guarantee against `gl.createTexture()` null (export worker has its **own** GL context and decode cursors) but removes up to **1,610,612,736 bytes (1536 MiB)** of preview-retained surfaces that could coincide with export allocation.
+
+**(c) HANDOFF — `ws3-export-liveness-occlusion`**
+
+Preview path peak retained bytes (global cap): **1,610,612,736 bytes (1536 MiB)**. Per warm 1080p120 session: **≤746,496,000 bytes** (~712 MiB). Memory type: decoded `VideoFrame` surfaces (GPU-accessible; macOS IOSurface-class — exact VRAM accounting NOT DETERMINED). **Step 2 change:** while `isExporting`, preview decode is fully torn down — export runs without preview pool contention; after export, preview re-warms automatically. **Re-test:** reproduce `gl.createTexture()` null with export running **after** merging this branch; compare against baseline with preview left enabled. If null persists, preview was not the dominant consumer; if cleared, preview/export concurrency was contributory.
+
+### Step 4 — Live Mac presented fps
+
+**One attempt:** `npm run tauri:dev` with `CARGO_TARGET_DIR=.work-phase4/cargo-target` — app **built and launched** (Vite + cargo `Finished`), but presented fps / drop counter require interactive playback of operator `1.mp4` in the native WKWebView window. **Blocker:** no automated WKWebView driver in this agent session to load the asset, play 0–5 s, and read DevTools / `getDevDropStats()`. **NOT DETERMINED.**
+
+### Step 5 — Merge preparation (not executed)
+
+```bash
+git fetch origin
+git checkout main
+git merge --no-ff ws3-120fps-preview -m "Merge ws3-120fps-preview: 120fps buffer cap + export preview release"
+```
+
+**Rollback SHA:** `4d4922c`
+
+**Expected diff vs `4d4922c` (this branch):**
+
+- `docs/ws3-120fps-preview-analysis.md`
+- `src/services/previewBufferBudget.ts`, `previewBufferBudget.test.ts`
+- `src/services/videoDecoderPool.ts`, `videoDecoderPool.test.ts`
+- `src/hooks/useWebCodecsPreview.ts`, `useWebCodecsPreview.exportRelease.test.ts`
+- `src/components/PreviewStage.tsx`, `src/App.tsx` (export gate wiring only)
+- Prior commits also touch `docs/work-in-progress.md`, `docs/history-2.md` (frozen this round — not edited here)
+
+**Zero file overlap** with `origin/ws3-export-liveness-occlusion` vs `4d4922c` (verified via `comm` on diff name lists).
+
+**Gates (this round):**
+
+| Gate | Result |
+|---|---|
+| `npx tsc --noEmit` | clean |
+| `npm run lint` | clean |
+| `npm test -- src/` | **3097 passed / 1 skipped / 0 failed** (= 3088 + **9** new: 1 retain + 2 4K scrub + 6 export-release) |
+| `npm test` (full, replay symlinked) | **3220 passed / 77 skipped / 0 failed** (= 3211 + **9**) |
+| `git diff --name-only main -- src-tauri/` | empty |
+
+### Step 6 — Windows checklist (post Step 2)
+
+Existing checklist (Implementation § Step 8) plus **during export:**
+
+1. Start export (MP4) while a 120 fps clip is on the timeline.
+2. **Pass:** preview goes blank/static (no decode work); DevTools shows **no** new `[videoDecoderPool] preview buffer drop` lines during export.
+3. After export completes or is cancelled: preview **restores** on play/scrub without app restart.
+4. **Fail capture:** if preview stays permanently blank post-export, or drops appear during export, save console log + export outcome.
+
+**Windows symptom remains UNVERIFIED.**
+
+### NOT DETERMINED (remaining)
+
+- Live Windows preview stall
+- Live Mac presented preview fps (blocker: no WKWebView automation)
+- Windows WebView2 VideoFrame memory domain (GPU vs system RAM)
+- Minimum supported system RAM (product requirement)
+- Exact IOSurface vs dedicated VRAM accounting on Apple Silicon
+
+---
+
 ## References
 
 - `docs/ws2-video-ingest/bug3-diagnosis.md` — prior mock reproduction @ 120 fps
