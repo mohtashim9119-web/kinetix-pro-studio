@@ -623,6 +623,150 @@ once the operator's byte-identical `1.mp4` is supplied.
 
 ---
 
+## Gap-closing round 2 (2026-09-08) — 4K feed horizon, digest, concurrency
+
+### Step 1 — Why feed was 0.0333 s at every 4K fps (blocking)
+
+**(a) Source.** The constant is **not** the one-frame `feedWindow` progress
+fallback (`videoDecoderPool.ts:619-629`). It is the clamped feed formula:
+
+- `admittedWindowSec(3840,2160)` → `64/120 = 0.5333…` s
+  (`previewBufferBudget.ts:38-45`, now with `DESIGN_MAX_SOURCE_FPS`)
+- Pre-fix `effectiveFeedAheadSec` = `max(0, admitted − RETAIN_BEHIND_SEC)` =
+  `0.5333… − 0.5` = **`0.033333333333333326` s** (exactly 1/30), independent of
+  source fps (`previewBufferBudget.ts` pre-fix line of
+  `return Math.max(0, admitted - RETAIN_BEHIND_SEC)`).
+
+So 4K **did** compute a clamped horizon — but that horizon collapsed to a
+one-frame floor because retain was subtracted from an already byte-clamped
+admitted window. The one-frame fallback is a separate sparse/VFR safety net.
+
+**(b) Consequence (synthetic harness).** Lead time at 4K was **33.333 ms** for
+30/60/120 alike. First batch admitted **2** frames @ 4K30 and **5** @ 4K120.
+Playback ticks ~16.7 ms (rAF); a 4K decode that exceeds ~33 ms cannot stay ahead
+of the playhead → **preview starves / stutters** under real decode load even
+though the sync mock still returns latest-at-or-before within one source frame.
+
+Measured presented-vs-requested on the pool harness (33 ms ticks, 0–2 s):
+
+| Case | feedAheadSec | max(requested−presented) | structural lead |
+|---|---:|---:|---|
+| 4K30 pre-fix | 0.0333… | ≤ 1/30 | collapsed (~1× 30 fps frame) |
+| 4K120 pre-fix | 0.0333… | ≤ 1/120 | collapsed (~4× 120 fps frames incl. current) |
+| 4K30 post-fix | 0.525 | ≤ 1/30 | ≥ 0.4 s |
+| 4K120 post-fix | 0.525 | ≤ 1/120 | ≥ 0.4 s |
+
+**(c) Fix.** `effectiveFeedAheadSec` now takes the largest feed the admitted
+window allows after a one-frame safety margin:
+
+`min(WINDOW_AHEAD_SEC, max(0, admitted − FEED_BYTE_BUDGET_MARGIN_SEC))`
+
+with `FEED_BYTE_BUDGET_MARGIN_SEC = 1/DESIGN_MAX_SOURCE_FPS = 1/120`
+(`previewBufferBudget.ts`). **Margin rationale:** reserve one design-max-fps
+frame so a full first batch still fits the playhead frame under the 768 MiB
+ceiling without dropping it. Retain-behind stays an **eviction** policy
+(`slideWindowForward` / `makeRoomForFrame`), not a second carve-out from feed.
+1080p stays `min(1.5, 2.0 − 1/120) = 1.5`.
+
+**(d) Regressions + destructive probe.** 4K30/4K120/VFR tests green; first-batch
+admits **16** (4K30) and **64** (4K120), 0 drops. Probe: force
+`session.feedAheadSec = WINDOW_AHEAD_SEC` in `startSession` → both 4K tests red;
+4K120 recorded **117 drops**. Restored; focused suite green.
+
+Corrected budget table:
+
+| Resolution | fps | Admitted window (s) | Feed window (s) | Frames in admitted window | Admitted bytes |
+|---|---:|---:|---:|---:|---:|
+| 1080p | 30 | 2 | 1.5 | 60 | 186,624,000 |
+| 1080p | 60 | 2 | 1.5 | 120 | 373,248,000 |
+| 1080p | 120 | 2 | 1.5 | 240 | 746,496,000 |
+| 4K | 30 | 0.5333333333333333 | 0.525 | 16 | 199,065,600 |
+| 4K | 60 | 0.5333333333333333 | 0.525 | 32 | 398,131,200 |
+| 4K | 120 | 0.5333333333333333 | 0.525 | 64 | 796,262,400 |
+
+**(e)** 1080p unchanged: **1.5 s feed / 2.0 s admitted** at 30/60/120.
+
+### Step 2 — Frame digest
+
+Sidecar: symlinked from main (`ffmpeg-x86_64-apple-darwin` / `whisper-x86_64-apple-darwin`;
+host is x86_64 — aarch64 ffmpeg is the wrong arch). Pre-change scratch:
+`/tmp/kinetix-ws3-digest-pre-4d4922c` @ `4d4922c`. Post-change uses a worktree-local
+`public/_spike` (not the export agent's shared spike) and
+`CARGO_TARGET_DIR=.work-phase4/cargo-target` (a `/tmp` target makes Tauri refuse
+sidecar spawn: `StartingBinary … symlink on a non-allowed platform: /tmp`; mux
+fails but frame digests still compute).
+
+**Frame digest** `fda1b8dfa616ef8f0ecf76d7b1ae6011bb0c8bb272777146c476cba821ca2ea0`
+(1200 frames @ 30 fps / 40 s):
+
+| Run | label | runA | runB | digests match | mux |
+|---|---|---|---|---|---|
+| Post #1 (partial) | `ws3-preview-post-1` | `fda1b8df…` (A only; B killed) | — | n/a | A mux fail (`/tmp` target) |
+| Post #2 | `ws3-preview-post-2` | `fda1b8df…` | `fda1b8df…` | **yes** (`reproducible: true`) | OK |
+| Post #3 | `ws3-preview-post-3` | `fda1b8df…` | `fda1b8df…` | **yes** (`reproducible: true`) | OK |
+| Pre-change | `ws3-preview-pre-2` @ `4d4922c` | `fda1b8df…` | `fda1b8df…` | **yes** (flag false only because mux fail under `/tmp` target; digests equal) | mux fail (`/tmp`) |
+
+Post #2 vs post #3 vs pre-change: **identical frame digests**
+`fda1b8dfa616ef8f0ecf76d7b1ae6011bb0c8bb272777146c476cba821ca2ea0` (1200 frames).
+Export pixel neutrality of the preview buffer/feed change: **MATCH** (frame digest).
+Byte comparison of muxed MP4s: not used (invalid on macOS; mux also fails under `/tmp` targets).
+
+### Step 3 — Preview/export concurrency
+
+**(a) In practice.** Preview decode sessions stay live whenever
+`useWebCodecsPath` is enabled and a current/next video segment exists —
+`useWebCodecsPreview`'s `ensureSession` effect does **not** depend on
+`isPlaying` (`useWebCodecsPreview.ts:560-598`; `PreviewStage.tsx:535-541`).
+Playback ticks only run while `isPlaying` (`usePlayback.ts:72-79`, `133-139`)
+and do **not** stop on `isExporting`. A typical export (user paused, or never
+playing) still leaves **warm buffered sessions** for current+next; continuous
+decode-ahead only if the user leaves preview playing during export.
+
+**(b) Recommendation (not implemented).** Smallest change: gate
+`enabled: useWebCodecsPath && !isExporting` in `PreviewStage.tsx` (or call
+`pool.dispose()` when `isExporting` rises). UX cost: preview goes blank/cold
+for the export duration; one cold re-ensure after export ends (brief rebuffer
+on first play).
+
+**(c) Handoff figure.** Peak preview retained bytes that can coincide with
+export GL allocation: **`PREVIEW_BUFFER_MAX_BYTES_GLOBAL` =
+1,610,612,736 bytes (1536 MiB)**.
+
+### Step 4 — Windows checklist re-verify
+
+Step 8 checklist re-read after the feed-horizon fix. Pass criteria unchanged
+(no freeze; no `[videoDecoderPool] preview buffer drop` on first playthrough).
+Self-contained: build command, asset properties, DevTools watch, pass/fail
+capture. No dependency on the old collapsed 0.033 s feed. **Windows symptom
+remains UNVERIFIED.**
+
+### Final gates (this round)
+
+- `npx tsc --noEmit` — clean.
+- `npm run lint` — clean.
+- `npm test -- src/` — **3088 passed / 1 skipped / 0 failed**
+  (= prior 3085 + **3** new: 1080p feed pin, 4K margin assertion, two 4K
+  lead-time cases; `3085 + 3 = 3088`).
+- `npm test` — **3207 passed / 77 skipped / 4 failed** with
+  `.work-phase4/replay` symlinked from main. Arithmetic vs the prior
+  missing-replay baseline (3174 passed / 33 failed / 77 skipped before this
+  round's +3): `3174 + 3 = 3177` expected passed if those 33 stayed red;
+  observed `3207 = 3177 + 30`, so **30/33** former env failures now pass.
+  Remaining **4**: three `phase4-handoff-replay-sync` EPERM writes through the
+  symlink into main's replay tree, plus one `ws1-session-aj0-oracle-diff`
+  180s timeout under load — **not** the same 33 missing-input failures.
+- `git diff --name-only main -- src-tauri/` — empty (sidecar/target are
+  untracked symlinks / gitignored dirs only).
+- Frame digest — post×2 + pre @ `4d4922c` all
+  `fda1b8dfa616ef8f0ecf76d7b1ae6011bb0c8bb272777146c476cba821ca2ea0`.
+
+**Still NOT DETERMINED:** Windows live symptom; minimum supported RAM;
+presented Mac preview fps under live WKWebView (synthetic harness only).
+
+**Commits:** `c0ed19c` (feed fix + tests); docs commit follows.
+
+---
+
 ## References
 
 - `docs/ws2-video-ingest/bug3-diagnosis.md` — prior mock reproduction @ 120 fps
