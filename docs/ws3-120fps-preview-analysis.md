@@ -417,19 +417,21 @@ Export remains `exportFps ∈ {24, 30, 60}`; 120 fps sources auto-suggest **60**
 
 **Until this checklist passes on Windows, the Windows preview symptom remains UNVERIFIED even with the fix landed.**
 
-1. **Build:** clone/checkout `ws3-120fps-preview`, `npm install`, provision ffmpeg sidecar per `src-tauri/binaries/README.md`, then:
+1. **Build:** clone/checkout `ws3-120fps-preview`, `npm install`, provision the Windows ffmpeg sidecar exactly as `src-tauri/binaries/README.md` directs, open Command Prompt at the repository root, then:
    ```bash
    set CARGO_TARGET_DIR=%CD%\src-tauri\target
    npm run tauri:dev
    ```
-2. **Asset:** copy `1.mp4` from operator Assets folder (H.264 High@4.2, 1920×1080, **120 fps** CFR, 5 s).
-3. **Actions:** import → place on timeline → play 0–5 s → scrub forward/back across 0–2 s.
-4. **Pass criteria:**
+2. **Asset:** obtain the operator repro file `1.mp4` (H.264 High@4.2, 1920×1080, **120 fps** CFR, 5.000 s, no audio; SHA not recorded). Do not substitute a transcoded copy.
+3. **Prepare:** open DevTools, clear Console, then import `1.mp4`, place it on the timeline, and select it.
+4. **Actions:** play 0–5 s once without scrubbing; then scrub forward/back across 0–2 s and play again.
+5. **Pass criteria:**
    - Preview plays (no permanent freeze)
-   - DevTools console: **`framesDropped: 0`** on first playthrough (read `[videoDecoderPool] preview buffer drop` — should be **absent**)
-   - `getDevDropStats()` if invoked from console: `framesDropped === 0` after first 2 s
+   - DevTools console contains **no** `[videoDecoderPool] preview buffer drop` warning during the first playthrough
    - Presented motion smooth within ~60 Hz display limit (judder OK; **freeze not OK**)
-5. **If fail:** capture console logs (drop counters, any `VideoDecoder` configure/decode errors), note stall time(s), screen recording, WebView2 version; file against WS3 open bug.
+6. **If fail:** save the complete console log, note exact stall time(s), capture a screen recording, and record Windows and WebView2 versions.
+
+This checklist is self-contained procedurally, but the exact operator asset must be supplied to the tester; without that byte-identical file the original symptom has not been re-verified. **Windows symptom: UNVERIFIED.**
 
 ### Gates (implementation round)
 
@@ -444,6 +446,180 @@ Export remains `exportFps ∈ {24, 30, 60}`; 120 fps sources auto-suggest **60**
 | Cargo | **skipped** — empty `src-tauri/` diff |
 
 **Commits:** `f36df8c` (instrumentation + confirmation), `2d314f6` (regression red), `3500f58` (fix), `910ea7e` (fps coverage), `7acd3c6` (docs).
+
+---
+
+## Gap-closing round (2026-09-08)
+
+### Step 1 — Full-suite settlement and exact arithmetic
+
+`main` was checked out at `4d4922c` in the separate scratch worktree
+`4.kinetix-pro-studio-ws3-main-baseline-scratch` and run with the identical
+`npm test` command used on this branch. Both runs fail only because the
+gitignored `.work-phase4/replay/{v6,173,spanish}` inputs have not been restored
+in either worktree. Every failure names `python3
+scripts/phase4-restore-replay-inputs.py` as the regeneration command.
+
+The exact rerun disproves the premise that skips fell from 77 to 1. Vitest's
+test-case row is **77 skipped** on both `main` and this branch:
+
+- Historical clean baseline: 3193 passed + 77 skipped = 3270 registered tests.
+- Current `main`: 3159 passed + 33 failed + 77 skipped = 3269 registered tests.
+- This branch before the three tests added in this round: 3171 passed + 33
+  failed + 77 skipped = 3281 registered tests.
+- Expected after the prior round's 12 additions: 3193 + 12 passed + 77 skipped
+  = 3282 registered tests.
+
+The one missing registered test is `scripts/ws1-session-p-arms.test.ts`'s
+`sweeps input arms`. Its module-level read of
+`.work-phase4/replay/v6/whisper_raw_tokens.json` throws before Vitest can
+register that `it(...)`. The 33 failed tests therefore replace 33 expected
+passes, and the unregistered test supplies the remaining one exactly:
+`3205 - 33 - 1 = 3171` passed. **No 76 skips went anywhere; all 77 remain
+skipped.**
+
+Failing files on both `main` and this branch, all for the same missing
+`.work-phase4/replay` environment:
+
+1. `scripts/ws1-silence-arms.test.ts` (2)
+2. `scripts/ws1-session-p-arms.test.ts` (failed collection, 0 registered tests)
+3. `scripts/ws1-session-p-measure.test.ts` (1)
+4. `scripts/ws2-27-absorption-numbering.test.ts` (4)
+5. `scripts/ws1-session-q-invariants.test.ts` (1)
+6. `scripts/ws1-production-path.test.ts` (5)
+7. `scripts/ws1-session-p-invariants.test.ts` (2)
+8. `scripts/ws1-session-aj0-oracle-diff.test.ts` (3)
+9. `scripts/ws1-session-s-exclusion.test.ts` (6)
+10. `scripts/ws1-session-s-measure.test.ts` (2 failed, 2 skipped)
+11. `scripts/ws1-session-q-production-pins.test.ts` (4)
+12. `scripts/phase4-handoff-replay-sync.test.ts` (3)
+
+The 33 failed registered tests sum exactly:
+`2+1+4+1+5+2+3+6+2+4+3 = 33`; the failed-collection file contributes no
+registered test. Final post-change gate numbers appear below.
+
+### Step 2 — 4K feeder clamp, sparse/VFR forward progress, and probe
+
+The feeder **was already byte-clamped**: `startSession` computes
+`session.feedAheadSec` through `effectiveFeedAheadSec`
+(`videoDecoderPool.ts:443-454`), and `feedWindow` uses
+`targetSec + session.feedAheadSec`, not the fixed 1.5 s constant
+(`videoDecoderPool.ts:594-610`). At 4K the 768 MiB ceiling admits
+0.5333333333333333 s total and therefore clamps the issued-ahead window to
+0.033333333333333326 s.
+
+The audit nevertheless found one real drop path. When no timestamp fit inside
+that short horizon, `feedWindow` deliberately issued one frame for forward
+progress. The output-side horizon check then rejected that same sparse/VFR
+frame after `feedCursor` had advanced. The check is removed: the feeder owns the
+time horizon, while the per-session/global byte checks are the hard admission
+guard and evict already-passed data if needed (`videoDecoderPool.ts:1185-1212`).
+
+Added regressions:
+
+- 4K30 first batch: byte ceiling binds, feeder admits 2 frames, 0 drops.
+- 4K120 first batch: byte ceiling binds, feeder admits 5 frames, 0 drops.
+- Irregular-timestamp 4K VFR traversal: forward/backed selection remains
+  timestamp-driven and records 0 drops.
+
+Destructive reach probe: temporarily replaced the clamped feeder boundary with
+`WINDOW_AHEAD_SEC`. Both 4K tests went red; 4K120 recorded **117 drops**. The
+source was restored from a temporary copy, and the focused suite returned
+**63 passed / 0 failed**.
+
+Corrected budget table:
+
+| Resolution | fps | Admitted window (s) | Feed window (s) | Frames in admitted window | Admitted bytes |
+|---|---:|---:|---:|---:|---:|
+| 1080p | 30 | 2 | 1.5 | 60 | 186,624,000 |
+| 1080p | 60 | 2 | 1.5 | 120 | 373,248,000 |
+| 1080p | 120 | 2 | 1.5 | 240 | 746,496,000 |
+| 4K | 30 | 0.5333333333333333 | 0.033333333333333326 | 16 | 199,065,600 |
+| 4K | 60 | 0.5333333333333333 | 0.033333333333333326 | 32 | 398,131,200 |
+| 4K | 120 | 0.5333333333333333 | 0.033333333333333326 | 64 | 796,262,400 |
+
+For every row, `feed window <= admitted window`; when the byte ceiling binds,
+the feeder never emits the old 1.5 s batch.
+
+### Step 3 — Memory ceilings and export concurrency
+
+Minimum supported RAM is **NOT DETERMINED** by any product requirement. The
+provisional engineering default for this local 1080p120/4K compositor is **16
+GiB**. The 1,610,612,736-byte preview cap is exactly 1536 MiB, **9.375%** of 16
+GiB.
+
+Preview and export are **not exclusive**. `usePlayback`'s voiceover and
+no-voiceover loops are guarded by `isPlaying` but do not stop on `isExporting`
+(`usePlayback.ts:72-79`, `133-139`); `App.tsx` leaves `PreviewStage` mounted and
+passes export state only into that hook (`App.tsx:5493-5502`). Existing preview
+sessions and active preview decode can therefore coexist with export decode.
+
+Export's frozen design permits two live cursors, each with 8 undelivered frames
+plus `current` and `pending`: a conservative decoded-frame bound is 20 frames.
+At 4K I420 that is 248,832,000 bytes. Combined with preview:
+
+`1,610,612,736 + 248,832,000 = 1,859,444,736 bytes`
+= **1773.3046875 MiB**, **10.823392868041992%** of 16 GiB.
+
+This excludes decoder-internal surfaces, whole-file demux buffers, GL textures,
+the encoder queue, and OS/GPU overhead, so it **can plausibly contribute** to a
+texture-allocation failure on an 8 GiB/shared-memory Windows machine. The cap is
+kept because two transition-protected 1080p120 preview sessions need
+1,492,992,000 bytes; 1536 MiB leaves only 112.171875 MiB beyond that measured
+requirement. Lowering it without redesigning protected-session admission would
+reintroduce drops during transitions. The operational consequence is explicit:
+**16 GiB is the provisional default; behavior below it remains NOT DETERMINED.**
+
+### Step 4 — Export neutrality status
+
+The 40 s digest harness exists at
+`src/dev/exportLivenessProbe/runPartC.ts:65-94`, but the requested gate cannot
+be completed in this worktree:
+
+1. `src-tauri/binaries/` contains no Apple ffmpeg sidecar, so the production
+   Tauri export invoked by the harness cannot mux/save its result.
+2. No pre-change Part C frame-content digest was persisted in the available
+   `public/_spike/ws3-result*.jsonl` artifacts. Two post-change matching runs
+   would prove reproducibility but could not prove a match against pre-change.
+3. Provisioning a sidecar into `src-tauri/` is outside this round's frozen
+   no-`src-tauri/`-writes scope.
+
+Therefore frame-digest export neutrality remains **NOT DETERMINED**. Supporting
+evidence only: production export imports `findChunkRange` from
+`videoDecoderPool.ts`; it does not instantiate the preview pool or import
+`previewBufferBudget.ts`. That import-scope fact is not the requested pixel
+proof.
+
+### Step 5 — VFR resolution
+
+Added an irregular-timestamp VFR test through `VideoDecoderPool` at 4K. It
+mixes 8.333, 12.5, 16.667, 25, 33.333, and 41.667 ms intervals, traverses six
+nonuniform targets, checks latest-at-or-before timestamp selection, and asserts
+zero recorded drops. This test found and now guards the sparse-frame
+forward-progress defect described in Step 2.
+
+### Step 6 — Windows handoff
+
+The checklist above was re-read after the feeder change. It now removes the
+non-self-contained suggestion that a tester call an unexposed pool method,
+states every setup/action/pass/failure-capture step, and identifies the exact
+asset properties. The procedure is self-contained for a zero-context tester
+once the operator's byte-identical `1.mp4` is supplied.
+
+**Windows symptom remains UNVERIFIED.**
+
+### Final gates
+
+- `npx tsc --noEmit` — clean.
+- `npm run lint` — clean.
+- `npm test -- src/` — **3085 passed / 1 skipped / 0 failed**.
+- `npm test` — **3174 passed / 77 skipped / 33 failed**; the **33
+  pre-existing environment failures** reproduce identically on `main`
+  (3159 passed / 77 skipped / 33 failed) and are confined to the 12 replay
+  files listed in Step 1.
+- `git diff --name-only main -- src-tauri/` — empty.
+- Cargo — skipped because the `src-tauri/` diff is empty; no Tauri command was
+  run.
 
 ---
 
