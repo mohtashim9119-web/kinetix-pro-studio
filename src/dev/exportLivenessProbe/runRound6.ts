@@ -61,7 +61,7 @@ function hashingFfmpeg(inner: TauriFfmpeg): { ffmpeg: WebCodecsFfmpeg; fingerpri
   return { ffmpeg: inner as unknown as WebCodecsFfmpeg, fingerprints };
 }
 
-async function runProductionExport(
+export async function runProductionExport(
   id: string,
   project: Project,
   opts: { fps: number; width: number; height: number; savePath: string },
