@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, type RefObject } from 'react';
 import type { Asset, VideoSegment } from '../types';
+import { previewDiagnosticsActive, recordRafTick } from '../services/previewDiagnostics';
 
 // Smaller than one frame at 60 fps (~16.7 ms) — large enough that ordinary
 // float-precision jitter in repeated `audio.currentTime` reads can't trip it,
@@ -92,6 +93,7 @@ export function usePlayback({
         currentTimeRef.current = audio.currentTime;
         setCurrentTime(audio.currentTime);
       }
+      if (previewDiagnosticsActive()) recordRafTick(audio.currentTime);
 
       // Defensive resume: if audio stalled mid-playback for any reason, restart it.
       // Guard with !audio.ended so a naturally-finished audio is not restarted here.

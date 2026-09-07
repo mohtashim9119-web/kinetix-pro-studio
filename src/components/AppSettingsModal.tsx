@@ -52,6 +52,11 @@ import {
 } from '../services/appDefaults';
 import type { AspectRatio, ResolutionTier } from '../types';
 
+import {
+  isPreviewDiagnosticsEnabled,
+  setPreviewDiagnosticsEnabled,
+} from '../services/previewDiagnostics';
+
 const ASPECT_RATIO_OPTIONS: AspectRatio[] = ['16:9', '9:16', '1:1'];
 const RESOLUTION_TIER_OPTIONS: ResolutionTier[] = ['720p', '1080p'];
 
@@ -64,6 +69,8 @@ const SELECT = 'w-full bg-[#1A1A1A] border border-[#282828] p-2.5 rounded-lg tex
 
 interface Props {
   onClose: () => void;
+  /** Fired after Save commits draft settings (preview diagnostics toggle, etc.). */
+  onSaved?: () => void;
 }
 
 function Toggle({
@@ -99,10 +106,11 @@ function Toggle({
   );
 }
 
-export function AppSettingsModal({ onClose }: Props): React.ReactElement {
+export function AppSettingsModal({ onClose, onSaved }: Props): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
 
   const [draftWebcodecsEnabled, setDraftWebcodecsEnabled] = useState<boolean>(() => isWebCodecsExportToggleOn());
+  const [draftPreviewDiagnostics, setDraftPreviewDiagnostics] = useState<boolean>(() => isPreviewDiagnosticsEnabled());
   const [draftDefaults, setDraftDefaults] = useState<NewProjectDefaults>(() => readNewProjectDefaults());
 
   const webcodecsCapable = isWebCodecsExportCapable();
@@ -121,7 +129,9 @@ export function AppSettingsModal({ onClose }: Props): React.ReactElement {
 
   const handleSave = (): void => {
     setWebCodecsExportToggle(draftWebcodecsEnabled);
+    setPreviewDiagnosticsEnabled(draftPreviewDiagnostics);
     writeNewProjectDefaults(draftDefaults);
+    onSaved?.();
     onClose();
   };
 
@@ -197,6 +207,24 @@ export function AppSettingsModal({ onClose }: Props): React.ReactElement {
               Not available on this device — requires WebCodecs, WebGL2, and module worker support.
             </p>
           )}
+        </section>
+
+        <section data-testid="app-settings-block-preview-diagnostics" className={HAIRLINE}>
+          <p className={BLOCK_TITLE}>Preview diagnostics (field capture)</p>
+          <label className="flex items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-gray-500 font-bold">
+            <span>Show preview decode diagnostics panel</span>
+            <Toggle
+              on={draftPreviewDiagnostics}
+              onToggle={() => setDraftPreviewDiagnostics((v) => !v)}
+              label={draftPreviewDiagnostics ? 'Disable preview diagnostics' : 'Enable preview diagnostics'}
+              testId="app-settings-preview-diagnostics-toggle"
+            />
+          </label>
+          <p className="text-[9px] text-gray-600 leading-snug">
+            For packaged Windows builds: enables an in-editor panel with WebCodecs configure probes,
+            decode counters, presentation rate, and segment/texture selection state. Copy JSON and
+            send to engineering. No effect on preview timing when off.
+          </p>
         </section>
 
         {/* ── Block 2: Models & Add-ons ───────────────────────────────────

@@ -272,6 +272,7 @@ import { readUiState, patchUiState } from './services/uiStateStore';
 import { compactRanges } from './services/rangeCompact';
 import { formatTime } from './services/timeFormat';
 import { invoke, Channel } from '@tauri-apps/api/core';
+import { isPreviewDiagnosticsEnabled, syncPreviewDiagnosticsEnabled } from './services/previewDiagnostics';
 
 interface RawSegment {
   text: string;
@@ -2093,8 +2094,16 @@ export default function App() {
   const [showExportSettingsModal, setShowExportSettingsModal] = useState(false);
   const [showManageModelsModal, setShowManageModelsModal] = useState(false);
   const [devPanelOpen, setDevPanelOpen] = useState(false);
+  const [previewDiagnosticsRevision, setPreviewDiagnosticsRevision] = useState(0);
   const audioRef = useRef<HTMLAudioElement>(null);
   const previewStageRef = useRef<PreviewStageHandle>(null);
+
+  useEffect(() => {
+    syncPreviewDiagnosticsEnabled();
+    if (isPreviewDiagnosticsEnabled()) {
+      setPreviewDiagnosticsRevision((r) => r + 1);
+    }
+  }, []);
 
   // Ref that mirrors project.assets so useCallback([]) closures can read the
   // latest asset list without project.assets appearing in their dep arrays.
@@ -6344,6 +6353,7 @@ export default function App() {
                   autoGradeSamplerRef={autoGradeSamplerRef}
                   onTogglePlay={togglePlay}
                   onSpeedCycle={handleSpeedClick}
+                  previewDiagnosticsRevision={previewDiagnosticsRevision}
                 />
               </ErrorBoundary>
               </div>
@@ -7018,7 +7028,13 @@ export default function App() {
           It is a flat three-block surface that raises no nested modal, so
           nothing needs to stay mounted underneath it. */}
       {showAppSettingsModal && (
-        <AppSettingsModal onClose={() => setShowAppSettingsModal(false)} />
+        <AppSettingsModal
+          onClose={() => setShowAppSettingsModal(false)}
+          onSaved={() => {
+            syncPreviewDiagnosticsEnabled();
+            setPreviewDiagnosticsRevision((r) => r + 1);
+          }}
+        />
       )}
       {import.meta.env.DEV && devPanelOpen && (
         <Suspense fallback={null}>

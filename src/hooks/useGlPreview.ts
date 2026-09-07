@@ -40,6 +40,10 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Asset, VideoSegment } from '../types';
 import type { VideoDecoderPool } from '../services/videoDecoderPool';
+import {
+  previewDiagnosticsActive,
+  recordTextureUpload,
+} from '../services/previewDiagnostics';
 import { GlCompositor, type TextureSlot, type UploadSource } from '../services/gl/glCompositor';
 import { acquireGlContext } from '../services/gl/glContext';
 import { computeObjectContainUvRect } from '../services/gl/uvRect';
@@ -186,6 +190,7 @@ export function useGlPreview({
   // the boundary (afterwards useWebCodecsPreview's own `currentFrame` covers
   // the incoming segment, since it has become `current`).
   const [incoming, setIncoming] = useState<{ frame: VideoFrame; segmentId: string } | null>(null);
+  const lastTextureUploadRef = useRef<{ segmentId: string; assetId: string } | null>(null);
 
   // --- Render-scope pure derivation (cheap; recomputed each render) ---------
   const rawParams = deriveCompositeParams(segments, currentTime, config);
@@ -501,19 +506,34 @@ export function useGlPreview({
     // session before this synchronous gl.texImage2D call ran) — same hazard
     // PreviewCanvas.tsx's drawImage documents, now guarding texImage2D
     // instead.
-    const uploadSlot = (slot: TextureSlot, src: SlotSource): boolean => {
+    const uploadSlot = (slot: TextureSlot, src: SlotSource, seg: VideoSegment): boolean => {
       const texRect = computeObjectContainUvRect(src.w, src.h, dstW, dstH);
       try {
         compositor.uploadFrame(slot, src.source, texRect);
       } catch {
         return false;
       }
+      if (previewDiagnosticsActive() && seg.assetId) {
+        const asset = assets.find((a) => a.id === seg.assetId);
+        const prev = lastTextureUploadRef.current;
+        const rebound = !prev || prev.segmentId !== seg.id || prev.assetId !== seg.assetId;
+        lastTextureUploadRef.current = { segmentId: seg.id, assetId: seg.assetId };
+        const frameTs = src.source instanceof VideoFrame ? src.source.timestamp / 1e6 : null;
+        recordTextureUpload(
+          seg.id,
+          seg.assetId,
+          asset?.type === 'video' ? 'video' : 'image',
+          rebound,
+          frameTs,
+          currentTime,
+        );
+      }
       return true;
     };
 
     if (!plan.a) return; // outside every segment — retain last frame
     const aSrc = resolveSlotSource(plan.a);
-    if (!aSrc || !uploadSlot('a', aSrc)) return; // slot a not ready — retain
+    if (!aSrc || !uploadSlot('a', aSrc, plan.a)) return; // slot a not ready — retain
 
     // plan.b non-null ⇒ deriveSlotPlan found a REAL active transition (it only
     // assigns slot 'b' when params.transition is non-null and a boundary
@@ -528,7 +548,7 @@ export function useGlPreview({
     // below with params.transition already null.
     if (plan.b) {
       const bSrc = resolveSlotSource(plan.b);
-      if (!bSrc || !uploadSlot('b', bSrc)) return; // incoming transiently closed — retain, don't pop to A-solo
+      if (!bSrc || !uploadSlot('b', bSrc, plan.b)) return; // incoming transiently closed — retain, don't pop to A-solo
     }
 
     compositor.renderFrame({ ...params });

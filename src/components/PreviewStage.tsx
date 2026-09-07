@@ -31,6 +31,8 @@ import {
 import { PreviewCanvas } from './PreviewCanvas';
 import { isWebGL2Supported } from '../services/gl/glContext';
 import { useGlPreview } from '../hooks/useGlPreview';
+import { PreviewDiagnosticsPanel } from './PreviewDiagnosticsPanel';
+import { previewDiagnosticsActive } from '../services/previewDiagnostics';
 import { computeAutoGrade } from '../services/gl/autoGrade';
 
 // Live-preview side of the animation pipeline. The export side lives in
@@ -261,6 +263,8 @@ interface Props {
   onTogglePlay: () => void;
   /** Callback for the floating SpeedBadge click shown in fullscreen mode. */
   onSpeedCycle: () => void;
+  /** Bumped when App Settings toggles preview diagnostics — re-read gate. */
+  previewDiagnosticsRevision?: number;
 }
 
 export interface PreviewStageHandle {
@@ -357,8 +361,12 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
   autoGradeSamplerRef,
   onTogglePlay,
   onSpeedCycle,
+  previewDiagnosticsRevision = 0,
 }, ref) {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [previewDiagPanelOpen, setPreviewDiagPanelOpen] = useState(true);
+  const previewDiagnosticsOn = previewDiagnosticsActive();
+  void previewDiagnosticsRevision;
   // Tracks the previous fullscreen value across onResized events (focus-bug
   // fix, see the Tauri onResized listener below) — only a true→false edge
   // (fullscreen exit) should refocus the window; every other resize
@@ -1162,6 +1170,10 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
             <div className="font-black uppercase tracking-wider mb-0.5">Effects engine error</div>
             <span className="font-mono">{glPreview.error}</span>
           </div>
+        )}
+
+        {previewDiagnosticsOn && previewDiagPanelOpen && (
+          <PreviewDiagnosticsPanel onClose={() => setPreviewDiagPanelOpen(false)} />
         )}
 
         {/* Phase 5 cutover — the CSS/Framer cross-segment transition path is deleted

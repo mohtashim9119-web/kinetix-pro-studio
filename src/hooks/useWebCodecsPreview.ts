@@ -55,6 +55,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Asset, VideoSegment } from '../types';
 import { VideoDecoderPool } from '../services/videoDecoderPool';
+import {
+  previewDiagnosticsActive,
+  recordFramePresented,
+  recordPreviewDiagnosticsError,
+  recordSelectionChange,
+  sessionCountersFor,
+} from '../services/previewDiagnostics';
 
 interface UseWebCodecsPreviewParams {
   segments: VideoSegment[];
@@ -535,6 +542,7 @@ export function useWebCodecsPreview({
    *  site here would race the live chase against the pre-pull on the same
    *  session the instant it becomes current (see the Phase A2 audit). */
   const pendingBoundaryPullRef = useRef<{ segmentId: string; promise: Promise<VideoFrame | null> } | null>(null);
+  const lastSelectionRef = useRef<{ segmentId: string; assetId: string } | null>(null);
 
   const currentAsset = currentSegment ? assets.find(a => a.id === currentSegment.assetId) : undefined;
   const isVideoSegment = isPlainVideoAsset(currentSegment, currentAsset);
@@ -590,6 +598,7 @@ export function useWebCodecsPreview({
       // eslint-disable-next-line react-hooks/exhaustive-deps
       const initialTarget = toSourceTime(currentSegment, currentTime, currentAsset.duration);
       void pool.ensureSession(currentSegment.id, currentAsset.url, start, end, initialTarget).catch((err) => {
+        recordPreviewDiagnosticsError(err);
         setError(err instanceof Error ? err.message : String(err));
       });
     }
@@ -615,6 +624,24 @@ export function useWebCodecsPreview({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewActive, currentSegment, isVideoSegment, currentAsset, nextSegment, nextIsVideo, nextAsset]);
+
+  useEffect(() => {
+    if (!previewDiagnosticsActive() || !currentSegment) return;
+    const assetId = currentAsset?.id ?? null;
+    const prev = lastSelectionRef.current;
+    const changed = !prev || prev.segmentId !== currentSegment.id || prev.assetId !== assetId;
+    if (assetId) lastSelectionRef.current = { segmentId: currentSegment.id, assetId };
+    recordSelectionChange({
+      selectedSegmentId: currentSegment.id,
+      activeAssetId: assetId,
+      mediaType: currentAsset?.type === 'video' ? 'video' : currentAsset?.type === 'image' ? 'image' : 'other',
+      compositorBoundAssetId: assetId,
+      compositorBoundSegmentId: frameSegmentId,
+      textureRebound: changed,
+      requestedTimelineSec: currentTime,
+      activeFrameTimestampSec: frame ? frame.timestamp / 1e6 : null,
+    });
+  }, [currentSegment, currentAsset, currentTime, frame, frameSegmentId]);
 
   // Pull the frame for the current playhead position out of the (already
   // decode-ahead-warmed) current segment's session.
@@ -698,6 +725,7 @@ export function useWebCodecsPreview({
           return pending.promise;
         }
         return pool.getFrameAt(segmentId, target).catch((err) => {
+          recordPreviewDiagnosticsError(err);
           if (generationRef.current === generation) {
             setError(err instanceof Error ? err.message : String(err));
           }
@@ -709,6 +737,10 @@ export function useWebCodecsPreview({
         setFrame(result);
         if (result) {
           setError(null);
+          if (previewDiagnosticsActive()) {
+            const diag = sessionCountersFor(segmentId, currentAsset!.url, null);
+            recordFramePresented(diag, latestTargetRef.current, result.timestamp / 1e6);
+          }
           // Only a REAL frame counts as "content caught up" for this segment —
           // a null result (nothing decoded yet) must leave frameSegmentId
           // pointing at whatever segment was last genuinely displayed, so

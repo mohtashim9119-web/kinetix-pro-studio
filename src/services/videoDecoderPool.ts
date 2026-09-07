@@ -79,6 +79,14 @@ import {
   effectiveFeedAheadSec,
   estimateFrameBytes,
 } from './previewBufferBudget';
+import {
+  previewDiagnosticsActive,
+  probeAndRecordConfigure,
+  recordChunkDecoded,
+  recordDecoderOutput,
+  recordDecoderState,
+  sessionCountersFor,
+} from './previewDiagnostics';
 
 export { WINDOW_AHEAD_SEC, MAX_CACHED_SESSIONS } from './previewBufferBudget';
 
@@ -235,6 +243,8 @@ interface DecodeSession {
    *  `turnRunning` is true; a call that arrives with nothing running becomes
    *  its own turn on `queueTail` instead of populating this. */
   pendingCall: PendingCall | null;
+  /** Field diagnostics — only populated when preview diagnostics are enabled. */
+  diag: ReturnType<typeof sessionCountersFor> | null;
 }
 
 /** Finds the chunk range [startIndex, endIndex] (inclusive) to feed a decoder
@@ -405,6 +415,7 @@ export class VideoDecoderPool {
       queueTail: Promise.resolve(),
       turnRunning: false,
       pendingCall: null,
+      diag: null,
     };
     session.ready = this.startSession(session, assetUrl, endSec, initialTargetSec).catch((err) => {
       // Don't poison the session cache with a failed startSession — allow a
@@ -452,6 +463,9 @@ export class VideoDecoderPool {
       demuxed.config.codedWidth ?? 0,
       demuxed.config.codedHeight ?? 0,
     );
+    if (previewDiagnosticsActive()) {
+      session.diag = sessionCountersFor(session.segmentId, assetUrl, session.sourceFps);
+    }
 
     const handle = this.acquireHandle(assetUrl);
     if (session.closed) {
@@ -462,7 +476,21 @@ export class VideoDecoderPool {
     handle.errored = false;
     session.handle = handle;
     try {
-      handle.decoder.configure(demuxed.config);
+      if (previewDiagnosticsActive()) {
+        await probeAndRecordConfigure(
+          session.segmentId,
+          assetUrl,
+          session.sourceFps,
+          demuxed.config,
+          () => {
+            handle.decoder.configure(demuxed.config);
+            if (session.diag) recordDecoderState(session.diag, handle.decoder.state);
+          },
+          () => handle.decoder.state,
+        );
+      } else {
+        handle.decoder.configure(demuxed.config);
+      }
     } catch (err) {
       session.handle = null;
       this.releaseHandle(handle);
@@ -550,7 +578,9 @@ export class VideoDecoderPool {
     if (handle && session.config) {
       try {
         handle.decoder.reset();
+        if (session.diag) recordDecoderState(session.diag, handle.decoder.state);
         handle.decoder.configure(session.config);
+        if (session.diag) recordDecoderState(session.diag, handle.decoder.state);
       } catch {
         // Surfaced via the decoder's own error callback if fatal; nothing
         // further to do here.
@@ -610,6 +640,7 @@ export class VideoDecoderPool {
       while (session.feedCursor <= session.fullEndIndex && session.chunks[session.feedCursor]!.timestamp <= boundaryUs) {
         const chunk = session.chunks[session.feedCursor]!;
         handle.decoder.decode(chunk);
+        if (session.diag) recordChunkDecoded(session.diag);
         session.feedFrontierUs = chunk.timestamp;
         session.feedCursor++;
         fed = true;
@@ -622,6 +653,7 @@ export class VideoDecoderPool {
         // always made rather than spinning.
         const chunk = session.chunks[session.feedCursor]!;
         handle.decoder.decode(chunk);
+        if (session.diag) recordChunkDecoded(session.diag);
         session.feedFrontierUs = chunk.timestamp;
         session.feedCursor++;
         if (session.feedCursor > session.fullEndIndex) session.fullyFed = true;
@@ -1203,12 +1235,14 @@ export class VideoDecoderPool {
     while (this.isOverByteBudget(session, 1)) {
       if (!this.makeRoomForFrame(session)) {
         this.recordDevDrop(session, timestampSec);
+        if (session.diag) recordDecoderOutput(session.diag, false, timestampSec);
         frame.close();
         return;
       }
     }
 
     this.recordDevAdmit(timestampSec);
+    if (session.diag) recordDecoderOutput(session.diag, true, timestampSec);
     session.frames.push({ frame, timestampSec });
     if (session.waiters.length > 0) {
       const stillWaiting: FrameWaiter[] = [];
