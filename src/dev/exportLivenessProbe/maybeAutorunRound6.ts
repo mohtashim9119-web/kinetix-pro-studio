@@ -6,7 +6,7 @@ import { persistLivenessReport } from './autorunFlag';
 import { runRound6Equivalence40s, runRound6CeilingSuite } from './runRound6';
 import { isTauri } from '../../services/tauriFfmpeg';
 
-const LOCK_PREFIX = 'ws3-r6-autorun-lock-v10-';
+const LOCK_PREFIX = 'ws3-r6-autorun-lock-v12-';
 const AUTORUN_URL = '/_spike/ws3-autorun.json';
 
 async function readPhase(): Promise<'equiv-40s' | 'ceiling' | 'all' | null> {

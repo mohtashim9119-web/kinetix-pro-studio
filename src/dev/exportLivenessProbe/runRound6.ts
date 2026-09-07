@@ -7,6 +7,7 @@ import { isTauri, TauriFfmpeg } from '../../services/tauriFfmpeg';
 import {
   exportProjectWebCodecs,
   lastWebCodecsRunDiagnostics,
+  setFrameContentDigestEnabled,
   type WebCodecsFfmpeg,
 } from '../../services/webcodecsExport/exportPipelineWebCodecs';
 import { sha256Hex, type EncodedOutputDigest, type ChunkFingerprint } from '../../services/webcodecsExport/annexbChunkCompare';
@@ -31,6 +32,10 @@ export interface Round6ExportRow {
   failureVia: string | null;
   failureMessage: string | null;
   digest: EncodedOutputDigest | null;
+  /** Rolling hash of the pixels handed to the encoder — the output-neutrality
+   *  gate that survives the encoder's run-to-run non-reproducibility. */
+  frameContentDigest: string | null;
+  frameContentDigestFrames: number | null;
 }
 
 function sliceProject(project: Project, segmentCount: number, timelineSec: number, fps = 30): Project {
@@ -136,6 +141,8 @@ async function runProductionExport(
     failureVia: gl?.failure?.via ?? null,
     failureMessage: gl?.failure ? gl.failure.message : failureMessage,
     digest,
+    frameContentDigest: gl?.frameContentDigest ?? null,
+    frameContentDigestFrames: gl?.frameContentDigestFrames ?? null,
   };
   persistLivenessReport(`round6-${id}`, row);
   return row;
@@ -143,6 +150,10 @@ async function runProductionExport(
 
 export async function runRound6Equivalence40s(): Promise<Round6ExportRow> {
   setWebCodecsExportToggle(true);
+  // The encoder is not bit-reproducible on this machine (Round 6 Part 1: two
+  // identical-code runs shared only 6.3% of annexb chunks), so the equivalence
+  // gate is the frame-content digest, not pieceSha256.
+  setFrameContentDigestEnabled(true);
   const base = await generateGlWatchdogFixture();
   const project = sliceProject(base.project, 100, 40);
   return runProductionExport(
@@ -155,6 +166,8 @@ export async function runRound6Equivalence40s(): Promise<Round6ExportRow> {
 
 export async function runRound6CeilingSuite(): Promise<Round6ExportRow[]> {
   setWebCodecsExportToggle(true);
+  // Ceiling runs measure wall-clock headroom — never pay the per-frame readback.
+  setFrameContentDigestEnabled(false);
   const rows: Round6ExportRow[] = [];
   const base = await generateGlWatchdogFixture();
   const baseline = buildBisectVariants().find((v) => v.id === 'baseline-30fps-1080p-4assets')!;

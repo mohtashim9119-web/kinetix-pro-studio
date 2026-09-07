@@ -140,6 +140,8 @@ function diagnostics(
     openCursors: 0,
     peakOpenCursors: 0,
     openImageBitmaps: 0,
+    frameContentDigest: null,
+    frameContentDigestFrames: null,
     ...overrides,
   };
 }

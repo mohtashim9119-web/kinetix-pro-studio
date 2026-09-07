@@ -51,6 +51,7 @@ import { acquireOffscreenGlContext } from '../gl/glContext';
 import { computeObjectCoverUvRect } from '../gl/uvRect';
 import { decodeSegmentFrames, decodeResourceCounts } from './sequentialDecode';
 import { DecodeCursorRegistry } from './decodeCursorLifetime';
+import { FrameContentDigest } from './frameContentDigest';
 import { GLTextRenderer, type FontConfig, type TextRenderGlobalConfig } from './textRenderer';
 import { ExportPhaseTracker, type ExportDemuxSplit } from './exportPhaseTracker';
 import { demuxCacheSize } from '../videoDemuxer';
@@ -110,6 +111,12 @@ export interface ExportWorkerInitMessage {
   /** Absolute index of `segments[0]` in the project — used to report
    *  project-level segmentIndex on phase tokens. Default 0. */
   startIndex?: number;
+  /** Diagnostic opt-in: fold a SHA-256 over the RGBA of every frame submitted
+   *  to the encoder, reported as `frameContentDigest` on the diagnostics
+   *  payload. This is the output-neutrality gate that survives the encoder's
+   *  non-reproducibility (see frameContentDigest.ts). Costs a per-frame
+   *  readback, so it defaults OFF and no production export sets it. */
+  frameContentDigest?: boolean;
 }
 
 export type ExportWorkerInboundMessage =
@@ -215,6 +222,8 @@ function buildDiagnostics(
     openCursors: resourceCounts.openCursors,
     peakOpenCursors: resourceCounts.peakOpenCursors,
     openImageBitmaps: resourceCounts.openImageBitmaps,
+    frameContentDigest: activeFrameDigest ? activeFrameDigest.digestHex() : null,
+    frameContentDigestFrames: activeFrameDigest ? activeFrameDigest.frameCount : null,
   };
 }
 
@@ -233,6 +242,8 @@ class EncodeStats {
 /** Active export state — readable on request-diagnostics before terminate. */
 let activeTracker: ExportPhaseTracker | null = null;
 let activeFailure: RunFailureState | null = null;
+/** Non-null only when the init message opted into frame-content hashing. */
+let activeFrameDigest: FrameContentDigest | null = null;
 let activePieceIndex = 0;
 let activeEncodeStats: EncodeStats | null = null;
 let activeRunState: RunState | null = null;
@@ -691,6 +702,7 @@ interface FrameLoopTickContext {
   frameDurUs?: number;
   isKeyFrame?: (i: number) => boolean;
   onFrameEncoded?: () => void;
+  frameDigest?: FrameContentDigest | null;
 }
 
 /** One frame-loop iteration — export and vitest probe share this finally block. */
@@ -772,6 +784,10 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
       duration: frameDurUs,
     });
     try {
+      // Hash the composited pixels BEFORE encode — this is the frame the
+      // encoder receives, so a digest match proves input equivalence even
+      // though the encoded bytes are not reproducible run to run.
+      if (ctx.frameDigest) await ctx.frameDigest.add(frame);
       encoder.encode(frame, { keyFrame: isKeyFrame(frameIndex) });
     } finally {
       frame.close();
@@ -795,6 +811,8 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   activePieceIndex = pieceIndex;
   const failState = new RunFailureState();
   activeFailure = failState;
+  const frameDigest = payload.frameContentDigest ? new FrameContentDigest() : null;
+  activeFrameDigest = frameDigest;
   const encodeStats = new EncodeStats();
   activeEncodeStats = encodeStats;
 
@@ -992,6 +1010,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
           fps,
           frameDurUs,
           isKeyFrame,
+          frameDigest,
           onFrameEncoded: () => {
             framesEmitted++;
             tracker.setFramesEncoded(framesEmitted);

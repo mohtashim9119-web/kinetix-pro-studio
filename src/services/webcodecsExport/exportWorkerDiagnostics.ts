@@ -73,6 +73,13 @@ export interface ExportWorkerDiagnosticsPayload {
   peakOpenCursors: number;
   /** Cached ImageBitmaps still open at terminal snapshot. */
   openImageBitmaps: number;
+  /** Diagnostic-only: rolling SHA-256 over the RGBA of every frame submitted
+   *  to the encoder, and how many frames it covers. Null unless the init
+   *  message opted in via `frameContentDigest` (see frameContentDigest.ts —
+   *  the encoded bytes are not reproducible run to run, so this is the gate
+   *  that can actually show two runs composited the same pixels). */
+  frameContentDigest: string | null;
+  frameContentDigestFrames: number | null;
 }
 
 export interface WatchdogOutputEvent {

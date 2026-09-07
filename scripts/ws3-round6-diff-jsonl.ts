@@ -34,6 +34,28 @@ function hashesToFingerprints(hashes: string[]): ChunkFingerprint[] {
   }));
 }
 
+const CHUNK_FPS = 30;
+
+function findPieceSha(rows: JsonlRow[], label?: string): string | null {
+  const pick = (r: JsonlRow): string | null => {
+    const d = (r.payload as { digest?: { pieceSha256?: string } } | null)?.digest;
+    return typeof d?.pieceSha256 === 'string' ? d.pieceSha256 : null;
+  };
+  if (label) {
+    const starts = rows.filter((r) => r.tag === 'round6-autorun-start');
+    for (let i = starts.length - 1; i >= 0; i--) {
+      const start = starts[i]!;
+      if ((start.payload as { label?: string }).label !== label) continue;
+      const row = rows.find((r) => r.tag === 'round6-equiv-40s-4assets' && r.ts >= start.ts);
+      if (row) return pick(row);
+    }
+    return null;
+  }
+  const all = rows.filter((r) => r.tag === 'round6-equiv-40s-4assets');
+  const last = all[all.length - 1];
+  return last ? pick(last) : null;
+}
+
 function findHashes(rows: JsonlRow[], label?: string): string[] | null {
   if (label) {
     const starts = rows.filter((r) => r.tag === 'round6-autorun-start');
@@ -65,15 +87,21 @@ function main(): void {
     process.exit(1);
   }
 
-  console.log(`A (${aLabel ?? 'latest'}): ${a.length} chunks`);
-  console.log(`B (${bLabel ?? 'prior'}): ${b.length} chunks`);
+  console.log(`A (${aLabel ?? 'latest'}): ${a.length} chunks  pieceSha256=${findPieceSha(rows, aLabel) ?? 'n/a'}`);
+  console.log(`B (${bLabel ?? 'prior'}): ${b.length} chunks  pieceSha256=${findPieceSha(rows, bLabel) ?? 'n/a'}`);
 
   const mismatch = firstChunkMismatch(hashesToFingerprints(a), hashesToFingerprints(b));
   if (!mismatch) {
     console.log('MATCH — byte-for-byte equivalent annexb chunk sequence');
     process.exit(0);
   }
+  // Chunks are 1:1 with encoded frames on this fixture, so the timeline instant
+  // is derived from the index; appendFileRaw carries no per-chunk timestamp.
+  const derivedSec = mismatch.index / CHUNK_FPS;
   console.log('MISMATCH at chunk', mismatch.index, 'timestamp', mismatch.timestamp);
+  console.log(`  derived timeline instant: ${derivedSec.toFixed(4)}s (index / ${CHUNK_FPS}fps)`);
+  console.log(`  A[${mismatch.index}] = ${a[mismatch.index] ?? '(absent)'}`);
+  console.log(`  B[${mismatch.index}] = ${b[mismatch.index] ?? '(absent)'}`);
   process.exit(2);
 }
 

@@ -646,6 +646,8 @@ export function driveGlRun(
         openCursors: 0,
         peakOpenCursors: 0,
         openImageBitmaps: 0,
+        frameContentDigest: null,
+        frameContentDigestFrames: null,
       };
     };
 
@@ -878,10 +880,23 @@ export function driveGlRun(
       headings: textConfig.headings,
       pieceIndex,
       startIndex,
+      frameContentDigest: frameContentDigestEnabled,
     };
     resetWatchdog();
     worker.postMessage(initMsg);
   });
+}
+
+/**
+ * Dev/diagnostic opt-in for per-frame content hashing in the export worker.
+ * OFF for every production export — the Round 6 harness turns it on to get an
+ * output-neutrality gate that the encoder's run-to-run non-reproducibility
+ * cannot invalidate. See frameContentDigest.ts.
+ */
+let frameContentDigestEnabled = false;
+
+export function setFrameContentDigestEnabled(on: boolean): void {
+  frameContentDigestEnabled = on;
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,6 +1310,8 @@ export async function exportProjectWebCodecs(
             openCursors: 0,
             peakOpenCursors: 0,
             openImageBitmaps: 0,
+            frameContentDigest: null,
+            frameContentDigestFrames: null,
           }),
           maxSilentMs: driveResult.error.liveness?.maxSilentMs ?? 0,
           appendDrainMs: 0,
