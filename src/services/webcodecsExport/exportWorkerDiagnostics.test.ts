@@ -93,3 +93,25 @@ describe('exportWorkerDiagnostics', () => {
     expect(formatFailureMessage(f)).toContain('59.967');
   });
 });
+
+// ---------------------------------------------------------------------------
+// WS3 Defect 3 — flush liveness baseline.
+// ---------------------------------------------------------------------------
+
+describe('encodedChunkCountAtFlushStart', () => {
+  it('makes "hung flush" and "slow flush" distinguishable from one payload', () => {
+    // The field payload's shape: lastPhase "encoder-flush", watchdog fired.
+    // Before this field, both rows below read identically.
+    const hung = { encodedChunkCount: 38061, encodedChunkCountAtFlushStart: 38061 };
+    const slow = { encodedChunkCount: 38063, encodedChunkCountAtFlushStart: 38061 };
+    const drained = (d: { encodedChunkCount: number; encodedChunkCountAtFlushStart: number | null }): number | null =>
+      d.encodedChunkCountAtFlushStart === null ? null : d.encodedChunkCount - d.encodedChunkCountAtFlushStart;
+    expect(drained(hung)).toBe(0);
+    expect(drained(slow)).toBe(2);
+  });
+
+  it('is null for a run that never reached the flush phase', () => {
+    const payload = { encodedChunkCount: 12, encodedChunkCountAtFlushStart: null };
+    expect(payload.encodedChunkCountAtFlushStart).toBeNull();
+  });
+});

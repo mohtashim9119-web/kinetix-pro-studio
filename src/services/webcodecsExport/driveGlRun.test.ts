@@ -135,6 +135,7 @@ function diagnostics(
     encodedChunkCount: 1,
     encodedKeyframeCount: 1,
     encodedChunkBytes: 8,
+    encodedChunkCountAtFlushStart: null,
     decodersCreated: 0,
     decodersOpen: 0,
     cursorsCreated: 0,

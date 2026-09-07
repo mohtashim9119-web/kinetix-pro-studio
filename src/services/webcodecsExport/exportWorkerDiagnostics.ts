@@ -88,6 +88,18 @@ export interface ExportWorkerDiagnosticsPayload {
   encodedChunkCount: number;
   encodedKeyframeCount: number;
   encodedChunkBytes: number;
+  /**
+   * WS3 Defect 3 — `encodeStats.chunkCount` AT THE MOMENT `encoder.flush()`
+   * was entered, or `null` if the run never reached the flush phase.
+   *
+   * Why this exists: a legitimately slow flush and a hung flush were
+   * indistinguishable in a payload. `encodedChunkCount` alone is a total, so a
+   * watchdog payload with `lastPhase: "encoder-flush"` could not say whether
+   * any chunk had drained SINCE the flush began. The difference
+   * `encodedChunkCount - encodedChunkCountAtFlushStart` answers exactly that,
+   * and costs one integer copy on the flush path.
+   */
+  encodedChunkCountAtFlushStart: number | null;
   /** VideoDecoder instances created this run (one per open decode cursor). */
   decodersCreated: number;
   /** VideoDecoder instances still open at terminal snapshot. */

@@ -257,6 +257,7 @@ function buildDiagnostics(
     encodedChunkCount: encodeStats.chunkCount,
     encodedKeyframeCount: encodeStats.keyframeCount,
     encodedChunkBytes: encodeStats.chunkBytes,
+    encodedChunkCountAtFlushStart: activeFlushStartChunkCount,
     decodersCreated: resourceCounts.decodersCreated,
     decodersOpen: resourceCounts.decodersOpen,
     cursorsCreated: resourceCounts.cursorsCreated,
@@ -287,6 +288,9 @@ let activeFailure: RunFailureState | null = null;
 let activeFrameDigest: FrameContentDigest | null = null;
 let activePieceIndex = 0;
 let activeEncodeStats: EncodeStats | null = null;
+/** WS3 Defect 3 — see `encodedChunkCountAtFlushStart` on the payload. Reset to
+ *  null at the start of every run; set exactly once, on entering the flush. */
+let activeFlushStartChunkCount: number | null = null;
 let activeRunState: RunState | null = null;
 
 // ---------------------------------------------------------------------------
@@ -984,6 +988,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
 
   const runState = new RunState(assets, tracker, startIndex, segments, config);
   activeRunState = runState;
+  activeFlushStartChunkCount = null;
   const first = segments[0]!;
   const last = segments[segments.length - 1]!;
   const runEndSec = last.startTime + last.duration;
@@ -1085,6 +1090,26 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       return;
     }
 
+    // WS3 Defect 3 — flush liveness.
+    //
+    // `VideoEncoder.flush()` DOES emit its remaining chunks through the same
+    // output callback registered in `createEncoder` above, and that callback
+    // posts a `chunk` message per chunk — which IS in the main thread's
+    // WATCHDOG_MS reset set. So the flush is not opaque in principle: a
+    // draining flush keeps the watchdog alive on its own.
+    //
+    // What was missing is a BASELINE. A watchdog payload reading
+    // `lastPhase: "encoder-flush"` could not distinguish "chunks are still
+    // draining, just slowly" from "nothing has come out since flush began",
+    // because `encodedChunkCount` is a whole-run total. Recording the count at
+    // flush entry makes the difference readable directly off the payload.
+    //
+    // Worst-case flush size is small and INDEPENDENT of Defect 1's cap: the
+    // frame loop refuses to submit while `encoder.encodeQueueSize >
+    // BACKPRESSURE_HIGH_WATER` (4), so at most ~5 frames plus the codec's own
+    // reorder depth are outstanding when flush is entered — never the run's
+    // whole frame count.
+    activeFlushStartChunkCount = encodeStats.chunkCount;
     tracker.enter('encoder-flush');
     await encoder.flush();
     postTerminal('done', framesEmitted, null, runState);
