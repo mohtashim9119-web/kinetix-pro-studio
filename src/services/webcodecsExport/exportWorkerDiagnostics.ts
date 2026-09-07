@@ -33,7 +33,43 @@ import type { ExportDemuxSplit } from './exportPhaseTracker';
  * plain array retains.
  */
 const DEV_PHASE_LOG_CAP = 8192;
-export const PHASE_LOG_CAP = import.meta.env.DEV ? DEV_PHASE_LOG_CAP : 128;
+
+/**
+ * WS3 Defect 5 — the PRODUCTION cap, raised from 128 to 1024.
+ *
+ * 128 was sized against "one long-lived phase at 4 pulses/s" (~32s of history)
+ * and is far too small for a real export, which also pushes an `enter()` per
+ * cold decode cursor. A 20-minute run evicted everything before anyone asked,
+ * which is exactly why the field payloads that motivated this round carry no
+ * attribution at all.
+ *
+ * WHY 1024, and why it cannot simply grow:
+ *
+ *  - It is sized to span ONE capped piece, which is now a bounded thing:
+ *    MAX_ENCODER_SESSION_FRAMES (1800 frames, 60s at 30fps) at PHASE_THROTTLE_MS
+ *    (250 ms) is ~240 pulses, plus one enter/leave pair per segment in the
+ *    piece (~20 segments on a 3s-average project, so ~40 more). Call it ~280
+ *    entries for a full piece; 1024 is ~3.6x that. A window that reaches back
+ *    across the whole piece is what `attributeSilentIntervals` needs, and
+ *    nothing is served by reaching further than the piece the gap happened in.
+ *  - The cost is NOT one log. `WebCodecsRunDiagnostics.glPieces` retains a
+ *    `phaseLog` copy per finished GL piece for the whole export, so the real
+ *    memory is `cap x pieces x entry`. An `ExportPhaseLogEntry` is 8 fields
+ *    including an interned phase string and an asset-id string reference —
+ *    ~150 bytes in V8. At 1024 that is ~150 KB per log, and a ~23-piece export
+ *    (Defect 1's plan for the 1268.7s field job) retains ~3.4 MB. At the DEV
+ *    cap of 8192 the same export would retain ~28 MB, which is why the DEV
+ *    value is not simply promoted to production.
+ *  - `pushPhaseLogEntry` evicts with `Array.shift()`, which is O(n) once at
+ *    cap. At 1024 entries and ~4 pushes/s that is negligible; at 8192+ it
+ *    starts to be real work on the export's own hot path.
+ *
+ * So the cap multiplies with the piece count, and the piece count now grows
+ * with timeline length — that product is the reason there is a ceiling here at
+ * all, and the reason it is 1024 rather than "as much as we can afford".
+ */
+const PROD_PHASE_LOG_CAP = 1024;
+export const PHASE_LOG_CAP = import.meta.env.DEV ? DEV_PHASE_LOG_CAP : PROD_PHASE_LOG_CAP;
 
 export interface ExportPhaseLogEntry {
   seq: number;
