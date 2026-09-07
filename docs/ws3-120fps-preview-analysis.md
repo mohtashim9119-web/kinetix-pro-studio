@@ -443,7 +443,7 @@ Export remains `exportFps ∈ {24, 30, 60}`; 120 fps sources auto-suggest **60**
 | `git diff --name-only main -- src-tauri/` | **empty** |
 | Cargo | **skipped** — empty `src-tauri/` diff |
 
-**Commits:** `f36df8c` (instrumentation + confirmation), `2d314f6` (regression red), `3500f58` (fix), `910ea7e` (fps coverage), `c367513` (docs).
+**Commits:** `f36df8c` (instrumentation + confirmation), `2d314f6` (regression red), `3500f58` (fix), `910ea7e` (fps coverage), `7acd3c6` (docs).
 
 ---
 
