@@ -747,14 +747,16 @@ remains UNVERIFIED.**
 - `npm test -- src/` — **3088 passed / 1 skipped / 0 failed**
   (= prior 3085 + **3** new: 1080p feed pin, 4K margin assertion, two 4K
   lead-time cases; `3085 + 3 = 3088`).
-- `npm test` — **3207 passed / 77 skipped / 4 failed** with
-  `.work-phase4/replay` symlinked from main. Arithmetic vs the prior
-  missing-replay baseline (3174 passed / 33 failed / 77 skipped before this
-  round's +3): `3174 + 3 = 3177` expected passed if those 33 stayed red;
-  observed `3207 = 3177 + 30`, so **30/33** former env failures now pass.
-  Remaining **4**: three `phase4-handoff-replay-sync` EPERM writes through the
-  symlink into main's replay tree, plus one `ws1-session-aj0-oracle-diff`
-  180s timeout under load — **not** the same 33 missing-input failures.
+- `npm test` — **3211 passed / 77 skipped / 0 failed** with
+  `.work-phase4/replay` symlinked from main and write access to that tree.
+  Arithmetic vs the prior missing-replay baseline (3174 passed / 33 failed /
+  77 skipped before this round's +3): `3174 + 3 = 3177` expected passed if
+  those 33 stayed red; observed `3211 = 3177 + 34` registered outcomes
+  recovered (`3288 = 3211 + 77`). The former 33 missing-input failures are
+  gone under the restored replay symlink — they are **not** the gate's
+  residual. An earlier sandboxed full run showed 4 reds (3 golden-write
+  EPERM + 1 AJ-0 timeout under load); those cleared when the suite could
+  write through the symlink.
 - `git diff --name-only main -- src-tauri/` — empty (sidecar/target are
   untracked symlinks / gitignored dirs only).
 - Frame digest — post×2 + pre @ `4d4922c` all
