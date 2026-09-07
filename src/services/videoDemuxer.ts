@@ -180,3 +180,29 @@ export function getOrCreateDemux(url: string): Promise<DemuxedVideo> {
 export function clearDemuxCache(): void {
   demuxCache.clear();
 }
+
+/**
+ * Drops ONE url's cache entry, returning true if there was one to drop.
+ *
+ * WS3 Defect 6. `decodeSegmentFrames` deliberately released nothing on exit —
+ * its own comment says the cache "has no ref-counted release API (only a global
+ * clearDemuxCache, which would be wrong to call here — it's a shared,
+ * long-lived cache also used by preview)". That reasoning is correct about
+ * `clearDemuxCache` and about the MAIN THREAD, and it is why the release below
+ * is per-url and why the caller, not this module, decides when an asset is
+ * finished.
+ *
+ * The realm argument that makes a caller-driven release safe: `demuxCache` is
+ * MODULE state, and the export worker (`exportWorker.ts`) is a dedicated Worker
+ * with its own module instance of this file. Preview (`videoDecoderPool.ts`,
+ * main thread) holds a different Map entirely. So an export releasing a url it
+ * has finished with cannot evict anything preview is using, and cannot be
+ * evicted by preview either.
+ *
+ * A released url is not poisoned: `getOrCreateDemux` re-demuxes on the next
+ * call. So a caller that releases too eagerly pays a re-fetch/re-parse, never a
+ * failure — release is a memory decision, not a correctness one.
+ */
+export function releaseDemux(url: string): boolean {
+  return demuxCache.delete(url);
+}

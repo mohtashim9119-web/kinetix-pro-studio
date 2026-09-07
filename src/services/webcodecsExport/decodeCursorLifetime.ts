@@ -64,6 +64,38 @@ export function cursorLastNeededSec(
   return end + resolved.duration / 2;
 }
 
+/**
+ * WS3 Defects 6/7 — per-ASSET last-needed time, `assetId -> seconds`.
+ *
+ * Cursor lifetime is per-SEGMENT, which is right for a decoder but wrong for
+ * everything keyed by ASSET: the demux cache entry (`videoDemuxer.ts`) and the
+ * decoded `ImageBitmap` both outlive any one segment and were held for the
+ * whole run.
+ *
+ * An asset is finished once the playhead has passed `cursorLastNeededSec` for
+ * EVERY segment in the run that references it — hence the max. Taking the max
+ * is what makes an asset reused by a later segment safe: its release time is
+ * pushed out to that later segment's own last-needed time, so a "revisit" is
+ * never a reopen. Segments with no `assetId` contribute nothing.
+ *
+ * Pure. Same monotone-playhead assumption as `cursorLastNeededSec`, and the
+ * same exclusive-end semantics, so this inherits its transition-tail handling
+ * rather than restating it.
+ */
+export function assetLastNeededSecByAsset(
+  segments: readonly VideoSegment[],
+  config: ProjectEffectConfig,
+): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const seg of segments) {
+    if (!seg.assetId) continue;
+    const lastNeeded = cursorLastNeededSec(seg, segments, config);
+    const prev = out.get(seg.assetId);
+    if (prev === undefined || lastNeeded > prev) out.set(seg.assetId, lastNeeded);
+  }
+  return out;
+}
+
 export function shouldReleaseDecodeCursor(
   segment: VideoSegment,
   currentTime: number,

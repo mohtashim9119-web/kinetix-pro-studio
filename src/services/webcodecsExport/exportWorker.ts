@@ -50,11 +50,11 @@ import { deriveCompositeParams, deriveSlotPlan, type ProjectEffectConfig } from 
 import { acquireOffscreenGlContext, GlContextLostError } from '../gl/glContext';
 import { computeObjectCoverUvRect } from '../gl/uvRect';
 import { decodeSegmentFrames, decodeResourceCounts } from './sequentialDecode';
-import { DecodeCursorRegistry } from './decodeCursorLifetime';
+import { DecodeCursorRegistry, assetLastNeededSecByAsset } from './decodeCursorLifetime';
 import { FrameContentDigest } from './frameContentDigest';
 import { GLTextRenderer, type FontConfig, type TextRenderGlobalConfig } from './textRenderer';
 import { ExportPhaseTracker, type ExportDemuxSplit } from './exportPhaseTracker';
-import { demuxCacheSize } from '../videoDemuxer';
+import { demuxCacheSize, releaseDemux } from '../videoDemuxer';
 import {
   failureFromUnknown,
   type ExportFailureIdentity,
@@ -463,6 +463,31 @@ interface SlotSource {
 class RunState {
   private cursors = new DecodeCursorRegistry<DecodeCursor>();
   private imageBitmaps = new Map<string, ImageBitmap>();
+  /**
+   * WS3 Defects 6 and 7 — per-ASSET last-needed time, in timeline seconds.
+   *
+   * Cursor release (`DecodeCursorRegistry.releaseStale`) is per-SEGMENT, and
+   * that is correct for a decoder, but an asset outlives its segments: the
+   * demux cache entry and the decoded ImageBitmap are both keyed by asset and
+   * were released only in `disposeAll`, i.e. at the very end of the run. On a
+   * 1268.7s single-piece export with many assets that is the whole run's worth
+   * of parsed MP4 sample tables and full-resolution bitmaps held at once.
+   *
+   * The release rule is the same "the playhead has definitively passed it"
+   * reasoning the decode-cursor fix uses, lifted one level: an asset is
+   * finished when the playhead has passed `cursorLastNeededSec` for EVERY
+   * segment in this run that references it (the max), which is exclusive-end
+   * and already accounts for an outgoing centered GL transition's tail. Export's
+   * playhead is strictly monotone, so "passed" is final.
+   *
+   * Because the max is taken over every referencing segment, an asset reused by
+   * a later segment is not released early; and by the time the max has passed,
+   * `releaseStale` has already closed every cursor that could still read it in
+   * the SAME call. Cursor lifetime is not touched at all, so the peak-open-
+   * cursors invariant (2) is unaffected.
+   */
+  private assetLastNeededSec: Map<string, number>;
+  private releasedAssets = new Set<string>();
   private assetById: Map<string, Asset>;
   private tracker: ExportPhaseTracker;
   private startIndex: number;
@@ -484,6 +509,7 @@ class RunState {
     this.segments = segments;
     this.config = config;
     this.decodersCreatedAtStart = decodeResourceCounts().decodersCreated;
+    this.assetLastNeededSec = assetLastNeededSecByAsset(segments, config);
   }
 
   resourceSnapshot(): {
@@ -509,6 +535,33 @@ class RunState {
    *  is exclusive-end, matching deriveSlotPlan, so a later frame cannot read it. */
   async releaseStaleCursors(currentTime: number): Promise<void> {
     await this.cursors.releaseStale(currentTime, this.segments, this.config, closeCursor);
+    this.releaseStaleAssets(currentTime);
+  }
+
+  /** WS3 Defects 6/7 — see `assetLastNeededSec`. Runs after cursor release in
+   *  the same tick, so nothing that could still read the asset is open. */
+  private releaseStaleAssets(currentTime: number): void {
+    for (const [assetId, lastNeeded] of this.assetLastNeededSec) {
+      if (currentTime < lastNeeded) continue;
+      if (this.releasedAssets.has(assetId)) continue;
+      this.releasedAssets.add(assetId);
+      const asset = this.assetById.get(assetId);
+      if (!asset) continue;
+      if (asset.type === 'video') {
+        releaseDemux(asset.url);
+      } else if (asset.type === 'image') {
+        const bmp = this.imageBitmaps.get(assetId);
+        if (bmp) {
+          bmp.close();
+          this.imageBitmaps.delete(assetId);
+        }
+      }
+    }
+  }
+
+  /** Vitest-only: which assets this run has already released. */
+  releasedAssetIds(): string[] {
+    return [...this.releasedAssets];
   }
 
   /** Vitest-only — lazy open without demux/decode, mirroring resolveSlotSource's first touch. */

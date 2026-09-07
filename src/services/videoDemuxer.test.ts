@@ -38,7 +38,7 @@ vi.mock('mp4box', () => ({
   Endianness: { BIG_ENDIAN: 0 },
 }));
 
-import { getOrCreateDemux, clearDemuxCache } from './videoDemuxer';
+import { getOrCreateDemux, clearDemuxCache, releaseDemux, demuxCacheHas, demuxCacheSize } from './videoDemuxer';
 import { createFile } from 'mp4box';
 const createFileMock = createFile as unknown as ReturnType<typeof vi.fn>;
 
@@ -167,5 +167,54 @@ describe('getOrCreateDemux', () => {
     void getOrCreateDemux('blob:no-track');
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
     await awaitOwnMockFile(); // a fresh createFile() call proves the URL wasn't poisoned
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS3 Defect 6 — per-url release.
+// ---------------------------------------------------------------------------
+
+describe('releaseDemux', () => {
+  afterEach(() => {
+    clearDemuxCache();
+  });
+
+  it('drops one url and leaves the rest of the cache alone', async () => {
+    // The property that matters: release is SURGICAL. `clearDemuxCache` was
+    // the only eviction API, and calling it from a decode path would have
+    // evicted every other consumer's entry too — which is exactly why
+    // sequentialDecode released nothing at all.
+    const a = getOrCreateDemux('blob:a');
+    const b = getOrCreateDemux('blob:b');
+    void a.catch(() => undefined);
+    void b.catch(() => undefined);
+    expect(demuxCacheSize()).toBe(2);
+    expect(demuxCacheHas('blob:a')).toBe(true);
+
+    expect(releaseDemux('blob:a')).toBe(true);
+
+    expect(demuxCacheHas('blob:a')).toBe(false);
+    expect(demuxCacheHas('blob:b')).toBe(true);
+    expect(demuxCacheSize()).toBe(1);
+  });
+
+  it('reports false for a url that was never cached, and is idempotent', () => {
+    expect(releaseDemux('blob:never')).toBe(false);
+    const p = getOrCreateDemux('blob:c');
+    void p.catch(() => undefined);
+    expect(releaseDemux('blob:c')).toBe(true);
+    expect(releaseDemux('blob:c')).toBe(false);
+  });
+
+  it('does not poison the url — a later call re-demuxes rather than failing', () => {
+    const first = getOrCreateDemux('blob:d');
+    void first.catch(() => undefined);
+    releaseDemux('blob:d');
+    const second = getOrCreateDemux('blob:d');
+    void second.catch(() => undefined);
+    // A fresh promise, not the released one: release is a memory decision, not
+    // a correctness one.
+    expect(second).not.toBe(first);
+    expect(demuxCacheHas('blob:d')).toBe(true);
   });
 });
