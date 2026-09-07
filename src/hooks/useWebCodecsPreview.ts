@@ -61,7 +61,22 @@ interface UseWebCodecsPreviewParams {
   assets: Asset[];
   currentSegment: VideoSegment | undefined;
   currentTime: number;
+  /** Master gate (capability / dev toggle). Combined with `!isExporting`
+   *  before any decode work runs — see `isWebCodecsPreviewEnabled`. */
   enabled: boolean;
+  /** When true, preview decode is torn down so export owns GPU/RAM budget. */
+  isExporting: boolean;
+}
+
+/** Pure gate used by the hook and PreviewStage — exported for unit tests. */
+export function isWebCodecsPreviewEnabled(enabled: boolean, isExporting: boolean): boolean {
+  return enabled && !isExporting;
+}
+
+/** Pool teardown the hook runs when preview is disabled (export start, etc.). */
+export function releaseAllPreviewSessions(pool: VideoDecoderPool): void {
+  pool.setProtectedIds([]);
+  for (const id of pool.activeSegmentIds()) pool.releaseSession(id);
 }
 
 export interface UseWebCodecsPreviewResult {
@@ -474,7 +489,9 @@ export function useWebCodecsPreview({
   currentSegment,
   currentTime,
   enabled,
+  isExporting,
 }: UseWebCodecsPreviewParams): UseWebCodecsPreviewResult {
+  const previewActive = isWebCodecsPreviewEnabled(enabled, isExporting);
   const poolRef = useRef<VideoDecoderPool | null>(null);
   if (!poolRef.current) poolRef.current = new VideoDecoderPool();
 
@@ -541,14 +558,13 @@ export function useWebCodecsPreview({
   // never the eviction target.
   useEffect(() => {
     const pool = poolRef.current!;
-    if (!enabled) {
-      pool.setProtectedIds([]);
-      for (const id of pool.activeSegmentIds()) pool.releaseSession(id);
+    if (!previewActive) {
+      releaseAllPreviewSessions(pool);
       return;
     }
     const keep = computeKeepSet(currentSegment, isVideoSegment, nextSegment, nextIsVideo);
     pool.setProtectedIds(keep);
-  }, [enabled, currentSegment, isVideoSegment, nextSegment, nextIsVideo]);
+  }, [previewActive, currentSegment, isVideoSegment, nextSegment, nextIsVideo]);
 
   // Decode-ahead (Phase 2, one segment ahead — the direct generalization of
   // the legacy dual <video>-slot ping-pong): ensure a session for the
@@ -558,7 +574,7 @@ export function useWebCodecsPreview({
   // (not segment start) so a cold scrub landing mid-segment doesn't decode
   // from the wrong place first — see the file header note.
   useEffect(() => {
-    if (!enabled) return;
+    if (!previewActive) return;
     const pool = poolRef.current!;
 
     if (currentSegment && isVideoSegment && currentAsset) {
@@ -598,7 +614,7 @@ export function useWebCodecsPreview({
       };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, currentSegment, isVideoSegment, currentAsset, nextSegment, nextIsVideo, nextAsset]);
+  }, [previewActive, currentSegment, isVideoSegment, currentAsset, nextSegment, nextIsVideo, nextAsset]);
 
   // Pull the frame for the current playhead position out of the (already
   // decode-ahead-warmed) current segment's session.
@@ -615,7 +631,7 @@ export function useWebCodecsPreview({
   // per segment, and every intermediate scrub position in between gets
   // skipped rather than separately decoded and discarded.
   useEffect(() => {
-    if (!enabled || !currentSegment || !isVideoSegment || !currentAsset) {
+    if (!previewActive || !currentSegment || !isVideoSegment || !currentAsset) {
       // Bump the generation even on this inert path — an in-flight chase
       // loop from a still-resolving previous segment must recognize it's
       // stale and stop, not paint a frame for a segment we've since left.
@@ -702,7 +718,7 @@ export function useWebCodecsPreview({
         }
       },
     );
-  }, [enabled, currentSegment, isVideoSegment, currentAsset, currentTime]);
+  }, [previewActive, currentSegment, isVideoSegment, currentAsset, currentTime]);
 
   // Dispose the pool (closes every session and buffered VideoFrame) on unmount.
   //
@@ -741,10 +757,10 @@ export function useWebCodecsPreview({
   }, []);
 
   return {
-    frame: enabled && isVideoSegment ? frame : null,
-    isVideoSegment: enabled && isVideoSegment,
+    frame: previewActive && isVideoSegment ? frame : null,
+    isVideoSegment: previewActive && isVideoSegment,
     error,
-    frameSegmentId: enabled && isVideoSegment ? frameSegmentId : null,
+    frameSegmentId: previewActive && isVideoSegment ? frameSegmentId : null,
     pool: poolRef.current!,
   };
 }

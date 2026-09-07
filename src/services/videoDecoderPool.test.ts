@@ -1676,6 +1676,49 @@ describe('VideoDecoderPool — 4K feed horizon lead time', () => {
   });
 });
 
+// --- WS3 4K backward scrub (byte-bound retain collapse) -----------------------
+
+describe('VideoDecoderPool — 4K backward scrub retain collapse', () => {
+  const FRAME_DUR_120 = 1 / 120;
+
+  async function warm4k120(pool: VideoDecoderPool, targetSec: number): Promise<MockVideoDecoder> {
+    const demuxed = makeCfrDemuxed(120, 600, 3840, 2160);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+    await pool.ensureSession('seg', 'blob:4k', 0, 5, targetSec);
+    await pool.getFrameAt('seg', targetSec);
+    return MockVideoDecoder.instances[0]!;
+  }
+
+  it('a one-frame backward nudge at 4K120 re-seeks because retain is one frame', async () => {
+    const pool = new VideoDecoderPool();
+    const decoder = await warm4k120(pool, 0.4);
+    const resetsBefore = decoder.resetCalls;
+    const decodedBefore = decoder.totalDecodedCount;
+
+    const nudged = await pool.getFrameAt('seg', 0.4 - FRAME_DUR_120);
+
+    expect(decoder.resetCalls).toBeGreaterThan(resetsBefore);
+    expect(decoder.totalDecodedCount).toBeGreaterThan(decodedBefore);
+    expect(nudged).not.toBeNull();
+    pool.dispose();
+  });
+
+  it('a backward scrub beyond the 4K retain tail re-seeks and re-decodes every intermediate frame', async () => {
+    const pool = new VideoDecoderPool();
+    const decoder = await warm4k120(pool, 0.4);
+    const resetsBefore = decoder.resetCalls;
+    const decodedBefore = decoder.totalDecodedCount;
+
+    const back = await pool.getFrameAt('seg', 0.1);
+
+    expect(decoder.resetCalls).toBeGreaterThan(resetsBefore);
+    expect(decoder.totalDecodedCount).toBeGreaterThan(decodedBefore);
+    expect(back).not.toBeNull();
+    expect(back!.timestamp / 1e6).toBeLessThanOrEqual(0.1 + 1e-6);
+    pool.dispose();
+  });
+});
+
 // --- WS3 multi-fps preview buffer coverage (Step 4) --------------------------
 
 describe('VideoDecoderPool — multi-fps preview buffer coverage (WS3 Step 4)', () => {

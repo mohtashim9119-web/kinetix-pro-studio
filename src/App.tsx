@@ -6334,6 +6334,7 @@ export default function App() {
                   globalOverlayConfig={project.globalOverlayConfig}
                   assets={project.assets}
                   isPlaying={isPlaying}
+                  isExporting={exportState.isExporting}
                   isResizingRef={isResizingRef}
                   nativeWidth={previewNativeDimensions.width}
                   nativeHeight={previewNativeDimensions.height}

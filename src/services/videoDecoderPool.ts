@@ -1137,6 +1137,11 @@ export class VideoDecoderPool {
     return true;
   }
 
+  /** Dev/test — total bytes held in live session frame buffers. */
+  getBufferedBytes(): number {
+    return this.totalBufferedBytes();
+  }
+
   /** Dev-only — returns null outside DEV builds. */
   getDevDropStats(): PreviewDropStats | null {
     return this.devDropStats;

@@ -233,6 +233,8 @@ interface Props {
   globalOverlayConfig: GlobalOverlayConfig;
   assets: Asset[];
   isPlaying: boolean;
+  /** When true, preview decode is torn down so export owns memory budget. */
+  isExporting: boolean;
   isResizingRef: React.RefObject<boolean>;
   /** Backing-buffer dimensions (NOT the CSS display size) — the project's
    *  native resolution, derived by App.tsx via resolutionConfig.ts's
@@ -345,6 +347,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
   globalOverlayConfig,
   assets,
   isPlaying,
+  isExporting,
   isResizingRef,
   nativeWidth,
   nativeHeight,
@@ -538,6 +541,7 @@ export const PreviewStage = forwardRef<PreviewStageHandle, Props>(function Previ
     currentSegment,
     currentTime,
     enabled: useWebCodecsPath,
+    isExporting,
   });
 
   // Phase 5 cutover — the useTransitionPreview call that stood here is gone,

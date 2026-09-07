@@ -70,6 +70,16 @@ export function effectiveFeedAheadSec(codedWidth: number, codedHeight: number): 
   );
 }
 
+/** Trailing retention that fits inside the admitted window after the feed
+ *  horizon is reserved. When the byte ceiling binds, this is much smaller
+ *  than RETAIN_BEHIND_SEC — eviction still *targets* 0.5 s, but the buffer
+ *  cannot hold more than admitted − feedAhead. */
+export function effectiveRetainBehindSec(codedWidth: number, codedHeight: number): number {
+  const admitted = admittedWindowSec(codedWidth, codedHeight);
+  const feed = effectiveFeedAheadSec(codedWidth, codedHeight);
+  return Math.min(RETAIN_BEHIND_SEC, Math.max(0, admitted - feed));
+}
+
 export interface PreviewBufferBudgetRow {
   resolution: string;
   fps: number;

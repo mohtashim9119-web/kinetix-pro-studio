@@ -7,6 +7,7 @@ import {
   DESIGN_MAX_SOURCE_FPS,
   admittedWindowSec,
   effectiveFeedAheadSec,
+  effectiveRetainBehindSec,
   previewBufferBudgetTable,
 } from './previewBufferBudget';
 
@@ -53,5 +54,17 @@ describe('previewBufferBudget', () => {
     // The old admitted − RETAIN formula collapsed to ~0.033 s; this must not.
     expect(ahead).toBeGreaterThan(RETAIN_BEHIND_SEC * 0.5);
     expect(ahead).toBeGreaterThan(1 / 30);
+  });
+
+  it('4K effective retain-behind is one design-max frame, same at 30/60/120', () => {
+    const expected = FEED_BYTE_BUDGET_MARGIN_SEC;
+    for (const fps of [30, 60, 120]) {
+      const retain = effectiveRetainBehindSec(3840, 2160);
+      expect(retain).toBeCloseTo(expected, 12);
+      expect(retain).toBeCloseTo(1 / DESIGN_MAX_SOURCE_FPS, 12);
+      expect(retain).toBeLessThan(RETAIN_BEHIND_SEC);
+      const row = previewBufferBudgetTable().find((r) => r.resolution === '4K' && r.fps === fps)!;
+      expect(row.admittedSec - row.feedWindowSec).toBeCloseTo(expected, 12);
+    }
   });
 });
