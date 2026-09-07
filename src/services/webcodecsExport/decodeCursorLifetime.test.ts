@@ -1,6 +1,3 @@
-import { readFileSync } from 'fs';
-import { dirname, resolve } from 'path';
-import { fileURLToPath } from 'url';
 import { describe, it, expect } from 'vitest';
 import { AnimationType, TransitionType, type VideoSegment } from '../../types';
 import { deriveCompositeParams, deriveSlotPlan, type ProjectEffectConfig } from '../gl/compositeParams';
@@ -10,8 +7,7 @@ import {
   cursorLastNeededSec,
   shouldReleaseDecodeCursor,
 } from './decodeCursorLifetime';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
+import { probeFrameLoopCursorPeak } from './exportWorker';
 
 function makeSegment(overrides: Partial<VideoSegment> & { id: string; startTime: number }): VideoSegment {
   return {
@@ -100,8 +96,11 @@ describe('decode-cursor accumulation (the test that stops the leak returning)', 
     expect(leaked.openAtEnd).toBe(8);
   });
 
-  it('exportWorker frame loop still calls releaseStaleCursors', () => {
-    const src = readFileSync(resolve(HERE, 'exportWorker.ts'), 'utf8');
-    expect(src).toContain('await runState.releaseStaleCursors(currentTime)');
+  it('exportWorker frame loop keeps peakOpenCursors <= 2 on a synthetic multi-segment run', async () => {
+    const segments = chain(8, 1);
+    const result = await probeFrameLoopCursorPeak(segments, none, 30);
+    expect(result.cursorsCreated).toBe(8);
+    expect(result.peakOpenCursors).toBeLessThanOrEqual(MAX_SIMULTANEOUS_OPEN_DECODE_CURSORS);
+    expect(result.openAtEnd).toBeLessThanOrEqual(1);
   });
 });

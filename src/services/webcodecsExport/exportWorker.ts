@@ -305,6 +305,11 @@ interface DecodeCursor {
   exhausted: boolean;
 }
 
+function stubDecodeCursor(): DecodeCursor {
+  async function* emptyGen(): AsyncGenerator<VideoFrame> {}
+  return { gen: emptyGen(), pending: null, current: null, exhausted: true };
+}
+
 function openCursor(
   segment: VideoSegment,
   assetUrl: string,
@@ -448,6 +453,13 @@ class RunState {
    *  is exclusive-end, matching deriveSlotPlan, so a later frame cannot read it. */
   async releaseStaleCursors(currentTime: number): Promise<void> {
     await this.cursors.releaseStale(currentTime, this.segments, this.config, closeCursor);
+  }
+
+  /** Vitest-only — lazy open without demux/decode, mirroring resolveSlotSource's first touch. */
+  stubOpenForSegment(seg: VideoSegment): void {
+    if (!this.cursors.get(seg.id)) {
+      this.cursors.open(seg.id, stubDecodeCursor());
+    }
   }
 
   private projectSegmentIndex(seg: VideoSegment): number {
@@ -660,6 +672,120 @@ function resolveTextSegment(
   return transition.progress < 0.5 ? plan.a : plan.b;
 }
 
+interface FrameLoopTickContext {
+  mode: 'export' | 'probe';
+  runState: RunState;
+  segments: readonly VideoSegment[];
+  config: ProjectEffectConfig;
+  currentTime: number;
+  compositor?: GlCompositor;
+  textRenderer?: GLTextRenderer;
+  textGlobalConfig?: TextRenderGlobalConfig;
+  width?: number;
+  height?: number;
+  encoder?: VideoEncoder;
+  canvas?: OffscreenCanvas;
+  failState?: RunFailureState;
+  frameIndex?: number;
+  fps?: number;
+  frameDurUs?: number;
+  isKeyFrame?: (i: number) => boolean;
+  onFrameEncoded?: () => void;
+}
+
+/** One frame-loop iteration — export and vitest probe share this finally block. */
+async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
+  const { runState, segments, config, currentTime } = ctx;
+  try {
+    const rawParams = deriveCompositeParams(segments, currentTime, config);
+    const plan = deriveSlotPlan(segments, currentTime, rawParams.transition, config);
+    if (!plan.a) return false;
+
+    if (ctx.mode === 'probe') {
+      runState.stubOpenForSegment(plan.a);
+      if (plan.b) runState.stubOpenForSegment(plan.b);
+      return true;
+    }
+
+    const {
+      compositor,
+      textRenderer,
+      textGlobalConfig,
+      width,
+      height,
+      encoder,
+      canvas,
+      failState,
+      frameIndex,
+      fps,
+      frameDurUs,
+      isKeyFrame,
+      onFrameEncoded,
+    } = ctx;
+    if (
+      !compositor ||
+      !textRenderer ||
+      !textGlobalConfig ||
+      width === undefined ||
+      height === undefined ||
+      !encoder ||
+      !canvas ||
+      !failState ||
+      frameIndex === undefined ||
+      fps === undefined ||
+      frameDurUs === undefined ||
+      !isKeyFrame
+    ) {
+      return false;
+    }
+
+    const aSrc = await runState.resolveSlotSource(plan.a, currentTime);
+    if (!aSrc) return false;
+    uploadSlot(compositor, 'a', aSrc, width, height);
+
+    if (plan.b) {
+      const bSrc = await runState.resolveSlotSource(plan.b, currentTime);
+      if (!bSrc) return false;
+      uploadSlot(compositor, 'b', bSrc, width, height);
+    }
+
+    compositor.renderFrame(rawParams);
+
+    const textSegment = resolveTextSegment(plan, rawParams.transition);
+    textRenderer.renderFrame({
+      segment: textSegment,
+      global: textGlobalConfig,
+      absoluteTime: currentTime,
+      frameWidth: width,
+      frameHeight: height,
+    });
+
+    if (encoder.encodeQueueSize > BACKPRESSURE_HIGH_WATER) {
+      const waitStarted = performance.now();
+      await waitForDequeue(encoder);
+      activeTracker?.add('wait-dequeue', performance.now() - waitStarted);
+    }
+    if (failState.failure) throw failState.failure;
+
+    const frame = new VideoFrame(canvas, {
+      timestamp: Math.round((frameIndex * 1_000_000) / fps),
+      duration: frameDurUs,
+    });
+    try {
+      encoder.encode(frame, { keyFrame: isKeyFrame(frameIndex) });
+    } finally {
+      frame.close();
+    }
+    onFrameEncoded?.();
+    if (frameIndex % 5 === 0) {
+      postOut({ type: 'queue-sample', frameIndex, size: encoder.encodeQueueSize });
+    }
+    return true;
+  } finally {
+    await runState.releaseStaleCursors(currentTime);
+  }
+}
+
 async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   const { runId, segments, assets, config, width, height, fps } = payload;
   const pieceIndex = payload.pieceIndex ?? 0;
@@ -848,71 +974,31 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       // exactly as well as a whole-project index would.
       const currentTime = runStartSec + i / fps;
 
-      try {
-      const rawParams = deriveCompositeParams(segments, currentTime, config);
-      const plan = deriveSlotPlan(segments, currentTime, rawParams.transition, config);
-
-      if (!plan.a) continue; // outside every segment this tick — should not happen within [runStartSec, runEndSec), defensive only
-
-      const aSrc = await runState.resolveSlotSource(plan.a, currentTime);
-      if (!aSrc) continue; // decode not ready yet this tick
-      uploadSlot(compositor, 'a', aSrc, width, height);
-
-      if (plan.b) {
-        const bSrc = await runState.resolveSlotSource(plan.b, currentTime);
-        if (!bSrc) continue;
-        uploadSlot(compositor, 'b', bSrc, width, height);
-      }
-
-      compositor.renderFrame(rawParams);
-
-      // Step 6 text pass — after GlCompositor's grade pass, before the
-      // VideoFrame is constructed from this same canvas (plan §4.1 item 2 /
-      // §4.3 point 2: text composites on top of video+grade+transition).
-      // See resolveTextSegment's own doc comment for which segment's text
-      // shows during an active transition.
-      const textSegment = resolveTextSegment(plan, rawParams.transition);
-      textRenderer.renderFrame({
-        segment: textSegment,
-        global: textGlobalConfig,
-        absoluteTime: currentTime,
-        frameWidth: width,
-        frameHeight: height,
-      });
-
-      // Backpressure (plan §4.1, required): GL compositing is fast relative
-      // to hardware encode; without this, in-flight VideoFrames would queue
-      // unboundedly. Checked AFTER compositing (so the GL work for this tick
-      // is already done) and BEFORE constructing/encoding this tick's frame.
-      if (encoder.encodeQueueSize > BACKPRESSURE_HIGH_WATER) {
-        const waitStarted = performance.now();
-        await waitForDequeue(encoder);
-        tracker.add('wait-dequeue', performance.now() - waitStarted);
-      }
-      if (failState.failure) throw failState.failure;
-
-      const frame = new VideoFrame(canvas, {
-        timestamp: Math.round((i * 1_000_000) / fps),
-        duration: frameDurUs,
-      });
-      try {
-        encoder.encode(frame, { keyFrame: isKeyFrame(i) });
-      } finally {
-        // encode() snapshots/refs the frame synchronously per spec — safe
-        // (and required, to bound worker memory) to close immediately after.
-        frame.close();
-      }
-      framesEmitted++;
-      tracker.setFramesEncoded(framesEmitted);
-      tracker.pulse();
-      if (i % 5 === 0) postOut({ type: 'queue-sample', frameIndex: i, size: encoder.encodeQueueSize });
-      } finally {
-        // Release after this tick's slot reads (or an early continue / throw)
-        // so a transition pair stays live through compositing, then the
-        // outgoing cursor closes once currentTime has passed its lastNeeded.
-        // cancel / error / success also hit disposeAll in the outer finally.
-        await runState.releaseStaleCursors(currentTime);
-      }
+      const encoded = await runFrameLoopTick({
+          mode: 'export',
+          runState,
+          segments,
+          config,
+          currentTime,
+          compositor,
+          textRenderer,
+          textGlobalConfig,
+          width,
+          height,
+          encoder,
+          canvas,
+          failState,
+          frameIndex: i,
+          fps,
+          frameDurUs,
+          isKeyFrame,
+          onFrameEncoded: () => {
+            framesEmitted++;
+            tracker.setFramesEncoded(framesEmitted);
+            tracker.pulse();
+          },
+        });
+      if (!encoded) continue;
     }
 
     if (cancelled) {
@@ -958,6 +1044,43 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   }
 }
 
+/**
+ * Vitest-only: walk the exportWorker frame-loop slot-open + finally
+ * releaseStaleCursors path over a synthetic multi-segment timeline.
+ */
+export async function probeFrameLoopCursorPeak(
+  segments: readonly VideoSegment[],
+  config: ProjectEffectConfig,
+  fps: number,
+): Promise<{ peakOpenCursors: number; cursorsCreated: number; openAtEnd: number }> {
+  const tracker = new ExportPhaseTracker(() => undefined, 0);
+  const runState = new RunState([], tracker, 0, segments, config);
+  const first = segments[0]!;
+  const last = segments[segments.length - 1]!;
+  const runStartSec = first.startTime;
+  const runEndSec = last.startTime + last.duration;
+  const totalFrames = Math.max(0, Math.round((runEndSec - runStartSec) * fps));
+
+  for (let i = 0; i < totalFrames; i++) {
+    const currentTime = runStartSec + i / fps;
+    await runFrameLoopTick({
+      mode: 'probe',
+      runState,
+      segments,
+      config,
+      currentTime,
+    });
+  }
+  const snap = runState.resourceSnapshot();
+  await runState.disposeAll();
+  return {
+    peakOpenCursors: snap.peakOpenCursors,
+    cursorsCreated: snap.cursorsCreated,
+    openAtEnd: snap.openCursors,
+  };
+}
+
+if (typeof self !== 'undefined' && 'onmessage' in self) {
 self.onmessage = (ev: MessageEvent<ExportWorkerInboundMessage>) => {
   const data = ev.data;
   if (data.type === 'request-diagnostics') {
@@ -995,3 +1118,4 @@ self.onmessage = (ev: MessageEvent<ExportWorkerInboundMessage>) => {
     cancelRequested = true;
   }
 };
+}
