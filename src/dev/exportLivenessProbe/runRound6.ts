@@ -14,7 +14,8 @@ import { setWebCodecsExportToggle } from '../../hooks/useExport';
 import { persistLivenessReport } from './autorunFlag';
 import { generateGlWatchdogFixture } from './generateGlWatchdogFixture';
 import { buildBisectVariants } from './runCeilingBisect';
-import { AnimationType, TransitionType, type Project, type VideoSegment } from '../../types';
+import { sliceProjectFrameGrid } from './frameGridSlice';
+import { type Project } from '../../types';
 
 export interface Round6ExportRow {
   id: string;
@@ -33,36 +34,7 @@ export interface Round6ExportRow {
 }
 
 function sliceProject(project: Project, segmentCount: number, timelineSec: number, fps = 30): Project {
-  // Frame-grid alignment: i/fps must land inside some [start, start+duration).
-  // `k * (timelineSec/segmentCount)` leaves IEEE holes (100×0.4s @ 30fps → 20
-  // skipped ticks → concat 1180 vs 1200). Integer frame spans have zero holes.
-  const framesPerSeg = Math.max(1, Math.round((timelineSec / segmentCount) * fps));
-  const segDur = framesPerSeg / fps;
-  const videoAssets = project.assets.filter((a) => a.type === 'video');
-  const src = project.segments;
-  const segments: VideoSegment[] = [];
-  for (let i = 0; i < segmentCount; i++) {
-    const template = src[i % src.length]!;
-    const video = videoAssets[i % videoAssets.length]!;
-    segments.push({
-      ...template,
-      id: `r6-${i}`,
-      assetId: video.id,
-      startTime: (i * framesPerSeg) / fps,
-      duration: segDur,
-      order: i,
-      transition: TransitionType.NONE,
-      animation: AnimationType.NONE,
-      trimStart: 0,
-      trimEnd: Math.min(segDur, video.duration ?? segDur),
-      text: `Caption ${i + 1}`,
-      showOverlay: true,
-    });
-  }
-  // Voiceover stays at the full 263-seg fixture length; a 40s/200s slice
-  // then fails mux (-shortest against a much longer wav). Video-only remux
-  // is enough for the annexb equivalence + ceiling gates.
-  return { ...project, segments, voiceoverId: undefined };
+  return sliceProjectFrameGrid(project, segmentCount, timelineSec, fps);
 }
 
 function hashingFfmpeg(inner: TauriFfmpeg): { ffmpeg: WebCodecsFfmpeg; fingerprints: ChunkFingerprint[] } {

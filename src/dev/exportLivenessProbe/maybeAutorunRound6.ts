@@ -17,10 +17,23 @@ async function readPhase(): Promise<'equiv-40s' | 'ceiling' | 'all' | null> {
     if (body === 'run') return 'all';
     const parsed: unknown = JSON.parse(body);
     if (typeof parsed !== 'object' || parsed === null) return null;
-    const rec = parsed as { run?: boolean; phase?: string };
+    const rec = parsed as { run?: boolean; phase?: string; label?: string };
     if (rec.run !== true) return null;
     if (rec.phase === 'equiv-40s' || rec.phase === 'ceiling' || rec.phase === 'all') return rec.phase;
     return 'all';
+  } catch {
+    return null;
+  }
+}
+
+async function readLabel(): Promise<string | null> {
+  try {
+    const resp = await fetch(AUTORUN_URL, { cache: 'no-store' });
+    if (!resp.ok) return null;
+    const parsed: unknown = JSON.parse((await resp.text()).trim());
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const label = (parsed as { label?: string }).label;
+    return typeof label === 'string' ? label : null;
   } catch {
     return null;
   }
@@ -31,10 +44,11 @@ void (async () => {
     if (!isTauri()) return;
     const phase = await readPhase();
     if (!phase) return;
-    const lock = `${LOCK_PREFIX}${phase}`;
+    const label = await readLabel();
+    const lock = `${LOCK_PREFIX}${phase}${label ? `-${label}` : ''}`;
     if (sessionStorage.getItem(lock) === '1') return;
     sessionStorage.setItem(lock, '1');
-    persistLivenessReport('round6-autorun-start', { t: Date.now(), phase });
+    persistLivenessReport('round6-autorun-start', { t: Date.now(), phase, label });
 
     if (phase === 'equiv-40s' || phase === 'all') {
       const equiv = await runRound6Equivalence40s();
