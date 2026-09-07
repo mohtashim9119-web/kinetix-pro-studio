@@ -47,7 +47,7 @@ declare const self: DedicatedWorkerGlobalScope;
 import type { Asset, HeadingOverlay, TextOverlay, VideoSegment } from '../../types';
 import { GlCompositor, type TextureSlot, type UploadSource } from '../gl/glCompositor';
 import { deriveCompositeParams, deriveSlotPlan, type ProjectEffectConfig } from '../gl/compositeParams';
-import { acquireOffscreenGlContext } from '../gl/glContext';
+import { acquireOffscreenGlContext, GlContextLostError } from '../gl/glContext';
 import { computeObjectCoverUvRect } from '../gl/uvRect';
 import { decodeSegmentFrames, decodeResourceCounts } from './sequentialDecode';
 import { DecodeCursorRegistry } from './decodeCursorLifetime';
@@ -1062,7 +1062,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     postTerminal('done', framesEmitted, null, runState);
   } catch (e) {
     if (!failState.failure) {
-      failState.setFailure('thrown', e);
+      // WS3 export-liveness-occlusion round (Step 3): a GL allocation call
+      // racing a same-tick context loss surfaces here as `GlContextLostError`
+      // (glContext.ts's `requireGl`) rather than through the per-iteration
+      // `contextLost` flag check above — give it the same 'gl-context-lost'
+      // identity either way, so which path wins the race never changes the
+      // reported failure.
+      failState.setFailure(e instanceof GlContextLostError ? 'gl-context-lost' : 'thrown', e);
     }
     postTerminal('error', framesEmitted, undefined, runState);
   } finally {

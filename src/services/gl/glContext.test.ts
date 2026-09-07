@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { isWebGL2Supported, __resetWebGL2SupportCacheForTests, acquireGlContext } from './glContext';
+import { isWebGL2Supported, __resetWebGL2SupportCacheForTests, acquireGlContext, requireGl, GlContextLostError } from './glContext';
 
 /**
  * This repo's vitest runs in plain Node (no jsdom, no vitest `environment`
@@ -154,5 +154,67 @@ describe('acquireGlContext', () => {
 
     expect(events).toEqual(['lost', 'restored']);
     expect(canvas.addEventListener).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * WS3 export-liveness-occlusion round, Step 3 — `requireGl` is what closes
+ * the race between the export worker's `contextlost` LISTENER (async,
+ * subject to whatever event-loop scheduling delay the occlusion investigation
+ * found) and a GL allocation call's own null return (synchronous, at the
+ * exact point of failure). `gl.isContextLost()` is queried directly here
+ * rather than relying on the listener having fired, so classification never
+ * depends on which one "wins" — see glCompositor.test.ts's "context loss at
+ * the point of use" suite for the same fix exercised through the real
+ * GlCompositor call sites (createTexture/createFramebuffer).
+ */
+describe('requireGl', () => {
+  function fakeGl(isContextLost: boolean): { isContextLost: () => boolean } {
+    return { isContextLost: () => isContextLost };
+  }
+
+  it('returns the value unchanged when it is non-null (the common, no-failure case)', () => {
+    const gl = fakeGl(false);
+    const obj = { marker: 'texture' };
+    expect(requireGl(gl as unknown as WebGL2RenderingContext, obj, 'GlCompositor: gl.createTexture()')).toBe(obj);
+  });
+
+  it('throws GlContextLostError when value is null AND the context is lost', () => {
+    const gl = fakeGl(true);
+    expect(() => requireGl(gl as unknown as WebGL2RenderingContext, null, 'GlCompositor: gl.createTexture()')).toThrow(
+      GlContextLostError,
+    );
+  });
+
+  it('the GlContextLostError message names the call site and the loss', () => {
+    const gl = fakeGl(true);
+    try {
+      requireGl(gl as unknown as WebGL2RenderingContext, null, 'GlCompositor: gl.createTexture()');
+      expect.unreachable('requireGl should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GlContextLostError);
+      expect((e as Error).message).toBe('GlCompositor: gl.createTexture() returned null — WebGL2 context lost');
+      expect((e as Error).name).toBe('GlContextLostError');
+    }
+  });
+
+  it('throws a plain Error (NOT GlContextLostError) when value is null and the context is NOT lost — a genuine allocation failure', () => {
+    const gl = fakeGl(false);
+    let caught: unknown;
+    try {
+      requireGl(gl as unknown as WebGL2RenderingContext, null, 'GlCompositor: gl.createFramebuffer()');
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(GlContextLostError);
+    expect((caught as Error).message).toBe('GlCompositor: gl.createFramebuffer() returned null');
+  });
+
+  it('does not call isContextLost() at all when the value is non-null (no cost on the hot, no-failure path)', () => {
+    const isContextLost = vi.fn(() => false);
+    const gl = { isContextLost };
+    requireGl(gl as unknown as WebGL2RenderingContext, { marker: 'ok' }, 'x');
+    expect(isContextLost).not.toHaveBeenCalled();
   });
 });

@@ -55,6 +55,7 @@
  */
 
 import type { CompositeParams, GradeParams, TransitionSlug } from './compositeParams';
+import { requireGl } from './glContext';
 import {
   brightnessOffsetUniform,
   contrastGainUniform,
@@ -164,8 +165,7 @@ interface Programs {
 }
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
-  const shader = gl.createShader(type);
-  if (!shader) throw new Error('GlCompositor: gl.createShader() returned null');
+  const shader = requireGl(gl, gl.createShader(type), 'GlCompositor: gl.createShader()');
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
@@ -179,8 +179,7 @@ function compileShader(gl: WebGL2RenderingContext, type: number, source: string)
 function linkProgram(gl: WebGL2RenderingContext, fragSrc: string, vertSrc: string = VERTEX_SHADER_SOURCE): WebGLProgram {
   const vs = compileShader(gl, gl.VERTEX_SHADER, vertSrc);
   const fs = compileShader(gl, gl.FRAGMENT_SHADER, fragSrc);
-  const program = gl.createProgram();
-  if (!program) throw new Error('GlCompositor: gl.createProgram() returned null');
+  const program = requireGl(gl, gl.createProgram(), 'GlCompositor: gl.createProgram()');
   gl.attachShader(program, vs);
   gl.attachShader(program, fs);
   gl.linkProgram(program);
@@ -198,8 +197,7 @@ function linkProgram(gl: WebGL2RenderingContext, fragSrc: string, vertSrc: strin
 }
 
 function createContentTexture(gl: WebGL2RenderingContext): WebGLTexture {
-  const texture = gl.createTexture();
-  if (!texture) throw new Error('GlCompositor: gl.createTexture() returned null');
+  const texture = requireGl(gl, gl.createTexture(), 'GlCompositor: gl.createTexture()');
   gl.bindTexture(gl.TEXTURE_2D, texture);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -212,8 +210,7 @@ function createRenderTarget(gl: WebGL2RenderingContext, width: number, height: n
   const texture = createContentTexture(gl);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
-  const framebuffer = gl.createFramebuffer();
-  if (!framebuffer) throw new Error('GlCompositor: gl.createFramebuffer() returned null');
+  const framebuffer = requireGl(gl, gl.createFramebuffer(), 'GlCompositor: gl.createFramebuffer()');
   gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
   const status = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
@@ -286,9 +283,9 @@ export class GlCompositor {
       grade: this.makeGradeProgram(linkProgram(gl, GRADE_FRAGMENT_SHADER_SOURCE, VERTEX_SHADER_SOURCE_STRAIGHT)),
     };
 
-    this.vao = gl.createVertexArray() ?? (() => { throw new Error('GlCompositor: gl.createVertexArray() returned null'); })();
+    this.vao = requireGl(gl, gl.createVertexArray(), 'GlCompositor: gl.createVertexArray()');
     gl.bindVertexArray(this.vao);
-    this.vbo = gl.createBuffer() ?? (() => { throw new Error('GlCompositor: gl.createBuffer() returned null'); })();
+    this.vbo = requireGl(gl, gl.createBuffer(), 'GlCompositor: gl.createBuffer()');
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);

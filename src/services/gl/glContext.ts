@@ -43,6 +43,50 @@ export function __resetWebGL2SupportCacheForTests(): void {
   cachedSupport = null;
 }
 
+/**
+ * WS3 export-liveness-occlusion round (Step 3): thrown by `requireGl` below
+ * in place of a generic `Error` whenever a GL allocation call (createTexture,
+ * createProgram, createShader, createFramebuffer, createVertexArray,
+ * createBuffer, ...) returns null AND `gl.isContextLost()` is true at that
+ * exact moment. This is the failure identity the export worker's own
+ * `contextlost`/`onLost` listener already reports as `'gl-context-lost'`
+ * (see exportWorker.ts's per-iteration `contextLost` flag check) — giving
+ * every null-return call site the SAME typed identity closes the race where
+ * a context loss occurs mid-`renderFrame`, after that iteration's own flag
+ * check already passed but before the next iteration's would catch it: the
+ * null-return path now recognizes the loss itself instead of surfacing a
+ * generic thrown error that the listener-driven path would have labeled
+ * differently. See `requireGl`'s own doc comment for the call-site contract.
+ */
+export class GlContextLostError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GlContextLostError';
+  }
+}
+
+/**
+ * Every WebGL2 object-creation call (`createTexture`, `createProgram`, ...)
+ * is spec'd to return `null` on failure, and "the context is lost" is one
+ * cause among several (the others being genuine resource exhaustion). This
+ * distinguishes them AT THE POINT OF FAILURE via `gl.isContextLost()` — a
+ * synchronous, always-available WebGL2 query, independent of whether this
+ * context's `contextlost`/`webglcontextlost` LISTENER has fired yet — so a
+ * caller on the render path gets the correct typed error (`GlContextLostError`)
+ * even when the loss is discovered here first, before the event dispatches.
+ * `what` should be the full call description already carrying its module
+ * prefix (e.g. `'GlCompositor: gl.createTexture()'`) so the thrown message
+ * matches this call site's pre-existing wording exactly in the non-lost case.
+ */
+export function requireGl<T>(gl: WebGL2RenderingContext, value: T | null, what: string): T {
+  if (value !== null) return value;
+  const base = `${what} returned null`;
+  if (gl.isContextLost()) {
+    throw new GlContextLostError(`${base} — WebGL2 context lost`);
+  }
+  throw new Error(base);
+}
+
 export interface AcquireGlContextOptions {
   /**
    * Default true. Image segments (still frames) and possible future

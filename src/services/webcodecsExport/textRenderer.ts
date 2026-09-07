@@ -38,6 +38,7 @@
 
 import type { HeadingOverlay, TextOverlay, VideoSegment } from '../../types';
 import { getActiveHeadingAt } from '../headingLayer';
+import { requireGl } from '../gl/glContext';
 import { HEADING_REFERENCE_HEIGHT, HEADING_SUPERSAMPLE_FACTOR } from '../headingRenderConstants';
 
 // ---------------------------------------------------------------------------
@@ -463,8 +464,7 @@ class AtlasCache {
 
   set(key: string, build: AtlasBuild): AtlasEntry {
     const gl = this.gl;
-    const texture = gl.createTexture();
-    if (!texture) throw new Error('GLTextRenderer: gl.createTexture() returned null for a text atlas');
+    const texture = requireGl(gl, gl.createTexture(), 'GLTextRenderer: gl.createTexture() (text atlas)');
     gl.bindTexture(gl.TEXTURE_2D, texture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -658,8 +658,7 @@ void main() {
 }`;
 
 function compileShader(gl: WebGL2RenderingContext, type: number, source: string): WebGLShader {
-  const shader = gl.createShader(type);
-  if (!shader) throw new Error('GLTextRenderer: gl.createShader() returned null');
+  const shader = requireGl(gl, gl.createShader(type), 'GLTextRenderer: gl.createShader()');
   gl.shaderSource(shader, source);
   gl.compileShader(shader);
   if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
@@ -673,8 +672,7 @@ function compileShader(gl: WebGL2RenderingContext, type: number, source: string)
 function linkProgram(gl: WebGL2RenderingContext, fragSrc: string): WebGLProgram {
   const vs = compileShader(gl, gl.VERTEX_SHADER, QUAD_VERTEX_SHADER);
   const fs = compileShader(gl, gl.FRAGMENT_SHADER, fragSrc);
-  const program = gl.createProgram();
-  if (!program) throw new Error('GLTextRenderer: gl.createProgram() returned null');
+  const program = requireGl(gl, gl.createProgram(), 'GLTextRenderer: gl.createProgram()');
   gl.attachShader(program, vs);
   gl.attachShader(program, fs);
   gl.linkProgram(program);
@@ -735,12 +733,10 @@ export class GLTextRenderer {
       uColor: gl.getUniformLocation(solidProgram, 'u_color'),
     };
 
-    const vao = gl.createVertexArray();
-    if (!vao) throw new Error('GLTextRenderer: gl.createVertexArray() returned null');
+    const vao = requireGl(gl, gl.createVertexArray(), 'GLTextRenderer: gl.createVertexArray()');
     this.vao = vao;
     gl.bindVertexArray(this.vao);
-    const vbo = gl.createBuffer();
-    if (!vbo) throw new Error('GLTextRenderer: gl.createBuffer() returned null');
+    const vbo = requireGl(gl, gl.createBuffer(), 'GLTextRenderer: gl.createBuffer()');
     this.vbo = vbo;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.vbo);
     // Unit quad in (0,0)..(1,1), drawn as a TRIANGLE_STRIP: (0,0) (1,0) (0,1) (1,1).

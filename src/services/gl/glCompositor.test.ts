@@ -9,6 +9,7 @@ import {
   type CompositeParams,
 } from './compositeParams';
 import { VERTEX_SHADER_SOURCE, VERTEX_SHADER_SOURCE_STRAIGHT } from './shaders';
+import { GlContextLostError } from './glContext';
 
 /**
  * Mock-based tests (option (a) from the pre-implementation plan) — this
@@ -110,6 +111,11 @@ class MockWebGL2 {
   deleteBuffer(): void { this.calls.push('deleteBuffer'); }
   enableVertexAttribArray(): void {}
   vertexAttribPointer(): void {}
+
+  /** Defaults to "not lost" — matches a real WebGL2RenderingContext's steady
+   *  state. WS3 export-liveness-occlusion round's context-loss-at-point-of-use
+   *  tests below override this per-case. */
+  isContextLost(): boolean { return false; }
 
   createTexture(): unknown { this.calls.push('createTexture'); return nextId('texture'); }
   bindTexture(): void {}
@@ -831,5 +837,68 @@ describe('GlCompositor — dispose', () => {
 
     expect(gl.calls.filter((c) => c === 'deleteTexture')).toHaveLength(5); // texA, texB, rt0, rt1, rt2
     expect(gl.calls.filter((c) => c === 'deleteFramebuffer')).toHaveLength(3);
+  });
+});
+
+/**
+ * WS3 export-liveness-occlusion round, Step 3 — context loss at the point of
+ * use. Round 2's own Step 3c found the real bug: `createContentTexture`
+ * (glCompositor.ts:202, at the time) threw a generic `Error` when
+ * `gl.createTexture()` returned null mid-run, instead of the same
+ * `'gl-context-lost'` identity the export worker's `contextlost` LISTENER
+ * reports — because the listener lost a same-tick race against the frame
+ * loop's own per-iteration flag check. The fix (glContext.ts's `requireGl`)
+ * sidesteps the race entirely: it consults `gl.isContextLost()` — a
+ * synchronous, spec-guaranteed reflection of context state that does not
+ * depend on whether the async `contextlost` event has dispatched yet —
+ * at the exact moment a GL allocation call returns null, so the null-return
+ * path itself now recognizes a loss instead of needing the listener to have
+ * won a race first. These tests are the destructive probe: reverting
+ * `requireGl`'s `isContextLost()` branch (or reverting createContentTexture's
+ * null-check back to a bare `new Error(...)`) turns the first two RED; the
+ * third (a genuine, non-loss allocation failure) stays green either way,
+ * proving the fix doesn't over-classify every null return as context loss.
+ */
+describe('GlCompositor — context loss at the point of use (WS3 Step 3)', () => {
+  it('a null createTexture() DURING context loss throws GlContextLostError, not a generic Error', () => {
+    const gl = makeGl();
+    gl.isContextLost = () => true;
+    gl.createTexture = () => null;
+
+    expect(() => new GlCompositor(gl as unknown as WebGL2RenderingContext)).toThrow(GlContextLostError);
+  });
+
+  it('a null createFramebuffer() DURING context loss (mid-run, on the renderFrame path) throws GlContextLostError', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+
+    // Simulate the context being lost partway through the run, discovered by
+    // this GL allocation call returning null before the worker's own
+    // `contextlost` listener has fired — the exact race Step 3 targets.
+    gl.isContextLost = () => true;
+    gl.createFramebuffer = () => null;
+
+    // transition:null + animScaleA!==1 is the smallest renderFrame call that
+    // reaches ensureRenderTargets -> createRenderTarget -> createFramebuffer
+    // (see the "zoom-only" render targets test above for the same trigger).
+    expect(() =>
+      compositor.renderFrame({ transition: null, animScaleA: 1.2, animScaleB: 1, grade: NEUTRAL_GRADE }),
+    ).toThrow(GlContextLostError);
+  });
+
+  it('a null createTexture() WITHOUT context loss (genuine allocation failure) still throws the original generic Error, not GlContextLostError', () => {
+    const gl = makeGl();
+    gl.isContextLost = () => false; // context is fine — this is a real resource-exhaustion failure
+    gl.createTexture = () => null;
+
+    let caught: unknown;
+    try {
+      new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    expect(caught).not.toBeInstanceOf(GlContextLostError);
+    expect((caught as Error).message).toMatch(/gl\.createTexture\(\) returned null$/);
   });
 });
