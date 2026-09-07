@@ -117,6 +117,25 @@ export interface ExportWorkerInitMessage {
    *  non-reproducibility (see frameContentDigest.ts). Costs a per-frame
    *  readback, so it defaults OFF and no production export sets it. */
   frameContentDigest?: boolean;
+  /**
+   * WS3 Defect 1 (encoder-session cap). Timeline seconds this piece's frame
+   * grid is anchored at — the `startTime` of the first segment of the whole GL
+   * RUN, which may be EARLIER than `segments[0].startTime` when the
+   * orchestrator cut that run into several capped pieces. Together with
+   * `frameGridBaseFrame` it lets N pieces walk ONE continuous absolute frame
+   * grid instead of N independently-rounded local ones, which is what makes
+   * the cut exactly frame-neutral.
+   *
+   * Default (`segments[0].startTime`, base 0) reproduces the pre-cap behaviour
+   * byte for byte: `totalFrames` collapses to
+   * `Math.round((runEndSec - runStartSec) * fps)` and `currentTime` to
+   * `runStartSec + i / fps`, which is exactly what this worker computed
+   * before. Both fields are optional for that reason.
+   */
+  frameGridOriginSec?: number;
+  /** Index of this piece's FIRST frame on the `frameGridOriginSec` grid.
+   *  Default 0 (an unsplit run starts at its own origin). */
+  frameGridBaseFrame?: number;
 }
 
 export type ExportWorkerInboundMessage =
@@ -967,16 +986,25 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   activeRunState = runState;
   const first = segments[0]!;
   const last = segments[segments.length - 1]!;
-  const runStartSec = first.startTime;
   const runEndSec = last.startTime + last.duration;
-  const totalFrames = Math.max(0, Math.round((runEndSec - runStartSec) * fps));
+  // WS3 Defect 1 — one absolute grid for every piece cut out of the same GL
+  // run. Defaults reproduce the pre-cap arithmetic exactly (see the init
+  // message's own doc comment).
+  const gridOriginSec = payload.frameGridOriginSec ?? first.startTime;
+  const gridBaseFrame = payload.frameGridBaseFrame ?? 0;
+  const runStartSec = gridOriginSec + gridBaseFrame / fps;
+  const totalFrames = Math.max(0, Math.round((runEndSec - gridOriginSec) * fps) - gridBaseFrame);
   const frameDurUs = Math.round(1_000_000 / fps);
   const gop = gopFrames(fps);
 
-  // Frame indices (run-local, 0-based) that must be keyframes because they
+  // Frame indices (piece-local, 0-based) that must be keyframes because they
   // are the first frame of a segment within this run (plan §4.1 item 4e).
+  // Computed on the ABSOLUTE grid and then rebased, so a segment that starts a
+  // capped piece lands on index 0 — i.e. the piece's own first frame was
+  // already a forced keyframe in the unsplit run. That is the whole of the
+  // "a piece boundary adds no keyframe" argument.
   const segmentStartFrames = new Set<number>(
-    segments.map((s) => Math.round((s.startTime - runStartSec) * fps)),
+    segments.map((s) => Math.round((s.startTime - gridOriginSec) * fps) - gridBaseFrame),
   );
   function isKeyFrame(i: number): boolean {
     return segmentStartFrames.has(i) || i % gop === 0;
@@ -1019,7 +1047,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       // matters here is monotonic, gap-free per-run ordering for the
       // encoder's own GOP/reorder bookkeeping, which a run-local index gives
       // exactly as well as a whole-project index would.
-      const currentTime = runStartSec + i / fps;
+      const currentTime = gridOriginSec + (gridBaseFrame + i) / fps;
 
       const encoded = await runFrameLoopTick({
           mode: 'export',

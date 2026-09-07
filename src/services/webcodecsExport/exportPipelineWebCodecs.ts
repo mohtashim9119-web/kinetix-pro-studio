@@ -375,6 +375,123 @@ interface PiecePlan {
    *  encoding (same formulas the encoders themselves use), so the total is
    *  known up front for progress reporting and the frame-count guard. */
   expectedFrames: number;
+  /** GL only (WS3 Defect 1). Frame-grid origin, in timeline seconds: the
+   *  `startTime` of the FIRST segment of the whole GL RUN this piece came
+   *  from, NOT of this piece. Every piece cut out of one run shares one
+   *  origin, so their frame grids are one continuous absolute grid rather
+   *  than N independently-rounded local ones. Equal to `segments[0].startTime`
+   *  for an unsplit run (and for every Tier 1/C piece, which ignores it). */
+  gridOriginSec: number;
+  /** GL only (WS3 Defect 1). This piece's first frame's index ON that grid:
+   *  `Math.round((segments[0].startTime - gridOriginSec) * fps)`. 0 for an
+   *  unsplit run. */
+  gridBaseFrame: number;
+}
+
+/**
+ * WS3 Defect 1 — the encoder-session cap.
+ *
+ * Before this, `buildPiecePlans` coalesced EVERY maximal run of adjacent
+ * 'gl'-tier segments into a single PiecePlan, with no bound of any kind on the
+ * resulting piece's duration, frame count, or encoder-session length. Field
+ * evidence: a 334-segment 1080p30 project collapsed to `pieceIndex 0` and ran
+ * ONE VideoEncoder session across 38061 frames (1268.7s of timeline) before
+ * the watchdog fired in `encoder-flush`.
+ *
+ * Why a bound is needed at all — and why this number:
+ *
+ *  - A piece boundary is a WORKER boundary (`driveGlRun` constructs a fresh
+ *    `Worker` per GL piece and `terminate()`s it at the end), so it is the
+ *    only place in this pipeline where every per-run accumulator resets to
+ *    zero at once: the worker's demux cache, its `ImageBitmap` map, its
+ *    decode cursors, the encoder's own internal state, and the main thread's
+ *    per-run event/attribution arrays. Capping the piece therefore caps every
+ *    one of those, which is the whole of Defect 7's growth surface.
+ *  - It is also the unit of ATTRIBUTION. With one piece, a failure payload can
+ *    only ever say `pieceIndex 0`; with a cap it names a bounded span of
+ *    timeline.
+ *
+ *  1800 frames = 60s at 30fps. The cap is stated in FRAMES, not seconds,
+ *  because every accumulator above grows per frame, not per second.
+ *
+ *  HONEST CAVEAT: 1800 is a judgement call, not a measured cliff. The prior
+ *  "~62s platform ceiling" this round was told to evaluate has since been
+ *  REFUTED in this repo's own history (commit 4d4922c), so it is deliberately
+ *  NOT the basis for this number, and the 1268.7s field failure gives an upper
+ *  bound on what is too much but no lower bound on what is enough. What 1800
+ *  buys is a 21x reduction in every per-frame accumulator against a per-piece
+ *  fixed cost (GL context + shader compile + font init) that the phase log
+ *  already measures. Tune it from a real run's `phaseMs`, not from this
+ *  comment.
+ */
+export const MAX_ENCODER_SESSION_FRAMES = 1800;
+
+/** Absolute frame index of `sec` on the grid anchored at `originSec`. */
+function gridFrame(sec: number, originSec: number, fps: number): number {
+  return Math.round((sec - originSec) * fps);
+}
+
+/**
+ * Is local index `k` inside `run` a LEGAL place to end one piece and begin the
+ * next? Two conditions, and both are what makes a split output-neutral by
+ * construction rather than by measurement:
+ *
+ *  1. `k` is a SEGMENT START. `exportWorker.ts` forces a keyframe on the first
+ *     frame of every segment in its run (`segmentStartFrames` / `isKeyFrame`),
+ *     so the frame that becomes the new encoder session's IDR was already
+ *     going to be an IDR in the unsplit run. A split at a segment start
+ *     therefore adds no keyframe that was not already there.
+ *  2. NO TRANSITION STRADDLES `k`. A real (duration > 0) transition out of
+ *     `run[k-1]` is CENTERED on the boundary, so frames on both sides of it
+ *     composite BOTH segments. Cutting there would put half of that blend in a
+ *     piece whose `segments` array no longer contains the outgoing segment,
+ *     and `deriveSlotPlan` would then composite something different. So a
+ *     candidate boundary with a straddling transition is not moved out of the
+ *     way of the transition — the BOUNDARY moves, to the nearest earlier hard
+ *     cut (see `planGlRunPieceStarts`), and the transition is never touched.
+ */
+function isLegalPieceBoundary(run: readonly VideoSegment[], k: number, project: Project): boolean {
+  const prev = run[k - 1];
+  if (!prev) return false;
+  return resolveEffectiveTransition(prev, project.globalTransition, project.globalTransitionDuration).duration <= 0;
+}
+
+/**
+ * Local indices in `run` at which a new piece begins. Always starts with 0.
+ *
+ * Greedy: extend the current piece until its frame span would exceed
+ * `capFrames`, then cut at the LAST legal boundary seen since this piece
+ * began. A run with no legal boundary at all (every segment joined to the next
+ * by a real transition) returns `[0]` — it stays one piece, because splitting
+ * it could not be output-neutral. That is a deliberate, stated limit of this
+ * fix, not an oversight.
+ */
+function planGlRunPieceStarts(
+  run: readonly VideoSegment[],
+  project: Project,
+  fps: number,
+  originSec: number,
+  capFrames: number,
+): number[] {
+  const starts = [0];
+  let pieceStartFrame = gridFrame(run[0]!.startTime, originSec, fps);
+  let lastLegal = -1;
+  for (let k = 1; k < run.length; k++) {
+    if (isLegalPieceBoundary(run, k, project)) lastLegal = k;
+    const seg = run[k]!;
+    const endFrame = gridFrame(seg.startTime + seg.duration, originSec, fps);
+    if (endFrame - pieceStartFrame > capFrames && lastLegal > starts[starts.length - 1]!) {
+      starts.push(lastLegal);
+      pieceStartFrame = gridFrame(run[lastLegal]!.startTime, originSec, fps);
+      // Resume scanning FROM the cut, so legal boundaries between `lastLegal`
+      // and `k` are still available to the new piece. Terminates: `lastLegal`
+      // is strictly greater than the previous piece start every time, so the
+      // piece-start sequence is strictly increasing and bounded by run.length.
+      k = lastLegal;
+      lastLegal = -1;
+    }
+  }
+  return starts;
 }
 
 function buildPiecePlans(
@@ -393,14 +510,33 @@ function buildPiecePlans(
       let j = i;
       while (j + 1 < n && tiers[j + 1] === 'gl') j++;
       const runSegments = segments.slice(i, j + 1);
-      const first = runSegments[0]!;
-      const last = runSegments[runSegments.length - 1]!;
-      // Matches exportWorker.ts's own totalFrames formula EXACTLY (line
-      // ~541: `Math.max(0, Math.round((runEndSec - runStartSec) * fps))`
-      // with runStartSec = first.startTime, runEndSec = last.startTime +
-      // last.duration) — the absolute frame grid the worker actually walks.
-      const expectedFrames = Math.max(0, Math.round((last.startTime + last.duration - first.startTime) * fps));
-      pieces.push({ tier: 'gl', segments: runSegments, startIndex: i, expectedFrames });
+      // ONE origin for the whole run, shared by every piece cut out of it
+      // (WS3 Defect 1). This is what makes the split exactly frame-neutral:
+      // each piece's span is `gridFrame(pieceEnd) - gridFrame(pieceStart)` on
+      // ONE grid, so the per-piece counts TELESCOPE — they sum to
+      // `gridFrame(runEnd) - gridFrame(runStart)`, which is byte-for-byte the
+      // single number the unsplit run produced. Splitting can therefore never
+      // add or drop a frame, and the post-concat frame-count guard sees the
+      // same total either way.
+      const originSec = runSegments[0]!.startTime;
+      const pieceStarts = planGlRunPieceStarts(runSegments, project, fps, originSec, MAX_ENCODER_SESSION_FRAMES);
+      for (let p = 0; p < pieceStarts.length; p++) {
+        const from = pieceStarts[p]!;
+        const to = p + 1 < pieceStarts.length ? pieceStarts[p + 1]! : runSegments.length;
+        const pieceSegments = runSegments.slice(from, to);
+        const first = pieceSegments[0]!;
+        const last = pieceSegments[pieceSegments.length - 1]!;
+        const gridBaseFrame = gridFrame(first.startTime, originSec, fps);
+        const endFrame = gridFrame(last.startTime + last.duration, originSec, fps);
+        pieces.push({
+          tier: 'gl',
+          segments: pieceSegments,
+          startIndex: i + from,
+          expectedFrames: Math.max(0, endFrame - gridBaseFrame),
+          gridOriginSec: originSec,
+          gridBaseFrame,
+        });
+      }
       i = j + 1;
     } else if (tier === 'plain') {
       const segment = segments[i]!;
@@ -426,7 +562,14 @@ function buildPiecePlans(
         asset?.type === 'video'
           ? Math.max(1, Math.ceil(segment.duration * fps))
           : Math.max(1, Math.round(segment.duration * fps));
-      pieces.push({ tier: 'plain', segments: [segment], startIndex: i, expectedFrames });
+      pieces.push({
+        tier: 'plain',
+        segments: [segment],
+        startIndex: i,
+        expectedFrames,
+        gridOriginSec: segment.startTime,
+        gridBaseFrame: 0,
+      });
       i++;
     } else {
       const segment = segments[i]!;
@@ -439,7 +582,14 @@ function buildPiecePlans(
         ? resolveEffectiveTransition(segment, project.globalTransition, project.globalTransitionDuration).duration / 2
         : 0;
       const expectedFrames = Math.max(1, Math.round((segment.duration - startTimeOffset + trailingExtension) * fps));
-      pieces.push({ tier: 'canvas', segments: [segment], startIndex: i, expectedFrames });
+      pieces.push({
+        tier: 'canvas',
+        segments: [segment],
+        startIndex: i,
+        expectedFrames,
+        gridOriginSec: segment.startTime,
+        gridBaseFrame: 0,
+      });
       i++;
     }
   }
@@ -453,6 +603,10 @@ export interface WebCodecsPieceSummary {
   startIndex: number;
   segmentCount: number;
   expectedFrames: number;
+  /** WS3 Defect 1 — see `PiecePlan.gridOriginSec`. */
+  gridOriginSec: number;
+  /** WS3 Defect 1 — see `PiecePlan.gridBaseFrame`. */
+  gridBaseFrame: number;
 }
 
 export interface WebCodecsRoutingSummary {
@@ -502,6 +656,8 @@ export function planWebCodecsExport(project: Project, fps: number): WebCodecsRou
       startIndex: p.startIndex,
       segmentCount: p.segments.length,
       expectedFrames: p.expectedFrames,
+      gridOriginSec: p.gridOriginSec,
+      gridBaseFrame: p.gridBaseFrame,
     })),
     segmentCounts: countTiers(routing.tiers),
     pieceCounts,
@@ -585,6 +741,16 @@ export interface DriveGlRunDeps {
   now?: () => number;
 }
 
+/**
+ * WS3 Defect 1 — the absolute frame grid this piece sits on. See `PiecePlan`'s
+ * `gridOriginSec`/`gridBaseFrame`. Defaulted so an unsplit run (and every
+ * existing caller/test) drives exactly the pre-cap behaviour.
+ */
+export interface GlRunGrid {
+  originSec: number;
+  baseFrame: number;
+}
+
 export function driveGlRun(
   ffmpeg: WebCodecsFfmpeg,
   runId: string,
@@ -606,6 +772,7 @@ export function driveGlRun(
   pieceIndex: number,
   startIndex: number,
   deps: DriveGlRunDeps = {},
+  grid: GlRunGrid = { originSec: segments[0]?.startTime ?? 0, baseFrame: 0 },
 ): Promise<RunDriveResult> {
   return new Promise((resolve) => {
     const worker = deps.createWorker
@@ -1017,6 +1184,8 @@ export function driveGlRun(
       pieceIndex,
       startIndex,
       frameContentDigest: frameContentDigestEnabled,
+      frameGridOriginSec: grid.originSec,
+      frameGridBaseFrame: grid.baseFrame,
     };
     resetWatchdog();
     resetProgressBound();
@@ -1333,6 +1502,8 @@ export async function exportProjectWebCodecs(
         startIndex: p.startIndex,
         segmentCount: p.segments.length,
         expectedFrames: p.expectedFrames,
+        gridOriginSec: p.gridOriginSec,
+        gridBaseFrame: p.gridBaseFrame,
       })),
       segmentCounts: countTiers(routing.tiers),
       pieceCounts,
@@ -1421,6 +1592,8 @@ export async function exportProjectWebCodecs(
         },
         pieceIndex,
         plan.startIndex,
+        {},
+        { originSec: plan.gridOriginSec, baseFrame: plan.gridBaseFrame },
       );
       if (!driveResult.ok) {
         const watchdogFired = driveResult.error.message.includes('no output for 30s');
