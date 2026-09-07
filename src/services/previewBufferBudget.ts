@@ -56,6 +56,8 @@ export interface PreviewBufferBudgetRow {
   frameBytes: number;
   framesAtFullWindow: number;
   admittedSec: number;
+  /** Actual source-time horizon issued ahead of the playhead. */
+  feedWindowSec: number;
   admittedBytes: number;
   byteBound: boolean;
 }
@@ -66,14 +68,25 @@ export function previewBufferBudgetTable(): PreviewBufferBudgetRow[] {
     { resolution: '1080p', w: 1920, h: 1080, fps: 60 },
     { resolution: '1080p', w: 1920, h: 1080, fps: 120 },
     { resolution: '4K', w: 3840, h: 2160, fps: 30 },
+    { resolution: '4K', w: 3840, h: 2160, fps: 60 },
     { resolution: '4K', w: 3840, h: 2160, fps: 120 },
   ];
   return cases.map(({ resolution, w, h, fps }) => {
     const frameBytes = estimateFrameBytes(w, h);
     const admittedSec = admittedWindowSec(w, h);
+    const feedWindowSec = effectiveFeedAheadSec(w, h);
     const byteBound = admittedSec < PREVIEW_BUFFER_WINDOW_SEC;
     const framesAtFullWindow = Math.ceil(admittedSec * fps);
     const admittedBytes = framesAtFullWindow * frameBytes;
-    return { resolution, fps, frameBytes, framesAtFullWindow, admittedSec, admittedBytes, byteBound };
+    return {
+      resolution,
+      fps,
+      frameBytes,
+      framesAtFullWindow,
+      admittedSec,
+      feedWindowSec,
+      admittedBytes,
+      byteBound,
+    };
   });
 }

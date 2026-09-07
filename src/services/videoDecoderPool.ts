@@ -308,7 +308,7 @@ export function findChunkRange(
   // a different depth. It also bounded nothing real: `chunks` is already
   // fully in memory (the demuxer owns it), per-batch feed volume is bounded
   // by `boundaryUs` in feedWindow, and live decoded-frame memory is bounded
-  // by MAX_BUFFERED_FRAMES_PER_SESSION.
+  // by the preview byte ceilings.
   endIndex = Math.min(endIndex, chunks.length - 1);
   return { startIndex, endIndex };
 }
@@ -562,7 +562,8 @@ export class VideoDecoderPool {
   }
 
   /** Feeds chunks from `session.feedCursor` up to whichever is smaller:
-   *  `targetSec + WINDOW_AHEAD_SEC`, or the session's own fullEndIndex —
+   *  `targetSec + session.feedAheadSec` (the byte-clamped feeder horizon),
+   *  or the session's own fullEndIndex —
    *  always feeding at least one chunk of forward progress when anything
    *  remains, even if the window boundary is already behind feedCursor
    *  (e.g. a target right at the tail of what's already been requested).
@@ -1110,11 +1111,6 @@ export class VideoDecoderPool {
     return total;
   }
 
-  private isOutsideAdmittedHorizon(session: DecodeSession, timestampSec: number): boolean {
-    const aheadUs = session.feedAheadSec * 1e6;
-    return timestampSec * 1e6 > session.windowTargetUs + aheadUs + 1;
-  }
-
   private isOverByteBudget(session: DecodeSession, extraFrames = 1): boolean {
     if (this.sessionBufferedBytes(session, extraFrames) > PREVIEW_BUFFER_MAX_BYTES_PER_SESSION) return true;
     return this.totalBufferedBytes() + session.frameBytes * extraFrames > PREVIEW_BUFFER_MAX_BYTES_GLOBAL;
@@ -1193,12 +1189,12 @@ export class VideoDecoderPool {
     }
     const timestampSec = frame.timestamp / 1e6;
 
-    if (this.isOutsideAdmittedHorizon(session, timestampSec)) {
-      this.recordDevDrop(session, timestampSec);
-      frame.close();
-      return;
-    }
-
+    // feedWindow owns the source-time admission horizon. Its one-frame
+    // forward-progress fallback may issue the first sparse/VFR sample just
+    // beyond that horizon because fillWindow needs a frame after targetSec to
+    // settle latest-at-or-before selection. Never discard a frame after the
+    // feeder advanced past its chunk: the hard byte budget below either admits
+    // it or evicts already-passed data to make room.
     while (this.isOverByteBudget(session, 1)) {
       if (!this.makeRoomForFrame(session)) {
         this.recordDevDrop(session, timestampSec);

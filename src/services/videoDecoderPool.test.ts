@@ -6,6 +6,11 @@ vi.mock('./videoDemuxer', () => ({
 
 import { getOrCreateDemux } from './videoDemuxer';
 import { VideoDecoderPool, findChunkRange } from './videoDecoderPool';
+import {
+  PREVIEW_BUFFER_WINDOW_SEC,
+  admittedWindowSec,
+  effectiveFeedAheadSec,
+} from './previewBufferBudget';
 
 /** Builds a chunk list in DECODE order, timestamped by PRESENTATION time,
  *  reproducing the real inversion pattern `videoDemuxer.ts` produces for a
@@ -1559,6 +1564,36 @@ describe('VideoDecoderPool — 120fps buffer-cap drop confirmation (WS3 Step 1)'
 
     pool.dispose();
   });
+
+  async function assertByteBound4kFirstBatch(fps: 30 | 120, expectedAdmitted: number): Promise<void> {
+    const demuxed = makeCfrDemuxed(fps, fps * 5, 3840, 2160);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const admittedSec = admittedWindowSec(3840, 2160);
+    const feedWindowSec = effectiveFeedAheadSec(3840, 2160);
+    expect(admittedSec).toBeLessThan(PREVIEW_BUFFER_WINDOW_SEC);
+    expect(feedWindowSec).toBeLessThan(1.5);
+    expect(admittedSec).toBeGreaterThanOrEqual(feedWindowSec);
+
+    const pool = new VideoDecoderPool();
+    pool.resetDevDropStats();
+    await pool.ensureSession('seg', 'blob:4k', 0, 5, 0);
+    await pool.getFrameAt('seg', 0);
+
+    const stats = pool.getDevDropStats()!;
+    expect(stats.framesDropped).toBe(0);
+    expect(stats.framesAdmitted).toBe(expectedAdmitted);
+    expect(stats.drops).toHaveLength(0);
+    pool.dispose();
+  }
+
+  it('clamps the feeder to the admitted byte-bound window at 4K30 with zero drops', async () => {
+    await assertByteBound4kFirstBatch(30, 2);
+  });
+
+  it('clamps the feeder to the admitted byte-bound window at 4K120 with zero drops', async () => {
+    await assertByteBound4kFirstBatch(120, 5);
+  });
 });
 
 // --- WS3 120fps incremental playback regression (Step 2) ---------------------
@@ -1640,6 +1675,37 @@ describe('VideoDecoderPool — multi-fps preview buffer coverage (WS3 Step 4)', 
       expect(frame).not.toBeNull();
       expect(target - frame!.timestamp / 1e6).toBeLessThanOrEqual(STALE_TOLERANCE_SEC + 1e-6);
     }
+    pool.dispose();
+  });
+
+  it('keeps irregular VFR timestamps inside the same byte budget with zero drops', async () => {
+    const deltasUs = [8_333, 16_667, 33_333, 8_333, 25_000, 12_500, 41_667];
+    const timestampsUs: number[] = [0];
+    while (timestampsUs[timestampsUs.length - 1]! < 2_000_000) {
+      const i = timestampsUs.length - 1;
+      timestampsUs.push(timestampsUs[i]! + deltasUs[i % deltasUs.length]!);
+    }
+    const demuxed = {
+      config: { codec: 'avc1.640020', codedWidth: 3840, codedHeight: 2160, description: new Uint8Array() },
+      chunks: timestampsUs.map((timestamp, i) => ({
+        type: i === 0 ? 'key' : 'delta',
+        timestamp,
+        duration: deltasUs[i % deltasUs.length]!,
+        data: new Uint8Array(),
+      })),
+      durationSec: timestampsUs[timestampsUs.length - 1]! / 1e6,
+    };
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    pool.resetDevDropStats();
+    await pool.ensureSession('seg', 'blob:vfr-4k', 0, demuxed.durationSec, 0);
+    for (const target of [0, 0.11, 0.29, 0.51, 0.84, 1.17]) {
+      const frame = await pool.getFrameAt('seg', target);
+      expect(frame).not.toBeNull();
+      expect(frame!.timestamp / 1e6).toBeLessThanOrEqual(target + 1e-6);
+    }
+    expect(pool.getDevDropStats()!.framesDropped).toBe(0);
     pool.dispose();
   });
 

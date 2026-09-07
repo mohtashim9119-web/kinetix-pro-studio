@@ -10,12 +10,13 @@ import {
 describe('previewBufferBudget', () => {
   it('admitted window is never smaller than the feed horizon at every table row', () => {
     for (const row of previewBufferBudgetTable()) {
-      const feedAhead = effectiveFeedAheadSec(
+      const feedWindowSec = effectiveFeedAheadSec(
         row.resolution === '1080p' ? 1920 : 3840,
         row.resolution === '1080p' ? 1080 : 2160,
       );
-      expect(feedAhead).toBeLessThanOrEqual(WINDOW_AHEAD_SEC + 1e-9);
-      expect(row.admittedSec).toBeGreaterThanOrEqual(feedAhead - 1e-9);
+      expect(row.feedWindowSec).toBe(feedWindowSec);
+      expect(feedWindowSec).toBeLessThanOrEqual(WINDOW_AHEAD_SEC + 1e-9);
+      expect(row.admittedSec).toBeGreaterThanOrEqual(feedWindowSec - 1e-9);
       expect(PREVIEW_BUFFER_WINDOW_SEC).toBeGreaterThanOrEqual(WINDOW_AHEAD_SEC);
     }
   });
@@ -33,5 +34,6 @@ describe('previewBufferBudget', () => {
     const ahead = effectiveFeedAheadSec(3840, 2160);
     expect(admitted).toBeLessThan(2);
     expect(ahead).toBeLessThan(WINDOW_AHEAD_SEC);
+    expect(admitted).toBeGreaterThanOrEqual(ahead);
   });
 });
