@@ -1574,3 +1574,28 @@ describe('VideoDecoderPool — 120fps buffer-cap drop confirmation (WS3 Step 1)'
     pool.dispose();
   });
 });
+
+// --- WS3 120fps incremental playback regression (Step 2) ---------------------
+
+describe('VideoDecoderPool — 120fps incremental playback regression (WS3 Step 2)', () => {
+  const STALE_TOLERANCE_SEC = 0.2;
+  const TICK_SEC = 33 / 1000;
+
+  it('delivers frames within 200ms of each incremental playhead tick at 120fps', async () => {
+    const demuxed = makeCfrDemuxed(120, 600);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 5, 0);
+
+    for (let target = 0; target <= 2.0; target += TICK_SEC) {
+      const frame = await pool.getFrameAt('seg', target);
+      expect(frame).not.toBeNull();
+      const frameSec = frame!.timestamp / 1e6;
+      expect(target - frameSec).toBeLessThanOrEqual(STALE_TOLERANCE_SEC + 1e-6);
+      expect(frameSec).toBeLessThanOrEqual(target + 1e-6);
+    }
+
+    pool.dispose();
+  });
+});
