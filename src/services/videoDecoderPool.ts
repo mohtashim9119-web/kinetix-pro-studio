@@ -172,8 +172,28 @@ interface DecoderHandle {
   errored: boolean;
 }
 
+/** Dev-only counters for WS3 120fps buffer-cap confirmation (Step 1). */
+export interface PreviewDropRecord {
+  timestampSec: number;
+  sessionId: string;
+  sourceFps: number | null;
+  windowTargetUs: number;
+  feedCursor: number;
+  framesAdmittedBefore: number;
+  refedLater: boolean;
+}
+
+export interface PreviewDropStats {
+  framesDropped: number;
+  framesAdmitted: number;
+  drops: PreviewDropRecord[];
+}
+
 interface DecodeSession {
+  segmentId: string;
   assetUrl: string;
+  /** Estimated source fps from chunk timestamps (first two chunks). */
+  sourceFps: number | null;
   /** Segment-level source-time ceiling this session may ever decode within
    *  — the segment's own [trimStart, trimEnd]-derived range. Fixed for the
    *  life of the session; never widened by window feeding or resets. */
@@ -333,9 +353,21 @@ export function findChunkRange(
   return { startIndex, endIndex };
 }
 
+/** Derive nominal source fps from the first two chunk timestamps. */
+function estimateSourceFps(chunks: readonly EncodedVideoChunk[]): number | null {
+  if (chunks.length < 2) return null;
+  const dtUs = chunks[1]!.timestamp - chunks[0]!.timestamp;
+  if (dtUs <= 0) return null;
+  return 1e6 / dtUs;
+}
+
 export class VideoDecoderPool {
   private sessions = new Map<string, DecodeSession>();
   private idleHandles = new Map<string, DecoderHandle[]>();
+  /** Dev-only — null in production builds. */
+  private devDropStats: PreviewDropStats | null = import.meta.env.DEV
+    ? { framesDropped: 0, framesAdmitted: 0, drops: [] }
+    : null;
   private protectedIds = new Set<string>();
   /** Second, independent protected set for the item-4 transition fix
    *  (docs/webcodecs-architecture-plan.md) — keeps the OUTGOING segment's
@@ -386,7 +418,9 @@ export class VideoDecoderPool {
     if (existing) this.closeSession(existing);
 
     const session: DecodeSession = {
+      segmentId,
       assetUrl,
+      sourceFps: null,
       startSec,
       endSec,
       chunks: [],
@@ -442,6 +476,7 @@ export class VideoDecoderPool {
 
     session.chunks = demuxed.chunks;
     session.config = demuxed.config;
+    session.sourceFps = estimateSourceFps(demuxed.chunks);
 
     const handle = this.acquireHandle(assetUrl);
     if (session.closed) {
@@ -898,8 +933,18 @@ export class VideoDecoderPool {
     // at the moment it leaves `session.frames` — via the filter above,
     // slideWindowForward, resetSessionWindow, or closeSession.
     session.displayedFrame = selected.frame;
+    this.markDevDelivered(selected.timestampSec);
     this.enforceBudget();
     return selected.frame;
+  }
+
+  private markDevDelivered(timestampSec: number): void {
+    if (!this.devDropStats) return;
+    for (const drop of this.devDropStats.drops) {
+      if (!drop.refedLater && Math.abs(drop.timestampSec - timestampSec) < 1e-9) {
+        drop.refedLater = true;
+      }
+    }
   }
 
   hasSession(segmentId: string): boolean {
@@ -1078,6 +1123,50 @@ export class VideoDecoderPool {
     return freed;
   }
 
+  /** Dev-only — returns null outside DEV builds. */
+  getDevDropStats(): PreviewDropStats | null {
+    return this.devDropStats;
+  }
+
+  /** Dev-only — clears counters between tests. */
+  resetDevDropStats(): void {
+    if (this.devDropStats) {
+      this.devDropStats.framesDropped = 0;
+      this.devDropStats.framesAdmitted = 0;
+      this.devDropStats.drops = [];
+    }
+  }
+
+  private recordDevDrop(session: DecodeSession, timestampSec: number): void {
+    if (!this.devDropStats) return;
+    this.devDropStats.framesDropped++;
+    this.devDropStats.drops.push({
+      timestampSec,
+      sessionId: session.segmentId,
+      sourceFps: session.sourceFps,
+      windowTargetUs: session.windowTargetUs,
+      feedCursor: session.feedCursor,
+      framesAdmittedBefore: this.devDropStats.framesAdmitted,
+      refedLater: false,
+    });
+    if (import.meta.env.DEV) {
+      console.warn('[videoDecoderPool] preview buffer drop', {
+        timestampSec,
+        sessionId: session.segmentId,
+        sourceFps: session.sourceFps,
+        windowTargetUs: session.windowTargetUs,
+        feedCursor: session.feedCursor,
+        framesAdmitted: this.devDropStats.framesAdmitted,
+        framesDropped: this.devDropStats.framesDropped,
+      });
+    }
+  }
+
+  private recordDevAdmit(_timestampSec: number): void {
+    if (!this.devDropStats) return;
+    this.devDropStats.framesAdmitted++;
+  }
+
   private handleDecoderOutput(handle: DecoderHandle, frame: VideoFrame): void {
     const session = handle.activeSession;
     if (!session || session.closed) {
@@ -1089,10 +1178,12 @@ export class VideoDecoderPool {
       // racing ahead of consumption, which is the case this cap was always
       // meant to contain. Dropping the newest is correct here: everything
       // buffered is closer to the target than this frame is.
+      this.recordDevDrop(session, frame.timestamp / 1e6);
       frame.close();
       return;
     }
     const timestampSec = frame.timestamp / 1e6;
+    this.recordDevAdmit(timestampSec);
     session.frames.push({ frame, timestampSec });
     if (session.waiters.length > 0) {
       const stillWaiting: FrameWaiter[] = [];

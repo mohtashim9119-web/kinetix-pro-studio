@@ -1505,3 +1505,72 @@ describe('VideoDecoderPool — single-keyframe clips reach targets past the buff
     pool.dispose();
   });
 });
+
+// --- WS3 120fps buffer-cap confirmation (Step 1) -----------------------------
+
+function makeCfrDemuxed(fps: number, totalFrames: number, width = 1920, height = 1080) {
+  const frameDurUs = Math.round(1e6 / fps);
+  return {
+    config: {
+      codec: 'avc1.640020',
+      codedWidth: width,
+      codedHeight: height,
+      description: new Uint8Array(),
+    },
+    chunks: Array.from({ length: totalFrames }, (_, i) => ({
+      type: i === 0 ? 'key' : 'delta',
+      timestamp: i * frameDurUs,
+      duration: frameDurUs,
+      data: new Uint8Array(),
+    })),
+    durationSec: (totalFrames * frameDurUs) / 1e6,
+  };
+}
+
+describe('VideoDecoderPool — 120fps buffer-cap drop confirmation (WS3 Step 1)', () => {
+  it('drops frames on the first 120fps batch when the fps-blind cap is exceeded', async () => {
+    const demuxed = makeCfrDemuxed(120, 600);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    pool.resetDevDropStats();
+    await pool.ensureSession('seg', 'blob:v', 0, 5, 0);
+    await pool.getFrameAt('seg', 0);
+
+    const stats = pool.getDevDropStats()!;
+    expect(stats.framesDropped).toBe(91);
+    expect(stats.framesAdmitted).toBe(90);
+    expect(stats.drops.every((d) => d.sourceFps !== null && Math.abs(d.sourceFps! - 120) < 0.01)).toBe(true);
+    expect(stats.drops.every((d) => d.windowTargetUs === 0)).toBe(true);
+    expect(stats.drops.every((d) => !d.refedLater)).toBe(true);
+
+    const droppedTs = new Set(stats.drops.map((d) => d.timestampSec));
+    pool.resetDevDropStats();
+    const deliveredTs: number[] = [];
+    for (let t = 0; t <= 2.0; t += 1 / 120) {
+      const frame = await pool.getFrameAt('seg', t);
+      if (frame) deliveredTs.push(frame.timestamp / 1e6);
+    }
+    for (const ts of droppedTs) {
+      expect(deliveredTs.some((d) => Math.abs(d - ts) < 1e-9)).toBe(false);
+    }
+
+    pool.dispose();
+  });
+
+  it('drops zero frames on the first 30fps batch within the cap horizon', async () => {
+    const demuxed = makeCfrDemuxed(30, 150);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+
+    const pool = new VideoDecoderPool();
+    pool.resetDevDropStats();
+    await pool.ensureSession('seg', 'blob:v', 0, 5, 0);
+    await pool.getFrameAt('seg', 0);
+
+    const stats = pool.getDevDropStats()!;
+    expect(stats.framesDropped).toBe(0);
+    expect(stats.framesAdmitted).toBe(46);
+
+    pool.dispose();
+  });
+});
