@@ -18,6 +18,19 @@ export interface PartCRunReport extends Round6ExportRow {
   openAtEnd: number | null;
   silentIntervalsOver5s: SilentIntervalAttribution[];
   expectedFrames: number;
+  /** WS3 silent-gaps diagnosis (2026-09-07): surfaces resource-accounting
+   *  fields `ExportWorkerDiagnosticsPayload` already computes but that never
+   *  reached the jsonl sink before this round — read-only, no new
+   *  computation added on the frame path. */
+  demuxCacheSize: number | null;
+  workerHeapBytes: number | null;
+  decodersCreated: number | null;
+  decodedSourceFrames: number | null;
+  encodedChunkCount: number | null;
+  phaseMs: Record<string, number> | null;
+  instrumentationMs: number | null;
+  appendCallCount: number | null;
+  appendBytes: number | null;
 }
 
 export async function runPartC500(): Promise<PartCRunReport> {
@@ -49,6 +62,15 @@ export async function runPartC500(): Promise<PartCRunReport> {
     openAtEnd: row.openCursors,
     silentIntervalsOver5s,
     expectedFrames,
+    demuxCacheSize: gl?.demuxCacheSize ?? null,
+    workerHeapBytes: gl?.workerHeapBytes ?? null,
+    decodersCreated: gl?.decodersCreated ?? null,
+    decodedSourceFrames: gl?.decodedSourceFrames ?? null,
+    encodedChunkCount: gl?.encodedChunkCount ?? null,
+    phaseMs: gl?.phaseMs ?? null,
+    instrumentationMs: gl?.instrumentationMs ?? null,
+    appendCallCount: gl?.appendCallCount ?? null,
+    appendBytes: gl?.appendBytes ?? null,
   };
   persistLivenessReport('part-c-500-report', report);
   return report;

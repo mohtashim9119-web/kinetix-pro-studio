@@ -11,8 +11,29 @@ import type { ExportDemuxSplit } from './exportPhaseTracker';
  * `pulse()` per phase yields at most 4 entries/s; 128 entries cover ~32 s of
  * continuous single-phase activity — above WATCHDOG_MS (30 s) — without
  * growing with segment or frame count.
+ *
+ * That assumption holds for a single long-lived phase but not for a run that
+ * also pushes an `enter()`/`leave()` pair per segment (one per cold decode
+ * cursor — see `exportWorker.ts`'s `resolveSlotSource`): a multi-minute,
+ * many-segment run can push far more than 128 entries over its lifetime, and
+ * `attributeSilentIntervals` (`exportPipelineWebCodecs.ts`) reads this log
+ * *retrospectively* at the very end of the run against an uncapped
+ * `outputEvents` history — so once the log's surviving window no longer
+ * reaches back to an early gap, that gap's phase/frame attribution reads as
+ * the ring buffer's initialized default (`null`/`0`), not because nothing was
+ * ever tracked there, but because it was evicted before anyone asked
+ * (WS3, 2026-09-07 silent-gaps diagnosis, `docs/ws3-silent-gaps-diagnosis.md`).
+ *
+ * `DEV_PHASE_LOG_CAP` widens the window for diagnostic runs only — it is
+ * resolved by Vite/esbuild at build time via `import.meta.env.DEV` and
+ * dead-code-eliminated to the original 128 in a production build
+ * (`npm run tauri:build`), so this is a diagnostics-only capacity increase,
+ * not a behavior change: nothing in `ExportPhaseTracker` reads this value to
+ * gate timing, pacing, or encoder work — it only bounds how much history a
+ * plain array retains.
  */
-export const PHASE_LOG_CAP = 128;
+const DEV_PHASE_LOG_CAP = 8192;
+export const PHASE_LOG_CAP = import.meta.env.DEV ? DEV_PHASE_LOG_CAP : 128;
 
 export interface ExportPhaseLogEntry {
   seq: number;
@@ -100,6 +121,11 @@ export interface SilentIntervalAttribution {
   phase: string | null;
   framesEncodedAtStart: number;
   frameIndexAtStart: number | null;
+  /** Diagnostics-only (WS3 silent-gaps round): segment/asset live at `startMs`
+   *  per the phase log, same eviction caveat as `phase` above — `null` once
+   *  the gap predates the log's surviving window. */
+  segmentIndexAtStart: number | null;
+  assetIdAtStart: string | null;
 }
 
 /** Ring-buffer push — drops oldest entries once at cap. */
@@ -128,6 +154,21 @@ export function framesAtTime(log: readonly ExportPhaseLogEntry[], atMs: number):
   return frames;
 }
 
+/** Log entry live at `atMs` (last entry whose timestamp is <= atMs), or null
+ *  before the log's first surviving entry / once it has been evicted —
+ *  diagnostics-only, backs `segmentIndexAtStart`/`assetIdAtStart` below. */
+function entryAtTime(
+  log: readonly ExportPhaseLogEntry[],
+  atMs: number,
+): ExportPhaseLogEntry | null {
+  let found: ExportPhaseLogEntry | null = null;
+  for (const e of log) {
+    if (e.atMs <= atMs) found = e;
+    else break;
+  }
+  return found;
+}
+
 function pushSilentGap(
   out: SilentIntervalAttribution[],
   startMs: number,
@@ -138,11 +179,14 @@ function pushSilentGap(
   const durationMs = endMs - startMs;
   if (durationMs < minDurationMs) return;
   const frames = framesAtTime(phaseLog, startMs);
+  const entry = entryAtTime(phaseLog, startMs);
   out.push({
     startMs,
     endMs,
     durationMs,
     phase: phaseAtTime(phaseLog, startMs),
+    segmentIndexAtStart: entry?.segmentIndex ?? null,
+    assetIdAtStart: entry?.assetId ?? null,
     framesEncodedAtStart: frames,
     frameIndexAtStart: frames > 0 ? frames - 1 : null,
   });
