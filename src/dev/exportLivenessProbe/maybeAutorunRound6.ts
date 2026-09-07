@@ -20,7 +20,12 @@ async function readPhase(): Promise<'equiv-40s' | 'ceiling' | 'all' | null> {
     const rec = parsed as { run?: boolean; phase?: string; label?: string };
     if (rec.run !== true) return null;
     if (rec.phase === 'equiv-40s' || rec.phase === 'ceiling' || rec.phase === 'all') return rec.phase;
-    return 'all';
+    // An unrecognized (or absent) `phase` must be a hard no-op — falling
+    // through to 'all' here previously ran both export suites concurrently,
+    // racing over the module-level `lastWebCodecsRunDiagnostics` singleton.
+    // eslint-disable-next-line no-console
+    console.warn('[ws3-r6-autorun] unrecognized phase, refusing to autorun:', rec.phase);
+    return null;
   } catch {
     return null;
   }
