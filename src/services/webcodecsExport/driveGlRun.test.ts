@@ -13,6 +13,8 @@ import {
   driveGlRun,
   WATCHDOG_MS,
   FORWARD_PROGRESS_BOUND_MS,
+  SILENT_INTERVAL_CAP,
+  SILENT_INTERVAL_MIN_MS,
   type ExportWorkerHandle,
   type WebCodecsFfmpeg,
 } from './exportPipelineWebCodecs';
@@ -486,5 +488,74 @@ describe('driveGlRun fake-worker harness', () => {
     } finally {
       setTimeoutSpy.mockRestore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS3 Defect 7 — the per-frame accumulators inside driveGlRun.
+// ---------------------------------------------------------------------------
+
+describe('driveGlRun — bounded silent-interval recording', () => {
+  it('records nothing for ordinary per-frame chunk cadence (destructive probe on the old behaviour)', async () => {
+    vi.useFakeTimers();
+    const fake = new FakeWorker();
+    const p = startDrive(fake);
+    // 200 chunks, ~20 ms apart — normal frame cadence. The pre-fix code kept
+    // one event per chunk AND emitted one attribution per consecutive pair
+    // (minDurationMs was 0), so this would have produced ~199 retained
+    // intervals for 200 perfectly healthy frames.
+    for (let i = 0; i < 200; i++) {
+      fake.emit(chunkMsg(i));
+      await vi.advanceTimersByTimeAsync(20);
+    }
+    fake.emit(doneMsg({ 'frame-loop': 4000 }, 200));
+    const result = await p;
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Only the terminal gap, which is always reported.
+    expect(result.silentIntervals.length).toBeLessThanOrEqual(1);
+  });
+
+  it('still records a real gap, and never exceeds SILENT_INTERVAL_CAP', async () => {
+    vi.useFakeTimers();
+    const fake = new FakeWorker();
+    const p = startDrive(fake);
+    fake.emit(phase('frame-loop', 1));
+    // Alternate a real 1s stall with fast frames, many more times than the cap.
+    for (let i = 0; i < SILENT_INTERVAL_CAP + 100; i++) {
+      fake.emit(chunkMsg(i));
+      await vi.advanceTimersByTimeAsync(1_000);
+    }
+    fake.emit(doneMsg({ 'frame-loop': 1 }, 1));
+    const result = await p;
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // Bounded — the whole point.
+    expect(result.silentIntervals.length).toBeLessThanOrEqual(SILENT_INTERVAL_CAP + 1);
+    // ...and not empty: real gaps above SILENT_INTERVAL_MIN_MS still land.
+    expect(result.silentIntervals.length).toBeGreaterThan(1);
+    for (const iv of result.silentIntervals) {
+      expect(iv.durationMs).toBeGreaterThanOrEqual(SILENT_INTERVAL_MIN_MS);
+    }
+  });
+
+  it('eviction keeps the LONGEST gap, not the most recent', async () => {
+    vi.useFakeTimers();
+    const fake = new FakeWorker();
+    const p = startDrive(fake);
+    fake.emit(phase('frame-loop', 1));
+    // One outlier stall first, then enough shorter stalls to overflow the cap.
+    fake.emit(chunkMsg(0));
+    await vi.advanceTimersByTimeAsync(20_000);
+    for (let i = 1; i < SILENT_INTERVAL_CAP + 50; i++) {
+      fake.emit(chunkMsg(i));
+      await vi.advanceTimersByTimeAsync(300);
+    }
+    fake.emit(doneMsg({ 'frame-loop': 1 }, 1));
+    const result = await p;
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const longest = Math.max(...result.silentIntervals.map((iv) => iv.durationMs));
+    expect(longest).toBeGreaterThanOrEqual(20_000);
   });
 });

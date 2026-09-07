@@ -241,6 +241,34 @@ function pushSilentGap(
 }
 
 /**
+ * WS3 Defect 7 — the INCREMENTAL form of `pushSilentGap`, for a caller that
+ * records a gap the moment it closes instead of retaining every output event
+ * and attributing them all at the end.
+ *
+ * Two reasons this is the better shape, not just the cheaper one:
+ *  1. Memory. `driveGlRun` pushed one `WatchdogOutputEvent` per chunk AND per
+ *     queue-sample, then called `attributeSilentIntervals` with
+ *     `minDurationMs = 0`, which emits one attribution per CONSECUTIVE PAIR.
+ *     On the 38061-frame field run that is ~45k events and ~45k attributions
+ *     per GL piece, all retained in `WebCodecsRunDiagnostics.glPieces` for the
+ *     whole export.
+ *  2. Accuracy. Attributing at the END reads a phase log that has since rolled
+ *     over, so an early gap resolves to the ring buffer's defaults rather than
+ *     to what was actually live. Attributing at gap-close reads the log while
+ *     the gap's own entries are still in it.
+ */
+export function buildSilentGap(
+  startMs: number,
+  endMs: number,
+  phaseLog: readonly ExportPhaseLogEntry[],
+  minDurationMs: number,
+): SilentIntervalAttribution | null {
+  const out: SilentIntervalAttribution[] = [];
+  pushSilentGap(out, startMs, endMs, phaseLog, minDurationMs);
+  return out[0] ?? null;
+}
+
+/**
  * Given watchdog-resetting output events on the main thread, list silent gaps
  * and attribute each to the phase that was live for the gap duration.
  *

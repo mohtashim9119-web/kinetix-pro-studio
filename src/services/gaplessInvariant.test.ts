@@ -483,8 +483,22 @@ describe('gapless invariant — the Whisper path (snapCoveredBoundaries)', () =>
       );
       toks.push(...wordTokensAt(`w${i}a w${i}b`, start, 0.5));
     }
-    const alignments = extractSegmentAlignments(segments, toks);
-    expect(alignments.every(a => a.matched)).toBe(true);
+    // Alignments are built directly rather than via `extractSegmentAlignments`:
+    // this test is about `snapCoveredBoundaries`, and running the real aligner
+    // over 424 segments costs ~20s under full-suite load for no added reach.
+    // Two tokens per segment, in order, so `firstTokenIdx`/`lastTokenIdx` are
+    // exactly what the aligner would produce for this fixture.
+    const alignments = segments.map((sg, i) => ({
+      t0: sg.startTime,
+      t1: sg.startTime + sg.duration,
+      firstTokenIdx: i * 2,
+      lastTokenIdx: i * 2 + 1,
+      confidence: 1,
+      matched: true,
+      matchedWords: 2,
+      totalWords: 2,
+      longestRun: 2,
+    })) as unknown as ReturnType<typeof extractSegmentAlignments>;
 
     // One silence, positioned to pull the (98, 99) boundary 0.200s earlier
     // than segment 99's pre-snap start (198.0). The resulting hole is the same

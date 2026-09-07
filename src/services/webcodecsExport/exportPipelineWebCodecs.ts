@@ -91,7 +91,7 @@ import { muxOnly } from './muxOnly';
 import { FONT_FAMILIES } from '../../constants';
 import type { ExportDemuxSplit } from './exportPhaseTracker';
 import {
-  attributeSilentIntervals,
+  buildSilentGap,
   formatFailureMessage,
   pushPhaseLogEntry,
   type ExportPhaseLogEntry,
@@ -748,6 +748,24 @@ export const WATCHDOG_MS = 30_000;
 export const FORWARD_PROGRESS_BOUND_MS = 45_000;
 
 /**
+ * WS3 Defect 7 — smallest output gap worth recording as a silent interval,
+ * and the hard cap on how many are kept.
+ *
+ * 250 ms is PHASE_THROTTLE_MS: below it a gap cannot even span one phase pulse,
+ * so it has nothing to be attributed to, and at baseline cadence (~21 ms/frame,
+ * one chunk per frame) it is more than 10x the ordinary inter-chunk spacing.
+ * The previous code used 0, which recorded a "gap" between every consecutive
+ * pair of the ~45k per-frame events.
+ *
+ * 256 bounds the retained set at roughly 50 KB per GL piece (~1.2 MB across a
+ * 23-piece export, all of it retained in `WebCodecsRunDiagnostics.glPieces`).
+ * Eviction keeps the LONGEST gaps, so a stuttery run cannot push the one gap
+ * that mattered out of the record.
+ */
+export const SILENT_INTERVAL_MIN_MS = 250;
+export const SILENT_INTERVAL_CAP = 256;
+
+/**
  * Minimal Worker surface `driveGlRun` needs. Production uses a real module
  * Worker; tests inject a fake so this function can run in node/vitest
  * without constructing `exportWorker.ts`.
@@ -827,14 +845,53 @@ export function driveGlRun(
     let maxSilentMs = 0;
     let lastWorkerDiagnostics: ExportWorkerDiagnosticsPayload | null = null;
     const phaseLog: ExportPhaseLogEntry[] = [];
-    const outputEvents: { atMs: number; kind: 'chunk' | 'queue-sample' }[] = [];
+    /**
+     * WS3 Defect 7 — replaces the unbounded `outputEvents` array.
+     *
+     * That array held one entry per `chunk` AND per `queue-sample` for the
+     * whole run — ~45k objects on the 38061-frame field run — and was then fed
+     * to `attributeSilentIntervals` with `minDurationMs = 0`, which produces
+     * one attribution per CONSECUTIVE PAIR: another ~45k objects, retained per
+     * GL piece in `WebCodecsRunDiagnostics.glPieces` for the whole export. Both
+     * grew strictly per frame.
+     *
+     * Now a gap is attributed the moment it CLOSES (`buildSilentGap`), so the
+     * only thing retained is gaps worth looking at. Memory is O(notable gaps),
+     * hard-capped below, instead of O(frames) — and the attribution is more
+     * accurate too, because it reads the phase log while the gap's own entries
+     * are still in it rather than after it has rolled over.
+     */
+    const recordedIntervals: SilentIntervalAttribution[] = [];
+    let outputEventCount = 0;
+    let lastOutputRelMs = 0;
 
     const relMs = (): number => now() - runStartedAt;
 
+    /** Keep the LONGEST gaps once at cap — a short gap that was evicted was
+     *  never the one anyone was looking for. */
+    const retainInterval = (interval: SilentIntervalAttribution): void => {
+      if (recordedIntervals.length < SILENT_INTERVAL_CAP) {
+        recordedIntervals.push(interval);
+        return;
+      }
+      let shortestAt = 0;
+      for (let i = 1; i < recordedIntervals.length; i++) {
+        if (recordedIntervals[i]!.durationMs < recordedIntervals[shortestAt]!.durationMs) shortestAt = i;
+      }
+      if (interval.durationMs > recordedIntervals[shortestAt]!.durationMs) {
+        recordedIntervals[shortestAt] = interval;
+      }
+    };
+
     const recordOutput = (kind: 'chunk' | 'queue-sample'): void => {
+      void kind; // kept in the signature for call-site readability at both sites
       const t = relMs();
-      outputEvents.push({ atMs: t, kind });
-      maxSilentMs = Math.max(maxSilentMs, t - (outputEvents.length > 1 ? outputEvents[outputEvents.length - 2]!.atMs : 0));
+      const gapStart = outputEventCount === 0 ? 0 : lastOutputRelMs;
+      const interval = buildSilentGap(gapStart, t, phaseLog, SILENT_INTERVAL_MIN_MS);
+      if (interval) retainInterval(interval);
+      maxSilentMs = Math.max(maxSilentMs, t - gapStart);
+      outputEventCount++;
+      lastOutputRelMs = t;
       lastOutputAt = now();
     };
 
@@ -879,8 +936,13 @@ export function driveGlRun(
       };
     };
 
-    const silentIntervals = (): SilentIntervalAttribution[] =>
-      attributeSilentIntervals(outputEvents, phaseLog, 0, relMs());
+    /** Everything retained so far, plus the still-open terminal gap — which is
+     *  always reported regardless of length, exactly as
+     *  `attributeSilentIntervals`'s `endMs` clause did. */
+    const silentIntervals = (): SilentIntervalAttribution[] => {
+      const terminal = buildSilentGap(outputEventCount === 0 ? 0 : lastOutputRelMs, relMs(), phaseLog, 0);
+      return terminal ? [...recordedIntervals, terminal] : [...recordedIntervals];
+    };
 
     const snapshotLiveness = (): ExportLivenessSnapshot => ({
       lastPhase,
