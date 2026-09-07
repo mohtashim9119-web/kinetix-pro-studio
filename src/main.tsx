@@ -4,8 +4,8 @@ import App from './App.tsx';
 import './index.css';
 
 if (import.meta.env.DEV) {
-  // Round 5 pipeline bisection autorun (dev-only).
-  void import('./dev/exportLivenessProbe/maybeAutorunRound5');
+  // Round 6 cursor-release verification autorun (dev-only).
+  void import('./dev/exportLivenessProbe/maybeAutorunRound6');
 }
 
 createRoot(document.getElementById('root')!).render(

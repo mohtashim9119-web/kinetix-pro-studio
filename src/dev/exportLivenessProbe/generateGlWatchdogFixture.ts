@@ -81,7 +81,9 @@ export async function generateGlWatchdogFixture(): Promise<GlWatchdogFixtureResu
     });
   }
 
-  const timelineDurationSec = FIXTURE_SEGMENT_COUNT * FIXTURE_SEG_DURATION_SEC;
+  const framesPerSeg = Math.max(1, Math.round(FIXTURE_SEG_DURATION_SEC * FIXTURE_FPS));
+  const segDur = framesPerSeg / FIXTURE_FPS;
+  const timelineDurationSec = FIXTURE_SEGMENT_COUNT * segDur;
   const voBlob = makeSilentWav(timelineDurationSec);
   const voiceoverId = crypto.randomUUID();
   await putAsset(projectId, voiceoverId, voBlob, { name: 'voiceover.wav', mimeType: 'audio/wav' });
@@ -100,14 +102,14 @@ export async function generateGlWatchdogFixture(): Promise<GlWatchdogFixtureResu
       id: crypto.randomUUID(),
       text: `Caption ${i + 1}`,
       assetId: video.id,
-      startTime: i * FIXTURE_SEG_DURATION_SEC,
-      duration: FIXTURE_SEG_DURATION_SEC,
+      startTime: (i * framesPerSeg) / FIXTURE_FPS,
+      duration: segDur,
       transition: TransitionType.NONE,
       animation: AnimationType.NONE,
       order: i,
       showOverlay: true,
       trimStart: 0,
-      trimEnd: Math.min(FIXTURE_SEG_DURATION_SEC, video.duration ?? FIXTURE_SEG_DURATION_SEC),
+      trimEnd: Math.min(segDur, video.duration ?? segDur),
     });
   }
 

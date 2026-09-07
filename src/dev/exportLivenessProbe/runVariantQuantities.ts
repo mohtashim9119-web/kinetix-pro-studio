@@ -37,6 +37,7 @@ export interface VariantQuantityRow {
   decodersOpen: number | null;
   cursorsCreated: number | null;
   openCursors: number | null;
+  peakOpenCursors: number | null;
   openImageBitmaps: number | null;
   workerHeapBytes: number | null;
   terminalSilentInterval: { durationMs: number; phase: string | null } | null;
@@ -144,6 +145,7 @@ export async function runVariantQuantities(variantIds?: string[]): Promise<Varia
       decodersOpen: gl?.decodersOpen ?? null,
       cursorsCreated: gl?.cursorsCreated ?? null,
       openCursors: gl?.openCursors ?? null,
+      peakOpenCursors: gl?.peakOpenCursors ?? null,
       openImageBitmaps: gl?.openImageBitmaps ?? null,
       workerHeapBytes: gl?.workerHeapBytes ?? null,
       terminalSilentInterval: terminal
