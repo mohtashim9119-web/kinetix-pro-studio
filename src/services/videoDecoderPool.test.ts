@@ -1585,3 +1585,85 @@ describe('VideoDecoderPool — 120fps incremental playback regression (WS3 Step 
     pool.dispose();
   });
 });
+
+// --- WS3 multi-fps preview buffer coverage (Step 4) --------------------------
+
+describe('VideoDecoderPool — multi-fps preview buffer coverage (WS3 Step 4)', () => {
+  const STALE_TOLERANCE_SEC = 0.2;
+  const TICK_SEC = 33 / 1000;
+
+  async function assertIncrementalPlayback(fps: number, totalFrames: number, endSec = 2.0) {
+    const demuxed = makeCfrDemuxed(fps, totalFrames);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, totalFrames / fps, 0);
+    for (let target = 0; target <= endSec; target += TICK_SEC) {
+      const frame = await pool.getFrameAt('seg', target);
+      expect(frame).not.toBeNull();
+      const frameSec = frame!.timestamp / 1e6;
+      expect(target - frameSec).toBeLessThanOrEqual(STALE_TOLERANCE_SEC + 1e-6);
+    }
+    pool.dispose();
+  }
+
+  it('incremental playback at 30fps', async () => {
+    await assertIncrementalPlayback(30, 150);
+  });
+
+  it('incremental playback at 60fps', async () => {
+    await assertIncrementalPlayback(60, 300);
+  });
+
+  it('incremental playback at 120fps', async () => {
+    await assertIncrementalPlayback(120, 600);
+  });
+
+  it('incremental playback at fractional 119.88fps', async () => {
+    const fps = 119.88;
+    const frameDurUs = Math.round(1e6 / fps);
+    const totalFrames = 600;
+    const demuxed = {
+      config: { codec: 'avc1.640020', codedWidth: 1920, codedHeight: 1080, description: new Uint8Array() },
+      chunks: Array.from({ length: totalFrames }, (_, i) => ({
+        type: i === 0 ? 'key' : 'delta',
+        timestamp: i * frameDurUs,
+        duration: frameDurUs,
+        data: new Uint8Array(),
+      })),
+      durationSec: (totalFrames * frameDurUs) / 1e6,
+    };
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 5, 0);
+    for (let target = 0; target <= 2.0; target += TICK_SEC) {
+      const frame = await pool.getFrameAt('seg', target);
+      expect(frame).not.toBeNull();
+      expect(target - frame!.timestamp / 1e6).toBeLessThanOrEqual(STALE_TOLERANCE_SEC + 1e-6);
+    }
+    pool.dispose();
+  });
+
+  it('deep seek on a 120fps single-keyframe clip', async () => {
+    const demuxed = makeCfrDemuxed(120, 600);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 5, 4.5);
+    const frame = await pool.getFrameAt('seg', 4.5);
+    expect(frame).not.toBeNull();
+    expect(frame!.timestamp / 1e6).toBeGreaterThanOrEqual(4.49);
+    pool.dispose();
+  });
+
+  it('backward scrub on a 120fps clip returns a prior frame', async () => {
+    const demuxed = makeCfrDemuxed(120, 600);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+    const pool = new VideoDecoderPool();
+    await pool.ensureSession('seg', 'blob:v', 0, 5, 0);
+    await pool.getFrameAt('seg', 2.0);
+    const back = await pool.getFrameAt('seg', 1.0);
+    expect(back).not.toBeNull();
+    expect(back!.timestamp / 1e6).toBeLessThanOrEqual(1.0 + 1e-6);
+    expect(back!.timestamp / 1e6).toBeGreaterThanOrEqual(0.99);
+    pool.dispose();
+  });
+});
