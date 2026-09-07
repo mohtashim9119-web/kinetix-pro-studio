@@ -1196,3 +1196,375 @@ to `exportWorkerDiagnostics.ts`/`exportPhaseTracker.ts`/`runPartC.ts` this round
   against round 1's actual run-5 data (which run 8's still-outstanding live validation, or a
   dedicated instrumentation pass timing individual GL calls, could resolve).
 
+---
+
+# Round 3 — WS3 export-liveness-occlusion (blocked-vs-slow verdict, live occlusion proof, context-loss race fix)
+
+Same worktree/branch as Round 2 (`ws3-export-liveness-occlusion`), continuing from `39ac318`.
+
+## Step 1 — Blocked or merely slow?
+
+Answered entirely from Round 1's own already-captured data (`public/_spike/ws3-result.jsonl`,
+`/tmp/ws3-ceiling-hang-evidence.jsonl`) — no new run, per the task's own instruction.
+
+**1a. Every event of any kind in run 5's window.** Parsing `ws3-result.jsonl` for run 5
+(`part-c-autorun-start` ts `1788805241672` → `part-c-500-done` ts `1788805947986`, label
+`run5-warm-immediate`) and listing every logged tag with its timestamp finds exactly 37 events for
+the whole 705.25s run, all either `round6-part-c-500-progress` (the coarse, per-150-frame progress
+tick fired from the main thread's `onProgress` callback in response to a real `'chunk'`-derived
+`stage.frame` update — i.e. itself worker-message-driven, not a main-thread poll) or the run's
+start/predicted/terminal tags. The last progress tick before the reported 223.591s gap and the
+first event of ANY kind after it:
+```
+1788805700400  (relMs 457666)  round6-part-c-500-progress
+1788805723202  (relMs 480468)  round6-part-c-500-progress   <- last event before the gap
+--- 224,719 ms with ZERO events of any kind ---
+1788805947921  (relMs 705187)  round6-part-c-500-export-returned  <- first event after the gap
+```
+This 224,719ms silent span fully encloses (and is 1,128ms wider on each side of, from imprecision
+in the progress tick's own 150-frame granularity than) the `silentIntervalsOver5s` terminal entry's
+own reported window: `{startMs: 480656, endMs: 704247, durationMs: 223591, phase: 'frame-loop',
+framesEncodedAtStart: 4513, frameIndexAtStart: 4512}`. `/tmp/ws3-ceiling-hang-evidence.jsonl` was
+independently re-parsed this round (581 lines, 47 distinct tags, ts range
+`[1788724305319, 1788778496648]`) — entirely before run 5's own window
+(`[1788805241672, 1788805947986]`) and containing zero `part-c-*` tags, confirming Round 1's own
+claim that this file holds Round 6 ceiling-bisect data from earlier in the session, unrelated to
+Part C.
+
+**1b. CONFIRMED-INERT.** Zero worker-originated output of any kind — no `chunk`, no
+`queue-sample`, no phase pulse — reached the main thread for 224.7 continuous seconds. A "merely
+slow" worker thread still executes JS between long individual operations and would be expected to
+emit at least an occasional message at a reduced rate; a rate that drops to exactly zero for 3.75
+minutes is the signature of a thread not running AT ALL, not one running slowly. Consequence: a
+worker-side `setInterval` heartbeat — had one existed in Round 1's original (pre-`bc50955`) code —
+could not have fired during this specific window either, because a genuinely blocked JS thread
+cannot service any of its own timer callbacks, heartbeat included. **Redesign implied (stated, not
+built, per the task's instruction):** the bound must be evaluated from something that survives a
+fully blocked export-worker thread — either (a) a SEPARATE, independent `Worker` instance (its own
+OS-level thread, not sharing the export worker's event loop, so a synchronous native call blocking
+the export worker cannot block a different worker's timer) whose only job is a periodic liveness
+ping, or (b) a native Rust-side timer (Step 5's "third context") that observes IPC/heartbeat
+silence from OUTSIDE the WebView's JS engine entirely. Neither is implemented this round. This also
+means `bc50955`'s ACTUAL shipped fix (`checkLivenessBounds` + the export-worker's own heartbeat) is
+a genuine improvement for the "worker keeps running slowly but freely" shape (Round 1's non-
+catastrophic gaps up to ~10s) but does **not** close the CONFIRMED-INERT gap for the specific
+"single synchronous call blocks the whole worker thread" failure mode — a heartbeat sourced from
+the very thread that's blocked is exactly as inert as the raw `setTimeout` it backstops, for that
+one failure mode specifically.
+
+**1c. Longest synchronous, non-yielding span on the frame path.** In `runFrameLoopTick`
+(`exportWorker.ts:731-825`), the steady-state (no active transition) span between the `await` at
+`exportWorker.ts:776` (`resolveSlotSource(plan.a, ...)`) returning and the next yield point (either
+the conditional `await waitForDequeue(encoder)` at `exportWorker.ts:799`, only entered when
+`encoder.encodeQueueSize > BACKPRESSURE_HIGH_WATER`, or the following loop iteration's own
+`resolveSlotSource` await) runs entirely synchronously:
+- `uploadSlot` → `compositor.uploadFrame('a', ...)` → `gl.texImage2D(...)` (`glCompositor.ts:376`)
+  — a single texture upload from a (possibly hardware-decoded, IOSurface-backed) `VideoFrame`,
+  the same call class Step 3 below found returning `null` after a context loss.
+- `compositor.renderFrame(rawParams)` (`exportWorker.ts:786`) — up to 6 chained
+  `gl.useProgram`/`gl.drawArrays` calls on the transition path (`glCompositor.ts`'s
+  `renderTransition`: 2×`drawBlit`, 2×`drawZoom`, 1×`drawTransitionBlend`, 1×`drawGrade`), plus,
+  whenever the render-target size changes, `ensureRenderTargets` → `createRenderTarget` →
+  `gl.createFramebuffer`/`gl.checkFramebufferStatus` — the latter an explicit, spec'd GPU
+  synchronization point that cannot return until the driver validates the framebuffer.
+- `textRenderer.renderFrame(...)` (`exportWorker.ts:789-795`) — synchronous; on an atlas-cache miss
+  (`AtlasCache.set`, `textRenderer.ts:464`) this also does synchronous Canvas2D rasterization
+  (`ctx.fillText`, `wrapText`'s `measureText` loop) plus its own `gl.texImage2D` upload
+  (`textRenderer.ts:473`) of a possibly-supersampled canvas (heading path,
+  `HEADING_SUPERSAMPLE_FACTOR`×).
+- `new VideoFrame(canvas, {...})` (`exportWorker.ts:804`) — constructing a `VideoFrame` from an
+  `OffscreenCanvas` requires the engine to snapshot the canvas's current backing store; no
+  documented async variant exists.
+- `encoder.encode(frame, {...})` / `frame.close()` (`exportWorker.ts:813,815`).
+
+**Worst-case duration: NOT DETERMINED precisely** — no instrumentation inside this span times
+individual GL calls (`ExportPhaseTracker`'s pulses are throttled to 250ms and only bracket the
+OUTER `demux`/`image-bitmap` phases, not calls within `frame-loop`). Empirically, whichever single
+call in this chain stalled did so for **at least 223.591s** in Round 1's run 5 (the terminal
+`createContentTexture` throw Step 3 below fixes came from exactly this call chain —
+`renderFrame` → `ensureRenderTargets` → `createRenderTarget` → `createContentTexture`); nothing in
+this span carries its own timeout, so the theoretical worst case is unbounded.
+
+**1d. Heartbeat primitive and worker-throttling citation.** `setInterval`
+(`exportWorker.ts:994`, `HEARTBEAT_INTERVAL_MS = 5_000`, `exportWorker.ts:189`), running in the
+export Worker's own `DedicatedWorkerGlobalScope` (`self`), posting via `self.postMessage`
+(`postOut`, `exportWorker.ts:179-182`) — the identical timer primitive family as the main thread's
+`WATCHDOG_MS`/`FORWARD_PROGRESS_BOUND_MS`, differing only in which global scope owns it.
+**NOT DETERMINED with certainty for this exact platform** (real windowed WKWebView on macOS,
+Tauri) — not assumed exempt either. One concrete, documented WebKit issue was found:
+[microsoft/playwright#41044](https://github.com/microsoft/playwright/issues/41044) reports a
+dedicated Worker's own event loop (not merely cross-thread `postMessage` dispatch) throttled/
+suspended by the WebKit browser process when it considers the page "inactive," with 20-40s delays
+before a Worker's `postMessage` was processed — on WebKit running headed under Xvfb on Linux
+(virtual display), contradicting the general cross-browser convention (also surfaced by the same
+search) that a Worker's own timers are NOT subject to page-visibility throttling the way
+`window.setInterval` is. Not confirmed for a real macOS windowed/occluded WKWebView specifically.
+Given 1b's CONFIRMED-INERT finding already answers the practical question — the worker was fully
+blocked regardless of whether its interval was ALSO independently throttled, since a blocked JS
+thread can't run any of its own callbacks either way — this sub-question is secondary to 1b, but is
+reported as asked: **NOT DETERMINED**, cited above rather than assumed.
+
+## Step 2 — One live occluded run
+
+**Method, and an early methodological correction (reported honestly).** The first attempt
+(`run9-round3-occluded-fullscreen`) was contaminated: Step 3's code edits (below) were made to
+`glCompositor.ts`/`textRenderer.ts`/`exportWorker.ts` WHILE that run was still executing — Vite's
+dev-server file watcher fired repeated `page reload src/services/gl/glCompositor.ts` /
+`...textRenderer.ts` / `...exportWorker.ts` full-page reloads into the SAME running window
+(confirmed in `run9_tauri.log`: 12 page-reload lines and a `[TAURI] Couldn't find callback id
+1442156703. This might happen when the app is reloaded while Rust is running an asynchronous
+operation` warning), which tore down the in-progress export mid-run and even re-triggered
+`maybeAutorunPartC.ts`'s IIFE a second time from a fresh page load (two independent
+`part-c-autorun-start` events for the one label). That run's data is invalid and is not used below.
+**Lesson applied for the rest of this round: no worktree source file was edited while a live run
+was in flight for the remainder of this session.** A clean re-run
+(`run10-round3-occluded-clean`) was launched only after Step 3's edits were finished and `tsc`/
+`lint`/the two new test files all passed.
+
+Setup: `npm run tauri:dev` launched via a backgrounded shell (not double-clicked — matches Round
+1's own finding that this alone keeps a freshly-launched window from being focused), immediately
+covered by a same-Space (not macOS Space-based Full Screen, which would move the window to a
+different Space rather than occlude it) `TextEdit` window resized to `(0,0)-(1792,1120)` via
+`osascript`, re-asserted via `osascript` every time an `lsappinfo front` poll (5-8s cadence)
+detected a different frontmost app. Before launch, `ps aux` found and killed 3 orphaned
+(`ppid=1`) `WebKit.*.xpc` children left over from an earlier, unrelated process — the "leftover
+process" scenario Round 1 also hit — and confirmed no `vitest`/other competing CPU load. **Honest
+imperfection**: occlusion lapsed briefly at least twice over the run's 88s — once seconds after
+launch (the window briefly self-activated) and once, significantly, right at the very start of the
+fatal stall window itself (see below) — this was not a single, perfectly clean, uninterrupted
+occlusion window the way a dedicated scripted repro would be; the reaction latency (5-8s polling)
+is a real limitation of this round's method, reported rather than hidden.
+
+**Result: the liveness bound FIRED.** `part-c-500-done` (label `run10-round3-occluded-clean`):
+
+| Field | Value |
+|---|---|
+| `resultOk` | `false` |
+| `framesEncoded` | 697 / 6000 expected |
+| `wallSec` | 88.238 |
+| `failureVia` | `watchdog` |
+| `failureMessage` | `Export worker produced no output for 30s — aborting (watchdog).` |
+| `longestSilent` | `{durationMs: 32423, phase: 'frame-loop'}` |
+| `appendCallCount` / `appendBytes` | 654 / 20,521,832 (real encode/append work happened before the stall) |
+
+The single `silentIntervalsOver5s` entry: `{startMs: 52329, endMs: 84752, durationMs: 32423,
+phase: 'frame-loop', segmentIndexAtStart: 58, assetIdAtStart:
+'68d764a7-0dde-4312-985f-2b7d2ee6233d', frameIndexAtStart: 696}` — **this is also the first live
+confirmation of Round 1's own Part 2c instrumentation** (`segmentIndexAtStart`/`assetIdAtStart`),
+never exercised by a completed live run before this round (Round 1's own "run 8" attempt never
+started; see the still-open Round 2 Step 6 note above).
+
+**Elapsed at firing**: stall began at relMs 52,329 (~52.3s into the run), watchdog fired at relMs
+84,752 (~84.8s in) — a 32,423ms stall, closely matching `WATCHDOG_MS` (30,000ms) plus
+`finishWatchdog`'s own 50ms grace and polling/detection overhead.
+
+**Full typed-error diagnostics payload — what this dev harness's jsonl report actually captures,
+and what it does not:**
+- `lastPhase`: `'frame-loop'`
+- `pieceIndex`: 0 (single GL piece, per the fixture's own one-piece plan)
+- `segmentIndex` / `assetId`: 58 / `68d764a7-0dde-4312-985f-2b7d2ee6233d` (see above)
+- `framesEncoded`: 697 (`frameIndexAtStart` 696)
+- failure identity: `{via: 'watchdog', name: null, message: 'Export worker produced no output for
+  30s — aborting (watchdog).', frameIndex: 696, timelineSec: null}`
+- `msSinceLastPhaseChange`, per-phase elapsed (`phaseMs`), `demuxSplit`, and the full
+  phase-transition log are **NOT captured by this report type** — `phaseMs` came back as `{}`
+  (empty) live, and `demuxSplit`/the raw `phaseLog` array were never fields `PartCRunReport`
+  exposes to the jsonl sink at all (a schema gap, not a live-data absence — same class of gap
+  Round 1's Part 1b already flagged for the original sink, now confirmed to also apply to the
+  post-Round-1-instrumentation report type). The empty `phaseMs` is itself evidence, addressed
+  next.
+
+**Every interval >5s** (this run had exactly one): the table row above — phase `frame-loop`,
+segment 58, asset `68d764a7-0dde-4312-985f-2b7d2ee6233d`.
+
+**Resource/CPU signature during the stall** (this round's own sampler, ~3-4s cadence, run for the
+FULL run rather than ending early — closing the exact gap Round 1's Part 3c flagged in its own
+sampler): `com.apple.WebKit.WebContent` and `com.apple.WebKit.GPU` CPU both flatlined at 0.0-0.2%
+for the ~23-28s sampled inside the stall window (epoch `1788812845`-`1788812868`), RSS essentially
+frozen (415,364 KB -> 407,012 KB, no growth) — the same "blocked, not merely slow" signature Round
+1's Part 3c found for its own (differently-timed) sampled portion of run 5, now confirmed for a
+second, independent stall.
+
+**Which mechanism actually caught it — NOT DEFINITIVELY DETERMINED, circumstantial evidence leans
+toward the pre-existing raw `setTimeout` backstop, not the new heartbeat path.** No instrumentation
+this round distinguishes which of `checkLivenessBounds`'s message-driven call to `finishWatchdog`
+vs. the raw `setTimeout(finishWatchdog, WATCHDOG_MS)` actually fired. But the CPU signature above
+(worker apparently still fully blocked at the moment of firing) plus the empty `phaseMs` and
+zeroed resource-count fields (`decodersCreated: 0`, `cursorsCreated: 0`, etc. — inconsistent with
+697 real frames having been encoded, meaning `finishWatchdog`'s `'request-diagnostics'`
+`postMessage` almost certainly got no response inside its 50ms grace window) together suggest the
+export worker was STILL blocked when the bound fired — meaning it could not have sent a
+`'heartbeat'` message either, so by elimination the raw `setTimeout` is the more likely culprit.
+**Consequence, stated plainly**: this run demonstrates the OVERALL system (both redundant
+mechanisms together) correctly turns an occlusion-triggered ~30s stall into a clean, typed failure
+in ~88s total, rather than the 223.591s hang + uncaught-exception crash Round 1's unfixed run 5
+produced — a genuine, non-hypothetical positive result, since this run DID stall (not a "no gaps,
+fix unvalidated" case). It does **not** conclusively isolate the NEW heartbeat mechanism as the one
+that mattered here; it is equally consistent with "the main-thread `setTimeout` was not yet
+throttled severely enough at the ~32s mark to matter," a milder case than Round 1's run 5 and closer
+to Round 1's run 4 (backgrounded the whole time, gaps only up to 10.0s).
+
+**A methodological finding along the way, reported for full transparency**: this round's own
+process cleanup made a mistake — a `pkill -f "target/debug/app"` / `pkill -f "node.*tauri dev"`
+issued to recover from the contaminated `run9` also matched and killed a concurrent peer session's
+(`ws3-120fps-preview`) own `npm run tauri:dev` process on this shared machine, which that session
+then had to detect and restart on its own. Every process action for the remainder of this round
+used exact PIDs verified by `ps -o pid,ppid,command` immediately beforehand, never a name pattern.
+
+## Step 3 — Context-loss race fix (implemented)
+
+**3a/3b — the fix.** `glContext.ts` gains `GlContextLostError` (a typed `Error` subclass) and
+`requireGl<T>(gl, value, what)`: when a GL allocation call returns `null`, `requireGl` checks
+`gl.isContextLost()` — a synchronous, spec-guaranteed query independent of whether the async
+`contextlost`/`webglcontextlost` event has dispatched yet — and throws `GlContextLostError` when
+true, or the original generic `Error` (unchanged message) when false (a genuine, non-loss
+allocation failure). Every GL allocation call in the render path that can return `null` on loss now
+routes through it: `glCompositor.ts`'s `compileShader`/`linkProgram`/`createContentTexture`/
+`createRenderTarget`'s `createFramebuffer`/`setup`'s `createVertexArray`/`createBuffer` (6 sites),
+and `textRenderer.ts`'s equivalent 5 sites (`compileShader`/`linkProgram`/`AtlasCache.set`'s
+`createTexture`/the constructor's `createVertexArray`/`createBuffer`). `exportWorker.ts`'s outer
+`catch` block (the frame loop's own `try/catch`) now recognizes `GlContextLostError` and reports it
+via `failState.setFailure('gl-context-lost', e)` instead of the generic `'thrown'` — using the
+SAME `RunFailureState`/`ExportFailureIdentity`/`buildDiagnostics` machinery the pre-existing
+per-iteration `contextLost`-flag check already used, so the full diagnostics payload (unchanged
+shape) is populated identically regardless of which path wins.
+
+**Both orderings converge, by construction, not by handling two cases.** The pre-existing
+listener-driven path (`exportWorker.ts`'s per-iteration `contextLost` flag check, unchanged) and
+the new null-return-driven path (`requireGl`) both resolve to the identical
+`'gl-context-lost'` identity — because both ultimately ask the SAME synchronous
+`gl.isContextLost()` state (the flag check indirectly, via the listener that flips it; `requireGl`
+directly), there is no longer an ordering-dependent branch to race between: whichever call site
+notices the loss first reports the same thing. This is why the fix removes the race rather than
+adding a second case to handle it.
+
+**3c — tests (destructive probes both performed, both reverted after; `git diff` below shows the
+tree in the KEPT, working state):**
+- `glContext.test.ts`'s new `requireGl` suite (5 tests): value passthrough when non-null; throws
+  `GlContextLostError` when null+lost, with the exact expected message and `.name`; throws a plain
+  `Error` (not `GlContextLostError`) when null+NOT-lost (proves no over-classification); does not
+  call `isContextLost()` at all on the non-null hot path.
+- `glCompositor.test.ts`'s new "context loss at the point of use" suite (3 tests): a null
+  `createTexture()` during a simulated loss (construction-time, texA) throws `GlContextLostError`;
+  a null `createFramebuffer()` during a simulated loss reached via a real `renderFrame()` call
+  (the exact `ensureRenderTargets` -> `createRenderTarget` path Round 2's Step 3c found live) throws
+  `GlContextLostError`; the same null `createTexture()` WITHOUT a context loss still throws the
+  original generic `Error`, not `GlContextLostError`.
+- **Destructive probe, performed**: reverting `requireGl`'s `isContextLost()` branch (making it
+  always throw the generic `Error`) turned the first two glContext tests and the first two
+  glCompositor tests RED, confirming they exercise the new branch and not some other path; the
+  "without a loss" tests in both files stayed GREEN under this probe (they don't depend on the
+  branch under test), correctly bounding what the probe demonstrates. Restored -> all green again.
+- No `exportWorker.ts`-level test exists for the catch-block's `GlContextLostError` recognition —
+  **stated as a scope boundary, not hidden**: `exportWorker.ts` has no unit-test harness at all
+  (confirmed: no `exportWorker.test.ts` exists in this repo; its internals — `RunFailureState`,
+  `runFrameLoopTick`, `runExport` — are all unexported, and building a harness would mean mocking
+  `OffscreenCanvas`/`WebGL2RenderingContext`/`VideoEncoder`/`VideoDecoder`/`self.postMessage` from
+  scratch, out of proportion to this step). The catch-block's one-line ternary is exercised
+  indirectly by Step 2's own live run 10 in the sense that `exportWorker.ts` still compiles and
+  runs correctly end-to-end under real WebGL2 (tsc + the live run above are the only evidence for
+  that specific line, not a dedicated unit test).
+
+**3d.** No context recovery/restart implemented (Step 5's scope, confirmed by the `git diff` below
+carrying no changes to any `contextrestored`/`handleContextRestored` code path).
+
+## Step 4 — Output neutrality, measured live
+
+Round 2's Step 4c ran no live comparison ("NOT DETERMINED... the source-audit argument above is
+strong... but is not the same evidence as a matching digest"). This round ran it, twice over:
+
+1. **Reproducibility at HEAD** (`run11-round3-digest`, current worktree — Round 1's `351df7f`,
+   Round 2's `bc50955`, and this round's Step 3 fix all present): the `~40s` GL fixture
+   (100 segments, 1200 frames at 30fps) run twice back-to-back produced
+   `frameContentDigest` **`fda1b8dfa616ef8f0ecf76d7b1ae6011bb0c8bb272777146c476cba821ca2ea0`** on
+   BOTH runs (`framesA`/`framesB`: 1200/1200, `reproducible: true`).
+2. **Matches pre-`bc50955`** (`run12-pre-bc50955-baseline`, the existing worktree
+   `4.kinetix-pro-studio-tmp-ws3-silent-gaps` at `12f6ad7` — Round 1's own last commit, before ANY
+   Round 2/3 liveness-mechanism or context-loss changes): the identical fixture, run twice on this
+   OLDER commit, produced the **exact same digest**,
+   `fda1b8dfa616ef8f0ecf76d7b1ae6011bb0c8bb272777146c476cba821ca2ea0`, also with
+   `reproducible: true` internally.
+
+**Byte-identical hash across three independent runs spanning two commits (one pre-`bc50955`, one
+with `bc50955`+Step 3) is now empirical proof, not source-audit inference, that neither the
+liveness-mechanism fix nor the context-loss-race fix changed a single composited pixel.** No frame
+digest gate needed to be built this round — `runPartCDigestRepro40s`/`generatePartCFixture`
+(dev-only, already existed) were reused unmodified.
+
+## Step 5 — App Nap fix, scoped but not built
+
+- **Exact macOS API**: `ProcessInfo.processInfo.beginActivity(options:reason:)` (Foundation),
+  called with `.userInitiated` (or a similar non-suspending option set), retaining the returned
+  opaque activity token for the export's duration and releasing it via `endActivity(_:)` when the
+  export finishes or fails. This is Apple's documented, standard mechanism for opting a long-running
+  operation out of App Nap (precedent: HandBrake's own encode-time use of exactly this API, found
+  during this round's research).
+- **`src-tauri` file:line**: `src-tauri/src/lib.rs`'s `tauri::generate_handler![...]` macro
+  (currently `lib.rs:440-...`, e.g. right after `ffmpeg::reveal_in_finder,` at `lib.rs:456`) would
+  gain two new commands (`begin_export_activity`/`end_export_activity`) implemented in a new
+  `src-tauri/src/power.rs` — no existing module owns this concern. Each command
+  `#[cfg(target_os = "macos")]`-gated to call `ProcessInfo` via the `objc2`/`objc2-foundation`
+  crate, with a no-op fallback on other platforms; the frontend would bracket `runExport`'s
+  start/end in `exportPipelineWebCodecs.ts` with `invoke(...)` calls, mirroring the existing
+  `ffmpeg_create_session`/`ffmpeg_destroy_session` session-bracket pattern.
+- **Windows equivalent**: `SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED |
+  ES_AWAYMODE_REQUIRED)` (`kernel32`, via the `windows-sys` crate) — the standard Windows API for
+  preventing system/display sleep during a long operation, but **not a precise analog**: Windows
+  has no documented per-window "occlusion-triggered throttling" concept equivalent to macOS App Nap
+  or WebKit's own page-visibility timer throttling; `SetThreadExecutionState` targets SYSTEM
+  sleep/display timeout, not per-app background CPU/timer throttling.
+- **Cargo gates a future round would need**: a new native dependency in `Cargo.toml`
+  (`objc2`+`objc2-foundation` macOS-only via `[target.'cfg(target_os = "macos")'.dependencies]`;
+  `windows-sys` with its `Win32_System_Power` feature, Windows-only) — `Cargo.toml` currently has
+  ZERO such crates (confirmed by grep this round). A future round would need `cargo check`/
+  `cargo build` on both platform configurations plus new Rust-side tests (none exist for power
+  management today).
+- **CPU vs. GPU — the core question, and a correction to Round 2's own framing.**
+  `ProcessInfo.beginActivity` addresses ONLY the CPU/timer-throttling half of App Nap (priority
+  reduction, `setInterval`/`setTimeout` throttling, I/O throttling) — it does **not** prevent GPU
+  surface/window-backing-store reclamation for an occluded window. These are two separate,
+  independently-documented Apple mechanisms: App Nap is a CPU/power-management feature: window
+  occlusion (`NSWindowOcclusionState`) is a distinct, GPU/compositor-facing concern that Apple's OWN
+  guidance explicitly recommends apps COOPERATE with by HALTING GPU work when occluded (the "Work
+  When Visible" pattern — e.g. Photo Booth stopping its camera/effects when not visible) — i.e.
+  Apple's platform convention runs the OPPOSITE direction from what this app would want, and there
+  is no documented, supported "keep my GPU resources live while occluded" API analogous to
+  `beginActivity`. **Consequence**: `beginActivity` would help the Step 1/4 timer-throttling risk
+  (already independently covered by `bc50955`'s message-driven `checkLivenessBounds`, making its
+  marginal value here smaller than Round 2's table estimated) but would **not**, by itself, have
+  prevented Round 1 run 5's `gl.createTexture()`-returns-null context loss — that symptom points at
+  WebKit's own internal GPU-resource handling for a hidden page, a WebKit-internal decision this
+  app's own `beginActivity` call cannot override, and Apple's stated platform philosophy suggests
+  there may be no supported app-level fix for that half at all.
+
+## Gates
+
+- `npx tsc --noEmit` -> clean.
+- `npm run lint` -> clean (same command as `tsc` on this project).
+- `npm test` -> **3203 passed / 77 skipped / 0 failed** (227 test files: 165 passed / 62 skipped).
+  Arithmetic: Round 2's baseline was 3195 passed; this round added exactly 8 new tests (5 in
+  `glContext.test.ts`'s `requireGl` suite, 3 in `glCompositor.test.ts`'s context-loss suite) and
+  modified no existing assertions — 3195 + 8 = 3203, matching exactly.
+- `git diff --name-only main -- src-tauri/` -> empty — confirmed, no Rust files touched this round.
+  Cargo gates skipped on this basis, as instructed.
+- This round's own working-tree diff (`git diff --stat`, uncommitted at time of writing): 6 files
+  changed, 197 insertions(+), 23 deletions(-) — `glCompositor.test.ts` (+69), `glCompositor.ts`
+  (+17/-11 net), `glContext.test.ts` (+64), `glContext.ts` (+44), `exportWorker.ts` (+10/-2),
+  `textRenderer.ts` (+16/-10).
+
+## Summary of what remains NOT DETERMINED (this round, in addition to Rounds 1/2's own lists above)
+
+- Step 1's redesign (a second independent Worker, or a native/Rust-side third context, for a
+  genuinely blocked export-worker thread) is stated, not built.
+- Step 1d's WebKit-worker-throttling question is answered by a documented but platform-adjacent
+  citation (Playwright/WebKit on Linux/Xvfb), not confirmed for macOS windowed WKWebView.
+- Step 2's occlusion was imperfect (two brief lapses, 5-8s reaction latency) — a dedicated, single,
+  perfectly-clean controlled-interval repro (Round 1's own Part 5c recommendation, still not built
+  by either round) remains the cleanest way to close this out further.
+- Step 2 could not determine WHICH of the two redundant liveness mechanisms (raw `setTimeout` vs.
+  message-driven `checkLivenessBounds`) actually fired for run 10's stall specifically — circumstantial
+  evidence favors the raw `setTimeout`, not proof.
+- Step 5's `beginActivity` scoping is a design-only report — not implemented, not verified against
+  a running macOS App Nap state this round.
+- Round 2's Step 6 (run 8) remains open — not attempted this round either.
+
