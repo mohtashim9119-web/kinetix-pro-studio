@@ -29,6 +29,22 @@ export const PREVIEW_BUFFER_MAX_BYTES_GLOBAL = 1536 * 1024 * 1024;
 /** Legacy pool-wide session count ceiling (unchanged). */
 export const MAX_CACHED_SESSIONS = 3;
 
+/** Design-max source fps for the fps-agnostic byte→seconds conversion.
+ *  Matches the highest rate the preview path is sized to keep under budget. */
+export const DESIGN_MAX_SOURCE_FPS = 120;
+
+/** Safety margin subtracted from the admitted window when deriving the feed
+ *  horizon under a binding byte ceiling: one design-max-fps frame (1/120 s).
+ *
+ *  Why this margin (and not RETAIN_BEHIND_SEC): retain-behind is an eviction
+ *  policy applied by slideWindowForward / makeRoomForFrame, not a second claim
+ *  on the same byte budget that must be carved out of the feed. Subtracting
+ *  the full 0.5 s retain from a 0.533 s admitted window collapsed the feed to
+ *  a one-frame floor (~0.033 s) at every 4K fps. Reserving a single max-fps
+ *  frame leaves the largest feed the ceiling will admit while still fitting
+ *  the playhead frame in the first batch without dropping it. */
+export const FEED_BYTE_BUDGET_MARGIN_SEC = 1 / DESIGN_MAX_SOURCE_FPS;
+
 export function estimateFrameBytes(codedWidth: number, codedHeight: number): number {
   return Math.ceil(codedWidth * codedHeight * I420_BYTES_PER_PIXEL);
 }
@@ -39,15 +55,19 @@ export function admittedWindowSec(codedWidth: number, codedHeight: number): numb
   const frameBytes = estimateFrameBytes(codedWidth, codedHeight);
   if (frameBytes <= 0) return PREVIEW_BUFFER_WINDOW_SEC;
   const maxFrames = Math.floor(PREVIEW_BUFFER_MAX_BYTES_PER_SESSION / frameBytes);
-  // Conservative fps-agnostic bound: assume up to 120 fps source.
-  const maxSecFromBytes = maxFrames / 120;
+  const maxSecFromBytes = maxFrames / DESIGN_MAX_SOURCE_FPS;
   return Math.min(PREVIEW_BUFFER_WINDOW_SEC, maxSecFromBytes);
 }
 
-/** Effective decode-ahead when byte budget binds (may be < WINDOW_AHEAD_SEC). */
+/** Effective decode-ahead when byte budget binds (may be < WINDOW_AHEAD_SEC).
+ *  Takes the largest feed the admitted window allows after the one-frame
+ *  safety margin — never admitted − RETAIN_BEHIND (which collapses at 4K). */
 export function effectiveFeedAheadSec(codedWidth: number, codedHeight: number): number {
   const admitted = admittedWindowSec(codedWidth, codedHeight);
-  return Math.max(0, admitted - RETAIN_BEHIND_SEC);
+  return Math.min(
+    WINDOW_AHEAD_SEC,
+    Math.max(0, admitted - FEED_BYTE_BUDGET_MARGIN_SEC),
+  );
 }
 
 export interface PreviewBufferBudgetRow {

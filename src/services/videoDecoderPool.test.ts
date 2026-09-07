@@ -1588,11 +1588,13 @@ describe('VideoDecoderPool — 120fps buffer-cap drop confirmation (WS3 Step 1)'
   }
 
   it('clamps the feeder to the admitted byte-bound window at 4K30 with zero drops', async () => {
-    await assertByteBound4kFirstBatch(30, 2);
+    // feed = admitted − 1/120 = 0.525 s → frames with ts ≤ 0.525 at 30 fps = 16
+    await assertByteBound4kFirstBatch(30, 16);
   });
 
   it('clamps the feeder to the admitted byte-bound window at 4K120 with zero drops', async () => {
-    await assertByteBound4kFirstBatch(120, 5);
+    // feed = 0.525 s → frames with ts ≤ 0.525 at 120 fps = 64 (full byte ceiling)
+    await assertByteBound4kFirstBatch(120, 64);
   });
 });
 
@@ -1618,6 +1620,59 @@ describe('VideoDecoderPool — 120fps incremental playback regression (WS3 Step 
     }
 
     pool.dispose();
+  });
+});
+
+// --- WS3 4K feed-horizon lead time (gap-closing: collapsed 0.033s fix) --------
+
+describe('VideoDecoderPool — 4K feed horizon lead time', () => {
+  const TICK_SEC = 33 / 1000;
+  const FRAME_TOLERANCE = 1e-6;
+
+  async function measurePresentedVsRequested(
+    fps: 30 | 120,
+  ): Promise<{ maxLagSec: number; minLeadSec: number; feedAheadSec: number; samples: number }> {
+    const demuxed = makeCfrDemuxed(fps, fps * 5, 3840, 2160);
+    (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
+    const feedAheadSec = effectiveFeedAheadSec(3840, 2160);
+    const pool = new VideoDecoderPool();
+    pool.resetDevDropStats();
+    await pool.ensureSession('seg', 'blob:4k-lead', 0, 5, 0);
+
+    let maxLagSec = 0;
+    let minLeadSec = Number.POSITIVE_INFINITY;
+    let samples = 0;
+    for (let target = 0; target <= 2.0; target += TICK_SEC) {
+      const frame = await pool.getFrameAt('seg', target);
+      expect(frame).not.toBeNull();
+      const presented = frame!.timestamp / 1e6;
+      const lag = target - presented;
+      expect(lag).toBeGreaterThanOrEqual(-FRAME_TOLERANCE);
+      expect(lag).toBeLessThanOrEqual(1 / fps + FRAME_TOLERANCE);
+      maxLagSec = Math.max(maxLagSec, lag);
+      // Lead = how far the feeder horizon sits past the playhead after this tick.
+      const lead = target + feedAheadSec - presented;
+      minLeadSec = Math.min(minLeadSec, lead);
+      samples++;
+    }
+    expect(pool.getDevDropStats()!.framesDropped).toBe(0);
+    pool.dispose();
+    return { maxLagSec, minLeadSec, feedAheadSec, samples };
+  }
+
+  it('at 4K30, presented stays within one source frame of requested and feed lead is not one-frame', async () => {
+    const { maxLagSec, minLeadSec, feedAheadSec } = await measurePresentedVsRequested(30);
+    expect(feedAheadSec).toBeCloseTo(0.525, 9);
+    expect(maxLagSec).toBeLessThanOrEqual(1 / 30 + FRAME_TOLERANCE);
+    // Pre-fix feed was 0.0333 s — lead collapsed to ~one 30 fps frame.
+    expect(minLeadSec).toBeGreaterThan(0.4);
+  });
+
+  it('at 4K120, presented stays within one source frame of requested and feed lead is not one-frame', async () => {
+    const { maxLagSec, minLeadSec, feedAheadSec } = await measurePresentedVsRequested(120);
+    expect(feedAheadSec).toBeCloseTo(0.525, 9);
+    expect(maxLagSec).toBeLessThanOrEqual(1 / 120 + FRAME_TOLERANCE);
+    expect(minLeadSec).toBeGreaterThan(0.4);
   });
 });
 
