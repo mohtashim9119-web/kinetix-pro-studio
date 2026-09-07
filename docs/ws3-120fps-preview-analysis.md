@@ -264,13 +264,186 @@ Separate follow-up (not this fix): **`ExportFps` 120 tier** + UI — tracked as 
 
 ## NOT DETERMINED (explicit)
 
-1. Live Windows preview stall with instrumentation (drop branch counts).
-2. Live Mac preview behaviour on 120 fps **on current `main`** with instrumentation.
-3. Whether Mac "works" due to timing luck, different test asset, or older build (`history-2.md` non-repro).
-4. `VideoDecoder` HW vs SW path on Windows WebView2 for High@4.2 1080p120.
-5. Whether all 10 operator assets remain byte-identical profile (only `1.mp4` re-probed this session).
-6. Exact presented preview fps on any platform (no live run).
-7. Whether a **byte** cap exists anywhere outside preview decode (none found in preview path).
+1. Live Windows preview stall with instrumentation (drop branch counts). **Still open** — see Windows verification handoff below.
+2. Live Mac preview behaviour on 120 fps with instrumentation. **Still open** — no Tauri/WKWebView driver this session.
+3. Whether Mac "works" due to timing luck, different test asset, or older build. **Still open**.
+4. `VideoDecoder` HW vs SW path on Windows WebView2 for High@4.2 1080p120. **Still open**.
+5. ~~Whether all 10 operator assets remain byte-identical profile~~ **CLOSED** — all 10 reprobed 2026-09-07 (see Implementation § asset table).
+6. Exact presented preview fps on any platform. **Still open** — no live preview run.
+7. ~~Whether a byte cap exists anywhere outside preview decode~~ **CLOSED** — none outside preview; preview now has explicit byte caps in `previewBufferBudget.ts`.
+
+---
+
+## Implementation round (2026-09-07, branch `ws3-120fps-preview`)
+
+Worktree: `/Users/mohtashim/Drive/Vibe Coding Projects/4.kinetix-pro-studio-ws3-120fps-preview` @ `910ea7e` (after implementation commits). Base `main` @ `4d4922c` untouched.
+
+### Step 1 — Root cause verdict: **CONFIRMED**
+
+Synthetic confirmation (no live app):
+
+| Source fps | Frames dropped (first batch) | Frames admitted | Dropped timestamps re-delivered? |
+|---|---:|---:|---|
+| **120** | **91** | **90** | **No** — pre-fix only |
+| **30** | **0** | **46** | N/A |
+
+Mechanism: `feedWindow` issued **181** chunks (0–1.5 s @ 120 fps) while `MAX_BUFFERED_FRAMES_PER_SESSION=90` held **0.75 s**; with `windowTargetUs=0`, `slideWindowForward` could not evict (`keepFromUs < 0`), so the drop branch at `handleDecoderOutput` permanently discarded **91** frames while `feedCursor` advanced past them.
+
+Post-fix: same 120 fps fixture admits **181** frames, **0** drops.
+
+Live Mac preview on `1.mp4`: **NOT DETERMINED** (no interactive Tauri driver).
+
+Dev instrumentation: `VideoDecoderPool.getDevDropStats()` / `resetDevDropStats()` (DEV builds only); drop branch logs `[videoDecoderPool] preview buffer drop` with session id, source fps, `windowTargetUs`, `feedCursor`, admitted/dropped counts.
+
+### Step 2 — Failing regression (pre-fix)
+
+`test(ws3): add 120fps incremental playback regression` @ `2d314f6` failed:
+
+```
+AssertionError: expected 0.21536300000000064 to be less than or equal to 0.200001
+```
+
+Stale frame ~215 ms behind playhead once incremental ticks passed the 0.75 s cap horizon. **Passes after fix.**
+
+### Step 3 — Design B implemented
+
+**Module:** `src/services/previewBufferBudget.ts` (single source of truth).
+
+| Constant | Value |
+|---|---|
+| `WINDOW_AHEAD_SEC` | 1.5 |
+| `RETAIN_BEHIND_SEC` | 0.5 |
+| `PREVIEW_BUFFER_WINDOW_SEC` | 2.0 (= retain + ahead) |
+| `PREVIEW_BUFFER_MAX_BYTES_PER_SESSION` | 805,306,368 (768 MiB) |
+| `PREVIEW_BUFFER_MAX_BYTES_GLOBAL` | 1,610,612,736 (1536 MiB) |
+| `MAX_CACHED_SESSIONS` | 3 |
+| `I420_BYTES_PER_PIXEL` | 1.5 |
+
+**Policy:** Remove fps-blind frame-count cap. Admit all frames within `[windowTarget − retain, windowTarget + feedAhead]` where `feedAhead = effectiveFeedAheadSec(resolution)` (byte-clamped). Under byte pressure, evict passed (`slideWindowForward`) then oldest before playhead; drop incoming only if outside admitted horizon or no evictable slot remains.
+
+**Memory table (exact):**
+
+| Resolution | fps | Frame bytes | Admitted sec | Frames | Admitted bytes | Byte-bound? |
+|---|---:|---:|---:|---:|---:|---|
+| 1080p | 30 | 3,110,400 | 2.0 | 60 | 186,624,000 | no |
+| 1080p | 60 | 3,110,400 | 2.0 | 120 | 373,248,000 | no |
+| 1080p | 120 | 3,110,400 | 2.0 | 240 | 746,496,000 | no |
+| 4K | 30 | 12,441,600 | 0.533333 | 16 | 199,065,600 | **yes** |
+| 4K | 120 | 12,441,600 | 0.533333 | 64 | 796,262,400 | **yes** |
+
+When byte ceiling binds before the 2.0 s window fills (4K rows): `feedAheadSec` degrades below 1.5 s; feeder uses the clamped ahead so incoming frames are not issued beyond what the buffer can retain.
+
+**Cross-session budget:** Global **1536 MiB** cap enforced in `enforceBudget()` (replaces `MAX_TOTAL_BUFFERED_FRAMES=150`). LRU session eviction when global bytes exceeded.
+
+| Scenario | Old design (4×1080p120, 90 frames/session) | New design (4× full 2.0 s window) |
+|---|---:|---:|
+| Peak retained bytes | 1,121,587,200 (~1069 MiB) | 2,985,984,000 (~2848 MiB) theoretical; **capped at 1,610,612,736 bytes (1536 MiB)** → LRU evicts until ≤ global budget |
+
+Operator assets are **1080p120 only** — per-session peak **746,496,000 bytes** (~712 MiB), four concurrent **2,985,984,000 bytes** before global LRU; acceptable with global backstop.
+
+**VideoFrame lifetime audit (`videoDecoderPool.ts`):**
+
+| Site | Line(s) | Path |
+|---|---|---|
+| Create (admit) | ~1210 | `handleDecoderOutput` push |
+| Close — outside horizon / drop | 1191, 1198, 1205 | `handleDecoderOutput` |
+| Close — slide evict | 1090 | `slideWindowForward` |
+| Close — byte evict | 1137 | `evictOldestFrame` |
+| Close — post-select trim | 894 | `getFrameAtInternal` filter |
+| Close — scrub reset | 540–543 | `resetSessionWindow` |
+| Close — session teardown | 947 | `closeSession` |
+| Close — decoder handle | 975, 1039, 1048, 1059, 1302 | error / idle overflow / `dispose` |
+
+Peak live `VideoFrame` count in 120 fps Step 1 test (first batch): **181** (mock `MockVideoFrame.instances` at `getFrameAt('seg', 0)` completion).
+
+Display-paced preview refactor: **follow-up** (not this round).
+
+### Step 4 — Test inventory
+
+| Test file | New tests | Result |
+|---|---|---|
+| `videoDecoderPool.test.ts` Step 1 | 2 | pass |
+| `videoDecoderPool.test.ts` Step 2 | 1 | pass (was red pre-fix) |
+| `videoDecoderPool.test.ts` Step 4 | 6 (30/60/120 incremental, 119.88, deep seek, backward scrub) | pass |
+| `previewBufferBudget.test.ts` | 3 | pass |
+
+**VFR:** Pool accepts arbitrary chunk timestamps; no VFR-specific path. Operator assets are CFR (`r_frame_rate == avg_frame_rate == 120/1`). VFR would inherit time/byte caps without fps-derived sizing — **not separately tested** (no VFR fixture in repo).
+
+### Step 5 — Export neutrality
+
+`git diff --name-only main -- src/`:
+
+- `src/services/previewBufferBudget.ts` (+ test)
+- `src/services/videoDecoderPool.ts` (+ test)
+
+**No export-path files.** Shared module `videoDecoderPool.ts` exports `findChunkRange` unchanged; export callers (`sequentialDecode.ts:35`) import only that pure function — pool buffer logic is preview-only via `useWebCodecsPreview.ts`.
+
+Export suites: `npm test -- src/services/webcodecsExport/` → **168 passed / 0 failed**.
+
+Frame-content digest gate (~40 s GL fixture, 2×): **NOT DETERMINED** — requires `npm run tauri:dev` + `src/dev/exportLivenessProbe/runPartC.ts` in a WKWebView session with binaries provisioned; not run this session.
+
+### Step 6 — Operator asset reprobe (all 10)
+
+Probed via bundled ffmpeg sidecar (`ffmpeg-x86_64-apple-darwin -hide_banner -i`) + system ffprobe for level, 2026-09-07.
+
+| File | Codec / profile / level | fps | CFR/VFR | Resolution | Bitrate (format) | Duration | Container |
+|---|---|---|---:|---|---:|---:|---|
+| 1.mp4 | H.264 High / L4.2 | 120 | CFR | 1920×1080 | 11,580,064 b/s | 5.000 s | MP4 |
+| 2.mp4 | H.264 High / L4.2 | 120 | CFR | 1920×1080 | 11,321,360 b/s | 5.000 s | MP4 |
+| 3.mp4 | H.264 High / L4.2 | 120 | CFR | 1920×1080 | 11,410,024 b/s | 5.000 s | MP4 |
+| 4.mp4 | H.264 High / L4.2 | 120 | CFR | 1920×1080 | 11,182,470 b/s | 5.000 s | MP4 |
+| 5.mp4 | H.264 High / L4.2 | 120 | CFR | 1920×1080 | 11,115,466 b/s | 5.000 s | MP4 |
+| 6.mp4 | H.264 High / L4.2 | 120 | CFR | 1920×1080 | 10,962,482 b/s | 5.000 s | MP4 |
+| 7.mp4 | H.264 High / L4.2 | 120 | CFR | 1920×1080 | 10,964,830 b/s | 5.000 s | MP4 |
+| 8.mp4 | H.264 High / L4.2 | 120 | CFR | 1920×1080 | 11,347,822 b/s | 5.000 s | MP4 |
+| 9.mp4 | H.264 High / L4.2 | 120 | CFR | 1920×1080 | 12,050,413 b/s | 5.000 s | MP4 |
+| 10.mp4 | H.264 High / L4.2 | 120 | CFR | 1920×1080 | 11,816,862 b/s | 5.000 s | MP4 |
+
+**>60 fps:** all 10. **VFR:** none. **Fix coverage:** all 10 — 1080p120 within byte/time budget; no 4K in operator set.
+
+Presented preview fps on Mac: **NOT DETERMINED** (no live preview instrumentation).
+
+### Step 7 — Export fps policy (no 120 fps tier this round)
+
+Export remains `exportFps ∈ {24, 30, 60}`; 120 fps sources auto-suggest **60** (`nearestExportFps`). Export decodes all source frames sequentially but samples the output timeline at the chosen export fps (implicit drop of intermediate 120 fps frames at 60 fps export).
+
+**Judder:** 120→60 export drops every other source frame. For the operator's high-motion 120 fps CFR clips, motion is sampled at half the capture rate — **judder is plausible on fast pans** but is a separate, by-design export-tier limitation, not the preview freeze defect. Not user-visible enough in static/slideshow-style use to warrant emergency 120 fps export tier; recommend ear-check on exported output before adding a tier.
+
+**Documented policy:** No 120 fps export tier until explicitly product-approved. Preview plays source rate; export caps at 60 fps.
+
+**Backlog (for `docs/work-in-progress.md` on merge):** `[OPEN · NON-BLOCKING] WS3 — Evaluate 120 fps export tier vs 120→60 judder on operator high-fps assets; preview fix does not change export sampling.`
+
+### Step 8 — WINDOWS-VERIFICATION
+
+**Until this checklist passes on Windows, the Windows preview symptom remains UNVERIFIED even with the fix landed.**
+
+1. **Build:** clone/checkout `ws3-120fps-preview`, `npm install`, provision ffmpeg sidecar per `src-tauri/binaries/README.md`, then:
+   ```bash
+   set CARGO_TARGET_DIR=%CD%\src-tauri\target
+   npm run tauri:dev
+   ```
+2. **Asset:** copy `1.mp4` from operator Assets folder (H.264 High@4.2, 1920×1080, **120 fps** CFR, 5 s).
+3. **Actions:** import → place on timeline → play 0–5 s → scrub forward/back across 0–2 s.
+4. **Pass criteria:**
+   - Preview plays (no permanent freeze)
+   - DevTools console: **`framesDropped: 0`** on first playthrough (read `[videoDecoderPool] preview buffer drop` — should be **absent**)
+   - `getDevDropStats()` if invoked from console: `framesDropped === 0` after first 2 s
+   - Presented motion smooth within ~60 Hz display limit (judder OK; **freeze not OK**)
+5. **If fail:** capture console logs (drop counters, any `VideoDecoder` configure/decode errors), note stall time(s), screen recording, WebView2 version; file against WS3 open bug.
+
+### Gates (implementation round)
+
+| Gate | Result |
+|---|---|
+| `npx tsc --noEmit` | clean |
+| `npm run lint` | clean |
+| `npm test` (full) | **3171 passed / 77 skipped / 33 failed** — failures are **pre-existing `scripts/ws1-*` / `ws2-27-*` env tests**, unrelated to preview diff |
+| `npm test -- src/` | **3082 passed / 1 skipped** (includes **12 new** WS3 tests; baseline src ≈3070 + 12) |
+| `npm test -- src/services/webcodecsExport/` | **168 passed** |
+| `git diff --name-only main -- src-tauri/` | **empty** |
+| Cargo | **skipped** — empty `src-tauri/` diff |
+
+**Commits:** `f36df8c` (instrumentation + confirmation), `2d314f6` (regression red), `3500f58` (fix), `910ea7e` (fps coverage), `c367513` (docs).
 
 ---
 
