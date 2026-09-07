@@ -143,8 +143,31 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
   concatAnnexbPieces(piecePaths: string[], outputPath: string): Promise<void>;
 }
 
+import {
+  withFfmpegLivenessBound,
+  FfmpegBoundExpiredError,
+  TIER_PIECE_BOUND_MS,
+  REMUX_BOUND_MS,
+  CONCAT_BOUND_MS,
+  FRAME_COUNT_BOUND_MS,
+  MUX_BOUND_MS,
+} from './ffmpegLivenessBound';
+
 function causeString(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * WS3 Defect 2 — an expired ffmpeg liveness bound must reach the user as
+ * ITSELF (its own message plus the standard diagnostics payload), not folded
+ * into the generic "Failed to ..." wording of whatever step it interrupted.
+ * Any other failure keeps the pre-existing shape exactly.
+ */
+function boundedStepError(kind: ExportError['kind'], fallbackMessage: string, err: unknown): ExportError {
+  if (err instanceof FfmpegBoundExpiredError) {
+    return { kind, message: err.message, cause: JSON.stringify(err.diagnostics) };
+  }
+  return { kind, message: fallbackMessage, cause: causeString(err) };
 }
 
 // ---------------------------------------------------------------------------
@@ -1209,10 +1232,22 @@ export function setFrameContentDigestEnabled(on: boolean): void {
 // Part 4 — Driving Tier 1 / Tier C pieces + the annexb remux (plan §4.4).
 // ---------------------------------------------------------------------------
 
-async function remuxMp4ToAnnexb(ffmpeg: WebCodecsFfmpeg, mp4File: string, h264File: string): Promise<void> {
+async function remuxMp4ToAnnexb(
+  ffmpeg: WebCodecsFfmpeg,
+  mp4File: string,
+  h264File: string,
+  pieceIndex: number,
+  pieceCount: number,
+): Promise<void> {
   // Stream-copy: no re-encode, no quality change — only the container
   // changes (MP4 -> raw annexb H.264), milliseconds per piece (plan §4.4).
-  await ffmpeg.exec(['-i', mp4File, '-c', 'copy', '-bsf:v', 'h264_mp4toannexb', '-f', 'h264', '-y', h264File]);
+  // Opaque single `ffmpeg.exec` — WS3 Defect 2 class (ii), bounded.
+  await withFfmpegLivenessBound(
+    { label: 'REMUX_BOUND_MS', boundMs: REMUX_BOUND_MS, ffmpeg, files: [mp4File, h264File], pieceIndex, pieceCount },
+    async () => {
+      await ffmpeg.exec(['-i', mp4File, '-c', 'copy', '-bsf:v', 'h264_mp4toannexb', '-f', 'h264', '-y', h264File]);
+    },
+  );
 }
 
 interface PieceEncodeSuccess {
@@ -1237,16 +1272,22 @@ async function encodeTier1Piece(
   width: number,
   height: number,
   pieceIndex: number,
+  pieceCount: number,
 ): Promise<PieceEncodeResult> {
   const mp4File = `tier1_piece_${pieceIndex}.mp4`;
   const h264File = `piece_${pieceIndex}.h264`;
   try {
-    const mp4Bytes =
-      asset.type === 'video'
-        ? await encodePlainVideoSegment(segment, asset, ffmpeg, { fps, width, height })
-        : await encodeStaticImageSegment(segment, asset, globalConfig, ffmpeg, { fps, width, height });
+    // WS3 Defect 2 — opaque (class ii): both Tier 1 encoders are a single
+    // `ffmpeg.exec` with no incremental output, so this gets a plain timeout.
+    const mp4Bytes = await withFfmpegLivenessBound(
+      { label: 'TIER_PIECE_BOUND_MS(tier1)', boundMs: TIER_PIECE_BOUND_MS, ffmpeg, files: [mp4File], pieceIndex, pieceCount },
+      async () =>
+        asset.type === 'video'
+          ? await encodePlainVideoSegment(segment, asset, ffmpeg, { fps, width, height })
+          : await encodeStaticImageSegment(segment, asset, globalConfig, ffmpeg, { fps, width, height }),
+    );
     await ffmpeg.writeFile(mp4File, mp4Bytes);
-    await remuxMp4ToAnnexb(ffmpeg, mp4File, h264File);
+    await remuxMp4ToAnnexb(ffmpeg, mp4File, h264File, pieceIndex, pieceCount);
   } catch (err) {
     return {
       ok: false,
@@ -1274,6 +1315,7 @@ async function encodeCanvasPiece(
   width: number,
   height: number,
   pieceIndex: number,
+  pieceCount: number,
   onFrameProgress: (frame: number, totalFrames: number) => void,
 ): Promise<PieceEncodeResult> {
   const segment = plan.segments[0]!;
@@ -1292,20 +1334,32 @@ async function encodeCanvasPiece(
   const mp4File = `canvas_piece_${pieceIndex}.mp4`;
   const h264File = `piece_${pieceIndex}.h264`;
   try {
-    const mp4Bytes = await encodeSegment(segment, asset, ffmpeg, globalConfig, {
-      fps,
-      width,
-      height,
-      nextSegment,
-      nextAsset,
-      globalTransitionDuration: project.globalTransitionDuration,
-      globalTransition: project.globalTransition,
-      startTimeOffset,
-      trailingExtension,
-      onProgress: onFrameProgress,
-    });
+    // WS3 Defect 2 — the ONE class (i) path: `encodeSegment` renders and writes
+    // one PNG per frame before ffmpeg runs, and reports each via `onProgress`.
+    // So this bound RESETS on a completed frame write (`handle.touch()`) and
+    // can only fire when frames genuinely stop moving, never merely because the
+    // segment is long or the machine is slow.
+    const mp4Bytes = await withFfmpegLivenessBound(
+      { label: 'TIER_PIECE_BOUND_MS(canvas)', boundMs: TIER_PIECE_BOUND_MS, ffmpeg, files: [mp4File], pieceIndex, pieceCount },
+      async (handle) =>
+        await encodeSegment(segment, asset, ffmpeg, globalConfig, {
+          fps,
+          width,
+          height,
+          nextSegment,
+          nextAsset,
+          globalTransitionDuration: project.globalTransitionDuration,
+          globalTransition: project.globalTransition,
+          startTimeOffset,
+          trailingExtension,
+          onProgress: (frame, totalFrames) => {
+            handle.touch();
+            onFrameProgress(frame, totalFrames);
+          },
+        }),
+    );
     await ffmpeg.writeFile(mp4File, mp4Bytes);
-    await remuxMp4ToAnnexb(ffmpeg, mp4File, h264File);
+    await remuxMp4ToAnnexb(ffmpeg, mp4File, h264File, pieceIndex, pieceCount);
   } catch (err) {
     return {
       ok: false,
@@ -1664,7 +1718,7 @@ export async function exportProjectWebCodecs(
     } else if (plan.tier === 'plain') {
       const segment = plan.segments[0]!;
       const asset = assetMap.get(segment.assetId!)!; // presence already verified above
-      const result = await encodeTier1Piece(ffmpeg, segment, asset, globalConfig, fps, width, height, pieceIndex);
+      const result = await encodeTier1Piece(ffmpeg, segment, asset, globalConfig, fps, width, height, pieceIndex, pieces.length);
       onFrameProgress(plan.expectedFrames);
       if (!result.ok) {
         activeFfmpeg = null;
@@ -1672,7 +1726,7 @@ export async function exportProjectWebCodecs(
       }
       pieceFiles.push(result.h264File);
     } else {
-      const result = await encodeCanvasPiece(ffmpeg, plan, project, assetMap, globalConfig, fps, width, height, pieceIndex, onFrameProgress);
+      const result = await encodeCanvasPiece(ffmpeg, plan, project, assetMap, globalConfig, fps, width, height, pieceIndex, pieces.length, onFrameProgress);
       if (!result.ok) {
         activeFfmpeg = null;
         return { ok: false, error: result.error };
@@ -1695,19 +1749,27 @@ export async function exportProjectWebCodecs(
       diag.concatMs = 0;
     } else {
       const concatStarted = performance.now();
-      await ffmpeg.concatAnnexbPieces(pieceFiles, videoAllFile);
+      await withFfmpegLivenessBound(
+        { label: 'CONCAT_BOUND_MS', boundMs: CONCAT_BOUND_MS, ffmpeg, files: [videoAllFile], pieceCount: pieces.length },
+        async () => {
+          await ffmpeg.concatAnnexbPieces(pieceFiles, videoAllFile);
+        },
+      );
       diag.concatMs = performance.now() - concatStarted;
     }
   } catch (err) {
     activeFfmpeg = null;
-    return { ok: false, error: { kind: 'concat', message: 'Failed to concatenate the encoded pieces.', cause: causeString(err) } };
+    return { ok: false, error: boundedStepError('concat', 'Failed to concatenate the encoded pieces.', err) };
   }
   const finalVideoFile = pieceFiles.length === 1 ? pieceFiles[0]! : videoAllFile;
 
   // ── Loud-failure frame-count guard (plan §4.4) — never ship silently
   // corrupt output ─────────────────────────────────────────────────────────
   try {
-    const actualFrames = await ffmpeg.countAnnexbFrames(finalVideoFile);
+    const actualFrames = await withFfmpegLivenessBound(
+      { label: 'FRAME_COUNT_BOUND_MS', boundMs: FRAME_COUNT_BOUND_MS, ffmpeg, files: [finalVideoFile], pieceCount: pieces.length },
+      async () => await ffmpeg.countAnnexbFrames(finalVideoFile),
+    );
     if (actualFrames !== totalExpectedFramesOverall) {
       activeFfmpeg = null;
       return {
@@ -1722,7 +1784,7 @@ export async function exportProjectWebCodecs(
     }
   } catch (err) {
     activeFfmpeg = null;
-    return { ok: false, error: { kind: 'concat', message: 'Failed to verify the concatenated output frame count.', cause: causeString(err) } };
+    return { ok: false, error: boundedStepError('concat', 'Failed to verify the concatenated output frame count.', err) };
   }
 
   // ── Mux voiceover audio (unchanged — ./muxOnly.ts) ────────────────────────
@@ -1751,11 +1813,22 @@ export async function exportProjectWebCodecs(
     // `project.id` identifies this export run in muxOnly's error messages
     // instead; see muxOnly.ts's own doc comment on the `sessionId` param.
     const muxStarted = performance.now();
-    await muxOnly(ffmpeg, project.id, finalVideoFile, audioFile, outputFile, fps);
+    await withFfmpegLivenessBound(
+      {
+        label: 'MUX_BOUND_MS',
+        boundMs: MUX_BOUND_MS,
+        ffmpeg,
+        files: [finalVideoFile, ...(audioFile ? [audioFile] : []), outputFile],
+        pieceCount: pieces.length,
+      },
+      async () => {
+        await muxOnly(ffmpeg, project.id, finalVideoFile, audioFile, outputFile, fps);
+      },
+    );
     diag.muxMs = performance.now() - muxStarted;
   } catch (err) {
     activeFfmpeg = null;
-    return { ok: false, error: { kind: 'mux', message: 'Failed to mux the encoded output with audio.', cause: causeString(err) } };
+    return { ok: false, error: boundedStepError('mux', 'Failed to mux the encoded output with audio.', err) };
   }
 
   // ── Cleanup intermediates (best-effort — mirrors exportPipeline.ts's own
