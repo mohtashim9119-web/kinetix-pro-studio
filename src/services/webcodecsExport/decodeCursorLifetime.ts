@@ -96,6 +96,44 @@ export function assetLastNeededSecByAsset(
   return out;
 }
 
+/**
+ * Is every asset's SOURCE time non-decreasing across the run?
+ *
+ * This is the exact — and, on the field shape, unmet — precondition for keying
+ * decode cursors by ASSET instead of by SEGMENT.
+ *
+ * A `DecodeCursor` wraps one `decodeSegmentFrames(url, start, end)` generator,
+ * which is forward-only: `frameAt` advances it with `gen.next()` and has no
+ * rewind of any kind (`exportWorker.ts`). Timeline time is strictly monotone
+ * during export, so a SEGMENT-keyed cursor is always read forward and is always
+ * safe. An ASSET-keyed cursor is only safe in addition when consecutive
+ * segments sharing that asset also read its SOURCE forward — i.e. segment i+1's
+ * `trimStart` is at or after where segment i stopped.
+ *
+ * Slideshow timelines do not satisfy this: every segment is authored with
+ * `trimStart: 0`, so each one restarts the same source range from zero and the
+ * sequence is decreasing at every reuse. Returns false there.
+ *
+ * Pure. Compares `trimStart` only — the quantity that decides direction — so it
+ * does not need the asset's duration or the transition tail.
+ */
+export function assetSourceTimeIsMonotone(segments: readonly VideoSegment[]): boolean {
+  const lastEndByAsset = new Map<string, number>();
+  for (const seg of [...segments].sort((a, b) => a.startTime - b.startTime)) {
+    if (!seg.assetId) continue;
+    const start = seg.trimStart || 0;
+    const prevEnd = lastEndByAsset.get(seg.assetId);
+    // Strictly `start < prevEnd`, not `start < prevStart`: the next segment must
+    // begin at or after where the previous one STOPPED reading. Equal trimStarts
+    // (the slideshow case, every segment at 0) fail here, which is correct — the
+    // second segment needs frames the shared generator has already yielded and
+    // cannot produce again.
+    if (prevEnd !== undefined && start < prevEnd) return false;
+    lastEndByAsset.set(seg.assetId, start + seg.duration);
+  }
+  return true;
+}
+
 export function shouldReleaseDecodeCursor(
   segment: VideoSegment,
   currentTime: number,
