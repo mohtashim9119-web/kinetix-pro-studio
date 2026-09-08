@@ -598,6 +598,14 @@ class RunState {
     if (asset.type === 'video') {
       let cursor = this.cursors.get(seg.id);
       if (!cursor) {
+        // SUB-TIMER `cursor-open`: the whole first-touch cost of this segment's
+        // cursor — generator construction, the demux cache lookup (a hit inside
+        // a piece, a fetch+parse on the first segment to touch the asset), the
+        // VideoDecoder configure, and the keyframe-preroll frames
+        // `decodeSegmentFrames` decodes but never yields. This is the bucket
+        // that grows with SEGMENT count rather than with frame count, so it is
+        // the one that answers "is per-segment cursor granularity costing us?"
+        const openStarted = performance.now();
         this.tracker.enter('demux');
         cursor = openCursor(seg, asset.url, asset.duration, this.tracker, asset.id);
         this.cursors.open(seg.id, cursor);
@@ -606,16 +614,23 @@ class RunState {
           this.decodedSourceFrames++;
         });
         this.tracker.leave();
+        this.tracker.add('cursor-open', performance.now() - openStarted);
         if (!frame) return null;
         const w = frame.displayWidth;
         const h = frame.displayHeight;
         if (!w || !h) return null;
         return { source: frame, w, h };
       }
+      // SUB-TIMER `decode-wait`: steady-state advance of an ALREADY-open cursor.
+      // Separated from `cursor-open` on purpose: the two have different causes
+      // (frame count vs segment count) and only splitting them can tell the two
+      // apart on a field run.
+      const waitStarted = performance.now();
       const targetSec = toSourceTime(seg, currentTime, asset.duration);
       const frame = await frameAt(cursor, targetSec, () => {
         this.decodedSourceFrames++;
       });
+      this.tracker.add('decode-wait', performance.now() - waitStarted);
       if (!frame) return null;
       const w = frame.displayWidth;
       const h = frame.displayHeight;
@@ -949,16 +964,26 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
       return false;
     }
 
+    // `resolveSlotSource` books its own time into `cursor-open` / `decode-wait`;
+    // the GL upload that follows each one is compositing work, so it is timed
+    // into `composite` alongside renderFrame and the text pass. The two never
+    // overlap, so `composite` + `decode-wait` + `cursor-open` + `encode-submit`
+    // + `wait-dequeue` partition the tick rather than double-counting it.
     const aSrc = await runState.resolveSlotSource(plan.a, currentTime);
     if (!aSrc) return false;
+    let compositeStarted = performance.now();
     uploadSlot(compositor, 'a', aSrc, width, height);
+    let compositeMs = performance.now() - compositeStarted;
 
     if (plan.b) {
       const bSrc = await runState.resolveSlotSource(plan.b, currentTime);
       if (!bSrc) return false;
+      compositeStarted = performance.now();
       uploadSlot(compositor, 'b', bSrc, width, height);
+      compositeMs += performance.now() - compositeStarted;
     }
 
+    compositeStarted = performance.now();
     compositor.renderFrame(rawParams);
 
     const textSegment = resolveTextSegment(plan, rawParams.transition);
@@ -969,6 +994,8 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
       frameWidth: width,
       frameHeight: height,
     });
+    compositeMs += performance.now() - compositeStarted;
+    activeTracker?.add('composite', compositeMs);
 
     if (encoder.encodeQueueSize > BACKPRESSURE_HIGH_WATER) {
       const waitStarted = performance.now();
@@ -977,6 +1004,11 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
     }
     if (failState.failure) throw failState.failure;
 
+    // SUB-TIMER `encode-submit`: VideoFrame construction off the canvas, the
+    // optional content digest, and the `encoder.encode` submit itself. This is
+    // submit cost only — the encoder's own async work shows up as
+    // `wait-dequeue` on a later tick, which is why the two are separate.
+    const submitStarted = performance.now();
     const frame = new VideoFrame(canvas, {
       timestamp: Math.round((frameIndex * 1_000_000) / fps),
       duration: frameDurUs,
@@ -990,6 +1022,7 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
     } finally {
       frame.close();
     }
+    activeTracker?.add('encode-submit', performance.now() - submitStarted);
     onFrameEncoded?.();
     if (frameIndex % 5 === 0) {
       postOut({ type: 'queue-sample', frameIndex, size: encoder.encodeQueueSize });

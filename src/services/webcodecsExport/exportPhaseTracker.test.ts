@@ -43,6 +43,27 @@ describe('ExportPhaseTracker', () => {
     expect(breakdown.phaseMs['frame-loop']).toBe(100);
   });
 
+  it('frame-loop sub-timers post NOTHING — the cheapness the frame loop depends on', () => {
+    // The five buckets the frame loop books every tick. `enter`/`leave` post a
+    // work token each; `add` must not, or a 38k-frame run would emit ~190k
+    // postMessage calls purely as instrumentation.
+    const now = { t: 0 };
+    const { posted, tracker } = collect(now);
+    for (const phase of ['composite', 'decode-wait', 'encode-submit', 'wait-dequeue', 'cursor-open']) {
+      tracker.add(phase, 1);
+    }
+    expect(posted).toHaveLength(0);
+
+    // ...and they are five DISTINCT buckets, not one bucket written five times.
+    expect(Object.keys(tracker.finish().phaseMs).sort()).toEqual([
+      'composite',
+      'cursor-open',
+      'decode-wait',
+      'encode-submit',
+      'wait-dequeue',
+    ]);
+  });
+
   it('includes per-phase totals in finish() including add() sub-timers', () => {
     const now = { t: 0 };
     const { tracker } = collect(now);
