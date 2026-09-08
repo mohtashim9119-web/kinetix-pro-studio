@@ -134,10 +134,36 @@ describe('isPlainVideoSegment', () => {
     expect(isPlainVideoSegment(seg, undefined, undefined, makeProject())).toBe(false);
   });
 
+  it('stays plain when overlayFilter is the Effects-tab "none" sentinel', () => {
+    const seg = makeSegment({ id: 's', overlayFilter: 'none' });
+    expect(isPlainVideoSegment(seg, undefined, undefined, makeProject())).toBe(true);
+  });
+
+  it('stays plain when overlayFilter is an empty string', () => {
+    const seg = makeSegment({ id: 's', overlayFilter: '' });
+    expect(isPlainVideoSegment(seg, undefined, undefined, makeProject())).toBe(true);
+  });
+
+  it('overlayFilter "none" and null are identical (both plain)', () => {
+    const noneSeg = makeSegment({ id: 's', overlayFilter: 'none' });
+    const nullSeg = makeSegment({ id: 's', overlayFilter: null as unknown as string });
+    const project = makeProject();
+    expect(isPlainVideoSegment(noneSeg, undefined, undefined, project)).toBe(true);
+    expect(isPlainVideoSegment(nullSeg, undefined, undefined, project)).toBe(
+      isPlainVideoSegment(noneSeg, undefined, undefined, project),
+    );
+  });
+
   it('false when a global overlay filter is set', () => {
     const seg = makeSegment({ id: 's' });
     const project = makeProject({ globalOverlayFilter: 'sepia' });
     expect(isPlainVideoSegment(seg, undefined, undefined, project)).toBe(false);
+  });
+
+  it('stays plain when globalOverlayFilter is "none"', () => {
+    const seg = makeSegment({ id: 's' });
+    const project = makeProject({ globalOverlayFilter: 'none' });
+    expect(isPlainVideoSegment(seg, undefined, undefined, project)).toBe(true);
   });
 
   it('false when an outgoing transition overlaps the tail (own transition + next)', () => {
@@ -269,10 +295,21 @@ describe('isPlainImageSegment', () => {
     expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(false);
   });
 
+  it('stays plain when overlayFilter is the Effects-tab "none" sentinel', () => {
+    const seg = makeImageSegment({ id: 's', overlayFilter: 'none' });
+    expect(isPlainImageSegment(seg, undefined, undefined, makeProject())).toBe(true);
+  });
+
   it('false when a global overlay filter is set', () => {
     const seg = makeImageSegment({ id: 's' });
     const project = makeProject({ globalOverlayFilter: 'sepia' });
     expect(isPlainImageSegment(seg, undefined, undefined, project)).toBe(false);
+  });
+
+  it('stays plain when globalOverlayFilter is "none"', () => {
+    const seg = makeImageSegment({ id: 's' });
+    const project = makeProject({ globalOverlayFilter: 'none' });
+    expect(isPlainImageSegment(seg, undefined, undefined, project)).toBe(true);
   });
 
   it('false when an outgoing transition overlaps the tail (own transition + next)', () => {

@@ -17,6 +17,26 @@ export const ANIMATION_NONE = 'none';
 export const OVERLAY_NONE = 'none';
 
 /**
+ * True when an optional effect slug means "no effect."
+ *
+ * The Effects tab and FILTERS[0] persist the literal string `'none'`
+ * (`App.tsx` `handleApplyEffect` overlay/preset writers reset
+ * `overlayFilter: 'none'`); never-touched fields stay `undefined` (or
+ * JSON-null / `''`). Routing used to disagree: `plainSegment.ts` treated
+ * any truthy string as SET (`if (segment.overlayFilter)`), while
+ * `glCompositable.ts` treated `'none'` as UNSET — so a zero-effects
+ * project failed Tier 1 and fell through to GL.
+ *
+ * This is the single normalizer. Callers must not re-derive the same
+ * four-way check locally. Transition off-state is a different sentinel
+ * (`TRANSITION_NONE` = `'hard-cut'`) and is resolved by duration via
+ * `resolveEffectiveTransition`, not here.
+ */
+export function isEffectUnset(value: string | null | undefined): value is null | undefined | '' | 'none' {
+  return value == null || value === '' || value === 'none';
+}
+
+/**
  * The transition set the app offers — restricted at the WebGL2 Phase 5
  * cutover (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 6) to exactly the slugs
  * the GL effects engine implements (compositeParams.ts's GL_TRANSITION_SLUGS),

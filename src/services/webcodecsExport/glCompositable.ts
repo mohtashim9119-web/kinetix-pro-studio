@@ -53,7 +53,7 @@
  */
 
 import { AnimationType, type Project, type VideoSegment } from '../../types';
-import { ANIMATION_NONE } from '../../effectsOptions';
+import { isEffectUnset } from '../../effectsOptions';
 import { resolveEffectiveTransition, type EffectiveTransition } from '../transitionResolver';
 
 /**
@@ -122,14 +122,15 @@ export const GL_TRANSITION_SLUGS: ReadonlySet<string> = new Set([
  * (KEN_BURNS, FLOAT, BOUNCE, PULSE, HEARTBEAT, WOBBLE, ROTATE, …).
  */
 function isGlCompatibleAnimationSlug(segment: VideoSegment): boolean {
-  if (segment.effectAnimation && segment.effectAnimation !== ANIMATION_NONE) {
+  const slug = segment.effectAnimation;
+  if (!isEffectUnset(slug)) {
     // Explicit reject for the 5 clip-effect slugs (redundant with the
     // zoom-in/zoom-out check below, since none of them equal either — kept
     // as its own branch so `CLIP_EFFECT_SLUGS` is load-bearing, not just
     // documentary, and so a future GL clip-effect pass has one obvious place
     // to widen).
-    if (CLIP_EFFECT_SLUGS.has(segment.effectAnimation)) return false;
-    return segment.effectAnimation === 'zoom-in' || segment.effectAnimation === 'zoom-out';
+    if (CLIP_EFFECT_SLUGS.has(slug)) return false;
+    return slug === 'zoom-in' || slug === 'zoom-out';
   }
   return segment.animation === AnimationType.NONE
     || segment.animation === AnimationType.ZOOM_IN
@@ -141,19 +142,12 @@ function isGlCompatibleAnimationSlug(segment: VideoSegment): boolean {
  * (`segment.overlayFilter` / `project.globalOverlayFilter`, the 24-named-
  * filter CSS system — `constants.ts`'s `FILTERS`/`getFilterStyle`, applied
  * on the legacy path via `frameRenderer.ts`'s `ctx.filter = filterStr`).
- * `'none'` (the FILTERS[0] off-state, and the literal value
- * `onApplyFilterToAll`/the Effects tab can persist onto a segment or the
- * project) is treated as EQUIVALENT to unset, per the plan's own "unset/
- * none" phrasing (§3.2) — a stricter `if (segment.overlayFilter) return
- * false` (matching `plainSegment.ts`'s own check) would incorrectly treat a
- * segment explicitly reset to "no filter" as filtered, needlessly losing GL
- * eligibility for a segment that renders identically either way (no visual
- * difference at 'none' vs. unset — `getFilterStyle` returns the same 'none'
- * no-op CSS string for both).
+ * `'none'` / `''` / null / undefined are the same off-state — see
+ * `isEffectUnset` in `effectsOptions.ts`. A local truthy check would
+ * disagree with that helper and re-open the Tier-1 vs GL split.
  */
 function hasNoColorFilter(segment: VideoSegment, project: Project): boolean {
-  const isUnsetOrNone = (v: string | undefined): boolean => !v || v === 'none';
-  return isUnsetOrNone(segment.overlayFilter) && isUnsetOrNone(project.globalOverlayFilter);
+  return isEffectUnset(segment.overlayFilter) && isEffectUnset(project.globalOverlayFilter);
 }
 
 /**

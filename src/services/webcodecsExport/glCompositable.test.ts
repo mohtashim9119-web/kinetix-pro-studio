@@ -165,6 +165,21 @@ describe('isGlCompositableSegment — color filter', () => {
     const project = makeProject({ globalOverlayFilter: 'none' });
     expect(isGlCompositableSegment(seg, project, {})).toBe(true);
   });
+
+  it('overlayFilter "none" and null are identical (both GL-eligible)', () => {
+    const noneSeg = makeSegment({ id: 's0', overlayFilter: 'none' });
+    const nullSeg = makeSegment({ id: 's0', overlayFilter: null as unknown as string });
+    const project = makeProject();
+    expect(isGlCompositableSegment(noneSeg, project, {})).toBe(true);
+    expect(isGlCompositableSegment(nullSeg, project, {})).toBe(
+      isGlCompositableSegment(noneSeg, project, {}),
+    );
+  });
+
+  it('true when overlayFilter is an empty string', () => {
+    const seg = makeSegment({ id: 's0', overlayFilter: '' });
+    expect(isGlCompositableSegment(seg, makeProject(), {})).toBe(true);
+  });
 });
 
 describe('isGlCompositableSegment — transitions', () => {

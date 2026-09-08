@@ -8,6 +8,7 @@ import {
   TRANSITION_NONE,
   ANIMATION_NONE,
   OVERLAY_NONE,
+  isEffectUnset,
   labelOf,
 } from './effectsOptions';
 
@@ -83,6 +84,22 @@ describe('ANIMATIONS — picker is a subset of a catalog that stays complete', (
   it('a *_VISIBLE subset canNOT name a hidden slug — which is why callers must pass the catalog', () => {
     expect(labelOf(ANIMATIONS_VISIBLE, 'sepia')).toBeUndefined();
   });
+});
+
+describe('isEffectUnset — one normalizer for every off-state spelling', () => {
+  it.each([undefined, null, '', 'none'] as const)(
+    'treats %j as no effect',
+    (value) => {
+      expect(isEffectUnset(value)).toBe(true);
+    },
+  );
+
+  it.each(['noir', 'zoom-in', 'grayscale', 'hard-cut'] as const)(
+    'treats a real slug %j as SET',
+    (value) => {
+      expect(isEffectUnset(value)).toBe(false);
+    },
+  );
 });
 
 describe('OVERLAYS — Coming Soon, off-state only', () => {

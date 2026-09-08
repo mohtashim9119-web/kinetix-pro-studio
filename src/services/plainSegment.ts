@@ -1,4 +1,5 @@
 import { VideoSegment, Project, AnimationType } from '../types';
+import { isEffectUnset } from '../effectsOptions';
 import { resolveEffectiveTransition } from './transitionResolver';
 
 /**
@@ -103,13 +104,16 @@ function isPlainMediaSegment(
   if (targetedByGlobalLayer) return false;
 
   // No animation (legacy enum or effectAnimation slug — covers ken-burns/zoom
-  // transforms and the filter/pixel slugs like sepia/duotone).
+  // transforms and the filter/pixel slugs like sepia/duotone). `'none'` /
+  // `''` / null / undefined are the same off-state (`isEffectUnset`).
   if (segment.animation !== AnimationType.NONE) return false;
-  if (segment.effectAnimation && segment.effectAnimation !== 'none') return false;
+  if (!isEffectUnset(segment.effectAnimation)) return false;
 
-  // No colour filter (per-segment or global).
-  if (segment.overlayFilter) return false;
-  if (project.globalOverlayFilter) return false;
+  // No colour filter (per-segment or global). `'none'` is FILTERS[0] and
+  // what the Effects tab writes; a truthy check would treat it as SET
+  // and knock a zero-effects project off Tier 1 onto GL.
+  if (!isEffectUnset(segment.overlayFilter)) return false;
+  if (!isEffectUnset(project.globalOverlayFilter)) return false;
 
   // No transition overlapping either edge. Mirrors exportPipeline.ts:
   //   incoming = prev's outgoing transition into this segment
