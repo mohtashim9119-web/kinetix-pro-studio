@@ -6756,6 +6756,12 @@ export default function App() {
                           pieceIndex: err.liveness?.pieceIndex ?? null,
                           framesEncoded: err.liveness?.framesEncoded ?? null,
                           maxSilentMs: err.liveness?.maxSilentMs ?? null,
+                          // WS3 — the phase log's last hop to the operator. It
+                          // was collected and capped all along; it just had no
+                          // route out of `ExportLivenessSnapshot` until now,
+                          // which is why field payloads carried none.
+                          failureVia: err.liveness?.failureVia ?? null,
+                          phaseLogTail: err.liveness?.phaseLogTail ?? null,
                           projectMeta: {
                             segmentCount: project.segments.length,
                             hasVoiceover: !!project.voiceoverId,
