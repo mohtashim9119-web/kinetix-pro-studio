@@ -791,6 +791,8 @@ export interface ExportWorkerHandle {
 export interface DriveGlRunDeps {
   createWorker?: () => ExportWorkerHandle;
   now?: () => number;
+  /** WS3 — called once per GL piece with its encoder-session plan. Observational. */
+  onSessionPlan?: (pieceIndex: number, sessions: number) => void;
 }
 
 /**
@@ -845,6 +847,13 @@ export function driveGlRun(
     let lastPhaseAt = now();
     let lastPieceIndex = pieceIndex;
     let lastFramesEncoded = 0;
+    /** WS3 — observational only: the encoder-session plan this piece reported,
+     *  and how far into it the run got. Surfaced in the liveness snapshot so a
+     *  failure payload says whether the session bound engaged at all, and fed
+     *  to `onProgress` so the operator can see it live instead of inferring it
+     *  from an unchanged piece count. */
+    let sessionCount: number | null = null;
+    let sessionAt = 0;
     let lastOutputAt = now();
     /** WS3 export-liveness-occlusion round: monotonic-clock anchor mirroring
      *  FORWARD_PROGRESS_BOUND_MS's own reset condition exactly (set only
@@ -972,6 +981,8 @@ export function driveGlRun(
         kind: e.kind,
       })),
       failureVia: lastWorkerDiagnostics?.failure?.via ?? null,
+      encoderSessions: sessionCount,
+      encoderSessionIndex: sessionCount === null ? null : sessionAt,
     });
 
     const errorFromDiagnostics = (
@@ -1219,6 +1230,17 @@ export function driveGlRun(
           recordOutput('queue-sample');
           noteWatchdogOutput();
           resetWatchdog();
+          break;
+        // Observational only — deliberately NOT in the watchdog reset set, so
+        // adding them cannot mask a stall the way a resetting message would.
+        case 'session-plan':
+          sessionCount = data.sessions;
+          sessionAt = 0;
+          deps.onSessionPlan?.(data.pieceIndex, data.sessions);
+          break;
+        case 'session-rotate':
+          sessionCount = data.sessions;
+          sessionAt = data.sessionIndex;
           break;
         case 'phase':
           if (data.phase !== lastPhase) lastPhaseAt = now();
@@ -1689,6 +1711,11 @@ export async function exportProjectWebCodecs(
   for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
     const plan = pieces[pieceIndex]!;
     const frameOffsetForThisPiece = framesCompletedBase;
+    // WS3 — the encoder-session plan for this piece, once the worker reports
+    // it. Held here so `onFrameProgress` can carry it: the piece count alone
+    // cannot show that the session bound engaged, because the bound does not
+    // change the piece count.
+    let pieceSessions: number | null = null;
     const onFrameProgress = (frame: number): void => {
       onProgress({
         type: 'encoding_segment',
@@ -1696,6 +1723,13 @@ export async function exportProjectWebCodecs(
         total: pieces.length,
         frame: frameOffsetForThisPiece + frame,
         totalFrames: totalExpectedFramesOverall,
+        ...(pieceSessions !== null
+          ? {
+              encoderSessions: pieceSessions,
+              // 1800-frame sessions on this piece's own frame grid.
+              encoderSessionIndex: Math.min(pieceSessions - 1, Math.floor(frame / MAX_ENCODER_SESSION_FRAMES)),
+            }
+          : {}),
       });
     };
 
@@ -1731,7 +1765,11 @@ export async function exportProjectWebCodecs(
         },
         pieceIndex,
         plan.startIndex,
-        {},
+        {
+          onSessionPlan: (_pi, sessions) => {
+            pieceSessions = sessions;
+          },
+        },
         { originSec: plan.gridOriginSec, baseFrame: plan.gridBaseFrame },
       );
       if (!driveResult.ok) {

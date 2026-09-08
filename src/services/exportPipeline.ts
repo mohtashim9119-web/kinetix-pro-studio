@@ -13,7 +13,17 @@ export interface ExportOptions {
 
 export type ExportStage =
   | { type: 'loading_ffmpeg' }
-  | { type: 'encoding_segment'; index: number; total: number; frame: number; totalFrames: number }
+  | {
+      type: 'encoding_segment';
+      index: number;
+      total: number;
+      frame: number;
+      totalFrames: number;
+      /** WS3 — encoder sessions planned for THIS piece, and the current one.
+       *  Absent on the legacy canvas path and on non-GL pieces. */
+      encoderSessions?: number;
+      encoderSessionIndex?: number;
+    }
   | { type: 'muxing' }
   | { type: 'done' };
 
@@ -62,6 +72,17 @@ export interface ExportLivenessSnapshot {
    *  one — e.g. `'flush-timeout'` names a flush that never returned, which
    *  `'watchdog'` alone cannot. */
   failureVia?: string | null;
+  /**
+   * WS3 — how many `VideoEncoder` sessions this GL piece planned, and which
+   * one it was in. `null` on a piece that never reported a plan.
+   *
+   * This is the number that says whether the encoder-session bound engaged.
+   * It is NOT the piece count the progress UI shows: bounding the session
+   * deliberately leaves piece boundaries alone, so a payload can legitimately
+   * read `pieceIndex 0` with `encoderSessions 22`.
+   */
+  encoderSessions?: number | null;
+  encoderSessionIndex?: number | null;
 }
 
 /** One phase-log line, flattened for the diagnostics blob. */

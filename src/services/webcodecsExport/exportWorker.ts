@@ -167,6 +167,19 @@ export type ExportWorkerOutboundMessage =
   // spike) chart the backpressure trajectory. No orchestrator depends on
   // this; safe to ignore.
   | { type: 'queue-sample'; frameIndex: number; size: number }
+  // WS3 — the encoder-session plan for THIS piece, posted once before the
+  // frame loop, plus one message per rotation. Purely observational: no
+  // orchestrator behaviour depends on either.
+  //
+  // These exist because the fix they report on is otherwise INVISIBLE. The
+  // progress UI counts PIECES ("Encoding segment 2 / 3"), and bounding the
+  // encoder session deliberately does not change the piece count — so an
+  // operator watching a real export had no way to tell a working rotation
+  // from a dead one, and read the unchanged piece count as the fix having
+  // failed. Same class of mistake as the phase log that was capped but never
+  // routed: a change nobody can observe is a change nobody can trust.
+  | { type: 'session-plan'; pieceIndex: number; sessions: number; capFrames: number; totalFrames: number }
+  | { type: 'session-rotate'; pieceIndex: number; sessionIndex: number; sessions: number; frameIndex: number }
   // Work-token / phase heartbeat. Does NOT reset the main-thread watchdog
   // (the set of resetting messages is unchanged: `chunk` and `queue-sample`
   // only). Throttled to ≤1 per 250 ms inside a phase; posted immediately
@@ -1179,6 +1192,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   const sessionStarts = planEncoderSessions(totalFrames, isKeyFrame, MAX_ENCODER_SESSION_FRAMES);
   const rotateAt = new Set<number>(sessionStarts.slice(1));
   let sessionIndex = 0;
+  postOut({
+    type: 'session-plan',
+    pieceIndex,
+    sessions: sessionStarts.length,
+    capFrames: MAX_ENCODER_SESSION_FRAMES,
+    totalFrames,
+  });
 
   failState.runStartSec = runStartSec;
   failState.fps = fps;
@@ -1233,6 +1253,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
         sessionIndex++;
         encoder = await buildEncoder();
         activeFlushStartChunkCount = null;
+        postOut({
+          type: 'session-rotate',
+          pieceIndex,
+          sessionIndex,
+          sessions: sessionStarts.length,
+          frameIndex: i,
+        });
         if (failState.failure) throw failState.failure;
         tracker.enter('frame-loop');
       }

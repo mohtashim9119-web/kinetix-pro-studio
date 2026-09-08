@@ -241,9 +241,17 @@ export function parentDir(path: string): string | null {
   return sep >= 0 ? path.substring(0, sep) : null;
 }
 
-function stageLabelFor(stage: ExportStage): string {
+export function stageLabelFor(stage: ExportStage): string {
   if (stage.type === 'loading_ffmpeg') return 'Loading ffmpeg…';
-  if (stage.type === 'encoding_segment') return `Encoding segment ${stage.index + 1} / ${stage.total}`;
+  if (stage.type === 'encoding_segment') {
+    const base = `Encoding segment ${stage.index + 1} / ${stage.total}`;
+    // WS3 — the piece count and the encoder-session count are DIFFERENT
+    // numbers, and only the second one moves when the session bound engages.
+    // Showing just the first is what made a working bound read as a dead one.
+    return stage.encoderSessions !== undefined && stage.encoderSessions > 1
+      ? `${base} · encoder session ${(stage.encoderSessionIndex ?? 0) + 1} / ${stage.encoderSessions}`
+      : base;
+  }
   if (stage.type === 'muxing') return 'Muxing & packaging…';
   if (stage.type === 'done') return 'Done!';
   return '';
