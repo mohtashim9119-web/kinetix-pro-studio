@@ -97,7 +97,13 @@ export type ExportFailureVia =
    *  messages (chunk/queue-sample) may have kept arriving and resetting the
    *  message-based WATCHDOG_MS timer in the meantime — see that constant's
    *  own doc comment for why message arrival alone is not proof of progress. */
-  | 'stall';
+  | 'stall'
+  /** WS3 Defect 1b/3 — `VideoEncoder.flush()` did not settle within the
+   *  worker-side FLUSH_BOUND_MS (`exportWorker.ts`). Distinct from 'watchdog',
+   *  which only knows that no message arrived: this one names the operation
+   *  and carries the frames encoded and the encoder queue depth at expiry in
+   *  its message (`EncoderFlushTimeoutError`). */
+  | 'flush-timeout';
 
 export interface ExportFailureIdentity {
   name: string | null;

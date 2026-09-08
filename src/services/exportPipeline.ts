@@ -45,6 +45,32 @@ export interface ExportLivenessSnapshot {
   framesEncoded: number | null;
   /** Longest gap between watchdog-resetting messages (`chunk` / `queue-sample`). */
   maxSilentMs?: number | null;
+  /**
+   * WS3 — the tail of the worker phase log, newest last.
+   *
+   * Raising `PHASE_LOG_CAP` from 128 to 1024 changed how much history the
+   * worker RETAINS and nothing about what the operator RECEIVES: the
+   * Copy-diagnostics blob is built from this interface alone
+   * (`App.tsx`'s handler), and until now this interface had no phase-log
+   * field at all. That is the whole reason field payloads carried none —
+   * the log was collected, capped, merged, and then dropped at the last
+   * hop. Tail-capped (`LIVENESS_PHASE_LOG_TAIL`) because the blob goes to
+   * a clipboard, not a file.
+   */
+  phaseLogTail?: readonly ExportPhaseLogTailEntry[] | null;
+  /** Typed failure route from the worker (`ExportFailureVia`), when there was
+   *  one — e.g. `'flush-timeout'` names a flush that never returned, which
+   *  `'watchdog'` alone cannot. */
+  failureVia?: string | null;
+}
+
+/** One phase-log line, flattened for the diagnostics blob. */
+export interface ExportPhaseLogTailEntry {
+  atMs: number;
+  phase: string;
+  pieceIndex: number;
+  framesEncoded: number;
+  kind: string;
 }
 
 export interface ExportError {

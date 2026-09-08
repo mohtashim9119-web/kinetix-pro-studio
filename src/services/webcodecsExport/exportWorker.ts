@@ -61,6 +61,7 @@ import {
   type ExportFailureVia,
   type ExportWorkerDiagnosticsPayload,
 } from './exportWorkerDiagnostics';
+import { MAX_ENCODER_SESSION_FRAMES, planEncoderSessions } from './encoderSessionPlan';
 
 // ---------------------------------------------------------------------------
 // Message protocol
@@ -644,6 +645,92 @@ function uploadSlot(compositor: GlCompositor, slot: TextureSlot, src: SlotSource
   compositor.uploadFrame(slot, src.source, texRect);
 }
 
+/**
+ * WS3 Defect 1b/3 — the FLUSH BOUND.
+ *
+ * `VideoEncoder.flush()` returns a promise with no timeout of its own. The
+ * field failure this round is precisely a flush that never settled: the
+ * payload read `lastPhase: "encoder-flush"`, `framesEncoded: 38061`,
+ * `msSinceLastPhaseChange: 30158`. The main thread's WATCHDOG_MS did fire, but
+ * it can only say "no messages for 30s" — it cannot name flush, cannot say how
+ * deep the encoder queue was when it stopped, and (being main-thread) it kills
+ * the whole export rather than the operation that actually hung.
+ *
+ * This is a worker-side bound on the flush call SPECIFICALLY. It is additive:
+ * WATCHDOG_MS and FORWARD_PROGRESS_BOUND_MS are unchanged, and this fires
+ * first only because it is the tighter of the three on this one operation.
+ *
+ * 20s: a bounded flush drains at most `BACKPRESSURE_HIGH_WATER` (4) frames
+ * plus the codec's own reorder depth — single-digit frames, tens of
+ * milliseconds on any encoder that is making progress. Twenty seconds is three
+ * orders of magnitude of headroom and still well inside WATCHDOG_MS (30s), so
+ * a hung flush is reported as a hung FLUSH rather than as a generic silent
+ * worker.
+ */
+const FLUSH_BOUND_MS = 20_000;
+
+/**
+ * Typed, self-describing flush timeout. `name` is carried into the failure
+ * payload by `failureFromUnknown`, and the message names the operation, the
+ * frames encoded so far and the encoder queue depth at expiry — the three
+ * numbers that separate "draining slowly" from "stopped".
+ */
+export class EncoderFlushTimeoutError extends Error {
+  readonly framesEncoded: number;
+  readonly encodeQueueSize: number;
+  readonly boundMs: number;
+  readonly sessionIndex: number;
+
+  constructor(opts: { framesEncoded: number; encodeQueueSize: number; boundMs: number; sessionIndex: number }) {
+    super(
+      `VideoEncoder.flush() did not settle within ${opts.boundMs / 1000}s ` +
+        `(encoder session ${opts.sessionIndex}, framesEncoded ${opts.framesEncoded}, ` +
+        `encodeQueueSize ${opts.encodeQueueSize}) — aborting the run at the flush, not at the watchdog.`,
+    );
+    this.name = 'EncoderFlushTimeoutError';
+    this.framesEncoded = opts.framesEncoded;
+    this.encodeQueueSize = opts.encodeQueueSize;
+    this.boundMs = opts.boundMs;
+    this.sessionIndex = opts.sessionIndex;
+  }
+}
+
+/**
+ * `encoder.flush()` under `FLUSH_BOUND_MS`. Resolves when flush resolves;
+ * rejects with `EncoderFlushTimeoutError` on expiry. The underlying flush
+ * promise is left pending on timeout — it is not cancellable, and the caller's
+ * `finally` closes the encoder, which is the only lever there is.
+ */
+export async function flushWithBound(
+  encoder: Pick<VideoEncoder, 'flush' | 'encodeQueueSize'>,
+  framesEncoded: number,
+  sessionIndex: number,
+  boundMs: number = FLUSH_BOUND_MS,
+): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    await Promise.race([
+      encoder.flush(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new EncoderFlushTimeoutError({
+                framesEncoded,
+                encodeQueueSize: encoder.encodeQueueSize,
+                boundMs,
+                sessionIndex,
+              }),
+            ),
+          boundMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer !== null) clearTimeout(timer);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // VideoEncoder construction — hardware-first ladder with per-rung probe AND
 // configure-time fallback (plan §4.1: isConfigSupported can pass and
@@ -1006,10 +1093,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     return;
   }
 
-  let encoder: VideoEncoder;
-  try {
-    tracker.enter('encoder-ladder');
-    encoder = await createEncoder(
+  // One factory for BOTH the initial encoder and every rotation (WS3 Defect
+  // 1b). The output/error callbacks are identical by construction, so a
+  // rotated session streams chunks through exactly the same path — the bytes
+  // reach `postOut` in the same order, with the same stats bookkeeping, as if
+  // one session had produced them.
+  const buildEncoder = (): Promise<VideoEncoder> =>
+    createEncoder(
       width,
       height,
       fps,
@@ -1023,6 +1113,11 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
         failState.setFailure('encoder-callback', e);
       },
     );
+
+  let encoder: VideoEncoder;
+  try {
+    tracker.enter('encoder-ladder');
+    encoder = await buildEncoder();
   } catch (e) {
     failState.setFailure('init-error', e);
     postTerminal('error', 0);
@@ -1068,6 +1163,23 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     return segmentStartFrames.has(i) || i % gop === 0;
   }
 
+  // WS3 Defect 1b — bound the ENCODER SESSION inside this run.
+  //
+  // The piece cap in `exportPipelineWebCodecs.ts` cannot cut where a
+  // transition straddles a segment boundary, so a fully-transitioned timeline
+  // arrives here as ONE piece of arbitrary length and the piece cap never
+  // engages. This bound has no such precondition: it rotates the
+  // `VideoEncoder` only, leaving the GL context, compositor, text renderer,
+  // `segments` array, demux cache and decode cursors untouched across the
+  // seam, so it is reachable on every timeline shape.
+  //
+  // `planEncoderSessions` only ever cuts at a frame for which THIS `isKeyFrame`
+  // is already true, so a rotation adds no keyframe the unsplit run would not
+  // have emitted — see that module's guarantee 2.
+  const sessionStarts = planEncoderSessions(totalFrames, isKeyFrame, MAX_ENCODER_SESSION_FRAMES);
+  const rotateAt = new Set<number>(sessionStarts.slice(1));
+  let sessionIndex = 0;
+
   failState.runStartSec = runStartSec;
   failState.fps = fps;
 
@@ -1106,6 +1218,24 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       // encoder's own GOP/reorder bookkeeping, which a run-local index gives
       // exactly as well as a whole-project index would.
       const currentTime = gridOriginSec + (gridBaseFrame + i) / fps;
+
+      // Rotate the encoder session (WS3 Defect 1b). Strictly BETWEEN two
+      // `encode()` calls: frame `i` has not been submitted yet and will be
+      // submitted to the new session below, so no frame is skipped and none is
+      // encoded twice. The old session is flushed under its own bound first,
+      // so every chunk it still owed is posted before the new session's first
+      // chunk — the byte stream stays in frame order across the seam.
+      if (rotateAt.has(i)) {
+        tracker.enter('encoder-rotate');
+        activeFlushStartChunkCount = encodeStats.chunkCount;
+        await flushWithBound(encoder, framesEmitted, sessionIndex);
+        encoder.close();
+        sessionIndex++;
+        encoder = await buildEncoder();
+        activeFlushStartChunkCount = null;
+        if (failState.failure) throw failState.failure;
+        tracker.enter('frame-loop');
+      }
 
       const encoded = await runFrameLoopTick({
           mode: 'export',
@@ -1164,7 +1294,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     // whole frame count.
     activeFlushStartChunkCount = encodeStats.chunkCount;
     tracker.enter('encoder-flush');
-    await encoder.flush();
+    await flushWithBound(encoder, framesEmitted, sessionIndex);
     postTerminal('done', framesEmitted, null, runState);
   } catch (e) {
     if (!failState.failure) {
@@ -1174,7 +1304,14 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       // `contextLost` flag check above — give it the same 'gl-context-lost'
       // identity either way, so which path wins the race never changes the
       // reported failure.
-      failState.setFailure(e instanceof GlContextLostError ? 'gl-context-lost' : 'thrown', e);
+      // WS3 Defect 1b/3 — a flush that never returned gets its OWN via, so the
+      // payload names the flush rather than reading as a generic 'thrown'.
+      const via: ExportFailureVia = e instanceof EncoderFlushTimeoutError
+        ? 'flush-timeout'
+        : e instanceof GlContextLostError
+          ? 'gl-context-lost'
+          : 'thrown';
+      failState.setFailure(via, e);
     }
     postTerminal('error', framesEmitted, undefined, runState);
   } finally {

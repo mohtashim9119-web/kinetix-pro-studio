@@ -412,42 +412,42 @@ interface PiecePlan {
 }
 
 /**
- * WS3 Defect 1 — the encoder-session cap.
+ * WS3 Defect 1 — the GL PIECE cap.
  *
  * Before this, `buildPiecePlans` coalesced EVERY maximal run of adjacent
  * 'gl'-tier segments into a single PiecePlan, with no bound of any kind on the
- * resulting piece's duration, frame count, or encoder-session length. Field
- * evidence: a 334-segment 1080p30 project collapsed to `pieceIndex 0` and ran
- * ONE VideoEncoder session across 38061 frames (1268.7s of timeline) before
- * the watchdog fired in `encoder-flush`.
+ * resulting piece's duration or frame count. Field evidence: a 334-segment
+ * 1080p30 project collapsed to `pieceIndex 0` and ran ONE VideoEncoder session
+ * across 38061 frames (1268.7s of timeline) before the watchdog fired in
+ * `encoder-flush`.
  *
- * Why a bound is needed at all — and why this number:
+ * What capping the PIECE buys, and what it does NOT:
  *
  *  - A piece boundary is a WORKER boundary (`driveGlRun` constructs a fresh
  *    `Worker` per GL piece and `terminate()`s it at the end), so it is the
  *    only place in this pipeline where every per-run accumulator resets to
  *    zero at once: the worker's demux cache, its `ImageBitmap` map, its
- *    decode cursors, the encoder's own internal state, and the main thread's
- *    per-run event/attribution arrays. Capping the piece therefore caps every
- *    one of those, which is the whole of Defect 7's growth surface.
+ *    decode cursors, and the main thread's per-run event/attribution arrays.
  *  - It is also the unit of ATTRIBUTION. With one piece, a failure payload can
  *    only ever say `pieceIndex 0`; with a cap it names a bounded span of
  *    timeline.
+ *  - It is NOT a reachable bound on the encoder session. `isLegalPieceBoundary`
+ *    refuses to cut where a transition straddles the boundary, so a timeline
+ *    with a transition on EVERY boundary has no legal cut anywhere and stays
+ *    one piece no matter how long it is — which is exactly the shape of the
+ *    332-segment field failure this cap did not touch. The encoder session is
+ *    bounded independently, inside the run, by
+ *    `encoderSessionPlan.ts`'s `planEncoderSessions`; that bound has no
+ *    transition precondition and is therefore always reachable.
  *
- *  1800 frames = 60s at 30fps. The cap is stated in FRAMES, not seconds,
- *  because every accumulator above grows per frame, not per second.
- *
- *  HONEST CAVEAT: 1800 is a judgement call, not a measured cliff. The prior
- *  "~62s platform ceiling" this round was told to evaluate has since been
- *  REFUTED in this repo's own history (commit 4d4922c), so it is deliberately
- *  NOT the basis for this number, and the 1268.7s field failure gives an upper
- *  bound on what is too much but no lower bound on what is enough. What 1800
- *  buys is a 21x reduction in every per-frame accumulator against a per-piece
- *  fixed cost (GL context + shader compile + font init) that the phase log
- *  already measures. Tune it from a real run's `phaseMs`, not from this
- *  comment.
+ * The frame count is shared with that module (`MAX_ENCODER_SESSION_FRAMES`,
+ * re-exported below for the existing callers and tests) because the two bounds
+ * answer the same question — how much per-frame state may accumulate before
+ * something is reset — and there is no reason for them to disagree.
  */
-export const MAX_ENCODER_SESSION_FRAMES = 1800;
+export { MAX_ENCODER_SESSION_FRAMES } from './encoderSessionPlan';
+
+import { MAX_ENCODER_SESSION_FRAMES } from './encoderSessionPlan';
 
 /** Absolute frame index of `sec` on the grid anchored at `originSec`. */
 function gridFrame(sec: number, originSec: number, fps: number): number {
@@ -716,6 +716,17 @@ type RunDriveResult =
 
 /** Unchanged 30s bound — exported so tests can assert the value and drive
  *  fake timers against the same constant the production path uses. */
+/**
+ * WS3 — how many phase-log lines ride along in an `ExportLivenessSnapshot`.
+ *
+ * Independent of `PHASE_LOG_CAP` (1024, how much the worker retains) and much
+ * smaller, because this one lands in the OS clipboard via App.tsx's Copy
+ * diagnostics button. 64 lines at ~4 pulses/s covers the last ~16s before the
+ * failure — comfortably the window a 30s watchdog or a 20s flush bound cares
+ * about — for a few KB of JSON.
+ */
+export const LIVENESS_PHASE_LOG_TAIL = 64;
+
 export const WATCHDOG_MS = 30_000;
 
 /**
@@ -950,6 +961,17 @@ export function driveGlRun(
       pieceIndex: lastPieceIndex,
       framesEncoded: lastFramesEncoded,
       maxSilentMs: Math.max(maxSilentMs, now() - lastOutputAt),
+      // WS3 — the last hop the phase log never crossed. `PHASE_LOG_CAP` governs
+      // how much the worker RETAINS; this governs how much the operator SEES,
+      // and before this it was zero regardless of the cap.
+      phaseLogTail: phaseLog.slice(-LIVENESS_PHASE_LOG_TAIL).map((e) => ({
+        atMs: Math.round(e.atMs),
+        phase: e.phase,
+        pieceIndex: e.pieceIndex,
+        framesEncoded: e.framesEncoded,
+        kind: e.kind,
+      })),
+      failureVia: lastWorkerDiagnostics?.failure?.via ?? null,
     });
 
     const errorFromDiagnostics = (
