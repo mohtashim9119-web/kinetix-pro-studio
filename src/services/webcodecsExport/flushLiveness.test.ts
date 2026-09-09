@@ -242,11 +242,22 @@ describe('rotation flush — unchanged: still bounded, still the fast path', () 
  * instead. Source-reading guards have precedent in this repo
  * (`unreachableFromProduction.test.ts`, `webcodecsToggleConsumers.test.ts`).
  *
- * Destructive probe run for this file (CLAUDE.md §4 Testing): replacing the
- * final call site with a bare `await encoder.flush()` turns the first test in
- * this block red; restoring it turns it green. Reverting the arming order to
- * `Promise.race([encoder.flush(), ...])` turns 'arms its timeout BEFORE
- * calling flush()' red. Both were run and both went red as stated.
+ * Destructive probes run for this file (CLAUDE.md §4 Testing — reach is
+ * established by breaking it on purpose, never by a green run):
+ *
+ *   P1  final call site -> bare `await encoder.flush()`
+ *       => RED (2 tests in this block). Restored => green.
+ *   P2  race array order swapped back to `[encoder.flush(), bound]`, with the
+ *       bound promise still hoisted to its own `const`
+ *       => GREEN. Recorded deliberately: the load-bearing half of the fix is
+ *       HOISTING the promise construction out of the array literal, not the
+ *       order of the two array elements. Once the `const` runs first the timer
+ *       is armed regardless of which element the race sees first, so this
+ *       suite correctly does not fail a change that is genuinely harmless.
+ *   P2b the genuine pre-fix body — the timeout promise inlined back INTO the
+ *       array after `encoder.flush()`
+ *       => RED, on `expected +0 to be 1`: zero timers armed at the moment
+ *       flush() was entered. Restored => green.
  */
 describe('exportWorker source — both flush call sites go through the shared bound', () => {
   const src = readFileSync(
