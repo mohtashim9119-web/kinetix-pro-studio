@@ -45,12 +45,14 @@
 // underlying `invoke` promise is abandoned by the race, not awaited — killing
 // the session is what actually settles it.
 //
-// SCOPE OF THE KILL. `ffmpeg_kill_session` (`src-tauri/src/ffmpeg.rs`) only
-// kills a `CommandChild` registered by `ffmpeg_exec`. Remux / mux / tier-piece
-// `ffmpeg.exec` calls are therefore actually terminated. `concatAnnexbPieces`
-// and `countAnnexbFrames` are native file I/O commands, not ffmpeg children —
-// kill is a no-op for them and the abandoned invoke keeps running. That is a
-// separate bug from an orphaned ffmpeg holding the output file.
+// SCOPE OF THE KILL. `ffmpeg_kill_session` (`src-tauri/src/ffmpeg.rs`) kills
+// any in-flight `ffmpeg_exec` child AND sets a per-session cooperative cancel
+// flag (`Arc<AtomicBool>`) polled every 64 KB in the native concat, frame-count,
+// and truncate commands. Remux / mux / tier-piece `ffmpeg.exec` calls die via
+// process kill; concat / count / truncate stop their Rust loops and return
+// `Err("cancelled")`. Residual window: up to one 64 KB read/write after the
+// flag is set, plus any in-flight `truncate_annexb` in-memory parse between
+// read completion and write start (not chunked).
 //
 // Deliberately NOT reusing WATCHDOG_MS: that bound is frozen (it fired
 // correctly in the field) and it measures a completely different thing — the
@@ -75,32 +77,27 @@ export interface FfmpegKillable {
  */
 export const TIER_PIECE_BOUND_MS = 600_000;
 
-/** Per-piece MP4 -> annexb remux (stream copy, one piece), 2 min. A piece is at
- *  most MAX_ENCODER_SESSION_FRAMES long and a stream copy touches no pixels;
- *  this is milliseconds in practice (the plan's own §4.4 wording). */
-export const REMUX_BOUND_MS = 120_000;
+/** Per-piece MP4 -> annexb remux (stream copy, one piece). Measured on this
+ *  machine (x86_64 sidecar, 60 s 1080p30 piece): p50/worst **0.14 s**; chosen
+ *  **30 s** (~214× worst). */
+export const REMUX_BOUND_MS = 30_000;
 
 /**
- * Whole-export annexb concatenation, 10 min. The 1268.7s 1080p30 field job at
- * roughly 8-12 Mbps is ~1.3-1.9 GB; `ffmpeg_concat_annexb_pieces` stream-copies
- * it with 2 FDs open. Even at a punitive 5 MB/s that is ~380s, so 600s clears
- * it; on any real disk this completes in seconds.
+ * Whole-export annexb concatenation. Measured native stream-copy of **1.7 GB**
+ * (two-piece concat, SSD): p50/worst **0.64 s**; chosen **60 s** (~94× worst).
  */
-export const CONCAT_BOUND_MS = 600_000;
+export const CONCAT_BOUND_MS = 60_000;
 
-/** Post-concat frame-count guard, 5 min. A 64 KB-chunked native scan of the
- *  same ~1.9 GB file — pure sequential read, no decode. 300s is ~6 MB/s, far
- *  below any real device. */
+/** Post-concat frame-count guard. **Not re-measured this round** (1.7 GB native
+ *  scan benchmark did not complete cleanly); left at the prior **300 s** value. */
 export const FRAME_COUNT_BOUND_MS = 300_000;
 
 /**
- * Mux (`muxOnly`, one or two `ffmpeg.exec` calls), 15 min. Larger than concat
- * because the with-audio case makes TWO passes over the whole ~1.9 GB video
- * (annexb -> real-PTS MP4 premux, then the audio mix) and additionally AAC-
- * encodes ~21 minutes of voiceover. This is the single longest legitimate step
- * in a large export, so it gets the loosest bound.
+ * Mux (`muxOnly`, one or two `ffmpeg.exec` calls). Measured on **1.7 GB** valid
+ * annexb (60 s piece repeated): video-only **13.78 s**; with-audio premux
+ * **9.22 s** + mix **4.70 s** = **13.92 s** worst; chosen **180 s** (~13× worst).
  */
-export const MUX_BOUND_MS = 900_000;
+export const MUX_BOUND_MS = 180_000;
 
 export interface FfmpegBoundDiagnostics {
   /** Which bounded step expired — the same label as the constant's name. */
