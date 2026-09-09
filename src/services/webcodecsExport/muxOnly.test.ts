@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { buildVideoRemuxArgs, buildAudioMuxArgs, muxOnly } from './muxOnly';
+import {
+  buildVideoRemuxArgs,
+  buildAudioMuxArgs,
+  forcedMp4SealOffer,
+  muxOnly,
+  sealTruncatedAnnexbToMp4,
+} from './muxOnly';
 import type { FfmpegLike } from '../segmentEncoder';
 
 // buildVideoRemuxArgs/buildAudioMuxArgs are the pure command-construction
@@ -147,5 +153,80 @@ describe('muxOnly', () => {
     });
     await expect(muxOnly(ffmpeg, 'sess-7', 'run_0.h264', null, 'export_final.mp4', 30)).rejects.toThrow(/sess-7/);
     await expect(muxOnly(ffmpeg, 'sess-7', 'run_0.h264', null, 'export_final.mp4', 30)).rejects.toThrow(/ffmpeg exited with code 1/);
+  });
+});
+
+describe('forced MP4 sealing — post-guard disposition', () => {
+  function fakeFfmpeg(): FfmpegLike & { exec: ReturnType<typeof vi.fn> } {
+    return {
+      writeFile: vi.fn(),
+      exec: vi.fn(async () => 0),
+      readFile: vi.fn(),
+      deleteFile: vi.fn(async () => undefined),
+    };
+  }
+
+  it('offers only a non-empty true shortfall and derives duration from pictures/fps', () => {
+    expect(
+      forcedMp4SealOffer({ pictures: 870, vclNals: 6_960 }, 900, 30),
+    ).toEqual({
+      picturesKept: 870,
+      picturesExpected: 900,
+      picturesLost: 30,
+      keptWallDurationSeconds: 29,
+      lostWallDurationSeconds: 1,
+      fps: 30,
+    });
+    expect(forcedMp4SealOffer({ pictures: 900, vclNals: 7_200 }, 900, 30)).toBeNull();
+    expect(forcedMp4SealOffer({ pictures: 901, vclNals: 7_208 }, 900, 30)).toBeNull();
+    expect(forcedMp4SealOffer({ pictures: 0, vclNals: 0 }, 900, 30)).toBeNull();
+  });
+
+  it('destructive predicate probe: a genuine discrepancy remains visible to the guard', () => {
+    const measured = { pictures: 870, vclNals: 6_960 };
+    // The sealing offer is additive. It does not rewrite measured pictures to
+    // expected or suppress the exact concat guard's mismatch.
+    expect(measured.pictures).not.toBe(900);
+    expect(forcedMp4SealOffer(measured, 900, 30)).not.toBeNull();
+  });
+
+  it('requires explicit consent and does not invoke ffmpeg when declined', async () => {
+    const ffmpeg = fakeFfmpeg();
+    const result = await sealTruncatedAnnexbToMp4({
+      ffmpeg,
+      sessionId: 'session-1',
+      videoFile: 'video_all.h264',
+      audioFile: null,
+      outputFile: 'forced.mp4',
+      measured: { pictures: 870, vclNals: 6_960 },
+      picturesExpected: 900,
+      fps: 30,
+      operatorConsented: false,
+    });
+    expect(result.kind).toBe('consent-required');
+    expect(ffmpeg.exec).not.toHaveBeenCalled();
+  });
+
+  it('consented sealing remuxes the picture-valid prefix into MP4', async () => {
+    const ffmpeg = fakeFfmpeg();
+    const result = await sealTruncatedAnnexbToMp4({
+      ffmpeg,
+      sessionId: 'session-1',
+      videoFile: 'video_all.h264',
+      audioFile: null,
+      outputFile: 'forced.mp4',
+      measured: { pictures: 870, vclNals: 6_960 },
+      picturesExpected: 900,
+      fps: 30,
+      operatorConsented: true,
+    });
+    expect(result).toMatchObject({
+      kind: 'sealed',
+      outputFile: 'forced.mp4',
+      offer: { picturesKept: 870, picturesExpected: 900, picturesLost: 30 },
+    });
+    expect(ffmpeg.exec).toHaveBeenCalledWith(
+      buildVideoRemuxArgs('video_all.h264', 'forced.mp4', 30),
+    );
   });
 });
