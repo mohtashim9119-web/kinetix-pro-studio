@@ -202,6 +202,16 @@ pub fn ffmpeg_append_file_raw(request: tauri::ipc::Request<'_>) -> Result<(), St
     }
 }
 
+/// Returns the byte length of `<session_dir>/<path>` without reading contents.
+#[tauri::command]
+pub fn ffmpeg_session_file_size(session_id: String, path: String) -> Result<u64, String> {
+    validate_path(&path)?;
+    let full = session_dir(&session_id)?.join(&path);
+    fs::metadata(&full)
+        .map(|m| m.len())
+        .map_err(|e| format!("session_file_size({}): {}", path, e))
+}
+
 /// Reads <session_dir>/<path> and returns its bytes.
 #[tauri::command]
 pub fn ffmpeg_read_file(session_id: String, path: String) -> Result<Vec<u8>, String> {
@@ -357,6 +367,9 @@ impl AnnexbAccessUnitScanner {
     fn drain_complete_nals(&mut self) {
         let header_indices = collect_annexb_header_indices(&self.buffer);
         if header_indices.len() < 2 {
+            if header_indices.is_empty() {
+                compact_buffer_tail_without_start_codes(&mut self.buffer);
+            }
             return;
         }
         let last_header = header_indices[header_indices.len() - 1];
@@ -372,6 +385,221 @@ fn count_annexb_access_units(bytes: &[u8]) -> AnnexbFrameCount {
     scanner.feed(bytes);
     scanner.finish();
     scanner.count
+}
+
+/// Bytes retained when compacting a buffer that contains no start codes so a
+/// `00 00 01` / `00 00 00 01` split across chunk boundaries is still found.
+const ANNEXB_START_CODE_LOOKBACK: usize = 4;
+
+fn buffer_contains_start_code(buf: &[u8]) -> bool {
+    buf.windows(3).any(|w| w[0] == 0 && w[1] == 0 && w[2] == 1)
+}
+
+fn compact_buffer_tail_without_start_codes(buffer: &mut Vec<u8>) {
+    if buffer.len() <= IO_CHUNK_SIZE {
+        return;
+    }
+    if buffer_contains_start_code(buffer) {
+        return;
+    }
+    let discard = buffer.len().saturating_sub(ANNEXB_START_CODE_LOOKBACK);
+    if discard > 0 {
+        buffer.drain(..discard);
+    }
+}
+
+fn compact_buffer_without_start_codes(buffer: &mut Vec<u8>, base_offset: &mut u64) {
+    if buffer.len() <= IO_CHUNK_SIZE {
+        return;
+    }
+    if buffer_contains_start_code(buffer) {
+        return;
+    }
+    let discard = buffer.len().saturating_sub(ANNEXB_START_CODE_LOOKBACK);
+    if discard == 0 {
+        return;
+    }
+    *base_offset += discard as u64;
+    buffer.drain(..discard);
+}
+
+#[derive(Clone, Copy)]
+struct ScannedNal {
+    start: u64,
+    header: u64,
+    end: u64,
+    nal_type: u8,
+    first_mb: Option<u32>,
+}
+
+fn scanned_nal_from_span(nal: &AnnexbNalSpan, base_offset: u64, buffer: &[u8]) -> ScannedNal {
+    let first_mb = if nal.nal_type == 1 || nal.nal_type == 5 {
+        if nal.header + 1 < nal.end {
+            parse_first_mb_in_slice(&buffer[nal.header + 1..nal.end])
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    ScannedNal {
+        start: base_offset + nal.start as u64,
+        header: base_offset + nal.header as u64,
+        end: base_offset + nal.end as u64,
+        nal_type: nal.nal_type,
+        first_mb,
+    }
+}
+
+struct StreamAnnexbNalScanner {
+    buffer: Vec<u8>,
+    base_offset: u64,
+    nals: Vec<ScannedNal>,
+}
+
+impl StreamAnnexbNalScanner {
+    fn new() -> Self {
+        Self {
+            buffer: Vec::new(),
+            base_offset: 0,
+            nals: Vec::new(),
+        }
+    }
+
+    fn feed(&mut self, data: &[u8]) {
+        self.buffer.extend_from_slice(data);
+        self.drain_complete_nals();
+    }
+
+    fn finish(&mut self, _file_len: u64) {
+        if !self.buffer.is_empty() {
+            let nals = scan_annexb_nals(&self.buffer);
+            for nal in nals {
+                self.nals
+                    .push(scanned_nal_from_span(&nal, self.base_offset, &self.buffer));
+            }
+        }
+        self.buffer.clear();
+    }
+
+    fn drain_complete_nals(&mut self) {
+        loop {
+            let nals = scan_annexb_nals(&self.buffer);
+            if nals.len() < 2 {
+                compact_buffer_without_start_codes(&mut self.buffer, &mut self.base_offset);
+                break;
+            }
+            for nal in &nals[..nals.len() - 1] {
+                self.nals
+                    .push(scanned_nal_from_span(nal, self.base_offset, &self.buffer));
+            }
+            let keep_from = nals[nals.len() - 1].start;
+            self.base_offset += keep_from as u64;
+            self.buffer.drain(..keep_from);
+        }
+    }
+}
+
+fn scan_annexb_nals_from_file(
+    full: &Path,
+    path: &str,
+    cancel: Option<&AtomicBool>,
+) -> Result<Vec<ScannedNal>, String> {
+    use std::io::Read;
+
+    check_cancelled(cancel)?;
+    let mut file = fs::File::open(full)
+        .map_err(|e| format!("scan_annexb_nals({}): open: {}", path, e))?;
+    let mut read_buf = vec![0u8; IO_CHUNK_SIZE];
+    let mut scanner = StreamAnnexbNalScanner::new();
+    loop {
+        check_cancelled(cancel)?;
+        let n = file
+            .read(&mut read_buf)
+            .map_err(|e| format!("scan_annexb_nals({}): read: {}", path, e))?;
+        if n == 0 {
+            break;
+        }
+        scanner.feed(&read_buf[..n]);
+    }
+    let file_len = fs::metadata(full)
+        .map_err(|e| format!("scan_annexb_nals({}): metadata: {}", path, e))?
+        .len();
+    scanner.finish(file_len);
+    Ok(scanner.nals)
+}
+
+struct PictureGroupScanned {
+    vcl: Vec<ScannedNal>,
+}
+
+fn group_pictures_scanned(nals: &[ScannedNal]) -> Vec<PictureGroupScanned> {
+    let mut pictures: Vec<PictureGroupScanned> = Vec::new();
+    for nal in nals {
+        if nal.nal_type != 1 && nal.nal_type != 5 {
+            continue;
+        }
+        if nal.header + 1 >= nal.end {
+            continue;
+        }
+        if nal.first_mb == Some(0) {
+            pictures.push(PictureGroupScanned { vcl: vec![*nal] });
+        } else if let Some(last) = pictures.last_mut() {
+            last.vcl.push(*nal);
+        }
+    }
+    pictures
+}
+
+fn dropped_picture_cut_scanned(
+    nals: &[ScannedNal],
+    prev_last_vcl: ScannedNal,
+    dropped_first_vcl: ScannedNal,
+) -> u64 {
+    for nal in nals {
+        if nal.start <= prev_last_vcl.start {
+            continue;
+        }
+        if nal.start >= dropped_first_vcl.start {
+            break;
+        }
+        if nal.nal_type == 9 {
+            return nal.start;
+        }
+    }
+    dropped_first_vcl.start
+}
+
+fn compute_truncate_cut_from_scanned(nals: &[ScannedNal], file_len: u64) -> u64 {
+    let pictures = group_pictures_scanned(nals);
+    if pictures.is_empty() {
+        return 0;
+    }
+
+    let closed_counts: Vec<usize> = pictures[..pictures.len() - 1]
+        .iter()
+        .map(|p| p.vcl.len())
+        .collect();
+    let spp = mode_of(&closed_counts);
+    let mut keep_count = pictures.len();
+    if let Some(spp) = spp {
+        if pictures[keep_count - 1].vcl.len() != spp {
+            keep_count -= 1;
+        }
+    }
+
+    if keep_count == 0 {
+        return 0;
+    }
+
+    if keep_count < pictures.len() {
+        let dropped = &pictures[keep_count];
+        let prev = &pictures[keep_count - 1];
+        let prev_last = prev.vcl[prev.vcl.len() - 1];
+        dropped_picture_cut_scanned(nals, prev_last, dropped.vcl[0])
+    } else {
+        nals.last().map(|n| n.end).unwrap_or(file_len).min(file_len)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -594,10 +822,8 @@ fn count_annexb_frames_inner(
 }
 
 /// Truncates `<session_dir>/<path>` at the last complete Annex-B access unit.
-/// In-place `set_len`. Unused by the production export pipeline this round
-/// (salvage is not this command's call); provided as the native primitive a
-/// future resume path will invoke on a GB-scale file without pulling bytes
-/// into the renderer.
+/// Single forward pass over the file (bounded lookback buffer), then in-place
+/// `set_len` — never materializes the whole file in memory.
 #[tauri::command]
 pub fn ffmpeg_truncate_annexb(
     session_id: String,
@@ -610,50 +836,20 @@ pub fn ffmpeg_truncate_annexb(
     truncate_annexb_inner(&full, &path, cancel.as_deref())
 }
 
-fn read_file_with_cancel(full: &Path, path: &str, cancel: Option<&AtomicBool>) -> Result<Vec<u8>, String> {
-    use std::io::Read;
-
-    check_cancelled(cancel)?;
-    let mut file = fs::File::open(full)
-        .map_err(|e| format!("truncate_annexb({}): open: {}", path, e))?;
-    let mut out = Vec::new();
-    let mut buf = vec![0u8; IO_CHUNK_SIZE];
-    loop {
-        check_cancelled(cancel)?;
-        let n = file
-            .read(&mut buf)
-            .map_err(|e| format!("truncate_annexb({}): read: {}", path, e))?;
-        if n == 0 {
-            break;
-        }
-        out.extend_from_slice(&buf[..n]);
-    }
-    Ok(out)
-}
-
-fn write_truncated_annexb(
-    full: &Path,
-    path: &str,
-    kept: &[u8],
-    cancel: Option<&AtomicBool>,
-) -> Result<(), String> {
-    use std::io::Write;
-
-    check_cancelled(cancel)?;
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .open(full)
-        .map_err(|e| format!("truncate_annexb({}): open: {}", path, e))?;
-    file.set_len(0)
-        .map_err(|e| format!("truncate_annexb({}): set_len(0): {}", path, e))?;
-    for chunk in kept.chunks(IO_CHUNK_SIZE) {
-        check_cancelled(cancel)?;
-        file.write_all(chunk)
-            .map_err(|e| format!("truncate_annexb({}): write: {}", path, e))?;
-    }
-    file.flush()
-        .map_err(|e| format!("truncate_annexb({}): flush: {}", path, e))?;
-    Ok(())
+/// Truncates `<session_dir>/<path>` to an exact caller-supplied byte length
+/// via in-place `set_len`, then returns the picture count on the kept prefix
+/// so the caller can verify the seam against a checkpoint.
+#[tauri::command]
+pub fn ffmpeg_truncate_annexb_to_offset(
+    session_id: String,
+    path: String,
+    byte_offset: u64,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Result<AnnexbTruncateResult, String> {
+    validate_path(&path)?;
+    let full = session_dir(&session_id)?.join(&path);
+    let cancel = session_cancel_flag(&state, &session_id);
+    truncate_annexb_to_offset_inner(&full, &path, byte_offset, cancel.as_deref())
 }
 
 fn truncate_annexb_inner(
@@ -661,19 +857,67 @@ fn truncate_annexb_inner(
     path: &str,
     cancel: Option<&AtomicBool>,
 ) -> Result<AnnexbTruncateResult, String> {
-    let bytes = read_file_with_cancel(full, path, cancel)?;
     check_cancelled(cancel)?;
-    let (kept, result) = truncate_annexb_to_last_complete_au(&bytes);
-    if (kept.len() as u64) != result.kept_bytes {
+    let file_len = fs::metadata(full)
+        .map_err(|e| format!("truncate_annexb({}): metadata: {}", path, e))?
+        .len();
+    let nals = scan_annexb_nals_from_file(full, path, cancel)?;
+    check_cancelled(cancel)?;
+    let cut = compute_truncate_cut_from_scanned(&nals, file_len);
+    if cut < file_len {
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(full)
+            .map_err(|e| format!("truncate_annexb({}): open: {}", path, e))?;
+        file.set_len(cut)
+            .map_err(|e| format!("truncate_annexb({}): set_len({}): {}", path, cut, e))?;
+    }
+    check_cancelled(cancel)?;
+    let measured = count_annexb_frames_inner(full, path, cancel)?;
+    Ok(AnnexbTruncateResult {
+        pictures: measured.pictures,
+        vcl_nals: measured.vcl_nals,
+        bytes_removed: file_len.saturating_sub(cut),
+        kept_bytes: cut,
+    })
+}
+
+fn truncate_annexb_to_offset_inner(
+    full: &Path,
+    path: &str,
+    byte_offset: u64,
+    cancel: Option<&AtomicBool>,
+) -> Result<AnnexbTruncateResult, String> {
+    check_cancelled(cancel)?;
+    let file_len = fs::metadata(full)
+        .map_err(|e| format!("truncate_annexb_to_offset({}): metadata: {}", path, e))?
+        .len();
+    if byte_offset > file_len {
         return Err(format!(
-            "truncate_annexb({}): internal length mismatch kept={} result.keptBytes={}",
-            path,
-            kept.len(),
-            result.kept_bytes
+            "truncate_annexb_to_offset({}): offset {} exceeds file length {}",
+            path, byte_offset, file_len
         ));
     }
-    write_truncated_annexb(full, path, &kept, cancel)?;
-    Ok(result)
+    if byte_offset < file_len {
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(full)
+            .map_err(|e| format!("truncate_annexb_to_offset({}): open: {}", path, e))?;
+        file.set_len(byte_offset).map_err(|e| {
+            format!(
+                "truncate_annexb_to_offset({}): set_len({}): {}",
+                path, byte_offset, e
+            )
+        })?;
+    }
+    check_cancelled(cancel)?;
+    let measured = count_annexb_frames_inner(full, path, cancel)?;
+    Ok(AnnexbTruncateResult {
+        pictures: measured.pictures,
+        vcl_nals: measured.vcl_nals,
+        bytes_removed: file_len.saturating_sub(byte_offset),
+        kept_bytes: byte_offset,
+    })
 }
 
 /// Stream-concatenates a list of AnnexB H.264 piece files (in order) into a
@@ -1641,19 +1885,162 @@ mod tests {
     }
 
     #[test]
-    fn truncate_stops_mid_write_when_cancel_flag_is_set() {
+    fn truncate_stops_mid_scan_when_cancel_flag_is_set() {
         let (_id, dir) = make_session();
         write_large_piece(&dir, "piece.h264", 2048 * IO_CHUNK_SIZE);
         let cancel = Arc::new(AtomicBool::new(false));
         let cancel_worker = cancel.clone();
         let full = dir.join("piece.h264");
 
-        let handle = thread::spawn(move || truncate_annexb_inner(&full, "piece.h264", Some(cancel_worker.as_ref())));
+        let handle = thread::spawn(move || {
+            truncate_annexb_inner(&full, "piece.h264", Some(cancel_worker.as_ref()))
+        });
 
         thread::sleep(Duration::from_millis(10));
         cancel.store(true, Ordering::SeqCst);
         let result = handle.join().unwrap();
         assert_eq!(result, Err("cancelled".to_string()));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn streaming_truncate_cut_matches_in_memory_on_fixtures() {
+        let fixtures: [(&str, Vec<u8>); 4] = [
+            ("8slice-10pic", build_multi_slice_stream(10, 8)),
+            ("1slice-12pic", build_synthetic_single_slice_with_param_sets(12)),
+            ("paramsets-3pic", build_multi_slice_stream(3, 1)),
+            ("short-9pic", build_synthetic_single_slice_with_param_sets(9)),
+        ];
+        for (name, stream) in fixtures {
+            let (_id, dir) = make_session();
+            fs::write(dir.join("test.h264"), &stream).unwrap();
+            let file_len = stream.len() as u64;
+            let nals = scan_annexb_nals_from_file(&dir.join("test.h264"), "test.h264", None).unwrap();
+            let stream_cut = compute_truncate_cut_from_scanned(&nals, file_len);
+            let (_, mem) = truncate_annexb_to_last_complete_au(&stream);
+            assert_eq!(stream_cut, mem.kept_bytes, "{name} cut");
+            fs::remove_dir_all(&dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn truncate_to_offset_refuses_past_eof_and_reports_picture_count() {
+        let (_id, dir) = make_session();
+        let stream = build_multi_slice_stream(4, 8);
+        fs::write(dir.join("piece.h264"), &stream).unwrap();
+        let vcls = vcl_nals(&stream);
+        let offset = vcls[8].start as u64;
+        let got = truncate_annexb_to_offset_inner(&dir.join("piece.h264"), "piece.h264", offset, None)
+            .unwrap();
+        assert_eq!(got.kept_bytes, offset);
+        assert_eq!(got.pictures, 1);
+        let on_disk = fs::read(dir.join("piece.h264")).unwrap();
+        assert_eq!(on_disk.len() as u64, offset);
+        assert_eq!(count_annexb_access_units(&on_disk).pictures, got.pictures);
+        let err = truncate_annexb_to_offset_inner(
+            &dir.join("piece.h264"),
+            "piece.h264",
+            offset + 1,
+            None,
+        );
+        assert!(err.is_err());
+        assert!(err.unwrap_err().contains("exceeds file length"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn session_file_size_reports_byte_length() {
+        let (_id, dir) = make_session();
+        let stream = build_multi_slice_stream(2, 4);
+        fs::write(dir.join("piece.h264"), &stream).unwrap();
+        let size = fs::metadata(dir.join("piece.h264")).unwrap().len();
+        assert_eq!(size as usize, stream.len());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn truncate_to_offset_stops_mid_count_when_cancel_flag_is_set() {
+        let (_id, dir) = make_session();
+        write_large_piece(&dir, "piece.h264", 2048 * IO_CHUNK_SIZE);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_worker = cancel.clone();
+        let full = dir.join("piece.h264");
+        let offset = (1024 * IO_CHUNK_SIZE) as u64;
+
+        let handle = thread::spawn(move || {
+            truncate_annexb_to_offset_inner(&full, "piece.h264", offset, Some(cancel_worker.as_ref()))
+        });
+
+        thread::sleep(Duration::from_millis(10));
+        cancel.store(true, Ordering::SeqCst);
+        let result = handle.join().unwrap();
+        assert_eq!(result, Err("cancelled".to_string()));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn write_padded_annexb_fixture(path: &Path, valid_prefix: &[u8], target_bytes: u64) {
+        use std::io::Write;
+        let mut file = fs::File::create(path).unwrap();
+        file.write_all(valid_prefix).unwrap();
+        // Dangling start code closes the prefix's last open NAL so GB-scale
+        // padding is not absorbed as false payload (keeps streaming buffers bounded).
+        file.write_all(&[0, 0, 0, 1]).unwrap();
+        let pad_byte = 0xFFu8;
+        let chunk = vec![pad_byte; IO_CHUNK_SIZE];
+        let mut written = valid_prefix.len() as u64;
+        while written < target_bytes {
+            let take = ((target_bytes - written) as usize).min(chunk.len());
+            file.write_all(&chunk[..take]).unwrap();
+            written += take as u64;
+        }
+        file.flush().unwrap();
+    }
+
+    /// Export-scale timing for streaming count/truncate (pair with
+    /// `scripts/ws3-measure-streaming-annexb.sh` for peak RSS via `/usr/bin/time -l`).
+    /// Run: `cargo test --release measure_streaming_annexb_at_scale -- --ignored --nocapture`
+    #[test]
+    #[ignore = "manual: writes ~2.3 GB under $TMPDIR"]
+    fn measure_streaming_annexb_at_scale() {
+        use std::time::Instant;
+
+        const TARGET_1_7_GB: u64 = 1_700_000_000;
+        const TARGET_2_3_GB: u64 = 2_300_000_000;
+        let prefix = build_multi_slice_stream(400, 8);
+        let (_id, dir) = make_session();
+
+        for (label, target) in [("1_7gb", TARGET_1_7_GB), ("2_3gb", TARGET_2_3_GB)] {
+            let path = dir.join(format!("scale_{label}.h264"));
+            let master = dir.join(format!("scale_{label}_master.h264"));
+            write_padded_annexb_fixture(&master, &prefix, target);
+
+            let mut count_samples = Vec::new();
+            for _ in 0..3 {
+                let t0 = Instant::now();
+                let got = count_annexb_frames_inner(&master, "scale.h264", None).unwrap();
+                count_samples.push(t0.elapsed().as_millis());
+                assert_eq!(got.pictures, 400);
+            }
+            count_samples.sort_unstable();
+
+            let mut trunc_samples = Vec::new();
+            for _ in 0..3 {
+                fs::copy(&master, &path).unwrap();
+                let t0 = Instant::now();
+                let got = truncate_annexb_inner(&path, "scale.h264", None).unwrap();
+                trunc_samples.push(t0.elapsed().as_millis());
+                assert_eq!(got.pictures, 400);
+            }
+            trunc_samples.sort_unstable();
+
+            println!(
+                "ws3-streaming-measurement {label} bytes={target} count_p50_ms={} count_worst_ms={} truncate_p50_ms={} truncate_worst_ms={}",
+                count_samples[1],
+                count_samples[2],
+                trunc_samples[1],
+                trunc_samples[2],
+            );
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 }
