@@ -174,11 +174,21 @@ pub fn ffmpeg_read_file(session_id: String, path: String) -> Result<Vec<u8>, Str
 }
 
 /// Picture and raw-VCL counts for an Annex-B H.264 stream.
-#[derive(serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnnexbFrameCount {
     pub pictures: u64,
     pub vcl_nals: u64,
+}
+
+/// Result of truncating an Annex-B file at the last complete access unit.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnexbTruncateResult {
+    pub pictures: u64,
+    pub vcl_nals: u64,
+    pub bytes_removed: u64,
+    pub kept_bytes: u64,
 }
 
 struct AnnexbBitReader<'a> {
@@ -327,6 +337,171 @@ fn count_annexb_access_units(bytes: &[u8]) -> AnnexbFrameCount {
     scanner.count
 }
 
+#[derive(Clone, Copy)]
+struct AnnexbNalSpan {
+    start: usize,
+    header: usize,
+    end: usize,
+    nal_type: u8,
+}
+
+fn scan_annexb_nals(bytes: &[u8]) -> Vec<AnnexbNalSpan> {
+    let n = bytes.len();
+    let mut starts: Vec<(usize, usize)> = Vec::new();
+    let mut dangling_start: Option<usize> = None;
+    let mut i = 0usize;
+    while i + 2 < n {
+        if bytes[i] == 0 && bytes[i + 1] == 0 && bytes[i + 2] == 1 {
+            let start = if i > 0 && bytes[i - 1] == 0 { i - 1 } else { i };
+            let header = i + 3;
+            if header >= n {
+                dangling_start = Some(start);
+                break;
+            }
+            starts.push((start, header));
+            i = header;
+        } else {
+            i += 1;
+        }
+    }
+
+    let mut nals = Vec::with_capacity(starts.len());
+    for k in 0..starts.len() {
+        let (start, header) = starts[k];
+        let end = if k + 1 < starts.len() {
+            starts[k + 1].0
+        } else {
+            dangling_start.unwrap_or(n)
+        };
+        nals.push(AnnexbNalSpan {
+            start,
+            header,
+            end,
+            nal_type: bytes[header] & 0x1f,
+        });
+    }
+    nals
+}
+
+struct PictureGroup {
+    vcl: Vec<AnnexbNalSpan>,
+}
+
+fn group_pictures(nals: &[AnnexbNalSpan], bytes: &[u8]) -> Vec<PictureGroup> {
+    let mut pictures: Vec<PictureGroup> = Vec::new();
+    for nal in nals {
+        if nal.nal_type != 1 && nal.nal_type != 5 {
+            continue;
+        }
+        if nal.header + 1 >= nal.end {
+            continue;
+        }
+        let first_mb = parse_first_mb_in_slice(&bytes[nal.header + 1..nal.end]);
+        if first_mb == Some(0) {
+            pictures.push(PictureGroup { vcl: vec![*nal] });
+        } else if let Some(last) = pictures.last_mut() {
+            last.vcl.push(*nal);
+        }
+    }
+    pictures
+}
+
+fn mode_of(values: &[usize]) -> Option<usize> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut best = values[0];
+    let mut best_n = 0usize;
+    for &v in values {
+        let n = values.iter().filter(|x| **x == v).count();
+        if n > best_n {
+            best = v;
+            best_n = n;
+        }
+    }
+    Some(best)
+}
+
+fn dropped_picture_cut(
+    nals: &[AnnexbNalSpan],
+    prev_last_vcl: AnnexbNalSpan,
+    dropped_first_vcl: AnnexbNalSpan,
+) -> usize {
+    for nal in nals {
+        if nal.start <= prev_last_vcl.start {
+            continue;
+        }
+        if nal.start >= dropped_first_vcl.start {
+            break;
+        }
+        if nal.nal_type == 9 {
+            return nal.start;
+        }
+    }
+    dropped_first_vcl.start
+}
+
+fn truncate_annexb_to_last_complete_au(bytes: &[u8]) -> (Vec<u8>, AnnexbTruncateResult) {
+    let nals = scan_annexb_nals(bytes);
+    let pictures = group_pictures(&nals, bytes);
+    if pictures.is_empty() {
+        return (
+            Vec::new(),
+            AnnexbTruncateResult {
+                pictures: 0,
+                vcl_nals: 0,
+                bytes_removed: bytes.len() as u64,
+                kept_bytes: 0,
+            },
+        );
+    }
+
+    let closed_counts: Vec<usize> = pictures[..pictures.len() - 1]
+        .iter()
+        .map(|p| p.vcl.len())
+        .collect();
+    let spp = mode_of(&closed_counts);
+    let mut keep_count = pictures.len();
+    if let Some(spp) = spp {
+        if pictures[keep_count - 1].vcl.len() != spp {
+            keep_count -= 1;
+        }
+    }
+
+    if keep_count == 0 {
+        return (
+            Vec::new(),
+            AnnexbTruncateResult {
+                pictures: 0,
+                vcl_nals: 0,
+                bytes_removed: bytes.len() as u64,
+                kept_bytes: 0,
+            },
+        );
+    }
+
+    let cut = if keep_count < pictures.len() {
+        let dropped = &pictures[keep_count];
+        let prev = &pictures[keep_count - 1];
+        let prev_last = prev.vcl[prev.vcl.len() - 1];
+        dropped_picture_cut(&nals, prev_last, dropped.vcl[0])
+    } else {
+        nals[nals.len() - 1].end
+    };
+
+    let kept = bytes[..cut].to_vec();
+    let measured = count_annexb_access_units(&kept);
+    (
+        kept,
+        AnnexbTruncateResult {
+            pictures: measured.pictures,
+            vcl_nals: measured.vcl_nals,
+            bytes_removed: (bytes.len() - cut) as u64,
+            kept_bytes: cut as u64,
+        },
+    )
+}
+
 /// Counts H.264 Annex B access units (pictures) in <session_dir>/<path>,
 /// without ever sending the file's bytes to the renderer.
 ///
@@ -364,6 +539,42 @@ pub fn ffmpeg_count_annexb_frames(session_id: String, path: String) -> Result<An
 
     scanner.finish();
     Ok(scanner.count)
+}
+
+/// Truncates `<session_dir>/<path>` at the last complete Annex-B access unit.
+/// In-place `set_len`. Unused by the production export pipeline this round
+/// (salvage is not this command's call); provided as the native primitive a
+/// future resume path will invoke on a GB-scale file without pulling bytes
+/// into the renderer.
+#[tauri::command]
+pub fn ffmpeg_truncate_annexb(session_id: String, path: String) -> Result<AnnexbTruncateResult, String> {
+    validate_path(&path)?;
+    let full = session_dir(&session_id)?.join(&path);
+    let bytes = fs::read(&full)
+        .map_err(|e| format!("truncate_annexb({}): read: {}", path, e))?;
+    let (kept, result) = truncate_annexb_to_last_complete_au(&bytes);
+    if (kept.len() as u64) != result.kept_bytes {
+        return Err(format!(
+            "truncate_annexb({}): internal length mismatch kept={} result.keptBytes={}",
+            path,
+            kept.len(),
+            result.kept_bytes
+        ));
+    }
+    {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .open(&full)
+            .map_err(|e| format!("truncate_annexb({}): open: {}", path, e))?;
+        use std::io::Write;
+        file.set_len(0)
+            .map_err(|e| format!("truncate_annexb({}): set_len(0): {}", path, e))?;
+        file.write_all(&kept)
+            .map_err(|e| format!("truncate_annexb({}): write: {}", path, e))?;
+        file.flush()
+            .map_err(|e| format!("truncate_annexb({}): flush: {}", path, e))?;
+    }
+    Ok(result)
 }
 
 /// Stream-concatenates a list of AnnexB H.264 piece files (in order) into a
@@ -943,8 +1154,35 @@ mod tests {
             for s in 0..slices_per_picture {
                 write_slice_nal(&mut out, p == 0 && s == 0, if s == 0 { 0 } else { 100 + s as u32 });
             }
+            write_nal(&mut out, 7, &[0x42, 0x00, 0x1e, (p as u8) & 0xff]);
+            write_nal(&mut out, 8, &[0x68, 0xce, (p as u8) & 0xff]);
         }
         out
+    }
+
+    fn build_synthetic_single_slice_with_param_sets(pictures: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        for p in 0..pictures {
+            write_nal(&mut out, 7, &[0x42, 0x00, 0x1e, (p as u8) & 0xff]);
+            write_nal(&mut out, 8, &[0x68, 0xce, (p as u8) & 0xff]);
+            write_nal(&mut out, 9, &[0xf0]);
+            write_nal(&mut out, 6, &[0x05, 0xbe, 0xef]);
+            write_slice_nal(&mut out, p == 0, 0);
+        }
+        out
+    }
+
+    fn sha256_hex(bytes: &[u8]) -> String {
+        let mut hasher = crate::sha256::Sha256::new();
+        hasher.update(bytes);
+        crate::sha256::hex_digest(&hasher.finish())
+    }
+
+    fn vcl_nals(bytes: &[u8]) -> Vec<AnnexbNalSpan> {
+        scan_annexb_nals(bytes)
+            .into_iter()
+            .filter(|n| n.nal_type == 1 || n.nal_type == 5)
+            .collect()
     }
 
     #[test]
@@ -964,6 +1202,116 @@ mod tests {
         let want = count_annexb_access_units(&stream);
         assert_eq!(got.pictures, want.pictures);
         assert_eq!(got.vcl_nals, want.vcl_nals);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn ffmpeg_count_annexb_frames_matches_js_synthetic_bytes() {
+        // Digests locked against annexbFrameCount.test.ts's JS constructors.
+        let cases: [(&str, Vec<u8>, u64, u64, usize, &str); 4] = [
+            (
+                "8slice-10pic",
+                build_multi_slice_stream(10, 8),
+                10,
+                80,
+                945,
+                "efd16ab57ff667563b14ce12bafa3425e5c7802f637d92e4f3565f4475920112",
+            ),
+            (
+                "1slice-12pic",
+                build_synthetic_single_slice_with_param_sets(12),
+                12,
+                12,
+                444,
+                "d02aca0757167768f0561f6a8a92632b3dd8ab69266757d2ab88734beb22233c",
+            ),
+            (
+                "paramsets-3pic",
+                build_multi_slice_stream(3, 1),
+                3,
+                3,
+                126,
+                "b6ce471760350a3545a80ccb54da71441a04c2006c55452b6e00187adfb38894",
+            ),
+            (
+                "short-9pic",
+                build_synthetic_single_slice_with_param_sets(9),
+                9,
+                9,
+                333,
+                "c84a5aae5a64f203d9ec02326e84e5296792813de7b4cd35b5ec7ca7404a55aa",
+            ),
+        ];
+
+        for (name, stream, pictures, vcl_nals_expected, len, digest) in cases {
+            assert_eq!(stream.len(), len, "{name} byteLength");
+            assert_eq!(sha256_hex(&stream), digest, "{name} sha256");
+            let mem = count_annexb_access_units(&stream);
+            assert_eq!(mem.pictures, pictures, "{name} pictures");
+            assert_eq!(mem.vcl_nals, vcl_nals_expected, "{name} vclNals");
+
+            let (id, dir) = make_session();
+            fs::write(dir.join("test.h264"), &stream).unwrap();
+            let got = ffmpeg_count_annexb_frames(id, "test.h264".to_string()).unwrap();
+            assert_eq!(got, mem, "{name} command vs in-memory");
+            fs::remove_dir_all(&dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn truncate_mid_nal_mid_picture_and_boundary() {
+        let stream = build_multi_slice_stream(4, 8);
+        let vcls = vcl_nals(&stream);
+        assert_eq!(vcls.len(), 32);
+
+        // mid-NAL: 2 bytes into slice 5 of picture 2
+        let slice5 = vcls[2 * 8 + 5];
+        let mid_nal = &stream[..slice5.header + 2];
+        let (kept, result) = truncate_annexb_to_last_complete_au(mid_nal);
+        assert_eq!(result.pictures, 2);
+        assert_eq!(result.vcl_nals, 16);
+        assert_eq!(count_annexb_access_units(&kept).pictures, 2);
+
+        // mid-picture: cut at start of slice 5 of 8
+        let mid_pic = &stream[..slice5.start];
+        let (_, result) = truncate_annexb_to_last_complete_au(mid_pic);
+        assert_eq!(result.pictures, 2);
+        assert_eq!(result.vcl_nals, 16);
+
+        // exactly on a picture boundary: AUD of picture 2
+        let first_vcl_p2 = vcls[2 * 8];
+        let prev_last = vcls[2 * 8 - 1];
+        let nals = scan_annexb_nals(&stream);
+        let aud = nals
+            .iter()
+            .find(|n| n.nal_type == 9 && n.start > prev_last.start && n.start < first_vcl_p2.start)
+            .expect("AUD of picture 2");
+        let on_boundary = &stream[..aud.start];
+        let (_, result) = truncate_annexb_to_last_complete_au(on_boundary);
+        assert_eq!(result.pictures, 2);
+        assert_eq!(result.vcl_nals, 16);
+
+        // complete file is a no-op
+        let (kept, result) = truncate_annexb_to_last_complete_au(&stream);
+        assert_eq!(result.pictures, 4);
+        assert_eq!(result.vcl_nals, 32);
+        assert_eq!(result.bytes_removed, 0);
+        assert_eq!(kept, stream);
+    }
+
+    #[test]
+    fn ffmpeg_truncate_annexb_command_matches_in_memory() {
+        let (id, dir) = make_session();
+        let stream = build_multi_slice_stream(4, 8);
+        let vcls = vcl_nals(&stream);
+        let slice5 = vcls[2 * 8 + 5];
+        let truncated = &stream[..slice5.header + 2];
+        fs::write(dir.join("piece.h264"), truncated).unwrap();
+        let got = ffmpeg_truncate_annexb(id, "piece.h264".to_string()).unwrap();
+        let (_, want) = truncate_annexb_to_last_complete_au(truncated);
+        assert_eq!(got, want);
+        let on_disk = fs::read(dir.join("piece.h264")).unwrap();
+        assert_eq!(count_annexb_access_units(&on_disk).pictures, 2);
         fs::remove_dir_all(&dir).unwrap();
     }
 }

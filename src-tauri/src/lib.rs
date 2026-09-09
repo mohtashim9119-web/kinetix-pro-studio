@@ -444,6 +444,7 @@ pub fn run() {
             ffmpeg::ffmpeg_append_file_raw,
             ffmpeg::ffmpeg_read_file,
             ffmpeg::ffmpeg_count_annexb_frames,
+            ffmpeg::ffmpeg_truncate_annexb,
             ffmpeg::ffmpeg_concat_annexb_pieces,
             ffmpeg::ffmpeg_delete_file,
             ffmpeg::ffmpeg_exec,

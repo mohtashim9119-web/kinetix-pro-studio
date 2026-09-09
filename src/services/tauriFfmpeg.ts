@@ -214,6 +214,24 @@ export class TauriFfmpeg implements FfmpegLike {
   }
 
   /**
+   * Truncates `<path>` at the last complete Annex-B access unit. Unused by
+   * the production export pipeline this round — salvage/resume is not this
+   * client's call. The native command exists so a future resume path can
+   * truncate a GB-scale file without pulling bytes into the renderer.
+   */
+  async truncateAnnexb(path: string): Promise<{ pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number }> {
+    this.#assertAlive();
+    try {
+      return await invoke('ffmpeg_truncate_annexb', {
+        sessionId: this.#sessionId,
+        path,
+      });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
+  /**
    * Stream-concatenates `piecePaths` (in order) into a single `outputPath` via
    * the native `ffmpeg_concat_annexb_pieces` command — only 2 file descriptors
    * are ever open (one read, one write), independent of piece count. Replaces
