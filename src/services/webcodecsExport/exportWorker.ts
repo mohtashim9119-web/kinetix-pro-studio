@@ -795,7 +795,10 @@ function uploadSlot(compositor: GlCompositor, slot: TextureSlot, src: SlotSource
  * a hung flush is reported as a hung FLUSH rather than as a generic silent
  * worker.
  */
-const FLUSH_BOUND_MS = 20_000;
+// WS3 salvage-runtime round — exported (value unchanged) so a test can drive
+// fake timers against the exact production constant instead of a duplicated
+// magic number that could silently drift from it.
+export const FLUSH_BOUND_MS = 20_000;
 
 /**
  * Typed, self-describing flush timeout. `name` is carried into the failure
