@@ -173,29 +173,174 @@ pub fn ffmpeg_read_file(session_id: String, path: String) -> Result<Vec<u8>, Str
     fs::read(&full).map_err(|e| format!("read_file({}): {}", path, e))
 }
 
-/// Counts H.264 Annex B coded-picture NAL units (type 1 = non-IDR slice, type 5
-/// = IDR slice) in <session_dir>/<path>, without ever sending the file's bytes
-/// to the renderer.
+/// Picture and raw-VCL counts for an Annex-B H.264 stream.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnnexbFrameCount {
+    pub pictures: u64,
+    pub vcl_nals: u64,
+}
+
+struct AnnexbBitReader<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> AnnexbBitReader<'a> {
+    fn new(bytes: &'a [u8]) -> Self {
+        Self { bytes, pos: 0 }
+    }
+
+    fn read_bit(&mut self) -> u8 {
+        let byte_idx = self.pos >> 3;
+        if byte_idx >= self.bytes.len() {
+            return 0;
+        }
+        let bit_idx = 7 - (self.pos & 7);
+        self.pos += 1;
+        (self.bytes[byte_idx] >> bit_idx) & 1
+    }
+
+    fn read_ue(&mut self) -> Option<u32> {
+        let mut zeros = 0u32;
+        while self.read_bit() == 0 {
+            zeros += 1;
+            if zeros > 32 {
+                return None;
+            }
+        }
+        let mut value = (1u32 << zeros).wrapping_sub(1);
+        for i in (0..zeros).rev() {
+            value += (self.read_bit() as u32) << i;
+        }
+        Some(value)
+    }
+}
+
+fn rbsp_from_nal_payload(payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(payload.len());
+    for (i, &b) in payload.iter().enumerate() {
+        if i >= 2 && b == 0x03 && payload[i - 1] == 0 && payload[i - 2] == 0 {
+            continue;
+        }
+        out.push(b);
+    }
+    out
+}
+
+fn parse_first_mb_in_slice(payload: &[u8]) -> Option<u32> {
+    if payload.is_empty() {
+        return None;
+    }
+    let rbsp = rbsp_from_nal_payload(payload);
+    AnnexbBitReader::new(&rbsp).read_ue()
+}
+
+fn collect_annexb_header_indices(buf: &[u8]) -> Vec<usize> {
+    let mut header_indices = Vec::new();
+    let n = buf.len();
+    let mut i = 0usize;
+    while i + 2 < n {
+        if buf[i] == 0 && buf[i + 1] == 0 && buf[i + 2] == 1 {
+            let header_idx = i + 3;
+            if header_idx < n {
+                header_indices.push(header_idx);
+            }
+            i = header_idx;
+        } else {
+            i += 1;
+        }
+    }
+    header_indices
+}
+
+fn count_annexb_access_units_in_buffer(buf: &[u8], count: &mut AnnexbFrameCount) {
+    let header_indices = collect_annexb_header_indices(buf);
+    for k in 0..header_indices.len() {
+        let header_idx = header_indices[k];
+        let next_start = if k + 1 < header_indices.len() {
+            header_indices[k + 1].saturating_sub(3)
+        } else {
+            buf.len()
+        };
+        let header_byte = buf[header_idx];
+        let nal_type = header_byte & 0x1f;
+        if nal_type != 1 && nal_type != 5 {
+            continue;
+        }
+        count.vcl_nals += 1;
+        let payload_start = header_idx + 1;
+        if payload_start >= next_start {
+            continue;
+        }
+        if parse_first_mb_in_slice(&buf[payload_start..next_start]) == Some(0) {
+            count.pictures += 1;
+        }
+    }
+}
+
+struct AnnexbAccessUnitScanner {
+    buffer: Vec<u8>,
+    count: AnnexbFrameCount,
+}
+
+impl AnnexbAccessUnitScanner {
+    fn new() -> Self {
+        Self {
+            buffer: Vec::new(),
+            count: AnnexbFrameCount {
+                pictures: 0,
+                vcl_nals: 0,
+            },
+        }
+    }
+
+    fn feed(&mut self, data: &[u8]) {
+        self.buffer.extend_from_slice(data);
+        self.drain_complete_nals();
+    }
+
+    fn finish(&mut self) {
+        if !self.buffer.is_empty() {
+            count_annexb_access_units_in_buffer(&self.buffer, &mut self.count);
+            self.buffer.clear();
+        }
+    }
+
+    fn drain_complete_nals(&mut self) {
+        let header_indices = collect_annexb_header_indices(&self.buffer);
+        if header_indices.len() < 2 {
+            return;
+        }
+        let last_header = header_indices[header_indices.len() - 1];
+        let last_nal_start = last_header.saturating_sub(3);
+        let process = self.buffer[..last_nal_start].to_vec();
+        count_annexb_access_units_in_buffer(&process, &mut self.count);
+        self.buffer = self.buffer[last_nal_start..].to_vec();
+    }
+}
+
+fn count_annexb_access_units(bytes: &[u8]) -> AnnexbFrameCount {
+    let mut scanner = AnnexbAccessUnitScanner::new();
+    scanner.feed(bytes);
+    scanner.finish();
+    scanner.count
+}
+
+/// Counts H.264 Annex B access units (pictures) in <session_dir>/<path>,
+/// without ever sending the file's bytes to the renderer.
 ///
 /// Replaces the WebCodecs export orchestrator's previous frame-count guard
-/// (`exportPipelineWebCodecs.ts`'s `ffmpeg.readFile` + JS `countAnnexbFrames`
-/// scan), which cost ~5s per export pulling the whole concatenated annexb
-/// file's bytes across IPC just to count frames. This command reads the file
-/// in bounded 64 KB chunks — never the whole file at once — and performs the
-/// identical left-to-right Annex-B start-code scan the JS version used, so the
-/// count matches it exactly.
-///
-/// Boundary handling: a start code (`00 00 01`) or its following NAL-type
-/// header byte can straddle a 64 KB chunk boundary. Each iteration only
-/// resolves positions where the header byte is definitely inside the current
-/// window (`i + 3 < len`); anything closer to the end (at most 3 bytes) is
-/// carried into the next chunk instead of guessed at. The final leftover
-/// (after EOF) is scanned with the exact bounds semantics of the original
-/// whole-file scan — a header byte beyond the true end of file is never
-/// counted, matching `bytes[headerIdx] ... if (headerIdx < n)` in the JS
-/// reference implementation.
+/// (`exportPipelineWebCodecs.ts`'s `ffmpeg.readFile` + JS scan), which cost
+/// ~5s per export pulling the whole concatenated annexb file's bytes across
+/// IPC just to count frames. This command reads the file in bounded 64 KB
+/// chunks — never the whole file at once — and counts pictures via
+/// `first_mb_in_slice == 0` on VCL NALs (types 1/5), matching
+/// `annexbFrameCount.ts`. Raw VCL NAL count is returned alongside for
+/// diagnostics (multi-slice encoders can inflate VCL count without changing
+/// picture count).
 #[tauri::command]
-pub fn ffmpeg_count_annexb_frames(session_id: String, path: String) -> Result<u64, String> {
+pub fn ffmpeg_count_annexb_frames(session_id: String, path: String) -> Result<AnnexbFrameCount, String> {
     use std::io::Read;
 
     validate_path(&path)?;
@@ -205,8 +350,7 @@ pub fn ffmpeg_count_annexb_frames(session_id: String, path: String) -> Result<u6
 
     const CHUNK_SIZE: usize = 64 * 1024;
     let mut read_buf = vec![0u8; CHUNK_SIZE];
-    let mut leftover: Vec<u8> = Vec::with_capacity(4);
-    let mut count: u64 = 0;
+    let mut scanner = AnnexbAccessUnitScanner::new();
 
     loop {
         let n = file
@@ -215,49 +359,11 @@ pub fn ffmpeg_count_annexb_frames(session_id: String, path: String) -> Result<u6
         if n == 0 {
             break;
         }
-
-        // Combine any carried-over tail bytes from the previous chunk with
-        // this chunk's new bytes so a start code (or its header byte) that
-        // straddles a chunk boundary is never missed.
-        let mut window = std::mem::take(&mut leftover);
-        window.extend_from_slice(&read_buf[..n]);
-
-        let len = window.len();
-        let mut i = 0usize;
-        while i + 3 < len {
-            if window[i] == 0 && window[i + 1] == 0 && window[i + 2] == 1 {
-                let nal_type = window[i + 3] & 0x1f;
-                if nal_type == 1 || nal_type == 5 {
-                    count += 1;
-                }
-                i += 3;
-            } else {
-                i += 1;
-            }
-        }
-        leftover = window[i..].to_vec();
+        scanner.feed(&read_buf[..n]);
     }
 
-    // Final pass over whatever remains (at most 3 bytes) using the true-EOF
-    // bounds semantics described above.
-    let n = leftover.len();
-    let mut i = 0usize;
-    while i + 2 < n {
-        if leftover[i] == 0 && leftover[i + 1] == 0 && leftover[i + 2] == 1 {
-            let header_idx = i + 3;
-            if header_idx < n {
-                let nal_type = leftover[header_idx] & 0x1f;
-                if nal_type == 1 || nal_type == 5 {
-                    count += 1;
-                }
-            }
-            i = header_idx;
-        } else {
-            i += 1;
-        }
-    }
-
-    Ok(count)
+    scanner.finish();
+    Ok(scanner.count)
 }
 
 /// Stream-concatenates a list of AnnexB H.264 piece files (in order) into a
@@ -779,6 +885,85 @@ mod tests {
         assert!(result.is_err(), "path traversal in a piece path must be rejected");
 
         let dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn write_start_code(out: &mut Vec<u8>) {
+        out.extend_from_slice(&[0, 0, 0, 1]);
+    }
+
+    fn write_ue(out_bits: &mut Vec<u8>, value: u32) {
+        let mut tmp = value + 1;
+        let mut bits = 0u32;
+        while tmp > 1 {
+            bits += 1;
+            tmp >>= 1;
+        }
+        for _ in 0..bits {
+            out_bits.push(0);
+        }
+        out_bits.push(1);
+        for i in (0..bits).rev() {
+            out_bits.push(((value >> i) & 1) as u8);
+        }
+    }
+
+    fn bits_to_rbsp_bytes(bits: &[u8]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for chunk in bits.chunks(8) {
+            let mut byte = 0u8;
+            for (b, &bit) in chunk.iter().enumerate() {
+                byte |= bit << (7 - b);
+            }
+            bytes.push(byte);
+        }
+        bytes
+    }
+
+    fn write_nal(out: &mut Vec<u8>, nal_type: u8, rbsp: &[u8]) {
+        write_start_code(out);
+        out.push((2 << 5) | (nal_type & 0x1f));
+        out.extend_from_slice(rbsp);
+    }
+
+    fn write_slice_nal(out: &mut Vec<u8>, idr: bool, first_mb: u32) {
+        let mut bits = Vec::new();
+        write_ue(&mut bits, first_mb);
+        write_ue(&mut bits, if idr { 7 } else { 5 });
+        write_nal(out, if idr { 5 } else { 1 }, &bits_to_rbsp_bytes(&bits));
+    }
+
+    fn build_multi_slice_stream(pictures: usize, slices_per_picture: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_nal(&mut out, 7, &[0x42, 0x00, 0x1e]);
+        write_nal(&mut out, 8, &[0x68, 0xce]);
+        for p in 0..pictures {
+            write_nal(&mut out, 9, &[0xf0]);
+            write_nal(&mut out, 6, &[0x05, 0xde, 0xad]);
+            for s in 0..slices_per_picture {
+                write_slice_nal(&mut out, p == 0 && s == 0, if s == 0 { 0 } else { 100 + s as u32 });
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn count_annexb_access_units_multi_slice_counts_pictures_not_slices() {
+        let stream = build_multi_slice_stream(5, 8);
+        let count = count_annexb_access_units(&stream);
+        assert_eq!(count.pictures, 5);
+        assert_eq!(count.vcl_nals, 40);
+    }
+
+    #[test]
+    fn ffmpeg_count_annexb_frames_command_matches_in_memory_counter() {
+        let (id, dir) = make_session();
+        let stream = build_multi_slice_stream(3, 4);
+        fs::write(dir.join("test.h264"), &stream).unwrap();
+        let got = ffmpeg_count_annexb_frames(id, "test.h264".to_string()).unwrap();
+        let want = count_annexb_access_units(&stream);
+        assert_eq!(got.pictures, want.pictures);
+        assert_eq!(got.vcl_nals, want.vcl_nals);
         fs::remove_dir_all(&dir).unwrap();
     }
 }

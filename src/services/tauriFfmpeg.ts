@@ -1,5 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { FfmpegLike } from './segmentEncoder';
+import type { AnnexbFrameCount } from './webcodecsExport/annexbFrameCount';
+
+export type { AnnexbFrameCount };
 
 /**
  * Converts a Uint8Array to a base64 string using 32 KB chunks to avoid
@@ -192,17 +195,16 @@ export class TauriFfmpeg implements FfmpegLike {
   }
 
   /**
-   * Counts H.264 Annex B coded-picture NAL units (type 1/5) in <path> via the
-   * native `ffmpeg_count_annexb_frames` command — the file is scanned in
-   * bounded 64 KB chunks entirely on the Rust side, so its bytes never cross
-   * into the renderer. Replaces the WebCodecs export orchestrator's old
-   * `readFile` + JS-scan frame-count guard, which cost ~5s per export moving
-   * the whole concatenated video file's bytes over IPC just to count frames.
+   * Counts H.264 Annex B access units (pictures) in <path> via the native
+   * `ffmpeg_count_annexb_frames` command — the file is scanned in bounded
+   * 64 KB chunks entirely on the Rust side, so its bytes never cross into
+   * the renderer. Returns both picture count and raw VCL NAL count for the
+   * post-concat guard's diagnostic message.
    */
-  async countAnnexbFrames(path: string): Promise<number> {
+  async countAnnexbFrames(path: string): Promise<AnnexbFrameCount> {
     this.#assertAlive();
     try {
-      return await invoke<number>('ffmpeg_count_annexb_frames', {
+      return await invoke<AnnexbFrameCount>('ffmpeg_count_annexb_frames', {
         sessionId: this.#sessionId,
         path,
       });
