@@ -52,8 +52,10 @@ function makeFfmpeg(overrides: Partial<WebCodecsFfmpeg> = {}): WebCodecsFfmpeg {
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
+    sessionFileSize: vi.fn(async () => 1_700_000_000),
     countAnnexbFrames: vi.fn(async () => ({ pictures: 0, vclNals: 0 })),
     concatAnnexbPieces: vi.fn(async () => undefined),
+    truncateAnnexb: vi.fn(async () => ({ pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 })),
     ...overrides,
   } as unknown as WebCodecsFfmpeg;
 }

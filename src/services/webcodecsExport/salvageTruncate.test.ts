@@ -133,6 +133,7 @@ function ffmpegHarness(opts: {
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
+    sessionFileSize: vi.fn(async () => 1_700_000_000),
     countAnnexbFrames: vi.fn(async () => opts.countResult ?? { pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES }),
     concatAnnexbPieces: vi.fn(async () => undefined),
     truncateAnnexb,
