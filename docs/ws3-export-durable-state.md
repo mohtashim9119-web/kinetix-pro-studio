@@ -10,6 +10,323 @@
 
 ---
 
+## Round 7 — Rung 2b sealing + Rung 4 durable resume (2026-09-10)
+
+This section supersedes this report's earlier "WRITE ONLY", "wired to
+nothing", 15× mux-headroom, and bound-ordering statements. The historical
+sections remain below because they explain how the current design was reached.
+`docs/ws3-export-architecture-ledger.md` is referenced by name only and was not
+edited.
+
+### Scope result and production-wiring blocker
+
+All implementation in this round stayed inside the assigned paths:
+`src-tauri/**`, `tauriFfmpeg.ts`, checkpoint code, `muxOnly.ts`,
+`ffmpegLivenessBound.ts`, their tests, and this report. No change was made to
+`exportWorker.ts`, `exportPipelineWebCodecs.ts`, `encoderSessionPlan.ts`,
+`driveGlRun*`, `App.tsx`, or `docs/ws3-export-architecture-ledger.md`.
+
+That scope has one unavoidable consequence. The exact concat frame-count guard
+and the fresh-session export entry point both live in
+`exportPipelineWebCodecs.ts`, an explicitly forbidden path. Therefore:
+
+- the existing guard remains byte-for-byte untouched and still receives the
+  count returned after `concatAnnexbPieces`;
+- Rung 2b's post-guard sealing predicate and actual MP4 sealing helper are
+  implemented and tested, but the guard's failure branch cannot offer/call them
+  until that owner wires the disposition after reporting the discrepancy;
+- Rung 4's reader, validator, session discovery/re-entry, native pre-append
+  fence, repair, and exact-offset recount are implemented and tested, but the
+  export entry point cannot choose a surviving session or plan/render the
+  remainder until that owner wires it.
+
+This is not reported as end-to-end production resume. The owned primitives are
+complete; the two caller integrations are blocked by the path prohibition.
+
+### Rung 2b — forced MP4 sealing
+
+`muxOnly.ts` now exposes `forcedMp4SealOffer` and
+`sealTruncatedAnnexbToMp4`.
+
+Eligibility is deliberately narrow: canonical measured pictures must be
+non-zero and strictly less than expected pictures. An equal count is not a
+shortfall; an excess count is not truncation and remains an error. The helper
+does not rewrite either count, suppress the existing guard, or turn its result
+green. It is a post-guard disposition only.
+
+The result is typed with:
+
+- `picturesKept`
+- `picturesExpected`
+- `picturesLost`
+- `keptWallDurationSeconds = picturesKept / fps`
+- `lostWallDurationSeconds = picturesLost / fps`
+- `fps`
+
+The MP4 is produced by the existing `muxOnly` path, preserving `-r <fps>`,
+the two-pass audio rule, H.264 stream copy, AAC audio, and bt709 tags. Duration
+comes from picture count and fps, never raw-stream/container metadata.
+
+**Consent decision: explicit operator consent.** The application knows it is
+about to produce a shorter deliverable than requested. Automatic sealing would
+turn a loud correctness failure into silent data loss. The current architecture
+already returns a typed export error and has no owned recovery UI surface, so
+the safe additive behavior is: report the exact guard discrepancy first, offer
+the measured loss, and seal only after explicit consent. The helper performs no
+ffmpeg call when consent is absent.
+
+Destructive predicate probe:
+
+- RED mutation: changed `measured.pictures >= picturesExpected` to `>`.
+  The equal-count fixture incorrectly produced an offer with zero pictures and
+  zero seconds lost; the test failed 1/1.
+- GREEN restoration: strict shortfall restored; the same test passed 1/1.
+
+### Rung 4 — manifest validation, session re-entry, and mandatory repair
+
+`export_state.json` remains at
+`$TMPDIR/kinetix-export-{sessionId}/export_state.json`.
+`TauriFfmpeg.writeExportState` uses the native
+`ffmpeg_write_export_state` command: JSON is validated, written to a sibling
+temporary file, `sync_all` is called, then it is renamed over the manifest.
+
+`validateExportState` treats disk data as `unknown` and validates:
+
+- schema version and UUID session id;
+- project id;
+- SHA-256 `sourceTimelineHash` of canonical
+  `ExportTimelineIdentity` JSON;
+- fps, width, and height;
+- every checkpoint's piece index, encoder-session index, byte offset,
+  cumulative picture count, fps, resolution, and hash;
+- strict monotonic movement of `(pieceIndex, encoderSessionIndex)`,
+  `byteOffset`, and `cumulativePictures`;
+- selection of the latest checkpoint whose byte offset fits the surviving
+  file.
+
+Any malformed field, stale hash, configuration mismatch, non-monotonic row, or
+missing usable checkpoint returns `{kind: "clean"}`. Hash mismatch performs no
+Annex-B operation. The owner call site must then create a fresh UUID session.
+
+Native re-entry no longer assumes a fresh UUID:
+
+- `ffmpeg_list_resumable_sessions` enumerates only UUID-named
+  `kinetix-export-*` directories containing `export_state.json`;
+- `ffmpeg_reenter_session` verifies the existing directory/manifest, restores
+  the cancellation flag, and marks the session `resume_pending`;
+- native append, count, and concat all reject a `resume_pending` session;
+- only successful `ffmpeg_prepare_checkpoint_resume` clears the fence.
+
+The pre-append native order is mandatory and atomic from the renderer's point
+of view:
+
+1. find the final start code by bounded backwards file reads and record whether
+   it has a header;
+2. run canonical whole-access-unit truncation unconditionally;
+3. require that repair did not fall before the recorded checkpoint;
+4. truncate exactly to checkpoint `byteOffset`;
+5. run canonical whole-AU truncation again and require `bytesRemoved == 0`;
+6. recount with `AnnexbAccessUnitScanner`;
+7. require `pictures == cumulativePictures`;
+8. only then clear `resume_pending`.
+
+On any error, append/count/concat remain blocked. The frontend
+`prepareCheckpointResume` adds manifest/hash validation before entering that
+native handshake and independently checks returned kept bytes and pictures.
+
+Required fixtures:
+
+| Fixture | Expected result |
+|---|---|
+| crash mid-NAL | repair then exact checkpoint; 2 pictures kept |
+| crash mid-picture, 8 slices/picture | partial picture dropped; 16 VCL / 2 pictures |
+| exact AU boundary | byte-exact no-op |
+| clean complete bytes | mandatory repair still runs; `bytesRemoved = 0` |
+| stale `sourceTimelineHash` | `{kind:"clean"}`; zero repair calls; bytes unchanged |
+
+Additional native fixtures cover the pre-append append/count/concat fence,
+backwards detection of a dangling start code, picture-count disagreement, and
+the same four byte-cut shapes through the Rust command core.
+
+Destructive pre-append probe:
+
+- RED mutation bypassed `io.prepareCheckpointResume` while fabricating matching
+  returned counts. The mid-NAL fixture failed because repair calls were 0,
+  proving the fixture reaches the mandatory handshake rather than merely
+  checking settled metadata.
+- GREEN restoration passed the same test.
+
+Destructive hash-invalidation probe:
+
+- RED mutation disabled the `sourceTimelineHash` comparison. The stale fixture
+  resumed and physically truncated the bytes (reported 186 bytes removed),
+  failing against the required clean/no-touch result.
+- GREEN restoration passed and made zero repair calls.
+
+**Remaining owner work:** selecting the matching surviving session, writing
+checkpoints at real encoder-rotation seams, and rendering/concatenating the
+remainder require `exportPipelineWebCodecs.ts` and the worker/session-plan paths.
+Those paths were prohibited this round.
+
+### Bounds — 25× mux fix and five-bound invariant
+
+`MUX_HEADROOM` is now 25, closing the old 10×/15× gap.
+
+| Input size | Measured/scaled two-pass mux | 10× slow I/O | 25× slow I/O / chosen bound |
+|---|---:|---:|---:|
+| 1.7 GB | `9.22 + 4.70 = 13.92 s` | `139.20 s` | `348.00 s` |
+| 2.3 GB | `13.92 × 1.353 = 18.834 s` | `188.34 s` | `470.84 s` |
+
+The implementation uses the exact `2.3 / 1.7` ratio, so
+`computeMuxBoundMs(2_300_000_000)` returns **470,824 ms**; 1.7 GB returns
+**348,000 ms**.
+
+The refuted `FRAME_COUNT_BOUND_MS < CONCAT_BOUND_MS` assertion is deleted.
+The actual invariant is that the five heterogeneous opaque bounds
+(remux, concat, frame count, truncate, mux) are finite, positive, and each
+sized from its own workload. There is no valid cross-step ordering. Current
+values are 30,000 / 60,000 / 81,375 / 172,675 / 348,000 ms at 1.7 GB.
+
+`TIER_PIECE_BOUND_MS = 600,000` cannot be measured by a synthetic disk scan.
+It includes canvas rendering, raw IPC, browser scheduling, hardware/software
+encoder behavior, and ffmpeg. Its 10-minute value remains **hardware-bound /
+NOT DETERMINED** until a live representative export is run.
+
+### Scanner identity, residual cut, and memory
+
+Truncate reports `pictures` and `vclNals` from
+`count_annexb_frames_inner` → `AnnexbAccessUnitScanner`, the same canonical
+count path as `ffmpeg_count_annexb_frames`. The cut path remains
+`scan_annexb_nals_from_file` → `group_pictures_scanned` →
+`compute_truncate_cut_from_scanned`, but both paths derive NAL spans through
+the same `scan_annexb_nals` routine. The old four-byte-start-code offset
+disagreement was unified; its verdict-level wrong answer was traced as
+unreachable because the extra terminal zero could not change
+`first_mb_in_slice == 0`. The boundary-agreement differential test remains.
+
+Residual single-slice risk after `first_mb_in_slice == 0`:
+
+- for a representative ~33 KB single-slice picture, almost the entire slice
+  follows the few first_mb bits; a uniformly timed crash within that write has
+  nearly 100% opportunity to leave a tail that still parses as a picture start;
+- maximum corrupt tail retained by the inference-only salvage rule is about
+  33 KB; expected retained partial payload under a uniform cut is about
+  16.5 KB;
+- at 1080p30 the symptom is one corrupt final picture spanning **33.33 ms**;
+  at 1080p60 it spans **16.67 ms**;
+- it is a visual corruption risk, not trustworthy duration. A decoder may show
+  macroblock/green-grey damage or drop the picture;
+- the streaming rewrite and 8 MiB cap do not change reachability. Checkpoint
+  resume removes the risk by using the recorded byte offset after canonical
+  repair, rather than trusting the inferred single-slice EOF.
+
+`compact_buffer_tail_without_start_codes` by itself still handles only a tail
+with no start code. An open trailing NAL necessarily contains its own start
+code, so both scanners use the explicit `MAX_IN_FLIGHT_NAL_BYTES` path: count
+parks/counts the parsed head; cut parks `ScannedNal` metadata; both retain only
+four bytes of lookback. This distinction matters—the function name is not
+evidence that it covered open NALs.
+
+The large unterminated-NAL Rust probes now use a fixed independent 10 MiB
+ceiling. The earlier assertion derived its bound from
+`MAX_IN_FLIGHT_NAL_BYTES`; raising the production cap raised the test's limit,
+so the supposed coverage stayed green.
+
+Destructive memory probe:
+
+- first RED attempt raised the cap 8→64 MiB and unexpectedly stayed green,
+  exposing the moving-goalpost test;
+- after fixing the fixture's ceiling at 10 MiB, the same mutation failed both
+  paths at **25,165,829 retained bytes**;
+- restoring 8 MiB passed both tests;
+- the real file truncate fixture also proves a >12 MiB unterminated final NAL
+  is cut back to the valid prefix.
+
+### `ffmpeg_truncate_annexb_to_offset` contract
+
+`ffmpeg_truncate_annexb_to_offset(session, path, byteOffset)` truncates the
+session file to exactly `byteOffset` bytes via in-place `set_len`, refuses
+offsets past EOF, and returns `{pictures, vclNals, bytesRemoved, keptBytes}`.
+
+### Prior-failure reconstruction (Step 5)
+
+The prior transcript/reflog preserves that the initial npm baseline was
+**3353 passed / 5 failed / 77 skipped**, all classified there as WS1
+`runProductionPath` timeouts. Four identities remain recoverable from this
+report's earlier record:
+
+1. `aj0-oracle-diff` v6
+2. `q-production-pins` R.12
+3. `s-exclusion` R.11
+4. `s-measure` R.12 descriptors
+
+The fifth test name is absent from the surviving terminal files, commit
+messages, reflog, and redacted transcript output. It is formally closed as
+**unrecoverable evidence**, not guessed.
+
+The first post-fix `cargo test --features fa-inference` run is preserved only
+as **360 passed / 1 failed / 34 ignored** and described as one flaky failure.
+The subsequent command intended to print the test identity has no surviving
+terminal output and the transcript redacts the result. Its identity is also
+formally closed as **unrecoverable evidence**.
+
+### Round 7 gates
+
+Round 7 added **10 executed Vitest tests** (6 checkpoint/resume, 4 sealing)
+and **5 Rust tests** (resume fence, four-shape repair, mismatch, backwards
+tail, durable manifest replace).
+
+| Gate | Expected | Observed |
+|---|---|---|
+| `npx tsc --noEmit` | clean | clean |
+| `npm run lint` | clean | clean (`tsc --noEmit`) |
+| `cargo build` | clean, warning-free | clean, 0 warnings |
+| Vitest total arithmetic | `3446 + 10 = 3456` | 3456 in both full runs |
+| `npm test` run 1 | 3379 pass / 0 fail / 77 skip | 3366 / 13 / 77; sandbox EPERM, WS1 timeouts/artifact writers, two decode timing timeouts, timing-budget failure |
+| `npm test` run 2 (unrestricted) | 3379 / 0 / 77 | 3378 / 1 / 77; only AJ-0 v6 180 s timeout |
+| isolated AJ-0 follow-up | 3 / 0 / 0 | 3 / 0 / 0 in 91.16 s |
+| targeted changed Vitest files | 52 / 0 / 0 | 52 / 0 / 0 |
+| `cargo test` | actual cut 283 + 5 = 288 / 0 / 5 | 288 / 0 / 5 |
+| `cargo test --features fa-inference` | 369 + 5 = 374 / 0 / 35 | 374 / 0 / 35 |
+| locked fixture digests | all four unchanged | all four unchanged; locked-hash test 1/1 |
+| `git diff --name-only main -- src-tauri/` | non-empty, expected paths | `src-tauri/src/ffmpeg.rs`, `src-tauri/src/lib.rs` |
+
+The prompt's default-Cargo baseline said 279 / 0 / 5, but this branch was cut
+after `2515acb` (+3 scanner tests) and `2a806df` (+1 scanner-unification test);
+its own cut baseline is 283 / 0 / 5. Thus observed 288 is actual-cut
+`283 + 5`, not an unexplained four-test addition. The supplied feature baseline
+already included those inherited tests.
+
+The second full Vitest run is the valid unrestricted gate. Its sole failure is
+the historical `runProductionPath` wall-time class, and the exact failed file
+passed immediately in isolation. No export/checkpoint/sealing test failed.
+This is recorded as a non-green full-suite gate rather than misreported as
+green.
+
+Named-path implementation commits:
+
+- `1c2be49` — native session re-entry, pre-append fence/repair, durable manifest
+- `989f9c1` — TypeScript checkpoint reader/validator and native bindings
+- `dea7953` — explicit-consent forced MP4 sealing helper
+- `3e817df` — 25× mux liveness bound and five-bound invariant
+
+No test-mock or script path required a change; no empty/manufactured commit was
+created for those groups. The docs commit follows this section.
+
+### Still NOT DETERMINED
+
+- Live production guard → sealing-offer call site: owner-blocked by forbidden
+  `exportPipelineWebCodecs.ts`.
+- Live checkpoint writing, session selection, remainder planning/rendering,
+  and concat: owner-blocked by forbidden orchestrator/worker/session-plan paths.
+- Tier-piece 600 s bound: hardware-bound; requires a live representative
+  export.
+- Windows hardware encoder bitstream and real-world single-slice crash
+  frequency: hardware/operator evidence required.
+- 2.3 GB mux timing is a linear extrapolation from the measured 1.7 GB run,
+  not a direct 2.3 GB measurement.
+
+
 ## Part 0 — Cargo gate (closed)
 
 `CARGO_TARGET_DIR=$PWD/src-tauri/target`
