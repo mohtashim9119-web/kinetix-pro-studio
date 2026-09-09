@@ -14,6 +14,7 @@ import {
   CONCAT_BOUND_MS,
   FRAME_COUNT_BOUND_MS,
   MUX_BOUND_MS,
+  TRUNCATE_BOUND_MS,
   type FfmpegKillable,
 } from './ffmpegLivenessBound';
 
@@ -152,7 +153,7 @@ describe('withFfmpegLivenessBound', () => {
   it('every bound is distinct from WATCHDOG_MS and ordered by the size of the job it covers', () => {
     // Subprocess bounds must stay above the frozen 30 s worker watchdog, except
     // REMUX which measured to 30 s itself (same number, different subsystem).
-    for (const ms of [TIER_PIECE_BOUND_MS, CONCAT_BOUND_MS, FRAME_COUNT_BOUND_MS, MUX_BOUND_MS]) {
+    for (const ms of [TIER_PIECE_BOUND_MS, CONCAT_BOUND_MS, FRAME_COUNT_BOUND_MS, MUX_BOUND_MS, TRUNCATE_BOUND_MS]) {
       expect(ms).not.toBe(30_000);
       expect(ms).toBeGreaterThan(30_000);
     }
@@ -160,5 +161,8 @@ describe('withFfmpegLivenessBound', () => {
     expect(REMUX_BOUND_MS).toBeLessThan(CONCAT_BOUND_MS);
     expect(CONCAT_BOUND_MS).toBeLessThan(MUX_BOUND_MS);
     expect(MUX_BOUND_MS).toBeLessThan(FRAME_COUNT_BOUND_MS);
+    // Truncate mirrors the frame-count guard's bound by deliberate structural
+    // analogy (same single-pass access-unit scanner), not coincidence.
+    expect(TRUNCATE_BOUND_MS).toBe(FRAME_COUNT_BOUND_MS);
   });
 });

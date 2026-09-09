@@ -169,6 +169,7 @@ import {
   CONCAT_BOUND_MS,
   FRAME_COUNT_BOUND_MS,
   MUX_BOUND_MS,
+  TRUNCATE_BOUND_MS,
 } from './ffmpegLivenessBound';
 
 function causeString(err: unknown): string {
@@ -2164,8 +2165,8 @@ export async function exportProjectWebCodecs(
         try {
           truncateResult = await withFfmpegLivenessBound(
             {
-              label: 'FRAME_COUNT_BOUND_MS',
-              boundMs: FRAME_COUNT_BOUND_MS,
+              label: 'TRUNCATE_BOUND_MS',
+              boundMs: TRUNCATE_BOUND_MS,
               ffmpeg,
               files: [runFile],
               pieceCount: pieces.length,

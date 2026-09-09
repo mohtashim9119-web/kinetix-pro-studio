@@ -99,6 +99,36 @@ export const FRAME_COUNT_BOUND_MS = 300_000;
  */
 export const MUX_BOUND_MS = 180_000;
 
+/**
+ * Salvage-only: `ffmpeg.truncateAnnexb` on one GL piece's file, run BEFORE
+ * concat (`exportPipelineWebCodecs.ts`'s flush-timeout salvage path).
+ *
+ * **NOT measured at export scale.** The only number that exists for this
+ * command is a 3200-picture synthetic fixture in
+ * `ffmpeg.rs::measure_export_scale_native_io_on_disk` (`#[ignore]`d, never
+ * actually run this round — no printed timing exists in any commit or doc).
+ * A GB-scale number for `ffmpeg_truncate_annexb` specifically remains
+ * **NOT DETERMINED**; closing that is explicitly punted to the next round
+ * (`docs/ws3-export-durable-state.md`'s bounds table: "bound wired by
+ * runtime agent").
+ *
+ * Chosen by structural analogy instead of a fitted measurement: truncate's
+ * three phases are (1) a chunked read of the whole file into memory —
+ * bounded the same way `concat`'s chunked copy is (measured 0.64s/1.7GB),
+ * (2) a **single-pass, non-chunked, non-cancellable** in-memory access-unit
+ * scan (`truncate_annexb_to_last_complete_au` -> `count_annexb_access_units`)
+ * — the exact same scanner class `ffmpeg_count_annexb_frames` runs over a
+ * same-size buffer, whose own bound (`FRAME_COUNT_BOUND_MS`) was left at a
+ * conservative, also-unmeasured 300s this round — and (3) a chunked write of
+ * the kept bytes, again `concat`-shaped. Phase 2 dominates and is
+ * structurally identical to the frame-count guard's scan, so this constant
+ * mirrors `FRAME_COUNT_BOUND_MS` rather than borrowing it by reference (a
+ * salvage-specific label matters for diagnostics — this round's runtime code
+ * mislabeled its bound `'FRAME_COUNT_BOUND_MS'` while measuring a truncate,
+ * conflating the two steps in any expiry diagnostics).
+ */
+export const TRUNCATE_BOUND_MS = 300_000;
+
 export interface FfmpegBoundDiagnostics {
   /** Which bounded step expired — the same label as the constant's name. */
   label: string;

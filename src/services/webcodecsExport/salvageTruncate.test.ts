@@ -32,6 +32,7 @@ import {
   type ExportWorkerHandle,
   type WebCodecsFfmpeg,
 } from './exportPipelineWebCodecs';
+import { TRUNCATE_BOUND_MS } from './ffmpegLivenessBound';
 
 class FakeWorker implements ExportWorkerHandle {
   onmessage: ((ev: MessageEvent<ExportWorkerOutboundMessage>) => void) | null = null;
@@ -235,6 +236,58 @@ describe('salvage -> truncate -> count -> compare, at the exportProjectWebCodecs
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('unreachable');
     expect(r.error.message).toContain('long by 1');
+  });
+
+  it('(d) BOUND EXPIRY: a truncateAnnexb call that never settles kills the session THEN aborts with a typed, salvage-scoped error', async () => {
+    vi.useFakeTimers();
+    try {
+      const killOrder: string[] = [];
+      const truncateAnnexb = vi.fn(() => new Promise<never>(() => undefined));
+      const { ffmpeg } = ffmpegHarness();
+      (ffmpeg as unknown as { truncateAnnexb: typeof truncateAnnexb }).truncateAnnexb = truncateAnnexb;
+      const kill = vi.fn(async () => {
+        killOrder.push('kill');
+      });
+      (ffmpeg as unknown as { kill: typeof kill }).kill = kill;
+
+      const resultPromise = runWithFakeWorker(ffmpeg, (fake) => {
+        fake.emit({ type: 'run-done', runId: 'run_0', frameCount: EXPECTED_FRAMES });
+        fake.emit({
+          type: 'salvage-done',
+          runId: 'run_0',
+          frameCount: EXPECTED_FRAMES,
+          reason: 'final-flush timeout after every frame was submitted',
+          diagnostics: diagnostics(EXPECTED_FRAMES),
+        });
+      }).then((r) => {
+        killOrder.push('resolved');
+        return r;
+      });
+
+      await vi.advanceTimersByTimeAsync(TRUNCATE_BOUND_MS + 1_000);
+      const r = await resultPromise;
+
+      expect(truncateAnnexb).toHaveBeenCalledTimes(1);
+      expect(kill).toHaveBeenCalledTimes(1);
+      // Kill must have actually run (its own await settled) before the export
+      // pipeline's promise resolves with the aborted result — never an
+      // orphaned session left behind while the caller already moved on.
+      expect(killOrder).toEqual(['kill', 'resolved']);
+
+      expect(r.ok).toBe(false);
+      if (r.ok) throw new Error('unreachable');
+      expect(r.error.kind).toBe('concat');
+      // The salvage call site's own bound — not FRAME_COUNT_BOUND_MS's label,
+      // which this call used to (mis)borrow.
+      expect(r.error.message).toContain('TRUNCATE_BOUND_MS');
+      expect(r.error.message).toContain('ffmpeg liveness bound');
+      // Salvage context survives into the diagnostics payload carried on `cause`.
+      expect(r.error.cause).toContain('piece_0.h264');
+      expect(r.error.cause).toContain('"pieceIndex":0');
+      expect(r.error.cause).toContain('"killed":true');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('(c) OUTPUT NEUTRALITY: truncateAnnexb is NEVER invoked on the clean (non-salvaged) path', async () => {
