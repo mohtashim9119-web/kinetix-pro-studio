@@ -313,24 +313,225 @@ the flag.
    not available yet (see below).
 4. `ffmpeg.destroy()` reclaims the temp dir when the export handler finishes.
 
-### Measured bounds (26-minute 1080p30 scale, ~1.7 GB annexb)
+### Measured bounds — CLOSED 2026-09-10
 
-Synthetic inputs on an x86_64 macOS SSD worktree (`scripts/ws3-measure-ffmpeg-exec-bounds.sh`
-for sidecar steps; native concat on 1.7 GB on-disk blobs; frame-count triplicate
-**NOT DETERMINED** — benchmark did not finish cleanly).
+Synthetic inputs on a macOS internal SSD worktree
+(`scripts/ws3-measure-ffmpeg-exec-bounds.sh` for sidecar steps; native steps via
+`ffmpeg::tests::measure_streaming_annexb_at_scale` and
+`measure_export_scale_native_io_on_disk`, release profile, run **standalone**
+under `/usr/bin/time -l` so no cargo build shares the process and the RSS figure
+is the scanner's own). Three samples per native cell; p50 = middle, worst = max.
 
 | Step | p50 / worst observed | Chosen bound | Headroom (× worst) | Applied? |
 |---|---|---|---|---|
 | Remux (60 s 1080p30 piece) | 0.14 s / 0.14 s | **30 s** | ~214× | **yes** |
-| Concat (1.7 GB native copy) | 0.64 s / 0.64 s | **60 s** | ~94× | **yes** |
-| Frame-count (1.7 GB scan) | — / — | **300 s** (prior) | — | **no change** (not measured) |
-| Mux video-only (1.7 GB annexb) | 13.78 s / 13.78 s | **180 s** | ~13× | **yes** |
-| Mux with-audio (premux + mix) | 13.92 s / 13.92 s | **180 s** (same constant) | ~13× | **yes** |
-| Truncate (`ffmpeg_truncate_annexb`) | 3200-picture fixture only | **NOT DETERMINED** at 1.7 GB | — | bound wired by runtime agent |
+| Concat (1.7 GB native copy) | 0.834 s / 0.834 s | **60 s** | ~72× | **yes** |
+| Frame-count (1.7 GB scan) | 2.714 s / 2.739 s | — (sized at 2.3 GB) | — | — |
+| **Frame-count (2.3 GB scan)** | **3.251 s / 3.255 s** | **81.375 s** | **25×** | **yes** |
+| Truncate (1.7 GB, scan + set_len + count) | 5.242 s / 5.820 s | — (sized at 2.3 GB) | — | — |
+| **Truncate (2.3 GB)** | **6.770 s / 6.907 s** | **172.675 s** | **25×** | **yes** |
+| Mux video-only (1.7 GB annexb) | 13.78 s / 13.78 s | **208.8 s** (size-scaled) | ~15× | **yes** |
+| Mux with-audio (premux + mix) | 13.92 s / 13.92 s | **208.8 s** @1.7 GB, **282.5 s** @2.3 GB | ~15× | **yes** |
 | Tier-piece (canvas + libx264) | — | **600 s** (prior) | — | **no change** (needs live export) |
 
 Prior unmeasured values retired where measured: remux 120→30 s, concat 600→60 s,
-mux 900→180 s.
+mux fixed 180 s → `computeMuxBoundMs(bytes)`, frame-count 300 s → 81.375 s,
+truncate 300 s → 172.675 s.
+
+**What the previous round's constants were.** `FRAME_COUNT_BOUND_MS` 18 150 ms
+and `TRUNCATE_BOUND_MS` 36 300 ms were derived from 1210 ms and 2420 ms at
+2.3 GB. Those two inputs were never measured. Measured, they are 3255 ms and
+6907 ms — the invented figures were **2.7×–2.9× too fast**, so the shipped
+bounds carried ~5.5× real headroom, not the 15× they claimed. A healthy 2.3 GB
+export on a disk barely 6× slower than this machine would have been killed by
+its own liveness guard: the same class of defect as the hang it guards against,
+self-inflicted. The bounds are now 25× measured worst, chosen so a 2.3 GB export
+survives a device 25× slower than an internal SSD.
+
+`computeMuxBoundMs` is KEPT. Verified against the earlier risk table: 13.92 s
+worst at 1.7 GB scales to 18.83 s at 2.3 GB, so the flagged row (2.3 GB, two
+ffmpeg passes sharing one budget, 10× slower I/O = 188.3 s) is cleared by the
+282.5 s the formula yields there, with ~1.5× margin. **Known limit, stated:** at
+25× slower I/O a 2.3 GB mux needs 470.8 s and this bound would false-abort. The
+native scan bounds are sized for 25×; the mux bound is sized for the 10× bar its
+measurement was taken against. `MUX_HEADROOM` was NOT raised this round because
+13.92 s at 1.7 GB is the only mux number that exists.
+
+**The `cat` proxy was representative.** `measure_export_scale_native_io_on_disk`
+puts the real Rust `ffmpeg_concat_annexb_pieces` at **834 ms** on 1.7 GB against
+the earlier `cat` proxy's 640 ms — same order, same shape, proxy optimistic by
+~30%. The 60 s concat bound stands.
+
+**A measured ordering reversal.** `FRAME_COUNT_BOUND_MS` (81.375 s) now exceeds
+`CONCAT_BOUND_MS` (60 s). That is measurement, not drift: at 1.7 GB the native
+concat copy is 834 ms while the access-unit scan is 2.739 s — counting is the
+more expensive step. The bound-ordering test's old
+`FRAME_COUNT_BOUND_MS < CONCAT_BOUND_MS` assertion encoded an assumption the
+first real measurement refuted, and was inverted with the numbers cited inline.
+
+### Memory profile — before and after
+
+**Before (both streaming scanners, as inherited).** Peak memory was **O(file)**,
+not O(window), whenever the input did not end at a clean NAL boundary.
+`StreamAnnexbNalScanner::drain_complete_nals` and
+`AnnexbAccessUnitScanner::drain_complete_nals` both retain the buffer from the
+last start code onward, and their only compaction —
+`compact_buffer_without_start_codes` / `compact_buffer_tail_without_start_codes`
+— is guarded on `buffer_contains_start_code` being **false**. An unterminated
+final NAL leaves exactly one start code in the buffer, so that guard holds
+forever and every subsequent byte of the file is appended as NAL payload. On top
+of the memory, the whole buffer is re-scanned once per 64 KB chunk, i.e. O(n²/chunk).
+
+`compact_buffer_tail_without_start_codes` covered **only** start-code-free
+padding, never the unterminated-NAL case — the hazard the count command was
+given it for is a strictly narrower one than the hazard that exists.
+
+Measured on the unfixed code: **25 165 828 bytes retained for 24 MiB of trailing
+payload, on BOTH scanners.**
+
+Malformed input is not a corner case here — it is the salvage case, a file left
+by a crashed or killed export, which is exactly what the truncate primitive is
+for. The path is production-reachable.
+
+The fixture generator's dangling `00 00 00 01` before the 0xFF pad does **not**
+avoid this: a start code followed by 0xFF is a well-formed NAL header
+(`0xFF & 0x1f = 31`) whose payload then runs to EOF. It produces the identical
+single-open-NAL shape. That is why `measure_streaming_annexb_at_scale` could not
+complete before this fix — a 2.3 GB in-flight NAL re-scanned every 64 KB is
+~40 PB of scanning — and why the bounds above could not be measured.
+
+**After.** `MAX_IN_FLIGHT_NAL_BYTES` (8 MiB) caps a single in-flight NAL in both
+scanners. Past the cap:
+
+* the **cut path** parks the NAL's head — `start`, `header`, `nal_type`,
+  `first_mb`, which is everything the cut decision reads — as `pending` and drops
+  the payload; the real `end` is filled in by the next start code, or by `finish`
+  at EOF;
+* the **count path** counts the NAL from its retained head and drops the payload.
+
+Both keep `ANNEXB_START_CODE_LOOKBACK` (4) trailing bytes so a start code
+straddling the next chunk boundary is still found. Dropped payload cannot contain
+a start code — RBSP escaping forbids `00 00 01` inside a NAL — so nothing is
+lost. Only ONE force-close happens per unterminated NAL: afterwards the buffer
+holds no start code, so the ordinary start-code-free compaction keeps it at
+~64 KB from then on.
+
+**Bounded working set:** 8 MiB + one I/O chunk per scanner. 8 MiB sits far above
+any real H.264 NAL this app emits (a 4K IDR is ~2 MiB worst case), so a
+well-formed stream never reaches the cap; and force-closing a legitimately larger
+NAL is still **correct**, only slower, because the head that decides everything
+has already been parsed. The cap is a memory/performance knob, not a correctness
+cliff.
+
+Measured after the fix, at export scale: peak RSS **87 539 712 B (83.5 MiB)** for
+a run that writes 4 GB of fixtures and performs six counts and six truncates —
+**O(window), confirmed on a 2.3 GB file.**
+
+Regression lock: `stream_nal_scanner_stays_bounded_on_unterminated_trailing_nal`,
+`access_unit_scanner_stays_bounded_on_unterminated_trailing_nal` (both failed
+before the fix at 25 165 828 bytes against a 10 485 760-byte bound, both pass
+after), and `truncate_annexb_on_unterminated_trailing_nal_produces_sane_cut`.
+
+### Counter inventory — production, with file:line
+
+Exactly **two** annexb consumers in production. No third counter.
+
+| Role | Chain | Entry |
+|---|---|---|
+| Reported `pictures` / `vclNals` | `AnnexbAccessUnitScanner` (`ffmpeg.rs:319`) → `count_annexb_access_units_in_buffer` (`ffmpeg.rs:304`) | `count_annexb_frames_inner` (`ffmpeg.rs:866`), backing `ffmpeg_count_annexb_frames` **and** the reported counts of BOTH truncate commands |
+| Cut-point selection | `scan_annexb_nals_from_file` (`ffmpeg.rs:559`) → `StreamAnnexbNalScanner` (`ffmpeg.rs:464`) → `group_pictures_scanned` (`ffmpeg.rs:592`) → `compute_truncate_cut_from_scanned` (`ffmpeg.rs:629`) | `truncate_annexb_inner` (`ffmpeg.rs:927`) |
+
+The in-memory reference implementations (`count_annexb_access_units`,
+`group_pictures`, `dropped_picture_cut`, `truncate_annexb_to_last_complete_au`,
+`PictureGroup`) are now `#[cfg(test)]` — test oracles, not a third production
+counter. `cargo build` is warning-free.
+
+**Could they disagree about where a picture begins?** They did, in the offsets.
+`collect_annexb_header_indices` (the counter's own scanner, now deleted) treated
+a NAL as beginning at `header - 3` — the three-byte start code's position —
+while `scan_annexb_nals` backs up over the leading zero of a four-byte start
+code. One byte apart on every four-byte start code. The failure that would
+follow: truncate cuts at an offset the counter then interprets as a different
+boundary, so the exact-match guard compares against a boundary the cut did not
+respect.
+
+**Was a wrong ANSWER reachable? No — traced, not assumed.** The one-byte
+difference only ever appends a `0x00` to the END of the payload slice handed to
+`parse_first_mb_in_slice`. Appending zero bits to an Exp-Golomb code can add
+leading zeros but can never create or destroy a `ue(v) == 0`, and the two
+scanners find the identical set of header positions, so `vcl_nals` and the
+`first_mb == 0` verdict were always equal. The divergence was real in the
+offsets and latent in the verdict.
+
+**Unified anyway,** because "latent" is a property of today's payload parser, not
+a guarantee: `count_annexb_access_units_in_buffer` and the count scanner's
+retention boundary now both go through `scan_annexb_nals`;
+`collect_annexb_header_indices` is deleted. One routine, one answer.
+`count_path_and_cut_path_agree_on_every_picture_boundary` locks it, including
+four-byte start codes and empty / single-byte VCL payloads.
+
+### The documented residual, restated as a PRODUCTION risk
+
+The residual in Part 2 — *a last VCL whose payload is truncated after `first_mb`
+still parses, and on a single-slice stream looks like a complete 1-slice picture,
+so it is kept* — is no longer a property of a primitive nobody calls. The salvage
+path in `exportPipelineWebCodecs.ts` invokes `ffmpeg.truncateAnnexb` on a GL
+piece's file before concat, so this is a shipped behaviour.
+
+**The failure a shipped export would exhibit.** On a single-slice bitstream, a
+crash mid-NAL leaves a truncated final slice. Truncate keeps it, having no way in
+Annex-B to know the slice is short — there is no length prefix. Concat, the
+frame-count guard and mux all pass, because every one of them counts access
+units, and by that measure the picture is present. The user gets an MP4 whose
+final frame is a corrupt or partially decoded picture — macroblock garbage or a
+green/grey band across the last frame — rather than a file that is one frame
+shorter. It is a silent wrong-output, not an error.
+
+**Does the streaming rewrite change its reachability?** In neither direction, and
+that is a deliberate finding, not an omission. The cut rule is unchanged: a last
+picture is kept iff its VCL count equals the mode of the closed pictures' counts.
+On a single-slice stream that mode is 1, and a truncated-after-`first_mb` slice
+still presents as one VCL NAL with `first_mb == 0`. The streaming rewrite changed
+only HOW spans are discovered (chunked instead of whole-file), not WHICH picture
+is kept. The new in-flight cap does not touch it either: the cap parks a head and
+recovers the exact same `end`, and a truncated final slice is nowhere near 8 MiB.
+
+**The mitigation is unchanged and still unbuilt:** resume should truncate to a
+**recorded byte offset** and then count, never infer the cut from the bitstream.
+The primitive for that now exists — see the contract below — but nothing calls it.
+
+### `ffmpeg_truncate_annexb_to_offset` — contract
+
+> `ffmpeg_truncate_annexb_to_offset(session, path, byteOffset)` truncates the
+> session file to exactly `byteOffset` bytes via in-place `set_len`, refuses
+> offsets past EOF, and returns `{ pictures, vclNals, bytesRemoved, keptBytes }`
+> where `pictures`/`vclNals` are counted on the kept prefix by the same streaming
+> access-unit scanner as `ffmpeg_count_annexb_frames`.
+
+Rust `ffmpeg.rs:915`; JS binding `TauriFfmpeg.truncateAnnexbToOffset`
+(`tauriFfmpeg.ts:251`). **Wired to nothing.** It has zero production callers —
+it is the primitive the resume path in Part 3 was designed around, shipped ahead
+of that path. `ffmpeg_session_file_size` / `TauriFfmpeg.sessionFileSize`
+(`tauriFfmpeg.ts:205`) IS live: `exportPipelineWebCodecs.ts:2361` calls it to
+size `computeMuxBoundMs`.
+
+### Still NOT DETERMINED
+
+* **Tier-piece bound (600 s).** Unmeasured. Needs a live export, out of scope
+  this round (no live exports were run).
+* **Mux at 25× slower I/O.** `computeMuxBoundMs` would false-abort a 2.3 GB mux
+  there. Only one mux measurement exists (13.92 s at 1.7 GB) and it was not
+  re-taken this round.
+* **Mux at 2.3 GB.** The 282.5 s figure is the formula's linear extrapolation
+  from a 1.7 GB measurement, not a 2.3 GB measurement.
+* **Non-SSD and non-macOS numbers.** Every figure above is one macOS internal
+  SSD. The 25× headroom is an argument about that gap, not a measurement of it.
+* **`ffmpeg_truncate_annexb_to_offset` end-to-end.** Unit-tested, never
+  exercised by a real resume, because no resume path calls it.
+* **The residual's real-world frequency.** Whether a crashed export actually
+  lands mid-slice often enough to matter is unmeasured; only its mechanism is
+  established.
+* **Windows encoder bitstream.** Unchanged — see Part 5.
 
 ### Checkpoint RESUME — designed, deliberately not implemented
 
