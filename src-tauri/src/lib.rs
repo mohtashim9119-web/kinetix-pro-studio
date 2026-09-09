@@ -439,14 +439,18 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ffmpeg::ffmpeg_create_session,
+            ffmpeg::ffmpeg_list_resumable_sessions,
+            ffmpeg::ffmpeg_reenter_session,
             ffmpeg::ffmpeg_write_file,
             ffmpeg::ffmpeg_write_file_raw,
             ffmpeg::ffmpeg_append_file_raw,
             ffmpeg::ffmpeg_read_file,
             ffmpeg::ffmpeg_session_file_size,
+            ffmpeg::ffmpeg_write_export_state,
             ffmpeg::ffmpeg_count_annexb_frames,
             ffmpeg::ffmpeg_truncate_annexb,
             ffmpeg::ffmpeg_truncate_annexb_to_offset,
+            ffmpeg::ffmpeg_prepare_checkpoint_resume,
             ffmpeg::ffmpeg_concat_annexb_pieces,
             ffmpeg::ffmpeg_delete_file,
             ffmpeg::ffmpeg_exec,
