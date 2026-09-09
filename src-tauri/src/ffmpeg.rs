@@ -2,19 +2,55 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use std::collections::HashMap;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
-use std::sync::Mutex;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
-/// Tracks the currently-running ffmpeg child process per session (D13 fix).
-/// `ffmpeg_exec` inserts its `CommandChild` here for the duration of the run;
-/// `ffmpeg_kill_session` removes and kills it. At most one entry per session_id
-/// since a session runs its ffmpeg calls sequentially (segment encode, concat,
-/// mux — never concurrently).
+/// Per-export session state: killable ffmpeg children and cooperative cancel
+/// flags for native I/O commands (concat, frame-count, truncate).
 #[derive(Default)]
-pub struct FfmpegProcessState(pub Mutex<HashMap<String, CommandChild>>);
+pub struct FfmpegSessionState {
+    pub children: Mutex<HashMap<String, CommandChild>>,
+    pub cancel_flags: Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
+
+/// Back-compat alias — lib.rs still `.manage(ffmpeg::FfmpegProcessState::default())`.
+pub type FfmpegProcessState = FfmpegSessionState;
+
+const IO_CHUNK_SIZE: usize = 64 * 1024;
+
+fn register_session_cancel_flag(state: &FfmpegSessionState, session_id: &str) {
+    state
+        .cancel_flags
+        .lock()
+        .unwrap()
+        .insert(session_id.to_string(), Arc::new(AtomicBool::new(false)));
+}
+
+fn session_cancel_flag(state: &FfmpegSessionState, session_id: &str) -> Option<Arc<AtomicBool>> {
+    state
+        .cancel_flags
+        .lock()
+        .unwrap()
+        .get(session_id)
+        .cloned()
+}
+
+fn check_cancelled(cancel: Option<&AtomicBool>) -> Result<(), String> {
+    if cancel.is_some_and(|f| f.load(Ordering::Relaxed)) {
+        return Err("cancelled".to_string());
+    }
+    Ok(())
+}
+
+fn set_session_cancelled(state: &FfmpegSessionState, session_id: &str) {
+    if let Some(flag) = session_cancel_flag(state, session_id) {
+        flag.store(true, Ordering::SeqCst);
+    }
+}
 
 /// Validates a logical filename is safe for use inside a session directory.
 ///
@@ -62,10 +98,11 @@ fn session_dir(session_id: &str) -> Result<PathBuf, String> {
 /// Returns the session id (UUID v4 string) that must be passed to all
 /// subsequent commands for this export.
 #[tauri::command]
-pub fn ffmpeg_create_session() -> Result<String, String> {
+pub fn ffmpeg_create_session(state: tauri::State<'_, FfmpegSessionState>) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     let dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
     fs::create_dir_all(&dir).map_err(|e| format!("create_session: {}", e))?;
+    register_session_cancel_flag(&state, &id);
     Ok(id)
 }
 
@@ -515,19 +552,33 @@ fn truncate_annexb_to_last_complete_au(bytes: &[u8]) -> (Vec<u8>, AnnexbTruncate
 /// diagnostics (multi-slice encoders can inflate VCL count without changing
 /// picture count).
 #[tauri::command]
-pub fn ffmpeg_count_annexb_frames(session_id: String, path: String) -> Result<AnnexbFrameCount, String> {
-    use std::io::Read;
-
+pub fn ffmpeg_count_annexb_frames(
+    session_id: String,
+    path: String,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Result<AnnexbFrameCount, String> {
     validate_path(&path)?;
     let full = session_dir(&session_id)?.join(&path);
-    let mut file = fs::File::open(&full)
+    let cancel = session_cancel_flag(&state, &session_id);
+    count_annexb_frames_inner(&full, &path, cancel.as_deref())
+}
+
+fn count_annexb_frames_inner(
+    full: &Path,
+    path: &str,
+    cancel: Option<&AtomicBool>,
+) -> Result<AnnexbFrameCount, String> {
+    use std::io::Read;
+
+    check_cancelled(cancel)?;
+    let mut file = fs::File::open(full)
         .map_err(|e| format!("count_annexb_frames({}): open: {}", path, e))?;
 
-    const CHUNK_SIZE: usize = 64 * 1024;
-    let mut read_buf = vec![0u8; CHUNK_SIZE];
+    let mut read_buf = vec![0u8; IO_CHUNK_SIZE];
     let mut scanner = AnnexbAccessUnitScanner::new();
 
     loop {
+        check_cancelled(cancel)?;
         let n = file
             .read(&mut read_buf)
             .map_err(|e| format!("count_annexb_frames({}): read: {}", path, e))?;
@@ -537,6 +588,7 @@ pub fn ffmpeg_count_annexb_frames(session_id: String, path: String) -> Result<An
         scanner.feed(&read_buf[..n]);
     }
 
+    check_cancelled(cancel)?;
     scanner.finish();
     Ok(scanner.count)
 }
@@ -547,11 +599,70 @@ pub fn ffmpeg_count_annexb_frames(session_id: String, path: String) -> Result<An
 /// future resume path will invoke on a GB-scale file without pulling bytes
 /// into the renderer.
 #[tauri::command]
-pub fn ffmpeg_truncate_annexb(session_id: String, path: String) -> Result<AnnexbTruncateResult, String> {
+pub fn ffmpeg_truncate_annexb(
+    session_id: String,
+    path: String,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Result<AnnexbTruncateResult, String> {
     validate_path(&path)?;
     let full = session_dir(&session_id)?.join(&path);
-    let bytes = fs::read(&full)
-        .map_err(|e| format!("truncate_annexb({}): read: {}", path, e))?;
+    let cancel = session_cancel_flag(&state, &session_id);
+    truncate_annexb_inner(&full, &path, cancel.as_deref())
+}
+
+fn read_file_with_cancel(full: &Path, path: &str, cancel: Option<&AtomicBool>) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+
+    check_cancelled(cancel)?;
+    let mut file = fs::File::open(full)
+        .map_err(|e| format!("truncate_annexb({}): open: {}", path, e))?;
+    let mut out = Vec::new();
+    let mut buf = vec![0u8; IO_CHUNK_SIZE];
+    loop {
+        check_cancelled(cancel)?;
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("truncate_annexb({}): read: {}", path, e))?;
+        if n == 0 {
+            break;
+        }
+        out.extend_from_slice(&buf[..n]);
+    }
+    Ok(out)
+}
+
+fn write_truncated_annexb(
+    full: &Path,
+    path: &str,
+    kept: &[u8],
+    cancel: Option<&AtomicBool>,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    check_cancelled(cancel)?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .open(full)
+        .map_err(|e| format!("truncate_annexb({}): open: {}", path, e))?;
+    file.set_len(0)
+        .map_err(|e| format!("truncate_annexb({}): set_len(0): {}", path, e))?;
+    for chunk in kept.chunks(IO_CHUNK_SIZE) {
+        check_cancelled(cancel)?;
+        file.write_all(chunk)
+            .map_err(|e| format!("truncate_annexb({}): write: {}", path, e))?;
+    }
+    file.flush()
+        .map_err(|e| format!("truncate_annexb({}): flush: {}", path, e))?;
+    Ok(())
+}
+
+fn truncate_annexb_inner(
+    full: &Path,
+    path: &str,
+    cancel: Option<&AtomicBool>,
+) -> Result<AnnexbTruncateResult, String> {
+    let bytes = read_file_with_cancel(full, path, cancel)?;
+    check_cancelled(cancel)?;
     let (kept, result) = truncate_annexb_to_last_complete_au(&bytes);
     if (kept.len() as u64) != result.kept_bytes {
         return Err(format!(
@@ -561,19 +672,7 @@ pub fn ffmpeg_truncate_annexb(session_id: String, path: String) -> Result<Annexb
             result.kept_bytes
         ));
     }
-    {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .open(&full)
-            .map_err(|e| format!("truncate_annexb({}): open: {}", path, e))?;
-        use std::io::Write;
-        file.set_len(0)
-            .map_err(|e| format!("truncate_annexb({}): set_len(0): {}", path, e))?;
-        file.write_all(&kept)
-            .map_err(|e| format!("truncate_annexb({}): write: {}", path, e))?;
-        file.flush()
-            .map_err(|e| format!("truncate_annexb({}): flush: {}", path, e))?;
-    }
+    write_truncated_annexb(full, path, &kept, cancel)?;
     Ok(result)
 }
 
@@ -609,6 +708,7 @@ pub fn ffmpeg_concat_annexb_pieces(
     session_id: String,
     piece_paths: Vec<String>,
     output_path: String,
+    state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<(), String> {
     validate_path(&output_path)?;
     for piece in &piece_paths {
@@ -617,8 +717,9 @@ pub fn ffmpeg_concat_annexb_pieces(
 
     let dir = session_dir(&session_id)?;
     let out_full = dir.join(&output_path);
+    let cancel = session_cancel_flag(&state, &session_id);
 
-    let result = concat_annexb_pieces_inner(&dir, &piece_paths, &out_full);
+    let result = concat_annexb_pieces_inner(&dir, &piece_paths, &out_full, cancel.as_deref());
     if result.is_err() {
         // Don't leave a partial/corrupt output behind on failure. The write
         // handle inside `concat_annexb_pieces_inner` has already been dropped
@@ -629,23 +730,26 @@ pub fn ffmpeg_concat_annexb_pieces(
 }
 
 fn concat_annexb_pieces_inner(
-    dir: &std::path::Path,
+    dir: &Path,
     piece_paths: &[String],
-    out_full: &std::path::Path,
+    out_full: &Path,
+    cancel: Option<&AtomicBool>,
 ) -> Result<(), String> {
     use std::io::{Read, Write};
 
+    check_cancelled(cancel)?;
     let mut out = fs::File::create(out_full)
         .map_err(|e| format!("concat_annexb_pieces: create output: {}", e))?;
 
-    const CHUNK_SIZE: usize = 64 * 1024;
-    let mut buf = vec![0u8; CHUNK_SIZE];
+    let mut buf = vec![0u8; IO_CHUNK_SIZE];
 
     for piece in piece_paths {
+        check_cancelled(cancel)?;
         let piece_full = dir.join(piece);
         let mut input = fs::File::open(&piece_full)
             .map_err(|e| format!("concat_annexb_pieces: open piece({}): {}", piece, e))?;
         loop {
+            check_cancelled(cancel)?;
             let n = input
                 .read(&mut buf)
                 .map_err(|e| format!("concat_annexb_pieces: read piece({}): {}", piece, e))?;
@@ -657,6 +761,7 @@ fn concat_annexb_pieces_inner(
         }
     }
 
+    check_cancelled(cancel)?;
     out.flush()
         .map_err(|e| format!("concat_annexb_pieces: flush output: {}", e))?;
     Ok(())
@@ -697,7 +802,7 @@ pub async fn ffmpeg_exec(
     app: tauri::AppHandle,
     session_id: String,
     args: Vec<String>,
-    state: tauri::State<'_, FfmpegProcessState>,
+    state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<i32, String> {
     let cwd = session_dir(&session_id)?;
 
@@ -710,7 +815,7 @@ pub async fn ffmpeg_exec(
         .spawn()
         .map_err(|e| format!("ffmpeg spawn failed: {e}"))?;
 
-    state.0.lock().unwrap().insert(session_id.clone(), child);
+    state.children.lock().unwrap().insert(session_id.clone(), child);
 
     let mut code: Option<i32> = None;
     let mut stderr: Vec<u8> = Vec::new();
@@ -728,7 +833,7 @@ pub async fn ffmpeg_exec(
 
     // Already removed by ffmpeg_kill_session if this run was cancelled — a normal
     // completion removes it here instead.
-    state.0.lock().unwrap().remove(&session_id);
+    state.children.lock().unwrap().remove(&session_id);
 
     let exit_code = code.unwrap_or(-1);
 
@@ -757,9 +862,10 @@ pub async fn ffmpeg_exec(
 #[tauri::command]
 pub fn ffmpeg_kill_session(
     session_id: String,
-    state: tauri::State<'_, FfmpegProcessState>,
+    state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<(), String> {
-    if let Some(child) = state.0.lock().unwrap().remove(&session_id) {
+    set_session_cancelled(&state, &session_id);
+    if let Some(child) = state.children.lock().unwrap().remove(&session_id) {
         child
             .kill()
             .map_err(|e| format!("kill_session({}): {}", session_id, e))?;
@@ -772,7 +878,11 @@ pub fn ffmpeg_kill_session(
 /// Should be called after the export completes (success or failure) to
 /// reclaim disk space. Best-effort: if the directory is already gone, no error.
 #[tauri::command]
-pub fn ffmpeg_destroy_session(session_id: String) -> Result<(), String> {
+pub fn ffmpeg_destroy_session(
+    session_id: String,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Result<(), String> {
+    state.cancel_flags.lock().unwrap().remove(&session_id);
     let dir = session_dir(&session_id)?;
     if dir.exists() {
         fs::remove_dir_all(&dir).map_err(|e| format!("destroy_session: {}", e))?;
@@ -1001,10 +1111,12 @@ pub async fn reveal_in_finder(path: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
+    use std::thread;
+    use std::time::Duration;
 
-    /// Creates a real session directory (matching `session_dir`'s layout) so the
-    /// public `ffmpeg_concat_annexb_pieces` command — including its on-error
-    /// cleanup — can be exercised end to end.
+    /// Creates a real session directory (matching `session_dir`'s layout) for
+    /// inner-function tests that do not need a Tauri `State` handle.
     fn make_session() -> (String, PathBuf) {
         let id = Uuid::new_v4().to_string();
         let dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
@@ -1012,21 +1124,33 @@ mod tests {
         (id, dir)
     }
 
+    fn write_large_piece(dir: &Path, name: &str, total_bytes: usize) -> Vec<u8> {
+        let chunk: Vec<u8> = (0..IO_CHUNK_SIZE).map(|i| (i % 251) as u8).collect();
+        let mut out = Vec::with_capacity(total_bytes);
+        while out.len() < total_bytes {
+            let take = (total_bytes - out.len()).min(chunk.len());
+            out.extend_from_slice(&chunk[..take]);
+        }
+        fs::write(dir.join(name), &out).unwrap();
+        out
+    }
+
     #[test]
     fn concat_annexb_pieces_produces_exact_byte_concatenation() {
-        let (id, dir) = make_session();
+        let (_id, dir) = make_session();
         fs::write(dir.join("piece_0.h264"), [0u8, 1, 2, 3]).unwrap();
         fs::write(dir.join("piece_1.h264"), [4u8, 5]).unwrap();
         fs::write(dir.join("piece_2.h264"), [6u8, 7, 8, 9, 10]).unwrap();
 
-        let result = ffmpeg_concat_annexb_pieces(
-            id,
-            vec![
+        let result = concat_annexb_pieces_inner(
+            &dir,
+            &[
                 "piece_0.h264".to_string(),
                 "piece_1.h264".to_string(),
                 "piece_2.h264".to_string(),
             ],
-            "video_all.h264".to_string(),
+            &dir.join("video_all.h264"),
+            None,
         );
         assert!(result.is_ok(), "concat should succeed: {:?}", result);
 
@@ -1038,17 +1162,16 @@ mod tests {
 
     #[test]
     fn concat_annexb_pieces_handles_larger_than_chunk_input() {
-        // A piece larger than the 64 KB copy buffer must be streamed across
-        // multiple read/write iterations with no byte loss at the boundary.
-        let (id, dir) = make_session();
+        let (_id, dir) = make_session();
         let big: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
         fs::write(dir.join("piece_0.h264"), &big).unwrap();
         fs::write(dir.join("piece_1.h264"), [42u8, 43, 44]).unwrap();
 
-        let result = ffmpeg_concat_annexb_pieces(
-            id,
-            vec!["piece_0.h264".to_string(), "piece_1.h264".to_string()],
-            "video_all.h264".to_string(),
+        let result = concat_annexb_pieces_inner(
+            &dir,
+            &["piece_0.h264".to_string(), "piece_1.h264".to_string()],
+            &dir.join("video_all.h264"),
+            None,
         );
         assert!(result.is_ok(), "concat should succeed: {:?}", result);
 
@@ -1061,41 +1184,175 @@ mod tests {
     }
 
     #[test]
-    fn concat_annexb_pieces_missing_piece_errors_and_leaves_no_partial_output() {
-        let (id, dir) = make_session();
+    fn concat_annexb_pieces_missing_piece_errors() {
+        let (_id, dir) = make_session();
         fs::write(dir.join("piece_0.h264"), [10u8, 11, 12]).unwrap();
-        // piece_1.h264 deliberately absent.
-        fs::write(dir.join("piece_2.h264"), [20u8, 21]).unwrap();
-
-        let result = ffmpeg_concat_annexb_pieces(
-            id,
-            vec![
+        let out_full = dir.join("video_all.h264");
+        let result = concat_annexb_pieces_inner(
+            &dir,
+            &[
                 "piece_0.h264".to_string(),
                 "piece_1.h264".to_string(),
-                "piece_2.h264".to_string(),
             ],
-            "video_all.h264".to_string(),
+            &out_full,
+            None,
         );
         assert!(result.is_err(), "expected Err for a missing piece");
-        assert!(
-            !dir.join("video_all.h264").exists(),
-            "partial output must be cleaned up on error"
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concat_annexb_pieces_rejects_traversal_paths_via_validate_path() {
+        assert!(validate_path("../escape.h264").is_err());
+    }
+
+    #[test]
+    fn native_concat_count_truncate_return_cancelled_when_flag_preset() {
+        let (_id, dir) = make_session();
+        write_large_piece(&dir, "piece_0.h264", 2 * IO_CHUNK_SIZE);
+        fs::write(dir.join("scan.h264"), build_multi_slice_stream(2, 4)).unwrap();
+        let stream = build_multi_slice_stream(3, 4);
+        fs::write(dir.join("piece.h264"), &stream).unwrap();
+        let cancel = AtomicBool::new(true);
+
+        assert_eq!(
+            concat_annexb_pieces_inner(
+                &dir,
+                &["piece_0.h264".to_string()],
+                &dir.join("out.h264"),
+                Some(&cancel),
+            ),
+            Err("cancelled".to_string())
+        );
+        assert_eq!(
+            count_annexb_frames_inner(&dir.join("scan.h264"), "scan.h264", Some(&cancel)),
+            Err("cancelled".to_string())
+        );
+        assert_eq!(
+            truncate_annexb_inner(&dir.join("piece.h264"), "piece.h264", Some(&cancel)),
+            Err("cancelled".to_string())
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concat_stops_mid_copy_when_cancel_flag_is_set() {
+        let (_id, dir) = make_session();
+        // ~128 MB per piece so the copy loop runs long enough to cancel mid-flight.
+        write_large_piece(&dir, "piece_0.h264", 2048 * IO_CHUNK_SIZE);
+        write_large_piece(&dir, "piece_1.h264", 2048 * IO_CHUNK_SIZE);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_worker = cancel.clone();
+        let dir_worker = dir.clone();
+        let out_full = dir.join("video_all.h264");
+        let out_worker = out_full.clone();
+
+        let handle = thread::spawn(move || {
+            concat_annexb_pieces_inner(
+                &dir_worker,
+                &["piece_0.h264".to_string(), "piece_1.h264".to_string()],
+                &out_worker,
+                Some(cancel_worker.as_ref()),
+            )
+        });
+
+        loop {
+            if out_full.exists() {
+                let len = fs::metadata(&out_full).map(|m| m.len()).unwrap_or(0);
+                if len >= IO_CHUNK_SIZE as u64 {
+                    cancel.store(true, Ordering::SeqCst);
+                    break;
+                }
+            }
+            if handle.is_finished() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        let result = handle.join().unwrap();
+        assert_eq!(result, Err("cancelled".to_string()));
+
+        let size_after_cancel = fs::metadata(&out_full).unwrap().len();
+        thread::sleep(Duration::from_millis(50));
+        assert_eq!(
+            fs::metadata(&out_full).unwrap().len(),
+            size_after_cancel,
+            "concat must stop writing after cancel"
         );
 
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn concat_annexb_pieces_rejects_traversal_paths() {
-        let (id, _dir) = make_session();
-        let result = ffmpeg_concat_annexb_pieces(
-            id.clone(),
-            vec!["../escape.h264".to_string()],
-            "video_all.h264".to_string(),
-        );
-        assert!(result.is_err(), "path traversal in a piece path must be rejected");
+    fn count_stops_mid_scan_when_cancel_flag_is_set() {
+        let (_id, dir) = make_session();
+        write_large_piece(&dir, "scan.h264", 2048 * IO_CHUNK_SIZE);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_worker = cancel.clone();
+        let full = dir.join("scan.h264");
 
-        let dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
+        let handle = thread::spawn(move || {
+            count_annexb_frames_inner(&full, "scan.h264", Some(cancel_worker.as_ref()))
+        });
+
+        thread::sleep(Duration::from_millis(10));
+        cancel.store(true, Ordering::SeqCst);
+        let result = handle.join().unwrap();
+        assert_eq!(result, Err("cancelled".to_string()));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn kill_session_sets_cancel_flag_for_native_commands() {
+        let state = FfmpegSessionState::default();
+        let id = Uuid::new_v4().to_string();
+        register_session_cancel_flag(&state, &id);
+        let flag = session_cancel_flag(&state, &id).unwrap();
+        assert!(!flag.load(Ordering::Relaxed));
+        set_session_cancelled(&state, &id);
+        assert!(flag.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn salvage_interleaving_cancel_then_truncate_leaves_stable_file() {
+        let (_id, dir) = make_session();
+        let stream = build_multi_slice_stream(6, 8);
+        let vcls = vcl_nals(&stream);
+        let slice5 = vcls[2 * 8 + 5];
+        let partial = stream[..slice5.header + 2].to_vec();
+        fs::write(dir.join("video_all.h264"), &partial).unwrap();
+        let size_before = fs::metadata(dir.join("video_all.h264")).unwrap().len();
+
+        write_large_piece(&dir, "piece_tail.h264", 2048 * IO_CHUNK_SIZE);
+        let cancel = AtomicBool::new(true);
+        let out_full = dir.join("video_all.h264");
+
+        // Simulates bound expiry: kill set the flag before salvage truncate runs.
+        let concat_result = concat_annexb_pieces_inner(
+            &dir,
+            &["piece_tail.h264".to_string()],
+            &out_full,
+            Some(&cancel),
+        );
+        assert_eq!(concat_result, Err("cancelled".to_string()));
+        assert_eq!(
+            fs::metadata(&out_full).unwrap().len(),
+            size_before,
+            "cancelled concat must not append orphan bytes"
+        );
+
+        let truncate_result =
+            truncate_annexb_inner(&out_full, "video_all.h264", None).unwrap();
+        assert_eq!(truncate_result.pictures, 2);
+
+        let size_after_truncate = fs::metadata(&out_full).unwrap().len();
+        thread::sleep(Duration::from_millis(20));
+        assert_eq!(
+            fs::metadata(&out_full).unwrap().len(),
+            size_after_truncate,
+            "file stable after truncate — no orphan writer"
+        );
+
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1195,10 +1452,10 @@ mod tests {
 
     #[test]
     fn ffmpeg_count_annexb_frames_command_matches_in_memory_counter() {
-        let (id, dir) = make_session();
+        let (_id, dir) = make_session();
         let stream = build_multi_slice_stream(3, 4);
         fs::write(dir.join("test.h264"), &stream).unwrap();
-        let got = ffmpeg_count_annexb_frames(id, "test.h264".to_string()).unwrap();
+        let got = count_annexb_frames_inner(&dir.join("test.h264"), "test.h264", None).unwrap();
         let want = count_annexb_access_units(&stream);
         assert_eq!(got.pictures, want.pictures);
         assert_eq!(got.vcl_nals, want.vcl_nals);
@@ -1250,9 +1507,9 @@ mod tests {
             assert_eq!(mem.pictures, pictures, "{name} pictures");
             assert_eq!(mem.vcl_nals, vcl_nals_expected, "{name} vclNals");
 
-            let (id, dir) = make_session();
+            let (_id, dir) = make_session();
             fs::write(dir.join("test.h264"), &stream).unwrap();
-            let got = ffmpeg_count_annexb_frames(id, "test.h264".to_string()).unwrap();
+            let got = count_annexb_frames_inner(&dir.join("test.h264"), "test.h264", None).unwrap();
             assert_eq!(got, mem, "{name} command vs in-memory");
             fs::remove_dir_all(&dir).unwrap();
         }
@@ -1301,17 +1558,102 @@ mod tests {
 
     #[test]
     fn ffmpeg_truncate_annexb_command_matches_in_memory() {
-        let (id, dir) = make_session();
+        let (_id, dir) = make_session();
         let stream = build_multi_slice_stream(4, 8);
         let vcls = vcl_nals(&stream);
         let slice5 = vcls[2 * 8 + 5];
         let truncated = &stream[..slice5.header + 2];
         fs::write(dir.join("piece.h264"), truncated).unwrap();
-        let got = ffmpeg_truncate_annexb(id, "piece.h264".to_string()).unwrap();
+        let got = truncate_annexb_inner(&dir.join("piece.h264"), "piece.h264", None).unwrap();
         let (_, want) = truncate_annexb_to_last_complete_au(truncated);
         assert_eq!(got, want);
         let on_disk = fs::read(dir.join("piece.h264")).unwrap();
         assert_eq!(count_annexb_access_units(&on_disk).pictures, 2);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn write_io_benchmark_blob(path: &Path, target_bytes: usize) {
+        use std::io::Write;
+        let chunk: Vec<u8> = (0..IO_CHUNK_SIZE).map(|i| (i % 251) as u8).collect();
+        let mut file = fs::File::create(path).unwrap();
+        let mut written = 0usize;
+        while written < target_bytes {
+            let take = (target_bytes - written).min(chunk.len());
+            file.write_all(&chunk[..take]).unwrap();
+            written += take;
+        }
+        file.flush().unwrap();
+    }
+
+    /// One-off timing against `WS3_BENCH_FILE` (existing on-disk annexb).
+    #[test]
+    #[ignore = "manual: WS3_BENCH_FILE=/path/to/file.h264"]
+    fn measure_ws3_bench_file_from_env() {
+        use std::time::Instant;
+        let path = std::env::var("WS3_BENCH_FILE").expect("WS3_BENCH_FILE");
+        let full = PathBuf::from(path);
+        let t0 = Instant::now();
+        let _ = count_annexb_frames_inner(&full, "bench.h264", None).unwrap();
+        println!("ws3 frame_count_ms: {}", t0.elapsed().as_millis());
+    }
+
+    /// Export-scale native I/O measurement (~1.7 GB on disk, no full-RAM buffer).
+    /// Uses high-entropy bytes so frame-count measures sequential read throughput,
+    /// not pathological multi-million-picture parsing on repeated fixtures.
+    /// Run: `cargo test --release measure_export_scale_native_io_on_disk -- --ignored --nocapture`
+    #[test]
+    #[ignore = "manual: writes ~1.7 GB under $TMPDIR — export-scale bound measurement"]
+    fn measure_export_scale_native_io_on_disk() {
+        use std::time::Instant;
+
+        const TARGET_BYTES: usize = 1_700_000_000;
+        let (_id, dir) = make_session();
+        write_io_benchmark_blob(&dir.join("piece_a.h264"), TARGET_BYTES / 2);
+        write_io_benchmark_blob(&dir.join("piece_b.h264"), TARGET_BYTES - TARGET_BYTES / 2);
+
+        let mut samples: Vec<(&str, u128)> = Vec::new();
+
+        let t0 = Instant::now();
+        let _ = concat_annexb_pieces_inner(
+            &dir,
+            &["piece_a.h264".to_string(), "piece_b.h264".to_string()],
+            &dir.join("concat_out.h264"),
+            None,
+        )
+        .unwrap();
+        samples.push(("concat_ms", t0.elapsed().as_millis()));
+
+        let t0 = Instant::now();
+        let _ = count_annexb_frames_inner(&dir.join("concat_out.h264"), "concat_out.h264", None).unwrap();
+        samples.push(("frame_count_ms", t0.elapsed().as_millis()));
+
+        let truncate_stream = build_multi_slice_stream(400, 8);
+        fs::write(dir.join("truncate_src.h264"), &truncate_stream).unwrap();
+        let t0 = Instant::now();
+        let _ = truncate_annexb_inner(&dir.join("truncate_src.h264"), "truncate_src.h264", None).unwrap();
+        samples.push(("truncate_3200pic_ms", t0.elapsed().as_millis()));
+
+        println!("ws3-native-bounds-measurement target_bytes={TARGET_BYTES}");
+        for (label, ms) in &samples {
+            println!("  {label}: {ms} ms");
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn truncate_stops_mid_write_when_cancel_flag_is_set() {
+        let (_id, dir) = make_session();
+        write_large_piece(&dir, "piece.h264", 2048 * IO_CHUNK_SIZE);
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_worker = cancel.clone();
+        let full = dir.join("piece.h264");
+
+        let handle = thread::spawn(move || truncate_annexb_inner(&full, "piece.h264", Some(cancel_worker.as_ref())));
+
+        thread::sleep(Duration::from_millis(10));
+        cancel.store(true, Ordering::SeqCst);
+        let result = handle.join().unwrap();
+        assert_eq!(result, Err("cancelled".to_string()));
         fs::remove_dir_all(&dir).unwrap();
     }
 }
