@@ -153,34 +153,36 @@ describe('withFfmpegLivenessBound', () => {
     expect(killOrder).toEqual(['kill', 'reject']);
   });
 
-  it('every bound is distinct from WATCHDOG_MS and ordered by the size of the job it covers', () => {
-    // Subprocess bounds must stay above the frozen 30 s worker watchdog, except
-    // REMUX which measured to 30 s itself (same number, different subsystem).
+  it('the five opaque bounds are finite, positive, and independently justified (no cross-step ordering)', () => {
     const muxAtScale = computeMuxBoundMs(EXPORT_SCALE_ANNEXB_BYTES);
-    // Opaque sidecar steps must exceed the frozen 30 s worker watchdog.
-    for (const ms of [TIER_PIECE_BOUND_MS, CONCAT_BOUND_MS, muxAtScale, TRUNCATE_BOUND_MS]) {
-      expect(ms).not.toBe(30_000);
-      expect(ms).toBeGreaterThan(30_000);
+    const fiveOpaqueBounds = [
+      REMUX_BOUND_MS,
+      CONCAT_BOUND_MS,
+      FRAME_COUNT_BOUND_MS,
+      TRUNCATE_BOUND_MS,
+      muxAtScale,
+    ];
+    for (const ms of fiveOpaqueBounds) {
+      expect(Number.isFinite(ms)).toBe(true);
+      expect(ms).toBeGreaterThan(0);
     }
-    // Native streaming scan — MEASURED worst 3.255 s at 2.3 GB (not the ~1 s
-    // that was assumed before this was ever run); bound is 25x that.
-    expect(FRAME_COUNT_BOUND_MS).toBeGreaterThan(5_000);
-    expect(FRAME_COUNT_BOUND_MS).toBeLessThan(muxAtScale);
+
+    // Each step has its own workload and multiplier. There is deliberately no
+    // `<` relationship between heterogeneous operations.
     expect(REMUX_BOUND_MS).toBe(30_000);
-    expect(REMUX_BOUND_MS).toBeLessThan(CONCAT_BOUND_MS);
-    // Frame-count's bound now sits ABOVE the concat bound, and that ordering is
-    // measurement, not drift: at 1.7 GB the native concat copy is 834 ms while
-    // the access-unit scan is 2.74 s — counting is the more expensive step, so
-    // the old "frame count < concat" assertion encoded an assumption the first
-    // real measurement refuted. Concat keeps its own conservative 60 s (72x its
-    // measured worst); it is not resized here.
-    expect(FRAME_COUNT_BOUND_MS).toBeGreaterThan(CONCAT_BOUND_MS);
-    expect(FRAME_COUNT_BOUND_MS).toBeLessThan(TRUNCATE_BOUND_MS);
-    expect(TRUNCATE_BOUND_MS).toBeLessThan(muxAtScale);
-    expect(TRUNCATE_BOUND_MS).toBeGreaterThan(TRUNCATE_BOUND_MS_PROVISIONAL / 10);
+    expect(CONCAT_BOUND_MS).toBe(60_000);
+    expect(FRAME_COUNT_BOUND_MS).toBe(81_375);
+    expect(TRUNCATE_BOUND_MS).toBe(172_675);
+    expect(muxAtScale).toBe(348_000);
     expect(TRUNCATE_BOUND_MS).toBeLessThan(TRUNCATE_BOUND_MS_PROVISIONAL);
-    // 2.3 GB export at 10× slower I/O (~188 s mux) must survive size-scaled bound.
+
+    // 2.3 GB: (9.22 + 4.70)s × (2.3/1.7) × 25 = 470.824s.
     const mux23 = computeMuxBoundMs(2_300_000_000);
-    expect(mux23).toBeGreaterThan(188_000);
+    expect(mux23).toBe(470_824);
+    expect(mux23).toBeGreaterThan(470_800);
+
+    // Tier-piece remains a separate hardware/render-path bound. A synthetic
+    // filesystem scan cannot measure VideoToolbox/canvas/IPC performance.
+    expect(TIER_PIECE_BOUND_MS).toBe(600_000);
   });
 });

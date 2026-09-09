@@ -129,9 +129,9 @@ const TRUNCATE_WORST_MS_AT_2_3_GB = 6_907;
  * or network volume with margin. A 10x-slower disk needs 32.6 s (count) and
  * 69.1 s (truncate); 25x needs 81.4 s and 172.7 s. Both bounds clear those.
  *
- * The asymmetry with `MUX_HEADROOM` (15x) is deliberate and stated, not an
- * oversight: the mux bound scales with file size as well, so its effective
- * headroom at 2.3 GB is spent differently. See `computeMuxBoundMs`.
+ * Mux uses the same 25x floor below. File-size scaling and slow-device
+ * headroom are independent multipliers; applying only 15x after scaling was
+ * the earlier 10x-row defect.
  */
 const NATIVE_SCAN_HEADROOM = 25;
 
@@ -156,27 +156,21 @@ export const TRUNCATE_BOUND_MS_PROVISIONAL = 300_000;
 const MUX_WITH_AUDIO_WORST_MS_AT_1_7_GB = 13_920;
 
 /** Headroom over size-scaled mux worst (×). */
-const MUX_HEADROOM = 15;
+const MUX_HEADROOM = 25;
 
 /**
  * Size-scaled mux bound: `muxOnly` runs one or two `ffmpeg.exec` passes under
  * ONE `withFfmpegLivenessBound` wrapper when audio is present — both passes share
  * this budget. Scales linearly with annexb bytes so a healthy 2.3 GB export
- * survives 10x slower I/O without false-abort.
+ * survives 25x slower I/O without false-abort.
  *
- * Verified against CC's risk table: the 13.92 s worst at 1.7 GB (premux 9.22 s +
- * mix 4.70 s) scales to 18.83 s at 2.3 GB, so 10x slower I/O is 188.3 s — the
- * exact row the table flagged against the old fixed 180_000 ms bound.
+ * Arithmetic from the measured two-pass total:
+ *   1.7 GB: 9.22 + 4.70 = 13.92 s; 10x = 139.20 s; 25x = 348.00 s.
+ *   2.3 GB: scale x1.353 => 18.834 s; 10x = 188.34 s;
+ *           25x = 470.84 s.
  *
- * Yields **208_800 ms (208.8 s) at 1.7 GB** and **282_495 ms (282.5 s) at
- * 2.3 GB**. Both clear 188.3 s, the 2.3 GB case with ~1.5x margin.
- *
- * KNOWN LIMIT, stated rather than papered over: at 25x slower I/O a 2.3 GB mux
- * needs 470.8 s and this bound would false-abort. The native scan bounds above
- * are sized for 25x; this one is sized for the 10x bar its measurement was
- * taken against. Raising `MUX_HEADROOM` to 25 would close the gap and was NOT
- * done this round because 13.92 s is the only mux number that exists and it was
- * measured at 1.7 GB only.
+ * Yields **348_000 ms at 1.7 GB** and **470_824 ms at 2.3 GB** (the
+ * implementation uses the exact 2.3/1.7 ratio; x1.353 above is rounded).
  */
 export function computeMuxBoundMs(annexbByteLength: number): number {
   const scaledWorst =
