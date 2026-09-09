@@ -142,6 +142,38 @@ export interface ExportWorkerDiagnosticsPayload {
    * and costs one integer copy on the flush path.
    */
   encodedChunkCountAtFlushStart: number | null;
+  /**
+   * WS3 flush-occlusion round — the three numbers that make a hung flush
+   * self-describing, all null when the run never entered a flush.
+   *
+   * `encodedChunkBytesAtFlushStart` is the byte-count companion to
+   * `encodedChunkCountAtFlushStart`; `flushChunksSinceEntry` /
+   * `flushBytesSinceEntry` are counted directly by the worker's chunk callback
+   * while a flush is in progress, so they survive into a WATCHDOG payload too
+   * (they are module state, snapshotted on `request-diagnostics`) rather than
+   * existing only on the flush-timeout error.
+   *
+   * Reading them: `flushChunksSinceEntry === 0` is "(i) the encoder produced
+   * nothing". Non-zero with `appendPendingAtFailure === true` is "(ii) the
+   * encoder produced chunks but the writer is blocked". Non-zero and still
+   * climbing across the phase-log tail is "(iii) a genuinely slow flush".
+   */
+  encodedChunkBytesAtFlushStart: number | null;
+  flushChunksSinceEntry: number | null;
+  flushBytesSinceEntry: number | null;
+  /** `encoder.encodeQueueSize` sampled at the instant a flush bound EXPIRED
+   *  (null if none expired). Deliberately not a live read — by snapshot time
+   *  the encoder may be closed, and a closed encoder's depth explains nothing. */
+  encodeQueueSizeAtFlushExpiry: number | null;
+  /** Encoder-session identity at the failure, so the payload names the session
+   *  that hung without cross-referencing the progress UI. */
+  encoderSessionIndex: number;
+  encoderSessions: number;
+  /** Main-thread only (`exportPipelineWebCodecs.ts`): was an `appendFileRaw`
+   *  call still outstanding when the run was declared failed? Null in a
+   *  worker-built payload, which cannot know. This is the field that separates
+   *  leg (ii) from leg (iii). */
+  appendPendingAtFailure: boolean | null;
   /** VideoDecoder instances created this run (one per open decode cursor). */
   decodersCreated: number;
   /** VideoDecoder instances still open at terminal snapshot. */
@@ -162,6 +194,32 @@ export interface ExportWorkerDiagnosticsPayload {
   frameContentDigest: string | null;
   frameContentDigestFrames: number | null;
 }
+
+/**
+ * WS3 flush-occlusion round — the neutral value of the seven flush-observation
+ * fields above, for the several places that synthesize a payload when no
+ * worker diagnostics arrived (a watchdog reconstruction, an aborted piece, a
+ * test fixture). One constant so a future field is added in ONE place and
+ * every synthetic site picks it up; spread it, then override what is known.
+ */
+export const NO_FLUSH_OBSERVATION: Pick<
+  ExportWorkerDiagnosticsPayload,
+  | 'encodedChunkBytesAtFlushStart'
+  | 'flushChunksSinceEntry'
+  | 'flushBytesSinceEntry'
+  | 'encodeQueueSizeAtFlushExpiry'
+  | 'encoderSessionIndex'
+  | 'encoderSessions'
+  | 'appendPendingAtFailure'
+> = {
+  encodedChunkBytesAtFlushStart: null,
+  flushChunksSinceEntry: null,
+  flushBytesSinceEntry: null,
+  encodeQueueSizeAtFlushExpiry: null,
+  encoderSessionIndex: 0,
+  encoderSessions: 1,
+  appendPendingAtFailure: null,
+};
 
 export interface WatchdogOutputEvent {
   atMs: number;

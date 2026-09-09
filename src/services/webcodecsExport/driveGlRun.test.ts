@@ -20,7 +20,7 @@ import {
 } from './exportPipelineWebCodecs';
 import type { ExportWorkerOutboundMessage } from './exportWorker';
 import type { ProjectEffectConfig } from '../gl/compositeParams';
-import type { ExportWorkerDiagnosticsPayload } from './exportWorkerDiagnostics';
+import { NO_FLUSH_OBSERVATION, type ExportWorkerDiagnosticsPayload } from './exportWorkerDiagnostics';
 
 class FakeWorker implements ExportWorkerHandle {
   onmessage: ((ev: MessageEvent<ExportWorkerOutboundMessage>) => void) | null = null;
@@ -138,6 +138,7 @@ function diagnostics(
     encodedKeyframeCount: 1,
     encodedChunkBytes: 8,
     encodedChunkCountAtFlushStart: null,
+    ...NO_FLUSH_OBSERVATION,
     decodersCreated: 0,
     decodersOpen: 0,
     cursorsCreated: 0,

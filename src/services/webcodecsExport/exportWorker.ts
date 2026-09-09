@@ -272,6 +272,15 @@ function buildDiagnostics(
     encodedKeyframeCount: encodeStats.keyframeCount,
     encodedChunkBytes: encodeStats.chunkBytes,
     encodedChunkCountAtFlushStart: activeFlushStartChunkCount,
+    encodedChunkBytesAtFlushStart: activeFlushStartChunkBytes,
+    flushChunksSinceEntry: activeFlushStartChunkCount === null ? null : activeFlushChunksSinceEntry,
+    flushBytesSinceEntry: activeFlushStartChunkCount === null ? null : activeFlushBytesSinceEntry,
+    encodeQueueSizeAtFlushExpiry: activeFlushExpiryQueueSize,
+    encoderSessionIndex: activeSessionIndex,
+    encoderSessions: activeSessionCount,
+    // The worker cannot see the main thread's append queue — see the field's
+    // own doc comment. `exportPipelineWebCodecs.ts` fills this in.
+    appendPendingAtFailure: null,
     decodersCreated: resourceCounts.decodersCreated,
     decodersOpen: resourceCounts.decodersOpen,
     cursorsCreated: resourceCounts.cursorsCreated,
@@ -303,9 +312,83 @@ let activeFrameDigest: FrameContentDigest | null = null;
 let activePieceIndex = 0;
 let activeEncodeStats: EncodeStats | null = null;
 /** WS3 Defect 3 — see `encodedChunkCountAtFlushStart` on the payload. Reset to
- *  null at the start of every run; set exactly once, on entering the flush. */
+ *  null at the start of every run; set on entering EITHER flush (rotation or
+ *  final) and cleared when that flush returns. Doubles as the "we are inside a
+ *  flush right now" sentinel the chunk callback reads — see
+ *  `noteFlushChunk`. */
 let activeFlushStartChunkCount: number | null = null;
+/** WS3 flush-occlusion round — companion baselines/counters to the above, all
+ *  scoped to the CURRENT flush and all reset by `beginFlushObservation`.
+ *
+ * Why these exist: the field failure's phase log had exactly zero events
+ * between `encoder-flush` enter and the main thread's 30s watchdog, so the
+ * payload could not distinguish "the encoder emitted nothing" from "the
+ * encoder was draining and the writer was the thing that stopped". A chunk
+ * count and a byte count taken SINCE flush entry separate those two directly,
+ * and cost two integer adds on a path that runs single-digit times per flush.
+ */
+let activeFlushStartChunkBytes: number | null = null;
+let activeFlushChunksSinceEntry = 0;
+let activeFlushBytesSinceEntry = 0;
+/** `encoder.encodeQueueSize` sampled at the moment a flush bound EXPIRED, or
+ *  null if no flush bound has expired this run. Distinct from a live read: by
+ *  the time a diagnostics snapshot is built the encoder may have been closed,
+ *  and a closed encoder's queue depth is not the number that explains the
+ *  hang. */
+let activeFlushExpiryQueueSize: number | null = null;
+/** WS3 Defect 1b — encoder-session identity, mirrored to module scope so a
+ *  `request-diagnostics` snapshot names the session that hung without the
+ *  caller having to thread it through. */
+let activeSessionIndex = 0;
+let activeSessionCount = 1;
 let activeRunState: RunState | null = null;
+
+/** Enter a flush: snapshot the baselines and zero the since-entry counters.
+ *  Called at BOTH flush sites so the two are observationally identical. */
+function beginFlushObservation(stats: EncodeStats): void {
+  activeFlushStartChunkCount = stats.chunkCount;
+  activeFlushStartChunkBytes = stats.chunkBytes;
+  activeFlushChunksSinceEntry = 0;
+  activeFlushBytesSinceEntry = 0;
+}
+
+/** Leave a flush (normally — an expiry deliberately leaves the baselines in
+ *  place so the terminal payload can still report them). */
+function endFlushObservation(): void {
+  activeFlushStartChunkCount = null;
+  activeFlushStartChunkBytes = null;
+}
+
+/** The since-entry counters, in the shape `flushWithBound` folds into its
+ *  typed error. One closure, passed by BOTH flush call sites. */
+function flushObservation(): { chunksSinceFlushEntry: number; bytesSinceFlushEntry: number } {
+  return {
+    chunksSinceFlushEntry: activeFlushChunksSinceEntry,
+    bytesSinceFlushEntry: activeFlushBytesSinceEntry,
+  };
+}
+
+/**
+ * WS3 flush-occlusion round — the flush PULSE.
+ *
+ * Called from the encoder's chunk output callback for every chunk. While a
+ * flush is in progress (`activeFlushStartChunkCount !== null`) it counts the
+ * chunk and emits a phase-log pulse, so a draining flush writes events into
+ * the phase log instead of leaving the hole the field failure showed: entry at
+ * `atMs 438344`, then nothing for the whole 30s until the main-thread
+ * watchdog. After this change that hole is only possible when the encoder
+ * genuinely emits nothing, which is itself the answer.
+ *
+ * `ExportPhaseTracker.pulse()` is throttled to `PHASE_THROTTLE_MS` (250 ms),
+ * so a fast-draining flush costs at most 4 messages/second, not one per chunk.
+ * No-op when not inside a flush.
+ */
+function noteFlushChunk(tracker: ExportPhaseTracker, byteLength: number): void {
+  if (activeFlushStartChunkCount === null) return;
+  activeFlushChunksSinceEntry++;
+  activeFlushBytesSinceEntry += byteLength;
+  tracker.pulse();
+}
 
 // ---------------------------------------------------------------------------
 // Segment-local <-> source-time mapping.
@@ -708,19 +791,50 @@ export class EncoderFlushTimeoutError extends Error {
   readonly encodeQueueSize: number;
   readonly boundMs: number;
   readonly sessionIndex: number;
+  /** Chunks the encoder emitted BETWEEN flush entry and this expiry. Zero
+   *  means the encoder produced nothing at all — the "(i) encoder produced
+   *  nothing" leg. Non-zero means it was draining, and the hang is downstream
+   *  or the flush is genuinely slow. */
+  readonly chunksSinceFlushEntry: number;
+  /** Bytes those chunks carried — the same distinction, sized. */
+  readonly bytesSinceFlushEntry: number;
 
-  constructor(opts: { framesEncoded: number; encodeQueueSize: number; boundMs: number; sessionIndex: number }) {
+  constructor(opts: {
+    framesEncoded: number;
+    encodeQueueSize: number;
+    boundMs: number;
+    sessionIndex: number;
+    chunksSinceFlushEntry: number;
+    bytesSinceFlushEntry: number;
+  }) {
     super(
       `VideoEncoder.flush() did not settle within ${opts.boundMs / 1000}s ` +
         `(encoder session ${opts.sessionIndex}, framesEncoded ${opts.framesEncoded}, ` +
-        `encodeQueueSize ${opts.encodeQueueSize}) — aborting the run at the flush, not at the watchdog.`,
+        `encodeQueueSize ${opts.encodeQueueSize}, ` +
+        `chunksSinceFlushEntry ${opts.chunksSinceFlushEntry}, ` +
+        `bytesSinceFlushEntry ${opts.bytesSinceFlushEntry}) — ` +
+        `aborting the run at the flush, not at the watchdog.`,
     );
     this.name = 'EncoderFlushTimeoutError';
     this.framesEncoded = opts.framesEncoded;
     this.encodeQueueSize = opts.encodeQueueSize;
     this.boundMs = opts.boundMs;
     this.sessionIndex = opts.sessionIndex;
+    this.chunksSinceFlushEntry = opts.chunksSinceFlushEntry;
+    this.bytesSinceFlushEntry = opts.bytesSinceFlushEntry;
   }
+}
+
+/**
+ * Extra, caller-supplied context sampled AT EXPIRY (not at arming time) and
+ * folded into `EncoderFlushTimeoutError`. Split out from the positional
+ * parameters so the SINGLE shared helper below stays the only place the bound
+ * is implemented — the rotation flush and the final flush pass the same
+ * closure, and neither carries a second copy of the timeout logic.
+ */
+export interface FlushBoundObservation {
+  chunksSinceFlushEntry: number;
+  bytesSinceFlushEntry: number;
 }
 
 /**
@@ -728,32 +842,52 @@ export class EncoderFlushTimeoutError extends Error {
  * rejects with `EncoderFlushTimeoutError` on expiry. The underlying flush
  * promise is left pending on timeout — it is not cancellable, and the caller's
  * `finally` closes the encoder, which is the only lever there is.
+ *
+ * ARMING ORDER (WS3 flush-occlusion round — this is a real fix, not a
+ * refactor). The previous body was
+ * `Promise.race([encoder.flush(), new Promise(...)])`. Array literals evaluate
+ * left to right, so `encoder.flush()` was INVOKED BEFORE the timer was
+ * created. A `flush()` that blocks the worker thread synchronously — rather
+ * than returning a promise that never settles — therefore ran with no bound
+ * armed at all: the timeout was never scheduled, so it could not fire even in
+ * principle, and the only thing left to notice was the main thread's watchdog,
+ * reporting `kind: "unknown"`, `via: "watchdog"`. That is exactly the shape of
+ * the 647-segment field failure. The timer is now armed first and `flush()` is
+ * called after, so the bound covers the call itself.
+ *
+ * What this does NOT fix, stated plainly: if the worker's event loop is wedged
+ * (whether inside `flush()` or by timer throttling of an occluded window), an
+ * armed `setTimeout` still cannot run. A worker-side bound is only ever as
+ * live as the worker's own event loop. The main-thread watchdog remains the
+ * backstop for that case, which is why it is untouched.
  */
 export async function flushWithBound(
   encoder: Pick<VideoEncoder, 'flush' | 'encodeQueueSize'>,
   framesEncoded: number,
   sessionIndex: number,
   boundMs: number = FLUSH_BOUND_MS,
+  observe?: () => FlushBoundObservation,
 ): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    await Promise.race([
-      encoder.flush(),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () =>
-            reject(
-              new EncoderFlushTimeoutError({
-                framesEncoded,
-                encodeQueueSize: encoder.encodeQueueSize,
-                boundMs,
-                sessionIndex,
-              }),
-            ),
+  // Armed BEFORE flush() is called — see the ARMING ORDER note above.
+  const bound = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const obs = observe?.() ?? { chunksSinceFlushEntry: 0, bytesSinceFlushEntry: 0 };
+      activeFlushExpiryQueueSize = encoder.encodeQueueSize;
+      reject(
+        new EncoderFlushTimeoutError({
+          framesEncoded,
+          encodeQueueSize: encoder.encodeQueueSize,
           boundMs,
-        );
-      }),
-    ]);
+          sessionIndex,
+          chunksSinceFlushEntry: obs.chunksSinceFlushEntry,
+          bytesSinceFlushEntry: obs.bytesSinceFlushEntry,
+        }),
+      );
+    }, boundMs);
+  });
+  try {
+    await Promise.race([bound, encoder.flush()]);
   } finally {
     if (timer !== null) clearTimeout(timer);
   }
@@ -1151,9 +1285,14 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       fps,
       (chunk) => {
         encodeStats.noteChunk(chunk);
-        const buf = new ArrayBuffer(chunk.byteLength);
+        // Read the length BEFORE postOut — `buf` is in the transfer list, so
+        // it is detached (byteLength 0) the moment postMessage returns.
+        const chunkBytes = chunk.byteLength;
+        const buf = new ArrayBuffer(chunkBytes);
         chunk.copyTo(buf);
         postOut({ type: 'chunk', runId, bytes: buf, chunkType: chunk.type, timestamp: chunk.timestamp }, [buf]);
+        // WS3 flush-occlusion round — see noteFlushChunk. No-op outside a flush.
+        noteFlushChunk(tracker, chunkBytes);
       },
       (e) => {
         failState.setFailure('encoder-callback', e);
@@ -1182,7 +1321,12 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
 
   const runState = new RunState(assets, tracker, startIndex, segments, config);
   activeRunState = runState;
-  activeFlushStartChunkCount = null;
+  endFlushObservation();
+  activeFlushChunksSinceEntry = 0;
+  activeFlushBytesSinceEntry = 0;
+  activeFlushExpiryQueueSize = null;
+  activeSessionIndex = 0;
+  activeSessionCount = 1;
   const first = segments[0]!;
   const last = segments[segments.length - 1]!;
   const runEndSec = last.startTime + last.duration;
@@ -1225,6 +1369,8 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   const sessionStarts = planEncoderSessions(totalFrames, isKeyFrame, MAX_ENCODER_SESSION_FRAMES);
   const rotateAt = new Set<number>(sessionStarts.slice(1));
   let sessionIndex = 0;
+  activeSessionIndex = 0;
+  activeSessionCount = sessionStarts.length;
   postOut({
     type: 'session-plan',
     pieceIndex,
@@ -1280,12 +1426,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       // chunk — the byte stream stays in frame order across the seam.
       if (rotateAt.has(i)) {
         tracker.enter('encoder-rotate');
-        activeFlushStartChunkCount = encodeStats.chunkCount;
-        await flushWithBound(encoder, framesEmitted, sessionIndex);
+        beginFlushObservation(encodeStats);
+        await flushWithBound(encoder, framesEmitted, sessionIndex, FLUSH_BOUND_MS, flushObservation);
         encoder.close();
         sessionIndex++;
+        activeSessionIndex = sessionIndex;
         encoder = await buildEncoder();
-        activeFlushStartChunkCount = null;
+        endFlushObservation();
         postOut({
           type: 'session-rotate',
           pieceIndex,
@@ -1352,9 +1499,15 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     // BACKPRESSURE_HIGH_WATER` (4), so at most ~5 frames plus the codec's own
     // reorder depth are outstanding when flush is entered — never the run's
     // whole frame count.
-    activeFlushStartChunkCount = encodeStats.chunkCount;
+    //
+    // WS3 flush-occlusion round — this call is bounded by the SAME
+    // `flushWithBound` helper the rotation above uses, with the same
+    // `flushObservation` closure. There is exactly one implementation of the
+    // bound in this file; the final flush is not a second copy of it.
+    beginFlushObservation(encodeStats);
     tracker.enter('encoder-flush');
-    await flushWithBound(encoder, framesEmitted, sessionIndex);
+    await flushWithBound(encoder, framesEmitted, sessionIndex, FLUSH_BOUND_MS, flushObservation);
+    endFlushObservation();
     postTerminal('done', framesEmitted, null, runState);
   } catch (e) {
     if (!failState.failure) {

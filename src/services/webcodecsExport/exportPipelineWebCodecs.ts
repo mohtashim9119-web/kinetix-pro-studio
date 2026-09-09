@@ -94,6 +94,7 @@ import {
   buildSilentGap,
   formatFailureMessage,
   pushPhaseLogEntry,
+  NO_FLUSH_OBSERVATION,
   type ExportPhaseLogEntry,
   type ExportWorkerDiagnosticsPayload,
   type SilentIntervalAttribution,
@@ -840,6 +841,13 @@ export function driveGlRun(
     let appendError: Error | null = null;
     let appendCallCount = 0;
     let appendBytes = 0;
+    /** WS3 flush-occlusion round — how many `appendFileRaw` calls are in flight
+     *  right now. The failure payload's `appendPendingAtFailure` is
+     *  `appendsInFlight > 0`, and it is the field that separates "the encoder
+     *  emitted chunks but the WRITER stopped" from "the flush itself is slow".
+     *  A counter rather than a boolean so a burst that drains partway is still
+     *  readable as pending. */
+    let appendsInFlight = 0;
     let settled = false;
     let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
     let progressBoundTimer: ReturnType<typeof setTimeout> | null = null;
@@ -927,8 +935,35 @@ export function driveGlRun(
       }
     };
 
+    /** WS3 flush-occlusion round — see the call site in the `chunk` case. Only
+     *  pushes while the worker's own last reported phase is the flush, so a
+     *  normal frame-loop export logs nothing extra. `seq` continues this
+     *  document's own numbering (negative, so a main-thread entry is never
+     *  confused with a worker `seq`). */
+    let mainPhaseSeq = 0;
+    const notePhaseAppendDuringFlush = (): void => {
+      if (lastPhase !== 'encoder-flush') return;
+      mainPhaseSeq++;
+      pushPhaseLogEntry(phaseLog, {
+        seq: -mainPhaseSeq,
+        atMs: relMs(),
+        phase: 'encoder-flush-append',
+        pieceIndex: lastPieceIndex,
+        segmentIndex: -1,
+        assetId: null,
+        framesEncoded: lastFramesEncoded,
+        kind: 'pulse',
+      });
+    };
+
     const reconstructDiagnostics = (): ExportWorkerDiagnosticsPayload => {
-      if (lastWorkerDiagnostics) return lastWorkerDiagnostics;
+      // WS3 flush-occlusion round — `appendPendingAtFailure` is main-thread
+      // knowledge the worker's own payload cannot carry (it is always null
+      // there), so it is stamped on every reconstruction, including the one
+      // built from a worker snapshot.
+      if (lastWorkerDiagnostics) {
+        return { ...lastWorkerDiagnostics, appendPendingAtFailure: appendsInFlight > 0 };
+      }
       return {
         phaseMs: {},
         instrumentationMs: 0,
@@ -945,6 +980,10 @@ export function driveGlRun(
         encodedKeyframeCount: 0,
         encodedChunkBytes: 0,
         encodedChunkCountAtFlushStart: null,
+        ...NO_FLUSH_OBSERVATION,
+        encoderSessionIndex: sessionAt,
+        encoderSessions: sessionCount ?? 1,
+        appendPendingAtFailure: appendsInFlight > 0,
         decodersCreated: 0,
         decodersOpen: 0,
         cursorsCreated: 0,
@@ -1137,14 +1176,24 @@ export function driveGlRun(
           const bytes = new Uint8Array(data.bytes);
           appendQueue = appendQueue.then(async () => {
             if (appendError || settled) return;
+            appendsInFlight++;
             try {
               await ffmpeg.appendFileRaw(runFile, bytes);
               appendCallCount++;
               appendBytes += bytes.byteLength;
               resetProgressBound();
               onFrameProgress(appendCallCount, totalExpectedFrames);
+              // WS3 flush-occlusion round — an append that COMPLETES while the
+              // worker is inside `encoder-flush` writes its own phase-log entry.
+              // Together with the worker's per-chunk flush pulse this closes the
+              // hole the field payload showed: between flush entry and the 30s
+              // watchdog there were zero events of any kind, so the log could
+              // not say whether the encoder or the writer was the stalled half.
+              notePhaseAppendDuringFlush();
             } catch (err) {
               appendError = err instanceof Error ? err : new Error(causeString(err));
+            } finally {
+              appendsInFlight--;
             }
           });
           break;
@@ -1195,18 +1244,27 @@ export function driveGlRun(
             });
           }
           break;
-        case 'error':
-          lastWorkerDiagnostics = data.diagnostics;
-          mergePhaseFromWorker(data.diagnostics.phaseLog);
+        case 'error': {
+          // WS3 flush-occlusion round — stamp the one field only this thread
+          // knows before the payload is handed on. This is the path a
+          // `flush-timeout` arrives on, and `appendPendingAtFailure` is what
+          // separates "the writer stopped" from "the flush itself is slow".
+          const errDiagnostics: ExportWorkerDiagnosticsPayload = {
+            ...data.diagnostics,
+            appendPendingAtFailure: appendsInFlight > 0,
+          };
+          lastWorkerDiagnostics = errDiagnostics;
+          mergePhaseFromWorker(errDiagnostics.phaseLog);
           finish({
             ok: false,
-            error: errorFromDiagnostics('encode', data.diagnostics, 'Export worker error.'),
-            diagnostics: data.diagnostics,
+            error: errorFromDiagnostics('encode', errDiagnostics, 'Export worker error.'),
+            diagnostics: errDiagnostics,
             silentIntervals: silentIntervals(),
             appendCallCount,
             appendBytes,
           });
           break;
+        }
         case 'cancelled':
           lastWorkerDiagnostics = data.diagnostics;
           mergePhaseFromWorker(data.diagnostics.phaseLog);
@@ -1777,6 +1835,7 @@ export async function exportProjectWebCodecs(
         const d = driveResult.diagnostics;
         diag.glPieces.push({
           ...(d ?? {
+            ...NO_FLUSH_OBSERVATION,
             phaseMs: {},
             instrumentationMs: 0,
             demuxSplit: [],
