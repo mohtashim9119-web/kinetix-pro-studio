@@ -99,6 +99,11 @@ import {
   type ExportWorkerDiagnosticsPayload,
   type SilentIntervalAttribution,
 } from './exportWorkerDiagnostics';
+import type { AnnexbFrameCount, PieceFrameCountRow } from './annexbFrameCount';
+import {
+  concatFrameCountGuardFails,
+  formatConcatFrameCountMismatch,
+} from './annexbFrameCount';
 
 export interface ExportOptionsWebCodecs {
   width?: number;
@@ -127,12 +132,12 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
   kill(): Promise<void>;
   destroy(): Promise<void>;
   /**
-   * Counts H.264 Annex B coded-picture NAL units in a session file entirely on
+   * Counts H.264 Annex B access units (pictures) in a session file entirely on
    * the native side (`TauriFfmpeg.countAnnexbFrames`, backed by the Rust
    * `ffmpeg_count_annexb_frames` command) — see the frame-count guard section
    * below for why this replaced a `readFile` + JS-scan approach.
    */
-  countAnnexbFrames(path: string): Promise<number>;
+  countAnnexbFrames(path: string): Promise<AnnexbFrameCount>;
   /**
    * Stream-concatenates `piecePaths` (in order) into a single `outputPath`
    * entirely on the native side (`TauriFfmpeg.concatAnnexbPieces`, backed by the
@@ -1669,48 +1674,24 @@ async function encodeCanvasPiece(
 // ---------------------------------------------------------------------------
 // Part 5 — Concat + frame-count guard (plan §4.4).
 //
-// The frame-count guard needs `video_all.h264`'s ACTUAL coded-frame count.
+// The frame-count guard needs `video_all.h264`'s ACTUAL picture count.
 // `ffmpeg.countAnnexbFrames` (the native `ffmpeg_count_annexb_frames` Rust
-// command, src-tauri/src/ffmpeg.rs) now performs this count directly on the
-// session-side file, in bounded 64 KB chunks — the file's bytes never cross
+// command, src-tauri/src/ffmpeg.rs) scans the session-side file in bounded
+// 64 KB chunks and counts access units via `first_mb_in_slice == 0` on VCL
+// NALs (types 1/5) — not raw slice NAL count, which Windows hardware encoders
+// inflate by emitting multiple slices per picture. The file's bytes never cross
 // into the renderer. This replaced an earlier version of this guard that
-// read the whole file back via `ffmpeg.readFile` and ran the identical
-// start-code scan in JS (`countAnnexbFrames` below), which cost ~5s per
-// export moving the concatenated video file's bytes over IPC just to count
-// frames.
+// read the whole file back via `ffmpeg.readFile` and ran the JS scan in
+// `annexbFrameCount.ts`, which cost ~5s per export moving the concatenated
+// video file's bytes over IPC just to count frames.
 //
-// `countAnnexbFrames` (JS) is kept below as the reference implementation —
-// exported for the Step 5 spike (`src/dev/webcodecsStep2Spike/main.ts`) to
-// diff against the Rust command's output on the same file, and for this
-// file's own unit tests — but the guard itself no longer calls it.
+// `annexbFrameCount.ts` holds the shared JS reference implementation (exported
+// below as `countAnnexbFrames`) for spike/test comparison against the Rust
+// command on the same bytes — but the guard itself calls the native command.
 // ---------------------------------------------------------------------------
 
-/**
- * Counts H.264 Annex B coded-picture NAL units (type 1 = non-IDR slice,
- * type 5 = IDR slice) in a raw byte stream. Reference implementation kept
- * for spike/test comparison against the native `ffmpeg_count_annexb_frames`
- * command the real guard below now uses — see the section header above.
- */
-export function countAnnexbFrames(bytes: Uint8Array): number {
-  let count = 0;
-  const n = bytes.length;
-  let i = 0;
-  while (i < n - 2) {
-    // A 3-byte start code (00 00 01) also matches the tail of a 4-byte start
-    // code (00 00 00 01), so scanning for the 3-byte form alone finds both.
-    if (bytes[i] === 0 && bytes[i + 1] === 0 && bytes[i + 2] === 1) {
-      const headerIdx = i + 3;
-      if (headerIdx < n) {
-        const nalType = bytes[headerIdx]! & 0x1f;
-        if (nalType === 1 || nalType === 5) count++;
-      }
-      i = headerIdx;
-    } else {
-      i++;
-    }
-  }
-  return count;
-}
+export { countAnnexbFrames } from './annexbFrameCount';
+export type { AnnexbFrameCount } from './annexbFrameCount';
 
 // Concatenation itself is now a native Rust helper (`ffmpeg.concatAnnexbPieces`
 // -> `ffmpeg_concat_annexb_pieces`), NOT an ffmpeg concat-protocol invocation.
@@ -2092,19 +2073,40 @@ export async function exportProjectWebCodecs(
   // ── Loud-failure frame-count guard (plan §4.4) — never ship silently
   // corrupt output ─────────────────────────────────────────────────────────
   try {
-    const actualFrames = await withFfmpegLivenessBound(
+    const measured = await withFfmpegLivenessBound(
       { label: 'FRAME_COUNT_BOUND_MS', boundMs: FRAME_COUNT_BOUND_MS, ffmpeg, files: [finalVideoFile], pieceCount: pieces.length },
       async () => await ffmpeg.countAnnexbFrames(finalVideoFile),
     );
-    if (actualFrames !== totalExpectedFramesOverall) {
+    if (concatFrameCountGuardFails(measured, totalExpectedFramesOverall)) {
+      let perPiece: PieceFrameCountRow[] = [];
+      try {
+        perPiece = await Promise.all(
+          pieceFiles.map(async (path, pieceIndex) => {
+            const rowCount = await ffmpeg.countAnnexbFrames(path);
+            return {
+              pieceIndex,
+              path,
+              pictures: rowCount.pictures,
+              vclNals: rowCount.vclNals,
+              expectedFrames: pieces[pieceIndex]!.expectedFrames,
+            };
+          }),
+        );
+      } catch {
+        // Per-piece breakdown is diagnostic-only — a failure here must not
+        // mask the primary picture-count mismatch above.
+      }
       activeFfmpeg = null;
       return {
         ok: false,
         error: {
           kind: 'concat',
-          message:
-            `Concatenated output frame count (${actualFrames}) does not match the expected total (${totalExpectedFramesOverall}) ` +
-            `across ${pieces.length} piece(s) — aborting rather than shipping a corrupt export.`,
+          message: formatConcatFrameCountMismatch({
+            measured,
+            expectedTotal: totalExpectedFramesOverall,
+            pieceCount: pieces.length,
+            perPiece,
+          }),
         },
       };
     }

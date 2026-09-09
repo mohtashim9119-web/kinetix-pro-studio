@@ -96,7 +96,7 @@ function makeFakeFfmpeg(): WebCodecsFfmpeg {
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
-    countAnnexbFrames: vi.fn(async () => 90),
+    countAnnexbFrames: vi.fn(async () => ({ pictures: 90, vclNals: 90 })),
     concatAnnexbPieces: vi.fn(async () => undefined),
   } as unknown as WebCodecsFfmpeg;
 }

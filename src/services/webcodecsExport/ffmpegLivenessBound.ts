@@ -45,6 +45,13 @@
 // underlying `invoke` promise is abandoned by the race, not awaited — killing
 // the session is what actually settles it.
 //
+// SCOPE OF THE KILL. `ffmpeg_kill_session` (`src-tauri/src/ffmpeg.rs`) only
+// kills a `CommandChild` registered by `ffmpeg_exec`. Remux / mux / tier-piece
+// `ffmpeg.exec` calls are therefore actually terminated. `concatAnnexbPieces`
+// and `countAnnexbFrames` are native file I/O commands, not ffmpeg children —
+// kill is a no-op for them and the abandoned invoke keeps running. That is a
+// separate bug from an orphaned ffmpeg holding the output file.
+//
 // Deliberately NOT reusing WATCHDOG_MS: that bound is frozen (it fired
 // correctly in the field) and it measures a completely different thing — the
 // silence of a worker message stream, not the wall time of one opaque
