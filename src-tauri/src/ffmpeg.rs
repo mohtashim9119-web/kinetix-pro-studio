@@ -293,44 +293,24 @@ fn parse_first_mb_in_slice(payload: &[u8]) -> Option<u32> {
     AnnexbBitReader::new(&rbsp).read_ue()
 }
 
-fn collect_annexb_header_indices(buf: &[u8]) -> Vec<usize> {
-    let mut header_indices = Vec::new();
-    let n = buf.len();
-    let mut i = 0usize;
-    while i + 2 < n {
-        if buf[i] == 0 && buf[i + 1] == 0 && buf[i + 2] == 1 {
-            let header_idx = i + 3;
-            if header_idx < n {
-                header_indices.push(header_idx);
-            }
-            i = header_idx;
-        } else {
-            i += 1;
-        }
-    }
-    header_indices
-}
-
+/// Counts access units over one buffer using `scan_annexb_nals` — the SAME NAL
+/// span routine the truncate cut path uses. Sharing it is deliberate: the two
+/// paths previously derived NAL boundaries independently, and their notions of
+/// where a NAL begins differed by one byte on a four-byte start code (this one
+/// took `header - 3`, i.e. the three-byte code's position; the cut path backs up
+/// over the leading zero). A truncate could then cut at an offset the counter
+/// interpreted as a different boundary, so the exact-match guard would compare
+/// against a boundary the cut did not respect. One routine, one answer.
 fn count_annexb_access_units_in_buffer(buf: &[u8], count: &mut AnnexbFrameCount) {
-    let header_indices = collect_annexb_header_indices(buf);
-    for k in 0..header_indices.len() {
-        let header_idx = header_indices[k];
-        let next_start = if k + 1 < header_indices.len() {
-            header_indices[k + 1].saturating_sub(3)
-        } else {
-            buf.len()
-        };
-        let header_byte = buf[header_idx];
-        let nal_type = header_byte & 0x1f;
-        if nal_type != 1 && nal_type != 5 {
+    for nal in scan_annexb_nals(buf) {
+        if nal.nal_type != 1 && nal.nal_type != 5 {
             continue;
         }
         count.vcl_nals += 1;
-        let payload_start = header_idx + 1;
-        if payload_start >= next_start {
+        if nal.header + 1 >= nal.end {
             continue;
         }
-        if parse_first_mb_in_slice(&buf[payload_start..next_start]) == Some(0) {
+        if parse_first_mb_in_slice(&buf[nal.header + 1..nal.end]) == Some(0) {
             count.pictures += 1;
         }
     }
@@ -365,9 +345,9 @@ impl AnnexbAccessUnitScanner {
     }
 
     fn drain_complete_nals(&mut self) {
-        let header_indices = collect_annexb_header_indices(&self.buffer);
-        if header_indices.len() < 2 {
-            if header_indices.is_empty() {
+        let nals = scan_annexb_nals(&self.buffer);
+        if nals.len() < 2 {
+            if nals.is_empty() {
                 compact_buffer_tail_without_start_codes(&mut self.buffer);
             } else if self.buffer.len() > MAX_IN_FLIGHT_NAL_BYTES {
                 // Exactly one start code, and its NAL has outgrown the cap:
@@ -386,8 +366,7 @@ impl AnnexbAccessUnitScanner {
             }
             return;
         }
-        let last_header = header_indices[header_indices.len() - 1];
-        let last_nal_start = last_header.saturating_sub(3);
+        let last_nal_start = nals[nals.len() - 1].start;
         let process = self.buffer[..last_nal_start].to_vec();
         count_annexb_access_units_in_buffer(&process, &mut self.count);
         self.buffer = self.buffer[last_nal_start..].to_vec();
@@ -1873,6 +1852,51 @@ mod tests {
         );
         assert!(got.bytes_removed > 12 * 1024 * 1024);
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Production has exactly two annexb consumers: the counter that reports
+    /// pictures/vclNals, and the cut-point selector. They now share
+    /// `scan_annexb_nals`, so they cannot drift apart about where a NAL — and
+    /// therefore a picture — begins. This locks that agreement, including the
+    /// degenerate shapes where the two previously derived boundaries that
+    /// differed by one byte (a four-byte start code, and a VCL NAL with an
+    /// empty or single-byte payload).
+    #[test]
+    fn count_path_and_cut_path_agree_on_every_picture_boundary() {
+        let mut streams: Vec<Vec<u8>> = vec![
+            build_multi_slice_stream(1, 1),
+            build_multi_slice_stream(3, 1),
+            build_multi_slice_stream(5, 8),
+            build_multi_slice_stream(2, 3),
+            build_synthetic_single_slice_with_param_sets(4),
+        ];
+        // VCL NAL with an EMPTY payload, closed by a four-byte start code, then
+        // a VCL NAL with a single payload byte.
+        streams.push(vec![
+            0, 0, 0, 1, 0x41, 0, 0, 0, 1, 0x41, 0x88, 0, 0, 0, 1, 0x41, 0x88, 0x00,
+        ]);
+
+        for (i, stream) in streams.iter().enumerate() {
+            let counted = count_annexb_access_units(stream);
+            let spans = scan_annexb_nals(stream);
+            let scanned: Vec<ScannedNal> = spans
+                .iter()
+                .map(|n| scanned_nal_from_span(n, 0, stream))
+                .collect();
+            let grouped = group_pictures_scanned(&scanned);
+            let cut_vcl = scanned
+                .iter()
+                .filter(|n| n.nal_type == 1 || n.nal_type == 5)
+                .count();
+            assert_eq!(
+                counted.pictures as usize, grouped.len(),
+                "stream {i}: counter and cut path disagree on picture count"
+            );
+            assert_eq!(
+                counted.vcl_nals as usize, cut_vcl,
+                "stream {i}: counter and cut path disagree on VCL NAL count"
+            );
+        }
     }
 
     #[test]
