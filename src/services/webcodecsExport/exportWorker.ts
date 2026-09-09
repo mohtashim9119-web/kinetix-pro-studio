@@ -154,6 +154,23 @@ export type ExportWorkerOutboundMessage =
   // actually needs; the extra fields are additive, never required.
   | { type: 'chunk'; runId: string; bytes: ArrayBuffer; chunkType: EncodedVideoChunkType; timestamp: number }
   | { type: 'run-done'; runId: string; frameCount: number }
+  // WS3 export-recovery round — the SALVAGE terminal.
+  //
+  // Posted INSTEAD of 'done' when the run's FINAL `flush()` blew its bound but
+  // every frame the run owed had already been submitted and the encoder's own
+  // output was fenced before another byte could reach disk. It deliberately is
+  // NOT 'done': the worker does not, and cannot, know whether the bytes on disk
+  // contain every picture. It says only "the frame loop completed, the flush
+  // did not, and nothing further will be appended for this run" — the decision
+  // is the orchestrator's post-concat picture-accurate frame-count guard,
+  // unchanged and zero-tolerance. See `decideFlushTimeoutDisposition`.
+  | {
+      type: 'salvage-done';
+      runId: string;
+      frameCount: number;
+      reason: string;
+      diagnostics: ExportWorkerDiagnosticsPayload;
+    }
   | {
       type: 'done';
       frameCount: number;
@@ -825,6 +842,137 @@ export class EncoderFlushTimeoutError extends Error {
   }
 }
 
+// ---------------------------------------------------------------------------
+// WS3 export-recovery round — flush-timeout RECOVERY.
+//
+// Everything in this block is inert on a clean export: nothing is ever fenced,
+// `decideFlushTimeoutDisposition` is never called, and no 'salvage-done' is
+// ever posted. See docs/ws3-export-recovery-architecture.md §5 for the
+// byte-level neutrality argument and §3 for why a bounded RE-RENDER is not
+// what shipped here.
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-encoder-session output valve.
+ *
+ * A `VideoEncoder.flush()` that blows its bound is NOT cancelled — the promise
+ * is left pending and the encoder may still fire its `output` callback
+ * afterwards, at any time, from a session the run has already given up on.
+ * Every one of those late chunks would be `postMessage`d and appended to
+ * `runFile` behind whatever the recovery decided, corrupting the tail of a
+ * file the frame-count guard is about to be asked to trust.
+ *
+ * Fencing a session makes its output callback a no-op: no `postOut`, no
+ * `EncodeStats` bookkeeping, no flush pulse. It is the single mechanism that
+ * makes the on-disk tail STABLE at the instant of the timeout, which is the
+ * precondition for handing the file to the guard at all.
+ *
+ * `encoder.reset()` is also called on the recovery path, but a reset cannot be
+ * relied on alone: if the worker thread is wedged inside `flush()` the reset
+ * never executes either, and this fence is a plain boolean read on whichever
+ * turn of the event loop the callback does eventually get.
+ */
+export class SessionOutputFence {
+  private readonly fenced = new Set<number>();
+
+  fence(sessionIndex: number): void {
+    this.fenced.add(sessionIndex);
+  }
+
+  /** True while session `sessionIndex`'s chunks may still reach disk. */
+  accepts(sessionIndex: number): boolean {
+    return !this.fenced.has(sessionIndex);
+  }
+
+  get fencedCount(): number {
+    return this.fenced.size;
+  }
+}
+
+/**
+ * How many flush-timeout salvages one GL run may take: ONE.
+ *
+ * A salvage is terminal — it ends the run — so this is a bound on re-entry,
+ * not on a retry loop, and there is deliberately no loop for it to bound. It
+ * exists so that a future bounded re-render (which DOES re-enter the frame
+ * loop) inherits an already-enforced ceiling rather than inventing one.
+ */
+export const MAX_FLUSH_SALVAGES = 1;
+
+/** A flush timeout that the salvage bound refuses to act on. Typed so the
+ *  failure payload names the bound rather than reading as a generic 'thrown'. */
+export class FlushSalvageBoundError extends Error {
+  readonly salvagesUsed: number;
+  readonly maxSalvages: number;
+
+  constructor(salvagesUsed: number, maxSalvages: number) {
+    super(
+      `VideoEncoder.flush() blew its bound again after ${salvagesUsed} salvage(s) ` +
+        `(max ${maxSalvages}) — aborting the run rather than retrying unboundedly.`,
+    );
+    this.name = 'FlushSalvageBoundError';
+    this.salvagesUsed = salvagesUsed;
+    this.maxSalvages = maxSalvages;
+  }
+}
+
+export type FlushTimeoutDisposition =
+  | { action: 'abort'; reason: string }
+  | { action: 'salvage'; reason: string };
+
+/**
+ * What to do about an `EncoderFlushTimeoutError`. Pure — the whole policy, in
+ * one testable function.
+ *
+ * ROTATION site -> ABORT, always. A rotation flush hangs at frame
+ * `sessionStarts[k]`, with every frame from there to `totalFrames` still
+ * unencoded: the piece is short by up to the whole remainder of the run, so the
+ * picture-accurate guard would reject it with certainty. Salvaging would spend
+ * a concat and a full-file NAL scan to reach a foregone conclusion, and — worse
+ * — would make "salvage" a routine outcome, which is exactly how a guard
+ * eventually gets widened. It is refused here instead.
+ *
+ * FINAL site -> SALVAGE, once. Every one of the run's `totalFrames` frames has
+ * been submitted to an encoder by the time the final flush is entered; what is
+ * unknown is only how many of the last few came back out. The backpressure
+ * ceiling bounds that to `BACKPRESSURE_HIGH_WATER` (4) frames plus the codec's
+ * reorder depth, so the file is either exactly complete or short by single
+ * digits — and which of those it is, is precisely what the guard measures. So
+ * the worker does not guess: it stops the bleeding and hands the file over.
+ *
+ * Note what is NOT consulted: `chunksSinceFlushEntry`. It has zero field
+ * observations behind it, and it cannot decide this question anyway — a flush
+ * that emitted nothing may still have had nothing to emit. Only a count of the
+ * pictures actually on disk can answer it.
+ */
+export function decideFlushTimeoutDisposition(input: {
+  site: 'rotation' | 'final';
+  salvagesUsed: number;
+  maxSalvages?: number;
+}): FlushTimeoutDisposition {
+  const maxSalvages = input.maxSalvages ?? MAX_FLUSH_SALVAGES;
+  if (input.site === 'rotation') {
+    return {
+      action: 'abort',
+      reason:
+        'rotation-flush timeout: every frame from this session boundary onward is unencoded, ' +
+        'so the piece cannot pass a picture-exact frame-count guard',
+    };
+  }
+  if (input.salvagesUsed >= maxSalvages) {
+    return {
+      action: 'abort',
+      reason: `salvage bound reached (${input.salvagesUsed}/${maxSalvages})`,
+    };
+  }
+  return {
+    action: 'salvage',
+    reason:
+      'final-flush timeout after every frame was submitted: output fenced, ' +
+      'file handed to the post-concat frame-count guard',
+  };
+}
+
 /**
  * Extra, caller-supplied context sampled AT EXPIRY (not at arming time) and
  * folded into `EncoderFlushTimeoutError`. Split out from the positional
@@ -861,6 +1009,67 @@ export interface FlushBoundObservation {
  * live as the worker's own event loop. The main-thread watchdog remains the
  * backstop for that case, which is why it is untouched.
  */
+/** The `VideoEncoder` surface the final-flush recovery touches — three
+ *  members, so a test can drive the whole recovery with an object literal. */
+export interface FlushRecoveryEncoder {
+  flush(): Promise<void>;
+  reset(): void;
+  readonly encodeQueueSize: number;
+}
+
+export type FinalFlushOutcome =
+  | { kind: 'clean' }
+  | { kind: 'salvage'; reason: string };
+
+/**
+ * The run's FINAL flush, with recovery. Extracted from `runExport` so the
+ * recovery is drivable by a mocked encoder rather than only by a real export.
+ *
+ * Three outcomes, and no fourth:
+ *  - flush settles      -> `{ kind: 'clean' }`, fence untouched, caller posts 'done'.
+ *  - bound blows, 1st   -> fence the session (FIRST, before anything that can
+ *                          yield), best-effort `reset()`, return
+ *                          `{ kind: 'salvage' }`. The pending flush promise is
+ *                          NEVER awaited: it is not cancellable, and awaiting
+ *                          it is the hang.
+ *  - bound blows, again -> `FlushSalvageBoundError`. The session is fenced on
+ *                          this path too, because the abort still runs the
+ *                          caller's `finally` and a late chunk must not append
+ *                          behind it.
+ *
+ * A flush REJECTION (a real encoder error) is not a timeout and propagates
+ * untouched, exactly as `flushWithBound` already guarantees.
+ */
+export async function runFinalFlushWithRecovery(opts: {
+  encoder: FlushRecoveryEncoder;
+  framesEncoded: number;
+  sessionIndex: number;
+  fence: SessionOutputFence;
+  salvagesUsed: number;
+  boundMs?: number;
+  observe?: () => FlushBoundObservation;
+}): Promise<FinalFlushOutcome> {
+  const { encoder, framesEncoded, sessionIndex, fence, salvagesUsed } = opts;
+  try {
+    await flushWithBound(encoder, framesEncoded, sessionIndex, opts.boundMs ?? FLUSH_BOUND_MS, opts.observe);
+    return { kind: 'clean' };
+  } catch (e) {
+    if (!(e instanceof EncoderFlushTimeoutError)) throw e;
+    // Fence BEFORE anything that can yield or throw, on every timeout path.
+    fence.fence(sessionIndex);
+    try {
+      encoder.reset();
+    } catch {
+      // best-effort — the fence, not reset(), is what makes the on-disk tail stable
+    }
+    const disposition = decideFlushTimeoutDisposition({ site: 'final', salvagesUsed });
+    if (disposition.action === 'abort') {
+      throw new FlushSalvageBoundError(salvagesUsed, MAX_FLUSH_SALVAGES);
+    }
+    return { kind: 'salvage', reason: `${disposition.reason} (${e.message})` };
+  }
+}
+
 export async function flushWithBound(
   encoder: Pick<VideoEncoder, 'flush' | 'encodeQueueSize'>,
   framesEncoded: number,
@@ -1182,10 +1391,11 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   activeEncodeStats = encodeStats;
 
   const postTerminal = (
-    kind: 'done' | 'error' | 'cancelled',
+    kind: 'done' | 'error' | 'cancelled' | 'salvaged',
     frameCount: number,
     failureOverride?: ExportFailureIdentity | null,
     runState?: RunState,
+    salvageReason?: string,
   ): void => {
     const breakdown = tracker.finish();
     const diagnostics = buildDiagnostics(
@@ -1207,6 +1417,18 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     if (kind === 'done') {
       postOut({ type: 'run-done', runId, frameCount });
       postOut({ type: 'done', frameCount, diagnostics });
+    } else if (kind === 'salvaged') {
+      // 'run-done' first, exactly as the success path does, so the orchestrator's
+      // message ordering is identical either way; the SECOND message is what
+      // differs, and it is the one that carries the "unverified" status.
+      postOut({ type: 'run-done', runId, frameCount });
+      postOut({
+        type: 'salvage-done',
+        runId,
+        frameCount,
+        reason: salvageReason ?? 'flush-timeout salvage',
+        diagnostics,
+      });
     } else if (kind === 'cancelled') {
       postOut({ type: 'cancelled', diagnostics });
     } else {
@@ -1278,12 +1500,23 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   // rotated session streams chunks through exactly the same path — the bytes
   // reach `postOut` in the same order, with the same stats bookkeeping, as if
   // one session had produced them.
-  const buildEncoder = (): Promise<VideoEncoder> =>
+  const fence = new SessionOutputFence();
+  let salvagesUsed = 0;
+  // Captured per BUILD, not read from the mutable `sessionIndex` binding: a
+  // late chunk from a fenced session must be identified by the session that
+  // PRODUCED it, and by the time it arrives `sessionIndex` may already name a
+  // different one.
+  const buildEncoder = (forSession: number): Promise<VideoEncoder> =>
     createEncoder(
       width,
       height,
       fps,
       (chunk) => {
+        // WS3 export-recovery round — the valve. Inert unless this session was
+        // fenced by the flush-timeout recovery below; when it was, the chunk is
+        // dropped whole: not counted, not posted, not pulsed. See
+        // `SessionOutputFence`.
+        if (!fence.accepts(forSession)) return;
         encodeStats.noteChunk(chunk);
         // Read the length BEFORE postOut — `buf` is in the transfer list, so
         // it is detached (byteLength 0) the moment postMessage returns.
@@ -1302,7 +1535,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   let encoder: VideoEncoder;
   try {
     tracker.enter('encoder-ladder');
-    encoder = await buildEncoder();
+    encoder = await buildEncoder(0);
   } catch (e) {
     failState.setFailure('init-error', e);
     postTerminal('error', 0);
@@ -1427,11 +1660,28 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       if (rotateAt.has(i)) {
         tracker.enter('encoder-rotate');
         beginFlushObservation(encodeStats);
-        await flushWithBound(encoder, framesEmitted, sessionIndex, FLUSH_BOUND_MS, flushObservation);
+        try {
+          await flushWithBound(encoder, framesEmitted, sessionIndex, FLUSH_BOUND_MS, flushObservation);
+        } catch (e) {
+          if (e instanceof EncoderFlushTimeoutError) {
+            // Policy, not an inline judgement call — `decideFlushTimeoutDisposition`
+            // returns 'abort' here unconditionally, and the reason it gives is
+            // what the operator sees. Fence anyway: the abort path still runs
+            // `runState.disposeAll()` and a terminal post, and a late chunk from
+            // this dead session must not append behind either.
+            fence.fence(sessionIndex);
+            try {
+              encoder.reset();
+            } catch {
+              // best-effort — a wedged encoder may refuse reset; the fence is the real guard
+            }
+          }
+          throw e;
+        }
         encoder.close();
         sessionIndex++;
         activeSessionIndex = sessionIndex;
-        encoder = await buildEncoder();
+        encoder = await buildEncoder(sessionIndex);
         endFlushObservation();
         postOut({
           type: 'session-rotate',
@@ -1506,7 +1756,21 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     // bound in this file; the final flush is not a second copy of it.
     beginFlushObservation(encodeStats);
     tracker.enter('encoder-flush');
-    await flushWithBound(encoder, framesEmitted, sessionIndex, FLUSH_BOUND_MS, flushObservation);
+    const outcome = await runFinalFlushWithRecovery({
+      encoder,
+      framesEncoded: framesEmitted,
+      sessionIndex,
+      fence,
+      salvagesUsed,
+      boundMs: FLUSH_BOUND_MS,
+      observe: flushObservation,
+    });
+    if (outcome.kind === 'salvage') {
+      salvagesUsed++;
+      tracker.enter('flush-salvage');
+      postTerminal('salvaged', framesEmitted, null, runState, outcome.reason);
+      return;
+    }
     endFlushObservation();
     postTerminal('done', framesEmitted, null, runState);
   } catch (e) {
@@ -1519,7 +1783,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       // reported failure.
       // WS3 Defect 1b/3 — a flush that never returned gets its OWN via, so the
       // payload names the flush rather than reading as a generic 'thrown'.
-      const via: ExportFailureVia = e instanceof EncoderFlushTimeoutError
+      const via: ExportFailureVia = e instanceof EncoderFlushTimeoutError || e instanceof FlushSalvageBoundError
         ? 'flush-timeout'
         : e instanceof GlContextLostError
           ? 'gl-context-lost'

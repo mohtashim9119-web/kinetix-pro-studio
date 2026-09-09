@@ -655,6 +655,16 @@ export interface WebCodecsRunDiagnostics {
   muxMs: number | null;
   watchdogFired: boolean;
   watchdogPhase: string | null;
+  /**
+   * WS3 export-recovery round — GL pieces that ended on a flush-timeout
+   * SALVAGE rather than a clean flush, with the worker's stated reason.
+   *
+   * Empty on every clean export. A non-empty list on an export that SHIPPED
+   * means the picture-accurate frame-count guard passed at zero tolerance on a
+   * file whose final flush never returned — which is a legitimate pass, and
+   * still something the operator must be told happened.
+   */
+  salvagedPieces: { pieceIndex: number; reason: string }[];
 }
 
 /** Last WebCodecs export's measurement blob — read by the throwaway liveness probe. */
@@ -696,6 +706,44 @@ export function planWebCodecsExport(project: Project, fps: number): WebCodecsRou
 // ---------------------------------------------------------------------------
 
 type RunDriveResult =
+  | {
+      ok: true;
+      frameCount: number;
+      diagnostics: ExportWorkerDiagnosticsPayload;
+      maxSilentMs: number;
+      appendDrainMs: number;
+      silentIntervals: SilentIntervalAttribution[];
+      appendCallCount: number;
+      appendBytes: number;
+      /** WS3 export-recovery round — TRUE only when the run ended on a
+       *  'salvage-done' rather than a 'done'. `ok: true` here means "no further
+       *  bytes will be appended for this piece", NOT "the piece is complete":
+       *  completeness is decided downstream, by the picture-accurate
+       *  post-concat frame-count guard, at zero tolerance. */
+      salvaged: boolean;
+      salvageReason: string | null;
+      /** Byte offset in `runFile` at which each encoder session's first byte
+       *  landed, indexed by session. Recorded IN APPEND-QUEUE ORDER, so entry
+       *  `k` is the exact truncation point for a rewind to session `k`. Purely
+       *  observational today — see docs/ws3-export-recovery-architecture.md §1c. */
+      sessionByteOffsets: number[];
+    }
+  | {
+      ok: false;
+      error: ExportError;
+      diagnostics: ExportWorkerDiagnosticsPayload | null;
+      silentIntervals: SilentIntervalAttribution[];
+      appendCallCount: number;
+      appendBytes: number;
+      sessionByteOffsets: number[];
+    };
+
+/**
+ * What a `finish` call site supplies. The ledger fields (`sessionByteOffsets`,
+ * `salvaged`, `salvageReason`) are stamped centrally by `finish` from run-scoped
+ * state, so no call site can forget one and no call site can disagree.
+ */
+type RunDriveResultCore =
   | {
       ok: true;
       frameCount: number;
@@ -862,6 +910,29 @@ export function driveGlRun(
      *  from an unchanged piece count. */
     let sessionCount: number | null = null;
     let sessionAt = 0;
+    /**
+     * WS3 export-recovery round — the SESSION BYTE LEDGER.
+     *
+     * `sessionByteOffsets[k]` is how many bytes of `runFile` had been written
+     * when encoder session `k` produced its first byte. Session 0 is 0 by
+     * construction.
+     *
+     * Recorded by threading a marker THROUGH `appendQueue` rather than reading
+     * `appendBytes` when the `session-rotate` message arrives. Message order
+     * already guarantees every chunk of session k-1 was RECEIVED before the
+     * rotate (the worker posts them all before it posts the rotate), but an
+     * append is async: at rotate-receipt time some of those chunks may still be
+     * queued, and `appendBytes` would under-count. The marker takes its reading
+     * at the queue position the rotate occupies, which is exactly the seam.
+     *
+     * Nothing reads this to make a decision yet. It is the one number a
+     * truncate-and-rewind recovery needs and does not otherwise have — see
+     * PART 1c of docs/ws3-export-recovery-architecture.md. The marker appends
+     * nothing and does not reset either liveness bound.
+     */
+    const sessionByteOffsets: number[] = [0];
+    let salvaged = false;
+    let salvageReason: string | null = null;
     let lastOutputAt = now();
     /** WS3 export-liveness-occlusion round: monotonic-clock anchor mirroring
      *  FORWARD_PROGRESS_BOUND_MS's own reset condition exactly (set only
@@ -1052,14 +1123,18 @@ export function driveGlRun(
       }
     };
 
-    const finish = (result: RunDriveResult): void => {
+    const finish = (result: RunDriveResultCore): void => {
       if (settled) return;
       settled = true;
       clearWatchdog();
       clearProgressBound();
       if (activeWorker === worker) activeWorker = null;
       worker.terminate();
-      resolve(result);
+      resolve(
+        result.ok
+          ? { ...result, salvaged, salvageReason, sessionByteOffsets: sessionByteOffsets.slice() }
+          : { ...result, sessionByteOffsets: sessionByteOffsets.slice() },
+      );
     };
 
     const finishWatchdog = (): void => {
@@ -1244,6 +1319,56 @@ export function driveGlRun(
             });
           }
           break;
+        case 'salvage-done':
+          {
+            // Identical drain-then-settle shape as 'done'. The ONLY differences
+            // are the two flags stamped by `finish` — deliberately, because the
+            // append queue must be drained the same way either way: whatever
+            // chunks were already posted before the fence closed still have to
+            // reach disk before anyone counts pictures in the file.
+            salvaged = true;
+            salvageReason = data.reason;
+            lastWorkerDiagnostics = data.diagnostics;
+            mergePhaseFromWorker(data.diagnostics.phaseLog);
+            const salvageDrainStarted = now();
+            void appendQueue.then(() => {
+              const appendDrainMs = now() - salvageDrainStarted;
+              maxSilentMs = Math.max(maxSilentMs, now() - lastOutputAt);
+              const intervals = silentIntervals();
+              if (appendError) {
+                const failDiag = {
+                  ...data.diagnostics,
+                  failure: {
+                    name: appendError.name || null,
+                    message: appendError.message,
+                    via: 'append-error' as const,
+                    frameIndex: data.diagnostics.framesEncoded > 0 ? data.diagnostics.framesEncoded - 1 : null,
+                    timelineSec: null,
+                  },
+                };
+                finish({
+                  ok: false,
+                  error: errorFromDiagnostics('encode', failDiag, 'Failed to append an encoded chunk to disk.'),
+                  diagnostics: failDiag,
+                  silentIntervals: intervals,
+                  appendCallCount,
+                  appendBytes,
+                });
+                return;
+              }
+              finish({
+                ok: true,
+                frameCount: data.frameCount,
+                diagnostics: data.diagnostics,
+                maxSilentMs,
+                appendDrainMs,
+                silentIntervals: intervals,
+                appendCallCount,
+                appendBytes,
+              });
+            });
+          }
+          break;
         case 'error': {
           // WS3 flush-occlusion round — stamp the one field only this thread
           // knows before the payload is handed on. This is the path a
@@ -1296,10 +1421,15 @@ export function driveGlRun(
           sessionAt = 0;
           deps.onSessionPlan?.(data.pieceIndex, data.sessions);
           break;
-        case 'session-rotate':
+        case 'session-rotate': {
           sessionCount = data.sessions;
           sessionAt = data.sessionIndex;
+          const rotatedTo = data.sessionIndex;
+          appendQueue = appendQueue.then(() => {
+            sessionByteOffsets[rotatedTo] = appendBytes;
+          });
           break;
+        }
         case 'phase':
           if (data.phase !== lastPhase) lastPhaseAt = now();
           lastPhase = data.phase;
@@ -1732,6 +1862,7 @@ export async function exportProjectWebCodecs(
     muxMs: null,
     watchdogFired: false,
     watchdogPhase: null,
+    salvagedPieces: [],
   };
   lastWebCodecsRunDiagnostics = diag;
   // eslint-disable-next-line no-console
@@ -1889,9 +2020,21 @@ export async function exportProjectWebCodecs(
         appendCallCount: driveResult.appendCallCount,
         appendBytes: driveResult.appendBytes,
       });
+      if (driveResult.salvaged) {
+        diag.salvagedPieces.push({ pieceIndex, reason: driveResult.salvageReason ?? 'flush-timeout salvage' });
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-recovery] gl-piece SALVAGED — completeness now rests entirely on the frame-count guard', JSON.stringify({
+          pieceIndex,
+          reason: driveResult.salvageReason,
+          frameCount: driveResult.frameCount,
+          expectedFrames: plan.expectedFrames,
+          sessionByteOffsets: driveResult.sessionByteOffsets,
+        }));
+      }
       // eslint-disable-next-line no-console
       console.info('[ws3-liveness] gl-piece done', JSON.stringify({
         pieceIndex,
+        salvaged: driveResult.salvaged,
         diagnostics: d,
         maxSilentMs: driveResult.maxSilentMs,
         appendDrainMs: driveResult.appendDrainMs,
