@@ -13,6 +13,8 @@ import {
   driveGlRun,
   WATCHDOG_MS,
   FORWARD_PROGRESS_BOUND_MS,
+  APPEND_BATCH_CHUNKS,
+  APPEND_BATCH_MAX_AGE_MS,
   SILENT_INTERVAL_CAP,
   SILENT_INTERVAL_MIN_MS,
   type ExportWorkerHandle,
@@ -334,7 +336,14 @@ describe('driveGlRun fake-worker harness', () => {
     const p = startDrive(fake);
     fake.emit(chunkMsg(0));
     fake.emit(phase('frame-loop', 1));
-    await vi.advanceTimersByTimeAsync(WATCHDOG_MS + 60);
+    // WS3 append-batching round — the wait grew by APPEND_BATCH_MAX_AGE_MS, and
+    // that is the fix working rather than a fudge. The lone chunk is flushed by
+    // the batch age trigger at t=1000ms and the append COMPLETES, which now
+    // resets WATCHDOG_MS (Step 3a: a completed append is liveness). So the
+    // watchdog's 30s runs from t=1000, not from t=0. The silent-interval
+    // assertions below are unchanged — they measure chunk/queue-sample output
+    // gaps, which an append does not touch.
+    await vi.advanceTimersByTimeAsync(WATCHDOG_MS + APPEND_BATCH_MAX_AGE_MS + 60);
     const result = await p;
     expect(result.ok).toBe(false);
     if (result.ok) return;
@@ -457,7 +466,12 @@ describe('driveGlRun fake-worker harness', () => {
       // is now a permanent no-op per the mock above, exactly like a document
       // timer starved by occlusion. `appendQueue.then(...)` schedules a
       // microtask, so flush one before asserting it ran.
-      fake.emit(chunkMsg(0));
+      //
+      // WS3 append-batching round — a FULL batch rather than one chunk, so the
+      // size trigger issues the call synchronously. One chunk would now wait on
+      // the APPEND_BATCH_MAX_AGE_MS timer, and this test's whole premise is a
+      // scheduler that cannot be relied on to fire.
+      for (let i = 0; i < APPEND_BATCH_CHUNKS; i++) fake.emit(chunkMsg(i));
       await Promise.resolve();
       await Promise.resolve();
       expect(hangingAppend).toHaveBeenCalled();

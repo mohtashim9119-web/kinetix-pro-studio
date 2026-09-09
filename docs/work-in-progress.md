@@ -29,7 +29,12 @@ wall-clock ~62s is CLOSED — 3/3 live 200s/1080p/6000-frame transitioned+animat
 with `peakOpenCursors:2` held throughout. `FORWARD_PROGRESS_BOUND_MS` (45s) landed alongside the
 unchanged 30s `WATCHDOG_MS`, not the originally-proposed 30s→90s bump. Full writeup:
 `docs/history-2.md`'s "Export liveness" entry.
-1. [OPEN] Part C 500-segment live export (200s/1080p, transition+animation on every
+1. [OPEN] Append-path batching landed static-only (`docs/ws3-append-path-audit.md`): the 30s
+   watchdog was killing COMPLETED exports during their final append drain (a completed append
+   reset only the 45s progress bound, never `WATCHDOG_MS`, and no chunk can arrive after 'done').
+   Fixed, plus 1-per-chunk `appendFileRaw` IPC batched 100:1 and a 256MB queue ceiling. Unverified
+   live: no export was run, so the throughput claim is arithmetic on call count only.
+2. [OPEN] Part C 500-segment live export (200s/1080p, transition+animation on every
    boundary/segment) shows intermittent multi-second silent gaps mid-run — reproduced in 1 of 3
    live runs 2026-09-07 (15 intervals >5s, longest 10.74s), never crossing either watchdog so the
    export still completes. Root cause not isolated; most intervals lack phase attribution.
