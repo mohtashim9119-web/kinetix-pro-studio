@@ -103,7 +103,22 @@ export type ExportFailureVia =
    *  which only knows that no message arrived: this one names the operation
    *  and carries the frames encoded and the encoder queue depth at expiry in
    *  its message (`EncoderFlushTimeoutError`). */
-  | 'flush-timeout';
+  | 'flush-timeout'
+  /** WS3 append-batching round — the TERMINAL DRAIN made no progress.
+   *
+   *  Distinct from 'watchdog' (no worker message) and from 'stall' (no append
+   *  completed while the frame loop was still running): this one fires only
+   *  after the worker's terminal message ('done'/'salvage-done') has been
+   *  received, i.e. while the only remaining work is writing an already-encoded
+   *  backlog to disk. Its message names the append-queue depth and retained
+   *  bytes, which is the pair that says whether the writer is stuck or merely
+   *  behind. */
+  | 'append-drain-stall'
+  /** WS3 append-batching round — the main-thread append queue exceeded
+   *  APPEND_QUEUE_CEILING_BYTES. The encoder is outrunning the writer by enough
+   *  that the backlog is a memory risk in its own right; failing here names the
+   *  depth instead of dying later as an opaque OOM. */
+  | 'append-queue-overflow';
 
 export interface ExportFailureIdentity {
   name: string | null;

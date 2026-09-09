@@ -83,6 +83,58 @@ export interface ExportLivenessSnapshot {
    */
   encoderSessions?: number | null;
   encoderSessionIndex?: number | null;
+  /**
+   * WS3 append-batching round — the APPEND LEDGER, main-thread only.
+   *
+   * Why it lives here and not on `ExportWorkerDiagnosticsPayload`: the
+   * Copy-diagnostics blob (`App.tsx`) is built from `ExportError` +
+   * `ExportLivenessSnapshot` and NOTHING else, so every worker-side field
+   * (`flushChunksSinceEntry`, `encodeQueueSizeAtFlushExpiry`,
+   * `appendPendingAtFailure`, `selectedHardwareRung`) is dropped at that last
+   * hop no matter what the worker reported — the reason a field payload can
+   * show all four absent while the worker was perfectly healthy. Everything in
+   * this block is knowledge the MAIN THREAD already holds, so it is present in
+   * every payload regardless of whether the worker is alive, wedged, or
+   * terminated, and regardless of whether it answered `request-diagnostics`.
+   *
+   * Together these answer, off the payload alone, the question the previous
+   * round had to reason its way to: was the export still writing when it died?
+   */
+  appendLedger?: ExportAppendLedger | null;
+}
+
+/**
+ * Main-thread append-path counters (see `ExportLivenessSnapshot.appendLedger`).
+ * Every field is derived from state `exportPipelineWebCodecs.ts`'s `driveGlRun`
+ * owns directly; none of it requires a reply from the worker.
+ */
+export interface ExportAppendLedger {
+  /** Encoded chunks that have reached disk. */
+  chunksAppended: number;
+  /** `appendFileRaw` IPC calls actually issued (batched: << chunksAppended). */
+  ipcCalls: number;
+  /** Bytes that have reached disk. */
+  bytesAppended: number;
+  /** Chunks accepted from the worker but NOT yet on disk (batch buffer + queued batches). */
+  queueDepthChunks: number;
+  /** Bytes for those chunks — what the backlog actually retains in the JS heap. */
+  queueDepthBytes: number;
+  /** Milliseconds since the last append COMPLETED. The single number that says
+   *  whether the writer was alive at the moment of death. */
+  msSinceLastAppendCompleted: number;
+  /** Chunks/bytes appended since the worker last entered `encoder-flush`. */
+  chunksAppendedDuringFlush: number;
+  /** Bytes appended since the worker last entered `encoder-flush`. */
+  bytesAppendedDuringFlush: number;
+  /** TRUE once the worker's terminal 'done'/'salvage-done' arrived — i.e. the
+   *  run is in its final drain and no further chunks will ever be posted.
+   *  A failure with `doneReceived: true` killed an export the worker had
+   *  already finished. */
+  doneReceived: boolean;
+  /** Milliseconds since that terminal message, or null if it never arrived. */
+  msSinceDone: number | null;
+  /** Whether an `appendFileRaw` call was in flight at the moment of failure. */
+  appendInFlight: boolean;
 }
 
 /** One phase-log line, flattened for the diagnostics blob. */

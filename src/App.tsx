@@ -6761,6 +6761,17 @@ export default function App() {
                           // route out of `ExportLivenessSnapshot` until now,
                           // which is why field payloads carried none.
                           failureVia: err.liveness?.failureVia ?? null,
+                          // WS3 append-batching round — the MAIN-THREAD append
+                          // ledger, flattened alongside the other headline
+                          // fields. Every worker-sourced diagnostic
+                          // (flushChunksSinceEntry, encodeQueueSizeAtFlushExpiry,
+                          // appendPendingAtFailure, selectedHardwareRung) is
+                          // absent from this blob by ROUTE — it is built from
+                          // ExportError + ExportLivenessSnapshot and nothing
+                          // else — which is why a payload could show all four
+                          // missing while the worker was perfectly healthy.
+                          // These do not need the worker to reply.
+                          appendLedger: err.liveness?.appendLedger ?? null,
                           phaseLogTail: err.liveness?.phaseLogTail ?? null,
                           projectMeta: {
                             segmentCount: project.segments.length,

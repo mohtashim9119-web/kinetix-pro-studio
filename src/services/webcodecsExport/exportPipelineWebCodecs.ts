@@ -95,6 +95,7 @@ import {
   formatFailureMessage,
   pushPhaseLogEntry,
   NO_FLUSH_OBSERVATION,
+  type ExportFailureVia,
   type ExportPhaseLogEntry,
   type ExportWorkerDiagnosticsPayload,
   type SilentIntervalAttribution,
@@ -886,6 +887,106 @@ export const SILENT_INTERVAL_MIN_MS = 250;
 export const SILENT_INTERVAL_CAP = 256;
 
 /**
+ * WS3 append-batching round — how much the main thread accumulates before it
+ * spends one `appendFileRaw` IPC round-trip.
+ *
+ * THE MEASUREMENT THIS IS SIZED FROM. The 354-segment WebView2 field run wrote
+ * one chunk per `invoke`, and the phase log timed those calls at 12.4 ms apart,
+ * unbroken, for the whole terminal drain. 12.4 ms per frame against a 1080p30
+ * encoder that produces a frame far faster than that means the WRITER, not the
+ * encoder, sets the run's pace — and every frame the encoder wins by is a chunk
+ * that stays in the main thread's queue, so the backlog grows monotonically for
+ * the entire run. The cost is not the write: `ffmpeg.rs`'s
+ * `ffmpeg_append_file_raw` opens the file, writes, and closes it PER CALL, and
+ * that whole sequence plus the WebView2 IPC hop is what 12.4 ms buys.
+ *
+ * Batching does not make the write faster; it amortizes the fixed per-call cost
+ * over ~100 frames. Nothing about the FILE changes — `concatChunks` writes the
+ * same bytes in the same order, and `appendFileRawByteEquality.test.ts` pins
+ * that against a recording writer rather than leaving it as a claim.
+ *
+ * 100 chunks / 4 MB, whichever comes first: at 1080p30 (~33 KB/frame measured
+ * on this corpus) the count trigger fires first at ~3.3 MB, and the byte
+ * trigger is the guard for a high-bitrate or 4K-ish stream where 100 frames
+ * would be a much larger buffer. Both are deliberately small enough that a
+ * full buffer is a rounding error against the retained backlog the ceiling
+ * below actually exists to bound.
+ */
+export const APPEND_BATCH_CHUNKS = 100;
+export const APPEND_BATCH_BYTES = 4 * 1024 * 1024;
+
+/**
+ * WS3 append-batching round — the batch's AGE trigger, and it is a correctness
+ * bound rather than a throughput knob.
+ *
+ * FORWARD_PROGRESS_BOUND_MS (45s) resets ONLY on a completed append, by design.
+ * A size-triggered batch therefore introduces a failure the unbatched path could
+ * not have: a slow encoder that emits 50 frames and then spends a minute
+ * compositing leaves those 50 sitting in the buffer, no append ever completes,
+ * and the progress bound fires on a perfectly healthy run. Caught by
+ * `driveGlRun.test.ts`'s silent-interval eviction case, which feeds 306 chunks
+ * at 300ms spacing — the count trigger alone would not have fired until t≈49.7s,
+ * past the bound.
+ *
+ * So a non-empty buffer is ALWAYS flushed within this window, whether or not
+ * another chunk ever arrives (the timer is armed when the buffer becomes
+ * non-empty, not on a chunk). 1s: at the field run's own 12.4 ms/chunk the count
+ * trigger fires first roughly eight times over, so under load this costs nothing
+ * and never fires; when the encoder is slow it costs at most one extra IPC call
+ * per second — which is precisely the regime where landing an append promptly is
+ * the point, because it is the run's only liveness signal.
+ */
+export const APPEND_BATCH_MAX_AGE_MS = 1_000;
+
+/**
+ * WS3 append-batching round — hard ceiling on bytes accepted from the worker
+ * but not yet on disk (batch buffer + every queued batch).
+ *
+ * The field run's own arithmetic is the reasoning: 40384 frames at ~33 KB is
+ * ~1.3 GB of encoded output, and an append path that runs slower than the
+ * encoder retains the difference. A backlog of 5000 chunks — entirely plausible
+ * at 12.4 ms/chunk — is ~165 MB sitting in the JS heap on top of the GL
+ * compositor, the demux cache, and the decoders.
+ *
+ * 256 MB is set ABOVE that plausible-backlog figure on purpose. Under batching
+ * the queue should hover near zero, so this is not a tuning knob for normal
+ * operation — it is the line past which "the writer is behind" has become "the
+ * backlog is itself the failure", and crossing it produces a typed
+ * 'append-queue-overflow' naming the depth instead of an opaque renderer OOM
+ * some minutes later. It is NOT sized to any measured legitimate peak: no such
+ * peak has been measured (see the FINAL REPORT's NOT DETERMINED list), so it is
+ * placed by the memory-risk argument alone and should be re-derived the first
+ * time a real run reports a `queueDepthBytes` anywhere near it.
+ */
+export const APPEND_QUEUE_CEILING_BYTES = 256 * 1024 * 1024;
+
+/**
+ * WS3 append-batching round — the TERMINAL DRAIN bound.
+ *
+ * Step 3's liveness fix makes a completed append reset WATCHDOG_MS, which stops
+ * a healthy drain being killed. That alone would let a drain run unbounded as
+ * long as it keeps making any progress at all, so the drain gets its own
+ * ceiling: once the worker's terminal message has arrived, the remaining work
+ * is finite and already encoded, and 10 minutes is far past what writing even a
+ * multi-GB backlog can legitimately take once the per-call cost is amortized.
+ * A drain that blows this fails as 'append-drain-stall' with its depth named.
+ */
+export const APPEND_DRAIN_BOUND_MS = 600_000;
+
+/** Copy `parts` end to end into one buffer. `total` is passed rather than
+ *  re-summed so the allocation and the ledger can never disagree. */
+function concatChunks(parts: readonly Uint8Array[], total: number): Uint8Array {
+  if (parts.length === 1 && parts[0]!.byteLength === total) return parts[0]!;
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.byteLength;
+  }
+  return out;
+}
+
+/**
  * Minimal Worker surface `driveGlRun` needs. Production uses a real module
  * Worker; tests inject a fake so this function can run in node/vitest
  * without constructing `exportWorker.ts`.
@@ -902,6 +1003,11 @@ export interface DriveGlRunDeps {
   now?: () => number;
   /** WS3 — called once per GL piece with its encoder-session plan. Observational. */
   onSessionPlan?: (pieceIndex: number, sessions: number) => void;
+  /** Test-only override for APPEND_QUEUE_CEILING_BYTES. Production never passes
+   *  it. Exists because the real ceiling is 256 MB and a test that actually
+   *  allocated a quarter-gigabyte of chunk buffers to cross it would be
+   *  measuring the allocator, not the bound. */
+  appendQueueCeilingBytes?: number;
 }
 
 /**
@@ -943,6 +1049,7 @@ export function driveGlRun(
       : new Worker(new URL('./exportWorker.ts', import.meta.url), { type: 'module' });
     activeWorker = worker as Worker;
     const now = deps.now ?? (() => performance.now());
+    const appendQueueCeiling = deps.appendQueueCeilingBytes ?? APPEND_QUEUE_CEILING_BYTES;
     const runStartedAt = now();
 
     let appendQueue: Promise<void> = Promise.resolve();
@@ -956,6 +1063,35 @@ export function driveGlRun(
      *  A counter rather than a boolean so a burst that drains partway is still
      *  readable as pending. */
     let appendsInFlight = 0;
+    /**
+     * WS3 append-batching round — the main-thread APPEND LEDGER.
+     *
+     * Every counter here is main-thread knowledge, deliberately: the operator's
+     * Copy-diagnostics blob is built from `ExportError` + `ExportLivenessSnapshot`
+     * only (App.tsx), so nothing that requires a worker reply survives the last
+     * hop. These do, whatever state the worker is in.
+     */
+    /** Chunks buffered but not yet handed to an `appendFileRaw` call. */
+    let pendingBatch: Uint8Array[] = [];
+    let pendingBatchBytes = 0;
+    let pendingBatchChunks = 0;
+    /** Accepted from the worker, not yet on disk — buffer PLUS queued batches. */
+    let queueDepthChunks = 0;
+    let queueDepthBytes = 0;
+    /** `appendFileRaw` IPC calls actually issued (<< `appendCallCount` now). */
+    let appendIpcCallCount = 0;
+    let lastAppendCompletedAt = now();
+    let chunksAppendedDuringFlush = 0;
+    let bytesAppendedDuringFlush = 0;
+    /** Set the moment the worker's terminal 'done'/'salvage-done' arrives. From
+     *  here on no further chunk will ever be posted and the ONLY remaining work
+     *  is the drain — which is exactly the window the 30s watchdog used to kill.
+     *  Reported on the payload so the next field report answers "was the export
+     *  already finished?" without anyone having to infer it. */
+    let doneReceived = false;
+    let doneReceivedAt: number | null = null;
+    let drainBoundTimer: ReturnType<typeof setTimeout> | null = null;
+    let pendingBatchTimer: ReturnType<typeof setTimeout> | null = null;
     let settled = false;
     let watchdogTimer: ReturnType<typeof setTimeout> | null = null;
     let progressBoundTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1153,6 +1289,19 @@ export function driveGlRun(
       failureVia: lastWorkerDiagnostics?.failure?.via ?? null,
       encoderSessions: sessionCount,
       encoderSessionIndex: sessionCount === null ? null : sessionAt,
+      appendLedger: {
+        chunksAppended: appendCallCount,
+        ipcCalls: appendIpcCallCount,
+        bytesAppended: appendBytes,
+        queueDepthChunks,
+        queueDepthBytes,
+        msSinceLastAppendCompleted: now() - lastAppendCompletedAt,
+        chunksAppendedDuringFlush,
+        bytesAppendedDuringFlush,
+        doneReceived,
+        msSinceDone: doneReceivedAt === null ? null : now() - doneReceivedAt,
+        appendInFlight: appendsInFlight > 0,
+      },
     });
 
     const errorFromDiagnostics = (
@@ -1183,11 +1332,24 @@ export function driveGlRun(
       }
     };
 
+    const clearDrainBound = (): void => {
+      if (drainBoundTimer) {
+        clearTimeout(drainBoundTimer);
+        drainBoundTimer = null;
+      }
+    };
+
     const finish = (result: RunDriveResultCore): void => {
       if (settled) return;
       settled = true;
       clearWatchdog();
       clearProgressBound();
+      clearDrainBound();
+      if (pendingBatchTimer) {
+        clearTimeout(pendingBatchTimer);
+        pendingBatchTimer = null;
+      }
+      pendingBatch = [];
       if (activeWorker === worker) activeWorker = null;
       worker.terminate();
       resolve(
@@ -1197,59 +1359,104 @@ export function driveGlRun(
       );
     };
 
-    const finishWatchdog = (): void => {
+    /** How the append queue looked at the moment a bound fired — appended to
+     *  every terminal bound message, because "no output for 30s" and "no output
+     *  for 30s while 4211 chunks / 139 MB were still queued and the last one
+     *  landed 12 ms ago" are different failures and the old text could not tell
+     *  them apart. */
+    const appendQueueClause = (): string =>
+      `append queue: ${queueDepthChunks} chunk(s) / ${queueDepthBytes} byte(s) pending, ` +
+      `last append completed ${Math.round(now() - lastAppendCompletedAt)}ms ago, ` +
+      `${appendCallCount} chunk(s) written in ${appendIpcCallCount} IPC call(s)` +
+      (doneReceived ? ', worker had already reported done' : '');
+
+    /**
+     * One terminal-bound path for all four bounds (watchdog, forward-progress,
+     * terminal-drain, queue-overflow). Extracted rather than copied a fourth
+     * time: the 50 ms `request-diagnostics` grace, the reconstruction, the
+     * failure stamp and the `finish` call were identical in every copy, and the
+     * only thing that ever differed is the `via` and the sentence.
+     *
+     * The 50 ms grace is a BEST-EFFORT enrichment, never a dependency. If the
+     * worker is wedged, terminated, or simply slower than 50 ms, the payload is
+     * rebuilt from main-thread state and is complete for everything the
+     * operator reads off it — see `ExportLivenessSnapshot.appendLedger`.
+     */
+    const finishWithBound = (via: ExportFailureVia, message: string): void => {
       if (settled) return;
       worker.postMessage({ type: 'request-diagnostics' });
       setTimeout(() => {
         const diagnostics = reconstructDiagnostics();
         diagnostics.failure = {
           name: null,
-          message: 'Export worker produced no output for 30s — aborting (watchdog).',
-          via: 'watchdog',
+          message,
+          via,
           frameIndex: diagnostics.framesEncoded > 0 ? diagnostics.framesEncoded - 1 : null,
           timelineSec: null,
         };
         finish({
           ok: false,
-          error: errorFromDiagnostics('unknown', diagnostics, 'Export worker produced no output for 30s — aborting (watchdog).'),
+          error: errorFromDiagnostics('unknown', diagnostics, message),
           diagnostics,
           silentIntervals: silentIntervals(),
           appendCallCount,
           appendBytes,
         });
       }, 50);
+    };
+
+    /**
+     * WS3 append-batching round — the watchdog now DISCRIMINATES.
+     *
+     * Before this round the 30s message-based watchdog fired blind during the
+     * terminal drain: a completed append reset FORWARD_PROGRESS_BOUND_MS but
+     * never WATCHDOG_MS, and no chunk message can arrive after 'done' by
+     * construction, so a healthy export whose backlog took longer than 30s to
+     * write was killed while its writer was still landing a chunk every 12.4 ms.
+     * A completed append now resets WATCHDOG_MS too (see the append task), so
+     * reaching this function during a drain means no append completed either —
+     * a genuinely stuck writer, reported as such rather than as a generic
+     * silence.
+     */
+    const finishWatchdog = (): void => {
+      finishWithBound(
+        doneReceived ? 'append-drain-stall' : 'watchdog',
+        doneReceived
+          ? `Export worker finished, but no encoded chunk reached disk for ${WATCHDOG_MS / 1000}s ` +
+            `during the final drain — aborting (drain stalled). ${appendQueueClause()}.`
+          : `Export worker produced no output for ${WATCHDOG_MS / 1000}s — aborting (watchdog). ${appendQueueClause()}.`,
+      );
+    };
+
+    const finishProgressBound = (): void => {
+      finishWithBound(
+        'stall',
+        `Export made no forward progress (no append completed) for ${FORWARD_PROGRESS_BOUND_MS / 1000}s ` +
+          `— aborting (stall guard). ${appendQueueClause()}.`,
+      );
+    };
+
+    /** The drain's own ceiling — see APPEND_DRAIN_BOUND_MS. Fires even when the
+     *  drain IS progressing, so a pathologically slow writer cannot hold the run
+     *  open indefinitely on the strength of one append per 29 seconds. */
+    const finishDrainBound = (): void => {
+      finishWithBound(
+        'append-drain-stall',
+        `Export final drain exceeded ${APPEND_DRAIN_BOUND_MS / 1000}s — aborting. ${appendQueueClause()}.`,
+      );
+    };
+
+    const finishQueueOverflow = (): void => {
+      finishWithBound(
+        'append-queue-overflow',
+        `Encoded output outran the writer: ${queueDepthBytes} byte(s) pending exceeds the ` +
+          `${appendQueueCeiling}-byte append-queue ceiling — aborting. ${appendQueueClause()}.`,
+      );
     };
 
     const resetWatchdog = (): void => {
       clearWatchdog();
       watchdogTimer = setTimeout(finishWatchdog, WATCHDOG_MS);
-    };
-
-    const finishProgressBound = (): void => {
-      if (settled) return;
-      worker.postMessage({ type: 'request-diagnostics' });
-      setTimeout(() => {
-        const diagnostics = reconstructDiagnostics();
-        diagnostics.failure = {
-          name: null,
-          message: `Export made no forward progress (no append completed) for ${FORWARD_PROGRESS_BOUND_MS / 1000}s — aborting (stall guard).`,
-          via: 'stall',
-          frameIndex: diagnostics.framesEncoded > 0 ? diagnostics.framesEncoded - 1 : null,
-          timelineSec: null,
-        };
-        finish({
-          ok: false,
-          error: errorFromDiagnostics(
-            'unknown',
-            diagnostics,
-            `Export made no forward progress (no append completed) for ${FORWARD_PROGRESS_BOUND_MS / 1000}s — aborting (stall guard).`,
-          ),
-          diagnostics,
-          silentIntervals: silentIntervals(),
-          appendCallCount,
-          appendBytes,
-        });
-      }, 50);
     };
 
     /** Reset ONLY on real forward progress (an append actually completing) —
@@ -1259,6 +1466,79 @@ export function driveGlRun(
       lastRealProgressAt = now();
       clearProgressBound();
       progressBoundTimer = setTimeout(finishProgressBound, FORWARD_PROGRESS_BOUND_MS);
+    };
+
+    /**
+     * WS3 append-batching round — hand the buffered chunks to ONE `appendFileRaw`.
+     *
+     * The queue is still a strict serial chain (`appendQueue.then`), so batch k
+     * is fully written before batch k+1 opens the file: concatenation order is
+     * unchanged from the one-call-per-chunk path, and so are the bytes, because
+     * `concatChunks` only copies. That equality is pinned by
+     * `appendBatching.test.ts`'s recording writer rather than asserted here.
+     *
+     * Called on every batch trigger, and additionally at three seams where a
+     * PARTIAL buffer must not be left sitting: encoder-session rotation (so the
+     * `sessionByteOffsets` marker still reads the exact seam), and the two
+     * terminal messages (so every byte the worker produced reaches disk before
+     * anyone counts pictures in the file).
+     */
+    const flushPendingBatch = (): void => {
+      if (pendingBatchTimer) {
+        clearTimeout(pendingBatchTimer);
+        pendingBatchTimer = null;
+      }
+      if (pendingBatch.length === 0) return;
+      const parts = pendingBatch;
+      const batchBytes = pendingBatchBytes;
+      const batchChunks = pendingBatchChunks;
+      pendingBatch = [];
+      pendingBatchBytes = 0;
+      pendingBatchChunks = 0;
+      appendQueue = appendQueue.then(async () => {
+        if (appendError || settled) {
+          queueDepthChunks -= batchChunks;
+          queueDepthBytes -= batchBytes;
+          return;
+        }
+        appendsInFlight++;
+        try {
+          await ffmpeg.appendFileRaw(runFile, concatChunks(parts, batchBytes));
+          appendIpcCallCount++;
+          appendCallCount += batchChunks;
+          appendBytes += batchBytes;
+          lastAppendCompletedAt = now();
+          if (lastPhase === 'encoder-flush') {
+            chunksAppendedDuringFlush += batchChunks;
+            bytesAppendedDuringFlush += batchBytes;
+          }
+          // WS3 append-batching round, Step 3a — A COMPLETED APPEND IS LIVENESS.
+          //
+          // This is the line that stops the watchdog killing healthy exports.
+          // `resetProgressBound` was already here; `noteWatchdogOutput` +
+          // `resetWatchdog` were not, so once the worker stopped posting chunks
+          // — which happens by construction the moment it posts 'done' —
+          // WATCHDOG_MS ran down to zero no matter how fast bytes were still
+          // reaching disk. An append landing on disk is strictly stronger
+          // evidence of life than a 'queue-sample', which already resets this
+          // timer and only proves a frame was SUBMITTED.
+          //
+          // This cannot mask a real hang: the reset happens after `await`
+          // RESOLVES, so a writer that is stuck produces no reset at all and
+          // both bounds run out exactly as before.
+          noteWatchdogOutput();
+          resetWatchdog();
+          resetProgressBound();
+          onFrameProgress(appendCallCount, totalExpectedFrames);
+          notePhaseAppendDuringFlush();
+        } catch (err) {
+          appendError = err instanceof Error ? err : new Error(causeString(err));
+        } finally {
+          appendsInFlight--;
+          queueDepthChunks -= batchChunks;
+          queueDepthBytes -= batchBytes;
+        }
+      });
     };
 
     /**
@@ -1301,6 +1581,19 @@ export function driveGlRun(
       }
     };
 
+    /**
+     * The worker's terminal message arrived: no further chunk can ever be
+     * posted, so everything left is the drain. Push the partial buffer out,
+     * record the transition for the payload, and arm the drain's own ceiling.
+     */
+    const noteTerminalMessage = (): void => {
+      doneReceived = true;
+      doneReceivedAt = now();
+      flushPendingBatch();
+      clearDrainBound();
+      drainBoundTimer = setTimeout(finishDrainBound, APPEND_DRAIN_BOUND_MS);
+    };
+
     worker.onmessage = (ev: MessageEvent<ExportWorkerOutboundMessage>) => {
       const data = ev.data;
       switch (data.type) {
@@ -1309,28 +1602,30 @@ export function driveGlRun(
           noteWatchdogOutput();
           resetWatchdog();
           const bytes = new Uint8Array(data.bytes);
-          appendQueue = appendQueue.then(async () => {
-            if (appendError || settled) return;
-            appendsInFlight++;
-            try {
-              await ffmpeg.appendFileRaw(runFile, bytes);
-              appendCallCount++;
-              appendBytes += bytes.byteLength;
-              resetProgressBound();
-              onFrameProgress(appendCallCount, totalExpectedFrames);
-              // WS3 flush-occlusion round — an append that COMPLETES while the
-              // worker is inside `encoder-flush` writes its own phase-log entry.
-              // Together with the worker's per-chunk flush pulse this closes the
-              // hole the field payload showed: between flush entry and the 30s
-              // watchdog there were zero events of any kind, so the log could
-              // not say whether the encoder or the writer was the stalled half.
-              notePhaseAppendDuringFlush();
-            } catch (err) {
-              appendError = err instanceof Error ? err : new Error(causeString(err));
-            } finally {
-              appendsInFlight--;
-            }
-          });
+          pendingBatch.push(bytes);
+          pendingBatchBytes += bytes.byteLength;
+          pendingBatchChunks++;
+          queueDepthChunks++;
+          queueDepthBytes += bytes.byteLength;
+          if (pendingBatchChunks >= APPEND_BATCH_CHUNKS || pendingBatchBytes >= APPEND_BATCH_BYTES) {
+            flushPendingBatch();
+          } else if (pendingBatchTimer === null) {
+            // Buffer just became non-empty — arm the age trigger. Armed here
+            // rather than re-armed per chunk so the window measures the OLDEST
+            // buffered chunk, and so a buffer whose producer goes silent still
+            // reaches disk. See APPEND_BATCH_MAX_AGE_MS.
+            pendingBatchTimer = setTimeout(() => {
+              pendingBatchTimer = null;
+              flushPendingBatch();
+            }, APPEND_BATCH_MAX_AGE_MS);
+          }
+          // WS3 Step 5 — the queue is bounded now. Checked on ACCEPT rather
+          // than on completion, because acceptance is the only moment the depth
+          // can grow, and the point of the ceiling is to fail while the number
+          // is still explainable rather than as an opaque renderer OOM later.
+          if (queueDepthBytes > appendQueueCeiling) {
+            finishQueueOverflow();
+          }
           break;
         }
         case 'run-done':
@@ -1339,6 +1634,7 @@ export function driveGlRun(
           {
             lastWorkerDiagnostics = data.diagnostics;
             mergePhaseFromWorker(data.diagnostics.phaseLog);
+            noteTerminalMessage();
             const appendDrainStarted = now();
             void appendQueue.then(() => {
               const appendDrainMs = now() - appendDrainStarted;
@@ -1390,6 +1686,7 @@ export function driveGlRun(
             salvageReason = data.reason;
             lastWorkerDiagnostics = data.diagnostics;
             mergePhaseFromWorker(data.diagnostics.phaseLog);
+            noteTerminalMessage();
             const salvageDrainStarted = now();
             void appendQueue.then(() => {
               const appendDrainMs = now() - salvageDrainStarted;
@@ -1485,6 +1782,12 @@ export function driveGlRun(
           sessionCount = data.sessions;
           sessionAt = data.sessionIndex;
           const rotatedTo = data.sessionIndex;
+          // WS3 append-batching round — the partial buffer MUST go out before
+          // the marker. `sessionByteOffsets[k]` is a truncation point, so it has
+          // to be the byte count at the exact seam; a buffer still holding
+          // session k-1's tail would put the marker before bytes that belong
+          // ahead of it, and a rewind to k would then cut in the wrong place.
+          flushPendingBatch();
           appendQueue = appendQueue.then(() => {
             sessionByteOffsets[rotatedTo] = appendBytes;
           });
