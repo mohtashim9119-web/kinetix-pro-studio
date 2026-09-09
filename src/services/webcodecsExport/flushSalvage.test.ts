@@ -337,7 +337,7 @@ function recordingFfmpeg(): { ffmpeg: WebCodecsFfmpeg; written: number[] } {
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
-    countAnnexbFrames: vi.fn(async () => 0),
+    countAnnexbFrames: vi.fn(async () => ({ pictures: 0, vclNals: 0 })),
     concatAnnexbPieces: vi.fn(async () => undefined),
   } as unknown as WebCodecsFfmpeg;
   return { ffmpeg, written };
@@ -483,7 +483,7 @@ function project(): Project {
 function guardFfmpeg(pictures: number): WebCodecsFfmpeg {
   return {
     ...recordingFfmpeg().ffmpeg,
-    countAnnexbFrames: vi.fn(async () => pictures),
+    countAnnexbFrames: vi.fn(async () => ({ pictures, vclNals: pictures })),
   } as unknown as WebCodecsFfmpeg;
 }
 
@@ -501,8 +501,8 @@ describe('post-concat frame-count guard — the salvage predicate', () => {
     expect(r.ok).toBe(false);
     if (r.ok) throw new Error('unreachable');
     expect(r.error.kind).toBe('concat');
-    expect(r.error.message).toContain('(89)');
-    expect(r.error.message).toContain('(90)');
+    expect(r.error.message).toContain('measuredPictures=89');
+    expect(r.error.message).toContain('expectedTotal=90');
   });
 
   it('LONG BY ONE picture -> ABORTS too — a duplicated tail is as fatal as a truncated one', async () => {
