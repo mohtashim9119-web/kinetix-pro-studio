@@ -369,6 +369,20 @@ impl AnnexbAccessUnitScanner {
         if header_indices.len() < 2 {
             if header_indices.is_empty() {
                 compact_buffer_tail_without_start_codes(&mut self.buffer);
+            } else if self.buffer.len() > MAX_IN_FLIGHT_NAL_BYTES {
+                // Exactly one start code, and its NAL has outgrown the cap:
+                // nothing will ever close it from inside this buffer, and the
+                // start-code-free compaction above cannot fire while that code
+                // is present. Count the NAL now — `first_mb_in_slice` lives in
+                // the bytes right after the header, which we already hold — and
+                // drop its payload, keeping only enough tail to reassemble a
+                // start code split across the next chunk boundary. The dropped
+                // payload cannot contain a start code of its own (RBSP escaping
+                // forbids `00 00 01` inside a NAL), so no count is lost.
+                let buf = std::mem::take(&mut self.buffer);
+                count_annexb_access_units_in_buffer(&buf, &mut self.count);
+                let keep = ANNEXB_START_CODE_LOOKBACK.min(buf.len());
+                self.buffer.extend_from_slice(&buf[buf.len() - keep..]);
             }
             return;
         }
@@ -380,6 +394,10 @@ impl AnnexbAccessUnitScanner {
     }
 }
 
+/// In-memory reference implementation, kept as the oracle the streaming
+/// scanners are diffed against in tests. Production reads through the
+/// streaming path only, so this is test-only by design, not by accident.
+#[cfg(test)]
 fn count_annexb_access_units(bytes: &[u8]) -> AnnexbFrameCount {
     let mut scanner = AnnexbAccessUnitScanner::new();
     scanner.feed(bytes);
@@ -390,6 +408,19 @@ fn count_annexb_access_units(bytes: &[u8]) -> AnnexbFrameCount {
 /// Bytes retained when compacting a buffer that contains no start codes so a
 /// `00 00 01` / `00 00 00 01` split across chunk boundaries is still found.
 const ANNEXB_START_CODE_LOOKBACK: usize = 4;
+
+/// Hard cap on the bytes of a SINGLE in-flight (not yet closed) NAL that either
+/// streaming scanner will retain before it force-closes that NAL and drops its
+/// payload. Neither scanner needs a NAL's payload body: the count path needs the
+/// header byte plus the leading `first_mb_in_slice` Exp-Golomb code, and the cut
+/// path needs only `start` / `header` / `nal_type` / `first_mb` offsets. Without
+/// this cap a file that ends mid-NAL — the salvage case, a crashed or killed
+/// export — is absorbed whole as payload: O(file) memory and a quadratic
+/// re-scan. 8 MiB sits far above any real H.264 NAL this app emits (a 4K IDR is
+/// ~2 MiB worst case), so a well-formed stream never reaches it; force-closing a
+/// legitimately larger NAL is still CORRECT, only slower, because the head that
+/// decides everything has already been parsed.
+const MAX_IN_FLIGHT_NAL_BYTES: usize = 8 * 1024 * 1024;
 
 fn buffer_contains_start_code(buf: &[u8]) -> bool {
     buf.windows(3).any(|w| w[0] == 0 && w[1] == 0 && w[2] == 1)
@@ -455,6 +486,13 @@ struct StreamAnnexbNalScanner {
     buffer: Vec<u8>,
     base_offset: u64,
     nals: Vec<ScannedNal>,
+    /// A NAL whose head (start / header / type / `first_mb`) has been parsed but
+    /// whose `end` is not yet known, because its payload outgrew
+    /// `MAX_IN_FLIGHT_NAL_BYTES` and was dropped. Closed by the next start code,
+    /// or by `finish` at end of file. At most one can be outstanding: once the
+    /// payload is dropped the buffer holds no start code, so the ordinary
+    /// start-code-free compaction keeps it small from then on.
+    pending: Option<ScannedNal>,
 }
 
 impl StreamAnnexbNalScanner {
@@ -463,6 +501,7 @@ impl StreamAnnexbNalScanner {
             buffer: Vec::new(),
             base_offset: 0,
             nals: Vec::new(),
+            pending: None,
         }
     }
 
@@ -471,13 +510,28 @@ impl StreamAnnexbNalScanner {
         self.drain_complete_nals();
     }
 
+    /// Every emit goes through here so a force-closed NAL always gets its real
+    /// `end` — the start offset of whatever NAL follows it.
+    fn push_nal(&mut self, nal: ScannedNal) {
+        if let Some(mut pending) = self.pending.take() {
+            pending.end = nal.start;
+            self.nals.push(pending);
+        }
+        self.nals.push(nal);
+    }
+
     fn finish(&mut self, _file_len: u64) {
+        let end_offset = self.base_offset + self.buffer.len() as u64;
         if !self.buffer.is_empty() {
             let nals = scan_annexb_nals(&self.buffer);
             for nal in nals {
-                self.nals
-                    .push(scanned_nal_from_span(&nal, self.base_offset, &self.buffer));
+                let scanned = scanned_nal_from_span(&nal, self.base_offset, &self.buffer);
+                self.push_nal(scanned);
             }
+        }
+        if let Some(mut pending) = self.pending.take() {
+            pending.end = end_offset;
+            self.nals.push(pending);
         }
         self.buffer.clear();
     }
@@ -486,17 +540,40 @@ impl StreamAnnexbNalScanner {
         loop {
             let nals = scan_annexb_nals(&self.buffer);
             if nals.len() < 2 {
+                if nals.len() == 1 && self.buffer.len() > MAX_IN_FLIGHT_NAL_BYTES {
+                    self.force_close_in_flight_nal(nals[0]);
+                    break;
+                }
                 compact_buffer_without_start_codes(&mut self.buffer, &mut self.base_offset);
                 break;
             }
             for nal in &nals[..nals.len() - 1] {
-                self.nals
-                    .push(scanned_nal_from_span(nal, self.base_offset, &self.buffer));
+                let scanned = scanned_nal_from_span(nal, self.base_offset, &self.buffer);
+                self.push_nal(scanned);
             }
             let keep_from = nals[nals.len() - 1].start;
             self.base_offset += keep_from as u64;
             self.buffer.drain(..keep_from);
         }
+    }
+
+    /// Parks the single open NAL's head and discards its payload. The cut
+    /// decision reads only `start` / `header` / `nal_type` / `first_mb`, all of
+    /// which are already resolved here, so dropping the body loses nothing; the
+    /// provisional `end` is corrected by `push_nal`/`finish`. Retains
+    /// `ANNEXB_START_CODE_LOOKBACK` trailing bytes so a start code straddling
+    /// the next chunk boundary is still detected.
+    fn force_close_in_flight_nal(&mut self, span: AnnexbNalSpan) {
+        let scanned = scanned_nal_from_span(&span, self.base_offset, &self.buffer);
+        if let Some(mut previous) = self.pending.take() {
+            previous.end = scanned.start;
+            self.nals.push(previous);
+        }
+        self.pending = Some(scanned);
+        let keep = ANNEXB_START_CODE_LOOKBACK.min(self.buffer.len());
+        let discard = self.buffer.len() - keep;
+        self.base_offset += discard as u64;
+        self.buffer.drain(..discard);
     }
 }
 
@@ -648,10 +725,18 @@ fn scan_annexb_nals(bytes: &[u8]) -> Vec<AnnexbNalSpan> {
     nals
 }
 
+/// In-memory reference implementation, kept as the oracle the streaming
+/// scanners are diffed against in tests. Production reads through the
+/// streaming path only, so this is test-only by design, not by accident.
+#[cfg(test)]
 struct PictureGroup {
     vcl: Vec<AnnexbNalSpan>,
 }
 
+/// In-memory reference implementation, kept as the oracle the streaming
+/// scanners are diffed against in tests. Production reads through the
+/// streaming path only, so this is test-only by design, not by accident.
+#[cfg(test)]
 fn group_pictures(nals: &[AnnexbNalSpan], bytes: &[u8]) -> Vec<PictureGroup> {
     let mut pictures: Vec<PictureGroup> = Vec::new();
     for nal in nals {
@@ -687,6 +772,10 @@ fn mode_of(values: &[usize]) -> Option<usize> {
     Some(best)
 }
 
+/// In-memory reference implementation, kept as the oracle the streaming
+/// scanners are diffed against in tests. Production reads through the
+/// streaming path only, so this is test-only by design, not by accident.
+#[cfg(test)]
 fn dropped_picture_cut(
     nals: &[AnnexbNalSpan],
     prev_last_vcl: AnnexbNalSpan,
@@ -706,6 +795,10 @@ fn dropped_picture_cut(
     dropped_first_vcl.start
 }
 
+/// In-memory reference implementation, kept as the oracle the streaming
+/// scanners are diffed against in tests. Production reads through the
+/// streaming path only, so this is test-only by design, not by accident.
+#[cfg(test)]
 fn truncate_annexb_to_last_complete_au(bytes: &[u8]) -> (Vec<u8>, AnnexbTruncateResult) {
     let nals = scan_annexb_nals(bytes);
     let pictures = group_pictures(&nals, bytes);
@@ -1684,6 +1777,102 @@ mod tests {
             .into_iter()
             .filter(|n| n.nal_type == 1 || n.nal_type == 5)
             .collect()
+    }
+
+    /// A file left behind by a crashed or killed export can end mid-NAL: the
+    /// last start code is present but nothing ever closes it. Both streaming
+    /// scanners retain the in-flight NAL, and their "no start code present"
+    /// compaction cannot fire while that one start code sits in the buffer, so
+    /// without an explicit in-flight cap the whole remaining file is absorbed
+    /// as NAL payload — O(file) memory, plus a quadratic re-scan of the growing
+    /// buffer on every chunk. Salvage is exactly the malformed-input case, so
+    /// this path is reachable in production.
+    #[test]
+    fn stream_nal_scanner_stays_bounded_on_unterminated_trailing_nal() {
+        const FEED: usize = 1024 * 1024;
+        const TRAILING_MIB: usize = 24;
+
+        let prefix = build_multi_slice_stream(6, 2);
+        let mut scanner = StreamAnnexbNalScanner::new();
+        scanner.feed(&prefix);
+        // Open a slice NAL and never close it.
+        scanner.feed(&[0, 0, 0, 1, 0x41]);
+
+        let chunk = vec![0xFFu8; FEED];
+        let mut peak = scanner.buffer.len();
+        for _ in 0..TRAILING_MIB {
+            scanner.feed(&chunk);
+            peak = peak.max(scanner.buffer.len());
+        }
+        let bound = MAX_IN_FLIGHT_NAL_BYTES + 2 * FEED;
+        assert!(
+            peak <= bound,
+            "in-flight NAL buffer peaked at {peak} bytes, above the {bound}-byte bound \
+             (unbounded absorption of the unterminated trailing NAL)"
+        );
+    }
+
+    #[test]
+    fn access_unit_scanner_stays_bounded_on_unterminated_trailing_nal() {
+        const FEED: usize = 1024 * 1024;
+        const TRAILING_MIB: usize = 24;
+
+        let mut all = build_multi_slice_stream(6, 2);
+        all.extend_from_slice(&[0, 0, 0, 1, 0x41]);
+        all.extend(std::iter::repeat(0xFFu8).take(TRAILING_MIB * FEED));
+
+        let mut scanner = AnnexbAccessUnitScanner::new();
+        let mut peak = 0usize;
+        for chunk in all.chunks(FEED) {
+            scanner.feed(chunk);
+            peak = peak.max(scanner.buffer.len());
+        }
+        let bound = MAX_IN_FLIGHT_NAL_BYTES + 2 * FEED;
+        assert!(
+            peak <= bound,
+            "count-path buffer peaked at {peak} bytes, above the {bound}-byte bound"
+        );
+        scanner.finish();
+
+        // Force-closing the in-flight NAL must not change what is counted: the
+        // dropped payload cannot hold a start code, and `first_mb_in_slice` was
+        // read from the retained head. (The unterminated trailing slice does
+        // parse `first_mb == 0`, so it legitimately reads as a 7th picture
+        // start — the truncate path is what discards it as incomplete.)
+        assert_eq!(scanner.count, count_annexb_access_units(&all));
+        assert_eq!(scanner.count.pictures, 7);
+    }
+
+    /// The same malformed shape driven through the real file path: the cut must
+    /// still land on the last complete picture and the kept prefix must count
+    /// back the pictures the prefix actually contains.
+    #[test]
+    fn truncate_annexb_on_unterminated_trailing_nal_produces_sane_cut() {
+        let (_id, dir) = make_session();
+        let path = dir.join("crashed.h264");
+        let prefix = build_multi_slice_stream(6, 2);
+        {
+            use std::io::Write;
+            let mut file = fs::File::create(&path).unwrap();
+            file.write_all(&prefix).unwrap();
+            file.write_all(&[0, 0, 0, 1, 0x41]).unwrap();
+            let chunk = vec![0xFFu8; IO_CHUNK_SIZE];
+            for _ in 0..(12 * 1024 * 1024 / IO_CHUNK_SIZE) {
+                file.write_all(&chunk).unwrap();
+            }
+            file.flush().unwrap();
+        }
+
+        let got = truncate_annexb_inner(&path, "crashed.h264", None).unwrap();
+        assert_eq!(got.pictures, 6);
+        assert!(
+            got.kept_bytes <= prefix.len() as u64 + 8,
+            "cut kept {} bytes, past the valid prefix ({} bytes)",
+            got.kept_bytes,
+            prefix.len()
+        );
+        assert!(got.bytes_removed > 12 * 1024 * 1024);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
