@@ -169,6 +169,25 @@ export interface ExportWorkerDiagnosticsPayload {
    *  that hung without cross-referencing the progress UI. */
   encoderSessionIndex: number;
   encoderSessions: number;
+  /**
+   * WS3 salvage-runtime round — which `HARDWARE_LADDER` rung
+   * (`exportWorker.ts`) the MOST RECENT successful `createEncoder` call
+   * selected: `'prefer-hardware'`, `'no-preference'`, or `'prefer-software'`.
+   * Null only if no encoder has been built yet (init-error before the ladder
+   * ran). Updated on every session build, including a rotation, so this
+   * always names the session actually active at snapshot time —
+   * `encoderSessionIndex` says WHICH session; this says what it IS.
+   *
+   * Exists because a rotation's rebuilt encoder re-walks the ladder from
+   * scratch with nothing pinning it to the previous session's rung
+   * (`docs/ws3-export-recovery-architecture.md` §1a's caveat): two sessions
+   * could legally land on different rungs, different levels, or CABAC vs
+   * CAVLC, and until this field existed no diagnostics payload could say
+   * whether that had happened — "the two halves are byte-comparable" was
+   * asserted, never measured, because the rung was thrown away the instant
+   * `createEncoder` returned.
+   */
+  selectedHardwareRung: string | null;
   /** Main-thread only (`exportPipelineWebCodecs.ts`): was an `appendFileRaw`
    *  call still outstanding when the run was declared failed? Null in a
    *  worker-built payload, which cannot know. This is the field that separates
@@ -211,6 +230,7 @@ export const NO_FLUSH_OBSERVATION: Pick<
   | 'encoderSessionIndex'
   | 'encoderSessions'
   | 'appendPendingAtFailure'
+  | 'selectedHardwareRung'
 > = {
   encodedChunkBytesAtFlushStart: null,
   flushChunksSinceEntry: null,
@@ -219,6 +239,7 @@ export const NO_FLUSH_OBSERVATION: Pick<
   encoderSessionIndex: 0,
   encoderSessions: 1,
   appendPendingAtFailure: null,
+  selectedHardwareRung: null,
 };
 
 export interface WatchdogOutputEvent {

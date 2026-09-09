@@ -147,6 +147,18 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
    * exhausted macOS's default 256 per-process FD limit on large-segment exports.
    */
   concatAnnexbPieces(piecePaths: string[], outputPath: string): Promise<void>;
+  /**
+   * WS3 salvage-runtime round — truncates `path` at the last complete Annex-B
+   * access unit entirely on the native side (`TauriFfmpeg.truncateAnnexb`,
+   * backed by the Rust `ffmpeg_truncate_annexb` command, `tauriFfmpeg.ts:222`)
+   * and returns the picture/VCL-NAL count of the KEPT bytes as its last step
+   * (`ffmpeg.rs`'s `truncate_annexb_to_last_complete_au`, which counts via
+   * `count_annexb_access_units(&kept)` after computing the cut) — so this one
+   * call is both "truncate" and "count the truncated result", with no second
+   * round-trip needed. Called ONLY on a salvaged GL piece (see the salvage
+   * handling below), never on the clean path.
+   */
+  truncateAnnexb(path: string): Promise<{ pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number }>;
 }
 
 import {
@@ -174,6 +186,47 @@ function boundedStepError(kind: ExportError['kind'], fallbackMessage: string, er
     return { kind, message: err.message, cause: JSON.stringify(err.diagnostics) };
   }
   return { kind, message: fallbackMessage, cause: causeString(err) };
+}
+
+/**
+ * WS3 salvage-runtime round — the message for a salvaged GL piece that fails
+ * ITS OWN exact-match check, right after truncation, before concat ever runs.
+ *
+ * Deliberately mirrors `formatConcatFrameCountMismatch` (`annexbFrameCount.ts`,
+ * the other agent's file — not imported here to avoid a cross-ownership edit
+ * were its shape ever to change) rather than importing it, but reports at a
+ * NARROWER scope: one piece, with the truncation's own byte accounting and the
+ * worker-reported session/frame context folded in, so a failure here can be
+ * attributed to the exact salvaged piece without waiting for the aggregate
+ * post-concat guard to run a diagnostic per-piece breakdown after the fact.
+ */
+function formatSalvageTruncateMismatch(params: {
+  pieceIndex: number;
+  pictures: number;
+  vclNals: number;
+  expectedFrames: number;
+  bytesRemoved: number;
+  keptBytes: number;
+  framesEncoded: number;
+  encoderSessionIndex: number;
+  encoderSessions: number;
+  salvageReason: string | null;
+}): string {
+  const {
+    pieceIndex, pictures, vclNals, expectedFrames, bytesRemoved, keptBytes,
+    framesEncoded, encoderSessionIndex, encoderSessions, salvageReason,
+  } = params;
+  const direction = pictures < expectedFrames ? 'short' : 'long';
+  return (
+    `Salvaged piece ${pieceIndex} failed its post-truncation exact-match check ` +
+    `(${direction} by ${Math.abs(pictures - expectedFrames)}): ` +
+    `picturesAfterTruncation=${pictures}, vclNals=${vclNals}, expectedFrames=${expectedFrames}, ` +
+    `bytesRemovedByTruncation=${bytesRemoved}, keptBytes=${keptBytes}, ` +
+    `framesSubmittedToEncoder=${framesEncoded}, ` +
+    `encoderSessionIndex=${encoderSessionIndex}/${encoderSessions}, ` +
+    `salvageReason=${salvageReason ?? 'unknown'}. ` +
+    'The guard tolerance was not widened — aborting rather than shipping a corrupt export.'
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1757,6 +1810,78 @@ function collectUsedFontFamilies(project: Project): Set<string> {
 }
 
 // ---------------------------------------------------------------------------
+// WS3 salvage-runtime round — Step 3: the BOUND for a future bounded
+// re-render, designed and tested here, NOT wired into the live recovery path.
+//
+// Why not wired: a bounded re-render (fence + abandon the hung session,
+// truncate `piece_N.h264` back to the last rotation boundary's recorded byte
+// offset — `sessionByteOffsets[k]`, this file's own session-byte-ledger doc
+// comment above — reopen an encoder, re-render only from that boundary
+// forward) needs a primitive this round does not have:
+// `truncateFile(path, byteLength)`, cutting a file to a CALLER-SUPPLIED byte
+// length. `ffmpeg.truncateAnnexb` (Step 1, `WebCodecsFfmpeg` above) is NOT
+// that primitive — it truncates to the LAST COMPLETE ACCESS UNIT the file
+// happens to end on, computed from the bytes themselves, with no way to name
+// an earlier, specific cut point. Applied to a piece whose abandoned session
+// has been streaming chunks for up to 60s, it would keep most of that
+// session's bytes (whichever prefix of them happens to end on a complete AU)
+// instead of discarding them — the opposite of a rewind. Re-rendering the
+// boundary forward and APPENDING (the only operation actually available)
+// would then make the file LONGER than expected, which the zero-tolerance
+// guard already rejects exactly as it rejects a short file — a safe failure,
+// but a strictly worse one than aborting immediately: it burns up to
+// `MAX_ENCODER_SESSION_FRAMES` frames of re-encoding for a foregone-conclusion
+// abort. Wiring the mechanism into production today would be a pure
+// regression, not a partial win. See this round's final report for the full
+// argument and exactly which native command (session id, path, byte length)
+// would need to exist for rung 9 to become buildable.
+//
+// What IS built here: the ceiling a real re-render must obey once that
+// primitive exists — "exactly one attempt per boundary, at most 2 boundary
+// rewinds per export" — as one pure, tested function, so a future round
+// inherits an already-enforced bound rather than inventing one. Precedent:
+// `MAX_FLUSH_SALVAGES`/`decideFlushTimeoutDisposition` (`exportWorker.ts`)
+// did exactly this for the flush-salvage bound before the salvage itself was
+// fully wired.
+// ---------------------------------------------------------------------------
+
+/** At most this many rotation-boundary rewinds across a WHOLE export (every
+ *  GL piece combined) — a per-EXPORT ceiling, deliberately distinct from
+ *  `MAX_FLUSH_SALVAGES` (per-RUN, i.e. per GL piece). Two, not one: a single
+ *  export can legitimately contain more than one GL piece, and a transient
+ *  stall recovered by one piece's rewind says nothing about whether a
+ *  SECOND, unrelated piece's rewind is also transient — but a third rewind in
+ *  the same export is exactly the "salvage becomes routine" failure mode
+ *  `decideFlushTimeoutDisposition`'s own doc comment warns against, so the
+ *  ceiling stops there rather than growing with piece count. */
+export const MAX_BOUNDARY_REWINDS_PER_EXPORT = 2;
+
+export type BoundedRerenderDisposition =
+  | { action: 'rewind' }
+  | { action: 'abort'; reason: string };
+
+/**
+ * Pure policy for whether a bounded re-render may attempt ANOTHER rotation-
+ * boundary rewind. Takes only a count — same shape as
+ * `decideFlushTimeoutDisposition`'s own bound check, and for the same reason:
+ * a policy function that cannot see anything but the counter cannot be
+ * talked into re-litigating the bound from some other signal.
+ */
+export function decideBoundedRerenderDisposition(input: {
+  rewindsUsed: number;
+  maxRewinds?: number;
+}): BoundedRerenderDisposition {
+  const maxRewinds = input.maxRewinds ?? MAX_BOUNDARY_REWINDS_PER_EXPORT;
+  if (input.rewindsUsed >= maxRewinds) {
+    return {
+      action: 'abort',
+      reason: `bounded re-render rewind bound reached (${input.rewindsUsed}/${maxRewinds}) — aborting rather than rewinding unboundedly`,
+    };
+  }
+  return { action: 'rewind' };
+}
+
+// ---------------------------------------------------------------------------
 // Part 6 — Main orchestrator.
 // ---------------------------------------------------------------------------
 
@@ -1771,6 +1896,15 @@ export async function exportProjectWebCodecs(
   ffmpeg: WebCodecsFfmpeg,
   options: ExportOptionsWebCodecs = {},
   onProgress: ProgressCallback = () => undefined,
+  /**
+   * WS3 salvage-runtime round — test-only injection point, mirroring
+   * `DriveGlRunDeps.createWorker` one level up. Defaults to real `Worker`
+   * construction (unchanged production behavior); a test supplies a fake
+   * `ExportWorkerHandle` so a GL piece's salvage/truncate/count wiring is
+   * reachable from `exportProjectWebCodecs` itself, not only from `driveGlRun`
+   * in isolation.
+   */
+  deps: { createWorker?: () => ExportWorkerHandle } = {},
 ): Promise<ExportResult> {
   const fps = options.fps ?? 30;
   // Width/height must both be even for yuv420p. segmentEncoder.ts's own
@@ -1939,6 +2073,7 @@ export async function exportProjectWebCodecs(
           onSessionPlan: (_pi, sessions) => {
             pieceSessions = sessions;
           },
+          createWorker: deps.createWorker,
         },
         { originSec: plan.gridOriginSec, baseFrame: plan.gridBaseFrame },
       );
@@ -2011,6 +2146,86 @@ export async function exportProjectWebCodecs(
           expectedFrames: plan.expectedFrames,
           sessionByteOffsets: driveResult.sessionByteOffsets,
         }));
+
+        // WS3 salvage-runtime round — real truncation, real count, zero
+        // tolerance, BEFORE this piece's file is ever concatenated. Ordering
+        // (truncate -> count -> compare, per piece, strictly before concat) is
+        // deliberate: truncation is a "last complete AU of THIS buffer"
+        // operation, so it is only meaningful applied to the exact file whose
+        // tail is in question. Post-concat it would find the tail of whichever
+        // piece is LAST in the concatenated stream — not this piece, unless
+        // this happens to be the last one — and a single-piece export skips
+        // concat entirely (`pieceFiles.length === 1` below), so pre-concat,
+        // per-piece truncation is the one hook that is uniform across both
+        // shapes. `truncateAnnexb` counts the KEPT bytes as its own last step
+        // (see the `WebCodecsFfmpeg` interface doc above), so this is one
+        // native round-trip, not two.
+        let truncateResult: { pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number };
+        try {
+          truncateResult = await withFfmpegLivenessBound(
+            {
+              label: 'FRAME_COUNT_BOUND_MS',
+              boundMs: FRAME_COUNT_BOUND_MS,
+              ffmpeg,
+              files: [runFile],
+              pieceCount: pieces.length,
+              pieceIndex,
+            },
+            async () => await ffmpeg.truncateAnnexb(runFile),
+          );
+        } catch (err) {
+          activeFfmpeg = null;
+          return {
+            ok: false,
+            error: boundedStepError('concat', `Failed to truncate salvaged piece ${pieceIndex} to its last complete access unit.`, err),
+          };
+        }
+
+        // eslint-disable-next-line no-console
+        console.info('[ws3-recovery] gl-piece salvage TRUNCATED', JSON.stringify({ pieceIndex, ...truncateResult }));
+
+        // Zero tolerance — exact match only. Never widened, in either
+        // direction: a salvage short by even one picture, or long by even
+        // one (a truncation that kept a stray complete-looking picture the
+        // encoder never actually finished emitting for this run), aborts.
+        if (truncateResult.pictures !== plan.expectedFrames) {
+          activeFfmpeg = null;
+          return {
+            ok: false,
+            error: {
+              kind: 'concat',
+              message: formatSalvageTruncateMismatch({
+                pieceIndex,
+                pictures: truncateResult.pictures,
+                vclNals: truncateResult.vclNals,
+                expectedFrames: plan.expectedFrames,
+                bytesRemoved: truncateResult.bytesRemoved,
+                keptBytes: truncateResult.keptBytes,
+                framesEncoded: d.framesEncoded,
+                encoderSessionIndex: d.encoderSessionIndex,
+                encoderSessions: d.encoderSessions,
+                salvageReason: driveResult.salvageReason,
+              }),
+              cause: `salvaged piece ${pieceIndex} failed its post-truncation exact-match check`,
+              liveness: {
+                lastPhase: d.lastPhase,
+                msSinceLastPhaseChange: null,
+                pieceIndex,
+                framesEncoded: d.framesEncoded,
+                phaseLogTail: d.phaseLog.slice(-LIVENESS_PHASE_LOG_TAIL).map((e) => ({
+                  atMs: Math.round(e.atMs),
+                  phase: e.phase,
+                  pieceIndex: e.pieceIndex,
+                  framesEncoded: e.framesEncoded,
+                  kind: e.kind,
+                })),
+                failureVia: 'flush-timeout',
+                encoderSessions: d.encoderSessions,
+                encoderSessionIndex: d.encoderSessionIndex,
+              },
+            },
+          };
+        }
       }
       // eslint-disable-next-line no-console
       console.info('[ws3-liveness] gl-piece done', JSON.stringify({
