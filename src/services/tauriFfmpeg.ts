@@ -201,6 +201,19 @@ export class TauriFfmpeg implements FfmpegLike {
    * the renderer. Returns both picture count and raw VCL NAL count for the
    * post-concat guard's diagnostic message.
    */
+  /** Byte length of a session file without reading its contents. */
+  async sessionFileSize(path: string): Promise<number> {
+    this.#assertAlive();
+    try {
+      return await invoke<number>('ffmpeg_session_file_size', {
+        sessionId: this.#sessionId,
+        path,
+      });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
   async countAnnexbFrames(path: string): Promise<AnnexbFrameCount> {
     this.#assertAlive();
     try {
@@ -225,6 +238,26 @@ export class TauriFfmpeg implements FfmpegLike {
       return await invoke('ffmpeg_truncate_annexb', {
         sessionId: this.#sessionId,
         path,
+      });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
+  /**
+   * Truncates `<path>` to an exact byte offset via in-place `set_len`, then
+   * returns the picture count on the kept prefix for checkpoint verification.
+   */
+  async truncateAnnexbToOffset(
+    path: string,
+    byteOffset: number,
+  ): Promise<{ pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number }> {
+    this.#assertAlive();
+    try {
+      return await invoke('ffmpeg_truncate_annexb_to_offset', {
+        sessionId: this.#sessionId,
+        path,
+        byteOffset,
       });
     } catch (err) {
       throw new Error(typeof err === 'string' ? err : String(err));
