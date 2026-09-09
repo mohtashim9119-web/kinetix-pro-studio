@@ -15,6 +15,9 @@ import {
   FRAME_COUNT_BOUND_MS,
   MUX_BOUND_MS,
   TRUNCATE_BOUND_MS,
+  TRUNCATE_BOUND_MS_PROVISIONAL,
+  computeMuxBoundMs,
+  EXPORT_SCALE_ANNEXB_BYTES,
   type FfmpegKillable,
 } from './ffmpegLivenessBound';
 
@@ -153,16 +156,26 @@ describe('withFfmpegLivenessBound', () => {
   it('every bound is distinct from WATCHDOG_MS and ordered by the size of the job it covers', () => {
     // Subprocess bounds must stay above the frozen 30 s worker watchdog, except
     // REMUX which measured to 30 s itself (same number, different subsystem).
-    for (const ms of [TIER_PIECE_BOUND_MS, CONCAT_BOUND_MS, FRAME_COUNT_BOUND_MS, MUX_BOUND_MS, TRUNCATE_BOUND_MS]) {
+    const muxAtScale = computeMuxBoundMs(EXPORT_SCALE_ANNEXB_BYTES);
+    // Opaque sidecar steps must exceed the frozen 30 s worker watchdog.
+    for (const ms of [TIER_PIECE_BOUND_MS, CONCAT_BOUND_MS, muxAtScale, TRUNCATE_BOUND_MS]) {
       expect(ms).not.toBe(30_000);
       expect(ms).toBeGreaterThan(30_000);
     }
+    // Native streaming scan — measured ~1 s at 2.3 GB; bound is seconds, not minutes.
+    expect(FRAME_COUNT_BOUND_MS).toBeGreaterThan(5_000);
+    expect(FRAME_COUNT_BOUND_MS).toBeLessThan(muxAtScale);
     expect(REMUX_BOUND_MS).toBe(30_000);
     expect(REMUX_BOUND_MS).toBeLessThan(CONCAT_BOUND_MS);
-    expect(CONCAT_BOUND_MS).toBeLessThan(MUX_BOUND_MS);
-    expect(MUX_BOUND_MS).toBeLessThan(FRAME_COUNT_BOUND_MS);
-    // Truncate mirrors the frame-count guard's bound by deliberate structural
-    // analogy (same single-pass access-unit scanner), not coincidence.
-    expect(TRUNCATE_BOUND_MS).toBe(FRAME_COUNT_BOUND_MS);
+    // Frame-count is a fast native scan (~1 s at 2.3 GB); its bound is below
+    // the conservative concat copy bound even though both are native I/O.
+    expect(FRAME_COUNT_BOUND_MS).toBeLessThan(CONCAT_BOUND_MS);
+    expect(FRAME_COUNT_BOUND_MS).toBeLessThan(TRUNCATE_BOUND_MS);
+    expect(TRUNCATE_BOUND_MS).toBeLessThan(muxAtScale);
+    expect(TRUNCATE_BOUND_MS).toBeGreaterThan(TRUNCATE_BOUND_MS_PROVISIONAL / 10);
+    expect(TRUNCATE_BOUND_MS).toBeLessThan(TRUNCATE_BOUND_MS_PROVISIONAL);
+    // 2.3 GB export at 10× slower I/O (~188 s mux) must survive size-scaled bound.
+    const mux23 = computeMuxBoundMs(2_300_000_000);
+    expect(mux23).toBeGreaterThan(188_000);
   });
 });

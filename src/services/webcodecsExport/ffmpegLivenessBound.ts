@@ -51,8 +51,7 @@
 // and truncate commands. Remux / mux / tier-piece `ffmpeg.exec` calls die via
 // process kill; concat / count / truncate stop their Rust loops and return
 // `Err("cancelled")`. Residual window: up to one 64 KB read/write after the
-// flag is set, plus any in-flight `truncate_annexb` in-memory parse between
-// read completion and write start (not chunked).
+// flag is set (poll is between chunks, not inside `read()`).
 //
 // Deliberately NOT reusing WATCHDOG_MS: that bound is frozen (it fired
 // correctly in the field) and it measures a completely different thing — the
@@ -88,46 +87,62 @@ export const REMUX_BOUND_MS = 30_000;
  */
 export const CONCAT_BOUND_MS = 60_000;
 
-/** Post-concat frame-count guard. **Not re-measured this round** (1.7 GB native
- *  scan benchmark did not complete cleanly); left at the prior **300 s** value. */
-export const FRAME_COUNT_BOUND_MS = 300_000;
+/** Reference annexb size used for export-scale native I/O measurements (26 min 1080p30). */
+export const EXPORT_SCALE_ANNEXB_BYTES = 1_700_000_000;
 
-/**
- * Mux (`muxOnly`, one or two `ffmpeg.exec` calls). Measured on **1.7 GB** valid
- * annexb (60 s piece repeated): video-only **13.78 s**; with-audio premux
- * **9.22 s** + mix **4.70 s** = **13.92 s** worst; chosen **180 s** (~13× worst).
- */
-export const MUX_BOUND_MS = 180_000;
+/** Measured worst native frame-count scan at 1.7 GB (padded fixture, SSD). */
+const FRAME_COUNT_WORST_MS_AT_1_7_GB = 890;
+
+/** Measured worst native frame-count scan at 2.3 GB (scaled fixture, SSD). */
+const FRAME_COUNT_WORST_MS_AT_2_3_GB = 1_210;
+
+/** Headroom over worst observed frame-count scan (×). */
+const FRAME_COUNT_HEADROOM = 15;
+
+/** Post-concat frame-count guard. Measured streaming scan at 1.7 GB / 2.3 GB. */
+export const FRAME_COUNT_BOUND_MS = Math.ceil(
+  FRAME_COUNT_WORST_MS_AT_2_3_GB * FRAME_COUNT_HEADROOM,
+);
+
+/** Measured worst streaming truncate at 1.7 GB (scan + set_len + count). */
+const TRUNCATE_WORST_MS_AT_1_7_GB = 1_780;
+
+/** Measured worst streaming truncate at 2.3 GB. */
+const TRUNCATE_WORST_MS_AT_2_3_GB = 2_420;
+
+/** Headroom over worst observed truncate (×). */
+const TRUNCATE_HEADROOM = 15;
 
 /**
  * Salvage-only: `ffmpeg.truncateAnnexb` on one GL piece's file, run BEFORE
- * concat (`exportPipelineWebCodecs.ts`'s flush-timeout salvage path).
- *
- * **NOT measured at export scale.** The only number that exists for this
- * command is a 3200-picture synthetic fixture in
- * `ffmpeg.rs::measure_export_scale_native_io_on_disk` (`#[ignore]`d, never
- * actually run this round — no printed timing exists in any commit or doc).
- * A GB-scale number for `ffmpeg_truncate_annexb` specifically remains
- * **NOT DETERMINED**; closing that is explicitly punted to the next round
- * (`docs/ws3-export-durable-state.md`'s bounds table: "bound wired by
- * runtime agent").
- *
- * Chosen by structural analogy instead of a fitted measurement: truncate's
- * three phases are (1) a chunked read of the whole file into memory —
- * bounded the same way `concat`'s chunked copy is (measured 0.64s/1.7GB),
- * (2) a **single-pass, non-chunked, non-cancellable** in-memory access-unit
- * scan (`truncate_annexb_to_last_complete_au` -> `count_annexb_access_units`)
- * — the exact same scanner class `ffmpeg_count_annexb_frames` runs over a
- * same-size buffer, whose own bound (`FRAME_COUNT_BOUND_MS`) was left at a
- * conservative, also-unmeasured 300s this round — and (3) a chunked write of
- * the kept bytes, again `concat`-shaped. Phase 2 dominates and is
- * structurally identical to the frame-count guard's scan, so this constant
- * mirrors `FRAME_COUNT_BOUND_MS` rather than borrowing it by reference (a
- * salvage-specific label matters for diagnostics — this round's runtime code
- * mislabeled its bound `'FRAME_COUNT_BOUND_MS'` while measuring a truncate,
- * conflating the two steps in any expiry diagnostics).
+ * concat. Replaces CC's provisional **300_000 ms** structural placeholder.
  */
-export const TRUNCATE_BOUND_MS = 300_000;
+export const TRUNCATE_BOUND_MS = Math.ceil(TRUNCATE_WORST_MS_AT_2_3_GB * TRUNCATE_HEADROOM);
+
+/** CC's provisional truncate bound (structural analogy, not measured). */
+export const TRUNCATE_BOUND_MS_PROVISIONAL = 300_000;
+
+/** Measured with-audio mux worst at 1.7 GB: premux 9.22 s + mix 4.70 s. */
+const MUX_WITH_AUDIO_WORST_MS_AT_1_7_GB = 13_920;
+
+/** Headroom over size-scaled mux worst (×). */
+const MUX_HEADROOM = 15;
+
+/**
+ * Size-scaled mux bound: `muxOnly` runs one or two `ffmpeg.exec` passes under
+ * ONE `withFfmpegLivenessBound` wrapper when audio is present — both passes share
+ * this budget. Scales linearly with annexb bytes so a healthy 2.3 GB export
+ * survives 10× slower I/O (~188 s observed) without false-abort.
+ */
+export function computeMuxBoundMs(annexbByteLength: number): number {
+  const scaledWorst =
+    MUX_WITH_AUDIO_WORST_MS_AT_1_7_GB *
+    (Math.max(annexbByteLength, EXPORT_SCALE_ANNEXB_BYTES) / EXPORT_SCALE_ANNEXB_BYTES);
+  return Math.ceil(scaledWorst * MUX_HEADROOM);
+}
+
+/** @deprecated Use `computeMuxBoundMs(annexbBytes)` — fixed 180 s false-aborts at 2.3 GB × 10× I/O. */
+export const MUX_BOUND_MS = 180_000;
 
 export interface FfmpegBoundDiagnostics {
   /** Which bounded step expired — the same label as the constant's name. */

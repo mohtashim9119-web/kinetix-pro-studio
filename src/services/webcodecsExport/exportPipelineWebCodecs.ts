@@ -137,6 +137,7 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
    * `ffmpeg_count_annexb_frames` command) — see the frame-count guard section
    * below for why this replaced a `readFile` + JS-scan approach.
    */
+  sessionFileSize(path: string): Promise<number>;
   countAnnexbFrames(path: string): Promise<AnnexbFrameCount>;
   /**
    * Stream-concatenates `piecePaths` (in order) into a single `outputPath`
@@ -168,7 +169,7 @@ import {
   REMUX_BOUND_MS,
   CONCAT_BOUND_MS,
   FRAME_COUNT_BOUND_MS,
-  MUX_BOUND_MS,
+  computeMuxBoundMs,
   TRUNCATE_BOUND_MS,
 } from './ffmpegLivenessBound';
 
@@ -2357,10 +2358,12 @@ export async function exportProjectWebCodecs(
     // `project.id` identifies this export run in muxOnly's error messages
     // instead; see muxOnly.ts's own doc comment on the `sessionId` param.
     const muxStarted = performance.now();
+    const annexbBytes = await ffmpeg.sessionFileSize(finalVideoFile);
+    const muxBoundMs = computeMuxBoundMs(annexbBytes);
     await withFfmpegLivenessBound(
       {
         label: 'MUX_BOUND_MS',
-        boundMs: MUX_BOUND_MS,
+        boundMs: muxBoundMs,
         ffmpeg,
         files: [finalVideoFile, ...(audioFile ? [audioFile] : []), outputFile],
         pieceCount: pieces.length,
