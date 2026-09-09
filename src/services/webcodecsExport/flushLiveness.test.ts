@@ -268,9 +268,20 @@ describe('exportWorker source — both flush call sites go through the shared bo
   it('the FINAL flush is bounded — no bare `await encoder.flush()` survives in the export path', () => {
     // A bare awaited flush anywhere in this file is the unbounded shape.
     expect(src).not.toMatch(/await\s+encoder\.flush\(\)/);
-    // ...and the final flush specifically is a flushWithBound call.
+    // ...and the final flush specifically reaches the bound. WS3 export-recovery
+    // round: it does so through `runFinalFlushWithRecovery`, which exists so the
+    // flush-timeout recovery is drivable by a mocked encoder. That wrapper is
+    // NOT a second implementation of the bound — the next assertion in this
+    // block pins that there is still exactly one — it is a call site of it, and
+    // the two hops are checked separately so neither can quietly drop out.
     const finalFlush = src.slice(src.indexOf("tracker.enter('encoder-flush')"));
-    expect(finalFlush).toMatch(/await flushWithBound\(encoder, framesEmitted, sessionIndex, FLUSH_BOUND_MS, flushObservation\)/);
+    expect(finalFlush).toMatch(/await runFinalFlushWithRecovery\(\{/);
+    expect(finalFlush).toMatch(/boundMs: FLUSH_BOUND_MS/);
+    expect(finalFlush).toMatch(/observe: flushObservation/);
+    const wrapper = src.slice(src.indexOf('export async function runFinalFlushWithRecovery('));
+    expect(wrapper).toMatch(
+      /await flushWithBound\(encoder, framesEncoded, sessionIndex, opts\.boundMs \?\? FLUSH_BOUND_MS, opts\.observe\)/,
+    );
   });
 
   it('there is exactly ONE implementation of the bound, shared by both call sites', () => {
