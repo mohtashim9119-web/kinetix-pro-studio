@@ -162,14 +162,19 @@ describe('withFfmpegLivenessBound', () => {
       expect(ms).not.toBe(30_000);
       expect(ms).toBeGreaterThan(30_000);
     }
-    // Native streaming scan — measured ~1 s at 2.3 GB; bound is seconds, not minutes.
+    // Native streaming scan — MEASURED worst 3.255 s at 2.3 GB (not the ~1 s
+    // that was assumed before this was ever run); bound is 25x that.
     expect(FRAME_COUNT_BOUND_MS).toBeGreaterThan(5_000);
     expect(FRAME_COUNT_BOUND_MS).toBeLessThan(muxAtScale);
     expect(REMUX_BOUND_MS).toBe(30_000);
     expect(REMUX_BOUND_MS).toBeLessThan(CONCAT_BOUND_MS);
-    // Frame-count is a fast native scan (~1 s at 2.3 GB); its bound is below
-    // the conservative concat copy bound even though both are native I/O.
-    expect(FRAME_COUNT_BOUND_MS).toBeLessThan(CONCAT_BOUND_MS);
+    // Frame-count's bound now sits ABOVE the concat bound, and that ordering is
+    // measurement, not drift: at 1.7 GB the native concat copy is 834 ms while
+    // the access-unit scan is 2.74 s — counting is the more expensive step, so
+    // the old "frame count < concat" assertion encoded an assumption the first
+    // real measurement refuted. Concat keeps its own conservative 60 s (72x its
+    // measured worst); it is not resized here.
+    expect(FRAME_COUNT_BOUND_MS).toBeGreaterThan(CONCAT_BOUND_MS);
     expect(FRAME_COUNT_BOUND_MS).toBeLessThan(TRUNCATE_BOUND_MS);
     expect(TRUNCATE_BOUND_MS).toBeLessThan(muxAtScale);
     expect(TRUNCATE_BOUND_MS).toBeGreaterThan(TRUNCATE_BOUND_MS_PROVISIONAL / 10);

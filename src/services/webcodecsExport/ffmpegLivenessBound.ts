@@ -90,34 +90,64 @@ export const CONCAT_BOUND_MS = 60_000;
 /** Reference annexb size used for export-scale native I/O measurements (26 min 1080p30). */
 export const EXPORT_SCALE_ANNEXB_BYTES = 1_700_000_000;
 
-/** Measured worst native frame-count scan at 1.7 GB (padded fixture, SSD). */
-const FRAME_COUNT_WORST_MS_AT_1_7_GB = 890;
+// ---------------------------------------------------------------------------
+// MEASURED 2026-09-10 on the final streaming scanners, release profile, macOS
+// internal SSD, via `ffmpeg::tests::measure_streaming_annexb_at_scale` run
+// standalone under `/usr/bin/time -l` (no cargo build in the same process, so
+// the RSS figure is the scanner's own). Three samples per cell; p50 = middle,
+// worst = max. Peak RSS for the WHOLE run — which writes 4 GB of fixtures and
+// performs six counts and six truncates — was 87,539,712 B (83.5 MiB), i.e.
+// O(window), not O(file).
+//
+//   1.7 GB   count  p50 2714 ms / worst 2739 ms   truncate p50 5242 / worst 5820
+//   2.3 GB   count  p50 3251 ms / worst 3255 ms   truncate p50 6770 / worst 6907
+//
+// These REPLACE the previous constants' inputs (1210 ms count, 2420 ms
+// truncate at 2.3 GB), which were never measured and were ~2.7-2.9x too fast.
+// Bounds built on them (18_150 ms / 36_300 ms) carried only ~5.5x real headroom
+// and would have false-aborted a healthy 2.3 GB export on a disk barely 6x
+// slower than this one — the same class of defect as the hang they guard.
+// ---------------------------------------------------------------------------
 
-/** Measured worst native frame-count scan at 2.3 GB (scaled fixture, SSD). */
-const FRAME_COUNT_WORST_MS_AT_2_3_GB = 1_210;
+/** Measured worst native frame-count scan at 1.7 GB. */
+const FRAME_COUNT_WORST_MS_AT_1_7_GB = 2_739;
 
-/** Headroom over worst observed frame-count scan (×). */
-const FRAME_COUNT_HEADROOM = 15;
-
-/** Post-concat frame-count guard. Measured streaming scan at 1.7 GB / 2.3 GB. */
-export const FRAME_COUNT_BOUND_MS = Math.ceil(
-  FRAME_COUNT_WORST_MS_AT_2_3_GB * FRAME_COUNT_HEADROOM,
-);
+/** Measured worst native frame-count scan at 2.3 GB — the sizing case. */
+const FRAME_COUNT_WORST_MS_AT_2_3_GB = 3_255;
 
 /** Measured worst streaming truncate at 1.7 GB (scan + set_len + count). */
-const TRUNCATE_WORST_MS_AT_1_7_GB = 1_780;
+const TRUNCATE_WORST_MS_AT_1_7_GB = 5_820;
 
-/** Measured worst streaming truncate at 2.3 GB. */
-const TRUNCATE_WORST_MS_AT_2_3_GB = 2_420;
+/** Measured worst streaming truncate at 2.3 GB — the sizing case. */
+const TRUNCATE_WORST_MS_AT_2_3_GB = 6_907;
 
-/** Headroom over worst observed truncate (×). */
-const TRUNCATE_HEADROOM = 15;
+/**
+ * Headroom over worst observed, for both native scans (x).
+ *
+ * 25x, chosen so a 2.3 GB export survives a device 25x slower than the machine
+ * these numbers came from — an internal SSD. That covers a contended external
+ * or network volume with margin. A 10x-slower disk needs 32.6 s (count) and
+ * 69.1 s (truncate); 25x needs 81.4 s and 172.7 s. Both bounds clear those.
+ *
+ * The asymmetry with `MUX_HEADROOM` (15x) is deliberate and stated, not an
+ * oversight: the mux bound scales with file size as well, so its effective
+ * headroom at 2.3 GB is spent differently. See `computeMuxBoundMs`.
+ */
+const NATIVE_SCAN_HEADROOM = 25;
+
+/** Post-concat frame-count guard. Measured streaming scan, 25x worst at 2.3 GB. */
+export const FRAME_COUNT_BOUND_MS = Math.ceil(
+  FRAME_COUNT_WORST_MS_AT_2_3_GB * NATIVE_SCAN_HEADROOM,
+);
 
 /**
  * Salvage-only: `ffmpeg.truncateAnnexb` on one GL piece's file, run BEFORE
- * concat. Replaces CC's provisional **300_000 ms** structural placeholder.
+ * concat. Measured streaming truncate, 25x worst at 2.3 GB. Replaces CC's
+ * provisional 300_000 ms structural placeholder.
  */
-export const TRUNCATE_BOUND_MS = Math.ceil(TRUNCATE_WORST_MS_AT_2_3_GB * TRUNCATE_HEADROOM);
+export const TRUNCATE_BOUND_MS = Math.ceil(
+  TRUNCATE_WORST_MS_AT_2_3_GB * NATIVE_SCAN_HEADROOM,
+);
 
 /** CC's provisional truncate bound (structural analogy, not measured). */
 export const TRUNCATE_BOUND_MS_PROVISIONAL = 300_000;
@@ -132,7 +162,21 @@ const MUX_HEADROOM = 15;
  * Size-scaled mux bound: `muxOnly` runs one or two `ffmpeg.exec` passes under
  * ONE `withFfmpegLivenessBound` wrapper when audio is present — both passes share
  * this budget. Scales linearly with annexb bytes so a healthy 2.3 GB export
- * survives 10× slower I/O (~188 s observed) without false-abort.
+ * survives 10x slower I/O without false-abort.
+ *
+ * Verified against CC's risk table: the 13.92 s worst at 1.7 GB (premux 9.22 s +
+ * mix 4.70 s) scales to 18.83 s at 2.3 GB, so 10x slower I/O is 188.3 s — the
+ * exact row the table flagged against the old fixed 180_000 ms bound.
+ *
+ * Yields **208_800 ms (208.8 s) at 1.7 GB** and **282_495 ms (282.5 s) at
+ * 2.3 GB**. Both clear 188.3 s, the 2.3 GB case with ~1.5x margin.
+ *
+ * KNOWN LIMIT, stated rather than papered over: at 25x slower I/O a 2.3 GB mux
+ * needs 470.8 s and this bound would false-abort. The native scan bounds above
+ * are sized for 25x; this one is sized for the 10x bar its measurement was
+ * taken against. Raising `MUX_HEADROOM` to 25 would close the gap and was NOT
+ * done this round because 13.92 s is the only mux number that exists and it was
+ * measured at 1.7 GB only.
  */
 export function computeMuxBoundMs(annexbByteLength: number): number {
   const scaledWorst =
