@@ -414,6 +414,26 @@ function writeSliceNal(out: number[], idr: boolean, firstMbInSlice: number): voi
   writeNal(out, idr ? 5 : 1, bitsToRbspBytes(bits));
 }
 
+/** Build one picture per entry in `slicesPerPicture` (variable slices per picture). */
+export function buildSyntheticVariableSliceAnnexb(slicesPerPicture: readonly number[]): Uint8Array {
+  const out: number[] = [];
+  writeNal(out, 7, new Uint8Array([0x42, 0x00, 0x1e]));
+  writeNal(out, 8, new Uint8Array([0x68, 0xce]));
+
+  for (let p = 0; p < slicesPerPicture.length; p++) {
+    const spp = slicesPerPicture[p]!;
+    writeNal(out, 9, new Uint8Array([0xf0]));
+    writeNal(out, 6, new Uint8Array([0x05, 0xde, 0xad]));
+    for (let s = 0; s < spp; s++) {
+      writeSliceNal(out, p === 0 && s === 0, s === 0 ? 0 : 100 + s);
+    }
+    writeNal(out, 7, new Uint8Array([0x42, 0x00, 0x1e, p & 0xff]));
+    writeNal(out, 8, new Uint8Array([0x68, 0xce, p & 0xff]));
+  }
+
+  return new Uint8Array(out);
+}
+
 /** Build N pictures with `slicesPerPicture` coded slices each (synthetic RBSP). */
 export function buildSyntheticMultiSliceAnnexb(pictures: number, slicesPerPicture: number): Uint8Array {
   const out: number[] = [];

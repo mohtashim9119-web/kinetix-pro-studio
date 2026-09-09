@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import {
   buildSyntheticMultiSliceAnnexb,
   buildSyntheticSingleSliceWithParamSets,
+  buildSyntheticVariableSliceAnnexb,
   concatFrameCountGuardFails,
   countAnnexbAccessUnits,
   countAnnexbFrames,
@@ -178,6 +179,50 @@ describe('annexb truncate — last complete access unit', () => {
     expect(result.pictures).toBe(12);
     expect(result.vclNals).toBe(12);
     expect(result.bytesRemoved).toBe(0);
+  });
+});
+
+describe('annexb truncate — variable slices per picture (mode rule)', () => {
+  const SLICE_COUNTS = [8, 8, 4, 8] as const;
+
+  it('complete 8/8/4/8 stream is a no-op: keeps every picture', () => {
+    const stream = buildSyntheticVariableSliceAnnexb(SLICE_COUNTS);
+    expect(countAnnexbAccessUnits(stream)).toEqual({ pictures: 4, vclNals: 28 });
+    expect(pictureSliceCounts(stream)).toEqual([8, 8, 4, 8]);
+
+    const result = truncateAnnexbToLastCompleteAu(stream);
+    expect(result.pictures).toBe(4);
+    expect(result.vclNals).toBe(28);
+    expect(result.bytesRemoved).toBe(0);
+    expect(pictureSliceCounts(result.bytes)).toEqual([8, 8, 4, 8]);
+  });
+
+  it('mid-NAL in the final 8-slice picture drops the incomplete picture only', () => {
+    const stream = buildSyntheticVariableSliceAnnexb(SLICE_COUNTS);
+    const vcls = vclNals(stream);
+    const slice5OfLast = vcls[8 + 8 + 4 + 5]!;
+    const truncated = stream.subarray(0, slice5OfLast.header + 2);
+
+    const result = truncateAnnexbToLastCompleteAu(truncated);
+    expect(result.pictures).toBe(3);
+    expect(result.vclNals).toBe(20);
+    expect(pictureSliceCounts(result.bytes)).toEqual([8, 8, 4]);
+  });
+
+  it('single-slice stream truncated after first_mb byte is indistinguishable from complete (resume must use byte offset)', () => {
+    const complete = buildSyntheticSingleSliceWithParamSets(4);
+    const vcls = vclNals(complete);
+    const fourthFirstSlice = vcls[3]!;
+    // Cut immediately after the first_mb_in_slice==0 RBSP byte — NAL is incomplete
+    // but the access-unit counter already saw first_mb==0.
+    const truncated = complete.subarray(0, fourthFirstSlice.header + 2);
+
+    expect(countAnnexbAccessUnits(truncated)).toEqual({ pictures: 4, vclNals: 4 });
+
+    const result = truncateAnnexbToLastCompleteAu(truncated);
+    expect(result.pictures).toBe(4);
+    expect(result.vclNals).toBe(4);
+    expect(pictureSliceCounts(result.bytes)).toEqual([1, 1, 1, 1]);
   });
 });
 
