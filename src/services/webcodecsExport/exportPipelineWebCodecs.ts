@@ -1810,6 +1810,78 @@ function collectUsedFontFamilies(project: Project): Set<string> {
 }
 
 // ---------------------------------------------------------------------------
+// WS3 salvage-runtime round — Step 3: the BOUND for a future bounded
+// re-render, designed and tested here, NOT wired into the live recovery path.
+//
+// Why not wired: a bounded re-render (fence + abandon the hung session,
+// truncate `piece_N.h264` back to the last rotation boundary's recorded byte
+// offset — `sessionByteOffsets[k]`, this file's own session-byte-ledger doc
+// comment above — reopen an encoder, re-render only from that boundary
+// forward) needs a primitive this round does not have:
+// `truncateFile(path, byteLength)`, cutting a file to a CALLER-SUPPLIED byte
+// length. `ffmpeg.truncateAnnexb` (Step 1, `WebCodecsFfmpeg` above) is NOT
+// that primitive — it truncates to the LAST COMPLETE ACCESS UNIT the file
+// happens to end on, computed from the bytes themselves, with no way to name
+// an earlier, specific cut point. Applied to a piece whose abandoned session
+// has been streaming chunks for up to 60s, it would keep most of that
+// session's bytes (whichever prefix of them happens to end on a complete AU)
+// instead of discarding them — the opposite of a rewind. Re-rendering the
+// boundary forward and APPENDING (the only operation actually available)
+// would then make the file LONGER than expected, which the zero-tolerance
+// guard already rejects exactly as it rejects a short file — a safe failure,
+// but a strictly worse one than aborting immediately: it burns up to
+// `MAX_ENCODER_SESSION_FRAMES` frames of re-encoding for a foregone-conclusion
+// abort. Wiring the mechanism into production today would be a pure
+// regression, not a partial win. See this round's final report for the full
+// argument and exactly which native command (session id, path, byte length)
+// would need to exist for rung 9 to become buildable.
+//
+// What IS built here: the ceiling a real re-render must obey once that
+// primitive exists — "exactly one attempt per boundary, at most 2 boundary
+// rewinds per export" — as one pure, tested function, so a future round
+// inherits an already-enforced bound rather than inventing one. Precedent:
+// `MAX_FLUSH_SALVAGES`/`decideFlushTimeoutDisposition` (`exportWorker.ts`)
+// did exactly this for the flush-salvage bound before the salvage itself was
+// fully wired.
+// ---------------------------------------------------------------------------
+
+/** At most this many rotation-boundary rewinds across a WHOLE export (every
+ *  GL piece combined) — a per-EXPORT ceiling, deliberately distinct from
+ *  `MAX_FLUSH_SALVAGES` (per-RUN, i.e. per GL piece). Two, not one: a single
+ *  export can legitimately contain more than one GL piece, and a transient
+ *  stall recovered by one piece's rewind says nothing about whether a
+ *  SECOND, unrelated piece's rewind is also transient — but a third rewind in
+ *  the same export is exactly the "salvage becomes routine" failure mode
+ *  `decideFlushTimeoutDisposition`'s own doc comment warns against, so the
+ *  ceiling stops there rather than growing with piece count. */
+export const MAX_BOUNDARY_REWINDS_PER_EXPORT = 2;
+
+export type BoundedRerenderDisposition =
+  | { action: 'rewind' }
+  | { action: 'abort'; reason: string };
+
+/**
+ * Pure policy for whether a bounded re-render may attempt ANOTHER rotation-
+ * boundary rewind. Takes only a count — same shape as
+ * `decideFlushTimeoutDisposition`'s own bound check, and for the same reason:
+ * a policy function that cannot see anything but the counter cannot be
+ * talked into re-litigating the bound from some other signal.
+ */
+export function decideBoundedRerenderDisposition(input: {
+  rewindsUsed: number;
+  maxRewinds?: number;
+}): BoundedRerenderDisposition {
+  const maxRewinds = input.maxRewinds ?? MAX_BOUNDARY_REWINDS_PER_EXPORT;
+  if (input.rewindsUsed >= maxRewinds) {
+    return {
+      action: 'abort',
+      reason: `bounded re-render rewind bound reached (${input.rewindsUsed}/${maxRewinds}) — aborting rather than rewinding unboundedly`,
+    };
+  }
+  return { action: 'rewind' };
+}
+
+// ---------------------------------------------------------------------------
 // Part 6 — Main orchestrator.
 // ---------------------------------------------------------------------------
 

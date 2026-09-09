@@ -646,3 +646,184 @@ P5 is the honest one. Per CLAUDE.md's fixture-reach rule a suite that has never 
 has unmeasured reach — so the reach of this suite is: policy, bound, valve semantics, recovery sequencing,
 orchestrator routing, guard strictness, byte neutrality. It is **not**: the worker's own frame loop, the
 output callback, or anything that needs a real encoder.
+
+---
+
+## 7. WS3 salvage-runtime round (2026-09-09) — real truncation, P5 closed, hardware-rung recording
+
+Branch `ws3-salvage-runtime`, cut from `ws3-export-integration` @ `2959861`. Static analysis + mocked
+tests only — no live export, no Part C fixture, no `tauri dev`. `WATCHDOG_MS` (30 000),
+`FORWARD_PROGRESS_BOUND_MS` (45 000), `FLUSH_BOUND_MS` (20 000, now exported — value unchanged) untouched.
+Ran concurrently with another agent owning `src-tauri/**`, `tauriFfmpeg.ts`, `ffmpegLivenessBound.ts`,
+`annexbFrameCount.ts`, `muxOnly.ts`, the concat path in `segmentEncoder.ts`, and checkpoint code — none of
+those files were edited here; `ffmpeg_truncate_annexb` (`ffmpeg.rs:550`) and its binding
+(`tauriFfmpeg.ts:222`), already merged onto this branch's base, were called but not modified.
+
+### Step 1 — salvage wired to real truncation and a real counter
+
+Rung 8's primitive (`ffmpeg_truncate_annexb`) landed since §3b was written. Wired at the exact per-piece
+call site (`exportPipelineWebCodecs.ts`, inside `if (driveResult.salvaged) { ... }`, strictly before
+`pieceFiles.push(runFile)` and therefore strictly before concat): truncate `piece_N.h264` via
+`ffmpeg.truncateAnnexb`, whose own last step already counts pictures on the KEPT bytes
+(`ffmpeg.rs`'s `truncate_annexb_to_last_complete_au` → `count_annexb_access_units(&kept)`), so this is one
+native round-trip, not truncate-then-separately-count. Compare to `plan.expectedFrames` at exact equality —
+short OR long aborts, same as the unchanged post-concat guard. On mismatch: a typed `'concat'` error whose
+message carries `picturesAfterTruncation`, `vclNals`, `expectedFrames`, `bytesRemovedByTruncation`,
+`keptBytes`, `framesSubmittedToEncoder`, `encoderSessionIndex/encoderSessions`, and `salvageReason` —
+`formatSalvageTruncateMismatch`, `exportPipelineWebCodecs.ts`. The guard's own tolerance
+(`concatFrameCountGuardFails`, the other agent's file) is untouched.
+
+**Ordering — truncate before concat, per piece, always.** Truncation is a "last complete AU of THIS
+buffer" operation; applied post-concat it would find the tail of whichever piece is LAST in the
+concatenated stream, not the actually-salvaged piece, unless they happen to be the same piece — and a
+single-piece export skips concat entirely (`pieceFiles.length === 1`), so post-concat has no consistent
+hook across both shapes. Pre-concat, per-piece truncation is the one call site that is uniform, and it
+isolates a bad salvage to its own piece before the aggregate guard ever runs.
+
+**The Cursor residual (single-slice NAL truncated immediately after `first_mb_in_slice==0` reads as
+complete) does not reach this salvage path.** Every appended chunk is a WHOLE `EncodedVideoChunk` —
+WebCodecs only ever fires the encoder's `output` callback with a complete access unit, never a partial one
+— copied in full (`chunk.copyTo(buf)`, `exportWorker.ts`) and written by exactly one Rust `write_all` per
+append, all-or-nothing (`ffmpeg_append_file_raw`, `src-tauri/src/ffmpeg.rs:159` — `file.write_all(data)`,
+no partial-write path on success). So the on-disk file, at any point a flush-timeout salvage can observe
+it, is already a sequence of complete access units; there is no byte-level truncation mid-NAL for the
+truncate call to discover. Measured, not assumed: every "SHORT after truncation" test in
+`salvageTruncate.test.ts` sets `bytesRemoved` explicitly (it is not derived from real bytes in the mock),
+and the real Rust command is exercised by its own suite
+(`ffmpeg_truncate_annexb_command_matches_in_memory`, `ffmpeg.rs`) against synthetic single- and
+multi-slice streams, not against this append architecture's guarantee. Accepted, not gated further: gating
+additionally on the recorded session byte offset would be gating on a quantity (`bytesRemoved`) that this
+call site can prove is always 0 in the success case — a no-op check with no discriminating power here. The
+residual stays real for `ffmpeg_truncate_annexb` as a general primitive (a file truncated by some OTHER
+process — an interrupted OS-level write, a hand-edited fixture — is not something this call site can
+distinguish), it is simply not reachable THROUGH the flush-timeout salvage path this round wires it to.
+
+Tests: `salvageTruncate.test.ts` (4) — exact match ships and calls `truncateAnnexb` exactly once with the
+piece's own path; short-by-one aborts with every field of the typed payload asserted by substring; long-
+by-one also aborts (never widened); `truncateAnnexb` is never invoked on the clean path, and the clean
+path's appended bytes are asserted byte-for-byte via a recording `appendFileRaw`. Reached through a new
+test-only `deps: { createWorker? }` parameter on `exportProjectWebCodecs` (mirrors `DriveGlRunDeps` one
+level down) — added because the existing `flushSalvage.test.ts` suite mocks GL routing OFF entirely and
+never drives this code path at the orchestrator level, only at `driveGlRun` in isolation.
+
+### Step 2 — P5, closed
+
+§Tests item P5 above is superseded: **it is no longer the honest gap.** A new harness
+(`sessionOutputFenceCallSite.test.ts`) drives the REAL, private `runExport` (reached only through
+`exportWorker.ts`'s own `self.onmessage` wiring, which requires `self` to exist in the test's global scope
+BEFORE the module is first evaluated — a plain Node vitest environment has no `self` at all, confirmed by
+running `node -e "console.log(typeof self)"` → `undefined`, which is exactly why every prior fixture in
+this file's tree never reached this call site) bridged end-to-end to the REAL `driveGlRun`, with only the
+irreducibly-unavailable browser/WebCodecs primitives stubbed by hand: `OffscreenCanvas`, `VideoFrame`,
+`createImageBitmap`, and a `VideoEncoder` whose `output` callback the test invokes directly and manually —
+both BEFORE a flush-timeout (to prove the positive control: a legitimate chunk DOES reach
+`appendFileRaw`) and AFTER one (to prove the fence: a late chunk from the same, now-fenced session does
+NOT). `GlCompositor`, `GLTextRenderer`, `acquireOffscreenGlContext` are mocked (real WebGL, no Node
+stand-in plausible); `SessionOutputFence`, `runFinalFlushWithRecovery`, `decideFlushTimeoutDisposition`,
+`ExportPhaseTracker`, and every line of `driveGlRun`'s append-queue/watchdog machinery are the REAL
+production code, unmocked.
+
+**Destructive probe, run for real this round (not merely described):**
+
+| # | mutation | result |
+|---|---|---|
+| P5 (re-run) | delete `if (!fence.accepts(forSession)) return;` at `exportWorker.ts`'s chunk output call site | **RED — 1 failed / 1 passed** (`sessionOutputFenceCallSite.test.ts`, 2 tests): the late-chunk test fails with "expected 2 to be 1" — the fenced session's second chunk leaks through to `postMessage` and would reach `appendFileRaw`. The positive-control test (chunk before the timeout) is unaffected, exactly as expected — it does not depend on the fence at all. |
+| restore | `cp` the pre-mutation backup back over the file (never `git checkout`, per CLAUDE.md — the file carries other uncommitted edits from this same round) | **GREEN — 2 passed**, `diff` against the backup confirmed byte-identical before re-running |
+
+**The fence proved necessary, not merely present.** P5 is now covered at its real call site, closing the
+"must be true before an installer is built" item 5 from §"What must be true" above.
+
+### Step 3 — bounded re-render: what shipped, what remains blocked, and why
+
+**(c) Rotation-boundary anchor property — reconfirmed unchanged.** `planEncoderSessions`
+(`encoderSessionPlan.ts:98-129`) still only ever cuts at a frame index for which the caller's own
+`isKeyFrame` was already true (guarantee 2, pushed at line 126 only inside `if (isKeyFrame(i))`), and
+`createEncoder`'s `base` config still carries `avc: { format: 'annexb' as const }`
+(`exportWorker.ts:1151`), which puts SPS/PPS inline ahead of every IDR. Both are exactly as §1a found them;
+neither was touched this round.
+
+**(d) Selected `HARDWARE_LADDER` rung — now recorded, every build.** New field
+`ExportWorkerDiagnosticsPayload.selectedHardwareRung` (`exportWorkerDiagnostics.ts`), set by
+`createEncoder` on every successful build — initial session AND every rotation — via a module-level
+`activeSelectedHardwareRung`, mirroring the existing `activeSessionIndex` pattern. Reset at run start
+(before the encoder ladder runs — resetting it later, alongside `activeSessionIndex`'s own per-run reset,
+would clobber the value session 0's build just set, since that reset site executes AFTER `buildEncoder(0)`
+in source order). Closes §1a's caveat: "the two halves are byte-comparable is not established, and no run
+has ever checked" now has a field to check it with. Tests (`hardwareRungDiagnostics.test.ts`, 3): records
+`'prefer-hardware'` when it succeeds; falls through and records `'no-preference'` when the first rung is
+rejected; falls through to `'prefer-software'` when only the last rung is accepted. Destructive probe: the
+one-line assignment removed → **RED, 3/3 failed** (`selectedHardwareRung` read back `null` in every case);
+restored → **GREEN, 3/3 passed**.
+
+**(a)/(b) Bounded re-render — still not reachable, for the same structural reason as §3b, despite
+`ffmpeg_truncate_annexb` now existing.** That command is not the primitive rung 9 needs. It truncates to
+the LAST COMPLETE ACCESS UNIT **of whatever bytes are already on disk**, computed from the bytes
+themselves — it takes no byte-length argument and cannot be told to cut at an earlier, specific,
+caller-known offset. A rewind needs exactly that: discard everything from `sessionByteOffsets[k]` onward
+(the abandoned session's own first byte, already recorded by the session-byte-ledger — §1c, implemented)
+and re-render from there. Handed to `ffmpeg_truncate_annexb` instead, a piece whose dead session has been
+streaming chunks for up to 60s would have MOST of that session's bytes kept (whichever prefix ends on a
+complete AU) rather than discarded — the opposite of a rewind. The only operation actually available
+(append) would then make the file LONGER than expected once the re-rendered frames are appended behind the
+undiscarded old ones, and the zero-tolerance guard rejects that exactly as it rejects a short file — a
+SAFE failure, but a strictly WORSE one than aborting immediately: it spends up to
+`MAX_ENCODER_SESSION_FRAMES` frames of real re-encoding to reach a foregone-conclusion abort. Wiring the
+re-seek/rebuild-encoder mechanics into the live recovery path this round, without the byte-offset
+primitive, would therefore be a pure regression, not a partial capability — so it was not done. This is a
+judgement call, not a permissions question (the same distinction §3b itself drew for the per-session-file
+alternative it rejected): the mechanics (re-seek via `RunState.resolveSlotSource`'s existing lazy-reopen,
+a fresh `buildEncoder(k)`) are still exactly as reachable as §3b found them, entirely inside
+`exportWorker.ts`; what's missing is a place to land the truncated write.
+
+**What DID ship for rung 9 this round:** `decideBoundedRerenderDisposition` /
+`MAX_BOUNDARY_REWINDS_PER_EXPORT = 2` (`exportPipelineWebCodecs.ts`) — a pure, tested ceiling on rewind
+attempts ACROSS A WHOLE EXPORT (deliberately per-export, not per-piece like `MAX_FLUSH_SALVAGES`: an
+export can contain more than one GL piece, and a third rewind anywhere in the same export is the "salvage
+becomes routine" failure mode `decideFlushTimeoutDisposition`'s own doc comment warns against). Same
+precedent as `MAX_FLUSH_SALVAGES` shipping before the salvage it bounds was fully wired: a future round
+that builds the byte-offset primitive inherits an already-enforced ceiling. 6 tests
+(`boundedRerenderPolicy.test.ts`), not wired to any call site — there is none to wire it to yet.
+
+**What would have to change for rung 9 to become buildable:** a new Rust command in
+`src-tauri/src/ffmpeg.rs` (shape: `session_id`, `path`, `byte_len` → truncate the file to exactly
+`byte_len`, `set_len`-style, no AU scanning) and its binding on `TauriFfmpeg`
+(`tauriFfmpeg.ts`) — both files are the other agent's this round, so per this round's own rule this is
+reported, not attempted.
+
+### Step 4 — heartbeat, settled from source
+
+**(a) Armed across the final flush — confirmed by reading, not by inference.** `HEARTBEAT_INTERVAL_MS =
+5_000` (`exportWorker.ts`). The `setInterval` is armed at the top of the frame-loop `try` block
+(`exportWorker.ts`, immediately before `tracker.enter('frame-loop')`) and cleared in that SAME try's
+`finally` — the one that also contains the rotation loop, `runFrameLoopTick`, AND
+`runFinalFlushWithRecovery`. So the heartbeat is armed continuously from the start of the frame loop
+through the final flush and only stops in `finally`, after the flush (clean, salvaged, or erroring) has
+already resolved.
+
+**(b) The operator-visible discriminator, stated precisely.** `HEARTBEAT_INTERVAL_MS`'s `setInterval` lives
+in the WORKER's own realm — the same realm `FLUSH_BOUND_MS`'s `setTimeout` (armed by `flushWithBound`,
+BEFORE `encoder.flush()` is called — the arming-order fix from the flush-occlusion round) lives in. Both
+are scheduled callbacks on the SAME single-threaded worker event loop. A synchronous, thread-blocking
+`flush()` therefore cannot selectively silence one and spare the other — if it blocks the event loop at
+all, BOTH the flush-timeout `setTimeout` and the heartbeat `setInterval` starve together, because neither
+can run until the call stack unwinds back to the event loop, which by definition never happens inside a
+synchronous block. So:
+
+- **Heartbeats CONTINUE arriving (on their ~5s cadence) through the silent stretch, right up to a
+  `'salvage-done'` or the flush-timeout's own resolution.** The worker's event loop is alive; `flush()`
+  returned a promise that simply never settles (the documented shape this round's whole recovery is built
+  for). §3's fence-and-verify (and, if it existed, §3's bounded re-render) WILL fire, on schedule, at
+  `FLUSH_BOUND_MS`.
+- **Heartbeats STOP arriving at the same moment `chunk`/`phase`/`queue-sample` stop — total silence on
+  every message type, ended only by the main-thread `WATCHDOG_MS` (30s) firing from `driveGlRun`'s own
+  `setTimeout`, which lives on the MAIN thread and is therefore unaffected by a wedged WORKER thread.**
+  This is the "thread wedged" case: no worker-side bound — not `FLUSH_BOUND_MS`, not a heartbeat, not a
+  future re-render bound — can ever fire, because the worker's event loop itself never turns again. The
+  main-thread watchdog is the only backstop, exactly as `flushWithBound`'s own pre-existing doc comment
+  already stated ("a worker-side bound is only ever as live as the worker's own event loop").
+
+A single Windows field run settles which case actually occurred by reading whether `'heartbeat'` messages
+(surfaced in the phase-log tail / liveness snapshot, `exportPipelineWebCodecs.ts`'s `checkLivenessBounds`
+call site) continue for ~25 of the 30 seconds between the last `chunk`/`phase` and the eventual watchdog
+firing, or stop dead alongside everything else. **NOT DETERMINED without that run** — this round did not
+run one, per its own rules (static analysis and mocked tests only).

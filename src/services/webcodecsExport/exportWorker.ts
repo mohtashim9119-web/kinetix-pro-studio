@@ -295,6 +295,7 @@ function buildDiagnostics(
     encodeQueueSizeAtFlushExpiry: activeFlushExpiryQueueSize,
     encoderSessionIndex: activeSessionIndex,
     encoderSessions: activeSessionCount,
+    selectedHardwareRung: activeSelectedHardwareRung,
     // The worker cannot see the main thread's append queue — see the field's
     // own doc comment. `exportPipelineWebCodecs.ts` fills this in.
     appendPendingAtFailure: null,
@@ -359,6 +360,11 @@ let activeFlushExpiryQueueSize: number | null = null;
 let activeSessionIndex = 0;
 let activeSessionCount = 1;
 let activeRunState: RunState | null = null;
+/** WS3 salvage-runtime round — see `ExportWorkerDiagnosticsPayload.selectedHardwareRung`.
+ *  Set by `createEncoder` on every successful build (initial session and
+ *  every rotation), mirroring `activeSessionIndex`'s "module scope so a
+ *  snapshot can read it without a thread-through" pattern. */
+let activeSelectedHardwareRung: string | null = null;
 
 /** Enter a flush: snapshot the baselines and zero the since-entry counters.
  *  Called at BOTH flush sites so the two are observationally identical. */
@@ -1171,6 +1177,10 @@ async function createEncoder(
     try {
       encoder = new VideoEncoder({ output: onOutput, error: onError });
       encoder.configure(config);
+      // WS3 salvage-runtime round — record which rung actually succeeded,
+      // on EVERY build (initial session and every rotation), so a payload
+      // can name the session's own rung rather than assuming session 0's.
+      activeSelectedHardwareRung = hardwareAcceleration;
       return encoder;
     } catch (e) {
       attempts.push(`${hardwareAcceleration}: configure threw: ${errMessage(e)}`);
@@ -1388,6 +1398,12 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   activePieceIndex = pieceIndex;
   const failState = new RunFailureState();
   activeFailure = failState;
+  // WS3 salvage-runtime round — reset BEFORE the encoder ladder runs (below),
+  // never after: `buildEncoder(0)` sets this on success, and this run's own
+  // `activeSessionIndex`/`activeSessionCount` reset happens later, past that
+  // first build, which would clobber the value it just set. Reset up front,
+  // where every other per-run `active*` field is initialized.
+  activeSelectedHardwareRung = null;
   const frameDigest = payload.frameContentDigest ? new FrameContentDigest() : null;
   activeFrameDigest = frameDigest;
   const encodeStats = new EncodeStats();
