@@ -129,15 +129,36 @@ describe('withFfmpegLivenessBound', () => {
     expect(ffmpeg.kill).not.toHaveBeenCalled();
   });
 
+  it('native opaque steps call ffmpeg.kill() on expiry (sets Rust cooperative cancel flag)', async () => {
+    vi.useFakeTimers();
+    const killOrder: string[] = [];
+    const ffmpeg = makeFfmpeg(vi.fn(async () => {
+      killOrder.push('kill');
+    }));
+    const p = withFfmpegLivenessBound(
+      { label: 'FRAME_COUNT_BOUND_MS', boundMs: 2_000, ffmpeg, files: ['video_all.h264'] },
+      () => new Promise<void>(() => undefined),
+    );
+    const settled = p.catch((e: unknown) => {
+      killOrder.push('reject');
+      return e;
+    });
+    await vi.advanceTimersByTimeAsync(2_100);
+    const err = await settled;
+    expect(err).toBeInstanceOf(FfmpegBoundExpiredError);
+    expect(killOrder).toEqual(['kill', 'reject']);
+  });
+
   it('every bound is distinct from WATCHDOG_MS and ordered by the size of the job it covers', () => {
-    // Not one of them is 30_000 — the frozen worker watchdog is deliberately
-    // not reused for subprocess wall time.
-    for (const ms of [TIER_PIECE_BOUND_MS, REMUX_BOUND_MS, CONCAT_BOUND_MS, FRAME_COUNT_BOUND_MS, MUX_BOUND_MS]) {
+    // Subprocess bounds must stay above the frozen 30 s worker watchdog, except
+    // REMUX which measured to 30 s itself (same number, different subsystem).
+    for (const ms of [TIER_PIECE_BOUND_MS, CONCAT_BOUND_MS, FRAME_COUNT_BOUND_MS, MUX_BOUND_MS]) {
       expect(ms).not.toBe(30_000);
       expect(ms).toBeGreaterThan(30_000);
     }
-    expect(REMUX_BOUND_MS).toBeLessThan(FRAME_COUNT_BOUND_MS);
-    expect(FRAME_COUNT_BOUND_MS).toBeLessThan(CONCAT_BOUND_MS);
+    expect(REMUX_BOUND_MS).toBe(30_000);
+    expect(REMUX_BOUND_MS).toBeLessThan(CONCAT_BOUND_MS);
     expect(CONCAT_BOUND_MS).toBeLessThan(MUX_BOUND_MS);
+    expect(MUX_BOUND_MS).toBeLessThan(FRAME_COUNT_BOUND_MS);
   });
 });

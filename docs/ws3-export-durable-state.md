@@ -274,62 +274,77 @@ the seam.
 
 ---
 
-## Part 4 — Bound audit (native side)
+## Part 4 — Native cancellation + measured bounds (`ws3-native-cancel`)
 
-Values in `ffmpegLivenessBound.ts` (unmeasured, by that file's own header):
-remux 120s, frame-count 300s, tier-piece 600s, concat 600s, mux 900s.
+### Cooperative cancel (built this round)
 
-### 26-minute 1080p30 estimate
+`FfmpegSessionState` (`ffmpeg.rs`) holds per-session `Arc<AtomicBool>` cancel
+flags, registered in `ffmpeg_create_session`, cleared in `ffmpeg_destroy_session`.
 
-1560 s × 30 fps = 46_800 pictures. At 8–12 Mbps the concatenated Annex-B is
-on the order of **1.6–2.3 GB**. Encoder rotation at 1800 frames → ~26
-sessions.
+**`ffmpeg_kill_session`** (unchanged JS surface — `TauriFfmpeg.kill()`):
+1. Sets the session cancel flag (`Ordering::SeqCst`).
+2. Kills any in-flight `ffmpeg_exec` child (unchanged D13 behaviour).
 
-| Step | What it does | Estimated wall time | Bound | Verdict |
+**Poll points** (every **64 KB** read/write iteration, plus entry/exit checks):
+- `ffmpeg_concat_annexb_pieces` → `Err("cancelled")`, partial output removed.
+- `ffmpeg_count_annexb_frames` → `Err("cancelled")`.
+- `ffmpeg_truncate_annexb` → chunked read + chunked write → `Err("cancelled")`.
+
+**Remaining window after this change:** up to **one 64 KB** read/write may
+complete after the flag is set (poll is between chunks, not inside `read()`).
+`truncate_annexb` additionally holds the full file in RAM for the access-unit
+parse between read completion and rewrite — that parse is **not** interruptible;
+on a ~1.7 GB file it is usually seconds, not minutes. No other export step is
+still unkillable: remux/mux/tier-piece die via process kill; native I/O stops via
+the flag.
+
+**Salvage safety:** bound expiry → `kill()` sets flag → a subsequent
+`truncateAnnexb` cannot interleave with an orphan concat writer (Rust test
+`salvage_interleaving_cancel_then_truncate_leaves_stable_file`).
+
+### When an export is interrupted
+
+1. The UI cancel path (or a liveness bound) calls `ffmpeg.kill()`.
+2. Any running **ffmpeg sidecar** is terminated; native concat/count/truncate
+   loops observe the flag and stop.
+3. The orchestrator surfaces `FfmpegBoundExpiredError` or a user-cancel error;
+   the session dir may contain partial piece files — **do not** treat them as
+   complete. Use **Export again** (full re-export). Checkpoint **resume** is
+   not available yet (see below).
+4. `ffmpeg.destroy()` reclaims the temp dir when the export handler finishes.
+
+### Measured bounds (26-minute 1080p30 scale, ~1.7 GB annexb)
+
+Synthetic inputs on an x86_64 macOS SSD worktree (`scripts/ws3-measure-ffmpeg-exec-bounds.sh`
+for sidecar steps; native concat on 1.7 GB on-disk blobs; frame-count triplicate
+**NOT DETERMINED** — benchmark did not finish cleanly).
+
+| Step | p50 / worst observed | Chosen bound | Headroom (× worst) | Applied? |
 |---|---|---|---|---|
-| Remux (per piece) | MP4→Annex-B stream copy, ≤60 s of video | milliseconds–2 s on SSD | 120 s | absurdly loose |
-| Frame-count | 64 KB sequential read + start-code scan of ~2 GB | ~10 s @ 200 MB/s; ~40 s @ 50 MB/s | 300 s | loose (~6.7 MB/s implied) |
-| Concat | native 2-FD copy of ~2 GB, **not ffmpeg** | ~10–40 s | 600 s | absurdly loose (~3.3 MB/s implied) |
-| Mux | annexb→MP4 `-c:v copy -r fps` + optional AAC; faststart rewrites | ~30–90 s typical | 900 s | loose |
-| Tier-piece | GL worker + possible libx264; bound wraps `ffmpeg.exec` | GL is the worker's job; libx264 60 s 1080p maybe 20–90 s; canvas PNG path unknown | 600 s | **NOT DETERMINED** (canvas path); not too tight on GL/libx264 estimate |
+| Remux (60 s 1080p30 piece) | 0.14 s / 0.14 s | **30 s** | ~214× | **yes** |
+| Concat (1.7 GB native copy) | 0.64 s / 0.64 s | **60 s** | ~94× | **yes** |
+| Frame-count (1.7 GB scan) | — / — | **300 s** (prior) | — | **no change** (not measured) |
+| Mux video-only (1.7 GB annexb) | 13.78 s / 13.78 s | **180 s** | ~13× | **yes** |
+| Mux with-audio (premux + mix) | 13.92 s / 13.92 s | **180 s** (same constant) | ~13× | **yes** |
+| Truncate (`ffmpeg_truncate_annexb`) | 3200-picture fixture only | **NOT DETERMINED** at 1.7 GB | — | bound wired by runtime agent |
+| Tier-piece (canvas + libx264) | — | **600 s** (prior) | — | **no change** (needs live export) |
 
-**None of these bounds look too tight** for a healthy 26-minute export.
-Several are an order of magnitude above SSD sequential I/O.
+Prior unmeasured values retired where measured: remux 120→30 s, concat 600→60 s,
+mux 900→180 s.
 
-### Does expiry kill the child, or only reject the promise?
+### Checkpoint RESUME — designed, deliberately not implemented
 
-`withFfmpegLivenessBound` (`ffmpegLivenessBound.ts:191`) calls
-`options.ffmpeg.kill()` then rejects. `TauriFfmpeg.kill`
-(`tauriFfmpeg.ts:298-306`) invokes `ffmpeg_kill_session`.
-`ffmpeg_kill_session` (`ffmpeg.rs:758-767`) **only kills a child registered by
-`ffmpeg_exec`**.
+**Reason:** resume requires rendering the remainder of a partially encoded
+timeline — that logic lives in `exportWorker.ts`, `exportPipelineWebCodecs.ts`,
+`encoderSessionPlan.ts`, and `driveGlRun.ts`, owned by the parallel
+`ws3-salvage-runtime` agent this round. Building both would produce competing
+implementations.
 
-| Step | Spawned how | Kill on expiry |
-|---|---|---|
-| remux / mux / tier-piece `ffmpeg.exec` | `ffmpeg_exec` → sidecar `CommandChild` | **yes** — process is killed |
-| `concatAnnexbPieces` | native Rust copy, no ffmpeg | **no** — kill is a no-op; the abandoned `invoke` keeps running |
-| `countAnnexbFrames` | native Rust scan, no ffmpeg | **no** — same |
-
-An orphaned **ffmpeg** holding the output file is therefore a remux/mux
-concern, and the kill path covers those. Concat/count can leave an
-orphaned **Rust command** still writing/reading `video_all.h264` after the
-JS promise has rejected. That is its own bug, distinct from an ffmpeg
-orphan. Noted in `ffmpegLivenessBound.ts`'s header this round. Not fixed
-(would be a cooperative cancel token on the native commands).
-
-`Promise.race` always abandons `fn()`; even when kill succeeds, the
-`ffmpeg_exec` invoke is not awaited. Kill is what settles the sidecar.
-
-### Recommended values
-
-**NOT DETERMINED** as measured numbers. Measurement needed: wall-clock of
-each `withFfmpegLivenessBound` label on one 26-minute 1080p30 export, SSD
-and (if available) HDD, with `elapsedMs` logged on success — not only on
-expiry. Until that exists, do not tighten production constants; they are
-fail-deadlines, not performance targets. A reasonable *candidate* set from
-the estimates above, for a later measured round to confirm: remux 30 s,
-frame-count 60 s, concat 60 s, mux 180 s, tier-piece leave 600 s until the
-canvas path is timed.
+**Future round would touch:** `exportPipelineWebCodecs.ts` (manifest reader,
+skip committed sessions), `exportWorker.ts` / `driveGlRun.ts` (start run at
+session index), `encoderSessionPlan.ts`, `exportCheckpoint.ts` (reader +
+validator), `useExport.ts` / UI, and possibly truncate-to-offset in
+`ffmpeg.rs` / `tauriFfmpeg.ts`.
 
 ---
 
