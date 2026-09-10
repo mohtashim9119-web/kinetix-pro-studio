@@ -29,7 +29,17 @@ vi.mock('./glCompositable', () => ({
   isGlCompositableSegment: () => true,
   GL_TRANSITION_SLUGS: new Set<string>(),
 }));
-vi.mock('./muxOnly', () => ({ muxOnly: vi.fn(async () => undefined) }));
+// WS3 Round 10 — PARTIAL module mock, made partial on purpose. The sealing
+// seam (`forcedMp4SealOffer` / `sealTruncatedAnnexbToMp4`) now lives in this
+// module and IS reached by the orchestrator's guard path, so a factory that
+// returned only `muxOnly` deleted those two exports and turned a clean typed
+// guard failure into "Failed to verify the concatenated output frame count".
+// Spreading the real module keeps the seal logic honest while still stubbing
+// the ffmpeg-invoking part.
+vi.mock('./muxOnly', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./muxOnly')>()),
+  muxOnly: vi.fn(async () => undefined),
+}));
 
 // eslint-disable-next-line import/first
 import {

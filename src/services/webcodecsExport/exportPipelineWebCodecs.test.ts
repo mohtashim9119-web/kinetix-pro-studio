@@ -38,7 +38,15 @@ vi.mock('../segmentEncoder', () => ({
 
 // --- Mock the mux step so we can assert what video file it receives. ---
 const muxOnlyMock = vi.fn(async (..._args: unknown[]) => undefined);
-vi.mock('./muxOnly', () => ({
+// WS3 Round 10 — PARTIAL module mock, made partial on purpose. The sealing
+// seam (`forcedMp4SealOffer` / `sealTruncatedAnnexbToMp4`) now lives in this
+// module and IS reached by the orchestrator's guard path, so a factory that
+// returned only `muxOnly` deleted those two exports and turned a clean typed
+// guard failure into "Failed to verify the concatenated output frame count".
+// Spreading the real module keeps the seal logic honest while still stubbing
+// the ffmpeg-invoking part.
+vi.mock('./muxOnly', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./muxOnly')>()),
   muxOnly: (...args: unknown[]) => muxOnlyMock(...args),
 }));
 

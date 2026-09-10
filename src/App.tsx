@@ -3161,7 +3161,7 @@ export default function App() {
     setProject(p => ({ ...p, lastExportPath: path }));
   }, []);
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
-  const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent } = exportApi;
+  const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent, resolveResumeChoice } = exportApi;
 
   // ExportSettingsModal's Continue commits exportResolution/exportFps via
   // setState, then must call startExport — but startExport is a useCallback
@@ -6985,6 +6985,66 @@ export default function App() {
           >
             <X size={16} />
           </button>
+        </div>
+      )}
+
+      {/*
+        WS3 Round 10 Blocker 3 — RESUME A CRASH-SURVIVING EXPORT.
+
+        Shown only when a surviving session has already been validated against
+        THIS timeline's hash, fenced natively, stepped back to its rotation
+        seam, and had every earlier piece verified by picture count. By the
+        time this dialog appears the work is genuinely there — the operator is
+        choosing whether to keep it, not whether to gamble on it.
+
+        "Start fresh" is byte-identical to an export that never had a survivor,
+        and collects the abandoned session rather than leaving gigabytes behind.
+      */}
+      {exportState.pendingResumeOffer && (
+        <div className="fixed inset-0 z-[500] bg-black/70 flex items-center justify-center p-6">
+          <div className="bg-zinc-900 border border-indigo-500/60 rounded-xl p-6 max-w-lg w-full shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center gap-2 text-indigo-300 font-semibold">
+              <Info size={18} />
+              An unfinished export of this timeline is still on disk
+            </div>
+            <p className="text-sm text-zinc-300 leading-relaxed">
+              A previous export stopped before it finished. The frames it already rendered are
+              intact and verified, so this export can pick up where that one left off instead of
+              starting from the beginning.
+            </p>
+            <div className="bg-zinc-800/70 rounded-lg p-4 flex items-center justify-between">
+              <div>
+                <div className="text-lg font-semibold text-zinc-100">
+                  {formatElapsedLong(exportState.pendingResumeOffer.secondsAlreadyRendered)}
+                  <span className="text-zinc-500 font-normal"> of {formatElapsedLong(exportState.pendingResumeOffer.secondsTotal)}</span>
+                </div>
+                <div className="text-xs text-zinc-500 mt-1">
+                  {exportState.pendingResumeOffer.picturesAlreadyRendered.toLocaleString()} of{' '}
+                  {exportState.pendingResumeOffer.picturesTotal.toLocaleString()} frames already rendered
+                </div>
+              </div>
+              <div className="text-2xl font-semibold text-indigo-300">
+                {Math.floor(
+                  (exportState.pendingResumeOffer.picturesAlreadyRendered /
+                    Math.max(1, exportState.pendingResumeOffer.picturesTotal)) * 100,
+                )}%
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                onClick={() => resolveResumeChoice('clean')}
+                className="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg px-4 py-2 transition-colors"
+              >
+                Start fresh
+              </button>
+              <button
+                onClick={() => resolveResumeChoice('resume')}
+                className="text-sm bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-lg px-4 py-2 transition-colors"
+              >
+                Continue this export
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

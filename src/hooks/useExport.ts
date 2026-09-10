@@ -8,9 +8,13 @@ import {
 import {
   exportProjectWebCodecs,
   cancelExportWebCodecs,
+  planWebCodecsExport,
   type WebCodecsFfmpeg,
 } from '../services/webcodecsExport/exportPipelineWebCodecs';
 import type { ForcedMp4SealOffer } from '../services/webcodecsExport/muxOnly';
+import { findResumeOffer, type ResumeOffer } from '../services/webcodecsExport/exportResumeSession';
+import { recordExportSessionCreated, forgetExportSession } from '../services/webcodecsExport/exportSessionLedger';
+import { TauriFfmpeg } from '../services/tauriFfmpeg';
 import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
@@ -186,6 +190,15 @@ export interface UseExportState {
    * `resolveSealConsent`.
    */
   pendingSealConsent: ForcedMp4SealOffer | null;
+  /**
+   * WS3 Round 10 Blocker 3 — a crash-surviving export for THIS EXACT timeline
+   * was found, validated, and fenced, and is waiting on the operator.
+   *
+   * Non-null only between discovery finding one and the operator answering.
+   * The export is parked on that answer. Answer with `resolveResumeChoice`;
+   * `'clean'` is byte-identical to an export that never had a survivor.
+   */
+  pendingResumeOffer: ResumeOffer | null;
   /** The offer the operator ACCEPTED for the most recent export, so the
    *  success surface can say the file is deliberately shorter than asked for
    *  rather than silently handing over a short video. */
@@ -201,6 +214,8 @@ export interface UseExportApi {
   /** Answers a `state.pendingSealConsent` prompt. `false` (or a cancel that
    *  never answers) leaves the export on its unchanged typed failure. */
   resolveSealConsent: (accept: boolean) => void;
+  /** Answers a `state.pendingResumeOffer` prompt. */
+  resolveResumeChoice: (choice: 'resume' | 'clean') => void;
 }
 
 interface ExportSnapshot {
@@ -218,6 +233,7 @@ const IDLE_STATE: UseExportState = {
   error: null,
   elapsedSec: 0,
   pendingSealConsent: null,
+  pendingResumeOffer: null,
 };
 
 /**
@@ -315,6 +331,9 @@ export function useExport(
    *  Cleared the instant it is called, so a second click cannot double-settle. */
   const sealConsentResolverRef = useRef<((accept: boolean) => void) | null>(null);
 
+  /** Same parking mechanism as the seal consent, for the resume offer. */
+  const resumeChoiceResolverRef = useRef<((choice: 'resume' | 'clean') => void) | null>(null);
+
   // Which orchestrator the CURRENT (or most recently started) export is using
   // — decided fresh at the top of every runExport call from the gate check.
   // cancelExport reads this to pick the matching cancel sequence (plan §9.1).
@@ -366,6 +385,7 @@ export function useExport(
       stage: null,
       progress: 0,
       pendingSealConsent: null,
+      pendingResumeOffer: null,
       stageLabel: 'Loading ffmpeg…',
       error: null,
       elapsedSec: 0,
@@ -387,6 +407,7 @@ export function useExport(
         progress: 0,
         stageLabel: '',
         pendingSealConsent: null,
+        pendingResumeOffer: null,
         error: {
           kind: 'ffmpeg_load',
           message: 'Failed to create a native ffmpeg session. Is ffmpeg installed and on PATH?',
@@ -446,6 +467,78 @@ export function useExport(
         setState(prev => ({ ...prev, pendingSealConsent: offer }));
       });
 
+    // ── WS3 Round 10 Blocker 3 — RESUME DISCOVERY + CLEANUP ────────────────
+    //
+    // Runs only on the WebCodecs path (the legacy path has no checkpoints),
+    // only once the operator has committed to an export, and only after the
+    // fresh session exists so it is protected from collection. Discovery does
+    // the whole handshake for real — validate the manifest against THIS
+    // timeline's hash, run the native fence, step back to the rotation seam,
+    // and verify every earlier piece by picture count — before anything is
+    // offered. A failure anywhere returns no offer and the export starts
+    // clean, which is always a correct outcome.
+    let resumePlan: NonNullable<Parameters<typeof exportProjectWebCodecs>[2]>['resume'];
+    let resumeFfmpeg: WebCodecsFfmpeg | null = null;
+    let resumePlanSessionId: string | null = null;
+    if (useWebCodecsPath) {
+      const freshSessionId = (tauriBackendRef.current.ffmpeg as unknown as { sessionId?: string }).sessionId;
+      if (freshSessionId) recordExportSessionCreated(freshSessionId);
+      const routing = planWebCodecsExport(snap, fps);
+      const pieceExpectedFrames = 'error' in routing ? [] : routing.pieces.map((p) => p.expectedFrames);
+      const offer = pieceExpectedFrames.length === 0
+        ? null
+        : await findResumeOffer({
+            project: snap,
+            fps,
+            width: resWidth,
+            height: resHeight,
+            pieceExpectedFrames,
+            inUseSessionId: freshSessionId,
+          });
+      if (generationRef.current !== gen) return;
+      if (offer) {
+        const choice = await new Promise<'resume' | 'clean'>((resolve) => {
+          resumeChoiceResolverRef.current = (answer) => {
+            resumeChoiceResolverRef.current = null;
+            setState(prev => ({ ...prev, pendingResumeOffer: null }));
+            resolve(answer);
+          };
+          setState(prev => ({ ...prev, pendingResumeOffer: offer }));
+        });
+        if (generationRef.current !== gen) return;
+        if (choice === 'resume') {
+          try {
+            // The fenced, re-entered session — NOT the fresh one. Its bytes are
+            // the whole point; a fresh session has none of them.
+            resumeFfmpeg = (await TauriFfmpeg.reenter(offer.sessionId)) as unknown as WebCodecsFfmpeg;
+            resumePlanSessionId = offer.sessionId;
+            resumePlan = {
+              pieceIndex: offer.resumable.checkpoint.pieceIndex,
+              encoderSessionIndex: offer.resumable.checkpoint.encoderSessionIndex,
+              byteOffset: offer.resumable.appendFromByteOffset,
+              cumulativePictures: offer.resumable.checkpoint.cumulativePictures,
+              manifest: offer.resumable.manifest,
+            };
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.warn('[ws3-resume] could not re-enter the surviving session — starting clean', err instanceof Error ? err.message : String(err));
+            resumeFfmpeg = null;
+            resumePlan = undefined;
+          }
+        } else {
+          // "Start clean" collects the survivor rather than leaving 2 GB
+          // behind that the operator has just said they do not want.
+          try {
+            const stale = await TauriFfmpeg.reenter(offer.sessionId);
+            await stale.destroy();
+            forgetExportSession(offer.sessionId);
+          } catch {
+            // Best-effort; the TTL/count policy catches it on a later run.
+          }
+        }
+      }
+    }
+
     const result = useWebCodecsPath
       ? await exportProjectWebCodecs(
           snap,
@@ -454,8 +547,8 @@ export function useExport(
           // to the base FfmpegLike surface — it structurally satisfies
           // WebCodecsFfmpeg even though TauriBackend's own field type doesn't
           // declare those extra members.
-          tauriBackendRef.current.ffmpeg as WebCodecsFfmpeg,
-          { fps, width: resWidth, height: resHeight, requestForcedSealConsent },
+          resumeFfmpeg ?? (tauriBackendRef.current.ffmpeg as WebCodecsFfmpeg),
+          { fps, width: resWidth, height: resHeight, requestForcedSealConsent, ...(resumePlan ? { resume: resumePlan } : {}) },
           onProgress,
         )
       : await exportProject(
@@ -469,8 +562,22 @@ export function useExport(
     // check its result would overwrite the 'cancelled' error state.
     if (generationRef.current !== gen) return;
 
+    // Whichever session the export actually ran in must be released. `teardown`
+    // only knows the fresh one, so a resumed session is destroyed here — and
+    // its ledger row with it, so cleanup never counts a directory that is gone.
+    const releaseResumedSession = async (): Promise<void> => {
+      if (!resumeFfmpeg) return;
+      try {
+        await (resumeFfmpeg as unknown as { destroy(): Promise<void> }).destroy();
+        forgetExportSession(resumePlanSessionId!);
+      } catch {
+        // Best-effort; the TTL/count policy catches it on a later run.
+      }
+    };
+
     if (!result.ok) {
       stopElapsedTimer();
+      await releaseResumedSession();
       await teardown();
       setState(prev => ({
         ...prev,
@@ -490,7 +597,15 @@ export function useExport(
     const backend = tauriBackendRef.current;
     try {
       if (!backend) throw new Error('export backend was torn down before save');
-      await backend.saveOutputToDisk(result.outputFile, savedPath);
+      // WS3 Round 10 Blocker 3 — a RESUMED export wrote its output into the
+      // re-entered session, not the fresh one. Saving from the fresh session
+      // would look for a file that was never written there.
+      if (resumeFfmpeg) {
+        await (resumeFfmpeg as unknown as { saveSessionFile(f: string, d: string): Promise<void> })
+          .saveSessionFile(result.outputFile, savedPath);
+      } else {
+        await backend.saveOutputToDisk(result.outputFile, savedPath);
+      }
     } catch (err) {
       stopElapsedTimer();
       await teardown();
@@ -508,6 +623,7 @@ export function useExport(
     }
 
     stopElapsedTimer();
+    await releaseResumedSession();
     await teardown();
     if (generationRef.current !== gen) return;
 
@@ -571,6 +687,7 @@ export function useExport(
     // parked pipeline unwinds through its unchanged typed failure instead of
     // hanging on a promise nobody will ever settle.
     sealConsentResolverRef.current?.(false);
+    resumeChoiceResolverRef.current?.('clean');
     // D13 fix — kill the in-flight ffmpeg subprocess before tearing down the
     // session dir it's writing into. Fire-and-forget: cancelExport is sync;
     // cancel() runs before teardown() so the sidecar isn't left running against
@@ -601,6 +718,7 @@ export function useExport(
       progress: 0,
       stageLabel: '',
       pendingSealConsent: null,
+      pendingResumeOffer: null,
       error: { kind: 'cancelled', message: 'Export cancelled.' },
       elapsedSec: prev.elapsedSec,
     }));
@@ -625,5 +743,11 @@ export function useExport(
     resolver(accept);
   }, []);
 
-  return { state, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent };
+  const resolveResumeChoice = useCallback((choice: 'resume' | 'clean'): void => {
+    const resolver = resumeChoiceResolverRef.current;
+    if (!resolver) return;
+    resolver(choice);
+  }, []);
+
+  return { state, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent, resolveResumeChoice };
 }

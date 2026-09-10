@@ -110,6 +110,21 @@ export class TauriFfmpeg implements FfmpegLike {
     return new TauriFfmpeg(sessionId);
   }
 
+  /**
+   * This session's own UUID — the same id `ffmpeg_write_export_state` requires
+   * an `export_state.json` manifest's `sessionId` field to carry, and the same
+   * id `listResumableSessionIds`/`reenter` speak in.
+   *
+   * WS3 Round 10 wiring edit (CC), named in that round's report: the checkpoint
+   * writer has to put this id INSIDE the manifest it writes, and Rust rejects a
+   * manifest whose `sessionId` disagrees with the session it is written to. The
+   * id was private, so a caller could not build a manifest Rust would accept.
+   * Read-only; nothing else about the encapsulation changes.
+   */
+  get sessionId(): string {
+    return this.#sessionId;
+  }
+
   /** UUIDs of crash-surviving session directories containing export_state.json. */
   static async listResumableSessionIds(): Promise<string[]> {
     return invoke<string[]>('ffmpeg_list_resumable_sessions');

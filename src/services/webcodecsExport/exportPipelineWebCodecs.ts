@@ -87,6 +87,9 @@ import type {
 } from './exportWorker';
 import type { FontConfig } from './textRenderer';
 import { resolveFontBytes } from './fontResolver';
+import { fenceSafeCheckpointOffset } from './exportCheckpointPlacement';
+import { createExportCheckpointWriter } from './exportCheckpointWriter';
+import { buildSourceTimelineHash, timelineIdentityFromProject, type ExportStateManifest } from './exportCheckpoint';
 import {
   muxOnly,
   forcedMp4SealOffer,
@@ -140,6 +143,44 @@ export interface ExportOptionsWebCodecs {
    * the user does not know is truncated.
    */
   requestForcedSealConsent?: (offer: ForcedMp4SealOffer) => Promise<boolean>;
+  /**
+   * WS3 Round 10 (Blocker 3) — continue a crash-surviving export instead of
+   * starting clean.
+   *
+   * Supplied ONLY by a caller that has already run the full discovery
+   * handshake (`exportResumeDiscovery.discoverResumableExport`): the manifest
+   * validated against the current timeline's `sourceTimelineHash`, the native
+   * fence (`ffmpeg_prepare_checkpoint_resume`) cleared, and every EARLIER
+   * piece verified by picture count. The `ffmpeg` handle passed alongside must
+   * be the RE-ENTERED session those checks ran against — a fresh session has
+   * none of those bytes.
+   *
+   * Absent (the overwhelmingly common case) is byte-identical to today.
+   */
+  resume?: {
+    pieceIndex: number;
+    encoderSessionIndex: number;
+    /**
+     * Byte offset inside `piece_<pieceIndex>.h264` at which appending resumes.
+     *
+     * This is the checkpoint's `seamByteOffset`, NOT its `byteOffset`: the
+     * fence verifies at `byteOffset` (which sits past the next access unit's
+     * leading parameter sets, because a prefix ending on a coded slice cannot
+     * be proven closed), and the caller then cuts back to the seam so the
+     * re-rendered access unit does not write those parameter sets a second
+     * time. Both prefixes hold `cumulativePictures` pictures.
+     */
+    byteOffset: number;
+    /** Pictures inside that prefix — this piece's own count, not the export's. */
+    cumulativePictures: number;
+    /**
+     * The validated manifest already on disk for this session, so the resumed
+     * run APPENDS to it rather than writing an empty one over it. Omitting it
+     * still resumes correctly, but a second crash before the next rotation
+     * would find no usable checkpoint.
+     */
+    manifest?: ExportStateManifest;
+  };
 }
 
 /**
@@ -202,6 +243,18 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
    * `pictures` count is used only to VERIFY that construction, not to decide it.
    */
   truncateAnnexbToOffset(path: string, byteOffset: number): Promise<{ pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number }>;
+  /**
+   * WS3 Round 10 (Blocker 3) — the durable-checkpoint half of the surface.
+   *
+   * OPTIONAL on purpose. `TauriFfmpeg` has both (see
+   * `tauriFfmpegCheckpointSurface.test.ts`, which pins that so this cannot
+   * silently become a production no-op), and every pre-existing fake has
+   * neither — which is exactly right: a fake with no session id cannot write a
+   * manifest Rust would accept, and an export that cannot checkpoint must run
+   * unchanged rather than fail.
+   */
+  readonly sessionId?: string;
+  writeExportState?(serializedManifest: string): Promise<void>;
 }
 
 import {
@@ -1071,6 +1124,37 @@ export interface DriveGlRunDeps {
    *  invariant this value must satisfy. */
   resumeFromFrameIndex?: number;
   /**
+   * WS3 Round 10 (Blocker 3) — how many bytes of `runFile` existed BEFORE this
+   * invocation. `appendBytes` is per-invocation state that restarts at 0, so a
+   * resumed run (a Rung 3 rewind, or a crash resume) must add this to every
+   * offset it reports, or it names a byte position in a file that no longer
+   * exists. The orchestrator already keeps exactly this number for the rewind
+   * truncate (`fileBaseByteOffset`); this hands the same value INTO the run so
+   * checkpoints can be absolute too.
+   */
+  fileBaseByteOffset?: number;
+  /**
+   * WS3 Round 10 (Blocker 3) — a durable checkpoint is available at an encoder
+   * rotation. Called at most once per rotation, from inside the append queue,
+   * with an offset that is already ABSOLUTE in `runFile` and already proven
+   * fence-safe (`fenceSafeCheckpointOffset`). A rotation whose following bytes
+   * cannot yield a fence-safe offset produces no call at all — a missing
+   * checkpoint costs a resume opportunity, a bad one costs a bitstream.
+   *
+   * The callback must not block: the append queue is the export's critical
+   * path. The orchestrator's implementation only mutates an in-memory manifest
+   * and pokes a single-slot writer.
+   */
+  onRotationCheckpoint?: (record: {
+    encoderSessionIndex: number;
+    byteOffset: number;
+    /** The rotation seam itself — where a resumed run resumes APPENDING, after
+     *  the fence has verified at `byteOffset`. See
+     *  `ExportCheckpointRecord.seamByteOffset` for why the two differ. */
+    seamByteOffset: number;
+    cumulativePictures: number;
+  }) => void;
+  /**
    * WS3 Tier 1 item 3c (Rung 3) — the GLOBAL (whole-piece) session index
    * `resumeFromFrameIndex` resumes INTO. Set alongside it, to the same
    * `hungSessionIndex` the orchestrator's rewind loop already computed.
@@ -1238,6 +1322,18 @@ export function driveGlRun(
      */
     const sessionFrameIndices: number[] = [];
     sessionFrameIndices[resumeSessionIndex] = deps.resumeFromFrameIndex ?? 0;
+    /** WS3 Round 10 (Blocker 3) — bytes of `runFile` already on disk when this
+     *  invocation started. Every checkpoint offset is reported relative to the
+     *  FILE, so a resumed run adds this to its own local byte counter. */
+    const fileBaseByteOffset = deps.fileBaseByteOffset ?? 0;
+    /**
+     * A rotation that is waiting for its FOLLOWING bytes before a checkpoint
+     * can be placed. The seam itself is not a legal checkpoint offset — the
+     * native fence's re-repair step drops a final access unit it cannot prove
+     * closed, and at a seam nothing follows the last coded slice to prove it.
+     * See `exportCheckpointPlacement.ts` for the measurement.
+     */
+    let pendingSeam: { sessionIndex: number; seamByteOffset: number; frameIndex: number } | null = null;
     let salvaged = false;
     let salvageReason: string | null = null;
     let lastOutputAt = now();
@@ -1624,11 +1720,39 @@ export function driveGlRun(
           return;
         }
         appendsInFlight++;
+        // Hoisted so the checkpoint placement below can scan the very bytes
+        // that were written, rather than re-concatenating them. Identical
+        // buffer, identical call — `concatChunks` only copies.
+        const payload = concatChunks(parts, batchBytes);
+        const batchStartOffset = appendBytes;
         try {
-          await ffmpeg.appendFileRaw(runFile, concatChunks(parts, batchBytes));
+          await ffmpeg.appendFileRaw(runFile, payload);
           appendIpcCallCount++;
           appendCallCount += batchChunks;
           appendBytes += batchBytes;
+          // WS3 Round 10 (Blocker 3) — DURABLE CHECKPOINT AT A ROTATION SEAM.
+          //
+          // Runs only for the first batch after a rotation, and only once the
+          // bytes are actually on disk (after the await), so a checkpoint can
+          // never name an offset the file has not reached. The offset is the
+          // seam plus session k+1's leading non-VCL run, which is the only
+          // shape the native fence accepts — see `exportCheckpointPlacement`.
+          // `cumulativePictures` is the rotation's own frame index: the new
+          // session's leading parameter sets add no picture, so the count at
+          // the checkpoint is the count at the seam.
+          if (pendingSeam !== null && batchStartOffset === pendingSeam.seamByteOffset) {
+            const seam = pendingSeam;
+            pendingSeam = null;
+            const checkpointOffset = fenceSafeCheckpointOffset(fileBaseByteOffset + seam.seamByteOffset, payload);
+            if (checkpointOffset !== null) {
+              deps.onRotationCheckpoint?.({
+                encoderSessionIndex: seam.sessionIndex,
+                byteOffset: checkpointOffset,
+                seamByteOffset: fileBaseByteOffset + seam.seamByteOffset,
+                cumulativePictures: seam.frameIndex,
+              });
+            }
+          }
           lastAppendCompletedAt = now();
           if (lastPhase === 'encoder-flush') {
             chunksAppendedDuringFlush += batchChunks;
@@ -1926,8 +2050,18 @@ export function driveGlRun(
           // session k-1's tail would put the marker before bytes that belong
           // ahead of it, and a rewind to k would then cut in the wrong place.
           flushPendingBatch();
+          const rotatedFrameIndex = data.frameIndex;
           appendQueue = appendQueue.then(() => {
             sessionByteOffsets[rotatedTo] = appendBytes;
+            // WS3 Round 10 (Blocker 3) — arm the checkpoint. It is placed by
+            // the NEXT append, once session `rotatedTo`'s own leading
+            // parameter sets are on disk. `appendBytes` here is the exact
+            // seam, for the same reason the marker above is exact.
+            pendingSeam = {
+              sessionIndex: rotatedTo,
+              seamByteOffset: appendBytes,
+              frameIndex: rotatedFrameIndex,
+            };
           });
           // `frameIndex` needs no append-queue marker — it is exact the
           // instant this message arrives (see `sessionFrameIndices`'s own doc).
@@ -2491,6 +2625,44 @@ export async function exportProjectWebCodecs(
     ? await resolveFontBytes([...collectUsedFontFamilies(project)])
     : [];
 
+  // ── WS3 Round 10 (Blocker 3) — durable checkpointing ─────────────────────
+  //
+  // The manifest is PIECE-SCOPED: recreated at the start of every GL piece, so
+  // its `byteOffset`/`cumulativePictures` are local to that piece's own
+  // `piece_<n>.h264`. That is the only scope under which the native fence
+  // (which takes ONE file) and `appendExportCheckpoint`'s strict monotonicity
+  // can both hold, since a per-piece byte offset necessarily resets at a piece
+  // boundary. Earlier pieces are proven at RESUME time by picture count
+  // instead (`exportResumeDiscovery.ts`), which is stronger than a byte offset
+  // would have been anyway.
+  //
+  // `sourceTimelineHash` is the ONLY resume gate against an edited timeline.
+  // It is computed once, here, from the project this run is actually
+  // exporting; a hash failure disables checkpointing for the run and changes
+  // nothing else.
+  //
+  // NOTHING HERE IS AWAITED. The hash comes from `crypto.subtle.digest`, and
+  // awaiting it would push worker construction one macrotask later than it has
+  // been since this path shipped — an observable change to the clean path.
+  // The writer takes the promise and buffers the calls that can precede it.
+  const checkpointWriter = createExportCheckpointWriter(ffmpeg, {
+    projectId: project.id,
+    sourceTimelineHash: (async () => {
+      try {
+        return await buildSourceTimelineHash(timelineIdentityFromProject(project, { fps, width, height }));
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-resume] could not build the timeline identity — this export will not be resumable', causeString(err));
+        return null;
+      }
+    })(),
+    fps,
+    width,
+    height,
+  });
+
+  const resume = options.resume ?? null;
+
   const pieceFiles: string[] = [];
   let framesCompletedBase = 0;
   // WS3 Tier 1 item 3c (Rung 3) — per-EXPORT ceiling (every GL piece
@@ -2501,6 +2673,25 @@ export async function exportProjectWebCodecs(
 
   for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
     const plan = pieces[pieceIndex]!;
+    // WS3 Round 10 (Blocker 3) — a resumed run does not re-render the pieces
+    // that already finished. Their files are on disk in the SAME re-entered
+    // session, and `discoverResumableExport` has already proven each one holds
+    // exactly `plan.expectedFrames` pictures by native count — existence alone
+    // was never evidence, and a short earlier piece would silently shorten the
+    // finished film. Nothing is truncated, counted or appended here: the fence
+    // already ran, and the proof already happened.
+    if (resume !== null && pieceIndex < resume.pieceIndex) {
+      pieceFiles.push(`piece_${pieceIndex}.h264`);
+      framesCompletedBase += plan.expectedFrames;
+      onProgress({
+        type: 'encoding_segment',
+        index: pieceIndex,
+        total: pieces.length,
+        frame: framesCompletedBase,
+        totalFrames: totalExpectedFramesOverall,
+      });
+      continue;
+    }
     const frameOffsetForThisPiece = framesCompletedBase;
     // WS3 — the encoder-session plan for this piece, once the worker reports
     // it. Held here so `onFrameProgress` can carry it: the piece count alone
@@ -2536,10 +2727,21 @@ export async function exportProjectWebCodecs(
         }
       }
       const runFile = `piece_${pieceIndex}.h264`;
+      // WS3 Round 10 (Blocker 3) — a fresh piece starts a fresh, piece-scoped
+      // manifest; a RESUMED piece keeps writing into the one already on disk
+      // for it, so a second crash rewinds to the newest rotation rather than
+      // to the start of the piece.
+      const resumingThisPiece = resume !== null && resume.pieceIndex === pieceIndex;
+      if (resumingThisPiece && resume!.manifest) {
+        checkpointWriter.adoptManifest(resume!.manifest, pieceIndex);
+      } else if (!resumingThisPiece) {
+        checkpointWriter.beginPiece(pieceIndex);
+      }
       const runGlPiece = (
         resumeFromFrameIndex?: number,
         resumeSessionIndex?: number,
         forceSoftware?: boolean,
+        baseByteOffset = 0,
       ): Promise<RunDriveResult> =>
         driveGlRun(
           ffmpeg,
@@ -2569,11 +2771,15 @@ export async function exportProjectWebCodecs(
             resumeFromFrameIndex,
             resumeSessionIndex,
             forceSoftwareEncoder: forceSoftware,
+            fileBaseByteOffset: baseByteOffset,
+            onRotationCheckpoint: (row) => checkpointWriter.record(row),
           },
           { originSec: plan.gridOriginSec, baseFrame: plan.gridBaseFrame },
         );
 
-      let driveResult = await runGlPiece();
+      let driveResult = resumingThisPiece
+        ? await runGlPiece(resume!.cumulativePictures, resume!.encoderSessionIndex, false, resume!.byteOffset)
+        : await runGlPiece();
       // WS3 Tier 1 item 3c — Rung 3, wired to real execution. On a MID-run
       // (rotation) flush timeout only — never the final flush, which already
       // has its own salvage path via `runFinalFlushWithRecovery` — abandon
@@ -2593,7 +2799,7 @@ export async function exportProjectWebCodecs(
       // SECOND rewind's absolute offset is `fileBaseByteOffset + <local
       // offset>`, never the local offset alone — the file already has bytes
       // on disk this new invocation never wrote and knows nothing about.
-      let fileBaseByteOffset = 0;
+      let fileBaseByteOffset = resumingThisPiece ? resume!.byteOffset : 0;
       while (!driveResult.ok) {
         const liveness = driveResult.error.liveness;
         const hungSessionIndex = liveness?.encoderSessionIndex ?? null;
@@ -2721,7 +2927,7 @@ export async function exportProjectWebCodecs(
         // `isRotationFlushTimeout` above) is what stops the RESUMED run's own
         // ledger from defaulting to session 0 if IT hangs again before its
         // own first 'session-rotate' — see `DriveGlRunDeps.resumeSessionIndex`.
-        driveResult = await runGlPiece(rewindFrameIndex, hungSessionIndex, forceSoftware);
+        driveResult = await runGlPiece(rewindFrameIndex, hungSessionIndex, forceSoftware, absoluteByteOffset);
       }
       if (!driveResult.ok) {
         const watchdogFired = driveResult.error.message.includes('no output for 30s');

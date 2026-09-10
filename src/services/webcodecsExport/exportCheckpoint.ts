@@ -74,6 +74,29 @@ export interface ExportCheckpointRecord {
   byteOffset: number;
   /** Pictures in `[0, byteOffset)` — access units, not raw VCL NALs. */
   cumulativePictures: number;
+  /**
+   * WS3 Round 10 (CC wiring edit, named in that round's report) — the ENCODER
+   * ROTATION SEAM this checkpoint was taken at: the byte count at the instant
+   * the previous encoder session's output ended.
+   *
+   * Why both offsets exist. `byteOffset` is where the FENCE can verify: its
+   * step-5 re-repair drops a final access unit it cannot prove closed, so an
+   * offset cut exactly at the seam — which ends on a coded slice with nothing
+   * after it — is refused. The fence therefore needs `byteOffset` to sit just
+   * past the next access unit's leading non-VCL run. But appending a
+   * re-rendered access unit onto a prefix that already holds that unit's
+   * parameter sets and AUD writes them TWICE, which is not a conforming
+   * access-unit sequence and which the picture counter cannot see.
+   *
+   * So: the fence verifies at `byteOffset`, and the caller then cuts back to
+   * `seamByteOffset` before appending. Both prefixes hold exactly
+   * `cumulativePictures` pictures — the bytes between them contain no coded
+   * slice — so the cut is verifiable, not assumed.
+   *
+   * Optional so a manifest written before this field existed still validates;
+   * a checkpoint without it simply is not resumed byte-exactly.
+   */
+  seamByteOffset?: number;
   fps: number;
   width: number;
   height: number;
@@ -516,6 +539,9 @@ function isCheckpointRecord(value: unknown): value is ExportCheckpointRecord {
     isNonNegativeSafeInteger(value.encoderSessionIndex) &&
     isNonNegativeSafeInteger(value.byteOffset) &&
     isNonNegativeSafeInteger(value.cumulativePictures) &&
+    (value.seamByteOffset === undefined ||
+      (isNonNegativeSafeInteger(value.seamByteOffset) &&
+        value.seamByteOffset <= (value.byteOffset as number))) &&
     isPositiveFinite(value.fps) &&
     isPositiveSafeInteger(value.width) &&
     isPositiveSafeInteger(value.height) &&
