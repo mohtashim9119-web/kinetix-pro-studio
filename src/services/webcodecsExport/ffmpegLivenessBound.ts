@@ -121,6 +121,33 @@ const TRUNCATE_WORST_MS_AT_1_7_GB = 5_820;
 /** Measured worst streaming truncate at 2.3 GB — the sizing case. */
 const TRUNCATE_WORST_MS_AT_2_3_GB = 6_907;
 
+// ---------------------------------------------------------------------------
+// MEASURED 2026-09-11 — `ffmpeg_kill_session` settle latency, macOS, release
+// profile, TMPDIR=/var/folders/39/.../T, three samples per case; p50 = middle,
+// worst = max. Cases: idle (no child), already-exited (kill twice), mid-concat
+// (1.7 GB stream-copy, kill during copy), mid-mux (annexb→mp4 copy), mid-truncate
+// (400×8 synthetic stream, kill during scan+set_len).
+//
+//   idle              p50 0 ms / worst 1 ms
+//   already-exited    p50 0 ms / worst 0 ms
+//   mid-concat        p50 2 ms / worst 3 ms
+//   mid-mux           p50 2 ms / worst 4 ms
+//   mid-truncate      p50 3 ms / worst 5 ms
+//
+// Chosen bound: 25× worst (5 ms) = 125 ms. There is no third mechanism behind
+// kill — if this expires, reject with `FfmpegKillHungError` and tell the
+// operator the ffmpeg sidecar process may still be running.
+// ---------------------------------------------------------------------------
+
+/** Measured worst `ffmpeg_kill_session` settle across representative cases. */
+const KILL_WORST_MS = 5;
+
+/** Headroom over measured kill settle (×). Same 25× convention as native scans. */
+const KILL_HEADROOM = 25;
+
+/** Wall-clock bound for `ffmpeg.kill()` inside a liveness-bound expiry handler. */
+export const KILL_BOUND_MS = Math.ceil(KILL_WORST_MS * KILL_HEADROOM);
+
 /**
  * Headroom over worst observed, for both native scans (x).
  *
@@ -219,6 +246,21 @@ export interface FfmpegBoundDiagnostics {
   msSinceLastProgress: number | null;
 }
 
+/** Kill itself did not settle within `KILL_BOUND_MS` — no further retry layer. */
+export class FfmpegKillHungError extends Error {
+  readonly diagnostics: FfmpegBoundDiagnostics;
+
+  constructor(diagnostics: FfmpegBoundDiagnostics) {
+    super(
+      `ffmpeg step "${diagnostics.label}" expired and ffmpeg.kill() did not settle within ` +
+        `${Math.round(KILL_BOUND_MS / 1000)}s — the sidecar process may still be running ` +
+        `(files=${diagnostics.files.join(',') || 'none'}). Aborting (ffmpeg kill bound).`,
+    );
+    this.name = 'FfmpegKillHungError';
+    this.diagnostics = diagnostics;
+  }
+}
+
 /** Typed failure for an expired ffmpeg liveness bound. */
 export class FfmpegBoundExpiredError extends Error {
   readonly diagnostics: FfmpegBoundDiagnostics;
@@ -282,27 +324,44 @@ export async function withFfmpegLivenessBound<T>(
       timer = setTimeout(() => {
         void (async () => {
           if (settled) return;
+          const diagnosticsBase: FfmpegBoundDiagnostics = {
+            label: options.label,
+            boundMs: options.boundMs,
+            elapsedMs: now() - startedAt,
+            pieceIndex: options.pieceIndex ?? null,
+            pieceCount: options.pieceCount ?? null,
+            files: options.files ?? [],
+            killed: false,
+            killError: null,
+            progressTicks: progressTicks > 0 ? progressTicks : null,
+            msSinceLastProgress: progressTicks > 0 ? now() - lastProgressAt : null,
+          };
           let killed = false;
           let killError: string | null = null;
           try {
-            await options.ffmpeg.kill();
+            await Promise.race([
+              options.ffmpeg.kill(),
+              new Promise<never>((_, killReject) => {
+                setTimeout(
+                  () => killReject(new FfmpegKillHungError(diagnosticsBase)),
+                  KILL_BOUND_MS,
+                );
+              }),
+            ]);
             killed = true;
           } catch (err) {
+            if (err instanceof FfmpegKillHungError) {
+              if (!settled) reject(err);
+              return;
+            }
             killError = err instanceof Error ? err.message : String(err);
           }
           if (settled) return;
           reject(
             new FfmpegBoundExpiredError({
-              label: options.label,
-              boundMs: options.boundMs,
-              elapsedMs: now() - startedAt,
-              pieceIndex: options.pieceIndex ?? null,
-              pieceCount: options.pieceCount ?? null,
-              files: options.files ?? [],
+              ...diagnosticsBase,
               killed,
               killError,
-              progressTicks: progressTicks > 0 ? progressTicks : null,
-              msSinceLastProgress: progressTicks > 0 ? now() - lastProgressAt : null,
             }),
           );
         })();
