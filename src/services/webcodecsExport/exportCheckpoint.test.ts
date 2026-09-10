@@ -5,7 +5,12 @@ import {
   buildSourceTimelineHash,
   canonicalTimelineJson,
   createExportStateManifest,
+  EXPORT_TIMELINE_IDENTITY_VERSION,
+  isRecoveryBudgetExhausted,
+  MAX_BOUNDARY_REWINDS_PER_EXPORT,
+  MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT,
   prepareCheckpointResume,
+  recoveryBudgetExhaustionReason,
   serializeExportState,
   timelineIdentityFromProject,
   validateExportState,
@@ -303,6 +308,206 @@ describe('exportCheckpoint reader + mandatory pre-append repair', () => {
     expect(validateExportState(malformed, expected, complete.byteLength)).toEqual({
       kind: 'clean',
       reason: 'checkpoint record 1 is not monotonic',
+    });
+  });
+
+  it('repair failure after truncation returns bitstream_touched, not clean', async () => {
+    const crashAt = vcls[2 * 8 + 5]!.header + 2;
+    let bytes = complete.slice(0, crashAt);
+    const io: ExportCheckpointResumeIo = {
+      sessionFileSize: async () => bytes.byteLength,
+      prepareCheckpointResume: async () => {
+        const repaired = truncateAnnexbToLastCompleteAu(bytes);
+        bytes = repaired.bytes.slice(0, Math.max(0, repaired.bytes.byteLength - 10));
+        throw new Error('simulated native failure after whole-AU repair');
+      },
+    };
+    const result = await prepareCheckpointResume(io, 'piece_0.h264', serialized(), expected);
+    expect(result.kind).toBe('bitstream_touched');
+    if (result.kind !== 'bitstream_touched') return;
+    expect(result.reason).toMatch(/repair failed after mutating/);
+    expect(result.repair.keptBytes).toBeLessThan(crashAt);
+  });
+});
+
+describe('exportCheckpoint timeline identity v2', () => {
+  const dims = { fps: 30, width: 1920, height: 1080 };
+
+  async function baseHash(): Promise<string> {
+    return buildSourceTimelineHash(timelineIdentityFromProject(stubProject(), dims));
+  }
+
+  it('includes timelineIdentityVersion so v1 hashes invalidate', async () => {
+    const identity = timelineIdentityFromProject(stubProject(), dims);
+    expect(identity.timelineIdentityVersion).toBe(EXPORT_TIMELINE_IDENTITY_VERSION);
+    const v2 = await buildSourceTimelineHash(identity);
+    const v1ish = await buildSourceTimelineHash({
+      ...identity,
+      timelineIdentityVersion: 1 as typeof EXPORT_TIMELINE_IDENTITY_VERSION,
+    });
+    expect(v2).not.toBe(v1ish);
+  });
+
+  it('each newly covered visual field changes the hash', async () => {
+    const base = await baseHash();
+    const gradeHash = await buildSourceTimelineHash(timelineIdentityFromProject(
+      stubProject({
+        segments: [{
+          id: 'seg-1',
+          text: 'hello',
+          assetId: 'asset-1',
+          startTime: 0,
+          duration: 2,
+          transition: TransitionType.NONE,
+          animation: AnimationType.NONE,
+          order: 0,
+          effectGrade: { brightness: 0.1, contrast: 0, saturation: 0, temperature: 0 },
+        }],
+      }),
+      dims,
+    ));
+    expect(gradeHash).not.toBe(base);
+
+    const overlayHash = await buildSourceTimelineHash(timelineIdentityFromProject(
+      stubProject({
+        segments: [{
+          id: 'seg-1',
+          text: 'hello',
+          assetId: 'asset-1',
+          startTime: 0,
+          duration: 2,
+          transition: TransitionType.NONE,
+          animation: AnimationType.NONE,
+          order: 0,
+          overlayConfig: {
+            color: '#f00',
+            backgroundColor: 'transparent',
+            fontFamily: 'Arial',
+          },
+        }],
+      }),
+      dims,
+    ));
+    expect(overlayHash).not.toBe(base);
+
+    const globalOverlayHash = await buildSourceTimelineHash(timelineIdentityFromProject(
+      stubProject({
+        globalOverlayConfig: {
+          color: '#00f',
+          backgroundColor: 'transparent',
+          fontFamily: 'Arial',
+        },
+      }),
+      dims,
+    ));
+    expect(globalOverlayHash).not.toBe(base);
+
+    const assetHash = await buildSourceTimelineHash(timelineIdentityFromProject(
+      stubProject({
+        assets: [{
+          id: 'asset-1',
+          name: 'clip.mp4',
+          url: 'blob:x',
+          type: 'video',
+          addedAt: 12345,
+        }],
+      }),
+      dims,
+    ));
+    expect(assetHash).not.toBe(base);
+  });
+
+  it('excluded UI/sync fields do not change the hash', async () => {
+    const base = await baseHash();
+    const withLocked = await buildSourceTimelineHash(timelineIdentityFromProject(
+      stubProject({
+        segments: [{
+          id: 'seg-1',
+          text: 'hello',
+          assetId: 'asset-1',
+          startTime: 0,
+          duration: 2,
+          transition: TransitionType.NONE,
+          animation: AnimationType.NONE,
+          order: 0,
+          locked: true,
+          anchorStart: 9.5,
+          anchorSource: 'whisper',
+        }],
+      }),
+      dims,
+    ));
+    expect(withLocked).toBe(base);
+  });
+});
+
+describe('exportCheckpoint recovery budget', () => {
+  const sessionId = '00000000-0000-4000-8000-000000000001';
+  const hash = 'a'.repeat(64);
+  const expected = {
+    projectId: 'proj-1',
+    sourceTimelineHash: hash,
+    fps: 30,
+    width: 1920,
+    height: 1080,
+  };
+
+  it('old-shape manifest without budget fields still validates', () => {
+    const legacy = JSON.stringify({
+      schemaVersion: 1,
+      sessionId,
+      projectId: expected.projectId,
+      sourceTimelineHash: hash,
+      fps: 30,
+      width: 1920,
+      height: 1080,
+      checkpoints: [{
+        pieceIndex: 0,
+        encoderSessionIndex: 0,
+        byteOffset: 0,
+        cumulativePictures: 0,
+        fps: 30,
+        width: 1920,
+        height: 1080,
+        sourceTimelineHash: hash,
+      }],
+    });
+    const result = validateExportState(legacy, expected, 0);
+    expect(result.kind).toBe('resume');
+  });
+
+  it('budget exhaustion halts resume with a clean reason', () => {
+    const exhausted = JSON.stringify({
+      ...createExportStateManifest({
+        sessionId,
+        projectId: expected.projectId,
+        sourceTimelineHash: hash,
+        fps: 30,
+        width: 1920,
+        height: 1080,
+      }),
+      boundaryRewindsUsed: MAX_BOUNDARY_REWINDS_PER_EXPORT,
+    });
+    expect(isRecoveryBudgetExhausted({ boundaryRewindsUsed: MAX_BOUNDARY_REWINDS_PER_EXPORT })).toBe(true);
+    expect(validateExportState(exhausted, expected, 0)).toEqual({
+      kind: 'clean',
+      reason: recoveryBudgetExhaustionReason({ boundaryRewindsUsed: MAX_BOUNDARY_REWINDS_PER_EXPORT }),
+    });
+
+    const totalExhausted = JSON.stringify({
+      ...createExportStateManifest({
+        sessionId,
+        projectId: expected.projectId,
+        sourceTimelineHash: hash,
+        fps: 30,
+        width: 1920,
+        height: 1080,
+      }),
+      totalRecoveryAttempts: MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT,
+    });
+    expect(validateExportState(totalExhausted, expected, 0)).toEqual({
+      kind: 'clean',
+      reason: recoveryBudgetExhaustionReason({ totalRecoveryAttempts: MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT }),
     });
   });
 });
