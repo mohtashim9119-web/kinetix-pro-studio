@@ -16,8 +16,8 @@ This section supersedes Round 7's extrapolated 2.3 GB mux bound, the
 slices-per-picture mode heuristic as a keep/drop rule, and the claim that
 unification was already permanently guarded by sampling. Historical Round 7
 text remains below. `docs/ws3-export-architecture-ledger.md` is referenced
-by name only and was not edited. Full `npm test` was **not** run this round
-(coordinator-gated; concurrent suites hang the machine).
+by name only and was not edited. Full `npm test` ran twice after CC finished;
+both runs were 0 failed.
 
 ### STEP 0 — Cargo reconciliation (not a blocker)
 
@@ -55,16 +55,23 @@ in the Round 7 *observed* cargo numbers — only in the prompt's 279
 baseline. Round 7 docs already stated 283 + 5 = 288; list-diff confirmed
 it.
 
-This round then added five more Rust tests (enumerated under STEP 4/5).
-Post-round default cargo is **293 passed / 0 failed / 5 ignored**
-(288 + 5). fa-inference is **379 / 0 / 35** (374 + 5).
+This round then added five more Rust tests (enumerated under STEP 4/5)
+and **four** Vitest tests (enumerated below). Post-round default cargo is
+**293 passed / 0 failed / 5 ignored** (288 + 5). fa-inference is
+**379 / 0 / 35** (374 + 5).
 
-Expected vs Observed (Round 8 close). `npm test` is inventory/record only
-— **not run**.
+Vitest N vs Round 7's 3456 executed = **+4** (`3456 + 4 = 3460`):
+
+| File | New `it(...)` names |
+|---|---|
+| `src/services/webcodecsExport/annexbFrameCount.test.ts` | +3: `five fixtures: mid-payload, first_mb, complete+dangling, multi-slice, clean`; `predicate: trailing AUD is complete; EOF-ending VCL is not`; `count path and grouping agree at every byte offset of a small corpus` |
+| `src/services/webcodecsExport/muxOnly.test.ts` | +1: `operator-visible offer numbers are the post-final-AU-drop counts` |
+
+Expected vs Observed (Round 8 close).
 
 | Gate | Expected | Observed |
 |---|---|---|
-| `npm test` count | Round 7 record 3379 pass / 0 fail / 77 skip (3456); +6 Vitest this round → 3385 / 0 / 77 (3462) if AJ-0 holds | **NOT RUN** (deferred). Round 7 last observed 3378 / 1 / 77 (AJ-0 v6 180 s timeout) |
+| `npm test` count | 3379 + 4 = 3383 pass / 0 fail / 77 skip (**3460**) | **3383 / 0 / 77 (3460)** twice |
 | `cargo test` | 288 + 5 = 293 / 0 / 5 | **293 / 0 / 5** |
 | `cargo test --features fa-inference` | 374 + 5 = 379 / 0 / 35 | **379 / 0 / 35** |
 | fixture `efd16ab5…` (8-slice × 10, 945 B) | unchanged | unchanged |
@@ -94,7 +101,8 @@ Fix: timeout **530_000 ms = 3× isolated worst (176.34 s)** in
 2.7–3.3× isolated span plus the historical ~2× warm-isolated → full-suite
 inflation. Raising the timeout is the right fix for a load-sensitive
 fixed cost; serialising a reporting check does not remove the 176 s cold
-floor. Full-suite confirmation deferred.
+floor. Full-suite confirmation: AJ-0 file **151.2 s** (run 1) and
+**184.0 s** (run 2), both well under 530 s, both 3/0/0.
 
 ### STEP 2 — Mux measured at 1.7 GB and 2.3 GB
 
@@ -129,7 +137,9 @@ size, which is correct.
 Old bound 470_824 ms / 20.470 s = **23.0×**, under the 25× floor — that
 is why the formula changed. New 511_750 / 20.470 = **25.0×**.
 
-Scratch was cleaned after the run; none remained at Round 8 close.
+Scratch cleanup: **8,575,616 KiB (8,781,430,784 bytes)** freed from
+`$TMPDIR/kinetix-ws3-mux-at-scale-*`. None remained at Round 8 close.
+Tier-piece synthetic scratch freed **7,200 KiB**.
 
 ### STEP 3 — Tier-piece decomposition
 
@@ -367,8 +377,9 @@ Round 8 did not change this contract.
 | `git diff --name-only main -- src-tauri/` | non-empty (`ffmpeg.rs`, `lib.rs`) |
 | four fixture digests | unchanged |
 | targeted Vitest (changed files) | 56 / 0 / 0 |
-| `npm test` twice | **SKIPPED** pending user approval that CC is done |
-| benchmark scratch | cleaned; none present at close |
+| `npm test` run 1 | **3383 / 0 / 77 (3460)** in 390 s; AJ-0 file 151.2 s |
+| `npm test` run 2 | **3383 / 0 / 77 (3460)** in 457 s; AJ-0 file 184.0 s |
+| benchmark scratch | cleaned; **8,781,430,784 bytes** mux + 7,200 KiB tier-piece |
 
 Destructive probes (RED then GREEN): final-AU completeness predicate;
 clean-path byte neutrality; resume-path byte-exactness; sealing offer
