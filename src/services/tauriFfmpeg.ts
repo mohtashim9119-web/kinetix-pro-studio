@@ -1,6 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
 import type { FfmpegLike } from './segmentEncoder';
 import type { AnnexbFrameCount } from './webcodecsExport/annexbFrameCount';
+import {
+  EXPORT_STATE_FILENAME,
+  type AnnexbCheckpointRepairResult,
+  type ExportCheckpointRecord,
+} from './webcodecsExport/exportCheckpoint';
 
 export type { AnnexbFrameCount };
 
@@ -103,6 +108,37 @@ export class TauriFfmpeg implements FfmpegLike {
   static async create(): Promise<TauriFfmpeg> {
     const sessionId = await invoke<string>('ffmpeg_create_session');
     return new TauriFfmpeg(sessionId);
+  }
+
+  /** UUIDs of crash-surviving session directories containing export_state.json. */
+  static async listResumableSessionIds(): Promise<string[]> {
+    return invoke<string[]>('ffmpeg_list_resumable_sessions');
+  }
+
+  /**
+   * Re-enters a surviving session without minting a new UUID. The Rust side
+   * keeps append/count/concat closed until `prepareCheckpointResume` succeeds.
+   */
+  static async reenter(sessionId: string): Promise<TauriFfmpeg> {
+    await invoke<void>('ffmpeg_reenter_session', { sessionId });
+    return new TauriFfmpeg(sessionId);
+  }
+
+  async readExportState(): Promise<Uint8Array> {
+    const bytes = await this.readFile(EXPORT_STATE_FILENAME);
+    return typeof bytes === 'string' ? new TextEncoder().encode(bytes) : bytes;
+  }
+
+  async writeExportState(serializedManifest: string): Promise<void> {
+    this.#assertAlive();
+    try {
+      await invoke<void>('ffmpeg_write_export_state', {
+        sessionId: this.#sessionId,
+        serializedState: serializedManifest,
+      });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
   }
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
@@ -258,6 +294,30 @@ export class TauriFfmpeg implements FfmpegLike {
         sessionId: this.#sessionId,
         path,
         byteOffset,
+      });
+    } catch (err) {
+      throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
+  /**
+   * Atomic native pre-append resume gate. Rust performs backwards tail
+   * inspection, unconditional whole-AU repair, exact checkpoint truncation,
+   * and canonical picture recount before unblocking append/count/concat.
+   */
+  async prepareCheckpointResume(
+    path: string,
+    checkpoint: ExportCheckpointRecord,
+  ): Promise<AnnexbCheckpointRepairResult> {
+    this.#assertAlive();
+    try {
+      return await invoke<AnnexbCheckpointRepairResult>('ffmpeg_prepare_checkpoint_resume', {
+        sessionId: this.#sessionId,
+        path,
+        byteOffset: checkpoint.byteOffset,
+        cumulativePictures: checkpoint.cumulativePictures,
+        pieceIndex: checkpoint.pieceIndex,
+        encoderSessionIndex: checkpoint.encoderSessionIndex,
       });
     } catch (err) {
       throw new Error(typeof err === 'string' ? err : String(err));

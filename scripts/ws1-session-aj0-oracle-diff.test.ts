@@ -95,5 +95,16 @@ describe.each(['v6', '173', 'spanish'] as const)('AJ-0 oracle diff (reporting on
     // structural ones above (segment count, tag order). Every value delta —
     // allowlisted or not — is printed above for a human to read; this check
     // does not fail the suite on an unexplained delta, by design.
-  }, 180_000); // vitest harness only — v6 runProductionPath can exceed 120s under full-suite CPU load
+  }, 530_000);
+  // Isolated diagnosis, n=10 across two 5-run series (Round 8):
+  //   This-file (3 tests, v6 split): 48.6, 90.5, 132.4, 78.9, 77.9 s
+  //     p50 78.9 s, worst 132.4 s, file-wall worst 160.4 s.
+  //   `-t v6` series already in this file: 176.34, 81.44, 76.36, 63.97, 53.59 s
+  //     p50 76.36 s, worst 176.34 s.
+  // Combined isolated v6 p50 ≈ 78 s, worst 176.34 s. Output is deterministic
+  // (always 3/0/0, same allowlisted 10 ms delta). Wall-time is load-sensitive,
+  // not a non-deterministic assertion. 180 s is 1.02× the isolated worst — no
+  // headroom, so full-suite contention false-fails a correct run.
+  // Ceiling 530 s = 3× isolated worst (176.34 s). 3× covers the observed 2.7–3.3×
+  // isolated span plus the historical ~2× warm-isolated → full-suite inflation.
 });

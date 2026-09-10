@@ -1,14 +1,11 @@
 /**
- * Write-only export checkpoint manifest (`export_state.json`).
+ * Durable export checkpoint manifest (`export_state.json`).
  *
- * Encoder rotation already produces ~27 SPS/PPS+IDR seams on a 26-minute
- * 1080p30 export. This module persists those seams so a future resume round
- * can truncate + concatenate a remainder. THIS ROUND WRITES ONLY. Nothing
- * in the production export pipeline imports this file; writing a manifest
- * cannot change export behaviour, timing, or output bytes until a later
- * round wires a caller.
- *
- * Salvage (whether to resume vs. fail the export) is not this module's call.
+ * This module owns canonical timeline identity, manifest writing, strict
+ * parsing/invalidation, and the mandatory pre-append repair handshake. The
+ * production orchestrator deliberately does not import it yet: that call site
+ * is owned separately, but any future caller must go through
+ * `prepareCheckpointResume` before appending to a surviving session.
  */
 
 import { sha256Hex } from './annexbChunkCompare';
@@ -95,6 +92,107 @@ export interface ExportStateManifest {
   height: number;
   checkpoints: ExportCheckpointRecord[];
 }
+
+export interface ExportCheckpointExpectedIdentity {
+  projectId: string;
+  sourceTimelineHash: string;
+  fps: number;
+  width: number;
+  height: number;
+}
+
+export interface AnnexbCheckpointRepairResult {
+  pictures: number;
+  vclNals: number;
+  bytesRemoved: number;
+  keptBytes: number;
+}
+
+export interface ExportCheckpointResumeIo {
+  sessionFileSize(path: string): Promise<number>;
+  /**
+   * Native atomic handshake: inspect the tail backwards, truncate to the last
+   * whole access unit unconditionally, truncate to the recorded byte offset,
+   * then re-count the kept prefix before allowing append/count/concat.
+   */
+  prepareCheckpointResume(
+    path: string,
+    checkpoint: ExportCheckpointRecord,
+  ): Promise<AnnexbCheckpointRepairResult>;
+}
+
+export type ExportCheckpointValidation =
+  | {
+      kind: 'resume';
+      manifest: ExportStateManifest;
+      checkpoint: ExportCheckpointRecord;
+    }
+  | {
+      kind: 'clean';
+      reason: string;
+    };
+
+export type ExportCheckpointPreparation =
+  | {
+      kind: 'resume';
+      manifest: ExportStateManifest;
+      checkpoint: ExportCheckpointRecord;
+      repair: AnnexbCheckpointRepairResult;
+    }
+  | {
+      kind: 'clean';
+      reason: string;
+    };
+
+/**
+ * Resume handshake seam (CC call site lives in exportPipelineWebCodecs.ts /
+ * encoderSessionPlan.ts — not edited here).
+ *
+ * CC must supply, and nothing else:
+ * 1. The surviving session id (from `TauriFfmpeg.listResumableSessionIds` +
+ *    `reenter`) — never mint a new UUID for a resume.
+ * 2. `serializedManifest` bytes from `export_state.json`.
+ * 3. `expected` identity: `{projectId, sourceTimelineHash, fps, width, height}`
+ *    of the project currently in memory (`buildSourceTimelineHash` of
+ *    `timelineIdentityFromProject`).
+ * 4. The surviving Annex-B `path` inside that session.
+ * 5. An `ExportCheckpointResumeIo` whose `prepareCheckpointResume` is
+ *    `TauriFfmpeg.prepareCheckpointResume` (native atomic handshake).
+ * 6. Rotation-seam call sites that call `appendExportCheckpoint` then
+ *    `serializeExportState` then `TauriFfmpeg.writeExportState`. CC does
+ *    not design the write; those three are the complete writer primitive.
+ *
+ * HARD PRECONDITION — pre-append fence ordering, native and mandatory:
+ * 1. find the final start code (backwards tail inspection)
+ * 2. unconditional whole-AU repair (`ffmpeg_truncate_annexb`)
+ * 3. assert repair did not fall before the checkpoint byte offset
+ * 4. exact-offset truncate (`ffmpeg_truncate_annexb_to_offset`)
+ * 5. re-repair asserting `bytesRemoved == 0`
+ * 6. recount; assert `pictures == cumulativePictures`
+ * 7. only then clear `resume_pending`
+ *
+ * `prepareCheckpointResume` (this module) + `ffmpeg_prepare_checkpoint_resume`
+ * (Rust) already perform that order. CC must not append, count, or concat
+ * while `resume_pending` is set, and must not skip `prepareCheckpointResume`.
+ *
+ * Postconditions: `{kind:'resume', repair}` with `keptBytes === byteOffset`
+ * and `pictures === cumulativePictures`, fence cleared; or `{kind:'clean'}`
+ * with a reason and no Annex-B mutation from the JS validator.
+ *
+ * Errors: native repair failure → `{kind:'clean'}`; hash/schema/monotonicity
+ * mismatch → `{kind:'clean'}` without Annex-B I/O.
+ *
+ * Call ordering: list/reenter → readExportState → prepareCheckpointResume →
+ * (only on kind=resume) append remainder. Writer at a rotation seam:
+ * appendExportCheckpoint → serializeExportState → writeExportState.
+ */
+export type ResumeHandshakeSeam = {
+  validate: typeof validateExportState;
+  prepare: typeof prepareCheckpointResume;
+  appendCheckpoint: typeof appendExportCheckpoint;
+  serialize: typeof serializeExportState;
+  createManifest: typeof createExportStateManifest;
+};
 
 export function timelineIdentityFromProject(
   project: Pick<
@@ -227,6 +325,13 @@ export function appendExportCheckpoint(
       'appendExportCheckpoint: fps/width/height disagree with the manifest',
     );
   }
+  assertCheckpointRecord(record, 'appendExportCheckpoint');
+  const previous = manifest.checkpoints[manifest.checkpoints.length - 1];
+  if (previous && !checkpointStrictlyFollows(previous, record)) {
+    throw new Error(
+      'appendExportCheckpoint: checkpoint indices, byteOffset, and cumulativePictures must increase monotonically',
+    );
+  }
   return {
     ...manifest,
     checkpoints: [...manifest.checkpoints, record],
@@ -235,4 +340,209 @@ export function appendExportCheckpoint(
 
 export function serializeExportState(manifest: ExportStateManifest): string {
   return `${JSON.stringify(sortKeys(manifest), null, 2)}\n`;
+}
+
+/**
+ * Parse and validate a surviving manifest. Every field is checked rather than
+ * asserted with a cast: a crash may leave partial JSON, and a stale or malformed
+ * record must start clean instead of being partially trusted.
+ */
+export function validateExportState(
+  serialized: string | Uint8Array,
+  expected: ExportCheckpointExpectedIdentity,
+  annexbFileLength: number,
+): ExportCheckpointValidation {
+  if (!Number.isSafeInteger(annexbFileLength) || annexbFileLength < 0) {
+    return { kind: 'clean', reason: 'invalid Annex-B file length' };
+  }
+
+  let value: unknown;
+  try {
+    const text = typeof serialized === 'string'
+      ? serialized
+      : new TextDecoder().decode(serialized);
+    value = JSON.parse(text);
+  } catch {
+    return { kind: 'clean', reason: 'export_state.json is not valid JSON' };
+  }
+
+  if (!isRecord(value)) {
+    return { kind: 'clean', reason: 'export_state.json root is not an object' };
+  }
+  if (value.schemaVersion !== EXPORT_STATE_SCHEMA_VERSION) {
+    return { kind: 'clean', reason: 'checkpoint schemaVersion mismatch' };
+  }
+  if (!isUuid(value.sessionId)) {
+    return { kind: 'clean', reason: 'checkpoint sessionId is invalid' };
+  }
+  if (
+    typeof value.projectId !== 'string' ||
+    typeof value.sourceTimelineHash !== 'string' ||
+    !isSha256(value.sourceTimelineHash) ||
+    !isPositiveFinite(value.fps) ||
+    !isPositiveSafeInteger(value.width) ||
+    !isPositiveSafeInteger(value.height) ||
+    !Array.isArray(value.checkpoints)
+  ) {
+    return { kind: 'clean', reason: 'checkpoint manifest fields are invalid' };
+  }
+
+  if (value.projectId !== expected.projectId) {
+    return { kind: 'clean', reason: 'checkpoint projectId mismatch' };
+  }
+  if (value.sourceTimelineHash !== expected.sourceTimelineHash) {
+    return { kind: 'clean', reason: 'checkpoint sourceTimelineHash mismatch' };
+  }
+  if (
+    value.fps !== expected.fps ||
+    value.width !== expected.width ||
+    value.height !== expected.height
+  ) {
+    return { kind: 'clean', reason: 'checkpoint fps/resolution mismatch' };
+  }
+
+  const checkpoints: ExportCheckpointRecord[] = [];
+  for (let i = 0; i < value.checkpoints.length; i++) {
+    const candidate = value.checkpoints[i];
+    if (!isCheckpointRecord(candidate)) {
+      return { kind: 'clean', reason: `checkpoint record ${i} is invalid` };
+    }
+    if (
+      candidate.sourceTimelineHash !== value.sourceTimelineHash ||
+      candidate.fps !== value.fps ||
+      candidate.width !== value.width ||
+      candidate.height !== value.height
+    ) {
+      return { kind: 'clean', reason: `checkpoint record ${i} disagrees with its manifest` };
+    }
+    const previous = checkpoints[checkpoints.length - 1];
+    if (previous && !checkpointStrictlyFollows(previous, candidate)) {
+      return { kind: 'clean', reason: `checkpoint record ${i} is not monotonic` };
+    }
+    checkpoints.push(candidate);
+  }
+
+  const checkpoint = [...checkpoints]
+    .reverse()
+    .find((row) => row.byteOffset <= annexbFileLength);
+  if (!checkpoint) {
+    return { kind: 'clean', reason: 'no checkpoint fits the surviving Annex-B file' };
+  }
+
+  return {
+    kind: 'resume',
+    manifest: {
+      schemaVersion: EXPORT_STATE_SCHEMA_VERSION,
+      sessionId: value.sessionId,
+      projectId: value.projectId,
+      sourceTimelineHash: value.sourceTimelineHash,
+      fps: value.fps,
+      width: value.width,
+      height: value.height,
+      checkpoints,
+    },
+    checkpoint,
+  };
+}
+
+/**
+ * Mandatory resume gate. Validation and hash invalidation happen before any
+ * mutating native call. A matching manifest then performs one atomic native
+ * repair/count operation; disagreement starts clean.
+ */
+export async function prepareCheckpointResume(
+  io: ExportCheckpointResumeIo,
+  path: string,
+  serializedManifest: string | Uint8Array,
+  expected: ExportCheckpointExpectedIdentity,
+): Promise<ExportCheckpointPreparation> {
+  const fileLength = await io.sessionFileSize(path);
+  const validation = validateExportState(serializedManifest, expected, fileLength);
+  if (validation.kind === 'clean') {
+    return validation;
+  }
+
+  let repair: AnnexbCheckpointRepairResult;
+  try {
+    repair = await io.prepareCheckpointResume(path, validation.checkpoint);
+  } catch (err) {
+    return {
+      kind: 'clean',
+      reason: `checkpoint pre-append repair failed: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  if (
+    repair.keptBytes !== validation.checkpoint.byteOffset ||
+    repair.pictures !== validation.checkpoint.cumulativePictures
+  ) {
+    return {
+      kind: 'clean',
+      reason:
+        'checkpoint pre-append verification disagrees with byteOffset/cumulativePictures',
+    };
+  }
+  return { ...validation, repair };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isUuid(value: unknown): value is string {
+  return typeof value === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function isSha256(value: string): boolean {
+  return /^[0-9a-f]{64}$/.test(value);
+}
+
+function isPositiveFinite(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
+function isNonNegativeSafeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function isPositiveSafeInteger(value: unknown): value is number {
+  return isNonNegativeSafeInteger(value) && value > 0;
+}
+
+function isCheckpointRecord(value: unknown): value is ExportCheckpointRecord {
+  if (!isRecord(value)) return false;
+  return (
+    isNonNegativeSafeInteger(value.pieceIndex) &&
+    isNonNegativeSafeInteger(value.encoderSessionIndex) &&
+    isNonNegativeSafeInteger(value.byteOffset) &&
+    isNonNegativeSafeInteger(value.cumulativePictures) &&
+    isPositiveFinite(value.fps) &&
+    isPositiveSafeInteger(value.width) &&
+    isPositiveSafeInteger(value.height) &&
+    typeof value.sourceTimelineHash === 'string' &&
+    isSha256(value.sourceTimelineHash)
+  );
+}
+
+function assertCheckpointRecord(record: ExportCheckpointRecord, owner: string): void {
+  if (!isCheckpointRecord(record)) {
+    throw new Error(`${owner}: invalid checkpoint record`);
+  }
+}
+
+function checkpointStrictlyFollows(
+  previous: ExportCheckpointRecord,
+  next: ExportCheckpointRecord,
+): boolean {
+  const indexMoves =
+    next.pieceIndex > previous.pieceIndex ||
+    (
+      next.pieceIndex === previous.pieceIndex &&
+      next.encoderSessionIndex > previous.encoderSessionIndex
+    );
+  return (
+    indexMoves &&
+    next.byteOffset > previous.byteOffset &&
+    next.cumulativePictures > previous.cumulativePictures
+  );
 }

@@ -3,12 +3,14 @@ import { createHash } from 'node:crypto';
 import {
   buildSyntheticMultiSliceAnnexb,
   buildSyntheticSingleSliceWithParamSets,
+  buildSyntheticSingleSliceWithTrailingAud,
   buildSyntheticVariableSliceAnnexb,
   concatFrameCountGuardFails,
   countAnnexbAccessUnits,
   countAnnexbFrames,
   countAnnexbVclNalsRaw,
   formatConcatFrameCountMismatch,
+  isFinalAccessUnitProvablyComplete,
   scanAnnexbNals,
   truncateAnnexbToLastCompleteAu,
 } from './annexbFrameCount';
@@ -173,12 +175,12 @@ describe('annexb truncate — last complete access unit', () => {
     expect(pictureSliceCounts(result.bytes)).toEqual([8, 8, 8, 8]);
   });
 
-  it('single-slice complete file is a no-op', () => {
+  it('single-slice file ending on a VCL is not provably complete: last AU is dropped', () => {
     const single = buildSyntheticSingleSliceWithParamSets(12);
     const result = truncateAnnexbToLastCompleteAu(single);
-    expect(result.pictures).toBe(12);
-    expect(result.vclNals).toBe(12);
-    expect(result.bytesRemoved).toBe(0);
+    expect(result.pictures).toBe(11);
+    expect(result.vclNals).toBe(11);
+    expect(result.bytesRemoved).toBeGreaterThan(0);
   });
 });
 
@@ -209,20 +211,18 @@ describe('annexb truncate — variable slices per picture (mode rule)', () => {
     expect(pictureSliceCounts(result.bytes)).toEqual([8, 8, 4]);
   });
 
-  it('single-slice stream truncated after first_mb byte is indistinguishable from complete (resume must use byte offset)', () => {
+  it('single-slice stream truncated after first_mb byte drops the incomplete last AU', () => {
     const complete = buildSyntheticSingleSliceWithParamSets(4);
     const vcls = vclNals(complete);
     const fourthFirstSlice = vcls[3]!;
-    // Cut immediately after the first_mb_in_slice==0 RBSP byte — NAL is incomplete
-    // but the access-unit counter already saw first_mb==0.
     const truncated = complete.subarray(0, fourthFirstSlice.header + 2);
 
     expect(countAnnexbAccessUnits(truncated)).toEqual({ pictures: 4, vclNals: 4 });
 
     const result = truncateAnnexbToLastCompleteAu(truncated);
-    expect(result.pictures).toBe(4);
-    expect(result.vclNals).toBe(4);
-    expect(pictureSliceCounts(result.bytes)).toEqual([1, 1, 1, 1]);
+    expect(result.pictures).toBe(3);
+    expect(result.vclNals).toBe(3);
+    expect(pictureSliceCounts(result.bytes)).toEqual([1, 1, 1]);
   });
 });
 
@@ -258,3 +258,94 @@ describe('synthetic Annex-B byte identity (JS reference hashes)', () => {
     }
   });
 });
+
+function pictureStartOffsetsFromCount(bytes: Uint8Array): number[] {
+  return scanAnnexbNals(bytes)
+    .filter((n) => n.nalType === 1 || n.nalType === 5)
+    .filter((n) => {
+      const payload = bytes.subarray(n.header + 1, n.end);
+      return payload.length > 0 && ((payload[0] ?? 0) & 0x80) !== 0;
+    })
+    .map((n) => n.start);
+}
+
+function pictureStartOffsetsFromGrouping(bytes: Uint8Array): number[] {
+  const nals = scanAnnexbNals(bytes);
+  const pictures: number[] = [];
+  for (const nal of nals) {
+    if (nal.nalType !== 1 && nal.nalType !== 5) continue;
+    const payload = bytes.subarray(nal.header + 1, nal.end);
+    if (payload.length > 0 && ((payload[0] ?? 0) & 0x80) !== 0) {
+      pictures.push(nal.start);
+    }
+  }
+  return pictures;
+}
+
+describe('conservative final-AU salvage policy', () => {
+  const PAYLOAD = 200;
+
+  it('five fixtures: mid-payload, first_mb, complete+dangling, multi-slice, clean', () => {
+    const clean = buildSyntheticSingleSliceWithTrailingAud(4, PAYLOAD);
+    const vcls = vclNals(clean);
+    expect(vcls).toHaveLength(4);
+
+    const last = vcls[3]!;
+    const mid = last.header + 2 + Math.floor(PAYLOAD / 2);
+    const midResult = truncateAnnexbToLastCompleteAu(clean.subarray(0, mid));
+    expect(midResult.pictures).toBe(3);
+    expect(midResult.bytesRemoved).toBeGreaterThan(0);
+
+    const afterFirstMb = truncateAnnexbToLastCompleteAu(clean.subarray(0, last.header + 2));
+    expect(afterFirstMb.pictures).toBe(3);
+
+    const dangling = new Uint8Array(clean.length + 4);
+    dangling.set(clean);
+    dangling.set([0, 0, 0, 1], clean.length);
+    const completeThenDangling = truncateAnnexbToLastCompleteAu(dangling);
+    expect(completeThenDangling.pictures).toBe(4);
+    expect(completeThenDangling.bytes).toEqual(clean);
+
+    const multi = buildSyntheticMultiSliceAnnexb(4, 8);
+    const mv = vclNals(multi);
+    const slice5 = mv[2 * 8 + 5]!;
+    expect(truncateAnnexbToLastCompleteAu(multi.subarray(0, slice5.header + 2)).pictures).toBe(2);
+
+    const cleanResult = truncateAnnexbToLastCompleteAu(clean);
+    expect(cleanResult.pictures).toBe(4);
+    expect(cleanResult.bytesRemoved).toBe(0);
+    expect(cleanResult.bytes).toEqual(clean);
+  });
+
+  it('predicate: trailing AUD is complete; EOF-ending VCL is not', () => {
+    const withAud = buildSyntheticSingleSliceWithTrailingAud(2, 8);
+    const nals = scanAnnexbNals(withAud);
+    const lastVcl = vclNals(withAud)[1]!;
+    expect(isFinalAccessUnitProvablyComplete(nals, lastVcl, withAud)).toBe(true);
+
+    const eofVcl = buildSyntheticSingleSliceWithParamSets(2);
+    const eofNals = scanAnnexbNals(eofVcl);
+    const eofLast = vclNals(eofVcl)[1]!;
+    expect(isFinalAccessUnitProvablyComplete(eofNals, eofLast, eofVcl)).toBe(false);
+  });
+});
+
+describe('scanner unification — byte-exhaustive picture-boundary agreement', () => {
+  it('count path and grouping agree at every byte offset of a small corpus', () => {
+    const streams: Array<[string, Uint8Array]> = [
+      ['multi-2x2', buildSyntheticMultiSliceAnnexb(2, 2)],
+      ['variable-1-3-2', buildSyntheticVariableSliceAnnexb([1, 3, 2])],
+      ['paramsets-3', buildSyntheticSingleSliceWithParamSets(3)],
+      ['single-aud-2', buildSyntheticSingleSliceWithTrailingAud(2, 8)],
+    ];
+    for (const [name, stream] of streams) {
+      for (let offset = 0; offset <= stream.byteLength; offset++) {
+        const prefix = stream.subarray(0, offset);
+        expect(pictureStartOffsetsFromCount(prefix), `${name} offset ${offset}`).toEqual(
+          pictureStartOffsetsFromGrouping(prefix),
+        );
+      }
+    }
+  });
+});
+

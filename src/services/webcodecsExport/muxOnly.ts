@@ -93,6 +93,7 @@
  */
 
 import type { FfmpegLike } from '../segmentEncoder';
+import type { AnnexbFrameCount } from './annexbFrameCount';
 
 function causeString(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -141,6 +142,125 @@ export function buildAudioMuxArgs(premuxedVideoFile: string, audioFile: string, 
     '-y',
     outputFile,
   ];
+}
+
+export interface ForcedMp4SealOffer {
+  picturesKept: number;
+  picturesExpected: number;
+  picturesLost: number;
+  keptWallDurationSeconds: number;
+  lostWallDurationSeconds: number;
+  fps: number;
+}
+
+/**
+ * Sealing-offer seam (CC call site lives in exportPipelineWebCodecs.ts).
+ *
+ * CC must supply, and nothing else:
+ * 1. `measured` — the concat guard's unmodified `{pictures, vclNals}` after
+ *    salvage-truncate (post-final-AU-drop counts, never pre-drop).
+ * 2. `picturesExpected` — the same expected count the guard compared against.
+ * 3. `fps` — the export frame rate used for wall-duration.
+ * 4. `operatorConsented` — explicit operator yes/no; this helper never infers it.
+ * 5. ffmpeg session + `videoFile` / `audioFile` / `outputFile` paths for seal.
+ *
+ * Preconditions: the concat frame-count guard has already reported the
+ * discrepancy. This seam must not rewrite either count, suppress the guard,
+ * or run before the guard. `measured.pictures` is the post-policy kept count.
+ *
+ * Postconditions: `null` / `not-eligible` when there is no non-empty true
+ * shortfall; `consent-required` with the offer when eligible and consent is
+ * absent (no ffmpeg call); `sealed` with the same offer after muxOnly when
+ * consent is present. Duration is pictures/fps, never container metadata.
+ *
+ * Errors: muxOnly failures throw; eligibility failures do not throw.
+ *
+ * Call ordering: guard reports → offer(measured, expected, fps) → UI consent
+ * → sealTruncatedAnnexbToMp4({..., operatorConsented: true}).
+ */
+export type SealingOfferSeam = {
+  offer: typeof forcedMp4SealOffer;
+  seal: typeof sealTruncatedAnnexbToMp4;
+};
+
+export type ForcedMp4SealDisposition =
+  | { kind: 'not-eligible'; reason: string }
+  | { kind: 'consent-required'; offer: ForcedMp4SealOffer }
+  | { kind: 'sealed'; offer: ForcedMp4SealOffer; outputFile: string };
+
+/**
+ * Post-guard disposition only. The existing concat guard must first report the
+ * true discrepancy; this predicate never changes measured/expected counts and
+ * never turns the guard green. Only a shorter, non-empty picture-valid prefix
+ * can be offered for sealing.
+ */
+export function forcedMp4SealOffer(
+  measured: AnnexbFrameCount,
+  picturesExpected: number,
+  fps: number,
+): ForcedMp4SealOffer | null {
+  if (
+    !Number.isSafeInteger(measured.pictures) ||
+    measured.pictures <= 0 ||
+    !Number.isSafeInteger(picturesExpected) ||
+    picturesExpected <= 0 ||
+    measured.pictures >= picturesExpected ||
+    !Number.isFinite(fps) ||
+    fps <= 0
+  ) {
+    return null;
+  }
+  const picturesLost = picturesExpected - measured.pictures;
+  return {
+    picturesKept: measured.pictures,
+    picturesExpected,
+    picturesLost,
+    keptWallDurationSeconds: measured.pictures / fps,
+    lostWallDurationSeconds: picturesLost / fps,
+    fps,
+  };
+}
+
+/**
+ * Seals an already-truncated, canonical-picture-counted Annex-B prefix into an
+ * MP4. Explicit operator consent is required because the output is knowingly
+ * shorter than requested. Duration is derived from picture count / fps; raw
+ * Annex-B has no trustworthy container duration metadata.
+ */
+export async function sealTruncatedAnnexbToMp4(params: {
+  ffmpeg: FfmpegLike;
+  sessionId: string;
+  videoFile: string;
+  audioFile: string | null;
+  outputFile: string;
+  measured: AnnexbFrameCount;
+  picturesExpected: number;
+  fps: number;
+  operatorConsented: boolean;
+}): Promise<ForcedMp4SealDisposition> {
+  const offer = forcedMp4SealOffer(
+    params.measured,
+    params.picturesExpected,
+    params.fps,
+  );
+  if (!offer) {
+    return {
+      kind: 'not-eligible',
+      reason: 'forced sealing requires a non-empty, shorter picture-valid prefix',
+    };
+  }
+  if (!params.operatorConsented) {
+    return { kind: 'consent-required', offer };
+  }
+  await muxOnly(
+    params.ffmpeg,
+    params.sessionId,
+    params.videoFile,
+    params.audioFile,
+    params.outputFile,
+    params.fps,
+  );
+  return { kind: 'sealed', offer, outputFile: params.outputFile };
 }
 
 /**

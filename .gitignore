@@ -49,3 +49,8 @@ scripts/ws2-49-measurement/*.json
 
 # graphify tool output — regeneratable, not source (2026-08-07)
 graphify-out/
+
+# Durable vitest/cargo failure records (WS3 Round 8) — gitignored on purpose.
+# Vitest reporter writes only on a failing run; scripts/ws3-record-test-run.mjs
+# writes cargo (and filtered vitest) arithmetic. See docs/ws3-export-durable-state.md.
+.ws3-test-failures/

@@ -193,15 +193,17 @@ export function formatConcatFrameCountMismatch(params: {
 //   - A picture (access unit) is the VCL NALs from one `first_mb_in_slice==0`
 //     up to (but not including) the next. Continuation slices (`first_mb!=0`)
 //     belong to that picture. This does NOT assume one slice per picture.
-//   - The last picture is kept iff its VCL count equals the mode of the
-//     closed pictures' VCL counts (the stream's established slices-per-picture).
-//     With no closed pictures, a single trailing picture is kept (a one-picture
-//     file that ended on a NAL boundary is assumed complete).
+//   - The last picture is kept iff it is PROVABLY COMPLETE: a subsequent
+//     scanned NAL begins the next access unit (non-VCL, or VCL with
+//     `first_mb_in_slice == 0`). A dangling start code with no header is not
+//     enough. A last VCL whose end is EOF is not complete — that is the
+//     single-slice crash residual. Cost of the drop: one picture.
 //   - The cut is the first AUD of a dropped picture if one sits after the
 //     previous picture's last VCL; otherwise the first VCL of the dropped
 //     picture. Trailing SPS/PPS of a KEPT picture stay.
 //
 // Whether to CALL this after a crash is not this module's decision.
+// Exact-offset resume does not use this predicate.
 // ---------------------------------------------------------------------------
 
 export interface AnnexbNalSpan {
@@ -219,24 +221,6 @@ export interface AnnexbTruncateResult {
   bytesRemoved: number;
   pictures: number;
   vclNals: number;
-}
-
-function modeOf(values: readonly number[]): number | null {
-  if (values.length === 0) {
-    return null;
-  }
-  const counts = new Map<number, number>();
-  let best = values[0]!;
-  let bestN = 0;
-  for (const v of values) {
-    const n = (counts.get(v) ?? 0) + 1;
-    counts.set(v, n);
-    if (n > bestN) {
-      best = v;
-      bestN = n;
-    }
-  }
-  return best;
 }
 
 /**
@@ -319,6 +303,38 @@ function droppedPictureCut(nals: readonly AnnexbNalSpan[], prevLastVcl: AnnexbNa
   return droppedFirstVcl.start;
 }
 
+function nalBeginsNextAccessUnit(nalType: number, firstMb: number | null): boolean {
+  if (nalType !== 1 && nalType !== 5) {
+    return true;
+  }
+  return firstMb === 0;
+}
+
+/**
+ * Salvage-truncate completeness predicate (JS twin of
+ * `scanned_final_au_is_provably_complete` in ffmpeg.rs).
+ *
+ * The final access unit is provably complete iff a subsequent scanned NAL
+ * begins the next AU (non-VCL, or VCL with `first_mb_in_slice == 0`). A
+ * dangling start code with no header is not enough. Exact-offset resume does
+ * not consult this predicate.
+ */
+export function isFinalAccessUnitProvablyComplete(
+  nals: readonly AnnexbNalSpan[],
+  lastVcl: AnnexbNalSpan,
+  bytes: Uint8Array,
+): boolean {
+  return nals.some((n) => {
+    if (n.start < lastVcl.end) {
+      return false;
+    }
+    const firstMb = (n.nalType === 1 || n.nalType === 5) && n.header + 1 < n.end
+      ? parseFirstMbInSlice(bytes.subarray(n.header + 1, n.end))
+      : null;
+    return nalBeginsNextAccessUnit(n.nalType, firstMb);
+  });
+}
+
 /**
  * Truncate an Annex-B buffer at the last complete access unit.
  * Never assumes one slice per picture. Returns a copy of the kept prefix.
@@ -331,11 +347,10 @@ export function truncateAnnexbToLastCompleteAu(bytes: Uint8Array): AnnexbTruncat
     return { bytes: new Uint8Array(), bytesRemoved: bytes.length, pictures: 0, vclNals: 0 };
   }
 
-  const closedCounts = pictures.slice(0, -1).map((p) => p.vcl.length);
-  const spp = modeOf(closedCounts);
   let keepCount = pictures.length;
   const last = pictures[pictures.length - 1]!;
-  if (spp !== null && last.vcl.length !== spp) {
+  const lastVcl = last.vcl[last.vcl.length - 1]!;
+  if (!isFinalAccessUnitProvablyComplete(nals, lastVcl, bytes)) {
     keepCount -= 1;
   }
 
@@ -450,6 +465,26 @@ export function buildSyntheticMultiSliceAnnexb(pictures: number, slicesPerPictur
     writeNal(out, 8, new Uint8Array([0x68, 0xce, p & 0xff]));
   }
 
+  return new Uint8Array(out);
+}
+
+/** Single-slice pictures plus a trailing AUD so a clean file's final AU is provably complete. */
+export function buildSyntheticSingleSliceWithTrailingAud(pictures: number, extraPayload = 0): Uint8Array {
+  const out: number[] = [];
+  writeNal(out, 7, new Uint8Array([0x42, 0x00, 0x1e]));
+  writeNal(out, 8, new Uint8Array([0x68, 0xce]));
+  for (let p = 0; p < pictures; p++) {
+    writeNal(out, 9, new Uint8Array([0xf0]));
+    const bits: number[] = [];
+    writeUe(bits, 0);
+    writeUe(bits, p === 0 ? 7 : 5);
+    const rbsp = Array.from(bitsToRbspBytes(bits));
+    for (let i = 0; i < extraPayload; i++) {
+      rbsp.push(0xab);
+    }
+    writeNal(out, p === 0 ? 5 : 1, new Uint8Array(rbsp));
+    writeNal(out, 9, new Uint8Array([0xf0]));
+  }
   return new Uint8Array(out);
 }
 
