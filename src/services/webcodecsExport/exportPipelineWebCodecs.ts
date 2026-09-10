@@ -2613,14 +2613,35 @@ export async function exportProjectWebCodecs(
 
         let truncateResult: { pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number };
         try {
-          truncateResult = await ffmpeg.truncateAnnexbToOffset(runFile, absoluteByteOffset);
+          // WS3 Round 10 Blocker 1 — Rung 0 says a RECOVERY path may not hang.
+          // This call is a native, whole-file streaming truncate on the same
+          // annexb file, on the same sidecar, as the salvage path's
+          // `ffmpeg.truncateAnnexb` below — it just cuts at a caller-supplied
+          // offset rather than at a scanned AU boundary. It was the only such
+          // call in the recovery set left unwrapped, so a sidecar that wedged
+          // during a rewind hung the export forever, defeating the very bound
+          // (`FLUSH_BOUND_MS`) that sent us into the rewind. Same constant as
+          // its sibling (`TRUNCATE_BOUND_MS`, 25x the measured worst 2.3 GB
+          // streaming truncate), same kill chain on expiry (`ffmpeg.kill()` ->
+          // `set_session_cancelled` -> the per-session `AtomicBool` the Rust
+          // scanners poll), same typed `FfmpegBoundExpiredError` surfaced
+          // through `boundedStepError`.
+          truncateResult = await withFfmpegLivenessBound(
+            {
+              label: 'TRUNCATE_BOUND_MS',
+              boundMs: TRUNCATE_BOUND_MS,
+              ffmpeg,
+              files: [runFile],
+              pieceCount: pieces.length,
+              pieceIndex,
+            },
+            async () => await ffmpeg.truncateAnnexbToOffset(runFile, absoluteByteOffset),
+          );
         } catch (err) {
           driveResult = {
             ok: false,
             error: {
-              kind: 'concat',
-              message: `Bounded re-render: failed to truncate ${runFile} to rewind offset ${absoluteByteOffset} (session ${hungSessionIndex}).`,
-              cause: causeString(err),
+              ...boundedStepError('concat', `Bounded re-render: failed to truncate ${runFile} to rewind offset ${absoluteByteOffset} (session ${hungSessionIndex}).`, err),
               liveness,
             },
             diagnostics: driveResult.diagnostics,
@@ -2910,9 +2931,21 @@ export async function exportProjectWebCodecs(
     if (concatFrameCountGuardFails(measured, totalExpectedFramesOverall)) {
       let perPiece: PieceFrameCountRow[] = [];
       try {
+        // WS3 Round 10 Blocker 1 sweep — the SECOND unbounded native call on a
+        // failure disposition. This breakdown runs only once the guard has
+        // ALREADY failed, so it is squarely inside the recovery path Rung 0
+        // covers, and a wedged sidecar here hangs an export whose verdict is
+        // already known. Same measured constant as the aggregate count above:
+        // each piece is a strict prefix of the file that bound was sized from,
+        // so it can only be more generous, never tighter. Still diagnostic-only
+        // — the outer catch keeps a bound expiry from masking the real
+        // picture-count mismatch, exactly as a native failure already did.
         perPiece = await Promise.all(
           pieceFiles.map(async (path, pieceIndex) => {
-            const rowCount = await ffmpeg.countAnnexbFrames(path);
+            const rowCount = await withFfmpegLivenessBound(
+              { label: 'FRAME_COUNT_BOUND_MS', boundMs: FRAME_COUNT_BOUND_MS, ffmpeg, files: [path], pieceCount: pieces.length, pieceIndex },
+              async () => await ffmpeg.countAnnexbFrames(path),
+            );
             return {
               pieceIndex,
               path,
