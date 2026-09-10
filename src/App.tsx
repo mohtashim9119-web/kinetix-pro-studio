@@ -29,6 +29,7 @@ import {
   Archive,
   RefreshCw,
   AlertCircle,
+  AlertTriangle,
   Link,
   Search,
   Maximize,
@@ -3160,7 +3161,7 @@ export default function App() {
     setProject(p => ({ ...p, lastExportPath: path }));
   }, []);
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
-  const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess } = exportApi;
+  const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent } = exportApi;
 
   // ExportSettingsModal's Continue commits exportResolution/exportFps via
   // setState, then must call startExport — but startExport is a useCallback
@@ -6987,6 +6988,78 @@ export default function App() {
         </div>
       )}
 
+      {/*
+        WS3 Round 10 Blocker 2 — FORCED SEALING CONSENT.
+
+        Shown only when the post-concat picture-count guard has already failed
+        AND a non-empty, strictly shorter, picture-valid prefix exists. The
+        export is genuinely parked on this dialog: the pipeline is awaiting
+        the promise these two buttons settle, so nothing is muxed or saved
+        until a human answers. The numbers are the guard's own measured
+        post-drop counts — the operator is deciding about a specific shorter
+        render, in seconds, not clicking through a warning.
+
+        There is deliberately no default, no timeout, and no "remember this":
+        a silently shorter deliverable is its own failure mode.
+      */}
+      {exportState.pendingSealConsent && (
+        <div className="fixed inset-0 z-[500] bg-black/70 flex items-center justify-center p-6">
+          <div className="bg-zinc-900 border border-amber-600/60 rounded-xl p-6 max-w-lg w-full shadow-2xl flex flex-col gap-4">
+            <div className="flex items-center gap-2 text-amber-400 font-semibold">
+              <AlertTriangle size={18} />
+              This export is shorter than your timeline
+            </div>
+            <p className="text-sm text-zinc-300 leading-relaxed">
+              The encoder stopped early. Everything rendered so far is valid video and can be
+              saved as a playable MP4 — but it will be a shorter film than the one you asked for.
+            </p>
+            <div className="grid grid-cols-3 gap-3 text-center">
+              <div className="bg-zinc-800/70 rounded-lg py-3">
+                <div className="text-lg font-semibold text-zinc-100">
+                  {exportState.pendingSealConsent.picturesKept.toLocaleString()}
+                </div>
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500 mt-0.5">frames kept</div>
+                <div className="text-xs text-zinc-400 mt-1">
+                  {formatElapsedLong(exportState.pendingSealConsent.keptWallDurationSeconds)}
+                </div>
+              </div>
+              <div className="bg-zinc-800/70 rounded-lg py-3">
+                <div className="text-lg font-semibold text-amber-400">
+                  {exportState.pendingSealConsent.picturesLost.toLocaleString()}
+                </div>
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500 mt-0.5">frames lost</div>
+                <div className="text-xs text-amber-400/80 mt-1">
+                  {formatElapsedLong(exportState.pendingSealConsent.lostWallDurationSeconds)}
+                </div>
+              </div>
+              <div className="bg-zinc-800/70 rounded-lg py-3">
+                <div className="text-lg font-semibold text-zinc-100">
+                  {exportState.pendingSealConsent.picturesExpected.toLocaleString()}
+                </div>
+                <div className="text-[11px] uppercase tracking-wide text-zinc-500 mt-0.5">frames expected</div>
+                <div className="text-xs text-zinc-400 mt-1">
+                  at {exportState.pendingSealConsent.fps} fps
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end pt-1">
+              <button
+                onClick={() => resolveSealConsent(false)}
+                className="text-sm bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-lg px-4 py-2 transition-colors"
+              >
+                Don't save — report the failure
+              </button>
+              <button
+                onClick={() => resolveSealConsent(true)}
+                className="text-sm bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg px-4 py-2 transition-colors"
+              >
+                Save the shorter {formatElapsedLong(exportState.pendingSealConsent.keptWallDurationSeconds)} video
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Export success toast — bottom-right, auto-dismisses after EXPORT_SUCCESS_TOAST_DURATION_MS */}
       <AnimatePresence>
         {exportState.showExportSuccess && exportState.lastExportPath && (
@@ -7004,6 +7077,14 @@ export default function App() {
             <p className="text-zinc-400 text-xs truncate max-w-56">
               {exportState.lastExportPath.split('/').pop()?.split('\\').pop()}
             </p>
+            {/* WS3 Round 10 — a consented SHORT deliverable never leaves
+                without saying so on the same surface that reports success. */}
+            {exportState.lastExportSealedOffer && (
+              <p className="text-amber-400 text-xs">
+                Shortened by {formatElapsedLong(exportState.lastExportSealedOffer.lostWallDurationSeconds)}
+                {' '}({exportState.lastExportSealedOffer.picturesLost.toLocaleString()} frames) — you approved this.
+              </p>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={() => invoke('reveal_in_finder', { path: exportState.lastExportPath })}

@@ -10,6 +10,7 @@ import {
   cancelExportWebCodecs,
   type WebCodecsFfmpeg,
 } from '../services/webcodecsExport/exportPipelineWebCodecs';
+import type { ForcedMp4SealOffer } from '../services/webcodecsExport/muxOnly';
 import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
@@ -174,6 +175,21 @@ export interface UseExportState {
    *  text reads, so the toast and the live timer can never compute elapsed
    *  time from two different sources. */
   lastExportElapsedSec?: number;
+  /**
+   * WS3 Round 10 Blocker 2 — a SHORT deliverable is waiting on the operator.
+   *
+   * Non-null only between the post-concat picture-count guard failing with a
+   * sealable prefix and the operator answering. The export is parked on that
+   * answer (the pipeline is awaiting the promise this offer's resolver
+   * settles), so the numbers here are the guard's own measured ones: pictures
+   * kept, pictures lost, and the wall-duration of each. Answer with
+   * `resolveSealConsent`.
+   */
+  pendingSealConsent: ForcedMp4SealOffer | null;
+  /** The offer the operator ACCEPTED for the most recent export, so the
+   *  success surface can say the file is deliberately shorter than asked for
+   *  rather than silently handing over a short video. */
+  lastExportSealedOffer?: ForcedMp4SealOffer;
 }
 
 export interface UseExportApi {
@@ -182,6 +198,9 @@ export interface UseExportApi {
   cancelExport: () => void;
   retryExport: () => void;
   dismissSuccess: () => void;
+  /** Answers a `state.pendingSealConsent` prompt. `false` (or a cancel that
+   *  never answers) leaves the export on its unchanged typed failure. */
+  resolveSealConsent: (accept: boolean) => void;
 }
 
 interface ExportSnapshot {
@@ -198,6 +217,7 @@ const IDLE_STATE: UseExportState = {
   stageLabel: '',
   error: null,
   elapsedSec: 0,
+  pendingSealConsent: null,
 };
 
 /**
@@ -288,6 +308,13 @@ export function useExport(
   // Last snapshot — retryExport re-runs with the same inputs as the last startExport.
   const lastSnapshotRef = useRef<ExportSnapshot | null>(null);
 
+  /** WS3 Round 10 Blocker 2 — the resolver of the promise the export pipeline
+   *  is parked on while `state.pendingSealConsent` is showing. Held in a ref
+   *  (not state) because `resolveSealConsent` must settle exactly the promise
+   *  the CURRENT prompt created, and a stale closure would settle nothing.
+   *  Cleared the instant it is called, so a second click cannot double-settle. */
+  const sealConsentResolverRef = useRef<((accept: boolean) => void) | null>(null);
+
   // Which orchestrator the CURRENT (or most recently started) export is using
   // — decided fresh at the top of every runExport call from the gate check.
   // cancelExport reads this to pick the matching cancel sequence (plan §9.1).
@@ -338,6 +365,7 @@ export function useExport(
       isExporting: true,
       stage: null,
       progress: 0,
+      pendingSealConsent: null,
       stageLabel: 'Loading ffmpeg…',
       error: null,
       elapsedSec: 0,
@@ -358,6 +386,7 @@ export function useExport(
         stage: null,
         progress: 0,
         stageLabel: '',
+        pendingSealConsent: null,
         error: {
           kind: 'ffmpeg_load',
           message: 'Failed to create a native ffmpeg session. Is ffmpeg installed and on PATH?',
@@ -394,6 +423,29 @@ export function useExport(
       }));
     };
 
+    /**
+     * WS3 Round 10 Blocker 2 — surface the seal offer to a HUMAN.
+     *
+     * The pipeline awaits this promise, so the export is genuinely parked
+     * here: nothing is muxed, saved, or reported until the operator answers.
+     * A cancel (which bumps the generation) resolves it `false`, which is the
+     * pipeline's status-quo failure — never an accidental yes.
+     */
+    const requestForcedSealConsent = (offer: ForcedMp4SealOffer): Promise<boolean> =>
+      new Promise<boolean>((resolve) => {
+        if (generationRef.current !== gen) { resolve(false); return; }
+        sealConsentResolverRef.current = (accept: boolean) => {
+          sealConsentResolverRef.current = null;
+          setState(prev => ({
+            ...prev,
+            pendingSealConsent: null,
+            ...(accept ? { lastExportSealedOffer: offer } : {}),
+          }));
+          resolve(accept);
+        };
+        setState(prev => ({ ...prev, pendingSealConsent: offer }));
+      });
+
     const result = useWebCodecsPath
       ? await exportProjectWebCodecs(
           snap,
@@ -403,7 +455,7 @@ export function useExport(
           // WebCodecsFfmpeg even though TauriBackend's own field type doesn't
           // declare those extra members.
           tauriBackendRef.current.ffmpeg as WebCodecsFfmpeg,
-          { fps, width: resWidth, height: resHeight },
+          { fps, width: resWidth, height: resHeight, requestForcedSealConsent },
           onProgress,
         )
       : await exportProject(
@@ -515,6 +567,10 @@ export function useExport(
     stopElapsedTimer();
     // Invalidate all in-flight onProgress callbacks from the current generation.
     generationRef.current++;
+    // WS3 Round 10 — a cancel while a seal prompt is open is a DECLINE, so the
+    // parked pipeline unwinds through its unchanged typed failure instead of
+    // hanging on a promise nobody will ever settle.
+    sealConsentResolverRef.current?.(false);
     // D13 fix — kill the in-flight ffmpeg subprocess before tearing down the
     // session dir it's writing into. Fire-and-forget: cancelExport is sync;
     // cancel() runs before teardown() so the sidecar isn't left running against
@@ -544,6 +600,7 @@ export function useExport(
       stage: null,
       progress: 0,
       stageLabel: '',
+      pendingSealConsent: null,
       error: { kind: 'cancelled', message: 'Export cancelled.' },
       elapsedSec: prev.elapsedSec,
     }));
@@ -562,5 +619,11 @@ export function useExport(
     setState(prev => ({ ...prev, showExportSuccess: false }));
   }, []);
 
-  return { state, startExport, cancelExport, retryExport, dismissSuccess };
+  const resolveSealConsent = useCallback((accept: boolean): void => {
+    const resolver = sealConsentResolverRef.current;
+    if (!resolver) return;
+    resolver(accept);
+  }, []);
+
+  return { state, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent };
 }

@@ -87,7 +87,12 @@ import type {
 } from './exportWorker';
 import type { FontConfig } from './textRenderer';
 import { resolveFontBytes } from './fontResolver';
-import { muxOnly } from './muxOnly';
+import {
+  muxOnly,
+  forcedMp4SealOffer,
+  sealTruncatedAnnexbToMp4,
+  type ForcedMp4SealOffer,
+} from './muxOnly';
 import { FONT_FAMILIES } from '../../constants';
 import type { ExportDemuxSplit } from './exportPhaseTracker';
 import {
@@ -116,6 +121,25 @@ export interface ExportOptionsWebCodecs {
    * Step 4 report for the full rationale; kept verbatim here.
    */
   savePath?: string;
+  /**
+   * WS3 Round 10 Blocker 2 — the operator consent gate for FORCED MP4 SEALING.
+   *
+   * Reached only after the post-concat picture-count guard has ALREADY failed
+   * and `forcedMp4SealOffer` has found a non-empty, strictly shorter,
+   * picture-valid prefix. The callback is handed the post-drop numbers the
+   * guard itself measured — pictures kept, pictures lost, and the wall
+   * duration of each — and must resolve `true` only on an explicit human yes.
+   *
+   * ABSENT OR FALSE IS THE STATUS QUO. When this is not supplied (every test
+   * that predates it, and the legacy path, which never reaches here) or the
+   * operator declines, the export returns the SAME typed
+   * `formatConcatFrameCountMismatch` failure it returned before this option
+   * existed — byte-for-byte the same message, same `kind`. Sealing is never
+   * automatic: a silently shorter deliverable is its own failure mode, and
+   * the guard is the only thing standing between a wedged encoder and a video
+   * the user does not know is truncated.
+   */
+  requestForcedSealConsent?: (offer: ForcedMp4SealOffer) => Promise<boolean>;
 }
 
 /**
@@ -2923,6 +2947,12 @@ export async function exportProjectWebCodecs(
 
   // ── Loud-failure frame-count guard (plan §4.4) — never ship silently
   // corrupt output ─────────────────────────────────────────────────────────
+  /** Set ONLY when the guard failed AND the operator explicitly consented to
+   *  a knowingly shorter deliverable. `null` on every clean export, which is
+   *  what makes the clean path byte-identical to the pre-wiring tree. Carries
+   *  the guard's OWN `measured` reading alongside the offer so the seal step
+   *  re-uses the real counts rather than reconstructing them from the offer. */
+  let forcedSeal: { offer: ForcedMp4SealOffer; measured: AnnexbFrameCount } | null = null;
   try {
     const measured = await withFfmpegLivenessBound(
       { label: 'FRAME_COUNT_BOUND_MS', boundMs: FRAME_COUNT_BOUND_MS, ffmpeg, files: [finalVideoFile], pieceCount: pieces.length },
@@ -2959,19 +2989,59 @@ export async function exportProjectWebCodecs(
         // Per-piece breakdown is diagnostic-only — a failure here must not
         // mask the primary picture-count mismatch above.
       }
-      activeFfmpeg = null;
-      return {
-        ok: false,
-        error: {
-          kind: 'concat',
-          message: formatConcatFrameCountMismatch({
-            measured,
-            expectedTotal: totalExpectedFramesOverall,
-            pieceCount: pieces.length,
-            perPiece,
-          }),
-        },
-      };
+      // ── WS3 Round 10 Blocker 2 — FORCED SEALING: guard -> offer -> consent
+      // -> seal, in that order and no other ─────────────────────────────────
+      //
+      // The guard above is NOT relaxed by any of this. It has already run, it
+      // has already reported the TRUE discrepancy, and `measured` is the
+      // post-drop count — the conservative final-AU drop (salvage truncation,
+      // per piece, strictly before concat) makes that discrepancy LARGER by
+      // exactly one picture, and nothing here compensates for it in either
+      // direction. `forcedMp4SealOffer` never rewrites a count and never
+      // turns the guard green; it only decides whether a non-empty, strictly
+      // shorter, picture-valid prefix EXISTS to be offered.
+      const offer = forcedMp4SealOffer(measured, totalExpectedFramesOverall, fps);
+      // No offer (empty, or not actually short — e.g. the stream is LONGER
+      // than expected, which sealing cannot fix) => the status quo failure.
+      // An offer with no consent hook, or a declined one => the same.
+      let consented = false;
+      if (offer !== null && options.requestForcedSealConsent) {
+        try {
+          consented = await options.requestForcedSealConsent(offer);
+        } catch (consentErr) {
+          // A consent surface that throws (an unmounted modal, a rejected
+          // dialog promise) is NOT a yes. Falling through to the status-quo
+          // failure is the only safe reading, and it must not be reported as
+          // "failed to verify the frame count" — the count was verified, and
+          // it was wrong.
+          // eslint-disable-next-line no-console
+          console.warn('[ws3-seal] consent surface threw — treating as declined', causeString(consentErr));
+          consented = false;
+        }
+      }
+      if (offer !== null && consented) {
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-seal] operator consented to a SHORT deliverable', JSON.stringify(offer));
+        // The offer's numbers are the POST-DROP numbers by construction:
+        // `measured` is the guard's own reading of the concatenated file as
+        // it exists on disk after every salvage truncation. The operator is
+        // therefore never told more was kept than actually was.
+        forcedSeal = { offer, measured };
+      } else {
+        activeFfmpeg = null;
+        return {
+          ok: false,
+          error: {
+            kind: 'concat',
+            message: formatConcatFrameCountMismatch({
+              measured,
+              expectedTotal: totalExpectedFramesOverall,
+              pieceCount: pieces.length,
+              perPiece,
+            }),
+          },
+        };
+      }
     }
   } catch (err) {
     activeFfmpeg = null;
@@ -3015,7 +3085,35 @@ export async function exportProjectWebCodecs(
         pieceCount: pieces.length,
       },
       async () => {
-        await muxOnly(ffmpeg, project.id, finalVideoFile, audioFile, outputFile, fps);
+        if (forcedSeal === null) {
+          await muxOnly(ffmpeg, project.id, finalVideoFile, audioFile, outputFile, fps);
+          return;
+        }
+        // WS3 Round 10 Blocker 2 — the SEAL. Same ffmpeg invocations as
+        // `muxOnly` (this helper calls it), under the same measured mux bound,
+        // with the duration derived from picture count / fps rather than any
+        // container metadata the raw Annex-B does not carry. `measured` is the
+        // guard's own unmodified reading — never a value reconstructed from
+        // the offer — and the helper re-runs `forcedMp4SealOffer` on it,
+        // refusing to seal if it no longer describes a shorter, non-empty,
+        // picture-valid prefix.
+        const disposition = await sealTruncatedAnnexbToMp4({
+          ffmpeg,
+          sessionId: project.id,
+          videoFile: finalVideoFile,
+          audioFile,
+          outputFile,
+          measured: forcedSeal.measured,
+          picturesExpected: forcedSeal.offer.picturesExpected,
+          fps,
+          operatorConsented: true,
+        });
+        if (disposition.kind !== 'sealed') {
+          throw new Error(
+            `forced MP4 sealing did not seal (kind=${disposition.kind}` +
+              `${disposition.kind === 'not-eligible' ? `, reason=${disposition.reason}` : ''}) — refusing to report success`,
+          );
+        }
       },
     );
     diag.muxMs = performance.now() - muxStarted;
