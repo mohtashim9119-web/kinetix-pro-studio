@@ -27,5 +27,6 @@ export default defineConfig({
     // up by a plain `vitest run`'s glob — the stray-worktree incident
     // closed in WS2 Step 17 Part 0.
     exclude: ['**/node_modules/**', '**/.git/**', '.claude/worktrees/**', '.work-phase4/**'],
+    reporters: ['default', './scripts/vitest-failure-record.ts'],
   },
 });

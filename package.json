@@ -11,6 +11,8 @@
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:failure-record": "test -f .ws3-test-failures/latest.json && cat .ws3-test-failures/latest.json || echo 'no failure record'",
+    "test:record": "node scripts/ws3-record-test-run.mjs",
     "tauri:dev": "tauri dev",
     "tauri:dev:fa": "tauri dev -f fa-inference",
     "tauri:build": "tauri build"
