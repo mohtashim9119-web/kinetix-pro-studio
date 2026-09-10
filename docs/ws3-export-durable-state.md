@@ -1507,3 +1507,96 @@ working explanation of the 8× inflations, not a captured fact.
 | `src/services/webcodecsExport/exportCheckpoint.ts` | write-only manifest |
 | `src/services/webcodecsExport/exportCheckpoint.test.ts` | hash invalidation + neutrality |
 | `src/services/webcodecsExport/ffmpegLivenessBound.ts` | kill-scope comment (concat/count are not ffmpeg children) |
+
+---
+
+## Round 13 — Realistic fixtures, kill bound, claim, orphan sweep, exhaustion variant (2026-09-11)
+
+Cross-reference: `docs/ws3-export-architecture-ledger.md` (name only).
+
+### Part 0 baseline
+
+| Gate | Expected | Observed |
+|---|---|---|
+| Vitest total | 3466 = 3389 pass + 77 skip + 0 fail | 3466 = 3389 / 77 / 0 (pre-change) |
+| `cargo test` | 295 / 0 / 5 | 295 / 0 / 5 |
+| `cargo test --features fa-inference` | 381 / 0 / 35 | 381 / 0 / 35 |
+| locked digests (pre-change) | efd16ab5… d02aca07… b6ce4717… c84a5aae… | unchanged on entry |
+
+### STEP 1 — Realistic fixture rebuild
+
+**Shape:** SPS/PPS once at stream start; per-picture AUD/SEI/slices; **no** per-picture trailing SPS/PPS; trailing AUD after the final picture only (delimiter for the conservative predicate — not a per-picture param-set rotation).
+
+**New locked digests (all four changed — fixture shape changed):**
+
+| Fixture | len | SHA-256 |
+|---|---|---|
+| `8slice-10pic` | 781 | `5db5e004522c4212339bfbae771df15c84bc8858ec8ad7906a131199dcaf8994` |
+| `1slice-12pic` | 261 | `af89ca66bbb7447312547e54d8ded6e9ac460b51d8e09f5a327ac82cf5a88d44` |
+| `paramsets-3pic` | 81 | `1abf9839f658ae5b9f83f2411542b86fe0490c055e1ec739f00d4bd2a6458035` |
+| `short-9pic` | 201 | `fb9cdda22d69cac8af96ef1f7f1cd5a9dfaf486ef7d8efb46fe01a0c7fb6198b` |
+
+**Truncation / resume after rebuild:** all annexb + checkpoint Vitest rows green; Rust truncate/resume rows green. Initial failures on realistic bytes revealed (a) the old per-picture SPS/PPS was masking predicate gaps, and (b) checkpoint `byteOffset` at AUD-start without an in-prefix delimiter is **exact-offset** business, not salvage-predicate business — repaired via exact-length fast path in `prepare_checkpoint_resume_inner`.
+
+**Predicate / seam verdict:** conservative final-AU + count-and-cut + exact-offset seam **hold** on the rebuilt corpus with trailing-AUD delimiter and exact-offset authority for checkpoint offsets at AUD-start.
+
+### STEP 2 — Kill latency + `KILL_BOUND_MS`
+
+| Case | p50 | worst |
+|---|---|---|
+| idle | 0 ms | 1 ms |
+| already-exited | 0 ms | 0 ms |
+| mid-concat (1.7 GB) | 2 ms | 3 ms |
+| mid-mux | 2 ms | 4 ms |
+| mid-truncate | 3 ms | 5 ms |
+
+**Landed:** `KILL_BOUND_MS = 125` (25× worst 5 ms). On kill-bound expiry: `FfmpegKillHungError` — no third retry layer; message states the sidecar **may still be running**. Windows: kill uses the same sidecar `CommandChild::kill()` path; expect similar order-of-magnitude (not re-measured on hardware this round).
+
+### STEP 3 — H5 session claim
+
+**File:** `<session_dir>/session_claim.json` — `{schemaVersion, sessionId, holderPid, holderStartTimeMs, holderInstanceId, claimedAtMs}`.
+
+**Acquire:** `ffmpeg_create_session` / `ffmpeg_reenter_session` call `acquire_session_claim`. **Stale policy:** reclaim when `holderPid` is dead or PID-reuse disambiguation fails (start-time mismatch). **Live holder:** PID exists with matching start time — refuse reentry. Slow-but-alive holders cannot misfire: claim is refreshed on every session command path that acquires, and liveness is PID+start-time, not a heartbeat timeout.
+
+**Discovery (read-only):** `ffmpeg_read_session_claim` → `{holderLiveness: live|stale|unclaimed}`. **CC contract:** before `reenter`, read claim; if `live` and not this process, show “session in use by another window”; if `stale`, proceed with reenter (claim rewrites); reenter guarantees exclusive claim for this process on success.
+
+**Windows caveats:** PID reuse guarded by start-time; open-handle delete may pend — claim file removal on destroy is best-effort.
+
+### STEP 4 — H10 orphan sweep
+
+**Threshold:** `ORPHAN_SWEEP_MIN_AGE_SECS = 3600` (1 h). **Safety:** no `export_state.json*`; not claimed by live holder; age ≥ threshold. **Runs:** app startup (best-effort log) + `ffmpeg_sweep_orphan_sessions`. **Windows honesty:** `pending_delete` outcome when `remove_dir_all` returns Ok but the directory still exists (open handle). Never counts `pending_delete` toward `bytes_reclaimed`.
+
+### STEP 5 — `recovery_budget_exhausted`
+
+Additive variant `{kind:'recovery_budget_exhausted', reason, budget}`. **`clean` retains:** nothing-to-resume / invalid manifest. **CC:** branch on `kind === 'recovery_budget_exhausted'` (not `clean` + reason parse).
+
+**Return-surface audit:**
+
+| Outcome | Understatement risk | Round 13 |
+|---|---|---|
+| `clean` | none when truly nothing to resume | unchanged |
+| `recovery_budget_exhausted` | was `clean` + reason | **fixed** |
+| `bitstream_touched` | none — distinct kind | unchanged |
+| `resume` | none | unchanged |
+
+### STEP 6 — H9 delivery / MAX_PATH
+
+`save_session_file` uses plain `fs::copy` — no `\\?\` extended prefix. Failure is typed in the error string and **includes the intact session source path** so the operator can copy manually. Pre-encode path-length validation: **NOT DETERMINED** (CC/UI scope). Session temp paths stay short; risk is operator-chosen destination only.
+
+### STEP 7 — Four corrections
+
+1. **`byteOffset` doc** — per-piece file while rendering, not “concatenated Annex-B file”.
+2. **`ResumeHandshakeSeam`** — `keptBytes === byteOffset` is on the same **piece** file.
+3. **283 addend** — prior gate rows used **283 + N** where 283 is the branch cut addend, not the suite total.
+4. **Fixtures** — STEP 1 above.
+
+### Round 13 gates
+
+| Gate | Expected | Observed |
+|---|---|---|
+| Vitest | 3466 + 1 = **3467** | 3390 pass / 77 skip / 0 fail ×2 |
+| `cargo test` | 295 + 3 = **298** | 298 / 0 / 5 ×2 |
+| `cargo test --features fa-inference` | 381 + 3 = **384** | 384 / 0 / 35 |
+| `tsc` / `lint` | clean | clean |
+| digests | four new values above | locked in Rust + JS |
+| additive CC manifest | validates | unchanged schema v1 fields only |
