@@ -10,6 +10,183 @@
 
 ---
 
+## Round 11 — Audit remediation: fence, mutation invariant, identity v2, budget (2026-09-10)
+
+PROMPT 13 primitive-side remediation on `ws3-durable-resume`. Cross-references
+`docs/ws3-export-architecture-ledger.md` by name only.
+
+### STEP 0 — Expected vs Observed
+
+| Gate | Expected | Observed |
+|---|---|---|
+| `npm test` | 3383 + 6 = **3389** pass / 0 fail / 77 skip (**3466**) | **3389 / 0 / 77 (3466)** twice |
+| `cargo test` | 293 + 2 = **295** / 0 / 5 | **295 / 0 / 5** |
+| `cargo test --features fa-inference` | 379 + 2 = **381** / 0 / 35 | **381 / 0 / 35** |
+| fixture digests | unchanged | unchanged |
+| `git diff --name-only main -- src-tauri/` | non-empty | non-empty (`ffmpeg.rs`) |
+
+Vitest +6 (`exportCheckpoint.test.ts`): `repair failure after truncation
+returns bitstream_touched, not clean`; `includes timelineIdentityVersion so v1
+hashes invalidate`; `each newly covered visual field changes the hash`;
+`excluded UI/sync fields do not change the hash`; `old-shape manifest without
+budget fields still validates`; `budget exhaustion halts resume with a clean
+reason`.
+
+Rust +2 (`ffmpeg.rs`): `resumed_session_blocks_write_during_pending`;
+`concat_preserves_partial_output_on_disk_full_error`. Renamed
+`resumed_session_blocks_append_count_concat_until_prepared` →
+`resumed_session_blocks_bitstream_ops_until_prepared` (expanded surface).
+
+### STEP 1 — C1: gated command surface
+
+| Command | Disposition | Reason |
+|---|---|---|
+| `ffmpeg_create_session` | **Exempt** | mints a fresh session |
+| `ffmpeg_list_resumable_sessions` | **Exempt** | no session id / no bitstream I/O |
+| `ffmpeg_reenter_session` | **Exempt** | sets `resume_pending` |
+| `ffmpeg_prepare_checkpoint_resume` | **Exempt** | IS the handshake; requires pending |
+| `ffmpeg_write_export_state` | **Exempt** | manifest only; needed to read budget before prepare |
+| `ffmpeg_session_file_size` | **Exempt** | metadata; `validateExportState` needs length while pending |
+| `ffmpeg_read_file` | **Gated** (manifest exempt) | reads bitstream bytes; `export_state.json*` allowed |
+| `ffmpeg_write_file` | **Gated** | mutates session media |
+| `ffmpeg_write_file_raw` | **Gated** | mutates session media |
+| `ffmpeg_append_file_raw` | **Gated** (unchanged) | mutates Annex-B |
+| `ffmpeg_count_annexb_frames` | **Gated** (unchanged) | reads/scans bitstream |
+| `ffmpeg_truncate_annexb` | **Gated** (new) | mutates bitstream |
+| `ffmpeg_truncate_annexb_to_offset` | **Gated** (new) | mutates bitstream |
+| `ffmpeg_concat_annexb_pieces` | **Gated** (unchanged) | mutates output bitstream |
+| `ffmpeg_delete_file` | **Gated** (new) | can delete bitstream files |
+| `ffmpeg_exec` | **Gated** (new) | sidecar can write/read session media |
+| `ffmpeg_kill_session` | **Exempt** | cancel path |
+| `ffmpeg_destroy_session` | **Exempt** | cleanup |
+| `save_session_file` | **Exempt** | delivery copy-out |
+| `probe_*` | **Exempt** | no session dir |
+
+**Handshake steps enforced by primitive:** 1–7 (tail inspect → whole-AU repair
+→ offset assert → exact-offset truncate → zero-byte re-repair → recount match
+→ clear `resume_pending`).
+
+**Still caller discipline:** surviving UUID selection; calling
+`prepareCheckpointResume` before append; remainder planner starting at checkpoint
+`encoderSessionIndex` / frame index; writing recovery counters at rotation/recovery
+seams; fsync ordering at rotation (bitstream durable before manifest — see H8).
+
+Destructive probe: with `ensure_resume_bitstream_fence` removed, write during
+pending succeeds (RED); restored, refused (GREEN —
+`resumed_session_blocks_write_during_pending`).
+
+### STEP 2 — C2: mutation vs clean
+
+| Return | Mutation before return? | Legal? |
+|---|---|---|
+| `{kind:'clean'}` from validate (hash/schema/budget/file length) | No | Yes |
+| `{kind:'clean'}` from repair throw, file length unchanged | No | Yes |
+| `{kind:'clean'}` from repair throw, file length changed | No | **No** → now `{kind:'bitstream_touched'}` |
+| `{kind:'clean'}` from post-repair verify mismatch | Yes | **No** → now `{kind:'bitstream_touched'}` |
+| `{kind:'resume', repair}` | Yes (intentional) | Yes |
+| `{kind:'bitstream_touched', repair}` | Yes | Yes — caller must not reuse file |
+
+New additive variant: `{kind:'bitstream_touched', reason, repair:{keptBytes,
+bytesRemoved, …}}`. CC's `{kind:'clean'}` and error handling stay valid.
+
+Probe: `repair failure after truncation returns bitstream_touched, not clean`
+(GREEN).
+
+### STEP 3 — C3: timeline identity v2
+
+Added to `ExportTimelineIdentity` (hashed via `timelineIdentityVersion: 2`):
+
+- `globalOverlayConfig`
+- per-segment: `overlayConfig`, `extraOverlays`, all `effect*` fields incl.
+  `effectGrade`, `effectAnimationScaleRate`
+- `assets[]`: `{id, fileIdentity}` sorted by id
+
+**Asset bytes approach:** `fileIdentity = getFileIdentity(file)` when `File` is
+in memory; else `${name}|${addedAt}`. **Detects:** replacement with different
+size or mtime. **Misses:** same-path same-size same-mtime replacement (content
+swap with preserved metadata).
+
+**Deliberately excluded (with reason):**
+
+| Field | Reason |
+|---|---|
+| `locked`, `anchorStart`, `anchorSource` | sync/timing metadata, not pixels |
+| `unmatchedExplicitTag`, `tag`, `rootSegmentId` | parse/sync bookkeeping |
+| `HeadingOverlay.needsReview` | UI review flag |
+| playhead / selection / UI prefs | not render inputs |
+| raw asset blob bytes | cost; cheap identity above |
+
+Old v1 hashes invalidate via `timelineIdentityVersion` bump (no false-match).
+
+### STEP 4 — C7: persisted recovery budget
+
+Optional manifest fields (defaults: rewinds `0`, failover `false`, resume attempts
+`0`, total `0`):
+
+- `boundaryRewindsUsed`
+- `hardwareFailoverUsed`
+- `checkpointResumeAttempts`
+- `totalRecoveryAttempts`
+
+Cross-restart bound (matches in-process proof on `dedc3bf`):
+
+- `MAX_BOUNDARY_REWINDS_PER_EXPORT = 2`
+- `MAX_HARDWARE_FAILOVER_PER_EXPORT = 1`
+- `MAX_DRIVE_GL_RUN_ATTEMPTS_PER_EXPORT = 4` (1 + 2 rewinds + 1 failover)
+- `MAX_TRUNCATES_PER_EXPORT = 3`
+- `MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT = 4`
+
+**Worst case across repeated crash/resume:** at most **4** total recovery events
+and **3** truncates per export lifetime when counters are persisted at seams.
+
+**Exhaustion:** `validateExportState` returns `{kind:'clean', reason:'recovery
+budget exhausted: …'}` — no resume offered.
+
+**CC must write at seams (explicit list):**
+
+1. **Encoder rotation seam:** after pending append batch lands and native
+   `sessionFileSize` matches expected offset → `appendExportCheckpoint` →
+   `serializeExportState` → `writeExportState` (manifest fsync already native).
+2. **After boundary rewind:** increment `boundaryRewindsUsed` and
+   `totalRecoveryAttempts` → `serializeExportState` → `writeExportState`.
+3. **After hardware failover:** set `hardwareFailoverUsed: true`, increment
+   `totalRecoveryAttempts` → `serializeExportState` → `writeExportState`.
+4. **Before each resume handshake attempt:** increment `checkpointResumeAttempts`
+   and `totalRecoveryAttempts` → `writeExportState` (or fold into post-handshake
+   write if attempt fails validation without I/O).
+5. **After successful `{kind:'resume'}`:** clear or roll `checkpointResumeAttempts`
+   on next rotation checkpoint row as appropriate; continue export.
+
+### STEP 5 — C8 and H8
+
+**C8 disk-full concat:** partial concat output is **preserved** when the error
+is disk-full (`StorageFull` / `No space left on device`). All other concat errors
+still delete the partial output. **Safety:** production consumes concat output
+only after the picture-count guard passes — a partial file cannot become a
+deliverable without a shortfall or error.
+
+**H8 durability ordering:** `append_file_raw`, truncate commands, and successful
+`prepare_checkpoint_resume` now `sync_all` the Annex-B file before returning.
+**Required seam order:** append/truncate bitstream → fsync (native) →
+`writeExportState` (manifest fsync). Handshake `byteOffset ≤ fileLen` catches
+manifest-ahead-of-durable-length; inverse (durable bytes past checkpoint) is
+repaired by whole-AU + exact-offset steps 2–4.
+
+### STEP 6 — Clean findings re-confirmed
+
+Unchanged by this round: picture-accurate production counter; concat two-FD
+invariant; guard-to-seal predicate; handshake steps 1–7 now include STEP 1
+write/exec/truncate/read gates.
+
+### Additive compatibility
+
+- Old manifest without budget fields validates (`old-shape manifest without budget
+  fields still validates`).
+- All `TauriFfmpeg` / `exportCheckpoint` public signatures retain compatible shapes;
+  new types are additive variants/optional fields only.
+
+---
+
 ## Round 8 — Cargo arithmetic, mux measurement, conservative final-AU, seams (2026-09-10)
 
 This section supersedes Round 7's extrapolated 2.3 GB mux bound, the

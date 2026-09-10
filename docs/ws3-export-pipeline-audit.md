@@ -415,6 +415,17 @@ Input to the round after CC's. Cheap tests, not implementations.
 | C9 | **LOW** | Picture-accurate counter is the only production guard; slice path not reachable. | ledger Counter register; `annexbFrameCount.ts:148–149` `dedc3bf` | No | **Yes** — Rung 1 LANDED | n/a (clean) | n/a |
 | C10 | **LOW** | In-process second-rewind session index bug is fixed on `dedc3bf`. | `resumeSessionIndex` `:1172–1892`; `boundedRerenderWiring.test.ts` | No | **Yes** — Round 7/9 | n/a (clean on this head) | Durable remainder must reuse the same field |
 
+#### Round 11 dispositions (2026-09-10, `ws3-durable-resume`)
+
+| ID | Disposition | Fixing commit(s) |
+|---|---|---|
+| C1 | **FIXED** — `ensure_resume_bitstream_fence` gates write/raw-write/read (manifest exempt), exec, both truncates, delete; append/count/concat unchanged | `79e3eed` |
+| C2 | **FIXED** — `{kind:'bitstream_touched'}` when repair mutates before failure; `{kind:'clean'}` only when bitstream length unchanged | `693e533` |
+| C3 | **FIXED** — `ExportTimelineIdentity` v2 (`timelineIdentityVersion: 2`): overlay/effect/globalOverlayConfig/assets fileIdentity | `693e533` |
+| C7 | **FIXED** — optional `boundaryRewindsUsed`, `hardwareFailoverUsed`, `checkpointResumeAttempts`, `totalRecoveryAttempts`; exhaustion → clean | `693e533` |
+| C8 | **FIXED** — concat preserves partial output on disk-full only; guard still required before mux | `79e3eed` |
+| H8 | **FIXED** — Annex-B `sync_all` on append/truncate/prepare; rotation seam order documented in `docs/ws3-export-durable-state.md` Round 11 | `79e3eed` |
+
 ### 7.2 Hypotheses (not confirmed by our code alone)
 
 | ID | Sev | Statement | Evidence | Win-specific? | Already tracked? | Operator symptom | Cheapest confirm/refute |
