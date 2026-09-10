@@ -155,6 +155,20 @@ export interface ExportWorkerInitMessage {
    * `undefined`.
    */
   resumeFromFrameIndex?: number;
+  /**
+   * WS3 Rung 5a (hardware->software failover). Set only by
+   * `exportPipelineWebCodecs.ts`'s rewind recovery, and only after Rung 3's
+   * own rewind budget (`decideBoundedRerenderDisposition`) is exhausted for
+   * the export AND `decideHardwareFailoverDisposition` grants the one-shot
+   * failover retry. When true, `createEncoder` is built against
+   * `SOFTWARE_ONLY_LADDER` instead of `HARDWARE_LADDER` for EVERY session
+   * this `runExport` call builds (initial and every rotation) — the whole
+   * resumed run, not just the next session — because this init message
+   * already represents a fresh `driveGlRun` attempt starting at a rotation
+   * boundary, so there is no "current session" to leave on hardware. Default
+   * undefined/false reproduces today's ladder exactly.
+   */
+  forceSoftwareEncoder?: boolean;
 }
 
 export type ExportWorkerInboundMessage =
@@ -1150,6 +1164,10 @@ const EXPORT_CODEC = 'avc1.640028';
  *  not a permanent setting. */
 const EXPORT_BITRATE = 8_000_000;
 const HARDWARE_LADDER: HardwareAcceleration[] = ['prefer-hardware', 'no-preference', 'prefer-software'];
+/** WS3 Rung 5a — the ladder a failed-over session builds against: software
+ *  only, no hardware probe attempted at all. See
+ *  `ExportWorkerInitMessage.forceSoftwareEncoder`'s own doc. */
+const SOFTWARE_ONLY_LADDER: HardwareAcceleration[] = ['prefer-software'];
 /** Backpressure threshold (plan §4.1) — encodeQueueSize above this pauses the
  *  frame loop until the encoder dequeues work, bounding in-flight VideoFrames. */
 const BACKPRESSURE_HIGH_WATER = 4;
@@ -1158,12 +1176,59 @@ function gopFrames(fps: number): number {
   return Math.max(1, Math.round(2 * fps));
 }
 
+// ---------------------------------------------------------------------------
+// WS3 Rung 5b — adaptive throttling. `docs/ws3-export-recovery-architecture.md`
+// §5c reasoned through and REJECTED making `BACKPRESSURE_HIGH_WATER` itself
+// adaptive (raising the hard ceiling under driver pressure is exactly
+// backwards — it puts MORE in-flight frames into a struggling encoder). This
+// is deliberately a SEPARATE, smaller mechanism underneath that unchanged
+// hard ceiling: a small, continuous, per-frame submission delay that grows
+// as `encodeQueueSize` rises past a SOFT threshold below the hard one, so
+// the encoder is given breathing room before it ever needs the hard wait —
+// "slow submission" as its own graduated response, not a rename of the
+// existing binary wait.
+//
+// Both constants are DERIVED from `BACKPRESSURE_HIGH_WATER`, never freshly
+// assumed: the soft threshold is half the hard ceiling, and the max per-
+// frame delay this produces (`MAX_THROTTLE_DELAY_MS`) is small enough that
+// it cannot plausibly approach `FORWARD_PROGRESS_BOUND_MS` (45,000 ms) even
+// pathologically summed across a whole `MAX_ENCODER_SESSION_FRAMES` (1800)
+// session — see the Round 9 ledger entry for the exact arithmetic. The
+// bound is also structural, not just arithmetic: `FORWARD_PROGRESS_BOUND_MS`
+// resets on every COMPLETED append, and this delay only paces the interval
+// BEFORE a frame is submitted — it never blocks an append that has already
+// been queued, so it cannot itself withhold the reset.
+export const THROTTLE_SOFT_WATER = Math.floor(BACKPRESSURE_HIGH_WATER / 2);
+export const THROTTLE_STEP_MS = 5;
+export const MAX_THROTTLE_DELAY_MS = THROTTLE_STEP_MS * (BACKPRESSURE_HIGH_WATER - THROTTLE_SOFT_WATER);
+
+/**
+ * Pure — the whole throttle policy in one function, same posture as
+ * `decideFlushTimeoutDisposition`/`decideBoundedRerenderDisposition`:
+ * nothing but the sampled queue depth can talk it into a different answer.
+ * 0 below the soft threshold (reproduces today's behaviour exactly — the
+ * hard `BACKPRESSURE_HIGH_WATER` wait is the only thing that can still
+ * engage), then linear up to `MAX_THROTTLE_DELAY_MS` at the hard ceiling.
+ * No hysteresis / separate "recovery" state is needed: the backoff is
+ * already continuous in `encodeQueueSize`, so there is no discrete on/off
+ * boundary for consecutive frames to oscillate across.
+ */
+export function computeThrottleDelayMs(encodeQueueSize: number): number {
+  if (encodeQueueSize <= THROTTLE_SOFT_WATER) return 0;
+  return Math.min(THROTTLE_STEP_MS * (encodeQueueSize - THROTTLE_SOFT_WATER), MAX_THROTTLE_DELAY_MS);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function createEncoder(
   width: number,
   height: number,
   fps: number,
   onOutput: (chunk: EncodedVideoChunk) => void,
   onError: (e: DOMException) => void,
+  ladder: HardwareAcceleration[] = HARDWARE_LADDER,
 ): Promise<VideoEncoder> {
   const base = {
     codec: EXPORT_CODEC,
@@ -1179,7 +1244,7 @@ async function createEncoder(
   };
 
   const attempts: string[] = [];
-  for (const hardwareAcceleration of HARDWARE_LADDER) {
+  for (const hardwareAcceleration of ladder) {
     const config: VideoEncoderConfig = { ...base, hardwareAcceleration };
 
     let supported = false;
@@ -1216,7 +1281,7 @@ async function createEncoder(
     }
   }
 
-  throw new Error(`exportWorker: no VideoEncoder config in the hardware-first ladder succeeded — [${attempts.join(' | ')}]`);
+  throw new Error(`exportWorker: no VideoEncoder config in the ladder [${ladder.join(', ')}] succeeded — [${attempts.join(' | ')}]`);
 }
 
 /** Resolves the next time `encoder.encodeQueueSize` decreases. Registered
@@ -1382,6 +1447,16 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
     compositeMs += performance.now() - compositeStarted;
     activeTracker?.add('composite', compositeMs);
 
+    // WS3 Rung 5b — graduated backoff BELOW the hard wait, unconditional
+    // (never gated on `activeAppendBackpressureGate` or anything else — a
+    // pure function of the sampled queue depth only, so it composes with
+    // the append gate below by plain sequencing, never a shared lock).
+    const throttleMs = computeThrottleDelayMs(encoder.encodeQueueSize);
+    if (throttleMs > 0) {
+      const throttleStarted = performance.now();
+      await sleep(throttleMs);
+      activeTracker?.add('wait-dequeue', performance.now() - throttleStarted);
+    }
     if (encoder.encodeQueueSize > BACKPRESSURE_HIGH_WATER) {
       const waitStarted = performance.now();
       await waitForDequeue(encoder);
@@ -1594,6 +1669,11 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       (e) => {
         failState.setFailure('encoder-callback', e);
       },
+      // WS3 Rung 5a — every session THIS `runExport` call builds (initial and
+      // every rotation) uses the demoted ladder once the orchestrator has
+      // set `forceSoftwareEncoder`. See the field's own doc comment for why
+      // this is whole-run, not "next session only".
+      payload.forceSoftwareEncoder ? SOFTWARE_ONLY_LADDER : HARDWARE_LADDER,
     );
 
   const runState = new RunState(assets, tracker, startIndex, segments, config);

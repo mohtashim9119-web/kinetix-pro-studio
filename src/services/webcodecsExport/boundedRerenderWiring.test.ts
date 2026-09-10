@@ -231,7 +231,15 @@ describe('bounded re-render (Rung 3) — wired at the exportProjectWebCodecs cal
     expect(truncateAnnexbToOffset).not.toHaveBeenCalled();
   });
 
-  it(`stops rewinding once MAX_BOUNDARY_REWINDS_PER_EXPORT (${MAX_BOUNDARY_REWINDS_PER_EXPORT}) is reached and fails instead`, async () => {
+  it(`stops SAME-RUNG rewinding once MAX_BOUNDARY_REWINDS_PER_EXPORT (${MAX_BOUNDARY_REWINDS_PER_EXPORT}) is reached, then fails over to software once, then fails instead`, async () => {
+    // WS3 Round 9 (Rung 5a) — this test used to assert a hard abort right at
+    // the rewind bound. That bound is unchanged; what changed is what
+    // happens AFTER it, once `decideHardwareFailoverDisposition` exists:
+    // exactly one more attempt, forced onto `SOFTWARE_ONLY_LADDER`, before
+    // the export actually gives up. See `hardwareFailoverWiring.test.ts` for
+    // the dedicated coverage of that branch — this test still pins the part
+    // that is genuinely this file's own: the SAME-RUNG rewind bound itself,
+    // extended one attempt further so the whole export completes.
     const { ffmpeg, truncateAnnexbToOffset } = ffmpegHarness({
       truncateOffsetResult: { pictures: 5, vclNals: 5, bytesRemoved: 0, keptBytes: 30 },
     });
@@ -242,7 +250,9 @@ describe('bounded re-render (Rung 3) — wired at the exportProjectWebCodecs cal
       // is exactly the case that used to defeat the ledger: a resumed run's
       // `sessionAt` must start at the session it resumed INTO, not 0, or a
       // hang before its own first rotation reads the wrong session entirely.
-      for (let attempt = 0; attempt <= MAX_BOUNDARY_REWINDS_PER_EXPORT; attempt++) {
+      // One extra iteration beyond the old bound: the failover (software)
+      // attempt hangs too, so the export exhausts BOTH resources.
+      for (let attempt = 0; attempt <= MAX_BOUNDARY_REWINDS_PER_EXPORT + 1; attempt++) {
         fake.emit({ type: 'session-plan', pieceIndex: 0, sessions: 3, capFrames: 1800, totalFrames: EXPECTED_FRAMES });
         if (attempt === 0) {
           fake.emit(chunkMsg(0, 10));
@@ -258,21 +268,24 @@ describe('bounded re-render (Rung 3) — wired at the exportProjectWebCodecs cal
     });
 
     expect(r.ok).toBe(false);
-    // Exactly MAX_BOUNDARY_REWINDS_PER_EXPORT truncate attempts — the
-    // (MAX+1)th hang is refused a rewind by `decideBoundedRerenderDisposition`.
-    expect(truncateAnnexbToOffset).toHaveBeenCalledTimes(MAX_BOUNDARY_REWINDS_PER_EXPORT);
-    // Both rewinds land at the SAME boundary — correct here specifically
+    // MAX_BOUNDARY_REWINDS_PER_EXPORT same-rung truncates, plus exactly ONE
+    // more for the software failover attempt — never fewer, never more.
+    expect(truncateAnnexbToOffset).toHaveBeenCalledTimes(MAX_BOUNDARY_REWINDS_PER_EXPORT + 1);
+    // All three land at the SAME boundary — correct here specifically
     // because every resumed attempt makes zero progress before hanging
     // again, so there is nothing new to cut back past.
-    expect(truncateAnnexbToOffset.mock.calls.map((c: unknown[]) => c[1])).toEqual([30, 30]);
+    expect(truncateAnnexbToOffset.mock.calls.map((c: unknown[]) => c[1])).toEqual([30, 30, 30]);
     // THE FIELD THIS TEST EXISTS TO PIN: every resumed init message must
     // still carry `resumeFromFrameIndex: 5` — session 1's real start. Before
     // `resumeSessionIndex` was threaded through `DriveGlRunDeps`, a resumed
     // run's own `sessionAt` reset to 0 on hanging again, so the SECOND
     // rewind read `hungSessionIndex=0` and resumed from frame 0 instead of
     // 5 — silently re-encoding (and duplicating) frames already on disk.
-    expect(fake.initMessages.length).toBe(MAX_BOUNDARY_REWINDS_PER_EXPORT + 1);
-    expect(fake.initMessages.map((m) => m.resumeFromFrameIndex)).toEqual([undefined, 5, 5]);
+    expect(fake.initMessages.length).toBe(MAX_BOUNDARY_REWINDS_PER_EXPORT + 2);
+    expect(fake.initMessages.map((m) => m.resumeFromFrameIndex)).toEqual([undefined, 5, 5, 5]);
+    // The LAST attempt only is the software failover — see
+    // `hardwareFailoverWiring.test.ts` for the dedicated ordering proof.
+    expect(fake.initMessages.map((m) => m.forceSoftwareEncoder ?? false)).toEqual([false, false, false, true]);
   });
 
   it('a truncate that keeps the wrong picture count aborts rather than resuming from a mismatched boundary', async () => {

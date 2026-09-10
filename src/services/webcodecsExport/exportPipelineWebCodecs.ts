@@ -1064,6 +1064,10 @@ export interface DriveGlRunDeps {
    * reproducing today's behavior exactly.
    */
   resumeSessionIndex?: number;
+  /** WS3 Rung 5a (hardware->software failover) — threaded straight to
+   *  `ExportWorkerInitMessage.forceSoftwareEncoder`; see its own doc comment.
+   *  Set only by the rewind loop's failover branch, at most once per export. */
+  forceSoftwareEncoder?: boolean;
 }
 
 /**
@@ -1981,6 +1985,7 @@ export function driveGlRun(
       frameGridOriginSec: grid.originSec,
       frameGridBaseFrame: grid.baseFrame,
       resumeFromFrameIndex: deps.resumeFromFrameIndex,
+      forceSoftwareEncoder: deps.forceSoftwareEncoder,
     };
     resetWatchdog();
     resetProgressBound();
@@ -2301,6 +2306,40 @@ export function decideBoundedRerenderDisposition(input: {
 }
 
 // ---------------------------------------------------------------------------
+// WS3 Rung 5a — hardware->software failover, ONE shot per export.
+//
+// Deliberately a SEPARATE bounded resource from `decideBoundedRerenderDisposition`
+// above, not a widening of it: consulted only once Rung 3's own rewind budget
+// (`MAX_BOUNDARY_REWINDS_PER_EXPORT`, per-export) is exhausted, so a transient
+// stall is always given the SAME-rung rewind first — a `HARDWARE_LADDER`
+// construction-time fallback already exists and a single stall says nothing
+// about whether hardware itself is unhealthy for this export. Failing over
+// only after the rewind budget is exhausted means: two same-rung rewind
+// attempts must already have failed (or the export must already have spent
+// its rewind budget on an earlier, unrelated boundary) before this ever
+// fires. `failoverUsed` is a boolean, never a counter, so this function can
+// grant AT MOST one extra `driveGlRun` attempt for the whole export — see
+// the Round 9 ledger entry for the resulting worst-case attempt count.
+// ---------------------------------------------------------------------------
+
+export type HardwareFailoverDisposition = { action: 'retry-software' } | { action: 'abort' };
+
+/**
+ * Pure policy for whether the export may demote to `SOFTWARE_ONLY_LADDER`
+ * and retry the current rotation boundary once more, after
+ * `decideBoundedRerenderDisposition` has already refused a same-rung
+ * rewind. Same shape as its sibling policy functions — a single input, no
+ * I/O — for the same reason: nothing but the counter can talk it into
+ * re-litigating the bound from some other signal.
+ */
+export function decideHardwareFailoverDisposition(input: { failoverUsed: boolean }): HardwareFailoverDisposition {
+  if (input.failoverUsed) {
+    return { action: 'abort' };
+  }
+  return { action: 'retry-software' };
+}
+
+// ---------------------------------------------------------------------------
 // Part 6 — Main orchestrator.
 // ---------------------------------------------------------------------------
 
@@ -2433,6 +2472,8 @@ export async function exportProjectWebCodecs(
   // WS3 Tier 1 item 3c (Rung 3) — per-EXPORT ceiling (every GL piece
   // combined), matching `MAX_BOUNDARY_REWINDS_PER_EXPORT`'s own doc comment.
   let boundaryRewindsUsed = 0;
+  // WS3 Rung 5a — per-EXPORT, one-shot. See `decideHardwareFailoverDisposition`.
+  let hardwareFailoverUsed = false;
 
   for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
     const plan = pieces[pieceIndex]!;
@@ -2471,7 +2512,11 @@ export async function exportProjectWebCodecs(
         }
       }
       const runFile = `piece_${pieceIndex}.h264`;
-      const runGlPiece = (resumeFromFrameIndex?: number, resumeSessionIndex?: number): Promise<RunDriveResult> =>
+      const runGlPiece = (
+        resumeFromFrameIndex?: number,
+        resumeSessionIndex?: number,
+        forceSoftware?: boolean,
+      ): Promise<RunDriveResult> =>
         driveGlRun(
           ffmpeg,
           `run_${pieceIndex}`,
@@ -2499,6 +2544,7 @@ export async function exportProjectWebCodecs(
             createWorker: deps.createWorker,
             resumeFromFrameIndex,
             resumeSessionIndex,
+            forceSoftwareEncoder: forceSoftware,
           },
           { originSec: plan.gridOriginSec, baseFrame: plan.gridBaseFrame },
         );
@@ -2535,10 +2581,23 @@ export async function exportProjectWebCodecs(
           hungSessionIndex < totalSessions - 1;
         if (!isRotationFlushTimeout) break;
         const disposition = decideBoundedRerenderDisposition({ rewindsUsed: boundaryRewindsUsed });
+        let forceSoftware = false;
         if (disposition.action === 'abort') {
+          const failoverDisposition = decideHardwareFailoverDisposition({ failoverUsed: hardwareFailoverUsed });
+          if (failoverDisposition.action === 'abort') {
+            // eslint-disable-next-line no-console
+            console.info('[ws3-rerender] bounded re-render abort', JSON.stringify({ pieceIndex, hungSessionIndex, reason: disposition.reason }));
+            break;
+          }
+          // WS3 Rung 5a — rewind budget exhausted, but this export has not
+          // yet tried demoting to software. One more attempt at THIS same
+          // boundary, forced onto `SOFTWARE_ONLY_LADDER` for the whole
+          // resumed run — see `decideHardwareFailoverDisposition`'s own doc
+          // for why this is bounded to exactly one such attempt per export.
+          hardwareFailoverUsed = true;
+          forceSoftware = true;
           // eslint-disable-next-line no-console
-          console.info('[ws3-rerender] bounded re-render abort', JSON.stringify({ pieceIndex, hungSessionIndex, reason: disposition.reason }));
-          break;
+          console.info('[ws3-failover] hardware->software failover engaged', JSON.stringify({ pieceIndex, hungSessionIndex, rewindsUsed: boundaryRewindsUsed }));
         }
 
         const localByteOffset = driveResult.sessionByteOffsets[hungSessionIndex];
@@ -2603,15 +2662,21 @@ export async function exportProjectWebCodecs(
           break;
         }
 
-        boundaryRewindsUsed++;
+        // WS3 Rung 5a — the failover attempt is bounded by its OWN one-shot
+        // flag (`hardwareFailoverUsed`, set above), never by this counter:
+        // it must not consume a slot from Rung 3's separate rewind budget,
+        // and must not be countable twice.
+        if (!forceSoftware) {
+          boundaryRewindsUsed++;
+        }
         fileBaseByteOffset = absoluteByteOffset;
         // eslint-disable-next-line no-console
-        console.info('[ws3-rerender] bounded re-render rewind', JSON.stringify({ pieceIndex, hungSessionIndex, rewindFrameIndex, absoluteByteOffset, boundaryRewindsUsed }));
+        console.info('[ws3-rerender] bounded re-render rewind', JSON.stringify({ pieceIndex, hungSessionIndex, rewindFrameIndex, absoluteByteOffset, boundaryRewindsUsed, forceSoftware }));
         // `resumeSessionIndex` (= `hungSessionIndex`, guaranteed non-null by
         // `isRotationFlushTimeout` above) is what stops the RESUMED run's own
         // ledger from defaulting to session 0 if IT hangs again before its
         // own first 'session-rotate' — see `DriveGlRunDeps.resumeSessionIndex`.
-        driveResult = await runGlPiece(rewindFrameIndex, hungSessionIndex);
+        driveResult = await runGlPiece(rewindFrameIndex, hungSessionIndex, forceSoftware);
       }
       if (!driveResult.ok) {
         const watchdogFired = driveResult.error.message.includes('no output for 30s');
