@@ -264,6 +264,7 @@ import { ExportSettingsModal } from './components/ExportSettingsModal';
 import { ManageModelsModal } from './components/ManageModelsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, formatElapsed, formatElapsedLong, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
+import { buildExportDiagnosticsBlob } from './services/exportDiagnosticsBlob';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
@@ -6748,39 +6749,13 @@ export default function App() {
                       onClick={() => {
                         const err = exportState.error;
                         if (!err) return;
-                        const diagnostics = {
-                          error: err,
-                          liveness: err.liveness ?? null,
-                          lastPhase: err.liveness?.lastPhase ?? null,
-                          msSinceLastPhaseChange: err.liveness?.msSinceLastPhaseChange ?? null,
-                          pieceIndex: err.liveness?.pieceIndex ?? null,
-                          framesEncoded: err.liveness?.framesEncoded ?? null,
-                          maxSilentMs: err.liveness?.maxSilentMs ?? null,
-                          // WS3 — the phase log's last hop to the operator. It
-                          // was collected and capped all along; it just had no
-                          // route out of `ExportLivenessSnapshot` until now,
-                          // which is why field payloads carried none.
-                          failureVia: err.liveness?.failureVia ?? null,
-                          // WS3 append-batching round — the MAIN-THREAD append
-                          // ledger, flattened alongside the other headline
-                          // fields. Every worker-sourced diagnostic
-                          // (flushChunksSinceEntry, encodeQueueSizeAtFlushExpiry,
-                          // appendPendingAtFailure, selectedHardwareRung) is
-                          // absent from this blob by ROUTE — it is built from
-                          // ExportError + ExportLivenessSnapshot and nothing
-                          // else — which is why a payload could show all four
-                          // missing while the worker was perfectly healthy.
-                          // These do not need the worker to reply.
-                          appendLedger: err.liveness?.appendLedger ?? null,
-                          phaseLogTail: err.liveness?.phaseLogTail ?? null,
-                          projectMeta: {
-                            segmentCount: project.segments.length,
-                            hasVoiceover: !!project.voiceoverId,
-                            exportResolution,
-                            exportFps,
-                            ts: new Date().toISOString(),
-                          },
-                        };
+                        const diagnostics = buildExportDiagnosticsBlob(err, {
+                          segmentCount: project.segments.length,
+                          hasVoiceover: !!project.voiceoverId,
+                          exportResolution,
+                          exportFps,
+                          ts: new Date().toISOString(),
+                        });
                         navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => undefined);
                       }}
                       className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
