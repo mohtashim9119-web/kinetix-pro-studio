@@ -430,9 +430,9 @@ Input to the round after CC's. Cheap tests, not implementations.
 
 | ID | Disposition | Fixing commit(s) |
 |---|---|---|
-| H5 | **FIXED** — `session_claim.json` cross-process claim on create/reenter; stale = dead PID or start-time mismatch; read-only `ffmpeg_read_session_claim` | *(Round 13 SHA)* |
-| H9 | **PARTIAL** — delivery failure preserves session file + surfaces source path in error; no `\\?\` long-path prefix yet | *(Round 13 SHA)* |
-| H10 | **FIXED** — `ffmpeg_sweep_orphan_sessions` + startup sweep; 1 h age; live-claim defer; `pending_delete` honesty | *(Round 13 SHA)* |
+| H5 | **FIXED** — `session_claim.json` cross-process claim on create/reenter; stale = dead PID or start-time mismatch; read-only `ffmpeg_read_session_claim` | `d73747a` |
+| H9 | **PARTIAL** — delivery failure preserves session file + surfaces source path in error; no `\\?\` long-path prefix yet | `f525f09` |
+| H10 | **FIXED** — `ffmpeg_sweep_orphan_sessions` + startup sweep; 1 h age; live-claim defer; `pending_delete` honesty | `d73747a` |
 
 ### 7.2 Hypotheses (not confirmed by our code alone)
 
