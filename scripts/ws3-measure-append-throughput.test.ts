@@ -386,3 +386,71 @@ describe('WS3 Tier 1 — append throughput, SIMULATED (not measured)', () => {
 // has enough headroom at the measured latency — it is not proof the
 // production code path behaves identically on real Windows hardware.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// WS3 Round 9 — closes the NOT DETERMINED register's "break-even latency"
+// row: at what per-call writer latency would APPEND_BACKPRESSURE_THRESHOLD_BYTES
+// (32 MB) actually engage for THIS field chunk profile, i.e. stop being a
+// hedge and start actually parking the frame loop?
+//
+// Bisects `writerLatencyMs` using the BATCHED config with the gate DISABLED
+// (`backpressureThresholdBytes: null`) — the gate itself caps
+// `bytesSubmitted - bytesAcked` the instant it is enabled (see `simulate`'s
+// `canSubmitMoreFrames` check), so measuring where the gate would engage
+// requires observing what the backlog does WITHOUT it capping the answer.
+// SIMULATED, same caveats as the file above — not a real-hardware latency.
+// ---------------------------------------------------------------------------
+function batchedNoGateConfig(writerLatencyMs: number): SimConfig {
+  return {
+    batching: { chunks: APPEND_BATCH_CHUNKS, bytes: APPEND_BATCH_BYTES, ageMs: APPEND_BATCH_MAX_AGE_MS },
+    backpressureThresholdBytes: null,
+    writerLatencyMs,
+  };
+}
+
+describe('WS3 Round 9 — back-pressure break-even latency (SIMULATED)', () => {
+  it('peakUnackedBytes is monotone non-decreasing in writer latency (bisection precondition)', () => {
+    const samples = [0.5, 5, 12.4, 25, 50, 100, 250, 500, 1000];
+    const peaks = samples.map((ms) => simulate(batchedNoGateConfig(ms)).peakUnackedBytes);
+    for (let i = 1; i < peaks.length; i++) {
+      expect(peaks[i]).toBeGreaterThanOrEqual(peaks[i - 1]!);
+    }
+  });
+
+  it('bisects the break-even latency at which the 32MB gate would actually engage', () => {
+    const threshold = APPEND_BACKPRESSURE_THRESHOLD_BYTES;
+
+    // Bracket first — confirm the threshold is crossed somewhere inside
+    // [0, hi] before bisecting, rather than assuming it.
+    let lo = 0;
+    let hi = 20_000; // ms — deliberately far beyond anything plausible for a local disk
+    const peakAt = (ms: number): number => simulate(batchedNoGateConfig(ms)).peakUnackedBytes;
+    expect(peakAt(lo)).toBeLessThan(threshold);
+    expect(peakAt(hi)).toBeGreaterThanOrEqual(threshold);
+
+    for (let i = 0; i < 40; i++) {
+      const mid = (lo + hi) / 2;
+      if (peakAt(mid) >= threshold) hi = mid; else lo = mid;
+      if (hi - lo < 0.001) break;
+    }
+
+    // eslint-disable-next-line no-console
+    console.log(
+      `\n[BREAK-EVEN] APPEND_BACKPRESSURE_THRESHOLD_BYTES (${fmt(threshold / 1024 / 1024)}MB) engages ` +
+      `at writerLatencyMs ~= ${hi.toFixed(3)}ms for the field chunk profile ` +
+      `(${ENCODER_CADENCE_MS}ms/frame encoder cadence, ${CHUNK_BYTES}B/chunk, ` +
+      `batch=${APPEND_BATCH_CHUNKS}chunks/${fmt(APPEND_BATCH_BYTES / 1024 / 1024)}MB/${APPEND_BATCH_MAX_AGE_MS}ms). ` +
+      `Measured latencies this round: 0.5/12.4/25ms — all far below break-even, ` +
+      `so back-pressure is a ceiling guard against a writer roughly ` +
+      `${(hi / 12.4).toFixed(0)}x slower than the measured Windows figure, not something ` +
+      'any measured latency has exercised.',
+    );
+
+    // The break-even point itself must sit comfortably above every latency
+    // actually measured this round or a prior one (0.5/12.4/25ms) — if it
+    // didn't, the "back-pressure never engaged" finding above would be wrong.
+    for (const measured of LATENCIES_MS) {
+      expect(hi).toBeGreaterThan(measured);
+    }
+  });
+});
