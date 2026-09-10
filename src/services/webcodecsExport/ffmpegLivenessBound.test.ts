@@ -13,7 +13,6 @@ import {
   REMUX_BOUND_MS,
   CONCAT_BOUND_MS,
   FRAME_COUNT_BOUND_MS,
-  MUX_BOUND_MS,
   TRUNCATE_BOUND_MS,
   TRUNCATE_BOUND_MS_PROVISIONAL,
   computeMuxBoundMs,
@@ -173,13 +172,13 @@ describe('withFfmpegLivenessBound', () => {
     expect(CONCAT_BOUND_MS).toBe(60_000);
     expect(FRAME_COUNT_BOUND_MS).toBe(81_375);
     expect(TRUNCATE_BOUND_MS).toBe(172_675);
-    expect(muxAtScale).toBe(348_000);
+    expect(muxAtScale).toBe(345_500);
     expect(TRUNCATE_BOUND_MS).toBeLessThan(TRUNCATE_BOUND_MS_PROVISIONAL);
 
-    // 2.3 GB: (9.22 + 4.70)s × (2.3/1.7) × 25 = 470.824s.
+    // 2.3 GB measured two-pass 20.470 s × 25 = 511_750 ms. Not the 13.92×(2.3/1.7) extrapolation.
     const mux23 = computeMuxBoundMs(2_300_000_000);
-    expect(mux23).toBe(470_824);
-    expect(mux23).toBeGreaterThan(470_800);
+    expect(mux23).toBe(511_750);
+    expect(mux23).toBeGreaterThan(510_000);
 
     // Tier-piece remains a separate hardware/render-path bound. A synthetic
     // filesystem scan cannot measure VideoToolbox/canvas/IPC performance.

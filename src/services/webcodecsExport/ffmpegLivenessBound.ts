@@ -152,35 +152,52 @@ export const TRUNCATE_BOUND_MS = Math.ceil(
 /** CC's provisional truncate bound (structural analogy, not measured). */
 export const TRUNCATE_BOUND_MS_PROVISIONAL = 300_000;
 
-/** Measured with-audio mux worst at 1.7 GB: premux 9.22 s + mix 4.70 s. */
-const MUX_WITH_AUDIO_WORST_MS_AT_1_7_GB = 13_920;
+/** Measured 2026-09-10 two-pass muxOnly on real tiled Annex-B (not 0xFF),
+ *  21 min AAC mix, TMPDIR=/var/folders/39/.../T, x86_64 sidecar.
+ *  1.7 GB (1_700_660_619 B): pass-1 8.370 s, pass-2 5.450 s, total 13.820 s,
+ *  peak RSS 55_234_560. 2.3 GB (2_300_238_216 B): pass-1 13.550 s, pass-2
+ *  6.920 s, total 20.470 s, peak RSS 63_279_104. */
+const MUX_PASS1_MS_AT_1_7_GB = 8_370;
+const MUX_PASS2_MS_AT_1_7_GB = 5_450;
+const MUX_PASS1_MS_AT_2_3_GB = 13_550;
+const MUX_PASS2_MS_AT_2_3_GB = 6_920;
+const MUX_SIZING_BYTES = 2_300_000_000;
 
-/** Headroom over size-scaled mux worst (×). */
+/** Headroom over measured mux total (×). */
 const MUX_HEADROOM = 25;
 
 /**
- * Size-scaled mux bound: `muxOnly` runs one or two `ffmpeg.exec` passes under
- * ONE `withFfmpegLivenessBound` wrapper when audio is present — both passes share
- * this budget. Scales linearly with annexb bytes so a healthy 2.3 GB export
- * survives 25x slower I/O without false-abort.
+ * Mux liveness bound. `muxOnly` runs one or two `ffmpeg.exec` passes under
+ * ONE `withFfmpegLivenessBound` wrapper when audio is present.
  *
- * Arithmetic from the measured two-pass total:
- *   1.7 GB: 9.22 + 4.70 = 13.92 s; 10x = 139.20 s; 25x = 348.00 s.
- *   2.3 GB: scale x1.353 => 18.834 s; 10x = 188.34 s;
- *           25x = 470.84 s.
+ * Shape is NOT linear in annexb bytes. Pass-1 (annexb→mp4 copy) grew
+ * 8.370 s → 13.550 s from 1.7 GB to 2.3 GB (ratio 1.619 vs byte ratio 1.353)
+ * — I/O bound in the annexb stream, noisy but same order as bytes. Pass-2
+ * AAC-encodes a fixed-length 21 min voiceover against `-shortest` and only
+ * grew 5.450 s → 6.920 s (ratio 1.270): the mix is audio-duration bound, with
+ * a weak extra cost from a larger premux. Sizing interpolates the two
+ * measured (pass-1, pass-2) pairs rather than multiplying the whole two-pass
+ * total by 2.3/1.7.
  *
- * Yields **348_000 ms at 1.7 GB** and **470_824 ms at 2.3 GB** (the
- * implementation uses the exact 2.3/1.7 ratio; x1.353 above is rounded).
+ *   1.7 GB measured 13.820 s → 25× = 345_500 ms.
+ *   2.3 GB measured 20.470 s → 25× = 511_750 ms.
+ * Round 7's 13.92 × (2.3/1.7) = 18.834 s extrapolation was 1.636 s (8.0%)
+ * too fast against the 20.470 s measurement. Round 7's own 1.7 GB figure
+ * (13.92 s) matches this run to 0.10 s.
+ *
+ * There is no `MUX_BOUND_MS` constant. Callers pass `computeMuxBoundMs` the
+ * actual annexb byte length.
  */
 export function computeMuxBoundMs(annexbByteLength: number): number {
-  const scaledWorst =
-    MUX_WITH_AUDIO_WORST_MS_AT_1_7_GB *
-    (Math.max(annexbByteLength, EXPORT_SCALE_ANNEXB_BYTES) / EXPORT_SCALE_ANNEXB_BYTES);
-  return Math.ceil(scaledWorst * MUX_HEADROOM);
+  const bytes = Math.max(annexbByteLength, EXPORT_SCALE_ANNEXB_BYTES);
+  const span = MUX_SIZING_BYTES - EXPORT_SCALE_ANNEXB_BYTES;
+  const t = (bytes - EXPORT_SCALE_ANNEXB_BYTES) / span;
+  const pass1 =
+    MUX_PASS1_MS_AT_1_7_GB + t * (MUX_PASS1_MS_AT_2_3_GB - MUX_PASS1_MS_AT_1_7_GB);
+  const pass2 =
+    MUX_PASS2_MS_AT_1_7_GB + t * (MUX_PASS2_MS_AT_2_3_GB - MUX_PASS2_MS_AT_1_7_GB);
+  return Math.ceil((pass1 + pass2) * MUX_HEADROOM);
 }
-
-/** @deprecated Use `computeMuxBoundMs(annexbBytes)` — fixed 180 s false-aborts at 2.3 GB × 10× I/O. */
-export const MUX_BOUND_MS = 180_000;
 
 export interface FfmpegBoundDiagnostics {
   /** Which bounded step expired — the same label as the constant's name. */
