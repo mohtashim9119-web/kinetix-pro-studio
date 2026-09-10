@@ -207,11 +207,22 @@ describe('exportCheckpoint reader + mandatory pre-append repair', () => {
         io.prepareCalls++;
         // Mirrors the native atomic order: inferred whole-AU repair is
         // unconditional, then the authoritative checkpoint offset wins.
+        const originalLength = bytes.byteLength;
+        if (originalLength === record.byteOffset) {
+          const count = countAnnexbAccessUnits(bytes);
+          if (count.pictures !== record.cumulativePictures) {
+            throw new Error('picture count mismatch');
+          }
+          return {
+            ...count,
+            bytesRemoved: 0,
+            keptBytes: bytes.byteLength,
+          };
+        }
         const repaired = truncateAnnexbToLastCompleteAu(bytes);
         if (repaired.bytes.byteLength < record.byteOffset) {
           throw new Error('repair fell before checkpoint');
         }
-        const originalLength = bytes.byteLength;
         bytes = repaired.bytes.slice(0, record.byteOffset);
         const count = countAnnexbAccessUnits(bytes);
         if (count.pictures !== record.cumulativePictures) {
@@ -476,7 +487,7 @@ describe('exportCheckpoint recovery budget', () => {
     expect(result.kind).toBe('resume');
   });
 
-  it('budget exhaustion halts resume with a clean reason', () => {
+  it('budget exhaustion halts resume with a distinct recovery_budget_exhausted kind', () => {
     const exhausted = JSON.stringify({
       ...createExportStateManifest({
         sessionId,
@@ -490,8 +501,14 @@ describe('exportCheckpoint recovery budget', () => {
     });
     expect(isRecoveryBudgetExhausted({ boundaryRewindsUsed: MAX_BOUNDARY_REWINDS_PER_EXPORT })).toBe(true);
     expect(validateExportState(exhausted, expected, 0)).toEqual({
-      kind: 'clean',
+      kind: 'recovery_budget_exhausted',
       reason: recoveryBudgetExhaustionReason({ boundaryRewindsUsed: MAX_BOUNDARY_REWINDS_PER_EXPORT }),
+      budget: {
+        boundaryRewindsUsed: MAX_BOUNDARY_REWINDS_PER_EXPORT,
+        hardwareFailoverUsed: false,
+        checkpointResumeAttempts: 0,
+        totalRecoveryAttempts: 0,
+      },
     });
 
     const totalExhausted = JSON.stringify({
@@ -506,8 +523,14 @@ describe('exportCheckpoint recovery budget', () => {
       totalRecoveryAttempts: MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT,
     });
     expect(validateExportState(totalExhausted, expected, 0)).toEqual({
-      kind: 'clean',
+      kind: 'recovery_budget_exhausted',
       reason: recoveryBudgetExhaustionReason({ totalRecoveryAttempts: MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT }),
+      budget: {
+        boundaryRewindsUsed: 0,
+        hardwareFailoverUsed: false,
+        checkpointResumeAttempts: 0,
+        totalRecoveryAttempts: MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT,
+      },
     });
   });
 });

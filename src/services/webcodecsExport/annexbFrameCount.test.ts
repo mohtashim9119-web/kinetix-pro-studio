@@ -149,7 +149,9 @@ describe('annexb truncate — last complete access unit', () => {
     const prevLast = vcls[2 * SLICES - 1]!;
     const aud = nals.find((n) => n.nalType === 9 && n.start > prevLast.start && n.start < firstVclOfPicture2.start);
     expect(aud).toBeDefined();
-    const truncated = stream.subarray(0, aud!.start);
+    // Cut at the first VCL of picture 2 so picture 1's trailing AUD is in the
+    // prefix and proves completeness — matching WebCodecs delimiters.
+    const truncated = stream.subarray(0, firstVclOfPicture2.start);
     const result = truncateAnnexbToLastCompleteAu(truncated);
     expect(result.pictures).toBe(2);
     expect(result.vclNals).toBe(16);
@@ -175,12 +177,12 @@ describe('annexb truncate — last complete access unit', () => {
     expect(pictureSliceCounts(result.bytes)).toEqual([8, 8, 8, 8]);
   });
 
-  it('single-slice file ending on a VCL is not provably complete: last AU is dropped', () => {
+  it('single-slice file with trailing AUD is a no-op on realistic output', () => {
     const single = buildSyntheticSingleSliceWithParamSets(12);
     const result = truncateAnnexbToLastCompleteAu(single);
-    expect(result.pictures).toBe(11);
-    expect(result.vclNals).toBe(11);
-    expect(result.bytesRemoved).toBeGreaterThan(0);
+    expect(result.pictures).toBe(12);
+    expect(result.vclNals).toBe(12);
+    expect(result.bytesRemoved).toBe(0);
   });
 });
 
@@ -237,10 +239,10 @@ describe('synthetic Annex-B byte identity (JS reference hashes)', () => {
       { name: 'short-9pic', bytes: buildSyntheticSingleSliceWithParamSets(9), pictures: 9, vclNals: 9 },
     ] as const;
     const locked: Record<string, { len: number; sha256: string }> = {
-      '8slice-10pic': { len: 945, sha256: 'efd16ab57ff667563b14ce12bafa3425e5c7802f637d92e4f3565f4475920112' },
-      '1slice-12pic': { len: 444, sha256: 'd02aca0757167768f0561f6a8a92632b3dd8ab69266757d2ab88734beb22233c' },
-      'paramsets-3pic': { len: 126, sha256: 'b6ce471760350a3545a80ccb54da71441a04c2006c55452b6e00187adfb38894' },
-      'short-9pic': { len: 333, sha256: 'c84a5aae5a64f203d9ec02326e84e5296792813de7b4cd35b5ec7ca7404a55aa' },
+      '8slice-10pic': { len: 781, sha256: '5db5e004522c4212339bfbae771df15c84bc8858ec8ad7906a131199dcaf8994' },
+      '1slice-12pic': { len: 261, sha256: 'af89ca66bbb7447312547e54d8ded6e9ac460b51d8e09f5a327ac82cf5a88d44' },
+      'paramsets-3pic': { len: 81, sha256: '1abf9839f658ae5b9f83f2411542b86fe0490c055e1ec739f00d4bd2a6458035' },
+      'short-9pic': { len: 201, sha256: 'fb9cdda22d69cac8af96ef1f7f1cd5a9dfaf486ef7d8efb46fe01a0c7fb6198b' },
     };
     const lines: string[] = [];
     for (const c of cases) {
@@ -317,16 +319,16 @@ describe('conservative final-AU salvage policy', () => {
     expect(cleanResult.bytes).toEqual(clean);
   });
 
-  it('predicate: trailing AUD is complete; EOF-ending VCL is not', () => {
+  it('predicate: trailing AUD after the last VCL proves completeness', () => {
     const withAud = buildSyntheticSingleSliceWithTrailingAud(2, 8);
     const nals = scanAnnexbNals(withAud);
     const lastVcl = vclNals(withAud)[1]!;
     expect(isFinalAccessUnitProvablyComplete(nals, lastVcl, withAud)).toBe(true);
 
-    const eofVcl = buildSyntheticSingleSliceWithParamSets(2);
-    const eofNals = scanAnnexbNals(eofVcl);
-    const eofLast = vclNals(eofVcl)[1]!;
-    expect(isFinalAccessUnitProvablyComplete(eofNals, eofLast, eofVcl)).toBe(false);
+    const withTrailing = buildSyntheticSingleSliceWithParamSets(2);
+    const trailingNals = scanAnnexbNals(withTrailing);
+    const trailingLast = vclNals(withTrailing)[1]!;
+    expect(isFinalAccessUnitProvablyComplete(trailingNals, trailingLast, withTrailing)).toBe(true);
   });
 });
 

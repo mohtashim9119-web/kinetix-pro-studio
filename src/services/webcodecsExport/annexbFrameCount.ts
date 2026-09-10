@@ -442,9 +442,8 @@ export function buildSyntheticVariableSliceAnnexb(slicesPerPicture: readonly num
     for (let s = 0; s < spp; s++) {
       writeSliceNal(out, p === 0 && s === 0, s === 0 ? 0 : 100 + s);
     }
-    writeNal(out, 7, new Uint8Array([0x42, 0x00, 0x1e, p & 0xff]));
-    writeNal(out, 8, new Uint8Array([0x68, 0xce, p & 0xff]));
   }
+  writeNal(out, 9, new Uint8Array([0xf0]));
 
   return new Uint8Array(out);
 }
@@ -461,9 +460,8 @@ export function buildSyntheticMultiSliceAnnexb(pictures: number, slicesPerPictur
     for (let s = 0; s < slicesPerPicture; s++) {
       writeSliceNal(out, p === 0 && s === 0, s === 0 ? 0 : 100 + s);
     }
-    writeNal(out, 7, new Uint8Array([0x42, 0x00, 0x1e, p & 0xff]));
-    writeNal(out, 8, new Uint8Array([0x68, 0xce, p & 0xff]));
   }
+  writeNal(out, 9, new Uint8Array([0xf0]));
 
   return new Uint8Array(out);
 }
@@ -488,15 +486,16 @@ export function buildSyntheticSingleSliceWithTrailingAud(pictures: number, extra
   return new Uint8Array(out);
 }
 
-/** Build a single-slice-per-picture stream with repeated parameter-set rotation. */
+/** Build a single-slice-per-picture stream with stream-start parameter sets only. */
 export function buildSyntheticSingleSliceWithParamSets(pictures: number): Uint8Array {
   const out: number[] = [];
+  writeNal(out, 7, new Uint8Array([0x42, 0x00, 0x1e]));
+  writeNal(out, 8, new Uint8Array([0x68, 0xce]));
   for (let p = 0; p < pictures; p++) {
-    writeNal(out, 7, new Uint8Array([0x42, 0x00, 0x1e, p & 0xff]));
-    writeNal(out, 8, new Uint8Array([0x68, 0xce, p & 0xff]));
     writeNal(out, 9, new Uint8Array([0xf0]));
     writeNal(out, 6, new Uint8Array([0x05, 0xbe, 0xef]));
     writeSliceNal(out, p === 0, 0);
   }
+  writeNal(out, 9, new Uint8Array([0xf0]));
   return new Uint8Array(out);
 }

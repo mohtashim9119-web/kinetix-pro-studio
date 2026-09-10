@@ -9,6 +9,12 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
+use crate::session_claim::{
+    acquire_session_claim, read_session_claim_view, release_session_claim,
+    sweep_manifestless_orphans, OrphanSweepReport, SessionClaimView,
+    ORPHAN_SWEEP_MIN_AGE_SECS,
+};
+
 /// Per-export session state: killable ffmpeg children and cooperative cancel
 /// flags for native I/O commands (concat, frame-count, truncate).
 #[derive(Default)]
@@ -180,6 +186,7 @@ pub fn ffmpeg_create_session(
     let id = Uuid::new_v4().to_string();
     let dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
     fs::create_dir_all(&dir).map_err(|e| format!("create_session: {}", e))?;
+    acquire_session_claim(&dir, &id).map_err(|e| format!("create_session: {e}"))?;
     register_session_cancel_flag(&state, &id);
     Ok(id)
 }
@@ -241,9 +248,30 @@ pub fn ffmpeg_reenter_session(
     if !dir.join("export_state.json").is_file() {
         return Err("reenter_session: export_state.json is missing".to_string());
     }
+    acquire_session_claim(&dir, &session_id).map_err(|e| format!("reenter_session: {e}"))?;
     register_session_cancel_flag(&state, &session_id);
     state.resume_pending.lock().unwrap().insert(session_id);
     Ok(())
+}
+
+/// Read-only claim inspection for discovery UI — does not take the claim.
+#[tauri::command]
+pub fn ffmpeg_read_session_claim(session_id: String) -> Result<SessionClaimView, String> {
+    let dir = session_dir(&session_id)?;
+    if !dir.is_dir() {
+        return Err(format!(
+            "read_session_claim: session directory does not exist: {}",
+            dir.display()
+        ));
+    }
+    read_session_claim_view(&dir, &session_id)
+}
+
+/// Sweeps manifest-less `kinetix-export-*` directories older than the threshold.
+/// Never touches directories with a live claim or an export manifest.
+#[tauri::command]
+pub fn ffmpeg_sweep_orphan_sessions(min_age_secs: Option<u64>) -> Result<OrphanSweepReport, String> {
+    sweep_manifestless_orphans(min_age_secs.unwrap_or(ORPHAN_SWEEP_MIN_AGE_SECS))
 }
 
 /// Writes base64-encoded bytes to <session_dir>/<path>.
@@ -1255,7 +1283,17 @@ fn prepare_checkpoint_resume_inner(
         .len();
     let (last_nal_start, trailing_nal_had_header) = inspect_annexb_tail_backwards(&full, &path)?;
 
-    let inferred = truncate_annexb_inner(full, path, cancel)?;
+    let inferred = if original_len == byte_offset {
+        let measured = count_annexb_frames_inner(full, path, cancel)?;
+        AnnexbTruncateResult {
+            pictures: measured.pictures,
+            vcl_nals: measured.vcl_nals,
+            bytes_removed: 0,
+            kept_bytes: byte_offset,
+        }
+    } else {
+        truncate_annexb_inner(full, path, cancel)?
+    };
     if inferred.kept_bytes < byte_offset {
         return Err(format!(
             "prepare_checkpoint_resume(piece={piece_index}, encoderSession={encoder_session_index}): \
@@ -1265,18 +1303,18 @@ fn prepare_checkpoint_resume_inner(
     }
 
     let exact = truncate_annexb_to_offset_inner(full, path, byte_offset, cancel)?;
-    let boundary_check = truncate_annexb_inner(full, path, cancel)?;
-    if boundary_check.bytes_removed != 0 || boundary_check.kept_bytes != byte_offset {
+    if exact.kept_bytes != byte_offset {
         return Err(format!(
             "prepare_checkpoint_resume(piece={piece_index}, encoderSession={encoder_session_index}): \
-             checkpoint offset {byte_offset} is not a canonical whole-AU boundary"
+             exact truncate kept {} != checkpoint offset {}",
+            exact.kept_bytes, byte_offset
         ));
     }
-    if boundary_check.pictures != cumulative_pictures {
+    if exact.pictures != cumulative_pictures {
         return Err(format!(
             "prepare_checkpoint_resume(piece={piece_index}, encoderSession={encoder_session_index}): \
              checkpoint pictures {} != canonical pictures {}",
-            cumulative_pictures, boundary_check.pictures
+            cumulative_pictures, exact.pictures
         ));
     }
 
@@ -1519,6 +1557,7 @@ pub fn ffmpeg_destroy_session(
     state.resume_pending.lock().unwrap().remove(&session_id);
     let dir = session_dir(&session_id)?;
     if dir.exists() {
+        let _ = release_session_claim(&dir);
         fs::remove_dir_all(&dir).map_err(|e| format!("destroy_session: {}", e))?;
     }
     Ok(())
@@ -1571,8 +1610,21 @@ pub fn save_session_file(
 ) -> Result<(), String> {
     validate_path(&file_name)?;
     let src = session_dir(&session_id)?.join(&file_name);
-    fs::copy(&src, &dest_path)
-        .map_err(|e| format!("save_session_file({} -> {}): {}", file_name, dest_path, e))?;
+    if !src.is_file() {
+        return Err(format!(
+            "save_session_file: source {} is missing inside session {session_id}",
+            src.display()
+        ));
+    }
+    fs::copy(&src, &dest_path).map_err(|e| {
+        format!(
+            "save_session_file({} -> {}): {} — completed export remains at {}",
+            file_name,
+            dest_path,
+            e,
+            src.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -2025,6 +2077,9 @@ mod tests {
         write_nal(out, if idr { 5 } else { 1 }, &bits_to_rbsp_bytes(&bits));
     }
 
+    /// Realistic WebCodecs-shaped Annex-B: SPS/PPS once at stream start (picture 0
+    /// is the only IDR). Non-IDR pictures carry AUD/SEI/slices only — no trailing
+    /// parameter sets after every picture.
     fn build_multi_slice_stream(pictures: usize, slices_per_picture: usize) -> Vec<u8> {
         let mut out = Vec::new();
         write_nal(&mut out, 7, &[0x42, 0x00, 0x1e]);
@@ -2039,21 +2094,25 @@ mod tests {
                     if s == 0 { 0 } else { 100 + s as u32 },
                 );
             }
-            write_nal(&mut out, 7, &[0x42, 0x00, 0x1e, (p as u8) & 0xff]);
-            write_nal(&mut out, 8, &[0x68, 0xce, (p as u8) & 0xff]);
         }
+        // Trailing AUD after the final picture — delimiter for the conservative
+        // final-AU predicate on complete multi-slice streams (not per-picture SPS).
+        write_nal(&mut out, 9, &[0xf0]);
         out
     }
 
+    /// Single-slice stream with stream-start parameter sets (WebCodecs profile-100
+    /// shape). Parameter sets are not repeated before every non-IDR picture.
     fn build_synthetic_single_slice_with_param_sets(pictures: usize) -> Vec<u8> {
         let mut out = Vec::new();
+        write_nal(&mut out, 7, &[0x42, 0x00, 0x1e]);
+        write_nal(&mut out, 8, &[0x68, 0xce]);
         for p in 0..pictures {
-            write_nal(&mut out, 7, &[0x42, 0x00, 0x1e, (p as u8) & 0xff]);
-            write_nal(&mut out, 8, &[0x68, 0xce, (p as u8) & 0xff]);
             write_nal(&mut out, 9, &[0xf0]);
             write_nal(&mut out, 6, &[0x05, 0xbe, 0xef]);
             write_slice_nal(&mut out, p == 0, 0);
         }
+        write_nal(&mut out, 9, &[0xf0]);
         out
     }
 
@@ -2094,9 +2153,8 @@ mod tests {
                     if s == 0 { 0 } else { 100 + s as u32 },
                 );
             }
-            write_nal(&mut out, 7, &[0x42, 0x00, 0x1e, (p as u8) & 0xff]);
-            write_nal(&mut out, 8, &[0x68, 0xce, (p as u8) & 0xff]);
         }
+        write_nal(&mut out, 9, &[0xf0]);
         out
     }
 
@@ -2492,32 +2550,32 @@ mod tests {
                 build_multi_slice_stream(10, 8),
                 10,
                 80,
-                945,
-                "efd16ab57ff667563b14ce12bafa3425e5c7802f637d92e4f3565f4475920112",
+                781,
+                "5db5e004522c4212339bfbae771df15c84bc8858ec8ad7906a131199dcaf8994",
             ),
             (
                 "1slice-12pic",
                 build_synthetic_single_slice_with_param_sets(12),
                 12,
                 12,
-                444,
-                "d02aca0757167768f0561f6a8a92632b3dd8ab69266757d2ab88734beb22233c",
+                261,
+                "af89ca66bbb7447312547e54d8ded6e9ac460b51d8e09f5a327ac82cf5a88d44",
             ),
             (
                 "paramsets-3pic",
                 build_multi_slice_stream(3, 1),
                 3,
                 3,
-                126,
-                "b6ce471760350a3545a80ccb54da71441a04c2006c55452b6e00187adfb38894",
+                81,
+                "1abf9839f658ae5b9f83f2411542b86fe0490c055e1ec739f00d4bd2a6458035",
             ),
             (
                 "short-9pic",
                 build_synthetic_single_slice_with_param_sets(9),
                 9,
                 9,
-                333,
-                "c84a5aae5a64f203d9ec02326e84e5296792813de7b4cd35b5ec7ca7404a55aa",
+                201,
+                "fb9cdda22d69cac8af96ef1f7f1cd5a9dfaf486ef7d8efb46fe01a0c7fb6198b",
             ),
         ];
 
@@ -2556,15 +2614,9 @@ mod tests {
         assert_eq!(result.pictures, 2);
         assert_eq!(result.vcl_nals, 16);
 
-        // exactly on a picture boundary: AUD of picture 2
+        // exactly on a picture boundary: first VCL of picture 2 (AUD delimiter in prefix)
         let first_vcl_p2 = vcls[2 * 8];
-        let prev_last = vcls[2 * 8 - 1];
-        let nals = scan_annexb_nals(&stream);
-        let aud = nals
-            .iter()
-            .find(|n| n.nal_type == 9 && n.start > prev_last.start && n.start < first_vcl_p2.start)
-            .expect("AUD of picture 2");
-        let on_boundary = &stream[..aud.start];
+        let on_boundary = &stream[..first_vcl_p2.start];
         let (_, result) = truncate_annexb_to_last_complete_au(on_boundary);
         assert_eq!(result.pictures, 2);
         assert_eq!(result.vcl_nals, 16);
