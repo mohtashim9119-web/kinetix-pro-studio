@@ -9,6 +9,36 @@ import {
 
 export type { AnnexbFrameCount };
 
+/** Read-only cross-process session claim (native `session_claim.json`). */
+export interface SessionClaimView {
+  sessionId: string;
+  holderPid: number;
+  holderStartTimeMs: number;
+  holderInstanceId: string;
+  claimedAtMs: number;
+  /** `live` | `stale` | `unclaimed` */
+  holderLiveness: string;
+}
+
+export interface OrphanSweepEntry {
+  sessionId: string;
+  path: string;
+  ageSecs: number;
+  bytes: number;
+  outcome: string;
+  detail?: string | null;
+}
+
+export interface OrphanSweepReport {
+  scanned: number;
+  candidates: number;
+  deleted: number;
+  deferred: number;
+  pendingDelete: number;
+  bytesReclaimed: number;
+  entries: OrphanSweepEntry[];
+}
+
 /**
  * Converts a Uint8Array to a base64 string using 32 KB chunks to avoid
  * stack-overflow on large buffers (String.fromCharCode.apply has a per-call
@@ -113,6 +143,18 @@ export class TauriFfmpeg implements FfmpegLike {
   /** UUIDs of crash-surviving session directories containing export_state.json. */
   static async listResumableSessionIds(): Promise<string[]> {
     return invoke<string[]>('ffmpeg_list_resumable_sessions');
+  }
+
+  /** Read-only claim inspection — does not take the claim. */
+  static async readSessionClaim(sessionId: string): Promise<SessionClaimView> {
+    return invoke<SessionClaimView>('ffmpeg_read_session_claim', { sessionId });
+  }
+
+  /** Sweeps manifest-less orphan session directories older than the threshold. */
+  static async sweepOrphanSessions(minAgeSecs?: number): Promise<OrphanSweepReport> {
+    return invoke<OrphanSweepReport>('ffmpeg_sweep_orphan_sessions', {
+      minAgeSecs: minAgeSecs ?? null,
+    });
   }
 
   /**

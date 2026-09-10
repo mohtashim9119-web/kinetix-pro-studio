@@ -81,6 +81,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "fs4",
+ "libc",
  "log",
  "num_cpus",
  "ort",
@@ -93,6 +94,7 @@ dependencies = [
  "tauri-plugin-log",
  "tauri-plugin-shell",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

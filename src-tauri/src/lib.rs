@@ -16,6 +16,7 @@ mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;
 mod ffmpeg;
+mod session_claim;
 mod event_sink;
 pub mod model_download;
 pub mod models;
@@ -435,11 +436,28 @@ pub fn run() {
                 app.get_webview_window("main")
                    .map(|w| w.open_devtools());
             }
+            // Best-effort orphan reclaim on startup — never blocks launch.
+            match session_claim::sweep_manifestless_orphans(
+                session_claim::ORPHAN_SWEEP_MIN_AGE_SECS,
+            ) {
+                Ok(report) if report.deleted > 0 || report.pending_delete > 0 => {
+                    log::info!(
+                        "orphan sweep: deleted={} pending_delete={} bytes_reclaimed={}",
+                        report.deleted,
+                        report.pending_delete,
+                        report.bytes_reclaimed
+                    );
+                }
+                Ok(_) => {}
+                Err(err) => log::warn!("orphan sweep skipped: {err}"),
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             ffmpeg::ffmpeg_create_session,
             ffmpeg::ffmpeg_list_resumable_sessions,
+            ffmpeg::ffmpeg_read_session_claim,
+            ffmpeg::ffmpeg_sweep_orphan_sessions,
             ffmpeg::ffmpeg_reenter_session,
             ffmpeg::ffmpeg_write_file,
             ffmpeg::ffmpeg_write_file_raw,
