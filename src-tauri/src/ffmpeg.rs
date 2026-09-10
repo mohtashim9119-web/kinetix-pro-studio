@@ -789,22 +789,43 @@ fn dropped_picture_cut_scanned(
     dropped_first_vcl.start
 }
 
+/// A NAL that begins the *next* access unit (or a delimiter after this one):
+/// non-VCL (AUD/SPS/PPS/SEI) or a VCL whose `first_mb_in_slice == 0`.
+/// Continuation slices (`first_mb != 0`) do not complete the current AU.
+fn nal_begins_next_access_unit(nal_type: u8, first_mb: Option<u32>) -> bool {
+    if nal_type != 1 && nal_type != 5 {
+        return true;
+    }
+    first_mb == Some(0)
+}
+
+/// Salvage-truncate completeness predicate.
+///
+/// The final access unit is provably complete iff a start code was observed
+/// that begins something other than a continuation slice of this picture —
+/// a fully-scanned subsequent NAL that is non-VCL, or a VCL with
+/// `first_mb_in_slice == 0`. A dangling start code (no header) is not enough:
+/// its type is unknown, so the conservative policy drops the AU.
+///
+/// Exact-offset resume (`truncate_annexb_to_offset_inner`) does not consult
+/// this predicate. Cost of a drop: one picture (33.33 ms at 1080p30).
+fn scanned_final_au_is_provably_complete(nals: &[ScannedNal], last_vcl: &ScannedNal) -> bool {
+    nals.iter().any(|n| {
+        n.start >= last_vcl.end && nal_begins_next_access_unit(n.nal_type, n.first_mb)
+    })
+}
+
 fn compute_truncate_cut_from_scanned(nals: &[ScannedNal], file_len: u64) -> u64 {
     let pictures = group_pictures_scanned(nals);
     if pictures.is_empty() {
         return 0;
     }
 
-    let closed_counts: Vec<usize> = pictures[..pictures.len() - 1]
-        .iter()
-        .map(|p| p.vcl.len())
-        .collect();
-    let spp = mode_of(&closed_counts);
     let mut keep_count = pictures.len();
-    if let Some(spp) = spp {
-        if pictures[keep_count - 1].vcl.len() != spp {
-            keep_count -= 1;
-        }
+    let last = &pictures[keep_count - 1];
+    let last_vcl = last.vcl[last.vcl.len() - 1];
+    if !scanned_final_au_is_provably_complete(nals, &last_vcl) {
+        keep_count -= 1;
     }
 
     if keep_count == 0 {
@@ -867,37 +888,7 @@ fn scan_annexb_nals(bytes: &[u8]) -> Vec<AnnexbNalSpan> {
     nals
 }
 
-/// In-memory reference implementation, kept as the oracle the streaming
-/// scanners are diffed against in tests. Production reads through the
-/// streaming path only, so this is test-only by design, not by accident.
 #[cfg(test)]
-struct PictureGroup {
-    vcl: Vec<AnnexbNalSpan>,
-}
-
-/// In-memory reference implementation, kept as the oracle the streaming
-/// scanners are diffed against in tests. Production reads through the
-/// streaming path only, so this is test-only by design, not by accident.
-#[cfg(test)]
-fn group_pictures(nals: &[AnnexbNalSpan], bytes: &[u8]) -> Vec<PictureGroup> {
-    let mut pictures: Vec<PictureGroup> = Vec::new();
-    for nal in nals {
-        if nal.nal_type != 1 && nal.nal_type != 5 {
-            continue;
-        }
-        if nal.header + 1 >= nal.end {
-            continue;
-        }
-        let first_mb = parse_first_mb_in_slice(&bytes[nal.header + 1..nal.end]);
-        if first_mb == Some(0) {
-            pictures.push(PictureGroup { vcl: vec![*nal] });
-        } else if let Some(last) = pictures.last_mut() {
-            last.vcl.push(*nal);
-        }
-    }
-    pictures
-}
-
 fn mode_of(values: &[usize]) -> Option<usize> {
     if values.is_empty() {
         return None;
@@ -914,81 +905,19 @@ fn mode_of(values: &[usize]) -> Option<usize> {
     Some(best)
 }
 
-/// In-memory reference implementation, kept as the oracle the streaming
-/// scanners are diffed against in tests. Production reads through the
-/// streaming path only, so this is test-only by design, not by accident.
-#[cfg(test)]
-fn dropped_picture_cut(
-    nals: &[AnnexbNalSpan],
-    prev_last_vcl: AnnexbNalSpan,
-    dropped_first_vcl: AnnexbNalSpan,
-) -> usize {
-    for nal in nals {
-        if nal.start <= prev_last_vcl.start {
-            continue;
-        }
-        if nal.start >= dropped_first_vcl.start {
-            break;
-        }
-        if nal.nal_type == 9 {
-            return nal.start;
-        }
-    }
-    dropped_first_vcl.start
-}
-
-/// In-memory reference implementation, kept as the oracle the streaming
-/// scanners are diffed against in tests. Production reads through the
-/// streaming path only, so this is test-only by design, not by accident.
+/// In-memory helper that MUST go through the production cut so fixture
+/// reach includes `scanned_final_au_is_provably_complete`. A twin that
+/// reimplemented the predicate (the old `span_final_au_is_provably_complete`)
+/// stayed green when production was mutated.
 #[cfg(test)]
 fn truncate_annexb_to_last_complete_au(bytes: &[u8]) -> (Vec<u8>, AnnexbTruncateResult) {
-    let nals = scan_annexb_nals(bytes);
-    let pictures = group_pictures(&nals, bytes);
-    if pictures.is_empty() {
-        return (
-            Vec::new(),
-            AnnexbTruncateResult {
-                pictures: 0,
-                vcl_nals: 0,
-                bytes_removed: bytes.len() as u64,
-                kept_bytes: 0,
-            },
-        );
-    }
-
-    let closed_counts: Vec<usize> = pictures[..pictures.len() - 1]
+    let spans = scan_annexb_nals(bytes);
+    let scanned: Vec<ScannedNal> = spans
         .iter()
-        .map(|p| p.vcl.len())
+        .map(|n| scanned_nal_from_span(n, 0, bytes))
         .collect();
-    let spp = mode_of(&closed_counts);
-    let mut keep_count = pictures.len();
-    if let Some(spp) = spp {
-        if pictures[keep_count - 1].vcl.len() != spp {
-            keep_count -= 1;
-        }
-    }
-
-    if keep_count == 0 {
-        return (
-            Vec::new(),
-            AnnexbTruncateResult {
-                pictures: 0,
-                vcl_nals: 0,
-                bytes_removed: bytes.len() as u64,
-                kept_bytes: 0,
-            },
-        );
-    }
-
-    let cut = if keep_count < pictures.len() {
-        let dropped = &pictures[keep_count];
-        let prev = &pictures[keep_count - 1];
-        let prev_last = prev.vcl[prev.vcl.len() - 1];
-        dropped_picture_cut(&nals, prev_last, dropped.vcl[0])
-    } else {
-        nals[nals.len() - 1].end
-    };
-
+    let cut = compute_truncate_cut_from_scanned(&scanned, bytes.len() as u64) as usize;
+    let cut = cut.min(bytes.len());
     let kept = bytes[..cut].to_vec();
     let measured = count_annexb_access_units(&kept);
     (
@@ -2044,6 +1973,73 @@ mod tests {
         out
     }
 
+    /// Single-slice pictures with a large payload (~33 KB) and a trailing AUD
+    /// after every picture so a clean file's final AU is provably complete.
+    fn write_slice_nal_with_payload(out: &mut Vec<u8>, idr: bool, first_mb: u32, extra: usize) {
+        let mut bits = Vec::new();
+        write_ue(&mut bits, first_mb);
+        write_ue(&mut bits, if idr { 7 } else { 5 });
+        let mut rbsp = bits_to_rbsp_bytes(&bits);
+        // 0xAB never forms a start code; this is payload, not 0xFF padding of a file.
+        rbsp.extend(std::iter::repeat(0xABu8).take(extra));
+        write_nal(out, if idr { 5 } else { 1 }, &rbsp);
+    }
+
+    fn build_single_slice_with_trailing_aud(pictures: usize, extra: usize) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_nal(&mut out, 7, &[0x42, 0x00, 0x1e]);
+        write_nal(&mut out, 8, &[0x68, 0xce]);
+        for p in 0..pictures {
+            write_nal(&mut out, 9, &[0xf0]);
+            write_slice_nal_with_payload(&mut out, p == 0, 0, extra);
+            write_nal(&mut out, 9, &[0xf0]);
+        }
+        out
+    }
+
+    fn build_variable_slice_stream(slices_per_picture: &[usize]) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_nal(&mut out, 7, &[0x42, 0x00, 0x1e]);
+        write_nal(&mut out, 8, &[0x68, 0xce]);
+        for (p, &spp) in slices_per_picture.iter().enumerate() {
+            write_nal(&mut out, 9, &[0xf0]);
+            for s in 0..spp {
+                write_slice_nal(
+                    &mut out,
+                    p == 0 && s == 0,
+                    if s == 0 { 0 } else { 100 + s as u32 },
+                );
+            }
+            write_nal(&mut out, 7, &[0x42, 0x00, 0x1e, (p as u8) & 0xff]);
+            write_nal(&mut out, 8, &[0x68, 0xce, (p as u8) & 0xff]);
+        }
+        out
+    }
+
+    fn picture_start_offsets_from_count(bytes: &[u8]) -> Vec<usize> {
+        scan_annexb_nals(bytes)
+            .into_iter()
+            .filter(|n| n.nal_type == 1 || n.nal_type == 5)
+            .filter(|n| {
+                n.header + 1 < n.end
+                    && parse_first_mb_in_slice(&bytes[n.header + 1..n.end]) == Some(0)
+            })
+            .map(|n| n.start)
+            .collect()
+    }
+
+    fn picture_start_offsets_from_grouping(bytes: &[u8]) -> Vec<usize> {
+        let spans = scan_annexb_nals(bytes);
+        let scanned: Vec<ScannedNal> = spans
+            .iter()
+            .map(|n| scanned_nal_from_span(n, 0, bytes))
+            .collect();
+        group_pictures_scanned(&scanned)
+            .into_iter()
+            .map(|p| p.vcl[0].start as usize)
+            .collect()
+    }
+
     fn sha256_hex(bytes: &[u8]) -> String {
         let mut hasher = crate::sha256::Sha256::new();
         hasher.update(bytes);
@@ -2199,6 +2195,187 @@ mod tests {
                 counted.vcl_nals as usize, cut_vcl,
                 "stream {i}: counter and cut path disagree on VCL NAL count"
             );
+        }
+    }
+
+    /// Byte-exhaustive: at every prefix of a small corpus (fixed slices,
+    /// variable slices, repeated SPS/PPS/AUD/SEI), the canonical count path
+    /// and the cut-path grouping agree on picture-start offsets. This is the
+    /// permanent unification guard — sampling is not a substitute.
+    #[test]
+    fn count_and_cut_grouping_agree_at_every_byte_offset() {
+        let streams: Vec<(&str, Vec<u8>)> = vec![
+            ("multi-2x2", build_multi_slice_stream(2, 2)),
+            ("variable-1-3-2", build_variable_slice_stream(&[1, 3, 2])),
+            ("paramsets-3", build_synthetic_single_slice_with_param_sets(3)),
+            ("single-aud-2", build_single_slice_with_trailing_aud(2, 8)),
+        ];
+        for (name, stream) in streams {
+            for offset in 0..=stream.len() {
+                let prefix = &stream[..offset];
+                let from_count = picture_start_offsets_from_count(prefix);
+                let from_group = picture_start_offsets_from_grouping(prefix);
+                assert_eq!(
+                    from_count, from_group,
+                    "{name} offset {offset}/{}: count path {:?} grouping {:?}",
+                    stream.len(),
+                    from_count,
+                    from_group
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn variable_slice_mode_heuristic_is_not_used_for_complete_last_picture() {
+        // 1, 3, 2, 4 slices — every closed count is unique, so mode_of picks
+        // the first (1). The last picture has 4 slices and trailing SPS/PPS,
+        // so it is provably complete. The old mode heuristic would drop it.
+        let stream = build_variable_slice_stream(&[1, 3, 2, 4]);
+        let closed = [1usize, 3, 2];
+        assert_eq!(mode_of(&closed), Some(1));
+        let (kept, result) = truncate_annexb_to_last_complete_au(&stream);
+        assert_eq!(result.pictures, 4);
+        assert_eq!(result.bytes_removed, 0);
+        assert_eq!(kept, stream);
+    }
+
+    #[test]
+    fn conservative_final_au_policy_five_fixtures() {
+        const PAYLOAD: usize = 33_000;
+
+        // 1. Crash mid-payload of a single-slice picture.
+        let clean = build_single_slice_with_trailing_aud(4, PAYLOAD);
+        let vcls = vcl_nals(&clean);
+        assert_eq!(vcls.len(), 4);
+        let last = vcls[3];
+        let mid = last.header + 2 + PAYLOAD / 2;
+        assert!(mid < last.end);
+        let crashed = &clean[..mid];
+        let (kept, result) = truncate_annexb_to_last_complete_au(crashed);
+        assert_eq!(result.pictures, 3, "mid-payload must drop the incomplete last AU");
+        assert_eq!(count_annexb_access_units(&kept).pictures, 3);
+        assert!(result.bytes_removed > 0);
+        {
+            let (_id, dir) = make_session();
+            fs::write(dir.join("mid.h264"), crashed).unwrap();
+            let disk = truncate_annexb_inner(&dir.join("mid.h264"), "mid.h264", None).unwrap();
+            assert_eq!(disk.pictures, 3, "production file path must drop the same AU");
+            fs::remove_dir_all(&dir).unwrap();
+        }
+
+        // 2. Crash immediately after first_mb_in_slice == 0 of a new picture.
+        let after_first_mb = last.header + 2;
+        let crashed = &clean[..after_first_mb.min(last.end)];
+        let (_, result) = truncate_annexb_to_last_complete_au(crashed);
+        assert_eq!(result.pictures, 3, "first_mb==0 with no following AU delimiter must drop");
+
+        // 3. Crash with a provably complete final AU (trailing AUD present, then
+        //    a dangling start code). Expect no drop of the complete pictures.
+        let mut complete_then_dangling = clean.clone();
+        complete_then_dangling.extend_from_slice(&[0, 0, 0, 1]);
+        let (kept, result) = truncate_annexb_to_last_complete_au(&complete_then_dangling);
+        assert_eq!(result.pictures, 4);
+        assert_eq!(kept, clean);
+
+        // 4. Multi-slice crash mid-picture.
+        let multi = build_multi_slice_stream(4, 8);
+        let mv = vcl_nals(&multi);
+        let slice5 = mv[2 * 8 + 5];
+        let (_, result) = truncate_annexb_to_last_complete_au(&multi[..slice5.header + 2]);
+        assert_eq!(result.pictures, 2);
+
+        // 5. Clean file: final AU closed by trailing AUD. No drop, bytesRemoved=0.
+        let (kept, result) = truncate_annexb_to_last_complete_au(&clean);
+        assert_eq!(result.pictures, 4);
+        assert_eq!(result.bytes_removed, 0);
+        assert_eq!(kept, clean);
+    }
+
+    #[test]
+    fn clean_path_truncate_is_full_bytes_identical() {
+        let stream = build_multi_slice_stream(4, 8);
+        let (kept, result) = truncate_annexb_to_last_complete_au(&stream);
+        assert_eq!(result.bytes_removed, 0);
+        assert_eq!(kept.as_slice(), stream.as_slice());
+
+        let (_id, dir) = make_session();
+        fs::write(dir.join("clean.h264"), &stream).unwrap();
+        let got = truncate_annexb_inner(&dir.join("clean.h264"), "clean.h264", None).unwrap();
+        assert_eq!(got.bytes_removed, 0);
+        assert_eq!(got.kept_bytes, stream.len() as u64);
+        assert_eq!(fs::read(dir.join("clean.h264")).unwrap(), stream);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn resume_exact_offset_path_untouched_by_final_au_policy() {
+        let stream = build_multi_slice_stream(4, 8);
+        let vcls = vcl_nals(&stream);
+        let first_vcl_p2 = vcls[2 * 8];
+        let previous_vcl = vcls[2 * 8 - 1];
+        let checkpoint_offset = scan_annexb_nals(&stream)
+            .iter()
+            .find(|n| {
+                n.nal_type == 9 && n.start > previous_vcl.start && n.start < first_vcl_p2.start
+            })
+            .expect("AUD at checkpoint")
+            .start as u64;
+
+        let fixtures: Vec<(&str, Vec<u8>, u64, u64)> = vec![
+            (
+                "mid-nal",
+                stream[..vcls[2 * 8 + 5].header + 2].to_vec(),
+                checkpoint_offset,
+                2,
+            ),
+            (
+                "mid-picture",
+                stream[..vcls[2 * 8 + 5].start].to_vec(),
+                checkpoint_offset,
+                2,
+            ),
+            (
+                "exact-au-boundary",
+                stream[..checkpoint_offset as usize].to_vec(),
+                checkpoint_offset,
+                2,
+            ),
+            ("clean", stream.clone(), stream.len() as u64, 4),
+        ];
+
+        for (name, bytes, offset, pictures) in fixtures {
+            let (_id, dir) = make_session();
+            let offset_path = dir.join("offset.h264");
+            let resume_path = dir.join("resume.h264");
+            fs::write(&offset_path, &bytes).unwrap();
+            fs::write(&resume_path, &bytes).unwrap();
+
+            let offset_result =
+                truncate_annexb_to_offset_inner(&offset_path, "offset.h264", offset, None)
+                    .unwrap_or_else(|e| panic!("{name} offset: {e}"));
+            let resume_result = prepare_checkpoint_resume_inner(
+                &resume_path,
+                "resume.h264",
+                offset,
+                pictures,
+                0,
+                0,
+                None,
+            )
+            .unwrap_or_else(|e| panic!("{name} resume: {e}"));
+
+            let offset_bytes = fs::read(&offset_path).unwrap();
+            let resume_bytes = fs::read(&resume_path).unwrap();
+            assert_eq!(
+                offset_bytes, resume_bytes,
+                "{name}: resume path must stay byte-identical to exact-offset"
+            );
+            assert_eq!(offset_result.kept_bytes, offset, "{name}");
+            assert_eq!(resume_result.kept_bytes, offset, "{name}");
+            assert_eq!(offset_result.pictures, pictures, "{name}");
+            assert_eq!(resume_result.pictures, pictures, "{name}");
+            fs::remove_dir_all(&dir).unwrap();
         }
     }
 
