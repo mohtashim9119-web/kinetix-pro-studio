@@ -62,6 +62,7 @@ import {
   type ExportWorkerDiagnosticsPayload,
 } from './exportWorkerDiagnostics';
 import { MAX_ENCODER_SESSION_FRAMES, planEncoderSessions } from './encoderSessionPlan';
+import { AppendBackpressureGate, APPEND_BACKPRESSURE_THRESHOLD_BYTES } from './appendBackpressureGate';
 
 // ---------------------------------------------------------------------------
 // Message protocol
@@ -137,12 +138,35 @@ export interface ExportWorkerInitMessage {
   /** Index of this piece's FIRST frame on the `frameGridOriginSec` grid.
    *  Default 0 (an unsplit run starts at its own origin). */
   frameGridBaseFrame?: number;
+  /**
+   * WS3 Tier 1 item 3c (Rung 3 — bounded re-render). This piece's own local
+   * frame loop index (0-based over `totalFrames`, the SAME index space
+   * `frameIndex`/`session-rotate`'s `frameIndex` already use — NOT an
+   * absolute-grid frame) to start the `for` loop at, instead of 0.
+   *
+   * Set only by `exportPipelineWebCodecs.ts`'s rewind recovery, to a value
+   * that MUST be one of `planEncoderSessions`'s own returned session-start
+   * indices for this exact `totalFrames`/`isKeyFrame` — i.e. a boundary the
+   * planner already guarantees is a keyframe, so a fresh encoder session
+   * opened here needs no different bootstrapping than session 0 ever did.
+   * `runExport` fails fast (rather than silently starting mid-session) if
+   * this is set to anything else. Default 0 reproduces the pre-existing
+   * behaviour byte for byte — every caller except the rewind path passes
+   * `undefined`.
+   */
+  resumeFromFrameIndex?: number;
 }
 
 export type ExportWorkerInboundMessage =
   | ExportWorkerInitMessage
   | { type: 'cancel' }
-  | { type: 'request-diagnostics' };
+  | { type: 'request-diagnostics' }
+  // WS3 Tier 1 item 3b — the main thread's append-batching ack. `bytesAcked`
+  // is the CUMULATIVE total confirmed on disk (mirrors `appendBytes`, the
+  // running total exportPipelineWebCodecs.ts already keeps), sent once per
+  // successful `flushPendingBatch` — i.e. after every batch/age/rotate/done/
+  // salvage-done trigger, never per chunk. See appendBackpressureGate.ts.
+  | { type: 'append-ack'; bytesAcked: number };
 
 export type ExportWorkerOutboundMessage =
   // chunkType/timestamp are diagnostic additions beyond the plan's minimal
@@ -1215,6 +1239,11 @@ function waitForDequeue(encoder: VideoEncoder): Promise<void> {
 
 let running = false;
 let cancelRequested = false;
+/** WS3 Tier 1 item 3b — one gate per run, live only while a run is in
+ *  flight. `null` between runs and before the first is set up, so a
+ *  message arriving outside a run (there is none today, but `ack` is only
+ *  ever meaningful during a run) is a safe no-op rather than a crash. */
+let activeAppendBackpressureGate: AppendBackpressureGate | null = null;
 
 /**
  * Which segment's text (extraOverlays / global text layers / body caption)
@@ -1358,6 +1387,20 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
       await waitForDequeue(encoder);
       activeTracker?.add('wait-dequeue', performance.now() - waitStarted);
     }
+    // WS3 Tier 1 item 3b — a second, independent back-pressure gate: the
+    // encoder queue above bounds in-flight VideoFrames, this bounds bytes
+    // submitted toward the append/IPC path but not yet confirmed on disk.
+    // Folded into the same `wait-dequeue` bucket rather than a new one —
+    // both are "the loop is blocked on downstream capacity" from the frame
+    // budget's perspective, and this waits on real disk-confirmed progress
+    // (see AppendBackpressureGate's doc), never on a timer of its own, so it
+    // cannot itself read as a stall independent of the liveness bounds that
+    // already watch for one.
+    if (activeAppendBackpressureGate) {
+      const waitStarted = performance.now();
+      await activeAppendBackpressureGate.waitIfNeeded();
+      activeTracker?.add('wait-dequeue', performance.now() - waitStarted);
+    }
     if (failState.failure) throw failState.failure;
 
     // SUB-TIMER `encode-submit`: VideoFrame construction off the canvas, the
@@ -1396,6 +1439,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   const tracker = new ExportPhaseTracker((msg) => postOut(msg), pieceIndex);
   activeTracker = tracker;
   activePieceIndex = pieceIndex;
+  activeAppendBackpressureGate = new AppendBackpressureGate(APPEND_BACKPRESSURE_THRESHOLD_BYTES);
   const failState = new RunFailureState();
   activeFailure = failState;
   // WS3 salvage-runtime round — reset BEFORE the encoder ladder runs (below),
@@ -1542,6 +1586,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
         const chunkBytes = chunk.byteLength;
         const buf = new ArrayBuffer(chunkBytes);
         chunk.copyTo(buf);
+        activeAppendBackpressureGate?.submit(chunkBytes);
         postOut({ type: 'chunk', runId, bytes: buf, chunkType: chunk.type, timestamp: chunk.timestamp }, [buf]);
         // WS3 flush-occlusion round — see noteFlushChunk. No-op outside a flush.
         noteFlushChunk(tracker, chunkBytes);
@@ -1550,26 +1595,6 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
         failState.setFailure('encoder-callback', e);
       },
     );
-
-  let encoder: VideoEncoder;
-  try {
-    tracker.enter('encoder-ladder');
-    encoder = await buildEncoder(0);
-  } catch (e) {
-    failState.setFailure('init-error', e);
-    postTerminal('error', 0);
-    try {
-      compositor.dispose();
-    } catch {
-      // best-effort
-    }
-    try {
-      textRenderer.dispose();
-    } catch {
-      // best-effort
-    }
-    return;
-  }
 
   const runState = new RunState(assets, tracker, startIndex, segments, config);
   activeRunState = runState;
@@ -1619,9 +1644,79 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   // is already true, so a rotation adds no keyframe the unsplit run would not
   // have emitted — see that module's guarantee 2.
   const sessionStarts = planEncoderSessions(totalFrames, isKeyFrame, MAX_ENCODER_SESSION_FRAMES);
-  const rotateAt = new Set<number>(sessionStarts.slice(1));
-  let sessionIndex = 0;
-  activeSessionIndex = 0;
+
+  // WS3 Tier 1 item 3c (Rung 3) — a rewind's resume point MUST be one of
+  // `sessionStarts`'s own values: those are exactly the frames the planner
+  // already guarantees are keyframes, so a fresh encoder opened here needs
+  // no different bootstrapping than session 0 ever did. Validated BEFORE
+  // the encoder ladder runs (computed here specifically so the encoder can
+  // be built at the CORRECT session index from its first attempt, not index
+  // 0 followed by a rebuild) — an out-of-plan value fails the run outright
+  // rather than silently starting mid-session, which would desync `fence`'s
+  // `forSession` tagging from the loop's own `sessionIndex`.
+  const resumeFromFrameIndex = payload.resumeFromFrameIndex ?? 0;
+  let initialSessionIndex = 0;
+  if (resumeFromFrameIndex !== 0) {
+    initialSessionIndex = sessionStarts.indexOf(resumeFromFrameIndex);
+    if (initialSessionIndex < 0) {
+      failState.setFailure(
+        'init-error',
+        new Error(
+          `exportWorker: resumeFromFrameIndex ${resumeFromFrameIndex} is not a planned encoder-session start ` +
+          `(sessionStarts: [${sessionStarts.join(', ')}]) — refusing to start mid-session.`,
+        ),
+      );
+      postTerminal('error', 0);
+      try {
+        await runState.disposeAll();
+      } catch {
+        // best-effort
+      }
+      try {
+        compositor.dispose();
+      } catch {
+        // best-effort
+      }
+      try {
+        textRenderer.dispose();
+      } catch {
+        // best-effort
+      }
+      return;
+    }
+  }
+
+  let encoder: VideoEncoder;
+  try {
+    tracker.enter('encoder-ladder');
+    encoder = await buildEncoder(initialSessionIndex);
+  } catch (e) {
+    failState.setFailure('init-error', e);
+    postTerminal('error', 0);
+    try {
+      await runState.disposeAll();
+    } catch {
+      // best-effort
+    }
+    try {
+      compositor.dispose();
+    } catch {
+      // best-effort
+    }
+    try {
+      textRenderer.dispose();
+    } catch {
+      // best-effort
+    }
+    return;
+  }
+
+  // Every `sessionStarts` entry AT OR BEFORE the resume point is already
+  // "opened" by the `buildEncoder` call above — only later ones still need
+  // a rotation.
+  const rotateAt = new Set<number>(sessionStarts.slice(initialSessionIndex + 1));
+  let sessionIndex = initialSessionIndex;
+  activeSessionIndex = initialSessionIndex;
   activeSessionCount = sessionStarts.length;
   postOut({
     type: 'session-plan',
@@ -1645,7 +1740,12 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   }, HEARTBEAT_INTERVAL_MS);
   try {
     tracker.enter('frame-loop');
-    for (let i = 0; i < totalFrames; i++) {
+    // WS3 Tier 1 item 3c (Rung 3) — a rewind resumes the SAME piece's loop at
+    // its own resume point instead of 0. Every frame before it was already
+    // encoded (and, per the rewind recovery's own verification, truncated
+    // back to exactly its last complete byte) by the run this one replaces —
+    // re-encoding it here would duplicate output, not repair it.
+    for (let i = resumeFromFrameIndex; i < totalFrames; i++) {
       failState.frameIndex = i;
       if (cancelRequested) {
         cancelled = true;
@@ -1907,9 +2007,12 @@ self.onmessage = (ev: MessageEvent<ExportWorkerInboundMessage>) => {
       running = false;
       activeTracker = null;
       activeFailure = null;
+      activeAppendBackpressureGate = null;
     });
   } else if (data.type === 'cancel') {
     cancelRequested = true;
+  } else if (data.type === 'append-ack') {
+    activeAppendBackpressureGate?.ack(data.bytesAcked);
   }
 };
 }

@@ -78,7 +78,7 @@ import { resolveEffectiveTransition } from '../transitionResolver';
 import { isPlainVideoSegment, isPlainImageSegment } from '../plainSegment';
 import { checkTimelineIsGapless } from '../timelinePartition';
 import { isGlCompositableSegment, GL_TRANSITION_SLUGS } from './glCompositable';
-import type { ExportError, ExportLivenessSnapshot, ExportResult, ProgressCallback } from '../exportPipeline';
+import type { ExportAppendLedger, ExportError, ExportLivenessSnapshot, ExportResult, ProgressCallback } from '../exportPipeline';
 import type { ProjectEffectConfig } from '../gl/compositeParams';
 import type {
   ExportWorkerInboundMessage,
@@ -161,6 +161,23 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
    * handling below), never on the clean path.
    */
   truncateAnnexb(path: string): Promise<{ pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number }>;
+  /**
+   * WS3 Tier 1 item 3c (Rung 3, bounded re-render) — truncates `path` to an
+   * EXACT, caller-supplied byte offset (`TauriFfmpeg.truncateAnnexbToOffset`,
+   * backed by the Rust `ffmpeg_truncate_annexb_to_offset` command,
+   * `ffmpeg.rs:915-924` / `tauriFfmpeg.ts:251`), unlike `truncateAnnexb`
+   * above, which finds its own cut point from the bytes. This is the
+   * primitive the salvage-runtime round's own doc comment (above,
+   * `decideBoundedRerenderDisposition`'s block) named as missing — it has
+   * since been built but was, until this round, wired to nothing. Used ONLY
+   * with a `sessionByteOffsets[k]` value: a boundary already established by
+   * a COMPLETED `VideoEncoder.flush()` before the rotation that recorded it
+   * (see `driveGlRun`'s own `sessionByteOffsets` doc comment) — never a
+   * scanned-from-bytes guess — so the AU-accuracy question `truncateAnnexb`
+   * has to resolve by inspection is moot here by construction; the returned
+   * `pictures` count is used only to VERIFY that construction, not to decide it.
+   */
+  truncateAnnexbToOffset(path: string, byteOffset: number): Promise<{ pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number }>;
 }
 
 import {
@@ -788,6 +805,18 @@ type RunDriveResult =
        *  `k` is the exact truncation point for a rewind to session `k`. Purely
        *  observational today — see docs/ws3-export-recovery-architecture.md §1c. */
       sessionByteOffsets: number[];
+      /** WS3 Tier 1 item 3c (Rung 3) — `sessionByteOffsets`' frame-index
+       *  companion, same stamping/indexing scheme. See its own doc comment. */
+      sessionFrameIndices: number[];
+      /** WS3 Tier 1 item 4 — stamped centrally by `finish`, same as
+       *  `sessionByteOffsets` above, so a call site built AFTER `driveGlRun`
+       *  returns (its own closure, including `snapshotLiveness`, is gone by
+       *  then) can still assemble a complete `ExportLivenessSnapshot` instead
+       *  of hand-rolling one with fields it has no way to fill in. See the
+       *  post-truncation mismatch error site below for the call site this
+       *  closed. */
+      appendLedger: ExportAppendLedger;
+      msSinceLastPhaseChange: number;
     }
   | {
       ok: false;
@@ -797,6 +826,9 @@ type RunDriveResult =
       appendCallCount: number;
       appendBytes: number;
       sessionByteOffsets: number[];
+      sessionFrameIndices: number[];
+      appendLedger: ExportAppendLedger;
+      msSinceLastPhaseChange: number;
     };
 
 /**
@@ -1008,6 +1040,30 @@ export interface DriveGlRunDeps {
    *  allocated a quarter-gigabyte of chunk buffers to cross it would be
    *  measuring the allocator, not the bound. */
   appendQueueCeilingBytes?: number;
+  /** WS3 Tier 1 item 3c (Rung 3) — set only by the rewind recovery in the
+   *  'gl' tier loop below, to resume this piece's frame loop at a prior
+   *  encoder-session boundary instead of frame 0. See
+   *  `ExportWorkerInitMessage.resumeFromFrameIndex`'s own doc for the
+   *  invariant this value must satisfy. */
+  resumeFromFrameIndex?: number;
+  /**
+   * WS3 Tier 1 item 3c (Rung 3) — the GLOBAL (whole-piece) session index
+   * `resumeFromFrameIndex` resumes INTO. Set alongside it, to the same
+   * `hungSessionIndex` the orchestrator's rewind loop already computed.
+   *
+   * Worker-side session numbering is always correct without this (the
+   * worker derives its own `initialSessionIndex` from
+   * `sessionStarts.indexOf(resumeFromFrameIndex)` — see
+   * `exportWorker.ts:runExport`). This field exists because the
+   * ORCHESTRATOR's OWN session bookkeeping (`sessionAt`, `sessionByteOffsets`,
+   * `sessionFrameIndices`, all local to THIS `driveGlRun` call) has no other
+   * way to learn where a resumed run starts in the whole piece's numbering:
+   * it only ever learns a session's index from a 'session-rotate' message,
+   * which fires on a TRANSITION into a session, never on the run's own
+   * starting one. Left at its default (0) for every non-resumed call,
+   * reproducing today's behavior exactly.
+   */
+  resumeSessionIndex?: number;
 }
 
 /**
@@ -1105,7 +1161,12 @@ export function driveGlRun(
      *  to `onProgress` so the operator can see it live instead of inferring it
      *  from an unchanged piece count. */
     let sessionCount: number | null = null;
-    let sessionAt = 0;
+    /** WS3 Tier 1 item 3c (Rung 3) — the GLOBAL session index THIS
+     *  invocation starts at. 0 for every non-resumed call (unchanged
+     *  behavior); a rewind's resumed call sets it to the session it is
+     *  resuming into. See `DriveGlRunDeps.resumeSessionIndex`'s own doc. */
+    const resumeSessionIndex = deps.resumeSessionIndex ?? 0;
+    let sessionAt = resumeSessionIndex;
     /**
      * WS3 export-recovery round — the SESSION BYTE LEDGER.
      *
@@ -1126,7 +1187,29 @@ export function driveGlRun(
      * PART 1c of docs/ws3-export-recovery-architecture.md. The marker appends
      * nothing and does not reset either liveness bound.
      */
-    const sessionByteOffsets: number[] = [0];
+    const sessionByteOffsets: number[] = [];
+    sessionByteOffsets[resumeSessionIndex] = 0;
+    /**
+     * WS3 Tier 1 item 3c (Rung 3) — the SESSION FRAME LEDGER, `sessionByteOffsets`'
+     * companion. `sessionFrameIndices[k]` is this piece's own 0-based frame
+     * index at which encoder session `k` produced its first frame — read
+     * directly off the 'session-rotate' message's own `frameIndex` field,
+     * which the worker already computes from the SAME `i` the frame loop
+     * itself is at (`exportWorker.ts`'s `postOut({type:'session-rotate',
+     * ..., frameIndex: i})`, posted strictly between two `encode()` calls —
+     * see that call site's own comment). Unlike the byte offset, this needs
+     * no append-queue marker: it is exact the instant the message arrives,
+     * with nothing async in between.
+     *
+     * This is the value a rewind passes back to `exportWorker.ts` as
+     * `resumeFromFrameIndex` — `planEncoderSessions` guarantees every
+     * `sessionStarts` entry (which is exactly the set of values this array
+     * ever receives) is already a valid keyframe/session-start boundary, so
+     * a resumed run built by `runExport` from this exact value needs no
+     * different bootstrapping than session 0 ever did.
+     */
+    const sessionFrameIndices: number[] = [];
+    sessionFrameIndices[resumeSessionIndex] = deps.resumeFromFrameIndex ?? 0;
     let salvaged = false;
     let salvageReason: string | null = null;
     let lastOutputAt = now();
@@ -1270,6 +1353,27 @@ export function driveGlRun(
       return terminal ? [...recordedIntervals, terminal] : [...recordedIntervals];
     };
 
+    /** WS3 Tier 1 item 4 — the one place the append ledger's shape is
+     *  written, shared by `snapshotLiveness` (used while `driveGlRun`'s
+     *  closure is still alive) and `finish` (which stamps it onto the
+     *  returned `RunDriveResult` so a call site reading the result AFTER
+     *  this closure is gone — the salvage-truncate-mismatch site below is
+     *  exactly that call site — never has to reconstruct it by hand and
+     *  risk leaving a field out). */
+    const buildAppendLedger = (): ExportAppendLedger => ({
+      chunksAppended: appendCallCount,
+      ipcCalls: appendIpcCallCount,
+      bytesAppended: appendBytes,
+      queueDepthChunks,
+      queueDepthBytes,
+      msSinceLastAppendCompleted: now() - lastAppendCompletedAt,
+      chunksAppendedDuringFlush,
+      bytesAppendedDuringFlush,
+      doneReceived,
+      msSinceDone: doneReceivedAt === null ? null : now() - doneReceivedAt,
+      appendInFlight: appendsInFlight > 0,
+    });
+
     const snapshotLiveness = (): ExportLivenessSnapshot => ({
       lastPhase,
       msSinceLastPhaseChange: now() - lastPhaseAt,
@@ -1289,19 +1393,7 @@ export function driveGlRun(
       failureVia: lastWorkerDiagnostics?.failure?.via ?? null,
       encoderSessions: sessionCount,
       encoderSessionIndex: sessionCount === null ? null : sessionAt,
-      appendLedger: {
-        chunksAppended: appendCallCount,
-        ipcCalls: appendIpcCallCount,
-        bytesAppended: appendBytes,
-        queueDepthChunks,
-        queueDepthBytes,
-        msSinceLastAppendCompleted: now() - lastAppendCompletedAt,
-        chunksAppendedDuringFlush,
-        bytesAppendedDuringFlush,
-        doneReceived,
-        msSinceDone: doneReceivedAt === null ? null : now() - doneReceivedAt,
-        appendInFlight: appendsInFlight > 0,
-      },
+      appendLedger: buildAppendLedger(),
     });
 
     const errorFromDiagnostics = (
@@ -1352,10 +1444,12 @@ export function driveGlRun(
       pendingBatch = [];
       if (activeWorker === worker) activeWorker = null;
       worker.terminate();
+      const appendLedger = buildAppendLedger();
+      const msSinceLastPhaseChange = now() - lastPhaseAt;
       resolve(
         result.ok
-          ? { ...result, salvaged, salvageReason, sessionByteOffsets: sessionByteOffsets.slice() }
-          : { ...result, sessionByteOffsets: sessionByteOffsets.slice() },
+          ? { ...result, salvaged, salvageReason, sessionByteOffsets: sessionByteOffsets.slice(), sessionFrameIndices: sessionFrameIndices.slice(), appendLedger, msSinceLastPhaseChange }
+          : { ...result, sessionByteOffsets: sessionByteOffsets.slice(), sessionFrameIndices: sessionFrameIndices.slice(), appendLedger, msSinceLastPhaseChange },
       );
     };
 
@@ -1531,6 +1625,19 @@ export function driveGlRun(
           resetProgressBound();
           onFrameProgress(appendCallCount, totalExpectedFrames);
           notePhaseAppendDuringFlush();
+          // WS3 Tier 1 item 3b — the back-pressure ack. Sent after EVERY
+          // successful flush regardless of trigger (count/bytes/age/rotate/
+          // done/salvage-done all funnel through this one success path), with
+          // the cumulative total rather than this batch's delta so the
+          // worker-side gate needs no reassembly. This is also what makes a
+          // gated worker's wait bounded: even if no other trigger fires, the
+          // 1s age timer (APPEND_BATCH_MAX_AGE_MS) still reaches this line
+          // and still sends an ack, so a parked worker is unblocked within
+          // that window as long as the writer itself is making progress —
+          // see appendBackpressureGate.ts and the round log for the
+          // three-seam non-deadlock argument.
+          const ackMsg: ExportWorkerInboundMessage = { type: 'append-ack', bytesAcked: appendBytes };
+          worker.postMessage(ackMsg);
         } catch (err) {
           appendError = err instanceof Error ? err : new Error(causeString(err));
         } finally {
@@ -1775,7 +1882,10 @@ export function driveGlRun(
         // adding them cannot mask a stall the way a resetting message would.
         case 'session-plan':
           sessionCount = data.sessions;
-          sessionAt = 0;
+          // WS3 Tier 1 item 3c — NOT hardcoded 0: a resumed run's 'session-plan'
+          // still describes the WHOLE piece, but this run itself starts at
+          // `resumeSessionIndex`, not the piece's own session 0.
+          sessionAt = resumeSessionIndex;
           deps.onSessionPlan?.(data.pieceIndex, data.sessions);
           break;
         case 'session-rotate': {
@@ -1791,6 +1901,9 @@ export function driveGlRun(
           appendQueue = appendQueue.then(() => {
             sessionByteOffsets[rotatedTo] = appendBytes;
           });
+          // `frameIndex` needs no append-queue marker — it is exact the
+          // instant this message arrives (see `sessionFrameIndices`'s own doc).
+          sessionFrameIndices[rotatedTo] = data.frameIndex;
           break;
         }
         case 'phase':
@@ -1867,6 +1980,7 @@ export function driveGlRun(
       frameContentDigest: frameContentDigestEnabled,
       frameGridOriginSec: grid.originSec,
       frameGridBaseFrame: grid.baseFrame,
+      resumeFromFrameIndex: deps.resumeFromFrameIndex,
     };
     resetWatchdog();
     resetProgressBound();
@@ -2316,6 +2430,9 @@ export async function exportProjectWebCodecs(
 
   const pieceFiles: string[] = [];
   let framesCompletedBase = 0;
+  // WS3 Tier 1 item 3c (Rung 3) — per-EXPORT ceiling (every GL piece
+  // combined), matching `MAX_BOUNDARY_REWINDS_PER_EXPORT`'s own doc comment.
+  let boundaryRewindsUsed = 0;
 
   for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
     const plan = pieces[pieceIndex]!;
@@ -2354,34 +2471,148 @@ export async function exportProjectWebCodecs(
         }
       }
       const runFile = `piece_${pieceIndex}.h264`;
-      const driveResult = await driveGlRun(
-        ffmpeg,
-        `run_${pieceIndex}`,
-        runFile,
-        plan.segments,
-        referencedAssets,
-        config,
-        width,
-        height,
-        fps,
-        plan.expectedFrames,
-        onFrameProgress,
-        {
-          fontConfigs,
-          globalOverlayConfig: project.globalOverlayConfig,
-          textLayers: project.textLayers ?? [],
-          headings: project.headings ?? [],
-        },
-        pieceIndex,
-        plan.startIndex,
-        {
-          onSessionPlan: (_pi, sessions) => {
-            pieceSessions = sessions;
+      const runGlPiece = (resumeFromFrameIndex?: number, resumeSessionIndex?: number): Promise<RunDriveResult> =>
+        driveGlRun(
+          ffmpeg,
+          `run_${pieceIndex}`,
+          runFile,
+          plan.segments,
+          referencedAssets,
+          config,
+          width,
+          height,
+          fps,
+          plan.expectedFrames,
+          onFrameProgress,
+          {
+            fontConfigs,
+            globalOverlayConfig: project.globalOverlayConfig,
+            textLayers: project.textLayers ?? [],
+            headings: project.headings ?? [],
           },
-          createWorker: deps.createWorker,
-        },
-        { originSec: plan.gridOriginSec, baseFrame: plan.gridBaseFrame },
-      );
+          pieceIndex,
+          plan.startIndex,
+          {
+            onSessionPlan: (_pi, sessions) => {
+              pieceSessions = sessions;
+            },
+            createWorker: deps.createWorker,
+            resumeFromFrameIndex,
+            resumeSessionIndex,
+          },
+          { originSec: plan.gridOriginSec, baseFrame: plan.gridBaseFrame },
+        );
+
+      let driveResult = await runGlPiece();
+      // WS3 Tier 1 item 3c — Rung 3, wired to real execution. On a MID-run
+      // (rotation) flush timeout only — never the final flush, which already
+      // has its own salvage path via `runFinalFlushWithRecovery` — abandon
+      // the hung session, truncate back to the last rotation boundary
+      // (`sessionByteOffsets`/`sessionFrameIndices`, both already established
+      // by a COMPLETED flush before that rotation was ever posted, so no
+      // AU-scan is needed to trust the cut point — see
+      // `WebCodecsFfmpeg.truncateAnnexbToOffset`'s own doc), and re-render
+      // from that boundary forward via a fresh `driveGlRun` call that resumes
+      // the SAME piece's frame loop instead of restarting it.
+      //
+      // `fileBaseByteOffset` tracks how many bytes of `runFile` existed
+      // BEFORE the current `driveGlRun` attempt — 0 for the first attempt,
+      // then the previous rewind's absolute cut point. Each attempt's OWN
+      // `sessionByteOffsets` is LOCAL to that attempt (it starts counting
+      // from 0 again because `appendBytes` is per-invocation state), so a
+      // SECOND rewind's absolute offset is `fileBaseByteOffset + <local
+      // offset>`, never the local offset alone — the file already has bytes
+      // on disk this new invocation never wrote and knows nothing about.
+      let fileBaseByteOffset = 0;
+      while (!driveResult.ok) {
+        const liveness = driveResult.error.liveness;
+        const hungSessionIndex = liveness?.encoderSessionIndex ?? null;
+        const totalSessions = liveness?.encoderSessions ?? null;
+        const isRotationFlushTimeout =
+          liveness?.failureVia === 'flush-timeout' &&
+          hungSessionIndex !== null &&
+          totalSessions !== null &&
+          hungSessionIndex < totalSessions - 1;
+        if (!isRotationFlushTimeout) break;
+        const disposition = decideBoundedRerenderDisposition({ rewindsUsed: boundaryRewindsUsed });
+        if (disposition.action === 'abort') {
+          // eslint-disable-next-line no-console
+          console.info('[ws3-rerender] bounded re-render abort', JSON.stringify({ pieceIndex, hungSessionIndex, reason: disposition.reason }));
+          break;
+        }
+
+        const localByteOffset = driveResult.sessionByteOffsets[hungSessionIndex];
+        const rewindFrameIndex = driveResult.sessionFrameIndices[hungSessionIndex];
+        if (localByteOffset === undefined || rewindFrameIndex === undefined) {
+          // Defensive only — `hungSessionIndex` came from a real 'session-rotate'
+          // this same attempt received (that is the only way `encoderSessionIndex`
+          // advances past 0), so both arrays MUST have that entry. Never widen
+          // this into a guess at the boundary — abort the rewind attempt instead.
+          break;
+        }
+        const absoluteByteOffset = fileBaseByteOffset + localByteOffset;
+
+        let truncateResult: { pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number };
+        try {
+          truncateResult = await ffmpeg.truncateAnnexbToOffset(runFile, absoluteByteOffset);
+        } catch (err) {
+          driveResult = {
+            ok: false,
+            error: {
+              kind: 'concat',
+              message: `Bounded re-render: failed to truncate ${runFile} to rewind offset ${absoluteByteOffset} (session ${hungSessionIndex}).`,
+              cause: causeString(err),
+              liveness,
+            },
+            diagnostics: driveResult.diagnostics,
+            silentIntervals: driveResult.silentIntervals,
+            appendCallCount: driveResult.appendCallCount,
+            appendBytes: driveResult.appendBytes,
+            sessionByteOffsets: driveResult.sessionByteOffsets,
+            sessionFrameIndices: driveResult.sessionFrameIndices,
+            appendLedger: driveResult.appendLedger,
+            msSinceLastPhaseChange: driveResult.msSinceLastPhaseChange,
+          };
+          break;
+        }
+        // Zero tolerance, same posture as the salvage-truncate-mismatch guard
+        // below: the kept portion must hold EXACTLY the frame count of every
+        // session before the hung one — `rewindFrameIndex` IS that count, by
+        // construction (it is the absolute frame index the hung session
+        // started at). A mismatch means `absoluteByteOffset` did not land
+        // where `sessionByteOffsets`/`fileBaseByteOffset` said it would —
+        // never widened or accepted as a residual; abort the rewind.
+        if (truncateResult.pictures !== rewindFrameIndex) {
+          driveResult = {
+            ok: false,
+            error: {
+              kind: 'concat',
+              message: `Bounded re-render: rewind truncation of ${runFile} to offset ${absoluteByteOffset} kept ${truncateResult.pictures} picture(s), expected exactly ${rewindFrameIndex} (session ${hungSessionIndex}) — aborting rather than resuming from a mismatched boundary.`,
+              cause: `rewind boundary mismatch at session ${hungSessionIndex}`,
+              liveness,
+            },
+            diagnostics: driveResult.diagnostics,
+            silentIntervals: driveResult.silentIntervals,
+            appendCallCount: driveResult.appendCallCount,
+            appendBytes: driveResult.appendBytes,
+            sessionByteOffsets: driveResult.sessionByteOffsets,
+            sessionFrameIndices: driveResult.sessionFrameIndices,
+            appendLedger: driveResult.appendLedger,
+            msSinceLastPhaseChange: driveResult.msSinceLastPhaseChange,
+          };
+          break;
+        }
+
+        boundaryRewindsUsed++;
+        fileBaseByteOffset = absoluteByteOffset;
+        // eslint-disable-next-line no-console
+        console.info('[ws3-rerender] bounded re-render rewind', JSON.stringify({ pieceIndex, hungSessionIndex, rewindFrameIndex, absoluteByteOffset, boundaryRewindsUsed }));
+        // `resumeSessionIndex` (= `hungSessionIndex`, guaranteed non-null by
+        // `isRotationFlushTimeout` above) is what stops the RESUMED run's own
+        // ledger from defaulting to session 0 if IT hangs again before its
+        // own first 'session-rotate' — see `DriveGlRunDeps.resumeSessionIndex`.
+        driveResult = await runGlPiece(rewindFrameIndex, hungSessionIndex);
+      }
       if (!driveResult.ok) {
         const watchdogFired = driveResult.error.message.includes('no output for 30s');
         const d = driveResult.diagnostics;
@@ -2512,11 +2743,24 @@ export async function exportProjectWebCodecs(
                 salvageReason: driveResult.salvageReason,
               }),
               cause: `salvaged piece ${pieceIndex} failed its post-truncation exact-match check`,
+              // WS3 Tier 1 item 4 — `maxSilentMs` and `appendLedger` used to
+              // be silently absent here: this object was hand-rolled at a
+              // call site outside driveGlRun's own closure (snapshotLiveness
+              // is gone by the time this runs), so it could only include
+              // what RunDriveResult happened to expose. `finish` now stamps
+              // `appendLedger`/`msSinceLastPhaseChange` onto every
+              // RunDriveResult centrally (same mechanism as
+              // `sessionByteOffsets`), so this reads from `driveResult`
+              // instead of reconstructing a partial copy by hand.
               liveness: {
                 lastPhase: d.lastPhase,
-                msSinceLastPhaseChange: null,
+                // `driveResult` is narrowed to `ok: true` here (the `!driveResult.ok`
+                // branch above returns), so every field `finish` stamps centrally is
+                // available directly — no reconstruction, no gaps.
+                msSinceLastPhaseChange: driveResult.msSinceLastPhaseChange,
                 pieceIndex,
                 framesEncoded: d.framesEncoded,
+                maxSilentMs: driveResult.maxSilentMs,
                 phaseLogTail: d.phaseLog.slice(-LIVENESS_PHASE_LOG_TAIL).map((e) => ({
                   atMs: Math.round(e.atMs),
                   phase: e.phase,
@@ -2527,6 +2771,7 @@ export async function exportProjectWebCodecs(
                 failureVia: 'flush-timeout',
                 encoderSessions: d.encoderSessions,
                 encoderSessionIndex: d.encoderSessionIndex,
+                appendLedger: driveResult.appendLedger,
               },
             },
           };
