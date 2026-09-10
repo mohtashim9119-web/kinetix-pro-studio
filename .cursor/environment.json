@@ -1,0 +1,18 @@
+{
+  "name": "Kinetix Pro Studio",
+  "user": "ubuntu",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "vite-dev",
+      "command": "npm run dev",
+      "description": "Vite frontend dev server on http://localhost:3000 (browser-only UI iteration). Note: this is a Tauri desktop app — native export/ffmpeg/whisper features and a stable full runtime require `npm run tauri:dev`, not this browser server."
+    }
+  ],
+  "ports": [
+    {
+      "name": "vite-dev-server",
+      "port": 3000
+    }
+  ]
+}
