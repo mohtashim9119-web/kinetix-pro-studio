@@ -132,7 +132,13 @@ function ffmpegHarness(opts: {
   countResult?: { pictures: number; vclNals: number };
 } = {}): { ffmpeg: WebCodecsFfmpeg; truncateAnnexb: ReturnType<typeof vi.fn>; appendFileRaw: ReturnType<typeof vi.fn> } {
   const truncateAnnexb = vi.fn(async () => opts.truncateResult ?? { pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES, bytesRemoved: 0, keptBytes: 100 });
-  const appendFileRaw = vi.fn(async () => undefined);
+  // WS3 Round 12 (H1) — tracked by path so `driveGlRun`'s per-append verify
+  // (`sessionFileSize` read right after `appendFileRaw`) sees a landed size
+  // consistent with what was actually appended.
+  const landed = new Map<string, number>();
+  const appendFileRaw = vi.fn(async (p: string, data: Uint8Array) => {
+    landed.set(p, (landed.get(p) ?? 0) + data.byteLength);
+  });
   const ffmpeg = {
     writeFile: vi.fn(async () => undefined),
     writeFileRaw: vi.fn(async () => undefined),
@@ -143,7 +149,7 @@ function ffmpegHarness(opts: {
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
-    sessionFileSize: vi.fn(async () => 1_700_000_000),
+    sessionFileSize: vi.fn(async (p: string) => landed.get(p) ?? 1_700_000_000),
     countAnnexbFrames: vi.fn(async () => opts.countResult ?? { pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES }),
     concatAnnexbPieces: vi.fn(async () => undefined),
     truncateAnnexb,

@@ -28,6 +28,7 @@ import {
   APPEND_BATCH_BYTES,
   APPEND_BATCH_MAX_AGE_MS,
   APPEND_QUEUE_CEILING_BYTES,
+  ShortAppendError,
   type DriveGlRunDeps,
   type ExportWorkerHandle,
   type WebCodecsFfmpeg,
@@ -47,18 +48,23 @@ class FakeWorker implements ExportWorkerHandle {
   }
 }
 
+/** WS3 Round 12 (H1) — `driveGlRun` now verifies every append against
+ *  `sessionFileSize`, so the default fake must behave like a real growing
+ *  file rather than a fixed stub, or every append-batching test would fail
+ *  its own byte-landed check regardless of what it's actually probing. */
 function makeFfmpeg(overrides: Partial<WebCodecsFfmpeg> = {}): WebCodecsFfmpeg {
+  let landed = 0;
   return {
     writeFile: vi.fn(async () => undefined),
     writeFileRaw: vi.fn(async () => undefined),
     exec: vi.fn(async () => 0),
     readFile: vi.fn(async () => new Uint8Array()),
     deleteFile: vi.fn(async () => undefined),
-    appendFileRaw: vi.fn(async () => undefined),
+    appendFileRaw: vi.fn(async (_p: string, data: Uint8Array) => { landed += data.byteLength; }),
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
-    sessionFileSize: vi.fn(async () => 0),
+    sessionFileSize: vi.fn(async () => landed),
     countAnnexbFrames: vi.fn(async () => ({ pictures: 0, vclNals: 0 })),
     concatAnnexbPieces: vi.fn(async () => undefined),
     truncateAnnexb: vi.fn(async () => ({ pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 })),
@@ -130,6 +136,7 @@ describe('append batching — output is byte-identical to one-call-per-chunk', (
     const received: Uint8Array[] = [];
     const ffmpeg = makeFfmpeg({
       appendFileRaw: vi.fn(async (_p: string, data: Uint8Array) => { received.push(data.slice()); }),
+      sessionFileSize: vi.fn(async () => received.reduce((n, b) => n + b.byteLength, 0)),
     });
     const fake = new FakeWorker();
     const p = startDrive(fake, ffmpeg);
@@ -176,6 +183,7 @@ describe('append batching — output is byte-identical to one-call-per-chunk', (
     const received: Uint8Array[] = [];
     const ffmpeg = makeFfmpeg({
       appendFileRaw: vi.fn(async (_p: string, data: Uint8Array) => { received.push(data.slice()); }),
+      sessionFileSize: vi.fn(async () => received.reduce((n, b) => n + b.byteLength, 0)),
     });
     const fake = new FakeWorker();
     const p = startDrive(fake, ffmpeg);
@@ -200,6 +208,7 @@ describe('append batching — the age trigger is a liveness bound, not a through
     const received: Uint8Array[] = [];
     const ffmpeg = makeFfmpeg({
       appendFileRaw: vi.fn(async (_p: string, data: Uint8Array) => { received.push(data.slice()); }),
+      sessionFileSize: vi.fn(async () => received.reduce((n, b) => n + b.byteLength, 0)),
     });
     const fake = new FakeWorker();
     const p = startDrive(fake, ffmpeg);
@@ -241,8 +250,12 @@ describe('append liveness — a completed append counts as life', () => {
     vi.useFakeTimers();
     // Each IPC call takes 5s. Eight batches = 40s of drain, all of it after the
     // last chunk message — the exact window the old watchdog killed at 30s.
+    let landed = 0;
     const ffmpeg = makeFfmpeg({
-      appendFileRaw: vi.fn(() => new Promise<void>((res) => { setTimeout(res, 5_000); })),
+      appendFileRaw: vi.fn((_p: string, data: Uint8Array) => new Promise<void>((res) => {
+        setTimeout(() => { landed += data.byteLength; res(); }, 5_000);
+      })),
+      sessionFileSize: vi.fn(async () => landed),
     });
     const fake = new FakeWorker();
     const p = startDrive(fake, ffmpeg);
@@ -348,5 +361,119 @@ describe('append queue ceiling', () => {
     fake.emit(doneMsg(50));
     const result = await p;
     expect(result.ok).toBe(true);
+  });
+});
+
+/**
+ * WS3 Round 12 (H1) — a deliberately truncating fake `appendFileRaw` (the
+ * WebView2 ~2 MB IStream-limit shape: the invoke resolves normally but fewer
+ * bytes actually landed than were submitted) must be caught at THIS batch's
+ * own verification, not at the concat/frame-count guard minutes later.
+ *
+ * RED-then-GREEN: with the `sessionFileSize` verify removed (stash the fix in
+ * `flushPendingBatch` and re-run), these tests fail — `result.ok` comes back
+ * `true` with a silently short file, which is exactly the failure this round
+ * closes.
+ */
+describe('append verification — a short landed write is caught at its own batch', () => {
+  it('a batch whose bytes are truncated in transit fails as append-short-write, naming the batch and offset', async () => {
+    // Lands only the first 5 of the submitted bytes — the exact shape of a
+    // transport that silently truncates a body over its own limit.
+    const ffmpeg = makeFfmpeg({
+      appendFileRaw: vi.fn(async () => undefined),
+      sessionFileSize: vi.fn(async () => 5),
+    });
+    const fake = new FakeWorker();
+    const p = startDrive(fake, ffmpeg);
+
+    fake.emit(chunkOf(0, 20).msg);
+    fake.emit(doneMsg(1));
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics?.failure?.via).toBe('append-short-write');
+    expect(result.error.message).toContain('truncated the write in transit');
+  });
+
+  it('the ShortAppendError names bytes submitted, bytes landed, the batch index, and the byte offset', async () => {
+    const ffmpeg = makeFfmpeg({
+      appendFileRaw: vi.fn(async () => undefined),
+      sessionFileSize: vi.fn(async () => 5),
+    });
+    const fake = new FakeWorker();
+    const p = startDrive(fake, ffmpeg);
+
+    fake.emit(chunkOf(0, 20).msg);
+    fake.emit(doneMsg(1));
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.message).toContain('Append batch 1 at byte offset 0');
+    expect(result.error.message).toContain('landed 5 byte(s)');
+    expect(result.error.message).toContain('submitted 20 byte(s)');
+    expect(result.error.message).toContain('short by 15 byte(s)');
+  });
+
+  it('a short write on the SECOND batch is caught there — not masked by the first batch having landed correctly', async () => {
+    let call = 0;
+    const ffmpeg = makeFfmpeg({
+      appendFileRaw: vi.fn(async () => { call++; }),
+      // First batch (8 bytes, forced out by the session-rotate below) lands
+      // correctly; the second batch (would bring the total to 16) truncates,
+      // landing only 3 more bytes (11 instead of 16).
+      sessionFileSize: vi.fn(async () => (call === 1 ? 8 : 11)),
+    });
+    const fake = new FakeWorker();
+    const p = startDrive(fake, ffmpeg);
+
+    // Rotation forces the first chunk out as its own batch (batch 1) before
+    // the second chunk arrives, so the two chunks land as two distinct
+    // append calls within the SAME run rather than being coalesced.
+    fake.emit(chunkOf(0).msg);
+    fake.emit({ type: 'session-rotate', pieceIndex: 0, sessionIndex: 1, sessions: 2, frameIndex: 1 });
+    fake.emit(chunkOf(1).msg);
+    fake.emit(doneMsg(2));
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics?.failure?.via).toBe('append-short-write');
+    expect(result.error.message).toContain('Append batch 2');
+    // The first batch's correctly-landed 8 bytes are not what's blamed —
+    // the second batch's own 8-byte submission is.
+    expect(result.error.message).toContain('submitted 8 byte(s)');
+    expect(result.error.message).toContain('byte offset 8');
+  });
+
+  it('ShortAppendError is instanceof Error and carries typed fields directly, not just in the message', () => {
+    const err = new ShortAppendError({ bytesSubmitted: 100, bytesLanded: 40, batchIndex: 3, byteOffset: 512 });
+    expect(err).toBeInstanceOf(Error);
+    expect(err.name).toBe('ShortAppendError');
+    expect(err.bytesSubmitted).toBe(100);
+    expect(err.bytesLanded).toBe(40);
+    expect(err.batchIndex).toBe(3);
+    expect(err.byteOffset).toBe(512);
+  });
+
+  it('VERIFICATION COST — a clean batch spends exactly one extra IPC call (sessionFileSize) beyond appendFileRaw, and no extra wall-clock time', async () => {
+    const calls: string[] = [];
+    const ffmpeg = makeFfmpeg({
+      appendFileRaw: vi.fn(async (_p: string, data: Uint8Array) => { calls.push(`appendFileRaw:${data.byteLength}`); }),
+      sessionFileSize: vi.fn(async () => {
+        calls.push('sessionFileSize');
+        // Reflects the just-completed append: one 8-byte chunk in one batch.
+        return 8;
+      }),
+    });
+    const fake = new FakeWorker();
+    const p = startDrive(fake, ffmpeg);
+    fake.emit(chunkOf(0).msg);
+    fake.emit(doneMsg(1));
+    const result = await p;
+    expect(result.ok).toBe(true);
+    // Exactly one verify call per append call — the stated verification cost.
+    expect(calls).toEqual(['appendFileRaw:8', 'sessionFileSize']);
   });
 });

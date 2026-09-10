@@ -114,25 +114,35 @@ function chunkMsg(index: number, size: number): Extract<ExportWorkerOutboundMess
 
 function ffmpegHarness(opts: {
   truncateOffsetResult?: { pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number };
-} = {}): { ffmpeg: WebCodecsFfmpeg; truncateAnnexbToOffset: ReturnType<typeof vi.fn> } {
-  const truncateAnnexbToOffset = vi.fn(async () => opts.truncateOffsetResult ?? { pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 });
+} = {}): { ffmpeg: WebCodecsFfmpeg; truncateAnnexbToOffset: ReturnType<typeof vi.fn>; landed: Map<string, number> } {
+  // WS3 Round 12 (H1) — tracked by path so `driveGlRun`'s per-append verify
+  // (`sessionFileSize` read right after `appendFileRaw`) sees a landed size
+  // consistent with what was actually appended, and a rewind's truncate
+  // shrinks it back the same way a real file would.
+  const landed = new Map<string, number>();
+  const truncateAnnexbToOffset = vi.fn(async (p: string, byteOffset: number) => {
+    landed.set(p, byteOffset);
+    return opts.truncateOffsetResult ?? { pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 };
+  });
   const ffmpeg = {
     writeFile: vi.fn(async () => undefined),
     writeFileRaw: vi.fn(async () => undefined),
     exec: vi.fn(async () => 0),
     readFile: vi.fn(async () => new Uint8Array()),
     deleteFile: vi.fn(async () => undefined),
-    appendFileRaw: vi.fn(async () => undefined),
+    appendFileRaw: vi.fn(async (p: string, data: Uint8Array) => {
+      landed.set(p, (landed.get(p) ?? 0) + data.byteLength);
+    }),
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
-    sessionFileSize: vi.fn(async () => 1_700_000_000),
+    sessionFileSize: vi.fn(async (p: string) => landed.get(p) ?? 1_700_000_000),
     countAnnexbFrames: vi.fn(async () => ({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES })),
     concatAnnexbPieces: vi.fn(async () => undefined),
     truncateAnnexb: vi.fn(async () => ({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES, bytesRemoved: 0, keptBytes: 100 })),
     truncateAnnexbToOffset,
   } as unknown as WebCodecsFfmpeg;
-  return { ffmpeg, truncateAnnexbToOffset };
+  return { ffmpeg, truncateAnnexbToOffset, landed };
 }
 
 async function runWithFakeWorker(ffmpeg: WebCodecsFfmpeg, drive: (fake: FakeWorker) => Promise<void> | void) {
@@ -235,11 +245,12 @@ describe('Rung 5a (hardware->software failover) — wired at exportProjectWebCod
   });
 
   it('OUTPUT NEUTRALITY (full bytes, not a metadata hash): a clean run appends exactly the chunk bytes, in order, with no forceSoftwareEncoder anywhere', async () => {
-    const { ffmpeg, truncateAnnexbToOffset } = ffmpegHarness();
+    const { ffmpeg, truncateAnnexbToOffset, landed } = ffmpegHarness();
     const appendedBuffers: Uint8Array[] = [];
     (ffmpeg.appendFileRaw as unknown as ReturnType<typeof vi.fn>).mockImplementation(
-      async (_path: string, bytes: Uint8Array) => {
+      async (path: string, bytes: Uint8Array) => {
         appendedBuffers.push(new Uint8Array(bytes));
+        landed.set(path, (landed.get(path) ?? 0) + bytes.byteLength);
       },
     );
     const { result: r, fake } = await runWithFakeWorker(ffmpeg, (fk) => {

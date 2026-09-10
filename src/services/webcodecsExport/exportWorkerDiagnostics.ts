@@ -118,7 +118,17 @@ export type ExportFailureVia =
    *  APPEND_QUEUE_CEILING_BYTES. The encoder is outrunning the writer by enough
    *  that the backlog is a memory risk in its own right; failing here names the
    *  depth instead of dying later as an opaque OOM. */
-  | 'append-queue-overflow';
+  | 'append-queue-overflow'
+  /** WS3 Round 12 (H1) — a completed `appendFileRaw` invoke landed FEWER bytes
+   *  on disk than the batch submitted. WebView2 documents an ~2 MB IStream
+   *  body limit that some hosts silently truncate against rather than
+   *  erroring; on a platform where that is true, a short append is a corrupt
+   *  Annex-B file produced with no other visible failure. Caught by a
+   *  `sessionFileSize` read immediately after every append (see
+   *  `ShortAppendError` in exportPipelineWebCodecs.ts) rather than waiting for
+   *  the concat/frame-count guard to notice the file is short — this fires at
+   *  the batch that lost bytes, naming it. */
+  | 'append-short-write';
 
 export interface ExportFailureIdentity {
   name: string | null;

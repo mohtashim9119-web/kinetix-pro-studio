@@ -1014,15 +1014,42 @@ export const SILENT_INTERVAL_CAP = 256;
  * same bytes in the same order, and `appendFileRawByteEquality.test.ts` pins
  * that against a recording writer rather than leaving it as a claim.
  *
- * 100 chunks / 4 MB, whichever comes first: at 1080p30 (~33 KB/frame measured
- * on this corpus) the count trigger fires first at ~3.3 MB, and the byte
- * trigger is the guard for a high-bitrate or 4K-ish stream where 100 frames
- * would be a much larger buffer. Both are deliberately small enough that a
- * full buffer is a rounding error against the retained backlog the ceiling
- * below actually exists to bound.
+ * WS3 Round 12 (H1) — the byte cap was 4 MB through the STEP 1 branch point.
+ * The audit surfaced that WebView2 documents an ~2 MB `IStream` body limit on
+ * the invoke transport that some hosts silently truncate against rather than
+ * erroring — a body over that line can land on disk shorter than what was
+ * submitted, with no exception anywhere in the call chain. 4 MB sat entirely
+ * on the wrong side of that line, on the one platform (Windows) that has
+ * actually failed in the field, and no test could have caught it: batching
+ * itself is confirmed byte-identical against a recording writer, which proves
+ * nothing about a transport that lies about what it received.
+ *
+ * 512 KiB is chosen as a 4x margin below the ~2 MB figure — not "as large as
+ * still safe", because "still safe" is exactly the number nobody can confirm
+ * without the Windows machine (see the governing-principle framing in the
+ * round prompt): a value that sits close to an unconfirmed limit is a value
+ * this codebase cannot verify is actually below it. 4x leaves room for the
+ * limit to be smaller than documented, or for per-platform overhead inside
+ * the same body, without re-tuning. Batching amortizes a FIXED per-call cost
+ * (~12.4 ms measured, dominated by the IPC hop, not by payload size at these
+ * scales — see `ffmpeg_append_file_raw`'s open/write/close-per-call shape) —
+ * shrinking the cap trades some of that amortization for a value this
+ * codebase can defend against the documented limit without a Windows run.
+ *
+ * At 1080p30 (~33 KB/frame, the field-run corpus), 512 KiB / 33 KB ≈ 15.5
+ * chunks — the byte trigger now fires long before the 100-chunk count
+ * trigger, so effective batch size for this profile is ~15-16 chunks
+ * (previously ~100, since 4 MB / 33 KB ≈ 124 chunks let the count trigger
+ * dominate). IPC reduction vs. one-call-per-chunk: ~15.5x, down from the
+ * ~100x the 4 MB cap gave — see this file's `ShortAppendError` verification
+ * addition for why that trade is made, and the Round 12 ledger entry for the
+ * full terminal-drain margin re-derivation. `APPEND_BATCH_CHUNKS` (100) is
+ * unchanged: it still bounds a batch's IPC-call count in a low-bitrate or
+ * highly-compressed regime where 15.5x-fewer-bytes chunks might otherwise
+ * accumulate past 100 before crossing 512 KiB.
  */
 export const APPEND_BATCH_CHUNKS = 100;
-export const APPEND_BATCH_BYTES = 4 * 1024 * 1024;
+export const APPEND_BATCH_BYTES = 512 * 1024;
 
 /**
  * WS3 append-batching round — the batch's AGE trigger, and it is a correctness
@@ -1081,6 +1108,45 @@ export const APPEND_QUEUE_CEILING_BYTES = 256 * 1024 * 1024;
  * A drain that blows this fails as 'append-drain-stall' with its depth named.
  */
 export const APPEND_DRAIN_BOUND_MS = 600_000;
+
+/**
+ * WS3 Round 12 (H1) — a completed `appendFileRaw` invoke landed fewer bytes
+ * than the batch submitted. Typed rather than a bare `Error` so the payload
+ * names exactly what a "some Windows host truncated the IPC body" failure
+ * needs to be actionable: which batch, at what offset, how much was claimed,
+ * and how much actually landed.
+ */
+export class ShortAppendError extends Error {
+  readonly bytesSubmitted: number;
+  readonly bytesLanded: number;
+  readonly batchIndex: number;
+  readonly byteOffset: number;
+
+  constructor(opts: { bytesSubmitted: number; bytesLanded: number; batchIndex: number; byteOffset: number }) {
+    super(
+      `Append batch ${opts.batchIndex} at byte offset ${opts.byteOffset} landed ${opts.bytesLanded} ` +
+        `byte(s) on disk but submitted ${opts.bytesSubmitted} byte(s) — short by ${opts.bytesSubmitted - opts.bytesLanded} ` +
+        `byte(s). The transport truncated the write in transit.`,
+    );
+    this.name = 'ShortAppendError';
+    this.bytesSubmitted = opts.bytesSubmitted;
+    this.bytesLanded = opts.bytesLanded;
+    this.batchIndex = opts.batchIndex;
+    this.byteOffset = opts.byteOffset;
+  }
+}
+
+/** Distinguishes a short-write from any other append failure so the payload's
+ *  `via` names the actual mechanism rather than a generic 'append-error'. */
+function appendFailureVia(err: Error): ExportFailureVia {
+  return err instanceof ShortAppendError ? 'append-short-write' : 'append-error';
+}
+
+function appendErrorSummary(err: Error): string {
+  return err instanceof ShortAppendError
+    ? 'An encoded chunk batch landed short of what was submitted — the write was truncated in transit.'
+    : 'Failed to append an encoded chunk to disk.';
+}
 
 /** Copy `parts` end to end into one buffer. `total` is passed rather than
  *  re-summed so the allocation and the ledger can never disagree. */
@@ -1728,6 +1794,36 @@ export function driveGlRun(
         try {
           await ffmpeg.appendFileRaw(runFile, payload);
           appendIpcCallCount++;
+          // WS3 Round 12 (H1) — VERIFY EVERY APPEND.
+          //
+          // The invoke promise resolving is not proof the bytes landed: the
+          // audit found WebView2 documents an ~2 MB `IStream` body limit that
+          // some hosts silently truncate against rather than erroring, so a
+          // short write can resolve cleanly. `sessionFileSize` is an
+          // independent read of what is actually on disk, taken right after
+          // the write it confirms.
+          //
+          // Compared against the RUNNING total (`fileBaseByteOffset +
+          // batchStartOffset + batchBytes`, where `batchStartOffset` is
+          // `appendBytes` captured before this batch) rather than just this
+          // batch's own delta, so a short append cannot hide behind a total
+          // that a later, fully-landed batch would otherwise make look right
+          // again. A mismatch throws `ShortAppendError` — caught by the same
+          // `catch` below — naming exactly what's needed to act on it: bytes
+          // submitted, bytes actually landed, which batch, at what offset.
+          // This never continues silently; it fails the export at the batch
+          // that lost bytes, not at the concat/frame-count guard minutes
+          // later.
+          const landedSize = await ffmpeg.sessionFileSize(runFile);
+          const expectedSize = fileBaseByteOffset + batchStartOffset + batchBytes;
+          if (landedSize !== expectedSize) {
+            throw new ShortAppendError({
+              bytesSubmitted: batchBytes,
+              bytesLanded: Math.max(0, landedSize - (fileBaseByteOffset + batchStartOffset)),
+              batchIndex: appendIpcCallCount,
+              byteOffset: fileBaseByteOffset + batchStartOffset,
+            });
+          }
           appendCallCount += batchChunks;
           appendBytes += batchBytes;
           // WS3 Round 10 (Blocker 3) — DURABLE CHECKPOINT AT A ROTATION SEAM.
@@ -1906,14 +2002,14 @@ export function driveGlRun(
                   failure: {
                     name: appendError.name || null,
                     message: appendError.message,
-                    via: 'append-error' as const,
+                    via: appendFailureVia(appendError),
                     frameIndex: diagnostics.framesEncoded > 0 ? diagnostics.framesEncoded - 1 : null,
                     timelineSec: null,
                   },
                 };
                 finish({
                   ok: false,
-                  error: errorFromDiagnostics('encode', failDiag, 'Failed to append an encoded chunk to disk.'),
+                  error: errorFromDiagnostics('encode', failDiag, appendErrorSummary(appendError)),
                   diagnostics: failDiag,
                   silentIntervals: intervals,
                   appendCallCount,
@@ -1957,14 +2053,14 @@ export function driveGlRun(
                   failure: {
                     name: appendError.name || null,
                     message: appendError.message,
-                    via: 'append-error' as const,
+                    via: appendFailureVia(appendError),
                     frameIndex: data.diagnostics.framesEncoded > 0 ? data.diagnostics.framesEncoded - 1 : null,
                     timelineSec: null,
                   },
                 };
                 finish({
                   ok: false,
-                  error: errorFromDiagnostics('encode', failDiag, 'Failed to append an encoded chunk to disk.'),
+                  error: errorFromDiagnostics('encode', failDiag, appendErrorSummary(appendError)),
                   diagnostics: failDiag,
                   silentIntervals: intervals,
                   appendCallCount,

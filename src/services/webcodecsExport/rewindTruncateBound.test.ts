@@ -185,18 +185,28 @@ describe('Rung 3 rewind truncate — bounded by TRUNCATE_BOUND_MS', () => {
 
   it('a truncateAnnexbToOffset that settles inside the bound is unaffected — the rewind proceeds', async () => {
     const kill = vi.fn(async () => undefined);
-    const truncateAnnexbToOffset = vi.fn(async () => ({ pictures: 5, vclNals: 5, bytesRemoved: 40, keptBytes: 30 }));
+    // WS3 Round 12 (H1) — tracked by path so `driveGlRun`'s per-append verify
+    // (`sessionFileSize` read right after `appendFileRaw`) sees a landed size
+    // consistent with what was actually appended, and the rewind's truncate
+    // shrinks it back the same way a real file would.
+    const landed = new Map<string, number>();
+    const truncateAnnexbToOffset = vi.fn(async (p: string, byteOffset: number) => {
+      landed.set(p, byteOffset);
+      return { pictures: 5, vclNals: 5, bytesRemoved: 40, keptBytes: 30 };
+    });
     const ffmpeg = {
       writeFile: vi.fn(async () => undefined),
       writeFileRaw: vi.fn(async () => undefined),
       exec: vi.fn(async () => 0),
       readFile: vi.fn(async () => new Uint8Array()),
       deleteFile: vi.fn(async () => undefined),
-      appendFileRaw: vi.fn(async () => undefined),
+      appendFileRaw: vi.fn(async (p: string, data: Uint8Array) => {
+        landed.set(p, (landed.get(p) ?? 0) + data.byteLength);
+      }),
       saveSessionFile: vi.fn(async () => undefined),
       kill,
       destroy: vi.fn(async () => undefined),
-      sessionFileSize: vi.fn(async () => 1_700_000_000),
+      sessionFileSize: vi.fn(async (p: string) => landed.get(p) ?? 1_700_000_000),
       countAnnexbFrames: vi.fn(async () => ({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES })),
       concatAnnexbPieces: vi.fn(async () => undefined),
       truncateAnnexb: vi.fn(async () => ({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES, bytesRemoved: 0, keptBytes: 100 })),

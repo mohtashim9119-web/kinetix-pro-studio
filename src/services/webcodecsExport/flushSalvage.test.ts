@@ -337,7 +337,10 @@ function recordingFfmpeg(): { ffmpeg: WebCodecsFfmpeg; written: number[] } {
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
-    sessionFileSize: vi.fn(async () => 1_700_000_000),
+    // WS3 Round 12 (H1) — must track `written`'s real length so the
+    // per-append verify (`exportPipelineWebCodecs.ts`'s `flushPendingBatch`)
+    // sees a landed size consistent with what was actually appended.
+    sessionFileSize: vi.fn(async () => written.length),
     countAnnexbFrames: vi.fn(async () => ({ pictures: 0, vclNals: 0 })),
     concatAnnexbPieces: vi.fn(async () => undefined),
     truncateAnnexb: vi.fn(async () => ({ pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 })),

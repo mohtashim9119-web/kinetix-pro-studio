@@ -80,18 +80,22 @@ class GatedFakeWorker implements ExportWorkerHandle {
   }
 }
 
+/** WS3 Round 12 (H1) — `driveGlRun` now verifies every append against
+ *  `sessionFileSize`, so the default fake must behave like a real growing
+ *  file rather than a fixed stub. */
 function makeFfmpeg(overrides: Partial<WebCodecsFfmpeg> = {}): WebCodecsFfmpeg {
+  let landed = 0;
   return {
     writeFile: vi.fn(async () => undefined),
     writeFileRaw: vi.fn(async () => undefined),
     exec: vi.fn(async () => 0),
     readFile: vi.fn(async () => new Uint8Array()),
     deleteFile: vi.fn(async () => undefined),
-    appendFileRaw: vi.fn(async () => undefined),
+    appendFileRaw: vi.fn(async (_p: string, data: Uint8Array) => { landed += data.byteLength; }),
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
-    sessionFileSize: vi.fn(async () => 0),
+    sessionFileSize: vi.fn(async () => landed),
     countAnnexbFrames: vi.fn(async () => ({ pictures: 0, vclNals: 0 })),
     concatAnnexbPieces: vi.fn(async () => undefined),
     truncateAnnexb: vi.fn(async () => ({ pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 })),
@@ -145,18 +149,25 @@ function chunkOf(index: number, size: number): { msg: Extract<ExportWorkerOutbou
 afterEach(() => { vi.useRealTimers(); });
 
 // Seven small chunks — well under APPEND_BATCH_CHUNKS (100) and, summed,
-// well under APPEND_BATCH_BYTES (4 MB) — so they sit in `pendingBatch`
+// well under APPEND_BATCH_BYTES (WS3 Round 12: 512 KiB, down from 4 MB —
+// see APPEND_BATCH_BYTES's own doc comment) — so they sit in `pendingBatch`
 // unflushed until something forces them out.
-const SMALL_CHUNK_BYTES = 512 * 1024; // 512 KiB
+const SMALL_CHUNK_BYTES = 32 * 1024; // 32 KiB
 const SMALL_CHUNK_COUNT = 7;
-const BUFFERED_TOTAL = SMALL_CHUNK_BYTES * SMALL_CHUNK_COUNT; // 3.5 MiB
+const BUFFERED_TOTAL = SMALL_CHUNK_BYTES * SMALL_CHUNK_COUNT; // 224 KiB — well under the 512 KiB batch cap
 
-// Sized so that submitting it pushes cumulative unacked 2 MiB over the
-// back-pressure threshold, but acking ONLY the buffered 3.5 MiB brings it
-// 1.5 MiB back under — i.e. the buffered amount is exactly what has to be
+// Sized so that submitting it pushes cumulative unacked OVER_THRESHOLD_MARGIN
+// over the back-pressure threshold, but acking ONLY the buffered amount
+// brings it back under — i.e. the buffered amount is exactly what has to be
 // flushed (and acked) for the gate to reopen. If the tested seam's own
-// `flushPendingBatch()` call did not fire, this stays parked forever.
-const BIG_CHUNK_BYTES = APPEND_BACKPRESSURE_THRESHOLD_BYTES - BUFFERED_TOTAL + 2 * 1024 * 1024;
+// `flushPendingBatch()` call did not fire, this stays parked forever. The
+// margin must stay LESS than BUFFERED_TOTAL: unacked-after-ack works out to
+// exactly BIG_CHUNK_BYTES itself (`threshold - BUFFERED_TOTAL + margin`),
+// which only lands back at-or-under `threshold` when `margin <= BUFFERED_TOTAL`
+// (WS3 Round 12: shrunk from 2 MiB alongside BUFFERED_TOTAL's own shrink —
+// see SMALL_CHUNK_BYTES's doc comment — to keep that relationship true).
+const OVER_THRESHOLD_MARGIN = 64 * 1024; // 64 KiB, well under BUFFERED_TOTAL (224 KiB)
+const BIG_CHUNK_BYTES = APPEND_BACKPRESSURE_THRESHOLD_BYTES - BUFFERED_TOTAL + OVER_THRESHOLD_MARGIN;
 
 async function bufferSmallChunks(fake: GatedFakeWorker): Promise<void> {
   for (let i = 0; i < SMALL_CHUNK_COUNT; i++) {
@@ -167,8 +178,12 @@ async function bufferSmallChunks(fake: GatedFakeWorker): Promise<void> {
 describe('append back-pressure — non-deadlock at the three seams', () => {
   it('session rotation flushes the buffer and unblocks the parked worker (seam 1/3)', async () => {
     vi.useFakeTimers();
+    let landed = 0;
     const ffmpeg = makeFfmpeg({
-      appendFileRaw: vi.fn(() => new Promise<void>((res) => { setTimeout(res, 3_000); })),
+      appendFileRaw: vi.fn((_p: string, data: Uint8Array) => new Promise<void>((res) => {
+        setTimeout(() => { landed += data.byteLength; res(); }, 3_000);
+      })),
+      sessionFileSize: vi.fn(async () => landed),
     });
     const fake = new GatedFakeWorker();
     const p = startDrive(fake, ffmpeg);
@@ -198,8 +213,12 @@ describe('append back-pressure — non-deadlock at the three seams', () => {
 
   it('a normal done flushes the buffer and unblocks the parked worker (seam 2/3)', async () => {
     vi.useFakeTimers();
+    let landed = 0;
     const ffmpeg = makeFfmpeg({
-      appendFileRaw: vi.fn(() => new Promise<void>((res) => { setTimeout(res, 3_000); })),
+      appendFileRaw: vi.fn((_p: string, data: Uint8Array) => new Promise<void>((res) => {
+        setTimeout(() => { landed += data.byteLength; res(); }, 3_000);
+      })),
+      sessionFileSize: vi.fn(async () => landed),
     });
     const fake = new GatedFakeWorker();
     const p = startDrive(fake, ffmpeg);
@@ -233,8 +252,12 @@ describe('append back-pressure — non-deadlock at the three seams', () => {
 
   it('a salvage-done flushes the buffer and unblocks the parked worker (seam 3/3)', async () => {
     vi.useFakeTimers();
+    let landed = 0;
     const ffmpeg = makeFfmpeg({
-      appendFileRaw: vi.fn(() => new Promise<void>((res) => { setTimeout(res, 3_000); })),
+      appendFileRaw: vi.fn((_p: string, data: Uint8Array) => new Promise<void>((res) => {
+        setTimeout(() => { landed += data.byteLength; res(); }, 3_000);
+      })),
+      sessionFileSize: vi.fn(async () => landed),
     });
     const fake = new GatedFakeWorker();
     const p = startDrive(fake, ffmpeg);
@@ -272,8 +295,12 @@ describe('append back-pressure — non-deadlock at the three seams', () => {
     // (in which case the SAME bounds that catch a hung writer today still fire
     // — back-pressure adds no new failure mode there).
     vi.useFakeTimers();
+    let landed = 0;
     const ffmpeg = makeFfmpeg({
-      appendFileRaw: vi.fn(() => new Promise<void>((res) => { setTimeout(res, 3_000); })),
+      appendFileRaw: vi.fn((_p: string, data: Uint8Array) => new Promise<void>((res) => {
+        setTimeout(() => { landed += data.byteLength; res(); }, 3_000);
+      })),
+      sessionFileSize: vi.fn(async () => landed),
     });
     const fake = new GatedFakeWorker();
     const p = startDrive(fake, ffmpeg);

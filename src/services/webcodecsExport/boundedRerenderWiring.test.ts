@@ -132,9 +132,23 @@ function chunkMsg(index: number, size: number): Extract<ExportWorkerOutboundMess
 function ffmpegHarness(opts: {
   truncateOffsetResult?: { pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number };
 } = {}): { ffmpeg: WebCodecsFfmpeg; truncateAnnexbToOffset: ReturnType<typeof vi.fn>; truncateAnnexb: ReturnType<typeof vi.fn>; appendFileRaw: ReturnType<typeof vi.fn> } {
-  const appendFileRaw = vi.fn(async () => undefined);
+  // WS3 Round 12 (H1) — tracked by path so `driveGlRun`'s per-append verify
+  // (`sessionFileSize` read right after `appendFileRaw`) sees a landed size
+  // consistent with what was actually appended, while any OTHER path (the
+  // orchestrator's post-run `finalVideoFile` probe when it differs from the
+  // piece file) keeps the old fixed stub these tests never depend on.
+  const landed = new Map<string, number>();
+  const appendFileRaw = vi.fn(async (p: string, data: Uint8Array) => {
+    landed.set(p, (landed.get(p) ?? 0) + data.byteLength);
+  });
   const truncateAnnexb = vi.fn(async () => ({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES, bytesRemoved: 0, keptBytes: 100 }));
-  const truncateAnnexbToOffset = vi.fn(async () => opts.truncateOffsetResult ?? { pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 });
+  // A rewind's truncate shrinks the real file back to `byteOffset` — the
+  // fake must do the same to `landed`, or the resumed run's next append
+  // verify sees a landed size that never actually shrank.
+  const truncateAnnexbToOffset = vi.fn(async (p: string, byteOffset: number) => {
+    landed.set(p, byteOffset);
+    return opts.truncateOffsetResult ?? { pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 };
+  });
   const ffmpeg = {
     writeFile: vi.fn(async () => undefined),
     writeFileRaw: vi.fn(async () => undefined),
@@ -145,7 +159,7 @@ function ffmpegHarness(opts: {
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
-    sessionFileSize: vi.fn(async () => 1_700_000_000),
+    sessionFileSize: vi.fn(async (p: string) => landed.get(p) ?? 1_700_000_000),
     countAnnexbFrames: vi.fn(async () => ({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES })),
     concatAnnexbPieces: vi.fn(async () => undefined),
     truncateAnnexb,

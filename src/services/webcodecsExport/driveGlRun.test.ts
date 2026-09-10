@@ -43,18 +43,27 @@ class FakeWorker implements ExportWorkerHandle {
   }
 }
 
+/** WS3 Round 12 (H1) — `driveGlRun` now verifies every append against
+ *  `sessionFileSize`, so the default fake must behave like a real growing
+ *  file (tracked by `runFile`'s own path) rather than a fixed stub. The
+ *  fixed 1.7 GB stub is kept as the fallback for any OTHER path (the
+ *  higher-level orchestrator's post-run `finalVideoFile` probe in tests
+ *  that exercise it) so this change stays scoped to the append-verify path. */
 function makeFfmpeg(overrides: Partial<WebCodecsFfmpeg> = {}): WebCodecsFfmpeg {
+  const landed = new Map<string, number>();
   return {
     writeFile: vi.fn(async () => undefined),
     writeFileRaw: vi.fn(async () => undefined),
     exec: vi.fn(async () => 0),
     readFile: vi.fn(async () => new Uint8Array()),
     deleteFile: vi.fn(async () => undefined),
-    appendFileRaw: vi.fn(async () => undefined),
+    appendFileRaw: vi.fn(async (p: string, data: Uint8Array) => {
+      landed.set(p, (landed.get(p) ?? 0) + data.byteLength);
+    }),
     saveSessionFile: vi.fn(async () => undefined),
     kill: vi.fn(async () => undefined),
     destroy: vi.fn(async () => undefined),
-    sessionFileSize: vi.fn(async () => 1_700_000_000),
+    sessionFileSize: vi.fn(async (p: string) => landed.get(p) ?? 1_700_000_000),
     countAnnexbFrames: vi.fn(async () => ({ pictures: 0, vclNals: 0 })),
     concatAnnexbPieces: vi.fn(async () => undefined),
     truncateAnnexb: vi.fn(async () => ({ pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: 0 })),

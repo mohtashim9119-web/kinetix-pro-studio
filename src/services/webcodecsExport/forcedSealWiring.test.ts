@@ -90,17 +90,23 @@ function harness(measuredPictures: number): {
   const calls: Call[] = [];
   const rec = <T>(fn: string, impl: (...a: never[]) => T) =>
     vi.fn((...args: unknown[]) => { calls.push({ fn, args }); return (impl as (...a: unknown[]) => T)(...args); });
+  // WS3 Round 12 (H1) — tracked by path so `driveGlRun`'s per-append verify
+  // (`sessionFileSize` read right after `appendFileRaw`) sees a landed size
+  // consistent with what was actually appended.
+  const landed = new Map<string, number>();
   const ffmpeg = {
     writeFile: rec('writeFile', async () => undefined),
     writeFileRaw: rec('writeFileRaw', async () => undefined),
     exec: rec('exec', async () => 0),
     readFile: rec('readFile', async () => new Uint8Array()),
     deleteFile: rec('deleteFile', async () => undefined),
-    appendFileRaw: rec('appendFileRaw', async () => undefined),
+    appendFileRaw: rec('appendFileRaw', async (p: string, data: Uint8Array) => {
+      landed.set(p, (landed.get(p) ?? 0) + data.byteLength);
+    }),
     saveSessionFile: rec('saveSessionFile', async () => undefined),
     kill: rec('kill', async () => undefined),
     destroy: rec('destroy', async () => undefined),
-    sessionFileSize: rec('sessionFileSize', async () => 1_700_000_000),
+    sessionFileSize: rec('sessionFileSize', async (p: string) => landed.get(p) ?? 1_700_000_000),
     countAnnexbFrames: rec('countAnnexbFrames', async () => ({ pictures: measuredPictures, vclNals: measuredPictures })),
     concatAnnexbPieces: rec('concatAnnexbPieces', async () => undefined),
     truncateAnnexb: rec('truncateAnnexb', async () => ({ pictures: measuredPictures, vclNals: measuredPictures, bytesRemoved: 0, keptBytes: 100 })),
@@ -148,6 +154,7 @@ describe('forced MP4 sealing — wired at the concat-guard seam', () => {
     );
     expect(calls.map((c) => c.fn)).toEqual([
       'appendFileRaw',      // the one chunk
+      'sessionFileSize',    // WS3 Round 12 (H1) — per-append verify
       'countAnnexbFrames',  // the guard
       'sessionFileSize',    // mux bound sizing
       'exec',               // muxOnly (video only)
