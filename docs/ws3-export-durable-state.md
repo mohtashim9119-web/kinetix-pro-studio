@@ -10,6 +10,381 @@
 
 ---
 
+## Round 8 — Cargo arithmetic, mux measurement, conservative final-AU, seams (2026-09-10)
+
+This section supersedes Round 7's extrapolated 2.3 GB mux bound, the
+slices-per-picture mode heuristic as a keep/drop rule, and the claim that
+unification was already permanently guarded by sampling. Historical Round 7
+text remains below. `docs/ws3-export-architecture-ledger.md` is referenced
+by name only and was not edited. Full `npm test` was **not** run this round
+(coordinator-gated; concurrent suites hang the machine).
+
+### STEP 0 — Cargo reconciliation (not a blocker)
+
+`cargo test -- --list` at cut `15002e5` vs HEAD `c03c593`, both feature
+configs. Listed counts include ignored tests.
+
+| Config | 15002e5 listed | c03c593 listed | Δ |
+|---|---:|---:|---:|
+| default | 288 | 293 | **+5** |
+| `--features fa-inference` | 404 | 409 | **+5** |
+
+Ignored tests identical (5 default / 35 fa-inference). Names that appear at
+`c03c593` and not at `15002e5` — all introduced by `1c2be49`, all intended:
+
+1. `ffmpeg::tests::backwards_tail_inspection_detects_dangling_start_code`
+2. `ffmpeg::tests::checkpoint_resume_rejects_picture_count_disagreement`
+3. `ffmpeg::tests::checkpoint_resume_repairs_mid_nal_mid_picture_boundary_and_clean_file`
+4. `ffmpeg::tests::export_state_write_is_validated_synced_and_replaceable`
+5. `ffmpeg::tests::resumed_session_blocks_append_count_concat_until_prepared`
+
+The prompt's "279 + 5 = 288, but observed +9" gap is a **stale baseline**,
+not four extra tests on this branch. Actual cut at `15002e5` is **283
+passed + 5 ignored = 288 listed**. Four tests already existed at the cut
+(introduced on `ws3-export-integration`, not here):
+
+- `stream_nal_scanner_stays_bounded_on_unterminated_trailing_nal` (`2515acb`)
+- `access_unit_scanner_stays_bounded_on_unterminated_trailing_nal` (`2515acb`)
+- `truncate_annexb_on_unterminated_trailing_nal_produces_sane_cut` (`2515acb`)
+- `count_path_and_cut_path_agree_on_every_picture_boundary` (`2a806df`)
+
+Reconciled arithmetic: **279 (stale) + 4 inherited + 5 new = 288** passed
+at `c03c593`. fa-inference's 369 baseline already included those four, so
+it reconciled at +5 with no cfg/doc-test interaction and no counting error
+in the Round 7 *observed* cargo numbers — only in the prompt's 279
+baseline. Round 7 docs already stated 283 + 5 = 288; list-diff confirmed
+it.
+
+This round then added five more Rust tests (enumerated under STEP 4/5).
+Post-round default cargo is **293 passed / 0 failed / 5 ignored**
+(288 + 5). fa-inference is **379 / 0 / 35** (374 + 5).
+
+Expected vs Observed (Round 8 close). `npm test` is inventory/record only
+— **not run**.
+
+| Gate | Expected | Observed |
+|---|---|---|
+| `npm test` count | Round 7 record 3379 pass / 0 fail / 77 skip (3456); +6 Vitest this round → 3385 / 0 / 77 (3462) if AJ-0 holds | **NOT RUN** (deferred). Round 7 last observed 3378 / 1 / 77 (AJ-0 v6 180 s timeout) |
+| `cargo test` | 288 + 5 = 293 / 0 / 5 | **293 / 0 / 5** |
+| `cargo test --features fa-inference` | 374 + 5 = 379 / 0 / 35 | **379 / 0 / 35** |
+| fixture `efd16ab5…` (8-slice × 10, 945 B) | unchanged | unchanged |
+| fixture `d02aca07…` (1-slice × 12, 444 B) | unchanged | unchanged |
+| fixture `b6ce4717…` (param-sets × 3, 126 B) | unchanged | unchanged |
+| fixture `c84a5aae…` (short × 9, 333 B) | unchanged | unchanged |
+
+### STEP 1 — AJ-0 oracle-diff flake
+
+Isolated `npx vitest run scripts/ws1-session-aj0-oracle-diff.test.ts -t v6`,
+n=5, plus a second 5-run series of the whole file (v6 split out of 3 tests):
+
+| series | walls (s) | p50 | worst |
+|---|---|---:|---:|
+| `-t v6` | 176.34, 81.44, 76.36, 63.97, 53.59 | 76.36 | **176.34** |
+| this-file (3 tests) | 48.6, 90.5, 132.4, 78.9, 77.9 | 78.9 | 132.4 (file-wall worst 160.4) |
+
+Output is deterministic (same oracle diff every run). Not non-deterministic
+logic. Combined isolated v6 p50 ≈ 78 s, worst **176.34 s**. The old 180 s
+ceiling is **1.02× isolated worst** — no headroom even cold/isolated — and
+historically ~2× under full-suite CPU contention. Cause: a fixed-cost
+`runProductionPath` sitting against a ceiling with no margin, degraded
+further by concurrent load.
+
+Fix: timeout **530_000 ms = 3× isolated worst (176.34 s)** in
+`scripts/ws1-session-aj0-oracle-diff.test.ts`. 3× covers the observed
+2.7–3.3× isolated span plus the historical ~2× warm-isolated → full-suite
+inflation. Raising the timeout is the right fix for a load-sensitive
+fixed cost; serialising a reporting check does not remove the 176 s cold
+floor. Full-suite confirmation deferred.
+
+### STEP 2 — Mux measured at 1.7 GB and 2.3 GB
+
+Harness: `scripts/ws3-measure-mux-at-scale.sh`. TMPDIR=
+`/var/folders/39/r5vx27154l74y4c2_hp625_w0000gn/T`. Real libx264 Annex-B
+GOP tiled by whole copies (no 0xFF, no mid-NAL trim), 21 min WAV, two-pass
+muxOnly args, x86_64 sidecar. No duplicate processes; stale scratch purged
+first; tail fsync before measure.
+
+| size | actual bytes | pass-1 | pass-2 | total | peak RSS | 25× `computeMuxBoundMs` |
+|---|---:|---:|---:|---:|---:|---:|
+| 1.7 GB | 1_700_660_619 | 8.370 s | 5.450 s | **13.820 s** | 55_234_560 | **345_500 ms** |
+| 2.3 GB | 2_300_238_216 | 13.550 s | 6.920 s | **20.470 s** | 63_279_104 | **511_750 ms** |
+
+Round 7 extrapolation `13.92 × (2.3/1.7) = 18.834 s` vs measured
+**20.470 s** → **−1.636 s / 8.0% too fast**. Round 7's 1.7 GB figure
+(13.92 s) matches this run to 0.10 s.
+
+Shape is **not linear in annexb bytes**. Pass-1 ratio 13.550/8.370 =
+1.619 vs byte ratio 1.353 (I/O of the annexb copy, noisy same order).
+Pass-2 ratio 6.920/5.450 = 1.270: AAC of a fixed-length 21 min VO against
+`-shortest`, weakly larger premux. Total ratio 1.481. `computeMuxBoundMs`
+now interpolates the two measured (pass-1, pass-2) pairs rather than
+`total × bytes/1.7GB`. There is no `MUX_BOUND_MS` constant in owned paths.
+
+Owned call sites pass the actual byte length into `computeMuxBoundMs`.
+**CC seam (not edited):** `exportPipelineWebCodecs.ts` labels the wrapper
+`'MUX_BOUND_MS'` and calls `computeMuxBoundMs(annexbBytes)` where
+`annexbBytes` comes from `ffmpeg.sessionFileSize(finalVideoFile)` — actual
+size, which is correct.
+
+Old bound 470_824 ms / 20.470 s = **23.0×**, under the 25× floor — that
+is why the formula changed. New 511_750 / 20.470 = **25.0×**.
+
+Scratch was cleaned after the run; none remained at Round 8 close.
+
+### STEP 3 — Tier-piece decomposition
+
+`TIER_PIECE_BOUND_MS = 600_000` spans canvas render, PNG encode, IPC,
+libx264, and remux.
+
+| Stage | Measurable? | This round |
+|---|---|---|
+| 1. Canvas/WebGL render per frame | live export / CC lane | unmeasured |
+| 2. PNG encode (`toBlob`) | live / CC | unmeasured |
+| 3. IPC `writeFileRaw` per frame | Tauri/live | unmeasured |
+| 4. ffmpeg libx264 of the piece | synthetic (lavfi) | **13.94 s** for 60 s 1080p30 ultrafast; RSS ~314 MB. PNG-sequence encode would be slower |
+| 5. remux MP4→annexb | already measured | **0.14 s** |
+
+Composed measured stages ≈ 14 s. Unmeasured canvas+PNG+IPC dominate (old
+allowance 100 ms × 1800 frames = 180 s, itself unmeasured).
+
+**Verdict 3:** the unmeasured stages dominate so completely that no
+synthetic composition constrains 600 s. Closing measurement: one live
+canvas-path export of a 60 s 1080p30 piece with per-frame timing. Until
+that exists the 600 s value remains hardware-bound / NOT DETERMINED.
+
+### STEP 4 — Conservative final-AU policy
+
+**Predicate** (`nal_begins_next_access_unit` /
+`scanned_final_au_is_provably_complete` in `src-tauri/src/ffmpeg.rs`; JS
+twin `isFinalAccessUnitProvablyComplete` in `annexbFrameCount.ts`):
+
+> The final access unit is provably complete iff a **fully scanned
+> subsequent NAL** begins the next AU — non-VCL (AUD/SPS/PPS/SEI), or VCL
+> with `first_mb_in_slice == 0`. A dangling start code with no header is
+> **not** enough. A last VCL that ends at EOF is **not** complete.
+
+Keep/drop no longer consults the slices-per-picture **mode** heuristic
+(`mode_of` is `#[cfg(test)]` only). Cost of a drop: **one picture,
+33.33 ms at 1080p30**.
+
+Constraints proven:
+
+1. **Exact-offset resume untouched.** `truncate_annexb_to_offset_inner`
+   does not consult the predicate. `resume_exact_offset_path_untouched_by_final_au_policy`
+   compares full bytes of offset-only vs `prepare_checkpoint_resume_inner`
+   on mid-NAL, mid-picture, exact-AU-boundary, and clean fixtures.
+2. **Clean path byte-identical.** `clean_path_truncate_is_full_bytes_identical`
+   compares the entire kept buffer to the input (not a length or hash);
+   on-disk `truncate_annexb_inner` leaves the file bytes equal.
+3. **Sealing offer uses post-drop counts.** `muxOnly.test.ts`: 900
+   expected → 899 kept / 1 lost at 30 fps; pre-drop equal count is
+   `null` (not eligible). Counter guard is not compensated.
+4. **Counter guard not relaxed.** Dropping a picture enlarges the
+   discrepancy by one; `forcedMp4SealOffer` never rewrites measured or
+   expected.
+
+Fixtures (Rust + JS): crash mid-payload of a single-slice picture; crash
+immediately after `first_mb_in_slice == 0`; crash with a provably complete
+final AU (trailing AUD, then dangling start — no drop); multi-slice crash
+mid-picture; clean file (`bytesRemoved = 0`). Destructive probes RED then
+GREEN: completeness always-true mutated `conservative_final_au_policy_five_fixtures`
+(4 vs 3); JS twin the same; restored GREEN.
+
+**New residual:** a last picture that is structurally a complete NAL
+(closed by a fully scanned subsequent AU-starting NAL) can still carry
+corrupt RBSP. Frequency: the crash must occur *after* the next AU header
+was fully written, which is not the mid-payload case that was ~100%
+before. Incomplete last pictures (mid-payload, first_mb-only, mid
+multi-slice) are now dropped. Structurally complete-then-crash-during-next
+is the remaining visual risk, expected rare vs the old ~100% keep of a
+~33 KB partial slice.
+
+### STEP 5 — Scanner unification
+
+Both paths derive NAL spans from `scan_annexb_nals` (`ffmpeg.rs:853`)
+with no remaining divergent offset arithmetic:
+
+- Count: `count_annexb_access_units_in_buffer` (`ffmpeg.rs:467`) iterates
+  `scan_annexb_nals`.
+- Cut: `scan_annexb_nals_from_file` (`ffmpeg.rs:722`) →
+  `scanned_nal_from_span` (`ffmpeg.rs:608`) → `group_pictures_scanned`
+  (`ffmpeg.rs:755`) → `compute_truncate_cut_from_scanned`.
+
+Permanent guard: `count_and_cut_grouping_agree_at_every_byte_offset` —
+byte-exhaustive over every prefix offset of multi-2×2, variable-1-3-2,
+paramsets-3, and single-aud-2. Sampling is not a substitute. Unification
+is complete; no divergence guard was added because none survived.
+
+Variable-slice: `variable_slice_mode_heuristic_is_not_used_for_complete_last_picture`
+(`[1,3,2,4]`, mode would pick 1 and drop a complete 4-slice last picture;
+completeness keeps it). `group_pictures_scanned` groups by
+`first_mb == 0` only; mode is not load-bearing.
+
+Destructive probe: `group_pictures_scanned` `first_mb==0 && false` went
+RED on the differential (`[29]` vs `[]`), then GREEN on restore.
+
+### STEP 6 — Durable failure records
+
+A class of bug that has now cost two rounds of forensics: a failing suite
+whose failing names, files, durations, and arithmetic lived only in a
+terminal buffer.
+
+Mechanism (dependency-free):
+
+- Vitest custom reporter `scripts/vitest-failure-record.ts`, hooked from
+  `vite.config.ts`. A **failing** run writes
+  `.ws3-test-failures/<UTC>-<HEADSHA>.json` plus `latest.json`. Success
+  writes nothing. The reporter never throws.
+- `scripts/ws3-record-test-run.mjs` (`npm run test:record`) for cargo and
+  filtered vitest. Unfiltered vitest is refused (coordinator-gated).
+- `npm run test:failure-record` prints `latest.json`.
+- Output path is gitignored (`.gitignore` named `.ws3-test-failures/`).
+
+Read: `cat .ws3-test-failures/latest.json`.
+
+### STEP 7 — Seam contracts (owned files only; CC files not edited)
+
+#### Sealing-offer seam — `SealingOfferSeam` (`muxOnly.ts`)
+
+Exported symbols: `forcedMp4SealOffer`, `sealTruncatedAnnexbToMp4`,
+types `ForcedMp4SealOffer`, `ForcedMp4SealDisposition`, `SealingOfferSeam`.
+
+**CC must supply, and nothing else:**
+
+1. `measured` — the concat guard's unmodified `{pictures, vclNals}` after
+   salvage-truncate (post-final-AU-drop counts, never pre-drop).
+2. `picturesExpected` — the same expected count the guard compared against.
+3. `fps` — the export frame rate used for wall-duration.
+4. `operatorConsented` — explicit operator yes/no; this helper never infers it.
+5. ffmpeg session + `videoFile` / `audioFile` / `outputFile` paths for seal.
+
+Preconditions: the concat frame-count guard has already reported the
+discrepancy. This seam must not rewrite either count, suppress the guard,
+or run before the guard. `measured.pictures` is the post-policy kept count.
+
+Postconditions: `null` / `not-eligible` when there is no non-empty true
+shortfall; `consent-required` with the offer when eligible and consent is
+absent (no ffmpeg call); `sealed` with the same offer after muxOnly when
+consent is present. Duration is pictures/fps, never container metadata.
+
+Errors: muxOnly failures throw; eligibility failures do not throw.
+
+Call ordering: guard reports → `forcedMp4SealOffer(measured, expected, fps)`
+→ UI consent → `sealTruncatedAnnexbToMp4({..., operatorConsented: true})`.
+
+#### Resume handshake seam — `ResumeHandshakeSeam` (`exportCheckpoint.ts`)
+
+Exported symbols: `validateExportState`, `prepareCheckpointResume`,
+`appendExportCheckpoint`, `serializeExportState`,
+`createExportStateManifest`; types `ResumeHandshakeSeam`,
+`ExportCheckpointResumeIo`, `ExportCheckpointPreparation`.
+
+**CC must supply, and nothing else:**
+
+1. The surviving session id (from `TauriFfmpeg.listResumableSessionIds` +
+   `reenter`) — never mint a new UUID for a resume.
+2. `serializedManifest` bytes from `export_state.json`.
+3. `expected` identity: `{projectId, sourceTimelineHash, fps, width, height}`
+   of the project currently in memory (`buildSourceTimelineHash` of
+   `timelineIdentityFromProject`).
+4. The surviving Annex-B `path` inside that session.
+5. An `ExportCheckpointResumeIo` whose `prepareCheckpointResume` is
+   `TauriFfmpeg.prepareCheckpointResume` (native atomic handshake).
+6. Rotation-seam call sites that call `appendExportCheckpoint` then
+   `serializeExportState` then `TauriFfmpeg.writeExportState`. CC does
+   not design the write; those three are the complete writer primitive.
+
+HARD PRECONDITION — pre-append fence ordering, native and mandatory:
+
+1. find the final start code (backwards tail inspection)
+2. unconditional whole-AU repair (`ffmpeg_truncate_annexb`)
+3. assert repair did not fall before the checkpoint byte offset
+4. exact-offset truncate (`ffmpeg_truncate_annexb_to_offset`)
+5. re-repair asserting `bytesRemoved == 0`
+6. recount; assert `pictures == cumulativePictures`
+7. only then clear `resume_pending`
+
+`prepareCheckpointResume` (JS) + `ffmpeg_prepare_checkpoint_resume`
+(Rust) already perform that order. CC must not append, count, or concat
+while `resume_pending` is set, and must not skip `prepareCheckpointResume`.
+
+Postconditions: `{kind:'resume', repair}` with `keptBytes === byteOffset`
+and `pictures === cumulativePictures`, fence cleared; or `{kind:'clean'}`
+with a reason and no Annex-B mutation from the JS validator.
+
+Errors: native repair failure → `{kind:'clean'}`; hash/schema/monotonicity
+mismatch → `{kind:'clean'}` without Annex-B I/O.
+
+Call ordering: list/reenter → readExportState → prepareCheckpointResume →
+(only on kind=resume) append remainder. Writer at a rotation seam:
+appendExportCheckpoint → serializeExportState → writeExportState.
+
+The checkpoint writer API is complete and tested as a callable primitive
+(`export_state_write_is_validated_synced_and_replaceable` plus the JS
+checkpoint tests). CC only supplies rotation-seam call sites.
+
+### STEP 8 — Six-row bound register
+
+Recomputed against this round's mux measurements and Round 7
+frame-count (81_375) / truncate (172_675). Break-even is the I/O/CPU
+multiple at which the bound false-aborts a healthy export.
+
+| Bound | Current value | Source | Measurement p50 / worst | Headroom | Break-even | False-abort risk |
+|---|---|---|---|---:|---:|---|
+| remux | 30_000 ms | measured | 0.14 s / 0.14 s | ~214× | **~214×** | low |
+| concat | 60_000 ms | measured | 0.64 s / 0.64 s (1.7 GB) | ~94× | **~94×** | low |
+| frame-count | 81_375 ms | measured | p50 3.251 s / worst 3.255 s @ 2.3 GB | 25× | **25×** | sized |
+| truncate | 172_675 ms | measured | p50 6.770 s / worst 6.907 s @ 2.3 GB | 25× | **25×** | sized |
+| mux | 345_500 ms @ 1.7 GB; **511_750 ms @ 2.3 GB** | **measured this round** | 13.820 s / 20.470 s (n=1 per size; used as both p50 and worst) | 25× | **25×** | superseded 470_824 ms was **23.0× vs measured 2.3 GB — under 25×, flagged**. Current 25.0× |
+| tier-piece | 600_000 ms | hardware-bound | unmeasured canvas/PNG/IPC; synthetic encode 13.94 s | n/a | **NOT DETERMINED** | verdict 3; cannot be constrained synthetically |
+
+No current sized bound sits under 25×. The deleted
+`FRAME_COUNT_BOUND_MS < CONCAT_BOUND_MS` assertion stays deleted.
+
+**Invariant:** the five opaque bounds (remux, concat, frame-count,
+truncate, mux) are finite, positive, independently sized, and carry **no
+valid cross-step ordering**. They measure different workloads
+(stream-copy of one piece, native concat, native scan, salvage rewrite,
+two-pass mux). A numeric `<` between them is not a safety property.
+
+### `ffmpeg_truncate_annexb_to_offset` contract (restated)
+
+`ffmpeg_truncate_annexb_to_offset(session, path, byteOffset)` truncates
+the session file to exactly `byteOffset` bytes via in-place `set_len`,
+refuses offsets past EOF, and returns `{pictures, vclNals, bytesRemoved,
+keptBytes}`. It does not consult the salvage completeness predicate.
+Round 8 did not change this contract.
+
+### Round 8 gates
+
+| Gate | Result |
+|---|---|
+| `npx tsc --noEmit` | clean |
+| `npm run lint` | clean (`tsc --noEmit`) |
+| `cargo build` | warning-free |
+| `cargo test` | 293 / 0 / 5 |
+| `cargo test --features fa-inference` | 379 / 0 / 35 |
+| `git diff --name-only main -- src-tauri/` | non-empty (`ffmpeg.rs`, `lib.rs`) |
+| four fixture digests | unchanged |
+| targeted Vitest (changed files) | 56 / 0 / 0 |
+| `npm test` twice | **SKIPPED** pending user approval that CC is done |
+| benchmark scratch | cleaned; none present at close |
+
+Destructive probes (RED then GREEN): final-AU completeness predicate;
+clean-path byte neutrality; resume-path byte-exactness; sealing offer
+post-drop numbers; scanner differential / grouping mutation. No
+divergence guard was added.
+
+This round's five new Rust tests:
+
+1. `ffmpeg::tests::conservative_final_au_policy_five_fixtures`
+2. `ffmpeg::tests::count_and_cut_grouping_agree_at_every_byte_offset`
+3. `ffmpeg::tests::variable_slice_mode_heuristic_is_not_used_for_complete_last_picture`
+4. `ffmpeg::tests::clean_path_truncate_is_full_bytes_identical`
+5. `ffmpeg::tests::resume_exact_offset_path_untouched_by_final_au_policy`
+
+---
+
 ## Round 7 — Rung 2b sealing + Rung 4 durable resume (2026-09-10)
 
 This section supersedes this report's earlier "WRITE ONLY", "wired to
