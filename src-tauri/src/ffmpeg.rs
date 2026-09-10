@@ -63,6 +63,51 @@ fn ensure_resume_prepared(
     Ok(())
 }
 
+/// Manifest paths that may be read during `resume_pending` without passing the
+/// checkpoint handshake. Every other session-scoped path that touches Annex-B or
+/// other render media is gated until `ffmpeg_prepare_checkpoint_resume` clears
+/// the fence.
+fn is_resume_fence_exempt_path(path: &str) -> bool {
+    path == "export_state.json"
+        || path == "export_state.json.tmp"
+        || path == "export_state.json.bak"
+}
+
+fn ensure_resume_bitstream_fence(
+    state: &FfmpegSessionState,
+    session_id: &str,
+    path: &str,
+    operation: &str,
+) -> Result<(), String> {
+    if is_resume_fence_exempt_path(path) {
+        return Ok(());
+    }
+    ensure_resume_prepared(state, session_id, operation)
+}
+
+fn sync_session_file(path: &Path, label: &str) -> Result<(), String> {
+    let file = fs::File::open(path).map_err(|e| format!("{label}: open for sync: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("{label}: sync_all: {e}"))
+}
+
+fn io_error_is_disk_full(err: &io::Error) -> bool {
+    if err.kind() == io::ErrorKind::StorageFull {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        if err.raw_os_error() == Some(112) {
+            return true;
+        }
+    }
+    false
+}
+
+fn concat_error_preserves_partial_output(err: &str) -> bool {
+    err.contains("StorageFull") || err.contains("No space left on device") || err.contains("disk full")
+}
+
 /// Validates a logical filename is safe for use inside a session directory.
 ///
 /// Rules:
@@ -207,13 +252,20 @@ pub fn ffmpeg_reenter_session(
 /// Decoding in Rust eliminates the JSON-array-of-numbers IPC overhead that was
 /// the dominant export bottleneck (~5-10× speedup on per-frame PNG writes). Phase 6.3.1.
 #[tauri::command]
-pub fn ffmpeg_write_file(session_id: String, path: String, data_b64: String) -> Result<(), String> {
+pub fn ffmpeg_write_file(
+    session_id: String,
+    path: String,
+    data_b64: String,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Result<(), String> {
     validate_path(&path)?;
+    ensure_resume_bitstream_fence(&state, &session_id, &path, "write_file")?;
     let full = session_dir(&session_id)?.join(&path);
     let data = STANDARD
         .decode(&data_b64)
         .map_err(|e| format!("write_file({}): base64 decode failed: {}", path, e))?;
-    fs::write(&full, &data).map_err(|e| format!("write_file({}): {}", path, e))
+    fs::write(&full, &data).map_err(|e| format!("write_file({}): {}", path, e))?;
+    sync_session_file(&full, &format!("write_file({path})"))
 }
 
 /// Raw-binary variant of `ffmpeg_write_file`.
@@ -231,7 +283,10 @@ pub fn ffmpeg_write_file(session_id: String, path: String, data_b64: String) -> 
 /// Validation and the `fs::write` logic are identical to `ffmpeg_write_file` —
 /// only the transport differs.
 #[tauri::command]
-pub fn ffmpeg_write_file_raw(request: tauri::ipc::Request<'_>) -> Result<(), String> {
+pub fn ffmpeg_write_file_raw(
+    request: tauri::ipc::Request<'_>,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Result<(), String> {
     let headers = request.headers();
     let session_id = headers
         .get("session-id")
@@ -243,11 +298,13 @@ pub fn ffmpeg_write_file_raw(request: tauri::ipc::Request<'_>) -> Result<(), Str
         .ok_or_else(|| "write_file_raw: missing or invalid 'path' header".to_string())?;
 
     validate_path(path)?;
+    ensure_resume_bitstream_fence(&state, session_id, path, "write_file_raw")?;
     let full = session_dir(session_id)?.join(path);
 
     match request.body() {
         tauri::ipc::InvokeBody::Raw(data) => {
-            fs::write(&full, data).map_err(|e| format!("write_file_raw({}): {}", path, e))
+            fs::write(&full, data).map_err(|e| format!("write_file_raw({}): {}", path, e))?;
+            sync_session_file(&full, &format!("write_file_raw({path})"))
         }
         tauri::ipc::InvokeBody::Json(_) => {
             Err("write_file_raw: expected a raw byte body, got JSON".to_string())
@@ -293,7 +350,9 @@ pub fn ffmpeg_append_file_raw(
                 .open(&full)
                 .map_err(|e| format!("append_file_raw({}): open: {}", path, e))?;
             file.write_all(data)
-                .map_err(|e| format!("append_file_raw({}): write: {}", path, e))
+                .map_err(|e| format!("append_file_raw({}): write: {}", path, e))?;
+            file.sync_all()
+                .map_err(|e| format!("append_file_raw({}): sync: {}", path, e))
         }
         tauri::ipc::InvokeBody::Json(_) => {
             Err("append_file_raw: expected a raw byte body, got JSON".to_string())
@@ -364,8 +423,13 @@ pub fn ffmpeg_write_export_state(
 
 /// Reads <session_dir>/<path> and returns its bytes.
 #[tauri::command]
-pub fn ffmpeg_read_file(session_id: String, path: String) -> Result<Vec<u8>, String> {
+pub fn ffmpeg_read_file(
+    session_id: String,
+    path: String,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Result<Vec<u8>, String> {
     validate_path(&path)?;
+    ensure_resume_bitstream_fence(&state, &session_id, &path, "read_file")?;
     let full = session_dir(&session_id)?.join(&path);
     fs::read(&full).map_err(|e| format!("read_file({}): {}", path, e))
 }
@@ -1041,9 +1105,12 @@ pub fn ffmpeg_truncate_annexb(
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<AnnexbTruncateResult, String> {
     validate_path(&path)?;
+    ensure_resume_bitstream_fence(&state, &session_id, &path, "truncate_annexb")?;
     let full = session_dir(&session_id)?.join(&path);
     let cancel = session_cancel_flag(&state, &session_id);
-    truncate_annexb_inner(&full, &path, cancel.as_deref())
+    let result = truncate_annexb_inner(&full, &path, cancel.as_deref())?;
+    sync_session_file(&full, &format!("truncate_annexb({path})"))?;
+    Ok(result)
 }
 
 /// Truncates `<session_dir>/<path>` to an exact caller-supplied byte length
@@ -1057,9 +1124,12 @@ pub fn ffmpeg_truncate_annexb_to_offset(
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<AnnexbTruncateResult, String> {
     validate_path(&path)?;
+    ensure_resume_bitstream_fence(&state, &session_id, &path, "truncate_annexb_to_offset")?;
     let full = session_dir(&session_id)?.join(&path);
     let cancel = session_cancel_flag(&state, &session_id);
-    truncate_annexb_to_offset_inner(&full, &path, byte_offset, cancel.as_deref())
+    let result = truncate_annexb_to_offset_inner(&full, &path, byte_offset, cancel.as_deref())?;
+    sync_session_file(&full, &format!("truncate_annexb_to_offset({path})"))?;
+    Ok(result)
 }
 
 fn truncate_annexb_inner(
@@ -1166,6 +1236,7 @@ pub fn ffmpeg_prepare_checkpoint_resume(
         encoder_session_index,
         cancel.as_deref(),
     )?;
+    sync_session_file(&full, &format!("prepare_checkpoint_resume({path})"))?;
     state.resume_pending.lock().unwrap().remove(&session_id);
     Ok(result)
 }
@@ -1265,11 +1336,13 @@ pub fn ffmpeg_concat_annexb_pieces(
     let cancel = session_cancel_flag(&state, &session_id);
 
     let result = concat_annexb_pieces_inner(&dir, &piece_paths, &out_full, cancel.as_deref());
-    if result.is_err() {
-        // Don't leave a partial/corrupt output behind on failure. The write
-        // handle inside `concat_annexb_pieces_inner` has already been dropped
-        // (closed) by the time it returns, so this remove is safe.
-        let _ = fs::remove_file(&out_full);
+    if let Err(ref err) = result {
+        // Preserve a partial concat when the volume is full — the operator may
+        // salvage prefix bytes. Every consumer still runs the picture-count
+        // guard before treating concat output as complete.
+        if !concat_error_preserves_partial_output(err) {
+            let _ = fs::remove_file(&out_full);
+        }
     }
     result
 }
@@ -1301,8 +1374,13 @@ fn concat_annexb_pieces_inner(
             if n == 0 {
                 break;
             }
-            out.write_all(&buf[..n])
-                .map_err(|e| format!("concat_annexb_pieces: write output: {}", e))?;
+            out.write_all(&buf[..n]).map_err(|e| {
+                if io_error_is_disk_full(&e) {
+                    "concat_annexb_pieces: write output: No space left on device".to_string()
+                } else {
+                    format!("concat_annexb_pieces: write output: {}", e)
+                }
+            })?;
         }
     }
 
@@ -1314,8 +1392,13 @@ fn concat_annexb_pieces_inner(
 
 /// Deletes <session_dir>/<path>. Missing file is treated as success.
 #[tauri::command]
-pub fn ffmpeg_delete_file(session_id: String, path: String) -> Result<(), String> {
+pub fn ffmpeg_delete_file(
+    session_id: String,
+    path: String,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Result<(), String> {
     validate_path(&path)?;
+    ensure_resume_bitstream_fence(&state, &session_id, &path, "delete_file")?;
     let full = session_dir(&session_id)?.join(&path);
     match fs::remove_file(&full) {
         Ok(()) => Ok(()),
@@ -1349,6 +1432,7 @@ pub async fn ffmpeg_exec(
     args: Vec<String>,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<i32, String> {
+    ensure_resume_prepared(&state, &session_id, "ffmpeg_exec")?;
     let cwd = session_dir(&session_id)?;
 
     let (mut rx, child) = app
@@ -2510,7 +2594,7 @@ mod tests {
     }
 
     #[test]
-    fn resumed_session_blocks_append_count_concat_until_prepared() {
+    fn resumed_session_blocks_bitstream_ops_until_prepared() {
         let state = FfmpegSessionState::default();
         let id = Uuid::new_v4().to_string();
         state.resume_pending.lock().unwrap().insert(id.clone());
@@ -2519,14 +2603,50 @@ mod tests {
             "append_file_raw",
             "count_annexb_frames",
             "concat_annexb_pieces",
+            "write_file",
+            "write_file_raw",
+            "read_file",
+            "truncate_annexb",
+            "truncate_annexb_to_offset",
+            "delete_file",
+            "ffmpeg_exec",
         ] {
             let err = ensure_resume_prepared(&state, &id, operation).unwrap_err();
-            assert!(err.contains(operation));
+            assert!(err.contains(operation), "missing op name for {operation}");
             assert!(err.contains("has not passed checkpoint pre-append validation"));
         }
 
+        assert!(
+            ensure_resume_bitstream_fence(&state, &id, "export_state.json", "read_file").is_ok()
+        );
+
         state.resume_pending.lock().unwrap().remove(&id);
         assert!(ensure_resume_prepared(&state, &id, "append_file_raw").is_ok());
+    }
+
+    #[test]
+    fn resumed_session_blocks_write_during_pending() {
+        let state = FfmpegSessionState::default();
+        let (id, dir) = make_session();
+        state.resume_pending.lock().unwrap().insert(id.clone());
+        let err = ensure_resume_bitstream_fence(&state, &id, "piece_0.h264", "write_file")
+            .unwrap_err();
+        assert!(err.contains("write_file"));
+        assert!(err.contains("has not passed checkpoint pre-append validation"));
+        fs::write(dir.join("piece_0.h264"), b"blocked").unwrap();
+        state.resume_pending.lock().unwrap().remove(&id);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn concat_preserves_partial_output_on_disk_full_error() {
+        assert!(!concat_error_preserves_partial_output(
+            "concat_annexb_pieces: open piece(missing.h264): No such file",
+        ));
+        assert!(concat_error_preserves_partial_output(
+            "concat_annexb_pieces: write output: No space left on device",
+        ));
+        assert!(io_error_is_disk_full(&io::Error::from(io::ErrorKind::StorageFull)));
     }
 
     #[test]

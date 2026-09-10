@@ -9,10 +9,25 @@
  */
 
 import { sha256Hex } from './annexbChunkCompare';
-import type { HeadingOverlay, Project, TextOverlay, VideoSegment } from '../../types';
+import { getFileIdentity } from '../syncEngine';
+import type { Asset, HeadingOverlay, Project, SegmentGrade, TextOverlay, VideoSegment } from '../../types';
 
 export const EXPORT_STATE_SCHEMA_VERSION = 1;
 export const EXPORT_STATE_FILENAME = 'export_state.json';
+
+/** Bumped when fields included in `sourceTimelineHash` change. Old manifests
+ *  whose hash was computed over a narrower identity set invalidate on resume. */
+export const EXPORT_TIMELINE_IDENTITY_VERSION = 2;
+
+/** In-process recovery bounds from `exportPipelineWebCodecs.ts` (dedc3bf). */
+export const MAX_BOUNDARY_REWINDS_PER_EXPORT = 2;
+export const MAX_HARDWARE_FAILOVER_PER_EXPORT = 1;
+/** 1 initial + 2 rewinds + 1 software failover `driveGlRun` attempts. */
+export const MAX_DRIVE_GL_RUN_ATTEMPTS_PER_EXPORT = 4;
+/** 2 rewind truncates + 1 failover truncate (exact-offset). */
+export const MAX_TRUNCATES_PER_EXPORT = 3;
+/** Cross-process ceiling on rewind/failover/resume-repair events for one export. */
+export const MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT = MAX_DRIVE_GL_RUN_ATTEMPTS_PER_EXPORT;
 
 /**
  * Canonical identity of the timeline a checkpoint may be applied to.
@@ -25,6 +40,9 @@ export const EXPORT_STATE_FILENAME = 'export_state.json';
  */
 export interface ExportTimelineIdentity {
   schema: 1;
+  /** Included in the hash — bump `EXPORT_TIMELINE_IDENTITY_VERSION` when this
+   *  object's covered fields change so old checkpoints invalidate. */
+  timelineIdentityVersion: typeof EXPORT_TIMELINE_IDENTITY_VERSION;
   projectId: string;
   voiceoverId: string | null;
   voiceoverFileIdentity: string | null;
@@ -37,6 +55,24 @@ export interface ExportTimelineIdentity {
   globalTransitionDuration: number;
   globalAnimation: string;
   globalOverlayFilter: string | null;
+  globalOverlayConfig: {
+    color: string;
+    backgroundColor: string;
+    fontFamily: string;
+    fontSize?: number;
+    fontWeight?: string | number;
+    fontStyle?: 'normal' | 'italic';
+    textShadow?: string;
+    animation?: string;
+    x?: number;
+    y?: number;
+  };
+  /** Cheap asset identity — `name|size|lastModified` when `File` is present,
+   *  else `name|addedAt`. Does not hash blob bytes. */
+  assets: ReadonlyArray<{
+    id: string;
+    fileIdentity: string | null;
+  }>;
   segments: ReadonlyArray<{
     id: string;
     startTime: number;
@@ -51,6 +87,30 @@ export interface ExportTimelineIdentity {
     overlayFilter: string | null;
     showOverlay: boolean | null;
     text: string;
+    overlayConfig: VideoSegment['overlayConfig'] | null;
+    extraOverlays: ReadonlyArray<{
+      id: string;
+      text: string;
+      color: string;
+      backgroundColor: string;
+      fontFamily: string;
+      fontSize: number;
+      fontWeight?: string | number;
+      fontStyle?: 'normal' | 'italic';
+      textDecoration?: 'none' | 'underline';
+      textShadow?: string;
+      position: { x: number; y: number };
+      animation?: string;
+      textAlign?: 'left' | 'center' | 'right';
+      hiddenOnSegments?: string[];
+    }> | null;
+    effectTransition?: string;
+    effectTransitionDuration?: number;
+    effectAnimation?: string;
+    effectAnimationDuration?: number;
+    effectAnimationScaleRate?: number;
+    effectOverlay?: string;
+    effectGrade?: SegmentGrade | null;
   }>;
   headings: ReadonlyArray<{
     id: string;
@@ -104,7 +164,18 @@ export interface ExportCheckpointRecord {
   sourceTimelineHash: string;
 }
 
-export interface ExportStateManifest {
+export interface ExportRecoveryBudget {
+  /** Boundary rewinds consumed this export (default 0). */
+  boundaryRewindsUsed?: number;
+  /** Whether the one-shot hardware→software failover has fired (default false). */
+  hardwareFailoverUsed?: boolean;
+  /** Resume-handshake attempts for the current checkpoint generation (default 0). */
+  checkpointResumeAttempts?: number;
+  /** Rewind + failover + resume-repair events across process restarts (default 0). */
+  totalRecoveryAttempts?: number;
+}
+
+export interface ExportStateManifest extends ExportRecoveryBudget {
   schemaVersion: typeof EXPORT_STATE_SCHEMA_VERSION;
   /** ffmpeg session id (`kinetix-export-{uuid}`). */
   sessionId: string;
@@ -165,6 +236,15 @@ export type ExportCheckpointPreparation =
   | {
       kind: 'clean';
       reason: string;
+    }
+  | {
+      /** The Annex-B file was mutated before the handshake completed. */
+      kind: 'bitstream_touched';
+      reason: string;
+      repair: Partial<AnnexbCheckpointRepairResult> & {
+        keptBytes: number;
+        bytesRemoved: number;
+      };
     };
 
 /**
@@ -199,10 +279,12 @@ export type ExportCheckpointPreparation =
  * while `resume_pending` is set, and must not skip `prepareCheckpointResume`.
  *
  * Postconditions: `{kind:'resume', repair}` with `keptBytes === byteOffset`
- * and `pictures === cumulativePictures`, fence cleared; or `{kind:'clean'}`
- * with a reason and no Annex-B mutation from the JS validator.
+ * and `pictures === cumulativePictures`, fence cleared; `{kind:'clean'}`
+ * with a reason when the bitstream is provably untouched; or
+ * `{kind:'bitstream_touched', repair}` when repair mutated the file before failing.
  *
- * Errors: native repair failure → `{kind:'clean'}`; hash/schema/monotonicity
+ * Errors: native repair failure after mutation → `{kind:'bitstream_touched'}`;
+ * failure without mutation → `{kind:'clean'}`; hash/schema/monotonicity/budget
  * mismatch → `{kind:'clean'}` without Annex-B I/O.
  *
  * Call ordering: list/reenter → readExportState → prepareCheckpointResume →
@@ -217,6 +299,16 @@ export type ResumeHandshakeSeam = {
   createManifest: typeof createExportStateManifest;
 };
 
+export function assetFileIdentity(asset: Asset): string | null {
+  if (asset.file) {
+    return getFileIdentity(asset.file);
+  }
+  if (asset.addedAt != null) {
+    return `${asset.name}|${asset.addedAt}`;
+  }
+  return null;
+}
+
 export function timelineIdentityFromProject(
   project: Pick<
     Project,
@@ -229,14 +321,17 @@ export function timelineIdentityFromProject(
     | 'globalTransitionDuration'
     | 'globalAnimation'
     | 'globalOverlayFilter'
+    | 'globalOverlayConfig'
     | 'segments'
     | 'headings'
     | 'textLayers'
+    | 'assets'
   >,
   dims: { fps: number; width: number; height: number },
 ): ExportTimelineIdentity {
   return {
     schema: 1,
+    timelineIdentityVersion: EXPORT_TIMELINE_IDENTITY_VERSION,
     projectId: project.id,
     voiceoverId: project.voiceoverId ?? null,
     voiceoverFileIdentity: project.lastTranscribedFileIdentity ?? null,
@@ -249,6 +344,13 @@ export function timelineIdentityFromProject(
     globalTransitionDuration: project.globalTransitionDuration,
     globalAnimation: project.globalAnimation,
     globalOverlayFilter: project.globalOverlayFilter ?? null,
+    globalOverlayConfig: { ...project.globalOverlayConfig },
+    assets: [...project.assets]
+      .sort((a, b) => a.id.localeCompare(b.id))
+      .map((asset) => ({
+        id: asset.id,
+        fileIdentity: assetFileIdentity(asset),
+      })),
     segments: project.segments.map(segmentIdentity),
     headings: (project.headings ?? []).map(headingIdentity),
     textLayers: (project.textLayers ?? []).map(textLayerIdentity),
@@ -270,6 +372,34 @@ function segmentIdentity(s: VideoSegment): ExportTimelineIdentity['segments'][nu
     overlayFilter: s.overlayFilter ?? null,
     showOverlay: s.showOverlay ?? null,
     text: s.text,
+    overlayConfig: s.overlayConfig ?? null,
+    extraOverlays: s.extraOverlays?.map(textOverlayIdentity) ?? null,
+    effectTransition: s.effectTransition,
+    effectTransitionDuration: s.effectTransitionDuration,
+    effectAnimation: s.effectAnimation,
+    effectAnimationDuration: s.effectAnimationDuration,
+    effectAnimationScaleRate: s.effectAnimationScaleRate,
+    effectOverlay: s.effectOverlay,
+    effectGrade: s.effectGrade ?? null,
+  };
+}
+
+function textOverlayIdentity(t: TextOverlay): NonNullable<ExportTimelineIdentity['segments'][number]['extraOverlays']>[number] {
+  return {
+    id: t.id,
+    text: t.text,
+    color: t.color,
+    backgroundColor: t.backgroundColor,
+    fontFamily: t.fontFamily,
+    fontSize: t.fontSize,
+    fontWeight: t.fontWeight,
+    fontStyle: t.fontStyle,
+    textDecoration: t.textDecoration,
+    textShadow: t.textShadow,
+    position: { ...t.position },
+    animation: t.animation,
+    textAlign: t.textAlign,
+    hiddenOnSegments: t.hiddenOnSegments,
   };
 }
 
@@ -309,6 +439,39 @@ export async function buildSourceTimelineHash(identity: ExportTimelineIdentity):
   return sha256Hex(new TextEncoder().encode(canonicalTimelineJson(identity)));
 }
 
+export function normalizeRecoveryBudget(
+  budget: ExportRecoveryBudget | undefined,
+): Required<ExportRecoveryBudget> {
+  return {
+    boundaryRewindsUsed: budget?.boundaryRewindsUsed ?? 0,
+    hardwareFailoverUsed: budget?.hardwareFailoverUsed ?? false,
+    checkpointResumeAttempts: budget?.checkpointResumeAttempts ?? 0,
+    totalRecoveryAttempts: budget?.totalRecoveryAttempts ?? 0,
+  };
+}
+
+export function isRecoveryBudgetExhausted(manifest: ExportRecoveryBudget): boolean {
+  const budget = normalizeRecoveryBudget(manifest);
+  if (budget.boundaryRewindsUsed >= MAX_BOUNDARY_REWINDS_PER_EXPORT) {
+    return true;
+  }
+  if (budget.totalRecoveryAttempts >= MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT) {
+    return true;
+  }
+  return false;
+}
+
+export function recoveryBudgetExhaustionReason(manifest: ExportRecoveryBudget): string {
+  const budget = normalizeRecoveryBudget(manifest);
+  if (budget.boundaryRewindsUsed >= MAX_BOUNDARY_REWINDS_PER_EXPORT) {
+    return `recovery budget exhausted: boundary rewinds ${budget.boundaryRewindsUsed}/${MAX_BOUNDARY_REWINDS_PER_EXPORT}`;
+  }
+  if (budget.totalRecoveryAttempts >= MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT) {
+    return `recovery budget exhausted: total recovery attempts ${budget.totalRecoveryAttempts}/${MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT}`;
+  }
+  return 'recovery budget exhausted';
+}
+
 export function createExportStateManifest(params: {
   sessionId: string;
   projectId: string;
@@ -326,6 +489,10 @@ export function createExportStateManifest(params: {
     width: params.width,
     height: params.height,
     checkpoints: [],
+    boundaryRewindsUsed: 0,
+    hardwareFailoverUsed: false,
+    checkpointResumeAttempts: 0,
+    totalRecoveryAttempts: 0,
   };
 }
 
@@ -410,6 +577,30 @@ export function validateExportState(
     return { kind: 'clean', reason: 'checkpoint manifest fields are invalid' };
   }
 
+  const boundaryRewindsUsed = optionalNonNegativeInteger(value.boundaryRewindsUsed);
+  const checkpointResumeAttempts = optionalNonNegativeInteger(value.checkpointResumeAttempts);
+  const totalRecoveryAttempts = optionalNonNegativeInteger(value.totalRecoveryAttempts);
+  if (
+    boundaryRewindsUsed === null ||
+    checkpointResumeAttempts === null ||
+    totalRecoveryAttempts === null ||
+    (value.hardwareFailoverUsed !== undefined &&
+      typeof value.hardwareFailoverUsed !== 'boolean')
+  ) {
+    return { kind: 'clean', reason: 'checkpoint recovery budget fields are invalid' };
+  }
+  const recoveryBudget: ExportRecoveryBudget = {
+    boundaryRewindsUsed,
+    hardwareFailoverUsed: typeof value.hardwareFailoverUsed === 'boolean'
+      ? value.hardwareFailoverUsed
+      : undefined,
+    checkpointResumeAttempts,
+    totalRecoveryAttempts,
+  };
+  if (isRecoveryBudgetExhausted(recoveryBudget)) {
+    return { kind: 'clean', reason: recoveryBudgetExhaustionReason(recoveryBudget) };
+  }
+
   if (value.projectId !== expected.projectId) {
     return { kind: 'clean', reason: 'checkpoint projectId mismatch' };
   }
@@ -463,6 +654,7 @@ export function validateExportState(
       width: value.width,
       height: value.height,
       checkpoints,
+      ...normalizeRecoveryBudget(recoveryBudget),
     },
     checkpoint,
   };
@@ -479,8 +671,8 @@ export async function prepareCheckpointResume(
   serializedManifest: string | Uint8Array,
   expected: ExportCheckpointExpectedIdentity,
 ): Promise<ExportCheckpointPreparation> {
-  const fileLength = await io.sessionFileSize(path);
-  const validation = validateExportState(serializedManifest, expected, fileLength);
+  const fileLengthBefore = await io.sessionFileSize(path);
+  const validation = validateExportState(serializedManifest, expected, fileLengthBefore);
   if (validation.kind === 'clean') {
     return validation;
   }
@@ -489,6 +681,19 @@ export async function prepareCheckpointResume(
   try {
     repair = await io.prepareCheckpointResume(path, validation.checkpoint);
   } catch (err) {
+    const fileLengthAfter = await io.sessionFileSize(path);
+    if (fileLengthAfter !== fileLengthBefore) {
+      return {
+        kind: 'bitstream_touched',
+        reason: `checkpoint pre-append repair failed after mutating the bitstream: ${err instanceof Error ? err.message : String(err)}`,
+        repair: {
+          keptBytes: fileLengthAfter,
+          bytesRemoved: fileLengthBefore > fileLengthAfter
+            ? fileLengthBefore - fileLengthAfter
+            : 0,
+        },
+      };
+    }
     return {
       kind: 'clean',
       reason: `checkpoint pre-append repair failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -499,9 +704,15 @@ export async function prepareCheckpointResume(
     repair.pictures !== validation.checkpoint.cumulativePictures
   ) {
     return {
-      kind: 'clean',
+      kind: 'bitstream_touched',
       reason:
         'checkpoint pre-append verification disagrees with byteOffset/cumulativePictures',
+      repair: {
+        keptBytes: repair.keptBytes,
+        bytesRemoved: repair.bytesRemoved,
+        pictures: repair.pictures,
+        vclNals: repair.vclNals,
+      },
     };
   }
   return { ...validation, repair };
@@ -526,6 +737,13 @@ function isPositiveFinite(value: unknown): value is number {
 
 function isNonNegativeSafeInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+}
+
+function optionalNonNegativeInteger(value: unknown): number | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return isNonNegativeSafeInteger(value) ? value : null;
 }
 
 function isPositiveSafeInteger(value: unknown): value is number {
