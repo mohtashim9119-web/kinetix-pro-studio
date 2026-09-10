@@ -12,7 +12,7 @@ import {
   type WebCodecsFfmpeg,
 } from '../services/webcodecsExport/exportPipelineWebCodecs';
 import type { ForcedMp4SealOffer } from '../services/webcodecsExport/muxOnly';
-import { findResumeOffer, type ResumeOffer } from '../services/webcodecsExport/exportResumeSession';
+import { findResumeOffer, type ResumeOffer, type ResumeRefusalNotice } from '../services/webcodecsExport/exportResumeSession';
 import { recordExportSessionCreated, forgetExportSession } from '../services/webcodecsExport/exportSessionLedger';
 import { TauriFfmpeg } from '../services/tauriFfmpeg';
 import { type Project, type ResolutionTier } from '../types';
@@ -199,6 +199,14 @@ export interface UseExportState {
    * `'clean'` is byte-identical to an export that never had a survivor.
    */
   pendingResumeOffer: ResumeOffer | null;
+  /**
+   * WS3 Round 12, STEP 1 — a resume was refused for a reason the operator
+   * needs to hear (the bitstream was cut before the refusal, or the
+   * recovery budget on this timeline is spent). Non-blocking: unlike
+   * `pendingResumeOffer`, the export has already proceeded clean by the
+   * time this is set. Set at most once per `startExport` call.
+   */
+  resumeRefusalNotice: ResumeRefusalNotice | null;
   /** The offer the operator ACCEPTED for the most recent export, so the
    *  success surface can say the file is deliberately shorter than asked for
    *  rather than silently handing over a short video. */
@@ -234,6 +242,7 @@ const IDLE_STATE: UseExportState = {
   elapsedSec: 0,
   pendingSealConsent: null,
   pendingResumeOffer: null,
+  resumeRefusalNotice: null,
 };
 
 /**
@@ -386,6 +395,7 @@ export function useExport(
       progress: 0,
       pendingSealConsent: null,
       pendingResumeOffer: null,
+      resumeRefusalNotice: null,
       stageLabel: 'Loading ffmpeg…',
       error: null,
       elapsedSec: 0,
@@ -408,6 +418,7 @@ export function useExport(
         stageLabel: '',
         pendingSealConsent: null,
         pendingResumeOffer: null,
+        resumeRefusalNotice: null,
         error: {
           kind: 'ffmpeg_load',
           message: 'Failed to create a native ffmpeg session. Is ffmpeg installed and on PATH?',
@@ -485,8 +496,8 @@ export function useExport(
       if (freshSessionId) recordExportSessionCreated(freshSessionId);
       const routing = planWebCodecsExport(snap, fps);
       const pieceExpectedFrames = 'error' in routing ? [] : routing.pieces.map((p) => p.expectedFrames);
-      const offer = pieceExpectedFrames.length === 0
-        ? null
+      const { offer, notice } = pieceExpectedFrames.length === 0
+        ? { offer: null, notice: null }
         : await findResumeOffer({
             project: snap,
             fps,
@@ -496,6 +507,7 @@ export function useExport(
             inUseSessionId: freshSessionId,
           });
       if (generationRef.current !== gen) return;
+      if (notice) setState(prev => ({ ...prev, resumeRefusalNotice: notice }));
       if (offer) {
         const choice = await new Promise<'resume' | 'clean'>((resolve) => {
           resumeChoiceResolverRef.current = (answer) => {
@@ -719,6 +731,7 @@ export function useExport(
       stageLabel: '',
       pendingSealConsent: null,
       pendingResumeOffer: null,
+      resumeRefusalNotice: null,
       error: { kind: 'cancelled', message: 'Export cancelled.' },
       elapsedSec: prev.elapsedSec,
     }));

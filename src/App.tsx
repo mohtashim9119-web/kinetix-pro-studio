@@ -5556,6 +5556,23 @@ export default function App() {
     return () => clearTimeout(t);
   }, [exportState.showExportSuccess, dismissSuccess]);
 
+  // --- WS3 Round 12, STEP 1: resume-refusal notice ---
+  // A crash-surviving export existed but could not be resumed for a reason
+  // the operator needs to hear — the bitstream was cut before the refusal,
+  // or the recovery budget on this timeline is spent. Non-blocking: the
+  // export already proceeded clean by the time this fires. Every ordinary
+  // "nothing to resume" case (no match, identity mismatch, stale manifest)
+  // sets no notice at all and stays silent, as before.
+  useEffect(() => {
+    const notice = exportState.resumeRefusalNotice;
+    if (!notice) return;
+    showToast(
+      notice.kind === 'bitstream_touched'
+        ? `A previous export session couldn't be resumed — its saved video was already partly cut (${notice.reason}). Starting fresh.`
+        : `A previous export session couldn't be resumed — recovery attempts on this project are used up. Starting fresh.`,
+    );
+  }, [exportState.resumeRefusalNotice, showToast]);
+
   // --- Phase 2a H.4 guard: unsupported-language log entry ---
   // Fires once per DISTINCT unsupported value (loggedUnsupportedLanguageRef),
   // not on every render a language happens to still be unsupported — an

@@ -87,6 +87,29 @@ export interface ResumableExport {
 export interface ResumeRejection {
   sessionId: string;
   reason: string;
+  /**
+   * Set when a native mutating call (the pre-append fence, or the post-fence
+   * seam step-back cut) failed AFTER already cutting bytes from the surviving
+   * Annex-B file — never on a call that failed cleanly. `reason` alone cannot
+   * distinguish these: "the fence refused" and "the fence refused, and also
+   * cut the file first" are different operator-facing situations, and only
+   * this field tells them apart. See WS3 Round 12, STEP 1.
+   */
+  bitstreamTouched?: {
+    path: string;
+    fileLengthBefore: number;
+    fileLengthAfter: number;
+  };
+}
+
+/**
+ * Mirrors the exact prefix `exportCheckpoint.ts`'s `recoveryBudgetExhaustionReason`
+ * produces. String-matched rather than a shared export because that module is
+ * Cursor's and off-limits to further edits outside STEP 0's merge reconciliation
+ * — see WS3 Round 12, STEP 1's Cursor-blocker note on this seam.
+ */
+export function isBudgetExhaustedReason(reason: string): boolean {
+  return reason.startsWith('recovery budget exhausted');
 }
 
 export interface ResumeDiscoveryResult {
@@ -163,7 +186,10 @@ export async function evaluateResumeCandidate(
   sessionId: string,
   target: ResumeTargetPlan,
   countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
-): Promise<{ ok: true; value: ResumableExport } | { ok: false; reason: string }> {
+): Promise<
+  | { ok: true; value: ResumableExport }
+  | { ok: false; reason: string; bitstreamTouched?: ResumeRejection['bitstreamTouched'] }
+> {
   let session: ResumeSessionHandle;
   try {
     session = await io.reenter(sessionId);
@@ -188,10 +214,36 @@ export async function evaluateResumeCandidate(
 
   // ── The fence. Native, atomic, and mandatory. Rust keeps append/count/
   // concat closed until this returns. ──────────────────────────────────────
+  //
+  // `ffmpeg_prepare_checkpoint_resume` runs its whole-AU repair and its
+  // exact-offset cut as native mutations BEFORE its own post-repair
+  // verification can fail (WS3 Round 12, STEP 1) — a thrown error here does
+  // not mean the file is untouched. `fileLengthBefore`/`fileLengthAfter`
+  // bracket the call so a real mutation is reported as `bitstreamTouched`
+  // rather than folded into "nothing to resume."
+  const fileLengthBeforeFence = await session.sessionFileSize(pieceFile).catch(() => null);
   let repair: AnnexbCheckpointRepairResult;
   try {
     repair = await session.prepareCheckpointResume(pieceFile, checkpoint);
   } catch (err) {
+    const fileLengthAfterFence = await session.sessionFileSize(pieceFile).catch(() => null);
+    if (
+      fileLengthBeforeFence !== null &&
+      fileLengthAfterFence !== null &&
+      fileLengthAfterFence !== fileLengthBeforeFence
+    ) {
+      return {
+        ok: false,
+        reason:
+          `pre-append fence mutated ${pieceFile} before failing: ${message(err)} ` +
+          `(kept ${fileLengthAfterFence} of ${fileLengthBeforeFence} bytes)`,
+        bitstreamTouched: {
+          path: pieceFile,
+          fileLengthBefore: fileLengthBeforeFence,
+          fileLengthAfter: fileLengthAfterFence,
+        },
+      };
+    }
     return { ok: false, reason: `pre-append fence refused the resume: ${message(err)}` };
   }
   if (
@@ -216,10 +268,32 @@ export async function evaluateResumeCandidate(
     typeof checkpoint.seamByteOffset === 'number' &&
     checkpoint.seamByteOffset < checkpoint.byteOffset
   ) {
+    // Same bracket as the fence above: `truncate_annexb_to_offset_inner`
+    // calls `set_len` (the mutation) before the count that can fail, so a
+    // thrown error here can equally follow a completed cut.
+    const fileLengthBeforeSeam = await session.sessionFileSize(pieceFile).catch(() => null);
     let cut: { pictures: number; keptBytes: number };
     try {
       cut = await session.truncateAnnexbToOffset(pieceFile, checkpoint.seamByteOffset);
     } catch (err) {
+      const fileLengthAfterSeam = await session.sessionFileSize(pieceFile).catch(() => null);
+      if (
+        fileLengthBeforeSeam !== null &&
+        fileLengthAfterSeam !== null &&
+        fileLengthAfterSeam !== fileLengthBeforeSeam
+      ) {
+        return {
+          ok: false,
+          reason:
+            `stepping back to the rotation seam mutated ${pieceFile} before failing: ${message(err)} ` +
+            `(kept ${fileLengthAfterSeam} of ${fileLengthBeforeSeam} bytes)`,
+          bitstreamTouched: {
+            path: pieceFile,
+            fileLengthBefore: fileLengthBeforeSeam,
+            fileLengthAfter: fileLengthAfterSeam,
+          },
+        };
+      }
       return { ok: false, reason: `could not step back to the rotation seam: ${message(err)}` };
     }
     if (cut.pictures !== checkpoint.cumulativePictures || cut.keptBytes !== checkpoint.seamByteOffset) {
@@ -297,7 +371,11 @@ export async function discoverResumableExport(
   for (const sessionId of ids) {
     const outcome = await evaluateResumeCandidate(io, sessionId, target, countPictures);
     if (outcome.ok) return { resumable: outcome.value, rejected };
-    rejected.push({ sessionId, reason: outcome.reason });
+    rejected.push({
+      sessionId,
+      reason: outcome.reason,
+      ...(outcome.bitstreamTouched ? { bitstreamTouched: outcome.bitstreamTouched } : {}),
+    });
   }
   return { resumable: null, rejected };
 }

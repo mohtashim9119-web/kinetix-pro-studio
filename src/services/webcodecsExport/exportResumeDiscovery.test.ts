@@ -242,6 +242,110 @@ describe('resume discovery — the fence ordering', () => {
     expect(result.rejected[0]!.sessionId).toBe(SESSION_2);
     expect(result.rejected[0]!.reason).toContain('sourceTimelineHash mismatch');
   });
+
+  // ── WS3 Round 12, STEP 1 — the three new outcomes ─────────────────────────
+
+  function bitstreamTouchedByFenceIo(): ResumeDiscoveryIo {
+    // A stateful fake: `sessionFileSize` reflects whatever `prepareCheckpointResume`
+    // has already done to the file, exactly like the real native pair would
+    // (`ffmpeg_prepare_checkpoint_resume` truncates before its own post-repair
+    // check can fail).
+    let currentSize = 5_000;
+    return {
+      listResumableSessionIds: async () => [SESSION],
+      reenter: async (sessionId) => ({
+        sessionId,
+        readExportState: async () => new TextEncoder().encode(
+          manifestJson({ rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }] }),
+        ),
+        sessionFileSize: async () => currentSize,
+        prepareCheckpointResume: async () => {
+          currentSize = 4_000; // the native repair's truncate landed...
+          throw new Error('canonical AU repair kept fewer bytes than checkpoint offset'); // ...then its own check failed.
+        },
+        truncateAnnexbToOffset: async (_p, off) => ({ pictures: 1_200, vclNals: 0, bytesRemoved: 0, keptBytes: off }),
+        destroy: async () => {},
+      }),
+    };
+  }
+
+  it('bitstream_touched: the fence mutates the file, THEN fails — reported as touched, not clean', async () => {
+    const r = await evaluateResumeCandidate(bitstreamTouchedByFenceIo(), SESSION, target, async () => 1800);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('unreachable');
+    expect(r.bitstreamTouched).toEqual({ path: 'piece_1.h264', fileLengthBefore: 5_000, fileLengthAfter: 4_000 });
+    expect(r.reason).toContain('mutated');
+  });
+
+  it('bitstream_touched propagates through discoverResumableExport into the rejection list', async () => {
+    const discovered = await discoverResumableExport(bitstreamTouchedByFenceIo(), target, async () => 1800, [SESSION]);
+    expect(discovered.resumable).toBeNull();
+    expect(discovered.rejected[0]!.bitstreamTouched).toEqual({ path: 'piece_1.h264', fileLengthBefore: 5_000, fileLengthAfter: 4_000 });
+  });
+
+  it('bitstream_touched: the seam step-back cut mutates the file, THEN fails', async () => {
+    let currentSize = 5_000;
+    const io: ResumeDiscoveryIo = {
+      listResumableSessionIds: async () => [SESSION],
+      reenter: async (sessionId) => ({
+        sessionId,
+        readExportState: async () => new TextEncoder().encode(
+          manifestJson({ rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, seamByteOffset: 3_000, cumulativePictures: 1_200 }] }),
+        ),
+        sessionFileSize: async () => currentSize,
+        prepareCheckpointResume: async (_p, cp) => {
+          currentSize = cp.byteOffset;
+          return { pictures: cp.cumulativePictures, vclNals: cp.cumulativePictures, bytesRemoved: 0, keptBytes: cp.byteOffset };
+        },
+        truncateAnnexbToOffset: async () => {
+          currentSize = 3_000; // set_len landed...
+          throw new Error('cancelled'); // ...then the recount failed.
+        },
+        destroy: async () => {},
+      }),
+    };
+    const r = await evaluateResumeCandidate(io, SESSION, target, async () => 1800);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('unreachable');
+    expect(r.bitstreamTouched).toEqual({ path: 'piece_1.h264', fileLengthBefore: 4_000, fileLengthAfter: 3_000 });
+  });
+
+  it('a fence failure with NO mutation is never reported as bitstream_touched', async () => {
+    const h = harness({ fenceThrows: 'checkpoint offset is not a canonical whole-AU boundary' });
+    const r = await evaluateResumeCandidate(h.io, SESSION, target, h.countPictures);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('unreachable');
+    expect(r.bitstreamTouched).toBeUndefined();
+  });
+
+  it('recovery budget exhaustion invalidates the manifest (clean, not resumable) with the reason intact', async () => {
+    let manifest = createExportStateManifest({
+      sessionId: SESSION, projectId: 'proj', sourceTimelineHash: HASH_A, fps: 30, width: 1920, height: 1080,
+    });
+    manifest.totalRecoveryAttempts = 4; // MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT
+    manifest = appendExportCheckpoint(manifest, {
+      pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200,
+      fps: 30, width: 1920, height: 1080, sourceTimelineHash: HASH_A,
+    });
+    const h = harness({ json: serializeExportState(manifest) });
+    const result = await discoverResumableExport(h.io, target, h.countPictures);
+    expect(result.resumable).toBeNull();
+    expect(result.rejected[0]!.reason).toContain('recovery budget exhausted');
+    expect(h.fence).not.toHaveBeenCalled(); // no Annex-B I/O — pure manifest check
+  });
+
+  it('a v1-era manifest (hash computed without timelineIdentityVersion) invalidates via the ordinary hash-mismatch path — not corruption, not offered', async () => {
+    // A v1 manifest's sourceTimelineHash was built from a differently-shaped
+    // identity object (no `timelineIdentityVersion` field), so it can never
+    // equal `expected.sourceTimelineHash` computed under v2 — it falls
+    // straight into the existing mismatch check with no dedicated code path.
+    const h = harness({ json: manifestJson({ hash: HASH_B, rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }] }) });
+    const result = await discoverResumableExport(h.io, target, h.countPictures);
+    expect(result.resumable).toBeNull();
+    expect(result.rejected[0]!.reason).toBe('checkpoint sourceTimelineHash mismatch');
+    expect(result.rejected[0]!.bitstreamTouched).toBeUndefined();
+    expect(h.fence).not.toHaveBeenCalled(); // rejected before any native mutation — safe, not "corrupt"
+  });
 });
 
 describe('abandoned-session cleanup policy', () => {

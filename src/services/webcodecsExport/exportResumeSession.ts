@@ -18,8 +18,10 @@ import {
 import {
   collectAbandonedSessions,
   discoverResumableExport,
+  isBudgetExhaustedReason,
   type ResumableExport,
   type ResumeDiscoveryIo,
+  type ResumeRejection,
   type ResumeSessionHandle,
 } from './exportResumeDiscovery';
 import { exportSessionCreatedAt, forgetExportSession } from './exportSessionLedger';
@@ -35,6 +37,36 @@ export interface ResumeOffer {
   secondsAlreadyRendered: number;
   secondsTotal: number;
   resumable: ResumableExport;
+}
+
+/**
+ * A resume was refused for a reason the operator needs to hear, distinct
+ * from the ordinary "nothing to resume" silence — WS3 Round 12, STEP 1.
+ * `bitstream_touched` means a surviving file was cut before the refusal;
+ * `budget_exhausted` means recovery attempts on that timeline are spent.
+ * Every other rejection reason (identity mismatch, corrupt manifest, no
+ * checkpoint fits) is the ordinary, silent "start clean" case and is not
+ * surfaced — it is not evidence of anything gone wrong.
+ */
+export interface ResumeRefusalNotice {
+  sessionId: string;
+  kind: 'bitstream_touched' | 'budget_exhausted';
+  reason: string;
+  bitstreamTouched?: ResumeRejection['bitstreamTouched'];
+}
+
+function refusalNoticeFromRejections(rejected: readonly ResumeRejection[]): ResumeRefusalNotice | null {
+  // Newest first (the caller passes `ordered`), so the first match is the
+  // candidate THIS export would actually have tried.
+  for (const r of rejected) {
+    if (r.bitstreamTouched) {
+      return { sessionId: r.sessionId, kind: 'bitstream_touched', reason: r.reason, bitstreamTouched: r.bitstreamTouched };
+    }
+    if (isBudgetExhaustedReason(r.reason)) {
+      return { sessionId: r.sessionId, kind: 'budget_exhausted', reason: r.reason };
+    }
+  }
+  return null;
 }
 
 const tauriIo: ResumeDiscoveryIo = {
@@ -73,7 +105,12 @@ export async function buildExpectedIdentity(
  * abandoned sessions the policy says should go.
  *
  * Everything here is best-effort: a failure returns "no offer" and the export
- * starts clean, which is always a correct outcome.
+ * starts clean, which is always a correct outcome. `notice` is a SEPARATE,
+ * non-blocking signal: unlike `offer`, it is never something the operator
+ * answers — the export proceeds either way — but a `bitstream_touched` or
+ * `budget_exhausted` refusal must still reach them (WS3 Round 12, STEP 1),
+ * because both are silently indistinguishable from "nothing to resume"
+ * otherwise.
  */
 export async function findResumeOffer(params: {
   project: Project;
@@ -86,7 +123,7 @@ export async function findResumeOffer(params: {
   nowMs?: number;
   io?: ResumeDiscoveryIo;
   countPicturesImpl?: (session: ResumeSessionHandle, path: string) => Promise<number>;
-}): Promise<ResumeOffer | null> {
+}): Promise<{ offer: ResumeOffer | null; notice: ResumeRefusalNotice | null }> {
   const io = params.io ?? tauriIo;
   const count = params.countPicturesImpl ?? countPictures;
   const nowMs = params.nowMs ?? Date.now();
@@ -95,9 +132,9 @@ export async function findResumeOffer(params: {
   try {
     sessionIds = await io.listResumableSessionIds();
   } catch {
-    return null;
+    return { offer: null, notice: null };
   }
-  if (sessionIds.length === 0) return null;
+  if (sessionIds.length === 0) return { offer: null, notice: null };
 
   // Newest first — the ledger's job. An id the ledger does not know sorts last,
   // matching the cleanup policy's own "unknown means oldest" treatment.
@@ -111,6 +148,7 @@ export async function findResumeOffer(params: {
   });
 
   let offer: ResumeOffer | null = null;
+  let notice: ResumeRefusalNotice | null = null;
   try {
     const expected = await buildExpectedIdentity(params.project, {
       fps: params.fps, width: params.width, height: params.height,
@@ -131,6 +169,8 @@ export async function findResumeOffer(params: {
         secondsTotal: found.resumable.picturesTotal / params.fps,
         resumable: found.resumable,
       };
+    } else {
+      notice = refusalNoticeFromRejections(found.rejected);
     }
   } catch (err) {
     // eslint-disable-next-line no-console
@@ -157,5 +197,5 @@ export async function findResumeOffer(params: {
     // Cleanup is housekeeping; it never blocks or fails an export.
   }
 
-  return offer;
+  return { offer, notice };
 }
