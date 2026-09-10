@@ -153,6 +153,36 @@ export interface ForcedMp4SealOffer {
   fps: number;
 }
 
+/**
+ * Sealing-offer seam (CC call site lives in exportPipelineWebCodecs.ts).
+ *
+ * CC must supply, and nothing else:
+ * 1. `measured` — the concat guard's unmodified `{pictures, vclNals}` after
+ *    salvage-truncate (post-final-AU-drop counts, never pre-drop).
+ * 2. `picturesExpected` — the same expected count the guard compared against.
+ * 3. `fps` — the export frame rate used for wall-duration.
+ * 4. `operatorConsented` — explicit operator yes/no; this helper never infers it.
+ * 5. ffmpeg session + `videoFile` / `audioFile` / `outputFile` paths for seal.
+ *
+ * Preconditions: the concat frame-count guard has already reported the
+ * discrepancy. This seam must not rewrite either count, suppress the guard,
+ * or run before the guard. `measured.pictures` is the post-policy kept count.
+ *
+ * Postconditions: `null` / `not-eligible` when there is no non-empty true
+ * shortfall; `consent-required` with the offer when eligible and consent is
+ * absent (no ffmpeg call); `sealed` with the same offer after muxOnly when
+ * consent is present. Duration is pictures/fps, never container metadata.
+ *
+ * Errors: muxOnly failures throw; eligibility failures do not throw.
+ *
+ * Call ordering: guard reports → offer(measured, expected, fps) → UI consent
+ * → sealTruncatedAnnexbToMp4({..., operatorConsented: true}).
+ */
+export type SealingOfferSeam = {
+  offer: typeof forcedMp4SealOffer;
+  seal: typeof sealTruncatedAnnexbToMp4;
+};
+
 export type ForcedMp4SealDisposition =
   | { kind: 'not-eligible'; reason: string }
   | { kind: 'consent-required'; offer: ForcedMp4SealOffer }

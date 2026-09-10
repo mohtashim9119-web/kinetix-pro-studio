@@ -144,6 +144,56 @@ export type ExportCheckpointPreparation =
       reason: string;
     };
 
+/**
+ * Resume handshake seam (CC call site lives in exportPipelineWebCodecs.ts /
+ * encoderSessionPlan.ts — not edited here).
+ *
+ * CC must supply, and nothing else:
+ * 1. The surviving session id (from `TauriFfmpeg.listResumableSessionIds` +
+ *    `reenter`) — never mint a new UUID for a resume.
+ * 2. `serializedManifest` bytes from `export_state.json`.
+ * 3. `expected` identity: `{projectId, sourceTimelineHash, fps, width, height}`
+ *    of the project currently in memory (`buildSourceTimelineHash` of
+ *    `timelineIdentityFromProject`).
+ * 4. The surviving Annex-B `path` inside that session.
+ * 5. An `ExportCheckpointResumeIo` whose `prepareCheckpointResume` is
+ *    `TauriFfmpeg.prepareCheckpointResume` (native atomic handshake).
+ * 6. Rotation-seam call sites that call `appendExportCheckpoint` then
+ *    `serializeExportState` then `TauriFfmpeg.writeExportState`. CC does
+ *    not design the write; those three are the complete writer primitive.
+ *
+ * HARD PRECONDITION — pre-append fence ordering, native and mandatory:
+ * 1. find the final start code (backwards tail inspection)
+ * 2. unconditional whole-AU repair (`ffmpeg_truncate_annexb`)
+ * 3. assert repair did not fall before the checkpoint byte offset
+ * 4. exact-offset truncate (`ffmpeg_truncate_annexb_to_offset`)
+ * 5. re-repair asserting `bytesRemoved == 0`
+ * 6. recount; assert `pictures == cumulativePictures`
+ * 7. only then clear `resume_pending`
+ *
+ * `prepareCheckpointResume` (this module) + `ffmpeg_prepare_checkpoint_resume`
+ * (Rust) already perform that order. CC must not append, count, or concat
+ * while `resume_pending` is set, and must not skip `prepareCheckpointResume`.
+ *
+ * Postconditions: `{kind:'resume', repair}` with `keptBytes === byteOffset`
+ * and `pictures === cumulativePictures`, fence cleared; or `{kind:'clean'}`
+ * with a reason and no Annex-B mutation from the JS validator.
+ *
+ * Errors: native repair failure → `{kind:'clean'}`; hash/schema/monotonicity
+ * mismatch → `{kind:'clean'}` without Annex-B I/O.
+ *
+ * Call ordering: list/reenter → readExportState → prepareCheckpointResume →
+ * (only on kind=resume) append remainder. Writer at a rotation seam:
+ * appendExportCheckpoint → serializeExportState → writeExportState.
+ */
+export type ResumeHandshakeSeam = {
+  validate: typeof validateExportState;
+  prepare: typeof prepareCheckpointResume;
+  appendCheckpoint: typeof appendExportCheckpoint;
+  serialize: typeof serializeExportState;
+  createManifest: typeof createExportStateManifest;
+};
+
 export function timelineIdentityFromProject(
   project: Pick<
     Project,

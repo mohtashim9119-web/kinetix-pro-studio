@@ -207,6 +207,24 @@ describe('forced MP4 sealing — post-guard disposition', () => {
     expect(ffmpeg.exec).not.toHaveBeenCalled();
   });
 
+  it('operator-visible offer numbers are the post-final-AU-drop counts', () => {
+    // Salvage dropped the incomplete last picture (900 expected → 899 kept).
+    // The offer must not overstate what was kept by reporting the pre-drop count.
+    const postDrop = forcedMp4SealOffer({ pictures: 899, vclNals: 899 }, 900, 30);
+    expect(postDrop).toEqual({
+      picturesKept: 899,
+      picturesExpected: 900,
+      picturesLost: 1,
+      keptWallDurationSeconds: 899 / 30,
+      lostWallDurationSeconds: 1 / 30,
+      fps: 30,
+    });
+    const preDropWouldHaveBeen = forcedMp4SealOffer({ pictures: 900, vclNals: 900 }, 900, 30);
+    expect(preDropWouldHaveBeen).toBeNull();
+    expect(postDrop?.picturesKept).toBe(899);
+    expect(postDrop?.picturesLost).toBe(1);
+  });
+
   it('consented sealing remuxes the picture-valid prefix into MP4', async () => {
     const ffmpeg = fakeFfmpeg();
     const result = await sealTruncatedAnnexbToMp4({
