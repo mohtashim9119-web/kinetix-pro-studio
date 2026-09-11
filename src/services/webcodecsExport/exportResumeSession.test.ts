@@ -115,6 +115,38 @@ describe('findResumeOffer — resume refusal notice', () => {
     expect(offer).toBeNull();
     expect(notice).toBeNull();
   });
+
+  // WS3 STEP 8 (H5) — a live claim held by a DIFFERENT process must reach
+  // the caller as its own distinct notice kind, decided before `reenter` is
+  // even attempted (so `prepareCheckpointResume` throwing "should not be
+  // called" — ioFor's default — would fail this test if the block did not
+  // actually short-circuit).
+  it('a live claim reaches the caller as a live_claim_blocked notice, with no offer, and never attempts reenter', async () => {
+    let reentered = false;
+    const io: ResumeDiscoveryIo = {
+      listResumableSessionIds: async () => [SESSION],
+      reenter: async (sessionId) => {
+        reentered = true;
+        return {
+          sessionId,
+          readExportState: async () => { throw new Error('should not be called — live claim must block first'); },
+          sessionFileSize: async () => 5_000,
+          prepareCheckpointResume: async () => { throw new Error('should not be called'); },
+          truncateAnnexbToOffset: async (_p, off) => ({ pictures: 0, vclNals: 0, bytesRemoved: 0, keptBytes: off }),
+          destroy: async () => {},
+        };
+      },
+      readSessionClaim: async () => ({ holderLiveness: 'live' }),
+    };
+    const { offer, notice } = await findResumeOffer({
+      project: project(), fps: 30, width: 1920, height: 1080,
+      pieceExpectedFrames: [60], io, nowMs: 0,
+    });
+    expect(offer).toBeNull();
+    expect(notice?.kind).toBe('live_claim_blocked');
+    expect(notice?.reason).toContain('another window is using this session');
+    expect(reentered).toBe(false);
+  });
 });
 
 async function expectedHash(): Promise<string> {

@@ -359,6 +359,43 @@ pub fn is_session_dir_claimed_by_live_holder(dir: &Path) -> Result<bool, String>
     }
 }
 
+/// WS3 STEP 8 (H10) — the three outcomes a successful `remove_dir_all` call
+/// can leave behind, extracted as a pure classifier so the accounting
+/// invariant ("a directory the sweep could not actually remove must never
+/// be counted as reclaimed space") is directly unit-testable without
+/// depending on real Windows delete-pending semantics, which this
+/// environment cannot reproduce (`remove_dir_all` either fully succeeds or
+/// fully fails on macOS/Linux — there is no real way to force the
+/// open-handle-pends-behind-a-successful-call race here). The classifier
+/// takes only the two booleans the real call site already has
+/// (`existed_before`, `dir.exists()` after the call), so the SAME decision
+/// this makes is exercised for real on every platform — only the INPUT that
+/// drives `PendingDelete` is Windows-specific, not the logic that decides
+/// what to do with it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoveOutcome {
+    /// `remove_dir_all` returned `Ok`, but the directory is genuinely gone —
+    /// the ordinary case. Counts toward `bytes_reclaimed`.
+    Deleted,
+    /// `remove_dir_all` returned `Ok`, but the directory still exists —
+    /// Windows: a delete pending behind an open handle. MUST NOT count
+    /// toward `bytes_reclaimed`; the bytes are not actually reclaimed yet.
+    PendingDelete,
+    /// The directory was already gone before the call even ran (a race with
+    /// something else deleting it). Not a reclaim THIS sweep performed.
+    VanishedBeforeDelete,
+}
+
+fn classify_remove_outcome(existed_before: bool, still_exists_after: bool) -> RemoveOutcome {
+    if still_exists_after {
+        RemoveOutcome::PendingDelete
+    } else if existed_before {
+        RemoveOutcome::Deleted
+    } else {
+        RemoveOutcome::VanishedBeforeDelete
+    }
+}
+
 pub fn sweep_manifestless_orphans(min_age_secs: u64) -> Result<OrphanSweepReport, String> {
     let temp = std::env::temp_dir();
     let entries = fs::read_dir(&temp)
@@ -436,42 +473,46 @@ pub fn sweep_manifestless_orphans(min_age_secs: u64) -> Result<OrphanSweepReport
         let existed_before = dir.exists();
         match fs::remove_dir_all(&dir) {
             Ok(()) => {
-                if dir.exists() {
-                    // Windows: delete may pend behind an open handle while returning Ok.
-                    report.pending_delete += 1;
-                    report.entries.push(OrphanSweepEntry {
-                        session_id: id.to_string(),
-                        path: dir.display().to_string(),
-                        age_secs,
-                        bytes,
-                        outcome: "pending_delete".to_string(),
-                        detail: Some(
-                            "remove_dir_all returned Ok but directory still exists — \
-                             likely an open handle (Windows delete-pending semantics)"
-                                .to_string(),
-                        ),
-                    });
-                } else if existed_before {
-                    report.deleted += 1;
-                    report.bytes_reclaimed += bytes;
-                    report.entries.push(OrphanSweepEntry {
-                        session_id: id.to_string(),
-                        path: dir.display().to_string(),
-                        age_secs,
-                        bytes,
-                        outcome: "deleted".to_string(),
-                        detail: None,
-                    });
-                } else {
-                    report.deferred += 1;
-                    report.entries.push(OrphanSweepEntry {
-                        session_id: id.to_string(),
-                        path: dir.display().to_string(),
-                        age_secs,
-                        bytes,
-                        outcome: "deferred".to_string(),
-                        detail: Some("directory disappeared before delete".to_string()),
-                    });
+                match classify_remove_outcome(existed_before, dir.exists()) {
+                    RemoveOutcome::PendingDelete => {
+                        // Windows: delete may pend behind an open handle while returning Ok.
+                        report.pending_delete += 1;
+                        report.entries.push(OrphanSweepEntry {
+                            session_id: id.to_string(),
+                            path: dir.display().to_string(),
+                            age_secs,
+                            bytes,
+                            outcome: "pending_delete".to_string(),
+                            detail: Some(
+                                "remove_dir_all returned Ok but directory still exists — \
+                                 likely an open handle (Windows delete-pending semantics)"
+                                    .to_string(),
+                            ),
+                        });
+                    }
+                    RemoveOutcome::Deleted => {
+                        report.deleted += 1;
+                        report.bytes_reclaimed += bytes;
+                        report.entries.push(OrphanSweepEntry {
+                            session_id: id.to_string(),
+                            path: dir.display().to_string(),
+                            age_secs,
+                            bytes,
+                            outcome: "deleted".to_string(),
+                            detail: None,
+                        });
+                    }
+                    RemoveOutcome::VanishedBeforeDelete => {
+                        report.deferred += 1;
+                        report.entries.push(OrphanSweepEntry {
+                            session_id: id.to_string(),
+                            path: dir.display().to_string(),
+                            age_secs,
+                            bytes,
+                            outcome: "deferred".to_string(),
+                            detail: Some("directory disappeared before delete".to_string()),
+                        });
+                    }
                 }
             }
             Err(e) => {
@@ -594,5 +635,64 @@ mod tests {
             "released claim must not block sweep"
         );
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // WS3 STEP 8 (H10) — `classify_remove_outcome` in isolation, not a full
+    // `sweep_manifestless_orphans` run. That function scans the WHOLE OS
+    // temp directory and is shared, global, mutating state — under
+    // `cargo test`'s default parallelism, calling it for real (even with a
+    // 0 min-age override) risks racing and deleting ANOTHER concurrently
+    // running test's own `kinetix-export-*` directory, which is a worse
+    // failure mode than the thing being tested. `classify_remove_outcome`
+    // is the exact decision the real call site makes from the same two
+    // inputs it already has (`existed_before`, `dir.exists()` after the
+    // call) — testing it directly exercises the real accounting logic with
+    // none of the shared-filesystem risk. See its own doc comment for why
+    // this environment cannot reproduce Windows delete-pending semantics
+    // for real either way.
+    #[test]
+    fn pending_delete_is_never_classified_as_deleted() {
+        // The Windows race this exists for: remove_dir_all returned Ok, but
+        // an open handle kept the directory alive.
+        assert_eq!(
+            classify_remove_outcome(true, true),
+            RemoveOutcome::PendingDelete
+        );
+    }
+
+    #[test]
+    fn a_genuine_removal_is_classified_as_deleted() {
+        assert_eq!(
+            classify_remove_outcome(true, false),
+            RemoveOutcome::Deleted
+        );
+    }
+
+    #[test]
+    fn a_directory_gone_before_the_call_is_neither_deleted_nor_pending() {
+        // Raced away by something else before remove_dir_all ran — not a
+        // reclaim THIS sweep performed, so it must not inflate
+        // bytes_reclaimed either.
+        assert_eq!(
+            classify_remove_outcome(false, false),
+            RemoveOutcome::VanishedBeforeDelete
+        );
+    }
+
+    #[test]
+    fn only_the_deleted_outcome_is_eligible_for_bytes_reclaimed() {
+        // Direct statement of the STEP 8 invariant: exactly one of the three
+        // outcomes may ever be counted as reclaimed space.
+        let outcomes = [
+            classify_remove_outcome(true, true),   // PendingDelete
+            classify_remove_outcome(true, false),  // Deleted
+            classify_remove_outcome(false, false), // VanishedBeforeDelete
+        ];
+        let reclaimable: Vec<_> = outcomes
+            .iter()
+            .filter(|o| **o == RemoveOutcome::Deleted)
+            .collect();
+        assert_eq!(reclaimable.len(), 1);
+        assert_ne!(*reclaimable[0], RemoveOutcome::PendingDelete);
     }
 }

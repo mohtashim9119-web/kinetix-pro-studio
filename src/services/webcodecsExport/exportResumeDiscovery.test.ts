@@ -77,6 +77,11 @@ function harness(opts: {
   pieceCounts?: Record<string, number>;
   sessionIds?: string[];
   seamCutPictures?: number;
+  /** WS3 STEP 8 (H5) — when set, `io.readSessionClaim` is wired in and
+   *  reports this liveness for every session id. Omitted entirely (not just
+   *  falsy) keeps `readSessionClaim` absent from `io`, matching the
+   *  pre-STEP-8 default-skip behavior most tests still exercise. */
+  claimLiveness?: 'live' | 'stale' | 'unclaimed';
 } = {}): Harness {
   const calls: string[] = [];
   const fileSizes = opts.fileSizes ?? { 'piece_1.h264': 5_000 };
@@ -123,6 +128,14 @@ function harness(opts: {
       };
       return handle;
     },
+    ...(opts.claimLiveness
+      ? {
+          readSessionClaim: async (sessionId: string) => {
+            calls.push(`readSessionClaim(${sessionId})`);
+            return { holderLiveness: opts.claimLiveness! };
+          },
+        }
+      : {}),
   };
   return { io, calls, fence, count, seamCut, countPictures: (_s, p) => count(p) };
 }
@@ -346,6 +359,75 @@ describe('resume discovery — the fence ordering', () => {
     expect(result.rejected[0]!.reason).toBe('checkpoint sourceTimelineHash mismatch');
     expect(result.rejected[0]!.bitstreamTouched).toBeUndefined();
     expect(h.fence).not.toHaveBeenCalled(); // rejected before any native mutation — safe, not "corrupt"
+  });
+});
+
+/**
+ * WS3 STEP 8 (H5) — the frontend consumer of two already-merged native
+ * commands (`ffmpeg_read_session_claim`, and `reenter`'s own
+ * `acquire_session_claim` refusal). These tests pin the TWO DIFFERENT
+ * operator-facing outcomes a claim can produce, and that they are decided
+ * BEFORE `reenter` is even attempted.
+ */
+describe('claim-aware reentry (H5) — a live foreign holder blocks, a stale one recovers', () => {
+  it('a LIVE claim blocks reentry before it is even attempted, and is reported as liveClaimBlocked', async () => {
+    const h = harness({ claimLiveness: 'live' });
+    const r = await evaluateResumeCandidate(h.io, SESSION, target, h.countPictures);
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('unreachable');
+    expect(r.liveClaimBlocked).toBe(true);
+    expect(r.reason).toContain('another window is using this session');
+    // The whole point: reenter is never even called for a live-blocked candidate.
+    expect(h.calls).toContain(`readSessionClaim(${SESSION})`);
+    expect(h.calls.some((c) => c.startsWith('reenter('))).toBe(false);
+  });
+
+  it('a live claim propagates through discoverResumableExport as a live_claim_blocked rejection', async () => {
+    const h = harness({ claimLiveness: 'live' });
+    const result = await discoverResumableExport(h.io, target, h.countPictures);
+    expect(result.resumable).toBeNull();
+    expect(result.rejected[0]!.liveClaimBlocked).toBe(true);
+  });
+
+  it('a STALE claim permits reentry, and the resumable value says so (staleClaimRecovered)', async () => {
+    const h = harness({ claimLiveness: 'stale' });
+    const r = await evaluateResumeCandidate(h.io, SESSION, target, h.countPictures);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('unreachable');
+    expect(r.value.staleClaimRecovered).toBe(true);
+    // Reentry DID happen — a stale claim recovers, it does not block.
+    expect(h.calls.some((c) => c.startsWith('reenter('))).toBe(true);
+  });
+
+  it('an UNCLAIMED session is the ordinary case — no recovery notice, reentry proceeds', async () => {
+    const h = harness({ claimLiveness: 'unclaimed' });
+    const r = await evaluateResumeCandidate(h.io, SESSION, target, h.countPictures);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('unreachable');
+    expect(r.value.staleClaimRecovered).toBe(false);
+  });
+
+  it('omitting readSessionClaim entirely (a caller that does not supply it) skips the check and behaves exactly as before STEP 8', async () => {
+    const h = harness(); // no claimLiveness — io.readSessionClaim is absent
+    const r = await evaluateResumeCandidate(h.io, SESSION, target, h.countPictures);
+    expect(r.ok).toBe(true);
+    if (!r.ok) throw new Error('unreachable');
+    expect(r.value.staleClaimRecovered).toBe(false);
+    expect(h.calls.some((c) => c.startsWith('readSessionClaim('))).toBe(false);
+  });
+
+  it('TWO DIFFERENT operator-facing messages: live-block text never mentions recovery, and vice versa', async () => {
+    const live = harness({ claimLiveness: 'live' });
+    const liveResult = await evaluateResumeCandidate(live.io, SESSION, target, live.countPictures);
+    expect(liveResult.ok).toBe(false);
+    if (liveResult.ok) throw new Error('unreachable');
+    expect(liveResult.reason.toLowerCase()).not.toContain('recover');
+
+    const stale = harness({ claimLiveness: 'stale' });
+    const staleResult = await evaluateResumeCandidate(stale.io, SESSION, target, stale.countPictures);
+    expect(staleResult.ok).toBe(true);
+    if (!staleResult.ok) throw new Error('unreachable');
+    expect(staleResult.value.staleClaimRecovered).toBe(true);
   });
 });
 

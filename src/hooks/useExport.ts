@@ -14,7 +14,8 @@ import {
 import type { ForcedMp4SealOffer } from '../services/webcodecsExport/muxOnly';
 import { findResumeOffer, type ResumeOffer, type ResumeRefusalNotice } from '../services/webcodecsExport/exportResumeSession';
 import { recordExportSessionCreated, forgetExportSession } from '../services/webcodecsExport/exportSessionLedger';
-import { TauriFfmpeg } from '../services/tauriFfmpeg';
+import { readCleanupNotices, clearCleanupNotices, type CleanupNotice } from '../services/webcodecsExport/exportCleanupNotices';
+import { TauriFfmpeg, type OrphanSweepReport } from '../services/tauriFfmpeg';
 import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
@@ -211,6 +212,26 @@ export interface UseExportState {
    *  success surface can say the file is deliberately shorter than asked for
    *  rather than silently handing over a short video. */
   lastExportSealedOffer?: ForcedMp4SealOffer;
+  /**
+   * WS3 STEP 8 (H10) — the result of the orphan sweep run once at the start
+   * of this `startExport` call, before the fresh session is even created.
+   * Non-null only when the sweep found at least one candidate (scanned-but-
+   * clean runs leave this `null` rather than reporting nothing every time).
+   * `pendingDelete` (Windows: `remove_dir_all` returned Ok but the directory
+   * still exists behind an open handle) is reported SEPARATELY from
+   * `bytesReclaimed` — a directory the sweep could not actually remove must
+   * never be counted as reclaimed space.
+   */
+  orphanSweepNotice: OrphanSweepReport | null;
+  /**
+   * WS3 STEP 8 (C6) — cleanup failures (`TauriFfmpeg.destroy()`, the
+   * premux-intermediate delete in `muxOnly.ts`) recorded by a PRIOR run and
+   * read back at the start of this one, then cleared so the same notice
+   * does not repeat on every subsequent export. Never blocks or delays
+   * anything — purely informational, for an operator who wants to know why
+   * disk usage crept up.
+   */
+  cleanupNotices: CleanupNotice[];
 }
 
 export interface UseExportApi {
@@ -243,6 +264,8 @@ const IDLE_STATE: UseExportState = {
   pendingSealConsent: null,
   pendingResumeOffer: null,
   resumeRefusalNotice: null,
+  orphanSweepNotice: null,
+  cleanupNotices: [],
 };
 
 /**
@@ -396,6 +419,8 @@ export function useExport(
       pendingSealConsent: null,
       pendingResumeOffer: null,
       resumeRefusalNotice: null,
+      orphanSweepNotice: null,
+      cleanupNotices: [],
       stageLabel: 'Loading ffmpeg…',
       error: null,
       elapsedSec: 0,
@@ -419,6 +444,8 @@ export function useExport(
         pendingSealConsent: null,
         pendingResumeOffer: null,
         resumeRefusalNotice: null,
+        orphanSweepNotice: null,
+        cleanupNotices: [],
         error: {
           kind: 'ffmpeg_load',
           message: 'Failed to create a native ffmpeg session. Is ffmpeg installed and on PATH?',
@@ -432,6 +459,42 @@ export function useExport(
     }
 
     if (generationRef.current !== gen) return;
+
+    // ── WS3 STEP 8 (H10 + C6) — ORPHAN SWEEP + CLEANUP NOTICES ─────────────
+    //
+    // Runs before the fresh session exists, independent of WebCodecs vs.
+    // legacy path — orphaned `kinetix-export-*` directories are a native,
+    // path-agnostic artifact of any prior export. Best-effort in every
+    // sense: a failure here is swallowed rather than surfaced as an export
+    // error, and the sweep itself already refuses anything younger than
+    // ORPHAN_SWEEP_MIN_AGE_SECS, manifest-bearing, or claimed by a live
+    // holder (native `sweep_manifestless_orphans` — see session_claim.rs).
+    // Left uncollected, one orphaned session directory holds a whole
+    // Annex-B stream: ~1.7-2.3 GB at the measured reference/sizing cases
+    // (exportResumeDiscovery.ts's cleanup-policy header).
+    try {
+      const report = await TauriFfmpeg.sweepOrphanSessions();
+      if (generationRef.current === gen && report.candidates > 0) {
+        setState(prev => ({ ...prev, orphanSweepNotice: report }));
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[ws3-orphan-sweep] sweep failed — leaving orphans for next time', err instanceof Error ? err.message : String(err));
+    }
+    // Cleanup failures a PRIOR run recorded (TauriFfmpeg.destroy(),
+    // muxOnly.ts's premux-intermediate delete) — read once, then cleared so
+    // the same notice does not repeat on every subsequent export start.
+    try {
+      const notices = readCleanupNotices();
+      if (notices.length > 0) {
+        clearCleanupNotices();
+        if (generationRef.current === gen) {
+          setState(prev => ({ ...prev, cleanupNotices: notices }));
+        }
+      }
+    } catch {
+      // Best-effort, same posture as the sweep above.
+    }
 
     const { resolution, fps, project: snap, savedPath } = snapshot;
     const { width: resWidth, height: resHeight } = resolveDimensions(
@@ -732,6 +795,8 @@ export function useExport(
       pendingSealConsent: null,
       pendingResumeOffer: null,
       resumeRefusalNotice: null,
+      orphanSweepNotice: null,
+      cleanupNotices: [],
       error: { kind: 'cancelled', message: 'Export cancelled.' },
       elapsedSec: prev.elapsedSec,
     }));

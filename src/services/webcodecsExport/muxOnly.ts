@@ -94,6 +94,7 @@
 
 import type { FfmpegLike } from '../segmentEncoder';
 import type { AnnexbFrameCount } from './annexbFrameCount';
+import { recordCleanupFailure } from './exportCleanupNotices';
 
 function causeString(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -311,10 +312,16 @@ export async function muxOnly(
   } finally {
     // Best-effort cleanup of the intermediate — a failure here must not mask
     // whatever mux result/error already happened above.
+    //
+    // WS3 STEP 8 (C6) — this used to be swallowed with no trace at all (not
+    // even a console.warn), so a left-behind `.premux.mp4` was invisible
+    // until an operator happened to notice disk usage. Still best-effort —
+    // never allowed to shadow the mux result/error above — but now durably
+    // recorded so the next run's start-up notice can surface it.
     try {
       await ffmpeg.deleteFile(premuxFile);
-    } catch {
-      // best-effort
+    } catch (err) {
+      recordCleanupFailure('premux-intermediate', sessionId, `${premuxFile}: ${causeString(err)}`);
     }
   }
 }

@@ -36,6 +36,15 @@ export interface ResumeOffer {
   secondsAlreadyRendered: number;
   secondsTotal: number;
   resumable: ResumableExport;
+  /**
+   * WS3 STEP 8 (H5) — mirrors `resumable.staleClaimRecovered`. True means
+   * this session's own prior holder process crashed (its claim read
+   * `stale`) rather than exited cleanly, so the offer UI must show a
+   * "recovering an abandoned session" notice — DIFFERENT wording from the
+   * ordinary resume-offer text, because it tells the operator something
+   * actually went wrong last time, not just that they closed the app mid-export.
+   */
+  claimRecoveryNotice: boolean;
 }
 
 /**
@@ -49,7 +58,7 @@ export interface ResumeOffer {
  */
 export interface ResumeRefusalNotice {
   sessionId: string;
-  kind: 'bitstream_touched' | 'budget_exhausted';
+  kind: 'bitstream_touched' | 'budget_exhausted' | 'live_claim_blocked';
   reason: string;
   bitstreamTouched?: ResumeRejection['bitstreamTouched'];
 }
@@ -58,6 +67,14 @@ function refusalNoticeFromRejections(rejected: readonly ResumeRejection[]): Resu
   // Newest first (the caller passes `ordered`), so the first match is the
   // candidate THIS export would actually have tried.
   for (const r of rejected) {
+    // WS3 STEP 8 (H5) — checked first: a live-claim block is decided before
+    // `reenter` is even attempted, so it is the most specific signal
+    // available for this candidate and should never be shadowed by a
+    // coincidental bitstream/budget rejection on some OTHER candidate later
+    // in the list.
+    if (r.liveClaimBlocked) {
+      return { sessionId: r.sessionId, kind: 'live_claim_blocked', reason: r.reason };
+    }
     if (r.bitstreamTouched) {
       return { sessionId: r.sessionId, kind: 'bitstream_touched', reason: r.reason, bitstreamTouched: r.bitstreamTouched };
     }
@@ -71,6 +88,10 @@ function refusalNoticeFromRejections(rejected: readonly ResumeRejection[]): Resu
 const tauriIo: ResumeDiscoveryIo = {
   listResumableSessionIds: () => TauriFfmpeg.listResumableSessionIds(),
   reenter: async (sessionId) => (await TauriFfmpeg.reenter(sessionId)) as unknown as ResumeSessionHandle,
+  // WS3 STEP 8 (H5) — read-only, does not take the claim. Wires the native
+  // `ffmpeg_read_session_claim` command (already merged, STEP 3) into
+  // discovery's claim-aware reentry check.
+  readSessionClaim: (sessionId) => TauriFfmpeg.readSessionClaim(sessionId),
 };
 
 /** Every native count here is bounded — a resume is a recovery path (Rung 0). */
@@ -167,6 +188,7 @@ export async function findResumeOffer(params: {
         secondsAlreadyRendered: found.resumable.picturesAlreadyRendered / params.fps,
         secondsTotal: found.resumable.picturesTotal / params.fps,
         resumable: found.resumable,
+        claimRecoveryNotice: found.resumable.staleClaimRecovered,
       };
     } else {
       notice = refusalNoticeFromRejections(found.rejected);

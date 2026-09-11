@@ -6,6 +6,7 @@ import {
   type AnnexbCheckpointRepairResult,
   type ExportCheckpointRecord,
 } from './webcodecsExport/exportCheckpoint';
+import { recordCleanupFailure } from './webcodecsExport/exportCleanupNotices';
 
 export type { AnnexbFrameCount };
 
@@ -16,8 +17,10 @@ export interface SessionClaimView {
   holderStartTimeMs: number;
   holderInstanceId: string;
   claimedAtMs: number;
-  /** `live` | `stale` | `unclaimed` */
-  holderLiveness: string;
+  /** `live` = a different process holds it and is still running; `stale` =
+   *  the holder process is gone (crashed), safe to recover; `unclaimed` =
+   *  no claim file exists. */
+  holderLiveness: 'live' | 'stale' | 'unclaimed';
 }
 
 export interface OrphanSweepEntry {
@@ -458,6 +461,16 @@ export class TauriFfmpeg implements FfmpegLike {
   /**
    * Deletes the session directory. Should be called after every export
    * (success or failure). Safe to call multiple times.
+   *
+   * WS3 STEP 8 (C6) — a failure here used to reach only `console.warn`,
+   * invisible the moment the WebView closes, and worse on Windows: a delete
+   * can pend behind an open file handle rather than failing outright, so
+   * the session directory (1.6-2.3 GB — see `exportResumeDiscovery.ts`'s
+   * cleanup-policy header) silently outlives the export that made it. Still
+   * best-effort — this never becomes fatal to the export that already
+   * finished — but the failure is now durably recorded
+   * (`recordCleanupFailure`) so the NEXT run's start-up notice can surface
+   * it, on top of the console warning.
    */
   async destroy(): Promise<void> {
     if (this.#destroyed) return;
@@ -468,7 +481,9 @@ export class TauriFfmpeg implements FfmpegLike {
       });
     } catch (err) {
       // Best-effort cleanup — session dir may already be gone.
-      console.warn('[tauriFfmpeg] destroy failed:', err);
+      const detail = typeof err === 'string' ? err : String(err);
+      console.warn('[tauriFfmpeg] destroy failed:', detail);
+      recordCleanupFailure('session-destroy', this.#sessionId, detail);
     }
   }
 

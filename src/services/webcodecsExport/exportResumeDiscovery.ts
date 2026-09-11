@@ -35,6 +35,22 @@ import {
   type ExportStateManifest,
 } from './exportCheckpoint';
 
+/**
+ * WS3 STEP 8 (H5) — the minimal claim-liveness shape discovery needs.
+ * `TauriFfmpeg.readSessionClaim`'s `SessionClaimView` satisfies it (it
+ * carries more fields — holder pid/instance/timestamp — that discovery has
+ * no use for). Liveness is PID + process start time, not a heartbeat
+ * timeout — see `session_claim.rs`'s `is_holder_process_live`: a slow-but-
+ * alive holder reads `live`, never `stale`, and PID reuse is guarded by the
+ * start-time comparison.
+ */
+export interface SessionClaimLivenessView {
+  /** `live` = a DIFFERENT process holds this session and is still running;
+   *  `stale` = the holder process is gone (crashed) — safe to recover;
+   *  `unclaimed` = no claim file at all. */
+  holderLiveness: 'live' | 'stale' | 'unclaimed';
+}
+
 /** The per-session surface discovery needs. `TauriFfmpeg` satisfies it. */
 export interface ResumeSessionHandle {
   readonly sessionId: string;
@@ -59,6 +75,18 @@ export interface ResumeDiscoveryIo {
   /** Re-enters an existing session. Rust marks it `resume_pending`, which
    *  closes append/count/concat until the fence clears it. */
   reenter(sessionId: string): Promise<ResumeSessionHandle>;
+  /**
+   * WS3 STEP 8 (H5) — read-only claim inspection, does NOT take the claim
+   * (the native `ffmpeg_read_session_claim` command). Optional: when a
+   * caller doesn't supply it, `evaluateResumeCandidate` skips the
+   * claim-aware live-block/stale-recovery distinction and goes straight to
+   * `reenter` as it always did — `reenter`'s own native refusal
+   * (`acquire_session_claim` in `session_claim.rs`) still protects a live
+   * foreign holder either way; this only adds the SEPARATE, clearer
+   * operator-facing message and skips the wasted round-trip for the blocked
+   * case. Production (`exportResumeSession.ts`'s `tauriIo`) always supplies it.
+   */
+  readSessionClaim?(sessionId: string): Promise<SessionClaimLivenessView>;
 }
 
 /** A validated, fenced, ready-to-continue export. */
@@ -82,6 +110,15 @@ export interface ResumableExport {
   picturesAlreadyRendered: number;
   /** Total pictures this export will contain when finished. */
   picturesTotal: number;
+  /**
+   * WS3 STEP 8 (H5) — true when this session's claim read `stale` (the prior
+   * holder process is gone) immediately before reentry. Distinct from the
+   * ordinary "nothing was claimed" case (`false`): the operator-facing
+   * notice for this must read "recovering an abandoned session", never the
+   * generic resume-offer text, because a stale claim means the PRIOR RUN
+   * crashed rather than exited cleanly.
+   */
+  staleClaimRecovered: boolean;
 }
 
 export interface ResumeRejection {
@@ -108,6 +145,15 @@ export interface ResumeRejection {
    * re-parsed downstream from its own error message.
    */
   budgetExhausted?: boolean;
+  /**
+   * WS3 STEP 8 (H5) — true when this candidate was refused because its
+   * claim read `live` (a DIFFERENT process is currently using it), checked
+   * BEFORE `reenter` was even attempted. Distinct from an ordinary reenter
+   * failure: this is not "something went wrong with the session", it's
+   * "another window already owns it" — a different operator-facing message,
+   * and not evidence the session itself is broken.
+   */
+  liveClaimBlocked?: boolean;
 }
 
 export interface ResumeDiscoveryResult {
@@ -203,8 +249,38 @@ export async function evaluateResumeCandidate(
       reason: string;
       bitstreamTouched?: ResumeRejection['bitstreamTouched'];
       budgetExhausted?: boolean;
+      liveClaimBlocked?: boolean;
     }
 > {
+  // WS3 STEP 8 (H5) — claim-aware reentry. Read-only inspection FIRST, before
+  // `reenter` is even attempted: a `live` claim held by a different process
+  // means "another window is using this session" — an operator-facing
+  // situation distinct from any reenter failure — and a `stale` claim means
+  // the prior holder crashed, which `reenter`/`acquire_session_claim` will
+  // happily recover but the operator should be told is a RECOVERY, not an
+  // ordinary resume. `io.readSessionClaim` is optional so callers that don't
+  // supply it fall through to the pre-STEP-8 behavior unchanged — `reenter`'s
+  // own native refusal for a live foreign holder still applies regardless.
+  let staleClaimRecovered = false;
+  if (io.readSessionClaim) {
+    let claim: SessionClaimLivenessView;
+    try {
+      claim = await io.readSessionClaim(sessionId);
+    } catch (err) {
+      return { ok: false, reason: `cannot read session claim: ${message(err)}` };
+    }
+    if (claim.holderLiveness === 'live') {
+      return {
+        ok: false,
+        reason: 'another window is using this session (live claim held by a different process) — refusing to reenter it here',
+        liveClaimBlocked: true,
+      };
+    }
+    if (claim.holderLiveness === 'stale') {
+      staleClaimRecovered = true;
+    }
+  }
+
   let session: ResumeSessionHandle;
   try {
     session = await io.reenter(sessionId);
@@ -355,6 +431,7 @@ export async function evaluateResumeCandidate(
       appendFromByteOffset,
       picturesAlreadyRendered,
       picturesTotal: target.pieceExpectedFrames.reduce((a, b) => a + b, 0),
+      staleClaimRecovered,
     },
   };
 }
@@ -391,6 +468,7 @@ export async function discoverResumableExport(
       reason: outcome.reason,
       ...(outcome.bitstreamTouched ? { bitstreamTouched: outcome.bitstreamTouched } : {}),
       ...(outcome.budgetExhausted ? { budgetExhausted: true } : {}),
+      ...(outcome.liveClaimBlocked ? { liveClaimBlocked: true } : {}),
     });
   }
   return { resumable: null, rejected };

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   buildVideoRemuxArgs,
   buildAudioMuxArgs,
@@ -7,6 +7,11 @@ import {
   sealTruncatedAnnexbToMp4,
 } from './muxOnly';
 import type { FfmpegLike } from '../segmentEncoder';
+
+// C6 probes below stub `localStorage` (this file's default test environment
+// is node, which has none) — unstub after every test so the fake never
+// leaks into an unrelated one.
+afterEach(() => { vi.unstubAllGlobals(); });
 
 // buildVideoRemuxArgs/buildAudioMuxArgs are the pure command-construction
 // pieces of muxOnly.ts. Two real, empirically-found bugs are load-bearing
@@ -145,6 +150,62 @@ describe('muxOnly', () => {
     await expect(muxOnly(ffmpeg, 'sess-42', 'run_0.h264', 'voiceover_audio', 'export_final.mp4', 30)).rejects.toThrow(/sess-42/);
     expect(execSpy).toHaveBeenCalledTimes(2);
     expect(ffmpeg.deleteFile).toHaveBeenCalledWith('run_0.h264.premux.mp4');
+  });
+
+  /** `exportCleanupNotices.ts` persists to `localStorage`, which vitest's
+   *  default node environment does not provide — this repo's convention
+   *  (see `projectStoreGuard.test.ts`) is a `vi.stubGlobal` fake rather than
+   *  switching the whole file to a jsdom environment. */
+  function installLocalStorage(): void {
+    const backing = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (backing.has(k) ? backing.get(k)! : null),
+      setItem: (k: string, v: string) => backing.set(k, String(v)),
+      removeItem: (k: string) => void backing.delete(k),
+      clear: () => backing.clear(),
+      key: (i: number) => [...backing.keys()][i] ?? null,
+      get length() {
+        return backing.size;
+      },
+    } as Storage);
+  }
+
+  // WS3 STEP 8 (C6) — before this round, a failed premux-intermediate
+  // delete was swallowed with NO trace at all (not even a console.warn).
+  // This pins that it is now durably recorded, without changing muxOnly's
+  // own success/throw behavior in either branch.
+  it('C6: a premux-intermediate delete failure is durably recorded, and never masks or is masked by the mux result', async () => {
+    installLocalStorage();
+    const { readCleanupNotices, clearCleanupNotices } = await import('./exportCleanupNotices');
+    clearCleanupNotices();
+    const ffmpeg = fakeFfmpeg(async () => 0, async () => { throw new Error('EBUSY: file locked'); });
+    // Happy path (both mux steps succeed) must still resolve cleanly even
+    // though cleanup itself failed underneath it.
+    await expect(muxOnly(ffmpeg, 'sess-cleanup', 'run_0.h264', 'voiceover_audio', 'export_final.mp4', 30)).resolves.toBeUndefined();
+    const notices = readCleanupNotices();
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ kind: 'premux-intermediate', sessionId: 'sess-cleanup' });
+    expect(notices[0]!.detail).toContain('run_0.h264.premux.mp4');
+    expect(notices[0]!.detail).toContain('EBUSY');
+    clearCleanupNotices();
+  });
+
+  it('C6: a premux delete failure does not mask a REAL audio-mux failure — the mux error still wins', async () => {
+    installLocalStorage();
+    const { readCleanupNotices, clearCleanupNotices } = await import('./exportCleanupNotices');
+    clearCleanupNotices();
+    let call = 0;
+    const execSpy = vi.fn(async () => {
+      call++;
+      if (call === 2) throw new Error('audio mux exploded');
+      return 0;
+    });
+    const ffmpeg = fakeFfmpeg(execSpy, async () => { throw new Error('also cannot delete'); });
+    await expect(muxOnly(ffmpeg, 'sess-both-fail', 'run_0.h264', 'voiceover_audio', 'export_final.mp4', 30)).rejects.toThrow(/audio mux exploded/);
+    // Both failures are real: the mux error is what the caller sees, and the
+    // cleanup failure is still recorded underneath it — neither shadows the other.
+    expect(readCleanupNotices().some((n) => n.kind === 'premux-intermediate' && n.sessionId === 'sess-both-fail')).toBe(true);
+    clearCleanupNotices();
   });
 
   it('propagates a wrapped Error (not the raw ffmpeg rejection) on no-audio failure, including the session id', async () => {
