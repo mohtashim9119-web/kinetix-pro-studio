@@ -1558,7 +1558,7 @@ export function driveGlRun(
      *  this closure is gone — the salvage-truncate-mismatch site below is
      *  exactly that call site — never has to reconstruct it by hand and
      *  risk leaving a field out). */
-    const buildAppendLedger = (): ExportAppendLedger => ({
+    const buildAppendLedger = (atFinish = false): ExportAppendLedger => ({
       chunksAppended: appendCallCount,
       ipcCalls: appendIpcCallCount,
       bytesAppended: appendBytes,
@@ -1570,6 +1570,14 @@ export function driveGlRun(
       doneReceived,
       msSinceDone: doneReceivedAt === null ? null : now() - doneReceivedAt,
       appendInFlight: appendsInFlight > 0,
+      // WS3 STEP 7 (C5) — see the field's own doc comment (exportPipeline.ts).
+      // Read here, not after `finish` clears `pendingBatch`/terminates the
+      // worker: `queueDepthChunks`/`queueDepthBytes` at THIS instant already
+      // equal exactly the population still unlanded — pendingBatch's own
+      // buffer plus any batch already handed to `appendQueue` whose `.finally`
+      // decrement has not yet run (it can't have: nothing async has run
+      // between the caller setting `settled = true` and this call).
+      discardedAtFinish: atFinish ? { chunks: queueDepthChunks, bytes: queueDepthBytes } : null,
     });
 
     const snapshotLiveness = (): ExportLivenessSnapshot => ({
@@ -1591,8 +1599,35 @@ export function driveGlRun(
       failureVia: lastWorkerDiagnostics?.failure?.via ?? null,
       encoderSessions: sessionCount,
       encoderSessionIndex: sessionCount === null ? null : sessionAt,
-      appendLedger: buildAppendLedger(),
+      // WS3 STEP 7 (C5) — `snapshotLiveness` is only ever called while
+      // constructing a failure's `ExportError.liveness` (both call sites are
+      // terminal), never as a mid-run progress snapshot, so its embedded
+      // ledger is always the AT-FINISH one — the same one the operator's
+      // Copy-diagnostics blob reads (`buildExportDiagnosticsBlob` pulls
+      // `err.liveness.appendLedger`, never `RunDriveResult.appendLedger`
+      // directly), so `discardedAtFinish` must be populated here too, not
+      // just on the internal `finish()`-stamped ledger.
+      appendLedger: buildAppendLedger(true),
     });
+
+    /**
+     * WS3 STEP 7 (C5) — names bytes the encoder already produced (posted as a
+     * 'chunk' message) that this abort is about to discard before they reach
+     * disk. `queueDepthChunks`/`queueDepthBytes` read here are exactly that
+     * population — see `buildAppendLedger`'s `discardedAtFinish` doc comment.
+     * Empty string when there is nothing outstanding (a clean finish, or a
+     * drain that already ran to completion), so this never pads a healthy
+     * result's message. The invariant this exists for: a reported shortfall
+     * must reflect the ENCODER's own output, never this pipeline's own
+     * buffer being torn down — so every abnormal-finish message that could
+     * feed a downstream "missing frames" reading must say, explicitly, when
+     * some of that gap is bytes we threw away ourselves.
+     */
+    const discardedBytesClause = (): string =>
+      queueDepthBytes > 0
+        ? ` ${queueDepthChunks} chunk(s) / ${queueDepthBytes} byte(s) already produced by the encoder ` +
+          `were discarded by this abort before reaching disk — not a shortfall in the encoder's own output.`
+        : '';
 
     const errorFromDiagnostics = (
       kind: ExportError['kind'],
@@ -1602,7 +1637,7 @@ export function driveGlRun(
       const msg = diagnostics.failure ? formatFailureMessage(diagnostics.failure) : fallbackMessage;
       return {
         kind,
-        message: msg,
+        message: msg + discardedBytesClause(),
         cause: diagnostics.failure?.message,
         liveness: snapshotLiveness(),
       };
@@ -1642,7 +1677,7 @@ export function driveGlRun(
       pendingBatch = [];
       if (activeWorker === worker) activeWorker = null;
       worker.terminate();
-      const appendLedger = buildAppendLedger();
+      const appendLedger = buildAppendLedger(true);
       const msSinceLastPhaseChange = now() - lastPhaseAt;
       resolve(
         result.ok
@@ -2111,16 +2146,50 @@ export function driveGlRun(
           break;
         }
         case 'cancelled':
-          lastWorkerDiagnostics = data.diagnostics;
-          mergePhaseFromWorker(data.diagnostics.phaseLog);
-          finish({
-            ok: false,
-            error: errorFromDiagnostics('cancelled', data.diagnostics, 'Export cancelled.'),
-            diagnostics: data.diagnostics,
-            silentIntervals: silentIntervals(),
-            appendCallCount,
-            appendBytes,
-          });
+          {
+            // WS3 STEP 7 (C5) — flush-then-fail, the one abnormal-finish path
+            // where it's safe. 'cancelled' is the worker's own TERMINAL
+            // message (same contract as 'done'/'salvage-done': nothing more
+            // can ever be posted after it), so unlike watchdog/queue-overflow
+            // /worker-error there is no risk of an unbounded backlog growing
+            // behind a drain — whatever is buffered or already queued is the
+            // whole remaining population, not a moving target. Draining here
+            // (flush the small pendingBatch buffer, then wait for the append
+            // queue to empty) reuses exactly `noteTerminalMessage`'s shape —
+            // the same drain bound (`APPEND_DRAIN_BOUND_MS`) that already
+            // exists to keep the wait finite — so a cancel whose writer turns
+            // out to be genuinely stuck still terminates, just via that bound
+            // rather than instantly. The payoff: a deliberately-cancelled run
+            // gets its last verified batch onto disk instead of reporting
+            // perfectly good encoder output as a discarded/missing shortfall.
+            lastWorkerDiagnostics = data.diagnostics;
+            mergePhaseFromWorker(data.diagnostics.phaseLog);
+            noteTerminalMessage();
+            void appendQueue.then(() => {
+              maxSilentMs = Math.max(maxSilentMs, now() - lastOutputAt);
+              const intervals = silentIntervals();
+              const cancelDiagnostics: ExportWorkerDiagnosticsPayload = appendError
+                ? {
+                    ...data.diagnostics,
+                    failure: {
+                      name: appendError.name || null,
+                      message: appendError.message,
+                      via: appendFailureVia(appendError),
+                      frameIndex: data.diagnostics.framesEncoded > 0 ? data.diagnostics.framesEncoded - 1 : null,
+                      timelineSec: null,
+                    },
+                  }
+                : data.diagnostics;
+              finish({
+                ok: false,
+                error: errorFromDiagnostics('cancelled', cancelDiagnostics, 'Export cancelled.'),
+                diagnostics: cancelDiagnostics,
+                silentIntervals: intervals,
+                appendCallCount,
+                appendBytes,
+              });
+            });
+          }
           break;
         case 'diagnostics-snapshot':
           lastWorkerDiagnostics = data.diagnostics;
@@ -2217,7 +2286,14 @@ export function driveGlRun(
         ok: false,
         error: {
           kind: 'encode',
-          message: formatFailureMessage(diagnostics.failure),
+          // WS3 STEP 7 (C5) — see discardedBytesClause's doc comment. A
+          // worker crash says nothing about the append IPC path's own
+          // health, but by the time `finish` below clears `pendingBatch`
+          // and bails any still-queued batch, bytes the encoder already
+          // produced (posted as 'chunk' before the crash) are gone — name
+          // them so this reads as "the pipeline discarded N bytes on
+          // abort", never as "the encoder only produced N-fewer frames".
+          message: formatFailureMessage(diagnostics.failure) + discardedBytesClause(),
           cause: diagnostics.failure.message,
           liveness: snapshotLiveness(),
         },

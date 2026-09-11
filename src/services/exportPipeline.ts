@@ -135,6 +135,29 @@ export interface ExportAppendLedger {
   msSinceDone: number | null;
   /** Whether an `appendFileRaw` call was in flight at the moment of failure. */
   appendInFlight: boolean;
+  /**
+   * WS3 STEP 7 (C5) — bytes/chunks the ENCODER had already produced (posted
+   * as a 'chunk' message) that were discarded — pendingBatch's unflushed
+   * buffer, plus any batch already handed to `appendQueue` but not yet
+   * landed/verified — because this run settled before they reached disk.
+   *
+   * `null` on every snapshot taken WHILE the run is still live
+   * (`snapshotLiveness` mid-run) — the field only has a meaning at the
+   * moment a run actually stops accepting more work. Non-null and `{0, 0}`
+   * on a clean finish (every accepted chunk landed or failed loudly through
+   * `appendError` before `finish` ran — true for 'done'/'salvage-done' and a
+   * successfully-drained 'cancelled'). Non-null and non-zero on an abrupt
+   * abort (watchdog / queue-overflow / forward-progress-stall / worker
+   * error) where bytes the encoder already emitted never reached the
+   * writer.
+   *
+   * This is the number a downstream shortfall reader (the concat frame-count
+   * guard, `forcedMp4SealOffer`'s `picturesLost`) must consult before
+   * attributing a gap to "the encoder failed to produce N frames" — a
+   * non-zero value here means at least part of that gap is bytes THIS
+   * pipeline threw away itself, not bytes the encoder never made.
+   */
+  discardedAtFinish: { chunks: number; bytes: number } | null;
 }
 
 /** One phase-log line, flattened for the diagnostics blob. */

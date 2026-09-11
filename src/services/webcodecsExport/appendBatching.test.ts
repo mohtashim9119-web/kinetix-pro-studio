@@ -477,3 +477,117 @@ describe('append verification — a short landed write is caught at its own batc
     expect(calls).toEqual(['appendFileRaw:8', 'sessionFileSize']);
   });
 });
+
+/**
+ * WS3 STEP 7 (C5) — "a discarded batch is a false diagnosis". Before this
+ * round `finish` cleared `pendingBatch` and let any already-queued-but-
+ * unlanded batch bail silently (the `if (appendError || settled) return`
+ * inside `flushPendingBatch`'s queued closure), with nothing in the payload
+ * distinguishing "the encoder never produced these bytes" from "we threw
+ * away bytes the encoder already produced". `ExportAppendLedger` had no
+ * `discardedAtFinish` field at all, so a RED run of the first test below
+ * (pre-fix) fails on `ledger?.discardedAtFinish` being `undefined`, not the
+ * `{chunks, bytes}` the fix stamps — the field/clause did not exist to be
+ * wrong, which is itself the bug this pins.
+ */
+describe('discarded-batch accounting (C5) — a shortfall must name what THIS pipeline threw away', () => {
+  it('watchdog kill: discardedAtFinish names the encoder-produced bytes that never reached disk, and the message never blames the encoder', async () => {
+    vi.useFakeTimers();
+    // A writer that never resolves — the realistic shape of "the watchdog's
+    // 30s bound is the only thing that ends this run".
+    const ffmpeg = makeFfmpeg({ appendFileRaw: vi.fn(() => new Promise<void>(() => { /* never */ })) });
+    const fake = new FakeWorker();
+    const p = startDrive(fake, ffmpeg);
+
+    const N = 5;
+    for (let i = 0; i < N; i++) fake.emit(chunkOf(i).msg);
+    // Well under APPEND_BATCH_CHUNKS/APPEND_BATCH_BYTES, so these chunks are
+    // still sitting in pendingBatch/queued behind the stuck writer when the
+    // watchdog fires — exactly the "at risk of false-shortfall" population
+    // STEP 7 names.
+    await vi.advanceTimersByTimeAsync(WATCHDOG_MS + 1_000);
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics?.failure?.via).toBe('watchdog');
+    const ledger = result.error.liveness?.appendLedger;
+    // The exact population at risk — pendingBatch's own buffer plus whatever
+    // had already been handed to appendQueue but never landed — named, not
+    // silently folded into "the encoder only made N-fewer frames".
+    expect(ledger?.discardedAtFinish).toEqual({ chunks: N, bytes: N * 8 });
+    expect(result.error.message).toContain(
+      `${N} chunk(s) / ${N * 8} byte(s) already produced by the encoder`,
+    );
+    expect(result.error.message).toContain("not a shortfall in the encoder's own output");
+  });
+
+  it('worker crash: the same discard accounting applies — a crash is silent about the append path\'s own health', async () => {
+    const ffmpeg = makeFfmpeg({ appendFileRaw: vi.fn(() => new Promise<void>(() => { /* never */ })) });
+    const fake = new FakeWorker();
+    const p = startDrive(fake, ffmpeg);
+
+    const N = 2;
+    for (let i = 0; i < N; i++) fake.emit(chunkOf(i).msg);
+    fake.onerror?.({ message: 'boom', filename: 'worker.ts', lineno: 1 } as ErrorEvent);
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    const ledger = result.error.liveness?.appendLedger;
+    expect(ledger?.discardedAtFinish).toEqual({ chunks: N, bytes: N * 8 });
+    expect(result.error.message).toContain(
+      `${N} chunk(s) / ${N * 8} byte(s) already produced by the encoder`,
+    );
+  });
+
+  it('cancel drains the buffered batch before failing — a deliberate cancel does not throw away bytes the encoder already produced', async () => {
+    const landedBatches: number[] = [];
+    let landed = 0;
+    const ffmpeg = makeFfmpeg({
+      appendFileRaw: vi.fn(async (_p: string, data: Uint8Array) => {
+        landedBatches.push(data.byteLength);
+        landed += data.byteLength;
+      }),
+      sessionFileSize: vi.fn(async () => landed),
+    });
+    const fake = new FakeWorker();
+    const p = startDrive(fake, ffmpeg);
+
+    const N = 3;
+    for (let i = 0; i < N; i++) fake.emit(chunkOf(i).msg);
+    // Still buffered — below both batch triggers, so this is exactly the
+    // population that used to be silently dropped by `pendingBatch = []`
+    // inside `finish`.
+    fake.emit({ type: 'cancelled', diagnostics: diagnostics({ framesEncoded: N }) });
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.kind).toBe('cancelled');
+    // The buffered batch actually landed — flush-then-fail, not discard.
+    expect(landedBatches).toEqual([N * 8]);
+    const ledger = result.error.liveness?.appendLedger;
+    expect(ledger?.discardedAtFinish).toEqual({ chunks: 0, bytes: 0 });
+    expect(ledger?.chunksAppended).toBe(N);
+    expect(ledger?.bytesAppended).toBe(N * 8);
+  });
+
+  it('queue overflow: still account-and-report (writer is falling behind, not necessarily stuck — draining further would grow the very backlog being aborted)', async () => {
+    vi.useFakeTimers();
+    const ffmpeg = makeFfmpeg({ appendFileRaw: vi.fn(() => new Promise<void>(() => { /* never */ })) });
+    const fake = new FakeWorker();
+    const p = startDrive(fake, ffmpeg, { appendQueueCeilingBytes: 1_000 });
+
+    for (let i = 0; i < 200; i++) fake.emit(chunkOf(i).msg); // 200 * 8 = 1600 B
+    await vi.advanceTimersByTimeAsync(100);
+    const result = await p;
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.diagnostics?.failure?.via).toBe('append-queue-overflow');
+    const ledger = result.error.liveness?.appendLedger;
+    expect(ledger?.discardedAtFinish).toEqual({ chunks: 200, bytes: 1600 });
+    expect(result.error.message).toContain("not a shortfall in the encoder's own output");
+  });
+});

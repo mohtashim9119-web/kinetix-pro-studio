@@ -46,6 +46,7 @@ const SENTINEL_APPEND_LEDGER: ExportAppendLedger = {
   doneReceived: true,
   msSinceDone: 999999,
   appendInFlight: true,
+  discardedAtFinish: { chunks: 121212, bytes: 343434 },
 };
 
 const SENTINEL_LIVENESS: ExportLivenessSnapshot = {
