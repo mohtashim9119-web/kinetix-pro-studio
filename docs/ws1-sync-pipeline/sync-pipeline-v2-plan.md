@@ -10,13 +10,13 @@ Next Action section tracks the rolling top-3 cross-workstream task queue.
 
 **Docs Cleanup Round 2 (2026-08-25): Parts AE–AH condensed.** The full session-by-session
 narrative for Parts AE (Session AK), AF (Session AL), AG (Session AM), and AH (Session AN) was
-folded into `docs/history-2.md`'s matching Session entries and this document's own copies were
+folded into `docs/archive/history/history-2.md`'s matching Session entries and this document's own copies were
 cut to short pointer summaries in the same commit — those four Parts stopped being the primary
 record for their sessions. `docs/ws1-sync-pipeline/`'s 20 finished raw session/measurement/ear-list
 files (fa-chunk-phantom-root-cause.md, the session-al/am/an-*.md dumps, and the stage1-* run
 sheets and ear lists other than `stage1-mover-audit.md`/`stage1-live-run-prep.md`, which are still
 open) were folded the same way and deleted; original text of all of them remains retrievable via
-`git show` at the fold commit (see `docs/history-2.md`'s own Round 2 note for the retrieval
+`git show` at the fold commit (see `docs/archive/history/history-2.md`'s own Round 2 note for the retrieval
 command).
 
 ## Phase Status
@@ -2644,7 +2644,7 @@ flip becomes shippable as a consequence rather than as a separate act:
 - **Overrides:** R-AD (OV1)'s deferral of the flip to "the final act of Stage 1", to the
   extent that the flip is now landed ahead of the ear pass — the register is EMPTY (R-AI(c)),
   which was R-AD's own release condition, and the per-project shape removes the silent-retime
-  hazard that made ordering matter. The ear pass (folded into `docs/history-2.md`'s Session G entry)
+  hazard that made ordering matter. The ear pass (folded into `docs/archive/history/history-2.md`'s Session G entry)
   and Stage 1 lock are unchanged and still ahead.
 
 ---
@@ -5354,12 +5354,12 @@ Replacing the fixed −45dB scan with noise-floor estimation, ONLY if Phase 2b�
   **R-N is CLOSED** by ruling R-AL (`load-dynamic` + bundled dylib); **Step T**
   (model download) remains open.
 - **The 12/12 ear pass is DRAWN and ready to run:**
-  `docs/history-2.md`'s Session G entry — fresh, stratified, 7 MOVED /
+  `docs/archive/history/history-2.md`'s Session G entry — fresh, stratified, 7 MOVED /
   5 UNMOVED, uniform 4.00 s windows (blinding preserved by construction: max |Δ|
   1.95 s < 2 s, so every row's window contains both candidates), sealed arm key,
   R-AB satisfied by there being a single blinded tier. **The Contract 1→2
   guarantee-by-guarantee pass is likewise a working document:**
-  `docs/history-2.md`'s Session G entry — 5 DIRECT / 4 PARTIAL /
+  `docs/archive/history/history-2.md`'s Session G entry — 5 DIRECT / 4 PARTIAL /
   3 ABSENT, with **P6** identified as the one row this gate cannot schedule away,
   because the pass IS its enforcement.
 
@@ -5721,7 +5721,7 @@ H.5 Language-keyed normalization (Phase 3b, Stage 1) — THE MAIN MULTILINGUAL W
   separator strip, an English `CONTRACTIONS` list, and the `NUMBER_WORDS` hyphen
   carve-out — all real, all English-only, all correctly described above for THAT
   module. But Rule 1 (French elision) and Rule 2 (Spanish cardinals) both landed
-  in `faTextNormalize.ts` (created 2026-08-12, R-Q — `docs/history.md`), a module
+  in `faTextNormalize.ts` (created 2026-08-12, R-Q — `docs/archive/history/history.md`), a module
   its own header comment states is **"DELIBERATELY PARALLEL to `textNormalize.ts`'s
   `canonicalize`, not built on top of it."** `faTextNormalize.ts` started with
   NONE of the five capabilities above, for ANY language, English included — every
@@ -5893,7 +5893,7 @@ Transcription-only pass (Revision 1); each flag now carries its Revision 2 resol
 
 Part J — Stage Contracts
 
-Adopts the concept from `docs/sync-pipeline-contract-plan.md` (deleted; archived verbatim in `docs/history.md`'s "Sync Pipeline Contract Plan — Working Document" section) — producer guarantees / consumer assumptions / enforcement / failure mode — rewritten for the NEW 4-stage architecture. That archived document remains the authority on the OLD pipeline's §2 assumption tables; its R1-R14 risk register is not restated here — it is MAPPED here (end of this part) onto the new contracts.
+Adopts the concept from `docs/sync-pipeline-contract-plan.md` (deleted; archived verbatim in `docs/archive/history/history.md`'s "Sync Pipeline Contract Plan — Working Document" section) — producer guarantees / consumer assumptions / enforcement / failure mode — rewritten for the NEW 4-stage architecture. That archived document remains the authority on the OLD pipeline's §2 assumption tables; its R1-R14 risk register is not restated here — it is MAPPED here (end of this part) onto the new contracts.
 
 Enforcement vocabulary, in order of preference: **type-level** (violation cannot compile — Stage 2's timing-free return type is the model; prefer this wherever the type system can express the rule) > **runtime-checked** (violation detected in a cheap linear scan and logged) > **manually-verified** (owner inspection at the stage lock) > **UNENFORCED** (must be closed or accepted in writing before the owning stage locks). Per contract, what the type system CAN and CANNOT enforce is stated explicitly. Every SILENT-DEGRADATION failure mode names the Stage 4 log entry that surfaces it; where none exists yet, the entry is listed in Contract OUT's REQUIRED ADDITIONS table and building it is Phase 7 work.
 
@@ -5991,7 +5991,7 @@ Type-level limits: contiguity is enforced by arithmetic (better than types); "no
 | P5 | Persistence shape is unchanged (`transcriptTokens`, `lastTranscribedFileIdentity`, segments) — internal stage types are never persisted | Manually-verified at Phase 4 | Reload breaks / forced re-transcription | Phase 4 |
 | P6 | Staging-time (non-Apply-Sync) findings also reach the log with their own run id | Runtime (carried — old R11's fix) | Console-only staging failures | Carried |
 
-**Severity taxonomy (absorbed from `docs/sync-pipeline-contract-plan.md` §4, deleted — archived in `docs/history.md`'s "Sync Pipeline Contract Plan — Working Document" section — this contract owns it now):**
+**Severity taxonomy (absorbed from `docs/sync-pipeline-contract-plan.md` §4, deleted — archived in `docs/archive/history/history.md`'s "Sync Pipeline Contract Plan — Working Document" section — this contract owns it now):**
 
 | Severity | Meaning | User action | Panel treatment |
 |---|---|---|---|
@@ -6029,7 +6029,7 @@ Type-level limits: contiguity is enforced by arithmetic (better than types); "no
 
 ### R1–R14 mapping (the old risk register onto the new contracts)
 
-The register itself lived in `docs/sync-pipeline-contract-plan.md` §5 (deleted; archived verbatim in `docs/history.md`'s "Sync Pipeline Contract Plan — Working Document" section) and is not restated. Disposition under the 4-stage restructure:
+The register itself lived in `docs/sync-pipeline-contract-plan.md` §5 (deleted; archived verbatim in `docs/archive/history/history.md`'s "Sync Pipeline Contract Plan — Working Document" section) and is not restated. Disposition under the 4-stage restructure:
 
 **Made structurally impossible by the restructure:** the contiguity break (Contract 3→4 P2 — arithmetic, not a maintained property; this also closes R3's contract half including the retile path), the 5/6 interleave and two-snap-path drift (Phase 1 deletes the duplicate; Contract 2→3 P1's timing-free type prevents recurrence), R7 (same-filtered-array coupling — Contract 1→2 P8's single output object), and R8 (silence-identity Map keys — the fence has no contention assignment; the Map is deleted at Phase 5).
 
@@ -6092,7 +6092,7 @@ Each break found during the Revision 2 self-audit, its fix, and whether the fix 
 
 **K12 — Claims that were stated as facts.** Break: several load-bearing numbers were model-recall or single-observation claims presented without flags. Fix: marked UNVERIFIED in place — the “~60% deletable” estimate and the “~190ms → ~80ms” DTW estimate (Part C), the “word + gap ≈ 0.4s” speech-rate figure (Part A), the 24-July-build parity observation (Part A, USER-REPORTED), H.9's three model-size figures (Task 6c), and H.3's MMS mechanics (verify against MMS-FA docs before implementation). whisper-cli determinism remains an open question that Phase 0 answers by measurement. **No structural change** — epistemic labels only.
 
-**K13 — Lock preservation is not carried behaviour; it does not currently work.** Break: Contract 2→3 A4 and Contract 3→4 P4 (above) were written as if a locked segment's `locked` flag and position simply arrive at Stage 3 intact, needing only a single decision site (A4) and a reported-adjustment guarantee (P4). Owner repro on the 173-seg project (2026-08-04): moved segment 27 to overlap segment 28, locked BOTH, ran Apply Sync — both segments reset to their original unlocked positions AND the lock flag itself was cleared. Root cause traced read-only against HEAD: clean-slate resync's Stage 1 (`parseProjectData`, `App.tsx:318`) mints every segment fresh from a `RawSegment` (`App.tsx:161-172`) that has no `locked` field at all, then constructs the final `VideoSegment` via `{ ...s, id: crypto.randomUUID(), ... }` (`App.tsx:513-528`) — never reading `project.segments` or any prior segment. This is the same clean-slate discipline already documented for `anchorStart`/`anchorSource` (the stableKey merge loop that used to restore fields by matching `assetId` or heading text was deleted in step 3a, commit `452e1eb` — see CLAUDE.md's Anchor-Based Segment Timing section) — except no equivalent merge was ever built for `locked`, so it was never carried even before that deletion made carry-forward-by-id impossible (new segments get fresh `crypto.randomUUID()` ids every run, so an id-keyed restore couldn't work today regardless). Confirmed: none of the five sites that *read* `locked` (`syncEngine.ts:217,232,300`; `snapBoundaries.ts:697,899`; `whisperService.ts:1364,1369,1488`; `syncContracts.ts:295`) ever runs against a segment that could carry `true` into a fresh Apply Sync — they are all checking a flag that is structurally always `undefined` at that point. **Hypothesis confirmed.** Fix: Contract 2→3 A4 and Contract 3→4 P4 above are restated as behaviour Stage 3 must BUILD (a carry-forward step — by script-position/order, not id, since ids churn every run — from the pre-sync `project.segments` into the freshly parsed array, before any of the five lock-consuming sites run), not behaviour that is merely being consolidated into one site. The Stage 3 lock gate (Part D) must verify it with this exact repro: lock two overlapping segments, Apply Sync, confirm both position and lock flag survive. **Changes Contract 2→3 A4 and Contract 3→4 P4's status from "carried" to "built at Phase 3"; adds a mandatory Stage 3 lock-gate test case; no stage-boundary or order change.** Also corrects `docs/sync-pipeline-contract-plan.md:359`'s (deleted; archived in `docs/history.md`'s "Sync Pipeline Contract Plan — Working Document" section) "Locks are authoritative everywhere" claim (the closest existing statement of this invariant — CLAUDE.md carries no equivalent line to correct) and `project-state.md`'s Deferred Known Bugs, both updated alongside this entry. **K13 itself is now CLOSED (2026-08-11) — see the header note at the top of this document; this paragraph is left as the historical finding record.**
+**K13 — Lock preservation is not carried behaviour; it does not currently work.** Break: Contract 2→3 A4 and Contract 3→4 P4 (above) were written as if a locked segment's `locked` flag and position simply arrive at Stage 3 intact, needing only a single decision site (A4) and a reported-adjustment guarantee (P4). Owner repro on the 173-seg project (2026-08-04): moved segment 27 to overlap segment 28, locked BOTH, ran Apply Sync — both segments reset to their original unlocked positions AND the lock flag itself was cleared. Root cause traced read-only against HEAD: clean-slate resync's Stage 1 (`parseProjectData`, `App.tsx:318`) mints every segment fresh from a `RawSegment` (`App.tsx:161-172`) that has no `locked` field at all, then constructs the final `VideoSegment` via `{ ...s, id: crypto.randomUUID(), ... }` (`App.tsx:513-528`) — never reading `project.segments` or any prior segment. This is the same clean-slate discipline already documented for `anchorStart`/`anchorSource` (the stableKey merge loop that used to restore fields by matching `assetId` or heading text was deleted in step 3a, commit `452e1eb` — see CLAUDE.md's Anchor-Based Segment Timing section) — except no equivalent merge was ever built for `locked`, so it was never carried even before that deletion made carry-forward-by-id impossible (new segments get fresh `crypto.randomUUID()` ids every run, so an id-keyed restore couldn't work today regardless). Confirmed: none of the five sites that *read* `locked` (`syncEngine.ts:217,232,300`; `snapBoundaries.ts:697,899`; `whisperService.ts:1364,1369,1488`; `syncContracts.ts:295`) ever runs against a segment that could carry `true` into a fresh Apply Sync — they are all checking a flag that is structurally always `undefined` at that point. **Hypothesis confirmed.** Fix: Contract 2→3 A4 and Contract 3→4 P4 above are restated as behaviour Stage 3 must BUILD (a carry-forward step — by script-position/order, not id, since ids churn every run — from the pre-sync `project.segments` into the freshly parsed array, before any of the five lock-consuming sites run), not behaviour that is merely being consolidated into one site. The Stage 3 lock gate (Part D) must verify it with this exact repro: lock two overlapping segments, Apply Sync, confirm both position and lock flag survive. **Changes Contract 2→3 A4 and Contract 3→4 P4's status from "carried" to "built at Phase 3"; adds a mandatory Stage 3 lock-gate test case; no stage-boundary or order change.** Also corrects `docs/sync-pipeline-contract-plan.md:359`'s (deleted; archived in `docs/archive/history/history.md`'s "Sync Pipeline Contract Plan — Working Document" section) "Locks are authoritative everywhere" claim (the closest existing statement of this invariant — CLAUDE.md carries no equivalent line to correct) and `project-state.md`'s Deferred Known Bugs, both updated alongside this entry. **K13 itself is now CLOSED (2026-08-11) — see the header note at the top of this document; this paragraph is left as the historical finding record.**
 
 **Found sound (attacked, no revision needed):** the Phase 3-before-Phase 5 ordering (segment 96's fixture numbers hold at §D.12/§D.13); Phase 1's redundancy claim (audit §B.4's trace confirmed the gap-fill's output is overwritten on every real path, including the first-segment, locked, and empty-token cases); the coverage-partition move to Stage 2's end; keeping the two duration-floor constants separate (rename, not merge); and the decision to keep `isBreathSilence` through Phase 5 into its own deprecation phase rather than deleting it with the picker.
 
@@ -6125,7 +6125,7 @@ These five boundaries give the short-segment-run category 6 total members in the
 
 ---
 
-> Bug & task tracking lives in `project-state.md`. `docs/sync-pipeline-contract-plan.md` (deleted; archived verbatim in `docs/history.md`'s "Sync Pipeline Contract Plan — Working Document" section) remains the authority on the OLD pipeline's assumption tables and the R1-R14 register text; Part J owns their v2 mapping. `docs/verification-baseline.csv` (created at Phase 0) is the programme's verdict record.
+> Bug & task tracking lives in `project-state.md`. `docs/sync-pipeline-contract-plan.md` (deleted; archived verbatim in `docs/archive/history/history.md`'s "Sync Pipeline Contract Plan — Working Document" section) remains the authority on the OLD pipeline's assumption tables and the R1-R14 register text; Part J owns their v2 mapping. `docs/verification-baseline.csv` (created at Phase 0) is the programme's verdict record.
 
 ---
 
@@ -6395,7 +6395,7 @@ an older build silently roll a project backwards. Adoption can therefore only ev
 an origin can see.
 
 **(g) Scope discipline.** `faAnchors.ts` (sha256 `b61e94cb…`), `snapBoundaries.ts`,
-`silenceDetector.ts`, the Hirschberg aligner, `project-state.md`, `docs/history.md` and
+`silenceDetector.ts`, the Hirschberg aligner, `project-state.md`, `docs/archive/history/history.md` and
 `scripts/fixtures/phase4-baseline-*.csv` were not touched. Nothing on §3's Master Phase Board
 advances: this session touched persistence, not sync timing. Golden replay 6/6 unchanged.
 
@@ -6449,7 +6449,7 @@ so `applyUtterancePlacementCorrections` and every R.13 test stay on their existi
 must be settled before R.13 is treated as exercised in production.
 
 **(f) Scope discipline.** `faAnchors.ts` (sha256 `b61e94cb…`), `snapBoundaries.ts`,
-`silenceDetector.ts`, the Hirschberg aligner, `project-state.md`, `docs/history.md` and
+`silenceDetector.ts`, the Hirschberg aligner, `project-state.md`, `docs/archive/history/history.md` and
 `scripts/fixtures/phase4-baseline-*.csv` were not touched. Golden replay 6/6 byte-identical.
 Nothing on §3's Master Phase Board advances — Class A and Class B remain open.
 
@@ -6546,7 +6546,7 @@ would misattribute suspicion as guilt).
 
 **(i) Scope discipline.** `faAnchors.ts` (sha256 `b61e94cb…`, verified unchanged after every
 mutation-matrix revert), `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner,
-`project-state.md`, `docs/history.md` and `scripts/fixtures/phase4-baseline-*.csv` untouched.
+`project-state.md`, `docs/archive/history/history.md` and `scripts/fixtures/phase4-baseline-*.csv` untouched.
 Golden replay 6/6 byte-identical. `src/services/faRunPlacementGate.ts` IS touched (the R.13 fix) —
 the one deliberate exception, RED-before/GREEN-after verified, full 57/57 suite green including
 every pre-existing corpus regression pin.
@@ -6607,7 +6607,7 @@ exercises the floor conjunct — neither committed corpus does.
 
 **(f) Scope discipline.** No production code touched. `faAnchors.ts` (sha256 `b61e94cb…`),
 `faRunPlacementGate.ts`, `faSeamFitGate.ts`, `snapBoundaries.ts`, `silenceDetector.ts`,
-`syncConstants.ts`, the Hirschberg aligner, `project-state.md`, `docs/history.md` and
+`syncConstants.ts`, the Hirschberg aligner, `project-state.md`, `docs/archive/history/history.md` and
 `scripts/fixtures/phase4-baseline-*.csv` unchanged. One additive harness change
 (`ws1-session-p-pipeline.ts` returns `keptAlignments`). Nothing on §3's Master Phase Board
 advances — Class A and Class B remain open, register unchanged at 8, no ear pass ran.
@@ -6756,7 +6756,7 @@ Session S sitting is the first to hear 1188.95, and it passes).
 ## Part R — Candidate B Licensed: the Clamp Was a Symptom Mask, the Run's Onset Was the Real Defect (WS1 Session T, 2026-08-21, append-only)
 
 **(a) THE RULING, from the owner's A/B side-by-side pass (`ear-verify-t`, `docs/ws1-sync-pipeline/
-Session T entry, `docs/history-2.md`).** Candidate B (the unclamped whole-silence midpoint) is licensed
+Session T entry, `docs/archive/history/history-2.md`).** Candidate B (the unclamped whole-silence midpoint) is licensed
 on all six rows tested: `042` -> 125.760, `176` -> 522.460, `224` -> 664.330, `307` -> 925.430,
 `340` -> 1045.620, `383` -> 1189.050 (reversing the SOLO-listened `1188.950` — see (d)). Breath
 presence is confirmed irrelevant to correct placement: the owner chose B on a row with a quiet
@@ -6861,7 +6861,7 @@ recorded as a distinct population from R.12 (Part Q(k) still applies verbatim: R
 never consults segment spans, so Session R's word-attribution finding does not transfer). The
 propose-then-arbitrate rule-stage refactor (Part Q(f)) remains the scheduled, not-started follow-
 up. `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `project-state.md`,
-`docs/history.md` and `scripts/fixtures/phase4-baseline-*.csv` were not touched. Golden replay 6/6
+`docs/archive/history/history.md` and `scripts/fixtures/phase4-baseline-*.csv` were not touched. Golden replay 6/6
 byte-identical.
 
 ## Part S — Seven Rows Close Against Live, Not Fixture; the 266 "Regression" Is Refuted (WS1 Session V, Part 1, 2026-08-22, append-only)
@@ -6922,7 +6922,7 @@ register — the first time since Session F the open set is a single population 
 rule gaps and re-litigated R.12 values. Part 2 (an attribution-side detector for these 8) is
 scoped in the same session's brief but explicitly NOT started pending approval. The propose-then-
 arbitrate rule-stage refactor remains scheduled, not started. `snapBoundaries.ts`,
-`silenceDetector.ts`, the Hirschberg aligner, `docs/history.md` and
+`silenceDetector.ts`, the Hirschberg aligner, `docs/archive/history/history.md` and
 `scripts/fixtures/phase4-baseline-*.csv` were not touched; `phase4-fa-second-baseline-v6-
 segments.csv` remains deliberately unregenerated and therefore stale for the five R.12 rows and
 `266`/`383` — closure this session is against live, not fixture. Golden replay 6/6 byte-identical.
@@ -7083,7 +7083,7 @@ touches no FA/chunking/rule code. The IPC transfer-encoding change is real but d
 measured bytes. None of the axes in this table, individually or combined, account for the observed
 divergence. The finding is downgraded from "an inferred mechanism" to **"a real, measured
 divergence between one live execution and every offline replay of it, with no candidate explanation
-that survives direct measurement."** This is reported as `docs/history.md`'s own standing preference
+that survives direct measurement."** This is reported as `docs/archive/history/history.md`'s own standing preference
 states it should be: "I could not determine the mechanism," not a fabricated one.
 
 **(d) STEP 2 — REPRODUCTION ATTEMPTED UNDER LOAD, UNREPRODUCED. 7 trials total.** Session Y's own
@@ -7249,7 +7249,7 @@ failed/**24** ignored (+1 vs. Session Y's 23 — this session's own new
 replay 6/6 (full `npm test` green, no test file skipped or failing). `faAnchors.ts` sha256
 unchanged, `b61e94cb…`. `git diff --stat` against `29ddcd3`: `src-tauri/src/fa_onnx.rs` +89
 insertions only — no other file touched, all CONSTRAINTS held (no edits to `faAnchors.ts`,
-`snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`, or any
+`snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/archive/history/history.md`, or any
 `scripts/fixtures/phase4-baseline-*.csv`).
 
 ---
@@ -7514,7 +7514,7 @@ standalone and confirmed part of the full green `npm test`). `faAnchors.ts` sha2
 `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`. `git diff --stat` against
 `ceaa6df`: docs only (this file, `docs/work-in-progress.md`, `project-state.md`) — no
 `src/`/`src-tauri/` file touched, all CONSTRAINTS held (no edits to `faAnchors.ts`,
-`snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`, or any
+`snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/archive/history/history.md`, or any
 `scripts/fixtures/phase4-baseline-*.csv`; no repo-root files added; no generator run in the
 default sweep; no Phase 4 corpus work; no arbiter rebuild; no ear-verified row reopened).
 
@@ -7811,7 +7811,7 @@ green, and confirmed part of the full green `npm test`. `faAnchors.ts` sha256 un
 `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`. `git diff --stat` against
 `2a082d6`: `src/services/syncConstants.ts` (+90/-17 across both blocks) and
 `src/services/faSeamFitGate.test.ts` (+47/-4) only — `faAnchors.ts`, `snapBoundaries.ts`,
-`silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`, and every
+`silenceDetector.ts`, the Hirschberg aligner, `docs/archive/history/history.md`, and every
 `scripts/fixtures/phase4-baseline-*.csv` untouched; no repo-root file added (five new files, all
 under `scripts/`); no generator in the default sweep; no ear-verified row reopened on confidence
 grounds; no Phase 4 corpus work; no arbiter rebuild.
@@ -7902,7 +7902,7 @@ both carry genuine sittings: `152_frozen_brush_mice` — `ear-12` (the original 
 451.03 CORRECT; `abysmal_opinion` — `ov3-triage` (Session D's blinded OV3 triage) scored 17.88
 CORRECT. Neither needs a fresh listen; neither is on this session's ear list.
 
-**(d) Step 3 — ear list.** Folded into `docs/history-2.md`'s Session AC entry. All eight open
+**(d) Step 3 — ear list.** Folded into `docs/archive/history/history-2.md`'s Session AC entry. All eight open
 rows (not six — `231_slowing_pace` and `167_smell_of_butchery` measure identically to the six the
 session brief named by example and belong on the same list for the same reason). Candidates and
 silence bounds independently re-measured this session, not copied from the register's prose;
@@ -7987,7 +7987,7 @@ plan.md`, `docs/work-in-progress.md` including its own Changelog section, `proje
 one new gated `scripts/` measurement file (`ws1-session-ac-drift-probe.test.ts`, not in the
 default sweep), a one-line fix to `scripts/ws1-single-tracker.test.ts`'s allowlist (the RED caught
 above), and one new ear-list doc — no `snapBoundaries.ts`, `silenceDetector.ts`, Hirschberg
-aligner, `docs/history.md`, or `scripts/fixtures/phase4-baseline-*.csv` touched; no `src/` or
+aligner, `docs/archive/history/history.md`, or `scripts/fixtures/phase4-baseline-*.csv` touched; no `src/` or
 `src-tauri/` file touched; no repo-root file added; no `git checkout` reverts; no ear-verified row
 reopened on confidence grounds; no rule changes; no arbiter rebuild.
 
@@ -8186,7 +8186,7 @@ shipped no rule, placement or otherwise, so the prerequisite gates nothing new t
 the standing blocker for Class A/B's eventual fix).
 
 **(h) SCOPE DISCIPLINE.** `faAnchors.ts` (sha256 `b61e94cb…`, unchanged), `snapBoundaries.ts`,
-`silenceDetector.ts`, the Hirschberg aligner, `docs/history.md`, and every
+`silenceDetector.ts`, the Hirschberg aligner, `docs/archive/history/history.md`, and every
 `scripts/fixtures/phase4-baseline-*.csv` untouched. `scripts/phase4-fa-replay.test.ts` (the
 register) untouched. No new repo-root file. No `git checkout` reverts. No arbiter rebuild. No
 Phase 4 corpus work. Two new gated measurement files (`ws1-session-ad-step4-classA.py`,
@@ -8438,7 +8438,7 @@ zero regressions. `tsc --noEmit` clean. `cargo check --features fa-inference` cl
 replay harness stops at `snapCoveredBoundaries` and never reaches the rule stage, so R.14/R.15
 cannot touch it and no re-baseline was needed or made. `faAnchors.ts` sha256 unchanged,
 `b61e94cb…`. `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner
-(`whisperService.ts`), `docs/history.md` and `scripts/fixtures/phase4-baseline-*.csv` all untouched.
+(`whisperService.ts`), `docs/archive/history/history.md` and `scripts/fixtures/phase4-baseline-*.csv` all untouched.
 
 ---
 
@@ -8447,7 +8447,7 @@ cannot touch it and no re-baseline was needed or made. `faAnchors.ts` sha256 unc
 ### AA.0 — What this session set out to do, and what actually happened
 
 Session AE shipped R.14/R.15, a gate that *detects* untrustworthy FA timestamps and substitutes
-an acoustic landmark. `docs/history-2.md`'s Session AH entry then identified the mechanism producing
+an acoustic landmark. `docs/archive/history/history-2.md`'s Session AH entry then identified the mechanism producing
 those untrustworthy timestamps — script text filed into a chunk window's silent tail comes back
 with a timestamp and a collapsed posterior — and named the experiment that would settle
 causality. This session ran that experiment.
@@ -8735,7 +8735,7 @@ shipped, (b) golden coverage built for the rule stage — which does not exist t
 
 ### AA.9 — Step 8 and what is deferred
 
-`docs/history-2.md`'s Session AG entry: **19 rows** (predicted 21) — 17 v6
+`docs/archive/history/history-2.md`'s Session AG entry: **19 rows** (predicted 21) — 17 v6
 boundaries with no ear evidence, plus the 2 ear-verified controls that moved. The 4 known defect
 targets that moved are excluded (they already carry verdicts).
 
@@ -8751,14 +8751,14 @@ rule stage (AA.3) — the gate on R.14 deletion.
 
 ### AB.1 — The verdict
 
-The operator ear-audited the Session AG ear list (folded into `docs/history-2.md`), the full
+The operator ear-audited the Session AG ear list (folded into `docs/archive/history/history-2.md`), the full
 collateral sheet Session AG produced for S1. **Every one of the eighteen v6 boundaries came back
 a REGRESSION**: the current production cut was already right, and S1's proposed value was wrong.
 Zero improvements, zero neutrals.
 
 S1 -- `faChunkPlan.ts`'s partial-case trailing-silence text fold, and its `foldPhantomTails` flag
 -- is **DELETED** from the tree, not disabled. This is recorded as a permanent negative result in
-`docs/history-2.md`'s Session AH entry and in the planner's own source
+`docs/archive/history/history-2.md`'s Session AH entry and in the planner's own source
 comment, so the next session cannot rebuild it by reading §5 alone.
 
 The **total case** fold (a run with text and a genuinely zero-duration window) is untouched. It is
@@ -9152,7 +9152,7 @@ two small edits to `scripts/ws1-session-ag-step8-earlist.test.ts`/`ws1-single-tr
 prose-only, updating what they say about S1's status), `src/services/faAnchorTrustGate.ts` (header
 rewrite), `src/services/faChunkPlan.ts` (S1 deletion). **Confirmed untouched:**
 `snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts`, the Hirschberg aligner,
-`docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv` — zero hits for any of them in the diff
+`docs/archive/history/history.md`, `scripts/fixtures/phase4-baseline-*.csv` — zero hits for any of them in the diff
 stat. No new repo-root file (checked against the repo-root listing directly, not inferred from
 `git status`, since some pre-existing untracked spike files live there already).
 
@@ -9427,7 +9427,7 @@ unaffected by anything in `faChunkPlan.ts`), so no fixture protects a deletion; 
 
 ### AC.8 — Step 6: the ear list, and its bill
 
-the Session AI ear list (folded into `docs/history-2.md`), ordered highest-value listening first per
+the Session AI ear list (folded into `docs/archive/history/history-2.md`), ordered highest-value listening first per
 the brief: (1) the five open defects (all 5 moved — no "unchanged" rows to note), (2) ear-verified
 controls that moved, (3) boundaries whose incoming FA confidence changed by more than one order of
 magnitude, (4) the remaining moved-without-evidence set.
@@ -9537,9 +9537,9 @@ the allowlist, same discipline every prior ear-list file used.
 `scripts/ws1-ear-pass-ledger.ts`, `scripts/ws1-single-tracker.test.ts`, five new
 `scripts/ws1-session-ai-*.test.ts` files (step0, step1×2, step3-generate, step4, step5, step6),
 `src/services/faChunkPlan.ts` (S2 addition), `src/services/faChunkPlan.test.ts` (5 new tests),
-the Session AI ear list (folded into `docs/history-2.md`), plus this docs commit's own targets.
+the Session AI ear list (folded into `docs/archive/history/history-2.md`), plus this docs commit's own targets.
 **Confirmed untouched:** `snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts` (the
-Hirschberg aligner), `docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv` — zero hits for
+Hirschberg aligner), `docs/archive/history/history.md`, `scripts/fixtures/phase4-baseline-*.csv` — zero hits for
 any of them in the diff stat. No new repo-root file. Golden replay 6/6 byte-identical throughout —
 confirmed again to cover chunk plan through `snapCoveredBoundaries` only, never FA or any rule
 (unchanged from AH's own finding; this session's own severe FA-layer regression is precisely the
@@ -9727,7 +9727,7 @@ clean, 4 pre-existing warnings (`fa.rs:117` unit-arg, `fa.rs:833` needless-retur
 216/0/24 `--features fa-inference` · golden replay 6/6. `faAnchors.ts` sha256 unchanged
 (`b61e94cb…`). `git diff --stat a3b0ffc` touches only the 4 new AJ-0 files (3 oracle fixtures + the
 reporting test) plus this docs commit's own targets — zero hits for `snapBoundaries.ts`,
-`silenceDetector.ts`, `whisperService.ts`, `docs/history.md`, `scripts/fixtures/phase4-baseline-*.csv`.
+`silenceDetector.ts`, `whisperService.ts`, `docs/archive/history/history.md`, `scripts/fixtures/phase4-baseline-*.csv`.
 
 **Next action: repoint `.work-phase4/replay/173/run_manifest.json`'s default `faWords`/`chunkPlan`
 arms from `fa_live_*` to `fa_ah_*`** (AD.4) — the single highest-value fix this session found,
@@ -9766,7 +9766,7 @@ genuinely novel material. Not executed this session per the hard stop at Step 7.
 
 ## Part AE — R.5 Excision Is a Contributing Cause, Not the Cause: Global S2 Fails Its Pre-Registered Gate at 0.62% Precision (WS1 Session AK, 2026-08-23, append-only)
 
-**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/history-2.md`'s
+**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/archive/history/history-2.md`'s
 Session AK entry; see there for the complete result.** Summary: a three-arm ablation
 (production / global S2 / global S2 + R.5 excision) found R.5 excision a CONTRIBUTING cause of
 v6's S2 drift (14/30 ear-verified control regressions repaired exactly) but not the general
@@ -9780,14 +9780,14 @@ check`/`cargo clippy --features fa-inference` all clean; `cargo test` 141/0/1 (d
 (`b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`). Commits: `25eb100` (Step
 0 — repoint 173's default arm, three ledger supersessions), `788faf7` (Steps 1-3 — gate + R.5
 excision wired into S2), `addcc38` (Steps 4-5 — three-arm ablation, measured). `snapBoundaries.ts`,
-`silenceDetector.ts`, `whisperService.ts`, `faAnchors.ts`, `docs/history.md`, and the golden-replay
+`silenceDetector.ts`, `whisperService.ts`, `faAnchors.ts`, `docs/archive/history/history.md`, and the golden-replay
 fixture CSVs were all confirmed untouched.
 
 ---
 
 ## Part AF — Chunk Width Is Not the Cause: a Period-Strict 1–15s Band Regresses MORE Than the 10–30s Arm, and the Arch Is the Anchor Estimate's Own Error (WS1 Session AL, 2026-08-24, append-only)
 
-**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/history-2.md`'s
+**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/archive/history/history-2.md`'s
 Session AL entry; see there for the complete result.** Summary: v6-only. A period-strict 1–15s
 chunk band (arm D, half the median width of the 10–30s baseline) made drift *worse*, not better
 (peak −20.617s vs. arm C's −19.155s, 363 regressed boundaries vs. 279) — eliminating chunk width
@@ -9804,7 +9804,7 @@ rule.
 
 ## Part AG — Chunk-Edge Placement Error IS the Driver: the Arch DIES Under Anchor-Placed Edges (68 Regressions Against Arm C's 279), and DIES Again Under the Oracle Ceiling (2) (WS1 Session AM, 2026-08-24, append-only)
 
-**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/history-2.md`'s
+**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/archive/history/history-2.md`'s
 Session AM entry; see there for the complete result, including the arm-G unreachability check and
 the arm-F anchor-substitution-surface safeguard.** Summary: v6-only. Two additive arms, one
 variable each from arm C: arm F places internal chunk edges at the nearest `faAnchors.ts`
@@ -9823,14 +9823,14 @@ anchor substitution surface, measured before FA), `55b7750` (Step 3 — arm F), 
 arm G, diagnostic only), `b7417c1` (Step 5 — six-arm measurement + pre-committed adjudication).
 `git diff --stat 90197cb` touched only `src/services/faChunkPlan.ts` (two additive sections) plus
 test/docs scaffolding. `snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts`,
-`faAnchors.ts`, `docs/history.md`, and the golden-replay fixture CSVs confirmed untouched.
+`faAnchors.ts`, `docs/archive/history/history.md`, and the golden-replay fixture CSVs confirmed untouched.
 Production's own default remains `computeFaChunkPlan`, untouched by this session.
 
 ---
 
 ## Part AH — Arm H: Recovering Arm F's Five Fallback Seams by Widening the Anchor Search One Group, MEASURED Against Real Audio on Both v6 and 173 (WS1 Session AN, 2026-08-24, append-only)
 
-**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/history-2.md`'s
+**Condensed 2026-08-25 (Docs Cleanup Round 2) — full narrative superseded by `docs/archive/history/history-2.md`'s
 Session AN entry; see there for the complete result, including the edge-accuracy budget's "NOT
 STEEP" finding (26/67 ceiling), the session's own self-corrected adjudication-function defect, and
 the 173 extension's unresolved `gadget_decay` row.** Summary: widening the anchor search one
@@ -9848,7 +9848,7 @@ H code + structural checks), `c4a3d2f` (Step 4 — real FA run, five-arm v6 meas
 correction), `352ce0e` (Step 5 — 173 extension). `git diff --stat 28821eb` touched only
 `src/services/faChunkPlan.ts` (one additive branch, `'anchor-widened'`, on the existing
 `S2EdgePlacement` union — no existing arm's code path touched) plus test/docs scaffolding.
-`snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts`, `faAnchors.ts`, `docs/history.md`,
+`snapBoundaries.ts`, `silenceDetector.ts`, `whisperService.ts`, `faAnchors.ts`, `docs/archive/history/history.md`,
 and the golden-replay fixture CSVs confirmed untouched; `computeFaChunkPlan` (the production
 default) remains untouched.
 
@@ -10038,7 +10038,7 @@ buggy (always-`-1`) behavior breaks and needs a considered update rather than a 
 
 **What changed, and where.** The "118/119/126" figure was never three runs of identical code — it
 was three different commits/bundles conflated as one number. `sync-pipeline-v2-plan.md` Part AB.7
-(Session AH, 2026-08-23, `docs/history-2.md`'s matching Session AH entry) bisected it directly:
+(Session AH, 2026-08-23, `docs/archive/history/history-2.md`'s matching Session AH entry) bisected it directly:
 **"Every committed tree from `4b9bea9` — the commit that was HEAD when the [126-chunk] bundle was
 minted — through HEAD computes 119, with a byte-identical `chunk[11]`."** None of eight tested
 arm/attribution combinations reproduced 126; the silence arm was re-derived from the audio with
@@ -10060,7 +10060,7 @@ AH.60's own verification line for the most recent of these (Session AN) states p
 production chunk plan Session AH established has had no code path to regress since.
 
 **Closed.** Removed from `docs/work-in-progress.md`'s Open bugs; one-line closure note in
-`docs/history-2.md`.
+`docs/archive/history/history-2.md`.
 
 ### AI.4 — 5 open Zero-Defect Register rows: STILL REPRODUCES, no rule reaches ship precision — this needs acceptance, not a design slot
 
@@ -10080,7 +10080,7 @@ one audited here.)
 defects — the same class Sessions AL–AN spent nine sessions chasing (the "arch"). Two of five
 (173's `lethal_nature_hazard`, `gadget_decay`) are separately named and have no candidate mechanism
 at all: `gadget_decay`'s ear target sits 0.06s past its own segment's first-word onset, "unreachable
-by any right-edge-minus-pre-roll placement" (Session AH's own autopsy, `docs/history-2.md`'s
+by any right-edge-minus-pre-roll placement" (Session AH's own autopsy, `docs/archive/history/history-2.md`'s
 Session AH entry), and it still doesn't land even under Session AN's own most-aggressive diagnostic
 arm (arm H) — the only one of the five that never landed under any tested arm.
 
@@ -10685,10 +10685,10 @@ version pointing here):
 > Chosen because, post-cleanup, live WS1 content is a short list of standing constraints and
 > open roadmap items, not a second history file — 250 gives headroom for a few more workstreams
 > without inviting narrative back in. When the cap is hit, move finished work to
-> `docs/history-2.md` (companion to `docs/history.md`, same append-only rule: never edited
+> `docs/archive/history/history-2.md` (companion to `docs/archive/history/history.md`, same append-only rule: never edited
 > mid-workstream, only appended to) and re-measure.
 >
 > WS1's full session-by-session history (Sessions A through AN, the component/measurement
-> ledger, and the Changelog) moved to `docs/history-2.md` on 2026-08-25. This file tracks WS1's
+> ledger, and the Changelog) moved to `docs/archive/history/history-2.md` on 2026-08-25. This file tracks WS1's
 > current phase status (Finished / In progress / Open bugs / Not started) plus the constraints
-> that still bind it — full session detail lives in `docs/history-2.md`.
+> that still bind it — full session detail lives in `docs/archive/history/history-2.md`.

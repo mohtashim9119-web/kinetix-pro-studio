@@ -316,7 +316,7 @@ interface Props {
    *  project can never restore into another. */
   projectId: string;
   segments: VideoSegment[];
-  /** Path B (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — top-level heading overlays,
+  /** Path B (docs/archive/history/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — top-level heading overlays,
    *  interleaved into the segments-tab list by `interleaveHeadingRows`. */
   headings: HeadingOverlay[];
   assets: Asset[];
@@ -616,7 +616,7 @@ export function DropZonePanel({
   const rowRefs = useRef<(HTMLDivElement | null)[]>([]);
 
   // Interleaves top-level heading overlays into the segment list for display
-  // (Path B, docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived) Phase 5, Decision 3) — row
+  // (Path B, docs/archive/history/history.md ("Path B — Separate Heading Layer — Design Decisions", archived) Phase 5, Decision 3) — row
   // position is derived from heading.time relative to segment boundaries,
   // not stored as an array position. `rowRefs` below is indexed 1:1 with
   // this merged list, not with the raw `segments` array.

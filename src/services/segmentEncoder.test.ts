@@ -13,7 +13,7 @@ import type { Asset, VideoSegment } from '../types';
  * segment's trailingExtension, after its own nominal end). The blend zone is
  * now centered on `segmentDuration` (the outgoing segment's own nominal
  * end): half sits BEFORE it (still the segment's own un-extended span), half
- * AFTER (the trailingExtension) — see docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s
+ * AFTER (the trailingExtension) — see docs/archive/history/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s
  * transition-centering entry.
  */
 
@@ -88,7 +88,7 @@ describe('resolveBlendFrameParams', () => {
  * already-in-memory `asset.file` over `fetch(asset.url)`, same defect
  * shape/fix as WS2 Step 10's `fetchAndDetectSilences` (a `blob:`-URL
  * `fetch()` fails on Windows WebView2 where DOM-native consumption of the
- * identical URL does not — `docs/history-2.md`).
+ * identical URL does not — `docs/archive/history/history-2.md`).
  */
 describe('encodePlainVideoSegment — fetch-avoidance (WS2 Step 11)', () => {
   beforeEach(() => {

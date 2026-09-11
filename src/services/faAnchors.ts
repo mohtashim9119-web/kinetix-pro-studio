@@ -5,7 +5,7 @@
 
 // ---------------------------------------------------------------------------
 // Forced-alignment anchor computation (R.0/R.1/R.4, `sync-pipeline-v2-plan.md`;
-// R-O/R-P rulings, `docs/history.md` 2026-08-12).
+// R-O/R-P rulings, `docs/archive/history/history.md` 2026-08-12).
 //
 // Pure, synchronous, no I/O: computes the R.1 anchor set and the R.0 "runs"
 // between them, entirely from data that already exists before any forced-

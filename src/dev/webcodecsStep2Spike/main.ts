@@ -843,7 +843,7 @@ async function verifyMuxOnlyStep4(
 // render the SAME effects identically). Grade's own correctness is already
 // covered exhaustively by glCompositable.test.ts's unit tests (grade never
 // disqualifies GL routing) and by the pre-existing GL compositor pixel
-// verification (docs/history.md). This spike compares zoom + both
+// verification (docs/archive/history/history.md). This spike compares zoom + both
 // transition families + a legacy animation + a color filter instead.
 // ---------------------------------------------------------------------------
 

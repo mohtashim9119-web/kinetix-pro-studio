@@ -15,7 +15,7 @@ Windows sync log for a real project:
 - `[FA FALLBACK]` — `error: [object Object]`, high-precision sync did not run.
 - `[FA PRE-FLIGHT]` — not ready: no bundled onnxruntime for `windows-x86_64` — **correct
   behaviour**, not a bug (Windows ORT was never provisioned; see the WS2 bug 2 correction note in
-  `docs/history-2.md`).
+  `docs/archive/history/history-2.md`).
 
 ## A1/A2 — the exact fetch call and its transport
 
@@ -171,11 +171,11 @@ first for a native arm64 build, and CI never produces one to test against.
 4. **Verification**: a Windows CI leg producing FA-executes-end-to-end evidence (the existing
    `[CLAIM-UNVERIFIED]` WIP item already asks for this on the current x86_64-only gate — it grows
    to cover the new platforms too), plus the same live-run confirmation on a real arm64 Mac (no
-   arm64 hardware available in any session to date, per `docs/history.md`'s repeated
+   arm64 hardware available in any session to date, per `docs/archive/history/history.md`'s repeated
    "macOS arm64... unverified" notes across the WebGL2/WebCodecs feasibility work).
 
 Rough sizing: step 1 (Windows DLL + CI wiring + manifest) is a same-shape repeat of the already-
-shipped macOS x86_64 work (WS2 bug 2, `docs/history-2.md`'s `d8baef5` entry) — comparable size.
+shipped macOS x86_64 work (WS2 bug 2, `docs/archive/history/history-2.md`'s `d8baef5` entry) — comparable size.
 Step 2 (generalizing the gate) is small and mechanical once the manifest shape is decided. Step 3
 (arm64) carries unknown cost until it's confirmed whether Microsoft ships an arm64 or universal
 onnxruntime macOS binary for 1.23.2 — that lookup itself is out of this session's scope. None of

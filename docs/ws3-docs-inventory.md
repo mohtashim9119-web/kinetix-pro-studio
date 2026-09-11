@@ -1,8 +1,9 @@
 # WS3 Documentation Inventory & Consolidation Plan (PROMPT 16)
 
-> **Mode:** read-only audit. Produced on branch `docs-inventory`, cut from `main` @ `4d4922c`.
-> Rollback anchor for WS3 integration work: `15002e5` (`ws3-export-integration`).
-> **This file is the only artifact created this round.** No existing doc was edited, moved, or deleted.
+> **Mode:** consolidation inventory. PROMPT 16 audit on `docs-inventory` @ `5bf2f07`; **Phase 1b**
+> executed on `docs-consolidate-p1b` (same cut, base `main` @ `4d4922c`, rollback anchor `15002e5`).
+> **`docs-consolidate-p1` @ `7de0f5b` is superseded** — do not merge or branch from it; consult its diff
+> only to save rework. Phase 1b re-derived every move against the final tree below.
 
 ---
 
@@ -413,17 +414,181 @@ Docs modified on **`ws3-durable-resume`** (subset; no architecture-ledger):
 
 ---
 
-## Gates (this round)
+## Gates (PROMPT 16 — audit only)
 
 | Gate | Status |
 |---|---|
-| Only added file: `docs/ws3-docs-inventory.md` | **Pending commit** on `docs-inventory` |
-| Pre-existing untracked: 3 ws3 md files on main WT | **Not staged** |
-| No `git mv` / `git rm` / edits to existing docs | **Confirmed** |
+| Only added file: `docs/ws3-docs-inventory.md` | **Done** on `docs-inventory` |
 | No merge to `main` | **Confirmed** |
-| No push to `main` | **Confirmed** |
-| No npm/cargo test runs | **Confirmed** (audit-only) |
 
 ---
 
-*Audit agent: Cursor. Inventory date: 2026-09-11. Enumeration HEAD reference: `ws3-hardening-windows` @ `96fec65`.*
+## Phase 1b — Execution record (`docs-consolidate-p1b`)
+
+### Supersession & CC lineage notes
+
+| Item | Record |
+|---|---|
+| `docs-consolidate-p1` @ `7de0f5b` | **Superseded** by p1b; stays pushed as reference only |
+| Taxonomy preamble | Restored on `ws3-hardening-windows` @ `be332ee` |
+| `dedc3bf` (tier3 Round 9) | Confirmed in hardening lineage via `2514423` merge — tier3 not orphaned |
+| Ledger divergence (remaining) | tier3 Round 9 **Rung 5c DEFER** block + Round 9 **number collision** — Phase 2 fold/renumber |
+| CC HEAD (refresh) | `ws3-hardening-windows` @ `9c80e71` (Round 14 STEPs 7–10) |
+
+### STEP 8 — Corrected loose-file arithmetic
+
+**Basis:** `git ls-tree --name-only <branch> docs/` — count of `.md` files directly under `docs/`, not in subfolders.
+
+| Branch / snapshot | Loose `.md` at `docs/` root | Notes |
+|---|---:|---|
+| `main` @ `4d4922c` | **4** | `history.md`, `history-2.md`, `wkwebview-drag-checklist.md`, `work-in-progress.md` |
+| `docs-inventory` @ `5bf2f07` | **5** | above + `ws3-docs-inventory.md` |
+| `ws3-hardening-windows` | **13** | 4 shared + 9 `docs/ws3-*.md` |
+| PROMPT 16 "18 loose" | **Incorrect** | Counted cross-branch union / pre-taxonomy navigational set; authoritative per-branch counts are 4 (main) and 13 (hardening) |
+
+**No video-ingest living doc on `main`** — both `ws2-video-ingest/` files are archive-only; `ws2-app` carries 4 content docs (fa-models ×2, editor checklist, groq feasibility).
+
+### Divergent blobs (remaining after STEP 7 fold)
+
+| Path | Blobs | Resolution |
+|---|---|---|
+| `docs/work-in-progress.md` | 2 | **Partially killed:** unique `15002e5` append-path item folded into `project-state.draft.md`; file moves Phase 2 |
+| `docs/ws3-export-architecture-ledger.md` | 3 | Phase 2 merge + Rung 5c / Round 9 collision fix |
+| `docs/ws3-export-durable-state.md` | 3 | Phase 2 merge — take hardening/durable-resume HEAD |
+
+### STEP 5 — Pending README drafts (paste in Phase 2)
+
+#### `docs/README.md` three-lane table (final)
+
+| Lane | Path | Scope |
+|---|---|---|
+| WS1 — Sync pipeline | `docs/ws1-sync-pipeline/README.md` | FA timing, measurement programme, live runbooks |
+| WS2 — App & platform | `docs/ws2-app/README.md` | FA model packs, editor QA, transcription feasibility |
+| WS3 — Export | `docs/ws3-export/README.md` | WebCodecs export architecture, liveness, durable resume |
+
+Archive policy paragraph, no-loose-files rule, and Phase 2 pending note for `ws3-export/` — **already applied** in p1b `docs/README.md`; table above is the Phase 2 final form (add WS3 README link once created).
+
+#### `docs/ws3-export/README.md` (draft — Phase 2)
+
+```markdown
+# WS3 — Export pipeline
+
+Living architecture for the WebCodecs+WebGL2 export path: liveness watchdogs, append batching,
+hardware rung failover, and durable checkpoint/resume. Round-by-round history lives in the ledger
+preamble (Rung/Tier taxonomy) — not restated here.
+
+| Doc | Purpose |
+|---|---|
+| `architecture-ledger.md` | Round-by-round export architecture ledger (Rung/Tier registers) |
+| `durable-state.md` | Durable checkpoint/resume preconditions and Round 11–13+ records |
+| `pipeline-audit.md` | PROMPT 12 cross-branch pipeline audit (static) |
+| `silent-gaps-diagnosis.md` | Timer-starvation / occlusion diagnosis (code-cited; archive candidate later) |
+| `recovery-architecture.md` | Flush-timeout / rung failover architecture (code-cited living spec) |
+| `speed-architecture-audit.md` | Export speed optimization feasibility study |
+
+**Archive:** closed round audits → `docs/archive/ws3/` after CC lands.
+```
+
+*(Note: `silent-gaps-diagnosis.md` may move to archive in a later pass; six living docs cap satisfied at Phase 2 landing.)*
+
+### STEP 4 — Reference rewrites (p1b applied vs deferred)
+
+**Applied** (non-prohibited): `README.md`, `.github/workflows/build.yml`, `scripts/**`, `docs/ws1-sync-pipeline/*.md`, `docs/ws2-app/*.md` (except rescue internals), ~40 `src/**` files (comments only). Path mappings:
+
+| Old | New |
+|---|---|
+| `docs/history.md` | `docs/archive/history/history.md` |
+| `docs/history-2.md` | `docs/archive/history/history-2.md` |
+| `docs/wkwebview-drag-checklist.md` | `docs/ws2-app/editor-wkwebview-drag-checklist.md` |
+| `docs/ws2-fa-models/*.md` | `docs/ws2-app/fa-models-*.md` |
+
+**Deferred to Phase 2:**
+
+| File | Lines (approx) | Old → New |
+|---|---|---|
+| `CLAUDE.md` | 246, 281–282, 279–287 | `docs/history.md` → archive path; `docs/wkwebview-drag-checklist.md` → `docs/ws2-app/editor-wkwebview-drag-checklist.md`; five-doc scheme → lane folders |
+| `project-state.md` | 10, 30, 38, 55, 63–70 | history paths → archive |
+| `docs/work-in-progress.md` | 4–6, 31, 40, 201, 207 | history-2 paths → archive |
+| `src-tauri/onnxruntime/README.md` | 54, 107 | `docs/ws2-fa-models/ort-provisioning.md` → `docs/ws2-app/fa-models-ort-provisioning.md` |
+| `src/services/webcodecsExport/exportPipelineWebCodecs.ts` | 561, 1904 | history + ws3 doc paths |
+| `src/services/exportPipeline.ts` | 148, 263 | history paths |
+| `src/services/exportPipeline.test.ts` | 6 | history-2 |
+| WS3 code refs | see PROMPT 16 Phase E table | recovery-architecture, silent-gaps paths after Phase 2 mv |
+
+**Intentional unchanged:** historical path citations inside `docs/archive/history/history.md` and `history-2.md`.
+
+### STEP 3 — Rescue disposition
+
+| Main WT source | Committed copy | Main WT original |
+|---|---|---|
+| `docs/ws3-groq-transcription-architecture-audit.md` | `docs/ws2-app/transcription-groq-feasibility.md` | **Untouched** — delete Phase 2 after merge |
+| `docs/ws3-export-speed-architecture-audit.md` | `docs/ws3-export/speed-architecture-audit.md` | **Untouched** — delete Phase 2 after merge |
+
+### STEP 6 — Root drafts (repo root, not applied)
+
+- `CLAUDE.draft.md` (~120 lines) — commands, invariants, do-not subset, lane pointers; no WS3 Rung/Tier restatement
+- `project-state.draft.md` — WS3-primary, WIP folded, no frozen vitest/SHA counts
+
+### STEP 9 — Phase 2 execution spec (ordered, not run)
+
+1. **BLOCKED-UNTIL-CC-LANDS:** Merge `ws3-hardening-windows` → integration trunk.
+2. **Ledger reconciliation:** fold tier3 Round 9 Rung 5c DEFER block; renumber later Round 9 entry (do not drop).
+3. **BLOCKED-UNTIL-CC-LANDS:** `git mv docs/ws3-export-architecture-ledger.md docs/ws3-export/architecture-ledger.md`
+4. **BLOCKED-UNTIL-CC-LANDS:** `git mv docs/ws3-export-durable-state.md docs/ws3-export/durable-state.md`
+5. **BLOCKED-UNTIL-CC-LANDS:** `git mv docs/ws3-export-pipeline-audit.md docs/ws3-export/pipeline-audit.md`
+6. **BLOCKED-UNTIL-CC-LANDS:** `git mv docs/ws3-export-recovery-architecture.md docs/ws3-export/recovery-architecture.md`
+7. **BLOCKED-UNTIL-CC-LANDS:** `git mv docs/ws3-silent-gaps-diagnosis.md docs/ws3-export/silent-gaps-diagnosis.md` (or archive per cap review)
+8. Create `docs/ws3-export/README.md` (paste STEP 5 draft).
+9. Update `docs/README.md` WS3 row link to README (table already live).
+10. **BLOCKED-UNTIL-CC-LANDS:** `git mv` WS3 archives → `docs/archive/ws3/` (`append-path-audit`, `decode-cursor-granularity`, `throughput-regression-audit`, `round4-static-fixes`; keep `silent-gaps` if still living).
+11. `git mv docs/work-in-progress.md docs/archive/history/work-in-progress.md`
+12. Apply deferred reference rewrites (Phase 2 table above + WS3 code paths).
+13. `mv CLAUDE.draft.md → CLAUDE.md`; `mv project-state.draft.md → project-state.md`; delete drafts.
+14. Delete main-WT untracked originals (`ws3-groq-*`, `ws3-export-speed-*`) after committed copies verified on merged branch.
+15. Retire or fold `docs/ws3-docs-inventory.md` into history.
+
+**Collision list refresh (`ws3-hardening-windows` @ `9c80e71` dirty vs `main`):**
+
+- `docs/work-in-progress.md`
+- All 9 `docs/ws3-*.md` paths on hardening
+- Do not `git mv` any until CC branch merges
+
+### Phase 1b gates
+
+| Gate | Status |
+|---|---|
+| `git diff --name-only main..HEAD` — no `docs/ws3-*` except inventory + `ws3-export/speed-architecture-audit.md` | **Verify at commit** |
+| All moves `R` under `-M`, no A/D pairs for moved content | **Verified** |
+| No prohibited paths touched | **Confirmed** |
+| tsc / lint / npm test / cargo test | **Skipped** (docs-only) |
+| Push `docs-consolidate-p1b` only; no merge to `main` | **Pending push** |
+
+### Living / archived counts (p1b target tree)
+
+| Lane | Living content docs | README | Archive |
+|---|---:|---|---|
+| ws1-sync-pipeline | 4 | yes | history overflow |
+| ws2-app | 4 | yes | ws2/ (2 diagnoses) |
+| ws3-export | 1 (speed audit only; 5 more Phase 2) | Phase 2 | — |
+| archive/history | — | — | history, history-2 (+ WIP Phase 2) |
+| **Total content (post–Phase 2 WS3)** | **≤14** | 4 lane + 2 index/archive | ws2: 2; ws3: Phase 2 |
+
+### Rename list (Phase 1b, all `R100`–`R098`)
+
+| From | To |
+|---|---|
+| `docs/history.md` | `docs/archive/history/history.md` |
+| `docs/history-2.md` | `docs/archive/history/history-2.md` |
+| `docs/wkwebview-drag-checklist.md` | `docs/ws2-app/editor-wkwebview-drag-checklist.md` |
+| `docs/ws2-fa-models/manage-models.md` | `docs/ws2-app/fa-models-manage-models.md` |
+| `docs/ws2-fa-models/ort-provisioning.md` | `docs/ws2-app/fa-models-ort-provisioning.md` |
+| `docs/ws2-video-ingest/bug3-diagnosis.md` | `docs/archive/ws2/bug3-diagnosis.md` |
+| `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md` | `docs/archive/ws2/step10-windows-fetch-diagnosis.md` |
+
+**Additive (copy, not mv):** groq feasibility → `ws2-app/`; speed audit → `ws3-export/`.
+
+**Unplaced (by design):** all WS3 living docs except speed audit — **BLOCKED-UNTIL-CC-LANDS**; `work-in-progress.md` content — in `project-state.draft.md`, file move Phase 2; `CLAUDE.md` / `project-state.md` — drafts at repo root.
+
+---
+
+*Phase 1b agent: Cursor. Date: 2026-09-11. Branch: `docs-consolidate-p1b` cut from `docs-inventory` @ `5bf2f07`. CC HEAD refresh: `ws3-hardening-windows` @ `9c80e71`.*

@@ -3346,7 +3346,7 @@ describe('snapCoveredBoundaries — degenerate-pair guard (no giant boundary fro
 // NOTE: the pre-existing "contention-aware assignment gives a contested
 // silence to its better-fitting pair" test above used to exercise this
 // branch (formerly titled "applies the monotonic check to a silence-derived
-// boundary too", see docs/history.md) — contention-aware assignment
+// boundary too", see docs/archive/history/history.md) — contention-aware assignment
 // (2026-07-30) resolves that fixture's non-monotonicity before the fallback
 // branch is even reached, so it no longer does (see that test's own
 // COVERAGE NOTE). This fixture closes that gap with fresh coverage,

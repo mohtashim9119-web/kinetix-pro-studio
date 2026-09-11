@@ -22,7 +22,7 @@ rename; a cancel-then-resume pass was cancelled at 28,793,177 real on-disk
 bytes and resumed from 29,907,289 bytes (not from zero), completing to the
 exact expected size in 325.9s with the resulting file confirmed
 sha256-identical to the original. Full detail:
-`docs/history-2.md#2026-08-27--ws2-step13-fa-download-engine-ort-provisioning`.
+`docs/archive/history/history-2.md#2026-08-27--ws2-step13-fa-download-engine-ort-provisioning`.
 Import (below) remains the manual fallback — still useful for an operator who
 already has a `model.onnx` from a prior `export-fa-onnx.py` run, or who needs
 to place a model without a network transfer.

@@ -812,7 +812,7 @@ export function snapCoveredBoundaries(
     // of seconds downstream of `next`'s `firstTokenIdx`. Forcing a boundary
     // anyway via `(lastSpokenEnd + nextSpokenStart) / 2` is precisely the
     // step that turned that false positive into a multi-minute phantom
-    // duration in production (docs/history.md) — it overwrote
+    // duration in production (docs/archive/history/history.md) — it overwrote
     // applyAnchorBasedTiming's already-correct, already-repaired timing with
     // one derived from the same corrupted indices. A MILD inversion (a few
     // hundred ms — Whisper words spoken close together/overlapping) is

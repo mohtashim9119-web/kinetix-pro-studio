@@ -5,7 +5,7 @@
 > committed value any rule has ever changed — plus a blinded unmoved-control arm.
 > **Everything needed to run it is in this file.** No setup, no other document.
 >
-> **Drawn at HEAD `726112b`.** Superseded: the Session G ear list's (`docs/history-2.md`) 12-row sample (scored
+> **Drawn at HEAD `726112b`.** Superseded: the Session G ear list's (`docs/archive/history/history-2.md`) 12-row sample (scored
 > in Session H; all twelve re-verified against this HEAD in §5 below, no drift).
 >
 > **Scope (carried verbatim from R-AB..R-AF):** Stage 1's "zero defects" is **en/es only**.
@@ -72,7 +72,7 @@ no rule proposes at HEAD.
 
 **Score: 24 / 24.**
 
-**Scoring provenance.** Rows scored across two sittings, not one — see `docs/history-2.md`'s
+**Scoring provenance.** Rows scored across two sittings, not one — see `docs/archive/history/history-2.md`'s
 Session K entry and `scripts/ws1-ear-pass-ledger.ts`'s `mover-audit-k` sitting for the original
 record: Session K (2026-08-18, same HEAD this table was drawn at) scored 22/24 directly against
 this table (its ledger notes cite "Audit clip 1" and "Audit clip 12", i.e. rows 1 and 12 above);
@@ -86,7 +86,7 @@ never happened.
 
 **Live re-confirmation, 2026-08-27.** Five rows have moved since this table was drawn (Session
 T/Q, 2026-08-21, superseded the values below with A/B-verified corrections — see
-`docs/history-2.md#2026-08-27--operator-attested--ws1-r12-live-reconfirmation`) and were
+`docs/archive/history/history-2.md#2026-08-27--operator-attested--ws1-r12-live-reconfirmation`) and were
 therefore stale relative to current `main` regardless of Session K's scoring. Owner re-verified
 all 24 boundaries against current `main` on this date; the five with a different live value are
 recorded here rather than silently overwritten above, preserving this table's own historical

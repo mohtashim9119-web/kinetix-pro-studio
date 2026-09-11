@@ -798,7 +798,7 @@ function attributeByIndex(
   // v6 chunks against ~13 true defects (~7% precision), and a repair keyed on
   // it moved 18 boundaries an operator ear audit confirmed were ALREADY
   // CORRECT. Do not reintroduce a cleanup keyed on this test. See
-  // `docs/history-2.md`'s Session AH entry (ruling R-AS).
+  // `docs/archive/history/history-2.md`'s Session AH entry (ruling R-AS).
   // Fold zero-duration runs' text forward into the next run that has audio.
   for (let i = 0; i < ranges.length - 1; i++) {
     const r = ranges[i]!.run;
@@ -956,12 +956,12 @@ function applyFaTextNormalization(
 //
 // S1 (WS1 Session AG/AH) tried to CLEAN UP the phantom-tail defect after the
 // fact, keyed on a ~7% precision detector, and was rejected 18/18 on ear
-// audit (ruling R-AS: `docs/history-2.md`'s Session AH entry). S2 tries to
+// audit (ruling R-AS: `docs/archive/history/history-2.md`'s Session AH entry). S2 tries to
 // PREVENT it instead, at the layer where it is created: today's planner
 // (`computeFaChunkPlanWithAttribution` above) cuts the raw token stream at
 // `qi`-derived indices with no awareness of sentence structure, which is what
 // lets a chunk window end mid-sentence and hand a neighbour's silent tail
-// someone else's words (`docs/history-2.md`'s Session AH entry — text filed
+// someone else's words (`docs/archive/history/history-2.md`'s Session AH entry — text filed
 // into a window's silent tail).
 //
 // PRODUCTION DEFAULT UNCHANGED. This is a SEPARATE, explicitly-named function
@@ -1013,7 +1013,7 @@ function applyFaTextNormalization(
 // built from the SAME raw-token/anchor machinery invariant 3 asks this planner
 // to stay clear of — and folding it in is real, separable follow-on work, not
 // attempted here. v6 carries ~10 genuinely unscripted recitations
-// (`docs/history-2.md`'s Session AH entry, R.5 recitation-census note); a wide S2 chunk that
+// (`docs/archive/history/history-2.md`'s Session AH entry, R.5 recitation-census note); a wide S2 chunk that
 // wholly contains one is therefore NOT excised and the recitation's audio
 // stays inside whatever chunk contains it, unlike the production path. This
 // is a real, measured gap (Session AI Step 4 checks the recitation-adjacent
