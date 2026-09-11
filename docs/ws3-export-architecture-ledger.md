@@ -940,3 +940,110 @@ matches exactly), `APPEND_BATCH_BYTES` 524,288 / 512 KiB (`exportPipelineWebCode
 fixture digests (`5db5e004…`, `af89ca66…`, `1abf9839…`, `fb9cdda2…`) confirmed unchanged, present
 identically in both `docs/ws3-export-durable-state.md:1709-1712` and the live
 `annexbFrameCount.test.ts:242-245`, and exercised passing as part of the `npm test` run above.
+
+### Round 16 (2026-09-11) — Consolidation: carry-overs closed, integration merge, canonical ledger (PROMPT 20)
+
+**Branch:** `ws3-hardening-windows` from `9de3455`, merged into `ws3-export-integration` (STEP 2
+below). **Base main:** `4d4922c`. **Rollback:** `15002e5`. This is the entry to read instead of
+the fifteen before it: it carries the merge record, the round-number map, the single C1–C11 /
+H1–H10 disposition table, and the final frozen state. Hardware-bound residuals live in exactly one
+file, `docs/ws3-export-windows-validation.md`, and are referenced from the table by ID only.
+
+#### STEP 1a — Real clean-path byte neutrality: MATCH (`931a3c8`)
+
+Not a trace assertion. `scripts/ws3-clean-path-artifact.test.ts` runs the real
+`exportProjectWebCodecs` orchestrator — batching, per-append verify, checkpoint writes, concat,
+the post-concat picture-count guard, mux, save — against a fake WORKER that replays a
+byte-deterministic libx264 Annex-B fixture one access unit per frame (the granularity the real
+worker posts), and a fake ffmpeg whose every file operation is real disk I/O in a session
+directory and whose `exec` spawns the REAL bundled sidecar (`ffmpeg-x86_64-apple-darwin`, the
+binary the app runs on this machine) with the argv the pipeline hands it. The output is a real
+`export_final.mp4` written by the real muxer. The same file, unchanged, was run at `51e1f6b`
+(pre-durable-state, in a detached worktree) and at the current head.
+
+Why not a full live export: a live export needs the Tauri IPC bridge, WKWebView's `VideoEncoder`
+and a GL context — none of which exist headless. Everything from the encoder's output bytes
+onward IS the real code, and that is the entire surface the durable-state work touched.
+
+| Arm | Input | `export_final.mp4` SHA-256 | `video_all.h264` SHA-256 |
+|---|---|---|---|
+| A | 320×180, 3 GL pieces × 1830 frames (5490 AUs, ~3.25 KB/AU), sine WAV voiceover; fixture `216592e8…9b95`, wav `9bd76648…6c5d` | `5bef695552b82311c95c4dbad410c6755c0820a220a2e7519a3caf4f3748f06c` at **both** `51e1f6b` and head | `216592e8…9b95` at both — equal to the input fixture, i.e. the pipeline is byte-transparent for the bitstream |
+| B | 1280×720, 2 GL pieces × 1830 frames (3660 AUs, ~45 KB/AU — the field profile, so the 512 KiB BYTE trigger decides batch boundaries); fixture `89a16a32…3d69`, wav `5d2557e9…6285` | `09c53b61334205f7522e24912a2bbf951ca8da011a12e9de3eab22be39995386` at **both** | `89a16a32…3d69` at both |
+
+Every intermediate (`piece_N.h264`, `voiceover_audio`, `video_all.h264.premux.mp4`) also matched
+in both arms; the mux argv was identical across all runs; head is self-deterministic (Arm A run
+twice, identical); both truncate primitives throw if reached and were never reached. The head's
+extra clean-path work is visible in the call trace and moves no byte: Arm A — 9 manifest writes
+and 57 per-append verify reads at head vs 0 / 1 at `51e1f6b`; Arm B — **304 appends under the
+512 KiB cap vs 42 under the old 4 MiB cap** (7.2×), 6 manifest writes, 305 verify reads. So none
+of STEP 9's five durable writes, nor STEP 2's batch cap, perturbs the clean path; the digests
+above are the baseline. The harness is skipped without `WS3_ARTIFACT_DIR` (+1 skipped test in
+`npm test`); fixture generation commands are in its header and are byte-deterministic
+(regenerated, identical digest). The C11 fix (`5aba84b`, STEP 1c) was re-run through Arm A after
+landing: still `5bef6955…f06c`.
+
+#### STEP 1b — Cargo reconciliation: all 15 accounted, and the premise corrected
+
+Round 13 did **not** record 379 — its own gate table (`docs/ws3-export-durable-state.md`, "Round
+13 gates") records **384** (`381 + 3`). 379 is Round 8's / Round 10's figure (ledger Round 10
+gates; durable-state Round 8 gates). Round 15's note that "5 further Rust tests were added
+somewhere between Round 13 and this round's measurement, not itemized" was wrong about the
+location: they sit between Round 10 and Round 13 and ARE itemized in Cursor's own Round 11 and
+Round 13 gate tables. Measured with `cargo test --features fa-inference -- --list` (which lists
+ignored tests too, so listed − 35 = runnable) at four heads, name sets diffed:
+
+| Head | Listed | Runnable | Delta | Test names (module::tests::name) | Introducing commit | Arrived on this branch via |
+|---|---|---|---|---|---|---|
+| `57fc882` (Round 10, `ws3-tier2-wire`) | 414 | **379** | — | — | — | — |
+| `4006386` (Round 11, `ws3-durable-resume`) | 416 | **381** | +3 −1 | + `ffmpeg::concat_preserves_partial_output_on_disk_full_error`, + `ffmpeg::resumed_session_blocks_bitstream_ops_until_prepared`, + `ffmpeg::resumed_session_blocks_write_during_pending`; − `ffmpeg::resumed_session_blocks_append_count_concat_until_prepared` (from `1c2be49`, replaced by the two `resumed_session_blocks_*` tests) | `79e3eed` | merge `d6eff3b` |
+| `1b3d369` (Round 13, `ws3-durable-resume`; `80a7458` is identical) | 419 | **384** | +3 | `session_claim::claim_contention_second_holder_refused_while_first_live`, `session_claim::stale_claim_recovery_after_dead_pid`, `session_claim::sweep_refuses_claimed_directory` | `d73747a` | merge `2514423` |
+| `9de3455` (Round 15, this branch) | 429 | **394** | +10 | `ffmpeg::windows_long_path_is_a_byte_for_byte_no_op_on_this_platform`, `ffmpeg::windows_prefix_actually_defeats_max_path_by_length`, `ffmpeg::windows_prefix_applies_to_a_drive_letter_path`, `ffmpeg::windows_prefix_applies_to_a_unc_path`, `ffmpeg::windows_prefix_is_idempotent_never_double_prefixed`, `ffmpeg::windows_prefix_leaves_a_relative_path_alone_defensively` (6, `e9355a2`, H9); `session_claim::a_directory_gone_before_the_call_is_neither_deleted_nor_pending`, `session_claim::a_genuine_removal_is_classified_as_deleted`, `session_claim::only_the_deleted_outcome_is_eligible_for_bytes_reclaimed`, `session_claim::pending_delete_is_never_classified_as_deleted` (4, `ee406dd`, H5/H10) | `e9355a2`, `ee406dd` | own commits |
+
+379 + 2 + 3 + 10 = 394. Sixteen additions, one removal, every one attributed by `git log -S`.
+The 35 ignored are constant at every head.
+
+**`whisper::in_flight_tests` flake — REPRODUCED on the 4th run.** Round 15 observed 0 failures in
+3 parallel runs; this round's 4th parallel run of `cargo test --features fa-inference` failed
+`whisper::in_flight_tests::a_retained_percent_is_peeked_not_consumed` — `393 passed; 1 failed;
+35 ignored`, panic at `src/whisper.rs:1671:43`, which is `received[0]` on a recording-channel log
+that was still empty when read (the attach's replayed progress event had not been delivered
+yet). The same test passes in isolation (`cargo test --features fa-inference
+a_retained_percent_is_peeked_not_consumed`: 1/1, 0.00 s) and single-threaded. Record: **1 in 4
+parallel runs this session, historically observed, not fixed and not proven fixed.** Nothing in
+this round's or this branch's Rust changes plausibly touched it: `git log 4d4922c..HEAD --
+src-tauri/src/whisper.rs` is empty; the branch's Rust diff is confined to `ffmpeg.rs`,
+`session_claim.rs`, `lib.rs` (command registration), `Cargo.toml`/`Cargo.lock`. The race is
+between the test's synchronous read of the log and the channel's asynchronous delivery — a
+pre-existing test-fixture timing defect, not a product defect, and outside WS3's file ownership.
+
+#### STEP 1c — C11, the multi-piece budget gap: FIXED (`5aba84b`)
+
+**ID `C11`.** The manifest on disk is piece-scoped (the only scope under which the native fence,
+which takes one file, and `appendExportCheckpoint`'s strict monotonicity can both hold — Round
+10), and a fresh piece's manifest started every budget counter at zero. Within one process that
+was harmless — the in-process gates (`boundaryRewindsUsed`, `hardwareFailoverUsed`) are
+export-scoped locals — but a resumed process seeds those locals from the resumed PIECE's manifest
+(STEP 9, `fa0a61c`), so everything an earlier, already-finished piece had spent was silently
+restored.
+
+**Worst case, written out.** An export with N GL pieces and one OS-level crash per piece: each
+crash lands in a piece whose manifest shows only that piece's own spend, so each new process is
+granted a fresh in-process budget and the cross-process `totalRecoveryAttempts` gate is likewise
+per piece. Total: **2N rewinds, N failovers, 3N exact-offset truncates, 4N recovery attempts**
+against the documented **2 / 1 / 3 / 4**. A 26-minute 1080p30 export (~26 pieces at 1800 frames)
+could perform 52 rewinds and 26 failovers. Within a single piece repeated crashes were already
+bounded (the adopted manifest rolls forward); the leak is strictly across piece boundaries.
+
+**Fix, inside Rung 0.** `exportLifetimeBudgetOf(previous)` (pure, `exportCheckpoint.ts`) projects
+the three export-scoped counters; `createExportStateManifest` takes them as `carriedBudget`; the
+writer's `startManifest` passes the manifest it is leaving behind (fresh or adopted, plus every
+`note*` since — the export's running total). The newest manifest on disk is therefore always the
+export-lifetime total and a resume from ANY piece seeds the in-process gates correctly. No new
+file, no new native command, no new I/O, no new time constant — the same single-slot,
+never-awaited write. `checkpointResumeAttempts` (documented per checkpoint generation) and
+`rotationsSeen` (per-piece coverage signal for `never_checkpointed`) deliberately stay
+piece-scoped. Probes: `exportCheckpointWriter.test.ts` "THE C11 SCENARIO" (+3), `exportCheckpoint.test.ts`
+(+2); destructive — replacing the carry with `undefined` turns the scenario red, restored by
+move. The residual from Round 15 STEP 10b item 3 (a crash landing between the synchronous
+in-memory charge and its fsync under-counts ONE attempt) is unchanged and unchanged in kind — it
+was never a piece-boundary leak.
