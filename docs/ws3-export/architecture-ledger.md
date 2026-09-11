@@ -1814,3 +1814,209 @@ https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/34637659903
 installer this branch has ever produced.
 
 **No merge to main. No PR.** Pushed `ws3-windows-build-fix`.
+
+### Round 20 (2026-09-12) — Windows fsync access denied (PROMPT 26)
+
+Branch `ws3-windows-fsync-fix`, cut from `ws3-export-integration` @ `1abe9a1` (the integration
+head after fast-forwarding `ws3-windows-build-fix` @ `5825dc9` and folding in the Round 19
+carry-overs); rollback `15002e5`. No merge to main, no PR.
+
+**Field report, machine 1.** 1080p30, 354 segments, voiceover present. Export reached 40,374 of
+40,384 frames; the sealing offer fired and was accepted; the mux stage then failed with
+`write_file(voiceover_audio): sync_all: Access is denied. (os error 5)`. macOS passed the same
+project.
+
+**Field report, machine 2 (arrived mid-round).** 167 segments, 1080p30, voiceover present. Failed
+on the FIRST frame of segment 0 on the canvas/PNG segment path (`segv1_…`):
+`kind: encode, segmentIndex: 0 — write_file_raw(frame_00001.png): sync_all: Access is denied.
+(os error 5)`. Deterministic, not a race — which rules out a Defender timing window as the
+primary cause and, together with machine 1's 40,374 successful appends, gives the discriminator:
+the append path's handle survives `FlushFileBuffers`; the `write_file`/`write_file_raw` handle
+does not. Both installers were built from `5825dc9`. Machine 3 pending — **no rebuild until it
+reports**, so all three results come from the same binary.
+
+#### STEP 1 — Root cause, with evidence
+
+The failing call is `ffmpeg.rs`'s `sync_session_file` — the ONE function behind both field
+failures. `ffmpeg_write_file` (machine 1, base64 body, `voiceover_audio`) and
+`ffmpeg_write_file_raw` (machine 2, raw IPC body, `frame_00001.png`) differ only in transport;
+each does `fs::write(&full, bytes)` and then calls it with the same arguments:
+
+```rust
+fn sync_session_file(path: &Path, label: &str) -> Result<(), String> {
+    let file = fs::File::open(path)…;   // Win32: CreateFileW(GENERIC_READ)
+    file.sync_all()…                     // Win32: FlushFileBuffers(handle)
+}
+```
+
+`File::open` maps to `GENERIC_READ` only. `FlushFileBuffers` requires write access on the handle
+and returns `ERROR_ACCESS_DENIED` (5) otherwise. `fsync(2)` on an `O_RDONLY` descriptor succeeds
+on macOS and Linux — which is exactly why the same project passed on macOS and why nothing in the
+repo's test suite had ever seen this. The file pre-exists (just written by `fs::write`), is under
+the session dir in `%TEMP%`, and nothing else in-process holds a handle to it: `fs::write`'s
+handle is closed before `sync_session_file` opens its own.
+
+**Ranking against the code, not plausibility:**
+
+| Hypothesis | Verdict | Evidence |
+|---|---|---|
+| Handle opened without write access, `FlushFileBuffers` refuses | **Confirmed — the cause** | (1) The error string's shape `{label}: sync_all: {e}` is emitted at exactly one site, `sync_session_file`, and only from the `sync_all` arm — the open arm would read `open for sync:`, and a failed `fs::write` would read `write_file(voiceover_audio): Access is denied` with no `sync_all`. So the write succeeded, the read-only open succeeded, and `FlushFileBuffers` alone failed. (2) The first Windows execution of the existing `cargo test` suite (integration run 34647026774, the Round 19 carry-over's first run) reproduced the identical failure at a SECOND site with no voiceover involved: `copy_session_file_atomic_does_not_touch_dest_until_complete` failed with `copy_session_file dest: sync_all: Access is denied. (os error 5)` — the post-rename `sync_session_file(dest)` in the delivery path. (3) The new `#[cfg(windows)]` probe `read_only_handle_cannot_flush_file_buffers` pins `File::open(p).sync_all()` → `raw_os_error == 5` on windows-latest. |
+| `.append(true)` maps to `FILE_APPEND_DATA` without `FILE_WRITE_DATA` and `FlushFileBuffers` refuses it | **Ruled out by the field reports — and the direction is the reverse** | The brief's discriminator is right (append survives, `write_file`/`write_file_raw` do not) but the mechanism it names is inverted: the append handle is the one WITH a write right (`FILE_APPEND_DATA`), and `append_file_raw_inner` ends every 512 KiB batch with `sync_all` on it — 40,374 machine-1 frames = thousands of successful `FlushFileBuffers` calls on exactly that handle shape. The failing handles have NO write right at all: `sync_session_file` opened them with `File::open` (`GENERIC_READ`), which neither `write_file` nor `write_file_raw` shares with the append path. Machine 2 failing on frame 1 of segment 0 confirms it is the open, not timing. Pinned by `append_only_handle_can_flush_file_buffers` (green on windows-latest, run below). |
+| Defender scan-on-close holding the file (W7) | Not this failure | A scan-on-close hold surfaces as `ERROR_SHARING_VIOLATION` (32) on the next *open*, not `ERROR_ACCESS_DENIED` on `FlushFileBuffers` of an already-open handle; and the open here succeeded. Remains a real external-hold class — covered by the STEP 3 retry policy, not by the STEP 3 open fix. |
+| Controlled Folder Access on the destination | Not this failure | CFA denies the *open-for-write* (and `fs::write` would have failed first); the session dir is under `%TEMP%`, not a protected folder; the delivery path was never reached. Same retry/degrade coverage as above. |
+| File open elsewhere in-process / in the WebView | Not this failure | `fs::write` closes its handle before `sync_session_file` opens; the WebView never touches the session dir (raw-body IPC lands bytes natively). A concurrent opener with `FILE_SHARE_*` would not deny a flush anyway. |
+| Read-only attribute from a prior attempt | Not this failure | Would have failed `fs::write` (the create/truncate open), not the flush; the session dir is fresh per export. |
+
+No Windows machine was needed to distinguish: hypothesis 1 is the only one that fails at
+`FlushFileBuffers` on a handle that was just successfully opened, and CI run 34647026774 executed
+the reproduction on real Windows.
+
+#### STEP 2 — `sync_all` / open-flags audit, `src-tauri/**`
+
+Every `sync_all` in the crate, with the `OpenOptions` behind its handle and whether
+`FlushFileBuffers` can legally succeed on it under Win32 semantics. "Latent" = same bug as the
+field failure. "Site fixed" refers to STEP 3.
+
+| # | Site (`file:fn`) | Handle came from | Win32 access on handle | `FlushFileBuffers` legal? | Status before | After Round 20 |
+|---|---|---|---|---|---|---|
+| 1 | `ffmpeg.rs:sync_session_file` ← `ffmpeg_write_file` (the field failure, `voiceover_audio`; also canvas-tier `export_piece_N.mp4` bytes) | `fs::File::open(path)` | `GENERIC_READ` | **No — ERROR_ACCESS_DENIED** | **LATENT — the failure** | `durable_fs::fsync_path_bounded`: `OpenOptions::write(true)` (no create/truncate) → `GENERIC_WRITE`; bounded retry; `Unconfirmed` degrades (recorded, command returns Ok) |
+| 2 | `ffmpeg.rs:sync_session_file` ← `ffmpeg_write_file_raw` (**machine 2's failure**, `frame_00001.png`) | same as 1 | `GENERIC_READ` | **No — ERROR_ACCESS_DENIED** | **LATENT — the second field failure** | same as 1 |
+| 2a | **Canvas/PNG segment path** (`segv1_*`, the second export route): `segmentEncoder.ts` per-frame `writeFileRaw(frame_%05d.png)` (pooled encoder) / `writeFile` (fallback), `writeFile(src_*.mp4)` for the plain-video source, and `encodeCanvasPiece` in the WebCodecs orchestrator; legacy `exportPipeline.ts` `writeFile` for segment MP4s, the concat manifest and the voiceover | all resolve to sites 1 and 2 — no other native write command exists | as 1/2 | as 1/2 | **LATENT — every canvas-path export fails on its first frame on Windows** (machine 2) | covered by the fix to 1/2; no separate site |
+| 3 | `ffmpeg.rs:sync_session_file` ← `ffmpeg_truncate_annexb` (salvage) | same as 1 | `GENERIC_READ` | **No** | **LATENT** — every Windows salvage/rewind would have failed after the truncate landed | same as 1 |
+| 4 | `ffmpeg.rs:sync_session_file` ← `ffmpeg_truncate_annexb_to_offset` (Rung 3 rewind) | same as 1 | `GENERIC_READ` | **No** | **LATENT** | same as 1 |
+| 5 | `ffmpeg.rs:sync_session_file` ← `ffmpeg_prepare_checkpoint_resume` (durable resume fence) | same as 1 | `GENERIC_READ` | **No** | **LATENT** — every Windows resume would have failed at the fence | same as 1 |
+| 6 | `ffmpeg.rs:copy_session_file_atomic` — post-rename `sync_session_file(dest)` (**F2 delivery — the priority**) | same as 1 | `GENERIC_READ` | **No** | **LATENT — every Windows delivery.** Reproduced on windows-latest by the pre-existing test (run 34647026774). The `.part` was fully written, fsynced and promoted by rename; the command then returned `Err`, `useExport` reported "Failed to save the exported file to disk", and the bytes sat at `dest` unacknowledged. | same as 1; outcome carried into `SaveSessionFileResult` — never an `Err` for an unconfirmed flush of a complete file |
+| 7 | `ffmpeg.rs:copy_session_file_atomic` — `.part` `output.sync_all()` | `fs::File::create(&part)` | `GENERIC_READ \| GENERIC_WRITE` | Yes | OK (external-hold class only) | `durable_fs::fsync_file_bounded`; `Unconfirmed` proceeds to the rename and is reported |
+| 8 | `ffmpeg.rs:append_file_raw_inner` (per 512 KiB batch) | `OpenOptions::create(true).append(true)` | `FILE_GENERIC_WRITE & !FILE_WRITE_DATA` = `FILE_APPEND_DATA \| FILE_WRITE_ATTRIBUTES \| FILE_WRITE_EA \| STANDARD_RIGHTS_WRITE \| SYNCHRONIZE` | Yes — proven by 40,374 field frames and the new probe | OK | Unchanged. A per-batch external hold surfaces as a hard append error, which the per-append size verify and Rung 3 already handle; degrading here would flood warnings on the hot path. |
+| 9 | `ffmpeg.rs:ffmpeg_write_export_state` — manifest temp | `fs::File::create(&temp)` | `GENERIC_READ \| GENERIC_WRITE` | Yes | OK | Unchanged, still a HARD error: the crash-safe manifest contract depends on the temp being durable before the rename; an unconfirmed manifest must not be promoted |
+| 10 | `ffmpeg.rs:concat_annexb_pieces_inner` (**F6 concat output**) | `fs::File::create(out_full)` | `GENERIC_READ \| GENERIC_WRITE` | Yes | OK | `durable_fs::fsync_file_bounded`; `Unconfirmed` recorded, concat returns Ok (the picture-count guard still runs on the bytes) |
+| 11 | `session_claim.rs:write_claim_record` — claim temp | `fs::File::create(&temp)` | `GENERIC_READ \| GENERIC_WRITE` | Yes | OK | Unchanged, hard error (a claim that is not durable must not be promoted) |
+| 12 | `project_mirror.rs:write_atomic` — mirror temp | `fs::File::create(&tmp)` | `GENERIC_READ \| GENERIC_WRITE` | Yes | OK | Unchanged |
+| 13 | `model_download.rs` — `.part` after body end | `OpenOptions::create(true).write(true).truncate/append(resumed)` | `GENERIC_WRITE` (or `FILE_APPEND_DATA` set when resumed — see #8) | Yes | OK | Unchanged |
+| 14 | `models.rs:import_to_target` — `.part` before validate/rename | **`File::open(&part_path)`** | `GENERIC_READ` | **No — ERROR_ACCESS_DENIED** | **LATENT — model import would fail on every Windows machine** | `durable_fs::fsync_path` (write-access open); still a hard error — an import is cheap to retry and nothing has consumed the bytes |
+
+Six latent sites (1–6, one function), one more in a different subsystem (14). Every site that
+fsyncs by path now goes through `durable_fs::open_for_fsync`; there is no remaining
+`File::open(..).sync_all()` in the crate (`grep -n "sync_all" src-tauri/src/*.rs` is the check).
+
+**What the delivery failure would have looked like in the field.** Site 6 runs after the export
+is complete and the bytes are at the operator's chosen path. Every Windows export — with or
+without a voiceover, forced-sealed or not — would have ended in "Failed to save the exported file
+to disk. … completed export remains at `%TEMP%\kinetix-export-<uuid>\export_final.mp4`", with a
+byte-identical copy already sitting at the destination. Machine 1 never reached it only because
+site 1 fired first.
+
+#### STEP 3 — Fix and degradation policy
+
+New module `src-tauri/src/durable_fs.rs`:
+
+- `open_for_fsync(path)` — `OpenOptions::new().write(true).open(path)`: write access, no create,
+  no truncate, no append. The only open under which `FlushFileBuffers` is defined to succeed.
+- `fsync_path_bounded(path, label)` / `fsync_file_bounded(&file, path, label)` — bounded retry:
+  `FSYNC_RETRY_BACKOFF_MS = [25, 50, 100, 200, 400]`, six attempts, **≤ 775 ms of sleep total**
+  (Rung 0: every wait has a number, and this one is inside every ffmpeg liveness bound). The path
+  variant re-opens on every attempt so a released hold is actually observed. Retryable set:
+  `ERROR_ACCESS_DENIED` (5), `ERROR_SHARING_VIOLATION` (32), `ERROR_LOCK_VIOLATION` (33),
+  `EINTR`, `EAGAIN`, `EBUSY`. Everything else (`NotFound`, `EIO`, `ENOSPC`/`ERROR_DISK_FULL`)
+  returns `Err` immediately, with the OS error code, the step, the full path, the attempt count and
+  elapsed ms in the string — the same fields an `Unconfirmed` cause carries.
+- `SyncOutcome::{Confirmed, Unconfirmed{cause}}` — the fsync is **never dropped**; the two
+  outcomes are made distinguishable and the caller applies policy.
+
+**Policy, by site** (`record_durability_outcome` in `ffmpeg.rs`):
+
+| Outcome | Session-scoped writes (1–5, 10) | Delivery (6, 7) | Manifest / claim (9, 11) | Model import (14) |
+|---|---|---|---|---|
+| `Confirmed` | silent | silent; `durableConfirmed: true` | silent | silent |
+| `Unconfirmed` after ≤ 775 ms | **command returns Ok**; cause logged natively (`[ws3-durability]`) and recorded on the session; drained by the frontend at the terminal (`ffmpeg_take_durability_warnings`) and surfaced on the error blob or the success toast | **rename still happens; command returns Ok** with `SaveSessionFileResult { durableConfirmed: false, durabilityWarning }`; success toast says "Saved, but the disk did not confirm the write was flushed" with the OS error + path on hover | hard `Err` (unchanged — an unconfirmed manifest/claim must not be promoted over a good one) | hard `Err` (unchanged) |
+| hard error | `Err` with code + path (unchanged shape, richer string) | `Err` — `.part` removed, `dest` untouched (unchanged) | `Err` | `Err` |
+
+"A durability failure on a complete file degrades to *saved but not confirmed durable*, never to
+*export lost*." Anything not yet drained when `TauriFfmpeg.destroy()` runs (a cancel, a crash
+between mux and delivery) becomes a `durability-unconfirmed` cleanup notice for the next run — the
+same channel STEP 8 (C6) built for cleanup failures.
+
+#### STEP 4 — Diagnostics hole
+
+Every post-encode failure in `exportPipelineWebCodecs.ts` — concat, the frame-count guard (both
+the typed mismatch and a thrown count), the voiceover write, mux/seal, and the pipeline-side
+delivery — was built as `{ kind, message, cause }` with no `liveness`, because `snapshotLiveness`
+is a closure inside `driveGlRun` and is gone by the time these stages run. The blob's
+`liveness`/`lastPhase`/`framesEncoded`/`pieceIndex`/`appendLedger`/`phaseLogTail` are all read
+off `err.liveness`, hence all null. The `useExport`-side delivery failure had the same shape.
+
+Fix: the pipeline retains the last GL piece's `finish`-stamped result as `lastGlPieceLiveness`
+and layers the post-encode stages on as their own phase-log entries (`kind: 'post-encode'`).
+`postEncodeError(kind, message, err, phase)` wraps `boundedStepError` and every post-encode
+failure now goes through it; `lastPhase` names the failing stage (`concat`, `concat:verify`,
+`mux:write-voiceover`, `mux`, `mux:seal`, `deliver`) and the tail ends in it. A successful run
+returns its terminal view on `ExportResult.liveness` so `useExport`'s delivery step — which has no
+closure of its own — attaches it (with `lastPhase: 'deliver'`) to a delivery failure. The native
+cause already carries the OS error code and full path (`durable_fs::describe`, or the new
+`[path=…]` suffix on a failed `fs::write`); the TS side passes it through verbatim
+(`ExportError.cause`). `ExportError.durabilityWarnings` and the blob's `durabilityWarnings` carry
+any degraded fsyncs from the failed run.
+
+**The seal dialog's "10 FRAMES LOST / 0s".** `formatElapsedLong` floors; 10 frames at 30 fps is
+0.333 s → "0s" beside a non-zero frame count. New `formatFrameSpanDuration`: sub-second shows
+milliseconds ("333 ms"), ≥ 1 s rounds UP to whole seconds so a loss is never understated. Used
+on the three seal-dialog tiles and the success toast's "Shortened by".
+
+#### STEP 5 — Proof and gates
+
+**Red, then green, on real Windows.**
+
+- Run 34647026774 (integration `1abe9a1`, first-ever Windows execution of the test suite, unfixed
+  code): `copy_session_file_atomic_does_not_touch_dest_until_complete` **FAILED** with
+  `copy_session_file dest: sync_all: Access is denied. (os error 5)`. Also failed:
+  `windows_long_path_is_a_byte_for_byte_no_op_on_this_platform` — a test with no platform gate
+  asserting the non-Windows branch; now `#[cfg(not(windows))]`, with a `#[cfg(windows)]` twin
+  asserting the prefix IS applied. The Round 19 `windows_start_time` trio ran for the first time:
+  3/3 ok. 65 passed / 2 failed.
+- Run 34647440025 (this branch, probe commit on unfixed code): the new
+  `ffmpeg::tests::windows_fsync_access` trio — `read_only_handle_cannot_flush_file_buffers` ok,
+  `append_only_handle_can_flush_file_buffers` ok, `sync_session_file_confirms_on_an_existing_file`
+  **FAILED** (the site under test, pre-fix). RED as designed.
+- Run RUN_GREEN (fix commit): every filtered test green — including the machine-2 case
+  `write_file_raw_first_frame_sync_confirms` (fresh `frame_00001.png` via `fs::write`, then
+  `sync_session_file`, the exact first-frame sequence), added after machine 2 reported. Its red
+  is run 34647440025: it exercises the same function with the same arguments as the probe that
+  went red there (`sync_session_file_confirms_on_an_existing_file` — itself a `fs::write` +
+  `sync_session_file` on a file that did not exist before the test).
+
+`windows-check.yml` (Round 19 carry-over, landed on integration at `1abe9a1`): the feature-off
+cell runs `cargo test --lib -- --test-threads=1 session_claim:: project_mirror:: ffmpeg::tests::
+durable_fs::` and fails if fewer than 3 tests execute. The feature-on cell stays check-only
+(linking the `fa-inference` test binary pulls the ort runtime, which is `build.yml`'s concern).
+
+| Gate | Result |
+|---|---|
+| Windows `cargo check --all-targets` (feature-off / fa-inference) | RUN_GREEN_CHECK |
+| Windows `cargo test --lib` (filtered) | RUN_GREEN_TEST |
+| Windows bundle build (`build.yml`, `-f fa-inference`) | RUN_BUNDLE |
+| macOS `npx tsc --noEmit` / `npm run lint` | clean / clean |
+| `npm test` | GATE_NPM |
+| `cargo test` | GATE_CARGO |
+| `cargo test --features fa-inference -- --test-threads=1` | GATE_CARGO_FA |
+
+New tests: Rust `durable_fs::tests` ×7 (open never truncates/creates; confirmed on every platform;
+`NotFound` is a hard error with path + `attempts=1`; the schedule is exhausted and bounded
+(≥ 775 ms, < 1,775 ms) then degrades; a hold released mid-schedule confirms; retryable set is the
+external-hold class only, per platform; handle variant confirms), `ffmpeg::tests::windows_fsync_access` ×4
+(`#[cfg(windows)]`), `windows_long_path_applies_the_prefix_at_runtime_on_windows` (`#[cfg(windows)]`).
+TS `postEncodeDiagnostics.test.ts` ×7 (the field failure's blob has all six fields populated and
+the native cause verbatim; each post-encode stage names itself; success carries liveness;
+`durableConfirmed: false` is still a success), `formatFrameSpanDuration` ×5,
+`normalizeSaveSessionFileResult` ×3.
+
+#### Field evidence for W4/W5 — recorded, not fixed
+
+The 10-frame shortfall (40,374 / 40,384) on machine 1's hardware encoder is the first field
+observation of the encoder-drain class W4/W5 describe. The sealing offer fired and was accepted,
+so the guard and the seal worked as designed. **Not attempted this round** — it needs the same
+project on all three machines first. Row W17 in `windows-validation.md` names the data to collect
+(machine, GPU, driver version, `encoderSessions`/`encoderSessionIndex`/`selectedHardwareRung` from
+the blob, and reproducibility on the same project). Note the diagnostics blob from machine 1 was
+the null one this round fixed, so none of those fields are known for that run.
+
+**No merge to main. No PR.** Pushed `ws3-windows-fsync-fix`.
