@@ -447,6 +447,25 @@ Input to the round after CC's. Cheap tests, not implementations.
 
 Also newly checked, not previously in this register: the two-sources-of-truth question C7 raises (in-memory vs. persisted recovery-budget counters) is answered explicitly in `docs/ws3-export-durable-state.md`'s Round 14 STEP 9 entry — in-memory is authoritative for THIS process's own next-rewind decision, persisted `totalRecoveryAttempts` is authoritative for whether a NEW process may resume at all, and STEP 9's fix is exactly what keeps those two gates from disagreeing across a resume.
 
+#### Round 15 dispositions (2026-09-11, `ws3-hardening-windows`, PROMPT 19 STEPs 11-13 close-out)
+
+Full per-ID disposition table (all C1-C10, H1-H10, `closed`/`mitigated`/`open`, no blanks) lives in
+`docs/ws3-export-architecture-ledger.md`'s own Round 15 entry, not duplicated here. Summary of what
+changed THIS round specifically (everything else in the table above is carried forward unchanged):
+
+| ID | Disposition | Fixing commit(s) / note |
+|---|---|---|
+| C4 | **CLOSED, confirmed** — the rewind truncate (`exportPipelineWebCodecs.ts:3110-3120`) IS wrapped in `withFfmpegLivenessBound`/`TRUNCATE_BOUND_MS`, contradicting this doc's own C4 row as written above (which predates that fix). Fixed pre-`9c80e71` (Round 10, Blocker 1), inherited on this branch — this doc's C4 row is stale and should be read alongside the ledger's Round 15 table, which is authoritative | Round 10, Blocker 1 |
+| C7 | **MITIGATED, not fully closed** — Round 14's `fa0a61c` fixed the severe unconditional-0/false reset; this round found a narrower residual: the manifest is piece-scoped, so budget spent in an earlier, already-finished GL piece is invisible to a later piece's resumed manifest after a crash | `fa0a61c` (severe case); residual unfixed, out of PROMPT 19 scope |
+| H9 | **Pre-encode path-length check confirmed WIRED** (`useExport.ts:717-747`, before any rendering). Two residual gaps found: forward-slash paths not normalized before `\\?\` prefixing; `..`/`.` relative components not detected (Win32 disables canonicalization under `\\?\`). Both latent — not reachable through this app's own native save dialog | `e9355a2`; residuals unfixed, both latent |
+| H5 | Confirmed operator-facing live/stale messaging exists verbatim: "another window is using this session" (`exportResumeDiscovery.ts:286`) vs. a stale-recovery message distinct from it (`:117`) | No change — confirms Round 14's `ee406dd` |
+| H10 | Confirmed `pendingDelete` kept separate from `bytesReclaimed` in both the Rust sweep contract and the TS consumer (`useExport.ts:221-223`) | No change — confirms Round 14's `ee406dd` |
+
+Gate arithmetic, the full STEP 11 batch-cap quantification, and the STEP 10b carry-over writeups
+(budget seeding, persist ordering with its new probe, path validation, keyframe guarantee) all live
+in the ledger's Round 15 entry — this file's job is findings and dispositions, not gate output or
+narrative detail (see this file's own header and `CLAUDE.md` §5's documentation rules).
+
 ### 7.2 Hypotheses (not confirmed by our code alone)
 
 | ID | Sev | Statement | Evidence | Win-specific? | Already tracked? | Operator symptom | Cheapest confirm/refute |

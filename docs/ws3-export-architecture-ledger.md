@@ -667,3 +667,276 @@ state, not a hypothetical; or (b) a second field-verified occurrence of the WKWe
 timer-starvation class documented in `docs/ws3-silent-gaps-diagnosis.md`'s run 5, confirming it
 is a recurring failure mode rather than a one-off. Either observation reopens this decision;
 absent one, it stays deferred.
+
+### Round 15 (2026-09-11) — PROMPT 19 close-out: STEPs 11-13, findings-register disposition
+
+**Branch:** `ws3-hardening-windows`, fresh session, continuing directly from Round 14's own head
+(`9c80e71`). SHA chain covered: `9c80e71` (Round 14 docs) → `e9355a2` (S10, H9) → `fa0a61c` (S9,
+C7) → `ee406dd` (S8, C6/H5/H10) → `2bb06fa` (S7, C5) → `9ea600a` (S6, H3) → `75e331c` (S5, H2) →
+`9ea600a`'s sibling `2514423` (merge of `ws3-durable-resume` Round 13 into this branch) →
+`0d397f7` (S2, H1) → `4a3e584` (S1) → `d6eff3b` (S0). Round numbering note: Round 9 already
+collided between `ws3-tier3-failover` and this branch's own numbering before this round started;
+that collision is NOT renumbered here, and the tier3 Rung 5c DEFER block above is a later
+reconciliation, untouched by this round.
+
+**Merge disposition (`2514423`).** No textual conflicts; the two branches touched disjoint
+regions — `ws3-durable-resume`'s Rust primitives and `exportCheckpoint.ts`'s pure schema/handshake
+functions vs. this branch's own `exportPipelineWebCodecs.ts` orchestration and Rung 3/5a rewind
+code. Confirmed by the merge commit's own diff carrying no `<<<<<<<` markers and no file appearing
+on both sides' independent change lists.
+
+**Corrected STEP 2 arithmetic.** The task text's assumed baseline (`3514 passed / 77 skipped / 0
+failed = 3591`) does not match this tree. Measured, twice, identically: **3564 passed / 0 failed /
+77 skipped = 3641** at this round's start (before this round's own STEP 10b probe addition), which
+is `9c80e71`'s true total. See "Gate arithmetic" below for the full reconciliation — this round
+adds exactly one more test (`exportCheckpointWriter.test.ts`'s persist-ordering probe, STEP 10b
+item 3), bringing the final total to 3565/0/77 = 3642.
+
+**STEP 4 disposition (inherited, not re-run this round).** Per Round 14's own report (unchanged
+this round — STEP 4 was a Round 14, not Round 15, deliverable): four failures surfaced during that
+round's wiring work, all fixed before commit — see Round 14's "What broke" entries above. This
+round did not re-run STEP 4; it is cited here only because PROMPT 19 asks the Round 15 entry to
+carry it forward.
+
+**STEP 5 codec ladder / STEP 6 accounting / STEP 7 discard accounting.** Unchanged this round —
+see Round 14's own dispositions above (`75e331c`, `9ea600a`, `2bb06fa`). Carried forward by
+reference, not re-verified, except where STEP 10b below found a residual.
+
+#### STEP 10b — five carry-overs
+
+1. **Push.** `ws3-hardening-windows` pushed to `origin` at the start of this round
+   (`be332ee..9c80e71`), before any of this round's own work — confirmed via `git push` output.
+   A second push closes this round (see "Push" at the end of this entry).
+
+2. **Budget seeding completeness.** `boundaryRewindsUsed` and `hardwareFailoverUsed` are seeded
+   explicitly as named locals in `exportPipelineWebCodecs.ts:2885,2888` from `resume?.manifest`.
+   `checkpointResumeAttempts` and `totalRecoveryAttempts` are **not** separately re-seeded as
+   locals — they do not need to be, because `adoptManifest` (`exportCheckpointWriter.ts:196-209`)
+   assigns the **entire** resumed manifest object (`manifest = existing`), all four
+   `ExportRecoveryBudget` fields intact, to the writer's own state; every subsequent `record()` /
+   `noteBoundaryRewind()` / `noteHardwareFailover()` / `noteResumeAttempt()` call increments off
+   that adopted object, not a fresh one. There is no separate "truncate counter" field in
+   `ExportStateManifest` (`exportCheckpoint.ts:169-178` has exactly four budget fields) — truncate
+   count is not tracked independently because it is 1:1 with the two counters that already are:
+   every `boundaryRewindsUsed` increment and every `hardwareFailoverUsed` transition corresponds to
+   exactly one `truncateAnnexbToOffset` call, so there is nothing to seed that boundaryRewindsUsed/
+   hardwareFailoverUsed do not already cover.
+
+   **The counter that is NOT fully seeded, found this round:** the manifest is **piece-scoped**, not
+   export-scoped, on disk. `beginPiece` → `startManifest` (`exportCheckpointWriter.ts:157-166`)
+   constructs a **brand-new** manifest via `createExportStateManifest` with no budget argument —
+   all four counters reset to 0 — for every piece that is NOT the one being resumed (`beginPiece` is
+   called for every piece after the resumed one, and for every piece in a run that never crashed).
+   But `MAX_BOUNDARY_REWINDS_PER_EXPORT` and `MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT` are documented,
+   in `exportPipelineWebCodecs.ts`'s own comment at the `boundaryRewindsUsed` declaration, as
+   **per-EXPORT, every GL piece combined**. Concretely: if piece 0 spends 1 rewind and finishes, then
+   the process crashes mid-piece-1 (which has spent 0 rewinds of its own), `resume.manifest` is
+   piece 1's manifest — `boundaryRewindsUsed: 0` — so the resumed process's in-process local seeds to
+   0, not 1, silently restoring a rewind piece 0 already spent. This is narrower than the STEP 9 bug
+   (which reset the ENTIRE budget to 0 on every resume, any piece, any history) — it only leaks
+   budget spent in a piece **before** the one being resumed, and only across a crash (a single
+   unbroken process run never loses it, since the in-process locals are never piece-scoped). Reported
+   as found, not fixed this round — out of PROMPT 19's scope (STEP 10b asks to "report any counter
+   that is not" seeded; this is that counter, not a directive to re-architect the manifest's
+   piece-scoping this round). Affects only multi-GL-piece exports (a single-piece export, the common
+   case for most projects, cannot exhibit it) that crash after piece 0+ has already spent a rewind.
+
+3. **Budget persist ordering.** Traced precisely for both write sites:
+   - Rewind (`noteBoundaryRewind`, `exportPipelineWebCodecs.ts:3177`): called **after** the rewind
+     truncate (`:3110-3138`) completes and its exact-match check (`:3146-3165`) passes, but
+     **before** the re-render attempt (`runGlPiece`, `:3186`) — the operation that could hang again
+     — begins.
+   - Failover (`noteHardwareFailover`, `:3079`): called **before** the failover's own re-render
+     attempt begins (same ordering intent, stated explicitly in the code's own comment: "write #3:
+     persist the failover flag AND bump totalRecoveryAttempts before the failover attempt itself
+     runs").
+
+   So the charge is issued before the risky attempt in both cases — **in-process**, synchronously:
+   `checkpointWriter`'s internal `manifest` variable is mutated the instant `noteBoundaryRewind()`/
+   `noteHardwareFailover()` returns, with zero dependency on I/O (`exportCheckpointWriter.ts`'s own
+   header comment: "Nothing ever awaits it. `record()` is synchronous and returns immediately").
+   The DURABLE write (`ffmpeg_write_export_state`'s `sync_all`) is deliberately never awaited — by
+   the writer's own explicit design, so a wedged volume cannot stall the export (Rung 0: "a recovery
+   path may not hang", cited verbatim in the rewind-truncate's own comment at `:3097`). So there is a
+   real window — between the in-memory charge and the fsync landing — where a genuine OS-level crash
+   loses the durable copy of that one charge.
+
+   **Probe added:** `exportCheckpointWriter.test.ts`'s new "PERSIST-ORDERING PROBE" — a
+   `writeExportState` that never resolves (simulating a crash before its fsync completes) — confirms
+   the in-memory manifest (`snapshot()`) already reflects the charge in the SAME synchronous turn as
+   the `note*` call, with zero dependency on the write settling, and that a SECOND charge issued
+   while the first write is still stalled also lands in-memory immediately (so a wedged fsync cannot
+   itself let one process over-spend its own in-process budget — the in-process gate reads the
+   synchronous local, never the manifest, never disk). 7/7 green (was 6/6 before this addition).
+
+   **Verdict: acceptable, not a bug to fix.** Making the durable write synchronous (awaited before
+   the re-render attempt) would reintroduce exactly the hang Rung 0 forbids and the rewind-truncate
+   fix (Round 10, Blocker 1) exists to prevent — an fsync on a wedged volume can block indefinitely,
+   and awaiting it would turn "one lost checkpoint" into "the export itself now hangs on I/O it was
+   specifically built not to depend on." The residual risk is real but bounded: it requires an actual
+   process crash landing in a narrow window (between a synchronous local mutation and one fsync
+   round-trip, typically single-digit milliseconds), the worst case is under-counting one recovery
+   attempt (not an unbounded reset — item 2's cross-piece gap is structurally the same shape but
+   would leak more), and the absolute per-piece ceiling (`MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT`)
+   still applies to whatever the next process's own attempts add on top, so this is not the same
+   "silently grants a full fresh budget" severity STEP 9 fixed — it is a strictly smaller residual of
+   the identical shape, correctly attributable to fsync durability, not to the recording logic.
+
+4. **Pre-encode path-length validation: EXISTS**, confirmed at `src/hooks/useExport.ts:717-747`
+   (`checkExportDestinationPathLength`, called immediately after `pick_save_path` returns and
+   explicitly before Step 3's render call — the function's own doc comment states the intent: "reject
+   an impossible destination... at second zero, rather than after a 30+ minute encode"). This closes
+   the durable-state doc's own STEP 6 "NOT DETERMINED (CC/UI scope)" note — it has since landed
+   (Round 14, `e9355a2`); `docs/ws3-export-durable-state.md` is updated below to match.
+
+   **Forward slashes:** `apply_windows_long_path_prefix` (`ffmpeg.rs:1622-1639`) only inspects
+   whether byte index 1 is `:` to detect a drive-letter path — it does not require or convert to
+   backslashes. A path like `C:/Users/alice/out.mp4` (which `looksLikeWindowsPath`,
+   `exportDestinationPath.ts:41-43`, accepts via its own `[\\\/]` alternation) would be prefixed as
+   `\\?\C:/Users/alice/out.mp4`. Per Microsoft's own documentation, `\\?\` **disables** the usual
+   path parsing and requires backslash separators — a forward-slash path under that prefix is not
+   guaranteed to resolve the way an unprefixed one would. **Known gap, not fixed this round:** no
+   code path normalizes `/` to `\` before prefixing.
+   **Relative components (`.`/`..`):** the function's own comment states a relative path (no drive
+   letter) is left unprefixed, "defensive, not expected" — but it does **not** detect or reject `..`/
+   `.` segments inside an otherwise-absolute path (e.g. `C:\Users\alice\..\Videos\out.mp4`). Since
+   `\\?\` disables canonicalization, Win32 would **not** resolve those segments — the literal string
+   after the prefix is looked up verbatim. **Known gap, not fixed this round.** Neither gap is
+   reachable through this app's own UI today (`pick_save_path` returns whatever the native Windows
+   save dialog produces, which does not normally emit forward slashes or `..` segments) — both are
+   recorded as latent, not live, defects.
+   **UNC (`\\?\UNC\`):** confirmed correct — `apply_windows_long_path_prefix` strips the leading
+   `\\` and reprefixes as `\\?\UNC\server\share\...`, exercised by
+   `windows_prefix_applies_to_a_unc_path` (`ffmpeg.rs` test suite, passing).
+
+5. **Keyframe guarantee: already answered by STEP 9**, not a gap. Cited precisely:
+   `encoderSessionPlan.test.ts:166`, "RESUME KEYFRAME GUARANTEE" — a checkpoint's recorded frame
+   index is always one of `planEncoderSessions`' own `sessionStarts` (found, keyframe-safe by
+   construction, since the planner only ever cuts backward to an already-keyframe boundary — never
+   forward, never off-grid); a foreign/corrupted checkpoint value is rejected the identical way
+   `exportWorker.ts` itself rejects an off-grid resume frame. Passing as part of this round's `npm
+   test` run.
+
+#### STEP 11 — Quantifying the 512 KiB batch cap
+
+Figures on record (this round's own gate run + STEP 2's commit message, `0d397f7`): ~460.4 s
+export; a ~33 KB/chunk 1080p30 profile; ~40,000 chunks unbatched; STEP 2's own commit message
+states the append-call reduction for that profile drops from **~100×** (at the old 4 MiB cap) to
+**~15.5×** (at the new 512 KiB cap) once the byte trigger, not the 100-chunk count trigger,
+dominates at the smaller size.
+
+**Append-call counts, this profile:** old (4 MiB, no verify): 40,000/100 ≈ **400** append calls, 0
+verify calls, 400 total IPC round trips. New (512 KiB, every append verified): 40,000/15.5 ≈
+**2,581** append calls **+ 2,581** verify calls (STEP 2, `0d397f7`, added an immediate
+`sessionFileSize` read after every `appendFileRaw`) = **5,162** total round trips.
+
+**IPC call-count multiplier, 512 KiB vs. 4 MiB:** append calls alone, 2,581/400 ≈ **6.45×**; total
+round trips (append + verify), 5,162/400 ≈ **12.9×**.
+
+**Added wall-clock from the verify calls alone** (2,581 extra round trips, isolating just the new
+per-append verify — not the batch-count increase itself, which was already implicit in the pre-STEP-2
+call count):
+
+| Latency | Added wall-clock | % of 460.4 s |
+|---|---|---|
+| 0.5 ms (Mac) | 2,581 × 0.5 ms ≈ **1.29 s** | **0.28%** |
+| 12.4 ms (Windows, measured) | 2,581 × 12.4 ms ≈ **32.0 s** | **6.96%** |
+| 25 ms (pathological) | 2,581 × 25 ms ≈ **64.5 s** | **14.0%** |
+
+**Resulting terminal-drain margin.** The 12.4 ms terminal-drain figure on record is for the single
+FINAL pending batch drained at finish, not the whole run's append stream — that step now issues one
+additional verify round trip, not thousands. Worst case (pathological 25 ms latency): terminal
+drain becomes ≈ 12.4 ms (append) + 25 ms (verify) ≈ **37.4 ms**, against the 30,000 ms `WATCHDOG_MS`
+bound — margin drops from ~29,988 ms to **~29,963 ms**. The bulk of the added wall-clock (32.0 s on
+Windows, 64.5 s pathological) lands across the WHOLE export's many mid-run appends, not at the
+terminal drain step, so it competes with `APPEND_DRAIN_BOUND_MS` (600,000 ms) and total export wall
+time, not with `WATCHDOG_MS`'s per-idle-interval bound — and at 32.0 s / 460.4 s it is nowhere close
+to either.
+
+**The 32 MiB back-pressure gate's relationship to batch size CHANGED, stated plainly.**
+`APPEND_BACKPRESSURE_THRESHOLD_BYTES = 32 * 1024 * 1024` (`appendBackpressureGate.ts:52`) is an
+absolute byte threshold, untouched by this round. At the old 4 MiB batch size, 32 MiB of unacked
+data meant at most **8** batches (8 round trips) could be outstanding before back-pressure parked
+the frame loop. At the new 512 KiB batch size, the SAME 32 MiB threshold now permits **64** batches
+(64 round trips) outstanding before parking — an 8× increase in the number of concurrently
+in-flight IPC calls the gate tolerates, even though the byte ceiling itself is unchanged. This is a
+real behavioral change: back-pressure now engages later in call-count terms (though at the identical
+byte volume), meaning more outstanding round-trip promises can accumulate in the append queue before
+throttling kicks in.
+
+**Verdict: the cap is justified.** H1's WebView2 ~2 MB IStream truncation risk is the one hypothesis
+in the register that plausibly explains BOTH production Windows hangs without inventing a new
+mechanism, and 512 KiB carries a 4× margin below the documented ~2 MB ceiling — plus the verify call
+is an INDEPENDENT second mitigation (a short write is caught and typed at the batch that lost bytes,
+not discovered minutes later at the concat/frame-count guard) that holds even if the size guess is
+wrong. The wall-clock cost is real (6.96% of total export time at measured Windows latency, 14% in
+the pathological case) but does not threaten any bound in the register — `APPEND_DRAIN_BOUND_MS`
+has ~9.4 minutes of headroom against a worst-case few-tens-of-seconds addition, and the terminal
+drain's own margin against `WATCHDOG_MS` barely moves. `APPEND_BATCH_BYTES` stays frozen at 512 KiB.
+
+**What would license raising it, precisely.** The test: on a real Windows machine, through the
+actual Tauri/WebView2 IPC raw-body path (not a Mac dev environment, not a mock), append a known byte
+pattern at a stepped series of sizes from 512 KiB upward (e.g. 512 KiB, 1 MiB, 1.5 MiB, 2 MiB, 3 MiB,
+4 MiB) and compare landed `sessionFileSize` + a SHA-256 of the written file against the submitted
+bytes at each step — the exact probe `docs/ws3-export-pipeline-audit.md` Part 4.5 already specifies
+for H1. The threshold: the largest size in that sweep that lands byte-identical, with the SAME 4×
+safety-margin convention this round's own fix already used (raise only to ¼ of the empirically
+confirmed safe ceiling, never to the ceiling itself). Who runs it: someone with hands-on access to a
+real Windows machine running the built app — this is explicitly not producible from this Mac dev
+environment, and not something CI can stand in for; until that number is measured, 512 KiB is not a
+default awaiting confirmation, it is the frozen value.
+
+#### STEP 12 — Dispositions
+
+| ID | Statement (short) | Status | Fixing SHA(s) / probe |
+|---|---|---|---|
+| C1 | Resume fence didn't gate write/exec/truncate/read | **closed** | `79e3eed` (Round 11); `ensure_resume_bitstream_fence` gates write/raw-write/read/exec/both truncates/delete |
+| C2 | `{kind:'clean'}` masked a post-mutation native failure | **closed** | `693e533` (Round 11); `{kind:'bitstream_touched'}` distinguishes it |
+| C3 | Timeline hash omitted overlay/effect/asset-byte identity | **closed** | `693e533` (Round 11); `ExportTimelineIdentity` v2 |
+| C4 | Rewind `truncateAnnexbToOffset` had no TS liveness bound | **closed** | Round 10, Blocker 1 (pre-`9c80e71`, inherited on this branch); `exportPipelineWebCodecs.ts:3110-3120` wraps it in `withFfmpegLivenessBound` / `TRUNCATE_BOUND_MS`, same kill chain as salvage truncate |
+| C5 | Pending append batch silently discarded on abnormal finish | **closed** | `2bb06fa` (STEP 7); `ExportAppendLedger.discardedAtFinish` named in every abnormal-finish message; probed by `appendBatching.test.ts` |
+| C6 | `destroy`/premux cleanup failures invisible to operator | **closed** | `ee406dd` (STEP 8); `exportCleanupNotices.ts` durable ledger, read at next export start |
+| C7 | Manifest schema couldn't bound recovery across restarts | **mitigated** | `fa0a61c` (STEP 9) fixed the unconditional-0/false full-reset bug (closes the SEVERE case). **Residual, found this round (STEP 10b item 2):** piece-scoped manifest reset means budget spent in an EARLIER, already-finished piece is invisible to a LATER piece's resumed manifest — a narrower, still-real cross-piece leak. Not fixed this round; out of PROMPT 19 scope per STEP 10b's own framing ("report any counter that is not") |
+| C8 | Concat deleted output on any error, including disk-full | **closed** | `79e3eed` (Round 11); preserves partial output on disk-full only |
+| C9 | Slice-counting reachable on a production guard | **closed** (was already clean) | Rung 1, pre-existing; `.vclNals` confirmed diagnostic-only, `annexbFrameCount.test.ts` passing |
+| C10 | In-process second-rewind session-index bug | **closed** (was already clean on this head) | `resumeSessionIndex` fix pre-dates this branch (Round 7/9); `boundedRerenderWiring.test.ts` passing |
+| H1 | 4 MiB batch vs. WebView2 ~2 MB IStream truncation | **mitigated** | `0d397f7` (STEP 2): 512 KiB (4× margin) + independent per-append verify/short-write detector. Real-hardware confirmation of the ~2 MB ceiling itself remains **open** — see STEP 11 |
+| H2 | `prefer-software` + `avc1.640028` may be unconfigurable on Windows/OpenH264 | **mitigated** | `75e331c` (STEP 5): profile-ladder descent pinned per piece via `selectedCodec`, closing the MIXED-PROFILE-MID-PIECE structural risk. The underlying `isConfigSupported` behavior on real Windows/WebView2 remains **open** |
+| H3 | `VideoEncoder.close()` async release may leak HW sessions | **mitigated** | `9ea600a` (STEP 6): explicit encoder-session accounting (open/close counts on the diagnostics blob), closing before every terminal post — makes a leak OBSERVABLE. The underlying Chromium/driver release timing on real hardware remains **open** |
+| H4 | Defender scan-on-close may explain the 12.4 ms/append gap | **open** | No code fix possible from this repo — requires a real Windows machine + Defender exclusion A/B (`docs/ws3-export-pipeline-audit.md` Part 4.3) |
+| H5 | Two app instances could `reenter` the same session (no lock) | **mitigated** | `d73747a` (Round 13, native claim primitive) + `ee406dd` (STEP 8, consumer wiring: `evaluateResumeCandidate` reads the claim before `reenter`, distinguishing live/stale). Logic is unit-tested (`exportResumeDiscovery.test.ts`, `exportResumeSession.test.ts`); a real two-process concurrent race on Windows NTFS has not been run live — **open** as hardware confirmation |
+| H6 | TDR during a long GL export presents as unrecoverable context loss | **open**, by deliberate decision | Rung 5c **DEFER** (Round 9), reopen trigger stated explicitly in that entry above — not a gap awaiting a fix, a decision awaiting a specific reopening observation |
+| H7 | Lid close / Modern Standby may kill MF drain despite heartbeat | **open** | Untested; needs a real Windows machine, lid-close mid-session |
+| H8 | Checkpoint fsync without Annex-B `sync_all` could lose durability | **closed** | `79e3eed` (Round 11); `sync_all` on append/truncate/prepare |
+| H9 | Long destination paths fail `save_session_file` post-encode | **mitigated** | `e9355a2` (STEP 10): `windows_long_path` prefixes both copy sides; `exportDestinationPath.ts` pre-encode check confirmed wired (STEP 10b item 4). **Residual, found this round:** forward-slash and relative-component (`..`/`.`) Windows paths are not normalized before `\\?\` prefixing — latent, not reachable through this app's own save dialog today. Real `CreateFile`-family compliance with `\\?\` across every `fs::copy` code path remains **open** |
+| H10 | Orphaned session dirs accumulate, ~1.6-2.3 GB each | **mitigated** | `d73747a` (Round 13, native sweep) + `ee406dd` (STEP 8, consumer wiring: `useExport.ts` sweeps once per export start, `pendingDelete` kept separate from `bytesReclaimed` — confirmed this round via `useExport.ts:221-223`, `exportResumeDiscovery.ts:117,268,286`). Real Windows `pending_delete` accounting accuracy under a live delete-pending race remains **open** |
+
+No blanks; nothing hardware-bound is marked `closed` — every hardware-dependent item above reads
+`mitigated` (code-side fix verified, hardware unconfirmed) or `open` (no code-side fix possible from
+this environment at all).
+
+#### STEP 13 — Gates (raw output in this round's own final report, not duplicated here)
+
+`npx tsc --noEmit` clean; `npm run lint` clean (this repo's `lint` script is `tsc --noEmit` itself,
+per `CLAUDE.md`'s own Commands section — the two gates are the same command). `npm test` ×2,
+identical both times: **3,564 pass / 0 fail / 77 skip → 3,565 pass / 0 fail / 77 skip after this
+round's own +1 probe test** (see "Corrected STEP 2 arithmetic" above for the reconciliation from
+`9c80e71`'s true baseline, 3,564/0/77, not the task text's assumed 3,591). `cargo test`: **308 / 0 /
+5**, matching the expected figure exactly. `cargo test --features fa-inference`: parallel **394 / 0
+/ 35**, run three times, zero failures observed in any of the three (the historically-flaky
+`whisper::in_flight_tests` race did not reproduce on this machine this session — reported as
+observed, not asserted as fixed, since a race that does not reproduce in three runs is not proven
+absent); single-threaded **394 / 0 / 35**, matching exactly. Note: 394 is +15 over Round 13's
+recorded 379 baseline, not the +10 the task text's "10 new Rust tests" language implies — the
+`session_claim.rs` (4 tests) + `ffmpeg.rs` (6 tests) additions the Round 14 entry lists sum to 10,
+so 5 further Rust tests were added somewhere between Round 13 and this round's measurement that are
+not individually itemized in either round's own file list; reported as measured, not reconciled
+further within this round's scope. Seven frozen constants verified verbatim against source (not
+just quoted): `WATCHDOG_MS` 30,000 (`exportPipelineWebCodecs.ts:949`), `FORWARD_PROGRESS_BOUND_MS`
+45,000 (`:978`), `FLUSH_BOUND_MS` 20,000 (`exportWorker.ts:886`), `APPEND_DRAIN_BOUND_MS` 600,000
+(`exportPipelineWebCodecs.ts:1110`), `TRUNCATE_BOUND_MS` 172,675 (`ffmpegLivenessBound.ts:175-177`,
+computed as `6,907 × 25`, matches exactly), `KILL_BOUND_MS` 125 (`:149`, computed as `5 × 25`,
+matches exactly), `APPEND_BATCH_BYTES` 524,288 / 512 KiB (`exportPipelineWebCodecs.ts:1052`). Four
+fixture digests (`5db5e004…`, `af89ca66…`, `1abf9839…`, `fb9cdda2…`) confirmed unchanged, present
+identically in both `docs/ws3-export-durable-state.md:1709-1712` and the live
+`annexbFrameCount.test.ts:242-245`, and exercised passing as part of the `npm test` run above.

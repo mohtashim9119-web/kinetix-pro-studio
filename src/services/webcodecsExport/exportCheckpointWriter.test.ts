@@ -140,4 +140,67 @@ describe('ExportCheckpointWriter recovery-budget notes (C7)', () => {
     // The gap this round makes visible: one rotation produced no checkpoint.
     expect((snap?.rotationsSeen ?? 0) - (snap?.checkpoints.length ?? 0)).toBe(1);
   });
+
+  // PROMPT 19 STEP 10b — persist-ordering probe. `noteBoundaryRewind()` /
+  // `noteHardwareFailover()` are called in `exportPipelineWebCodecs.ts`
+  // BEFORE the re-render attempt (`runGlPiece`) that could hang again — so
+  // if the OS process dies during that re-render, has the charge already
+  // survived, or was it lost with the crash?
+  //
+  // The writer's own fsync (`ffmpeg_write_export_state` -> `sync_all`) is
+  // never awaited by `record()`/`noteBoundaryRewind()` (see this file's own
+  // header comment on `pump()` — deliberately so a wedged volume cannot
+  // stall the export, per Rung 0). So the DURABLE write genuinely races the
+  // next recovery attempt. What this probe pins down is the narrower claim
+  // that actually bounds the risk: the IN-MEMORY manifest — the one
+  // `snapshot()` reads, and the one the NEXT `noteBoundaryRewind()` call in
+  // the same process would increment from — already reflects the charge
+  // the instant `noteBoundaryRewind()` returns, with zero dependency on the
+  // write settling. A `writeExportState` that never resolves (simulating a
+  // crash before the fsync lands) is indistinguishable, from the writer's
+  // own state, from one that resolved instantly.
+  it('PERSIST-ORDERING PROBE: the charge is applied to the in-memory manifest synchronously, independent of whether the durable write ever settles (simulated crash-before-fsync)', async () => {
+    let neverResolve!: () => void;
+    const stall = new Promise<void>((resolve) => { neverResolve = resolve; });
+    const writes: string[] = [];
+    const ffmpeg: CheckpointWritingFfmpeg & { writes: string[] } = {
+      sessionId: 'sess-1',
+      writes,
+      writeExportState: async (serialized: string) => {
+        writes.push(serialized);
+        // Simulates a process crash before this write's fsync ever
+        // completes: the promise this call returns simply never settles.
+        await stall;
+      },
+    };
+    const writer = createExportCheckpointWriter(ffmpeg, identity());
+    writer.beginPiece(0);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // beginPiece's own write is now in flight and permanently stalled
+    // (fsync "never completes"). The charge below is issued while that
+    // write is still outstanding — exactly the ordering
+    // `exportPipelineWebCodecs.ts` uses (note* before the re-render).
+    writer.noteBoundaryRewind();
+
+    // No `await` on the write at all — this assertion runs in the SAME
+    // synchronous turn as the charge, proving the in-memory manifest needs
+    // no I/O to reflect it. A resumed process reading `resume.manifest`
+    // only ever sees a manifest that made it to disk, so this does not by
+    // itself prove durability across a real crash — it proves the ONLY gap
+    // is the fsync window itself, not any earlier bookkeeping lag.
+    expect(writer.snapshot()?.boundaryRewindsUsed).toBe(1);
+    expect(writer.snapshot()?.totalRecoveryAttempts).toBe(1);
+
+    // A second charge in the same still-stalled process also lands
+    // in-memory immediately — the in-process gate
+    // (`decideBoundedRerenderDisposition`) never waits on disk either, so a
+    // wedged fsync cannot itself let a process over-spend its own budget.
+    writer.noteBoundaryRewind();
+    expect(writer.snapshot()?.boundaryRewindsUsed).toBe(2);
+
+    neverResolve();
+    await flush();
+  });
 });
