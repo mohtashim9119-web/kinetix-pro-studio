@@ -2026,6 +2026,67 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    /// WS3 Round 20 — the Windows `FlushFileBuffers` access-right probe.
+    ///
+    /// Field report (machine 1, 1080p30, 354 segments): the mux stage failed
+    /// with `write_file(voiceover_audio): sync_all: Access is denied. (os
+    /// error 5)` after 40,374 frames of successful appends. The three tests
+    /// pin the Win32 semantics the fix rests on, from the actual `std`
+    /// `OpenOptions` this file uses — not from documentation:
+    ///
+    ///   1. a `File::open` (GENERIC_READ only) handle CANNOT `sync_all` —
+    ///      the exact call `sync_session_file` made before the fix;
+    ///   2. an `.append(true)` handle (FILE_APPEND_DATA, no FILE_WRITE_DATA)
+    ///      CAN — the field report's own evidence: every 512 KiB batch of the
+    ///      40,374 frames ended in `append_file_raw_inner`'s `sync_all`;
+    ///   3. `sync_session_file` on an existing file succeeds — RED before the
+    ///      fix (it opened read-only), GREEN after.
+    ///
+    /// Compiled by windows-check's `--all-targets`; RUN by its
+    /// `cargo test --lib` step (`ffmpeg::tests::` filter).
+    #[cfg(windows)]
+    mod windows_fsync_access {
+        use super::*;
+
+        const ERROR_ACCESS_DENIED: i32 = 5;
+
+        fn existing_file() -> PathBuf {
+            let (_, dir) = make_session();
+            let p = dir.join("voiceover_audio");
+            fs::write(&p, b"RIFF....WAVE").unwrap();
+            p
+        }
+
+        #[test]
+        fn read_only_handle_cannot_flush_file_buffers() {
+            let p = existing_file();
+            let err = fs::File::open(&p)
+                .unwrap()
+                .sync_all()
+                .expect_err("GENERIC_READ handle must not satisfy FlushFileBuffers");
+            assert_eq!(err.raw_os_error(), Some(ERROR_ACCESS_DENIED), "{err}");
+        }
+
+        #[test]
+        fn append_only_handle_can_flush_file_buffers() {
+            let p = existing_file();
+            let mut f = fs::OpenOptions::new().append(true).open(&p).unwrap();
+            use std::io::Write;
+            f.write_all(b"more").unwrap();
+            f.sync_all()
+                .expect("FILE_APPEND_DATA handle must satisfy FlushFileBuffers — the append path relies on it");
+        }
+
+        #[test]
+        fn sync_session_file_confirms_on_an_existing_file() {
+            let p = existing_file();
+            let before = fs::read(&p).unwrap();
+            let outcome = sync_session_file(&p, "probe");
+            assert!(outcome.is_ok(), "{outcome:?}");
+            assert_eq!(fs::read(&p).unwrap(), before, "sync must never truncate");
+        }
+    }
+
     /// Creates a real session directory (matching `session_dir`'s layout) for
     /// inner-function tests that do not need a Tauri `State` handle.
     fn make_session() -> (String, PathBuf) {
