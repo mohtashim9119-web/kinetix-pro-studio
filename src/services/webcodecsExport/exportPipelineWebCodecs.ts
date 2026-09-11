@@ -949,6 +949,28 @@ export const LIVENESS_PHASE_LOG_TAIL = 64;
 export const WATCHDOG_MS = 30_000;
 
 /**
+ * WS3 Round 18 (F1 follow-up) — bounds `finishAfterInFlightAppends`'s wait
+ * for the append queue to drain before a rotation-flush-timeout rewind
+ * truncates the same file. NOT a correctness mechanism: `session_io_gate()`
+ * on the Rust side already serializes the truncate behind any in-flight
+ * append regardless of how long this wait runs — an append still writing
+ * when this expires simply makes the truncate block in the native mutex
+ * instead of here. This bound exists only so a genuinely stuck drain doesn't
+ * sit idle for the full `WATCHDOG_MS` before handing off to the native gate
+ * (which is already covered by `TRUNCATE_BOUND_MS` on the other side).
+ *
+ * Sized on what's actually being waited for: one ~512 KiB
+ * (`APPEND_BATCH_BYTES`) append round trip — IPC out, chunked writes,
+ * `sync_all`, IPC back. Per-append latency on record: 0.5 ms (Mac), 12.4 ms
+ * (Windows, measured), 25 ms (pathological, simulated) — see
+ * `docs/ws3-export/architecture-ledger.md`'s Round 16/17 cost tables. Using
+ * the worst (already-pathological) figure with the same 25x headroom
+ * multiplier `TRUNCATE_BOUND_MS`/`KILL_BOUND_MS` were derived with:
+ * 25 ms x 25 = 625 ms.
+ */
+export const IN_FLIGHT_APPEND_DRAIN_BOUND_MS = 625;
+
+/**
  * Forward-progress bound (WS3 Part D) — a SECOND, independent timer alongside
  * WATCHDOG_MS, not a replacement for it. WATCHDOG_MS resets on ANY worker
  * message, including 'queue-sample' (exportWorker.ts's per-5-frames
@@ -1797,16 +1819,19 @@ export function driveGlRun(
     /**
      * Wait for any in-flight `appendFileRaw` before resolving this run. Does
      * NOT flush `pendingBatch` — those bytes belong to the hung session and
-     * rewind truncate will discard them. A hung writer is raced against
-     * `WATCHDOG_MS`; the native session IO gate then serializes a still-running
-     * write with the rewind's `set_len`.
+     * rewind truncate will discard them. Raced against
+     * `IN_FLIGHT_APPEND_DRAIN_BOUND_MS`, NOT `WATCHDOG_MS` — see that
+     * constant's doc comment for why a short local bound here is safe: the
+     * native session IO gate serializes a still-running write with the
+     * rewind's truncate regardless of how this race resolves, so an early
+     * expiry here cannot let the truncate observe a half-written file.
      */
     const finishAfterInFlightAppends = (result: RunDriveResultCore): void => {
       if (settled) return;
       void Promise.race([
         appendQueue,
         new Promise<void>((resolve) => {
-          setTimeout(resolve, WATCHDOG_MS);
+          setTimeout(resolve, IN_FLIGHT_APPEND_DRAIN_BOUND_MS);
         }),
       ]).then(() => {
         finish(result);
@@ -3080,6 +3105,11 @@ export async function exportProjectWebCodecs(
           totalSessions !== null &&
           hungSessionIndex < totalSessions - 1;
         if (!isRotationFlushTimeout) break;
+        // WS3 Round 18 — the rewind truncate below is bounded by
+        // TRUNCATE_BOUND_MS (172.7s) with no incremental output. Without this,
+        // the UI goes silent for that whole window with nothing to
+        // distinguish "recovering" from "frozen".
+        onProgress({ type: 'recovering', index: pieceIndex, total: pieces.length });
         const disposition = decideBoundedRerenderDisposition({ rewindsUsed: boundaryRewindsUsed });
         let forceSoftware = false;
         if (disposition.action === 'abort') {

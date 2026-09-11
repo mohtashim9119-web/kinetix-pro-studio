@@ -323,6 +323,7 @@ export function stageLabelFor(stage: ExportStage): string {
   }
   if (stage.type === 'muxing') return 'Muxing & packaging…';
   if (stage.type === 'done') return 'Done!';
+  if (stage.type === 'recovering') return `Recovering segment ${stage.index + 1} / ${stage.total}…`;
   return '';
 }
 
@@ -336,6 +337,11 @@ function progressFor(stage: ExportStage): number {
   }
   if (stage.type === 'muxing') return 93;
   if (stage.type === 'done') return 100;
+  // Holds at the piece's own start-of-segment percentage rather than
+  // dropping to 0 — a real rewind is a recovery mid-piece, not a restart.
+  if (stage.type === 'recovering') {
+    return stage.total > 0 ? Math.round((stage.index / stage.total) * 90) : 0;
+  }
   return 0;
 }
 

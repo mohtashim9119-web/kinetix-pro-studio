@@ -387,10 +387,8 @@ export async function evaluateResumeCandidate(
   // `cumulativePictures` pictures by construction — the bytes between them
   // contain no coded slice — and that is ASSERTED, not assumed. ─────────────
   let appendFromByteOffset = checkpoint.byteOffset;
-  if (
-    typeof checkpoint.seamByteOffset === 'number' &&
-    checkpoint.seamByteOffset < checkpoint.byteOffset
-  ) {
+  const seamByteOffset = checkpoint.seamByteOffset;
+  if (typeof seamByteOffset === 'number' && seamByteOffset < checkpoint.byteOffset) {
     // Same bracket as the fence above: `truncate_annexb_to_offset_inner`
     // calls `set_len` (the mutation) before the count that can fail, so a
     // thrown error here can equally follow a completed cut.
@@ -398,7 +396,7 @@ export async function evaluateResumeCandidate(
     let cut: { pictures: number; keptBytes: number };
     try {
       cut = await boundedTruncate(session, [pieceFile], () =>
-        session.truncateAnnexbToOffset(pieceFile, checkpoint.seamByteOffset),
+        session.truncateAnnexbToOffset(pieceFile, seamByteOffset),
       );
     } catch (err) {
       const fileLengthAfterSeam = await session.sessionFileSize(pieceFile).catch(() => null);
