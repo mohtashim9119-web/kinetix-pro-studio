@@ -5,6 +5,7 @@ import {
   buildSourceTimelineHash,
   canonicalTimelineJson,
   createExportStateManifest,
+  exportLifetimeBudgetOf,
   EXPORT_TIMELINE_IDENTITY_VERSION,
   isRecoveryBudgetExhausted,
   MAX_BOUNDARY_REWINDS_PER_EXPORT,
@@ -670,5 +671,31 @@ describe('never_checkpointed — the checkpoint-coverage gap (C7)', () => {
     });
     const result = validateExportState(legacy, expected, 0);
     expect(result.kind).not.toBe('never_checkpointed');
+  });
+});
+
+describe('exportLifetimeBudgetOf (C11, Round 16)', () => {
+  it('projects exactly the three export-scoped counters, normalized, and zero for null', () => {
+    expect(exportLifetimeBudgetOf(null)).toEqual({ boundaryRewindsUsed: 0, hardwareFailoverUsed: false, totalRecoveryAttempts: 0 });
+    expect(exportLifetimeBudgetOf({})).toEqual({ boundaryRewindsUsed: 0, hardwareFailoverUsed: false, totalRecoveryAttempts: 0 });
+    expect(exportLifetimeBudgetOf({ boundaryRewindsUsed: 2, hardwareFailoverUsed: true, checkpointResumeAttempts: 5, totalRecoveryAttempts: 4 }))
+      .toEqual({ boundaryRewindsUsed: 2, hardwareFailoverUsed: true, totalRecoveryAttempts: 4 });
+  });
+
+  it('createExportStateManifest seeds from carriedBudget and keeps piece-scoped fields at zero', () => {
+    const m = createExportStateManifest({
+      sessionId: 's', projectId: 'p', sourceTimelineHash: 'a'.repeat(64), fps: 30, width: 1920, height: 1080,
+      carriedBudget: { boundaryRewindsUsed: 1, hardwareFailoverUsed: true, totalRecoveryAttempts: 2 },
+    });
+    expect(m.boundaryRewindsUsed).toBe(1);
+    expect(m.hardwareFailoverUsed).toBe(true);
+    expect(m.totalRecoveryAttempts).toBe(2);
+    expect(m.checkpointResumeAttempts).toBe(0);
+    expect(m.rotationsSeen).toBe(0);
+    expect(m.checkpoints).toEqual([]);
+    // The cross-process gate reads the carried total, so a resume into this
+    // piece is refused exactly when the EXPORT's budget is gone.
+    expect(isRecoveryBudgetExhausted(m)).toBe(false);
+    expect(isRecoveryBudgetExhausted({ ...m, boundaryRewindsUsed: 2 })).toBe(true);
   });
 });

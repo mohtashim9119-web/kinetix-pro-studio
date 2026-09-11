@@ -203,4 +203,69 @@ describe('ExportCheckpointWriter recovery-budget notes (C7)', () => {
     neverResolve();
     await flush();
   });
+
+  describe('C11 — export-lifetime budget survives a piece boundary (Round 16)', () => {
+    it('THE C11 SCENARIO: piece 0 spends a rewind and a failover, piece 1 begins fresh — piece 1\'s manifest on disk already carries both, so a crash in piece 1 cannot restore them', async () => {
+      const ffmpeg = fakeFfmpeg();
+      const writer = createExportCheckpointWriter(ffmpeg, identity());
+      writer.beginPiece(0);
+      await flush();
+      writer.noteBoundaryRewind();
+      writer.noteHardwareFailover();
+      writer.noteRotation();
+      writer.record({ encoderSessionIndex: 1, byteOffset: 4096, seamByteOffset: 4000, cumulativePictures: 1800 });
+      await flush();
+      const piece0 = writer.snapshot()!;
+      expect(piece0.boundaryRewindsUsed).toBe(1);
+      expect(piece0.hardwareFailoverUsed).toBe(true);
+      expect(piece0.totalRecoveryAttempts).toBe(2);
+
+      writer.beginPiece(1);
+      await flush();
+      const piece1 = writer.snapshot()!;
+      // Export-scoped counters: CARRIED.
+      expect(piece1.boundaryRewindsUsed).toBe(1);
+      expect(piece1.hardwareFailoverUsed).toBe(true);
+      expect(piece1.totalRecoveryAttempts).toBe(2);
+      // Piece-scoped state: RESET, exactly as before this fix.
+      expect(piece1.checkpoints).toEqual([]);
+      expect(piece1.rotationsSeen).toBe(0);
+      expect(piece1.checkpointResumeAttempts).toBe(0);
+      // And it is what is ON DISK — the crash reads the file, not the object.
+      const lastWrite = JSON.parse(ffmpeg.writes[ffmpeg.writes.length - 1]!);
+      expect(lastWrite.boundaryRewindsUsed).toBe(1);
+      expect(lastWrite.hardwareFailoverUsed).toBe(true);
+      expect(lastWrite.totalRecoveryAttempts).toBe(2);
+      expect(lastWrite.checkpoints).toEqual([]);
+    });
+
+    it('the carry composes across three pieces and with an adopted (resumed) manifest in the middle', async () => {
+      const ffmpeg = fakeFfmpeg('sess-1');
+      const writer = createExportCheckpointWriter(ffmpeg, identity());
+      writer.beginPiece(0);
+      await flush();
+      writer.noteBoundaryRewind();
+      // Piece 1 is RESUMED: its manifest already holds piece 0's carry plus
+      // its own rewind — exactly what the writer would have written for it.
+      writer.adoptManifest({ ...writer.snapshot()!, boundaryRewindsUsed: 2, totalRecoveryAttempts: 2, checkpoints: [] }, 1);
+      writer.noteResumeAttempt();
+      writer.beginPiece(2);
+      await flush();
+      const piece2 = writer.snapshot()!;
+      expect(piece2.boundaryRewindsUsed).toBe(2);
+      expect(piece2.totalRecoveryAttempts).toBe(3);
+      expect(piece2.checkpointResumeAttempts).toBe(0);
+    });
+
+    it('a first piece starts from zero — there is nothing to carry', async () => {
+      const ffmpeg = fakeFfmpeg();
+      const writer = createExportCheckpointWriter(ffmpeg, identity());
+      writer.beginPiece(0);
+      await flush();
+      const snap = writer.snapshot()!;
+      expect(snap.boundaryRewindsUsed).toBe(0);
+      expect(snap.hardwareFailoverUsed).toBe(false);
+      expect(snap.totalRecoveryAttempts).toBe(0);
+    });
+  });
 });

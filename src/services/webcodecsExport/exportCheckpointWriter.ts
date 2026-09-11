@@ -39,6 +39,7 @@
 import {
   appendExportCheckpoint,
   createExportStateManifest,
+  exportLifetimeBudgetOf,
   recordBoundaryRewind,
   recordHardwareFailover,
   recordResumeAttempt,
@@ -162,6 +163,12 @@ export function createExportCheckpointWriter(
       fps: identity.fps,
       width: identity.width,
       height: identity.height,
+      // WS3 Round 16 (C11) — the manifest being left behind is the previous
+      // piece's (fresh or adopted, plus every note* since), i.e. the export's
+      // running total. The new piece inherits it, so the newest manifest on
+      // disk is always the export-lifetime budget and a resume from ANY piece
+      // seeds `exportPipelineWebCodecs.ts`'s in-process gates correctly.
+      carriedBudget: exportLifetimeBudgetOf(manifest),
     });
     dirty = true;
     pump();

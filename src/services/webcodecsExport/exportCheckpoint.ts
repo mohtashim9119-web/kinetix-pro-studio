@@ -591,7 +591,13 @@ export function createExportStateManifest(params: {
   fps: number;
   width: number;
   height: number;
+  /**
+   * WS3 Round 16 (C11) — the export-lifetime budget the NEW piece-scoped
+   * manifest inherits. Omitted (a first piece) means zero.
+   */
+  carriedBudget?: ExportLifetimeBudget;
 }): ExportStateManifest {
+  const carried = params.carriedBudget ?? ZERO_LIFETIME_BUDGET;
   return {
     schemaVersion: EXPORT_STATE_SCHEMA_VERSION,
     sessionId: params.sessionId,
@@ -602,10 +608,52 @@ export function createExportStateManifest(params: {
     height: params.height,
     checkpoints: [],
     rotationsSeen: 0,
-    boundaryRewindsUsed: 0,
-    hardwareFailoverUsed: false,
+    boundaryRewindsUsed: carried.boundaryRewindsUsed,
+    hardwareFailoverUsed: carried.hardwareFailoverUsed,
     checkpointResumeAttempts: 0,
-    totalRecoveryAttempts: 0,
+    totalRecoveryAttempts: carried.totalRecoveryAttempts,
+  };
+}
+
+/**
+ * WS3 Round 16 (C11) — the subset of `ExportRecoveryBudget` whose documented
+ * scope is the EXPORT, not the piece. `MAX_BOUNDARY_REWINDS_PER_EXPORT`,
+ * `MAX_HARDWARE_FAILOVER_PER_EXPORT` and `MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT`
+ * are all "per export, every GL piece combined" — but the manifest on disk is
+ * piece-scoped (the only scope under which the native fence, which takes one
+ * file, and `appendExportCheckpoint`'s strict monotonicity can both hold), so
+ * a fresh piece's manifest used to start every counter at zero. Within one
+ * process that was harmless (the in-process locals are export-scoped); across
+ * a crash it was not: the resumed process seeds its locals from the resumed
+ * PIECE's manifest, so everything an earlier, already-finished piece had spent
+ * was silently restored. Carrying these three forward at every piece start
+ * makes the newest manifest on disk always the export-lifetime total.
+ *
+ * NOT carried, by their own documented scope: `checkpointResumeAttempts`
+ * ("for the current checkpoint generation") and `rotationsSeen` (the per-piece
+ * checkpoint-coverage signal `never_checkpointed` reads).
+ */
+export interface ExportLifetimeBudget {
+  boundaryRewindsUsed: number;
+  hardwareFailoverUsed: boolean;
+  totalRecoveryAttempts: number;
+}
+
+const ZERO_LIFETIME_BUDGET: ExportLifetimeBudget = {
+  boundaryRewindsUsed: 0,
+  hardwareFailoverUsed: false,
+  totalRecoveryAttempts: 0,
+};
+
+/** The export-lifetime budget a manifest carries — zero for `null` (no
+ *  previous piece). Pure; the writer calls it at every fresh `beginPiece`. */
+export function exportLifetimeBudgetOf(previous: ExportRecoveryBudget | null): ExportLifetimeBudget {
+  if (previous === null) return ZERO_LIFETIME_BUDGET;
+  const budget = normalizeRecoveryBudget(previous);
+  return {
+    boundaryRewindsUsed: budget.boundaryRewindsUsed,
+    hardwareFailoverUsed: budget.hardwareFailoverUsed,
+    totalRecoveryAttempts: budget.totalRecoveryAttempts,
   };
 }
 
