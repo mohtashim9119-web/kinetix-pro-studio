@@ -78,7 +78,8 @@ import { resolveEffectiveTransition } from '../transitionResolver';
 import { isPlainVideoSegment, isPlainImageSegment } from '../plainSegment';
 import { checkTimelineIsGapless } from '../timelinePartition';
 import { isGlCompositableSegment, GL_TRANSITION_SLUGS } from './glCompositable';
-import type { ExportAppendLedger, ExportError, ExportLivenessSnapshot, ExportResult, ProgressCallback } from '../exportPipeline';
+import type { ExportAppendLedger, ExportError, ExportLivenessSnapshot, ExportPhaseLogTailEntry, ExportResult, ProgressCallback } from '../exportPipeline';
+import type { SaveSessionFileResult } from '../tauriFfmpeg';
 import type { ProjectEffectConfig } from '../gl/compositeParams';
 import type {
   ExportWorkerInboundMessage,
@@ -195,7 +196,9 @@ export interface ExportOptionsWebCodecs {
  */
 export interface WebCodecsFfmpeg extends FfmpegLike {
   appendFileRaw(path: string, data: Uint8Array): Promise<void>;
-  saveSessionFile(fileName: string, destPath: string): Promise<void>;
+  /** WS3 Round 20 — resolves to a `SaveSessionFileResult` on the real
+   *  backend; `void` from older fakes reads as confirmed. */
+  saveSessionFile(fileName: string, destPath: string): Promise<SaveSessionFileResult | void>;
   kill(): Promise<void>;
   destroy(): Promise<void>;
   /**
@@ -2926,6 +2929,55 @@ export async function exportProjectWebCodecs(
 
   const pieceFiles: string[] = [];
   let framesCompletedBase = 0;
+
+  // WS3 Round 20 — the POST-ENCODE liveness view. The first Windows field
+  // report failed at the mux stage (`write_file(voiceover_audio)`) and its
+  // diagnostics blob had `liveness`, `lastPhase`, `framesEncoded`,
+  // `pieceIndex`, `appendLedger` and `phaseLogTail` ALL null: every failure
+  // constructed after the piece loop (`concat`, the frame-count guard, the
+  // voiceover write, `mux`, delivery) was built as `{ kind, message, cause }`
+  // with no `liveness` at all, because `snapshotLiveness` lives inside
+  // `driveGlRun`'s closure and is gone by then. This keeps the last GL
+  // piece's stamped result (`finish` puts `appendLedger` and the phase log on
+  // every `RunDriveResult`) and layers the post-encode stages on top as their
+  // own phase-log entries, so a mux-stage failure reports the frames encoded,
+  // the last piece, the append ledger, and a tail that ends in the stage
+  // that actually failed.
+  let lastGlPieceLiveness: ExportLivenessSnapshot | null = null;
+  const postEncodePhases: ExportPhaseLogTailEntry[] = [];
+  const pipelineStartedAt = performance.now();
+  let lastPostEncodePhaseAt = pipelineStartedAt;
+  const enterPostEncodePhase = (phase: string): void => {
+    lastPostEncodePhaseAt = performance.now();
+    postEncodePhases.push({
+      atMs: Math.round(lastPostEncodePhaseAt - pipelineStartedAt),
+      phase,
+      pieceIndex: pieces.length - 1,
+      framesEncoded: framesCompletedBase,
+      kind: 'post-encode',
+    });
+  };
+  const postEncodeLiveness = (phase: string): ExportLivenessSnapshot => ({
+    ...(lastGlPieceLiveness ?? {}),
+    lastPhase: phase,
+    msSinceLastPhaseChange: Math.round(performance.now() - lastPostEncodePhaseAt),
+    pieceIndex: pieces.length - 1,
+    framesEncoded: framesCompletedBase,
+    phaseLogTail: [...(lastGlPieceLiveness?.phaseLogTail ?? []), ...postEncodePhases].slice(-LIVENESS_PHASE_LOG_TAIL),
+    // Post-encode failures are not worker failures; the worker's own route
+    // (if any) stays on `lastGlPieceLiveness`, never re-labelled here.
+    failureVia: lastGlPieceLiveness?.failureVia ?? null,
+    appendLedger: lastGlPieceLiveness?.appendLedger ?? null,
+    encoderSessions: lastGlPieceLiveness?.encoderSessions ?? null,
+    encoderSessionIndex: lastGlPieceLiveness?.encoderSessionIndex ?? null,
+    maxSilentMs: lastGlPieceLiveness?.maxSilentMs ?? null,
+  });
+  /** `boundedStepError` plus the post-encode liveness view — every failure
+   *  after the piece loop goes through this, none through the bare form. */
+  const postEncodeError = (kind: ExportError['kind'], fallbackMessage: string, err: unknown, phase: string): ExportError => ({
+    ...boundedStepError(kind, fallbackMessage, err),
+    liveness: postEncodeLiveness(phase),
+  });
   // WS3 Tier 1 item 3c (Rung 3) — per-EXPORT ceiling (every GL piece
   // combined), matching `MAX_BOUNDARY_REWINDS_PER_EXPORT`'s own doc comment.
   //
@@ -3432,6 +3484,25 @@ export async function exportProjectWebCodecs(
         appendDrainMs: driveResult.appendDrainMs,
         silentIntervals: driveResult.silentIntervals,
       }));
+      // WS3 Round 20 — retained for the post-encode stages' diagnostics.
+      lastGlPieceLiveness = {
+        lastPhase: d.lastPhase,
+        msSinceLastPhaseChange: driveResult.msSinceLastPhaseChange,
+        pieceIndex,
+        framesEncoded: d.framesEncoded,
+        maxSilentMs: driveResult.maxSilentMs,
+        phaseLogTail: d.phaseLog.slice(-LIVENESS_PHASE_LOG_TAIL).map((e) => ({
+          atMs: Math.round(e.atMs),
+          phase: e.phase,
+          pieceIndex: e.pieceIndex,
+          framesEncoded: e.framesEncoded,
+          kind: e.kind,
+        })),
+        failureVia: null,
+        encoderSessions: d.encoderSessions,
+        encoderSessionIndex: d.encoderSessionIndex,
+        appendLedger: driveResult.appendLedger,
+      };
       pieceFiles.push(runFile);
     } else if (plan.tier === 'plain') {
       const segment = plan.segments[0]!;
@@ -3459,6 +3530,7 @@ export async function exportProjectWebCodecs(
 
   // ── Concat every piece's annexb file, in timeline order ──────────────────
   const videoAllFile = 'video_all.h264';
+  enterPostEncodePhase('concat');
   try {
     if (pieceFiles.length === 1) {
       // A single piece needs no concat call at all — but still goes through
@@ -3477,7 +3549,7 @@ export async function exportProjectWebCodecs(
     }
   } catch (err) {
     activeFfmpeg = null;
-    return { ok: false, error: boundedStepError('concat', 'Failed to concatenate the encoded pieces.', err) };
+    return { ok: false, error: postEncodeError('concat', 'Failed to concatenate the encoded pieces.', err, 'concat') };
   }
   const finalVideoFile = pieceFiles.length === 1 ? pieceFiles[0]! : videoAllFile;
 
@@ -3489,6 +3561,7 @@ export async function exportProjectWebCodecs(
    *  the guard's OWN `measured` reading alongside the offer so the seal step
    *  re-uses the real counts rather than reconstructing them from the offer. */
   let forcedSeal: { offer: ForcedMp4SealOffer; measured: AnnexbFrameCount } | null = null;
+  enterPostEncodePhase('concat:verify');
   try {
     const measured = await withFfmpegLivenessBound(
       { label: 'FRAME_COUNT_BOUND_MS', boundMs: FRAME_COUNT_BOUND_MS, ffmpeg, files: [finalVideoFile], pieceCount: pieces.length },
@@ -3575,13 +3648,14 @@ export async function exportProjectWebCodecs(
               pieceCount: pieces.length,
               perPiece,
             }),
+            liveness: postEncodeLiveness('concat:verify'),
           },
         };
       }
     }
   } catch (err) {
     activeFfmpeg = null;
-    return { ok: false, error: boundedStepError('concat', 'Failed to verify the concatenated output frame count.', err) };
+    return { ok: false, error: postEncodeError('concat', 'Failed to verify the concatenated output frame count.', err, 'concat:verify') };
   }
 
   // ── Mux voiceover audio (unchanged — ./muxOnly.ts) ────────────────────────
@@ -3589,6 +3663,7 @@ export async function exportProjectWebCodecs(
   const voiceoverAsset = project.voiceoverId ? assetMap.get(project.voiceoverId) : undefined;
   let audioFile: string | null = null;
 
+  enterPostEncodePhase('mux:write-voiceover');
   try {
     if (voiceoverAsset?.url) {
       audioFile = 'voiceover_audio';
@@ -3599,12 +3674,15 @@ export async function exportProjectWebCodecs(
     }
   } catch (err) {
     activeFfmpeg = null;
+    // The native cause already carries the OS error code and the full path
+    // (`durable_fs::describe`, or the `[path=…]` suffix on the write).
     return {
       ok: false,
-      error: { kind: 'mux', message: 'Failed to prepare the voiceover audio for muxing.', cause: causeString(err) },
+      error: postEncodeError('mux', 'Failed to prepare the voiceover audio for muxing.', err, 'mux:write-voiceover'),
     };
   }
 
+  enterPostEncodePhase(forcedSeal === null ? 'mux' : 'mux:seal');
   try {
     // TauriFfmpeg's real session id is private (not exposed to callers) —
     // `project.id` identifies this export run in muxOnly's error messages
@@ -3655,7 +3733,7 @@ export async function exportProjectWebCodecs(
     diag.muxMs = performance.now() - muxStarted;
   } catch (err) {
     activeFfmpeg = null;
-    return { ok: false, error: boundedStepError('mux', 'Failed to mux the encoded output with audio.', err) };
+    return { ok: false, error: postEncodeError('mux', 'Failed to mux the encoded output with audio.', err, forcedSeal === null ? 'mux' : 'mux:seal') };
   }
 
   // ── Cleanup intermediates (best-effort — mirrors exportPipeline.ts's own
@@ -3664,15 +3742,20 @@ export async function exportProjectWebCodecs(
   await Promise.allSettled(intermediates.map((f) => ffmpeg.deleteFile(f)));
 
   if (options.savePath) {
+    enterPostEncodePhase('deliver');
     try {
-      await ffmpeg.saveSessionFile(outputFile, options.savePath);
+      const saved: SaveSessionFileResult | void = await ffmpeg.saveSessionFile(outputFile, options.savePath);
+      if (saved && saved.durableConfirmed === false && saved.durabilityWarning) {
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-durability] delivered, durability not confirmed:', saved.durabilityWarning);
+      }
     } catch (err) {
       activeFfmpeg = null;
-      return { ok: false, error: { kind: 'unknown', message: 'Failed to save the exported file to disk.', cause: causeString(err) } };
+      return { ok: false, error: postEncodeError('unknown', 'Failed to save the exported file to disk.', err, 'deliver') };
     }
   }
 
   activeFfmpeg = null;
   onProgress({ type: 'done' });
-  return { ok: true, outputFile };
+  return { ok: true, outputFile, liveness: postEncodeLiveness('done') };
 }

@@ -15,6 +15,7 @@ import type { ForcedMp4SealOffer } from '../services/webcodecsExport/muxOnly';
 import { findResumeOffer, type ResumeOffer, type ResumeRefusalNotice } from '../services/webcodecsExport/exportResumeSession';
 import { recordExportSessionCreated, forgetExportSession } from '../services/webcodecsExport/exportSessionLedger';
 import { readCleanupNotices, clearCleanupNotices, recordCleanupFailure, type CleanupNotice } from '../services/webcodecsExport/exportCleanupNotices';
+import { normalizeSaveSessionFileResult } from '../services/tauriFfmpeg';
 import { checkExportDestinationPathLength } from '../services/exportDestinationPath';
 import { TauriFfmpeg, type OrphanSweepReport } from '../services/tauriFfmpeg';
 import { type Project, type ResolutionTier } from '../types';
@@ -233,6 +234,15 @@ export interface UseExportState {
    * disk usage crept up.
    */
   cleanupNotices: CleanupNotice[];
+  /**
+   * WS3 Round 20 — fsyncs the native side could not confirm within its
+   * bounded retry during the most recent SUCCESSFUL export (delivery's own
+   * result plus anything the session recorded earlier). The file is saved;
+   * its durability against a crash/power loss was not proven. Shown on the
+   * success toast so "saved but not confirmed durable" is said out loud
+   * rather than silently reported as a clean save.
+   */
+  lastExportDurabilityWarnings?: string[];
 }
 
 export interface UseExportApi {
@@ -295,6 +305,22 @@ export function formatElapsedLong(totalSec: number): string {
   if (h > 0) return `${h}h ${m}m ${s}s`;
   if (m > 0) return `${m}m ${s}s`;
   return `${s}s`;
+}
+
+/**
+ * WS3 Round 20 — for a duration that stands NEXT TO a frame count (the
+ * sealing dialog's "frames kept / frames lost" tiles and the success
+ * toast's "shortened by"). `formatElapsedLong` floors, so 10 frames at
+ * 30 fps (0.33 s) rendered as "0s" beside a non-zero frame count — which
+ * reads as a display bug and undermines the number next to it. Sub-second
+ * values show milliseconds; anything ≥ 1 s rounds UP to whole seconds so a
+ * loss is never understated.
+ */
+export function formatFrameSpanDuration(totalSec: number): string {
+  const sec = Math.max(0, totalSec);
+  if (sec === 0) return '0s';
+  if (sec < 1) return `${Math.max(1, Math.round(sec * 1000))} ms`;
+  return formatElapsedLong(Math.ceil(sec - 1e-9));
 }
 
 /**
@@ -657,14 +683,26 @@ export function useExport(
       }
     };
 
+    // WS3 Round 20 — drain the session's degraded-fsync warnings BEFORE
+    // teardown (destroy() would otherwise route them to the next run's
+    // cleanup notices), so they ride on this run's error or success surface.
+    const drainDurabilityWarnings = async (): Promise<string[]> => {
+      try {
+        return (await tauriBackendRef.current?.takeDurabilityWarnings()) ?? [];
+      } catch {
+        return [];
+      }
+    };
+
     if (!result.ok) {
       stopElapsedTimer();
+      const durabilityWarnings = await drainDurabilityWarnings();
       await releaseResumedSession();
       await teardown();
       setState(prev => ({
         ...prev,
         isExporting: false,
-        error: result.error,
+        error: durabilityWarnings.length > 0 ? { ...result.error, durabilityWarnings } : result.error,
       }));
       return;
     }
@@ -677,19 +715,27 @@ export function useExport(
     // the whole file ~5–6× in the WebView heap and crashed WebView2's OOM guard
     // (STATUS_BREAKPOINT) on large exports.
     const backend = tauriBackendRef.current;
+    const durabilityWarnings: string[] = [];
+    const deliveryStartedAt = performance.now();
     try {
       if (!backend) throw new Error('export backend was torn down before save');
       // WS3 Round 10 Blocker 3 — a RESUMED export wrote its output into the
       // re-entered session, not the fresh one. Saving from the fresh session
       // would look for a file that was never written there.
-      if (resumeFfmpeg) {
-        await (resumeFfmpeg as unknown as { saveSessionFile(f: string, d: string): Promise<void> })
-          .saveSessionFile(result.outputFile, savedPath);
-      } else {
-        await backend.saveOutputToDisk(result.outputFile, savedPath);
+      const saved = resumeFfmpeg
+        ? normalizeSaveSessionFileResult(
+            await (resumeFfmpeg as unknown as { saveSessionFile(f: string, d: string): Promise<unknown> })
+              .saveSessionFile(result.outputFile, savedPath),
+          )
+        : await backend.saveOutputToDisk(result.outputFile, savedPath);
+      // WS3 Round 20 — "saved but not confirmed durable" is a success with a
+      // warning, never a failure: the bytes are at `savedPath`.
+      if (!saved.durableConfirmed && saved.durabilityWarning) {
+        durabilityWarnings.push(saved.durabilityWarning);
       }
     } catch (err) {
       stopElapsedTimer();
+      const drained = await drainDurabilityWarnings();
       await teardown();
       if (generationRef.current !== gen) return;
       setState(prev => ({
@@ -699,12 +745,22 @@ export function useExport(
           kind: 'unknown',
           message: 'Failed to save the exported file to disk.',
           cause: err instanceof Error ? err.message : String(err),
+          // WS3 Round 20 — the pipeline's own terminal liveness view, with
+          // the delivery step layered on as the failing phase. Before this,
+          // a delivery failure shipped a blob with every liveness field null.
+          liveness: {
+            ...(result.liveness ?? { pieceIndex: null, framesEncoded: null }),
+            lastPhase: 'deliver',
+            msSinceLastPhaseChange: Math.round(performance.now() - deliveryStartedAt),
+          },
+          ...(drained.length > 0 ? { durabilityWarnings: drained } : {}),
         },
       }));
       return;
     }
 
     stopElapsedTimer();
+    durabilityWarnings.push(...(await drainDurabilityWarnings()));
     await releaseResumedSession();
     await teardown();
     if (generationRef.current !== gen) return;
@@ -714,6 +770,7 @@ export function useExport(
       lastExportPath: savedPath,
       showExportSuccess: true,
       lastExportElapsedSec: prev.elapsedSec,
+      ...(durabilityWarnings.length > 0 ? { lastExportDurabilityWarnings: durabilityWarnings } : {}),
     }));
     // Best-effort completion sound — never awaited, never allowed to affect
     // the export flow or the toast if it fails (see notificationSound.ts).

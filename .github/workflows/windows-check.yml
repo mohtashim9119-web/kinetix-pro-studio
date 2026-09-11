@@ -17,7 +17,7 @@ name: Windows compile + platform-gated test check
 #
 # Round 20 carry-over: the feature-off cell ALSO RUNS `cargo test --lib` for
 # the platform-gated modules (`session_claim`, `project_mirror`, and
-# `ffmpeg::tests`'s pure-Rust file/path tests). A `#[cfg(windows)]` test that
+# `ffmpeg::tests`'s pure-Rust file/path tests, and `durable_fs`). A `#[cfg(windows)]` test that
 # only ever compiles is not evidence — the three Round 19 start-time tests
 # had never executed anywhere. The filter list is explicit: the full
 # `cargo test` needs real ffmpeg/whisper sidecars, which this job deliberately
@@ -98,7 +98,7 @@ jobs:
         working-directory: src-tauri
         shell: pwsh
         env:
-          WINDOWS_TEST_FILTERS: 'session_claim:: project_mirror:: ffmpeg::tests::'
+          WINDOWS_TEST_FILTERS: 'session_claim:: project_mirror:: ffmpeg::tests:: durable_fs::'
         run: |
           $ErrorActionPreference = "Stop"
           $filters = $env:WINDOWS_TEST_FILTERS -split ' '

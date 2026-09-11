@@ -15,6 +15,7 @@ pub mod fa_production;
 mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;
+mod durable_fs;
 mod ffmpeg;
 mod session_claim;
 mod event_sink;
@@ -477,6 +478,7 @@ pub fn run() {
             ffmpeg::ffmpeg_destroy_session,
             ffmpeg::pick_save_path,
             ffmpeg::save_session_file,
+            ffmpeg::ffmpeg_take_durability_warnings,
             ffmpeg::probe_audio_duration,
             ffmpeg::probe_video_fps,
             ffmpeg::reveal_in_finder,

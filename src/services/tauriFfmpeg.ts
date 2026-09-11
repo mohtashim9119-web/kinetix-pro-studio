@@ -126,6 +126,33 @@ export async function probeVideoFps(blob: Blob): Promise<number> {
  *   Phase 7 optimization candidate: Tauri v2 Channel API or raw binary
  *   IPC support once stabilized.
  */
+/**
+ * WS3 Round 20 — what the native `save_session_file` reports back.
+ * `durableConfirmed === false` means the bytes ARE at the destination (the
+ * `.part` was fully written and promoted by rename) but an fsync could not
+ * be confirmed within the native bounded retry; `durabilityWarning` carries
+ * the OS error code and the path. Never thrown: a completed export is never
+ * reported lost over an fsync that could not be confirmed.
+ */
+export interface SaveSessionFileResult {
+  durableConfirmed: boolean;
+  durabilityWarning: string | null;
+}
+
+/** A `void`/non-object result (older native build, test fakes) reads as
+ *  confirmed — the pre-Round-20 contract was "returned without throwing ⇒
+ *  saved", and this keeps that reading rather than inventing a warning. */
+export function normalizeSaveSessionFileResult(raw: unknown): SaveSessionFileResult {
+  if (raw && typeof raw === 'object') {
+    const r = raw as Partial<SaveSessionFileResult>;
+    return {
+      durableConfirmed: r.durableConfirmed !== false,
+      durabilityWarning: typeof r.durabilityWarning === 'string' ? r.durabilityWarning : null,
+    };
+  }
+  return { durableConfirmed: true, durabilityWarning: null };
+}
+
 export class TauriFfmpeg implements FfmpegLike {
   readonly #sessionId: string;
   #destroyed = false;
@@ -428,16 +455,37 @@ export class TauriFfmpeg implements FfmpegLike {
    * (STATUS_BREAKPOINT) on large exports. Must be called before destroy() deletes
    * the session dir.
    */
-  async saveSessionFile(fileName: string, destPath: string): Promise<void> {
+  async saveSessionFile(fileName: string, destPath: string): Promise<SaveSessionFileResult> {
     this.#assertAlive();
     try {
-      await invoke<void>('save_session_file', {
+      const raw = await invoke<unknown>('save_session_file', {
         sessionId: this.#sessionId,
         fileName,
         destPath,
       });
+      return normalizeSaveSessionFileResult(raw);
     } catch (err) {
       throw new Error(typeof err === 'string' ? err : String(err));
+    }
+  }
+
+  /**
+   * WS3 Round 20 — drains the durability warnings the native side recorded
+   * for this session: every fsync that exhausted `durable_fs`'s bounded
+   * retry on an externally-caused error (Defender scan-on-close, Controlled
+   * Folder Access, a sharing violation) and was DEGRADED to "written,
+   * durability not confirmed" instead of failing the command. Empty when
+   * every fsync was confirmed. Best-effort: a failure to read the list must
+   * never turn into an export failure of its own. Safe after destroy() (the
+   * native map entry is simply gone by then).
+   */
+  async takeDurabilityWarnings(): Promise<string[]> {
+    try {
+      const raw = await invoke<unknown>('ffmpeg_take_durability_warnings', { sessionId: this.#sessionId });
+      return Array.isArray(raw) ? raw.filter((w): w is string => typeof w === 'string') : [];
+    } catch (err) {
+      console.warn('[ws3-durability] could not read durability warnings:', err instanceof Error ? err.message : String(err));
+      return [];
     }
   }
 
@@ -483,6 +531,13 @@ export class TauriFfmpeg implements FfmpegLike {
   async destroy(): Promise<void> {
     if (this.#destroyed) return;
     this.#destroyed = true;
+    // WS3 Round 20 — anything still un-drained becomes a durable notice via
+    // the same channel as a failed cleanup, so a degraded fsync the pipeline
+    // never got to read (a cancel, a crash between mux and delivery) still
+    // reaches the operator on the next run instead of dying with the map.
+    for (const warning of await this.takeDurabilityWarnings()) {
+      recordCleanupFailure('durability-unconfirmed', this.#sessionId, warning);
+    }
     try {
       await invoke<void>('ffmpeg_destroy_session', {
         sessionId: this.#sessionId,

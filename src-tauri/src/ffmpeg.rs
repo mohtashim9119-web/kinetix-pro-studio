@@ -1,3 +1,4 @@
+use crate::durable_fs::{self, SyncOutcome};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -29,6 +30,53 @@ pub struct FfmpegSessionState {
     /// racing `set_len` on the same file — the rewind path used to truncate
     /// while `ffmpeg_append_file_raw` could still be in `write_all`/`sync_all`.
     io_gates: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// WS3 Round 20 — fsyncs that exhausted `durable_fs`'s bounded retry on
+    /// an externally-caused error and were DEGRADED to "written, durability
+    /// not confirmed" rather than failing the export. Drained once by
+    /// `ffmpeg_take_durability_warnings` so the operator sees them on the
+    /// success toast / diagnostics blob. Keyed by session; bounded per
+    /// session by `DURABILITY_WARNING_CAP`.
+    durability_warnings: Mutex<HashMap<String, Vec<String>>>,
+}
+
+/// Per-session cap on retained durability warnings — the append path could
+/// in principle produce one per batch under a pathological AV hold, and a
+/// warning list is operator metadata, never a log.
+const DURABILITY_WARNING_CAP: usize = 32;
+
+/// Applies the Round 20 degradation policy to a bounded fsync outcome:
+/// `Confirmed` is silent; `Unconfirmed` is logged natively AND recorded on
+/// the session for the frontend to drain — and the command proceeds. Never
+/// turns an `Unconfirmed` into an error: by the time any caller reaches
+/// this the bytes are written, and "saved but not confirmed durable" must
+/// not become "export lost".
+fn record_durability_outcome(state: &FfmpegSessionState, session_id: &str, outcome: &SyncOutcome) {
+    if let Some(cause) = outcome.warning() {
+        eprintln!("[ws3-durability] session {session_id}: {cause}");
+        let mut map = state.durability_warnings.lock().unwrap();
+        let list = map.entry(session_id.to_string()).or_default();
+        if list.len() < DURABILITY_WARNING_CAP {
+            list.push(cause.to_string());
+        } else if list.len() == DURABILITY_WARNING_CAP {
+            list.push(format!("… further durability warnings for this session suppressed at {DURABILITY_WARNING_CAP}"));
+        }
+    }
+}
+
+/// Drains (returns and clears) the durability warnings recorded for
+/// `session_id` — see `record_durability_outcome`. Empty when every fsync
+/// in the session was confirmed. Safe to call for an unknown session.
+#[tauri::command]
+pub fn ffmpeg_take_durability_warnings(
+    session_id: String,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Vec<String> {
+    state
+        .durability_warnings
+        .lock()
+        .unwrap()
+        .remove(&session_id)
+        .unwrap_or_default()
 }
 
 /// Back-compat alias — lib.rs still `.manage(ffmpeg::FfmpegProcessState::default())`.
@@ -106,10 +154,18 @@ fn ensure_resume_bitstream_fence(
     ensure_resume_prepared(state, session_id, operation)
 }
 
-fn sync_session_file(path: &Path, label: &str) -> Result<(), String> {
-    let file = fs::File::open(path).map_err(|e| format!("{label}: open for sync: {e}"))?;
-    file.sync_all()
-        .map_err(|e| format!("{label}: sync_all: {e}"))
+/// fsync a session file by path. WS3 Round 20 — this used to be
+/// `fs::File::open(path)` (read-only) + `sync_all`, which is fine on
+/// macOS/Linux and returns `ERROR_ACCESS_DENIED` on Windows, where
+/// `FlushFileBuffers` needs write access on the handle — the machine-1
+/// field failure at `write_file(voiceover_audio)`. Now routed through
+/// `durable_fs::fsync_path_bounded`: write-access open, bounded retry on
+/// external holds, and a typed `Unconfirmed` outcome the caller applies the
+/// degradation policy to via `record_durability_outcome`. A hard error
+/// (missing file, I/O error, disk full) is still an `Err` and still carries
+/// the OS error code and the full path.
+fn sync_session_file(path: &Path, label: &str) -> Result<SyncOutcome, String> {
+    durable_fs::fsync_path_bounded(path, label)
 }
 
 fn io_error_is_disk_full(err: &io::Error) -> bool {
@@ -307,8 +363,10 @@ pub fn ffmpeg_write_file(
     let data = STANDARD
         .decode(&data_b64)
         .map_err(|e| format!("write_file({}): base64 decode failed: {}", path, e))?;
-    fs::write(&full, &data).map_err(|e| format!("write_file({}): {}", path, e))?;
-    sync_session_file(&full, &format!("write_file({path})"))
+    fs::write(&full, &data).map_err(|e| format!("write_file({}): {} [path={}]", path, e, full.display()))?;
+    let outcome = sync_session_file(&full, &format!("write_file({path})"))?;
+    record_durability_outcome(&state, &session_id, &outcome);
+    Ok(())
 }
 
 /// Raw-binary variant of `ffmpeg_write_file`.
@@ -346,8 +404,10 @@ pub fn ffmpeg_write_file_raw(
 
     match request.body() {
         tauri::ipc::InvokeBody::Raw(data) => {
-            fs::write(&full, data).map_err(|e| format!("write_file_raw({}): {}", path, e))?;
-            sync_session_file(&full, &format!("write_file_raw({path})"))
+            fs::write(&full, data).map_err(|e| format!("write_file_raw({}): {} [path={}]", path, e, full.display()))?;
+            let outcome = sync_session_file(&full, &format!("write_file_raw({path})"))?;
+            record_durability_outcome(&state, session_id, &outcome);
+            Ok(())
         }
         tauri::ipc::InvokeBody::Json(_) => {
             Err("write_file_raw: expected a raw byte body, got JSON".to_string())
@@ -1177,7 +1237,8 @@ pub fn ffmpeg_truncate_annexb(
     let gate = session_io_gate(&state, &session_id);
     let _guard = gate.lock().unwrap();
     let result = truncate_annexb_inner(&full, &path, cancel.as_deref())?;
-    sync_session_file(&full, &format!("truncate_annexb({path})"))?;
+    let outcome = sync_session_file(&full, &format!("truncate_annexb({path})"))?;
+    record_durability_outcome(&state, &session_id, &outcome);
     Ok(result)
 }
 
@@ -1198,7 +1259,8 @@ pub fn ffmpeg_truncate_annexb_to_offset(
     let gate = session_io_gate(&state, &session_id);
     let _guard = gate.lock().unwrap();
     let result = truncate_annexb_to_offset_inner(&full, &path, byte_offset, cancel.as_deref())?;
-    sync_session_file(&full, &format!("truncate_annexb_to_offset({path})"))?;
+    let outcome = sync_session_file(&full, &format!("truncate_annexb_to_offset({path})"))?;
+    record_durability_outcome(&state, &session_id, &outcome);
     Ok(result)
 }
 
@@ -1308,7 +1370,8 @@ pub fn ffmpeg_prepare_checkpoint_resume(
         encoder_session_index,
         cancel.as_deref(),
     )?;
-    sync_session_file(&full, &format!("prepare_checkpoint_resume({path})"))?;
+    let outcome = sync_session_file(&full, &format!("prepare_checkpoint_resume({path})"))?;
+    record_durability_outcome(&state, &session_id, &outcome);
     state.resume_pending.lock().unwrap().remove(&session_id);
     Ok(result)
 }
@@ -1420,6 +1483,9 @@ pub fn ffmpeg_concat_annexb_pieces(
     let _guard = gate.lock().unwrap();
 
     let result = concat_annexb_pieces_inner(&dir, &piece_paths, &out_full, cancel.as_deref());
+    if let Ok(ref outcome) = result {
+        record_durability_outcome(&state, &session_id, outcome);
+    }
     if let Err(ref err) = result {
         // Preserve a partial concat when the volume is full — the operator may
         // salvage prefix bytes. Every consumer still runs the picture-count
@@ -1428,7 +1494,7 @@ pub fn ffmpeg_concat_annexb_pieces(
             let _ = fs::remove_file(&out_full);
         }
     }
-    result
+    result.map(|_| ())
 }
 
 fn concat_annexb_pieces_inner(
@@ -1436,7 +1502,7 @@ fn concat_annexb_pieces_inner(
     piece_paths: &[String],
     out_full: &Path,
     cancel: Option<&AtomicBool>,
-) -> Result<(), String> {
+) -> Result<SyncOutcome, String> {
     use std::io::{Read, Write};
 
     check_cancelled(cancel)?;
@@ -1476,9 +1542,9 @@ fn concat_annexb_pieces_inner(
     // didn't. A crash between concat returning and mux starting could leave
     // video_all.h264 short on disk (flushed to the OS page cache, not to
     // storage) with no error surfaced anywhere.
-    out.sync_all()
-        .map_err(|e| format!("concat_annexb_pieces: sync output: {}", e))?;
-    Ok(())
+    // Round 20 — `out` is a `File::create` handle (write access), so only
+    // the external-hold class can fail here; bounded retry, then degrade.
+    durable_fs::fsync_file_bounded(&out, out_full, "concat_annexb_pieces: sync output")
 }
 
 /// Deletes <session_dir>/<path>. Missing file is treated as success.
@@ -1760,7 +1826,7 @@ pub fn save_session_file(
     file_name: String,
     dest_path: String,
     state: tauri::State<'_, FfmpegSessionState>,
-) -> Result<(), String> {
+) -> Result<SaveSessionFileResult, String> {
     validate_path(&file_name)?;
     let src = session_dir(&session_id)?.join(&file_name);
     if !src.is_file() {
@@ -1772,7 +1838,7 @@ pub fn save_session_file(
     let src_long = windows_long_path(&src);
     let dest_long = windows_long_path(Path::new(&dest_path));
     let cancel = session_cancel_flag(&state, &session_id);
-    copy_session_file_atomic(&src_long, &dest_long, cancel.as_deref()).map_err(|e| {
+    let outcome = copy_session_file_atomic(&src_long, &dest_long, cancel.as_deref()).map_err(|e| {
         format!(
             "save_session_file({} -> {}): {} — completed export remains at {}",
             file_name,
@@ -1780,7 +1846,26 @@ pub fn save_session_file(
             e,
             src.display()
         )
+    })?;
+    record_durability_outcome(&state, &session_id, &outcome);
+    Ok(SaveSessionFileResult {
+        durable_confirmed: outcome.is_confirmed(),
+        durability_warning: outcome.warning().map(|w| format!("save_session_file({file_name} -> {dest_path}): {w}")),
     })
+}
+
+/// WS3 Round 20 — what `save_session_file` reports. `durable_confirmed ==
+/// false` means the bytes ARE at `dest_path` (the `.part` was fully written
+/// and promoted by rename) but an fsync could not be confirmed within the
+/// bounded retry — the operator is told the file is saved and that its
+/// durability was not proven, with the OS error and path in
+/// `durability_warning`. Never an error: a completed export is never
+/// reported lost over an fsync that could not be confirmed.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSessionFileResult {
+    pub durable_confirmed: bool,
+    pub durability_warning: Option<String>,
 }
 
 fn dest_part_path(dest: &Path) -> PathBuf {
@@ -1815,16 +1900,26 @@ fn rename_over(part: &Path, dest: &Path) -> Result<(), String> {
 /// Stream-copy `src` onto `dest` via a sibling `.part` file. Honors the session
 /// cancel flag between 64 KB chunks. Never truncates `dest` until the copy has
 /// been fsynced.
+///
+/// WS3 Round 20 — returns the WORST durability outcome of the two fsyncs
+/// (the `.part` before rename, `dest` after). Both go through `durable_fs`'s
+/// bounded retry; neither turns an external hold into a lost export. The
+/// `.part` handle is a `File::create` (write access); the post-rename `dest`
+/// sync used to be a read-only open — the same `ERROR_ACCESS_DENIED` the
+/// voiceover write hit, which would have failed EVERY Windows delivery after
+/// the bytes were already at `dest`. An `Unconfirmed` outcome on the `.part`
+/// still proceeds to the rename: the alternative is deleting a complete
+/// copy over an fsync that could not be confirmed.
 fn copy_session_file_atomic(
     src: &Path,
     dest: &Path,
     cancel: Option<&AtomicBool>,
-) -> Result<(), String> {
+) -> Result<SyncOutcome, String> {
     use std::io::{Read, Write};
 
     check_cancelled(cancel)?;
     let part = dest_part_path(dest);
-    let copied = (|| -> Result<(), String> {
+    let copied = (|| -> Result<SyncOutcome, String> {
         let mut input =
             fs::File::open(src).map_err(|e| format!("copy_session_file: open src: {e}"))?;
         let mut output =
@@ -1845,13 +1940,16 @@ fn copy_session_file_atomic(
         output
             .flush()
             .map_err(|e| format!("copy_session_file: flush part: {e}"))?;
-        output
-            .sync_all()
-            .map_err(|e| format!("copy_session_file: fsync part: {e}"))?;
+        let part_outcome = durable_fs::fsync_file_bounded(&output, &part, "copy_session_file: fsync part")?;
         drop(output);
         rename_over(&part, dest)?;
-        sync_session_file(dest, "copy_session_file dest")?;
-        Ok(())
+        let dest_outcome = sync_session_file(dest, "copy_session_file: fsync dest")?;
+        Ok(match (part_outcome, dest_outcome) {
+            (SyncOutcome::Confirmed, SyncOutcome::Confirmed) => SyncOutcome::Confirmed,
+            (SyncOutcome::Unconfirmed { cause }, _) | (_, SyncOutcome::Unconfirmed { cause }) => {
+                SyncOutcome::Unconfirmed { cause }
+            }
+        })
     })();
     if copied.is_err() {
         let _ = fs::remove_file(&part);
@@ -2077,12 +2175,31 @@ mod tests {
                 .expect("FILE_APPEND_DATA handle must satisfy FlushFileBuffers — the append path relies on it");
         }
 
+        /// Machine 2 (167 segments, canvas/PNG segment path): failed on the
+        /// FIRST frame — `write_file_raw(frame_00001.png): sync_all: Access
+        /// is denied. (os error 5)`, `kind: encode, segmentIndex: 0`.
+        /// Deterministic, not a race: the very first `fs::write` + read-only
+        /// open + `FlushFileBuffers` in the session. This is that exact
+        /// sequence, on a file that did not exist a moment before, through the
+        /// same `sync_session_file` both `ffmpeg_write_file` and
+        /// `ffmpeg_write_file_raw` call. RED before the fix (run 34647440025's
+        /// sibling probe below is the same function), GREEN after.
+        #[test]
+        fn write_file_raw_first_frame_sync_confirms() {
+            let (_, dir) = make_session();
+            let p = dir.join("frame_00001.png");
+            assert!(!p.exists());
+            fs::write(&p, b"\x89PNG\r\n\x1a\n").unwrap(); // what write_file_raw does
+            let outcome = sync_session_file(&p, "write_file_raw(frame_00001.png)");
+            assert_eq!(outcome, Ok(SyncOutcome::Confirmed), "{outcome:?}");
+        }
+
         #[test]
         fn sync_session_file_confirms_on_an_existing_file() {
             let p = existing_file();
             let before = fs::read(&p).unwrap();
             let outcome = sync_session_file(&p, "probe");
-            assert!(outcome.is_ok(), "{outcome:?}");
+            assert_eq!(outcome, Ok(SyncOutcome::Confirmed), "{outcome:?}");
             assert_eq!(fs::read(&p).unwrap(), before, "sync must never truncate");
         }
     }
@@ -3606,6 +3723,31 @@ mod tests {
         assert_eq!(prefixed.len(), long_path.len() + r"\\?\".len());
     }
 
+    /// WS3 Round 20 — the Windows twin of the no-op test below: now that
+    /// windows-check actually RUNS `ffmpeg::tests::` on windows-latest, the
+    /// runtime branch `windows_long_path` takes there is pinned too. (The
+    /// first Windows execution of this module failed the non-Windows test
+    /// below for exactly this reason — it was gated on nothing.)
+    #[cfg(windows)]
+    #[test]
+    fn windows_long_path_applies_the_prefix_at_runtime_on_windows() {
+        assert_eq!(
+            windows_long_path(Path::new(r"C:\Users\alice\Videos\out.mp4")).to_string_lossy(),
+            r"\\?\C:\Users\alice\Videos\out.mp4"
+        );
+        assert_eq!(
+            windows_long_path(Path::new(r"\\server\share\project\out.mp4")).to_string_lossy(),
+            r"\\?\UNC\server\share\project\out.mp4"
+        );
+        // Already-prefixed and relative inputs are untouched.
+        assert_eq!(
+            windows_long_path(Path::new(r"\\?\C:\x\out.mp4")).to_string_lossy(),
+            r"\\?\C:\x\out.mp4"
+        );
+        assert_eq!(windows_long_path(Path::new("relative/out.mp4")).to_string_lossy(), "relative/out.mp4");
+    }
+
+    #[cfg(not(windows))]
     #[test]
     fn windows_long_path_is_a_byte_for_byte_no_op_on_this_platform() {
         // WS3 STEP 10 (H9) — the property this repo can actually verify:

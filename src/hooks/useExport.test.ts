@@ -8,7 +8,9 @@ import {
   isWebCodecsExportGateOpen,
   formatElapsed,
   formatElapsedLong,
+  formatFrameSpanDuration,
 } from './useExport';
+import { normalizeSaveSessionFileResult } from '../services/tauriFfmpeg';
 
 /**
  * formatElapsed / formatElapsedLong — the live-timer and completion-toast
@@ -51,6 +53,60 @@ describe('formatElapsed', () => {
   it('floors fractional seconds and clamps negative input to zero', () => {
     expect(formatElapsed(65.9)).toBe('01:05');
     expect(formatElapsed(-5)).toBe('00:00');
+  });
+});
+
+/**
+ * WS3 Round 20 — the sealing dialog rendered "10 FRAMES LOST / 0s" on the
+ * machine-1 field run (40,374 of 40,384 at 30 fps = 0.33 s, floored to 0).
+ * A zero beside a non-zero frame count reads as a display bug and undermines
+ * the frame count next to it. Sub-second spans show milliseconds; ≥ 1 s
+ * rounds UP so a loss is never understated.
+ */
+describe('formatFrameSpanDuration', () => {
+  it('10 frames at 30 fps is "333 ms", never "0s"', () => {
+    expect(formatFrameSpanDuration(10 / 30)).toBe('333 ms');
+  });
+
+  it('1 frame at 30 fps is "33 ms"', () => {
+    expect(formatFrameSpanDuration(1 / 30)).toBe('33 ms');
+  });
+
+  it('a true zero is "0s"', () => {
+    expect(formatFrameSpanDuration(0)).toBe('0s');
+  });
+
+  it('rounds up past one second so a loss is never understated', () => {
+    expect(formatFrameSpanDuration(1.0)).toBe('1s');
+    expect(formatFrameSpanDuration(1.03)).toBe('2s');
+    expect(formatFrameSpanDuration(40_374 / 30)).toBe('22m 26s'); // 1345.8 s kept, ceil 1346
+  });
+
+  it('a negative input clamps to zero rather than printing a sign', () => {
+    expect(formatFrameSpanDuration(-3)).toBe('0s');
+  });
+});
+
+/**
+ * WS3 Round 20 — `save_session_file` now returns a durability report; a
+ * `void`/non-object result (older native build, test fakes) must read as
+ * confirmed, since the pre-Round-20 contract was "returned ⇒ saved".
+ */
+describe('normalizeSaveSessionFileResult', () => {
+  it('void reads as confirmed', () => {
+    expect(normalizeSaveSessionFileResult(undefined)).toEqual({ durableConfirmed: true, durabilityWarning: null });
+    expect(normalizeSaveSessionFileResult(null)).toEqual({ durableConfirmed: true, durabilityWarning: null });
+  });
+
+  it('an explicit false with a warning passes through', () => {
+    expect(normalizeSaveSessionFileResult({ durableConfirmed: false, durabilityWarning: 'x [os_error=32]' }))
+      .toEqual({ durableConfirmed: false, durabilityWarning: 'x [os_error=32]' });
+  });
+
+  it('a confirmed result never carries a stale warning', () => {
+    expect(normalizeSaveSessionFileResult({ durableConfirmed: true, durabilityWarning: null }))
+      .toEqual({ durableConfirmed: true, durabilityWarning: null });
+    expect(normalizeSaveSessionFileResult({ durableConfirmed: true, durabilityWarning: 42 }).durabilityWarning).toBeNull();
   });
 });
 

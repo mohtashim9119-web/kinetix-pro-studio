@@ -1,5 +1,5 @@
 import type { FfmpegLike } from './segmentEncoder';
-import { TauriFfmpeg } from './tauriFfmpeg';
+import { TauriFfmpeg, type SaveSessionFileResult } from './tauriFfmpeg';
 
 export interface TauriBackend {
   ffmpeg: FfmpegLike;
@@ -13,7 +13,10 @@ export interface TauriBackend {
    * straight to `destPath` on disk, without routing the bytes through the
    * renderer. Must be called before dispose() removes the session dir.
    */
-  saveOutputToDisk: (fileName: string, destPath: string) => Promise<void>;
+  saveOutputToDisk: (fileName: string, destPath: string) => Promise<SaveSessionFileResult>;
+  /** WS3 Round 20 — drains the session's degraded-fsync warnings (see
+   *  `TauriFfmpeg.takeDurabilityWarnings`). */
+  takeDurabilityWarnings: () => Promise<string[]>;
   /**
    * Kills the in-flight ffmpeg subprocess for this session, if any (D13 fix).
    * Must be called before dispose() so the sidecar isn't left running against a
@@ -38,6 +41,7 @@ export async function createTauriBackend(): Promise<TauriBackend> {
     sessionId: ffmpeg.sessionId,
     dispose: () => ffmpeg.destroy(),
     saveOutputToDisk: (fileName, destPath) => ffmpeg.saveSessionFile(fileName, destPath),
+    takeDurabilityWarnings: () => ffmpeg.takeDurabilityWarnings(),
     cancel: () => ffmpeg.kill(),
   };
 }

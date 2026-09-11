@@ -264,7 +264,7 @@ import { SyncLogPanel } from './components/SyncLogPanel';
 import { ExportSettingsModal } from './components/ExportSettingsModal';
 import { ManageModelsModal } from './components/ManageModelsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
-import { useExport, formatElapsed, formatElapsedLong, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
+import { useExport, formatElapsed, formatElapsedLong, formatFrameSpanDuration, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { buildExportDiagnosticsBlob } from './services/exportDiagnosticsBlob';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
@@ -7102,7 +7102,7 @@ export default function App() {
                 </div>
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500 mt-0.5">frames kept</div>
                 <div className="text-xs text-zinc-400 mt-1">
-                  {formatElapsedLong(exportState.pendingSealConsent.keptWallDurationSeconds)}
+                  {formatFrameSpanDuration(exportState.pendingSealConsent.keptWallDurationSeconds)}
                 </div>
               </div>
               <div className="bg-zinc-800/70 rounded-lg py-3">
@@ -7111,7 +7111,7 @@ export default function App() {
                 </div>
                 <div className="text-[11px] uppercase tracking-wide text-zinc-500 mt-0.5">frames lost</div>
                 <div className="text-xs text-amber-400/80 mt-1">
-                  {formatElapsedLong(exportState.pendingSealConsent.lostWallDurationSeconds)}
+                  {formatFrameSpanDuration(exportState.pendingSealConsent.lostWallDurationSeconds)}
                 </div>
               </div>
               <div className="bg-zinc-800/70 rounded-lg py-3">
@@ -7135,7 +7135,7 @@ export default function App() {
                 onClick={() => resolveSealConsent(true)}
                 className="text-sm bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded-lg px-4 py-2 transition-colors"
               >
-                Save the shorter {formatElapsedLong(exportState.pendingSealConsent.keptWallDurationSeconds)} video
+                Save the shorter {formatFrameSpanDuration(exportState.pendingSealConsent.keptWallDurationSeconds)} video
               </button>
             </div>
           </div>
@@ -7163,8 +7163,17 @@ export default function App() {
                 without saying so on the same surface that reports success. */}
             {exportState.lastExportSealedOffer && (
               <p className="text-amber-400 text-xs">
-                Shortened by {formatElapsedLong(exportState.lastExportSealedOffer.lostWallDurationSeconds)}
+                Shortened by {formatFrameSpanDuration(exportState.lastExportSealedOffer.lostWallDurationSeconds)}
                 {' '}({exportState.lastExportSealedOffer.picturesLost.toLocaleString()} frames) — you approved this.
+              </p>
+            )}
+            {/* WS3 Round 20 — "saved but not confirmed durable" is said on the
+                same surface that reports success, never hidden behind it. */}
+            {exportState.lastExportDurabilityWarnings && exportState.lastExportDurabilityWarnings.length > 0 && (
+              <p className="text-amber-400 text-xs" title={exportState.lastExportDurabilityWarnings.join('\n')}>
+                Saved, but the disk did not confirm the write was flushed ({exportState.lastExportDurabilityWarnings.length} warning
+                {exportState.lastExportDurabilityWarnings.length === 1 ? '' : 's'}). The file is complete; if this machine loses power
+                before the OS flushes it, re-export. Hover for the OS error and path.
               </p>
             )}
             <div className="flex gap-2">

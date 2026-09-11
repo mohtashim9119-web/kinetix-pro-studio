@@ -60,7 +60,7 @@ export interface ExportOptionsWebCodecs {
 
 export interface WebCodecsFfmpeg extends FfmpegLike {
   appendFileRaw(path: string, data: Uint8Array): Promise<void>;
-  saveSessionFile(fileName: string, destPath: string): Promise<void>;
+  saveSessionFile(fileName: string, destPath: string): Promise<unknown>;
   kill(): Promise<void>;
   destroy(): Promise<void>;
 }

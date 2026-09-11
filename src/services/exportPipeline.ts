@@ -184,10 +184,30 @@ export interface ExportError {
   segmentIndex?: number;
   cause?: string;
   liveness?: ExportLivenessSnapshot;
+  /**
+   * WS3 Round 20 — fsyncs the native side DEGRADED (bounded retry exhausted
+   * on an external hold; bytes written, durability not confirmed) during
+   * the run that ended in this error. Drained from the session at failure
+   * time by `useExport`, so a field report shows whether the disk was
+   * fighting back before the terminal failure.
+   */
+  durabilityWarnings?: readonly string[];
 }
 
 export type ExportResult =
-  | { ok: true; outputFile: string }
+  | {
+      ok: true;
+      outputFile: string;
+      /**
+       * WS3 Round 20 — the main-thread liveness view at the moment the
+       * pipeline returned (last piece, frames encoded, phase-log tail,
+       * append ledger). Carried on SUCCESS so the delivery step in
+       * `useExport` — which runs after the pipeline has returned and has no
+       * closure of its own to snapshot — can attach it to a delivery
+       * failure instead of shipping a blob with every field `null`.
+       */
+      liveness?: ExportLivenessSnapshot;
+    }
   | { ok: false; error: ExportError };
 
 function causeString(err: unknown): string {

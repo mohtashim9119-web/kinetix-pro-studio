@@ -200,7 +200,15 @@ describe('forced MP4 sealing — wired at the concat-guard seam', () => {
     const unwired = await run(ffmpeg2);
     expect(unwired.ok).toBe(false);
     if (unwired.ok) throw new Error('unreachable');
-    expect(unwired.error).toEqual(declined.error);
+    // WS3 Round 20 — every post-encode failure now carries `liveness`
+    // (populated, with a wall-clock `msSinceLastPhaseChange`), so the two
+    // errors are compared on their TYPED content; the liveness view is
+    // asserted present on both rather than byte-equal.
+    const { liveness: declinedLiveness, ...declinedTyped } = declined.error;
+    const { liveness: unwiredLiveness, ...unwiredTyped } = unwired.error;
+    expect(unwiredTyped).toEqual(declinedTyped);
+    expect(declinedLiveness?.lastPhase).toBe('concat:verify');
+    expect(unwiredLiveness?.lastPhase).toBe('concat:verify');
   });
 
   it('consenting seals: one muxOnly-shaped exec, a successful result, and the guard still having reported the shortfall', async () => {

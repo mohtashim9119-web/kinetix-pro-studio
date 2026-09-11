@@ -46,6 +46,9 @@ export function buildExportDiagnosticsBlob(
     failureVia: err.liveness?.failureVia ?? null,
     appendLedger: err.liveness?.appendLedger ?? null,
     phaseLogTail: err.liveness?.phaseLogTail ?? null,
+    // WS3 Round 20 — fsyncs degraded to "written, not confirmed durable"
+    // during the failed run (see `ExportError.durabilityWarnings`).
+    durabilityWarnings: err.durabilityWarnings ?? null,
     projectMeta,
   };
 }

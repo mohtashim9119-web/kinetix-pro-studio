@@ -24,7 +24,11 @@
  * them on its own schedule regardless of whether this notice survives.
  */
 
-export type CleanupNoticeKind = 'session-destroy' | 'premux-intermediate' | 'session-kill';
+/** `durability-unconfirmed` (WS3 Round 20): an fsync that exhausted the
+ *  native bounded retry on an external hold and was degraded to "written,
+ *  not confirmed durable" — recorded here only if the pipeline did not
+ *  drain it itself before `destroy()`. */
+export type CleanupNoticeKind = 'session-destroy' | 'premux-intermediate' | 'session-kill' | 'durability-unconfirmed';
 
 export interface CleanupNotice {
   kind: CleanupNoticeKind;

@@ -568,7 +568,13 @@ fn import_to_target(id: ModelId, source: &Path, target: &Path) -> Result<(), Str
     // rename dance is that a crash mid-copy never leaves a corrupt file at
     // `target`; an un-fsynced `.part` could still be lost on a crash right
     // after the copy call returns but before the OS has actually flushed it.
-    if let Err(e) = File::open(&part_path).and_then(|f| f.sync_all()) {
+    // WS3 Round 20 — was `File::open(..).sync_all()`: a read-only handle,
+    // which `FlushFileBuffers` rejects with ERROR_ACCESS_DENIED on Windows
+    // (the export mux-stage field failure had the identical shape). Model
+    // import would have failed on every Windows machine. Write-access open
+    // via the shared helper; still a hard error here — an import is cheap to
+    // retry and nothing downstream has consumed the bytes yet.
+    if let Err(e) = crate::durable_fs::fsync_path(&part_path) {
         let _ = fs::remove_file(&part_path);
         return Err(format!("fsync failed for {}: {e}", part_path.display()));
     }
