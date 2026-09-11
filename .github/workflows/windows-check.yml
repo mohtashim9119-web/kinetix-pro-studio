@@ -1,4 +1,4 @@
-name: Windows compile check
+name: Windows compile + platform-gated test check
 
 # ---------------------------------------------------------------------------
 # WS3 Round 19 — a cheap, permanent compile guard for the Windows-gated Rust
@@ -14,6 +14,17 @@ name: Windows compile check
 # Both feature cells are checked: the shipped installer is built with
 # `-f fa-inference` (build.yml), so a Windows-only error inside a
 # `#[cfg(feature = "fa-inference")]` block would otherwise still hide.
+#
+# Round 20 carry-over: the feature-off cell ALSO RUNS `cargo test --lib` for
+# the platform-gated modules (`session_claim`, `project_mirror`, and
+# `ffmpeg::tests`'s pure-Rust file/path tests). A `#[cfg(windows)]` test that
+# only ever compiles is not evidence — the three Round 19 start-time tests
+# had never executed anywhere. The filter list is explicit: the full
+# `cargo test` needs real ffmpeg/whisper sidecars, which this job deliberately
+# does not provision (the placeholders below are zero-byte). Add a module to
+# `WINDOWS_TEST_FILTERS` when it gains a Windows-gated or fs-semantics test.
+# The feature-on cell stays check-only: linking the `fa-inference` test
+# binary pulls the ort runtime, which is build.yml's concern, not this job's.
 # ---------------------------------------------------------------------------
 
 on:
@@ -79,6 +90,27 @@ jobs:
           $ErrorActionPreference = "Stop"
           cargo check --all-targets --locked ${{ matrix.cargo_args }} 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/check.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # Filters are libtest substring filters (space-separated = OR). Keep in
+      # sync with the header comment above.
+      - name: cargo test --lib (platform-gated modules, ${{ matrix.name }})
+        if: matrix.name == 'feature-off'
+        working-directory: src-tauri
+        shell: pwsh
+        env:
+          WINDOWS_TEST_FILTERS: 'session_claim:: project_mirror:: ffmpeg::tests::'
+        run: |
+          $ErrorActionPreference = "Stop"
+          $filters = $env:WINDOWS_TEST_FILTERS -split ' '
+          cargo test --lib --locked -- --test-threads=1 @filters 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/test.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # A filter that matched zero tests is a silent regression of this
+          # job's purpose — fail loudly.
+          $summary = Select-String -Path "$env:RUNNER_TEMP/test.log" -Pattern 'test result: ok\. (\d+) passed'
+          if (-not $summary) { Write-Error "no 'test result: ok' line found"; exit 1 }
+          $ran = [int]$summary.Matches[0].Groups[1].Value
+          Write-Host "platform-gated tests executed: $ran"
+          if ($ran -lt 3) { Write-Error "expected >= 3 tests to run (the Round 19 windows_start_time trio at minimum); got $ran"; exit 1 }
 
       - name: Report remaining warnings
         if: always()
