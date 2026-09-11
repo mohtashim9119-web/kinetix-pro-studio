@@ -1966,18 +1966,18 @@ on the three seal-dialog tiles and the success toast's "Shortened by".
 
 **Red, then green, on real Windows.**
 
-- Run 34647026774 (integration `1abe9a1`, first-ever Windows execution of the test suite, unfixed
+- Run 34647026774 (https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/34647026774, integration `1abe9a1`, first-ever Windows execution of the test suite, unfixed
   code): `copy_session_file_atomic_does_not_touch_dest_until_complete` **FAILED** with
   `copy_session_file dest: sync_all: Access is denied. (os error 5)`. Also failed:
   `windows_long_path_is_a_byte_for_byte_no_op_on_this_platform` — a test with no platform gate
   asserting the non-Windows branch; now `#[cfg(not(windows))]`, with a `#[cfg(windows)]` twin
   asserting the prefix IS applied. The Round 19 `windows_start_time` trio ran for the first time:
   3/3 ok. 65 passed / 2 failed.
-- Run 34647440025 (this branch, probe commit on unfixed code): the new
+- Run 34647440025 (https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/34647440025, this branch, probe commit `8982e2e` on unfixed code): the new
   `ffmpeg::tests::windows_fsync_access` trio — `read_only_handle_cannot_flush_file_buffers` ok,
   `append_only_handle_can_flush_file_buffers` ok, `sync_session_file_confirms_on_an_existing_file`
   **FAILED** (the site under test, pre-fix). RED as designed.
-- Run RUN_GREEN (fix commit): every filtered test green — including the machine-2 case
+- Run 34650194466 (https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/34650194466, fix commit `bf49a99`): every filtered test green — including the machine-2 case
   `write_file_raw_first_frame_sync_confirms` (fresh `frame_00001.png` via `fs::write`, then
   `sync_session_file`, the exact first-frame sequence), added after machine 2 reported. Its red
   is run 34647440025: it exercises the same function with the same arguments as the probe that
@@ -1991,13 +1991,13 @@ durable_fs::` and fails if fewer than 3 tests execute. The feature-on cell stays
 
 | Gate | Result |
 |---|---|
-| Windows `cargo check --all-targets` (feature-off / fa-inference) | RUN_GREEN_CHECK |
-| Windows `cargo test --lib` (filtered) | RUN_GREEN_TEST |
-| Windows bundle build (`build.yml`, `-f fa-inference`) | RUN_BUNDLE |
+| Windows `cargo check --all-targets` (feature-off / fa-inference) | **green / green, 0 warnings** — run 34650194466 |
+| Windows `cargo test --lib` (filtered: `session_claim:: project_mirror:: ffmpeg::tests:: durable_fs::`) | **78 passed / 0 failed / 3 ignored** — run 34650194466; includes the 4 `windows_fsync_access` probes, the Round 19 `windows_start_time` trio (executed for the first time on run 34647026774), `windows_long_path_applies_the_prefix_at_runtime_on_windows`, and `durable_fs::tests` ×7 |
+| Windows bundle build (`build.yml`, `-f fa-inference`) | **NOT dispatched this round, deliberately.** The machine-2 follow-up: no rebuild until machine 3 reports, so all three field results come from `5825dc9`. Dispatch `build.yml` on this branch's head once machine 3 is in; the compile+test job above is the standing gate until then. |
 | macOS `npx tsc --noEmit` / `npm run lint` | clean / clean |
-| `npm test` | GATE_NPM |
-| `cargo test` | GATE_CARGO |
-| `cargo test --features fa-inference -- --test-threads=1` | GATE_CARGO_FA |
+| `npm test` | **3587 passed, 0 failed, 78 skipped = 3665** (was 3572/0/78 = 3650; +15: `postEncodeDiagnostics` ×7, `formatFrameSpanDuration` ×5, `normalizeSaveSessionFileResult` ×3) |
+| `cargo test` | **321 / 0 / 6** (was 314; +7 `durable_fs::tests`; the 5 `#[cfg(windows)]` additions do not run here) |
+| `cargo test --features fa-inference -- --test-threads=1` | **407 / 0 / 36** (was 400; +7) |
 
 New tests: Rust `durable_fs::tests` ×7 (open never truncates/creates; confirmed on every platform;
 `NotFound` is a hard error with path + `attempts=1`; the schedule is exhausted and bounded
