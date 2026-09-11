@@ -58,4 +58,25 @@ describe('checkExportDestinationPathLength', () => {
     expect(longPath.length).toBeGreaterThan(WINDOWS_MAX_PATH);
     expect(checkExportDestinationPathLength(longPath)).not.toBeNull();
   });
+
+  // WS3 Round 18 (F2 follow-up) — DESTRUCTIVE PROBE. `save_session_file`
+  // delivers via a sibling `<dest>.part` file (5 extra characters) before
+  // renaming over `dest`. A destPath the OLD check accepted (< 260 on its
+  // own) but whose `.part` form reaches or exceeds WINDOWS_MAX_PATH must now
+  // be rejected — this is the exact gap STEP 3 closed. Without the
+  // DEST_PART_SUFFIX_LENGTH accounting, this path (255-259 chars, `.part`
+  // form 260-264) would silently pass pre-encode validation and only fail
+  // at delivery, after a full render.
+  it('rejects a path whose .part form crosses WINDOWS_MAX_PATH even though the path itself does not', () => {
+    // 'C:\' (3) + 246 'a's + '\' (1) + 'out.mp4' (7) = 257 chars: under
+    // WINDOWS_MAX_PATH (260) on its own, but 257 + '.part'.length (5) = 262
+    // crosses it — exactly the gap between "the path" and "what delivery
+    // actually constructs".
+    const destPath = 'C:\\' + 'a'.repeat(246) + '\\out.mp4';
+    expect(destPath.length).toBeLessThan(WINDOWS_MAX_PATH);
+    expect(destPath.length + '.part'.length).toBeGreaterThanOrEqual(WINDOWS_MAX_PATH);
+    const message = checkExportDestinationPathLength(destPath);
+    expect(message).not.toBeNull();
+    expect(message).toContain(String(destPath.length + '.part'.length));
+  });
 });

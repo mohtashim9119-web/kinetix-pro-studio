@@ -25,7 +25,12 @@ export type ExportStage =
       encoderSessionIndex?: number;
     }
   | { type: 'muxing' }
-  | { type: 'done' };
+  | { type: 'done' }
+  /** WS3 Round 18 — a bounded re-render's rewind truncate is a native
+   *  streaming operation up to `TRUNCATE_BOUND_MS` (172.7s) with no
+   *  incremental output; without this stage the UI goes silent for that
+   *  whole window with no way to tell "recovering" from "frozen". */
+  | { type: 'recovering'; index: number; total: number };
 
 export type ProgressCallback = (stage: ExportStage) => void;
 

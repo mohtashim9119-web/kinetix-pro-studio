@@ -252,8 +252,12 @@ export class FfmpegKillHungError extends Error {
 
   constructor(diagnostics: FfmpegBoundDiagnostics) {
     super(
+      // WS3 Round 18 (F4) — KILL_BOUND_MS (125ms) rendered as "0s" under
+      // Math.round(.../1000), reporting the bound as effectively instant.
+      // Report milliseconds directly; this bound is two orders of magnitude
+      // below the ones that legitimately read in whole seconds.
       `ffmpeg step "${diagnostics.label}" expired and ffmpeg.kill() did not settle within ` +
-        `${Math.round(KILL_BOUND_MS / 1000)}s — the sidecar process may still be running ` +
+        `${KILL_BOUND_MS}ms — the sidecar process may still be running ` +
         `(files=${diagnostics.files.join(',') || 'none'}). Aborting (ffmpeg kill bound).`,
     );
     this.name = 'FfmpegKillHungError';

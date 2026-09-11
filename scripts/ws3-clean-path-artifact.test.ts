@@ -20,10 +20,19 @@
  * SKIPPED unless `WS3_ARTIFACT_DIR` is set — it spawns a native binary and
  * writes ~40 MB to disk, which does not belong in `npm test`.
  *
- * Run:
+ * Run (Arm A shape — 320x180, 3 segments, the defaults):
  *   WS3_ARTIFACT_DIR=/path/out WS3_ARTIFACT_FIXTURES=/path/fixtures \
- *   WS3_FFMPEG_BIN=src-tauri/binaries/ffmpeg-x86_64-apple-darwin \
+ *   WS3_FFMPEG_BIN=/absolute/path/to/src-tauri/binaries/ffmpeg-x86_64-apple-darwin \
  *     npx vitest run scripts/ws3-clean-path-artifact.test.ts
+ *
+ * WS3_FFMPEG_BIN MUST be absolute. `diskFfmpeg`'s `exec` passes it to
+ * `spawnSync` together with `cwd: sessionDir` — Node resolves a RELATIVE
+ * executable path against that `cwd`, not against the process's own cwd, so
+ * a relative WS3_FFMPEG_BIN silently ENOENTs (`ffmpeg exited with code
+ * null`) the moment the mux step runs, well after the three GL pieces
+ * (which never exec ffmpeg) have already logged success. WS3 Round 18 STEP 5
+ * hit exactly this and lost time to it before noticing — recorded here so
+ * it isn't rediscovered.
  *
  * Fixtures (generated once with the SAME sidecar binary, byte-deterministic —
  * `-threads 1`, no B-frames, an AUD leading every access unit so the AU split
@@ -36,6 +45,39 @@
  *     -ac 1 -c:a pcm_s16le fixture.wav
  *   fixture.aus.json = [[start,end], ...] — byte spans split at every
  *     4-byte-start-code AUD NAL (`00 00 00 01 09`), 5490 of them.
+ *
+ * Run (Arm B shape — 1280x720, 2 segments, the field profile — set
+ * WS3_ARTIFACT_SEGMENTS=2 WS3_ARTIFACT_SIZE=1280x720 alongside the vars
+ * above). Generation command, recorded here for the first time — Round 16's
+ * own Arm B digest (`09c53b61…`) has NO generation command anywhere in the
+ * docs, which is itself a record defect this entry is fixing:
+ *   ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30:duration=122 \
+ *     -c:v libx264 -preset ultrafast -threads 1 -bf 0 -g 30 -keyint_min 30 \
+ *     -x264-params aud=1:repeat-headers=1:sliced-threads=0:threads=1 \
+ *     -pix_fmt yuv420p -f h264 fixture.h264
+ *   ffmpeg -f lavfi -i sine=frequency=440:sample_rate=16000:duration=122 \
+ *     -ac 1 -c:a pcm_s16le fixture.wav
+ *   fixture.aus.json — same AUD-split method, 3660 of them.
+ *
+ * WS3 Round 18 STEP 5 tried to reproduce Round 16's ORIGINAL Arm B fixture
+ * byte-for-byte from this same command and could not: the regenerated WAV
+ * matched Round 16's recorded digest exactly (`5d2557e9…6285` — audio is a
+ * pure function of frequency/rate/duration, no encoder involved), but the
+ * regenerated H.264 did not match (`89a16a32…3d69`) despite identical frame
+ * count (3660 AUs) and the identical `-threads 1`/`threads=1` flags that DID
+ * reproduce Arm A exactly. Conclusion: Round 16's original Arm B fixture was
+ * generated WITHOUT pinning threads (or on a differently-configured
+ * encoder), so libx264's slice/row-threading partitioning — which is
+ * machine/core-count-dependent when threads aren't pinned — makes it
+ * non-reproducible off the box that made it. It was never safe to treat as
+ * a fixed byte-neutrality anchor; only Arm A's documented command actually
+ * is. A newly regenerated Arm B fixture (using the pinned command above) IS
+ * internally reproducible and was confirmed byte-identical between
+ * `78c104a` (pre-F1) and the F1-F6 head — see Round 18's ledger entry. Byte
+ * neutrality is a DIFFERENTIAL property (same input through two code
+ * versions), never a match against a fixed recorded digest — a changed
+ * anchor digest after fixture regeneration is not itself evidence of
+ * anything moving.
  *
  * This file deliberately imports NOTHING from the repo except the pipeline
  * entry point and the two message types, so the identical file runs
