@@ -83,6 +83,48 @@ describe('checkpoint placement — the fence decides where a checkpoint may sit'
     }
   });
 
+  /**
+   * WS3 STEP 9 (C7) — production never hands `fenceSafeCheckpointOffset` the
+   * WHOLE remaining stream: it hands it `payload`, the FIRST append batch
+   * after the seam (`exportPipelineWebCodecs.ts`'s `flushPendingBatch`),
+   * which can be as small as exactly ONE encoder 'chunk' message. A 'chunk'
+   * message is atomic — one whole access unit's leading non-VCL run AND its
+   * coded slice always arrive together in a single postMessage
+   * (`exportWorker.ts`'s `encoder.encode` -> `output` callback fires once
+   * per input frame) — so the SMALLEST realistic batch is exactly one
+   * picture's own bytes, never a fragment of one. This test measures
+   * coverage at THAT granularity, not the whole-stream one the tests above
+   * use, closing the gap between what was tested and what production does.
+   */
+  it('PRODUCTION GRANULARITY: holds even when the batch is exactly ONE picture (the smallest real append batch), at every rotation seam', () => {
+    const stream = encoderShapedStream(8);
+    let uncheckpointable = 0;
+    for (let p = 1; p < 8; p++) {
+      const seam = accessUnitStartOffset(stream, p);
+      const nextSeam = p + 1 < 8 ? accessUnitStartOffset(stream, p + 1) : stream.length;
+      // Exactly picture p's own bytes — the smallest possible first
+      // post-rotation batch, not the whole remaining stream.
+      const onePictureBatch = stream.subarray(seam, nextSeam);
+      const offset = fenceSafeCheckpointOffset(seam, onePictureBatch);
+      if (offset === null) {
+        uncheckpointable++;
+        continue;
+      }
+      expect(fenceAcceptsPrefix(stream, offset), `picture ${p}`).toBe(true);
+      expect(countAnnexbAccessUnits(stream.subarray(0, offset)).pictures, `picture ${p}`).toBe(p);
+    }
+    // The finding this test exists to record: for realistic encoder-shaped
+    // content (AUD before every slice, SPS/PPS only at stream start — see
+    // `encoderShapedStream`'s own doc comment), coverage is TOTAL even at
+    // the smallest real batch granularity. This is not content-dependent —
+    // it follows from every access unit carrying at least a leading AUD,
+    // which `avc: { format: 'annexb' }` guarantees per `encoderSessionPlan
+    // .ts`'s own doc comment. Confirmed here against the synthetic
+    // realistic fixture; NOT independently confirmed against real
+    // VideoToolbox/software-encoder output — see this round's report.
+    expect(uncheckpointable).toBe(0);
+  });
+
   it('declines when the post-seam bytes open directly on a coded slice', () => {
     // No leading parameter sets: the only candidate offset is the seam, which
     // the fence rejects — so there is no checkpoint to write.

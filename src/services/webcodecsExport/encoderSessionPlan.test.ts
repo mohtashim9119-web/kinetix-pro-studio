@@ -145,6 +145,49 @@ describe('encoder-session plan — the field shape the piece cap could not reach
     expect(offGrid).not.toContain(1777);
     for (const s of offGrid) expect(isKeyFrame(s)).toBe(true);
   });
+
+  /**
+   * WS3 STEP 9 (C7) — the resume-specific angle on the keyframe guarantee.
+   * `exportWorker.ts`'s frame loop does NOT trust a resumed run's own
+   * bootstrapping computation over the checkpoint blindly, and does not
+   * trust the checkpoint blindly either — it RECOMPUTES `sessionStarts`
+   * fresh from the SAME deterministic inputs (`totalFrames`, `isKeyFrame`,
+   * `MAX_ENCODER_SESSION_FRAMES`) the original run used, then requires
+   * `sessionStarts.indexOf(resumeFromFrameIndex) >= 0` — hard failure
+   * (`init-error`), never a silent mid-session start, when a checkpoint's
+   * frame index is not found. This test reproduces that exact check: a
+   * checkpoint's `cumulativePictures` is, by construction, always ONE OF
+   * `planEncoderSessions`' own returned values (checkpoints are only ever
+   * written at rotation seams — `onRotationCheckpoint`'s `cumulativePictures`
+   * IS the seam's `frameIndex`), so it is always found and its frame is
+   * always a keyframe; a foreign/corrupted value is rejected the same way
+   * the real guard rejects it.
+   */
+  it('RESUME KEYFRAME GUARANTEE: a checkpoint frame index is always one of sessionStarts (found, keyframe-safe); a foreign value is rejected the same way exportWorker.ts rejects it', () => {
+    const project = fullyTransitionedProject(FIELD_SEGMENTS, SEG_DUR);
+    const plan = planWebCodecsExport(project, FPS);
+    if ('error' in plan) throw new Error('unexpected routing error');
+    const totalFrames = plan.pieces[0]!.expectedFrames;
+    const isKeyFrame = workerIsKeyFrame(project.segments, FPS);
+    const sessionStarts = planEncoderSessions(totalFrames, isKeyFrame, MAX_ENCODER_SESSION_FRAMES);
+    expect(sessionStarts.length).toBeGreaterThan(1); // must actually exercise resume, not just session 0
+
+    // Every legitimate checkpoint frame (every session start except the
+    // piece's own frame 0, which never resumes mid-piece) is found and safe.
+    for (const checkpointFrame of sessionStarts.slice(1)) {
+      const initialSessionIndex = sessionStarts.indexOf(checkpointFrame);
+      expect(initialSessionIndex).toBeGreaterThanOrEqual(0);
+      expect(isKeyFrame(checkpointFrame)).toBe(true);
+    }
+
+    // A foreign/corrupted checkpoint value (not a real session start — e.g.
+    // one frame off, from a stale or hand-edited manifest) is NOT found —
+    // exportWorker.ts's guard fails loudly on this, never silently starting
+    // mid-session on a non-keyframe.
+    const foreignFrame = sessionStarts[1]! + 1;
+    expect(isKeyFrame(foreignFrame)).toBe(false); // confirms it's genuinely off-grid, not accidentally valid
+    expect(sessionStarts.indexOf(foreignFrame)).toBe(-1);
+  });
 });
 
 describe('encoder-session plan — destructive probes and degenerate inputs', () => {

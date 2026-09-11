@@ -1221,6 +1221,19 @@ export interface DriveGlRunDeps {
     cumulativePictures: number;
   }) => void;
   /**
+   * WS3 STEP 9 (C7) — called on EVERY 'session-rotate' message, regardless
+   * of whether it later produces an `onRotationCheckpoint` call. This is
+   * the checkpoint-COVERAGE signal: `onRotationCheckpoint` alone cannot
+   * tell "this export never rotated" (0 rotations, 0 checkpoints — normal)
+   * apart from "this export rotated repeatedly and never once found a
+   * fence-safe seam" (N rotations, 0 checkpoints — the gap
+   * `exportCheckpointPlacement.ts` documents). Called synchronously from
+   * the 'session-rotate' handler itself, not gated on the append queue —
+   * unlike a checkpoint, "a rotation happened" is known the instant the
+   * message arrives, with no byte-landed dependency.
+   */
+  onSessionRotation?: () => void;
+  /**
    * WS3 Tier 1 item 3c (Rung 3) — the GLOBAL (whole-piece) session index
    * `resumeFromFrameIndex` resumes INTO. Set alongside it, to the same
    * `hungSessionIndex` the orchestrator's rewind loop already computed.
@@ -2217,6 +2230,10 @@ export function driveGlRun(
           sessionCount = data.sessions;
           sessionAt = data.sessionIndex;
           const rotatedTo = data.sessionIndex;
+          // WS3 STEP 9 (C7) — coverage counter. Fires for THIS rotation
+          // regardless of whether `pendingSeam` below ever turns into an
+          // actual `onRotationCheckpoint` call.
+          deps.onSessionRotation?.();
           // WS3 append-batching round — the partial buffer MUST go out before
           // the marker. `sessionByteOffsets[k]` is a truncation point, so it has
           // to be the byte count at the exact seam; a buffer still holding
@@ -2848,9 +2865,27 @@ export async function exportProjectWebCodecs(
   let framesCompletedBase = 0;
   // WS3 Tier 1 item 3c (Rung 3) — per-EXPORT ceiling (every GL piece
   // combined), matching `MAX_BOUNDARY_REWINDS_PER_EXPORT`'s own doc comment.
-  let boundaryRewindsUsed = 0;
+  //
+  // WS3 STEP 9 (C7) — SEEDED FROM THE RESUMED MANIFEST, not unconditionally
+  // 0/false. A fresh process's in-memory counter starting at 0 regardless of
+  // what a crashed process already spent would silently grant a resumed run
+  // a NEW full rewind/failover budget on top of the old one — the exact
+  // "two sources of truth, and the persisted one is decorative" failure
+  // this round's own manifest writes would otherwise just be recording
+  // numbers nothing enforces. `resume.manifest` is the validated,
+  // fence-cleared manifest discovery already proved belongs to this exact
+  // timeline, so its own `boundaryRewindsUsed`/`hardwareFailoverUsed` are
+  // the correct starting point — not the DEFAULT 0/false a first-ever
+  // attempt gets, and not re-derived from `totalRecoveryAttempts` (a
+  // different, coarser counter that also includes resume attempts
+  // themselves and is checked at a different gate — see
+  // `isRecoveryBudgetExhausted`, the CROSS-PROCESS "may this resume happen
+  // at all" gate, which is independent of this IN-PROCESS "may THIS
+  // process attempt another rewind right now" gate).
+  let boundaryRewindsUsed = resume?.manifest?.boundaryRewindsUsed ?? 0;
   // WS3 Rung 5a — per-EXPORT, one-shot. See `decideHardwareFailoverDisposition`.
-  let hardwareFailoverUsed = false;
+  // Same STEP 9 seeding rationale as `boundaryRewindsUsed` above.
+  let hardwareFailoverUsed = resume?.manifest?.hardwareFailoverUsed ?? false;
 
   for (let pieceIndex = 0; pieceIndex < pieces.length; pieceIndex++) {
     const plan = pieces[pieceIndex]!;
@@ -2928,6 +2963,16 @@ export async function exportProjectWebCodecs(
       const resumingThisPiece = resume !== null && resume.pieceIndex === pieceIndex;
       if (resumingThisPiece && resume!.manifest) {
         checkpointWriter.adoptManifest(resume!.manifest, pieceIndex);
+        // WS3 STEP 9 (C7) — write #4: before the resume attempt itself runs
+        // (the piece has been adopted; `runGlPiece` below is what actually
+        // continues rendering), bump checkpointResumeAttempts AND
+        // totalRecoveryAttempts. Placed after `adoptManifest` so the
+        // increment lands on the RESUMED manifest's own already-persisted
+        // counts (write #5's "roll forward" is then automatic — nothing
+        // resets them, `adoptManifest` keeps the whole object, and
+        // `appendExportCheckpoint`/every subsequent `record()` call
+        // preserves whatever this stamped).
+        checkpointWriter.noteResumeAttempt();
       } else if (!resumingThisPiece) {
         checkpointWriter.beginPiece(pieceIndex);
       }
@@ -2968,6 +3013,7 @@ export async function exportProjectWebCodecs(
             pinnedCodec: pinnedCodecForPiece,
             fileBaseByteOffset: baseByteOffset,
             onRotationCheckpoint: (row) => checkpointWriter.record(row),
+            onSessionRotation: () => checkpointWriter.noteRotation(),
           },
           { originSec: plan.gridOriginSec, baseFrame: plan.gridBaseFrame },
         );
@@ -3028,6 +3074,9 @@ export async function exportProjectWebCodecs(
           // for why this is bounded to exactly one such attempt per export.
           hardwareFailoverUsed = true;
           forceSoftware = true;
+          // WS3 STEP 9 (C7) — write #3: persist the failover flag AND bump
+          // totalRecoveryAttempts before the failover attempt itself runs.
+          checkpointWriter.noteHardwareFailover();
           // eslint-disable-next-line no-console
           console.info('[ws3-failover] hardware->software failover engaged', JSON.stringify({ pieceIndex, hungSessionIndex, rewindsUsed: boundaryRewindsUsed }));
         }
@@ -3121,6 +3170,11 @@ export async function exportProjectWebCodecs(
         // and must not be countable twice.
         if (!forceSoftware) {
           boundaryRewindsUsed++;
+          // WS3 STEP 9 (C7) — write #2: persist the rewind AND bump
+          // totalRecoveryAttempts. Only on the actual rewind branch — a
+          // forced-software attempt already recorded its own event above
+          // and must not be double-counted here.
+          checkpointWriter.noteBoundaryRewind();
         }
         fileBaseByteOffset = absoluteByteOffset;
         // eslint-disable-next-line no-console

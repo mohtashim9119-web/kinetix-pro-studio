@@ -154,6 +154,14 @@ export interface ResumeRejection {
    * and not evidence the session itself is broken.
    */
   liveClaimBlocked?: boolean;
+  /**
+   * WS3 STEP 9 (C7) — true when this rejection came from
+   * `validateExportState`'s `never_checkpointed` variant: the export
+   * rotated at least one encoder session but never durably checkpointed
+   * any of them (every seam lacked a fence-safe offset). Distinct from the
+   * ordinary silent case — see the validation kind's own doc comment.
+   */
+  neverCheckpointed?: boolean;
 }
 
 export interface ResumeDiscoveryResult {
@@ -188,7 +196,7 @@ async function selectCheckpoint(
   expected: ExportCheckpointExpectedIdentity,
 ): Promise<
   | { ok: true; manifest: ExportStateManifest; checkpoint: ExportCheckpointRecord; pieceFile: string }
-  | { ok: false; reason: string; budgetExhausted?: boolean }
+  | { ok: false; reason: string; budgetExhausted?: boolean; neverCheckpointed?: boolean }
 > {
   const provisional = validateExportState(serialized, expected, Number.MAX_SAFE_INTEGER);
   if (provisional.kind !== 'resume') {
@@ -196,6 +204,7 @@ async function selectCheckpoint(
       ok: false,
       reason: provisional.reason,
       budgetExhausted: provisional.kind === 'recovery_budget_exhausted',
+      neverCheckpointed: provisional.kind === 'never_checkpointed',
     };
   }
 
@@ -213,6 +222,7 @@ async function selectCheckpoint(
       ok: false,
       reason: validated.reason,
       budgetExhausted: validated.kind === 'recovery_budget_exhausted',
+      neverCheckpointed: validated.kind === 'never_checkpointed',
     };
   }
   // A manifest is piece-scoped, so the authoritative selection cannot name a
@@ -250,6 +260,7 @@ export async function evaluateResumeCandidate(
       bitstreamTouched?: ResumeRejection['bitstreamTouched'];
       budgetExhausted?: boolean;
       liveClaimBlocked?: boolean;
+      neverCheckpointed?: boolean;
     }
 > {
   // WS3 STEP 8 (H5) — claim-aware reentry. Read-only inspection FIRST, before
@@ -469,6 +480,7 @@ export async function discoverResumableExport(
       ...(outcome.bitstreamTouched ? { bitstreamTouched: outcome.bitstreamTouched } : {}),
       ...(outcome.budgetExhausted ? { budgetExhausted: true } : {}),
       ...(outcome.liveClaimBlocked ? { liveClaimBlocked: true } : {}),
+      ...(outcome.neverCheckpointed ? { neverCheckpointed: true } : {}),
     });
   }
   return { resumable: null, rejected };

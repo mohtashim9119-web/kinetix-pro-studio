@@ -58,7 +58,7 @@ export interface ResumeOffer {
  */
 export interface ResumeRefusalNotice {
   sessionId: string;
-  kind: 'bitstream_touched' | 'budget_exhausted' | 'live_claim_blocked';
+  kind: 'bitstream_touched' | 'budget_exhausted' | 'live_claim_blocked' | 'never_checkpointed';
   reason: string;
   bitstreamTouched?: ResumeRejection['bitstreamTouched'];
 }
@@ -80,6 +80,11 @@ function refusalNoticeFromRejections(rejected: readonly ResumeRejection[]): Resu
     }
     if (r.budgetExhausted) {
       return { sessionId: r.sessionId, kind: 'budget_exhausted', reason: r.reason };
+    }
+    // WS3 STEP 9 (C7) — the checkpoint-coverage gap: this export rotated
+    // but never durably checkpointed. See ResumeRejection.neverCheckpointed.
+    if (r.neverCheckpointed) {
+      return { sessionId: r.sessionId, kind: 'never_checkpointed', reason: r.reason };
     }
   }
   return null;

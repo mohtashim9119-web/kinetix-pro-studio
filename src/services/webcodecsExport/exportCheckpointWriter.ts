@@ -39,6 +39,10 @@
 import {
   appendExportCheckpoint,
   createExportStateManifest,
+  recordBoundaryRewind,
+  recordHardwareFailover,
+  recordResumeAttempt,
+  recordRotationSeen,
   serializeExportState,
   type ExportCheckpointRecord,
   type ExportStateManifest,
@@ -92,6 +96,21 @@ export interface ExportCheckpointWriter {
   adoptManifest(manifest: ExportStateManifest, pieceIndex: number): void;
   /** Records a rotation checkpoint. Synchronous; never throws. */
   record(record: { encoderSessionIndex: number; byteOffset: number; seamByteOffset: number; cumulativePictures: number }): void;
+  /**
+   * WS3 STEP 9 (C7) — the three recovery-budget writes. Each is
+   * synchronous, never throws, and a no-op before any manifest exists (the
+   * same "costs exactly the checkpoints it would have carried" posture as
+   * `record` — a budget write that arrives before `beginPiece`/
+   * `adoptManifest` has nothing to attach to and is dropped, never queued
+   * to be misapplied to a LATER, unrelated manifest).
+   */
+  noteBoundaryRewind(): void;
+  noteHardwareFailover(): void;
+  noteResumeAttempt(): void;
+  /** WS3 STEP 9 (C7) — call on EVERY 'session-rotate', regardless of
+   *  whether a checkpoint was actually written for it (see
+   *  `ExportStateManifest.rotationsSeen`'s own doc comment). */
+  noteRotation(): void;
   /** The manifest as it stands — for tests and diagnostics. */
   snapshot(): ExportStateManifest | null;
   /** Number of writes actually issued — for tests and diagnostics. */
@@ -216,6 +235,30 @@ export function createExportCheckpointWriter(
         console.warn('[ws3-resume] refusing a non-monotonic checkpoint', err instanceof Error ? err.message : String(err));
         return;
       }
+      dirty = true;
+      pump();
+    },
+    noteBoundaryRewind(): void {
+      if (!enabled || manifest === null) return;
+      manifest = recordBoundaryRewind(manifest);
+      dirty = true;
+      pump();
+    },
+    noteHardwareFailover(): void {
+      if (!enabled || manifest === null) return;
+      manifest = recordHardwareFailover(manifest);
+      dirty = true;
+      pump();
+    },
+    noteResumeAttempt(): void {
+      if (!enabled || manifest === null) return;
+      manifest = recordResumeAttempt(manifest);
+      dirty = true;
+      pump();
+    },
+    noteRotation(): void {
+      if (!enabled || manifest === null) return;
+      manifest = recordRotationSeen(manifest);
       dirty = true;
       pump();
     },

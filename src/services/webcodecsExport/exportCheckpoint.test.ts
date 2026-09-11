@@ -10,6 +10,10 @@ import {
   MAX_BOUNDARY_REWINDS_PER_EXPORT,
   MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT,
   prepareCheckpointResume,
+  recordBoundaryRewind,
+  recordHardwareFailover,
+  recordResumeAttempt,
+  recordRotationSeen,
   recoveryBudgetExhaustionReason,
   serializeExportState,
   timelineIdentityFromProject,
@@ -532,5 +536,139 @@ describe('exportCheckpoint recovery budget', () => {
         totalRecoveryAttempts: MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT,
       },
     });
+  });
+});
+
+/**
+ * WS3 STEP 9 (C7) — the three durable recovery-budget writes, pure and
+ * monotonic. Each event bumps its own counter AND `totalRecoveryAttempts`
+ * together, in one call — never as two separate writes that could land out
+ * of step with each other (a manifest cannot have a rewind counted without
+ * the cross-process ceiling seeing it, or vice versa).
+ */
+describe('exportCheckpoint recovery-budget writes (C7)', () => {
+  const sessionId = '00000000-0000-4000-8000-000000000002';
+  const hash = 'b'.repeat(64);
+  const base = () => createExportStateManifest({
+    sessionId, projectId: 'proj-2', sourceTimelineHash: hash, fps: 30, width: 1920, height: 1080,
+  });
+
+  it('recordBoundaryRewind increments boundaryRewindsUsed and totalRecoveryAttempts together', () => {
+    const m = recordBoundaryRewind(base());
+    expect(m.boundaryRewindsUsed).toBe(1);
+    expect(m.totalRecoveryAttempts).toBe(1);
+    expect(m.hardwareFailoverUsed).toBe(false);
+    expect(m.checkpointResumeAttempts).toBe(0);
+    const twice = recordBoundaryRewind(m);
+    expect(twice.boundaryRewindsUsed).toBe(2);
+    expect(twice.totalRecoveryAttempts).toBe(2);
+  });
+
+  it('recordHardwareFailover sets the one-shot flag and increments totalRecoveryAttempts, never boundaryRewindsUsed', () => {
+    const m = recordHardwareFailover(base());
+    expect(m.hardwareFailoverUsed).toBe(true);
+    expect(m.totalRecoveryAttempts).toBe(1);
+    expect(m.boundaryRewindsUsed).toBe(0);
+  });
+
+  it('recordResumeAttempt increments checkpointResumeAttempts and totalRecoveryAttempts, never the others', () => {
+    const m = recordResumeAttempt(base());
+    expect(m.checkpointResumeAttempts).toBe(1);
+    expect(m.totalRecoveryAttempts).toBe(1);
+    expect(m.boundaryRewindsUsed).toBe(0);
+    expect(m.hardwareFailoverUsed).toBe(false);
+  });
+
+  it('a mixed recovery lifecycle (2 rewinds, 1 failover, 1 resume) sums to the documented 4 total — MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT', () => {
+    let m = base();
+    m = recordBoundaryRewind(m);
+    m = recordBoundaryRewind(m);
+    m = recordHardwareFailover(m);
+    m = recordResumeAttempt(m);
+    expect(m.boundaryRewindsUsed).toBe(2);
+    expect(m.hardwareFailoverUsed).toBe(true);
+    expect(m.checkpointResumeAttempts).toBe(1);
+    expect(m.totalRecoveryAttempts).toBe(4);
+    expect(m.totalRecoveryAttempts).toBe(MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT);
+    expect(isRecoveryBudgetExhausted(m)).toBe(true);
+  });
+
+  it('none of the three writes touch checkpoints — pure budget mutation, no bitstream implication', () => {
+    let m = base();
+    m = appendExportCheckpoint(m, {
+      pieceIndex: 0, encoderSessionIndex: 0, byteOffset: 100, cumulativePictures: 10,
+      fps: 30, width: 1920, height: 1080, sourceTimelineHash: hash,
+    });
+    const before = m.checkpoints;
+    m = recordBoundaryRewind(m);
+    m = recordHardwareFailover(m);
+    m = recordResumeAttempt(m);
+    expect(m.checkpoints).toBe(before);
+  });
+
+  it('recordRotationSeen increments rotationsSeen only — never a recovery-budget field', () => {
+    const m = recordRotationSeen(base());
+    expect(m.rotationsSeen).toBe(1);
+    expect(m.totalRecoveryAttempts).toBe(0);
+    expect(m.boundaryRewindsUsed).toBe(0);
+    const twice = recordRotationSeen(m);
+    expect(twice.rotationsSeen).toBe(2);
+  });
+});
+
+/**
+ * WS3 STEP 9 (C7) — the checkpoint-COVERAGE gap `exportCheckpointPlacement
+ * .ts` documents, made durably visible: `rotationsSeen > 0 &&
+ * checkpoints.length === 0` means the export rotated but never once found
+ * a fence-safe seam. Gated on `rotationsSeen`, not bare `checkpoints
+ * .length === 0`, so the overwhelmingly common single-session export (under
+ * `MAX_ENCODER_SESSION_FRAMES`, 60s) stays silent — it never rotated, so
+ * having zero checkpoints is not a defect.
+ */
+describe('never_checkpointed — the checkpoint-coverage gap (C7)', () => {
+  const sessionId = '00000000-0000-4000-8000-000000000003';
+  const hash = 'c'.repeat(64);
+  const expected = { projectId: 'proj-3', sourceTimelineHash: hash, fps: 30, width: 1920, height: 1080 };
+
+  it('fires when the export rotated but has zero checkpoints', () => {
+    const manifest = JSON.stringify({
+      ...createExportStateManifest({ sessionId, ...expected }),
+      rotationsSeen: 3,
+    });
+    const result = validateExportState(manifest, expected, 0);
+    expect(result.kind).toBe('never_checkpointed');
+    if (result.kind !== 'never_checkpointed') return;
+    expect(result.reason).toContain('3 encoder session');
+  });
+
+  it('does NOT fire for the ordinary single-session export — zero rotations, zero checkpoints, silent', () => {
+    const manifest = JSON.stringify(createExportStateManifest({ sessionId, ...expected }));
+    const result = validateExportState(manifest, expected, 0);
+    // rotationsSeen defaults to 0, so this is the ordinary "no checkpoint
+    // fits" clean case, not the alarming never_checkpointed one.
+    expect(result.kind).not.toBe('never_checkpointed');
+    expect(result.kind).toBe('clean');
+  });
+
+  it('does NOT fire when rotations happened AND at least one checkpoint landed', () => {
+    let m = createExportStateManifest({ sessionId, ...expected });
+    m = { ...m, rotationsSeen: 2 };
+    m = appendExportCheckpoint(m, {
+      pieceIndex: 0, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 30,
+      fps: 30, width: 1920, height: 1080, sourceTimelineHash: hash,
+    });
+    const result = validateExportState(JSON.stringify(m), expected, 4_000);
+    expect(result.kind).toBe('resume');
+  });
+
+  it('old-shape manifests without rotationsSeen still validate (default 0, silent)', () => {
+    const legacy = JSON.stringify({
+      schemaVersion: 1, sessionId, projectId: expected.projectId,
+      sourceTimelineHash: hash, fps: 30, width: 1920, height: 1080,
+      checkpoints: [],
+      // no rotationsSeen field at all — pre-STEP-9 manifest shape.
+    });
+    const result = validateExportState(legacy, expected, 0);
+    expect(result.kind).not.toBe('never_checkpointed');
   });
 });

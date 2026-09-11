@@ -244,6 +244,83 @@ describe('Rung 5a (hardware->software failover) — wired at exportProjectWebCod
     // reusable counter, is what stopped it.
   });
 
+  /**
+   * WS3 STEP 9 (C7) — the "two sources of truth" question the round has to
+   * answer: does the CROSS-PROCESS ceiling (`totalRecoveryAttempts` on the
+   * manifest, checked once by discovery BEFORE a resumed process starts)
+   * actually bound the IN-PROCESS rewind budget (`boundaryRewindsUsed`,
+   * checked by `decideBoundedRerenderDisposition` on every hang WITHIN a
+   * process) once that process is running? Before this round it did not:
+   * `boundaryRewindsUsed` started at a hardcoded 0 every fresh process
+   * regardless of `options.resume`, so a resumed run always got a brand
+   * new MAX_BOUNDARY_REWINDS_PER_EXPORT budget on top of whatever the
+   * crashed process already spent. This test's manifest already shows the
+   * rewind budget fully spent (`boundaryRewindsUsed: MAX`); the FIRST hang
+   * in the resumed process must therefore go straight to the failover
+   * attempt (one truncate, one forced-software init message) — never a
+   * fresh rewind first.
+   */
+  it('a resumed run seeds its in-process rewind budget from resume.manifest — no fresh MAX_BOUNDARY_REWINDS_PER_EXPORT on top of what the crashed process already spent', async () => {
+    const { ffmpeg, truncateAnnexbToOffset } = ffmpegHarness({
+      truncateOffsetResult: { pictures: 5, vclNals: 5, bytesRemoved: 0, keptBytes: 30 },
+    });
+    const resumeManifest = {
+      schemaVersion: 1 as const,
+      sessionId: 'irrelevant-for-this-probe',
+      projectId: 'p',
+      sourceTimelineHash: 'a'.repeat(64),
+      fps: 30, width: 1920, height: 1080,
+      checkpoints: [],
+      // Already fully spent BEFORE the crash — the exact scenario write #2
+      // (STEP 8/9) persists.
+      boundaryRewindsUsed: MAX_BOUNDARY_REWINDS_PER_EXPORT,
+      hardwareFailoverUsed: false,
+      checkpointResumeAttempts: 1,
+      totalRecoveryAttempts: MAX_BOUNDARY_REWINDS_PER_EXPORT + 1,
+    };
+
+    const fake = new FakeWorker();
+    const resultPromise = exportProjectWebCodecs(
+      project(),
+      ffmpeg,
+      {
+        width: 1920, height: 1080, fps: 30,
+        resume: {
+          pieceIndex: 0,
+          encoderSessionIndex: 1,
+          byteOffset: 30,
+          cumulativePictures: 5,
+          manifest: resumeManifest,
+        },
+      },
+      () => undefined,
+      { createWorker: () => fake },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The FIRST hang in this resumed process. Without STEP 9's seeding fix,
+    // `decideBoundedRerenderDisposition` would see a fresh in-memory 0 here
+    // and attempt a rewind (no failover, no forced-software init message) —
+    // this assertion is what would go RED without the fix.
+    await emitHangingAttempt(fake, true);
+    fake.emit({ type: 'session-plan', pieceIndex: 0, sessions: 3, capFrames: 1800, totalFrames: EXPECTED_FRAMES });
+    fake.emit(chunkMsg(9, 12));
+    fake.emit({ type: 'run-done', runId: 'run_0', frameCount: EXPECTED_FRAMES });
+    fake.emit({ type: 'done', frameCount: EXPECTED_FRAMES, diagnostics: diagnostics() });
+    const result = await resultPromise;
+
+    expect(result.ok).toBe(true);
+    // Exactly 2 init messages: the initial resumed attempt + the ONE
+    // failover attempt — no intermediate rewind attempt fits between them.
+    expect(fake.initMessages.length).toBe(2);
+    const flags = fake.initMessages.map((m) => m.forceSoftwareEncoder ?? false);
+    expect(flags).toEqual([false, true]);
+    // Exactly one truncate — the failover's own rewind-to-boundary cut, not
+    // a spurious extra rewind truncate first.
+    expect(truncateAnnexbToOffset).toHaveBeenCalledTimes(1);
+  });
+
   it('OUTPUT NEUTRALITY (full bytes, not a metadata hash): a clean run appends exactly the chunk bytes, in order, with no forceSoftwareEncoder anywhere', async () => {
     const { ffmpeg, truncateAnnexbToOffset, landed } = ffmpegHarness();
     const appendedBuffers: Uint8Array[] = [];

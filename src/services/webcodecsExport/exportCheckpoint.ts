@@ -179,6 +179,19 @@ export interface ExportRecoveryBudget {
 
 export interface ExportStateManifest extends ExportRecoveryBudget {
   schemaVersion: typeof EXPORT_STATE_SCHEMA_VERSION;
+  /**
+   * WS3 STEP 9 (C7) — every `VideoEncoder` session rotation this piece hit,
+   * REGARDLESS of whether it produced a durable checkpoint. Default 0.
+   * Paired with `checkpoints.length` (successes only), the gap between them
+   * is exactly the checkpoint-coverage question
+   * `exportCheckpointPlacement.ts` raises: `rotationsSeen > checkpoints
+   * .length` means at least one seam had no fence-safe offset. See
+   * `validateExportState`'s `never_checkpointed` kind, which is gated on
+   * `rotationsSeen > 0 && checkpoints.length === 0` specifically so a
+   * single-session export (the common case — anything under
+   * `MAX_ENCODER_SESSION_FRAMES`) never trips it.
+   */
+  rotationsSeen?: number;
   /** ffmpeg session id (`kinetix-export-{uuid}`). */
   sessionId: string;
   projectId: string;
@@ -232,6 +245,28 @@ export type ExportCheckpointValidation =
       kind: 'recovery_budget_exhausted';
       reason: string;
       budget: Required<ExportRecoveryBudget>;
+    }
+  | {
+      /**
+       * WS3 STEP 9 (C7) — the manifest matches this exact timeline (project,
+       * hash, fps/resolution all agree — this is NOT a stale/irrelevant
+       * manifest), the encoder rotated at least once (`rotationsSeen > 0`),
+       * and YET `checkpoints` is EMPTY: every rotation seam this export hit
+       * failed `fenceSafeCheckpointOffset` (`exportCheckpointPlacement.ts`).
+       *
+       * Deliberately gated on `rotationsSeen > 0`, not just
+       * `checkpoints.length === 0` — a single-session export (anything
+       * under `MAX_ENCODER_SESSION_FRAMES`, 60s) never rotates at all and
+       * legitimately has zero checkpoints; that is the overwhelmingly
+       * common, entirely unremarkable case and must stay silent. This kind
+       * fires only for the genuinely worse outcome: an export that DID
+       * rotate but could never durably checkpoint any of those rotations,
+       * so a crash mid-export silently offers nothing to resume from —
+       * exactly the gap this round's checkpoint-coverage investigation
+       * found and this kind exists to stop being silent about.
+       */
+      kind: 'never_checkpointed';
+      reason: string;
     };
 
 export type ExportCheckpointPreparation =
@@ -258,6 +293,13 @@ export type ExportCheckpointPreparation =
         keptBytes: number;
         bytesRemoved: number;
       };
+    }
+  | {
+      /** WS3 STEP 9 (C7) — mirrors `ExportCheckpointValidation`'s own kind;
+       *  see its doc comment. Reached here before any native mutation, same
+       *  as `clean`/`recovery_budget_exhausted`. */
+      kind: 'never_checkpointed';
+      reason: string;
     };
 
 /**
@@ -464,6 +506,62 @@ export function normalizeRecoveryBudget(
   };
 }
 
+/**
+ * WS3 STEP 9 (C7) — the three recovery events that must persist to the
+ * durable manifest, pure and monotonic like `appendExportCheckpoint`. Each
+ * bumps `totalRecoveryAttempts` alongside its own specific counter — a
+ * rewind, a failover, and a resume attempt are each their own event toward
+ * the cross-process ceiling (`MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT`),
+ * not sub-events of one another. See `exportPipelineWebCodecs.ts`'s STEP 9
+ * wiring for why the in-process rewind/failover counters must ALSO be
+ * seeded from a resumed manifest's own `boundaryRewindsUsed`/
+ * `hardwareFailoverUsed` — otherwise a resumed process's fresh in-memory
+ * counters would grant a NEW full rewind/failover budget on top of
+ * whatever the crashed process already spent, and persisting these counts
+ * here would be recording numbers nothing actually enforces.
+ */
+export function recordBoundaryRewind(manifest: ExportStateManifest): ExportStateManifest {
+  const budget = normalizeRecoveryBudget(manifest);
+  return {
+    ...manifest,
+    boundaryRewindsUsed: budget.boundaryRewindsUsed + 1,
+    totalRecoveryAttempts: budget.totalRecoveryAttempts + 1,
+  };
+}
+
+export function recordHardwareFailover(manifest: ExportStateManifest): ExportStateManifest {
+  const budget = normalizeRecoveryBudget(manifest);
+  return {
+    ...manifest,
+    hardwareFailoverUsed: true,
+    totalRecoveryAttempts: budget.totalRecoveryAttempts + 1,
+  };
+}
+
+/**
+ * WS3 STEP 9 (C7) — records a rotation REGARDLESS of whether it produced a
+ * durable checkpoint. Called on every 'session-rotate', not just the ones
+ * that pass `fenceSafeCheckpointOffset` — the whole point is to make the
+ * gap between "rotations seen" and "checkpoints written" visible. Not a
+ * recovery event (does not touch `totalRecoveryAttempts`): a rotation is
+ * normal operation, never a failure by itself.
+ */
+export function recordRotationSeen(manifest: ExportStateManifest): ExportStateManifest {
+  return {
+    ...manifest,
+    rotationsSeen: (manifest.rotationsSeen ?? 0) + 1,
+  };
+}
+
+export function recordResumeAttempt(manifest: ExportStateManifest): ExportStateManifest {
+  const budget = normalizeRecoveryBudget(manifest);
+  return {
+    ...manifest,
+    checkpointResumeAttempts: budget.checkpointResumeAttempts + 1,
+    totalRecoveryAttempts: budget.totalRecoveryAttempts + 1,
+  };
+}
+
 export function isRecoveryBudgetExhausted(manifest: ExportRecoveryBudget): boolean {
   const budget = normalizeRecoveryBudget(manifest);
   if (budget.boundaryRewindsUsed >= MAX_BOUNDARY_REWINDS_PER_EXPORT) {
@@ -503,6 +601,7 @@ export function createExportStateManifest(params: {
     width: params.width,
     height: params.height,
     checkpoints: [],
+    rotationsSeen: 0,
     boundaryRewindsUsed: 0,
     hardwareFailoverUsed: false,
     checkpointResumeAttempts: 0,
@@ -594,10 +693,12 @@ export function validateExportState(
   const boundaryRewindsUsed = optionalNonNegativeInteger(value.boundaryRewindsUsed);
   const checkpointResumeAttempts = optionalNonNegativeInteger(value.checkpointResumeAttempts);
   const totalRecoveryAttempts = optionalNonNegativeInteger(value.totalRecoveryAttempts);
+  const rotationsSeen = optionalNonNegativeInteger(value.rotationsSeen);
   if (
     boundaryRewindsUsed === null ||
     checkpointResumeAttempts === null ||
     totalRecoveryAttempts === null ||
+    rotationsSeen === null ||
     (value.hardwareFailoverUsed !== undefined &&
       typeof value.hardwareFailoverUsed !== 'boolean')
   ) {
@@ -654,6 +755,18 @@ export function validateExportState(
     checkpoints.push(candidate);
   }
 
+  // WS3 STEP 9 (C7) — checked BEFORE the generic "no checkpoint fits" case
+  // just below, which an empty `checkpoints` array would also trip: this is
+  // the more specific, more concerning diagnosis (the export rotated but
+  // NEVER durably checkpointed), not to be folded into the silent-and-
+  // ordinary "no checkpoint fits the current file length" bucket.
+  if (checkpoints.length === 0 && (rotationsSeen ?? 0) > 0) {
+    return {
+      kind: 'never_checkpointed',
+      reason: `export rotated ${rotationsSeen} encoder session(s) but never wrote a durable checkpoint — every rotation seam lacked a fence-safe offset`,
+    };
+  }
+
   const checkpoint = [...checkpoints]
     .reverse()
     .find((row) => row.byteOffset <= annexbFileLength);
@@ -672,6 +785,7 @@ export function validateExportState(
       width: value.width,
       height: value.height,
       checkpoints,
+      rotationsSeen: rotationsSeen ?? 0,
       ...normalizeRecoveryBudget(recoveryBudget),
     },
     checkpoint,
