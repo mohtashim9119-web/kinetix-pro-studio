@@ -1510,6 +1510,181 @@ working explanation of the 8× inflations, not a captured fact.
 
 ---
 
+## Round 14 — C5/C6/H5/H10/C7/H9 consumer-side wiring + durable writes (2026-09-11)
+
+`ws3-hardening-windows` STEPs 7-10 (fresh session, not the `ws3-durable-resume`
+branch Rounds 11/13 above). Cursor's native H5/H10 commands (already merged at
+STEP 3) get their frontend consumer here; C7's five manifest writes and C5/C6/H9
+are pure TS/Rust hardening with no native-command dependency.
+
+### STEP 7 — C5: discarded-batch accounting
+
+`finish()` in `exportPipelineWebCodecs.ts` cleared `pendingBatch` and let any
+already-queued-but-unlanded batch bail silently on watchdog / queue-overflow /
+worker-error / cancel, with nothing in the payload distinguishing "the encoder
+never produced these bytes" from "we threw away bytes the encoder already
+produced." `ExportAppendLedger.discardedAtFinish: {chunks, bytes} | null` now
+names that population, populated at the terminal snapshot only (both
+`finish()`'s own ledger and the one embedded in `ExportError.liveness`, which is
+what the operator's Copy-diagnostics blob actually reads). Every abnormal-finish
+message now states explicitly: "N chunk(s) / N byte(s) already produced by the
+encoder were discarded by this abort ... not a shortfall in the encoder's own
+output."
+
+**Per-path decision:** watchdog / queue-overflow / worker-crash keep
+account-and-report (the writer may genuinely be stuck; waiting to drain risks an
+unbounded hang or growing the backlog being aborted). `cancel` switches to
+flush-then-fail — `'cancelled'` is the worker's own terminal message (same
+contract as `'done'`/`'salvage-done'`), so draining via the existing
+`noteTerminalMessage`/`APPEND_DRAIN_BOUND_MS` machinery is safe.
+
+Commit: `2bb06fa`. 4 new destructive probes in `appendBatching.test.ts`.
+
+### STEP 8 — C6, H5, H10
+
+**C6** — `TauriFfmpeg.destroy()` (console.warn-only) and `muxOnly.ts`'s
+premux-intermediate delete (completely silent — no warn at all) now both record
+into a new bounded ledger, `exportCleanupNotices.ts` (localStorage-backed).
+`useExport.ts` reads and clears it at the start of the NEXT export, surfacing
+`UseExportState.cleanupNotices`.
+
+**H5** — `evaluateResumeCandidate` (`exportResumeDiscovery.ts`) now calls the
+already-merged `ffmpeg_read_session_claim` BEFORE `reenter`: `live` (different
+process) blocks with a distinct `liveClaimBlocked` rejection — "another window
+is using this session" — without attempting `reenter` at all; `stale` proceeds
+and stamps `ResumableExport.staleClaimRecovered` for a separate "recovering an
+abandoned session" notice. `readSessionClaim` is optional on `ResumeDiscoveryIo`
+so every pre-existing test fake needed zero changes; production's `tauriIo`
+always supplies it.
+
+**H10** — `TauriFfmpeg.sweepOrphanSessions()` (already-merged
+`ffmpeg_sweep_orphan_sessions`) wired into `useExport.ts`, run once per export
+start before the fresh session exists. `pendingDelete` (Windows: `remove_dir_all`
+returned Ok but an open handle kept the directory alive) is surfaced separately
+from `bytesReclaimed`, never conflated — enforced in Rust by extracting
+`classify_remove_outcome` (Deleted / PendingDelete / VanishedBeforeDelete) as a
+pure function, since the real global-temp-dir-scanning `sweep_manifestless_orphans`
+was deliberately NOT called from a new test (risk of racing/deleting another
+concurrently running test's own session directory under `cargo test`'s default
+parallelism). Disk exposure this closes: ~1.7-2.3 GB per orphaned session
+directory (measured reference/sizing cases, `exportResumeDiscovery.ts`'s
+cleanup-policy header — carried forward from that prior measurement, not
+re-measured this round).
+
+Commit: `ee406dd`. 6 probes (`exportResumeDiscovery.test.ts`), 1
+(`exportResumeSession.test.ts`), 2 (`muxOnly.test.ts`), 5
+(`exportCleanupNotices.test.ts`), 4 Rust (`session_claim.rs`).
+
+### STEP 9 — C7: five durable writes + checkpoint coverage
+
+Write #1 (rotation checkpoint + serialize on a verified landed batch) was
+already fully wired since Round 10/STEP 3 — confirmed unchanged. Writes #2-4
+(`recordBoundaryRewind`/`recordHardwareFailover`/`recordResumeAttempt`, pure,
+each bumps its own counter AND `totalRecoveryAttempts`) added to
+`exportCheckpoint.ts`, wired via new `ExportCheckpointWriter` methods called at
+the exact three call sites in `exportPipelineWebCodecs.ts`. Write #5 (roll
+forward across a resume) is automatic: `adoptManifest` keeps the whole existing
+manifest object and nothing downstream resets the counters.
+
+**Real bug found and fixed:** the in-memory `boundaryRewindsUsed`/
+`hardwareFailoverUsed` locals were unconditionally 0/false at the top of EVERY
+process, including a resumed one — so a resumed run always got a fresh
+`MAX_BOUNDARY_REWINDS_PER_EXPORT` budget on top of whatever the crashed process
+already spent. **Two sources of truth, and which is authoritative:** the
+in-memory counter gates THIS process's own next-rewind decision
+(`decideBoundedRerenderDisposition`); the persisted `totalRecoveryAttempts`
+gates whether a NEW process may resume AT ALL (`isRecoveryBudgetExhausted`,
+checked once at discovery time). Without seeding the in-memory counter from
+`resume.manifest`, these two gates could disagree and the cross-restart bound
+(2 rewinds / 1 failover / 4 total recovery attempts / 3 truncates,
+`MAX_BOUNDARY_REWINDS_PER_EXPORT`/`MAX_HARDWARE_FAILOVER_PER_EXPORT`/
+`MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT`/`MAX_TRUNCATES_PER_EXPORT` in
+`exportCheckpoint.ts`) would be silently wider than documented across a resume.
+Fixed by seeding both from `resume.manifest`. Destructive probe
+(`hardwareFailoverWiring.test.ts`): a resumed run whose manifest already shows
+the rewind budget at MAX goes straight to the one remaining failover attempt on
+its FIRST hang, never a fresh rewind first.
+
+**Checkpoint coverage:** the existing `exportCheckpointPlacement.test.ts`
+"holds at every rotation seam" test only proved coverage against the WHOLE
+remaining stream; production hands `fenceSafeCheckpointOffset` just the first
+post-seam append batch. Added a PRODUCTION-GRANULARITY test (smallest real
+batch = exactly one encoder 'chunk', atomic per `exportWorker.ts`'s
+`output` callback) — coverage is still total for realistic encoder-shaped
+content. NOT content-dependent: it follows from every access unit carrying a
+leading AUD (`avc:{format:'annexb'}`), per `encoderSessionPlan.ts`'s own doc
+comment — NOT independently confirmed against real VideoToolbox/software
+encoder output.
+
+**"Wrote zero checkpoints" is now distinguishable:** added
+`ExportStateManifest.rotationsSeen` (bumped on every 'session-rotate' via a new
+`deps.onSessionRotation` callback, regardless of checkpoint success) and a new
+`validateExportState` kind `'never_checkpointed'`, gated on `rotationsSeen > 0
+&& checkpoints.length === 0` — deliberately NOT bare `checkpoints.length ===
+0`, since any single-session export (under `MAX_ENCODER_SESSION_FRAMES`, 60s)
+legitimately has zero checkpoints and must stay silent. Wired through
+`ResumeRejection`/`ResumeRefusalNotice` as a fourth operator-facing kind
+alongside `bitstream_touched`/`budget_exhausted`/`live_claim_blocked`.
+
+**Resumed-run keyframe guarantee:** confirmed `exportWorker.ts` already
+recomputes `sessionStarts` fresh (deterministic from
+`totalFrames`/`isKeyFrame`/`MAX_ENCODER_SESSION_FRAMES`) and hard-fails
+(`init-error`) if `resumeFromFrameIndex` is not found in it — no bug, no code
+change. New test in `encoderSessionPlan.test.ts` proves every legitimate
+checkpoint frame is found and keyframe-safe, and a foreign/corrupted value is
+rejected the same way.
+
+Commit: `fa0a61c`. New tests: `exportCheckpoint.test.ts` (+10),
+`exportCheckpointWriter.test.ts` (new file, 6), `exportCheckpointPlacement.test.ts`
+(+1), `hardwareFailoverWiring.test.ts` (+1), `encoderSessionPlan.test.ts` (+1).
+
+### STEP 10 — H9: close the delivery path
+
+`save_session_file` used plain `fs::copy` — no `\\?\` extended-length-path
+prefix, so a long project path + long output filename could fail the delivery
+copy AFTER a successful 30+ minute encode. The error already named the intact
+session source path (unchanged, pre-existing). Two halves:
+
+1. `windows_long_path` (`ffmpeg.rs`) applies `\\?\` (`\\?\UNC\` for a UNC
+   share) to both sides of the copy, gated by `cfg!(target_os = "windows")`
+   checked AT the call site rather than `#[cfg(windows)]` on the function
+   itself — the string-prefixing logic (`apply_windows_long_path_prefix`)
+   compiles and is directly unit-tested on every platform, including this
+   macOS dev environment; only the runtime decision to apply it differs per
+   target. 6 new Rust tests, including a no-op check proving macOS behavior is
+   byte-for-byte unchanged (the one platform this environment can verify).
+2. `exportDestinationPath.ts` checks the chosen destination's length against
+   `WINDOWS_MAX_PATH = 260` (mirrored, named constant on both sides of the IPC
+   boundary) BEFORE any rendering starts — wired into `useExport.ts`'s
+   `startExport`, right after `pick_save_path` resolves the path. Windows-only
+   by the path's own shape (drive-letter or UNC — no OS-detection API/
+   dependency needed); a macOS/Linux path is never rejected regardless of
+   length (destructive probe pins this). 7 new TS tests.
+
+**Explicitly noted:** `windows_long_path` makes the delivery copy itself immune
+to MAX_PATH, so the TS-side check is now mostly belt-and-suspenders for THIS
+pipeline — valuable for fast second-zero feedback and as a safety net for any
+future copy path that doesn't go through `windows_long_path`, not the primary
+fix. **Remains genuinely UNRECOVERABLE** even with both fixes: disk full,
+permission denied, or an antivirus lock on the destination — ordinary
+`fs::copy` failures unrelated to path length, for which the existing error
+message still names the intact session source path. **UNCONFIRMED on real
+hardware:** whether the real Win32 `CreateFile` family honors `\\?\` for every
+internal code path `fs::copy` takes — the prefixing RULE is proven here, not
+the OS's own compliance with it.
+
+Commit: `e9355a2`.
+
+### Round 14 gates
+
+| Gate | Expected | Observed |
+|---|---|---|
+| `tsc --noEmit` / `npm run lint` | clean | clean |
+| `cargo test` | 298 + 10 = **308** | 308 / 0 / 5 |
+| `cargo test --features fa-inference` (single-threaded) | 384 + 10 = **394** | 394 / 0 / 35 |
+| `npm test` | see final report (run twice, both green) | see final report |
+| frozen constants (WATCHDOG_MS, FORWARD_PROGRESS_BOUND_MS, FLUSH_BOUND_MS, APPEND_DRAIN_BOUND_MS, TRUNCATE_BOUND_MS, KILL_BOUND_MS, APPEND_BATCH_BYTES) | unchanged | unchanged — none of the four STEPs touch them |
+
 ## Round 13 — Realistic fixtures, kill bound, claim, orphan sweep, exhaustion variant (2026-09-11)
 
 Cross-reference: `docs/ws3-export-architecture-ledger.md` (name only).

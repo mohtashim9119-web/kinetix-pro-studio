@@ -521,7 +521,101 @@ Cursor's):
 
 **Tier 2: CLOSED.** Rungs 2b, 3 and 4 are all wired, and verified together rather than only apart.
 
-## 7. Decisions register (durable — not round-log, never re-litigated without overturning the entry)
+### Round 14 (2026-09-11) — Findings-register close-out: C5/C6/C7 + H5/H10 consumer wiring + H9
+
+**Branch:** `ws3-hardening-windows`, a fresh session (no memory of prior rounds), picking up from
+STEPs 0-6 already committed on this branch. **Base:** the branch's own STEP 6 head, `9ea600a`.
+Scope was `docs/ws3-export-pipeline-audit.md`'s Findings register (Part 7) items C5, C6, C7, H5,
+H9, H10 — STEPs 7-10 of a 4-STEP assignment (STEPs 11+ deliberately not started, per the
+operator's instruction to stop here for review).
+
+**Files touched:**
+- `src/services/webcodecsExport/exportPipelineWebCodecs.ts` (modified — STEP 7 discard accounting,
+  STEP 9 five recovery-budget writes + in-process budget seeding, STEP 9 rotation-coverage counter)
+- `src/services/exportPipeline.ts` (modified — `ExportAppendLedger.discardedAtFinish`,
+  `ExportErrorKind.destination_path`)
+- `src/services/webcodecsExport/appendBatching.test.ts` (modified — 4 new C5 probes)
+- `src/services/exportDiagnosticsBlob.test.ts` (modified — sentinel for the new field)
+- `src/services/webcodecsExport/exportCleanupNotices.ts` (new — C6 durable ledger)
+- `src/services/webcodecsExport/exportCleanupNotices.test.ts` (new)
+- `src/services/tauriFfmpeg.ts` (modified — `destroy()` records via `exportCleanupNotices`;
+  `SessionClaimView.holderLiveness` narrowed to a literal union)
+- `src/services/webcodecsExport/muxOnly.ts` / `.test.ts` (modified — premux-delete failure recorded)
+- `src/services/webcodecsExport/exportResumeDiscovery.ts` / `.test.ts` (modified — H5 claim-aware
+  reentry: `SessionClaimLivenessView`, `liveClaimBlocked`, `staleClaimRecovered`; C7
+  `never_checkpointed` propagation)
+- `src/services/webcodecsExport/exportResumeSession.ts` / `.test.ts` (modified — `tauriIo` supplies
+  `readSessionClaim`; `ResumeRefusalNotice.kind` gains `live_claim_blocked`/`never_checkpointed`)
+- `src/hooks/useExport.ts` (modified — orphan sweep + cleanup notices at export start;
+  destination-path check before `runExport`)
+- `src/services/webcodecsExport/exportCheckpoint.ts` (modified — `rotationsSeen`,
+  `recordBoundaryRewind`/`recordHardwareFailover`/`recordResumeAttempt`/`recordRotationSeen`,
+  `never_checkpointed` validation kind)
+- `src/services/webcodecsExport/exportCheckpoint.test.ts` (modified — 10 new tests)
+- `src/services/webcodecsExport/exportCheckpointWriter.ts` (modified — four `note*` methods)
+- `src/services/webcodecsExport/exportCheckpointWriter.test.ts` (new, 6 tests)
+- `src/services/webcodecsExport/exportCheckpointPlacement.test.ts` (modified — production-granularity
+  coverage test)
+- `src/services/webcodecsExport/hardwareFailoverWiring.test.ts` (modified — resumed-run budget-seeding probe)
+- `src/services/webcodecsExport/encoderSessionPlan.test.ts` (modified — resume keyframe-guarantee test)
+- `src-tauri/src/session_claim.rs` (modified — `classify_remove_outcome` extracted + 4 tests)
+- `src-tauri/src/ffmpeg.rs` (modified — `windows_long_path`/`apply_windows_long_path_prefix`,
+  `WINDOWS_MAX_PATH`, `save_session_file` now prefixes both copy sides; 6 new tests)
+- `src/App.tsx` (modified — `getExportErrorSummary` handles `'destination_path'`)
+- `src/services/exportDestinationPath.ts` / `.test.ts` (new — H9 TS-side pre-encode check)
+
+**What landed:**
+1. **C5 (STEP 7, `2bb06fa`).** `ExportAppendLedger.discardedAtFinish` — the exact
+   pendingBatch-plus-unlanded-queue population, read at the moment `finish()` settles, before it is
+   discarded — is now named in every abnormal-finish message and in the ledger the operator's
+   Copy-diagnostics blob reads. Decided flush-then-fail for `cancel` only (the worker's own terminal
+   message — nothing more will ever be posted, so draining is safe, reusing the existing
+   `APPEND_DRAIN_BOUND_MS` machinery); account-and-report for watchdog/queue-overflow/worker-crash
+   (a writer that may genuinely be stuck must not be waited on further).
+2. **C6 (STEP 8, `ee406dd`).** `exportCleanupNotices.ts`, a small localStorage-backed bounded ledger,
+   fed by `TauriFfmpeg.destroy()` and `muxOnly.ts`'s premux-intermediate delete failure paths — both
+   previously invisible to the operator (console.warn-only, and completely silent, respectively).
+3. **H5 + H10 consumer wiring (STEP 8, `ee406dd`).** Cursor's Round 13 native commands
+   (`ffmpeg_read_session_claim`, `ffmpeg_sweep_orphan_sessions`) had thin `TauriFfmpeg` wrappers but
+   were called from nowhere in the frontend — confirmed by grep before starting. `evaluateResumeCandidate`
+   now reads the claim before `reenter` (live blocks with its own message, stale recovers with a
+   different one); `useExport.ts` calls the sweep once per export start, `pendingDelete` kept separate
+   from `bytesReclaimed`.
+4. **C7 (STEP 9, `fa0a61c`).** The five specified durable-manifest writes, plus a REAL bug found and
+   fixed: the in-process `boundaryRewindsUsed`/`hardwareFailoverUsed` locals were unconditionally
+   0/false on every process start, including a resumed one, silently granting a resumed run a fresh
+   `MAX_BOUNDARY_REWINDS_PER_EXPORT` budget on top of whatever a crashed process already spent — now
+   seeded from `resume.manifest`. Also: `rotationsSeen` + a new `never_checkpointed` validation kind,
+   making "this export rotated but never durably checkpointed" a distinguishable state rather than
+   silent nothing-to-resume; and a production-batch-granularity coverage test confirming
+   `fenceSafeCheckpointOffset` coverage is total for realistic encoder-shaped content (not
+   content-dependent — follows from every access unit carrying a leading AUD).
+5. **H9 (STEP 10, `e9355a2`).** `windows_long_path` prefixes both sides of `save_session_file`'s
+   copy with `\\?\` on Windows; `exportDestinationPath.ts` rejects an over-length Windows destination
+   before rendering starts. The prefixing RULE (pure string logic, deliberately not
+   `#[cfg(windows)]`-gated) is unit-tested on this macOS dev environment; whether the real Win32
+   `CreateFile` family honors it for every code path `fs::copy` takes internally is UNCONFIRMED here.
+
+**What did not land:** STEPs 11+ (out of this round's assigned scope — the operator's instruction
+was to stop after STEP 10 for review). No live export was run (no real ffmpeg/whisper sidecar) —
+this round is verified by tests and code inspection only, matching the assignment's stated
+constraint.
+
+**Gate arithmetic:** see this round's own final report for the full `npx tsc --noEmit` /
+`npm run lint` / `npm test` ×2 / `cargo test` / `cargo test --features fa-inference` numbers and
+every commit SHA — recorded once there, not duplicated here.
+
+**What broke (and was caught before shipping):** two bugs, both found by this round's own tests
+before commit:
+1. The resumed-run in-process rewind/failover budget bug described under C7 above — caught by a
+   dedicated `hardwareFailoverWiring.test.ts` probe (a resumed run whose manifest already shows the
+   rewind budget at MAX must go straight to the ONE remaining failover attempt on its first hang,
+   never a fresh rewind), which failed until the seeding fix landed.
+2. STEP 7's `errorFromDiagnostics`/`snapshotLiveness` initially left `discardedAtFinish` `null` on
+   the operator-facing `ExportError.liveness.appendLedger` (only the internal, unread-by-operators
+   `RunDriveResult.appendLedger` had it) — caught by the cancel-path destructive probe reading the
+   wrong field, fixed by making `snapshotLiveness`'s embedded ledger always the at-finish one (both
+   its call sites are terminal-only, never a mid-run progress snapshot).
 
 ### Rung 5c — out-of-process render isolation: **DEFER** (decided Round 9, 2026-09-10)
 

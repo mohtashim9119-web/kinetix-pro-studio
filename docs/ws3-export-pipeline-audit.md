@@ -434,6 +434,19 @@ Input to the round after CC's. Cheap tests, not implementations.
 | H9 | **PARTIAL** — delivery failure preserves session file + surfaces source path in error; no `\\?\` long-path prefix yet | `f525f09` |
 | H10 | **FIXED** — `ffmpeg_sweep_orphan_sessions` + startup sweep; 1 h age; live-claim defer; `pending_delete` honesty | `d73747a` |
 
+#### Round 14 dispositions (2026-09-11, `ws3-hardening-windows`, STEPs 7-10)
+
+| ID | Disposition | Fixing commit(s) |
+|---|---|---|
+| C5 | **FIXED** — `ExportAppendLedger.discardedAtFinish` names the population at every abnormal `finish` (watchdog/queue-overflow/worker-error account-and-report; cancel switches to flush-then-fail via the existing terminal-drain machinery); every message states explicitly the discarded bytes are not an encoder shortfall | `2bb06fa` |
+| C6 | **FIXED** — `exportCleanupNotices.ts` durably records `TauriFfmpeg.destroy()` and `muxOnly.ts` premux-delete failures; `useExport.ts` reads/clears at the next export start (`UseExportState.cleanupNotices`) | `ee406dd` |
+| C7 | **FIXED** — `recordBoundaryRewind`/`recordHardwareFailover`/`recordResumeAttempt` persist the three recovery events (write #1, the checkpoint itself, was already wired since Round 11); the REAL bug this round found and fixed: `boundaryRewindsUsed`/`hardwareFailoverUsed` in-memory locals were unconditionally 0/false on every process including a resumed one, granting a fresh in-process rewind/failover budget on top of whatever a crashed process already spent — now seeded from `resume.manifest` | `fa0a61c` |
+| H5 | **WIRED (consumer side)** — Round 13's `d73747a` landed the native claim primitive only; this round's `evaluateResumeCandidate` actually calls `ffmpeg_read_session_claim` before `reenter` and distinguishes `live` (blocks, "another window is using this session") from `stale` (proceeds, "recovering an abandoned session") as two different operator-facing messages — previously unreachable from the frontend | `ee406dd` |
+| H10 | **WIRED (consumer side)** — Round 13's `d73747a` landed the native sweep primitive only; this round's `useExport.ts` actually calls `TauriFfmpeg.sweepOrphanSessions()` once per export start, surfacing `pendingDelete` separately from `bytesReclaimed` — previously unreachable from the frontend | `ee406dd` |
+| H9 | **FIXED** (was **PARTIAL** in Round 13, `f525f09`) — `windows_long_path` applies the `\\?\` extended-length-path prefix to both sides of `save_session_file`'s copy on Windows; `exportDestinationPath.ts` also rejects an over-length Windows destination before any rendering starts. UNCONFIRMED on real hardware: whether Win32's own `CreateFile` family honors `\\?\` for every code path `fs::copy` takes internally — the prefixing rule is proven by 6 Rust unit tests (including a macOS no-op check), not the OS's own compliance | `e9355a2` |
+
+Also newly checked, not previously in this register: the two-sources-of-truth question C7 raises (in-memory vs. persisted recovery-budget counters) is answered explicitly in `docs/ws3-export-durable-state.md`'s Round 14 STEP 9 entry — in-memory is authoritative for THIS process's own next-rewind decision, persisted `totalRecoveryAttempts` is authoritative for whether a NEW process may resume at all, and STEP 9's fix is exactly what keeps those two gates from disagreeing across a resume.
+
 ### 7.2 Hypotheses (not confirmed by our code alone)
 
 | ID | Sev | Statement | Evidence | Win-specific? | Already tracked? | Operator symptom | Cheapest confirm/refute |
