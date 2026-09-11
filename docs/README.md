@@ -17,5 +17,5 @@ Completed investigations, session overflow, and folded task ledgers live under [
 ## Rules
 
 - **No loose files** at `docs/` root (this index only).
-- **≤6 content docs per lane** (READMEs excluded); cross-lane overflow goes to `archive/`. **WS3 cap amended to ≤7** — `windows-validation.md` was added after the cap was set and all seven WS3 content docs are load-bearing.
+- **≤6 content docs per lane** (READMEs excluded); cross-lane overflow goes to `archive/`. **WS3 cap amended to ≤7** — `windows-validation.md` was added after the cap was set and all seven WS3 content docs are load-bearing. **WS3 cap amended again to ≤8** (Round 18) — `final-crash-audit.md` was added after the second cap was set; it is the adversarial-pass record for F1–F6 and is load-bearing, with nowhere else in the five-doc scheme to live.
 - **Script runbooks** stay beside their readers under `scripts/` per `CLAUDE.md` §7.
