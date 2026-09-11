@@ -120,44 +120,63 @@ fn process_start_time_ms() -> u64 {
     }
     #[cfg(windows)]
     {
-        use std::mem::MaybeUninit;
-        use std::os::windows::io::AsRawHandle;
-        unsafe {
-            let handle = std::process::id();
-            let proc = windows_sys::Win32::System::Threading::OpenProcess(
-                windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
-                0,
-                handle,
-            );
-            if proc.is_null() {
-                return now_ms();
-            }
-            let mut creation = MaybeUninit::<i64>::uninit();
-            let mut exit = MaybeUninit::<i64>::uninit();
-            let mut kernel = MaybeUninit::<i64>::uninit();
-            let mut user = MaybeUninit::<i64>::uninit();
-            let ok = windows_sys::Win32::System::Threading::GetProcessTimes(
-                proc,
-                creation.as_mut_ptr(),
-                exit.as_mut_ptr(),
-                kernel.as_mut_ptr(),
-                user.as_mut_ptr(),
-            );
-            windows_sys::Win32::Foundation::CloseHandle(proc);
-            if ok == 0 {
-                return now_ms();
-            }
-            let filetime = creation.assume_init();
-            // FILETIME is 100-ns intervals since 1601-01-01.
-            const EPOCH_DIFF_100NS: i64 = 116_444_736_000_000_000;
-            let unix_100ns = filetime - EPOCH_DIFF_100NS;
-            return (unix_100ns / 10_000).max(0) as u64;
+        // `GetCurrentProcess()` is a pseudo-handle for this process: never
+        // needs OpenProcess, never needs CloseHandle, cannot fail.
+        let handle = unsafe { windows_sys::Win32::System::Threading::GetCurrentProcess() };
+        match windows_process_times(handle) {
+            Some(times) => times.creation_unix_ms,
+            // Own start time unreadable — "now" is still unique within the session.
+            None => now_ms(),
         }
     }
     #[cfg(not(any(unix, windows)))]
     {
         now_ms()
     }
+}
+
+#[cfg(windows)]
+struct WindowsProcessTimes {
+    /// Creation time in milliseconds since the Unix epoch — the value persisted
+    /// as `holder_start_time_ms`, and the value compared against it.
+    creation_unix_ms: u64,
+}
+
+/// Convert a Win32 `FILETIME` (100-ns intervals since 1601-01-01 UTC) to
+/// milliseconds since the Unix epoch. Saturates to 0 for pre-1970 values.
+#[cfg(windows)]
+fn filetime_to_unix_ms(ft: &windows_sys::Win32::Foundation::FILETIME) -> u64 {
+    // 1601-01-01 → 1970-01-01 in 100-ns units.
+    const EPOCH_DIFF_100NS: u64 = 116_444_736_000_000_000;
+    let raw = ((ft.dwHighDateTime as u64) << 32) | ft.dwLowDateTime as u64;
+    raw.saturating_sub(EPOCH_DIFF_100NS) / 10_000
+}
+
+/// The one `GetProcessTimes` call site. Both the self-identity path and the
+/// foreign-PID liveness path go through here so the FILETIME handling cannot
+/// diverge between them — two inline copies is how the original type error
+/// (`*mut i64` passed where `*mut FILETIME` is required) got past review.
+///
+/// `handle` must carry `PROCESS_QUERY_LIMITED_INFORMATION`. Returns `None`
+/// when `GetProcessTimes` fails.
+#[cfg(windows)]
+fn windows_process_times(
+    handle: windows_sys::Win32::Foundation::HANDLE,
+) -> Option<WindowsProcessTimes> {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::GetProcessTimes;
+    let zero = FILETIME { dwLowDateTime: 0, dwHighDateTime: 0 };
+    let mut creation = zero;
+    let mut exit = zero;
+    let mut kernel = zero;
+    let mut user = zero;
+    let ok = unsafe { GetProcessTimes(handle, &mut creation, &mut exit, &mut kernel, &mut user) };
+    if ok == 0 {
+        return None;
+    }
+    Some(WindowsProcessTimes {
+        creation_unix_ms: filetime_to_unix_ms(&creation),
+    })
 }
 
 #[cfg(unix)]
@@ -209,37 +228,32 @@ pub fn is_holder_process_live(pid: u32, start_time_ms: u64) -> bool {
     }
     #[cfg(windows)]
     {
-        use std::mem::MaybeUninit;
-        unsafe {
-            let proc = windows_sys::Win32::System::Threading::OpenProcess(
-                windows_sys::Win32::System::Threading::PROCESS_QUERY_LIMITED_INFORMATION,
-                0,
-                pid,
-            );
-            if proc.is_null() {
-                return false;
-            }
-            let mut creation = MaybeUninit::<i64>::uninit();
-            let mut exit = MaybeUninit::<i64>::uninit();
-            let mut kernel = MaybeUninit::<i64>::uninit();
-            let mut user = MaybeUninit::<i64>::uninit();
-            let ok = windows_sys::Win32::System::Threading::GetProcessTimes(
-                proc,
-                creation.as_mut_ptr(),
-                exit.as_mut_ptr(),
-                kernel.as_mut_ptr(),
-                user.as_mut_ptr(),
-            );
-            windows_sys::Win32::Foundation::CloseHandle(proc);
-            if ok == 0 {
-                return false;
-            }
-            let filetime = creation.assume_init();
-            const EPOCH_DIFF_100NS: i64 = 116_444_736_000_000_000;
-            let unix_100ns = filetime - EPOCH_DIFF_100NS;
-            let observed = (unix_100ns / 10_000).max(0) as u64;
-            observed.abs_diff(start_time_ms) <= 2_000
+        use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ACCESS_DENIED};
+        use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+        let proc = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        if proc.is_null() {
+            // ERROR_INVALID_PARAMETER: no such PID — stale. ERROR_ACCESS_DENIED:
+            // the process exists but is another user's / elevated — cannot
+            // verify, so assume live rather than steal its directory.
+            return unsafe { GetLastError() } == ERROR_ACCESS_DENIED;
         }
+        let times = windows_process_times(proc);
+        unsafe { CloseHandle(proc) };
+        let Some(times) = times else {
+            // PID exists but times unreadable — treat as live to avoid stealing
+            // (mirrors the unix arm's unreadable-/proc branch).
+            return true;
+        };
+        // Deliberately NOT consulting the exit-time FILETIME: MSDN documents
+        // its content as undefined while the process is still running, so
+        // "nonzero exit time ⇒ stale" could steal a live holder's directory.
+        if start_time_ms == 0 {
+            // Legacy / unverifiable claim: no usable start time recorded.
+            // PID exists — cannot verify, assume live.
+            return true;
+        }
+        // Allow 2 s slack for clock rounding — not a heartbeat timeout.
+        times.creation_unix_ms.abs_diff(start_time_ms) <= 2_000
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -694,5 +708,55 @@ mod tests {
             .collect();
         assert_eq!(reclaimable.len(), 1);
         assert_ne!(*reclaimable[0], RemoveOutcome::PendingDelete);
+    }
+
+    /// Windows-only: compiled by the windows-check CI job (`--all-targets`),
+    /// RUN only by a real `cargo test` on Windows — see
+    /// docs/ws3-export/windows-validation.md's claim start-time row.
+    #[cfg(windows)]
+    mod windows_start_time {
+        use super::super::*;
+        use windows_sys::Win32::Foundation::FILETIME;
+
+        fn ft(raw: u64) -> FILETIME {
+            FILETIME { dwLowDateTime: raw as u32, dwHighDateTime: (raw >> 32) as u32 }
+        }
+
+        #[test]
+        fn filetime_conversion_matches_known_vectors() {
+            // 1970-01-01T00:00:00Z as FILETIME.
+            assert_eq!(filetime_to_unix_ms(&ft(116_444_736_000_000_000)), 0);
+            // 2000-01-01T00:00:00Z = 946684800 s after the Unix epoch.
+            assert_eq!(filetime_to_unix_ms(&ft(125_911_584_000_000_000)), 946_684_800_000);
+            // Pre-1970 saturates to 0 rather than wrapping.
+            assert_eq!(filetime_to_unix_ms(&ft(0)), 0);
+            // High/low split is honored (not just the low dword).
+            let split = ft(125_911_584_000_000_000);
+            assert_ne!(split.dwHighDateTime, 0);
+        }
+
+        #[test]
+        fn own_process_start_time_is_plausible_and_stable() {
+            let a = process_start_time_ms();
+            let b = process_start_time_ms();
+            assert_eq!(a, b, "creation time must not drift between reads");
+            let now = now_ms();
+            assert!(a <= now, "start {a} after now {now}");
+            // Test process started less than an hour ago.
+            assert!(now - a < 3_600_000, "start {a} implausibly far from now {now}");
+        }
+
+        #[test]
+        fn liveness_uses_start_time_to_detect_pid_reuse() {
+            let pid = std::process::id();
+            let start = process_start_time_ms();
+            assert!(is_holder_process_live(pid, start));
+            // Same PID, start time an hour off ⇒ a different process reused the PID.
+            assert!(!is_holder_process_live(pid, start + 3_600_000));
+            // Legacy/unverifiable record (no start time) with an existing PID ⇒ live.
+            assert!(is_holder_process_live(pid, 0));
+            // Nonexistent PID ⇒ stale regardless of start time.
+            assert!(!is_holder_process_live(4_000_000, start));
+        }
     }
 }

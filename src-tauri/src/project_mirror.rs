@@ -391,6 +391,10 @@ mod tests {
         fs::remove_dir_all(&d).ok();
     }
 
+    // Unix-only: inode identity via `MetadataExt::ino()`. Windows' equivalent
+    // (`file_index()`) is nightly-only, so the replace-not-truncate property
+    // is unasserted there (docs/ws3-export/windows-validation.md).
+    #[cfg(unix)]
     #[test]
     fn write_atomic_never_truncates_the_destination_in_place() {
         // The destination inode must be REPLACED, not opened for truncation —

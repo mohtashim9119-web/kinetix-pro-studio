@@ -244,7 +244,7 @@ fn begin_deferred_quit(app: &tauri::AppHandle) {
 fn build_menu_with_deferred_quit<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> tauri::Result<tauri::menu::Menu<R>> {
-    use tauri::menu::{Menu, MenuItem, MenuItemKind};
+    use tauri::menu::Menu;
 
     let menu = Menu::default(app)?;
 
@@ -253,6 +253,7 @@ fn build_menu_with_deferred_quit<R: tauri::Runtime>(
     // menu is returned untouched.
     #[cfg(target_os = "macos")]
     {
+        use tauri::menu::{MenuItem, MenuItemKind};
         let items = menu.items()?;
         let Some(MenuItemKind::Submenu(app_menu)) = items.first() else {
             log::warn!("[quit] app submenu not where expected; leaving the default menu alone");
