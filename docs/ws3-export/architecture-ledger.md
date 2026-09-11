@@ -1668,3 +1668,149 @@ residuals `final-crash-audit.md` itself lists as open at merge time; F1's stacki
 Rung 3 interleaving gap are new findings this round, not residuals the audit already knew about.
 
 **No merge to main. No PR.** Pushed `ws3-export-integration`, `ws3-crash-fixes`, `final-crash-audit`.
+
+### Round 19 (2026-09-12) — First Windows compile (PROMPT 25)
+
+Branch `ws3-windows-build-fix`, cut from `ws3-export-integration` @ `a5f352e`; rollback `15002e5`.
+No merge to main, no PR.
+
+#### STEP 0 — The feedback loop: `.github/workflows/windows-check.yml`
+
+Until this round nothing ever compiled a `#[cfg(windows)]` block: `build.yml` is
+`workflow_dispatch`-only and costs ~7 minutes, and every local gate runs on macOS. The new job runs
+`cargo check --all-targets --locked` on `windows-latest` in two cells (feature-off, `--features
+fa-inference` — the shipped installer's cell) and nothing else: no bundling, no signing, no `npm ci`.
+Sidecars are empty placeholders (`ffmpeg-<triple>.exe`, `whisper-<triple>.exe`), the same trick
+`fa-ort-matrix.yml` uses, because `tauri-build` hard-fails any cargo invocation when an
+`externalBin` path is missing. Triggers: `workflow_dispatch`, PRs and pushes to `main`/`ws3-**`
+touching `src-tauri/**`. A final step prints the count of remaining `warning:` lines.
+
+**Reach was established destructively, not by a green run.** The first dispatch ran against the
+pre-fix tip (`a5f352e` + workflow commit) and went RED on both cells
+(https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/34636558113) with
+`E0308` ×2 at the two `GetProcessTimes` sites, plus — **not in the brief** — `E0433`/`E0599` in
+`project_mirror.rs` (see STEP 2). The post-fix run went green on both cells with **0 warning lines**
+(https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/34637227561).
+
+Local cross-check was tried and abandoned inside the brief's time box: `rustup target add
+x86_64-pc-windows-msvc` + `cargo check --target x86_64-pc-windows-msvc` gets as far as
+`tauri-build`'s `build.rs`, which panics in `tauri-winres` with `NotAttempted("llvm-rc")` — the
+Windows resource compiler isn't in Xcode's toolchain and Homebrew's only ships it inside the full
+`llvm` formula. CI is the loop.
+
+#### STEP 1 — The two `GetProcessTimes` sites, `src-tauri/src/session_claim.rs`
+
+**Before** (both `process_start_time_ms` at ~139-144 and `is_holder_process_live` at ~226-231,
+byte-for-byte duplicates apart from the handle source):
+
+```rust
+let mut creation = MaybeUninit::<i64>::uninit();
+let mut exit     = MaybeUninit::<i64>::uninit();
+let mut kernel   = MaybeUninit::<i64>::uninit();
+let mut user     = MaybeUninit::<i64>::uninit();
+let ok = GetProcessTimes(proc, creation.as_mut_ptr(), exit.as_mut_ptr(),
+                         kernel.as_mut_ptr(), user.as_mut_ptr());   // E0308: *mut i64, wants *mut FILETIME
+let filetime = creation.assume_init();
+const EPOCH_DIFF_100NS: i64 = 116_444_736_000_000_000;
+return ((filetime - EPOCH_DIFF_100NS) / 10_000).max(0) as u64;
+```
+
+**After** — one call site. `windows_process_times(handle) -> Option<WindowsProcessTimes>` owns the
+four real `FILETIME` values (`&mut creation, &mut exit, &mut kernel, &mut user`) and
+`filetime_to_unix_ms(&FILETIME) -> u64` does `((hi as u64) << 32 | lo as u64)
+.saturating_sub(116_444_736_000_000_000) / 10_000`. Both former sites now call the helper:
+
+- `process_start_time_ms` (self): `GetCurrentProcess()` pseudo-handle → helper → `creation_unix_ms`,
+  falling back to `now_ms()` if the call fails. No `OpenProcess`, no `CloseHandle`.
+- `is_holder_process_live(pid, start)` (foreign): `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`
+  → helper → `abs_diff(start) <= 2_000`. Every "cannot verify" branch now resolves to **live**, never
+  stale: `OpenProcess` failing with `ERROR_ACCESS_DENIED` (process exists under another user /
+  elevated), `GetProcessTimes` failing on a valid handle, or a recorded `start == 0`. Only a PID
+  that does not exist (`OpenProcess` fails with anything else) or a creation-time mismatch > 2 s
+  (PID reuse) is stale. The exit-time `FILETIME` is deliberately NOT consulted: MSDN documents its
+  content as undefined while the process runs, so "nonzero exit ⇒ stale" could steal a live holder.
+
+**Claim-file compatibility — the answer.** `session_claim.json` persists
+`holder_start_time_ms: u64` = milliseconds since the Unix epoch, and the reconstruction produces
+exactly the number the broken code *intended*: `(FILETIME_100ns − 1601→1970 offset) / 10_000`. The
+only differences are (a) the `i64` subtraction that could go negative is now a `u64`
+`saturating_sub` (same result for every post-1970 value, 0 instead of `.max(0)` for pre-1970) and
+(b) the hi/lo dwords are combined explicitly instead of reinterpreting an `i64`. **The persisted
+format does not change.** Beyond that, there is no legacy population to protect: this arm never
+compiled, so no Windows build has ever written a claim file with a Windows-derived value. The
+`start == 0 ⇒ cannot verify, assume live` branch is still added, as the brief asked, so an
+unparseable/absent start time can never make a live session look stale.
+
+**The `AsRawHandle` finding.** `use std::os::windows::io::AsRawHandle` at line 124 was unused, and
+the local named `handle` was `std::process::id()` — a **PID**, not a handle. That was fine by
+accident: `OpenProcess` takes a PID, so the call was opening a real handle to the current process
+with `PROCESS_QUERY_LIMITED_INFORMATION`, which is sufficient for `GetProcessTimes`. The import
+looks like a leftover from an earlier draft that derived the handle from `Child`/`File` (neither
+applies to the current process — there is no `AsRawHandle` for "self"). The code was NOT passing a
+bad handle; it would have returned a real creation time had it compiled. Rewritten to
+`GetCurrentProcess()` anyway, which removes the misnamed local, the `OpenProcess` failure branch and
+the `CloseHandle` for the self path.
+
+**`lib.rs:247`** — `MenuItem`/`MenuItemKind` were imported at function scope but used only inside
+the `#[cfg(target_os = "macos")]` block; the `use` moved into that block.
+
+**Tests added** (`session_claim::tests::windows_start_time`, `#[cfg(windows)]`): known FILETIME
+vectors (1970 epoch → 0, 2000-01-01 → 946 684 800 000, pre-1970 → 0); own start time stable across
+reads, ≤ now, < 1 h old; `is_holder_process_live` true for (own PID, own start), **false for (own
+PID, start + 1 h)** — the PID-reuse case — true for (own PID, 0), false for PID 4 000 000. These are
+COMPILED by the check job (`--all-targets`) and RUN only by a real Windows `cargo test` — see the
+new row in `windows-validation.md`.
+
+#### STEP 2 — The full platform-gated inventory, `src-tauri/**`
+
+Every `#[cfg(...)]` naming `windows`/`unix`/`macos`/`linux` (`grep -rn 'cfg(' src tests build.rs`),
+plus the runtime `cfg!(target_os = "windows")` sites. "Compiles" = green on run 34637227561.
+
+| File:line | Gate | What it does | Compiles on Windows | Ever exercised by a test |
+|---|---|---|---|---|
+| `session_claim.rs:97` / `:199` | `unix` | `/proc/<pid>/stat` starttime + `kill(pid,0)` liveness | n/a (unix) | YES on macOS via `claim_contention…`, `stale_claim_recovery…` — **but see the macOS finding below** |
+| `session_claim.rs:121` / `:229` | `windows` | the two fixed sites above | **YES (was NO)** | Compiled only; 3 new `#[cfg(windows)]` tests exist, never run |
+| `session_claim.rs:138,147,162` | `windows` | `WindowsProcessTimes`, `filetime_to_unix_ms`, `windows_process_times` (new) | YES | Compiled only (same 3 tests) |
+| `session_claim.rs:132` / `:258` | `not(any(unix,windows))` | fallbacks | n/a | never (no such target) |
+| `session_claim.rs:182` | `unix` | `boot_time_epoch_ms` via `/proc/stat` | n/a | Linux only in practice; on macOS returns `None` |
+| `session_claim.rs:403` (`classify_remove_outcome`) + `:493-499` | none (runtime) | `pending_delete` classification from `ee406dd` | YES | Pure function: 4 tests (`pending_delete_is_never_classified_as_deleted` etc.). The NTFS race itself: W1, unverified |
+| `lib.rs:254` | `macos` | deferred-Quit menu rewrite | n/a | manual only |
+| `lib.rs:434` | `all(windows, debug_assertions)` | `open_devtools()` on the main window | YES | never (dev-build side effect) |
+| `ffmpeg.rs:119` | `windows` | `raw_os_error() == 112` (`ERROR_DISK_FULL`) → disk-full | YES | `StorageFull` kind branch tested (`ffmpeg.rs:3129`); the `112` branch never |
+| `ffmpeg.rs:1676-1707` | none (`cfg!` runtime) | `apply_windows_long_path_prefix` / `windows_long_path` from `e9355a2` | YES | Prefix RULE: 5 tests (`:3506-3539`). Real Win32 honouring of `\\?\`: W2/W3, unverified |
+| `ffmpeg.rs:2005` / `:2012` | `macos` / `windows` | `reveal_in_finder` → `open -R` / `explorer /select,` | YES | never on either platform |
+| `whisper.rs:597` | `windows` | resource_dir `_up_` parent fallback for the model path | YES | never |
+| `fa_onnx.rs:432` / `:443` | `windows` / `not(windows)` | `augment_ort_load_error` MSVC-runtime hint | YES | never (the string is never asserted) |
+| `fa_onnx.rs:1919…7611` (16 pairs) | `macos` / `not(macos)` | `fa_models_dir()` in `#[ignore]`d corpus-measurement test modules; the non-macOS arm `panic!`s | YES (compiles; the panic is only reached under `--ignored`) | macOS only, and only with a private corpus |
+| `project_mirror.rs:399` | was **ungated** | inode-identity test using `std::os::unix::fs::MetadataExt::ino()` | **was NO** (`E0433`/`E0599`) → now `#[cfg(unix)]` | YES on macOS; on Windows the replace-not-truncate property is now simply unasserted (`file_index()` is nightly-only) |
+
+**Coverage gaps this round names and does not fix:** `reveal_in_finder` (both arms),
+`whisper.rs:597`, `augment_ort_load_error`, `ffmpeg.rs:119`'s `112` branch, `lib.rs:434`, and the
+three new Windows tests that have never executed. All are compile-verified only.
+
+**macOS finding, out of this round's scope but recorded because the inventory surfaced it:** the
+`#[cfg(unix)]` arm is really a *Linux* arm. macOS has no `/proc`, so on macOS
+`process_start_time_ms()` always falls through to `now_ms()` and `is_holder_process_live` returns
+`true` for any existing PID (the "unreadable → live" branch). PID-reuse detection therefore does
+not exist on macOS today; the instance-UUID (`holder_instance_id`) is what actually distinguishes
+same-PID holders there. Safe direction (never steals), but weaker than the struct's doc comment
+claims. Needs `sysctl(KERN_PROC)`/`proc_pidinfo` to close; not started.
+
+#### STEP 3 — Gates
+
+| Gate | Result |
+|---|---|
+| Windows `cargo check --all-targets` (feature-off / fa-inference) | **green / green, 0 warnings** — run 34637227561 |
+| Windows bundle build (`build.yml`, `-f fa-inference`) | see the closing line of this entry |
+| macOS `cargo check --all-targets` | clean, 0 warnings |
+| `npx tsc --noEmit` / `npm run lint` | clean / clean |
+| `npm test` | **3572 passed, 0 failed, 78 skipped = 3650** — unchanged (no TS touched) |
+| `cargo test` | **314 / 0 / 6** — unchanged; the 3 new tests are `#[cfg(windows)]` and the gated `project_mirror` test still runs on macOS |
+| `cargo test --features fa-inference -- --test-threads=1` | **400 / 0 / 36** — unchanged |
+
+**Windows bundle build:** `build.yml` dispatched on `2aba548` — **green on both matrix legs**
+(windows-latest `x86_64-pc-windows-msvc` MSI+NSIS and macos-latest universal DMG),
+https://github.com/mohtashim9119-web/kinetix-pro-studio/actions/runs/34637659903. The first Windows
+installer this branch has ever produced.
+
+**No merge to main. No PR.** Pushed `ws3-windows-build-fix`.
