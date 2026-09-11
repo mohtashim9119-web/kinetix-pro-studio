@@ -8,7 +8,7 @@
  * (`ensure_resume_prepared`); these tests prove the JS side never even tries,
  * by recording every call and asserting the order rather than only the result.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   collectAbandonedSessions,
   discoverResumableExport,
@@ -26,6 +26,7 @@ import {
   serializeExportState,
   type ExportCheckpointRecord,
 } from './exportCheckpoint';
+import { TRUNCATE_BOUND_MS } from './ffmpegLivenessBound';
 
 const HASH_A = 'a'.repeat(64);
 const HASH_B = 'b'.repeat(64);
@@ -141,6 +142,10 @@ function harness(opts: {
 }
 
 describe('resume discovery — the fence ordering', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('THE ORDERING: nothing counts before the fence succeeds', async () => {
     const h = harness();
     const r = await evaluateResumeCandidate(h.io, SESSION, target, h.countPictures);
@@ -288,6 +293,34 @@ describe('resume discovery — the fence ordering', () => {
     if (r.ok) throw new Error('unreachable');
     expect(r.bitstreamTouched).toEqual({ path: 'piece_1.h264', fileLengthBefore: 5_000, fileLengthAfter: 4_000 });
     expect(r.reason).toContain('mutated');
+  });
+
+  it('a fence that never settles expires TRUNCATE_BOUND_MS rather than hanging discovery', async () => {
+    vi.useFakeTimers();
+    const kill = vi.fn(async () => undefined);
+    const io: ResumeDiscoveryIo = {
+      listResumableSessionIds: async () => [SESSION],
+      reenter: async (sessionId) => ({
+        sessionId,
+        readExportState: async () => new TextEncoder().encode(
+          manifestJson({ rows: [{ pieceIndex: 1, encoderSessionIndex: 1, byteOffset: 4_000, cumulativePictures: 1_200 }] }),
+        ),
+        sessionFileSize: async () => 5_000,
+        prepareCheckpointResume: () => new Promise(() => undefined),
+        truncateAnnexbToOffset: async () => {
+          throw new Error('must not run');
+        },
+        destroy: async () => {},
+        kill,
+      }),
+    };
+    const p = evaluateResumeCandidate(io, SESSION, target, async () => 1800);
+    await vi.advanceTimersByTimeAsync(TRUNCATE_BOUND_MS + 1_000);
+    const r = await p;
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('unreachable');
+    expect(r.reason).toContain('TRUNCATE_BOUND_MS');
+    expect(kill).toHaveBeenCalled();
   });
 
   it('bitstream_touched propagates through discoverResumableExport into the rejection list', async () => {

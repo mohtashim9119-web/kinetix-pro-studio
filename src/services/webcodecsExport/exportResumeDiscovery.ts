@@ -34,6 +34,7 @@ import {
   type ExportCheckpointRecord,
   type ExportStateManifest,
 } from './exportCheckpoint';
+import { TRUNCATE_BOUND_MS, withFfmpegLivenessBound } from './ffmpegLivenessBound';
 
 /**
  * WS3 STEP 8 (H5) — the minimal claim-liveness shape discovery needs.
@@ -68,6 +69,11 @@ export interface ResumeSessionHandle {
     byteOffset: number,
   ): Promise<{ pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number }>;
   destroy(): Promise<void>;
+  /**
+   * Present on `TauriFfmpeg`. Optional so test fakes can omit it; fence/seam
+   * bound expiry then no-ops kill rather than throwing.
+   */
+  kill?(): Promise<void>;
 }
 
 export interface ResumeDiscoveryIo {
@@ -243,6 +249,19 @@ function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Resume-path truncates are recovery (Rung 0) — same measured bound as salvage. */
+function boundedTruncate<T>(session: ResumeSessionHandle, files: string[], fn: () => Promise<T>): Promise<T> {
+  return withFfmpegLivenessBound(
+    {
+      label: 'TRUNCATE_BOUND_MS',
+      boundMs: TRUNCATE_BOUND_MS,
+      ffmpeg: { kill: session.kill?.bind(session) ?? (async () => undefined) },
+      files,
+    },
+    fn,
+  );
+}
+
 /**
  * Inspect one surviving session. Never mutates Annex-B bytes unless the
  * identity check has already passed — that is the whole point of the ordering.
@@ -326,7 +345,9 @@ export async function evaluateResumeCandidate(
   const fileLengthBeforeFence = await session.sessionFileSize(pieceFile).catch(() => null);
   let repair: AnnexbCheckpointRepairResult;
   try {
-    repair = await session.prepareCheckpointResume(pieceFile, checkpoint);
+    repair = await boundedTruncate(session, [pieceFile], () =>
+      session.prepareCheckpointResume(pieceFile, checkpoint),
+    );
   } catch (err) {
     const fileLengthAfterFence = await session.sessionFileSize(pieceFile).catch(() => null);
     if (
@@ -376,7 +397,9 @@ export async function evaluateResumeCandidate(
     const fileLengthBeforeSeam = await session.sessionFileSize(pieceFile).catch(() => null);
     let cut: { pictures: number; keptBytes: number };
     try {
-      cut = await session.truncateAnnexbToOffset(pieceFile, checkpoint.seamByteOffset);
+      cut = await boundedTruncate(session, [pieceFile], () =>
+        session.truncateAnnexbToOffset(pieceFile, checkpoint.seamByteOffset),
+      );
     } catch (err) {
       const fileLengthAfterSeam = await session.sessionFileSize(pieceFile).catch(() => null);
       if (

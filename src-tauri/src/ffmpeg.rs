@@ -24,6 +24,11 @@ pub struct FfmpegSessionState {
     /// Surviving sessions re-entered after a process restart. Native append,
     /// count, and concat stay closed until checkpoint repair succeeds.
     resume_pending: Mutex<HashSet<String>>,
+    /// One mutex per session, held across mutating bitstream I/O (append,
+    /// truncate, checkpoint repair, concat). Stops an in-flight append from
+    /// racing `set_len` on the same file — the rewind path used to truncate
+    /// while `ffmpeg_append_file_raw` could still be in `write_all`/`sync_all`.
+    io_gates: Mutex<HashMap<String, Arc<Mutex<()>>>>,
 }
 
 /// Back-compat alias — lib.rs still `.manage(ffmpeg::FfmpegProcessState::default())`.
@@ -54,6 +59,16 @@ fn set_session_cancelled(state: &FfmpegSessionState, session_id: &str) {
     if let Some(flag) = session_cancel_flag(state, session_id) {
         flag.store(true, Ordering::SeqCst);
     }
+}
+
+fn session_io_gate(state: &FfmpegSessionState, session_id: &str) -> Arc<Mutex<()>> {
+    state
+        .io_gates
+        .lock()
+        .unwrap()
+        .entry(session_id.to_string())
+        .or_insert_with(|| Arc::new(Mutex::new(())))
+        .clone()
 }
 
 fn ensure_resume_prepared(
@@ -354,8 +369,6 @@ pub fn ffmpeg_append_file_raw(
     request: tauri::ipc::Request<'_>,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<(), String> {
-    use std::io::Write;
-
     let headers = request.headers();
     let session_id = headers
         .get("session-id")
@@ -372,20 +385,45 @@ pub fn ffmpeg_append_file_raw(
 
     match request.body() {
         tauri::ipc::InvokeBody::Raw(data) => {
-            let mut file = fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&full)
-                .map_err(|e| format!("append_file_raw({}): open: {}", path, e))?;
-            file.write_all(data)
-                .map_err(|e| format!("append_file_raw({}): write: {}", path, e))?;
-            file.sync_all()
-                .map_err(|e| format!("append_file_raw({}): sync: {}", path, e))
+            let cancel = session_cancel_flag(&state, session_id);
+            let gate = session_io_gate(&state, session_id);
+            let _guard = gate.lock().unwrap();
+            append_file_raw_inner(&full, path, data, cancel.as_deref())
         }
         tauri::ipc::InvokeBody::Json(_) => {
             Err("append_file_raw: expected a raw byte body, got JSON".to_string())
         }
     }
+}
+
+/// Chunked append so `kill_session`'s cancel flag can stop a write between
+/// 64 KB blocks — `write_all` of a whole 512 KiB batch could not be interrupted
+/// at all, and the rewind truncate used to race it.
+fn append_file_raw_inner(
+    full: &Path,
+    path: &str,
+    data: &[u8],
+    cancel: Option<&AtomicBool>,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    check_cancelled(cancel)?;
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(full)
+        .map_err(|e| format!("append_file_raw({}): open: {}", path, e))?;
+    let mut offset = 0usize;
+    while offset < data.len() {
+        check_cancelled(cancel)?;
+        let end = (offset + IO_CHUNK_SIZE).min(data.len());
+        file.write_all(&data[offset..end])
+            .map_err(|e| format!("append_file_raw({}): write: {}", path, e))?;
+        offset = end;
+    }
+    check_cancelled(cancel)?;
+    file.sync_all()
+        .map_err(|e| format!("append_file_raw({}): sync: {}", path, e))
 }
 
 /// Returns the byte length of `<session_dir>/<path>` without reading contents.
@@ -1136,6 +1174,8 @@ pub fn ffmpeg_truncate_annexb(
     ensure_resume_bitstream_fence(&state, &session_id, &path, "truncate_annexb")?;
     let full = session_dir(&session_id)?.join(&path);
     let cancel = session_cancel_flag(&state, &session_id);
+    let gate = session_io_gate(&state, &session_id);
+    let _guard = gate.lock().unwrap();
     let result = truncate_annexb_inner(&full, &path, cancel.as_deref())?;
     sync_session_file(&full, &format!("truncate_annexb({path})"))?;
     Ok(result)
@@ -1155,6 +1195,8 @@ pub fn ffmpeg_truncate_annexb_to_offset(
     ensure_resume_bitstream_fence(&state, &session_id, &path, "truncate_annexb_to_offset")?;
     let full = session_dir(&session_id)?.join(&path);
     let cancel = session_cancel_flag(&state, &session_id);
+    let gate = session_io_gate(&state, &session_id);
+    let _guard = gate.lock().unwrap();
     let result = truncate_annexb_to_offset_inner(&full, &path, byte_offset, cancel.as_deref())?;
     sync_session_file(&full, &format!("truncate_annexb_to_offset({path})"))?;
     Ok(result)
@@ -1255,6 +1297,8 @@ pub fn ffmpeg_prepare_checkpoint_resume(
     }
     let full = session_dir(&session_id)?.join(&path);
     let cancel = session_cancel_flag(&state, &session_id);
+    let gate = session_io_gate(&state, &session_id);
+    let _guard = gate.lock().unwrap();
     let result = prepare_checkpoint_resume_inner(
         &full,
         &path,
@@ -1372,6 +1416,8 @@ pub fn ffmpeg_concat_annexb_pieces(
     let dir = session_dir(&session_id)?;
     let out_full = dir.join(&output_path);
     let cancel = session_cancel_flag(&state, &session_id);
+    let gate = session_io_gate(&state, &session_id);
+    let _guard = gate.lock().unwrap();
 
     let result = concat_annexb_pieces_inner(&dir, &piece_paths, &out_full, cancel.as_deref());
     if let Err(ref err) = result {
@@ -1555,6 +1601,7 @@ pub fn ffmpeg_destroy_session(
 ) -> Result<(), String> {
     state.cancel_flags.lock().unwrap().remove(&session_id);
     state.resume_pending.lock().unwrap().remove(&session_id);
+    state.io_gates.lock().unwrap().remove(&session_id);
     let dir = session_dir(&session_id)?;
     if dir.exists() {
         let _ = release_session_claim(&dir);
@@ -1687,18 +1734,25 @@ pub const WINDOWS_MAX_PATH: usize = 260;
 ///
 /// `file_name` is validated as a session-local filename (same rules as the other
 /// session commands); `dest_path` is the absolute path returned by
-/// `pick_save_path`. Uses `fs::copy` (not `rename`) so it works when `$TMPDIR`
-/// and the destination live on different volumes (common on Windows). The source
-/// is left in place for `ffmpeg_destroy_session` to reclaim.
+/// `pick_save_path`. Copies via a sibling `.part` file (not a same-volume
+/// `rename` of the session original) so `$TMPDIR` and the destination may live
+/// on different volumes. The source is left in place for
+/// `ffmpeg_destroy_session` to reclaim.
 ///
 /// WS3 STEP 10 (H9) — both `src` and `dest_path` go through
 /// `windows_long_path` before the copy, so the ~260-character MAX_PATH limit
 /// no longer applies to this call on Windows.
+///
+/// Delivery is copy-to-`.part` + fsync + rename, never a direct write onto
+/// `dest_path`. A cancel or crash mid-copy therefore cannot leave a truncated
+/// file at the path the operator picked — the original dest (if any) is
+/// untouched, and the `.part` is deleted on failure.
 #[tauri::command]
 pub fn save_session_file(
     session_id: String,
     file_name: String,
     dest_path: String,
+    state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<(), String> {
     validate_path(&file_name)?;
     let src = session_dir(&session_id)?.join(&file_name);
@@ -1710,7 +1764,8 @@ pub fn save_session_file(
     }
     let src_long = windows_long_path(&src);
     let dest_long = windows_long_path(Path::new(&dest_path));
-    fs::copy(&src_long, &dest_long).map_err(|e| {
+    let cancel = session_cancel_flag(&state, &session_id);
+    copy_session_file_atomic(&src_long, &dest_long, cancel.as_deref()).map_err(|e| {
         format!(
             "save_session_file({} -> {}): {} — completed export remains at {}",
             file_name,
@@ -1718,8 +1773,83 @@ pub fn save_session_file(
             e,
             src.display()
         )
-    })?;
+    })
+}
+
+fn dest_part_path(dest: &Path) -> PathBuf {
+    let mut os = dest.as_os_str().to_os_string();
+    os.push(".part");
+    PathBuf::from(os)
+}
+
+/// Replace `dest` with `part` (already fsynced). Unix `rename` replaces. Windows
+/// does not, so fall back to the same backup-then-promote sequence as
+/// `ffmpeg_write_export_state`.
+fn rename_over(part: &Path, dest: &Path) -> Result<(), String> {
+    if let Err(rename_err) = fs::rename(part, dest) {
+        let mut backup_os = dest.as_os_str().to_os_string();
+        backup_os.push(".bak");
+        let backup = PathBuf::from(backup_os);
+        let _ = fs::remove_file(&backup);
+        if dest.is_file() {
+            fs::rename(dest, &backup).map_err(|e| {
+                format!("rename_over: replace fallback after {rename_err}: backup: {e}")
+            })?;
+        }
+        if let Err(e) = fs::rename(part, dest) {
+            let _ = fs::rename(&backup, dest);
+            return Err(format!("rename_over: promote part: {e}"));
+        }
+        let _ = fs::remove_file(&backup);
+    }
     Ok(())
+}
+
+/// Stream-copy `src` onto `dest` via a sibling `.part` file. Honors the session
+/// cancel flag between 64 KB chunks. Never truncates `dest` until the copy has
+/// been fsynced.
+fn copy_session_file_atomic(
+    src: &Path,
+    dest: &Path,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), String> {
+    use std::io::{Read, Write};
+
+    check_cancelled(cancel)?;
+    let part = dest_part_path(dest);
+    let copied = (|| -> Result<(), String> {
+        let mut input =
+            fs::File::open(src).map_err(|e| format!("copy_session_file: open src: {e}"))?;
+        let mut output =
+            fs::File::create(&part).map_err(|e| format!("copy_session_file: create part: {e}"))?;
+        let mut buf = vec![0u8; IO_CHUNK_SIZE];
+        loop {
+            check_cancelled(cancel)?;
+            let n = input
+                .read(&mut buf)
+                .map_err(|e| format!("copy_session_file: read src: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            output
+                .write_all(&buf[..n])
+                .map_err(|e| format!("copy_session_file: write part: {e}"))?;
+        }
+        output
+            .flush()
+            .map_err(|e| format!("copy_session_file: flush part: {e}"))?;
+        output
+            .sync_all()
+            .map_err(|e| format!("copy_session_file: fsync part: {e}"))?;
+        drop(output);
+        rename_over(&part, dest)?;
+        sync_session_file(dest, "copy_session_file dest")?;
+        Ok(())
+    })();
+    if copied.is_err() {
+        let _ = fs::remove_file(&part);
+    }
+    copied
 }
 
 /// Extracts duration in seconds from ffmpeg's stderr `Duration: HH:MM:SS.ss`
@@ -2123,6 +2253,130 @@ mod tests {
             "file stable after truncate — no orphan writer"
         );
 
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn append_file_raw_inner_returns_cancelled_when_flag_preset() {
+        let (_id, dir) = make_session();
+        let full = dir.join("piece.h264");
+        let cancel = AtomicBool::new(true);
+        let err = append_file_raw_inner(&full, "piece.h264", &[1, 2, 3], Some(&cancel)).unwrap_err();
+        assert_eq!(err, "cancelled");
+        assert!(!full.exists(), "cancelled append must not create the file");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn append_stops_mid_write_when_cancel_flag_is_set() {
+        let (_id, dir) = make_session();
+        let full = dir.join("piece.h264");
+        let payload = vec![7u8; 2048 * IO_CHUNK_SIZE];
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_worker = cancel.clone();
+        let full_worker = full.clone();
+
+        let handle = thread::spawn(move || {
+            append_file_raw_inner(&full_worker, "piece.h264", &payload, Some(cancel_worker.as_ref()))
+        });
+
+        loop {
+            if full.exists() {
+                let len = fs::metadata(&full).map(|m| m.len()).unwrap_or(0);
+                if len >= IO_CHUNK_SIZE as u64 {
+                    cancel.store(true, Ordering::SeqCst);
+                    break;
+                }
+            }
+            if handle.is_finished() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        let result = handle.join().unwrap();
+        assert_eq!(result, Err("cancelled".to_string()));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn session_io_gate_is_exclusive_per_session() {
+        let state = FfmpegSessionState::default();
+        let id = Uuid::new_v4().to_string();
+        let gate = session_io_gate(&state, &id);
+        let held = gate.lock().unwrap();
+        assert!(
+            gate.try_lock().is_err(),
+            "a second append/truncate on the same session must wait"
+        );
+        drop(held);
+        assert!(gate.try_lock().is_ok());
+        let other = session_io_gate(&state, &Uuid::new_v4().to_string());
+        assert!(other.try_lock().is_ok(), "a different session must not share the gate");
+    }
+
+    #[test]
+    fn copy_session_file_atomic_does_not_touch_dest_until_complete() {
+        let dir = std::env::temp_dir().join(format!("kinetix-copy-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("export_final.mp4");
+        let dest = dir.join("out.mp4");
+        fs::write(&src, b"complete-mp4-bytes").unwrap();
+        copy_session_file_atomic(&src, &dest, None).unwrap();
+        assert_eq!(fs::read(&dest).unwrap(), b"complete-mp4-bytes");
+        assert!(!dest_part_path(&dest).exists(), "part file must be gone after rename");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copy_session_file_atomic_cancel_leaves_existing_dest_untouched() {
+        let dir = std::env::temp_dir().join(format!("kinetix-copy-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("export_final.mp4");
+        let dest = dir.join("out.mp4");
+        fs::write(&src, vec![9u8; 8 * IO_CHUNK_SIZE]).unwrap();
+        fs::write(&dest, b"previous-export").unwrap();
+        let cancel = AtomicBool::new(true);
+        let err = copy_session_file_atomic(&src, &dest, Some(&cancel)).unwrap_err();
+        assert_eq!(err, "cancelled");
+        assert_eq!(fs::read(&dest).unwrap(), b"previous-export");
+        assert!(!dest_part_path(&dest).exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copy_session_file_atomic_cancel_mid_copy_does_not_create_dest() {
+        let dir = std::env::temp_dir().join(format!("kinetix-copy-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("export_final.mp4");
+        let dest = dir.join("out.mp4");
+        fs::write(&src, vec![3u8; 2048 * IO_CHUNK_SIZE]).unwrap();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_worker = cancel.clone();
+        let src_worker = src.clone();
+        let dest_worker = dest.clone();
+        let part = dest_part_path(&dest);
+
+        let handle = thread::spawn(move || {
+            copy_session_file_atomic(&src_worker, &dest_worker, Some(cancel_worker.as_ref()))
+        });
+
+        loop {
+            if part.exists() {
+                let len = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+                if len >= IO_CHUNK_SIZE as u64 {
+                    cancel.store(true, Ordering::SeqCst);
+                    break;
+                }
+            }
+            if handle.is_finished() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        let result = handle.join().unwrap();
+        assert_eq!(result, Err("cancelled".to_string()));
+        assert!(!dest.exists(), "cancelled copy must not rename onto dest");
+        assert!(!part.exists(), "failed copy must delete the part file");
         fs::remove_dir_all(&dir).unwrap();
     }
 

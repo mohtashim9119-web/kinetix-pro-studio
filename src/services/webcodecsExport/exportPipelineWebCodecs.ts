@@ -1794,6 +1794,25 @@ export function driveGlRun(
       );
     };
 
+    /**
+     * Wait for any in-flight `appendFileRaw` before resolving this run. Does
+     * NOT flush `pendingBatch` — those bytes belong to the hung session and
+     * rewind truncate will discard them. A hung writer is raced against
+     * `WATCHDOG_MS`; the native session IO gate then serializes a still-running
+     * write with the rewind's `set_len`.
+     */
+    const finishAfterInFlightAppends = (result: RunDriveResultCore): void => {
+      if (settled) return;
+      void Promise.race([
+        appendQueue,
+        new Promise<void>((resolve) => {
+          setTimeout(resolve, WATCHDOG_MS);
+        }),
+      ]).then(() => {
+        finish(result);
+      });
+    };
+
     const resetWatchdog = (): void => {
       clearWatchdog();
       watchdogTimer = setTimeout(finishWatchdog, WATCHDOG_MS);
@@ -2148,7 +2167,10 @@ export function driveGlRun(
           };
           lastWorkerDiagnostics = errDiagnostics;
           mergePhaseFromWorker(errDiagnostics.phaseLog);
-          finish({
+          // Rotation rewind truncates this same file. Wait for the in-flight
+          // append (if any) so `set_len` cannot race `write_all`. Pending
+          // unflushed chunks are discarded — they are the hung session.
+          finishAfterInFlightAppends({
             ok: false,
             error: errorFromDiagnostics('encode', errDiagnostics, 'Export worker error.'),
             diagnostics: errDiagnostics,

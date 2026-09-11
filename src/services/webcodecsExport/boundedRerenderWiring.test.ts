@@ -46,6 +46,7 @@ vi.mock('./muxOnly', async (importOriginal) => ({
 import {
   exportProjectWebCodecs,
   MAX_BOUNDARY_REWINDS_PER_EXPORT,
+  APPEND_BATCH_BYTES,
   type ExportWorkerHandle,
   type WebCodecsFfmpeg,
 } from './exportPipelineWebCodecs';
@@ -241,6 +242,80 @@ describe('bounded re-render (Rung 3) — wired at the exportProjectWebCodecs cal
     // batch — proving the rewind didn't duplicate or re-send anything.
     const appendedByteLengths = appendFileRaw.mock.calls.map((c: unknown[]) => (c[1] as Uint8Array).byteLength);
     expect(appendedByteLengths).toEqual([30, 12]);
+  });
+
+  it('does not truncate while an in-flight append from the hung session is still writing', async () => {
+    let releaseHang: (() => void) | null = null;
+    let hangArmed = false;
+    const landed = new Map<string, number>();
+    const appendFileRaw = vi.fn(async (p: string, data: Uint8Array) => {
+      if (hangArmed) {
+        hangArmed = false;
+        await new Promise<void>((resolve) => { releaseHang = resolve; });
+      }
+      landed.set(p, (landed.get(p) ?? 0) + data.byteLength);
+    });
+    const truncateAnnexbToOffset = vi.fn(async (p: string, byteOffset: number) => {
+      landed.set(p, byteOffset);
+      return { pictures: 5, vclNals: 5, bytesRemoved: 0, keptBytes: byteOffset };
+    });
+    const ffmpeg = {
+      writeFile: vi.fn(async () => undefined),
+      writeFileRaw: vi.fn(async () => undefined),
+      exec: vi.fn(async () => 0),
+      readFile: vi.fn(async () => new Uint8Array()),
+      deleteFile: vi.fn(async () => undefined),
+      appendFileRaw,
+      saveSessionFile: vi.fn(async () => undefined),
+      kill: vi.fn(async () => undefined),
+      destroy: vi.fn(async () => undefined),
+      sessionFileSize: vi.fn(async (p: string) => landed.get(p) ?? 1_700_000_000),
+      countAnnexbFrames: vi.fn(async () => ({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES })),
+      concatAnnexbPieces: vi.fn(async () => undefined),
+      truncateAnnexb: vi.fn(async () => ({ pictures: EXPECTED_FRAMES, vclNals: EXPECTED_FRAMES, bytesRemoved: 0, keptBytes: 100 })),
+      truncateAnnexbToOffset,
+    } as unknown as WebCodecsFfmpeg;
+
+    const fake = new FakeWorker();
+    const resultPromise = exportProjectWebCodecs(
+      project(),
+      ffmpeg,
+      { width: 1920, height: 1080, fps: 30 },
+      () => undefined,
+      { createWorker: () => fake },
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    fake.emit({ type: 'session-plan', pieceIndex: 0, sessions: 3, capFrames: 1800, totalFrames: EXPECTED_FRAMES });
+    fake.emit(chunkMsg(0, 10));
+    fake.emit(chunkMsg(1, 10));
+    fake.emit(chunkMsg(2, 10));
+    await flush();
+    fake.emit({ type: 'session-rotate', pieceIndex: 0, sessionIndex: 1, sessions: 3, frameIndex: 5 });
+    await flush();
+
+    hangArmed = true;
+    fake.emit(chunkMsg(3, APPEND_BATCH_BYTES));
+    for (let i = 0; i < 50 && releaseHang === null; i++) await Promise.resolve();
+    fake.emit(rotationFlushTimeoutError(9));
+    await flush();
+
+    expect(truncateAnnexbToOffset).not.toHaveBeenCalled();
+    expect(releaseHang).not.toBeNull();
+    releaseHang!();
+    await flush(80);
+
+    expect(truncateAnnexbToOffset).toHaveBeenCalledTimes(1);
+    expect(truncateAnnexbToOffset).toHaveBeenCalledWith('piece_0.h264', 30);
+    expect(fake.initMessages.length).toBe(2);
+
+    fake.emit({ type: 'session-plan', pieceIndex: 0, sessions: 3, capFrames: 1800, totalFrames: EXPECTED_FRAMES });
+    fake.emit(chunkMsg(4, 12));
+    fake.emit({ type: 'run-done', runId: 'run_0', frameCount: EXPECTED_FRAMES });
+    fake.emit({ type: 'done', frameCount: EXPECTED_FRAMES, diagnostics: diagnostics() });
+    const r = await resultPromise;
+    expect(r.ok).toBe(true);
   });
 
   it('a final-flush timeout (last planned session) is NOT treated as a rewind candidate', async () => {
