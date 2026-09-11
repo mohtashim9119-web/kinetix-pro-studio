@@ -15,6 +15,7 @@ import type { ForcedMp4SealOffer } from '../services/webcodecsExport/muxOnly';
 import { findResumeOffer, type ResumeOffer, type ResumeRefusalNotice } from '../services/webcodecsExport/exportResumeSession';
 import { recordExportSessionCreated, forgetExportSession } from '../services/webcodecsExport/exportSessionLedger';
 import { readCleanupNotices, clearCleanupNotices, type CleanupNotice } from '../services/webcodecsExport/exportCleanupNotices';
+import { checkExportDestinationPathLength } from '../services/exportDestinationPath';
 import { TauriFfmpeg, type OrphanSweepReport } from '../services/tauriFfmpeg';
 import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
@@ -730,6 +731,20 @@ export function useExport(
         defaultDir,
       });
       if (!savedPath) return; // user cancelled — nothing rendered, nothing wasted
+
+      // WS3 STEP 10 (H9) — reject an impossible destination HERE, at second
+      // zero, rather than after a 30+ minute render finds out the delivery
+      // copy cannot land. Windows-only (see exportDestinationPath.ts) — a
+      // macOS/Linux savedPath is never rejected by this check.
+      const pathIssue = checkExportDestinationPathLength(savedPath);
+      if (pathIssue) {
+        setState(prev => ({
+          ...IDLE_STATE,
+          error: { kind: 'destination_path', message: pathIssue },
+          elapsedSec: prev.elapsedSec,
+        }));
+        return;
+      }
 
       // Step 2: remember path immediately so retryExport and the toast can use it.
       onSavePath(savedPath);

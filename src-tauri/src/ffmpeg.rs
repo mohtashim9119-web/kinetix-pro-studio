@@ -1587,6 +1587,94 @@ pub async fn pick_save_path(
     Ok(handle.map(|p| p.path().to_string_lossy().into_owned()))
 }
 
+/// WS3 STEP 10 (H9) — Windows `\\?\` extended-length-path prefix, applied by
+/// `save_session_file` below to both the session source and the operator's
+/// chosen destination.
+///
+/// `fs::copy`/most Win32 file APIs are subject to the ~260-character MAX_PATH
+/// limit UNLESS the path is prefixed `\\?\` (or `\\?\UNC\` for a UNC share),
+/// which also disables `.`/`..` and forward-slash normalization — so this
+/// must only ever be applied to an already-absolute, already-clean path, and
+/// only once. A no-op everywhere except `#[cfg(windows)]`, so macOS/Linux
+/// behavior (this is what this environment can actually test) is completely
+/// unchanged: those platforms have no MAX_PATH and no `\\?\` syntax, so
+/// prefixing there would just corrupt the path.
+///
+/// A long PROJECT path plus a long descriptive OUTPUT filename is exactly the
+/// combination that can push `dest_path` past MAX_PATH after a 30+ minute
+/// encode already finished — this fix targets exactly that: the DELIVERY
+/// copy's destination is the one path this app does not control the length
+/// of (the session source, under the OS temp dir with a short UUID name, is
+/// not the thing observed to overflow, but is prefixed too since it costs
+/// nothing and keeps both sides of the copy under the same guarantee).
+/// The pure string-prefixing decision, deliberately NOT `#[cfg(windows)]`-
+/// gated: it is plain string manipulation with no Win32 API calls, so it
+/// compiles and is directly unit-testable on every platform (including this
+/// codebase's own macOS dev environment, which cannot otherwise verify
+/// anything about `\\?\` at all). `windows_long_path` below is the only
+/// caller, and only invokes this when `cfg!(target_os = "windows")` is true
+/// at runtime — on macOS/Linux the string is returned completely unchanged,
+/// verified by the same test suite this function's logic is exercised
+/// under. Splitting the logic from the platform gate this way means the
+/// prefixing RULE is confirmed here; only whether the real OS file APIs
+/// actually honor a `\\?\`-prefixed path remains unconfirmed outside a real
+/// Windows run (see this round's report).
+fn apply_windows_long_path_prefix(s: &str) -> String {
+    if s.starts_with(r"\\?\") {
+        return s.to_string();
+    }
+    if let Some(rest) = s.strip_prefix(r"\\") {
+        // UNC path (`\\server\share\...`) — prefixed as `\\?\UNC\server\share\...`.
+        return format!(r"\\?\UNC\{}", rest);
+    }
+    // A normal absolute path (`C:\...`). A relative path (no drive letter) is
+    // left unprefixed — `\\?\` requires an absolute path and this function
+    // has no cwd to resolve one against; callers here always pass absolute
+    // paths (a session dir under the OS temp dir, or the operator's chosen
+    // save-dialog destination), so this branch is defensive, not expected.
+    if s.len() >= 2 && s.as_bytes()[1] == b':' {
+        return format!(r"\\?\{}", s);
+    }
+    s.to_string()
+}
+
+/// Applies `apply_windows_long_path_prefix` only when actually running on
+/// Windows — `cfg!(target_os = "windows")` is a compile-time-baked runtime
+/// constant, not conditional compilation, so this function itself compiles
+/// identically everywhere; only its RETURN VALUE differs per target. On
+/// macOS/Linux this is a byte-for-byte no-op, keeping that behavior (what
+/// this environment can actually verify) completely unchanged.
+fn windows_long_path(path: &Path) -> PathBuf {
+    if !cfg!(target_os = "windows") {
+        return path.to_path_buf();
+    }
+    let s = path.as_os_str().to_string_lossy();
+    PathBuf::from(apply_windows_long_path_prefix(&s))
+}
+
+/// WS3 STEP 10 (H9) — the classic Windows MAX_PATH ceiling, checked BEFORE
+/// encoding starts (see the TS-side call in `exportResumeSession.ts`'s
+/// export-start flow) so an impossible destination is rejected at second
+/// zero, not after a 30+ minute encode. `windows_long_path` above makes the
+/// DELIVERY COPY itself immune to this limit once a valid `dest_path`
+/// reaches `save_session_file`, but the TS-side check still matters for
+/// paths that do NOT get the `\\?\` treatment (nothing else does today) and
+/// as the fast, honest "this will not work" signal a native-side prefix
+/// applied only at copy time cannot give the operator up front.
+///
+/// Not read by any Rust call site (the native side is made immune to this
+/// limit by `windows_long_path` instead) — kept here as the single named
+/// source of the number, cross-referenced by the TS-side check
+/// (`src/services/exportDestinationPath.ts`'s `WINDOWS_MAX_PATH`) rather
+/// than a bare `260` reappearing unexplained on the other side of the IPC
+/// boundary. That TS check is now mostly belt-and-suspenders for THIS
+/// pipeline (`windows_long_path` already makes the one long path this app
+/// produces — the delivery copy's destination — immune), but stays valuable
+/// as fast, honest, second-zero operator feedback, and as the guard for any
+/// future path that copies without going through `windows_long_path`.
+#[allow(dead_code)]
+pub const WINDOWS_MAX_PATH: usize = 260;
+
 /// Copies a finished file from a session directory straight to a user-chosen
 /// destination path, WITHOUT reading its bytes into a `Vec<u8>` for IPC.
 ///
@@ -1602,6 +1690,10 @@ pub async fn pick_save_path(
 /// `pick_save_path`. Uses `fs::copy` (not `rename`) so it works when `$TMPDIR`
 /// and the destination live on different volumes (common on Windows). The source
 /// is left in place for `ffmpeg_destroy_session` to reclaim.
+///
+/// WS3 STEP 10 (H9) — both `src` and `dest_path` go through
+/// `windows_long_path` before the copy, so the ~260-character MAX_PATH limit
+/// no longer applies to this call on Windows.
 #[tauri::command]
 pub fn save_session_file(
     session_id: String,
@@ -1616,7 +1708,9 @@ pub fn save_session_file(
             src.display()
         ));
     }
-    fs::copy(&src, &dest_path).map_err(|e| {
+    let src_long = windows_long_path(&src);
+    let dest_long = windows_long_path(Path::new(&dest_path));
+    fs::copy(&src_long, &dest_long).map_err(|e| {
         format!(
             "save_session_file({} -> {}): {} — completed export remains at {}",
             file_name,
@@ -3068,5 +3162,76 @@ mod tests {
             );
         }
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ── WS3 STEP 10 (H9) — Windows extended-length-path prefixing ──────────
+
+    #[test]
+    fn windows_prefix_applies_to_a_drive_letter_path() {
+        assert_eq!(
+            apply_windows_long_path_prefix(r"C:\Users\alice\Videos\out.mp4"),
+            r"\\?\C:\Users\alice\Videos\out.mp4"
+        );
+    }
+
+    #[test]
+    fn windows_prefix_applies_to_a_unc_path() {
+        assert_eq!(
+            apply_windows_long_path_prefix(r"\\server\share\project\out.mp4"),
+            r"\\?\UNC\server\share\project\out.mp4"
+        );
+    }
+
+    #[test]
+    fn windows_prefix_is_idempotent_never_double_prefixed() {
+        let already = r"\\?\C:\Users\alice\out.mp4";
+        assert_eq!(apply_windows_long_path_prefix(already), already);
+    }
+
+    #[test]
+    fn windows_prefix_leaves_a_relative_path_alone_defensively() {
+        // `\\?\` requires an absolute path; a relative input (should never
+        // happen for a real save_session_file call, both `src` and
+        // `dest_path` are always absolute) is returned unchanged rather than
+        // producing a malformed prefixed-relative path.
+        assert_eq!(apply_windows_long_path_prefix("out.mp4"), "out.mp4");
+    }
+
+    #[test]
+    fn windows_prefix_actually_defeats_max_path_by_length() {
+        let long_dir = "C:\\".to_string() + &"a".repeat(300) + "\\";
+        let long_path = long_dir + "out.mp4";
+        assert!(long_path.len() > WINDOWS_MAX_PATH);
+        let prefixed = apply_windows_long_path_prefix(&long_path);
+        assert!(prefixed.starts_with(r"\\?\"));
+        // The prefix does not shorten anything — it changes which Win32 code
+        // path handles the string (bypassing MAX_PATH normalization), not the
+        // string's own length. Named here so the invariant this fix rests on
+        // (the API contract, not the string) is stated, not just implied.
+        assert_eq!(prefixed.len(), long_path.len() + r"\\?\".len());
+    }
+
+    #[test]
+    fn windows_long_path_is_a_byte_for_byte_no_op_on_this_platform() {
+        // WS3 STEP 10 (H9) — the property this repo can actually verify:
+        // on any non-Windows target (this dev environment, and CI, are both
+        // macOS/Linux), `windows_long_path` must never alter a path at all.
+        // `cfg!(target_os = "windows")` is false here, so this exercises the
+        // REAL runtime branch the compiled binary takes on this machine —
+        // not a simulation of it.
+        let cases = [
+            r"C:\Users\alice\Videos\out.mp4",
+            r"\\server\share\project\out.mp4",
+            "/Users/alice/Movies/out.mp4",
+            "relative/out.mp4",
+        ];
+        for case in cases {
+            let result = windows_long_path(Path::new(case));
+            assert_eq!(
+                result.to_string_lossy(),
+                case,
+                "windows_long_path must be a no-op on this platform for {case}"
+            );
+        }
     }
 }

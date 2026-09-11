@@ -801,6 +801,11 @@ function getExportErrorSummary(error: ExportError): string {
       // written for a user rather than a developer — pass it through instead of
       // replacing it with something vaguer.
       return error.message;
+    case 'destination_path':
+      // WS3 STEP 10 (H9) — same posture as timeline_gap: the guard's own
+      // message already names the character count and the limit, written
+      // for the operator, not a developer.
+      return error.message;
     case 'unknown':
       return 'An unexpected error occurred during export.';
   }

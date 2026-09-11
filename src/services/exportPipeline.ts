@@ -41,6 +41,10 @@ export type ExportErrorKind =
    *  desynchronise A/V and misplace headings. See `timelinePartition.ts`'s
    *  `checkTimelineIsGapless`. */
   | 'timeline_gap'
+  /** WS3 STEP 10 (H9) — the chosen destination path would exceed Windows'
+   *  MAX_PATH. Rejected before any rendering starts — see
+   *  `exportDestinationPath.ts`. */
+  | 'destination_path'
   | 'unknown';
 
 /**
