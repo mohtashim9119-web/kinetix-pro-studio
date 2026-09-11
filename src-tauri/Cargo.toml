@@ -68,6 +68,12 @@ fs4 = { version = "0.9", default-features = false, features = ["sync"] }
 # target this project does not build.
 num_cpus = "1.16"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading"] }
+
 [dev-dependencies]
 # WS1 Task 5 Slice D25 A1 — `tauri::test::mock_context`/`noop_assets` build a
 # `Context<R>` with an EMPTY window list, generic over the runtime `R`. Used

@@ -9,6 +9,8 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import {
   withFfmpegLivenessBound,
   FfmpegBoundExpiredError,
+  FfmpegKillHungError,
+  KILL_BOUND_MS,
   TIER_PIECE_BOUND_MS,
   REMUX_BOUND_MS,
   CONCAT_BOUND_MS,
@@ -152,6 +154,23 @@ describe('withFfmpegLivenessBound', () => {
     expect(killOrder).toEqual(['kill', 'reject']);
   });
 
+  it('kill bound expiry rejects with FfmpegKillHungError when kill never settles (destructive probe)', async () => {
+    vi.useFakeTimers();
+    const ffmpeg = makeFfmpeg(vi.fn(async () => {
+      await new Promise<void>(() => undefined);
+    }));
+    const p = withFfmpegLivenessBound(
+      { label: 'CONCAT_BOUND_MS', boundMs: 1_000, ffmpeg },
+      () => new Promise<void>(() => undefined),
+    );
+    const settled = p.catch((e: unknown) => e);
+    await vi.advanceTimersByTimeAsync(1_000 + KILL_BOUND_MS + 50);
+    const err = await settled;
+    expect(err).toBeInstanceOf(FfmpegKillHungError);
+    if (!(err instanceof FfmpegKillHungError)) return;
+    expect(err.message).toContain('may still be running');
+  });
+
   it('the five opaque bounds are finite, positive, and independently justified (no cross-step ordering)', () => {
     const muxAtScale = computeMuxBoundMs(EXPORT_SCALE_ANNEXB_BYTES);
     const fiveOpaqueBounds = [
@@ -183,5 +202,6 @@ describe('withFfmpegLivenessBound', () => {
     // Tier-piece remains a separate hardware/render-path bound. A synthetic
     // filesystem scan cannot measure VideoToolbox/canvas/IPC performance.
     expect(TIER_PIECE_BOUND_MS).toBe(600_000);
+    expect(KILL_BOUND_MS).toBe(125);
   });
 });

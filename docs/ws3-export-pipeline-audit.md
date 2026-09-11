@@ -426,6 +426,14 @@ Input to the round after CC's. Cheap tests, not implementations.
 | C8 | **FIXED** — concat preserves partial output on disk-full only; guard still required before mux | `79e3eed` |
 | H8 | **FIXED** — Annex-B `sync_all` on append/truncate/prepare; rotation seam order documented in `docs/ws3-export-durable-state.md` Round 11 | `79e3eed` |
 
+#### Round 13 dispositions (2026-09-11, `ws3-durable-resume`)
+
+| ID | Disposition | Fixing commit(s) |
+|---|---|---|
+| H5 | **FIXED** — `session_claim.json` cross-process claim on create/reenter; stale = dead PID or start-time mismatch; read-only `ffmpeg_read_session_claim` | `d73747a` |
+| H9 | **PARTIAL** — delivery failure preserves session file + surfaces source path in error; no `\\?\` long-path prefix yet | `f525f09` |
+| H10 | **FIXED** — `ffmpeg_sweep_orphan_sessions` + startup sweep; 1 h age; live-claim defer; `pending_delete` honesty | `d73747a` |
+
 ### 7.2 Hypotheses (not confirmed by our code alone)
 
 | ID | Sev | Statement | Evidence | Win-specific? | Already tracked? | Operator symptom | Cheapest confirm/refute |

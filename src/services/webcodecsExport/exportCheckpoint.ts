@@ -130,9 +130,11 @@ export interface ExportCheckpointRecord {
   pieceIndex: number;
   /** 0-based VideoEncoder session inside that piece (rotation index). */
   encoderSessionIndex: number;
-  /** Byte offset into the concatenated Annex-B file AFTER this checkpoint. */
+  /** Byte offset into the session piece Annex-B file AFTER this checkpoint.
+   *  Offsets are per-piece while rendering; a concatenated file exists only
+   *  after concat — never assume a single on-disk concatenated path mid-export. */
   byteOffset: number;
-  /** Pictures in `[0, byteOffset)` — access units, not raw VCL NALs. */
+  /** Access-unit count in `[0, byteOffset)` of that same piece file. */
   cumulativePictures: number;
   /**
    * WS3 Round 10 (CC wiring edit, named in that round's report) — the ENCODER
@@ -224,6 +226,12 @@ export type ExportCheckpointValidation =
   | {
       kind: 'clean';
       reason: string;
+    }
+  | {
+      /** Persisted recovery budget exhausted — distinct from a generic clean refusal. */
+      kind: 'recovery_budget_exhausted';
+      reason: string;
+      budget: Required<ExportRecoveryBudget>;
     };
 
 export type ExportCheckpointPreparation =
@@ -236,6 +244,11 @@ export type ExportCheckpointPreparation =
   | {
       kind: 'clean';
       reason: string;
+    }
+  | {
+      kind: 'recovery_budget_exhausted';
+      reason: string;
+      budget: Required<ExportRecoveryBudget>;
     }
   | {
       /** The Annex-B file was mutated before the handshake completed. */
@@ -278,9 +291,10 @@ export type ExportCheckpointPreparation =
  * (Rust) already perform that order. CC must not append, count, or concat
  * while `resume_pending` is set, and must not skip `prepareCheckpointResume`.
  *
- * Postconditions: `{kind:'resume', repair}` with `keptBytes === byteOffset`
- * and `pictures === cumulativePictures`, fence cleared; `{kind:'clean'}`
- * with a reason when the bitstream is provably untouched; or
+ * Postconditions: `{kind:'resume', repair}` with `repair.keptBytes ===
+ * checkpoint.byteOffset` (both measured on the same surviving **piece** file)
+ * and `repair.pictures === checkpoint.cumulativePictures`, fence cleared;
+ * `{kind:'clean'}` with a reason when the bitstream is provably untouched; or
  * `{kind:'bitstream_touched', repair}` when repair mutated the file before failing.
  *
  * Errors: native repair failure after mutation → `{kind:'bitstream_touched'}`;
@@ -598,7 +612,11 @@ export function validateExportState(
     totalRecoveryAttempts,
   };
   if (isRecoveryBudgetExhausted(recoveryBudget)) {
-    return { kind: 'clean', reason: recoveryBudgetExhaustionReason(recoveryBudget) };
+    return {
+      kind: 'recovery_budget_exhausted',
+      reason: recoveryBudgetExhaustionReason(recoveryBudget),
+      budget: normalizeRecoveryBudget(recoveryBudget),
+    };
   }
 
   if (value.projectId !== expected.projectId) {
@@ -673,7 +691,7 @@ export async function prepareCheckpointResume(
 ): Promise<ExportCheckpointPreparation> {
   const fileLengthBefore = await io.sessionFileSize(path);
   const validation = validateExportState(serializedManifest, expected, fileLengthBefore);
-  if (validation.kind === 'clean') {
+  if (validation.kind !== 'resume') {
     return validation;
   }
 
