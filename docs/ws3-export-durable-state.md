@@ -573,7 +573,12 @@ This round's five new Rust tests:
 
 ---
 
-## Round 7 — Rung 2b sealing + Rung 4 durable resume (2026-09-10)
+## Round 7 [Cursor lineage] — Rung 2b sealing + Rung 4 durable resume (2026-09-10)
+
+> Round-number collision, disambiguated Round 16: `docs/ws3-export-architecture-ledger.md` carries a
+> DIFFERENT "Round 7" (CC lineage, `ws3-tier1-close`, 2026-09-10/11 — Tier 1 closeout + Rung 3
+> re-render). Every "Round 7" reference in THIS file means this entry; the ledger's Round 16 entry
+> carries the cross-lineage round-number map.
 
 This section supersedes this report's earlier "WRITE ONLY", "wired to
 nothing", 15× mux-headroom, and bound-ordering statements. The historical
@@ -1777,3 +1782,78 @@ Additive variant `{kind:'recovery_budget_exhausted', reason, budget}`. **`clean`
 | `tsc` / `lint` | clean | clean |
 | digests | four new values above | locked in Rust + JS |
 | additive CC manifest | validates | unchanged schema v1 fields only |
+
+---
+
+## Round 16 — Consolidation: C11 closed, budget carried across pieces, hardware list moved out (2026-09-11)
+
+`ws3-export-integration` (fast-forwarded from `ws3-hardening-windows`; the merge base `15002e5`
+was an ancestor, so there were no conflicts). This section is the durable-state view of the
+ledger's Round 16 entry (`docs/ws3-export-architecture-ledger.md`), which is authoritative for
+dispositions, gates and the round-number map; this file states only what changed in the durable
+state itself. Note this file's own "Round 7" is the Cursor-lineage Round 7 (heading qualified
+above); the ledger's is a different entry — see the ledger's round-number map.
+
+### STEP 1a — Byte neutrality of the durable writes, on real bytes
+
+`scripts/ws3-clean-path-artifact.test.ts` (`931a3c8`) produced a real `export_final.mp4` through
+the real sidecar muxer at `51e1f6b` (before any of this branch's durable-state work) and at the
+consolidated head, same input, same settings: **identical SHA-256** in both arms —
+`5bef6955…f06c` (320×180, 3 pieces, 5490 AUs) and `09c53b61…5386` (1280×720, 2 pieces, 3660 AUs,
+~45 KB/AU — the arm in which the 512 KiB byte trigger, not the 100-chunk count, decides batch
+boundaries: 304 appends vs 42). The manifest writes (9 and 6 respectively at head, 0 at `51e1f6b`)
+and the per-append verify reads are the only clean-path difference and move no byte.
+
+### STEP 1c — C11: the export-lifetime budget now survives a piece boundary (`5aba84b`)
+
+**Was.** `startManifest` built every fresh piece's manifest with all four budget counters at 0.
+Within one process the in-process gates (export-scoped locals) held; across a crash the resumed
+process seeded those locals from the resumed PIECE's manifest, so budget spent in an earlier,
+finished piece was restored. Worst case for N GL pieces with one OS-level crash per piece:
+**2N rewinds, N failovers, 3N exact-offset truncates, 4N recovery attempts** against the documented
+2 / 1 / 3 / 4 (a 26-piece export: 52 rewinds, 26 failovers).
+
+**Is.** `createExportStateManifest` takes `carriedBudget: ExportLifetimeBudget`
+(`boundaryRewindsUsed`, `hardwareFailoverUsed`, `totalRecoveryAttempts`), which the writer's
+`startManifest` fills from `exportLifetimeBudgetOf(manifest)` — the manifest it is leaving behind,
+fresh or adopted plus every `note*` since. The newest manifest on disk is therefore always the
+export-lifetime total; `isRecoveryBudgetExhausted` on a resume into ANY piece reads the export's
+real spend. Still piece-scoped, by their own documented scope: `checkpoints`, `rotationsSeen`
+(the `never_checkpointed` coverage signal) and `checkpointResumeAttempts` (per checkpoint
+generation). No new file, native command, I/O or time constant — the same single-slot,
+never-awaited write, so Rung 0 is untouched. Schema version unchanged (the fields already
+existed; only their initial values on a fresh piece changed), and an older manifest with the
+fields absent still normalizes to zero.
+
+**Manifest scope statement, restated so it is not misread:** the manifest is per PIECE for
+checkpoints (the fence takes one file; `appendExportCheckpoint` is strictly monotonic within it)
+and per EXPORT for the three budget counters (carried at every piece start). Both are true at
+once; neither is a change to the Round 10 design, which said nothing about budget scope.
+
+**Residual, unchanged:** a crash inside the single fsync window between the synchronous
+in-memory charge and its durable write under-counts exactly one attempt (Round 15 STEP 10b
+item 3) — accepted, because awaiting the write would reintroduce the hang Rung 0 forbids.
+
+### Cargo reconciliation (STEP 1b)
+
+`cargo test --features fa-inference` runnable counts by head, name-diffed with `-- --list`
+(listed − 35 ignored): `57fc882` (Round 10) **379** → `4006386` (Round 11) **381** (+3 −1,
+`79e3eed`) → `1b3d369` = `80a7458` (Round 13) **384** (+3, `d73747a`) → `9de3455` (Round 15)
+**394** (+10: 6 `ffmpeg::windows_*` from `e9355a2`, 4 `session_claim::*` from `ee406dd`). This
+file's own Round 13 gate table (384) was already correct; the ledger's Round 15 "5 unitemized
+tests" note was the error, corrected there. This round's `cargo test --features fa-inference`
+adds no Rust tests; `cargo test` and the fa-inference suite numbers for the consolidated head are
+in the ledger's Round 16 gate section.
+
+### Hardware-bound items
+
+Every durable-state item that needs a real Windows or real macOS-native run — `pending_delete`
+accuracy, `\\?\` compliance and normalization, `KILL_BOUND_MS` on Windows, resume after a real
+OS crash, the checkpoint decline rate, `TIER_PIECE_BOUND_MS`, HDD bound numbers — now lives ONLY in
+`docs/ws3-export-windows-validation.md` (rows W1, W2, W3, W6, E1, E2, E4, E8). The earlier
+"hardware-bound / NOT DETERMINED" phrases in this file's Round 7/8/13 sections are dated history;
+that file is the current list.
+
+### Round 16 gates
+
+Recorded once, in the ledger's Round 16 entry ("STEP 6 — Gates"), not duplicated here.

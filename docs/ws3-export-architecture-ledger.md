@@ -112,7 +112,7 @@ is folded into Rung 5's row below as pre-existing plumbing, not a rung of its ow
 | 1 | — | **COMPLETE** as of Round 7's own closeout — unchanged this round. | LANDED | — | — | — |
 | 2 | — | Recoverable failure: Rungs 2b, 3, 4 wired end to end. | **COMPLETE as of Round 10.** All three are wired: Rung 3 (Round 7), Rung 2b (`7b53676`), Rung 4 (`8d5eb7d`). Verified together, not only apart, by `recoveryMatrix.test.ts`'s nine rows. Nothing in Tier 2 is left open. | see Rung 2b/3/4 rows | `7b53676`, `8d5eb7d` | `ws3-tier2-wire` |
 | 3 | — | Enterprise layers: Rung 5 plus size-scaled, I/O-calibrated bounds. **Confirmed this round** (closes Round 7's own speculative "Rung 5 is a plausible candidate" row). 5a/5b landed this round; 5c decided (defer); size-scaled/I/O-calibrated bounds NOT STARTED (no task this round scoped them). | **PARTIAL** | — | this round (5a/5b only) | `ws3-tier3-failover` |
-| 4 | — | Hardware-bound: real WebView2 IPC cost; HDD/non-SSD bound numbers; tier-piece wall-time on a live export; the Windows encoder's actual slice structure. **Confirmed this round** (closes Round 7's own speculative "old rung 13, process isolation" guess — that guess was WRONG; Tier 4 is a hardware-access category, not a single mechanism). All four items remain NOT STARTED — none reachable without physical Windows/non-SSD hardware, per Part 0. | NOT STARTED | — | — | — |
+| 4 | — | Hardware-bound: real WebView2 IPC cost (**W11/W12/W13**); HDD/non-SSD bound numbers (**E8**); tier-piece wall-time on a live export (**E4**); the Windows encoder's actual slice structure (**W14**). **Confirmed Round 9** (closes Round 7's own speculative "old rung 13, process isolation" guess — that guess was WRONG; Tier 4 is a hardware-access category, not a single mechanism). All four remain NOT STARTED; from Round 16 they are rows of `docs/ws3-export-windows-validation.md`, the single list of hardware-bound items. | NOT STARTED | `docs/ws3-export-windows-validation.md` | — | — |
 
 ---
 
@@ -163,27 +163,32 @@ future change doesn't have to re-derive "is this measured or assumed."
 | Item | Owner | What would close it | Needs hardware not available here? |
 |---|---|---|---|
 | ~~Tier 2/3/4 authoritative definitions~~ — **CLOSED Round 9.** See §2 Tier table: Tier 2 = Rungs 2b/3/4 (PARTIAL — 3 landed, 2b/4 not-wired); Tier 3 = Rung 5 + size-scaled bounds (PARTIAL — 5a/5b landed, 5c deferred, size-scaled bounds not started); Tier 4 = hardware-bound items (NOT STARTED, all four require physical hardware). | closed | closed | closed |
-| NOT DETERMINED #1/#2 (append throughput at 3 latencies) — **SIMULATED, not resolved** | Next round with Windows hardware access | A real WebView2/Windows run at the 12.4 ms-class machine, with the batched+back-pressure path active, measuring actual terminal drain | **Yes** — Windows machine with the real regression hardware profile |
-| Real per-call `open`/`write_all`/`close` cost in `ffmpeg.rs:189-198` on Windows | Owner of `ffmpeg.rs` (outside this round's file-ownership boundary) | Instrument that function directly and log real per-call timings on Windows | Yes |
+| NOT DETERMINED #1/#2 (append throughput at 3 latencies) — **SIMULATED, not resolved** → `docs/ws3-export-windows-validation.md` **W12** (Round 16) | Next round with Windows hardware access | see W12 | **Yes** |
+| Real per-call `open`/`write_all`/`close` cost in `ffmpeg.rs`'s append command on Windows → **W13** (Round 16) | Owner of `ffmpeg.rs` | see W13 | Yes |
 | ~~Whether `APPEND_QUEUE_CEILING_BYTES` (256 MB) is sized to any real legitimate peak~~ — **CLOSED Round 9 STEP 6b.** Restated explicitly as a last-resort guard, deliberately NOT derived from the unbatched pathological peak (category error — production is always batched). See Bound register row. Reopen trigger: a real field `queueDepthBytes` reading near 256 MB. | closed | closed | closed |
 | ~~The break-even latency at which `APPEND_BACKPRESSURE_THRESHOLD_BYTES` (32 MB) would actually engage~~ — **CLOSED Round 9 STEP 6a.** ≈5,654.5 ms/call (SIMULATED bisection), ≈456x the measured 12.4 ms Windows figure. See Bound register row and `scripts/ws3-measure-append-throughput.test.ts`. | closed | closed | closed |
 | ~~Rung 5 (software failover at a rotation boundary)~~ — **CLOSED (5a/5b) Round 9.** See Rung 5 sub-table. 5c remains a DECIDED-DEFER, not a NOT DETERMINED — see §7. | closed | closed | closed |
-| Whether `planEncoderSessions`'s "every session start is a keyframe" guarantee still holds under Rung 3's (and now Rung 5a's, which reuses the same resume mechanism) resumed-run bootstrapping (`initialSessionIndex` computed from `sessionStarts.indexOf`) for every real timeline shape, not just synthetic fixtures | Next round, or a live-export verification pass | A live export that actually triggers a mid-run rotation-flush-timeout and inspects the resumed session's first frame | Not necessarily — could be checked with a broader property-based fixture instead |
+| Whether `planEncoderSessions`'s "every session start is a keyframe" guarantee still holds under Rung 3's/5a's resumed-run bootstrapping for every real timeline shape — the CHECKPOINT half is answered (`encoderSessionPlan.test.ts` "RESUME KEYFRAME GUARANTEE", Round 14); the live-rewind half → **E3** (Round 16) | Next round, or a live-export verification pass | see E3, or a broader property-based fixture | Not necessarily |
 | Whether the Rung 3/5a rewind's simplification in the ORCHESTRATOR (`resumeSessionIndex` bootstrap at exactly one sparse index) generalizes correctly to a THIRD same-rung rewind if `MAX_BOUNDARY_REWINDS_PER_EXPORT` were ever raised above 2 | Whoever changes that constant | Extend `boundedRerenderWiring.test.ts` with a 3-rewind scenario before raising the constant | No |
 | ~~Round 9 STEP 2b — the Rung 3/5a rewind's `truncateAnnexbToOffset` is unbounded~~ — **CLOSED Round 10** (`46cfda8`). Wrapped in `TRUNCATE_BOUND_MS` with the same kill chain and typed error as its salvage sibling. Destructive probe: removing the wrap makes `rewindTruncateBound.test.ts` HANG (test timed out in 20 s) rather than fail an assertion — the defect itself, not a proxy. The sweep also found and fixed a second instance (the guard's per-piece diagnostic count). | closed | closed | closed |
 | **NEW, Round 9 STEP 5b — no active production "driver is struggling" warning currently exists** to ask whether throttling suppresses it. `encodeQueueSizeAtFlushExpiry` and `'queue-sample'` are diagnostic-only (no orchestrator/UI logic reads either as a live warning). If one is built later off raw `encodeQueueSize` trajectory, it MUST account for the fact that both `BACKPRESSURE_HIGH_WATER` (pre-existing) and this round's throttle now actively suppress that signal by design — build it off `wait-dequeue` time or the throttle's own internal state instead | Whoever builds that warning | Read this note before building it | No |
-| ~~Round 9 STEP 3/4 — mixed-rung SPS/PPS continuity is REASONED, not measured~~ — **MECHANISM CLOSED Round 10** (`1e61e84`), **WINDOWS ANSWER STILL OPEN**. Measured on Mac (Chromium 152, avc1.640028, 640x360@30): both rungs emit profile_idc 100 / level_idc 30, but the constraint flags differ ([000000] hw vs [000011] sw) and the entropy coding mode differs (CABAC hw vs CAVLC sw); SPS and PPS payloads differ entirely. The hardware-then-software join is nonetheless accepted by our own picture counter (60/60), by `VideoDecoder` (60 frames, no error), and by the real x86_64 ffmpeg sidecar, which muxes 60 frames AND fully decodes all 60 with zero warnings. So the pipeline tolerates a mid-stream parameter-set change, including the more dangerous entropy-mode change. **What is NOT answered:** Windows (Media Foundation vs a different software encoder) — Tier 4, needs the hardware; and WKWebView, where the app actually encodes — this ran in Chromium, so it compares VideoToolbox to OpenH264 through a different host. | Next round with Windows hardware; a WKWebView run needs only `npm run tauri:dev` | Re-run `spike-parameter-sets.html` inside the Tauri app for the WKWebView half; a Windows machine for the Windows half | Yes for the Windows half; no for the WKWebView half |
+| ~~Round 9 STEP 3/4 — mixed-rung SPS/PPS continuity is REASONED, not measured~~ — **MECHANISM CLOSED Round 10** (`1e61e84`), **WINDOWS ANSWER STILL OPEN**. Measured on Mac (Chromium 152, avc1.640028, 640x360@30): both rungs emit profile_idc 100 / level_idc 30, but the constraint flags differ ([000000] hw vs [000011] sw) and the entropy coding mode differs (CABAC hw vs CAVLC sw); SPS and PPS payloads differ entirely. The hardware-then-software join is nonetheless accepted by our own picture counter (60/60), by `VideoDecoder` (60 frames, no error), and by the real x86_64 ffmpeg sidecar, which muxes 60 frames AND fully decodes all 60 with zero warnings. So the pipeline tolerates a mid-stream parameter-set change, including the more dangerous entropy-mode change. **What is NOT answered:** Windows (Media Foundation vs a different software encoder) — Tier 4, needs the hardware; and WKWebView, where the app actually encodes — this ran in Chromium, so it compares VideoToolbox to OpenH264 through a different host. | Next round with Windows hardware; a WKWebView run needs only `npm run tauri:dev` | → **W4** (Windows) / **M1** (WKWebView), Round 16 | Yes for the Windows half; no for the WKWebView half |
 
-| **NEW, Round 10 — `ffmpeg.kill()` inside `withFfmpegLivenessBound`'s expiry handler is itself an unbounded `await`** (`ffmpegLivenessBound.ts:288`). If `kill()` never settles, the bound never rejects: the mechanism that saves every other native call can itself hang. Found by STEP 2's sweep; deliberately NOT fixed. Every candidate fix needs a new time constant for `kill()` that has never been measured, and inventing one is exactly the defect Round 7's unmeasured-bounds correction established the rule against. | Owner of `ffmpegLivenessBound.ts` | Measure real `ffmpeg_kill_session` latency (it is a state-flag store plus a child kill, expected sub-millisecond), then bound the await at a measured multiple — or restructure so the rejection does not depend on the kill settling | No |
-| **NEW, Round 10 — a rotation whose following bytes open directly on a coded slice yields NO checkpoint.** `fenceSafeCheckpointOffset` declines rather than guess, which is correct, but it means an encoder that does not emit inline parameter sets before its first slice after a rotation would produce a resumable-in-principle export with an empty manifest. Not observed: the Mac spike shows both rungs leading every IDR with SPS/PPS. | Next round | Log the decline rate on a live export; if it is ever non-zero, the encoder's AU shape needs re-examining before resume can be relied on there | No |
-| **NEW, Round 10 — pre-Round-10 abandoned session directories with no `export_state.json` are uncollectable from the renderer.** `ffmpeg_list_resumable_sessions` only returns directories that have a manifest, so a directory left by an older build is invisible to the cleanup policy. From this round on every export writes its manifest before rendering a frame, so only pre-round leftovers can be in that state. | Owner of `ffmpeg.rs` (frozen this round) | A native command that lists `kinetix-export-*` regardless of manifest presence, or a one-time sweep at startup | No |
-| **NEW, Round 10 — the resume path has never been exercised against a real crash.** Every proof here is a fixture: a byte-real fake ffmpeg for the bitstream, call-order recording for the fence. The native fence, `ffmpeg_list_resumable_sessions`, and `ffmpeg_reenter_session` have Rust unit tests (Cursor's) but no end-to-end run where the app was actually killed mid-export and restarted. | Next round | `npm run tauri:dev`, start a long export, kill the process at a rotation, restart, take the resume offer, and diff the finished file against an uninterrupted run | No — needs only a live Tauri session, which this round's "no live exports" rule excluded |
+| ~~Round 10 — `ffmpeg.kill()` inside `withFfmpegLivenessBound`'s expiry handler is itself an unbounded `await`~~ — **CLOSED Round 13** (`f9af872`, Cursor): measured worst 5 ms, `KILL_BOUND_MS` = 125 (25×), expiry raises `FfmpegKillHungError` naming that the sidecar may still be running. The Windows kill-latency half → **W6** (Round 16). | closed | closed | closed |
+| Round 10 — a rotation whose following bytes open directly on a coded slice yields NO checkpoint. Made VISIBLE Round 14 (`rotationsSeen` + `never_checkpointed`, `fa0a61c`); the live decline rate → **E2** (Round 16) | Next round | see E2 | No |
+| ~~Round 10 — pre-Round-10 abandoned session directories with no `export_state.json` are uncollectable from the renderer~~ — **CLOSED Round 13/14** (`d73747a` manifest-less orphan sweep, `ee406dd` consumer wiring at every export start). Windows `pending_delete` accuracy → **W1**. | closed | closed | closed |
+| Round 10 — the resume path has never been exercised against a real crash → **E1** (Round 16). Every proof is a fixture (byte-real fake ffmpeg, call-order recording). | Next round | see E1 | Live app on either platform |
 
 ---
 
 ## 6. Round log
 
-### Round 7 (2026-09-10 / 2026-09-11) — Tier 1 closeout + Rung 3 re-render
+### Round 7 [CC lineage] (2026-09-10 / 2026-09-11) — Tier 1 closeout + Rung 3 re-render
+
+> Round-number collision, disambiguated Round 16: `docs/ws3-export-durable-state.md` carries a
+> DIFFERENT "Round 7" (Cursor lineage, `ws3-durable-resume`, 2026-09-10 — Rung 2b sealing + Rung 4
+> resume primitives). Every "Round 7" reference in THIS file means this entry; see the Round 16
+> round-number map for the full cross-lineage numbering.
 
 **Branch:** `ws3-tier1-close`, cut from `ws3-export-integration` @ `15002e5` (commits `89317ea`, `15002e5`). **Base main SHA:** `4d4922c`. **Rollback:** `2959861`. Parallel round — Cursor concurrently on `ws3-durable-resume`.
 
@@ -617,57 +622,6 @@ before commit:
    wrong field, fixed by making `snapshotLiveness`'s embedded ledger always the at-finish one (both
    its call sites are terminal-only, never a mid-run progress snapshot).
 
-### Rung 5c — out-of-process render isolation: **DEFER** (decided Round 9, 2026-09-10)
-
-Deferred three times before this round (per Part 0's own framing); decided here, adopting
-`docs/ws3-export-recovery-architecture.md` §6's own prior analysis as the authoritative
-reasoning (that document reached the identical conclusion independently, with a fuller
-two-shape cost comparison this entry summarizes rather than re-derives).
-
-1. **Would it have prevented the frame-47,840 hang? No — confirmed, and the premise itself
-   needs correcting.** That export was never actually hung: `docs/ws3-export-recovery-architecture.md`
-   §6a is unambiguous — process isolation contains CRASHES, not HANGS. A `flush()` that never
-   returns still never returns in another process; the caller still waits. What isolation buys
-   is the ability to KILL the stuck process and survive, and this pipeline already has that —
-   the export body runs in a `Worker`, and the orchestrator's watchdog already calls
-   `worker.terminate()` on timeout, a hard kill that needs no cooperation from the worker. So
-   for a hang, the marginal gain of a separate OS process over the existing `Worker.terminate()`
-   is close to zero. Isolation addresses failures this pipeline does not currently have evidence
-   of having had, not the one actually investigated.
-2. **Which failures it WOULD genuinely save, concretely:** (a) a renderer crash or OOM that
-   takes the whole app down — a `Worker` shares the renderer process, so a crash there loses
-   the app and the current project, not just the export; this is the strongest genuine case,
-   and it is about blast radius, not liveness. (b) Main-thread timer throttling under WKWebView
-   occlusion (the documented run-5 class, `docs/ws3-silent-gaps-diagnosis.md`, 223.6 s of
-   starved `setTimeout` deadlines) — a native process is not subject to that policy at all; this
-   is the one class where isolation is a real fix, not a nicer failure mode. **Concretely NOT**
-   `glCompositor.ts:202`'s GPU-context-loss throw (`createContentTexture` → `requireGl`) — a lost
-   WebGL context is a driver/compositor event that happens in whatever process owns the context;
-   isolation changes WHERE the exception surfaces, not WHETHER it occurs, and it is already
-   handled deterministically today (`exportWorker.ts`'s `contextLost` flag → `'gl-context-lost'`
-   failure identity, verified present this round at `exportWorker.ts:1835-1839`).
-3. **Cost, native Rust render vs. hidden-WebView isolation:** a full native render process needs
-   the WebGL2 compositor, the GL text renderer (~900 lines), decode, and encode all rewritten
-   against a new IPC protocol — MONTHS, and it re-opens every parity question the export plan
-   already settled once; it is the ONLY shape that actually fixes the occlusion class (item 2b),
-   being outside WebKit's throttling policy entirely. A second hidden WebView window is DAYS —
-   one seam (`ExportWorkerHandle`, already the sole surface `driveGlRun` depends on) — but fixes
-   NEITHER the investigated hang NOR the occlusion class, and is arguably WORSE for occlusion: a
-   window that is never visible is the maximally-throttled case of exactly the policy that caused
-   the documented run-5 failure.
-4. **Defer or implement: DEFER.** Neither shape addresses the failure actually investigated,
-   the cheap shape does not address the one class isolation WOULD help with, and the expensive
-   shape that does is a rewrite whose engineering budget produces more value spent on Rungs 2b/3/4/5
-   (which this round and Cursor's concurrent round are actively closing) than on a speculative
-   rewrite.
-
-**Reopen trigger (specific, not "if problems continue"):** a real, OBSERVED occurrence of EITHER
-— (a) a renderer crash/OOM during export that took down the whole app and lost unsaved project
-state, not a hypothetical; or (b) a second field-verified occurrence of the WKWebView-occlusion
-timer-starvation class documented in `docs/ws3-silent-gaps-diagnosis.md`'s run 5, confirming it
-is a recurring failure mode rather than a one-off. Either observation reopens this decision;
-absent one, it stays deferred.
-
 ### Round 15 (2026-09-11) — PROMPT 19 close-out: STEPs 11-13, findings-register disposition
 
 **Branch:** `ws3-hardening-windows`, fresh session, continuing directly from Round 14's own head
@@ -1005,11 +959,14 @@ The 35 ignored are constant at every head.
 **`whisper::in_flight_tests` flake — REPRODUCED on the 4th run.** Round 15 observed 0 failures in
 3 parallel runs; this round's 4th parallel run of `cargo test --features fa-inference` failed
 `whisper::in_flight_tests::a_retained_percent_is_peeked_not_consumed` — `393 passed; 1 failed;
-35 ignored`, panic at `src/whisper.rs:1671:43`, which is `received[0]` on a recording-channel log
-that was still empty when read (the attach's replayed progress event had not been delivered
-yet). The same test passes in isolation (`cargo test --features fa-inference
-a_retained_percent_is_peeked_not_consumed`: 1/1, 0.00 s) and single-threaded. Record: **1 in 4
-parallel runs this session, historically observed, not fixed and not proven fixed.** Nothing in
+35 ignored`, panic at `src/whisper.rs:1671:43` — `received[0]` on a recording-channel log that
+was empty when read. The test's `Channel` callback pushes synchronously, so this is NOT an
+async-delivery race; the mechanism was not investigated further (outside WS3 file ownership).
+The same test passes in isolation (`cargo test --features fa-inference
+a_retained_percent_is_peeked_not_consumed`: 1/1, 0.00 s) and single-threaded. Record across the
+consolidated tree (STEP 6): parallel runs this round **2 failed of 3** (hardening head; integration
+head run 1), the third green; Round 15's 3 were green — **2 of 6 parallel runs overall, always
+this one test, never single-threaded. Historically observed, not fixed, not proven fixed.** Nothing in
 this round's or this branch's Rust changes plausibly touched it: `git log 4d4922c..HEAD --
 src-tauri/src/whisper.rs` is empty; the branch's Rust diff is confined to `ffmpeg.rs`,
 `session_claim.rs`, `lib.rs` (command registration), `Cargo.toml`/`Cargo.lock`. The race is
@@ -1047,3 +1004,306 @@ piece-scoped. Probes: `exportCheckpointWriter.test.ts` "THE C11 SCENARIO" (+3), 
 move. The residual from Round 15 STEP 10b item 3 (a crash landing between the synchronous
 in-memory charge and its fsync under-counts ONE attempt) is unchanged and unchanged in kind — it
 was never a piece-boundary leak.
+
+#### STEP 2 — Merge into `ws3-export-integration`: fast-forward, ZERO conflicts
+
+`git merge ws3-hardening-windows` in the `ws3-export-integration` worktree (which already
+existed at `../4.kinetix-pro-studio-ws3-export-integration` @ `15002e5`; no second worktree was
+added) was a **fast-forward** `15002e5 → e8cfd82`. Structurally so, not luck: `15002e5` is the
+merge base of the two branches and an ancestor of the hardening head, and every lineage the task
+predicted conflicts from — `ws3-tier3-failover` (`0ab9af8`), `ws3-tier2-wire` (`81815cd`),
+`ws3-durable-resume` Rounds 11 and 13 (`d6eff3b`, `2514423`) — had already been merged INTO
+`ws3-hardening-windows` before this round. The integration branch itself carried no ledger and no
+pipeline audit at all (`git cat-file -e 15002e5:docs/ws3-export-architecture-ledger.md` fails).
+The three predicted hazards were therefore verified as resolutions of the MERGED tree rather than
+resolved as conflicts:
+
+| File | Predicted | Measured on the merged tree |
+|---|---|---|
+| `docs/ws3-export-architecture-ledger.md` | three divergent blobs, chronological union | Every Round-log entry from every blob (`ws3-tier1-close` Round 7, `ws3-tier3-failover` Round 7 + 9 + Rung 5c, `ws3-tier2-wire` Round 7 + 9 + 10) is present in the merged file with **zero** missing non-empty lines; the Round 7 and Round 9 entries are byte-identical to their source blobs. The only lines unique to an older blob are LIVING-register rows (Rung 0/2b/4 status, Tier 2 status, two NOT DETERMINED rows) that Round 10 updated in place — registers are current-state tables, not append-only — plus the `## 7. Decisions register` heading, restored in STEP 3. |
+| `docs/ws3-export-durable-state.md` | three blobs, hardening (1779 lines) a strict superset | `ws3-export-integration` (629 lines), `ws3-tier3-failover` (629) and `ws3-tier2-wire` (1332): **0** unique non-empty lines each. `ws3-durable-resume` (1602): **1** unique line — the `save_session_file` / "pre-encode path-length validation: NOT DETERMINED" sentence, which Round 15 edited in place at `:1759` (adding "*as of this entry*") and followed with the Round 14/15 closure. Nothing lost; one sentence deliberately qualified. |
+| `docs/work-in-progress.md` | two blobs, WS3 @ `15002e5` wins | One blob (`c16afeab`) on every branch involved — identical everywhere; the 5-line append-path batching item is at `:32-36`. Nothing to take. |
+
+#### STEP 3 — The ledger's two remaining divergences
+
+**The "Round 9 collision" does not exist in any ledger blob.** Measured: the only `### Round 9`
+heading in any blob (`ws3-tier3-failover`, `ws3-tier2-wire`, hardening) is the same entry, and
+the tier3 and hardening copies differ by one blank line. No entry was dropped, so none needed
+keeping. What DOES exist is a cross-DOCUMENT collision on **Round 7**: this file's Round 7 (CC
+lineage, `ws3-tier1-close`, 2026-09-10/11, Tier 1 closeout + Rung 3) versus
+`docs/ws3-export-durable-state.md`'s Round 7 (Cursor lineage, `ws3-durable-resume`, 2026-09-10,
+Rung 2b sealing + Rung 4 resume primitives). Round 15's "Round 9 already collided" note was this
+collision, misnumbered. Disposition: **both kept, both headings qualified** (`Round 7 [CC
+lineage]` / `Round 7 [Cursor lineage]`), a one-line cross-note added under each pointing at the
+other, and the map below recorded. **Deliberately NOT renumbered** to "the next free round
+number": the next free number is 17 (12 is taken — see the map), so renaming would put a
+2026-09-10 entry after a 2026-09-11 one, and it would break 42 existing "Round 7" cross-references
+across three docs (29 in this file alone) plus the commit messages that cite them. The qualified
+headings disambiguate every existing reference without moving it.
+
+**Round-number map (cross-lineage, authoritative from here on):**
+
+| Round | Lineage / branch | Where the entry lives | Content |
+|---|---|---|---|
+| 7 [CC] | `ws3-tier1-close` | this file §6 | Tier 1 closeout, Rung 3 rewind, back-pressure, diagnostics blob, ledger created |
+| 7 [Cursor] | `ws3-durable-resume` | `durable-state.md` | Rung 2b sealing + Rung 4 resume primitives, checkpoint manifest, fence |
+| 8 | Cursor, `ws3-durable-resume` | `durable-state.md` | Cargo arithmetic, mux measured at 1.7/2.3 GB, conservative final-AU, seam contracts |
+| 9 | CC, `ws3-tier3-failover` | this file §6 + §7 | Rung 5a/5b, canonical taxonomy, Rung 5c DEFER |
+| 10 | CC, `ws3-tier2-wire` | this file §6 | Tier 2 closeout: sealing wired, resume wired, Rung 0 holes, parameter-set spike, recovery matrix |
+| 11 | Cursor, `ws3-durable-resume` | `durable-state.md` + audit Part 7 | C1/C2/C3/C7/C8/H8 remediation |
+| 12 | CC, `ws3-hardening-windows` STEPs 0-2 (`d6eff3b`, `4a3e584`, `0d397f7`) | **code comments only** (`WS3 Round 12`, `App.tsx`, `useExport.ts`, `exportResumeSession.ts`, `flushSalvage.test.ts`) — no doc entry was ever written | Round 11 merge, resume-refusal notice, 512 KiB batch cap (H1) |
+| 13 | Cursor, `ws3-durable-resume` | `durable-state.md` + audit Part 7 | Realistic fixtures, `KILL_BOUND_MS`, session claim, orphan sweep |
+| 14 | CC, `ws3-hardening-windows` | this file §6 + `durable-state.md` + audit | C5/C6/C7/H5/H9/H10 |
+| 15 | CC, `ws3-hardening-windows` | this file §6 + audit | STEPs 10b-13, batch-cap quantification, first full disposition table |
+| 16 | CC, `ws3-export-integration` | this file §6 (this entry) + `windows-validation.md` | Consolidation |
+
+**Rung 5c DEFER block: folded.** It had lost its `## 7. Decisions register` heading at `be332ee`
+(the Round 7 preamble restore) and was sitting inside §6 between the Round 14 and Round 15
+entries. Restored as **§7** after the Round log — the position its own first line ("durable — not
+round-log") and the Round 9 entry ("see §7 below") both name — with a provenance note; content
+verified byte-identical to the `ws3-tier3-failover` blob (`dedc3bf`). Deferred four rounds; closed
+here.
+
+**Canonical form.** After this round, `docs/ws3-export-architecture-ledger.md` has exactly one
+form: the file at `ws3-export-integration`'s head, to which `ws3-hardening-windows` is
+fast-forwarded (both pushed at the same SHA). The older blobs on `ws3-tier1-close`,
+`ws3-tier3-failover` and `ws3-tier2-wire` are strict historical ancestors whose every round-log
+line is contained in this one (measured above); no branch carries a ledger with content this one
+lacks.
+
+#### STEP 4 — Consolidated disposition: C1–C11, H1–H10 (supersedes every earlier table)
+
+Vocabulary: `closed` = fixed in code, with the SHA and the probe that goes red without the fix;
+`mitigated` = code-side fix verified, one residual stated; `open` = no code-side fix possible from
+this environment, or an explicit deferral. Nothing hardware-bound is `closed`. Hardware residuals
+are named by their row ID in `docs/ws3-export-windows-validation.md` and described nowhere else.
+
+| ID | Statement (short) | Status | Fixing SHA(s) · probe / residual |
+|---|---|---|---|
+| C1 | Resume fence didn't gate write/exec/truncate/read | **closed** | `79e3eed` · `ffmpeg::tests::resumed_session_blocks_bitstream_ops_until_prepared`, `resumed_session_blocks_write_during_pending` |
+| C2 | `{kind:'clean'}` masked a post-mutation native failure | **closed** | `693e533` · `exportResumeDiscovery.test.ts` "bitstream_touched: the fence mutates the file, THEN fails" + "a fence failure with NO mutation is never reported as bitstream_touched" |
+| C3 | Timeline hash omitted overlay/effect/asset-byte identity | **closed** | `693e533` · `exportCheckpoint.test.ts` "each newly covered visual field changes the hash", "includes timelineIdentityVersion so v1 hashes invalidate" |
+| C4 | Rewind `truncateAnnexbToOffset` had no TS liveness bound | **closed** | `46cfda8` (Round 10) · `rewindTruncateBound.test.ts` — with the wrap removed the test HANGS (20 s timeout), the defect itself |
+| C5 | Pending append batch silently discarded on abnormal finish | **closed** | `2bb06fa` · `appendBatching.test.ts` "watchdog kill: discardedAtFinish names the encoder-produced bytes…", "worker crash: the same discard accounting applies" |
+| C6 | `destroy`/premux cleanup failures invisible to operator | **closed** | `ee406dd` · `exportCleanupNotices.test.ts`; `muxOnly.test.ts` premux-delete failure recorded |
+| C7 | Manifest schema couldn't bound recovery across restarts | **mitigated** | `fa0a61c` (full-reset bug) + `5aba84b` (C11 cross-piece carry) · `hardwareFailoverWiring.test.ts` resumed-run seeding probe; `exportCheckpointWriter.test.ts` "THE C11 SCENARIO". Residual: a crash inside the single fsync window between the synchronous in-memory charge and its durable write under-counts exactly one attempt (Round 15 STEP 10b item 3, accepted under Rung 0 — awaiting the write would reintroduce the hang) |
+| C8 | Concat deleted output on any error, including disk-full | **closed** | `79e3eed` · `ffmpeg::tests::concat_preserves_partial_output_on_disk_full_error` |
+| C9 | Slice-counting reachable on a production guard | **closed** (already clean) | Rung 1, pre-existing · `annexbFrameCount.test.ts` `8slice-10pic` fixture (`pictures` 10 vs `vclNals` 80); zero production reads of `.vclNals` for a decision |
+| C10 | In-process second-rewind session-index bug | **closed** | `a6581d2` (Round 7 [CC]) · `boundedRerenderWiring.test.ts` "stops rewinding once MAX_BOUNDARY_REWINDS_PER_EXPORT is reached" — RED with the `resumeSessionIndex` bootstrap removed |
+| C11 | Piece-scoped manifest leaked budget spent in earlier pieces across a crash (worst case 2N/N/3N/4N vs 2/1/3/4) | **closed** | `5aba84b` · `exportCheckpointWriter.test.ts` "THE C11 SCENARIO" — RED with the carry replaced by `undefined`; `exportCheckpoint.test.ts` `exportLifetimeBudgetOf` |
+| H1 | 4 MiB batch vs. WebView2 ~2 MB IStream truncation | **mitigated** | `0d397f7` · 512 KiB cap (4× margin) + independent per-append verify; clean-path neutrality of the cap measured on real bytes (STEP 1a Arm B, 304 vs 42 appends, identical MP4). Residual: **W11** (and **W12**, **W13**) |
+| H2 | `prefer-software` + `avc1.640028` may be unconfigurable on Windows/OpenH264 | **mitigated** | `75e331c` · profile-ladder descent pinned per piece via `selectedCodec` (`hardwareCodecLadder.ts`, `hardwareFailoverLadder.test.ts`). Residual: **W4** |
+| H3 | `VideoEncoder.close()` async release may leak HW sessions | **mitigated** | `9ea600a` · `encoderSessionsOpened`/`encoderSessionsClosed` on the diagnostics blob, close before every terminal post — a leak is observable. Residual: **W5**, **M2** |
+| H4 | Defender scan-on-close may explain the 12.4 ms/append gap | **open** | No code-side fix possible here. **W7** |
+| H5 | Two app instances could `reenter` the same session (no lock) | **mitigated** | `d73747a` (claim primitive) + `ee406dd` (consumer: `evaluateResumeCandidate` reads the claim before `reenter`) · `exportResumeDiscovery.test.ts` "a LIVE claim blocks reentry…", "a STALE claim permits reentry…"; `session_claim::tests::claim_contention_second_holder_refused_while_first_live`. Residual: **W10** |
+| H6 | TDR during a long GL export presents as unrecoverable context loss | **open**, by decision | Rung 5c DEFER (§7), reopen trigger stated there. **W8** |
+| H7 | Lid close / Modern Standby may kill MF drain despite heartbeat | **open** | No code-side fix possible here. **W9** |
+| H8 | Checkpoint fsync without Annex-B `sync_all` could lose durability | **mitigated** | `79e3eed` · `sync_session_file` (`ffmpeg.rs:94`) on append/truncate/prepare; seam order append → fsync → manifest; handshake `byteOffset ≤ fileLen` (`exportResumeDiscovery.test.ts`); `ffmpeg::tests::export_state_write_is_validated_synced_and_replaceable`. Residual: durability under a real OS crash is **E1** |
+| H9 | Long destination paths fail `save_session_file` post-encode | **mitigated** | `e9355a2` · `windows_long_path` on both copy sides (6 `ffmpeg::tests::windows_*` tests) + `exportDestinationPath.ts` pre-encode check (`useExport.ts:717-747`). Residual: **W2**, **W3** |
+| H10 | Orphaned session dirs accumulate, ~1.6–2.3 GB each | **mitigated** | `d73747a` (native sweep) + `ee406dd` (consumer: `useExport.ts` sweeps once per export start, `pendingDelete` kept apart from `bytesReclaimed`) · `session_claim::tests::pending_delete_is_never_classified_as_deleted`, `only_the_deleted_outcome_is_eligible_for_bytes_reclaimed`. Residual: **W1** |
+
+Twenty-one rows, no blanks. Ten `closed` (C1–C6, C8–C11), eight `mitigated` (C7, H1, H2, H3,
+H5, H8, H9, H10), three `open` (H4, H6, H7). Every `mitigated` residual and every `open`
+item resolves to a row in `docs/ws3-export-windows-validation.md` (25 rows: W1–W15 Windows,
+M1–M2 macOS-native, E1–E8 either) — that file, not this table, is where "what's left" is read.
+This table supersedes Round 15 STEP 12's table and every earlier scattered disposition
+(`docs/ws3-export-pipeline-audit.md` Part 7's Round 11/13/14/15 blocks are historical; its Round
+16 block points here).
+
+#### Final state
+
+**Seven frozen constants, read from source at this head:** `WATCHDOG_MS` = 30,000
+(`exportPipelineWebCodecs.ts:949`) · `FORWARD_PROGRESS_BOUND_MS` = 45,000 (`:978`) ·
+`FLUSH_BOUND_MS` = 20,000 (`exportWorker.ts:886`) · `APPEND_DRAIN_BOUND_MS` = 600,000
+(`exportPipelineWebCodecs.ts:1110`) · `TRUNCATE_BOUND_MS` = 172,675 (`ffmpegLivenessBound.ts:175`,
+`⌈6,907 × 25⌉`) · `KILL_BOUND_MS` = 125 (`:149`, `⌈5 × 25⌉`) · `APPEND_BATCH_BYTES` = 524,288 =
+512 KiB (`exportPipelineWebCodecs.ts:1052`). Unchanged this round.
+
+**Four fixture digests** (`annexbFrameCount.test.ts:242-245`, mirrored in
+`docs/ws3-export-durable-state.md`): `8slice-10pic` 781 B
+`5db5e004522c4212339bfbae771df15c84bc8858ec8ad7906a131199dcaf8994` · `1slice-12pic` 261 B
+`af89ca66bbb7447312547e54d8ded6e9ac460b51d8e09f5a327ac82cf5a88d44` · `paramsets-3pic` 81 B
+`1abf9839f658ae5b9f83f2411542b86fe0490c055e1ec739f00d4bd2a6458035` · `short-9pic` 201 B
+`fb9cdda22d69cac8af96ef1f7f1cd5a9dfaf486ef7d8efb46fe01a0c7fb6198b`. Unchanged.
+
+**Clean-path output digests (new baseline, STEP 1a):** Arm A `export_final.mp4`
+`5bef695552b82311c95c4dbad410c6755c0820a220a2e7519a3caf4f3748f06c`; Arm B
+`09c53b61334205f7522e24912a2bbf951ca8da011a12e9de3eab22be39995386` (inputs and procedure in
+STEP 1a and the harness header).
+
+**Recovery budget as actually implemented** (`exportCheckpoint.ts:22-30`,
+`exportPipelineWebCodecs.ts`): per export, every GL piece combined, and — from `5aba84b` —
+carried across piece boundaries in the durable manifest so it holds across any number of
+crashes: `MAX_BOUNDARY_REWINDS_PER_EXPORT` = 2 · `MAX_HARDWARE_FAILOVER_PER_EXPORT` = 1
+(one-shot flag, not charged to the rewind budget) · `MAX_TRUNCATES_PER_EXPORT` = 3 (2 + 1,
+exact-offset, each under `TRUNCATE_BOUND_MS`) · `MAX_DRIVE_GL_RUN_ATTEMPTS_PER_EXPORT` = 4 (1
+initial + 2 + 1) = `MAX_TOTAL_RECOVERY_ATTEMPTS_PER_EXPORT`, the cross-process gate
+(`isRecoveryBudgetExhausted`: refuses a resume once `boundaryRewindsUsed ≥ 2` or
+`totalRecoveryAttempts ≥ 4`, where resume attempts also count). In-process gates read the
+export-scoped locals, seeded from the resumed manifest; the durable manifest carries
+`boundaryRewindsUsed`, `hardwareFailoverUsed`, `totalRecoveryAttempts` export-lifetime and
+`checkpointResumeAttempts`, `rotationsSeen`, `checkpoints` piece-scoped. Salvage: `MAX_FLUSH_SALVAGES`
+= 1 per GL piece (final-flush only). Known residual: the one-attempt fsync-window under-count
+(C7).
+
+#### STEP 6 — Gates on the merged integration branch (raw tails)
+
+`npx tsc --noEmit` → exit 0, no output. `npm run lint` (= `tsc --noEmit`) → exit 0.
+
+`npm test`, run 1:
+```
+[replay:v6] parsed=447 kept=444 skipped=3 gate.aborted=false totalCommittedDuration=1421.29 audioDuration=1421.29
+[replay:173] parsed=175 kept=172 skipped=3 gate.aborted=false totalCommittedDuration=709.01 audioDuration=709.01
+[replay:spanish] parsed=27 kept=26 skipped=1 gate.aborted=false totalCommittedDuration=92.04 audioDuration=92.04
+ ✓ src/services/dragDurationInvariant.test.ts (12 tests) 504ms
+stdout | src/services/syncTiming.test.ts > Row 8a — last-segment rescue window sized from the probed audioDuration > fails to recover the last segment's true words with the token-derived fallback, succeeds once the true probed duration is passed
+stdout | src/services/syncTiming.test.ts > Row 8a — last-segment rescue window sized from the probed audioDuration > the optional audioDuration parameter does not change output for existing (no-audioDuration) call sites
+[ws3-seal] operator consented to a SHORT deliverable {"picturesKept":27,"picturesExpected":30,"picturesLost":3,"keptWallDurationSeconds":0.9,"lostWallDurationSeconds":0.1,"fps":30}
+[ws3-seal] operator consented to a SHORT deliverable {"picturesKept":27,"picturesExpected":30,"picturesLost":3,"keptWallDurationSeconds":0.9,"lostWallDurationSeconds":0.1,"fps":30}
+[ws3-seal] operator consented to a SHORT deliverable {"picturesKept":29,"picturesExpected":30,"picturesLost":1,"keptWallDurationSeconds":0.9666666666666667,"lostWallDurationSeconds":0.03333333333333333,"fps":30}
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+ Test Files  207 passed | 63 skipped (270)
+      Tests  3569 passed | 78 skipped (3647)
+   Duration  225.20s (transform 29.81s, setup 0ms, import 136.89s, tests 1374.82s, environment 37.37s)
+exit 0
+```
+`npm test`, run 2:
+```
+[replay:v6] parsed=447 kept=444 skipped=3 gate.aborted=false totalCommittedDuration=1421.29 audioDuration=1421.29
+[replay:173] parsed=175 kept=172 skipped=3 gate.aborted=false totalCommittedDuration=709.01 audioDuration=709.01
+[replay:spanish] parsed=27 kept=26 skipped=1 gate.aborted=false totalCommittedDuration=92.04 audioDuration=92.04
+ ✓ src/services/dragDurationInvariant.test.ts (12 tests) 529ms
+stdout | src/services/syncTiming.test.ts > Row 8a — last-segment rescue window sized from the probed audioDuration > fails to recover the last segment's true words with the token-derived fallback, succeeds once the true probed duration is passed
+stdout | src/services/syncTiming.test.ts > Row 8a — last-segment rescue window sized from the probed audioDuration > the optional audioDuration parameter does not change output for existing (no-audioDuration) call sites
+[ws3-seal] operator consented to a SHORT deliverable {"picturesKept":27,"picturesExpected":30,"picturesLost":3,"keptWallDurationSeconds":0.9,"lostWallDurationSeconds":0.1,"fps":30}
+[ws3-seal] operator consented to a SHORT deliverable {"picturesKept":29,"picturesExpected":30,"picturesLost":1,"keptWallDurationSeconds":0.9666666666666667,"lostWallDurationSeconds":0.03333333333333333,"fps":30}
+[ws3-seal] operator consented to a SHORT deliverable {"picturesKept":27,"picturesExpected":30,"picturesLost":3,"keptWallDurationSeconds":0.9,"lostWallDurationSeconds":0.1,"fps":30}
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+[seek] target=0.000s videoDuration=10s readyState=4 networkState=1 src=blob:same-source-url
+ Test Files  207 passed | 63 skipped (270)
+      Tests  3569 passed | 78 skipped (3647)
+   Duration  219.79s (transform 29.26s, setup 0ms, import 138.07s, tests 1395.73s, environment 39.01s)
+exit 0
+```
+Identical. **Arithmetic against 3641:** `9de3455` = 3564 passed + 77 skipped = **3641** (Round
+15's own "3565/77 = 3642" was an off-by-one — its +1 probe was already inside its 3564
+measurement; the diff `9de3455..HEAD -- '*.test.ts'` adds exactly 6 tests and removes 0). Delta
+this round, every one attributed: `exportCheckpointWriter.test.ts` +3 (`5aba84b`, C11: 7 → 10),
+`exportCheckpoint.test.ts` +2 (`5aba84b`: 26 → 28), `scripts/ws3-clean-path-artifact.test.ts` +1
+**skipped** (`931a3c8`, gated on `WS3_ARTIFACT_DIR`). 3641 + 5 passed + 1 skipped = **3647 =
+3569 / 0 / 78** ✓.
+
+`cargo test` (default features):
+```
+test result: ok. 308 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 9.37s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+`cargo test --features fa-inference`, parallel, run 1 of 2 on this head:
+```
+test whisper::in_flight_tests::a_retained_percent_is_peeked_not_consumed ... FAILED
+thread 'whisper::in_flight_tests::a_retained_percent_is_peeked_not_consumed' (376042) panicked at src/whisper.rs:1671:43:
+test result: FAILED. 393 passed; 1 failed; 35 ignored; 0 measured; 0 filtered out; finished in 9.40s
+```
+run 2 of 2, parallel:
+```
+test result: ok. 394 passed; 0 failed; 35 ignored; 0 measured; 0 filtered out; finished in 9.28s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+single-threaded (`-- --test-threads=1`):
+```
+test result: ok. 394 passed; 0 failed; 35 ignored; 0 measured; 0 filtered out; finished in 34.41s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+308 / 0 / 5 and 394 / 0 / 35 match Round 15 exactly (no Rust test added this round). The one
+parallel failure is the `whisper::in_flight_tests` flake recorded under STEP 1b.
+
+**Seven frozen constants** verified verbatim against source (values and `file:line` in "Final
+state" above). **Four fixture digests** unchanged (`annexbFrameCount.test.ts:242-245` ==
+`docs/ws3-export-durable-state.md`, exercised passing in both `npm test` runs). `git status
+--porcelain` on the integration worktree: clean apart from `node_modules/` and `public/`
+(standing untracked). The three pre-existing untracked docs in the MAIN worktree
+(`docs/ws3-export-durable-state.md`, `docs/ws3-export-speed-architecture-audit.md`,
+`docs/ws3-groq-transcription-architecture-audit.md`) are pre-existing and out of scope — not
+staged, committed, or deleted (Cursor removes two of them in its Phase 2). No `git add -A`; every
+stage was by named path. `ws3-hardening-windows` fast-forwarded to the integration head so both
+branches carry the one canonical ledger; both pushed. No merge to `main`, no PR.
+
+---
+
+## 7. Decisions register (durable — not round-log, never re-litigated without overturning the entry)
+
+> Round 16 note: this heading was dropped by `be332ee` (the Round 7 preamble restore), which left
+> the block below sitting inside §6 between the Round 14 and Round 15 entries. Restored here, at
+> the position its own first line and the Round 9 entry ("see §7 below") both name. Content
+> unchanged from the `ws3-tier3-failover` blob (`dedc3bf`), verified byte-identical.
+
+### Rung 5c — out-of-process render isolation: **DEFER** (decided Round 9, 2026-09-10)
+
+Deferred three times before this round (per Part 0's own framing); decided here, adopting
+`docs/ws3-export-recovery-architecture.md` §6's own prior analysis as the authoritative
+reasoning (that document reached the identical conclusion independently, with a fuller
+two-shape cost comparison this entry summarizes rather than re-derives).
+
+1. **Would it have prevented the frame-47,840 hang? No — confirmed, and the premise itself
+   needs correcting.** That export was never actually hung: `docs/ws3-export-recovery-architecture.md`
+   §6a is unambiguous — process isolation contains CRASHES, not HANGS. A `flush()` that never
+   returns still never returns in another process; the caller still waits. What isolation buys
+   is the ability to KILL the stuck process and survive, and this pipeline already has that —
+   the export body runs in a `Worker`, and the orchestrator's watchdog already calls
+   `worker.terminate()` on timeout, a hard kill that needs no cooperation from the worker. So
+   for a hang, the marginal gain of a separate OS process over the existing `Worker.terminate()`
+   is close to zero. Isolation addresses failures this pipeline does not currently have evidence
+   of having had, not the one actually investigated.
+2. **Which failures it WOULD genuinely save, concretely:** (a) a renderer crash or OOM that
+   takes the whole app down — a `Worker` shares the renderer process, so a crash there loses
+   the app and the current project, not just the export; this is the strongest genuine case,
+   and it is about blast radius, not liveness. (b) Main-thread timer throttling under WKWebView
+   occlusion (the documented run-5 class, `docs/ws3-silent-gaps-diagnosis.md`, 223.6 s of
+   starved `setTimeout` deadlines) — a native process is not subject to that policy at all; this
+   is the one class where isolation is a real fix, not a nicer failure mode. **Concretely NOT**
+   `glCompositor.ts:202`'s GPU-context-loss throw (`createContentTexture` → `requireGl`) — a lost
+   WebGL context is a driver/compositor event that happens in whatever process owns the context;
+   isolation changes WHERE the exception surfaces, not WHETHER it occurs, and it is already
+   handled deterministically today (`exportWorker.ts`'s `contextLost` flag → `'gl-context-lost'`
+   failure identity, verified present this round at `exportWorker.ts:1835-1839`).
+3. **Cost, native Rust render vs. hidden-WebView isolation:** a full native render process needs
+   the WebGL2 compositor, the GL text renderer (~900 lines), decode, and encode all rewritten
+   against a new IPC protocol — MONTHS, and it re-opens every parity question the export plan
+   already settled once; it is the ONLY shape that actually fixes the occlusion class (item 2b),
+   being outside WebKit's throttling policy entirely. A second hidden WebView window is DAYS —
+   one seam (`ExportWorkerHandle`, already the sole surface `driveGlRun` depends on) — but fixes
+   NEITHER the investigated hang NOR the occlusion class, and is arguably WORSE for occlusion: a
+   window that is never visible is the maximally-throttled case of exactly the policy that caused
+   the documented run-5 failure.
+4. **Defer or implement: DEFER.** Neither shape addresses the failure actually investigated,
+   the cheap shape does not address the one class isolation WOULD help with, and the expensive
+   shape that does is a rewrite whose engineering budget produces more value spent on Rungs 2b/3/4/5
+   (which this round and Cursor's concurrent round are actively closing) than on a speculative
+   rewrite.
+
+**Reopen trigger (specific, not "if problems continue"):** a real, OBSERVED occurrence of EITHER
+— (a) a renderer crash/OOM during export that took down the whole app and lost unsaved project
+state, not a hypothetical; or (b) a second field-verified occurrence of the WKWebView-occlusion
+timer-starvation class documented in `docs/ws3-silent-gaps-diagnosis.md`'s run 5, confirming it
+is a recurring failure mode rather than a one-off. Either observation reopens this decision;
+absent one, it stays deferred.

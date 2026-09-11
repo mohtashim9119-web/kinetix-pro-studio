@@ -530,3 +530,23 @@ Do **not** treat H1–H4 as defects in the tree. They are the cheapest Windows o
 - `docs/ws3-export-durable-state.md` — Step 4d residual, handshake order, sealing consent, production-wiring blocker.
 - `docs/ws3-export-speed-architecture-audit.md` — throughput anatomy (Mac; not re-derived here).
 - `docs/work-in-progress.md` WS3 — still tracks 2026-09-07 liveness/silent-gap team blockers; it does not list the Round 7–9 seam debt (that lives in the two docs above).
+
+#### Round 16 dispositions (2026-09-11, `ws3-export-integration`, PROMPT 20 consolidation)
+
+The single consolidated C1–C11 / H1–H10 table — twenty-one rows, `closed` / `mitigated` / `open`,
+every hardware residual named by its row ID in `docs/ws3-export-windows-validation.md` — lives in
+`docs/ws3-export-architecture-ledger.md`'s Round 16 entry and **supersedes** every block above
+(Round 11, 13, 14, 15) and this file's own 7.1/7.2 tables as dispositions. Those remain as the
+findings' original statements and evidence. What changed this round:
+
+| ID | Disposition | Fixing commit(s) / note |
+|---|---|---|
+| C11 (new) | **CLOSED** — the multi-piece budget gap Round 15 reported as C7's residual (piece-scoped manifest reset every counter to 0 on a fresh piece; worst case 2N/N/3N/4N vs 2/1/3/4 across N crashes). Fixed by carrying `boundaryRewindsUsed`/`hardwareFailoverUsed`/`totalRecoveryAttempts` into every fresh piece manifest. Probe: `exportCheckpointWriter.test.ts` "THE C11 SCENARIO", red with the carry removed. | `5aba84b` |
+| C7 | **MITIGATED** — now with a single residual: the one-attempt fsync-window under-count (Round 15 STEP 10b item 3, accepted under Rung 0). The cross-piece residual is C11, closed. | `fa0a61c` + `5aba84b` |
+| H1 | Clean-path neutrality of the 512 KiB cap measured on REAL bytes, not a trace: identical `export_final.mp4` at `51e1f6b` and head with the byte trigger deciding batch boundaries (304 vs 42 appends). The ~2 MB ceiling itself: **W11**. | `931a3c8` (harness) |
+| H4, H6, H7 | **OPEN** — unchanged; **W7**, **W8**, **W9**. | — |
+| H2, H3, H5, H8, H9, H10 | **MITIGATED** — unchanged in code; residuals now named only as **W4**, **W5/M2**, **W10**, **E1**, **W2/W3**, **W1**. | — |
+
+"What could not be determined" (below) and Part 6's "never tested" table are now indexed by
+`docs/ws3-export-windows-validation.md` (W1–W15, M1–M2, E1–E8); where a row there names a Part 4
+or Part 6 test, that file's pass criterion is the operative one.
