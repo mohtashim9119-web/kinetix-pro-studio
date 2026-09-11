@@ -54,9 +54,9 @@ const ALLOWLIST = new Set<string>([
   // Docs Cleanup Round 2 (2026-08-25) folded and deleted every other file
   // that was on this allowlist — each was FINISHED work (a completed run
   // sheet, root-cause report, or measurement dump), and its load-bearing
-  // content now lives in docs/history-2.md under the matching dated Session
+  // content now lives in docs/archive/history/history-2.md under the matching dated Session
   // entry. Full original text remains retrievable via `git show` at the
-  // fold commit — see docs/history-2.md's own Round 2 note.
+  // fold commit — see docs/archive/history/history-2.md's own Round 2 note.
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

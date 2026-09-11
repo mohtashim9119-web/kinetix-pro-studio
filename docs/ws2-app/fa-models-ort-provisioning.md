@@ -205,7 +205,7 @@ CI-VERIFIED evidence that the ORT provisioning steps above (download, hash
 check, lipo) complete cleanly in CI on both targets — it is NOT evidence that
 either DLL/dylib loads or that FA runs correctly at runtime; no Windows or
 Apple Silicon hardware has run the built artifact. See
-`docs/history-2.md#2026-08-27--correction--ws2-ci-installer-artifacts-now-exist`.
+`docs/archive/history/history-2.md#2026-08-27--correction--ws2-ci-installer-artifacts-now-exist`.
 
 ## What Phase 4 / Step 17 Part 1 did NOT verify
 
@@ -226,5 +226,5 @@ Apple Silicon hardware has run the built artifact. See
   macOS x86_64 path has ever been exercised end-to-end with real audio
   (WS2 Step 11, A5).
 - A full built installer's size on Windows (no Windows hardware to install
-  and measure it on — see `docs/history-2.md`'s WS2 Step 13 entry for the
+  and measure it on — see `docs/archive/history/history-2.md`'s WS2 Step 13 entry for the
   component byte deltas that were measured instead).

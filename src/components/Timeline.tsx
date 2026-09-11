@@ -67,7 +67,7 @@ interface Props {
   // splits the waveform into multiple ≤16384px canvas tiles at the current zoom
   // level (useTimelineWaveform) and lays them out as CSS multi-background layers
   // on one shared lane — true 1:1 fidelity at any zoom, debounced rebuild on
-  // zoom change (docs/history.md).
+  // zoom change (docs/archive/history/history.md).
   waveformSource: WaveformSource | null;
   onTogglePlay: () => void;
   onSeek: (time: number) => void;
@@ -380,7 +380,7 @@ export function Timeline({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sliderT]);
 
-  // Path B Phase 4 (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — heading band edge-drag.
+  // Path B Phase 4 (docs/archive/history/history.md ("Path B — Separate Heading Layer — Design Decisions", archived)) — heading band edge-drag.
   // Reuses the f4da926 ref+rAF live-drag pattern: no setProject/onHeadingResizeCommit
   // per mousemove, live visual feedback via direct DOM style writes on the band
   // element (found via data-heading-id), the real commit fires exactly once on
@@ -465,7 +465,7 @@ export function Timeline({
           window.addEventListener('mouseup', handleMouseUp);
         }}
       >
-        {/* Path B corrective fix (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 3/4/5
+        {/* Path B corrective fix (docs/archive/history/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 3/4/5
             correction) — three stacked lanes, top to bottom: headings, segments,
             voiceover waveform, each with the same bounded-lane border/background
             (bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg). Originally a

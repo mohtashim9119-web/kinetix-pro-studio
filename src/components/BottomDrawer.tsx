@@ -15,7 +15,7 @@ import { computeSlipBarGeometry } from '../services/slipBarGeometry';
 interface Props {
   segment: VideoSegment | null;
   segmentIndex: number;
-  /** Path B (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 5) — top-level heading
+  /** Path B (docs/archive/history/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 5) — top-level heading
    *  overlay target, mutually exclusive with `segment`. When set, the drawer
    *  renders the HeadingOverlay editor instead of the segment editor. */
   heading?: HeadingOverlay | null;

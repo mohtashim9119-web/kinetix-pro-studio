@@ -5,7 +5,7 @@
 
 // ---------------------------------------------------------------------------
 // Forced-alignment vocab-aware text normalizer (Phase 3b groundwork, R-Q,
-// `docs/history.md` 2026-08-12).
+// `docs/archive/history/history.md` 2026-08-12).
 //
 // Maps script text to a per-language CTC character vocabulary for the five
 // models WS1 will actually ship — `jonatasgrosman/wav2vec2-large-xlsr-53-

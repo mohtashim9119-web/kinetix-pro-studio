@@ -24,7 +24,7 @@ import type { TexRect } from './glCompositor';
  * canvas — this function's original form, and the ONLY reason a canvas hop
  * ever existed in this hook — measured 36-58ms/frame on WKWebView, ~1800-
  * 2900x slower than uploading the raw source directly; see
- * docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 7's [CORRECTED] object-cover row).
+ * docs/archive/history/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 7's [CORRECTED] object-cover row).
  *
  * Pure and dependency-free so it's directly unit-testable (see
  * useGlPreview.test.ts), same discipline as toSourceTime/computeKeepSet.

@@ -38,7 +38,7 @@ export function isEffectUnset(value: string | null | undefined): value is null |
 
 /**
  * The transition set the app offers — restricted at the WebGL2 Phase 5
- * cutover (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 6) to exactly the slugs
+ * cutover (docs/archive/history/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20) Section 6) to exactly the slugs
  * the GL effects engine implements (compositeParams.ts's GL_TRANSITION_SLUGS),
  * plus the hard-cut sentinel.
  *

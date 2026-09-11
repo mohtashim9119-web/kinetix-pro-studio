@@ -14,7 +14,7 @@ and `scripts/phase3-reference-validity-step-b-phoneme.py`. The 6 R-H-second-base
 CSVs were the one exception when they landed, but no longer are: `scripts/phase4-fa-replay.test.ts`
 reads all six by hardcoded name (see their own section). Moving or renaming any hardcoded-path file here requires updating every
 one of those paths in the same commit, or the golden-replay test breaks (see
-`docs/history.md`'s 2026-08-09 docs-restructure entry for the earlier version of
+`docs/archive/history/history.md`'s 2026-08-09 docs-restructure entry for the earlier version of
 this mistake).
 
 Content is unchanged from its original commit for every file except the R-H
@@ -238,7 +238,7 @@ blank rather than merging the repeat into one span. The `es-*` fixture
 exercises a non-ASCII source word (`inútiles`) through real uroman
 romanization. Not read by any script yet in this commit — read by the Rust
 Viterbi port's fixture-diff tests, added in a later commit (see
-`docs/history.md`).
+`docs/archive/history/history.md`).
 
 | File pattern | Purpose |
 |---|---|
@@ -346,7 +346,7 @@ above) and this commit (2026-08-06) — every intervening pass (Phase 2b,
 Phase 3 Blockers 1-3, the data-cleaning pass, the reference-validity pass,
 the reference-correction pass, the blinded-batch scoring pass) is explicitly
 recorded as measurement-only with no `src/` edits (see each pass's own entry
-in `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` / `docs/history.md`).
+in `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md` / `docs/archive/history/history.md`).
 Determinism of the Whisper→Hirschberg→snap pipeline was independently
 re-verified on turbo (Phase 2a, byte-identical MD5s across repeated runs).
 Given that, and given `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`'s own

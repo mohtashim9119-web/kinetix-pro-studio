@@ -5,7 +5,7 @@
 > or event timing. **Permanent, not workstream-scoped** — stays at `docs/` root
 > indefinitely, outliving any single workstream. Only executable steps, setup, and
 > pass criteria belong here. **Never put here:** run logs, investigation narrative,
-> or closed sections — append those to `docs/history.md`'s "WKWebView Drag
+> or closed sections — append those to `docs/archive/history/history.md`'s "WKWebView Drag
 > Checklist — Run History and Closed Sections, Folded" entry instead. Run time under
 > fifteen minutes once a test project is loaded.
 
@@ -20,7 +20,7 @@ coverage of the drag *logic*, but `jsdom` has no CSS layout engine, is not WKWeb
 constant-offset bugs, real WebKit rendering quirks, frame coalescing under a real event
 flood, and perceived smoothness are all structurally invisible to the automated suite. A
 human watching the real app is the only thing that can currently assert "this looks and
-feels right." Full rationale: `docs/history.md`'s "WS2 Task 2" entry.
+feels right." Full rationale: `docs/archive/history/history.md`'s "WS2 Task 2" entry.
 
 **This checklist does not re-litigate what the automated suite already proves.** Each step
 below states what CI already covers so nobody re-derives it by hand, and names the specific
@@ -74,7 +74,7 @@ automated suite already covers so you're not re-checking it by eye.
 | 7 | Grab an edge, move the pointer **only a few pixels**, and release. | The drag commits at however small the move was — there is no revert-on-negligible-drag (withdrawn by owner ruling). No console error, and releasing does **not** trigger an accidental seek or selection change (the ghost-click case). | Numbers only. Covered by `dragSessionHarness.test.ts`; the ghost-click swallow is real-browser click-synthesis behavior `jsdom` doesn't reproduce — only the eye can confirm no stray seek happens. |
 | 8 | **Zoom in** until the timeline overflows its panel, **scroll right**, then drag a segment that is now positioned to the left of the original (unscrolled) viewport. | The drag tracks the pointer correctly relative to the *scrolled* position — no jump the instant the drag starts, and the edge stays under the pointer for the whole gesture. | **Nothing.** `jsdom` has no real scroll-affecting layout; `timelineContentX`'s `scrollLeft` term is only ever exercised with hand-fed numbers in unit tests, never against a real scrolled viewport. This is the step with the least automated coverage — give it real attention. |
 | 9 | **MANUAL-ONLY (feel).** While zoomed in, drag a segment's edge **toward and past the visible right edge** of the timeline panel, and hold it there. Then bring it back inside. | **The timeline auto-scrolls** — starts gently near the edge, speeds up further past it, keeps scrolling while the pointer is held still, and stops the moment the pointer comes back inside. The dragged edge stays under the pointer throughout. No freeze, no clipped drag, no lost pointer, and nothing keeps scrolling after you release. | Logic only. `dragTriage.test.ts`'s F3 block covers ramp thresholds, proportionality, direction, clamping, teardown, and scroll/pointer-motion equivalence. `dragGeometry.test.ts` PART 4 unit-tests the velocity curve. **None of it can measure comfort or smoothness** — the ramp constants (48px zone, 1200 px/s ceiling) were chosen, not tuned against a real hand. Say so in Notes if it feels wrong. |
-| 10 | Start a drag on a segment edge, keep the mouse button **held down**, then switch applications mid-drag (**Cmd+Tab**) and come back. Also: start a drag, release the button **outside the window**, then move the pointer back over the timeline. | The drag **discards** — the segment springs back to its pre-drag geometry with no timing change — and the session ends cleanly: the `col-resize` cursor is gone, text selection works again, and the next drag behaves normally. | Covered at the logic layer by `dragSessionHarness.test.ts` PART 5 (verified non-vacuous). What remains manual is confirming the real shell still delivers `blur` on Cmd+Tab — the measured premise the fix rests on. Full investigation: `docs/history.md`'s "WKWebView Drag Checklist" folded entry, Step 10 subsection. |
+| 10 | Start a drag on a segment edge, keep the mouse button **held down**, then switch applications mid-drag (**Cmd+Tab**) and come back. Also: start a drag, release the button **outside the window**, then move the pointer back over the timeline. | The drag **discards** — the segment springs back to its pre-drag geometry with no timing change — and the session ends cleanly: the `col-resize` cursor is gone, text selection works again, and the next drag behaves normally. | Covered at the logic layer by `dragSessionHarness.test.ts` PART 5 (verified non-vacuous). What remains manual is confirming the real shell still delivers `blur` on Cmd+Tab — the measured premise the fix rests on. Full investigation: `docs/archive/history/history.md`'s "WKWebView Drag Checklist" folded entry, Step 10 subsection. |
 | 11 | Grab a **locked** segment's own edge (not a neighbour's — the segment itself) and try to drag it. | The segment does not move by even a pixel, in the live preview or after release. No console error. | Numbers only. `dragCascade.test.ts`/`dragSessionHarness.test.ts` assert the array and live preview never move; only the eye confirms the stop doesn't look broken. |
 | 12 | Drag a boundary between two **video** segments (either edge), then let playback cross into both the segment you shrank and the one you grew, without navigating away from the preview. | Both segments play normally — no frozen/stuck frame on either side of the moved boundary. | Partial. `videoDecoderPool.test.ts`'s sliding-window regression tests cover the confirmed root cause (single-keyframe clips, deep targets past the old buffer cap) at the unit level; this step is the real-decoder-timing confirmation only `jsdom`'s mocked `VideoDecoder` output can't give. Re-run after ANY change to the preview decode path. |
 | 13 | Open the segment editor **drawer** on a video segment whose asset duration hasn't been probed yet, and whose duration is **longer than 60 seconds**. (Make one if the project has none: drag an image segment out past 60s, or set the duration numerically in the drawer.) Look at the orange **slip-trim bar** in the drawer's Asset column. | The bar stays **inside its container** — or is hidden entirely when the source duration is unknown, per `hasKnownSourceDuration`. It never extends past the container's right edge, overflows the drawer, or pushes the drawer wider than the viewport. | Yes — `slipBarGeometry.test.ts` unit-tests `computeSlipBarGeometry`'s `[0,100]` clamp and its hide-rather-than-guess behavior directly. This step is the real-DOM/CSS layout confirmation only `jsdom`'s layout-less environment can't give. |
@@ -82,7 +82,7 @@ automated suite already covers so you're not re-checking it by eye.
 **Note on the video path:** steps 12 and 13 are regression checks, not open-investigation
 scoring — the WS3 video-segment investigation (preview stall, slip-bar overflow, and the
 `duration`↔`playbackSpeed` coupling) closed 2026-08-10, owner-verified on real preview and
-export; full record in `docs/history.md`'s "WS2 + WS3 Closeout" entry. The coupling was ruled
+export; full record in `docs/archive/history/history.md`'s "WS2 + WS3 Closeout" entry. The coupling was ruled
 a bug and fixed by decoupling — a video segment always plays at its native rate, and
 `VideoSegment` carries no `playbackSpeed` field at all, so there is nothing left to couple or
 score. Steps 12 and 13 remain useful as ongoing regressions checks for the preview-stall and
@@ -95,7 +95,7 @@ WS1 Deferred / Known Bugs block. It is not a checklist step; don't spend time tr
 
 **Failure numbering: refer to a failure by its checklist step number above, nothing else.**
 Ad-hoc "F" labels have drifted across documents before and cost real time reconciling — see
-`docs/history.md`'s folded entry for the incident. If a run finds a defect that isn't yet a
+`docs/archive/history/history.md`'s folded entry for the incident. If a run finds a defect that isn't yet a
 step, add the step first, then cite it by that number.
 
 ---
@@ -103,7 +103,7 @@ step, add the step first, then cite it by that number.
 ## Pass/fail record
 
 Copy this block and fill it in for each run. After the run, append the filled-in block (plus
-any notes worth keeping) as a new dated entry under `docs/history.md`'s "WKWebView Drag
+any notes worth keeping) as a new dated entry under `docs/archive/history/history.md`'s "WKWebView Drag
 Checklist — Run History and Closed Sections, Folded" section — do not accumulate run history
 in this file.
 

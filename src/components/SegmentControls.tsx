@@ -38,7 +38,7 @@ interface SegmentControlsProps {
   /** Scene/content segment target — mutually exclusive with `heading`. */
   segment?: VideoSegment;
   index?: number;
-  /** Path B (docs/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 5) — top-level
+  /** Path B (docs/archive/history/history.md ("Path B — Separate Heading Layer — Design Decisions", archived), Phase 5) — top-level
    *  HeadingOverlay target, mutually exclusive with `segment`. Renders a
    *  dedicated editor reading/writing HeadingOverlay fields directly. */
   heading?: HeadingOverlay;

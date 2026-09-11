@@ -490,7 +490,7 @@ export const WORD_COVERAGE_MIN_RATIO = 0.6;
 export const WORD_COVERAGE_MIN_MISSING = 2;
 
 // --- Forced-alignment anchor computation (`faAnchors.ts`) — R.1/R.4/R.7,
-// `sync-pipeline-v2-plan.md`, R-O/R-P rulings (`docs/history.md`, 2026-08-12)
+// `sync-pipeline-v2-plan.md`, R-O/R-P rulings (`docs/archive/history/history.md`, 2026-08-12)
 // --------------------------------------------------------------------------
 // A time `t` is an anchor for script word `w` only when three independent
 // sources agree within this tolerance: the Hirschberg alignment maps `w` to a

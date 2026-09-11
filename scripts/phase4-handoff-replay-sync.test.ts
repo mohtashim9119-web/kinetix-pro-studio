@@ -379,7 +379,7 @@ describe('Phase 3->4 handoff Step M — golden baseline replay', () => {
 // 3.0 and neighbour-midpoint windowing are MEASUREMENT convention. R.4
 // specifies PAD_BASE 0.75s for production, and the audit that produced R.4
 // traced the midpoint-clamp strategy used here to five documented failures on
-// gapless corpora (docs/history.md). This is a FIDELITY reference for the
+// gapless corpora (docs/archive/history/history.md). This is a FIDELITY reference for the
 // future Rust MMS-FA/Viterbi port to reproduce — not a claim about what Apply
 // Sync should ever commit.
 // ---------------------------------------------------------------------------

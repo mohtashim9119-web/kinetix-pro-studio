@@ -4,7 +4,7 @@ import chimeUrl from '../assets/export-complete-chime.wav';
  * Export-complete notification chime (originally two-tone WAV, ~0.5s,
  * generated for this project — no third-party licensing to track).
  * Played via Web Audio API decode, never a runtime-synthesized
- * OscillatorNode tone, per the export-UX product decision (docs/history.md).
+ * OscillatorNode tone, per the export-UX product decision (docs/archive/history/history.md).
  */
 
 type AudioContextCtor = new () => AudioContext;

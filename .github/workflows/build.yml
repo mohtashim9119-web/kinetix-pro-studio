@@ -222,7 +222,7 @@ jobs:
         # glob already bundles unconditionally — no tauri.conf.json change
         # needed. UNVERIFIED beyond a checksum match: no Windows hardware
         # available to confirm the dylib actually loads there (tracked in
-        # docs/ws2-fa-models/ort-provisioning.md alongside the MSVC
+        # docs/ws2-app/fa-models-ort-provisioning.md alongside the MSVC
         # redistributable prerequisite note).
         if: matrix.os == 'windows-latest'
         shell: pwsh

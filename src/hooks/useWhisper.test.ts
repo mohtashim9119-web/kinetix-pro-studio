@@ -8,7 +8,7 @@
 // already-in-memory `asset.file` over re-fetching `asset.url` (a `blob:`
 // object URL).
 //
-// The confirmed defect (`docs/history-2.md`, this session): a Windows
+// The confirmed defect (`docs/archive/history/history-2.md`, this session): a Windows
 // WebView2 build's `fetch(asset.url)` rejected outright ("Failed to fetch")
 // against a same-session `blob:` URL that the DOM's own `<video src>`
 // consumption of the identical URL had no trouble with, while `App.tsx`'s

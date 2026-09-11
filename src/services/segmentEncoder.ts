@@ -47,7 +47,7 @@ export interface EncodeSegmentOptions {
 
 /**
  * Pure blend-window math for the outgoing segment's per-frame render loop —
- * the centered-window spec (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s transition-
+ * the centered-window spec (docs/archive/history/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s transition-
  * centering entry; supersedes the old 100%-after-the-boundary placement, D7
  * in project-state.md's Ignored Low Risk Bugs) applied in SEGMENT-LOCAL time.
  *
@@ -166,7 +166,7 @@ export async function encodeSegment(
     }
 
     // Compute transition blend alpha for frames in the centered blend zone
-    // (docs/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s transition-centering entry —
+    // (docs/archive/history/history.md (WebGL2 Effects Engine — Full Plan, archived 2026-07-20)'s transition-centering entry —
     // supersedes the old 100%-after-the-boundary placement, D7 in
     // project-state.md's Ignored Low Risk Bugs). The zone is centered on
     // segment.duration (this segment's own nominal end): half sits BEFORE it
@@ -244,7 +244,7 @@ export async function encodeSegment(
   // (unchanged) bytesToBase64 + ffmpeg.writeFile IPC. PNG bytes, frame ordering
   // (each frame → its own frame_%05d.png), and the IPC call shape are identical
   // to the sequential path — this is a scheduling change only. See
-  // docs/history.md ("Export Rendering Profiling — Phase 7 Task 1", archived).
+  // docs/archive/history/history.md ("Export Rendering Profiling — Phase 7 Task 1", archived).
   //
   // Fallback path: the original fully-sequential render → toBlob → writeFile
   // loop, used when OffscreenCanvas/convertToBlob/Worker are unavailable.
