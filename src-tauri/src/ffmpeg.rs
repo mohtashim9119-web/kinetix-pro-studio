@@ -2321,6 +2321,79 @@ mod tests {
         assert!(other.try_lock().is_ok(), "a different session must not share the gate");
     }
 
+    /// WS3 Round 18 (F1 re-proof) — DESTRUCTIVE PROBE of the actual race F1
+    /// closes, not just the gate primitive in isolation. Simulates a
+    /// rotation-flush-timeout rewind: an append is genuinely mid-write
+    /// (proven by polling the file for at least one landed 64 KiB chunk,
+    /// not merely spawned) when a truncate — same shape as the real
+    /// `ffmpeg_truncate_annexb_to_offset`, which takes `session_io_gate`
+    /// before doing anything else — tries to run concurrently on the same
+    /// file. If the gate does its job, `gate_t.lock()` cannot return until
+    /// the append thread has fully released `gate_a` — i.e., after
+    /// `append_file_raw_inner` has returned, all chunks written AND
+    /// `sync_all`ed. The file must therefore hold EXACTLY the complete
+    /// append's byte count once the truncate side is unblocked; observing
+    /// anything else (a still-partial length, or a truncate result at all)
+    /// would mean the two interleaved.
+    #[test]
+    fn truncate_cannot_interleave_with_in_flight_append() {
+        let (_id, dir) = make_session();
+        let full = dir.join("piece.h264");
+        let state = FfmpegSessionState::default();
+        let session_id = Uuid::new_v4().to_string();
+
+        const TOTAL_BYTES: usize = 2048 * IO_CHUNK_SIZE;
+        let payload = vec![7u8; TOTAL_BYTES];
+        let full_append = full.clone();
+        let gate_append = session_io_gate(&state, &session_id);
+
+        let append_handle = thread::spawn(move || {
+            let _guard = gate_append.lock().unwrap();
+            append_file_raw_inner(&full_append, "piece.h264", &payload, None)
+        });
+
+        // Wait until the append is PROVABLY mid-write — at least one chunk
+        // landed on disk — before the rewind's truncate is allowed to
+        // contend for the gate. Without this wait the test could pass
+        // trivially by racing ahead of the append starting at all.
+        loop {
+            if let Ok(meta) = fs::metadata(&full) {
+                if meta.len() >= IO_CHUNK_SIZE as u64 {
+                    break;
+                }
+            }
+            assert!(!append_handle.is_finished(), "append finished before a single chunk was observable — widen TOTAL_BYTES");
+            thread::sleep(Duration::from_micros(50));
+        }
+
+        // The rewind's truncate: same gate, same session, same ordering the
+        // real `ffmpeg_truncate_annexb_to_offset` command uses (gate first,
+        // operate second). This blocks for as long as the append still holds
+        // the gate — the correctness guarantee under test.
+        let gate_truncate = session_io_gate(&state, &session_id);
+        let _truncate_guard = gate_truncate.lock().unwrap();
+
+        // Check the file THE INSTANT the gate is acquired — deliberately
+        // BEFORE joining the append thread. A `.join()` here would block
+        // until the append finishes regardless of whether the gate actually
+        // serialized anything, making the assertion below true even with a
+        // broken (e.g. wrong-session, or missing) gate — this ordering is
+        // what makes the probe able to go red. If the gate did its job,
+        // `append_file_raw_inner` (chunks + `sync_all`) has ALREADY fully
+        // returned by the time `.lock()` above unblocked, so the file must
+        // already hold the complete payload with no waiting needed here.
+        let len_when_gate_acquired = fs::metadata(&full).unwrap().len();
+        assert_eq!(
+            len_when_gate_acquired, TOTAL_BYTES as u64,
+            "the gate let the truncate side proceed while the append was still short of complete — interleaving occurred"
+        );
+        drop(_truncate_guard);
+
+        let append_result = append_handle.join().unwrap();
+        assert_eq!(append_result, Ok(()), "append must have completed cleanly, not been interrupted by the truncate");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn copy_session_file_atomic_does_not_touch_dest_until_complete() {
         let dir = std::env::temp_dir().join(format!("kinetix-copy-{}", Uuid::new_v4()));
