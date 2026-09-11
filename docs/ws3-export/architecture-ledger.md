@@ -1248,6 +1248,144 @@ staged, committed, or deleted (Cursor removes two of them in its Phase 2). No `g
 stage was by named path. `ws3-hardening-windows` fast-forwarded to the integration head so both
 branches carry the one canonical ledger; both pushed. No merge to `main`, no PR.
 
+### Round 17 (2026-09-11) — Documentation consolidation and close (PROMPT 22)
+
+**Branch:** `ws3-export-integration` @ `523d9a5`, merging `docs-consolidate-p2` @ `9c58985`.
+**Base main:** `4d4922c`. **Rollback:** `15002e5`. Documentation-lane close only — no features,
+no refactors, one test-annotation change (STEP 3 below).
+
+#### STEP 1 — Merge: fast-forward, ZERO conflicts
+
+`git fetch origin && git merge origin/docs-consolidate-p2` was a clean fast-forward
+`523d9a5 → 9c58985` (124 files changed, +2088/-738) — `docs-consolidate-p2` branches directly off
+this branch's own `523d9a5`, so there was no divergence to reconcile. Content-identity confirmed
+for all three docs this prompt named, by diffing old flat path (as committed at `523d9a5`)
+against new nested path: every hunk in all three diffs is a cross-reference string rewritten from
+the old flat filename (`docs/ws3-export-architecture-ledger.md` etc.) to the new nested one
+(`docs/ws3-export/architecture-ledger.md`) — the ref-rewrite this consolidation commit exists to
+do. Zero content dropped, zero hunks outside a path string:
+- `architecture-ledger.md` — 8 hunks, all path-string rewrites.
+- `durable-state.md` — 8 hunks, all path-string rewrites.
+- `pipeline-audit.md` — 8 hunks, all path-string rewrites.
+
+#### STEP 2 — Stale stub deleted
+
+`docs/ws3-export-durable-state.md` in the main worktree: confirmed 64 lines / 3842 bytes, dated
+2026-09-10, containing only the "Step 4d residual" analysis (truncated-final-slice-read-as-complete).
+That topic is superseded in the committed `docs/ws3-export/durable-state.md` (1859 lines), whose
+Round-11+ text (around line 1367-1382) carries the same truncated-final-slice concern folded into
+the durable checkpoint/resume design. Committed copy confirmed present on this branch before
+deletion. Stub removed by `rm` (named path, not a wildcard). Main worktree `git status --porcelain`
+is now **completely empty** — zero untracked files of any kind, docs included.
+
+#### STEP 3 — Flake rule: `#[ignore]`, not a canonical-gate rewrite
+
+**Decision: `#[ignore]` on the test, with the panic site and reason recorded inline.**
+`whisper::in_flight_tests::a_retained_percent_is_peeked_not_consumed` (`src-tauri/src/whisper.rs`)
+panics at `whisper.rs:1671:43` in roughly one parallel `cargo test` run in three, never
+single-threaded, never in isolation — first reproduced Round 16 STEP 1b, mechanism traced there to
+cross-test interference through the process-global `IN_FLIGHT`/`TERMINAL_BUFFER` statics
+(`whisper.rs:94,220-221`), not a defect in the peeked-not-consumed behavior the test asserts. The
+test is `#[cfg(test)]`-only, not `fa-inference`-gated, so the flake risk sits on the **plain**
+`cargo test` gate, not the feature-gated one.
+
+Why `#[ignore]` over a canonical-gate rewrite: the alternative this prompt offered — stating that
+single-threaded is the canonical gate — would mean either (a) restating that rule for the whole
+`cargo test` invocation project-wide to cover a single test outside WS3's file ownership, which
+over-scopes a local fixture problem into a project-wide workflow change, or (b) leaving the
+default parallel gate free to flake ~1/3 of the time with no enforcement, which defeats the point
+of stating a rule at all. `#[ignore]` is scoped to exactly the one test that has the problem, is
+enforced by the compiler (an ignored test cannot silently un-ignore itself), and the inline comment
+at the test site plus this entry are the record the next person needs — no rediscovery required.
+
+**Canonical gate commands, stated once here for reference:**
+- Plain: `cargo test` (parallel, default) — now **307 / 0 / 6** (the flake's own test moved from
+  counted-and-occasionally-red to ignored; everything else unchanged).
+- fa-inference: `cargo test --features fa-inference -- --test-threads=1` — now **393 / 0 / 36**
+  (same one-test shift). Single-threaded was already this project's practice for the fa-inference
+  gate (STEP 5 below runs it that way); this entry makes it explicit that doing so is not merely a
+  style choice but the only way to get a trustworthy count while `IN_FLIGHT`/`TERMINAL_BUFFER`
+  remain process-global test state.
+- To exercise the ignored test on its own for a real answer: `cargo test --features fa-inference
+  -- --ignored --test-threads=1 a_retained_percent_is_peeked_not_consumed`.
+
+Not fixed, not owned by WS3 — the fix (scoping the test's global state, or accepting per-test
+isolation via a different harness) belongs to whoever owns `whisper.rs`'s test module.
+
+#### STEP 4 — Doc tree as it now stands
+
+31 markdown files under `docs/`, 5 lanes:
+
+| Lane | Path | Count |
+|---|---|---|
+| Top-level | `docs/README.md` | 1 |
+| Archive | `docs/archive/` (`README.md` + `history/` × 3 + `ws2/` × 2 + `ws3/` × 5) | 11 |
+| WS1 (sync pipeline) | `docs/ws1-sync-pipeline/` (incl. `measurements/`) | 6 |
+| WS2 (app) | `docs/ws2-app/` | 5 |
+| WS3 (export) | `docs/ws3-export/` | 8 |
+
+`1 + 11 + 6 + 5 + 8 = 31`, matches `find docs -name '*.md' | wc -l`. This is the tree
+`docs-consolidate-p2` produced: every WS3 doc this ledger cross-references now lives under
+`docs/ws3-export/` (README, architecture-ledger, durable-state, pipeline-audit,
+recovery-architecture, silent-gaps-diagnosis, speed-architecture-audit, windows-validation); the
+old flat `docs/ws3-export-*.md` naming is retired project-wide, not just for the three files STEP
+1 checked byte-for-byte.
+
+**21-row C1–C11/H1–H10 disposition table and 25-row Windows validation list: unchanged, remain
+authoritative.** Referenced by path only, not restated: this file's own §6 Round 16 STEP 4 table
+(C1–C11, H1–H10), and `docs/ws3-export/windows-validation.md` (W1–W15, M1–M2, E1–E8).
+
+#### STEP 4 (cont.) — durable-state.md / pipeline-audit.md: no number moved
+
+Checked both files for any number this round's changes could have invalidated. **None did, and
+none needed updating.** The only "current state" figures either file carries are the seven frozen
+constants and four fixture digests (both mirrored from source and re-verified unchanged in STEP 5
+below). The `cargo test` counts appearing in `durable-state.md` (e.g. its Round 13/Round 14 gate
+tables, "384 + 10 = 394" etc.) are historical per-round snapshots of what that round actually
+measured at the time — correctly frozen, not retroactively rewritten to Round 17's post-`#[ignore]`
+counts, the same way `docs/history.md` entries are never edited after the fact. `pipeline-audit.md`
+carries no raw pass/fail counts at all (checked; zero hits for the relevant numbers).
+
+#### State at close
+
+**What the pipeline guarantees today:** the 21-row C1–C11/H1–H10 disposition table (§6 Round 16
+STEP 4) is the single authoritative statement — ten `closed`, eight `mitigated` with a named
+residual each, three `open` by explicit decision or hardware dependency. Every `mitigated`/`open`
+residual resolves to exactly one row in `docs/ws3-export/windows-validation.md` (25 rows), which is
+where "what's left" is read — not this ledger, not `pipeline-audit.md`. Seven frozen liveness/batch
+constants and four fixture digests are re-verified unchanged this round (STEP 5). The recovery
+budget (2 rewinds / 1 hardware failover / 3 truncates / 4 total attempts, export-lifetime, carried
+across piece boundaries since C11) is unchanged.
+
+**What remains unverified:** everything hardware-bound — the full W1–W15/M1–M2/E1–E8 set in
+`docs/ws3-export/windows-validation.md` requires real Windows and/or non-SSD hardware this
+environment does not have. Rung 5c (out-of-process render isolation) stays DEFERRED per §7's
+standing decision, reopened only by one of the two observed-occurrence triggers stated there. C7's
+one-attempt fsync-window under-count residual is accepted, not fixed. The `whisper::in_flight_tests`
+flake (STEP 3 above) is documented and contained, not fixed — ownership sits outside WS3.
+
+**Where each lives:** disposition table and final-state figures — this file, §6 Round 16. Hardware
+residuals — `docs/ws3-export/windows-validation.md`. Deferred-decision reasoning — this file, §7.
+Checkpoint/resume design and the durable-write seam order — `docs/ws3-export/durable-state.md`.
+Byte-level guard/truncate semantics and the C-series/H-series findings register —
+`docs/ws3-export/pipeline-audit.md`. Throughput anatomy (Mac) —
+`docs/ws3-export/speed-architecture-audit.md`. Recovery-architecture rung numbering (its own,
+independent 1-13 scheme, not this ledger's) — `docs/ws3-export/recovery-architecture.md`. This
+entry is the one place all of the above is indexed together; someone reading only this entry knows
+the whole position.
+
+#### STEP 5 — Gates (raw tails below)
+
+See the STEP 5 gate log appended to this round's close — `npx tsc --noEmit` exit 0 (no output),
+`npm run lint` exit 0, `npm test` run twice identical at **3569 / 0 / 78 = 3647** (no delta from
+Round 16), `cargo test` **307 / 0 / 6** (was 308/0/5; delta is exactly STEP 3's new `#[ignore]`),
+`cargo test --features fa-inference -- --test-threads=1` **393 / 0 / 36** (was 394/0/35; same
+one-test delta). Seven frozen constants verified verbatim against source (unchanged). Four named
+fixture digests verified unchanged (`annexbFrameCount.test.ts:242-245`). `git status --porcelain`
+on the integration worktree: clean apart from `node_modules/` and `public/` (standing untracked)
+plus the STEP 3 edit to `src-tauri/src/whisper.rs`, committed this round. Pushed to
+`ws3-export-integration`. No merge to `main`, no PR.
+
 ---
 
 ## 7. Decisions register (durable — not round-log, never re-litigated without overturning the entry)
