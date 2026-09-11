@@ -28,7 +28,7 @@
  *                   IRRELEVANT HERE and this is deliberately NOT a download
  *                   prompt: this binary was compiled without `fa-inference`,
  *                   so `fa_align` returns `not_implemented` for every run no
- *                   matter what is on disk (`docs/work-in-progress.md` §5's
+ *                   matter what is on disk (`docs/archive/history/work-in-progress.md` §5's
  *                   `[DEFERRED · BLOCKS T4.1 CLOSE]` entry). Offering a 1.2 GiB
  *                   download that cannot be used is the exact dishonesty this
  *                   step was told to avoid.

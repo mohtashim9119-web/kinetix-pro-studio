@@ -1,7 +1,7 @@
 # WS2 Bug 3 — video-ingest playback freeze — diagnosis + decision memo
 
 > Session: `.work-phase4/session-ws2-06/`. One build, one project, four bugs (WS2). Bugs 1/2/4
-> status is out of scope here — see `docs/work-in-progress.md`. This file covers Bug 3 only:
+> status is out of scope here — see `docs/archive/history/work-in-progress.md`. This file covers Bug 3 only:
 > diagnosis (measured) + decision memo. No code changed this session.
 
 ## Symptom, precisely (B1 in the operator's numbering, reported not measured)

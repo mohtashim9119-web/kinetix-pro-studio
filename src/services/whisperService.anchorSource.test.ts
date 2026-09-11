@@ -4,7 +4,7 @@
  */
 
 // ---------------------------------------------------------------------------
-// WS1 Task 5, docs/work-in-progress.md §11 item 1 (owner ruling R-G):
+// WS1 Task 5, docs/archive/history/work-in-progress.md §11 item 1 (owner ruling R-G):
 // `distributeSegmentTimes` gained an optional `anchorSource` parameter so a
 // forced-alignment caller can label its own output `'forced-alignment'`
 // instead of the hardcoded `'whisper'` every pre-existing call site relies

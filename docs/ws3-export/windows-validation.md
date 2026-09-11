@@ -4,13 +4,13 @@
 > Windows hardware, a real macOS-native (`npm run tauri:dev` / built app) session, or either. It
 > is the entire answer to "what's left" for WS3 export hardening — if this list is complete, the
 > architecture ledger is clean. **Nothing else lives here**: no architecture, no history, no
-> rationale beyond one sentence per item. `docs/ws3-export-architecture-ledger.md`'s Round 16
+> rationale beyond one sentence per item. `docs/ws3-export/architecture-ledger.md`'s Round 16
 > disposition table references these rows by ID and says nothing more about them. When an item is
 > closed, record the run in the ledger's next round entry and delete the row here.
 >
 > Column contract, every row: **ID** · **What is unverified** (one sentence) · **The exact test**
 > · **Pass criterion** (a number or an observable) · **What breaks if it fails**. Cross-references
-> in parentheses are to the C/H finding IDs in `docs/ws3-export-pipeline-audit.md` Part 7 and the
+> in parentheses are to the C/H finding IDs in `docs/ws3-export/pipeline-audit.md` Part 7 and the
 > ledger's disposition table.
 
 ---

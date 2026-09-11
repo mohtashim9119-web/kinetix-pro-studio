@@ -512,7 +512,7 @@ function selectYearCandidate(n: number, policy: FaYearReading['selectionPolicy']
  *
  *  Separately, and not to be confused with the above: the RUST arm's own
  *  reachability is gated by the `fa-inference` Cargo feature, which is OFF in
- *  `tauri:dev`/`tauri:build`. See `docs/work-in-progress.md` §5.
+ *  `tauri:dev`/`tauri:build`. See `docs/archive/history/work-in-progress.md` §5.
  *
  *  `stripped` must be entirely
  *  digits, no sign, no separators, no leading zero other than a bare "0" —

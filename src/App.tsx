@@ -1047,7 +1047,7 @@ export const EMPTY_SCENE_DOC_MESSAGE = 'Your scene doc has no scenes to sync. Ad
 /** WS2-50 — the OTHER way a sync parses zero segments: there is no scene doc at
  *  all. `EMPTY_SCENE_DOC_MESSAGE` tells that user to "add scene tags", which is
  *  advice about a document they do not have; the honest instruction is to load
- *  one. Filed as misleading in `docs/work-in-progress.md` §5 and corrected here
+ *  one. Filed as misleading in `docs/archive/history/work-in-progress.md` §5 and corrected here
  *  because this round owns `App.tsx`. */
 export const NO_SCENE_DOC_MESSAGE = 'No scene doc is loaded, so there is nothing to sync. Add a scene details file and try again.';
 /** WS2 quick-close — no voiceover means no timeline. Does not imply the user
@@ -3600,7 +3600,7 @@ export default function App() {
     }
 
     let finalTimedSegments: VideoSegment[];
-    // WS1 Task 5, docs/work-in-progress.md §11 item 1 — set only when the FA
+    // WS1 Task 5, docs/archive/history/work-in-progress.md §11 item 1 — set only when the FA
     // capability gate was open AND forced alignment actually succeeded this
     // run; persisted verbatim onto `Project.faWordTimings` by the single
     // commit below (schema: types.ts's `faWordTimings?: TranscriptToken[]`).

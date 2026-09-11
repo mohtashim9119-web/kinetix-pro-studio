@@ -11,7 +11,7 @@
 // (`.work-phase4/session-aj0/live/`), which the operator has ear-verified in
 // full except the five named `openDefect` rows. It is RAW PIPELINE OUTPUT —
 // no boundary was ever manually dragged (confirmed by the operator; see
-// `docs/work-in-progress.md` §9 AJ-0) — so a clean production run at HEAD is
+// `docs/archive/history/work-in-progress.md` §9 AJ-0) — so a clean production run at HEAD is
 // expected to reproduce it almost exactly, and Session AJ-0's own measurement
 // found exactly three small (~10ms) `knownMicroDrift` rows plus the five
 // `openDefect` rows as the only departures across 620 compared boundaries.
@@ -22,7 +22,7 @@
 // tag order. A future session may promote it to a hard gate (fail on ANY
 // boundary outside the openDefect/knownMicroDrift allowlist) once someone has
 // decided what to do about the two 10ms ledger-vs-export drifts this session
-// left unexplained. See docs/work-in-progress.md §9 AJ-0 for that decision.
+// left unexplained. See docs/archive/history/work-in-progress.md §9 AJ-0 for that decision.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from 'vitest';

@@ -397,7 +397,7 @@ describe('driveGlRun fake-worker harness', () => {
     expect(hangingAppend).toHaveBeenCalled();
   });
 
-  // WS3 export-liveness-occlusion round (docs/ws3-silent-gaps-diagnosis.md
+  // WS3 export-liveness-occlusion round (docs/ws3-export/silent-gaps-diagnosis.md
   // Step 1/4): both bounds above are ALSO evaluated on every worker message
   // via `checkLivenessBounds` (exportPipelineWebCodecs.ts), not solely via
   // their own `setTimeout` deadline — because that `setTimeout` lives on this

@@ -90,7 +90,7 @@ slip-bar fixes respectively.
 
 **Known, not a checklist failure:** dragging a segment id that doesn't exist, or starting a
 drag before the timeline DOM exists, leaves `resizingId`/the `resizing` body class stuck.
-**RULED WONTFIX 2026-08-08** — unreachable through normal UI use; see `docs/work-in-progress.md`'s
+**RULED WONTFIX 2026-08-08** — unreachable through normal UI use; see `docs/archive/history/work-in-progress.md`'s
 WS1 Deferred / Known Bugs block. It is not a checklist step; don't spend time trying to trigger it here.
 
 **Failure numbering: refer to a failure by its checklist step number above, nothing else.**

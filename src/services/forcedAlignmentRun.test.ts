@@ -4,7 +4,7 @@
  */
 
 // ---------------------------------------------------------------------------
-// WS1 Task 5, docs/work-in-progress.md §11 item 1 — the production
+// WS1 Task 5, docs/archive/history/work-in-progress.md §11 item 1 — the production
 // forced-alignment caller's own FAIL-CLEAN contract: `runForcedAlignmentForSync`
 // must resolve (never throw) on every failure a real gate-on-without-a-model
 // session will hit — unsupported language, an empty chunk plan, a Tauri command

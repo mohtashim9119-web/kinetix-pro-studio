@@ -3,7 +3,7 @@
 > **Purpose:** static, read-only feasibility analysis of migrating (or adding)
 > an online Groq LPU Speech path in place of local `whisper-cli` +
 > `ggml-large-v3-turbo.bin`. Not a status tracker and not a workstream ledger
-> — those remain `project-state.md` / `docs/work-in-progress.md`.
+> — those remain `project-state.md` / `docs/archive/history/work-in-progress.md`.
 >
 > **Method:** source reading only. No code edits besides this file, no test
 > runs, no network calls, no live Groq requests. Groq request/response
@@ -125,7 +125,7 @@ Done     { tokens: TranscriptToken[],
 Error    { message: string }
 ```
 
-Progress is **percent-only**. Tokens arrive only on `Done`. That is the standing Transcription Req 2 gap (`docs/work-in-progress.md` WS2 Next tasks): there is no partial-token IPC variant today. Groq is the same shape (all-or-nothing), so it does not make that gap worse; it also does not close it.
+Progress is **percent-only**. Tokens arrive only on `Done`. That is the standing Transcription Req 2 gap (`docs/archive/history/work-in-progress.md` WS2 Next tasks): there is no partial-token IPC variant today. Groq is the same shape (all-or-nothing), so it does not make that gap worse; it also does not close it.
 
 Cancel is silent (exit 130/143): no retained terminal event. Attach-before-start (`whisper_transcribe_attach`) exists because the child outlives a Cmd+R.
 

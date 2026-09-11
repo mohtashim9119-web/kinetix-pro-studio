@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Production, capability-gated forced-alignment entry point
-// (docs/work-in-progress.md §11 item 1).
+// (docs/archive/history/work-in-progress.md §11 item 1).
 //
 // Reachable from the real running app — unlike `fa_dev.rs`'s `fa_align_dev`
 // (devtools-console-only, `import.meta.env.DEV`-gated on the TS side), this

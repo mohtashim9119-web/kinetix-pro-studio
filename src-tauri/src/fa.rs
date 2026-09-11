@@ -14,7 +14,7 @@ pub mod text;
 // not-implemented error and no ML dependency enters the build graph — that
 // part of this comment's original claim is unchanged. With `fa-inference` ON,
 // this has carried a real ONNX forward pass + Viterbi alignment since Slice
-// D2 (`49e233a`) — see `fa_onnx.rs` and `docs/work-in-progress.md` §5 for the
+// D2 (`49e233a`) — see `fa_onnx.rs` and `docs/archive/history/work-in-progress.md` §5 for the
 // full slice-by-slice record (`task5-slice-ledger.md`, its original source,
 // was deleted 2026-08-14, `9cf5867`; retrieve: `git show
 // 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`). Still not wired
@@ -376,7 +376,7 @@ pub struct FaChunkInput {
 /// chunk. This is the intended join key back to the script's own word
 /// sequence (`faAnchors.ts`'s `FaAnchor.qi` space / `faChunkPlan.ts`'s
 /// `queryWords`) — a persisted word timing's TIME is not a reliable join key
-/// (see `docs/work-in-progress.md` §4's word-timing-schema row for why
+/// (see `docs/archive/history/work-in-progress.md` §4's word-timing-schema row for why
 /// (`d18-index-trace-2026-08-14.md`'s Step 1 trace, the original source, was
 /// deleted 2026-08-14, `9cf5867`; retrieve: `git show
 /// 251be64:docs/ws1-sync-pipeline/d18-index-trace-2026-08-14.md`): neither
@@ -392,7 +392,7 @@ pub struct FaChunkInput {
 /// crosses this IPC boundary), so the only signal a consumer gets is this
 /// flag, mirroring the existing `HeadingOverlay.needsReview` convention
 /// (`src/types.ts`) rather than inventing a new shape. See
-/// `docs/work-in-progress.md` §4's R.7 confidence flag row for the full
+/// `docs/archive/history/work-in-progress.md` §4's R.7 confidence flag row for the full
 /// three-option design writeup (`d19-r7-fallback-2026-08-14.md`, the
 /// original source, was deleted 2026-08-14, `9cf5867`; retrieve: `git show
 /// 251be64:docs/ws1-sync-pipeline/d19-r7-fallback-2026-08-14.md`).
@@ -544,7 +544,7 @@ pub enum FaEvent {
 // Format resolved as of WS1 Task 5 Slice D2: ONNX, exported per-language by
 // `scripts/export-fa-onnx.py` into this same `fa-models/<lang>/` convention
 // (ruling superseding the earlier "format unresolved" placeholder note —
-// see docs/work-in-progress.md §7 item 4; original source
+// see docs/archive/history/work-in-progress.md §7 item 4; original source
 // measurements/runtime-unblock-2026-08-12.md was deleted 2026-08-14,
 // `9cf5867`; retrieve: `git show
 // 251be64:docs/ws1-sync-pipeline/measurements/runtime-unblock-2026-08-12.md`).
@@ -620,7 +620,7 @@ pub(crate) fn fa_model_path(app: &tauri::AppHandle, language_code: &str) -> Resu
 // production/script/test caller invokes [`ensure_durable_wav`] on any live
 // path yet (`isFaGateOpen()` stays OFF regardless — this section changes no
 // shipped behavior). Closes the ledger's own "Production audio path" gap
-// (`docs/work-in-progress.md` §5, D24/D25 rows; `task5-slice-ledger.md` §6,
+// (`docs/archive/history/work-in-progress.md` §5, D24/D25 rows; `task5-slice-ledger.md` §6,
 // the original source, was deleted 2026-08-14, `9cf5867`; retrieve: `git show
 // 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`): `fa_align` takes a
 // filesystem path to an already-16kHz-mono WAV and never transcodes
@@ -939,7 +939,7 @@ pub async fn ensure_durable_wav_timed(
 /// Not called from `src/` for production timing in either configuration yet
 /// — the only caller anywhere is the DEV-only `fa_align_dev` (`fa_dev.rs`,
 /// Slice D10), unreachable from any UI control. Real frontend wiring (a
-/// capability-gated Settings toggle, per `docs/work-in-progress.md` §11
+/// capability-gated Settings toggle, per `docs/archive/history/work-in-progress.md` §11
 /// item 1's ruling — `task5-slice-ledger.md`, the original source, was
 /// deleted 2026-08-14, `9cf5867`; retrieve: `git show
 /// 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`) is a later, separately-scoped slice.

@@ -3,7 +3,7 @@
  * is recorded on the diagnostics payload on every encoder build, so a seam
  * between two encoder sessions (a rotation, or a future software failover)
  * can be checked for byte-comparability instead of assumed
- * (`docs/ws3-export-recovery-architecture.md` §1a's caveat — "the two halves
+ * (`docs/ws3-export/recovery-architecture.md` §1a's caveat — "the two halves
  * are byte-comparable is not established, and no run has ever checked").
  *
  * Uses the same real-`runExport`-via-fake-`self` harness as

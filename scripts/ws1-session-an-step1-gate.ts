@@ -72,7 +72,7 @@ export const WORSE_THAN_ARM_F_ABOVE = ARM_F_V6_REGRESSED_5MS;
 
 /**
  * MEASURED (`.work-phase4/session-am/step5-measure.json`'s `openDefects`,
- * cross-checked against `docs/work-in-progress.md:6746`, "2 of 3 defects
+ * cross-checked against `docs/archive/history/work-in-progress.md:6746`, "2 of 3 defects
  * landed"): arm F lands **TWO** of v6's three open defects at ±50ms —
  * `214_solitary_fire` (630.10 vs ear 630.09, Δ=0.01) and
  * `447_scout_facing_dark` (1418.51 vs ear 1418.53, Δ=0.02) — not one. Arms

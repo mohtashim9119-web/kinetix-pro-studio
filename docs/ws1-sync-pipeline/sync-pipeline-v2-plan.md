@@ -1,12 +1,12 @@
 Status: Accepted architecture — pending implementation
 Date: 2026-08-03 (Revision 2, same day — stage contracts, stage locking, Stage 1 observability, Russian descope, adversarial audit; see Part K)
 Verified-against-HEAD: 124ad3dd34a580cbfc0fb34b34d5c058338296d2
-Live status: see `docs/work-in-progress.md`'s "WS1 — Sync Pipeline Rewrite" section (§1–§11)
+Live status: see `docs/archive/history/work-in-progress.md`'s "WS1 — Sync Pipeline Rewrite" section (§1–§11)
 for Task 5 (Phase 3) granular status, updated per-slice — this document remains
 design-of-record only (stages, phases, contracts, risk register); if the two ever disagree,
 `work-in-progress.md` is newer and wins (see this document's own Part M). `project-state.md`'s
 Next Action section tracks the rolling top-3 cross-workstream task queue.
-**K13 correction (2026-08-11): CLOSED.** This document's Part K finding and every other K13 reference below describe the pre-fix defect, its discovery, and the original plan to fix it inside Stage 3 — that plan was superseded. K13 was fixed as an independent task directly against `main` (owner ruling R-C), not via the Stage 3 restructure this document describes; the restructure itself remains not-started. Current status/registry: `project-state.md` §4/§5, `docs/work-in-progress.md` §3 task 8 (`ws1-master-roadmap.md` §5, the original source, was deleted 2026-08-14, `9cf5867`; retrieve: `git show 251be64:docs/ws1-sync-pipeline/ws1-master-roadmap.md`). Read every present-tense "K13 is open" / "C11 must keep failing" statement below as historical, not current.
+**K13 correction (2026-08-11): CLOSED.** This document's Part K finding and every other K13 reference below describe the pre-fix defect, its discovery, and the original plan to fix it inside Stage 3 — that plan was superseded. K13 was fixed as an independent task directly against `main` (owner ruling R-C), not via the Stage 3 restructure this document describes; the restructure itself remains not-started. Current status/registry: `project-state.md` §4/§5, `docs/archive/history/work-in-progress.md` §3 task 8 (`ws1-master-roadmap.md` §5, the original source, was deleted 2026-08-14, `9cf5867`; retrieve: `git show 251be64:docs/ws1-sync-pipeline/ws1-master-roadmap.md`). Read every present-tense "K13 is open" / "C11 must keep failing" statement below as historical, not current.
 
 **Docs Cleanup Round 2 (2026-08-25): Parts AE–AH condensed.** The full session-by-session
 narrative for Parts AE (Session AK), AF (Session AL), AG (Session AM), and AH (Session AN) was
@@ -30,8 +30,8 @@ Phases are grouped under the stage they build (Part D). A stage's phases may not
 | 1b | Stage 1 | Transcript Inspector — dev-only, in-app; BLOCKING Stage 1 deliverable | DONE | Owner inspection — `window.__transcriptInspector()` run in-app on V6 (447-seg) and 173-seg, output captured to `docs/ws1-sync-pipeline/measurements/v6-smear-baseline.csv` / `docs/ws1-sync-pipeline/measurements/173-smear-baseline.csv` | 2026-08-04 |
 | 2a | Stage 1 | Model swap — multilingual model, `-l auto`, per-project language override | **DONE** — gate passed: Phase 0 30/47 → phase-2a 38/44 verified (correct 38, word-shifted 5, FAIL 1; 2 N/A + 1 unverified named, not counted against the gate) | Owner ear-listening pass, `verification-baseline.csv` | 2026-08-05 |
 | 2b | Stage 1 | Measure timing sources on the production model (turbo raw / turbo+DTW / large-v3 reference) — committed script | **DONE** — **DTW ABANDONED**: measured to change timestamps by exactly 0.000000000s vs a no-DTW control, on 4,579 + 2,080 tokens. Phase 3 = forced alignment. Script committed at `scripts/measure-word-onset.py` | Measurement (read-only; no owner listening required by this phase's own terms) | 2026-08-05 |
-| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **STALE, describes this row's 2026-08-07 pre-Task-5 state — see Part M.** Original text, left as the historical readiness record: "IMPLEMENTATION-READY, not started. Blockers 1/2/3 CLOSED; all three Rust gates closed (Spanish accuracy — Step U, reference bias, corrected p95 50.4ms vs the approved 250ms gate; structural checks — Steps W/X, 12 in / C10 out by name; heading assignment — owner decision 8, Option A). Pre-implementation baseline (Steps M-P) captured, restored and proven faithful at Step Y; readiness statement at Step Z. Integration not started." **Current status (2026-08-15, Part M / `docs/work-in-progress.md` §3–§5, §11 item 1): ALIGNER COMPLETE, dev-only — Slices D1–D25 shipped (D7 cancelled as scoped), behind the `fa-inference` feature flag, zero production callers. The remaining work — the capability-gated production-wiring slice — is BLOCKED ON 3C BY DECISION (Option B, 2026-08-15): the gate stays off through Phase 3b/3c and flips once, after 3c lands. Not "not started"; not "in progress" either — what's left is sequencing-blocked by owner decision, not incomplete implementation.** | Owner ear-listening (Step U, 10 Spanish clips); measurement (`scripts/measure-forced-alignment.py`, `scripts/phase4-step-u-score-spanish.py`); structural-check harness (`scripts/phase4-step-x-verify.py`); golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`, per-boundary diff, 0 divergence) | 2026-08-07 |
-| 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | **IN PROGRESS, NOT COMPLETE** — Owner: project owner (assigned 2026-08-15, execution order 3b → 3c → Phase 3 production wiring → Stage 1 lock; the remaining sub-item below inherits this same assignment, it is not separately unowned). Rule 1 (French elision) DONE (Slice 2); Rule 2 (Spanish cardinals 0-30, 31+ PERMANENTLY out of scope under the multi-word-output decision (b)) DONE (Slice 3); Rule 3 (German cardinals 0-30, no structural wall but scope-capped to mirror Rule 2) DONE (remainder audit, 2026-08-15); Rule 4 (Portuguese cardinals 0-20 and 30, PT-BR spelling per owner decision 2026-08-15 — `docs/work-in-progress.md` §7 item 6, RESOLVED) DONE (remainder audit follow-up, 2026-08-15) — Portuguese 21-29 PERMANENTLY excluded, same three-word wall as Spanish 31+ ("vinte e X"), discovered during Rule 4's own implementation, not part of the original scoping; currency and thousands-separator expansion (in `faTextNormalize.ts`) audited and found PERMANENTLY blocked by decision (b) — every case needs multi-word output. **Still open:** French cardinal expansion beyond Rule 1 (blocked on its own irregular "et"-exception design, not a flat lookup like Rule 2/3/4 — not attempted this pass). **Reassigned OUT of Phase 3b, 2026-08-15 (code evidence, not assumption):** the pre-existing Task 5 prerequisite (`textNormalize.ts`'s ASCII-only fold destroying native diacritics) and `textNormalize.ts`'s thousands-separator MANGLING bug both moved to Phase 3c below — traced through `faChunkPlan.ts` and confirmed neither reaches the FA model's input text (`chunk.text` is raw, never routed through `canonicalize` — `faChunkPlan.ts:360-371,628`); both only affect `qi` word-count bookkeeping via `canonicalize`, which is `textNormalize.ts` territory, not `faTextNormalize.ts`'s. See Phase 3c's own entry below and `docs/work-in-progress.md`'s changelog for the full evidence trail. See H.5's decision block and `docs/work-in-progress.md`'s changelog for the full per-rule classification table. | `src/services/faTextNormalize.test.ts` + `src-tauri/src/fa/text.rs` fixture-parity gate (French elision + Spanish/German/Portuguese cardinals) | 2026-08-15 |
+| 3 | Stage 1 | Upgrade the timing source — **forced alignment** (decided by 2b; DTW eliminated) | **STALE, describes this row's 2026-08-07 pre-Task-5 state — see Part M.** Original text, left as the historical readiness record: "IMPLEMENTATION-READY, not started. Blockers 1/2/3 CLOSED; all three Rust gates closed (Spanish accuracy — Step U, reference bias, corrected p95 50.4ms vs the approved 250ms gate; structural checks — Steps W/X, 12 in / C10 out by name; heading assignment — owner decision 8, Option A). Pre-implementation baseline (Steps M-P) captured, restored and proven faithful at Step Y; readiness statement at Step Z. Integration not started." **Current status (2026-08-15, Part M / `docs/archive/history/work-in-progress.md` §3–§5, §11 item 1): ALIGNER COMPLETE, dev-only — Slices D1–D25 shipped (D7 cancelled as scoped), behind the `fa-inference` feature flag, zero production callers. The remaining work — the capability-gated production-wiring slice — is BLOCKED ON 3C BY DECISION (Option B, 2026-08-15): the gate stays off through Phase 3b/3c and flips once, after 3c lands. Not "not started"; not "in progress" either — what's left is sequencing-blocked by owner decision, not incomplete implementation.** | Owner ear-listening (Step U, 10 Spanish clips); measurement (`scripts/measure-forced-alignment.py`, `scripts/phase4-step-u-score-spanish.py`); structural-check harness (`scripts/phase4-step-x-verify.py`); golden-baseline replay (`scripts/phase4-handoff-replay-sync.test.ts`, per-boundary diff, 0 divergence) | 2026-08-07 |
+| 3b | Stage 1 | Language-keyed normalization (moved here from old Phase 8 / H.5 — Part K, K1) | **IN PROGRESS, NOT COMPLETE** — Owner: project owner (assigned 2026-08-15, execution order 3b → 3c → Phase 3 production wiring → Stage 1 lock; the remaining sub-item below inherits this same assignment, it is not separately unowned). Rule 1 (French elision) DONE (Slice 2); Rule 2 (Spanish cardinals 0-30, 31+ PERMANENTLY out of scope under the multi-word-output decision (b)) DONE (Slice 3); Rule 3 (German cardinals 0-30, no structural wall but scope-capped to mirror Rule 2) DONE (remainder audit, 2026-08-15); Rule 4 (Portuguese cardinals 0-20 and 30, PT-BR spelling per owner decision 2026-08-15 — `docs/archive/history/work-in-progress.md` §7 item 6, RESOLVED) DONE (remainder audit follow-up, 2026-08-15) — Portuguese 21-29 PERMANENTLY excluded, same three-word wall as Spanish 31+ ("vinte e X"), discovered during Rule 4's own implementation, not part of the original scoping; currency and thousands-separator expansion (in `faTextNormalize.ts`) audited and found PERMANENTLY blocked by decision (b) — every case needs multi-word output. **Still open:** French cardinal expansion beyond Rule 1 (blocked on its own irregular "et"-exception design, not a flat lookup like Rule 2/3/4 — not attempted this pass). **Reassigned OUT of Phase 3b, 2026-08-15 (code evidence, not assumption):** the pre-existing Task 5 prerequisite (`textNormalize.ts`'s ASCII-only fold destroying native diacritics) and `textNormalize.ts`'s thousands-separator MANGLING bug both moved to Phase 3c below — traced through `faChunkPlan.ts` and confirmed neither reaches the FA model's input text (`chunk.text` is raw, never routed through `canonicalize` — `faChunkPlan.ts:360-371,628`); both only affect `qi` word-count bookkeeping via `canonicalize`, which is `textNormalize.ts` territory, not `faTextNormalize.ts`'s. See Phase 3c's own entry below and `docs/archive/history/work-in-progress.md`'s changelog for the full evidence trail. See H.5's decision block and `docs/archive/history/work-in-progress.md`'s changelog for the full per-rule classification table. | `src/services/faTextNormalize.test.ts` + `src-tauri/src/fa/text.rs` fixture-parity gate (French elision + Spanish/German/Portuguese cardinals) | 2026-08-15 |
 | 3c | Stage 1 | Hyphen asymmetry fix (moved here from old Phase 8 — Part K, K1) | NOT STARTED — Owner: project owner (assigned 2026-08-15, execution order 3b → 3c → Phase 3 production wiring → Stage 1 lock) | — | — |
 | 3d | Stage 1 | Adaptive silence thresholds (conditional on 2b evidence; moved from old Phase 8 — Part K, K1) | **SKIPPED** | — | — |
 | — | **STAGE 1 LOCK** | Gate in Part D | NOT PASSED | — | — |
@@ -147,7 +147,7 @@ The corpus lives at `/Users/mohtashim/Downloads/All Projects Test Data` — OUTS
 | `294 Segs Project` | `3. Voiceover.m4a` | 30.6 MB | 1265.1s | ✓ | ✓ + `4. Assets/` | English | not determinable | The contention/starvation-cascade project (segments 249–251) |
 | `V6 Natural Long Pause Segs` | `6.m4a` | 32.9 MB | 1421.3s | ✓ (`All Text Files/Script.txt`) | ✓ (`All Text Files/Sync.txt`) | English | **natural / long-pause** (named in the directory) | THE V6 447-segment project — the 11 word-shift cases, the 8 seam-exemption fixes, segment 96 |
 | `V8 Lin-en Fl-ax Concate Segs` | `V.8.m4a` | 31.4 MB | 1296.2s | ✓ (`Humanized Scripts.txt`) | ✓ (`Sync.txt`) + asset zips + a finished MP4 | English | not determinable | The Pass-3 sub-word concatenation evidence project (“lin”+“en”, “fl”+“ax”) |
-| `Projects Backend Data` | `voiceover.m4a` (byte-identical to 173’s), `voiceover (1).m4a` (byte-identical to V6’s) | 17.2 / 32.9 MB | 709.0s / 1421.3s | — | — | English | — | **Phase 0’s backups already exist here**: `project.json` = 173 segments / 1973 transcript tokens, `project (1).json` = 447 segments / 4517 tokens — both matching the counts in `boundary-drift-investigation.md` (deleted 2026-08-14, `9cf5867`; retrieve: `git show 251be64:docs/ws1-sync-pipeline/boundary-drift-investigation.md`; conclusion folded into `docs/work-in-progress.md` §3/§12 row 17), both carrying `transcriptTokens` (i.e. the frozen transcripts), plus `v6-segments.json` / `v6-segments-full.json` |
+| `Projects Backend Data` | `voiceover.m4a` (byte-identical to 173’s), `voiceover (1).m4a` (byte-identical to V6’s) | 17.2 / 32.9 MB | 709.0s / 1421.3s | — | — | English | — | **Phase 0’s backups already exist here**: `project.json` = 173 segments / 1973 transcript tokens, `project (1).json` = 447 segments / 4517 tokens — both matching the counts in `boundary-drift-investigation.md` (deleted 2026-08-14, `9cf5867`; retrieve: `git show 251be64:docs/ws1-sync-pipeline/boundary-drift-investigation.md`; conclusion folded into `docs/archive/history/work-in-progress.md` §3/§12 row 17), both carrying `transcriptTokens` (i.e. the frozen transcripts), plus `v6-segments.json` / `v6-segments-full.json` |
 
 (The V6 directory also contains creator-workflow files — `Prompts.txt`, `Description.txt`, `Agent File.txt` (instructions for the owner’s image-generation agents) — that are not sync inputs and play no role here.)
 
@@ -1350,7 +1350,7 @@ Step H's did before it.
 > implemented anywhere in `src/` or `src-tauri/src/` as of this update. A
 > planned slice (D7) to build the remainder and its own verification method
 > was scoped, reviewed, and **cancelled** rather than completed — see
-> `docs/work-in-progress.md` §5's D7 row for why (`task5-slice-ledger.md` §2,
+> `docs/archive/history/work-in-progress.md` §5's D7 row for why (`task5-slice-ledger.md` §2,
 > the original source, was deleted 2026-08-14, `9cf5867`; retrieve: `git show
 > 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`), and its §4 for
 > the "Automated Agreement Budget" ruling that replaces the zero-tolerance
@@ -1438,7 +1438,7 @@ in `syncConstants.ts`, never hardcoded at a call site.
 **R-R ruling (owner, 2026-08-16) — R.1(c)'s corroboration test is unsound;
 items 6/7 fix decided as a rewrite, two rejected alternatives named.** The
 ear-pass root-cause diagnosis (`b36f6c2`, independently re-derived `f8250a3`,
-both recorded in `docs/work-in-progress.md`'s §11 item 6 addenda) traced
+both recorded in `docs/archive/history/work-in-progress.md`'s §11 item 6 addenda) traced
 ear-pass items 6 (173, `vessel_damage_clue`: FA 172.91 vs. ear-correct 174.74)
 and 7 (v6, `152_frozen_brush_mice`: FA 449.20 vs. ear-correct 451.03) to the
 same mechanism: `faAnchors.ts`'s `findAgreeingSilence` (R.1(c)'s
@@ -1667,7 +1667,7 @@ spanish, every one of them inside the upper-bound set. Item 6 (173
 `vessel_damage_clue`) resolves to **174.74 exactly**, the ear-correct value,
 residual 0.000s. Item 7 is bit-identical at 449.20, as R-V predicts. The V6
 seam 150/151 control does not move. Per-boundary table:
-`docs/work-in-progress.md` §11.
+`docs/archive/history/work-in-progress.md` §11.
 
 *One consequence, recorded because it is intended and not an oversight.* The
 FIRST token of a transcript can never carry an R.1 anchor — there is no token
@@ -1780,13 +1780,13 @@ independent evidence against them — 9 of the 12 dropped are in neither set.
 Stated with its limit: n = 4, so this is a direction, not a proof.
 
 *The 12 dropped boundaries are NAMED CANDIDATE DEFECTS, left unfixed by this
-ruling on the record.* Full table in `docs/work-in-progress.md` §11. Three of
+ruling on the record.* Full table in `docs/archive/history/work-in-progress.md` §11. Three of
 them are in the 44 (`173 protection_failure`, `173 abysmal_opinion` — also in
 the 24 — and `v6 226_four_scouts`) and are the ones a later rule should
 revisit — **those three are the RC3 candidates, and they are now TRIAGED, not
 parked, by ruling R-AF (WS1 Session C, the "WS1 SESSION C RULINGS" block
 above), which overrides the owner's ear-pass decision RC3 to park them; the
-blinded triage list is drawn in `docs/work-in-progress.md` §11**; the other nine, including the entire 173 ord 143-148 cluster and item
+blinded triage list is drawn in `docs/archive/history/work-in-progress.md` §11**; the other nine, including the entire 173 ord 143-148 cluster and item
 11's `blue_monkey`, have no independent evidence against them and were moved
 by the instant reading alone.
 
@@ -1826,7 +1826,7 @@ participates at any point. *Evidence:* v6 `152_frozen_brush_mice`, committed
 >
 > **The reachability claim in the next paragraph is ALSO too strong, on
 > measurement** — see WS1 Session C's Diagnosis B in
-> `docs/work-in-progress.md` §11. It is true that `faAnchors.ts` never sees an
+> `docs/archive/history/work-in-progress.md` §11. It is true that `faAnchors.ts` never sees an
 > FA word timing, and true that R-U/R-AA leave item 7 bit-identical. It does
 > NOT follow that no anchor-side change can reach it: Session C measured that
 > item 7's chunk window `[448.34, 451.70]` is cut by an R.1 anchor at 451.70
@@ -1852,7 +1852,7 @@ grounds.** Option 2 of A.5's (g). ~460s for V6 against an already-accepted
 AUTHORISED BEFORE implementation, read-only, to convert A.5's 179 upper bound
 into real magnitudes.** This is what makes R-X's stratified sample drawable:
 the magnitude buckets do not exist until it runs. Executed in WS1 Session B;
-results in `docs/work-in-progress.md` §11. Method, recorded because the result
+results in `docs/archive/history/work-in-progress.md` §11. Method, recorded because the result
 is only as trustworthy as it: the re-capture driver was validated by replaying
 the PREVIOUS capture's own words through it and reproducing all three
 committed `phase4-fa-second-baseline-*-segments.csv` fixtures byte-for-byte,
@@ -1884,7 +1884,7 @@ the "this listener says yes to everything" failure R-X was written to catch.
 But the blinding is spent, so Tier 2's 8/8 is corroboration, not the
 independent confirmation its design intended. **Binding on the next draw: the
 blinded tier is scored before any disclosing tier, without exception.** Session
-H (`docs/work-in-progress.md` §11) inherits this as a hard precondition.
+H (`docs/archive/history/work-in-progress.md` §11) inherits this as a hard precondition.
 
 **R-AC ruling (owner, 2026-08-16) — the UNSCORED CONTROL is ACCEPTED (alias
 RC4).** Tier 1's 12/12 stands with `vessel_damage_clue` (ear-pass item 6)
@@ -1949,7 +1949,7 @@ that is about to become the default cannot sit outside the lock scope. R-V's
 *substance* is untouched — item 7 is still its own defect class R.11, still
 unbundled from R-R, still a distinct mechanism from item 6. Only its schedule
 moves. See also the Session C root-cause diagnosis
-(`docs/work-in-progress.md` §11), which finds R-V's stated reachability claim
+(`docs/archive/history/work-in-progress.md` §11), which finds R-V's stated reachability claim
 too strong.
 
 **R-AF ruling (2026-08-16) — the three RC3 candidates are TRIAGED, not parked
@@ -1963,7 +1963,7 @@ abysmal_opinion`, `v6 226_four_scouts` — are parked for a later rule.** They
 are the three of R-AA's twelve dropped boundaries that carry independent
 evidence against them (all three in the 44 >0.5s FA-vs-Whisper disagreement
 set; `abysmal_opinion` also in the 24 >1.0s set) — see R-AA's own "12 dropped"
-paragraph at `:1770` and the full table in `docs/work-in-progress.md` §11.
+paragraph at `:1770` and the full table in `docs/archive/history/work-in-progress.md` §11.
 
 *Why the override.* Parking is the right call when triage is expensive. Here it
 is three boundaries at ~25s of listening each — roughly **75 seconds**. The
@@ -1972,7 +1972,7 @@ them now than by filing them where a later session must rediscover why they
 were filed. Each resolves to exactly one of: **correct as-is** (closed on the
 record), **defective** (enters the Zero-Defect Register), or **undecidable by
 ear** (closed with a named further step). The triage list is drawn and ready in
-`docs/work-in-progress.md` §11; running it is the owner's, and it is ~2 minutes.
+`docs/archive/history/work-in-progress.md` §11; running it is the owner's, and it is ~2 minutes.
 
 ---
 
@@ -2087,7 +2087,7 @@ which is exactly what leaving the inter-chunk span unclaimed produces.
 > onto the nearest real silence, which is a separate question R-E never
 > answered: nine of V6's ten unscripted runs turned out to hold a committed
 > boundary landing on a real silence STRICTLY INSIDE the run (measured, not
-> assumed — `docs/work-in-progress.md` §11's Session H entry). Owner ruling 3
+> assumed — `docs/archive/history/work-in-progress.md` §11's Session H entry). Owner ruling 3
 > REVERSES the destination for that committed boundary specifically: it
 > belongs to the FOLLOWING segment, in `[prevToken.endSec, run.startSec]`,
 > matching what the ear scored correct on all twelve Session H listening-pass
@@ -2109,12 +2109,12 @@ all in v6, and every one of the 8 lands exactly on the Whisper-committed
 value.** Ear-pass items 4 and 5 both resolve with residual **0.000s** at 931.40
 and 130.96. Item 7 (449.20), the V6 seam 150/151 control (457.81) and all three
 v6 FA-recovered boundaries are unmoved. Full tables:
-`docs/work-in-progress.md` §11's Session D block.
+`docs/archive/history/work-in-progress.md` §11's Session D block.
 
 *Not built, deliberately.* The `unscripted-gap` sync-log entry R-E calls for.
 `faChunkPlan.ts` is a pure module with no logging surface, and the caller that
 would emit it is the Phase 3 production-wiring slice
-(`docs/work-in-progress.md` §11 item 1), which has not landed. `detectUnscripted
+(`docs/archive/history/work-in-progress.md` §11 item 1), which has not landed. `detectUnscripted
 Runs` is exported so that caller can emit the entry without re-deriving
 anything. Recorded as a deferral, not an omission.
 
@@ -2264,7 +2264,7 @@ alignment has no drop path for this: a CTC objective is required to place
 every target token *somewhere*, so unspoken scripted words are carved out of
 whichever real speech happens to be adjacent, stealing that speech's own
 words into the same window at near-zero confidence (ear-pass items 10
-`perilous_realms`, 11 `blue_monkey`, `docs/work-in-progress.md`'s 12-item
+`perilous_realms`, 11 `blue_monkey`, `docs/archive/history/work-in-progress.md`'s 12-item
 mechanism table).
 
 **Detection signal, measured not assumed.** Both item 10 and item 11 score
@@ -2283,7 +2283,7 @@ matched segment's words are overwhelmingly below `CONF_MIN`, treat the
 segment as unmatched and drop it, rather than committing timing an alignment
 was forced into place with no real acoustic evidence behind it. This is
 inherent to a forced-alignment objective, not a bug in `faAnchors.ts` or
-`faChunkPlan.ts` (`docs/work-in-progress.md`'s "inherent vs. missing-feature
+`faChunkPlan.ts` (`docs/archive/history/work-in-progress.md`'s "inherent vs. missing-feature
 vs. bug" categorization) — so the fix is a drop/skip gate layered on FA's
 output, not a change to the alignment computation itself.
 
@@ -2299,7 +2299,7 @@ defect.
 **Ruling status.** Specified here to the same depth R.5 carries, not yet
 built, and its own implementation approach (the drop-gate threshold; whether
 it reuses `CONF_MIN` as-is or needs its own constant) is still an open
-decision, tracked in `docs/work-in-progress.md` — the same status R.5 held
+decision, tracked in `docs/archive/history/work-in-progress.md` — the same status R.5 held
 before ruling R-E closed its destination question.
 
 **R-Z ruling (owner, 2026-08-16) — R.10's RESPEC is an INDEPENDENT TRACK, not
@@ -2332,7 +2332,7 @@ is measured yet.
 *Status.* Documented only, this session. No respec written, no detector
 built, not a Session B or Session C blocker.
 
-*RESPEC — WS1 Session C (`docs/work-in-progress.md` §11(d)), plus the owner's
+*RESPEC — WS1 Session C (`docs/archive/history/work-in-progress.md` §11(d)), plus the owner's
 Session D directive.* Session C measured the two numbers above and found BOTH
 premises wrong: `hostile_landscape` and `perilous_realms` score **0.000**, not
 0.769/0.778, so the thief/victim adjacency this ruling was built on does not
@@ -2537,7 +2537,7 @@ only meaningful once the COMMITTED boundary exists to compare against a chunk ed
 silence midpoint, which is FA's own inference OUTPUT. Full mechanism, root cause on all
 three register members (re-measured against the real captured FA output, not cited),
 the false positive that forced a third conjunct, and the measured 4/649 blast radius:
-`docs/work-in-progress.md` §11's Session F block.
+`docs/archive/history/work-in-progress.md` §11's Session F block.
 
 **(b) The signal is suspicion, not the structural zero R.5/R.10 achieved — stated as a
 ruling, not a caveat.** `R11_MIN_FIT_DEVIATION`'s own margin (worst known-bad 1.3333 vs.
@@ -2597,7 +2597,7 @@ production outputs of both paths across four commits (`40a12cf` → `a0ff7c0` �
 1.7248e-5 and 6.4257e-6, and 0/447 in v6). Surviving membership: v6
 `027_internal_change_face`, `028_small_permanent_flake`, `029_night_understanding`; 173
 `shadow_loss`; spanish `001_scylla_intro`. **0 of the 5 has moved in value across all four
-commits.** This supersedes `docs/work-in-progress.md` §11's Session E entry (f) — "0 of 6
+commits.** This supersedes `docs/archive/history/work-in-progress.md` §11's Session E entry (f) — "0 of 6
 moved … so six, not seven" — which was wrong.
 
 **(b) A HEALTHY model's verification tax is measured, not inferred.** R-AI(e) inferred that
@@ -2936,7 +2936,7 @@ Before `isFaGateOpen()`'s default can flip
 from OFF to ON, three conditions must all hold:
 
   (i)   **12/12 on a FRESH listening list** drawn from the post-fix run — not
-        the 12-item list `docs/work-in-progress.md`'s §11 item 6 already used.
+        the 12-item list `docs/archive/history/work-in-progress.md`'s §11 item 6 already used.
         That list informed the R-R ruling above and the items-6/7 diagnosis
         itself; it is not itself the acceptance gate, because scoring a fix
         against boundaries chosen before the fix existed would not be a fair
@@ -2946,7 +2946,7 @@ from OFF to ON, three conditions must all hold:
   (iii) **Runtime**, resolved per the acceptance below.
 
 **Runtime — accepted for an opt-in toggle; NOT resolved for the default.**
-V6's ~231s full-chunked-run wall-clock (`docs/work-in-progress.md`'s §11
+V6's ~231s full-chunked-run wall-clock (`docs/archive/history/work-in-progress.md`'s §11
 item 1 smoke-test follow-on) is accepted as-is for the existing opt-in
 Settings toggle — no optimization work is scoped this session, and none
 blocks the items-6/7 fix. It remains a blocker only for flipping the
@@ -2990,7 +2990,7 @@ R-S(ii) (zero boundaries more than 1.0s from ear-correct) and R-S(iii)
 (runtime, unresolved for the default) are unamended and still gate Tier 2.
 
 Both lists were drawn in WS1 Session B and are recorded in
-`docs/work-in-progress.md` §11. Neither has been listened to: the listening
+`docs/archive/history/work-in-progress.md` §11. Neither has been listened to: the listening
 pass is the owner's, in Session C.
 
 **AMENDED, 2026-08-16 (WS1 Session B.1), for R-AA — the lists are REDRAWN and
@@ -3036,7 +3036,7 @@ structure, which changes what fills each tier but not what either tier gates:
 
 Estimated listening cost at ~25s/boundary: 21 rows (13 Tier 1 including the
 unscored control + 8 Tier 2) ≈ **9 minutes**, against ~19 minutes for Session
-B's 44-row draw. Redrawn lists: `docs/work-in-progress.md` §11.
+B's 44-row draw. Redrawn lists: `docs/archive/history/work-in-progress.md` §11.
 
 ---
 
@@ -5261,7 +5261,7 @@ going into Stage 1 lock, not a replacement for either.
 
 **Carried-forward risk, stated so it is not silently assumed clean.** Phase
 3b's Rules 1-5 (French elision; Spanish/German/Portuguese/French cardinal
-numbers 0-20/30, §3b `docs/work-in-progress.md`) have **shipped**, but have
+numbers 0-20/30, §3b `docs/archive/history/work-in-progress.md`) have **shipped**, but have
 **never been exercised against real audio** for French, Portuguese, or
 German — only Spanish has a real corpus project, and even Spanish's boundary
 correctness remains unverified by ear (Phase 2a's Step 5 acceptance, `:381`
@@ -5277,7 +5277,7 @@ textNormalize.ts glues mid-call into one alignment word while Whisper emits two 
 **Scope addition (2026-08-15, Phase 3b remainder-audit follow-up — reassigned here, not
 newly invented work):** two `textNormalize.ts`/`canonicalize` items previously filed
 under Phase 3b belong here instead, confirmed by tracing `faChunkPlan.ts` end to end
-(`docs/work-in-progress.md`'s changelog carries the full trace) — (1) `canonicalize`
+(`docs/archive/history/work-in-progress.md`'s changelog carries the full trace) — (1) `canonicalize`
 step 10's ASCII-only fold destroying native diacritics for es/fr/de/pt (originally flagged
 2026-08-11, runtime spike G1, `:3800-3809` above), and (2) `canonicalize`'s
 thousands-separator step actively mangling a non-English-format number (e.g.
@@ -5325,7 +5325,7 @@ Replacing the fixed −45dB scan with noise-floor estimation, ONLY if Phase 2b�
   (owner ruling R4, WS1 Session A).** This reverses the 2026-08-15 decision
   below (`:4618` further down this document) that R.5 was not a Stage 1 lock
   criterion. Together the two rules address 4 of the 7 ear-pass failures
-  (items 4, 5 → R.5; items 10, 11 → R.10, `docs/work-in-progress.md`'s
+  (items 4, 5 → R.5; items 10, 11 → R.10, `docs/archive/history/work-in-progress.md`'s
   mechanism table) found after that 2026-08-15 decision was written — locking
   Stage 1 with defects already known and scheduled for repair two stages
   later is the exact pattern the Phase 3c ruling (above) and D.-1's hard rule
@@ -5382,7 +5382,7 @@ defects" must never be read, quoted, or summarised as unqualified — it means
   (e) cross-cutting regression checklist (D.-1) not yet run;
   (f) ~~`verification-baseline.csv` carried 69 blank `phase-2a` verdict cells (47 existing boundaries + 22 new sync-log-flagged candidates) awaiting the owner's ear~~ **RESOLVED 2026-08-11.** All 69 are closed: the 47 existing boundaries were scored during Phase 2a's own listening pass, which passed its correct-count gate (38/44 verified, ≥30-of-47 threshold met — see Phase 2a's entry above); the remaining 22 new sync-log-flagged candidates are DEFERRED, non-blocking, by owner ruling R-A (2026-08-11) — WS1 does not pause for an ear-listening pass to fill them in.
 
-**Update 2026-08-15: Phase 3c CLOSED, by written acceptance, no code change — see Phase 3c's own entry above.** The hyphen-tokenization mismatch was never separately itemized in this blocking list (K1's phase-move already folded it into criterion 3851's "no Stage 1 defect deferred downstream — closed inside Stage 1 by 3c/3d"), but is recorded here explicitly since the plan's own §3c row and `docs/work-in-progress.md`'s §2 cross-reference this section directly. Phase 3c is fully closed (qi-bookkeeping sub-items DONE 2026-08-15; hyphen-asymmetry CLOSED-by-acceptance 2026-08-15) and drops off the blocking list entirely. Outstanding: (a) smear thresholds (needs Phase 3 production landing), (b) fr/de/pt corpus absent (see the R-T ruling, above), (d) Contract IN/1→2 guarantee-by-guarantee verification not run, (e) regression checklist not run.
+**Update 2026-08-15: Phase 3c CLOSED, by written acceptance, no code change — see Phase 3c's own entry above.** The hyphen-tokenization mismatch was never separately itemized in this blocking list (K1's phase-move already folded it into criterion 3851's "no Stage 1 defect deferred downstream — closed inside Stage 1 by 3c/3d"), but is recorded here explicitly since the plan's own §3c row and `docs/archive/history/work-in-progress.md`'s §2 cross-reference this section directly. Phase 3c is fully closed (qi-bookkeeping sub-items DONE 2026-08-15; hyphen-asymmetry CLOSED-by-acceptance 2026-08-15) and drops off the blocking list entirely. Outstanding: (a) smear thresholds (needs Phase 3 production landing), (b) fr/de/pt corpus absent (see the R-T ruling, above), (d) Contract IN/1→2 guarantee-by-guarantee verification not run, (e) regression checklist not run.
 
 **Update 2026-08-16 (owner ruling R4, WS1 Session A): (f) R.5 and R.10 added
 to the blocking list.** Reverses the 2026-08-15 "R.5 is not a Stage 1 lock
@@ -5406,7 +5406,7 @@ failed on every in-app FA run with `failed to initialize onnxruntime: ORT_DYLIB_
 before any model or dylib version was ever consulted — the fallback then silently absorbed the
 error (fixed, Step 1 below), and Whisper timing shipped under the user's explicit
 high-precision-sync choice. This changes the standing of every fixture-based FA claim in this
-document until the live run (owed, `docs/work-in-progress.md`'s Session M changelog entry)
+document until the live run (owed, `docs/archive/history/work-in-progress.md`'s Session M changelog entry)
 reproduces it against the bundled runtime.
 
 **Required vs. available runtime, resolved authoritatively (not from memory).** ort-sys
@@ -5670,7 +5670,7 @@ H.3 Forced alignment, if Phase 2b triggers it
   `docs/ws1-sync-pipeline/measurements/runtime-spike-2026-08-11.md` (deleted
   2026-08-14, `9cf5867`; retrieve: `git show
   251be64:docs/ws1-sync-pipeline/measurements/runtime-spike-2026-08-11.md`;
-  conclusions also carried in `docs/work-in-progress.md` §7 item 4).
+  conclusions also carried in `docs/archive/history/work-in-progress.md` §7 item 4).
 
 H.4 NO segmentation-strategy interface — plus the guard that replaces it
   All five supported languages are whitespace-delimited, so the whitespace
@@ -5713,7 +5713,7 @@ H.5 Language-keyed normalization (Phase 3b, Stage 1) — THE MAIN MULTILINGUAL W
   today's, verified against the frozen English baseline. Every non-English rule
   is additive and language-keyed.
 
-  **Correction (2026-08-15, Phase 3b Slice 3 self-audit — `docs/work-in-progress.md`
+  **Correction (2026-08-15, Phase 3b Slice 3 self-audit — `docs/archive/history/work-in-progress.md`
   changelog): every claim above is accurate for `textNormalize.ts` but is NOT the
   starting-point capability inventory for Phase 3b's actual implementation
   target.** `textNormalize.ts` really does have working English digit expansion
@@ -6121,7 +6121,7 @@ Owner listening of the two repaired control boundaries in `verification-baseline
 
 These five boundaries give the short-segment-run category 6 total members in the verification set (144-145, 145-146, 146-147, 79-80, 80-81, plus the 134-135 control), satisfying the ≥3 requirement above with margin and covering both directions plus both defect signatures. This is a pre-swap (Phase 0) baseline — comparison after Phase 2a's model swap requires these same script-word keys to be re-listened and appended under the `phase-2a` label, per the standard baseline re-establishment procedure (K9).
 
-**RE-OPENS.** This finding partially contradicts `boundary-drift-investigation.md`'s conclusion (deleted 2026-08-14, `9cf5867`; retrieve: `git show 251be64:docs/ws1-sync-pipeline/boundary-drift-investigation.md`; also see `docs/work-in-progress.md` §3's paragraph immediately below the task-4 table, which already notes this same contradiction) that the defect was "localized to the boundary picker" and that "the aligner is exonerated." The aligner's SPANS may still be correct while the TIMESTAMPS those spans point at are not — both statements can hold.
+**RE-OPENS.** This finding partially contradicts `boundary-drift-investigation.md`'s conclusion (deleted 2026-08-14, `9cf5867`; retrieve: `git show 251be64:docs/ws1-sync-pipeline/boundary-drift-investigation.md`; also see `docs/archive/history/work-in-progress.md` §3's paragraph immediately below the task-4 table, which already notes this same contradiction) that the defect was "localized to the boundary picker" and that "the aligner is exonerated." The aligner's SPANS may still be correct while the TIMESTAMPS those spans point at are not — both statements can hold.
 
 ---
 
@@ -6138,7 +6138,7 @@ Part M — Task 5 (Phase 3) Status Addendum (2026-08-14, WS1 documentation conso
 > scoped) between this document's own last self-correction (the 2026-08-13 callout under
 > Step R, "Status update, 2026-08-13 (WS1 Task 5 documentation pass)") and today, and none
 > of D2–D25 is reflected anywhere above. **Live, granular status for all of this — updated
-> per-slice, not per-consolidation-pass — now lives in `docs/work-in-progress.md`'s
+> per-slice, not per-consolidation-pass — now lives in `docs/archive/history/work-in-progress.md`'s
 > "WS1 — Sync Pipeline Rewrite" section (§1–§11). This Part is a point-in-time pointer, not
 > a replacement tracker; if the two ever disagree, `work-in-progress.md` is newer and wins.**
 > This document remains design-of-record: stages, phases, contracts (Part J), and the risk
@@ -6156,7 +6156,7 @@ three symbols (`align_chunked_with_padding`, `align_chunk_samples_padded`,
 `FA_R2_DEFAULT_PADDING_SEC`) were deleted from `src-tauri/src/fa_onnx.rs` rather than kept
 as unwired dead code — confirmed by direct grep, zero hits. Does not need re-attempting
 under the falsified untokenized-pad-speech hypothesis; a future slice would need a
-genuinely new mechanism. Full record: `docs/work-in-progress.md` §4/§6, commits `3f2b9e6`
+genuinely new mechanism. Full record: `docs/archive/history/work-in-progress.md` §4/§6, commits `3f2b9e6`
 (build) / `a89f70a` (post-mortem + deletion).
 
 **R.5 (unscripted-audio wildcard) — scoped, reachable, not built.** Step R (`:1485-1503`)
@@ -6177,7 +6177,7 @@ most chunks already concatenate multiple segments' text); index attribution (D21
 different, coarser-granularity bug and did not add any wildcard mechanism. No
 wildcard/star-token state exists anywhere in `fa_viterbi.rs`/`fa_onnx.rs` today (grepped,
 zero hits). What remains open is *whether/when* to build it, not where the gap goes — see
-`docs/work-in-progress.md` §7 item 2 for the live open-decision framing.
+`docs/archive/history/work-in-progress.md` §7 item 2 for the live open-decision framing.
 
 **Spanish language gate — CLOSED**, unchanged from Step U's own finding above (this
 document's Step U, Spanish accuracy: corrected p95 50.4ms vs. the approved 250ms gate, 1 of
@@ -6198,24 +6198,24 @@ matches production's `app_local_data_dir()` exactly, cache hit 1538× faster and
 byte-identical to a miss. Two real bugs were caught and fixed live in the same slice (a
 `.tmp`-suffix filename defeating ffmpeg's own format auto-detection; a concurrent-miss
 filename collision). Still has no production (non-dev, UI-reachable) caller — that slice is
-the next item on the terminal path (`docs/work-in-progress.md` §11, item 1).
+the next item on the terminal path (`docs/archive/history/work-in-progress.md` §11, item 1).
 
 **R.5 (unscripted-audio wildcard) — DECISION: DEFERRED, 2026-08-15.** Closes the
-"whether/when" question `docs/work-in-progress.md` §7 item 2 left open (the
+"whether/when" question `docs/archive/history/work-in-progress.md` §7 item 2 left open (the
 *destination* question was already closed by ruling R-E; the *implementation*
 timing is what this closes). **Decision: option (b)** — ship the capability-gated
-production-wiring slice (`docs/work-in-progress.md` §11 item 1) without R.5, build
+production-wiring slice (`docs/archive/history/work-in-progress.md` §11 item 1) without R.5, build
 R.5 afterward. **Reasoning:** Stage 1 lock (§11 items 12-13) depends only on items
 1 (production wiring) and 8 (Phase 3c) landing — R.5 is not a Stage 1 lock
 criterion under any citation in this document or the tracker. D25 B1 already found
 the condition R.5 exists to handle remains reachable and silently-absorbed (not
 mis-attributed) under the shipped index-attribution path, so deferring costs
 nothing correctness-wise before Stage 1 lock. **Does not descope R.5** — owner
-ruling D1 (`docs/work-in-progress.md` §7, "PERMANENT") mandates it in Task 5's
+ruling D1 (`docs/archive/history/work-in-progress.md` §7, "PERMANENT") mandates it in Task 5's
 scope; this decision only orders it after production wiring rather than bundled
 into it, since both changes touch `FaChunkInput` and combining them would delay
 production wiring's own landing for no Stage-1-lock benefit. **Reopen trigger:**
-the next time work begins on `docs/work-in-progress.md` §11 item 1 (production
+the next time work begins on `docs/archive/history/work-in-progress.md` §11 item 1 (production
 wiring) or item 6 (R-H second-baseline pass) — whichever lands first — R.5 (item
 5) should be scoped concretely as the following slice, before Phase 4 begins.
 
@@ -6225,7 +6225,7 @@ with its newly-specified companion R.10 (scripted-text-never-spoken, `:1509`
 above), is now a Stage 1 lock gate criterion (STAGE 1 LOCK GATE, `:3860`
 above). Reasoning for the reversal: R.5/R.10 together address 4 of the 7
 ear-pass failures found after this decision was originally written
-(`docs/work-in-progress.md`'s 2026-08-16 root-cause diagnosis, items 4/5/10/
+(`docs/archive/history/work-in-progress.md`'s 2026-08-16 root-cause diagnosis, items 4/5/10/
 11) — locking Stage 1 with defects already known and scheduled for repair
 two stages later is the exact pattern D.-1's hard rule and the Phase 3c
 ruling already warn against. D25 B1's own finding above — the condition R.5
@@ -6463,7 +6463,7 @@ existing 10-mutation matrix against it, and Part N(e) left open whether R.13's z
 were the SAME raw-token-inflation defect. Both are settled here. The matrix itself needed a fix
 first: the 12-file gate could not see a mutation to `FaAnchor.tokenIdx` (zero production
 consumers; the pinned digest covers times only) — expanded to 16 files before the matrix could be
-trusted. Full results, M1-M12: `docs/work-in-progress.md` §11's Session Q entry (a).
+trusted. Full results, M1-M12: `docs/archive/history/work-in-progress.md` §11's Session Q entry (a).
 
 **(b) R.13's zero is NOT Part N(e)'s hypothesized mechanism.** Measured directly: the raw-vs-
 acoustic `run.endSec` delta Part N(e) worried about is 0.08s-0.40s on all ten v6 runs, while the
@@ -6562,7 +6562,7 @@ segment's first. Measured over all 446 v6 boundaries on the run-id-stamped live 
 confidence-filtered arm returns **zero violations anywhere** — controls, pins, and all 9 open
 defect rows alike. The unfiltered arm returns 160 violations that are anti-correlated with the
 defect set (155/426 controls, 3/4 ear-verified-correct pins, 1/4 Class A). No fix was designed on
-it. Full numbers: `docs/work-in-progress.md` §11's Session R entry (a).
+it. Full numbers: `docs/archive/history/work-in-progress.md` §11's Session R entry (a).
 
 **(b) The finding that matters is WHY the zero, and it relocates the defect.** Every FA word in
 every disputed span `[committed, ear-correct]`, on all 9 rows, is attributed to the INCOMING
@@ -6909,7 +6909,7 @@ all seven values — a later sitting re-confirming the same number, not a disagr
 the coherence test pins it to `KNOWN_BAD.length` (total membership, open + fixed combined), not to
 open count; only entries actually removed from the array (via `CLOSED_BY_POSITIVE_ASSERTION`
 conversion) have ever lowered it historically, and none were removed this session. Full semantics
-argument, quoted from the file by line number: `docs/work-in-progress.md` §11's Session V entry.
+argument, quoted from the file by line number: `docs/archive/history/work-in-progress.md` §11's Session V entry.
 
 **(f) MUTATION M16.** `acousticRunExtent`'s onset correction (`faRunPlacementGate.ts:273`)
 neutered to the raw Whisper onset — the one mechanism all seven closed values share. RED: 7 test
@@ -6930,7 +6930,7 @@ segments.csv` remains deliberately unregenerated and therefore stale for the fiv
 ## Part T — Engine Determinism Pinned and Proven; the Word-Gap Placement Hypothesis Only Partially
 Holds and Ships Nothing (WS1 Session Y, 2026-08-22, append-only)
 
-**Scope executed: Phases 1-2 of the session's own four-phase plan (`docs/work-in-progress.md`
+**Scope executed: Phases 1-2 of the session's own four-phase plan (`docs/archive/history/work-in-progress.md`
 §11a). Phase 3 (propose/arbitrate rule-stage rebuild) is designed but NOT implemented this
 session — see (d). Phase 4a (5 new WPM corpora) is blocked — no TTS/audio tooling available;
 recorded in §11a before execution began, not re-litigated here.**
@@ -7024,7 +7024,7 @@ fa-inference`, `cargo clippy --features fa-inference --all-targets` (4 pre-exist
 unchanged), `cargo test` (141/0/1), `cargo test --features fa-inference` (216/0/23 — the +2
 ignored are this session's own two new determinism tests, both real and both passing when run
 explicitly). Golden replay 6/6. Zero movement across all 447 v6 boundaries. `faAnchors.ts` sha256
-unchanged. Full numbers: `docs/work-in-progress.md`'s Session Y Changelog entry.
+unchanged. Full numbers: `docs/archive/history/work-in-progress.md`'s Session Y Changelog entry.
 
 ---
 
@@ -7041,7 +7041,7 @@ main`. HEAD `29ddcd3`.
 **(b) STEP 1a — THE LEADING HYPOTHESIS IS FALSE. MEASURED, NOT ASSUMED.** First correction: the
 task brief's own premise ("prior sessions recorded 280 vs. 277 vs. 273 chunks") is a
 misattribution — those three numbers are V6's chunk-plan history across Sessions M/N/P/D25 (grep-
-confirmed: `docs/work-in-progress.md` lines 1905/1912/4307), never 173's. 173's own chunk count has
+confirmed: `docs/archive/history/work-in-progress.md` lines 1905/1912/4307), never 173's. 173's own chunk count has
 independently drifted across captures too, just with different numbers: **118** (the replay
 bundle's `fa_production_chunks.json`), **119** (Session W's fresh `runProductionPath('173')` regen),
 **126** (the same replay bundle's `fa_live_chunks.json`) — three real, MEASURED counts, not one.
@@ -7130,7 +7130,7 @@ to — exactly the failure mode `CLAUDE.md`'s own standing invariant names ("tim
 100-900ms across a real silence seam"). **Classification: CONFIRMED DEFECT against ear ground truth
 on the frozen 2026-08-19 capture / offline harness path — not confirmed as a defect in the live
 app's own behavior, which got this boundary right.** **Not added to `KNOWN_BAD` this session** —
-per Session X's own scoping (`docs/work-in-progress.md` §11, Session X Step 1) a new open row needs
+per Session X's own scoping (`docs/archive/history/work-in-progress.md` §11, Session X Step 1) a new open row needs
 a verified `phase4-fa-second-baseline-173-segments.csv` regeneration to assert `faValue` against,
 and this session's CONSTRAINTS explicitly bar touching that file. Recorded here, in full, as a
 named open item instead.
@@ -7499,7 +7499,7 @@ passing comfortably — none of this requires a different acoustic model or a re
 alignment. **What would unblock them:** (a) the fitDeviation/silence-distance pair needs a third
 discriminator, not yet identified by any prior session; (b) the four amplitude-floor rows need
 either a revisited floor constant or a still-playing checker that CORRECTS (today it only WARNS —
-Part T's own `docs/work-in-progress.md` note); (c) `classA-231` needs a chunk-edge-aware silence
+Part T's own `docs/archive/history/work-in-progress.md` note); (c) `classA-231` needs a chunk-edge-aware silence
 selector. None of the three is an alignment-technology change. This is INFERRED, not a fix shipped
 this session — no row's `status` or `owningRule` changed.
 
@@ -7512,7 +7512,7 @@ pre-existing warnings (unchanged — same 3 lint classes as Session Z: `needless
 added this session). Golden replay 6/6 (`scripts/phase4-handoff-replay-sync.test.ts`, run
 standalone and confirmed part of the full green `npm test`). `faAnchors.ts` sha256 unchanged,
 `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`. `git diff --stat` against
-`ceaa6df`: docs only (this file, `docs/work-in-progress.md`, `project-state.md`) — no
+`ceaa6df`: docs only (this file, `docs/archive/history/work-in-progress.md`, `project-state.md`) — no
 `src/`/`src-tauri/` file touched, all CONSTRAINTS held (no edits to `faAnchors.ts`,
 `snapBoundaries.ts`, `silenceDetector.ts`, the Hirschberg aligner, `docs/archive/history/history.md`, or any
 `scripts/fixtures/phase4-baseline-*.csv`; no repo-root files added; no generator run in the
@@ -7553,13 +7553,13 @@ others are plain scripts run via `tsx`/`python3`, invoked directly, never part o
 IS ACTUALLY EAR-CONFIRMED (MEASURED, corrects the session brief before building on it).** R.11
 DETECTS six raw candidates on the live v6 bundle (`192_scout_listening`, `226_four_scouts`,
 `232_sudden_halt`, `233_firelight_speech`, `266_forty_one_burden`, `322_body_readiness` — matches
-`docs/work-in-progress.md`'s own "R.11 fires 6" from Session P/S) and KEEPS five after R-AP declines
+`docs/archive/history/work-in-progress.md`'s own "R.11 fires 6" from Session P/S) and KEEPS five after R-AP declines
 `266_forty_one_burden` (that boundary's origin lies strictly inside an R.5 run; R.12 owns it). Of
 those six, only TWO carry an ear pass that scored R.11's OWN proposed correction CORRECT:
 `192_scout_listening` and `226_four_scouts` (`scripts/ws1-ear-pass-ledger.ts`'s `h-192-scout-
 listening`/`ov3-226-four-scouts` rows). `232_sudden_halt`, `233_firelight_speech`,
 `322_body_readiness` appear NOWHERE in `EAR_PASS_LEDGER` (confirmed by direct grep of all 550 lines
-of that file) — `docs/work-in-progress.md`'s own Session Q entry already names them "Positive-
+of that file) — `docs/archive/history/work-in-progress.md`'s own Session Q entry already names them "Positive-
 looking pins WITHOUT one, now labelled change detectors," which this session's fresh measurement
 reproduces exactly. `266_forty_one_burden`'s R.11 PROPOSAL (moving the boundary past the run's end)
 is R.12's row, not R.11's — R.12's own value there is ear-confirmed, R.11's is not and never was.
@@ -7909,7 +7909,7 @@ silence bounds independently re-measured this session, not copied from the regis
 verdict/class columns blank; candidates in timestamp order, not correctness order.
 
 **(e) Steps 4-5 — STAGE 1 EXIT CRITERIA, checked against current state, and the four-phase
-assessment.** Full checklist and phase-by-phase assessment: `docs/work-in-progress.md` §11f (this
+assessment.** Full checklist and phase-by-phase assessment: `docs/archive/history/work-in-progress.md` §11f (this
 session's own results section) — reproduced there rather than duplicated here so there is exactly
 one copy to keep current. Headline findings, stated here because they revise standing claims in
 this very document:
@@ -7917,13 +7917,13 @@ this very document:
 - The **Spanish non-English-corpus acceptance appears to have silently lapsed.** Its own written
   reopening trigger ("voided... the moment any Spanish-specific normalization or alignment code
   ships (Phase 3b)") is satisfied by its own literal text — Phase 3b shipped Spanish cardinals
-  0-30 on 2026-08-15 (`docs/work-in-progress.md` §3 row 3b) — but the passage in THIS document
+  0-30 on 2026-08-15 (`docs/archive/history/work-in-progress.md` §3 row 3b) — but the passage in THIS document
   asserting "No Spanish-specific code has shipped in Task 5 to date, so... has not fired"
   (`:6174`, "Spanish language gate — CLOSED") is dated to a day before Task 5's first commit,
   predates the Phase 3b shipment it discusses, and was never revisited afterward. This session
   does not resolve the question (whether the trigger's own text should be read as scoped to Task
   5/alignment code specifically, narrower than its literal wording) — it is flagged for the owner,
-  full reasoning at `docs/work-in-progress.md` §11f.
+  full reasoning at `docs/archive/history/work-in-progress.md` §11f.
 - **Phase 2 (script-anchored word-gap placement) is WAIVED-BY-EVIDENCE for Stage 1 lock purposes**
   — three separate sessions (Y, Z, AA) each independently tested and refuted it; Stage 1 lock does
   not require a placement-model replacement of any kind (the open register rows are attribution
@@ -7935,7 +7935,7 @@ this very document:
   Session AB's SEPARATE onset-lead-in CONTROL-population extension (order of magnitude survives,
   the precise 10-30ms range does not) — a related but different hypothesis about a fixed pre-roll
   constant, not the word-gap interval model itself. Both are negative; neither is the same n=41
-  finding. Full detail: `docs/work-in-progress.md` §11f.
+  finding. Full detail: `docs/archive/history/work-in-progress.md` §11f.
 - **Phase 3 (propose/arbitrate rule-stage rebuild) is not demonstrably required for Stage 1
   lock.** Its stated purpose — retiring "the L7 class" of silent rule-ordering collisions — is
   already discharged for the one collision that has ever actually occurred
@@ -7946,9 +7946,9 @@ this very document:
   does not require a placement rule (per Phase 2's waiver above), the WPM suite's own "blocking
   prerequisite before any PLACEMENT rule ships to main" language (Part W(i)) does not, by its own
   scope, block Stage 1 lock either — it would gate a FUTURE session's placement-rule proposal, if
-  one is ever made. Cost estimate: `docs/work-in-progress.md` §11f Step 6.
+  one is ever made. Cost estimate: `docs/archive/history/work-in-progress.md` §11f Step 6.
 
-**(f) Step 6 — WPM prerequisite, costed.** Full estimate: `docs/work-in-progress.md` §11f. Headline:
+**(f) Step 6 — WPM prerequisite, costed.** Full estimate: `docs/archive/history/work-in-progress.md` §11f. Headline:
 sourcing five 120/140/160/180/200-WPM pacing corpora needs, per tier, real narrated audio at that
 pacing (this environment has no TTS/audio-generation tool — Session Y's own Phase 4a finding,
 unchanged), a matching script/scene-doc pair, a run-id-stamped live-fidelity bundle capture (the
@@ -7971,7 +7971,7 @@ skipped vs. the 26 floor — this session's own new gated probe file,
 regressions; 107 files passed/18 skipped, up from 17). **One real RED was caught and fixed en
 route, worth recording**: the first full re-run failed `scripts/ws1-single-tracker.test.ts`
 (1 failed/2464 passed/27 skipped) — the new ear-list doc landed before being added to that file's
-allowlist, the exact Session W-era oversight `docs/work-in-progress.md` §9's own history already
+allowlist, the exact Session W-era oversight `docs/archive/history/work-in-progress.md` §9's own history already
 names as a recurring failure mode for this gate. Fixed with a one-line allowlist addition
 (same file, same pattern as every prior ear-list doc); re-run green.
 
@@ -7983,7 +7983,7 @@ tests across both files, freshly re-run standalone this session, byte-identical)
 sha256 unchanged, `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`.
 
 `git diff --stat` against `aea0d19`: documentation only (`docs/ws1-sync-pipeline/sync-pipeline-v2-
-plan.md`, `docs/work-in-progress.md` including its own Changelog section, `project-state.md`) plus
+plan.md`, `docs/archive/history/work-in-progress.md` including its own Changelog section, `project-state.md`) plus
 one new gated `scripts/` measurement file (`ws1-session-ac-drift-probe.test.ts`, not in the
 default sweep), a one-line fix to `scripts/ws1-single-tracker.test.ts`'s allowlist (the RED caught
 above), and one new ear-list doc — no `snapBoundaries.ts`, `silenceDetector.ts`, Hirschberg
@@ -8009,12 +8009,12 @@ grep, not paraphrase. Row 2's committed value (681.63) is unchanged from the reg
 
 **Row 0 — the 449.20/450.99/451.03 reconciliation.** `git log -S"450.99"` traced the value to
 exactly one commit, `e7e4f9a` (WS1 Session P, 2026-08-19), which introduced it in TWO places: the
-"Class A is not a threshold problem" per-conjunct prose table (`docs/work-in-progress.md`) and
+"Class A is not a threshold problem" per-conjunct prose table (`docs/archive/history/work-in-progress.md`) and
 `scripts/ws1-generalization.test.ts`'s banned-ear-list-timestamp guard. Both instances write
 `449.20 → 450.99` for this row. But `scripts/ws1-ear-pass-ledger.ts`'s `ear-12` sitting (order 1 —
 the ORIGINAL 12-item ear pass, predating Session P by three sessions) already recorded this exact
 row as `scoredValue: 451.03, verdict: CORRECT` — and every OTHER file that names this row's
-ear-correct value (`docs/work-in-progress.md`'s dozens of other references, `sync-pipeline-v2-
+ear-correct value (`docs/archive/history/work-in-progress.md`'s dozens of other references, `sync-pipeline-v2-
 plan.md`'s own Parts M/N/Q, `src/services/faSeamFitGate.test.ts:250`, `faRunPlacementGate.
 test.ts:646`, `scripts/phase4-fa-replay.test.ts`'s own `earCorrect: 451.03` and its `toBeCloseTo
 (451.03, 0.005)` assertion) agrees on 451.03, not 450.99. Session P's own probe/measurement
@@ -8119,7 +8119,7 @@ measured to date, across three independent sessions:
 
 **No detector shipped in this document has ever reached item-7.** Per Session R's Part P finding
 (reaffirmed, not re-tested this session): the defect class here is word-ATTRIBUTION, not boundary
-placement — item-7's own traced mechanism (`docs/work-in-progress.md`'s ADDENDUM 2 to item 6) is
+placement — item-7's own traced mechanism (`docs/archive/history/work-in-progress.md`'s ADDENDUM 2 to item 6) is
 `findAgreeingSilence` (`faAnchors.ts`) anchoring on "moving," the SIXTH word of the segment's OWN
 correct text, because that word's Whisper timestamp happens to sit 0.10s from a real silence's
 `endSec` — the segment's first five words get trapped in the preceding chunk. Any detector that
@@ -8205,7 +8205,7 @@ ignored (unchanged). `cargo test --features fa-inference` 216 passed/0 failed/24
 `faAnchors.ts` sha256 unchanged, `b61e94cb6ac61a3f8f22ce076ac55440227f4d4b5aef0c6d6aa980035db7380c`.
 `git diff --stat` against `478bfb5`: `scripts/ws1-ear-pass-ledger.ts` (+109/-0, additive), two new
 `scripts/` files (`ws1-session-ad-step4-classA.py`, `ws1-session-ad-step6-classB.test.ts`, neither
-in the default sweep), plus this document, `docs/work-in-progress.md` (§11g + Changelog) and
+in the default sweep), plus this document, `docs/archive/history/work-in-progress.md` (§11g + Changelog) and
 `project-state.md` — no `src/` or `src-tauri/` file touched.
 
 ---
@@ -8215,7 +8215,7 @@ in the default sweep), plus this document, `docs/work-in-progress.md` (§11g + C
 **Scope, stated first.** The brief restricted this session to Class A and Class B on v6 and 173.
 Idle exit criteria, the Spanish reopening trigger, the D-1 regression checklist, Contract IN / 1→2
 verification, inspector smear thresholds and the WPM tier suite are all recorded as DEFERRED in
-`docs/work-in-progress.md` §11 and no work was done on any of them.
+`docs/archive/history/work-in-progress.md` §11 and no work was done on any of them.
 
 ### Z.1 — Ground truth ingested; the register had been under-reporting 173 for two sessions
 
@@ -9145,7 +9145,7 @@ is — confirmed by grep before this entry was written, not assumed.
 | `ae2c516` | Steps 3-4 — S2 dry run, pre-registered predictions, the failed proxy |
 | `5006806` | docs — this Part, §§3/9/11j, Changelog, project-state, CLAUDE.md invariants |
 
-`git diff --stat 09790ac` touches only: `docs/work-in-progress.md`, the (now-folded) `fa-chunk-phantom-root-cause.md`,
+`git diff --stat 09790ac` touches only: `docs/archive/history/work-in-progress.md`, the (now-folded) `fa-chunk-phantom-root-cause.md`,
 `sync-pipeline-v2-plan.md`, `project-state.md`, `CLAUDE.md`, `scripts/ws1-ear-pass-ledger.ts`, nine
 new `scripts/ws1-session-ah-*.test.ts` files, one deleted `scripts/ws1-session-ag-s1-plan.test.ts`,
 two small edits to `scripts/ws1-session-ag-step8-earlist.test.ts`/`ws1-single-tracker.test.ts` (both
@@ -9853,7 +9853,7 @@ and the golden-replay fixture CSVs confirmed untouched; `computeFaChunkPlan` (th
 default) remains untouched.
 
 **This is the last entry in the S2/chunk-edge research line.** As of the 2026-08-25 accuracy-bar
-decision recorded in `docs/work-in-progress.md`, further chunk-width/chunk-edge research is
+decision recorded in `docs/archive/history/work-in-progress.md`, further chunk-width/chunk-edge research is
 frozen — current ~97–98% accuracy is accepted and remaining errors go through manual review
 instead. The budget curve's own finding (§AH.2, folded above) is why: substitutable edges could
 close at most 26 of the 67 residual v6 boundaries, not enough to justify continuing this line past
@@ -9861,7 +9861,7 @@ arm H.
 
 ## Part AI — Open-Bugs Audit: Chunk-Plan Non-Determinism Retired, Four Bugs Confirmed and Designed, Sequenced, and the Two Standing Gaps Ruled On (Operator-Directed Audit, 2026-08-25, append-only)
 
-**Scope and method.** Read-only audit of the five bugs `docs/work-in-progress.md`'s Open bugs
+**Scope and method.** Read-only audit of the five bugs `docs/archive/history/work-in-progress.md`'s Open bugs
 section carried as of this morning. Every claim below traces to a file/line read this session or a
 prior session's record cited by name — no code changed except a throwaway repro (reverted before
 this commit; see §AI.9). Worked alone, no sub-agents.
@@ -9961,7 +9961,7 @@ project save, and a React "Maximum update depth exceeded" render loop) were flag
 neither touches the ORT/FA memory path this session fixed.
 
 **Verdict: CLOSED.** Commits: `6a1b939` (drop-then-build fix), `c295cb3` (guardrail test). Moved
-out of `docs/work-in-progress.md`'s Open bugs.
+out of `docs/archive/history/work-in-progress.md`'s Open bugs.
 
 ### AI.2 — `boundaryUsedFallback` isBreathSilence arg-count bug: STILL REPRODUCES
 
@@ -10059,7 +10059,7 @@ AH.60's own verification line for the most recent of these (Session AN) states p
 "`computeFaChunkPlan` (the production default) remains untouched." So the reproducibly-119
 production chunk plan Session AH established has had no code path to regress since.
 
-**Closed.** Removed from `docs/work-in-progress.md`'s Open bugs; one-line closure note in
+**Closed.** Removed from `docs/archive/history/work-in-progress.md`'s Open bugs; one-line closure note in
 `docs/archive/history/history-2.md`.
 
 ### AI.4 — 5 open Zero-Defect Register rows: STILL REPRODUCES, no rule reaches ship precision — this needs acceptance, not a design slot
@@ -10579,7 +10579,7 @@ rescue adoption): the check is additive-only and only ever calls `console.warn`,
 
 ## Part AK — Docs Cleanup: Standing Constraints, Embedded Detector/Log-Revamp Specs, and the Spanish Acceptance Lapse Relocated from work-in-progress.md (WS2 Step 9, Operator-Directed, 2026-08-26, append-only)
 
-**Scope.** `docs/work-in-progress.md` hit its 250-line cap. Per its own header's overflow
+**Scope.** `docs/archive/history/work-in-progress.md` hit its 250-line cap. Per its own header's overflow
 procedure, this Part relocates the reference material identified as such (frozen rulings, dead
 ends, and two fully-specced but not-yet-built items) out of the active task ledger and into this
 plan doc, verbatim, so the task ledger goes back to being one line per task. Nothing below is new

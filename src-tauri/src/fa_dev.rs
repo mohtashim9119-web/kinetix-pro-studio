@@ -542,7 +542,7 @@ pub async fn fa_align_dev(
 
 /// Shared body behind both `fa_align_dev` (above) and the production,
 /// capability-gated `fa_align_production` (`fa_production.rs`,
-/// docs/work-in-progress.md §11 item 1): resolves + manifest-verifies the
+/// docs/archive/history/work-in-progress.md §11 item 1): resolves + manifest-verifies the
 /// model, obtains a durable 16kHz mono WAV via `fa::ensure_durable_wav` from
 /// the already-staged `input_path` (see `fa_stage_audio_raw` above — the
 /// caller runs that first and passes its result here), then delegates to

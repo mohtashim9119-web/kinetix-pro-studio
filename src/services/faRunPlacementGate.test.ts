@@ -402,7 +402,7 @@ const PARSED_COUNT: Record<Corpus, number> = { v6: 447, '173': 175, spanish: 27 
 /**
  * `scripts/fixtures/phase4-fa-second-baseline-v6-segments.csv` is the SAME
  * fixture WS1 Session H's own R.12 re-pin overwrote with the nine corrections
- * already applied (`docs/work-in-progress.md` §11) — reading it live would
+ * already applied (`docs/archive/history/work-in-progress.md` §11) — reading it live would
  * test the detector against its own already-corrected output (a false
  * negative: the detector correctly declines to re-fire on an already-correct
  * boundary, per its own no-op guard). These are the REAL pre-correction

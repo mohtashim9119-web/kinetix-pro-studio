@@ -51,7 +51,7 @@ with actionable text rather than silently loading an incompatible library.
 that locally. **Only macOS x86_64 has been runtime-verified in this repo's
 own history** (real FA runs, real corpora) — the aarch64 and Windows recipes
 are checksum-verified downloads only; see
-`docs/ws2-fa-models/ort-provisioning.md` for what's still unverified on each.
+`docs/ws2-app/fa-models-ort-provisioning.md` for what's still unverified on each.
 
 ### macOS (universal x86_64+arm64 — matches this app's own bundle target)
 
@@ -104,7 +104,7 @@ Get-FileHash onnxruntime_providers_shared.dll -Algorithm SHA256
 files must sit in `onnxruntime/`, but only `onnxruntime.dll` is ever named by
 path in code. The Windows target also needs the Microsoft Visual C++
 Redistributable (x64) present on the END USER's machine — see
-`docs/ws2-fa-models/ort-provisioning.md` for what is and isn't verified about
+`docs/ws2-app/fa-models-ort-provisioning.md` for what is and isn't verified about
 that.
 
 The SHA-256 of every provisioned file must match its

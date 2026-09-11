@@ -3,7 +3,7 @@
  * prefer an already-in-memory `voiceoverAsset.file` over `fetch(voiceoverAsset.url)`,
  * same defect shape/fix as WS2 Step 10's `fetchAndDetectSilences` (a `blob:`-URL
  * `fetch()` fails on Windows WebView2 where DOM-native consumption of the
- * identical URL does not — `docs/history-2.md`).
+ * identical URL does not — `docs/archive/history/history-2.md`).
  *
  * All encoder/ffmpeg collaborators are mocked; the goal is the mux-step
  * wiring, not real ffmpeg encoding.

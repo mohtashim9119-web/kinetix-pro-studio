@@ -216,7 +216,7 @@ function expandDigitsInto(tok: string, out: string[]): void {
 /**
  * Non-English `qi`-bookkeeping fixes (Phase 3c, `sync-pipeline-v2-plan.md`
  * H.5/:3821-3839 scope-addition; hyphen-asymmetry itself stays out of scope —
- * NOT STARTED, see `docs/work-in-progress.md` §3). Gated behind an explicit
+ * NOT STARTED, see `docs/archive/history/work-in-progress.md` §3). Gated behind an explicit
  * `languageCode` argument so every existing caller (nothing passes one today
  * outside `faChunkPlan.ts`'s `qi` computation) is byte-for-byte unaffected —
  * the frozen English alignment baseline (`CLAUDE.md` Testing invariant) never

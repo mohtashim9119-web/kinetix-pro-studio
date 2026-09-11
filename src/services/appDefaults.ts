@@ -55,7 +55,7 @@ const KEY_OVERLAY = 'defaultTextOverlay';
  * (owner instruction, WS2 T4.1). `fa-inference` is not in `Cargo.toml`'s
  * default feature set, so a default build's `fa_align` returns
  * `not_implemented` for every run and falls back to Whisper timing — see
- * `docs/work-in-progress.md` §5's `[DEFERRED · BLOCKS T4.1 CLOSE]` entry. A
+ * `docs/archive/history/work-in-progress.md` §5's `[DEFERRED · BLOCKS T4.1 CLOSE]` entry. A
  * default of ON would promise precision the shipped binary cannot deliver.
  *
  * Separate from `faGate.ts`'s `FA_PROJECT_DEFAULT_ON`, which is the READ-TIME

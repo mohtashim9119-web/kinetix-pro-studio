@@ -325,7 +325,7 @@ describe('computeFaAnchors', () => {
 // "where is the least-bad place to cut a run that has run too long?" — and
 // only the first is an identity claim. Extending the veto to R-P would also
 // move the production chunk plan away from the one Session B's Step 3
-// measured, which is what every number in `docs/work-in-progress.md` §11's
+// measured, which is what every number in `docs/archive/history/work-in-progress.md` §11's
 // R-Y table describes.
 // ===========================================================================
 
@@ -378,7 +378,7 @@ describe('computeFaAnchors — R-U zero-seam rejection rule', () => {
 
   it('ear-pass item 6: the false anchor at 173.12 is vetoed, and the real seam silence at 174.96 anchors instead', () => {
     // The real configuration, from scripts/fixtures/phase4-baseline-173-{words,
-    // silences}.csv (docs/work-in-progress.md §11): Whisper token 464
+    // silences}.csv (docs/archive/history/work-in-progress.md §11): Whisper token 464
     // "chemical" spans [172.57, 173.18], and detected silence [172.70, 173.12]
     // lies WHOLLY INSIDE it — zero seams. The next token's onset (173.18) is
     // 0.06s from that silence's endSec, well inside ANCHOR_AGREEMENT_SEC, so

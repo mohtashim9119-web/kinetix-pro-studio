@@ -2,9 +2,9 @@
 //
 // WHY THIS FILE EXISTS. The 2026-08-14 consolidation (commit `9cf5867`) collapsed
 // 29 scattered WS1 tracking/slice/decision/measurement files into
-// `docs/work-in-progress.md` §1-§11 plus `sync-pipeline-v2-plan.md`'s append-only
+// `docs/archive/history/work-in-progress.md` §1-§11 plus `sync-pipeline-v2-plan.md`'s append-only
 // Part M, specifically so a reader never has to chase cross-references into files
-// that don't exist. `docs/work-in-progress.md` itself carries a "SINGLE-TRACKER
+// that don't exist. `docs/archive/history/work-in-progress.md` itself carries a "SINGLE-TRACKER
 // RULE" callout stating this — but a prose warning does not fail a build. This
 // test is the enforcement: it runs on every `npx vitest run`, so a new WS1
 // tracking/status/decision `.md` file fails at the moment someone creates it, not
@@ -30,26 +30,28 @@ const WS1_DIR = resolve(REPO, 'docs/ws1-sync-pipeline');
  * 2026-08-14 consolidation this test enforces.
  */
 const ALLOWLIST = new Set<string>([
+  // Phase 2 docs consolidation — lane index README (navigation only, not a tracker).
+  'docs/ws1-sync-pipeline/README.md',
   // The design/contract source of truth — stages, phases, contracts, risk
   // register, plus its own append-only Part M pointing at the live tracker.
   'docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md',
   // The measurement data index (restored 2026-08-15 close-out audit — CLAUDE.md
   // §7 asserts its existence; deleting it during the 2026-08-14 consolidation
-  // was itself a defect, see docs/work-in-progress.md §3/§4).
+  // was itself a defect, see docs/archive/history/work-in-progress.md §3/§4).
   'docs/ws1-sync-pipeline/measurements/README.md',
   // Provenance manifest for the rescued-2026-08-07-model-p-park/ data subtree —
   // not a tracking/status file, a fixed record of where that data came from.
   'docs/ws1-sync-pipeline/measurements/rescued-2026-08-07-model-p-park/PROVENANCE.md',
   // The Stage 1 lock's still-open gate (WS1 Session I): a blinded 24-row
   // ear-scoring dossier with a sealed answer key, awaiting owner scoring —
-  // named directly in docs/work-in-progress.md's "Work in progress" section.
+  // named directly in docs/archive/history/work-in-progress.md's "Work in progress" section.
   // Cannot fold into history yet because it isn't finished, and a blinded
   // pass whose key sits inline in the tracker is not blinded.
   'docs/ws1-sync-pipeline/stage1-mover-audit.md',
   // The live acceptance run's own run sheet (WS1 Session I), procedurally
   // gated behind stage1-mover-audit.md's still-unscored dossier above — not
   // yet executed, so not yet foldable. Its RESULTS, once run, go to
-  // docs/work-in-progress.md.
+  // docs/archive/history/work-in-progress.md.
   'docs/ws1-sync-pipeline/stage1-live-run-prep.md',
   // Docs Cleanup Round 2 (2026-08-25) folded and deleted every other file
   // that was on this allowlist — each was FINISHED work (a completed run
@@ -84,10 +86,10 @@ describe('WS1 single-tracker rule — no new .md file outside the allowlist', ()
       'A new .md file appeared under docs/ws1-sync-pipeline/ outside the allowlist ' +
       'in scripts/ws1-single-tracker.test.ts. The 2026-08-14 consolidation ' +
       '(commit 9cf5867) deliberately collapsed 29 scattered WS1 tracking files ' +
-      'into docs/work-in-progress.md §1-§11 (execution/status) plus ' +
+      'into docs/archive/history/work-in-progress.md §1-§11 (execution/status) plus ' +
       'sync-pipeline-v2-plan.md Part M (design-of-record pointer) — see ' +
-      'docs/work-in-progress.md\'s "SINGLE-TRACKER RULE" callout. Add new WS1 ' +
-      'status/decision/slice content to docs/work-in-progress.md §1-§11 instead ' +
+      'docs/archive/history/work-in-progress.md\'s "SINGLE-TRACKER RULE" callout. Add new WS1 ' +
+      'status/decision/slice content to docs/archive/history/work-in-progress.md §1-§11 instead ' +
       'of creating a new file. If this file is genuinely not a tracking document ' +
       '(e.g. a data-index or provenance record analogous to the existing ' +
       'allowlist entries), add it to ALLOWLIST above with a one-line reason.\n' +

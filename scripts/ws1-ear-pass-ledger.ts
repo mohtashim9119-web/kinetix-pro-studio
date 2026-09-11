@@ -412,7 +412,7 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
   // -------------------------------------------------------------------------
   // WS1 SESSION S — the owner's LIVE pass over all ten v6 unscripted runs.
   //
-  // Recorded verbatim in `docs/work-in-progress.md` §11's Session S entry.
+  // Recorded verbatim in `docs/archive/history/work-in-progress.md` §11's Session S entry.
   // Scored in the app on the shipped production path, post-Session-Q-fix
   // vintage. Score: 4 PASS / 5 EARLY / 1 MAJOR. THIS SITTING IS AUTHORITATIVE
   // over every earlier one it contradicts, by `order`.
@@ -634,7 +634,7 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
   // at the fixture level (`ear-12`'s order-1 sitting already scored 451.03
   // CORRECT) and stays open only as a LIVE-PATH-ONLY defect (fitDeviation
   // pinned at the metric's own mathematical floor of 1.0 — structurally
-  // unreachable by R.11 at any threshold, `docs/work-in-progress.md` §11f).
+  // unreachable by R.11 at any threshold, `docs/archive/history/work-in-progress.md` §11f).
   { sitting: 'ear-verify-ad', corpus: 'v6', tag: '152_frozen_brush_mice', scoredValue: 449.20, verdict: 'WRONG',
     note: 'Row 0. The live-path committed value. Confirmed wrong, A/B against the target below.' },
   { sitting: 'ear-verify-ad', corpus: 'v6', tag: '152_frozen_brush_mice', scoredValue: 451.03, verdict: 'CORRECT',
@@ -643,7 +643,7 @@ export const EAR_PASS_LEDGER: readonly EarPassRow[] = [
       'right, and nothing between then and now ever entered a contradicting row INTO THIS LEDGER. ' +
       'SEPARATELY SUPERSEDED, for the record: the value `450.99`, which was NEVER an EAR_PASS_LEDGER ' +
       'entry — it originates in WS1 Session P\'s (2026-08-19, commit `e7e4f9a`) own "Class A is not a ' +
-      'threshold problem" per-conjunct prose table (`docs/work-in-progress.md`), which transcribed ' +
+      'threshold problem" per-conjunct prose table (`docs/archive/history/work-in-progress.md`), which transcribed ' +
       'this row\'s own already-on-record 451.03 as 450.99 and from there propagated into `scripts/ws1-' +
       'generalization.test.ts`\'s banned-timestamp guard list and three Session Q/R measurement ' +
       'scripts\' hardcoded constants (`ws1-session-q-silence-distance.test.ts`, `ws1-session-q-' +

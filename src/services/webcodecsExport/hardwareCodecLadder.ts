@@ -25,6 +25,6 @@
 
 /** Descending profile/level. High@4.0 is the production target; Baseline@3.1
  *  is OpenH264's typical ceiling in Chromium/WebView2's software fallback —
- *  see `docs/ws3-export-architecture-ledger.md`'s H2 entry for the measured
+ *  see `docs/ws3-export/architecture-ledger.md`'s H2 entry for the measured
  *  spike this choice is based on. */
 export const EXPORT_CODEC_LADDER: readonly string[] = ['avc1.640028', 'avc1.42001f'];

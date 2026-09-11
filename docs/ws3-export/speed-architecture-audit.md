@@ -2,7 +2,7 @@
 
 > **Purpose:** static, read-only feasibility analysis of four candidate export-speed
 > optimizations against the shipped WebCodecs+WebGL2 pipeline. Not a status tracker
-> and not a workstream ledger — those remain `project-state.md` / `docs/work-in-progress.md`.
+> and not a workstream ledger — those remain `project-state.md` / `docs/archive/history/work-in-progress.md`.
 >
 > **Method:** source reading only. No code edits, no test runs, no live exports.
 > FPS numbers other than the stated baseline are **estimates**, not measurements.
@@ -458,4 +458,4 @@ A measurement that would change this: a phase-attributed 42k-frame run showing `
 | Mux `-r` / two-step audio | `src/services/webcodecsExport/muxOnly.ts` |
 | Per-worker demux cache | `src/services/videoDemuxer.ts` |
 | WebGL2-over-WebGPU ruling + 411 fps spike | `docs/archive/history/history.md` (engine-decision section) |
-| Export liveness / cursor cap history | `docs/work-in-progress.md` WS3; `docs/archive/history/history-2.md` |
+| Export liveness / cursor cap history | `docs/archive/history/work-in-progress.md` WS3; `docs/archive/history/history-2.md` |

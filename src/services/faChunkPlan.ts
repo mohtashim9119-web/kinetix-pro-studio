@@ -850,7 +850,7 @@ function attributeByIndex(
  *
  * WS1 Task 5 Slice D22: `attribution` DEFAULTS to `'script-word-index'` — the
  * planner's own internal default, per the owner ruling recorded in
- * `docs/work-in-progress.md` §6's "R.7 CONF_MIN" and "CTC-infeasibility"
+ * `docs/archive/history/work-in-progress.md` §6's "R.7 CONF_MIN" and "CTC-infeasibility"
  * paragraphs (original sources `d21-attribution-confmin-2026-08-14.md` Step 2
  * and `d22-attribution-default-tail-2026-08-14.md`, this slice, were deleted
  * 2026-08-14, `9cf5867`; retrieve: `git show
@@ -881,7 +881,7 @@ function attributeByIndex(
  * native diacritics and (WS2 T3.2 Step 3b-iii) expands bare cardinal-number
  * tokens, as opposed to this module's pre-existing raw-text passthrough
  * (Rust's own `normalize_for_forced_alignment` port already normalizes raw
- * chunk text safely today — see `docs/work-in-progress.md` §10 — so this is
+ * chunk text safely today — see `docs/archive/history/work-in-progress.md` §10 — so this is
  * an additive JS-side capability, not a fix to a live bug). Omitting any of
  * the three (every call site today, `App.tsx`'s dev path included) leaves
  * `runsToChunks`/`attributeByIndex`'s output completely untouched — this

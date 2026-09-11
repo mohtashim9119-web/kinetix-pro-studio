@@ -4,7 +4,7 @@
  * What is under test is the recovery that shipped, not the one that was
  * designed: a bounded RE-RENDER was ruled unreachable this round (it needs a
  * byte-truncate primitive that lives in src-tauri, owned by another agent —
- * see docs/ws3-export-recovery-architecture.md §3), so what exists is
+ * see docs/ws3-export/recovery-architecture.md §3), so what exists is
  * fence-and-verify: stop the dead encoder's output reaching disk, end the run
  * without awaiting the un-cancellable flush, and let the orchestrator's
  * picture-accurate, zero-tolerance frame-count guard decide whether the file

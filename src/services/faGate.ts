@@ -82,7 +82,7 @@ export const LEGACY_GLOBAL_FA_TOGGLE_KEY = 'faHighPrecisionSyncEnabled';
  * of rows, also 12/12, so one lucky sample cannot carry the decision alone;
  * (3) the live acceptance run itself. None of the three has happened as of
  * this session — Session H's own sealed, unscored Step 12 draw is the FIRST
- * of the two required blind passes (`docs/work-in-progress.md` §9).
+ * of the two required blind passes (`docs/archive/history/work-in-progress.md` §9).
  *
  * This is a READ-TIME fallback and must stay one. Persisting it on load
  * would convert "no preference" into "explicit choice" behind the user's

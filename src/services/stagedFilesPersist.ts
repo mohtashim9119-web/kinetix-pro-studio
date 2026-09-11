@@ -24,7 +24,7 @@
  * call site added later, which is precisely the failure mode `processZipFile`
  * demonstrates: it drops a deduplicated asset without `deleteAsset` and without
  * `URL.revokeObjectURL`, leaking a row and a blob URL
- * (`docs/work-in-progress.md` §5).
+ * (`docs/archive/history/work-in-progress.md` §5).
  *
  * AND WHY THIS SHAPE AVOIDS THAT DEFECT'S SHAPE. `processZipFile` writes first
  * and decides membership afterwards. Here `next` IS the decided membership:

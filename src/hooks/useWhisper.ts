@@ -86,7 +86,7 @@ export async function alignSegmentsFromCachedTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
   durationSecs: number,
-  // WS1 Task 5, docs/work-in-progress.md §11 item 1, owner ruling R-G:
+  // WS1 Task 5, docs/archive/history/work-in-progress.md §11 item 1, owner ruling R-G:
   // defaults to 'whisper', preserving both existing call sites' behavior
   // (this function's own live-Option-A caller and App.tsx's direct Option C
   // call) byte-for-byte. The forced-alignment production branch (App.tsx's

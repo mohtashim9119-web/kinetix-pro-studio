@@ -512,7 +512,7 @@ existing `Worker.terminate()` is close to zero. The operator's read is correct.
   crash there loses the app and the project, not just the export. This is the strongest genuine case, and
   it is about blast radius, not liveness.
 - **Main-thread timer throttling under occlusion** — the run-5 class documented in
-  `docs/ws3-silent-gaps-diagnosis.md`, where this document's own `setTimeout` deadlines were starved for
+  `docs/ws3-export/silent-gaps-diagnosis.md`, where this document's own `setTimeout` deadlines were starved for
   223.6 s. A *native* process is not subject to WebKit's occlusion policy at all. This is the one class
   where isolation is a real fix rather than a nicer failure mode — and note that it argues specifically
   for the **native** shape and specifically **against** the hidden-window shape (§6c).

@@ -112,7 +112,7 @@
 //       either rule today would be deleting code no fixture protects.
 //   (c) a measured firing count of zero with all rows still correct.
 //
-// Full evidence: `sync-pipeline-v2-plan.md` Parts AA/AB, `docs/work-in-progress.md`
+// Full evidence: `sync-pipeline-v2-plan.md` Parts AA/AB, `docs/archive/history/work-in-progress.md`
 // §§11i/11j.
 // ---------------------------------------------------------------------------
 //

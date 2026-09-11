@@ -207,7 +207,7 @@ describe('R.11 — the named constants', () => {
 /**
  * `scripts/fixtures/phase4-fa-second-baseline-*-segments.csv` is the SAME
  * fixture WS1 Session F's own regeneration script overwrote with R.11's
- * corrections already applied (`docs/work-in-progress.md` §11) — reading it
+ * corrections already applied (`docs/archive/history/work-in-progress.md` §11) — reading it
  * live would test the detector against its own already-corrected output
  * (a false negative, not a false positive: the detector correctly declines
  * to re-fire on an already-correct boundary, per the same no-op guard

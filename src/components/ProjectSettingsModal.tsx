@@ -231,7 +231,7 @@ export function ProjectSettingsModal({
               `Project.faHighPrecisionSync`
               rather than a per-machine global key, and Save writes it only
               when the user actually moved it (`shouldPersistFaChoice`) — see
-              docs/work-in-progress.md §7 item 2 / §11 item 1 (original source
+              docs/archive/history/work-in-progress.md §7 item 2 / §11 item 1 (original source
               docs/ws1-sync-pipeline/task5-integration-scope.md was deleted
               2026-08-14, `9cf5867`; retrieve: `git show
               251be64:docs/ws1-sync-pipeline/task5-integration-scope.md`). */}

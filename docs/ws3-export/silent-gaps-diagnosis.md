@@ -1095,7 +1095,7 @@ explicitly deferred to a future round with its own cargo gate.
 scope decision; the same live-run cost applies here, and Step 6 specifically needs the
 *instrumented* worktree build to run live, which is exactly the run round 1's own "run 8" attempt
 could not get the `maybeAutorunPartC.ts` IIFE to execute for, and that specific mystery
-(`docs/ws3-silent-gaps-diagnosis.md`'s own Part 3, "Run 8" section) was not re-investigated this
+(`docs/ws3-export/silent-gaps-diagnosis.md`'s own Part 3, "Run 8" section) was not re-investigated this
 round either). What's missing to close it: a completed live Part C run against this round's
 current worktree (carrying both round 1's `PHASE_LOG_CAP` widening and this round's liveness fix)
 that reaches `part-c-500-done` and reports at least one `silentIntervalsOver5s` entry with a non-null

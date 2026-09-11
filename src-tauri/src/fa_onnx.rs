@@ -7,7 +7,7 @@
 // calls [`align_chunked_for_language`] only from its own
 // `#[cfg(feature = "fa-inference")]` arm.
 //
-// Scope (WS1 Task 5 Slice D2 boundary — see docs/work-in-progress.md §7
+// Scope (WS1 Task 5 Slice D2 boundary — see docs/archive/history/work-in-progress.md §7
 // item 4 for the ort/onnxruntime version-deadlock resolution this wiring is
 // built on; original source measurements/runtime-unblock-2026-08-12.md was
 // deleted 2026-08-14, `9cf5867`; retrieve: `git show
@@ -514,7 +514,7 @@ pub(crate) fn intra_op_thread_count() -> usize {
 /// `SetInterOpNumThreads` are unset (ORT picks a thread count from the host's
 /// core count) and `SetDeterministicCompute` is off (ORT's default kernels
 /// trade run-to-run bit-reproducibility for speed) — Session X
-/// (`docs/work-in-progress.md`'s 2026-08-22 Changelog entry) measured this as
+/// (`docs/archive/history/work-in-progress.md`'s 2026-08-22 Changelog entry) measured this as
 /// the INFERRED mechanism behind FA word timings diverging across two
 /// byte-identical-token captures of the same audio (the "45-46
 /// non-determinism"). `with_optimization_level` is deliberately NOT touched
@@ -1402,7 +1402,7 @@ pub fn align_chunked_for_language(
 const CTC_INFEASIBLE_FALLBACK_SCORE: f32 = f32::NEG_INFINITY;
 
 /// Root cause (WS1 Task 5 Slice D20, measured on the real 709s/173-project
-/// corpus — see `docs/work-in-progress.md` §6's CTC-infeasibility paragraph;
+/// corpus — see `docs/archive/history/work-in-progress.md` §6's CTC-infeasibility paragraph;
 /// original source `d20-ctc-infeasibility-2026-08-14.md` was deleted
 /// 2026-08-14, `9cf5867`; retrieve: `git show
 /// 251be64:docs/ws1-sync-pipeline/d20-ctc-infeasibility-2026-08-14.md`):
@@ -1587,7 +1587,7 @@ pub fn align_chunked_timed(
 
 // ---------------------------------------------------------------------------
 // Windowed-output invariants (WS1 Task 5 Slice D11 — the Automated Agreement
-// Budget's "hard structural invariants" leg, `docs/work-in-progress.md` §5;
+// Budget's "hard structural invariants" leg, `docs/archive/history/work-in-progress.md` §5;
 // `task5-slice-ledger.md` §4, the original source, was deleted 2026-08-14,
 // `9cf5867`; retrieve: `git show
 // 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`).
@@ -1737,7 +1737,7 @@ fn check_times_within_audio_bounds(words: &[WordSpan], audio_duration: f64) -> R
 /// log-softmax output) — checked anyway because the GATE'S JOB is to catch a
 /// FUTURE regression (e.g. someone accidentally comparing raw `score`
 /// against `[0,1]` again, the exact D8/D9 spec defect this project already
-/// hit once — see `docs/work-in-progress.md` §5's D8 row for the
+/// hit once — see `docs/archive/history/work-in-progress.md` §5's D8 row for the
 /// "Confidence unit" ruling; `task5-slice-ledger.md`, the original source,
 /// was deleted 2026-08-14, `9cf5867`; retrieve: `git show
 /// 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`), not
@@ -2467,7 +2467,7 @@ mod real_corpus_measurement {
 // 5 Slice D12 Step 5) — #[ignore]d, real-corpus, measurement-only. Separates
 // the three variables D11's own agreement measurement conflated (window
 // size, text-attribution source, choice of reference) — see
-// `docs/work-in-progress.md` §6's "Attribution isolation (D12/D13)"
+// `docs/archive/history/work-in-progress.md` §6's "Attribution isolation (D12/D13)"
 // paragraph for the conflation this module exists to resolve; original
 // source measurements/d11-chunked-alignment-2026-08-13.md §5's "conclusions
 // NOT yet supported" was deleted 2026-08-14, `9cf5867`; retrieve: `git show
@@ -2573,7 +2573,7 @@ mod d12_measurement {
     /// attribution-isolation leg — each its own `cargo test --exact`
     /// process, per this module's own top doc comment — don't each pay the
     /// whole-file pass's own ~113s/~20GiB cost separately (measured at
-    /// `docs/work-in-progress.md` §5's D11 row; `d11-chunked-alignment-2026-08-13.md`
+    /// `docs/archive/history/work-in-progress.md` §5's D11 row; `d11-chunked-alignment-2026-08-13.md`
     /// §1, the original source, was deleted 2026-08-14, `9cf5867`; retrieve:
     /// `git show 251be64:docs/ws1-sync-pipeline/measurements/d11-chunked-alignment-2026-08-13.md`).
     fn whole_file_reference_240s(plan_dir: &Path, model_path: &Path, audio_path: &str) -> Vec<RefWord> {
@@ -2765,7 +2765,7 @@ mod d12_measurement {
     /// reference itself shows an inter-word gap `>= GAP_THRESHOLD_SEC`, and
     /// assigns each resulting window's TEXT by whole-file WORD membership —
     /// not by `segment.startTime` (`faChunkPlan.ts`'s rule, the thing under
-    /// suspicion per `docs/work-in-progress.md` §6's "Attribution isolation"
+    /// suspicion per `docs/archive/history/work-in-progress.md` §6's "Attribution isolation"
     /// paragraph; `d11-chunked-alignment-2026-08-13.md` §5 point 1, the
     /// original source, was deleted 2026-08-14, `9cf5867`; retrieve: `git show
     /// 251be64:docs/ws1-sync-pipeline/measurements/d11-chunked-alignment-2026-08-13.md`).
@@ -3683,7 +3683,7 @@ mod d21_measurement {
 // `segment.startTime` windowing, `173-excerpt-240s-windowed.json`) so the
 // full-population Pearson r reproduces D21's own -0.75 as an internal sanity
 // check, then applies D15's own mis-assignment identification method
-// (`docs/work-in-progress.md` §6's "Mis-assignment diagnostic (D15)"
+// (`docs/archive/history/work-in-progress.md` §6's "Mis-assignment diagnostic (D15)"
 // paragraph; `d15-mis-assignment-diagnostic-2026-08-13.md` §1.1, the
 // original source, was deleted 2026-08-14, `9cf5867`, retrieve: `git show
 // 251be64:docs/ws1-sync-pipeline/measurements/d15-mis-assignment-diagnostic-2026-08-13.md`:
@@ -5484,7 +5484,7 @@ mod multi_word_fragment_capability {
 // CTC-infeasibility fallback unit tests (WS1 Task 5 Slice D20). Real data:
 // both chunks are the exact (window, text) pairs `align_chunked` produced
 // `AlignError::TooManyRepeats` on when run against the real 709s/173-project
-// corpus (`docs/work-in-progress.md` §6's CTC-infeasibility paragraph;
+// corpus (`docs/archive/history/work-in-progress.md` §6's CTC-infeasibility paragraph;
 // `d20-ctc-infeasibility-2026-08-14.md`'s own Step 2 reproduction, the
 // original source, was deleted 2026-08-14, `9cf5867`; retrieve: `git show
 // 251be64:docs/ws1-sync-pipeline/d20-ctc-infeasibility-2026-08-14.md`) —
@@ -6136,7 +6136,7 @@ mod e2e_parity {
         Fixture { file: "fa-e2e-alignment-en-mother-look.json", language: "en" },
         Fixture { file: "fa-e2e-alignment-es-resultan-inutiles.json", language: "es" },
         // Slice D5: fr/de/pt, sourced from google/fleurs (CC-BY-4.0) real audio —
-        // see docs/work-in-progress.md §5's D5 row; original source
+        // see docs/archive/history/work-in-progress.md §5's D5 row; original source
         // fa-text-to-spans-seam-d5-2026-08-12.md was deleted 2026-08-14,
         // `9cf5867`; retrieve: `git show
         // 251be64:docs/ws1-sync-pipeline/fa-text-to-spans-seam-d5-2026-08-12.md`.

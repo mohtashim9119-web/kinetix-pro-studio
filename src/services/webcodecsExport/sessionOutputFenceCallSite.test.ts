@@ -1,7 +1,7 @@
 /**
  * WS3 salvage-runtime round — Step 2: closing probe P5 for real.
  *
- * `docs/ws3-export-recovery-architecture.md`'s own honest accounting (P5,
+ * `docs/ws3-export/recovery-architecture.md`'s own honest accounting (P5,
  * "the destructive-probe negative"): no fixture reached `runExport`'s real
  * output callback, because it lives inside a function that needs a worker
  * realm, `OffscreenCanvas`, WebGL2 and a real `VideoEncoder` — none of which

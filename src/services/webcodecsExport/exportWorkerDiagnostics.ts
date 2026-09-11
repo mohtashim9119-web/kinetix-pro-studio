@@ -22,7 +22,7 @@ import type { ExportDemuxSplit } from './exportPhaseTracker';
  * reaches back to an early gap, that gap's phase/frame attribution reads as
  * the ring buffer's initialized default (`null`/`0`), not because nothing was
  * ever tracked there, but because it was evicted before anyone asked
- * (WS3, 2026-09-07 silent-gaps diagnosis, `docs/ws3-silent-gaps-diagnosis.md`).
+ * (WS3, 2026-09-07 silent-gaps diagnosis, `docs/ws3-export/silent-gaps-diagnosis.md`).
  *
  * `DEV_PHASE_LOG_CAP` widens the window for diagnostic runs only — it is
  * resolved by Vite/esbuild at build time via `import.meta.env.DEV` and
@@ -205,7 +205,7 @@ export interface ExportWorkerDiagnosticsPayload {
    *
    * Exists because a rotation's rebuilt encoder re-walks the ladder from
    * scratch with nothing pinning it to the previous session's rung
-   * (`docs/ws3-export-recovery-architecture.md` §1a's caveat): two sessions
+   * (`docs/ws3-export/recovery-architecture.md` §1a's caveat): two sessions
    * could legally land on different rungs, different levels, or CABAC vs
    * CAVLC, and until this field existed no diagnostics payload could say
    * whether that had happened — "the two halves are byte-comparable" was

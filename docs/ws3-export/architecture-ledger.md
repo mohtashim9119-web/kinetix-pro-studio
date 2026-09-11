@@ -2,7 +2,7 @@
 
 > **A note on taxonomy, read before trusting the numbers below.** No prior committed doc
 > in this repo defines a 0-5 "Rung" scale or a "Tier 1-4" scale under those exact names —
-> `docs/ws3-export-recovery-architecture.md` uses its OWN 1-13 rung numbering (different
+> `docs/ws3-export/recovery-architecture.md` uses its OWN 1-13 rung numbering (different
 > scheme, same underlying mechanisms in most cases). The Round 7 task that created this
 > file used "Rung 3" / "Tier 1 item 3b/3c/4" as if a 0-5 / 1-4 scale already existed and
 > was common ground. It was not found in any committed doc by this session. **This ledger
@@ -29,7 +29,7 @@ recovery action when something goes wrong."
 | 2 | `prefer-software` — third attempt; exhausting all three throws | LANDED | `exportWorker.ts:1152`; selected rung recorded on every build via `activeSelectedHardwareRung` (`exportWorker.ts`, set inside `createEncoder`'s success path) and surfaced as `selectedHardwareRung` on the diagnostics payload | pre-existing |
 | 3 | **Bounded re-render** — on a MID-run (rotation) flush timeout only: fence the hung session, truncate `runFile` back to the last rotation boundary's exact byte offset (never scanned — established by a completed `VideoEncoder.flush()` before that rotation was ever posted), resume the SAME piece's frame loop from that boundary via a fresh `driveGlRun` call. One attempt per boundary, `MAX_BOUNDARY_REWINDS_PER_EXPORT = 2` total per export. | **LANDED this round** | Decision: `decideBoundedRerenderDisposition`, `exportPipelineWebCodecs.ts:2289`. Wiring/retry loop: `exportPipelineWebCodecs.ts:2474-2610` (`runGlPiece`, the `while (!driveResult.ok)` loop at `:2527`, the truncate call at `:2557`). Resume plumbing: `exportWorker.ts`'s `ExportWorkerInitMessage.resumeFromFrameIndex` and the reordered `runExport` setup that computes `initialSessionIndex` before building the first encoder. Orchestrator-side session-index bootstrap for a SECOND rewind: `DriveGlRunDeps.resumeSessionIndex`, `exportPipelineWebCodecs.ts` (seeds `sessionAt`/`sessionByteOffsets`/`sessionFrameIndices` at the resumed index instead of defaulting to 0 — a real bug found and fixed mid-round, see Round 7 log). | `a6581d2` |
 | 4 | **Salvage-and-truncate** — on a FINAL-flush timeout (the run's LAST planned session only): fence, salvage once (`MAX_FLUSH_SALVAGES = 1`), truncate to the last complete access unit (`ffmpeg.truncateAnnexb`, AU-scanned since there is no clean rotation boundary to fall back to), accept the piece only on an EXACT picture-count match against `plan.expectedFrames`. | LANDED (prior round: `ws3-salvage-runtime`) | `exportWorker.ts`'s `runFinalFlushWithRecovery`/`decideFlushTimeoutDisposition`; `exportPipelineWebCodecs.ts`'s post-truncation mismatch guard (`formatSalvageTruncateMismatch`) | prior round (`2959861` base, `6efd525`/`765f546`/`efff8ee` per `git log`) |
-| 5 | **Software failover at a rotation boundary** — if hardware encoding keeps failing mid-export, force the NEXT session to build at rung 2 (`prefer-software`) rather than restarting the ladder from rung 0 every time. | NOT STARTED | none (inferred successor to `docs/ws3-export-recovery-architecture.md`'s old rung 10, "designed, not built") | — |
+| 5 | **Software failover at a rotation boundary** — if hardware encoding keeps failing mid-export, force the NEXT session to build at rung 2 (`prefer-software`) rather than restarting the ladder from rung 0 every time. | NOT STARTED | none (inferred successor to `docs/ws3-export/recovery-architecture.md`'s old rung 10, "designed, not built") | — |
 
 ---
 
@@ -45,14 +45,14 @@ recovery action when something goes wrong."
 | 1 | NOT DETERMINED #5 closure | Confirm `doneReceived`+`msSinceDone`+`queueDepthChunks` are jointly readable from one payload with no inference | **LANDED this round** (same work as Tier 1 item 4) | `exportDiagnosticsBlob.test.ts` | `eb95bac` |
 | 2 | — | **Not known to this session.** `ws3-durable-resume` is a real, concurrently-active branch name (per Part 0's context) and is the most plausible Tier 2 candidate (checkpoint/resume across a full app restart, distinct from this round's intra-export rewind), but no doc confirms this mapping. | NOT DETERMINED | — | — |
 | 3 | — | Not known to this session. Rung 5 (software failover) is a plausible candidate. | NOT DETERMINED | — | — |
-| 4 | — | Not known to this session. `docs/ws3-export-recovery-architecture.md`'s old rung 13 ("process isolation," SPECULATIVE) is a plausible candidate. | NOT DETERMINED | — | — |
+| 4 | — | Not known to this session. `docs/ws3-export/recovery-architecture.md`'s old rung 13 ("process isolation," SPECULATIVE) is a plausible candidate. | NOT DETERMINED | — | — |
 
 ---
 
 > **Purpose.** This is the file that prevents context loss across WS3 export-hardening
 > rounds. Five registers (Rung, Tier, Bound, Counter, NOT DETERMINED) plus a dated Round
 > log. Every status uses the fixed vocabulary: `LANDED` / `PARTIAL` / `PRIMITIVE-ONLY` /
-> `NOT-WIRED` / `SIMULATED` / `NOT STARTED`. Cross-reference `docs/ws3-export-durable-state.md`
+> `NOT-WIRED` / `SIMULATED` / `NOT STARTED`. Cross-reference `docs/ws3-export/durable-state.md`
 > by name only — this file does not edit or duplicate its content.
 >
 > **Round 9 (this entry) — THIS FILE IS NOW THE SINGLE SOURCE OF TRUTH for the Rung
@@ -64,7 +64,7 @@ recovery action when something goes wrong."
 > pre-existing plumbing that Round 9's real Rung 5a builds on. Round 9's definition
 > below REPLACES Round 7's Rung/Tier tables. Any future disagreement about what a
 > Rung or Tier number means resolves HERE, in this file — not in conversation, not
-> in `docs/ws3-export-recovery-architecture.md`'s own independent 1-13 numbering
+> in `docs/ws3-export/recovery-architecture.md`'s own independent 1-13 numbering
 > (a different, older scheme covering mostly the same mechanisms), and not by
 > re-deriving it from a task prompt. The vocabulary also changed this round:
 > Round 7 used `POLICY-ONLY`/`WRITE-ONLY`; Round 9's task specified
@@ -112,7 +112,7 @@ is folded into Rung 5's row below as pre-existing plumbing, not a rung of its ow
 | 1 | — | **COMPLETE** as of Round 7's own closeout — unchanged this round. | LANDED | — | — | — |
 | 2 | — | Recoverable failure: Rungs 2b, 3, 4 wired end to end. | **COMPLETE as of Round 10.** All three are wired: Rung 3 (Round 7), Rung 2b (`7b53676`), Rung 4 (`8d5eb7d`). Verified together, not only apart, by `recoveryMatrix.test.ts`'s nine rows. Nothing in Tier 2 is left open. | see Rung 2b/3/4 rows | `7b53676`, `8d5eb7d` | `ws3-tier2-wire` |
 | 3 | — | Enterprise layers: Rung 5 plus size-scaled, I/O-calibrated bounds. **Confirmed this round** (closes Round 7's own speculative "Rung 5 is a plausible candidate" row). 5a/5b landed this round; 5c decided (defer); size-scaled/I/O-calibrated bounds NOT STARTED (no task this round scoped them). | **PARTIAL** | — | this round (5a/5b only) | `ws3-tier3-failover` |
-| 4 | — | Hardware-bound: real WebView2 IPC cost (**W11/W12/W13**); HDD/non-SSD bound numbers (**E8**); tier-piece wall-time on a live export (**E4**); the Windows encoder's actual slice structure (**W14**). **Confirmed Round 9** (closes Round 7's own speculative "old rung 13, process isolation" guess — that guess was WRONG; Tier 4 is a hardware-access category, not a single mechanism). All four remain NOT STARTED; from Round 16 they are rows of `docs/ws3-export-windows-validation.md`, the single list of hardware-bound items. | NOT STARTED | `docs/ws3-export-windows-validation.md` | — | — |
+| 4 | — | Hardware-bound: real WebView2 IPC cost (**W11/W12/W13**); HDD/non-SSD bound numbers (**E8**); tier-piece wall-time on a live export (**E4**); the Windows encoder's actual slice structure (**W14**). **Confirmed Round 9** (closes Round 7's own speculative "old rung 13, process isolation" guess — that guess was WRONG; Tier 4 is a hardware-access category, not a single mechanism). All four remain NOT STARTED; from Round 16 they are rows of `docs/ws3-export/windows-validation.md`, the single list of hardware-bound items. | NOT STARTED | `docs/ws3-export/windows-validation.md` | — | — |
 
 ---
 
@@ -154,7 +154,7 @@ future change doesn't have to re-derive "is this measured or assumed."
 | `appendCallCount` / `appendIpcCallCount` | Chunks landed on disk / actual `appendFileRaw` IPC calls issued (batched, so `<<` the chunk count) | `buildAppendLedger` (`:1363`) | none | none | Incremented only after `await ffmpeg.appendFileRaw(...)` RESOLVES — a stuck writer produces no increment. |
 | `encoderSessionIndex` / `encoderSessions` (on `ExportLivenessSnapshot`) | Orchestrator's own `sessionAt`/`sessionCount`, main-thread state, updated only by 'session-plan'/'session-rotate' messages | `snapshotLiveness` | none | none | On a rotation-flush-timeout, `sessionAt` correctly still names the HUNG session (not yet advanced), because advancement only happens after a successful flush — this is the property Rung 3's rewind depends on, and the property that was WRONG for a resumed run before this round's `resumeSessionIndex` fix (a resumed run's own 'session-plan' message used to hard-reset `sessionAt` to 0 regardless of where it actually resumed). |
 | `AppendBackpressureGate.unacked()` (this round, new) | `submitted - acked`, both cumulative, both worker-local per run | `waitIfNeeded`, `ack` | `waiterCount()` (test/diagnostic only, not read by production logic) | none | Never resolves on a timer of its own — only a real `ack()` call (sourced from a completed `appendFileRaw`) can unblock a parked waiter; proven directly in `appendBackpressureGate.test.ts`. |
-| `AnnexbFrameCount.pictures` vs `.vclNals` | `pictures` is the picture-accurate (access-unit) counter; `vclNals` is the raw, multi-slice-inflatable counter | Every production truncate/count/compare site uses `.pictures` only (verified by the explore pass that fed this ledger — zero production reads of `.vclNals` for a decision) | `countAnnexbFrames` (JS reference implementation, `exportPipelineWebCodecs.ts` — explicitly noted in `docs/ws3-export-recovery-architecture.md` item 2 as "still counts slices... off the guard path but what spikes/tests diff against") | `countAnnexbFrames` itself, per the note above — flagged as a rename/fix candidate in a prior round, not touched this round | Zero-tolerance exact-match, both directions, at every site that compares a picture count to an expected frame count (final-flush salvage AND this round's rewind-truncate verification both use this posture). |
+| `AnnexbFrameCount.pictures` vs `.vclNals` | `pictures` is the picture-accurate (access-unit) counter; `vclNals` is the raw, multi-slice-inflatable counter | Every production truncate/count/compare site uses `.pictures` only (verified by the explore pass that fed this ledger — zero production reads of `.vclNals` for a decision) | `countAnnexbFrames` (JS reference implementation, `exportPipelineWebCodecs.ts` — explicitly noted in `docs/ws3-export/recovery-architecture.md` item 2 as "still counts slices... off the guard path but what spikes/tests diff against") | `countAnnexbFrames` itself, per the note above — flagged as a rename/fix candidate in a prior round, not touched this round | Zero-tolerance exact-match, both directions, at every site that compares a picture count to an expected frame count (final-flush salvage AND this round's rewind-truncate verification both use this posture). |
 
 ---
 
@@ -163,7 +163,7 @@ future change doesn't have to re-derive "is this measured or assumed."
 | Item | Owner | What would close it | Needs hardware not available here? |
 |---|---|---|---|
 | ~~Tier 2/3/4 authoritative definitions~~ — **CLOSED Round 9.** See §2 Tier table: Tier 2 = Rungs 2b/3/4 (PARTIAL — 3 landed, 2b/4 not-wired); Tier 3 = Rung 5 + size-scaled bounds (PARTIAL — 5a/5b landed, 5c deferred, size-scaled bounds not started); Tier 4 = hardware-bound items (NOT STARTED, all four require physical hardware). | closed | closed | closed |
-| NOT DETERMINED #1/#2 (append throughput at 3 latencies) — **SIMULATED, not resolved** → `docs/ws3-export-windows-validation.md` **W12** (Round 16) | Next round with Windows hardware access | see W12 | **Yes** |
+| NOT DETERMINED #1/#2 (append throughput at 3 latencies) — **SIMULATED, not resolved** → `docs/ws3-export/windows-validation.md` **W12** (Round 16) | Next round with Windows hardware access | see W12 | **Yes** |
 | Real per-call `open`/`write_all`/`close` cost in `ffmpeg.rs`'s append command on Windows → **W13** (Round 16) | Owner of `ffmpeg.rs` | see W13 | Yes |
 | ~~Whether `APPEND_QUEUE_CEILING_BYTES` (256 MB) is sized to any real legitimate peak~~ — **CLOSED Round 9 STEP 6b.** Restated explicitly as a last-resort guard, deliberately NOT derived from the unbatched pathological peak (category error — production is always batched). See Bound register row. Reopen trigger: a real field `queueDepthBytes` reading near 256 MB. | closed | closed | closed |
 | ~~The break-even latency at which `APPEND_BACKPRESSURE_THRESHOLD_BYTES` (32 MB) would actually engage~~ — **CLOSED Round 9 STEP 6a.** ≈5,654.5 ms/call (SIMULATED bisection), ≈456x the measured 12.4 ms Windows figure. See Bound register row and `scripts/ws3-measure-append-throughput.test.ts`. | closed | closed | closed |
@@ -185,7 +185,7 @@ future change doesn't have to re-derive "is this measured or assumed."
 
 ### Round 7 [CC lineage] (2026-09-10 / 2026-09-11) — Tier 1 closeout + Rung 3 re-render
 
-> Round-number collision, disambiguated Round 16: `docs/ws3-export-durable-state.md` carries a
+> Round-number collision, disambiguated Round 16: `docs/ws3-export/durable-state.md` carries a
 > DIFFERENT "Round 7" (Cursor lineage, `ws3-durable-resume`, 2026-09-10 — Rung 2b sealing + Rung 4
 > resume primitives). Every "Round 7" reference in THIS file means this entry; see the Round 16
 > round-number map for the full cross-lineage numbering.
@@ -257,11 +257,11 @@ future change doesn't have to re-derive "is this measured or assumed."
 - **Precondition 4 (the conservative final-AU drop does NOT apply to the exact-offset path): TRUE, verified by direct code read, not assumed — the one Cursor flagged as mattering most.** `truncate_annexb_to_offset_inner` (`ffmpeg.rs:957-993`) never calls `compute_truncate_cut_from_scanned` (`ffmpeg.rs:629-654`, the conservative-drop policy) — it truncates to the CALLER-supplied `byte_offset` via a direct `set_len`, then counts pictures on the result via `count_annexb_frames_inner` (`ffmpeg.rs:866-891`), a plain streaming AU counter with no drop logic of its own. `compute_truncate_cut_from_scanned` is called ONLY from `truncate_annexb_inner` (the AU-scanned salvage function), never from the exact-offset function. Confirmed structurally, not by running Cursor's code.
 
 **STEP 3 — Rung 5a (hardware→software failover): LANDED.**
-- **`VideoEncoder`/`prefer-software` in WebView2:** NOT independently confirmed this round (no live/Windows run permitted). `docs/ws3-export-recovery-architecture.md` §4a already reasoned it is a valid WebCodecs value in every Chromium-family engine with OpenH264 shipped for software encode, and flagged the actual WebView2 exposure as NOT DETERMINED absent a live run — that status is unchanged. What WOULD confirm it: a `VideoEncoder.isConfigSupported({..., hardwareAcceleration: 'prefer-software'})` probe logged from a real `tauri:dev` session on Windows.
+- **`VideoEncoder`/`prefer-software` in WebView2:** NOT independently confirmed this round (no live/Windows run permitted). `docs/ws3-export/recovery-architecture.md` §4a already reasoned it is a valid WebCodecs value in every Chromium-family engine with OpenH264 shipped for software encode, and flagged the actual WebView2 exposure as NOT DETERMINED absent a live run — that status is unchanged. What WOULD confirm it: a `VideoEncoder.isConfigSupported({..., hardwareAcceleration: 'prefer-software'})` probe logged from a real `tauri:dev` session on Windows.
 - **Failover trigger and ordering: REWIND FIRST, failover only once the rewind budget is exhausted — argued, not assumed.** A rotation flush timeout already has a tested, landed same-rung recovery (Rung 3). Failing over to software on the FIRST such timeout would discard a fast hardware path over what might be one transient stall — exactly the "salvage becomes routine" failure mode `MAX_BOUNDARY_REWINDS_PER_EXPORT`'s own doc comment already warns against, just one rung earlier. So: `decideBoundedRerenderDisposition` is consulted first (unchanged); only when IT returns abort does `decideHardwareFailoverDisposition` get a turn, and it is one-shot (`hardwareFailoverUsed` boolean, never a counter).
 - **Worst-case total attempt count, PROVEN bounded:** 1 initial attempt + `MAX_BOUNDARY_REWINDS_PER_EXPORT` (2) same-rung rewinds + 1 one-shot software failover retry = **4 total `driveGlRun` attempts, 3 total `truncateAnnexbToOffset` calls, per export** — regardless of how many GL pieces or rotation boundaries the export contains, because both gating resources (`boundaryRewindsUsed`, `hardwareFailoverUsed`) are export-scoped, not per-piece/per-boundary. Proven by `hardwareFailoverWiring.test.ts`'s "total worst-case attempt bound" test (destructively RED/GREEN probed: `decideHardwareFailoverDisposition` forced to always abort → 4 tests across 3 files went RED, confirming they actually catch the regression; restored → GREEN).
-- **fps penalty estimate: SPECULATIVE, carried from `docs/ws3-export-recovery-architecture.md` §4c, not independently measured** — "tens of seconds to a couple of minutes for 1800 frames" for a 60 s 1080p30 software session vs. hardware's seconds; no separate 1080p60 estimate exists in that doc or was computable this round without a live run. Flagged NOT DETERMINED / hardware-bound.
-- **Mixed-rung concat verdict: REASONED CLEAN, not measured.** Annexb emits SPS/PPS inline ahead of every IDR, so a decoder re-reads parameter sets at a rung-change seam and the mux (`-r <fps>` on a PTS-less raw stream) is unaffected — per `docs/ws3-export-recovery-architecture.md` §4c, adopted here. **Real risk, MEDIUM, unresolved:** `isConfigSupported` passing does not guarantee which profile/level a given rung actually emits (this codebase's own `createEncoder` comment already says so), so a software rung could legally emit a different profile than hardware mid-file — decodable and guard-passing, but a quality/compatibility discontinuity nothing in the pipeline would notice. Not measured this round (no live encoder available); recorded as a NOT DETERMINED row (§5).
+- **fps penalty estimate: SPECULATIVE, carried from `docs/ws3-export/recovery-architecture.md` §4c, not independently measured** — "tens of seconds to a couple of minutes for 1800 frames" for a 60 s 1080p30 software session vs. hardware's seconds; no separate 1080p60 estimate exists in that doc or was computable this round without a live run. Flagged NOT DETERMINED / hardware-bound.
+- **Mixed-rung concat verdict: REASONED CLEAN, not measured.** Annexb emits SPS/PPS inline ahead of every IDR, so a decoder re-reads parameter sets at a rung-change seam and the mux (`-r <fps>` on a PTS-less raw stream) is unaffected — per `docs/ws3-export/recovery-architecture.md` §4c, adopted here. **Real risk, MEDIUM, unresolved:** `isConfigSupported` passing does not guarantee which profile/level a given rung actually emits (this codebase's own `createEncoder` comment already says so), so a software rung could legally emit a different profile than hardware mid-file — decodable and guard-passing, but a quality/compatibility discontinuity nothing in the pipeline would notice. Not measured this round (no live encoder available); recorded as a NOT DETERMINED row (§5).
 - **Output neutrality: PROVEN, full bytes, not a metadata hash.** `hardwareFailoverWiring.test.ts`'s "OUTPUT NEUTRALITY (full bytes, not a metadata hash)" test records every `appendFileRaw` call through a real recording mock and asserts the exact concatenated byte sequence, in order, against the exact chunk bytes emitted — for a run that never fails over. Passes.
 
 **STEP 4 — Rung 5b (adaptive throttling): LANDED.**
@@ -494,7 +494,7 @@ Per-file arithmetic for the 73 added, all under `src/services/webcodecsExport/`:
 **Cargo baseline correction, carried forward.** The round's task text asked to "carry forward the
 corrected Cargo baseline 283/0/5". That figure is not this tree's: `cargo test` measures
 **293 / 0 / 5** here, twice, on the merged tree. 283 appears in
-`docs/ws3-export-durable-state.md` as the pre-`afa8818` CUT-POINT count in an arithmetic line
+`docs/ws3-export/durable-state.md` as the pre-`afa8818` CUT-POINT count in an arithmetic line
 ("actual cut 283 + 5 = 288 / 0 / 5"), i.e. an input to a sum, never a suite total. The authoritative
 pair is **293 / 0 / 5** and **379 / 0 / 35**.
 
@@ -505,7 +505,7 @@ both fixed:
    failure became a generic one. Made partial with `importOriginal`.
 2. Resuming at the fence-verified offset duplicated the next access unit's parameter sets, as above.
 
-**`docs/ws3-export-durable-state.md` corrections for Cursor** (collected, not made — that file is
+**`docs/ws3-export/durable-state.md` corrections for Cursor** (collected, not made — that file is
 Cursor's):
 1. `ExportCheckpointRecord.byteOffset`'s doc says "Byte offset into the concatenated Annex-B file".
    There is no concatenated file while an export is rendering; each piece is its own
@@ -521,7 +521,7 @@ Cursor's):
    `ExportCheckpointResumeIo`. The JS `prepareCheckpointResume` wrapper additionally requires that
    `repair.keptBytes === checkpoint.byteOffset`, which is a file-local reading of `byteOffset` and so
    contradicts correction 1's "concatenated file" wording. Worth reconciling in one direction.
-4. `docs/ws3-export-durable-state.md:675` records "actual cut 283 + 5 = 288 / 0 / 5". That 283 has
+4. `docs/ws3-export/durable-state.md:675` records "actual cut 283 + 5 = 288 / 0 / 5". That 283 has
    since been quoted downstream as a suite total. Worth marking as an addend.
 
 **Tier 2: CLOSED.** Rungs 2b, 3 and 4 are all wired, and verified together rather than only apart.
@@ -530,7 +530,7 @@ Cursor's):
 
 **Branch:** `ws3-hardening-windows`, a fresh session (no memory of prior rounds), picking up from
 STEPs 0-6 already committed on this branch. **Base:** the branch's own STEP 6 head, `9ea600a`.
-Scope was `docs/ws3-export-pipeline-audit.md`'s Findings register (Part 7) items C5, C6, C7, H5,
+Scope was `docs/ws3-export/pipeline-audit.md`'s Findings register (Part 7) items C5, C6, C7, H5,
 H9, H10 — STEPs 7-10 of a 4-STEP assignment (STEPs 11+ deliberately not started, per the
 operator's instruction to stop here for review).
 
@@ -741,7 +741,7 @@ reference, not re-verified, except where STEP 10b below found a residual.
    explicitly before Step 3's render call — the function's own doc comment states the intent: "reject
    an impossible destination... at second zero, rather than after a 30+ minute encode"). This closes
    the durable-state doc's own STEP 6 "NOT DETERMINED (CC/UI scope)" note — it has since landed
-   (Round 14, `e9355a2`); `docs/ws3-export-durable-state.md` is updated below to match.
+   (Round 14, `e9355a2`); `docs/ws3-export/durable-state.md` is updated below to match.
 
    **Forward slashes:** `apply_windows_long_path_prefix` (`ffmpeg.rs:1622-1639`) only inspects
    whether byte index 1 is `:` to detect a drive-letter path — it does not require or convert to
@@ -832,7 +832,7 @@ drain's own margin against `WATCHDOG_MS` barely moves. `APPEND_BATCH_BYTES` stay
 actual Tauri/WebView2 IPC raw-body path (not a Mac dev environment, not a mock), append a known byte
 pattern at a stepped series of sizes from 512 KiB upward (e.g. 512 KiB, 1 MiB, 1.5 MiB, 2 MiB, 3 MiB,
 4 MiB) and compare landed `sessionFileSize` + a SHA-256 of the written file against the submitted
-bytes at each step — the exact probe `docs/ws3-export-pipeline-audit.md` Part 4.5 already specifies
+bytes at each step — the exact probe `docs/ws3-export/pipeline-audit.md` Part 4.5 already specifies
 for H1. The threshold: the largest size in that sweep that lands byte-identical, with the SAME 4×
 safety-margin convention this round's own fix already used (raise only to ¼ of the empirically
 confirmed safe ceiling, never to the ceiling itself). Who runs it: someone with hands-on access to a
@@ -857,7 +857,7 @@ default awaiting confirmation, it is the frozen value.
 | H1 | 4 MiB batch vs. WebView2 ~2 MB IStream truncation | **mitigated** | `0d397f7` (STEP 2): 512 KiB (4× margin) + independent per-append verify/short-write detector. Real-hardware confirmation of the ~2 MB ceiling itself remains **open** — see STEP 11 |
 | H2 | `prefer-software` + `avc1.640028` may be unconfigurable on Windows/OpenH264 | **mitigated** | `75e331c` (STEP 5): profile-ladder descent pinned per piece via `selectedCodec`, closing the MIXED-PROFILE-MID-PIECE structural risk. The underlying `isConfigSupported` behavior on real Windows/WebView2 remains **open** |
 | H3 | `VideoEncoder.close()` async release may leak HW sessions | **mitigated** | `9ea600a` (STEP 6): explicit encoder-session accounting (open/close counts on the diagnostics blob), closing before every terminal post — makes a leak OBSERVABLE. The underlying Chromium/driver release timing on real hardware remains **open** |
-| H4 | Defender scan-on-close may explain the 12.4 ms/append gap | **open** | No code fix possible from this repo — requires a real Windows machine + Defender exclusion A/B (`docs/ws3-export-pipeline-audit.md` Part 4.3) |
+| H4 | Defender scan-on-close may explain the 12.4 ms/append gap | **open** | No code fix possible from this repo — requires a real Windows machine + Defender exclusion A/B (`docs/ws3-export/pipeline-audit.md` Part 4.3) |
 | H5 | Two app instances could `reenter` the same session (no lock) | **mitigated** | `d73747a` (Round 13, native claim primitive) + `ee406dd` (STEP 8, consumer wiring: `evaluateResumeCandidate` reads the claim before `reenter`, distinguishing live/stale). Logic is unit-tested (`exportResumeDiscovery.test.ts`, `exportResumeSession.test.ts`); a real two-process concurrent race on Windows NTFS has not been run live — **open** as hardware confirmation |
 | H6 | TDR during a long GL export presents as unrecoverable context loss | **open**, by deliberate decision | Rung 5c **DEFER** (Round 9), reopen trigger stated explicitly in that entry above — not a gap awaiting a fix, a decision awaiting a specific reopening observation |
 | H7 | Lid close / Modern Standby may kill MF drain despite heartbeat | **open** | Untested; needs a real Windows machine, lid-close mid-session |
@@ -892,7 +892,7 @@ just quoted): `WATCHDOG_MS` 30,000 (`exportPipelineWebCodecs.ts:949`), `FORWARD_
 computed as `6,907 × 25`, matches exactly), `KILL_BOUND_MS` 125 (`:149`, computed as `5 × 25`,
 matches exactly), `APPEND_BATCH_BYTES` 524,288 / 512 KiB (`exportPipelineWebCodecs.ts:1052`). Four
 fixture digests (`5db5e004…`, `af89ca66…`, `1abf9839…`, `fb9cdda2…`) confirmed unchanged, present
-identically in both `docs/ws3-export-durable-state.md:1709-1712` and the live
+identically in both `docs/ws3-export/durable-state.md:1709-1712` and the live
 `annexbFrameCount.test.ts:242-245`, and exercised passing as part of the `npm test` run above.
 
 ### Round 16 (2026-09-11) — Consolidation: carry-overs closed, integration merge, canonical ledger (PROMPT 20)
@@ -901,7 +901,7 @@ identically in both `docs/ws3-export-durable-state.md:1709-1712` and the live
 below). **Base main:** `4d4922c`. **Rollback:** `15002e5`. This is the entry to read instead of
 the fifteen before it: it carries the merge record, the round-number map, the single C1–C11 /
 H1–H10 disposition table, and the final frozen state. Hardware-bound residuals live in exactly one
-file, `docs/ws3-export-windows-validation.md`, and are referenced from the table by ID only.
+file, `docs/ws3-export/windows-validation.md`, and are referenced from the table by ID only.
 
 #### STEP 1a — Real clean-path byte neutrality: MATCH (`931a3c8`)
 
@@ -938,7 +938,7 @@ landing: still `5bef6955…f06c`.
 
 #### STEP 1b — Cargo reconciliation: all 15 accounted, and the premise corrected
 
-Round 13 did **not** record 379 — its own gate table (`docs/ws3-export-durable-state.md`, "Round
+Round 13 did **not** record 379 — its own gate table (`docs/ws3-export/durable-state.md`, "Round
 13 gates") records **384** (`381 + 3`). 379 is Round 8's / Round 10's figure (ledger Round 10
 gates; durable-state Round 8 gates). Round 15's note that "5 further Rust tests were added
 somewhere between Round 13 and this round's measurement, not itemized" was wrong about the
@@ -1014,15 +1014,15 @@ merge base of the two branches and an ancestor of the hardening head, and every 
 predicted conflicts from — `ws3-tier3-failover` (`0ab9af8`), `ws3-tier2-wire` (`81815cd`),
 `ws3-durable-resume` Rounds 11 and 13 (`d6eff3b`, `2514423`) — had already been merged INTO
 `ws3-hardening-windows` before this round. The integration branch itself carried no ledger and no
-pipeline audit at all (`git cat-file -e 15002e5:docs/ws3-export-architecture-ledger.md` fails).
+pipeline audit at all (`git cat-file -e 15002e5:docs/ws3-export/architecture-ledger.md` fails).
 The three predicted hazards were therefore verified as resolutions of the MERGED tree rather than
 resolved as conflicts:
 
 | File | Predicted | Measured on the merged tree |
 |---|---|---|
-| `docs/ws3-export-architecture-ledger.md` | three divergent blobs, chronological union | Every Round-log entry from every blob (`ws3-tier1-close` Round 7, `ws3-tier3-failover` Round 7 + 9 + Rung 5c, `ws3-tier2-wire` Round 7 + 9 + 10) is present in the merged file with **zero** missing non-empty lines; the Round 7 and Round 9 entries are byte-identical to their source blobs. The only lines unique to an older blob are LIVING-register rows (Rung 0/2b/4 status, Tier 2 status, two NOT DETERMINED rows) that Round 10 updated in place — registers are current-state tables, not append-only — plus the `## 7. Decisions register` heading, restored in STEP 3. |
-| `docs/ws3-export-durable-state.md` | three blobs, hardening (1779 lines) a strict superset | `ws3-export-integration` (629 lines), `ws3-tier3-failover` (629) and `ws3-tier2-wire` (1332): **0** unique non-empty lines each. `ws3-durable-resume` (1602): **1** unique line — the `save_session_file` / "pre-encode path-length validation: NOT DETERMINED" sentence, which Round 15 edited in place at `:1759` (adding "*as of this entry*") and followed with the Round 14/15 closure. Nothing lost; one sentence deliberately qualified. |
-| `docs/work-in-progress.md` | two blobs, WS3 @ `15002e5` wins | One blob (`c16afeab`) on every branch involved — identical everywhere; the 5-line append-path batching item is at `:32-36`. Nothing to take. |
+| `docs/ws3-export/architecture-ledger.md` | three divergent blobs, chronological union | Every Round-log entry from every blob (`ws3-tier1-close` Round 7, `ws3-tier3-failover` Round 7 + 9 + Rung 5c, `ws3-tier2-wire` Round 7 + 9 + 10) is present in the merged file with **zero** missing non-empty lines; the Round 7 and Round 9 entries are byte-identical to their source blobs. The only lines unique to an older blob are LIVING-register rows (Rung 0/2b/4 status, Tier 2 status, two NOT DETERMINED rows) that Round 10 updated in place — registers are current-state tables, not append-only — plus the `## 7. Decisions register` heading, restored in STEP 3. |
+| `docs/ws3-export/durable-state.md` | three blobs, hardening (1779 lines) a strict superset | `ws3-export-integration` (629 lines), `ws3-tier3-failover` (629) and `ws3-tier2-wire` (1332): **0** unique non-empty lines each. `ws3-durable-resume` (1602): **1** unique line — the `save_session_file` / "pre-encode path-length validation: NOT DETERMINED" sentence, which Round 15 edited in place at `:1759` (adding "*as of this entry*") and followed with the Round 14/15 closure. Nothing lost; one sentence deliberately qualified. |
+| `docs/archive/history/work-in-progress.md` | two blobs, WS3 @ `15002e5` wins | One blob (`c16afeab`) on every branch involved — identical everywhere; the 5-line append-path batching item is at `:32-36`. Nothing to take. |
 
 #### STEP 3 — The ledger's two remaining divergences
 
@@ -1031,7 +1031,7 @@ heading in any blob (`ws3-tier3-failover`, `ws3-tier2-wire`, hardening) is the s
 the tier3 and hardening copies differ by one blank line. No entry was dropped, so none needed
 keeping. What DOES exist is a cross-DOCUMENT collision on **Round 7**: this file's Round 7 (CC
 lineage, `ws3-tier1-close`, 2026-09-10/11, Tier 1 closeout + Rung 3) versus
-`docs/ws3-export-durable-state.md`'s Round 7 (Cursor lineage, `ws3-durable-resume`, 2026-09-10,
+`docs/ws3-export/durable-state.md`'s Round 7 (Cursor lineage, `ws3-durable-resume`, 2026-09-10,
 Rung 2b sealing + Rung 4 resume primitives). Round 15's "Round 9 already collided" note was this
 collision, misnumbered. Disposition: **both kept, both headings qualified** (`Round 7 [CC
 lineage]` / `Round 7 [Cursor lineage]`), a one-line cross-note added under each pointing at the
@@ -1064,7 +1064,7 @@ round-log") and the Round 9 entry ("see §7 below") both name — with a provena
 verified byte-identical to the `ws3-tier3-failover` blob (`dedc3bf`). Deferred four rounds; closed
 here.
 
-**Canonical form.** After this round, `docs/ws3-export-architecture-ledger.md` has exactly one
+**Canonical form.** After this round, `docs/ws3-export/architecture-ledger.md` has exactly one
 form: the file at `ws3-export-integration`'s head, to which `ws3-hardening-windows` is
 fast-forwarded (both pushed at the same SHA). The older blobs on `ws3-tier1-close`,
 `ws3-tier3-failover` and `ws3-tier2-wire` are strict historical ancestors whose every round-log
@@ -1076,7 +1076,7 @@ lacks.
 Vocabulary: `closed` = fixed in code, with the SHA and the probe that goes red without the fix;
 `mitigated` = code-side fix verified, one residual stated; `open` = no code-side fix possible from
 this environment, or an explicit deferral. Nothing hardware-bound is `closed`. Hardware residuals
-are named by their row ID in `docs/ws3-export-windows-validation.md` and described nowhere else.
+are named by their row ID in `docs/ws3-export/windows-validation.md` and described nowhere else.
 
 | ID | Statement (short) | Status | Fixing SHA(s) · probe / residual |
 |---|---|---|---|
@@ -1104,10 +1104,10 @@ are named by their row ID in `docs/ws3-export-windows-validation.md` and describ
 
 Twenty-one rows, no blanks. Ten `closed` (C1–C6, C8–C11), eight `mitigated` (C7, H1, H2, H3,
 H5, H8, H9, H10), three `open` (H4, H6, H7). Every `mitigated` residual and every `open`
-item resolves to a row in `docs/ws3-export-windows-validation.md` (25 rows: W1–W15 Windows,
+item resolves to a row in `docs/ws3-export/windows-validation.md` (25 rows: W1–W15 Windows,
 M1–M2 macOS-native, E1–E8 either) — that file, not this table, is where "what's left" is read.
 This table supersedes Round 15 STEP 12's table and every earlier scattered disposition
-(`docs/ws3-export-pipeline-audit.md` Part 7's Round 11/13/14/15 blocks are historical; its Round
+(`docs/ws3-export/pipeline-audit.md` Part 7's Round 11/13/14/15 blocks are historical; its Round
 16 block points here).
 
 #### Final state
@@ -1120,7 +1120,7 @@ This table supersedes Round 15 STEP 12's table and every earlier scattered dispo
 512 KiB (`exportPipelineWebCodecs.ts:1052`). Unchanged this round.
 
 **Four fixture digests** (`annexbFrameCount.test.ts:242-245`, mirrored in
-`docs/ws3-export-durable-state.md`): `8slice-10pic` 781 B
+`docs/ws3-export/durable-state.md`): `8slice-10pic` 781 B
 `5db5e004522c4212339bfbae771df15c84bc8858ec8ad7906a131199dcaf8994` · `1slice-12pic` 261 B
 `af89ca66bbb7447312547e54d8ded6e9ac460b51d8e09f5a327ac82cf5a88d44` · `paramsets-3pic` 81 B
 `1abf9839f658ae5b9f83f2411542b86fe0490c055e1ec739f00d4bd2a6458035` · `short-9pic` 201 B
@@ -1239,10 +1239,10 @@ parallel failure is the `whisper::in_flight_tests` flake recorded under STEP 1b.
 
 **Seven frozen constants** verified verbatim against source (values and `file:line` in "Final
 state" above). **Four fixture digests** unchanged (`annexbFrameCount.test.ts:242-245` ==
-`docs/ws3-export-durable-state.md`, exercised passing in both `npm test` runs). `git status
+`docs/ws3-export/durable-state.md`, exercised passing in both `npm test` runs). `git status
 --porcelain` on the integration worktree: clean apart from `node_modules/` and `public/`
 (standing untracked). The three pre-existing untracked docs in the MAIN worktree
-(`docs/ws3-export-durable-state.md`, `docs/ws3-export-speed-architecture-audit.md`,
+(`docs/ws3-export/durable-state.md`, `docs/ws3-export/speed-architecture-audit.md`,
 `docs/ws3-groq-transcription-architecture-audit.md`) are pre-existing and out of scope — not
 staged, committed, or deleted (Cursor removes two of them in its Phase 2). No `git add -A`; every
 stage was by named path. `ws3-hardening-windows` fast-forwarded to the integration head so both
@@ -1260,12 +1260,12 @@ branches carry the one canonical ledger; both pushed. No merge to `main`, no PR.
 ### Rung 5c — out-of-process render isolation: **DEFER** (decided Round 9, 2026-09-10)
 
 Deferred three times before this round (per Part 0's own framing); decided here, adopting
-`docs/ws3-export-recovery-architecture.md` §6's own prior analysis as the authoritative
+`docs/ws3-export/recovery-architecture.md` §6's own prior analysis as the authoritative
 reasoning (that document reached the identical conclusion independently, with a fuller
 two-shape cost comparison this entry summarizes rather than re-derives).
 
 1. **Would it have prevented the frame-47,840 hang? No — confirmed, and the premise itself
-   needs correcting.** That export was never actually hung: `docs/ws3-export-recovery-architecture.md`
+   needs correcting.** That export was never actually hung: `docs/ws3-export/recovery-architecture.md`
    §6a is unambiguous — process isolation contains CRASHES, not HANGS. A `flush()` that never
    returns still never returns in another process; the caller still waits. What isolation buys
    is the ability to KILL the stuck process and survive, and this pipeline already has that —
@@ -1278,7 +1278,7 @@ two-shape cost comparison this entry summarizes rather than re-derives).
    takes the whole app down — a `Worker` shares the renderer process, so a crash there loses
    the app and the current project, not just the export; this is the strongest genuine case,
    and it is about blast radius, not liveness. (b) Main-thread timer throttling under WKWebView
-   occlusion (the documented run-5 class, `docs/ws3-silent-gaps-diagnosis.md`, 223.6 s of
+   occlusion (the documented run-5 class, `docs/ws3-export/silent-gaps-diagnosis.md`, 223.6 s of
    starved `setTimeout` deadlines) — a native process is not subject to that policy at all; this
    is the one class where isolation is a real fix, not a nicer failure mode. **Concretely NOT**
    `glCompositor.ts:202`'s GPU-context-loss throw (`createContentTexture` → `requireGl`) — a lost
@@ -1304,6 +1304,6 @@ two-shape cost comparison this entry summarizes rather than re-derives).
 **Reopen trigger (specific, not "if problems continue"):** a real, OBSERVED occurrence of EITHER
 — (a) a renderer crash/OOM during export that took down the whole app and lost unsaved project
 state, not a hypothetical; or (b) a second field-verified occurrence of the WKWebView-occlusion
-timer-starvation class documented in `docs/ws3-silent-gaps-diagnosis.md`'s run 5, confirming it
+timer-starvation class documented in `docs/ws3-export/silent-gaps-diagnosis.md`'s run 5, confirming it
 is a recurring failure mode rather than a one-off. Either observation reopens this decision;
 absent one, it stays deferred.

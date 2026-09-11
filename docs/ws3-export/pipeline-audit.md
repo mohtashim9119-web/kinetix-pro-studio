@@ -7,7 +7,7 @@
 > - `ws3-tier3-failover` `dedc3bf` (`dedc3bfe6e9d3579fb321f75076afe8f8a645459`) — rewind, failover, throttling, batching.
 > **Not consulted:** `ws3-tier2-wire` (or any merge of the two heads). Where the halves are unwired, this audit covers the *seam* — whether wiring *can* be correct, not how CC is wiring it.
 >
-> Citations are `file:line` against the named HEAD. Cross-references `docs/ws3-export-architecture-ledger.md` (Round 9 taxonomy, on `dedc3bf`) and `docs/ws3-export-durable-state.md` (on `81bde88`) **by name only**.
+> Citations are `file:line` against the named HEAD. Cross-references `docs/ws3-export/architecture-ledger.md` (Round 9 taxonomy, on `dedc3bf`) and `docs/ws3-export/durable-state.md` (on `81bde88`) **by name only**.
 
 ---
 
@@ -193,7 +193,7 @@ Four seams. CC is wiring them; this section asks whether they *can* be wired cor
 
 ### 3.5 Fence ordering — primitive vs caller discipline
 
-Documented order (`docs/ws3-export-durable-state.md`; implemented `prepare_checkpoint_resume_inner` `ffmpeg.rs:1173–1220`):
+Documented order (`docs/ws3-export/durable-state.md`; implemented `prepare_checkpoint_resume_inner` `ffmpeg.rs:1173–1220`):
 
 | Step | Enforced by |
 |---|---|
@@ -424,7 +424,7 @@ Input to the round after CC's. Cheap tests, not implementations.
 | C3 | **FIXED** — `ExportTimelineIdentity` v2 (`timelineIdentityVersion: 2`): overlay/effect/globalOverlayConfig/assets fileIdentity | `693e533` |
 | C7 | **FIXED** — optional `boundaryRewindsUsed`, `hardwareFailoverUsed`, `checkpointResumeAttempts`, `totalRecoveryAttempts`; exhaustion → clean | `693e533` |
 | C8 | **FIXED** — concat preserves partial output on disk-full only; guard still required before mux | `79e3eed` |
-| H8 | **FIXED** — Annex-B `sync_all` on append/truncate/prepare; rotation seam order documented in `docs/ws3-export-durable-state.md` Round 11 | `79e3eed` |
+| H8 | **FIXED** — Annex-B `sync_all` on append/truncate/prepare; rotation seam order documented in `docs/ws3-export/durable-state.md` Round 11 | `79e3eed` |
 
 #### Round 13 dispositions (2026-09-11, `ws3-durable-resume`)
 
@@ -445,12 +445,12 @@ Input to the round after CC's. Cheap tests, not implementations.
 | H10 | **WIRED (consumer side)** — Round 13's `d73747a` landed the native sweep primitive only; this round's `useExport.ts` actually calls `TauriFfmpeg.sweepOrphanSessions()` once per export start, surfacing `pendingDelete` separately from `bytesReclaimed` — previously unreachable from the frontend | `ee406dd` |
 | H9 | **FIXED** (was **PARTIAL** in Round 13, `f525f09`) — `windows_long_path` applies the `\\?\` extended-length-path prefix to both sides of `save_session_file`'s copy on Windows; `exportDestinationPath.ts` also rejects an over-length Windows destination before any rendering starts. UNCONFIRMED on real hardware: whether Win32's own `CreateFile` family honors `\\?\` for every code path `fs::copy` takes internally — the prefixing rule is proven by 6 Rust unit tests (including a macOS no-op check), not the OS's own compliance | `e9355a2` |
 
-Also newly checked, not previously in this register: the two-sources-of-truth question C7 raises (in-memory vs. persisted recovery-budget counters) is answered explicitly in `docs/ws3-export-durable-state.md`'s Round 14 STEP 9 entry — in-memory is authoritative for THIS process's own next-rewind decision, persisted `totalRecoveryAttempts` is authoritative for whether a NEW process may resume at all, and STEP 9's fix is exactly what keeps those two gates from disagreeing across a resume.
+Also newly checked, not previously in this register: the two-sources-of-truth question C7 raises (in-memory vs. persisted recovery-budget counters) is answered explicitly in `docs/ws3-export/durable-state.md`'s Round 14 STEP 9 entry — in-memory is authoritative for THIS process's own next-rewind decision, persisted `totalRecoveryAttempts` is authoritative for whether a NEW process may resume at all, and STEP 9's fix is exactly what keeps those two gates from disagreeing across a resume.
 
 #### Round 15 dispositions (2026-09-11, `ws3-hardening-windows`, PROMPT 19 STEPs 11-13 close-out)
 
 Full per-ID disposition table (all C1-C10, H1-H10, `closed`/`mitigated`/`open`, no blanks) lives in
-`docs/ws3-export-architecture-ledger.md`'s own Round 15 entry, not duplicated here. Summary of what
+`docs/ws3-export/architecture-ledger.md`'s own Round 15 entry, not duplicated here. Summary of what
 changed THIS round specifically (everything else in the table above is carried forward unchanged):
 
 | ID | Disposition | Fixing commit(s) / note |
@@ -526,16 +526,16 @@ Do **not** treat H1–H4 as defects in the tree. They are the cheapest Windows o
 
 ## Cross-references (by name only)
 
-- `docs/ws3-export-architecture-ledger.md` — canonical Rung 0–5 / Tier 1–4, bound and counter registers, Round 9 NOT DETERMINED list (including STEP 2b unbounded rewind truncate, mixed-rung SPS).
-- `docs/ws3-export-durable-state.md` — Step 4d residual, handshake order, sealing consent, production-wiring blocker.
-- `docs/ws3-export-speed-architecture-audit.md` — throughput anatomy (Mac; not re-derived here).
-- `docs/work-in-progress.md` WS3 — still tracks 2026-09-07 liveness/silent-gap team blockers; it does not list the Round 7–9 seam debt (that lives in the two docs above).
+- `docs/ws3-export/architecture-ledger.md` — canonical Rung 0–5 / Tier 1–4, bound and counter registers, Round 9 NOT DETERMINED list (including STEP 2b unbounded rewind truncate, mixed-rung SPS).
+- `docs/ws3-export/durable-state.md` — Step 4d residual, handshake order, sealing consent, production-wiring blocker.
+- `docs/ws3-export/speed-architecture-audit.md` — throughput anatomy (Mac; not re-derived here).
+- `docs/archive/history/work-in-progress.md` WS3 — still tracks 2026-09-07 liveness/silent-gap team blockers; it does not list the Round 7–9 seam debt (that lives in the two docs above).
 
 #### Round 16 dispositions (2026-09-11, `ws3-export-integration`, PROMPT 20 consolidation)
 
 The single consolidated C1–C11 / H1–H10 table — twenty-one rows, `closed` / `mitigated` / `open`,
-every hardware residual named by its row ID in `docs/ws3-export-windows-validation.md` — lives in
-`docs/ws3-export-architecture-ledger.md`'s Round 16 entry and **supersedes** every block above
+every hardware residual named by its row ID in `docs/ws3-export/windows-validation.md` — lives in
+`docs/ws3-export/architecture-ledger.md`'s Round 16 entry and **supersedes** every block above
 (Round 11, 13, 14, 15) and this file's own 7.1/7.2 tables as dispositions. Those remain as the
 findings' original statements and evidence. What changed this round:
 
@@ -548,5 +548,5 @@ findings' original statements and evidence. What changed this round:
 | H2, H3, H5, H8, H9, H10 | **MITIGATED** — unchanged in code; residuals now named only as **W4**, **W5/M2**, **W10**, **E1**, **W2/W3**, **W1**. | — |
 
 "What could not be determined" (below) and Part 6's "never tested" table are now indexed by
-`docs/ws3-export-windows-validation.md` (W1–W15, M1–M2, E1–E8); where a row there names a Part 4
+`docs/ws3-export/windows-validation.md` (W1–W15, M1–M2, E1–E8); where a row there names a Part 4
 or Part 6 test, that file's pass criterion is the operative one.

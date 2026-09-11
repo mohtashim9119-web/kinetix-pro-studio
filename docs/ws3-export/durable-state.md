@@ -13,7 +13,7 @@
 ## Round 11 — Audit remediation: fence, mutation invariant, identity v2, budget (2026-09-10)
 
 PROMPT 13 primitive-side remediation on `ws3-durable-resume`. Cross-references
-`docs/ws3-export-architecture-ledger.md` by name only.
+`docs/ws3-export/architecture-ledger.md` by name only.
 
 ### STEP 0 — Expected vs Observed
 
@@ -192,7 +192,7 @@ write/exec/truncate/read gates.
 This section supersedes Round 7's extrapolated 2.3 GB mux bound, the
 slices-per-picture mode heuristic as a keep/drop rule, and the claim that
 unification was already permanently guarded by sampling. Historical Round 7
-text remains below. `docs/ws3-export-architecture-ledger.md` is referenced
+text remains below. `docs/ws3-export/architecture-ledger.md` is referenced
 by name only and was not edited. Full `npm test` ran twice after CC finished;
 both runs were 0 failed.
 
@@ -575,7 +575,7 @@ This round's five new Rust tests:
 
 ## Round 7 [Cursor lineage] — Rung 2b sealing + Rung 4 durable resume (2026-09-10)
 
-> Round-number collision, disambiguated Round 16: `docs/ws3-export-architecture-ledger.md` carries a
+> Round-number collision, disambiguated Round 16: `docs/ws3-export/architecture-ledger.md` carries a
 > DIFFERENT "Round 7" (CC lineage, `ws3-tier1-close`, 2026-09-10/11 — Tier 1 closeout + Rung 3
 > re-render). Every "Round 7" reference in THIS file means this entry; the ledger's Round 16 entry
 > carries the cross-lineage round-number map.
@@ -583,7 +583,7 @@ This round's five new Rust tests:
 This section supersedes this report's earlier "WRITE ONLY", "wired to
 nothing", 15× mux-headroom, and bound-ordering statements. The historical
 sections remain below because they explain how the current design was reached.
-`docs/ws3-export-architecture-ledger.md` is referenced by name only and was not
+`docs/ws3-export/architecture-ledger.md` is referenced by name only and was not
 edited.
 
 ### Scope result and production-wiring blocker
@@ -592,7 +592,7 @@ All implementation in this round stayed inside the assigned paths:
 `src-tauri/**`, `tauriFfmpeg.ts`, checkpoint code, `muxOnly.ts`,
 `ffmpegLivenessBound.ts`, their tests, and this report. No change was made to
 `exportWorker.ts`, `exportPipelineWebCodecs.ts`, `encoderSessionPlan.ts`,
-`driveGlRun*`, `App.tsx`, or `docs/ws3-export-architecture-ledger.md`.
+`driveGlRun*`, `App.tsx`, or `docs/ws3-export/architecture-ledger.md`.
 
 That scope has one unavoidable consequence. The exact concat frame-count guard
 and the fresh-session export entry point both live in
@@ -1692,7 +1692,7 @@ Commit: `e9355a2`.
 
 ## Round 13 — Realistic fixtures, kill bound, claim, orphan sweep, exhaustion variant (2026-09-11)
 
-Cross-reference: `docs/ws3-export-architecture-ledger.md` (name only).
+Cross-reference: `docs/ws3-export/architecture-ledger.md` (name only).
 
 ### Part 0 baseline
 
@@ -1789,7 +1789,7 @@ Additive variant `{kind:'recovery_budget_exhausted', reason, budget}`. **`clean`
 
 `ws3-export-integration` (fast-forwarded from `ws3-hardening-windows`; the merge base `15002e5`
 was an ancestor, so there were no conflicts). This section is the durable-state view of the
-ledger's Round 16 entry (`docs/ws3-export-architecture-ledger.md`), which is authoritative for
+ledger's Round 16 entry (`docs/ws3-export/architecture-ledger.md`), which is authoritative for
 dispositions, gates and the round-number map; this file states only what changed in the durable
 state itself. Note this file's own "Round 7" is the Cursor-lineage Round 7 (heading qualified
 above); the ledger's is a different entry — see the ledger's round-number map.
@@ -1850,7 +1850,7 @@ in the ledger's Round 16 gate section.
 Every durable-state item that needs a real Windows or real macOS-native run — `pending_delete`
 accuracy, `\\?\` compliance and normalization, `KILL_BOUND_MS` on Windows, resume after a real
 OS crash, the checkpoint decline rate, `TIER_PIECE_BOUND_MS`, HDD bound numbers — now lives ONLY in
-`docs/ws3-export-windows-validation.md` (rows W1, W2, W3, W6, E1, E2, E4, E8). The earlier
+`docs/ws3-export/windows-validation.md` (rows W1, W2, W3, W6, E1, E2, E4, E8). The earlier
 "hardware-bound / NOT DETERMINED" phrases in this file's Round 7/8/13 sections are dated history;
 that file is the current list.
 

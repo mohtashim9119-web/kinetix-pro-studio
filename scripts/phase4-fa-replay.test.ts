@@ -21,7 +21,7 @@
 // golden replay exercises (`filterMalformedTokens` -> `alignScenestoTranscript`
 // -> `distributeSegmentTimes` -> `applyAnchorBasedTiming` -> coverage gate ->
 // `filterToCoveredSegments` -> `snapCoveredBoundaries` -> `headExtendFirstSegment`,
-// `docs/work-in-progress.md`'s §11 item 6) — captured once, outside this
+// `docs/archive/history/work-in-progress.md`'s §11 item 6) — captured once, outside this
 // harness, via a scratch `tauri::test::mock_context` pass that was never
 // committed (real ONNX inference cannot run inside `npx vitest`). Those CSVs
 // were "read by nothing" per their own README section before this file
@@ -50,7 +50,7 @@
 //     value, residual 0.000s. FIXED; it left KNOWN_BAD for a positive pin.
 //   - 15 other boundaries moved (6 v6 + 10 173 total, spanish 0), all inside
 //     Session A.5's 179/649 upper bound and all listed in
-//     `docs/work-in-progress.md` §11's R-Y re-capture table. None is ear-verified either
+//     `docs/archive/history/work-in-progress.md` §11's R-Y re-capture table. None is ear-verified either
 //     way yet — that is Session C's listening pass.
 //
 // WS1 SESSION B.1 RE-PIN (owner ruling R-AA — the SEAM REGION reading). R-U's
@@ -69,7 +69,7 @@
 //     its known-bad pin goes back to its pre-Session-B 36.96.
 //   - the 12 boundaries the instant reading moved and this one does not are
 //     reverted in the fixtures to their pre-Session-B values, and recorded as
-//     named candidate defects in `docs/work-in-progress.md` §11 — three of them
+//     named candidate defects in `docs/archive/history/work-in-progress.md` §11 — three of them
 //     are in the 44 known >0.5s FA-vs-Whisper movers and are being left unfixed
 //     by this ruling, deliberately and on the record.
 // M1-M5 were re-run against these re-pinned values: M5 (the items-6/7 error
@@ -245,7 +245,7 @@ const EXPECTED_SHAPE: Record<Corpus, {
 
 /**
  * KNOWN-BAD manifest — the 12-item ear pass's failures, values as recorded
- * in `docs/work-in-progress.md`'s §11 item 6 mechanism table and its
+ * in `docs/archive/history/work-in-progress.md`'s §11 item 6 mechanism table and its
  * addenda. `status: 'open'` entries are asserted against the committed
  * `phase4-fa-second-baseline-*` fixture below (Session B's scope, or a
  * later rule's scope — see `mechanism`). `status: 'fixed'` is recorded for
@@ -328,7 +328,7 @@ interface KnownBadRow {
    *  value, not a measurement of the correct one, and writing a guessed target
    *  into this field would be exactly the suspicion-becomes-guilt move the
    *  register exists to prevent (R-AG). Session S's own candidate table
-   *  (`docs/work-in-progress.md` §11) measured five principled placements for
+   *  (`docs/archive/history/work-in-progress.md` §11) measured five principled placements for
    *  each row and shipped NONE of them, because no candidate reproduces both
    *  ear-CORRECT rows. Until a listening pass names a value, it is unknown. */
   earCorrect: number | null | 'unknown';
@@ -350,7 +350,7 @@ const KNOWN_BAD: KnownBadRow[] = [
   // before adding these rows — the two vintages agree here, unlike item-7;
   // see REGISTER_HIGH_WATER's own comment for that one's separate story and
   // why it stays closed, only annotated, rather than reopening). Full
-  // measurements: `docs/work-in-progress.md` §11's Session Q entry.
+  // measurements: `docs/archive/history/work-in-progress.md` §11's Session Q entry.
   // -------------------------------------------------------------------------
   {
     id: 'classA-214-solitary-fire', origin: 'session-p-live', corpus: 'v6', tag: '214_solitary_fire',
@@ -360,7 +360,7 @@ const KNOWN_BAD: KnownBadRow[] = [
       '(-0.0366). Unlike 152/447, this row is a genuine THRESHOLD miss, not a structural blind spot: ' +
       'admitting it needs C1 lowered to 77/291 candidates (+21, a 37.5% widening of what reaches C2/C3) ' +
       '— re-deriving the threshold on this one row alone would be fitting noise, per this session\'s own ' +
-      'sensitivity sweep (`docs/work-in-progress.md` §11 Session P (i)).',
+      'sensitivity sweep (`docs/archive/history/work-in-progress.md` §11 Session P (i)).',
     status: 'open',
     note: 'Silence-distance from committed value: 0 (sits exactly on a real silence midpoint) — the ' +
       'SAME structural blind spot as 152/447 on that second signal too, for a different reason (the ' +
@@ -900,7 +900,7 @@ const REGISTER_ROSTER = [
   // fixture story and stays CLOSED, annotated rather than reopened; see
   // item-7's own entry above and REGISTER_HIGH_WATER's comment) and Class B
   // (5 rows), both measured but neither owned by an existing rule
-  // (`docs/work-in-progress.md` §11's Session Q entry).
+  // (`docs/archive/history/work-in-progress.md` §11's Session Q entry).
   'classA-214-solitary-fire', 'classA-231-slowing-pace', 'classA-447-scout-facing-dark',
   'classB-056-dropping-torch', 'classB-167-smell-of-butchery', 'classB-286-fact-to-act',
   'classB-400-endless-dark', 'classB-403-vigilant-embers',
@@ -935,7 +935,7 @@ const REGISTER_ROSTER = [
  *  triage confirmed two NEW defects by ear (`abysmal_opinion`,
  *  `226_four_scouts`) — the guard doing exactly its job: growth cost a
  *  deliberate edit to this constant, an append to the roster above, an entry
- *  in KNOWN_BAD, and a row in `docs/work-in-progress.md` §11's register table.
+ *  in KNOWN_BAD, and a row in `docs/archive/history/work-in-progress.md` §11's register table.
  *  It was then lowered because R.5 landed in the same commit and closed items
  *  4 and 5 into positive assertions, taking the open count 7 -> 5.
  *
@@ -953,7 +953,7 @@ const REGISTER_ROSTER = [
  *  suspicion as guilt (the exact distinction R-AG's "membership in the 44 is
  *  suspicion, not guilt" ruling draws). It IS reflected in the committed FA
  *  second-baseline fixture (the rule fired for real) and is carried forward
- *  as an explicit open triage item — see `docs/work-in-progress.md` §11.
+ *  as an explicit open triage item — see `docs/archive/history/work-in-progress.md` §11.
  *
  *  WS1 Session H RAISED it 0 -> 9 and LOWERED it back to 0 in the same
  *  commit, and — exactly as in Session D — both halves matter.
@@ -963,7 +963,7 @@ const REGISTER_ROSTER = [
  *  unscripted run) identified NINE real defects on v6 that no rule had ever
  *  owned. The guard did its job: growth cost a deliberate edit to this
  *  constant, nine appends to the roster above, nine KNOWN_BAD entries, and
- *  nine rows in `docs/work-in-progress.md` §11's register table. Five of the
+ *  nine rows in `docs/archive/history/work-in-progress.md` §11's register table. Five of the
  *  nine were scored WRONG by the owner's ear in Session H's own 12-row
  *  listening pass; the remaining four are STRUCTURALLY DERIVED — the same
  *  mechanism, the same evidence, no ear pass — and are marked as such in
@@ -1018,7 +1018,7 @@ const REGISTER_ROSTER = [
  *  (`phase4-fa-second-baseline-v6-segments.csv`), which Session Q did not
  *  touch and which still, correctly, shows 451.03 — so the closed entry
  *  above stays closed, with the live-bundle finding recorded in its own
- *  `why` field and in `docs/work-in-progress.md` §11's Session Q entry,
+ *  `why` field and in `docs/archive/history/work-in-progress.md` §11's Session Q entry,
  *  rather than manufacturing an open row keyed to a value (449.20) nothing
  *  in this register's own checked artifacts shows. A future session that
  *  deliberately regenerates this fixture is the right place to act on it.
@@ -1244,7 +1244,7 @@ const CLOSED_BY_POSITIVE_ASSERTION: Array<{
       '449.20. This is NOT reopened in the register: the register\'s source of truth is this fixture, ' +
       'which has not regressed, and "close only rows with an ear pass" cuts against inventing a NEW open ' +
       'row keyed to a value (449.20) no fixture here shows. Recorded instead in ' +
-      '`docs/work-in-progress.md` §11\'s Session Q entry as an open finding for a future session: R.11\'s ' +
+      '`docs/archive/history/work-in-progress.md` §11\'s Session Q entry as an open finding for a future session: R.11\'s ' +
       'fitDeviation signal is sensitive to the same raw-vs-filtered-token substitution R.12 and R.13 both ' +
       'were, and this fixture needs deliberate regeneration (a decision, not a silent edit) before this ' +
       'closure can be trusted as still describing production.',
@@ -1482,7 +1482,7 @@ describe('WS1 Session C — the Zero-Defect Register (ruling R-AD)', () => {
       `The Zero-Defect Register GREW: ${open.length} open entries against a high-water mark of ` +
       `${REGISTER_HIGH_WATER}. A new defect is not forbidden — but it must be recorded deliberately: ` +
       `raise REGISTER_HIGH_WATER in the same commit, add the item to REGISTER_ROSTER, and record it in ` +
-      `docs/work-in-progress.md §11's register table. Do NOT raise the constant to make this green ` +
+      `docs/archive/history/work-in-progress.md §11's register table. Do NOT raise the constant to make this green ` +
       `without doing the other two. Open entries now: ${open.map(k => k.id).join(', ')}.`,
     ).toBeLessThanOrEqual(REGISTER_HIGH_WATER);
   });
@@ -1842,7 +1842,7 @@ describe('WS1 Session F — R.11: chunk-fit boundary correction', () => {
     // makes ALL THREE registered corrections fail to fire, which flips both
     // the register-empty test and the three ear-correct pins above to RED.
     // Verified directly against the real production detector this session —
-    // see the WS1 Session F ledger entry (docs/work-in-progress.md §11) for
+    // see the WS1 Session F ledger entry (docs/archive/history/work-in-progress.md §11) for
     // the exact run. This test itself only documents the mutation was run
     // and confirms the CURRENT (unmutated) state stays green, which is what
     // licenses trusting the mutation result reported in the ledger.
@@ -2025,7 +2025,7 @@ describe('WS1 Session H — R.12: the atomic-run invariant', () => {
     // midpoint is 664.33, reproducing the committed defect bit for bit, and on
     // 176/307/340 it lands back inside the run. Verified directly against the
     // real production detector this session — see the WS1 Session H ledger
-    // entry (docs/work-in-progress.md §11) for the exact run.
+    // entry (docs/archive/history/work-in-progress.md §11) for the exact run.
     //
     // The standing half of M7 lives in `faRunPlacementGate.test.ts`'s CLAMPS
     // test and its H7 assertion, which are permanent. This test documents that
@@ -2110,7 +2110,7 @@ describe('WS1 Session K — R.13: the atomic-utterance invariant', () => {
     // interval becomes [667.730, 668.010], no detected silence intersects it,
     // and the fallback lands at 667.73 — a 0.26s move that leaves the defect
     // audible. Measured this session; see the WS1 Session K ledger entry
-    // (docs/work-in-progress.md §11).
+    // (docs/archive/history/work-in-progress.md §11).
     //
     // M8-A is RED: 5 failures across `faRunPlacementGate.test.ts` (the corpus
     // row, the blast radius, the no-op nine, the apply-scope test, and the
@@ -2204,10 +2204,10 @@ describe('WS1 Session A — FA replay gate (R10): V6 seam 150/151 (Phase 3c cont
   it('154_silent_night_birds / 155_predator_passing_under: committed-correct, raw-Whisper-token, and FA values all represented', () => {
     // Three distinct quantities at the same seam, deliberately not collapsed
     // into one number (sync-pipeline-v2-plan.md's Phase 3c entry; ear-pass
-    // item 8 in docs/work-in-progress.md's mechanism table):
+    // item 8 in docs/archive/history/work-in-progress.md's mechanism table):
     //   - committed/ear-correct: the Step M golden baseline's own boundary,
     //     owner-ear-verified correct (Phase 3c's ruling).
-    //   - raw Whisper token end for "call" (docs/work-in-progress.md:1598) —
+    //   - raw Whisper token end for "call" (docs/archive/history/work-in-progress.md:1598) —
     //     a WORD-level timestamp, not the committed segment boundary; the
     //     committed value differs from it because of the midpoint arithmetic
     //     Phase 3c's own entry walks through.
@@ -2465,7 +2465,7 @@ describe('WS1 Session A.5 — FA replay gate II: the anchor path, replayed throu
         `${spec.key}: ${what} changed. This is the SOLE channel by which faAnchors.ts's ` +
         `findAgreeingSilence reaches a committed boundary, so a change here IS a behavior change. ` +
         `If this is Session B's R-R rewrite landing, re-pin the digests and the NAMED_WINDOWS rows ` +
-        `in the same commit and record the movement in docs/work-in-progress.md §11 — do not delete ` +
+        `in the same commit and record the movement in docs/archive/history/work-in-progress.md §11 — do not delete ` +
         `the assertion.`;
 
       expect(digest(anchorTimes.map(r3).join('|')), failHint('the R.1 anchor time set')).toBe(spec.anchorDigest);

@@ -72,7 +72,7 @@ Nothing here is worth ~+94 ms/frame, which is what 45 -> 8.6 fps requires.
 
 ## Already-documented cause
 
-`docs/ws3-silent-gaps-diagnosis.md` (this round) had already measured and
+`docs/ws3-export/silent-gaps-diagnosis.md` (this round) had already measured and
 attributed this, and it is being rediscovered as a regression:
 
 - A **load-dependent uniform throughput tax, ~3.3x**, "present in every single

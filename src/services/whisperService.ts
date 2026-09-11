@@ -1651,7 +1651,7 @@ export function computeCoverageSummary(
  * Applies time windows from `alignments` to `segments`, respecting
  * `segment.locked === true` (locked segments are left unchanged).
  *
- * `anchorSource` (WS1 Task 5, docs/work-in-progress.md §11 item 1, owner
+ * `anchorSource` (WS1 Task 5, docs/archive/history/work-in-progress.md §11 item 1, owner
  * ruling R-G — `'forced-alignment' > 'whisper' > 'estimate'`, demote-only)
  * defaults to `'whisper'`, preserving every existing call site's behavior
  * byte-for-byte. A forced-alignment production caller passes

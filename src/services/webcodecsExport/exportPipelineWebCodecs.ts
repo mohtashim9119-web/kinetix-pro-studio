@@ -880,7 +880,7 @@ type RunDriveResult =
       /** Byte offset in `runFile` at which each encoder session's first byte
        *  landed, indexed by session. Recorded IN APPEND-QUEUE ORDER, so entry
        *  `k` is the exact truncation point for a rewind to session `k`. Purely
-       *  observational today — see docs/ws3-export-recovery-architecture.md §1c. */
+       *  observational today — see docs/ws3-export/recovery-architecture.md §1c. */
       sessionByteOffsets: number[];
       /** WS3 Tier 1 item 3c (Rung 3) — `sessionByteOffsets`' frame-index
        *  companion, same stamping/indexing scheme. See its own doc comment. */
@@ -967,7 +967,7 @@ export const WATCHDOG_MS = 30_000;
  * export progress, never a bare message arrival.
  *
  * 45s (1.5x WATCHDOG_MS): the measured no-transition baseline (200s timeline,
- * 6000 frames, 126s wall — docs/history.md Round 6) runs at ~21ms/frame.
+ * 6000 frames, 126s wall — docs/archive/history/history.md Round 6) runs at ~21ms/frame.
  * Transitioned/animated frames composite two textures + a zoom transform
  * instead of one and are measurably slower, but nowhere near 45s/frame under
  * any non-hung condition — this bound is sized to absorb that slowdown many
@@ -1383,7 +1383,7 @@ export function driveGlRun(
      *
      * Nothing reads this to make a decision yet. It is the one number a
      * truncate-and-rewind recovery needs and does not otherwise have — see
-     * PART 1c of docs/ws3-export-recovery-architecture.md. The marker appends
+     * PART 1c of docs/ws3-export/recovery-architecture.md. The marker appends
      * nothing and does not reset either liveness bound.
      */
     const sessionByteOffsets: number[] = [];
@@ -1957,7 +1957,7 @@ export function driveGlRun(
      * above are ALSO still enforced by their own `setTimeout` deadline
      * (unchanged, kept as a backstop), but a `setTimeout` living on this
      * document's main-thread context is exactly what WebKit throttles/defers
-     * for an occluded/non-visible window (docs/ws3-silent-gaps-diagnosis.md's
+     * for an occluded/non-visible window (docs/ws3-export/silent-gaps-diagnosis.md's
      * Step 1 finding) — so a deadline that depends solely on its own callback
      * firing on schedule can be starved for the entire duration of an
      * occlusion, independent of whether real work has stalled.

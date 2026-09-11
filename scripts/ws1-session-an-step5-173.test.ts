@@ -183,7 +183,7 @@ describe.skipIf(!MEASURE)('WS1 Session AN Step 5 — 173 extension (CONDITIONAL,
     L.push('');
     L.push('## The "6 previously unexplained 173 control regressions from arm C"');
     L.push('');
-    L.push('**NOT DETERMINED.** A targeted search of `docs/work-in-progress.md` and `sync-pipeline-v2-plan.md` '
+    L.push('**NOT DETERMINED.** A targeted search of `docs/archive/history/work-in-progress.md` and `sync-pipeline-v2-plan.md` '
       + 'did not turn up an explicit, unambiguous list of six specific tags under this description. The closest '
       + 'match found is `vessel_damage_clue` (Session AI\'s original 173 "control regression" set), which '
       + 'Sessions AJ-0/AK already resolved as a stale-bundle-provenance artifact (172.910 vs the correct '

@@ -3,7 +3,7 @@ name: FA ORT matrix
 # ---------------------------------------------------------------------------
 # WS1 Task 5 Slice D14 B1 — automates the four-way `fa-inference`/ORT gate
 # matrix that was, until this workflow, run by hand and recorded in prose in
-# each slice's own commit message / docs/work-in-progress.md §5 (original
+# each slice's own commit message / docs/archive/history/work-in-progress.md §5 (original
 # source docs/ws1-sync-pipeline/task5-slice-ledger.md §6 Known-gap register,
 # "CI automation of the four-way ORT matrix" — the same gap this workflow
 # closes — was deleted 2026-08-14, `9cf5867`; retrieve: `git show
@@ -157,7 +157,7 @@ jobs:
       # `build.yml` already uses for ffmpeg/whisper-cli), not vendoring.
       # Version pinned to 1.23.2 — the exact version already validated
       # locally against this crate's `ort = "=2.0.0-rc.13"` binding
-      # (`docs/work-in-progress.md` §7 item 4 / §6's attribution-isolation
+      # (`docs/archive/history/work-in-progress.md` §7 item 4 / §6's attribution-isolation
       # paragraph; original sources measurements/runtime-unblock-2026-08-12.md
       # and measurements/d11-chunked-alignment-2026-08-13.md's own repro
       # command were deleted 2026-08-14, `9cf5867`; retrieve: `git show

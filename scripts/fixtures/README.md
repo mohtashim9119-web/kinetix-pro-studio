@@ -87,7 +87,7 @@ gate's `KNOWN_BAD` table to warn about (item 9 was removed from it). The
 What changed in this regeneration, in full: 16 committed boundaries moved (6
 v6, 10 173, 0 spanish) under R-U, plus the 1 spanish boundary 616abb2 had
 already fixed but that this file had never shown. Every moved row is listed
-by name in `docs/work-in-progress.md` §11's R-Y re-capture table; none of the
+by name in `docs/archive/history/work-in-progress.md` §11's R-Y re-capture table; none of the
 16 is ear-verified yet.
 
 **NARROWED AGAIN (WS1 Session B.1, 2026-08-16, owner ruling R-AA).** R-U's
@@ -100,7 +100,7 @@ now differs from `7468ff3` at 3 boundaries / 6 rows and the 173 file at 1
 boundary / 2 rows, everything else byte-identical. The spanish file is
 untouched by this change and keeps its item-9 refresh (65.12). Both the
 surviving 4 and the reverted 12 are listed by name in
-`docs/work-in-progress.md` §11's Session B.1 block; the 12 are recorded there
+`docs/archive/history/work-in-progress.md` §11's Session B.1 block; the 12 are recorded there
 as named candidate defects, not as resolved. Still no ear verification on any
 of them — that is Session C. The `-skipped.csv` files are again unchanged.
 

@@ -27,7 +27,7 @@
 // SCOPE, deliberately drawn. This scans `src/` only — live code and the
 // comments attached to it, which describe what the app does TODAY and are
 // therefore falsifiable. It does NOT scan `docs/`: those files are dated,
-// append-only records (CLAUDE.md §5), and `docs/work-in-progress.md` correctly
+// append-only records (CLAUDE.md §5), and `docs/archive/history/work-in-progress.md` correctly
 // records "default ON" as a true statement about WS1 Session G. Asserting over
 // them would fail on accurate history.
 //

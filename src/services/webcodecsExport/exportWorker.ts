@@ -269,7 +269,7 @@ export type ExportWorkerOutboundMessage =
   // of frame/phase progress, so the main thread gets a fresh monotonic-clock
   // check-in even when the frame loop itself produces zero chunk/queue-sample/
   // phase messages for a long stretch (exactly the run-5 profile — see
-  // docs/ws3-silent-gaps-diagnosis.md). Sourced from a `setInterval` living in
+  // docs/ws3-export/silent-gaps-diagnosis.md). Sourced from a `setInterval` living in
   // THIS worker's own realm, not the main document's — the diagnosis found the
   // worker kept executing (however slowly) through the 223.6s freeze that
   // neither WATCHDOG_MS nor FORWARD_PROGRESS_BOUND_MS caught, while both
@@ -935,7 +935,7 @@ export class EncoderFlushTimeoutError extends Error {
 //
 // Everything in this block is inert on a clean export: nothing is ever fenced,
 // `decideFlushTimeoutDisposition` is never called, and no 'salvage-done' is
-// ever posted. See docs/ws3-export-recovery-architecture.md §5 for the
+// ever posted. See docs/ws3-export/recovery-architecture.md §5 for the
 // byte-level neutrality argument and §3 for why a bounded RE-RENDER is not
 // what shipped here.
 // ---------------------------------------------------------------------------
@@ -1221,7 +1221,7 @@ function gopFrames(fps: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// WS3 Rung 5b — adaptive throttling. `docs/ws3-export-recovery-architecture.md`
+// WS3 Rung 5b — adaptive throttling. `docs/ws3-export/recovery-architecture.md`
 // §5c reasoned through and REJECTED making `BACKPRESSURE_HIGH_WATER` itself
 // adaptive (raising the hard ceiling under driver pressure is exactly
 // backwards — it puts MORE in-flight frames into a struggling encoder). This

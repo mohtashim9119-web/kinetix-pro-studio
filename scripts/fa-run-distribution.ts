@@ -7,7 +7,7 @@
 // WS1 Task 5 Slice D13 Step 1 — run-distribution + runs-vs-chunks
 // reconciliation diagnostic.
 //
-// PROVENANCE REPAIR. `docs/work-in-progress.md` §6's attribution-isolation
+// PROVENANCE REPAIR. `docs/archive/history/work-in-progress.md` §6's attribution-isolation
 // paragraph (original source measurements/d11-chunked-alignment-2026-08-13.md
 // §4, deleted 2026-08-14, `9cf5867`; retrieve: `git show
 // 251be64:docs/ws1-sync-pipeline/measurements/d11-chunked-alignment-2026-08-13.md`)
