@@ -346,3 +346,31 @@ describe('SessionOutputFence at its real call site inside runExport (P5, closed)
     expect(written).toEqual([0xaa]);
   });
 });
+
+/**
+ * WS3 Round 14, STEP 6 (H3) — session accounting reconciles even on the
+ * flush-timeout/abort path this file already knows how to drive. The
+ * single-session encoder this scenario builds is never explicitly closed on
+ * the abort branch itself (only `reset()` — see `runFinalFlushWithRecovery`'s
+ * own doc) and instead relies on `runExport`'s single-close-point `finally`.
+ * This is the destructive proof that reliance is not silent: if a future
+ * edit removed that `finally` close (or guarded it wrong), this would fail
+ * with `encoderSessionsOpened=1, encoderSessionsClosed=0` instead of 1/1.
+ */
+describe('encoder session accounting reconciles on the abort path (STEP 6, H3)', () => {
+  it('opened===closed===1 after a final-flush timeout forces salvage, not just on the clean path', async () => {
+    const { chunks } = await driveToFencedSalvage();
+
+    const { FLUSH_BOUND_MS } = await import('./exportWorker');
+    await vi.advanceTimersByTimeAsync(FLUSH_BOUND_MS);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    const salvaged = chunks.find((m) => m.type === 'salvage-done');
+    if (!salvaged || salvaged.type !== 'salvage-done') {
+      throw new Error(`expected a 'salvage-done' message, got: ${JSON.stringify(chunks.map((m) => m.type))}`);
+    }
+    expect(salvaged.diagnostics.encoderSessionsOpened).toBe(1);
+    expect(salvaged.diagnostics.encoderSessionsClosed).toBe(1);
+  });
+});

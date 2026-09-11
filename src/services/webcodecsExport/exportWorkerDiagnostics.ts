@@ -222,6 +222,16 @@ export interface ExportWorkerDiagnosticsPayload {
    * `ExportWorkerInitMessage.pinnedCodec` — see that field's own doc.
    */
   selectedCodec: string | null;
+  /**
+   * WS3 Round 14, STEP 6 (H3) — explicit encoder session accounting. See
+   * `exportWorker.ts`'s `encoderSessionsOpened`/`encoderSessionsClosed` own
+   * doc for exactly what each counts and what it cannot prove.
+   * `encoderSessionsOpened - encoderSessionsClosed` is the session count
+   * this process still BELIEVES live at the moment of this snapshot; it
+   * should read 0 once a piece finishes cleanly.
+   */
+  encoderSessionsOpened: number;
+  encoderSessionsClosed: number;
   /** Main-thread only (`exportPipelineWebCodecs.ts`): was an `appendFileRaw`
    *  call still outstanding when the run was declared failed? Null in a
    *  worker-built payload, which cannot know. This is the field that separates
@@ -266,6 +276,8 @@ export const NO_FLUSH_OBSERVATION: Pick<
   | 'appendPendingAtFailure'
   | 'selectedHardwareRung'
   | 'selectedCodec'
+  | 'encoderSessionsOpened'
+  | 'encoderSessionsClosed'
 > = {
   encodedChunkBytesAtFlushStart: null,
   flushChunksSinceEntry: null,
@@ -276,6 +288,8 @@ export const NO_FLUSH_OBSERVATION: Pick<
   appendPendingAtFailure: null,
   selectedHardwareRung: null,
   selectedCodec: null,
+  encoderSessionsOpened: 0,
+  encoderSessionsClosed: 0,
 };
 
 export interface WatchdogOutputEvent {

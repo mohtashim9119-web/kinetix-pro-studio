@@ -352,6 +352,8 @@ function buildDiagnostics(
     encoderSessions: activeSessionCount,
     selectedHardwareRung: activeSelectedHardwareRung,
     selectedCodec: activeSelectedCodec,
+    encoderSessionsOpened,
+    encoderSessionsClosed,
     // The worker cannot see the main thread's append queue — see the field's
     // own doc comment. `exportPipelineWebCodecs.ts` fills this in.
     appendPendingAtFailure: null,
@@ -424,6 +426,24 @@ let activeSelectedHardwareRung: string | null = null;
 /** WS3 Round 14, STEP 5 (H2) — same pattern, for the pinned CODEC. See
  *  `ExportWorkerDiagnosticsPayload.selectedCodec`. */
 let activeSelectedCodec: string | null = null;
+/**
+ * WS3 Round 14, STEP 6 (H3) — explicit, observable encoder session
+ * accounting. `encoderSessionsOpened` increments once per successful
+ * `configure()` (a real session, not a failed ladder candidate);
+ * `encoderSessionsClosed` increments once per REAL `close()` call this run
+ * makes (never for a guarded no-op on an already-closed encoder — see the
+ * single-close-point `finally` in `runExport`). `opened - closed` is a
+ * session "believed live" by everything JS can observe: `close()` is
+ * documented synchronous and there is no other WebCodecs signal to await
+ * for release, so this pair is the full extent of what this process can
+ * assert about the underlying hardware/software session. Whether the
+ * platform's OWN release (e.g. an NVENC session slot) actually completes
+ * by the time `opened - closed` reads 0 is exactly H3's hardware-bound
+ * question — this counter cannot settle it, only make a leak's SHAPE
+ * visible if `opened - closed` ever fails to return to 0 between pieces.
+ */
+let encoderSessionsOpened = 0;
+let encoderSessionsClosed = 0;
 
 /** Enter a flush: snapshot the baselines and zero the since-entry counters.
  *  Called at BOTH flush sites so the two are observationally identical. */
@@ -1320,6 +1340,11 @@ async function createEncoder(
         // orchestrator pins it across a rewind's fresh worker via
         // `ExportWorkerInitMessage.pinnedCodec`.
         activeSelectedCodec = codec;
+        // WS3 Round 14, STEP 6 (H3) — a REAL session, counted the instant
+        // configure() actually succeeds (never for a failed ladder candidate
+        // — those are cleaned up in the catch branch below and never counted
+        // as opened).
+        encoderSessionsOpened++;
         return encoder;
       } catch (e) {
         attempts.push(`${codec}/${hardwareAcceleration}: configure threw: ${errMessage(e)}`);
@@ -1581,6 +1606,12 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   // since a pinned run's diagnostics should already name its codec even if
   // it fails before the first `createEncoder` call completes.
   activeSelectedCodec = payload.pinnedCodec ?? null;
+  // WS3 Round 14, STEP 6 (H3) — reset per run, same reasoning as the
+  // selected-rung/codec resets just above: this worker builds exactly one
+  // piece's worth of sessions in its lifetime, but resetting explicitly
+  // documents the invariant rather than relying on module-scope zero-init.
+  encoderSessionsOpened = 0;
+  encoderSessionsClosed = 0;
   const frameDigest = payload.frameContentDigest ? new FrameContentDigest() : null;
   activeFrameDigest = frameDigest;
   const encodeStats = new EncodeStats();
@@ -1858,6 +1889,28 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     return;
   }
 
+  // WS3 Round 14, STEP 6 (H3) — closes and counts the CURRENT encoder
+  // exactly once, then is a guarded no-op. Called explicitly right before
+  // every terminal `postTerminal` (done, salvaged, error, and the rotation/
+  // cancel closes below already did their own equivalent inline) so the
+  // diagnostics snapshot POSTED to the main thread always reflects a
+  // session already closed — never "opened=N, closed=N-1" because the real
+  // close was left to the `finally` below, which runs AFTER `postTerminal`
+  // has already built and sent the payload a `return` triggers it from.
+  // `finally`'s own guarded close stays as the last-resort net for any path
+  // that reaches it without calling this first (there is none left, by
+  // construction, but a net costs nothing to keep).
+  const closeEncoderOnce = (): void => {
+    try {
+      if (encoder.state !== 'closed') {
+        encoder.close();
+        encoderSessionsClosed++;
+      }
+    } catch {
+      // best-effort — a close failure must not mask whatever result is about to post
+    }
+  };
+
   // Every `sessionStarts` entry AT OR BEFORE the resume point is already
   // "opened" by the `buildEncoder` call above — only later ones still need
   // a rotation.
@@ -1945,6 +1998,11 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
           throw e;
         }
         encoder.close();
+        // WS3 Round 14, STEP 6 (H3) — only the successful, non-aborted rotation
+        // path reaches here; the flush-timeout abort above re-throws before
+        // this, and its own close (the single-close-point `finally`, below)
+        // counts separately.
+        encoderSessionsClosed++;
         sessionIndex++;
         activeSessionIndex = sessionIndex;
         encoder = await buildEncoder(sessionIndex);
@@ -1991,6 +2049,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     if (cancelled) {
       encoder.reset();
       encoder.close();
+      encoderSessionsClosed++; // WS3 Round 14, STEP 6 (H3)
       failState.setFailure('cancel', new DOMException('Export cancelled.', 'AbortError'));
       postTerminal('cancelled', framesEmitted, undefined, runState);
       return;
@@ -2034,10 +2093,12 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     if (outcome.kind === 'salvage') {
       salvagesUsed++;
       tracker.enter('flush-salvage');
+      closeEncoderOnce();
       postTerminal('salvaged', framesEmitted, null, runState, outcome.reason);
       return;
     }
     endFlushObservation();
+    closeEncoderOnce();
     postTerminal('done', framesEmitted, null, runState);
   } catch (e) {
     if (!failState.failure) {
@@ -2056,6 +2117,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
           : 'thrown';
       failState.setFailure(via, e);
     }
+    closeEncoderOnce();
     postTerminal('error', framesEmitted, undefined, runState);
   } finally {
     clearInterval(heartbeatTimer);
@@ -2068,7 +2130,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
     // closed it itself and this is then a guarded no-op) — flush() does not
     // close the encoder, so the success path still needs this.
     try {
-      if (encoder.state !== 'closed') encoder.close();
+      // WS3 Round 14, STEP 6 (H3) — only a REAL close increments the counter;
+      // the guard is exactly what stops this from double-counting a session
+      // an earlier path (rotation/cancel above) already closed and counted.
+      if (encoder.state !== 'closed') {
+        encoder.close();
+        encoderSessionsClosed++;
+      }
     } catch {
       // best-effort — a close failure must not mask whatever error/result already posted above
     }
