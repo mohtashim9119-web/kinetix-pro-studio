@@ -318,7 +318,7 @@ describe('resume discovery — the fence ordering', () => {
     expect(r.bitstreamTouched).toBeUndefined();
   });
 
-  it('recovery budget exhaustion invalidates the manifest (clean, not resumable) with the reason intact', async () => {
+  it('recovery budget exhaustion invalidates the manifest (recovery_budget_exhausted, not resumable) with the reason intact', async () => {
     let manifest = createExportStateManifest({
       sessionId: SESSION, projectId: 'proj', sourceTimelineHash: HASH_A, fps: 30, width: 1920, height: 1080,
     });
@@ -331,6 +331,7 @@ describe('resume discovery — the fence ordering', () => {
     const result = await discoverResumableExport(h.io, target, h.countPictures);
     expect(result.resumable).toBeNull();
     expect(result.rejected[0]!.reason).toContain('recovery budget exhausted');
+    expect(result.rejected[0]!.budgetExhausted).toBe(true);
     expect(h.fence).not.toHaveBeenCalled(); // no Annex-B I/O — pure manifest check
   });
 

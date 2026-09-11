@@ -68,11 +68,29 @@ describe('summarize + diff', () => {
   const scan = (b: Uint8Array) => scanAnnexbNals(b).map((n) => ({ ...n }));
 
   it('collapses repeated identical parameter sets and finds the first of each', () => {
-    const stream = buildSyntheticSingleSliceWithParamSets(4);
+    // buildSyntheticSingleSliceWithParamSets now emits realistic stream-start-only
+    // parameter sets (WS3 Round 13 fixture rebuild) — one SPS/PPS, not one per
+    // picture — so it can no longer exercise "distinct payloads are not collapsed".
+    // Build a local stream with parameter sets that vary per picture instead,
+    // purpose-built for that REACH claim.
+    const varyingParamSets = (pictures: number): Uint8Array => {
+      const out: number[] = [];
+      const startCode = () => out.push(0x00, 0x00, 0x00, 0x01);
+      for (let p = 0; p < pictures; p++) {
+        startCode();
+        out.push(0x67, 0x42, 0x00, 0x1e, p & 0xff); // SPS (nal type 7)
+        startCode();
+        out.push(0x68, 0x68, 0xce, p & 0xff); // PPS (nal type 8)
+        startCode();
+        out.push(0x65, 0x88); // IDR slice (nal type 5)
+      }
+      return new Uint8Array(out);
+    };
+    const stream = varyingParamSets(4);
     const summary = summarizeParameterSets(stream, scan);
     expect(summary.sps).not.toBeNull();
     expect(summary.pps).not.toBeNull();
-    // That builder varies the last SPS/PPS byte per picture, so four distinct
+    // Each picture carries a distinct SPS/PPS payload byte, so four distinct
     // payloads is the correct reading — and proves repeats are not collapsed
     // across genuinely different bytes.
     expect(summary.spsPayloadsHex).toHaveLength(4);

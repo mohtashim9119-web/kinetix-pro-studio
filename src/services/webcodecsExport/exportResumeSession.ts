@@ -18,7 +18,6 @@ import {
 import {
   collectAbandonedSessions,
   discoverResumableExport,
-  isBudgetExhaustedReason,
   type ResumableExport,
   type ResumeDiscoveryIo,
   type ResumeRejection,
@@ -62,7 +61,7 @@ function refusalNoticeFromRejections(rejected: readonly ResumeRejection[]): Resu
     if (r.bitstreamTouched) {
       return { sessionId: r.sessionId, kind: 'bitstream_touched', reason: r.reason, bitstreamTouched: r.bitstreamTouched };
     }
-    if (isBudgetExhaustedReason(r.reason)) {
+    if (r.budgetExhausted) {
       return { sessionId: r.sessionId, kind: 'budget_exhausted', reason: r.reason };
     }
   }

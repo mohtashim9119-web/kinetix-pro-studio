@@ -26,7 +26,6 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  buildSyntheticSingleSliceWithParamSets,
   buildSyntheticSingleSliceWithTrailingAud,
   countAnnexbAccessUnits,
   truncateAnnexbToLastCompleteAu,
@@ -81,9 +80,29 @@ describe('conservative final-AU drop — structural confinement', () => {
   });
 
   it('the drop predicate is live: the JS twin drops exactly one picture when the tail is unprovable', () => {
-    // Param sets lead each picture, so the last picture's final NAL is its own
-    // slice — nothing follows to prove the AU closed.
-    const unprovable = buildSyntheticSingleSliceWithParamSets(4);
+    // buildSyntheticSingleSliceWithParamSets now appends a trailing AUD after
+    // the last picture (WS3 Round 13 realistic-fixture rebuild), which makes
+    // its own tail provably complete — it no longer exercises this case.
+    // Build a local stream whose final NAL is a bare slice with nothing
+    // following, so the last picture's AU genuinely cannot be proven closed.
+    const buildUnprovableTailStream = (pictures: number): Uint8Array => {
+      const out: number[] = [];
+      const startCode = () => out.push(0x00, 0x00, 0x00, 0x01);
+      startCode();
+      out.push(0x67, 0x42, 0x00, 0x1e); // SPS (nal type 7)
+      startCode();
+      out.push(0x68, 0x68, 0xce); // PPS (nal type 8)
+      for (let p = 0; p < pictures; p++) {
+        startCode();
+        out.push(0x09, 0xf0); // AUD (nal type 9)
+        startCode();
+        out.push(0x06, 0x05, 0xbe, 0xef); // SEI (nal type 6)
+        startCode();
+        out.push(p === 0 ? 0x65 : 0x21, 0x88); // slice (IDR for p0, non-IDR after)
+      }
+      return new Uint8Array(out);
+    };
+    const unprovable = buildUnprovableTailStream(4);
     expect(countAnnexbAccessUnits(unprovable).pictures).toBe(4);
     expect(truncateAnnexbToLastCompleteAu(unprovable).pictures).toBe(3);
 

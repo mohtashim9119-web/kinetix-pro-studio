@@ -100,16 +100,14 @@ export interface ResumeRejection {
     fileLengthBefore: number;
     fileLengthAfter: number;
   };
-}
-
-/**
- * Mirrors the exact prefix `exportCheckpoint.ts`'s `recoveryBudgetExhaustionReason`
- * produces. String-matched rather than a shared export because that module is
- * Cursor's and off-limits to further edits outside STEP 0's merge reconciliation
- * — see WS3 Round 12, STEP 1's Cursor-blocker note on this seam.
- */
-export function isBudgetExhaustedReason(reason: string): boolean {
-  return reason.startsWith('recovery budget exhausted');
+  /**
+   * True when this rejection came from `validateExportState`'s
+   * `recovery_budget_exhausted` variant — WS3 Round 13, STEP 4. Carried as a
+   * typed flag from the validation `kind`, not re-derived from `reason` text:
+   * a discriminant that already exists on the source value must not be
+   * re-parsed downstream from its own error message.
+   */
+  budgetExhausted?: boolean;
 }
 
 export interface ResumeDiscoveryResult {
@@ -144,10 +142,16 @@ async function selectCheckpoint(
   expected: ExportCheckpointExpectedIdentity,
 ): Promise<
   | { ok: true; manifest: ExportStateManifest; checkpoint: ExportCheckpointRecord; pieceFile: string }
-  | { ok: false; reason: string }
+  | { ok: false; reason: string; budgetExhausted?: boolean }
 > {
   const provisional = validateExportState(serialized, expected, Number.MAX_SAFE_INTEGER);
-  if (provisional.kind === 'clean') return { ok: false, reason: provisional.reason };
+  if (provisional.kind !== 'resume') {
+    return {
+      ok: false,
+      reason: provisional.reason,
+      budgetExhausted: provisional.kind === 'recovery_budget_exhausted',
+    };
+  }
 
   const pieceFile = pieceFileName(provisional.checkpoint.pieceIndex);
   let fileLength: number;
@@ -158,7 +162,13 @@ async function selectCheckpoint(
   }
 
   const validated = validateExportState(serialized, expected, fileLength);
-  if (validated.kind === 'clean') return { ok: false, reason: validated.reason };
+  if (validated.kind !== 'resume') {
+    return {
+      ok: false,
+      reason: validated.reason,
+      budgetExhausted: validated.kind === 'recovery_budget_exhausted',
+    };
+  }
   // A manifest is piece-scoped, so the authoritative selection cannot name a
   // different piece than the provisional one did. If it somehow does, the
   // manifest is not one this module wrote — decline rather than guess.
@@ -188,7 +198,12 @@ export async function evaluateResumeCandidate(
   countPictures: (session: ResumeSessionHandle, path: string) => Promise<number>,
 ): Promise<
   | { ok: true; value: ResumableExport }
-  | { ok: false; reason: string; bitstreamTouched?: ResumeRejection['bitstreamTouched'] }
+  | {
+      ok: false;
+      reason: string;
+      bitstreamTouched?: ResumeRejection['bitstreamTouched'];
+      budgetExhausted?: boolean;
+    }
 > {
   let session: ResumeSessionHandle;
   try {
@@ -375,6 +390,7 @@ export async function discoverResumableExport(
       sessionId,
       reason: outcome.reason,
       ...(outcome.bitstreamTouched ? { bitstreamTouched: outcome.bitstreamTouched } : {}),
+      ...(outcome.budgetExhausted ? { budgetExhausted: true } : {}),
     });
   }
   return { resumable: null, rejected };
