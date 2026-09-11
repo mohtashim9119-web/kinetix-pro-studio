@@ -36,6 +36,16 @@
  *  both sides of the IPC boundary rather than a bare `260` on either. */
 export const WINDOWS_MAX_PATH = 260;
 
+/** WS3 Round 18 (F2 follow-up) — `save_session_file` (ffmpeg.rs) now
+ *  delivers via a sibling `<dest>.part` file, renamed over `dest` on
+ *  success (`copy_session_file_atomic`/`dest_part_path`). This check exists
+ *  as belt-and-suspenders/fast-feedback (the actual copy is already immune
+ *  to MAX_PATH via `windows_long_path`'s `\\?\` prefix — see that fn's doc
+ *  comment) — but its OWN stated purpose is to reject whatever path the
+ *  delivery path will actually construct, and that is now 5 characters
+ *  longer than the operator's chosen destination, not equal to it. */
+const DEST_PART_SUFFIX_LENGTH = '.part'.length;
+
 /**
  * True when `path` is shaped like a Windows path — drive-letter-rooted
  * (`C:\...` or `C:/...`) or UNC (`\\server\share\...`). Never true for a
@@ -52,9 +62,11 @@ export function looksLikeWindowsPath(path: string): boolean {
  */
 export function checkExportDestinationPathLength(destPath: string): string | null {
   if (!looksLikeWindowsPath(destPath)) return null;
-  if (destPath.length < WINDOWS_MAX_PATH) return null;
+  const constructedLength = destPath.length + DEST_PART_SUFFIX_LENGTH;
+  if (constructedLength < WINDOWS_MAX_PATH) return null;
   return (
-    `This save location is too long (${destPath.length} characters — Windows' limit is ` +
-    `${WINDOWS_MAX_PATH}). Choose a shorter folder or file name and try again.`
+    `This save location is too long (${destPath.length} characters, ${constructedLength} ` +
+    `during delivery — Windows' limit is ${WINDOWS_MAX_PATH}). Choose a shorter folder or ` +
+    `file name and try again.`
   );
 }

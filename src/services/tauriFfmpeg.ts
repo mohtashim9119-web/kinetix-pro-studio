@@ -443,19 +443,27 @@ export class TauriFfmpeg implements FfmpegLike {
 
   /**
    * Kills the in-flight ffmpeg subprocess for this session, if one is currently
-   * running (D13 fix). Best-effort, mirroring destroy()'s catch-and-warn — a
-   * missing/already-finished process is not an error. Must be called BEFORE
-   * destroy() so the sidecar isn't left writing into a session dir that's about
-   * to be deleted out from under it.
+   * running (D13 fix). Must be called BEFORE destroy() so the sidecar isn't
+   * left writing into a session dir that's about to be deleted out from
+   * under it.
+   *
+   * WS3 Round 18 (F4) — THROWS on failure; does not swallow. This used to
+   * catch-and-warn unconditionally, which meant every bound built on top of
+   * it (`withFfmpegLivenessBound`'s expiry handler is the main one —
+   * `FfmpegBoundDiagnostics.killed`/`killError` exist specifically to record
+   * a kill failure) could never actually observe one: the failure died here,
+   * `killed` always read `true`, and a bound whose whole job is "the sidecar
+   * is now known to be stopped" silently stopped being that. Each caller now
+   * decides for itself whether a failed kill is fatal (a liveness bound: yes
+   * — it cannot claim the process stopped) or best-effort (a user cancel:
+   * no, but see `recordCleanupFailure` at those call sites for how the
+   * failure stays visible instead of disappearing into `console.warn`, the
+   * exact gap STEP 8 (C6) already closed for `destroy()`).
    */
   async kill(): Promise<void> {
-    try {
-      await invoke<void>('ffmpeg_kill_session', {
-        sessionId: this.#sessionId,
-      });
-    } catch (err) {
-      console.warn('[tauriFfmpeg] kill failed:', err);
-    }
+    await invoke<void>('ffmpeg_kill_session', {
+      sessionId: this.#sessionId,
+    });
   }
 
   /**

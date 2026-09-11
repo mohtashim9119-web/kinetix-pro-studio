@@ -14,7 +14,7 @@ import {
 import type { ForcedMp4SealOffer } from '../services/webcodecsExport/muxOnly';
 import { findResumeOffer, type ResumeOffer, type ResumeRefusalNotice } from '../services/webcodecsExport/exportResumeSession';
 import { recordExportSessionCreated, forgetExportSession } from '../services/webcodecsExport/exportSessionLedger';
-import { readCleanupNotices, clearCleanupNotices, type CleanupNotice } from '../services/webcodecsExport/exportCleanupNotices';
+import { readCleanupNotices, clearCleanupNotices, recordCleanupFailure, type CleanupNotice } from '../services/webcodecsExport/exportCleanupNotices';
 import { checkExportDestinationPathLength } from '../services/exportDestinationPath';
 import { TauriFfmpeg, type OrphanSweepReport } from '../services/tauriFfmpeg';
 import { type Project, type ResolutionTier } from '../types';
@@ -805,10 +805,18 @@ export function useExport(
       // native cancel flag `save_session_file` polls, so a cancel mid-save
       // stops writing the `.part` instead of racing `destroy` against a
       // direct write onto the operator's dest path.
+      //
+      // WS3 Round 18 (F4) — TauriFfmpeg.kill() now throws on failure instead
+      // of swallowing it. Still best-effort here (a cancel must proceed to
+      // teardown() regardless), but the failure is now recorded durably
+      // rather than disappearing — same posture as destroy()'s own
+      // recordCleanupFailure, STEP 8 (C6).
       try {
         await backend.cancel();
-      } catch {
-        // kill is best-effort — TauriFfmpeg.kill already swallows invoke errors
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        console.warn('[ws3-cancel] kill failed:', detail);
+        recordCleanupFailure('session-kill', backend.sessionId, detail);
       }
       // teardown() nulls tauriBackendRef regardless of path. For the
       // WebCodecs path this is a second, idempotent destroy() on top of the

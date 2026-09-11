@@ -1471,6 +1471,13 @@ fn concat_annexb_pieces_inner(
     check_cancelled(cancel)?;
     out.flush()
         .map_err(|e| format!("concat_annexb_pieces: flush output: {}", e))?;
+    // WS3 Round 18 (F6) — append, truncate, write_file, and the manifest
+    // writer all fsync before returning; this was the one mutating path that
+    // didn't. A crash between concat returning and mux starting could leave
+    // video_all.h264 short on disk (flushed to the OS page cache, not to
+    // storage) with no error surfaced anywhere.
+    out.sync_all()
+        .map_err(|e| format!("concat_annexb_pieces: sync output: {}", e))?;
     Ok(())
 }
 

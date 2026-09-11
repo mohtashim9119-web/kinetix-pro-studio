@@ -88,6 +88,7 @@ import type {
 import type { FontConfig } from './textRenderer';
 import { resolveFontBytes } from './fontResolver';
 import { fenceSafeCheckpointOffset } from './exportCheckpointPlacement';
+import { recordCleanupFailure } from './exportCleanupNotices';
 import { createExportCheckpointWriter } from './exportCheckpointWriter';
 import { buildSourceTimelineHash, timelineIdentityFromProject, type ExportStateManifest } from './exportCheckpoint';
 import {
@@ -364,7 +365,22 @@ export async function cancelExportWebCodecs(): Promise<void> {
     worker.terminate();
   }
   if (ffmpeg) {
-    await ffmpeg.kill();
+    // WS3 Round 18 (F4) — kill() now throws on failure instead of
+    // swallowing it. This is a cancel path: a failed kill must not block
+    // destroy() (the session dir still needs to go), but it also must not
+    // vanish into `console.warn` the way it used to — same posture
+    // `destroy()` itself already has (STEP 8 (C6)), so `recordCleanupFailure`
+    // gives the NEXT export's startup notice a chance to surface it.
+    try {
+      await ffmpeg.kill();
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err);
+      console.warn('[ws3-cancel] kill failed:', detail);
+      // sessionId is OPTIONAL on WebCodecsFfmpeg (a checkpoint-less fake has
+      // none) — a real TauriFfmpeg always has one; fall back rather than
+      // drop the notice for the one case that matters in production.
+      recordCleanupFailure('session-kill', ffmpeg.sessionId ?? 'unknown', detail);
+    }
     await ffmpeg.destroy();
   }
 }

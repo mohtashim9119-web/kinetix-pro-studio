@@ -24,7 +24,7 @@
  * them on its own schedule regardless of whether this notice survives.
  */
 
-export type CleanupNoticeKind = 'session-destroy' | 'premux-intermediate';
+export type CleanupNoticeKind = 'session-destroy' | 'premux-intermediate' | 'session-kill';
 
 export interface CleanupNotice {
   kind: CleanupNoticeKind;

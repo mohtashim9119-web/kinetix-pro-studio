@@ -3,6 +3,9 @@ import { TauriFfmpeg } from './tauriFfmpeg';
 
 export interface TauriBackend {
   ffmpeg: FfmpegLike;
+  /** WS3 Round 18 (F4) — needed to attribute a swallowed cancel()/kill()
+   *  failure to the right session in `recordCleanupFailure`'s durable notice. */
+  sessionId: string;
   /** Deletes the session temp dir. Idempotent — safe to call multiple times. */
   dispose: () => Promise<void>;
   /**
@@ -32,6 +35,7 @@ export async function createTauriBackend(): Promise<TauriBackend> {
   const ffmpeg = await TauriFfmpeg.create();
   return {
     ffmpeg,
+    sessionId: ffmpeg.sessionId,
     dispose: () => ffmpeg.destroy(),
     saveOutputToDisk: (fileName, destPath) => ffmpeg.saveSessionFile(fileName, destPath),
     cancel: () => ffmpeg.kill(),
