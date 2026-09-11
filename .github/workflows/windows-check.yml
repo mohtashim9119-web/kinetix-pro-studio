@@ -1,0 +1,92 @@
+name: Windows compile check
+
+# ---------------------------------------------------------------------------
+# WS3 Round 19 — a cheap, permanent compile guard for the Windows-gated Rust
+# surface. Until this workflow existed, nothing ever compiled a
+# `#[cfg(windows)]` / `#[cfg(target_os = "windows")]` block except the
+# 7-minute `build.yml` bundle job, which is workflow_dispatch-only — so
+# `session_claim.rs`'s `GetProcessTimes` calls shipped with a type error that
+# no local Mac `cargo check` could see. This job runs `cargo check
+# --all-targets` on windows-latest and NOTHING else: no bundling, no signing,
+# no `npm ci`, no real sidecars. It is the fast feedback loop for Windows-side
+# Rust changes and the standing gate afterward.
+#
+# Both feature cells are checked: the shipped installer is built with
+# `-f fa-inference` (build.yml), so a Windows-only error inside a
+# `#[cfg(feature = "fa-inference")]` block would otherwise still hide.
+# ---------------------------------------------------------------------------
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/windows-check.yml'
+  push:
+    branches: [main, 'ws3-**']
+    paths:
+      - 'src-tauri/**'
+      - '.github/workflows/windows-check.yml'
+
+concurrency:
+  group: windows-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: feature-off
+            cargo_args: ''
+          - name: feature-on
+            cargo_args: '--features fa-inference'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          key: windows-check-${{ matrix.name }}
+
+      # tauri-build's build.rs hard-fails any cargo invocation if the
+      # externalBin paths tauri.conf.json declares aren't on disk (same
+      # failure fa-ort-matrix.yml hit on its first run). `cargo check` never
+      # spawns a sidecar, so an empty placeholder at each expected path is
+      # sufficient. On Windows the resolved name carries a `.exe` suffix.
+      - name: Provision placeholder sidecar binaries (existence only)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path src-tauri/binaries | Out-Null
+          $triple = (rustc -vV | Select-String '^host: (.+)$').Matches[0].Groups[1].Value
+          foreach ($name in @("ffmpeg", "whisper")) {
+            New-Item -ItemType File -Force -Path "src-tauri/binaries/$name-$triple.exe" | Out-Null
+          }
+
+      - name: cargo check --all-targets (${{ matrix.name }})
+        working-directory: src-tauri
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo check --all-targets --locked ${{ matrix.cargo_args }} 2>&1 | Tee-Object -FilePath "$env:RUNNER_TEMP/check.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Report remaining warnings
+        if: always()
+        shell: pwsh
+        run: |
+          $log = "$env:RUNNER_TEMP/check.log"
+          if (Test-Path $log) {
+            $warnings = Select-String -Path $log -Pattern '^warning:' | Where-Object { $_.Line -notmatch 'generated \d+ warning' }
+            Write-Host "warning lines: $($warnings.Count)"
+            $warnings | ForEach-Object { Write-Host $_.Line }
+          }
