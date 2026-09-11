@@ -1445,3 +1445,226 @@ state, not a hypothetical; or (b) a second field-verified occurrence of the WKWe
 timer-starvation class documented in `docs/ws3-export/silent-gaps-diagnosis.md`'s run 5, confirming it
 is a recurring failure mode rather than a one-off. Either observation reopens this decision;
 absent one, it stays deferred.
+
+---
+
+### Round 18 (2026-09-11) — Crash audit remediation (PROMPT 24)
+
+**Branch:** `ws3-crash-fixes` (from `ws3-export-integration` @ `78c104a`), merged into
+`ws3-export-integration`. **Source of fixes:** `final-crash-audit` @ `d3b56c4` (F1–F3 code,
+adopted and extended; doc merged separately). **Base main:** `4d4922c`. **Rollback:** `15002e5`.
+
+#### F1–F6 disposition
+
+| Finding | What it was | Fixing SHA(s) | Probe proving it |
+|---|---|---|---|
+| F1 — rewind truncate could race an in-flight append | `session_io_gate` (per-session `Arc<Mutex<()>>`) serializes append/truncate/checkpoint-repair/concat in `ffmpeg.rs`; JS-side `finishAfterInFlightAppends` drains the append queue before a rotation-flush rewind fires | `30e071e` (adopted), `4564bee` (drain-wait tightened) | `truncate_cannot_interleave_with_in_flight_append` (`ffmpeg.rs`) — see below for the self-correction on this probe's own validity |
+| F2 — delivery copy not crash-atomic | `save_session_file` now copies to `dest.part`, `sync_all`s, `rename_over`s (atomic on Unix; backup-then-promote on Windows) | `30e071e` | `copy_session_file_atomic_*` (3 Rust tests, adopted from the audit) |
+| F3 — resume-path native repair unbounded | `prepareCheckpointResume`/`truncateAnnexbToOffset` on the resume path wrapped in `withFfmpegLivenessBound(TRUNCATE_BOUND_MS)`, mirroring salvage | `30e071e` | `boundedRerenderWiring.test.ts`/`exportResumeDiscovery.test.ts` additions (adopted); this is also the Rung 3/Tier 2 closed-row gap named below |
+| F4 — `TauriFfmpeg.kill()` swallowed invoke failures | `kill()` now throws; `withFfmpegLivenessBound`'s pre-existing `killed`/`killError` diagnostics fields can finally be populated; the two best-effort cancel callers (`cancelExportWebCodecs()`, `useExport.ts`'s cancel handler) catch-and-record via `recordCleanupFailure('session-kill', ...)` instead of silently swallowing | `0ce18d1` | Full vitest suite green with `kill()` now throwing (3572/0/78); no call site left unhandled |
+| F5 | not named by the audit (F1–F3 blockers + F4/F6 residuals only) | — | — |
+| F6 — concat output not fsynced | `concat_annexb_pieces_inner` calls `out.sync_all()` after `flush()`, matching append/truncate/write_file/manifest | `0ce18d1` | Existing `concat_annexb_pieces_*` Rust tests still pass; cost bound below |
+
+#### STEP 2 — F1 review answers
+
+1. **JS-side wait bound:** yes, but it was reusing `WATCHDOG_MS` (30s) for a wait that only needed
+   to cover one ~512 KiB append round trip. **Safety argument, verified, not assumed:** the native
+   `session_io_gate` is the actual correctness guarantee — a truncate command acquires the gate
+   unconditionally as the first thing it does (confirmed by direct read of
+   `ffmpeg_truncate_annexb_to_offset`), so an early expiry of the JS-side wait cannot let the
+   truncate bypass the gate; it can only make the truncate block *in the Rust mutex* instead of in
+   JS. Confirmed the gate-wait sits *inside* `TRUNCATE_BOUND_MS`'s coverage too: `ffmpeg_kill_session`
+   sets the SAME per-session cooperative cancel flag both `append_file_raw_inner` and
+   `truncate_annexb_to_offset_inner` poll (`set_session_cancelled`, `ffmpeg.rs:1584`), so if
+   `TRUNCATE_BOUND_MS` itself expires while truncate is genuinely blocked on the gate, its own
+   kill-on-expiry unsticks the wedged append within one 64 KiB chunk, which releases the gate. New
+   **eighth constant**, `IN_FLIGHT_APPEND_DRAIN_BOUND_MS = 625` (`exportPipelineWebCodecs.ts:987`):
+   derived, not picked — the worst on-record per-append latency (25ms, pathological/simulated,
+   `architecture-ledger.md`'s own Round 16/17 cost table) × the same 25× headroom multiplier
+   `TRUNCATE_BOUND_MS`/`KILL_BOUND_MS` were derived with. `625ms × 3` (2 rewinds + 1 failover,
+   `MAX_BOUNDARY_REWINDS_PER_EXPORT = 2`) is a rounding error next to the old `30s × 3`.
+2. **Gate deadlock:** no cycle. One mutex per session; every gated command acquires it exactly once
+   and releases on return; `prepare_checkpoint_resume_inner` calls the ungated `truncate_annexb_inner`
+   helper directly (not the gated command), so there is no reentrant acquisition anywhere in the
+   call graph. The outer `io_gates: Mutex<HashMap<...>>` is held only long enough to fetch/insert
+   the per-session `Arc`, never during I/O.
+3. **Short-write detector:** unaffected. `append_file_raw_inner` calls `sync_all()` once, after all
+   64 KiB chunks succeed; a mid-loop error or cancel returns `Err` for the WHOLE command, so the
+   JS-side `sessionFileSize` comparison (`exportPipelineWebCodecs.ts:1877-1897`) — which only runs
+   after `appendFileRaw` resolves `Ok` — never observes a partially-landed batch as a success.
+4. **Per-append cost:** ~7 extra `write()` syscalls per 512 KiB batch (8 chunks vs. 1), fsync count
+   unchanged (still one `sync_all` per batch). Bounded at low-single-digit microseconds per syscall;
+   across a 2.3 GB export (~4,600 batches) that's well under 200ms total added wall-clock — three
+   orders of magnitude below `TRUNCATE_BOUND_MS`. See the W7a addition below for the one place this
+   assumption needs a real-hardware check rather than a bound.
+
+**Stacking risk found and closed.** Before tightening, the wait could stack:
+`WATCHDOG_MS` (detect) + `WATCHDOG_MS` (drain) + `TRUNCATE_BOUND_MS` (172.7s) ≈ 232.7s per hung
+rewind cycle, up to 3 cycles (2 rewinds + 1 failover) = ~698s (11.6 min) of potential silent stall
+with zero progress indication. Fixed two ways: (a) the drain wait is now `625ms` instead of `30s`
+(saves up to ~89.6s of the 698s); (b) `ExportStage` gained a `'recovering'` variant
+(`exportPipeline.ts`), emitted the moment a rotation-flush rewind is about to run its
+`TRUNCATE_BOUND_MS`-bounded truncate — the dominant ~172.7s of any remaining stall. **Confirmed it
+reaches the UI through every consumer, not just the type:** `useExport.ts`'s `stageLabelFor`
+("Recovering segment N / M…") and `progressFor` (holds at the piece's own start-of-segment
+percentage rather than dropping to 0) both handle it; the emission site
+(`exportPipelineWebCodecs.ts`, right where `isRotationFlushTimeout` is first true) has `onProgress`
+and `pieces`/`pieceIndex` in scope from the enclosing per-piece loop, not synthesized.
+
+#### STEP 3 — `.part` path length
+
+`checkExportDestinationPathLength` now validates `destPath.length + '.part'.length` (5) against
+`WINDOWS_MAX_PATH` (260), since `save_session_file`'s delivery path constructs that longer path
+before ever touching the operator's chosen name. **Effective limit for the operator's own path:
+260 → 255 characters.** Still reported at `startExport()`, before any rendering begins — call site
+unchanged (`useExport.ts` ~745). Destructive probe added: a path the old check accepted (< 260,
+`.part` form 260–264) is now rejected — `exportDestinationPath.test.ts`.
+
+**Windows `rename_over` fallback — worked through, not waved past.** Unix: single `fs::rename`
+syscall, POSIX-atomic replace, no intermediate window. Windows (only on the fallback branch, when
+a bare `fs::rename(part, dest)` fails because `dest` exists): backup-then-promote — remove any
+stale `.bak`, rename `dest → dest.bak`, rename `part → dest`. **If the process dies between those
+two renames:** `dest` does not exist under its own name; `dest.bak` holds the pre-existing file's
+original bytes, untouched (rename doesn't touch content); `dest.part` holds the new export's
+bytes, already fsynced complete. **Both the old and new files are fully recoverable — a rename
+away, not gone** — but nothing in this codebase auto-detects or reconciles a `.bak`/`.part` leftover
+pair on next launch (checked: no such logic exists anywhere `.bak`/`.part` appear in
+`src-tauri/src/`). This is a real, honest gap: recoverable manually, not recovered automatically.
+Recorded here rather than fixed, since building that reconciliation is new scope beyond F2.
+
+#### STEP 4 — F4 and F6
+
+**F6:** `concat_annexb_pieces_inner` now calls `out.sync_all()` after `flush()` — `flush()` on a
+raw `fs::File` is a no-op (no userspace buffering to flush; all durability work is in `sync_all`).
+**Cost against `CONCAT_BOUND_MS` (60,000ms, ~94× the measured 0.64s worst-case 1.7GB stream-copy):**
+the original measurement never included an fsync. A GB-scale fsync on local SSD, most bytes already
+written incrementally by the preceding `write_all` loop, typically completes in low single-digit
+seconds — comfortably inside the 60s bound's ~94× headroom even before accounting for it.
+
+**F4:** `TauriFfmpeg.kill()` throws instead of swallowing. `withFfmpegLivenessBound`'s expiry
+handler already had `killed`/`killError` diagnostics fields built for exactly this — they could
+never be populated before, because the failure died inside `kill()` before reaching that race.
+Two best-effort cancel-path callers (`cancelExportWebCodecs()`, `useExport.ts`'s `cancelExport`)
+now catch, `console.warn`, and `recordCleanupFailure('session-kill', ...)` — same durable-notice
+posture `destroy()` already has (STEP 8, C6) — rather than disappearing. New `'session-kill'`
+`CleanupNoticeKind`; `TauriBackend`/`WebCodecsFfmpeg` gained the `sessionId` plumbing needed to
+attribute the notice. Also fixed: `FfmpegKillHungError`'s message rendered `KILL_BOUND_MS` (125ms)
+as "0s" (`Math.round(125/1000) = 0`) — now reports milliseconds.
+
+#### STEP 5 — Re-proof
+
+**Byte neutrality, Arm A: exact match.** Regenerated Arm A's fixtures from the test file's own
+documented command; input digests matched Round 16's recorded `216592e8…9b95` (h264) /
+`9bd76648…6c5d` (wav) exactly, confirming the command is genuinely byte-deterministic.
+`export_final.mp4` on the fixed tree: `5bef695552b82311c95c4dbad410c6755c0820a220a2e7519a3caf4f3748f06c`
+— **identical to Round 16's recorded digest.**
+
+**Byte neutrality, Arm B: differential proof, not a fixed-anchor match.** Round 16's Arm B fixture
+has no recorded generation command anywhere in the docs (a record defect, fixed this round —
+see `scripts/ws3-clean-path-artifact.test.ts`'s header). Regenerating it from the same
+`-threads 1` command that reproduced Arm A exactly reproduced the WAV bit-for-bit
+(`5d2557e9…6285`, a pure function of frequency/rate/duration — no encoder involved) but NOT the
+H.264 (`89a16a32…3d69` expected, `f4e8752b…6309` got), despite identical frame count and identical
+thread-pinning flags. **Conclusion: Round 16's original Arm B fixture was generated without
+pinning threads (or on a differently-configured encoder), so libx264's slice/row-threading
+partitioning — machine/core-count-dependent when unpinned — was never reproducible off that
+specific box.** It was never a valid fixed byte-neutrality anchor; only Arm A's documented command
+is. Byte neutrality is a DIFFERENTIAL property (same input through two code versions), not a match
+against a recorded digest, so this doesn't touch the actual claim: ran the newly-regenerated,
+internally-reproducible Arm B fixture (1280×720, 2 pieces, field profile) through BOTH `78c104a`
+(pre-fix) and the F1–F6 head. **Every digest matched exactly** — `export_final.mp4`
+`d0be77fdd72edf956fa94a2b257f88d0ef8e67923a531e6a39adc0b3ff7e5db8`, `video_all.h264`
+`f4e8752b75a9d92e19c9d71201760d4402f976bdfc5b11dac649417448bf6309` at both, plus every intermediate
+— and even the call trace matched exactly (216 `appendFileRaw`, 217 `sessionFileSize`, 1
+`concatAnnexbPieces`, etc., identical between the two commits). F1's chunking/gating perturbs
+nothing on the clean path.
+
+**512 KiB cost recomputation.** F1's chunking happens INSIDE one Rust command — still exactly one
+`invoke()`/IPC round trip per 512 KiB batch, same batch count (2,581 for the field export) as
+before. **The IPC-round-trip math behind 1.29s/32.0s/64.5s (0.28%/6.96%/14.0% at 0.5/12.4/25ms) is
+therefore unchanged** — no new round trips were added, only ~7 extra in-process `write()` syscalls
+per batch (STEP 2's bound: negligible). **New consideration this round surfaces, not resolved by
+it:** if the still-NOT-DETERMINED W7/H4 Windows Defender cost is ultimately found to be per-`write`
+rather than per-`close`, chunking multiplies it ~8× (12.4ms → ~99ms/append, 6.96% → ~56% — not a
+rounding difference). Recorded as its own row, **W7a**, in `windows-validation.md` with the
+multiplier named explicitly, since that's the file real-hardware verification actually works from.
+
+**The F1 scenario itself — destructive probe, and a real self-correction.** First version of
+`truncate_cannot_interleave_with_in_flight_append` (spawn an append thread, poll until ≥1 chunk
+landed, take the gate, `.join()` the append, assert full length) passed even when deliberately
+pointed the "truncate" side at a DIFFERENT session's gate — simulating exactly the bug class F1
+fixes. Root cause: `.join()` blocks until the append finishes regardless of whether anything
+actually serialized it, so the assertion was true no matter what. Rewrote to check the file length
+the INSTANT the gate is acquired, before any join — reliably red (3/3, observed `196608` of
+`134217728` expected bytes) with the gate broken, reliably green (3/3) with it correct. This is
+the standard CLAUDE.md's own testing-reach invariant asks for (a probe validated by breaking the
+thing it claims to guard, not trusted on a green run) — applied here to a test *written this
+round*, not just cited from precedent.
+
+#### STEP 6 — Ledger discrepancies
+
+**W2 resolved in place** (`windows-validation.md`). The row claimed "confirm the pre-encode check
+passes (it allows ≤ 32,767)" and named `std::fs::copy` as the tested path — both wrong for this
+repo. `checkExportDestinationPathLength` deliberately enforces 260 (255 after this round's `.part`
+fix), documented at `windows_long_path`'s own definition as intentional fast-feedback/defensive-net,
+never an attempt to express the real Win32 extended-length ceiling; `save_session_file` hasn't
+called `std::fs::copy` since F2 replaced it with `copy_session_file_atomic`. Rewrote W2 to exercise
+the real `\\?\` prefix via direct IPC (bypassing the pre-check, same technique W3 already uses) and
+to separately confirm the pre-check still rejects the same path for a normal export — that
+rejection is the intended UX, not the bug.
+
+**Rung 3 / Tier 2 closed-row discrepancy — said plainly, not quietly fixed.** The ledger's Rung 3
+row ("LANDED") and Tier 2 row ("COMPLETE... nothing left open") both predate this round. F1 found
+the rewind truncate could run concurrently with a still-in-flight append with nothing serializing
+them — `recoveryMatrix.test.ts`'s nine rows verify decision/dispatch correctness (which recovery
+policy fires for which failure shape), never concurrent native I/O safety, so a real interleaving
+defect sat inside an already-closed row. Both rows corrected in place with the discrepancy stated,
+not silently patched around.
+
+**Closed-row recheck result:** checked every other Tier 2 row (2b, 4) against the same question —
+does its recovery path run a native mutation concurrently with another in-flight one from the LIVE
+process. Neither has Rung 3's shape. Rung 2b's forced seal runs after the guard's own frame count,
+never concurrently with a writer. Rung 4's resume starts in a FRESH process after the old one
+crashed — there is no live in-flight append from a dead process to race. No other row shares the
+defect class; this is a Rung-3-specific gap, not a systemic one.
+
+#### STEP 7 — Merge, ledger, gates
+
+Merged `ws3-crash-fixes` into `ws3-export-integration` (`5d06851`, clean, zero conflicts). Merged
+`docs/ws3-export/final-crash-audit.md` from `final-crash-audit` (doc only — its code was already
+adopted and extended on `ws3-crash-fixes`) as the eighth WS3 content doc; recorded the second cap
+amendment (WS3 ≤7 → ≤8) in `docs/README.md` (`0b2af15`), as the audit doc asked for and correctly
+left undone itself.
+
+**Gates, run directly, raw tails:**
+
+| Gate | Result | Reconciliation |
+|---|---|---|
+| `npx tsc --noEmit` | clean, zero errors | Fixed one real error in the ADOPTED F3 code along the way (see below) |
+| `npm run lint` | clean (= `tsc --noEmit` in this repo) | — |
+| `npm test` × 2 | **3572 passed, 0 failed, 78 skipped = 3650**, identical both runs | Baseline 3569/0/78=3647 + 3 new tests (1 each in `boundedRerenderWiring.test.ts`, `exportResumeDiscovery.test.ts` from the adopted F1–F3, 1 in `exportDestinationPath.test.ts` from STEP 3) = 3572. Exact. |
+| `cargo test` | **314 passed, 0 failed, 6 ignored** | Baseline 307/0/6 + 7 new tests (6 adopted from F1/F2's Rust tests + 1 `truncate_cannot_interleave_with_in_flight_append`) = 314. Exact. |
+| `cargo test --features fa-inference -- --test-threads=1` | **400 passed, 0 failed, 36 ignored** | Baseline 393/0/36 + the same 7 = 400. Exact. |
+| Seven frozen constants | Verbatim, re-read from source: `WATCHDOG_MS` 30_000 · `FORWARD_PROGRESS_BOUND_MS` 45_000 · `FLUSH_BOUND_MS` 20_000 · `APPEND_DRAIN_BOUND_MS` 600_000 · `TRUNCATE_BOUND_MS` 172_675 · `KILL_BOUND_MS` 125 · `APPEND_BATCH_BYTES` 524_288 (512 KiB) | Unchanged by every fix this round |
+| Eighth constant | `IN_FLIGHT_APPEND_DRAIN_BOUND_MS = 625` (`exportPipelineWebCodecs.ts:987`) | Stated explicitly as an ADDITION, derivation in STEP 2 above |
+| Four named fixture digests | Unchanged | `scripts/fixtures/` — zero files touched by any commit this round (`git diff 78c104a...HEAD --stat -- scripts/fixtures/` is empty), so trivially unchanged |
+| Byte-neutrality digests | Both re-proven — Arm A exact match to Round 16's recorded digest, Arm B exact differential match (`78c104a` vs. F1–F6 head, freshly regenerated fixture) | See STEP 5 above |
+| `git status --porcelain` | Clean apart from `node_modules`/`public` | — |
+
+**A note on what "targeted tests" meant.** The cherry-picked F3 code (`exportResumeDiscovery.ts`,
+wrapping `session.truncateAnnexbToOffset(pieceFile, checkpoint.seamByteOffset)` in a new closure
+passed to `boundedTruncate`) carried a real `tsc` error: TypeScript does not retain a property
+narrow (`typeof checkpoint.seamByteOffset === 'number'`) through a nested arrow function, so the
+closure saw `number | undefined` again. `final-crash-audit`'s own doc claims 33/33 vitest passing
+on the touched files — true, but vitest doesn't type-check, and this error would have surfaced on
+the very first `tsc --noEmit` anyone ran against that branch. Fixed by hoisting the narrowed value
+to a local `const` before the check (`exportResumeDiscovery.ts`). Recorded here because "targeted
+tests passed" is weaker evidence than it reads when the targeted tests never included the
+type-checker.
+
+**Disposition rows updated this round:** Rung 3 (Rung table, §1), Tier 2 (Tier table, §2) — both
+in place with the Round 18 correction inline, per STEP 6 above. F4/F6 close two of the four
+residuals `final-crash-audit.md` itself lists as open at merge time; F1's stacking risk and the
+Rung 3 interleaving gap are new findings this round, not residuals the audit already knew about.
+
+**No merge to main. No PR.** Pushed `ws3-export-integration`, `ws3-crash-fixes`, `final-crash-audit`.
