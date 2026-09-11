@@ -213,6 +213,15 @@ export interface ExportWorkerDiagnosticsPayload {
    * `createEncoder` returned.
    */
   selectedHardwareRung: string | null;
+  /**
+   * WS3 Round 14, STEP 5 (H2) — the CODEC this session actually configured
+   * with (e.g. `'avc1.640028'`), mirroring `selectedHardwareRung` one level
+   * up: profile, not just execution path. `exportPipelineWebCodecs.ts` reads
+   * this from the FIRST session's diagnostics to learn what a piece's codec
+   * got pinned to, then threads it forward as every later session's
+   * `ExportWorkerInitMessage.pinnedCodec` — see that field's own doc.
+   */
+  selectedCodec: string | null;
   /** Main-thread only (`exportPipelineWebCodecs.ts`): was an `appendFileRaw`
    *  call still outstanding when the run was declared failed? Null in a
    *  worker-built payload, which cannot know. This is the field that separates
@@ -256,6 +265,7 @@ export const NO_FLUSH_OBSERVATION: Pick<
   | 'encoderSessions'
   | 'appendPendingAtFailure'
   | 'selectedHardwareRung'
+  | 'selectedCodec'
 > = {
   encodedChunkBytesAtFlushStart: null,
   flushChunksSinceEntry: null,
@@ -265,6 +275,7 @@ export const NO_FLUSH_OBSERVATION: Pick<
   encoderSessions: 1,
   appendPendingAtFailure: null,
   selectedHardwareRung: null,
+  selectedCodec: null,
 };
 
 export interface WatchdogOutputEvent {

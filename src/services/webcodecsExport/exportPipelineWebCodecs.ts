@@ -1242,6 +1242,14 @@ export interface DriveGlRunDeps {
    *  `ExportWorkerInitMessage.forceSoftwareEncoder`; see its own doc comment.
    *  Set only by the rewind loop's failover branch, at most once per export. */
   forceSoftwareEncoder?: boolean;
+  /** WS3 Round 14, STEP 5 (H2) — threaded straight to
+   *  `ExportWorkerInitMessage.pinnedCodec`; see its own doc comment. Optional
+   *  only so existing tests that construct `DriveGlRunDeps` without it keep
+   *  compiling; the real orchestrator (`exportProjectWebCodecs`) always
+   *  passes its piece-start probe's result. Defaults to
+   *  `EXPORT_CODEC_LADDER[0]` (High profile 4.0), reproducing the
+   *  pre-STEP-5 fixed codec exactly when omitted. */
+  pinnedCodec?: string;
 }
 
 /**
@@ -2240,6 +2248,7 @@ export function driveGlRun(
       frameGridBaseFrame: grid.baseFrame,
       resumeFromFrameIndex: deps.resumeFromFrameIndex,
       forceSoftwareEncoder: deps.forceSoftwareEncoder,
+      pinnedCodec: deps.pinnedCodec,
     };
     resetWatchdog();
     resetProgressBound();
@@ -2823,6 +2832,19 @@ export async function exportProjectWebCodecs(
         }
       }
       const runFile = `piece_${pieceIndex}.h264`;
+      // WS3 Round 14, STEP 5 (H2) — the codec this piece is pinned to, once
+      // the FIRST worker built for it reports which one it selected
+      // (`ExportWorkerDiagnosticsPayload.selectedCodec` — the worker itself
+      // does the ladder descent, exactly as it always has for
+      // `hardwareAcceleration`; see `hardwareCodecLadder.ts` for why codec
+      // descent cannot happen from the main thread without duplicating
+      // WebCodecs support probing outside the tested worker path). `undefined`
+      // for the very first `runGlPiece()` call (full descent allowed);
+      // learned from `driveResult.diagnostics` below and threaded into every
+      // SUBSEQUENT call for this SAME piece — every rewind's fresh worker,
+      // and any forced-software failover session — so a profile change can
+      // only ever happen on that first, unrewound call, never mid-piece.
+      let pinnedCodecForPiece: string | undefined;
       // WS3 Round 10 (Blocker 3) — a fresh piece starts a fresh, piece-scoped
       // manifest; a RESUMED piece keeps writing into the one already on disk
       // for it, so a second crash rewinds to the newest rotation rather than
@@ -2867,6 +2889,7 @@ export async function exportProjectWebCodecs(
             resumeFromFrameIndex,
             resumeSessionIndex,
             forceSoftwareEncoder: forceSoftware,
+            pinnedCodec: pinnedCodecForPiece,
             fileBaseByteOffset: baseByteOffset,
             onRotationCheckpoint: (row) => checkpointWriter.record(row),
           },
@@ -2876,6 +2899,13 @@ export async function exportProjectWebCodecs(
       let driveResult = resumingThisPiece
         ? await runGlPiece(resume!.cumulativePictures, resume!.encoderSessionIndex, false, resume!.byteOffset)
         : await runGlPiece();
+      // WS3 Round 14, STEP 5 (H2) — pin this piece's codec the first time any
+      // worker for it reports one. `??=` only: once pinned, never revisited,
+      // even if a later `driveResult` names a different one (it should not,
+      // now that this value is threaded into every subsequent call, but a
+      // defensive re-pin would silently reopen the mid-piece hazard STEP 5
+      // exists to close).
+      pinnedCodecForPiece ??= driveResult.diagnostics?.selectedCodec ?? undefined;
       // WS3 Tier 1 item 3c — Rung 3, wired to real execution. On a MID-run
       // (rotation) flush timeout only — never the final flush, which already
       // has its own salvage path via `runFinalFlushWithRecovery` — abandon
@@ -3024,6 +3054,12 @@ export async function exportProjectWebCodecs(
         // ledger from defaulting to session 0 if IT hangs again before its
         // own first 'session-rotate' — see `DriveGlRunDeps.resumeSessionIndex`.
         driveResult = await runGlPiece(rewindFrameIndex, hungSessionIndex, forceSoftware, absoluteByteOffset);
+        // WS3 Round 14, STEP 5 (H2) — see the identical pin above. Reached
+        // only if `pinnedCodecForPiece` was somehow still unset going into
+        // this rewind (the first `driveResult` had no diagnostics at all,
+        // e.g. a crash before the worker ever reported), in which case this
+        // rewind's own worker is the first real chance to learn it.
+        pinnedCodecForPiece ??= driveResult.diagnostics?.selectedCodec ?? undefined;
       }
       if (!driveResult.ok) {
         const watchdogFired = driveResult.error.message.includes('no output for 30s');

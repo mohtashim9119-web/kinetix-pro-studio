@@ -50,8 +50,15 @@ const asset: Asset = { id: 'a0', name: 'a0.png', url: 'blob:a0', type: 'image', 
 const config: ProjectEffectConfig = { globalTransition: TransitionType.NONE, globalTransitionDuration: 0 };
 
 /** `acceptedRungs` controls which `HARDWARE_LADDER` entries this fake
- *  `isConfigSupported` accepts, letting a test force a fall-through. */
-function installFakeBrowserGlobals(acceptedRungs: readonly string[]): void {
+ *  `isConfigSupported` accepts, letting a test force a fall-through.
+ *  `acceptedCodecs` does the same for `EXPORT_CODEC_LADDER` — WS3 Round 14,
+ *  STEP 5 (H2). Every call is recorded in `configureCalls` so a test can
+ *  assert not just the FINAL selection but that no re-descent happened. */
+function installFakeBrowserGlobals(
+  acceptedRungs: readonly string[],
+  acceptedCodecs: readonly string[] = ['avc1.640028', 'avc1.42001f'],
+  configureCalls: { codec: string; hardwareAcceleration: string }[] = [],
+): void {
   class FakeOffscreenCanvas {
     constructor(public width: number, public height: number) {}
   }
@@ -63,8 +70,8 @@ function installFakeBrowserGlobals(acceptedRungs: readonly string[]): void {
     close(): void {}
   }
   class FakeVideoEncoder {
-    static async isConfigSupported(cfg: { hardwareAcceleration: string }): Promise<{ supported: boolean }> {
-      return { supported: acceptedRungs.includes(cfg.hardwareAcceleration) };
+    static async isConfigSupported(cfg: { codec: string; hardwareAcceleration: string }): Promise<{ supported: boolean }> {
+      return { supported: acceptedRungs.includes(cfg.hardwareAcceleration) && acceptedCodecs.includes(cfg.codec) };
     }
     state = 'unconfigured';
     encodeQueueSize = 0;
@@ -72,7 +79,8 @@ function installFakeBrowserGlobals(acceptedRungs: readonly string[]): void {
     constructor(opts: { output: (chunk: unknown) => void }) {
       this.output = opts.output;
     }
-    configure(): void {
+    configure(cfg: { codec: string; hardwareAcceleration: string }): void {
+      configureCalls.push({ codec: cfg.codec, hardwareAcceleration: cfg.hardwareAcceleration });
       this.state = 'configured';
     }
     encode(): void {
@@ -122,8 +130,13 @@ afterEach(() => {
   uninstallFakeBrowserGlobals();
 });
 
-async function runOneCleanExportAndCollectDoneDiagnostics(acceptedRungs: readonly string[]) {
-  installFakeBrowserGlobals(acceptedRungs);
+async function runOneCleanExportAndCollectDoneDiagnostics(
+  acceptedRungs: readonly string[],
+  acceptedCodecs?: readonly string[],
+  pinnedCodec?: string,
+  configureCalls: { codec: string; hardwareAcceleration: string }[] = [],
+) {
+  installFakeBrowserGlobals(acceptedRungs, acceptedCodecs, configureCalls);
   (globalThis as unknown as { self: unknown }).self = { onmessage: null, postMessage: undefined };
   await import('./exportWorker');
   const self = (globalThis as unknown as {
@@ -147,6 +160,7 @@ async function runOneCleanExportAndCollectDoneDiagnostics(acceptedRungs: readonl
     fps: 1,
     pieceIndex: 0,
     startIndex: 0,
+    ...(pinnedCodec !== undefined ? { pinnedCodec } : {}),
   };
   self.onmessage!({ data: initMsg } as MessageEvent<ExportWorkerInboundMessage>);
 
@@ -172,4 +186,45 @@ describe('selectedHardwareRung on the diagnostics payload', () => {
     const diagnostics = await runOneCleanExportAndCollectDoneDiagnostics(['prefer-software']);
     expect(diagnostics.selectedHardwareRung).toBe('prefer-software');
   });
+});
+
+/**
+ * WS3 Round 14, STEP 5 (H2) — the CODEC ladder, and the mid-piece pin.
+ */
+describe('selectedCodec on the diagnostics payload (STEP 5, H2)', () => {
+  it('records the High-profile codec when it is supported (default, unpinned)', async () => {
+    const diagnostics = await runOneCleanExportAndCollectDoneDiagnostics(
+      ['prefer-hardware', 'no-preference', 'prefer-software'],
+    );
+    expect(diagnostics.selectedCodec).toBe('avc1.640028');
+  });
+
+  it('descends to the Baseline codec when High profile is unsupported at every hardwareAcceleration', async () => {
+    const diagnostics = await runOneCleanExportAndCollectDoneDiagnostics(
+      ['prefer-hardware', 'no-preference', 'prefer-software'],
+      ['avc1.42001f'],
+    );
+    expect(diagnostics.selectedCodec).toBe('avc1.42001f');
+  });
+
+  it(
+    'a pinned codec is used EXCLUSIVELY — no re-descent to a higher profile even when the fake would accept it, ' +
+      'the destructive proof that mid-piece failover cannot change profile',
+    async () => {
+      const configureCalls: { codec: string; hardwareAcceleration: string }[] = [];
+      const diagnostics = await runOneCleanExportAndCollectDoneDiagnostics(
+        ['prefer-hardware', 'no-preference', 'prefer-software'],
+        ['avc1.640028', 'avc1.42001f'], // both codecs would be accepted if tried
+        'avc1.42001f', // but this piece is already pinned to Baseline
+        configureCalls,
+      );
+      expect(diagnostics.selectedCodec).toBe('avc1.42001f');
+      // Confinement, not just the final answer: every configure() attempt —
+      // including every failed one on the way to the winning rung — used the
+      // pinned codec. A single-entry ladder made a re-descent to High
+      // impossible BY CONSTRUCTION, not by the fake happening not to offer it.
+      expect(configureCalls.every((c) => c.codec === 'avc1.42001f')).toBe(true);
+      expect(configureCalls.some((c) => c.codec === 'avc1.640028')).toBe(false);
+    },
+  );
 });

@@ -62,6 +62,7 @@ import {
   type ExportWorkerDiagnosticsPayload,
 } from './exportWorkerDiagnostics';
 import { MAX_ENCODER_SESSION_FRAMES, planEncoderSessions } from './encoderSessionPlan';
+import { EXPORT_CODEC_LADDER } from './hardwareCodecLadder';
 import { AppendBackpressureGate, APPEND_BACKPRESSURE_THRESHOLD_BYTES } from './appendBackpressureGate';
 
 // ---------------------------------------------------------------------------
@@ -169,6 +170,22 @@ export interface ExportWorkerInitMessage {
    * undefined/false reproduces today's ladder exactly.
    */
   forceSoftwareEncoder?: boolean;
+  /**
+   * WS3 Round 14, STEP 5 (H2) — the CODEC this whole piece is pinned to,
+   * decided ONCE by `exportPipelineWebCodecs.ts`'s piece-start probe
+   * (`hardwareCodecLadder.ts`'s `selectPieceCodec`) before any worker for
+   * this piece is built, and unchanged for every session this `runExport`
+   * call builds AND every rewind's fresh worker for the SAME piece — a
+   * profile change mid-piece would put two different H.264 profiles inside
+   * one Annex-B piece file. `hardwareAcceleration` still varies per session
+   * (`HARDWARE_LADDER`/`SOFTWARE_ONLY_LADDER`); the codec never does.
+   * Optional only so existing tests constructing this message directly keep
+   * compiling; every real caller (`exportPipelineWebCodecs.ts`'s
+   * `driveGlRun`) sets it from the piece-start probe. Falls back to
+   * `DEFAULT_PINNED_CODEC` (the pre-STEP-5 fixed High-profile codec) when
+   * omitted.
+   */
+  pinnedCodec?: string;
 }
 
 export type ExportWorkerInboundMessage =
@@ -334,6 +351,7 @@ function buildDiagnostics(
     encoderSessionIndex: activeSessionIndex,
     encoderSessions: activeSessionCount,
     selectedHardwareRung: activeSelectedHardwareRung,
+    selectedCodec: activeSelectedCodec,
     // The worker cannot see the main thread's append queue — see the field's
     // own doc comment. `exportPipelineWebCodecs.ts` fills this in.
     appendPendingAtFailure: null,
@@ -403,6 +421,9 @@ let activeRunState: RunState | null = null;
  *  every rotation), mirroring `activeSessionIndex`'s "module scope so a
  *  snapshot can read it without a thread-through" pattern. */
 let activeSelectedHardwareRung: string | null = null;
+/** WS3 Round 14, STEP 5 (H2) — same pattern, for the pinned CODEC. See
+ *  `ExportWorkerDiagnosticsPayload.selectedCodec`. */
+let activeSelectedCodec: string | null = null;
 
 /** Enter a flush: snapshot the baselines and zero the since-entry counters.
  *  Called at BOTH flush sites so the two are observationally identical. */
@@ -1156,13 +1177,16 @@ export async function flushWithBound(
 // rung, not just the probe).
 // ---------------------------------------------------------------------------
 
-/** H.264 High profile, level 4.0 — appropriate for the 1080p30 spike target;
- *  a higher level would be needed for 4K (noted, not this step's scope). */
-const EXPORT_CODEC = 'avc1.640028';
 /** Visually-acceptable for the Step 3 spike; NOT quality-matched to the
  *  legacy libx264 crf16 path — that comparison is Step 8's job. Tuning point,
  *  not a permanent setting. */
 const EXPORT_BITRATE = 8_000_000;
+// WS3 Round 14, STEP 5 (H2) — CODEC is no longer fixed. `createEncoder`
+// descends `EXPORT_CODEC_LADDER` (imported above) only on a piece's very
+// first, unpinned session; `activeSelectedCodec` then pins it for every
+// later call in this run, and the orchestrator pins it across a rewind's
+// fresh worker via `ExportWorkerInitMessage.pinnedCodec`. See
+// `hardwareCodecLadder.ts` and `buildEncoder`'s own doc.
 const HARDWARE_LADDER: HardwareAcceleration[] = ['prefer-hardware', 'no-preference', 'prefer-software'];
 /** WS3 Rung 5a — the ladder a failed-over session builds against: software
  *  only, no hardware probe attempted at all. See
@@ -1222,16 +1246,30 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/**
+ * WS3 Round 14, STEP 5 (H2) — no (codec, hardwareAcceleration) combination in
+ * `createEncoder`'s ladders is configurable on this device. Typed so the
+ * operator sees a named failure rather than a bare "encode" error — this is
+ * the failure the whole profile ladder exists to make explicit instead of a
+ * silent stall.
+ */
+export class NoSupportedEncoderConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NoSupportedEncoderConfigError';
+  }
+}
+
 async function createEncoder(
   width: number,
   height: number,
   fps: number,
   onOutput: (chunk: EncodedVideoChunk) => void,
   onError: (e: DOMException) => void,
+  codecLadder: readonly string[],
   ladder: HardwareAcceleration[] = HARDWARE_LADDER,
 ): Promise<VideoEncoder> {
   const base = {
-    codec: EXPORT_CODEC,
     width,
     height,
     framerate: fps,
@@ -1244,44 +1282,59 @@ async function createEncoder(
   };
 
   const attempts: string[] = [];
-  for (const hardwareAcceleration of ladder) {
-    const config: VideoEncoderConfig = { ...base, hardwareAcceleration };
+  // WS3 Round 14, STEP 5 (H2) — codec OUTER, hardwareAcceleration INNER: a
+  // caller with a single-entry `codecLadder` (the common case — see
+  // `runExport`'s `pinnedCodecThisRun`) still varies hardwareAcceleration
+  // freely; a caller with the full ladder (only ever the very first session
+  // of a piece with no pin yet) descends profile only after every
+  // hardwareAcceleration preference at the current profile has failed.
+  for (const codec of codecLadder) {
+    for (const hardwareAcceleration of ladder) {
+      const config: VideoEncoderConfig = { ...base, codec, hardwareAcceleration };
 
-    let supported = false;
-    try {
-      const support = await VideoEncoder.isConfigSupported(config);
-      supported = support.supported === true;
-    } catch (e) {
-      attempts.push(`${hardwareAcceleration}: isConfigSupported threw: ${errMessage(e)}`);
-      continue;
-    }
-    if (!supported) {
-      attempts.push(`${hardwareAcceleration}: isConfigSupported=false`);
-      continue;
-    }
-
-    // isConfigSupported passing does not guarantee configure() succeeds
-    // (plan §9.2 / §4.1) — a real construction+configure attempt is required.
-    let encoder: VideoEncoder | null = null;
-    try {
-      encoder = new VideoEncoder({ output: onOutput, error: onError });
-      encoder.configure(config);
-      // WS3 salvage-runtime round — record which rung actually succeeded,
-      // on EVERY build (initial session and every rotation), so a payload
-      // can name the session's own rung rather than assuming session 0's.
-      activeSelectedHardwareRung = hardwareAcceleration;
-      return encoder;
-    } catch (e) {
-      attempts.push(`${hardwareAcceleration}: configure threw: ${errMessage(e)}`);
+      let supported = false;
       try {
-        encoder?.close();
-      } catch {
-        // best-effort — configure failure may leave the encoder in a state where close() itself throws
+        const support = await VideoEncoder.isConfigSupported(config);
+        supported = support.supported === true;
+      } catch (e) {
+        attempts.push(`${codec}/${hardwareAcceleration}: isConfigSupported threw: ${errMessage(e)}`);
+        continue;
+      }
+      if (!supported) {
+        attempts.push(`${codec}/${hardwareAcceleration}: isConfigSupported=false`);
+        continue;
+      }
+
+      // isConfigSupported passing does not guarantee configure() succeeds
+      // (plan §9.2 / §4.1) — a real construction+configure attempt is required.
+      let encoder: VideoEncoder | null = null;
+      try {
+        encoder = new VideoEncoder({ output: onOutput, error: onError });
+        encoder.configure(config);
+        // WS3 salvage-runtime round — record which rung actually succeeded,
+        // on EVERY build (initial session and every rotation), so a payload
+        // can name the session's own rung rather than assuming session 0's.
+        activeSelectedHardwareRung = hardwareAcceleration;
+        // WS3 Round 14, STEP 5 — same, for codec. `runExport` pins this back
+        // into `codecLadder` for every later call in the SAME run; the
+        // orchestrator pins it across a rewind's fresh worker via
+        // `ExportWorkerInitMessage.pinnedCodec`.
+        activeSelectedCodec = codec;
+        return encoder;
+      } catch (e) {
+        attempts.push(`${codec}/${hardwareAcceleration}: configure threw: ${errMessage(e)}`);
+        try {
+          encoder?.close();
+        } catch {
+          // best-effort — configure failure may leave the encoder in a state where close() itself throws
+        }
       }
     }
   }
 
-  throw new Error(`exportWorker: no VideoEncoder config in the ladder [${ladder.join(', ')}] succeeded — [${attempts.join(' | ')}]`);
+  throw new NoSupportedEncoderConfigError(
+    `exportWorker: no VideoEncoder config across codec ladder [${codecLadder.join(', ')}] x hardwareAcceleration ladder [${ladder.join(', ')}] succeeded — [${attempts.join(' | ')}]`,
+  );
 }
 
 /** Resolves the next time `encoder.encodeQueueSize` decreases. Registered
@@ -1523,6 +1576,11 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   // first build, which would clobber the value it just set. Reset up front,
   // where every other per-run `active*` field is initialized.
   activeSelectedHardwareRung = null;
+  // WS3 Round 14, STEP 5 — same reset, for codec. Set to `payload.pinnedCodec`
+  // immediately below (before any encoder is built) rather than left null,
+  // since a pinned run's diagnostics should already name its codec even if
+  // it fails before the first `createEncoder` call completes.
+  activeSelectedCodec = payload.pinnedCodec ?? null;
   const frameDigest = payload.frameContentDigest ? new FrameContentDigest() : null;
   activeFrameDigest = frameDigest;
   const encodeStats = new EncodeStats();
@@ -1669,6 +1727,15 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
       (e) => {
         failState.setFailure('encoder-callback', e);
       },
+      // WS3 Round 14, STEP 5 (H2) — `activeSelectedCodec` starts this run as
+      // `payload.pinnedCodec ?? null` and `createEncoder` sets it to whatever
+      // codec actually configures. So: a piece that already has an orchestrator
+      // pin (a rewind, or any non-first session) gets a single-entry ladder —
+      // no descent, codec cannot change. The very first session of a fresh
+      // piece (no pin yet) gets the full descent ladder, and THIS worker's own
+      // later rotations then pin to whatever it picked — see the read of
+      // `activeSelectedCodec` re-evaluating on every call, not captured once.
+      activeSelectedCodec ? [activeSelectedCodec] : EXPORT_CODEC_LADDER,
       // WS3 Rung 5a — every session THIS `runExport` call builds (initial and
       // every rotation) uses the demoted ladder once the orchestrator has
       // set `forceSoftwareEncoder`. See the field's own doc comment for why
