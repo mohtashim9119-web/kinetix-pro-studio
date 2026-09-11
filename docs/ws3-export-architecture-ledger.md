@@ -1,5 +1,54 @@
 # WS3 Export — Architecture Ledger
 
+> **A note on taxonomy, read before trusting the numbers below.** No prior committed doc
+> in this repo defines a 0-5 "Rung" scale or a "Tier 1-4" scale under those exact names —
+> `docs/ws3-export-recovery-architecture.md` uses its OWN 1-13 rung numbering (different
+> scheme, same underlying mechanisms in most cases). The Round 7 task that created this
+> file used "Rung 3" / "Tier 1 item 3b/3c/4" as if a 0-5 / 1-4 scale already existed and
+> was common ground. It was not found in any committed doc by this session. **This ledger
+> is therefore the FIRST place these two scales are formalized**, built from (a) the
+> literal content of the Round 7 task and (b) the actual code. The Rung table's 0-2 are a
+> confident mapping onto `exportWorker.ts`'s real `HARDWARE_LADDER`; 3-4 map onto real,
+> shipped code; 5 is inferred from the older doc's "designed, not built" rung 10
+> (software failover). The Tier table's Tier 1 is fully known (this round's own task);
+> Tiers 2-4 are NOT known to this session — see the NOT DETERMINED register's first row.
+> **Whoever holds the authoritative Tier 2-4 definition should correct this file before
+> trusting it for planning purposes beyond Tier 1.**
+
+---
+
+## 1. Rung table (0-5)
+
+The encoder/recovery escalation ladder. 0-2 are "which encoder backend," 3-5 are "which
+recovery action when something goes wrong."
+
+| Rung | What it is | Status | Owning file:line | Landing SHA |
+|---|---|---|---|---|
+| 0 | `prefer-hardware` — first `VideoEncoder` config attempted, every session build | LANDED | `exportWorker.ts:1152` (`HARDWARE_LADDER[0]`), tried in `createEncoder`'s ladder loop, `exportWorker.ts:1187` (`for (const hardwareAcceleration of HARDWARE_LADDER)`) | pre-existing (before this round) |
+| 1 | `no-preference` — second attempt if rung 0's `isConfigSupported`/`configure` fails | LANDED | `exportWorker.ts:1152` | pre-existing |
+| 2 | `prefer-software` — third attempt; exhausting all three throws | LANDED | `exportWorker.ts:1152`; selected rung recorded on every build via `activeSelectedHardwareRung` (`exportWorker.ts`, set inside `createEncoder`'s success path) and surfaced as `selectedHardwareRung` on the diagnostics payload | pre-existing |
+| 3 | **Bounded re-render** — on a MID-run (rotation) flush timeout only: fence the hung session, truncate `runFile` back to the last rotation boundary's exact byte offset (never scanned — established by a completed `VideoEncoder.flush()` before that rotation was ever posted), resume the SAME piece's frame loop from that boundary via a fresh `driveGlRun` call. One attempt per boundary, `MAX_BOUNDARY_REWINDS_PER_EXPORT = 2` total per export. | **LANDED this round** | Decision: `decideBoundedRerenderDisposition`, `exportPipelineWebCodecs.ts:2289`. Wiring/retry loop: `exportPipelineWebCodecs.ts:2474-2610` (`runGlPiece`, the `while (!driveResult.ok)` loop at `:2527`, the truncate call at `:2557`). Resume plumbing: `exportWorker.ts`'s `ExportWorkerInitMessage.resumeFromFrameIndex` and the reordered `runExport` setup that computes `initialSessionIndex` before building the first encoder. Orchestrator-side session-index bootstrap for a SECOND rewind: `DriveGlRunDeps.resumeSessionIndex`, `exportPipelineWebCodecs.ts` (seeds `sessionAt`/`sessionByteOffsets`/`sessionFrameIndices` at the resumed index instead of defaulting to 0 — a real bug found and fixed mid-round, see Round 7 log). | `a6581d2` |
+| 4 | **Salvage-and-truncate** — on a FINAL-flush timeout (the run's LAST planned session only): fence, salvage once (`MAX_FLUSH_SALVAGES = 1`), truncate to the last complete access unit (`ffmpeg.truncateAnnexb`, AU-scanned since there is no clean rotation boundary to fall back to), accept the piece only on an EXACT picture-count match against `plan.expectedFrames`. | LANDED (prior round: `ws3-salvage-runtime`) | `exportWorker.ts`'s `runFinalFlushWithRecovery`/`decideFlushTimeoutDisposition`; `exportPipelineWebCodecs.ts`'s post-truncation mismatch guard (`formatSalvageTruncateMismatch`) | prior round (`2959861` base, `6efd525`/`765f546`/`efff8ee` per `git log`) |
+| 5 | **Software failover at a rotation boundary** — if hardware encoding keeps failing mid-export, force the NEXT session to build at rung 2 (`prefer-software`) rather than restarting the ladder from rung 0 every time. | NOT STARTED | none (inferred successor to `docs/ws3-export-recovery-architecture.md`'s old rung 10, "designed, not built") | — |
+
+---
+
+## 2. Tier table (1-4)
+
+| Tier | Item | Description | Status | Owning file:line | Landing SHA |
+|---|---|---|---|---|---|
+| 1 | 3a | (Pre-existing, not this round) Append batching, 100:1 IPC reduction | LANDED | `exportPipelineWebCodecs.ts` (`APPEND_BATCH_CHUNKS`/`APPEND_BATCH_BYTES`/`flushPendingBatch`) | prior round (`89317ea`) |
+| 1 | 3b | Worker-side back-pressure against the append/IPC path — a gate that pauses the frame loop (never the append pipeline itself) once unacked bytes exceed 32 MB, unblocked only by a real completed append's ack | **LANDED this round** | `appendBackpressureGate.ts` (class + `APPEND_BACKPRESSURE_THRESHOLD_BYTES`, `:52`/`:71`); worker wiring `exportWorker.ts:1401` (wait), `:1442` (construct), `:1589` (submit), `:2015` (ack-in); orchestrator ack-out `exportPipelineWebCodecs.ts:1639` | `a6581d2` |
+| 1 | 3c | Bounded re-render — see Rung 3 above (same work, Tier/Rung cross-reference) | **LANDED this round** | see Rung 3 row | `a6581d2` |
+| 1 | 4 | `ExportAppendLedger`'s `doneReceived`/`msSinceDone` (and every other liveness field) reaches the operator-visible Copy-diagnostics blob end to end, with a permanent regression test | **LANDED this round** | `exportDiagnosticsBlob.ts:34` (extracted `buildExportDiagnosticsBlob`, was inline in `App.tsx`); centrally-stamped `appendLedger`/`msSinceLastPhaseChange` on `RunDriveResult` via `buildAppendLedger` (`exportPipelineWebCodecs.ts:1363`) and `finish` (`:1434`) | `eb95bac` |
+| 1 | NOT DETERMINED #1/#2 closure | Append-throughput measurement at 3 latencies, unbatched vs batched+back-pressure | **SIMULATED this round** — see §5 register and §6 | `scripts/ws3-measure-append-throughput.test.ts` | `265fcae` |
+| 1 | NOT DETERMINED #5 closure | Confirm `doneReceived`+`msSinceDone`+`queueDepthChunks` are jointly readable from one payload with no inference | **LANDED this round** (same work as Tier 1 item 4) | `exportDiagnosticsBlob.test.ts` | `eb95bac` |
+| 2 | — | **Not known to this session.** `ws3-durable-resume` is a real, concurrently-active branch name (per Part 0's context) and is the most plausible Tier 2 candidate (checkpoint/resume across a full app restart, distinct from this round's intra-export rewind), but no doc confirms this mapping. | NOT DETERMINED | — | — |
+| 3 | — | Not known to this session. Rung 5 (software failover) is a plausible candidate. | NOT DETERMINED | — | — |
+| 4 | — | Not known to this session. `docs/ws3-export-recovery-architecture.md`'s old rung 13 ("process isolation," SPECULATIVE) is a plausible candidate. | NOT DETERMINED | — | — |
+
+---
+
 > **Purpose.** This is the file that prevents context loss across WS3 export-hardening
 > rounds. Five registers (Rung, Tier, Bound, Counter, NOT DETERMINED) plus a dated Round
 > log. Every status uses the fixed vocabulary: `LANDED` / `PARTIAL` / `PRIMITIVE-ONLY` /
