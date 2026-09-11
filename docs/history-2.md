@@ -778,7 +778,7 @@ against a current `main` build on 2026-08-26 and all three worked; the original 
 to an installer 8 commits stale. Moved out of `docs/work-in-progress.md`'s "Other active work"
 (was `[OPEN] WS2 bug 3`) per this session's Step 8/Step 9 close-out.
 Evidence: OPERATOR-ATTESTED — 2026-08-26 live run (import, preview, export) against a HEAD build,
-no freeze observed. The prior diagnosis session (`docs/ws2-video-ingest/bug3-diagnosis.md`,
+no freeze observed. The prior diagnosis session (`docs/archive/ws2-video-ingest/bug3-diagnosis.md`,
 sessions `ws2-06`/`ws2-07`) established three facts by direct measurement, preserved here since
 they remain true regardless of the non-repro: (1) the `elst`/edit-list hypothesis is ruled out by
 direct ISOBMFF box inspection of the reported-failing asset — no `edts`/`elst` box exists in the
@@ -804,7 +804,7 @@ combination may not have been reproduced. Because the reproduced buffer-overflow
 (§B3/B4 of the diagnosis doc) is a real, code-level defect independent of whether THIS bug report
 reproduces, it is tracked separately and NOT closed by this entry — see
 `docs/work-in-progress.md`'s `[DEFERRED] 120fps preview decode lag` row, the sole remaining
-record of that mechanism. Full diagnosis: `docs/ws2-video-ingest/bug3-diagnosis.md`.
+record of that mechanism. Full diagnosis: `docs/archive/ws2-video-ingest/bug3-diagnosis.md`.
 Superseded-by: none
 
 ### 2026-08-26 · correction · ws2-bug2-ort-runtime-platform-gap
@@ -830,7 +830,7 @@ plus `build.yml:124-148`'s provisioning step fetching only `onnxruntime-osx-x86_
 NOT independently confirmed on real arm64 hardware this session or any prior one.
 Detail: full scoped plan for closing this (Windows DLL provisioning, generalizing the
 `fa_onnx.rs:319` gate to a per-platform table, an arm64 macOS slice) sized but explicitly NOT
-built this session (out of scope by operator instruction) — `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`'s
+built this session (out of scope by operator instruction) — `docs/archive/ws2-video-ingest/step10-windows-fetch-diagnosis.md`'s
 "B3" section. New WS2 open item tracking this: `docs/work-in-progress.md`'s
 "Operational / verification tasks" section (add: FA runtime provisioning for Windows + macOS
 arm64 — no code exists yet, unlike bug 2's compiled-in-but-gated state for macOS x86_64).
@@ -927,10 +927,10 @@ sites carrying the identical defect shape (no `asset.file` fallback) — `App.ts
 `segmentEncoder.ts:416`, `whisperService.ts:1686`, `exportPipeline.ts:277`,
 `webcodecsExport/exportWorker.ts:301` (runs inside a Web Worker — a materially different, likely
 more fragile case), `webcodecsExport/exportPipelineWebCodecs.ts:1031`. Full list with per-site
-notes: `docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`'s "A6" section. New WS2 open
+notes: `docs/archive/ws2-video-ingest/step10-windows-fetch-diagnosis.md`'s "A6" section. New WS2 open
 item: `docs/work-in-progress.md`'s `[IN-PROGRESS]` row for this bug names the same list.
 Full diagnosis (candidate ruling, A1-A6, deviation note on the C1 test spec, B3 sizing):
-`docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md`.
+`docs/archive/ws2-video-ingest/step10-windows-fetch-diagnosis.md`.
 Superseded-by: none
 
 ### 2026-08-26 · WS2 Step 11 · ws2-step11-fa-model-provenance-a5
@@ -1288,7 +1288,7 @@ written; this entry cites and supersedes each, per the append-only rule (nothing
 2. **"fa_onnx.rs:319 refusal-message" as a single hardcoded string.** Superseded by the same Step 13
    Phase 4 change — the refusal message is now generated FROM `SUPPORTED_ORT_TARGETS` inside
    `resolve_bundled_ort_dylib` (`fa_onnx.rs:360`), not a fixed string. Any doc quoting the old
-   verbatim Windows refusal text (`docs/ws2-video-ingest/step10-windows-fetch-diagnosis.md:16`,
+   verbatim Windows refusal text (`docs/archive/ws2-video-ingest/step10-windows-fetch-diagnosis.md:16`,
    `docs/history-2.md`'s Step 10 correction entry) is quoting a real, MEASURED log line from
    2026-08-26 — historically accurate and left as-is — but should not be read as still describing
    current gate behavior; this entry is the pointer forward.
@@ -2957,7 +2957,7 @@ true — the preview cap is a frame COUNT (`videoDecoderPool.ts:107`, `MAX_BUFFE
 = 90`, with `MAX_TOTAL_BUFFERED_FRAMES = 150` at `:130`), and a single project frame rate IS assumed
 (`ExportFps = 24 | 30 | 60`, `useExport.ts:27`, applied per-run at `:190`/`:490`, with
 `Asset.nativeFps` "used only to auto-suggest exportFps", `types.ts:134-136`). But two true facts are
-not one cause. `bug3-diagnosis.md:124` and `:199-200` locate the 120fps defect in the preview pool
+not one cause. `docs/archive/ws2-video-ingest/bug3-diagnosis.md:124` and `:199-200` locate the 120fps defect in the preview pool
 never reading the SOURCE ASSET's rate, and `:212` records export as unaffected; the arbitrary-frame-
 rate item is an export/project-model question. Different subsystems, neither fix advancing the
 other. Kept as two entries — a shared label over two unshared causes is the false-green pattern this
@@ -3078,7 +3078,7 @@ the symptom matches the redundant-read class removed by T4.8.
 `docs/ws2-t41-phase4-manual-checklist.md` was written at T4.1 Step 5 as a one-time Phase 4
 observability runbook. Every actionable row carries a **RESOLVED** annotation or lives under §Z as
 NOT OBSERVABLE — the checklist did its job and is not a standing repeated procedure (contrast
-`docs/wkwebview-drag-checklist.md`, which stays tracked because drag regressions are re-run every
+`docs/ws2-editor/wkwebview-drag-checklist.md`, which stays tracked because drag regressions are re-run every
 release).
 
 **Decision:** fold outcomes into this file and **untrack** the checklist. Keeping a tracked doc

@@ -6342,7 +6342,7 @@ general src/ comment sweep.
 
 ## WKWebView Drag Checklist — Run History and Closed Sections, Folded (2026-08-09)
 
-> `docs/wkwebview-drag-checklist.md` (relocated this same pass from
+> `docs/ws2-editor/wkwebview-drag-checklist.md` (relocated this same pass from
 > `docs/checklists/`, which is now dissolved) is trimmed this pass, per the
 > docs-restructure Phase 5 plan (Stage 3), to keep only its live procedure —
 > the steps to execute, their pass criteria, and the video-path caveat WS3
@@ -8654,7 +8654,7 @@ no conflict. All three unblocked. A maintenance rule (remove-and-append-one on c
 recorded inline in `project-state.md` §4 so the list doesn't need re-deriving next time.
 
 **Consistency sweep.** One live cross-reference needed repointing:
-`docs/wkwebview-drag-checklist.md` (a standing, run-before-every-release manual procedure) named
+`docs/ws2-editor/wkwebview-drag-checklist.md` (a standing, run-before-every-release manual procedure) named
 `project-state.md`'s "Deferred Known Bugs" for the stuck-`resizingId` WONTFIX — repointed to
 `docs/work-in-progress.md`'s new WS1 block. Several other repo hits on the same search strings
 (`docs/ws1-sync-pipeline/roadmap-2026-08-07.md`, multiple spots in `sync-pipeline-v2-plan.md`, and

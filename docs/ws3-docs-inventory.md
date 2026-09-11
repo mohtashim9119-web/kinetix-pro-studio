@@ -426,4 +426,81 @@ Docs modified on **`ws3-durable-resume`** (subset; no architecture-ledger):
 
 ---
 
-*Audit agent: Cursor. Inventory date: 2026-09-11. Enumeration HEAD reference: `ws3-hardening-windows` @ `96fec65`.*
+## PROMPT 17 Phase 1 — Divergent-blob reconciliation spec (analysis only)
+
+Produced on branch `docs-consolidate-p1`. **Do not resolve here** — WS3 paths are
+Phase 2. This section records what can silently lose data at merge time.
+
+### `docs/work-in-progress.md`
+
+| Blob | Branch @ commit | Lines |
+|---|---|---|
+| A (main) | `main` @ `4d4922c` | 212 |
+| B (WS3) | `ws3-export-integration` @ `15002e5` (identical on all six WS3 branches) | 212 |
+
+**Diff size:** 18 lines (one renumbered open-item block in §WS3).
+
+**Required output:** Section-by-section merge — take blob B as base. Blob B adds a new §WS3
+open item 1 (append-path batching, cites `docs/ws3-append-path-audit.md`) and renumbers the
+existing Part C 500-segment item from 1 → 2. Blob A's Part C text is **byte-identical** to
+blob B's item 2; nothing in A is lost by taking B.
+
+**Unique to losing blob A:** only the old item numbering (Part C listed as item 1). No prose
+unique to A.
+
+**Unique to winning blob B (not in A):** append-path batching paragraph (5 lines + renumber).
+
+### `docs/ws3-export-architecture-ledger.md`
+
+| Blob | Branch @ commit | Lines | Round headers |
+|---|---|---:|---|
+| tier1 | `ws3-tier1-close` @ `51e1f6b` | 143 | Round 7 only |
+| tier2+hardening | `ws3-hardening-windows` @ `57fc882` | 526 | Rounds 7, 9, 10 |
+| tier3 | `ws3-tier3-failover` @ `dedc3bf` | 281 | Rounds 7, 9 |
+
+**Required output:** Chronological union with **`ws3-hardening-windows` @ `57fc882` as
+presumed winner** (most complete: adds Round 10 Tier 2 closeout). Append-only round entries
+must not be dropped silently.
+
+**Round number collisions (same number, different content):**
+
+| Round | Verdict |
+|---|---|
+| **7** | **Identical** across all three blobs (same 34-line block, same branch-cut metadata). |
+| **9** | **DIFFERENT** between tier3 and hardening. Tier3 carries a §7 "Decisions register" with **Rung 5c — out-of-process render isolation: DEFER** (~60 lines, decided Round 9) that hardening **does not contain**. Hardening's Round 9 continues with later steps (ledger authority, seam closure) instead. **Must union, not pick one side.** |
+| **10** | Present only on hardening (Tier 2 closeout). No collision. |
+
+**Unique to losing blob tier1 (not in hardening):** ~49 lines of preamble including **"A note
+on taxonomy"** formalizing the 0–5 Rung / 1–4 Tier scales for the first time, full Rung and
+Tier tables with NOT-DETERMINED rows, and constant registers (`APPEND_QUEUE_CEILING_BYTES`,
+etc.). Hardening replaced this preamble with expanded Round 9/10 material — the taxonomy note
+does **not** appear in hardening (grep: 0 hits). **Preserve tier1 preamble verbatim in merge**
+(or confirm equivalent content landed elsewhere before discarding).
+
+**Unique to losing blob tier3 (not in hardening):** six table/register lines (Tier 2 mapping
+confirmation, three Rung table rows 0/2b/4, two Round 9 NEW callouts on truncate wrapping and
+SPS/PPS continuity) plus the entire Rung 5c DEFER section under Round 9 (see collision above).
+
+### `docs/ws3-export-durable-state.md`
+
+| Blob | Branch @ commit | Lines |
+|---|---|---|
+| integration+tier1+tier3 | `ws3-export-integration` / tier1 / tier3 @ `beab034` | 629 |
+| tier2 | `ws3-tier2-wire` @ `81bde88` | 1332 |
+| durable+hardening | `ws3-durable-resume` + `ws3-hardening-windows` @ `1b3d369` | 1602 |
+
+**Required output:** Take **`ws3-hardening-windows` @ `1b3d369`** (1602 lines) as authoritative.
+
+**Unique to losing blobs (line-level diff against hardening):**
+
+| Losing blob | Non-empty lines not in hardening |
+|---|---|
+| integration+tier1+tier3 @ `beab034` | **0** — hardening is a strict superset |
+| tier2 @ `81bde88` | **0** — hardening is a strict superset |
+
+**Confirmation:** Nothing unique exists only in the integration or tier2 blobs. The 64-line
+untracked stub on the main worktree is **not authoritative** (inventory STEP 0).
+
+---
+
+*Audit agent: Cursor. Inventory date: 2026-09-11. Phase 1 reconciliation spec appended 2026-09-11.*
