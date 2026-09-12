@@ -365,6 +365,7 @@ function buildDiagnostics(
     openImageBitmaps: resourceCounts.openImageBitmaps,
     frameContentDigest: activeFrameDigest ? activeFrameDigest.digestHex() : null,
     frameContentDigestFrames: activeFrameDigest ? activeFrameDigest.frameCount : null,
+    encodeQueueHighWater: activeEncodeQueueHighWater,
   };
 }
 
@@ -426,6 +427,10 @@ let activeSelectedHardwareRung: string | null = null;
 /** WS3 Round 14, STEP 5 (H2) — same pattern, for the pinned CODEC. See
  *  `ExportWorkerDiagnosticsPayload.selectedCodec`. */
 let activeSelectedCodec: string | null = null;
+/** PROMPT 28 STEP 4 — largest `encoder.encodeQueueSize` observed this run,
+ *  same module-scope-mirror pattern as the fields above. Reset at the top
+ *  of `runExport`. See `ExportWorkerDiagnosticsPayload.encodeQueueHighWater`. */
+let activeEncodeQueueHighWater = 0;
 /**
  * WS3 Round 14, STEP 6 (H3) — explicit, observable encoder session
  * accounting. `encoderSessionsOpened` increments once per successful
@@ -1502,18 +1507,30 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
     let compositeStarted = performance.now();
     uploadSlot(compositor, 'a', aSrc, width, height);
     let compositeMs = performance.now() - compositeStarted;
+    // PROMPT 28 STEP 4 — texture-upload/draw slice of `compositeMs` (upload +
+    // GL render, excluding the text pass below), as its own named bucket
+    // alongside the existing `composite` total — additive only, `composite`
+    // itself is computed exactly as before. See
+    // docs/ws3-export/windows-throughput-audit.md §2/§6.
+    let textureUploadAndDrawMs = compositeMs;
 
     if (plan.b) {
       const bSrc = await runState.resolveSlotSource(plan.b, currentTime);
       if (!bSrc) return false;
       compositeStarted = performance.now();
       uploadSlot(compositor, 'b', bSrc, width, height);
-      compositeMs += performance.now() - compositeStarted;
+      const bUploadMs = performance.now() - compositeStarted;
+      compositeMs += bUploadMs;
+      textureUploadAndDrawMs += bUploadMs;
     }
 
     compositeStarted = performance.now();
     compositor.renderFrame(rawParams);
+    const renderFrameMs = performance.now() - compositeStarted;
+    compositeMs += renderFrameMs;
+    textureUploadAndDrawMs += renderFrameMs;
 
+    compositeStarted = performance.now();
     const textSegment = resolveTextSegment(plan, rawParams.transition);
     textRenderer.renderFrame({
       segment: textSegment,
@@ -1524,6 +1541,7 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
     });
     compositeMs += performance.now() - compositeStarted;
     activeTracker?.add('composite', compositeMs);
+    activeTracker?.add('texture-upload-draw', textureUploadAndDrawMs);
 
     // WS3 Rung 5b — graduated backoff BELOW the hard wait, unconditional
     // (never gated on `activeAppendBackpressureGate` or anything else — a
@@ -1533,12 +1551,20 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
     if (throttleMs > 0) {
       const throttleStarted = performance.now();
       await sleep(throttleMs);
-      activeTracker?.add('wait-dequeue', performance.now() - throttleStarted);
+      const dt = performance.now() - throttleStarted;
+      activeTracker?.add('wait-dequeue', dt);
+      // PROMPT 28 STEP 4 — same window, also under its own name so a report
+      // can tell graduated-backoff sleep apart from an actual dequeue wait.
+      activeTracker?.add('encoder-throttle-sleep', dt);
     }
+    // PROMPT 28 STEP 4 — encoder queue high-water, for the same report.
+    activeEncodeQueueHighWater = Math.max(activeEncodeQueueHighWater, encoder.encodeQueueSize);
     if (encoder.encodeQueueSize > BACKPRESSURE_HIGH_WATER) {
       const waitStarted = performance.now();
       await waitForDequeue(encoder);
-      activeTracker?.add('wait-dequeue', performance.now() - waitStarted);
+      const dt = performance.now() - waitStarted;
+      activeTracker?.add('wait-dequeue', dt);
+      activeTracker?.add('encoder-dequeue-wait', dt);
     }
     // WS3 Tier 1 item 3b — a second, independent back-pressure gate: the
     // encoder queue above bounds in-flight VideoFrames, this bounds bytes
@@ -1552,7 +1578,9 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
     if (activeAppendBackpressureGate) {
       const waitStarted = performance.now();
       await activeAppendBackpressureGate.waitIfNeeded();
-      activeTracker?.add('wait-dequeue', performance.now() - waitStarted);
+      const dt = performance.now() - waitStarted;
+      activeTracker?.add('wait-dequeue', dt);
+      activeTracker?.add('append-backpressure-wait', dt);
     }
     if (failState.failure) throw failState.failure;
 
@@ -1561,16 +1589,25 @@ async function runFrameLoopTick(ctx: FrameLoopTickContext): Promise<boolean> {
     // submit cost only — the encoder's own async work shows up as
     // `wait-dequeue` on a later tick, which is why the two are separate.
     const submitStarted = performance.now();
+    // PROMPT 28 STEP 4 — timed in isolation so a canvas-realization/readback
+    // stall inside `new VideoFrame(canvas, ...)` is never charged to the
+    // encoder. See docs/ws3-export/windows-throughput-audit.md §2/§6.
+    const videoFrameStarted = performance.now();
     const frame = new VideoFrame(canvas, {
       timestamp: Math.round((frameIndex * 1_000_000) / fps),
       duration: frameDurUs,
     });
+    activeTracker?.add('video-frame-from-canvas', performance.now() - videoFrameStarted);
     try {
       // Hash the composited pixels BEFORE encode — this is the frame the
       // encoder receives, so a digest match proves input equivalence even
       // though the encoded bytes are not reproducible run to run.
       if (ctx.frameDigest) await ctx.frameDigest.add(frame);
+      // PROMPT 28 STEP 4 — the synchronous `encoder.encode()` call alone,
+      // excluding the optional diagnostic hash above.
+      const encodeCallStarted = performance.now();
       encoder.encode(frame, { keyFrame: isKeyFrame(frameIndex) });
+      activeTracker?.add('encode-call', performance.now() - encodeCallStarted);
     } finally {
       frame.close();
     }
@@ -1593,6 +1630,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
   activeTracker = tracker;
   activePieceIndex = pieceIndex;
   activeAppendBackpressureGate = new AppendBackpressureGate(APPEND_BACKPRESSURE_THRESHOLD_BYTES);
+  activeEncodeQueueHighWater = 0;
   const failState = new RunFailureState();
   activeFailure = failState;
   // WS3 salvage-runtime round — reset BEFORE the encoder ladder runs (below),

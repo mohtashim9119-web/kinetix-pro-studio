@@ -23,6 +23,10 @@
 import { describe, it, expect } from 'vitest';
 import { buildExportDiagnosticsBlob } from './exportDiagnosticsBlob';
 import type { ExportAppendLedger, ExportError, ExportLivenessSnapshot, ExportPhaseLogTailEntry } from './exportPipeline';
+import type { ExportPathSelectionDiagnostics } from './webcodecsExport/exportPathSelection';
+import type { WebCodecsRoutingSummary } from './webcodecsExport/exportPipelineWebCodecs';
+import { TOP_1080P30_ENCODER_CONFIG, type GpuCapabilityReport } from './webcodecsExport/gpuCapabilityProbe';
+import type { GradeLossRefusal } from './webcodecsExport/exportPathSelectionTypes';
 
 const SENTINEL_PHASE_LOG_ENTRY: ExportPhaseLogTailEntry = {
   atMs: 123456,
@@ -49,6 +53,44 @@ const SENTINEL_APPEND_LEDGER: ExportAppendLedger = {
   discardedAtFinish: { chunks: 121212, bytes: 343434 },
 };
 
+/** PROMPT 28 STEP 1 — one sentinel `WebCodecsRoutingSummary`, all-numeric
+ *  leaves distinct from everything else in this fixture. */
+const SENTINEL_ROUTING: WebCodecsRoutingSummary = {
+  pieces: [
+    { tier: 'canvas', startIndex: 100009, segmentCount: 100010, expectedFrames: 100011, gridOriginSec: 100012, gridBaseFrame: 100013 },
+  ],
+  segmentCounts: { plain: 100014, gl: 100015, canvas: 100016 },
+  pieceCounts: { plain: 100017, gl: 100018, canvas: 100019 },
+};
+
+const SENTINEL_EXPORT_PATH_SELECTION: ExportPathSelectionDiagnostics = {
+  topLevelPath: 'webcodecs',
+  gate: {
+    capable: true,
+    toggleOn: true,
+    open: true,
+    capabilityFailures: ['no-webgl2'],
+  },
+  routing: SENTINEL_ROUTING,
+  progressInterpretation: {
+    pieceOrSegmentTotal: 100020,
+    encoderSessionsPlanned: 100021,
+  },
+};
+
+/** PROMPT 28 STEP 3 — the one `null` leaf in this whole fixture
+ *  (`top1080p30EncoderSupport.error`), deliberately singular — see this
+ *  file's own distinctness sanity check below, which would fail if a
+ *  second `null` leaf were introduced anywhere in `SENTINEL_LIVENESS`. */
+const SENTINEL_GPU_CAPABILITY: GpuCapabilityReport = {
+  webgl2Available: true,
+  unmaskedRendererWebGL: 'SENTINEL_GPU_RENDERER',
+  unmaskedVendorWebGL: 'SENTINEL_GPU_VENDOR',
+  softwareRasterizationDetected: false,
+  top1080p30EncoderConfig: TOP_1080P30_ENCODER_CONFIG,
+  top1080p30EncoderSupport: { supported: true, error: null },
+};
+
 const SENTINEL_LIVENESS: ExportLivenessSnapshot = {
   lastPhase: 'SENTINEL_LAST_PHASE',
   msSinceLastPhaseChange: 100001,
@@ -60,6 +102,14 @@ const SENTINEL_LIVENESS: ExportLivenessSnapshot = {
   encoderSessions: 100005,
   encoderSessionIndex: 100006,
   appendLedger: SENTINEL_APPEND_LEDGER,
+  exportPathSelection: SENTINEL_EXPORT_PATH_SELECTION,
+  gpuCapability: SENTINEL_GPU_CAPABILITY,
+};
+
+const SENTINEL_GRADE_LOSS_REFUSAL: GradeLossRefusal = {
+  affectedSegmentIndices: [100022, 100023],
+  failedGateClauses: ['no-worker'],
+  remediation: ['SENTINEL_REMEDIATION_STEP'],
 };
 
 const SENTINEL_ERROR: ExportError = {
@@ -67,6 +117,7 @@ const SENTINEL_ERROR: ExportError = {
   message: 'SENTINEL_ERROR_MESSAGE',
   cause: 'SENTINEL_ERROR_CAUSE',
   liveness: SENTINEL_LIVENESS,
+  gradeLossRefusal: SENTINEL_GRADE_LOSS_REFUSAL,
 };
 
 const PROJECT_META = {
@@ -164,6 +215,23 @@ describe('buildExportDiagnosticsBlob — no field defined on the emit-site snaps
     expect(blob.liveness).toBeNull();
     expect(blob.appendLedger).toBeNull();
     expect(blob.phaseLogTail).toBeNull();
+    expect(blob.exportPathSelection).toBeNull();
+    expect(blob.gpuCapability).toBeNull();
+    expect(blob.gradeLossRefusal).toBeNull();
     expect(() => JSON.stringify(blob)).not.toThrow();
+  });
+
+  it('PROMPT 28 — exportPathSelection, gpuCapability, and gradeLossRefusal all reach the blob top level', () => {
+    const blob = buildExportDiagnosticsBlob(SENTINEL_ERROR, PROJECT_META) as {
+      exportPathSelection: ExportPathSelectionDiagnostics | null;
+      gpuCapability: GpuCapabilityReport | null;
+      gradeLossRefusal: GradeLossRefusal | null;
+    };
+    expect(blob.exportPathSelection?.topLevelPath).toBe('webcodecs');
+    expect(blob.exportPathSelection?.gate.capabilityFailures).toEqual(['no-webgl2']);
+    expect(blob.exportPathSelection?.routing?.pieceCounts.canvas).toBe(100019);
+    expect(blob.gpuCapability?.unmaskedRendererWebGL).toBe('SENTINEL_GPU_RENDERER');
+    expect(blob.gradeLossRefusal?.affectedSegmentIndices).toEqual([100022, 100023]);
+    expect(blob.gradeLossRefusal?.failedGateClauses).toEqual(['no-worker']);
   });
 });

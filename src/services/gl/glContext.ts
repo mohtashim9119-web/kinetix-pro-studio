@@ -38,6 +38,60 @@ export function isWebGL2Supported(): boolean {
   return cachedSupport;
 }
 
+/**
+ * PROMPT 28 STEP 1 — the WHY behind a WebGL2 support failure, for the
+ * export-path-selection diagnostics blob. `isWebGL2Supported()` above stays
+ * a bare boolean (its existing callers — `PreviewStage.tsx`, `useGlPreview.ts`
+ * — need only the yes/no answer); this is an additive diagnosis, memoized
+ * separately so a test resetting one cache doesn't have to know about the
+ * other's shape.
+ *
+ * `failureReason` distinguishes the two ways `getContext('webgl2')` can fail
+ * to yield a context from a case that never got that far — `no-document`
+ * covers the (untestable-by-a-real-browser) `typeof document === 'undefined'`
+ * guard, kept distinct from `context-null` so a report never conflates "no
+ * DOM" with "DOM present, GPU/driver refused the context."
+ */
+export type WebGL2FailureReason = 'no-document' | 'context-null' | 'threw';
+
+export interface WebGL2SupportDiagnosis {
+  supported: boolean;
+  failureReason: WebGL2FailureReason | null;
+  /** The thrown error's message, only set when `failureReason === 'threw'`. */
+  errorMessage: string | null;
+}
+
+let cachedDiagnosis: WebGL2SupportDiagnosis | null = null;
+
+export function diagnoseWebGL2Support(): WebGL2SupportDiagnosis {
+  if (cachedDiagnosis !== null) return cachedDiagnosis;
+  cachedDiagnosis = (() => {
+    if (typeof document === 'undefined') {
+      return { supported: false, failureReason: 'no-document', errorMessage: null } as const;
+    }
+    try {
+      const canvas = document.createElement('canvas');
+      const context = canvas.getContext('webgl2');
+      if (context === null) {
+        return { supported: false, failureReason: 'context-null', errorMessage: null } as const;
+      }
+      return { supported: true, failureReason: null, errorMessage: null } as const;
+    } catch (error) {
+      return {
+        supported: false,
+        failureReason: 'threw',
+        errorMessage: error instanceof Error ? error.message : String(error),
+      } as const;
+    }
+  })();
+  return cachedDiagnosis;
+}
+
+/** Test-only: clears the memoized diagnosis so a test can simulate a different runtime. */
+export function __resetWebGL2DiagnosisForTests(): void {
+  cachedDiagnosis = null;
+}
+
 /** Test-only: clears the memoized result so a test can simulate a different runtime. */
 export function __resetWebGL2SupportCacheForTests(): void {
   cachedSupport = null;

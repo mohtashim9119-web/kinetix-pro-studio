@@ -21,7 +21,10 @@ import { TauriFfmpeg, type OrphanSweepReport, type RetainForResumeReport } from 
 import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
-import { isWebGL2Supported } from '../services/gl/glContext';
+import { diagnoseWebGL2Support } from '../services/gl/glContext';
+import type { WebCodecsCapabilityFailureCode, WebCodecsCapabilityDiagnosis } from '../services/webcodecsExport/exportPathSelectionTypes';
+import { evaluateGradeLossRefusal, type ExportPathSelectionDiagnostics } from '../services/webcodecsExport/exportPathSelection';
+import { probeGpuCapabilities, type GpuCapabilityReport } from '../services/webcodecsExport/gpuCapabilityProbe';
 import { readUiState, patchUiState } from '../services/uiStateStore';
 import { resolveDimensions, DEFAULT_ASPECT_RATIO } from '../services/resolutionConfig';
 import { playExportCompleteChime } from '../services/notificationSound';
@@ -99,43 +102,74 @@ const WEBCODECS_TOGGLE_KEY = 'webcodecsExportEnabled';
  */
 export const WEBCODECS_TOGGLE_DEFAULT_ON = true;
 
-let cachedWebCodecsExportCapability: boolean | null = null;
+// `WebCodecsCapabilityFailureCode`/`WebCodecsCapabilityDiagnosis` live in
+// `exportPathSelectionTypes.ts` (not here) because `exportPipeline.ts`'s
+// `ExportError.gradeLossRefusal` also needs them, and that file cannot
+// import from this hook. See that module's own header.
+
+let cachedWebCodecsExportCapabilityDiagnosis: WebCodecsCapabilityDiagnosis | null = null;
 
 /**
- * Capability probe: WebCodecs encode+decode, WebGL2, and module-worker
+ * Capability diagnosis: WebCodecs encode+decode, WebGL2, and module-worker
  * support are all required by the new path's worker (exportWorker.ts).
  * Memoized — runtime capability can't change mid-session, matching the
  * isWebGL2Supported()/isWebCodecsPreviewSupported() memoization pattern
  * already used elsewhere (glContext.ts, webcodecsSupport.ts).
+ *
+ * This does not change what the gate DECIDES (`capable` is exactly the old
+ * `isWebCodecsExportCapable()` boolean) — only what it RECORDS, so the
+ * export-path-selection diagnostics blob can name which clause failed
+ * instead of the operator seeing a bare "compatibility encoder" fallback
+ * with no way to tell why.
  */
-export function isWebCodecsExportCapable(): boolean {
-  if (cachedWebCodecsExportCapability !== null) return cachedWebCodecsExportCapability;
-  cachedWebCodecsExportCapability = (() => {
-    if (typeof window === 'undefined') return false;
+export function diagnoseWebCodecsExportCapability(): WebCodecsCapabilityDiagnosis {
+  if (cachedWebCodecsExportCapabilityDiagnosis !== null) return cachedWebCodecsExportCapabilityDiagnosis;
+  cachedWebCodecsExportCapabilityDiagnosis = (() => {
+    if (typeof window === 'undefined') {
+      return { capable: false, failures: ['no-window'], webgl2Failure: null } as const;
+    }
+    const failures: WebCodecsCapabilityFailureCode[] = [];
     if (!('VideoEncoder' in window) || !('VideoDecoder' in window) || !('EncodedVideoChunk' in window)) {
-      return false;
+      failures.push('no-webcodecs');
     }
-    if (!isWebGL2Supported()) return false;
-    if (typeof Worker === 'undefined') return false;
-    // Module-worker probe: constructing with { type: 'module' } throws
-    // synchronously on a runtime that doesn't support it. An empty module
-    // script is valid and never executes anything before terminate().
-    try {
-      const url = URL.createObjectURL(new Blob([''], { type: 'text/javascript' }));
-      const worker = new Worker(url, { type: 'module' });
-      worker.terminate();
-      URL.revokeObjectURL(url);
-      return true;
-    } catch {
-      return false;
+    const webgl2Diagnosis = diagnoseWebGL2Support();
+    if (!webgl2Diagnosis.supported) failures.push('no-webgl2');
+    if (typeof Worker === 'undefined') {
+      failures.push('no-worker');
+    } else {
+      // Module-worker probe: constructing with { type: 'module' } throws
+      // synchronously on a runtime that doesn't support it. An empty module
+      // script is valid and never executes anything before terminate().
+      try {
+        const url = URL.createObjectURL(new Blob([''], { type: 'text/javascript' }));
+        const worker = new Worker(url, { type: 'module' });
+        worker.terminate();
+        URL.revokeObjectURL(url);
+      } catch {
+        failures.push('no-module-worker');
+      }
     }
+    return {
+      capable: failures.length === 0,
+      failures,
+      webgl2Failure: webgl2Diagnosis.supported ? null : webgl2Diagnosis,
+    };
   })();
-  return cachedWebCodecsExportCapability;
+  return cachedWebCodecsExportCapabilityDiagnosis;
 }
 
-/** Test-only: clears the memoized capability result. */
+/**
+ * Capability probe (bare boolean) — see `diagnoseWebCodecsExportCapability`
+ * for the per-clause reasons. Kept as its own function because every
+ * existing call site only needs the yes/no answer.
+ */
+export function isWebCodecsExportCapable(): boolean {
+  return diagnoseWebCodecsExportCapability().capable;
+}
+
+/** Test-only: clears the memoized capability diagnosis. */
 export function __resetWebCodecsExportCapabilityForTests(): void {
-  cachedWebCodecsExportCapability = null;
+  cachedWebCodecsExportCapabilityDiagnosis = null;
 }
 
 /**
@@ -541,6 +575,87 @@ export function useExport(
     const useWebCodecsPath = isWebCodecsExportGateOpen();
     activePathRef.current = useWebCodecsPath ? 'webcodecs' : 'legacy';
 
+    // PROMPT 28 STEP 1/2 — routing preview computed unconditionally (pure,
+    // no I/O) so both the exportPathSelection diagnostics and the grade-loss
+    // refusal check below can see it regardless of which path is taken.
+    // Recomputed independently of Blocker 3's own `planWebCodecsExport` call
+    // further down (that one only runs `if (useWebCodecsPath)`, for resume
+    // discovery) rather than hoisting that call, to keep this addition from
+    // touching the resume-discovery code path at all.
+    const pathSelectionRouting = planWebCodecsExport(snap, fps);
+    const routingForDiagnostics = 'error' in pathSelectionRouting ? null : pathSelectionRouting;
+    const capabilityDiagnosis = diagnoseWebCodecsExportCapability();
+
+    const exportPathSelection: ExportPathSelectionDiagnostics = {
+      topLevelPath: useWebCodecsPath ? 'webcodecs' : 'legacy',
+      gate: {
+        capable: capabilityDiagnosis.capable,
+        toggleOn: isWebCodecsExportToggleOn(),
+        open: useWebCodecsPath,
+        capabilityFailures: capabilityDiagnosis.failures,
+      },
+      routing: useWebCodecsPath ? routingForDiagnostics : null,
+      progressInterpretation: {
+        pieceOrSegmentTotal: useWebCodecsPath
+          ? (routingForDiagnostics?.pieces.length ?? snap.segments.length)
+          : snap.segments.length,
+        encoderSessionsPlanned: null,
+      },
+    };
+
+    // STEP 2 (CRITICAL) — refuse BEFORE any encoding work when a segment's
+    // color grade would be silently dropped by the path this run would take.
+    // Per CC ruling: hard-refuse ONLY on grade loss — every other canvas-
+    // routed feature already renders correctly on canvas (see the parity
+    // matrix in docs/ws3-export/export-path-selection-audit.md STEP 3), so
+    // those cases are unaffected by this check.
+    const gradeLossRefusal = evaluateGradeLossRefusal(snap, {
+      gateOpen: useWebCodecsPath,
+      capabilityFailures: capabilityDiagnosis.failures,
+      routing: routingForDiagnostics,
+    });
+    if (gradeLossRefusal) {
+      const segmentList = gradeLossRefusal.affectedSegmentIndices.map((i) => i + 1).join(', ');
+      const plural = gradeLossRefusal.affectedSegmentIndices.length > 1 ? 's' : '';
+      const message = gradeLossRefusal.failedGateClauses
+        ? `Export refused: this machine cannot use the accelerated export path (${gradeLossRefusal.failedGateClauses.join(', ')}), and the compatibility path cannot render the color grade on segment${plural} ${segmentList}.`
+        : `Export refused: segment${plural} ${segmentList} combine a color grade with an effect that cannot run on the accelerated export path, so the grade would be silently dropped.`;
+      stopElapsedTimer();
+      await teardown();
+      setState(prev => ({
+        isExporting: false,
+        stage: null,
+        progress: 0,
+        stageLabel: '',
+        pendingSealConsent: null,
+        pendingResumeOffer: null,
+        resumeRefusalNotice: null,
+        orphanSweepNotice: null,
+        cleanupNotices: [],
+        error: { kind: 'grade_loss_refused', message, gradeLossRefusal },
+        elapsedSec: prev.elapsedSec,
+      }));
+      return;
+    }
+
+    // PROMPT 28 STEP 3 — one-shot GPU/WebCodecs capability probe, taken once
+    // here (before the first encoder session on the WebCodecs path, before
+    // any encoder session at all) and stamped into every liveness snapshot
+    // for this run via the two attachment points below. `null` on the
+    // legacy path — there is no encoder session to probe ahead of.
+    // Read-only: does not change routing, recovery, or encoded bytes.
+    let gpuCapability: GpuCapabilityReport | null = null;
+    if (useWebCodecsPath) {
+      try {
+        gpuCapability = await probeGpuCapabilities({
+          createWebGL2Context: () => document.createElement('canvas').getContext('webgl2'),
+          isVideoEncoderConfigSupported: (config) => VideoEncoder.isConfigSupported(config),
+        });
+      } catch {
+        gpuCapability = null;
+      }
+    }
+
     const onProgress = (stage: ExportStage): void => {
       if (generationRef.current !== gen) return;
       setState(prev => ({
@@ -736,6 +851,16 @@ export function useExport(
         isExporting: false,
         error: {
           ...result.error,
+          // PROMPT 28 STEP 1/3 — stamped at this single hop (mirrors the
+          // durabilityWarnings drain immediately above) so exportPathSelection
+          // and gpuCapability reach every failure regardless of how deep in
+          // the pipeline it originated, rather than threading a new param
+          // through exportProjectWebCodecs/exportProject.
+          liveness: {
+            ...(result.error.liveness ?? { lastPhase: null, msSinceLastPhaseChange: null, pieceIndex: null, framesEncoded: null }),
+            exportPathSelection,
+            gpuCapability,
+          },
           ...(durabilityWarnings.length > 0 ? { durabilityWarnings } : {}),
           ...(sessionDisposition
             ? {
@@ -795,6 +920,8 @@ export function useExport(
           // a delivery failure shipped a blob with every liveness field null.
           liveness: {
             ...(result.liveness ?? { pieceIndex: null, framesEncoded: null }),
+            exportPathSelection,
+            gpuCapability,
             lastPhase: 'deliver',
             msSinceLastPhaseChange: Math.round(performance.now() - deliveryStartedAt),
           },

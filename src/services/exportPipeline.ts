@@ -4,6 +4,7 @@ import { FrameGlobalConfig } from './frameRenderer';
 import { resolveEffectiveTransition } from './transitionResolver';
 import { isPlainVideoSegment, isPlainImageSegment } from './plainSegment';
 import { checkTimelineIsGapless } from './timelinePartition';
+import type { GradeLossRefusal } from './webcodecsExport/exportPathSelectionTypes';
 
 export interface ExportOptions {
   width?: number;
@@ -55,6 +56,14 @@ export type ExportErrorKind =
    *  budget, never offered a lossy seal, session retained for resume when a
    *  checkpoint exists. See `webcodecsExport/diskFull.ts`. */
   | 'disk_full'
+  /**
+   * PROMPT 28 STEP 2 (CRITICAL) — refused before any encoding started
+   * because at least one segment carries a non-neutral `effectGrade` that
+   * the path this run would have taken cannot render (no grade renderer
+   * outside the GL tier). See `ExportError.gradeLossRefusal` and
+   * `webcodecsExport/exportPathSelection.ts`.
+   */
+  | 'grade_loss_refused'
   | 'unknown';
 
 /**
@@ -115,6 +124,22 @@ export interface ExportLivenessSnapshot {
    * round had to reason its way to: was the export still writing when it died?
    */
   appendLedger?: ExportAppendLedger | null;
+  /**
+   * PROMPT 28 STEP 1 — which top-level path this run took and why, recorded
+   * immediately after the gate decision (before any encoding), so a failure
+   * payload never has to infer path choice from progress-string shape the
+   * way the audit's field investigation had to. `null` only on a snapshot
+   * built before this round shipped (never on a run recorded by it).
+   */
+  exportPathSelection?: import('./webcodecsExport/exportPathSelection').ExportPathSelectionDiagnostics | null;
+  /**
+   * PROMPT 28 STEP 3 — one-shot GPU/WebCodecs capability probe
+   * (`gpuCapabilityProbe.ts`), taken once before the first encoder session
+   * and stamped immutably into every liveness snapshot for this run. `null`
+   * when the probe was never taken (legacy path — no encoder session to
+   * probe ahead of) or when the probe call itself unexpectedly rejected.
+   */
+  gpuCapability?: import('./webcodecsExport/gpuCapabilityProbe').GpuCapabilityReport | null;
 }
 
 /**
@@ -172,6 +197,25 @@ export interface ExportAppendLedger {
    * pipeline threw away itself, not bytes the encoder never made.
    */
   discardedAtFinish: { chunks: number; bytes: number } | null;
+  /**
+   * PROMPT 28 STEP 4 — throughput attribution: cumulative + max milliseconds
+   * spent inside the `appendFileRaw` IPC call itself (writer cost only —
+   * excludes the queue wait counted elsewhere), and how many samples that
+   * covers. See `docs/ws3-export/windows-throughput-audit.md` §2/§6.
+   */
+  appendFileRawMsTotal?: number;
+  appendFileRawMsMax?: number;
+  appendFileRawSampleCount?: number;
+  /** Same shape, for the `sessionFileSize` verification read taken right
+   *  after each append. */
+  sessionFileSizeMsTotal?: number;
+  sessionFileSizeMsMax?: number;
+  sessionFileSizeSampleCount?: number;
+  /** High-water marks for the append queue depth — the largest backlog this
+   *  run ever carried, distinct from `queueDepthChunks`/`queueDepthBytes`
+   *  above (which are the CURRENT depth at snapshot time). */
+  queueDepthChunksHighWater?: number;
+  queueDepthBytesHighWater?: number;
 }
 
 /** One phase-log line, flattened for the diagnostics blob. */
@@ -215,6 +259,11 @@ export interface ExportError {
    * `destroyed`, or `refused_live`. Plus the bytes the session still holds.
    */
   sessionDisposition?: { disposition: string; retainedBytes: number; reclaimedBytes: number; path: string };
+  /**
+   * PROMPT 28 STEP 2 (CRITICAL) — present only on `kind: 'grade_loss_refused'`.
+   * See `webcodecsExport/exportPathSelectionTypes.ts`'s `GradeLossRefusal`.
+   */
+  gradeLossRefusal?: GradeLossRefusal;
 }
 
 export type ExportResult =

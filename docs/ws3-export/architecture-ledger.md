@@ -2290,3 +2290,179 @@ reading back the `.part` the old code had just deleted; green after the `keep_pa
 round added no annexb fixtures).
 
 **No merge to main. No PR.** Pushed `ws3-disk-full-hardening`.
+
+### Round 22 (2026-09-13) — Path-selection correctness + integration (PROMPT 28)
+
+Worktree `ws3-export-integration`, cut from `main` @ `4d4922c` (rollback anchor). No PR, no merge
+to main.
+
+#### STEP 0 — merge chain
+
+`git merge origin/ws3-disk-full-hardening` (Round 21, `dd39b08`) fast-forwarded cleanly onto
+`9297de2`. `git merge origin/ws3-win-perf-audit` (Cursor @ `bb3409d`) merged with zero conflicts,
+adding exactly the four expected files (`gpuCapabilityProbe.ts`/`.test.ts`,
+`windows-throughput-audit.md`, `export-path-selection-audit.md`) and touching no pipeline code.
+Post-merge baseline confirmed exactly as predicted: `npm test` **3617 / 0 / 78 = 3695**, `cargo
+test` **339 / 0 / 6 = 345**, `cargo test --features fa-inference` **425 / 0 / 36 = 461**.
+
+#### Context — the defect this round closes
+
+`export-path-selection-audit.md` (Cursor, `bb3409d`) independently traced Machine 2's
+`Encoding segment 1/345` (no encoder-session suffix, ~12.8 fps) against Machine 1's
+`1/1 · encoder session 1/n` (~96 fps) on comparable projects to the top-level
+`isWebCodecsExportGateOpen()` fork (`useExport.ts`), not a within-WebCodecs tier downgrade: five
+capability clauses, none logging on failure, most likely failing at `isWebGL2Supported()`.
+Independently re-verified against source before implementing anything: `grep -rn effectGrade src/`
+returns hits only in `services/gl/compositeParams.ts` (GL) and UI/App code — **zero** references in
+`frameRenderer.ts`/`segmentEncoder.ts`, which back both the legacy canvas path and WebCodecs' own
+Tier C canvas tier. Confirmed CRITICAL finding: a project with a non-neutral `effectGrade` that
+lands on either non-GL path exports successfully, silently missing the grade.
+
+**CC ruling on refusal scope (checkpointed with the user before implementing):** hard-refuse ONLY
+on grade loss, per the audit's own CRITICAL classification. Every other canvas-routed feature
+(filters, legacy transitions, non-zoom animations) already renders correctly on canvas per the
+parity matrix below — those cases get the STEP 2b slow-path posture (no new UI wired this round;
+`ExportPathSelectionDiagnostics` carries what a future warning surface would need), not a refusal.
+
+**Parity matrix** (GL / Tier C canvas / legacy):
+
+| Feature | GL | Canvas | Legacy |
+|---|---|---|---|
+| Color filter (`overlayFilter`) | disqualifies → canvas | renders | renders |
+| Clip-effect slugs (blur/sepia/invert/duotone/color-grade-preset) | disqualifies → canvas | renders | renders |
+| GL transitions (4 slugs) | native | renders (intended parity) | renders |
+| Legacy enum transitions | disqualifies → canvas | renders | renders |
+| Zoom in/out | native | renders | renders |
+| Other animations (Ken Burns, float, bounce, …) | disqualifies → canvas | renders | renders |
+| **`effectGrade`** | **renders** | **dropped — no renderer** | **dropped — no renderer** |
+| Text/headings/overlays | renders | renders | renders — not a routing factor |
+
+#### STEP 1 — gate instrumentation
+
+`glContext.ts` gains `diagnoseWebGL2Support()` alongside the existing `isWebGL2Supported()` (bare
+boolean unchanged, same callers) — a separately-memoized diagnosis naming `failureReason`
+(`no-document` / `context-null` / `threw`) and the thrown error's message when applicable.
+`useExport.ts`'s `isWebCodecsExportCapable()` is now backed by `diagnoseWebCodecsExportCapability()`,
+which evaluates all five clauses (rather than short-circuiting at the first `false`, so a runtime
+failing two clauses at once reports both) and returns `{ capable, failures, webgl2Failure }`. New
+leaf-dependency-free module `exportPathSelectionTypes.ts` holds
+`WebCodecsCapabilityFailureCode`/`WebCodecsCapabilityDiagnosis`/`GradeLossRefusal` so both
+`exportPipeline.ts` (needs the failure-code type on `ExportError.gradeLossRefusal`) and
+`useExport.ts` can import them without either importing the other. `ExportLivenessSnapshot` gains
+optional `exportPathSelection`/`gpuCapability` fields; `ExportAppendLedger` gains the STEP 4
+counters (below). `exportDiagnosticsBlob.ts` flattens `exportPathSelection`, `gpuCapability`, and
+`gradeLossRefusal` to the top level, mirroring the existing `appendLedger` pattern; the
+completeness test's sentinel fixture was extended with distinct sentinels for all three (one
+deliberate `null` leaf — `top1080p30EncoderSupport.error` — kept singular per the test's own
+distinctness sanity check).
+
+Wiring point: `exportPathSelection` is built in `useExport.ts`'s `runExport`, immediately after
+`isWebCodecsExportGateOpen()`/`planWebCodecsExport()` are evaluated and before `onProgress` is
+defined — i.e. before any encoder work. Rather than threading it as a new parameter through
+`exportProjectWebCodecs`/`exportProject` (both CC-review-gated pipeline entry points), it is
+stamped onto `liveness` at the two places a run's outcome already reaches `useExport.ts`'s own
+state (the pipeline-failure branch and the delivery-failure branch) — the same hop pattern
+`durabilityWarnings` already uses. This keeps the change entirely inside `useExport.ts` +
+diagnostics types; zero lines changed in the CC-review-gated orchestrator for this step.
+
+#### STEP 2 (CRITICAL) — grade-loss fail-loud refusal
+
+New `exportPathSelection.ts`: `isNeutralGrade`, `nonNeutralGradeSegmentIndices`, and
+`evaluateGradeLossRefusal(project, { gateOpen, capabilityFailures, routing })`. Gate-closed
+(legacy): ANY non-neutral-grade segment refuses (legacy has no grade renderer for anything).
+Gate-open (WebCodecs): only a graded segment whose tier resolved to `'canvas'` (found by walking
+`routing.pieces[].tier`/`startIndex`/`segmentCount`, which partition segments contiguously and
+completely — no new export needed from `exportPipelineWebCodecs.ts`) refuses; a graded GL-tier
+segment is unaffected. New `ExportErrorKind` member `grade_loss_refused`, wired into
+`App.tsx`'s `getExportErrorSummary` switch (tsc's own exhaustiveness check caught the missing arm).
+`useExport.ts` calls this check right after computing `exportPathSelection`, before `onProgress`,
+before the resume-discovery block, before any backend/encoder work — a match refuses via the same
+`setState(...); return;` shape the existing `destination_path` pre-flight guard uses, so zero
+frames are ever rendered for a refused run.
+
+**Red-then-green**, at the policy-function level (this repo has no jsdom/react-testing-library —
+same limitation `useExport.test.ts`'s own header documents — so the hook body itself is not
+directly renderable; `evaluateGradeLossRefusal` is the exact function `useExport.ts` calls at the
+decision point, tested directly): `exportPathSelection.test.ts`'s
+`'RED-then-GREEN: refuses when ANY segment carries a non-neutral grade...'` case is the shape a
+pre-Round-22 build would export successfully with the grade silently dropped; it now returns a
+populated `GradeLossRefusal`. Full matrix: gate-closed + graded (refuses), gate-closed + all-neutral
+(no refusal), gate-open + GL-tier graded (no refusal — renders correctly), gate-open + canvas-tier
+graded (refuses, `failedGateClauses: null`), gate-open + canvas-tier non-graded (no refusal —
+matches the parity matrix's claim that canvas renders every other feature correctly).
+
+#### STEP 3 — GPU capability probe wiring
+
+`useExport.ts` calls `probeGpuCapabilities()` (from `gpuCapabilityProbe.ts`, unmodified — this round
+only consumes it) exactly once per run, gated on `useWebCodecsPath`, at the same early point as the
+`exportPathSelection` computation — before the first (or any) encoder session. Read-only:
+`createWebGL2Context`/`isVideoEncoderConfigSupported` are the same production dependencies the
+throughput audit's wiring spec names; a rejection is caught and recorded as `null` rather than
+becoming a new export gate. Stamped into `liveness.gpuCapability` at the same two attachment points
+as `exportPathSelection`. Reviewed the throughput audit's STEP 6 spec against the actual diff before
+accepting it: nothing here touches a frozen constant, the recovery ladder, session/piece
+boundaries, frame timestamps, codec config, or encoded bytes — confirmed by the STEP 0 gate numbers
+being test-count-additive only (see Gates below).
+
+#### STEP 4 — throughput attribution counters
+
+All additive: new named buckets alongside existing ones (`activeTracker.add(...)` is a generic
+`Record<string, number>` accumulator — no type change needed for the ms totals themselves), so no
+existing bucket's value or name changed and every pre-existing test asserting on `phaseMs.composite`
+/ `.wait-dequeue` / `.encode-submit` still sees the identical value it did before.
+
+- `exportWorker.ts`: `texture-upload-draw` (upload + `renderFrame`, excluding the text pass) beside
+  `composite`; `video-frame-from-canvas` (isolates `new VideoFrame(canvas, ...)` construction) and
+  `encode-call` (isolates the synchronous `encoder.encode()` call) as sub-slices inside the existing
+  `encode-submit` window; `encoder-throttle-sleep` / `encoder-dequeue-wait` / `append-backpressure-wait`
+  as named sub-slices of the existing combined `wait-dequeue` bucket. New module-scope
+  `activeEncodeQueueHighWater`, reset per run, sampled every tick, surfaced as
+  `ExportWorkerDiagnosticsPayload.encodeQueueHighWater` (optional — absent on any payload built
+  before this round or a reconstruction with no live encoder).
+- `exportPipelineWebCodecs.ts`: cumulative + max `appendFileRawMsTotal`/`appendFileRawMsMax`
+  (timing `ffmpeg.appendFileRaw` alone) and `sessionFileSizeMsTotal`/`sessionFileSizeMsMax` (timing
+  the post-append `ffmpeg.sessionFileSize` verification read), plus sample counts for both, and
+  `queueDepthChunksHighWater`/`queueDepthBytesHighWater` (updated only on the accept side, the only
+  side that can grow the depth) — all new optional fields on `ExportAppendLedger`, stamped in the
+  existing `buildAppendLedger` closure.
+
+Bounded by construction throughout: every new field is a running total, a running max, or a running
+high-water mark — no new list, no unbounded histogram, matching the throughput audit's own "totals
+plus sample count plus max" minimum.
+
+#### Gates
+
+`npx tsc --noEmit`: clean. `npm run lint` (= `tsc --noEmit`): clean.
+
+`npm test`, twice, identical: **3627 passed, 0 failed, 78 skipped = 3705** (baseline 3695 + 10 new:
+`exportPathSelection.test.ts` ×9, one added assertion group in `exportDiagnosticsBlob.test.ts` ×1).
+
+`cargo test`: **339 / 0 / 6 = 345** — unchanged from the STEP 0 baseline; no Rust source touched
+this round. `cargo test --features fa-inference -- --test-threads=1`: **425 / 0 / 36 = 461** —
+likewise unchanged.
+
+**Eight frozen constants and four fixture digests: unchanged.** `grep` against source post-change
+confirms none of `WATCHDOG_MS`, `FORWARD_PROGRESS_BOUND_MS`, `FLUSH_BOUND_MS`,
+`APPEND_DRAIN_BOUND_MS`, `TRUNCATE_BOUND_MS`, `KILL_BOUND_MS`, `APPEND_BATCH_BYTES`,
+`WINDOWS_MAX_PATH` were touched; `5db5e004…`/`af89ca66…`/`1abf9839…`/`fb9cdda2…` untouched (this
+round added no annexb fixtures). `git status`: clean except gitignored `node_modules`/`public`.
+
+#### Disposition — silent-fallback defects from `export-path-selection-audit.md` STEP 3
+
+| Location | Round 22 disposition |
+|---|---|
+| Top-level gate closed, `effectGrade` present | **Fixed** — hard refusal, STEP 2 |
+| `computeIndividualTier` → `'canvas'` with `effectGrade` present | **Fixed** — hard refusal, STEP 2 |
+| `groupConnectedComponents` downgrade with `effectGrade` present | **Fixed** — covered by the same canvas-tier check (STEP 2 walks `routing.pieces[].tier` post-grouping) |
+| Top-level gate closed / canvas-tier, non-grade features (filters, legacy transitions, other animations) | **Not a defect** — parity matrix confirms canvas/legacy render these correctly; no refusal, no warning UI added this round |
+| `createFrameEncoderPool()` → sequential fallback | **Open** — perf-only, `console.log` remains the only signal; not in this round's scope |
+| Hardware encoder ladder silent software fallback | **Open** — `selectedHardwareRung` exists in worker diagnostics but STEP 3's `gpuCapability` deliberately does NOT feed it (per the throughput audit's own review-boundary: canvas rasterizer and encoder backend are separate facts) |
+| `isWebGL2Supported()` memoization stale after first probe | **Open** — unchanged this round; a session-lifetime memoization, matching every other capability probe in this codebase |
+
+**Standing architectural limitation, not a bug to close:** the legacy top-level path and the
+WebCodecs Tier C canvas tier sit OUTSIDE all eight frozen liveness bounds, the recovery ladder
+(rewind/failover/salvage), the append ledger's batching/backpressure machinery, and durable
+checkpoint/resume — this was true before this round and remains true after it; STEP 2's refusal
+prevents the ONE case (grade loss) where that gap was also silently WRONG, not just slower.
+
+**No merge to main. No PR.** Push `ws3-export-integration`.

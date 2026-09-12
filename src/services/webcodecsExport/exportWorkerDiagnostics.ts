@@ -256,6 +256,11 @@ export interface ExportWorkerDiagnosticsPayload {
    *  that can actually show two runs composited the same pixels). */
   frameContentDigest: string | null;
   frameContentDigestFrames: number | null;
+  /** PROMPT 28 STEP 4 — largest `encoder.encodeQueueSize` observed this run.
+   *  Optional: absent on any payload built before this round and on a
+   *  reconstruction that has no live encoder to have sampled. See
+   *  docs/ws3-export/windows-throughput-audit.md §2/§6. */
+  encodeQueueHighWater?: number;
 }
 
 /**

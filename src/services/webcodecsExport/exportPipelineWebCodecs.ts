@@ -1400,6 +1400,22 @@ export function driveGlRun(
     let queueDepthBytes = 0;
     /** `appendFileRaw` IPC calls actually issued (<< `appendCallCount` now). */
     let appendIpcCallCount = 0;
+    /**
+     * PROMPT 28 STEP 4 — throughput attribution counters (windows-throughput-
+     * audit.md §2/§6). Additive/diagnostic only: read-only bookkeeping around
+     * calls that already happen, never changing what those calls do, their
+     * order, or the recovery/backpressure decisions built on the counters
+     * above. Bounded by construction — every one of these is a running total,
+     * a running max, or a running high-water mark, never an unbounded list.
+     */
+    let appendFileRawMsTotal = 0;
+    let appendFileRawMsMax = 0;
+    let appendFileRawSampleCount = 0;
+    let sessionFileSizeMsTotal = 0;
+    let sessionFileSizeMsMax = 0;
+    let sessionFileSizeSampleCount = 0;
+    let queueDepthChunksHighWater = 0;
+    let queueDepthBytesHighWater = 0;
     let lastAppendCompletedAt = now();
     let chunksAppendedDuringFlush = 0;
     let bytesAppendedDuringFlush = 0;
@@ -1642,6 +1658,15 @@ export function driveGlRun(
       bytesAppended: appendBytes,
       queueDepthChunks,
       queueDepthBytes,
+      // PROMPT 28 STEP 4 — see the fields' own doc comments (exportPipeline.ts).
+      appendFileRawMsTotal,
+      appendFileRawMsMax,
+      appendFileRawSampleCount,
+      sessionFileSizeMsTotal,
+      sessionFileSizeMsMax,
+      sessionFileSizeSampleCount,
+      queueDepthChunksHighWater,
+      queueDepthBytesHighWater,
       msSinceLastAppendCompleted: now() - lastAppendCompletedAt,
       chunksAppendedDuringFlush,
       bytesAppendedDuringFlush,
@@ -1972,7 +1997,12 @@ export function driveGlRun(
         const payload = concatChunks(parts, batchBytes);
         const batchStartOffset = appendBytes;
         try {
+          const appendFileRawStarted = now();
           await ffmpeg.appendFileRaw(runFile, payload);
+          const appendFileRawMs = now() - appendFileRawStarted;
+          appendFileRawMsTotal += appendFileRawMs;
+          if (appendFileRawMs > appendFileRawMsMax) appendFileRawMsMax = appendFileRawMs;
+          appendFileRawSampleCount++;
           appendIpcCallCount++;
           // WS3 Round 12 (H1) — VERIFY EVERY APPEND.
           //
@@ -1994,7 +2024,12 @@ export function driveGlRun(
           // This never continues silently; it fails the export at the batch
           // that lost bytes, not at the concat/frame-count guard minutes
           // later.
+          const sessionFileSizeStarted = now();
           const landedSize = await ffmpeg.sessionFileSize(runFile);
+          const sessionFileSizeMs = now() - sessionFileSizeStarted;
+          sessionFileSizeMsTotal += sessionFileSizeMs;
+          if (sessionFileSizeMs > sessionFileSizeMsMax) sessionFileSizeMsMax = sessionFileSizeMs;
+          sessionFileSizeSampleCount++;
           const expectedSize = fileBaseByteOffset + batchStartOffset + batchBytes;
           if (landedSize !== expectedSize) {
             throw new ShortAppendError({
@@ -2143,6 +2178,10 @@ export function driveGlRun(
           pendingBatchChunks++;
           queueDepthChunks++;
           queueDepthBytes += bytes.byteLength;
+          // PROMPT 28 STEP 4 — high-water marks, updated only on the accept
+          // side (the only side that can grow the depth).
+          if (queueDepthChunks > queueDepthChunksHighWater) queueDepthChunksHighWater = queueDepthChunks;
+          if (queueDepthBytes > queueDepthBytesHighWater) queueDepthBytesHighWater = queueDepthBytes;
           if (pendingBatchChunks >= APPEND_BATCH_CHUNKS || pendingBatchBytes >= APPEND_BATCH_BYTES) {
             flushPendingBatch();
           } else if (pendingBatchTimer === null) {

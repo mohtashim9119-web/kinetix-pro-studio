@@ -49,6 +49,15 @@ export function buildExportDiagnosticsBlob(
     // WS3 Round 20 — fsyncs degraded to "written, not confirmed durable"
     // during the failed run (see `ExportError.durabilityWarnings`).
     durabilityWarnings: err.durabilityWarnings ?? null,
+    // PROMPT 28 STEP 1/3 — path choice + GPU capability, flattened
+    // top-level same as `appendLedger`/`gpuCapability` above it: `liveness`
+    // itself is the completeness guarantee, these are a quick-glance copy.
+    exportPathSelection: err.liveness?.exportPathSelection ?? null,
+    gpuCapability: err.liveness?.gpuCapability ?? null,
+    // PROMPT 28 STEP 2 (CRITICAL) — present only when this run was refused
+    // before any encoding started because a segment's color grade would
+    // have been silently dropped. See `ExportError.gradeLossRefusal`.
+    gradeLossRefusal: err.gradeLossRefusal ?? null,
     projectMeta,
   };
 }

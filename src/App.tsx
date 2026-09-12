@@ -812,6 +812,10 @@ function getExportErrorSummary(error: ExportError): string {
       // phase and the required/available bytes; same posture as
       // timeline_gap/destination_path.
       return error.message;
+    case 'grade_loss_refused':
+      // PROMPT 28 STEP 2 (CRITICAL) — the guard's own message already names
+      // the affected segments and remediation; same posture as timeline_gap.
+      return error.message;
     case 'unknown':
       return 'An unexpected error occurred during export.';
   }
