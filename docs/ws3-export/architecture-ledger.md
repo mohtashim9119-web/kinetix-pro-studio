@@ -2020,3 +2020,273 @@ the blob, and reproducibility on the same project). Note the diagnostics blob fr
 the null one this round fixed, so none of those fields are known for that run.
 
 **No merge to main. No PR.** Pushed `ws3-windows-fsync-fix`.
+
+### Round 21 (2026-09-13) — Disk-full hardening + orphan reclamation (PROMPT 25)
+
+Worktree `ws3-disk-full-hardening`, cut from `ws3-export-integration` @ `9297de2` (fast-forwarded
+from `1abe9a1`). Rollback anchor `main` @ `4d4922c`. No PR, no merge to main.
+
+**Field evidence, machine 1 (2026-09-12T18:25:22Z, build 9297de2).** `error.kind = "mux"`,
+`muxOnly` audio-mux step, session `d9b1d204-2c8e-4552-a14f-99fb29ad6f83`, 1080p30, 379 segments,
+voiceover present. ffmpeg exit `-28`, `"No space left on device"` from `[aost#0:1/aac]`, then
+`"Error writing trailer"` / `"Error closing file"`. 50,911 frames encoded, 3,101 append IPC calls,
+1,694,429,224 bytes appended. **Genuine ENOSPC, not the Round 20 sync_all bug** — upstream was
+clean.
+
+#### STEP 0 — baseline at 9297de2
+
+`npx tsc --noEmit`: clean. `npm run lint` (= `tsc --noEmit`): clean. `npm test`: **3587 passed, 0
+failed, 78 skipped = 3665** — identical to Round 20's own recorded total (the fsync branch's tests
+are already counted there; nothing drifted between rounds). `cargo test`: **321 / 0 / 6 = 327**.
+`cargo test --features fa-inference -- --test-threads=1`: **407 / 0 / 36 = 443**. All four match
+Round 20's recorded figures exactly — used as-is rather than the task text's stale 3572/314/400
+numbers.
+
+#### STEP 1 — disk accounting model
+
+Every artifact the GL-tier, voiceover export path puts in the session temp dir
+(`env::temp_dir()/kinetix-export-<uuid>/`), its lifetime, and whether the code deletes it at that
+moment:
+
+| Artifact | Size | Becomes deletable | Deleted then? |
+|---|---|---|---|
+| `piece_<n>.h264` | A (below) | After a **successful** mux | Yes (`exportPipelineWebCodecs.ts`'s post-mux `intermediates` cleanup) — **retained on any mux/concat failure**, deliberately: a resume needs it |
+| `video_all.h264` (≥ 2 pieces only) | A | Same as above | Same as above |
+| `<video>.premux.mp4` | ≈ A | Immediately after the audio-mux step, success or failure | Yes — `muxOnly.ts`'s own `finally` (`ffmpeg.deleteFile`), unconditional |
+| `voiceover_audio` | W (below) | After a successful mux | Yes, with the pieces |
+| `export_final.mp4` | A + AAC·D | Only when the session is destroyed | Not on a failed mux (this round's own D4 fix keeps it that way on purpose — see STEP 4) |
+| `export_state.json` (+ `.tmp`/`.bak`) | KB | Never during a resumable run | **Retained** — this IS the resume manifest |
+| `session_claim.json` | B | On session release | Yes |
+
+No PNG/canvas (`segv1_*`) artifact exists on the machine-1 path (GL tier only); the canvas-tier
+per-frame PNG transient is modelled separately below for completeness (`diskFull.ts`'s
+`EXPORT_DISK_CANVAS_PNG_BYTES_PER_FRAME`) since a mixed-tier project can still hit it.
+
+**The formula**, `A` = Annex-B video bytes at `EXPORT_BITRATE = 8,000,000` bit/s (exportWorker.ts,
+resolution-independent — a fixed target, not per-pixel) ÷ 8 = **1,000,000 bytes/second of
+1080p30 output**; `D` = duration in seconds; `W` = voiceover asset bytes (its own file size, or the
+PCM-WAV rate 192,000 B/s when unknown); AAC = 24,000 B/s (192 kbit/s ÷ 8, `buildAudioMuxArgs`).
+Peak is the audio-mux step, when pieces + premux + voiceover + final all coexist:
+
+```
+peak(1 piece)   = 3A + W + AAC·D     (piece, premux, final)
+peak(≥2 pieces) = 4A + W + AAC·D     (+ video_all)
+```
+
+**Validated against the field numbers** (50,911 frames @ 30 fps → D = 1697.03 s):
+A = 1,697,033,333 B (field measured 1,694,429,224 B appended — model 0.15 % HIGH, i.e.
+998,465 B/s actual vs. 1,000,000 B/s modelled); W = 325,830,400 B (WAV-rate estimate; the field
+note's own 326 MB is this same number rounded); AAC = 40,728,800 B; **peak(1 piece) = 5,457,659,200
+B ≈ 5.08 GiB**; final = A + AAC = 1,737,762,133 B ≈ 1.62 GiB; **amplification = 3.14×** the
+delivered output (the field note's own "~3.3×" used a smaller, non-code-derived premux estimate —
+the code path is a stream copy, so the model keeps the larger, code-derived ≈A figure instead of
+guessing a smaller one).
+
+`-movflags +faststart` shifts `moov` **in place** (`libavformat`'s `shift_data` re-opens the same
+output file for read, no temp copy), so neither MP4 step doubles its own artifact.
+
+Implemented in `src/services/webcodecsExport/diskFull.ts` (`estimateExportDiskBytes`), with every
+constant's derivation as an inline comment in the same style as the seven/eight frozen constants.
+**New constant**, `EXPORT_DISK_HEADROOM_RATIO = 0.10` plus a fixed
+`EXPORT_DISK_HEADROOM_FLOOR_BYTES = 64 MiB` floor — 10 % covers VBR rate-control drift (the one
+field sample ran at 99.85 % of target, and `VideoEncoder.bitrate` is an average bound, not a file
+cap); the floor covers itemized container overhead (a 26-min `moov` is ~2 MB; two MP4 headers,
+manifest, and claim are KB) for short exports where 10 % would otherwise underprice it. Recorded
+as a judgement call, not a measurement — see the constant's own doc comment.
+
+#### STEP 2 — preflight (D1)
+
+Rust: `src-tauri/src/disk_space.rs`, new module. `volume_free_space(path)` walks up to the nearest
+EXISTING ancestor (the destination file itself may not exist yet) and reads
+`fs4::available_space`, which is `GetDiskFreeSpaceExW`'s **`lpFreeBytesAvailableToCaller`** (first
+out-param — quota-aware, NOT `lpTotalNumberOfFreeBytes`) on Windows and `f_frsize * f_bavail` on
+Unix — verified against `fs4-0.9.1`'s own source, not assumed. `volume_key(path)` identifies which
+readings share a free-space pool: `st_dev` on Unix, the drive-letter/UNC root prefix on Windows;
+the TS side (`diskFull.ts`'s `groupVolumes`) additionally merges any two readings with
+byte-identical `available_bytes`, which closes the one gap `st_dev` alone cannot (two APFS volumes
+in one container have distinct device ids but share the pool). New Tauri command
+`ffmpeg_volume_free_space(session_id, dest_path?)` returns the temp tree's reading and, when a
+destination is already chosen, the destination volume's too.
+
+`exportProjectWebCodecs` (`exportPipelineWebCodecs.ts`) runs the check **before `onProgress({type:
+'loading_ffmpeg'})`** — before any worker is built, before `checkpointWriter` exists, before a
+single byte is written — behind `ffmpeg.volumeFreeSpace` being present on the interface (optional,
+same pattern as `writeExportState`: a fake without it — every pre-existing test — skips the check
+byte-for-byte identically to before this round). `decideDiskPreflight` sums per volume-group and
+refuses on the first volume that cannot hold its `applyHeadroom(...)` requirement, returning the
+exact required/available bytes and the paths on that volume.
+
+#### STEP 3 — ENOSPC as a first-class terminal (D3)
+
+**Classification**, `disk_space::io_error_is_disk_full` / `ffmpeg_run_is_disk_full`: portable
+`io::ErrorKind::StorageFull` (also `QuotaExceeded` — a per-user quota is out-of-space for this
+process even with bytes free on the volume) **or**, on Windows, raw OS error `112`
+(`ERROR_DISK_FULL`) or `39` (`ERROR_HANDLE_DISK_FULL` — raised on the handle when NTFS cannot grow
+its allocation; distinct from 112 and not covered by std's kind mapping on every toolchain, so
+checked explicitly) **or** ffmpeg's own exit `-28` (`AVERROR(ENOSPC)`, the field's literal exit
+code) / `228` (the same value truncated to a POSIX shell's 0-255 range) / the stderr string
+`"No space left on device"` anywhere in the tail. Every native write site
+(`ffmpeg_write_file[_raw]`, `ffmpeg_append_file_raw`, `concat_annexb_pieces_inner`,
+`copy_session_file_atomic`'s `.part` write) tags a matching error with a `[disk-full]` prefix via
+`tag_if_disk_full`; `ffmpeg_exec`'s own exit-code path does the same. TS side, `diskFull.ts`'s
+`isDiskFullCause`/`isDiskFullError` recognise the tag plus every raw spelling, so a fake that
+throws a plain `Error('ENOSPC: ...')` in a test is classified identically to the real native
+string.
+
+**(a) Never charges the recovery budget.** `finishDiskFull` (a new terminal path in
+`driveGlRun`, alongside `finishWatchdog`/`finishProgressBound`/`finishDrainBound`) settles the run
+the moment an append's `catch` classifies its error as disk-full — **before** any bound would ever
+fire, so a full disk during append no longer waits out `WATCHDOG_MS`/`FORWARD_PROGRESS_BOUND_MS`
+only to be reported as `via: 'watchdog'`/`'stall'` with the real cause absent. Post-encode
+(concat/verify/voiceover-write/mux/deliver), `postEncodeError` checks `isDiskFullError` first and
+routes to the typed error instead of the step's generic wording. Neither path touches
+`boundaryRewindsUsed`/`hardwareFailoverUsed`/`checkpointResumeAttempts`/`totalRecoveryAttempts` —
+proved by `diskFullWiring.test.ts`'s APPEND and MUX rows, which assert the written manifest's
+budget fields are all zero after the typed failure.
+
+**(b) Never triggers forced sealing or truncate-to-last-keyframe.** `finishDiskFull` returns before
+`driveGlRun`'s salvage-truncate path ever runs; the post-encode `disk_full` check sits ahead of
+every `truncateAnnexb`/`truncateAnnexbToOffset`/`requestForcedSealConsent` call site. Proved by the
+same two wiring tests: `consent` is never invoked, `truncateAnnexb*` never called.
+
+**(c) One sentence plus free/required bytes; the raw tail capped.** `diskFullExportError` builds
+`ExportError.message` as `"The export ran out of disk space{ on the volume holding <path>}
+(<phase>). Needs about <X>, <Y> free."` (or a bare one-sentence form with no numbers when the
+failure came from a write rather than the preflight, which has no modelled requirement). The raw
+native cause rides on `ExportError.cause`, capped by `capDiagnosticCause`
+(`DISK_FULL_CAUSE_MAX_LINES = 12`, `DISK_FULL_CAUSE_MAX_BYTES = 1,500`) — the ffmpeg `frame=/size=/
+video:` progress spam is dropped by line-prefix filter, the actual error lines (which come last)
+survive. Native side mirrors this at the source: `ffmpeg_exec`'s stderr tail moved from "last 2000
+CHARACTERS" (today's blob carried ~4 KB of progress spam) to `ffmpeg_stderr_tail`'s 12-line /
+1,500-byte, progress-filtered cap (`disk_space.rs`). `ExportError.diskFull` carries
+`{phase, requiredBytes, availableBytes, volumePath}` as structured fields for a UI to use directly
+rather than parsing the sentence.
+
+**(d) Resumability after an ENOSPC.** **Yes, when a checkpoint exists** — this is the STEP 4/D5
+retention path (`retain_session_for_resume`, wired from `useExport.ts`'s failure branch): on a
+`kind: 'disk_full'` result, the session's `piece_<n>.h264` files and `export_state.json` are kept
+and everything else (the failed mux's intermediates) is deleted, instead of the pre-round
+unconditional `destroy()`. **What blocks it before this round**: nothing architectural — the
+resume-discovery path (`exportResumeDiscovery.ts`) was already built to find exactly this shape of
+survivor; the gap was purely that the old failure path destroyed the whole directory on every
+error, checkpoint or not. A session that never reached its first rotation checkpoint
+(`never_checkpointed`, an existing resume-discovery classification) is still not resumable — no
+manifest exists to resume from — and `retain_session_for_resume` destroys it outright in that
+case, freeing the same bytes the old code freed.
+
+#### STEP 4 — partial-output disposition (D4)
+
+**What is on disk after the field failure.** `export_final.mp4` never gets past `muxOnly`'s
+`buildAudioMuxArgs` `ffmpeg.exec` call — ffmpeg opens the output, starts writing, and dies mid-write
+on the audio stream; the file that results is a **truncated, non-faststarted MP4** at the SESSION
+path (`<sessionDir>/export_final.mp4`), never at the operator's chosen destination — delivery
+(`save_session_file`/`copy_session_file_atomic`) never runs, because the pipeline returns `Err`
+before reaching the `deliver` phase. So the immediate question is not "is the destination
+corrupted" (it never touched) but "does a LATER retry's delivery ever get confused by that stray
+session file" — answered no: `retain_session_for_resume` deletes exactly this file (it is not in
+the resume-retained set — see STEP 1's table) whether the mux failure is disk-full or anything
+else.
+
+**The `.part`/`.bak`/rename_over window this intersects.** `docs/ws3-export/architecture-ledger.md`
+Round 18's own "worked through, not waved past" note on `rename_over`'s Windows fallback recorded a
+real, unfixed gap: if the process dies BETWEEN the two renames of the backup-then-promote sequence
+(`dest → dest.bak`, then `part → dest`), the original ends up at `dest.bak` and the new export at
+`dest.part`, both intact — but the OLD code then unconditionally deleted `.part` on ANY
+`copy_session_file_atomic` error, which on that exact interleaving would have destroyed the one
+complete copy left. Fixed at the root this round rather than papered over at the mux layer, since
+the task named it as the right place: `rename_over_checked` now distinguishes `Restored` (the
+ordinary case — `dest` is back under its own name, byte-identical) from `OriginalAtBackup` (the
+promote AND the restore both failed) and only the latter suppresses the `.part` cleanup; the
+error names both surviving paths explicitly. `copy_session_file_atomic_with` takes an injectable
+`rename` closure so this Windows-only fallback path is exercised on every platform.
+
+**The guarantee, and its test.** No partial file is ever left at the operator's chosen path; a
+pre-existing file at that path is never destroyed. Four new Rust tests:
+`failed_delivery_write_leaves_preexisting_dest_byte_identical` /
+`failed_delivery_write_leaves_fresh_dest_absent` (the write itself fails before any rename — the
+pre-existing/fresh-destination cases) and `rename_over_fallback_promote_failure_restores_original`
+/ `rename_over_fallback_restore_failure_keeps_both_files_and_names_them` (the Windows fallback
+branch, both failure depths). Plus the wiring test's own D4 assertion: a MUX-stage disk-full
+failure never calls `saveSessionFile` at all (delivery is downstream of a step that already
+failed), so the destination is provably untouched for the field's own failure shape.
+
+#### STEP 5 — orphan reclamation (D5)
+
+**Native.** `session_claim.rs` gains `retain_session_for_resume` (STEP 3/4's D3d), plus the D5
+read/write pair: `report_reclaimable_sessions()` scans every `kinetix-export-*` directory and
+classifies each `live` (a live claim — never reclaimable), `resumable` (a manifest, no live claim —
+reclaimable **if abandoned**, never auto-deleted by the report itself), or `orphan` (no manifest, no
+live claim). `reclaim_sessions(ids)` is the explicit operator action: removes exactly the named,
+non-live directories (refusing any that gained a live claim since the report), honoring the same
+`classify_remove_outcome` accounting invariant as the existing sweep (`pending_delete` — a Windows
+delete-pending race — is never counted as reclaimed). Four new Tauri commands:
+`ffmpeg_volume_free_space`, `ffmpeg_retain_session_for_resume`, `ffmpeg_reclaimable_sessions`,
+`ffmpeg_reclaim_sessions`.
+
+**Sweep on app startup.** New `App.tsx` mount-only effect calls `TauriFfmpeg.sweepOrphanSessions()`
+(the existing age/live-holder-gated sweep, unchanged threshold) THEN `reclaimableSessions()`, and
+if anything reclaimable remains (a resumable session the sweep correctly never touches, or an
+orphan under the age threshold) shows a toast — `"<bytes> from N old export session(s) can be
+freed (<temp dir>)."` — with an explicit **Reclaim** action button that calls `reclaimSessions` on
+every non-live entry. This is the "sweep on startup, not only the 1 h age timer" requirement: the
+sweep no longer waits for the user to next START an export (`useExport.ts`'s own per-attempt sweep
+is unchanged and still runs too).
+
+**Sweep on terminal export failure.** Already covered by STEP 3(d)/STEP 4's `retainForResume`
+wiring in `useExport.ts` — every failed export (disk-full or otherwise routed there) reports its
+own session's disposition (`retained`/`destroyed`/`refused_live`) rather than leaving it to the
+next sweep cycle; the reclaimable-bytes figure a NON-disk-full failure leaves behind (still calling
+plain `destroy()`) is picked up by the startup/next-export sweep as before.
+
+**Live-session safety.** `retain_session_for_resume` and `reclaim_sessions` both check
+`read_session_claim_record` + `is_holder_process_live` before touching anything, refusing with
+`disposition: "refused_live"` / `refused_live: [...]` exactly like the existing sweep's
+claimed-directory guard — never a new code path for this check.
+
+**Temp-tree paths, for manual clearing right now:**
+
+- **macOS:** `$TMPDIR` — typically `/var/folders/<xx>/<hash>/T/kinetix-export-<uuid>/`.
+- **Windows:** `%LOCALAPPDATA%\Temp\kinetix-export-<uuid>\` (Rust's `std::env::temp_dir()` resolves
+  to `GetTempPath2`'s result, which is `%LOCALAPPDATA%\Temp` unless `TMP`/`TEMP` is overridden).
+
+Machine 1's own stranded session (`d9b1d204-2c8e-4552-a14f-99fb29ad6f83`, the field failure this
+round fixes) can be cleared by deleting that directory by hand, or — once this branch ships — by
+the startup reclaim toast on next launch.
+
+#### Gates
+
+`npx tsc --noEmit`: clean. `npm run lint`: clean. `npm test`, twice, identical:
+**3608 passed, 0 failed, 78 skipped = 3686** (baseline 3665 + 21 new: `diskFull.test.ts` ×17,
+`diskFullWiring.test.ts` ×4). One transient failure surfaced and was fixed mid-round, not carried
+into the reported gate: a repo tripwire (`scripts/no-tmp-artifacts.test.ts`, K8) flags any
+`*.test.ts` under `src/`/`scripts/` that contains the literal substring `/tmp` — the new test
+files used `/tmp/...` as placeholder volume paths in fixture data (never touching the real
+filesystem); renamed to `/fake-vol/...`, tripwire green, no functional change.
+
+`cargo test`: **339 / 0 / 6 = 345** (baseline 321 + 18 new: `disk_space::tests` ×7,
+`ffmpeg::tests` ×5 — the D4 partial-output tests — `session_claim::tests` ×6 — retain/reclaim).
+Confirmed on 4 consecutive runs; one earlier run in this session reported 3 failures with no
+captured panic detail (output was piped through `tail`), not reproduced in 4 subsequent full runs
+immediately after — recorded as observed, not diagnosed further, per this ledger's own convention
+for a non-reproducing flake (Round 14's `whisper::in_flight_tests` precedent). `cargo test
+--features fa-inference -- --test-threads=1`: **425 / 0 / 36 = 461** (baseline 407 + 18, same new
+tests — the crate is one compilation unit; the fa-inference feature adds no NEW disk-full test,
+it recompiles the same ones).
+
+**Red, then green.** `diskFullWiring.test.ts`'s three rows (PREFLIGHT/APPEND/MUX) were run against
+the pipeline with none of STEP 2/3's wiring present (git-stashed): PREFLIGHT and MUX failed
+outright (`kind: 'timeline'`-style generic errors, no preflight ever ran); APPEND's own assertion
+("the run must settle without waiting for a liveness bound") timed out at 5 s, proving the
+pre-round behavior actually did wait on `WATCHDOG_MS`/`FORWARD_PROGRESS_BOUND_MS` rather than
+failing fast. All three green after restoring the wiring. Rust: `rename_over_fallback_restore_
+failure_keeps_both_files_and_names_them` was run against the pre-Round-21 `rename_over` (restore
+failure ignored, `.part` unconditionally deleted on any error) and failed with a `NotFound` panic
+reading back the `.part` the old code had just deleted; green after the `keep_part` fix.
+
+**Eight frozen constants and four fixture digests: unchanged** — none of `WATCHDOG_MS`,
+`FORWARD_PROGRESS_BOUND_MS`, `FLUSH_BOUND_MS`, `APPEND_DRAIN_BOUND_MS`, `TRUNCATE_BOUND_MS`,
+`KILL_BOUND_MS`, `APPEND_BATCH_BYTES`, `WINDOWS_MAX_PATH` were touched by this round; verified by
+`grep` against source post-change. `5db5e004…`/`af89ca66…`/`1abf9839…`/`fb9cdda2…` untouched (this
+round added no annexb fixtures).
+
+**No merge to main. No PR.** Pushed `ws3-disk-full-hardening`.

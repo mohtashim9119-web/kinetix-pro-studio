@@ -15,6 +15,7 @@ pub mod fa_production;
 mod fa_viterbi;
 #[cfg(feature = "fa-inference")]
 mod fa_onnx;
+mod disk_space;
 mod durable_fs;
 mod ffmpeg;
 mod session_claim;
@@ -460,6 +461,10 @@ pub fn run() {
             ffmpeg::ffmpeg_list_resumable_sessions,
             ffmpeg::ffmpeg_read_session_claim,
             ffmpeg::ffmpeg_sweep_orphan_sessions,
+            ffmpeg::ffmpeg_volume_free_space,
+            ffmpeg::ffmpeg_retain_session_for_resume,
+            ffmpeg::ffmpeg_reclaimable_sessions,
+            ffmpeg::ffmpeg_reclaim_sessions,
             ffmpeg::ffmpeg_reenter_session,
             ffmpeg::ffmpeg_write_file,
             ffmpeg::ffmpeg_write_file_raw,

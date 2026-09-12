@@ -269,7 +269,8 @@ import { buildExportDiagnosticsBlob } from './services/exportDiagnosticsBlob';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
-import { isTauri, probeAudioDuration, probeVideoFps } from './services/tauriFfmpeg';
+import { isTauri, probeAudioDuration, probeVideoFps, TauriFfmpeg } from './services/tauriFfmpeg';
+import { formatBytes } from './services/webcodecsExport/diskFull';
 import { readUiState, patchUiState } from './services/uiStateStore';
 import { compactRanges } from './services/rangeCompact';
 import { formatTime } from './services/timeFormat';
@@ -805,6 +806,11 @@ function getExportErrorSummary(error: ExportError): string {
       // WS3 STEP 10 (H9) — same posture as timeline_gap: the guard's own
       // message already names the character count and the limit, written
       // for the operator, not a developer.
+      return error.message;
+    case 'disk_full':
+      // WS3 Round 21 (D3c) — the guard's own message already names the
+      // phase and the required/available bytes; same posture as
+      // timeline_gap/destination_path.
       return error.message;
     case 'unknown':
       return 'An unexpected error occurred during export.';
@@ -2212,6 +2218,49 @@ export default function App() {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, action });
     toastTimerRef.current = setTimeout(() => setToast(null), TOAST_DURATION);
+  }, []);
+
+  // WS3 Round 21 (D5) — ORPHAN RECLAMATION ON APP STARTUP.
+  //
+  // Before this round the sweep ran only when the user next STARTED an
+  // export (`useExport.ts`'s own sweep, still in place, still per-attempt),
+  // so a machine that crashed mid-export and was never reopened for export
+  // could sit on 1.5-3 GB indefinitely. This runs once at mount, honors the
+  // same age/live-holder rules as the per-export sweep (never touches a
+  // live session, never a directory under `ORPHAN_SWEEP_MIN_AGE_SECS`), and
+  // then reports whatever is LEFT (including a checkpointed, resumable
+  // session — a sweep never deletes one, so it must still be reported as
+  // reclaimable-if-abandoned rather than silently ignored).
+  useEffect(() => {
+    if (!isTauri()) return;
+    void (async () => {
+      try {
+        await TauriFfmpeg.sweepOrphanSessions();
+        const report = await TauriFfmpeg.reclaimableSessions();
+        if (report.reclaimableBytes <= 0) return;
+        const reclaimableIds = report.entries.filter((e) => e.class !== 'live').map((e) => e.sessionId);
+        showToast(
+          `${formatBytes(report.reclaimableBytes)} from ${reclaimableIds.length} old export session(s) ` +
+            `can be freed (${report.tempDir}).`,
+          {
+            label: 'Reclaim',
+            onClick: () => {
+              void TauriFfmpeg.reclaimSessions(reclaimableIds).then((result) => {
+                if (result.bytesReclaimed > 0) {
+                  showToast(`Freed ${formatBytes(result.bytesReclaimed)}.`);
+                } else if (result.pendingDelete.length > 0) {
+                  showToast('Some files are still in use elsewhere — try again after closing other apps.');
+                }
+              });
+            },
+          },
+        );
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-disk] startup orphan reclamation check failed', err instanceof Error ? err.message : String(err));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   /**
@@ -6754,6 +6803,13 @@ export default function App() {
                   <p className="text-sm text-gray-300 mb-1">
                     {getExportErrorSummary(exportState.error)}
                   </p>
+                  {exportState.error.kind === 'disk_full' &&
+                    exportState.error.sessionDisposition?.disposition === 'retained' && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        The partial export was kept — free up space and retry to resume from where it stopped,
+                        rather than starting over.
+                      </p>
+                    )}
                   {exportState.error.kind !== 'cancelled' && (
                     <p className="text-xs text-gray-600">{exportState.error.message}</p>
                   )}

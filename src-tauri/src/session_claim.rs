@@ -569,6 +569,286 @@ fn dir_size(dir: &Path) -> u64 {
     total
 }
 
+// ---------------------------------------------------------------------------
+// WS3 Round 21 — orphan reclamation (D5) and retain-for-resume (D3d)
+// ---------------------------------------------------------------------------
+
+/// Files a durable resume needs. Everything else in a session directory is
+/// a mux/concat/delivery intermediate that the next attempt regenerates.
+/// `piece_<n>.h264` is the resumed bitstream itself; `export_state.json`
+/// (+ its `.tmp`/`.bak` siblings) is the manifest; the claim file is
+/// re-taken by `reenter`. `tier1_piece_*.mp4` / `canvas_piece_*.mp4` are
+/// transient sources for a piece that is remuxed to `piece_<n>.h264` in the
+/// same step — not resume inputs.
+pub fn is_resume_retained_file(name: &str) -> bool {
+    if name == "export_state.json"
+        || name == "export_state.json.tmp"
+        || name == "export_state.json.bak"
+        || name == SESSION_CLAIM_FILENAME
+    {
+        return true;
+    }
+    if let Some(rest) = name.strip_prefix("piece_") {
+        if let Some(idx) = rest.strip_suffix(".h264") {
+            return !idx.is_empty() && idx.bytes().all(|b| b.is_ascii_digit());
+        }
+    }
+    false
+}
+
+fn has_manifest(dir: &Path) -> bool {
+    dir.join("export_state.json").is_file()
+        || dir.join("export_state.json.tmp").is_file()
+        || dir.join("export_state.json.bak").is_file()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RetainForResumeReport {
+    pub session_id: String,
+    pub path: String,
+    /// `retained` — manifest present, pieces kept, intermediates removed;
+    /// `destroyed` — no manifest, directory removed outright;
+    /// `refused_live` — a live foreign process holds the claim; nothing touched.
+    pub disposition: String,
+    /// Bytes still on disk after this call (the resume's own inputs).
+    pub retained_bytes: u64,
+    /// Bytes this call actually removed.
+    pub reclaimed_bytes: u64,
+    /// Files removed (session-local names).
+    pub removed: Vec<String>,
+}
+
+/// See `ffmpeg_retain_session_for_resume`. Never counts a byte as reclaimed
+/// unless the file is actually gone afterwards.
+pub fn retain_session_for_resume(dir: &Path, session_id: &str) -> Result<RetainForResumeReport, String> {
+    let path = dir.display().to_string();
+    if !dir.exists() {
+        return Ok(RetainForResumeReport {
+            session_id: session_id.to_string(),
+            path,
+            disposition: "destroyed".to_string(),
+            retained_bytes: 0,
+            reclaimed_bytes: 0,
+            removed: Vec::new(),
+        });
+    }
+    if let Some(record) = read_session_claim_record(dir)? {
+        let identity = current_process_identity();
+        let same_holder = record.holder_instance_id == identity.instance_id;
+        if !same_holder && is_holder_process_live(record.holder_pid, record.holder_start_time_ms) {
+            return Ok(RetainForResumeReport {
+                session_id: session_id.to_string(),
+                path,
+                disposition: "refused_live".to_string(),
+                retained_bytes: dir_size(dir),
+                reclaimed_bytes: 0,
+                removed: Vec::new(),
+            });
+        }
+    }
+    if !has_manifest(dir) {
+        let bytes = dir_size(dir);
+        let _ = release_session_claim(dir);
+        fs::remove_dir_all(dir).map_err(|e| format!("retain_session_for_resume: destroy: {e}"))?;
+        let gone = !dir.exists();
+        return Ok(RetainForResumeReport {
+            session_id: session_id.to_string(),
+            path,
+            disposition: "destroyed".to_string(),
+            retained_bytes: if gone { 0 } else { dir_size(dir) },
+            reclaimed_bytes: if gone { bytes } else { 0 },
+            removed: Vec::new(),
+        });
+    }
+    let mut removed = Vec::new();
+    let mut reclaimed = 0u64;
+    let entries = fs::read_dir(dir).map_err(|e| format!("retain_session_for_resume: read_dir: {e}"))?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if is_resume_retained_file(name) {
+            continue;
+        }
+        let p = entry.path();
+        let bytes = if p.is_dir() { dir_size(&p) } else { fs::metadata(&p).map(|m| m.len()).unwrap_or(0) };
+        let result = if p.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) };
+        if result.is_ok() && !p.exists() {
+            reclaimed += bytes;
+            removed.push(name.to_string());
+        }
+    }
+    release_session_claim(dir)?;
+    Ok(RetainForResumeReport {
+        session_id: session_id.to_string(),
+        path,
+        disposition: "retained".to_string(),
+        retained_bytes: dir_size(dir),
+        reclaimed_bytes: reclaimed,
+        removed,
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReclaimableSessionEntry {
+    pub session_id: String,
+    pub path: String,
+    pub age_secs: u64,
+    pub bytes: u64,
+    pub has_manifest: bool,
+    /// `live` | `stale` | `unclaimed` (see `SessionClaimView::holder_liveness`).
+    pub holder_liveness: String,
+    /// `live` — never reclaimable; `resumable` — reclaimable if abandoned;
+    /// `orphan` — reclaimable now.
+    pub class: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReclaimableSessionsReport {
+    /// The temp tree that was scanned — printed for the operator so a manual
+    /// clear-out needs no guessing (`%LOCALAPPDATA%\Temp` on Windows,
+    /// `$TMPDIR` — `/var/folders/…/T/` — on macOS).
+    pub temp_dir: String,
+    pub scanned: u64,
+    pub live_bytes: u64,
+    pub resumable_bytes: u64,
+    pub orphan_bytes: u64,
+    /// `resumable_bytes + orphan_bytes` — everything the operator may reclaim.
+    pub reclaimable_bytes: u64,
+    pub entries: Vec<ReclaimableSessionEntry>,
+}
+
+fn holder_liveness_of(dir: &Path) -> Result<String, String> {
+    Ok(match read_session_claim_record(dir)? {
+        Some(record) => {
+            let identity = current_process_identity();
+            if record.holder_instance_id == identity.instance_id
+                || is_holder_process_live(record.holder_pid, record.holder_start_time_ms)
+            {
+                "live".to_string()
+            } else {
+                "stale".to_string()
+            }
+        }
+        None => "unclaimed".to_string(),
+    })
+}
+
+fn export_session_dirs() -> Result<Vec<(String, PathBuf)>, String> {
+    let temp = std::env::temp_dir();
+    let entries = fs::read_dir(&temp).map_err(|e| format!("reclaim: read_dir({}): {e}", temp.display()))?;
+    let mut out = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("reclaim: read_dir: {e}"))?;
+        if !entry.file_type().map_err(|e| format!("reclaim: file_type: {e}"))?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(id) = name.strip_prefix("kinetix-export-") else { continue };
+        if Uuid::parse_str(id).is_err() {
+            continue;
+        }
+        out.push((id.to_string(), entry.path()));
+    }
+    Ok(out)
+}
+
+/// See `ffmpeg_reclaimable_sessions`. Read-only.
+pub fn report_reclaimable_sessions() -> Result<ReclaimableSessionsReport, String> {
+    let now = now_ms();
+    let mut report = ReclaimableSessionsReport {
+        temp_dir: std::env::temp_dir().display().to_string(),
+        scanned: 0,
+        live_bytes: 0,
+        resumable_bytes: 0,
+        orphan_bytes: 0,
+        reclaimable_bytes: 0,
+        entries: Vec::new(),
+    };
+    for (id, dir) in export_session_dirs()? {
+        report.scanned += 1;
+        let bytes = dir_size(&dir);
+        let manifest = has_manifest(&dir);
+        let liveness = holder_liveness_of(&dir)?;
+        let class = if liveness == "live" {
+            report.live_bytes += bytes;
+            "live"
+        } else if manifest {
+            report.resumable_bytes += bytes;
+            "resumable"
+        } else {
+            report.orphan_bytes += bytes;
+            "orphan"
+        };
+        report.entries.push(ReclaimableSessionEntry {
+            session_id: id,
+            path: dir.display().to_string(),
+            age_secs: dir_age_secs(&dir, now),
+            bytes,
+            has_manifest: manifest,
+            holder_liveness: liveness,
+            class: class.to_string(),
+        });
+    }
+    report.reclaimable_bytes = report.resumable_bytes + report.orphan_bytes;
+    Ok(report)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ReclaimReport {
+    pub removed: Vec<String>,
+    pub refused_live: Vec<String>,
+    pub pending_delete: Vec<String>,
+    pub failed: Vec<String>,
+    /// Only directories that are actually gone afterwards count.
+    pub bytes_reclaimed: u64,
+}
+
+/// See `ffmpeg_reclaim_sessions`. Same accounting invariant as the sweep: a
+/// directory that still exists after `remove_dir_all` (Windows
+/// delete-pending) is never counted as reclaimed.
+pub fn reclaim_sessions(session_ids: &[String]) -> Result<ReclaimReport, String> {
+    let mut report = ReclaimReport {
+        removed: Vec::new(),
+        refused_live: Vec::new(),
+        pending_delete: Vec::new(),
+        failed: Vec::new(),
+        bytes_reclaimed: 0,
+    };
+    for id in session_ids {
+        if Uuid::parse_str(id).is_err() {
+            report.failed.push(format!("{id}: not a session id"));
+            continue;
+        }
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        if !dir.exists() {
+            continue;
+        }
+        if holder_liveness_of(&dir)? == "live" {
+            report.refused_live.push(id.clone());
+            continue;
+        }
+        let bytes = dir_size(&dir);
+        let _ = release_session_claim(&dir);
+        match fs::remove_dir_all(&dir) {
+            Ok(()) => match classify_remove_outcome(true, dir.exists()) {
+                RemoveOutcome::Deleted => {
+                    report.bytes_reclaimed += bytes;
+                    report.removed.push(id.clone());
+                }
+                RemoveOutcome::PendingDelete => report.pending_delete.push(id.clone()),
+                RemoveOutcome::VanishedBeforeDelete => {}
+            },
+            Err(e) => report.failed.push(format!("{id}: {e}")),
+        }
+    }
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -633,6 +913,153 @@ mod tests {
         let view = read_session_claim_view(&dir, &id).unwrap();
         assert_eq!(view.holder_liveness, "live");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── WS3 Round 21 (D3d / D5) — retain-for-resume and reclamation ─────────
+
+    #[test]
+    fn resume_retained_files_are_exactly_pieces_manifest_and_claim() {
+        for keep in ["piece_0.h264", "piece_17.h264", "export_state.json", "export_state.json.tmp", "export_state.json.bak", SESSION_CLAIM_FILENAME] {
+            assert!(is_resume_retained_file(keep), "{keep}");
+        }
+        for drop in [
+            "video_all.h264",
+            "piece_0.h264.premux.mp4",
+            "export_final.mp4",
+            "voiceover_audio",
+            "tier1_piece_0.mp4",
+            "canvas_piece_0.mp4",
+            "frame_00001.png",
+            "piece_.h264",
+            "piece_x.h264",
+        ] {
+            assert!(!is_resume_retained_file(drop), "{drop}");
+        }
+    }
+
+    #[test]
+    fn retain_for_resume_keeps_pieces_and_manifest_drops_intermediates() {
+        let id = Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        acquire_session_claim(&dir, &id).unwrap();
+        fs::write(dir.join("piece_0.h264"), vec![1u8; 4096]).unwrap();
+        fs::write(dir.join("export_state.json"), b"{}").unwrap();
+        fs::write(dir.join("piece_0.h264.premux.mp4"), vec![2u8; 2048]).unwrap();
+        fs::write(dir.join("export_final.mp4"), vec![3u8; 1024]).unwrap(); // the truncated mux output
+        fs::write(dir.join("voiceover_audio"), vec![4u8; 512]).unwrap();
+        let report = retain_session_for_resume(&dir, &id).unwrap();
+        assert_eq!(report.disposition, "retained");
+        assert_eq!(report.reclaimed_bytes, 2048 + 1024 + 512);
+        assert!(dir.join("piece_0.h264").is_file());
+        assert!(dir.join("export_state.json").is_file());
+        assert!(!dir.join("piece_0.h264.premux.mp4").exists());
+        assert!(!dir.join("export_final.mp4").exists());
+        assert!(!dir.join("voiceover_audio").exists());
+        assert!(!claim_path(&dir).exists(), "claim released so discovery reads `unclaimed`");
+        assert_eq!(report.retained_bytes, 4096 + 2);
+        let mut removed = report.removed.clone();
+        removed.sort();
+        assert_eq!(removed, vec!["export_final.mp4", "piece_0.h264.premux.mp4", "voiceover_audio"]);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn retain_for_resume_without_manifest_destroys_the_session() {
+        let id = Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        acquire_session_claim(&dir, &id).unwrap();
+        fs::write(dir.join("piece_0.h264"), vec![1u8; 4096]).unwrap();
+        let report = retain_session_for_resume(&dir, &id).unwrap();
+        assert_eq!(report.disposition, "destroyed");
+        assert!(!dir.exists());
+        assert_eq!(report.retained_bytes, 0);
+        assert!(report.reclaimed_bytes >= 4096);
+    }
+
+    #[test]
+    fn retain_for_resume_refuses_a_live_foreign_holder() {
+        let id = Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        acquire_session_claim(&dir, &id).unwrap();
+        let record = read_session_claim_record(&dir).unwrap().unwrap();
+        let foreign = SessionClaimRecord { holder_instance_id: Uuid::new_v4().to_string(), ..record };
+        fs::write(claim_path(&dir), serde_json::to_string(&foreign).unwrap()).unwrap();
+        fs::write(dir.join("export_final.mp4"), vec![3u8; 1024]).unwrap();
+        let report = retain_session_for_resume(&dir, &id).unwrap();
+        assert_eq!(report.disposition, "refused_live");
+        assert!(dir.join("export_final.mp4").is_file(), "nothing touched under a live foreign claim");
+        assert_eq!(report.reclaimed_bytes, 0);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reclaimable_report_classifies_live_resumable_and_orphan() {
+        let mk = |manifest: bool, claim: bool| {
+            let id = Uuid::new_v4().to_string();
+            let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("piece_0.h264"), vec![1u8; 1000]).unwrap();
+            if manifest {
+                fs::write(dir.join("export_state.json"), b"{}").unwrap();
+            }
+            if claim {
+                acquire_session_claim(&dir, &id).unwrap();
+            }
+            (id, dir)
+        };
+        let (live_id, live_dir) = mk(true, true);
+        let (resumable_id, resumable_dir) = mk(true, false);
+        let (orphan_id, orphan_dir) = mk(false, false);
+        let report = report_reclaimable_sessions().unwrap();
+        assert!(!report.temp_dir.is_empty());
+        let find = |id: &str| report.entries.iter().find(|e| e.session_id == id).unwrap().clone();
+        assert_eq!(find(&live_id).class, "live");
+        assert_eq!(find(&live_id).holder_liveness, "live");
+        assert_eq!(find(&resumable_id).class, "resumable");
+        assert!(find(&resumable_id).has_manifest);
+        assert_eq!(find(&orphan_id).class, "orphan");
+        assert!(report.live_bytes >= 1000);
+        assert!(report.resumable_bytes >= 1002);
+        assert!(report.orphan_bytes >= 1000);
+        assert_eq!(report.reclaimable_bytes, report.resumable_bytes + report.orphan_bytes);
+        release_session_claim(&live_dir).unwrap();
+        for d in [live_dir, resumable_dir, orphan_dir] {
+            let _ = fs::remove_dir_all(&d);
+        }
+    }
+
+    #[test]
+    fn reclaim_sessions_removes_named_non_live_and_refuses_live() {
+        let mk = |claim: bool| {
+            let id = Uuid::new_v4().to_string();
+            let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+            let _ = fs::remove_dir_all(&dir);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("piece_0.h264"), vec![1u8; 1000]).unwrap();
+            fs::write(dir.join("export_state.json"), b"{}").unwrap();
+            if claim {
+                acquire_session_claim(&dir, &id).unwrap();
+            }
+            (id, dir)
+        };
+        let (live_id, live_dir) = mk(true);
+        let (gone_id, gone_dir) = mk(false);
+        let report = reclaim_sessions(&[live_id.clone(), gone_id.clone(), "not-a-uuid".to_string()]).unwrap();
+        assert_eq!(report.refused_live, vec![live_id.clone()]);
+        assert_eq!(report.removed, vec![gone_id.clone()]);
+        assert_eq!(report.failed.len(), 1);
+        assert!(report.bytes_reclaimed >= 1002);
+        assert!(live_dir.exists(), "live session untouched");
+        assert!(!gone_dir.exists());
+        release_session_claim(&live_dir).unwrap();
+        let _ = fs::remove_dir_all(&live_dir);
     }
 
     #[test]

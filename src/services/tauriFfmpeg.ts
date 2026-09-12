@@ -42,6 +42,55 @@ export interface OrphanSweepReport {
   entries: OrphanSweepEntry[];
 }
 
+/** WS3 Round 21 — mirrors the native `VolumeFreeSpace` (`disk_space.rs`). */
+export interface VolumeFreeSpace {
+  path: string;
+  probedPath: string;
+  volumeKey: string;
+  availableBytes: number;
+}
+
+/** WS3 Round 21 — mirrors the native `RetainForResumeReport`. */
+export interface RetainForResumeReport {
+  sessionId: string;
+  path: string;
+  disposition: 'retained' | 'destroyed' | 'refused_live';
+  retainedBytes: number;
+  reclaimedBytes: number;
+  removed: string[];
+}
+
+/** WS3 Round 21 — mirrors the native `ReclaimableSessionEntry`. */
+export interface ReclaimableSessionEntry {
+  sessionId: string;
+  path: string;
+  ageSecs: number;
+  bytes: number;
+  hasManifest: boolean;
+  holderLiveness: 'live' | 'stale' | 'unclaimed';
+  class: 'live' | 'resumable' | 'orphan';
+}
+
+/** WS3 Round 21 — mirrors the native `ReclaimableSessionsReport`. */
+export interface ReclaimableSessionsReport {
+  tempDir: string;
+  scanned: number;
+  liveBytes: number;
+  resumableBytes: number;
+  orphanBytes: number;
+  reclaimableBytes: number;
+  entries: ReclaimableSessionEntry[];
+}
+
+/** WS3 Round 21 — mirrors the native `ReclaimReport`. */
+export interface ReclaimReport {
+  removed: string[];
+  refusedLive: string[];
+  pendingDelete: string[];
+  failed: string[];
+  bytesReclaimed: number;
+}
+
 /**
  * Converts a Uint8Array to a base64 string using 32 KB chunks to avoid
  * stack-overflow on large buffers (String.fromCharCode.apply has a per-call
@@ -200,6 +249,45 @@ export class TauriFfmpeg implements FfmpegLike {
     return invoke<OrphanSweepReport>('ffmpeg_sweep_orphan_sessions', {
       minAgeSecs: minAgeSecs ?? null,
     });
+  }
+
+  /**
+   * WS3 Round 21 (D1) — free space on this session's temp-tree volume, and
+   * (when `destPath` is given) the destination volume too. See
+   * `ffmpeg_volume_free_space` / `disk_space::volume_free_space`.
+   */
+  async volumeFreeSpace(destPath: string | null): Promise<VolumeFreeSpace[]> {
+    this.#assertAlive();
+    return invoke<VolumeFreeSpace[]>('ffmpeg_volume_free_space', {
+      sessionId: this.#sessionId,
+      destPath,
+    });
+  }
+
+  /**
+   * WS3 Round 21 (D3d/D5) — terminal-failure disposition: keeps this
+   * session's pieces + manifest for a future resume, deletes everything a
+   * resume does not need. Marks the instance destroyed (same contract as
+   * `destroy()` — the session dir may still exist, but this handle is done
+   * with it).
+   */
+  async retainForResume(): Promise<RetainForResumeReport> {
+    const report = await invoke<RetainForResumeReport>('ffmpeg_retain_session_for_resume', {
+      sessionId: this.#sessionId,
+    });
+    this.#destroyed = true;
+    return report;
+  }
+
+  /** WS3 Round 21 (D5) — every export session directory, classified. Static:
+   *  no particular session owns the temp tree. */
+  static async reclaimableSessions(): Promise<ReclaimableSessionsReport> {
+    return invoke<ReclaimableSessionsReport>('ffmpeg_reclaimable_sessions');
+  }
+
+  /** WS3 Round 21 (D5) — the operator's explicit reclaim action. */
+  static async reclaimSessions(sessionIds: string[]): Promise<ReclaimReport> {
+    return invoke<ReclaimReport>('ffmpeg_reclaim_sessions', { sessionIds });
   }
 
   /**

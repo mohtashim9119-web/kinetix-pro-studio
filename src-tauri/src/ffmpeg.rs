@@ -10,9 +10,16 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
+use crate::disk_space::{
+    ffmpeg_run_is_disk_full, ffmpeg_stderr_tail, io_error_is_disk_full, tag_if_disk_full,
+    volume_free_space, VolumeFreeSpace, DISK_FULL_TAG, FFMPEG_STDERR_TAIL_BYTES,
+    FFMPEG_STDERR_TAIL_LINES,
+};
 use crate::session_claim::{
-    acquire_session_claim, read_session_claim_view, release_session_claim,
-    sweep_manifestless_orphans, OrphanSweepReport, SessionClaimView,
+    acquire_session_claim, read_session_claim_view, reclaim_sessions, release_session_claim,
+    report_reclaimable_sessions, retain_session_for_resume, sweep_manifestless_orphans,
+    OrphanSweepReport, ReclaimReport, ReclaimableSessionsReport, RetainForResumeReport,
+    SessionClaimView,
     ORPHAN_SWEEP_MIN_AGE_SECS,
 };
 
@@ -168,21 +175,14 @@ fn sync_session_file(path: &Path, label: &str) -> Result<SyncOutcome, String> {
     durable_fs::fsync_path_bounded(path, label)
 }
 
-fn io_error_is_disk_full(err: &io::Error) -> bool {
-    if err.kind() == io::ErrorKind::StorageFull {
-        return true;
-    }
-    #[cfg(windows)]
-    {
-        if err.raw_os_error() == Some(112) {
-            return true;
-        }
-    }
-    false
-}
-
+/// Round 21 — the concat partial-output rule keys on the SAME tag every
+/// native ENOSPC now carries (`disk_space::DISK_FULL_TAG`), plus the older
+/// spellings the pre-Round-21 string could carry.
 fn concat_error_preserves_partial_output(err: &str) -> bool {
-    err.contains("StorageFull") || err.contains("No space left on device") || err.contains("disk full")
+    err.contains(DISK_FULL_TAG)
+        || err.contains("StorageFull")
+        || err.contains("No space left on device")
+        || err.contains("disk full")
 }
 
 /// Validates a logical filename is safe for use inside a session directory.
@@ -345,6 +345,64 @@ pub fn ffmpeg_sweep_orphan_sessions(min_age_secs: Option<u64>) -> Result<OrphanS
     sweep_manifestless_orphans(min_age_secs.unwrap_or(ORPHAN_SWEEP_MIN_AGE_SECS))
 }
 
+/// WS3 Round 21 (D1) — free space on every volume an export will write to.
+/// `session_id` names the temp tree (`kinetix-export-<uuid>` under
+/// `env::temp_dir()`); `dest_path` is the operator's chosen output file
+/// (may not exist yet — the nearest existing ancestor is probed). The
+/// frontend sums requirements per `volume_key` and decides; this command
+/// only reads. `dest_path: None` for a save-later export probes the temp
+/// tree alone.
+#[tauri::command]
+pub fn ffmpeg_volume_free_space(
+    session_id: String,
+    dest_path: Option<String>,
+) -> Result<Vec<VolumeFreeSpace>, String> {
+    let dir = session_dir(&session_id)?;
+    let mut out = vec![volume_free_space(&dir)?];
+    if let Some(dest) = dest_path {
+        out.push(volume_free_space(Path::new(&dest))?);
+    }
+    Ok(out)
+}
+
+/// WS3 Round 21 (D3d/D5) — the terminal-failure disposition of a session
+/// that a resume could still use. Deletes only what a resume does NOT need
+/// (mux intermediates, a partial `export_final.mp4`, the voiceover copy,
+/// `video_all.h264`), releases this process's claim, and leaves
+/// `piece_*.h264` + the manifest in place so discovery offers the session
+/// next time. A session with NO manifest has nothing to resume and is
+/// destroyed outright (the pre-Round-21 behaviour). Never touches a session
+/// claimed by a live foreign holder.
+#[tauri::command]
+pub fn ffmpeg_retain_session_for_resume(
+    session_id: String,
+    state: tauri::State<'_, FfmpegSessionState>,
+) -> Result<RetainForResumeReport, String> {
+    state.cancel_flags.lock().unwrap().remove(&session_id);
+    state.resume_pending.lock().unwrap().remove(&session_id);
+    state.io_gates.lock().unwrap().remove(&session_id);
+    let dir = session_dir(&session_id)?;
+    retain_session_for_resume(&dir, &session_id)
+}
+
+/// WS3 Round 21 (D5) — every `kinetix-export-*` directory under the temp
+/// tree, classified: `live` (claimed by a running process — never
+/// reclaimable), `resumable` (manifest present, no live holder — reclaimable
+/// if the operator abandons the resume), `orphan` (no manifest, no live
+/// holder). Read-only.
+#[tauri::command]
+pub fn ffmpeg_reclaimable_sessions() -> Result<ReclaimableSessionsReport, String> {
+    report_reclaimable_sessions()
+}
+
+/// WS3 Round 21 (D5) — the explicit operator reclaim action. Removes the
+/// named sessions whether or not they carry a manifest (the operator has
+/// chosen to abandon them); refuses any that a live process still claims.
+#[tauri::command]
+pub fn ffmpeg_reclaim_sessions(session_ids: Vec<String>) -> Result<ReclaimReport, String> {
+    reclaim_sessions(&session_ids)
+}
+
 /// Writes base64-encoded bytes to <session_dir>/<path>.
 ///
 /// The frontend encodes Uint8Array → base64 string before invoking this command.
@@ -363,7 +421,8 @@ pub fn ffmpeg_write_file(
     let data = STANDARD
         .decode(&data_b64)
         .map_err(|e| format!("write_file({}): base64 decode failed: {}", path, e))?;
-    fs::write(&full, &data).map_err(|e| format!("write_file({}): {} [path={}]", path, e, full.display()))?;
+    fs::write(&full, &data)
+        .map_err(|e| tag_if_disk_full(&e, format!("write_file({}): {} [path={}]", path, e, full.display())))?;
     let outcome = sync_session_file(&full, &format!("write_file({path})"))?;
     record_durability_outcome(&state, &session_id, &outcome);
     Ok(())
@@ -404,7 +463,8 @@ pub fn ffmpeg_write_file_raw(
 
     match request.body() {
         tauri::ipc::InvokeBody::Raw(data) => {
-            fs::write(&full, data).map_err(|e| format!("write_file_raw({}): {} [path={}]", path, e, full.display()))?;
+            fs::write(&full, data)
+                .map_err(|e| tag_if_disk_full(&e, format!("write_file_raw({}): {} [path={}]", path, e, full.display())))?;
             let outcome = sync_session_file(&full, &format!("write_file_raw({path})"))?;
             record_durability_outcome(&state, session_id, &outcome);
             Ok(())
@@ -478,7 +538,7 @@ fn append_file_raw_inner(
         check_cancelled(cancel)?;
         let end = (offset + IO_CHUNK_SIZE).min(data.len());
         file.write_all(&data[offset..end])
-            .map_err(|e| format!("append_file_raw({}): write: {}", path, e))?;
+            .map_err(|e| tag_if_disk_full(&e, format!("append_file_raw({}): write: {}", path, e)))?;
         offset = end;
     }
     check_cancelled(cancel)?;
@@ -1526,7 +1586,7 @@ fn concat_annexb_pieces_inner(
             }
             out.write_all(&buf[..n]).map_err(|e| {
                 if io_error_is_disk_full(&e) {
-                    "concat_annexb_pieces: write output: No space left on device".to_string()
+                    format!("{DISK_FULL_TAG} concat_annexb_pieces: write output: No space left on device")
                 } else {
                     format!("concat_annexb_pieces: write output: {}", e)
                 }
@@ -1629,12 +1689,18 @@ pub async fn ffmpeg_exec(
 
     if exit_code != 0 {
         let stderr_str = String::from_utf8_lossy(&stderr);
-        // Truncate to last 2000 chars to avoid pathologically large error payloads.
-        let tail = if stderr_str.len() > 2000 {
-            format!("...{}", &stderr_str[stderr_str.len() - 2000..])
-        } else {
-            stderr_str.to_string()
-        };
+        // Round 21 (D3c) — line-capped, progress-free tail (was: last 2000
+        // characters, which on a long mux is all `frame=` spam and no error).
+        let tail = ffmpeg_stderr_tail(&stderr_str, FFMPEG_STDERR_TAIL_LINES, FFMPEG_STDERR_TAIL_BYTES);
+        // Round 21 (D3) — `AVERROR(ENOSPC)` exit (-28 / 228) or the errno
+        // string in stderr is a first-class disk-full terminal, tagged the
+        // same way every native write site tags its own ENOSPC.
+        if ffmpeg_run_is_disk_full(exit_code, &stderr_str) {
+            return Err(format!(
+                "{DISK_FULL_TAG} ffmpeg exited with code {} (No space left on device): {}",
+                exit_code, tail
+            ));
+        }
         return Err(format!("ffmpeg exited with code {}: {}", exit_code, tail));
     }
 
@@ -1876,21 +1942,69 @@ fn dest_part_path(dest: &Path) -> PathBuf {
 
 /// Replace `dest` with `part` (already fsynced). Unix `rename` replaces. Windows
 /// does not, so fall back to the same backup-then-promote sequence as
-/// `ffmpeg_write_export_state`.
-fn rename_over(part: &Path, dest: &Path) -> Result<(), String> {
-    if let Err(rename_err) = fs::rename(part, dest) {
-        let mut backup_os = dest.as_os_str().to_os_string();
-        backup_os.push(".bak");
-        let backup = PathBuf::from(backup_os);
+/// `ffmpeg_write_export_state`. (`rename_over_checked` below; the only
+/// caller is `copy_session_file_atomic_with`.)
+
+/// WS3 Round 21 (D4) — the outcome of a `rename_over` that could not
+/// complete. `Restored` means `dest` is byte-identical to what it was before
+/// the call (the ordinary failure). `OriginalAtBackup` is the one shape
+/// where the pre-existing file is NOT back under its own name: the promote
+/// failed AND the restore rename failed, so the original sits at `dest.bak`
+/// and the completed export at `dest.part` — both intact, neither under the
+/// name the operator chose. The caller must NOT delete the `.part` in that
+/// case (it did, before this round), and the error names both paths.
+#[derive(Debug)]
+enum RenameOverFailure {
+    Restored(String),
+    OriginalAtBackup { message: String },
+}
+
+impl RenameOverFailure {
+    fn into_message(self) -> String {
+        match self {
+            RenameOverFailure::Restored(m) => m,
+            RenameOverFailure::OriginalAtBackup { message } => message,
+        }
+    }
+}
+
+fn dest_backup_path(dest: &Path) -> PathBuf {
+    let mut backup_os = dest.as_os_str().to_os_string();
+    backup_os.push(".bak");
+    PathBuf::from(backup_os)
+}
+
+fn rename_over_checked(
+    part: &Path,
+    dest: &Path,
+    rename: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> Result<(), RenameOverFailure> {
+    if let Err(rename_err) = rename(part, dest) {
+        let backup = dest_backup_path(dest);
         let _ = fs::remove_file(&backup);
-        if dest.is_file() {
-            fs::rename(dest, &backup).map_err(|e| {
-                format!("rename_over: replace fallback after {rename_err}: backup: {e}")
+        let had_dest = dest.is_file();
+        if had_dest {
+            rename(dest, &backup).map_err(|e| {
+                RenameOverFailure::Restored(format!(
+                    "rename_over: replace fallback after {rename_err}: backup: {e}"
+                ))
             })?;
         }
-        if let Err(e) = fs::rename(part, dest) {
-            let _ = fs::rename(&backup, dest);
-            return Err(format!("rename_over: promote part: {e}"));
+        if let Err(e) = rename(part, dest) {
+            if had_dest {
+                if let Err(restore_err) = rename(&backup, dest) {
+                    return Err(RenameOverFailure::OriginalAtBackup {
+                        message: format!(
+                            "rename_over: promote part: {e}; restoring the original also failed: \
+                             {restore_err} — the original file is intact at {} and the completed \
+                             export at {}; neither was deleted",
+                            backup.display(),
+                            part.display()
+                        ),
+                    });
+                }
+            }
+            return Err(RenameOverFailure::Restored(format!("rename_over: promote part: {e}")));
         }
         let _ = fs::remove_file(&backup);
     }
@@ -1915,10 +2029,25 @@ fn copy_session_file_atomic(
     dest: &Path,
     cancel: Option<&AtomicBool>,
 ) -> Result<SyncOutcome, String> {
+    copy_session_file_atomic_with(src, dest, cancel, |a, b| fs::rename(a, b))
+}
+
+/// `rename` is injectable so the Windows-only backup-then-promote fallback
+/// (and its failure shapes) can be exercised on every platform.
+fn copy_session_file_atomic_with(
+    src: &Path,
+    dest: &Path,
+    cancel: Option<&AtomicBool>,
+    rename: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> Result<SyncOutcome, String> {
     use std::io::{Read, Write};
 
     check_cancelled(cancel)?;
     let part = dest_part_path(dest);
+    // Round 21 (D4) — set when the original could not be put back under its
+    // own name; the `.part` is then the only complete copy outside the
+    // session dir and must survive this function.
+    let mut keep_part = false;
     let copied = (|| -> Result<SyncOutcome, String> {
         let mut input =
             fs::File::open(src).map_err(|e| format!("copy_session_file: open src: {e}"))?;
@@ -1935,14 +2064,19 @@ fn copy_session_file_atomic(
             }
             output
                 .write_all(&buf[..n])
-                .map_err(|e| format!("copy_session_file: write part: {e}"))?;
+                .map_err(|e| tag_if_disk_full(&e, format!("copy_session_file: write part: {e}")))?;
         }
         output
             .flush()
             .map_err(|e| format!("copy_session_file: flush part: {e}"))?;
         let part_outcome = durable_fs::fsync_file_bounded(&output, &part, "copy_session_file: fsync part")?;
         drop(output);
-        rename_over(&part, dest)?;
+        rename_over_checked(&part, dest, &rename).map_err(|f| {
+            if matches!(f, RenameOverFailure::OriginalAtBackup { .. }) {
+                keep_part = true;
+            }
+            f.into_message()
+        })?;
         let dest_outcome = sync_session_file(dest, "copy_session_file: fsync dest")?;
         Ok(match (part_outcome, dest_outcome) {
             (SyncOutcome::Confirmed, SyncOutcome::Confirmed) => SyncOutcome::Confirmed,
@@ -1951,7 +2085,7 @@ fn copy_session_file_atomic(
             }
         })
     })();
-    if copied.is_err() {
+    if copied.is_err() && !keep_part {
         let _ = fs::remove_file(&part);
     }
     copied
@@ -2570,6 +2704,109 @@ mod tests {
         let append_result = append_handle.join().unwrap();
         assert_eq!(append_result, Ok(()), "append must have completed cleanly, not been interrupted by the truncate");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    // ── WS3 Round 21 (D4) — partial-output disposition ─────────────────────
+
+    /// A `rename` shim that fails exactly the calls whose (from → to) pair is
+    /// listed, and performs a real `fs::rename` otherwise. Pairs are matched
+    /// by file name so the test does not care about the temp dir.
+    fn failing_rename(fail: &'static [(&'static str, &'static str)]) -> impl Fn(&Path, &Path) -> io::Result<()> {
+        move |from: &Path, to: &Path| {
+            let f = from.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            let t = to.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if fail.iter().any(|(a, b)| *a == f && *b == t) {
+                return Err(io::Error::new(io::ErrorKind::PermissionDenied, format!("injected: {f} -> {t}")));
+            }
+            fs::rename(from, to)
+        }
+    }
+
+    /// The write itself dies (a session-dir source that vanishes mid-read
+    /// stands in for ENOSPC on the `.part` — the SAME `Err` arm, before any
+    /// rename): a pre-existing destination is byte-identical afterwards and
+    /// the `.part` is gone.
+    #[test]
+    fn failed_delivery_write_leaves_preexisting_dest_byte_identical() {
+        let dir = std::env::temp_dir().join(format!("kinetix-copy-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("missing_export_final.mp4"); // never created → open fails
+        let dest = dir.join("out.mp4");
+        let original = vec![7u8; 3 * IO_CHUNK_SIZE + 11];
+        fs::write(&dest, &original).unwrap();
+        let err = copy_session_file_atomic(&src, &dest, None).unwrap_err();
+        assert!(err.contains("open src"), "{err}");
+        assert_eq!(fs::read(&dest).unwrap(), original, "destination must be byte-identical");
+        assert!(!dest_part_path(&dest).exists());
+        assert!(!dest_backup_path(&dest).exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Fresh-destination twin: nothing appears at the operator's path.
+    #[test]
+    fn failed_delivery_write_leaves_fresh_dest_absent() {
+        let dir = std::env::temp_dir().join(format!("kinetix-copy-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("missing_export_final.mp4");
+        let dest = dir.join("out.mp4");
+        let _ = copy_session_file_atomic(&src, &dest, None).unwrap_err();
+        assert!(!dest.exists());
+        assert!(!dest_part_path(&dest).exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Windows fallback branch, promote fails, restore succeeds: the original
+    /// is back under its own name, byte-identical, `.bak` and `.part` gone.
+    #[test]
+    fn rename_over_fallback_promote_failure_restores_original() {
+        let dir = std::env::temp_dir().join(format!("kinetix-copy-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("export_final.mp4");
+        let dest = dir.join("out.mp4");
+        fs::write(&src, b"new-export").unwrap();
+        fs::write(&dest, b"previous-export").unwrap();
+        let rename = failing_rename(&[("out.mp4.part", "out.mp4")]);
+        let err = copy_session_file_atomic_with(&src, &dest, None, rename).unwrap_err();
+        assert!(err.contains("promote part"), "{err}");
+        assert_eq!(fs::read(&dest).unwrap(), b"previous-export");
+        assert!(!dest_part_path(&dest).exists(), ".part removed when the original is back in place");
+        assert!(!dest_backup_path(&dest).exists());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Windows fallback branch, promote fails AND restore fails: the original
+    /// is intact at `.bak`, the completed export is intact at `.part`
+    /// (before Round 21 the `.part` was deleted here), and the error names
+    /// both paths so the operator can put things back.
+    #[test]
+    fn rename_over_fallback_restore_failure_keeps_both_files_and_names_them() {
+        let dir = std::env::temp_dir().join(format!("kinetix-copy-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("export_final.mp4");
+        let dest = dir.join("out.mp4");
+        fs::write(&src, b"new-export").unwrap();
+        fs::write(&dest, b"previous-export").unwrap();
+        let rename = failing_rename(&[("out.mp4.part", "out.mp4"), ("out.mp4.bak", "out.mp4")]);
+        let err = copy_session_file_atomic_with(&src, &dest, None, rename).unwrap_err();
+        let part = dest_part_path(&dest);
+        let backup = dest_backup_path(&dest);
+        assert!(!dest.exists(), "dest cannot be restored in this shape");
+        assert_eq!(fs::read(&backup).unwrap(), b"previous-export", "original intact at .bak");
+        assert_eq!(fs::read(&part).unwrap(), b"new-export", "completed export intact at .part");
+        assert!(err.contains(&backup.display().to_string()), "error must name the .bak: {err}");
+        assert!(err.contains(&part.display().to_string()), "error must name the .part: {err}");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// ENOSPC on the `.part` write is tagged as disk-full (so the frontend
+    /// classifies it) — checked at the classifier boundary, since a real
+    /// full volume is not something a unit test can arrange.
+    #[test]
+    fn delivery_write_enospc_is_tagged_disk_full() {
+        let e = io::Error::from(io::ErrorKind::StorageFull);
+        let msg = tag_if_disk_full(&e, format!("copy_session_file: write part: {e}"));
+        assert!(msg.starts_with(DISK_FULL_TAG), "{msg}");
+        assert!(concat_error_preserves_partial_output(&msg));
     }
 
     #[test]

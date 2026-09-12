@@ -112,6 +112,15 @@ import {
 } from './exportWorkerDiagnostics';
 import type { AnnexbFrameCount, PieceFrameCountRow } from './annexbFrameCount';
 import {
+  DiskFullError,
+  decideDiskPreflight,
+  diskFullExportError,
+  diskFullExportErrorFrom,
+  estimateExportDiskBytes,
+  isDiskFullError,
+  type VolumeFreeSpace,
+} from './diskFull';
+import {
   concatFrameCountGuardFails,
   formatConcatFrameCountMismatch,
 } from './annexbFrameCount';
@@ -126,6 +135,13 @@ export interface ExportOptionsWebCodecs {
    * Step 4 report for the full rationale; kept verbatim here.
    */
   savePath?: string;
+  /**
+   * WS3 Round 21 (D1) — the operator's chosen output path, for the disk
+   * preflight ONLY (delivery itself stays in `useExport`, which owns the
+   * path). The destination volume may differ from the temp tree's; both are
+   * checked. Absent → only the temp tree is checked.
+   */
+  destinationPath?: string;
   /**
    * WS3 Round 10 Blocker 2 — the operator consent gate for FORCED MP4 SEALING.
    *
@@ -259,6 +275,14 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
    */
   readonly sessionId?: string;
   writeExportState?(serializedManifest: string): Promise<void>;
+  /**
+   * WS3 Round 21 (D1) — free space on the session tree's volume and, when
+   * given, the destination's (`TauriFfmpeg.volumeFreeSpace`, backed by the
+   * Rust `ffmpeg_volume_free_space` command). OPTIONAL: a fake without it
+   * skips the preflight, exactly as a fake without `writeExportState` skips
+   * checkpointing.
+   */
+  volumeFreeSpace?(destPath: string | null): Promise<VolumeFreeSpace[]>;
 }
 
 import {
@@ -1787,6 +1811,43 @@ export function driveGlRun(
     };
 
     /**
+     * WS3 Round 21 (D3) — ENOSPC mid-append settles the run NOW.
+     *
+     * Before this round an append that failed with "No space left on device"
+     * only set `appendError`; every later batch was dropped on the floor, no
+     * `append-ack` went back, the worker parked on the back-pressure gate,
+     * and 30–45 s later the WATCHDOG or the forward-progress bound fired —
+     * reported as `via: 'stall'` / `'watchdog'`, kind `'unknown'`, with the
+     * ENOSPC cause nowhere in the message. A full disk cannot be waited out,
+     * so the run settles immediately with the typed disk-full error, the
+     * worker is terminated by `finish`, and no bound ever fires.
+     */
+    const finishDiskFull = (err: Error): void => {
+      if (settled) return;
+      const diagnostics = reconstructDiagnostics();
+      diagnostics.failure = {
+        name: err.name || 'DiskFullError',
+        message: err.message,
+        via: 'append-error',
+        frameIndex: diagnostics.framesEncoded > 0 ? diagnostics.framesEncoded - 1 : null,
+        timelineSec: null,
+      };
+      // `snapshotLiveness`'s `failureVia` reads `lastWorkerDiagnostics`, not
+      // this local `diagnostics` — same requirement `finishWithBound` meets
+      // via `reconstructDiagnostics` writing through it below.
+      lastWorkerDiagnostics = diagnostics;
+      const typed = diskFullExportErrorFrom(err, 'append');
+      finish({
+        ok: false,
+        error: { ...typed, liveness: snapshotLiveness() },
+        diagnostics,
+        silentIntervals: silentIntervals(),
+        appendCallCount,
+        appendBytes,
+      });
+    };
+
+    /**
      * WS3 append-batching round — the watchdog now DISCRIMINATES.
      *
      * Before this round the 30s message-based watchdog fired blind during the
@@ -2007,6 +2068,7 @@ export function driveGlRun(
           worker.postMessage(ackMsg);
         } catch (err) {
           appendError = err instanceof Error ? err : new Error(causeString(err));
+          if (isDiskFullError(appendError)) finishDiskFull(appendError);
         } finally {
           appendsInFlight--;
           queueDepthChunks -= batchChunks;
@@ -2490,7 +2552,9 @@ async function encodeTier1Piece(
   } catch (err) {
     return {
       ok: false,
-      error: { kind: 'encode', message: `Failed to encode Tier 1 segment "${segment.id}".`, segmentIndex: pieceIndex, cause: causeString(err) },
+      error: isDiskFullError(err)
+        ? { ...diskFullExportErrorFrom(err, `encode:plain:${pieceIndex}`), segmentIndex: pieceIndex }
+        : { kind: 'encode', message: `Failed to encode Tier 1 segment "${segment.id}".`, segmentIndex: pieceIndex, cause: causeString(err) },
     };
   } finally {
     await ffmpeg.deleteFile(mp4File).catch(() => undefined);
@@ -2562,7 +2626,9 @@ async function encodeCanvasPiece(
   } catch (err) {
     return {
       ok: false,
-      error: { kind: 'encode', message: `Failed to encode canvas segment "${segment.id}".`, segmentIndex: pieceIndex, cause: causeString(err) },
+      error: isDiskFullError(err)
+        ? { ...diskFullExportErrorFrom(err, `encode:canvas:${pieceIndex}`), segmentIndex: pieceIndex }
+        : { kind: 'encode', message: `Failed to encode canvas segment "${segment.id}".`, segmentIndex: pieceIndex, cause: causeString(err) },
     };
   } finally {
     await ffmpeg.deleteFile(mp4File).catch(() => undefined);
@@ -2880,6 +2946,68 @@ export async function exportProjectWebCodecs(
   onProgress({ type: 'loading_ffmpeg' });
   activeFfmpeg = ffmpeg;
 
+  // ── WS3 Round 21 (D1) — DISK PREFLIGHT, before the first encoder session ──
+  //
+  // The model (`diskFull.ts`) prices every artifact the export will hold at
+  // its peak (the audio-mux step: pieces + video_all + premux + voiceover +
+  // final) and the delivery copy on the destination volume, sums per volume,
+  // and refuses BEFORE any work with the required/available bytes and the
+  // volume named. A fake without `volumeFreeSpace` skips this, so every
+  // pre-existing test runs unchanged.
+  if (ffmpeg.volumeFreeSpace) {
+    const voiceoverForEstimate = project.voiceoverId ? assetMap.get(project.voiceoverId) : undefined;
+    const estimate = estimateExportDiskBytes({
+      fps,
+      pieces: pieces.map((p) => ({
+        tier: p.tier,
+        expectedFrames: p.expectedFrames,
+        ...(p.tier === 'plain'
+          ? { sourceBytes: p.segments[0]?.assetId ? assetMap.get(p.segments[0].assetId)?.file?.size : undefined }
+          : {}),
+      })),
+      voiceover: voiceoverForEstimate ? { bytes: voiceoverForEstimate.file?.size ?? null } : null,
+      resumedBytesOnDisk: options.resume?.byteOffset ?? 0,
+    });
+    const destinationPath = options.destinationPath ?? options.savePath ?? null;
+    let readings: VolumeFreeSpace[];
+    try {
+      readings = await ffmpeg.volumeFreeSpace(destinationPath);
+    } catch (err) {
+      // A reading that cannot be taken must not block an export the disk
+      // may well be able to hold — logged, not fatal (same posture as the
+      // orphan sweep).
+      // eslint-disable-next-line no-console
+      console.warn('[ws3-disk] free-space preflight skipped — could not read volume free space', causeString(err));
+      readings = [];
+    }
+    if (readings.length > 0) {
+      const preflight = decideDiskPreflight({
+        estimate,
+        temp: readings[0]!,
+        destination: readings[1] ?? null,
+      });
+      // eslint-disable-next-line no-console
+      console.info('[ws3-disk] preflight', JSON.stringify({ estimate, volumes: preflight.volumes, ok: preflight.ok }));
+      if (!preflight.ok && preflight.shortfall) {
+        activeFfmpeg = null;
+        const sf = preflight.shortfall;
+        return {
+          ok: false,
+          error: diskFullExportError({
+            phase: 'preflight',
+            requiredBytes: sf.requiredBytes,
+            availableBytes: sf.availableBytes,
+            volumePath: sf.paths[0] ?? null,
+            cause:
+              `disk preflight: volume ${sf.volumeKey} holding ${sf.paths.join(' and ')} has ${sf.availableBytes} bytes ` +
+              `available, export needs ${sf.requiredBytes} (short by ${sf.shortfallBytes}); ` +
+              `model: ${JSON.stringify(estimate)}`,
+          }),
+        };
+      }
+    }
+  }
+
   // Only Tier-GL pieces render text via the worker's GLTextRenderer, so skip
   // the fetch entirely when nothing in this export needs it. resolveFontBytes
   // caches fetched bytes by URL for the session either way, and only fetches
@@ -2975,7 +3103,9 @@ export async function exportProjectWebCodecs(
   /** `boundedStepError` plus the post-encode liveness view — every failure
    *  after the piece loop goes through this, none through the bare form. */
   const postEncodeError = (kind: ExportError['kind'], fallbackMessage: string, err: unknown, phase: string): ExportError => ({
-    ...boundedStepError(kind, fallbackMessage, err),
+    // WS3 Round 21 (D3) — ENOSPC at any post-encode step is the typed
+    // disk-full terminal, not the step's generic wording.
+    ...(isDiskFullError(err) ? diskFullExportErrorFrom(err, phase) : boundedStepError(kind, fallbackMessage, err)),
     liveness: postEncodeLiveness(phase),
   });
   // WS3 Tier 1 item 3c (Rung 3) — per-EXPORT ceiling (every GL piece

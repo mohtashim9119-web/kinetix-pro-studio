@@ -17,7 +17,7 @@ import { recordExportSessionCreated, forgetExportSession } from '../services/web
 import { readCleanupNotices, clearCleanupNotices, recordCleanupFailure, type CleanupNotice } from '../services/webcodecsExport/exportCleanupNotices';
 import { normalizeSaveSessionFileResult } from '../services/tauriFfmpeg';
 import { checkExportDestinationPathLength } from '../services/exportDestinationPath';
-import { TauriFfmpeg, type OrphanSweepReport } from '../services/tauriFfmpeg';
+import { TauriFfmpeg, type OrphanSweepReport, type RetainForResumeReport } from '../services/tauriFfmpeg';
 import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
@@ -694,15 +694,60 @@ export function useExport(
       }
     };
 
+    // WS3 Round 21 (D3d) — a disk-full terminal must leave a resumable
+    // session resumable: the operator frees space and resumes, rather than
+    // starting a full re-render from zero. `retainForResume` keeps the
+    // pieces + manifest and deletes only the mux/delivery intermediates a
+    // resume does not need (no-op-equivalent to the old destroy() when the
+    // session never got far enough to checkpoint at all — it destroys
+    // outright in that case, same bytes freed as before).
+    const releaseFailedSessionForDiskFull = async (): Promise<RetainForResumeReport | null> => {
+      const active = (resumeFfmpeg ??
+        tauriBackendRef.current?.ffmpeg) as unknown as { retainForResume?(): Promise<RetainForResumeReport> } | null;
+      if (!active?.retainForResume) return null;
+      try {
+        const report = await active.retainForResume();
+        if (resumeFfmpeg) forgetExportSession(resumePlanSessionId!);
+        // The session dir is not deleted (when retained) — only this
+        // in-memory handle is done with it. `dispose()` must not also try
+        // to destroy it, so the ref is cleared without calling destroy().
+        tauriBackendRef.current = null;
+        return report;
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[ws3-disk] retain-for-resume failed — falling back to ordinary teardown', err instanceof Error ? err.message : String(err));
+        return null;
+      }
+    };
+
     if (!result.ok) {
       stopElapsedTimer();
       const durabilityWarnings = await drainDurabilityWarnings();
-      await releaseResumedSession();
-      await teardown();
+      let sessionDisposition: RetainForResumeReport | null = null;
+      if (result.error.kind === 'disk_full') {
+        sessionDisposition = await releaseFailedSessionForDiskFull();
+      }
+      if (sessionDisposition === null) {
+        await releaseResumedSession();
+        await teardown();
+      }
       setState(prev => ({
         ...prev,
         isExporting: false,
-        error: durabilityWarnings.length > 0 ? { ...result.error, durabilityWarnings } : result.error,
+        error: {
+          ...result.error,
+          ...(durabilityWarnings.length > 0 ? { durabilityWarnings } : {}),
+          ...(sessionDisposition
+            ? {
+                sessionDisposition: {
+                  disposition: sessionDisposition.disposition,
+                  retainedBytes: sessionDisposition.retainedBytes,
+                  reclaimedBytes: sessionDisposition.reclaimedBytes,
+                  path: sessionDisposition.path,
+                },
+              }
+            : {}),
+        },
       }));
       return;
     }

@@ -50,6 +50,11 @@ export type ExportErrorKind =
    *  MAX_PATH. Rejected before any rendering starts — see
    *  `exportDestinationPath.ts`. */
   | 'destination_path'
+  /** WS3 Round 21 — the volume ran out of space (preflight, an append, a
+   *  concat, the mux, or delivery). Terminal: never charges the recovery
+   *  budget, never offered a lossy seal, session retained for resume when a
+   *  checkpoint exists. See `webcodecsExport/diskFull.ts`. */
+  | 'disk_full'
   | 'unknown';
 
 /**
@@ -192,6 +197,24 @@ export interface ExportError {
    * fighting back before the terminal failure.
    */
   durabilityWarnings?: readonly string[];
+  /**
+   * WS3 Round 21 — present only on `kind: 'disk_full'`: the step that hit
+   * ENOSPC and the numbers the operator needs (required vs. available on the
+   * volume named). `null`s when the failure came from a write rather than
+   * the preflight (a mid-run ENOSPC has no modelled requirement).
+   */
+  diskFull?: {
+    phase: string;
+    requiredBytes: number | null;
+    availableBytes: number | null;
+    volumePath: string | null;
+  };
+  /**
+   * WS3 Round 21 (D5) — what `useExport` did with the session after this
+   * failure: `retained` (checkpoint present; resumable once space is freed),
+   * `destroyed`, or `refused_live`. Plus the bytes the session still holds.
+   */
+  sessionDisposition?: { disposition: string; retainedBytes: number; reclaimedBytes: number; path: string };
 }
 
 export type ExportResult =
