@@ -462,7 +462,7 @@ A measurement that would change this: a phase-attributed 42k-frame run showing `
 
 ---
 
-## 5. Fold: `windows-throughput-audit` (archived Round 32)
+## 5. Fold: `windows-throughput-audit` (archived Round 23)
 
 Field evidence (installer from `9297de2`, three comparable 1080p30 machines):
 

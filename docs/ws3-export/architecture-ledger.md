@@ -2468,7 +2468,7 @@ prevents the ONE case (grade loss) where that gap was also silently WRONG, not j
 
 **No merge to main. No PR.** Push `ws3-export-integration`.
 
-### Round 32 (2026-09-13) — Clean baseline (PROMPT 32)
+### Round 23 (2026-09-13) — Clean baseline (PROMPT 32)
 
 Worktree `ws3-export-integration`. Merged `webgl2Diagnosis.ts` + 11 tests from `ws3-win-perf-audit`
 @ `88f5d20` (kept gate-wired `diagnoseWebGL2Support` in `glContext.ts`; richer

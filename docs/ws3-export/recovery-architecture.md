@@ -830,7 +830,7 @@ run one, per its own rules (static analysis and mocked tests only).
 
 ---
 
-## Fold: `routing-audit` (archived Round 32)
+## Fold: `routing-audit` (archived Round 23)
 
 Static audit (`ws3-export-liveness-occlusion`, compared to `main` @ `4d4922c`):
 
