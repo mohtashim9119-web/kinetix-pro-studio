@@ -1243,7 +1243,7 @@ state" above). **Four fixture digests** unchanged (`annexbFrameCount.test.ts:242
 --porcelain` on the integration worktree: clean apart from `node_modules/` and `public/`
 (standing untracked). The three pre-existing untracked docs in the MAIN worktree
 (`docs/ws3-export/durable-state.md`, `docs/ws3-export/speed-architecture-audit.md`,
-`docs/ws3-groq-transcription-architecture-audit.md`) are pre-existing and out of scope — not
+`docs/ws2-app/transcription-groq-feasibility.md`) are pre-existing and out of scope — not
 staged, committed, or deleted (Cursor removes two of them in its Phase 2). No `git add -A`; every
 stage was by named path. `ws3-hardening-windows` fast-forwarded to the integration head so both
 branches carry the one canonical ledger; both pushed. No merge to `main`, no PR.
@@ -1261,7 +1261,7 @@ no refactors, one test-annotation change (STEP 3 below).
 this branch's own `523d9a5`, so there was no divergence to reconcile. Content-identity confirmed
 for all three docs this prompt named, by diffing old flat path (as committed at `523d9a5`)
 against new nested path: every hunk in all three diffs is a cross-reference string rewritten from
-the old flat filename (`docs/ws3-export-architecture-ledger.md` etc.) to the new nested one
+the old flat filename (`docs/ws3-export/architecture-ledger.md` etc.) to the new nested one
 (`docs/ws3-export/architecture-ledger.md`) — the ref-rewrite this consolidation commit exists to
 do. Zero content dropped, zero hunks outside a path string:
 - `architecture-ledger.md` — 8 hunks, all path-string rewrites.
@@ -1270,7 +1270,7 @@ do. Zero content dropped, zero hunks outside a path string:
 
 #### STEP 2 — Stale stub deleted
 
-`docs/ws3-export-durable-state.md` in the main worktree: confirmed 64 lines / 3842 bytes, dated
+`docs/ws3-export/durable-state.md` in the main worktree: confirmed 64 lines / 3842 bytes, dated
 2026-09-10, containing only the "Step 4d residual" analysis (truncated-final-slice-read-as-complete).
 That topic is superseded in the committed `docs/ws3-export/durable-state.md` (1859 lines), whose
 Round-11+ text (around line 1367-1382) carries the same truncated-final-slice concern folded into
@@ -1343,7 +1343,7 @@ constants and four fixture digests (both mirrored from source and re-verified un
 below). The `cargo test` counts appearing in `durable-state.md` (e.g. its Round 13/Round 14 gate
 tables, "384 + 10 = 394" etc.) are historical per-round snapshots of what that round actually
 measured at the time — correctly frozen, not retroactively rewritten to Round 17's post-`#[ignore]`
-counts, the same way `docs/history.md` entries are never edited after the fact. `pipeline-audit.md`
+counts, the same way `docs/archive/history/history.md` entries are never edited after the fact. `pipeline-audit.md`
 carries no raw pass/fail counts at all (checked; zero hits for the relevant numbers).
 
 #### State at close
@@ -1631,7 +1631,7 @@ defect class; this is a Rung-3-specific gap, not a systemic one.
 #### STEP 7 — Merge, ledger, gates
 
 Merged `ws3-crash-fixes` into `ws3-export-integration` (`5d06851`, clean, zero conflicts). Merged
-`docs/ws3-export/final-crash-audit.md` from `final-crash-audit` (doc only — its code was already
+`docs/archive/ws3/final-crash-audit.md` from `final-crash-audit` (doc only — its code was already
 adopted and extended on `ws3-crash-fixes`) as the eighth WS3 content doc; recorded the second cap
 amendment (WS3 ≤7 → ≤8) in `docs/README.md` (`0b2af15`), as the audit doc asked for and correctly
 left undone itself.
@@ -2301,13 +2301,14 @@ to main.
 `git merge origin/ws3-disk-full-hardening` (Round 21, `dd39b08`) fast-forwarded cleanly onto
 `9297de2`. `git merge origin/ws3-win-perf-audit` (Cursor @ `bb3409d`) merged with zero conflicts,
 adding exactly the four expected files (`gpuCapabilityProbe.ts`/`.test.ts`,
-`windows-throughput-audit.md`, `export-path-selection-audit.md`) and touching no pipeline code.
+[`windows-throughput-audit.md`](../archive/ws3/windows-throughput-audit.md),
+[`export-path-selection-audit.md`](../archive/ws3/export-path-selection-audit.md)) and touching no pipeline code.
 Post-merge baseline confirmed exactly as predicted: `npm test` **3617 / 0 / 78 = 3695**, `cargo
 test` **339 / 0 / 6 = 345**, `cargo test --features fa-inference` **425 / 0 / 36 = 461**.
 
 #### Context — the defect this round closes
 
-`export-path-selection-audit.md` (Cursor, `bb3409d`) independently traced Machine 2's
+[`export-path-selection-audit.md`](../archive/ws3/export-path-selection-audit.md) (Cursor, `bb3409d`) independently traced Machine 2's
 `Encoding segment 1/345` (no encoder-session suffix, ~12.8 fps) against Machine 1's
 `1/1 · encoder session 1/n` (~96 fps) on comparable projects to the top-level
 `isWebCodecsExportGateOpen()` fork (`useExport.ts`), not a within-WebCodecs tier downgrade: five
@@ -2447,7 +2448,7 @@ confirms none of `WATCHDOG_MS`, `FORWARD_PROGRESS_BOUND_MS`, `FLUSH_BOUND_MS`,
 `WINDOWS_MAX_PATH` were touched; `5db5e004…`/`af89ca66…`/`1abf9839…`/`fb9cdda2…` untouched (this
 round added no annexb fixtures). `git status`: clean except gitignored `node_modules`/`public`.
 
-#### Disposition — silent-fallback defects from `export-path-selection-audit.md` STEP 3
+#### Disposition — silent-fallback defects from [`export-path-selection-audit.md`](../archive/ws3/export-path-selection-audit.md) STEP 3
 
 | Location | Round 22 disposition |
 |---|---|
@@ -2466,3 +2467,29 @@ checkpoint/resume — this was true before this round and remains true after it;
 prevents the ONE case (grade loss) where that gap was also silently WRONG, not just slower.
 
 **No merge to main. No PR.** Push `ws3-export-integration`.
+
+### Round 32 (2026-09-13) — Clean baseline (PROMPT 32)
+
+Worktree `ws3-export-integration`. Merged `webgl2Diagnosis.ts` + 11 tests from `ws3-win-perf-audit`
+@ `88f5d20` (kept gate-wired `diagnoseWebGL2Support` in `glContext.ts`; richer
+`diagnoseWebGl2ExportCapability` is a separate field-diagnosis module). Rescued
+`routing-audit.md` from `ws3-export-liveness-occlusion`. Closed disposable worktrees
+(`fa-perf-foundation`, `docs-consolidate-p1`, `ws3-export-liveness-occlusion`). WS3 lane capped
+at 7 content docs — four round audits archived to `docs/archive/ws3/` after folding key findings
+into survivors (see §5 folds in `speed-architecture-audit.md`, `recovery-architecture.md`, and
+W20/W2 updates in `windows-validation.md`).
+
+#### Fold: `final-crash-audit` (archived)
+
+F1–F3 closed Round 18; F4 (`KILL_BOUND_MS` display + kill swallow) and F6 (concat `sync_all`) remain
+open. **W2 pass-criterion correction (from audit STEP 4):** `checkExportDestinationPathLength`
+rejects Windows paths at ≥ 260 — production never exercises long-path delivery via the UI even though
+native `windows_long_path` supports ≤ 32,767; W2's written pass criterion must be rewritten to match.
+Full audit: [`docs/archive/ws3/final-crash-audit.md`](../archive/ws3/final-crash-audit.md).
+
+#### Fold: `export-path-selection-audit` (archived)
+
+Round 22 disposition table above is authoritative. Still-open (not defects): `createFrameEncoderPool`
+sequential fallback (perf-only); hardware encoder silent software fallback; `isWebGL2Supported` session-lifetime
+memoization stale-after-first-probe. Full audit:
+[`docs/archive/ws3/export-path-selection-audit.md`](../archive/ws3/export-path-selection-audit.md).

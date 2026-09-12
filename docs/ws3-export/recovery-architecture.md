@@ -14,7 +14,7 @@ Every risk label below is one of **LOW-RISK**, **MEDIUM**, **SPECULATIVE**, with
 pwd     /Users/mohtashim/Drive/Vibe Coding Projects/4.kinetix-pro-studio-ws3-export-liveness-occlusion
 branch  ws3-export-liveness-occlusion
 HEAD    c118ac113c9a0a7b7acaf587678b41f7eca93311
-status  clean except untracked docs/ws3-export-routing-audit.md, node_modules/, public/
+status  clean except node_modules/, public/ (routing audit → docs/archive/ws3/routing-audit.md)
 ```
 
 One full-suite run, today, on `c118ac1` before any edit:
@@ -827,3 +827,19 @@ A single Windows field run settles which case actually occurred by reading wheth
 call site) continue for ~25 of the 30 seconds between the last `chunk`/`phase` and the eventual watchdog
 firing, or stop dead alongside everything else. **NOT DETERMINED without that run** — this round did not
 run one, per its own rules (static analysis and mocked tests only).
+
+---
+
+## Fold: `routing-audit` (archived Round 32)
+
+Static audit (`ws3-export-liveness-occlusion`, compared to `main` @ `4d4922c`):
+
+| Question | Answer |
+|---|---|
+| Fast path broken this round? | **No** — `plainSegment.ts` / `glCompositable.ts` byte-identical to `main`; routing predicates unchanged. |
+| Why `Encoding segment 1 / 1`? | **Piece count**, not segment count. Consecutive GL segments collapse to one piece; true Tier-1 N-segment export reads `1 / N`. |
+| No-effects project still on GL? | Pre-existing `isPlain` failure — most likely `overlayFilter`/`globalOverlayFilter` === `'none'` (string truthy in `plainSegment.ts:111`, unset in GL `glCompositable.ts:154-157`). Effects tab writes `'none'` on purpose when clearing legacy twins. |
+| Cursor opens (332 segs / 4 assets)? | **Once per segment** (332×), not per asset; peak live cursors ≤ 2. |
+| Demux re-parse? | Not inside one GL piece (release uses max last-needed over the piece). **Yes across GL pieces** — each piece is a new Worker; demux cache dies at piece boundary. |
+
+Full audit: [`docs/archive/ws3/routing-audit.md`](../archive/ws3/routing-audit.md).

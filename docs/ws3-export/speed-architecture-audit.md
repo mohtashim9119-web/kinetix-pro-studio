@@ -459,3 +459,34 @@ A measurement that would change this: a phase-attributed 42k-frame run showing `
 | Per-worker demux cache | `src/services/videoDemuxer.ts` |
 | WebGL2-over-WebGPU ruling + 411 fps spike | `docs/archive/history/history.md` (engine-decision section) |
 | Export liveness / cursor cap history | `docs/archive/history/work-in-progress.md` WS3; `docs/archive/history/history-2.md` |
+
+---
+
+## 5. Fold: `windows-throughput-audit` (archived Round 32)
+
+Field evidence (installer from `9297de2`, three comparable 1080p30 machines):
+
+| Machine | GPU | Throughput | Outcome |
+|---|---|---|---|
+| 1 (control) | RX 580 8 GB | ~96 fps | 50,911 frames complete |
+| 3 | same class | fast | complete |
+| 2 (divergent) | RTX 3050 8 GB | ~12.8 fps (~7.5× slower) | cancelled at ~10% in 6–7 min |
+
+**Codec-selection ladder** (`createEncoder`, first unpinned session): outer codec loop, inner
+`hardwareAcceleration` loop — `avc1.640028` then `avc1.42001f`, each tried
+`prefer-hardware` → `no-preference` → `prefer-software`. Codec string pins after first success;
+the three-value hardware ladder re-walks each session. Force-software recovery uses only
+`prefer-software` against the pinned codec.
+
+**Probe contract (Round 22 wired):** `gpuCapabilityProbe.ts` runs once per WebCodecs export,
+before encoder work — read-only `createWebGL2Context` + `isVideoEncoderConfigSupported`;
+`softwareRasterizationDetected` must **not** feed the hardware-codec recovery ladder (canvas
+rasterizer ≠ encoder backend). Round 22 STEP 4 counters (`texture-upload-draw`,
+`video-frame-from-canvas`, `encode-call`, append timing high-waters) implement the audit's
+attribution minimum.
+
+**Remediation ladder (field):** restart locally (not RDP) → update WebView2 + GPU drivers →
+Windows Graphics high-performance preference → Defender exclusion A/B (W7) →
+`--force_high_performance_gpu` trial (WebView2 145+) → `--ignore-gpu-blocklist` diagnostic only.
+
+Full audit: [`docs/archive/ws3/windows-throughput-audit.md`](../archive/ws3/windows-throughput-audit.md).
