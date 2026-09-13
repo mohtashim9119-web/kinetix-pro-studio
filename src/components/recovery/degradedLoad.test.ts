@@ -10,16 +10,12 @@ const resolved: RecoveryAsset = {
   id: 'a1',
   name: 'clip.mp4',
   unresolved: false,
-  nativeCopyExists: true,
-  backupExists: false,
 };
 
 const missing: RecoveryAsset = {
   id: 'a2',
   name: 'vo.wav',
   unresolved: true,
-  nativeCopyExists: false,
-  backupExists: false,
 };
 
 const okSegment: RecoverySegment = {

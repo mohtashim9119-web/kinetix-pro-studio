@@ -21,36 +21,26 @@ afterEach(() => {
   container.remove();
 });
 
+// No nativeCopyExists/backupExists — assetRecovery.ts's AssetRecoveryEntry
+// collapses both into one nativeResolved, so `unresolved` here is already
+// exactly "neither the cache nor the native store has this asset's bytes"
+// (see degradedLoad.ts's RecoveryAsset doc comment).
 const resolvedAsset: RecoveryAsset = {
   id: 'asset-resolved',
   name: 'hero.mp4',
   unresolved: false,
-  nativeCopyExists: true,
-  backupExists: true,
 };
 
 const missingAsset: RecoveryAsset = {
   id: 'asset-missing',
   name: 'b-roll.mp4',
   unresolved: true,
-  nativeCopyExists: false,
-  backupExists: false,
 };
 
-const nativeCopyAsset: RecoveryAsset = {
+const anotherMissingAsset: RecoveryAsset = {
   id: 'asset-native',
   name: 'cutaway.mp4',
   unresolved: true,
-  nativeCopyExists: true,
-  backupExists: false,
-};
-
-const backupAsset: RecoveryAsset = {
-  id: 'asset-backup',
-  name: 'vo.wav',
-  unresolved: true,
-  nativeCopyExists: false,
-  backupExists: true,
 };
 
 const segments: RecoverySegment[] = [
@@ -109,7 +99,7 @@ describe('DegradedProjectRecoveryScreen — no-save invariant', () => {
 describe('DegradedProjectRecoveryScreen — status rendering', () => {
   it('renders per-segment resolution status from props', async () => {
     await renderScreen({
-      assets: [resolvedAsset, missingAsset, nativeCopyAsset],
+      assets: [resolvedAsset, missingAsset, anotherMissingAsset],
       segments,
     });
     const rows = [...container.querySelectorAll('[data-testid="recovery-segment"]')];
@@ -122,9 +112,13 @@ describe('DegradedProjectRecoveryScreen — status rendering', () => {
     expect(container.textContent).toMatch(/Missing asset/);
   });
 
-  it('distinguishes missing vs native-copy vs backup indicators', async () => {
+  // WS3 recovery-ui reconciliation: a native-vs-backup distinction has no
+  // referent in the shipped architecture (assetRecovery.ts's nativeResolved
+  // already collapses both), so there is nothing left to distinguish beyond
+  // resolved vs missing.
+  it('shows Missing for every unresolved asset and Resolved for every resolved one', async () => {
     await renderScreen({
-      assets: [missingAsset, nativeCopyAsset, backupAsset],
+      assets: [missingAsset, anotherMissingAsset, resolvedAsset],
       segments,
     });
     const byId = (id: string): Element => {
@@ -133,16 +127,15 @@ describe('DegradedProjectRecoveryScreen — status rendering', () => {
       return el;
     };
     expect(byId('asset-missing').getAttribute('data-location')).toBe('missing');
-    expect(byId('asset-native').getAttribute('data-location')).toBe('native-copy');
-    expect(byId('asset-backup').getAttribute('data-location')).toBe('backup');
-    expect(byId('asset-native').textContent).toMatch(/Native copy available/);
-    expect(byId('asset-backup').textContent).toMatch(/Backup available/);
+    expect(byId('asset-native').getAttribute('data-location')).toBe('missing');
+    expect(byId('asset-resolved').getAttribute('data-location')).toBe('resolved');
     expect(byId('asset-missing').textContent).toMatch(/Missing/);
+    expect(byId('asset-resolved').textContent).toMatch(/Resolved/);
   });
 
   it('invokes the re-link fake with the unresolved asset id', async () => {
     const fake = await renderScreen({
-      assets: [missingAsset, nativeCopyAsset],
+      assets: [missingAsset, anotherMissingAsset],
       segments,
     });
     const buttons = [...container.querySelectorAll<HTMLButtonElement>('[data-testid="recovery-relink"]')];

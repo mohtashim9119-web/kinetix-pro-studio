@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { AlertTriangle, FolderOpen, HardDrive, Link2 } from 'lucide-react';
+import { AlertTriangle, Link2 } from 'lucide-react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
   canPersistRecoveredProject,
@@ -31,18 +31,16 @@ export interface DegradedProjectRecoveryScreenProps {
   onSave?: () => void;
 }
 
+// No native-copy/backup distinction: `assetRecovery.ts`'s `nativeResolved`
+// already means "resolved" (see degradedLoad.ts's RecoveryAsset doc comment),
+// so an unresolved asset here has, by construction, neither — the only
+// remaining path is re-linking the user's own source file.
 function assetLocationLabel(asset: RecoveryAsset): string {
-  if (!asset.unresolved) return 'Resolved';
-  if (asset.nativeCopyExists) return 'Native copy available';
-  if (asset.backupExists) return 'Backup available';
-  return 'Missing';
+  return asset.unresolved ? 'Missing' : 'Resolved';
 }
 
-function assetLocationKind(asset: RecoveryAsset): 'resolved' | 'native-copy' | 'backup' | 'missing' {
-  if (!asset.unresolved) return 'resolved';
-  if (asset.nativeCopyExists) return 'native-copy';
-  if (asset.backupExists) return 'backup';
-  return 'missing';
+function assetLocationKind(asset: RecoveryAsset): 'resolved' | 'missing' {
+  return asset.unresolved ? 'missing' : 'resolved';
 }
 
 function segmentStatusLabel(status: RecoverySegment['resolutionStatus']): string {
@@ -165,8 +163,6 @@ export function DegradedProjectRecoveryScreen({
                     data-testid="recovery-asset-location"
                     className="text-[9px] text-gray-500 flex items-center gap-1"
                   >
-                    {kind === 'native-copy' && <HardDrive size={11} />}
-                    {kind === 'backup' && <FolderOpen size={11} />}
                     {assetLocationLabel(asset)}
                   </p>
                 </div>
