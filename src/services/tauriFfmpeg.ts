@@ -60,6 +60,26 @@ export interface RetainForResumeReport {
   removed: string[];
 }
 
+/** WS3 (diagnostic logging) — mirrors native `DestroySessionOutcome`. A
+ *  DIFFERENT enum from `RetainForResumeReport.disposition` above — see
+ *  `destroy_session_dir`'s own doc comment (`session_claim.rs`) for why the
+ *  two are never conflated. */
+export interface DestroySessionOutcome {
+  disposition: 'destroyed' | 'refused_manifest' | 'not_found';
+}
+
+/** WS3 (diagnostic logging) — mirrors native `SessionDiskSnapshot`: a
+ *  read-only, independent post-hoc reading of what's actually on disk for a
+ *  session, taken separately from whatever `RetainForResumeReport`/
+ *  `DestroySessionOutcome` claims happened — see `ffmpeg_session_disk_snapshot`'s
+ *  own doc comment (`ffmpeg.rs`) for why this is a real cross-check and not
+ *  two readings of the same claim. */
+export interface SessionDiskSnapshot {
+  manifestPresent: boolean;
+  pieceCount: number;
+  pieceTotalBytes: number;
+}
+
 /** WS3 Round 21 — mirrors the native `ReclaimableSessionEntry`. */
 export interface ReclaimableSessionEntry {
   sessionId: string;
@@ -271,12 +291,20 @@ export class TauriFfmpeg implements FfmpegLike {
    * `destroy()` — the session dir may still exist, but this handle is done
    * with it).
    */
-  async retainForResume(): Promise<RetainForResumeReport> {
+  async retainForResume(failureKind?: string): Promise<RetainForResumeReport> {
     const report = await invoke<RetainForResumeReport>('ffmpeg_retain_session_for_resume', {
       sessionId: this.#sessionId,
+      failureKind: failureKind ?? null,
     });
     this.#destroyed = true;
     return report;
+  }
+
+  /** WS3 (diagnostic logging) — read-only, independent of any destroy/retain
+   *  decision; safe to call any time, including on an already-destroyed
+   *  handle's session id. See `SessionDiskSnapshot`'s own doc comment. */
+  static async sessionDiskSnapshot(sessionId: string): Promise<SessionDiskSnapshot> {
+    return invoke<SessionDiskSnapshot>('ffmpeg_session_disk_snapshot', { sessionId });
   }
 
   /** WS3 Round 21 (D5) — every export session directory, classified. Static:
@@ -626,9 +654,17 @@ export class TauriFfmpeg implements FfmpegLike {
    * (`cancelExportWebCodecs`), an operator's "start clean" choice, a
    * successful export's own teardown, and the abandoned-session TTL
    * collector (`exportResumeDiscovery.ts`'s `collectAbandonedSessions`).
+   *
+   * WS3 (diagnostic logging) — returns the native `DestroySessionOutcome`
+   * (or `null` on a swallowed IPC failure — session dir may already be
+   * gone) instead of `void`, so a caller building failure diagnostics can
+   * surface which disposition the native side actually returned. `failureKind`
+   * is opaque here too — see `ffmpeg_destroy_session`'s own doc comment
+   * (`ffmpeg.rs`) for the exact convention; it reaches the opt-in native log
+   * only, never changes behavior.
    */
-  async destroy(opts?: { force?: boolean }): Promise<void> {
-    if (this.#destroyed) return;
+  async destroy(opts?: { force?: boolean; failureKind?: string }): Promise<DestroySessionOutcome | null> {
+    if (this.#destroyed) return null;
     this.#destroyed = true;
     // WS3 Round 20 — anything still un-drained becomes a durable notice via
     // the same channel as a failed cleanup, so a degraded fsync the pipeline
@@ -638,9 +674,10 @@ export class TauriFfmpeg implements FfmpegLike {
       recordCleanupFailure('durability-unconfirmed', this.#sessionId, warning);
     }
     try {
-      const outcome = await invoke<{ disposition: string }>('ffmpeg_destroy_session', {
+      const outcome = await invoke<DestroySessionOutcome>('ffmpeg_destroy_session', {
         sessionId: this.#sessionId,
         force: opts?.force ?? false,
+        failureKind: opts?.failureKind ?? null,
       });
       if (outcome.disposition === 'refused_manifest') {
         // Not a failure — the native guard did its job. Logged (not routed
@@ -652,11 +689,13 @@ export class TauriFfmpeg implements FfmpegLike {
           this.#sessionId,
         );
       }
+      return outcome;
     } catch (err) {
       // Best-effort cleanup — session dir may already be gone.
       const detail = typeof err === 'string' ? err : String(err);
       console.warn('[tauriFfmpeg] destroy failed:', detail);
       recordCleanupFailure('session-destroy', this.#sessionId, detail);
+      return null;
     }
   }
 

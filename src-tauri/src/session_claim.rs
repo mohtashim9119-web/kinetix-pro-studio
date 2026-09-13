@@ -588,12 +588,16 @@ pub fn is_resume_retained_file(name: &str) -> bool {
     {
         return true;
     }
-    if let Some(rest) = name.strip_prefix("piece_") {
-        if let Some(idx) = rest.strip_suffix(".h264") {
-            return !idx.is_empty() && idx.bytes().all(|b| b.is_ascii_digit());
-        }
-    }
-    false
+    is_piece_file(name)
+}
+
+/// `piece_<n>.h264` naming check, shared by [`is_resume_retained_file`] and
+/// `ffmpeg::session_disk_snapshot` (a diagnostic-only piece count/byte total,
+/// which needs the same name shape without the manifest/claim-file branches).
+pub fn is_piece_file(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("piece_") else { return false };
+    let Some(idx) = rest.strip_suffix(".h264") else { return false };
+    !idx.is_empty() && idx.bytes().all(|b| b.is_ascii_digit())
 }
 
 pub fn has_manifest(dir: &Path) -> bool {

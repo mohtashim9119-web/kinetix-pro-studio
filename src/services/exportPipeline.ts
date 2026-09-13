@@ -255,10 +255,36 @@ export interface ExportError {
   };
   /**
    * WS3 Round 21 (D5) — what `useExport` did with the session after this
-   * failure: `retained` (checkpoint present; resumable once space is freed),
-   * `destroyed`, or `refused_live`. Plus the bytes the session still holds.
+   * failure. `source` distinguishes WHICH native call actually produced
+   * `disposition` — `retain_session_for_resume`'s own enum (`retained` /
+   * `destroyed` / `refused_live`) and `destroy_session_dir`'s (`destroyed` /
+   * `refused_manifest` / `not_found`) are two DIFFERENT enums that happen to
+   * share the string `"destroyed"`; never read `disposition` without
+   * checking `source` first. `retainedBytes`/`reclaimedBytes`/`path` are
+   * present only when `source === 'retainForResume'` (destroy_session_dir's
+   * own outcome carries none of those).
    */
-  sessionDisposition?: { disposition: string; retainedBytes: number; reclaimedBytes: number; path: string };
+  sessionDisposition?:
+    | { source: 'retainForResume'; disposition: string; retainedBytes: number; reclaimedBytes: number; path: string }
+    | { source: 'destroySession'; disposition: string };
+  /**
+   * WS3 (diagnostic logging) — was session retention even ATTEMPTED for
+   * this failure (`retainForResume` existed on the active handle and was
+   * called), independent of what it returned. `false` means there was
+   * nothing to try it on at all (a bare test fake, or a future ffmpeg-like
+   * surface that hasn't grown the method) — `sessionDisposition` being
+   * absent could otherwise mean either that, or an attempt that returned
+   * `null`/threw; this disambiguates.
+   */
+  retentionAttempted?: boolean;
+  /**
+   * WS3 (diagnostic logging) — an independent, read-only post-hoc reading
+   * of what's actually on disk for this session, taken AFTER the
+   * destroy/retain decision above resolved. A real cross-check: it does not
+   * trust `sessionDisposition`'s own claim, it re-lists the directory. See
+   * `TauriFfmpeg.sessionDiskSnapshot`'s own doc comment.
+   */
+  diskStateAfterFailure?: { manifestPresent: boolean; pieceCount: number; pieceTotalBytes: number };
   /**
    * PROMPT 28 STEP 2 (CRITICAL) — present only on `kind: 'grade_loss_refused'`.
    * See `webcodecsExport/exportPathSelectionTypes.ts`'s `GradeLossRefusal`.

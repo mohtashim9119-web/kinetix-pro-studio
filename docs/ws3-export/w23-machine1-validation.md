@@ -9,19 +9,55 @@
 > the timed part (Step 4 onward); the setup steps are cheap, the timed part is
 > not.
 
-## 0. Build choice — read this before you build
+## 0. Enable diagnostic logging on the release installer
 
-Use a **debug** build (`npm run tauri:dev`, or a debug bundle), not the release
-installer, for this test. Reason, verified against source: `tauri_plugin_log`
-is only attached `if cfg!(debug_assertions)` (`src-tauri/src/lib.rs:429-433`),
-and DevTools only auto-opens on Windows under the same debug guard
-(`src-tauri/src/lib.rs:435-439`). In a release build, every native `log::warn!`
-call (including the orphan-sweep and resume-related ones) goes nowhere — no
-file, nothing — so a failure in a release installer is only half-diagnosable.
-If you must test the actual release installer for another reason, you can
-still open DevTools manually and you still get the TS-side console tags below,
-but you lose every native-side log line; say so explicitly in your notes if
-you go that route so a clean-looking result isn't over-trusted.
+Test the actual release installer — you no longer need a debug build for
+this. Native logging (`tauri_plugin_log`) now attaches in release too, but
+only when opted in: it is OFF by default so an end user never gets a log
+file. Turn it on for this run by setting an environment variable on the
+launching process before starting the app:
+
+```powershell
+$env:KINETIX_DIAGNOSTIC_LOG = "1"
+Start-Process "path\to\kinetix-pro-studio.exe"
+```
+
+(macOS/Linux equivalent: `KINETIX_DIAGNOSTIC_LOG=1 open "/Applications/Kinetix Pro Studio.app"`,
+or `KINETIX_DIAGNOSTIC_LOG=1 ./kinetix-pro-studio` for a raw binary.) Any
+value that isn't exactly `1` or `true` (case-insensitive) is treated as off —
+unset, empty, or `0` all mean no logging, matching the default.
+
+**The exact log file path** (`src-tauri/src/lib.rs`'s `setup`, the
+`KINETIX_DIAGNOSTIC_LOG` branch): `<app_local_data_dir>/diagnostic-logs/kinetix-diagnostic.log` —
+
+- **Windows:** `%LOCALAPPDATA%\com.kinetix.pro-studio\diagnostic-logs\kinetix-diagnostic.log`
+- **macOS:** `~/Library/Application Support/com.kinetix.pro-studio/diagnostic-logs/kinetix-diagnostic.log`
+
+This is a `Folder` target with a pinned filename, not `tauri_plugin_log`'s own
+`LogDir` default — you do not need to hunt for an app-name-derived filename
+under the OS log directory; it is exactly this path, every time, on every
+platform. The file accumulates across launches (it is not truncated on
+restart) — if you're running this validation more than once, note the file's
+size or delete it before your timed run so the entries you're looking for
+aren't mixed in with a prior attempt's.
+
+**What lands in it:** every `ffmpeg_retain_session_for_resume` and
+`ffmpeg_destroy_session` call, each as one line carrying the session id, the
+`failureKind` the frontend passed (or `none` for a call with no failure
+context), and the full native result — `RetainForResumeReport`'s disposition
++ retained/reclaimed bytes + removed-file list, or `DestroySessionOutcome`'s
+disposition. This is INDEPENDENT of DevTools/the frontend diagnostics blob
+below — if the WebView crashes or DevTools wasn't open at the right moment,
+this file still has the native side's own record of what happened. No other
+call is enriched by this opt-in; it does not turn the app noisy — every
+`log::info!`/`log::warn!` in the codebase is technically eligible once the
+plugin is attached, but the volume in a normal export run is a handful of
+lines, not a firehose.
+
+DevTools does NOT auto-open in a release build (that guard is unchanged,
+still debug-only) — open it yourself. Right-click anywhere in the app window
+and choose "Inspect Element", or use the WebView2 DevTools keyboard shortcut
+(F12) if the release build doesn't block it.
 
 ## 1. Size the volume from a real dry run — don't compute it blind
 
@@ -128,9 +164,9 @@ real attempt).
 | 1. Render completes | `export_state.json` exists in the session dir, all `piece_N.h264` present | file exists, `"closed":true`-shaped content | `session_claim.rs::has_manifest` |
 | 2. Concat starts | DevTools console / phase log | `enterPostEncodePhase('concat')` fires | `exportPipelineWebCodecs.ts:3769` |
 | 3. Concat hits ENOSPC | the returned error object | `error.kind === 'disk_full'`, `error.phase === 'concat'` — NOT `'append'`, NOT a bare `'concat'`-kind generic message | `exportPipelineWebCodecs.ts:3788`/`3894`, cross-check against ledger E11 |
-| 4. Retention decision | `RetainForResumeReport.disposition` (NOT the same enum as step 6 below — this is `retain_session_for_resume`'s own field) | `"retained"` | `session_claim.rs:715`; reached via `decideSessionRetentionOnFailure` in `exportSessionRetentionDecision.ts` |
-| 5. Files after the failure, before any relaunch | `Get-ChildItem W:\kinetix-export-<uuid> -Force` | **Present:** every `piece_N.h264`, `export_state.json` (+ `.tmp`/`.bak` if mid-write), `session_claim.json`. **Absent:** `video_all.h264`, any `export_final*`/`.part` file | `is_resume_retained_file`, `session_claim.rs:583-597` |
-| 6. If step 4 unexpectedly is NOT `"retained"` | fallback path taken | `teardown(false)` → `ffmpeg_destroy_session(force:false)` → `DestroySessionOutcome.disposition` | if this reads `"refused_manifest"`, the native backstop caught a bug in step 4 — the session still survives, but report this as a defect, not a pass. If it reads `"destroyed"`, Round 24a's fix failed outright — this is the Machine 1 loss recurring; capture everything in §6 immediately, don't retry blind |
+| 4. Retention decision | Three independent readings, which must all agree: (a) `RetainForResumeReport.disposition` (NOT the same enum as step 6 below — `retain_session_for_resume`'s own field), (b) the diagnostics-log line `retain_session_for_resume session_id=... failure_kind=concat disposition=...` (§0), (c) the frontend diagnostics blob's `retentionAttempted`/`sessionDisposition.source`/`sessionDisposition.disposition` | (a)/(b)/(c) all `"retained"`, `retentionAttempted: true`, `sessionDisposition.source: "retainForResume"` | `session_claim.rs:715`; reached via `decideSessionRetentionOnFailure` in `exportSessionRetentionDecision.ts`; logged in `ffmpeg_retain_session_for_resume` (`ffmpeg.rs`); blob fields from `ExportError`/`exportDiagnosticsBlob.ts` |
+| 5. Files after the failure, before any relaunch | `Get-ChildItem W:\kinetix-export-<uuid> -Force`, cross-checked against the blob's `diskStateAfterFailure` (an INDEPENDENT post-hoc directory read the app itself took — `manifestPresent`/`pieceCount`/`pieceTotalBytes` should match your own listing exactly) | **Present:** every `piece_N.h264`, `export_state.json` (+ `.tmp`/`.bak` if mid-write), `session_claim.json`. **Absent:** `video_all.h264`, any `export_final*`/`.part` file | `is_resume_retained_file`, `session_claim.rs:583-597`; `diskStateAfterFailure` from `ffmpeg_session_disk_snapshot` (`ffmpeg.rs`) |
+| 6. If step 4 unexpectedly is NOT `"retained"` | fallback path taken | `teardown(false)` → `ffmpeg_destroy_session(force:false)` → `DestroySessionOutcome.disposition`, ALSO visible as the blob's `sessionDisposition.source: "destroySession"` and the diagnostics-log line `destroy_session session_id=... failure_kind=concat disposition=...` | if this reads `"refused_manifest"`, the native backstop caught a bug in step 4 — the session still survives, but report this as a defect, not a pass. If it reads `"destroyed"`, Round 24a's fix failed outright — this is the Machine 1 loss recurring; capture everything in §6 immediately, don't retry blind |
 | 7. Relaunch the app | resumable-sessions list (dev IPC console: whatever surfaces `ffmpeg_list_resumable_sessions`, or the in-app resume offer UI) | the session from this run appears as resumable | `exportResumeDiscovery.ts` |
 | 8. Take the resume offer | phase log, THE ORDERING invariant | native picture-count (`count(...)`) never called before `prepareCheckpointResume` (the fence) succeeds | `exportResumeDiscovery.test.ts`'s `'THE ORDERING'` test — same invariant, now checked live not just in a fake harness |
 | 9. Resume with nothing left to render | DevTools console / no new `Worker` instantiation for `exportWorker.ts`, diagnostics blob's `encoderSessionsOpened` for this run | **zero** — resume goes straight to concat/mux, no render worker spun up, no piece re-encoded | `useExport.ts:146` creates the render `Worker` only when there's rendering left to do; a fully-rendered-but-unmuxed session should skip straight past it |
@@ -162,26 +198,55 @@ buffer, and a second run costs you the whole setup again:
    - `Get-ChildItem W:\kinetix-export-<uuid> -Force | Select Name,Length,LastWriteTime | Format-Table` — save to a text file.
    - `Get-FileHash W:\kinetix-export-<uuid>\piece_*.h264 -Algorithm SHA256` — save.
    - The app's own "Copy diagnostics" output (paste to a file) — this is the
-     `ExportWorkerDiagnosticsPayload`/liveness snapshot; it has `failureVia`,
-     `appendLedger`, `encoderSessionsOpened/Closed` for the FAILED run.
-   - If running a debug build: the log file under the app's log directory
-     (`tauri-plugin-log`'s default target — check `%APPDATA%\com.kinetix.pro-studio\logs\` or wherever the plugin resolved to; confirm the exact path once by watching it get created during Step 3's negative controls, since you'll want it again here).
+     `ExportWorkerDiagnosticsPayload`/liveness snapshot merged with
+     `ExportError`; it has `failureVia`, `appendLedger`,
+     `encoderSessionsOpened/Closed` for the FAILED run, PLUS (as of this
+     round) `retentionAttempted`, `sessionDisposition` (with its `source`
+     field — see §4's decision-point table), and `diskStateAfterFailure` —
+     the app's own independent post-hoc directory read, to diff against your
+     own `Get-ChildItem`/`Get-FileHash` above.
+   - Copy `<app_local_data_dir>\diagnostic-logs\kinetix-diagnostic.log`
+     (§0) — this is native-side, independent of the WebView/DevTools
+     entirely; if the app hard-crashes right after the failure and you lose
+     the console, this file is what's left. Confirm it has a
+     `retain_session_for_resume` or `destroy_session` line with this run's
+     session id before moving on — an empty or missing file at this point
+     means `KINETIX_DIAGNOSTIC_LOG` wasn't actually set for this process
+     (check now, not after the run).
 2. **On relaunch, before taking the resume offer:** screenshot the resumable-
    sessions UI / dev-IPC console output showing this session listed.
 3. **During resume:** leave DevTools open the whole time; do not refresh the
    page (a refresh loses the console buffer and the Worker/Network history
    Step 4.9 needs).
-4. **After resume completes:** the same three captures as item 1 (console
-   tail, directory listing + hashes, Copy-diagnostics output) for the
-   RESUMED run, so the before/after diff in §4's "what must prove" table is
-   evidence, not recollection.
+4. **After resume completes:** the same captures as item 1 (console tail,
+   directory listing + hashes, Copy-diagnostics output including the three
+   new fields, and the diagnostic log file) for the RESUMED run, so the
+   before/after diff in §4's "what must prove" table is evidence, not
+   recollection.
 5. **Finally:** `Get-FileHash` the delivered output file, and if you have an
    uninterrupted reference export of the same project (Step 1's dry run
    output), record both picture counts side by side.
 
-Bundle all of the above (text files + screenshots) into one folder named
-after the run before you tear down the VHD — `diskpart`'s `detach vdisk` and
-delete the `.vhdx` only after you've copied everything out.
+Bundle all of the above (text files + screenshots + the diagnostic log file)
+into one folder named after the run before you tear down the VHD —
+`diskpart`'s `detach vdisk` and delete the `.vhdx` only after you've copied
+everything out.
+
+**Why this order is still conclusive in one pass:** every capture in items
+1–5 is either a snapshot of state that doesn't change once taken (a file
+hash, a directory listing, the log file's tail) or is read from something
+that survives independently of the others — the diagnostic log file survives
+a WebView crash that would lose the DevTools console; the diagnostics blob's
+`diskStateAfterFailure` survives a scenario where you forgot to run
+`Get-ChildItem` yourself; your own `Get-ChildItem`/`Get-FileHash` survive a
+bug in the app's own snapshot function. No single capture is load-bearing —
+§4's decision-point table cross-references at least two independent sources
+for both the retention decision (row 4) and the disk state (row 5), so
+losing any ONE capture (a missed screenshot, a DevTools refresh) still
+leaves enough to reach a conclusive pass/fail without a second run. The one
+thing that is NOT recoverable after the fact is the resume-phase Worker/
+Network history (item 3) — that is the single point where "don't refresh
+DevTools" is a hard requirement, not a nice-to-have.
 
 ## 6. If it fails
 

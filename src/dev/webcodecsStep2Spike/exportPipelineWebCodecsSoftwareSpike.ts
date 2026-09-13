@@ -158,7 +158,7 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
   appendFileRaw(path: string, data: Uint8Array): Promise<void>;
   saveSessionFile(fileName: string, destPath: string): Promise<unknown>;
   kill(): Promise<void>;
-  destroy(): Promise<void>;
+  destroy(): Promise<unknown>;
 }
 
 function causeString(err: unknown): string {

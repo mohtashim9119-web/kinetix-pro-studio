@@ -426,16 +426,50 @@ pub fn run() {
         .manage(fa::FaState::default())
         .manage(fa::FaModelCache::default())
         .setup(|app| {
+            use tauri::Manager;
             if cfg!(debug_assertions) {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
                         .build(),
                 )?;
+            } else if std::env::var("KINETIX_DIAGNOSTIC_LOG")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+            {
+                // Opt-in diagnostic logging for a RELEASE build — the only
+                // place a release build can ever attach this plugin at all,
+                // so an end user gets zero logging unless they explicitly
+                // set KINETIX_DIAGNOSTIC_LOG=1 before launching (default
+                // off, per the W23 validation runbook's need for a
+                // release-installer log without shipping noisy logging to
+                // every user). Deliberately no `Stdout` target (a release
+                // GUI app has no attached console to see it, and it's the
+                // one part of the debug-build default this must not carry
+                // over) — `Folder`, not `LogDir`, so the path is pinned and
+                // documented exactly rather than left to
+                // tauri_plugin_log's own app_name-derived filename:
+                // `<app_local_data_dir>/diagnostic-logs/kinetix-diagnostic.log`
+                // — on Windows `%LOCALAPPDATA%\com.kinetix.pro-studio\
+                // diagnostic-logs\kinetix-diagnostic.log`, on macOS
+                // `~/Library/Application Support/com.kinetix.pro-studio/
+                // diagnostic-logs/kinetix-diagnostic.log`. See
+                // docs/ws3-export/w23-machine1-validation.md.
+                let log_dir = app.path().app_local_data_dir()?.join("diagnostic-logs");
+                app.handle().plugin(
+                    tauri_plugin_log::Builder::default()
+                        .level(log::LevelFilter::Info)
+                        .targets([tauri_plugin_log::Target::new(
+                            tauri_plugin_log::TargetKind::Folder {
+                                path: log_dir,
+                                file_name: Some("kinetix-diagnostic".to_string()),
+                            },
+                        )])
+                        .build(),
+                )?;
             }
             #[cfg(all(target_os = "windows", debug_assertions))]
             {
-                use tauri::Manager;
                 app.get_webview_window("main")
                    .map(|w| w.open_devtools());
             }
@@ -485,6 +519,7 @@ pub fn run() {
             ffmpeg::ffmpeg_exec,
             ffmpeg::ffmpeg_kill_session,
             ffmpeg::ffmpeg_destroy_session,
+            ffmpeg::ffmpeg_session_disk_snapshot,
             ffmpeg::pick_save_path,
             ffmpeg::save_session_file,
             ffmpeg::ffmpeg_take_durability_warnings,

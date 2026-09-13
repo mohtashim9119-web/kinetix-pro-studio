@@ -371,7 +371,7 @@ describe('exportProjectWebCodecs — STEP 3b resume after a mux-stage failure', 
     expect(ffmpeg.kill).toHaveBeenCalledTimes(1);
     // THE NEGATIVE CASE: cancel forces past the manifest guard — it does
     // NOT call `retainForResume` and does NOT do a plain guarded destroy.
-    expect(ffmpeg.destroy).toHaveBeenCalledWith({ force: true });
+    expect(ffmpeg.destroy).toHaveBeenCalledWith({ force: true, failureKind: 'cancel' });
 
     // Let the in-flight export settle either way — its outcome is not
     // this test's concern, only that cancel's own destroy call was forced.

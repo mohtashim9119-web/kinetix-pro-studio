@@ -373,16 +373,42 @@ pub fn ffmpeg_volume_free_space(
 /// next time. A session with NO manifest has nothing to resume and is
 /// destroyed outright (the pre-Round-21 behaviour). Never touches a session
 /// claimed by a live foreign holder.
+///
+/// `failure_kind` is opaque to this function — it exists solely so the
+/// diagnostic log line below (opt-in, `KINETIX_DIAGNOSTIC_LOG`, see
+/// `lib.rs`'s `setup`) records WHY the caller decided a session's fate
+/// alongside WHAT that fate was, without threading a whole `ExportError`
+/// across the IPC boundary. The TS side passes `result.error.kind` (e.g.
+/// `"disk_full"`) for a real failure, or a short reason string for a
+/// non-failure call (`"success"`, `"cancel"`) at other call sites.
 #[tauri::command]
 pub fn ffmpeg_retain_session_for_resume(
     session_id: String,
+    failure_kind: Option<String>,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<RetainForResumeReport, String> {
     state.cancel_flags.lock().unwrap().remove(&session_id);
     state.resume_pending.lock().unwrap().remove(&session_id);
     state.io_gates.lock().unwrap().remove(&session_id);
     let dir = session_dir(&session_id)?;
-    retain_session_for_resume(&dir, &session_id)
+    let result = retain_session_for_resume(&dir, &session_id);
+    match &result {
+        Ok(report) => log::info!(
+            target: "kinetix::session_retention",
+            "retain_session_for_resume session_id={session_id} failure_kind={} disposition={} retained_bytes={} reclaimed_bytes={} removed={:?}",
+            failure_kind.as_deref().unwrap_or("none"),
+            report.disposition,
+            report.retained_bytes,
+            report.reclaimed_bytes,
+            report.removed,
+        ),
+        Err(e) => log::warn!(
+            target: "kinetix::session_retention",
+            "retain_session_for_resume session_id={session_id} failure_kind={} error={e}",
+            failure_kind.as_deref().unwrap_or("none"),
+        ),
+    }
+    result
 }
 
 /// WS3 Round 21 (D5) — every `kinetix-export-*` directory under the temp
@@ -1743,17 +1769,78 @@ pub fn ffmpeg_kill_session(
 /// tear down regardless of a manifest — an explicit cancel, an operator's
 /// "start clean" choice, a successful export's own teardown, and the
 /// abandoned-session TTL collector.
+///
+/// `failure_kind` is opaque here too — see `ffmpeg_retain_session_for_resume`'s
+/// own doc comment for the exact same convention.
 #[tauri::command]
 pub fn ffmpeg_destroy_session(
     session_id: String,
     force: Option<bool>,
+    failure_kind: Option<String>,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<DestroySessionOutcome, String> {
     state.cancel_flags.lock().unwrap().remove(&session_id);
     state.resume_pending.lock().unwrap().remove(&session_id);
     state.io_gates.lock().unwrap().remove(&session_id);
     let dir = session_dir(&session_id)?;
-    destroy_session_dir(&dir, force.unwrap_or(false))
+    let forced = force.unwrap_or(false);
+    let result = destroy_session_dir(&dir, forced);
+    match &result {
+        Ok(outcome) => log::info!(
+            target: "kinetix::session_retention",
+            "destroy_session session_id={session_id} failure_kind={} force={forced} disposition={}",
+            failure_kind.as_deref().unwrap_or("none"),
+            outcome.disposition,
+        ),
+        Err(e) => log::warn!(
+            target: "kinetix::session_retention",
+            "destroy_session session_id={session_id} failure_kind={} force={forced} error={e}",
+            failure_kind.as_deref().unwrap_or("none"),
+        ),
+    }
+    result
+}
+
+/// STEP (diagnostic logging) — a read-only, independent post-hoc check of
+/// what's actually on disk for a session, taken by the TS side right after a
+/// destroy/retain decision resolves. Deliberately separate from
+/// `DestroySessionOutcome`/`RetainForResumeReport`: those report what the
+/// native call BELIEVES it did; this reports what a fresh directory listing
+/// actually shows, so a diagnostics blob comparing the two is a real
+/// cross-check, not two readings of the same claim. Never errors on a
+/// missing directory — that's the normal, expected shape after a genuine
+/// destroy.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionDiskSnapshot {
+    pub manifest_present: bool,
+    pub piece_count: usize,
+    pub piece_total_bytes: u64,
+}
+
+pub(crate) fn session_disk_snapshot(dir: &Path) -> SessionDiskSnapshot {
+    if !dir.exists() {
+        return SessionDiskSnapshot { manifest_present: false, piece_count: 0, piece_total_bytes: 0 };
+    }
+    let manifest_present = crate::session_claim::has_manifest(dir);
+    let mut piece_count = 0usize;
+    let mut piece_total_bytes = 0u64;
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let Some(name) = entry.file_name().to_str().map(str::to_string) else { continue };
+            if crate::session_claim::is_piece_file(&name) {
+                piece_count += 1;
+                piece_total_bytes += entry.metadata().map(|m| m.len()).unwrap_or(0);
+            }
+        }
+    }
+    SessionDiskSnapshot { manifest_present, piece_count, piece_total_bytes }
+}
+
+#[tauri::command]
+pub fn ffmpeg_session_disk_snapshot(session_id: String) -> Result<SessionDiskSnapshot, String> {
+    let dir = session_dir(&session_id)?;
+    Ok(session_disk_snapshot(&dir))
 }
 
 /// Opens a native OS save-file dialog and returns the chosen path without
@@ -4014,5 +4101,70 @@ mod tests {
                 "windows_long_path must be a no-op on this platform for {case}"
             );
         }
+    }
+
+    // ── diagnostic logging — session_disk_snapshot ──────────────────────────
+    //
+    // A read-only, independent cross-check of what a destroy/retain decision
+    // actually left on disk — see this function's own doc comment for why it
+    // exists as a SEPARATE reading from `DestroySessionOutcome`/
+    // `RetainForResumeReport` rather than trusting either's own claim.
+
+    #[test]
+    fn session_disk_snapshot_on_a_missing_directory_reports_all_absent() {
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{}", Uuid::new_v4()));
+        let _ = fs::remove_dir_all(&dir);
+        let snap = session_disk_snapshot(&dir);
+        assert_eq!(snap, SessionDiskSnapshot { manifest_present: false, piece_count: 0, piece_total_bytes: 0 });
+    }
+
+    #[test]
+    fn session_disk_snapshot_counts_pieces_and_bytes_and_sees_the_manifest() {
+        let (_, dir) = make_session();
+        fs::write(dir.join("piece_0.h264"), vec![0xAAu8; 100]).unwrap();
+        fs::write(dir.join("piece_1.h264"), vec![0xBBu8; 250]).unwrap();
+        fs::write(dir.join("export_state.json"), br#"{"closed":true}"#).unwrap();
+        // Not a piece — must not be counted, mirrors `is_piece_file`'s own
+        // exclusion of `tier1_piece_*.mp4`/`canvas_piece_*.mp4` intermediates.
+        fs::write(dir.join("video_all.h264"), vec![0xCCu8; 999]).unwrap();
+
+        let snap = session_disk_snapshot(&dir);
+        assert!(snap.manifest_present);
+        assert_eq!(snap.piece_count, 2);
+        assert_eq!(snap.piece_total_bytes, 350);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_disk_snapshot_after_a_retain_sees_pieces_and_manifest_but_not_the_removed_intermediate() {
+        // Exercises the REAL sequence a W23 run produces: retain first, then
+        // snapshot — proving the snapshot reads the post-retain state, not a
+        // stale pre-retain one.
+        let (id, dir) = make_session();
+        acquire_session_claim(&dir, &id).unwrap();
+        fs::write(dir.join("piece_0.h264"), vec![0xAAu8; 65_536]).unwrap();
+        fs::write(dir.join("export_state.json"), br#"{"closed":true}"#).unwrap();
+        fs::write(dir.join("video_all.h264"), vec![0xBBu8; 65_536]).unwrap();
+
+        let report = retain_session_for_resume(&dir, &id).unwrap();
+        assert_eq!(report.disposition, "retained");
+
+        let snap = session_disk_snapshot(&dir);
+        assert!(snap.manifest_present, "the manifest must survive a retain");
+        assert_eq!(snap.piece_count, 1, "the rendered piece must survive a retain");
+        assert_eq!(snap.piece_total_bytes, 65_536);
+    }
+
+    #[test]
+    fn session_disk_snapshot_after_a_forced_destroy_reports_the_directory_gone() {
+        let (_, dir) = make_session();
+        fs::write(dir.join("piece_0.h264"), vec![0xAAu8; 4096]).unwrap();
+        fs::write(dir.join("export_state.json"), b"{}").unwrap();
+
+        let outcome = destroy_session_dir(&dir, true).unwrap();
+        assert_eq!(outcome.disposition, "destroyed");
+
+        let snap = session_disk_snapshot(&dir);
+        assert_eq!(snap, SessionDiskSnapshot { manifest_present: false, piece_count: 0, piece_total_bytes: 0 });
     }
 }

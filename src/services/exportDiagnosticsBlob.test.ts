@@ -218,6 +218,9 @@ describe('buildExportDiagnosticsBlob — no field defined on the emit-site snaps
     expect(blob.exportPathSelection).toBeNull();
     expect(blob.gpuCapability).toBeNull();
     expect(blob.gradeLossRefusal).toBeNull();
+    expect(blob.retentionAttempted).toBeNull();
+    expect(blob.sessionDisposition).toBeNull();
+    expect(blob.diskStateAfterFailure).toBeNull();
     expect(() => JSON.stringify(blob)).not.toThrow();
   });
 
@@ -233,5 +236,54 @@ describe('buildExportDiagnosticsBlob — no field defined on the emit-site snaps
     expect(blob.gpuCapability?.unmaskedRendererWebGL).toBe('SENTINEL_GPU_RENDERER');
     expect(blob.gradeLossRefusal?.affectedSegmentIndices).toEqual([100022, 100023]);
     expect(blob.gradeLossRefusal?.failedGateClauses).toEqual(['no-worker']);
+  });
+
+  // WS3 (diagnostic logging) — the W23 cross-check trio: whether retention
+  // was attempted, WHICH native call's disposition is being reported
+  // (`sessionDisposition.source` — the two native dispositions are
+  // different enums that happen to share the string "destroyed", per
+  // `ExportError`'s own doc comment), and the independent post-hoc disk
+  // read. Two source variants covered, not just one, since a caller reading
+  // `disposition` without first checking `source` is exactly the bug this
+  // field's own shape exists to prevent.
+  it('retentionAttempted, sessionDisposition (retainForResume source), and diskStateAfterFailure all reach the blob top level', () => {
+    const err: ExportError = {
+      kind: 'disk_full',
+      message: 'SENTINEL',
+      retentionAttempted: true,
+      sessionDisposition: {
+        source: 'retainForResume',
+        disposition: 'retained',
+        retainedBytes: 65_536,
+        reclaimedBytes: 4_096,
+        path: '/sessions/kinetix-export-sentinel',
+      },
+      diskStateAfterFailure: { manifestPresent: true, pieceCount: 2, pieceTotalBytes: 65_536 },
+    };
+    const blob = buildExportDiagnosticsBlob(err, PROJECT_META) as {
+      retentionAttempted: boolean | null;
+      sessionDisposition: { source: string; disposition: string; retainedBytes?: number } | null;
+      diskStateAfterFailure: { manifestPresent: boolean; pieceCount: number; pieceTotalBytes: number } | null;
+    };
+    expect(blob.retentionAttempted).toBe(true);
+    expect(blob.sessionDisposition?.source).toBe('retainForResume');
+    expect(blob.sessionDisposition?.disposition).toBe('retained');
+    expect(blob.sessionDisposition?.retainedBytes).toBe(65_536);
+    expect(blob.diskStateAfterFailure).toEqual({ manifestPresent: true, pieceCount: 2, pieceTotalBytes: 65_536 });
+  });
+
+  it('sessionDisposition with the destroySession source carries no retainedBytes/reclaimedBytes/path — a different enum, not a partial retainForResume result', () => {
+    const err: ExportError = {
+      kind: 'concat',
+      message: 'SENTINEL',
+      retentionAttempted: true,
+      sessionDisposition: { source: 'destroySession', disposition: 'refused_manifest' },
+    };
+    const blob = buildExportDiagnosticsBlob(err, PROJECT_META) as {
+      sessionDisposition: { source: string; disposition: string; retainedBytes?: number } | null;
+    };
+    expect(blob.sessionDisposition?.source).toBe('destroySession');
+    expect(blob.sessionDisposition?.disposition).toBe('refused_manifest');
+    expect(blob.sessionDisposition?.retainedBytes).toBeUndefined();
   });
 });

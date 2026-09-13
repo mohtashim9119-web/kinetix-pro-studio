@@ -1,7 +1,7 @@
 import type { RetainForResumeReport } from '../services/tauriFfmpeg';
 
 export interface RetainableSession {
-  retainForResume?(): Promise<RetainForResumeReport>;
+  retainForResume?(failureKind?: string): Promise<RetainForResumeReport>;
 }
 
 /**
@@ -25,10 +25,16 @@ export interface RetainableSession {
  * (a bare test fake, or a future ffmpeg-like surface that hasn't grown it
  * yet) — the caller must then fall back to an ordinary GUARDED destroy,
  * which `ffmpeg_destroy_session`'s own native manifest guard backstops.
+ *
+ * WS3 (diagnostic logging) — `failureKind` (the caller's `ExportError.kind`)
+ * is passed through to `retainForResume` opaquely; it reaches the opt-in
+ * native log (`ffmpeg_retain_session_for_resume`'s doc comment) only and
+ * never changes this function's own decision.
  */
 export async function decideSessionRetentionOnFailure(
   active: RetainableSession | null,
+  failureKind?: string,
 ): Promise<RetainForResumeReport | null> {
   if (!active?.retainForResume) return null;
-  return active.retainForResume();
+  return active.retainForResume(failureKind);
 }

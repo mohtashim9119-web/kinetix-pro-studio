@@ -1,5 +1,5 @@
 import type { FfmpegLike } from './segmentEncoder';
-import { TauriFfmpeg, type SaveSessionFileResult } from './tauriFfmpeg';
+import { TauriFfmpeg, type DestroySessionOutcome, type SaveSessionFileResult } from './tauriFfmpeg';
 
 export interface TauriBackend {
   ffmpeg: FfmpegLike;
@@ -8,8 +8,11 @@ export interface TauriBackend {
   sessionId: string;
   /** Deletes the session temp dir. Idempotent — safe to call multiple times.
    *  STEP 3b — `force: true` bypasses the native resume-manifest guard; see
-   *  `TauriFfmpeg.destroy`'s own doc comment for which callers must set it. */
-  dispose: (opts?: { force?: boolean }) => Promise<void>;
+   *  `TauriFfmpeg.destroy`'s own doc comment for which callers must set it.
+   *  WS3 (diagnostic logging) — `failureKind` reaches the opt-in native log
+   *  only; the returned outcome (or `null`, best-effort) lets a caller
+   *  building failure diagnostics see what the native side actually did. */
+  dispose: (opts?: { force?: boolean; failureKind?: string }) => Promise<DestroySessionOutcome | null>;
   /**
    * Copies a finished file (e.g. `export_final.mp4`) from the session temp dir
    * straight to `destPath` on disk, without routing the bytes through the

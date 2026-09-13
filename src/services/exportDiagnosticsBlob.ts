@@ -58,6 +58,15 @@ export function buildExportDiagnosticsBlob(
     // before any encoding started because a segment's color grade would
     // have been silently dropped. See `ExportError.gradeLossRefusal`.
     gradeLossRefusal: err.gradeLossRefusal ?? null,
+    // WS3 (diagnostic logging) — the W23 cross-check trio: whether
+    // retention was even attempted, the native disposition whichever call
+    // (retainForResume or destroySession) actually ran, and an independent
+    // post-hoc read of what's really on disk. See `ExportError`'s own doc
+    // comments for why `sessionDisposition.source` must be checked before
+    // its `disposition` string is compared against either native enum.
+    retentionAttempted: err.retentionAttempted ?? null,
+    sessionDisposition: err.sessionDisposition ?? null,
+    diskStateAfterFailure: err.diskStateAfterFailure ?? null,
     projectMeta,
   };
 }

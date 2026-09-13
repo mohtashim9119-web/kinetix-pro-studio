@@ -79,7 +79,7 @@ import { isPlainVideoSegment, isPlainImageSegment } from '../plainSegment';
 import { checkTimelineIsGapless } from '../timelinePartition';
 import { isGlCompositableSegment, GL_TRANSITION_SLUGS } from './glCompositable';
 import type { ExportAppendLedger, ExportError, ExportLivenessSnapshot, ExportPhaseLogTailEntry, ExportResult, ProgressCallback } from '../exportPipeline';
-import type { SaveSessionFileResult } from '../tauriFfmpeg';
+import type { DestroySessionOutcome, SaveSessionFileResult } from '../tauriFfmpeg';
 import type { ProjectEffectConfig } from '../gl/compositeParams';
 import type {
   ExportWorkerInboundMessage,
@@ -218,7 +218,7 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
   kill(): Promise<void>;
   /** STEP 3b — `force: true` bypasses the native manifest guard; see
    *  `TauriFfmpeg.destroy`'s own doc comment for which callers must set it. */
-  destroy(opts?: { force?: boolean }): Promise<void>;
+  destroy(opts?: { force?: boolean; failureKind?: string }): Promise<DestroySessionOutcome | null>;
   /**
    * Counts H.264 Annex B access units (pictures) in a session file entirely on
    * the native side (`TauriFfmpeg.countAnnexbFrames`, backed by the Rust
@@ -413,7 +413,7 @@ export async function cancelExportWebCodecs(): Promise<void> {
     // STEP 3b — a user cancel discards the session regardless of any
     // manifest: there is no "resume this cancelled export" offer, so leaving
     // the directory behind would just be a leak the operator never asked for.
-    await ffmpeg.destroy({ force: true });
+    await ffmpeg.destroy({ force: true, failureKind: 'cancel' });
   }
 }
 
