@@ -1,0 +1,384 @@
+# Persistence-layer audit (independent)
+
+**Scope.** Read-only audit of persistence at `ws3-export-integration` @ `b80ba40bee37f88f3da5f04f58c2e93d2170d0a7` (`feat(ws3-export): opt-in release diagnostic logging + failure-diagnostics cross-check`). No `src/`, `src-tauri/**`, tests, or existing docs were edited.
+
+**Method.** Exhaustive search of this commit for IndexedDB, Cache Storage, OPFS, `localStorage` / `sessionStorage`, Tauri native files, `navigator.storage.persist`, `storage.estimate`, quota handling, `.bak` / `.part` promotion, and in-place writes. Tauri 2.11.2 / wry 0.55.1 (this app’s locked crates) were read only to resolve on-disk paths the app code names by API (`app_local_data_dir()`, WebView2 `data_directory`) rather than by literal string.
+
+**Identifier.** `src-tauri/tauri.conf.json` → `"identifier": "com.kinetix.pro-studio"`. There is no `data_directory` override in that config.
+
+---
+
+## 1. Quota and persistence APIs — what exists
+
+Searched the entire tree for `navigator.storage.persist`, `storage.persist`, `navigator.storage.estimate`, `storage.estimate`, `persist()`, and `navigator.storage`.
+
+| API | Present at this commit? | Where / what it does |
+|---|---|---|
+| `navigator.storage.persist()` | **No.** Zero call sites in `src/`, `src-tauri/`, tests, or scripts. | Origin storage is never requested as persistent. WebView2 / Chromium therefore treat this origin as **best-effort**. |
+| `navigator.storage.persisted()` | **No.** | — |
+| `navigator.storage.estimate()` | **Yes, once.** Display only. | `src/components/ProjectDashboard.tsx` (~lines 80–82): `void navigator.storage?.estimate?.().then(({ usage, quota }) => { ... })`. Feeds the dashboard “storage used” bar. No gate, no persist request, no write refusal. |
+| Origin-quota handling in JS | Partial, localStorage-era leftovers. | `projectStore.ts` maps `QuotaExceededError` / `/quota/` on `saveProject` to `reason: 'quota-exceeded'`. `usePersistProject` surfaces that as a toast. `uiStateStore.ts`, `upsertProjectMeta`, `setLastOpenedProjectId`, `lookPresetService`, `exportSessionLedger`, `exportCleanupNotices` swallow `setItem` failures. IndexedDB `put` failures in `App.tsx` are logged and the file is **skipped**. |
+| Native volume free-space | Yes, not origin quota. | `src-tauri/src/disk_space.rs` + `ffmpeg_volume_free_space` / model-download preflight. These measure the **OS volume** under a path (`lpFreeBytesAvailableToCaller` on Windows — quota-aware). They do not protect IndexedDB or `localStorage`, and they are not called on the project-JSON write path. |
+
+**Cache Storage.** No `caches.open`, `cache.put`, `cache.match`, or `CacheStorage` usage.
+
+**OPFS.** No `navigator.storage.getDirectory`, `FileSystemDirectoryHandle`, or other origin-private filesystem API.
+
+**Implication.** Media blobs in IndexedDB sit in the same best-effort bucket Chromium evicts under storage pressure. This app never opts out.
+
+---
+
+## 2. Store map
+
+Authoritative vs cache is judged by whether losing the store loses user work that cannot be rebuilt from another surviving store.
+
+### 2.1 IndexedDB (origin-scoped, Chromium-evictable)
+
+Four databases. No fifth. (`indexedDB.open` appears only in these four production files.)
+
+| DB | Object store | Key | User data | Authoritative? | Lose it → lose user work? | Chromium quota eviction? |
+|---|---|---|---|---|---|---|
+| `kinetix-assets` | `assets-v2` (v2); `assets` (v1, migration-only) | `[projectId, id]` | **The media bytes.** `StoredAsset { projectId, id, blob, name, mimeType }`. Voiceover, video, images. Project JSON stores only metadata (`url: ''`, `file` stripped). | **Yes — sole copy of imported media.** Original files on disk are never re-read; the app copies into IDB at import (`putAsset`). | **Yes.** Cold open drops any asset whose blob is missing (`App.tsx` `handleSwitchProject`: “Dropping orphaned asset”), clears `segment.assetId` / `voiceoverId` for those ids, and leaves segments as empty clips. Preview, waveform rebuild, export, and re-transcription of that blob are gone unless the user re-imports the same files. | **Yes.** Largest origin consumer. Primary eviction target. |
+| `kinetix-waveforms` | `waveforms` | `[projectId, assetId]` | Derived peak arrays (`Float32Array`) + `blobSize` / `peaksPerSecond` guards. | **Cache.** Header in `waveformStore.ts`: “peaks are a derived cache, not source data.” In-memory LRU (`peekWaveform`, 32 entries) is session-only and also non-authoritative. | **No, if the audio blob still exists** — rebuild via `decodeAudioData`. **Yes in practice after asset eviction** — there is nothing to rebuild from. | **Yes.** |
+| `kinetix-staged` | `staged-v1` | `[projectId, slotKey]` | Pending DropZone slots: script / scene / voiceover / extra files as `File`-rebuildable blobs (`lastModified` is load-bearing for `getFileIdentity`). | Authoritative for *unapplied* staging only. Applied work lives in project JSON + `kinetix-assets`. | Loses unapplied staging. Does not empty an already-synced timeline. | **Yes.** |
+| `kinetix-history` | `history` | `projectId` | Up to 20 undo snapshots, tagged with the Rust process token. Blobs stripped. | Convenience. Owner ruling: survives reload, not app restart (`historyPersist.ts`). Writes are swallowed on failure. | Loses undo across reload. Project body is elsewhere. | **Yes.** |
+
+There is **no** `kinetix-projects` IndexedDB at this commit. Project bodies were moved to the OS file store (WS2 T1.3). Archive prose that still names an IDB project store is historical.
+
+### 2.2 Cache Storage
+
+None.
+
+### 2.3 OPFS
+
+None.
+
+### 2.4 `localStorage` (origin-scoped)
+
+| Key | User data | Authoritative? | Lose it → lose user work? | Chromium quota eviction? |
+|---|---|---|---|---|
+| `kinetix:projects:v1` | Dashboard registry: `ProjectMeta[]` (`id`, `name`, `savedAt`, `segmentCount`, optional `thumbnailUrl` data-URL). | **Listing only.** Not the project body. `loadAllMetas()` is the sole dashboard source. | **Listing vanishes.** OS `projects/<id>/project.json` can still exist. Boot does **not** rebuild the registry from the OS store when the file is already present (`adoptMirroredProjects` treats `osStoreRead(id) !== null` as `skippedAlreadyLocal` and does not upsert meta). | Subject to origin wipe. In Chromium, DOM storage is a separate ~5–10 MB budget from Quota-managed IDB; **IDB-only eviction commonly leaves this key intact.** Full origin-data clear removes it. |
+| `kinetix:project:<id>:v1` | Legacy / `npm run dev` project JSON. | **Deprecated in Tauri.** Primary body is the OS file. Still the primary store when `!isTauri()`. Boot migrates these keys into the OS store then deletes them (`migrateLocalStorageProjectsToOsStore`). | In the shipped Tauri app, losing leftover keys after a successful migration loses nothing. In plain Vite, this **is** the project body. | Same as other `localStorage`. |
+| `kinetix:project:v1` | Pre-multi-project single blob. Read-once migration. | Legacy. | One old project if never migrated. | Same. |
+| `kinetix:lastOpenedProjectId` | Last opened id. | Preference. | Cold boot already lands on the dashboard; only reload-resume is affected. | Same. |
+| `kinetix:ui:v1` | UI + machine defaults: timeline scroll/zoom, WebCodecs toggle (`webcodecsExportEnabled`), new-project seeds (`appDefaults.ts`). | Preferences. | Loses UI chrome / defaults, not timelines. | Same. |
+| `kinetix:stylePresets:v1` | Global style preset library. | User-created presets (built-ins are code). | Loses custom style presets. | Same. |
+| `kinetix:lookPresets:v1` | Combined-look presets (max 20). | User-created looks. | Loses custom looks. | Same. |
+| `kinetix:exportSessions:v1` | Export-session created-at ledger (cleanup age). | Convenience. Missing ⇒ session treated as oldest / more reclaimable. | Does not lose project data or a finished MP4. | Same. |
+| `kinetix:exportCleanupNotices:v1` | Post-export cleanup toasts. | Convenience. Writes are best-effort. | Cosmetic. | Same. |
+| `kinetix:ws3-liveness:v1` | Dev-only liveness-probe flag. | Dev. | None. | Same. |
+
+Thumbnails in the registry are ~15–25 KB JPEGs (`usePersistProject.buildThumbnailBase64`). They are not the media library.
+
+### 2.5 `sessionStorage` (tab / webview session)
+
+| Key | Role | Authoritative? | Eviction / loss |
+|---|---|---|---|
+| `kinetix:editorResumeToken` | Reload-vs-cold-boot discriminator. Compared to Rust `app_session_token`. | Session UX only. | Dies with the browsing session. Not a quota-eviction story. |
+| `kinetix:history:sessionToken` | Browser-dev stand-in for the Rust process token. | Dev only. | Same. |
+| `kinetix:lastOpenedProjectId` | Legacy read, then promoted to `localStorage`. | Migration remnant. | Same. |
+| Dev probe locks (`maybeAutorun*`) | Prevent double-autorun. | Dev. | Same. |
+
+### 2.6 Native files via Tauri (bundle-id-keyed, **not** Chromium-evictable)
+
+Resolved through `app.path().app_local_data_dir()` + identifier `com.kinetix.pro-studio`. Same directory for `tauri dev`, `tauri dev -f fa-inference`, and a bundled build.
+
+| Store | Path under `app_local_data_dir()` | User data | Authoritative? | Lose it → lose user work? | Chromium eviction? |
+|---|---|---|---|---|---|
+| **Primary project body** | `projects/<id>/project.json` | Full `StoredProjectData` v4: script, scene details, headings, segments (timing, overlays, `assetId` refs), transcript tokens, FA word timings, asset **metadata** (no bytes). Atomic write via `write_atomic`. | **Yes — timeline / sync / script.** | **Yes** for editorial work. Media bytes are not here. | **No.** |
+| Primary backups | `project-store-backups/<id>/<millis>.json` | Last 10 non-empty previous bodies. 30-day sweep after delete. | Recovery copy. | Recoverable if primary is gone and backups remain. | **No.** |
+| Legacy mirror | `project-mirror/projects/<id>.json` + `project-mirror/registry.json` | Cross-origin adoption copy (dev `http://localhost:3000` vs release `tauri://localhost`). Best-effort, fire-and-forget after the primary write. | Safety net, not the read path in Tauri. | Only matters if the primary write never landed. | **No.** |
+| Mirror backups | `project-mirror/backups/<id>/<millis>.json` | Same 10-deep / 30-day policy. | Recovery copy. | Same. | **No.** |
+| Whisper model | `models/ggml-large-v3-turbo.bin` (+ `.part` / `.part.meta` while downloading) | Downloaded model. | Replaceable (re-download). | No project data. | **No.** |
+| FA models | `fa-models/<lang>/model.onnx` (+ sidecars / `.part`) | Downloaded / imported ONNX. | Replaceable. | No project data. | **No.** |
+| FA audio cache | `fa-audio-cache/<key>.wav` | Derived 16 kHz WAV, 2 GiB LRU. | Cache. | Re-transcode from the IDB blob (if it still exists). | **No.** (app-internal LRU only) |
+| Diagnostic log | `diagnostic-logs/kinetix-diagnostic.log` | Opt-in release log (`KINETIX_DIAGNOSTIC_LOG=1`). | Ops. | No user work. | **No.** |
+
+**Export sessions** live in the **OS temp directory**, not `app_local_data_dir()`:
+
+- `std::env::temp_dir().join("kinetix-export-<uuid>")` (`ffmpeg.rs` `session_dir`)
+- Windows: `%LOCALAPPDATA%\Temp\kinetix-export-<uuid>\` (named in `session_claim.rs`)
+- macOS: `$TMPDIR` / `/var/folders/…/T/kinetix-export-<uuid>/`
+
+Contents: Annex-B pieces, `export_state.json` (+ `.tmp` / `.bak`), session claim, voiceover extract, etc. Losing them loses an in-flight / resumable export, not the project.
+
+### 2.7 In-memory only (not a disk store)
+
+`useFirstFrameCache` — JPEG data-URLs in a React ref. Dies on reload. Not evictable as origin storage; not user work.
+
+`waveformStore`’s 32-entry LRU mirror — same.
+
+Object URLs (`blob:`) are minted every load from IDB blobs and die with the document. Project JSON never stores a live `blob:` URL.
+
+### 2.8 What “user work” actually is
+
+A project is **split across two authorities**:
+
+1. **Timeline / script / sync JSON** → OS `projects/<id>/project.json` (Tauri) or `localStorage` (`!isTauri()`).
+2. **Media bytes** → IndexedDB `kinetix-assets`. There is no native copy and no path back to the user’s original file.
+
+The dashboard list is a third, cheaper store (`localStorage` registry) that can survive without (1) or (2), and (1) can survive without the registry.
+
+---
+
+## 3. If Chromium evicted best-effort origin storage — which symptoms follow?
+
+Assume a Tauri build on **Windows / WebView2** (the only shipped Chromium engine; macOS is WKWebView). “Best-effort origin storage” = IndexedDB + Cache Storage + OPFS +, on a full origin-data clear, `localStorage` / `sessionStorage`. Cache Storage and OPFS are empty here, so the payload is the four IndexedDB databases plus whatever DOM storage the wipe includes.
+
+### 3.1 Symptom-by-symptom
+
+| Observed symptom | Follows from origin-storage eviction? | Why |
+|---|---|---|
+| **Projects still listed** | **Yes, if the wipe was IDB-first / Quota-managed only.** **No, if the wipe included `localStorage`.** | The list is `kinetix:projects:v1`. Chromium’s quota evictor targets IndexedDB / Cache / OPFS. A full “clear site data” also drops `localStorage`, and this app **will not** rehydrate the registry from already-present OS `project.json` files. Twenty listed rows therefore imply the registry key survived — i.e. **not** a total origin wipe, or the list was rewritten after the wipe. |
+| **Timelines empty (0 segments)** | **Does not follow.** | Segment arrays live in OS `project.json`, outside the webview origin. Eviction does not open, truncate, or rewrite those files. `handleSwitchProject` keeps `saved.project.segments` and only nulls `assetId` on dropped blobs. `saveProject` refuses `segments.length === 0` over a stored non-empty body (`empty-over-nonempty`). |
+| **Timelines empty (clips present, no media / blank preview)** | **Yes.** | After IDB miss, every video/image/voiceover is dropped from `project.assets`, `assetId`s are cleared, `voiceoverId` is cleared. The ruler can still show segment widths from JSON; the preview is empty and waveforms cannot rebuild. Operators often call that “an empty timeline.” |
+| **Waveforms missing** | **Yes.** | `kinetix-waveforms` is origin IDB. Even if peaks survived, rebuild needs the audio blob in `kinetix-assets`. |
+| **Assets dead** | **Yes.** | `kinetix-assets` is the only copy of imported bytes. Source files on disk being “safe” does not help: the app does not retain those paths. |
+| **Filesystem intact / source files safe** | Compatible. | Eviction is inside the WebView2 profile (`EBWebView\…`), not the user’s footage folders, and not (by itself) `projects\<id>\project.json`. |
+
+### 3.2 Is eviction sufficient for *all* of them?
+
+**No — not if “timelines empty” means zero segments in the project body.**
+
+Eviction **is** sufficient for:
+
+- dead assets
+- missing waveforms
+- visually empty / unplayable timelines
+- projects still listed **provided** `kinetix:projects:v1` was not in the evicted set
+
+Eviction **is not** sufficient for:
+
+- wiping `segments: []` into twenty OS `project.json` files
+- deleting those files
+- emptying the durable mirror / `project-store-backups`
+
+A **second mechanism** is required for true empty segment arrays. Candidates that exist in *this* code, ranked by how well they fit “listed + empty + disk starvation”:
+
+1. **Post-eviction open + 500 ms autosave (amplification, not emptying).** `handleSwitchProject` writes the stripped-asset project into React state with `confirmed: true`. `usePersistProject` then `saveProject`s it. The empty-over-nonempty guard checks **segment count only**, not asset count. Result: OS JSON **keeps segments** but **permanently loses asset metadata** (names, ids, durations, `voiceoverId`). That is real data loss and is **not** Chromium deleting the JSON — it is this app persisting the evacuated in-memory view. It still does not produce `segments: []`.
+2. **Disk-full / failed native writes** against `project.json` (see §4). The atomic path is designed not to truncate the destination; a *successful* write of an already-empty in-memory project is the remaining way to land `segments: []` (new unsynced project, or a stored count the guard could not read).
+3. **Historical Session O shape** (documented in `projectStore.ts`): a genuinely new empty project opened because last-opened / origin-split hid the real one. Registry would then show extra empty rows, not twenty previously-full ones emptied in place — unless those rows were always empty.
+
+**Verdict.** Chromium best-effort eviction of this origin **explains assets dead + waveforms missing + visually empty timelines**, and **can** explain “still listed” if `localStorage` survived. It does **not** explain twenty emptied `project.json` bodies. If forensics show those files still contain segments, eviction is sufficient and the “empty timeline” report is the IDB-drop UI. If those files are `segments: []` or missing, a second write-path or operator-flow mechanism is required.
+
+**Engine note.** The eviction question is a Chromium/WebView2 question. macOS builds use WKWebView; WebKit has its own WebsiteData eviction, also best-effort because `persist()` is never called. The store split (OS JSON vs IDB blobs) is the same.
+
+---
+
+## 4. Silent loss on a full disk — write paths, ranked
+
+“Silent” = write fails or lands partial/empty without a hard stop that preserves the previous good bytes. Ranked by how much **user project work** a single failure can destroy.
+
+### Rank 1 — IndexedDB `putAsset` swallowed on quota / disk pressure
+
+**Where.** `App.tsx` `persistFileToAsset`, `persistPendingVoiceoverAsset`, `extractZipToAssets`, `processMediaFile`, stock-import path: `catch` → `console.error` → skip / `return null`.
+
+**Pattern.** Unchecked (from the user’s point of view) write result. The in-session `File` may still exist; after reload it is gone. During deliberate disk starvation this is the import path failing closed — **new** media never becomes durable. Combined with later eviction of blobs that *did* land, it is the highest-volume way to lose the media library.
+
+**Destroys.** Every imported video / image / voiceover that failed the `put`. No OS fallback.
+
+### Rank 2 — Post-open autosave of an IDB-evacuated project
+
+**Where.** `handleSwitchProject` (drop missing blobs) → `setProjectSilent({ …, confirmed: true })` → `usePersistProject` 500 ms debounce → `osStoreWrite` of stripped `assets: []` and nulled `assetId`s.
+
+**Pattern.** Not a truncate. A *successful*, verified atomic write of a worse snapshot. Guard 1 does not fire. Poison flag does not fire (JSON parsed).
+
+**Destroys.** Asset metadata and voiceover linkage across every project the user **opens** after the blobs are gone. Segments/transcripts remain. Irreversible without `project-store-backups/<id>/` (rotated *before* this write — the previous good JSON should be in the last backup if rotation succeeded).
+
+### Rank 3 — `localStorage` project-body write (`!isTauri()` only)
+
+**Where.** `saveProject` → `localStorage.setItem(projectKey(id), payload)`.
+
+**Pattern.** In-place replace of one key. A quota throw is now reported (`quota-exceeded` + toast). A crash mid-`setItem` can theoretically leave a truncated JSON string; the next load then poison-flags the id (parse-error) and **blocks** further autosave. In Tauri this path is not the primary store.
+
+**Destroys.** In Vite-dev only: that project’s JSON. In Tauri: leftover keys only.
+
+### Rank 4 — Registry / preference `setItem` swallowed
+
+**Where.** `upsertProjectMeta`, `setLastOpenedProjectId`, `uiStateStore.patchUiState`, presets, export ledger/notices.
+
+**Pattern.** Quota → silent skip. After a successful OS body write, a failed registry write leaves the project saved but possibly **invisible** on the dashboard (inverse of the observed “listed but empty”).
+
+**Destroys.** Discoverability / thumbnails / presets, not the body.
+
+### Rank 5 — `write_atomic` on full disk (project JSON + mirror)
+
+**Where.** `project_mirror.rs` `write_atomic`: create unique `.project.json.tmp-<pid>-<millis>` in the **same directory**, `write_all` + `flush` + `sync_all`, then `rename` over the destination.
+
+**Pattern.** Temp-and-rename. Destination is not truncated in place. `write_all` / `fsync` failure leaves dest untouched; tmp is removed on rename failure. `rotate_backup` runs first and is **non-fatal** (warn + continue); a full disk during backup does not by itself clobber the primary.
+
+**Windows gap (not disk-full-specific).** `std::fs::rename` does not replace an existing file on Windows. `write_atomic` has **no** backup-then-promote fallback (unlike `ffmpeg_write_export_state` / `rename_over_checked`). A rename-over-existing failure returns `Err`; `saveProject` reports `storage-unavailable` / `verify-failed`. Previous `project.json` stays. **Not silent emptying.** Subsequent saves of that id fail loud.
+
+**Destroys.** On ENOSPC: typically nothing already stored. Leftover `.tmp-*` files can accumulate. If `create_dir_all` / tmp create fails, the save fails and the UI should toast.
+
+### Rank 6 — `ffmpeg_write_file` / `ffmpeg_write_file_raw` in-place `fs::write`
+
+**Where.** Session directory under temp. `fs::write` creates/truncates the destination, then fsyncs.
+
+**Pattern.** **In-place overwrite / truncate-then-write.** ENOSPC is tagged (`disk_space::DISK_FULL_TAG`) and returned. A crash after truncate and before a full write leaves a short session file.
+
+**Destroys.** In-flight export pieces, not `project.json`. Resume/checkpoint may fail. User footage and project JSON are out of scope.
+
+### Rank 7 — `export_state.json` Windows `.bak` promotion
+
+**Where.** `ffmpeg_write_export_state`: write+fsync `export_state.json.tmp`; Unix `rename` over final; on Windows, `final → .bak`, then `tmp → final`, restore `.bak` on promote failure. Startup `recover_export_state_replace`: if final missing, **promote `.tmp` first**, else restore `.bak`.
+
+**Pattern.** The `.bak` → final restore is the crash-recovery path. Preferring `.tmp` over `.bak` when final is missing is correct only because tmp is fully written+fsynced before the swap starts. A crash after `final → .bak` and before promote leaves final missing; recovery promotes the new tmp (good) or restores bak.
+
+**Could this lose the original?** If promote fails and restore fails, final is missing, original is at `.bak`, new at `.tmp` — both intact, neither at the authoritative name until recovery. Recovery then **promotes tmp and deletes bak**. That is the one `.bak` promotion that can discard the previous manifest if tmp is somehow wrong. At this commit tmp is only created after a full JSON write+fsync of the new state, so tmp should be complete. This still cannot empty twenty project timelines.
+
+**Destroys.** Export resume manifest only.
+
+### Rank 8 — Export delivery `.part` / `.bak` (`save_session_file` / `rename_over_checked`)
+
+**Where.** Copy to `<dest>.part`, fsync, rename over the operator-chosen MP4. Windows: `dest → dest.bak`, `part → dest`. If promote **and** restore fail: original intact at `dest.bak`, new intact at `dest.part`; error names both; `.part` is **not** deleted (Round 21).
+
+**Pattern.** Explicitly designed so a failed promote does not delete the original. Not a project-data path.
+
+**Destroys.** At worst, the user’s last exported MP4 is displaced to `.bak` / `.part` names — recoverable, and reported.
+
+### Rank 9 — Session claim: delete-then-rename
+
+**Where.** `session_claim.rs` `write_claim_record`: write `.tmp`, `remove_file` existing claim, `rename` tmp into place.
+
+**Pattern.** Window where the claim file is gone if rename fails after remove.
+
+**Destroys.** A lock file, not user work.
+
+### Rank 10 — Model `.part` → final rename
+
+**Where.** `models.rs` / `model_download.rs`: copy or stream to `<target>.part`, fsync, validate, `rename` to final; validation failure **deletes `.part` and leaves the previous final**.
+
+**Pattern.** Safe for an already-installed model. A failed first install leaves nothing (correct).
+
+**Destroys.** Download progress, not projects.
+
+### Rank 11 — FA audio-cache writes + LRU
+
+**Where.** `fa.rs` `fa-audio-cache/`. App-capped at 2 GiB.
+
+**Destroys.** Derived WAVs only.
+
+### Rank 12 — History / waveform / staged / mirror writes
+
+Swallowed or best-effort. Losing them does not empty a synced project.
+
+### Paths that are **not** silent-emptying of project JSON
+
+- `write_atomic` (destination not truncated).
+- `empty-over-nonempty` + load-failure poison (blocks autosave over unreadable bytes).
+- `saveProject` read-back length check.
+- Model import (leaves previous file).
+- Export `.part` delivery (leaves previous dest until fsynced replace).
+
+---
+
+## 5. On-disk paths (from code + this app’s Tauri 2.11.2)
+
+`identifier` = `com.kinetix.pro-studio`.
+
+`app_local_data_dir()` = `dirs::data_local_dir() / identifier` (`tauri-2.11.2` `path/desktop.rs`), documented in-tree as:
+
+| OS | `app_local_data_dir()` |
+|---|---|
+| macOS | `~/Library/Application Support/com.kinetix.pro-studio` (asserted in `src-tauri/tests/models_status_live.rs`, `fa_durable_wav_live.rs`, `fa_onnx.rs` test helpers, `lib.rs` log comment) |
+| Windows | `%LOCALAPPDATA%\com.kinetix.pro-studio` (`lib.rs`: “on Windows `%LOCALAPPDATA%\com.kinetix.pro-studio\`”) |
+
+### 5.1 Native user-data (both OS)
+
+Relative to `app_local_data_dir()`:
+
+```
+projects/<id>/project.json
+project-store-backups/<id>/<millis>.json
+project-mirror/projects/<id>.json
+project-mirror/registry.json
+project-mirror/backups/<id>/<millis>.json
+models/ggml-large-v3-turbo.bin
+models/ggml-large-v3-turbo.bin.part
+models/ggml-large-v3-turbo.bin.part.meta
+fa-models/<lang>/model.onnx
+fa-audio-cache/<key>.wav
+diagnostic-logs/kinetix-diagnostic.log
+```
+
+Export sessions:
+
+| OS | Path |
+|---|---|
+| Windows | `%LOCALAPPDATA%\Temp\kinetix-export-<uuid>\` |
+| macOS | `$TMPDIR/kinetix-export-<uuid>/` (typically `/var/folders/…/T/`) |
+
+### 5.2 WebView2 user-data folder (Windows) — callout
+
+This app does not set `webview.data_directory` in `tauri.conf.json`. Tauri **forces** one on Windows (`tauri-2.11.2` `manager/webview.rs`):
+
+```text
+path.resolve(identifier, BaseDirectory::LocalData)
+= local_data_dir() / "com.kinetix.pro-studio"
+= %LOCALAPPDATA%\com.kinetix.pro-studio
+```
+
+That directory is passed to `CreateCoreWebView2EnvironmentWithOptions` as the WebView2 **user data folder** (wry 0.55.1 `webview2/mod.rs`). It is **the same directory** as `app_local_data_dir()`.
+
+WebView2 then creates its own tree **inside** that folder (Microsoft layout; not spelled in this repo):
+
+```
+%LOCALAPPDATA%\com.kinetix.pro-studio\          ← UserDataFolder AND app_local_data_dir
+  EBWebView\                                   ← WebView2 profile (origin storage)
+    Default\                                   ← or another profile name
+      IndexedDB\                               ← kinetix-assets / waveforms / staged / history
+      Local Storage\leveldb\                   ← kinetix:projects:v1 and other keys
+      Session Storage\
+      Cache\
+      Code Cache\
+      GPUCache\
+      Service Worker\
+  projects\<id>\project.json                   ← NOT inside EBWebView
+  project-mirror\
+  project-store-backups\
+  models\
+  fa-models\
+  fa-audio-cache\
+  diagnostic-logs\
+```
+
+**Forensics implication.** Chromium eviction / “clear browsing data” for this origin lives under `EBWebView\`. Sibling `projects\` is not origin storage. Conversely, wiping the entire `%LOCALAPPDATA%\com.kinetix.pro-studio` folder (a common “clear app data” instinct) destroys **both** the WebView2 profile **and** the OS project store.
+
+Dev vs release origins inside that profile (same split Session O measured on WebKit):
+
+- `tauri dev` → `http://localhost:3000` (`tauri.conf.json` `devUrl`)
+- bundled → `tauri://localhost`
+
+Those are two IndexedDB / `localStorage` origins. The OS `projects\` tree is shared.
+
+### 5.3 WKWebView WebsiteData (macOS) — from this repo
+
+Tauri does **not** force `data_directory` on macOS. WebKit paths are measured in-tree:
+
+| Profile | Path | Origin |
+|---|---|---|
+| Packaged / identifier-bearing | `~/Library/WebKit/com.kinetix.pro-studio/WebsiteData/Default/<origin>/…/IndexedDB/<hash>/IndexedDB.sqlite3` | `tauri://localhost` |
+| `tauri dev` (no CFBundleIdentifier on the raw binary) | `~/Library/WebKit/app/WebsiteData/Default/…` | `http://localhost:3000` |
+
+Cited in `scripts/ws2-49-measurement/measure_orphans.py`, `project_mirror.rs` module docs, and `storeLocationInvariant.test.ts`.
+
+`localStorage` for those origins lives under the same WebsiteData trees (WebKit LocalStorage / IndexedDB SQLite), **not** under `~/Library/Application Support/com.kinetix.pro-studio`.
+
+### 5.4 Plain `npm run dev` (no Tauri)
+
+No `app_local_data_dir`. Project bodies + registry + IDB all sit in the browser profile for `http://localhost:3000`. That configuration is not the shipped desktop app.
+
+---
+
+## 6. Short answers
+
+1. **`navigator.storage.persist` is never called.** `storage.estimate` is a dashboard readout only. Origin media is best-effort.
+
+2. **Authoritative user work is split:** OS `project.json` (timeline/sync/script) vs IndexedDB `kinetix-assets` (bytes). The dashboard list is a third, `localStorage` registry.
+
+3. **Chromium eviction of best-effort origin storage explains dead assets, missing waveforms, and visually empty timelines.** It explains “projects still listed” only if the registry key survived. It does **not** empty twenty OS project bodies.
+
+4. **A second mechanism is required** for `segments: []` across those files. The most dangerous in-tree amplifier after eviction is **opening a project and letting autosave persist the stripped-asset snapshot**. The most dangerous import-time hole under disk starvation is **swallowed `putAsset` failures**. The project-JSON writer itself is temp+rename and does not truncate the destination.
+
+5. **Windows WebView2 user data folder is `%LOCALAPPDATA%\com.kinetix.pro-studio`**, i.e. the same folder as `app_local_data_dir()`. Origin storage is the `EBWebView\` child; project JSON is the sibling `projects\` child.
