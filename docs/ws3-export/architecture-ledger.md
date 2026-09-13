@@ -2696,3 +2696,127 @@ directly post-merge, not inferred from the fast-forward). Pushed `ws3-export-int
   Either way, un-ignore `a_retained_percent_is_peeked_not_consumed` once fixed and re-run the 5×
   full-parallelism proof from this round to confirm 5/5 before trusting default `cargo test` again.
 - Step 5 (unified data root) and Step 7 (size report) — deferred from this round, not started.
+
+### Round 26 (2026-09-14) — ws3-recovery-ui wiring: Machine-1 recovery screen, clearance-policy audit fix
+
+**Audit (pre-wiring checkpoint).** Enumerated every read-named function (`load`/`get`/`check`/
+`status`/`resolve`/`discover`/`probe`/`estimate`/`scan`) across `src/` and `src-tauri/src/` for
+hidden writes. Six candidates found, all either the already-fixed version of a known bug or a
+deliberate verify-once-cache-once pattern with its own test — no new instance of "a read path
+corrupts authoritative state" — except one structural weakness: `loadProjectDetailed`'s auto-unpoison
+decision was a hand-written `reason !== 'asset-unresolvable'` condition, correct today but
+re-derivable-wrong at every future call site (it had already been the bug shape once). Fixed as its
+own commit: `LOAD_FAILURE_CLEARANCE`, an exhaustive `satisfies Record<LoadFailureReason,
+FailureClearance>` (same pattern as Round-prior item F's `FAILURE_VIA_TO_KIND`) so clearance is a
+property of the reason, declared once, not a condition re-derived per call site — plus a runtime
+test that fails if a reason ships with no declared policy.
+
+**Wiring.** Cherry-picked `ws3-recovery-ui`'s first two commits — `f72d2ef` (degraded-load,
+migration, storage-root views) and `8fc5a22` (export-failure message layer + finish-shortfall
+card) — onto this branch's tip. Deliberately NOT the branch's later tip (`645ccf3`, three more
+commits past `8fc5a22` that attempted the same reconciliation this round does): the request was to
+mount the raw UI slices and resolve the mismatches here, not adopt someone else's already-attempted
+reconciliation unreviewed. Both cherry-picks applied with zero conflicts — pure new files under
+`src/components/recovery/` and `src/services/exportFailure/`, touching nothing item B-H already
+landed.
+
+**Mismatch 1 — nativeCopyExists/backupExists vs. `nativeResolved`.** `DegradedProjectRecoveryScreen`
+modeled the two as independently-showable states; `assetRecovery.ts`'s `AssetRecoveryEntry` already
+collapses both into one `nativeResolved`. The prior contract was unreachable dead code (a resolved
+native copy implies `resolved: true`, so an "unresolved but has a native copy" row could never
+actually occur) — simplified `RecoveryAsset` to a single `unresolved` flag and collapsed the location
+label to Resolved/Missing. **What this means for what a user can recover, stated plainly since it is
+the reason this screen exists:** an asset is resolved if EITHER the IndexedDB cache or the native
+store (item B's durable copy) still has its bytes. If **both** are gone, this architecture has no
+third copy to fall back to — the native store IS the backup, there is no separate backup tier behind
+it — and re-linking the user's own surviving source file is the only recovery path. That is a
+deliberate design (a full second backing store for asset bytes was never in scope), but it is worth
+this ledger saying so directly rather than leaving it to be inferred from a collapsed prop.
+
+**Mismatch 2 — `ExportFailureMessage` prop reachability from `useExport.ts` post item F.** Checked
+each named prop against `useExport.ts`'s failure-path state construction:
+- `retentionAttempted` — reachable (`error.retentionAttempted`, set from `releaseFailedSessionForResume`).
+- `manifestPresent` — reachable (`error.diskStateAfterFailure?.manifestPresent`).
+- `sessionDisposition` with its `source` tag — reachable, both `retainForResume` and `destroySession`
+  variants are populated.
+- `diskFullVariant` — reachable, derivable as `error.diskFull?.phase === 'preflight' ? 'preflight' :
+  'mid-export'` (only meaningful when `kind === 'disk_full'`); not carried as its own field but the
+  underlying signal is there.
+- `failureVia` — **NOT reachable.** `ExportFailureVia` exists only inside the worker/pipeline
+  (consumed by `FAILURE_VIA_TO_KIND` to produce `kind`, and by `buildNativeFailureKind` for the
+  native log) and is never attached to the `ExportError` object `useExport.ts` exposes to the UI.
+  `hardwareFailoverUsed` (also a component prop) has the same gap — it lives in
+  `exportPipelineWebCodecs.ts`'s local closure/resume-manifest and is never surfaced onto
+  `ExportError`/`ExportResult` either. Both would need `via`/`hardwareFailoverUsed` threaded onto
+  `ExportError` at every `errorFromDiagnostics` call site (a dozen-plus sites in
+  `exportPipelineWebCodecs.ts`) — out of scope for this pass per "adapt at the boundary rather than
+  rewriting"; named here rather than silently wired with a fabricated value. Until that lands, any
+  mount of `ExportFailureMessage` passes `failureVia={undefined}` and gets no hardware note and no
+  `via`-specific copy — both features the component supports but this app cannot yet feed.
+
+**Mismatch 3 — `StorageRootRelocationView`'s byte props.** Decision: `requiredBytes`/`availableBytes`
+come from `storage_root_status()`/`size_report()` (current on-disk usage of the subtrees that would
+move — `managed_bytes`), **not** an export disk estimate. A relocation moves what's already on disk
+today; it has no relationship to any pending export's projected size, and `storage_root_relocate`'s
+own free-space check (`storage_root.rs`) already computes `required` from the identical `dir_size`
+subtree sum plus `RELOCATE_HEADROOM_RATIO`/`RELOCATE_HEADROOM_FLOOR_BYTES` — using the export
+estimator instead would disagree with the command that actually performs the move. Gap named rather
+than silently plumbed: there is no existing command to read free space at a **candidate** (not-yet-
+committed) target path outside of actually calling `storage_root_relocate` — `fs4::available_space`
+is called only inside that command today. `availableBytes` for this view is therefore left
+unpopulated pending either a small new read-only probe command or accepting that the number only
+becomes known when the relocation itself is attempted.
+
+**Scope boundary — what was actually wired live vs. cherry-picked-and-available.**
+`DegradedProjectRecoveryScreen` is fully wired into `App.tsx`'s `handleSwitchProject`: an asset-loss
+load failure that used to be a toast-and-dead-end now opens this screen, offers re-link through a
+hidden file input, and auto-reopens the project the instant every asset resolves (no manual "I'm
+done" step). `ExportFailureMessage`/`ExportFinishShortfallCard`/`IdbToNativeMigrationView`/
+`StorageRootRelocationView` are cherry-picked, contract-reconciled, and unit-tested, but **not**
+wired into a live `App.tsx` flow this round: the existing hand-built export-failure modal
+(`App.tsx` ~L6950) already has a repair-timeline-gaps action, a copy-diagnostics action, and Retry —
+none modeled in `ExportFailureMessage`'s given props — so replacing it now would either drop those
+actions or require extending the given component, both outside "adapt at the boundary, don't
+rewrite" for this pass; migration is deliberately fire-and-forget/non-blocking by design (its own
+doc comment), so a blocking progress modal would contradict that invariant rather than complete it;
+and storage-root relocation has no existing settings entry point (`AppSettingsModal` has no storage
+section) to attach to — building one is new-feature work, not mounting an existing slice. These are
+judgment calls, not oversights — flagging them here for whoever picks up the next round.
+
+**Machine-1 acceptance proof — two tests, not one, because the claim has two halves.**
+`assetRecovery.test.ts`'s new "Machine-1 shape" describe block proves the persistence-safety half
+against the REAL `saveProject`/Guard 2 (not mocked): while unresolved, a save attempt is refused
+(`blocked-by-load-failure`), zero bytes of the stored project.json change, and the
+`project_mirror_write_project` invoke (the sole path to Rust-side backup rotation) never fires; once
+re-linked and every asset resolves, the poison clears and the very next save succeeds, writes, and
+rotates — asserted by an `osStoreWrite` call counter and an explicit `mockInvoke` call-count check,
+not implied by the happy path merely passing. `App.projectSwitch.test.tsx`'s new Machine-1 describe
+block proves the UI-path half end-to-end: a project card click routes into the recovery screen
+instead of a dead-end toast, the unresolved asset is shown, a picked file goes through
+`writeAssetBlobNative`, and the app lands in the editor on the target project afterward. Boot-sanity
+for the asset migration (fire-and-forget, not flag-gated) is locked separately in
+`migrateAssetsToNative.test.ts`: a fresh install with no projects returns an empty report and writes
+nothing, and a migration interrupted after one asset failed resumes on the next boot and retries
+only that one.
+
+#### Gates
+
+`npx tsc --noEmit` / `npm run lint`: clean.
+
+`npm test`: **3,794 passed / 0 failed / 78 skipped = 3,872** (+87 over the pre-round 3,707/0/78
+baseline — the `LOAD_FAILURE_CLEARANCE` exhaustiveness test, the recovery-component contract tests
+for the five cherry-picked slices, the two Machine-1 tests, and the two boot-migration tests). Also
+fixed in-round: two of Cursor's cherry-picked fixtures (`ExportFailureMessage.test.tsx`,
+`resumeEligibility.test.ts`) used literal `/tmp/...` example paths in disposition fixtures, which
+`scripts/no-tmp-artifacts.test.ts`'s K8 tripwire hard-fails on for any test file — swapped to a
+`/sessions/...` placeholder, no behavior change, own commit.
+
+`cargo test --lib -- --test-threads=1`: **384 / 0 / 6** (unchanged — no Rust files touched this
+round). `cargo test --lib --features fa-inference -- --test-threads=1`: **470 / 0 / 36** (unchanged).
+
+Eight frozen constants and four fixture digests: unchanged — none of `WATCHDOG_MS`,
+`FORWARD_PROGRESS_BOUND_MS`, `FLUSH_BOUND_MS`, `APPEND_DRAIN_BOUND_MS`, `TRUNCATE_BOUND_MS`,
+`KILL_BOUND_MS`, `APPEND_BATCH_BYTES`, `WINDOWS_MAX_PATH` appear in this round's diff; annexb fixture
+digests untouched (no export-path work this round).
+
+No merge to main. No PR. Pushed `ws3-export-integration`.
