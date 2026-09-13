@@ -1,0 +1,104 @@
+/**
+ * Contract: `storage_size_report` against the fake. No Rust, no Tauri.
+ * The fake is a pass-through of the injected snapshot — it does not
+ * compute rows or re-sum reclaimable bytes.
+ */
+import { describe, it, expect } from 'vitest';
+import type { StorageSizeRow, StorageSizeSnapshot } from './storageSizeReport';
+import {
+  createStorageSizeReportFake,
+  STORAGE_SIZE_REPORT,
+} from './storageSizeReportFake';
+
+const ORPHAN: StorageSizeRow = {
+  path: '/Users/name/Library/Caches/kinetix-export-aaaa',
+  label: 'Abandoned export session',
+  currentBytes: 400_000_000,
+  reclaimableBytes: 400_000_000,
+  sweepClass: 'reclaimable',
+};
+
+const LIVE: StorageSizeRow = {
+  path: '/Users/name/Library/Caches/kinetix-export-bbbb',
+  label: 'Live export session',
+  currentBytes: 50_000_000,
+  reclaimableBytes: 0,
+  sweepClass: 'protected',
+};
+
+const WHISPER: StorageSizeRow = {
+  path: '/Users/name/Library/Application Support/kinetix/models/ggml-large-v3-turbo.bin',
+  label: 'Whisper large-v3-turbo',
+  currentBytes: 1.5 * 1024 ** 3,
+  reclaimableBytes: 0,
+  sweepClass: 'never-reclaimable',
+};
+
+const BROKEN: StorageSizeRow = {
+  path: '/Users/name/Library/Caches/kinetix-export-cccc',
+  label: 'Invariant-violating session',
+  currentBytes: 10_000_000,
+  reclaimableBytes: 99_000_000,
+  sweepClass: 'reclaimable',
+};
+
+describe('storage_size_report', () => {
+  it('returns the injected rows unchanged — it does not invent or rewrite a row', async () => {
+    const snapshot: StorageSizeSnapshot = {
+      rows: [ORPHAN, LIVE, WHISPER],
+      totalReclaimableBytes: 400_000_000,
+    };
+    const fake = createStorageSizeReportFake(snapshot);
+    const loaded = await fake.adapted.load();
+    expect(loaded.rows).toEqual([ORPHAN, LIVE, WHISPER]);
+    const viaInvoke = await fake.invoke<StorageSizeSnapshot>(STORAGE_SIZE_REPORT);
+    expect(viaInvoke).toEqual(loaded);
+  });
+
+  it('returns the injected totalReclaimableBytes even when it does not equal the row sum', async () => {
+    const fake = createStorageSizeReportFake({
+      rows: [ORPHAN, LIVE],
+      // Deliberately not 400_000_000 — proves the fake does not re-sum.
+      totalReclaimableBytes: 1,
+    });
+    expect((await fake.source.load()).totalReclaimableBytes).toBe(1);
+    expect((await fake.adapted.load()).totalReclaimableBytes).toBe(1);
+  });
+
+  it('round-trips a 13-row payload without dropping, merging, or filling rows', async () => {
+    const rows: StorageSizeRow[] = Array.from({ length: 13 }, (_, i) => ({
+      path: `/Users/name/Library/Caches/kinetix-row-${i}`,
+      label: `row-${i}`,
+      currentBytes: (i + 1) * 1_000,
+      reclaimableBytes: i % 2 === 0 ? (i + 1) * 1_000 : 0,
+      sweepClass: i % 2 === 0 ? 'reclaimable' : 'protected',
+    }));
+    const fake = createStorageSizeReportFake({ rows, totalReclaimableBytes: 0 });
+    const loaded = await fake.adapted.load();
+    expect(loaded.rows).toHaveLength(13);
+    expect(loaded.rows).toEqual(rows);
+  });
+
+  it('preserves a never-reclaimable 1.5 GiB Whisper model row (reclaimableBytes stays 0)', async () => {
+    const fake = createStorageSizeReportFake({
+      rows: [WHISPER],
+      totalReclaimableBytes: 0,
+    });
+    const [row] = (await fake.adapted.load()).rows;
+    expect(row).toEqual(WHISPER);
+    expect(row?.sweepClass).toBe('never-reclaimable');
+    expect(row?.reclaimableBytes).toBe(0);
+    expect(row?.currentBytes).toBe(1.5 * 1024 ** 3);
+  });
+
+  it('does not clamp a row whose reclaimableBytes exceed currentBytes', async () => {
+    const fake = createStorageSizeReportFake({
+      rows: [BROKEN],
+      totalReclaimableBytes: BROKEN.reclaimableBytes,
+    });
+    const [row] = (await fake.adapted.load()).rows;
+    expect(row?.reclaimableBytes).toBe(99_000_000);
+    expect(row?.currentBytes).toBe(10_000_000);
+    expect(row?.reclaimableBytes).toBeGreaterThan(row?.currentBytes ?? 0);
+  });
+});

@@ -314,6 +314,17 @@ Resolve on the storage tip before claiming prompt 37 done.
 | U13 | CC already threads bitrate into the encoder | Do not revert; do not implement if absent. |
 | U14 | CC's cloud `C_fail` set | May still be 35+1, or larger if new tests need corpus/replay. Do not assume 35. |
 | U15 | Filename collision `exportOutputEstimate.ts` | Rename our selector remainder if CC took that path. |
+| U16 | CC's 13-row storage payload field names | This lane's contract is `StorageSizeRow` `{ path, label, currentBytes, reclaimableBytes, sweepClass }` plus snapshot `{ rows, totalReclaimableBytes }`. Map inside `createInvokeStorageSizeReportSource` if CC differs; do not invent rows in the UI. |
+| U17 | The 13 row identities (what each row *is*) | Fake round-trips any 13 rows. Do not bake CC's categories into `StorageSizeReport`. Diff Round 24a on `ws3-storage-unified`. |
+| U18 | Sweep classes are `'reclaimable' \| 'protected' \| 'never-reclaimable'` | If CC ships `'orphan' \| 'resumable' \| 'live'` (Round 21 sessions) plus a model flag, map onto this union in the adapter — never in the component. |
+| U19 | `totalReclaimableBytes` is a source field, not a UI sum | If CC omits it, do **not** have the component sum `row.reclaimableBytes`. Ask CC to add the field (same rule as not computing a row). |
+| U20 | Command name `storage_size_report` | Not on this tree. If Round 24a used another name / args, change only the string in `createInvokeStorageSizeReportSource`. |
+| U21 | Whisper model path / exact byte size | Presentation fixture is 1.5 GiB (`1.5 * 1024 ** 3`) at a Library models path, `sweepClass: 'never-reclaimable'`, `reclaimableBytes: 0`. CC's real row may use 1_624_555_275 (`ManageModelsModal` whisper total). Do not offer delete either way. |
+| U22 | Low-disk fit is a caller-owned `showReclaimAction` boolean, not `available + reclaimable >= required` | Dialog takes three byte props and that flag and computes nothing. If CC's "fourth number" is `projectedAvailableBytes` or `shortfallBytes`, add it **display-only** at rebase; do not use it to show/hide Reclaim. |
+| U23 | Low-disk dialog / storage report are not mounted in `App.tsx` yet | Existing `src/` files are frozen this turn. Wiring (export `disk_full` overlay, settings surface) is rebase work — **UNSEEN** which parent CC wants. |
+| U24 | Per-row Reclaim on `sweepClass === 'reclaimable'` vs a single bulk reclaim | Report shows a per-row button only for reclaimable rows. If CC's UI is bulk-only, drop `onReclaimRow` at rebase; keep the never-reclaimable "no button" invariant. |
+
+This commit adds 14 passing Vitest tests (5 fake-contract + 5 `StorageSizeReport` + 4 `LowDiskPreflightDialog`). They are this lane's, on top of the §4.2 32. `Δ_ts` after this commit = 32 + 14 = **46** under the default estimator split. Still not a combined figure with CC's Step 3b/4.
 
 ---
 
