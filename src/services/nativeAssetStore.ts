@@ -119,3 +119,19 @@ export async function deleteProjectAssetsNative(projectId: string): Promise<void
     console.warn(`[nativeAssetStore] delete-project failed for ${projectId} (non-fatal):`, err);
   }
 }
+
+/**
+ * WS3 item H — the STRICT variant, for the one call site where a failure
+ * must surface rather than leak: deleting a whole project. Unlike
+ * `deleteProjectAssetsNative` above (best-effort, matches
+ * `assetStore.ts::deleteAsset`'s fire-and-forget posture for individual
+ * in-editor asset removal), this THROWS on failure. Deleted projects used to
+ * leave their native asset bytes on disk forever with no signal at all —
+ * "we just spent a round learning what swallowed filesystem errors cost" —
+ * so the caller (`ProjectDashboard.tsx`'s bulk-delete flow) is REQUIRED to
+ * await this and surface a rejection to the user, not discard it.
+ */
+export async function deleteProjectAssetsNativeStrict(projectId: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>('asset_store_delete_project', { projectId });
+}

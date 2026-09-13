@@ -4,6 +4,7 @@ import type { ProjectMeta } from '../types';
 import { loadAllMetas, deleteProjectData } from '../services/projectStore';
 import { deleteAllStagedForProject } from '../services/stagedFilesStore';
 import { deleteAllAssets } from '../services/assetStore';
+import { deleteProjectAssetsNativeStrict } from '../services/nativeAssetStore';
 import { deleteAllWaveforms } from '../services/waveformStore';
 import './ProjectDashboard.css';
 
@@ -35,6 +36,16 @@ interface Props {
    * fragment so this can raise it over the dashboard.
    */
   onOpenAppSettings: () => void;
+  /**
+   * WS3 item H — called once, after a bulk delete, if any project's NATIVE
+   * asset cleanup failed. The project record itself is still deleted either
+   * way (it is gone from the grid regardless) — this is specifically about
+   * the native asset bytes item B made authoritative, which can now be
+   * orphaned on disk if this fires and nothing surfaces it. Optional so a
+   * caller that doesn't care (a test harness) need not pass it, but App.tsx
+   * always does — a failed cleanup must never simply be silent.
+   */
+  onAssetCleanupFailed?: (message: string) => void;
 }
 
 function formatDate(ts: number): string {
@@ -55,6 +66,7 @@ export function ProjectDashboard({
   onSelectProject,
   onNewProject,
   onOpenAppSettings,
+  onAssetCleanupFailed,
 }: Props): React.ReactElement {
   const [metas, setMetas] = useState<ProjectMeta[]>([]);
   const [search, setSearch] = useState('');
@@ -129,17 +141,39 @@ export function ProjectDashboard({
 
   async function handleBulkDelete(): Promise<void> {
     const ids = Array.from(selectedIds);
+    // WS3 item H — native asset cleanup failures, collected across the whole
+    // batch and surfaced ONCE at the end (not fire-and-forget, not silent —
+    // "we just spent a round learning what swallowed filesystem errors
+    // cost"). The project record is still deleted either way: a project
+    // whose native cleanup failed is still gone from the grid, but its
+    // bytes may remain on disk, which the user is now told rather than
+    // never finding out.
+    const cleanupFailures: string[] = [];
     for (const id of ids) {
       await deleteAllAssets(id);
       await deleteAllWaveforms(id);
       // WS2-50 — a deleted project's staged slots go with it. Without this the
       // rows outlive the only thing that could ever restore them.
       await deleteAllStagedForProject(id);
+      try {
+        await deleteProjectAssetsNativeStrict(id);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        cleanupFailures.push(`${id}: ${message}`);
+        console.error(`[ProjectDashboard] native asset cleanup FAILED for deleted project ${id}:`, message);
+      }
       await deleteProjectData(id);
     }
     setMetas(prev => prev.filter(m => !selectedIds.has(m.id)));
     setSelectedIds(new Set());
     setShowBulkConfirm(false);
+    if (cleanupFailures.length > 0) {
+      onAssetCleanupFailed?.(
+        `${cleanupFailures.length} deleted project${cleanupFailures.length === 1 ? '' : 's'} could not be fully ` +
+          `cleaned up on disk — the project${cleanupFailures.length === 1 ? ' is' : 's are'} gone, but some ` +
+          `asset bytes may remain. (${cleanupFailures.join('; ')})`,
+      );
+    }
   }
 
   return (

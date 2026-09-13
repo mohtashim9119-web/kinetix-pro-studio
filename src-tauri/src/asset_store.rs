@@ -240,13 +240,33 @@ pub fn asset_store_delete(app: tauri::AppHandle, project_id: String, asset_id: S
 /// Removes a whole project's native asset directory — mirrors
 /// `assetStore.ts::deleteAllAssets`/`deleteAllAssetsForProject` parity for
 /// project deletion.
+///
+/// WS3 item H (folded-in project-delete orphaning fix) — routes through the
+/// item E audited helper (`safe_delete::delete_app_staging_dir`) instead of
+/// a raw `fs::remove_dir_all`, same posture as every other recursive delete
+/// in this crate now has: `dir` must canonicalize to somewhere strictly
+/// inside the project's OWN parent (`assets/`), never merely "looked like
+/// the right path". No filename-prefix convention applies here (a project
+/// id is a bare UUID, not `kinetix-whisper-…`), so `required_prefix` is
+/// empty — `str::starts_with("")` is unconditionally true, meaning this
+/// still gets full canonicalization + containment checking, just no name
+/// pattern on top of it.
+///
+/// The caller (`nativeAssetStore.ts`'s `deleteProjectAssetsNativeStrict`,
+/// wired into `ProjectDashboard.tsx`'s bulk-delete flow) is REQUIRED to
+/// treat a non-`is_dir()` early return as success (nothing to delete) but
+/// any `Err` from the helper as a real, surfaced failure — never
+/// fire-and-forget for project-level deletion, unlike the best-effort
+/// single-asset delete commands above.
 #[tauri::command]
 pub fn asset_store_delete_project(app: tauri::AppHandle, project_id: String) -> Result<(), String> {
-    let dir = project_dir(&app, &project_id)?;
-    if dir.is_dir() {
-        fs::remove_dir_all(&dir).map_err(|e| format!("remove_dir_all {}: {e}", dir.display()))?;
+    let root = resolve_storage_root(&app)?;
+    let project_id = safe_component(&project_id)?;
+    let dir = assets_dir(&root).join(project_id);
+    if !dir.is_dir() {
+        return Ok(());
     }
-    Ok(())
+    crate::safe_delete::delete_app_staging_dir(&dir, &assets_dir(&root), "")
 }
 
 #[cfg(test)]

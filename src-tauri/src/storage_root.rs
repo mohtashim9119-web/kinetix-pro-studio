@@ -153,7 +153,9 @@ pub fn temp_dir(root: &Path) -> PathBuf {
 }
 /// See the module doc comment's subtree table — path is defined for
 /// shape-completeness; `models.rs`/`fa.rs` do not yet consult it.
-#[allow(dead_code)]
+/// Used only as a last-resort fallback in `size_report` if
+/// `model_download::models_dir` itself fails to resolve — models are not
+/// actually stored here (see the module doc comment's subtree table).
 pub fn models_dir(root: &Path) -> PathBuf {
     root.join("models")
 }
@@ -231,6 +233,83 @@ pub fn storage_root_status(app: tauri::AppHandle) -> Result<StorageRootStatus, S
         is_default: current == default,
         managed_bytes,
     })
+}
+
+/// WS3 item H — one row of the size report. `path` is the resolved absolute
+/// filesystem path (so the UI can offer a "reveal in Finder"-style action,
+/// same idea as the existing `reveal_in_finder` command); `label` is
+/// operator-facing prose. `sweepClassification` is `"never-reclaimable"` or
+/// `"reclaimable"` — see `size_report`'s own doc comment for which subtree
+/// gets which and why.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SizeReportRow {
+    pub path: String,
+    pub label: String,
+    pub current_bytes: u64,
+    pub reclaimable_bytes: u64,
+    pub sweep_classification: String,
+}
+
+fn row(path: &std::path::Path, label: &str, current_bytes: u64, reclaimable_bytes: u64, classification: &str) -> SizeReportRow {
+    SizeReportRow {
+        path: path.to_string_lossy().to_string(),
+        label: label.to_string(),
+        current_bytes,
+        reclaimable_bytes,
+        sweep_classification: classification.to_string(),
+    }
+}
+
+/// WS3 item H (Step 7) — the size report's data source, over the storage
+/// root. One row per subtree:
+///
+/// | Subtree | Classification | Why |
+/// |---|---|---|
+/// | `assets/` | never-reclaimable | Project media — item B's authoritative copy. |
+/// | `projects/` | never-reclaimable | Project JSON bodies — the actual project data, not a cache. |
+/// | `models/` | never-reclaimable | Downloaded whisper/FA models — re-downloading is expensive (100s of MB–GB) and the user chose to install them. |
+/// | `project-store-backups/` | reclaimable | `rotate_backup`'s own safety net — bounded by `BACKUP_RETAIN`/`STALE_BACKUP_MIN_AGE_SECS` already, but every byte of it can be cleared without losing current data. |
+/// | `cache/` | reclaimable | A cache by construction — nothing here is the only copy of anything. |
+///
+/// `models/` bytes come from `models::check_installed_models` (whisper +
+/// every installed FA language's `InstalledModelStatus.bytes`), NOT from
+/// this module's own `dir_size` — models are not yet relocated onto the
+/// configurable storage root (see the module doc comment's subtree table),
+/// so this is the one row whose `path` is NOT necessarily under the current
+/// storage root; it reports wherever `models.rs`'s own resolution currently
+/// puts them.
+#[tauri::command]
+pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, String> {
+    let root = resolve_storage_root(&app)?;
+
+    let assets_bytes = dir_size(&assets_dir(&root));
+    let projects_bytes = dir_size(&projects_dir(&root));
+    let backups_bytes = dir_size(&project_backups_dir(&root));
+    let cache_bytes = dir_size(&cache_dir(&root));
+
+    let mut rows = vec![
+        row(&assets_dir(&root), "Project assets", assets_bytes, 0, "never-reclaimable"),
+        row(&projects_dir(&root), "Projects", projects_bytes, 0, "never-reclaimable"),
+        row(&project_backups_dir(&root), "Project backups", backups_bytes, backups_bytes, "reclaimable"),
+        row(&cache_dir(&root), "Cache", cache_bytes, cache_bytes, "reclaimable"),
+    ];
+
+    // Whisper and FA models resolve through their OWN, separate schemes
+    // (see this file's module doc comment) — `model_download::models_dir` is
+    // the whisper target dir specifically; FA models can additionally live
+    // at an exe-relative fallback `fa_model_candidate_paths` also checks.
+    // Reported as one approximate row (the whisper dir as the representative
+    // `path`) rather than pretending a single directory holds all of it.
+    let models_path = crate::model_download::models_dir(&app).unwrap_or_else(|_| models_dir(&root));
+    let installed = crate::models::check_installed_models(app).await?;
+    let mut model_bytes = installed.whisper.map(|s| s.bytes).unwrap_or(0);
+    for status in installed.fa.values() {
+        model_bytes += status.bytes;
+    }
+    rows.push(row(&models_path, "Downloaded models", model_bytes, 0, "never-reclaimable"));
+
+    Ok(rows)
 }
 
 /// Relocates `assets/`, `projects/`, and `cache/` (whichever exist) from the

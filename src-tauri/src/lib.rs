@@ -113,6 +113,25 @@ fn toggle_devtools(window: tauri::WebviewWindow) -> Result<bool, String> {
     }
 }
 
+/// WS3 item D — records what `navigator.storage.persist()` actually
+/// returned, into the SAME native diagnostic log item I's
+/// `ffmpeg_log_disk_preflight` writes to (opt-in, `KINETIX_DIAGNOSTIC_LOG`).
+/// Nobody in this codebase has measured this on WebView2 — Edge is closed
+/// source, and a stock Chromium profile with no site engagement is commonly
+/// reported to return `false` — so this exists to make the answer a durable,
+/// log-file fact instead of folklore the next time someone asks. `supported`
+/// distinguishes "the API does not exist in this WebView" from "it exists
+/// and refused": the frontend caller (`storagePersistence.ts`) sets it
+/// `false` when `navigator.storage?.persist` itself is undefined, never
+/// calling the browser API at all in that case.
+#[tauri::command]
+fn log_storage_persistence(supported: bool, persisted: bool) {
+    log::info!(
+        target: "kinetix::storage_persistence",
+        "navigator.storage.persist() supported={supported} persisted={persisted}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // DEFERRED QUIT (WS2 T4.6) — give the frontend a bounded moment to persist
 // before the process dies, WITHOUT ever making the app unquittable.
@@ -561,6 +580,7 @@ pub fn run() {
             project_mirror::project_store_list_ids,
             storage_root::storage_root_status,
             storage_root::storage_root_relocate,
+            storage_root::size_report,
             asset_store::asset_store_write,
             asset_store::asset_store_read,
             asset_store::asset_store_status,
@@ -570,6 +590,7 @@ pub fn run() {
             app_session_token,
             toggle_devtools,
             quit_flush_complete,
+            log_storage_persistence,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

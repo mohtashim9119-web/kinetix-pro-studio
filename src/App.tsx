@@ -221,6 +221,7 @@ import {
 import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
+import { requestStoragePersistence } from './services/storagePersistence';
 import { getAppSessionToken } from './services/historyPersist';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { UnappliedTranscriptBanner } from './components/UnappliedTranscriptBanner';
@@ -2426,6 +2427,14 @@ export default function App() {
       //        self-healing rather than gated by a "done" flag.
       // -----------------------------------------------------------------------
       void migrateIndexedDbAssetsToNative();
+
+      // -----------------------------------------------------------------------
+      // 1a-iii. WS3 item D — request durability. Fire-and-forget: never
+      //         throws (see its own doc comment), and there is nothing
+      //         useful to block startup on either way — a refusal is
+      //         recorded, not fatal.
+      // -----------------------------------------------------------------------
+      void requestStoragePersistence();
 
       // -----------------------------------------------------------------------
       // 2. Route on launch:
@@ -6308,6 +6317,7 @@ export default function App() {
       onSelectProject={(id) => { void handleSwitchProject(id); }}
       onNewProject={() => setShowNewProjectModal(true)}
       onOpenAppSettings={() => setShowAppSettingsModal(true)}
+      onAssetCleanupFailed={showToast}
     />
   ) : (
     /* `data-project-id` is the editor's rendered project IDENTITY. It exists so

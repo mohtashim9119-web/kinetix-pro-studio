@@ -204,4 +204,36 @@ mod tests {
         assert!(!target.exists());
         fs::remove_dir_all(&bounds).ok();
     }
+
+    // ── WS3 item H — an empty `required_prefix` (used by
+    //    `asset_store_delete_project`, where a project id is a bare UUID
+    //    with no naming convention to check) still enforces containment;
+    //    it only skips the name-pattern check, never the canonicalize +
+    //    bounds check.
+    #[test]
+    fn an_empty_prefix_skips_the_name_check_but_still_enforces_containment() {
+        let bounds = tmpdir("bounds-empty-prefix");
+        let target = bounds.join("550e8400-e29b-41d4-a716-446655440000"); // a bare UUID, no prefix
+        fs::create_dir_all(target.join("a1.bin")).unwrap();
+
+        assert!(delete_app_staging_dir(&target, &bounds, "").is_ok());
+        assert!(!target.exists());
+
+        fs::remove_dir_all(&bounds).ok();
+    }
+
+    #[test]
+    fn an_empty_prefix_still_refuses_a_target_outside_bounds() {
+        let bounds = tmpdir("bounds-empty-prefix-outside");
+        let outside = tmpdir("empty-prefix-victim");
+        fs::write(outside.join("real_file.txt"), b"do not delete").unwrap();
+
+        let result = delete_app_staging_dir(&outside, &bounds, "");
+        assert!(result.is_err());
+        assert!(outside.exists());
+        assert!(outside.join("real_file.txt").exists());
+
+        fs::remove_dir_all(&bounds).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
 }
