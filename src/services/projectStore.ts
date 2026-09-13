@@ -92,6 +92,8 @@ function stripAsset(asset: Asset): StoredAsset {
 /** Why a save was refused, or why a load failed. */
 export type StoreFailureReason =
   | 'empty-over-nonempty'
+  | 'asset-reference-loss'
+  | 'asset-unresolvable'
   | 'quota-exceeded'
   | 'verify-failed'
   | 'blocked-by-load-failure'
@@ -140,23 +142,59 @@ export function clearLoadFailure(id: string): void {
   loadFailures.delete(id);
 }
 
+/**
+ * WS3 item A — poisons `id` for writing because one or more assets its
+ * project.json references could not be resolved to bytes. `saveProject`
+ * itself only ever sees JSON and cannot detect this on its own — asset bytes
+ * live outside the project store (IndexedDB today; the native store from item
+ * B once it lands). The one caller today is App.tsx's project-switch asset
+ * rehydration step, which is where this is actually discovered.
+ *
+ * This is the second data-loss shape from the incident write-up: hydration
+ * used to silently drop an orphaned asset's reference (`assetId: undefined`)
+ * and commit that into live state, which the 500 ms autosave then persisted
+ * over the last known-good native project.json — turning a recoverable
+ * IndexedDB/origin cache loss into permanent destruction. Loss of asset
+ * resolution must be treated as a load failure, never as a legitimate edit:
+ * same poison contract as every other entry in `loadFailures` — blocked for
+ * writes until `clearLoadFailure` is called.
+ */
+export function reportAssetResolutionFailure(id: string, message: string, rawLength = 0): void {
+  console.error(`[kinetix] REFUSING future saves for project ${id}: ${message}`);
+  loadFailures.set(id, { id, reason: 'asset-unresolvable', message, rawLength, at: Date.now() });
+}
+
 /** Test-only reset so one spec's poisoned id cannot leak into the next. */
 export function __resetStoreGuardsForTests(): void {
   loadFailures.clear();
 }
 
-/** Reads the CURRENTLY stored segment count for `id`, or null if unknown. */
-async function storedSegmentCount(id: string): Promise<number | null> {
+/** What Guards 1 and 1b need from the currently stored project, read once. */
+interface StoredGuardSnapshot {
+  segmentCount: number;
+  /** Stored segment id -> its stored `assetId`, for segments that had a non-empty one. */
+  assetIdBySegment: Map<string, string>;
+}
+
+/** Reads the CURRENTLY stored guard snapshot for `id`, or null if unknown/unreadable. */
+async function storedGuardSnapshot(id: string): Promise<StoredGuardSnapshot | null> {
   try {
     const raw = isTauri() ? await osStoreRead(id) : localStorage.getItem(projectKey(id));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as StoredProjectData;
     const segs = parsed?.project?.segments;
-    return Array.isArray(segs) ? segs.length : null;
+    if (!Array.isArray(segs)) return null;
+    const assetIdBySegment = new Map<string, string>();
+    for (const s of segs) {
+      if (s && typeof s.id === 'string' && typeof s.assetId === 'string' && s.assetId) {
+        assetIdBySegment.set(s.id, s.assetId);
+      }
+    }
+    return { segmentCount: segs.length, assetIdBySegment };
   } catch {
-    // Unreadable stored value — the empty-over-nonempty guard cannot make a
-    // judgement, so it declines to (the poison flag from loadProject is what
-    // protects this case instead).
+    // Unreadable stored value — Guards 1/1b cannot make a judgement, so they
+    // decline to (the poison flag from loadProject is what protects this case
+    // instead).
     return null;
   }
 }
@@ -200,16 +238,55 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
   }
 
   // Guard 1 — never let an empty project overwrite a stored non-empty one.
+  let guardSnapshot: StoredGuardSnapshot | null = null;
   if (!opts.allowEmptying && project.segments.length === 0) {
-    const existing = await storedSegmentCount(project.id);
-    if (existing !== null && existing > 0) {
+    guardSnapshot = await storedGuardSnapshot(project.id);
+    if (guardSnapshot !== null && guardSnapshot.segmentCount > 0) {
       const message =
         `[kinetix] REFUSING to overwrite project ${project.id} ("${project.name}") — the in-memory ` +
-        `project has 0 segments but the stored one has ${existing}. This is the data-loss shape ` +
-        `WS1 Session O's guard exists to stop. The stored project is unchanged. If this emptying ` +
-        `was deliberate, call saveProject(p, { allowEmptying: true }).`;
+        `project has 0 segments but the stored one has ${guardSnapshot.segmentCount}. This is the ` +
+        `data-loss shape WS1 Session O's guard exists to stop. The stored project is unchanged. If ` +
+        `this emptying was deliberate, call saveProject(p, { allowEmptying: true }).`;
       console.error(message);
       return { ok: false, reason: 'empty-over-nonempty', message };
+    }
+  }
+
+  // Guard 1b — WS3 item A: a save that keeps its segment COUNT but drops one
+  // or more segments' `assetId` reference while the Asset those ids pointed at
+  // is STILL present in the incoming project's own `assets` array. This is the
+  // dangling-reference shape that turned a recoverable IndexedDB/origin cache
+  // loss into permanent destruction across twenty projects: the asset
+  // rehydration step nulled a segment's pointer for an unresolvable asset but
+  // left the Asset's metadata in place, and nothing stopped that state from
+  // autosaving over the last known-good copy 500 ms later. A LEGITIMATE
+  // removal (`handleDeleteAsset` / `handleDeleteAllAssets` in App.tsx) always
+  // removes the Asset from `assets` in the SAME write, so it never trips this
+  // — only a save that keeps the Asset's metadata around while a segment loses
+  // its only way to reach it does. Not gated behind `allowEmptying`, which is
+  // Guard 1's own escape hatch for a different shape (zero segments); this
+  // guard has no escape hatch because no legitimate save produces its shape.
+  if (!opts.allowEmptying && project.segments.length > 0) {
+    guardSnapshot ??= await storedGuardSnapshot(project.id);
+    if (guardSnapshot !== null && guardSnapshot.segmentCount === project.segments.length
+      && guardSnapshot.assetIdBySegment.size > 0) {
+      const incomingAssetIds = new Set(project.assets.map(a => a.id));
+      const incomingAssetIdBySegment = new Map<string, string>();
+      for (const s of project.segments) {
+        if (s.assetId) incomingAssetIdBySegment.set(s.id, s.assetId);
+      }
+      for (const [segId, storedAssetId] of guardSnapshot.assetIdBySegment) {
+        const incomingAssetId = incomingAssetIdBySegment.get(segId);
+        if (!incomingAssetId && incomingAssetIds.has(storedAssetId)) {
+          const message =
+            `[kinetix] REFUSING to overwrite project ${project.id} ("${project.name}") — segment ` +
+            `${segId} lost its reference to asset ${storedAssetId}, which is still listed in this ` +
+            `project's own assets. This is the dangling-reference data-loss shape closed after the ` +
+            `Machine 1 incident. The stored project is unchanged.`;
+          console.error(message);
+          return { ok: false, reason: 'asset-reference-loss', message };
+        }
+      }
     }
   }
 

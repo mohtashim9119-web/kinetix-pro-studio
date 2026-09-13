@@ -82,7 +82,12 @@ vi.mock('./services/historyPersist', async () => {
 
 // Imported AFTER the mocks are registered.
 const { default: App } = await import('./App');
-const { setLastOpenedProjectId, markEditorSessionActive } = await import('./services/projectStore');
+const {
+  setLastOpenedProjectId,
+  markEditorSessionActive,
+  getLoadFailure,
+  __resetStoreGuardsForTests,
+} = await import('./services/projectStore');
 const { getAppSessionToken } = await import('./services/historyPersist');
 
 async function armInSessionReload(projectId: string): Promise<void> {
@@ -430,5 +435,67 @@ describe('WS2 T4.1 — S/D are inert while a modal is open', () => {
     pressBareKey('s');
     // No throw, no modal appeared, editor still mounted.
     expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS3 item A — an asset whose METADATA survives in project.json but whose
+// BYTES are unresolvable from storage is a load failure, never a legitimate
+// edit. This is the second data-loss shape from the Machine 1 incident
+// write-up: silently dropping the reference and committing the
+// assetId-stripped project used to open cleanly and run straight into the
+// 500 ms autosave, persisting the degraded state over the last known-good
+// native project.json.
+// ---------------------------------------------------------------------------
+
+describe('WS3 item A — asset resolution failure blocks the switch', () => {
+  afterEach(() => {
+    __resetStoreGuardsForTests();
+  });
+
+  it('refuses to open a project whose project.json references an asset storage does not have, and poisons it for writing', async () => {
+    const targetProject = {
+      ...storedProject(TARGET_ID, 'Target'),
+      assets: [{ id: 'missing-asset', name: 'clip.mp4', url: '', type: 'video' }],
+      segments: [{ id: 'seg-0', assetId: 'missing-asset', text: '', startTime: 0, duration: 1 }],
+    } as unknown as Project;
+    mockLoadProjectDetailed.mockResolvedValue({ ok: true, project: targetProject, savedAt: Date.now() });
+    mockGetAllAssetsForProject.mockResolvedValue([]); // storage has nothing for this project
+
+    await mountApp();
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${TARGET_ID}"]`);
+    await act(async () => { card!.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    // Never opened — the dashboard stays up, the editor never mounts on the
+    // target project. This is the decisive assertion: the OLD behavior opened
+    // the project anyway with the reference silently nulled out.
+    expect(view()).toEqual({ view: 'dashboard', projectId: null });
+    // Poisoned for writing, same contract as a JSON parse failure.
+    const failure = getLoadFailure(TARGET_ID);
+    expect(failure).toBeDefined();
+    expect(failure!.reason).toBe('asset-unresolvable');
+    // Nothing was ever handed to saveProject for this degraded state.
+    expect(mockSaveProject).not.toHaveBeenCalled();
+  });
+
+  it('opens normally, unpoisoned, when every referenced asset resolves', async () => {
+    const targetProject = {
+      ...storedProject(TARGET_ID, 'Target'),
+      assets: [{ id: 'a1', name: 'photo.png', url: '', type: 'image' }],
+      segments: [{ id: 'seg-0', assetId: 'a1', text: '', startTime: 0, duration: 1 }],
+    } as unknown as Project;
+    mockLoadProjectDetailed.mockResolvedValue({ ok: true, project: targetProject, savedAt: Date.now() });
+    mockGetAllAssetsForProject.mockResolvedValue([
+      { projectId: TARGET_ID, id: 'a1', blob: new Blob(['x'], { type: 'image/png' }), name: 'photo.png', mimeType: 'image/png' },
+    ]);
+
+    await mountApp();
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${TARGET_ID}"]`);
+    await act(async () => { card!.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
+    expect(getLoadFailure(TARGET_ID)).toBeUndefined();
   });
 });

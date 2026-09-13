@@ -277,6 +277,105 @@ describe('empty-over-nonempty guard', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 2b. WS3 item A — asset-reference-loss guard (Guard 1b)
+// ---------------------------------------------------------------------------
+//
+// Regression lock for the Machine 1 incident: autosave persisted
+// assetId-stripped segments over native project.json in twenty projects
+// because the guard counted segments only. This is the RED case that guard
+// did not catch — with Guard 1b in place it must refuse, and the stored
+// record must survive byte-for-byte, exactly like Guard 1 above.
+
+function asset(id: string, over: Partial<Project['assets'][number]> = {}) {
+  return { id, name: `${id}.mp4`, url: '', type: 'video', ...over } as Project['assets'][number];
+}
+
+function segWithAsset(i: number, assetId: string | undefined): VideoSegment {
+  return { ...seg(i), assetId } as VideoSegment;
+}
+
+describe('asset-reference-loss guard', () => {
+  it('REFUSES a same-count save that silently drops a segment\'s assetId while the asset metadata survives', async () => {
+    const good = projectWith(0, {
+      segments: [segWithAsset(0, 'a1'), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+    });
+    await saveProject(good);
+    const before = getStored('p-guard');
+
+    // The exact hydration-bug shape: same 2 segments, a1's pointer vanished,
+    // but asset a1 is STILL listed in `assets` — nothing legitimately removed it.
+    const degraded = projectWith(0, {
+      segments: [segWithAsset(0, undefined), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+    });
+    const outcome = await saveProject(degraded);
+
+    expect(outcome).toEqual({ ok: false, reason: 'asset-reference-loss', message: expect.any(String) });
+    expect(getStored('p-guard')).toEqual(before);
+    expect((await loadProject('p-guard'))!.project.segments.map(s => s.assetId)).toEqual(['a1', 'a2']);
+  });
+
+  it('logs loudly, naming the segment and the dangling asset id', async () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, 'a1')],
+      assets: [asset('a1')],
+    }));
+    await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, undefined)],
+      assets: [asset('a1')],
+    }));
+    expect(err).toHaveBeenCalled();
+    const msg = err.mock.calls.map(c => String(c[0])).join('\n');
+    expect(msg).toMatch(/REFUSING/);
+    expect(msg).toMatch(/seg-0/);
+    expect(msg).toMatch(/a1/);
+    err.mockRestore();
+  });
+
+  it('ALLOWS a deliberate asset deletion — handleDeleteAsset removes the Asset from `assets` in the same write', async () => {
+    await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, 'a1'), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+    }));
+
+    // a1 is gone from BOTH the segment pointer AND the assets array — this is
+    // what handleDeleteAsset/handleDeleteAllAssets actually produce.
+    const outcome = await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, undefined), segWithAsset(1, 'a2')],
+      assets: [asset('a2')],
+    }));
+    expect(outcome.ok).toBe(true);
+    expect((await loadProject('p-guard'))!.project.segments.map(s => s.assetId)).toEqual([undefined, 'a2']);
+  });
+
+  it('ALLOWS an unrelated edit that keeps every asset reference intact', async () => {
+    await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, 'a1')],
+      assets: [asset('a1')],
+    }));
+    const outcome = await saveProject(projectWith(0, {
+      segments: [{ ...segWithAsset(0, 'a1'), text: 'edited' }],
+      assets: [asset('a1')],
+    }));
+    expect(outcome.ok).toBe(true);
+  });
+
+  it('does not fire when segment count changes (out of scope for this guard)', async () => {
+    await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, 'a1')],
+      assets: [asset('a1')],
+    }));
+    const outcome = await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, 'a1'), seg(1)],
+      assets: [asset('a1')],
+    }));
+    expect(outcome.ok).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 3. Malformed stored records — loud AND non-destructive
 // ---------------------------------------------------------------------------
 

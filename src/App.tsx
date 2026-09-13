@@ -216,6 +216,7 @@ import {
   markEditorSessionActive,
   clearEditorSessionActive,
   shouldResumeLastOpenedProject,
+  reportAssetResolutionFailure,
 } from './services/projectStore';
 import { getAppSessionToken } from './services/historyPersist';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
@@ -6107,24 +6108,51 @@ export default function App() {
       }
       const saved = { project: outcome.project, savedAt: outcome.savedAt };
 
-      // Revoke current project's blob URLs.
-      project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
-
       // Rehydrate the target project's assets from IndexedDB.
       const storedAssets = await getAllAssetsForProject(saved.project.id);
       const blobMap = new Map(storedAssets.map(a => [a.id, a]));
 
-      const droppedIds = new Set<string>();
-      const rehydratedAssets = (await Promise.all(
+      // WS3 item A — an asset whose METADATA survived in project.json but
+      // whose BYTES are unresolvable from storage is a LOAD FAILURE, never a
+      // legitimate edit (Machine 1 incident write-up). This must be checked
+      // BEFORE the outgoing project's blob URLs are revoked below and before
+      // any live state changes: silently dropping the reference here and
+      // committing the assetId-stripped result used to run straight into
+      // `setProjectSilent`, which the 500 ms autosave then persisted over the
+      // last known-good native project.json — the exact shape that turned a
+      // recoverable IndexedDB/origin cache loss into permanent destruction
+      // across twenty projects. Bail out entirely instead, same posture as
+      // the `!outcome.ok` branch above: the CURRENTLY open project is left
+      // completely untouched, and the target project is poisoned for writing
+      // (Guard 2's `loadFailures`) so nothing can autosave over it either.
+      const orphanedAssets = saved.project.assets.filter(a => !blobMap.has(a.id));
+      if (orphanedAssets.length > 0) {
+        const names = orphanedAssets.map(a => a.name).join(', ');
+        console.error(
+          '[kinetix] Cannot switch to project — asset(s) unresolvable from storage:',
+          id,
+          orphanedAssets.map(a => a.id),
+        );
+        reportAssetResolutionFailure(
+          saved.project.id,
+          `${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} (${names}) listed ` +
+            `in this project's data could not be found in storage.`,
+        );
+        showToast(
+          `This project could not be opened — ${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} ` +
+            `referenced in it could not be found in storage. Saving is blocked for it until this is resolved.`,
+        );
+        return;
+      }
+
+      // Revoke current project's blob URLs.
+      project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
+
+      // Every asset resolved above (the orphan check just returned otherwise), so
+      // this pass never drops anything — it only builds the rehydrated blob URLs.
+      const rehydratedAssets = await Promise.all(
         saved.project.assets.map(async asset => {
-          const stored = blobMap.get(asset.id);
-          if (!stored) {
-            console.warn(
-              `[kinetix] Dropping orphaned asset on switch — id: ${asset.id}, name: ${asset.name}`,
-            );
-            droppedIds.add(asset.id);
-            return null;
-          }
+          const stored = blobMap.get(asset.id)!;
           const rehydratedUrl = URL.createObjectURL(stored.blob);
           const rehydratedFile = new File([stored.blob], asset.name, { type: stored.blob.type });
           // Back-compat backfill: a project saved before Asset.duration existed
@@ -6137,19 +6165,10 @@ export default function App() {
             : asset.duration;
           return { ...asset, url: rehydratedUrl, file: rehydratedFile, duration };
         }),
-      )).filter((a): a is NonNullable<typeof a> => a !== null);
+      );
 
-      const rehydratedSegments = saved.project.segments.map(seg => {
-        if (seg.assetId !== undefined && droppedIds.has(seg.assetId)) {
-          return { ...seg, assetId: undefined };
-        }
-        return seg;
-      });
-
-      let rehydratedVoiceoverId = saved.project.voiceoverId;
-      if (rehydratedVoiceoverId !== undefined && droppedIds.has(rehydratedVoiceoverId)) {
-        rehydratedVoiceoverId = undefined;
-      }
+      const rehydratedSegments = saved.project.segments;
+      const rehydratedVoiceoverId = saved.project.voiceoverId;
 
       // VIEW FLIP — adjacent to the project-state swap, NOT to the resolution
       // of `loadProjectDetailed`/`getAllAssetsForProject` above. Between those

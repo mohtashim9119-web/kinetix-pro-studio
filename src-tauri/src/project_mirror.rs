@@ -34,7 +34,7 @@
 //! write path fighting the other's backup rotation. Both reuse `write_atomic`/
 //! `safe_id`/`rotate_backup` unchanged.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -139,6 +139,66 @@ fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
         let _ = fs::remove_file(&tmp);
         format!("rename {} -> {}: {e}", tmp.display(), dest.display())
     })
+}
+
+/// WS3 item A — defense-in-depth backstop for the JS-side guard in
+/// `projectStore.ts`'s `saveProject` (Guard 1b). Detects the exact corruption
+/// shape that turned a recoverable IndexedDB/origin cache loss into permanent
+/// destruction across twenty projects: the SAME number of segments, but one
+/// that carried an `assetId` in the currently-stored file no longer carries
+/// it in the incoming write, while the Asset it pointed at is STILL listed in
+/// the incoming project's own `assets` array. A legitimate removal
+/// (`handleDeleteAsset` / `handleDeleteAllAssets` in App.tsx) always removes
+/// the Asset entry from `assets` in the SAME write, so it never trips this.
+///
+/// This is a backstop, not a general validator: parse failures on either side
+/// (or a shape this function does not recognize) return `false` — not
+/// degraded — and are left to the guards that already own validity elsewhere.
+/// The JS-side guard is expected to be the one that actually fires in
+/// practice; this exists so a future bug that bypasses it (a direct
+/// `invoke('project_store_write', ...)` call, a dev script) still cannot
+/// rotate the last known-good backup out from under a degraded write.
+fn is_asset_reference_loss(existing: &str, incoming: &str) -> bool {
+    let Ok(existing_v) = serde_json::from_str::<serde_json::Value>(existing) else { return false };
+    let Ok(incoming_v) = serde_json::from_str::<serde_json::Value>(incoming) else { return false };
+
+    let existing_segments = existing_v.pointer("/project/segments").and_then(|v| v.as_array());
+    let incoming_segments = incoming_v.pointer("/project/segments").and_then(|v| v.as_array());
+    let (Some(existing_segments), Some(incoming_segments)) = (existing_segments, incoming_segments) else {
+        return false;
+    };
+    if existing_segments.is_empty() || existing_segments.len() != incoming_segments.len() {
+        return false;
+    }
+
+    let incoming_asset_ids: HashSet<&str> = incoming_v
+        .pointer("/project/assets")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|a| a.get("id").and_then(|v| v.as_str())).collect())
+        .unwrap_or_default();
+
+    let incoming_by_id: HashMap<&str, &serde_json::Value> = incoming_segments
+        .iter()
+        .filter_map(|s| s.get("id").and_then(|v| v.as_str()).map(|id| (id, s)))
+        .collect();
+
+    for seg in existing_segments {
+        let Some(id) = seg.get("id").and_then(|v| v.as_str()) else { continue };
+        let Some(existing_asset_id) = seg.get("assetId").and_then(|v| v.as_str()) else { continue };
+        if existing_asset_id.is_empty() {
+            continue;
+        }
+        let Some(incoming_seg) = incoming_by_id.get(id) else { continue };
+        let incoming_has_ref = incoming_seg
+            .get("assetId")
+            .and_then(|v| v.as_str())
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        if !incoming_has_ref && incoming_asset_ids.contains(existing_asset_id) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Step 5 item 4 — rotate the CURRENT contents of `src` into `backups_root/<id>/`
@@ -316,6 +376,18 @@ pub fn project_mirror_write_project(
     let id = safe_id(&id)?;
     let dest = projects_dir(&root).join(format!("{id}.json"));
 
+    // WS3 item A — refuse the write outright (rotate nothing, overwrite
+    // nothing) when it is the dangling-reference degradation shape. See
+    // `is_asset_reference_loss`'s doc comment.
+    if let Ok(existing) = fs::read_to_string(&dest) {
+        if is_asset_reference_loss(&existing, &contents) {
+            return Err(format!(
+                "refusing to mirror project {id}: incoming write keeps its segment count but drops \
+                 asset reference(s) still listed in its own assets array (WS3 item A backstop)"
+            ));
+        }
+    }
+
     if let Err(e) = rotate_backup(&backups_dir(&root), id, &dest) {
         // Non-fatal by design — see rotate_backup's contract.
         log::warn!("[project_mirror] backup rotation failed for {id}: {e}");
@@ -398,6 +470,20 @@ pub fn project_store_write(app: tauri::AppHandle, id: String, contents: String) 
     let root = store_root(&app)?;
     let id = safe_id(&id)?;
     let dest = store_project_file(&root, id);
+
+    // WS3 item A — same backstop as `project_mirror_write_project`; see
+    // `is_asset_reference_loss`'s doc comment. This is the PRIMARY store, so
+    // this is the check that actually stood between the incident's degraded
+    // writes and the last known-good `project.json` for each of the twenty
+    // affected projects.
+    if let Ok(existing) = fs::read_to_string(&dest) {
+        if is_asset_reference_loss(&existing, &contents) {
+            return Err(format!(
+                "refusing to overwrite project {id}: incoming write keeps its segment count but drops \
+                 asset reference(s) still listed in its own assets array (WS3 item A backstop)"
+            ));
+        }
+    }
 
     if let Err(e) = rotate_backup(&store_backups_dir(&root), id, &dest) {
         log::warn!("[project_store] backup rotation failed for {id}: {e}");
@@ -803,4 +889,80 @@ mod tests {
 
         fs::remove_dir_all(&d).ok();
     }
+
+    // ── WS3 item A — is_asset_reference_loss ────────────────────────────
+    //
+    // Regression coverage for the Machine 1 incident shape: same segment
+    // count, a segment's `assetId` pointer disappears, but the Asset it
+    // pointed at is still listed in the incoming write's own `assets` array.
+
+    fn stored(segments: &str, assets: &str) -> String {
+        format!(r#"{{"version":4,"savedAt":1,"project":{{"segments":{segments},"assets":{assets}}}}}"#)
+    }
+
+    #[test]
+    fn flags_a_dropped_asset_reference_when_the_asset_metadata_survives() {
+        // RED case before the fix existed: this is exactly the shape that
+        // overwrote twenty projects' native project.json.
+        let existing = stored(
+            r#"[{"id":"seg-1","assetId":"asset-1"}]"#,
+            r#"[{"id":"asset-1","name":"clip.mp4"}]"#,
+        );
+        let incoming = stored(
+            r#"[{"id":"seg-1"}]"#, // assetId silently dropped
+            r#"[{"id":"asset-1","name":"clip.mp4"}]"#, // asset metadata still present
+        );
+        assert!(is_asset_reference_loss(&existing, &incoming));
+    }
+
+    #[test]
+    fn allows_a_deliberate_asset_deletion_that_removes_the_asset_too() {
+        // handleDeleteAsset/handleDeleteAllAssets shape: the Asset itself is
+        // removed from `assets` in the SAME write, so this must NOT trip.
+        let existing = stored(
+            r#"[{"id":"seg-1","assetId":"asset-1"}]"#,
+            r#"[{"id":"asset-1","name":"clip.mp4"}]"#,
+        );
+        let incoming = stored(r#"[{"id":"seg-1"}]"#, r#"[]"#);
+        assert!(!is_asset_reference_loss(&existing, &incoming));
+    }
+
+    #[test]
+    fn allows_an_unrelated_edit_that_keeps_every_reference_intact() {
+        let existing = stored(
+            r#"[{"id":"seg-1","assetId":"asset-1"}]"#,
+            r#"[{"id":"asset-1","name":"clip.mp4"}]"#,
+        );
+        let incoming = stored(
+            r#"[{"id":"seg-1","assetId":"asset-1","text":"edited"}]"#,
+            r#"[{"id":"asset-1","name":"clip.mp4"}]"#,
+        );
+        assert!(!is_asset_reference_loss(&existing, &incoming));
+    }
+
+    #[test]
+    fn ignores_a_segment_count_change_entirely() {
+        // "retain their count" is the precondition — a genuine add/remove of a
+        // segment is out of scope for this guard.
+        let existing = stored(
+            r#"[{"id":"seg-1","assetId":"asset-1"}]"#,
+            r#"[{"id":"asset-1","name":"clip.mp4"}]"#,
+        );
+        let incoming = stored(
+            r#"[{"id":"seg-1"},{"id":"seg-2"}]"#,
+            r#"[{"id":"asset-1","name":"clip.mp4"}]"#,
+        );
+        assert!(!is_asset_reference_loss(&existing, &incoming));
+    }
+
+    #[test]
+    fn unparsable_content_on_either_side_is_never_treated_as_degraded() {
+        let existing = stored(
+            r#"[{"id":"seg-1","assetId":"asset-1"}]"#,
+            r#"[{"id":"asset-1","name":"clip.mp4"}]"#,
+        );
+        assert!(!is_asset_reference_loss("not json", &existing));
+        assert!(!is_asset_reference_loss(&existing, "not json"));
+    }
+
 }
