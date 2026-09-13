@@ -262,6 +262,8 @@ import { ProjectSettingsModal } from './components/ProjectSettingsModal';
 import { AppSettingsModal } from './components/AppSettingsModal';
 import { SyncLogPanel } from './components/SyncLogPanel';
 import { ExportSettingsModal } from './components/ExportSettingsModal';
+import { DEFAULT_EXPORT_BITRATE_KBPS } from './services/exportOutputEstimate';
+import { createFakeExportTargetFs, createInvokeExportTargetFs } from './services/exportTargetFs';
 import { ManageModelsModal } from './components/ManageModelsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, formatElapsed, formatElapsedLong, formatFrameSpanDuration, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
@@ -3207,6 +3209,16 @@ export default function App() {
   const [exportResolution, setExportResolution] = useState<ExportResolution>('1080p');
   /** frames per second */
   const [exportFps, setExportFps] = useState<ExportFps>(30);
+  /** kbps selector; defaults to today's 1080p encoder target so the modal is output-neutral. */
+  const [exportBitrateKbps, setExportBitrateKbps] = useState<number>(DEFAULT_EXPORT_BITRATE_KBPS);
+  const exportTargetFs = useMemo(
+    () => (isTauri() ? createInvokeExportTargetFs(invoke) : createFakeExportTargetFs({ pickedDirectory: null, freeSpace: null })),
+    [],
+  );
+  const exportDurationSeconds = useMemo(
+    () => project.segments.reduce((sum, s) => sum + s.duration, 0),
+    [project.segments],
+  );
   // True once the user has manually picked a value in the Frame Rate dropdown —
   // after that the source-fps auto-match effect below must never override it.
   const exportFpsUserSetRef = useRef(false);
@@ -3221,13 +3233,13 @@ export default function App() {
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
   const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent, resolveResumeChoice } = exportApi;
 
-  // ExportSettingsModal's Continue commits exportResolution/exportFps via
-  // setState, then must call startExport — but startExport is a useCallback
-  // closed over the OLD exportResolution/exportFps until the next render, so
-  // calling it synchronously in the same handler would export with stale
-  // values. exportTriggerCount forces a render to land first; this effect
-  // fires only on that render (never on resolution/fps changes coming from
-  // elsewhere, e.g. the native-fps auto-match effect below) and reads the
+  // ExportSettingsModal's Export commits resolution/fps/bitrate via setState,
+  // then must call startExport — but startExport is a useCallback closed over
+  // the OLD exportResolution/exportFps until the next render, so calling it
+  // synchronously in the same handler would export with stale values.
+  // exportTriggerCount forces a render to land first; this effect fires only
+  // on that render (never on resolution/fps changes coming from elsewhere,
+  // e.g. the native-fps auto-match effect below) and reads the
   // freshly-closed-over startExport from that same render.
   const [exportTriggerCount, setExportTriggerCount] = useState(0);
   useEffect(() => {
@@ -6950,23 +6962,31 @@ export default function App() {
         />
       )}
 
-      {/* Export Settings Modal — resolution + fps chosen at export time
-          (industry-standard pattern), replacing the old Project Settings
-          "Export Quality" section. Appears BEFORE the native save-path
-          dialog: Continue commits exportResolution/exportFps then triggers
-          startExport via exportTriggerCount (see its declaration above for
-          why); Cancel closes with no state change and no export. */}
+      {/* Unified export modal — file name, folder, resolution, fps, bitrate,
+          live size estimate, live free-space. Browse is the injected folder
+          picker (ExportTargetFs); Export commits the draft then triggers
+          startExport via exportTriggerCount (see its declaration above).
+          useExport.ts still opens pick_save_path (out of this lane) — CC
+          skips that dialog once it accepts the pre-chosen outputPath. */}
       {showExportSettingsModal && (
         <ExportSettingsModal
           aspectRatio={project.aspectRatio ?? DEFAULT_ASPECT_RATIO}
           exportResolution={exportResolution}
           exportFps={exportFps}
+          exportBitrateKbps={exportBitrateKbps}
           mixedNativeFpsWarning={mixedNativeFpsWarning}
-          onContinue={(resolution, fps) => {
+          projectName={project.name}
+          durationSeconds={exportDurationSeconds}
+          hasAudio={!!project.voiceoverId}
+          lastExportPath={project.lastExportPath}
+          targetFs={exportTargetFs}
+          onExport={(choice) => {
             exportFpsUserSetRef.current = true;
-            setExportResolution(resolution);
-            setExportFps(fps);
+            setExportResolution(choice.resolution);
+            setExportFps(choice.fps);
+            setExportBitrateKbps(choice.bitrateKbps);
             setShowExportSettingsModal(false);
+            onExportSavePath(choice.outputPath);
             setExportTriggerCount(c => c + 1);
           }}
           onCancel={() => setShowExportSettingsModal(false)}
