@@ -2648,6 +2648,13 @@ never ran (stays `#[ignore]`d) in any of the five.
 `cargo test --lib` (default parallel, informational only per STEP 5): flaky, see above — not a gate
 figure.
 
+**Every cargo figure quoted anywhere in this ledger for Round 24a onward is `--test-threads=1`.**
+A future round's `cargo test` (default parallel) coming back green is not evidence of a clean
+build — it is evidence the `whisper::in_flight_tests` race happened not to fire this run (STEP 5
+measured it at roughly 3-of-5 odds). Quote the single-threaded figure or state explicitly that a
+parallel run was used and why; a parallel "all green" reported as this round's gate would silently
+hide a real regression behind the known flake.
+
 **Eight frozen constants and four fixture digests: unchanged.** None of `WATCHDOG_MS`,
 `FORWARD_PROGRESS_BOUND_MS`, `FLUSH_BOUND_MS`, `APPEND_DRAIN_BOUND_MS`, `TRUNCATE_BOUND_MS`,
 `KILL_BOUND_MS`, `APPEND_BATCH_BYTES`, `WINDOWS_MAX_PATH` appear in this round's diff (`git diff`
@@ -2659,3 +2666,33 @@ Round 25 per the governing prompt for this round. Nothing above should be read a
 is done.
 
 **No merge to main. No PR.** Pushed `ws3-storage-unified` @ `4e93154`.
+
+#### Merged into `ws3-export-integration`
+
+`origin/ws3-storage-unified` (`4e93154` code, `0bdc8a5` docs) fast-forward-merged into
+`ws3-export-integration` from `fd547ce` — no conflicts, no edits, so every figure and every frozen
+constant/digest check above carries over byte-identical; re-verified independently post-merge
+rather than assumed: `npm test` 3,651/0/78 = 3,729; `cargo test --lib -- --test-threads=1`
+356/0/6 = 362; `cargo test --lib --features fa-inference -- --test-threads=1` 442/0/36 = 478;
+`tsc`/`lint` clean; eight frozen constants and four fixture digests present and unchanged (grepped
+directly post-merge, not inferred from the fast-forward). Pushed `ws3-export-integration` @
+`0bdc8a5`. No merge to main, no PR; `main` confirmed still `4d4922c`.
+
+#### Round 25 candidates
+
+- **The `whisper::in_flight_tests` flake (STEP 5 above), with an actual fix, not "run it
+  single-threaded forever":** the real fix is to stop sharing `IN_FLIGHT`/`TERMINAL_BUFFER` as
+  process-global `static`s across the whole test binary. Two candidate shapes, either closes it:
+  (a) make the registry/buffer **injectable** — thread an instance (or a per-test handle) through
+  `whisper_transcribe` and the `in_flight_tests` helpers instead of reaching a file-scope `static`,
+  so each test owns its own isolated state and `the_retention_cap_evicts_oldest_and_never_grows_
+  past_the_bound`'s intentional over-cap insertion can no longer evict another test's live entry;
+  or (b), smaller surface area, **serialize just the eviction test** against the rest of the module
+  (a `once_cell`/`Mutex`-based test-only lock acquired at the top of
+  `the_retention_cap_evicts_oldest_and_never_grows_past_the_bound`, or `#[serial]` from the
+  `serial_test` crate if it's already a dependency elsewhere) so it never runs concurrently with
+  anything else that has a live `TERMINAL_BUFFER`/`IN_FLIGHT` entry. (a) is the structurally correct
+  fix and worth it if the registry is touched again anyway; (b) is the minimal patch if it isn't.
+  Either way, un-ignore `a_retained_percent_is_peeked_not_consumed` once fixed and re-run the 5×
+  full-parallelism proof from this round to confirm 5/5 before trusting default `cargo test` again.
+- Step 5 (unified data root) and Step 7 (size report) — deferred from this round, not started.
