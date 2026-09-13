@@ -223,6 +223,12 @@ future change doesn't have to re-derive "is this measured or assumed."
 1. A resumed run's own `sessionAt` reset to 0 on its 'session-plan' message regardless of where it actually resumed, corrupting a SECOND rewind's boundary computation (silently resuming from frame 0 instead of the correct frame) — found by `boundedRerenderWiring.test.ts`'s "stops rewinding" test once its message timing was corrected, fixed via `resumeSessionIndex`, destructively re-probed (RED with the bootstrap removed, GREEN restored).
 2. The Step 4 completeness test's own generic leaf-scan was initially defeated by the diagnostics blob's `error: err` field trivially re-including the original (untouched) `liveness` object regardless of what the rest of the function did — caught by the test's own destructive probe going unexpectedly GREEN, fixed by excluding `blob.error` from the scan so the check exercises the function's own logic.
 
+### Round 8 (2026-09-10) — Cargo arithmetic, mux measurement, conservative final-AU, seams
+
+> **Cross-lineage entry (Cursor, `ws3-durable-resume`).** Full round log:
+> [`docs/ws3-export/durable-state.md`](durable-state.md) § "Round 8 — Cargo arithmetic, mux
+> measurement, conservative final-AU, seams". See Round 16 round-number map.
+
 ### Round 9 (2026-09-10) — Rung 5 + ledger authority + seam closure
 
 **Branch:** `ws3-tier3-failover`, cut from `ws3-tier1-close` @ `51e1f6b` (commits `a6581d2`, `eb95bac`, `265fcae`, `51e1f6b`). **Base main SHA:** `4d4922c`. **Rollback:** `15002e5`. Parallel round — Cursor on `ws3-durable-resume` @ `81bde88`, not read from this round per Part 0.
@@ -525,6 +531,26 @@ Cursor's):
    since been quoted downstream as a suite total. Worth marking as an addend.
 
 **Tier 2: CLOSED.** Rungs 2b, 3 and 4 are all wired, and verified together rather than only apart.
+
+### Round 11 (2026-09-10) — Audit remediation: fence, mutation invariant, identity v2, budget
+
+> **Cross-lineage entry (Cursor, `ws3-durable-resume`).** Full round log:
+> [`docs/ws3-export/durable-state.md`](durable-state.md) § "Round 11 — Audit remediation…".
+> Findings dispositions: `docs/ws3-export/pipeline-audit.md` Part 7 "Round 11 dispositions". See
+> Round 16 round-number map.
+
+### Round 12 (2026-09-10/11) — Hardening STEPs 0–2 (merge, resume-refusal notice, 512 KiB batch cap)
+
+> **Cross-lineage entry (CC, `ws3-hardening-windows` STEPs 0–2: `d6eff3b`, `4a3e584`, `0d397f7`).**
+> No standalone doc entry was written — recorded in code comments (`WS3 Round 12` in `App.tsx`,
+> `useExport.ts`, `exportResumeSession.ts`, `flushSalvage.test.ts`). See Round 16 round-number map.
+
+### Round 13 (2026-09-11) — Realistic fixtures, kill bound, claim, orphan sweep, exhaustion variant
+
+> **Cross-lineage entry (Cursor, `ws3-durable-resume`).** Full round log:
+> [`docs/ws3-export/durable-state.md`](durable-state.md) § "Round 13 — Realistic fixtures…".
+> Findings dispositions: `docs/ws3-export/pipeline-audit.md` Part 7 "Round 13 dispositions". See
+> Round 16 round-number map.
 
 ### Round 14 (2026-09-11) — Findings-register close-out: C5/C6/C7 + H5/H10 consumer wiring + H9
 
