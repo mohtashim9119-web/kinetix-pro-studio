@@ -7,6 +7,7 @@ import { act } from 'react';
 import { DegradedProjectRecoveryScreen } from './DegradedProjectRecoveryScreen';
 import { createRecoveryActionsFake } from './recoveryActionsFake';
 import type { RecoveryAsset, RecoverySegment } from './degradedLoad';
+import type { RelinkProposal } from '../../services/relinkResolution/types';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -155,5 +156,105 @@ describe('DegradedProjectRecoveryScreen — status rendering', () => {
       .toMatch(/1 unresolved asset/);
     const resolvedRow = container.querySelector('[data-testid="recovery-asset"][data-asset-id="asset-resolved"]');
     expect(resolvedRow?.querySelector('[data-testid="recovery-relink"]')).toBeNull();
+  });
+});
+
+describe('DegradedProjectRecoveryScreen — folder-pick primary action (Step 2)', () => {
+  it('shows the Pick-folder primary action when no folder has been picked', async () => {
+    await renderScreen({ assets: [missingAsset, anotherMissingAsset], segments });
+    expect(container.querySelector('[data-testid="recovery-pick-folder"]')).not.toBeNull();
+  });
+
+  it('requests a folder pick when the primary action is clicked', async () => {
+    let picked = 0;
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <DegradedProjectRecoveryScreen
+          projectName="t"
+          segments={segments}
+          assets={[missingAsset]}
+          onRelink={() => {}}
+          onPickFolder={() => { picked += 1; }}
+        />,
+      );
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="recovery-pick-folder"]')!.click();
+    });
+    expect(picked).toBe(1);
+  });
+
+  it('renders exact proposals pre-selected and probable proposals NOT pre-selected', async () => {
+    // a1 → exact (c1), a2 → probable only (c2). Only the exact one is checked.
+    const proposals: RelinkProposal[] = [
+      { assetId: 'asset-missing', candidateId: 'c1', confidence: 'exact', basis: { name: 'exact', type: 'match', duration: 'within-exact' }, manyToOneAssetIds: [], notes: [] },
+      { assetId: 'asset-native', candidateId: 'c2', confidence: 'probable', basis: { name: 'exact', type: 'match', duration: 'within-probable' }, manyToOneAssetIds: [], notes: [] },
+    ];
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <DegradedProjectRecoveryScreen
+          projectName="t"
+          segments={segments}
+          assets={[missingAsset, anotherMissingAsset]}
+          onRelink={() => {}}
+          folderRelink={{
+            phase: 'proposed',
+            proposals,
+            candidateById: {
+              c1: { id: 'c1', name: 'b-roll.mp4', path: '/m/b-roll.mp4' },
+              c2: { id: 'c2', name: 'cutaway.mp4', path: '/m/cutaway.mp4' },
+            },
+            selection: { 'asset-missing': 'c1', 'asset-native': null },
+            unresolvedAssetIds: ['asset-missing', 'asset-native'],
+            writeError: null,
+          }}
+        />,
+      );
+    });
+    const rows = [...container.querySelectorAll('[data-testid="recovery-folder-row"]')];
+    expect(rows).toHaveLength(2);
+    const exactRow = container.querySelector('[data-testid="recovery-folder-row"][data-asset-id="asset-missing"]');
+    const probRow = container.querySelector('[data-testid="recovery-folder-row"][data-asset-id="asset-native"]');
+    expect((exactRow?.querySelector('[data-testid="recovery-folder-toggle"]') as HTMLInputElement).checked).toBe(true);
+    expect((probRow?.querySelector('[data-testid="recovery-folder-toggle"]') as HTMLInputElement).checked).toBe(false);
+    expect(probRow?.querySelector('[data-testid="recovery-folder-proposal"]')?.textContent).toMatch(/needs confirmation/);
+  });
+
+  it('toggles a probable proposal on explicit user action and writes only selected', async () => {
+    const toggles: Array<[string, string]> = [];
+    let confirmed = 0;
+    const proposals: RelinkProposal[] = [
+      { assetId: 'asset-missing', candidateId: 'c1', confidence: 'probable', basis: { name: 'exact', type: 'match', duration: 'within-probable' }, manyToOneAssetIds: [], notes: [] },
+    ];
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <DegradedProjectRecoveryScreen
+          projectName="t"
+          segments={segments}
+          assets={[missingAsset]}
+          onRelink={() => {}}
+          folderRelink={{
+            phase: 'proposed',
+            proposals,
+            candidateById: { c1: { id: 'c1', name: 'b-roll.mp4', path: '/m/b-roll.mp4' } },
+            selection: { 'asset-missing': null },
+            unresolvedAssetIds: ['asset-missing'],
+            writeError: null,
+          }}
+          onToggleFolderProposal={(a, c) => { toggles.push([a, c]); }}
+          onConfirmFolderRelink={() => { confirmed += 1; }}
+        />,
+      );
+    });
+    // Confirm is disabled while nothing is selected.
+    expect(container.querySelector<HTMLButtonElement>('[data-testid="recovery-folder-confirm"]')!.disabled).toBe(true);
+    // User explicitly opts into the probable match.
+    await act(async () => {
+      (container.querySelector('[data-testid="recovery-folder-toggle"]') as HTMLInputElement).click();
+    });
+    expect(toggles).toEqual([['asset-missing', 'c1']]);
   });
 });

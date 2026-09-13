@@ -47,6 +47,36 @@ fn safe_component(id: &str) -> Result<&str, String> {
     }
 }
 
+/// Provenance for an asset's bytes — where they came from on the user's
+/// own filesystem, recorded at import/re-link time so a later resolution
+/// ladder (Step 4) can re-find them silently instead of forcing the
+/// recovery screen. Every field is optional and `#[serde(default)]`-ed so a
+/// meta file written BEFORE this round (no provenance) still deserializes:
+/// those assets have `original_path: None` and MUST route to folder-pick,
+/// never to silent resolution — see `docs/ws3-export/architecture-ledger.md`'s
+/// Round 27 entry for the pre-provenance limitation.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct AssetProvenance {
+    /// Absolute path to the user's original source file at import/re-link
+    /// time. `None` on assets imported before provenance was recorded, and
+    /// on any write path that did not know a path (e.g. a bare byte blob).
+    #[serde(default)]
+    original_path: Option<String>,
+    /// `original_path`'s parent directory, denormalized for the resolution
+    /// ladder's "same filename in the recorded folder" rung.
+    #[serde(default)]
+    containing_folder: Option<String>,
+    /// sha256 of the bytes. `None` until Step 4's ladder populates it; the
+    /// folder-pick write path (Step 2) records the path/folder/size but
+    /// leaves the hash for the ladder's own write.
+    #[serde(default)]
+    content_hash: Option<String>,
+    /// Probed media duration in seconds. `None` for images and probe misses.
+    #[serde(default)]
+    duration: Option<f64>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct AssetMetaFile {
@@ -54,6 +84,11 @@ struct AssetMetaFile {
     mime_type: String,
     bytes: u64,
     written_at_ms: u128,
+    /// Round 27 provenance. Absent on every meta file written before this
+    /// round — `#[serde(default)]` makes that a `None` provenance, which the
+    /// resolution ladder treats as "no recorded origin → folder-pick only".
+    #[serde(default)]
+    provenance: Option<AssetProvenance>,
 }
 
 #[derive(Serialize)]
@@ -124,12 +159,33 @@ fn write_atomic_bytes(dest: &Path, contents: &[u8]) -> Result<(), String> {
 /// failed asset write must surface as a failed import, not a silent
 /// absence").
 fn write_asset_atomic(dir: &Path, asset_id: &str, bytes: &[u8], name: String, mime_type: String) -> Result<(), String> {
+    write_asset_atomic_provenanced(dir, asset_id, bytes, name, mime_type, None)
+}
+
+/// Same as `write_asset_atomic` but also records the asset's provenance
+/// (Round 27). `provenance = None` is the legacy/import-path shape: the
+/// bytes are durable, but nothing remembers where they came from, so a
+/// later resolution cannot auto-relink them — they route to folder-pick.
+fn write_asset_atomic_provenanced(
+    dir: &Path,
+    asset_id: &str,
+    bytes: &[u8],
+    name: String,
+    mime_type: String,
+    provenance: Option<AssetProvenance>,
+) -> Result<(), String> {
     let bp = bytes_path(dir, asset_id);
     let mp = meta_path(dir, asset_id);
 
     write_atomic_bytes(&bp, bytes)?;
 
-    let meta = AssetMetaFile { name, mime_type, bytes: bytes.len() as u64, written_at_ms: now_millis() };
+    let meta = AssetMetaFile {
+        name,
+        mime_type,
+        bytes: bytes.len() as u64,
+        written_at_ms: now_millis(),
+        provenance,
+    };
     let meta_json = serde_json::to_vec(&meta).map_err(|e| format!("serialize asset meta: {e}"))?;
     if let Err(e) = write_atomic_bytes(&mp, &meta_json) {
         let _ = fs::remove_file(&bp);
@@ -169,7 +225,48 @@ pub fn asset_store_write(
     write_asset_atomic(&dir, asset_id, bytes, name, mime_type)
 }
 
-/// Reads one asset's bytes back. `Err` on any failure, missing included —
+/// Round 27 (Step 2/4) — copies a file BY PATH into the native asset store,
+/// recording its provenance. This is the folder-pick write path: bytes
+/// never cross IPC (the do-not: "Base64 large blobs over Tauri IPC"), and
+/// the source path becomes the asset's recorded origin so a later open can
+/// silently re-resolve it. `duration` is the caller's probed value (the
+/// folder list already probed it); `None` for images / probe misses.
+///
+/// THROWS on any read/write failure — never swallowed; the recovery UI
+/// surfaces it per-row so a partial batch is reported, not silently lost.
+#[tauri::command]
+pub fn asset_store_write_from_path(
+    app: tauri::AppHandle,
+    project_id: String,
+    asset_id: String,
+    src_path: String,
+    name: String,
+    mime_type: String,
+    duration: Option<f64>,
+) -> Result<(), String> {
+    let dir = project_dir(&app, &project_id)?;
+    let asset_id = safe_component(&asset_id)?;
+    let src = PathBuf::from(&src_path);
+    // Refuse to "copy" a path that is not a regular file — guards against a
+    // candidate descriptor that pointed at a directory or a broken symlink.
+    if !src.is_file() {
+        return Err(format!(
+            "asset_store_write_from_path: source is not a regular file: {}",
+            src.display()
+        ));
+    }
+    let bytes = fs::read(&src).map_err(|e| format!("read {}: {e}", src.display()))?;
+    let containing_folder = src
+        .parent()
+        .map(|p| p.to_string_lossy().to_string());
+    let provenance = AssetProvenance {
+        original_path: Some(src_path.clone()),
+        containing_folder,
+        content_hash: None, // Step 4's ladder populates the hash on its own write.
+        duration,
+    };
+    write_asset_atomic_provenanced(&dir, asset_id, &bytes, name, mime_type, Some(provenance))
+}
 /// callers that need to distinguish "missing" from "other I/O error" should
 /// consult `asset_store_status` first (the recovery-status data source), not
 /// probe by calling this and inspecting the error string.

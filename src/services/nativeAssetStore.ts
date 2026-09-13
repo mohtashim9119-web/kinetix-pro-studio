@@ -121,6 +121,32 @@ export async function deleteProjectAssetsNative(projectId: string): Promise<void
 }
 
 /**
+ * Round 27 (Step 2) — copies a file BY PATH into the native asset store,
+ * recording its provenance. This is the folder-pick write path: bytes never
+ * cross IPC. THROWS on any failure — the recovery UI surfaces it per-row,
+ * never swallowed. Outside Tauri (plain `npm run dev`) this is a no-op, so
+ * the flow is exercised only under `tauri:dev`/`tauri:build`.
+ */
+export async function writeAssetFromPath(
+  projectId: string,
+  assetId: string,
+  srcPath: string,
+  name: string,
+  mimeType: string,
+  duration: number | null,
+): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<void>('asset_store_write_from_path', {
+    projectId,
+    assetId,
+    srcPath,
+    name,
+    mimeType,
+    duration,
+  });
+}
+
+/**
  * WS3 item H — the STRICT variant, for the one call site where a failure
  * must surface rather than leak: deleting a whole project. Unlike
  * `deleteProjectAssetsNative` above (best-effort, matches

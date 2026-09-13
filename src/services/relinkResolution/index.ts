@@ -21,6 +21,12 @@ export {
 } from './relinkStateMachine';
 export { proposeFolderBatchRelink, type FolderBatchRelinkResult } from './folderBatchRelink';
 export { unresolvedMetadataFromAssets } from './fromRecoveryAssets';
+export {
+  defaultFolderSelection,
+  selectedFolderWrites,
+  toggleFolderSelection,
+  type FolderSelection,
+} from './folderRelinkSession';
 export type {
   RelinkAssetRecord,
   RelinkAssetType,

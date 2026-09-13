@@ -23,6 +23,7 @@ mod event_sink;
 pub mod model_download;
 pub mod models;
 mod asset_store;
+mod relink;
 mod project_mirror;
 mod safe_delete;
 mod sha256;
@@ -582,10 +583,13 @@ pub fn run() {
             storage_root::storage_root_relocate,
             storage_root::size_report,
             asset_store::asset_store_write,
+            asset_store::asset_store_write_from_path,
             asset_store::asset_store_read,
             asset_store::asset_store_status,
             asset_store::asset_store_delete,
             asset_store::asset_store_delete_project,
+            relink::relink_pick_folder,
+            relink::relink_list_folder,
             fetch_url_bytes,
             app_session_token,
             toggle_devtools,

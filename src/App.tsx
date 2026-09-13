@@ -217,11 +217,25 @@ import {
   clearEditorSessionActive,
   shouldResumeLastOpenedProject,
   reportAssetResolutionFailure,
+  clearLoadFailure,
 } from './services/projectStore';
 import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
 import { getProjectAssetRecoveryStatus, relinkAsset } from './services/assetRecovery';
-import { DegradedProjectRecoveryScreen } from './components/recovery/DegradedProjectRecoveryScreen';
+import { DegradedProjectRecoveryScreen, type FolderRelinkView } from './components/recovery/DegradedProjectRecoveryScreen';
+import {
+  proposeFolderBatchRelink,
+  defaultFolderSelection,
+  selectedFolderWrites,
+  toggleFolderSelection,
+  unresolvedMetadataFromAssets,
+  type FolderSelection,
+  type RelinkCandidate,
+  type RelinkProposal,
+  type UnresolvedAssetMetadata,
+} from './services/relinkResolution';
+import { relinkPickFolder, relinkListFolder, inferMimeType, type RelinkCandidateFile } from './services/relinkNative';
+import { writeAssetFromPath } from './services/nativeAssetStore';
 import type { RecoveryAsset, RecoverySegment } from './components/recovery/degradedLoad';
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
 import { requestStoragePersistence } from './services/storagePersistence';
@@ -2123,6 +2137,9 @@ export default function App() {
   } | null>(null);
   const [relinkTargetAssetId, setRelinkTargetAssetId] = useState<string | null>(null);
   const relinkFileInputRef = useRef<HTMLInputElement>(null);
+  // Step 2 — folder-pick session. `null` until the operator picks a folder.
+  // The pure matcher's output lives here; the screen renders it verbatim.
+  const [folderRelink, setFolderRelink] = useState<FolderRelinkView | null>(null);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   // WS2 T4.1 — the machine-global settings surface. Separate flag from
@@ -6136,6 +6153,7 @@ export default function App() {
       // a different failure class this screen has nothing to offer for; the
       // existing toast in the caller is what the user sees for that case.
       setDegradedRecovery(null);
+      setFolderRelink(null);
       return;
     }
     const resolvedByAssetId = new Map(status.assets.map((a) => [a.assetId, a.resolved]));
@@ -6180,11 +6198,147 @@ export default function App() {
       // (relinkAsset already called clearLoadFailure), so the project opens
       // exactly like any other: no manual "I'm done" step for the user.
       setDegradedRecovery(null);
+      setFolderRelink(null);
       await handleSwitchProject(projectId);
       return;
     }
     await refreshDegradedRecovery(projectId);
   };
+
+  // ── Step 2: folder-pick recovery — the PRIMARY action for a project with
+  //    many unresolved assets. One folder pick proposes matches for every
+  //    unresolved asset at once; the user confirms; all confirmed bytes are
+  //    written to the native store by path (no IPC byte transfer). Per-asset
+  //    re-link above stays as the fallback for what the folder pick misses.
+  //    Invariants: no non-exact match is auto-accepted (enforced in
+  //    `defaultFolderSelection`), and the project cannot leave the degraded
+  //    state until every asset reaches `written` (the reopen below only fires
+  //    when `getProjectAssetRecoveryStatus` reports `allResolved`).
+  const handleRecoveryPickFolder = useCallback(async (): Promise<void> => {
+    const projectId = degradedRecovery?.projectId;
+    if (!projectId) return;
+    const folder = await relinkPickFolder();
+    if (!folder) return; // operator cancelled — leave the screen as-is.
+    setFolderRelink({
+      phase: 'listing',
+      proposals: [],
+      candidateById: {},
+      selection: {},
+      unresolvedAssetIds: degradedRecovery.assets.filter((a) => a.unresolved).map((a) => a.id),
+      writeError: null,
+    });
+    let candidates: RelinkCandidateFile[];
+    try {
+      candidates = await relinkListFolder(folder);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setFolderRelink({
+        phase: 'proposed',
+        proposals: [],
+        candidateById: {},
+        selection: {},
+        unresolvedAssetIds: degradedRecovery.assets.filter((a) => a.unresolved).map((a) => a.id),
+        writeError: `Could not list that folder: ${message}`,
+      });
+      return;
+    }
+    // Map the project's unresolved assets + the listed candidates onto the
+    // pure matcher's input shapes, then run it.
+    const status = await getProjectAssetRecoveryStatus(projectId);
+    const projectOutcome = await loadProjectDetailed(projectId);
+    if (!status || !projectOutcome || !projectOutcome.ok) {
+      setFolderRelink(null);
+      await refreshDegradedRecovery(projectId);
+      return;
+    }
+    const unresolvedAssets: UnresolvedAssetMetadata[] = unresolvedMetadataFromAssets(
+      projectOutcome.project.assets,
+      status.assets,
+    );
+    const matcherCandidates: RelinkCandidate[] = candidates
+      .filter((c) => c.mediaType !== null)
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        type: c.mediaType as 'image' | 'video' | 'audio',
+        duration: c.duration,
+        path: c.path,
+      }));
+    const { proposals } = proposeFolderBatchRelink(unresolvedAssets, matcherCandidates);
+    const selection = defaultFolderSelection(proposals);
+    const candidateById: FolderRelinkView['candidateById'] = {};
+    for (const c of matcherCandidates) {
+      candidateById[c.id] = { id: c.id, name: c.name, path: c.path };
+    }
+    setFolderRelink({
+      phase: 'proposed',
+      proposals,
+      candidateById,
+      selection,
+      unresolvedAssetIds: unresolvedAssets.map((a) => a.id),
+      writeError: null,
+    });
+  }, [degradedRecovery]);
+
+  const handleRecoveryToggleFolderProposal = useCallback((assetId: string, candidateId: string): void => {
+    setFolderRelink((prev) => {
+      if (!prev) return prev;
+      return { ...prev, selection: toggleFolderSelection(prev.selection, assetId, candidateId) };
+    });
+  }, []);
+
+  const handleRecoveryCancelFolderRelink = useCallback((): void => {
+    setFolderRelink(null);
+  }, []);
+
+  const handleRecoveryConfirmFolderRelink = useCallback(async (): Promise<void> => {
+    const projectId = degradedRecovery?.projectId;
+    if (!projectId || !folderRelink) return;
+    const writes = selectedFolderWrites(folderRelink.selection);
+    if (writes.length === 0) return;
+    setFolderRelink({ ...folderRelink, phase: 'writing', writeError: null });
+    // The write needs only the candidate's path + name (the native command
+    // reads the bytes by path and records provenance itself). MIME type is
+    // inferred from the filename, mirroring the native `infer_media_type`.
+    let failed = 0;
+    let firstError: string | null = null;
+    for (const { assetId, candidateId } of writes) {
+      const candidate = folderRelink.candidateById[candidateId];
+      if (!candidate) continue;
+      const mimeType = inferMimeType(candidate.name);
+      try {
+        await writeAssetFromPath(projectId, assetId, candidate.path, candidate.name, mimeType, null);
+      } catch (err) {
+        failed += 1;
+        const message = err instanceof Error ? err.message : String(err);
+        if (firstError === null) firstError = message;
+        console.error(`[recovery] folder-pick write failed for ${assetId}:`, message);
+      }
+    }
+    if (failed > 0) {
+      setFolderRelink({
+        ...folderRelink,
+        phase: 'proposed',
+        writeError: `${failed} of ${writes.length} write(s) failed: ${firstError}`,
+      });
+      await refreshDegradedRecovery(projectId);
+      return;
+    }
+    // Every selected write landed. Re-check the whole-project status: the
+    // project leaves the degraded state ONLY when every asset is resolved —
+    // not when the batch finished. Assets the folder pick missed (no
+    // candidate, or the user deselected) stay unresolved and the screen
+    // remains, with per-asset re-link as the fallback.
+    setFolderRelink(null);
+    const status = await getProjectAssetRecoveryStatus(projectId);
+    if (status?.allResolved) {
+      clearLoadFailure(projectId);
+      setDegradedRecovery(null);
+      await handleSwitchProject(projectId);
+      return;
+    }
+    await refreshDegradedRecovery(projectId);
+  }, [degradedRecovery, folderRelink]);
 
   const handleSwitchProject = async (id: string, opts?: { preserveUiState?: boolean }): Promise<void> => {
     // Re-opening the project already loaded changes no project state, so the
@@ -7472,6 +7626,11 @@ export default function App() {
           segments={degradedRecovery.segments}
           assets={degradedRecovery.assets}
           onRelink={handleRecoveryRelinkRequest}
+          folderRelink={folderRelink}
+          onPickFolder={() => { void handleRecoveryPickFolder(); }}
+          onToggleFolderProposal={handleRecoveryToggleFolderProposal}
+          onConfirmFolderRelink={() => { void handleRecoveryConfirmFolderRelink(); }}
+          onCancelFolderRelink={handleRecoveryCancelFolderRelink}
         />
       )}
       <input

@@ -2234,7 +2234,7 @@ fn parse_ffmpeg_duration(stderr: &str) -> Option<f64> {
 /// ffmpeg exits non-zero in this mode but prints `Duration:` to stderr, which we
 /// parse. The bundled build ships ffmpeg only (no separate ffprobe binary), so
 /// this is the portable way to probe duration through the same sidecar.
-async fn ffmpeg_probe_duration_secs(
+pub(crate) async fn ffmpeg_probe_duration_secs(
     app: &tauri::AppHandle,
     input: &std::path::Path,
 ) -> Result<f64, String> {

@@ -9,7 +9,7 @@
  */
 
 import React from 'react';
-import { AlertTriangle, Link2 } from 'lucide-react';
+import { AlertTriangle, Link2, FolderOpen } from 'lucide-react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
   canPersistRecoveredProject,
@@ -17,6 +17,31 @@ import {
   type RecoveryAsset,
   type RecoverySegment,
 } from './degradedLoad';
+import type { RelinkProposal } from '../../services/relinkResolution/types';
+import type { FolderSelection } from '../../services/relinkResolution/folderRelinkSession';
+
+/** Display info for one folder-pick candidate, keyed by candidateId. */
+export interface FolderRelinkCandidateView {
+  id: string;
+  name: string;
+  path: string;
+}
+
+/**
+ * The folder-pick session state the screen renders. `null` means no folder
+ * has been picked yet — the screen shows the "Pick folder" primary action.
+ * Built by App from the pure matcher's output; this view never decides a
+ * match (the matcher does) and never writes bytes (App does).
+ */
+export interface FolderRelinkView {
+  phase: 'listing' | 'proposed' | 'writing';
+  proposals: readonly RelinkProposal[];
+  candidateById: Record<string, FolderRelinkCandidateView>;
+  selection: FolderSelection;
+  /** Unresolved assets the folder pick was asked to match. */
+  unresolvedAssetIds: readonly string[];
+  writeError: string | null;
+}
 
 export interface DegradedProjectRecoveryScreenProps {
   projectName: string;
@@ -29,6 +54,12 @@ export interface DegradedProjectRecoveryScreenProps {
    * the no-save invariant is enforced here, not by the caller.
    */
   onSave?: () => void;
+  /** Folder-pick primary action (Step 2). `null`/absent = no folder picked yet. */
+  folderRelink?: FolderRelinkView | null;
+  onPickFolder?: () => void;
+  onToggleFolderProposal?: (assetId: string, candidateId: string) => void;
+  onConfirmFolderRelink?: () => void;
+  onCancelFolderRelink?: () => void;
 }
 
 // No native-copy/backup distinction: `assetRecovery.ts`'s `nativeResolved`
@@ -55,11 +86,30 @@ export function DegradedProjectRecoveryScreen({
   assets,
   onRelink,
   onSave,
+  folderRelink,
+  onPickFolder,
+  onToggleFolderProposal,
+  onConfirmFolderRelink,
+  onCancelFolderRelink,
 }: DegradedProjectRecoveryScreenProps): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
   const canSave = canPersistRecoveredProject({ assets, segments });
   const missingIds = unresolvedAssetIds(assets);
   const unresolvedCount = missingIds.length;
+  const assetNameById = new Map(assets.map((a) => [a.id, a.name]));
+
+  // Folder-pick proposals grouped per asset (matcher sorts best-first).
+  const proposalsByAsset = new Map<string, RelinkProposal[]>();
+  if (folderRelink) {
+    for (const proposal of folderRelink.proposals) {
+      const list = proposalsByAsset.get(proposal.assetId) ?? [];
+      list.push(proposal);
+      proposalsByAsset.set(proposal.assetId, list);
+    }
+  }
+  const selectedCount = folderRelink
+    ? Object.values(folderRelink.selection).filter((c) => c !== null).length
+    : 0;
 
   return (
     <div
@@ -96,6 +146,120 @@ export function DegradedProjectRecoveryScreen({
         >
           {unresolvedCount} unresolved asset{unresolvedCount === 1 ? '' : 's'}
         </p>
+
+        {/* Step 2 — folder-pick is the PRIMARY recovery action. With many
+            unresolved assets, per-asset re-link is unusable; one folder pick
+            proposes matches for every asset at once. Per-asset re-link stays
+            as the fallback below for what the folder pick misses. */}
+        <section data-testid="recovery-folder-pick" className="mb-5 border border-[#282828] rounded-lg p-3">
+          {!folderRelink && (
+            <button
+              type="button"
+              data-testid="recovery-pick-folder"
+              onClick={() => onPickFolder?.()}
+              className="w-full inline-flex items-center justify-center gap-2 bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
+            >
+              <FolderOpen size={14} />
+              Pick the folder your originals live in
+            </button>
+          )}
+          {folderRelink?.phase === 'listing' && (
+            <p data-testid="recovery-folder-listing" className="text-[11px] text-gray-400 text-center p-3">
+              Listing folder…
+            </p>
+          )}
+          {folderRelink?.phase === 'writing' && (
+            <p data-testid="recovery-folder-writing" className="text-[11px] text-gray-400 text-center p-3">
+              Writing confirmed matches…
+            </p>
+          )}
+          {folderRelink?.phase === 'proposed' && (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <p data-testid="recovery-folder-summary" className="text-[10px] font-bold uppercase tracking-widest text-gray-300">
+                  {selectedCount} of {folderRelink.unresolvedAssetIds.length} selected
+                </p>
+                <button
+                  type="button"
+                  data-testid="recovery-folder-cancel"
+                  onClick={() => onCancelFolderRelink?.()}
+                  className="text-[9px] font-bold uppercase tracking-widest text-gray-500 hover:text-white"
+                >
+                  Cancel
+                </button>
+              </div>
+              <ul data-testid="recovery-folder-proposals" className="space-y-1 mb-3 max-h-48 overflow-y-auto">
+                {folderRelink.unresolvedAssetIds.map((assetId) => {
+                  const proposals = proposalsByAsset.get(assetId) ?? [];
+                  const confirmable = proposals.filter((p) => p.confidence !== 'rejected');
+                  const selectedCandidateId = folderRelink.selection[assetId] ?? null;
+                  const top = confirmable[0];
+                  const assetName = assetNameById.get(assetId) ?? assetId;
+                  return (
+                    <li
+                      key={assetId}
+                      data-testid="recovery-folder-row"
+                      data-asset-id={assetId}
+                      className="flex items-center gap-2 bg-[#1A1A1A] border border-[#282828] rounded px-2 py-1.5"
+                    >
+                      <input
+                        type="checkbox"
+                        data-testid="recovery-folder-toggle"
+                        data-asset-id={assetId}
+                        data-candidate-id={top?.candidateId ?? ''}
+                        checked={selectedCandidateId !== null}
+                        disabled={!top}
+                        onChange={() => {
+                          if (top) onToggleFolderProposal?.(assetId, top.candidateId);
+                        }}
+                        className="shrink-0"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-bold text-gray-200 truncate">{assetName}</p>
+                        {top ? (
+                          <p
+                            data-testid="recovery-folder-proposal"
+                            data-confidence={top.confidence}
+                            className="text-[9px] text-gray-500 truncate"
+                          >
+                            → {folderRelink.candidateById[top.candidateId]?.name ?? top.candidateId}
+                            {top.confidence !== 'exact' && (
+                              <span className="ml-1 text-amber-400">
+                                (needs confirmation)
+                              </span>
+                            )}
+                          </p>
+                        ) : (
+                          <p data-testid="recovery-folder-no-match" className="text-[9px] text-gray-600">
+                            no match — use Re-link below
+                          </p>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              <button
+                type="button"
+                data-testid="recovery-folder-confirm"
+                disabled={selectedCount === 0}
+                onClick={() => onConfirmFolderRelink?.()}
+                className="w-full bg-[#F27D26] text-white p-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Write {selectedCount} confirmed match{selectedCount === 1 ? '' : 'es'}
+              </button>
+              {folderRelink.writeError && (
+                <p
+                  data-testid="recovery-folder-write-error"
+                  role="alert"
+                  className="mt-2 text-[10px] text-red-400"
+                >
+                  {folderRelink.writeError}
+                </p>
+              )}
+            </>
+          )}
+        </section>
 
         {!canSave && (
           <div
