@@ -365,6 +365,26 @@ pub fn ffmpeg_volume_free_space(
     Ok(out)
 }
 
+/// WS3 item I — the disk preflight's computed numbers, into the SAME native
+/// diagnostic log `ffmpeg_retain_session_for_resume` writes to (opt-in,
+/// `KINETIX_DIAGNOSTIC_LOG`, see `lib.rs`'s `setup`). Before this, the model
+/// (`estimateExportDiskBytes`/`decideDiskPreflight` in `diskFull.ts`) only
+/// ever reached `console.info`/the diagnostics blob — both WebView-side, both
+/// gone the moment a release build's WebView crashes or DevTools was not
+/// open. `summary` is pre-formatted by the TS caller (estimate bytes, every
+/// volume's required/available/shortfall) rather than re-typed here, the
+/// same "opaque string, TS owns the shape" posture `failure_kind` already has
+/// on `ffmpeg_retain_session_for_resume` above — this command's only job is
+/// getting it into the log file.
+#[tauri::command]
+pub fn ffmpeg_log_disk_preflight(session_id: String, ok: bool, summary: String) -> Result<(), String> {
+    log::info!(
+        target: "kinetix::disk_preflight",
+        "disk_preflight session_id={session_id} ok={ok} {summary}"
+    );
+    Ok(())
+}
+
 /// WS3 Round 21 (D3d/D5) — the terminal-failure disposition of a session
 /// that a resume could still use. Deletes only what a resume does NOT need
 /// (mux intermediates, a partial `export_final.mp4`, the voiceover copy,

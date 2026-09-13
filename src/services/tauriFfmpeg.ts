@@ -285,6 +285,23 @@ export class TauriFfmpeg implements FfmpegLike {
   }
 
   /**
+   * WS3 item I — puts the disk preflight's own computed numbers into the
+   * NATIVE diagnostic log (`KINETIX_DIAGNOSTIC_LOG`), not just the WebView
+   * console/diagnostics blob. Called on both the pass and the refusal path so
+   * a refusal is diagnosable from the log file alone — see
+   * `docs/ws3-export/w23-machine1-validation.md`. Best-effort: a logging
+   * failure must never affect the export it is describing.
+   */
+  async logDiskPreflight(ok: boolean, summary: string): Promise<void> {
+    try {
+      await invoke('ffmpeg_log_disk_preflight', { sessionId: this.#sessionId, ok, summary });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[ws3-disk] native preflight logging failed (non-fatal):', err);
+    }
+  }
+
+  /**
    * WS3 Round 21 (D3d/D5) — terminal-failure disposition: keeps this
    * session's pieces + manifest for a future resume, deletes everything a
    * resume does not need. Marks the instance destroyed (same contract as

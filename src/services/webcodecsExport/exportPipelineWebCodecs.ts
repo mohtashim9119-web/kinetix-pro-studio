@@ -285,6 +285,12 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
    * checkpointing.
    */
   volumeFreeSpace?(destPath: string | null): Promise<VolumeFreeSpace[]>;
+  /**
+   * WS3 item I — puts the preflight's computed numbers into the NATIVE
+   * diagnostic log, not just the WebView console. OPTIONAL, same posture as
+   * `volumeFreeSpace`: a fake without it just skips the extra log write.
+   */
+  logDiskPreflight?(ok: boolean, summary: string): Promise<void>;
 }
 
 import {
@@ -3032,6 +3038,20 @@ export async function exportProjectWebCodecs(
       });
       // eslint-disable-next-line no-console
       console.info('[ws3-disk] preflight', JSON.stringify({ estimate, volumes: preflight.volumes, ok: preflight.ok }));
+      // WS3 item I — the SAME numbers, into the NATIVE diagnostic log too.
+      // `console.info` above is WebView-only: gone the moment a release
+      // build's WebView crashes or DevTools was not open, which is exactly
+      // why a preflight refusal used to be undiagnosable from the log file
+      // alone. Best-effort (see `logDiskPreflight`'s own doc comment) and
+      // awaited so the line is written before a refusal is reported upward.
+      await ffmpeg.logDiskPreflight?.(
+        preflight.ok,
+        `estimate_temp_required=${estimate.tempRequiredBytes} estimate_dest_required=${estimate.destinationRequiredBytes} ` +
+          `estimate_temp_peak=${estimate.tempPeakBytes} estimate_final=${estimate.finalBytes} ` +
+          `estimate_annexb=${estimate.annexbBytes} estimate_voiceover=${estimate.voiceoverBytes} ` +
+          `estimate_aac=${estimate.aacBytes} volumes=${JSON.stringify(preflight.volumes)} ` +
+          `shortfall=${preflight.shortfall ? JSON.stringify(preflight.shortfall) : 'none'}`,
+      );
       if (!preflight.ok && preflight.shortfall) {
         activeFfmpeg = null;
         const sf = preflight.shortfall;

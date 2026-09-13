@@ -59,6 +59,20 @@ still debug-only) — open it yourself. Right-click anywhere in the app window
 and choose "Inspect Element", or use the WebView2 DevTools keyboard shortcut
 (F12) if the release build doesn't block it.
 
+**WS3 item I addition** — as of this round the log also carries a
+`disk_preflight` line, target `kinetix::disk_preflight`, one per export
+attempt: `disk_preflight session_id=... ok=<bool> estimate_temp_required=...
+estimate_dest_required=... estimate_temp_peak=... estimate_final=...
+estimate_annexb=... estimate_voiceover=... estimate_aac=... volumes=[...]
+shortfall=<{...}|none>`. This is the preflight's OWN computed numbers
+(`estimateExportDiskBytes`/`decideDiskPreflight` in `diskFull.ts`) — before
+this round they only ever reached `console.info('[ws3-disk] preflight', ...)`
+and the diagnostics blob, both WebView-side and both gone the moment a
+release build's WebView crashes or DevTools was not open at the right
+moment. A `disk_preflight ok=false` line, on its own, is now enough to
+diagnose a refusal — required/available/shortfall bytes and the volume(s)
+involved — without DevTools ever having been open.
+
 ## 1. Size the volume from a real dry run — don't compute it blind
 
 Guessing the byte threshold from the bitrate formula alone risks either no
@@ -78,22 +92,87 @@ normal storage, of the EXACT project you'll use for the real test:
    right after the LAST piece's checkpoint would have been written (watch for
    `export_state.json`'s `mtime` to stop advancing, or just do this once the
    progress bar shows 100% render / "finishing up"). Record the sum of all
-   `piece_*.h264` sizes — call this `P`.
-2. `P` is what the concat step (`concat_annexb_pieces`, phase `'concat'`) must
-   write again into a NEW file (`video_all.h264`) before deleting nothing —
-   both `P` bytes of pieces AND up to `P` more bytes of `video_all.h264` exist
-   on disk simultaneously mid-concat. That's your target window.
+   `piece_*.h264` sizes — call this `P`. Also note whether a voiceover asset
+   is attached and its byte size (`W`) — from the same directory listing
+   (`voiceover_audio`/the copied WAV) or the asset's own file size.
 
-## 2. Create an undersized volume and redirect only the app's TEMP to it
+2. **CORRECTED — this used to say "P to 2P", which is wrong and is why
+   twelve exports were refused before frame one.** That number modelled
+   ONLY the concat step's own doubling (`P` pieces + up to `P` more for
+   `video_all.h264`) and ignored the premux copy, the delivered
+   `export_final.mp4`, and the voiceover bytes — all of which coexist at the
+   SAME instant, the audio-mux step (`diskFull.ts`'s own derivation,
+   § "The model, in bytes"):
+   ```
+   peak(1 piece)   = 3P + W + AAC·D
+   peak(≥2 pieces) = 4P + W + AAC·D        (+ video_all)
+   ```
+   and the LIVE preflight (`estimateExportDiskBytes` / `decideDiskPreflight`,
+   the same code this validates) does not gate on that raw peak — it gates
+   on the peak WITH headroom, `tempRequiredBytes` = `applyHeadroom(peak)` =
+   `ceil(peak × 1.10) + 64 MiB`. Rounding AAC's ~2.4%-of-`P` contribution in:
+   ```
+   required ≈ 4.4·P + 1.1·W + 64 MiB      (≥2 pieces, with voiceover)
+   ```
+   **This is now the FLOOR, not the target.** A volume with less available
+   space than `required` refuses the export at the preflight, before a
+   single frame renders — correct behavior, not a bug, but it means the old
+   "P to 2P" sizing guarantees a preflight refusal on any real project, every
+   time. See step 3 below for how to still land a genuine MUX-stage failure
+   now that the preflight actually gates on the true peak.
+
+3. **How a genuine mux-stage ENOSPC is still reachable.** Because the
+   preflight requires `required` bytes to be free before it lets the export
+   start, and real usage tracks the raw peak `4P + W + AAC·D` closely (the
+   Machine-1 field sample measured 998,485 B/s against the modelled
+   1,000,000 B/s — 0.15% under), a volume sized at exactly `required` has
+   its whole 10%-plus-64-MiB margin BY DESIGN and should complete without
+   hitting ENOSPC. Reproducing the failure deterministically means consuming
+   part of that margin AFTER the preflight has already measured it as free,
+   not shrinking the volume itself:
+   - Create the VHD sized at `required` plus a small operator margin (step 2
+     below uses `required + 150 MB`, comfortably above the floor so the
+     preflight passes).
+   - Once render completes (same `export_state.json` mtime-stop signal as
+     step 1 above — this is BEFORE concat starts, decision point 2 in §4's
+     table), write a filler file into the SAME volume, in a directory the
+     export does not use, sized to consume everything except roughly `2P`
+     of headroom. At that point the temp tree already holds `P` (the
+     pieces); concat needs another `~P` for `video_all.h264`, then the
+     premux/final/voiceover steps need the rest of the `4P + W` peak — a
+     ~`2P` remainder is enough to get PAST concat's own doubling but fail
+     during the premux/final/voiceover portion of the mux step, which is
+     the field failure's actual shape (`error.phase === 'concat'` is set for
+     ANY ENOSPC during `concat_annexb_pieces`'s phase, which in the live
+     pipeline spans through the mux step — see `exportPipelineWebCodecs.ts`
+     phase transitions cross-referenced in §4 decision point 3 below).
+   - Delete the filler file immediately after the run (pass or fail) — it is
+     not part of anything W23 or a later run needs, and leaving it defeats
+     `diskpart`'s own cleanup at the end of §5.
+
+## 2. Create a volume sized for the CORRECTED requirement, and redirect only the app's TEMP to it
+
+**Do not put this VHD on the volume holding `%LOCALAPPDATA%`.** The WebView2
+profile directory lives there too (see the ledger note below), so starving
+that volume of free space risks triggering origin-storage eviction — the
+exact class of loss item A/B of the incident fix exists to close, not
+something a validation run should risk reproducing as a side effect. Put the
+VHD on a different physical/logical volume than `%LOCALAPPDATA%`'s.
 
 Don't redirect the machine's global `%TEMP%` (`setx` at the system level) —
 that's a standing change to your whole Windows session that's easy to forget
 to revert. Redirect it for the app process only, via a launcher:
 
 ```powershell
-# Create a fixed-size VHD sized between P and 2P — e.g. P=1.2 GB -> 1.8 GB.
-# Adjust $sizeBytes from your Step 1 measurement of P.
-$sizeBytes = 1800MB
+# CORRECTED sizing — see §1 step 2. Replace P and W with your Step 1
+# measurements (bytes). This is `required` (what the live preflight itself
+# demands to let the export start) plus a small operator margin so the
+# preflight passes comfortably; §1 step 3 explains how the run still reaches
+# a genuine mux-stage ENOSPC despite that margin.
+$P = 1.2GB   # your Step 1 measurement of the summed piece_*.h264 bytes
+$W = 0.05GB  # your Step 1 measurement of the voiceover asset's byte size (0 if none)
+$required = [math]::Ceiling((4.4 * $P + 1.1 * $W) * 1) + 64MB   # matches diskFull.ts's applyHeadroom() to within rounding
+$sizeBytes = $required + 150MB
 $vhdPath = "$env:USERPROFILE\kinetix-w23-test.vhdx"
 $diskpartScript = @"
 create vdisk file="$vhdPath" maximum=$($sizeBytes/1MB) type=fixed
@@ -120,6 +199,16 @@ trust the child-process inheritance) that the app actually sees `W:\temp` —
 easiest proof: start ANY export and confirm `W:\kinetix-export-<uuid>\...`
 exists while it's running, not a path under the real `C:\Users\...\AppData\Local\Temp`.
 
+**Ledger note — the `%LOCALAPPDATA%` overlap is real, not hypothetical.** On
+Windows, the WebView2 user data folder and `app_local_data_dir()` (where
+native project storage, the diagnostic log, and — pre-item-C — every asset
+byte live) both resolve under `%LOCALAPPDATA%\com.kinetix.pro-studio`. Free-
+space pressure on that volume therefore affects both the browser engine's own
+storage (eviction risk) and the app's native stores at once. Item C's
+relocatable storage root moves assets off that volume; it is a durability
+improvement there, not merely a capacity one — this VHD warning is the same
+concern applied to how W23 itself must be run.
+
 ## 3. Negative controls to run FIRST, on normal (unconstrained) storage
 
 Run these two before the expensive constrained-disk run, so a failure in the
@@ -136,9 +225,25 @@ stop, this is a bigger regression than what W23 is testing and must be fixed
 first.
 
 **N2 — a genuine disk_full (render-stage, not mux-stage) must still retain.**
-Same VHD technique, but size the volume so it runs out DURING append/render
-(pick a size well under `P`, e.g. 40% of `P`). Expected: `error.kind ===
-'disk_full'`, `error.phase === 'append'` (not `'concat'`) this time, and
+**CORRECTED sizing note (WS3 item I):** "size the volume well under `P`" has
+the SAME problem §1 step 2 just fixed for the main run — the corrected
+preflight refuses any volume with less than `required` (§1 step 2) available
+BEFORE render starts, so a volume at 40% of `P` now gets
+`error.phase === 'preflight'`, not `'append'`, and N2 as originally written
+can no longer reach the append stage at all. Use the same "pass preflight,
+then consume the margin" approach as §1 step 3, timed differently: size the
+VHD at `required` plus a small margin (as in §2) so the preflight passes,
+then write a filler file sized to leave well under `P` of headroom BEFORE
+starting the export (there is no render-complete signal to wait for here —
+the filler has to land before the first append batch, which is harder to
+time precisely than §1 step 3's post-render window). Confirm `error.phase`
+actually reads `'append'` before trusting the result; if the filler landed
+too late (or the timing raced) and you instead observe `'concat'` or a clean
+completion, resize the filler and retry — do not report N2 against a run
+where the phase does not match.
+
+Same VHD technique otherwise. Expected: `error.kind === 'disk_full'`,
+`error.phase === 'append'` (not `'concat'`) this time, and
 `RetainForResumeReport.disposition === "retained"` — this is the ORIGINAL
 Round 21 D3d case; Round 24a only BROADENED the gate to every failure kind, it
 must not have narrowed or broken this one. If this regresses, Round 24a's

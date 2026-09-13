@@ -139,8 +139,11 @@ function harness(o: {
               ...(dest ? [{ path: dest, probedPath: '/Users/me', volumeKey: 'dev:1', availableBytes: avail }] : []),
             ];
           }),
+          // WS3 item I — the native diagnostic-log call. Only exercised when
+          // volumeFreeSpace is present too, same gating the preflight itself uses.
+          logDiskPreflight: vi.fn(async () => undefined),
         }),
-  } as unknown as WebCodecsFfmpeg & { volumeFreeSpace?: unknown };
+  } as unknown as WebCodecsFfmpeg & { volumeFreeSpace?: unknown; logDiskPreflight?: unknown };
   return { ffmpeg, calls, manifests };
 }
 
@@ -176,6 +179,16 @@ describe('disk-full wiring (Round 21)', () => {
     expect(h.calls.filter((c) => c !== 'volumeFreeSpace')).toEqual([]);
     expect(h.manifests).toHaveLength(0);
     expect(consent).not.toHaveBeenCalled();
+
+    // WS3 item I — the refusal is diagnosable from the NATIVE log alone: the
+    // required/available/shortfall numbers reach it, not just the WebView
+    // console/diagnostics blob.
+    const logFn = h.ffmpeg.logDiskPreflight as ReturnType<typeof vi.fn>;
+    expect(logFn).toHaveBeenCalledTimes(1);
+    const [ok, summary] = logFn.mock.calls[0] as [boolean, string];
+    expect(ok).toBe(false);
+    expect(summary).toMatch(/estimate_temp_required=\d+/);
+    expect(summary).toMatch(/shortfall=\{.*"availableBytes":1000.*\}/);
   });
 
   it('PREFLIGHT — a fake without volumeFreeSpace, or a healthy volume, runs unchanged', async () => {
@@ -189,6 +202,11 @@ describe('disk-full wiring (Round 21)', () => {
       await flush();
       const result = await p;
       expect(result.ok).toBe(true);
+      // A healthy volume still logs the PASS decision to the native log — a
+      // baseline record exists even when nothing goes wrong.
+      if (h.ffmpeg.logDiskPreflight) {
+        expect(h.ffmpeg.logDiskPreflight).toHaveBeenCalledWith(true, expect.stringContaining('estimate_temp_required='));
+      }
     }
   });
 
