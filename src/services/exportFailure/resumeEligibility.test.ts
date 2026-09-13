@@ -11,7 +11,7 @@ import {
 
 const ELIGIBLE = {
   retentionAttempted: true,
-  sessionDisposition: retainedForResumeDisposition(1_024, '/tmp/kinetix-export-1'),
+  sessionDisposition: retainedForResumeDisposition(1_024, '/sessions/kinetix-export-1'),
   manifestPresent: true,
 };
 
@@ -43,13 +43,13 @@ describe('isResumeEligible — retention evidence, not kind', () => {
   it('does not treat retainForResume.destroyed as resume — even with a manifest (diagnostic log: retained_bytes=0)', () => {
     expect(isResumeEligible({
       retentionAttempted: true,
-      sessionDisposition: retainForResumeDestroyedDisposition('/tmp/kinetix-export-1'),
+      sessionDisposition: retainForResumeDestroyedDisposition('/sessions/kinetix-export-1'),
       manifestPresent: true,
     })).toBe(false);
   });
 
   it('does not treat destroySession.destroyed as resume — same raw string, different enum', () => {
-    const retainDestroyed = retainForResumeDestroyedDisposition('/tmp/a');
+    const retainDestroyed = retainForResumeDestroyedDisposition('/sessions/a');
     const destroyDestroyed = destroySessionDestroyedDisposition();
     expect(retainDestroyed.disposition).toBe('destroyed');
     expect(destroyDestroyed.disposition).toBe('destroyed');

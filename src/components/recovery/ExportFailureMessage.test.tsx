@@ -33,7 +33,7 @@ const PANIC = 'PANIC: index out of bounds — rustc abort';
 
 const ELIGIBLE = {
   retentionAttempted: true,
-  sessionDisposition: retainedForResumeDisposition(4_096, '/tmp/kinetix-export-kept'),
+  sessionDisposition: retainedForResumeDisposition(4_096, '/sessions/kinetix-export-kept'),
   manifestPresent: true,
 };
 
@@ -125,7 +125,7 @@ describe('ExportFailureMessage — Resume from evidence, both branches per kind'
       kind: 'disk_full',
       diskFullVariant: 'mid-export',
       retentionAttempted: true,
-      sessionDisposition: retainForResumeDestroyedDisposition('/tmp/gone'),
+      sessionDisposition: retainForResumeDestroyedDisposition('/sessions/gone'),
       manifestPresent: false,
     });
     expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
