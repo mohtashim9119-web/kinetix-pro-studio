@@ -125,11 +125,67 @@ a `FAIL` line. Those skips are **not** part of the 35.
 
 ## How to judge a later cloud `npm test`
 
-Pass (cloud-gate match): 3630 passed / 35 failed / 78 skipped, the 35 names
-above, and `scripts/ws1-session-p-arms.test.ts` as the sole non-loading
-suite.
+The **expected-failure set** is 35 failed tests + 1 non-loading suite, with
+the names above. The **passed** count is not frozen: this branch may add
+passing tests (see the collection reconciliation below). A later cloud run
+that still has those 35 names and that suite, and no extra `FAIL`, matches
+the gate even if `passed` is above 3630.
 
 Regression: any extra `FAIL`, any missing name from the 35, any additional
 failed suite, or a flake (a name that is not in both runs).
 
-Not a regression: the Group C skips staying skipped.
+Not a regression: the Group C skips staying skipped; `passed` rising because
+new tests on this branch go green.
+
+## Collection-count reconciliation (3743 vs 3716)
+
+Local baseline on `fd547ce`: **3716** collected (3638 passed / 0 failed / 78
+skipped). Cloud on this branch at `cf3745f`: **3743** collected (3630 passed
+/ 35 failed / 78 skipped). Difference: **+27**.
+
+Counted with `npx vitest list` on this tree, not assumed.
+
+### This branch adds 28 tests in 3 files (all new vs `fd547ce`)
+
+| File | Tests | What they are |
+|---|---|---|
+| `src/components/ExportSettingsModal.test.tsx` | 10 | modal UI (bitrate default, Browse, size badge, free-space disable, commit/cancel) |
+| `src/services/exportOutputEstimate.test.ts` | 10 | size-estimator arithmetic on this branch (not the modal component) |
+| `src/services/exportTargetFs.test.ts` | 8 | path helpers + the thin fake used by the modal |
+
+`git diff --name-only fd547ce HEAD -- '*.test.ts' '*.test.tsx'` is exactly
+those three files. No other test file was added.
+
+The 10 estimator tests are this branch's work, not an unrelated cloud-only
+suite. They are not the modal UI; they are still Prompt 35 files, not a
+fourth source.
+
+### Cloud does not collect 1 test that local `fd547ce` does
+
+`scripts/ws1-session-p-arms.test.ts` declares one test (`sweeps input arms`).
+On a machine with `.work-phase4/replay/v6/` it loads and is part of the 3716.
+In cloud, top-level `readFileSync` of `whisper_raw_tokens.json` throws before
+`describe` registers, so `vitest list` returns **0** tests for that file (the
+non-loading suite). That is **−1** vs local `fd547ce`, not a new test.
+
+### Arithmetic
+
+```
+3716  (local fd547ce)
+ + 10  ExportSettingsModal.test.tsx
+ + 10  exportOutputEstimate.test.ts
+ +  8  exportTargetFs.test.ts
+ −  1  ws1-session-p-arms.test.ts not collected in cloud
+ = 3743
+```
+
+No cloud-collected test exists for a reason other than this branch's three
+new files. The only collection *gap* vs local `fd547ce` is `p-arms`.
+
+### This commit (prompt-37 fake) — not part of the 27
+
+`src/services/exportTargetFsFake.contract.test.ts` adds **8** passing
+contract tests against an in-memory fake. They were not in the `cf3745f`
+census. Next cloud collected = **3751** (3743 + 8). Failure set unchanged
+(35 + 1 suite). Passed rises from 3630 to 3638.
+
