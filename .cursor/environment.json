@@ -6,7 +6,7 @@
     {
       "name": "vite-dev",
       "command": "npm run dev",
-      "description": "Vite frontend on http://localhost:3000 (browser-only). Native export/ffmpeg/whisper need npm run tauri:dev — not available in this Linux cloud image (no ONNX runtime, no gitignored ffmpeg sidecar). Do not run cargo or Tauri gates here."
+      "description": "Vite frontend on http://localhost:3000 (browser-only). Native export/ffmpeg/whisper need npm run tauri:dev — not available in this Linux cloud image (no ONNX runtime, no gitignored ffmpeg sidecar). Do not run cargo or Tauri gates here. Cloud npm test expected failures: see .cursor/cloud-expected-failures.md (35 failed tests + 1 non-loading suite, not 38)."
     }
   ],
   "ports": [
@@ -17,125 +17,19 @@
   ]
 }
 
-// ---------------------------------------------------------------------------
-// CLOUD GATE — FROZEN FAILURE LIST (measured on ws3-export-modal @ fd547ce+)
-// Branch cut from fd547ce (ws3-export-integration tip). Do NOT treat a green
-// cloud `npm test` as matching local until EVERY row below is gone and no
-// new failure has appeared. Local baseline (operator machine): 3638 passed /
-// 0 failed / 78 skipped = 3716. Cloud (this environment, Node 22.22.2, after
-// the export-modal tests landed): 3630 passed / 35 failed / 78 skipped = 3743
-// collected tests, plus 1 failed suite that never registered its cases.
+// CLOUD npm test — FROZEN GATE (measured twice on ws3-export-modal @ f81674e)
+// Canonical names and grouping: .cursor/cloud-expected-failures.md
 //
-// A future green cloud gate means EXACTLY these 35 tests + 1 suite, and
-// nothing else. New failures are regressions. Disappearances mean a fixture
-// landed, not that the suite got stricter.
+// Two full `npm test` runs, Node v22.22.2, same tree, no rebase:
+//   run 1  3630 passed / 35 failed / 78 skipped = 3743   Start at 12:35:43
+//   run 2  3630 passed / 35 failed / 78 skipped = 3743   Start at 12:37:34
+// Failure-name diff: empty. Suite-name diff: empty.
+// Non-loading suite (both runs): scripts/ws1-session-p-arms.test.ts
+// Cloud flakes: none.
 //
-// Measured commands (this VM):
-//   npm install     exit 0 (lockfile in sync; jsdom wants Node ^22.22.2)
-//   npx tsc --noEmit / npm run lint    exit 0
-//   npm test        3630 passed / 35 failed / 78 skipped
-// Cargo / `tauri:dev` / `tauri:build` were NOT run (Linux: no ONNX, no sidecar).
-//
-// GROUP A — private corpus at /Users/mohtashim/Downloads/All Projects Test Data/...
-// Cause: ENOENT on the operator's local project files (not in the repo).
-//   1. scripts/phase4-handoff-replay-sync.test.ts
-//      "replays the shipped Apply-Sync pipeline for v6"
-//      ENOENT .../V6 Natural Long Pause Segs/All Text Files/Sync.txt
-//   2. scripts/phase4-handoff-replay-sync.test.ts
-//      "replays the shipped Apply-Sync pipeline for 173"
-//      ENOENT .../173 Segs Project/sync.txt
-//   3. scripts/phase4-handoff-replay-sync.test.ts
-//      "replays the shipped Apply-Sync pipeline for spanish"
-//      ENOENT .../Spanish Project/Spanish Sync.txt
-//   4. scripts/phase4-step-w-k13-repro.test.ts
-//      "PART 1 — preserveSegmentLocks restores a lock parseProjectData itself never carries"
-//      ENOENT .../173 Segs Project/script.txt
-//   5. scripts/phase4-step-w-k13-repro.test.ts
-//      "PART 3 — writes the C11 evidence artifact for the Step X harness"
-//      cascade of #4: record.part1 is undefined because PART 1 never ran
-//   6. scripts/ws2-27-absorption-numbering.test.ts
-//      "v6 S27, S28, S29 — all three name the same host, Clip 27, jump resolves to 030_watching_older_hunters"
-//      ENOENT .../V6 Natural Long Pause Segs/All Text Files/Sync.txt
-//   7. scripts/ws2-27-absorption-numbering.test.ts
-//      "173 S1 (leading run) — S-number is 1, Clip 1, byte-identical to the pre-fix behaviour"
-//      ENOENT .../173 Segs Project/sync.txt
-//   8. scripts/ws2-27-absorption-numbering.test.ts
-//      "173 S13 — mid-script, with an unrelated upstream drop at S1: moves from Clip 11 (pre-fix) to Clip 12, jump resolves to eternal_focus"
-//      ENOENT .../173 Segs Project/sync.txt
-//   9. scripts/ws2-27-absorption-numbering.test.ts
-//      "173 S112 — moves from Clip 109 (pre-fix) to Clip 110, jump resolves to shirking_foundation, notes Clip 109's 0.63s"
-//      ENOENT .../173 Segs Project/sync.txt
-//
-// GROUP B — missing gitignored .work-phase4/replay/ fixtures
-// Cause: live-fidelity bundles are gitignored; regenerate locally with
-//   python3 scripts/phase4-restore-replay-inputs.py
-//   10. [SUITE] scripts/ws1-session-p-arms.test.ts
-//       ENOENT .work-phase4/replay/v6/whisper_raw_tokens.json (file never loads)
-//   11. scripts/ws1-production-path.test.ts
-//       "reproduces the live run shape: 447 parsed, 447 kept, 0 skipped"
-//   12. scripts/ws1-production-path.test.ts
-//       "R-AO: every registry rule has an observable firing count on the production path"
-//   13. scripts/ws1-production-path.test.ts
-//       "commits R.11 ear-correct boundaries, not the pre-fix register values"
-//   14. scripts/ws1-production-path.test.ts
-//       "commits no boundary strictly inside an unscripted run (R.12 invariant, end to end)"
-//   15. scripts/ws1-production-path.test.ts
-//       "preserves Model P: gapless partition and total duration"
-//       #11–15: Replay input missing .work-phase4/replay/v6/transcript_tokens.json
-//   16. scripts/ws1-session-aj0-oracle-diff.test.ts
-//       "AJ-0 oracle diff (reporting only) — v6 > diffs the production path at HEAD against the ear-verified live export"
-//   17. scripts/ws1-session-aj0-oracle-diff.test.ts
-//       "AJ-0 oracle diff (reporting only) — 173 > diffs the production path at HEAD against the ear-verified live export"
-//   18. scripts/ws1-session-aj0-oracle-diff.test.ts
-//       "AJ-0 oracle diff (reporting only) — spanish > diffs the production path at HEAD against the ear-verified live export"
-//   19. scripts/ws1-session-p-invariants.test.ts
-//       "R.12 invariant: no committed boundary lies strictly inside an unscripted run"
-//   20. scripts/ws1-session-p-invariants.test.ts
-//       "strict monotonic ordering across every committed boundary"
-//   21. scripts/ws1-session-p-measure.test.ts
-//       "STEP 2 — reproduces the live run with raw tokens + native silences"
-//   22. scripts/ws1-session-q-invariants.test.ts
-//       "R.13 invariant: no run-carrying segment is closed before its own utterance ends"
-//   23. scripts/ws1-session-q-production-pins.test.ts
-//       "R.12: the SEVEN ear-verified corrected boundaries (WS1 Session T)"
-//   24. scripts/ws1-session-q-production-pins.test.ts
-//       "R.12 fires EIGHT times on the live v6 bundle after Session S's run-edge exclusion"
-//   25. scripts/ws1-session-q-production-pins.test.ts
-//       "L7: 266_forty_one_burden — EAR-VERIFIED at 788.75 (WS1 Session V closes the follow-up A/B)"
-//   26. scripts/ws1-session-q-production-pins.test.ts
-//       "R.11's remaining five firings: two ear-verified, three change detectors"
-//   27. scripts/ws1-session-s-exclusion.test.ts
-//       "R.11 proposes SIX and keeps FIVE; the one declined is 266_forty_one_burden, whose ORIGIN is inside run 6"
-//   28. scripts/ws1-session-s-exclusion.test.ts
-//       "R.11's other five firings are UNCHANGED in tag and value"
-//   29. scripts/ws1-session-s-exclusion.test.ts
-//       "R.12 now fires EIGHT, and its eighth row commits 266_forty_one_burden at 788.75 (WS1 Session T)"
-//   30. scripts/ws1-session-s-exclusion.test.ts
-//       "AT REST: the shipped stage produces ZERO R-AP violations on all three corpora"
-//   31. scripts/ws1-session-s-exclusion.test.ts
-//       "RED BEFORE, executed: the pre-Session-S stage (all six R.11 findings applied) violates R-AP exactly once"
-//   32. scripts/ws1-session-s-exclusion.test.ts
-//       "MUTUAL EXCLUSION, measured: R.11's kept set and R.12's finding set are disjoint by construction"
-//   33. scripts/ws1-session-s-measure.test.ts
-//       "writes the seven rows' structural descriptors, and separates the two passing rows by clamping"
-//   34. scripts/ws1-session-s-measure.test.ts
-//       "WS1 Session T: the shipped correctedValue now matches all six ear-verify-t targets"
-//       #16–34: bundle not stamped / missing .work-phase4/replay/{v6,173,spanish}/
-//   35. scripts/ws1-silence-arms.test.ts
-//       "16 kHz arm: the scan reproduces all 547 committed entries value for value"
-//       Missing replay input .work-phase4/replay/v6/audio_16k.wav
-//   36. scripts/ws1-silence-arms.test.ts
-//       "native arm exists, is the live-fidelity shape, and is NOT the 16 kHz arm"
-//       Missing replay input .work-phase4/replay/v6/silences_app.json
-//
-// GROUP C — missing gitignored src-tauri/binaries/ ffmpeg sidecar
-// No FAILED test in this run reached the sidecar: the tests that would exec
-// ffmpeg-x86_64-apple-darwin are skipped without env flags
-// (scripts/ws3-clean-path-artifact.test.ts needs WS3_ARTIFACT_DIR;
-//  scripts/ws1-session-s-measure.test.ts heavy arm needs WS1_SESSION_S_MEASURE=1).
-// The binaries directory has no ffmpeg-* / whisper-* on this VM (gitignored).
-// Do not treat a skip here as evidence the sidecar works.
-//
-// NOT in this list: the 28 new export-modal tests (estimator + ExportTargetFs
-// + ExportSettingsModal) — they must stay green. A failure among them is new.
-// ---------------------------------------------------------------------------
+// Corrected census (PR #9 claimed 35 private-corpus ENOENT; that was wrong):
+//   Group A  9  private corpus  /Users/mohtashim/Downloads/All Projects Test Data/...
+//   Group B 26  gitignored .work-phase4/replay/  + 1 non-loading suite
+//   Group C  0  ffmpeg sidecar — SKIP, not fail
+// A future green cloud gate is judged against 35 failed tests + 1 suite, NOT 38.
+// tsc/lint clean on this tree. Cargo / tauri:dev / tauri:build were not run.
