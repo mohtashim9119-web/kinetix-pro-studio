@@ -463,6 +463,58 @@ pub(crate) fn reset_staging_durations_for_tests() {
     }
 }
 
+/// WS3 STEP 4 — total on-disk budget for `fa_stage_audio_raw`'s
+/// content-addressed staging directories (`kinetix-fa-production-inputs`,
+/// `kinetix-fa-dev-inputs` — this one function serves both; the caller picks
+/// the directory via the `cache-dir` header). Before this step NOTHING ever
+/// removed a staged input: the content-addressing dedups repeat calls
+/// against the SAME audio (`if !input_path.exists()`), but a project with
+/// many distinct source files accumulated one file per distinct audio
+/// forever — a real, unbounded leak under `$TMPDIR`, found by grep alongside
+/// the STEP 3b session-retention audit. Same 2 GiB order-of-magnitude budget
+/// as `fa.rs::FA_AUDIO_CACHE_MAX_BYTES` (that cache's own doc comment states
+/// the reasoning: generous headroom for one active project's repeated runs,
+/// a small bounded fraction of typical available disk).
+const FA_STAGING_INPUTS_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// WS3 STEP 4 — least-recently-used eviction for a staging directory,
+/// applied opportunistically after every new WRITE (mirrors
+/// `fa.rs::evict_lru_until_under_cap`'s policy exactly — see that function's
+/// own doc comment for why mtime-as-LRU and why only-after-a-write). Cannot
+/// reuse that function directly: it hard-filters to `.wav` entries, but a
+/// staged input's extension is whatever `ext_hint` produced (wav/mp3/m4a/…),
+/// not always `.wav` — this is the same policy over "every file in the
+/// directory" instead. Best-effort: an error reading or removing an entry is
+/// skipped, never aborts the pass — worst case the directory grows past its
+/// budget until the next successful write, never a wrong alignment result.
+fn evict_staging_lru_until_under_cap(dir: &Path, max_bytes: u64) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    let mut files: Vec<(std::path::PathBuf, u64, std::time::SystemTime)> = Vec::new();
+    let mut total: u64 = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(meta) = entry.metadata() else { continue };
+        if !meta.is_file() {
+            continue;
+        }
+        let Ok(mtime) = meta.modified() else { continue };
+        total += meta.len();
+        files.push((path, meta.len(), mtime));
+    }
+    if total <= max_bytes {
+        return;
+    }
+    files.sort_by_key(|(_, _, mtime)| *mtime);
+    for (path, size, _) in files {
+        if total <= max_bytes {
+            break;
+        }
+        if fs::remove_file(&path).is_ok() {
+            total = total.saturating_sub(size);
+        }
+    }
+}
+
 #[tauri::command]
 pub fn fa_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<String, String> {
     let staging_started = std::time::Instant::now();
@@ -491,6 +543,11 @@ pub fn fa_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<String, St
     let input_path = input_dir.join(format!("{content_key}.{}", extension_for(ext_hint)));
     if !input_path.exists() {
         fs::write(&input_path, bytes).map_err(|e| format!("write audio: {e}"))?;
+        // WS3 STEP 4 — only on an actual write, mirroring
+        // `fa.rs::evict_lru_until_under_cap`'s own "never on a cache HIT"
+        // policy (a hit already re-stamped nothing before this step, and
+        // still doesn't — a repeat stage of the same content is a no-op).
+        evict_staging_lru_until_under_cap(&input_dir, FA_STAGING_INPUTS_MAX_BYTES);
     }
 
     // Measured across the SHA-256 of the whole body plus the write — the two
@@ -641,6 +698,71 @@ mod tests {
         assert_eq!(extension_for("mp3"), "mp3");
         assert_eq!(extension_for("audio/mp4"), "m4a");
         assert_eq!(extension_for("something-unknown"), "bin");
+    }
+
+    // -- WS3 STEP 4 — staging-directory LRU eviction (the leak fix) --------
+
+    fn staging_lru_test_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("kinetix-fa-staging-lru-test-{tag}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn write_aged(dir: &Path, name: &str, bytes: usize, age_secs: u64) -> std::path::PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, vec![7u8; bytes]).unwrap();
+        let older = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
+        let file = fs::File::open(&path).unwrap();
+        file.set_modified(older).unwrap();
+        path
+    }
+
+    #[test]
+    fn staging_eviction_removes_oldest_first_until_under_budget() {
+        let dir = staging_lru_test_dir("oldest-first");
+        // Mixed extensions on purpose — this must NOT filter by `.wav` the
+        // way `fa.rs::evict_lru_until_under_cap` does, since a staged input
+        // can be wav/mp3/m4a/bin depending on `ext_hint`.
+        let oldest = write_aged(&dir, "aaaa.mp3", 100, 300);
+        let middle = write_aged(&dir, "bbbb.wav", 100, 200);
+        let newest = write_aged(&dir, "cccc.m4a", 100, 100);
+
+        evict_staging_lru_until_under_cap(&dir, 150);
+
+        assert!(!oldest.exists(), "the oldest staged input must be evicted first");
+        assert!(!middle.exists(), "the second-oldest must go too — one entry alone is still over budget");
+        assert!(newest.exists(), "the most recently staged input must survive");
+    }
+
+    #[test]
+    fn staging_eviction_is_a_noop_under_budget() {
+        let dir = staging_lru_test_dir("noop-under-budget");
+        let entry = write_aged(&dir, "solo.wav", 100, 10);
+        evict_staging_lru_until_under_cap(&dir, 1_000_000);
+        assert!(entry.exists(), "nothing should be evicted while already under budget");
+    }
+
+    #[test]
+    fn a_fresh_stage_of_new_content_triggers_eviction_of_older_content() {
+        // Exercises `fa_stage_audio_raw`'s own wiring, not just the pure
+        // eviction function: a NEW distinct-content stage (a real write)
+        // must trigger the pass, reclaiming space an old, unrelated staged
+        // input was holding — this is the actual leak `fa_stage_audio_raw`
+        // had (content-addressed dedup means the SAME content is never
+        // re-written, but nothing ever reclaimed a DIFFERENT content's
+        // entry once staged).
+        let dir = staging_lru_test_dir("fresh-stage-evicts-old");
+        let _old = write_aged(&dir, "old-content.wav", 200, 1_000);
+
+        // Simulate what `fa_stage_audio_raw` does after a write: content-
+        // addressed name, then the eviction pass with a tight budget so the
+        // pre-existing old entry must go.
+        fs::write(dir.join("new-content.wav"), vec![9u8; 50]).unwrap();
+        evict_staging_lru_until_under_cap(&dir, 100);
+
+        assert!(!dir.join("old-content.wav").exists(), "the old, unrelated staged input must be reclaimed");
+        assert!(dir.join("new-content.wav").exists(), "the just-written entry must survive its own eviction pass");
     }
 
     // -- staging-duration hand-off (WS3 fa-perf-foundation) ---------------

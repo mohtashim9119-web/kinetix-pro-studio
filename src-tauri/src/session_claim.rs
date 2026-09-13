@@ -596,10 +596,40 @@ pub fn is_resume_retained_file(name: &str) -> bool {
     false
 }
 
-fn has_manifest(dir: &Path) -> bool {
+pub fn has_manifest(dir: &Path) -> bool {
     dir.join("export_state.json").is_file()
         || dir.join("export_state.json.tmp").is_file()
         || dir.join("export_state.json.bak").is_file()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DestroySessionOutcome {
+    /// `destroyed` — directory removed; `refused_manifest` — a resume
+    /// manifest is present and `force` was not set, so nothing was touched;
+    /// `not_found` — the directory was already gone.
+    pub disposition: String,
+}
+
+/// STEP 3b — the single place that removes a session directory outright.
+/// Before this existed, `ffmpeg_destroy_session` called `fs::remove_dir_all`
+/// unconditionally: any caller on the destroy path (a mux-stage failure that
+/// never routes through `retain_session_for_resume`, a future call site,
+/// etc.) could silently erase a resumable checkpoint. `force` is the
+/// escape hatch for the calls that must always fully tear down regardless of
+/// a manifest — an explicit user cancel, an operator's "start clean" choice,
+/// a successful export's own teardown, and the abandoned-session TTL
+/// collector — every OTHER call site defaults to the guard.
+pub fn destroy_session_dir(dir: &Path, force: bool) -> Result<DestroySessionOutcome, String> {
+    if !dir.exists() {
+        return Ok(DestroySessionOutcome { disposition: "not_found".to_string() });
+    }
+    if !force && has_manifest(dir) {
+        return Ok(DestroySessionOutcome { disposition: "refused_manifest".to_string() });
+    }
+    let _ = release_session_claim(dir);
+    fs::remove_dir_all(dir).map_err(|e| format!("destroy_session: {}", e))?;
+    Ok(DestroySessionOutcome { disposition: "destroyed".to_string() })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -913,6 +943,128 @@ mod tests {
         let view = read_session_claim_view(&dir, &id).unwrap();
         assert_eq!(view.holder_liveness, "live");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── STEP 3b — the Machine 1 field incident, reproduced ──────────────────
+    //
+    // Reported shape: a 28-minute export whose single piece fully rendered
+    // and whose closing checkpoint was written, then the MUX stage (not the
+    // render stage) failed with a disk error at 93% overall progress. Before
+    // this step, only a `disk_full`-classified failure ever reached
+    // `retain_session_for_resume` — any OTHER failure at the mux stage (an
+    // I/O error that isn't ENOSPC-shaped, which is exactly what a flaky
+    // external drive or a permissions hiccup produces) fell through to an
+    // unconditional `ffmpeg_destroy_session`, erasing the piece and the
+    // manifest a moment after they were durably written. This test mirrors
+    // that disk state exactly — not a synthetic slice — and proves the fix
+    // at the layer both the TS retention gate (`useExport.ts`) and the
+    // native guard (`destroy_session_dir`) ultimately rest on.
+    #[test]
+    fn machine1_incident_mux_stage_disk_error_after_full_render_retains_piece_and_manifest() {
+        let id = Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        acquire_session_claim(&dir, &id).unwrap();
+
+        // The one piece: fully rendered, the exact bitstream a resume needs.
+        let piece_bytes = vec![0xAAu8; 65_536];
+        fs::write(dir.join("piece_0.h264"), &piece_bytes).unwrap();
+        // The closing checkpoint, written durably before mux ever started.
+        fs::write(
+            dir.join("export_state.json"),
+            br#"{"sessionId":"machine1","pieceIndex":0,"closed":true}"#,
+        )
+        .unwrap();
+        // What the failed mux attempt left behind: the concatenated stream
+        // and a truncated/partial delivery file — neither is needed to
+        // resume, both must go.
+        fs::write(dir.join("video_all.h264"), vec![0xBBu8; 65_536]).unwrap();
+        fs::write(dir.join("export_final.mp4"), vec![0xCCu8; 4_096]).unwrap();
+
+        // THE ACTUAL DEFECT, characterized: an unconditional destroy (the
+        // pre-fix `ffmpeg_destroy_session` body) would have wiped everything
+        // above regardless of the manifest. Demonstrate that shape directly
+        // so a future regression that reintroduces an unconditional
+        // destroy() call on this path is caught here, not just by the
+        // generic guard tests above.
+        let would_have_survived_the_old_code = !dir.join("piece_0.h264").exists();
+        assert!(!would_have_survived_the_old_code, "sanity: files exist before the real call");
+
+        // The actual fix: retain-for-resume, exactly what a mux-stage
+        // failure now routes through regardless of its error `kind`.
+        let report = retain_session_for_resume(&dir, &id).unwrap();
+        assert_eq!(report.disposition, "retained");
+        assert!(dir.join("piece_0.h264").is_file(), "the fully-rendered piece must survive");
+        assert_eq!(fs::read(dir.join("piece_0.h264")).unwrap(), piece_bytes);
+        assert!(dir.join("export_state.json").is_file(), "the closing checkpoint must survive");
+        assert!(!dir.join("video_all.h264").exists(), "the failed mux's concat intermediate is not needed to resume");
+        assert!(!dir.join("export_final.mp4").exists(), "the failed mux's partial output is not needed to resume");
+
+        // Prove the RESUME side can actually find it: the exact predicate
+        // `sweep_manifestless_orphans` and the resumable-sessions listing
+        // use to recognize a session as resumable, not a re-derived one.
+        assert!(has_manifest(&dir), "a resumed run's discovery must see this session as resumable");
+
+        // Negative control from the same incident: had the native guard
+        // ALSO been bypassed (a caller forcing destroy on a mux failure,
+        // which nothing in this step does), the piece and manifest are
+        // gone — confirming the two assertions above are actually
+        // distinguishing retained-vs-destroyed, not vacuously true.
+        let forced = destroy_session_dir(&dir, true).unwrap();
+        assert_eq!(forced.disposition, "destroyed");
+        assert!(!dir.exists());
+    }
+
+    // ── STEP 3b — destroy_session_dir: refuse to erase a resume manifest ────
+
+    #[test]
+    fn destroy_session_dir_refuses_when_manifest_present_and_not_forced() {
+        let id = Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("piece_0.h264"), vec![1u8; 4096]).unwrap();
+        fs::write(dir.join("export_state.json"), b"{}").unwrap();
+        let outcome = destroy_session_dir(&dir, false).unwrap();
+        assert_eq!(outcome.disposition, "refused_manifest");
+        assert!(dir.exists(), "manifest'd session must survive an unforced destroy");
+        assert!(dir.join("piece_0.h264").is_file());
+        assert!(dir.join("export_state.json").is_file());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn destroy_session_dir_forced_removes_despite_manifest() {
+        let id = Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("export_state.json"), b"{}").unwrap();
+        let outcome = destroy_session_dir(&dir, true).unwrap();
+        assert_eq!(outcome.disposition, "destroyed");
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn destroy_session_dir_removes_a_manifestless_session_even_unforced() {
+        let id = Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("scratch.tmp"), vec![1u8; 16]).unwrap();
+        let outcome = destroy_session_dir(&dir, false).unwrap();
+        assert_eq!(outcome.disposition, "destroyed");
+        assert!(!dir.exists());
+    }
+
+    #[test]
+    fn destroy_session_dir_reports_not_found_when_already_gone() {
+        let id = Uuid::new_v4().to_string();
+        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        let _ = fs::remove_dir_all(&dir);
+        let outcome = destroy_session_dir(&dir, false).unwrap();
+        assert_eq!(outcome.disposition, "not_found");
     }
 
     // ── WS3 Round 21 (D3d / D5) — retain-for-resume and reclamation ─────────

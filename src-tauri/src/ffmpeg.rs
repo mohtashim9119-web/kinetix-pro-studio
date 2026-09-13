@@ -16,10 +16,10 @@ use crate::disk_space::{
     FFMPEG_STDERR_TAIL_LINES,
 };
 use crate::session_claim::{
-    acquire_session_claim, read_session_claim_view, reclaim_sessions, release_session_claim,
+    acquire_session_claim, destroy_session_dir, read_session_claim_view, reclaim_sessions,
     report_reclaimable_sessions, retain_session_for_resume, sweep_manifestless_orphans,
-    OrphanSweepReport, ReclaimReport, ReclaimableSessionsReport, RetainForResumeReport,
-    SessionClaimView,
+    DestroySessionOutcome, OrphanSweepReport, ReclaimReport, ReclaimableSessionsReport,
+    RetainForResumeReport, SessionClaimView,
     ORPHAN_SWEEP_MIN_AGE_SECS,
 };
 
@@ -1733,20 +1733,27 @@ pub fn ffmpeg_kill_session(
 ///
 /// Should be called after the export completes (success or failure) to
 /// reclaim disk space. Best-effort: if the directory is already gone, no error.
+///
+/// STEP 3b — refuses to remove a directory that still carries a resume
+/// manifest unless `force` is set, returning `disposition: "refused_manifest"`
+/// instead so the TS side can log it. This closes the gap where a mux-stage
+/// (or any other) failure that never routed through
+/// `ffmpeg_retain_session_for_resume` could silently erase a resumable
+/// checkpoint. `force: true` is for the call sites that must always fully
+/// tear down regardless of a manifest — an explicit cancel, an operator's
+/// "start clean" choice, a successful export's own teardown, and the
+/// abandoned-session TTL collector.
 #[tauri::command]
 pub fn ffmpeg_destroy_session(
     session_id: String,
+    force: Option<bool>,
     state: tauri::State<'_, FfmpegSessionState>,
-) -> Result<(), String> {
+) -> Result<DestroySessionOutcome, String> {
     state.cancel_flags.lock().unwrap().remove(&session_id);
     state.resume_pending.lock().unwrap().remove(&session_id);
     state.io_gates.lock().unwrap().remove(&session_id);
     let dir = session_dir(&session_id)?;
-    if dir.exists() {
-        let _ = release_session_claim(&dir);
-        fs::remove_dir_all(&dir).map_err(|e| format!("destroy_session: {}", e))?;
-    }
-    Ok(())
+    destroy_session_dir(&dir, force.unwrap_or(false))
 }
 
 /// Opens a native OS save-file dialog and returns the chosen path without

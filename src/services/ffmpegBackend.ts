@@ -6,8 +6,10 @@ export interface TauriBackend {
   /** WS3 Round 18 (F4) — needed to attribute a swallowed cancel()/kill()
    *  failure to the right session in `recordCleanupFailure`'s durable notice. */
   sessionId: string;
-  /** Deletes the session temp dir. Idempotent — safe to call multiple times. */
-  dispose: () => Promise<void>;
+  /** Deletes the session temp dir. Idempotent — safe to call multiple times.
+   *  STEP 3b — `force: true` bypasses the native resume-manifest guard; see
+   *  `TauriFfmpeg.destroy`'s own doc comment for which callers must set it. */
+  dispose: (opts?: { force?: boolean }) => Promise<void>;
   /**
    * Copies a finished file (e.g. `export_final.mp4`) from the session temp dir
    * straight to `destPath` on disk, without routing the bytes through the
@@ -39,7 +41,7 @@ export async function createTauriBackend(): Promise<TauriBackend> {
   return {
     ffmpeg,
     sessionId: ffmpeg.sessionId,
-    dispose: () => ffmpeg.destroy(),
+    dispose: (opts) => ffmpeg.destroy(opts),
     saveOutputToDisk: (fileName, destPath) => ffmpeg.saveSessionFile(fileName, destPath),
     takeDurabilityWarnings: () => ffmpeg.takeDurabilityWarnings(),
     cancel: () => ffmpeg.kill(),

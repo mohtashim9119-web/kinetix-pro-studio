@@ -216,7 +216,9 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
    *  backend; `void` from older fakes reads as confirmed. */
   saveSessionFile(fileName: string, destPath: string): Promise<SaveSessionFileResult | void>;
   kill(): Promise<void>;
-  destroy(): Promise<void>;
+  /** STEP 3b — `force: true` bypasses the native manifest guard; see
+   *  `TauriFfmpeg.destroy`'s own doc comment for which callers must set it. */
+  destroy(opts?: { force?: boolean }): Promise<void>;
   /**
    * Counts H.264 Annex B access units (pictures) in a session file entirely on
    * the native side (`TauriFfmpeg.countAnnexbFrames`, backed by the Rust
@@ -408,7 +410,10 @@ export async function cancelExportWebCodecs(): Promise<void> {
       // drop the notice for the one case that matters in production.
       recordCleanupFailure('session-kill', ffmpeg.sessionId ?? 'unknown', detail);
     }
-    await ffmpeg.destroy();
+    // STEP 3b — a user cancel discards the session regardless of any
+    // manifest: there is no "resume this cancelled export" offer, so leaving
+    // the directory behind would just be a leak the operator never asked for.
+    await ffmpeg.destroy({ force: true });
   }
 }
 
@@ -3180,7 +3185,25 @@ export async function exportProjectWebCodecs(
     // was never evidence, and a short earlier piece would silently shorten the
     // finished film. Nothing is truncated, counted or appended here: the fence
     // already ran, and the proof already happened.
-    if (resume !== null && pieceIndex < resume.pieceIndex) {
+    //
+    // WS3 Round 24 (STEP 3) — the checkpoint's OWN piece counts as "already
+    // finished" too when its `cumulativePictures` already equals the plan's
+    // `expectedFrames` for it: a mux-stage failure checkpoints against the
+    // LAST piece, which is fully rendered, not mid-render. `resume.cumulativePictures`
+    // is fence-verified against the real file by `discoverResumableExport`
+    // (`repair.pictures !== checkpoint.cumulativePictures` there throws), so
+    // trusting it here carries the same guarantee as the strictly-earlier
+    // case above. Without this, `resumingThisPiece` below would call
+    // `runGlPiece(resume.cumulativePictures, ...)` with a `resumeFromFrameIndex`
+    // equal to the piece's total frame count — a value that is never a
+    // planned encoder-session start — and `exportWorker.ts` throws
+    // `init-error` ("is not a planned encoder-session start"), failing the
+    // resume outright instead of proceeding straight to mux.
+    if (
+      resume !== null &&
+      (pieceIndex < resume.pieceIndex ||
+        (pieceIndex === resume.pieceIndex && resume.cumulativePictures >= plan.expectedFrames))
+    ) {
       pieceFiles.push(`piece_${pieceIndex}.h264`);
       framesCompletedBase += plan.expectedFrames;
       onProgress({
@@ -3672,6 +3695,50 @@ export async function exportProjectWebCodecs(
         encoderSessionIndex: d.encoderSessionIndex,
         appendLedger: driveResult.appendLedger,
       };
+      // WS3 Round 24 (STEP 3) — a piece's own completion was never itself
+      // checkpointed before this: `onRotationCheckpoint` only fires at a
+      // MID-piece rotation seam ('session-rotate'), so a piece that finished
+      // rendering cleanly and only failed LATER (e.g. in mux) left a
+      // checkpoint short of `expectedFrames` — the last rotation, not the
+      // true end. A resume built from that stale checkpoint would truncate
+      // the file back to it, discard already-good trailing frames, and
+      // force a pointless re-render (worse: if that rotation happened to
+      // sit exactly at the piece's true end, this file's per-piece resume
+      // would hand `exportWorker.ts` a frame index that is never a planned
+      // encoder-session start, which throws outright — see
+      // architecture-ledger.md Round 24 STEP 3). A CLOSING checkpoint at
+      // the piece's real, verified completion — recorded the same way
+      // every rotation checkpoint is — closes that gap: discovery's
+      // existing fence sees a checkpoint whose `cumulativePictures` already
+      // equals `expectedFrames`, verifies it for real (the fence's own
+      // native count), and this piece is then treated exactly like any
+      // other fully-rendered piece by the `resume.cumulativePictures >=
+      // plan.expectedFrames` check near the top of this loop.
+      //
+      // `encoderSessionIndex: d.encoderSessionIndex + 1` — one PAST the
+      // last one THIS PIECE'S OWN MANIFEST actually recorded — is what
+      // satisfies `checkpointStrictlyFollows`'s monotonicity (repeating an
+      // already-used session index would be rejected as non-monotonic).
+      // Read from the manifest snapshot rather than `d.encoderSessionIndex`
+      // (the diagnostics payload's own session index, which is worker-
+      // reported and not guaranteed to be the checkpoint sequence's own
+      // last value) so this is correct by construction against whatever is
+      // actually on disk for this piece, including a piece with zero
+      // rotations. It names no real session, and nothing reads it for a
+      // piece this checkpoint marks complete — a pure sequencing device,
+      // not a claim about a session that exists.
+      if (checkpointWriter.enabled) {
+        const finalByteOffset = await ffmpeg.sessionFileSize(runFile).catch(() => null);
+        if (finalByteOffset !== null) {
+          const lastRecorded = checkpointWriter.snapshot()?.checkpoints.at(-1);
+          checkpointWriter.record({
+            encoderSessionIndex: (lastRecorded?.encoderSessionIndex ?? -1) + 1,
+            byteOffset: finalByteOffset,
+            seamByteOffset: finalByteOffset,
+            cumulativePictures: plan.expectedFrames,
+          });
+        }
+      }
       pieceFiles.push(runFile);
     } else if (plan.tier === 'plain') {
       const segment = plan.segments[0]!;

@@ -234,12 +234,17 @@ describe('durable checkpoints — written at rotation seams', () => {
 
     const manifest = latestManifest(manifests);
     expect(manifest.sessionId).toBe(SESSION_ID);
-    expect(manifest.checkpoints.length).toBe(ROTATIONS.length);
+    // WS3 Round 24 (STEP 3) — one MORE checkpoint than there are rotations:
+    // the piece's own CLOSING checkpoint, written once it finishes, so a
+    // later failure (e.g. in mux) sees a checkpoint that already reads
+    // "fully rendered" instead of the last rotation short of the true end.
+    expect(manifest.checkpoints.length).toBe(ROTATIONS.length + 1);
 
     const finalBytes = files.get('piece_0.h264')!;
     expect(countAnnexbAccessUnits(finalBytes).pictures).toBe(FRAMES);
 
-    for (const cp of manifest.checkpoints) {
+    const rotationCheckpoints = manifest.checkpoints.slice(0, ROTATIONS.length);
+    for (const cp of rotationCheckpoints) {
       // 1. The recorded picture count is the truth about the recorded prefix.
       expect(countAnnexbAccessUnits(finalBytes.subarray(0, cp.byteOffset)).pictures)
         .toBe(cp.cumulativePictures);
@@ -255,6 +260,15 @@ describe('durable checkpoints — written at rotation seams', () => {
       const { truncateAnnexbToLastCompleteAu } = await import('./annexbFrameCount');
       expect(truncateAnnexbToLastCompleteAu(finalBytes.subarray(0, cp.byteOffset)).bytesRemoved).toBe(0);
     }
+
+    // The closing checkpoint: the piece's TRUE completion, not a rotation —
+    // byteOffset/seamByteOffset both sit at the whole file's length, and
+    // cumulativePictures is every frame the piece produced.
+    const closing = manifest.checkpoints[manifest.checkpoints.length - 1]!;
+    expect(closing.cumulativePictures).toBe(FRAMES);
+    expect(closing.byteOffset).toBe(finalBytes.length);
+    expect(closing.seamByteOffset).toBe(finalBytes.length);
+    expect(closing.encoderSessionIndex).toBeGreaterThan(rotationCheckpoints[rotationCheckpoints.length - 1]!.encoderSessionIndex);
   });
 
   it('THE CONTROL: the raw rotation seam would have been rejected by the fence', async () => {
@@ -267,7 +281,11 @@ describe('durable checkpoints — written at rotation seams', () => {
 
     const finalBytes = files.get('piece_0.h264')!;
     const { truncateAnnexbToLastCompleteAu } = await import('./annexbFrameCount');
-    for (const cp of latestManifest(manifests).checkpoints) {
+    // Only the ROTATION checkpoints — the piece's own CLOSING checkpoint
+    // (WS3 Round 24, STEP 3) names the true end (`cumulativePictures ===
+    // FRAMES`), which is not a rotation seam and has no "naive" AU-boundary
+    // counterpart in `AU` to compare against.
+    for (const cp of latestManifest(manifests).checkpoints.slice(0, ROTATIONS.length)) {
       const seam = AU[cp.cumulativePictures]!.start; // the naive checkpoint
       expect(cp.byteOffset).toBeGreaterThan(seam);
       expect(truncateAnnexbToLastCompleteAu(finalBytes.subarray(0, seam)).bytesRemoved).toBeGreaterThan(0);
@@ -387,9 +405,11 @@ describe('resumed vs uninterrupted', () => {
     expect((await resumedRun).ok).toBe(true);
 
     // The resumed run never called beginPiece, so it never wrote an empty
-    // manifest over the one on disk. Its own new rotation is appended to it.
+    // manifest over the one on disk. Its own new rotation is appended to
+    // it, followed by the piece's own CLOSING checkpoint (WS3 Round 24,
+    // STEP 3) once this resumed run finishes it.
     const manifest = latestManifest(resumed.manifests);
-    expect(manifest.checkpoints.map((c) => c.cumulativePictures)).toEqual([10, 20]);
+    expect(manifest.checkpoints.map((c) => c.cumulativePictures)).toEqual([10, 20, 30]);
     // …and that checkpoint's offset is ABSOLUTE in the file, not local to the
     // resumed invocation's own append counter.
     const newest = manifest.checkpoints[1]!;
@@ -410,5 +430,52 @@ describe('resumed vs uninterrupted', () => {
     await driveWholeRun(fake, 0, ROTATIONS);
     expect((await p).ok).toBe(true);
     expect(countAnnexbAccessUnits(files.get('piece_0.h264')!).pictures).toBe(FRAMES);
+  });
+
+  // WS3 Round 24, STEP 3 — THE PRIORITY BUG's second half: a mux-stage
+  // failure with every piece already fully rendered must resume AT MUX,
+  // never re-render. Before this round, resuming a piece whose CHECKPOINT
+  // read "fully rendered" (`cumulativePictures === expectedFrames`) still
+  // invoked the worker with `resumeFromFrameIndex` set to the piece's own
+  // total frame count — a value `exportWorker.ts` rejects outright (never a
+  // planned encoder-session start). The fix is the `cumulativePictures >=
+  // plan.expectedFrames` check in the per-piece loop, fed by the piece's
+  // own CLOSING checkpoint (written once a piece finishes — see the
+  // 'durable checkpoints' describe block above).
+  it('a piece already fully rendered resumes straight through — the worker is never created', async () => {
+    const control = byteFfmpeg();
+    const controlWorker = new FakeWorker();
+    const run = exportProjectWebCodecs(project(), control.ffmpeg, { width: 1920, height: 1080, fps: FPS }, () => undefined, { createWorker: () => controlWorker });
+    await flush();
+    await driveWholeRun(controlWorker, 0, ROTATIONS);
+    expect((await run).ok).toBe(true);
+
+    const manifest = latestManifest(control.manifests);
+    const closing = manifest.checkpoints[manifest.checkpoints.length - 1]!;
+    expect(closing.cumulativePictures).toBe(FRAMES); // the piece's own closing checkpoint
+
+    const finishedBytes = control.files.get('piece_0.h264')!;
+    const resumed = byteFfmpeg({ 'piece_0.h264': finishedBytes });
+    const p = exportProjectWebCodecs(
+      project(), resumed.ffmpeg, {
+        width: 1920, height: 1080, fps: FPS,
+        resume: {
+          pieceIndex: closing.pieceIndex,
+          encoderSessionIndex: closing.encoderSessionIndex,
+          byteOffset: closing.seamByteOffset!,
+          cumulativePictures: closing.cumulativePictures,
+          manifest,
+        },
+      }, () => undefined, {
+        createWorker: () => {
+          throw new Error('a fully-rendered piece must never spin up an encoder worker on resume');
+        },
+      },
+    );
+    const r = await p;
+    expect(r.ok).toBe(true);
+    expect(countAnnexbAccessUnits(resumed.files.get('piece_0.h264')!).pictures).toBe(FRAMES);
+    // Byte-identical to the control — nothing was re-rendered or re-touched.
+    expect(Array.from(resumed.files.get('piece_0.h264')!)).toEqual(Array.from(finishedBytes));
   });
 });

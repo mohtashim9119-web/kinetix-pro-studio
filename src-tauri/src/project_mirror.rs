@@ -34,6 +34,7 @@
 //! write path fighting the other's backup rotation. Both reuse `write_atomic`/
 //! `safe_id`/`rotate_backup` unchanged.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -48,6 +49,20 @@ const MIRROR_DIRNAME: &str = "project-mirror";
 /// Ten is deliberately generous: a project JSON is a few hundred KiB, so the
 /// whole retained set for one project stays in single-digit MiB.
 const BACKUP_RETAIN: usize = 10;
+
+/// WS3 STEP 4 — how long a DELETED project's backup subdirectory survives
+/// before [`sweep_stale_backup_dirs`] reclaims it. `BACKUP_RETAIN` only
+/// bounds how many files accumulate per LIVE project id; it never bounded
+/// how many project ids' worth of `backups/<id>/` directories pile up over
+/// the app's lifetime — `project_mirror_delete_project`'s own doc comment
+/// deliberately keeps a deleted project's backups as a safety net, but nothing
+/// ever swept that safety net once its recovery window had passed, so it was
+/// really "keep forever" in practice. 30 days is generous for that recovery
+/// window (reopening the app well after an accidental delete) — the same
+/// "grace period, not forever" shape as `exportResumeDiscovery.ts`'s 7-day
+/// `ABANDONED_SESSION_TTL_MS`, longer here because a project JSON backup set
+/// costs single-digit MiB at most, nothing like an export session's GBs.
+const STALE_BACKUP_MIN_AGE_SECS: u64 = 30 * 24 * 60 * 60;
 
 #[derive(Serialize)]
 pub struct MirrorSnapshot {
@@ -163,6 +178,98 @@ fn rotate_backup(backups_root: &Path, id: &str, src: &Path) -> Result<(), String
         let _ = fs::remove_file(path);
     }
     Ok(())
+}
+
+/// WS3 STEP 4 — sweeps whole per-project backup subdirectories under
+/// `backups_root` for ids that are no longer in `live_ids`, once the
+/// directory's newest entry is older than `min_age_secs`. The other half of
+/// closing the leak `rotate_backup`'s own cap doesn't: that cap bounds file
+/// COUNT per id, this bounds directory LIFETIME once its project is gone.
+///
+/// Age is the newest backup's own mtime (mirrors `rotate_backup`'s "prune
+/// oldest first" reasoning — a directory is only as fresh as its most recent
+/// entry), not the directory's own mtime, which a filesystem may not update
+/// on every child write. An unreadable or empty directory has nothing worth
+/// a 30-day grace period for and is swept immediately. Best-effort
+/// throughout, same posture as `rotate_backup` and
+/// `session_claim::sweep_manifestless_orphans`: an error reading or removing
+/// one entry is skipped, never aborts the pass or fails app launch.
+fn sweep_stale_backup_dirs(backups_root: &Path, live_ids: &HashSet<String>, min_age_secs: u64) {
+    let Ok(entries) = fs::read_dir(backups_root) else { return };
+    let now = SystemTime::now();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let Some(id) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        if live_ids.contains(id) {
+            continue;
+        }
+        let newest_mtime = fs::read_dir(&path).ok().and_then(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()))
+                .max()
+        });
+        let old_enough = match newest_mtime {
+            Some(mtime) => now
+                .duration_since(mtime)
+                .map(|age| age.as_secs() >= min_age_secs)
+                .unwrap_or(false),
+            None => true,
+        };
+        if old_enough {
+            let _ = fs::remove_dir_all(&path);
+        }
+    }
+}
+
+/// Project ids the legacy mirror still has a project file for.
+fn live_mirror_ids(root: &Path) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    if let Ok(rd) = fs::read_dir(projects_dir(root)) {
+        for entry in rd.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            if let Some(stem) = path.file_stem() {
+                ids.insert(stem.to_string_lossy().to_string());
+            }
+        }
+    }
+    ids
+}
+
+/// Project ids the primary store still has a project file for.
+fn live_store_ids(root: &Path) -> HashSet<String> {
+    let mut ids = HashSet::new();
+    if let Ok(rd) = fs::read_dir(root.join("projects")) {
+        for entry in rd.filter_map(|e| e.ok()) {
+            if entry.path().join("project.json").is_file() {
+                if let Some(name) = entry.file_name().to_str() {
+                    ids.insert(name.to_string());
+                }
+            }
+        }
+    }
+    ids
+}
+
+/// WS3 STEP 4 — best-effort startup sweep for both backup trees (the legacy
+/// mirror's `project-mirror/backups/` and the primary store's
+/// `project-store-backups/`). Never blocks or fails app launch — errors from
+/// either tree's `mirror_root`/`store_root` resolution are silently skipped,
+/// same posture `sweep_stale_backup_dirs` itself already has.
+pub fn sweep_stale_project_backups(app: &tauri::AppHandle) {
+    if let Ok(root) = mirror_root(app) {
+        let live = live_mirror_ids(&root);
+        sweep_stale_backup_dirs(&backups_dir(&root), &live, STALE_BACKUP_MIN_AGE_SECS);
+    }
+    if let Ok(root) = store_root(app) {
+        let live = live_store_ids(&root);
+        sweep_stale_backup_dirs(&store_backups_dir(&root), &live, STALE_BACKUP_MIN_AGE_SECS);
+    }
 }
 
 /// Reads every project file plus the registry. Used once at boot for the
@@ -438,6 +545,114 @@ mod tests {
             fs::read_to_string(newest).unwrap(),
             format!("{{\"n\":{}}}", BACKUP_RETAIN + 4)
         );
+        fs::remove_dir_all(&d).ok();
+    }
+
+    // ── WS3 STEP 4 — sweep_stale_backup_dirs: the leak rotate_backup's own
+    //    per-id cap doesn't close (a DELETED project's whole backup
+    //    directory, never just bounded, never swept). ─────────────────────
+
+    fn touch_backup_file(dir: &Path, name: &str, age_secs: u64) {
+        fs::create_dir_all(dir).unwrap();
+        let path = dir.join(name);
+        fs::write(&path, b"{}").unwrap();
+        let older = SystemTime::now() - std::time::Duration::from_secs(age_secs);
+        let file = fs::File::open(&path).unwrap();
+        file.set_modified(older).unwrap();
+    }
+
+    #[test]
+    fn a_dead_projects_backup_dir_past_the_grace_period_is_swept() {
+        let d = tmpdir("sweep-dead-old");
+        let root = backups_dir(&d);
+        touch_backup_file(&root.join("dead-project"), "111.json", 40 * 24 * 60 * 60);
+
+        sweep_stale_backup_dirs(&root, &HashSet::new(), STALE_BACKUP_MIN_AGE_SECS);
+
+        assert!(!root.join("dead-project").exists(), "a long-dead project's backups must be reclaimed");
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn a_dead_projects_backup_dir_still_inside_the_grace_period_survives() {
+        let d = tmpdir("sweep-dead-recent");
+        let root = backups_dir(&d);
+        touch_backup_file(&root.join("just-deleted"), "111.json", 60);
+
+        sweep_stale_backup_dirs(&root, &HashSet::new(), STALE_BACKUP_MIN_AGE_SECS);
+
+        assert!(
+            root.join("just-deleted").exists(),
+            "the safety net project_mirror_delete_project's doc comment promises must survive a recent delete"
+        );
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn a_live_projects_backup_dir_is_never_swept_regardless_of_age() {
+        let d = tmpdir("sweep-live");
+        let root = backups_dir(&d);
+        touch_backup_file(&root.join("still-around"), "111.json", 400 * 24 * 60 * 60);
+
+        let live: HashSet<String> = ["still-around".to_string()].into_iter().collect();
+        sweep_stale_backup_dirs(&root, &live, STALE_BACKUP_MIN_AGE_SECS);
+
+        assert!(root.join("still-around").exists(), "a live project's backups must never be swept, no matter how old");
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn live_mirror_ids_reflects_exactly_the_json_files_present() {
+        let d = tmpdir("live-mirror-ids");
+        write_atomic(&projects_dir(&d).join("a.json"), "{}").unwrap();
+        write_atomic(&projects_dir(&d).join("b.json"), "{}").unwrap();
+        let ids = live_mirror_ids(&d);
+        assert_eq!(ids, ["a".to_string(), "b".to_string()].into_iter().collect());
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn live_store_ids_requires_an_actual_project_json_not_just_the_id_directory() {
+        let d = tmpdir("live-store-ids");
+        let projects = d.join("projects");
+        fs::create_dir_all(projects.join("has-project")).unwrap();
+        fs::write(projects.join("has-project").join("project.json"), "{}").unwrap();
+        // An id directory with no project.json (e.g. left behind mid-write)
+        // must not count as live — otherwise its backups could never be swept.
+        fs::create_dir_all(projects.join("empty-dir")).unwrap();
+        let ids = live_store_ids(&d);
+        assert_eq!(ids, ["has-project".to_string()].into_iter().collect());
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn an_end_to_end_delete_then_sweep_reclaims_exactly_the_dead_projects_backups() {
+        // Mirrors the real sequence: a project accumulates backups while
+        // live, gets deleted (rotate_backup keeps firing on delete per
+        // project_mirror_delete_project's own contract), ages past the
+        // grace period, and only THEN is its directory reclaimed — a live
+        // sibling project's own backups must survive the same sweep.
+        let d = tmpdir("e2e-sweep");
+        let dead_dest = projects_dir(&d).join("dead.json");
+        let alive_dest = projects_dir(&d).join("alive.json");
+        write_atomic(&dead_dest, "{\"n\":0}").unwrap();
+        write_atomic(&alive_dest, "{\"n\":0}").unwrap();
+        rotate_backup(&backups_dir(&d), "dead", &dead_dest).unwrap();
+        rotate_backup(&backups_dir(&d), "alive", &alive_dest).unwrap();
+        // "Delete" dead: remove its live file (mirrors project_mirror_delete_project).
+        fs::remove_file(&dead_dest).unwrap();
+        // Age dead's backup past the grace period; alive's stays fresh.
+        for entry in fs::read_dir(backups_dir(&d).join("dead")).unwrap().filter_map(|e| e.ok()) {
+            let older = SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 60 * 60);
+            fs::File::open(entry.path()).unwrap().set_modified(older).unwrap();
+        }
+
+        let live = live_mirror_ids(&d);
+        assert_eq!(live, ["alive".to_string()].into_iter().collect());
+        sweep_stale_backup_dirs(&backups_dir(&d), &live, STALE_BACKUP_MIN_AGE_SECS);
+
+        assert!(!backups_dir(&d).join("dead").exists(), "the deleted, aged-out project's backups must be gone");
+        assert!(backups_dir(&d).join("alive").exists(), "the live sibling's backups must be untouched");
         fs::remove_dir_all(&d).ok();
     }
 

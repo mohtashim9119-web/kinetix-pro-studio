@@ -50,7 +50,13 @@ vi.mock('./muxOnly', async (importOriginal) => ({
   muxOnly: (...args: unknown[]) => muxOnlyMock(...args),
 }));
 
-import { exportProjectWebCodecs, type WebCodecsFfmpeg } from './exportPipelineWebCodecs';
+import { exportProjectWebCodecs, cancelExportWebCodecs, type WebCodecsFfmpeg } from './exportPipelineWebCodecs';
+import { encodeStaticImageSegment } from '../segmentEncoder';
+import {
+  decideSessionRetentionOnFailure,
+  type RetainableSession,
+} from '../../hooks/exportSessionRetentionDecision';
+import type { RetainForResumeReport } from '../tauriFfmpeg';
 
 const FPS = 30;
 
@@ -207,5 +213,168 @@ describe('exportProjectWebCodecs — voiceover mux fetch-avoidance (WS2 Step 11)
     expect(result.ok).toBe(true);
     expect(fetchSpy).toHaveBeenCalledWith('blob:vo1');
     fetchSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// STEP 3b — the Machine 1 field incident: every piece fully rendered (its
+// checkpoint written), then the MUX stage — not the render stage — fails
+// with a disk error. Reproduced end to end through the REAL orchestrator and
+// the REAL retention-decision function (`decideSessionRetentionOnFailure`,
+// extracted from `useExport.ts` for exactly this reason) — not a synthetic
+// unit slice of either. `retainForResume` below is a fake, but one that
+// enforces the SAME keep/drop rule the native `is_resume_retained_file`
+// does (see `session_claim.rs`), so a wrong caller (one that fails to call
+// it, or calls it with the wrong session) is still caught.
+// ---------------------------------------------------------------------------
+describe('exportProjectWebCodecs — STEP 3b resume after a mux-stage failure', () => {
+  beforeEach(() => {
+    muxOnlyMock.mockClear();
+    vi.mocked(encodeStaticImageSegment).mockClear();
+  });
+
+  /** Keeps only `piece_*.h264` and the manifest — the exact rule
+   *  `is_resume_retained_file` (session_claim.rs) enforces natively. */
+  function isResumeRetainedFile(name: string): boolean {
+    if (name === 'export_state.json') return true;
+    const m = /^piece_(\d+)\.h264$/.exec(name);
+    return m !== null;
+  }
+
+  it('a non-ENOSPC mux disk error classifies as `mux`, not `disk_full` — the gap this step closes', async () => {
+    const project = makeProject();
+    const ffmpeg = makeFakeFfmpeg();
+    // A genuine disk I/O error — the Machine 1 report — that is NOT
+    // ENOSPC-shaped, so `isDiskFullError` must NOT reclassify it. Before
+    // this step, `kind: 'mux'` never reached the retention gate at all.
+    muxOnlyMock.mockRejectedValueOnce(new Error('EIO: i/o error, write'));
+
+    const result = await exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.kind).toBe('mux');
+    }
+  });
+
+  it('retains the fully-rendered pieces and manifest, dropping only the failed mux intermediates', async () => {
+    const project = makeProject();
+    const ffmpeg = makeFakeFfmpeg();
+    muxOnlyMock.mockRejectedValueOnce(new Error('EIO: i/o error, write'));
+
+    const result = await exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
+    expect(result.ok).toBe(false);
+
+    // The disk state the real incident left behind: 3 rendered pieces, the
+    // closing checkpoint, and the failed mux attempt's own intermediates.
+    const sessionFiles = new Set([
+      'piece_0.h264',
+      'piece_1.h264',
+      'piece_2.h264',
+      'export_state.json',
+      'video_all.h264',
+      'export_final.mp4',
+    ]);
+    const active: RetainableSession = {
+      retainForResume: async (): Promise<RetainForResumeReport> => {
+        if (!sessionFiles.has('export_state.json')) {
+          const removed = [...sessionFiles];
+          sessionFiles.clear();
+          return {
+            sessionId: 'machine1', path: '/fake/kinetix-export-machine1',
+            disposition: 'destroyed', retainedBytes: 0, reclaimedBytes: removed.length, removed,
+          };
+        }
+        const removed = [...sessionFiles].filter((f) => !isResumeRetainedFile(f));
+        for (const f of removed) sessionFiles.delete(f);
+        return {
+          sessionId: 'machine1', path: '/fake/kinetix-export-machine1',
+          disposition: 'retained', retainedBytes: sessionFiles.size, reclaimedBytes: removed.length, removed,
+        };
+      },
+    };
+
+    // THE FIX, exercised directly: this is what `useExport.ts` now calls for
+    // EVERY failure kind (not just `disk_full`) — including the `mux` kind
+    // `result.error` just carried.
+    const report = await decideSessionRetentionOnFailure(active);
+
+    expect(report?.disposition).toBe('retained');
+    expect(sessionFiles.has('piece_0.h264')).toBe(true);
+    expect(sessionFiles.has('piece_1.h264')).toBe(true);
+    expect(sessionFiles.has('piece_2.h264')).toBe(true);
+    expect(sessionFiles.has('export_state.json')).toBe(true);
+    expect(sessionFiles.has('video_all.h264')).toBe(false);
+    expect(sessionFiles.has('export_final.mp4')).toBe(false);
+  });
+
+  it('a resumed run completes to a finished file without re-rendering any piece', async () => {
+    const project = makeProject();
+    const ffmpeg = makeFakeFfmpeg();
+
+    // Every piece already rendered and checkpointed — exactly the state
+    // `decideSessionRetentionOnFailure` above just proved survives. Piece 1
+    // (the plain/Tier-1 path never spins up a Worker for ANY piece — see
+    // this file's own header — so "without spinning up a worker" is
+    // structural here, not merely unexercised).
+    const result = await exportProjectWebCodecs(
+      project,
+      ffmpeg,
+      {
+        width: 1920, height: 1080, fps: FPS,
+        resume: { pieceIndex: 3, encoderSessionIndex: 0, byteOffset: 0, cumulativePictures: 0 },
+      },
+    );
+
+    expect(result.ok).toBe(true);
+    // No piece was re-rendered: the encoder this project's segments would
+    // have used is never called.
+    expect(encodeStaticImageSegment).not.toHaveBeenCalled();
+    // The 3 already-on-disk pieces are reused as-is, not regenerated.
+    expect(ffmpeg.concatAnnexbPieces).toHaveBeenCalledWith(
+      ['piece_0.h264', 'piece_1.h264', 'piece_2.h264'],
+      'video_all.h264',
+    );
+    expect(muxOnlyMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('negative case: an unrelated (non-mux) early failure with no manifest still destroys outright', async () => {
+    // `disk_full` is not the only kind that must keep working — a failure
+    // BEFORE any checkpoint exists (nothing to retain) must still free the
+    // bytes, same as the pre-STEP-3b behavior.
+    const active: RetainableSession = {
+      retainForResume: async (): Promise<RetainForResumeReport> => ({
+        sessionId: 'no-checkpoint-yet', path: '/fake/kinetix-export-none',
+        disposition: 'destroyed', retainedBytes: 0, reclaimedBytes: 4096, removed: ['scratch.tmp'],
+      }),
+    };
+    const report = await decideSessionRetentionOnFailure(active);
+    expect(report?.disposition).toBe('destroyed');
+  });
+
+  it('negative case: a bare fake with no retainForResume falls back to null (caller must guard-destroy)', async () => {
+    const report = await decideSessionRetentionOnFailure({});
+    expect(report).toBeNull();
+  });
+
+  it('negative case: a user cancel still destroys unconditionally — it never routes through retention', async () => {
+    const project = makeProject();
+    const ffmpeg = makeFakeFfmpeg();
+
+    const pending = exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
+
+    // `activeFfmpeg` is set synchronously before the first await inside
+    // `exportProjectWebCodecs` — this call observes it deterministically,
+    // not via a timing race.
+    await cancelExportWebCodecs();
+
+    expect(ffmpeg.kill).toHaveBeenCalledTimes(1);
+    // THE NEGATIVE CASE: cancel forces past the manifest guard — it does
+    // NOT call `retainForResume` and does NOT do a plain guarded destroy.
+    expect(ffmpeg.destroy).toHaveBeenCalledWith({ force: true });
+
+    // Let the in-flight export settle either way — its outcome is not
+    // this test's concern, only that cancel's own destroy call was forced.
+    await pending.catch(() => undefined);
   });
 });

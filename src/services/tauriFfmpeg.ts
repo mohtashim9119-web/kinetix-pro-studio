@@ -603,8 +603,7 @@ export class TauriFfmpeg implements FfmpegLike {
   }
 
   /**
-   * Deletes the session directory. Should be called after every export
-   * (success or failure). Safe to call multiple times.
+   * Deletes the session directory. Safe to call multiple times.
    *
    * WS3 STEP 8 (C6) — a failure here used to reach only `console.warn`,
    * invisible the moment the WebView closes, and worse on Windows: a delete
@@ -615,8 +614,20 @@ export class TauriFfmpeg implements FfmpegLike {
    * finished — but the failure is now durably recorded
    * (`recordCleanupFailure`) so the NEXT run's start-up notice can surface
    * it, on top of the console warning.
+   *
+   * STEP 3b — `ffmpeg_destroy_session` itself now refuses to remove a
+   * directory that still carries a resume manifest UNLESS `force` is set.
+   * Default (`force` unset/false) is the safe choice: any failure path that
+   * has not explicitly decided the session is disposable (via
+   * `retainForResume`, or one of the deliberate-discard call sites below)
+   * gets this backstop for free instead of silently erasing a resumable
+   * checkpoint. Pass `force: true` only where destruction must happen
+   * regardless of a manifest — an explicit user cancel
+   * (`cancelExportWebCodecs`), an operator's "start clean" choice, a
+   * successful export's own teardown, and the abandoned-session TTL
+   * collector (`exportResumeDiscovery.ts`'s `collectAbandonedSessions`).
    */
-  async destroy(): Promise<void> {
+  async destroy(opts?: { force?: boolean }): Promise<void> {
     if (this.#destroyed) return;
     this.#destroyed = true;
     // WS3 Round 20 — anything still un-drained becomes a durable notice via
@@ -627,9 +638,20 @@ export class TauriFfmpeg implements FfmpegLike {
       recordCleanupFailure('durability-unconfirmed', this.#sessionId, warning);
     }
     try {
-      await invoke<void>('ffmpeg_destroy_session', {
+      const outcome = await invoke<{ disposition: string }>('ffmpeg_destroy_session', {
         sessionId: this.#sessionId,
+        force: opts?.force ?? false,
       });
+      if (outcome.disposition === 'refused_manifest') {
+        // Not a failure — the native guard did its job. Logged (not routed
+        // through recordCleanupFailure, which is reserved for genuine
+        // failures) so it's visible; the directory itself surfaces through
+        // the ordinary resumable-sessions discovery on the next launch.
+        console.warn(
+          '[tauriFfmpeg] destroy refused: resume manifest present, session retained:',
+          this.#sessionId,
+        );
+      }
     } catch (err) {
       // Best-effort cleanup — session dir may already be gone.
       const detail = typeof err === 'string' ? err : String(err);

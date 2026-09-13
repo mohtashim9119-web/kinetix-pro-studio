@@ -454,6 +454,10 @@ pub fn run() {
                 Ok(_) => {}
                 Err(err) => log::warn!("orphan sweep skipped: {err}"),
             }
+            // WS3 STEP 4 — same best-effort posture: reclaims deleted
+            // projects' stale backup directories under app_local_data_dir(),
+            // never blocks launch.
+            project_mirror::sweep_stale_project_backups(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

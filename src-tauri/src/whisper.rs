@@ -762,6 +762,46 @@ pub(crate) async fn transcode_to_wav(
     Ok(())
 }
 
+/// WS3 STEP 4 — RAII guard that removes the whole `kinetix-whisper-<uuid>/`
+/// staging directory `whisper_stage_audio_raw` created, unless disarmed.
+///
+/// Before this step, `whisper_transcribe` only cleaned up `tmp_dir` at two
+/// explicit call sites: the `transcode_to_wav` failure arm, and the
+/// `CommandEvent::Terminated` arm. Every OTHER early return between them —
+/// `model_path(&app)?` (missing model — the everyday case), the whisper
+/// sidecar lookup's `?`, `spawn()`'s `?`, and the state-lock's `?` on both
+/// sides of `spawn` — skipped cleanup entirely and leaked the directory
+/// (the transcoded `input_16k.wav` plus the original upload) under
+/// `$TMPDIR` forever. Mirrors this file's own `_in_flight` guard idiom
+/// (`InFlightGuard`'s cleanup lives in `Drop` for the identical reason):
+/// putting removal in `Drop` means every exit path — an early `?`, the
+/// normal terminal arm, a panic — gets it for free, instead of being
+/// re-derived (and inevitably missed somewhere) at each call site.
+struct TmpDirCleanupGuard(Option<PathBuf>);
+
+impl TmpDirCleanupGuard {
+    fn new(dir: PathBuf) -> Self {
+        Self(Some(dir))
+    }
+
+    /// The `CommandEvent::Terminated` arm removes the directory itself at a
+    /// precise point in its own sequence (before dispatching the terminal
+    /// event) rather than "whenever this guard happens to drop" — call this
+    /// right after that removal so `Drop` becomes a no-op instead of a
+    /// harmless-but-redundant second `remove_dir_all`.
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for TmpDirCleanupGuard {
+    fn drop(&mut self) {
+        if let Some(dir) = self.0.take() {
+            let _ = fs::remove_dir_all(&dir);
+        }
+    }
+}
+
 /// Transcribes audio via the bundled whisper-cli sidecar, streaming progress
 /// and result tokens through the supplied Tauri IPC channel.
 ///
@@ -843,6 +883,10 @@ pub async fn whisper_transcribe(
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(std::env::temp_dir);
+    // STEP 4 — armed for the rest of this function; every `?` below this
+    // point (model_path, the sidecar lookup, spawn, the state lock) now
+    // cleans up `tmp_dir` via `Drop` instead of leaking it.
+    let mut tmp_dir_guard = TmpDirCleanupGuard::new(tmp_dir.clone());
 
     // Universal pre-transcode: normalize the upload (any ffmpeg-readable
     // container/codec) into 16 kHz mono WAV before whisper-cli runs. On failure,
@@ -851,6 +895,7 @@ pub async fn whisper_transcribe(
     let wav_path = tmp_dir.join("input_16k.wav");
     if let Err(e) = transcode_to_wav(&app, &audio_path, &wav_path).await {
         let _ = fs::remove_dir_all(&tmp_dir);
+        tmp_dir_guard.disarm();
         emit_terminal(&sink, &job_key, WhisperEvent::Error { message: e });
         return Ok(());
     }
@@ -997,6 +1042,7 @@ pub async fn whisper_transcribe(
                     lock.remove(&job_key);
                 }
                 let _ = fs::remove_dir_all(&tmp_dir);
+                tmp_dir_guard.disarm();
 
                 // Every decision this arm used to make inline now lives in
                 // `dispatch_terminal`, so it can be unit-tested — see its doc
@@ -1126,6 +1172,63 @@ fn parse_timestamp(ts: &str) -> f64 {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
+
+/// WS3 STEP 4 — the leak fix, isolated: `whisper_transcribe` itself needs a
+/// live `tauri::AppHandle` to unit-test directly (no existing test in this
+/// file calls it), so this exercises the exact mechanism that now runs on
+/// every one of its early-`?` exits — real disk I/O, matching this
+/// codebase's own `session_claim.rs`/`fa_dev.rs` guard-test style.
+#[cfg(test)]
+mod tmp_dir_cleanup_guard_tests {
+    use super::*;
+
+    fn guard_test_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kinetix-whisper-guard-test-{tag}"));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("input.wav"), b"fake-audio").unwrap();
+        dir
+    }
+
+    #[test]
+    fn dropping_an_armed_guard_removes_the_whole_staging_directory() {
+        let dir = guard_test_dir("armed-drop");
+        {
+            let _guard = TmpDirCleanupGuard::new(dir.clone());
+            assert!(dir.exists(), "sanity: the directory exists while the guard is alive");
+        }
+        assert!(!dir.exists(), "an early `?` return (simulated by scope exit) must not leak the directory");
+    }
+
+    #[test]
+    fn a_disarmed_guard_drops_without_touching_the_directory() {
+        let dir = guard_test_dir("disarmed-drop");
+        {
+            let mut guard = TmpDirCleanupGuard::new(dir.clone());
+            // Simulates the Terminated arm: it already removed the directory
+            // itself (or, as here, chose to keep it) before disarming.
+            guard.disarm();
+        }
+        assert!(dir.exists(), "disarm() must make Drop a no-op, not a forced second removal");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_panic_between_staging_and_the_terminal_arm_still_cleans_up() {
+        // The whole point of putting this in Drop rather than at each `?`
+        // call site: unwinding runs destructors, so even a code path nobody
+        // added an explicit cleanup call to (today, or in a future edit)
+        // still cannot leak the directory.
+        let dir = guard_test_dir("panic-unwind");
+        let dir_for_closure = dir.clone();
+        let result = std::panic::catch_unwind(move || {
+            let _guard = TmpDirCleanupGuard::new(dir_for_closure);
+            panic!("simulated failure between staging and the terminal arm");
+        });
+        assert!(result.is_err(), "sanity: the closure did panic");
+        assert!(!dir.exists(), "unwinding past the guard must still remove the directory");
+    }
+}
 
 #[cfg(test)]
 mod in_flight_tests {

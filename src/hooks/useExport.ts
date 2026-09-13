@@ -18,6 +18,7 @@ import { readCleanupNotices, clearCleanupNotices, recordCleanupFailure, type Cle
 import { normalizeSaveSessionFileResult } from '../services/tauriFfmpeg';
 import { checkExportDestinationPathLength } from '../services/exportDestinationPath';
 import { TauriFfmpeg, type OrphanSweepReport, type RetainForResumeReport } from '../services/tauriFfmpeg';
+import { decideSessionRetentionOnFailure } from './exportSessionRetentionDecision';
 import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
@@ -461,9 +462,17 @@ export function useExport(
 
   // Tear down the active backend and null the ref.
   // Async because session cleanup (dispose) awaits an IPC call.
-  const teardown = useCallback(async (): Promise<void> => {
+  //
+  // STEP 3b — `force` defaults to false (guarded): `ffmpeg_destroy_session`
+  // refuses to remove a directory that still carries a resume manifest
+  // unless forced, so an unmount/unhandled-failure teardown can never
+  // silently erase a checkpoint nothing upstream decided to discard. Pass
+  // `force: true` only where destruction must happen regardless of a
+  // manifest — a successful export's own teardown is the one call site in
+  // this file that does.
+  const teardown = useCallback(async (force = false): Promise<void> => {
     if (tauriBackendRef.current) {
-      await tauriBackendRef.current.dispose();
+      await tauriBackendRef.current.dispose({ force });
       tauriBackendRef.current = null;
     }
   }, []);
@@ -750,10 +759,11 @@ export function useExport(
           }
         } else {
           // "Start clean" collects the survivor rather than leaving 2 GB
-          // behind that the operator has just said they do not want.
+          // behind that the operator has just said they do not want — an
+          // explicit discard, so it forces past the manifest guard.
           try {
             const stale = await TauriFfmpeg.reenter(offer.sessionId);
-            await stale.destroy();
+            await stale.destroy({ force: true });
             forgetExportSession(offer.sessionId);
           } catch {
             // Best-effort; the TTL/count policy catches it on a later run.
@@ -788,10 +798,10 @@ export function useExport(
     // Whichever session the export actually ran in must be released. `teardown`
     // only knows the fresh one, so a resumed session is destroyed here — and
     // its ledger row with it, so cleanup never counts a directory that is gone.
-    const releaseResumedSession = async (): Promise<void> => {
+    const releaseResumedSession = async (force: boolean): Promise<void> => {
       if (!resumeFfmpeg) return;
       try {
-        await (resumeFfmpeg as unknown as { destroy(): Promise<void> }).destroy();
+        await (resumeFfmpeg as unknown as { destroy(opts?: { force?: boolean }): Promise<void> }).destroy({ force });
         forgetExportSession(resumePlanSessionId!);
       } catch {
         // Best-effort; the TTL/count policy catches it on a later run.
@@ -809,19 +819,27 @@ export function useExport(
       }
     };
 
-    // WS3 Round 21 (D3d) — a disk-full terminal must leave a resumable
-    // session resumable: the operator frees space and resumes, rather than
-    // starting a full re-render from zero. `retainForResume` keeps the
-    // pieces + manifest and deletes only the mux/delivery intermediates a
-    // resume does not need (no-op-equivalent to the old destroy() when the
-    // session never got far enough to checkpoint at all — it destroys
-    // outright in that case, same bytes freed as before).
-    const releaseFailedSessionForDiskFull = async (): Promise<RetainForResumeReport | null> => {
+    // WS3 Round 24 (STEP 2) — ANY render-stage failure must leave a
+    // resumable session resumable, not just disk_full: `retainForResume`
+    // (Rust `retain_session_for_resume`) already checks for a manifest
+    // before deciding — no manifest means the session never got far enough
+    // to checkpoint at all, and it destroys outright in that case, same
+    // bytes freed as before. A manifest present means real work (pieces)
+    // exists, and it keeps the pieces + manifest, deleting only the
+    // mux/delivery intermediates a resume does not need. So calling this
+    // unconditionally on every failure kind is safe by construction — it
+    // was previously gated to `kind === 'disk_full'` only (WS3 Round 21
+    // D3d), which is what let a `mux`-kind failure fall through to plain
+    // `teardown()` (`ffmpeg_destroy_session`'s unconditional
+    // `remove_dir_all`, no manifest check at all) and destroy a
+    // near-complete export's pieces — see architecture-ledger.md Round 24
+    // STEP 1.
+    const releaseFailedSessionForResume = async (): Promise<RetainForResumeReport | null> => {
       const active = (resumeFfmpeg ??
         tauriBackendRef.current?.ffmpeg) as unknown as { retainForResume?(): Promise<RetainForResumeReport> } | null;
-      if (!active?.retainForResume) return null;
       try {
-        const report = await active.retainForResume();
+        const report = await decideSessionRetentionOnFailure(active);
+        if (report === null) return null;
         if (resumeFfmpeg) forgetExportSession(resumePlanSessionId!);
         // The session dir is not deleted (when retained) — only this
         // in-memory handle is done with it. `dispose()` must not also try
@@ -830,7 +848,7 @@ export function useExport(
         return report;
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.warn('[ws3-disk] retain-for-resume failed — falling back to ordinary teardown', err instanceof Error ? err.message : String(err));
+        console.warn('[ws3-resume] retain-for-resume failed — falling back to ordinary teardown', err instanceof Error ? err.message : String(err));
         return null;
       }
     };
@@ -838,13 +856,15 @@ export function useExport(
     if (!result.ok) {
       stopElapsedTimer();
       const durabilityWarnings = await drainDurabilityWarnings();
-      let sessionDisposition: RetainForResumeReport | null = null;
-      if (result.error.kind === 'disk_full') {
-        sessionDisposition = await releaseFailedSessionForDiskFull();
-      }
+      const sessionDisposition = await releaseFailedSessionForResume();
       if (sessionDisposition === null) {
-        await releaseResumedSession();
-        await teardown();
+        // STEP 3b — guarded (not forced): no manifest was found to retain,
+        // but if one turns up anyway (a fake without `retainForResume`, or
+        // a future call path this line hasn't been updated for),
+        // `ffmpeg_destroy_session`'s own native guard is the backstop that
+        // refuses to erase it.
+        await releaseResumedSession(false);
+        await teardown(false);
       }
       setState(prev => ({
         ...prev,
@@ -933,8 +953,12 @@ export function useExport(
 
     stopElapsedTimer();
     durabilityWarnings.push(...(await drainDurabilityWarnings()));
-    await releaseResumedSession();
-    await teardown();
+    // STEP 3b — a successful export must always fully tear down: the
+    // manifest is still on disk at this point (nothing clears it on
+    // success), but there is nothing left to resume, so this is a forced
+    // destroy regardless of it.
+    await releaseResumedSession(true);
+    await teardown(true);
     if (generationRef.current !== gen) return;
 
     setState(prev => ({

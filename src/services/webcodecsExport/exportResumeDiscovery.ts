@@ -68,7 +68,9 @@ export interface ResumeSessionHandle {
     path: string,
     byteOffset: number,
   ): Promise<{ pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number }>;
-  destroy(): Promise<void>;
+  /** STEP 3b — `force: true` bypasses the native manifest guard; see
+   *  `TauriFfmpeg.destroy`'s own doc comment for which callers must set it. */
+  destroy(opts?: { force?: boolean }): Promise<void>;
   /**
    * Present on `TauriFfmpeg`. Optional so test fakes can omit it; fence/seam
    * bound expiry then no-ops kill rather than throwing.
@@ -602,7 +604,10 @@ export async function collectAbandonedSessions(
   for (const sessionId of doomed) {
     try {
       const session = await io.reenter(sessionId);
-      await session.destroy();
+      // STEP 3b — this policy exists specifically to discard sessions past
+      // the retention cap/TTL; a manifest is expected (that's why they were
+      // resumable candidates at all) and must not stop the collection.
+      await session.destroy({ force: true });
       collected.push(sessionId);
     } catch (err) {
       // eslint-disable-next-line no-console
