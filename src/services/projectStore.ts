@@ -455,8 +455,22 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
   // an already-backfilled project is a no-op here.
   project.segments = backfillSegmentIds(project.segments);
 
-  // A previously-poisoned id that now loads cleanly is un-poisoned.
-  loadFailures.delete(id);
+  // A previously-poisoned id that now loads cleanly is un-poisoned — but
+  // ONLY when the existing poison is one THIS function owns (a storage/
+  // parse/shape problem it just proved is gone). WS3 item B —
+  // `asset-unresolvable` is poisoned by a DIFFERENT subsystem (App.tsx's
+  // asset rehydration, via `reportAssetResolutionFailure`) for a reason a
+  // clean JSON parse says nothing about: project.json can be perfectly
+  // well-formed while its assets are still unresolvable. Clearing that
+  // poison here would let ANY read of the project (the recovery screen's
+  // own status check included) silently un-poison it without a single byte
+  // actually having been recovered — reopening exactly the guard item A
+  // added `asset-unresolvable` to close. Only `relinkAsset`
+  // (`assetRecovery.ts`), once every asset is actually resolved, may clear it.
+  const existingFailure = loadFailures.get(id);
+  if (!existingFailure || existingFailure.reason !== 'asset-unresolvable') {
+    loadFailures.delete(id);
+  }
   return { ok: true, project, savedAt: stored.savedAt };
 }
 

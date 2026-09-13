@@ -75,6 +75,7 @@ import {
   loadProjectDetailed,
   getLoadFailure,
   clearLoadFailure,
+  reportAssetResolutionFailure,
   __resetStoreGuardsForTests,
 } from './projectStore';
 import type { Project, VideoSegment } from '../types';
@@ -476,6 +477,39 @@ describe('load failure blocks the autosave that follows it', () => {
     expect(good!.ok).toBe(true);
     expect(getLoadFailure('p-guard')).toBeUndefined();
     err.mockRestore();
+  });
+
+  // WS3 item B — a real bug found while building the recovery screen's data
+  // source (assetRecovery.ts): the auto-unpoison above is correct for a
+  // JSON/shape poison (a clean parse really does prove the problem is gone),
+  // but `asset-unresolvable` (item A) is poisoned by a DIFFERENT subsystem
+  // for a DIFFERENT reason a clean parse says nothing about — project.json
+  // can be perfectly well-formed while its assets are still unresolvable.
+  // Before the fix, simply READING such a project (which the recovery
+  // screen's status check does, via loadProjectDetailed) silently cleared
+  // the poison without a single byte having been recovered.
+  it('an asset-unresolvable poison does NOT auto-clear on a clean load — only relinkAsset may clear it', async () => {
+    setStored('p-guard', { id: 'p-guard', version: 2, savedAt: 1, project: projectWith(3) });
+    reportAssetResolutionFailure('p-guard', 'asset a1 unresolvable from storage');
+    expect(getLoadFailure('p-guard')!.reason).toBe('asset-unresolvable');
+
+    // The project.json itself is perfectly well-formed — this load succeeds.
+    const outcome = await loadProjectDetailed('p-guard');
+    expect(outcome!.ok).toBe(true);
+
+    // But the poison MUST survive: nothing about the asset was actually fixed.
+    expect(getLoadFailure('p-guard')).toBeDefined();
+    expect(getLoadFailure('p-guard')!.reason).toBe('asset-unresolvable');
+
+    // A shape/parse poison, by contrast, still auto-clears on a clean load —
+    // unaffected by this fix.
+    clearLoadFailure('p-guard');
+    setStored('p-guard', { id: 'p-guard', version: 2, savedAt: 1, project: {} });
+    await loadProjectDetailed('p-guard');
+    expect(getLoadFailure('p-guard')!.reason).toBe('shape-invalid');
+    setStored('p-guard', { id: 'p-guard', version: 2, savedAt: 5, project: projectWith(3) });
+    await loadProjectDetailed('p-guard');
+    expect(getLoadFailure('p-guard')).toBeUndefined();
   });
 });
 

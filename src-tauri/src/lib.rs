@@ -22,9 +22,11 @@ mod session_claim;
 mod event_sink;
 pub mod model_download;
 pub mod models;
+mod asset_store;
 mod project_mirror;
 mod safe_delete;
 mod sha256;
+mod storage_root;
 mod whisper;
 
 use base64::Engine as _;
@@ -557,6 +559,13 @@ pub fn run() {
             project_mirror::project_store_write,
             project_mirror::project_store_delete,
             project_mirror::project_store_list_ids,
+            storage_root::storage_root_status,
+            storage_root::storage_root_relocate,
+            asset_store::asset_store_write,
+            asset_store::asset_store_read,
+            asset_store::asset_store_status,
+            asset_store::asset_store_delete,
+            asset_store::asset_store_delete_project,
             fetch_url_bytes,
             app_session_token,
             toggle_devtools,

@@ -218,6 +218,9 @@ import {
   shouldResumeLastOpenedProject,
   reportAssetResolutionFailure,
 } from './services/projectStore';
+import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative';
+import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
+import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
 import { getAppSessionToken } from './services/historyPersist';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
 import { UnappliedTranscriptBanner } from './components/UnappliedTranscriptBanner';
@@ -2415,6 +2418,16 @@ export default function App() {
       await migrateLocalStorageProjectsToOsStore();
 
       // -----------------------------------------------------------------------
+      // 1a-ii. WS3 item B — one-time-in-effect migration of IndexedDB-only
+      //        asset bytes onto the native store. Deliberately NOT awaited:
+      //        this can move real media bytes (gigabytes across a library)
+      //        and must never delay app startup. Idempotent — see its own
+      //        doc comment — so firing it every boot is safe and
+      //        self-healing rather than gated by a "done" flag.
+      // -----------------------------------------------------------------------
+      void migrateIndexedDbAssetsToNative();
+
+      // -----------------------------------------------------------------------
       // 2. Route on launch:
       //    • No projects yet  → new-project modal (first ever launch).
       //    • In-session reload with a matching editor-resume token AND a
@@ -3535,6 +3548,7 @@ export default function App() {
           deleteAsset(projectRef.current.id, oldAsset.id).catch(err =>
             console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
           );
+          void deleteAssetNative(projectRef.current.id, oldAsset.id); // WS3 item B — native-store parity
           deletePersistedWaveform(projectRef.current.id, oldAsset.id).catch(err =>
             console.error('[kinetix] Failed to delete old voiceover peaks:', err),
           );
@@ -5218,6 +5232,7 @@ export default function App() {
       deleteAsset(projectIdRef.current, assetId).catch(err =>
         console.error('Failed to delete asset from IndexedDB:', err)
       );
+      void deleteAssetNative(projectIdRef.current, assetId); // WS3 item B — native-store parity
       clearFrameRendererCache();
       return {
         ...prev,
@@ -5241,6 +5256,7 @@ export default function App() {
     Promise.all(nonAudio.map(a => deleteAsset(projectIdRef.current, a.id))).catch(err =>
       console.error('[handleDeleteAllAssets] IndexedDB delete failed:', err)
     );
+    void Promise.all(nonAudio.map(a => deleteAssetNative(projectIdRef.current, a.id))); // WS3 item B — native-store parity
     clearFrameRendererCache();
     setProject(prev => ({
       ...prev,
@@ -5261,6 +5277,21 @@ export default function App() {
       URL.revokeObjectURL(url);
       return;
     }
+    // WS3 item B — the native store is now the AUTHORITATIVE copy; the
+    // IndexedDB write above is a cache. "Never swallow a write failure — a
+    // failed asset write must surface as a failed import, not a silent
+    // absence": a native write failure fails the import exactly like the
+    // IndexedDB failure above does, rather than silently leaving the asset
+    // IndexedDB-only (which a future migration pass would retry, but the
+    // user's current import must not report success in the meantime).
+    try {
+      await writeAssetBlobNative(projectIdRef.current, id, file, file.name, file.type);
+    } catch (err) {
+      console.error('Failed to persist asset to the native store, import failed:', file.name, err);
+      URL.revokeObjectURL(url);
+      showToast(`Couldn't import "${file.name}" — it could not be saved to disk. Try again.`);
+      return;
+    }
     const newAsset: Asset = {
       id,
       name: file.name,
@@ -5279,6 +5310,7 @@ export default function App() {
         deleteAsset(projectIdRef.current, oldAudio.id).catch(err =>
           console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
         );
+        void deleteAssetNative(projectIdRef.current, oldAudio.id); // WS3 item B — native-store parity
         deletePersistedWaveform(projectIdRef.current, oldAudio.id).catch(err =>
           console.error('[kinetix] Failed to delete old voiceover peaks:', err),
         );
@@ -6111,6 +6143,18 @@ export default function App() {
       // Rehydrate the target project's assets from IndexedDB.
       const storedAssets = await getAllAssetsForProject(saved.project.id);
       const blobMap = new Map(storedAssets.map(a => [a.id, a]));
+
+      // WS3 item B — launch-time repair, BEFORE the item A orphan check
+      // below: an asset missing from IndexedDB but still present in the
+      // NATIVE store (item B's authoritative copy) is not data loss, only a
+      // cache miss. Rebuild IndexedDB from the native copy here so the
+      // orphan check downstream has nothing left to complain about for
+      // exactly the projects item B's migration already covered.
+      const missingIds = saved.project.assets.map(a => a.id).filter(assetId => !blobMap.has(assetId));
+      if (missingIds.length > 0) {
+        const repair = await repairMissingAssetsFromNative(saved.project.id, saved.project.assets, missingIds);
+        for (const repaired of repair.repaired) blobMap.set(repaired.id, repaired);
+      }
 
       // WS3 item A — an asset whose METADATA survived in project.json but
       // whose BYTES are unresolvable from storage is a LOAD FAILURE, never a

@@ -66,14 +66,37 @@ vi.mock('./services/projectStore', async () => {
   };
 });
 
+const mockPutAsset = vi.fn(async (
+  _projectId: string, _id: string, _blob: Blob, _meta: { name: string; mimeType: string },
+): Promise<void> => undefined);
+
 vi.mock('./services/assetStore', async () => {
   const actual = await vi.importActual<typeof import('./services/assetStore')>('./services/assetStore');
   return {
     ...actual,
     getAllAssetsForProject: (id: string) => mockGetAllAssetsForProject(id),
     getLegacyAssets: async () => [],
+    putAsset: (projectId: string, id: string, blob: Blob, meta: { name: string; mimeType: string }) =>
+      mockPutAsset(projectId, id, blob, meta),
   };
 });
+
+// WS3 item B — the launch-time repair path. Mocked at the module boundary
+// (rather than mocking its `nativeAssetStore` dependencies and letting the
+// real implementation run) because the real implementation's own `isTauri()`
+// gate would need to be forced true for this jsdom environment, which risks
+// waking up OTHER `isTauri()`-gated code paths this file's existing tests
+// don't expect to fire. `repairAssetsFromNative.ts` has its own dedicated
+// unit coverage for the real logic; this file only needs to assert App.tsx
+// WIRES it in at the right point, ahead of the item A orphan check.
+interface FakeStoredAsset { projectId: string; id: string; blob: Blob; name: string; mimeType: string }
+const mockRepairMissingAssetsFromNative = vi.fn(async (
+  _projectId: string, _assets: unknown[], _missingIds: string[],
+): Promise<{ repaired: FakeStoredAsset[]; failed: unknown[] }> => ({ repaired: [], failed: [] }));
+vi.mock('./services/repairAssetsFromNative', () => ({
+  repairMissingAssetsFromNative: (projectId: string, assets: unknown[], missingIds: string[]) =>
+    mockRepairMissingAssetsFromNative(projectId, assets, missingIds),
+}));
 
 vi.mock('./services/historyPersist', async () => {
   const actual = await vi.importActual<typeof import('./services/historyPersist')>('./services/historyPersist');
@@ -124,6 +147,8 @@ beforeEach(() => {
   mockLoadAllMetas.mockReturnValue([meta(OUTGOING_ID, 'Outgoing'), meta(TARGET_ID, 'Target')]);
   mockSaveProject.mockResolvedValue({ ok: true });
   mockGetAllAssetsForProject.mockResolvedValue([]);
+  mockRepairMissingAssetsFromNative.mockResolvedValue({ repaired: [], failed: [] });
+  mockPutAsset.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -497,5 +522,67 @@ describe('WS3 item A — asset resolution failure blocks the switch', () => {
 
     expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
     expect(getLoadFailure(TARGET_ID)).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS3 item B — launch-time repair, running BEFORE item A's orphan check.
+// "Detects origin data missing while native data survives and rebuilds
+// rather than presenting empty projects": an asset missing from the
+// IndexedDB cache but still present in the NATIVE store is a cache miss,
+// not data loss — the project must open normally, with IndexedDB silently
+// rebuilt from the native copy, and never get poisoned at all.
+// ---------------------------------------------------------------------------
+
+describe('WS3 item B — launch-time repair heals a cache miss before it can poison the project', () => {
+  afterEach(() => {
+    __resetStoreGuardsForTests();
+  });
+
+  it('rebuilds IndexedDB from the native copy and opens the project normally — no poisoning', async () => {
+    const targetProject = {
+      ...storedProject(TARGET_ID, 'Target'),
+      assets: [{ id: 'a1', name: 'clip.mp4', url: '', type: 'image' }],
+      segments: [{ id: 'seg-0', assetId: 'a1', text: '', startTime: 0, duration: 1 }],
+    } as unknown as Project;
+    mockLoadProjectDetailed.mockResolvedValue({ ok: true, project: targetProject, savedAt: Date.now() });
+    mockGetAllAssetsForProject.mockResolvedValue([]); // IndexedDB cache empty — a cache miss
+    const repairedBlob = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/png' });
+    mockRepairMissingAssetsFromNative.mockResolvedValue({
+      repaired: [{ projectId: TARGET_ID, id: 'a1', blob: repairedBlob, name: 'clip.mp4', mimeType: 'image/png' }],
+      failed: [],
+    });
+
+    await mountApp();
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${TARGET_ID}"]`);
+    await act(async () => { card!.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    // Opens normally — the repair healed the gap before the orphan check ran.
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
+    expect(getLoadFailure(TARGET_ID)).toBeUndefined();
+    // App.tsx called the repair with the right arguments before the orphan check.
+    expect(mockRepairMissingAssetsFromNative).toHaveBeenCalledWith(TARGET_ID, targetProject.assets, ['a1']);
+  });
+
+  it('an asset missing from BOTH stores still poisons the project — repair is not a substitute for the orphan guard', async () => {
+    const targetProject = {
+      ...storedProject(TARGET_ID, 'Target'),
+      assets: [{ id: 'a1', name: 'clip.mp4', url: '', type: 'image' }],
+      segments: [{ id: 'seg-0', assetId: 'a1', text: '', startTime: 0, duration: 1 }],
+    } as unknown as Project;
+    mockLoadProjectDetailed.mockResolvedValue({ ok: true, project: targetProject, savedAt: Date.now() });
+    mockGetAllAssetsForProject.mockResolvedValue([]);
+    // Repair runs but finds nothing natively either — reports nothing repaired.
+    mockRepairMissingAssetsFromNative.mockResolvedValue({ repaired: [], failed: [] });
+
+    await mountApp();
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${TARGET_ID}"]`);
+    await act(async () => { card!.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(view()).toEqual({ view: 'dashboard', projectId: null });
+    expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
+    expect(mockPutAsset).not.toHaveBeenCalled();
   });
 });

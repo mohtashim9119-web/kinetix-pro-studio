@@ -433,10 +433,16 @@ pub fn project_mirror_delete_project(
 // write paths never contend over the same backup directory.
 // ---------------------------------------------------------------------------
 
+/// WS3 item C — resolves through the configurable storage root
+/// (`storage_root.rs`), not `app_local_data_dir()` directly. On any install
+/// that has never relocated, `resolve_storage_root` returns exactly
+/// `app_local_data_dir()` (its own documented default), so this is a no-op
+/// for the overwhelming majority of installs today — behavior changes only
+/// after an explicit `storage_root_relocate`, which itself moves this
+/// module's `projects/` and `project-store-backups/` trees before ever
+/// updating the pointer this reads.
 fn store_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    app.path()
-        .app_local_data_dir()
-        .map_err(|e| format!("cannot resolve app_local_data_dir for the project store: {e}"))
+    crate::storage_root::resolve_storage_root(app)
 }
 
 fn store_project_file(root: &Path, id: &str) -> PathBuf {
@@ -444,7 +450,10 @@ fn store_project_file(root: &Path, id: &str) -> PathBuf {
 }
 
 fn store_backups_dir(root: &Path) -> PathBuf {
-    root.join("project-store-backups")
+    // WS3 item C — shared with storage_root.rs's relocation logic so the two
+    // never drift onto different literal paths; see
+    // `storage_root::project_backups_dir`'s own doc comment.
+    crate::storage_root::project_backups_dir(root)
 }
 
 /// Reads one project's JSON from the primary store. `Ok(None)` for "no such
