@@ -130,7 +130,8 @@ export function markRelinkFailed(
 /**
  * The only exit from item A's degraded / poisoned load: every unresolved
  * asset has been confirmed and marked written. Aligns with
- * `canPersistRecoveredProject` — anything short of `written` keeps Save illegal.
+ * `canPersistRecoveredProject` and CC's `allResolved` — anything short of
+ * `written` keeps Save illegal and the project poisoned.
  */
 export function canLeaveDegradedRelinkFlow(flow: readonly RelinkAssetRecord[]): boolean {
   if (flow.length === 0) return false;

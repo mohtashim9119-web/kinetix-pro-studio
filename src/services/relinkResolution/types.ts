@@ -3,12 +3,13 @@
  *
  * Metadata is whatever survived in project.json after item A poisoned the
  * load (`asset-unresolvable`). Candidate files are caller-supplied descriptors;
- * this module never reads the filesystem. CC item B will expose the real
- * payload and command — field names here are UI-lane assumptions
- * (`.cursor/ws3-relink-unseen.md`).
+ * this module never reads the filesystem. Field names follow CC's published
+ * `Asset` / `AssetRecoveryEntry` (`assetRecovery.ts`, `nativeAssetStore.ts`).
  */
 
-export type RelinkAssetType = 'image' | 'video' | 'audio';
+import type { Asset } from '../../types';
+
+export type RelinkAssetType = Asset['type'];
 
 export type RelinkConfidence = 'exact' | 'probable' | 'rejected';
 
@@ -18,7 +19,7 @@ export interface UnresolvedAssetMetadata {
   id: string;
   name: string;
   type: RelinkAssetType;
-  /** Seconds. Absent on images and on videos whose probe never landed. */
+  /** Seconds. `Asset.duration` when probed; null on images and probe misses. */
   duration: number | null;
 }
 
