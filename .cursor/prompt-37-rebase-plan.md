@@ -388,7 +388,7 @@ Same `bitrateKbps × 125 × D` + AAC 24,000 B/s. Different outputs. **Do not del
 
 Do not add any of those in this turn.
 
-### Post-rebase census (`4e52b31` on `0bdc8a5`)
+### Post-rebase census (onto `0bdc8a5`)
 
 Rebase: **zero conflicts** (no overlapping paths vs `fd547ce`→`0bdc8a5`).
 
