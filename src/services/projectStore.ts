@@ -109,14 +109,55 @@ export type LoadOutcome =
   | { ok: true; project: Project; savedAt: number }
   | { ok: false; reason: StoreFailureReason; message: string; rawLength: number };
 
+/**
+ * The subset of `StoreFailureReason` that ever actually poisons an id in
+ * `loadFailures` — the rest (`empty-over-nonempty`, `asset-reference-loss`,
+ * `quota-exceeded`, `verify-failed`, `blocked-by-load-failure`) are save-time
+ * refusals returned to the caller but never persisted as a poison entry.
+ * Narrowed separately so the clearance policy below only has to reason about
+ * failures that can actually need clearing.
+ */
+export type LoadFailureReason = 'storage-unavailable' | 'parse-error' | 'shape-invalid' | 'asset-unresolvable';
+
 export interface LoadFailure {
   id: string;
-  reason: StoreFailureReason;
+  reason: LoadFailureReason;
   message: string;
   /** Approximate serialized size of the value that failed, which is left UNTOUCHED in storage. */
   rawLength: number;
   at: number;
 }
+
+/**
+ * Who may clear a given `LoadFailureReason`'s poison. `loadProjectDetailed`
+ * used to decide this with a hand-written condition (`reason !==
+ * 'asset-unresolvable'`) that a caller had to remember to keep in sync with
+ * every new reason added anywhere in the file — the exact convention this
+ * type replaces. It was already wrong once (the original bug this project's
+ * incident write-up is about) and was reopened a second time by the same
+ * shape, which is why clearance is now a property OF the reason, declared at
+ * its definition, rather than a condition re-derived at each call site.
+ */
+export type FailureClearance =
+  /** A subsequent load that parses/shapes/reads cleanly clears it on its own. */
+  | 'clean-load'
+  /** Only `relinkAsset` (`assetRecovery.ts`), once every asset in the project
+   *  is resolved, may clear it — a clean JSON parse says nothing about
+   *  whether the assets it references still have bytes anywhere. */
+  | 'asset-recovery';
+
+/**
+ * Exhaustive `LoadFailureReason` -> `FailureClearance` policy record,
+ * `satisfies`-checked so a future `LoadFailureReason` addition that this map
+ * does not also cover is a COMPILE ERROR, not a silent gap — same pattern as
+ * WS3 item F's `FAILURE_VIA_TO_KIND` (`exportWorkerDiagnostics.ts`).
+ */
+export const LOAD_FAILURE_CLEARANCE = {
+  'storage-unavailable': 'clean-load',
+  'parse-error': 'clean-load',
+  'shape-invalid': 'clean-load',
+  'asset-unresolvable': 'asset-recovery',
+} as const satisfies Record<LoadFailureReason, FailureClearance>;
 
 /**
  * Ids whose last load attempt failed. A project in here is POISONED for
@@ -456,19 +497,16 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
   project.segments = backfillSegmentIds(project.segments);
 
   // A previously-poisoned id that now loads cleanly is un-poisoned — but
-  // ONLY when the existing poison is one THIS function owns (a storage/
-  // parse/shape problem it just proved is gone). WS3 item B —
-  // `asset-unresolvable` is poisoned by a DIFFERENT subsystem (App.tsx's
-  // asset rehydration, via `reportAssetResolutionFailure`) for a reason a
-  // clean JSON parse says nothing about: project.json can be perfectly
-  // well-formed while its assets are still unresolvable. Clearing that
-  // poison here would let ANY read of the project (the recovery screen's
-  // own status check included) silently un-poison it without a single byte
-  // actually having been recovered — reopening exactly the guard item A
-  // added `asset-unresolvable` to close. Only `relinkAsset`
-  // (`assetRecovery.ts`), once every asset is actually resolved, may clear it.
+  // only when its reason's OWN policy (`LOAD_FAILURE_CLEARANCE`) says a clean
+  // load is enough. `asset-unresolvable` says otherwise: project.json can be
+  // perfectly well-formed while its assets are still unresolvable, so a
+  // clean parse here — including the recovery screen's own status check —
+  // proves nothing about asset bytes. Only `relinkAsset` (`assetRecovery.ts`),
+  // once every asset is actually resolved, clears that one. This is read
+  // FROM the reason's declared policy rather than re-checked here so a new
+  // reason with the wrong clearance is a compile error, not a rediscovery.
   const existingFailure = loadFailures.get(id);
-  if (!existingFailure || existingFailure.reason !== 'asset-unresolvable') {
+  if (!existingFailure || LOAD_FAILURE_CLEARANCE[existingFailure.reason] === 'clean-load') {
     loadFailures.delete(id);
   }
   return { ok: true, project, savedAt: stored.savedAt };

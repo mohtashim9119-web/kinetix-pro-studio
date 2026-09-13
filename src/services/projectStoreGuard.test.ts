@@ -511,6 +511,25 @@ describe('load failure blocks the autosave that follows it', () => {
     await loadProjectDetailed('p-guard');
     expect(getLoadFailure('p-guard')).toBeUndefined();
   });
+
+  // Clearance is now a property of the reason itself (`LOAD_FAILURE_CLEARANCE`
+  // in projectStore.ts), not a condition re-derived at each call site — the
+  // `asset-unresolvable` hole above was opened by that convention twice. This
+  // is a runtime tripwire alongside the `satisfies Record<...>` compile check:
+  // a new `LoadFailureReason` with no listed policy fails here even if
+  // something upstream widened the type and bypassed the compiler (e.g. an
+  // `as` cast), and the hardcoded reason list means the test itself has to be
+  // touched — and read — whenever a reason is added or removed.
+  it('every LoadFailureReason has a declared clearance policy — no reason ships undeclared', async () => {
+    const { LOAD_FAILURE_CLEARANCE } = await import('./projectStore');
+    const knownReasons = ['storage-unavailable', 'parse-error', 'shape-invalid', 'asset-unresolvable'].sort();
+    expect(Object.keys(LOAD_FAILURE_CLEARANCE).sort()).toEqual(knownReasons);
+    for (const reason of knownReasons) {
+      expect(['clean-load', 'asset-recovery']).toContain(
+        LOAD_FAILURE_CLEARANCE[reason as keyof typeof LOAD_FAILURE_CLEARANCE],
+      );
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
