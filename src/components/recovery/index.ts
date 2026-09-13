@@ -1,5 +1,6 @@
 export {
   canPersistRecoveredProject,
+  recoveryAssetsFromStatus,
   unresolvedAssetIds,
   type RecoveryAsset,
   type RecoverySegment,

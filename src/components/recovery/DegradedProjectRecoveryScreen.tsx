@@ -6,10 +6,13 @@
  * instead of an empty timeline. This component never writes storage:
  * Save is omitted while any asset is unresolved, even if the caller
  * passed `onSave`. Re-link is a callback; there is no file picker here.
+ *
+ * Location copy follows CC's collapsed contract: `nativeResolved` is the
+ * one durable-copy fact. An unresolved row is Missing — never "backup".
  */
 
 import React from 'react';
-import { AlertTriangle, FolderOpen, HardDrive, Link2 } from 'lucide-react';
+import { AlertTriangle, HardDrive, Link2 } from 'lucide-react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
   canPersistRecoveredProject,
@@ -32,17 +35,15 @@ export interface DegradedProjectRecoveryScreenProps {
 }
 
 function assetLocationLabel(asset: RecoveryAsset): string {
-  if (!asset.unresolved) return 'Resolved';
-  if (asset.nativeCopyExists) return 'Native copy available';
-  if (asset.backupExists) return 'Backup available';
-  return 'Missing';
+  if (!asset.resolved) return 'Missing';
+  if (asset.nativeResolved) return 'Native copy available';
+  return 'Resolved';
 }
 
-function assetLocationKind(asset: RecoveryAsset): 'resolved' | 'native-copy' | 'backup' | 'missing' {
-  if (!asset.unresolved) return 'resolved';
-  if (asset.nativeCopyExists) return 'native-copy';
-  if (asset.backupExists) return 'backup';
-  return 'missing';
+function assetLocationKind(asset: RecoveryAsset): 'resolved' | 'native' | 'missing' {
+  if (!asset.resolved) return 'missing';
+  if (asset.nativeResolved) return 'native';
+  return 'resolved';
 }
 
 function segmentStatusLabel(status: RecoverySegment['resolutionStatus']): string {
@@ -152,11 +153,12 @@ export function DegradedProjectRecoveryScreen({
             const kind = assetLocationKind(asset);
             return (
               <div
-                key={asset.id}
+                key={asset.assetId}
                 data-testid="recovery-asset"
-                data-asset-id={asset.id}
-                data-unresolved={asset.unresolved ? 'true' : 'false'}
+                data-asset-id={asset.assetId}
+                data-unresolved={asset.resolved ? 'false' : 'true'}
                 data-location={kind}
+                data-native-resolved={asset.nativeResolved ? 'true' : 'false'}
                 className="flex items-center justify-between gap-3 bg-[#1A1A1A] border border-[#282828] rounded-lg px-3 py-2"
               >
                 <div className="min-w-0">
@@ -165,17 +167,16 @@ export function DegradedProjectRecoveryScreen({
                     data-testid="recovery-asset-location"
                     className="text-[9px] text-gray-500 flex items-center gap-1"
                   >
-                    {kind === 'native-copy' && <HardDrive size={11} />}
-                    {kind === 'backup' && <FolderOpen size={11} />}
+                    {kind === 'native' && <HardDrive size={11} />}
                     {assetLocationLabel(asset)}
                   </p>
                 </div>
-                {asset.unresolved && (
+                {!asset.resolved && (
                   <button
                     type="button"
                     data-testid="recovery-relink"
-                    data-asset-id={asset.id}
-                    onClick={() => onRelink(asset.id)}
+                    data-asset-id={asset.assetId}
+                    onClick={() => onRelink(asset.assetId)}
                     className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[9px] font-black uppercase tracking-widest border border-[#282828] rounded-lg text-gray-300 hover:text-white hover:border-gray-500"
                   >
                     <Link2 size={11} />

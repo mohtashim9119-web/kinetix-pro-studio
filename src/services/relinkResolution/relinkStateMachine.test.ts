@@ -107,8 +107,8 @@ describe('canLeaveDegradedRelinkFlow — extends the no-save invariant', () => {
     expect(canLeaveDegradedRelinkFlow(mid)).toBe(false);
     expect(canPersistRecoveredProject({
       assets: [
-        { id: 'a1', name: assetA.name, unresolved: true, nativeCopyExists: false, backupExists: false },
-        { id: 'a2', name: assetB.name, unresolved: true, nativeCopyExists: false, backupExists: false },
+        { assetId: 'a1', name: assetA.name, type: 'video', cacheResolved: false, nativeResolved: false, resolved: false },
+        { assetId: 'a2', name: assetB.name, type: 'video', cacheResolved: false, nativeResolved: false, resolved: false },
       ],
       segments: [
         { id: 's1', label: 'A', assetId: 'a1', resolutionStatus: 'unresolved' },
@@ -120,8 +120,8 @@ describe('canLeaveDegradedRelinkFlow — extends the no-save invariant', () => {
     expect(canLeaveDegradedRelinkFlow(done)).toBe(true);
     expect(canPersistRecoveredProject({
       assets: [
-        { id: 'a1', name: assetA.name, unresolved: false, nativeCopyExists: true, backupExists: false },
-        { id: 'a2', name: assetB.name, unresolved: false, nativeCopyExists: true, backupExists: false },
+        { assetId: 'a1', name: assetA.name, type: 'video', cacheResolved: false, nativeResolved: true, resolved: true },
+        { assetId: 'a2', name: assetB.name, type: 'video', cacheResolved: false, nativeResolved: true, resolved: true },
       ],
       segments: [
         { id: 's1', label: 'A', assetId: 'a1', resolutionStatus: 'resolved' },

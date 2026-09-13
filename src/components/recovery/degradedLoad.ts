@@ -1,12 +1,14 @@
 /**
  * Degraded-load model — props a future App.tsx can pass without this
- * slice knowing about IndexedDB, native copies, or autosave.
+ * slice writing IndexedDB, the native store, or autosave.
  *
- * A project can keep segment metadata after Chromium evicts media bytes
- * (`docs/ws3-export/persistence-layer-audit.md` at 01e565d). Opening that
- * project must not persist. `canPersistRecoveredProject` is the UI-side
- * gate: if any asset is unresolved, Save is not a legal affordance.
+ * Shape is CC's published `AssetRecoveryEntry`: one `nativeResolved` fact
+ * (the native store IS the durable copy; there is no separate backup flag).
+ * `resolved` is `cacheResolved || nativeResolved`. Saving stays illegal
+ * while any asset is short of that.
  */
+
+import type { AssetRecoveryEntry, ProjectAssetRecoveryStatus } from '../../services/assetRecovery';
 
 export type SegmentResolutionStatus = 'resolved' | 'unresolved' | 'missing-asset';
 
@@ -17,23 +19,30 @@ export interface RecoverySegment {
   resolutionStatus: SegmentResolutionStatus;
 }
 
-export interface RecoveryAsset {
-  id: string;
-  name: string;
-  unresolved: boolean;
-  nativeCopyExists: boolean;
-  backupExists: boolean;
+export type RecoveryAsset = AssetRecoveryEntry;
+
+export function recoveryAssetsFromStatus(
+  status: ProjectAssetRecoveryStatus,
+): RecoveryAsset[] {
+  return status.assets.map((entry) => ({
+    assetId: entry.assetId,
+    name: entry.name,
+    type: entry.type,
+    cacheResolved: entry.cacheResolved,
+    nativeResolved: entry.nativeResolved,
+    resolved: entry.resolved,
+  }));
 }
 
 export function canPersistRecoveredProject(input: {
   assets: readonly RecoveryAsset[];
   segments: readonly RecoverySegment[];
 }): boolean {
-  if (input.assets.some((asset) => asset.unresolved)) return false;
+  if (input.assets.some((asset) => !asset.resolved)) return false;
   if (input.segments.some((segment) => segment.resolutionStatus !== 'resolved')) return false;
   return true;
 }
 
 export function unresolvedAssetIds(assets: readonly RecoveryAsset[]): string[] {
-  return assets.filter((asset) => asset.unresolved).map((asset) => asset.id);
+  return assets.filter((asset) => !asset.resolved).map((asset) => asset.assetId);
 }

@@ -22,41 +22,36 @@ afterEach(() => {
 });
 
 const resolvedAsset: RecoveryAsset = {
-  id: 'asset-resolved',
+  assetId: 'asset-resolved',
   name: 'hero.mp4',
-  unresolved: false,
-  nativeCopyExists: true,
-  backupExists: true,
+  type: 'video',
+  cacheResolved: true,
+  nativeResolved: true,
+  resolved: true,
+};
+
+const cacheOnlyAsset: RecoveryAsset = {
+  assetId: 'asset-cache',
+  name: 'cutaway.mp4',
+  type: 'video',
+  cacheResolved: true,
+  nativeResolved: false,
+  resolved: true,
 };
 
 const missingAsset: RecoveryAsset = {
-  id: 'asset-missing',
+  assetId: 'asset-missing',
   name: 'b-roll.mp4',
-  unresolved: true,
-  nativeCopyExists: false,
-  backupExists: false,
-};
-
-const nativeCopyAsset: RecoveryAsset = {
-  id: 'asset-native',
-  name: 'cutaway.mp4',
-  unresolved: true,
-  nativeCopyExists: true,
-  backupExists: false,
-};
-
-const backupAsset: RecoveryAsset = {
-  id: 'asset-backup',
-  name: 'vo.wav',
-  unresolved: true,
-  nativeCopyExists: false,
-  backupExists: true,
+  type: 'video',
+  cacheResolved: false,
+  nativeResolved: false,
+  resolved: false,
 };
 
 const segments: RecoverySegment[] = [
   { id: 'seg-1', label: 'Hook', assetId: 'asset-resolved', resolutionStatus: 'resolved' },
   { id: 'seg-2', label: 'B-roll', assetId: 'asset-missing', resolutionStatus: 'missing-asset' },
-  { id: 'seg-3', label: 'Cutaway', assetId: 'asset-native', resolutionStatus: 'unresolved' },
+  { id: 'seg-3', label: 'Cutaway', assetId: 'asset-cache', resolutionStatus: 'resolved' },
 ];
 
 async function renderScreen(props: {
@@ -106,25 +101,25 @@ describe('DegradedProjectRecoveryScreen — no-save invariant', () => {
   });
 });
 
-describe('DegradedProjectRecoveryScreen — status rendering', () => {
+describe('DegradedProjectRecoveryScreen — collapsed nativeResolved contract', () => {
   it('renders per-segment resolution status from props', async () => {
     await renderScreen({
-      assets: [resolvedAsset, missingAsset, nativeCopyAsset],
+      assets: [resolvedAsset, missingAsset, cacheOnlyAsset],
       segments,
     });
     const rows = [...container.querySelectorAll('[data-testid="recovery-segment"]')];
     expect(rows.map((el) => el.getAttribute('data-resolution-status'))).toEqual([
       'resolved',
       'missing-asset',
-      'unresolved',
+      'resolved',
     ]);
     expect(container.textContent).toMatch(/Hook/);
     expect(container.textContent).toMatch(/Missing asset/);
   });
 
-  it('distinguishes missing vs native-copy vs backup indicators', async () => {
+  it('renders missing vs nativeResolved without a backup state', async () => {
     await renderScreen({
-      assets: [missingAsset, nativeCopyAsset, backupAsset],
+      assets: [missingAsset, resolvedAsset, cacheOnlyAsset],
       segments,
     });
     const byId = (id: string): Element => {
@@ -133,24 +128,27 @@ describe('DegradedProjectRecoveryScreen — status rendering', () => {
       return el;
     };
     expect(byId('asset-missing').getAttribute('data-location')).toBe('missing');
-    expect(byId('asset-native').getAttribute('data-location')).toBe('native-copy');
-    expect(byId('asset-backup').getAttribute('data-location')).toBe('backup');
-    expect(byId('asset-native').textContent).toMatch(/Native copy available/);
-    expect(byId('asset-backup').textContent).toMatch(/Backup available/);
+    expect(byId('asset-missing').getAttribute('data-native-resolved')).toBe('false');
     expect(byId('asset-missing').textContent).toMatch(/Missing/);
+    expect(byId('asset-resolved').getAttribute('data-location')).toBe('native');
+    expect(byId('asset-resolved').getAttribute('data-native-resolved')).toBe('true');
+    expect(byId('asset-resolved').textContent).toMatch(/Native copy available/);
+    expect(byId('asset-cache').getAttribute('data-location')).toBe('resolved');
+    expect(byId('asset-cache').getAttribute('data-unresolved')).toBe('false');
+    expect(container.textContent).not.toMatch(/Backup available/);
+    expect(container.querySelector('[data-location="backup"]')).toBeNull();
+    expect(container.querySelector('[data-location="native-copy"]')).toBeNull();
   });
 
-  it('invokes the re-link fake with the unresolved asset id', async () => {
+  it('invokes the re-link fake only for unresolved asset ids', async () => {
     const fake = await renderScreen({
-      assets: [missingAsset, nativeCopyAsset],
+      assets: [missingAsset, resolvedAsset],
       segments,
     });
     const buttons = [...container.querySelectorAll<HTMLButtonElement>('[data-testid="recovery-relink"]')];
-    expect(buttons).toHaveLength(2);
+    expect(buttons).toHaveLength(1);
     await act(async () => { buttons[0]!.click(); });
     expect(fake.relinked).toEqual(['asset-missing']);
-    await act(async () => { buttons[1]!.click(); });
-    expect(fake.relinked).toEqual(['asset-missing', 'asset-native']);
   });
 
   it('summarises unresolved assets and never offers re-link on a resolved row', async () => {

@@ -1,25 +1,38 @@
 import { describe, it, expect } from 'vitest';
+import type { ProjectAssetRecoveryStatus } from '../../services/assetRecovery';
 import {
   canPersistRecoveredProject,
+  recoveryAssetsFromStatus,
   unresolvedAssetIds,
   type RecoveryAsset,
   type RecoverySegment,
 } from './degradedLoad';
 
 const resolved: RecoveryAsset = {
-  id: 'a1',
+  assetId: 'a1',
   name: 'clip.mp4',
-  unresolved: false,
-  nativeCopyExists: true,
-  backupExists: false,
+  type: 'video',
+  cacheResolved: true,
+  nativeResolved: true,
+  resolved: true,
 };
 
 const missing: RecoveryAsset = {
-  id: 'a2',
+  assetId: 'a2',
   name: 'vo.wav',
-  unresolved: true,
-  nativeCopyExists: false,
-  backupExists: false,
+  type: 'audio',
+  cacheResolved: false,
+  nativeResolved: false,
+  resolved: false,
+};
+
+const nativeOnly: RecoveryAsset = {
+  assetId: 'a3',
+  name: 'still.png',
+  type: 'image',
+  cacheResolved: false,
+  nativeResolved: true,
+  resolved: true,
 };
 
 const okSegment: RecoverySegment = {
@@ -57,10 +70,34 @@ describe('canPersistRecoveredProject', () => {
       segments: [okSegment],
     })).toBe(true);
   });
+
+  it('treats nativeResolved as resolved — there is no separate backup flag', () => {
+    expect(canPersistRecoveredProject({
+      assets: [nativeOnly],
+      segments: [{ id: 's3', label: 'Still', assetId: 'a3', resolutionStatus: 'resolved' }],
+    })).toBe(true);
+    expect(nativeOnly.resolved).toBe(nativeOnly.cacheResolved || nativeOnly.nativeResolved);
+  });
 });
 
 describe('unresolvedAssetIds', () => {
   it('lists only unresolved ids', () => {
-    expect(unresolvedAssetIds([resolved, missing])).toEqual(['a2']);
+    expect(unresolvedAssetIds([resolved, missing, nativeOnly])).toEqual(['a2']);
+  });
+});
+
+describe('recoveryAssetsFromStatus', () => {
+  it('copies CC ProjectAssetRecoveryStatus rows without inventing a backup field', () => {
+    const status: ProjectAssetRecoveryStatus = {
+      projectId: 'p1',
+      projectName: 'Talk',
+      loadFailure: null,
+      allResolved: false,
+      assets: [resolved, missing, nativeOnly],
+    };
+    const rows = recoveryAssetsFromStatus(status);
+    expect(rows).toEqual([resolved, missing, nativeOnly]);
+    expect(rows.some((row) => 'backupExists' in row || 'nativeCopyExists' in row)).toBe(false);
+    expect(rows.map((row) => row.nativeResolved)).toEqual([true, false, true]);
   });
 });
