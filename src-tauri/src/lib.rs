@@ -23,6 +23,7 @@ mod event_sink;
 pub mod model_download;
 pub mod models;
 mod project_mirror;
+mod safe_delete;
 mod sha256;
 mod whisper;
 

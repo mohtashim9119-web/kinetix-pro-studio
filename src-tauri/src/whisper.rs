@@ -10,6 +10,21 @@ use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
 
+use crate::safe_delete::delete_app_staging_dir;
+
+/// WS3 item E — every staging directory this file creates (and the ONLY
+/// directories `delete_app_staging_dir` is ever allowed to remove on this
+/// file's behalf) shares this name prefix, under `std::env::temp_dir()`.
+/// `whisper_stage_audio_raw` is the sole creator; the three cleanup sites
+/// below (the transcode-failure arm, the `Terminated` arm, and
+/// `TmpDirCleanupGuard::drop`) are the only deleters, and now all three go
+/// through the audited helper instead of a raw `fs::remove_dir_all` on
+/// whatever `audio_path.parent()` happened to resolve to — see
+/// `safe_delete.rs`'s module doc comment for why that raw form was a
+/// shipping-blocking hazard: any IPC caller passing a real user file as
+/// `audio_path` got that file's entire parent directory deleted.
+const WHISPER_STAGING_DIR_PREFIX: &str = "kinetix-whisper-";
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -706,7 +721,7 @@ pub fn whisper_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<Strin
     };
 
     let tmp_id = Uuid::new_v4().to_string();
-    let tmp_dir = std::env::temp_dir().join(format!("kinetix-whisper-{}", tmp_id));
+    let tmp_dir = std::env::temp_dir().join(format!("{WHISPER_STAGING_DIR_PREFIX}{tmp_id}"));
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("create temp dir: {e}"))?;
 
     let audio_ext = audio_extension_from_bytes(bytes);
@@ -797,7 +812,17 @@ impl TmpDirCleanupGuard {
 impl Drop for TmpDirCleanupGuard {
     fn drop(&mut self) {
         if let Some(dir) = self.0.take() {
-            let _ = fs::remove_dir_all(&dir);
+            // WS3 item E — audited, bounded delete. This fires on EVERY early
+            // return between `TmpDirCleanupGuard::new` and either disarm
+            // point, including ones with no obvious connection to file I/O
+            // (a `?` on the state lock, the sidecar lookup) — exactly why a
+            // raw `remove_dir_all` here was the worst of the three sites: it
+            // ran on `audio_path.parent()`, an IPC-reachable string, with no
+            // verification it was ever a staging directory this file
+            // created. A refusal here is silently absorbed (`let _ =`), same
+            // posture as the raw call it replaces for the everyday "already
+            // gone" case — but a wrong path is now REFUSED, not deleted.
+            let _ = delete_app_staging_dir(&dir, &std::env::temp_dir(), WHISPER_STAGING_DIR_PREFIX);
         }
     }
 }
@@ -894,7 +919,8 @@ pub async fn whisper_transcribe(
     // degrade — see transcode_to_wav's doc comment.
     let wav_path = tmp_dir.join("input_16k.wav");
     if let Err(e) = transcode_to_wav(&app, &audio_path, &wav_path).await {
-        let _ = fs::remove_dir_all(&tmp_dir);
+        // WS3 item E — audited, bounded delete; see the guard's Drop impl above.
+        let _ = delete_app_staging_dir(&tmp_dir, &std::env::temp_dir(), WHISPER_STAGING_DIR_PREFIX);
         tmp_dir_guard.disarm();
         emit_terminal(&sink, &job_key, WhisperEvent::Error { message: e });
         return Ok(());
@@ -1041,7 +1067,8 @@ pub async fn whisper_transcribe(
                     let mut lock = state.0.lock().map_err(|_| "state lock poisoned")?;
                     lock.remove(&job_key);
                 }
-                let _ = fs::remove_dir_all(&tmp_dir);
+                // WS3 item E — audited, bounded delete; see the guard's Drop impl above.
+                let _ = delete_app_staging_dir(&tmp_dir, &std::env::temp_dir(), WHISPER_STAGING_DIR_PREFIX);
                 tmp_dir_guard.disarm();
 
                 // Every decision this arm used to make inline now lives in
@@ -1934,5 +1961,61 @@ mod in_flight_tests {
         assert_eq!(resolve_job_key(None), DEFAULT_JOB_KEY);
         assert_eq!(resolve_job_key(Some("   ".into())), DEFAULT_JOB_KEY);
         assert_eq!(resolve_job_key(Some("proj-7".into())), "proj-7");
+    }
+}
+
+/// WS3 item E — the tripwire. Scans this file's OWN source for a raw
+/// `fs::remove_dir_all` call reintroduced in PRODUCTION code (everything
+/// above the `// Tests` marker) outside the audited `delete_app_staging_dir`
+/// helper. Only production code is checked: the test modules below the
+/// marker manage their own fixture directories directly by design, and are
+/// not reachable from an untrusted IPC caller, which is the entire hazard
+/// this guards against. This is deliberately a source-text check, not a
+/// behavioral one — the three sites this closed (the transcode-failure arm,
+/// the `Terminated` arm, `TmpDirCleanupGuard::drop`) all had CORRECT-LOOKING
+/// call sites; the bug was never in what fired the delete, only in what path
+/// it was handed. A future edit that adds a fourth site the "normal" way —
+/// `fs::remove_dir_all(&some_caller_influenced_path)` — reproduces exactly
+/// that shape, and no behavioral test targeting one specific call site would
+/// catch a NEW one.
+#[cfg(test)]
+mod safe_delete_tripwire_tests {
+    const SOURCE: &str = include_str!("whisper.rs");
+
+    #[test]
+    fn no_raw_remove_dir_all_survives_in_production_code() {
+        let production_code = SOURCE.split("\n// Tests\n").next().expect(
+            "the '// Tests' section marker moved or was renamed in whisper.rs — \
+             update this test's marker to match before trusting its result",
+        );
+        let hits: Vec<&str> = production_code
+            .lines()
+            .filter(|line| line.contains("fs::remove_dir_all") && !line.trim_start().starts_with("//"))
+            .collect();
+        assert!(
+            hits.is_empty(),
+            "a raw fs::remove_dir_all call was reintroduced in whisper.rs production code — every \
+             deletion of an app-created staging directory MUST go through \
+             safe_delete::delete_app_staging_dir instead, which verifies the target is actually inside \
+             the staging root and correctly named before deleting anything. Offending line(s): {hits:?}"
+        );
+    }
+
+    /// The tripwire's own negative control: the marker split must actually
+    /// find something to check, and that something must contain the audited
+    /// helper's own three call sites (so a future rename of
+    /// `delete_app_staging_dir` that silently drops a call site is also
+    /// caught, not just a raw `remove_dir_all` reintroduction).
+    #[test]
+    fn the_marker_split_finds_production_code_containing_all_three_audited_call_sites() {
+        let production_code = SOURCE.split("\n// Tests\n").next().unwrap();
+        assert!(production_code.len() > 1000, "the marker split produced almost nothing — marker is wrong");
+        let call_sites = production_code.matches("delete_app_staging_dir(").count();
+        assert_eq!(
+            call_sites, 3,
+            "expected exactly 3 delete_app_staging_dir call sites in production code (Drop impl, \
+             transcode-failure arm, Terminated arm) — found {call_sites}. If a site was deliberately \
+             added or removed, update this count alongside it."
+        );
     }
 }
