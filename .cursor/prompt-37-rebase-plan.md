@@ -347,7 +347,7 @@ Checked 2026-09-13. Estimators are **two layers of one model**, not two copies o
 | U11 | **VERIFIED** (no duplicate of our 8 contract tests) | CC has no `export_pick_output_directory` / `export_validate_output_path` tests. `exportDestinationDiskEstimate.test.ts` is the formula, not the invoke adapter. Keep the 8. |
 | U12 | **VERIFIED** | `src/dev/webcodecsStep2Spike/main.ts:2386` still intercepts `pick_save_path`. `useExport.ts:988` on CC still calls it. Double-picker remains until `startExport` is edited (out of this turn — no new features). |
 | U13 | **VERIFIED** (bitrate not threaded) | `exportWorker.ts:1208` `const EXPORT_BITRATE = 8_000_000`; `:1301` `bitrate: EXPORT_BITRATE`. `useExport.ts` has no `bitrateKbps`. |
-| U14 | **STILL-UNSEEN** until post-rebase `npm test` | CC's 3729 is a **local** green gate. Cloud still lacks private corpus + `.work-phase4/replay/`. Measured below. |
+| U14 | **VERIFIED** (failure set unchanged) | Two post-rebase `npm test` runs: 35 failed + `ws1-session-p-arms.test.ts` suite. Names match `.cursor/cloud-expected-failures.md`. No new cloud failure. |
 | U15 | **VERIFIED** (no filename collision) | CC added `exportDestinationDiskEstimate.ts`, not `exportOutputEstimate.ts`. Both files coexist as the two layers. |
 | U16 | **WRONG** (no size-report payload on CC) | Round 24a `architecture-ledger.md:2500` and `:2657`: Step 7 (size report) **deferred to Round 25**. No `StorageSizeRow` type on CC's tip. Identities filled from writers (U17), not from a CC schema. |
 | U17 | **VERIFIED** (13 identities from writers, not from a CC table named "13 rows") | Round 23 ledger entry has **no STEP 1 storage inventory** (`architecture-ledger.md:2471` is PROMPT 32 clean baseline). Round 21 STEP 1 is the **session-artifact** table (7 files inside `kinetix-export-<uuid>/`, `:2048-2061`). Round 24a STEP 3 (`:2540-2560`) adds whisper staging, FA staging, stale backups. Plus Whisper + 5 FA packs. See `REAL_STORAGE_SIZE_ROWS`. |
@@ -387,6 +387,25 @@ Same `bitrateKbps × 125 × D` + AAC 24,000 B/s. Different outputs. **Do not del
 | Storage size report | **none**. Sessions only: `ffmpeg_reclaimable_sessions` / `ffmpeg_reclaim_sessions`. | Must write `storage_size_report` later (Round 25). |
 
 Do not add any of those in this turn.
+
+### Post-rebase census (`4e52b31` on `0bdc8a5`)
+
+Rebase: **zero conflicts** (no overlapping paths vs `fd547ce`→`0bdc8a5`).
+
+`npm test` twice, Node v22.22.2, identical:
+
+| | Totals |
+|---|---|
+| Run 1 | 3665 passed / **35 failed** / 78 skipped = **3778** (97.88s) |
+| Run 2 | 3665 passed / **35 failed** / 78 skipped = **3778** (97.05s) |
+
+Failure-name diff run1 vs run2: **empty**. Failure set vs freeze: **empty** (35 tests + 1 non-loading suite).
+
+Lane delta on CC's **3729**: `3778 − 3729 = **49**` = this lane's 50 new tests − 1 `p-arms` not collected in cloud.
+
+```
+50 = 28 (prompt 35) + 8 (ExportTargetFs fake) + 14 (storage report + low-disk)
+```
 
 ---
 
