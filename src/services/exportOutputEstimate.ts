@@ -30,6 +30,13 @@
  *   destinationRequiredBytes = applyHeadroom(estimatedFileBytes)
  *                            = ceil(estimatedFileBytes × 1.10) + 64 MiB
  *
+ * LAYERS (settled against ws3-storage-unified @ 0bdc8a5). This module is the
+ * badge / file-size layer (`estimatedFileBytes`). CC's
+ * `exportDestinationDiskEstimate.ts` is the preflight layer
+ * (`destinationRequiredBytes`). Same size-term arithmetic; different public
+ * outputs. The modal badge imports this file; the free-space gate imports
+ * CC's. Do not delete either module.
+ *
  * fps and resolution are accepted as inputs because the badge is specified
  * from bitrate, fps, resolution and duration. At a fixed target bitrate they
  * do not change the video-byte term — the encoder's `bitrate` is a

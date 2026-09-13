@@ -24,6 +24,7 @@ import {
   estimateExportOutputBytes,
   exportBitrateKbpsOptions,
 } from '../services/exportOutputEstimate';
+import { estimateExportDestinationDiskBytes } from '../services/webcodecsExport/exportDestinationDiskEstimate';
 import {
   defaultExportFileName,
   parentDirOf,
@@ -113,6 +114,15 @@ export function ExportSettingsModal({
     [draftBitrateKbps, draftFps, draftResolution, aspectRatio, durationSeconds, hasAudio],
   );
 
+  const destinationRequiredBytes = useMemo(
+    () => estimateExportDestinationDiskBytes({
+      bitrateKbps: draftBitrateKbps,
+      durationSeconds,
+      hasAudio,
+    }).destinationRequiredBytes,
+    [draftBitrateKbps, durationSeconds, hasAudio],
+  );
+
   const pureValidation = useMemo(
     () => validateExportOutputPath(draftDirectory, draftFileName),
     [draftDirectory, draftFileName],
@@ -147,7 +157,7 @@ export function ExportSettingsModal({
     return () => { cancelled = true; };
   }, [draftDirectory, draftFileName, pureValidation.ok, targetFs]);
 
-  const spaceShortfall = freeSpace !== null && freeSpace.availableBytes < estimate.destinationRequiredBytes;
+  const spaceShortfall = freeSpace !== null && freeSpace.availableBytes < destinationRequiredBytes;
   const canExport = pureValidation.ok && nativeValidationReason === null && !spaceShortfall && !browseBusy;
 
   const handleBrowse = useCallback(async (): Promise<void> => {
@@ -312,7 +322,7 @@ export function ExportSettingsModal({
               {freeSpace === null
                 ? (draftDirectory ? 'Free space unavailable' : 'No folder selected')
                 : spaceShortfall
-                  ? `${formatBytes(freeSpace.availableBytes)} free — need ${formatBytes(estimate.destinationRequiredBytes)}`
+                  ? `${formatBytes(freeSpace.availableBytes)} free — need ${formatBytes(destinationRequiredBytes)}`
                   : `${formatBytes(freeSpace.availableBytes)} free`}
             </span>
           </div>
