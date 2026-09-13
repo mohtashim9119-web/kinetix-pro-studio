@@ -105,6 +105,7 @@ import {
   formatFailureMessage,
   pushPhaseLogEntry,
   NO_FLUSH_OBSERVATION,
+  FAILURE_VIA_TO_KIND,
   type ExportFailureVia,
   type ExportPhaseLogEntry,
   type ExportWorkerDiagnosticsPayload,
@@ -1835,9 +1836,22 @@ export function driveGlRun(
           frameIndex: diagnostics.framesEncoded > 0 ? diagnostics.framesEncoded - 1 : null,
           timelineSec: null,
         };
+        // WS3 item F — two fixes together, both closing the same gap:
+        // (1) `lastWorkerDiagnostics` must be updated to THIS `diagnostics`
+        // before `errorFromDiagnostics` runs, matching `finishDiskFull`'s own
+        // pattern a few lines below — without it, `snapshotLiveness()`'s
+        // `failureVia` reads whatever `lastWorkerDiagnostics.failure?.via` was
+        // BEFORE this bound fired (typically null, from the last ordinary
+        // 'chunk'/'run-done' message), not the bound's own `via`. (2) the
+        // `kind` passed to `errorFromDiagnostics` was hardcoded to `'unknown'`
+        // for all four bounds (watchdog, stall, append-drain-stall,
+        // append-queue-overflow) — now the exhaustive `FAILURE_VIA_TO_KIND`
+        // policy record classifies it consistently with every other
+        // worker/append failure path instead of falling through to unknown.
+        lastWorkerDiagnostics = diagnostics;
         finish({
           ok: false,
-          error: errorFromDiagnostics('unknown', diagnostics, message),
+          error: errorFromDiagnostics(FAILURE_VIA_TO_KIND[via], diagnostics, message),
           diagnostics,
           silentIntervals: silentIntervals(),
           appendCallCount,

@@ -5,6 +5,7 @@
  */
 
 import type { ExportDemuxSplit } from './exportPhaseTracker';
+import type { ExportErrorKind } from '../exportPipeline';
 
 /**
  * Rolling phase-transition log capacity. At PHASE_THROTTLE_MS (250 ms) one
@@ -129,6 +130,50 @@ export type ExportFailureVia =
    *  the concat/frame-count guard to notice the file is short — this fires at
    *  the batch that lost bytes, naming it. */
   | 'append-short-write';
+
+/**
+ * WS3 item F — exhaustive `ExportFailureVia` -> `ExportErrorKind` policy
+ * record, `satisfies`-checked so a future `ExportFailureVia` addition that
+ * this map does not also cover is a COMPILE ERROR, not a silent gap.
+ *
+ * WHAT THIS CLOSES. `finishWithBound` (`exportPipelineWebCodecs.ts`), the
+ * one terminal path for all four liveness bounds (watchdog, forward-progress
+ * stall, terminal-drain stall, append-queue overflow), hardcoded
+ * `kind: 'unknown'` regardless of `via` — so the retained Machine 1 session
+ * logged `failure_kind=unknown` for a bound expiry, and "stalled because the
+ * disk was full" was indistinguishable from "stalled because the GPU hung"
+ * without opening the full diagnostics blob. Every `via` here maps to the
+ * SAME `'encode'` kind every other worker/append/flush failure path already
+ * uses (`errorFromDiagnostics('encode', ...)` at the append-error and
+ * worker-error call sites) — this map does not invent new `ExportErrorKind`
+ * values, it just stops one call site from being the sole exception that
+ * fell through to `'unknown'`. `'cancel'` is the one real exception, mapping
+ * to `'cancelled'` for consistency with the cancel path's own existing
+ * `errorFromDiagnostics('cancelled', ...)` call — included here for
+ * exhaustiveness even though `finishWithBound` itself never passes `'cancel'`
+ * as a `via` (cancellation has its own separate code path).
+ *
+ * `kind` alone still cannot distinguish the four bound types from each other
+ * (they all now map to `'encode'`) — that distinction lives in `via` itself,
+ * which is why the native diagnostic log now carries BOTH (see
+ * `useExport.ts`'s `failureKind` construction), not why this map exists to
+ * separate them at the `kind` level.
+ */
+export const FAILURE_VIA_TO_KIND = {
+  'encoder-callback': 'encode',
+  thrown: 'encode',
+  'gl-context-lost': 'encode',
+  cancel: 'cancelled',
+  'init-error': 'encode',
+  watchdog: 'encode',
+  'worker-crash': 'encode',
+  'append-error': 'encode',
+  stall: 'encode',
+  'flush-timeout': 'encode',
+  'append-drain-stall': 'encode',
+  'append-queue-overflow': 'encode',
+  'append-short-write': 'encode',
+} as const satisfies Record<ExportFailureVia, ExportErrorKind>;
 
 export interface ExportFailureIdentity {
   name: string | null;

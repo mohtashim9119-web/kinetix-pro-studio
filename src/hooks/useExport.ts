@@ -18,7 +18,7 @@ import { readCleanupNotices, clearCleanupNotices, recordCleanupFailure, type Cle
 import { normalizeSaveSessionFileResult } from '../services/tauriFfmpeg';
 import { checkExportDestinationPathLength } from '../services/exportDestinationPath';
 import { TauriFfmpeg, type DestroySessionOutcome, type OrphanSweepReport, type RetainForResumeReport, type SessionDiskSnapshot } from '../services/tauriFfmpeg';
-import { decideSessionRetentionOnFailure } from './exportSessionRetentionDecision';
+import { decideSessionRetentionOnFailure, buildNativeFailureKind } from './exportSessionRetentionDecision';
 import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
@@ -870,7 +870,8 @@ export function useExport(
     if (!result.ok) {
       stopElapsedTimer();
       const durabilityWarnings = await drainDurabilityWarnings();
-      const failureKind: string = result.error.kind;
+      // WS3 item F — see `buildNativeFailureKind`'s own doc comment.
+      const failureKind: string = buildNativeFailureKind(result.error);
       // WS3 (diagnostic logging) — captured BEFORE any destroy/retain call
       // below runs: both `releaseFailedSessionForResume` (on retention) and
       // `teardown` null out `tauriBackendRef.current`, so reading the

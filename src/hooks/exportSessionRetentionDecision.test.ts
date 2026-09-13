@@ -7,7 +7,7 @@
  * at all) is unaffected by that addition.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { decideSessionRetentionOnFailure, type RetainableSession } from './exportSessionRetentionDecision';
+import { decideSessionRetentionOnFailure, buildNativeFailureKind, type RetainableSession } from './exportSessionRetentionDecision';
 import type { RetainForResumeReport } from '../services/tauriFfmpeg';
 
 const REPORT: RetainForResumeReport = {
@@ -44,5 +44,45 @@ describe('decideSessionRetentionOnFailure', () => {
   it('returns null when active itself is null', async () => {
     const report = await decideSessionRetentionOnFailure(null, 'disk_full');
     expect(report).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS3 item F — buildNativeFailureKind
+// ---------------------------------------------------------------------------
+
+describe('buildNativeFailureKind', () => {
+  it('is just kind when there is no liveness.failureVia', () => {
+    expect(buildNativeFailureKind({ kind: 'disk_full', liveness: undefined })).toBe('disk_full');
+    expect(
+      buildNativeFailureKind({
+        kind: 'encode',
+        liveness: { lastPhase: null, msSinceLastPhaseChange: null, pieceIndex: null, framesEncoded: null, failureVia: null },
+      }),
+    ).toBe('encode');
+  });
+
+  it('appends via for a liveness-bound expiry — the exact shape that used to collapse to "unknown" alone', () => {
+    expect(
+      buildNativeFailureKind({
+        kind: 'encode',
+        liveness: { lastPhase: null, msSinceLastPhaseChange: null, pieceIndex: null, framesEncoded: null, failureVia: 'watchdog' },
+      }),
+    ).toBe('encode:watchdog');
+    expect(
+      buildNativeFailureKind({
+        kind: 'encode',
+        liveness: { lastPhase: null, msSinceLastPhaseChange: null, pieceIndex: null, framesEncoded: null, failureVia: 'append-drain-stall' },
+      }),
+    ).toBe('encode:append-drain-stall');
+  });
+
+  it('still appends via even for a non-encode kind — the two facts are independent', () => {
+    expect(
+      buildNativeFailureKind({
+        kind: 'disk_full',
+        liveness: { lastPhase: null, msSinceLastPhaseChange: null, pieceIndex: null, framesEncoded: null, failureVia: 'append-error' },
+      }),
+    ).toBe('disk_full:append-error');
   });
 });

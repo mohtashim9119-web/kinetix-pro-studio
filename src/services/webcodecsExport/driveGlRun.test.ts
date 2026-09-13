@@ -254,6 +254,16 @@ describe('driveGlRun fake-worker harness', () => {
     expectPopulatedDiagnostics(result.diagnostics);
     expect(result.diagnostics?.failure?.via).toBe('watchdog');
     expect(fake.terminated).toBe(true);
+    // WS3 item F — a liveness-bound expiry used to collapse to kind:
+    // 'unknown' regardless of which of the four bounds fired, AND
+    // `error.liveness.failureVia` read STALE state (`lastWorkerDiagnostics`
+    // was never updated before this point), so it could not fill the gap
+    // either. Both are fixed: `kind` is classified through the exhaustive
+    // FAILURE_VIA_TO_KIND policy record (same 'encode' every other
+    // worker/append failure path already uses), and `failureVia` now
+    // actually reflects the bound that fired.
+    expect(result.error.kind).toBe('encode');
+    expect(result.error.liveness?.failureVia).toBe('watchdog');
   });
 
   it('worker error path returns populated diagnostics with failure identity (destructive probe)', async () => {

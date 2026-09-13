@@ -400,7 +400,13 @@ pub fn ffmpeg_log_disk_preflight(session_id: String, ok: bool, summary: String) 
 /// alongside WHAT that fate was, without threading a whole `ExportError`
 /// across the IPC boundary. The TS side passes `result.error.kind` (e.g.
 /// `"disk_full"`) for a real failure, or a short reason string for a
-/// non-failure call (`"success"`, `"cancel"`) at other call sites.
+/// non-failure call (`"success"`, `"cancel"`) at other call sites — WS3 item
+/// F: suffixed `:<via>` (e.g. `"encode:watchdog"`, `"encode:append-drain-
+/// stall"`) whenever `ExportError.liveness?.failureVia` is present, so a
+/// liveness-bound expiry (which used to collapse to plain `"unknown"`, every
+/// bound indistinguishable from the others) is diagnosable from this log
+/// line alone — see `useExport.ts`'s `failureKind` construction and
+/// `exportWorkerDiagnostics.ts`'s `FAILURE_VIA_TO_KIND`.
 #[tauri::command]
 pub fn ffmpeg_retain_session_for_resume(
     session_id: String,
