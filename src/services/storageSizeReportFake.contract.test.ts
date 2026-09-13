@@ -4,38 +4,28 @@
  * compute rows or re-sum reclaimable bytes.
  */
 import { describe, it, expect } from 'vitest';
-import type { StorageSizeRow, StorageSizeSnapshot } from './storageSizeReport';
+import {
+  REAL_STORAGE_SIZE_ROWS,
+  WHISPER_MODEL_SIZE_BYTES,
+  OS_TEMP_DIR,
+  type StorageSizeRow,
+  type StorageSizeSnapshot,
+} from './storageSizeReport';
 import {
   createStorageSizeReportFake,
   STORAGE_SIZE_REPORT,
 } from './storageSizeReportFake';
 
+const WHISPER = REAL_STORAGE_SIZE_ROWS[0]!;
+const LIVE: StorageSizeRow = { ...REAL_STORAGE_SIZE_ROWS[9]!, currentBytes: 50_000_000 };
 const ORPHAN: StorageSizeRow = {
-  path: '/Users/name/Library/Caches/kinetix-export-aaaa',
-  label: 'Abandoned export session',
+  ...REAL_STORAGE_SIZE_ROWS[11]!,
   currentBytes: 400_000_000,
   reclaimableBytes: 400_000_000,
-  sweepClass: 'reclaimable',
-};
-
-const LIVE: StorageSizeRow = {
-  path: '/Users/name/Library/Caches/kinetix-export-bbbb',
-  label: 'Live export session',
-  currentBytes: 50_000_000,
-  reclaimableBytes: 0,
-  sweepClass: 'protected',
-};
-
-const WHISPER: StorageSizeRow = {
-  path: '/Users/name/Library/Application Support/kinetix/models/ggml-large-v3-turbo.bin',
-  label: 'Whisper large-v3-turbo',
-  currentBytes: 1.5 * 1024 ** 3,
-  reclaimableBytes: 0,
-  sweepClass: 'never-reclaimable',
 };
 
 const BROKEN: StorageSizeRow = {
-  path: '/Users/name/Library/Caches/kinetix-export-cccc',
+  path: `${OS_TEMP_DIR}/kinetix-export-invariant`,
   label: 'Invariant-violating session',
   currentBytes: 10_000_000,
   reclaimableBytes: 99_000_000,
@@ -65,21 +55,18 @@ describe('storage_size_report', () => {
     expect((await fake.adapted.load()).totalReclaimableBytes).toBe(1);
   });
 
-  it('round-trips a 13-row payload without dropping, merging, or filling rows', async () => {
-    const rows: StorageSizeRow[] = Array.from({ length: 13 }, (_, i) => ({
-      path: `/Users/name/Library/Caches/kinetix-row-${i}`,
-      label: `row-${i}`,
-      currentBytes: (i + 1) * 1_000,
-      reclaimableBytes: i % 2 === 0 ? (i + 1) * 1_000 : 0,
-      sweepClass: i % 2 === 0 ? 'reclaimable' : 'protected',
-    }));
-    const fake = createStorageSizeReportFake({ rows, totalReclaimableBytes: 0 });
+  it('round-trips the real 13-row identity payload without dropping, merging, or filling rows', async () => {
+    expect(REAL_STORAGE_SIZE_ROWS).toHaveLength(13);
+    const fake = createStorageSizeReportFake({
+      rows: REAL_STORAGE_SIZE_ROWS,
+      totalReclaimableBytes: 0,
+    });
     const loaded = await fake.adapted.load();
     expect(loaded.rows).toHaveLength(13);
-    expect(loaded.rows).toEqual(rows);
+    expect(loaded.rows).toEqual(REAL_STORAGE_SIZE_ROWS);
   });
 
-  it('preserves a never-reclaimable 1.5 GiB Whisper model row (reclaimableBytes stays 0)', async () => {
+  it('preserves a never-reclaimable Whisper model row at the recorded 1,624,555,275 B', async () => {
     const fake = createStorageSizeReportFake({
       rows: [WHISPER],
       totalReclaimableBytes: 0,
@@ -88,7 +75,8 @@ describe('storage_size_report', () => {
     expect(row).toEqual(WHISPER);
     expect(row?.sweepClass).toBe('never-reclaimable');
     expect(row?.reclaimableBytes).toBe(0);
-    expect(row?.currentBytes).toBe(1.5 * 1024 ** 3);
+    expect(row?.currentBytes).toBe(WHISPER_MODEL_SIZE_BYTES);
+    expect(row?.currentBytes).toBe(1_624_555_275);
   });
 
   it('does not clamp a row whose reclaimableBytes exceed currentBytes', async () => {

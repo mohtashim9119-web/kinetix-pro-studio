@@ -5,7 +5,13 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import { StorageSizeReport } from './StorageSizeReport';
 import { formatBytes } from '../services/webcodecsExport/diskFull';
-import type { StorageSizeRow, StorageSizeSnapshot } from '../services/storageSizeReport';
+import {
+  REAL_STORAGE_SIZE_ROWS,
+  WHISPER_MODEL_SIZE_BYTES,
+  OS_TEMP_DIR,
+  type StorageSizeRow,
+  type StorageSizeSnapshot,
+} from '../services/storageSizeReport';
 import { createStorageSizeReportFake } from '../services/storageSizeReportFake';
 
 let container: HTMLDivElement;
@@ -21,32 +27,16 @@ afterEach(() => {
   container.remove();
 });
 
+const WHISPER = REAL_STORAGE_SIZE_ROWS[0]!;
+const LIVE: StorageSizeRow = { ...REAL_STORAGE_SIZE_ROWS[9]!, currentBytes: 50_000_000 };
 const ORPHAN: StorageSizeRow = {
-  path: '/Users/name/Library/Caches/kinetix-export-aaaa',
-  label: 'Abandoned export session',
+  ...REAL_STORAGE_SIZE_ROWS[11]!,
   currentBytes: 400_000_000,
   reclaimableBytes: 400_000_000,
-  sweepClass: 'reclaimable',
-};
-
-const LIVE: StorageSizeRow = {
-  path: '/Users/name/Library/Caches/kinetix-export-bbbb',
-  label: 'Live export session',
-  currentBytes: 50_000_000,
-  reclaimableBytes: 0,
-  sweepClass: 'protected',
-};
-
-const WHISPER: StorageSizeRow = {
-  path: '/Users/name/Library/Application Support/kinetix/models/ggml-large-v3-turbo.bin',
-  label: 'Whisper large-v3-turbo',
-  currentBytes: 1.5 * 1024 ** 3,
-  reclaimableBytes: 0,
-  sweepClass: 'never-reclaimable',
 };
 
 const BROKEN: StorageSizeRow = {
-  path: '/Users/name/Library/Caches/kinetix-export-cccc',
+  path: `${OS_TEMP_DIR}/kinetix-export-invariant`,
   label: 'Invariant-violating session',
   currentBytes: 10_000_000,
   reclaimableBytes: 99_000_000,
@@ -118,7 +108,7 @@ describe('StorageSizeReport', () => {
     expect(rowEl(BROKEN.path).textContent).toContain('Invariant-violating session');
   });
 
-  it('offers no delete or reclaim control on a never-reclaimable 1.5 GiB Whisper model', async () => {
+  it('offers no delete or reclaim control on a never-reclaimable Whisper model (1,624,555,275 B)', async () => {
     const onReclaimRow = vi.fn();
     const fake = createStorageSizeReportFake({
       rows: [WHISPER, ORPHAN],
@@ -129,7 +119,7 @@ describe('StorageSizeReport', () => {
     expect(whisper.getAttribute('data-sweep-class')).toBe('never-reclaimable');
     expect(whisper.querySelector('[data-testid="storage-row-reclaim"]')).toBeNull();
     expect(whisper.querySelector('button')).toBeNull();
-    expect(whisper.textContent).toContain(formatBytes(1.5 * 1024 ** 3));
+    expect(whisper.textContent).toContain(formatBytes(WHISPER_MODEL_SIZE_BYTES));
     expect(rowEl(ORPHAN.path).querySelector('[data-testid="storage-row-reclaim"]')).not.toBeNull();
     expect(onReclaimRow).not.toHaveBeenCalled();
   });

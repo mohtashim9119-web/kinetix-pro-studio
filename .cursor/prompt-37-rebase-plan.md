@@ -328,11 +328,72 @@ This commit adds 14 passing Vitest tests (5 fake-contract + 5 `StorageSizeReport
 
 ---
 
-## 6. Done when
+## 6. Register resolved against `ws3-storage-unified` @ `0bdc8a5`
 
-- Rebase onto the landed storage tip completed; no second formula module remains.
-- Tests #8–#10 (or CC's equivalents) still assert 355,320,000 / 670,320,000 / 1,720,320,000.
-- `isTauri()` App path uses real `invoke` through `createInvokeExportTargetFs`; contract tests still use `createExportTargetFsFake`.
-- `useExport.ts` `startExport` no longer calls `pick_save_path`; modal `handleBrowse` is the only picker on the production Export path.
-- Totals reported as `CC's numbers + Δ_ts`, local and cloud separately; cargo separately.
-- Every U-row above either checked off or explicitly still blocked.
+Checked 2026-09-13. Estimators are **two layers of one model**, not two copies of one formula. Nothing in `exportOutputEstimate.test.ts` is deleted. Badge keeps `estimatedFileBytes`; preflight keeps CC's `destinationRequiredBytes`.
+
+| ID | Verdict | Settled by |
+|---|---|---|
+| U1 | **VERIFIED** | `origin/ws3-storage-unified` is `0bdc8a5` (`docs(ws3): Round 24a ledger entry + W23 pending-hardware row`). |
+| U2 | **VERIFIED** | `src/services/webcodecsExport/exportDestinationDiskEstimate.ts:56` `estimateExportDestinationDiskBytes`. No `exportOutputEstimate.ts` on CC's tip. |
+| U3 | **VERIFIED** (CC asserts the triplet as `videoBytes + audioBytes`, not `estimatedFileBytes`) | `exportDestinationDiskEstimate.test.ts:14-25` `it.each` 1500→355_320_000 / 3000→670_320_000 / 8000→1_720_320_000. Keep our three importers: they lock the **badge** field name. |
+| U4 | **VERIFIED** (CC covers hasAudio=false and 8 Mbps pin; not fps/resolution) | `exportDestinationDiskEstimate.test.ts:37-44` (audio 0), `:27-35` (8000 kbps = `EXPORT_DISK_VIDEO_BYTES_PER_SECOND × D`). CC's input has no fps/resolution (`DestinationDiskEstimateInput` `:41-46`). Keep our fps/resolution test — it is the badge layer. |
+| U5 | **VERIFIED** (CC does not ship the bitrate selector) | `exportDestinationDiskEstimate.ts` has no `exportBitrateKbpsOptions` / `DEFAULT_EXPORT_BITRATE_KBPS`. Keep selector helpers + tests #1–#3. |
+| U6 | **VERIFIED** | `DestinationDiskEstimate.destinationRequiredBytes` at `exportDestinationDiskEstimate.ts:48-53`. That is the **preflight** layer (`applyHeadroom`). Our `estimatedFileBytes` is the **badge** layer (file size, no headroom). Same size-term arithmetic; different public outputs. |
+| U7 | **WRONG** (commands do not exist; do not invent them) | `git grep` of those three names in `0bdc8a5:src-tauri/**` is empty. Ledger `architecture-ledger.md:2576` and `exportDestinationDiskEstimate.ts:11-12`: `export_volume_free_space` / `export_validate_output_path` "still out of scope — prompt 37". |
+| U8 | **VERIFIED** (existing volume query **requires** a session) | `ffmpeg.rs:356-365` `ffmpeg_volume_free_space(session_id, dest_path?)` calls `session_dir(&session_id)?` first. Modal runs before `startExport` creates a session — this command cannot back the badge. Closest session-less reading: `models.rs:701` `get_available_disk_space` (app-local-data volume only, `u64`, not `VolumeFreeSpace`). |
+| U9 | **VERIFIED** (fields match; command shape does not) | `disk_space.rs:129-140` `VolumeFreeSpace { path, probed_path, volume_key, available_bytes }` ≡ `VolumeFreeSpaceReading`. Return is `Vec<VolumeFreeSpace>`, args are `{ sessionId, destPath }`, not `{ targetPath } → reading \| null`. |
+| U10 | **VERIFIED** (ledger) | Round 24a STEP 6 `architecture-ledger.md` (~2644): `npm test` **3651 passed / 0 failed / 78 skipped = 3729**. `cargo test --lib -- --test-threads=1`: 356/0/6. Re-measured after rebase. |
+| U11 | **VERIFIED** (no duplicate of our 8 contract tests) | CC has no `export_pick_output_directory` / `export_validate_output_path` tests. `exportDestinationDiskEstimate.test.ts` is the formula, not the invoke adapter. Keep the 8. |
+| U12 | **VERIFIED** | `src/dev/webcodecsStep2Spike/main.ts:2386` still intercepts `pick_save_path`. `useExport.ts:988` on CC still calls it. Double-picker remains until `startExport` is edited (out of this turn — no new features). |
+| U13 | **VERIFIED** (bitrate not threaded) | `exportWorker.ts:1208` `const EXPORT_BITRATE = 8_000_000`; `:1301` `bitrate: EXPORT_BITRATE`. `useExport.ts` has no `bitrateKbps`. |
+| U14 | **STILL-UNSEEN** until post-rebase `npm test` | CC's 3729 is a **local** green gate. Cloud still lacks private corpus + `.work-phase4/replay/`. Measured below. |
+| U15 | **VERIFIED** (no filename collision) | CC added `exportDestinationDiskEstimate.ts`, not `exportOutputEstimate.ts`. Both files coexist as the two layers. |
+| U16 | **WRONG** (no size-report payload on CC) | Round 24a `architecture-ledger.md:2500` and `:2657`: Step 7 (size report) **deferred to Round 25**. No `StorageSizeRow` type on CC's tip. Identities filled from writers (U17), not from a CC schema. |
+| U17 | **VERIFIED** (13 identities from writers, not from a CC table named "13 rows") | Round 23 ledger entry has **no STEP 1 storage inventory** (`architecture-ledger.md:2471` is PROMPT 32 clean baseline). Round 21 STEP 1 is the **session-artifact** table (7 files inside `kinetix-export-<uuid>/`, `:2048-2061`). Round 24a STEP 3 (`:2540-2560`) adds whisper staging, FA staging, stale backups. Plus Whisper + 5 FA packs. See `REAL_STORAGE_SIZE_ROWS`. |
+| U18 | **WRONG** as a native enum; **kept** as presentation | Native session class is `'live' \| 'resumable' \| 'orphan'` (`tauriFfmpeg.ts:71`, `session_claim.rs`). No `never-reclaimable` in Rust. Models are deleted only via `delete_installed_model` (`models.rs:644`), not via `ffmpeg_reclaim_sessions`. Presentation union stays; adapter (when written) maps. |
+| U19 | **STILL-UNSEEN** (no snapshot type on CC) | `ffmpeg_reclaimable_sessions` returns `reclaimableBytes` on the **session** report (`tauriFfmpeg.ts:81`), not a 13-row total. Keep `totalReclaimableBytes` as a source field. |
+| U20 | **VERIFIED** (`storage_size_report` does not exist) | `git grep storage_size_report 0bdc8a5 -- src-tauri` empty. Ledger `:2500` Step 7 deferred. Do not invent. |
+| U21 | **VERIFIED** (correct 1,624,555,275 B; 1.5 GiB was wrong) | `src-tauri/src/model_download.rs:141` `MODEL_SIZE_BYTES = 1_624_555_275`; `:1411` asserts it; `whisper.rs:571` "1624555275 bytes (~1.51 GiB)". Path: `app_local_data_dir()/models/ggml-large-v3-turbo.bin` (`whisper.rs:583-584`). |
+| U22 | **STILL-UNSEEN** (no low-disk dialog on CC) | CC's formula returns `destinationRequiredBytes` (`exportDestinationDiskEstimate.ts:53`). No `showReclaimAction` / projected-available field. Keep the caller-owned boolean. |
+| U23 | **VERIFIED** | Neither `StorageSizeReport` nor `LowDiskPreflightDialog` exists on CC's tip. `App.tsx` on CC has the startup reclaim **toast** (`ffmpeg_reclaimable_sessions`), not a 13-row report. Wiring still later. |
+| U24 | **VERIFIED** (CC bulk-reclaims sessions) | `App.tsx` startup toast + `TauriFfmpeg.reclaimSessions(reclaimableIds)` — one action for every non-live session. Per-row Reclaim on this lane is extra; never-reclaimable models must still have no button. |
+
+### Layers, not copies
+
+```
+size term (badge)     estimatedFileBytes = videoBytes + audioBytes
+                      exportOutputEstimate.ts  — this lane
+                      (CC computes the same term internally as videoBytes+audioBytes
+                       but does not export a file-size field)
+
+preflight term        destinationRequiredBytes = applyHeadroom(size term)
+                      exportDestinationDiskEstimate.ts  — CC
+                      (this lane also applied headroom on the badge module;
+                       the modal gate should read CC's field after rebase)
+```
+
+Same `bitrateKbps × 125 × D` + AAC 24,000 B/s. Different outputs. **Do not delete the 10 badge-module tests.** Badge imports `estimateExportOutputBytes`. Preflight imports `estimateExportDestinationDiskBytes`.
+
+### Commands CC actually exposes vs what still has to be written
+
+**Bindable now (wrong shape for the modal's `ExportTargetFs` / size report):**
+
+| Need | Closest Rust | Gap |
+|---|---|---|
+| Folder picker | **none**. `pick_save_path` (`ffmpeg.rs:1759`) is a **save-file** dialog. `import_local_model` (`models.rs:515`) is a **pick-file** dialog. | Must write `export_pick_output_directory` (or equivalent pick-folder) later. |
+| Volume free space | `ffmpeg_volume_free_space` (`ffmpeg.rs:356`) — needs `session_id`, returns `Vec<VolumeFreeSpace>`. `get_available_disk_space` (`models.rs:701`) — app-local-data volume, `u64` only. | Must write a session-less `{ targetPath } → reading \| null` later, or wrap `volume_free_space(Path)` without `session_dir`. |
+| Validate output path | **none** | Must write `export_validate_output_path` later. |
+| Storage size report | **none**. Sessions only: `ffmpeg_reclaimable_sessions` / `ffmpeg_reclaim_sessions`. | Must write `storage_size_report` later (Round 25). |
+
+Do not add any of those in this turn.
+
+---
+
+## 7. Done when
+
+- Rebase onto `0bdc8a5` completed. Estimators are **layers**: keep both modules.
+- Badge triplet and CC's `videoBytes+audioBytes` triplet still 355,320,000 / 670,320,000 / 1,720,320,000.
+- Deferred commands still absent from `src-tauri/**` (not invented).
+- `useExport.ts` `pick_save_path` still present until a later wire (U12).
+- Totals reported as CC's 3729 + this lane's delta, local and cloud separately.
