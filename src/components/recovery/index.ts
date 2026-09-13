@@ -24,3 +24,16 @@ export {
   createRecoveryActionsFake,
   type RecoveryActionsFake,
 } from './recoveryActionsFake';
+export {
+  ExportFailureMessage,
+  type ExportFailureMessageProps,
+} from './ExportFailureMessage';
+export {
+  ExportFinishShortfallCard,
+  type ExportFinishShortfallCardProps,
+} from './ExportFinishShortfallCard';
+export { ExportResumeUnavailableCard } from './ExportResumeUnavailableCard';
+export {
+  createExportFailureActionsFake,
+  type ExportFailureActionsFake,
+} from './exportFailureActionsFake';
