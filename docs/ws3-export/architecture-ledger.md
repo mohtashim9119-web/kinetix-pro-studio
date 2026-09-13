@@ -2493,3 +2493,169 @@ Round 22 disposition table above is authoritative. Still-open (not defects): `cr
 sequential fallback (perf-only); hardware encoder silent software fallback; `isWebGL2Supported` session-lifetime
 memoization stale-after-first-probe. Full audit:
 [`docs/archive/ws3/export-path-selection-audit.md`](../archive/ws3/export-path-selection-audit.md).
+
+### Round 24a (2026-09-13) — Mux-gate manifest refusal + three temp-dir leak fixes
+
+Worktree `ws3-storage-unified`, cut from `main` @ `4d4922c`. Committed `4e93154`, pushed. No PR, no
+merge to main. **Step 5 (unified data root) and Step 7 (size report) are explicitly deferred to
+Round 25 — nothing below should be read as covering them.**
+
+#### STEP 1 — root cause (Machine 1 field incident)
+
+`useExport.ts:842` (pre-fix) gated retain-for-resume to `result.error.kind === 'disk_full'` only
+(Round 21 D3d). A mux-stage failure — a real field case: a 28-minute export whose single piece
+fully rendered and whose closing checkpoint was written, then the MUX stage (not render) failed
+with a disk error at 93% overall progress — is not `disk_full`-kind, so it fell through to plain
+`teardown()` → `ffmpeg_destroy_session`'s then-unconditional `fs::remove_dir_all`, erasing the
+fully-rendered piece and its checkpoint a moment after they were durably written. No manifest check
+existed on the native destroy path at all before this round.
+
+#### STEP 2 — the fix, two layers
+
+**Native guard (`session_claim::destroy_session_dir`, `ffmpeg.rs`):** `ffmpeg_destroy_session` now
+takes an optional `force: bool` and returns `DestroySessionOutcome { disposition }` instead of
+`()`. `destroy_session_dir` refuses to remove a directory carrying a resume manifest
+(`has_manifest`, now `pub`) unless `force` is set, returning `"refused_manifest"` instead of
+touching the directory; `"not_found"` if it's already gone; `"destroyed"` otherwise. The Machine 1
+incident is reproduced verbatim as a native test
+(`machine1_incident_mux_stage_disk_error_after_full_render_retains_piece_and_manifest`,
+`session_claim.rs`), including a negative control (forced destroy still wipes it — proves the
+assertions distinguish retained-vs-destroyed, not vacuously true).
+
+**Call-site decision (`useExport.ts` + new `exportSessionRetentionDecision.ts`):** the retention
+decision moved from "only on `disk_full`" to "every failure kind", via
+`decideSessionRetentionOnFailure(active)`: no manifest ⇒ `retainForResume` destroys outright
+(identical bytes freed as before), a live foreign claim ⇒ refuses, a manifest present ⇒ retains
+pieces + manifest, drops only the mux/delivery intermediates. `force` is passed only at the
+deliberate-discard call sites:
+
+| Call site | `force` | Why |
+|---|---|---|
+| `teardown()` on a failed export with no manifest found | `false` | guarded — backstop against a fake/future caller that turns up a manifest anyway |
+| `releaseResumedSession()` on the same failure path | `false` | same backstop |
+| "Start clean" (operator discards a resumable offer) | `true` | explicit discard — the operator said so |
+| `collectAbandonedSessions` (TTL/count eviction, `exportResumeDiscovery.ts`) | `true` | a manifest is EXPECTED here (that's why it was a resumable candidate); must not block eviction |
+| Successful export's own teardown | `true` | manifest still on disk at success (nothing clears it), but nothing left to resume |
+
+#### STEP 3 — three temp-dir leak fixes
+
+1. **`whisper_transcribe` staging dir** (`whisper.rs`): before this round, cleanup ran at exactly
+   two call sites (the `transcode_to_wav` failure arm, the `CommandEvent::Terminated` arm); every
+   other early `?` return — missing model, sidecar lookup, `spawn()`, either state-lock — leaked
+   `tmp_dir` (the transcoded WAV + original upload) under `$TMPDIR` forever. Fixed with an RAII
+   `TmpDirCleanupGuard` (`Drop` removes the dir unless `disarm()`ed), so unwinding — an early `?`,
+   a panic — cleans up for free instead of being re-derived per call site.
+2. **`fa_stage_audio_raw` staging inputs** (`fa_dev.rs`): content-addressed dedup means the SAME
+   audio is never re-written, but nothing ever reclaimed a DIFFERENT content's entry once staged —
+   unbounded growth under `$TMPDIR` for a project touching many distinct source files. Fixed with
+   `evict_staging_lru_until_under_cap` (2 GiB budget, same order of magnitude as
+   `fa.rs::FA_AUDIO_CACHE_MAX_BYTES`), run opportunistically after every actual write (never on a
+   cache hit).
+3. **Deleted projects' backup directories** (`project_mirror.rs`): `BACKUP_RETAIN` (10) bounds file
+   count per LIVE project id; nothing bounded how many project ids' worth of `backups/<id>/`
+   directories piled up once a project was deleted — in practice "keep forever". Fixed with
+   `sweep_stale_backup_dirs`, a 30-day grace period (`STALE_BACKUP_MIN_AGE_SECS`) keyed off the
+   directory's newest entry's mtime, wired into `lib.rs`'s launch sweep (best-effort, never blocks
+   launch).
+
+#### STEP 4 — destination disk-space formula
+
+New `exportDestinationDiskEstimate.ts`: answers "will the destination volume have room for the
+delivered file", distinct from `diskFull.ts`'s SESSION-temp-directory peak-usage model.
+
+```
+videoBytes = bitrateKbps × 125 × durationSeconds
+audioBytes = hasAudio ? EXPORT_DISK_AAC_BYTES_PER_SECOND × durationSeconds : 0
+destinationRequiredBytes = ceil((videoBytes + audioBytes) × 1.10) + 64 MiB
+```
+
+Reuses `diskFull.ts`'s own frozen `applyHeadroom` / `EXPORT_DISK_AAC_BYTES_PER_SECOND` rather than
+re-deriving them. Cross-check (not coincidence, asserted in the test file): at `bitrateKbps =
+8000`, the video term equals `EXPORT_DISK_VIDEO_BYTES_PER_SECOND` exactly — the point where this
+general formula and `diskFull.ts`'s fixed-rate session model agree. Consumed by the still-out-of-
+scope `export_volume_free_space` / `export_validate_output_path` preflight (prompt 37) — this
+module is the one calculation their UI should import, not re-derive.
+
+#### Rejected approach, recorded so it is not retried
+
+A discovery-side approach considered for the resume path — having the native side report a
+picture count BEFORE the Rust-side pre-append fence (`prepareCheckpointResume`) clears — is a
+regression this codebase already has a named test guarding against:
+`exportResumeDiscovery.test.ts`'s `describe('resume discovery — the fence ordering')` /
+`it('THE ORDERING: nothing counts before the fence succeeds', …)`. That test asserts every
+`count(...)` call in `evaluateResumeCandidate` happens strictly after the fence call in the
+harness's own call log. Counting before the fence clears is exactly the ordering that test exists
+to fail on `git blame`'s cheapest possible signal — do not reintroduce it on the discovery side.
+
+#### K8 tripwire — checked, clean
+
+This round's new Rust temp-dir code (`TmpDirCleanupGuard`, `evict_staging_lru_until_under_cap`,
+`sweep_stale_backup_dirs`) uses `std::env::temp_dir()` / caller-supplied paths throughout, never a
+literal `/tmp` string — K8 (`scripts/no-tmp-artifacts.test.ts`) scans TS `*.test.ts` under
+`scripts/`/`src/` and `scripts/*.py` only, so it does not reach `src-tauri/`, but `git diff`
+against this round's full patch confirms zero `/tmp` literal additions anywhere, Rust included.
+`exportDestinationDiskEstimate.test.ts` (new) passed K8's RULE 1 as part of the `npm test` run
+below. Recorded as a tripwire row because the failure mode K8 exists to catch — a hardcoded `/tmp`
+path that works on the author's machine and breaks elsewhere (here: Windows, where `/tmp` isn't
+even a path) — is exactly the class of bug `std::env::temp_dir()` avoids; any future edit to these
+three functions that swaps in a literal path string should be read as a regression.
+
+#### STEP 5 — the flake, bounded (not a footnote)
+
+`whisper::in_flight_tests` fails under the default parallel `cargo test` runner at roughly 3-of-5
+odds (reproduced live this round: 3 failures in 5 runs, on three DIFFERENT tests each time —
+`an_orphaned_percent_is_never_replayed_without_a_live_job`,
+`a_terminal_event_supersedes_a_retained_percent`, `retained_events_for_distinct_keys_stay_independent`
+— never the same one twice). **Pre-existing on `fd547ce`, not introduced by this round**: none of
+Round 24a's new tests (`whisper::tmp_dir_cleanup_guard_tests`, `fa_dev`'s staging-LRU tests) touch
+the racing mechanism, and all of them passed clean in every one of the 5 runs.
+
+**Shared resource, identified:** `whisper.rs`'s two process-global `static`s — `IN_FLIGHT`
+(`InFlightRegistry<String, WhisperEvent>`) and `TERMINAL_BUFFER` (`OnceLock<Mutex<HashMap<String,
+Retained>>>`, capacity-bounded at `TERMINAL_BUFFER_MAX_ENTRIES`). Per-test keys are namespaced
+(`"proj-resume-orphan"` etc. — a documented deliberate choice, see the comment at
+`whisper.rs:1264`) so DIFFERENT tests' entries don't collide by key, but
+`the_retention_cap_evicts_oldest_and_never_grows_past_the_bound` deliberately inserts
+`TERMINAL_BUFFER_MAX_ENTRIES + 5` entries to exercise LRU eviction, and that eviction is global —
+it evicts the oldest entries in the WHOLE map regardless of which test owns them. Running
+concurrently with any other test that has a live entry in `TERMINAL_BUFFER`, it can and does evict
+that other test's entry, which then reads back `None` where the owning test expected `Some(n)`.
+This is a broader mechanism than the single `#[ignore]`d `a_retained_percent_is_peeked_not_consumed`
+(Round 17) already named — that ignore covers the ONE test most consistently hit, not the module's
+actual exposure, which this round's 5-run sample shows touches at least three other tests too.
+
+**Disposition: documented as requiring `--test-threads=1`, not made deterministic this round** — a
+correct fix (per-test isolation of the global buffer, e.g. a `#[serial]`-style test-only mutex
+around the whole `in_flight_tests` module, or namespacing `TERMINAL_BUFFER_MAX_ENTRIES` per test
+run) is a real code change this round did not make and should not fold in unreviewed under an
+already-pushed commit. **The real gate is the single-threaded figure**, below — the default
+parallel figure is not a trustworthy pass/fail signal for this module and must not be quoted as one
+in a future round without this caveat repeated.
+
+Proof, `cargo test --lib whisper::` × 5 at default parallelism: **run 1: 24/1/1 (FAILED)**, **run 2:
+23/2/1 (FAILED)**, **run 3: 22/3/1 (FAILED)**, **run 4: 25/0/1 (ok)**, **run 5: 25/0/1 (ok)** — 3 of
+5 failed, a different pair/trio of tests each time, `a_retained_percent_is_peeked_not_consumed`
+never ran (stays `#[ignore]`d) in any of the five.
+
+#### STEP 6 — Gates
+
+`npx tsc --noEmit` / `npm run lint` (same command, per `CLAUDE.md`): clean.
+
+`npm test`: **3,651 passed / 0 failed / 78 skipped = 3,729.**
+
+`cargo test --lib -- --test-threads=1` (the real gate, per STEP 5): **356 / 0 / 6.**
+`cargo test --lib --features fa-inference -- --test-threads=1`: **442 / 0 / 36.**
+`cargo test --lib` (default parallel, informational only per STEP 5): flaky, see above — not a gate
+figure.
+
+**Eight frozen constants and four fixture digests: unchanged.** None of `WATCHDOG_MS`,
+`FORWARD_PROGRESS_BOUND_MS`, `FLUSH_BOUND_MS`, `APPEND_DRAIN_BOUND_MS`, `TRUNCATE_BOUND_MS`,
+`KILL_BOUND_MS`, `APPEND_BATCH_BYTES`, `WINDOWS_MAX_PATH` appear in this round's diff (`git diff`
+against the pre-commit tree, grepped for each name — zero hits); `5db5e004…`/`af89ca66…`/
+`1abf9839…`/`fb9cdda2…` untouched (no annexb fixture work this round).
+
+**Not covered by this entry:** Step 5 (unified data root) and Step 7 (size report) — deferred to
+Round 25 per the governing prompt for this round. Nothing above should be read as evidence either
+is done.
+
+**No merge to main. No PR.** Pushed `ws3-storage-unified` @ `4e93154`.
