@@ -220,6 +220,9 @@ import {
 } from './services/projectStore';
 import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
+import { getProjectAssetRecoveryStatus, relinkAsset } from './services/assetRecovery';
+import { DegradedProjectRecoveryScreen } from './components/recovery/DegradedProjectRecoveryScreen';
+import type { RecoveryAsset, RecoverySegment } from './components/recovery/degradedLoad';
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
 import { requestStoragePersistence } from './services/storagePersistence';
 import { getAppSessionToken } from './services/historyPersist';
@@ -2106,6 +2109,20 @@ export default function App() {
   // Id of the project whose async open is in flight. Not a view state — the
   // dashboard stays the single mounted view; this only marks the clicked card.
   const [openingProjectId, setOpeningProjectId] = useState<string | null>(null);
+  // WS3 recovery-ui wiring — the Machine-1 exit `handleSwitchProject` used to
+  // lack entirely: a project whose asset bytes are gone used to be refused
+  // with a toast and nothing else. `null` means no recovery screen is up;
+  // otherwise it holds everything DegradedProjectRecoveryScreen needs, kept
+  // in App state (not derived on every render) because it is refreshed by
+  // async re-link calls the component itself never sees.
+  const [degradedRecovery, setDegradedRecovery] = useState<{
+    projectId: string;
+    projectName: string;
+    segments: readonly RecoverySegment[];
+    assets: readonly RecoveryAsset[];
+  } | null>(null);
+  const [relinkTargetAssetId, setRelinkTargetAssetId] = useState<string | null>(null);
+  const relinkFileInputRef = useRef<HTMLInputElement>(null);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
   const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
   // WS2 T4.1 — the machine-global settings surface. Separate flag from
@@ -6103,6 +6120,72 @@ export default function App() {
     setSelectedSegmentId(null);
   };
 
+  // WS3 recovery-ui wiring — builds DegradedProjectRecoveryScreen's whole
+  // payload from the stored project directly, the same way assetRecovery.ts's
+  // own doc comment describes: `loadProjectDetailed` returns a poisoned
+  // project's JSON exactly as it would a healthy one (the poison never blocks
+  // the read, only `saveProject`), so this works without touching live app
+  // state — the outgoing project, if any, is left completely alone.
+  const refreshDegradedRecovery = useCallback(async (projectId: string): Promise<void> => {
+    const [projectOutcome, status] = await Promise.all([
+      loadProjectDetailed(projectId),
+      getProjectAssetRecoveryStatus(projectId),
+    ]);
+    if (!projectOutcome || !projectOutcome.ok || !status) {
+      // The project's own JSON is unreadable (parse/shape/storage failure) —
+      // a different failure class this screen has nothing to offer for; the
+      // existing toast in the caller is what the user sees for that case.
+      setDegradedRecovery(null);
+      return;
+    }
+    const resolvedByAssetId = new Map(status.assets.map((a) => [a.assetId, a.resolved]));
+    const segments: RecoverySegment[] = projectOutcome.project.segments.map((s) => ({
+      id: s.id,
+      label: s.text || s.id,
+      assetId: s.assetId ?? null,
+      resolutionStatus: !s.assetId ? 'missing-asset' : resolvedByAssetId.get(s.assetId) ? 'resolved' : 'unresolved',
+    }));
+    const assets: RecoveryAsset[] = status.assets.map((a) => ({
+      id: a.assetId,
+      name: a.name,
+      unresolved: !a.resolved,
+    }));
+    setDegradedRecovery({ projectId, projectName: status.projectName, segments, assets });
+  }, []);
+
+  // Re-link: the recovery screen never opens a picker itself (it is
+  // presentation-only, per its own doc comment) — this is the file input App
+  // owns for it, one hidden input reused for every asset row.
+  const handleRecoveryRelinkRequest = useCallback((assetId: string): void => {
+    setRelinkTargetAssetId(assetId);
+    relinkFileInputRef.current?.click();
+  }, []);
+
+  const handleRecoveryFileChosen = async (e: ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const file = e.target.files?.[0] ?? null;
+    e.target.value = '';
+    const projectId = degradedRecovery?.projectId;
+    const assetId = relinkTargetAssetId;
+    setRelinkTargetAssetId(null);
+    if (!file || !projectId || !assetId) return;
+
+    const outcome = await relinkAsset(projectId, assetId, file);
+    if (!outcome.ok) {
+      showToast(`Could not re-link this file: ${outcome.message ?? 'unknown error'}.`);
+      await refreshDegradedRecovery(projectId);
+      return;
+    }
+    if (outcome.status?.allResolved) {
+      // Every asset now has bytes somewhere — the poison clears itself
+      // (relinkAsset already called clearLoadFailure), so the project opens
+      // exactly like any other: no manual "I'm done" step for the user.
+      setDegradedRecovery(null);
+      await handleSwitchProject(projectId);
+      return;
+    }
+    await refreshDegradedRecovery(projectId);
+  };
+
   const handleSwitchProject = async (id: string, opts?: { preserveUiState?: boolean }): Promise<void> => {
     // Re-opening the project already loaded changes no project state, so the
     // view flip is immediate and there is nothing to indicate as pending.
@@ -6191,9 +6274,15 @@ export default function App() {
           `${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} (${names}) listed ` +
             `in this project's data could not be found in storage.`,
         );
+        // WS3 recovery-ui — this used to be a dead end: a toast and nothing
+        // else, with no way back into the project short of finding the
+        // missing bytes some other way. Route into the degraded-project
+        // recovery screen instead, so the user can see exactly which assets
+        // are unresolved and re-link their own surviving source files.
+        await refreshDegradedRecovery(saved.project.id);
         showToast(
           `This project could not be opened — ${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} ` +
-            `referenced in it could not be found in storage. Saving is blocked for it until this is resolved.`,
+            `referenced in it could not be found in storage. Re-link your source files to recover it.`,
         );
         return;
       }
@@ -7370,6 +7459,28 @@ export default function App() {
       {showAppSettingsModal && (
         <AppSettingsModal onClose={() => setShowAppSettingsModal(false)} />
       )}
+      {/* WS3 recovery-ui — the Machine-1 exit. Rendered outside `mainContent`
+          for the same reason NewProjectModal/AppSettingsModal are: it opens
+          from the dashboard (a project card that fails to switch), and the
+          dashboard stays mounted underneath while this is up. `onSave` is
+          intentionally omitted — `handleRecoveryFileChosen` auto-reopens the
+          project the instant every asset resolves, so this screen never
+          needs a manual "I'm done" affordance. */}
+      {degradedRecovery && (
+        <DegradedProjectRecoveryScreen
+          projectName={degradedRecovery.projectName}
+          segments={degradedRecovery.segments}
+          assets={degradedRecovery.assets}
+          onRelink={handleRecoveryRelinkRequest}
+        />
+      )}
+      <input
+        ref={relinkFileInputRef}
+        type="file"
+        data-testid="recovery-relink-file-input"
+        className="hidden"
+        onChange={(e) => { void handleRecoveryFileChosen(e); }}
+      />
       {import.meta.env.DEV && devPanelOpen && (
         <Suspense fallback={null}>
           <DevTestPanel

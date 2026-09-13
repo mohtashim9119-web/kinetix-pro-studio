@@ -15,11 +15,14 @@ import type { Mock } from 'vitest';
 let osBacking: Map<string, string>;
 let cacheBacking: Map<string, Blob>; // key: `${projectId}:${assetId}`
 let nativeBacking: Map<string, { name: string; mimeType: string }>; // key: `${projectId}:${assetId}`
+/** Count of actual `osStoreWrite` calls — a direct "did a write reach project.json" proof, independent of content diffing. */
+let osWriteCount = 0;
 
 vi.mock('./tauriFfmpeg', () => ({ isTauri: () => true }));
 
 vi.mock('./projectStoreClient', () => ({
   osStoreWrite: (id: string, contents: string) => {
+    osWriteCount += 1;
     osBacking.set(id, contents);
     return Promise.resolve();
   },
@@ -98,6 +101,7 @@ beforeEach(() => {
   osBacking = new Map();
   cacheBacking = new Map();
   nativeBacking = new Map();
+  osWriteCount = 0;
   mockInvoke.mockReset();
 });
 afterEach(() => {
@@ -199,5 +203,72 @@ describe('relinkAsset', () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.message).toMatch(/disk full/);
     expect(cacheBacking.has('p-recovery:a1')).toBe(false); // cache write never attempted
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Machine-1 end-to-end: the exact shape from the incident write-up —
+// project.json intact, registry intact, IndexedDB empty, source files
+// available on the user's own disk — proved against the REAL `saveProject`
+// (not a mock), so Guard 2's refusal and its release are both exercised for
+// real rather than assumed. This is the negative the incident actually
+// needed asserted directly: a write reaching project.json while assets are
+// still unresolved is precisely the shape that destroyed twenty projects.
+// ---------------------------------------------------------------------------
+describe('Machine-1 shape — no persistence while unresolved, exactly one write once resolved', () => {
+  it('refuses every write and never rotates a backup while unresolved, then writes and rotates exactly once resolved', async () => {
+    const a1 = asset('a1', 'clip.mp4');
+    // project.json intact + registry intact.
+    await saveProject(projectWith([a1], [seg('s0', 'a1')]));
+    const storedBeforeLoss = osBacking.get('p-recovery');
+    expect(storedBeforeLoss).toBeDefined();
+    mockInvoke.mockClear(); // only count invokes from here on.
+    osWriteCount = 0; // only count writes from here on.
+
+    // The loss: IndexedDB empty (cacheBacking was never populated) and the
+    // native store has nothing either (mockNativeStatus({}) below) — bytes
+    // are gone everywhere except the user's own source file. App.tsx's
+    // orphan check is what discovers this in production; simulated directly
+    // here since that check itself is exercised in App.projectSwitch.test.tsx.
+    const { reportAssetResolutionFailure } = await import('./projectStore');
+    reportAssetResolutionFailure('p-recovery', 'asset a1 unresolvable from storage');
+    expect(getLoadFailure('p-recovery')?.reason).toBe('asset-unresolvable');
+
+    // ---- NEGATIVE: while unresolved, a save attempt is refused outright. ----
+    const refused = await saveProject(projectWith([a1], [seg('s0', 'a1')]));
+    expect(refused.ok).toBe(false);
+    expect(refused.ok === false && refused.reason).toBe('blocked-by-load-failure');
+    // Not one byte of project.json changed...
+    expect(osBacking.get('p-recovery')).toBe(storedBeforeLoss);
+    expect(osWriteCount).toBe(0);
+    // ...and the native mirror/backup-rotation command was never invoked —
+    // `project_mirror_write_project` is the one call path into the Rust side
+    // that performs backup rotation, so "never invoked" is "never rotated".
+    expect(mockInvoke).not.toHaveBeenCalledWith('project_mirror_write_project', expect.anything());
+    // ...and the poison itself is untouched — a status check must not be
+    // what silently un-poisons it (the exact bug this whole guard exists for).
+    expect(getLoadFailure('p-recovery')?.reason).toBe('asset-unresolvable');
+
+    // ---- The user picks their surviving source file. ----
+    mockInvoke.mockResolvedValueOnce(undefined); // asset_store_write
+    mockNativeStatus({ a1: true }); // post-write status check sees it resolved
+    const file = new File([new Uint8Array([1, 2, 3])], 'clip.mp4', { type: 'video/mp4' });
+    const relinked = await relinkAsset('p-recovery', 'a1', file);
+    expect(relinked.ok).toBe(true);
+    expect(relinked.status?.allResolved).toBe(true);
+
+    // ---- POSITIVE: poison clears — exactly now, not before. ----
+    expect(getLoadFailure('p-recovery')).toBeUndefined();
+
+    // ---- POSITIVE: the project now opens normally, i.e. a save is no
+    // longer refused, and it actually reaches project.json plus rotates a
+    // backup — exactly once. ----
+    mockInvoke.mockClear();
+    osWriteCount = 0;
+    const saved = await saveProject(projectWith([a1], [seg('s0', 'a1')]));
+    expect(saved.ok).toBe(true);
+    expect(osWriteCount).toBe(1);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(mockInvoke).toHaveBeenCalledWith('project_mirror_write_project', expect.anything());
   });
 });

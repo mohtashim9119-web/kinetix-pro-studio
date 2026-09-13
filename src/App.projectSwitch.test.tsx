@@ -70,16 +70,54 @@ const mockPutAsset = vi.fn(async (
   _projectId: string, _id: string, _blob: Blob, _meta: { name: string; mimeType: string },
 ): Promise<void> => undefined);
 
+// Map-backed IndexedDB-cache stand-in for the Machine-1 recovery test below —
+// keyed like assetRecovery.test.ts's own fake, so `getAsset` (which
+// assetRecovery.ts's real `getProjectAssetRecoveryStatus` calls) reflects
+// whatever `mockPutAsset` writes into it, instead of touching real IndexedDB.
+let cacheBacking = new Map<string, Blob>();
+
 vi.mock('./services/assetStore', async () => {
   const actual = await vi.importActual<typeof import('./services/assetStore')>('./services/assetStore');
   return {
     ...actual,
     getAllAssetsForProject: (id: string) => mockGetAllAssetsForProject(id),
     getLegacyAssets: async () => [],
-    putAsset: (projectId: string, id: string, blob: Blob, meta: { name: string; mimeType: string }) =>
-      mockPutAsset(projectId, id, blob, meta),
+    getAsset: (projectId: string, id: string) => {
+      const blob = cacheBacking.get(`${projectId}:${id}`);
+      return Promise.resolve(blob ? { projectId, id, blob, name: 'x', mimeType: blob.type } : null);
+    },
+    putAsset: (projectId: string, id: string, blob: Blob, meta: { name: string; mimeType: string }) => {
+      cacheBacking.set(`${projectId}:${id}`, blob);
+      return mockPutAsset(projectId, id, blob, meta);
+    },
   };
 });
+
+// Native asset store — the real Tauri boundary. Mocked at the module
+// boundary (same reasoning as the repairAssetsFromNative mock right below:
+// forcing `isTauri()` true globally to let the real implementation run would
+// risk waking up other Tauri-only App.tsx code paths this file's existing
+// tests don't expect). `nativeBacking` is shared with
+// `mockRepairMissingAssetsFromNative`'s implementation further down so a
+// relink's native write is what makes the SECOND `handleSwitchProject`
+// attempt's repair step find the asset.
+let nativeBacking = new Map<string, boolean>(); // key: `${projectId}:${assetId}`
+const mockWriteAssetBlobNative = vi.fn(async (
+  projectId: string, assetId: string, _blob: Blob, _name: string, _mimeType: string,
+): Promise<void> => { nativeBacking.set(`${projectId}:${assetId}`, true); });
+
+vi.mock('./services/nativeAssetStore', () => ({
+  getAssetStatusNative: (projectId: string, assetIds: string[]) =>
+    Promise.resolve(assetIds.map((assetId) => ({
+      assetId,
+      bytesPresent: nativeBacking.get(`${projectId}:${assetId}`) ?? false,
+      metaPresent: nativeBacking.get(`${projectId}:${assetId}`) ?? false,
+      bytes: null, name: null, mimeType: null,
+    }))),
+  writeAssetBlobNative: (...a: [string, string, Blob, string, string]) => mockWriteAssetBlobNative(...a),
+  deleteAssetNative: vi.fn(async () => undefined),
+  deleteProjectAssetsNative: vi.fn(async () => undefined),
+}));
 
 // WS3 item B — the launch-time repair path. Mocked at the module boundary
 // (rather than mocking its `nativeAssetStore` dependencies and letting the
@@ -149,6 +187,8 @@ beforeEach(() => {
   mockGetAllAssetsForProject.mockResolvedValue([]);
   mockRepairMissingAssetsFromNative.mockResolvedValue({ repaired: [], failed: [] });
   mockPutAsset.mockResolvedValue(undefined);
+  cacheBacking = new Map();
+  nativeBacking = new Map();
 });
 
 afterEach(() => {
@@ -584,5 +624,96 @@ describe('WS3 item B — launch-time repair heals a cache miss before it can poi
     expect(view()).toEqual({ view: 'dashboard', projectId: null });
     expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
     expect(mockPutAsset).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS3 recovery-ui wiring — the user path the acceptance criterion is about,
+// not just a mounted component. The Machine-1 shape: project.json intact
+// (mockLoadProjectDetailed resolves it), registry intact (TARGET_ID is in
+// mockLoadAllMetas), IndexedDB empty (mockGetAllAssetsForProject -> []),
+// source files available (the user re-links one via the hidden file input).
+//
+// The negative half of this (no write reaches project.json, no backup
+// rotation, poison not cleared while unresolved) is proved against the REAL
+// `saveProject`/Guard 2 in assetRecovery.test.ts's own "Machine-1 shape"
+// describe block, where saveProject isn't mocked out. This test proves the
+// half that block can't: that the UI actually gets the user OUT of the dead
+// end — into the recovery screen, through a real re-link, and back into the
+// editor — rather than the toast-and-refuse this file's WS3 item A tests
+// (above) show was the only exit before this wiring pass.
+// ---------------------------------------------------------------------------
+describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens normally', () => {
+  afterEach(() => {
+    __resetStoreGuardsForTests();
+  });
+
+  it('routes a project with gone asset bytes into the recovery screen, then reopens it once re-linked', async () => {
+    const targetProject = {
+      ...storedProject(TARGET_ID, 'Target'),
+      // `type: 'image'` (despite the .mp4 name) dodges getMediaDuration's real
+      // <video> metadata probe, which never fires in jsdom — same dodge the
+      // WS3 item A/B tests above use for their own "clip.mp4" fixtures.
+      assets: [{ id: 'a1', name: 'clip.mp4', url: '', type: 'image' }],
+      segments: [{ id: 'seg-0', assetId: 'a1', text: 'Hook', startTime: 0, duration: 1 }],
+    } as unknown as Project;
+    mockLoadProjectDetailed.mockResolvedValue({ ok: true, project: targetProject, savedAt: Date.now() });
+    // Machine 1 shape: IndexedDB empty and the native store has nothing for
+    // this asset either (nativeBacking starts empty) — bytes are gone
+    // everywhere except the user's own disk.
+    mockGetAllAssetsForProject.mockResolvedValue([]);
+    mockRepairMissingAssetsFromNative.mockResolvedValueOnce({ repaired: [], failed: [] });
+
+    await mountApp();
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${TARGET_ID}"]`);
+    await act(async () => { card!.click(); });
+    await act(async () => {
+      await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
+    });
+
+    // ---- Opens into recovery — not refused with no exit. ----
+    const screen = (): Element | null => container.querySelector('[data-testid="degraded-project-recovery"]');
+    expect(view()).toEqual({ view: 'dashboard', projectId: null });
+    expect(screen()).not.toBeNull();
+    expect(screen()!.querySelector('[data-testid="recovery-project-name"]')?.textContent).toBe('Target');
+
+    // ---- Shows which assets are unresolved. ----
+    const assetRow = screen()!.querySelector('[data-testid="recovery-asset"][data-asset-id="a1"]');
+    expect(assetRow).not.toBeNull();
+    expect(assetRow!.getAttribute('data-unresolved')).toBe('true');
+    expect(screen()!.querySelector('[data-testid="recovery-unresolved-summary"]')!.textContent)
+      .toMatch(/1 unresolved asset/);
+    expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
+    expect(mockSaveProject).not.toHaveBeenCalled();
+
+    // ---- The user picks their surviving source file. ----
+    const relinkBtn = assetRow!.querySelector<HTMLButtonElement>('[data-testid="recovery-relink"]');
+    expect(relinkBtn).not.toBeNull();
+    await act(async () => { relinkBtn!.click(); });
+
+    const fileInput = container.querySelector<HTMLInputElement>('[data-testid="recovery-relink-file-input"]');
+    expect(fileInput).not.toBeNull();
+    const recoveredFile = new File([new Uint8Array([1, 2, 3])], 'clip.mp4', { type: 'video/mp4' });
+    Object.defineProperty(fileInput!, 'files', { value: [recoveredFile], configurable: true });
+    // The auto-reopen after resolution runs a second handleSwitchProject,
+    // whose repair step must now find the asset — this is what makes that
+    // possible: the same shape `writeAssetBlobNative`'s mock already wrote
+    // into `nativeBacking` for.
+    mockRepairMissingAssetsFromNative.mockResolvedValueOnce({
+      repaired: [{ projectId: TARGET_ID, id: 'a1', blob: recoveredFile, name: 'clip.mp4', mimeType: 'video/mp4' }],
+      failed: [],
+    });
+    await act(async () => { fileInput!.dispatchEvent(new Event('change', { bubbles: true })); });
+    await act(async () => {
+      for (let i = 0; i < 15; i++) await Promise.resolve();
+    });
+
+    // ---- The bytes actually landed in the native store. ----
+    expect(mockWriteAssetBlobNative).toHaveBeenCalledWith(TARGET_ID, 'a1', recoveredFile, 'clip.mp4', 'video/mp4');
+
+    // ---- Poison clears only now, and the project opens normally. ----
+    expect(getLoadFailure(TARGET_ID)).toBeUndefined();
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
+    expect(screen()).toBeNull();
   });
 });
