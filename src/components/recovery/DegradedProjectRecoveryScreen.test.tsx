@@ -142,7 +142,7 @@ describe('DegradedProjectRecoveryScreen — collapsed item list (Step 3)', () =>
     });
     // 1 unresolved asset (missingAsset) + seg-2's missing-asset status = 2.
     expect(container.querySelector('[data-testid="recovery-unresolved-summary"]')?.textContent)
-      .toMatch(/2 missing assets/);
+      .toMatch(/2 unresolved assets/);
     const resolvedRow = container.querySelector('[data-testid="recovery-item"][data-asset-id="asset-resolved"]');
     expect(resolvedRow?.querySelector('[data-testid="recovery-relink"]')).toBeNull();
   });

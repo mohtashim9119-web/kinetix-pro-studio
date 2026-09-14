@@ -169,7 +169,7 @@ export function DegradedProjectRecoveryScreen({
           }`}
         >
           {unresolvedCount > 0
-            ? `${unresolvedCount} missing asset${unresolvedCount === 1 ? '' : 's'}`
+            ? `${unresolvedCount} unresolved asset${unresolvedCount === 1 ? '' : 's'}`
             : 'All assets linked'}
         </p>
 
