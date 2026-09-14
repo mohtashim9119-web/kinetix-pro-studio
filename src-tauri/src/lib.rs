@@ -451,9 +451,33 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             if cfg!(debug_assertions) {
+                // Round 28 — `Stdout`/`Webview` kept (a dev build has both a
+                // console and DevTools to read them from) but `LogDir`
+                // (tauri_plugin_log's own app_name-derived default path,
+                // NOT this file's pinned `diagnostic-logs/kinetix-
+                // diagnostic.log`) is swapped for the SAME pinned `Folder`
+                // target the release branch below uses. Before this, a
+                // debug build (`tauri:dev`/`tauri:build --debug`) never
+                // wrote `kinetix-diagnostic.log` at all, so the in-app
+                // diagnostic log viewer (`get_diagnostic_log_text`) always
+                // read back its own empty-file sentinel while testing under
+                // `tauri:dev` — the file only ever existed in a release
+                // build launched with `KINETIX_DIAGNOSTIC_LOG=1`. Debug
+                // logging itself was never gated behind that env var (this
+                // branch already ran unconditionally); only the FILE
+                // DESTINATION changes here.
+                let log_dir = app.path().app_local_data_dir()?.join("diagnostic-logs");
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
+                        .targets([
+                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                            tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Folder {
+                                path: log_dir,
+                                file_name: Some("kinetix-diagnostic".to_string()),
+                            }),
+                        ])
                         .build(),
                 )?;
             } else if std::env::var("KINETIX_DIAGNOSTIC_LOG")
