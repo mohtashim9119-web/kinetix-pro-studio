@@ -385,6 +385,40 @@ pub fn ffmpeg_log_disk_preflight(session_id: String, ok: bool, summary: String) 
     Ok(())
 }
 
+/// D8 (Round 28) — the general-purpose door into `kinetix-diagnostic.log`
+/// for the WHOLE export lifecycle, not just the disk preflight
+/// (`ffmpeg_log_disk_preflight`) and session-retention
+/// (`ffmpeg_retain_session_for_resume`) events that already had their own
+/// narrow commands. `phase` names the lifecycle stage (`init`,
+/// `encoder-config`, `progress`, `watchdog`, `cancelled`, `disk-full`,
+/// `session-cleanup`, …) and `detail` is a pre-formatted, opaque string —
+/// same "TS owns the shape" posture as `failure_kind` above; this command's
+/// only job is getting it into the log file under one consistent target so
+/// every export-lifecycle line is findable by `target=kinetix::export`
+/// alone, in the order the events actually happened, interleaved with the
+/// disk-preflight/session-retention lines already going to the same file.
+///
+/// FLUSH: `log::info!`/`log::warn!` here route through the SAME
+/// `tauri_plugin_log` `Folder` target `lib.rs`'s `setup` attaches (when
+/// active — debug builds always, release builds only with
+/// `KINETIX_DIAGNOSTIC_LOG=1`, unchanged gating). That target's underlying
+/// writer is a raw `std::fs::File` opened in append mode — `File::write_all`
+/// is an unbuffered syscall (no `BufWriter` wraps it), so every line this
+/// command writes reaches the OS the instant the call returns; nothing is
+/// held in an application-level buffer that a crash could lose. This is why
+/// no separate raw-file writer was built for this command: the existing
+/// mechanism `ffmpeg_log_disk_preflight`/`ffmpeg_retain_session_for_resume`
+/// already rely on already has the durability property D8 asked for.
+#[tauri::command]
+pub fn export_log_event(phase: String, detail: String, level: Option<String>) -> Result<(), String> {
+    match level.as_deref() {
+        Some("warn") => log::warn!(target: "kinetix::export", "export_event phase={phase} {detail}"),
+        Some("error") => log::error!(target: "kinetix::export", "export_event phase={phase} {detail}"),
+        _ => log::info!(target: "kinetix::export", "export_event phase={phase} {detail}"),
+    }
+    Ok(())
+}
+
 /// WS3 Round 21 (D3d/D5) — the terminal-failure disposition of a session
 /// that a resume could still use. Deletes only what a resume does NOT need
 /// (mux intermediates, a partial `export_final.mp4`, the voiceover copy,

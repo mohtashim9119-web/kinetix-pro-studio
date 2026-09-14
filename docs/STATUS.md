@@ -84,7 +84,7 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 - [OPEN] D4 Storage root relocation skips models; export temp still under `%TEMP%` on C: — Round 28, assigned to CC
 - [OPEN] D5 Reclaim button frees zero bytes — U36's ownership ambiguity resolved (`.cursor/ws3-export-failure-unseen.md`), wiring still pending — Round 28, assigned to CC
 - [OPEN] D9 Twenty encoder sessions with eighteen restarts on RX 580 in one piece — Round 28, assigned to CC
-- [OPEN] D8 Diagnostic log file created but empty until first event — Round 28, assigned to CC (revised scope: full-lifecycle logging, in progress)
+- D8 CLOSED (Round 28, addendum scope) — added `export_log_event` (Rust, `ffmpeg.rs`) and `logExportEvent` (TS, `exportDiagnosticLog.ts`), a general-purpose door into `kinetix-diagnostic.log` for the export lifecycle, wired at init, cancellation, disk-full-preflight, and session-cleanup (`exportPipelineWebCodecs.ts`). Flush: routes through the same `tauri_plugin_log` `Folder` target the pre-existing `ffmpeg_log_disk_preflight`/`ffmpeg_retain_session_for_resume` commands already use, backed by an unbuffered `std::fs::File::write_all` (no `BufWriter`) — verified by reading `tauri-plugin-log 2.8.0`'s file-target implementation, not assumed. NOT wired: encoder-config, frame-loop progress pulses, and watchdog-update events, which originate inside the WebCodecs Worker (a separate global scope with no direct IPC access) and would need `postMessage`-to-main-thread plumbing this pass didn't build — left for a future pass; see `App.tsx`/`exportWorker.ts` for where that would attach.
 
 ### Deferred Tasks
 (none)

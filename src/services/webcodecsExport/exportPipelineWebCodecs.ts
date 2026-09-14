@@ -100,6 +100,7 @@ import {
 } from './muxOnly';
 import { FONT_FAMILIES } from '../../constants';
 import type { ExportDemuxSplit } from './exportPhaseTracker';
+import { logExportEvent } from '../exportDiagnosticLog';
 import {
   buildSilentGap,
   formatFailureMessage,
@@ -391,6 +392,7 @@ let activeFfmpeg: WebCodecsFfmpeg | null = null;
  * down its own ffmpeg handle afterward is safe.
  */
 export async function cancelExportWebCodecs(): Promise<void> {
+  logExportEvent('cancelled', 'cancelExportWebCodecs invoked');
   const worker = activeWorker;
   const ffmpeg = activeFfmpeg;
   activeWorker = null;
@@ -420,6 +422,7 @@ export async function cancelExportWebCodecs(): Promise<void> {
     // STEP 3b — a user cancel discards the session regardless of any
     // manifest: there is no "resume this cancelled export" offer, so leaving
     // the directory behind would just be a leak the operator never asked for.
+    logExportEvent('session-cleanup', `sessionId=${ffmpeg.sessionId ?? 'unknown'} reason=cancel`);
     await ffmpeg.destroy({ force: true, failureKind: 'cancel' });
   }
 }
@@ -2935,6 +2938,11 @@ export async function exportProjectWebCodecs(
   const width = rawWidth % 2 === 0 ? rawWidth : rawWidth - 1;
   const height = rawHeight % 2 === 0 ? rawHeight : rawHeight - 1;
 
+  // D8 (Round 28) — first line of this run's export-lifecycle log trail.
+  // Fire-and-forget (never awaited): a logging stall must never delay the
+  // export it is describing.
+  logExportEvent('init', `width=${width} height=${height} fps=${fps} segments=${project.segments.length} hasVoiceover=${!!project.voiceoverId}`);
+
   const segments = project.segments;
   if (segments.length === 0) {
     return { ok: false, error: { kind: 'encode', message: 'Project has no segments to export.' } };
@@ -3074,6 +3082,11 @@ export async function exportProjectWebCodecs(
       if (!preflight.ok && preflight.shortfall) {
         activeFfmpeg = null;
         const sf = preflight.shortfall;
+        logExportEvent(
+          'disk-full',
+          `phase=preflight volume=${sf.volumeKey} requiredBytes=${sf.requiredBytes} availableBytes=${sf.availableBytes} shortfallBytes=${sf.shortfallBytes}`,
+          'warn',
+        );
         return {
           ok: false,
           error: diskFullExportError({
