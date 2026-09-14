@@ -220,6 +220,7 @@ import {
   clearLoadFailure,
 } from './services/projectStore';
 import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative';
+import { withAssetLoadTimeout } from './services/assetLoadTimeout';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
 import { getProjectAssetRecoveryStatus, relinkAsset } from './services/assetRecovery';
 import { DegradedProjectRecoveryScreen, type FolderRelinkView } from './components/recovery/DegradedProjectRecoveryScreen';
@@ -2530,8 +2531,16 @@ export default function App() {
         // initial `true` keeps the dashboard up, which is the same rule the
         // other three sites now follow: the view changes where the project
         // state changes, and nowhere else.
-        await handleSwitchProjectRef.current(lastId, { preserveUiState: true });
-        setIsHydrating(false);
+        try {
+          await handleSwitchProjectRef.current(lastId, { preserveUiState: true });
+        } catch (err) {
+          console.error('[kinetix] Failed to resume last opened project on reload:', err);
+          setShowDashboard(true);
+        } finally {
+          // Always clear — a stuck asset load must not leave the global
+          // "Loading…" screen up forever (Machine-1 recovery never mounts).
+          setIsHydrating(false);
+        }
         return;
       }
 
@@ -6396,8 +6405,15 @@ export default function App() {
       }
       const saved = { project: outcome.project, savedAt: outcome.savedAt };
 
-      // Rehydrate the target project's assets from IndexedDB.
-      const storedAssets = await getAllAssetsForProject(saved.project.id);
+      // Rehydrate the target project's assets from IndexedDB — bounded so a
+      // stuck store cannot hold the dashboard card spinner open forever.
+      const storedAssets = await withAssetLoadTimeout(
+        getAllAssetsForProject(saved.project.id),
+        'getAllAssetsForProject(switch)',
+      ).catch((err) => {
+        console.warn('[kinetix] IndexedDB asset read failed or timed out:', err);
+        return [];
+      });
       const blobMap = new Map(storedAssets.map(a => [a.id, a]));
 
       // WS3 item B — launch-time repair, BEFORE the item A orphan check

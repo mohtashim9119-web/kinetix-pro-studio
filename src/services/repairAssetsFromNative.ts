@@ -21,6 +21,7 @@ import type { Asset } from '../types';
 import { putAsset, type StoredAsset } from './assetStore';
 import { getAssetStatusNative, readAssetNative } from './nativeAssetStore';
 import { isTauri } from './tauriFfmpeg';
+import { withAssetLoadTimeout } from './assetLoadTimeout';
 
 export interface AssetRepairReport {
   /** Assets successfully re-populated into IndexedDB from the native store. */
@@ -44,7 +45,10 @@ export async function repairMissingAssetsFromNative(
 
   let status;
   try {
-    status = await getAssetStatusNative(projectId, [...missingIds]);
+    status = await withAssetLoadTimeout(
+      getAssetStatusNative(projectId, [...missingIds]),
+      'getAssetStatusNative(repair)',
+    );
   } catch (err) {
     console.warn(`[assetRepair] could not read native asset status for project ${projectId}:`, err);
     return report;
@@ -59,7 +63,10 @@ export async function repairMissingAssetsFromNative(
     const mimeType = entry.mimeType ?? asset.file?.type ?? '';
     const name = entry.name ?? asset.name;
     try {
-      const bytes = await readAssetNative(projectId, entry.assetId);
+      const bytes = await withAssetLoadTimeout(
+        readAssetNative(projectId, entry.assetId),
+        `readAssetNative(${entry.assetId})`,
+      );
       // `Uint8Array.buffer` may be a larger backing ArrayBuffer than the
       // view (rare, but possible depending on the IPC deserializer) — slice
       // to the view's own bounds so the Blob never carries extra bytes.

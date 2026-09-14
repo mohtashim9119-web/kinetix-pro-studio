@@ -718,4 +718,34 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
     expect(screen()).toBeNull();
   });
+
+  it('closing the recovery screen (X) writes nothing and leaves the project poisoned', async () => {
+    const targetProject = {
+      ...storedProject(TARGET_ID, 'Target'),
+      assets: [{ id: 'a1', name: 'clip.mp4', url: '', type: 'image' }],
+      segments: [{ id: 'seg-0', assetId: 'a1', text: 'Hook', startTime: 0, duration: 1 }],
+    } as unknown as Project;
+    mockLoadProjectDetailed.mockResolvedValue({ ok: true, project: targetProject, savedAt: Date.now() });
+    mockGetAllAssetsForProject.mockResolvedValue([]);
+    mockRepairMissingAssetsFromNative.mockResolvedValueOnce({ repaired: [], failed: [] });
+
+    await mountApp();
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${TARGET_ID}"]`);
+    await act(async () => { card!.click(); });
+    await act(async () => {
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    });
+
+    expect(container.querySelector('[data-testid="degraded-project-recovery"]')).not.toBeNull();
+    expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
+
+    const closeBtn = container.querySelector<HTMLButtonElement>('[data-testid="recovery-close"]');
+    await act(async () => { closeBtn!.click(); });
+    await act(async () => { await Promise.resolve(); });
+
+    expect(container.querySelector('[data-testid="degraded-project-recovery"]')).toBeNull();
+    expect(view()).toEqual({ view: 'dashboard', projectId: null });
+    expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
+    expect(mockSaveProject).not.toHaveBeenCalled();
+  });
 });

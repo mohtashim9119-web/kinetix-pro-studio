@@ -32,9 +32,10 @@
  */
 
 import type { Asset, Project } from '../types';
-import { getAsset, putAsset } from './assetStore';
+import { getAllAssetsForProject, putAsset } from './assetStore';
 import { getAssetStatusNative, writeAssetBlobNative } from './nativeAssetStore';
 import { loadProjectDetailed, getLoadFailure, clearLoadFailure, type LoadFailure } from './projectStore';
+import { withAssetLoadTimeout, ASSET_LOAD_TIMEOUT_MS } from './assetLoadTimeout';
 
 /** One row of the recovery screen's asset list. */
 export interface AssetRecoveryEntry {
@@ -86,11 +87,27 @@ export async function getProjectAssetRecoveryStatus(projectId: string): Promise<
   const project: Project = outcome.project;
   const assetIds = project.assets.map((a) => a.id);
 
-  const [cacheEntries, nativeEntries] = await Promise.all([
-    Promise.all(assetIds.map(async (id) => [id, (await getAsset(projectId, id)) !== null] as const)),
-    getAssetStatusNative(projectId, assetIds),
+  // One IndexedDB read per project — NOT one `getAsset` open per id. The old
+  // N-parallel-get pattern hung WKWebView indefinitely on large libraries
+  // (900+ assets) and never reached the recovery screen.
+  const [storedAssets, nativeEntries] = await Promise.all([
+    withAssetLoadTimeout(getAllAssetsForProject(projectId), 'getAllAssetsForProject').catch((err) => {
+      console.warn(`[assetRecovery] cache read failed for project ${projectId}:`, err);
+      return [];
+    }),
+    withAssetLoadTimeout(getAssetStatusNative(projectId, assetIds), 'getAssetStatusNative').catch((err) => {
+      console.warn(`[assetRecovery] native status read failed for project ${projectId}:`, err);
+      return assetIds.map((assetId) => ({
+        assetId,
+        bytesPresent: false,
+        metaPresent: false,
+        bytes: null,
+        name: null,
+        mimeType: null,
+      }));
+    }),
   ]);
-  const cacheById = new Map(cacheEntries);
+  const cacheById = new Map(storedAssets.map((a) => [a.id, true]));
   const nativeById = new Map(nativeEntries.map((e) => [e.assetId, e.bytesPresent]));
 
   const assets: AssetRecoveryEntry[] = project.assets.map((a) => {

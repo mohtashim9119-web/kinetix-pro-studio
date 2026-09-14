@@ -37,6 +37,16 @@ vi.mock('./projectStoreClient', () => ({
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
 vi.mock('./assetStore', () => ({
+  getAllAssetsForProject: (projectId: string) => {
+    const assets: { projectId: string; id: string; blob: Blob; name: string; mimeType: string }[] = [];
+    for (const [key, blob] of cacheBacking.entries()) {
+      const [pid, id] = key.split(':');
+      if (pid === projectId) {
+        assets.push({ projectId, id, blob, name: 'x', mimeType: blob.type });
+      }
+    }
+    return Promise.resolve(assets);
+  },
   getAsset: (projectId: string, id: string) => {
     const blob = cacheBacking.get(`${projectId}:${id}`);
     return Promise.resolve(blob ? { projectId, id, blob, name: 'x', mimeType: blob.type } : null);
