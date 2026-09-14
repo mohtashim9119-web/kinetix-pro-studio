@@ -3623,3 +3623,34 @@ walk over every relative markdown link in `docs/**/*.md` and `CLAUDE.md`) found 
 checked, 0 broken. Force-pushed (`--force-with-lease`) after rebase, as required by the history
 rewrite.
 
+---
+
+## Round 28 — STATUS.md rewrite (docs only, 2026-09-14)
+
+Branch `ws3-export-integration` @ tip after `ws3-docs-restructure` merge (`34e04d1` parent).
+
+**Moved out of `STATUS.md` (closed / no longer open):**
+- Round 27 ff-merge narrative, gate totals (`831c872`: tsc/lint clean, vitest 3823/33 replay-fail,
+  cargo 400/486), and live-wiring evidence (`ExportFailureMessage` @ `App.tsx:294,7169`,
+  `applySilentProvenanceResolution` @ `App.tsx:223,6446`, `StorageSettingsSection` @
+  `AppSettingsModal.tsx:219`, `withAssetLoadTimeout` @ `App.tsx:224`) — all landed @ `831c872`.
+- "Double save-dialog / double-picker" claim — closed; sole dialog is `pick_save_path` @
+  `useExport.ts:1036`.
+- WS3 lane doc-count cap (7 content docs) — closed post-`ws3-docs-restructure` rename.
+- Prompt-37 UNSEEN U25–U30 — closed @ `86dde13` per `.cursor/ws3-export-failure-unseen.md`.
+- **D3 disk-full misclassification — CLOSED** (Round 28 Machine 1 check 8: disk-full card displayed
+  correctly on hardware @ build `831c872`).
+
+**Merged duplicates (same item, one line in new STATUS):**
+- "Execute `windows-validation.md`" + "Machine 1 hardware validation of `ws3-round27` (8 tests)" →
+  single Next Task referencing nine smoke checks @ `831c872` and remaining W/E rows.
+- Part C 500-segment silent gaps (was in both In Progress prose and Next Tasks) → one Next Task.
+- Round 27 In Progress status block + coordination notes (U25–U29 rebase deferral, size-estimator
+  note) → dropped or folded into Backlog / Open Bugs as applicable.
+
+**Deleted from STATUS (not verified still open as standalone items):**
+- Multi-paragraph WS3 In Progress gate-baseline prose (historical snapshot, not an open task).
+- Coordination note "U25–U29 wiring deferred rebase work" — U25–U30 closed @ `86dde13`.
+- Separate `[OPEN]` for cloud CI 33–35 failures — demoted to Backlog (fixture absence, non-blocking).
+- WS3 Deferred Tasks placeholder line "(none beyond the two items folded into Open Bugs above)".
+
