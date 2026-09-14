@@ -12,7 +12,7 @@
 
 ## 1. What This Project Is
 
-Kinetix Pro Studio is a desktop video slideshow compositor: script, scene-tagged assets, and voiceover sync into a gapless segment timeline with transitions, overlays, filters, and animations, exported as H.264/AAC MP4. Built for solo creators without a full NLE. Tauri v2 — React/Vite frontend, Rust shell, native ffmpeg sidecar (export), whisper.cpp sidecar (speech alignment), optional in-process forced alignment (`fa-inference` feature). **Local-first:** transcription and export run on-device; optional online Groq transcription is documented as feasibility only (`docs/ws2-app/transcription-groq-feasibility.md`), not shipped.
+Kinetix Pro Studio is a desktop video slideshow compositor: script, scene-tagged assets, and voiceover sync into a gapless segment timeline with transitions, overlays, filters, and animations, exported as H.264/AAC MP4. Built for solo creators without a full NLE. Tauri v2 — React/Vite frontend, Rust shell, native ffmpeg sidecar (export), whisper.cpp sidecar (speech alignment), optional in-process forced alignment (`fa-inference` feature). **Local-first:** transcription and export run on-device; optional online Groq transcription is documented as feasibility only (`docs/ws2-editing-pipeline/transcription-groq-feasibility.md`), not shipped.
 
 ---
 
@@ -41,11 +41,11 @@ Perishable test counts and branch HEAD → `project-state.md`. Rust: `cargo chec
 | `project-state.md` | Perishable situation report — six fixed sections |
 | `docs/README.md` | Three-lane index + archive policy |
 | `docs/ws1-sync-pipeline/README.md` | Sync pipeline living docs |
-| `docs/ws2-app/README.md` | App/platform living docs |
-| `docs/ws3-export/README.md` | Export architecture (ledger, durable state — see lane README) |
+| `docs/ws2-editing-pipeline/README.md` | App/platform living docs |
+| `docs/ws3-export-pipeline/README.md` | Export architecture (ledger, durable state — see lane README) |
 | `docs/archive/` | Folded history, closed investigations |
 
-Completed work → `docs/archive/history/history.md` (+ `history-2.md` overflow). **Do not restate WS3 Rung/Tier registers here** — they live in `docs/ws3-export/architecture-ledger.md`.
+Completed work → `docs/archive/history/history.md` (+ `history-2.md` overflow). **Do not restate WS3 Rung/Tier registers here** — they live in `docs/ws3-export-pipeline/architecture-ledger.md`.
 
 ---
 
@@ -53,13 +53,13 @@ Completed work → `docs/archive/history/history.md` (+ `history-2.md` overflow)
 
 **Sync:** `syncEngine.ts`, `whisperService.ts`, `snapBoundaries.ts`, `faAnchorTrustGate.ts`, `faChunkPlan.ts` — see `docs/ws1-sync-pipeline/README.md`.
 
-**Timeline / drag:** `dragCascade.ts`, `dragGeometry.ts`, `dragSession.ts`, `Timeline.tsx` — manual QA: `docs/ws2-app/editor-wkwebview-drag-checklist.md`.
+**Timeline / drag:** `dragCascade.ts`, `dragGeometry.ts`, `dragSession.ts`, `Timeline.tsx` — manual QA: `docs/ws2-editing-pipeline/editor-wkwebview-drag-checklist.md`.
 
 **Preview / GL:** `PreviewStage.tsx`, `useGlPreview.ts`, `services/gl/`.
 
-**Export (WebCodecs default):** `useExport.ts`, `webcodecsExport/exportWorker.ts`, `exportPipelineWebCodecs.ts`, `tauriFfmpeg.ts`; legacy `exportPipeline.ts`. Native: `ffmpeg.rs` (session lifecycle, append batch IPC, annexb concat/mux, resume/checkpoint commands). Liveness, rung failover, durable resume → `docs/ws3-export/`.
+**Export (WebCodecs default):** `useExport.ts`, `webcodecsExport/exportWorker.ts`, `exportPipelineWebCodecs.ts`, `tauriFfmpeg.ts`; legacy `exportPipeline.ts`. Native: `ffmpeg.rs` (session lifecycle, append batch IPC, annexb concat/mux, resume/checkpoint commands). Liveness, rung failover, durable resume → `docs/ws3-export-pipeline/`.
 
-**Speech:** `useWhisper.ts`, `whisper.rs`. **FA models:** `docs/ws2-app/fa-models-*.md`.
+**Speech:** `useWhisper.ts`, `whisper.rs`. **FA models:** `docs/ws2-editing-pipeline/fa-models-*.md`.
 
 ---
 
@@ -101,11 +101,11 @@ Full table preserved in git history at pre-consolidation `CLAUDE.md` — this fi
 
 - **Status / next actions** → `project-state.md`
 - **Archived task ledger** → `docs/archive/history/work-in-progress.md`
-- **Lane indexes** → `docs/README.md`, `docs/ws1-sync-pipeline/README.md`, `docs/ws2-app/README.md`, `docs/ws3-export/README.md`
+- **Lane indexes** → `docs/README.md`, `docs/ws1-sync-pipeline/README.md`, `docs/ws2-editing-pipeline/README.md`, `docs/ws3-export-pipeline/README.md`
 - **Sync v2 plan** → `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`
 - **Script fixtures** → `scripts/fixtures/` (hardcoded paths — grep before moving)
 - **WS1 measurements (non-fixture)** → `docs/ws1-sync-pipeline/measurements/`
-- **Manual drag QA** → `docs/ws2-app/editor-wkwebview-drag-checklist.md`
-- **Export ledger** → `docs/ws3-export/architecture-ledger.md`
+- **Manual drag QA** → `docs/ws2-editing-pipeline/editor-wkwebview-drag-checklist.md`
+- **Export ledger** → `docs/ws3-export-pipeline/architecture-ledger.md`
 
 **No CSV/JSON data files live in `docs/` — they're test fixtures, not documentation.** Files a `scripts/*.py` or `scripts/*.test.ts` reads by *hardcoded path* live in `scripts/fixtures/`. Everything else (WS1 research-phase measurement output) lives in `docs/ws1-sync-pipeline/measurements/`. Before moving any file into or out of `scripts/fixtures/`, grep `scripts/` for its filename; if there's a hit, update every hardcoded path in the same commit and re-verify golden replay 3/3 — see `docs/archive/history/history.md`'s "Docs Restructure Phase 5" entry.

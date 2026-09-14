@@ -477,7 +477,7 @@ pub fn run() {
                 // diagnostic-logs\kinetix-diagnostic.log`, on macOS
                 // `~/Library/Application Support/com.kinetix.pro-studio/
                 // diagnostic-logs/kinetix-diagnostic.log`. See
-                // docs/ws3-export/w23-machine1-validation.md.
+                // docs/ws3-export-pipeline/w23-machine1-validation.md.
                 let log_dir = app.path().app_local_data_dir()?.join("diagnostic-logs");
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()

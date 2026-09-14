@@ -3,7 +3,7 @@
  * slice knowing about IndexedDB, native copies, or autosave.
  *
  * A project can keep segment metadata after Chromium evicts media bytes
- * (`docs/ws3-export/persistence-layer-audit.md` at 01e565d). Opening that
+ * (`docs/ws3-export-pipeline/persistence-layer-audit.md` at 01e565d). Opening that
  * project must not persist. `canPersistRecoveredProject` is the UI-side
  * gate: if any asset is unresolved, Save is not a legal affordance.
  */

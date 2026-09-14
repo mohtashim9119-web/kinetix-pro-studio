@@ -2,7 +2,7 @@
  * PROMPT 28 (Round 22) — export-path-selection support: grade-loss detection
  * and the diagnostics shape recorded on every run (`exportPathSelection`).
  *
- * See `docs/ws3-export/export-path-selection-audit.md` for the full
+ * See `docs/ws3-export-pipeline/export-path-selection-audit.md` for the full
  * investigation this implements. Summary of the defect this file exists to
  * close: the canvas/legacy paths (`frameRenderer.ts`/`segmentEncoder.ts`)
  * have NO renderer for `VideoSegment.effectGrade` — it is GL-only
@@ -88,7 +88,7 @@ export function evaluateGradeLossRefusal(
     : [
         'This machine cannot use the accelerated (GL) export path, and the compatibility path cannot render color grade.',
         'Update your GPU driver, ensure hardware acceleration is enabled, and avoid remote/virtual-desktop sessions without GPU passthrough, then retry.',
-        'See docs/ws3-export/windows-throughput-audit.md for the WebView2/driver diagnostic steps.',
+        'See docs/ws3-export-pipeline/windows-throughput-audit.md for the WebView2/driver diagnostic steps.',
       ];
 
   return {

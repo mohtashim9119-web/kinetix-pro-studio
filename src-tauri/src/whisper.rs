@@ -1789,7 +1789,7 @@ mod in_flight_tests {
     // interference through the process-global `IN_FLIGHT`/`TERMINAL_BUFFER`
     // statics, not a defect in the peeked-not-consumed behavior itself. Never
     // reproduces single-threaded (`cargo test -- --test-threads=1`) or in
-    // isolation. Outside WS3 scope; not fixed here (docs/ws3-export/architecture-ledger.md
+    // isolation. Outside WS3 scope; not fixed here (docs/ws3-export-pipeline/architecture-ledger.md
     // Round 17). Re-run with `--test-threads=1` to get a trustworthy result.
     #[ignore]
     fn a_retained_percent_is_peeked_not_consumed() {

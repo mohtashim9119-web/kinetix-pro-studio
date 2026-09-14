@@ -618,7 +618,7 @@ export function useExport(
     // color grade would be silently dropped by the path this run would take.
     // Per CC ruling: hard-refuse ONLY on grade loss — every other canvas-
     // routed feature already renders correctly on canvas (see the parity
-    // matrix in docs/ws3-export/export-path-selection-audit.md STEP 3), so
+    // matrix in docs/ws3-export-pipeline/export-path-selection-audit.md STEP 3), so
     // those cases are unaffected by this check.
     const gradeLossRefusal = evaluateGradeLossRefusal(snap, {
       gateOpen: useWebCodecsPath,

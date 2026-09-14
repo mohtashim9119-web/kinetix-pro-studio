@@ -37,7 +37,7 @@ export interface WebCodecsCapabilityDiagnosis {
  * STEP 2 (CRITICAL) — a project carries a non-neutral `effectGrade` on at
  * least one segment that would be rendered by the canvas/legacy path
  * (which has no grade renderer — see `glCompositable.ts` and
- * `docs/ws3-export/export-path-selection-audit.md` STEP 3). Recorded on
+ * `docs/ws3-export-pipeline/export-path-selection-audit.md` STEP 3). Recorded on
  * `ExportError.gradeLossRefusal` so the UI and diagnostics blob can name
  * exactly why the export was refused before any work started.
  */

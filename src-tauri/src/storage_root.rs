@@ -20,7 +20,7 @@
 //!
 //! **What is never touched:** the WebView2 (or WKWebView/WebKit) user data
 //! folder. On Windows, that profile and `app_local_data_dir()` share
-//! `%LOCALAPPDATA%\com.kinetix.pro-studio` — see `docs/ws3-export/
+//! `%LOCALAPPDATA%\com.kinetix.pro-studio` — see `docs/ws3-export-pipeline/
 //! w23-machine1-validation.md`'s ledger note — but this module only ever
 //! moves the NAMED subtrees above, never the directory as a whole, so the
 //! WebView's own profile (wherever exactly Tauri/the OS places it) is

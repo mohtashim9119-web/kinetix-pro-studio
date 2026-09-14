@@ -647,7 +647,7 @@ mod tests {
 
     // Unix-only: inode identity via `MetadataExt::ino()`. Windows' equivalent
     // (`file_index()`) is nightly-only, so the replace-not-truncate property
-    // is unasserted there (docs/ws3-export/windows-validation.md).
+    // is unasserted there (docs/ws3-export-pipeline/windows-validation.md).
     #[cfg(unix)]
     #[test]
     fn write_atomic_never_truncates_the_destination_in_place() {

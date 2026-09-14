@@ -289,7 +289,7 @@ export class TauriFfmpeg implements FfmpegLike {
    * NATIVE diagnostic log (`KINETIX_DIAGNOSTIC_LOG`), not just the WebView
    * console/diagnostics blob. Called on both the pass and the refusal path so
    * a refusal is diagnosable from the log file alone — see
-   * `docs/ws3-export/w23-machine1-validation.md`. Best-effort: a logging
+   * `docs/ws3-export-pipeline/w23-machine1-validation.md`. Best-effort: a logging
    * failure must never affect the export it is describing.
    */
   async logDiskPreflight(ok: boolean, summary: string): Promise<void> {

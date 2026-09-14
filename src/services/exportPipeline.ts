@@ -203,7 +203,7 @@ export interface ExportAppendLedger {
    * PROMPT 28 STEP 4 — throughput attribution: cumulative + max milliseconds
    * spent inside the `appendFileRaw` IPC call itself (writer cost only —
    * excludes the queue wait counted elsewhere), and how many samples that
-   * covers. See `docs/ws3-export/windows-throughput-audit.md` §2/§6.
+   * covers. See `docs/ws3-export-pipeline/windows-throughput-audit.md` §2/§6.
    */
   appendFileRawMsTotal?: number;
   appendFileRawMsMax?: number;

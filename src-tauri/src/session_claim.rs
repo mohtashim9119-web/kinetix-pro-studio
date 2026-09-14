@@ -1319,7 +1319,7 @@ mod tests {
 
     /// Windows-only: compiled by the windows-check CI job (`--all-targets`),
     /// RUN only by a real `cargo test` on Windows — see
-    /// docs/ws3-export/windows-validation.md's claim start-time row.
+    /// docs/ws3-export-pipeline/windows-validation.md's claim start-time row.
     #[cfg(windows)]
     mod windows_start_time {
         use super::super::*;
