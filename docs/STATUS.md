@@ -72,20 +72,19 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 
 ### Open Bugs
 - [OPEN] `ExportFinishShortfallCard` + `StorageRootRelocationView` exported ([recovery/index.ts:19-34](../src/components/recovery/index.ts)) but not rendered in `App.tsx` — Round 28, assigned to CC
-- [OPEN] `estimateExportDestinationDiskBytes` has zero call sites in `ExportSettingsModal.tsx` — [diskFull.ts:546](../src/services/webcodecsExport/diskFull.ts) — Round 28, assigned to CC
-- [OPEN] `StorageSettingsSection.tsx:105` calls `relink_pick_folder` directly, bypassing `relinkPickFolder()` — [relinkNative.ts:28](../src/services/relinkNative.ts) — Round 28, assigned to CC
-- [OPEN] Export-session reclaim vs storage-root reclaim undrawn (U36) — `.cursor/ws3-export-failure-unseen.md:15`; `reclaimSessions` vs `storage_root_reclaim` — Round 28, assigned to CC
-- [OPEN] Stale FA downloader string still cites "separate, later task (ruling R-D)" — [fa.rs:596-599](../src-tauri/src/fa.rs)
+- D6 CLOSED (Round 28) — a degraded project (unresolved assets) now opens directly into the editor instead of a blocking recovery modal; unresolved assets show an Offline badge (`DropZonePanel.tsx`), autosave stays blocked via the existing `saveProject` Guard 2 poison (`canPersistRecoveredProject`, `assetRecovery.ts`), and the recovery screen is reachable on demand via Files ▸ Relink Media…. See `App.tsx`'s `handleSwitchProject`.
+- D7 CLOSED (Round 28) — `ExportLivenessSnapshot.framesEncodedCumulative` added alongside the existing per-session `framesEncoded`, summed across every completed piece in the run — [exportPipeline.ts](../src/services/exportPipeline.ts), wired in [exportPipelineWebCodecs.ts](../src/services/webcodecsExport/exportPipelineWebCodecs.ts).
+- CLOSED (Round 28) — `estimateExportDestinationDiskBytes` wired into `ExportSettingsModal.tsx`'s live size badge — [diskFull.ts:546](../src/services/webcodecsExport/diskFull.ts).
+- CLOSED (Round 28) — `StorageSettingsSection.tsx:105` now routes through `relinkPickFolder()` — [relinkNative.ts:28](../src/services/relinkNative.ts).
+- CLOSED (Round 28) — stale FA downloader string updated to describe the implemented, registered `fa_model_download` — [fa.rs:596-599](../src-tauri/src/fa.rs).
 - [OPEN] Whisper-cache flake bounded only by `--test-threads=1`; needs injectable `IN_FLIGHT`/`TERMINAL_BUFFER` — [whisper.rs:109](../src-tauri/src/whisper.rs), [whisper.rs:235](../src-tauri/src/whisper.rs)
 - [OPEN] `navigator.storage.persist()` WebView2 return value unrecorded — `windows-validation.md` W24
 - [OPEN] D1 Resume mints a new session folder instead of adopting the retained one — Round 28, assigned to CC
 - [OPEN] D2 Two resume surfaces; four equal-weight buttons on the failure overlay — Round 28, assigned to CC
 - [OPEN] D4 Storage root relocation skips models; export temp still under `%TEMP%` on C: — Round 28, assigned to CC
-- [OPEN] D5 Reclaim button frees zero bytes — Round 28, assigned to CC
-- [OPEN] D6 Recovery screen did not appear on the 42-asset project; cause undetermined — Round 28, assigned to CC
-- [OPEN] D7 `appendLedger` and `framesEncoded` reset per encoder session, read as totals — Round 28, assigned to CC
-- [OPEN] D8 Diagnostic log file created but empty until first event — Round 28, assigned to CC
+- [OPEN] D5 Reclaim button frees zero bytes — U36's ownership ambiguity resolved (`.cursor/ws3-export-failure-unseen.md`), wiring still pending — Round 28, assigned to CC
 - [OPEN] D9 Twenty encoder sessions with eighteen restarts on RX 580 in one piece — Round 28, assigned to CC
+- [OPEN] D8 Diagnostic log file created but empty until first event — Round 28, assigned to CC (revised scope: full-lifecycle logging, in progress)
 
 ### Deferred Tasks
 (none)

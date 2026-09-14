@@ -1384,15 +1384,32 @@ export function DropZonePanel({
                       <p className="text-[11px] text-[var(--kx-faint)] italic px-1">No images or videos loaded.</p>
                     )}
                     {nonAudioAssets.map((asset) => (
-                      <div key={asset.id} className="flex items-center gap-2.5 px-3 py-1.5">
+                      <div
+                        key={asset.id}
+                        className="flex items-center gap-2.5 px-3 py-1.5"
+                        data-testid="asset-row"
+                        data-asset-id={asset.id}
+                        data-unresolved={asset.unresolved ? 'true' : 'false'}
+                      >
                         <div className="w-8 h-8 rounded-[7px] overflow-hidden flex-shrink-0
                                         bg-[var(--kx-surface-2)] flex items-center justify-center">
-                          {asset.type === 'image'
-                            ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
-                            : <Film size={13} className="text-[var(--kx-faint)]" />
+                          {asset.unresolved || !asset.url
+                            ? <Film size={13} className="text-[var(--kx-danger)]" />
+                            : asset.type === 'image'
+                              ? <img src={asset.url} className="w-full h-full object-cover" alt="" />
+                              : <Film size={13} className="text-[var(--kx-faint)]" />
                           }
                         </div>
                         <span className="flex-1 min-w-0 text-[12px] text-[var(--kx-muted)] truncate">{asset.name}</span>
+                        {asset.unresolved && (
+                          <span
+                            data-testid="asset-offline-badge"
+                            className="flex-shrink-0 text-[9px] font-bold uppercase tracking-widest text-[var(--kx-danger)]
+                                       border border-[var(--kx-danger)] rounded-[6px] px-1.5 py-0.5"
+                          >
+                            Offline
+                          </span>
+                        )}
                         <button
                           onClick={() => onDeleteAsset(asset.id)}
                           aria-label={`Delete ${asset.name}`}

@@ -10,16 +10,20 @@
  * the UI side is mechanical (see each exported type's own doc comment for
  * the exact shape).
  *
- * WHY A PROJECT CAN BE INSPECTED HERE EVEN THOUGH IT WON'T OPEN. Item A's
- * Guard 2 poisons a project (`loadFailures`, `reportAssetResolutionFailure`)
- * and `App.tsx`'s `handleSwitchProject` refuses to open it — deliberately,
- * so nothing can autosave a degraded copy over it. But `loadProjectDetailed`
- * itself has no opinion about asset resolution (that check lives entirely in
- * `handleSwitchProject`), so it still returns the project's JSON — including
- * its `assets` array — for a poisoned project exactly as it would for a
+ * WHY A PROJECT CAN BE INSPECTED HERE INDEPENDENTLY OF WHETHER IT'S OPEN.
+ * Item A's Guard 2 poisons a project (`loadFailures`,
+ * `reportAssetResolutionFailure`) so nothing can autosave a degraded copy
+ * over it. D6 (Round 28) — `App.tsx`'s `handleSwitchProject` no longer
+ * refuses to open a poisoned project (it opens into the editor with each
+ * unresolved asset flagged, `Asset.unresolved`); the poison ALONE is what
+ * blocks a write, enforced by `saveProject`'s own Guard 2 check regardless
+ * of what the UI does. `loadProjectDetailed` itself still has no opinion
+ * about asset resolution (that check lives entirely in
+ * `handleSwitchProject`), so it returns the project's JSON — including its
+ * `assets` array — for a poisoned project exactly as it would for a
  * healthy one. That is what makes this module possible without touching
- * live app state at all: it reads the stored project directly, the same way
- * the (still poisoned) project itself would be read if it opened.
+ * live app state at all: it reads the stored project directly, independent
+ * of whatever the currently-open project (poisoned or not) is doing.
  *
  * RE-LINK IS THE SUPPORTED RECOVERY for the Machine-1 class of loss: an
  * asset that is unresolvable in BOTH IndexedDB and the native store (item
@@ -71,6 +75,27 @@ export interface ProjectAssetRecoveryStatus {
   assets: AssetRecoveryEntry[];
   /** `assets.every(a => a.resolved)`. When true, the project is safe to reopen. */
   allResolved: boolean;
+}
+
+/**
+ * D6 (Round 28) — the ONE predicate for "can this project be saved right
+ * now." A degraded project (opened with one or more assets `unresolved`,
+ * per `Asset.unresolved`) opens directly into the editor instead of being
+ * trapped behind a blocking recovery modal, but autosave and every other
+ * save-back-to-original-file path must stay off until every asset is
+ * re-linked — otherwise a save would commit the asset-reference-stripped or
+ * placeholder state over the last known-good `project.json`, the exact loss
+ * shape Guard 2's poisoning exists to prevent (see this module's own doc
+ * comment above).
+ *
+ * Deliberately the SAME poison this module's `reportAssetResolutionFailure`
+ * writes and `saveProject`'s Guard 2 already reads (`projectStore.ts`) —
+ * not a second, independently-derived check. A caller that wants to know
+ * "is this project safe to save" reads this; nothing computes its own
+ * unresolved-asset count for that decision.
+ */
+export function canPersistRecoveredProject(projectId: string): boolean {
+  return getLoadFailure(projectId) === undefined;
 }
 
 /**

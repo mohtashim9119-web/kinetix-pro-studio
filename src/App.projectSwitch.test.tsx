@@ -17,6 +17,17 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import type { Project, ProjectMeta } from './types';
 
+// D6 (Round 28) — the new default open path mounts <Timeline>, which reads
+// ResizeObserver (undefined in jsdom); a stub is enough since no test here
+// asserts on the sizes it would report.
+if (typeof (globalThis as { ResizeObserver?: unknown }).ResizeObserver === 'undefined') {
+  (globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Deferred promises — the whole point of this file. Each await inside
 // handleSwitchProject is held open so the DOM can be inspected mid-flight.
@@ -40,6 +51,7 @@ function storedProject(id: string, name: string): Project {
     id,
     name,
     script: '',
+    sceneDetails: '',
     segments: [],
     assets: [],
     headings: [],
@@ -150,6 +162,7 @@ const {
   __resetStoreGuardsForTests,
 } = await import('./services/projectStore');
 const { getAppSessionToken } = await import('./services/historyPersist');
+const { canPersistRecoveredProject } = await import('./services/assetRecovery');
 
 async function armInSessionReload(projectId: string): Promise<void> {
   setLastOpenedProjectId(projectId);
@@ -518,7 +531,7 @@ describe('WS3 item A — asset resolution failure blocks the switch', () => {
     __resetStoreGuardsForTests();
   });
 
-  it('refuses to open a project whose project.json references an asset storage does not have, and poisons it for writing', async () => {
+  it('D6: opens into the editor (not blocked) when project.json references an asset storage does not have, marks it unresolved, and poisons the project for writing', async () => {
     const targetProject = {
       ...storedProject(TARGET_ID, 'Target'),
       assets: [{ id: 'missing-asset', name: 'clip.mp4', url: '', type: 'video' }],
@@ -532,14 +545,19 @@ describe('WS3 item A — asset resolution failure blocks the switch', () => {
     await act(async () => { card!.click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 
-    // Never opened — the dashboard stays up, the editor never mounts on the
-    // target project. This is the decisive assertion: the OLD behavior opened
-    // the project anyway with the reference silently nulled out.
-    expect(view()).toEqual({ view: 'dashboard', projectId: null });
-    // Poisoned for writing, same contract as a JSON parse failure.
+    // D6 (Round 28) — opens straight into the editor. The OLD behavior left
+    // the dashboard up with the project unopenable until every asset was
+    // found; the reference is never silently dropped either way (the
+    // decisive difference from the pre-Guard-2 bug this test originally
+    // locked out) — it stays on the segment/asset, just flagged unresolved.
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
+    // Still poisoned for writing, same contract as a JSON parse failure —
+    // this is the guarantee that actually prevents data loss, independent
+    // of whether the UI blocks or opens.
     const failure = getLoadFailure(TARGET_ID);
     expect(failure).toBeDefined();
     expect(failure!.reason).toBe('asset-unresolvable');
+    expect(canPersistRecoveredProject(TARGET_ID)).toBe(false);
     // Nothing was ever handed to saveProject for this degraded state.
     expect(mockSaveProject).not.toHaveBeenCalled();
   });
@@ -605,7 +623,7 @@ describe('WS3 item B — launch-time repair heals a cache miss before it can poi
     expect(mockRepairMissingAssetsFromNative).toHaveBeenCalledWith(TARGET_ID, targetProject.assets, ['a1']);
   });
 
-  it('an asset missing from BOTH stores still poisons the project — repair is not a substitute for the orphan guard', async () => {
+  it('an asset missing from BOTH stores still poisons the project (D6: opens degraded, not refused) — repair is not a substitute for the orphan guard', async () => {
     const targetProject = {
       ...storedProject(TARGET_ID, 'Target'),
       assets: [{ id: 'a1', name: 'clip.mp4', url: '', type: 'image' }],
@@ -621,9 +639,10 @@ describe('WS3 item B — launch-time repair heals a cache miss before it can poi
     await act(async () => { card!.click(); });
     await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
 
-    expect(view()).toEqual({ view: 'dashboard', projectId: null });
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
     expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
     expect(mockPutAsset).not.toHaveBeenCalled();
+    expect(mockSaveProject).not.toHaveBeenCalled();
   });
 });
 
@@ -648,7 +667,23 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     __resetStoreGuardsForTests();
   });
 
-  it('routes a project with gone asset bytes into the recovery screen, then reopens it once re-linked', async () => {
+  /** Expands DropZonePanel's "Images & Videos" section (collapsed by
+   *  default) and clicks its "Relink Media…" door into the recovery
+   *  screen — the ONLY entry point into that screen since D6 (Round 28)
+   *  stopped opening it automatically. */
+  async function openRelinkMediaFromFilesTab(): Promise<void> {
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>('button')];
+    const sectionHeader = buttons.find((b) => b.textContent?.includes('Images & Videos'));
+    expect(sectionHeader).toBeDefined();
+    await act(async () => { sectionHeader!.click(); });
+    const relinkDoor = [...container.querySelectorAll<HTMLButtonElement>('button')]
+      .find((b) => b.textContent?.includes('Relink Media'));
+    expect(relinkDoor).toBeDefined();
+    await act(async () => { relinkDoor!.click(); });
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  it('D6: opens directly into the editor with the asset marked unresolved; Relink Media… (Files tab) reaches the recovery screen on demand, and relinking clears the poison and the flag', async () => {
     const targetProject = {
       ...storedProject(TARGET_ID, 'Target'),
       // `type: 'image'` (despite the .mp4 name) dodges getMediaDuration's real
@@ -662,7 +697,13 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     // this asset either (nativeBacking starts empty) — bytes are gone
     // everywhere except the user's own disk.
     mockGetAllAssetsForProject.mockResolvedValue([]);
-    mockRepairMissingAssetsFromNative.mockResolvedValueOnce({ repaired: [], failed: [] });
+    // Persistent (not `...Once`): this test drives handleSwitchProject
+    // TWICE (the initial open, then the auto-reopen after relink below) —
+    // an `...Once` queue that isn't drained exactly once per call leaks
+    // into whichever test runs next (`vi.clearAllMocks()` doesn't drain
+    // `...Once` queues), so every call here gets its own explicit
+    // `mockResolvedValue` instead of relying on queue order.
+    mockRepairMissingAssetsFromNative.mockResolvedValue({ repaired: [], failed: [] });
 
     await mountApp();
     const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${TARGET_ID}"]`);
@@ -671,13 +712,27 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
       await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
     });
 
-    // ---- Opens into recovery — not refused with no exit. ----
+    // ---- Opens straight into the editor — no forced/blocking modal. ----
     const screen = (): Element | null => container.querySelector('[data-testid="degraded-project-recovery"]');
-    expect(view()).toEqual({ view: 'dashboard', projectId: null });
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
+    expect(screen()).toBeNull();
+    expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
+    expect(canPersistRecoveredProject(TARGET_ID)).toBe(false);
+    expect(mockSaveProject).not.toHaveBeenCalled();
+
+    // ---- The Files tab's asset row marks the unresolved asset Offline —
+    //      the timeline/asset-list rendering the task asked to reuse. ----
+    const assetsBadgeRow = (): Element | null =>
+      container.querySelector('[data-testid="asset-row"][data-asset-id="a1"]');
+    expect(assetsBadgeRow()).toBeNull(); // "Images & Videos" starts collapsed
+    await openRelinkMediaFromFilesTab();
+    expect(assetsBadgeRow()?.getAttribute('data-unresolved')).toBe('true');
+    expect(assetsBadgeRow()?.querySelector('[data-testid="asset-offline-badge"]')).not.toBeNull();
+
+    // ---- The Relink Media… entry point (Files tab) reaches the recovery
+    //      screen on demand — the only way there now. ----
     expect(screen()).not.toBeNull();
     expect(screen()!.querySelector('[data-testid="recovery-project-name"]')?.textContent).toBe('Target');
-
-    // ---- Shows which assets are unresolved (collapsed item list, Step 3). ----
     const assetRow = screen()!.querySelector('[data-testid="recovery-item"][data-asset-id="a1"]');
     expect(assetRow).not.toBeNull();
     expect(assetRow!.getAttribute('data-resolution-status')).toBe('unresolved');
@@ -685,8 +740,6 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     expect(assetRow!.querySelector('[data-testid="recovery-item-asset"]')?.textContent).toBe('clip.mp4');
     expect(screen()!.querySelector('[data-testid="recovery-unresolved-summary"]')!.textContent)
       .toMatch(/1 unresolved asset/);
-    expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
-    expect(mockSaveProject).not.toHaveBeenCalled();
 
     // ---- The user picks their surviving source file. ----
     const relinkBtn = assetRow!.querySelector<HTMLButtonElement>('[data-testid="recovery-relink"]');
@@ -701,7 +754,7 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     // whose repair step must now find the asset — this is what makes that
     // possible: the same shape `writeAssetBlobNative`'s mock already wrote
     // into `nativeBacking` for.
-    mockRepairMissingAssetsFromNative.mockResolvedValueOnce({
+    mockRepairMissingAssetsFromNative.mockResolvedValue({
       repaired: [{ projectId: TARGET_ID, id: 'a1', blob: recoveredFile, name: 'clip.mp4', mimeType: 'video/mp4' }],
       failed: [],
     });
@@ -713,13 +766,18 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     // ---- The bytes actually landed in the native store. ----
     expect(mockWriteAssetBlobNative).toHaveBeenCalledWith(TARGET_ID, 'a1', recoveredFile, 'clip.mp4', 'video/mp4');
 
-    // ---- Poison clears only now, and the project opens normally. ----
+    // ---- Poison clears only now, still in the editor, recovery screen closed. ----
     expect(getLoadFailure(TARGET_ID)).toBeUndefined();
+    expect(canPersistRecoveredProject(TARGET_ID)).toBe(true);
     expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
     expect(screen()).toBeNull();
+    // The Offline badge clears along with the poison — same "Images &
+    // Videos" section, still expanded from `openRelinkMediaFromFilesTab`.
+    expect(assetsBadgeRow()?.getAttribute('data-unresolved')).toBe('false');
+    expect(assetsBadgeRow()?.querySelector('[data-testid="asset-offline-badge"]')).toBeNull();
   });
 
-  it('closing the recovery screen (X) writes nothing and leaves the project poisoned', async () => {
+  it('closing the on-demand recovery screen (X) writes nothing, leaves the project poisoned, and the editor stays open throughout', async () => {
     const targetProject = {
       ...storedProject(TARGET_ID, 'Target'),
       assets: [{ id: 'a1', name: 'clip.mp4', url: '', type: 'image' }],
@@ -727,7 +785,11 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     } as unknown as Project;
     mockLoadProjectDetailed.mockResolvedValue({ ok: true, project: targetProject, savedAt: Date.now() });
     mockGetAllAssetsForProject.mockResolvedValue([]);
-    mockRepairMissingAssetsFromNative.mockResolvedValueOnce({ repaired: [], failed: [] });
+    // Persistent (not `...Once`) — a stale queued `...Once` value from a
+    // preceding test can otherwise leak into this test's repair call and
+    // falsely resolve the asset, since `vi.clearAllMocks()` in `beforeEach`
+    // does not drain `mockResolvedValueOnce` queues.
+    mockRepairMissingAssetsFromNative.mockResolvedValue({ repaired: [], failed: [] });
 
     await mountApp();
     const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${TARGET_ID}"]`);
@@ -736,6 +798,12 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
       for (let i = 0; i < 8; i++) await Promise.resolve();
     });
 
+    // Already in the editor — no modal was ever forced.
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
+    expect(container.querySelector('[data-testid="degraded-project-recovery"]')).toBeNull();
+    expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
+
+    await openRelinkMediaFromFilesTab();
     expect(container.querySelector('[data-testid="degraded-project-recovery"]')).not.toBeNull();
     expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
 
@@ -744,7 +812,9 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     await act(async () => { await Promise.resolve(); });
 
     expect(container.querySelector('[data-testid="degraded-project-recovery"]')).toBeNull();
-    expect(view()).toEqual({ view: 'dashboard', projectId: null });
+    // The editor stays open — closing the optional recovery view never
+    // kicks the user back to the dashboard the way the old forced modal did.
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
     expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
     expect(mockSaveProject).not.toHaveBeenCalled();
   });

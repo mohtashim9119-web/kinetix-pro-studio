@@ -148,6 +148,18 @@ export interface Asset {
    *  guess (hide the trim bar, skip the clamp) rather than fabricate a
    *  length. */
   duration?: number;
+  /**
+   * D6 (Round 28) — true when this asset's bytes could not be resolved from
+   * storage at project-open time (`App.tsx`'s `handleSwitchProject`). The
+   * project still opens into the editor rather than being trapped behind a
+   * blocking recovery modal; `url` is `''` and `file` is absent for an
+   * unresolved asset, so every renderer that reads either must treat them as
+   * "not here yet," not fabricate a length or attempt playback. Cleared
+   * (field removed) once the asset is re-linked via the Files tab's
+   * "Relink Media…" entry point. See `canPersistRecoveredProject` — saving
+   * stays blocked while any asset in the project carries this flag.
+   */
+  unresolved?: boolean;
 }
 
 /**

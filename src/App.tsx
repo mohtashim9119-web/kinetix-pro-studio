@@ -6229,7 +6229,7 @@ export default function App() {
       // exactly like any other: no manual "I'm done" step for the user.
       setDegradedRecovery(null);
       setFolderRelink(null);
-      await handleSwitchProject(projectId);
+      await handleSwitchProject(projectId, { forceReload: true });
       return;
     }
     await refreshDegradedRecovery(projectId);
@@ -6398,16 +6398,28 @@ export default function App() {
     if (status?.allResolved) {
       clearLoadFailure(projectId);
       setDegradedRecovery(null);
-      await handleSwitchProject(projectId);
+      await handleSwitchProject(projectId, { forceReload: true });
       return;
     }
     await refreshDegradedRecovery(projectId);
   }, [degradedRecovery, folderRelink]);
 
-  const handleSwitchProject = async (id: string, opts?: { preserveUiState?: boolean }): Promise<void> => {
+  const handleSwitchProject = async (
+    id: string,
+    opts?: { preserveUiState?: boolean; forceReload?: boolean },
+  ): Promise<void> => {
     // Re-opening the project already loaded changes no project state, so the
     // view flip is immediate and there is nothing to indicate as pending.
-    if (id === project.id) {
+    //
+    // D6 (Round 28) — `forceReload` bypasses this shortcut. The project can
+    // now be open in DEGRADED form (an unresolved asset), and the recovery
+    // screen's post-relink reopen (`handleRecoveryFileChosen`/
+    // `handleRecoveryConfirmFolderRelink`) targets the SAME project id that
+    // is already live — without `forceReload` that reopen would silently
+    // no-op here, leaving the just-healed asset's `unresolved: true` flag
+    // and `assets`/`url` stale in memory even though storage now has the
+    // bytes and the poison already cleared.
+    if (id === project.id && !opts?.forceReload) {
       setShowDashboard(false);
       return;
     }
@@ -6503,15 +6515,31 @@ export default function App() {
       // `setProjectSilent`, which the 500 ms autosave then persisted over the
       // last known-good native project.json — the exact shape that turned a
       // recoverable IndexedDB/origin cache loss into permanent destruction
-      // across twenty projects. Bail out entirely instead, same posture as
-      // the `!outcome.ok` branch above: the CURRENTLY open project is left
-      // completely untouched, and the target project is poisoned for writing
-      // (Guard 2's `loadFailures`) so nothing can autosave over it either.
+      // across twenty projects — poisoned for writing (Guard 2's
+      // `loadFailures`, via `reportAssetResolutionFailure` below) so nothing
+      // can autosave over it. THAT poisoning, not a blocking modal, is what
+      // actually prevents the data-loss shape: `saveProject` refuses any
+      // write to a poisoned project id regardless of what the UI is doing.
+      //
+      // D6 (Round 28) — this USED TO also `return` here, trapping the user
+      // on the dashboard behind a forced `DegradedProjectRecoveryScreen`
+      // with no way into the editor until every asset was re-linked. That
+      // traded one failure mode for another: a project with even one
+      // unresolved asset (of, say, forty-two) became completely
+      // unopenable/uneditable until the user found every missing file. The
+      // project now opens into the editor exactly as before, with each
+      // unresolved asset flagged (`Asset.unresolved`) so the timeline/asset
+      // list can mark it offline — see `canPersistRecoveredProject` (which
+      // reads the SAME poison this call sets) for the one place that
+      // question is answered. `refreshDegradedRecovery` is no longer called
+      // automatically here; the user reaches that screen on demand via the
+      // Files tab's "Relink Media…" entry (`onOpenRelinkMedia`).
       const orphanedAssets = saved.project.assets.filter(a => !blobMap.has(a.id));
+      const orphanedAssetIds = new Set(orphanedAssets.map(a => a.id));
       if (orphanedAssets.length > 0) {
         const names = orphanedAssets.map(a => a.name).join(', ');
         console.error(
-          '[kinetix] Cannot switch to project — asset(s) unresolvable from storage:',
+          '[kinetix] Opening project with unresolved asset(s) — saving is disabled until re-linked:',
           id,
           orphanedAssets.map(a => a.id),
         );
@@ -6520,26 +6548,29 @@ export default function App() {
           `${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} (${names}) listed ` +
             `in this project's data could not be found in storage.`,
         );
-        // WS3 recovery-ui — this used to be a dead end: a toast and nothing
-        // else, with no way back into the project short of finding the
-        // missing bytes some other way. Route into the degraded-project
-        // recovery screen instead, so the user can see exactly which assets
-        // are unresolved and re-link their own surviving source files.
-        await refreshDegradedRecovery(saved.project.id);
         showToast(
-          `This project could not be opened — ${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} ` +
-            `referenced in it could not be found in storage. Re-link your source files to recover it.`,
+          `${orphanedAssets.length} asset${orphanedAssets.length === 1 ? '' : 's'} in this project ` +
+            `could not be found in storage — marked offline. Saving is disabled until you re-link ` +
+            `${orphanedAssets.length === 1 ? 'it' : 'them'} via Files ▸ Relink Media…`,
         );
-        return;
       }
 
       // Revoke current project's blob URLs.
       project.assets.forEach(a => { if (a.url) URL.revokeObjectURL(a.url); });
 
-      // Every asset resolved above (the orphan check just returned otherwise), so
-      // this pass never drops anything — it only builds the rehydrated blob URLs.
+      // D6 (Round 28) — an asset in `orphanedAssetIds` has no entry in
+      // `blobMap`; it opens with `url: ''`/`file: undefined` and
+      // `unresolved: true` instead of a rehydrated blob URL. Never drop the
+      // asset ROW itself (id/name/other metadata stay intact) — only a
+      // re-link should ever remove the `unresolved` flag, never a silent
+      // reference strip, which is the exact loss shape Guard 2 exists to
+      // prevent. Every OTHER asset (not in the orphan set) rehydrates exactly
+      // as before.
       const rehydratedAssets = await Promise.all(
         saved.project.assets.map(async asset => {
+          if (orphanedAssetIds.has(asset.id)) {
+            return { ...asset, url: '', file: undefined, unresolved: true };
+          }
           const stored = blobMap.get(asset.id)!;
           const rehydratedUrl = URL.createObjectURL(stored.blob);
           const rehydratedFile = new File([stored.blob], asset.name, { type: stored.blob.type });
@@ -6551,7 +6582,7 @@ export default function App() {
           const duration = asset.type === 'video' && asset.duration === undefined
             ? await getMediaDuration(rehydratedUrl, 'video')
             : asset.duration;
-          return { ...asset, url: rehydratedUrl, file: rehydratedFile, duration };
+          return { ...asset, url: rehydratedUrl, file: rehydratedFile, duration, unresolved: false };
         }),
       );
 
