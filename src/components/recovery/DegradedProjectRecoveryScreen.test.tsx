@@ -99,6 +99,30 @@ describe('DegradedProjectRecoveryScreen — no-save invariant', () => {
     await act(async () => { save!.click(); });
     expect(fake.saveCount).toBe(1);
   });
+
+  it('shows the "media missing" header title and subtext while unresolved', async () => {
+    await renderScreen({
+      assets: [resolvedAsset, missingAsset],
+      segments,
+    });
+    expect(container.querySelector('[data-testid="recovery-title"]')?.textContent)
+      .toBe('Project media missing');
+    expect(container.querySelector('[data-testid="recovery-subtext"]')?.textContent)
+      .toMatch(/Saving is blocked/);
+  });
+
+  it('flips the header title and subtext to "resolved" once every asset is linked, not just the inline banners', async () => {
+    await renderScreen({
+      assets: [resolvedAsset],
+      segments: [{ id: 'seg-1', label: 'Hook', assetId: 'asset-resolved', resolutionStatus: 'resolved' }],
+    });
+    expect(container.querySelector('[data-testid="recovery-title"]')?.textContent)
+      .toBe('Project media resolved');
+    expect(container.querySelector('[data-testid="recovery-subtext"]')?.textContent)
+      .toBe('All media assets are linked. Saving is enabled.');
+    expect(container.querySelector('[data-testid="degraded-project-recovery"]')?.getAttribute('data-can-save'))
+      .toBe('true');
+  });
 });
 
 describe('DegradedProjectRecoveryScreen — collapsed item list (Step 3)', () => {
