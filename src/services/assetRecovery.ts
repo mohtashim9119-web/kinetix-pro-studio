@@ -33,8 +33,8 @@
 
 import type { Asset, Project } from '../types';
 import { getAllAssetsForProject, putAsset } from './assetStore';
-import { getAssetStatusNative, writeAssetBlobNative } from './nativeAssetStore';
-import { loadProjectDetailed, getLoadFailure, clearLoadFailure, type LoadFailure } from './projectStore';
+import { getAssetStatusNative, writeAssetBlobNative, writeAssetFromPath } from './nativeAssetStore';
+import { loadProjectDetailed, saveProject, getLoadFailure, clearLoadFailure, type LoadFailure } from './projectStore';
 import { withAssetLoadTimeout, ASSET_LOAD_TIMEOUT_MS } from './assetLoadTimeout';
 
 /** One row of the recovery screen's asset list. */
@@ -161,6 +161,110 @@ export async function relinkAsset(projectId: string, assetId: string, file: File
     await putAsset(projectId, assetId, file, { name: file.name, mimeType: file.type });
   } catch (err) {
     console.warn(`[assetRecovery] re-link succeeded natively but IndexedDB cache write failed (non-fatal):`, err);
+  }
+
+  const status = await getProjectAssetRecoveryStatus(projectId);
+  if (status?.allResolved) {
+    clearLoadFailure(projectId);
+  }
+  return { ok: true, status };
+}
+
+const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'webm', 'm4v']);
+
+function inferAssetType(name: string): Asset['type'] {
+  const ext = name.split('.').pop()?.toLowerCase() ?? '';
+  return VIDEO_EXTENSIONS.has(ext) ? 'video' : 'image';
+}
+
+/**
+ * Attaches a brand-new asset to a segment that has NO `assetId` at all — the
+ * shape left behind when an asset is deliberately deleted from the project
+ * (its Asset entry and every pointer to it are removed together, per
+ * `deleteAsset`'s own invariant). `relinkAsset` above cannot help here: it
+ * writes bytes into an EXISTING asset id's slot, and there is no id left to
+ * write into. This mints a fresh id, writes the file's bytes to the native
+ * store under it (mirroring `persistFileToAsset` in App.tsx), appends the new
+ * Asset to `project.assets`, and points the target segment at it — the one
+ * write in this module that touches `project.json`, since the whole point is
+ * restoring a pointer that no longer exists anywhere.
+ */
+export async function attachNewAssetToSegment(
+  projectId: string,
+  segmentId: string,
+  file: File,
+): Promise<RelinkOutcome> {
+  return attachNewAssetCore(projectId, segmentId, file.name, file.type, async (id) => {
+    await writeAssetBlobNative(projectId, id, file, file.name, file.type);
+    try {
+      await putAsset(projectId, id, file, { name: file.name, mimeType: file.type });
+    } catch (err) {
+      console.warn(`[assetRecovery] attach-new-asset native write succeeded but IndexedDB cache write failed (non-fatal):`, err);
+    }
+  }, file.lastModified);
+}
+
+/**
+ * Path-based sibling of `attachNewAssetToSegment` for the folder-pick flow —
+ * bytes are copied by path on the native side (`writeAssetFromPath`, no IPC
+ * byte transfer), mirroring how folder-pick already writes into an EXISTING
+ * asset id (`App.tsx`'s `handleRecoveryConfirmFolderRelink`). No IndexedDB
+ * cache write here, matching that same existing path-write behavior.
+ */
+export async function attachNewAssetToSegmentFromPath(
+  projectId: string,
+  segmentId: string,
+  srcPath: string,
+  name: string,
+  mimeType: string,
+  duration: number | null,
+): Promise<RelinkOutcome> {
+  return attachNewAssetCore(projectId, segmentId, name, mimeType, async (id) => {
+    await writeAssetFromPath(projectId, id, srcPath, name, mimeType, duration);
+  });
+}
+
+async function attachNewAssetCore(
+  projectId: string,
+  segmentId: string,
+  name: string,
+  mimeType: string,
+  writeBytes: (assetId: string) => Promise<void>,
+  addedAt: number = Date.now(),
+): Promise<RelinkOutcome> {
+  const outcome = await loadProjectDetailed(projectId);
+  if (!outcome || !outcome.ok) {
+    return { ok: false, message: 'Project could not be read.', status: null };
+  }
+  const project: Project = outcome.project;
+  const segment = project.segments.find((s) => s.id === segmentId);
+  if (!segment) {
+    return { ok: false, message: 'Segment not found.', status: await getProjectAssetRecoveryStatus(projectId) };
+  }
+  if (segment.assetId) {
+    // Already has an asset — the caller should have used relinkAsset instead.
+    return { ok: false, message: 'Segment already has an asset.', status: await getProjectAssetRecoveryStatus(projectId) };
+  }
+
+  const id = crypto.randomUUID();
+  const type = inferAssetType(name);
+  try {
+    await writeBytes(id);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[assetRecovery] attach-new-asset write failed for segment ${segmentId} (project ${projectId}):`, message);
+    return { ok: false, message, status: await getProjectAssetRecoveryStatus(projectId) };
+  }
+
+  const newAsset: Asset = { id, name, url: '', type, addedAt };
+  const updatedProject: Project = {
+    ...project,
+    assets: [...project.assets, newAsset],
+    segments: project.segments.map((s) => (s.id === segmentId ? { ...s, assetId: id } : s)),
+  };
+  const saveOutcome = await saveProject(updatedProject);
+  if (!saveOutcome.ok) {
+    return { ok: false, message: saveOutcome.message, status: await getProjectAssetRecoveryStatus(projectId) };
   }
 
   const status = await getProjectAssetRecoveryStatus(projectId);

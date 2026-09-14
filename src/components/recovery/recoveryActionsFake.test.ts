@@ -4,8 +4,8 @@ import { createRecoveryActionsFake } from './recoveryActionsFake';
 describe('createRecoveryActionsFake', () => {
   it('records relink, save, resume, retry, and choose-folder without I/O', () => {
     const fake = createRecoveryActionsFake();
-    fake.onRelink('asset-1');
-    fake.onRelink('asset-2');
+    fake.onRelink({ assetId: 'asset-1', segmentId: null });
+    fake.onRelink({ assetId: 'asset-2', segmentId: null });
     fake.onSave();
     fake.onResume();
     fake.onRetryFailed();

@@ -26,6 +26,7 @@ import {
   Undo2,
   Redo2,
   Search,
+  Link2,
 } from 'lucide-react';
 import { VideoSegment, Asset, TransitionType, AnimationType, HeadingOverlay, type SegmentGrade } from '../types';
 import { TRANSITION_OPTIONS, ANIMATION_OPTIONS, FILTERS, FONT_FAMILIES } from '../constants';
@@ -342,6 +343,8 @@ interface Props {
   onDeleteAsset: (assetId: string) => void;
   onDeleteAllAssets: () => void;
   onDeleteVoiceover: () => void;
+  /** Opens the recovery/relink screen for the current project's assets. */
+  onOpenRelinkMedia: () => void;
   // File actions
   /** Starts an Apply Sync. Takes NO argument on purpose (WS2-50): the staged
    *  files are read by `App.tsx`'s single entry point from the shared live ref
@@ -491,6 +494,7 @@ export function DropZonePanel({
   onDeleteAsset,
   onDeleteAllAssets,
   onDeleteVoiceover,
+  onOpenRelinkMedia,
   onApplySync,
   onStagedFilesChange,
   stagedFilesClearSignal,
@@ -1401,6 +1405,18 @@ export function DropZonePanel({
                       </div>
                     ))}
                   </div>
+                  {/* Manual door into the recovery/relink screen — only here,
+                      only when Images & Videos is expanded, since that's
+                      where an operator is already looking at asset state. */}
+                  <button
+                    onClick={onOpenRelinkMedia}
+                    className="mt-2 w-full flex items-center justify-center gap-1.5 py-1.5 px-3
+                               text-[11px] font-medium text-[var(--kx-faint)] hover:text-[var(--kx-text)]
+                               border border-[var(--kx-line)] rounded-[8px] transition-colors"
+                  >
+                    <Link2 size={12} />
+                    Relink Media…
+                  </button>
                 </div>
               )}
             </div>

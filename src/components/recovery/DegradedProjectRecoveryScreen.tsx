@@ -14,11 +14,21 @@ import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
   buildRecoveryItemRows,
   canPersistRecoveredProject,
-  recoveryResolutionStatusLabel,
-  unresolvedAssetIds,
+  totalUnresolvedCount,
   type RecoveryAsset,
   type RecoverySegment,
 } from './degradedLoad';
+
+/**
+ * What a Re-link click targets: an existing asset with missing bytes
+ * (`assetId` set — the caller writes into it), or a segment whose asset was
+ * deleted outright (`segmentId` set, `assetId` null — the caller attaches a
+ * brand-new asset). Exactly one of the two is non-null.
+ */
+export interface RelinkTarget {
+  assetId: string | null;
+  segmentId: string | null;
+}
 import type { RelinkProposal } from '../../services/relinkResolution/types';
 import type { FolderSelection } from '../../services/relinkResolution/folderRelinkSession';
 
@@ -40,8 +50,11 @@ export interface FolderRelinkView {
   proposals: readonly RelinkProposal[];
   candidateById: Record<string, FolderRelinkCandidateView>;
   selection: FolderSelection;
-  /** Unresolved assets the folder pick was asked to match. */
+  /** Every id (asset or segment) the folder pick proposed matches for. */
   unresolvedAssetIds: readonly string[];
+  /** Which of the ids above are segment ids (missing-asset, no asset left)
+   *  rather than real asset ids — App.tsx uses this to route the write. */
+  segmentIds?: readonly string[];
   writeError: string | null;
 }
 
@@ -50,7 +63,7 @@ export interface DegradedProjectRecoveryScreenProps {
   segments: readonly RecoverySegment[];
   assets: readonly RecoveryAsset[];
   /** Fake or real re-link. This view does not open a picker. */
-  onRelink: (assetId: string) => void;
+  onRelink: (target: RelinkTarget) => void;
   /**
    * Optional persist callback. Ignored while any asset is unresolved —
    * the no-save invariant is enforced here, not by the caller.
@@ -81,9 +94,13 @@ export function DegradedProjectRecoveryScreen({
 }: DegradedProjectRecoveryScreenProps): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
   const canSave = canPersistRecoveredProject({ assets, segments });
-  const missingIds = unresolvedAssetIds(assets);
-  const unresolvedCount = missingIds.length;
-  const assetNameById = new Map(assets.map((a) => [a.id, a.name]));
+  const unresolvedCount = totalUnresolvedCount(assets, segments);
+  const assetNameById = new Map<string, string>([
+    ...assets.map((a): [string, string] => [a.id, a.name]),
+    ...segments
+      .filter((s): s is RecoverySegment & { expectedFileName: string } => !!s.expectedFileName)
+      .map((s): [string, string] => [s.id, s.expectedFileName]),
+  ]);
   const itemRows = buildRecoveryItemRows(segments, assets);
 
   useEffect(() => {
@@ -147,9 +164,13 @@ export function DegradedProjectRecoveryScreen({
 
         <p
           data-testid="recovery-unresolved-summary"
-          className="text-[10px] font-bold uppercase tracking-widest text-amber-300 mb-4"
+          className={`text-[10px] font-bold uppercase tracking-widest mb-4 ${
+            unresolvedCount > 0 ? 'text-red-400' : 'text-emerald-400'
+          }`}
         >
-          {unresolvedCount} unresolved asset{unresolvedCount === 1 ? '' : 's'}
+          {unresolvedCount > 0
+            ? `${unresolvedCount} missing asset${unresolvedCount === 1 ? '' : 's'}`
+            : 'All assets linked'}
         </p>
 
         {/* Step 2 — folder-pick is the PRIMARY recovery action. With many
@@ -165,7 +186,7 @@ export function DegradedProjectRecoveryScreen({
               className="w-full inline-flex items-center justify-center gap-2 bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
             >
               <FolderOpen size={14} />
-              Pick the folder your originals live in
+              Locate Original Files
             </button>
           )}
           {folderRelink?.phase === 'listing' && (
@@ -272,8 +293,8 @@ export function DegradedProjectRecoveryScreen({
             role="status"
             className="mb-5 border border-amber-500/40 bg-amber-500/10 rounded-lg px-3 py-2 text-[11px] text-amber-200"
           >
-            Saving is blocked until every asset is resolved. Re-link your
-            original files — they are the realistic recovery path.
+            Saving is blocked until every asset is linked. Locate your
+            original files to restore this project.
           </div>
         )}
 
@@ -305,28 +326,36 @@ export function DegradedProjectRecoveryScreen({
                   </p>
                 )}
                 <p data-testid="recovery-item-asset" className="text-[9px] text-gray-500 truncate">
-                  {row.assetName ?? (row.assetId ? row.assetId : 'no asset')}
+                  {row.assetName
+                    ? row.assetNameIsExpected
+                      ? `Expected: ${row.assetName}`
+                      : row.assetName
+                    : row.assetId ?? 'Not linked — pick a file'}
                 </p>
               </div>
               <div className="shrink-0 flex items-center gap-2">
-                <span
-                  data-testid="recovery-item-status"
-                  className="text-[9px] font-black uppercase tracking-widest text-gray-400"
-                >
-                  {recoveryResolutionStatusLabel(row.resolutionStatus)}
-                </span>
-                {row.showRelink && row.assetId && (
+                {row.showRelink && (row.assetId || row.segmentId) && (
                   <button
                     type="button"
                     data-testid="recovery-relink"
-                    data-asset-id={row.assetId}
-                    onClick={() => onRelink(row.assetId!)}
-                    className="inline-flex items-center gap-1 px-2 py-1 text-[9px] font-black uppercase tracking-widest border border-[#282828] rounded-lg text-gray-300 hover:text-white hover:border-gray-500"
+                    aria-label="Re-link"
+                    title="Re-link"
+                    data-asset-id={row.assetId ?? ''}
+                    data-segment-id={row.segmentId ?? ''}
+                    onClick={() => onRelink({ assetId: row.assetId, segmentId: row.assetId ? null : row.segmentId })}
+                    className="inline-flex items-center justify-center p-1.5 border border-[#282828] rounded-lg text-gray-300 hover:text-white hover:border-gray-500"
                   >
-                    <Link2 size={11} />
-                    Re-link
+                    <Link2 size={12} />
                   </button>
                 )}
+                <span
+                  data-testid="recovery-item-status"
+                  className={`text-[9px] font-black uppercase tracking-widest ${
+                    row.resolutionStatus === 'resolved' ? 'text-emerald-400' : 'text-red-400'
+                  }`}
+                >
+                  {row.resolutionStatus === 'resolved' ? 'Linked' : 'Missing'}
+                </span>
               </div>
             </div>
           ))}

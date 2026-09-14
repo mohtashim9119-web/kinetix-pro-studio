@@ -4,8 +4,10 @@
  * migrate / folder chooser. This module never imports Tauri or IndexedDB.
  */
 
+import type { RelinkTarget } from './DegradedProjectRecoveryScreen';
+
 export interface RecoveryActionsFake {
-  onRelink: (assetId: string) => void;
+  onRelink: (target: RelinkTarget) => void;
   onSave: () => void;
   onResume: () => void;
   onRetryFailed: () => void;
@@ -25,8 +27,8 @@ export function createRecoveryActionsFake(): RecoveryActionsFake {
   let chooseFolderCount = 0;
 
   return {
-    onRelink(assetId: string): void {
-      relinked.push(assetId);
+    onRelink(target: RelinkTarget): void {
+      relinked.push(target.assetId ?? `segment:${target.segmentId}`);
     },
     onSave(): void {
       saveCount += 1;

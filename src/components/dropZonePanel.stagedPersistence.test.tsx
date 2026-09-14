@@ -60,7 +60,7 @@ function makeProps(overrides: Partial<DropZonePanelProps> = {}): DropZonePanelPr
     persistedSceneDetails: '', persistedSceneDetailsName: '', persistedSceneDetailsUpdatedAt: undefined,
     persistedVoiceoverName: '', persistedAssetCount: 0, isSynced: true,
     onClearScript: noop, onClearSceneDetails: noop,
-    onDeleteAsset: noop, onDeleteAllAssets: noop, onDeleteVoiceover: noop,
+    onDeleteAsset: noop, onDeleteAllAssets: noop, onDeleteVoiceover: noop, onOpenRelinkMedia: noop,
     onApplySync: noop, onStagedFilesChange: noop, stagedFilesClearSignal: 0,
     onVoiceoverStaged: noop, onVoiceoverUnstaged: noop, applySyncDisabled: false,
     onVoiceoverRestored: () => true,
