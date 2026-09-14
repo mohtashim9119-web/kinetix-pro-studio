@@ -3546,3 +3546,80 @@ project), `npm test` → 3193 passed / 77 skipped / 0 failed (3190 baseline + 3 
 `af6a300` (forward-progress bound), `5709075` (frame-content digest gate), `eef6eeb`/PR #7 merge
 (release stale decode cursors), `1cea32f` (Part C fixture + harness).
 
+---
+
+## Round 27 — landed on `ws3-export-integration` (2026-09-14)
+
+`ws3-round27` (built in a separate worktree, `../4.kinetix-pro-studio-round27`) fast-forward
+merged into `ws3-export-integration` at `831c872` (from `a928eff`, 170 commits, 58 files,
++4700/-384 lines). `git merge-base --is-ancestor origin/ws3-export-integration
+origin/ws3-round27` confirmed a true fast-forward before merging; no rebuild performed. The
+`build.yml` desktop-installer workflow run for `ws3-round27` (run 34860683508) built at head SHA
+`831c872`, not the earlier `86dde13` — the tester therefore has both the provenance ladder work
+(`d23ab2c`) and the export-failure subagent-gap closure (`831c872`) baked in.
+
+**Verification gates, fresh worktree at `831c872`:**
+- `npx tsc --noEmit` — clean.
+- `npm run lint` — clean (same command as tsc on this project).
+- `npm test` — 3823 passed / 78 skipped / 33 failed (3934 total). All 33 failures are in
+  `.work-phase4/replay/`-dependent scripts (`phase4-handoff-replay-sync.test.ts`,
+  `ws1-production-path.test.ts`, `ws1-session-aj0-oracle-diff.test.ts`,
+  `ws1-session-p-arms.test.ts`, `ws1-session-p-invariants.test.ts`,
+  `ws1-session-p-measure.test.ts`, `ws1-session-q-invariants.test.ts`,
+  `ws1-session-q-production-pins.test.ts`, `ws1-session-s-exclusion.test.ts`,
+  `ws1-session-s-measure.test.ts`, `ws1-silence-arms.test.ts`,
+  `ws2-27-absorption-numbering.test.ts`) — the replay fixtures are gitignored
+  (`scripts/phase4-restore-replay-inputs.py` regenerates them) and were not present in this
+  fresh worktree, matching the expected-absent note in the task brief. Every other test passed.
+- `cargo test -- --test-threads=1` (default config, `ffmpeg`/`whisper` binaries copied from the
+  main checkout's provisioned `src-tauri/binaries/` — gitignored, not rebuilt) — 400 passed / 0
+  failed / 6 ignored.
+- `cargo test --features fa-inference -- --test-threads=1` — 486 passed / 0 failed / 36 ignored.
+- All four totals match the figures the task brief attributed to Cursor's own run exactly.
+
+**Live-wiring evidence (resolves the WS3 "cherry-picked but unwired" note from before Round
+27):** `ExportFailureMessage` is now imported and rendered in `App.tsx` (`App.tsx:294` import,
+`App.tsx:7169` JSX). `applySilentProvenanceResolution` (the provenance resolution ladder) is
+imported and called (`App.tsx:223`, `App.tsx:6446`). `StorageSettingsSection` is mounted inside
+`AppSettingsModal.tsx:219`. `withAssetLoadTimeout` (bounded asset loads) is imported into
+`App.tsx:224`.
+
+**Gaps found on the merged tip, not closed by Round 27** (carried forward to `STATUS.md`'s WS3
+In Progress section): `ExportFinishShortfallCard` and `StorageRootRelocationView` remain defined
+and exported from `src/components/recovery/index.ts` but have no import/render call site
+anywhere in `App.tsx` or the export overlay. `estimateExportDestinationDiskBytes`
+(`diskFull.ts:546`) is unit-tested but has zero call sites in `ExportSettingsModal.tsx`.
+`StorageSettingsSection.tsx:105` invokes the native command `relink_pick_folder` directly
+instead of going through the `relinkPickFolder()` wrapper (`relinkNative.ts:28`). UNSEEN item U36
+(the export-session-reclaim vs. storage-root-reclaim distinction) is still undrawn.
+
+**"Double save-dialog / double-picker" claim, closed — not a defect.** Originally logged
+`[CLAIM-UNVERIFIED]` and scoped as Prompt 37 work under three command names
+(`export_pick_output_directory`, `export_validate_output_path`, plus routing `startExport`
+through the modal path). None of those three command names exist anywhere in the codebase —
+`grep` across `src/`, `src-tauri/` returns zero hits. The actual implementation took a different
+shape: `useExport.ts`'s `startExport` (the sole call site reachable from `App.tsx:3310`) calls
+exactly one native dialog, `invoke('pick_save_path', ...)` at `useExport.ts:1036` — grep confirms
+this is the only production call site of `pick_save_path` (a second reference in
+`src/dev/webcodecsStep2Spike/main.ts` is a dev-harness IPC interceptor comment, not a second
+dialog). Windows-only destination-length validation (`checkExportDestinationPathLength`,
+`exportDestinationPath.ts`) is inline in the same handler, not a second native call.
+`ExportSettingsModal.tsx` contains no dialog/invoke calls of its own. One picker opens per export
+start; the claim does not reproduce against the current codebase and is closed.
+
+**WS3 lane doc count, closed.** The `docs/ws3-export/` → `docs/ws3-export-pipeline/` rename
+(part of `ws3-docs-restructure`, rebased onto this Round 27 tip) carried Round 27's two new docs
+(`architecture-ledger.md`, `windows-validation.md`) along under git's rename detection — both
+land directly in `docs/ws3-export-pipeline/` with no manual move needed. The lane now holds
+exactly 7 content docs (`architecture-ledger.md`, `durable-state.md`, `pipeline-audit.md`,
+`recovery-architecture.md`, `silent-gaps-diagnosis.md`, `w23-machine1-validation.md`,
+`windows-validation.md`) plus `README.md` (index, not counted) — at the cap, no overflow.
+
+**Docs rebase:** `ws3-docs-restructure` (4 commits: `24988a7`→`4feecc5`, `b654604`→`fefb343`,
+`bc38690`→`e0bb9c3`, `67a7082`→`34217e3`) rebased cleanly onto the merged `831c872` tip with no
+conflicts — the rename-detection commit (`fefb343`) replayed against Round 27's added files
+without manual intervention. Manual link check (no dedicated script exists; a one-off Python
+walk over every relative markdown link in `docs/**/*.md` and `CLAUDE.md`) found 198 links
+checked, 0 broken. Force-pushed (`--force-with-lease`) after rebase, as required by the history
+rewrite.
+

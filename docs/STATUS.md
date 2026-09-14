@@ -1,6 +1,6 @@
 # Project Status
 
-> Source SHA: `a928eff` (branch `ws3-export-integration`). Compiled 2026-09-14.
+> Source SHA: `831c872` (branch `ws3-export-integration`, Round 27 merged). Compiled 2026-09-14.
 > **This file is the single source of truth for project tracking.**
 > `work-in-progress.md` and `project-state.md` are retired — both now live, unedited except
 > for a pointer line, under `docs/archive/history/`. Do not create a new tracking file for
@@ -71,15 +71,38 @@ mover-audit dossier, no Stage 1 defect deferred downstream) and `FA_PROJECT_DEFA
 ## WS3: Export & Storage Pipeline
 
 ### In Progress
-**Round 27 (Steps 4-7 plus the self-audit pass) is in flight on branch `ws3-round27` in a
-separate worktree** (`../4.kinetix-pro-studio-round27`, currently at `86dde13`, 9 commits ahead
-of this branch's `a928eff` base — provenance resolution ladder, storage settings, export-failure
-message layer, bounded asset loads, pre-installer path hardening). Not yet merged here.
-**END GOAL:** degraded 42-asset projects recoverable by a single folder pick, with a provenance
-ladder, a storage settings entry, and the export-failure layer mounted into a live `App.tsx`
-flow (as of `a928eff`, `ExportFailureMessage`/`ExportFinishShortfallCard`/
-`IdbToNativeMigrationView`/`StorageRootRelocationView` are cherry-picked and unit-tested but not
-wired live — [architecture-ledger.md](ws3-export-pipeline/architecture-ledger.md) "Scope boundary" section).
+Status: **Round 27 (Steps 4-7 plus the self-audit pass) landed** — fast-forward merged from
+`ws3-round27` @ `831c872` into `ws3-export-integration` @ `831c872` (2026-09-14, no rebuild, ff-only
+verified via `git merge-base --is-ancestor`). Evidence of live wiring: `ExportFailureMessage`
+imported and rendered at [App.tsx:294](../src/App.tsx),[App.tsx:7169](../src/App.tsx) (previously
+cherry-picked but unwired); `applySilentProvenanceResolution` (provenance ladder) imported and
+called at [App.tsx:223](../src/App.tsx),[App.tsx:6446](../src/App.tsx); `StorageSettingsSection`
+mounted at [AppSettingsModal.tsx:219](../src/components/AppSettingsModal.tsx); bounded asset loads
+via `withAssetLoadTimeout` imported at [App.tsx:224](../src/App.tsx). Gate totals at `831c872`
+(fresh worktree): tsc clean, lint clean, vitest 3823 passed/78 skipped/33 failed (all 33 are
+`.work-phase4/replay/`-dependent fixture tests, gitignored and expected absent in a fresh
+worktree — every other test green), `cargo test --test-threads=1` 400 passed/0 failed/6 ignored,
+`cargo test --features fa-inference --test-threads=1` 486 passed/0 failed/36 ignored. Also
+closed this round: the "double save-dialog/double-picker" `[CLAIM-UNVERIFIED]` item (no such
+commands exist; `startExport` opens exactly one dialog, `pick_save_path` at
+[useExport.ts:1036](../src/hooks/useExport.ts) — see `history-2.md`'s Round 27 entry) and the
+WS3 lane doc-count overage (now exactly 7 docs post-rebase, rename detection carried Round 27's
+new docs along automatically).
+Remaining gaps found on the merged tip (not closed by Round 27):
+- [OPEN] `ExportFinishShortfallCard` and `StorageRootRelocationView` are still defined and
+  exported (`src/components/recovery/index.ts`) but not imported/rendered anywhere in `App.tsx`
+  or the export overlay — unwired, same as before Round 27.
+- [OPEN] `estimateExportDestinationDiskBytes` ([diskFull.ts:546](../src/services/webcodecsExport/diskFull.ts))
+  is defined and unit-tested (`diskFull.test.ts`) but has zero call sites in
+  `ExportSettingsModal.tsx` — the modal's live size badge does not use it.
+- [OPEN] `StorageSettingsSection.tsx:105` calls `invoke('relink_pick_folder')` directly instead
+  of the `relinkPickFolder()` wrapper in [relinkNative.ts:28](../src/services/relinkNative.ts) —
+  bypasses the wrapper's single point of change for that IPC call.
+- [OPEN] UNSEEN item U36 (`.cursor/ws3-export-failure-unseen.md`): the distinction between an
+  export-session reclaim and a storage-root reclaim is not yet drawn — both currently share
+  reclamation logic without a documented boundary.
+**END GOAL:** the four gaps above closed, then re-run the Machine 1 hardware validation below
+against the merged build.
 
 Also open, both landed but **unverified live** (`af6a300`/`6930b1d`, 2026-09-07):
 1. [OPEN] Append-path batching (`docs/archive/ws3/append-path-audit.md`) — 1-per-chunk `appendFileRaw` IPC batched 100:1, 256MB queue ceiling. No export has been run post-fix; throughput claim is arithmetic on call count only.
@@ -91,16 +114,14 @@ Coordination notes from Cursor (`.cursor/`), relevant to the in-flight Round 27 
 
 ### Next Tasks
 - [OPEN] Execute `docs/ws3-export-pipeline/windows-validation.md` — Windows long-path delivery checklist and installer build validation
-- [OPEN] Machine 1 hardware validation of the next installer — `docs/ws3-export-pipeline/w23-machine1-validation.md` is the companion runbook (mux-stage disk-full retain/resume proof); not yet run against the current build
+- [OPEN] Machine 1 hardware validation of `ws3-round27` (now merged @ `831c872`) — pending, eight tests per `docs/ws3-export-pipeline/w23-machine1-validation.md`: (1) mux-stage disk-full retain, (2) mux-stage disk-full resume, (3) provenance-ladder silent resolution on a degraded project, (4) storage settings relink via folder pick, (5) export-failure message surfaces on a forced ffmpeg failure, (6) bounded asset load timeout under a slow/missing native asset, (7) pre-installer path hardening (long-path Windows delivery), (8) cold-launch `navigator.storage.persist()` return value (W24, still unrecorded — see Open Bugs)
 - [OPEN] Part C 500-segment live export — reproduce/attribute the silent-gap defect (see In Progress item 2)
 
 ### Open Bugs
 - [OPEN] Stale error string at [fa.rs:596-599](../src-tauri/src/fa.rs) still calls the FA model downloader "a separate, later task (ruling R-D)" — confirmed still present verbatim
 - [OPEN] Whisper-cache flake currently bounded only by `cargo test -- --test-threads=1`; real fix is injectable `IN_FLIGHT`/`TERMINAL_BUFFER` ([whisper.rs:109](../src-tauri/src/whisper.rs), [whisper.rs:235](../src-tauri/src/whisper.rs)) or a serialized eviction test
 - [OPEN · NON-BLOCKING] ~33-35 cloud CI test failures caused by the private corpus and git-ignored `.work-phase4/replay/` fixtures not being present in the cloud environment — root cause matches the WIP backlog item on `.work-phase4/replay/` (~85M, restored via `scripts/phase4-restore-replay-inputs.py`); exact 33-35 count not independently re-verified this session
-- [OPEN] WS3 lane doc count: 8 live docs (excluding README) against the cap of 7 — see Phase 2 of the docs-restructure branch, which moves `speed-architecture-audit.md` to `docs/archive/ws3/` to close this out (see restructure report for why the two originally-proposed candidates were rejected)
 - [OPEN] `navigator.storage.persist()` WebView2 return value is unrecorded — [windows-validation.md](ws3-export-pipeline/windows-validation.md) row W24: plumbing shipped, only the cold-launch/after-use measurement is missing
-- [CLAIM-UNVERIFIED] "Double save-dialog / double-picker" removal — referenced in this session's brief but not located by grep across `docs/`, `src/`, `src-tauri/`, `.cursor/`, or the `ws3-round27` worktree under any phrasing tried ("double dialog", "duplicate picker", "shown twice", etc.) — needs triage with whoever named it
 
 ### Deferred Tasks
 (none beyond the two items folded into Open Bugs above)
