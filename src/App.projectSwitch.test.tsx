@@ -677,10 +677,12 @@ describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens 
     expect(screen()).not.toBeNull();
     expect(screen()!.querySelector('[data-testid="recovery-project-name"]')?.textContent).toBe('Target');
 
-    // ---- Shows which assets are unresolved. ----
-    const assetRow = screen()!.querySelector('[data-testid="recovery-asset"][data-asset-id="a1"]');
+    // ---- Shows which assets are unresolved (collapsed item list, Step 3). ----
+    const assetRow = screen()!.querySelector('[data-testid="recovery-item"][data-asset-id="a1"]');
     expect(assetRow).not.toBeNull();
-    expect(assetRow!.getAttribute('data-unresolved')).toBe('true');
+    expect(assetRow!.getAttribute('data-resolution-status')).toBe('unresolved');
+    expect(assetRow!.querySelector('[data-testid="recovery-item-segment"]')?.textContent).toBe('Hook');
+    expect(assetRow!.querySelector('[data-testid="recovery-item-asset"]')?.textContent).toBe('clip.mp4');
     expect(screen()!.querySelector('[data-testid="recovery-unresolved-summary"]')!.textContent)
       .toMatch(/1 unresolved asset/);
     expect(getLoadFailure(TARGET_ID)?.reason).toBe('asset-unresolvable');
