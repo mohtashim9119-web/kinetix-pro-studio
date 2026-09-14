@@ -233,6 +233,8 @@ describe('Rung 5a (hardware->software failover) — wired at exportProjectWebCod
     });
 
     expect(r.ok).toBe(false);
+    if (r.ok) throw new Error('expected export failure');
+    expect(r.error.liveness?.hardwareFailoverUsed).toBe(true);
     // Proves the bound: 1 initial + MAX_BOUNDARY_REWINDS_PER_EXPORT same-rung
     // rewinds + 1 software failover retry = MAX+2 total driveGlRun attempts,
     // MAX+1 total truncate calls (the initial attempt never truncates).

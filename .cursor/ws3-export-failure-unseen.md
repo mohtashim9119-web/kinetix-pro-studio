@@ -12,6 +12,6 @@ branch. New rows for this slice start at **U25**.
 | U28 | disk_full is two cards | Preflight (bytes + reclaim, no Resume) vs mid-export (Resume only under U26). Numbers are props. |
 | U29 | Raw errors stay in Technical details | Primary body is dictionary copy only. Tests feed stack/panic/`rawError` and assert they are absent from `[data-testid="export-failure-primary"]`. |
 | U30 | Machine 1's twelve destroyed disk-full rows differ only in diagnostic identity, not resume evidence | The regression fixture preserves twelve rows with `disposition: destroyed`, `retainedBytes: 0`, and no manifest; every row must hide Resume. |
+| U36 | Preflight disk-full reclaim uses export-session bytes, not storage-root reclaim | `ExportFailureMessage`'s Reclaim button calls `TauriFfmpeg.reclaimSessions` for abandoned export temp dirs; storage settings reclaim remains a separate native command. |
 
-Wiring into `App.tsx` / `useExport` is rebase work — **UNSEEN** which parent
-CC wants. This slice does not mount the cards.
+U25–U30 closed @ `86dde13` (Round 27 Step 6 wired `ExportFailureMessage` into `App.tsx`; post-audit follow-up @ next tip wires preflight reclaim bytes + `hardwareFailoverUsed` on GL encode failures). `ExportFinishShortfallCard` and `StorageRootRelocationView` remain intentionally unwired in the export overlay — storage settings owns relocation UI.

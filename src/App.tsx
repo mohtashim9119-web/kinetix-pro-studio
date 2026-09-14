@@ -810,44 +810,6 @@ function ModalLoadingFallback(): ReactElement {
   );
 }
 
-function getExportErrorSummary(error: ExportError): string {
-  switch (error.kind) {
-    case 'cancelled':
-      return 'Export cancelled.';
-    case 'asset_missing':
-      return `An asset used by segment ${(error.segmentIndex ?? 0) + 1} could not be found. It may have been deleted.`;
-    case 'ffmpeg_load':
-      return 'Failed to load the ffmpeg engine. Check your network connection and try again.';
-    case 'encode':
-      return `Failed to encode segment ${(error.segmentIndex ?? 0) + 1}.`;
-    case 'concat':
-      return 'Failed to concatenate segments into a single video.';
-    case 'mux':
-      return 'Failed to mux the audio track into the final video.';
-    case 'timeline_gap':
-      // The guard's own message already names the size and the segment, and is
-      // written for a user rather than a developer — pass it through instead of
-      // replacing it with something vaguer.
-      return error.message;
-    case 'destination_path':
-      // WS3 STEP 10 (H9) — same posture as timeline_gap: the guard's own
-      // message already names the character count and the limit, written
-      // for the operator, not a developer.
-      return error.message;
-    case 'disk_full':
-      // WS3 Round 21 (D3c) — the guard's own message already names the
-      // phase and the required/available bytes; same posture as
-      // timeline_gap/destination_path.
-      return error.message;
-    case 'grade_loss_refused':
-      // PROMPT 28 STEP 2 (CRITICAL) — the guard's own message already names
-      // the affected segments and remediation; same posture as timeline_gap.
-      return error.message;
-    case 'unknown':
-      return 'An unexpected error occurred during export.';
-  }
-}
-
 /**
  * Carries the five slug-valued effect fields forward across an Apply Sync
  * clean-slate rebuild. parseProjectData mints fresh segments with fresh ids, so
@@ -3290,6 +3252,49 @@ export default function App() {
   }, []);
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
   const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent, resolveResumeChoice } = exportApi;
+  const [exportReclaimableBytes, setExportReclaimableBytes] = useState<number | undefined>(undefined);
+
+  const handleExportSessionReclaim = useCallback(async () => {
+    if (!isTauri()) return;
+    try {
+      const report = await TauriFfmpeg.reclaimableSessions();
+      const reclaimableIds = report.entries.filter((entry) => entry.class !== 'live').map((entry) => entry.sessionId);
+      if (reclaimableIds.length === 0) return;
+      const result = await TauriFfmpeg.reclaimSessions(reclaimableIds);
+      if (result.bytesReclaimed > 0) {
+        showToast(`Freed ${formatBytes(result.bytesReclaimed)}.`);
+        const refreshed = await TauriFfmpeg.reclaimableSessions();
+        setExportReclaimableBytes(refreshed.reclaimableBytes);
+      } else if (result.pendingDelete.length > 0) {
+        showToast('Some files are still in use elsewhere — try again after closing other apps.');
+      }
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[ws3-disk] export failure reclaim failed', err instanceof Error ? err.message : String(err));
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    if (
+      !isTauri()
+      || exportState.error?.kind !== 'disk_full'
+      || exportState.error.diskFull?.phase !== 'preflight'
+    ) {
+      setExportReclaimableBytes(undefined);
+      return;
+    }
+    let cancelled = false;
+    void TauriFfmpeg.reclaimableSessions()
+      .then((report) => {
+        if (!cancelled) setExportReclaimableBytes(report.reclaimableBytes);
+      })
+      .catch(() => {
+        if (!cancelled) setExportReclaimableBytes(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [exportState.error]);
 
   // ExportSettingsModal's Continue commits exportResolution/exportFps via
   // setState, then must call startExport — but startExport is a useCallback
@@ -7175,6 +7180,7 @@ export default function App() {
                 }
                 requiredBytes={exportState.error.diskFull?.requiredBytes ?? undefined}
                 availableBytes={exportState.error.diskFull?.availableBytes ?? undefined}
+                reclaimableBytes={exportReclaimableBytes}
                 showReclaimAction={exportState.error.kind === 'disk_full'}
                 hardwareFailoverUsed={exportState.error.hardwareFailoverUsed}
                 failureVia={exportState.error.failureVia ?? exportState.error.liveness?.failureVia ?? null}
@@ -7211,6 +7217,11 @@ export default function App() {
                   });
                   navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => undefined);
                 }}
+                onReclaim={
+                  exportState.error.kind === 'disk_full' && exportState.error.diskFull?.phase === 'preflight'
+                    ? () => { void handleExportSessionReclaim(); }
+                    : undefined
+                }
                 onRetry={exportState.error.kind !== 'cancelled' ? retryExport : undefined}
                 onDismiss={cancelExport}
               />

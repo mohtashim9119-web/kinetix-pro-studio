@@ -1340,6 +1340,10 @@ export interface DriveGlRunDeps {
    *  `EXPORT_CODEC_LADDER[0]` (High profile 4.0), reproducing the
    *  pre-STEP-5 fixed codec exactly when omitted. */
   pinnedCodec?: string;
+  /** WS3 Round 27 audit — read the export-scoped failover flag at failure
+   *  snapshot time so GL encode failures surface `hardwareFailoverUsed`
+   *  through `ExportError.liveness`, not only post-encode failures. */
+  hardwareFailoverUsed?: () => boolean;
 }
 
 /**
@@ -1712,6 +1716,7 @@ export function driveGlRun(
         kind: e.kind,
       })),
       failureVia: lastWorkerDiagnostics?.failure?.via ?? null,
+      hardwareFailoverUsed: deps.hardwareFailoverUsed?.() ?? false,
       encoderSessions: sessionCount,
       encoderSessionIndex: sessionCount === null ? null : sessionAt,
       // WS3 STEP 7 (C5) — `snapshotLiveness` is only ever called while
@@ -3354,6 +3359,7 @@ export async function exportProjectWebCodecs(
             forceSoftwareEncoder: forceSoftware,
             pinnedCodec: pinnedCodecForPiece,
             fileBaseByteOffset: baseByteOffset,
+            hardwareFailoverUsed: () => hardwareFailoverUsed,
             onRotationCheckpoint: (row) => checkpointWriter.record(row),
             onSessionRotation: () => checkpointWriter.noteRotation(),
           },
