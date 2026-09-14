@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  buildRecoveryItemRows,
   canPersistRecoveredProject,
   unresolvedAssetIds,
   type RecoveryAsset,
@@ -58,5 +59,47 @@ describe('canPersistRecoveredProject', () => {
 describe('unresolvedAssetIds', () => {
   it('lists only unresolved ids', () => {
     expect(unresolvedAssetIds([resolved, missing])).toEqual(['a2']);
+  });
+});
+
+describe('buildRecoveryItemRows', () => {
+  const orphanAsset: RecoveryAsset = {
+    id: 'a3',
+    name: 'unused.wav',
+    unresolved: true,
+  };
+
+  it('joins segment text, asset filename, and resolution status on one row', () => {
+    const rows = buildRecoveryItemRows(
+      [okSegment, brokenSegment],
+      [resolved, missing],
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({
+      rowId: 's1',
+      segmentLabel: 'Intro',
+      assetName: 'clip.mp4',
+      resolutionStatus: 'resolved',
+      showRelink: false,
+    });
+    expect(rows[1]).toMatchObject({
+      rowId: 's2',
+      segmentLabel: 'Voiceover',
+      assetName: 'vo.wav',
+      resolutionStatus: 'unresolved',
+      showRelink: true,
+    });
+  });
+
+  it('appends orphan unresolved assets not referenced by any segment', () => {
+    const rows = buildRecoveryItemRows([okSegment], [resolved, orphanAsset]);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({
+      rowId: 'orphan-a3',
+      segmentLabel: null,
+      assetName: 'unused.wav',
+      resolutionStatus: 'unresolved',
+      showRelink: true,
+    });
   });
 });

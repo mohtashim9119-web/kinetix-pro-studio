@@ -223,6 +223,7 @@ import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
 import { getProjectAssetRecoveryStatus, relinkAsset } from './services/assetRecovery';
 import { DegradedProjectRecoveryScreen, type FolderRelinkView } from './components/recovery/DegradedProjectRecoveryScreen';
+import { performRecoveryClose } from './components/recovery/recoverySession';
 import {
   proposeFolderBatchRelink,
   defaultFolderSelection,
@@ -6291,6 +6292,15 @@ export default function App() {
     setFolderRelink(null);
   }, []);
 
+  // Step 3 — close without writing: return to dashboard, project stays
+  // poisoned, in-flight folder-pick discarded (never partially applied).
+  const handleRecoveryClose = useCallback((): void => {
+    performRecoveryClose({
+      clearFolderRelink: () => setFolderRelink(null),
+      clearRecoveryUi: () => setDegradedRecovery(null),
+    });
+  }, []);
+
   const handleRecoveryConfirmFolderRelink = useCallback(async (): Promise<void> => {
     const projectId = degradedRecovery?.projectId;
     if (!projectId || !folderRelink) return;
@@ -7631,6 +7641,7 @@ export default function App() {
           onToggleFolderProposal={handleRecoveryToggleFolderProposal}
           onConfirmFolderRelink={() => { void handleRecoveryConfirmFolderRelink(); }}
           onCancelFolderRelink={handleRecoveryCancelFolderRelink}
+          onClose={handleRecoveryClose}
         />
       )}
       <input

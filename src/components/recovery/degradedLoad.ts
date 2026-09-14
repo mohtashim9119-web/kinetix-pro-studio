@@ -47,3 +47,68 @@ export function canPersistRecoveredProject(input: {
 export function unresolvedAssetIds(assets: readonly RecoveryAsset[]): string[] {
   return assets.filter((asset) => asset.unresolved).map((asset) => asset.id);
 }
+
+/**
+ * One row in the collapsed recovery list — segment text, asset filename,
+ * resolution status, and the per-row re-link action live together so the
+ * operator is not forced to correlate separate segment and asset sections
+ * by eye (the 42-asset Machine-1 case).
+ */
+export interface RecoveryItemRow {
+  /** Stable React key — segment id, or `orphan-<assetId>` for assets not on any segment. */
+  rowId: string;
+  segmentLabel: string | null;
+  assetId: string | null;
+  assetName: string | null;
+  resolutionStatus: SegmentResolutionStatus;
+  /** When true, the row shows a per-asset Re-link affordance. */
+  showRelink: boolean;
+}
+
+function resolutionStatusLabel(status: SegmentResolutionStatus): string {
+  if (status === 'resolved') return 'Resolved';
+  if (status === 'missing-asset') return 'Missing asset';
+  return 'Unresolved';
+}
+
+export { resolutionStatusLabel as recoveryResolutionStatusLabel };
+
+/**
+ * Collapses the separate segment and asset lists into one operator-facing
+ * table. Primary rows follow segments (each shows its segment text + linked
+ * asset filename + resolution status). Unresolved assets that no segment
+ * references are appended as orphan rows so nothing is hidden.
+ */
+export function buildRecoveryItemRows(
+  segments: readonly RecoverySegment[],
+  assets: readonly RecoveryAsset[],
+): RecoveryItemRow[] {
+  const assetById = new Map(assets.map((a) => [a.id, a]));
+  const referencedAssetIds = new Set<string>();
+
+  const segmentRows: RecoveryItemRow[] = segments.map((segment) => {
+    if (segment.assetId) referencedAssetIds.add(segment.assetId);
+    const asset = segment.assetId ? assetById.get(segment.assetId) : undefined;
+    return {
+      rowId: segment.id,
+      segmentLabel: segment.label,
+      assetId: segment.assetId,
+      assetName: asset?.name ?? null,
+      resolutionStatus: segment.resolutionStatus,
+      showRelink: asset?.unresolved === true,
+    };
+  });
+
+  const orphanRows: RecoveryItemRow[] = assets
+    .filter((asset) => asset.unresolved && !referencedAssetIds.has(asset.id))
+    .map((asset) => ({
+      rowId: `orphan-${asset.id}`,
+      segmentLabel: null,
+      assetId: asset.id,
+      assetName: asset.name,
+      resolutionStatus: 'unresolved' as const,
+      showRelink: true,
+    }));
+
+  return [...segmentRows, ...orphanRows];
+}

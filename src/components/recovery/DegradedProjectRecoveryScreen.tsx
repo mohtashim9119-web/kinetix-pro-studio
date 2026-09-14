@@ -8,11 +8,13 @@
  * passed `onSave`. Re-link is a callback; there is no file picker here.
  */
 
-import React from 'react';
-import { AlertTriangle, Link2, FolderOpen } from 'lucide-react';
+import React, { useEffect } from 'react';
+import { AlertTriangle, Link2, FolderOpen, X } from 'lucide-react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
+  buildRecoveryItemRows,
   canPersistRecoveredProject,
+  recoveryResolutionStatusLabel,
   unresolvedAssetIds,
   type RecoveryAsset,
   type RecoverySegment,
@@ -60,24 +62,8 @@ export interface DegradedProjectRecoveryScreenProps {
   onToggleFolderProposal?: (assetId: string, candidateId: string) => void;
   onConfirmFolderRelink?: () => void;
   onCancelFolderRelink?: () => void;
-}
-
-// No native-copy/backup distinction: `assetRecovery.ts`'s `nativeResolved`
-// already means "resolved" (see degradedLoad.ts's RecoveryAsset doc comment),
-// so an unresolved asset here has, by construction, neither — the only
-// remaining path is re-linking the user's own source file.
-function assetLocationLabel(asset: RecoveryAsset): string {
-  return asset.unresolved ? 'Missing' : 'Resolved';
-}
-
-function assetLocationKind(asset: RecoveryAsset): 'resolved' | 'missing' {
-  return asset.unresolved ? 'missing' : 'resolved';
-}
-
-function segmentStatusLabel(status: RecoverySegment['resolutionStatus']): string {
-  if (status === 'resolved') return 'Resolved';
-  if (status === 'missing-asset') return 'Missing asset';
-  return 'Unresolved';
+  /** Close without writing — returns to dashboard, project stays poisoned. */
+  onClose: () => void;
 }
 
 export function DegradedProjectRecoveryScreen({
@@ -91,12 +77,22 @@ export function DegradedProjectRecoveryScreen({
   onToggleFolderProposal,
   onConfirmFolderRelink,
   onCancelFolderRelink,
+  onClose,
 }: DegradedProjectRecoveryScreenProps): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
   const canSave = canPersistRecoveredProject({ assets, segments });
   const missingIds = unresolvedAssetIds(assets);
   const unresolvedCount = missingIds.length;
   const assetNameById = new Map(assets.map((a) => [a.id, a.name]));
+  const itemRows = buildRecoveryItemRows(segments, assets);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   // Folder-pick proposals grouped per asset (matcher sorts best-first).
   const proposalsByAsset = new Map<string, RelinkProposal[]>();
@@ -126,12 +122,21 @@ export function DegradedProjectRecoveryScreen({
       >
         <div className="flex items-start gap-3 mb-6">
           <AlertTriangle size={18} className="shrink-0 text-amber-400 mt-0.5" />
-          <div>
+          <div className="min-w-0 flex-1">
             <h2 className="text-sm font-black uppercase tracking-[0.2em]">Project media missing</h2>
             <p data-testid="recovery-project-name" className="text-[11px] text-gray-400 mt-1">
               {projectName}
             </p>
           </div>
+          <button
+            type="button"
+            data-testid="recovery-close"
+            aria-label="Close recovery"
+            onClick={onClose}
+            className="shrink-0 p-1.5 text-gray-500 hover:text-white border border-transparent hover:border-[#282828] rounded-lg transition-colors"
+          >
+            <X size={16} />
+          </button>
         </div>
 
         <p className="text-[11px] text-gray-400 mb-4">
@@ -282,69 +287,49 @@ export function DegradedProjectRecoveryScreen({
           </div>
         )}
 
-        <section className="space-y-2 mb-6" data-testid="recovery-segment-list">
-          <h3 className="text-[8px] uppercase tracking-widest text-gray-600">Segments</h3>
-          {segments.map((segment) => (
+        <section className="space-y-2 mb-6" data-testid="recovery-item-list">
+          <h3 className="text-[8px] uppercase tracking-widest text-gray-600">Timeline items</h3>
+          {itemRows.map((row) => (
             <div
-              key={segment.id}
-              data-testid="recovery-segment"
-              data-segment-id={segment.id}
-              data-resolution-status={segment.resolutionStatus}
+              key={row.rowId}
+              data-testid="recovery-item"
+              data-row-id={row.rowId}
+              data-asset-id={row.assetId ?? ''}
+              data-resolution-status={row.resolutionStatus}
               className="flex items-center justify-between gap-3 bg-[#1A1A1A] border border-[#282828] rounded-lg px-3 py-2"
             >
-              <div className="min-w-0">
-                <p className="text-[11px] font-bold text-gray-200 truncate">{segment.label}</p>
-                <p className="text-[9px] text-gray-600">
-                  {segment.assetId ? `asset ${segment.assetId}` : 'no asset'}
+              <div className="min-w-0 flex-1">
+                {row.segmentLabel && (
+                  <p data-testid="recovery-item-segment" className="text-[11px] font-bold text-gray-200 truncate">
+                    {row.segmentLabel}
+                  </p>
+                )}
+                <p data-testid="recovery-item-asset" className="text-[9px] text-gray-500 truncate">
+                  {row.assetName ?? (row.assetId ? row.assetId : 'no asset')}
                 </p>
               </div>
-              <span
-                data-testid="recovery-segment-status"
-                className="shrink-0 text-[9px] font-black uppercase tracking-widest text-gray-400"
-              >
-                {segmentStatusLabel(segment.resolutionStatus)}
-              </span>
-            </div>
-          ))}
-        </section>
-
-        <section className="space-y-2 mb-6" data-testid="recovery-asset-list">
-          <h3 className="text-[8px] uppercase tracking-widest text-gray-600">Assets</h3>
-          {assets.map((asset) => {
-            const kind = assetLocationKind(asset);
-            return (
-              <div
-                key={asset.id}
-                data-testid="recovery-asset"
-                data-asset-id={asset.id}
-                data-unresolved={asset.unresolved ? 'true' : 'false'}
-                data-location={kind}
-                className="flex items-center justify-between gap-3 bg-[#1A1A1A] border border-[#282828] rounded-lg px-3 py-2"
-              >
-                <div className="min-w-0">
-                  <p className="text-[11px] font-bold text-gray-200 truncate">{asset.name}</p>
-                  <p
-                    data-testid="recovery-asset-location"
-                    className="text-[9px] text-gray-500 flex items-center gap-1"
-                  >
-                    {assetLocationLabel(asset)}
-                  </p>
-                </div>
-                {asset.unresolved && (
+              <div className="shrink-0 flex items-center gap-2">
+                <span
+                  data-testid="recovery-item-status"
+                  className="text-[9px] font-black uppercase tracking-widest text-gray-400"
+                >
+                  {recoveryResolutionStatusLabel(row.resolutionStatus)}
+                </span>
+                {row.showRelink && row.assetId && (
                   <button
                     type="button"
                     data-testid="recovery-relink"
-                    data-asset-id={asset.id}
-                    onClick={() => onRelink(asset.id)}
-                    className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[9px] font-black uppercase tracking-widest border border-[#282828] rounded-lg text-gray-300 hover:text-white hover:border-gray-500"
+                    data-asset-id={row.assetId}
+                    onClick={() => onRelink(row.assetId!)}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-[9px] font-black uppercase tracking-widest border border-[#282828] rounded-lg text-gray-300 hover:text-white hover:border-gray-500"
                   >
                     <Link2 size={11} />
                     Re-link
                   </button>
                 )}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </section>
 
         {canSave && onSave && (

@@ -22,10 +22,12 @@ afterEach(() => {
   container.remove();
 });
 
-// No nativeCopyExists/backupExists — assetRecovery.ts's AssetRecoveryEntry
-// collapses both into one nativeResolved, so `unresolved` here is already
-// exactly "neither the cache nor the native store has this asset's bytes"
-// (see degradedLoad.ts's RecoveryAsset doc comment).
+async function press(key: string): Promise<void> {
+  await act(async () => {
+    window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+  });
+}
+
 const resolvedAsset: RecoveryAsset = {
   id: 'asset-resolved',
   name: 'hero.mp4',
@@ -53,6 +55,7 @@ const segments: RecoverySegment[] = [
 async function renderScreen(props: {
   assets: readonly RecoveryAsset[];
   segments: readonly RecoverySegment[];
+  onClose?: () => void;
 }): Promise<ReturnType<typeof createRecoveryActionsFake>> {
   const fake = createRecoveryActionsFake();
   root = createRoot(container);
@@ -64,6 +67,7 @@ async function renderScreen(props: {
         assets={props.assets}
         onRelink={fake.onRelink}
         onSave={fake.onSave}
+        onClose={props.onClose ?? (() => {})}
       />,
     );
   });
@@ -97,44 +101,28 @@ describe('DegradedProjectRecoveryScreen — no-save invariant', () => {
   });
 });
 
-describe('DegradedProjectRecoveryScreen — status rendering', () => {
-  it('renders per-segment resolution status from props', async () => {
+describe('DegradedProjectRecoveryScreen — collapsed item list (Step 3)', () => {
+  it('renders one row per segment with segment text, asset filename, and status together', async () => {
     await renderScreen({
       assets: [resolvedAsset, missingAsset, anotherMissingAsset],
       segments,
     });
-    const rows = [...container.querySelectorAll('[data-testid="recovery-segment"]')];
+    expect(container.querySelector('[data-testid="recovery-segment-list"]')).toBeNull();
+    expect(container.querySelector('[data-testid="recovery-asset-list"]')).toBeNull();
+    const rows = [...container.querySelectorAll('[data-testid="recovery-item"]')];
+    expect(rows).toHaveLength(3);
     expect(rows.map((el) => el.getAttribute('data-resolution-status'))).toEqual([
       'resolved',
       'missing-asset',
       'unresolved',
     ]);
     expect(container.textContent).toMatch(/Hook/);
+    expect(container.textContent).toMatch(/hero\.mp4/);
+    expect(container.textContent).toMatch(/b-roll\.mp4/);
     expect(container.textContent).toMatch(/Missing asset/);
   });
 
-  // WS3 recovery-ui reconciliation: a native-vs-backup distinction has no
-  // referent in the shipped architecture (assetRecovery.ts's nativeResolved
-  // already collapses both), so there is nothing left to distinguish beyond
-  // resolved vs missing.
-  it('shows Missing for every unresolved asset and Resolved for every resolved one', async () => {
-    await renderScreen({
-      assets: [missingAsset, anotherMissingAsset, resolvedAsset],
-      segments,
-    });
-    const byId = (id: string): Element => {
-      const el = container.querySelector(`[data-testid="recovery-asset"][data-asset-id="${id}"]`);
-      if (!el) throw new Error(`missing asset row ${id}`);
-      return el;
-    };
-    expect(byId('asset-missing').getAttribute('data-location')).toBe('missing');
-    expect(byId('asset-native').getAttribute('data-location')).toBe('missing');
-    expect(byId('asset-resolved').getAttribute('data-location')).toBe('resolved');
-    expect(byId('asset-missing').textContent).toMatch(/Missing/);
-    expect(byId('asset-resolved').textContent).toMatch(/Resolved/);
-  });
-
-  it('invokes the re-link fake with the unresolved asset id', async () => {
+  it('shows Re-link only on unresolved rows and invokes the fake with the asset id', async () => {
     const fake = await renderScreen({
       assets: [missingAsset, anotherMissingAsset],
       segments,
@@ -154,8 +142,26 @@ describe('DegradedProjectRecoveryScreen — status rendering', () => {
     });
     expect(container.querySelector('[data-testid="recovery-unresolved-summary"]')?.textContent)
       .toMatch(/1 unresolved asset/);
-    const resolvedRow = container.querySelector('[data-testid="recovery-asset"][data-asset-id="asset-resolved"]');
+    const resolvedRow = container.querySelector('[data-testid="recovery-item"][data-asset-id="asset-resolved"]');
     expect(resolvedRow?.querySelector('[data-testid="recovery-relink"]')).toBeNull();
+  });
+});
+
+describe('DegradedProjectRecoveryScreen — close without writing (Step 3)', () => {
+  it('invokes onClose from the close button', async () => {
+    let closed = 0;
+    await renderScreen({ assets: [missingAsset], segments, onClose: () => { closed += 1; } });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="recovery-close"]')!.click();
+    });
+    expect(closed).toBe(1);
+  });
+
+  it('invokes onClose on Escape', async () => {
+    let closed = 0;
+    await renderScreen({ assets: [missingAsset], segments, onClose: () => { closed += 1; } });
+    await press('Escape');
+    expect(closed).toBe(1);
   });
 });
 
@@ -175,6 +181,7 @@ describe('DegradedProjectRecoveryScreen — folder-pick primary action (Step 2)'
           segments={segments}
           assets={[missingAsset]}
           onRelink={() => {}}
+          onClose={() => {}}
           onPickFolder={() => { picked += 1; }}
         />,
       );
@@ -186,7 +193,6 @@ describe('DegradedProjectRecoveryScreen — folder-pick primary action (Step 2)'
   });
 
   it('renders exact proposals pre-selected and probable proposals NOT pre-selected', async () => {
-    // a1 → exact (c1), a2 → probable only (c2). Only the exact one is checked.
     const proposals: RelinkProposal[] = [
       { assetId: 'asset-missing', candidateId: 'c1', confidence: 'exact', basis: { name: 'exact', type: 'match', duration: 'within-exact' }, manyToOneAssetIds: [], notes: [] },
       { assetId: 'asset-native', candidateId: 'c2', confidence: 'probable', basis: { name: 'exact', type: 'match', duration: 'within-probable' }, manyToOneAssetIds: [], notes: [] },
@@ -199,6 +205,7 @@ describe('DegradedProjectRecoveryScreen — folder-pick primary action (Step 2)'
           segments={segments}
           assets={[missingAsset, anotherMissingAsset]}
           onRelink={() => {}}
+          onClose={() => {}}
           folderRelink={{
             phase: 'proposed',
             proposals,
@@ -224,7 +231,6 @@ describe('DegradedProjectRecoveryScreen — folder-pick primary action (Step 2)'
 
   it('toggles a probable proposal on explicit user action and writes only selected', async () => {
     const toggles: Array<[string, string]> = [];
-    let confirmed = 0;
     const proposals: RelinkProposal[] = [
       { assetId: 'asset-missing', candidateId: 'c1', confidence: 'probable', basis: { name: 'exact', type: 'match', duration: 'within-probable' }, manyToOneAssetIds: [], notes: [] },
     ];
@@ -236,6 +242,7 @@ describe('DegradedProjectRecoveryScreen — folder-pick primary action (Step 2)'
           segments={segments}
           assets={[missingAsset]}
           onRelink={() => {}}
+          onClose={() => {}}
           folderRelink={{
             phase: 'proposed',
             proposals,
@@ -245,13 +252,10 @@ describe('DegradedProjectRecoveryScreen — folder-pick primary action (Step 2)'
             writeError: null,
           }}
           onToggleFolderProposal={(a, c) => { toggles.push([a, c]); }}
-          onConfirmFolderRelink={() => { confirmed += 1; }}
         />,
       );
     });
-    // Confirm is disabled while nothing is selected.
     expect(container.querySelector<HTMLButtonElement>('[data-testid="recovery-folder-confirm"]')!.disabled).toBe(true);
-    // User explicitly opts into the probable match.
     await act(async () => {
       (container.querySelector('[data-testid="recovery-folder-toggle"]') as HTMLInputElement).click();
     });
