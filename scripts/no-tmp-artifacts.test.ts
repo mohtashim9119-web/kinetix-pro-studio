@@ -5,9 +5,9 @@
 //   1. the original word-onset investigation's harness (the ~190ms figure) —
 //      confirmed unrecoverable, docs/audit-verification-2026-08-03.md §C.7;
 //   2. the Phase 3 Blocker-2 forced-alignment driver script;
-//   3. /tmp/phase3/ holding BOTH English listening batches' private answer keys
+//   3. a system temporary directory holding BOTH English listening batches' private answer keys
 //      (found at Step Q);
-//   4. /tmp/phase3/'s raw transcripts and silence arrays, which broke the Step M
+//   4. that temporary directory's raw transcripts and silence arrays, which broke the Step M
 //      golden-baseline replay harness outright (found at Step X).
 //
 // Each time the response was a note in a document. A note does not fail. This

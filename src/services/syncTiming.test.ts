@@ -2905,7 +2905,7 @@ describe('isBreathSilence — index-based seam exemption (V6 production autopsy,
   // exempts it too (isBreathSilence returns false, not true). This is
   // independently confirmed by the comparison harness's own diff: pairIdx
   // 404 (=seg405) appears in variant-b's IMPROVED list
-  // (/tmp/wexp-v6/compare/results/v6_diff_variantB.json) but NOT in
+  // (an external temporary-workspace comparison artifact) but NOT in
   // variant-a's — comparing the two diff files shows variant B (as
   // originally scored, with the exemption active on BOTH sides) uniquely
   // fixes 9 real pairs, not just the 5 originally cited: pairIdx

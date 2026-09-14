@@ -1,9 +1,16 @@
+// @vitest-environment jsdom
 /**
  * Recovery close — must write nothing. Closing mid-folder-pick leaves
  * project.json byte-identical and the load-failure poison intact.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import React, { act } from 'react';
+import { createRoot } from 'react-dom/client';
+import { invoke } from '@tauri-apps/api/core';
+import { DegradedProjectRecoveryScreen, type FolderRelinkView } from './DegradedProjectRecoveryScreen';
 import { performRecoveryClose } from './recoverySession';
+
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('performRecoveryClose', () => {
   it('discards folder-pick UI state and clears the recovery screen without other side effects', () => {
@@ -114,4 +121,158 @@ describe('recovery close — project.json and load failure unchanged', () => {
     if (!refused.ok) expect(refused.reason).toBe('blocked-by-load-failure');
     expect(osBacking.get('p-close')).toBe(bytesBefore);
   });
+
+  it.each(['X', 'Escape'] as const)(
+    'with 42 unresolved assets, folder proposals closed via %s write nothing',
+    async (closeVia) => {
+      const { saveProject, reportAssetResolutionFailure, getLoadFailure } =
+        await import('../../services/projectStore');
+      const { AnimationType, TransitionType } = await import('../../types');
+      type Project = import('../../types').Project;
+      const assets = Array.from({ length: 42 }, (_, index) => ({
+        id: `asset-${index}`,
+        name: `clip-${index}.mp4`,
+        url: '',
+        type: 'video' as const,
+      }));
+      const project = {
+        id: `p-close-${closeVia}`,
+        name: '42 unresolved assets',
+        script: '',
+        sceneDetails: '',
+        segments: assets.map((asset, index) => ({
+          id: `segment-${index}`,
+          text: `Segment ${index}`,
+          assetId: asset.id,
+          startTime: index,
+          duration: 1,
+          transition: TransitionType.NONE,
+          animation: AnimationType.NONE,
+          order: index,
+        })),
+        headings: [],
+        assets,
+        globalTransition: TransitionType.NONE,
+        globalTransitionDuration: 0.5,
+        globalAnimation: AnimationType.NONE,
+        textLayers: [],
+        globalOverlayConfig: {
+          color: '#fff',
+          backgroundColor: '#000',
+          fontFamily: 'Inter',
+        },
+        confirmed: true,
+        aspectRatio: '16:9',
+        resolutionTier: '1080p',
+      } as Project;
+      await saveProject(project);
+      const bytesBefore = osBacking.get(project.id);
+      const keysBefore = [...osBacking.keys()];
+      osWriteCount = 0;
+      vi.mocked(invoke).mockClear();
+      reportAssetResolutionFailure(project.id, '42 assets unresolved');
+
+      const container = document.createElement('div');
+      document.body.appendChild(container);
+      const reactRoot = createRoot(container);
+      let pickCount = 0;
+      let toggleCount = 0;
+      let recoveryCleared = false;
+      let folderCleared = false;
+      const proposal = {
+        assetId: assets[0]!.id,
+        candidateId: 'candidate-0',
+        confidence: 'probable' as const,
+        basis: {
+          name: 'similar' as const,
+          type: 'match' as const,
+          duration: 'within-probable' as const,
+        },
+        manyToOneAssetIds: [],
+        notes: [],
+      };
+      const folderRelink: FolderRelinkView = {
+        phase: 'proposed',
+        proposals: [proposal],
+        candidateById: {
+          'candidate-0': {
+            id: 'candidate-0',
+            name: 'clip-0.mp4',
+            path: '/media/clip-0.mp4',
+          },
+        },
+        selection: Object.fromEntries(assets.map((asset) => [asset.id, null])),
+        unresolvedAssetIds: assets.map((asset) => asset.id),
+        writeError: null,
+      };
+      const close = (): void => {
+        performRecoveryClose({
+          clearRecoveryUi: () => {
+            recoveryCleared = true;
+          },
+          clearFolderRelink: () => {
+            folderCleared = true;
+          },
+        });
+      };
+      const render = (view: FolderRelinkView | null): void => {
+        reactRoot.render(
+          React.createElement(DegradedProjectRecoveryScreen, {
+            projectName: project.name,
+            assets: assets.map((asset) => ({
+              id: asset.id,
+              name: asset.name,
+              unresolved: true,
+            })),
+            segments: project.segments.map((segment) => ({
+              id: segment.id,
+              label: segment.text,
+              assetId: segment.assetId ?? null,
+              resolutionStatus: 'unresolved' as const,
+            })),
+            onRelink: () => undefined,
+            folderRelink: view,
+            onPickFolder: () => {
+              pickCount += 1;
+              render(folderRelink);
+            },
+            onToggleFolderProposal: () => {
+              toggleCount += 1;
+            },
+            onClose: close,
+          }),
+        );
+      };
+
+      await act(async () => {
+        render(null);
+      });
+      await act(async () => {
+        container.querySelector<HTMLButtonElement>('[data-testid="recovery-pick-folder"]')!.click();
+      });
+      await act(async () => {
+        container.querySelector<HTMLInputElement>('[data-testid="recovery-folder-toggle"]')!.click();
+      });
+      await act(async () => {
+        if (closeVia === 'X') {
+          container.querySelector<HTMLButtonElement>('[data-testid="recovery-close"]')!.click();
+        } else {
+          window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+        }
+      });
+
+      expect(pickCount).toBe(1);
+      expect(toggleCount).toBe(1);
+      expect(recoveryCleared).toBe(true);
+      expect(folderCleared).toBe(true);
+      expect(osBacking.get(project.id)).toBe(bytesBefore);
+      expect([...osBacking.keys()]).toEqual(keysBefore);
+      expect(osWriteCount).toBe(0);
+      expect(getLoadFailure(project.id)?.reason).toBe('asset-unresolvable');
+      expect(invoke).not.toHaveBeenCalled();
+
+      await act(async () => reactRoot.unmount());
+      container.remove();
+    },
+  );
 });

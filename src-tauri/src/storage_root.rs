@@ -79,6 +79,9 @@ pub struct StorageRootRelocateReport {
     /// Subtrees actually moved this call (only ones that existed at `from`).
     pub moved: Vec<String>,
     pub bytes_moved: u64,
+    /// Source-copy cleanup failures after the pointer was durably switched.
+    /// The new root is authoritative and complete even when these are present.
+    pub cleanup_warnings: Vec<String>,
 }
 
 fn config_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -161,13 +164,17 @@ pub fn models_dir(root: &Path) -> PathBuf {
 }
 
 fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
-    let parent = dest.parent().ok_or_else(|| format!("no parent: {}", dest.display()))?;
+    let parent = dest
+        .parent()
+        .ok_or_else(|| format!("no parent: {}", dest.display()))?;
     fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
     let tmp = parent.join(format!(".storage-root.json.tmp-{}", std::process::id()));
     {
         let mut f = fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
-        f.write_all(contents.as_bytes()).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-        f.sync_all().map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
+        f.write_all(contents.as_bytes())
+            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        f.sync_all()
+            .map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
     }
     fs::rename(&tmp, dest).map_err(|e| {
         let _ = fs::remove_file(&tmp);
@@ -180,7 +187,9 @@ fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
 /// elsewhere in this crate).
 fn dir_size(dir: &Path) -> u64 {
     let mut total = 0u64;
-    let Ok(entries) = fs::read_dir(dir) else { return 0 };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let Ok(meta) = entry.metadata() else { continue };
@@ -203,14 +212,150 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         let entry = entry.map_err(|e| format!("read_dir entry in {}: {e}", src.display()))?;
         let from = entry.path();
         let to = dst.join(entry.file_name());
-        let meta = entry.metadata().map_err(|e| format!("metadata {}: {e}", from.display()))?;
+        let meta = entry
+            .metadata()
+            .map_err(|e| format!("metadata {}: {e}", from.display()))?;
         if meta.is_dir() {
             copy_dir_recursive(&from, &to)?;
         } else {
-            fs::copy(&from, &to).map_err(|e| format!("copy {} -> {}: {e}", from.display(), to.display()))?;
+            fs::copy(&from, &to)
+                .map_err(|e| format!("copy {} -> {}: {e}", from.display(), to.display()))?;
         }
     }
     Ok(())
+}
+
+fn verify_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+    let mut source_names = Vec::new();
+    for entry in fs::read_dir(src).map_err(|e| format!("verify read_dir {}: {e}", src.display()))? {
+        let entry =
+            entry.map_err(|e| format!("verify read_dir entry in {}: {e}", src.display()))?;
+        source_names.push(entry.file_name());
+    }
+    let mut destination_names = Vec::new();
+    for entry in fs::read_dir(dst).map_err(|e| format!("verify read_dir {}: {e}", dst.display()))? {
+        let entry =
+            entry.map_err(|e| format!("verify read_dir entry in {}: {e}", dst.display()))?;
+        destination_names.push(entry.file_name());
+    }
+    source_names.sort();
+    destination_names.sort();
+    if source_names != destination_names {
+        return Err(format!(
+            "relocation verification failed: directory entries differ between {} and {}",
+            src.display(),
+            dst.display()
+        ));
+    }
+
+    for name in source_names {
+        let from = src.join(&name);
+        let to = dst.join(&name);
+        let source_meta =
+            fs::metadata(&from).map_err(|e| format!("verify metadata {}: {e}", from.display()))?;
+        let destination_meta =
+            fs::metadata(&to).map_err(|e| format!("verify metadata {}: {e}", to.display()))?;
+        if source_meta.is_dir() != destination_meta.is_dir() {
+            return Err(format!(
+                "relocation verification failed: type differs for {} and {}",
+                from.display(),
+                to.display()
+            ));
+        }
+        if source_meta.is_dir() {
+            verify_dir_recursive(&from, &to)?;
+        } else {
+            if source_meta.len() != destination_meta.len() {
+                return Err(format!(
+                    "relocation verification failed: size differs for {} and {}",
+                    from.display(),
+                    to.display()
+                ));
+            }
+            let source_hash = crate::sha256::hash_file(&from)
+                .map_err(|e| format!("verify hash {}: {e}", from.display()))?;
+            let destination_hash = crate::sha256::hash_file(&to)
+                .map_err(|e| format!("verify hash {}: {e}", to.display()))?;
+            if source_hash != destination_hash {
+                return Err(format!(
+                    "relocation verification failed: digest differs for {} and {}",
+                    from.display(),
+                    to.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+const MANAGED_RELOCATION_SUBTREES: [(&str, fn(&Path) -> PathBuf); 4] = [
+    ("assets", assets_dir),
+    ("projects", projects_dir),
+    ("cache", cache_dir),
+    ("project-store-backups", project_backups_dir),
+];
+
+fn relocation_required_bytes(used: u64) -> u64 {
+    ((used as f64) * (1.0 + RELOCATE_HEADROOM_RATIO)) as u64 + RELOCATE_HEADROOM_FLOOR_BYTES
+}
+
+fn ensure_relocation_space(used: u64, available: u64) -> Result<(), String> {
+    let required = relocation_required_bytes(used);
+    if available < required {
+        Err(format!(
+            "not enough free space: needs about {required} bytes, {available} available"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn relocate_managed_subtrees_with<F, D>(
+    current: &Path,
+    new_root: &Path,
+    commit_pointer: F,
+    mut delete_source: D,
+) -> Result<(Vec<String>, u64, Vec<String>), String>
+where
+    F: FnOnce() -> Result<(), String>,
+    D: FnMut(&Path, &Path, &str) -> Result<(), String>,
+{
+    let mut moved = Vec::new();
+    let mut bytes_moved = 0u64;
+
+    // Phase 1: copy and byte-verify EVERY subtree. No source deletion is
+    // reachable until the entire set has passed.
+    for (name, get_dir) in MANAGED_RELOCATION_SUBTREES {
+        let from = get_dir(current);
+        if !from.is_dir() {
+            continue;
+        }
+        let to = get_dir(new_root);
+        copy_dir_recursive(&from, &to)?;
+        verify_dir_recursive(&from, &to)?;
+        moved.push(name.to_string());
+        bytes_moved += dir_size(&to);
+    }
+
+    // Phase 2: atomically switch authority to the fully verified copy.
+    // Failure leaves every source untouched.
+    commit_pointer()?;
+
+    // Phase 3: cleanup only. A crash here is recoverable because the pointer
+    // already names the complete new copy; failures are returned as warnings.
+    let mut cleanup_warnings = Vec::new();
+    for name in &moved {
+        let (_, get_dir) = MANAGED_RELOCATION_SUBTREES
+            .iter()
+            .find(|(candidate, _)| candidate == name)
+            .expect("moved name came from MANAGED_RELOCATION_SUBTREES");
+        let from = get_dir(current);
+        if let Err(error) = delete_source(&from, current, name) {
+            cleanup_warnings.push(error);
+        }
+    }
+
+    Ok((moved, bytes_moved, cleanup_warnings))
 }
 
 #[tauri::command]
@@ -251,7 +396,13 @@ pub struct SizeReportRow {
     pub sweep_classification: String,
 }
 
-fn row(path: &std::path::Path, label: &str, current_bytes: u64, reclaimable_bytes: u64, classification: &str) -> SizeReportRow {
+fn row(
+    path: &std::path::Path,
+    label: &str,
+    current_bytes: u64,
+    reclaimable_bytes: u64,
+    classification: &str,
+) -> SizeReportRow {
     SizeReportRow {
         path: path.to_string_lossy().to_string(),
         label: label.to_string(),
@@ -259,6 +410,10 @@ fn row(path: &std::path::Path, label: &str, current_bytes: u64, reclaimable_byte
         reclaimable_bytes,
         sweep_classification: classification.to_string(),
     }
+}
+
+fn reclaimable_dirs(root: &Path) -> [PathBuf; 2] {
+    [project_backups_dir(root), cache_dir(root)]
 }
 
 /// WS3 item H (Step 7) — the size report's data source, over the storage
@@ -285,14 +440,39 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
 
     let assets_bytes = dir_size(&assets_dir(&root));
     let projects_bytes = dir_size(&projects_dir(&root));
-    let backups_bytes = dir_size(&project_backups_dir(&root));
-    let cache_bytes = dir_size(&cache_dir(&root));
+    let [backups_path, cache_path] = reclaimable_dirs(&root);
+    let backups_bytes = dir_size(&backups_path);
+    let cache_bytes = dir_size(&cache_path);
 
     let mut rows = vec![
-        row(&assets_dir(&root), "Project assets", assets_bytes, 0, "never-reclaimable"),
-        row(&projects_dir(&root), "Projects", projects_bytes, 0, "never-reclaimable"),
-        row(&project_backups_dir(&root), "Project backups", backups_bytes, backups_bytes, "reclaimable"),
-        row(&cache_dir(&root), "Cache", cache_bytes, cache_bytes, "reclaimable"),
+        row(
+            &assets_dir(&root),
+            "Project assets",
+            assets_bytes,
+            0,
+            "never-reclaimable",
+        ),
+        row(
+            &projects_dir(&root),
+            "Projects",
+            projects_bytes,
+            0,
+            "never-reclaimable",
+        ),
+        row(
+            &backups_path,
+            "Project backups",
+            backups_bytes,
+            backups_bytes,
+            "reclaimable",
+        ),
+        row(
+            &cache_path,
+            "Cache",
+            cache_bytes,
+            cache_bytes,
+            "reclaimable",
+        ),
     ];
 
     // Whisper and FA models resolve through their OWN, separate schemes
@@ -307,7 +487,13 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
     for status in installed.fa.values() {
         model_bytes += status.bytes;
     }
-    rows.push(row(&models_path, "Downloaded models", model_bytes, 0, "never-reclaimable"));
+    rows.push(row(
+        &models_path,
+        "Downloaded models",
+        model_bytes,
+        0,
+        "never-reclaimable",
+    ));
 
     Ok(rows)
 }
@@ -319,11 +505,12 @@ pub fn storage_root_reclaim(app: tauri::AppHandle) -> Result<u64, String> {
     let root = resolve_storage_root(&app)?;
     crate::project_mirror::sweep_stale_project_backups(&app);
     let mut reclaimed = 0u64;
-    let cache = cache_dir(&root);
+    let [_backups, cache] = reclaimable_dirs(&root);
     if cache.is_dir() {
         reclaimed += dir_size(&cache);
-        fs::remove_dir_all(&cache).map_err(|e| format!("remove cache {}: {e}", cache.display()))?;
-        fs::create_dir_all(&cache).map_err(|e| format!("recreate cache {}: {e}", cache.display()))?;
+        crate::safe_delete::delete_app_staging_dir(&cache, &root, "cache")?;
+        fs::create_dir_all(&cache)
+            .map_err(|e| format!("recreate cache {}: {e}", cache.display()))?;
     }
     Ok(reclaimed)
 }
@@ -343,11 +530,13 @@ pub fn storage_root_relocate(
     let current = resolve_storage_root(&app)?;
     let new_root = PathBuf::from(new_root);
 
-    fs::create_dir_all(&new_root).map_err(|e| format!("cannot create {}: {e}", new_root.display()))?;
+    fs::create_dir_all(&new_root)
+        .map_err(|e| format!("cannot create {}: {e}", new_root.display()))?;
     let real_new = fs::canonicalize(&new_root)
         .map_err(|e| format!("cannot canonicalize {}: {e}", new_root.display()))?;
     let real_current = if current.is_dir() {
-        fs::canonicalize(&current).map_err(|e| format!("cannot canonicalize {}: {e}", current.display()))?
+        fs::canonicalize(&current)
+            .map_err(|e| format!("cannot canonicalize {}: {e}", current.display()))?
     } else {
         current.clone()
     };
@@ -364,70 +553,50 @@ pub fn storage_root_relocate(
 
     // Writability probe.
     let probe = real_new.join(format!(".kinetix-relocate-probe-{}", std::process::id()));
-    fs::write(&probe, b"probe").map_err(|e| format!("{} is not writable: {e}", real_new.display()))?;
-    let _ = fs::remove_file(&probe);
+    fs::write(&probe, b"probe")
+        .map_err(|e| format!("{} is not writable: {e}", real_new.display()))?;
+    fs::remove_file(&probe).map_err(|e| {
+        format!(
+            "could not remove writability probe {}: {e}",
+            probe.display()
+        )
+    })?;
 
     // Free-space check, with headroom, against what will actually be copied.
     let used = dir_size(&assets_dir(&real_current))
         + dir_size(&projects_dir(&real_current))
         + dir_size(&cache_dir(&real_current))
         + dir_size(&project_backups_dir(&real_current));
-    let required = ((used as f64) * (1.0 + RELOCATE_HEADROOM_RATIO)) as u64 + RELOCATE_HEADROOM_FLOOR_BYTES;
     let available = fs4::available_space(&real_new)
         .map_err(|e| format!("cannot read free space on {}: {e}", real_new.display()))?;
-    if available < required {
-        return Err(format!(
-            "not enough free space at {}: needs about {required} bytes, {available} available",
-            real_new.display()
-        ));
-    }
-
-    let mut moved = Vec::new();
-    let mut bytes_moved = 0u64;
-    for (name, get_dir) in [
-        ("assets", assets_dir as fn(&Path) -> PathBuf),
-        ("projects", projects_dir as fn(&Path) -> PathBuf),
-        ("cache", cache_dir as fn(&Path) -> PathBuf),
-        ("project-store-backups", project_backups_dir as fn(&Path) -> PathBuf),
-    ] {
-        let from = get_dir(&real_current);
-        if !from.is_dir() {
-            continue;
-        }
-        let to = get_dir(&real_new);
-        copy_dir_recursive(&from, &to)?;
-        let copied_bytes = dir_size(&to);
-        let original_bytes = dir_size(&from);
-        if copied_bytes != original_bytes {
-            return Err(format!(
-                "relocation verification failed for {name}: copied {copied_bytes} bytes, source has \
-                 {original_bytes} — the OLD copy at {} is left in place; nothing was deleted",
-                from.display()
-            ));
-        }
-        // Only now, with the new copy verified, is the old subtree removed.
-        fs::remove_dir_all(&from).map_err(|e| {
-            format!(
-                "copied {name} successfully but could not remove the old copy at {}: {e} — both copies \
-                 now exist; the new one at {} is authoritative going forward, the old one is safe to \
-                 delete by hand",
-                from.display(),
-                to.display()
-            )
-        })?;
-        moved.push(name.to_string());
-        bytes_moved += copied_bytes;
-    }
-
-    let cfg = StorageRootConfigFile { root: Some(real_new.to_string_lossy().to_string()) };
-    let json = serde_json::to_string_pretty(&cfg).map_err(|e| format!("serialize storage-root.json: {e}"))?;
-    write_atomic(&config_path(&app)?, &json)?;
+    ensure_relocation_space(used, available)
+        .map_err(|e| format!("{e} at {}", real_new.display()))?;
+    let cfg = StorageRootConfigFile {
+        root: Some(real_new.to_string_lossy().to_string()),
+    };
+    let json = serde_json::to_string_pretty(&cfg)
+        .map_err(|e| format!("serialize storage-root.json: {e}"))?;
+    let config = config_path(&app)?;
+    let (moved, bytes_moved, cleanup_warnings) = relocate_managed_subtrees_with(
+        &real_current,
+        &real_new,
+        || write_atomic(&config, &json),
+        |from, bounds, name| {
+            crate::safe_delete::delete_app_staging_dir(from, bounds, name).map_err(|e| {
+                format!(
+                    "new root is authoritative, but old {name} copy at {} could not be removed: {e}",
+                    from.display()
+                )
+            })
+        },
+    )?;
 
     Ok(StorageRootRelocateReport {
         from: real_current.to_string_lossy().to_string(),
         to: real_new.to_string_lossy().to_string(),
         moved,
         bytes_moved,
+        cleanup_warnings,
     })
 }
 
@@ -438,7 +607,10 @@ mod tests {
     fn tmpdir(tag: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(
             "kinetix-storage-root-test-{tag}-{}",
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
         ));
         fs::create_dir_all(&d).unwrap();
         d
@@ -468,7 +640,10 @@ mod tests {
 
         assert_eq!(fs::read_to_string(dst.join("root.txt")).unwrap(), "root");
         assert_eq!(fs::read_to_string(dst.join("a/one.txt")).unwrap(), "one");
-        assert_eq!(fs::read_to_string(dst.join("a/b/two.txt")).unwrap(), "two-bytes");
+        assert_eq!(
+            fs::read_to_string(dst.join("a/b/two.txt")).unwrap(),
+            "two-bytes"
+        );
         assert_eq!(dir_size(&src), dir_size(&dst));
 
         fs::remove_dir_all(&src).ok();
@@ -493,5 +668,141 @@ mod tests {
 
         fs::remove_dir_all(&src).ok();
         fs::remove_file(&dst).ok();
+    }
+
+    #[test]
+    fn low_space_is_refused_before_relocation_can_start() {
+        let used = 100 * 1024 * 1024;
+        let required = relocation_required_bytes(used);
+        assert!(ensure_relocation_space(used, required - 1).is_err());
+        assert!(ensure_relocation_space(used, required).is_ok());
+    }
+
+    #[test]
+    fn a_later_copy_failure_leaves_every_source_intact_and_never_commits() {
+        let current = tmpdir("transaction-source");
+        let destination = tmpdir("transaction-destination");
+        fs::create_dir_all(assets_dir(&current)).unwrap();
+        fs::write(assets_dir(&current).join("asset.bin"), b"asset").unwrap();
+        fs::create_dir_all(projects_dir(&current)).unwrap();
+        fs::write(projects_dir(&current).join("project.json"), b"project").unwrap();
+        // Assets copy first. Make the later projects destination impossible.
+        fs::write(projects_dir(&destination), b"blocks directory creation").unwrap();
+        let committed = std::cell::Cell::new(false);
+
+        let result = relocate_managed_subtrees_with(
+            &current,
+            &destination,
+            || {
+                committed.set(true);
+                Ok(())
+            },
+            |_, _, _| panic!("source deletion must be unreachable before all copies verify"),
+        );
+
+        assert!(result.is_err());
+        assert!(!committed.get());
+        assert_eq!(
+            fs::read(assets_dir(&current).join("asset.bin")).unwrap(),
+            b"asset"
+        );
+        assert_eq!(
+            fs::read(projects_dir(&current).join("project.json")).unwrap(),
+            b"project"
+        );
+        fs::remove_dir_all(&current).ok();
+        fs::remove_dir_all(&destination).ok();
+    }
+
+    #[test]
+    fn pointer_failure_leaves_sources_and_success_commits_before_cleanup() {
+        let current = tmpdir("commit-source");
+        let destination = tmpdir("commit-destination");
+        fs::create_dir_all(assets_dir(&current)).unwrap();
+        fs::write(assets_dir(&current).join("asset.bin"), b"asset").unwrap();
+
+        let result = relocate_managed_subtrees_with(
+            &current,
+            &destination,
+            || Err("pointer write failed".into()),
+            |_, _, _| panic!("cleanup must not run after pointer failure"),
+        );
+        assert!(result.is_err());
+        assert!(assets_dir(&current).join("asset.bin").is_file());
+
+        let second_destination = tmpdir("commit-destination-2");
+        let committed = std::cell::Cell::new(false);
+        let (_, _, warnings) = relocate_managed_subtrees_with(
+            &current,
+            &second_destination,
+            || {
+                committed.set(true);
+                Ok(())
+            },
+            |_, _, _| {
+                assert!(committed.get(), "pointer must commit before cleanup starts");
+                Err("simulated cleanup refusal".into())
+            },
+        )
+        .unwrap();
+        assert_eq!(warnings, vec!["simulated cleanup refusal"]);
+        assert!(assets_dir(&current).join("asset.bin").is_file());
+        assert!(assets_dir(&second_destination).join("asset.bin").is_file());
+
+        fs::remove_dir_all(&current).ok();
+        fs::remove_dir_all(&destination).ok();
+        fs::remove_dir_all(&second_destination).ok();
+    }
+
+    #[test]
+    fn reclaim_targets_are_only_cache_and_project_backups_inside_the_root() {
+        let root = tmpdir("reclaim-bounds");
+        let allowed = reclaimable_dirs(&root);
+        let forbidden = [
+            assets_dir(&root),
+            projects_dir(&root),
+            models_dir(&root),
+            root.join("EBWebView"),
+        ];
+
+        for target in allowed {
+            assert!(target.starts_with(&root));
+            assert!(matches!(
+                target.file_name().and_then(|name| name.to_str()),
+                Some("cache" | "project-store-backups")
+            ));
+            assert!(!forbidden.contains(&target));
+        }
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn status_and_size_report_commands_are_filesystem_read_only() {
+        let source = include_str!("storage_root.rs");
+        for (start, end) in [
+            ("pub fn storage_root_status", "/// WS3 item H — one row"),
+            ("pub async fn size_report", "/// Clears reclaimable subtrees"),
+        ] {
+            let body = source
+                .split(start)
+                .nth(1)
+                .unwrap_or_else(|| panic!("missing command marker {start}"))
+                .split(end)
+                .next()
+                .unwrap();
+            for forbidden in [
+                "fs::write",
+                "fs::rename",
+                "fs::remove_file",
+                "fs::remove_dir_all",
+                "fs::create_dir",
+                "write_atomic",
+            ] {
+                assert!(
+                    !body.contains(forbidden),
+                    "{start} reintroduced filesystem mutation via {forbidden}"
+                );
+            }
+        }
     }
 }

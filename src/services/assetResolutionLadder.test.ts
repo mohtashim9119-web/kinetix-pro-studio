@@ -21,6 +21,7 @@ import {
   applySilentProvenanceResolution,
   isPartialProvenance,
   isPreProvenance,
+  MAX_PROJECT_OPEN_LADDER_ASSETS,
   requiresConfirmation,
   routesToFolderPick,
   type AssetProvenanceStatus,
@@ -139,5 +140,32 @@ describe('applySilentProvenanceResolution', () => {
     expect(report.folderPickOnly).toEqual(['legacy']);
     expect(report.needsConfirmation).toHaveLength(1);
     expect(writeAssetFromPath).not.toHaveBeenCalled();
+  });
+
+  it('bounds a 448-asset project open and never creates 448 write transactions', async () => {
+    const population = Array.from({ length: 448 }, (_, index) => ({
+      ...asset,
+      id: `asset-${index}`,
+      name: `clip-${index}.mp4`,
+    }));
+    mockInvoke.mockImplementation(async (_command: string, args: unknown) => ({
+      assetId: (args as { assetId: string }).assetId,
+      rung: 'none',
+      confidence: 'none',
+      silent: false,
+      candidatePath: null,
+      reason: 'pre-provenance',
+    }));
+
+    const report = await applySilentProvenanceResolution(
+      'p448',
+      population,
+      population.map((entry) => entry.id),
+    );
+
+    expect(mockInvoke).toHaveBeenCalledTimes(MAX_PROJECT_OPEN_LADDER_ASSETS);
+    expect(writeAssetFromPath).not.toHaveBeenCalled();
+    expect(report.resolved).toEqual([]);
+    expect(new Set(report.folderPickOnly).size).toBe(448);
   });
 });

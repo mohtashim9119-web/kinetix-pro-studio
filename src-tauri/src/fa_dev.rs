@@ -791,7 +791,7 @@ mod tests {
     #[test]
     fn a_staged_path_hands_its_duration_to_the_run_that_claims_it() {
         let _guard = staging_test_guard();
-        let path = std::path::PathBuf::from("/tmp/kinetix-fa-test/abc.wav");
+        let path = std::path::PathBuf::from("/temporary-root/kinetix-fa-test/abc.wav");
         record_staging_duration(&path, 4_200_000);
         assert_eq!(take_staging_duration(&path), Some(4_200_000));
     }
@@ -799,7 +799,7 @@ mod tests {
     #[test]
     fn a_claim_removes_the_record_so_a_later_run_cannot_reuse_a_stale_measurement() {
         let _guard = staging_test_guard();
-        let path = std::path::PathBuf::from("/tmp/kinetix-fa-test/once.wav");
+        let path = std::path::PathBuf::from("/temporary-root/kinetix-fa-test/once.wav");
         record_staging_duration(&path, 999);
         assert_eq!(take_staging_duration(&path), Some(999));
         assert_eq!(
@@ -812,13 +812,13 @@ mod tests {
     #[test]
     fn an_unstaged_path_reports_unknown_not_zero() {
         let _guard = staging_test_guard();
-        assert_eq!(take_staging_duration(std::path::Path::new("/tmp/never-staged.wav")), None);
+        assert_eq!(take_staging_duration(std::path::Path::new("/temporary-root/never-staged.wav")), None);
     }
 
     #[test]
     fn restaging_the_same_path_replaces_rather_than_duplicating_its_record() {
         let _guard = staging_test_guard();
-        let path = std::path::PathBuf::from("/tmp/kinetix-fa-test/again.wav");
+        let path = std::path::PathBuf::from("/temporary-root/kinetix-fa-test/again.wav");
         record_staging_duration(&path, 100);
         record_staging_duration(&path, 200);
         assert_eq!(take_staging_duration(&path), Some(200), "the most recent measurement wins");
@@ -829,12 +829,12 @@ mod tests {
     fn the_record_table_is_bounded_and_evicts_oldest_first() {
         let _guard = staging_test_guard();
         for i in 0..(STAGING_RECORD_CAPACITY + 4) {
-            record_staging_duration(&std::path::PathBuf::from(format!("/tmp/kinetix-fa-test/{i}.wav")), i as u64);
+            record_staging_duration(&std::path::PathBuf::from(format!("/temporary-root/kinetix-fa-test/{i}.wav")), i as u64);
         }
         // The four oldest are gone; an evicted record reports unknown.
         for i in 0..4 {
             assert_eq!(
-                take_staging_duration(std::path::Path::new(&format!("/tmp/kinetix-fa-test/{i}.wav"))),
+                take_staging_duration(std::path::Path::new(&format!("/temporary-root/kinetix-fa-test/{i}.wav"))),
                 None,
                 "record {i} must have been evicted by the cap"
             );
@@ -842,7 +842,7 @@ mod tests {
         // The most recent survives with its real value.
         let last = STAGING_RECORD_CAPACITY + 3;
         assert_eq!(
-            take_staging_duration(std::path::Path::new(&format!("/tmp/kinetix-fa-test/{last}.wav"))),
+            take_staging_duration(std::path::Path::new(&format!("/temporary-root/kinetix-fa-test/{last}.wav"))),
             Some(last as u64)
         );
     }

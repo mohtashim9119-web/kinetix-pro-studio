@@ -8,11 +8,13 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { isTauri } from './tauriFfmpeg';
-import { writeAssetFromPath } from './nativeAssetStore';
+import { readAssetNative, writeAssetFromPath } from './nativeAssetStore';
 import { putAsset } from './assetStore';
-import { readAssetNative } from './nativeAssetStore';
 import type { Asset } from '../types';
 import { withAssetLoadTimeout } from './assetLoadTimeout';
+
+/** Hard ceiling for project-open repair work; the remaining assets stay in recovery. */
+export const MAX_PROJECT_OPEN_LADDER_ASSETS = 8;
 
 export type ResolutionRung =
   | 'exact_path'
@@ -90,8 +92,10 @@ export async function applySilentProvenanceResolution(
   if (!isTauri() || missingIds.length === 0) return report;
 
   const byId = new Map(assets.map((a) => [a.id, a]));
+  const attemptedIds = missingIds.slice(0, MAX_PROJECT_OPEN_LADDER_ASSETS);
+  report.folderPickOnly.push(...missingIds.slice(MAX_PROJECT_OPEN_LADDER_ASSETS));
 
-  for (const assetId of missingIds) {
+  for (const assetId of attemptedIds) {
     const result = await attemptAssetResolution(projectId, assetId);
     if (!result) continue;
 

@@ -49,6 +49,22 @@ const RESUME_CAPABLE_KINDS = [
   'grade_loss_refused',
 ] as const satisfies readonly ExportErrorKind[];
 
+const MACHINE_1_DESTROYED_DISK_FULL_FAILURES = Array.from(
+  { length: 12 },
+  (_, index) => ({
+    label: `Machine 1 disk_full failure ${index + 1}`,
+    retentionAttempted: true,
+    sessionDisposition: {
+      source: 'retainForResume' as const,
+      disposition: 'destroyed',
+      retainedBytes: 0,
+      reclaimedBytes: 0,
+      path: `/sessions/machine-1-disk-full-${index + 1}`,
+    },
+    manifestPresent: false,
+  }),
+);
+
 async function renderMessage(
   over: Partial<ExportFailureMessageProps> & Pick<ExportFailureMessageProps, 'kind'>,
 ): Promise<ReturnType<typeof createExportFailureActionsFake>> {
@@ -131,6 +147,21 @@ describe('ExportFailureMessage — Resume from evidence, both branches per kind'
     expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
     expect(container.querySelector('[data-testid="export-resume-unavailable"]')).not.toBeNull();
   });
+
+  it.each(MACHINE_1_DESTROYED_DISK_FULL_FAILURES)(
+    '$label hides Resume for disposition=destroyed and retained_bytes=0',
+    async (failure) => {
+      await renderMessage({
+        kind: 'disk_full',
+        diskFullVariant: 'mid-export',
+        retentionAttempted: failure.retentionAttempted,
+        sessionDisposition: failure.sessionDisposition,
+        manifestPresent: failure.manifestPresent,
+      });
+      expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
+      expect(container.querySelector('[data-testid="export-resume-unavailable"]')).not.toBeNull();
+    },
+  );
 
   it.each(['cancelled', 'asset_missing'] as const)('%s never shows Resume', async (kind) => {
     await renderMessage({ kind, ...ELIGIBLE });

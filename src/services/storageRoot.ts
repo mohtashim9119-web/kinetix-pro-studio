@@ -38,6 +38,8 @@ export interface StorageRootRelocateReport {
   /** Subtrees actually moved (only ones that existed at `from`). */
   moved: string[];
   bytesMoved: number;
+  /** Old-copy cleanup failures after the verified new root became authoritative. */
+  cleanupWarnings: string[];
 }
 
 /** `sweepClassification` is `'never-reclaimable' | 'reclaimable'` — see `size_report`'s own doc comment (storage_root.rs) for which subtree gets which. */

@@ -2836,3 +2836,44 @@ No merge to main. No PR. Pushed `ws3-export-integration`.
 #### Gates (Round 27)
 
 See Part C report in the Round 27 session record. Eight frozen constants and four fixture digests unchanged.
+
+#### Round 27 pre-installer self-audit correction
+
+The earlier test inventory was arithmetically wrong. At `c769425`, Vitest collected **3,912**
+tests (3,834 pass / 78 skip); at `58eee15`, it collected **3,918** (3,840 pass / 78 skip).
+The +6 is five new `assetResolutionLadder.test.ts` cases plus one new 42-row
+`degradedLoad.test.ts` case. `storageRoot.test.ts` (5), `exportFailureCopy.test.ts` (4),
+`ExportFailureMessage.test.tsx` (25), and `ExportResumeUnavailableCard.test.tsx` (1)
+already existed at `c769425`; summing the three export-failure files (4+25+1) and calling
+those 30 existing cases “30 added tests” was the error. Relative to the pre-hang-fix 3,904 collection, `c769425` added 8 and
+Steps 4–7 added 6, giving the real +14.
+
+Installer-breaking command registration is now source-locked by
+`src/services/nativeInvokeRegistration.test.ts`: every literal production TS `invoke` name
+must appear in `lib.rs`'s `generate_handler!`, with a destructive in-memory omission probe.
+The relocation transaction now copies and SHA-256-verifies every managed subtree, atomically
+switches `storage-root.json`, and only then treats old-source deletion as cleanup. A copy or
+pointer-write failure leaves the old root authoritative and intact; interruption after the
+pointer switch restarts from the complete new root. Reclaim recursive deletes and stale-backup
+deletes route through `safe_delete`.
+
+Project-open provenance work is bounded to 8 assets. Automatic exact-path hashing is capped at
+256 MiB/file; the explicit folder-pick hash-only rung is capped at 256 files, 2 GiB/file, and
+4 GiB total. Path imports now stream copy+SHA-256 on a blocking worker and reuse that digest
+for metadata instead of reading the whole media into memory and hashing it again.
+
+`ws3-export-integration` is **live** at `a928eff` and is the merge target for
+`ws3-round27`; the `archive/wt-fa-perf-audit-detached-2026-09-14` tag names a detached audit
+snapshot at the same commit, not the branch. Ancestry is `ws3-export-integration` →
+`ws3-round27` (0 commits left / 7 right at the audit start), so integration can fast-forward
+with no merge conflict.
+
+Frozen values re-read from source: `WATCHDOG_MS=30000`,
+`FORWARD_PROGRESS_BOUND_MS=45000`, `FLUSH_BOUND_MS=20000`,
+`APPEND_DRAIN_BOUND_MS=600000`, `TRUNCATE_BOUND_MS=172675`,
+`KILL_BOUND_MS=125`, `APPEND_BATCH_BYTES=524288`, `WINDOWS_MAX_PATH=260`.
+Fixture SHA-256 values:
+`5db5e004522c4212339bfbae771df15c84bc8858ec8ad7906a131199dcaf8994`,
+`af89ca66bbb7447312547e54d8ded6e9ac460b51d8e09f5a327ac82cf5a88d44`,
+`1abf9839f658ae5b9f83f2411542b86fe0490c055e1ec739f00d4bd2a6458035`,
+`fb9cdda22d69cac8af96ef1f7f1cd5a9dfaf486ef7d8efb46fe01a0c7fb6198b`.

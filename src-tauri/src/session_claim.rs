@@ -485,7 +485,11 @@ pub fn sweep_manifestless_orphans(min_age_secs: u64) -> Result<OrphanSweepReport
         report.candidates += 1;
         let bytes = dir_size(&dir);
         let existed_before = dir.exists();
-        match fs::remove_dir_all(&dir) {
+        match crate::safe_delete::delete_app_staging_dir(
+            &dir,
+            &temp,
+            "kinetix-export-",
+        ) {
             Ok(()) => {
                 match classify_remove_outcome(existed_before, dir.exists()) {
                     RemoveOutcome::PendingDelete => {
@@ -632,7 +636,11 @@ pub fn destroy_session_dir(dir: &Path, force: bool) -> Result<DestroySessionOutc
         return Ok(DestroySessionOutcome { disposition: "refused_manifest".to_string() });
     }
     let _ = release_session_claim(dir);
-    fs::remove_dir_all(dir).map_err(|e| format!("destroy_session: {}", e))?;
+    let bounds = dir
+        .parent()
+        .ok_or_else(|| format!("destroy_session: no parent for {}", dir.display()))?;
+    crate::safe_delete::delete_app_staging_dir(dir, bounds, "kinetix-export-")
+        .map_err(|e| format!("destroy_session: {e}"))?;
     Ok(DestroySessionOutcome { disposition: "destroyed".to_string() })
 }
 
@@ -684,7 +692,14 @@ pub fn retain_session_for_resume(dir: &Path, session_id: &str) -> Result<RetainF
     if !has_manifest(dir) {
         let bytes = dir_size(dir);
         let _ = release_session_claim(dir);
-        fs::remove_dir_all(dir).map_err(|e| format!("retain_session_for_resume: destroy: {e}"))?;
+        let bounds = dir.parent().ok_or_else(|| {
+            format!(
+                "retain_session_for_resume: no parent for {}",
+                dir.display()
+            )
+        })?;
+        crate::safe_delete::delete_app_staging_dir(dir, bounds, "kinetix-export-")
+            .map_err(|e| format!("retain_session_for_resume: destroy: {e}"))?;
         let gone = !dir.exists();
         return Ok(RetainForResumeReport {
             session_id: session_id.to_string(),
@@ -706,7 +721,12 @@ pub fn retain_session_for_resume(dir: &Path, session_id: &str) -> Result<RetainF
         }
         let p = entry.path();
         let bytes = if p.is_dir() { dir_size(&p) } else { fs::metadata(&p).map(|m| m.len()).unwrap_or(0) };
-        let result = if p.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) };
+        let result = if p.is_dir() {
+            crate::safe_delete::delete_app_staging_dir(&p, dir, "")
+        } else {
+            fs::remove_file(&p)
+                .map_err(|e| format!("remove_file {}: {e}", p.display()))
+        };
         if result.is_ok() && !p.exists() {
             reclaimed += bytes;
             removed.push(name.to_string());
@@ -868,7 +888,11 @@ pub fn reclaim_sessions(session_ids: &[String]) -> Result<ReclaimReport, String>
         }
         let bytes = dir_size(&dir);
         let _ = release_session_claim(&dir);
-        match fs::remove_dir_all(&dir) {
+        match crate::safe_delete::delete_app_staging_dir(
+            &dir,
+            &std::env::temp_dir(),
+            "kinetix-export-",
+        ) {
             Ok(()) => match classify_remove_outcome(true, dir.exists()) {
                 RemoveOutcome::Deleted => {
                     report.bytes_reclaimed += bytes;

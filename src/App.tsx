@@ -6439,11 +6439,15 @@ export default function App() {
       // rules because only exact-path+hash is marked silent in Rust.
       if (missingIds.length > 0) {
         const ladder = await applySilentProvenanceResolution(saved.project.id, saved.project.assets, missingIds);
-        for (const assetId of ladder.resolved) {
-          const stored = await getAllAssetsForProject(saved.project.id).then(
-            rows => rows.find(r => r.id === assetId),
+        if (ladder.resolved.length > 0) {
+          const resolvedIds = new Set(ladder.resolved);
+          const refreshedAssets = await withAssetLoadTimeout(
+            getAllAssetsForProject(saved.project.id),
+            'getAllAssetsForProject(post-ladder)',
           );
-          if (stored) blobMap.set(assetId, stored);
+          for (const stored of refreshedAssets) {
+            if (resolvedIds.has(stored.id)) blobMap.set(stored.id, stored);
+          }
         }
         missingIds = missingIds.filter(id => !blobMap.has(id));
       }

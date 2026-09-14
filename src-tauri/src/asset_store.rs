@@ -25,12 +25,22 @@
 //! failed import, not a silent absence; see that module's own doc comment.
 
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::storage_root::{assets_dir, resolve_storage_root};
+
+/// Project-open provenance checks are deliberately bounded. Files above this
+/// size require explicit folder-pick confirmation instead of hashing during
+/// project open.
+const MAX_AUTOMATIC_HASH_FILE_BYTES: u64 = 256 * 1024 * 1024;
+/// The user-triggered hash-only rung is bounded independently by entry count,
+/// per-file size, and aggregate bytes read.
+const MAX_HASH_SCAN_FILES: usize = 256;
+const MAX_HASH_SCAN_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_HASH_SCAN_TOTAL_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 
 /// Same shape as `project_mirror.rs::safe_id` — rejects anything but a plain
 /// single path segment. Both `project_id` and `asset_id` are
@@ -39,11 +49,15 @@ use crate::storage_root::{assets_dir, resolve_storage_root};
 fn safe_component(id: &str) -> Result<&str, String> {
     let ok = !id.is_empty()
         && id.len() <= 128
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if ok {
         Ok(id)
     } else {
-        Err(format!("refusing unsafe id for an asset-store path: {id:?}"))
+        Err(format!(
+            "refusing unsafe id for an asset-store path: {id:?}"
+        ))
     }
 }
 
@@ -157,23 +171,83 @@ fn meta_path(dir: &Path, asset_id: &str) -> PathBuf {
 /// keep separate-but-identical copies rather than one shared entry point
 /// used from two backup trees).
 fn write_atomic_bytes(dest: &Path, contents: &[u8]) -> Result<(), String> {
-    let parent = dest.parent().ok_or_else(|| format!("no parent: {}", dest.display()))?;
+    let parent = dest
+        .parent()
+        .ok_or_else(|| format!("no parent: {}", dest.display()))?;
     fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
     let tmp = parent.join(format!(
         ".{}.tmp-{}-{}",
-        dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "asset".into()),
+        dest.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "asset".into()),
         std::process::id(),
         now_millis()
     ));
     {
         let mut f = fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
-        f.write_all(contents).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-        f.sync_all().map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
+        f.write_all(contents)
+            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        f.sync_all()
+            .map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
     }
     fs::rename(&tmp, dest).map_err(|e| {
         let _ = fs::remove_file(&tmp);
         format!("rename {} -> {}: {e}", tmp.display(), dest.display())
     })
+}
+
+fn copy_atomic_with_hash(src: &Path, dest: &Path) -> Result<(u64, String), String> {
+    let parent = dest
+        .parent()
+        .ok_or_else(|| format!("no parent: {}", dest.display()))?;
+    fs::create_dir_all(parent).map_err(|e| format!("create_dir_all {}: {e}", parent.display()))?;
+    let tmp = parent.join(format!(
+        ".{}.tmp-{}-{}",
+        dest.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "asset".into()),
+        std::process::id(),
+        now_millis()
+    ));
+
+    let result = (|| -> Result<(u64, String), String> {
+        let mut input =
+            fs::File::open(src).map_err(|e| format!("open source {}: {e}", src.display()))?;
+        let mut output =
+            fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
+        let mut hasher = crate::sha256::Sha256::new();
+        let mut copied = 0u64;
+        let mut buffer = vec![0u8; 1024 * 1024];
+        loop {
+            let count = input
+                .read(&mut buffer)
+                .map_err(|e| format!("read source {}: {e}", src.display()))?;
+            if count == 0 {
+                break;
+            }
+            output
+                .write_all(&buffer[..count])
+                .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+            hasher.update(&buffer[..count]);
+            copied += count as u64;
+        }
+        output
+            .sync_all()
+            .map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
+        fs::rename(&tmp, dest)
+            .map_err(|e| format!("rename {} -> {}: {e}", tmp.display(), dest.display()))?;
+        Ok((copied, crate::sha256::hex_digest(&hasher.finish())))
+    })();
+
+    if result.is_err() && tmp.exists() {
+        fs::remove_file(&tmp).map_err(|cleanup| {
+            format!(
+                "copy failed and temp cleanup {} failed: {cleanup}",
+                tmp.display()
+            )
+        })?;
+    }
+    result
 }
 
 /// The actual write logic, factored out of the `#[tauri::command]` so it is
@@ -186,7 +260,13 @@ fn write_atomic_bytes(dest: &Path, contents: &[u8]) -> Result<(), String> {
 /// (the WS3 item B ruling this closes: "never swallow a write failure — a
 /// failed asset write must surface as a failed import, not a silent
 /// absence").
-fn write_asset_atomic(dir: &Path, asset_id: &str, bytes: &[u8], name: String, mime_type: String) -> Result<(), String> {
+fn write_asset_atomic(
+    dir: &Path,
+    asset_id: &str,
+    bytes: &[u8],
+    name: String,
+    mime_type: String,
+) -> Result<(), String> {
     write_asset_atomic_provenanced(dir, asset_id, bytes, name, mime_type, None)
 }
 
@@ -217,7 +297,9 @@ fn write_asset_atomic_provenanced(
     let meta_json = serde_json::to_vec(&meta).map_err(|e| format!("serialize asset meta: {e}"))?;
     if let Err(e) = write_atomic_bytes(&mp, &meta_json) {
         let _ = fs::remove_file(&bp);
-        return Err(format!("wrote asset bytes but failed to write its metadata, bytes removed: {e}"));
+        return Err(format!(
+            "wrote asset bytes but failed to write its metadata, bytes removed: {e}"
+        ));
     }
     Ok(())
 }
@@ -263,7 +345,7 @@ pub fn asset_store_write(
 /// THROWS on any read/write failure — never swallowed; the recovery UI
 /// surfaces it per-row so a partial batch is reported, not silently lost.
 #[tauri::command]
-pub fn asset_store_write_from_path(
+pub async fn asset_store_write_from_path(
     app: tauri::AppHandle,
     project_id: String,
     asset_id: String,
@@ -283,24 +365,52 @@ pub fn asset_store_write_from_path(
             src.display()
         ));
     }
-    let bytes = fs::read(&src).map_err(|e| format!("read {}: {e}", src.display()))?;
-    let content_hash = crate::sha256::hash_file(&src).ok();
-    let containing_folder = src
-        .parent()
-        .map(|p| p.to_string_lossy().to_string());
-    let provenance = AssetProvenance {
-        original_path: Some(src_path.clone()),
-        containing_folder,
-        content_hash,
-        duration,
-    };
-    write_asset_atomic_provenanced(&dir, asset_id, &bytes, name, mime_type, Some(provenance))
+    let asset_id = asset_id.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let bp = bytes_path(&dir, &asset_id);
+        let mp = meta_path(&dir, &asset_id);
+        let containing_folder = src.parent().map(|p| p.to_string_lossy().to_string());
+        let (bytes, content_hash) = copy_atomic_with_hash(&src, &bp)?;
+        let provenance = AssetProvenance {
+            original_path: Some(src_path),
+            containing_folder,
+            content_hash: Some(content_hash),
+            duration,
+        };
+        let meta = AssetMetaFile {
+            name,
+            mime_type,
+            bytes,
+            written_at_ms: now_millis(),
+            provenance: Some(provenance),
+        };
+        let meta_json =
+            serde_json::to_vec(&meta).map_err(|e| format!("serialize asset meta: {e}"))?;
+        if let Err(error) = write_atomic_bytes(&mp, &meta_json) {
+            fs::remove_file(&bp).map_err(|cleanup| {
+                format!(
+                    "wrote asset bytes but metadata failed ({error}); bytes cleanup {} also failed: {cleanup}",
+                    bp.display()
+                )
+            })?;
+            return Err(format!(
+                "wrote asset bytes but failed to write metadata; bytes removed: {error}"
+            ));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("asset_store_write_from_path worker failed: {e}"))?
 }
 /// callers that need to distinguish "missing" from "other I/O error" should
 /// consult `asset_store_status` first (the recovery-status data source), not
 /// probe by calling this and inspecting the error string.
 #[tauri::command]
-pub fn asset_store_read(app: tauri::AppHandle, project_id: String, asset_id: String) -> Result<Vec<u8>, String> {
+pub fn asset_store_read(
+    app: tauri::AppHandle,
+    project_id: String,
+    asset_id: String,
+) -> Result<Vec<u8>, String> {
     let dir = project_dir(&app, &project_id)?;
     let asset_id = safe_component(&asset_id)?;
     fs::read(bytes_path(&dir, asset_id)).map_err(|e| format!("asset_store_read({asset_id}): {e}"))
@@ -337,9 +447,11 @@ pub fn asset_store_status(
             continue;
         };
         let bp = bytes_path(&dir, asset_id);
-        let mp = meta_path(&dir, asset_id);
+        let mp = meta_path(&dir, &asset_id);
         let bytes_present = bp.is_file();
-        let meta: Option<AssetMetaFile> = fs::read(&mp).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let meta: Option<AssetMetaFile> = fs::read(&mp)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok());
         let provenance = meta.as_ref().and_then(|m| {
             m.provenance.as_ref().map(|p| AssetProvenanceStatus {
                 original_path: p.original_path.clone(),
@@ -361,15 +473,29 @@ pub fn asset_store_status(
     Ok(out)
 }
 
-fn file_matches_recorded(meta: &AssetMetaFile, path: &Path) -> Result<(bool, bool), String> {
-    let size_ok = fs::metadata(path)
-        .map(|m| m.len() == meta.bytes)
-        .unwrap_or(false);
+fn file_matches_recorded(
+    meta: &AssetMetaFile,
+    path: &Path,
+    max_hash_bytes: u64,
+) -> Result<(bool, bool), String> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(_) => return Ok((false, false)),
+    };
+    let size_ok = metadata.len() == meta.bytes;
+    if !size_ok || metadata.len() > max_hash_bytes {
+        return Ok((size_ok, false));
+    }
     let hash_ok = match (
-        meta.provenance.as_ref().and_then(|p| p.content_hash.as_deref()),
-        crate::sha256::hash_file(path).ok(),
+        meta.provenance
+            .as_ref()
+            .and_then(|p| p.content_hash.as_deref()),
+        crate::sha256::hash_file(path),
     ) {
-        (Some(recorded), Some(actual)) => recorded.eq_ignore_ascii_case(&actual),
+        (Some(recorded), Ok(actual)) => recorded.eq_ignore_ascii_case(&actual),
+        (_, Err(error)) => {
+            return Err(format!("hash {}: {error}", path.display()));
+        }
         _ => false,
     };
     Ok((size_ok, hash_ok))
@@ -386,10 +512,21 @@ fn filename_in_folder(folder: &Path, name: &str) -> Option<PathBuf> {
 
 fn hash_match_in_folder(folder: &Path, expected_hash: &str) -> Option<PathBuf> {
     let entries = fs::read_dir(folder).ok()?;
+    let mut files_seen = 0usize;
+    let mut bytes_seen = 0u64;
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_file() {
             continue;
+        }
+        let size = entry.metadata().ok()?.len();
+        if size > MAX_HASH_SCAN_FILE_BYTES {
+            continue;
+        }
+        files_seen += 1;
+        bytes_seen = bytes_seen.saturating_add(size);
+        if files_seen > MAX_HASH_SCAN_FILES || bytes_seen > MAX_HASH_SCAN_TOTAL_BYTES {
+            return None;
         }
         if let Ok(hash) = crate::sha256::hash_file(&path) {
             if hash.eq_ignore_ascii_case(expected_hash) {
@@ -405,7 +542,7 @@ fn hash_match_in_folder(folder: &Path, expected_hash: &str) -> Option<PathBuf> {
 /// true`; every weaker rung returns a candidate for confirmation instead.
 /// Pre-provenance assets (`original_path: None`) always return rung `none`.
 #[tauri::command]
-pub fn asset_store_attempt_resolution(
+pub async fn asset_store_attempt_resolution(
     app: tauri::AppHandle,
     project_id: String,
     asset_id: String,
@@ -413,133 +550,156 @@ pub fn asset_store_attempt_resolution(
 ) -> Result<AssetResolutionResult, String> {
     let dir = project_dir(&app, &project_id)?;
     let asset_id = safe_component(&asset_id)?;
-    let mp = meta_path(&dir, asset_id);
-    let meta: AssetMetaFile = fs::read(&mp)
-        .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-        .ok_or_else(|| format!("asset_store_attempt_resolution: no metadata for {asset_id}"))?;
+    let asset_id = asset_id.to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mp = meta_path(&dir, &asset_id);
+        let meta: AssetMetaFile = fs::read(&mp)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .ok_or_else(|| format!("asset_store_attempt_resolution: no metadata for {asset_id}"))?;
 
-    let Some(provenance) = meta.provenance.as_ref() else {
-        return Ok(AssetResolutionResult {
-            asset_id: asset_id.to_string(),
-            rung: "none".into(),
-            confidence: "none".into(),
-            silent: false,
-            candidate_path: None,
-            reason: Some("pre-provenance: no recorded origin — folder-pick only".into()),
-        });
-    };
+        let Some(provenance) = meta.provenance.as_ref() else {
+            return Ok(AssetResolutionResult {
+                asset_id: asset_id.to_string(),
+                rung: "none".into(),
+                confidence: "none".into(),
+                silent: false,
+                candidate_path: None,
+                reason: Some("pre-provenance: no recorded origin — folder-pick only".into()),
+            });
+        };
 
-    let Some(original_path) = provenance.original_path.as_deref() else {
-        return Ok(AssetResolutionResult {
-            asset_id: asset_id.to_string(),
-            rung: "none".into(),
-            confidence: "none".into(),
-            silent: false,
-            candidate_path: None,
-            reason: Some("pre-provenance: no original_path — folder-pick only".into()),
-        });
-    };
+        let Some(original_path) = provenance.original_path.as_deref() else {
+            return Ok(AssetResolutionResult {
+                asset_id: asset_id.to_string(),
+                rung: "none".into(),
+                confidence: "none".into(),
+                silent: false,
+                candidate_path: None,
+                reason: Some("pre-provenance: no original_path — folder-pick only".into()),
+            });
+        };
 
-    // Rung 1 — exact path hit.
-    let original = PathBuf::from(original_path);
-    if original.is_file() {
-        let (size_ok, hash_ok) = file_matches_recorded(&meta, &original)?;
-        if size_ok && hash_ok {
+        // Rung 1 — exact path hit.
+        let original = PathBuf::from(original_path);
+        if original.is_file() {
+            let (size_ok, hash_ok) =
+                file_matches_recorded(&meta, &original, MAX_AUTOMATIC_HASH_FILE_BYTES)?;
+            if size_ok && hash_ok {
+                return Ok(AssetResolutionResult {
+                    asset_id: asset_id.to_string(),
+                    rung: "exact_path".into(),
+                    confidence: "exact".into(),
+                    silent: true,
+                    candidate_path: Some(original_path.to_string()),
+                    reason: None,
+                });
+            }
             return Ok(AssetResolutionResult {
                 asset_id: asset_id.to_string(),
                 rung: "exact_path".into(),
-                confidence: "exact".into(),
-                silent: true,
+                confidence: if size_ok {
+                    "probable".into()
+                } else {
+                    "none".into()
+                },
+                silent: false,
                 candidate_path: Some(original_path.to_string()),
-                reason: None,
+                reason: Some(
+                    "exact path exists but size/hash mismatch — confirmation required".into(),
+                ),
             });
         }
-        return Ok(AssetResolutionResult {
+
+        // Rung 2 — same filename in recorded folder.
+        if let Some(folder) = provenance.containing_folder.as_deref().map(PathBuf::from) {
+            if folder.is_dir() {
+                if let Some(candidate) = filename_in_folder(&folder, &meta.name) {
+                    let (size_ok, hash_ok) =
+                        file_matches_recorded(&meta, &candidate, MAX_AUTOMATIC_HASH_FILE_BYTES)?;
+                    let confidence = if size_ok && hash_ok {
+                        "exact"
+                    } else if size_ok {
+                        "probable"
+                    } else {
+                        "probable"
+                    };
+                    return Ok(AssetResolutionResult {
+                        asset_id: asset_id.to_string(),
+                        rung: "same_folder_filename".into(),
+                        confidence: confidence.into(),
+                        silent: false,
+                        candidate_path: Some(candidate.to_string_lossy().into_owned()),
+                        reason: Some(
+                            "same filename in recorded folder — confirmation required".into(),
+                        ),
+                    });
+                }
+            }
+        }
+
+        // Rung 3 — same filename under user-picked root (folder-pick flow only).
+        if let Some(root) = user_picked_root.as_deref() {
+            let folder = PathBuf::from(root);
+            if folder.is_dir() {
+                if let Some(candidate) = filename_in_folder(&folder, &meta.name) {
+                    return Ok(AssetResolutionResult {
+                        asset_id: asset_id.to_string(),
+                        rung: "user_root_filename".into(),
+                        confidence: "probable".into(),
+                        silent: false,
+                        candidate_path: Some(candidate.to_string_lossy().into_owned()),
+                        reason: Some(
+                            "same filename under picked root — confirmation required".into(),
+                        ),
+                    });
+                }
+            }
+        }
+
+        // Rung 4 — content-hash match regardless of name (scan recorded folder).
+        if let (Some(expected_hash), Some(folder)) = (
+            provenance.content_hash.as_deref(),
+            user_picked_root.as_deref().map(PathBuf::from),
+        ) {
+            if folder.is_dir() {
+                if let Some(candidate) = hash_match_in_folder(&folder, expected_hash) {
+                    return Ok(AssetResolutionResult {
+                        asset_id: asset_id.to_string(),
+                        rung: "content_hash".into(),
+                        confidence: "exact".into(),
+                        silent: false,
+                        candidate_path: Some(candidate.to_string_lossy().into_owned()),
+                        reason: Some(
+                            "hash match with different filename — confirmation required".into(),
+                        ),
+                    });
+                }
+            }
+        }
+
+        Ok(AssetResolutionResult {
             asset_id: asset_id.to_string(),
-            rung: "exact_path".into(),
-            confidence: if size_ok { "probable".into() } else { "none".into() },
+            rung: "none".into(),
+            confidence: "none".into(),
             silent: false,
-            candidate_path: Some(original_path.to_string()),
-            reason: Some("exact path exists but size/hash mismatch — confirmation required".into()),
-        });
-    }
-
-    // Rung 2 — same filename in recorded folder.
-    if let Some(folder) = provenance.containing_folder.as_deref().map(PathBuf::from) {
-        if folder.is_dir() {
-            if let Some(candidate) = filename_in_folder(&folder, &meta.name) {
-                let (size_ok, hash_ok) = file_matches_recorded(&meta, &candidate)?;
-                let confidence = if size_ok && hash_ok {
-                    "exact"
-                } else if size_ok {
-                    "probable"
-                } else {
-                    "probable"
-                };
-                return Ok(AssetResolutionResult {
-                    asset_id: asset_id.to_string(),
-                    rung: "same_folder_filename".into(),
-                    confidence: confidence.into(),
-                    silent: false,
-                    candidate_path: Some(candidate.to_string_lossy().into_owned()),
-                    reason: Some("same filename in recorded folder — confirmation required".into()),
-                });
-            }
-        }
-    }
-
-    // Rung 3 — same filename under user-picked root (folder-pick flow only).
-    if let Some(root) = user_picked_root.as_deref() {
-        let folder = PathBuf::from(root);
-        if folder.is_dir() {
-            if let Some(candidate) = filename_in_folder(&folder, &meta.name) {
-                return Ok(AssetResolutionResult {
-                    asset_id: asset_id.to_string(),
-                    rung: "user_root_filename".into(),
-                    confidence: "probable".into(),
-                    silent: false,
-                    candidate_path: Some(candidate.to_string_lossy().into_owned()),
-                    reason: Some("same filename under picked root — confirmation required".into()),
-                });
-            }
-        }
-    }
-
-    // Rung 4 — content-hash match regardless of name (scan recorded folder).
-    if let (Some(expected_hash), Some(folder)) = (
-        provenance.content_hash.as_deref(),
-        provenance.containing_folder.as_deref().map(PathBuf::from),
-    ) {
-        if folder.is_dir() {
-            if let Some(candidate) = hash_match_in_folder(&folder, expected_hash) {
-                return Ok(AssetResolutionResult {
-                    asset_id: asset_id.to_string(),
-                    rung: "content_hash".into(),
-                    confidence: "exact".into(),
-                    silent: false,
-                    candidate_path: Some(candidate.to_string_lossy().into_owned()),
-                    reason: Some("hash match with different filename — confirmation required".into()),
-                });
-            }
-        }
-    }
-
-    Ok(AssetResolutionResult {
-        asset_id: asset_id.to_string(),
-        rung: "none".into(),
-        confidence: "none".into(),
-        silent: false,
-        candidate_path: None,
-        reason: Some("no ladder rung matched".into()),
+            candidate_path: None,
+            reason: Some("no ladder rung matched".into()),
+        })
     })
+    .await
+    .map_err(|e| format!("asset_store_attempt_resolution worker failed: {e}"))?
 }
 
 /// Removes one asset's native copy (both files), best-effort per file —
 /// mirrors `assetStore.ts::deleteAsset`'s "if it's already gone, that's
 /// fine" posture for the IndexedDB side.
 #[tauri::command]
-pub fn asset_store_delete(app: tauri::AppHandle, project_id: String, asset_id: String) -> Result<(), String> {
+pub fn asset_store_delete(
+    app: tauri::AppHandle,
+    project_id: String,
+    asset_id: String,
+) -> Result<(), String> {
     let dir = project_dir(&app, &project_id)?;
     let asset_id = safe_component(&asset_id)?;
     let _ = fs::remove_file(bytes_path(&dir, asset_id));
@@ -584,7 +744,8 @@ mod tests {
     use super::*;
 
     fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("kinetix-asset-store-test-{tag}-{}", now_millis()));
+        let d =
+            std::env::temp_dir().join(format!("kinetix-asset-store-test-{tag}-{}", now_millis()));
         fs::create_dir_all(&d).unwrap();
         d
     }
@@ -618,9 +779,20 @@ mod tests {
     #[test]
     fn write_asset_atomic_writes_both_files_on_success() {
         let d = tmpdir("write-both");
-        write_asset_atomic(&d, "asset-1", b"payload bytes", "clip.mp4".into(), "video/mp4".into()).unwrap();
-        assert_eq!(fs::read(bytes_path(&d, "asset-1")).unwrap(), b"payload bytes");
-        let meta: AssetMetaFile = serde_json::from_slice(&fs::read(meta_path(&d, "asset-1")).unwrap()).unwrap();
+        write_asset_atomic(
+            &d,
+            "asset-1",
+            b"payload bytes",
+            "clip.mp4".into(),
+            "video/mp4".into(),
+        )
+        .unwrap();
+        assert_eq!(
+            fs::read(bytes_path(&d, "asset-1")).unwrap(),
+            b"payload bytes"
+        );
+        let meta: AssetMetaFile =
+            serde_json::from_slice(&fs::read(meta_path(&d, "asset-1")).unwrap()).unwrap();
         assert_eq!(meta.name, "clip.mp4");
         assert_eq!(meta.mime_type, "video/mp4");
         assert_eq!(meta.bytes, 13);
@@ -639,9 +811,18 @@ mod tests {
         let d = tmpdir("meta-fail");
         fs::create_dir_all(meta_path(&d, "asset-1")).unwrap();
 
-        let result = write_asset_atomic(&d, "asset-1", b"payload", "clip.mp4".into(), "video/mp4".into());
+        let result = write_asset_atomic(
+            &d,
+            "asset-1",
+            b"payload",
+            "clip.mp4".into(),
+            "video/mp4".into(),
+        );
 
-        assert!(result.is_err(), "a metadata write that cannot land must be reported, not swallowed");
+        assert!(
+            result.is_err(),
+            "a metadata write that cannot land must be reported, not swallowed"
+        );
         assert!(
             !bytes_path(&d, "asset-1").exists(),
             "the bytes file must be removed when its metadata could not be written — a half-written \
@@ -686,9 +867,12 @@ mod tests {
         )
         .unwrap();
 
-        let meta: AssetMetaFile = serde_json::from_slice(&fs::read(meta_path(&d, "asset-1")).unwrap()).unwrap();
+        let meta: AssetMetaFile =
+            serde_json::from_slice(&fs::read(meta_path(&d, "asset-1")).unwrap()).unwrap();
         assert_eq!(
-            meta.provenance.as_ref().and_then(|p| p.content_hash.as_deref()),
+            meta.provenance
+                .as_ref()
+                .and_then(|p| p.content_hash.as_deref()),
             Some(expected_hash.as_str())
         );
         fs::remove_dir_all(&d).ok();
@@ -698,8 +882,131 @@ mod tests {
     fn legacy_write_leaves_provenance_absent() {
         let d = tmpdir("pre-prov");
         write_asset_atomic(&d, "asset-1", b"x", "clip.mp4".into(), "video/mp4".into()).unwrap();
-        let meta: AssetMetaFile = serde_json::from_slice(&fs::read(meta_path(&d, "asset-1")).unwrap()).unwrap();
+        let meta: AssetMetaFile =
+            serde_json::from_slice(&fs::read(meta_path(&d, "asset-1")).unwrap()).unwrap();
         assert!(meta.provenance.is_none());
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn path_copy_streams_bytes_and_reuses_the_same_pass_digest() {
+        let d = tmpdir("stream-copy");
+        let src = d.join("source.bin");
+        let dest = d.join("asset.bin");
+        let payload = vec![0x5au8; 3 * 1024 * 1024 + 17];
+        fs::write(&src, &payload).unwrap();
+
+        let (bytes, digest) = copy_atomic_with_hash(&src, &dest).unwrap();
+
+        assert_eq!(bytes, payload.len() as u64);
+        assert_eq!(digest, crate::sha256::hash_file(&src).unwrap());
+        assert_eq!(fs::read(&dest).unwrap(), payload);
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn automatic_exact_path_hashing_refuses_files_above_the_cap_without_reading_them() {
+        let d = tmpdir("automatic-hash-cap");
+        let path = d.join("large-sparse-media.bin");
+        let file = fs::File::create(&path).unwrap();
+        file.set_len(MAX_AUTOMATIC_HASH_FILE_BYTES + 1).unwrap();
+        let meta = AssetMetaFile {
+            name: "large.mp4".into(),
+            mime_type: "video/mp4".into(),
+            bytes: MAX_AUTOMATIC_HASH_FILE_BYTES + 1,
+            written_at_ms: now_millis(),
+            provenance: Some(AssetProvenance {
+                content_hash: Some("would-require-reading-the-file".into()),
+                ..AssetProvenance::default()
+            }),
+        };
+
+        let (size_ok, hash_ok) =
+            file_matches_recorded(&meta, &path, MAX_AUTOMATIC_HASH_FILE_BYTES).unwrap();
+        assert!(size_ok);
+        assert!(!hash_ok, "over-cap files require confirmation and are never silent");
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn path_import_keeps_streaming_copy_and_hash_off_the_async_command_thread() {
+        let source = include_str!("asset_store.rs");
+        let command = source
+            .split("pub async fn asset_store_write_from_path")
+            .nth(1)
+            .expect("path-import command must remain async")
+            .split("/// callers that need to distinguish")
+            .next()
+            .unwrap();
+        assert!(command.contains("spawn_blocking"));
+        assert!(command.contains("copy_atomic_with_hash"));
+        assert!(!command.contains("fs::read(&src)"));
+        assert!(!command.contains("hash_file(&src)"));
+    }
+
+    #[test]
+    fn status_and_resolution_commands_are_filesystem_read_only() {
+        let source = include_str!("asset_store.rs");
+        for (start, end) in [
+            ("pub fn asset_store_status", "fn file_matches_recorded"),
+            (
+                "pub async fn asset_store_attempt_resolution",
+                "/// Removes one asset's native copy",
+            ),
+        ] {
+            let body = source
+                .split(start)
+                .nth(1)
+                .unwrap_or_else(|| panic!("missing command marker {start}"))
+                .split(end)
+                .next()
+                .unwrap();
+            for forbidden in [
+                "fs::write",
+                "fs::rename",
+                "fs::remove_file",
+                "fs::remove_dir_all",
+                "fs::create_dir",
+                "write_atomic",
+            ] {
+                assert!(
+                    !body.contains(forbidden),
+                    "{start} reintroduced filesystem mutation via {forbidden}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn four_hundred_forty_eight_assets_create_448_bytes_and_448_metadata_sidecars() {
+        let d = tmpdir("448-layout");
+        for index in 0..448 {
+            write_asset_atomic(
+                &d,
+                &format!("asset-{index}"),
+                b"x",
+                format!("clip-{index}.mp4"),
+                "video/mp4".into(),
+            )
+            .unwrap();
+        }
+
+        let names: Vec<String> = fs::read_dir(&d)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names.len(), 896);
+        assert_eq!(names.iter().filter(|name| name.ends_with(".bin")).count(), 448);
+        assert_eq!(
+            names
+                .iter()
+                .filter(|name| name.ends_with(".meta.json"))
+                .count(),
+            448
+        );
+        assert!(names.iter().all(|name| {
+            name.ends_with(".bin") || name.ends_with(".meta.json")
+        }));
         fs::remove_dir_all(&d).ok();
     }
 }

@@ -2260,7 +2260,7 @@ mod tests {
 
     #[test]
     fn a_second_run_for_the_same_key_is_refused_while_the_first_holds_it() {
-        let key = "/tmp/kinetix-fa-production-inputs/aaaa.wav";
+        let key = "/temporary-root/kinetix-fa-production-inputs/aaaa.wav";
         let first = try_acquire_fa_run(key, noop_sink()).expect("the first claim must succeed");
         assert!(is_fa_run_in_flight(key));
         assert!(
@@ -2276,17 +2276,17 @@ mod tests {
 
     #[test]
     fn the_refusal_message_carries_the_exact_machine_readable_prefix() {
-        let msg = in_flight_refusal("/tmp/x.wav");
+        let msg = in_flight_refusal("/temporary-root/x.wav");
         assert!(
             msg.starts_with("fa:already-running:"),
             "the frontend distinguishes a duplicate-run refusal by this prefix — mirroring              whisper's `whisper:already-running:` convention. Got: {msg}"
         );
-        assert!(msg.contains("/tmp/x.wav"), "the refusal must name the key it is about");
+        assert!(msg.contains("/temporary-root/x.wav"), "the refusal must name the key it is about");
     }
 
     #[test]
     fn the_refusal_is_typed_as_already_running_and_is_not_mistakable_for_another_failure() {
-        let err = FaError::already_running(in_flight_refusal("/tmp/x.wav"));
+        let err = FaError::already_running(in_flight_refusal("/temporary-root/x.wav"));
         assert_eq!(err.kind, FaErrorKind::AlreadyRunning);
         assert!(err.message.starts_with(IN_FLIGHT_REFUSAL_PREFIX));
         // Non-vacuity: no OTHER FaError this module builds may collide with
@@ -2312,11 +2312,11 @@ mod tests {
         // the model-cache mutex once inside `align_chunked` — that is a
         // separate, deliberate mechanism, asserted in `fa_timing`'s source
         // guards, not here.)
-        let a = try_acquire_fa_run("/tmp/kinetix-fa-production-inputs/aa.wav", noop_sink()).expect("a");
-        let b = try_acquire_fa_run("/tmp/kinetix-fa-production-inputs/bb.wav", noop_sink())
+        let a = try_acquire_fa_run("/temporary-root/kinetix-fa-production-inputs/aa.wav", noop_sink()).expect("a");
+        let b = try_acquire_fa_run("/temporary-root/kinetix-fa-production-inputs/bb.wav", noop_sink())
             .expect("a different staged input must not be blocked by an unrelated run");
-        assert!(is_fa_run_in_flight("/tmp/kinetix-fa-production-inputs/aa.wav"));
-        assert!(is_fa_run_in_flight("/tmp/kinetix-fa-production-inputs/bb.wav"));
+        assert!(is_fa_run_in_flight("/temporary-root/kinetix-fa-production-inputs/aa.wav"));
+        assert!(is_fa_run_in_flight("/temporary-root/kinetix-fa-production-inputs/bb.wav"));
         drop(a);
         drop(b);
     }
@@ -2327,7 +2327,7 @@ mod tests {
         // modelled by a scope holding a real guard, because the release
         // mechanism under test is `Drop` — which is why there is no explicit
         // release call in the command body at all.
-        let key = "/tmp/kinetix-fa-production-inputs/release.wav";
+        let key = "/temporary-root/kinetix-fa-production-inputs/release.wav";
 
         // 1. Success: the tail call returns Ok and the guard drops with it.
         {
@@ -2371,7 +2371,7 @@ mod tests {
     fn a_refused_run_does_not_disturb_the_claim_it_was_refused_for() {
         // The bug this whole commit exists for, stated as an assertion: the
         // loser must change nothing about the winner.
-        let key = "/tmp/kinetix-fa-production-inputs/undisturbed.wav";
+        let key = "/temporary-root/kinetix-fa-production-inputs/undisturbed.wav";
         let winner = try_acquire_fa_run(key, noop_sink()).expect("claim");
         for _ in 0..5 {
             assert!(try_acquire_fa_run(key, noop_sink()).is_none());

@@ -89,7 +89,10 @@ fn backups_dir(root: &Path) -> PathBuf {
 }
 
 fn now_millis() -> u128 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0)
 }
 
 /// Rejects anything that is not a plain single path segment. Project ids are
@@ -99,11 +102,15 @@ fn now_millis() -> u128 {
 fn safe_id(id: &str) -> Result<&str, String> {
     let ok = !id.is_empty()
         && id.len() <= 128
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     if ok {
         Ok(id)
     } else {
-        Err(format!("refusing unsafe project id for a mirror path: {id:?}"))
+        Err(format!(
+            "refusing unsafe project id for a mirror path: {id:?}"
+        ))
     }
 }
 
@@ -121,18 +128,23 @@ fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
 
     let tmp = parent.join(format!(
         ".{}.tmp-{}-{}",
-        dest.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "mirror".into()),
+        dest.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "mirror".into()),
         std::process::id(),
         now_millis()
     ));
 
     {
         let mut f = fs::File::create(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
-        f.write_all(contents.as_bytes()).map_err(|e| format!("write {}: {e}", tmp.display()))?;
-        f.flush().map_err(|e| format!("flush {}: {e}", tmp.display()))?;
+        f.write_all(contents.as_bytes())
+            .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+        f.flush()
+            .map_err(|e| format!("flush {}: {e}", tmp.display()))?;
         // Durability before the rename — otherwise a crash can leave the
         // renamed name pointing at unflushed (zero-length) content.
-        f.sync_all().map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
+        f.sync_all()
+            .map_err(|e| format!("fsync {}: {e}", tmp.display()))?;
     }
 
     fs::rename(&tmp, dest).map_err(|e| {
@@ -159,12 +171,21 @@ fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
 /// `invoke('project_store_write', ...)` call, a dev script) still cannot
 /// rotate the last known-good backup out from under a degraded write.
 fn is_asset_reference_loss(existing: &str, incoming: &str) -> bool {
-    let Ok(existing_v) = serde_json::from_str::<serde_json::Value>(existing) else { return false };
-    let Ok(incoming_v) = serde_json::from_str::<serde_json::Value>(incoming) else { return false };
+    let Ok(existing_v) = serde_json::from_str::<serde_json::Value>(existing) else {
+        return false;
+    };
+    let Ok(incoming_v) = serde_json::from_str::<serde_json::Value>(incoming) else {
+        return false;
+    };
 
-    let existing_segments = existing_v.pointer("/project/segments").and_then(|v| v.as_array());
-    let incoming_segments = incoming_v.pointer("/project/segments").and_then(|v| v.as_array());
-    let (Some(existing_segments), Some(incoming_segments)) = (existing_segments, incoming_segments) else {
+    let existing_segments = existing_v
+        .pointer("/project/segments")
+        .and_then(|v| v.as_array());
+    let incoming_segments = incoming_v
+        .pointer("/project/segments")
+        .and_then(|v| v.as_array());
+    let (Some(existing_segments), Some(incoming_segments)) = (existing_segments, incoming_segments)
+    else {
         return false;
     };
     if existing_segments.is_empty() || existing_segments.len() != incoming_segments.len() {
@@ -174,7 +195,11 @@ fn is_asset_reference_loss(existing: &str, incoming: &str) -> bool {
     let incoming_asset_ids: HashSet<&str> = incoming_v
         .pointer("/project/assets")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|a| a.get("id").and_then(|v| v.as_str())).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|a| a.get("id").and_then(|v| v.as_str()))
+                .collect()
+        })
         .unwrap_or_default();
 
     let incoming_by_id: HashMap<&str, &serde_json::Value> = incoming_segments
@@ -183,12 +208,18 @@ fn is_asset_reference_loss(existing: &str, incoming: &str) -> bool {
         .collect();
 
     for seg in existing_segments {
-        let Some(id) = seg.get("id").and_then(|v| v.as_str()) else { continue };
-        let Some(existing_asset_id) = seg.get("assetId").and_then(|v| v.as_str()) else { continue };
+        let Some(id) = seg.get("id").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let Some(existing_asset_id) = seg.get("assetId").and_then(|v| v.as_str()) else {
+            continue;
+        };
         if existing_asset_id.is_empty() {
             continue;
         }
-        let Some(incoming_seg) = incoming_by_id.get(id) else { continue };
+        let Some(incoming_seg) = incoming_by_id.get(id) else {
+            continue;
+        };
         let incoming_has_ref = incoming_seg
             .get("assetId")
             .and_then(|v| v.as_str())
@@ -255,14 +286,18 @@ fn rotate_backup(backups_root: &Path, id: &str, src: &Path) -> Result<(), String
 /// `session_claim::sweep_manifestless_orphans`: an error reading or removing
 /// one entry is skipped, never aborts the pass or fails app launch.
 fn sweep_stale_backup_dirs(backups_root: &Path, live_ids: &HashSet<String>, min_age_secs: u64) {
-    let Ok(entries) = fs::read_dir(backups_root) else { return };
+    let Ok(entries) = fs::read_dir(backups_root) else {
+        return;
+    };
     let now = SystemTime::now();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
-        let Some(id) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(id) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
         if live_ids.contains(id) {
             continue;
         }
@@ -279,7 +314,14 @@ fn sweep_stale_backup_dirs(backups_root: &Path, live_ids: &HashSet<String>, min_
             None => true,
         };
         if old_enough {
-            let _ = fs::remove_dir_all(&path);
+            if let Err(error) = crate::safe_delete::delete_app_staging_dir(&path, backups_root, "")
+            {
+                log::warn!(
+                    target: "kinetix::project_backup_reclaim",
+                    "stale backup reclaim refused for {}: {error}",
+                    path.display()
+                );
+            }
         }
     }
 }
@@ -356,7 +398,10 @@ pub fn project_mirror_read_all(app: tauri::AppHandle) -> Result<MirrorSnapshot, 
             }
             match fs::read_to_string(&path) {
                 Ok(text) => projects.push((stem, text)),
-                Err(e) => log::warn!("[project_mirror] skipping unreadable {}: {e}", path.display()),
+                Err(e) => log::warn!(
+                    "[project_mirror] skipping unreadable {}: {e}",
+                    path.display()
+                ),
             }
         }
     }
@@ -475,7 +520,11 @@ pub fn project_store_read(app: tauri::AppHandle, id: String) -> Result<Option<St
 /// previous contents into the backup tree first (same non-fatal contract as
 /// `project_mirror_write_project`).
 #[tauri::command]
-pub fn project_store_write(app: tauri::AppHandle, id: String, contents: String) -> Result<(), String> {
+pub fn project_store_write(
+    app: tauri::AppHandle,
+    id: String,
+    contents: String,
+) -> Result<(), String> {
     let root = store_root(&app)?;
     let id = safe_id(&id)?;
     let dest = store_project_file(&root, id);
@@ -589,7 +638,10 @@ mod tests {
             .filter_map(|e| e.ok())
             .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
             .collect();
-        assert!(leftovers.is_empty(), "temp files left behind: {leftovers:?}");
+        assert!(
+            leftovers.is_empty(),
+            "temp files left behind: {leftovers:?}"
+        );
         fs::remove_dir_all(&d).ok();
     }
 
@@ -609,7 +661,10 @@ mod tests {
         let before = fs::metadata(&dest).unwrap().ino();
         write_atomic(&dest, "replacement").unwrap();
         let after = fs::metadata(&dest).unwrap().ino();
-        assert_ne!(before, after, "destination was truncated in place, not replaced by rename");
+        assert_ne!(
+            before, after,
+            "destination was truncated in place, not replaced by rename"
+        );
         fs::remove_dir_all(&d).ok();
     }
 
@@ -664,7 +719,10 @@ mod tests {
 
         sweep_stale_backup_dirs(&root, &HashSet::new(), STALE_BACKUP_MIN_AGE_SECS);
 
-        assert!(!root.join("dead-project").exists(), "a long-dead project's backups must be reclaimed");
+        assert!(
+            !root.join("dead-project").exists(),
+            "a long-dead project's backups must be reclaimed"
+        );
         fs::remove_dir_all(&d).ok();
     }
 
@@ -692,7 +750,10 @@ mod tests {
         let live: HashSet<String> = ["still-around".to_string()].into_iter().collect();
         sweep_stale_backup_dirs(&root, &live, STALE_BACKUP_MIN_AGE_SECS);
 
-        assert!(root.join("still-around").exists(), "a live project's backups must never be swept, no matter how old");
+        assert!(
+            root.join("still-around").exists(),
+            "a live project's backups must never be swept, no matter how old"
+        );
         fs::remove_dir_all(&d).ok();
     }
 
@@ -702,7 +763,10 @@ mod tests {
         write_atomic(&projects_dir(&d).join("a.json"), "{}").unwrap();
         write_atomic(&projects_dir(&d).join("b.json"), "{}").unwrap();
         let ids = live_mirror_ids(&d);
-        assert_eq!(ids, ["a".to_string(), "b".to_string()].into_iter().collect());
+        assert_eq!(
+            ids,
+            ["a".to_string(), "b".to_string()].into_iter().collect()
+        );
         fs::remove_dir_all(&d).ok();
     }
 
@@ -737,17 +801,29 @@ mod tests {
         // "Delete" dead: remove its live file (mirrors project_mirror_delete_project).
         fs::remove_file(&dead_dest).unwrap();
         // Age dead's backup past the grace period; alive's stays fresh.
-        for entry in fs::read_dir(backups_dir(&d).join("dead")).unwrap().filter_map(|e| e.ok()) {
+        for entry in fs::read_dir(backups_dir(&d).join("dead"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+        {
             let older = SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 60 * 60);
-            fs::File::open(entry.path()).unwrap().set_modified(older).unwrap();
+            fs::File::open(entry.path())
+                .unwrap()
+                .set_modified(older)
+                .unwrap();
         }
 
         let live = live_mirror_ids(&d);
         assert_eq!(live, ["alive".to_string()].into_iter().collect());
         sweep_stale_backup_dirs(&backups_dir(&d), &live, STALE_BACKUP_MIN_AGE_SECS);
 
-        assert!(!backups_dir(&d).join("dead").exists(), "the deleted, aged-out project's backups must be gone");
-        assert!(backups_dir(&d).join("alive").exists(), "the live sibling's backups must be untouched");
+        assert!(
+            !backups_dir(&d).join("dead").exists(),
+            "the deleted, aged-out project's backups must be gone"
+        );
+        assert!(
+            backups_dir(&d).join("alive").exists(),
+            "the live sibling's backups must be untouched"
+        );
         fs::remove_dir_all(&d).ok();
     }
 
@@ -814,7 +890,10 @@ mod tests {
     fn store_project_file_uses_the_id_as_a_directory_not_a_filename() {
         let d = tmpdir("store-path-shape");
         let path = store_project_file(&d, "abc-123");
-        assert_eq!(path, d.join("projects").join("abc-123").join("project.json"));
+        assert_eq!(
+            path,
+            d.join("projects").join("abc-123").join("project.json")
+        );
     }
 
     #[test]
@@ -844,7 +923,10 @@ mod tests {
         rotate_backup(&store_backups_dir(&d), id, &dest).unwrap();
         write_atomic(&dest, r#"{"version":2,"project":{"segments":[1,2]}}"#).unwrap();
         let backup_dir = store_backups_dir(&d).join(id);
-        assert!(backup_dir.exists(), "expected a rotated backup for the primary store");
+        assert!(
+            backup_dir.exists(),
+            "expected a rotated backup for the primary store"
+        );
 
         // Delete removes the file and prunes the now-empty `<id>/` directory,
         // but leaves the backup tree (and the id's history) alone.
@@ -856,7 +938,10 @@ mod tests {
             let _ = fs::remove_dir(parent);
         }
         assert!(!dest.exists());
-        assert!(!dest.parent().unwrap().exists(), "the now-empty <id>/ dir should be pruned");
+        assert!(
+            !dest.parent().unwrap().exists(),
+            "the now-empty <id>/ dir should be pruned"
+        );
         assert!(backup_dir.exists(), "backups must survive a delete");
 
         fs::remove_dir_all(&d).ok();
@@ -906,7 +991,9 @@ mod tests {
     // pointed at is still listed in the incoming write's own `assets` array.
 
     fn stored(segments: &str, assets: &str) -> String {
-        format!(r#"{{"version":4,"savedAt":1,"project":{{"segments":{segments},"assets":{assets}}}}}"#)
+        format!(
+            r#"{{"version":4,"savedAt":1,"project":{{"segments":{segments},"assets":{assets}}}}}"#
+        )
     }
 
     #[test]
@@ -918,7 +1005,7 @@ mod tests {
             r#"[{"id":"asset-1","name":"clip.mp4"}]"#,
         );
         let incoming = stored(
-            r#"[{"id":"seg-1"}]"#, // assetId silently dropped
+            r#"[{"id":"seg-1"}]"#,                     // assetId silently dropped
             r#"[{"id":"asset-1","name":"clip.mp4"}]"#, // asset metadata still present
         );
         assert!(is_asset_reference_loss(&existing, &incoming));
@@ -973,5 +1060,4 @@ mod tests {
         assert!(!is_asset_reference_loss("not json", &existing));
         assert!(!is_asset_reference_loss(&existing, "not json"));
     }
-
 }

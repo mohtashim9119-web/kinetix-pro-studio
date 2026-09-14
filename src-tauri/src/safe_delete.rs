@@ -48,9 +48,16 @@ use std::path::Path;
 
 /// See the module doc comment. `required_prefix` is matched against `dir`'s
 /// own (canonical) file name, not any ancestor.
-pub fn delete_app_staging_dir(dir: &Path, bounds: &Path, required_prefix: &str) -> Result<(), String> {
+pub fn delete_app_staging_dir(
+    dir: &Path,
+    bounds: &Path,
+    required_prefix: &str,
+) -> Result<(), String> {
     let real_dir = fs::canonicalize(dir).map_err(|e| {
-        format!("refusing to delete {}: cannot canonicalize: {e}", dir.display())
+        format!(
+            "refusing to delete {}: cannot canonicalize: {e}",
+            dir.display()
+        )
     })?;
     let real_bounds = fs::canonicalize(bounds).map_err(|e| {
         format!(
@@ -97,11 +104,15 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn now_millis() -> u128 {
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0)
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0)
     }
 
     fn tmpdir(tag: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("kinetix-safe-delete-test-{tag}-{}", now_millis()));
+        let d =
+            std::env::temp_dir().join(format!("kinetix-safe-delete-test-{tag}-{}", now_millis()));
         fs::create_dir_all(&d).unwrap();
         d
     }
@@ -129,7 +140,10 @@ mod tests {
 
         let result = delete_app_staging_dir(&outside, &bounds, "kinetix-whisper-");
         assert!(result.is_err());
-        assert!(outside.exists(), "an out-of-bounds directory must survive untouched");
+        assert!(
+            outside.exists(),
+            "an out-of-bounds directory must survive untouched"
+        );
         assert!(outside.join("users_real_file.txt").exists());
 
         fs::remove_dir_all(&bounds).ok();
@@ -235,5 +249,43 @@ mod tests {
 
         fs::remove_dir_all(&bounds).ok();
         fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
+    fn round_27_production_paths_have_no_raw_recursive_delete() {
+        for (name, source) in [
+            ("storage_root.rs", include_str!("storage_root.rs")),
+            ("project_mirror.rs", include_str!("project_mirror.rs")),
+            ("asset_store.rs", include_str!("asset_store.rs")),
+            ("session_claim.rs", include_str!("session_claim.rs")),
+        ] {
+            let production = source.split("\n#[cfg(test)]").next().unwrap_or(source);
+            let raw_calls: Vec<&str> = production
+                .lines()
+                .filter(|line| {
+                    line.contains("fs::remove_dir_all")
+                        && !line.trim_start().starts_with("//")
+                        && !line.trim_start().starts_with("//!")
+                })
+                .collect();
+            assert!(
+                raw_calls.is_empty(),
+                "{name} reintroduced raw recursive deletion outside safe_delete: {raw_calls:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn round_27_recursive_delete_tripwire_detects_the_forbidden_shape() {
+        let synthetic = "fn reclaim(path: &Path) { fs::remove_dir_all(path).unwrap(); }";
+        let raw_calls: Vec<&str> = synthetic
+            .lines()
+            .filter(|line| line.contains("fs::remove_dir_all"))
+            .collect();
+        assert_eq!(
+            raw_calls.len(),
+            1,
+            "the source tripwire must detect a raw delete"
+        );
     }
 }

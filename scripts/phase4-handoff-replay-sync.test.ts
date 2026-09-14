@@ -16,7 +16,7 @@
 // re-run cannot prove anything:
 //
 //  1. INPUTS MOVED OFF /tmp. This harness previously read its transcripts and
-//     silences from /tmp/phase3/..., which macOS purged — the fourth K8
+//     silences from a system temporary directory, which macOS purged — the fourth K8
 //     recurrence (docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md Part K). Inputs now live under
 //     .work-phase4/replay/ (gitignored, durable, resolved relative to this
 //     file, not to cwd) and are regenerated deterministically from COMMITTED

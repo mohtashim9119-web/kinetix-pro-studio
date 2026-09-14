@@ -1646,13 +1646,13 @@ mod tests {
     /// fix, so they are pinned rather than left to drift.
     #[test]
     fn message_forms_state_path_bytes_and_never_promise_an_impossible_resume() {
-        let p = Path::new("/tmp/x/model.onnx.part");
+        let p = Path::new("/temporary-root/x/model.onnx.part");
 
         let kept = exhausted_message("connection reset by peer", 3, p, 1_071_567_076, 1_262_619_311);
         assert!(kept.contains("after 3 attempts"), "{kept}");
         assert!(kept.contains("connection reset by peer"), "{kept}");
         assert!(kept.contains("1071567076/1262619311"), "{kept}");
-        assert!(kept.contains("/tmp/x/model.onnx.part"), "{kept}");
+        assert!(kept.contains("/temporary-root/x/model.onnx.part"), "{kept}");
         assert!(kept.contains("resumes from there"), "{kept}");
 
         // Nothing kept => no resume promise.
