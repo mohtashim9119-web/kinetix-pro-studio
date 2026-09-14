@@ -9,7 +9,7 @@
  */
 
 import React, { useEffect } from 'react';
-import { AlertTriangle, Link2, FolderOpen, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Link2, FolderOpen, X } from 'lucide-react';
 import { useFocusTrap } from '../../hooks/useFocusTrap';
 import {
   buildRecoveryItemRows,
@@ -121,9 +121,15 @@ export function DegradedProjectRecoveryScreen({
         className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-xl shadow-2xl max-h-[85vh] overflow-y-auto"
       >
         <div className="flex items-start gap-3 mb-6">
-          <AlertTriangle size={18} className="shrink-0 text-amber-400 mt-0.5" />
+          {canSave ? (
+            <CheckCircle2 size={18} className="shrink-0 text-emerald-400 mt-0.5" />
+          ) : (
+            <AlertTriangle size={18} className="shrink-0 text-amber-400 mt-0.5" />
+          )}
           <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-black uppercase tracking-[0.2em]">Project media missing</h2>
+            <h2 data-testid="recovery-title" className="text-sm font-black uppercase tracking-[0.2em]">
+              {canSave ? 'Project media resolved' : 'Project media missing'}
+            </h2>
             <p data-testid="recovery-project-name" className="text-[11px] text-gray-400 mt-1">
               {projectName}
             </p>
@@ -139,10 +145,10 @@ export function DegradedProjectRecoveryScreen({
           </button>
         </div>
 
-        <p className="text-[11px] text-gray-400 mb-4">
-          This project still has its timeline metadata, but some media bytes
-          cannot be resolved. Saving is blocked so this view cannot be
-          written back over the last good project.
+        <p data-testid="recovery-subtext" className="text-[11px] text-gray-400 mb-4">
+          {canSave
+            ? 'All media assets are linked. Saving is enabled.'
+            : 'This project still has its timeline metadata, but some media bytes cannot be resolved. Saving is blocked so this view cannot be written back over the last good project.'}
         </p>
 
         <p
