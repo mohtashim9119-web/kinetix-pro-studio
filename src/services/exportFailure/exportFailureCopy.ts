@@ -83,6 +83,10 @@ export const EXPORT_FAILURE_COPY = {
     title: 'Export refused to drop grades',
     body: 'This export would drop visual grades the selected path cannot render, so it was refused before encoding started.',
   },
+  resume_adoption_failed: {
+    title: 'Could not resume the saved session',
+    body: 'The previous export session could not be reopened, so nothing was re-rendered and no new session was started in its place. Try again, or start a new export.',
+  },
 } as const satisfies ExportFailureCopyMap;
 
 export const RESUME_UNAVAILABLE_COPY = {

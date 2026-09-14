@@ -18,6 +18,7 @@ const ALL_KINDS = [
   'timeline_gap',
   'ffmpeg_load',
   'grade_loss_refused',
+  'resume_adoption_failed',
 ] as const satisfies readonly ExportErrorKind[];
 
 type MissingKind = Exclude<ExportErrorKind, (typeof ALL_KINDS)[number]>;

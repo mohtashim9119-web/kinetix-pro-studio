@@ -64,6 +64,17 @@ export type ExportErrorKind =
    * `webcodecsExport/exportPathSelection.ts`.
    */
   | 'grade_loss_refused'
+  /**
+   * WS3 Round 28 (D1) — the operator explicitly chose "Resume" on a
+   * discovered offer, but adopting that session (re-entering it a second
+   * time to actually run the export in it) failed — the manifest or a piece
+   * went missing between discovery and adoption, or the directory is no
+   * longer reachable. This must never be swallowed into a silent "start
+   * clean" — see `exportResumeAdoptionDecision.ts`. The export is refused
+   * outright rather than proceeding in a brand-new session the operator did
+   * not ask for.
+   */
+  | 'resume_adoption_failed'
   | 'unknown';
 
 /**

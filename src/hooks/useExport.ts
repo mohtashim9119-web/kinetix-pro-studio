@@ -15,10 +15,12 @@ import type { ForcedMp4SealOffer } from '../services/webcodecsExport/muxOnly';
 import { findResumeOffer, type ResumeOffer, type ResumeRefusalNotice } from '../services/webcodecsExport/exportResumeSession';
 import { recordExportSessionCreated, forgetExportSession } from '../services/webcodecsExport/exportSessionLedger';
 import { readCleanupNotices, clearCleanupNotices, recordCleanupFailure, type CleanupNotice } from '../services/webcodecsExport/exportCleanupNotices';
+import { logExportEvent } from '../services/exportDiagnosticLog';
 import { normalizeSaveSessionFileResult } from '../services/tauriFfmpeg';
 import { checkExportDestinationPathLength } from '../services/exportDestinationPath';
 import { TauriFfmpeg, type DestroySessionOutcome, type OrphanSweepReport, type RetainForResumeReport, type SessionDiskSnapshot } from '../services/tauriFfmpeg';
 import { decideSessionRetentionOnFailure, buildNativeFailureKind } from './exportSessionRetentionDecision';
+import { decideResumeAdoptionOutcome } from './exportResumeAdoptionDecision';
 import { type Project, type ResolutionTier } from '../types';
 import { isTauri } from '../services/tauriFfmpeg';
 import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
@@ -741,6 +743,7 @@ export function useExport(
         });
         if (generationRef.current !== gen) return;
         if (choice === 'resume') {
+          let reenterError: string | null = null;
           try {
             // The fenced, re-entered session — NOT the fresh one. Its bytes are
             // the whole point; a fresh session has none of them.
@@ -754,10 +757,43 @@ export function useExport(
               manifest: offer.resumable.manifest,
             };
           } catch (err) {
-            // eslint-disable-next-line no-console
-            console.warn('[ws3-resume] could not re-enter the surviving session — starting clean', err instanceof Error ? err.message : String(err));
+            reenterError = err instanceof Error ? err.message : String(err);
             resumeFfmpeg = null;
             resumePlan = undefined;
+            resumePlanSessionId = null;
+          }
+          // WS3 Round 28 (D1) — Machine 1 field incident: a discovered,
+          // offered session that the operator explicitly chose to resume
+          // must never be silently swapped for the already-created fresh
+          // scratch session on an adoption failure. Before this, the catch
+          // block above logged a warning and let the export proceed clean —
+          // indistinguishable, from the operator's side, from the app
+          // quietly minting a brand new session folder and failing anyway.
+          const adoptionFailure = decideResumeAdoptionOutcome({
+            choice, sessionId: offer.sessionId, reenterError,
+          });
+          if (adoptionFailure) {
+            // eslint-disable-next-line no-console
+            console.warn('[ws3-resume] refusing to silently start clean after a failed adoption', adoptionFailure.message);
+            stopElapsedTimer();
+            // The fresh scratch session created above (line ~717) never had
+            // anything rendered into it — an ordinary guarded teardown is
+            // correct and cannot destroy anything the operator would miss.
+            await teardown(false, 'resume_adoption_refused');
+            setState(prev => ({
+              isExporting: false,
+              stage: null,
+              progress: 0,
+              stageLabel: '',
+              pendingSealConsent: null,
+              pendingResumeOffer: null,
+              resumeRefusalNotice: null,
+              orphanSweepNotice: null,
+              cleanupNotices: [],
+              error: { kind: adoptionFailure.kind, message: adoptionFailure.message },
+              elapsedSec: prev.elapsedSec,
+            }));
+            return;
           }
         } else {
           // "Start clean" collects the survivor rather than leaving 2 GB
@@ -1070,6 +1106,16 @@ export function useExport(
 
   const cancelExport = useCallback((): void => {
     if (tauriBackendRef.current === null) {
+      // WS3 Round 28 (STEP 2) — a cancel this early (before any session
+      // exists — e.g. during the pick_save_path dialog or the orphan sweep,
+      // both of which run before the WebCodecs-vs-legacy path is even
+      // decided at runExport's `activePathRef.current = ...` line) used to
+      // skip the diagnostic log entirely: cancelExportWebCodecs's own
+      // logExportEvent('cancelled', ...) call only runs once a WebCodecs
+      // session and worker exist, so this branch — and the `!wasWebCodecsPath`
+      // one below — were the gap. Every cancel must land one line in
+      // kinetix-diagnostic.log regardless of how early it fires.
+      logExportEvent('cancelled', 'cancelExport invoked before any export session existed');
       // No active export — just dismiss the error/cancelled modal.
       stopElapsedTimer();
       setState(IDLE_STATE);
@@ -1100,6 +1146,16 @@ export function useExport(
         // exportProjectWebCodecs above — same session, no separate handle to
         // thread through this hook).
         await cancelExportWebCodecs();
+      } else {
+        // WS3 Round 28 (STEP 2) — the other half of the early-cancel gap: a
+        // session exists (tauriBackendRef.current !== null, so we're past
+        // the null-branch above) but the export hasn't reached
+        // `activePathRef.current = 'webcodecs'/'legacy'` — a cancel this
+        // early is invisible to `cancelExportWebCodecs`'s own log call,
+        // which only fires on the `wasWebCodecsPath` branch above. Logged
+        // here so a cancel is never silently unrecorded regardless of
+        // exactly when it lands in the export lifecycle.
+        logExportEvent('cancelled', `cancelExport invoked (sessionId=${backend.sessionId ?? 'unknown'}, path not yet engaged)`);
       }
       // Always kill this session, even after the pipeline has returned and
       // `activeFfmpeg` is already null (the delivery copy). That sets the
