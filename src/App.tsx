@@ -223,8 +223,9 @@ import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative
 import { applySilentProvenanceResolution } from './services/assetResolutionLadder';
 import { withAssetLoadTimeout } from './services/assetLoadTimeout';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
-import { getProjectAssetRecoveryStatus, relinkAsset } from './services/assetRecovery';
-import { DegradedProjectRecoveryScreen, type FolderRelinkView } from './components/recovery/DegradedProjectRecoveryScreen';
+import { getProjectAssetRecoveryStatus, relinkAsset, attachNewAssetToSegment, attachNewAssetToSegmentFromPath } from './services/assetRecovery';
+import { findExpectedFileNameForSegmentText } from './services/sceneTagLookup';
+import { DegradedProjectRecoveryScreen, type FolderRelinkView, type RelinkTarget } from './components/recovery/DegradedProjectRecoveryScreen';
 import { performRecoveryClose } from './components/recovery/recoverySession';
 import {
   proposeFolderBatchRelink,
@@ -478,6 +479,7 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
 const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
 const EXPORT_SUCCESS_TOAST_DURATION_MS = 15000; // ms — auto-dismiss for the export-complete toast
 const MIN_TIMELINE_HEIGHT = 220; // px — absolute floor: ruler + 80px segments + 80px audio rows
+const VIDEO_EXTENSIONS = new Set(['mp4', 'mov', 'webm', 'm4v']);
 
 // Enhanced parser that handles heading-voiceover logic
 export const parseProjectData = async (
@@ -2103,6 +2105,9 @@ export default function App() {
     assets: readonly RecoveryAsset[];
   } | null>(null);
   const [relinkTargetAssetId, setRelinkTargetAssetId] = useState<string | null>(null);
+  // Set instead of relinkTargetAssetId when the row has no asset at all (the
+  // asset was deleted outright) — attachNewAssetToSegment mints a fresh one.
+  const [relinkTargetSegmentId, setRelinkTargetSegmentId] = useState<string | null>(null);
   const relinkFileInputRef = useRef<HTMLInputElement>(null);
   // Step 2 — folder-pick session. `null` until the operator picks a folder.
   // The pure matcher's output lives here; the screen renders it verbatim.
@@ -6175,11 +6180,13 @@ export default function App() {
       return;
     }
     const resolvedByAssetId = new Map(status.assets.map((a) => [a.assetId, a.resolved]));
+    const sceneDetails = projectOutcome.project.sceneDetails;
     const segments: RecoverySegment[] = projectOutcome.project.segments.map((s) => ({
       id: s.id,
       label: s.text || s.id,
       assetId: s.assetId ?? null,
       resolutionStatus: !s.assetId ? 'missing-asset' : resolvedByAssetId.get(s.assetId) ? 'resolved' : 'unresolved',
+      expectedFileName: !s.assetId ? findExpectedFileNameForSegmentText(sceneDetails, s.text) : null,
     }));
     const assets: RecoveryAsset[] = status.assets.map((a) => ({
       id: a.assetId,
@@ -6192,8 +6199,9 @@ export default function App() {
   // Re-link: the recovery screen never opens a picker itself (it is
   // presentation-only, per its own doc comment) — this is the file input App
   // owns for it, one hidden input reused for every asset row.
-  const handleRecoveryRelinkRequest = useCallback((assetId: string): void => {
-    setRelinkTargetAssetId(assetId);
+  const handleRecoveryRelinkRequest = useCallback((target: RelinkTarget): void => {
+    setRelinkTargetAssetId(target.assetId);
+    setRelinkTargetSegmentId(target.segmentId);
     relinkFileInputRef.current?.click();
   }, []);
 
@@ -6202,10 +6210,14 @@ export default function App() {
     e.target.value = '';
     const projectId = degradedRecovery?.projectId;
     const assetId = relinkTargetAssetId;
+    const segmentId = relinkTargetSegmentId;
     setRelinkTargetAssetId(null);
-    if (!file || !projectId || !assetId) return;
+    setRelinkTargetSegmentId(null);
+    if (!file || !projectId || (!assetId && !segmentId)) return;
 
-    const outcome = await relinkAsset(projectId, assetId, file);
+    const outcome = assetId
+      ? await relinkAsset(projectId, assetId, file)
+      : await attachNewAssetToSegment(projectId, segmentId!, file);
     if (!outcome.ok) {
       showToast(`Could not re-link this file: ${outcome.message ?? 'unknown error'}.`);
       await refreshDegradedRecovery(projectId);
@@ -6273,6 +6285,20 @@ export default function App() {
       projectOutcome.project.assets,
       status.assets,
     );
+    // Missing-asset segments (asset deleted outright) have no asset id to
+    // match against — feed the matcher their `expectedFileName` (recovered
+    // from the scene tag) as a synthetic entry, keyed by segment id, so ONE
+    // folder pick covers both "bytes missing" and "asset deleted" in one pass.
+    const missingSegmentMetadata: UnresolvedAssetMetadata[] = degradedRecovery.segments
+      .filter((s): s is typeof s & { expectedFileName: string } =>
+        s.resolutionStatus === 'missing-asset' && !!s.expectedFileName)
+      .map((s) => ({
+        id: s.id,
+        name: s.expectedFileName,
+        type: VIDEO_EXTENSIONS.has(s.expectedFileName.split('.').pop()?.toLowerCase() ?? '') ? 'video' : 'image',
+        duration: null,
+      }));
+    const allMetadata = [...unresolvedAssets, ...missingSegmentMetadata];
     const matcherCandidates: RelinkCandidate[] = candidates
       .filter((c) => c.mediaType !== null)
       .map((c) => ({
@@ -6282,7 +6308,7 @@ export default function App() {
         duration: c.duration,
         path: c.path,
       }));
-    const { proposals } = proposeFolderBatchRelink(unresolvedAssets, matcherCandidates);
+    const { proposals } = proposeFolderBatchRelink(allMetadata, matcherCandidates);
     const selection = defaultFolderSelection(proposals);
     const candidateById: FolderRelinkView['candidateById'] = {};
     for (const c of matcherCandidates) {
@@ -6293,7 +6319,8 @@ export default function App() {
       proposals,
       candidateById,
       selection,
-      unresolvedAssetIds: unresolvedAssets.map((a) => a.id),
+      unresolvedAssetIds: allMetadata.map((a) => a.id),
+      segmentIds: missingSegmentMetadata.map((s) => s.id),
       writeError: null,
     });
   }, [degradedRecovery]);
@@ -6327,6 +6354,7 @@ export default function App() {
     // The write needs only the candidate's path + name (the native command
     // reads the bytes by path and records provenance itself). MIME type is
     // inferred from the filename, mirroring the native `infer_media_type`.
+    const segmentIdSet = new Set(folderRelink.segmentIds ?? []);
     let failed = 0;
     let firstError: string | null = null;
     for (const { assetId, candidateId } of writes) {
@@ -6334,7 +6362,16 @@ export default function App() {
       if (!candidate) continue;
       const mimeType = inferMimeType(candidate.name);
       try {
-        await writeAssetFromPath(projectId, assetId, candidate.path, candidate.name, mimeType, null);
+        if (segmentIdSet.has(assetId)) {
+          // `assetId` here is actually a segment id (missing-asset row) —
+          // there's no existing asset to write bytes into, so mint one.
+          const outcome = await attachNewAssetToSegmentFromPath(
+            projectId, assetId, candidate.path, candidate.name, mimeType, null,
+          );
+          if (!outcome.ok) throw new Error(outcome.message ?? 'attach failed');
+        } else {
+          await writeAssetFromPath(projectId, assetId, candidate.path, candidate.name, mimeType, null);
+        }
       } catch (err) {
         failed += 1;
         const message = err instanceof Error ? err.message : String(err);
@@ -6660,6 +6697,7 @@ export default function App() {
             onDeleteAsset={handleDeleteAsset}
             onDeleteAllAssets={handleDeleteAllAssets}
             onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
+            onOpenRelinkMedia={() => { void refreshDegradedRecovery(project.id); }}
             onApplySync={handleApplySyncFromFiles}
             stagedFilesClearSignal={stagedFilesClearSignal}
             onStagedFilesChange={handleStagedFilesChange}

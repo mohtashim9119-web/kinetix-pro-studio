@@ -58,8 +58,8 @@ vi.mock('./assetStore', () => ({
 }));
 
 import { invoke } from '@tauri-apps/api/core';
-import { saveProject, __resetStoreGuardsForTests, getLoadFailure } from './projectStore';
-import { getProjectAssetRecoveryStatus, relinkAsset } from './assetRecovery';
+import { saveProject, loadProjectDetailed, __resetStoreGuardsForTests, getLoadFailure } from './projectStore';
+import { getProjectAssetRecoveryStatus, relinkAsset, attachNewAssetToSegment } from './assetRecovery';
 import type { Project, VideoSegment, Asset } from '../types';
 import { AnimationType, TransitionType } from '../types';
 
@@ -82,6 +82,9 @@ function asset(id: string, name: string): Asset {
 }
 function seg(id: string, assetId: string): VideoSegment {
   return { id, text: '', assetId, startTime: 0, duration: 1, transition: TransitionType.NONE, animation: AnimationType.NONE, order: 0 } as VideoSegment;
+}
+function segNoAsset(id: string): VideoSegment {
+  return { id, text: '', assetId: undefined, startTime: 0, duration: 1, transition: TransitionType.NONE, animation: AnimationType.NONE, order: 0 } as VideoSegment;
 }
 
 function projectWith(assets: Asset[], segments: VideoSegment[]): Project {
@@ -213,6 +216,61 @@ describe('relinkAsset', () => {
     expect(outcome.ok).toBe(false);
     expect(outcome.message).toMatch(/disk full/);
     expect(cacheBacking.has('p-recovery:a1')).toBe(false); // cache write never attempted
+  });
+});
+
+describe('attachNewAssetToSegment', () => {
+  it('mints a new asset, writes it natively and to cache, and points the segment at it', async () => {
+    await saveProject(projectWith([], [segNoAsset('s0')]));
+    // A fixture id like 's0' gets backfilled to segmentId.ts's content-hash
+    // format on LOAD (not on save — the stored bytes keep 's0' verbatim), so
+    // read it back through loadProjectDetailed, the same path
+    // attachNewAssetToSegment itself uses, rather than the raw stored id.
+    const realSegmentId = (await loadProjectDetailed('p-recovery'))!.ok
+      ? (await loadProjectDetailed('p-recovery') as { project: Project }).project.segments[0]!.id
+      : (() => { throw new Error('setup failed'); })();
+    mockInvoke.mockResolvedValueOnce(undefined); // asset_store_write
+    mockInvoke.mockResolvedValueOnce(undefined); // project_mirror_write_project (saveProject's mirror side effect)
+    mockNativeStatus({});
+
+    const file = new File([new Uint8Array([1, 2, 3])], 'clip.mp4', { type: 'video/mp4' });
+    const outcome = await attachNewAssetToSegment('p-recovery', realSegmentId, file);
+
+    expect(outcome.ok).toBe(true);
+    expect(mockInvoke).toHaveBeenCalledWith('asset_store_write', expect.any(Uint8Array), {
+      headers: expect.objectContaining({ 'project-id': 'p-recovery', name: 'clip.mp4', 'mime-type': 'video/mp4' }),
+    });
+    // project.json now has one asset, and the segment points at it.
+    const stored = JSON.parse(osBacking.get('p-recovery')!) as { project: Project };
+    expect(stored.project.assets).toHaveLength(1);
+    const newAssetId = stored.project.assets[0]!.id;
+    expect(newAssetId).not.toBe('');
+    expect(stored.project.segments[0]!.assetId).toBe(newAssetId);
+    // Cache was populated too.
+    expect(cacheBacking.has(`p-recovery:${newAssetId}`)).toBe(true);
+  });
+
+  it('refuses when the segment already has an asset', async () => {
+    const a1 = asset('a1', 'clip.mp4');
+    await saveProject(projectWith([a1], [seg('s0', 'a1')]));
+    const realSegmentId = (await loadProjectDetailed('p-recovery') as { project: Project }).project.segments[0]!.id;
+    mockNativeStatus({ a1: true }); // the refusal path still recomputes `status` for the return value
+    const file = new File([new Uint8Array([1])], 'clip.mp4', { type: 'video/mp4' });
+
+    const outcome = await attachNewAssetToSegment('p-recovery', realSegmentId, file);
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.message).toMatch(/already has an asset/);
+  });
+
+  it('refuses when the segment does not exist', async () => {
+    await saveProject(projectWith([], [segNoAsset('s0')]));
+    const file = new File([new Uint8Array([1])], 'clip.mp4', { type: 'video/mp4' });
+
+    const outcome = await attachNewAssetToSegment('p-recovery', 'no-such-segment', file);
+
+    expect(outcome.ok).toBe(false);
+    expect(outcome.message).toMatch(/Segment not found/);
   });
 });
 

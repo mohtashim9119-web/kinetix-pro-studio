@@ -119,7 +119,7 @@ describe('DegradedProjectRecoveryScreen — collapsed item list (Step 3)', () =>
     expect(container.textContent).toMatch(/Hook/);
     expect(container.textContent).toMatch(/hero\.mp4/);
     expect(container.textContent).toMatch(/b-roll\.mp4/);
-    expect(container.textContent).toMatch(/Missing asset/);
+    expect(container.textContent).toMatch(/Missing/);
   });
 
   it('shows Re-link only on unresolved rows and invokes the fake with the asset id', async () => {
@@ -140,8 +140,9 @@ describe('DegradedProjectRecoveryScreen — collapsed item list (Step 3)', () =>
       assets: [resolvedAsset, missingAsset],
       segments,
     });
+    // 1 unresolved asset (missingAsset) + seg-2's missing-asset status = 2.
     expect(container.querySelector('[data-testid="recovery-unresolved-summary"]')?.textContent)
-      .toMatch(/1 unresolved asset/);
+      .toMatch(/2 missing assets/);
     const resolvedRow = container.querySelector('[data-testid="recovery-item"][data-asset-id="asset-resolved"]');
     expect(resolvedRow?.querySelector('[data-testid="recovery-relink"]')).toBeNull();
   });
