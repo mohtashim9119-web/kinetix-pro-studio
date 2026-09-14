@@ -75,7 +75,26 @@ export interface ExportLivenessSnapshot {
   lastPhase: string | null;
   msSinceLastPhaseChange: number | null;
   pieceIndex: number | null;
+  /**
+   * THIS SESSION only — a fresh WebCodecs worker builds exactly one piece's
+   * worth of encoder sessions in its lifetime (see exportWorker.ts's
+   * `runExport`), so this resets to 0 at the start of every new piece even
+   * though earlier pieces already wrote real, retained bytes to disk. A
+   * Windows field report read `framesEncoded: 1029` at
+   * `encoderSessionIndex: 18` alongside 1,078,402,941 retained bytes and
+   * looked like a contradiction — it wasn't; those bytes came from
+   * already-completed prior pieces this field has no visibility into. See
+   * `framesEncodedCumulative` for the number that explains that report.
+   */
   framesEncoded: number | null;
+  /**
+   * Cumulative across every piece completed so far in this export run,
+   * PLUS this session's own `framesEncoded` — i.e. what `framesEncoded`
+   * would need to have summed to across every worker this run has spawned.
+   * Never resets on a per-piece worker restart. `null` only where no piece
+   * loop has run yet (a failure before the first piece starts).
+   */
+  framesEncodedCumulative?: number | null;
   /** Longest gap between watchdog-resetting messages (`chunk` / `queue-sample`). */
   maxSilentMs?: number | null;
   /**

@@ -3174,6 +3174,11 @@ export async function exportProjectWebCodecs(
     msSinceLastPhaseChange: Math.round(performance.now() - lastPostEncodePhaseAt),
     pieceIndex: pieces.length - 1,
     framesEncoded: framesCompletedBase,
+    // Post-encode runs after every piece has completed, so framesCompletedBase
+    // here already IS the grand total — same value as framesEncoded above,
+    // spelled out under the cumulative name for consistency with the
+    // mid-piece liveness snapshots (where the two differ).
+    framesEncodedCumulative: framesCompletedBase,
     phaseLogTail: [...(lastGlPieceLiveness?.phaseLogTail ?? []), ...postEncodePhases].slice(-LIVENESS_PHASE_LOG_TAIL),
     // Post-encode failures are not worker failures; the worker's own route
     // (if any) stays on `lastGlPieceLiveness`, never re-labelled here.
@@ -3691,6 +3696,7 @@ export async function exportProjectWebCodecs(
                 msSinceLastPhaseChange: driveResult.msSinceLastPhaseChange,
                 pieceIndex,
                 framesEncoded: d.framesEncoded,
+                framesEncodedCumulative: framesCompletedBase + d.framesEncoded,
                 maxSilentMs: driveResult.maxSilentMs,
                 phaseLogTail: d.phaseLog.slice(-LIVENESS_PHASE_LOG_TAIL).map((e) => ({
                   atMs: Math.round(e.atMs),
@@ -3723,6 +3729,7 @@ export async function exportProjectWebCodecs(
         msSinceLastPhaseChange: driveResult.msSinceLastPhaseChange,
         pieceIndex,
         framesEncoded: d.framesEncoded,
+        framesEncodedCumulative: framesCompletedBase + d.framesEncoded,
         maxSilentMs: driveResult.maxSilentMs,
         phaseLogTail: d.phaseLog.slice(-LIVENESS_PHASE_LOG_TAIL).map((e) => ({
           atMs: Math.round(e.atMs),

@@ -42,6 +42,7 @@ export function buildExportDiagnosticsBlob(
     msSinceLastPhaseChange: err.liveness?.msSinceLastPhaseChange ?? null,
     pieceIndex: err.liveness?.pieceIndex ?? null,
     framesEncoded: err.liveness?.framesEncoded ?? null,
+    framesEncodedCumulative: err.liveness?.framesEncodedCumulative ?? null,
     maxSilentMs: err.liveness?.maxSilentMs ?? null,
     failureVia: err.liveness?.failureVia ?? null,
     appendLedger: err.liveness?.appendLedger ?? null,
