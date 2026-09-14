@@ -9,4 +9,5 @@ Living docs for the forced-alignment timing-source upgrade and its measurement p
 | [`stage1-mover-audit.md`](stage1-mover-audit.md) | 24-row blind ear-scoring dossier for Apply Sync movers |
 | [`measurements/README.md`](measurements/README.md) | Index for WS1 research-phase CSV/JSON (not `scripts/fixtures/`) |
 
-**Archive:** session narratives folded from this lane → `docs/archive/history/history-2.md`. Fixture CSVs → `scripts/fixtures/`.
+**Archive:** session narratives folded from this lane → `docs/archive/history/history-2.md`.
+Fixture CSVs → `scripts/fixtures/`. Lane-specific overflow (none yet) → `docs/archive/ws1/`.

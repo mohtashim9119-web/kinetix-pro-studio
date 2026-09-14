@@ -1,4 +1,4 @@
-# WS2 — App & platform
+# WS2 — Editing pipeline
 
 Operator docs, editor QA procedures, and feasibility studies for app-level features outside the sync and export pipelines. WS2 close-out items that are investigation-only live in [`../archive/ws2/`](../archive/README.md).
 

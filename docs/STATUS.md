@@ -79,7 +79,7 @@ message layer, bounded asset loads, pre-installer path hardening). Not yet merge
 ladder, a storage settings entry, and the export-failure layer mounted into a live `App.tsx`
 flow (as of `a928eff`, `ExportFailureMessage`/`ExportFinishShortfallCard`/
 `IdbToNativeMigrationView`/`StorageRootRelocationView` are cherry-picked and unit-tested but not
-wired live — [architecture-ledger.md](ws3-export/architecture-ledger.md) "Scope boundary" section).
+wired live — [architecture-ledger.md](ws3-export-pipeline/architecture-ledger.md) "Scope boundary" section).
 
 Also open, both landed but **unverified live** (`af6a300`/`6930b1d`, 2026-09-07):
 1. [OPEN] Append-path batching (`docs/archive/ws3/append-path-audit.md`) — 1-per-chunk `appendFileRaw` IPC batched 100:1, 256MB queue ceiling. No export has been run post-fix; throughput claim is arithmetic on call count only.
@@ -90,8 +90,8 @@ Coordination notes from Cursor (`.cursor/`), relevant to the in-flight Round 27 
 - `ws3-size-estimators.md`: three parallel disk-size estimators exist (badge, CC's dead destination module, live session preflight `diskFull.ts`) — consolidation to one source of truth is not yet done; do not add a fourth.
 
 ### Next Tasks
-- [OPEN] Execute `docs/ws3-export/windows-validation.md` — Windows long-path delivery checklist and installer build validation
-- [OPEN] Machine 1 hardware validation of the next installer — `docs/ws3-export/w23-machine1-validation.md` is the companion runbook (mux-stage disk-full retain/resume proof); not yet run against the current build
+- [OPEN] Execute `docs/ws3-export-pipeline/windows-validation.md` — Windows long-path delivery checklist and installer build validation
+- [OPEN] Machine 1 hardware validation of the next installer — `docs/ws3-export-pipeline/w23-machine1-validation.md` is the companion runbook (mux-stage disk-full retain/resume proof); not yet run against the current build
 - [OPEN] Part C 500-segment live export — reproduce/attribute the silent-gap defect (see In Progress item 2)
 
 ### Open Bugs
@@ -99,7 +99,7 @@ Coordination notes from Cursor (`.cursor/`), relevant to the in-flight Round 27 
 - [OPEN] Whisper-cache flake currently bounded only by `cargo test -- --test-threads=1`; real fix is injectable `IN_FLIGHT`/`TERMINAL_BUFFER` ([whisper.rs:109](../src-tauri/src/whisper.rs), [whisper.rs:235](../src-tauri/src/whisper.rs)) or a serialized eviction test
 - [OPEN · NON-BLOCKING] ~33-35 cloud CI test failures caused by the private corpus and git-ignored `.work-phase4/replay/` fixtures not being present in the cloud environment — root cause matches the WIP backlog item on `.work-phase4/replay/` (~85M, restored via `scripts/phase4-restore-replay-inputs.py`); exact 33-35 count not independently re-verified this session
 - [OPEN] WS3 lane doc count: 8 live docs (excluding README) against the cap of 7 — see Phase 2 of the docs-restructure branch, which moves `speed-architecture-audit.md` to `docs/archive/ws3/` to close this out (see restructure report for why the two originally-proposed candidates were rejected)
-- [OPEN] `navigator.storage.persist()` WebView2 return value is unrecorded — [windows-validation.md](ws3-export/windows-validation.md) row W24: plumbing shipped, only the cold-launch/after-use measurement is missing
+- [OPEN] `navigator.storage.persist()` WebView2 return value is unrecorded — [windows-validation.md](ws3-export-pipeline/windows-validation.md) row W24: plumbing shipped, only the cold-launch/after-use measurement is missing
 - [CLAIM-UNVERIFIED] "Double save-dialog / double-picker" removal — referenced in this session's brief but not located by grep across `docs/`, `src/`, `src-tauri/`, `.cursor/`, or the `ws3-round27` worktree under any phrasing tried ("double dialog", "duplicate picker", "shown twice", etc.) — needs triage with whoever named it
 
 ### Deferred Tasks

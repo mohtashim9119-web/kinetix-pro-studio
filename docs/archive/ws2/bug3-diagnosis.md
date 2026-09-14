@@ -95,32 +95,32 @@ reproduces the symptom without one.)
 ## B3 — where playback derives timing (MEASURED, file:line)
 
 Playback timing/decode for the WebCodecs preview path lives in
-[`src/services/videoDecoderPool.ts`](../../src/services/videoDecoderPool.ts). Two constants
+[`src/services/videoDecoderPool.ts`](../../../src/services/videoDecoderPool.ts). Two constants
 govern the decode-ahead window and its buffer:
 
-- `WINDOW_AHEAD_SEC = 1.5` ([videoDecoderPool.ts:76](../../src/services/videoDecoderPool.ts#L76))
+- `WINDOW_AHEAD_SEC = 1.5` ([videoDecoderPool.ts:76](../../../src/services/videoDecoderPool.ts#L76))
   — a **time**-based decode-ahead horizon: `feedWindow` decodes every chunk whose presentation
   timestamp is `<= (targetSec + WINDOW_AHEAD_SEC) * 1e6`
-  ([videoDecoderPool.ts:586](../../src/services/videoDecoderPool.ts#L586)), in one synchronous
+  ([videoDecoderPool.ts:586](../../../src/services/videoDecoderPool.ts#L586)), in one synchronous
   loop of `decoder.decode(chunk)` calls with no yield between them
-  ([videoDecoderPool.ts:598-605](../../src/services/videoDecoderPool.ts#L598-L605)).
+  ([videoDecoderPool.ts:598-605](../../../src/services/videoDecoderPool.ts#L598-L605)).
 - `MAX_BUFFERED_FRAMES_PER_SESSION = 90`
-  ([videoDecoderPool.ts:107](../../src/services/videoDecoderPool.ts#L107)) — a **frame-count**
+  ([videoDecoderPool.ts:107](../../../src/services/videoDecoderPool.ts#L107)) — a **frame-count**
   cap on simultaneously-buffered decoded `VideoFrame`s. `handleDecoderOutput`
-  ([videoDecoderPool.ts:1081-1094](../../src/services/videoDecoderPool.ts#L1081-L1094)) drops
+  ([videoDecoderPool.ts:1081-1094](../../../src/services/videoDecoderPool.ts#L1081-L1094)) drops
   (closes without buffering) any decoder output arriving once this cap is hit, unless
   `slideWindowForward` can first evict already-passed frames to make room.
-- `slideWindowForward` ([videoDecoderPool.ts:1062-1079](../../src/services/videoDecoderPool.ts#L1062-L1079))
+- `slideWindowForward` ([videoDecoderPool.ts:1062-1079](../../../src/services/videoDecoderPool.ts#L1062-L1079))
   can only evict frames older than `session.windowTargetUs - RETAIN_BEHIND_SEC`, and
   `windowTargetUs` is only updated at the **start** of a `fillWindow` call
-  ([videoDecoderPool.ts:660](../../src/services/videoDecoderPool.ts#L660)) — i.e. once per
+  ([videoDecoderPool.ts:660](../../../src/services/videoDecoderPool.ts#L660)) — i.e. once per
   `getFrameAt` turn, not once per decoded frame.
 
 Both constants' own comments state the tuning assumption explicitly: `MAX_BUFFERED_FRAMES_
 PER_SESSION`'s doc says "roughly 3s of 30fps content"
-([videoDecoderPool.ts:97](../../src/services/videoDecoderPool.ts#L97)); `RETAIN_BEHIND_SEC`'s
+([videoDecoderPool.ts:97](../../../src/services/videoDecoderPool.ts#L97)); `RETAIN_BEHIND_SEC`'s
 doc says "0.5s is ~12 frames at 24fps / ~15 at 30fps"
-([videoDecoderPool.ts:83](../../src/services/videoDecoderPool.ts#L83)). **The code assumes
+([videoDecoderPool.ts:83](../../../src/services/videoDecoderPool.ts#L83)). **The code assumes
 content in the ~24-30fps range; nothing reads the source's actual `avg_frame_rate` to adjust
 either constant.** This is not a VFR-treated-as-CFR bug (the file genuinely is CFR, §B1) — it is
 a fixed TIME window sized against a frame-count cap that was never made proportional to the

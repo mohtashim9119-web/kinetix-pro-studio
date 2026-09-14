@@ -210,3 +210,7 @@ Audited 2026-08-25 against `main` — full mechanism/fix-design detail: Part AI.
 ---
 
 *Full history: `docs/history-2.md`. Standing reference material: `sync-pipeline-v2-plan.md` Part AK.*
+
+> **Retired 2026-09-14 (SHA `a928eff`).** Superseded by `docs/STATUS.md` — read that instead.
+> This pointer is appended at the end of the file, not the top, because `scripts/*.test.ts`
+> cites this file by line number and an insertion above would shift every one of them.

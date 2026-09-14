@@ -299,6 +299,6 @@ For **legacy gate failure** on a project that *would* have routed GL: **hard-fai
 ## Cross-references
 
 - Throughput / probe contract: [`windows-throughput-audit.md`](windows-throughput-audit.md)
-- Recovery ladder scope: [`recovery-architecture.md`](../../ws3-export/recovery-architecture.md) §4b (Tier C ≠ failover)
-- Frozen constants register: [`architecture-ledger.md`](../../ws3-export/architecture-ledger.md) Round 17 final state
+- Recovery ladder scope: [`recovery-architecture.md`](../../ws3-export-pipeline/recovery-architecture.md) §4b (Tier C ≠ failover)
+- Frozen constants register: [`architecture-ledger.md`](../../ws3-export-pipeline/architecture-ledger.md) Round 17 final state
 - Tier routing predicates: `src/services/webcodecsExport/glCompositable.ts`, `src/services/plainSegment.ts`

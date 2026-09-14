@@ -489,4 +489,4 @@ attribution minimum.
 Windows Graphics high-performance preference → Defender exclusion A/B (W7) →
 `--force_high_performance_gpu` trial (WebView2 145+) → `--ignore-gpu-blocklist` diagnostic only.
 
-Full audit: [`docs/archive/ws3/windows-throughput-audit.md`](../archive/ws3/windows-throughput-audit.md).
+Full audit: [`docs/archive/ws3/windows-throughput-audit.md`](windows-throughput-audit.md).

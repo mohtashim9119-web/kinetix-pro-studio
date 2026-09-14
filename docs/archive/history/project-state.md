@@ -1,3 +1,5 @@
+> **Retired 2026-09-14 (SHA `a928eff`).** Superseded by [`docs/STATUS.md`](../../STATUS.md) — read that instead.
+
 # Kinetix Pro Studio — Project State
 
 > **Purpose:** perishable situation report — six fixed sections. Durable rules → `CLAUDE.md`.
