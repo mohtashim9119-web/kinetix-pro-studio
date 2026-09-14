@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: Round 28, SHA 15ee972
+Last updated: Round 28, SHA bad0882
 
 > **Single source of truth for project tracking.** Retired trackers live under
 > `docs/archive/history/` (`work-in-progress.md`, `project-state.md`). Update this file only;
