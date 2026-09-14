@@ -7363,6 +7363,13 @@ export default function App() {
           exportResolution={exportResolution}
           exportFps={exportFps}
           mixedNativeFpsWarning={mixedNativeFpsWarning}
+          durationSeconds={
+            project.segments.length > 0
+              ? project.segments[project.segments.length - 1]!.startTime
+                + project.segments[project.segments.length - 1]!.duration
+              : 0
+          }
+          hasAudio={!!project.voiceoverId}
           onContinue={(resolution, fps) => {
             exportFpsUserSetRef.current = true;
             setExportResolution(resolution);

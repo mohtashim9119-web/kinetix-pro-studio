@@ -17,14 +17,24 @@ import type { AspectRatio } from '../types';
 import type { ExportFps, ExportResolution } from '../hooks/useExport';
 import { resolveDimensions } from '../services/resolutionConfig';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { estimateExportDestinationDiskBytes, formatBytes } from '../services/webcodecsExport/diskFull';
 
 const RESOLUTION_OPTIONS: ExportResolution[] = ['720p', '1080p'];
+
+// Mirrors exportWorker.ts's own EXPORT_BITRATE (8_000_000 bit/s = 8000 kbit/s)
+// — the single fixed encode bitrate every export currently uses, regardless
+// of resolution/fps choice. Not user-selectable, so not a draft field here.
+const EXPORT_BITRATE_KBPS = 8000;
 
 interface Props {
   aspectRatio: AspectRatio;
   exportResolution: ExportResolution;
   exportFps: ExportFps;
   mixedNativeFpsWarning: boolean;
+  /** Total content duration, in seconds — drives the size estimate badge. */
+  durationSeconds: number;
+  /** Whether the project has a voiceover track to mux in. */
+  hasAudio: boolean;
   onContinue: (resolution: ExportResolution, fps: ExportFps) => void;
   onCancel: () => void;
 }
@@ -34,6 +44,8 @@ export function ExportSettingsModal({
   exportResolution,
   exportFps,
   mixedNativeFpsWarning,
+  durationSeconds,
+  hasAudio,
   onContinue,
   onCancel,
 }: Props): React.ReactElement {
@@ -52,6 +64,11 @@ export function ExportSettingsModal({
   }, [onCancel]);
 
   const dims = resolveDimensions(aspectRatio, draftResolution);
+  const diskEstimate = estimateExportDestinationDiskBytes({
+    bitrateKbps: EXPORT_BITRATE_KBPS,
+    durationSeconds,
+    hasAudio,
+  });
 
   return (
     <div
@@ -110,6 +127,9 @@ export function ExportSettingsModal({
               </p>
             )}
             <p className="text-[9px] text-gray-600">{dims.width} × {dims.height}</p>
+            <p data-testid="export-size-estimate" className="text-[9px] text-gray-600">
+              Estimated file size: {formatBytes(diskEstimate.destinationRequiredBytes)}
+            </p>
           </div>
         </div>
 
