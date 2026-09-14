@@ -12,6 +12,7 @@ import {
   type StorageRootStatus,
 } from '../services/storageRoot';
 import { formatBytes } from '../services/webcodecsExport/diskFull';
+import { relinkPickFolder } from '../services/relinkNative';
 import { invoke } from '@tauri-apps/api/core';
 
 const HAIRLINE = 'pt-6 mt-6 border-t border-white/[0.06]';
@@ -102,7 +103,7 @@ export function StorageSettingsSection(): React.ReactElement {
             void (async () => {
               setRelocating(true);
               try {
-                const picked = await invoke<string | null>('relink_pick_folder');
+                const picked = await relinkPickFolder();
                 if (!picked) return;
                 await relocateStorageRoot(picked);
                 await refresh();

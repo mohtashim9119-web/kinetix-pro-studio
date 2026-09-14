@@ -594,9 +594,10 @@ fn no_model_found_error(candidates: &[PathBuf], language_code: &str) -> FaError 
         .join(", ");
     FaError::model_not_found(format!(
         "No FA model found for language \"{language_code}\". Tried: {tried}. Place it manually \
-         at one of those paths — the on-demand downloader (Step T) is a separate, later task \
-         (ruling R-D). Never place it under src-tauri/models/ — that ships the whisper model via \
-         the bundle's resources glob and FA models are not part of that glob."
+         at one of those paths, or use the in-app model downloader (see `fa_model_download` in \
+         models.rs) to fetch it on demand. Never place it under src-tauri/models/ — that ships \
+         the whisper model via the bundle's resources glob and FA models are not part of that \
+         glob."
     ))
 }
 
