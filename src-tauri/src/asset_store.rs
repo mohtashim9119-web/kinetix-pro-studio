@@ -91,6 +91,16 @@ struct AssetMetaFile {
     provenance: Option<AssetProvenance>,
 }
 
+/// Provenance surfaced over IPC for the resolution ladder (Round 27 Step 4).
+#[derive(Serialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetProvenanceStatus {
+    pub original_path: Option<String>,
+    pub containing_folder: Option<String>,
+    pub content_hash: Option<String>,
+    pub duration: Option<f64>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AssetStatusEntry {
@@ -100,6 +110,24 @@ pub struct AssetStatusEntry {
     pub bytes: Option<u64>,
     pub name: Option<String>,
     pub mime_type: Option<String>,
+    /// Round 27 — recorded origin, if any. Absent/`null` fields mean the asset
+    /// was imported before provenance existed and MUST route to folder-pick.
+    pub provenance: Option<AssetProvenanceStatus>,
+}
+
+/// Result of one resolution-ladder attempt for a single asset id.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AssetResolutionResult {
+    pub asset_id: String,
+    /// `exact_path` | `same_folder_filename` | `user_root_filename` | `content_hash` | `none`
+    pub rung: String,
+    /// `exact` | `probable` | `none`
+    pub confidence: String,
+    /// True ONLY for exact-path + matching recorded size + matching hash.
+    pub silent: bool,
+    pub candidate_path: Option<String>,
+    pub reason: Option<String>,
 }
 
 fn now_millis() -> u128 {
@@ -256,13 +284,14 @@ pub fn asset_store_write_from_path(
         ));
     }
     let bytes = fs::read(&src).map_err(|e| format!("read {}: {e}", src.display()))?;
+    let content_hash = crate::sha256::hash_file(&src).ok();
     let containing_folder = src
         .parent()
         .map(|p| p.to_string_lossy().to_string());
     let provenance = AssetProvenance {
         original_path: Some(src_path.clone()),
         containing_folder,
-        content_hash: None, // Step 4's ladder populates the hash on its own write.
+        content_hash,
         duration,
     };
     write_asset_atomic_provenanced(&dir, asset_id, &bytes, name, mime_type, Some(provenance))
@@ -303,6 +332,7 @@ pub fn asset_store_status(
                 bytes: None,
                 name: None,
                 mime_type: None,
+                provenance: None,
             });
             continue;
         };
@@ -310,6 +340,14 @@ pub fn asset_store_status(
         let mp = meta_path(&dir, asset_id);
         let bytes_present = bp.is_file();
         let meta: Option<AssetMetaFile> = fs::read(&mp).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let provenance = meta.as_ref().and_then(|m| {
+            m.provenance.as_ref().map(|p| AssetProvenanceStatus {
+                original_path: p.original_path.clone(),
+                containing_folder: p.containing_folder.clone(),
+                content_hash: p.content_hash.clone(),
+                duration: p.duration,
+            })
+        });
         out.push(AssetStatusEntry {
             asset_id: asset_id.to_string(),
             bytes_present,
@@ -317,9 +355,184 @@ pub fn asset_store_status(
             bytes: meta.as_ref().map(|m| m.bytes),
             name: meta.as_ref().map(|m| m.name.clone()),
             mime_type: meta.as_ref().map(|m| m.mime_type.clone()),
+            provenance,
         });
     }
     Ok(out)
+}
+
+fn file_matches_recorded(meta: &AssetMetaFile, path: &Path) -> Result<(bool, bool), String> {
+    let size_ok = fs::metadata(path)
+        .map(|m| m.len() == meta.bytes)
+        .unwrap_or(false);
+    let hash_ok = match (
+        meta.provenance.as_ref().and_then(|p| p.content_hash.as_deref()),
+        crate::sha256::hash_file(path).ok(),
+    ) {
+        (Some(recorded), Some(actual)) => recorded.eq_ignore_ascii_case(&actual),
+        _ => false,
+    };
+    Ok((size_ok, hash_ok))
+}
+
+fn filename_in_folder(folder: &Path, name: &str) -> Option<PathBuf> {
+    let candidate = folder.join(name);
+    if candidate.is_file() {
+        Some(candidate)
+    } else {
+        None
+    }
+}
+
+fn hash_match_in_folder(folder: &Path, expected_hash: &str) -> Option<PathBuf> {
+    let entries = fs::read_dir(folder).ok()?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        if let Ok(hash) = crate::sha256::hash_file(&path) {
+            if hash.eq_ignore_ascii_case(expected_hash) {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// Round 27 Step 4 — walks the provenance resolution ladder for one asset.
+/// ONLY the exact-path rung with matching size AND hash is marked `silent:
+/// true`; every weaker rung returns a candidate for confirmation instead.
+/// Pre-provenance assets (`original_path: None`) always return rung `none`.
+#[tauri::command]
+pub fn asset_store_attempt_resolution(
+    app: tauri::AppHandle,
+    project_id: String,
+    asset_id: String,
+    user_picked_root: Option<String>,
+) -> Result<AssetResolutionResult, String> {
+    let dir = project_dir(&app, &project_id)?;
+    let asset_id = safe_component(&asset_id)?;
+    let mp = meta_path(&dir, asset_id);
+    let meta: AssetMetaFile = fs::read(&mp)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .ok_or_else(|| format!("asset_store_attempt_resolution: no metadata for {asset_id}"))?;
+
+    let Some(provenance) = meta.provenance.as_ref() else {
+        return Ok(AssetResolutionResult {
+            asset_id: asset_id.to_string(),
+            rung: "none".into(),
+            confidence: "none".into(),
+            silent: false,
+            candidate_path: None,
+            reason: Some("pre-provenance: no recorded origin — folder-pick only".into()),
+        });
+    };
+
+    let Some(original_path) = provenance.original_path.as_deref() else {
+        return Ok(AssetResolutionResult {
+            asset_id: asset_id.to_string(),
+            rung: "none".into(),
+            confidence: "none".into(),
+            silent: false,
+            candidate_path: None,
+            reason: Some("pre-provenance: no original_path — folder-pick only".into()),
+        });
+    };
+
+    // Rung 1 — exact path hit.
+    let original = PathBuf::from(original_path);
+    if original.is_file() {
+        let (size_ok, hash_ok) = file_matches_recorded(&meta, &original)?;
+        if size_ok && hash_ok {
+            return Ok(AssetResolutionResult {
+                asset_id: asset_id.to_string(),
+                rung: "exact_path".into(),
+                confidence: "exact".into(),
+                silent: true,
+                candidate_path: Some(original_path.to_string()),
+                reason: None,
+            });
+        }
+        return Ok(AssetResolutionResult {
+            asset_id: asset_id.to_string(),
+            rung: "exact_path".into(),
+            confidence: if size_ok { "probable".into() } else { "none".into() },
+            silent: false,
+            candidate_path: Some(original_path.to_string()),
+            reason: Some("exact path exists but size/hash mismatch — confirmation required".into()),
+        });
+    }
+
+    // Rung 2 — same filename in recorded folder.
+    if let Some(folder) = provenance.containing_folder.as_deref().map(PathBuf::from) {
+        if folder.is_dir() {
+            if let Some(candidate) = filename_in_folder(&folder, &meta.name) {
+                let (size_ok, hash_ok) = file_matches_recorded(&meta, &candidate)?;
+                let confidence = if size_ok && hash_ok {
+                    "exact"
+                } else if size_ok {
+                    "probable"
+                } else {
+                    "probable"
+                };
+                return Ok(AssetResolutionResult {
+                    asset_id: asset_id.to_string(),
+                    rung: "same_folder_filename".into(),
+                    confidence: confidence.into(),
+                    silent: false,
+                    candidate_path: Some(candidate.to_string_lossy().into_owned()),
+                    reason: Some("same filename in recorded folder — confirmation required".into()),
+                });
+            }
+        }
+    }
+
+    // Rung 3 — same filename under user-picked root (folder-pick flow only).
+    if let Some(root) = user_picked_root.as_deref() {
+        let folder = PathBuf::from(root);
+        if folder.is_dir() {
+            if let Some(candidate) = filename_in_folder(&folder, &meta.name) {
+                return Ok(AssetResolutionResult {
+                    asset_id: asset_id.to_string(),
+                    rung: "user_root_filename".into(),
+                    confidence: "probable".into(),
+                    silent: false,
+                    candidate_path: Some(candidate.to_string_lossy().into_owned()),
+                    reason: Some("same filename under picked root — confirmation required".into()),
+                });
+            }
+        }
+    }
+
+    // Rung 4 — content-hash match regardless of name (scan recorded folder).
+    if let (Some(expected_hash), Some(folder)) = (
+        provenance.content_hash.as_deref(),
+        provenance.containing_folder.as_deref().map(PathBuf::from),
+    ) {
+        if folder.is_dir() {
+            if let Some(candidate) = hash_match_in_folder(&folder, expected_hash) {
+                return Ok(AssetResolutionResult {
+                    asset_id: asset_id.to_string(),
+                    rung: "content_hash".into(),
+                    confidence: "exact".into(),
+                    silent: false,
+                    candidate_path: Some(candidate.to_string_lossy().into_owned()),
+                    reason: Some("hash match with different filename — confirmation required".into()),
+                });
+            }
+        }
+    }
+
+    Ok(AssetResolutionResult {
+        asset_id: asset_id.to_string(),
+        rung: "none".into(),
+        confidence: "none".into(),
+        silent: false,
+        candidate_path: None,
+        reason: Some("no ladder rung matched".into()),
+    })
 }
 
 /// Removes one asset's native copy (both files), best-effort per file —
@@ -445,6 +658,48 @@ mod tests {
         let mp = meta_path(&d, "asset-1");
         assert_eq!(bp, d.join("asset-1.bin"));
         assert_eq!(mp, d.join("asset-1.meta.json"));
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn write_from_path_records_content_hash_in_provenance() {
+        let d = tmpdir("prov-hash");
+        let src_dir = d.join("src");
+        fs::create_dir_all(&src_dir).unwrap();
+        let src = src_dir.join("clip.mp4");
+        fs::write(&src, b"video-bytes-for-hash").unwrap();
+        let expected_hash = crate::sha256::hash_file(&src).unwrap();
+
+        let provenance = AssetProvenance {
+            original_path: Some(src.to_string_lossy().into_owned()),
+            containing_folder: Some(src_dir.to_string_lossy().into_owned()),
+            content_hash: Some(expected_hash.clone()),
+            duration: Some(12.5),
+        };
+        write_asset_atomic_provenanced(
+            &d,
+            "asset-1",
+            b"video-bytes-for-hash",
+            "clip.mp4".into(),
+            "video/mp4".into(),
+            Some(provenance),
+        )
+        .unwrap();
+
+        let meta: AssetMetaFile = serde_json::from_slice(&fs::read(meta_path(&d, "asset-1")).unwrap()).unwrap();
+        assert_eq!(
+            meta.provenance.as_ref().and_then(|p| p.content_hash.as_deref()),
+            Some(expected_hash.as_str())
+        );
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn legacy_write_leaves_provenance_absent() {
+        let d = tmpdir("pre-prov");
+        write_asset_atomic(&d, "asset-1", b"x", "clip.mp4".into(), "video/mp4".into()).unwrap();
+        let meta: AssetMetaFile = serde_json::from_slice(&fs::read(meta_path(&d, "asset-1")).unwrap()).unwrap();
+        assert!(meta.provenance.is_none());
         fs::remove_dir_all(&d).ok();
     }
 }

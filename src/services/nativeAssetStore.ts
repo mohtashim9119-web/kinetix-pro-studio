@@ -33,6 +33,14 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isTauri } from './tauriFfmpeg';
 
+/** Mirrors `asset_store.rs`'s `AssetProvenanceStatus` (camelCase over IPC). */
+export interface AssetProvenanceStatus {
+  originalPath: string | null;
+  containingFolder: string | null;
+  contentHash: string | null;
+  duration: number | null;
+}
+
 /** Mirrors `asset_store.rs`'s `AssetStatusEntry` (camelCase over IPC). */
 export interface AssetStatusEntry {
   assetId: string;
@@ -41,6 +49,7 @@ export interface AssetStatusEntry {
   bytes: number | null;
   name: string | null;
   mimeType: string | null;
+  provenance: AssetProvenanceStatus | null;
 }
 
 /**
@@ -92,7 +101,7 @@ export async function readAssetNative(projectId: string, assetId: string): Promi
 export async function getAssetStatusNative(projectId: string, assetIds: string[]): Promise<AssetStatusEntry[]> {
   if (!isTauri() || assetIds.length === 0) {
     return assetIds.map((assetId) => ({
-      assetId, bytesPresent: false, metaPresent: false, bytes: null, name: null, mimeType: null,
+      assetId, bytesPresent: false, metaPresent: false, bytes: null, name: null, mimeType: null, provenance: null,
     }));
   }
   return invoke<AssetStatusEntry[]>('asset_store_status', { projectId, assetIds });

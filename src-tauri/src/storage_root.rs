@@ -312,6 +312,22 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
     Ok(rows)
 }
 
+/// Clears reclaimable subtrees (cache + stale project backups). Never touches
+/// `assets/`, `projects/`, or `models/` — see `size_report`'s classification.
+#[tauri::command]
+pub fn storage_root_reclaim(app: tauri::AppHandle) -> Result<u64, String> {
+    let root = resolve_storage_root(&app)?;
+    crate::project_mirror::sweep_stale_project_backups(&app);
+    let mut reclaimed = 0u64;
+    let cache = cache_dir(&root);
+    if cache.is_dir() {
+        reclaimed += dir_size(&cache);
+        fs::remove_dir_all(&cache).map_err(|e| format!("remove cache {}: {e}", cache.display()))?;
+        fs::create_dir_all(&cache).map_err(|e| format!("recreate cache {}: {e}", cache.display()))?;
+    }
+    Ok(reclaimed)
+}
+
 /// Relocates `assets/`, `projects/`, and `cache/` (whichever exist) from the
 /// current root to `new_root`. Does NOT touch `models/` or `temp/` — see the
 /// module doc comment. Checks writability and free space BEFORE copying

@@ -220,6 +220,7 @@ import {
   clearLoadFailure,
 } from './services/projectStore';
 import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative';
+import { applySilentProvenanceResolution } from './services/assetResolutionLadder';
 import { withAssetLoadTimeout } from './services/assetLoadTimeout';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
 import { getProjectAssetRecoveryStatus, relinkAsset } from './services/assetRecovery';
@@ -290,6 +291,8 @@ import { ManageModelsModal } from './components/ManageModelsModal';
 import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, formatElapsed, formatElapsedLong, formatFrameSpanDuration, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { buildExportDiagnosticsBlob } from './services/exportDiagnosticsBlob';
+import { ExportFailureMessage } from './components/recovery/ExportFailureMessage';
+import { shouldOfferResume } from './services/exportFailure/resumeEligibility';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
@@ -6422,10 +6425,27 @@ export default function App() {
       // cache miss. Rebuild IndexedDB from the native copy here so the
       // orphan check downstream has nothing left to complain about for
       // exactly the projects item B's migration already covered.
-      const missingIds = saved.project.assets.map(a => a.id).filter(assetId => !blobMap.has(assetId));
+      let missingIds = saved.project.assets.map(a => a.id).filter(assetId => !blobMap.has(assetId));
       if (missingIds.length > 0) {
         const repair = await repairMissingAssetsFromNative(saved.project.id, saved.project.assets, missingIds);
         for (const repaired of repair.repaired) blobMap.set(repaired.id, repaired);
+        missingIds = missingIds.filter(id => !blobMap.has(id));
+      }
+
+      // Round 27 Step 4 — silently re-import assets whose exact path + size +
+      // hash still match; weaker rungs and pre-provenance assets fall through
+      // to the recovery screen below. Poison is in-memory only — a restart
+      // re-attempts this ladder; silent re-import cannot bypass confirmation
+      // rules because only exact-path+hash is marked silent in Rust.
+      if (missingIds.length > 0) {
+        const ladder = await applySilentProvenanceResolution(saved.project.id, saved.project.assets, missingIds);
+        for (const assetId of ladder.resolved) {
+          const stored = await getAllAssetsForProject(saved.project.id).then(
+            rows => rows.find(r => r.id === assetId),
+          );
+          if (stored) blobMap.set(assetId, stored);
+        }
+        missingIds = missingIds.filter(id => !blobMap.has(id));
       }
 
       // WS3 item A — an asset whose METADATA survived in project.json but
@@ -7137,73 +7157,59 @@ export default function App() {
             className="fixed inset-0 z-[200] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-8"
           >
             {exportState.error !== null ? (
-              /* ── Error view ── */
-              <div className="w-full max-w-md text-center space-y-6">
-                <div className="w-16 h-16 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto">
-                  <span className="text-2xl">✕</span>
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-white mb-2">
-                    {exportState.error.kind === 'cancelled' ? 'Export Cancelled' : 'Export Failed'}
-                  </h2>
-                  <p className="text-sm text-gray-300 mb-1">
-                    {getExportErrorSummary(exportState.error)}
-                  </p>
-                  {exportState.error.kind === 'disk_full' &&
-                    exportState.error.sessionDisposition?.disposition === 'retained' && (
-                      <p className="text-xs text-gray-500 mt-1">
-                        The partial export was kept — free up space and retry to resume from where it stopped,
-                        rather than starting over.
-                      </p>
-                    )}
-                  {exportState.error.kind !== 'cancelled' && (
-                    <p className="text-xs text-gray-600">{exportState.error.message}</p>
-                  )}
-                </div>
-                <div className="flex gap-3 justify-center flex-wrap">
-                  {exportState.error.kind === 'timeline_gap' && (
-                    <button
-                      onClick={handleRepairTimelineGaps}
-                      className="px-4 py-2 text-xs font-bold bg-[#F27D26] text-black rounded-xl hover:bg-orange-400 transition-colors"
-                    >
-                      Repair timeline
-                    </button>
-                  )}
-                  {exportState.error.kind !== 'cancelled' && (
-                    <button
-                      onClick={() => {
-                        const err = exportState.error;
-                        if (!err) return;
-                        const diagnostics = buildExportDiagnosticsBlob(err, {
-                          segmentCount: project.segments.length,
-                          hasVoiceover: !!project.voiceoverId,
-                          exportResolution,
-                          exportFps,
-                          ts: new Date().toISOString(),
-                        });
-                        navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => undefined);
-                      }}
-                      className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
-                    >
-                      Copy diagnostics
-                    </button>
-                  )}
-                  {exportState.error.kind !== 'cancelled' && (
-                    <button
-                      onClick={retryExport}
-                      className="px-4 py-2 text-xs font-bold bg-[#F27D26] text-black rounded-xl hover:bg-orange-400 transition-colors"
-                    >
-                      Retry
-                    </button>
-                  )}
-                  <button
-                    onClick={cancelExport}
-                    className="px-4 py-2 text-xs font-bold border border-gray-700 text-gray-300 rounded-xl hover:border-gray-500 transition-colors"
-                  >
-                    {exportState.error.kind === 'cancelled' ? 'Dismiss' : 'Cancel'}
-                  </button>
-                </div>
-              </div>
+              <ExportFailureMessage
+                kind={exportState.error.kind}
+                retentionAttempted={exportState.error.retentionAttempted === true}
+                sessionDisposition={exportState.error.sessionDisposition}
+                manifestPresent={exportState.error.diskStateAfterFailure?.manifestPresent === true}
+                diskFullVariant={
+                  exportState.error.kind === 'disk_full' && exportState.error.diskFull?.phase === 'preflight'
+                    ? 'preflight'
+                    : exportState.error.kind === 'disk_full'
+                      ? 'mid-export'
+                      : undefined
+                }
+                requiredBytes={exportState.error.diskFull?.requiredBytes ?? undefined}
+                availableBytes={exportState.error.diskFull?.availableBytes ?? undefined}
+                showReclaimAction={exportState.error.kind === 'disk_full'}
+                hardwareFailoverUsed={exportState.error.hardwareFailoverUsed}
+                failureVia={exportState.error.failureVia ?? exportState.error.liveness?.failureVia ?? null}
+                rawError={exportState.error.message}
+                stack={exportState.error.cause ?? null}
+                onResume={
+                  shouldOfferResume(exportState.error.kind, {
+                    retentionAttempted: exportState.error.retentionAttempted === true,
+                    sessionDisposition: exportState.error.sessionDisposition,
+                    manifestPresent: exportState.error.diskStateAfterFailure?.manifestPresent === true,
+                  }, exportState.error.diskFull?.phase === 'preflight' ? 'preflight' : 'mid-export')
+                    ? retryExport
+                    : undefined
+                }
+                onOpenDegradedRecovery={
+                  exportState.error.kind === 'asset_missing' && degradedRecovery
+                    ? () => setShowDashboard(false)
+                    : exportState.error.kind === 'asset_missing'
+                      ? () => { void refreshDegradedRecovery(project.id); setShowDashboard(false); }
+                      : undefined
+                }
+                onRepairTimeline={
+                  exportState.error.kind === 'timeline_gap' ? handleRepairTimelineGaps : undefined
+                }
+                onCopyDiagnostics={() => {
+                  const err = exportState.error;
+                  if (!err) return;
+                  const diagnostics = buildExportDiagnosticsBlob(err, {
+                    segmentCount: project.segments.length,
+                    hasVoiceover: !!project.voiceoverId,
+                    exportResolution,
+                    exportFps,
+                    ts: new Date().toISOString(),
+                  });
+                  navigator.clipboard.writeText(JSON.stringify(diagnostics, null, 2)).catch(() => undefined);
+                }}
+                onRetry={exportState.error.kind !== 'cancelled' ? retryExport : undefined}
+                onDismiss={cancelExport}
+              />
             ) : (
               /* ── Progress view ── */
               <div className="w-full max-w-md text-center space-y-8">

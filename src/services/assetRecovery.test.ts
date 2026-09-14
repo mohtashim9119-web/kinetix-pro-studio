@@ -41,7 +41,7 @@ vi.mock('./assetStore', () => ({
     const assets: { projectId: string; id: string; blob: Blob; name: string; mimeType: string }[] = [];
     for (const [key, blob] of cacheBacking.entries()) {
       const [pid, id] = key.split(':');
-      if (pid === projectId) {
+      if (pid === projectId && id !== undefined) {
         assets.push({ projectId, id, blob, name: 'x', mimeType: blob.type });
       }
     }

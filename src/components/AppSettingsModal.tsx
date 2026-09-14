@@ -42,6 +42,7 @@ import { X } from 'lucide-react';
 import { isWebCodecsExportCapable, isWebCodecsExportToggleOn, setWebCodecsExportToggle } from '../hooks/useExport';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { ModelsSection } from './ModelsSection';
+import { StorageSettingsSection } from './StorageSettingsSection';
 import { SUPPORTED_LANGUAGES } from '../constants';
 import { resolveDimensions } from '../services/resolutionConfig';
 import {
@@ -214,7 +215,10 @@ export function AppSettingsModal({ onClose }: Props): React.ReactElement {
           <ModelsSection />
         </section>
 
-        {/* ── Block 3: New Project Defaults ───────────────────────────────
+        {/* ── Block 3: Storage ─────────────────────────────────────────── */}
+        <StorageSettingsSection />
+
+        {/* ── Block 4: New Project Defaults ───────────────────────────────
             SEEDS ONLY. These pre-fill the New Project modal's fields and are
             read nowhere else; changing one never reaches a project that
             already exists. See `services/appDefaults.ts`. */}
