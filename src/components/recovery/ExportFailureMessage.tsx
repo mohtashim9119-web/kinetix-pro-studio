@@ -35,6 +35,10 @@ export interface ExportFailureMessageProps {
   onResume?: () => void;
   onReclaim?: () => void;
   onOpenDegradedRecovery?: () => void;
+  onRepairTimeline?: () => void;
+  onCopyDiagnostics?: () => void;
+  onRetry?: () => void;
+  onDismiss?: () => void;
 }
 
 export function ExportFailureMessage({
@@ -55,6 +59,10 @@ export function ExportFailureMessage({
   onResume,
   onReclaim,
   onOpenDegradedRecovery,
+  onRepairTimeline,
+  onCopyDiagnostics,
+  onRetry,
+  onDismiss,
 }: ExportFailureMessageProps): React.ReactElement {
   const presentation = resolveExportFailurePresentation({
     kind,
@@ -144,6 +152,46 @@ export function ExportFailureMessage({
               className="w-full bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
             >
               Open project recovery
+            </button>
+          )}
+          {kind === 'timeline_gap' && onRepairTimeline && (
+            <button
+              type="button"
+              data-testid="export-failure-repair-timeline"
+              onClick={() => onRepairTimeline()}
+              className="w-full bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
+            >
+              Repair timeline
+            </button>
+          )}
+          {kind !== 'cancelled' && onCopyDiagnostics && (
+            <button
+              type="button"
+              data-testid="export-failure-copy-diagnostics"
+              onClick={() => onCopyDiagnostics()}
+              className="w-full bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all"
+            >
+              Copy diagnostics
+            </button>
+          )}
+          {kind !== 'cancelled' && onRetry && (
+            <button
+              type="button"
+              data-testid="export-failure-retry"
+              onClick={() => onRetry()}
+              className="w-full bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
+            >
+              Retry
+            </button>
+          )}
+          {onDismiss && (
+            <button
+              type="button"
+              data-testid="export-failure-dismiss"
+              onClick={() => onDismiss()}
+              className="w-full bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all"
+            >
+              {kind === 'cancelled' ? 'Dismiss' : 'Cancel'}
             </button>
           )}
         </div>

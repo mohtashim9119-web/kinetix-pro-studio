@@ -26,6 +26,29 @@ const okSegment: RecoverySegment = {
   resolutionStatus: 'resolved',
 };
 
+describe('buildRecoveryItemRows — 42-row Machine-1 fixture', () => {
+  it('collapses 41 segments and one orphan unresolved asset into 42 rows', () => {
+    const segments: RecoverySegment[] = Array.from({ length: 41 }, (_, i) => ({
+      id: `seg-${i + 1}`,
+      label: `Segment ${i + 1}`,
+      assetId: `asset-${i + 1}`,
+      resolutionStatus: i === 40 ? 'unresolved' : 'resolved',
+    }));
+    const assets: RecoveryAsset[] = [
+      ...Array.from({ length: 41 }, (_, i) => ({
+        id: `asset-${i + 1}`,
+        name: `clip-${i + 1}.mp4`,
+        unresolved: i === 40,
+      })),
+      { id: 'orphan-asset', name: 'unused.mp4', unresolved: true },
+    ];
+    const rows = buildRecoveryItemRows(segments, assets);
+    expect(rows).toHaveLength(42);
+    expect(rows.filter((r) => r.showRelink)).toHaveLength(2);
+    expect(rows.some((r) => r.rowId === 'orphan-orphan-asset')).toBe(true);
+  });
+});
+
 const brokenSegment: RecoverySegment = {
   id: 's2',
   label: 'Voiceover',

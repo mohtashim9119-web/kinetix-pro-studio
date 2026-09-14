@@ -2820,3 +2820,19 @@ Eight frozen constants and four fixture digests: unchanged — none of `WATCHDOG
 digests untouched (no export-path work this round).
 
 No merge to main. No PR. Pushed `ws3-export-integration`.
+
+### Round 27 (2026-09-14) — hang fix, provenance ladder, storage settings, export failure layer
+
+**Hang fix (c769425).** Bounded asset loads (`withAssetLoadTimeout`) so a stuck IndexedDB read on large libraries cannot hold the dashboard spinner open forever — missing bytes now reach the recovery screen.
+
+**Step 4 — Provenance + resolution ladder.** Reconciled `AssetProvenance` in `asset_store.rs` (single model, not duplicated). `asset_store_write_from_path` now records `content_hash` via `sha256::hash_file`. `asset_store_status` exposes provenance; `asset_store_attempt_resolution` walks five rungs (exact path → same folder filename → user-picked root → content-hash scan → none). ONLY exact-path + size + hash resolves silently on project open (`applySilentProvenanceResolution` in `assetResolutionLadder.ts`); pre-provenance assets (`original_path: None`) always route to folder-pick. Poison remains in-memory only — restart re-attempts the ladder; silent re-import cannot bypass confirmation because Rust marks only the exact rung silent.
+
+**Step 5 — Storage settings.** `StorageSettingsSection` in App Settings wires `getStorageRootStatus`, `getSizeReport`, `relocateStorageRoot`, and `storage_root_reclaim` (cache + stale backups only — models and project assets never reclaimable).
+
+**Step 6 — Export failure layer.** Retired the hand-built export error overlay in `App.tsx`; `ExportFailureMessage` is now the sole failure UI with repair-timeline, copy-diagnostics, retry, dismiss, resume (gated on retention evidence), and degraded-recovery actions. `failureVia` and `hardwareFailoverUsed` threaded onto `ExportError` via `useExport`.
+
+**V6 Fresh Test project.json.** Compared live vs 2026-09-14 backup: byte-identical except `savedAt` timestamp — no project-body data loss.
+
+#### Gates (Round 27)
+
+See Part C report in the Round 27 session record. Eight frozen constants and four fixture digests unchanged.

@@ -911,6 +911,9 @@ export function useExport(
         isExporting: false,
         error: {
           ...result.error,
+          failureVia: result.error.failureVia ?? result.error.liveness?.failureVia ?? null,
+          hardwareFailoverUsed:
+            result.error.hardwareFailoverUsed ?? result.error.liveness?.hardwareFailoverUsed ?? false,
           // PROMPT 28 STEP 1/3 — stamped at this single hop (mirrors the
           // durabilityWarnings drain immediately above) so exportPathSelection
           // and gpuCapability reach every failure regardless of how deep in

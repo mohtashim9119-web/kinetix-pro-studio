@@ -95,6 +95,8 @@ export interface ExportLivenessSnapshot {
    *  one — e.g. `'flush-timeout'` names a flush that never returned, which
    *  `'watchdog'` alone cannot. */
   failureVia?: string | null;
+  /** True when this export run used the one-shot hardware→software failover. */
+  hardwareFailoverUsed?: boolean;
   /**
    * WS3 — how many `VideoEncoder` sessions this GL piece planned, and which
    * one it was in. `null` on a piece that never reported a plan.
@@ -290,6 +292,10 @@ export interface ExportError {
    * See `webcodecsExport/exportPathSelectionTypes.ts`'s `GradeLossRefusal`.
    */
   gradeLossRefusal?: GradeLossRefusal;
+  /** Typed failure route — also in `liveness.failureVia` for diagnostics. */
+  failureVia?: string | null;
+  /** One-shot hardware→software failover used during this run. */
+  hardwareFailoverUsed?: boolean;
 }
 
 export type ExportResult =

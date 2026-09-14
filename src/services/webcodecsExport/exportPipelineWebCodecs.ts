@@ -3173,6 +3173,7 @@ export async function exportProjectWebCodecs(
     // Post-encode failures are not worker failures; the worker's own route
     // (if any) stays on `lastGlPieceLiveness`, never re-labelled here.
     failureVia: lastGlPieceLiveness?.failureVia ?? null,
+    hardwareFailoverUsed,
     appendLedger: lastGlPieceLiveness?.appendLedger ?? null,
     encoderSessions: lastGlPieceLiveness?.encoderSessions ?? null,
     encoderSessionIndex: lastGlPieceLiveness?.encoderSessionIndex ?? null,
