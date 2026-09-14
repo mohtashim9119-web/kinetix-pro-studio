@@ -37,7 +37,7 @@
  * exception, for the reason above.
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { isWebCodecsExportCapable, isWebCodecsExportToggleOn, setWebCodecsExportToggle } from '../hooks/useExport';
 import { useFocusTrap } from '../hooks/useFocusTrap';
@@ -55,6 +55,12 @@ import type { AspectRatio, ResolutionTier } from '../types';
 
 const ASPECT_RATIO_OPTIONS: AspectRatio[] = ['16:9', '9:16', '1:1'];
 const RESOLUTION_TIER_OPTIONS: ResolutionTier[] = ['720p', '1080p'];
+
+// Round 28 — lazy so the diagnostic-log viewer's own icon imports never sit
+// on App Settings' bundle; opened rarely.
+const DiagnosticLogModal = lazy(() =>
+  import('./DiagnosticLogModal').then(m => ({ default: m.DiagnosticLogModal }))
+);
 
 /** The near-invisible hairline between blocks — a divider, not a card edge. */
 const HAIRLINE = 'pt-6 mt-6 border-t border-white/[0.06]';
@@ -105,20 +111,24 @@ export function AppSettingsModal({ onClose }: Props): React.ReactElement {
 
   const [draftWebcodecsEnabled, setDraftWebcodecsEnabled] = useState<boolean>(() => isWebCodecsExportToggleOn());
   const [draftDefaults, setDraftDefaults] = useState<NewProjectDefaults>(() => readNewProjectDefaults());
+  const [showLogModal, setShowLogModal] = useState(false);
 
   const webcodecsCapable = isWebCodecsExportCapable();
 
   const patchDefaults = (partial: Partial<NewProjectDefaults>): void =>
     setDraftDefaults((prev) => ({ ...prev, ...partial }));
 
-  // Escape = Cancel, same as ProjectSettingsModal/NewProjectModal.
+  // Escape = Cancel, same as ProjectSettingsModal/NewProjectModal. Skipped
+  // while the diagnostic log modal is up over this one — its own Escape
+  // handler closes just itself; without this guard both would close on the
+  // same keypress.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !showLogModal) onClose();
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
+  }, [onClose, showLogModal]);
 
   const handleSave = (): void => {
     setWebCodecsExportToggle(draftWebcodecsEnabled);
@@ -309,6 +319,24 @@ export function AppSettingsModal({ onClose }: Props): React.ReactElement {
           </div>
         </section>
 
+        {/* ── Block 5: Diagnostics — last block, deliberately. Not
+            draft-then-commit (same exemption as Models & Add-ons): opening
+            the log viewer is a read, not a setting. */}
+        <section data-testid="app-settings-block-diagnostics" className={HAIRLINE}>
+          <p className={BLOCK_TITLE}>Diagnostics</p>
+          <p className="text-[9px] text-gray-600 mt-1 mb-3">
+            Inspect the app's own diagnostic log without leaving the app.
+          </p>
+          <button
+            type="button"
+            data-testid="app-settings-view-diagnostic-log"
+            onClick={() => setShowLogModal(true)}
+            className="w-full bg-transparent border border-[#282828] p-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white hover:border-gray-500 transition-all"
+          >
+            View diagnostic logs
+          </button>
+        </section>
+
         <div className="flex gap-3 mt-8">
           <button
             onClick={onClose}
@@ -324,6 +352,12 @@ export function AppSettingsModal({ onClose }: Props): React.ReactElement {
           </button>
         </div>
       </div>
+
+      {showLogModal && (
+        <Suspense fallback={null}>
+          <DiagnosticLogModal onClose={() => setShowLogModal(false)} />
+        </Suspense>
+      )}
     </div>
   );
 }

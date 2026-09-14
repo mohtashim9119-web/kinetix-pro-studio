@@ -525,6 +525,7 @@ pub fn run() {
             ffmpeg::ffmpeg_volume_free_space,
             ffmpeg::ffmpeg_log_disk_preflight,
             ffmpeg::export_log_event,
+            ffmpeg::get_diagnostic_log_text,
             ffmpeg::ffmpeg_retain_session_for_resume,
             ffmpeg::ffmpeg_reclaimable_sessions,
             ffmpeg::ffmpeg_reclaim_sessions,

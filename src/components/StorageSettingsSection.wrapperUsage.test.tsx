@@ -26,6 +26,7 @@ vi.mock('../services/relinkNative', () => ({
   relinkPickFolder: (...args: unknown[]) => relinkPickFolder(...args),
 }));
 
+
 // No mock for '@tauri-apps/api/core' — a direct invoke('relink_pick_folder')
 // call would hit the real (unimplemented-outside-Tauri) module and throw.
 

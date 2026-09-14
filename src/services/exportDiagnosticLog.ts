@@ -50,3 +50,17 @@ export function logExportEvent(phase: ExportLogPhase, detail: string, level: Exp
     console.warn('[ws3-export-log] native export-lifecycle logging failed (non-fatal):', err);
   });
 }
+
+/**
+ * Round 28 — the in-app diagnostic log viewer's read side. Reads
+ * `kinetix-diagnostic.log` via the native `get_diagnostic_log_text` command
+ * (`ffmpeg.rs`), which already resolves the one pinned path this whole
+ * module writes to. Outside Tauri (`npm run dev`) there is no IPC bridge
+ * and nothing was ever written, so this returns the same empty-state
+ * sentinel the native side uses for a missing file — the caller never needs
+ * to special-case "not in Tauri" vs. "file not created yet".
+ */
+export async function getDiagnosticLogText(): Promise<string> {
+  if (!isTauri()) return 'No log entries recorded yet.';
+  return invoke<string>('get_diagnostic_log_text');
+}

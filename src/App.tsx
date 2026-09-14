@@ -279,6 +279,12 @@ const StockSearchModal = lazy(() =>
 const DevTestPanel = lazy(() =>
   import('./components/DevTestPanel').then(m => ({ default: m.DevTestPanel }))
 );
+// Round 28 — lazy so the diagnostic-log viewer's own icon imports never sit
+// on the initial bundle; opened rarely, via App Settings or the hidden
+// Cmd/Ctrl+Shift+D chord.
+const DiagnosticLogModal = lazy(() =>
+  import('./components/DiagnosticLogModal').then(m => ({ default: m.DiagnosticLogModal }))
+);
 import { Timeline } from './components/Timeline';
 import { PreviewStage, type AutoGradeSampler, type PreviewStageHandle } from './components/PreviewStage';
 import { SpeedBadge, SPEED_LADDER } from './components/SpeedBadge';
@@ -2121,6 +2127,7 @@ export default function App() {
   const [showExportSettingsModal, setShowExportSettingsModal] = useState(false);
   const [showManageModelsModal, setShowManageModelsModal] = useState(false);
   const [devPanelOpen, setDevPanelOpen] = useState(false);
+  const [diagnosticLogOpen, setDiagnosticLogOpen] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const previewStageRef = useRef<PreviewStageHandle>(null);
 
@@ -5767,7 +5774,8 @@ export default function App() {
   shortcutsSuppressedRef.current =
     showStockSearch || showNewProjectModal || showProjectSettingsModal
     || showExportSettingsModal || showReviewMapping || devPanelOpen
-    || showManageModelsModal || showAppSettingsModal || exportState.isExporting;
+    || showManageModelsModal || showAppSettingsModal || exportState.isExporting
+    || diagnosticLogOpen;
 
   const togglePlay = () => setIsPlaying(p => !p);
 
@@ -5950,6 +5958,14 @@ export default function App() {
       } else if (import.meta.env.DEV && (e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
         e.preventDefault();
         setDevPanelOpen(prev => !prev);
+      } else if (!import.meta.env.DEV && (e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+        // Round 28 — hidden diagnostic-log-viewer chord. Deliberately the
+        // NON-dev branch: `import.meta.env.DEV` already owns Cmd/Ctrl+Shift+D
+        // for the dev panel above, and this must never fight that binding
+        // for the same keys. A production/tauri:build run has no dev panel
+        // to collide with, so the chord is free there for this instead.
+        e.preventDefault();
+        setDiagnosticLogOpen(prev => !prev);
       }
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -7770,6 +7786,11 @@ export default function App() {
             onClose={() => setDevPanelOpen(false)}
             setProject={(p) => { setProject(p); setShowDashboard(false); }}
           />
+        </Suspense>
+      )}
+      {diagnosticLogOpen && (
+        <Suspense fallback={null}>
+          <DiagnosticLogModal onClose={() => setDiagnosticLogOpen(false)} />
         </Suspense>
       )}
     </>
