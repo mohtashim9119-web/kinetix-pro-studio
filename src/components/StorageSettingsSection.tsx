@@ -7,22 +7,38 @@ import { isTauri } from '../services/tauriFfmpeg';
 import {
   getSizeReport,
   getStorageRootStatus,
-  relocateStorageRoot,
   type SizeReportRow,
   type StorageRootStatus,
 } from '../services/storageRoot';
 import { formatBytes } from '../services/webcodecsExport/diskFull';
-import { relinkPickFolder } from '../services/relinkNative';
 import { invoke } from '@tauri-apps/api/core';
 
 const HAIRLINE = 'pt-6 mt-6 border-t border-white/[0.06]';
 const BLOCK_TITLE = 'text-[9px] font-black uppercase tracking-widest text-[#F27D26]';
 
-export function StorageSettingsSection(): React.ReactElement {
+export interface StorageSettingsSectionProps {
+  /**
+   * WS3 Batch 2 (STEP 3, 3A) — "Move storage root…" no longer picks a
+   * folder and relocates inline; it hands off to the parent, which mounts
+   * `StorageRootRelocationView` (a full-screen modal, App.tsx-level, same
+   * as every other top-level overlay) so the operator sees current root /
+   * target / required / available BEFORE anything is copied, instead of a
+   * native folder picker appearing with zero context.
+   */
+  onOpenRelocation: () => void;
+  /**
+   * Bumped by the parent after a relocation actually completes, so this
+   * section's own status/size-report re-fetch without a page reload —
+   * `refresh` below is otherwise only triggered by this component's own
+   * mount effect.
+   */
+  refreshSignal?: number;
+}
+
+export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: StorageSettingsSectionProps): React.ReactElement {
   const [status, setStatus] = useState<StorageRootStatus | null>(null);
   const [rows, setRows] = useState<SizeReportRow[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [relocating, setRelocating] = useState(false);
   const [reclaimBusy, setReclaimBusy] = useState(false);
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -39,7 +55,7 @@ export function StorageSettingsSection(): React.ReactElement {
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, refreshSignal]);
 
   if (!isTauri()) {
     return (
@@ -98,22 +114,7 @@ export function StorageSettingsSection(): React.ReactElement {
         <button
           type="button"
           data-testid="storage-relocate-open"
-          disabled={relocating}
-          onClick={() => {
-            void (async () => {
-              setRelocating(true);
-              try {
-                const picked = await relinkPickFolder();
-                if (!picked) return;
-                await relocateStorageRoot(picked);
-                await refresh();
-              } catch (err) {
-                setError(err instanceof Error ? err.message : String(err));
-              } finally {
-                setRelocating(false);
-              }
-            })();
-          }}
+          onClick={onOpenRelocation}
           className="w-full bg-transparent border border-[#282828] p-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-white hover:border-gray-500 transition-all disabled:opacity-40"
         >
           Move storage root…
@@ -142,10 +143,6 @@ export function StorageSettingsSection(): React.ReactElement {
           </button>
         )}
       </div>
-
-      {relocating && (
-        <p className="text-[9px] text-gray-500 mt-2">Relocating storage…</p>
-      )}
     </section>
   );
 }

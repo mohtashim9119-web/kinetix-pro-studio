@@ -39,7 +39,7 @@ describe('AppSettingsModal — Diagnostics block', () => {
   it('renders the Diagnostics block as the last block, after New Project Defaults', async () => {
     root = createRoot(container);
     await act(async () => {
-      root.render(<AppSettingsModal onClose={() => {}} />);
+      root.render(<AppSettingsModal onClose={() => {}} onOpenStorageRelocation={() => {}} />);
     });
     const blocks = [...container.querySelectorAll('[data-testid^="app-settings-block-"]')];
     const testIds = blocks.map((b) => b.getAttribute('data-testid'));
@@ -51,7 +51,7 @@ describe('AppSettingsModal — Diagnostics block', () => {
     await import('./DiagnosticLogModal');
     root = createRoot(container);
     await act(async () => {
-      root.render(<AppSettingsModal onClose={() => {}} />);
+      root.render(<AppSettingsModal onClose={() => {}} onOpenStorageRelocation={() => {}} />);
     });
     expect(container.querySelector('[data-testid="diagnostic-log-modal"]')).toBeNull();
     const button = container.querySelector<HTMLButtonElement>('[data-testid="app-settings-view-diagnostic-log"]');
@@ -70,7 +70,7 @@ describe('AppSettingsModal — Diagnostics block', () => {
     let outerClosed = 0;
     root = createRoot(container);
     await act(async () => {
-      root.render(<AppSettingsModal onClose={() => { outerClosed += 1; }} />);
+      root.render(<AppSettingsModal onClose={() => { outerClosed += 1; }} onOpenStorageRelocation={() => {}} />);
     });
     const button = container.querySelector<HTMLButtonElement>('[data-testid="app-settings-view-diagnostic-log"]');
     await act(async () => {

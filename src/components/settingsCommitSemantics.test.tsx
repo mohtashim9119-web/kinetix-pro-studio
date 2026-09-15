@@ -97,7 +97,7 @@ function press(key: string): Promise<void> {
 
 async function renderAppSettings(): Promise<void> {
   root = createRoot(container);
-  await act(async () => { root.render(<AppSettingsModal onClose={() => {}} />); });
+  await act(async () => { root.render(<AppSettingsModal onClose={() => {}} onOpenStorageRelocation={() => {}} />); });
   await act(async () => { await Promise.resolve(); await Promise.resolve(); });
 }
 

@@ -71,6 +71,10 @@ const SELECT = 'w-full bg-[#1A1A1A] border border-[#282828] p-2.5 rounded-lg tex
 
 interface Props {
   onClose: () => void;
+  /** WS3 Batch 2 (STEP 3, 3A) — opens the App.tsx-level StorageRootRelocationView. */
+  onOpenStorageRelocation: () => void;
+  /** Bumped by App.tsx after a relocation completes, to re-fetch this modal's own storage rows. */
+  storageRefreshSignal?: number;
 }
 
 function Toggle({
@@ -106,7 +110,7 @@ function Toggle({
   );
 }
 
-export function AppSettingsModal({ onClose }: Props): React.ReactElement {
+export function AppSettingsModal({ onClose, onOpenStorageRelocation, storageRefreshSignal }: Props): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
 
   const [draftWebcodecsEnabled, setDraftWebcodecsEnabled] = useState<boolean>(() => isWebCodecsExportToggleOn());
@@ -226,7 +230,7 @@ export function AppSettingsModal({ onClose }: Props): React.ReactElement {
         </section>
 
         {/* ── Block 3: Storage ─────────────────────────────────────────── */}
-        <StorageSettingsSection />
+        <StorageSettingsSection onOpenRelocation={onOpenStorageRelocation} refreshSignal={storageRefreshSignal} />
 
         {/* ── Block 4: New Project Defaults ───────────────────────────────
             SEEDS ONLY. These pre-fill the New Project modal's fields and are

@@ -300,6 +300,8 @@ import { useExport, formatElapsed, formatElapsedLong, formatFrameSpanDuration, t
 import { buildExportDiagnosticsBlob } from './services/exportDiagnosticsBlob';
 import { ExportFailureMessage } from './components/recovery/ExportFailureMessage';
 import { ReexportCheckpointModal } from './components/ReexportCheckpointModal';
+import { StorageRootRelocationView } from './components/recovery/StorageRootRelocationView';
+import { useStorageRootRelocation } from './hooks/useStorageRootRelocation';
 import { checkExistingCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
@@ -2125,6 +2127,13 @@ export default function App() {
   // `showProjectSettingsModal` so both can be up at once: Project Settings
   // deep-links into this one and stays mounted underneath it.
   const [showAppSettingsModal, setShowAppSettingsModal] = useState(false);
+  // WS3 Batch 2 (STEP 3, 3A) — a bump signal so StorageSettingsSection
+  // re-fetches its own rows/status after a relocation completes, without
+  // needing to lift that fetch itself up here.
+  const [storageRefreshSignal, setStorageRefreshSignal] = useState(0);
+  const storageRelocation = useStorageRootRelocation(() => {
+    setStorageRefreshSignal((n) => n + 1);
+  });
   const [showExportSettingsModal, setShowExportSettingsModal] = useState(false);
   const [showManageModelsModal, setShowManageModelsModal] = useState(false);
   const [devPanelOpen, setDevPanelOpen] = useState(false);
@@ -7885,7 +7894,24 @@ export default function App() {
           It is a flat three-block surface that raises no nested modal, so
           nothing needs to stay mounted underneath it. */}
       {showAppSettingsModal && (
-        <AppSettingsModal onClose={() => setShowAppSettingsModal(false)} />
+        <AppSettingsModal
+          onClose={() => setShowAppSettingsModal(false)}
+          onOpenStorageRelocation={storageRelocation.open}
+          storageRefreshSignal={storageRefreshSignal}
+        />
+      )}
+      {/* WS3 Batch 2 (STEP 3, 3A) — mounted here (App.tsx top level, same
+          tier as every other full-screen overlay) rather than nested inside
+          AppSettingsModal, so it can render above it. */}
+      {storageRelocation.view && (
+        <StorageRootRelocationView
+          currentRoot={storageRelocation.view.currentRoot}
+          targetVolume={storageRelocation.view.targetVolume}
+          requiredBytes={storageRelocation.view.requiredBytes}
+          availableBytes={storageRelocation.view.availableBytes}
+          validationState={storageRelocation.view.validationState}
+          onChooseFolder={storageRelocation.chooseFolder}
+        />
       )}
       {/* WS3 recovery-ui — the Machine-1 exit. Rendered outside `mainContent`
           for the same reason NewProjectModal/AppSettingsModal are: it opens
