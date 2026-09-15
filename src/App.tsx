@@ -299,7 +299,6 @@ import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, formatElapsed, formatElapsedLong, formatFrameSpanDuration, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { buildExportDiagnosticsBlob } from './services/exportDiagnosticsBlob';
 import { ExportFailureMessage } from './components/recovery/ExportFailureMessage';
-import { shouldOfferResume } from './services/exportFailure/resumeEligibility';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
@@ -3265,6 +3264,11 @@ export default function App() {
   const exportApi = useExport(project, exportResolution, exportFps, onExportSavePath);
   const { state: exportState, startExport, cancelExport, retryExport, dismissSuccess, resolveSealConsent, resolveResumeChoice } = exportApi;
   const [exportReclaimableBytes, setExportReclaimableBytes] = useState<number | undefined>(undefined);
+  // Ruling B (WS3 Batch 2) — distinct from `exportReclaimableBytes === undefined`,
+  // which is ambiguous between "not queried" and "resolved to nothing". The
+  // Reclaim button's primary slot must render disabled+pending while this is
+  // true, never blank, and must never disappear once the slot is chosen.
+  const [exportReclaimablePending, setExportReclaimablePending] = useState(false);
 
   const handleExportSessionReclaim = useCallback(async () => {
     if (!isTauri()) return;
@@ -3293,15 +3297,24 @@ export default function App() {
       || exportState.error.diskFull?.phase !== 'preflight'
     ) {
       setExportReclaimableBytes(undefined);
+      setExportReclaimablePending(false);
       return;
     }
     let cancelled = false;
+    setExportReclaimableBytes(undefined);
+    setExportReclaimablePending(true);
     void TauriFfmpeg.reclaimableSessions()
       .then((report) => {
-        if (!cancelled) setExportReclaimableBytes(report.reclaimableBytes);
+        if (!cancelled) {
+          setExportReclaimableBytes(report.reclaimableBytes);
+          setExportReclaimablePending(false);
+        }
       })
       .catch(() => {
-        if (!cancelled) setExportReclaimableBytes(undefined);
+        if (!cancelled) {
+          setExportReclaimableBytes(undefined);
+          setExportReclaimablePending(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -7266,20 +7279,13 @@ export default function App() {
                 requiredBytes={exportState.error.diskFull?.requiredBytes ?? undefined}
                 availableBytes={exportState.error.diskFull?.availableBytes ?? undefined}
                 reclaimableBytes={exportReclaimableBytes}
+                reclaimablePending={exportReclaimablePending}
                 showReclaimAction={exportState.error.kind === 'disk_full'}
                 hardwareFailoverUsed={exportState.error.hardwareFailoverUsed}
                 failureVia={exportState.error.failureVia ?? exportState.error.liveness?.failureVia ?? null}
                 rawError={exportState.error.message}
                 stack={exportState.error.cause ?? null}
-                onResume={
-                  shouldOfferResume(exportState.error.kind, {
-                    retentionAttempted: exportState.error.retentionAttempted === true,
-                    sessionDisposition: exportState.error.sessionDisposition,
-                    manifestPresent: exportState.error.diskStateAfterFailure?.manifestPresent === true,
-                  }, exportState.error.diskFull?.phase === 'preflight' ? 'preflight' : 'mid-export')
-                    ? retryExport
-                    : undefined
-                }
+                onResume={retryExport}
                 onOpenDegradedRecovery={
                   exportState.error.kind === 'asset_missing' && degradedRecovery
                     ? () => setShowDashboard(false)
@@ -7307,7 +7313,6 @@ export default function App() {
                     ? () => { void handleExportSessionReclaim(); }
                     : undefined
                 }
-                onRetry={exportState.error.kind !== 'cancelled' ? retryExport : undefined}
                 onDismiss={cancelExport}
               />
             ) : (

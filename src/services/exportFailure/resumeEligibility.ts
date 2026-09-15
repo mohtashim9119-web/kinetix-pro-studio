@@ -65,10 +65,47 @@ export interface ExportFailurePresentationInput extends RetentionEvidence {
   failureVia?: string | null;
 }
 
+/**
+ * Ruling A (WS3 Batch 2, owner ruling) — the modal renders at MOST one
+ * primary action. First match wins, in this fixed order:
+ *   1 asset_missing        -> open-recovery
+ *   2 timeline_gap         -> repair-timeline
+ *   3 disk_full preflight  -> reclaim
+ *   4 retention evidence   -> resume
+ *   5 cancelled            -> none (Close only, no unavailable card)
+ *   6 no match             -> none (Close + inline ExportResumeUnavailableCard)
+ *
+ * A remedy that addresses the CAUSE of the failure always outranks Resume —
+ * resuming a project with missing assets or a timeline gap just fails again
+ * at the same point, so rows 1-3 sit above row 4 even when retention
+ * evidence exists. `kind === 'cancelled'` is distinguished from the other
+ * `none` case only by the caller (no unavailable card for a plain cancel).
+ */
+export type PrimarySlot =
+  | 'open-recovery'
+  | 'repair-timeline'
+  | 'reclaim'
+  | 'resume'
+  | 'none';
+
+export function resolvePrimarySlot(input: ExportFailurePresentationInput): PrimarySlot {
+  if (input.kind === 'asset_missing') return 'open-recovery';
+  if (input.kind === 'timeline_gap') return 'repair-timeline';
+  if (input.kind === 'disk_full' && input.diskFullVariant === 'preflight') return 'reclaim';
+  // Row 5 — cancelled never offers Resume regardless of retention evidence
+  // (isNeverResumeKind also covers asset_missing, already handled above by
+  // row 1, so this is only additive for `cancelled` here).
+  if (isNeverResumeKind(input.kind)) return 'none';
+  if (isResumeEligible(input)) return 'resume';
+  return 'none';
+}
+
 export interface ExportFailurePresentation {
   title: string;
   body: string;
   hardwareNote: string | null;
+  primarySlot: PrimarySlot;
+  /** Derived convenience flag — `primarySlot === 'resume'`. */
   offerResume: boolean;
   showResumeUnavailable: boolean;
   showDegradedRecovery: boolean;
@@ -81,7 +118,8 @@ export function resolveExportFailurePresentation(
 ): ExportFailurePresentation {
   const copy = EXPORT_FAILURE_COPY[input.kind];
   const preflight = input.kind === 'disk_full' && input.diskFullVariant === 'preflight';
-  const offerResume = shouldOfferResume(input.kind, input, input.diskFullVariant);
+  const primarySlot = resolvePrimarySlot(input);
+  const offerResume = primarySlot === 'resume';
 
   let title: string = copy.title;
   let body: string = copy.body;
@@ -96,16 +134,17 @@ export function resolveExportFailurePresentation(
     }
   }
 
-  const showDegradedRecovery = input.kind === 'asset_missing';
-  const showResumeUnavailable =
-    !offerResume &&
-    !isNeverResumeKind(input.kind) &&
-    !preflight;
+  const showDegradedRecovery = primarySlot === 'open-recovery';
+  // Row 5 (cancelled) renders no unavailable card — Close only. Row 6 (no
+  // match) does. `isNeverResumeKind` still includes asset_missing, but that
+  // kind never reaches here with primarySlot === 'none' (row 1 wins first).
+  const showResumeUnavailable = primarySlot === 'none' && input.kind !== 'cancelled';
 
   return {
     title,
     body,
     hardwareNote: hardwareNoteFor(input),
+    primarySlot,
     offerResume,
     showResumeUnavailable,
     showDegradedRecovery,

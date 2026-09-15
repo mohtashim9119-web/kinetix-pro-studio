@@ -25,6 +25,14 @@ export interface ExportFailureMessageProps {
   requiredBytes?: number;
   availableBytes?: number;
   reclaimableBytes?: number;
+  /**
+   * Ruling B — the reclaimable-bytes query is async; this is true from the
+   * moment the query is issued until it settles. The primary slot for
+   * disk_full preflight is `reclaim` regardless of this flag (it must never
+   * swap or disappear once rendered) — this only toggles the button's
+   * disabled/pending presentation within that fixed slot.
+   */
+  reclaimablePending?: boolean;
   /** Caller-owned. This view does not compare required vs available. */
   showReclaimAction?: boolean;
   hardwareFailoverUsed?: boolean;
@@ -37,7 +45,6 @@ export interface ExportFailureMessageProps {
   onOpenDegradedRecovery?: () => void;
   onRepairTimeline?: () => void;
   onCopyDiagnostics?: () => void;
-  onRetry?: () => void;
   onDismiss?: () => void;
 }
 
@@ -50,6 +57,7 @@ export function ExportFailureMessage({
   requiredBytes,
   availableBytes,
   reclaimableBytes,
+  reclaimablePending = false,
   showReclaimAction = false,
   hardwareFailoverUsed,
   failureVia,
@@ -61,7 +69,6 @@ export function ExportFailureMessage({
   onOpenDegradedRecovery,
   onRepairTimeline,
   onCopyDiagnostics,
-  onRetry,
   onDismiss,
 }: ExportFailureMessageProps): React.ReactElement {
   const presentation = resolveExportFailurePresentation({
@@ -123,28 +130,13 @@ export function ExportFailureMessage({
 
         {presentation.showResumeUnavailable && <div className="mb-4"><ExportResumeUnavailableCard /></div>}
 
+        {/*
+          Ruling A — at most ONE primary action renders here, chosen by
+          `presentation.primarySlot` (resolvePrimarySlot's fixed ladder).
+          Retry no longer exists anywhere in this component.
+        */}
         <div className="flex flex-col gap-2 mb-4">
-          {presentation.offerResume && (
-            <button
-              type="button"
-              data-testid="export-failure-resume"
-              onClick={() => onResume?.()}
-              className="w-full bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
-            >
-              Resume
-            </button>
-          )}
-          {presentation.showPreflightDisk && showReclaimAction && (
-            <button
-              type="button"
-              data-testid="export-failure-reclaim"
-              onClick={() => onReclaim?.()}
-              className="w-full bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all"
-            >
-              Reclaim
-            </button>
-          )}
-          {presentation.showDegradedRecovery && (
+          {presentation.primarySlot === 'open-recovery' && (
             <button
               type="button"
               data-testid="export-failure-open-recovery"
@@ -154,34 +146,44 @@ export function ExportFailureMessage({
               Open project recovery
             </button>
           )}
-          {kind === 'timeline_gap' && onRepairTimeline && (
+          {presentation.primarySlot === 'repair-timeline' && (
             <button
               type="button"
               data-testid="export-failure-repair-timeline"
-              onClick={() => onRepairTimeline()}
+              onClick={() => onRepairTimeline?.()}
               className="w-full bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
             >
               Repair timeline
             </button>
           )}
-          {kind !== 'cancelled' && onCopyDiagnostics && (
-            <button
-              type="button"
-              data-testid="export-failure-copy-diagnostics"
-              onClick={() => onCopyDiagnostics()}
-              className="w-full bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all"
-            >
-              Copy diagnostics
-            </button>
+          {presentation.primarySlot === 'reclaim' && showReclaimAction && (
+            <>
+              <button
+                type="button"
+                data-testid="export-failure-reclaim"
+                disabled={reclaimablePending || (!reclaimablePending && (reclaimableBytes ?? 0) === 0)}
+                onClick={() => onReclaim?.()}
+                className="w-full bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all disabled:opacity-40 disabled:hover:bg-[#F27D26]"
+              >
+                {reclaimablePending
+                  ? 'Checking reclaimable space…'
+                  : `Reclaim${reclaimableBytes !== undefined ? ` ${formatBytes(reclaimableBytes)}` : ''}`}
+              </button>
+              {!reclaimablePending && reclaimableBytes === 0 && (
+                <p data-testid="export-failure-reclaim-none" className="text-[10px] text-gray-500 -mt-1">
+                  Nothing is currently reclaimable.
+                </p>
+              )}
+            </>
           )}
-          {kind !== 'cancelled' && onRetry && (
+          {presentation.primarySlot === 'resume' && (
             <button
               type="button"
-              data-testid="export-failure-retry"
-              onClick={() => onRetry()}
+              data-testid="export-failure-resume"
+              onClick={() => onResume?.()}
               className="w-full bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
             >
-              Retry
+              Resume
             </button>
           )}
           {onDismiss && (
@@ -191,7 +193,7 @@ export function ExportFailureMessage({
               onClick={() => onDismiss()}
               className="w-full bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all"
             >
-              {kind === 'cancelled' ? 'Dismiss' : 'Cancel'}
+              {kind === 'cancelled' ? 'Dismiss' : 'Close'}
             </button>
           )}
         </div>
@@ -207,6 +209,16 @@ export function ExportFailureMessage({
         >
           {technicalLines.join('\n')}
         </pre>
+        {onCopyDiagnostics && (
+          <button
+            type="button"
+            data-testid="export-failure-copy-diagnostics"
+            onClick={() => onCopyDiagnostics()}
+            className="mt-2 w-full bg-transparent border border-[#282828] p-2 rounded-xl text-[9px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all"
+          >
+            Copy diagnostics
+          </button>
+        )}
       </details>
     </div>
   );

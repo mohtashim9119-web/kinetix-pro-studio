@@ -37,6 +37,10 @@ const ELIGIBLE = {
   manifestPresent: true,
 };
 
+// Ruling A — timeline_gap is deliberately excluded here: its primary slot is
+// always `repair-timeline` (row 2), which outranks Resume (row 4) even when
+// retention evidence is eligible. Same reasoning would exclude asset_missing,
+// but that kind is already covered separately (isNeverResumeKind).
 const RESUME_CAPABLE_KINDS = [
   'disk_full',
   'encode',
@@ -44,7 +48,6 @@ const RESUME_CAPABLE_KINDS = [
   'mux',
   'unknown',
   'destination_path',
-  'timeline_gap',
   'ffmpeg_load',
   'grade_loss_refused',
 ] as const satisfies readonly ExportErrorKind[];
@@ -78,6 +81,9 @@ async function renderMessage(
     onResume: fake.onResume,
     onReclaim: fake.onReclaim,
     onOpenDegradedRecovery: fake.onOpenDegradedRecovery,
+    onRepairTimeline: fake.onRepairTimeline,
+    onDismiss: fake.onDismiss,
+    onCopyDiagnostics: fake.onCopyDiagnostics,
     ...over,
   };
   root = createRoot(container);
@@ -220,5 +226,177 @@ describe('ExportFailureMessage — asset_missing', () => {
     expect(open).not.toBeNull();
     await act(async () => { open!.click(); });
     expect(fake.openDegradedRecoveryCount).toBe(1);
+  });
+});
+
+describe('ExportFailureMessage — Ruling A primary-slot ladder (a remedy for the cause outranks Resume)', () => {
+  it('timeline_gap shows Repair timeline, never Resume, even with eligible retention evidence', async () => {
+    const fake = await renderMessage({ kind: 'timeline_gap', ...ELIGIBLE });
+    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
+    const repair = container.querySelector<HTMLButtonElement>('[data-testid="export-failure-repair-timeline"]');
+    expect(repair).not.toBeNull();
+    await act(async () => { repair!.click(); });
+    expect(fake.repairTimelineCount).toBe(1);
+    expect(fake.resumeCount).toBe(0);
+  });
+
+  it('asset_missing outranks eligible resume evidence too (row 1 over row 4)', async () => {
+    await renderMessage({ kind: 'asset_missing', ...ELIGIBLE });
+    expect(container.querySelector('[data-testid="export-failure-open-recovery"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
+  });
+
+  it('disk_full preflight shows Reclaim, never Resume, even with eligible retention evidence', async () => {
+    await renderMessage({
+      kind: 'disk_full',
+      diskFullVariant: 'preflight',
+      showReclaimAction: true,
+      reclaimableBytes: 400_000_000,
+      ...ELIGIBLE,
+    });
+    expect(container.querySelector('[data-testid="export-failure-reclaim"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
+  });
+
+  it('cancelled renders no primary action and no unavailable card — Close only', async () => {
+    await renderMessage({ kind: 'cancelled', retentionAttempted: false, manifestPresent: false });
+    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
+    expect(container.querySelector('[data-testid="export-failure-reclaim"]')).toBeNull();
+    expect(container.querySelector('[data-testid="export-failure-repair-timeline"]')).toBeNull();
+    expect(container.querySelector('[data-testid="export-failure-open-recovery"]')).toBeNull();
+    expect(container.querySelector('[data-testid="export-resume-unavailable"]')).toBeNull();
+    expect(container.querySelector('[data-testid="export-failure-dismiss"]')).not.toBeNull();
+  });
+
+  it('no-match kind (row 6) renders the inline unavailable card, not a blank primary row', async () => {
+    await renderMessage({ kind: 'encode', retentionAttempted: false, manifestPresent: false });
+    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
+    expect(container.querySelector('[data-testid="export-resume-unavailable"]')).not.toBeNull();
+  });
+
+  it('never renders a Retry button, for any kind, and the prop no longer exists on the type', async () => {
+    const kinds: ExportErrorKind[] = [
+      'disk_full', 'encode', 'concat', 'mux', 'unknown', 'destination_path',
+      'asset_missing', 'timeline_gap', 'ffmpeg_load', 'grade_loss_refused',
+      'resume_adoption_failed', 'cancelled',
+    ];
+    for (const kind of kinds) {
+      await renderMessage({ kind, ...ELIGIBLE });
+      expect(container.querySelector('[data-testid="export-failure-retry"]')).toBeNull();
+      expect(primaryText()).not.toMatch(/\bRetry\b/);
+      act(() => { root.unmount(); });
+      container.remove();
+      container = document.createElement('div');
+      document.body.appendChild(container);
+    }
+    // Compile-time guard: this line would fail to typecheck if `onRetry`
+    // still existed on ExportFailureMessageProps.
+    const props: Record<string, unknown> = { kind: 'unknown' };
+    expect('onRetry' in props).toBe(false);
+  });
+});
+
+describe('ExportFailureMessage — Ruling B: reclaimable-bytes pending/resolved stability', () => {
+  it('renders Reclaim disabled with pending copy while the byte count is in flight, then keeps the SAME slot once resolved', async () => {
+    const fake = createExportFailureActionsFake();
+    const baseProps: ExportFailureMessageProps = {
+      kind: 'disk_full',
+      diskFullVariant: 'preflight',
+      showReclaimAction: true,
+      retentionAttempted: false,
+      manifestPresent: false,
+      reclaimablePending: true,
+      reclaimableBytes: undefined,
+      onReclaim: fake.onReclaim,
+    };
+    root = createRoot(container);
+    await act(async () => { root.render(<ExportFailureMessage {...baseProps} />); });
+
+    let reclaim = container.querySelector<HTMLButtonElement>('[data-testid="export-failure-reclaim"]');
+    expect(reclaim).not.toBeNull();
+    expect(reclaim!.disabled).toBe(true);
+    expect(reclaim!.textContent).toMatch(/checking/i);
+    // No fallthrough to another ladder row while pending.
+    expect(container.querySelector('[data-testid="export-resume-unavailable"]')).toBeNull();
+
+    // Transition: pending resolves to a nonzero count.
+    await act(async () => {
+      root.render(<ExportFailureMessage {...baseProps} reclaimablePending={false} reclaimableBytes={400_000_000} />);
+    });
+    reclaim = container.querySelector<HTMLButtonElement>('[data-testid="export-failure-reclaim"]');
+    expect(reclaim).not.toBeNull(); // same testid — slot identity did not change
+    expect(reclaim!.disabled).toBe(false);
+    expect(reclaim!.textContent).toMatch(/reclaim/i);
+    await act(async () => { reclaim!.click(); });
+    expect(fake.reclaimCount).toBe(1);
+  });
+
+  it('keeps Reclaim in the primary slot, disabled, when the resolved count is zero — never falls through', async () => {
+    const baseProps: ExportFailureMessageProps = {
+      kind: 'disk_full',
+      diskFullVariant: 'preflight',
+      showReclaimAction: true,
+      retentionAttempted: false,
+      manifestPresent: false,
+      reclaimablePending: true,
+      reclaimableBytes: undefined,
+    };
+    root = createRoot(container);
+    await act(async () => { root.render(<ExportFailureMessage {...baseProps} />); });
+    await act(async () => {
+      root.render(<ExportFailureMessage {...baseProps} reclaimablePending={false} reclaimableBytes={0} />);
+    });
+    const reclaim = container.querySelector<HTMLButtonElement>('[data-testid="export-failure-reclaim"]');
+    expect(reclaim).not.toBeNull();
+    expect(reclaim!.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="export-failure-reclaim-none"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="export-resume-unavailable"]')).toBeNull();
+    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
+  });
+});
+
+describe('ExportFailureMessage — Close is a plain dismiss, on every variant', () => {
+  it('Close triggers only onDismiss — no resume/reclaim/repair/recovery side effect fires', async () => {
+    const fake = await renderMessage({ kind: 'mux', ...ELIGIBLE });
+    const close = container.querySelector<HTMLButtonElement>('[data-testid="export-failure-dismiss"]');
+    expect(close).not.toBeNull();
+    await act(async () => { close!.click(); });
+    expect(fake.dismissCount).toBe(1);
+    expect(fake.resumeCount).toBe(0);
+    expect(fake.reclaimCount).toBe(0);
+    expect(fake.repairTimelineCount).toBe(0);
+    expect(fake.openDegradedRecoveryCount).toBe(0);
+  });
+
+  it('Close is present alongside every primary slot kind, never replacing it', async () => {
+    for (const kind of ['asset_missing', 'timeline_gap', 'mux'] as const) {
+      await renderMessage({ kind, ...ELIGIBLE, diskFullVariant: undefined });
+      expect(container.querySelector('[data-testid="export-failure-dismiss"]')).not.toBeNull();
+      act(() => { root.unmount(); });
+      container.remove();
+      container = document.createElement('div');
+      document.body.appendChild(container);
+    }
+  });
+});
+
+describe('ExportFailureMessage — diagnostics live only inside Technical details, on every variant', () => {
+  it('renders Copy diagnostics inside the Technical details disclosure for cancelled too (previously excluded)', async () => {
+    const fake = await renderMessage({ kind: 'cancelled', retentionAttempted: false, manifestPresent: false });
+    const details = container.querySelector('[data-testid="export-failure-technical"]');
+    expect(details).not.toBeNull();
+    const copyBtn = details!.querySelector<HTMLButtonElement>('[data-testid="export-failure-copy-diagnostics"]');
+    expect(copyBtn).not.toBeNull();
+    // Never in the primary row.
+    expect(container.querySelector('[data-testid="export-failure-primary"] [data-testid="export-failure-copy-diagnostics"]')).toBeNull();
+    await act(async () => { copyBtn!.click(); });
+    expect(fake.copyDiagnosticsCount).toBe(1);
+  });
+
+  it('renders Copy diagnostics inside Technical details for an ordinary resumable failure too', async () => {
+    await renderMessage({ kind: 'mux', ...ELIGIBLE });
+    const details = container.querySelector('[data-testid="export-failure-technical"]');
+    expect(details!.querySelector('[data-testid="export-failure-copy-diagnostics"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="export-failure-primary"] [data-testid="export-failure-copy-diagnostics"]')).toBeNull();
   });
 });
