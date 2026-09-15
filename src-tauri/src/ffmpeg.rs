@@ -339,6 +339,53 @@ pub fn ffmpeg_read_session_claim(session_id: String) -> Result<SessionClaimView,
     read_session_claim_view(&dir, &session_id)
 }
 
+/// Outcome of `ffmpeg_peek_export_state` — a typed absence, never an `Err`
+/// that could be mistaken for corruption. `NotFound` covers every benign
+/// "nothing to see here" case uniformly: no session directory, no manifest
+/// file, or a manifest that fails to parse as JSON (a truncated/torn write).
+/// Schema/hash validation of `bytes` is intentionally NOT done here — that
+/// logic already exists once, in TypeScript's `validateExportState`
+/// (`exportCheckpoint.ts`), and this command must not grow a second copy of
+/// it (Ruling C).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum ExportStatePeekResult {
+    Found { bytes: Vec<u8> },
+    NotFound,
+}
+
+/// WS3 Batch 2 (STEP 2, 2A) — a pure, read-only peek at a session's
+/// `export_state.json`, for the pre-export "does an existing checkpoint
+/// match this timeline" check at Export-click time, BEFORE the operator has
+/// chosen to resume anything.
+///
+/// Deliberately distinct from `ffmpeg_reenter_session`: takes no
+/// `tauri::State`, acquires no session claim, never touches
+/// `resume_pending`, and calls no fence/repair machinery. It does exactly
+/// one filesystem read and returns. Calling this any number of times, on
+/// any session, must never change what a subsequent real `reenter` sees.
+#[tauri::command]
+pub fn ffmpeg_peek_export_state(session_id: String) -> Result<ExportStatePeekResult, String> {
+    peek_export_state_inner(&session_id)
+}
+
+fn peek_export_state_inner(session_id: &str) -> Result<ExportStatePeekResult, String> {
+    let dir = session_dir(session_id)?;
+    let path = dir.join("export_state.json");
+    let bytes = match fs::read(&path) {
+        Ok(b) => b,
+        Err(_) => return Ok(ExportStatePeekResult::NotFound),
+    };
+    // Confirms the bytes are at least well-formed JSON before handing them
+    // back — a torn/truncated write (process died mid-`fs::write`) reads as
+    // NotFound, same as a missing file, never as a surfaced parse error.
+    // Full schema/hash validation still happens once, in TS.
+    if serde_json::from_slice::<serde_json::Value>(&bytes).is_err() {
+        return Ok(ExportStatePeekResult::NotFound);
+    }
+    Ok(ExportStatePeekResult::Found { bytes })
+}
+
 /// Sweeps manifest-less `kinetix-export-*` directories older than the threshold.
 /// Never touches directories with a live claim or an export manifest.
 #[tauri::command]
@@ -2526,6 +2573,69 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
         fs::create_dir_all(&dir).unwrap();
         (id, dir)
+    }
+
+    mod peek_export_state {
+        use super::*;
+
+        #[test]
+        fn reads_a_valid_manifest() {
+            let (id, dir) = make_session();
+            let body = br#"{"schema":1,"sourceTimelineHash":"abc"}"#;
+            fs::write(dir.join("export_state.json"), body).unwrap();
+            let result = peek_export_state_inner(&id).unwrap();
+            match result {
+                ExportStatePeekResult::Found { bytes } => assert_eq!(bytes, body),
+                ExportStatePeekResult::NotFound => panic!("expected Found"),
+            }
+        }
+
+        #[test]
+        fn returns_not_found_for_a_missing_session() {
+            // A syntactically valid UUID that was never created as a session dir.
+            let id = Uuid::new_v4().to_string();
+            let result = peek_export_state_inner(&id).unwrap();
+            assert!(matches!(result, ExportStatePeekResult::NotFound));
+        }
+
+        #[test]
+        fn returns_not_found_not_an_error_for_a_truncated_manifest() {
+            let (id, dir) = make_session();
+            // A write that died mid-flush — not valid JSON.
+            fs::write(dir.join("export_state.json"), br#"{"schema":1,"sourceTimel"#).unwrap();
+            let result = peek_export_state_inner(&id);
+            assert!(result.is_ok(), "a torn manifest must never surface as Err: {result:?}");
+            assert!(matches!(result.unwrap(), ExportStatePeekResult::NotFound));
+        }
+
+        /// The important one — proves the peek engages no fence/claim
+        /// machinery: the manifest bytes and mtime are byte-identical and
+        /// timestamp-identical before and after, and (structurally) the
+        /// function takes no `FfmpegSessionState`, so it has no way to
+        /// insert into `resume_pending` even if it wanted to.
+        #[test]
+        fn engages_no_fence_session_state_is_byte_and_mtime_identical_after_read() {
+            let (id, dir) = make_session();
+            let path = dir.join("export_state.json");
+            fs::write(&path, br#"{"schema":1,"sourceTimelineHash":"xyz"}"#).unwrap();
+            let before_bytes = fs::read(&path).unwrap();
+            let before_mtime = fs::metadata(&path).unwrap().modified().unwrap();
+
+            let result = peek_export_state_inner(&id).unwrap();
+            assert!(matches!(result, ExportStatePeekResult::Found { .. }));
+
+            let after_bytes = fs::read(&path).unwrap();
+            let after_mtime = fs::metadata(&path).unwrap().modified().unwrap();
+            assert_eq!(before_bytes, after_bytes, "peek must not mutate the manifest");
+            assert_eq!(before_mtime, after_mtime, "peek must not touch (rewrite) the manifest file");
+
+            // No claim file was created by the peek either — reenter's own
+            // acquire_session_claim would have written one.
+            assert!(
+                !dir.join(crate::session_claim::SESSION_CLAIM_FILENAME).exists(),
+                "peek must never acquire a session claim"
+            );
+        }
     }
 
     fn write_large_piece(dir: &Path, name: &str, total_bytes: usize) -> Vec<u8> {

@@ -545,6 +545,7 @@ pub fn run() {
             ffmpeg::ffmpeg_create_session,
             ffmpeg::ffmpeg_list_resumable_sessions,
             ffmpeg::ffmpeg_read_session_claim,
+            ffmpeg::ffmpeg_peek_export_state,
             ffmpeg::ffmpeg_sweep_orphan_sessions,
             ffmpeg::ffmpeg_volume_free_space,
             ffmpeg::ffmpeg_log_disk_preflight,

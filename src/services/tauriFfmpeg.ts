@@ -23,6 +23,18 @@ export interface SessionClaimView {
   holderLiveness: 'live' | 'stale' | 'unclaimed';
 }
 
+/**
+ * `ffmpeg_peek_export_state`'s result. Mirrors Rust's internally-tagged
+ * `ExportStatePeekResult` (`#[serde(rename_all = "camelCase", tag = "kind")]`)
+ * — variant names serialize camelCase too, so `Found`/`NotFound` become
+ * `'found'`/`'notFound'`. `bytes` is the raw JSON array serde_json emits for
+ * `Vec<u8>` — callers decode it themselves (see `peekExportState`'s doc
+ * comment: this layer does not validate/parse the manifest).
+ */
+export type ExportStatePeekResult =
+  | { kind: 'found'; bytes: number[] }
+  | { kind: 'notFound' };
+
 export interface OrphanSweepEntry {
   sessionId: string;
   path: string;
@@ -262,6 +274,20 @@ export class TauriFfmpeg implements FfmpegLike {
   /** Read-only claim inspection — does not take the claim. */
   static async readSessionClaim(sessionId: string): Promise<SessionClaimView> {
     return invoke<SessionClaimView>('ffmpeg_read_session_claim', { sessionId });
+  }
+
+  /**
+   * WS3 Batch 2 (STEP 2, 2A) — a pure read of a session's manifest bytes.
+   * Engages no fence, takes no claim, never marks `resume_pending`; safe to
+   * call before the operator has chosen anything. `{ kind: 'not-found' }`
+   * covers every benign absence uniformly (missing session, missing
+   * manifest, or a torn/truncated write) — never throws for those. Schema
+   * validation of the returned bytes is the caller's job
+   * (`validateExportState` in `exportCheckpoint.ts`) — this method does not
+   * duplicate that logic.
+   */
+  static async peekExportState(sessionId: string): Promise<ExportStatePeekResult> {
+    return invoke<ExportStatePeekResult>('ffmpeg_peek_export_state', { sessionId });
   }
 
   /** Sweeps manifest-less orphan session directories older than the threshold. */
