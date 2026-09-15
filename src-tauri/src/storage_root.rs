@@ -15,8 +15,9 @@
 //! | `assets/`  | yes (item B)                  | yes |
 //! | `projects/`| yes (`project_mirror.rs`'s `store_root`, repointed) | yes |
 //! | `cache/`   | yes (reserved for future use) | yes |
-//! | `temp/`    | yes (reserved for future use — NOT the export pipeline's or whisper's own temp staging, both of which deliberately stay on `std::env::temp_dir()`; see the doc comment on `temp_dir()` below) | yes (contents are ephemeral — cleared, not copied) |
-//! | `models/`  | path is DEFINED for shape-completeness | **NOT moved**. `models.rs`/`fa.rs` have their own, older, multi-candidate resolution scheme (`fa_model_candidate_paths`, `model_download::models_dir`, ruling R-D) built around external-drive placement that this round does not audit or repoint. Relocating the root today does not move installed models; they stay reachable at their original location. Flagged here rather than silently pretended-away — closing this gap is follow-up work, not part of this round's scope. |
+//! | `temp/`    | yes (reserved for future use — general scratch space, not the export pipeline's own staging; see `export_sessions_dir` below) | yes (contents are ephemeral — cleared, not copied) |
+//! | `export-sessions/` | yes (WS3 Round 28, D4) — `ffmpeg.rs::session_dir` resolves every `kinetix-export-<uuid>` directory under here, not `std::env::temp_dir()`, so a session created after a relocation lands on the new volume. Whisper's own transcription staging is unrelated (`WHISPER_STAGING_DIR_PREFIX` under `std::env::temp_dir()`) and deliberately not moved this round. | **NOT relocated** — a session is resolved fresh from wherever the root currently is at creation time; relocation while an export is live is out of scope (see `storage_root_relocate`'s doc comment for the model-download analog of this same "refuse rather than move a live thing" posture). |
+//! | `models/`  | yes (WS3 Round 28, D4) — `models.rs`/`fa.rs` now resolve their install target through `storage_root::models_dir` first, with the OS-default location as a read-only fallback for pre-existing installs from before this round. | yes, with the same copy-verify-commit flow as `assets/`/`projects/`, refused outright while a download is in flight (see `model_download`'s in-flight guard). |
 //!
 //! **What is never touched:** the WebView2 (or WKWebView/WebKit) user data
 //! folder. On Windows, that profile and `app_local_data_dir()` share
@@ -163,6 +164,19 @@ pub fn models_dir(root: &Path) -> PathBuf {
     root.join("models")
 }
 
+/// WS3 Round 28 (D4) — the export pipeline's session temp tree
+/// (`ffmpeg.rs::session_dir`, `kinetix-export-<uuid>` directories), now
+/// resolved under the configured storage root instead of the OS-default
+/// `std::env::temp_dir()`. Kept as its own named subtree (a sibling of
+/// `temp/`, not reusing it) so a future relocation pass can decide
+/// independently whether a LIVE export session should be moved — this round
+/// does not move it (see `storage_root_relocate`'s doc comment); it is
+/// simply resolved fresh from wherever the root currently is every time a
+/// session directory is opened or scanned.
+pub fn export_sessions_dir(root: &Path) -> PathBuf {
+    root.join("export-sessions")
+}
+
 fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
     let parent = dest
         .parent()
@@ -291,11 +305,12 @@ fn verify_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-const MANAGED_RELOCATION_SUBTREES: [(&str, fn(&Path) -> PathBuf); 4] = [
+const MANAGED_RELOCATION_SUBTREES: [(&str, fn(&Path) -> PathBuf); 5] = [
     ("assets", assets_dir),
     ("projects", projects_dir),
     ("cache", cache_dir),
     ("project-store-backups", project_backups_dir),
+    ("models", models_dir),
 ];
 
 fn relocation_required_bytes(used: u64) -> u64 {
@@ -553,6 +568,19 @@ pub fn storage_root_relocate(
     app: tauri::AppHandle,
     new_root: String,
 ) -> Result<StorageRootRelocateReport, String> {
+    // WS3 Round 28 (D4) — a model (whisper or FA) currently downloading
+    // writes into the very `models/` subtree this call is about to copy and
+    // then delete from the source. Refuse outright rather than moving files
+    // out from under a live writer; the operator can retry once the
+    // download finishes or is cancelled.
+    if crate::model_download::any_download_in_flight() {
+        return Err(
+            "cannot relocate the storage root while a model download is in progress — \
+             wait for it to finish or cancel it, then try again"
+                .to_string(),
+        );
+    }
+
     let current = resolve_storage_root(&app)?;
     let new_root = PathBuf::from(new_root);
 
@@ -592,7 +620,8 @@ pub fn storage_root_relocate(
     let used = dir_size(&assets_dir(&real_current))
         + dir_size(&projects_dir(&real_current))
         + dir_size(&cache_dir(&real_current))
-        + dir_size(&project_backups_dir(&real_current));
+        + dir_size(&project_backups_dir(&real_current))
+        + dir_size(&models_dir(&real_current));
     let available = fs4::available_space(&real_new)
         .map_err(|e| format!("cannot read free space on {}: {e}", real_new.display()))?;
     ensure_relocation_space(used, available)
@@ -800,6 +829,67 @@ mod tests {
             assert!(!forbidden.contains(&target));
         }
         fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn relocation_moves_models_alongside_the_other_managed_subtrees() {
+        // WS3 Round 28 (D4) — models must move with the rest of the managed
+        // tree on relocation, using the same copy-verify-commit flow.
+        let current = tmpdir("models-reloc-source");
+        let destination = tmpdir("models-reloc-dest");
+        fs::remove_dir_all(&destination).ok(); // exists only to get a unique path
+
+        fs::create_dir_all(models_dir(&current).join("fa-models/en")).unwrap();
+        fs::write(models_dir(&current).join("ggml-model.bin"), b"whisper-model-bytes").unwrap();
+        fs::write(
+            models_dir(&current).join("fa-models/en/model.onnx"),
+            b"fa-model-bytes",
+        )
+        .unwrap();
+
+        let (moved, bytes_moved, warnings) = relocate_managed_subtrees_with(
+            &current,
+            &destination,
+            || Ok(()),
+            |from, bounds, name| crate::safe_delete::delete_app_staging_dir(from, bounds, name),
+        )
+        .unwrap();
+
+        assert!(warnings.is_empty());
+        assert!(moved.contains(&"models".to_string()));
+        assert!(bytes_moved > 0);
+
+        // Before/after subtree shape.
+        assert!(models_dir(&current).exists() == false, "source models/ must be gone after cleanup");
+        assert_eq!(
+            fs::read(models_dir(&destination).join("ggml-model.bin")).unwrap(),
+            b"whisper-model-bytes"
+        );
+        assert_eq!(
+            fs::read(models_dir(&destination).join("fa-models/en/model.onnx")).unwrap(),
+            b"fa-model-bytes"
+        );
+
+        fs::remove_dir_all(&current).ok();
+        fs::remove_dir_all(&destination).ok();
+    }
+
+    #[test]
+    fn relocate_refuses_outright_while_a_model_download_is_in_flight() {
+        let part = std::env::temp_dir().join(format!(
+            "kinetix-storage-root-inflight-test-{}.part",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        ));
+        let sink: std::sync::Arc<crate::model_download::EventSink> =
+            std::sync::Arc::new(crate::model_download::EventSink::new(tauri::ipc::Channel::new(
+                |_| Ok(()),
+            )));
+        let _guard = crate::model_download::try_acquire_in_flight(&part, sink)
+            .expect("first claim must succeed");
+        assert!(crate::model_download::any_download_in_flight());
     }
 
     #[test]

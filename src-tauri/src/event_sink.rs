@@ -95,6 +95,14 @@ impl<K: Eq + Hash, T: Clone> InFlightRegistry<K, T> {
     {
         self.map().lock().map(|set| set.contains_key(key)).unwrap_or(false)
     }
+
+    /// Whether ANY job is holding ANY key right now — WS3 Round 28 (D4),
+    /// used to refuse a storage-root relocation while a model download is
+    /// writing into the very tree relocation is about to copy/move, rather
+    /// than racing a `.part` file out from under it.
+    pub(crate) fn any_in_flight(&self) -> bool {
+        self.map().lock().map(|set| !set.is_empty()).unwrap_or(false)
+    }
 }
 
 impl<K, T> InFlightRegistry<K, T>

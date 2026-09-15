@@ -521,9 +521,19 @@ pub fn run() {
                    .map(|w| w.open_devtools());
             }
             // Best-effort orphan reclaim on startup — never blocks launch.
-            match session_claim::sweep_manifestless_orphans(
-                session_claim::ORPHAN_SWEEP_MIN_AGE_SECS,
-            ) {
+            // WS3 Round 28 (D4) — scans wherever the configured storage
+            // root's export-sessions tree currently is, not a hardcoded
+            // `std::env::temp_dir()`; a storage root that has never been
+            // resolved yet (fresh install) or fails to resolve just skips
+            // this best-effort sweep rather than failing startup.
+            let orphan_sweep_dir = storage_root::resolve_storage_root(app.handle())
+                .map(|root| storage_root::export_sessions_dir(&root));
+            match orphan_sweep_dir.and_then(|dir| {
+                session_claim::sweep_manifestless_orphans(
+                    &dir,
+                    session_claim::ORPHAN_SWEEP_MIN_AGE_SECS,
+                )
+            }) {
                 Ok(report) if report.deleted > 0 || report.pending_delete > 0 => {
                     log::info!(
                         "orphan sweep: deleted={} pending_delete={} bytes_reclaimed={}",

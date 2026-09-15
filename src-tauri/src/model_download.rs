@@ -127,7 +127,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::ipc::Channel;
-use tauri::Manager;
 
 use crate::whisper::MODEL_FILENAME;
 
@@ -399,14 +398,26 @@ pub struct ModelDownloadStatus {
     pub in_flight: bool,
 }
 
+/// WS3 Round 28 (D4) — resolves through the configured storage root
+/// (`storage_root::resolve_storage_root`), not a hardcoded
+/// `app_local_data_dir()`. Identical path to before this round when the
+/// root has never been relocated (`resolve_storage_root` returns
+/// `app_local_data_dir()` itself in that case), so an existing installed
+/// whisper model is found without any migration step; a relocated root
+/// moves this directory via `storage_root_relocate`'s `models` subtree.
 pub(crate) fn models_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| format!("cannot resolve app_local_data_dir: {e}"))?
-        .join("models");
+    let root = crate::storage_root::resolve_storage_root(app)?;
+    let dir = crate::storage_root::models_dir(&root);
     fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     Ok(dir)
+}
+
+/// WS3 Round 28 (D4) — true while any model (whisper or FA, any language) is
+/// mid-download in THIS process. `storage_root_relocate` refuses to run
+/// while this is true rather than copying/deleting files out from under a
+/// live writer.
+pub(crate) fn any_download_in_flight() -> bool {
+    IN_FLIGHT.any_in_flight()
 }
 
 /// `<target>.part` — the single place this suffix is spelled, so the

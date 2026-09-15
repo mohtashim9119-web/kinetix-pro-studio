@@ -260,19 +260,27 @@ fn target_path(app: &tauri::AppHandle, id: ModelId) -> Result<PathBuf, String> {
     match id {
         ModelId::Whisper => Ok(models_dir(app)?.join(MODEL_FILENAME)),
         ModelId::Fa(lang) => {
+            let storage_root_models_dir = crate::storage_root::resolve_storage_root(app)
+                .ok()
+                .map(|root| crate::storage_root::models_dir(&root));
             let local_data_dir = app.path().app_local_data_dir().ok();
             let exe_dir = std::env::current_exe()
                 .ok()
                 .and_then(|exe| exe.parent().map(|p| p.to_path_buf()));
-            let candidates = fa_model_candidate_paths(local_data_dir.as_deref(), exe_dir.as_deref(), lang);
-            // Candidate [0] is the managed `app_local_data_dir` slot — the
+            let candidates = fa_model_candidate_paths(
+                storage_root_models_dir.as_deref(),
+                local_data_dir.as_deref(),
+                exe_dir.as_deref(),
+                lang,
+            );
+            // Candidate [0] is the managed, storage-root-relative slot — the
             // only one this module ever WRITES to (the exe-dir fallback in
             // `fa_model_candidate_paths` stays a manual-placement-only path;
             // see that function's own doc comment).
             candidates
                 .into_iter()
                 .next()
-                .ok_or_else(|| "cannot resolve app_local_data_dir for FA model install target".to_string())
+                .ok_or_else(|| "cannot resolve a storage root for FA model install target".to_string())
         }
     }
 }

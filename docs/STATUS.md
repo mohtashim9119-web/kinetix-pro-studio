@@ -83,7 +83,26 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 - [OPEN] `navigator.storage.persist()` WebView2 return value unrecorded — `windows-validation.md` W24
 - [OPEN] D1 Resume mints a new session folder instead of adopting the retained one — Round 28, assigned to CC
 - [OPEN] D2 Two resume surfaces; four equal-weight buttons on the failure overlay — Round 28, assigned to CC
-- [OPEN] D4 Storage root relocation skips models; export temp still under `%TEMP%` on C: — Round 28, assigned to CC
+- D4 CLOSED (Round 28, Batch 3) — export session temp now resolves under the configured storage
+  root's `export-sessions/` subtree instead of a hardcoded `std::env::temp_dir()`
+  (`ffmpeg.rs::session_dir`/`session_dir_under`, `storage_root::export_sessions_dir`); the
+  create/list/sweep/reclaim commands and the resume-adoption path (`ffmpeg_reenter_session`)
+  all route through the same resolver — proven by
+  `session_dir_storage_root_routing::session_dir_always_nests_under_the_given_root_never_under_os_temp`,
+  `...session_dir_under_a_relocated_root_is_disjoint_from_os_temp_dir`, and
+  `...resume_and_session_management_commands_never_call_os_temp_dir_directly` (`src-tauri/src/ffmpeg.rs`).
+  Whisper/FA models now resolve their install target through `storage_root::models_dir` first
+  (`model_download.rs::models_dir`, `fa.rs::fa_model_candidate_paths`/`fa_model_path`), with the
+  pre-Round-28 `app_local_data_dir` location kept as a read-only fallback so an existing install
+  is still found without a migration step. `models` is now a fifth relocation subtree in
+  `storage_root.rs`'s `MANAGED_RELOCATION_SUBTREES`, moved by the same copy-verify-commit flow and
+  the same insufficient-space rejection as `assets`/`projects`/`cache`/`project-store-backups`
+  (`relocation_moves_models_alongside_the_other_managed_subtrees`). A model download in flight
+  refuses relocation outright (`model_download::any_download_in_flight`,
+  `relocate_refuses_outright_while_a_model_download_is_in_flight`) rather than moving files out
+  from under a live writer. Remaining hardware confirmation (relocation + a live export actually
+  landing on the new volume, Resume adopting the same directory on real Windows) is unit/
+  integration-covered only — see the new "Machine 1 checklist" in `windows-validation.md`.
 - CLOSED (WS3 Batch 2, 3B/3C) — D5 was never a wiring gap (`StorageSettingsSection.tsx:130` genuinely called `storage_root_reclaim` all along — STEP 0b re-grep). Three separate defects fixed instead: D5a `reclaimable_dirs`'s backups path was discarded (`storage_root.rs`); D5b `sweep_stale_project_backups`'s freed-byte total was thrown away (now returns `u64`, `project_mirror.rs`); D5c (the one that mattered) — `size_report` advertised the ENTIRE backups directory as reclaimable regardless of staleness, a number that was never true. Now advertises exactly what the sweep would free (`project_mirror::store_backups_stale_bytes`), proven byte-exact-equal to what the sweep actually frees by a mixed aged/fresh fixture test. U36 (the export-failure modal's separate "Reclaim {bytes}" mechanism) is untouched, by design — see `docs/ws3-export-pipeline/reclaim-mechanisms.md` for which root each mechanism covers.
 - [OPEN] D9 Twenty encoder sessions with eighteen restarts on RX 580 in one piece — Round 28, assigned to CC
 - D8 CLOSED (Round 28, addendum scope) — added `export_log_event` (Rust, `ffmpeg.rs`) and `logExportEvent` (TS, `exportDiagnosticLog.ts`), a general-purpose door into `kinetix-diagnostic.log` for the export lifecycle, wired at init, cancellation, disk-full-preflight, and session-cleanup (`exportPipelineWebCodecs.ts`). Flush: routes through the same `tauri_plugin_log` `Folder` target the pre-existing `ffmpeg_log_disk_preflight`/`ffmpeg_retain_session_for_resume` commands already use, backed by an unbuffered `std::fs::File::write_all` (no `BufWriter`) — verified by reading `tauri-plugin-log 2.8.0`'s file-target implementation, not assumed. NOT wired: encoder-config, frame-loop progress pulses, and watchdog-update events, which originate inside the WebCodecs Worker (a separate global scope with no direct IPC access) and would need `postMessage`-to-main-thread plumbing this pass didn't build — left for a future pass; see `App.tsx`/`exportWorker.ts` for where that would attach.

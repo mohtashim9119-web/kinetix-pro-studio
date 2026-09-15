@@ -410,9 +410,13 @@ fn classify_remove_outcome(existed_before: bool, still_exists_after: bool) -> Re
     }
 }
 
-pub fn sweep_manifestless_orphans(min_age_secs: u64) -> Result<OrphanSweepReport, String> {
-    let temp = std::env::temp_dir();
-    let entries = fs::read_dir(&temp)
+/// WS3 Round 28 (D4) — `base_dir` is the export sessions tree to scan
+/// (`storage_root::export_sessions_dir(&resolve_storage_root(&app)?)`), not
+/// a hardcoded `std::env::temp_dir()` — a session created under a relocated
+/// storage root must be swept from where it actually lives.
+pub fn sweep_manifestless_orphans(base_dir: &Path, min_age_secs: u64) -> Result<OrphanSweepReport, String> {
+    let temp = base_dir;
+    let entries = fs::read_dir(temp)
         .map_err(|e| format!("sweep_orphans({}): {e}", temp.display()))?;
     let now = now_ms();
     let mut report = OrphanSweepReport {
@@ -487,7 +491,7 @@ pub fn sweep_manifestless_orphans(min_age_secs: u64) -> Result<OrphanSweepReport
         let existed_before = dir.exists();
         match crate::safe_delete::delete_app_staging_dir(
             &dir,
-            &temp,
+            temp,
             "kinetix-export-",
         ) {
             Ok(()) => {
@@ -790,9 +794,8 @@ fn holder_liveness_of(dir: &Path) -> Result<String, String> {
     })
 }
 
-fn export_session_dirs() -> Result<Vec<(String, PathBuf)>, String> {
-    let temp = std::env::temp_dir();
-    let entries = fs::read_dir(&temp).map_err(|e| format!("reclaim: read_dir({}): {e}", temp.display()))?;
+fn export_session_dirs(base_dir: &Path) -> Result<Vec<(String, PathBuf)>, String> {
+    let entries = fs::read_dir(base_dir).map_err(|e| format!("reclaim: read_dir({}): {e}", base_dir.display()))?;
     let mut out = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| format!("reclaim: read_dir: {e}"))?;
@@ -810,11 +813,13 @@ fn export_session_dirs() -> Result<Vec<(String, PathBuf)>, String> {
     Ok(out)
 }
 
-/// See `ffmpeg_reclaimable_sessions`. Read-only.
-pub fn report_reclaimable_sessions() -> Result<ReclaimableSessionsReport, String> {
+/// See `ffmpeg_reclaimable_sessions`. Read-only. `base_dir` — see
+/// `sweep_manifestless_orphans`'s doc comment on why this is a parameter and
+/// not a hardcoded `std::env::temp_dir()` (WS3 Round 28, D4).
+pub fn report_reclaimable_sessions(base_dir: &Path) -> Result<ReclaimableSessionsReport, String> {
     let now = now_ms();
     let mut report = ReclaimableSessionsReport {
-        temp_dir: std::env::temp_dir().display().to_string(),
+        temp_dir: base_dir.display().to_string(),
         scanned: 0,
         live_bytes: 0,
         resumable_bytes: 0,
@@ -822,7 +827,7 @@ pub fn report_reclaimable_sessions() -> Result<ReclaimableSessionsReport, String
         reclaimable_bytes: 0,
         entries: Vec::new(),
     };
-    for (id, dir) in export_session_dirs()? {
+    for (id, dir) in export_session_dirs(base_dir)? {
         report.scanned += 1;
         let bytes = dir_size(&dir);
         let manifest = has_manifest(&dir);
@@ -865,7 +870,7 @@ pub struct ReclaimReport {
 /// See `ffmpeg_reclaim_sessions`. Same accounting invariant as the sweep: a
 /// directory that still exists after `remove_dir_all` (Windows
 /// delete-pending) is never counted as reclaimed.
-pub fn reclaim_sessions(session_ids: &[String]) -> Result<ReclaimReport, String> {
+pub fn reclaim_sessions(base_dir: &Path, session_ids: &[String]) -> Result<ReclaimReport, String> {
     let mut report = ReclaimReport {
         removed: Vec::new(),
         refused_live: Vec::new(),
@@ -878,7 +883,7 @@ pub fn reclaim_sessions(session_ids: &[String]) -> Result<ReclaimReport, String>
             report.failed.push(format!("{id}: not a session id"));
             continue;
         }
-        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
+        let dir = base_dir.join(format!("kinetix-export-{id}"));
         if !dir.exists() {
             continue;
         }
@@ -890,7 +895,7 @@ pub fn reclaim_sessions(session_ids: &[String]) -> Result<ReclaimReport, String>
         let _ = release_session_claim(&dir);
         match crate::safe_delete::delete_app_staging_dir(
             &dir,
-            &std::env::temp_dir(),
+            base_dir,
             "kinetix-export-",
         ) {
             Ok(()) => match classify_remove_outcome(true, dir.exists()) {
@@ -1263,7 +1268,7 @@ mod tests {
         let (live_id, live_dir) = mk(true, true);
         let (resumable_id, resumable_dir) = mk(true, false);
         let (orphan_id, orphan_dir) = mk(false, false);
-        let report = report_reclaimable_sessions().unwrap();
+        let report = report_reclaimable_sessions(&std::env::temp_dir()).unwrap();
         assert!(!report.temp_dir.is_empty());
         let find = |id: &str| report.entries.iter().find(|e| e.session_id == id).unwrap().clone();
         assert_eq!(find(&live_id).class, "live");
@@ -1297,7 +1302,11 @@ mod tests {
         };
         let (live_id, live_dir) = mk(true);
         let (gone_id, gone_dir) = mk(false);
-        let report = reclaim_sessions(&[live_id.clone(), gone_id.clone(), "not-a-uuid".to_string()]).unwrap();
+        let report = reclaim_sessions(
+            &std::env::temp_dir(),
+            &[live_id.clone(), gone_id.clone(), "not-a-uuid".to_string()],
+        )
+        .unwrap();
         assert_eq!(report.refused_live, vec![live_id.clone()]);
         assert_eq!(report.removed, vec![gone_id.clone()]);
         assert_eq!(report.failed.len(), 1);

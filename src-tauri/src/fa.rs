@@ -552,25 +552,37 @@ pub enum FaEvent {
 const FA_MODEL_FILENAME: &str = "model.onnx";
 
 /// Pure candidate-path builder — no filesystem access, no `AppHandle`, so it
-/// is directly unit-testable. Order matters: the managed location (R-D: FA
-/// models resolve via `app_local_data_dir`) is preferred; the manual-
-/// placement location is the fallback for a model dropped in by hand before
-/// Step T's on-demand downloader exists (R-D keeps Step T out of this task).
-/// Deliberately never includes anything under `src-tauri/models/` — that's
-/// the whisper model's bundle-glob location (`tauri.conf.json`'s
+/// is directly unit-testable. Order matters: the storage-root-managed
+/// location (WS3 Round 28, D4) is preferred and is the only one this module
+/// ever WRITES a fresh download to; the legacy `app_local_data_dir` location
+/// is next (so a model installed before this round, or on a build that has
+/// never relocated its storage root, is still found — `resolve_storage_root`
+/// returns `app_local_data_dir()` verbatim in the unrelocated case, so those
+/// two candidates are the SAME path then and this list has no duplicate
+/// effect); the manual-placement exe-dir location is the last-resort
+/// fallback for a model dropped in by hand before the on-demand downloader
+/// existed. Deliberately never includes anything under `src-tauri/models/`
+/// — that's the whisper model's bundle-glob location (`tauri.conf.json`'s
 /// `resources` map), untouched by this module. Called from `fa_align`'s
 /// `fa-inference`-gated real implementation (`fa_onnx.rs`) via
 /// [`fa_model_path`] below; still unused (and `dead_code`-allowed) when that
 /// feature is off.
 #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 pub(crate) fn fa_model_candidate_paths(
+    storage_root_models_dir: Option<&Path>,
     local_data_dir: Option<&Path>,
     exe_dir: Option<&Path>,
     language_code: &str,
 ) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
-    if let Some(dir) = local_data_dir {
+    if let Some(dir) = storage_root_models_dir {
         candidates.push(dir.join("fa-models").join(language_code).join(FA_MODEL_FILENAME));
+    }
+    if let Some(dir) = local_data_dir {
+        let p = dir.join("fa-models").join(language_code).join(FA_MODEL_FILENAME);
+        if !candidates.contains(&p) {
+            candidates.push(p);
+        }
     }
     if let Some(dir) = exe_dir {
         candidates.push(dir.join("fa-models").join(language_code).join(FA_MODEL_FILENAME));
@@ -603,12 +615,16 @@ fn no_model_found_error(candidates: &[PathBuf], language_code: &str) -> FaError 
 
 #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
 pub(crate) fn fa_model_path(app: &tauri::AppHandle, language_code: &str) -> Result<PathBuf, FaError> {
+    let storage_root_models_dir = crate::storage_root::resolve_storage_root(app)
+        .ok()
+        .map(|root| crate::storage_root::models_dir(&root));
     let local_data_dir = app.path().app_local_data_dir().ok();
     let exe_dir = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|p| p.to_path_buf()));
 
     let candidates = fa_model_candidate_paths(
+        storage_root_models_dir.as_deref(),
         local_data_dir.as_deref(),
         exe_dir.as_deref(),
         language_code,
@@ -1257,10 +1273,30 @@ mod tests {
     // -- model resolution ladder ---------------------------------------
 
     #[test]
-    fn candidate_paths_prefers_managed_over_manual_in_order() {
+    fn candidate_paths_prefers_storage_root_then_managed_then_manual_in_order() {
+        let storage = PathBuf::from("/fake/storage-root/models");
         let local = PathBuf::from("/fake/local-data");
         let exe = PathBuf::from("/fake/exe-dir");
-        let candidates = fa_model_candidate_paths(Some(&local), Some(&exe), "en");
+        let candidates = fa_model_candidate_paths(Some(&storage), Some(&local), Some(&exe), "en");
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("/fake/storage-root/models/fa-models/en/model.onnx"),
+                PathBuf::from("/fake/local-data/fa-models/en/model.onnx"),
+                PathBuf::from("/fake/exe-dir/fa-models/en/model.onnx"),
+            ]
+        );
+    }
+
+    #[test]
+    fn candidate_paths_dedupes_when_storage_root_equals_local_data_dir() {
+        // The unrelocated case: `resolve_storage_root` returns
+        // `app_local_data_dir()` verbatim, so the storage-root-managed
+        // "models" dir and the legacy local-data-dir dir resolve to the
+        // exact same path. Must not appear twice in the ladder.
+        let same = PathBuf::from("/fake/local-data");
+        let exe = PathBuf::from("/fake/exe-dir");
+        let candidates = fa_model_candidate_paths(Some(&same), Some(&same), Some(&exe), "en");
         assert_eq!(
             candidates,
             vec![
@@ -1272,9 +1308,10 @@ mod tests {
 
     #[test]
     fn candidate_paths_never_targets_src_tauri_models() {
+        let storage = PathBuf::from("/fake/storage-root/models");
         let local = PathBuf::from("/fake/local-data");
         let exe = PathBuf::from("/fake/exe-dir");
-        let candidates = fa_model_candidate_paths(Some(&local), Some(&exe), "es");
+        let candidates = fa_model_candidate_paths(Some(&storage), Some(&local), Some(&exe), "es");
         for c in &candidates {
             let s = c.display().to_string();
             assert!(!s.contains("src-tauri/models"), "candidate must not target src-tauri/models: {s}");
@@ -1284,10 +1321,10 @@ mod tests {
     #[test]
     fn candidate_paths_omits_missing_tiers() {
         let exe = PathBuf::from("/fake/exe-dir");
-        let candidates = fa_model_candidate_paths(None, Some(&exe), "de");
+        let candidates = fa_model_candidate_paths(None, None, Some(&exe), "de");
         assert_eq!(candidates, vec![PathBuf::from("/fake/exe-dir/fa-models/de/model.onnx")]);
 
-        let candidates = fa_model_candidate_paths(None, None, "de");
+        let candidates = fa_model_candidate_paths(None, None, None, "de");
         assert!(candidates.is_empty());
     }
 

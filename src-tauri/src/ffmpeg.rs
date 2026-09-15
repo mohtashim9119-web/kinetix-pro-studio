@@ -218,11 +218,38 @@ fn validate_path(path: &str) -> Result<(), String> {
 ///
 /// Validation ensures the frontend cannot supply an arbitrary directory path
 /// by crafting a malformed session_id string.
-fn session_dir(session_id: &str) -> Result<PathBuf, String> {
+///
+/// WS3 Round 28 (D4) — resolved under the configured storage root's
+/// `export-sessions/` subtree (`storage_root::export_sessions_dir`), not a
+/// hardcoded `std::env::temp_dir()`, so a session created after a relocation
+/// lands on the new volume rather than silently staying on the OS default
+/// (previously always `%TEMP%`/`$TMPDIR`, regardless of the configured root).
+fn session_dir(app: &tauri::AppHandle, session_id: &str) -> Result<PathBuf, String> {
+    let root = crate::storage_root::resolve_storage_root(app)?;
+    session_dir_under(&root, session_id)
+}
+
+/// Pure core of `session_dir` — no `AppHandle`, directly unit-testable
+/// (mirrors this codebase's established "pure core, thin AppHandle wrapper"
+/// split, e.g. `fa.rs`'s `fa_model_candidate_paths`/`fa_model_path`). Takes
+/// the already-resolved storage root rather than resolving it itself, so a
+/// test can assert the resulting path is under an ARBITRARY root — including
+/// one deliberately chosen to be nowhere near `std::env::temp_dir()` — with
+/// no Tauri runtime involved.
+fn session_dir_under(root: &Path, session_id: &str) -> Result<PathBuf, String> {
     // Parse as UUID to validate format — reject anything that isn't a real v4 UUID.
     let _ = Uuid::parse_str(session_id)
         .map_err(|_| format!("invalid session_id: \"{}\" is not a valid UUID", session_id))?;
-    Ok(std::env::temp_dir().join(format!("kinetix-export-{}", session_id)))
+    Ok(crate::storage_root::export_sessions_dir(root).join(format!("kinetix-export-{}", session_id)))
+}
+
+/// The base directory export sessions currently live under — same
+/// resolution `session_dir` uses, without a session id appended. Used by
+/// the create/list/sweep/reclaim commands, which operate over the whole
+/// tree rather than one session.
+fn export_sessions_base_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let root = crate::storage_root::resolve_storage_root(app)?;
+    Ok(crate::storage_root::export_sessions_dir(&root))
 }
 
 fn recover_export_state_replace(dir: &Path) -> Result<(), String> {
@@ -254,10 +281,11 @@ fn recover_export_state_replace(dir: &Path) -> Result<(), String> {
 /// subsequent commands for this export.
 #[tauri::command]
 pub fn ffmpeg_create_session(
+    app: tauri::AppHandle,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
-    let dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
+    let dir = export_sessions_base_dir(&app)?.join(format!("kinetix-export-{}", id));
     fs::create_dir_all(&dir).map_err(|e| format!("create_session: {}", e))?;
     acquire_session_claim(&dir, &id).map_err(|e| format!("create_session: {e}"))?;
     register_session_cancel_flag(&state, &id);
@@ -268,10 +296,16 @@ pub fn ffmpeg_create_session(
 /// Names are parsed as UUIDs; arbitrary `kinetix-export-*` directories are
 /// ignored rather than exposed to the renderer.
 #[tauri::command]
-pub fn ffmpeg_list_resumable_sessions() -> Result<Vec<String>, String> {
-    let temp = std::env::temp_dir();
-    let entries = fs::read_dir(&temp)
-        .map_err(|e| format!("list_resumable_sessions({}): {}", temp.display(), e))?;
+pub fn ffmpeg_list_resumable_sessions(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let temp = export_sessions_base_dir(&app)?;
+    let entries = match fs::read_dir(&temp) {
+        Ok(entries) => entries,
+        // No export has ever run under this root yet — an empty resumable
+        // list, not an error (mirrors every other "nothing here yet" read
+        // in this module).
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(format!("list_resumable_sessions({}): {}", temp.display(), e)),
+    };
     let mut sessions = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|e| format!("list_resumable_sessions: {}", e))?;
@@ -307,10 +341,11 @@ pub fn ffmpeg_list_resumable_sessions() -> Result<Vec<String>, String> {
 /// succeeds.
 #[tauri::command]
 pub fn ffmpeg_reenter_session(
+    app: tauri::AppHandle,
     session_id: String,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<(), String> {
-    let dir = session_dir(&session_id)?;
+    let dir = session_dir(&app, &session_id)?;
     if !dir.is_dir() {
         return Err(format!(
             "reenter_session: session directory does not exist: {}",
@@ -329,8 +364,8 @@ pub fn ffmpeg_reenter_session(
 
 /// Read-only claim inspection for discovery UI — does not take the claim.
 #[tauri::command]
-pub fn ffmpeg_read_session_claim(session_id: String) -> Result<SessionClaimView, String> {
-    let dir = session_dir(&session_id)?;
+pub fn ffmpeg_read_session_claim(app: tauri::AppHandle, session_id: String) -> Result<SessionClaimView, String> {
+    let dir = session_dir(&app, &session_id)?;
     if !dir.is_dir() {
         return Err(format!(
             "read_session_claim: session directory does not exist: {}",
@@ -366,12 +401,12 @@ pub enum ExportStatePeekResult {
 /// one filesystem read and returns. Calling this any number of times, on
 /// any session, must never change what a subsequent real `reenter` sees.
 #[tauri::command]
-pub fn ffmpeg_peek_export_state(session_id: String) -> Result<ExportStatePeekResult, String> {
-    peek_export_state_inner(&session_id)
+pub fn ffmpeg_peek_export_state(app: tauri::AppHandle, session_id: String) -> Result<ExportStatePeekResult, String> {
+    let dir = session_dir(&app, &session_id)?;
+    peek_export_state_inner(&dir)
 }
 
-fn peek_export_state_inner(session_id: &str) -> Result<ExportStatePeekResult, String> {
-    let dir = session_dir(session_id)?;
+fn peek_export_state_inner(dir: &Path) -> Result<ExportStatePeekResult, String> {
     let path = dir.join("export_state.json");
     let bytes = match fs::read(&path) {
         Ok(b) => b,
@@ -390,8 +425,8 @@ fn peek_export_state_inner(session_id: &str) -> Result<ExportStatePeekResult, St
 /// Sweeps manifest-less `kinetix-export-*` directories older than the threshold.
 /// Never touches directories with a live claim or an export manifest.
 #[tauri::command]
-pub fn ffmpeg_sweep_orphan_sessions(min_age_secs: Option<u64>) -> Result<OrphanSweepReport, String> {
-    sweep_manifestless_orphans(min_age_secs.unwrap_or(ORPHAN_SWEEP_MIN_AGE_SECS))
+pub fn ffmpeg_sweep_orphan_sessions(app: tauri::AppHandle, min_age_secs: Option<u64>) -> Result<OrphanSweepReport, String> {
+    sweep_manifestless_orphans(&export_sessions_base_dir(&app)?, min_age_secs.unwrap_or(ORPHAN_SWEEP_MIN_AGE_SECS))
 }
 
 /// WS3 Round 21 (D1) — free space on every volume an export will write to.
@@ -403,10 +438,11 @@ pub fn ffmpeg_sweep_orphan_sessions(min_age_secs: Option<u64>) -> Result<OrphanS
 /// tree alone.
 #[tauri::command]
 pub fn ffmpeg_volume_free_space(
+    app: tauri::AppHandle,
     session_id: String,
     dest_path: Option<String>,
 ) -> Result<Vec<VolumeFreeSpace>, String> {
-    let dir = session_dir(&session_id)?;
+    let dir = session_dir(&app, &session_id)?;
     let mut out = vec![volume_free_space(&dir)?];
     if let Some(dest) = dest_path {
         out.push(volume_free_space(Path::new(&dest))?);
@@ -518,6 +554,7 @@ pub fn get_diagnostic_log_text(app: tauri::AppHandle) -> Result<String, String> 
 /// `exportWorkerDiagnostics.ts`'s `FAILURE_VIA_TO_KIND`.
 #[tauri::command]
 pub fn ffmpeg_retain_session_for_resume(
+    app: tauri::AppHandle,
     session_id: String,
     failure_kind: Option<String>,
     state: tauri::State<'_, FfmpegSessionState>,
@@ -525,7 +562,7 @@ pub fn ffmpeg_retain_session_for_resume(
     state.cancel_flags.lock().unwrap().remove(&session_id);
     state.resume_pending.lock().unwrap().remove(&session_id);
     state.io_gates.lock().unwrap().remove(&session_id);
-    let dir = session_dir(&session_id)?;
+    let dir = session_dir(&app, &session_id)?;
     let result = retain_session_for_resume(&dir, &session_id);
     match &result {
         Ok(report) => log::info!(
@@ -552,16 +589,16 @@ pub fn ffmpeg_retain_session_for_resume(
 /// if the operator abandons the resume), `orphan` (no manifest, no live
 /// holder). Read-only.
 #[tauri::command]
-pub fn ffmpeg_reclaimable_sessions() -> Result<ReclaimableSessionsReport, String> {
-    report_reclaimable_sessions()
+pub fn ffmpeg_reclaimable_sessions(app: tauri::AppHandle) -> Result<ReclaimableSessionsReport, String> {
+    report_reclaimable_sessions(&export_sessions_base_dir(&app)?)
 }
 
 /// WS3 Round 21 (D5) — the explicit operator reclaim action. Removes the
 /// named sessions whether or not they carry a manifest (the operator has
 /// chosen to abandon them); refuses any that a live process still claims.
 #[tauri::command]
-pub fn ffmpeg_reclaim_sessions(session_ids: Vec<String>) -> Result<ReclaimReport, String> {
-    reclaim_sessions(&session_ids)
+pub fn ffmpeg_reclaim_sessions(app: tauri::AppHandle, session_ids: Vec<String>) -> Result<ReclaimReport, String> {
+    reclaim_sessions(&export_sessions_base_dir(&app)?, &session_ids)
 }
 
 /// Writes base64-encoded bytes to <session_dir>/<path>.
@@ -571,6 +608,7 @@ pub fn ffmpeg_reclaim_sessions(session_ids: Vec<String>) -> Result<ReclaimReport
 /// the dominant export bottleneck (~5-10× speedup on per-frame PNG writes). Phase 6.3.1.
 #[tauri::command]
 pub fn ffmpeg_write_file(
+    app: tauri::AppHandle,
     session_id: String,
     path: String,
     data_b64: String,
@@ -578,7 +616,7 @@ pub fn ffmpeg_write_file(
 ) -> Result<(), String> {
     validate_path(&path)?;
     ensure_resume_bitstream_fence(&state, &session_id, &path, "write_file")?;
-    let full = session_dir(&session_id)?.join(&path);
+    let full = session_dir(&app, &session_id)?.join(&path);
     let data = STANDARD
         .decode(&data_b64)
         .map_err(|e| format!("write_file({}): base64 decode failed: {}", path, e))?;
@@ -605,6 +643,7 @@ pub fn ffmpeg_write_file(
 /// only the transport differs.
 #[tauri::command]
 pub fn ffmpeg_write_file_raw(
+    app: tauri::AppHandle,
     request: tauri::ipc::Request<'_>,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<(), String> {
@@ -620,7 +659,7 @@ pub fn ffmpeg_write_file_raw(
 
     validate_path(path)?;
     ensure_resume_bitstream_fence(&state, session_id, path, "write_file_raw")?;
-    let full = session_dir(session_id)?.join(path);
+    let full = session_dir(&app, session_id)?.join(path);
 
     match request.body() {
         tauri::ipc::InvokeBody::Raw(data) => {
@@ -647,6 +686,7 @@ pub fn ffmpeg_write_file_raw(
 /// `VideoEncoder` chunks arrive one at a time.
 #[tauri::command]
 pub fn ffmpeg_append_file_raw(
+    app: tauri::AppHandle,
     request: tauri::ipc::Request<'_>,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<(), String> {
@@ -662,7 +702,7 @@ pub fn ffmpeg_append_file_raw(
 
     validate_path(path)?;
     ensure_resume_prepared(&state, session_id, "append_file_raw")?;
-    let full = session_dir(session_id)?.join(path);
+    let full = session_dir(&app, session_id)?.join(path);
 
     match request.body() {
         tauri::ipc::InvokeBody::Raw(data) => {
@@ -709,9 +749,9 @@ fn append_file_raw_inner(
 
 /// Returns the byte length of `<session_dir>/<path>` without reading contents.
 #[tauri::command]
-pub fn ffmpeg_session_file_size(session_id: String, path: String) -> Result<u64, String> {
+pub fn ffmpeg_session_file_size(app: tauri::AppHandle, session_id: String, path: String) -> Result<u64, String> {
     validate_path(&path)?;
-    let full = session_dir(&session_id)?.join(&path);
+    let full = session_dir(&app, &session_id)?.join(&path);
     fs::metadata(&full)
         .map(|m| m.len())
         .map_err(|e| format!("session_file_size({}): {}", path, e))
@@ -723,12 +763,18 @@ pub fn ffmpeg_session_file_size(session_id: String, path: String) -> Result<u64,
 /// half-written file under the authoritative name.
 #[tauri::command]
 pub fn ffmpeg_write_export_state(
+    app: tauri::AppHandle,
     session_id: String,
     serialized_state: String,
 ) -> Result<(), String> {
+    let dir = session_dir(&app, &session_id)?;
+    write_export_state_inner(&dir, &session_id, &serialized_state)
+}
+
+fn write_export_state_inner(dir: &Path, session_id: &str, serialized_state: &str) -> Result<(), String> {
     use std::io::Write;
 
-    let parsed: serde_json::Value = serde_json::from_str(&serialized_state)
+    let parsed: serde_json::Value = serde_json::from_str(serialized_state)
         .map_err(|e| format!("write_export_state: invalid JSON: {}", e))?;
     let manifest_session = parsed
         .get("sessionId")
@@ -738,7 +784,6 @@ pub fn ffmpeg_write_export_state(
         return Err("write_export_state: manifest sessionId mismatch".to_string());
     }
 
-    let dir = session_dir(&session_id)?;
     let temp = dir.join("export_state.json.tmp");
     let final_path = dir.join("export_state.json");
     let mut file =
@@ -771,13 +816,14 @@ pub fn ffmpeg_write_export_state(
 /// Reads <session_dir>/<path> and returns its bytes.
 #[tauri::command]
 pub fn ffmpeg_read_file(
+    app: tauri::AppHandle,
     session_id: String,
     path: String,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<Vec<u8>, String> {
     validate_path(&path)?;
     ensure_resume_bitstream_fence(&state, &session_id, &path, "read_file")?;
-    let full = session_dir(&session_id)?.join(&path);
+    let full = session_dir(&app, &session_id)?.join(&path);
     fs::read(&full).map_err(|e| format!("read_file({}): {}", path, e))
 }
 
@@ -1356,13 +1402,14 @@ fn truncate_annexb_to_last_complete_au(bytes: &[u8]) -> (Vec<u8>, AnnexbTruncate
 /// picture count).
 #[tauri::command]
 pub fn ffmpeg_count_annexb_frames(
+    app: tauri::AppHandle,
     session_id: String,
     path: String,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<AnnexbFrameCount, String> {
     validate_path(&path)?;
     ensure_resume_prepared(&state, &session_id, "count_annexb_frames")?;
-    let full = session_dir(&session_id)?.join(&path);
+    let full = session_dir(&app, &session_id)?.join(&path);
     let cancel = session_cancel_flag(&state, &session_id);
     count_annexb_frames_inner(&full, &path, cancel.as_deref())
 }
@@ -1447,13 +1494,14 @@ fn inspect_annexb_tail_backwards(full: &Path, path: &str) -> Result<(Option<u64>
 /// `set_len` — never materializes the whole file in memory.
 #[tauri::command]
 pub fn ffmpeg_truncate_annexb(
+    app: tauri::AppHandle,
     session_id: String,
     path: String,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<AnnexbTruncateResult, String> {
     validate_path(&path)?;
     ensure_resume_bitstream_fence(&state, &session_id, &path, "truncate_annexb")?;
-    let full = session_dir(&session_id)?.join(&path);
+    let full = session_dir(&app, &session_id)?.join(&path);
     let cancel = session_cancel_flag(&state, &session_id);
     let gate = session_io_gate(&state, &session_id);
     let _guard = gate.lock().unwrap();
@@ -1468,6 +1516,7 @@ pub fn ffmpeg_truncate_annexb(
 /// so the caller can verify the seam against a checkpoint.
 #[tauri::command]
 pub fn ffmpeg_truncate_annexb_to_offset(
+    app: tauri::AppHandle,
     session_id: String,
     path: String,
     byte_offset: u64,
@@ -1475,7 +1524,7 @@ pub fn ffmpeg_truncate_annexb_to_offset(
 ) -> Result<AnnexbTruncateResult, String> {
     validate_path(&path)?;
     ensure_resume_bitstream_fence(&state, &session_id, &path, "truncate_annexb_to_offset")?;
-    let full = session_dir(&session_id)?.join(&path);
+    let full = session_dir(&app, &session_id)?.join(&path);
     let cancel = session_cancel_flag(&state, &session_id);
     let gate = session_io_gate(&state, &session_id);
     let _guard = gate.lock().unwrap();
@@ -1564,6 +1613,7 @@ fn truncate_annexb_to_offset_inner(
 /// 6. only then open append/count/concat for this resumed session.
 #[tauri::command]
 pub fn ffmpeg_prepare_checkpoint_resume(
+    app: tauri::AppHandle,
     session_id: String,
     path: String,
     byte_offset: u64,
@@ -1578,7 +1628,7 @@ pub fn ffmpeg_prepare_checkpoint_resume(
             "prepare_checkpoint_resume: session {session_id} is not pending resume"
         ));
     }
-    let full = session_dir(&session_id)?.join(&path);
+    let full = session_dir(&app, &session_id)?.join(&path);
     let cancel = session_cancel_flag(&state, &session_id);
     let gate = session_io_gate(&state, &session_id);
     let _guard = gate.lock().unwrap();
@@ -1686,6 +1736,7 @@ fn prepare_checkpoint_resume_inner(
 /// behind for a later step to mistake for a complete one.
 #[tauri::command]
 pub fn ffmpeg_concat_annexb_pieces(
+    app: tauri::AppHandle,
     session_id: String,
     piece_paths: Vec<String>,
     output_path: String,
@@ -1697,7 +1748,7 @@ pub fn ffmpeg_concat_annexb_pieces(
     }
     ensure_resume_prepared(&state, &session_id, "concat_annexb_pieces")?;
 
-    let dir = session_dir(&session_id)?;
+    let dir = session_dir(&app, &session_id)?;
     let out_full = dir.join(&output_path);
     let cancel = session_cancel_flag(&state, &session_id);
     let gate = session_io_gate(&state, &session_id);
@@ -1771,13 +1822,14 @@ fn concat_annexb_pieces_inner(
 /// Deletes <session_dir>/<path>. Missing file is treated as success.
 #[tauri::command]
 pub fn ffmpeg_delete_file(
+    app: tauri::AppHandle,
     session_id: String,
     path: String,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<(), String> {
     validate_path(&path)?;
     ensure_resume_bitstream_fence(&state, &session_id, &path, "delete_file")?;
-    let full = session_dir(&session_id)?.join(&path);
+    let full = session_dir(&app, &session_id)?.join(&path);
     match fs::remove_file(&full) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
@@ -1811,7 +1863,7 @@ pub async fn ffmpeg_exec(
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<i32, String> {
     ensure_resume_prepared(&state, &session_id, "ffmpeg_exec")?;
-    let cwd = session_dir(&session_id)?;
+    let cwd = session_dir(&app, &session_id)?;
 
     let (mut rx, child) = app
         .shell()
@@ -1909,6 +1961,7 @@ pub fn ffmpeg_kill_session(
 /// own doc comment for the exact same convention.
 #[tauri::command]
 pub fn ffmpeg_destroy_session(
+    app: tauri::AppHandle,
     session_id: String,
     force: Option<bool>,
     failure_kind: Option<String>,
@@ -1917,7 +1970,7 @@ pub fn ffmpeg_destroy_session(
     state.cancel_flags.lock().unwrap().remove(&session_id);
     state.resume_pending.lock().unwrap().remove(&session_id);
     state.io_gates.lock().unwrap().remove(&session_id);
-    let dir = session_dir(&session_id)?;
+    let dir = session_dir(&app, &session_id)?;
     let forced = force.unwrap_or(false);
     let result = destroy_session_dir(&dir, forced);
     match &result {
@@ -1973,8 +2026,8 @@ pub(crate) fn session_disk_snapshot(dir: &Path) -> SessionDiskSnapshot {
 }
 
 #[tauri::command]
-pub fn ffmpeg_session_disk_snapshot(session_id: String) -> Result<SessionDiskSnapshot, String> {
-    let dir = session_dir(&session_id)?;
+pub fn ffmpeg_session_disk_snapshot(app: tauri::AppHandle, session_id: String) -> Result<SessionDiskSnapshot, String> {
+    let dir = session_dir(&app, &session_id)?;
     Ok(session_disk_snapshot(&dir))
 }
 
@@ -2117,13 +2170,14 @@ pub const WINDOWS_MAX_PATH: usize = 260;
 /// untouched, and the `.part` is deleted on failure.
 #[tauri::command]
 pub fn save_session_file(
+    app: tauri::AppHandle,
     session_id: String,
     file_name: String,
     dest_path: String,
     state: tauri::State<'_, FfmpegSessionState>,
 ) -> Result<SaveSessionFileResult, String> {
     validate_path(&file_name)?;
-    let src = session_dir(&session_id)?.join(&file_name);
+    let src = session_dir(&app, &session_id)?.join(&file_name);
     if !src.is_file() {
         return Err(format!(
             "save_session_file: source {} is missing inside session {session_id}",
@@ -2487,6 +2541,92 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
+    // ── WS3 Round 28 (D4) — export session temp directory must live under
+    //    the configured storage root, never a hardcoded `std::env::temp_dir()`.
+    mod session_dir_storage_root_routing {
+        use super::*;
+
+        /// `session_dir_under` is the pure core `session_dir` delegates to
+        /// (see its own doc comment). For an arbitrary root — deliberately
+        /// NOT `std::env::temp_dir()` — the resulting session path must sit
+        /// under that root's `export-sessions/` subtree.
+        #[test]
+        fn session_dir_always_nests_under_the_given_root_never_under_os_temp() {
+            let id = Uuid::new_v4().to_string();
+            for root in [
+                Path::new("/Volumes/ExternalDrive/kinetix-storage"),
+                Path::new("/Users/someone/kinetix-data"),
+                &std::env::temp_dir().join("kinetix-storage-root-test-custom"),
+            ] {
+                let dir = session_dir_under(root, &id).unwrap();
+                assert!(
+                    dir.starts_with(root),
+                    "{} must be nested under the storage root {}",
+                    dir.display(),
+                    root.display()
+                );
+                assert_eq!(
+                    dir,
+                    crate::storage_root::export_sessions_dir(root)
+                        .join(format!("kinetix-export-{}", id))
+                );
+            }
+        }
+
+        /// The OS default temp directory is never silently substituted when
+        /// a distinct root is supplied — the whole point of D4.
+        #[test]
+        fn session_dir_under_a_relocated_root_is_disjoint_from_os_temp_dir() {
+            let id = Uuid::new_v4().to_string();
+            let relocated_root = std::env::temp_dir().join(format!(
+                "kinetix-relocated-root-test-{}",
+                Uuid::new_v4()
+            ));
+            let dir = session_dir_under(&relocated_root, &id).unwrap();
+            let os_temp_export_dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
+            assert_ne!(
+                dir, os_temp_export_dir,
+                "a session created under a relocated root must not land at the OS-default \
+                 temp_dir()/kinetix-export-<id> path Batch 1/2 used to hardcode"
+            );
+            assert!(dir.starts_with(&relocated_root));
+        }
+
+        /// Source-level regression guard, in the same style as
+        /// `storage_root.rs`'s own `status_and_size_report_commands_are_
+        /// filesystem_read_only` test: the resume-adoption path
+        /// (`ffmpeg_reenter_session`, Batch 1) and the create/list/sweep/
+        /// reclaim commands must resolve their directory through
+        /// `session_dir`/`export_sessions_base_dir` (which route through
+        /// `storage_root::resolve_storage_root`), never reintroduce a raw
+        /// `std::env::temp_dir()` call of their own.
+        #[test]
+        fn resume_and_session_management_commands_never_call_os_temp_dir_directly() {
+            let source = include_str!("ffmpeg.rs");
+            for (start, end) in [
+                ("pub fn ffmpeg_reenter_session", "pub fn ffmpeg_read_session_claim"),
+                ("pub fn ffmpeg_create_session", "pub fn ffmpeg_list_resumable_sessions"),
+                ("pub fn ffmpeg_list_resumable_sessions", "pub fn ffmpeg_reenter_session"),
+                ("pub fn ffmpeg_sweep_orphan_sessions", "WS3 Round 21 (D1)"),
+                ("pub fn ffmpeg_reclaimable_sessions", "WS3 Round 21 (D5)"),
+                ("pub fn ffmpeg_reclaim_sessions", "Writes base64-encoded bytes"),
+            ] {
+                let body = source
+                    .split(start)
+                    .nth(1)
+                    .unwrap_or_else(|| panic!("missing command marker {start}"))
+                    .split(end)
+                    .next()
+                    .unwrap();
+                assert!(
+                    !body.contains("std::env::temp_dir()"),
+                    "{start} reintroduced a raw std::env::temp_dir() call — must resolve via \
+                     session_dir/export_sessions_base_dir (storage_root::resolve_storage_root) instead"
+                );
+            }
+        }
+    }
+
     // ── Round 28 Increment 0 — probe_audio_duration/probe_video_fps now
     //    route their tmp-dir cleanup through `safe_delete::delete_app_staging_dir`
     //    instead of a raw `fs::remove_dir_all`. These pin the forbidden-path
@@ -2682,10 +2822,10 @@ mod tests {
 
         #[test]
         fn reads_a_valid_manifest() {
-            let (id, dir) = make_session();
+            let (_id, dir) = make_session();
             let body = br#"{"schema":1,"sourceTimelineHash":"abc"}"#;
             fs::write(dir.join("export_state.json"), body).unwrap();
-            let result = peek_export_state_inner(&id).unwrap();
+            let result = peek_export_state_inner(&dir).unwrap();
             match result {
                 ExportStatePeekResult::Found { bytes } => assert_eq!(bytes, body),
                 ExportStatePeekResult::NotFound => panic!("expected Found"),
@@ -2694,18 +2834,19 @@ mod tests {
 
         #[test]
         fn returns_not_found_for_a_missing_session() {
-            // A syntactically valid UUID that was never created as a session dir.
+            // A syntactically valid UUID's directory that was never created.
             let id = Uuid::new_v4().to_string();
-            let result = peek_export_state_inner(&id).unwrap();
+            let dir = std::env::temp_dir().join(format!("kinetix-export-{}", id));
+            let result = peek_export_state_inner(&dir).unwrap();
             assert!(matches!(result, ExportStatePeekResult::NotFound));
         }
 
         #[test]
         fn returns_not_found_not_an_error_for_a_truncated_manifest() {
-            let (id, dir) = make_session();
+            let (_id, dir) = make_session();
             // A write that died mid-flush — not valid JSON.
             fs::write(dir.join("export_state.json"), br#"{"schema":1,"sourceTimel"#).unwrap();
-            let result = peek_export_state_inner(&id);
+            let result = peek_export_state_inner(&dir);
             assert!(result.is_ok(), "a torn manifest must never surface as Err: {result:?}");
             assert!(matches!(result.unwrap(), ExportStatePeekResult::NotFound));
         }
@@ -2717,13 +2858,13 @@ mod tests {
         /// insert into `resume_pending` even if it wanted to.
         #[test]
         fn engages_no_fence_session_state_is_byte_and_mtime_identical_after_read() {
-            let (id, dir) = make_session();
+            let (_id, dir) = make_session();
             let path = dir.join("export_state.json");
             fs::write(&path, br#"{"schema":1,"sourceTimelineHash":"xyz"}"#).unwrap();
             let before_bytes = fs::read(&path).unwrap();
             let before_mtime = fs::metadata(&path).unwrap().modified().unwrap();
 
-            let result = peek_export_state_inner(&id).unwrap();
+            let result = peek_export_state_inner(&dir).unwrap();
             assert!(matches!(result, ExportStatePeekResult::Found { .. }));
 
             let after_bytes = fs::read(&path).unwrap();
@@ -4038,7 +4179,7 @@ mod tests {
             "{{\"schemaVersion\":1,\"sessionId\":\"{}\",\"checkpoints\":[]}}\n",
             id
         );
-        ffmpeg_write_export_state(id.clone(), first.clone()).unwrap();
+        write_export_state_inner(&dir, &id, &first).unwrap();
         assert_eq!(
             fs::read_to_string(dir.join("export_state.json")).unwrap(),
             first
@@ -4048,7 +4189,7 @@ mod tests {
             "{{\"schemaVersion\":1,\"sessionId\":\"{}\",\"checkpoints\":[{{\"pieceIndex\":0}}]}}\n",
             id
         );
-        ffmpeg_write_export_state(id.clone(), second.clone()).unwrap();
+        write_export_state_inner(&dir, &id, &second).unwrap();
         assert_eq!(
             fs::read_to_string(dir.join("export_state.json")).unwrap(),
             second
@@ -4057,7 +4198,7 @@ mod tests {
 
         let other_id = Uuid::new_v4().to_string();
         let mismatch = format!("{{\"sessionId\":\"{}\"}}", other_id);
-        assert!(ffmpeg_write_export_state(id, mismatch)
+        assert!(write_export_state_inner(&dir, &id, &mismatch)
             .unwrap_err()
             .contains("sessionId mismatch"));
         fs::remove_dir_all(&dir).unwrap();

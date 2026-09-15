@@ -102,4 +102,37 @@ Observations only — no interpretation.
 | E10 (Round 21, D3) | ENOSPC firing mid-append on real hardware — the append fail-fast path (`finishDiskFull`) is proven against a thrown `Error` in `diskFullWiring.test.ts`, never against a REAL `appendFileRaw` IPC call returning a real Windows `ERROR_DISK_FULL`/`ERROR_HANDLE_DISK_FULL` or a real macOS `ENOSPC` from `write_all`. | On the built app, export to a volume that fills up mid-render (a small ramdisk/sparse image sized to run out after N frames); confirm the export settles within the append task's own turn — not 30–45 s later on a liveness bound — with `kind: 'disk_full'` and `phase: 'append'`. | Settles in well under `WATCHDOG_MS` (30 s); `error.diskFull.phase === 'append'`; the manifest's recovery-budget fields are all still zero. | If the real OS error's `raw_os_error()`/`ErrorKind` doesn't match `io_error_is_disk_full`'s mapping (a code this round didn't anticipate), the failure falls through to the generic `'encode'`/`'unknown'` path and waits on a liveness bound exactly like before this round. |
 | E11 (Round 21, D3) | ENOSPC firing mid-concat on real hardware — `concat_annexb_pieces_inner`'s disk-full branch (`io_error_is_disk_full` on the `write_all` to `video_all.h264`) is exercised only by the pre-existing synthetic Rust test (`concat_preserves_partial_output_on_disk_full_error`, a crafted `io::Error`), never a real multi-GB concat that actually exhausts a volume mid-copy. | On the built app, a ≥ 2-piece export (forces the `video_all.h264` concat path) to a volume sized to run out during concat specifically (after the pieces exist, before concat completes). | Concat's partial output is preserved (existing C8 guarantee, unchanged by this round) AND the pipeline surfaces `kind: 'disk_full'`, `phase: 'concat'` — not a bare `'concat'`-kind generic message. | A real concat-time ENOSPC that the classifier misses reports as a plain `'concat'` failure with no free/required bytes, and the operator gets no actionable next step. |
 | E13 (WS3 Batch 2, STEP 1) | Whether `ExportFailureMessage`'s Close button (`onDismiss`, wired to `cancelExport` in `App.tsx`) is genuinely a no-op on disk state when a retained session exists — proven at the code level (`cancelExport`'s `tauriBackendRef.current === null` early-return branch, which is the state by the time the failure modal renders, makes zero destroy/delete calls) but never confirmed against a real session directory on disk. | On the built app, force a failure that retains a session (e.g. a mid-export `disk_full`), let the failure overlay appear with Resume offered, then click Close instead of Resume. | The session directory under the app's temp root and its `export_state.json` manifest both still exist on disk after Close, byte-for-byte (same file size/mtime), exactly as `retainForResume` left them. | If Close silently destroys the retained session, an operator who closes the overlay to think it over loses the checkpoint permanently with no warning — indistinguishable from data loss until they try Resume later and find nothing. |
+
+---
+
+## Machine 1 checklist — D4 storage-root coverage (Round 28, Batch 3)
+
+Manual hardware pass for the D4 fix (export temp + models now routed through the configured
+storage root, `storage_root.rs`/`ffmpeg.rs::session_dir`). Unit/integration coverage for the
+underlying mechanism landed in this batch (see `docs/STATUS.md`'s D4 entry); this checklist is
+the real-Windows-hardware confirmation that coverage cannot substitute for. Run on Machine 1;
+record PASS/FAIL per step in the next round's STATUS.md entry.
+
+- [ ] 1. Relocate the storage root (Settings → Storage → Move storage root…) to a second volume
+      or a different path on the same volume, and confirm previously-downloaded whisper/FA
+      models are present under the NEW root's `models/` subtree afterward (not left behind at
+      the old location).
+- [ ] 2. Start an export and confirm (via Task Manager/Resource Monitor or a folder-size probe)
+      that the temp session directory (`kinetix-export-<uuid>`) is created under the configured
+      storage root's `export-sessions/` subtree — not under `C:\Users\<user>\AppData\Local\Temp`.
+- [ ] 3. Cancel the export early and confirm the session directory disappears from disk and the
+      diagnostic log (`kinetix-diagnostic.log`) records the cancellation.
+- [ ] 4. Fail an export on a full volume and confirm the disk-full card appears with a Resume
+      option.
+- [ ] 5. Click Resume and confirm it adopts the SAME session directory (same path, same
+      `kinetix-export-<uuid>`) without re-rendering already-completed work.
+- [ ] 6. Click Close instead and confirm the session survives on disk (directory and
+      `export_state.json` manifest both still present, unchanged).
+- [ ] 7. Use "Free up cached data" (Storage settings' reclaim action) and confirm the advertised
+      freed-space number matches what is actually freed (before/after folder size), and that all
+      existing projects still open correctly afterward.
+- [ ] 8. Attempt to produce a timeline gap (e.g. cancel a drag mid-gesture, force a rapid
+      lock/unlock during a resize) and record exactly what appears on screen if a gap occurs —
+      Model P (`CLAUDE.md` §4) says this must be structurally impossible; any observed gap is a
+      reportable regression, not an accepted risk.
 | E12 (Round 21, D4) | The `rename_over` Windows fallback's real failure behaviour — `rename_over_fallback_restore_failure_keeps_both_files_and_names_them` proves the LOGIC with an injected failing `rename` closure; it does not prove a REAL Windows `MoveFileExW` actually fails in the shape assumed (promote fails, then restore ALSO fails) under a genuine disk-full-during-rename condition, which needs real NTFS semantics to trigger. | On Windows, fill the destination volume to the point where `rename_over`'s fallback branch runs (a pre-existing file at `dest_path`) and the promote rename itself would need to grow an MFT record enough to fail on ENOSPC; confirm what's left at `dest`/`dest.bak`/`dest.part`. | Matches one of the two modelled outcomes exactly: `Restored` (dest back under its own name, `.bak`/`.part` gone) or `OriginalAtBackup` (dest absent, `.bak` holds the original, `.part` holds the complete new export, both named in the error) — never a third shape. | If Windows's real rename-failure semantics differ from the model (e.g. a partial rename that corrupts the MFT entry rather than cleanly failing), an operator could lose track of which file is which after a rename-time disk-full, with no code path to reconcile it — the same "real, honest gap" Round 18 recorded for a crash between the two renames, now also possible via ENOSPC rather than only a process death. |
