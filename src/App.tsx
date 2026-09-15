@@ -7911,6 +7911,8 @@ export default function App() {
           availableBytes={storageRelocation.view.availableBytes}
           validationState={storageRelocation.view.validationState}
           onChooseFolder={storageRelocation.chooseFolder}
+          copying={storageRelocation.view.copying}
+          onCancel={storageRelocation.cancel}
         />
       )}
       {/* WS3 recovery-ui — the Machine-1 exit. Rendered outside `mainContent`

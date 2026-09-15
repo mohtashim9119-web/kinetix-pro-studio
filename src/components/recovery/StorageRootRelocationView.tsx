@@ -22,6 +22,14 @@ export interface StorageRootRelocationViewProps {
   availableBytes: number;
   validationState: StorageRootValidationState;
   onChooseFolder?: () => void;
+  /**
+   * Round 28 Increment 1 — true while a copy is in flight. Disables the
+   * Cancel button and swaps its label/explanation, since a mid-copy cancel
+   * cannot be honored (see `useStorageRootRelocation`'s `cancel` comment).
+   */
+  copying?: boolean;
+  /** Dismisses the modal without initiating or committing any relocation. */
+  onCancel?: () => void;
 }
 
 const VALIDATION_LABEL: Record<StorageRootValidationState, string> = {
@@ -37,6 +45,8 @@ export function StorageRootRelocationView({
   availableBytes,
   validationState,
   onChooseFolder,
+  copying = false,
+  onCancel,
 }: StorageRootRelocationViewProps): React.ReactElement {
   const trapRef = useFocusTrap<HTMLDivElement>();
 
@@ -112,6 +122,26 @@ export function StorageRootRelocationView({
             <FolderOpen size={14} />
             Choose folder
           </button>
+        )}
+
+        {onCancel && (
+          <>
+            <button
+              type="button"
+              data-testid="relocation-cancel"
+              onClick={onCancel}
+              disabled={copying}
+              title={copying ? 'A copy is already in progress and cannot be cancelled' : undefined}
+              className="w-full mt-3 inline-flex items-center justify-center gap-2 bg-transparent border-none p-2 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-600 hover:text-gray-300 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:text-gray-600 transition-all"
+            >
+              [ Cancel ]
+            </button>
+            {copying && (
+              <p data-testid="relocation-cancel-explanation" className="mt-2 text-[9px] text-gray-600 text-center">
+                Copy already in progress — it cannot be interrupted, only allowed to finish or fail.
+              </p>
+            )}
+          </>
         )}
       </div>
     </div>

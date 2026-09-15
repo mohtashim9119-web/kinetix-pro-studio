@@ -23,6 +23,16 @@ export interface RelocationViewState {
   requiredBytes: number;
   availableBytes: number;
   validationState: StorageRootValidationState;
+  /**
+   * Round 28 Increment 1 — true for the span between `chooseFolder` handing
+   * `picked` to `relocateStorageRoot` (the native copy-verify-commit call,
+   * `storage_root_relocate` in `storage_root.rs`) and that call settling.
+   * `storage_root_relocate` is a synchronous Tauri command: there is no IPC
+   * cancellation channel for an in-flight invocation, so once this is true
+   * `cancel` refuses rather than pretending to abort a copy nothing can
+   * actually stop — see `cancel`'s own comment.
+   */
+  copying: boolean;
 }
 
 export interface UseStorageRootRelocation {
@@ -30,13 +40,26 @@ export interface UseStorageRootRelocation {
   open: () => void;
   close: () => void;
   chooseFolder: () => void;
+  /**
+   * Dismisses the modal without initiating or committing any relocation.
+   * Refuses (no-op, view stays open) while `view.copying` is true — see the
+   * field's own doc comment for why a mid-copy cancel can't be honored.
+   */
+  cancel: () => void;
 }
 
 export function useStorageRootRelocation(onRelocated?: (to: string) => void): UseStorageRootRelocation {
   const [view, setView] = useState<RelocationViewState | null>(null);
 
   const open = useCallback(() => {
-    setView({ currentRoot: '', targetVolume: '', requiredBytes: 0, availableBytes: 0, validationState: 'error' });
+    setView({
+      currentRoot: '',
+      targetVolume: '',
+      requiredBytes: 0,
+      availableBytes: 0,
+      validationState: 'error',
+      copying: false,
+    });
     void (async () => {
       try {
         const status = await getStorageRootStatus();
@@ -52,11 +75,23 @@ export function useStorageRootRelocation(onRelocated?: (to: string) => void): Us
 
   const close = useCallback(() => setView(null), []);
 
+  // Round 28 Increment 1 — cancel affordance. `storage_root_relocate` is a
+  // synchronous native command with no abort channel, so this cannot stop
+  // an in-flight copy; it only refuses to dismiss the modal while one is
+  // running (Option (a) from the increment's brief), so the modal can never
+  // be dismissed leaving a partial copy the user believes was cancelled.
+  // Before any copy starts (`view.copying === false`, including the whole
+  // window before "Choose folder" is even clicked), cancel is a plain
+  // dismiss: no copy is initiated, nothing is committed.
+  const cancel = useCallback(() => {
+    setView((prev) => (prev && prev.copying ? prev : null));
+  }, []);
+
   const chooseFolder = useCallback(() => {
     void (async () => {
       const picked = await relinkPickFolder();
       if (!picked) return;
-      setView((prev) => (prev ? { ...prev, targetVolume: picked } : prev));
+      setView((prev) => (prev ? { ...prev, targetVolume: picked, copying: true } : prev));
       try {
         const report = await relocateStorageRoot(picked);
         setView(null);
@@ -72,6 +107,7 @@ export function useStorageRootRelocation(onRelocated?: (to: string) => void): Us
                 requiredBytes: parsed?.requiredBytes ?? prev.requiredBytes,
                 availableBytes: parsed?.availableBytes ?? 0,
                 validationState: parsed ? 'insufficient' : 'error',
+                copying: false,
               }
             : prev,
         );
@@ -79,5 +115,5 @@ export function useStorageRootRelocation(onRelocated?: (to: string) => void): Us
     })();
   }, [onRelocated]);
 
-  return { view, open, close, chooseFolder };
+  return { view, open, close, chooseFolder, cancel };
 }

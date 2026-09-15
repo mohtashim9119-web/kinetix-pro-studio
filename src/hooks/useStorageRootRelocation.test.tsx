@@ -65,6 +65,7 @@ describe('useStorageRootRelocation', () => {
       requiredBytes: 42,
       availableBytes: 0,
       validationState: 'error',
+      copying: false,
     });
   });
 
@@ -105,6 +106,7 @@ describe('useStorageRootRelocation', () => {
       requiredBytes: 5_450_000_000,
       availableBytes: 120_000_000,
       validationState: 'insufficient',
+      copying: false,
     });
   });
 
@@ -125,6 +127,62 @@ describe('useStorageRootRelocation', () => {
     await act(async () => { latest!.open(); await Promise.resolve(); });
     expect(latest!.view).not.toBeNull();
     await act(async () => { latest!.close(); });
+    expect(latest!.view).toBeNull();
+  });
+
+  // Round 28 Increment 1 — cancel affordance.
+  it('cancel() before any copy starts dismisses the modal, initiating no copy and committing nothing', async () => {
+    getStorageRootStatus.mockResolvedValue({ currentRoot: '/root', defaultRoot: '/root', isDefault: true, managedBytes: 0 });
+    await mount();
+    await act(async () => { latest!.open(); await Promise.resolve(); });
+    expect(latest!.view).not.toBeNull();
+    expect(latest!.view!.copying).toBe(false);
+
+    await act(async () => { latest!.cancel(); });
+
+    expect(latest!.view).toBeNull();
+    expect(relinkPickFolder).not.toHaveBeenCalled();
+    expect(relocateStorageRoot).not.toHaveBeenCalled();
+  });
+
+  it('chooseFolder() sets copying:true for the span of the relocate call', async () => {
+    getStorageRootStatus.mockResolvedValue({ currentRoot: '/root', defaultRoot: '/root', isDefault: true, managedBytes: 100 });
+    relinkPickFolder.mockResolvedValue('/Volumes/Media');
+    let resolveRelocate!: (v: unknown) => void;
+    relocateStorageRoot.mockReturnValue(new Promise((resolve) => { resolveRelocate = resolve; }));
+    await mount();
+    await act(async () => { latest!.open(); await Promise.resolve(); });
+    await act(async () => { latest!.chooseFolder(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(latest!.view!.copying).toBe(true);
+
+    await act(async () => {
+      resolveRelocate({ from: '/root', to: '/Volumes/Media', moved: [], bytesMoved: 0, cleanupWarnings: [] });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(latest!.view).toBeNull();
+  });
+
+  it('cancel() is a no-op while a copy is in flight — the view stays open with copying still true', async () => {
+    getStorageRootStatus.mockResolvedValue({ currentRoot: '/root', defaultRoot: '/root', isDefault: true, managedBytes: 100 });
+    relinkPickFolder.mockResolvedValue('/Volumes/Media');
+    let resolveRelocate!: (v: unknown) => void;
+    relocateStorageRoot.mockReturnValue(new Promise((resolve) => { resolveRelocate = resolve; }));
+    await mount();
+    await act(async () => { latest!.open(); await Promise.resolve(); });
+    await act(async () => { latest!.chooseFolder(); await Promise.resolve(); await Promise.resolve(); });
+    expect(latest!.view!.copying).toBe(true);
+
+    await act(async () => { latest!.cancel(); });
+    expect(latest!.view).not.toBeNull();
+    expect(latest!.view!.copying).toBe(true);
+
+    await act(async () => {
+      resolveRelocate({ from: '/root', to: '/Volumes/Media', moved: [], bytesMoved: 0, cleanupWarnings: [] });
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(latest!.view).toBeNull();
   });
 });
