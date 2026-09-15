@@ -299,6 +299,8 @@ import { ErrorBoundary, PanelFallback } from './components/ErrorBoundary';
 import { useExport, formatElapsed, formatElapsedLong, formatFrameSpanDuration, type ExportResolution, type ExportFps, type ExportError } from './hooks/useExport';
 import { buildExportDiagnosticsBlob } from './services/exportDiagnosticsBlob';
 import { ExportFailureMessage } from './components/recovery/ExportFailureMessage';
+import { ReexportCheckpointModal } from './components/ReexportCheckpointModal';
+import { checkExistingCheckpoint, type ReexportCheckOutcome } from './services/webcodecsExport/exportReexportCheck';
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
@@ -3320,6 +3322,109 @@ export default function App() {
       cancelled = true;
     };
   }, [exportState.error]);
+
+  // ── WS3 Batch 2 (STEP 2) — re-export-with-existing-checkpoint ──────────
+  const [reexportOffer, setReexportOffer] = useState<{ sessionId: string; manifest: { fps: number; width: number; height: number } } | null>(null);
+  const [reexportEditedNotice, setReexportEditedNotice] = useState(false);
+  const [reexportChecking, setReexportChecking] = useState(false);
+  // Set the instant the operator picks RESUME SESSION; cleared the instant
+  // the matching internal resume offer is auto-answered (or never arrives).
+  // This is the ENTIRE mechanism for "route through the existing
+  // decideResumeAdoptionOutcome path, no second adoption route" — it does
+  // not re-implement adoption, it answers the SAME pendingResumeOffer prompt
+  // runExport already shows mid-export, on the operator's behalf, since they
+  // already made this exact choice by clicking Resume Session.
+  const pendingReexportAutoResumeSessionId = useRef<string | null>(null);
+
+  useEffect(() => {
+    const offer = exportState.pendingResumeOffer;
+    if (offer && pendingReexportAutoResumeSessionId.current === offer.sessionId) {
+      pendingReexportAutoResumeSessionId.current = null;
+      resolveResumeChoice('resume');
+    }
+  }, [exportState.pendingResumeOffer, resolveResumeChoice]);
+
+  // Purges a checkpoint session's chunks + manifest. Routes through the
+  // SAME audited-delete-backed call `useExport.ts`'s own "start clean"
+  // discard already uses (reenter -> destroy({force:true})) — see
+  // session_claim.rs's destroy_session_dir, the one function in the Rust
+  // crate permitted to call remove_dir_all, always via
+  // safe_delete::delete_app_staging_dir. No new native surface.
+  const purgeCheckpointSession = useCallback(async (sessionId: string, failureKind: string): Promise<void> => {
+    try {
+      const handle = await TauriFfmpeg.reenter(sessionId);
+      await handle.destroy({ force: true, failureKind });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn('[ws3-reexport] checkpoint purge failed (non-fatal — TTL sweep will catch it later)', err instanceof Error ? err.message : String(err));
+    }
+  }, []);
+
+  const handleExportButtonClick = useCallback(async (): Promise<void> => {
+    if (!isTauri()) {
+      setShowExportSettingsModal(true);
+      return;
+    }
+    setReexportChecking(true);
+    let outcome: ReexportCheckOutcome;
+    try {
+      outcome = await checkExistingCheckpoint(project, {
+        listResumableSessionIds: () => TauriFfmpeg.listResumableSessionIds(),
+        peekExportState: (sessionId) => TauriFfmpeg.peekExportState(sessionId),
+      });
+    } finally {
+      setReexportChecking(false);
+    }
+    if (outcome.kind === 'no-checkpoint') {
+      setShowExportSettingsModal(true);
+      return;
+    }
+    if (outcome.kind === 'unedited') {
+      setReexportOffer({ sessionId: outcome.sessionId, manifest: outcome.manifest });
+      return;
+    }
+    // 'edited' — no modal. Auto-purge, surface the verbatim inline notice,
+    // open a fresh export config.
+    await purgeCheckpointSession(outcome.sessionId, 'timeline-edited-auto-purge');
+    setReexportEditedNotice(true);
+    setShowExportSettingsModal(true);
+  }, [project, purgeCheckpointSession]);
+
+  const handleReexportStartFresh = useCallback(async (): Promise<void> => {
+    if (!reexportOffer) return;
+    const { sessionId } = reexportOffer;
+    setReexportOffer(null);
+    await purgeCheckpointSession(sessionId, 'reexport-start-fresh');
+    setShowExportSettingsModal(true);
+  }, [reexportOffer, purgeCheckpointSession]);
+
+  const handleReexportResumeSession = useCallback((): void => {
+    if (!reexportOffer) return;
+    const { sessionId, manifest } = reexportOffer;
+    // Resolution/aspect ratio are NOT re-derived from manifest.width/height:
+    // `sourceTimelineHash` already hashed `project.resolutionTier` and
+    // `project.aspectRatio` as their own fields (exportCheckpoint.ts's
+    // timelineIdentityFromProject), and this offer only exists because that
+    // hash matched — so project.resolutionTier is *already* provably the
+    // tier this checkpoint was written at. fps has no project-level field
+    // (it is caller-supplied at export time), so it comes from the
+    // manifest directly, with a narrow runtime guard since ExportFps is a
+    // closed union the manifest's raw number is not statically known to fit.
+    const fps = manifest.fps;
+    const isKnownExportFps = fps === 24 || fps === 30 || fps === 60;
+    if (!isKnownExportFps || !project.resolutionTier) {
+      // Conservative refusal rather than silently exporting at a guessed
+      // rate — surfaces the same operator-facing path as any other adoption
+      // refusal, without inventing a new one.
+      setReexportOffer(null);
+      return;
+    }
+    setExportFps(fps);
+    setExportResolution(project.resolutionTier);
+    pendingReexportAutoResumeSessionId.current = sessionId;
+    setReexportOffer(null);
+    startExport();
+  }, [reexportOffer, project.resolutionTier, startExport]);
 
   // ExportSettingsModal's Continue commits exportResolution/exportFps via
   // setState, then must call startExport — but startExport is a useCallback
@@ -7174,8 +7279,9 @@ export default function App() {
             {/* Export button */}
             <div className="p-3 border-b border-[#1A1A1A]">
               <button
-                onClick={() => setShowExportSettingsModal(true)}
-                className="w-full py-2 px-3 bg-[#F27D26] hover:bg-[#E06A15] text-white text-sm font-semibold rounded-lg transition-colors"
+                onClick={() => { void handleExportButtonClick(); }}
+                disabled={reexportChecking}
+                className="w-full py-2 px-3 bg-[#F27D26] hover:bg-[#E06A15] text-white text-sm font-semibold rounded-lg transition-colors disabled:opacity-60"
               >
                 Export
               </button>
@@ -7403,6 +7509,15 @@ export default function App() {
         />
       )}
 
+      {/* WS3 Batch 2 (STEP 2, 2C) — shown INSTEAD of ExportSettingsModal when
+          the current timeline hashes identically to an existing checkpoint. */}
+      {reexportOffer && (
+        <ReexportCheckpointModal
+          onResumeSession={handleReexportResumeSession}
+          onStartFresh={() => { void handleReexportStartFresh(); }}
+        />
+      )}
+
       {/* Export Settings Modal — resolution + fps chosen at export time
           (industry-standard pattern), replacing the old Project Settings
           "Export Quality" section. Appears BEFORE the native save-path
@@ -7428,9 +7543,24 @@ export default function App() {
             setExportFps(fps);
             setShowExportSettingsModal(false);
             setExportTriggerCount(c => c + 1);
+            setReexportEditedNotice(false);
           }}
-          onCancel={() => setShowExportSettingsModal(false)}
+          onCancel={() => {
+            setShowExportSettingsModal(false);
+            setReexportEditedNotice(false);
+          }}
         />
+      )}
+
+      {/* WS3 Batch 2 (STEP 2, 2D) — verbatim per owner ruling. Non-blocking:
+          export config opens regardless, this is informational only. */}
+      {reexportEditedNotice && showExportSettingsModal && (
+        <div
+          data-testid="reexport-auto-cleared-notice"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-[600] bg-zinc-900 border border-amber-500/40 text-amber-100 text-xs rounded-lg px-4 py-2 shadow-lg"
+        >
+          Timeline modified; previous checkpoint auto-cleared
+        </div>
       )}
 
       {/* Settings Modal — tombstoned (controls moved to Effects tab in task-layout-redesign) */}

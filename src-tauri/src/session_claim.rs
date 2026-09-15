@@ -912,6 +912,17 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// A throwaway directory under the OS temp root, tagged and unique per
+    /// call — for tests that need a `bounds` argument shaped like something
+    /// OTHER than a `kinetix-export-*` session dir (e.g. simulating a
+    /// forbidden real-data directory name inside it).
+    fn tmpdir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("kinetix-test-{tag}-{}", Uuid::new_v4()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     fn temp_session_dir(tag: &str) -> (String, PathBuf) {
         let id = Uuid::new_v4().to_string();
         let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
@@ -1093,6 +1104,61 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         let outcome = destroy_session_dir(&dir, false).unwrap();
         assert_eq!(outcome.disposition, "not_found");
+    }
+
+    // ── WS3 Batch 2 (STEP 2, 2D) — forbidden-path coverage for the purge
+    //    path specifically. `App.tsx`'s purgeCheckpointSession (both
+    //    START FRESH and the mismatched-hash auto-purge) calls this exact
+    //    function via `ffmpeg_destroy_session`, always with `force: true`.
+    //    `session_dir()` always constructs a `kinetix-export-<uuid>` path
+    //    from a UUID-validated session_id, so the app itself never asks
+    //    this function to delete anything else — this proves the function
+    //    ITSELF refuses to, as a second, independent line of defense that
+    //    does not rely on the caller having validated its input correctly.
+    #[test]
+    fn destroy_session_dir_force_true_refuses_a_path_shaped_like_models_dir() {
+        let bounds = tmpdir("forbidden-models-bounds");
+        let models_like = bounds.join("models"); // no "kinetix-export-" prefix
+        fs::create_dir_all(models_like.join("ggml-large-v3-turbo.bin")).unwrap();
+        let result = destroy_session_dir(&models_like, true);
+        assert!(result.is_err(), "must refuse a non-kinetix-export-prefixed dir: {result:?}");
+        assert!(models_like.join("ggml-large-v3-turbo.bin").exists());
+        fs::remove_dir_all(&bounds).ok();
+    }
+
+    #[test]
+    fn destroy_session_dir_force_true_refuses_a_path_shaped_like_projects_dir() {
+        let bounds = tmpdir("forbidden-projects-bounds");
+        let projects_like = bounds.join("projects");
+        fs::create_dir_all(&projects_like).unwrap();
+        fs::write(projects_like.join("my-real-project.json"), b"{}").unwrap();
+        let result = destroy_session_dir(&projects_like, true);
+        assert!(result.is_err(), "must refuse a non-kinetix-export-prefixed dir: {result:?}");
+        assert!(projects_like.join("my-real-project.json").exists());
+        fs::remove_dir_all(&bounds).ok();
+    }
+
+    #[test]
+    fn destroy_session_dir_force_true_refuses_a_path_shaped_like_native_asset_store() {
+        let bounds = tmpdir("forbidden-assets-bounds");
+        let assets_like = bounds.join("assets");
+        fs::create_dir_all(&assets_like).unwrap();
+        fs::write(assets_like.join("clip-0001.mp4"), b"not really an mp4").unwrap();
+        let result = destroy_session_dir(&assets_like, true);
+        assert!(result.is_err(), "must refuse a non-kinetix-export-prefixed dir: {result:?}");
+        assert!(assets_like.join("clip-0001.mp4").exists());
+        fs::remove_dir_all(&bounds).ok();
+    }
+
+    #[test]
+    fn destroy_session_dir_force_true_refuses_a_path_shaped_like_webview2_profile() {
+        let bounds = tmpdir("forbidden-webview2-bounds");
+        let webview_like = bounds.join("EBWebView"); // WebView2 profile dir naming
+        fs::create_dir_all(webview_like.join("Default")).unwrap();
+        let result = destroy_session_dir(&webview_like, true);
+        assert!(result.is_err(), "must refuse a non-kinetix-export-prefixed dir: {result:?}");
+        assert!(webview_like.join("Default").exists());
+        fs::remove_dir_all(&bounds).ok();
     }
 
     // ── WS3 Round 21 (D3d / D5) — retain-for-resume and reclamation ─────────
