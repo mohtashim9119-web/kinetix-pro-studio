@@ -285,11 +285,31 @@ fn rotate_backup(backups_root: &Path, id: &str, src: &Path) -> Result<(), String
 /// throughout, same posture as `rotate_backup` and
 /// `session_claim::sweep_manifestless_orphans`: an error reading or removing
 /// one entry is skipped, never aborts the pass or fails app launch.
-fn sweep_stale_backup_dirs(backups_root: &Path, live_ids: &HashSet<String>, min_age_secs: u64) {
+/// One stale-backup subdirectory found under a `backups_root`, and its size
+/// at the moment it was found — shared shape between the dry-run (WS3 Batch
+/// 2, D5c: `size_report`'s advertised bytes) and the real sweep (D5a/D5b:
+/// what actually gets deleted and how many bytes that frees), so the two
+/// can never drift onto separately-computed numbers for the same directory.
+struct StaleBackupCandidate {
+    path: PathBuf,
+    bytes: u64,
+}
+
+/// The staleness scan `sweep_stale_backup_dirs` used to do inline, factored
+/// out so it can also run as a READ-ONLY dry run (`stale_backup_bytes`,
+/// D5c) with the identical predicate and the identical
+/// `crate::storage_root::dir_size` byte-counting — not a second,
+/// hand-copied version of either.
+fn find_stale_backup_candidates(
+    backups_root: &Path,
+    live_ids: &HashSet<String>,
+    min_age_secs: u64,
+) -> Vec<StaleBackupCandidate> {
     let Ok(entries) = fs::read_dir(backups_root) else {
-        return;
+        return Vec::new();
     };
     let now = SystemTime::now();
+    let mut out = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if !path.is_dir() {
@@ -314,16 +334,46 @@ fn sweep_stale_backup_dirs(backups_root: &Path, live_ids: &HashSet<String>, min_
             None => true,
         };
         if old_enough {
-            if let Err(error) = crate::safe_delete::delete_app_staging_dir(&path, backups_root, "")
-            {
+            out.push(StaleBackupCandidate {
+                bytes: crate::storage_root::dir_size(&path),
+                path,
+            });
+        }
+    }
+    out
+}
+
+/// WS3 Batch 2 (D5c) — read-only: the byte total `sweep_stale_backup_dirs`
+/// would actually free if run right now against this exact `backups_root`/
+/// `live_ids`/`min_age_secs`, with ZERO deletion. This is what
+/// `size_report` must advertise as "reclaimable" for a backups row —
+/// previously it advertised the ENTIRE directory's size regardless of
+/// staleness, which was never a true figure (WS3 Batch 2 Ruling E, D5c).
+fn stale_backup_bytes(backups_root: &Path, live_ids: &HashSet<String>, min_age_secs: u64) -> u64 {
+    find_stale_backup_candidates(backups_root, live_ids, min_age_secs)
+        .iter()
+        .map(|c| c.bytes)
+        .sum()
+}
+
+/// Returns the total bytes actually reclaimed (D5b — previously discarded
+/// entirely; the caller had no way to know this swept anything).
+fn sweep_stale_backup_dirs(backups_root: &Path, live_ids: &HashSet<String>, min_age_secs: u64) -> u64 {
+    let candidates = find_stale_backup_candidates(backups_root, live_ids, min_age_secs);
+    let mut reclaimed = 0u64;
+    for candidate in candidates {
+        match crate::safe_delete::delete_app_staging_dir(&candidate.path, backups_root, "") {
+            Ok(()) => reclaimed += candidate.bytes,
+            Err(error) => {
                 log::warn!(
                     target: "kinetix::project_backup_reclaim",
                     "stale backup reclaim refused for {}: {error}",
-                    path.display()
+                    candidate.path.display()
                 );
             }
         }
     }
+    reclaimed
 }
 
 /// Project ids the legacy mirror still has a project file for.
@@ -363,15 +413,42 @@ fn live_store_ids(root: &Path) -> HashSet<String> {
 /// `project-store-backups/`). Never blocks or fails app launch — errors from
 /// either tree's `mirror_root`/`store_root` resolution are silently skipped,
 /// same posture `sweep_stale_backup_dirs` itself already has.
-pub fn sweep_stale_project_backups(app: &tauri::AppHandle) {
+///
+/// WS3 Batch 2 (D5b) — now returns the total bytes actually freed across
+/// both trees. `storage_root_reclaim` (`storage_root.rs`) previously
+/// discarded this call's return value entirely (there wasn't one), so the
+/// modal's "Reclaim {bytes}" total never included anything this call swept
+/// — the operator could click Reclaim, real backup bytes could be freed,
+/// and the reported total would still read as if only `cache/` had moved.
+/// The startup caller (`lib.rs`) still ignores the return value, which is
+/// fine — it never reported a total to anyone.
+pub fn sweep_stale_project_backups(app: &tauri::AppHandle) -> u64 {
+    let mut reclaimed = 0u64;
     if let Ok(root) = mirror_root(app) {
         let live = live_mirror_ids(&root);
-        sweep_stale_backup_dirs(&backups_dir(&root), &live, STALE_BACKUP_MIN_AGE_SECS);
+        reclaimed += sweep_stale_backup_dirs(&backups_dir(&root), &live, STALE_BACKUP_MIN_AGE_SECS);
     }
     if let Ok(root) = store_root(app) {
         let live = live_store_ids(&root);
-        sweep_stale_backup_dirs(&store_backups_dir(&root), &live, STALE_BACKUP_MIN_AGE_SECS);
+        reclaimed += sweep_stale_backup_dirs(&store_backups_dir(&root), &live, STALE_BACKUP_MIN_AGE_SECS);
     }
+    reclaimed
+}
+
+/// WS3 Batch 2 (D5c) — read-only counterpart for `size_report`'s "Project
+/// backups" row: the bytes the STORE tree's stale-backup sweep would
+/// actually free right now, with zero deletion. Deliberately covers only
+/// the store tree (`store_backups_dir`, == `storage_root::project_backups_dir`
+/// — see that function's own doc comment on why they're the same path) —
+/// `size_report`'s backups row IS that path, so this is the one number that
+/// can agree with it exactly. The legacy mirror tree the sweep ALSO clears
+/// is not reflected in `size_report` at all (a separate, smaller,
+/// pre-existing gap — `size_report` has never had a row for it — flagged
+/// in this batch's report rather than silently left unexplained).
+pub fn store_backups_stale_bytes(app: &tauri::AppHandle) -> u64 {
+    let Ok(root) = store_root(app) else { return 0 };
+    let live = live_store_ids(&root);
+    stale_backup_bytes(&store_backups_dir(&root), &live, STALE_BACKUP_MIN_AGE_SECS)
 }
 
 /// Reads every project file plus the registry. Used once at boot for the
@@ -709,6 +786,18 @@ mod tests {
         let older = SystemTime::now() - std::time::Duration::from_secs(age_secs);
         let file = fs::File::open(&path).unwrap();
         file.set_modified(older).unwrap();
+    }
+
+    /// Like `touch_backup_file` but with caller-supplied bytes — for D5c's
+    /// fixture, where a second file's SIZE (not just its presence) needs to
+    /// be part of what the sweep's byte-accounting proves it counted
+    /// correctly. Ages the file too, since `sweep_stale_backup_dirs`'s
+    /// staleness check uses the NEWEST mtime across every file in the dir —
+    /// a fresh-mtime file here would keep the whole directory looking live.
+    fn write_aged_file(path: &Path, bytes: Vec<u8>, age_secs: u64) {
+        fs::write(path, &bytes).unwrap();
+        let older = SystemTime::now() - std::time::Duration::from_secs(age_secs);
+        fs::File::open(path).unwrap().set_modified(older).unwrap();
     }
 
     #[test]
@@ -1059,5 +1148,68 @@ mod tests {
         );
         assert!(!is_asset_reference_loss("not json", &existing));
         assert!(!is_asset_reference_loss(&existing, "not json"));
+    }
+
+    // ── WS3 Batch 2 (D5b/D5c) — advertised reclaimable bytes must equal
+    //    actually-freed bytes, exactly, on a mix of aged and fresh backups.
+
+    #[test]
+    fn stale_backup_bytes_dry_run_advertises_exactly_what_the_sweep_actually_frees() {
+        let d = tmpdir("d5c-mixed");
+        let root = backups_dir(&d);
+        // Two dead-and-aged project backups (reclaimable) of DIFFERENT
+        // sizes, so a bug that reclaims the wrong one or double-counts
+        // would show up as a byte mismatch, not just a boolean pass/fail.
+        touch_backup_file(&root.join("dead-aged-a"), "111.json", 40 * 24 * 60 * 60);
+        write_aged_file(&root.join("dead-aged-a").join("222.json"), vec![b'x'; 4_096], 40 * 24 * 60 * 60);
+        touch_backup_file(&root.join("dead-aged-b"), "111.json", 45 * 24 * 60 * 60);
+        write_aged_file(&root.join("dead-aged-b").join("222.json"), vec![b'y'; 10_240], 45 * 24 * 60 * 60);
+        // One dead but still within the grace period — must NOT be counted
+        // as reclaimable, and must NOT be swept.
+        touch_backup_file(&root.join("dead-fresh"), "111.json", 60);
+        // One live project's backup, arbitrarily large — must NEVER be
+        // counted or swept regardless of age. Left at its natural (fresh)
+        // mtime deliberately — liveness must exempt it independent of age.
+        touch_backup_file(&root.join("still-live"), "111.json", 400 * 24 * 60 * 60);
+        fs::write(root.join("still-live").join("222.json"), vec![b'z'; 999_999]).unwrap();
+
+        let live: HashSet<String> = ["still-live".to_string()].into_iter().collect();
+
+        // D5c: the dry-run figure size_report would advertise.
+        let advertised = stale_backup_bytes(&root, &live, STALE_BACKUP_MIN_AGE_SECS);
+
+        // Exactly the two dead-and-aged dirs' bytes, nothing else.
+        let expected: u64 =
+            crate::storage_root::dir_size(&root.join("dead-aged-a"))
+                + crate::storage_root::dir_size(&root.join("dead-aged-b"));
+        assert_eq!(advertised, expected, "advertised bytes must equal the two reclaimable dirs' real size");
+        assert!(advertised > 0);
+
+        // D5b: the real sweep's return value — must equal `advertised`
+        // EXACTLY, not approximately, not rounded.
+        let freed = sweep_stale_backup_dirs(&root, &live, STALE_BACKUP_MIN_AGE_SECS);
+        assert_eq!(freed, advertised, "bytes actually freed must equal what was advertised, exactly");
+
+        // And the filesystem agrees with both numbers.
+        assert!(!root.join("dead-aged-a").exists());
+        assert!(!root.join("dead-aged-b").exists());
+        assert!(root.join("dead-fresh").exists(), "within-grace-period backup must survive");
+        assert!(root.join("still-live").exists(), "live project's backup must survive");
+
+        fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn stale_backup_bytes_is_zero_when_nothing_is_reclaimable() {
+        let d = tmpdir("d5c-none-reclaimable");
+        let root = backups_dir(&d);
+        touch_backup_file(&root.join("dead-fresh"), "111.json", 60);
+        let live: HashSet<String> = HashSet::new();
+        let advertised = stale_backup_bytes(&root, &live, STALE_BACKUP_MIN_AGE_SECS);
+        assert_eq!(advertised, 0);
+        let freed = sweep_stale_backup_dirs(&root, &live, STALE_BACKUP_MIN_AGE_SECS);
+        assert_eq!(freed, 0);
+        assert!(root.join("dead-fresh").exists());
+        fs::remove_dir_all(&d).ok();
     }
 }

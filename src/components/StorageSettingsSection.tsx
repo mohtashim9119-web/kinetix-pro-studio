@@ -137,9 +137,9 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
                 }
               })();
             }}
-            className="w-full bg-[#F27D26] text-black p-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all disabled:opacity-40"
+            className="w-full bg-[#F27D26] text-white p-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all disabled:opacity-40"
           >
-            Reclaim {formatBytes(totalReclaimable)}
+            Free up cached data
           </button>
         )}
       </div>

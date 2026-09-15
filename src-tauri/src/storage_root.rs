@@ -184,8 +184,11 @@ fn write_atomic(dest: &Path, contents: &str) -> Result<(), String> {
 
 /// Recursive byte total. Best-effort: an unreadable entry is skipped, never
 /// fails the whole walk (same posture `sweep_stale_backup_dirs` already has
-/// elsewhere in this crate).
-fn dir_size(dir: &Path) -> u64 {
+/// elsewhere in this crate). `pub(crate)` — `project_mirror.rs`'s
+/// stale-backup dry-run/sweep (D5c) sizes candidates with this exact
+/// function so the size it reports and the size it deletes can never drift
+/// onto two different byte-counting implementations.
+pub(crate) fn dir_size(dir: &Path) -> u64 {
     let mut total = 0u64;
     let Ok(entries) = fs::read_dir(dir) else {
         return 0;
@@ -443,6 +446,12 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
     let [backups_path, cache_path] = reclaimable_dirs(&root);
     let backups_bytes = dir_size(&backups_path);
     let cache_bytes = dir_size(&cache_path);
+    // WS3 Batch 2 (D5c) — advertise only what the sweep would ACTUALLY
+    // free (aged, orphaned entries), not the whole directory's current
+    // size. `backups_bytes` above stays as `currentBytes` (the row's "how
+    // big is this right now" figure, unrelated to reclaimability) — only
+    // `reclaimableBytes` changes.
+    let backups_reclaimable_bytes = crate::project_mirror::store_backups_stale_bytes(&app);
 
     let mut rows = vec![
         row(
@@ -463,7 +472,7 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
             &backups_path,
             "Project backups",
             backups_bytes,
-            backups_bytes,
+            backups_reclaimable_bytes,
             "reclaimable",
         ),
         row(
@@ -500,11 +509,28 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
 
 /// Clears reclaimable subtrees (cache + stale project backups). Never touches
 /// `assets/`, `projects/`, or `models/` — see `size_report`'s classification.
+///
+/// WS3 Batch 2 — three separate defects fixed here (Ruling E's D5a/D5b/D5c;
+/// confirmed via STEP 0b that `StorageSettingsSection.tsx:130` genuinely
+/// calls this — the bug was never missing wiring):
+///   D5a — `reclaimable_dirs`'s backups path used to be bound to `_backups`
+///         and discarded outright; this function only ever freed `cache/`.
+///         Fixed: `sweep_stale_project_backups`'s return value (below) now
+///         actually reaches `reclaimed`, covering the backups trees.
+///   D5b — even the sweep call that DID run had its byte total thrown away
+///         (`sweep_stale_project_backups` used to return `()`). Fixed by
+///         giving it and `sweep_stale_backup_dirs` real `u64` returns.
+///   D5c — `size_report`'s advertised "reclaimable" figure for backups was
+///         the ENTIRE directory's current size, not the aged/orphaned
+///         subset this function (and the sweep it calls) actually deletes
+///         — the number shown to the operator was never true regardless of
+///         whether the sweep itself worked. Fixed in `size_report` via
+///         `project_mirror::store_backups_stale_bytes`, the read-only
+///         counterpart to the exact same staleness scan this sweep runs.
 #[tauri::command]
 pub fn storage_root_reclaim(app: tauri::AppHandle) -> Result<u64, String> {
     let root = resolve_storage_root(&app)?;
-    crate::project_mirror::sweep_stale_project_backups(&app);
-    let mut reclaimed = 0u64;
+    let mut reclaimed = crate::project_mirror::sweep_stale_project_backups(&app);
     let [_backups, cache] = reclaimable_dirs(&root);
     if cache.is_dir() {
         reclaimed += dir_size(&cache);
