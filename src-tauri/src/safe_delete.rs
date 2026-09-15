@@ -258,6 +258,10 @@ mod tests {
             ("project_mirror.rs", include_str!("project_mirror.rs")),
             ("asset_store.rs", include_str!("asset_store.rs")),
             ("session_claim.rs", include_str!("session_claim.rs")),
+            // Round 28 Increment 0 — ffmpeg.rs's two probe-tmp-dir cleanup
+            // sites now route through delete_app_staging_dir; this pins that
+            // so a regression can't quietly reintroduce a raw call there.
+            ("ffmpeg.rs", include_str!("ffmpeg.rs")),
         ] {
             let production = source.split("\n#[cfg(test)]").next().unwrap_or(source);
             let raw_calls: Vec<&str> = production

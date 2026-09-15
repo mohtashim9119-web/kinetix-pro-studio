@@ -16,6 +16,7 @@ use crate::disk_space::{
     volume_free_space, VolumeFreeSpace, DISK_FULL_TAG, FFMPEG_STDERR_TAIL_BYTES,
     FFMPEG_STDERR_TAIL_LINES,
 };
+use crate::safe_delete::delete_app_staging_dir;
 use crate::session_claim::{
     acquire_session_claim, destroy_session_dir, read_session_claim_view, reclaim_sessions,
     report_reclaimable_sessions, retain_session_for_resume, sweep_manifestless_orphans,
@@ -2379,12 +2380,12 @@ pub async fn probe_audio_duration(app: tauri::AppHandle, audio_b64: String) -> R
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("probe: create temp dir: {e}"))?;
     let input = tmp_dir.join("probe_input");
     if let Err(e) = fs::write(&input, &bytes) {
-        let _ = fs::remove_dir_all(&tmp_dir);
+        let _ = delete_app_staging_dir(&tmp_dir, &std::env::temp_dir(), "kinetix-probe-");
         return Err(format!("probe: write input: {e}"));
     }
 
     let result = ffmpeg_probe_duration_secs(&app, &input).await;
-    let _ = fs::remove_dir_all(&tmp_dir);
+    let _ = delete_app_staging_dir(&tmp_dir, &std::env::temp_dir(), "kinetix-probe-");
     result
 }
 
@@ -2448,12 +2449,12 @@ pub async fn probe_video_fps(app: tauri::AppHandle, video_b64: String) -> Result
     fs::create_dir_all(&tmp_dir).map_err(|e| format!("probe: create temp dir: {e}"))?;
     let input = tmp_dir.join("probe_input");
     if let Err(e) = fs::write(&input, &bytes) {
-        let _ = fs::remove_dir_all(&tmp_dir);
+        let _ = delete_app_staging_dir(&tmp_dir, &std::env::temp_dir(), "kinetix-probe-");
         return Err(format!("probe: write input: {e}"));
     }
 
     let result = ffmpeg_probe_fps(&app, &input).await;
-    let _ = fs::remove_dir_all(&tmp_dir);
+    let _ = delete_app_staging_dir(&tmp_dir, &std::env::temp_dir(), "kinetix-probe-");
     result
 }
 
@@ -2485,6 +2486,107 @@ mod tests {
     use std::sync::atomic::Ordering;
     use std::thread;
     use std::time::Duration;
+
+    // ── Round 28 Increment 0 — probe_audio_duration/probe_video_fps now
+    //    route their tmp-dir cleanup through `safe_delete::delete_app_staging_dir`
+    //    instead of a raw `fs::remove_dir_all`. These pin the forbidden-path
+    //    refusals directly against the same helper/bounds/prefix those two
+    //    call sites actually use, so a regression that widens the bounds or
+    //    prefix here is caught the same way whisper.rs's is.
+    mod probe_tmp_dir_forbidden_paths {
+        use super::*;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        fn now_millis() -> u128 {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis())
+                .unwrap_or(0)
+        }
+
+        fn unique_temp_dir(tag: &str) -> PathBuf {
+            std::env::temp_dir().join(format!("kinetix-ffmpeg-probe-test-{tag}-{}", now_millis()))
+        }
+
+        /// The exact bounds/prefix `probe_audio_duration`/`probe_video_fps`
+        /// pass to `delete_app_staging_dir` — a real `kinetix-probe-*` dir
+        /// under the OS temp root deletes cleanly.
+        #[test]
+        fn a_real_kinetix_probe_dir_is_deleted() {
+            let dir = std::env::temp_dir().join(format!("kinetix-probe-{}", Uuid::new_v4()));
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("probe_input"), b"x").unwrap();
+
+            let result = delete_app_staging_dir(&dir, &std::env::temp_dir(), "kinetix-probe-");
+            assert!(result.is_ok());
+            assert!(!dir.exists());
+        }
+
+        /// Cannot reach a model directory — wrong prefix entirely.
+        #[test]
+        fn cannot_reach_a_model_directory() {
+            let fake_models_root = unique_temp_dir("models-root");
+            let models_dir = fake_models_root.join("models");
+            fs::create_dir_all(&models_dir).unwrap();
+            fs::write(models_dir.join("ggml-large-v3-turbo.bin"), b"model-bytes").unwrap();
+
+            let result = delete_app_staging_dir(&models_dir, &fake_models_root, "kinetix-probe-");
+            assert!(result.is_err());
+            assert!(models_dir.exists());
+            assert!(models_dir.join("ggml-large-v3-turbo.bin").exists());
+
+            fs::remove_dir_all(&fake_models_root).ok();
+        }
+
+        /// Cannot reach `projects/` — right-shaped bounds, wrong name prefix.
+        #[test]
+        fn cannot_reach_a_projects_directory() {
+            let bounds = unique_temp_dir("bounds-projects");
+            let projects_dir = bounds.join("projects");
+            fs::create_dir_all(&projects_dir).unwrap();
+            fs::write(projects_dir.join("project.json"), b"{}").unwrap();
+
+            let result = delete_app_staging_dir(&projects_dir, &bounds, "kinetix-probe-");
+            assert!(result.is_err());
+            assert!(projects_dir.exists());
+
+            fs::remove_dir_all(&bounds).ok();
+        }
+
+        /// Cannot reach the native asset store — same shape, wrong prefix.
+        #[test]
+        fn cannot_reach_the_native_asset_store() {
+            let bounds = unique_temp_dir("bounds-assets");
+            let asset_store_dir = bounds.join("asset_store");
+            fs::create_dir_all(&asset_store_dir).unwrap();
+            fs::write(asset_store_dir.join("asset-blob.bin"), b"asset-bytes").unwrap();
+
+            let result = delete_app_staging_dir(&asset_store_dir, &bounds, "kinetix-probe-");
+            assert!(result.is_err());
+            assert!(asset_store_dir.exists());
+
+            fs::remove_dir_all(&bounds).ok();
+        }
+
+        /// Cannot reach a WebView2 profile directory — outside bounds entirely,
+        /// mirroring the Windows shape (`%APPDATA%\...\EBWebView`).
+        #[test]
+        fn cannot_reach_a_webview2_profile_directory() {
+            let bounds = unique_temp_dir("bounds-wv2");
+            let webview_dir = unique_temp_dir("EBWebView-profile");
+            fs::create_dir_all(&bounds).unwrap();
+            fs::create_dir_all(&webview_dir).unwrap();
+            fs::write(webview_dir.join("Cookies"), b"session-data").unwrap();
+
+            let result = delete_app_staging_dir(&webview_dir, &bounds, "kinetix-probe-");
+            assert!(result.is_err());
+            assert!(webview_dir.exists());
+            assert!(webview_dir.join("Cookies").exists());
+
+            fs::remove_dir_all(&bounds).ok();
+            fs::remove_dir_all(&webview_dir).ok();
+        }
+    }
 
     /// WS3 Round 20 — the Windows `FlushFileBuffers` access-right probe.
     ///
