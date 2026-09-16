@@ -589,12 +589,28 @@ pub(crate) const MODEL_FILENAME: &str = "ggml-large-v3-turbo.bin";
 
 fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     // In-app acquisition (bug 4 fix): the model is downloaded on demand into
-    // app_local_data_dir()/models/ (see model_download.rs) rather than bundled
-    // — tauri.conf.json's resources map no longer ships models/* at all. This
-    // is checked FIRST, ahead of every bundle/dev fallback below, so a user who
-    // has downloaded the model always gets it; every existing fallback is kept
-    // unchanged underneath for a hand-placed file (dev checkout, or a build
-    // from before this change).
+    // the configured storage root's models/ dir (see model_download.rs /
+    // storage_root.rs) rather than bundled — tauri.conf.json's resources map
+    // no longer ships models/* at all. This is checked FIRST, ahead of every
+    // bundle/dev fallback below, so a user who has downloaded the model
+    // always gets it; every existing fallback is kept unchanged underneath
+    // for a hand-placed file (dev checkout, or a build from before this
+    // change).
+    //
+    // D12 fix (WS3 Round 29): this used to check only
+    // app_local_data_dir()/models/, which is what model_download.rs's
+    // models_dir() also resolved to BEFORE Round 28's storage-root routing.
+    // Since Round 28, model_download.rs (the download target AND the
+    // "DOWNLOAD MODEL" presence check) resolves through
+    // storage_root::resolve_storage_root() instead, which diverges from
+    // app_local_data_dir() once the user has relocated storage — leaving
+    // this function unable to find a model the UI reports as installed.
+    if let Ok(storage_root) = crate::storage_root::resolve_storage_root(app) {
+        let model = crate::storage_root::models_dir(&storage_root).join(MODEL_FILENAME);
+        if model.exists() {
+            return Ok(model);
+        }
+    }
     if let Ok(local_data_dir) = app.path().app_local_data_dir() {
         let model = local_data_dir.join("models").join(MODEL_FILENAME);
         if model.exists() {
