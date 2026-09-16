@@ -256,6 +256,38 @@ impl ModelId {
 // Target path resolution — always via the existing resolvers
 // ---------------------------------------------------------------------------
 
+/// D22 fix (WS3 Round 29) — detection's own resolver, distinct from
+/// `target_path` (which stays single-candidate: it's the WRITE target for
+/// downloads/imports, and there is exactly one place this module ever
+/// writes a fresh model to). `fa_model_path` (fa.rs, the actual
+/// alignment-time loader) already walks the full 3-tier candidate ladder
+/// (storage-root slot, `app_local_data_dir` slot, exe-dir "manual
+/// placement" slot) and happily uses a model at ANY of them — but
+/// `check_installed_models` used to ask only `target_path`'s single
+/// managed-slot candidate, so a model whose files sit at the local-data-dir
+/// or exe-dir tier (e.g. copied in externally rather than downloaded
+/// through the app) was real and already usable for alignment, yet showed
+/// "not installed" until the operator ran it through "Import" once per
+/// language — which did nothing but relocate the file into the one slot
+/// this used to check. Detection now mirrors the loader: first candidate
+/// that reports a real status wins, in the same preference order.
+fn fa_installed_status(app: &tauri::AppHandle, lang: &'static str) -> Option<InstalledModelStatus> {
+    let storage_root_models_dir = crate::storage_root::resolve_storage_root(app)
+        .ok()
+        .map(|root| crate::storage_root::models_dir(&root));
+    let local_data_dir = app.path().app_local_data_dir().ok();
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|p| p.to_path_buf()));
+    let candidates = crate::fa::fa_model_candidate_paths(
+        storage_root_models_dir.as_deref(),
+        local_data_dir.as_deref(),
+        exe_dir.as_deref(),
+        lang,
+    );
+    candidates.iter().find_map(|p| status_for(ModelId::Fa(lang), p))
+}
+
 fn target_path(app: &tauri::AppHandle, id: ModelId) -> Result<PathBuf, String> {
     match id {
         ModelId::Whisper => Ok(models_dir(app)?.join(MODEL_FILENAME)),
@@ -403,7 +435,10 @@ pub async fn check_installed_models(app: tauri::AppHandle) -> Result<InstalledMo
     for lang in FA_LANGUAGES {
         let app = app.clone();
         tasks.push(Box::new(move || {
-            let result = target_path(&app, ModelId::Fa(lang)).map(|p| status_for(ModelId::Fa(lang), &p));
+            // D22 fix (WS3 Round 29) — was `target_path(...).map(|p| status_for(...))`,
+            // which only ever checked the single managed-slot candidate. See
+            // `fa_installed_status`'s own doc comment.
+            let result: Result<Option<InstalledModelStatus>, String> = Ok(fa_installed_status(&app, lang));
             (Some(lang.to_string()), result)
         }));
     }
