@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: Round 28, SHA 1560ac5
+Last updated: FA wiring audit on `ws-cloud-asr-plan` (audit read @ `ebec58a`)
 
 > **Single source of truth for project tracking.** Retired trackers live under
 > `docs/archive/history/` (`work-in-progress.md`, `project-state.md`). Update this file only;
@@ -8,10 +8,21 @@ Last updated: Round 28, SHA 1560ac5
 
 ---
 
+## NEW RULINGS
+
+Dated entries from the FA wiring ground-truth audit (`docs/architecture/fa-wiring-audit.md`, source SHA `ebec58a`, worktree `4.kinetix-pro-studio-cloud-asr`, branch `ws-cloud-asr-plan`).
+
+- **NR-1 (2026-09-17):** Forced alignment is an officially wired, first-class **local** feature. When the project high-precision toggle is ON, alignment must run; it must **never** silently substitute Whisper timings while presenting a successful sync. Evidence: production path `App.tsx:3960-4022` + fail-clean `forcedAlignmentRun.ts`; CI compiles `fa-inference` (`.github/workflows/build.yml:424`).
+- **NR-2 (2026-09-17):** Toggle default becomes ON for all builds and users, subject to migration: absent `Project.faHighPrecisionSync` adopts ON at read time without persisting; explicit `false` stays off (`faGate.ts` absent-key semantics — audit STEP 4).
+- **NR-3 (2026-09-17):** Silent FA → Whisper fallback while toggle ON is defect **D24** (see WS3 Open Bugs). Inventory: audit STEP 3; Sync Log `fa-fallback` is not sufficient under NR-1.
+- **NR-4 (2026-09-17):** Prior “FA disabled / not in shipped build / cloud-only first delivery” claims are stale. Index: audit STEP 5 + Amendment 3 in [`docs/architecture/cloud-asr-plan.md`](architecture/cloud-asr-plan.md). WS1 `sync-pipeline-v2-plan.md` body unchanged; one status line at file top points here.
+
+---
+
 ## WS1: Sync Pipeline
 
 ### In Progress
-Phase 3 (Task 5); 3b/3c closed, 3d dormant. FA default toggle gated at [faGate.ts:91](../src/services/faGate.ts) — 0/4 stage locks passed; `fa-inference` non-default so shipped builds fall back to Whisper timing.
+Phase 3 (Task 5); 3b/3c closed, 3d dormant. FA default toggle still OFF at read time ([faGate.ts:91](../src/services/faGate.ts), NR-2 pending implementation); CI installers compile `fa-inference` — see NR-1 / [`fa-wiring-audit.md`](architecture/fa-wiring-audit.md).
 **END GOAL:** all Stage 1 lock gates satisfied and `FA_PROJECT_DEFAULT_ON` → ON — `docs/ws1-sync-pipeline/stage1-live-run-prep.md`
 
 ### Next Tasks
@@ -23,7 +34,7 @@ Phase 3 (Task 5); 3b/3c closed, 3d dormant. FA default toggle gated at [faGate.t
 - [OPEN] Task 3 — stale-anchor scroll degradation test (code-read only today)
 - [OPEN] Wire `FaEvent` to a UI progress consumer (none exists)
 - [OPEN] Rule-stage fixture-backed regression (golden replay stops at `snapCoveredBoundaries`)
-- [OPEN] Make FA reachable in shipped build — `fa-inference` non-default Cargo feature — `src-tauri/Cargo.toml`
+- CLOSED (FA wiring audit 2026-09-17, NR-1) — CI installers pass `-f fa-inference` (`.github/workflows/build.yml:424`); local plain `tauri:build` still omits FA unless `-f` — [`fa-wiring-audit.md`](architecture/fa-wiring-audit.md)
 - [OPEN] Pillar 2 passive detector (4 rules, `MIN_IMPLIED_PRECISION = 0.50`) — `sync-pipeline-v2-plan.md` Part AK.2
 - [OPEN] Sync log revamp (6 collapsible groups) — Part AK.3
 - [OPEN] Phases 4–7 (Align&Select, Place, Finalize&Report restructure) — `sync-pipeline-v2-plan.md`
@@ -106,6 +117,7 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 - D5 CLOSED (WS3 Batch 2, 3B/3C) — `70d298e` — D5 was never a wiring gap (`StorageSettingsSection.tsx:130` genuinely called `storage_root_reclaim` all along — STEP 0b re-grep). Three separate defects fixed instead: D5a `reclaimable_dirs`'s backups path was discarded (`storage_root.rs`); D5b `sweep_stale_project_backups`'s freed-byte total was thrown away (now returns `u64`, `project_mirror.rs`); D5c (the one that mattered) — `size_report` advertised the ENTIRE backups directory as reclaimable regardless of staleness, a number that was never true. Now advertises exactly what the sweep would free (`project_mirror::store_backups_stale_bytes`), proven byte-exact-equal to what the sweep actually frees by a mixed aged/fresh fixture test. U36 (the export-failure modal's separate "Reclaim {bytes}" mechanism) is untouched, by design — see `docs/ws3-export-pipeline/reclaim-mechanisms.md` for which root each mechanism covers.
 - U36 CLOSED (WS3 Batch 2, STEP 0c) — `b973b8c` — resolved the ownership ambiguity between the export-failure modal's "Reclaim {bytes}" and the App Settings "Free up cached data" button; they are two separate, non-merged mechanisms with separate targets (see `docs/ws3-export-pipeline/reclaim-mechanisms.md` for which root each covers) — not a single bug, not merged.
 - [OPEN] D9 Twenty encoder sessions with eighteen restarts on RX 580 in one piece — Round 28, assigned to CC; investigated read-only this round, see Round 28 closeout report for conclusion
+- D24 [OPEN] (NR-3, FA wiring audit @ `ebec58a`) — With high-precision sync ON, Apply Sync still commits Whisper timings on any `runForcedAlignmentForSync` fallback (`forcedAlignmentRun.ts:200-206`, `App.tsx:3974-4022`) without aborting; user may miss Sync Log `fa-fallback`. Fix dispatch: typed error / no silent substitution — [`fa-wiring-audit.md`](architecture/fa-wiring-audit.md) STEP 3–4
 - D8 CLOSED (Round 28, addendum scope) — `216878f` — added `export_log_event` (Rust, `ffmpeg.rs`) and `logExportEvent` (TS, `exportDiagnosticLog.ts`), a general-purpose door into `kinetix-diagnostic.log` for the export lifecycle, wired at init, cancellation, disk-full-preflight, and session-cleanup (`exportPipelineWebCodecs.ts`). Flush: routes through the same `tauri_plugin_log` `Folder` target the pre-existing `ffmpeg_log_disk_preflight`/`ffmpeg_retain_session_for_resume` commands already use, backed by an unbuffered `std::fs::File::write_all` (no `BufWriter`) — verified by reading `tauri-plugin-log 2.8.0`'s file-target implementation, not assumed. NOT wired: encoder-config, frame-loop progress pulses, and watchdog-update events, which originate inside the WebCodecs Worker (a separate global scope with no direct IPC access) and would need `postMessage`-to-main-thread plumbing this pass didn't build — left for a future pass; see `App.tsx`/`exportWorker.ts` for where that would attach.
 - D8 FOLLOW-UP FIX (Round 28, same session) — `8908a03` — the new in-app diagnostic log viewer (`DiagnosticLogModal.tsx`, App Settings → Diagnostics) surfaced that `lib.rs`'s `setup` debug-build branch (`cfg!(debug_assertions)`) attached `tauri_plugin_log` with its OWN DEFAULT targets (`Stdout`, `Webview`, `LogDir`) rather than the pinned `Folder` target at `diagnostic-logs/kinetix-diagnostic.log` — that pinned path was only ever written to by a release build launched with `KINETIX_DIAGNOSTIC_LOG=1`. Every `tauri:dev` session before this fix therefore had `export_log_event`/`ffmpeg_log_disk_preflight` calls succeeding (no error) while writing to a file `get_diagnostic_log_text`/the viewer never reads, so the log always read back empty under `tauri:dev` regardless of export activity — not a viewer bug, a debug-build target mismatch. Fixed by swapping `LogDir` for the same pinned `Folder` target in the debug branch too (keeping `Stdout`/`Webview` for DevTools/console visibility); debug logging itself was never gated, only its destination. `kinetix-diagnostic.log` is now populated live under `tauri:dev` as well as in an opted-in release build.
 
