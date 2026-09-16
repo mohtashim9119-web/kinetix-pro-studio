@@ -259,40 +259,213 @@ pub(crate) fn dir_size(dir: &Path) -> u64 {
     total
 }
 
+/// A no-op cancellation check — used by callers (and every existing test)
+/// that don't offer the operator a way to cancel mid-copy.
+#[cfg_attr(not(test), allow(dead_code))]
+fn never_cancelled() -> Result<(), String> {
+    Ok(())
+}
+
+/// Streams `from` -> `to` in fixed chunks, hashing the SOURCE bytes as they
+/// pass through (one read of `from`, not two) rather than `fs::copy` followed
+/// by a separate full re-read of `from` for verification. Returns the source
+/// digest so `verify_dir_recursive` only has to read `to` — catching genuine
+/// write-time corruption — instead of re-reading BOTH sides. D17/D18 fix
+/// (WS3 Round 29): this is the copy's dominant cost (every byte relocated
+/// used to be read three times — once to copy, once to hash each side —
+/// this cuts it to two), and each chunk is also the natural point to report
+/// live progress, which `copy_dir_recursive` below does via `on_bytes`.
+fn copy_file_with_hash(
+    from: &Path,
+    to: &Path,
+    on_bytes: &dyn Fn(u64),
+) -> Result<String, String> {
+    use std::io::{Read, Write};
+    let mut src_file = fs::File::open(from).map_err(|e| format!("open {}: {e}", from.display()))?;
+    let mut dst_file =
+        fs::File::create(to).map_err(|e| format!("create {}: {e}", to.display()))?;
+    let mut hasher = crc32fast::Hasher::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let n = src_file
+            .read(&mut buf)
+            .map_err(|e| format!("read {}: {e}", from.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        dst_file
+            .write_all(&buf[..n])
+            .map_err(|e| format!("write {}: {e}", to.display()))?;
+        on_bytes(n as u64);
+    }
+    Ok(format!("{:08x}", hasher.finalize()))
+}
+
+/// D-copy-speed fix (WS3 Round 29) — see `Cargo.toml`'s `crc32fast` entry
+/// for why this is CRC32, not a cryptographic hash: this only ever verifies
+/// our OWN just-written copy against accidental corruption, never a
+/// malicious adversary, and the CPU generation this was measured against
+/// has no SHA hardware extensions at all (though it does have the
+/// SSE4.2/PCLMULQDQ CRC32 instructions `crc32fast` auto-detects and uses).
+/// Used on this module's own hot path (destination verification, and the
+/// legacy-fa-models merge's fallback source hash).
+fn hash_file(path: &Path) -> Result<String, String> {
+    use std::io::Read;
+    let mut file = fs::File::open(path).map_err(|e| format!("hash {}: {e}", path.display()))?;
+    let mut hasher = crc32fast::Hasher::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("hash {}: {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:08x}", hasher.finalize()))
+}
+
 /// Recursive copy, preserving the tree shape. Stops and returns `Err` on the
 /// first failure — a PARTIAL copy must never be treated as a successful
 /// relocation (the caller only deletes the source subtree after this
 /// returns `Ok`).
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+///
+/// D15 fix (WS3 Round 29) — `check_cancelled` is polled once per directory
+/// entry (not just once per subtree), so an operator's Cancel click during a
+/// large subtree (e.g. `assets/`, easily hundreds of files) takes effect
+/// within one file rather than only at the next subtree boundary. Callers
+/// with nothing to cancel pass `&never_cancelled`.
+///
+/// D17/D18 fix (WS3 Round 29) — `on_bytes` reports live progress as each
+/// file streams through `copy_file_with_hash`, and `source_hashes` collects
+/// that file's digest (keyed by its DESTINATION path) so `verify_dir_recursive`
+/// never has to re-read the source side at all.
+/// D-DS_Store fix (WS3 Round 29) — Finder rewrites `.DS_Store` on its own
+/// schedule, entirely outside this app's control, purely to cache icon
+/// positions/view state — never real project data. Excluding it (never
+/// copied, never verified) sidesteps a real hazard the resume-skip logic
+/// above surfaced: a `.DS_Store` left at the destination by an earlier
+/// aborted attempt can match the CURRENT source file's size while Finder
+/// has since rewritten its content, which the resume skip (correctly, by
+/// design) cannot tell apart from a genuinely-already-copied file — and
+/// verification (also correctly) then refuses to commit over a real digest
+/// mismatch, failing the whole relocation over a file that was never
+/// supposed to be meaningful in the first place. `.DS_Store` is safe to
+/// simply not carry across at all — Finder recreates it on demand at the
+/// new location the next time it's browsed.
+///
+/// D-diagnostic-log fix (WS3 Round 29) — `kinetix-diagnostic.log` is the
+/// app's own live log file: this very process keeps an open file handle on
+/// it and appends to it for as long as the app runs, INCLUDING while a
+/// relocation copies and verifies it. Its size at copy time and its size at
+/// verify time are therefore never guaranteed to match — every relocation
+/// log line the copy/verify pass itself emits grows the source file out
+/// from under its own snapshot. Copying a live, growing file byte-for-byte
+/// isn't safely verifiable at all, so it's excluded the same way
+/// `.DS_Store` is: never copied, never verified. Nothing meaningful is
+/// lost — the log is diagnostic-only, and `tauri_plugin_log` creates a
+/// fresh file at the new root the next time the app launches.
+///
+/// Windows-audit fix (WS3 Round 29 Phase 2) — `Thumbs.db` (Explorer's
+/// per-folder thumbnail cache) and `desktop.ini` (folder customization
+/// metadata: custom icon, localized display name) are Explorer's equivalent
+/// of `.DS_Store` — written independently of this app, on Explorer's own
+/// schedule, whenever a folder is browsed. Left unexcluded, a leftover copy
+/// from an earlier aborted relocation attempt can match the CURRENT source
+/// file's size (the resume-skip heuristic in `copy_dir_recursive` can't
+/// tell that apart from a genuinely-already-copied file) while Explorer has
+/// since rewritten its content — the exact same false verify-mismatch class
+/// `.DS_Store` was excluded to prevent. Comparison is case-insensitive
+/// (`eq_ignore_ascii_case`) because Windows filenames are case-insensitive
+/// regardless of what case Explorer happens to have written.
+fn is_ignored_entry(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    name.eq_ignore_ascii_case(".DS_Store")
+        || name.eq_ignore_ascii_case("kinetix-diagnostic.log")
+        || name.eq_ignore_ascii_case("Thumbs.db")
+        || name.eq_ignore_ascii_case("desktop.ini")
+}
+
+fn copy_dir_recursive(
+    src: &Path,
+    dst: &Path,
+    check_cancelled: &dyn Fn() -> Result<(), String>,
+    on_bytes: &dyn Fn(u64),
+    source_hashes: &mut std::collections::HashMap<PathBuf, String>,
+) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| format!("create_dir_all {}: {e}", dst.display()))?;
     for entry in fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))? {
+        check_cancelled()?;
         let entry = entry.map_err(|e| format!("read_dir entry in {}: {e}", src.display()))?;
+        if is_ignored_entry(&entry.file_name()) {
+            continue;
+        }
         let from = entry.path();
         let to = dst.join(entry.file_name());
         let meta = entry
             .metadata()
             .map_err(|e| format!("metadata {}: {e}", from.display()))?;
         if meta.is_dir() {
-            copy_dir_recursive(&from, &to)?;
+            copy_dir_recursive(&from, &to, check_cancelled, on_bytes, source_hashes)?;
         } else {
-            fs::copy(&from, &to)
-                .map_err(|e| format!("copy {} -> {}: {e}", from.display(), to.display()))?;
+            // Resume fix (WS3 Round 29, operator decision) — `to` may
+            // already hold a complete copy of this exact file, left behind
+            // by an earlier attempt that failed or was cancelled partway
+            // through THIS SAME subtree (see `do_relocate`'s
+            // `record_stale_root` and the no-auto-delete change that
+            // makes this possible). A size match is treated as "already
+            // copied" and skipped outright — cheap (one `fs::metadata`,
+            // no read of either side) — rather than re-copying and
+            // re-hashing bytes that are already there. `on_bytes` still
+            // counts them toward progress, so the bar reflects real
+            // remaining work, not a mysterious jump. `verify_dir_recursive`
+            // never sees `to` in `source_hashes` for a skipped file, so its
+            // existing "hash `from` fresh" fallback (see that function's
+            // own comment) is what actually confirms this skip was safe —
+            // a size match that turns out to be a false positive (rare, but
+            // not impossible: same size, different bytes) still fails
+            // verification and the whole relocation still refuses to
+            // commit, exactly as if this file had been freshly copied and
+            // failed to verify.
+            let already_copied = fs::metadata(&to).map(|m| m.len() == meta.len()).unwrap_or(false);
+            if already_copied {
+                on_bytes(meta.len());
+            } else {
+                let hash = copy_file_with_hash(&from, &to, on_bytes)?;
+                source_hashes.insert(to, hash);
+            }
         }
     }
     Ok(())
 }
 
-fn verify_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+fn verify_dir_recursive(
+    src: &Path,
+    dst: &Path,
+    check_cancelled: &dyn Fn() -> Result<(), String>,
+    source_hashes: &std::collections::HashMap<PathBuf, String>,
+) -> Result<(), String> {
+    check_cancelled()?;
     let mut source_names = Vec::new();
     for entry in fs::read_dir(src).map_err(|e| format!("verify read_dir {}: {e}", src.display()))? {
         let entry =
             entry.map_err(|e| format!("verify read_dir entry in {}: {e}", src.display()))?;
+        if is_ignored_entry(&entry.file_name()) {
+            continue;
+        }
         source_names.push(entry.file_name());
     }
     let mut destination_names = Vec::new();
     for entry in fs::read_dir(dst).map_err(|e| format!("verify read_dir {}: {e}", dst.display()))? {
         let entry =
             entry.map_err(|e| format!("verify read_dir entry in {}: {e}", dst.display()))?;
+        if is_ignored_entry(&entry.file_name()) {
+            continue;
+        }
         destination_names.push(entry.file_name());
     }
     source_names.sort();
@@ -330,10 +503,15 @@ fn verify_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
                     to.display()
                 ));
             }
-            let source_hash = crate::sha256::hash_file(&from)
-                .map_err(|e| format!("verify hash {}: {e}", from.display()))?;
-            let destination_hash = crate::sha256::hash_file(&to)
-                .map_err(|e| format!("verify hash {}: {e}", to.display()))?;
+            // The digest `copy_dir_recursive` already computed while
+            // streaming this exact file — falls back to a fresh read of
+            // `from` only if that map is somehow missing an entry (never
+            // expected outside a test calling this function directly).
+            let source_hash = match source_hashes.get(&to) {
+                Some(hash) => hash.clone(),
+                None => hash_file(&from)?,
+            };
+            let destination_hash = hash_file(&to)?;
             if source_hash != destination_hash {
                 return Err(format!(
                     "relocation verification failed: digest differs for {} and {}",
@@ -467,14 +645,32 @@ where
 
     // Phase 1: copy and byte-verify EVERY subtree. No source deletion is
     // reachable until the entire set has passed.
+    //
+    // D-verify-feedback fix (WS3 Round 29) — `on_verify_start` fires for
+    // EVERY subtree's verify, unconditionally. An earlier attempt tried to
+    // fire it only for the loop's last subtree, on the theory that only the
+    // "final" verify should surface a label — but which subtree is slow
+    // enough to actually need one has nothing to do with loop position: the
+    // large `models`/fa-models data (the one verify that can genuinely take
+    // 30-50s+) sorts near the FRONT of `MANAGED_RELOCATION_SUBTREES`, while
+    // `diagnostic-logs` — trivially small, and now nearly empty after the
+    // live-writer-race fix excludes its one file — sorts LAST. Gating on
+    // "last" showed nothing during the one verify that actually stalls the
+    // UI, and showed a label too briefly to read on the one that doesn't.
+    // The right signal for "is this worth showing" is duration, which only
+    // the frontend can observe live — see `useStorageRootRelocation.ts`'s
+    // debounced handling of this same event for that half of the fix.
     for (name, get_dir) in MANAGED_RELOCATION_SUBTREES {
+        check_cancelled()?;
         let from = get_dir(current);
         if !from.is_dir() {
             continue;
         }
         let to = get_dir(new_root);
-        copy_dir_recursive(&from, &to)?;
-        verify_dir_recursive(&from, &to)?;
+        let mut source_hashes = std::collections::HashMap::new();
+        copy_dir_recursive(&from, &to, check_cancelled, on_bytes, &mut source_hashes)?;
+        on_verify_start();
+        verify_dir_recursive(&from, &to, check_cancelled, &source_hashes)?;
         moved.push(name.to_string());
         bytes_moved += dir_size(&to);
     }
@@ -872,36 +1068,156 @@ fn do_relocate(
         )
     })?;
 
-    // Free-space check, with headroom, against what will actually be copied.
-    let used = dir_size(&assets_dir(&real_current))
-        + dir_size(&projects_dir(&real_current))
-        + dir_size(&cache_dir(&real_current))
-        + dir_size(&project_backups_dir(&real_current))
-        + dir_size(&models_dir(&real_current));
+    // Free-space check, with headroom, against what will actually be
+    // copied. D-progress-total fix (WS3 Round 29) — this used to hardcode
+    // 5 subtree names, and silently fell out of sync when D20 added
+    // `project-mirror`/`diagnostic-logs` to `MANAGED_RELOCATION_SUBTREES`:
+    // both `used` (this free-space check) AND `bytes_total` below (which
+    // reuses `used`) under-counted the real total by however much of those
+    // two subtrees existed, so the progress bar hit "100%" while the copy
+    // loop still had those two subtrees left to go — indistinguishable
+    // from a hang. Summing over the same const both the copy loop and the
+    // legacy-fa-models merge already iterate keeps this from silently
+    // drifting out of sync again the next time a subtree is added.
+    let used = MANAGED_RELOCATION_SUBTREES
+        .iter()
+        .map(|(_, get_dir)| dir_size(&get_dir(&real_current)))
+        .sum::<u64>()
+        + dir_size(&real_current.join("fa-models"));
     let available = fs4::available_space(&real_new)
         .map_err(|e| format!("cannot read free space on {}: {e}", real_new.display()))?;
     ensure_relocation_space(used, available)
         .map_err(|e| format!("{e} at {}", real_new.display()))?;
+    // Stale-root fix (WS3 Round 29, operator decision) — ADDS where we're
+    // moving FROM to the accumulated stale-roots list, never overwrites it:
+    // moving A -> B -> C without cleaning up in between must remember BOTH
+    // A and B, not just the latest hop. The old copy is no longer deleted
+    // as part of this call (see the `delete_source` closure below) — this
+    // list is what lets Settings surface every leftover as one cleanup-able
+    // group instead of silently losing track of all but the most recent.
+    //
+    // Resume fix (WS3 Round 29) — if `real_new` was itself a previously
+    // stale target (this run is a resume, per `copy_dir_recursive`'s
+    // size-match skip), it's no longer stale once it becomes the live root
+    // — dropped from the list here rather than left to linger as an entry
+    // for a location that's now authoritative.
+    let real_new_str = real_new.to_string_lossy().to_string();
+    let real_current_str = real_current.to_string_lossy().to_string();
+    let mut stale_roots = read_config(&app)?.stale_roots;
+    stale_roots.retain(|t| t != &real_new_str);
+    if !stale_roots.iter().any(|t| t == &real_current_str) {
+        stale_roots.push(real_current_str);
+    }
     let cfg = StorageRootConfigFile {
-        root: Some(real_new.to_string_lossy().to_string()),
+        root: Some(real_new_str),
+        stale_roots,
+        legacy_previous_root: None,
+        legacy_abandoned_targets: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&cfg)
         .map_err(|e| format!("serialize storage-root.json: {e}"))?;
     let config = config_path(&app)?;
-    let (moved, bytes_moved, cleanup_warnings) = relocate_managed_subtrees_with(
+    let check_cancelled = || -> Result<(), String> {
+        if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+            Err("relocation cancelled by operator".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    // D18 fix (WS3 Round 29) — `used` above is already the exact total this
+    // call will copy, from the SAME walk the free-space check needed anyway;
+    // reused as `bytes_total` rather than a second `dir_size` pass. Emits
+    // are throttled to roughly every 16 MiB of progress (plus always at
+    // completion) rather than per-file or per-chunk, so an 8 GiB relocation
+    // sends dozens of IPC messages, not thousands.
+    const PROGRESS_EMIT_THRESHOLD_BYTES: u64 = 16 * 1024 * 1024;
+    let bytes_total = used;
+    let bytes_done = std::cell::Cell::new(0u64);
+    let last_emitted = std::cell::Cell::new(0u64);
+    let on_bytes = |n: u64| {
+        let done = bytes_done.get() + n;
+        bytes_done.set(done);
+        if done.saturating_sub(last_emitted.get()) >= PROGRESS_EMIT_THRESHOLD_BYTES || done >= bytes_total {
+            last_emitted.set(done);
+            let _ = on_event.send(RelocationEvent::Progress { bytes_done: done, bytes_total });
+        }
+    };
+    // D20 fix (WS3 Round 29) — the legacy top-level `fa-models/` merge runs
+    // as part of Phase 2 (inside `commit_pointer`, right before the pointer
+    // write), i.e. AFTER every normal subtree — including the modern nested
+    // `models/fa-models/` — has already copied and verified. That ordering
+    // is load-bearing: `relocate_legacy_fa_models` needs to see whatever the
+    // old root's OWN nested copy already produced at the new root before it
+    // can correctly skip a language that's already there. A failure here
+    // fails `commit_pointer` itself, so the existing Phase-1-failure cleanup
+    // below (which deletes the whole partial `models/` subtree at the new
+    // root on any error) already covers a partial legacy merge too, since
+    // it lands nested inside that same `models/` directory.
+    let found_legacy_fa_models = std::cell::Cell::new(false);
+    let relocation = relocate_managed_subtrees_cancellable(
         &real_current,
         &real_new,
-        || write_atomic(&config, &json),
-        |from, bounds, name| {
-            crate::safe_delete::delete_app_staging_dir(from, bounds, name).map_err(|e| {
-                format!(
-                    "new root is authoritative, but old {name} copy at {} could not be removed: {e}",
-                    from.display()
-                )
-            })
+        || {
+            found_legacy_fa_models.set(relocate_legacy_fa_models(
+                &real_current,
+                &real_new,
+                &check_cancelled,
+                &on_bytes,
+            )?);
+            write_atomic(&config, &json)
         },
-    )?;
+        // Stale-root fix (WS3 Round 29, operator decision) — no longer
+        // deletes the old copy here. `stale_roots` (set above) is what lets
+        // the operator clean it up explicitly and on their own schedule,
+        // via `storage_root_cleanup_all_stale_roots`, instead of an
+        // immediate, silent, un-reversible deletion the instant the new
+        // copy verifies.
+        |_from, _bounds, _name| Ok(()),
+        &check_cancelled,
+        &on_bytes,
+        &|| {
+            let _ = on_event.send(RelocationEvent::Verifying);
+        },
+    );
+    let (mut moved, bytes_moved, cleanup_warnings) = match relocation {
+        Ok(result) => result,
+        Err(err) => {
+            // A cancel (or any other Phase-1 failure) is caught BEFORE
+            // `commit_pointer` ever runs — see `relocate_managed_subtrees_cancellable`'s
+            // own phase ordering — so the old root is still authoritative and
+            // untouched. Resume/no-auto-delete fix (WS3 Round 29, operator
+            // decision) — the partial, never-adopted copy at the new root is
+            // no longer deleted here: a later relocation to this SAME target
+            // resumes from it (`copy_dir_recursive`'s size-match skip)
+            // instead of restarting at 0, and it's recorded as an
+            // "abandoned target" so Settings can ALSO offer it for manual
+            // cleanup if the operator would rather just discard it. Only
+            // recorded if something was actually written — an instant
+            // failure (bad path, no space, refused before any subtree
+            // started) leaves nothing worth tracking.
+            if MANAGED_RELOCATION_SUBTREES
+                .iter()
+                .any(|(_, get_dir)| get_dir(&real_new).is_dir())
+            {
+                let _ = record_stale_root(&app, &real_new);
+            }
+            return Err(err);
+        }
+    };
 
+    // Stale-root fix (WS3 Round 29, operator decision) — the legacy source
+    // is no longer deleted here either. By the time we're here every legacy
+    // language IS fully represented at the new root (freshly merged, or
+    // already present from the old root's own nested copy — see
+    // `relocate_legacy_fa_models`'s own doc comment), so it's redundant,
+    // stale data — left in place under the old root for the operator's
+    // explicit `storage_root_cleanup_previous` cleanup, same as every other
+    // subtree, rather than deleted immediately and silently.
+    if found_legacy_fa_models.get() {
+        moved.push("fa-models (legacy)".to_string());
+    }
+
+    let _ = on_event.send(RelocationEvent::Done);
     Ok(StorageRootRelocateReport {
         from: real_current.to_string_lossy().to_string(),
         to: real_new.to_string_lossy().to_string(),

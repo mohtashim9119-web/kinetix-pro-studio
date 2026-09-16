@@ -55,6 +55,26 @@ serde_json = "1.0"
 # `disks.list().first()`), which is what `get_available_disk_space` needs
 # since `app_local_data_dir` is not always on the boot volume.
 fs4 = { version = "0.9", default-features = false, features = ["sync"] }
+# D-copy-speed fix (WS3 Round 29) — `storage_root.rs`'s relocation copy
+# hashes every relocated byte (once, streamed alongside the copy — see
+# `copy_file_with_hash`) to verify the write landed correctly.
+#
+# First attempt used `sha2` (hardware-accelerated SHA-NI/ARMv8-crypto), on
+# the assumption the bottleneck was `sha256.rs`'s hand-rolled scalar
+# implementation. Measured no improvement: the actual dev/validation
+# machine (Intel Coffee Lake, i9-9980HK) predates Intel's SHA-NI extensions
+# entirely (added starting with 10th-gen/Ice Lake) — `sha2` was silently
+# falling back to the exact same unaccelerated portable path, so swapping
+# libraries changed nothing on this specific CPU.
+#
+# Cryptographic strength was never actually needed here — this verifies our
+# OWN just-written copy against accidental corruption (a truncated write, a
+# flipped bit), not a malicious adversary — so `crc32fast` (already resolves
+# transitively, no new package in `Cargo.lock`) replaces `sha2`: it
+# auto-detects and uses PCLMULQDQ/SSE4.2 CRC32 instructions, both present on
+# this CPU generation (unlike SHA-NI), for multi-GB/s throughput in any
+# build profile, not just release.
+crc32fast = "1.5"
 # Physical (not logical) core count for forced alignment's ORT intra-op thread
 # pool — see `fa_onnx::intra_op_thread_count`. std's
 # `available_parallelism()` reports LOGICAL CPUs (16 on this project's Intel
