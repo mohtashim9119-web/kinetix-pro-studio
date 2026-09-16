@@ -9,15 +9,20 @@
  */
 
 import { sha256Hex } from './annexbChunkCompare';
-import { getFileIdentity } from '../syncEngine';
 import type { Asset, HeadingOverlay, Project, SegmentGrade, TextOverlay, VideoSegment } from '../../types';
 
 export const EXPORT_STATE_SCHEMA_VERSION = 1;
 export const EXPORT_STATE_FILENAME = 'export_state.json';
 
 /** Bumped when fields included in `sourceTimelineHash` change. Old manifests
- *  whose hash was computed over a narrower identity set invalidate on resume. */
-export const EXPORT_TIMELINE_IDENTITY_VERSION = 2;
+ *  whose hash was computed over a narrower identity set invalidate on resume.
+ *  3 (D23, WS3 Round 29) — `assetFileIdentity`'s meaning changed: it no
+ *  longer ever reads `asset.file` (a `File` handle that is either absent or
+ *  freshly reconstructed with a volatile `lastModified` on every reload —
+ *  see that function's own comment), so an old manifest's hash was computed
+ *  under semantics that could never match a resume-time recomputation and
+ *  must invalidate rather than be compared against the new logic. */
+export const EXPORT_TIMELINE_IDENTITY_VERSION = 3;
 
 /** In-process recovery bounds from `exportPipelineWebCodecs.ts` (dedc3bf). */
 export const MAX_BOUNDARY_REWINDS_PER_EXPORT = 2;
@@ -356,13 +361,29 @@ export type ResumeHandshakeSeam = {
 };
 
 export function assetFileIdentity(asset: Asset): string | null {
-  if (asset.file) {
-    return getFileIdentity(asset.file);
-  }
+  // D23 fix (WS3 Round 29): `asset.file` must never be hashed. It's an
+  // in-memory `File` handle `projectStore.ts`'s `stripAsset` never persists
+  // (undefined after any restart) — AND on a project reopen, App.tsx's
+  // rehydration path (`rehydratedFile = new File([stored.blob], ...)`)
+  // reconstructs a FRESH `File` with a `lastModified` of "now" (the File
+  // constructor defaults it when not passed explicitly — see App.tsx's own
+  // comment on `rehydratedFile` minting "a fresh File object on every
+  // rehydration, even when content is byte-identical"). Either way, hashing
+  // `file.lastModified` guarantees a different value than the write-time
+  // hash on every single restart, regardless of real edits.
+  //
+  // `addedAt` is the stable, persisted alternative — set once at asset
+  // creation and never touched again. It was previously only a fallback
+  // behind `file`; promoted to primary here. The remaining fallback is
+  // `asset.id` (always present, always stable, never regenerated on
+  // reload — see CLAUDE.md's asset-identity invariants) rather than
+  // `file`-derived data, for the rare legacy/creation path that predates
+  // `addedAt` (e.g. `extractZipToAssets`, separately fixed to set it going
+  // forward — see App.tsx).
   if (asset.addedAt != null) {
     return `${asset.name}|${asset.addedAt}`;
   }
-  return null;
+  return `${asset.name}|${asset.id}`;
 }
 
 export function timelineIdentityFromProject(

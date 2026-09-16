@@ -476,7 +476,7 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
       const nativeFps = type === 'video' ? await resolveVideoNativeFps(blob) : undefined;
       const url = URL.createObjectURL(blob);
       const duration = type === 'video' ? await getMediaDuration(url, 'video') : undefined;
-      newAssets.push({ id, name, url, type, file: new File([blob], filename), nativeFps, duration });
+      newAssets.push({ id, name, url, type, file: new File([blob], filename), nativeFps, duration, addedAt: Date.now() });
     });
     await Promise.all(filePromises);
   } catch (err) {
@@ -5499,6 +5499,7 @@ export default function App() {
       type: detectedType,
       file,
       duration: detectedType === 'video' ? await getMediaDuration(url, 'video') : undefined,
+      addedAt: Date.now(),
     };
 
     // When replacing with a new audio file, evict the existing audio asset so
@@ -5573,6 +5574,7 @@ export default function App() {
           type,
           file: new File([blob], filename),
           duration: type === 'video' ? await getMediaDuration(zipUrl, 'video') : undefined,
+          addedAt: Date.now(),
         });
       });
 
@@ -7619,6 +7621,7 @@ export default function App() {
                 type: stock.type,
                 nativeFps,
                 duration: stock.type === 'video' ? await getMediaDuration(stockUrl, 'video') : undefined,
+                addedAt: Date.now(),
               };
               setProject(p => {
                 const newAssets = [...p.assets, newAsset];
