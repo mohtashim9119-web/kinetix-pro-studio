@@ -73,6 +73,39 @@ const RELOCATE_HEADROOM_FLOOR_BYTES: u64 = 64 * 1024 * 1024;
 struct StorageRootConfigFile {
     /// Absolute path to the current root. Absent/missing file = default.
     root: Option<String>,
+    /// Stale-root fix (WS3 Round 29, operator decision) — EVERY location
+    /// this app knows still holds a full or partial, un-deleted copy of
+    /// managed data: an old root a successful relocation moved away from,
+    /// AND/OR a target a failed/cancelled relocation was copying into.
+    /// Relocation never auto-deletes either kind (previously immediate,
+    /// silent deletion the instant the new copy verified, or the instant a
+    /// copy failed) — accumulates across as many hops as the operator makes
+    /// (moving A -> B -> C without cleaning up in between leaves BOTH A and
+    /// B listed, not just the most recent one) until cleaned up. A single
+    /// `storage_root_cleanup_all_stale_roots` call always clears every
+    /// entry in one action — there is deliberately no per-entry cleanup
+    /// command, per an explicit operator decision that this should be one
+    /// button, not N. A partial-target entry is ALSO what
+    /// `copy_dir_recursive`'s resume logic reads to decide whether a new
+    /// relocation to that same folder can resume instead of restarting.
+    /// Was two separate fields (`previous_root: Option<String>`,
+    /// `abandoned_targets: Vec<String>`) before this; unified because the
+    /// split was itself the bug an operator caught — moving A -> B -> C
+    /// only ever remembered the LATEST old root, silently losing track of
+    /// earlier ones. `#[serde(default)]` so an existing config file from
+    /// before this field existed (under either old name) parses as empty,
+    /// not a hard error.
+    #[serde(default)]
+    stale_roots: Vec<String>,
+    /// Migration-only (WS3 Round 29) — the pre-unification field names.
+    /// Never written by this version; only read, once, by `read_config`'s
+    /// migration step, so an existing config file's already-tracked stale
+    /// entries survive the rename instead of silently vanishing the first
+    /// time it's read under the new schema.
+    #[serde(default, rename = "previous_root", skip_serializing)]
+    legacy_previous_root: Option<String>,
+    #[serde(default, rename = "abandoned_targets", skip_serializing)]
+    legacy_abandoned_targets: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -138,6 +171,205 @@ pub fn resolve_storage_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => default_root(app),
         Err(e) => Err(format!("cannot read {}: {e}", cfg_path.display())),
     }
+}
+
+
+/// Stale-root fix (WS3 Round 29) — reads the full config (both stale-root
+/// fields at once) rather than duplicating `resolve_storage_root`'s own
+/// read/parse/default logic a second time.
+/// Migration (WS3 Round 29) — an existing config file predating the
+/// `previous_root`/`abandoned_targets` -> `stale_roots` unification still
+/// has its data under the old names; fold it in once, here, so it's never
+/// silently lost. `stale_roots` only stays empty post-migration if there
+/// was genuinely nothing stale recorded under either old name. Extracted as
+/// its own function (from `read_config`, which needs an `AppHandle` only to
+/// resolve the file path) purely so the migration logic itself — the part
+/// that actually has behavior worth locking down — is unit-testable without
+/// a Tauri runtime.
+fn migrate_legacy_stale_roots(cfg: &mut StorageRootConfigFile) {
+    if let Some(previous) = cfg.legacy_previous_root.take() {
+        if !previous.trim().is_empty() && !cfg.stale_roots.iter().any(|p| p == &previous) {
+            cfg.stale_roots.push(previous);
+        }
+    }
+    for target in std::mem::take(&mut cfg.legacy_abandoned_targets) {
+        if !cfg.stale_roots.iter().any(|p| p == &target) {
+            cfg.stale_roots.push(target);
+        }
+    }
+}
+
+fn read_config(app: &tauri::AppHandle) -> Result<StorageRootConfigFile, String> {
+    let cfg_path = config_path(app)?;
+    let mut cfg: StorageRootConfigFile = match fs::read_to_string(&cfg_path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("storage-root.json is corrupt: {e}"))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => StorageRootConfigFile::default(),
+        Err(e) => return Err(format!("cannot read {}: {e}", cfg_path.display())),
+    };
+    migrate_legacy_stale_roots(&mut cfg);
+    Ok(cfg)
+}
+
+fn write_config(app: &tauri::AppHandle, cfg: &StorageRootConfigFile) -> Result<(), String> {
+    let cfg_path = config_path(app)?;
+    let json = serde_json::to_string_pretty(cfg).map_err(|e| format!("serialize storage-root.json: {e}"))?;
+    write_atomic(&cfg_path, &json)
+}
+
+/// Resume/no-auto-delete fix (WS3 Round 29, operator decision) — records
+/// `target` as a stale location after a failure/cancel, so a later
+/// relocation to the same folder can resume from it (`copy_dir_recursive`'s
+/// size-match skip) and/or Settings can offer it for manual cleanup.
+/// Accumulates: does NOT overwrite any earlier stale entry (see
+/// `StorageRootConfigFile::stale_roots`'s own doc comment for why that
+/// matters — moving A -> B -> C without cleaning up must remember BOTH A
+/// and B). A no-op if already recorded (dedup) or if `target` IS the
+/// current root (impossible in practice — a relocation refuses
+/// same-as-current before copying starts — but never worth recording
+/// regardless).
+fn record_stale_root(app: &tauri::AppHandle, target: &Path) -> Result<(), String> {
+    let mut cfg = read_config(app)?;
+    let target_str = target.to_string_lossy().to_string();
+    if cfg.root.as_deref() == Some(target_str.as_str()) {
+        return Ok(());
+    }
+    if !cfg.stale_roots.iter().any(|t| t == &target_str) {
+        cfg.stale_roots.push(target_str);
+    }
+    write_config(app, &cfg)
+}
+
+/// Best-effort total across every managed subtree PLUS the legacy top-level
+/// `fa-models/` (see `relocate_legacy_fa_models`) at `root` — the same set
+/// `storage_root_cleanup_all_stale_roots` actually removes, so the number
+/// the operator sees before clicking cleanup is exactly what cleanup will
+/// free.
+fn stale_root_bytes(root: &Path) -> u64 {
+    let mut bytes = 0u64;
+    for (_, get_dir) in MANAGED_RELOCATION_SUBTREES {
+        bytes += dir_size(&get_dir(root));
+    }
+    bytes += dir_size(&root.join("fa-models"));
+    bytes
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StaleRootInfo {
+    pub path: String,
+    pub bytes: u64,
+}
+
+/// Stale-root fix (WS3 Round 29, operator decision) — relocation no longer
+/// auto-deletes ANY leftover copy: not an old root after a successful move
+/// (previously immediate, silent deletion right after the new copy
+/// verified), and not a partial target after a failed/cancelled one
+/// (previously immediate, silent deletion in the same breath as the
+/// failure). This is the read side Settings polls to list every such
+/// leftover this app knows about, accumulated across as many hops as the
+/// operator makes. A recorded path that no longer exists on disk (the
+/// operator already dealt with it some other way — deleted it in Finder, or
+/// it was on since-unmounted removable media) is silently dropped from the
+/// list, never reported as an error.
+#[tauri::command]
+pub fn storage_root_stale_roots(app: tauri::AppHandle) -> Result<Vec<StaleRootInfo>, String> {
+    let cfg = read_config(&app)?;
+    Ok(cfg
+        .stale_roots
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .map(|p| StaleRootInfo {
+            bytes: stale_root_bytes(&p),
+            path: p.to_string_lossy().to_string(),
+        })
+        .collect())
+}
+
+/// Stale-root fix (WS3 Round 29, operator decision) — ONE action that
+/// cleans up EVERY stale location this app knows about in one go
+/// (deliberately not per-entry — an operator explicitly asked for "one
+/// cleanup deletes everything" rather than a button per leftover folder).
+/// Removes every managed subtree (and the legacy `fa-models/`) found at
+/// each recorded path, via the same audited
+/// `safe_delete::delete_app_staging_dir` every other cleanup in this module
+/// uses — no raw recursive deletes. Clears the WHOLE list afterward
+/// REGARDLESS of whether every deletion at every path succeeded: a stuck
+/// stale-root list the operator can never dismiss (e.g. because one subtree
+/// is momentarily locked by another process) would be a worse outcome than
+/// occasionally under-reporting a leftover file the operator can still find
+/// and remove by hand — this mirrors every other Phase-3-style cleanup in
+/// this module, which is already best-effort by design. Silently skips (but
+/// still drops from the list) any recorded path that happens to BE the
+/// current root — that can only mean stale bookkeeping the caller shouldn't
+/// trust anyway, never a reason to fail the whole cleanup.
+///
+/// Windows-audit fix (WS3 Round 29 Phase 2) — `diagnostic-logs` is skipped
+/// here, unlike every other managed subtree. The app's log-file handle
+/// stays bound to whatever root was current AT BOOT (see `lib.rs`'s setup
+/// block); if the operator relocates and then cleans up stale roots in the
+/// SAME session (no restart since the relocation), the stale root's
+/// `diagnostic-logs/kinetix-diagnostic.log` is still open by this very
+/// process. Deleting an open file works on macOS/Linux (unlink-while-open),
+/// but Windows' default file-sharing mode refuses it outright — so
+/// `remove_dir_all` on that one subtree would return `Err` here anyway,
+/// just silently (the loop below discards it with `let _ =`, and this
+/// function unconditionally clears `stale_roots` regardless), leaving an
+/// orphaned, untracked leftover directory on disk with no way for the
+/// operator to know it's still there. Rather than let that happen invisibly
+/// on Windows only, `diagnostic-logs` is left out of the delete set
+/// everywhere: a small, diagnostic-only leftover the operator can find and
+/// remove by hand (the stale root's path is still shown in Settings before
+/// cleanup runs) is a better outcome than a silent per-platform gap. The
+/// chosen fix is exclusion, not close-and-reopen-the-handle-around-cleanup:
+/// `tauri_plugin_log` doesn't expose a way to do that safely, and closing
+/// the app's own active logger mid-session risks losing log lines emitted
+/// during the very cleanup operation being logged.
+/// The actual per-target delete loop, extracted from
+/// `storage_root_cleanup_all_stale_roots` so it's unit-testable without an
+/// `AppHandle` — the command itself only needs one to resolve `current`
+/// (to skip a target that IS the live root) and to read/write the config
+/// file; the deletion behavior itself takes a plain path.
+fn cleanup_stale_root_subtrees(target: &Path) -> u64 {
+    let mut reclaimed = 0u64;
+    for (name, get_dir) in MANAGED_RELOCATION_SUBTREES {
+        if name == "diagnostic-logs" {
+            continue;
+        }
+        let dir = get_dir(target);
+        if dir.is_dir() {
+            let size = dir_size(&dir);
+            if crate::safe_delete::delete_app_staging_dir(&dir, target, name).is_ok() {
+                reclaimed += size;
+            }
+        }
+    }
+    let legacy_fa = target.join("fa-models");
+    if legacy_fa.is_dir() {
+        let size = dir_size(&legacy_fa);
+        if crate::safe_delete::delete_app_staging_dir(&legacy_fa, target, "fa-models").is_ok() {
+            reclaimed += size;
+        }
+    }
+    reclaimed
+}
+
+#[tauri::command]
+pub fn storage_root_cleanup_all_stale_roots(app: tauri::AppHandle) -> Result<u64, String> {
+    let current = resolve_storage_root(&app)?;
+    let cfg = read_config(&app)?;
+    let mut reclaimed = 0u64;
+    for path in &cfg.stale_roots {
+        let target = PathBuf::from(path);
+        if target == current || !target.is_dir() {
+            continue;
+        }
+        reclaimed += cleanup_stale_root_subtrees(&target);
+    }
+    let mut cfg = cfg;
+    cfg.stale_roots.clear();
+    write_config(&app, &cfg)?;
+    Ok(reclaimed)
 }
 
 pub fn assets_dir(root: &Path) -> PathBuf {
@@ -850,34 +1082,25 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
             backups_reclaimable_bytes,
             "reclaimable",
         ),
+        row(&projects_dir(&root), "Projects", projects_bytes, 0, "never-reclaimable"),
+        row(&cache_path, "Cache", cache_bytes, cache_bytes, "reclaimable"),
         row(
-            &cache_path,
-            "Cache",
-            cache_bytes,
-            cache_bytes,
+            &export_sessions_path,
+            "Orphaned export sessions",
+            export_orphan_bytes,
+            export_orphan_bytes,
             "reclaimable",
         ),
     ];
-
-    // Whisper and FA models resolve through their OWN, separate schemes
-    // (see this file's module doc comment) — `model_download::models_dir` is
-    // the whisper target dir specifically; FA models can additionally live
-    // at an exe-relative fallback `fa_model_candidate_paths` also checks.
-    // Reported as one approximate row (the whisper dir as the representative
-    // `path`) rather than pretending a single directory holds all of it.
-    let models_path = crate::model_download::models_dir(&app).unwrap_or_else(|_| models_dir(&root));
-    let installed = crate::models::check_installed_models(app).await?;
-    let mut model_bytes = installed.whisper.map(|s| s.bytes).unwrap_or(0);
-    for status in installed.fa.values() {
-        model_bytes += status.bytes;
+    for stale in stale_roots {
+        // Deliberately its own classification, not "reclaimable" — the
+        // generic "Free up cached data" button (`storage_root_reclaim`)
+        // does NOT clean this up; only the dedicated
+        // `storage_root_cleanup_all_stale_roots` does. Folding it into
+        // "reclaimable" would make that generic button's advertised total
+        // include bytes it can't actually free.
+        rows.push(row(Path::new(&stale.path), "Stale root", stale.bytes, stale.bytes, "stale-root"));
     }
-    rows.push(row(
-        &models_path,
-        "Downloaded models",
-        model_bytes,
-        0,
-        "never-reclaimable",
-    ));
 
     Ok(rows)
 }

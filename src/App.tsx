@@ -7914,7 +7914,14 @@ export default function App() {
           availableBytes={storageRelocation.view.availableBytes}
           validationState={storageRelocation.view.validationState}
           onChooseFolder={storageRelocation.chooseFolder}
+          onResetToDefault={storageRelocation.resetToDefault}
+          isDefault={storageRelocation.view.isDefault}
           copying={storageRelocation.view.copying}
+          cancelling={storageRelocation.view.cancelling}
+          progress={storageRelocation.view.progress}
+          verifying={storageRelocation.view.verifying}
+          errorMessage={storageRelocation.view.errorMessage}
+          onDismiss={storageRelocation.dismiss}
           onCancel={storageRelocation.cancel}
         />
       )}

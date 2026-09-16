@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { isTauri } from '../services/tauriFfmpeg';
 import {
+  cleanupAllStaleRoots,
   getSizeReport,
   getStorageRootStatus,
   type SizeReportRow,
@@ -40,6 +41,7 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
   const [rows, setRows] = useState<SizeReportRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [reclaimBusy, setReclaimBusy] = useState(false);
+  const [cleanupAllBusy, setCleanupAllBusy] = useState(false);
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!isTauri()) return;
@@ -66,7 +68,23 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
     );
   }
 
-  const totalReclaimable = rows.reduce((sum, row) => sum + row.reclaimableBytes, 0);
+  // Stale-root fix (WS3 Round 29) — 'stale-root' rows are deliberately
+  // excluded here: the generic "Free up cached data" button below
+  // (`storage_root_reclaim`) cannot free them, only "Clean up all stale
+  // storage locations" can — folding them in would make this button's
+  // advertised total include bytes it can't actually reclaim.
+  const totalReclaimable = rows
+    .filter((row) => row.sweepClassification === 'reclaimable')
+    .reduce((sum, row) => sum + row.reclaimableBytes, 0);
+  // Resume/no-auto-delete fix (WS3 Round 29, operator decision) — can be
+  // more than one location (a completed relocation's old root AND/OR any
+  // number of failed/cancelled relocations' abandoned targets, accumulated
+  // across as many hops as the operator makes) — summed into ONE row and
+  // cleaned up by ONE button, per an explicit "just add up, one cleanup
+  // deletes everything" operator decision, rather than a button per folder.
+  const staleRootRows = rows.filter((row) => row.sweepClassification === 'stale-root');
+  const staleRootTotalBytes = staleRootRows.reduce((sum, row) => sum + row.currentBytes, 0);
+  const staleRootPaths = staleRootRows.map((row) => row.path);
 
   return (
     <section data-testid="app-settings-block-storage" className={HAIRLINE}>
@@ -94,19 +112,55 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
 
       {rows.length > 0 && (
         <div className="space-y-2 mb-4" data-testid="storage-size-report">
-          {rows.map((row) => (
-            <div key={row.label} className="flex items-center justify-between text-[10px]">
-              <span className="text-gray-400">{row.label}</span>
-              <span className="text-gray-200 font-bold">
-                {formatBytes(row.currentBytes)}
-                {row.sweepClassification === 'reclaimable' && row.reclaimableBytes > 0 && (
-                  <span className="text-gray-500 font-normal ml-1">
-                    ({formatBytes(row.reclaimableBytes)} reclaimable)
-                  </span>
-                )}
+          {rows
+            .filter((row) => row.sweepClassification !== 'stale-root')
+            .map((row) => (
+              <button
+                key={row.path}
+                type="button"
+                data-testid={`storage-size-row-${row.label}`}
+                title={row.path}
+                onClick={() => {
+                  void invoke('reveal_in_finder', { path: row.path }).catch((err) => {
+                    setError(err instanceof Error ? err.message : String(err));
+                  });
+                }}
+                className="w-full flex items-center justify-between text-[10px] text-left hover:bg-white/[0.04] rounded-md px-1 -mx-1 py-0.5 transition-colors"
+              >
+                <span className="text-gray-400">{row.label}</span>
+                <span className="text-gray-200 font-bold">
+                  {formatBytes(row.currentBytes)}
+                  {row.sweepClassification === 'reclaimable' && row.reclaimableBytes > 0 && (
+                    <span className="text-gray-500 font-normal ml-1">
+                      ({formatBytes(row.reclaimableBytes)} reclaimable)
+                    </span>
+                  )}
+                </span>
+              </button>
+            ))}
+          {/* Resume/no-auto-delete fix (WS3 Round 29, operator decision) —
+              one aggregated row summing every stale location this app
+              knows about, however many hops accumulated it — see the
+              cleanup button below for why this is deliberately ONE row,
+              not one per folder. */}
+          {staleRootRows.length > 0 && (
+            <button
+              type="button"
+              data-testid="storage-size-row-stale-root"
+              title={staleRootPaths.join('\n')}
+              onClick={() => {
+                void invoke('reveal_in_finder', { path: staleRootPaths[0] }).catch((err) => {
+                  setError(err instanceof Error ? err.message : String(err));
+                });
+              }}
+              className="w-full flex items-center justify-between text-[10px] text-left hover:bg-white/[0.04] rounded-md px-1 -mx-1 py-0.5 transition-colors"
+            >
+              <span className="text-gray-400">
+                Stale root{staleRootRows.length > 1 ? ` (${staleRootRows.length} locations)` : ''}
               </span>
-            </div>
-          ))}
+              <span className="text-gray-200 font-bold">{formatBytes(staleRootTotalBytes)}</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -140,6 +194,30 @@ export function StorageSettingsSection({ onOpenRelocation, refreshSignal }: Stor
             className="w-full bg-[#F27D26] text-white p-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all disabled:opacity-40"
           >
             Free up cached data
+          </button>
+        )}
+        {staleRootRows.length > 0 && (
+          <button
+            type="button"
+            data-testid="storage-cleanup-all-stale-roots"
+            disabled={cleanupAllBusy}
+            title={staleRootPaths.join('\n')}
+            onClick={() => {
+              void (async () => {
+                setCleanupAllBusy(true);
+                try {
+                  await cleanupAllStaleRoots();
+                  await refresh();
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : String(err));
+                } finally {
+                  setCleanupAllBusy(false);
+                }
+              })();
+            }}
+            className="w-full bg-[#F27D26] text-white p-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all disabled:opacity-40"
+          >
+            Clean up all stale storage locations
           </button>
         )}
       </div>
