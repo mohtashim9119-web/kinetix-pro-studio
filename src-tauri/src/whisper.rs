@@ -660,9 +660,23 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         return Ok(dev_model);
     }
 
+    // D21 fix (WS3 Round 29) — the dev-checkout suggestion below used to be
+    // a bare relative path (`src-tauri/models/...`) handed to the operator
+    // as a literal shell command with no `mkdir -p`. `curl -o` does not
+    // create missing intermediate directories, so the command only "works"
+    // if `src-tauri/models/` already exists relative to wherever the
+    // shell's cwd happens to be when it's pasted — e.g. a terminal opened
+    // via "reveal in folder" from the app-data directory while
+    // troubleshooting this very error, which reproduces the exact stray
+    // `<app-data-dir>/src-tauri/models/` structure reported as D21. No Rust
+    // code ever computed or created that path; only this suggested command
+    // could, and only when run from the wrong directory. Now explicit about
+    // where it must run, and self-creating so it can't half-succeed into a
+    // wrong location.
     Err(format!(
         "{MODEL_FILENAME} not found. Use the model download panel in Settings, \
-         or for a dev checkout: curl -L -o src-tauri/models/{MODEL_FILENAME} \
+         or from the project's repository root (NOT the app data folder): \
+         mkdir -p src-tauri/models && curl -L -o src-tauri/models/{MODEL_FILENAME} \
          https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL_FILENAME}"
     ))
 }
