@@ -697,11 +697,22 @@ fn fa_audio_cache_dir_from_local_data_dir(local_data_dir: &Path) -> PathBuf {
 /// half, mirroring `fa_model_path`'s own split. Reachable in every build (not
 /// just `cfg(test)`) since WS1 Task 5 Slice D25 A1 wired `ensure_durable_wav`
 /// into `fa_dev.rs`'s `fa_align_dev` — no longer `allow(dead_code)`.
+///
+/// D20 fix (WS3 Round 29) — this used to resolve straight off
+/// `app_local_data_dir()`, so a relocated storage root left this cache
+/// (bounded, but up to 2 GiB) behind at the old location on every
+/// relocation, unmoved and unmentioned in the relocation report. It is
+/// exactly the kind of thing `storage_root::cache_dir` was reserved for
+/// (see that function's own doc comment) — nested under it, so it now
+/// travels for free as part of the already-relocatable `cache/` subtree
+/// (`MANAGED_RELOCATION_SUBTREES`), no new subtree entry needed. The pure
+/// builder's own name/signature is unchanged — only the base directory
+/// passed to it moves.
 fn fa_audio_cache_dir(app: &tauri::AppHandle) -> Result<PathBuf, FaError> {
-    let local_data_dir = app.path().app_local_data_dir().map_err(|e| {
-        FaError::inference_failed(format!("cannot resolve app_local_data_dir for the FA audio cache: {e}"))
+    let root = crate::storage_root::resolve_storage_root(app).map_err(|e| {
+        FaError::inference_failed(format!("cannot resolve storage root for the FA audio cache: {e}"))
     })?;
-    Ok(fa_audio_cache_dir_from_local_data_dir(&local_data_dir))
+    Ok(fa_audio_cache_dir_from_local_data_dir(&crate::storage_root::cache_dir(&root)))
 }
 
 /// WS1 Task 5 Slice D24 B2 — the cache key. Deliberately mirrors this

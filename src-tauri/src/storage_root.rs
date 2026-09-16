@@ -18,6 +18,20 @@
 //! | `temp/`    | yes (reserved for future use — general scratch space, not the export pipeline's own staging; see `export_sessions_dir` below) | yes (contents are ephemeral — cleared, not copied) |
 //! | `export-sessions/` | yes (WS3 Round 28, D4) — `ffmpeg.rs::session_dir` resolves every `kinetix-export-<uuid>` directory under here, not `std::env::temp_dir()`, so a session created after a relocation lands on the new volume. Whisper's own transcription staging is unrelated (`WHISPER_STAGING_DIR_PREFIX` under `std::env::temp_dir()`) and deliberately not moved this round. | **NOT relocated** — a session is resolved fresh from wherever the root currently is at creation time; relocation while an export is live is out of scope (see `storage_root_relocate`'s doc comment for the model-download analog of this same "refuse rather than move a live thing" posture). |
 //! | `models/`  | yes (WS3 Round 28, D4) — `models.rs`/`fa.rs` now resolve their install target through `storage_root::models_dir` first, with the OS-default location as a read-only fallback for pre-existing installs from before this round. | yes, with the same copy-verify-commit flow as `assets/`/`projects/`, refused outright while a download is in flight (see `model_download`'s in-flight guard). |
+//! | `models/fa-models/` (legacy top-level, pre-nesting) | no — a bare `<app_local_data_dir>/fa-models/`, sibling of `models/`, not inside it (`fa.rs`'s `fa_model_candidate_paths` tier 2) | yes (D20, WS3 Round 29) — `relocate_legacy_fa_models` merges each legacy language into `models_dir(new_root).join("fa-models")` (skipping one already relocated via `models/`'s own nested copy), then removes the whole legacy source once every language is represented at the new root either way. |
+//! | `cache/fa-audio-cache/` | yes (D20, WS3 Round 29) — was hardcoded to `app_local_data_dir()` directly (`fa.rs`'s `fa_audio_cache_dir`), bypassing this module entirely; now nested under `cache_dir` | yes, for free, as part of the `cache/` subtree above — no separate subtree entry needed |
+//! | `project-mirror/` | yes (D20, WS3 Round 29 — `project_mirror.rs`'s `mirror_root`, repointed here; previously pinned unconditionally to `app_local_data_dir()`) | yes |
+//! | `diagnostic-logs/` | yes (D20, WS3 Round 29 — previously pinned in 3 places: `lib.rs`'s two logging-setup branches, `ffmpeg.rs`'s `get_diagnostic_log_text`) | yes, with one caveat — see `diagnostic_logs_dir`'s own doc comment: the ACTIVE log-plugin file handle stays bound to the path current at THIS boot, so a relocation mid-session moves the historical files but this session's own later lines need a restart to follow |
+//!
+//! **Unified per an explicit operator decision (D20, WS3 Round 29):** every
+//! managed subtree above now relocates — none are pinned to the OS default
+//! by design any more. `project-mirror/` and `diagnostic-logs/` previously
+//! were, on the reasoning that each needs a fixed anchor independent of the
+//! storage root; that reasoning conflated "SOMETHING needs a fixed anchor"
+//! (true — see the pointer-file paragraph below) with "THIS DIRECTORY must
+//! be that anchor" (not true — `storage-root.json`'s own fixed location
+//! already lets `resolve_storage_root` find the current root regardless of
+//! relocation history, which is all either of them actually needed).
 //!
 //! **What is never touched:** the WebView2 (or WKWebView/WebKit) user data
 //! folder. On Windows, that profile and `app_local_data_dir()` share
@@ -33,9 +47,10 @@
 //! **The pointer file itself never moves.** `storage-root.json` always lives
 //! at the OS-default `app_local_data_dir()` — the one location every build
 //! configuration agrees on — so the app can always find out where the REAL
-//! root is, even after N relocations. This is the same reasoning that keeps
-//! `project_mirror.rs`'s legacy `project-mirror/` adoption tree pinned to
-//! `app_local_data_dir()` unconditionally.
+//! root is, even after N relocations. This is the ONE fixed anchor the
+//! whole system needs; every managed subtree, including `project-mirror/`
+//! and `diagnostic-logs/`, is found by reading this pointer first and then
+//! looking under whatever root it currently names.
 
 use std::fs;
 use std::io::Write;
@@ -162,6 +177,31 @@ pub fn temp_dir(root: &Path) -> PathBuf {
 /// actually stored here (see the module doc comment's subtree table).
 pub fn models_dir(root: &Path) -> PathBuf {
     root.join("models")
+}
+
+/// D20 fix (WS3 Round 29) — per an explicit operator decision to unify
+/// EVERY managed subtree under one root rather than leave any of them
+/// pinned to the OS default: `project_mirror.rs`'s cross-origin adoption
+/// tree now resolves and relocates through here too. Still findable at
+/// boot regardless of relocation history, because `resolve_storage_root`
+/// itself reads the ALWAYS-fixed `storage-root.json` pointer first — that
+/// one file, not this directory, is what actually needs a fixed location.
+pub fn project_mirror_dir(root: &Path) -> PathBuf {
+    root.join("project-mirror")
+}
+
+/// D20 fix (WS3 Round 29) — same operator decision as `project_mirror_dir`
+/// above. Note for callers: the active `tauri_plugin_log` file handle is
+/// opened once at boot against whatever path was current THEN — moving this
+/// directory mid-session relocates the historical log files, but new lines
+/// written before the next app restart still land in the (now unlinked,
+/// still-open) old file, per ordinary POSIX/NTFS delete-while-open
+/// semantics, and are lost once the process exits. A restart is needed for
+/// logging itself to fully follow the new root, same as every other
+/// "reflects: next launch" limitation already accepted for this app's
+/// storage-root relocation.
+pub fn diagnostic_logs_dir(root: &Path) -> PathBuf {
+    root.join("diagnostic-logs")
 }
 
 /// WS3 Round 28 (D4) — the export pipeline's session temp tree
@@ -305,13 +345,67 @@ fn verify_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-const MANAGED_RELOCATION_SUBTREES: [(&str, fn(&Path) -> PathBuf); 5] = [
+const MANAGED_RELOCATION_SUBTREES: [(&str, fn(&Path) -> PathBuf); 7] = [
     ("assets", assets_dir),
     ("projects", projects_dir),
     ("cache", cache_dir),
     ("project-store-backups", project_backups_dir),
     ("models", models_dir),
+    // D20 fix (WS3 Round 29) — unified per an explicit operator decision:
+    // every managed subtree moves with the root, none stay pinned to the
+    // OS default. See `project_mirror_dir`/`diagnostic_logs_dir`'s own doc
+    // comments for what each requires from callers.
+    ("project-mirror", project_mirror_dir),
+    ("diagnostic-logs", diagnostic_logs_dir),
 ];
+
+/// D20 fix (WS3 Round 29) — a legacy, TOP-LEVEL `<root>/fa-models/<lang>/`
+/// tree (`fa.rs`'s `fa_model_candidate_paths` tier 2 — predates FA models
+/// moving under `models/`) is not itself a `MANAGED_RELOCATION_SUBTREES`
+/// entry, so it was silently left behind by every relocation while the
+/// MODERN nested `models/fa-models/<lang>/` tree (already inside the
+/// `models` subtree above) correctly moved. Merges each legacy language
+/// directory into `models_dir(new_root).join("fa-models")`, the same
+/// nested location a fresh download already uses, SKIPPING a language the
+/// new root already has there (from the old root's own nested copy, which
+/// `MANAGED_RELOCATION_SUBTREES` handles first — never overwriting a
+/// possibly-newer copy with a possibly-older legacy one). Returns whether a
+/// legacy tree was found at all: on success, EVERY legacy language is by
+/// definition now represented at the new root (freshly merged, or already
+/// there from the nested copy) — a `true` return is what tells the caller
+/// it's safe to delete the WHOLE legacy source wholesale afterward, no
+/// per-language bookkeeping needed.
+fn relocate_legacy_fa_models(
+    current: &Path,
+    new_root: &Path,
+    check_cancelled: &dyn Fn() -> Result<(), String>,
+    on_bytes: &dyn Fn(u64),
+) -> Result<bool, String> {
+    let legacy_src = current.join("fa-models");
+    if !legacy_src.is_dir() {
+        return Ok(false);
+    }
+    let dest_root = models_dir(new_root).join("fa-models");
+    for entry in fs::read_dir(&legacy_src).map_err(|e| format!("read_dir {}: {e}", legacy_src.display()))? {
+        check_cancelled()?;
+        let entry = entry.map_err(|e| format!("read_dir entry in {}: {e}", legacy_src.display()))?;
+        if !entry
+            .file_type()
+            .map_err(|e| format!("file_type {}: {e}", entry.path().display()))?
+            .is_dir()
+        {
+            continue;
+        }
+        let lang_dest = dest_root.join(entry.file_name());
+        if lang_dest.is_dir() {
+            continue;
+        }
+        let mut hashes = std::collections::HashMap::new();
+        copy_dir_recursive(&entry.path(), &lang_dest, check_cancelled, on_bytes, &mut hashes)?;
+        verify_dir_recursive(&entry.path(), &lang_dest, check_cancelled, &hashes)?;
+    }
+    Ok(true)
+}
 
 fn relocation_required_bytes(used: u64) -> u64 {
     ((used as f64) * (1.0 + RELOCATE_HEADROOM_RATIO)) as u64 + RELOCATE_HEADROOM_FLOOR_BYTES

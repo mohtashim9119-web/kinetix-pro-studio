@@ -6,7 +6,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::Manager;
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 use uuid::Uuid;
@@ -506,8 +505,9 @@ pub fn export_log_event(phase: String, detail: String, level: Option<String>) ->
 
 /// Round 28 — in-app diagnostic log viewer's read side. Reads the SAME file
 /// `lib.rs`'s `setup` attaches `tauri_plugin_log`'s `Folder` target to
-/// (`<app_local_data_dir>/diagnostic-logs/kinetix-diagnostic.log`), so this
-/// never re-derives or duplicates that path decision. A missing file (no
+/// (`<storage root>/diagnostic-logs/kinetix-diagnostic.log` — D20 fix, WS3
+/// Round 29: was unconditionally `app_local_data_dir()`), so this never
+/// re-derives or duplicates that path decision. A missing file (no
 /// diagnostic logging active this run — debug builds route to the plugin's
 /// default `LogDir` target instead, release builds are opt-in via
 /// `KINETIX_DIAGNOSTIC_LOG`) is not an error: the viewer should show an
@@ -515,12 +515,8 @@ pub fn export_log_event(phase: String, detail: String, level: Option<String>) ->
 /// sentinel string back rather than an `Err`.
 #[tauri::command]
 pub fn get_diagnostic_log_text(app: tauri::AppHandle) -> Result<String, String> {
-    let log_path = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| format!("could not resolve app_local_data_dir: {e}"))?
-        .join("diagnostic-logs")
-        .join("kinetix-diagnostic.log");
+    let storage_root = crate::storage_root::resolve_storage_root(&app)?;
+    let log_path = crate::storage_root::diagnostic_logs_dir(&storage_root).join("kinetix-diagnostic.log");
 
     match fs::read_to_string(&log_path) {
         Ok(contents) if contents.trim().is_empty() => Ok("No log entries recorded yet.".to_string()),
