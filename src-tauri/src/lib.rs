@@ -448,8 +448,8 @@ pub fn run() {
         .manage(ffmpeg::FfmpegProcessState::default())
         .manage(fa::FaState::default())
         .manage(fa::FaModelCache::default())
+        .manage(storage_root::RelocationCancelFlag::default())
         .setup(|app| {
-            use tauri::Manager;
             if cfg!(debug_assertions) {
                 // Round 28 — `Stdout`/`Webview` kept (a dev build has both a
                 // console and DevTools to read them from) but `LogDir`

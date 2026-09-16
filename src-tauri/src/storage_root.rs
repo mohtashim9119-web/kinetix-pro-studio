@@ -320,8 +320,9 @@ fn verify_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
             ));
         }
         if source_meta.is_dir() {
-            verify_dir_recursive(&from, &to)?;
+            verify_dir_recursive(&from, &to, check_cancelled, source_hashes)?;
         } else {
+            check_cancelled()?;
             if source_meta.len() != destination_meta.len() {
                 return Err(format!(
                     "relocation verification failed: size differs for {} and {}",
@@ -422,11 +423,40 @@ fn ensure_relocation_space(used: u64, available: u64) -> Result<(), String> {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn relocate_managed_subtrees_with<F, D>(
     current: &Path,
     new_root: &Path,
     commit_pointer: F,
+    delete_source: D,
+) -> Result<(Vec<String>, u64, Vec<String>), String>
+where
+    F: FnOnce() -> Result<(), String>,
+    D: FnMut(&Path, &Path, &str) -> Result<(), String>,
+{
+    relocate_managed_subtrees_cancellable(
+        current,
+        new_root,
+        commit_pointer,
+        delete_source,
+        &never_cancelled,
+        &|_| {},
+        &|| {},
+    )
+}
+
+/// D15/D18 fix (WS3 Round 29) — the cancellable, progress-reporting variant
+/// `storage_root_relocate` actually calls; `relocate_managed_subtrees_with`
+/// above (kept for its existing callers/tests, none of which offer either)
+/// is now a thin wrapper over this with `&never_cancelled`/a no-op reporter.
+fn relocate_managed_subtrees_cancellable<F, D>(
+    current: &Path,
+    new_root: &Path,
+    commit_pointer: F,
     mut delete_source: D,
+    check_cancelled: &dyn Fn() -> Result<(), String>,
+    on_bytes: &dyn Fn(u64),
+    on_verify_start: &dyn Fn(),
 ) -> Result<(Vec<String>, u64, Vec<String>), String>
 where
     F: FnOnce() -> Result<(), String>,
@@ -719,10 +749,80 @@ pub fn storage_root_reclaim(app: tauri::AppHandle) -> Result<u64, String> {
 /// an interrupted relocation leaves the OLD data intact and the NEW location
 /// either absent or partially populated, never a state where neither copy is
 /// complete.
+///
+/// D15 fix (WS3 Round 29) — this used to be a plain synchronous
+/// `#[tauri::command] fn` doing every bit of this (free-space `dir_size`
+/// walks, then `copy_dir_recursive`'s file-by-file `fs::copy`, then
+/// `verify_dir_recursive`'s file-by-file SHA-256 hash of both copies) inline
+/// on the thread Tauri's IPC/event dispatch shares — with zero yield points
+/// across possibly thousands of small-file syscalls, that starves the whole
+/// webview's event loop for the operation's entire duration (a hang sized by
+/// file COUNT, not total bytes, which is why it froze solid even though the
+/// underlying copy finished in well under a minute of real I/O time). Now an
+/// `async fn` that hands the actual work to `tauri::async_runtime::
+/// spawn_blocking`, so the executor's other worker threads stay free to
+/// service every other command/event — including the Cancel button's own
+/// click — for the whole duration. `do_relocate` below is the exact
+/// previous, unchanged synchronous body.
 #[tauri::command]
-pub fn storage_root_relocate(
+pub async fn storage_root_relocate(
     app: tauri::AppHandle,
     new_root: String,
+    cancel_state: tauri::State<'_, RelocationCancelFlag>,
+    on_event: tauri::ipc::Channel<RelocationEvent>,
+) -> Result<StorageRootRelocateReport, String> {
+    let cancel_flag = cancel_state.0.clone();
+    cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+    tauri::async_runtime::spawn_blocking(move || do_relocate(app, new_root, cancel_flag, on_event))
+        .await
+        .map_err(|e| format!("relocation task panicked: {e}"))?
+}
+
+/// D18 fix (WS3 Round 29) — live copy progress, same `tag`/`content` shape
+/// `ModelDownloadEvent` already uses (see that enum's own comment for why:
+/// a bare `#[serde(tag = "...")]` without `content` was caught silently
+/// lower-casing variant names and breaking the JS side's `msg.event ===`
+/// checks). `bytes_total` is the same `used` figure the free-space check
+/// computed — the two are the same walk, done once and reused here rather
+/// than a second `dir_size` pass.
+#[derive(serde::Serialize, Clone)]
+#[serde(tag = "event", content = "data")]
+pub enum RelocationEvent {
+    #[serde(rename_all = "camelCase")]
+    Progress { bytes_done: u64, bytes_total: u64 },
+    /// D-verify-feedback fix (WS3 Round 29) — the copy phase's own
+    /// `Progress` events cover only the copy loop; `verify_dir_recursive`'s
+    /// re-hash of every destination file (real work — often 30+ real
+    /// seconds on a large relocation, even at `crc32fast` speeds) ran with
+    /// zero events after it, so the progress bar sat at a stale "100%" for
+    /// that whole span with no way to tell "still working" apart from
+    /// "hung". Sent once, the first time ANY subtree's verify starts.
+    Verifying,
+    Done,
+}
+
+/// D15 fix (WS3 Round 29) — the shared flag `storage_root_relocate` polls
+/// (via `copy_dir_recursive`/`verify_dir_recursive`, once per directory
+/// entry) and `storage_root_relocate_cancel` sets. Reset to `false` at the
+/// start of every relocation, so a stale cancel from a PREVIOUS run can
+/// never abort a new one.
+#[derive(Default)]
+pub struct RelocationCancelFlag(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+/// The operator's Cancel button. Cooperative, not preemptive: takes effect
+/// at the next file/subtree boundary `do_relocate` checks, not mid-syscall —
+/// same posture as every other cancel path in this codebase (export cancel,
+/// model-download cancel).
+#[tauri::command]
+pub fn storage_root_relocate_cancel(cancel_state: tauri::State<'_, RelocationCancelFlag>) {
+    cancel_state.0.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn do_relocate(
+    app: tauri::AppHandle,
+    new_root: String,
+    cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    on_event: tauri::ipc::Channel<RelocationEvent>,
 ) -> Result<StorageRootRelocateReport, String> {
     // WS3 Round 28 (D4) — a model (whisper or FA) currently downloading
     // writes into the very `models/` subtree this call is about to copy and
@@ -847,7 +947,7 @@ mod tests {
         fs::write(src.join("a/one.txt"), b"one").unwrap();
         fs::write(src.join("a/b/two.txt"), b"two-bytes").unwrap();
 
-        copy_dir_recursive(&src, &dst).unwrap();
+        copy_dir_recursive(&src, &dst, &never_cancelled, &|_| {}, &mut std::collections::HashMap::new()).unwrap();
 
         assert_eq!(fs::read_to_string(dst.join("root.txt")).unwrap(), "root");
         assert_eq!(fs::read_to_string(dst.join("a/one.txt")).unwrap(), "one");
@@ -874,7 +974,7 @@ mod tests {
         fs::remove_dir_all(&dst).ok();
         fs::write(&dst, b"i am a file, not a directory").unwrap(); // blocks create_dir_all(dst)
 
-        let result = copy_dir_recursive(&src, &dst);
+        let result = copy_dir_recursive(&src, &dst, &never_cancelled, &|_| {}, &mut std::collections::HashMap::new());
         assert!(result.is_err());
 
         fs::remove_dir_all(&src).ok();
