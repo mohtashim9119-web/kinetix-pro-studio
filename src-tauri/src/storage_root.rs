@@ -471,15 +471,29 @@ where
 }
 
 #[tauri::command]
-pub fn storage_root_status(app: tauri::AppHandle) -> Result<StorageRootStatus, String> {
+pub async fn storage_root_status(app: tauri::AppHandle) -> Result<StorageRootStatus, String> {
     let current = resolve_storage_root(&app)?;
     let default = default_root(&app)?;
     let managed_bytes = if current.is_dir() {
+        // Round 29 (D14 follow-up) — models/ was excluded from this total
+        // even though it's real, user-chosen data under management (never
+        // reclaimable, but still "managed"), the same gap `size_report`'s
+        // own "Downloaded models" row exists to cover. Resolved the same
+        // way that row is: `check_installed_models`, since models are not
+        // (yet) relocated onto the storage root itself — see the module doc
+        // comment's subtree table — so a plain `dir_size` over `models_dir`
+        // would silently miss whatever `model_download`/`fa` actually used.
+        let installed = crate::models::check_installed_models(app.clone()).await?;
+        let mut model_bytes = installed.whisper.map(|s| s.bytes).unwrap_or(0);
+        for status in installed.fa.values() {
+            model_bytes += status.bytes;
+        }
         Some(
             dir_size(&assets_dir(&current))
                 + dir_size(&projects_dir(&current))
                 + dir_size(&cache_dir(&current))
-                + dir_size(&project_backups_dir(&current)),
+                + dir_size(&project_backups_dir(&current))
+                + model_bytes,
         )
     } else {
         None
@@ -562,21 +576,47 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
     // `reclaimableBytes` changes.
     let backups_reclaimable_bytes = crate::project_mirror::store_backups_stale_bytes(&app);
 
+    // Whisper and FA models resolve through their OWN, separate schemes
+    // (see this file's module doc comment) — `model_download::models_dir` is
+    // the whisper target dir specifically; FA models can additionally live
+    // at an exe-relative fallback `fa_model_candidate_paths` also checks.
+    // Reported as one approximate row (the whisper dir as the representative
+    // `path`) rather than pretending a single directory holds all of it.
+    let models_path = crate::model_download::models_dir(&app).unwrap_or_else(|_| models_dir(&root));
+    let installed = crate::models::check_installed_models(app.clone()).await?;
+    let mut model_bytes = installed.whisper.map(|s| s.bytes).unwrap_or(0);
+    for status in installed.fa.values() {
+        model_bytes += status.bytes;
+    }
+
+    // D14 fix (WS3 Round 29): Round 28 (683ebe2) moved the export-session
+    // temp tree onto the storage root (`export_sessions_dir`, a sibling of
+    // `cache/`) but never added it to `reclaimable_dirs`/this report, so an
+    // orphaned export session's bytes were structurally invisible to
+    // Settings — `totalReclaimable` stayed 0 in the overwhelming majority of
+    // sessions and the "Free up cached data" button never rendered
+    // (`StorageSettingsSection.tsx`'s `totalReclaimable > 0` gate). Only the
+    // `orphan` class counts here (a manifestless, unclaimed session) — a
+    // `resumable` session is left alone, same posture as the boot-time
+    // `sweep_manifestless_orphans` sweep, so this row never reports bytes
+    // the operator might still want to resume.
+    let export_sessions_path = export_sessions_dir(&root);
+    let export_orphan_bytes = crate::session_claim::report_reclaimable_sessions(&export_sessions_path)
+        .map(|r| r.orphan_bytes)
+        .unwrap_or(0);
+
+    // Stale-root fix (WS3 Round 29, operator decision) — surfaced last, one
+    // row per leftover this app knows about (a completed relocation's old
+    // location, and/or any failed/cancelled relocation's abandoned
+    // target) — see `storage_root_stale_roots`'s own doc comment.
+    let stale_roots = storage_root_stale_roots(app.clone())?;
+
+    // Ordering below is an explicit operator decision (WS3 Round 29): most
+    // valuable/expensive data first (models, assets), down to the smallest
+    // and most disposable (orphaned sessions, stale roots) last.
     let mut rows = vec![
-        row(
-            &assets_dir(&root),
-            "Project assets",
-            assets_bytes,
-            0,
-            "never-reclaimable",
-        ),
-        row(
-            &projects_dir(&root),
-            "Projects",
-            projects_bytes,
-            0,
-            "never-reclaimable",
-        ),
+        row(&models_path, "Downloaded models", model_bytes, 0, "never-reclaimable"),
+        row(&assets_dir(&root), "Project assets", assets_bytes, 0, "never-reclaimable"),
         row(
             &backups_path,
             "Project backups",
@@ -647,6 +687,28 @@ pub fn storage_root_reclaim(app: tauri::AppHandle) -> Result<u64, String> {
         fs::create_dir_all(&cache)
             .map_err(|e| format!("recreate cache {}: {e}", cache.display()))?;
     }
+
+    // D14 fix (WS3 Round 29) — see `size_report`'s matching comment. Only
+    // `orphan`-class sessions are swept (never `live`/`resumable`), the same
+    // selection `sweep_manifestless_orphans` already applies at boot, via
+    // the existing `reclaim_sessions` helper which itself refuses anything a
+    // live process still claims.
+    let export_sessions_path = export_sessions_dir(&root);
+    if export_sessions_path.is_dir() {
+        if let Ok(report) = crate::session_claim::report_reclaimable_sessions(&export_sessions_path) {
+            let orphan_ids: Vec<String> = report
+                .entries
+                .iter()
+                .filter(|e| e.class == "orphan")
+                .map(|e| e.session_id.clone())
+                .collect();
+            if !orphan_ids.is_empty() {
+                let reclaim_report = crate::session_claim::reclaim_sessions(&export_sessions_path, &orphan_ids)?;
+                reclaimed += reclaim_report.bytes_reclaimed;
+            }
+        }
+    }
+
     Ok(reclaimed)
 }
 
@@ -990,7 +1052,7 @@ mod tests {
     fn status_and_size_report_commands_are_filesystem_read_only() {
         let source = include_str!("storage_root.rs");
         for (start, end) in [
-            ("pub fn storage_root_status", "/// WS3 item H — one row"),
+            ("pub async fn storage_root_status", "/// WS3 item H — one row"),
             ("pub async fn size_report", "/// Clears reclaimable subtrees"),
         ] {
             let body = source
