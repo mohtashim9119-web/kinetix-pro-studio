@@ -515,6 +515,22 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            // D13 fix (WS3 Round 29): the unconditional startup line this
+            // block originally scoped ("Batch Q"/Q5/D8) was superseded by
+            // `216878f`'s export-lifecycle logging and never actually
+            // written — leaving a diagnostic log with zero entries on any
+            // install that never runs an export. Restored here so a boot is
+            // always recorded whenever the plugin above was actually
+            // attached (debug build unconditionally; release build only
+            // with `KINETIX_DIAGNOSTIC_LOG` set — a release build without it
+            // has no logger attached, so this is a harmless no-op there, by
+            // the same opt-in design as the block above).
+            log::info!(
+                target: "kinetix::boot",
+                "kinetix-pro-studio boot version={} debug={}",
+                env!("CARGO_PKG_VERSION"),
+                cfg!(debug_assertions)
+            );
             #[cfg(all(target_os = "windows", debug_assertions))]
             {
                 app.get_webview_window("main")
