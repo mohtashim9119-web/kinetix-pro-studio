@@ -136,4 +136,50 @@ record PASS/FAIL per step in the next round's STATUS.md entry.
       lock/unlock during a resize) and record exactly what appears on screen if a gap occurs —
       Model P (`CLAUDE.md` §4) says this must be structurally impossible; any observed gap is a
       reportable regression, not an accepted risk.
+
+## Machine 1 checklist — Round 29 Windows-verification pass (D12–D22 batch)
+
+Round 29 fixed D12–D22 and did a read-only cross-platform audit of the whole storage-root
+relocation feature (`storage_root.rs`) before formalizing the batch — see `docs/STATUS.md`'s
+Round 29 entry for the fix list. Everything below either has no macOS-only code path to worry
+about (confirmed by code read, e.g. the free-space query) or genuinely cannot be exercised
+without real Windows filesystem semantics (NTFS locking, `MAX_PATH`, real CPU feature detection).
+Unit/integration coverage for the underlying logic landed this round (`storage_root.rs`'s test
+module — see individual row IDs below for which test); these rows are the hardware confirmation
+that coverage cannot substitute for.
+
+- [ ] 9. **(W25)** Relocate the storage root, then immediately use "Clean up all stale storage
+      locations" in the SAME session (no restart in between). Confirm every managed subtree at
+      the old root is deleted EXCEPT `diagnostic-logs` — that directory is expected to survive
+      (see the Windows-audit fix's own comment on `cleanup_stale_root_subtrees`,
+      `storage_root.rs`), since the app's log-file handle may still be bound to it. Confirm the
+      app does not crash or hang, and that Settings still reports zero stale roots afterward
+      (the list clears regardless, by design).
+- [ ] 10. **(W26)** Restart the app after step 9, THEN attempt to manually delete the leftover
+      `diagnostic-logs` folder at the old (now-closed-everywhere) root via Explorer. Confirm it
+      deletes cleanly once the app has released the handle — proving the leftover is transient,
+      not a permanent leak.
+- [ ] 11. **(W27)** Copy a folder containing `Thumbs.db` and/or `desktop.ini` into one of the
+      managed subtrees (e.g. `assets/`) before relocating. Confirm relocation succeeds and
+      neither file appears at the destination (`is_ignored_entry`, unit-tested in
+      `os_metadata_files_are_ignored_on_both_platforms_case_insensitively`, but never against a
+      REAL Explorer-written `Thumbs.db`/`desktop.ini` with real, non-fixture content).
+- [ ] 12. **(W28)** Relocate to a target path deep enough that the full destination path for a
+      nested asset (e.g. `models/fa-models/<lang>/model.onnx.part.digest.json`) would exceed 260
+      characters if the legacy (non-`\\?\`) `MAX_PATH` limit applied. Confirm the copy succeeds
+      — `do_relocate` canonicalizes both roots up front (`fs::canonicalize`, which returns a
+      verbatim `\\?\`-prefixed path on Windows) before any file operation, which should sidestep
+      the limit, but this is unconfirmed on real Windows.
+- [ ] 13. **(W29)** Confirm `fs4::available_space` returns a correct, non-zero figure for the
+      relocation target on a real Windows volume (the free-space validation this checks,
+      `ensure_relocation_space`, is a genuinely cross-platform dependency — `fs4`'s own
+      `GetDiskFreeSpaceExW` backend — not OS-branched application code, but never directly
+      observed returning a real number on Windows).
+- [ ] 14. **(W30)** During a relocation of a large `models/` directory, observe copy throughput
+      and confirm it is NOT capped near ~16 MB/s (the pre-fix `sha2`/scalar-SHA-256 ceiling this
+      round's `crc32fast` substitution — see `docs/ws3-export-pipeline/architecture-ledger.md`'s
+      "CRC32 substitution" entry — fixed on macOS). `crc32fast`'s SSE4.2/PCLMULQDQ auto-detection
+      is a CPU-feature check (`is_x86_feature_detected!`), not an OS check, so the same speedup is
+      expected on any Windows x86_64 machine from the last ~15 years, but has not been measured.
+
 | E12 (Round 21, D4) | The `rename_over` Windows fallback's real failure behaviour — `rename_over_fallback_restore_failure_keeps_both_files_and_names_them` proves the LOGIC with an injected failing `rename` closure; it does not prove a REAL Windows `MoveFileExW` actually fails in the shape assumed (promote fails, then restore ALSO fails) under a genuine disk-full-during-rename condition, which needs real NTFS semantics to trigger. | On Windows, fill the destination volume to the point where `rename_over`'s fallback branch runs (a pre-existing file at `dest_path`) and the promote rename itself would need to grow an MFT record enough to fail on ENOSPC; confirm what's left at `dest`/`dest.bak`/`dest.part`. | Matches one of the two modelled outcomes exactly: `Restored` (dest back under its own name, `.bak`/`.part` gone) or `OriginalAtBackup` (dest absent, `.bak` holds the original, `.part` holds the complete new export, both named in the error) — never a third shape. | If Windows's real rename-failure semantics differ from the model (e.g. a partial rename that corrupts the MFT entry rather than cleanly failing), an operator could lose track of which file is which after a rename-time disk-full, with no code path to reconcile it — the same "real, honest gap" Round 18 recorded for a crash between the two renames, now also possible via ENOSPC rather than only a process death. |
