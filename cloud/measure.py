@@ -33,8 +33,11 @@ RESULTS.mkdir(exist_ok=True)
 V6_OPUS = FIXTURES / "v6_16k_cbr16k.opus"
 HOUR_OPUS = FIXTURES / "hour_16k_cbr16k.opus"
 HOUR_WAV = FIXTURES / "hour_16k.wav"
+SPANISH_OPUS = FIXTURES / "spanish_16k_cbr16k.opus"
 V6_DURATION = 1421.293438
 HOUR_DURATION = 3600.0
+SPANISH_DURATION = 92.04
+CPU_RATE_PER_SEC = 0.000038  # Modal published CPU ~$0.137/h; used only as derived label
 
 # Published Modal on-demand GPU rates (modal.com/pricing, 2026). Used only
 # as a fallback label when the dashboard line-item cannot be read. The
@@ -397,6 +400,97 @@ def step_fa() -> None:
     )
 
 
+def _load_plan(name: str) -> list[dict[str, Any]]:
+    data = json.loads((RESULTS / name).read_text(encoding="utf-8"))
+    return data["chunks"] if isinstance(data, dict) else data
+
+
+def _align_remote(cls_name: str, audio: Path, chunks: list[dict[str, Any]], language: str, suffix: str) -> dict[str, Any]:
+    import modal
+
+    cls = modal.Cls.from_name("kinetix-cloud-fa-poc", cls_name)
+    inst = cls()
+    client_sec, payload = time_call(inst.align, load_bytes(audio), chunks, language, suffix)
+    payload["_clientSec"] = round(client_sec, 3)
+    return payload
+
+
+def step_fa_v6() -> None:
+    chunks = _load_plan("chunk_plan_v6.json")
+    print(f"FA T4 V6 {len(chunks)} chunks")
+    aligned = _align_remote("AlignerT4", V6_OPUS, chunks, "en", ".opus")
+    save("fa_cloud_v6.json", aligned)
+    print(json.dumps(aligned.get("metrics"), indent=2))
+
+
+def step_fa_spanish() -> None:
+    chunks = _load_plan("chunk_plan_spanish.json")
+    print(f"FA T4 Spanish {len(chunks)} chunks")
+    aligned = _align_remote("AlignerT4", SPANISH_OPUS, chunks, "es", ".opus")
+    save("fa_cloud_spanish.json", aligned)
+    print(json.dumps(aligned.get("metrics"), indent=2))
+
+
+def step_fa_hour() -> None:
+    chunks = _load_plan("chunk_plan_hour.json")
+    print(f"FA T4 hour {len(chunks)} chunks")
+    aligned = _align_remote("AlignerT4", HOUR_OPUS, chunks, "en", ".opus")
+    save("fa_cloud_hour.json", aligned)
+    print(json.dumps(aligned.get("metrics"), indent=2))
+
+
+def step_fa_cpu() -> None:
+    chunks = _load_plan("chunk_plan_v6.json")
+    print(f"FA CPU V6 {len(chunks)} chunks")
+    aligned = _align_remote("AlignerCPU", V6_OPUS, chunks, "en", ".opus")
+    save("fa_cloud_v6_cpu.json", aligned)
+    print(json.dumps(aligned.get("metrics"), indent=2))
+
+
+def step_fa_packs() -> None:
+    import modal
+
+    packs = {
+        "en": ("You are seven years old. You live inside a skin covered shelter.", V6_OPUS, 0.0, 8.0),
+        "es": ("Scylla es un monstruo que vive dentro de un acantilado.", SPANISH_OPUS, 0.0, 8.0),
+        "fr": ("Ce n'est pas juste.", V6_OPUS, 0.0, 4.0),
+        "de": ("Das ist nicht fair.", V6_OPUS, 0.0, 4.0),
+        "pt": ("O site publico.", V6_OPUS, 0.0, 4.0),
+    }
+    cls = modal.Cls.from_name("kinetix-cloud-fa-poc", "AlignerT4")
+    inst = cls()
+    ping_sec, ping = time_call(inst.ping)
+    results: dict[str, Any] = {"warmPingSec": round(ping_sec, 3), "ping": ping, "packs": {}}
+    for lang, (text, audio, start, end) in packs.items():
+        chunks = [{"startSec": start, "endSec": end, "text": text}]
+        print(f"pack {lang}")
+        client_sec, payload = time_call(inst.align, load_bytes(audio), chunks, lang, ".opus")
+        results["packs"][lang] = {
+            "clientSec": round(client_sec, 3),
+            "metrics": payload.get("metrics"),
+            "nWords": len(payload.get("words") or []),
+            "wordsHead": (payload.get("words") or [])[:8],
+        }
+    save("fa_packs.json", results)
+    print(json.dumps({k: v.get("metrics") for k, v in results["packs"].items()}, indent=2))
+
+
+def step_fa_cold() -> None:
+    import modal
+
+    cls = modal.Cls.from_name("kinetix-cloud-fa-poc", "AlignerT4")
+    print("FA discarded first ping")
+    time_call(cls().ping)
+    stop_containers("kinetix-cloud-fa-poc")
+    runs: list[dict[str, Any]] = []
+    for i in range(3):
+        print(f"FA Viterbi cold ping {i + 1}/3")
+        elapsed, payload = time_call(cls().ping)
+        runs.append({"clientSec": round(elapsed, 3), "payload": payload})
+        stop_containers("kinetix-cloud-fa-poc")
+    save("fa_viterbi_cold.json", {"coldRuns": runs})
+
+
 STEPS = {
     "seed": step_seed,
     "cold-empty": lambda: step_cold("empty"),
@@ -406,6 +500,12 @@ STEPS = {
     "chunked": step_chunked,
     "license": step_license,
     "fa": step_fa,
+    "fa-cold": step_fa_cold,
+    "fa-v6": step_fa_v6,
+    "fa-spanish": step_fa_spanish,
+    "fa-hour": step_fa_hour,
+    "fa-cpu": step_fa_cpu,
+    "fa-packs": step_fa_packs,
 }
 
 

@@ -1,9 +1,7 @@
-"""Modal proof-of-concept: ONNX forced alignment.
+"""Modal proof-of-concept: ONNX forced alignment with the production Viterbi.
 
-Measurement-only. Refuses to fetch `mohtashim9/kinetix-fa-models` unless
-that repo's Hugging Face card carries an Apache-2.0 license tag — a license
-gate, not a technical one. Returns `FaWordSpan` dicts matching
-`faBoundaryTypes.ts:51`.
+Measurement-only. Returns FaWordSpan dicts matching faBoundaryTypes.ts:51.
+Refuses to fetch packs unless mohtashim9/kinetix-fa-models is Apache-2.0.
 """
 
 from __future__ import annotations
@@ -12,6 +10,7 @@ import os
 import tempfile
 import time
 import wave
+from pathlib import Path
 from typing import Any
 
 import modal
@@ -21,31 +20,54 @@ FA_REPO = "mohtashim9/kinetix-fa-models"
 FA_REVISION = "f618960d71728eba5f12528d5571838a10d262bf"
 FA_LANGS = ("en", "es", "fr", "de", "pt")
 REQUIRED_LICENSE = "apache-2.0"
-CONF_MIN = 0.3
-ORIGIN_VOCAB = {
-    "en": "jonatasgrosman/wav2vec2-large-xlsr-53-english",
-    "es": "jonatasgrosman/wav2vec2-large-xlsr-53-spanish",
-    "fr": "jonatasgrosman/wav2vec2-large-xlsr-53-french",
-    "de": "jonatasgrosman/wav2vec2-large-xlsr-53-german",
-    "pt": "jonatasgrosman/wav2vec2-large-xlsr-53-portuguese",
-}
+
+CLOUD = Path(__file__).resolve().parent
+FIXTURE_DIR = CLOUD.parent / "scripts" / "fixtures"
 
 app = modal.App(APP_NAME)
 fa_vol = modal.Volume.from_name("kinetix-fa-weights", create_if_missing=True)
 
-image = (
+cuda_image = (
     modal.Image.from_registry(
         "nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04",
         add_python="3.11",
     )
     .apt_install("ffmpeg")
     .pip_install(
-        "onnxruntime-gpu==1.20.2",
+        "onnxruntime-gpu==1.23.2",
         "numpy==2.2.4",
         "huggingface_hub==0.30.2",
         "nvidia-ml-py==12.570.86",
     )
+    .add_local_file(str(CLOUD / "fa_engine.py"), "/root/fa_engine.py")
 )
+for _lang in FA_LANGS:
+    cuda_image = cuda_image.add_local_file(
+        str(FIXTURE_DIR / f"fa-vocab-{_lang}.json"),
+        f"/vocabs/fa-vocab-{_lang}.json",
+    ).add_local_file(
+        str(FIXTURE_DIR / f"fa-cardinal-{_lang}.json"),
+        f"/vocabs/fa-cardinal-{_lang}.json",
+    )
+
+cpu_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .apt_install("ffmpeg")
+    .pip_install(
+        "onnxruntime==1.23.2",
+        "numpy==2.2.4",
+        "huggingface_hub==0.30.2",
+    )
+    .add_local_file(str(CLOUD / "fa_engine.py"), "/root/fa_engine.py")
+)
+for _lang in FA_LANGS:
+    cpu_image = cpu_image.add_local_file(
+        str(FIXTURE_DIR / f"fa-vocab-{_lang}.json"),
+        f"/vocabs/fa-vocab-{_lang}.json",
+    ).add_local_file(
+        str(FIXTURE_DIR / f"fa-cardinal-{_lang}.json"),
+        f"/vocabs/fa-cardinal-{_lang}.json",
+    )
 
 
 def hf_license_tag(repo_id: str) -> str | None:
@@ -65,9 +87,7 @@ def assert_fa_license() -> str:
     normalized = (tag or "").strip().lower().replace("_", "-")
     if normalized != REQUIRED_LICENSE:
         raise RuntimeError(
-            f"LICENSE GATE: {FA_REPO} card license is {tag!r}, need {REQUIRED_LICENSE}. "
-            "Refusing to fetch ONNX packs. Origin wav2vec2-XLSR-53 fine-tunes are "
-            "Apache-2.0; this is the missing conversion-repo tag, not an origin conflict."
+            f"LICENSE GATE: {FA_REPO} card license is {tag!r}, need {REQUIRED_LICENSE}."
         )
     return tag or REQUIRED_LICENSE
 
@@ -91,17 +111,16 @@ def gpu_mem() -> dict[str, Any]:
         return {"error": str(exc)}
 
 
-def read_wav_mono_16k(path: str) -> tuple[list[float], int]:
+def read_wav_mono_16k(path: str):
+    import numpy as np
+
     with wave.open(path, "rb") as wav:
         if wav.getnchannels() != 1 or wav.getframerate() != 16000:
             raise ValueError(
                 f"expected 16 kHz mono WAV, got {wav.getframerate()} Hz "
                 f"{wav.getnchannels()} ch"
             )
-        n = wav.getnframes()
-        raw = wav.readframes(n)
-        import numpy as np
-
+        raw = wav.readframes(wav.getnframes())
         samples = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
         return samples, wav.getframerate()
 
@@ -115,17 +134,7 @@ def decode_to_wav(audio_bytes: bytes, suffix: str) -> str:
     dest = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     dest.close()
     subprocess.check_call(
-        [
-            "ffmpeg",
-            "-y",
-            "-i",
-            src.name,
-            "-ar",
-            "16000",
-            "-ac",
-            "1",
-            dest.name,
-        ],
+        ["ffmpeg", "-y", "-i", src.name, "-ar", "16000", "-ac", "1", dest.name],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
@@ -133,84 +142,113 @@ def decode_to_wav(audio_bytes: bytes, suffix: str) -> str:
     return dest.name
 
 
-def load_vocab(language: str) -> tuple[dict[str, int], int]:
-    from huggingface_hub import hf_hub_download
-    import json
+def session_options(intra: int):
+    import onnxruntime as ort
 
-    repo = ORIGIN_VOCAB[language]
-    path = hf_hub_download(repo, "vocab.json")
-    with open(path, encoding="utf-8") as handle:
-        vocab = json.load(handle)
-    blank = vocab.get("[PAD]", vocab.get("<pad>", 0))
-    return vocab, int(blank)
+    so = ort.SessionOptions()
+    so.intra_op_num_threads = intra
+    so.inter_op_num_threads = 1
+    so.enable_mem_pattern = False
+    so.enable_cpu_mem_arena = False
+    try:
+        so.add_session_config_entry("session.use_deterministic_compute", "1")
+    except Exception:  # noqa: BLE001
+        pass
+    return so
 
 
-def greedy_ctc_words(
-    logits: Any,
-    text: str,
-    vocab: dict[str, int],
-    blank_id: int,
-    start_sec: float,
-    end_sec: float,
-    sample_rate: int,
-    hop: int = 320,
-) -> list[dict[str, Any]]:
-    """Greedy CTC collapse → word spans. Not the production Viterbi.
+def make_session(onnx_path: str, providers: list[str], intra: int):
+    import onnxruntime as ort
 
-    Good enough to exercise ONNX load + forward for the measurement, and to
-    return the FaWordSpan wire shape. Do not treat these timings as the
-    local engine's output.
-    """
+    return ort.InferenceSession(
+        onnx_path,
+        sess_options=session_options(intra),
+        providers=providers,
+    )
+
+
+def run_forward(session, normed):
     import numpy as np
 
-    if logits.ndim == 3:
-        logits = logits[0]
-    ids = np.argmax(logits, axis=-1)
-    id_to_char = {int(v): k for k, v in vocab.items()}
-    chars: list[tuple[str, int]] = []
-    prev = None
-    for t, idx in enumerate(ids.tolist()):
-        if idx == blank_id or idx == prev:
-            prev = idx
-            continue
-        ch = id_to_char.get(int(idx), "")
-        if ch and not ch.startswith("[") and not ch.startswith("<"):
-            chars.append((ch, t))
-        prev = idx
-
-    target = " ".join(text.split())
-    words_out: list[dict[str, Any]] = []
-    if not chars:
-        return words_out
-
-    # Map greedy chars onto whitespace-split script words in order.
-    script_words = [w for w in target.split() if w]
-    t_max = max(len(ids) - 1, 1)
-    window = max(end_sec - start_sec, 0.0)
-    n = max(len(script_words), 1)
-    for i, word in enumerate(script_words):
-        # Prefer frame span covering this word's characters if present,
-        # else even spacing across the chunk (CTC-infeasible fallback shape).
-        start_t = int(round(t_max * i / n))
-        end_t = int(round(t_max * (i + 1) / n))
-        conf = 0.5
-        words_out.append(
-            {
-                "word": word,
-                "startSec": start_sec + window * (start_t / t_max),
-                "endSec": start_sec + window * (end_t / t_max),
-                "confidence": conf,
-                "needsReview": conf < CONF_MIN,
-                "wordIndex": i,
-            }
-        )
-        _ = hop, sample_rate  # kept for a later frame-accurate port
-    for i, span in enumerate(words_out):
-        span["wordIndex"] = i
-    return words_out
+    logits = session.run(["logits"], {"input_values": normed.reshape(1, -1)})[0]
+    return np.asarray(logits, dtype=np.float32)
 
 
-@app.function(image=image, timeout=30)
+class _AlignerBase:
+    providers: list[str]
+    intra: int
+
+    def _load_one(self, language: str):
+        import fa_engine
+
+        onnx_path = f"/models/{language}/model.onnx"
+        if not os.path.isfile(onnx_path):
+            raise RuntimeError(f"missing {onnx_path}; run cloud/seed.py::seed_fa_weights")
+        session = make_session(onnx_path, self.providers, self.intra)
+        vocab = fa_engine.load_vocab(language, vocab_dir=Path("/vocabs"))
+        return session, vocab
+
+    def load_language(self, language: str) -> None:
+        if language not in FA_LANGS:
+            raise RuntimeError(f"unsupported FA language {language!r}")
+        if language in self.sessions:
+            return
+        t0 = time.perf_counter()
+        session, vocab = self._load_one(language)
+        self.sessions[language] = session
+        self.vocabs[language] = vocab
+        self.load_sec_by_lang[language] = time.perf_counter() - t0
+
+    def ping(self) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "loadSec": round(self.load_sec, 3),
+            "loadedLangs": sorted(self.sessions),
+            "loadSecByLang": {k: round(v, 3) for k, v in self.load_sec_by_lang.items()},
+            "gpuMemory": gpu_mem() if self.providers[0].startswith("CUDA") else None,
+            "providers": self.providers,
+        }
+
+    def align(
+        self,
+        audio_bytes: bytes,
+        chunks: list[dict[str, Any]],
+        language: str = "en",
+        suffix: str = ".opus",
+    ) -> dict[str, Any]:
+        import fa_engine
+        import numpy as np
+
+        self.load_language(language)
+        t0 = time.perf_counter()
+        wav_path = decode_to_wav(audio_bytes, suffix)
+        try:
+            samples, _sr = read_wav_mono_16k(wav_path)
+        finally:
+            os.unlink(wav_path)
+        session = self.sessions[language]
+        vocab = self.vocabs[language]
+
+        def _fwd(normed: np.ndarray):
+            return run_forward(session, normed)
+
+        words, extra = fa_engine.align_chunked(samples, chunks, language, vocab, _fwd)
+        processing_sec = time.perf_counter() - t0
+        return {
+            "words": words,
+            "metrics": {
+                "modelLoadSec": round(self.load_sec_by_lang[language], 3),
+                "processingSec": round(processing_sec, 3),
+                "gpuMemory": gpu_mem() if self.providers[0].startswith("CUDA") else None,
+                "nWords": extra["nWords"],
+                "nChunks": extra["nChunks"],
+                "nFallbackChunks": extra["nFallbackChunks"],
+                "providers": self.providers,
+            },
+        }
+
+
+@app.function(image=cuda_image, timeout=30)
 def check_fa_license() -> dict[str, Any]:
     tag = hf_license_tag(FA_REPO)
     ok = (tag or "").strip().lower().replace("_", "-") == REQUIRED_LICENSE
@@ -218,7 +256,7 @@ def check_fa_license() -> dict[str, Any]:
 
 
 @app.function(
-    image=image,
+    image=cuda_image,
     volumes={"/models": fa_vol},
     timeout=60 * 60,
     cpu=2,
@@ -231,8 +269,7 @@ def seed_fa_weights() -> dict[str, Any]:
     t0 = time.perf_counter()
     saved: dict[str, int] = {}
     for lang in FA_LANGS:
-        dest_dir = f"/models/{lang}"
-        os.makedirs(dest_dir, exist_ok=True)
+        os.makedirs(f"/models/{lang}", exist_ok=True)
         path = hf_hub_download(
             FA_REPO,
             f"{lang}/model.onnx",
@@ -241,54 +278,38 @@ def seed_fa_weights() -> dict[str, Any]:
         )
         saved[lang] = os.path.getsize(path)
     fa_vol.commit()
-    return {
-        "license": license_tag,
-        "bytes": saved,
-        "elapsedSec": round(time.perf_counter() - t0, 3),
-    }
+    return {"license": license_tag, "bytes": saved, "elapsedSec": round(time.perf_counter() - t0, 3)}
 
 
 @app.cls(
-    image=image,
+    image=cuda_image,
     gpu="T4",
     volumes={"/models": fa_vol},
-    timeout=60 * 30,
+    timeout=60 * 60,
     scaledown_window=2,
     memory=8192,
     cpu=2,
 )
-class AlignerT4:
+class AlignerT4(_AlignerBase):
+    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    intra = 1
+
     @modal.enter()
     def load(self) -> None:
         assert_fa_license()
-        import onnxruntime as ort
-
+        self.sessions = {}
+        self.vocabs = {}
+        self.load_sec_by_lang = {}
         t0 = time.perf_counter()
-        language = "en"
-        onnx_path = f"/models/{language}/model.onnx"
-        if not os.path.isfile(onnx_path):
-            raise RuntimeError(f"missing {onnx_path}; run cloud/seed.py::seed_fa_weights")
-        so = ort.SessionOptions()
-        so.intra_op_num_threads = 1
-        so.inter_op_num_threads = 1
-        self.language = language
-        self.session = ort.InferenceSession(
-            onnx_path,
-            sess_options=so,
-            providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
-        )
-        self.vocab, self.blank_id = load_vocab(language)
+        self.load_language("en")
         self.load_sec = time.perf_counter() - t0
         self.enter_gpu = gpu_mem()
 
     @modal.method()
     def ping(self) -> dict[str, Any]:
-        return {
-            "ok": True,
-            "loadSec": round(self.load_sec, 3),
-            "loadedLangs": [self.language],
-            "gpuMemory": self.enter_gpu,
-        }
+        out = super().ping()
+        out["gpuMemory"] = self.enter_gpu
+        return out
 
     @modal.method()
     def align(
@@ -298,55 +319,45 @@ class AlignerT4:
         language: str = "en",
         suffix: str = ".opus",
     ) -> dict[str, Any]:
-        """Accept audio + chunk plan; return FaWordSpan[] plus metrics."""
-        import numpy as np
+        return super().align(audio_bytes, chunks, language, suffix)
 
-        if language != self.language:
-            raise RuntimeError(
-                f"this container loaded {self.language!r}, not {language!r}"
-            )
+
+@app.cls(
+    image=cpu_image,
+    volumes={"/models": fa_vol},
+    timeout=60 * 90,
+    scaledown_window=2,
+    memory=8192,
+    cpu=4,
+)
+class AlignerCPU(_AlignerBase):
+    providers = ["CPUExecutionProvider"]
+    intra = 4
+
+    @modal.enter()
+    def load(self) -> None:
+        assert_fa_license()
+        self.sessions = {}
+        self.vocabs = {}
+        self.load_sec_by_lang = {}
         t0 = time.perf_counter()
-        wav_path = decode_to_wav(audio_bytes, suffix)
-        try:
-            samples, sr = read_wav_mono_16k(wav_path)
-        finally:
-            os.unlink(wav_path)
-        words: list[dict[str, Any]] = []
-        samples_arr = np.asarray(samples, dtype=np.float32)
-        for chunk in chunks:
-            start_sec = float(chunk["startSec"])
-            end_sec = float(chunk["endSec"])
-            text = str(chunk.get("text") or "")
-            i0 = max(int(round(start_sec * sr)), 0)
-            i1 = min(int(round(end_sec * sr)), len(samples_arr))
-            window = samples_arr[i0:i1]
-            if window.size == 0:
-                continue
-            mean = float(window.mean())
-            std = float(window.std()) or 1.0
-            normed = (window - mean) / std
-            logits = self.session.run(
-                ["logits"],
-                {"input_values": normed.reshape(1, -1)},
-            )[0]
-            chunk_words = greedy_ctc_words(
-                logits, text, self.vocab, self.blank_id, start_sec, end_sec, sr
-            )
-            for span in chunk_words:
-                span["wordIndex"] = len(words)
-                words.append(span)
-        processing_sec = time.perf_counter() - t0
-        return {
-            "words": words,
-            "metrics": {
-                "modelLoadSec": round(self.load_sec, 3),
-                "processingSec": round(processing_sec, 3),
-                "gpuMemory": gpu_mem(),
-                "nWords": len(words),
-                "nChunks": len(chunks),
-            },
-        }
+        self.load_language("en")
+        self.load_sec = time.perf_counter() - t0
+
+    @modal.method()
+    def ping(self) -> dict[str, Any]:
+        return super().ping()
+
+    @modal.method()
+    def align(
+        self,
+        audio_bytes: bytes,
+        chunks: list[dict[str, Any]],
+        language: str = "en",
+        suffix: str = ".opus",
+    ) -> dict[str, Any]:
+        return super().align(audio_bytes, chunks, language, suffix)
 
 
 if __name__ == "__main__":
-    print(check_fa_license.local() if False else "deploy with: modal deploy cloud/align.py")
+    print("deploy with: modal deploy cloud/align.py")

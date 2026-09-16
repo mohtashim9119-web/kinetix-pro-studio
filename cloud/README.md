@@ -71,7 +71,13 @@ python cloud/measure.py cold-snapshot   # 3 snapshot-restore pings, T4
 python cloud/measure.py warm            # V6 + 1-hour warm transcribe, T4
 python cloud/measure.py gpu-l4          # V6 warm transcribe, L4
 python cloud/measure.py chunked         # 1 / 4 / 10 naive splits of the hour
-python cloud/measure.py fa              # FA T4 cold pings + 30 s align
+python cloud/measure.py fa              # legacy even-spacing 30 s probe (superseded)
+python cloud/measure.py fa-cold         # T4 empty-container pings, real Viterbi image
+python cloud/measure.py fa-v6           # full V6 production chunk plan, T4
+python cloud/measure.py fa-spanish      # Spanish fixture + 5-chunk plan, T4
+python cloud/measure.py fa-hour         # tiled one-hour plan, T4
+python cloud/measure.py fa-cpu          # V6 on CPU-only
+python cloud/measure.py fa-packs        # load+align all five language packs
 ```
 
 JSON dumps land in `cloud/results/` (gitignored). `scaledown_window=2` plus
@@ -102,22 +108,38 @@ python cloud/compare_tokens.py \
 `cloud/align.py` is the second Modal function: ONNX packs from
 `mohtashim9/kinetix-fa-models` at revision `f618960d71728eba5f12528d5571838a10d262bf`,
 chunk plan in, `FaWordSpan` (`word`, `startSec`, `endSec`, `confidence`,
-`needsReview`, `wordIndex`) out. It loads the English pack only at
-container start.
+`needsReview`, `wordIndex`) out. English loads at container start; other
+packs lazy-load from the volume. The decoder in `cloud/fa_engine.py` is
+the production CTC Viterbi (`fa_viterbi.rs`) plus the ONNX word-merge
+path, not the 2026-09-16 even-spacing placeholder.
 
 Hard gate: do **not** seed or deploy unless the conversion repo's Hugging
-Face card carries an Apache-2.0 license tag (re-check; it was missing when
-the plan was written and present on 2026-09-16):
+Face card carries an Apache-2.0 license tag:
 
 ```sh
 python cloud/measure.py license
 # only if that reports ok=true:
 modal run cloud/seed.py::seed_fa_weights
 modal deploy cloud/align.py
-python cloud/measure.py fa
 ```
 
+Local English parity (existing FA path, `fa-inference`, production
+`load_session`):
+
+```sh
+./cloud/run_local_fa.sh
+python cloud/compare_fa.py \
+  --local cloud/results/local_fa_v6/arm_prod.json \
+  --cloud cloud/results/fa_cloud_v6.json \
+  --out cloud/results/fa_parity_v6.json
+```
+
+Chunk plans consumed by both sides are the frozen production dumps
+(`.work-phase4/replay/{v6,spanish}/fa_production_chunks.json`). Rebuild
+the live TypeScript planner with `npx vite-node cloud/build_chunk_plan.ts v6`
+if you need to see planner drift (273 vs 280 chunks on 2026-09-17).
+
+Viterbi fixture check (no ONNX): `python3 cloud/test_fa_decoder.py`.
+
 Origin Grosman wav2vec2-XLSR-53 checkpoints are already Apache-2.0. The
-gate is the conversion-repo tag. MMS-FA remains barred. The POC decoder is
-an ONNX forward plus even-spacing, not the production Viterbi — use it for
-load/cost, not FA parity.
+gate is the conversion-repo tag. MMS-FA remains barred.

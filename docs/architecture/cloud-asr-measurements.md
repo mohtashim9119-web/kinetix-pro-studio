@@ -1,6 +1,6 @@
 # Cloud ASR measurements (Modal proof of concept)
 
-Recorded 2026-09-16. Branch `ws-cloud-asr-plan`. This is a measurement
+Recorded 2026-09-16; FA Viterbi section added 2026-09-17. Branch `ws-cloud-asr-plan`. This is a measurement
 report, not a description of shipped behaviour. Functions live under
 `cloud/` and are not wired into the desktop app.
 
@@ -257,44 +257,205 @@ dedupe, or silence-snapped cuts, are not in this POC.
 
 ---
 
-## Forced alignment (step 5)
+## Forced alignment — placeholder run (2026-09-16, superseded)
 
-License gate, re-checked 2026-09-16: Hugging Face
-`GET /api/models/mohtashim9/kinetix-fa-models` now returns
-`cardData.license: apache-2.0` at sha `fa3db136daa49d3809e744fb8aacd06430a7442e`.
-The plan recorded this tag as **missing**. It is present as of this run,
-so the function was deployed. Origin Grosman checkpoints remain Apache-2.0.
-ONNX files were still fetched at the pinned revision
-`f618960d71728eba5f12528d5571838a10d262bf`. All five packs
-(`en es fr de pt`) are in volume `kinetix-fa-weights`. MMS-FA was not
-touched.
+The 2026-09-16 FA numbers below measured ONNX **load and forward only**.
+The decoder was an even-spacing placeholder after the logits. Those
+figures are **not real alignment**. They are kept so the contradiction
+with the 2026-09-17 Viterbi run is visible.
 
-The aligner loads **English only** at container start (one 1.26 GiB pack,
-matching "one language pack per container"). It returns `FaWordSpan`
-`{ word, startSec, endSec, confidence, needsReview, wordIndex }`. The
-decode is a **POC even-spacing fallback after an ONNX forward**, not the
-production Viterbi in `fa_onnx.rs`. Word timings below are therefore
-**not** a parity result against local FA.
+License was already `apache-2.0` on the conversion repo. English pack
+only at enter. Warm 30 s chunk: **4.662 s** processing, 24 even-spaced
+spans, T4 peak ~2.6 GiB, implied RTF **6.4×**. That 6.4× is
+overhead-dominated on a tiny clip and **does not describe** production
+Viterbi throughput (see the next section).
 
-### FA T4, English pack, first 30 s of V6, one chunk
+Cold pings from that run: 10.5 / 26.6 / 11.2 s client, 3.4–4.4 s load.
 
-| | Client (s) | Load inside container (s) | GPU used (MB) |
+---
+
+## Forced alignment — production Viterbi (2026-09-17)
+
+Recorded 2026-09-17. Same Modal workspace `thekingsmanco99`, AWS T4,
+onnxruntime 1.23.2 (GPU and CPU). Weights still the pinned revision
+`f618960d71728eba5f12528d5571838a10d262bf` in volume `kinetix-fa-weights`.
+HF card license re-checked the same day: **`apache-2.0`** (head sha
+`fa3db136daa49d3809e744fb8aacd06430a7442e`). Gate passed.
+
+**Parity verdict:** cloud FA is **not interchangeable** with local FA
+under the owner's threshold (mean < 10 ms **and** max < 50 ms).
+English V6: 3874/3874 identical text, mean |Δstart| **8.16 ms** (under
+the mean bar), max |Δstart| **1.84 s** (fails the max bar); 108 words
+beyond 50 ms. Spanish: interchangeable (mean 0.88 ms, max 20 ms, 249/249
+identical). The Viterbi port itself is frame-identical to
+`fa_viterbi.rs` on the three emission fixtures. Modal T4 and Modal CPU
+are bit-identical to each other. The remaining English outliers are
+therefore **ONNX-runtime numeric differences** (Python onnxruntime 1.23.2
+vs the bundled Rust `ort` C API 1.23.2), not a decoder-translation bug
+and not CUDA vs CPU.
+
+### Algorithm as ported
+
+Read-only from `fa_viterbi.rs` / `fa_onnx.rs` / `faTextNormalize.ts`
+(not `fa_dev.rs` — that file is the IPC wrapper; the DP lives in
+`fa_viterbi.rs`).
+
+- **Emissions:** zero-mean/unit-variance on the chunk PCM
+  (`(x-mean)/sqrt(var+1e-7)`, f64 accum, f32 out), ONNX `input_values` →
+  `logits`, then per-row log-softmax. Viterbi consumes log-probabilities,
+  never raw logits.
+- **Targets:** `normalizeForForcedAlignment` then characters mapped
+  through the committed `fa-vocab-<lang>.json`, with `|` inserted between
+  fragments. Blank is `<pad>`. Unrepresentable words are dropped.
+- **Transition model:** CTC lattice `S = 2L+1`
+  (blank/label/blank/…/blank). From state `i` the DP considers stay
+  (`x0`), previous (`x1`), and skip-a-blank (`x2`) only when `i` is a
+  label, `i != 1`, and `targets[i/2] != targets[i/2-1]`. Ties prefer
+  stay. `T >= L+R` or `TooManyRepeats`.
+- **Blank handling:** blank states on even `i`. `merge_tokens` drops
+  blank runs only; `|` delimiter runs survive and become word boundaries.
+  Immediate character repeats keep a mandatory blank between them.
+- **Backtrack:** pick the better of the last two states, then walk
+  `back_ptr` from `t=T-1` down to `t=1` (`t=0` is unwritten, skipped as
+  in the Rust port). Path labels become per-frame scores gathered from
+  the emission, not alpha totals.
+- **Frame clock:** `frame_to_seconds(i) = i * 320 / 16000` (exactly
+  0.02 s/frame). Chunk-local seconds plus `chunk.startSec`.
+  `confidence = exp(score)`, `needsReview = confidence < 0.3`.
+
+Choices that were not a line-for-line copy:
+
+1. **NFC.** Python `unicodedata.normalize('NFC')` matches the TypeScript
+   source of truth. Rust uses a scoped compose table because std has no
+   NFC; on the five shipped vocabs they agree.
+2. **log-softmax / Viterbi arithmetic** uses Python float (f64) rather
+   than Rust `f32`. Emission fixtures still matched at `1e-5`. This is
+   the one arithmetic deviation that could still move a DP tie.
+3. **ONNX session.** Python `onnxruntime==1.23.2` with
+   `enable_mem_pattern=False`, intra-op 1 (T4) or 4 (CPU). Local uses
+   `ort` 1.23.2 C API, intra-op = physical cores, `deterministic_compute`.
+   The Python `session.use_deterministic_compute` config key is best-effort.
+4. **Infeasible chunks.** Python applies the production even-spacing
+   `TooManyRepeats` fallback. The cargo dump test panics instead. V6 and
+   Spanish had **zero** fallbacks, so the paths are comparable.
+5. **Chunk plan.** Both engines used the frozen production plan
+   `fa_production_chunks.json` (V6 280 chunks, Spanish 5). The live
+   TypeScript planner on 2026-09-17 emits **273** V6 chunks
+   (`cloud/results/chunk_plan_v6_live.json`). That planner drift is a
+   separate finding; mixing the two plans would invalidate parity.
+
+### Accuracy
+
+Local English is a live `cargo test --features fa-inference` of
+`intra_thread_sweep_arm_v6` with `FA_SWEEP_INTRA=prod` (real
+`load_session`). That dump is bit-identical to the stored
+`.work-phase4/replay/v6/fa_production_words.json` (mean |Δ|
+`1.4e-14` s). Spanish local is that same stored production-path dump;
+V6 proves the capture is still today's engine.
+
+| Corpus | Local n | Cloud n | Identical text | Mean \|Δstart\| | Max \|Δstart\| | ≤10 ms | ≤50 ms | >50 ms | Interchangeable? |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| V6 English, 280-chunk plan | 3874 | 3874 | 3874 | **8.16 ms** | **1.84 s** | 3588 | 3766 | **108** | **no** |
+| Spanish, 5-chunk plan | 249 | 249 | 249 | **0.88 ms** | **20 ms** | 238 | 249 | 0 | **yes** |
+
+V6 outliers cluster; they are not randomly sprinkled:
+
+- i=330–331 `are` / `eleven` around 126–128 s (max 1.84 s)
+- i=1666–1669 `you` / `only` / `know` / `you` around 629–631 s (max 1.08 s)
+
+92.6% of V6 words are within 10 ms, 97.2% within 50 ms. The owner's max
+bar still fails. Mixing cloud and local FA on English would produce
+measurably different sync on those words. Provenance-recording is
+load-bearing for FA the same way it already is for transcription.
+
+Modal T4 vs Modal CPU on V6: **0.0 ms everywhere** (bit-identical). GPU
+is not the source of the local/cloud gap.
+
+### Duration and cost
+
+Published rates the same day: T4 **$0.59/h**, CPU **$0.0473/core/h**,
+memory **$0.008/GiB/h**. Dashboard per-invocation: **unmeasured**.
+
+| Job | Device | Processing (s) | Client (s) | RTF | Words | Peak mem |
+|---|---|---:|---:|---:|---:|---|
+| V6 23.7 min, 280 chunks | T4 | **25.819** | 32.522 | **55.05×** | 3874 | 4696 / 15360 MB (en+es cached) |
+| V6 | Modal CPU, 4 cores | **179.058** | 193.947 | **7.94×** | 3874 | (no GPU) |
+| V6 | local Rust `load_session` | **275.95** loop (forward 275.58, Viterbi 0.156) | — | **5.16×** | 3874 | 2081 MiB RSS |
+| Hour tiled plan, 702 chunks | T4 | **66.495** | 103.732 | **54.14×** | 9757 | 2628 / 15360 MB |
+| Spanish 92 s, 5 chunks | T4 | **3.087** | 19.929 | **29.8×** | 249 | 4684 / 15360 MB |
+
+**The 6.4× placeholder RTF does not hold.** It was worse because a 30 s
+clip is overhead. Real Viterbi on T4 is **~55×**, about 8.5× faster than
+that placeholder implied. Viterbi itself is 156 ms on the whole V6 file
+locally; the cost is the ONNX forward.
+
+Derived FA cost from published rates (GPU-seconds only unless noted):
+
+| | Per invocation | Per audio hour | Per 30-min video |
 |---|---:|---:|---:|
-| prime (image pull) | 33.949 | 15.984 | 2618 / 15360 |
-| cold 1 | 10.505 | 3.645 | 2615 / 15360 |
-| cold 2 | 26.611 | 4.382 | 2614 / 15360 |
-| cold 3 | 11.190 | 3.435 | 2614 / 15360 |
-| warm ping (after stop; really another cold) | 26.820 | 3.133 | 2614 / 15360 |
-| warm `align` (model already in that container) | **8.012** | (reuse) | 2624 / 15360 |
+| T4 V6 | $0.00423 | $0.0107 | $0.0054 |
+| T4 hour file | $0.0109 | $0.0109 | $0.0054 |
+| Modal CPU V6 (4 cores + 8 GiB) | $0.0126 | $0.0319 | $0.0160 |
 
-Warm align processing **4.662 s** for a 30 s chunk, 24 word spans.
-Volume-cached ONNX load after the first pull is **3.4–4.4 s**. That is
-fast enough that keeping a container warm *just to avoid re-reading
-weights* is unnecessary. Keeping one warm **to skip T4 scheduling
-(10–27 s)** is the same story as transcription.
+CPU **is viable** (still 8× realtime on V6) and **is not cheaper**. T4
+is both faster (~7×) and cheaper (~3×) per audio hour. That **changes
+the cost picture relative to a guess that the small ONNX graph would
+make CPU the winner**. It does not.
 
-FA app session cost (dashboard report): T4 **$0.017044** + CPU/memory
-**$0.006**. Per-invocation dashboard: **unmeasured**.
+Peak GPU 2.6 GiB with one pack, 4.7 GiB with two, **10.9 GiB with all
+five packs loaded in one container**. T4 16 GiB is enough. Nothing
+cheaper than T4 exists on Modal's GPU list.
+
+### Chunk boundary integrity
+
+Alignment is driven by the chunk plan, not naive audio splits. On the
+real V6 plan and the tiled hour plan:
+
+| | V6 cloud | V6 local | Spanish | Hour tiled |
+|---|---|---|---|---|
+| Expected representable words | 3874 | 3874 | 249 | 9757 |
+| Got | 3874 | 3874 | 249 | 9757 |
+| Every word exactly once | yes | yes | yes | yes |
+| `wordIndex` gapless | yes | yes | yes | yes |
+| Duplicates | 0 | 0 | 0 | 0 |
+| Missing | 0 | 0 | 0 | 0 |
+| Overlaps | 0 | 0 | 0 | 0 |
+| CTC fallback chunks | 0 | 0 | 0 | 0 |
+
+No word appears twice or not at all. Gaps > 50 ms between adjacent
+words are speech pauses, not seam holes — consecutive words never
+overlap, and hour tile seams at 1421.29 s / 2842.58 s have no word
+sitting on them. **The naive-split damage from the transcription POC
+does not appear here**, because the planner assigns each script word to
+exactly one chunk before inference. That is the engineering the
+transcription fan-out still lacks.
+
+### Five packs
+
+Each pack loaded from the volume and completed an alignment on a short
+chunk in one warm T4 container (languages cached after first use):
+
+| Pack | Load (s) | Align processing (s) | Words | GPU after load (MB) |
+|---|---:|---:|---:|---:|
+| en | 4.021 | 4.102 | 12 | 2624 / 15360 |
+| es | 2.276 | 0.577 | 10 | 4694 / 15360 |
+| fr | 4.145 | 3.744 | 4 | 6764 / 15360 |
+| de | 4.787 | 3.883 | 4 | 8842 / 15360 |
+| pt | 11.977 | 3.852 | 3 | 10912 / 15360 |
+
+fr/de/pt used a few seconds of English audio with language-appropriate
+text — enough to prove the pack loads and the forward+Viterbi run, **not**
+a quality claim. Apache-2.0 tag present (above).
+
+### Cold start (T4, Viterbi image)
+
+| | Client (s) | Load in container (s) |
+|---|---:|---:|
+| empty 1 / 2 / 3 | 7.310 / 26.514 / 29.622 | 3.718 / 3.558 / 3.404 |
+
+Volume load is still ~3.5 s. Client-facing time is still T4 scheduling.
+**Warm containers remain necessary for interactive FA**, not because
+ONNX is slow to read.
 
 ---
 
@@ -306,13 +467,20 @@ FA app session cost (dashboard report): T4 **$0.017044** + CPU/memory
 - Cold-start pings on the CUDA image (three empty + three snapshot were
   taken on `debian_slim` before cublas was added). One CUDA ping (14.6 s)
   sits inside that range; a full re-series was not repeated.
-- FA on a full V6 / one-hour chunk plan, and FA vs local ONNX Viterbi
-  parity. Out of scope of a load/cost probe; the POC decoder is not the
-  production aligner.
-- L4 hour file, L4 FA, A10G or anything above L4.
+- A live Spanish `cargo test` dump. Spanish local used the stored
+  production-path JSON; V6 showed that capture is bit-identical to
+  today's `fa-inference` `load_session`, so it is a valid baseline, but
+  a same-day Spanish cargo run was not executed.
+- fr/de/pt parity against local on real audio of those languages. Pack
+  smoke used short English audio plus target-language text.
+- L4 FA, A10G or anything above L4.
 - Pinned Modal region. T4 scheduling across `us-west-1` / `us-east-1` /
   `eu-central-1` was left on Modal's default.
 - Upload time from a real user's machine. Fixtures were already on the
   client that called `.remote()`.
 - Whisper.cpp with Metal enabled. Production sidecar on this host used
   the BLAS backend (`no GPU found`).
+- Why 108 English words exceed 50 ms: logits were not dumped per chunk,
+  so the split between f64 log-softmax and ORT kernel differences is
+  **unmeasured**. The decoder fixtures and the T4==CPU identity bound it
+  to the emission, not to CTC logic.
