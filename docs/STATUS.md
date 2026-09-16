@@ -133,3 +133,4 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 - [OPEN · NON-BLOCKING] ~33 cloud CI test failures from missing `.work-phase4/replay/` fixtures — `scripts/phase4-restore-replay-inputs.py`
 - [OPEN · NON-BLOCKING] 10 local `archive/wt-*-2026-09-14` branches, none pushed to origin
 - SaaS target architecture (source SHA `e8ffb6b`) recorded — `docs/architecture/saas-target-architecture.md`, Round 28, commit `06c67a3`
+- Cloud ASR and alignment plan (investigated SHA `c463814`) recorded — `docs/architecture/cloud-asr-plan.md`
