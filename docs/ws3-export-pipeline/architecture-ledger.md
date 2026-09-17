@@ -1,5 +1,9 @@
 # WS3 Export — Architecture Ledger
 
+> **Main line (2026-09-17):** `main` @ **`42988f1`** after Round 28/29 + cloud-asr consolidation.
+> Pre-merge baseline **`4d4922c`** (`pre-round28-main`). Older entries below cite `4d4922c` as the
+> then-current rollback anchor — read those as historical unless a line explicitly post-dates NR-5.
+
 > **A note on taxonomy, read before trusting the numbers below.** No prior committed doc
 > in this repo defines a 0-5 "Rung" scale or a "Tier 1-4" scale under those exact names —
 > `docs/ws3-export/recovery-architecture.md` uses its OWN 1-13 rung numbering (different
@@ -2676,7 +2680,7 @@ rather than assumed: `npm test` 3,651/0/78 = 3,729; `cargo test --lib -- --test-
 356/0/6 = 362; `cargo test --lib --features fa-inference -- --test-threads=1` 442/0/36 = 478;
 `tsc`/`lint` clean; eight frozen constants and four fixture digests present and unchanged (grepped
 directly post-merge, not inferred from the fast-forward). Pushed `ws3-export-integration` @
-`0bdc8a5`. No merge to main, no PR; `main` confirmed still `4d4922c`.
+`0bdc8a5`. No merge to main, no PR; `main` confirmed still `4d4922c` (pre-round28-main baseline; superseded 2026-09-17 — see NR-5 in `docs/STATUS.md`).
 
 #### Round 25 candidates
 

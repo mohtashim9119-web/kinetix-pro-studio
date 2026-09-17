@@ -300,7 +300,7 @@ At classification time the consolidation shape is:
 
 | Section | Stale | Correction |
 |---|---|---|
-| §1 Branch | `main` | Active integration trunk for release work is **`ws3-export-integration`** @ `15002e5`; `main` @ `4d4922c` is WS3 decode-cursor doc only |
+| §1 Branch | `main` | **Historical (pre-round28-main):** active trunk was **`ws3-export-integration`** @ `15002e5`; `main` @ `4d4922c`. **Current (2026-09-17):** `main` @ `42988f1` — see `docs/STATUS.md` NR-5. |
 | §1 HEAD | WS1 Session AN narrative | WS3 is active: decode-cursor closed, liveness/occlusion rounds, tier1–3 + durable resume + hardening in flight |
 | §1 vitest | 2561 passed | Re-measure on target branch (hardening: **~3297+** cited in recovery-architecture baseline — stale vs current) |
 | §1 golden replay | 6/6 | Still valid on main; WS3 branches may differ — state branch measured |

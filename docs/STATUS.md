@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: FA wiring audit on `ws-cloud-asr-plan` (audit read @ `ebec58a`)
+Last updated: Round 28/29 consolidation merge on `main` @ `42988f1` (rollback tag `pre-round28-main` → `4d4922c`)
 
 > **Single source of truth for project tracking.** Retired trackers live under
 > `docs/archive/history/` (`work-in-progress.md`, `project-state.md`). Update this file only;
@@ -16,6 +16,7 @@ Dated entries from the FA wiring ground-truth audit (`docs/architecture/fa-wirin
 - **NR-2 (2026-09-17):** Toggle default becomes ON for all builds and users, subject to migration: absent `Project.faHighPrecisionSync` adopts ON at read time without persisting; explicit `false` stays off (`faGate.ts` absent-key semantics — audit STEP 4).
 - **NR-3 (2026-09-17):** Silent FA → Whisper fallback while toggle ON is defect **D24** (see WS3 Open Bugs). Inventory: audit STEP 3; Sync Log `fa-fallback` is not sufficient under NR-1.
 - **NR-4 (2026-09-17):** Prior “FA disabled / not in shipped build / cloud-only first delivery” claims are stale. Index: audit STEP 5 + Amendment 3 in [`docs/architecture/cloud-asr-plan.md`](architecture/cloud-asr-plan.md). WS1 `sync-pipeline-v2-plan.md` body unchanged; one status line at file top points here.
+- **NR-5 (2026-09-17):** `main` moved **`4d4922c` → `42988f1`** (merge `ws3-export-integration` @ `45d5860`, then `ws-cloud-asr-plan` @ `eb1c4fa`). Rollback: annotated tag **`pre-round28-main`** on `4d4922c`. Windows verification of Round 29 D12–D22 passed before merge. **D23** and **D24** remain open and unblocked by this merge.
 
 ---
 
@@ -158,5 +159,5 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 - [OPEN · NON-BLOCKING] Three parallel disk-size estimators (badge, dead destination module, live preflight) — consolidate to one — `diskFull.ts`
 - [OPEN · NON-BLOCKING] ~33 cloud CI test failures from missing `.work-phase4/replay/` fixtures — `scripts/phase4-restore-replay-inputs.py`
 - [OPEN · NON-BLOCKING] 10 local `archive/wt-*-2026-09-14` branches, none pushed to origin
-- SaaS target architecture (source SHA `e8ffb6b`) recorded — `docs/architecture/saas-target-architecture.md`, Round 28, commit `06c67a3`
-- Cloud ASR and alignment plan (investigated SHA `c463814`) recorded — `docs/architecture/cloud-asr-plan.md`
+- SaaS target architecture (integration tip at record time `e8ffb6b`, one commit before docs tip `c463814`; branch now merged to `main` @ `42988f1`) — `docs/architecture/saas-target-architecture.md`, Round 28, commit `06c67a3`
+- Cloud ASR and alignment plan (branch `ws-cloud-asr-plan` @ `eb1c4fa`, merged to `main` @ `42988f1`) — `docs/architecture/cloud-asr-plan.md`
