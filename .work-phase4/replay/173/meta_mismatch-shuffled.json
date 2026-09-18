@@ -1,0 +1,114 @@
+{
+  "label": "mismatch-shuffled",
+  "cmd": [
+    "measure-forced-alignment.py",
+    "align",
+    "--segments-json",
+    "/private/tmp/claude-501/-Users-mohtashim-Drive-Vibe-Coding-Projects-4-kinetix-pro-studio/e7b44bb1-c920-4ccd-8a46-12c42da08a87/scratchpad/173-segments-shuffled-mismatch.json"
+  ],
+  "elapsed_sec": 126.31195292399934,
+  "model_load_sec": 5.952776475001883,
+  "align_only_sec": 119.63948234297277,
+  "peak_rss_bytes": 4155723776,
+  "returncode": 0,
+  "token_count": 1596,
+  "segment_count": 172,
+  "failed_segments": [
+    {
+      "seg": 4,
+      "text": "That single feature separates this from every other hostile environment on this list.",
+      "error": "targets length is too long for CTC. Found targets length: 31, log_probs length: 72, and number of repeats: 1"
+    },
+    {
+      "seg": 9,
+      "text": "The structure itself continuously reconfigures around the intrusion, sealing corridors, shifting gravity orientations, cycling through",
+      "error": "targets length is too long for CTC. Found targets length: 98, log_probs length: 117, and number of repeats: 3"
+    },
+    {
+      "seg": 56,
+      "text": "Supply lines, reinforcements, intelligence, extraction, everything a military force depends on",
+      "error": "targets length is too long for CTC. Found targets length: 78, log_probs length: 80, and number of repeats: 3"
+    },
+    {
+      "seg": 102,
+      "text": "The canopy generates a biological electrical field that jams vox-casters,",
+      "error": "targets length is too long for CTC. Found targets length: 44, log_probs length: 62, and number of repeats: 0"
+    }
+  ],
+  "model": "torchaudio MMS_FA (mling_uroman, with_star=True)",
+  "torch_version": "2.2.2",
+  "torchaudio_version": "2.2.2",
+  "pad_sec": 3.0,
+  "language": "en",
+  "dropped_unrepresentable": [
+    {
+      "seg": 4,
+      "words": [
+        "That",
+        "single",
+        "feature",
+        "separates",
+        "this",
+        "from",
+        "every",
+        "other",
+        "hostile",
+        "environment",
+        "on",
+        "this",
+        "list."
+      ]
+    },
+    {
+      "seg": 9,
+      "words": [
+        "The",
+        "structure",
+        "itself",
+        "continuously",
+        "reconfigures",
+        "around",
+        "the",
+        "intrusion,",
+        "sealing",
+        "corridors,",
+        "shifting",
+        "gravity",
+        "orientations,",
+        "cycling",
+        "through"
+      ]
+    },
+    {
+      "seg": 56,
+      "words": [
+        "Supply",
+        "lines,",
+        "reinforcements,",
+        "intelligence,",
+        "extraction,",
+        "everything",
+        "a",
+        "military",
+        "force",
+        "depends",
+        "on"
+      ]
+    },
+    {
+      "seg": 102,
+      "words": [
+        "The",
+        "canopy",
+        "generates",
+        "a",
+        "biological",
+        "electrical",
+        "field",
+        "that",
+        "jams",
+        "vox-casters,"
+      ]
+    }
+  ]
+}

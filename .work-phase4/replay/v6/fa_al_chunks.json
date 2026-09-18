@@ -1,0 +1,566 @@
+{
+  "_runId": "al-2026-08-23T200208177Z",
+  "audioDuration": 1421.29,
+  "language": "en",
+  "_source": {
+    "note": "WS1 Session AL arm D — computeFaChunkPlanPeriodStrict(anchorTimed, rawWhisperTokens, nativeSilences, audioDuration, 1, 15, 5) AT HEAD. Period-strict grouping, 1-15s band (OPERATOR-DIRECTED), R.5 excision ON (matching arm C). Plan is deliberately NOT gapless: every gap is an excised recitation.",
+    "anchorTimedSegments": 447,
+    "silenceCount": 546,
+    "r5RunCount": 10,
+    "excisedSpans": 9,
+    "excisedSec": 37.82,
+    "violationCount": 28
+  },
+  "chunks": [
+    {
+      "startSec": 3.57,
+      "endSec": 17.88,
+      "text": "You are seven years old. You live inside a skin-covered shelter at the edge of a shallow valley. The fire your mother tends smells like pine resin and scorched bone. Your grandmother is asleep against the far wall. It is deep in the night. You are wide awake."
+    },
+    {
+      "startSec": 17.88,
+      "endSec": 32.74,
+      "text": "You can hear something outside. You do not know what it is. You only know the sound is large it is close and the fire is the only reason you are not screaming. The sound stops. The night goes quiet."
+    },
+    {
+      "startSec": 32.74,
+      "endSec": 46.46,
+      "text": "Your chest is tight in a way you have no word for. Your mother does not look up. She feeds the fire another stick without turning her head. That stillness tells you something. She has been listening the whole time."
+    },
+    {
+      "startSec": 46.46,
+      "endSec": 57.1,
+      "text": "You watch her face and you learn your first lesson without a word being spoken. The darkness past the firelight is not empty. It has weight."
+    },
+    {
+      "startSec": 57.1,
+      "endSec": 68.58,
+      "text": "The fire is the line between you and whatever lives on the other side of it. You fall asleep against her side one hand on the warm stones ringing the hearth. You dream about the sound."
+    },
+    {
+      "startSec": 68.58,
+      "endSec": 81.26,
+      "text": "Morning comes bright and cold and you run out into the frost like nothing happened. But something stayed in you. Small and permanent. A new understanding of what the night actually is."
+    },
+    {
+      "startSec": 81.26,
+      "endSec": 98.3,
+      "text": "You start watching the older hunters differently. You notice where their eyes go when the sun drops. You notice how they arrange themselves around the fire before full dark. Nobody told them to do it. They just do."
+    },
+    {
+      "startSec": 98.3,
+      "endSec": 108.92,
+      "text": "The band has a shape at night it does not have during the day. Certain men always face outward. Certain men sleep closest to the fire’s edge. The arrangement is not accidental."
+    },
+    {
+      "startSec": 108.92,
+      "endSec": 125.25,
+      "text": "It is as deliberate as any trap your father sets in the river shallows. You are not old enough to hold a position in that shape. But you are old enough to start learning what it means."
+    },
+    {
+      "startSec": 129.15,
+      "endSec": 134.24,
+      "text": "You are eleven. On nights when the band moves between camps your job is to carry one of the torches. Birch bark and fat-soaked moss bound with sinew held in both hands out in front of your body."
+    },
+    {
+      "startSec": 134.24,
+      "endSec": 146.62,
+      "text": "The flame bends in the wind and you curve yourself around it using your chest against the cold air. The hunters move ahead. You stay in the center column with the women and older children."
+    },
+    {
+      "startSec": 146.62,
+      "endSec": 162.48,
+      "text": "Behind you, two of the most experienced men walk the rear with thrusting spears angled outward into the dark. They do not speak on night marches. Their silence is a tool same as the spear."
+    },
+    {
+      "startSec": 162.48,
+      "endSec": 174.24,
+      "text": "You drop the torch on the third night of your second season carrying it. You catch a root you did not see and the flame hits the ground and sputters and for three full heartbeats the column loses half its light."
+    },
+    {
+      "startSec": 174.24,
+      "endSec": 189.56,
+      "text": "Nobody shouts. But Daret, the rear guard moves up beside you and puts his hand flat on your shoulder. Not hard. Not gentle. Just there. He holds it until you have the torch burning again from the second carrier’s coals."
+    },
+    {
+      "startSec": 189.56,
+      "endSec": 205.08,
+      "text": "Then he walks back to his post without a word. The lesson in that touch your mistake put people in danger. You are not punished for it. You are expected to understand that on your own. You do not drop a torch again."
+    },
+    {
+      "startSec": 205.08,
+      "endSec": 216.54,
+      "text": "Those long column walks teach you how to read the night by its sounds. An owl is neutral. Every animal going silent at once is not. Wind through pine moves without any pattern."
+    },
+    {
+      "startSec": 216.54,
+      "endSec": 232.2,
+      "text": "Something large moving through pine has a rhythm even when it is trying to suppress one. You learn to feel the column change before you see it change. When the lead hunter slows every person slows. No signal. No sound."
+    },
+    {
+      "startSec": 232.2,
+      "endSec": 249.5,
+      "text": "The shift moves back through the group the way cold moves through water. You sleep lightly now even at camp. You did not decide to. Your body made that choice without asking."
+    },
+    {
+      "startSec": 253.32,
+      "endSec": 261.62,
+      "text": "You are sixteen and you carry your own spear. Not the heavy thrusting spear of the senior hunters. A throwing spear its flint point knapped by hand and bound to the shaft with pine pitch and wet sinew that dried hard as rock. They start sending you on forward runs."
+    },
+    {
+      "startSec": 261.62,
+      "endSec": 274.62,
+      "text": "Never far. Never alone. You go with Korik twenty-two, who has been scouting for four years. The two of you move ahead of the main group by about the distance a man can shout and be heard."
+    },
+    {
+      "startSec": 274.62,
+      "endSec": 287.86,
+      "text": "Your job is to read the ground before everyone else walks onto it. You learn to smell before you look. A predator’s presence reaches your nose before your mind names it."
+    },
+    {
+      "startSec": 287.86,
+      "endSec": 299.08,
+      "text": "Something thick, musky, wrong in a way that is hard to describe. You catch it on your third run and stop walking. Korik stops half a step after you. He has it too."
+    },
+    {
+      "startSec": 299.08,
+      "endSec": 313.8,
+      "text": "The two of you stand without moving for a long count long enough for your own breathing to feel very loud. You back out the way water runs in reverse. Slow, continuous, nothing sudden enough to announce you."
+    },
+    {
+      "startSec": 313.8,
+      "endSec": 325.82,
+      "text": "You never see the cave lion that night. But you find its tracks in the frost the next morning two spear-lengths from where you stood. The print is wider than both your hands laid side by side."
+    },
+    {
+      "startSec": 325.82,
+      "endSec": 338.76,
+      "text": "You look at it for a long time. You bring the information back. That is the job. Not to engage. Not to prove anything. See, register, return. A scout who sees too little endangers the band."
+    },
+    {
+      "startSec": 338.76,
+      "endSec": 352.4,
+      "text": "A scout who imagines too much does the same. What the job requires is exact truth delivered without drama. You are not yet calm about it. Your voice holds when you report but your hands do not."
+    },
+    {
+      "startSec": 352.4,
+      "endSec": 369.75,
+      "text": "Daret watches your hands when you speak. You see him doing it. You start working on the hands."
+    },
+    {
+      "startSec": 373.49,
+      "endSec": 375.2,
+      "text": "You are twenty and you have your first real position in the night circle. The eastern post facing the tree line where the river bends out of sight. You sit with your back to the fire so your eyes can adjust fully to the dark beyond the camp’s edge."
+    },
+    {
+      "startSec": 375.2,
+      "endSec": 389.92,
+      "text": "The fire’s warmth is on your back and the night’s cold is on your face. The discomfort is the point. It keeps you from drifting. You guard your stretch wake the next man sleep."
+    },
+    {
+      "startSec": 389.92,
+      "endSec": 394.64,
+      "text": "Three hours at most before you are back up. This runs every night no matter the weather."
+    },
+    {
+      "startSec": 394.64,
+      "endSec": 408.1,
+      "text": "On the coldest nights when the river ice cracks and carries those sounds through the valley nobody sleeps deep and nobody sleeps long. The body does not wait for the mind to decide if a sound is worth waking for."
+    },
+    {
+      "startSec": 408.1,
+      "endSec": 421.84,
+      "text": "Night is not quiet. It is full of noise almost all of it meaningless. Wind. Small animals. The fire settling. Branches pulling tight in the cold. Sleeping people breathing."
+    },
+    {
+      "startSec": 421.84,
+      "endSec": 432.98,
+      "text": "You spend your second month in rotation learning to separate the sounds that matter from the enormous volume that do not. You are not listening for a sound. You are listening for the absence of one."
+    },
+    {
+      "startSec": 432.98,
+      "endSec": 445.84,
+      "text": "When the brush mice stop moving through dry leaves something stopped them. When the night birds cut off mid-call something passed under them. These gaps tell you more than any loud noise could."
+    },
+    {
+      "startSec": 445.84,
+      "endSec": 460.56,
+      "text": "You get it wrong twice in your first season. The first time you raise an alert for a branch dropping from a snow-loaded tree. The whole camp stands up and it takes several minutes to settle. Nobody is angry with you."
+    },
+    {
+      "startSec": 460.56,
+      "endSec": 471.26,
+      "text": "But the waste of it stays in your chest the specific burn of a false alarm and you do not want to carry that feeling again. The second time you wait too long."
+    },
+    {
+      "startSec": 471.26,
+      "endSec": 484.84,
+      "text": "You hear the interruption and you talk yourself out of trusting it. The threat is a lone dire wolf testing the perimeter drawn by the smell of the previous day’s butchering."
+    },
+    {
+      "startSec": 484.84,
+      "endSec": 498.52,
+      "text": "Daret spots it from his post and turns it back with a thrown stone before it gets close. He finds you at your post afterward. He tells you one thing and you never stop carrying it."
+    },
+    {
+      "startSec": 498.52,
+      "endSec": 521.25,
+      "text": "The body knows before the mind agrees. When something in you says a pattern has broken that is enough. Stop waiting for your mind to finish arguing."
+    },
+    {
+      "startSec": 525.82,
+      "endSec": 536.04,
+      "text": "You are twenty-six. Fear no longer leads when you move in darkness. It runs alongside you now present but not in charge. The night that changes you comes in late autumn. Your group drives a small aurochs herd toward a valley narrowing and three animals break sideways into the trees instead of funneling through. Two hunters go after them. You are one. The other is Yaro thirty years old the most composed man on any hunt you have been on."
+    },
+    {
+      "startSec": 536.04,
+      "endSec": 550.36,
+      "text": "The light is going fast. You push through the tree line into heavier timber and the animals are already gone ahead of you into the dark. Yaro signals to stop. You both go still. You listen."
+    },
+    {
+      "startSec": 550.36,
+      "endSec": 564.18,
+      "text": "What you hear instead of aurochs is something low and close to the ground. A breathing that belongs to neither of you. You cannot locate it in the trees. You do not move. Yaro does not move. The breathing stops."
+    },
+    {
+      "startSec": 564.18,
+      "endSec": 571.36,
+      "text": "Three seconds. Then Yaro shifts his weight back one foot at a time and you mirror him exactly."
+    },
+    {
+      "startSec": 571.36,
+      "endSec": 586.5,
+      "text": "You walk backward out of the forest with your spear forward and your free hand trailing behind you to feel for the tree line. You reach the open meadow and you both run not deciding to run just running."
+    },
+    {
+      "startSec": 586.5,
+      "endSec": 596.4,
+      "text": "You return to the main group and report. The hunt leader listens and sends nobody back. The aurochs are gone. Whatever shared that timber with you was not worth finding."
+    },
+    {
+      "startSec": 596.4,
+      "endSec": 609.08,
+      "text": "That night by the fire you think about the three seconds after the breathing stopped. Something in the dark assessed you and made a decision. You do not know what it decided or why."
+    },
+    {
+      "startSec": 609.08,
+      "endSec": 623.94,
+      "text": "You only know you are at the fire because whatever it was let you leave. That is a different kind of knowledge than anything you were taught. It does not sit in the same place. You get quieter after that."
+    },
+    {
+      "startSec": 623.94,
+      "endSec": 630.62,
+      "text": "Not afraid, but rearranged inside. You understand that surviving is not only about what you do."
+    },
+    {
+      "startSec": 630.62,
+      "endSec": 663.63,
+      "text": "There is a space between your action and something else’s action and in that space lives an element that no amount of skill removes entirely. You do not say this to anyone for a long time. You carry it."
+    },
+    {
+      "startSec": 666.61,
+      "endSec": 671.48,
+      "text": "You are thirty-three. You lead the night scouts now. Four of them besides yourself ranging from seventeen to twenty-four. They are not yours in any formal sense. There is no formal sense here. But when you slow they slow. When you stop, they stop. When you speak at the fire before a hard night their attention is different from what they give anyone else. You did not ask for this. You are not sure when it started."
+    },
+    {
+      "startSec": 671.48,
+      "endSec": 684.44,
+      "text": "The weight of it is not the same as the fear from your younger years. That fear was about your own body. This sits differently. It is about theirs. Your youngest scout is Fen."
+    },
+    {
+      "startSec": 684.44,
+      "endSec": 697.54,
+      "text": "He has the instincts but his feet carry his excitement on runs. Too quick, consistently. You watch him for two full seasons and say almost nothing. You let him see the contrast."
+    },
+    {
+      "startSec": 697.54,
+      "endSec": 709.16,
+      "text": "Then one evening before a run you tell him plainly slow is not about the danger being less. Slow is about being harder to detect. Fast is for after the decision has already been made."
+    },
+    {
+      "startSec": 709.16,
+      "endSec": 722.24,
+      "text": "Before that moment slow is the sharpest thing you have. On the next run he slows. Not completely. But you can see it. You remember Daret’s hand on your shoulder over the dropped torch."
+    },
+    {
+      "startSec": 722.24,
+      "endSec": 736.06,
+      "text": "You remember Korik stopping half a step after you in the dark that wordless confirmation that your nose had caught something real. The things that kept you alive were not only your own choices."
+    },
+    {
+      "startSec": 736.06,
+      "endSec": 748,
+      "text": "They were built into you by people who made room for you to learn without killing your willingness to try. You try to build that same room for Fen. You do not always manage it."
+    },
+    {
+      "startSec": 748,
+      "endSec": 759.76,
+      "text": "Some nights the danger is too close and you have to be hard with them in ways you regret by the time you are sitting at the fire watching their faces. Every dawn is temporary."
+    },
+    {
+      "startSec": 759.76,
+      "endSec": 787.85,
+      "text": "The dark comes back the same way your mother fed the fire without announcement, without end."
+    },
+    {
+      "startSec": 791.94,
+      "endSec": 794.92,
+      "text": "You are forty-one. There are children here who have never known a night where someone other than you was the person the adults looked to when something moved at the perimeter. That reaches you one morning when a girl of about nine walks to you at the fire’s edge puts a piece of dried meat in your hand and walks away without any explanation. You hold the meat and understand you have become something this group has no simple word for."
+    },
+    {
+      "startSec": 794.92,
+      "endSec": 812.88,
+      "text": "Your back has decades stored in it. Long crouches in cold grass. The particular ache of held stillness. Your knees announce themselves on cold mornings before you are fully awake. You are not old by some measures."
+    },
+    {
+      "startSec": 812.88,
+      "endSec": 822.92,
+      "text": "But you are old the way that twenty years of moving at night makes a body old. There are faster men now. There are scouts with sharper ears. You say so."
+    },
+    {
+      "startSec": 822.92,
+      "endSec": 833.6,
+      "text": "You tell Fen twenty-five now and leading runs you no longer go on that his ears are better than yours in the birch stands. He takes it as modesty at first. You explain that it is not."
+    },
+    {
+      "startSec": 833.6,
+      "endSec": 842.52,
+      "text": "It is a fact he needs to act on and acting on it correctly means his responsibility at night is larger than it was not smaller."
+    },
+    {
+      "startSec": 842.52,
+      "endSec": 856.86,
+      "text": "A predator gets through the western perimeter on a winter night and kills one of the youngest members of the band before anyone can reach the site. The child is barely four years old. You are at the eastern post."
+    },
+    {
+      "startSec": 856.86,
+      "endSec": 873.36,
+      "text": "The attack comes from the direction that is not yours. You sit with that for a long time. You go back through every decision of that night. The positioning was right. The rotations were right."
+    },
+    {
+      "startSec": 873.36,
+      "endSec": 875.7,
+      "text": "The arrangement was what it has always been. None of that lifts the weight."
+    },
+    {
+      "startSec": 875.7,
+      "endSec": 888.56,
+      "text": "What you arrive at eventually, is that you can build the best structure knowledge and experience allow and the night will still find the gap that structure cannot close."
+    },
+    {
+      "startSec": 888.56,
+      "endSec": 901.12,
+      "text": "Accepting that without it hollowing out your readiness is harder than any technique you have ever learned. Harder than any night run in open ground. You rebuild. You add a post that covers the gap the night found."
+    },
+    {
+      "startSec": 901.12,
+      "endSec": 924.5,
+      "text": "You do not put down the grief. You carry it alongside everything else and you keep working."
+    },
+    {
+      "startSec": 929.33,
+      "endSec": 936.44,
+      "text": "You are forty-nine. Three of your old scouts lead their own groups now in different parts of the territory. When the bands come together at the seasonal meeting place by the wide river those men find you at the fire sit close, and the talk moves between ordinary things and the kind of talk that only happens between people who have shared a particular kind of night."
+    },
+    {
+      "startSec": 936.44,
+      "endSec": 951.64,
+      "text": "Fen brings two young scouts to you at the gathering. He does not ask you to teach them anything. He places them near you and you understand what he is asking. You watch the two of them over several evenings."
+    },
+    {
+      "startSec": 951.64,
+      "endSec": 959.32,
+      "text": "One has good instincts but is afraid of fear which is the worst combination you know. The fear itself is not the problem. Fear is information."
+    },
+    {
+      "startSec": 959.32,
+      "endSec": 964.72,
+      "text": "The problem is what happens when the body’s warning triggers a second signal that overrides the first."
+    },
+    {
+      "startSec": 964.72,
+      "endSec": 975.66,
+      "text": "That young man needs to understand that the tightness in his chest before a hard night is not a sign of weakness arriving. It is the body getting ready."
+    },
+    {
+      "startSec": 975.66,
+      "endSec": 987.12,
+      "text": "You tell him directly because he is young enough that direct still works. You see it take in his face. The other one is nearly the opposite."
+    },
+    {
+      "startSec": 987.12,
+      "endSec": 1000.32,
+      "text": "She moves into dark terrain with an ease that looks like calm but is actually the absence of proper attention. You take her to the perimeter edge one evening and ask her to stand still and report what she notices."
+    },
+    {
+      "startSec": 1000.32,
+      "endSec": 1016.32,
+      "text": "At first she reports the obvious. You wait. The reports get finer. A smell change at the base of a slope. A sound she had not consciously registered until it was gone. You tell her that. That second kind of noticing."
+    },
+    {
+      "startSec": 1016.32,
+      "endSec": 1029.04,
+      "text": "That is where the whole skill lives. You are not certain you gave either of them what they needed. You were not certain Daret and Korik gave you everything you needed. You gave what you had."
+    },
+    {
+      "startSec": 1029.04,
+      "endSec": 1044.47,
+      "text": "The rest belongs to the nights they will face without you."
+    },
+    {
+      "startSec": 1050.08,
+      "endSec": 1054.74,
+      "text": "You are fifty-eight. Your hair has gone pale at the edges. Your hands are steady now the same hands that could not hold still over your first real guarding post. They are also marked with everything the years put into them. The white line across your left palm from a night in the limestone hills."
+    },
+    {
+      "startSec": 1054.74,
+      "endSec": 1068.84,
+      "text": "The shortened finger on your right hand from something you do not describe in detail. The thickened knuckles from four decades of gripping things hard in the cold. Other bands know your name."
+    },
+    {
+      "startSec": 1068.84,
+      "endSec": 1078.18,
+      "text": "Not the way a man is known for a single event. The way a specific ridge is known or a reliable river crossing. A feature of the world that people orient by."
+    },
+    {
+      "startSec": 1078.18,
+      "endSec": 1092.34,
+      "text": "When the bands gather and the talk turns to the night to what lives in it to how to read an animal that is following you against one that only crossed your path people look toward where you are sitting."
+    },
+    {
+      "startSec": 1092.34,
+      "endSec": 1103.94,
+      "text": "Not because you stand and announce anything. Because over enough years your name has attached to a kind of knowledge people understand is not easily replaced."
+    },
+    {
+      "startSec": 1103.94,
+      "endSec": 1117.44,
+      "text": "Young hunters from other bands sit near your fire and listen. You know what they see. The same thing you saw when you first looked at Daret. Proof that surviving a long time is possible."
+    },
+    {
+      "startSec": 1117.44,
+      "endSec": 1131.22,
+      "text": "An answer to the question of whether you can face the night across a whole life without it eventually winning. You tell them the full cost same as you always do. You tell them the calm they see was not always there."
+    },
+    {
+      "startSec": 1131.22,
+      "endSec": 1144.7,
+      "text": "You tell them about the dropped torch the three seconds in the forest the child you could not reach in time. You tell them about the nights you got it right only because something in the dark chose to let you."
+    },
+    {
+      "startSec": 1144.7,
+      "endSec": 1156.48,
+      "text": "Most of them hear the strength. Fear as a tool. Slow as a weapon. The body ahead of the mind. They do not take in the losses the same way. They are not ready for them yet."
+    },
+    {
+      "startSec": 1156.48,
+      "endSec": 1168.18,
+      "text": "You know this because you were not ready either sitting at someone else’s fire at their age being told the whole truth and only catching part of it."
+    },
+    {
+      "startSec": 1168.18,
+      "endSec": 1188.05,
+      "text": "The knowledge that comes from actual experience cannot be handed over by talking. It has to grow inside the living of it. All you can do is be honest and let them take what they are able to carry right now."
+    },
+    {
+      "startSec": 1192.33,
+      "endSec": 1196.64,
+      "text": "You are sixty-four. The night runs belong to someone else now. Your legs still work but your eyes have lost the edge-of-darkness precision that forward scouting demands. You know this without needing anyone to tell you."
+    },
+    {
+      "startSec": 1196.64,
+      "endSec": 1209.4,
+      "text": "Three winters ago you stepped back from active perimeter work and gave it fully to Fen’s people who have by now become the ones teaching the people after them. What you do now is harder to put a name to."
+    },
+    {
+      "startSec": 1209.4,
+      "endSec": 1223.88,
+      "text": "You sit at the center fire on long winter nights when the band is settled deep in the valley and the cold has pulled everything close. Children gather near you."
+    },
+    {
+      "startSec": 1223.88,
+      "endSec": 1235.82,
+      "text": "Young hunters too new for real posts sit at the outer edge of your fire ring and listen to what you say in the dark hours. You are not telling stories to fill time. You are passing something."
+    },
+    {
+      "startSec": 1235.82,
+      "endSec": 1245.78,
+      "text": "You describe what Daret’s hand felt like on your shoulder and what it meant. You describe the three seconds in the forest with Yaro when something in the dark made a choice."
+    },
+    {
+      "startSec": 1245.78,
+      "endSec": 1256.24,
+      "text": "You describe the child you could not save and what you did in the weeks after and why you did not let that weight take the work from you."
+    },
+    {
+      "startSec": 1256.24,
+      "endSec": 1267.34,
+      "text": "You describe the look on Fen’s face the first time slowing his feet made a difference he could feel in his whole body. You tell them the dark cannot be finished."
+    },
+    {
+      "startSec": 1267.34,
+      "endSec": 1277.6,
+      "text": "It comes back every night the same as it always has and it expects the same quality of attention on the thousandth night as it did on the first."
+    },
+    {
+      "startSec": 1277.6,
+      "endSec": 1285.44,
+      "text": "You tell them the fire is the line and they are the ones responsible for keeping it fed."
+    },
+    {
+      "startSec": 1285.44,
+      "endSec": 1296.64,
+      "text": "You sit in the warmth of a hearth your family has tended across more seasons than you can count and you listen to the night the way you have listened to it for fifty years. You still catch the interruptions."
+    },
+    {
+      "startSec": 1296.64,
+      "endSec": 1304.34,
+      "text": "You still feel when the air outside the camp shifts in a certain way. The knowledge has not left you."
+    },
+    {
+      "startSec": 1304.34,
+      "endSec": 1314.46,
+      "text": "It lives in a different place now the place a thing moves to when it stops being something you do and becomes something you simply are."
+    },
+    {
+      "startSec": 1314.46,
+      "endSec": 1329.66,
+      "text": "Fen’s youngest scout a girl of fifteen sits just past your firelight on a clear cold night watching the tree line. Back straight but not locked. Weight even. Eyes moving in a slow sweep rather than fixed on one point."
+    },
+    {
+      "startSec": 1329.66,
+      "endSec": 1340.72,
+      "text": "One hand loose on her spear shaft. You watch her for a long time without making a sound. She does not know you are watching. She is entirely in her work."
+    },
+    {
+      "startSec": 1340.72,
+      "endSec": 1355.88,
+      "text": "She is doing the thing that cannot be scratched into bone or pressed into clay or passed through any medium other than one watching body alongside another watching body repeated across more generations than anyone alive can count."
+    },
+    {
+      "startSec": 1355.88,
+      "endSec": 1371.5,
+      "text": "She will teach the one after her. That one will teach the next. The knowledge traveling the only way it has ever traveled through the living night after night along the line where firelight ends and the dark begins."
+    },
+    {
+      "startSec": 1371.5,
+      "endSec": 1384.62,
+      "text": "Somewhere right now a child is pressed against their mother’s side. There is a sound from outside. The child has no word for what they feel. The tightness in the chest. The sudden, total attention."
+    },
+    {
+      "startSec": 1384.62,
+      "endSec": 1398.16,
+      "text": "The understanding, arriving without explanation that the space past the firelight is not empty. That child will learn. They will learn what the sounds mean. They will learn to slow their feet."
+    },
+    {
+      "startSec": 1398.16,
+      "endSec": 1410.72,
+      "text": "One day they will sit a cold post with their back to the fire and their face toward the dark. They will carry a torch in both hands and guard it with their body against the wind."
+    },
+    {
+      "startSec": 1410.72,
+      "endSec": 1421.29,
+      "text": "They will spend a whole life finding out what the night holds. They always have. They always will. The dark does not change. Only the ones who learn to face it."
+    }
+  ]
+}

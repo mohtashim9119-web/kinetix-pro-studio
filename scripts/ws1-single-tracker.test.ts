@@ -59,6 +59,43 @@ const ALLOWLIST = new Set<string>([
   // content now lives in docs/archive/history/history-2.md under the matching dated Session
   // entry. Full original text remains retrievable via `git show` at the
   // fold commit — see docs/archive/history/history-2.md's own Round 2 note.
+  //
+  // 2026-09-19 P1 gate-integrity pass — deliberate additions, each a dated,
+  // read-only, docs-only verification/audit note (not a live tracker; status
+  // content still lives in docs/archive/history/work-in-progress.md per the
+  // rule above). Self-describes as such in its own opening line.
+  'docs/ws1-sync-pipeline/gap-closing-verification-2026-09-18.md',
+  'docs/ws1-sync-pipeline/final-shape-mapping-2026-09-18.md',
+  'docs/ws1-sync-pipeline/verification-sweep-2026-09-18.md',
+  'docs/ws1-sync-pipeline/baseline-p0-p2-2026-09-19.md',
+  // This P1 gate-integrity pass's own deliverable note (T6) — same shape as the
+  // four entries above.
+  'docs/ws1-sync-pipeline/baseline-p1-2026-09-19.md',
+  // P1b/P3 pass (2026-09-19) — ffmpeg pin, whisper sidecar build, gates 4-6,
+  // flake hunt, stash/worktree disposition. Same shape as the entries above:
+  // dated, read-only, docs-only verification note, not a live tracker.
+  'docs/ws1-sync-pipeline/baseline-p1b-p3-2026-09-19.md',
+  // P4 lane re-charter pass (2026-09-19) — operator product rulings recorded
+  // verbatim as the plan doc's source of truth (cloud-default engine, FA
+  // toggle deletion, Whisper-only as flagged degraded state, etc.). A fixed
+  // dated record of a decision, not a live tracker — status content stays in
+  // docs/STATUS.md.
+  'docs/ws1-sync-pipeline/operator-product-rulings-2026-09-19.md',
+  // Same P4 pass — T6's baseline-clean declaration draft (criteria × evidence
+  // table, cap-arithmetic caveat, merge proposal, Decision Log, command log).
+  // A fixed dated record for operator sign-off, not a live tracker.
+  'docs/ws1-sync-pipeline/baseline-clean-declaration-2026-09-19.md',
+  // P4b pass (2026-09-19) — cap-resolution note: corrects the P4 pass's
+  // undercounted pre-P4 baseline (41, not 40), enumerates the open list,
+  // closes the one available evidence-backed line, re-shows the arithmetic.
+  // Dated, read-only, docs-only note, not a live tracker.
+  'docs/ws1-sync-pipeline/p4b-cap-resolution-2026-09-19.md',
+  // Baseline closeout pass (2026-09-19) — T0/T2 completion record, T1/T3
+  // deferral rationale (this session is scoped to the ws1-plan-rewrite
+  // worktree and cannot merge into or delete other worktrees from here),
+  // staged commands for whoever runs T1/T3 next. Dated, docs-only, not a
+  // live tracker.
+  'docs/ws1-sync-pipeline/baseline-closeout-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

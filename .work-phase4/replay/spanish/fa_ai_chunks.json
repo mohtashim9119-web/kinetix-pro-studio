@@ -1,0 +1,33 @@
+{
+  "_runId": "ai-2026-08-23T143447674Z",
+  "audioDuration": 92.04,
+  "language": "es",
+  "_source": {
+    "note": "WS1 Session AI — computeFaChunkPlanS2(anchorTimed, nativeSilences, audioDuration), target 10-30s (GEOMETRIC), AT HEAD. Real planner output, not the Step 1 dry-run simulation.",
+    "anchorTimedSegments": 27,
+    "silenceCount": 27,
+    "violationCount": 0
+  },
+  "chunks": [
+    {
+      "startSec": 0,
+      "endSec": 27.96,
+      "text": "Scylla. Scylla es un monstruo que vive dentro de un acantilado junto a un estrecho paso marítimo. Tiene seis cuellos largos, seis cabezas, tres hileras de dientes en cada boca y 12 patas debajo de su cuerpo. Su ataque es sencillo. Cuando un barco pasa lo suficientemente cerca, las seis cabezas se mueven al mismo tiempo. Cada cabeza atrapa a un marinero de la cubierta. Seis cabezas significan seis marineros que desaparecen en un solo ataque."
+    },
+    {
+      "startSec": 27.96,
+      "endSec": 56.12,
+      "text": "El detalle importante es que Scylla no persigue a los barcos en mar abierto. Se mantiene cerca del acantilado. Eso significa que la estrategia más segura no es luchar contra ella. Es seguir moviéndose antes de que pueda atacar de nuevo. Odiseo es advertido sobre esto antes de llegar al paso. Aún así, prepara sus armas, pero resultan inútiles. Scylla se lleva a seis de sus hombres mientras el barco continúa su marcha. Detenerse solo le daría otra oportunidad."
+    },
+    {
+      "startSec": 56.12,
+      "endSec": 84.32,
+      "text": "Scylla también comparte el paso con Caribdis, un remolino gigante en el lado opuesto, por lo que la tripulación no puede simplemente alejarse más. Navegar cerca de Scylla cuesta seis marineros. Navegar cerca de Caribdis puede destruir el barco entero. A Odiseo se le dice que elija a Scylla porque perder a seis personas es mejor que perderlo todo. Tradiciones posteriores situaron el paso en el estrecho de Mesina, entre Sicilia e Italia peninsular."
+    },
+    {
+      "startSec": 84.32,
+      "endSec": 92.04,
+      "text": "La frase «entre Scylla y Caribdis» se convirtió en una forma de describir el estar atrapado entre dos opciones peligrosas."
+    }
+  ]
+}

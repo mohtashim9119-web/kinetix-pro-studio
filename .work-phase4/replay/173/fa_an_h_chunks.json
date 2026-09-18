@@ -1,0 +1,157 @@
+{
+  "_runId": "an-h-173-2026-08-24T124913172Z",
+  "audioDuration": 709.01,
+  "language": "en",
+  "_source": {
+    "note": "WS1 Session AN Step 5 — arm H (one-group-wider fallback-seam recovery), UNCHANGED from the v6 run, extended to 173. No re-tuning.",
+    "r5RunCount": 0,
+    "violationCount": 9,
+    "edgeCensus": {
+      "anchor": 23,
+      "anchor-widened": 4,
+      "corpus-end": 1
+    }
+  },
+  "chunks": [
+    {
+      "startSec": 0,
+      "endSec": 30.34,
+      "text": "The Hardest Warhammer 40K Environments to Fight In Some places in the 41st Millennium don’t just kill soldiers. They take apart the conditions under which a soldier can function in the first place. Training, equipment, formation, doctrine, gone before the first contact report. These aren’t the worst battlefields because of the numbers. They’re the worst because the environment was already doing the killing before the enemy showed up. Number Six, Catachan."
+    },
+    {
+      "startSec": 30.34,
+      "endSec": 54.52,
+      "text": "Before Catachan produced the Imperium’s most capable baseline human soldiers, the planet had a simpler reputation. It killed everything on it. The jungle didn’t evolve around human warfare. \"The blue monkey jumped over the moon\". It spent millions of years optimizing toward a single outcome, and anything with a nervous system is on the wrong side of that outcome. Humidity wrecks unprotected electronics inside a few hours. Las-charge packs corrode."
+    },
+    {
+      "startSec": 54.52,
+      "endSec": 82.88,
+      "text": "Optical scopes fog permanently. The canopy generates a biological electrical field that jams vox-casters, something the Mechanicus has catalogued and never adequately explained. That’s before anything in the jungle decides to engage. Catachan devil ants dissolve flesh faster than combat-grade acid. The Catachan devil itself, six limbs, chitin thick enough to deflect small arms fire, hunts by thermal signature."
+    },
+    {
+      "startSec": 82.88,
+      "endSec": 106.7,
+      "text": "Strangler plants drop tendrils that sever limbs before the soldier registers contact. Miral land sharks track ground vibration. Every shadow has been occupying it longer than any patrol has been searching it. Forces without Catachan-born soldiers operate at a deficit that no amount of preparation closes. The jungle doesn’t telegraph its threats. It withholds them until they’re already past the point of response."
+    },
+    {
+      "startSec": 106.7,
+      "endSec": 135.86,
+      "text": "Catachan regiments work in that environment because they grew up treating survival as a practical discipline rather than an expected outcome. For everyone else, the mission doesn’t fail on Catachan. The jungle absorbs it and moves on. Number Five, Space Hulks. A Space Hulk is centuries of accumulated ships, stations, and debris, fused by warp transit into a structure too massive to ignore and too unstable for any chart to stay current on."
+    },
+    {
+      "startSec": 135.86,
+      "endSec": 161.46,
+      "text": "Boarding one isn’t a tactical challenge. It’s a structural impossibility that command has decided cannot be avoided. The corridors weren’t built. They’re the overlapping interiors of vessels that were never designed to share a wall, smashed into adjacency by warp physics. Floors become ceilings two junctions in. Gravity plates from different ships pull in competing directions in rooms separated by a single bulkhead."
+    },
+    {
+      "startSec": 161.46,
+      "endSec": 194.22,
+      "text": "Sections pressurize and vent without warning when something fails. The atmosphere, where it exists at all, is a chemical residue of whatever the last crew left behind, which includes whatever finished them. Genestealers are adapted to this geometry in ways that standard assault doctrine isn’t. They don’t need consistent gravity. They move through ventilation shafts with the velocity of a launched round and the acoustic signature of a maintenance fault."
+    },
+    {
+      "startSec": 194.22,
+      "endSec": 218.68,
+      "text": "Squad formations built around structured corridors collapse because line-of-sight inside a hulk rarely extends six meters, and flanking acquires a third dimension when the threat can arrive from overhead or through the wall itself. Terminator armor was developed for this specific operational context. It still doesn’t make the casualty rates acceptable. It makes them survivable for a fraction of the boarding party."
+    },
+    {
+      "startSec": 218.68,
+      "endSec": 253.48,
+      "text": "That’s the best available outcome and everyone going in knows it. Number Four, Vraks. Seventeen years. That number starts making sense once you understand what the terrain did to every assault the Imperium attempted. Vraks was an armoury world, built for storage and protection rather than habitation. Thick rockcrete everywhere. Deep vaults below it."
+    },
+    {
+      "startSec": 253.48,
+      "endSec": 258.2,
+      "text": "Defensive lines pre-dating the siege by centuries, constructed specifically to resist the type of assault being attempted against them. The attacking forces had to advance into ground that had been engineered, decades before they arrived, to stop exactly them. Trenches funnel movement and eliminate flanking at the squad level."
+    },
+    {
+      "startSec": 258.2,
+      "endSec": 291.58,
+      "text": "The Chaos-aligned defenders added persistent acidic chemical compounds to that problem, agents that pooled in low ground, degraded respirator seals over extended exposure, and corrupted the soil chemistry across entire operating sectors. Ground that should have been traversable became toxic inside two weeks of sustained fighting. Soldiers who crossed contaminated sections arrived at their objectives already in physiological decline before any contact occurred."
+    },
+    {
+      "startSec": 291.58,
+      "endSec": 321.06,
+      "text": "After seventeen years of that, the battlefield substrate changed. The soil churned. Contaminated zones developed biological properties that had no business being there. In the worst sectors the distinction between a minefield and clear ground stopped mattering operationally because the outcomes were roughly comparable either way. Fourteen million Krieg Guardsmen died at Vraks. The environment wasn’t incidental to that number."
+    },
+    {
+      "startSec": 321.06,
+      "endSec": 332.98,
+      "text": "It was built into the calculation from the start. Number Three, Necron Tomb Complexes. A Necron tomb world has been a trap for several million years. The exterior looks like a planet. That’s where the familiar part ends. Tomb complexes extend kilometers below the surface through dimensionally compressed architecture, rooms that register on auspex scans as physically larger than the geological formation around them should permit."
+    },
+    {
+      "startSec": 332.98,
+      "endSec": 373.76,
+      "text": "Whether that’s a sensor artifact or accurate data is not a question anyone fighting inside has time to settle. The defenders reassemble after being destroyed. That single feature separates this from every other hostile environment on this list. A fire lane is cleared. Warriors go down. Twenty minutes later they’ve partially rebuilt and resumed patrol. Progress measured in confirmed eliminations stops being meaningful."
+    },
+    {
+      "startSec": 373.76,
+      "endSec": 393.38,
+      "text": "The structure itself continuously reconfigures around the intrusion, sealing corridors, shifting gravity orientations, cycling through defensive responses the way a biological organism cycles through immune responses, automatic, tireless, and scaling up. The Astral Knights found this out aboard the World Engine."
+    },
+    {
+      "startSec": 393.38,
+      "endSec": 411.78,
+      "text": "The only thing that worked was abandoning the model of fighting through an enemy position entirely and treating the structure as a demolition target instead. The environment didn’t stop being hostile after that decision. It just became a problem with a physical solution rather than a tactical one. Number Two, Cadian Space."
+    },
+    {
+      "startSec": 411.78,
+      "endSec": 443.78,
+      "text": "Cadia sits at the edge of a permanent spatial rupture where the laws governing material reality are contested in ways standard military planning doesn’t account for. Navigation through the outer reaches of the Eye of Terror requires specialized instruments that themselves degrade the deeper in you go. Helmsmen on those routes age at accelerated rates. Ships that enter the inner Eye on standard transit projections sometimes emerge centuries off course."
+    },
+    {
+      "startSec": 443.78,
+      "endSec": 474.64,
+      "text": "Some don’t emerge. For ground forces during active incursions, the problem is reality as an unreliable physical substrate. During the 13th Black Crusade, corruption radiating from Abaddon’s fleet destabilized atmospheric conditions across entire operating zones. Equipment failed with no physical damage to explain it."
+    },
+    {
+      "startSec": 474.64,
+      "endSec": 492.54,
+      "text": "Soldiers who spent extended time in contaminated sectors reported geography that didn’t match survey maps, vox-traffic on dead frequencies, and an inability to track time between events. These were documented across multiple units. They weren’t morale failures. They were the operational signature of the Eye’s effect on personnel without shielding. Cadian Shock Troops were trained from the start with all of this as a baseline."
+    },
+    {
+      "startSec": 492.54,
+      "endSec": 520.78,
+      "text": "They treated it as standard operating parameters rather than emergency conditions. That gap between a force that had normalized the impossible and a force meeting it for the first time determined most of the tactical results at the Cadian Gate. The Cadians died there too. They just had doctrine that already had a line item for it. Number One, The Warp, Uncontrolled. Every interstellar vessel passes through the Warp to reach the next star system."
+    },
+    {
+      "startSec": 520.78,
+      "endSec": 551.88,
+      "text": "Nobody has survived losing control of that crossing. The Warp enables faster-than-light travel. It also operates under conditions where stable matter has no particular standing. A ship that loses its Geller field, the containment system maintaining a bubble of material-reality coherence around the hull, isn’t a vessel in a dangerous environment anymore. It’s matter trying to hold its shape somewhere that actively works against the concept of shape."
+    },
+    {
+      "startSec": 551.88,
+      "endSec": 573.04,
+      "text": "The crew doesn’t die the way crews die when life support fails. The deterioration comes from outside in and doesn’t follow a sequence anyone has successfully predicted. What makes this the worst environment in the setting is what gets stripped away the moment control fails. Navigation stops working because Warp currents have no fixed relationship to physical distances."
+    },
+    {
+      "startSec": 573.04,
+      "endSec": 594.08,
+      "text": "Time becomes operationally non-linear: vessels have exited transit weeks before they entered, as measured by external observers, and some have never exited despite correct departure coordinates. Crew psychological integrity declines in proportion to transit duration and proximity to Warp anomalies. Communication with anything outside the hull is severed."
+    },
+    {
+      "startSec": 594.08,
+      "endSec": 629.44,
+      "text": "Supply lines, reinforcements, intelligence, extraction, everything a military force depends on for sustained operation, ceases to function the moment the Geller field goes. The final boarding of the Vengeful Spirit illustrated what even partial Warp exposure does at close range. A targeted teleport assault, the most controlled form of Warp-adjacent transit available, was used as a dispersion mechanism."
+    },
+    {
+      "startSec": 629.44,
+      "endSec": 650.78,
+      "text": "The loyalist strike force scattered across a corrupted interior. Pocket instabilities isolated individuals from their units mid-transit. Dorn was displaced into a pocket dimension entirely. Corridors changed geometry around active engagements. That was one ship, partially destabilized by prolonged Warp exposure. The open Warp produces those conditions as its starting point, not its worst case."
+    },
+    {
+      "startSec": 650.78,
+      "endSec": 675.82,
+      "text": "No military force has operated effectively inside the open Warp without navigation. The ones that lost control going in didn’t return to write up what happened. The environment holds that record not because it kills efficiently, but because it removes the preconditions for any organized response. You cannot establish a perimeter. You cannot hold ground. You cannot advance on an objective."
+    },
+    {
+      "startSec": 675.82,
+      "endSec": 705.44,
+      "text": "Staying coherent long enough to matter is about the best available outcome, and that’s not a given. Some environments kill soldiers. These kill the structure of a mission before the first order reaches anyone. The officers who sent men into these places had the parameters in front of them and sent them anyway. The calculation kept producing the same answer: the alternative cost more. Usually it did. The hard places stay hard. The wars don’t stop."
+    },
+    {
+      "startSec": 705.44,
+      "endSec": 709.01,
+      "text": "Somebody else gets the briefing next."
+    }
+  ]
+}

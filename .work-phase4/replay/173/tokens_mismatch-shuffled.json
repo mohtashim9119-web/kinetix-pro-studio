@@ -1,0 +1,11174 @@
+[
+  {
+    "text": "rooms",
+    "start": 0.221,
+    "end": 0.422,
+    "score": 0.4,
+    "seg": 0
+  },
+  {
+    "text": "that",
+    "start": 0.462,
+    "end": 0.764,
+    "score": 0.25,
+    "seg": 0
+  },
+  {
+    "text": "register",
+    "start": 0.804,
+    "end": 1.266,
+    "score": 0.4984,
+    "seg": 0
+  },
+  {
+    "text": "on",
+    "start": 1.286,
+    "end": 1.326,
+    "score": 0.0,
+    "seg": 0
+  },
+  {
+    "text": "auspex",
+    "start": 1.407,
+    "end": 1.628,
+    "score": 0.1511,
+    "seg": 0
+  },
+  {
+    "text": "scans",
+    "start": 1.628,
+    "end": 1.849,
+    "score": 0.1938,
+    "seg": 0
+  },
+  {
+    "text": "as",
+    "start": 1.849,
+    "end": 1.889,
+    "score": 0.0,
+    "seg": 0
+  },
+  {
+    "text": "physically",
+    "start": 1.889,
+    "end": 2.13,
+    "score": 0.199,
+    "seg": 0
+  },
+  {
+    "text": "larger",
+    "start": 2.13,
+    "end": 2.271,
+    "score": 0.0168,
+    "seg": 0
+  },
+  {
+    "text": "than",
+    "start": 2.271,
+    "end": 2.351,
+    "score": 0.002,
+    "seg": 0
+  },
+  {
+    "text": "the",
+    "start": 2.351,
+    "end": 2.412,
+    "score": 0.0012,
+    "seg": 0
+  },
+  {
+    "text": "geological",
+    "start": 2.412,
+    "end": 2.613,
+    "score": 0.0,
+    "seg": 0
+  },
+  {
+    "text": "formation",
+    "start": 2.613,
+    "end": 2.894,
+    "score": 0.2195,
+    "seg": 0
+  },
+  {
+    "text": "around",
+    "start": 2.894,
+    "end": 3.055,
+    "score": 0.041,
+    "seg": 0
+  },
+  {
+    "text": "them",
+    "start": 3.075,
+    "end": 3.376,
+    "score": 0.2481,
+    "seg": 0
+  },
+  {
+    "text": "should",
+    "start": 3.457,
+    "end": 3.698,
+    "score": 0.5836,
+    "seg": 0
+  },
+  {
+    "text": "permit.",
+    "start": 3.718,
+    "end": 4.1,
+    "score": 0.3323,
+    "seg": 0
+  },
+  {
+    "text": "Whether",
+    "start": 4.381,
+    "end": 5.164,
+    "score": 0.727,
+    "seg": 1
+  },
+  {
+    "text": "that\u2019s",
+    "start": 5.204,
+    "end": 5.646,
+    "score": 0.3997,
+    "seg": 1
+  },
+  {
+    "text": "a",
+    "start": 5.686,
+    "end": 5.706,
+    "score": 0.0,
+    "seg": 1
+  },
+  {
+    "text": "sensor",
+    "start": 5.786,
+    "end": 6.389,
+    "score": 0.3332,
+    "seg": 1
+  },
+  {
+    "text": "artifact",
+    "start": 6.409,
+    "end": 7.052,
+    "score": 0.4255,
+    "seg": 1
+  },
+  {
+    "text": "or",
+    "start": 7.112,
+    "end": 7.192,
+    "score": 0.5272,
+    "seg": 1
+  },
+  {
+    "text": "accurate",
+    "start": 7.313,
+    "end": 7.815,
+    "score": 0.3744,
+    "seg": 1
+  },
+  {
+    "text": "data",
+    "start": 7.895,
+    "end": 8.256,
+    "score": 0.2497,
+    "seg": 1
+  },
+  {
+    "text": "is",
+    "start": 8.337,
+    "end": 8.477,
+    "score": 0.9993,
+    "seg": 1
+  },
+  {
+    "text": "not",
+    "start": 9.621,
+    "end": 9.801,
+    "score": 0.3332,
+    "seg": 2
+  },
+  {
+    "text": "a",
+    "start": 9.901,
+    "end": 9.921,
+    "score": 0.0002,
+    "seg": 2
+  },
+  {
+    "text": "question",
+    "start": 10.002,
+    "end": 10.723,
+    "score": 0.6644,
+    "seg": 2
+  },
+  {
+    "text": "anyone",
+    "start": 10.783,
+    "end": 11.124,
+    "score": 0.4986,
+    "seg": 2
+  },
+  {
+    "text": "fighting",
+    "start": 11.484,
+    "end": 12.546,
+    "score": 0.4703,
+    "seg": 2
+  },
+  {
+    "text": "inside",
+    "start": 12.607,
+    "end": 13.027,
+    "score": 0.3293,
+    "seg": 2
+  },
+  {
+    "text": "has",
+    "start": 13.047,
+    "end": 13.128,
+    "score": 0.4653,
+    "seg": 2
+  },
+  {
+    "text": "time",
+    "start": 13.148,
+    "end": 13.328,
+    "score": 0.2499,
+    "seg": 2
+  },
+  {
+    "text": "to",
+    "start": 13.348,
+    "end": 13.508,
+    "score": 0.9961,
+    "seg": 2
+  },
+  {
+    "text": "settle.",
+    "start": 13.568,
+    "end": 13.909,
+    "score": 0.4996,
+    "seg": 2
+  },
+  {
+    "text": "The",
+    "start": 14.651,
+    "end": 14.731,
+    "score": 0.9999,
+    "seg": 3
+  },
+  {
+    "text": "defenders",
+    "start": 14.791,
+    "end": 15.272,
+    "score": 0.4617,
+    "seg": 3
+  },
+  {
+    "text": "reassemble",
+    "start": 15.293,
+    "end": 15.894,
+    "score": 0.4438,
+    "seg": 3
+  },
+  {
+    "text": "after",
+    "start": 15.894,
+    "end": 16.336,
+    "score": 0.4606,
+    "seg": 3
+  },
+  {
+    "text": "being",
+    "start": 16.656,
+    "end": 16.897,
+    "score": 0.4,
+    "seg": 3
+  },
+  {
+    "text": "destroyed.",
+    "start": 16.917,
+    "end": 17.619,
+    "score": 0.3977,
+    "seg": 3
+  },
+  {
+    "text": "A",
+    "start": 19.472,
+    "end": 19.492,
+    "score": 0.9999,
+    "seg": 5
+  },
+  {
+    "text": "fire",
+    "start": 19.873,
+    "end": 20.234,
+    "score": 0.7958,
+    "seg": 5
+  },
+  {
+    "text": "lane",
+    "start": 20.354,
+    "end": 20.915,
+    "score": 0.5986,
+    "seg": 5
+  },
+  {
+    "text": "is",
+    "start": 21.216,
+    "end": 21.296,
+    "score": 0.4996,
+    "seg": 5
+  },
+  {
+    "text": "cleared.",
+    "start": 21.436,
+    "end": 22.799,
+    "score": 0.7389,
+    "seg": 5
+  },
+  {
+    "text": "Warriors",
+    "start": 23.421,
+    "end": 23.804,
+    "score": 0.2499,
+    "seg": 6
+  },
+  {
+    "text": "go",
+    "start": 24.166,
+    "end": 24.286,
+    "score": 0.001,
+    "seg": 6
+  },
+  {
+    "text": "down.",
+    "start": 24.347,
+    "end": 24.689,
+    "score": 0.2819,
+    "seg": 6
+  },
+  {
+    "text": "Twenty",
+    "start": 25.13,
+    "end": 25.792,
+    "score": 0.3504,
+    "seg": 7
+  },
+  {
+    "text": "minutes",
+    "start": 25.852,
+    "end": 26.473,
+    "score": 0.1436,
+    "seg": 7
+  },
+  {
+    "text": "later",
+    "start": 26.513,
+    "end": 26.794,
+    "score": 0.1998,
+    "seg": 7
+  },
+  {
+    "text": "they\u2019ve",
+    "start": 26.834,
+    "end": 27.094,
+    "score": 0.5881,
+    "seg": 7
+  },
+  {
+    "text": "partially",
+    "start": 27.094,
+    "end": 28.236,
+    "score": 0.444,
+    "seg": 7
+  },
+  {
+    "text": "rebuilt",
+    "start": 28.297,
+    "end": 28.737,
+    "score": 0.382,
+    "seg": 7
+  },
+  {
+    "text": "and",
+    "start": 28.818,
+    "end": 28.898,
+    "score": 0.3334,
+    "seg": 7
+  },
+  {
+    "text": "resumed",
+    "start": 28.898,
+    "end": 29.178,
+    "score": 0.2857,
+    "seg": 7
+  },
+  {
+    "text": "patrol.",
+    "start": 29.258,
+    "end": 29.639,
+    "score": 0.0006,
+    "seg": 7
+  },
+  {
+    "text": "Progress",
+    "start": 30.261,
+    "end": 30.462,
+    "score": 0.125,
+    "seg": 8
+  },
+  {
+    "text": "measured",
+    "start": 30.502,
+    "end": 30.803,
+    "score": 0.2483,
+    "seg": 8
+  },
+  {
+    "text": "in",
+    "start": 30.823,
+    "end": 30.863,
+    "score": 0.0001,
+    "seg": 8
+  },
+  {
+    "text": "confirmed",
+    "start": 30.863,
+    "end": 31.144,
+    "score": 0.1111,
+    "seg": 8
+  },
+  {
+    "text": "eliminations",
+    "start": 31.184,
+    "end": 31.726,
+    "score": 0.1652,
+    "seg": 8
+  },
+  {
+    "text": "stops",
+    "start": 31.747,
+    "end": 31.927,
+    "score": 0.2,
+    "seg": 8
+  },
+  {
+    "text": "being",
+    "start": 31.927,
+    "end": 32.048,
+    "score": 0.0,
+    "seg": 8
+  },
+  {
+    "text": "meaningful.",
+    "start": 32.068,
+    "end": 32.63,
+    "score": 0.3587,
+    "seg": 8
+  },
+  {
+    "text": "defensive",
+    "start": 34.62,
+    "end": 34.841,
+    "score": 0.0,
+    "seg": 10
+  },
+  {
+    "text": "responses",
+    "start": 34.841,
+    "end": 35.242,
+    "score": 0.2223,
+    "seg": 10
+  },
+  {
+    "text": "the",
+    "start": 35.242,
+    "end": 35.302,
+    "score": 0.3315,
+    "seg": 10
+  },
+  {
+    "text": "way",
+    "start": 35.302,
+    "end": 35.362,
+    "score": 0.0,
+    "seg": 10
+  },
+  {
+    "text": "a",
+    "start": 35.362,
+    "end": 35.382,
+    "score": 0.0,
+    "seg": 10
+  },
+  {
+    "text": "biological",
+    "start": 35.382,
+    "end": 35.744,
+    "score": 0.0,
+    "seg": 10
+  },
+  {
+    "text": "organism",
+    "start": 35.744,
+    "end": 35.904,
+    "score": 0.0022,
+    "seg": 10
+  },
+  {
+    "text": "cycles",
+    "start": 35.904,
+    "end": 36.025,
+    "score": 0.0001,
+    "seg": 10
+  },
+  {
+    "text": "through",
+    "start": 36.025,
+    "end": 36.165,
+    "score": 0.1418,
+    "seg": 10
+  },
+  {
+    "text": "immune",
+    "start": 36.165,
+    "end": 36.305,
+    "score": 0.1646,
+    "seg": 10
+  },
+  {
+    "text": "responses,",
+    "start": 36.305,
+    "end": 36.707,
+    "score": 0.2555,
+    "seg": 10
+  },
+  {
+    "text": "automatic,",
+    "start": 36.707,
+    "end": 36.927,
+    "score": 0.3332,
+    "seg": 10
+  },
+  {
+    "text": "tireless,",
+    "start": 36.947,
+    "end": 37.148,
+    "score": 0.0001,
+    "seg": 10
+  },
+  {
+    "text": "and",
+    "start": 37.148,
+    "end": 37.208,
+    "score": 0.0,
+    "seg": 10
+  },
+  {
+    "text": "scaling",
+    "start": 37.208,
+    "end": 37.469,
+    "score": 0.2478,
+    "seg": 10
+  },
+  {
+    "text": "up.",
+    "start": 37.469,
+    "end": 37.509,
+    "score": 0.0,
+    "seg": 10
+  },
+  {
+    "text": "The",
+    "start": 38.011,
+    "end": 38.251,
+    "score": 0.6664,
+    "seg": 11
+  },
+  {
+    "text": "Astral",
+    "start": 38.291,
+    "end": 38.792,
+    "score": 0.3326,
+    "seg": 11
+  },
+  {
+    "text": "Knights",
+    "start": 38.832,
+    "end": 39.093,
+    "score": 0.2855,
+    "seg": 11
+  },
+  {
+    "text": "found",
+    "start": 39.113,
+    "end": 39.314,
+    "score": 0.1999,
+    "seg": 11
+  },
+  {
+    "text": "this",
+    "start": 39.414,
+    "end": 39.755,
+    "score": 0.2499,
+    "seg": 11
+  },
+  {
+    "text": "out",
+    "start": 40.135,
+    "end": 40.316,
+    "score": 0.6665,
+    "seg": 11
+  },
+  {
+    "text": "aboard",
+    "start": 40.356,
+    "end": 40.757,
+    "score": 0.0,
+    "seg": 11
+  },
+  {
+    "text": "the",
+    "start": 40.817,
+    "end": 40.877,
+    "score": 0.3327,
+    "seg": 11
+  },
+  {
+    "text": "World",
+    "start": 40.877,
+    "end": 41.017,
+    "score": 0.6128,
+    "seg": 11
+  },
+  {
+    "text": "Engine.",
+    "start": 41.057,
+    "end": 41.919,
+    "score": 0.4998,
+    "seg": 11
+  },
+  {
+    "text": "The",
+    "start": 42.522,
+    "end": 42.682,
+    "score": 0.0,
+    "seg": 12
+  },
+  {
+    "text": "only",
+    "start": 42.883,
+    "end": 43.024,
+    "score": 0.4999,
+    "seg": 12
+  },
+  {
+    "text": "thing",
+    "start": 43.085,
+    "end": 43.225,
+    "score": 0.9956,
+    "seg": 12
+  },
+  {
+    "text": "that",
+    "start": 43.286,
+    "end": 43.386,
+    "score": 0.7233,
+    "seg": 12
+  },
+  {
+    "text": "worked",
+    "start": 43.406,
+    "end": 43.647,
+    "score": 0.1679,
+    "seg": 12
+  },
+  {
+    "text": "was",
+    "start": 43.647,
+    "end": 43.768,
+    "score": 0.4334,
+    "seg": 12
+  },
+  {
+    "text": "abandoning",
+    "start": 43.869,
+    "end": 44.633,
+    "score": 0.1,
+    "seg": 12
+  },
+  {
+    "text": "the",
+    "start": 44.633,
+    "end": 44.693,
+    "score": 0.9974,
+    "seg": 12
+  },
+  {
+    "text": "model",
+    "start": 44.713,
+    "end": 44.814,
+    "score": 0.0,
+    "seg": 12
+  },
+  {
+    "text": "of",
+    "start": 44.814,
+    "end": 44.854,
+    "score": 0.5,
+    "seg": 12
+  },
+  {
+    "text": "fighting",
+    "start": 44.894,
+    "end": 45.175,
+    "score": 0.125,
+    "seg": 12
+  },
+  {
+    "text": "through",
+    "start": 45.195,
+    "end": 45.336,
+    "score": 0.2823,
+    "seg": 12
+  },
+  {
+    "text": "an",
+    "start": 45.336,
+    "end": 45.376,
+    "score": 0.4987,
+    "seg": 12
+  },
+  {
+    "text": "enemy",
+    "start": 45.376,
+    "end": 45.477,
+    "score": 0.0,
+    "seg": 12
+  },
+  {
+    "text": "position",
+    "start": 45.477,
+    "end": 45.839,
+    "score": 0.25,
+    "seg": 12
+  },
+  {
+    "text": "entirely",
+    "start": 45.859,
+    "end": 46.06,
+    "score": 0.1248,
+    "seg": 12
+  },
+  {
+    "text": "and",
+    "start": 46.06,
+    "end": 46.241,
+    "score": 0.0001,
+    "seg": 13
+  },
+  {
+    "text": "treating",
+    "start": 46.261,
+    "end": 46.542,
+    "score": 0.122,
+    "seg": 13
+  },
+  {
+    "text": "the",
+    "start": 46.582,
+    "end": 46.643,
+    "score": 0.3323,
+    "seg": 13
+  },
+  {
+    "text": "structure",
+    "start": 46.663,
+    "end": 47.647,
+    "score": 0.531,
+    "seg": 13
+  },
+  {
+    "text": "as",
+    "start": 47.708,
+    "end": 47.788,
+    "score": 0.0,
+    "seg": 13
+  },
+  {
+    "text": "a",
+    "start": 47.828,
+    "end": 47.848,
+    "score": 0.0,
+    "seg": 13
+  },
+  {
+    "text": "demolition",
+    "start": 47.888,
+    "end": 48.451,
+    "score": 0.5998,
+    "seg": 13
+  },
+  {
+    "text": "target",
+    "start": 48.471,
+    "end": 48.672,
+    "score": 0.0017,
+    "seg": 13
+  },
+  {
+    "text": "instead.",
+    "start": 48.913,
+    "end": 50.199,
+    "score": 0.68,
+    "seg": 13
+  },
+  {
+    "text": "The",
+    "start": 50.601,
+    "end": 50.701,
+    "score": 0.0007,
+    "seg": 14
+  },
+  {
+    "text": "environment",
+    "start": 50.722,
+    "end": 50.943,
+    "score": 0.003,
+    "seg": 14
+  },
+  {
+    "text": "didn\u2019t",
+    "start": 50.943,
+    "end": 51.224,
+    "score": 0.0001,
+    "seg": 14
+  },
+  {
+    "text": "stop",
+    "start": 51.224,
+    "end": 51.305,
+    "score": 0.2461,
+    "seg": 14
+  },
+  {
+    "text": "being",
+    "start": 51.345,
+    "end": 51.486,
+    "score": 0.0147,
+    "seg": 14
+  },
+  {
+    "text": "hostile",
+    "start": 51.486,
+    "end": 51.627,
+    "score": 0.0005,
+    "seg": 14
+  },
+  {
+    "text": "after",
+    "start": 51.627,
+    "end": 51.727,
+    "score": 0.3317,
+    "seg": 14
+  },
+  {
+    "text": "that",
+    "start": 51.727,
+    "end": 51.868,
+    "score": 0.0163,
+    "seg": 14
+  },
+  {
+    "text": "decision.",
+    "start": 51.868,
+    "end": 52.029,
+    "score": 0.0014,
+    "seg": 14
+  },
+  {
+    "text": "It",
+    "start": 52.372,
+    "end": 52.412,
+    "score": 0.0,
+    "seg": 15
+  },
+  {
+    "text": "just",
+    "start": 52.412,
+    "end": 52.493,
+    "score": 0.004,
+    "seg": 15
+  },
+  {
+    "text": "became",
+    "start": 52.513,
+    "end": 52.654,
+    "score": 0.0094,
+    "seg": 15
+  },
+  {
+    "text": "a",
+    "start": 52.654,
+    "end": 52.675,
+    "score": 0.0002,
+    "seg": 15
+  },
+  {
+    "text": "problem",
+    "start": 52.675,
+    "end": 52.816,
+    "score": 0.1864,
+    "seg": 15
+  },
+  {
+    "text": "with",
+    "start": 52.816,
+    "end": 52.977,
+    "score": 0.0004,
+    "seg": 15
+  },
+  {
+    "text": "a",
+    "start": 52.998,
+    "end": 53.018,
+    "score": 0.0002,
+    "seg": 15
+  },
+  {
+    "text": "physical",
+    "start": 53.098,
+    "end": 53.401,
+    "score": 0.2499,
+    "seg": 15
+  },
+  {
+    "text": "solution",
+    "start": 53.401,
+    "end": 53.563,
+    "score": 0.107,
+    "seg": 15
+  },
+  {
+    "text": "rather",
+    "start": 53.563,
+    "end": 53.825,
+    "score": 0.4111,
+    "seg": 15
+  },
+  {
+    "text": "than",
+    "start": 53.825,
+    "end": 53.906,
+    "score": 0.3353,
+    "seg": 15
+  },
+  {
+    "text": "a",
+    "start": 53.906,
+    "end": 53.926,
+    "score": 0.0002,
+    "seg": 15
+  },
+  {
+    "text": "tactical",
+    "start": 53.926,
+    "end": 54.088,
+    "score": 0.1879,
+    "seg": 15
+  },
+  {
+    "text": "one.",
+    "start": 54.088,
+    "end": 54.148,
+    "score": 0.0,
+    "seg": 15
+  },
+  {
+    "text": "Number",
+    "start": 54.79,
+    "end": 55.571,
+    "score": 0.5075,
+    "seg": 16
+  },
+  {
+    "text": "Two,",
+    "start": 55.711,
+    "end": 56.612,
+    "score": 0.6663,
+    "seg": 16
+  },
+  {
+    "text": "Cadian",
+    "start": 56.813,
+    "end": 58.474,
+    "score": 0.6711,
+    "seg": 16
+  },
+  {
+    "text": "Space.",
+    "start": 58.555,
+    "end": 58.995,
+    "score": 0.3603,
+    "seg": 16
+  },
+  {
+    "text": "Cadia",
+    "start": 59.015,
+    "end": 59.135,
+    "score": 0.1697,
+    "seg": 17
+  },
+  {
+    "text": "sits",
+    "start": 59.135,
+    "end": 59.797,
+    "score": 0.7322,
+    "seg": 17
+  },
+  {
+    "text": "at",
+    "start": 59.817,
+    "end": 59.898,
+    "score": 0.0,
+    "seg": 17
+  },
+  {
+    "text": "the",
+    "start": 59.938,
+    "end": 59.998,
+    "score": 0.6642,
+    "seg": 17
+  },
+  {
+    "text": "edge",
+    "start": 60.018,
+    "end": 60.138,
+    "score": 0.2485,
+    "seg": 17
+  },
+  {
+    "text": "of",
+    "start": 60.179,
+    "end": 60.299,
+    "score": 0.0001,
+    "seg": 17
+  },
+  {
+    "text": "a",
+    "start": 60.379,
+    "end": 60.399,
+    "score": 0.9984,
+    "seg": 17
+  },
+  {
+    "text": "permanent",
+    "start": 60.459,
+    "end": 60.881,
+    "score": 0.0253,
+    "seg": 17
+  },
+  {
+    "text": "spatial",
+    "start": 60.941,
+    "end": 61.362,
+    "score": 0.7129,
+    "seg": 17
+  },
+  {
+    "text": "rupture",
+    "start": 61.623,
+    "end": 62.446,
+    "score": 0.2271,
+    "seg": 17
+  },
+  {
+    "text": "where",
+    "start": 62.506,
+    "end": 62.887,
+    "score": 0.5996,
+    "seg": 17
+  },
+  {
+    "text": "the",
+    "start": 63.027,
+    "end": 63.188,
+    "score": 0.6662,
+    "seg": 17
+  },
+  {
+    "text": "laws",
+    "start": 63.408,
+    "end": 63.709,
+    "score": 0.4999,
+    "seg": 17
+  },
+  {
+    "text": "governing",
+    "start": 63.91,
+    "end": 64.131,
+    "score": 0.0,
+    "seg": 18
+  },
+  {
+    "text": "material",
+    "start": 64.131,
+    "end": 64.352,
+    "score": 0.2499,
+    "seg": 18
+  },
+  {
+    "text": "reality",
+    "start": 64.372,
+    "end": 64.553,
+    "score": 0.1428,
+    "seg": 18
+  },
+  {
+    "text": "are",
+    "start": 64.553,
+    "end": 64.734,
+    "score": 0.666,
+    "seg": 18
+  },
+  {
+    "text": "contested",
+    "start": 64.754,
+    "end": 65.619,
+    "score": 0.2221,
+    "seg": 18
+  },
+  {
+    "text": "in",
+    "start": 65.659,
+    "end": 65.739,
+    "score": 0.9999,
+    "seg": 18
+  },
+  {
+    "text": "ways",
+    "start": 65.759,
+    "end": 65.9,
+    "score": 0.0002,
+    "seg": 18
+  },
+  {
+    "text": "standard",
+    "start": 65.92,
+    "end": 66.262,
+    "score": 0.1248,
+    "seg": 18
+  },
+  {
+    "text": "military",
+    "start": 66.302,
+    "end": 66.523,
+    "score": 0.125,
+    "seg": 18
+  },
+  {
+    "text": "planning",
+    "start": 66.523,
+    "end": 66.905,
+    "score": 0.125,
+    "seg": 18
+  },
+  {
+    "text": "doesn\u2019t",
+    "start": 66.925,
+    "end": 67.186,
+    "score": 0.565,
+    "seg": 18
+  },
+  {
+    "text": "account",
+    "start": 67.287,
+    "end": 67.709,
+    "score": 0.1429,
+    "seg": 18
+  },
+  {
+    "text": "for.",
+    "start": 67.709,
+    "end": 67.81,
+    "score": 0.0,
+    "seg": 18
+  },
+  {
+    "text": "Navigation",
+    "start": 68.071,
+    "end": 68.513,
+    "score": 0.3124,
+    "seg": 19
+  },
+  {
+    "text": "through",
+    "start": 68.573,
+    "end": 69.537,
+    "score": 0.0001,
+    "seg": 19
+  },
+  {
+    "text": "the",
+    "start": 69.537,
+    "end": 69.738,
+    "score": 0.3042,
+    "seg": 19
+  },
+  {
+    "text": "outer",
+    "start": 69.939,
+    "end": 70.32,
+    "score": 0.4688,
+    "seg": 19
+  },
+  {
+    "text": "reaches",
+    "start": 70.38,
+    "end": 70.923,
+    "score": 0.4521,
+    "seg": 19
+  },
+  {
+    "text": "of",
+    "start": 71.043,
+    "end": 71.103,
+    "score": 0.0001,
+    "seg": 19
+  },
+  {
+    "text": "the",
+    "start": 71.164,
+    "end": 71.224,
+    "score": 0.7132,
+    "seg": 19
+  },
+  {
+    "text": "Eye",
+    "start": 71.264,
+    "end": 71.545,
+    "score": 0.3325,
+    "seg": 19
+  },
+  {
+    "text": "of",
+    "start": 71.626,
+    "end": 71.806,
+    "score": 0.0,
+    "seg": 19
+  },
+  {
+    "text": "Terror",
+    "start": 71.847,
+    "end": 72.429,
+    "score": 0.1655,
+    "seg": 19
+  },
+  {
+    "text": "requires",
+    "start": 72.851,
+    "end": 73.112,
+    "score": 0.1741,
+    "seg": 20
+  },
+  {
+    "text": "specialized",
+    "start": 73.132,
+    "end": 73.534,
+    "score": 0.2706,
+    "seg": 20
+  },
+  {
+    "text": "instruments",
+    "start": 73.595,
+    "end": 73.977,
+    "score": 0.1786,
+    "seg": 20
+  },
+  {
+    "text": "that",
+    "start": 74.238,
+    "end": 74.921,
+    "score": 0.0001,
+    "seg": 20
+  },
+  {
+    "text": "themselves",
+    "start": 74.982,
+    "end": 75.826,
+    "score": 0.2026,
+    "seg": 20
+  },
+  {
+    "text": "degrade",
+    "start": 75.826,
+    "end": 76.168,
+    "score": 0.1916,
+    "seg": 20
+  },
+  {
+    "text": "the",
+    "start": 76.208,
+    "end": 76.288,
+    "score": 0.6521,
+    "seg": 20
+  },
+  {
+    "text": "deeper",
+    "start": 76.329,
+    "end": 76.469,
+    "score": 0.1676,
+    "seg": 20
+  },
+  {
+    "text": "in",
+    "start": 76.469,
+    "end": 76.509,
+    "score": 0.005,
+    "seg": 20
+  },
+  {
+    "text": "you",
+    "start": 76.509,
+    "end": 76.57,
+    "score": 0.0081,
+    "seg": 20
+  },
+  {
+    "text": "go.",
+    "start": 76.57,
+    "end": 76.61,
+    "score": 0.0213,
+    "seg": 20
+  },
+  {
+    "text": "Helmsmen",
+    "start": 76.69,
+    "end": 77.512,
+    "score": 0.4987,
+    "seg": 21
+  },
+  {
+    "text": "on",
+    "start": 77.653,
+    "end": 77.753,
+    "score": 0.0001,
+    "seg": 21
+  },
+  {
+    "text": "those",
+    "start": 77.793,
+    "end": 78.254,
+    "score": 0.1997,
+    "seg": 21
+  },
+  {
+    "text": "routes",
+    "start": 78.335,
+    "end": 78.956,
+    "score": 0.712,
+    "seg": 21
+  },
+  {
+    "text": "age",
+    "start": 78.996,
+    "end": 79.137,
+    "score": 0.0,
+    "seg": 21
+  },
+  {
+    "text": "at",
+    "start": 79.177,
+    "end": 79.237,
+    "score": 0.3674,
+    "seg": 21
+  },
+  {
+    "text": "accelerated",
+    "start": 79.297,
+    "end": 79.738,
+    "score": 0.0911,
+    "seg": 21
+  },
+  {
+    "text": "rates.",
+    "start": 79.759,
+    "end": 80.099,
+    "score": 0.6043,
+    "seg": 21
+  },
+  {
+    "text": "Ships",
+    "start": 80.3,
+    "end": 80.58,
+    "score": 0.1999,
+    "seg": 22
+  },
+  {
+    "text": "that",
+    "start": 80.621,
+    "end": 80.801,
+    "score": 0.4986,
+    "seg": 22
+  },
+  {
+    "text": "enter",
+    "start": 80.841,
+    "end": 81.001,
+    "score": 0.3763,
+    "seg": 22
+  },
+  {
+    "text": "the",
+    "start": 81.081,
+    "end": 81.222,
+    "score": 0.0001,
+    "seg": 22
+  },
+  {
+    "text": "inner",
+    "start": 81.222,
+    "end": 81.462,
+    "score": 0.2025,
+    "seg": 22
+  },
+  {
+    "text": "Eye",
+    "start": 81.462,
+    "end": 81.622,
+    "score": 0.0001,
+    "seg": 22
+  },
+  {
+    "text": "on",
+    "start": 81.662,
+    "end": 81.782,
+    "score": 0.5,
+    "seg": 22
+  },
+  {
+    "text": "standard",
+    "start": 81.923,
+    "end": 82.444,
+    "score": 0.4985,
+    "seg": 22
+  },
+  {
+    "text": "transit",
+    "start": 82.864,
+    "end": 83.425,
+    "score": 0.4711,
+    "seg": 22
+  },
+  {
+    "text": "projections",
+    "start": 83.445,
+    "end": 84.046,
+    "score": 0.1809,
+    "seg": 22
+  },
+  {
+    "text": "sometimes",
+    "start": 84.106,
+    "end": 84.547,
+    "score": 0.5545,
+    "seg": 22
+  },
+  {
+    "text": "emerge",
+    "start": 84.607,
+    "end": 84.988,
+    "score": 0.4671,
+    "seg": 22
+  },
+  {
+    "text": "centuries",
+    "start": 85.048,
+    "end": 85.389,
+    "score": 0.3327,
+    "seg": 22
+  },
+  {
+    "text": "off",
+    "start": 85.549,
+    "end": 85.729,
+    "score": 0.3333,
+    "seg": 22
+  },
+  {
+    "text": "course.",
+    "start": 85.949,
+    "end": 86.09,
+    "score": 0.1666,
+    "seg": 22
+  },
+  {
+    "text": "For",
+    "start": 86.431,
+    "end": 86.491,
+    "score": 0.0,
+    "seg": 23
+  },
+  {
+    "text": "ground",
+    "start": 86.491,
+    "end": 86.651,
+    "score": 0.0001,
+    "seg": 23
+  },
+  {
+    "text": "forces",
+    "start": 86.651,
+    "end": 86.772,
+    "score": 0.1672,
+    "seg": 23
+  },
+  {
+    "text": "during",
+    "start": 86.772,
+    "end": 86.892,
+    "score": 0.0001,
+    "seg": 23
+  },
+  {
+    "text": "active",
+    "start": 86.932,
+    "end": 87.073,
+    "score": 0.1655,
+    "seg": 23
+  },
+  {
+    "text": "incursions,",
+    "start": 87.073,
+    "end": 87.494,
+    "score": 0.1998,
+    "seg": 23
+  },
+  {
+    "text": "the",
+    "start": 87.494,
+    "end": 87.614,
+    "score": 0.3281,
+    "seg": 23
+  },
+  {
+    "text": "problem",
+    "start": 87.614,
+    "end": 87.835,
+    "score": 0.1442,
+    "seg": 23
+  },
+  {
+    "text": "is",
+    "start": 87.895,
+    "end": 87.935,
+    "score": 0.0,
+    "seg": 23
+  },
+  {
+    "text": "reality",
+    "start": 87.995,
+    "end": 88.236,
+    "score": 0.2857,
+    "seg": 23
+  },
+  {
+    "text": "as",
+    "start": 88.236,
+    "end": 88.276,
+    "score": 0.0002,
+    "seg": 23
+  },
+  {
+    "text": "an",
+    "start": 88.316,
+    "end": 88.377,
+    "score": 0.0,
+    "seg": 23
+  },
+  {
+    "text": "unreliable",
+    "start": 88.437,
+    "end": 88.878,
+    "score": 0.3988,
+    "seg": 23
+  },
+  {
+    "text": "physical",
+    "start": 88.878,
+    "end": 89.159,
+    "score": 0.1248,
+    "seg": 23
+  },
+  {
+    "text": "substrate.",
+    "start": 89.159,
+    "end": 89.44,
+    "score": 0.0,
+    "seg": 23
+  },
+  {
+    "text": "During",
+    "start": 90.323,
+    "end": 91.849,
+    "score": 0.7351,
+    "seg": 24
+  },
+  {
+    "text": "the",
+    "start": 91.929,
+    "end": 92.391,
+    "score": 0.6661,
+    "seg": 24
+  },
+  {
+    "text": "13th",
+    "start": 92.812,
+    "end": 92.872,
+    "score": 0.9979,
+    "seg": 24
+  },
+  {
+    "text": "Black",
+    "start": 92.872,
+    "end": 93.475,
+    "score": 0.2,
+    "seg": 24
+  },
+  {
+    "text": "Crusade,",
+    "start": 93.555,
+    "end": 94.679,
+    "score": 0.3695,
+    "seg": 24
+  },
+  {
+    "text": "corruption",
+    "start": 95.2,
+    "end": 95.982,
+    "score": 0.3999,
+    "seg": 25
+  },
+  {
+    "text": "radiating",
+    "start": 96.062,
+    "end": 96.362,
+    "score": 0.2108,
+    "seg": 25
+  },
+  {
+    "text": "from",
+    "start": 96.422,
+    "end": 96.502,
+    "score": 0.0921,
+    "seg": 25
+  },
+  {
+    "text": "Abaddon\u2019s",
+    "start": 96.502,
+    "end": 96.863,
+    "score": 0.3748,
+    "seg": 25
+  },
+  {
+    "text": "fleet",
+    "start": 96.923,
+    "end": 97.243,
+    "score": 0.3984,
+    "seg": 25
+  },
+  {
+    "text": "destabilized",
+    "start": 97.263,
+    "end": 98.345,
+    "score": 0.1644,
+    "seg": 25
+  },
+  {
+    "text": "atmospheric",
+    "start": 98.405,
+    "end": 98.926,
+    "score": 0.4539,
+    "seg": 25
+  },
+  {
+    "text": "conditions",
+    "start": 98.946,
+    "end": 99.867,
+    "score": 0.2,
+    "seg": 25
+  },
+  {
+    "text": "across",
+    "start": 99.867,
+    "end": 100.068,
+    "score": 0.3332,
+    "seg": 25
+  },
+  {
+    "text": "entire",
+    "start": 100.068,
+    "end": 100.428,
+    "score": 0.6664,
+    "seg": 25
+  },
+  {
+    "text": "operating",
+    "start": 100.448,
+    "end": 100.929,
+    "score": 0.6664,
+    "seg": 25
+  },
+  {
+    "text": "zones.",
+    "start": 100.969,
+    "end": 101.43,
+    "score": 0.5988,
+    "seg": 25
+  },
+  {
+    "text": "Equipment",
+    "start": 101.831,
+    "end": 102.152,
+    "score": 0.1111,
+    "seg": 26
+  },
+  {
+    "text": "failed",
+    "start": 102.152,
+    "end": 102.332,
+    "score": 0.4996,
+    "seg": 26
+  },
+  {
+    "text": "with",
+    "start": 102.353,
+    "end": 102.493,
+    "score": 0.0003,
+    "seg": 26
+  },
+  {
+    "text": "no",
+    "start": 102.513,
+    "end": 102.553,
+    "score": 0.4949,
+    "seg": 26
+  },
+  {
+    "text": "physical",
+    "start": 102.553,
+    "end": 102.915,
+    "score": 0.0001,
+    "seg": 26
+  },
+  {
+    "text": "damage",
+    "start": 102.935,
+    "end": 103.517,
+    "score": 0.1667,
+    "seg": 26
+  },
+  {
+    "text": "to",
+    "start": 103.577,
+    "end": 103.698,
+    "score": 0.4996,
+    "seg": 26
+  },
+  {
+    "text": "explain",
+    "start": 103.738,
+    "end": 103.878,
+    "score": 0.2523,
+    "seg": 26
+  },
+  {
+    "text": "it.",
+    "start": 103.878,
+    "end": 103.918,
+    "score": 0.4009,
+    "seg": 26
+  },
+  {
+    "text": "Soldiers",
+    "start": 104.5,
+    "end": 104.681,
+    "score": 0.1249,
+    "seg": 27
+  },
+  {
+    "text": "who",
+    "start": 104.681,
+    "end": 104.841,
+    "score": 0.0,
+    "seg": 27
+  },
+  {
+    "text": "spent",
+    "start": 104.841,
+    "end": 104.982,
+    "score": 0.2001,
+    "seg": 27
+  },
+  {
+    "text": "extended",
+    "start": 104.982,
+    "end": 105.403,
+    "score": 0.125,
+    "seg": 27
+  },
+  {
+    "text": "time",
+    "start": 105.443,
+    "end": 105.844,
+    "score": 0.4998,
+    "seg": 27
+  },
+  {
+    "text": "in",
+    "start": 105.864,
+    "end": 105.924,
+    "score": 0.1587,
+    "seg": 27
+  },
+  {
+    "text": "contaminated",
+    "start": 105.924,
+    "end": 106.325,
+    "score": 0.3328,
+    "seg": 27
+  },
+  {
+    "text": "sectors",
+    "start": 106.345,
+    "end": 106.686,
+    "score": 0.1404,
+    "seg": 27
+  },
+  {
+    "text": "reported",
+    "start": 106.726,
+    "end": 107.046,
+    "score": 0.3748,
+    "seg": 27
+  },
+  {
+    "text": "geography",
+    "start": 107.046,
+    "end": 107.467,
+    "score": 0.1111,
+    "seg": 27
+  },
+  {
+    "text": "that",
+    "start": 107.467,
+    "end": 107.588,
+    "score": 0.4109,
+    "seg": 27
+  },
+  {
+    "text": "didn\u2019t",
+    "start": 107.608,
+    "end": 107.728,
+    "score": 0.5937,
+    "seg": 27
+  },
+  {
+    "text": "match",
+    "start": 107.728,
+    "end": 107.848,
+    "score": 0.0062,
+    "seg": 27
+  },
+  {
+    "text": "survey",
+    "start": 107.868,
+    "end": 108.349,
+    "score": 0.3318,
+    "seg": 27
+  },
+  {
+    "text": "maps,",
+    "start": 108.349,
+    "end": 108.43,
+    "score": 0.0,
+    "seg": 27
+  },
+  {
+    "text": "vox-traffic",
+    "start": 108.691,
+    "end": 109.032,
+    "score": 0.2217,
+    "seg": 28
+  },
+  {
+    "text": "on",
+    "start": 109.072,
+    "end": 109.112,
+    "score": 0.0035,
+    "seg": 28
+  },
+  {
+    "text": "dead",
+    "start": 109.112,
+    "end": 109.193,
+    "score": 0.0021,
+    "seg": 28
+  },
+  {
+    "text": "frequencies,",
+    "start": 109.193,
+    "end": 109.474,
+    "score": 0.2722,
+    "seg": 28
+  },
+  {
+    "text": "and",
+    "start": 109.494,
+    "end": 109.575,
+    "score": 0.333,
+    "seg": 28
+  },
+  {
+    "text": "an",
+    "start": 109.575,
+    "end": 109.615,
+    "score": 0.0001,
+    "seg": 28
+  },
+  {
+    "text": "inability",
+    "start": 109.615,
+    "end": 109.816,
+    "score": 0.0001,
+    "seg": 28
+  },
+  {
+    "text": "to",
+    "start": 109.836,
+    "end": 109.896,
+    "score": 0.4992,
+    "seg": 28
+  },
+  {
+    "text": "track",
+    "start": 109.896,
+    "end": 110.037,
+    "score": 0.3996,
+    "seg": 28
+  },
+  {
+    "text": "time",
+    "start": 110.077,
+    "end": 110.177,
+    "score": 0.2493,
+    "seg": 28
+  },
+  {
+    "text": "between",
+    "start": 110.177,
+    "end": 110.418,
+    "score": 0.2866,
+    "seg": 28
+  },
+  {
+    "text": "events.",
+    "start": 110.438,
+    "end": 110.72,
+    "score": 0.3334,
+    "seg": 28
+  },
+  {
+    "text": "These",
+    "start": 111.201,
+    "end": 111.521,
+    "score": 0.8322,
+    "seg": 29
+  },
+  {
+    "text": "were",
+    "start": 111.561,
+    "end": 111.982,
+    "score": 0.7496,
+    "seg": 29
+  },
+  {
+    "text": "documented",
+    "start": 112.042,
+    "end": 113.204,
+    "score": 0.0982,
+    "seg": 29
+  },
+  {
+    "text": "across",
+    "start": 113.244,
+    "end": 113.664,
+    "score": 0.333,
+    "seg": 29
+  },
+  {
+    "text": "multiple",
+    "start": 113.685,
+    "end": 115.567,
+    "score": 0.6249,
+    "seg": 29
+  },
+  {
+    "text": "units.",
+    "start": 115.788,
+    "end": 116.99,
+    "score": 0.4982,
+    "seg": 29
+  },
+  {
+    "text": "They",
+    "start": 117.451,
+    "end": 117.792,
+    "score": 0.4999,
+    "seg": 30
+  },
+  {
+    "text": "weren\u2019t",
+    "start": 117.893,
+    "end": 118.616,
+    "score": 0.6064,
+    "seg": 30
+  },
+  {
+    "text": "morale",
+    "start": 118.737,
+    "end": 119.34,
+    "score": 0.4969,
+    "seg": 30
+  },
+  {
+    "text": "failures.",
+    "start": 119.621,
+    "end": 121.028,
+    "score": 0.5578,
+    "seg": 30
+  },
+  {
+    "text": "They",
+    "start": 121.47,
+    "end": 121.571,
+    "score": 0.0,
+    "seg": 31
+  },
+  {
+    "text": "were",
+    "start": 121.571,
+    "end": 121.652,
+    "score": 0.0,
+    "seg": 31
+  },
+  {
+    "text": "the",
+    "start": 121.652,
+    "end": 121.732,
+    "score": 0.9987,
+    "seg": 31
+  },
+  {
+    "text": "operational",
+    "start": 121.732,
+    "end": 122.035,
+    "score": 0.0909,
+    "seg": 31
+  },
+  {
+    "text": "signature",
+    "start": 122.035,
+    "end": 122.277,
+    "score": 0.1101,
+    "seg": 31
+  },
+  {
+    "text": "of",
+    "start": 122.318,
+    "end": 122.358,
+    "score": 0.4999,
+    "seg": 31
+  },
+  {
+    "text": "the",
+    "start": 122.358,
+    "end": 122.418,
+    "score": 0.0,
+    "seg": 31
+  },
+  {
+    "text": "Eye\u2019s",
+    "start": 122.439,
+    "end": 122.519,
+    "score": 0.2778,
+    "seg": 31
+  },
+  {
+    "text": "effect",
+    "start": 122.519,
+    "end": 122.661,
+    "score": 0.1666,
+    "seg": 31
+  },
+  {
+    "text": "on",
+    "start": 122.762,
+    "end": 122.822,
+    "score": 0.4998,
+    "seg": 31
+  },
+  {
+    "text": "personnel",
+    "start": 122.822,
+    "end": 123.105,
+    "score": 0.2221,
+    "seg": 31
+  },
+  {
+    "text": "without",
+    "start": 123.105,
+    "end": 123.286,
+    "score": 0.1428,
+    "seg": 31
+  },
+  {
+    "text": "shielding.",
+    "start": 123.286,
+    "end": 123.488,
+    "score": 0.1111,
+    "seg": 31
+  },
+  {
+    "text": "Cadian",
+    "start": 123.71,
+    "end": 123.911,
+    "score": 0.0012,
+    "seg": 32
+  },
+  {
+    "text": "Shock",
+    "start": 123.911,
+    "end": 124.011,
+    "score": 0.0047,
+    "seg": 32
+  },
+  {
+    "text": "Troops",
+    "start": 124.011,
+    "end": 124.152,
+    "score": 0.0087,
+    "seg": 32
+  },
+  {
+    "text": "were",
+    "start": 124.152,
+    "end": 124.313,
+    "score": 0.0,
+    "seg": 32
+  },
+  {
+    "text": "trained",
+    "start": 124.373,
+    "end": 124.634,
+    "score": 0.2855,
+    "seg": 32
+  },
+  {
+    "text": "from",
+    "start": 124.634,
+    "end": 124.755,
+    "score": 0.0,
+    "seg": 32
+  },
+  {
+    "text": "the",
+    "start": 124.875,
+    "end": 124.935,
+    "score": 0.0,
+    "seg": 32
+  },
+  {
+    "text": "start",
+    "start": 124.935,
+    "end": 125.257,
+    "score": 0.3999,
+    "seg": 32
+  },
+  {
+    "text": "with",
+    "start": 125.257,
+    "end": 125.337,
+    "score": 0.0474,
+    "seg": 32
+  },
+  {
+    "text": "all",
+    "start": 125.377,
+    "end": 125.478,
+    "score": 0.341,
+    "seg": 32
+  },
+  {
+    "text": "of",
+    "start": 125.478,
+    "end": 125.518,
+    "score": 0.0041,
+    "seg": 32
+  },
+  {
+    "text": "this",
+    "start": 125.538,
+    "end": 125.619,
+    "score": 0.0006,
+    "seg": 32
+  },
+  {
+    "text": "as",
+    "start": 125.619,
+    "end": 125.659,
+    "score": 0.4976,
+    "seg": 32
+  },
+  {
+    "text": "a",
+    "start": 125.659,
+    "end": 125.679,
+    "score": 0.0,
+    "seg": 32
+  },
+  {
+    "text": "baseline.",
+    "start": 125.679,
+    "end": 125.92,
+    "score": 0.0,
+    "seg": 32
+  },
+  {
+    "text": "They",
+    "start": 126.12,
+    "end": 126.221,
+    "score": 0.0003,
+    "seg": 33
+  },
+  {
+    "text": "treated",
+    "start": 126.221,
+    "end": 126.662,
+    "score": 0.2856,
+    "seg": 33
+  },
+  {
+    "text": "it",
+    "start": 126.722,
+    "end": 126.882,
+    "score": 0.0021,
+    "seg": 33
+  },
+  {
+    "text": "as",
+    "start": 127.163,
+    "end": 127.263,
+    "score": 0.4985,
+    "seg": 33
+  },
+  {
+    "text": "standard",
+    "start": 127.303,
+    "end": 127.725,
+    "score": 0.2503,
+    "seg": 33
+  },
+  {
+    "text": "operating",
+    "start": 127.725,
+    "end": 128.186,
+    "score": 0.105,
+    "seg": 33
+  },
+  {
+    "text": "parameters",
+    "start": 128.186,
+    "end": 128.607,
+    "score": 0.1999,
+    "seg": 33
+  },
+  {
+    "text": "rather",
+    "start": 128.607,
+    "end": 128.887,
+    "score": 0.4995,
+    "seg": 33
+  },
+  {
+    "text": "than",
+    "start": 128.988,
+    "end": 129.188,
+    "score": 0.2452,
+    "seg": 33
+  },
+  {
+    "text": "emergency",
+    "start": 129.208,
+    "end": 129.569,
+    "score": 0.0004,
+    "seg": 33
+  },
+  {
+    "text": "conditions.",
+    "start": 129.569,
+    "end": 129.87,
+    "score": 0.007,
+    "seg": 33
+  },
+  {
+    "text": "That",
+    "start": 131.852,
+    "end": 132.453,
+    "score": 0.4672,
+    "seg": 34
+  },
+  {
+    "text": "gap",
+    "start": 132.493,
+    "end": 132.673,
+    "score": 0.3332,
+    "seg": 34
+  },
+  {
+    "text": "between",
+    "start": 132.713,
+    "end": 133.034,
+    "score": 0.2867,
+    "seg": 34
+  },
+  {
+    "text": "a",
+    "start": 133.214,
+    "end": 133.234,
+    "score": 0.9954,
+    "seg": 34
+  },
+  {
+    "text": "force",
+    "start": 133.334,
+    "end": 133.835,
+    "score": 0.599,
+    "seg": 34
+  },
+  {
+    "text": "that",
+    "start": 134.055,
+    "end": 134.856,
+    "score": 0.7486,
+    "seg": 34
+  },
+  {
+    "text": "had",
+    "start": 134.876,
+    "end": 135.056,
+    "score": 0.0001,
+    "seg": 34
+  },
+  {
+    "text": "normalized",
+    "start": 135.136,
+    "end": 137.218,
+    "score": 0.4998,
+    "seg": 34
+  },
+  {
+    "text": "the",
+    "start": 137.339,
+    "end": 137.439,
+    "score": 0.4913,
+    "seg": 34
+  },
+  {
+    "text": "impossible",
+    "start": 137.479,
+    "end": 138.059,
+    "score": 0.3514,
+    "seg": 34
+  },
+  {
+    "text": "and",
+    "start": 138.681,
+    "end": 138.741,
+    "score": 0.0,
+    "seg": 35
+  },
+  {
+    "text": "a",
+    "start": 138.741,
+    "end": 138.762,
+    "score": 0.0,
+    "seg": 35
+  },
+  {
+    "text": "force",
+    "start": 138.762,
+    "end": 138.903,
+    "score": 0.1976,
+    "seg": 35
+  },
+  {
+    "text": "meeting",
+    "start": 138.903,
+    "end": 139.104,
+    "score": 0.3873,
+    "seg": 35
+  },
+  {
+    "text": "it",
+    "start": 139.104,
+    "end": 139.185,
+    "score": 0.0,
+    "seg": 35
+  },
+  {
+    "text": "for",
+    "start": 139.205,
+    "end": 139.386,
+    "score": 0.3328,
+    "seg": 35
+  },
+  {
+    "text": "the",
+    "start": 139.426,
+    "end": 139.487,
+    "score": 0.332,
+    "seg": 35
+  },
+  {
+    "text": "first",
+    "start": 139.487,
+    "end": 139.748,
+    "score": 0.2001,
+    "seg": 35
+  },
+  {
+    "text": "time",
+    "start": 139.769,
+    "end": 139.849,
+    "score": 0.0106,
+    "seg": 35
+  },
+  {
+    "text": "determined",
+    "start": 139.849,
+    "end": 140.091,
+    "score": 0.0997,
+    "seg": 35
+  },
+  {
+    "text": "most",
+    "start": 140.091,
+    "end": 140.192,
+    "score": 0.25,
+    "seg": 35
+  },
+  {
+    "text": "of",
+    "start": 140.192,
+    "end": 140.232,
+    "score": 0.0,
+    "seg": 35
+  },
+  {
+    "text": "the",
+    "start": 140.232,
+    "end": 140.292,
+    "score": 0.0035,
+    "seg": 35
+  },
+  {
+    "text": "tactical",
+    "start": 140.292,
+    "end": 140.594,
+    "score": 0.7453,
+    "seg": 35
+  },
+  {
+    "text": "results",
+    "start": 140.594,
+    "end": 140.755,
+    "score": 0.0,
+    "seg": 35
+  },
+  {
+    "text": "at",
+    "start": 140.755,
+    "end": 140.836,
+    "score": 0.4999,
+    "seg": 35
+  },
+  {
+    "text": "the",
+    "start": 140.876,
+    "end": 140.937,
+    "score": 0.3332,
+    "seg": 35
+  },
+  {
+    "text": "Cadian",
+    "start": 140.977,
+    "end": 141.098,
+    "score": 0.0,
+    "seg": 35
+  },
+  {
+    "text": "Gate.",
+    "start": 141.098,
+    "end": 141.178,
+    "score": 0.2528,
+    "seg": 35
+  },
+  {
+    "text": "The",
+    "start": 141.981,
+    "end": 142.082,
+    "score": 0.3333,
+    "seg": 36
+  },
+  {
+    "text": "Cadians",
+    "start": 142.142,
+    "end": 144.086,
+    "score": 0.8747,
+    "seg": 36
+  },
+  {
+    "text": "died",
+    "start": 144.146,
+    "end": 144.647,
+    "score": 0.97,
+    "seg": 36
+  },
+  {
+    "text": "there",
+    "start": 145.008,
+    "end": 145.228,
+    "score": 0.4,
+    "seg": 36
+  },
+  {
+    "text": "too.",
+    "start": 145.289,
+    "end": 145.609,
+    "score": 0.3333,
+    "seg": 36
+  },
+  {
+    "text": "They",
+    "start": 146.092,
+    "end": 146.193,
+    "score": 0.746,
+    "seg": 37
+  },
+  {
+    "text": "just",
+    "start": 146.213,
+    "end": 146.355,
+    "score": 0.0001,
+    "seg": 37
+  },
+  {
+    "text": "had",
+    "start": 146.355,
+    "end": 146.416,
+    "score": 0.0005,
+    "seg": 37
+  },
+  {
+    "text": "doctrine",
+    "start": 146.436,
+    "end": 146.659,
+    "score": 0.2559,
+    "seg": 37
+  },
+  {
+    "text": "that",
+    "start": 146.659,
+    "end": 146.8,
+    "score": 0.0,
+    "seg": 37
+  },
+  {
+    "text": "already",
+    "start": 146.82,
+    "end": 147.003,
+    "score": 0.1591,
+    "seg": 37
+  },
+  {
+    "text": "had",
+    "start": 147.003,
+    "end": 147.084,
+    "score": 0.0002,
+    "seg": 37
+  },
+  {
+    "text": "a",
+    "start": 147.144,
+    "end": 147.165,
+    "score": 0.0001,
+    "seg": 37
+  },
+  {
+    "text": "line",
+    "start": 147.165,
+    "end": 147.286,
+    "score": 0.1612,
+    "seg": 37
+  },
+  {
+    "text": "item",
+    "start": 147.306,
+    "end": 147.387,
+    "score": 0.2498,
+    "seg": 37
+  },
+  {
+    "text": "for",
+    "start": 147.387,
+    "end": 147.448,
+    "score": 0.0,
+    "seg": 37
+  },
+  {
+    "text": "it.",
+    "start": 147.448,
+    "end": 147.61,
+    "score": 0.0,
+    "seg": 37
+  },
+  {
+    "text": "Number",
+    "start": 148.955,
+    "end": 149.477,
+    "score": 0.5391,
+    "seg": 38
+  },
+  {
+    "text": "One,",
+    "start": 149.598,
+    "end": 149.939,
+    "score": 0.6497,
+    "seg": 38
+  },
+  {
+    "text": "The",
+    "start": 150.642,
+    "end": 150.863,
+    "score": 0.8229,
+    "seg": 38
+  },
+  {
+    "text": "Warp,",
+    "start": 150.883,
+    "end": 151.104,
+    "score": 0.2497,
+    "seg": 38
+  },
+  {
+    "text": "Uncontrolled.",
+    "start": 151.104,
+    "end": 152.329,
+    "score": 0.3585,
+    "seg": 38
+  },
+  {
+    "text": "Every",
+    "start": 152.891,
+    "end": 153.372,
+    "score": 0.0,
+    "seg": 39
+  },
+  {
+    "text": "interstellar",
+    "start": 153.513,
+    "end": 154.014,
+    "score": 0.3337,
+    "seg": 39
+  },
+  {
+    "text": "vessel",
+    "start": 154.014,
+    "end": 154.235,
+    "score": 0.1664,
+    "seg": 39
+  },
+  {
+    "text": "passes",
+    "start": 154.255,
+    "end": 154.455,
+    "score": 0.0072,
+    "seg": 39
+  },
+  {
+    "text": "through",
+    "start": 154.455,
+    "end": 155.017,
+    "score": 0.0,
+    "seg": 39
+  },
+  {
+    "text": "the",
+    "start": 155.017,
+    "end": 155.077,
+    "score": 0.0,
+    "seg": 39
+  },
+  {
+    "text": "Warp",
+    "start": 155.077,
+    "end": 155.278,
+    "score": 0.709,
+    "seg": 39
+  },
+  {
+    "text": "to",
+    "start": 155.278,
+    "end": 155.318,
+    "score": 0.0003,
+    "seg": 39
+  },
+  {
+    "text": "reach",
+    "start": 155.318,
+    "end": 155.418,
+    "score": 0.1654,
+    "seg": 39
+  },
+  {
+    "text": "the",
+    "start": 155.418,
+    "end": 155.478,
+    "score": 0.0006,
+    "seg": 39
+  },
+  {
+    "text": "next",
+    "start": 155.498,
+    "end": 155.578,
+    "score": 0.0,
+    "seg": 39
+  },
+  {
+    "text": "star",
+    "start": 155.578,
+    "end": 155.759,
+    "score": 0.0,
+    "seg": 39
+  },
+  {
+    "text": "system.",
+    "start": 155.799,
+    "end": 155.919,
+    "score": 0.165,
+    "seg": 39
+  },
+  {
+    "text": "Nobody",
+    "start": 156.361,
+    "end": 156.642,
+    "score": 0.1388,
+    "seg": 40
+  },
+  {
+    "text": "has",
+    "start": 156.642,
+    "end": 156.702,
+    "score": 0.333,
+    "seg": 40
+  },
+  {
+    "text": "survived",
+    "start": 156.762,
+    "end": 157.284,
+    "score": 0.1245,
+    "seg": 40
+  },
+  {
+    "text": "losing",
+    "start": 157.284,
+    "end": 157.505,
+    "score": 0.5684,
+    "seg": 40
+  },
+  {
+    "text": "control",
+    "start": 157.565,
+    "end": 158.027,
+    "score": 0.2855,
+    "seg": 40
+  },
+  {
+    "text": "of",
+    "start": 158.087,
+    "end": 158.167,
+    "score": 0.001,
+    "seg": 40
+  },
+  {
+    "text": "that",
+    "start": 158.167,
+    "end": 158.268,
+    "score": 0.2499,
+    "seg": 40
+  },
+  {
+    "text": "crossing.",
+    "start": 158.268,
+    "end": 158.709,
+    "score": 0.4972,
+    "seg": 40
+  },
+  {
+    "text": "The",
+    "start": 159.171,
+    "end": 159.312,
+    "score": 0.0005,
+    "seg": 41
+  },
+  {
+    "text": "Warp",
+    "start": 159.393,
+    "end": 159.654,
+    "score": 0.2499,
+    "seg": 41
+  },
+  {
+    "text": "enables",
+    "start": 159.695,
+    "end": 160.017,
+    "score": 0.3525,
+    "seg": 41
+  },
+  {
+    "text": "faster-than-light",
+    "start": 160.097,
+    "end": 161.949,
+    "score": 0.4104,
+    "seg": 41
+  },
+  {
+    "text": "travel.",
+    "start": 161.969,
+    "end": 162.15,
+    "score": 0.0459,
+    "seg": 41
+  },
+  {
+    "text": "It",
+    "start": 162.15,
+    "end": 162.21,
+    "score": 0.0025,
+    "seg": 42
+  },
+  {
+    "text": "also",
+    "start": 162.291,
+    "end": 162.411,
+    "score": 0.1443,
+    "seg": 42
+  },
+  {
+    "text": "operates",
+    "start": 162.431,
+    "end": 162.834,
+    "score": 0.2504,
+    "seg": 42
+  },
+  {
+    "text": "under",
+    "start": 162.834,
+    "end": 163.075,
+    "score": 0.1999,
+    "seg": 42
+  },
+  {
+    "text": "conditions",
+    "start": 163.075,
+    "end": 163.718,
+    "score": 0.2814,
+    "seg": 42
+  },
+  {
+    "text": "where",
+    "start": 163.718,
+    "end": 163.94,
+    "score": 0.2,
+    "seg": 42
+  },
+  {
+    "text": "stable",
+    "start": 163.96,
+    "end": 164.12,
+    "score": 0.1665,
+    "seg": 42
+  },
+  {
+    "text": "matter",
+    "start": 164.12,
+    "end": 164.342,
+    "score": 0.4997,
+    "seg": 42
+  },
+  {
+    "text": "has",
+    "start": 164.422,
+    "end": 164.804,
+    "score": 0.666,
+    "seg": 42
+  },
+  {
+    "text": "no",
+    "start": 164.905,
+    "end": 164.985,
+    "score": 0.5,
+    "seg": 42
+  },
+  {
+    "text": "particular",
+    "start": 165.045,
+    "end": 165.347,
+    "score": 0.0765,
+    "seg": 42
+  },
+  {
+    "text": "standing.",
+    "start": 165.387,
+    "end": 165.769,
+    "score": 0.1256,
+    "seg": 42
+  },
+  {
+    "text": "A",
+    "start": 166.252,
+    "end": 166.272,
+    "score": 0.0002,
+    "seg": 43
+  },
+  {
+    "text": "ship",
+    "start": 166.352,
+    "end": 166.774,
+    "score": 0.5101,
+    "seg": 43
+  },
+  {
+    "text": "that",
+    "start": 166.814,
+    "end": 166.975,
+    "score": 0.0298,
+    "seg": 43
+  },
+  {
+    "text": "loses",
+    "start": 167.076,
+    "end": 168.04,
+    "score": 0.2939,
+    "seg": 43
+  },
+  {
+    "text": "its",
+    "start": 168.101,
+    "end": 168.724,
+    "score": 0.6663,
+    "seg": 43
+  },
+  {
+    "text": "Geller",
+    "start": 168.744,
+    "end": 169.106,
+    "score": 0.3331,
+    "seg": 43
+  },
+  {
+    "text": "field,",
+    "start": 169.126,
+    "end": 169.769,
+    "score": 0.3999,
+    "seg": 43
+  },
+  {
+    "text": "the",
+    "start": 170.21,
+    "end": 170.291,
+    "score": 0.9936,
+    "seg": 44
+  },
+  {
+    "text": "containment",
+    "start": 170.291,
+    "end": 170.671,
+    "score": 0.1818,
+    "seg": 44
+  },
+  {
+    "text": "system",
+    "start": 170.671,
+    "end": 170.812,
+    "score": 0.1667,
+    "seg": 44
+  },
+  {
+    "text": "maintaining",
+    "start": 170.832,
+    "end": 171.092,
+    "score": 0.0002,
+    "seg": 44
+  },
+  {
+    "text": "a",
+    "start": 171.092,
+    "end": 171.112,
+    "score": 0.0,
+    "seg": 44
+  },
+  {
+    "text": "bubble",
+    "start": 171.112,
+    "end": 171.253,
+    "score": 0.0,
+    "seg": 44
+  },
+  {
+    "text": "of",
+    "start": 171.253,
+    "end": 171.293,
+    "score": 0.0,
+    "seg": 44
+  },
+  {
+    "text": "material-reality",
+    "start": 171.293,
+    "end": 171.653,
+    "score": 0.2657,
+    "seg": 44
+  },
+  {
+    "text": "coherence",
+    "start": 171.694,
+    "end": 172.074,
+    "score": 0.0,
+    "seg": 44
+  },
+  {
+    "text": "around",
+    "start": 172.074,
+    "end": 172.195,
+    "score": 0.0,
+    "seg": 44
+  },
+  {
+    "text": "the",
+    "start": 172.195,
+    "end": 172.255,
+    "score": 0.3332,
+    "seg": 44
+  },
+  {
+    "text": "hull,",
+    "start": 172.255,
+    "end": 172.575,
+    "score": 0.5987,
+    "seg": 44
+  },
+  {
+    "text": "isn\u2019t",
+    "start": 173.157,
+    "end": 173.297,
+    "score": 0.4997,
+    "seg": 44
+  },
+  {
+    "text": "a",
+    "start": 173.317,
+    "end": 173.337,
+    "score": 0.9968,
+    "seg": 44
+  },
+  {
+    "text": "vessel",
+    "start": 173.337,
+    "end": 173.598,
+    "score": 0.1666,
+    "seg": 44
+  },
+  {
+    "text": "in",
+    "start": 173.618,
+    "end": 173.698,
+    "score": 0.4999,
+    "seg": 44
+  },
+  {
+    "text": "a",
+    "start": 173.738,
+    "end": 173.758,
+    "score": 0.9997,
+    "seg": 44
+  },
+  {
+    "text": "dangerous",
+    "start": 173.778,
+    "end": 174.079,
+    "score": 0.2194,
+    "seg": 44
+  },
+  {
+    "text": "environment",
+    "start": 174.119,
+    "end": 174.419,
+    "score": 0.0006,
+    "seg": 44
+  },
+  {
+    "text": "anymore.",
+    "start": 174.419,
+    "end": 174.56,
+    "score": 0.0,
+    "seg": 44
+  },
+  {
+    "text": "It\u2019s",
+    "start": 174.981,
+    "end": 175.142,
+    "score": 0.0001,
+    "seg": 45
+  },
+  {
+    "text": "matter",
+    "start": 175.142,
+    "end": 175.523,
+    "score": 0.6612,
+    "seg": 45
+  },
+  {
+    "text": "trying",
+    "start": 175.564,
+    "end": 177.05,
+    "score": 0.7139,
+    "seg": 45
+  },
+  {
+    "text": "to",
+    "start": 177.492,
+    "end": 177.572,
+    "score": 0.0,
+    "seg": 45
+  },
+  {
+    "text": "hold",
+    "start": 177.633,
+    "end": 178.075,
+    "score": 0.7498,
+    "seg": 45
+  },
+  {
+    "text": "its",
+    "start": 178.075,
+    "end": 178.135,
+    "score": 0.3328,
+    "seg": 45
+  },
+  {
+    "text": "shape",
+    "start": 178.175,
+    "end": 178.496,
+    "score": 0.6604,
+    "seg": 45
+  },
+  {
+    "text": "somewhere",
+    "start": 178.496,
+    "end": 179.039,
+    "score": 0.3064,
+    "seg": 45
+  },
+  {
+    "text": "that",
+    "start": 179.521,
+    "end": 179.701,
+    "score": 0.0043,
+    "seg": 46
+  },
+  {
+    "text": "actively",
+    "start": 179.721,
+    "end": 180.083,
+    "score": 0.2684,
+    "seg": 46
+  },
+  {
+    "text": "works",
+    "start": 180.123,
+    "end": 180.705,
+    "score": 0.1998,
+    "seg": 46
+  },
+  {
+    "text": "against",
+    "start": 180.765,
+    "end": 183.193,
+    "score": 0.7146,
+    "seg": 46
+  },
+  {
+    "text": "the",
+    "start": 183.213,
+    "end": 183.293,
+    "score": 0.666,
+    "seg": 46
+  },
+  {
+    "text": "concept",
+    "start": 183.333,
+    "end": 184.236,
+    "score": 0.2792,
+    "seg": 46
+  },
+  {
+    "text": "of",
+    "start": 184.377,
+    "end": 184.738,
+    "score": 0.5,
+    "seg": 46
+  },
+  {
+    "text": "shape.",
+    "start": 184.979,
+    "end": 185.179,
+    "score": 0.28,
+    "seg": 46
+  },
+  {
+    "text": "The",
+    "start": 185.561,
+    "end": 185.621,
+    "score": 0.8688,
+    "seg": 47
+  },
+  {
+    "text": "crew",
+    "start": 185.621,
+    "end": 185.702,
+    "score": 0.0177,
+    "seg": 47
+  },
+  {
+    "text": "doesn\u2019t",
+    "start": 185.702,
+    "end": 185.822,
+    "score": 0.0004,
+    "seg": 47
+  },
+  {
+    "text": "die",
+    "start": 185.822,
+    "end": 185.883,
+    "score": 0.3332,
+    "seg": 47
+  },
+  {
+    "text": "the",
+    "start": 185.883,
+    "end": 185.943,
+    "score": 0.3324,
+    "seg": 47
+  },
+  {
+    "text": "way",
+    "start": 185.963,
+    "end": 186.023,
+    "score": 0.0,
+    "seg": 47
+  },
+  {
+    "text": "crews",
+    "start": 186.023,
+    "end": 186.224,
+    "score": 0.3999,
+    "seg": 47
+  },
+  {
+    "text": "die",
+    "start": 186.224,
+    "end": 186.345,
+    "score": 0.3325,
+    "seg": 47
+  },
+  {
+    "text": "when",
+    "start": 186.365,
+    "end": 186.466,
+    "score": 0.465,
+    "seg": 47
+  },
+  {
+    "text": "life",
+    "start": 186.466,
+    "end": 186.546,
+    "score": 0.0001,
+    "seg": 47
+  },
+  {
+    "text": "support",
+    "start": 186.546,
+    "end": 186.727,
+    "score": 0.0,
+    "seg": 47
+  },
+  {
+    "text": "fails.",
+    "start": 186.767,
+    "end": 186.928,
+    "score": 0.1994,
+    "seg": 47
+  },
+  {
+    "text": "The",
+    "start": 187.471,
+    "end": 187.551,
+    "score": 0.9959,
+    "seg": 48
+  },
+  {
+    "text": "deterioration",
+    "start": 187.591,
+    "end": 188.052,
+    "score": 0.077,
+    "seg": 48
+  },
+  {
+    "text": "comes",
+    "start": 188.052,
+    "end": 188.153,
+    "score": 0.0,
+    "seg": 48
+  },
+  {
+    "text": "from",
+    "start": 188.153,
+    "end": 188.233,
+    "score": 0.1979,
+    "seg": 48
+  },
+  {
+    "text": "outside",
+    "start": 188.233,
+    "end": 188.373,
+    "score": 0.2738,
+    "seg": 48
+  },
+  {
+    "text": "in",
+    "start": 188.373,
+    "end": 188.413,
+    "score": 0.0,
+    "seg": 48
+  },
+  {
+    "text": "and",
+    "start": 188.413,
+    "end": 188.473,
+    "score": 0.0001,
+    "seg": 48
+  },
+  {
+    "text": "doesn\u2019t",
+    "start": 188.493,
+    "end": 188.654,
+    "score": 0.4993,
+    "seg": 48
+  },
+  {
+    "text": "follow",
+    "start": 188.674,
+    "end": 188.814,
+    "score": 0.1889,
+    "seg": 48
+  },
+  {
+    "text": "a",
+    "start": 188.814,
+    "end": 188.834,
+    "score": 0.996,
+    "seg": 48
+  },
+  {
+    "text": "sequence",
+    "start": 188.915,
+    "end": 189.195,
+    "score": 0.1045,
+    "seg": 48
+  },
+  {
+    "text": "anyone",
+    "start": 189.256,
+    "end": 189.817,
+    "score": 0.1667,
+    "seg": 48
+  },
+  {
+    "text": "has",
+    "start": 189.817,
+    "end": 189.877,
+    "score": 0.3281,
+    "seg": 48
+  },
+  {
+    "text": "successfully",
+    "start": 189.897,
+    "end": 190.619,
+    "score": 0.2486,
+    "seg": 48
+  },
+  {
+    "text": "predicted.",
+    "start": 190.619,
+    "end": 190.82,
+    "score": 0.017,
+    "seg": 48
+  },
+  {
+    "text": "What",
+    "start": 190.82,
+    "end": 190.96,
+    "score": 0.1457,
+    "seg": 49
+  },
+  {
+    "text": "makes",
+    "start": 191.001,
+    "end": 191.322,
+    "score": 0.0002,
+    "seg": 49
+  },
+  {
+    "text": "this",
+    "start": 191.342,
+    "end": 191.602,
+    "score": 0.1478,
+    "seg": 49
+  },
+  {
+    "text": "the",
+    "start": 191.663,
+    "end": 191.743,
+    "score": 0.9976,
+    "seg": 49
+  },
+  {
+    "text": "worst",
+    "start": 191.903,
+    "end": 192.164,
+    "score": 0.3999,
+    "seg": 49
+  },
+  {
+    "text": "environment",
+    "start": 192.184,
+    "end": 193.268,
+    "score": 0.5417,
+    "seg": 49
+  },
+  {
+    "text": "in",
+    "start": 193.328,
+    "end": 193.388,
+    "score": 0.4962,
+    "seg": 49
+  },
+  {
+    "text": "the",
+    "start": 193.388,
+    "end": 193.448,
+    "score": 0.0032,
+    "seg": 49
+  },
+  {
+    "text": "setting",
+    "start": 193.448,
+    "end": 193.789,
+    "score": 0.1421,
+    "seg": 49
+  },
+  {
+    "text": "is",
+    "start": 194.27,
+    "end": 194.33,
+    "score": 0.6474,
+    "seg": 50
+  },
+  {
+    "text": "what",
+    "start": 194.471,
+    "end": 195.131,
+    "score": 0.5,
+    "seg": 50
+  },
+  {
+    "text": "gets",
+    "start": 195.432,
+    "end": 195.932,
+    "score": 0.2479,
+    "seg": 50
+  },
+  {
+    "text": "stripped",
+    "start": 195.992,
+    "end": 196.733,
+    "score": 0.6554,
+    "seg": 50
+  },
+  {
+    "text": "away",
+    "start": 197.014,
+    "end": 197.354,
+    "score": 0.2539,
+    "seg": 50
+  },
+  {
+    "text": "the",
+    "start": 197.434,
+    "end": 197.835,
+    "score": 0.3331,
+    "seg": 50
+  },
+  {
+    "text": "moment",
+    "start": 197.895,
+    "end": 198.556,
+    "score": 0.3684,
+    "seg": 50
+  },
+  {
+    "text": "control",
+    "start": 198.656,
+    "end": 199.977,
+    "score": 0.3783,
+    "seg": 50
+  },
+  {
+    "text": "fails.",
+    "start": 200.037,
+    "end": 201.059,
+    "score": 0.515,
+    "seg": 50
+  },
+  {
+    "text": "Navigation",
+    "start": 202.16,
+    "end": 203.064,
+    "score": 0.6196,
+    "seg": 51
+  },
+  {
+    "text": "stops",
+    "start": 203.084,
+    "end": 203.184,
+    "score": 0.2,
+    "seg": 51
+  },
+  {
+    "text": "working",
+    "start": 203.204,
+    "end": 203.526,
+    "score": 0.3993,
+    "seg": 51
+  },
+  {
+    "text": "because",
+    "start": 203.526,
+    "end": 203.867,
+    "score": 0.143,
+    "seg": 51
+  },
+  {
+    "text": "Warp",
+    "start": 203.867,
+    "end": 204.008,
+    "score": 0.2786,
+    "seg": 51
+  },
+  {
+    "text": "currents",
+    "start": 204.008,
+    "end": 204.389,
+    "score": 0.3711,
+    "seg": 51
+  },
+  {
+    "text": "have",
+    "start": 204.389,
+    "end": 204.831,
+    "score": 0.7493,
+    "seg": 51
+  },
+  {
+    "text": "no",
+    "start": 204.871,
+    "end": 204.911,
+    "score": 0.4995,
+    "seg": 51
+  },
+  {
+    "text": "fixed",
+    "start": 204.932,
+    "end": 205.152,
+    "score": 0.2,
+    "seg": 51
+  },
+  {
+    "text": "relationship",
+    "start": 205.152,
+    "end": 205.936,
+    "score": 0.46,
+    "seg": 51
+  },
+  {
+    "text": "to",
+    "start": 205.936,
+    "end": 205.976,
+    "score": 0.0,
+    "seg": 51
+  },
+  {
+    "text": "physical",
+    "start": 205.976,
+    "end": 206.237,
+    "score": 0.3653,
+    "seg": 51
+  },
+  {
+    "text": "distances.",
+    "start": 206.277,
+    "end": 206.719,
+    "score": 0.3202,
+    "seg": 51
+  },
+  {
+    "text": "Time",
+    "start": 206.98,
+    "end": 207.06,
+    "score": 0.0,
+    "seg": 52
+  },
+  {
+    "text": "becomes",
+    "start": 207.06,
+    "end": 207.221,
+    "score": 0.0002,
+    "seg": 52
+  },
+  {
+    "text": "operationally",
+    "start": 207.221,
+    "end": 207.581,
+    "score": 0.3832,
+    "seg": 52
+  },
+  {
+    "text": "non-linear:",
+    "start": 207.581,
+    "end": 207.862,
+    "score": 0.3152,
+    "seg": 52
+  },
+  {
+    "text": "vessels",
+    "start": 207.902,
+    "end": 208.223,
+    "score": 0.2586,
+    "seg": 52
+  },
+  {
+    "text": "have",
+    "start": 208.303,
+    "end": 208.503,
+    "score": 0.25,
+    "seg": 52
+  },
+  {
+    "text": "exited",
+    "start": 208.523,
+    "end": 208.824,
+    "score": 0.4998,
+    "seg": 52
+  },
+  {
+    "text": "transit",
+    "start": 208.884,
+    "end": 209.225,
+    "score": 0.3735,
+    "seg": 52
+  },
+  {
+    "text": "weeks",
+    "start": 209.225,
+    "end": 209.445,
+    "score": 0.2001,
+    "seg": 52
+  },
+  {
+    "text": "before",
+    "start": 209.525,
+    "end": 210.568,
+    "score": 0.6665,
+    "seg": 52
+  },
+  {
+    "text": "they",
+    "start": 210.648,
+    "end": 210.848,
+    "score": 0.25,
+    "seg": 52
+  },
+  {
+    "text": "entered,",
+    "start": 210.989,
+    "end": 211.51,
+    "score": 0.4285,
+    "seg": 52
+  },
+  {
+    "text": "as",
+    "start": 211.931,
+    "end": 211.992,
+    "score": 0.0,
+    "seg": 53
+  },
+  {
+    "text": "measured",
+    "start": 211.992,
+    "end": 212.374,
+    "score": 0.2499,
+    "seg": 53
+  },
+  {
+    "text": "by",
+    "start": 212.414,
+    "end": 212.495,
+    "score": 0.0002,
+    "seg": 53
+  },
+  {
+    "text": "external",
+    "start": 212.495,
+    "end": 212.676,
+    "score": 0.0147,
+    "seg": 53
+  },
+  {
+    "text": "observers,",
+    "start": 212.736,
+    "end": 213.139,
+    "score": 0.222,
+    "seg": 53
+  },
+  {
+    "text": "and",
+    "start": 213.219,
+    "end": 213.28,
+    "score": 0.3333,
+    "seg": 53
+  },
+  {
+    "text": "some",
+    "start": 213.3,
+    "end": 213.38,
+    "score": 0.2674,
+    "seg": 53
+  },
+  {
+    "text": "have",
+    "start": 213.38,
+    "end": 213.481,
+    "score": 0.0609,
+    "seg": 53
+  },
+  {
+    "text": "never",
+    "start": 213.481,
+    "end": 213.682,
+    "score": 0.1999,
+    "seg": 53
+  },
+  {
+    "text": "exited",
+    "start": 213.722,
+    "end": 213.843,
+    "score": 0.0502,
+    "seg": 53
+  },
+  {
+    "text": "despite",
+    "start": 213.863,
+    "end": 214.004,
+    "score": 0.0033,
+    "seg": 53
+  },
+  {
+    "text": "correct",
+    "start": 214.004,
+    "end": 214.266,
+    "score": 0.1402,
+    "seg": 53
+  },
+  {
+    "text": "departure",
+    "start": 214.266,
+    "end": 214.548,
+    "score": 0.3334,
+    "seg": 53
+  },
+  {
+    "text": "coordinates.",
+    "start": 214.568,
+    "end": 214.809,
+    "score": 0.0,
+    "seg": 53
+  },
+  {
+    "text": "Crew",
+    "start": 215.272,
+    "end": 215.553,
+    "score": 0.0,
+    "seg": 54
+  },
+  {
+    "text": "psychological",
+    "start": 215.553,
+    "end": 215.936,
+    "score": 0.1538,
+    "seg": 54
+  },
+  {
+    "text": "integrity",
+    "start": 215.936,
+    "end": 216.378,
+    "score": 0.1114,
+    "seg": 54
+  },
+  {
+    "text": "declines",
+    "start": 216.418,
+    "end": 216.7,
+    "score": 0.1993,
+    "seg": 54
+  },
+  {
+    "text": "in",
+    "start": 216.7,
+    "end": 216.74,
+    "score": 0.0,
+    "seg": 54
+  },
+  {
+    "text": "proportion",
+    "start": 216.74,
+    "end": 216.941,
+    "score": 0.1198,
+    "seg": 54
+  },
+  {
+    "text": "to",
+    "start": 216.941,
+    "end": 217.002,
+    "score": 0.0009,
+    "seg": 54
+  },
+  {
+    "text": "transit",
+    "start": 217.002,
+    "end": 217.243,
+    "score": 0.2863,
+    "seg": 54
+  },
+  {
+    "text": "duration",
+    "start": 217.243,
+    "end": 217.464,
+    "score": 0.4987,
+    "seg": 54
+  },
+  {
+    "text": "and",
+    "start": 217.464,
+    "end": 217.525,
+    "score": 0.0,
+    "seg": 54
+  },
+  {
+    "text": "proximity",
+    "start": 217.525,
+    "end": 217.706,
+    "score": 0.0,
+    "seg": 54
+  },
+  {
+    "text": "to",
+    "start": 217.726,
+    "end": 217.766,
+    "score": 0.4995,
+    "seg": 54
+  },
+  {
+    "text": "Warp",
+    "start": 217.766,
+    "end": 217.867,
+    "score": 0.4878,
+    "seg": 54
+  },
+  {
+    "text": "anomalies.",
+    "start": 217.887,
+    "end": 218.289,
+    "score": 0.2222,
+    "seg": 54
+  },
+  {
+    "text": "Communication",
+    "start": 218.47,
+    "end": 218.892,
+    "score": 0.1538,
+    "seg": 55
+  },
+  {
+    "text": "with",
+    "start": 218.892,
+    "end": 218.993,
+    "score": 0.5945,
+    "seg": 55
+  },
+  {
+    "text": "anything",
+    "start": 218.993,
+    "end": 219.616,
+    "score": 0.2879,
+    "seg": 55
+  },
+  {
+    "text": "outside",
+    "start": 219.897,
+    "end": 221.103,
+    "score": 0.7138,
+    "seg": 55
+  },
+  {
+    "text": "the",
+    "start": 221.144,
+    "end": 221.204,
+    "score": 0.2945,
+    "seg": 55
+  },
+  {
+    "text": "hull",
+    "start": 221.204,
+    "end": 221.505,
+    "score": 0.0,
+    "seg": 55
+  },
+  {
+    "text": "is",
+    "start": 221.646,
+    "end": 221.707,
+    "score": 0.4996,
+    "seg": 55
+  },
+  {
+    "text": "severed.",
+    "start": 221.787,
+    "end": 222.229,
+    "score": 0.0001,
+    "seg": 55
+  },
+  {
+    "text": "for",
+    "start": 223.97,
+    "end": 224.031,
+    "score": 0.0,
+    "seg": 57
+  },
+  {
+    "text": "sustained",
+    "start": 224.031,
+    "end": 224.213,
+    "score": 0.0,
+    "seg": 57
+  },
+  {
+    "text": "operation,",
+    "start": 224.213,
+    "end": 224.437,
+    "score": 0.1166,
+    "seg": 57
+  },
+  {
+    "text": "ceases",
+    "start": 224.437,
+    "end": 224.558,
+    "score": 0.0,
+    "seg": 57
+  },
+  {
+    "text": "to",
+    "start": 224.558,
+    "end": 224.599,
+    "score": 0.0,
+    "seg": 57
+  },
+  {
+    "text": "function",
+    "start": 224.599,
+    "end": 224.761,
+    "score": 0.0056,
+    "seg": 57
+  },
+  {
+    "text": "the",
+    "start": 224.761,
+    "end": 224.822,
+    "score": 0.2968,
+    "seg": 57
+  },
+  {
+    "text": "moment",
+    "start": 224.822,
+    "end": 224.964,
+    "score": 0.0002,
+    "seg": 57
+  },
+  {
+    "text": "the",
+    "start": 224.984,
+    "end": 225.045,
+    "score": 0.0,
+    "seg": 57
+  },
+  {
+    "text": "Geller",
+    "start": 225.045,
+    "end": 225.187,
+    "score": 0.0,
+    "seg": 57
+  },
+  {
+    "text": "field",
+    "start": 225.187,
+    "end": 225.289,
+    "score": 0.0,
+    "seg": 57
+  },
+  {
+    "text": "goes.",
+    "start": 225.289,
+    "end": 225.37,
+    "score": 0.0,
+    "seg": 57
+  },
+  {
+    "text": "The",
+    "start": 225.551,
+    "end": 225.612,
+    "score": 0.66,
+    "seg": 58
+  },
+  {
+    "text": "final",
+    "start": 225.672,
+    "end": 225.954,
+    "score": 0.1999,
+    "seg": 58
+  },
+  {
+    "text": "boarding",
+    "start": 225.994,
+    "end": 226.84,
+    "score": 0.7495,
+    "seg": 58
+  },
+  {
+    "text": "of",
+    "start": 226.86,
+    "end": 226.981,
+    "score": 0.0001,
+    "seg": 58
+  },
+  {
+    "text": "the",
+    "start": 226.981,
+    "end": 227.102,
+    "score": 0.3316,
+    "seg": 58
+  },
+  {
+    "text": "Vengeful",
+    "start": 227.122,
+    "end": 227.545,
+    "score": 0.2094,
+    "seg": 58
+  },
+  {
+    "text": "Spirit",
+    "start": 227.586,
+    "end": 227.747,
+    "score": 0.0003,
+    "seg": 58
+  },
+  {
+    "text": "illustrated",
+    "start": 227.747,
+    "end": 228.21,
+    "score": 0.2745,
+    "seg": 58
+  },
+  {
+    "text": "what",
+    "start": 228.37,
+    "end": 228.471,
+    "score": 0.9985,
+    "seg": 59
+  },
+  {
+    "text": "even",
+    "start": 228.471,
+    "end": 228.571,
+    "score": 0.2458,
+    "seg": 59
+  },
+  {
+    "text": "partial",
+    "start": 228.571,
+    "end": 228.872,
+    "score": 0.2284,
+    "seg": 59
+  },
+  {
+    "text": "Warp",
+    "start": 228.892,
+    "end": 229.132,
+    "score": 0.0002,
+    "seg": 59
+  },
+  {
+    "text": "exposure",
+    "start": 229.173,
+    "end": 229.935,
+    "score": 0.3317,
+    "seg": 59
+  },
+  {
+    "text": "does",
+    "start": 229.935,
+    "end": 230.135,
+    "score": 0.2518,
+    "seg": 59
+  },
+  {
+    "text": "at",
+    "start": 230.215,
+    "end": 230.376,
+    "score": 0.565,
+    "seg": 59
+  },
+  {
+    "text": "close",
+    "start": 230.436,
+    "end": 230.817,
+    "score": 0.1999,
+    "seg": 59
+  },
+  {
+    "text": "range.",
+    "start": 230.897,
+    "end": 231.619,
+    "score": 0.5995,
+    "seg": 59
+  },
+  {
+    "text": "A",
+    "start": 232.241,
+    "end": 232.261,
+    "score": 0.9844,
+    "seg": 60
+  },
+  {
+    "text": "targeted",
+    "start": 232.401,
+    "end": 234.565,
+    "score": 0.4436,
+    "seg": 60
+  },
+  {
+    "text": "teleport",
+    "start": 234.605,
+    "end": 236.568,
+    "score": 0.7492,
+    "seg": 60
+  },
+  {
+    "text": "assault,",
+    "start": 236.728,
+    "end": 237.289,
+    "score": 0.4282,
+    "seg": 60
+  },
+  {
+    "text": "the",
+    "start": 237.69,
+    "end": 237.75,
+    "score": 0.0,
+    "seg": 61
+  },
+  {
+    "text": "most",
+    "start": 237.75,
+    "end": 237.831,
+    "score": 0.0,
+    "seg": 61
+  },
+  {
+    "text": "controlled",
+    "start": 237.831,
+    "end": 238.052,
+    "score": 0.0,
+    "seg": 61
+  },
+  {
+    "text": "form",
+    "start": 238.052,
+    "end": 238.152,
+    "score": 0.0,
+    "seg": 61
+  },
+  {
+    "text": "of",
+    "start": 238.152,
+    "end": 238.192,
+    "score": 0.0,
+    "seg": 61
+  },
+  {
+    "text": "Warp-adjacent",
+    "start": 238.192,
+    "end": 238.474,
+    "score": 0.0876,
+    "seg": 61
+  },
+  {
+    "text": "transit",
+    "start": 238.494,
+    "end": 238.655,
+    "score": 0.0004,
+    "seg": 61
+  },
+  {
+    "text": "available,",
+    "start": 238.655,
+    "end": 238.836,
+    "score": 0.0856,
+    "seg": 61
+  },
+  {
+    "text": "was",
+    "start": 238.836,
+    "end": 238.896,
+    "score": 0.0,
+    "seg": 61
+  },
+  {
+    "text": "used",
+    "start": 238.896,
+    "end": 238.976,
+    "score": 0.0,
+    "seg": 61
+  },
+  {
+    "text": "as",
+    "start": 238.976,
+    "end": 239.016,
+    "score": 0.0,
+    "seg": 61
+  },
+  {
+    "text": "a",
+    "start": 239.016,
+    "end": 239.037,
+    "score": 0.0001,
+    "seg": 61
+  },
+  {
+    "text": "dispersion",
+    "start": 239.037,
+    "end": 239.278,
+    "score": 0.2001,
+    "seg": 61
+  },
+  {
+    "text": "mechanism.",
+    "start": 239.278,
+    "end": 239.559,
+    "score": 0.1101,
+    "seg": 61
+  },
+  {
+    "text": "The",
+    "start": 239.76,
+    "end": 239.882,
+    "score": 0.0,
+    "seg": 62
+  },
+  {
+    "text": "loyalist",
+    "start": 239.882,
+    "end": 240.085,
+    "score": 0.0003,
+    "seg": 62
+  },
+  {
+    "text": "strike",
+    "start": 240.085,
+    "end": 240.206,
+    "score": 0.0,
+    "seg": 62
+  },
+  {
+    "text": "force",
+    "start": 240.206,
+    "end": 240.308,
+    "score": 0.0002,
+    "seg": 62
+  },
+  {
+    "text": "scattered",
+    "start": 240.328,
+    "end": 240.531,
+    "score": 0.1132,
+    "seg": 62
+  },
+  {
+    "text": "across",
+    "start": 240.531,
+    "end": 240.693,
+    "score": 0.0,
+    "seg": 62
+  },
+  {
+    "text": "a",
+    "start": 240.693,
+    "end": 240.713,
+    "score": 0.0,
+    "seg": 62
+  },
+  {
+    "text": "corrupted",
+    "start": 240.734,
+    "end": 240.937,
+    "score": 0.1114,
+    "seg": 62
+  },
+  {
+    "text": "interior.",
+    "start": 240.937,
+    "end": 241.16,
+    "score": 0.1249,
+    "seg": 62
+  },
+  {
+    "text": "Pocket",
+    "start": 241.18,
+    "end": 241.541,
+    "score": 0.1665,
+    "seg": 63
+  },
+  {
+    "text": "instabilities",
+    "start": 241.582,
+    "end": 242.385,
+    "score": 0.4507,
+    "seg": 63
+  },
+  {
+    "text": "isolated",
+    "start": 242.465,
+    "end": 242.886,
+    "score": 0.0245,
+    "seg": 63
+  },
+  {
+    "text": "individuals",
+    "start": 242.907,
+    "end": 243.127,
+    "score": 0.1771,
+    "seg": 63
+  },
+  {
+    "text": "from",
+    "start": 243.127,
+    "end": 243.208,
+    "score": 0.0011,
+    "seg": 63
+  },
+  {
+    "text": "their",
+    "start": 243.208,
+    "end": 243.449,
+    "score": 0.1934,
+    "seg": 63
+  },
+  {
+    "text": "units",
+    "start": 243.509,
+    "end": 243.609,
+    "score": 0.0051,
+    "seg": 63
+  },
+  {
+    "text": "mid-transit.",
+    "start": 243.609,
+    "end": 243.81,
+    "score": 0.0197,
+    "seg": 63
+  },
+  {
+    "text": "Dorn",
+    "start": 244.07,
+    "end": 244.411,
+    "score": 0.25,
+    "seg": 64
+  },
+  {
+    "text": "was",
+    "start": 244.792,
+    "end": 244.992,
+    "score": 0.3332,
+    "seg": 64
+  },
+  {
+    "text": "displaced",
+    "start": 245.373,
+    "end": 246.455,
+    "score": 0.5552,
+    "seg": 64
+  },
+  {
+    "text": "into",
+    "start": 246.535,
+    "end": 247.236,
+    "score": 0.7496,
+    "seg": 64
+  },
+  {
+    "text": "a",
+    "start": 247.317,
+    "end": 247.337,
+    "score": 0.995,
+    "seg": 64
+  },
+  {
+    "text": "pocket",
+    "start": 247.437,
+    "end": 248.038,
+    "score": 0.3293,
+    "seg": 64
+  },
+  {
+    "text": "dimension",
+    "start": 248.078,
+    "end": 248.659,
+    "score": 0.4429,
+    "seg": 64
+  },
+  {
+    "text": "entirely.",
+    "start": 248.659,
+    "end": 248.94,
+    "score": 0.2495,
+    "seg": 64
+  },
+  {
+    "text": "Corridors",
+    "start": 249.542,
+    "end": 250.225,
+    "score": 0.3333,
+    "seg": 65
+  },
+  {
+    "text": "changed",
+    "start": 250.346,
+    "end": 250.808,
+    "score": 0.4992,
+    "seg": 65
+  },
+  {
+    "text": "geometry",
+    "start": 250.868,
+    "end": 251.592,
+    "score": 0.3055,
+    "seg": 65
+  },
+  {
+    "text": "around",
+    "start": 251.652,
+    "end": 252.034,
+    "score": 0.8022,
+    "seg": 65
+  },
+  {
+    "text": "active",
+    "start": 252.094,
+    "end": 252.335,
+    "score": 0.418,
+    "seg": 65
+  },
+  {
+    "text": "engagements.",
+    "start": 252.355,
+    "end": 253.179,
+    "score": 0.3855,
+    "seg": 65
+  },
+  {
+    "text": "That",
+    "start": 253.44,
+    "end": 253.601,
+    "score": 0.0,
+    "seg": 66
+  },
+  {
+    "text": "was",
+    "start": 253.661,
+    "end": 253.761,
+    "score": 0.3333,
+    "seg": 66
+  },
+  {
+    "text": "one",
+    "start": 253.802,
+    "end": 253.882,
+    "score": 0.3329,
+    "seg": 66
+  },
+  {
+    "text": "ship,",
+    "start": 253.882,
+    "end": 254.002,
+    "score": 0.2499,
+    "seg": 66
+  },
+  {
+    "text": "partially",
+    "start": 254.022,
+    "end": 254.263,
+    "score": 0.222,
+    "seg": 66
+  },
+  {
+    "text": "destabilized",
+    "start": 254.263,
+    "end": 254.805,
+    "score": 0.25,
+    "seg": 66
+  },
+  {
+    "text": "by",
+    "start": 254.805,
+    "end": 254.845,
+    "score": 0.0,
+    "seg": 66
+  },
+  {
+    "text": "prolonged",
+    "start": 254.925,
+    "end": 255.527,
+    "score": 0.3332,
+    "seg": 66
+  },
+  {
+    "text": "Warp",
+    "start": 255.527,
+    "end": 255.808,
+    "score": 0.25,
+    "seg": 66
+  },
+  {
+    "text": "exposure.",
+    "start": 255.828,
+    "end": 256.049,
+    "score": 0.125,
+    "seg": 66
+  },
+  {
+    "text": "The",
+    "start": 256.531,
+    "end": 256.671,
+    "score": 0.6604,
+    "seg": 67
+  },
+  {
+    "text": "open",
+    "start": 256.712,
+    "end": 256.872,
+    "score": 0.2411,
+    "seg": 67
+  },
+  {
+    "text": "Warp",
+    "start": 256.872,
+    "end": 257.033,
+    "score": 0.0002,
+    "seg": 67
+  },
+  {
+    "text": "produces",
+    "start": 257.053,
+    "end": 257.294,
+    "score": 0.0632,
+    "seg": 67
+  },
+  {
+    "text": "those",
+    "start": 257.294,
+    "end": 257.635,
+    "score": 0.3999,
+    "seg": 67
+  },
+  {
+    "text": "conditions",
+    "start": 257.736,
+    "end": 258.981,
+    "score": 0.3065,
+    "seg": 67
+  },
+  {
+    "text": "as",
+    "start": 258.981,
+    "end": 259.021,
+    "score": 0.4993,
+    "seg": 67
+  },
+  {
+    "text": "its",
+    "start": 259.021,
+    "end": 259.142,
+    "score": 0.3332,
+    "seg": 67
+  },
+  {
+    "text": "starting",
+    "start": 259.222,
+    "end": 259.704,
+    "score": 0.499,
+    "seg": 67
+  },
+  {
+    "text": "point,",
+    "start": 259.724,
+    "end": 260.005,
+    "score": 0.1998,
+    "seg": 67
+  },
+  {
+    "text": "not",
+    "start": 260.005,
+    "end": 260.066,
+    "score": 0.3324,
+    "seg": 67
+  },
+  {
+    "text": "its",
+    "start": 260.086,
+    "end": 260.186,
+    "score": 0.3332,
+    "seg": 67
+  },
+  {
+    "text": "worst",
+    "start": 260.307,
+    "end": 260.548,
+    "score": 0.0029,
+    "seg": 67
+  },
+  {
+    "text": "case.",
+    "start": 260.628,
+    "end": 260.829,
+    "score": 0.2498,
+    "seg": 67
+  },
+  {
+    "text": "No",
+    "start": 261.311,
+    "end": 261.391,
+    "score": 0.0001,
+    "seg": 68
+  },
+  {
+    "text": "military",
+    "start": 261.451,
+    "end": 262.114,
+    "score": 0.1177,
+    "seg": 68
+  },
+  {
+    "text": "force",
+    "start": 262.154,
+    "end": 262.294,
+    "score": 0.1998,
+    "seg": 68
+  },
+  {
+    "text": "has",
+    "start": 262.355,
+    "end": 262.515,
+    "score": 0.0,
+    "seg": 68
+  },
+  {
+    "text": "operated",
+    "start": 262.535,
+    "end": 263.097,
+    "score": 0.4979,
+    "seg": 68
+  },
+  {
+    "text": "effectively",
+    "start": 263.138,
+    "end": 263.84,
+    "score": 0.3599,
+    "seg": 68
+  },
+  {
+    "text": "inside",
+    "start": 263.92,
+    "end": 264.282,
+    "score": 0.1865,
+    "seg": 68
+  },
+  {
+    "text": "the",
+    "start": 264.302,
+    "end": 264.583,
+    "score": 0.7351,
+    "seg": 68
+  },
+  {
+    "text": "open",
+    "start": 264.603,
+    "end": 264.703,
+    "score": 0.0,
+    "seg": 68
+  },
+  {
+    "text": "Warp",
+    "start": 264.703,
+    "end": 264.864,
+    "score": 0.2499,
+    "seg": 68
+  },
+  {
+    "text": "without",
+    "start": 264.864,
+    "end": 265.346,
+    "score": 0.2855,
+    "seg": 68
+  },
+  {
+    "text": "navigation.",
+    "start": 265.346,
+    "end": 266.209,
+    "score": 0.3998,
+    "seg": 68
+  },
+  {
+    "text": "The",
+    "start": 266.79,
+    "end": 267.011,
+    "score": 0.3333,
+    "seg": 69
+  },
+  {
+    "text": "ones",
+    "start": 267.031,
+    "end": 267.191,
+    "score": 0.4994,
+    "seg": 69
+  },
+  {
+    "text": "that",
+    "start": 267.231,
+    "end": 267.371,
+    "score": 0.9646,
+    "seg": 69
+  },
+  {
+    "text": "lost",
+    "start": 267.451,
+    "end": 267.891,
+    "score": 0.213,
+    "seg": 69
+  },
+  {
+    "text": "control",
+    "start": 267.992,
+    "end": 268.392,
+    "score": 0.2855,
+    "seg": 69
+  },
+  {
+    "text": "going",
+    "start": 268.492,
+    "end": 269.633,
+    "score": 0.7819,
+    "seg": 69
+  },
+  {
+    "text": "in",
+    "start": 269.673,
+    "end": 269.753,
+    "score": 0.0,
+    "seg": 69
+  },
+  {
+    "text": "didn\u2019t",
+    "start": 269.833,
+    "end": 270.534,
+    "score": 0.5985,
+    "seg": 69
+  },
+  {
+    "text": "return",
+    "start": 270.574,
+    "end": 272.656,
+    "score": 0.9484,
+    "seg": 69
+  },
+  {
+    "text": "to",
+    "start": 272.676,
+    "end": 272.816,
+    "score": 0.5,
+    "seg": 69
+  },
+  {
+    "text": "write",
+    "start": 272.836,
+    "end": 273.097,
+    "score": 0.5999,
+    "seg": 69
+  },
+  {
+    "text": "up",
+    "start": 273.217,
+    "end": 273.277,
+    "score": 0.0,
+    "seg": 69
+  },
+  {
+    "text": "what",
+    "start": 273.457,
+    "end": 273.817,
+    "score": 0.4489,
+    "seg": 69
+  },
+  {
+    "text": "happened.",
+    "start": 273.918,
+    "end": 275.759,
+    "score": 0.6303,
+    "seg": 69
+  },
+  {
+    "text": "The",
+    "start": 276.28,
+    "end": 276.38,
+    "score": 0.0,
+    "seg": 70
+  },
+  {
+    "text": "environment",
+    "start": 276.4,
+    "end": 276.981,
+    "score": 0.4612,
+    "seg": 70
+  },
+  {
+    "text": "holds",
+    "start": 277.061,
+    "end": 277.202,
+    "score": 0.6315,
+    "seg": 70
+  },
+  {
+    "text": "that",
+    "start": 277.202,
+    "end": 277.502,
+    "score": 0.5028,
+    "seg": 70
+  },
+  {
+    "text": "record",
+    "start": 277.542,
+    "end": 277.863,
+    "score": 0.3385,
+    "seg": 70
+  },
+  {
+    "text": "not",
+    "start": 277.883,
+    "end": 278.023,
+    "score": 0.0001,
+    "seg": 70
+  },
+  {
+    "text": "because",
+    "start": 278.083,
+    "end": 279.205,
+    "score": 0.5714,
+    "seg": 70
+  },
+  {
+    "text": "it",
+    "start": 279.706,
+    "end": 280.187,
+    "score": 0.9986,
+    "seg": 70
+  },
+  {
+    "text": "kills",
+    "start": 280.647,
+    "end": 281.208,
+    "score": 0.3999,
+    "seg": 70
+  },
+  {
+    "text": "efficiently,",
+    "start": 281.309,
+    "end": 281.95,
+    "score": 0.3637,
+    "seg": 70
+  },
+  {
+    "text": "but",
+    "start": 282.37,
+    "end": 282.631,
+    "score": 0.0001,
+    "seg": 71
+  },
+  {
+    "text": "because",
+    "start": 282.651,
+    "end": 283.572,
+    "score": 0.5639,
+    "seg": 71
+  },
+  {
+    "text": "it",
+    "start": 284.033,
+    "end": 284.233,
+    "score": 0.9997,
+    "seg": 71
+  },
+  {
+    "text": "removes",
+    "start": 284.293,
+    "end": 285.595,
+    "score": 0.5713,
+    "seg": 71
+  },
+  {
+    "text": "the",
+    "start": 285.735,
+    "end": 285.855,
+    "score": 0.9308,
+    "seg": 71
+  },
+  {
+    "text": "preconditions",
+    "start": 285.855,
+    "end": 286.556,
+    "score": 0.4207,
+    "seg": 71
+  },
+  {
+    "text": "for",
+    "start": 286.576,
+    "end": 287.377,
+    "score": 0.3332,
+    "seg": 71
+  },
+  {
+    "text": "any",
+    "start": 287.437,
+    "end": 288.018,
+    "score": 0.995,
+    "seg": 71
+  },
+  {
+    "text": "organized",
+    "start": 288.178,
+    "end": 288.619,
+    "score": 0.3331,
+    "seg": 71
+  },
+  {
+    "text": "response.",
+    "start": 288.619,
+    "end": 289.16,
+    "score": 0.3711,
+    "seg": 71
+  },
+  {
+    "text": "You",
+    "start": 289.481,
+    "end": 289.802,
+    "score": 0.3333,
+    "seg": 72
+  },
+  {
+    "text": "cannot",
+    "start": 289.822,
+    "end": 290.385,
+    "score": 0.5,
+    "seg": 72
+  },
+  {
+    "text": "establish",
+    "start": 290.385,
+    "end": 290.767,
+    "score": 0.2222,
+    "seg": 72
+  },
+  {
+    "text": "a",
+    "start": 290.767,
+    "end": 290.787,
+    "score": 0.0,
+    "seg": 72
+  },
+  {
+    "text": "perimeter.",
+    "start": 290.827,
+    "end": 291.209,
+    "score": 0.2207,
+    "seg": 72
+  },
+  {
+    "text": "You",
+    "start": 291.692,
+    "end": 291.812,
+    "score": 0.0,
+    "seg": 73
+  },
+  {
+    "text": "cannot",
+    "start": 291.872,
+    "end": 292.676,
+    "score": 0.665,
+    "seg": 73
+  },
+  {
+    "text": "hold",
+    "start": 292.676,
+    "end": 293.982,
+    "score": 0.8415,
+    "seg": 73
+  },
+  {
+    "text": "ground.",
+    "start": 294.505,
+    "end": 295.389,
+    "score": 0.4982,
+    "seg": 73
+  },
+  {
+    "text": "You",
+    "start": 295.731,
+    "end": 295.812,
+    "score": 0.0001,
+    "seg": 74
+  },
+  {
+    "text": "cannot",
+    "start": 295.812,
+    "end": 296.034,
+    "score": 0.1642,
+    "seg": 74
+  },
+  {
+    "text": "advance",
+    "start": 296.054,
+    "end": 296.276,
+    "score": 0.0154,
+    "seg": 74
+  },
+  {
+    "text": "on",
+    "start": 296.316,
+    "end": 296.357,
+    "score": 0.0001,
+    "seg": 74
+  },
+  {
+    "text": "an",
+    "start": 296.357,
+    "end": 296.397,
+    "score": 0.0001,
+    "seg": 74
+  },
+  {
+    "text": "objective.",
+    "start": 296.397,
+    "end": 296.579,
+    "score": 0.1106,
+    "seg": 74
+  },
+  {
+    "text": "Staying",
+    "start": 297.041,
+    "end": 297.583,
+    "score": 0.5882,
+    "seg": 75
+  },
+  {
+    "text": "coherent",
+    "start": 297.804,
+    "end": 298.807,
+    "score": 0.4311,
+    "seg": 75
+  },
+  {
+    "text": "long",
+    "start": 298.868,
+    "end": 299.008,
+    "score": 0.5,
+    "seg": 75
+  },
+  {
+    "text": "enough",
+    "start": 299.008,
+    "end": 299.65,
+    "score": 0.5149,
+    "seg": 75
+  },
+  {
+    "text": "to",
+    "start": 299.67,
+    "end": 299.731,
+    "score": 0.0,
+    "seg": 75
+  },
+  {
+    "text": "matter",
+    "start": 299.771,
+    "end": 300.092,
+    "score": 0.3311,
+    "seg": 75
+  },
+  {
+    "text": "is",
+    "start": 300.152,
+    "end": 300.313,
+    "score": 0.9997,
+    "seg": 75
+  },
+  {
+    "text": "about",
+    "start": 300.353,
+    "end": 300.473,
+    "score": 0.1999,
+    "seg": 75
+  },
+  {
+    "text": "the",
+    "start": 300.493,
+    "end": 300.594,
+    "score": 0.3333,
+    "seg": 75
+  },
+  {
+    "text": "best",
+    "start": 301.156,
+    "end": 301.356,
+    "score": 0.5,
+    "seg": 75
+  },
+  {
+    "text": "available",
+    "start": 301.356,
+    "end": 301.738,
+    "score": 0.2222,
+    "seg": 75
+  },
+  {
+    "text": "outcome,",
+    "start": 301.818,
+    "end": 302.159,
+    "score": 0.2855,
+    "seg": 75
+  },
+  {
+    "text": "and",
+    "start": 302.622,
+    "end": 303.125,
+    "score": 0.3884,
+    "seg": 76
+  },
+  {
+    "text": "that\u2019s",
+    "start": 303.488,
+    "end": 303.992,
+    "score": 0.5946,
+    "seg": 76
+  },
+  {
+    "text": "not",
+    "start": 304.133,
+    "end": 304.556,
+    "score": 0.9926,
+    "seg": 76
+  },
+  {
+    "text": "a",
+    "start": 304.737,
+    "end": 304.758,
+    "score": 0.85,
+    "seg": 76
+  },
+  {
+    "text": "given.",
+    "start": 304.778,
+    "end": 305.04,
+    "score": 0.2894,
+    "seg": 76
+  },
+  {
+    "text": "Some",
+    "start": 306.605,
+    "end": 307.066,
+    "score": 0.7489,
+    "seg": 77
+  },
+  {
+    "text": "environments",
+    "start": 307.307,
+    "end": 309.474,
+    "score": 0.6162,
+    "seg": 77
+  },
+  {
+    "text": "kill",
+    "start": 309.795,
+    "end": 309.956,
+    "score": 0.3373,
+    "seg": 77
+  },
+  {
+    "text": "soldiers.",
+    "start": 310.016,
+    "end": 310.818,
+    "score": 0.6411,
+    "seg": 77
+  },
+  {
+    "text": "These",
+    "start": 311.721,
+    "end": 311.902,
+    "score": 0.5961,
+    "seg": 78
+  },
+  {
+    "text": "kill",
+    "start": 311.922,
+    "end": 312.203,
+    "score": 0.7955,
+    "seg": 78
+  },
+  {
+    "text": "the",
+    "start": 312.203,
+    "end": 312.283,
+    "score": 0.0001,
+    "seg": 78
+  },
+  {
+    "text": "structure",
+    "start": 312.323,
+    "end": 312.704,
+    "score": 0.3159,
+    "seg": 78
+  },
+  {
+    "text": "of",
+    "start": 312.784,
+    "end": 313.105,
+    "score": 0.0004,
+    "seg": 78
+  },
+  {
+    "text": "a",
+    "start": 313.165,
+    "end": 313.185,
+    "score": 0.995,
+    "seg": 78
+  },
+  {
+    "text": "mission",
+    "start": 313.265,
+    "end": 313.606,
+    "score": 0.146,
+    "seg": 78
+  },
+  {
+    "text": "before",
+    "start": 313.606,
+    "end": 313.727,
+    "score": 0.0001,
+    "seg": 78
+  },
+  {
+    "text": "the",
+    "start": 313.727,
+    "end": 314.008,
+    "score": 0.333,
+    "seg": 78
+  },
+  {
+    "text": "first",
+    "start": 314.028,
+    "end": 314.148,
+    "score": 0.1997,
+    "seg": 78
+  },
+  {
+    "text": "order",
+    "start": 314.148,
+    "end": 314.248,
+    "score": 0.1973,
+    "seg": 78
+  },
+  {
+    "text": "reaches",
+    "start": 314.268,
+    "end": 314.649,
+    "score": 0.2781,
+    "seg": 78
+  },
+  {
+    "text": "anyone.",
+    "start": 314.669,
+    "end": 314.89,
+    "score": 0.0,
+    "seg": 78
+  },
+  {
+    "text": "The",
+    "start": 315.071,
+    "end": 315.151,
+    "score": 0.9013,
+    "seg": 79
+  },
+  {
+    "text": "officers",
+    "start": 315.191,
+    "end": 315.572,
+    "score": 0.1252,
+    "seg": 79
+  },
+  {
+    "text": "who",
+    "start": 315.572,
+    "end": 315.633,
+    "score": 0.0,
+    "seg": 79
+  },
+  {
+    "text": "sent",
+    "start": 315.633,
+    "end": 315.753,
+    "score": 0.7495,
+    "seg": 79
+  },
+  {
+    "text": "men",
+    "start": 315.833,
+    "end": 315.994,
+    "score": 0.0,
+    "seg": 79
+  },
+  {
+    "text": "into",
+    "start": 316.034,
+    "end": 316.134,
+    "score": 0.307,
+    "seg": 79
+  },
+  {
+    "text": "these",
+    "start": 316.134,
+    "end": 316.235,
+    "score": 0.0004,
+    "seg": 79
+  },
+  {
+    "text": "places",
+    "start": 316.235,
+    "end": 316.375,
+    "score": 0.1658,
+    "seg": 79
+  },
+  {
+    "text": "had",
+    "start": 316.375,
+    "end": 316.455,
+    "score": 0.3333,
+    "seg": 79
+  },
+  {
+    "text": "the",
+    "start": 316.455,
+    "end": 316.516,
+    "score": 0.3333,
+    "seg": 79
+  },
+  {
+    "text": "parameters",
+    "start": 316.556,
+    "end": 316.917,
+    "score": 0.2061,
+    "seg": 79
+  },
+  {
+    "text": "in",
+    "start": 316.917,
+    "end": 316.957,
+    "score": 0.0,
+    "seg": 79
+  },
+  {
+    "text": "front",
+    "start": 316.957,
+    "end": 317.218,
+    "score": 0.2,
+    "seg": 79
+  },
+  {
+    "text": "of",
+    "start": 317.238,
+    "end": 317.318,
+    "score": 0.0003,
+    "seg": 79
+  },
+  {
+    "text": "them",
+    "start": 317.359,
+    "end": 317.479,
+    "score": 0.2497,
+    "seg": 79
+  },
+  {
+    "text": "and",
+    "start": 318.162,
+    "end": 318.384,
+    "score": 0.3333,
+    "seg": 80
+  },
+  {
+    "text": "sent",
+    "start": 318.626,
+    "end": 319.129,
+    "score": 0.4997,
+    "seg": 80
+  },
+  {
+    "text": "them",
+    "start": 319.209,
+    "end": 319.552,
+    "score": 0.7481,
+    "seg": 80
+  },
+  {
+    "text": "anyway.",
+    "start": 319.733,
+    "end": 320.659,
+    "score": 0.4993,
+    "seg": 80
+  },
+  {
+    "text": "The",
+    "start": 321.061,
+    "end": 321.181,
+    "score": 0.0,
+    "seg": 81
+  },
+  {
+    "text": "calculation",
+    "start": 321.201,
+    "end": 322.144,
+    "score": 0.1757,
+    "seg": 81
+  },
+  {
+    "text": "kept",
+    "start": 322.144,
+    "end": 322.265,
+    "score": 0.2238,
+    "seg": 81
+  },
+  {
+    "text": "producing",
+    "start": 322.305,
+    "end": 322.566,
+    "score": 0.2825,
+    "seg": 81
+  },
+  {
+    "text": "the",
+    "start": 322.626,
+    "end": 322.746,
+    "score": 0.3351,
+    "seg": 81
+  },
+  {
+    "text": "same",
+    "start": 322.766,
+    "end": 322.927,
+    "score": 0.2692,
+    "seg": 81
+  },
+  {
+    "text": "answer:",
+    "start": 322.927,
+    "end": 323.208,
+    "score": 0.0002,
+    "seg": 81
+  },
+  {
+    "text": "the",
+    "start": 323.208,
+    "end": 323.268,
+    "score": 0.0,
+    "seg": 81
+  },
+  {
+    "text": "alternative",
+    "start": 323.268,
+    "end": 323.569,
+    "score": 0.2711,
+    "seg": 81
+  },
+  {
+    "text": "cost",
+    "start": 323.569,
+    "end": 323.709,
+    "score": 0.2496,
+    "seg": 81
+  },
+  {
+    "text": "more.",
+    "start": 323.729,
+    "end": 323.93,
+    "score": 0.0,
+    "seg": 81
+  },
+  {
+    "text": "Usually",
+    "start": 324.892,
+    "end": 327.418,
+    "score": 0.4411,
+    "seg": 82
+  },
+  {
+    "text": "it",
+    "start": 327.458,
+    "end": 327.518,
+    "score": 0.4999,
+    "seg": 82
+  },
+  {
+    "text": "did.",
+    "start": 327.558,
+    "end": 328.14,
+    "score": 0.333,
+    "seg": 82
+  },
+  {
+    "text": "The",
+    "start": 328.561,
+    "end": 328.641,
+    "score": 0.9953,
+    "seg": 83
+  },
+  {
+    "text": "hard",
+    "start": 328.862,
+    "end": 329.103,
+    "score": 0.2499,
+    "seg": 83
+  },
+  {
+    "text": "places",
+    "start": 329.204,
+    "end": 329.585,
+    "score": 0.3332,
+    "seg": 83
+  },
+  {
+    "text": "stay",
+    "start": 329.666,
+    "end": 329.947,
+    "score": 0.2494,
+    "seg": 83
+  },
+  {
+    "text": "hard.",
+    "start": 329.987,
+    "end": 330.329,
+    "score": 0.2501,
+    "seg": 83
+  },
+  {
+    "text": "The",
+    "start": 330.772,
+    "end": 330.873,
+    "score": 0.7476,
+    "seg": 84
+  },
+  {
+    "text": "wars",
+    "start": 331.095,
+    "end": 331.922,
+    "score": 0.749,
+    "seg": 84
+  },
+  {
+    "text": "don\u2019t",
+    "start": 332.124,
+    "end": 332.427,
+    "score": 0.3969,
+    "seg": 84
+  },
+  {
+    "text": "stop.",
+    "start": 332.507,
+    "end": 332.608,
+    "score": 0.2499,
+    "seg": 84
+  },
+  {
+    "text": "Somebody",
+    "start": 332.99,
+    "end": 333.752,
+    "score": 0.3696,
+    "seg": 85
+  },
+  {
+    "text": "else",
+    "start": 333.852,
+    "end": 334.573,
+    "score": 0.7492,
+    "seg": 85
+  },
+  {
+    "text": "gets",
+    "start": 334.793,
+    "end": 335.735,
+    "score": 0.533,
+    "seg": 85
+  },
+  {
+    "text": "the",
+    "start": 336.095,
+    "end": 336.175,
+    "score": 0.9989,
+    "seg": 85
+  },
+  {
+    "text": "briefing",
+    "start": 336.256,
+    "end": 337.117,
+    "score": 0.5213,
+    "seg": 85
+  },
+  {
+    "text": "next.",
+    "start": 337.157,
+    "end": 338.539,
+    "score": 0.6282,
+    "seg": 85
+  },
+  {
+    "text": "Some",
+    "start": 339.3,
+    "end": 339.561,
+    "score": 0.5007,
+    "seg": 86
+  },
+  {
+    "text": "places",
+    "start": 339.601,
+    "end": 340.022,
+    "score": 0.3332,
+    "seg": 86
+  },
+  {
+    "text": "in",
+    "start": 340.042,
+    "end": 340.582,
+    "score": 0.9993,
+    "seg": 86
+  },
+  {
+    "text": "the",
+    "start": 340.863,
+    "end": 341.023,
+    "score": 0.3301,
+    "seg": 86
+  },
+  {
+    "text": "41st",
+    "start": 341.784,
+    "end": 341.985,
+    "score": 0.4993,
+    "seg": 86
+  },
+  {
+    "text": "Millennium",
+    "start": 342.045,
+    "end": 343.888,
+    "score": 0.6996,
+    "seg": 86
+  },
+  {
+    "text": "don\u2019t",
+    "start": 344.028,
+    "end": 344.228,
+    "score": 0.5576,
+    "seg": 86
+  },
+  {
+    "text": "just",
+    "start": 344.288,
+    "end": 344.509,
+    "score": 0.4015,
+    "seg": 86
+  },
+  {
+    "text": "kill",
+    "start": 344.509,
+    "end": 344.629,
+    "score": 0.0,
+    "seg": 86
+  },
+  {
+    "text": "soldiers.",
+    "start": 344.629,
+    "end": 344.949,
+    "score": 0.671,
+    "seg": 86
+  },
+  {
+    "text": "They",
+    "start": 345.571,
+    "end": 345.671,
+    "score": 0.5857,
+    "seg": 87
+  },
+  {
+    "text": "take",
+    "start": 345.691,
+    "end": 345.771,
+    "score": 0.4994,
+    "seg": 87
+  },
+  {
+    "text": "apart",
+    "start": 345.771,
+    "end": 345.952,
+    "score": 0.1995,
+    "seg": 87
+  },
+  {
+    "text": "the",
+    "start": 345.972,
+    "end": 346.032,
+    "score": 0.3318,
+    "seg": 87
+  },
+  {
+    "text": "conditions",
+    "start": 346.052,
+    "end": 346.393,
+    "score": 0.0855,
+    "seg": 87
+  },
+  {
+    "text": "under",
+    "start": 346.454,
+    "end": 346.714,
+    "score": 0.2956,
+    "seg": 87
+  },
+  {
+    "text": "which",
+    "start": 346.714,
+    "end": 346.855,
+    "score": 0.0015,
+    "seg": 87
+  },
+  {
+    "text": "a",
+    "start": 346.875,
+    "end": 346.895,
+    "score": 0.9951,
+    "seg": 87
+  },
+  {
+    "text": "soldier",
+    "start": 346.895,
+    "end": 347.076,
+    "score": 0.0782,
+    "seg": 87
+  },
+  {
+    "text": "can",
+    "start": 347.096,
+    "end": 347.256,
+    "score": 0.2999,
+    "seg": 87
+  },
+  {
+    "text": "function",
+    "start": 347.256,
+    "end": 347.698,
+    "score": 0.3722,
+    "seg": 87
+  },
+  {
+    "text": "in",
+    "start": 347.818,
+    "end": 347.919,
+    "score": 0.0,
+    "seg": 87
+  },
+  {
+    "text": "the",
+    "start": 347.959,
+    "end": 348.039,
+    "score": 0.0001,
+    "seg": 87
+  },
+  {
+    "text": "first",
+    "start": 348.079,
+    "end": 348.199,
+    "score": 0.1928,
+    "seg": 87
+  },
+  {
+    "text": "place.",
+    "start": 348.199,
+    "end": 348.36,
+    "score": 0.208,
+    "seg": 87
+  },
+  {
+    "text": "Training,",
+    "start": 348.4,
+    "end": 349.184,
+    "score": 0.2885,
+    "seg": 88
+  },
+  {
+    "text": "equipment,",
+    "start": 349.264,
+    "end": 349.666,
+    "score": 0.3919,
+    "seg": 88
+  },
+  {
+    "text": "formation,",
+    "start": 349.666,
+    "end": 350.229,
+    "score": 0.4443,
+    "seg": 88
+  },
+  {
+    "text": "doctrine,",
+    "start": 350.249,
+    "end": 350.631,
+    "score": 0.2522,
+    "seg": 88
+  },
+  {
+    "text": "gone",
+    "start": 350.631,
+    "end": 350.772,
+    "score": 0.4983,
+    "seg": 88
+  },
+  {
+    "text": "before",
+    "start": 350.772,
+    "end": 351.174,
+    "score": 0.1665,
+    "seg": 88
+  },
+  {
+    "text": "the",
+    "start": 351.214,
+    "end": 351.274,
+    "score": 0.1694,
+    "seg": 88
+  },
+  {
+    "text": "first",
+    "start": 351.455,
+    "end": 351.837,
+    "score": 0.3995,
+    "seg": 88
+  },
+  {
+    "text": "contact",
+    "start": 351.837,
+    "end": 352.158,
+    "score": 0.2853,
+    "seg": 88
+  },
+  {
+    "text": "report.",
+    "start": 352.219,
+    "end": 352.359,
+    "score": 0.1664,
+    "seg": 88
+  },
+  {
+    "text": "These",
+    "start": 352.701,
+    "end": 352.861,
+    "score": 0.799,
+    "seg": 89
+  },
+  {
+    "text": "aren\u2019t",
+    "start": 352.901,
+    "end": 353.102,
+    "score": 0.2007,
+    "seg": 89
+  },
+  {
+    "text": "the",
+    "start": 353.122,
+    "end": 353.202,
+    "score": 0.3091,
+    "seg": 89
+  },
+  {
+    "text": "worst",
+    "start": 353.202,
+    "end": 353.483,
+    "score": 0.3998,
+    "seg": 89
+  },
+  {
+    "text": "battlefields",
+    "start": 353.543,
+    "end": 354.747,
+    "score": 0.4165,
+    "seg": 89
+  },
+  {
+    "text": "because",
+    "start": 354.747,
+    "end": 355.028,
+    "score": 0.4284,
+    "seg": 89
+  },
+  {
+    "text": "of",
+    "start": 355.068,
+    "end": 355.108,
+    "score": 0.0,
+    "seg": 89
+  },
+  {
+    "text": "the",
+    "start": 355.148,
+    "end": 355.208,
+    "score": 0.3331,
+    "seg": 89
+  },
+  {
+    "text": "numbers.",
+    "start": 355.208,
+    "end": 355.59,
+    "score": 0.1428,
+    "seg": 89
+  },
+  {
+    "text": "They\u2019re",
+    "start": 355.971,
+    "end": 357.275,
+    "score": 0.8543,
+    "seg": 90
+  },
+  {
+    "text": "the",
+    "start": 359.262,
+    "end": 359.323,
+    "score": 0.9998,
+    "seg": 90
+  },
+  {
+    "text": "worst",
+    "start": 359.443,
+    "end": 361.189,
+    "score": 0.807,
+    "seg": 90
+  },
+  {
+    "text": "because",
+    "start": 361.531,
+    "end": 361.692,
+    "score": 0.1427,
+    "seg": 91
+  },
+  {
+    "text": "the",
+    "start": 361.712,
+    "end": 361.772,
+    "score": 0.0,
+    "seg": 91
+  },
+  {
+    "text": "environment",
+    "start": 361.792,
+    "end": 362.074,
+    "score": 0.1787,
+    "seg": 91
+  },
+  {
+    "text": "was",
+    "start": 362.074,
+    "end": 362.134,
+    "score": 0.0,
+    "seg": 91
+  },
+  {
+    "text": "already",
+    "start": 362.134,
+    "end": 362.275,
+    "score": 0.0084,
+    "seg": 91
+  },
+  {
+    "text": "doing",
+    "start": 362.275,
+    "end": 362.375,
+    "score": 0.1997,
+    "seg": 91
+  },
+  {
+    "text": "the",
+    "start": 362.375,
+    "end": 362.435,
+    "score": 0.0001,
+    "seg": 91
+  },
+  {
+    "text": "killing",
+    "start": 362.435,
+    "end": 362.717,
+    "score": 0.1427,
+    "seg": 91
+  },
+  {
+    "text": "before",
+    "start": 362.717,
+    "end": 362.857,
+    "score": 0.0,
+    "seg": 91
+  },
+  {
+    "text": "the",
+    "start": 362.857,
+    "end": 362.938,
+    "score": 0.3324,
+    "seg": 91
+  },
+  {
+    "text": "enemy",
+    "start": 362.958,
+    "end": 363.058,
+    "score": 0.0004,
+    "seg": 91
+  },
+  {
+    "text": "showed",
+    "start": 363.058,
+    "end": 363.179,
+    "score": 0.1641,
+    "seg": 91
+  },
+  {
+    "text": "up.",
+    "start": 363.199,
+    "end": 363.239,
+    "score": 0.0,
+    "seg": 91
+  },
+  {
+    "text": "Number",
+    "start": 363.582,
+    "end": 363.924,
+    "score": 0.3299,
+    "seg": 92
+  },
+  {
+    "text": "Six,",
+    "start": 363.964,
+    "end": 364.045,
+    "score": 0.333,
+    "seg": 92
+  },
+  {
+    "text": "Catachan.",
+    "start": 364.045,
+    "end": 364.548,
+    "score": 0.125,
+    "seg": 92
+  },
+  {
+    "text": "Before",
+    "start": 364.891,
+    "end": 365.071,
+    "score": 0.1628,
+    "seg": 93
+  },
+  {
+    "text": "Catachan",
+    "start": 365.071,
+    "end": 365.353,
+    "score": 0.244,
+    "seg": 93
+  },
+  {
+    "text": "produced",
+    "start": 365.393,
+    "end": 366.257,
+    "score": 0.1249,
+    "seg": 93
+  },
+  {
+    "text": "the",
+    "start": 366.317,
+    "end": 366.397,
+    "score": 0.9905,
+    "seg": 93
+  },
+  {
+    "text": "Imperium\u2019s",
+    "start": 366.397,
+    "end": 366.618,
+    "score": 0.1047,
+    "seg": 93
+  },
+  {
+    "text": "most",
+    "start": 366.658,
+    "end": 366.819,
+    "score": 0.2439,
+    "seg": 93
+  },
+  {
+    "text": "capable",
+    "start": 366.839,
+    "end": 367.181,
+    "score": 0.2854,
+    "seg": 93
+  },
+  {
+    "text": "baseline",
+    "start": 367.281,
+    "end": 368.145,
+    "score": 0.4998,
+    "seg": 93
+  },
+  {
+    "text": "human",
+    "start": 368.225,
+    "end": 368.527,
+    "score": 0.3964,
+    "seg": 93
+  },
+  {
+    "text": "soldiers,",
+    "start": 368.587,
+    "end": 369.069,
+    "score": 0.0909,
+    "seg": 93
+  },
+  {
+    "text": "the",
+    "start": 369.49,
+    "end": 369.911,
+    "score": 0.3333,
+    "seg": 94
+  },
+  {
+    "text": "planet",
+    "start": 369.952,
+    "end": 370.373,
+    "score": 0.2663,
+    "seg": 94
+  },
+  {
+    "text": "had",
+    "start": 370.413,
+    "end": 370.613,
+    "score": 0.3328,
+    "seg": 94
+  },
+  {
+    "text": "a",
+    "start": 370.693,
+    "end": 370.713,
+    "score": 0.0048,
+    "seg": 94
+  },
+  {
+    "text": "simpler",
+    "start": 370.733,
+    "end": 371.215,
+    "score": 0.198,
+    "seg": 94
+  },
+  {
+    "text": "reputation.",
+    "start": 371.255,
+    "end": 373.059,
+    "score": 0.6047,
+    "seg": 94
+  },
+  {
+    "text": "It",
+    "start": 373.801,
+    "end": 373.981,
+    "score": 0.4999,
+    "seg": 95
+  },
+  {
+    "text": "killed",
+    "start": 374.121,
+    "end": 376.647,
+    "score": 0.8309,
+    "seg": 95
+  },
+  {
+    "text": "everything",
+    "start": 376.688,
+    "end": 379.695,
+    "score": 0.7054,
+    "seg": 95
+  },
+  {
+    "text": "on",
+    "start": 380.156,
+    "end": 380.256,
+    "score": 0.4998,
+    "seg": 95
+  },
+  {
+    "text": "it.",
+    "start": 380.276,
+    "end": 380.457,
+    "score": 0.9995,
+    "seg": 95
+  },
+  {
+    "text": "The",
+    "start": 382.0,
+    "end": 382.08,
+    "score": 0.6351,
+    "seg": 96
+  },
+  {
+    "text": "jungle",
+    "start": 382.08,
+    "end": 382.421,
+    "score": 0.4989,
+    "seg": 96
+  },
+  {
+    "text": "didn\u2019t",
+    "start": 382.522,
+    "end": 383.344,
+    "score": 0.5981,
+    "seg": 96
+  },
+  {
+    "text": "evolve",
+    "start": 383.364,
+    "end": 384.306,
+    "score": 0.4955,
+    "seg": 96
+  },
+  {
+    "text": "around",
+    "start": 384.367,
+    "end": 385.67,
+    "score": 0.4999,
+    "seg": 96
+  },
+  {
+    "text": "human",
+    "start": 385.75,
+    "end": 386.713,
+    "score": 0.7334,
+    "seg": 96
+  },
+  {
+    "text": "warfare.",
+    "start": 386.994,
+    "end": 388.217,
+    "score": 0.5638,
+    "seg": 96
+  },
+  {
+    "text": "It",
+    "start": 389.521,
+    "end": 389.561,
+    "score": 0.4991,
+    "seg": 97
+  },
+  {
+    "text": "spent",
+    "start": 389.863,
+    "end": 390.003,
+    "score": 0.2,
+    "seg": 97
+  },
+  {
+    "text": "millions",
+    "start": 390.064,
+    "end": 391.149,
+    "score": 0.4406,
+    "seg": 97
+  },
+  {
+    "text": "of",
+    "start": 391.149,
+    "end": 391.19,
+    "score": 0.0,
+    "seg": 97
+  },
+  {
+    "text": "years",
+    "start": 391.19,
+    "end": 391.33,
+    "score": 0.2001,
+    "seg": 97
+  },
+  {
+    "text": "optimizing",
+    "start": 391.511,
+    "end": 392.215,
+    "score": 0.2,
+    "seg": 97
+  },
+  {
+    "text": "toward",
+    "start": 392.255,
+    "end": 392.577,
+    "score": 0.6663,
+    "seg": 97
+  },
+  {
+    "text": "a",
+    "start": 392.577,
+    "end": 392.597,
+    "score": 0.0,
+    "seg": 97
+  },
+  {
+    "text": "single",
+    "start": 392.597,
+    "end": 392.838,
+    "score": 0.3305,
+    "seg": 97
+  },
+  {
+    "text": "outcome,",
+    "start": 392.838,
+    "end": 392.979,
+    "score": 0.0045,
+    "seg": 97
+  },
+  {
+    "text": "and",
+    "start": 393.361,
+    "end": 393.481,
+    "score": 0.0,
+    "seg": 98
+  },
+  {
+    "text": "anything",
+    "start": 393.622,
+    "end": 394.103,
+    "score": 0.8789,
+    "seg": 98
+  },
+  {
+    "text": "with",
+    "start": 394.103,
+    "end": 394.183,
+    "score": 0.499,
+    "seg": 98
+  },
+  {
+    "text": "a",
+    "start": 394.183,
+    "end": 394.204,
+    "score": 0.9974,
+    "seg": 98
+  },
+  {
+    "text": "nervous",
+    "start": 394.244,
+    "end": 394.665,
+    "score": 0.1428,
+    "seg": 98
+  },
+  {
+    "text": "system",
+    "start": 394.745,
+    "end": 395.368,
+    "score": 0.1665,
+    "seg": 98
+  },
+  {
+    "text": "is",
+    "start": 395.428,
+    "end": 395.608,
+    "score": 0.0,
+    "seg": 98
+  },
+  {
+    "text": "on",
+    "start": 395.628,
+    "end": 395.709,
+    "score": 0.9991,
+    "seg": 98
+  },
+  {
+    "text": "the",
+    "start": 395.849,
+    "end": 395.929,
+    "score": 0.9925,
+    "seg": 98
+  },
+  {
+    "text": "wrong",
+    "start": 395.99,
+    "end": 396.812,
+    "score": 0.3992,
+    "seg": 98
+  },
+  {
+    "text": "side",
+    "start": 396.853,
+    "end": 397.174,
+    "score": 0.2498,
+    "seg": 98
+  },
+  {
+    "text": "of",
+    "start": 397.194,
+    "end": 397.274,
+    "score": 0.4995,
+    "seg": 98
+  },
+  {
+    "text": "that",
+    "start": 397.274,
+    "end": 397.816,
+    "score": 0.4984,
+    "seg": 98
+  },
+  {
+    "text": "outcome.",
+    "start": 397.856,
+    "end": 398.418,
+    "score": 0.5617,
+    "seg": 98
+  },
+  {
+    "text": "Humidity",
+    "start": 399.02,
+    "end": 399.181,
+    "score": 0.0188,
+    "seg": 99
+  },
+  {
+    "text": "wrecks",
+    "start": 399.181,
+    "end": 399.382,
+    "score": 0.011,
+    "seg": 99
+  },
+  {
+    "text": "unprotected",
+    "start": 399.442,
+    "end": 400.206,
+    "score": 0.4778,
+    "seg": 99
+  },
+  {
+    "text": "electronics",
+    "start": 400.246,
+    "end": 401.733,
+    "score": 0.5002,
+    "seg": 99
+  },
+  {
+    "text": "inside",
+    "start": 401.733,
+    "end": 402.155,
+    "score": 0.5027,
+    "seg": 99
+  },
+  {
+    "text": "a",
+    "start": 402.195,
+    "end": 402.216,
+    "score": 0.0,
+    "seg": 99
+  },
+  {
+    "text": "few",
+    "start": 402.216,
+    "end": 402.457,
+    "score": 0.0001,
+    "seg": 99
+  },
+  {
+    "text": "hours.",
+    "start": 402.557,
+    "end": 402.919,
+    "score": 0.0,
+    "seg": 99
+  },
+  {
+    "text": "Las-charge",
+    "start": 403.321,
+    "end": 403.864,
+    "score": 0.2868,
+    "seg": 100
+  },
+  {
+    "text": "packs",
+    "start": 404.487,
+    "end": 405.071,
+    "score": 0.3998,
+    "seg": 100
+  },
+  {
+    "text": "corrode.",
+    "start": 405.111,
+    "end": 406.137,
+    "score": 0.495,
+    "seg": 100
+  },
+  {
+    "text": "Optical",
+    "start": 407.142,
+    "end": 409.07,
+    "score": 0.857,
+    "seg": 101
+  },
+  {
+    "text": "scopes",
+    "start": 409.15,
+    "end": 409.491,
+    "score": 0.3333,
+    "seg": 101
+  },
+  {
+    "text": "fog",
+    "start": 409.511,
+    "end": 409.652,
+    "score": 0.3332,
+    "seg": 101
+  },
+  {
+    "text": "permanently.",
+    "start": 410.114,
+    "end": 411.319,
+    "score": 0.561,
+    "seg": 101
+  },
+  {
+    "text": "something",
+    "start": 412.445,
+    "end": 412.966,
+    "score": 0.2687,
+    "seg": 103
+  },
+  {
+    "text": "the",
+    "start": 412.966,
+    "end": 413.206,
+    "score": 0.0003,
+    "seg": 103
+  },
+  {
+    "text": "Mechanicus",
+    "start": 413.366,
+    "end": 414.347,
+    "score": 0.4903,
+    "seg": 103
+  },
+  {
+    "text": "has",
+    "start": 414.407,
+    "end": 414.567,
+    "score": 0.3332,
+    "seg": 103
+  },
+  {
+    "text": "catalogued",
+    "start": 414.587,
+    "end": 415.348,
+    "score": 0.3966,
+    "seg": 103
+  },
+  {
+    "text": "and",
+    "start": 415.408,
+    "end": 415.548,
+    "score": 0.0,
+    "seg": 103
+  },
+  {
+    "text": "never",
+    "start": 415.548,
+    "end": 415.829,
+    "score": 0.3996,
+    "seg": 103
+  },
+  {
+    "text": "adequately",
+    "start": 415.869,
+    "end": 416.569,
+    "score": 0.4002,
+    "seg": 103
+  },
+  {
+    "text": "explained.",
+    "start": 416.609,
+    "end": 416.99,
+    "score": 0.2215,
+    "seg": 103
+  },
+  {
+    "text": "That\u2019s",
+    "start": 417.511,
+    "end": 418.073,
+    "score": 0.824,
+    "seg": 104
+  },
+  {
+    "text": "before",
+    "start": 418.153,
+    "end": 419.075,
+    "score": 0.5666,
+    "seg": 104
+  },
+  {
+    "text": "anything",
+    "start": 419.176,
+    "end": 420.5,
+    "score": 0.375,
+    "seg": 104
+  },
+  {
+    "text": "in",
+    "start": 421.021,
+    "end": 421.101,
+    "score": 0.9989,
+    "seg": 104
+  },
+  {
+    "text": "the",
+    "start": 421.222,
+    "end": 421.322,
+    "score": 0.0056,
+    "seg": 104
+  },
+  {
+    "text": "jungle",
+    "start": 421.542,
+    "end": 422.325,
+    "score": 0.3333,
+    "seg": 104
+  },
+  {
+    "text": "decides",
+    "start": 422.365,
+    "end": 423.328,
+    "score": 0.6053,
+    "seg": 104
+  },
+  {
+    "text": "to",
+    "start": 423.388,
+    "end": 423.608,
+    "score": 0.4993,
+    "seg": 104
+  },
+  {
+    "text": "engage.",
+    "start": 423.628,
+    "end": 423.969,
+    "score": 0.1675,
+    "seg": 104
+  },
+  {
+    "text": "Catachan",
+    "start": 424.391,
+    "end": 424.812,
+    "score": 0.25,
+    "seg": 105
+  },
+  {
+    "text": "devil",
+    "start": 424.812,
+    "end": 424.973,
+    "score": 0.1998,
+    "seg": 105
+  },
+  {
+    "text": "ants",
+    "start": 424.973,
+    "end": 425.213,
+    "score": 0.4995,
+    "seg": 105
+  },
+  {
+    "text": "dissolve",
+    "start": 425.233,
+    "end": 425.855,
+    "score": 0.249,
+    "seg": 105
+  },
+  {
+    "text": "flesh",
+    "start": 425.855,
+    "end": 426.176,
+    "score": 0.4943,
+    "seg": 105
+  },
+  {
+    "text": "faster",
+    "start": 426.196,
+    "end": 426.457,
+    "score": 0.1669,
+    "seg": 105
+  },
+  {
+    "text": "than",
+    "start": 426.477,
+    "end": 426.578,
+    "score": 0.5198,
+    "seg": 105
+  },
+  {
+    "text": "combat-grade",
+    "start": 426.598,
+    "end": 427.2,
+    "score": 0.001,
+    "seg": 105
+  },
+  {
+    "text": "acid.",
+    "start": 427.2,
+    "end": 427.28,
+    "score": 0.0244,
+    "seg": 105
+  },
+  {
+    "text": "The",
+    "start": 427.28,
+    "end": 427.561,
+    "score": 0.3393,
+    "seg": 106
+  },
+  {
+    "text": "Catachan",
+    "start": 427.621,
+    "end": 428.806,
+    "score": 0.25,
+    "seg": 106
+  },
+  {
+    "text": "devil",
+    "start": 428.967,
+    "end": 429.228,
+    "score": 0.3999,
+    "seg": 106
+  },
+  {
+    "text": "itself,",
+    "start": 429.248,
+    "end": 429.549,
+    "score": 0.3331,
+    "seg": 106
+  },
+  {
+    "text": "six",
+    "start": 429.569,
+    "end": 429.77,
+    "score": 0.3312,
+    "seg": 106
+  },
+  {
+    "text": "limbs,",
+    "start": 429.81,
+    "end": 430.071,
+    "score": 0.3999,
+    "seg": 106
+  },
+  {
+    "text": "chitin",
+    "start": 430.412,
+    "end": 431.115,
+    "score": 0.0002,
+    "seg": 106
+  },
+  {
+    "text": "thick",
+    "start": 431.195,
+    "end": 431.536,
+    "score": 0.3981,
+    "seg": 106
+  },
+  {
+    "text": "enough",
+    "start": 431.577,
+    "end": 432.058,
+    "score": 0.8313,
+    "seg": 106
+  },
+  {
+    "text": "to",
+    "start": 432.641,
+    "end": 432.681,
+    "score": 0.0032,
+    "seg": 107
+  },
+  {
+    "text": "deflect",
+    "start": 432.681,
+    "end": 432.842,
+    "score": 0.2757,
+    "seg": 107
+  },
+  {
+    "text": "small",
+    "start": 432.882,
+    "end": 433.164,
+    "score": 0.4112,
+    "seg": 107
+  },
+  {
+    "text": "arms",
+    "start": 433.566,
+    "end": 433.887,
+    "score": 0.2497,
+    "seg": 107
+  },
+  {
+    "text": "fire,",
+    "start": 433.908,
+    "end": 434.028,
+    "score": 0.2499,
+    "seg": 107
+  },
+  {
+    "text": "hunts",
+    "start": 434.068,
+    "end": 434.31,
+    "score": 0.5943,
+    "seg": 107
+  },
+  {
+    "text": "by",
+    "start": 434.732,
+    "end": 434.792,
+    "score": 0.0,
+    "seg": 107
+  },
+  {
+    "text": "thermal",
+    "start": 434.973,
+    "end": 435.315,
+    "score": 0.2641,
+    "seg": 107
+  },
+  {
+    "text": "signature.",
+    "start": 435.355,
+    "end": 435.797,
+    "score": 0.3413,
+    "seg": 107
+  },
+  {
+    "text": "Strangler",
+    "start": 436.58,
+    "end": 437.462,
+    "score": 0.6663,
+    "seg": 108
+  },
+  {
+    "text": "plants",
+    "start": 437.502,
+    "end": 437.802,
+    "score": 0.0961,
+    "seg": 108
+  },
+  {
+    "text": "drop",
+    "start": 437.802,
+    "end": 438.643,
+    "score": 0.4961,
+    "seg": 108
+  },
+  {
+    "text": "tendrils",
+    "start": 438.803,
+    "end": 439.144,
+    "score": 0.5,
+    "seg": 108
+  },
+  {
+    "text": "that",
+    "start": 439.144,
+    "end": 439.364,
+    "score": 0.4995,
+    "seg": 108
+  },
+  {
+    "text": "sever",
+    "start": 439.404,
+    "end": 439.805,
+    "score": 0.3988,
+    "seg": 108
+  },
+  {
+    "text": "limbs",
+    "start": 439.845,
+    "end": 440.125,
+    "score": 0.3992,
+    "seg": 108
+  },
+  {
+    "text": "before",
+    "start": 440.426,
+    "end": 440.666,
+    "score": 0.3332,
+    "seg": 108
+  },
+  {
+    "text": "the",
+    "start": 440.706,
+    "end": 441.007,
+    "score": 0.666,
+    "seg": 108
+  },
+  {
+    "text": "soldier",
+    "start": 441.047,
+    "end": 441.527,
+    "score": 0.4208,
+    "seg": 108
+  },
+  {
+    "text": "registers",
+    "start": 441.587,
+    "end": 442.288,
+    "score": 0.4423,
+    "seg": 108
+  },
+  {
+    "text": "contact.",
+    "start": 442.489,
+    "end": 443.25,
+    "score": 0.2968,
+    "seg": 108
+  },
+  {
+    "text": "Miral",
+    "start": 443.95,
+    "end": 445.372,
+    "score": 0.495,
+    "seg": 109
+  },
+  {
+    "text": "land",
+    "start": 445.472,
+    "end": 445.712,
+    "score": 0.5651,
+    "seg": 109
+  },
+  {
+    "text": "sharks",
+    "start": 445.732,
+    "end": 446.233,
+    "score": 0.3332,
+    "seg": 109
+  },
+  {
+    "text": "track",
+    "start": 446.313,
+    "end": 447.094,
+    "score": 0.5999,
+    "seg": 109
+  },
+  {
+    "text": "ground",
+    "start": 447.134,
+    "end": 450.698,
+    "score": 0.7105,
+    "seg": 109
+  },
+  {
+    "text": "vibration.",
+    "start": 450.818,
+    "end": 452.42,
+    "score": 0.4567,
+    "seg": 109
+  },
+  {
+    "text": "Every",
+    "start": 452.6,
+    "end": 452.781,
+    "score": 0.0,
+    "seg": 110
+  },
+  {
+    "text": "shadow",
+    "start": 452.781,
+    "end": 452.901,
+    "score": 0.1667,
+    "seg": 110
+  },
+  {
+    "text": "has",
+    "start": 452.942,
+    "end": 453.002,
+    "score": 0.0,
+    "seg": 110
+  },
+  {
+    "text": "been",
+    "start": 453.002,
+    "end": 453.102,
+    "score": 0.0,
+    "seg": 110
+  },
+  {
+    "text": "occupying",
+    "start": 453.102,
+    "end": 453.323,
+    "score": 0.0444,
+    "seg": 110
+  },
+  {
+    "text": "it",
+    "start": 453.323,
+    "end": 453.384,
+    "score": 0.498,
+    "seg": 110
+  },
+  {
+    "text": "longer",
+    "start": 453.384,
+    "end": 453.504,
+    "score": 0.1653,
+    "seg": 110
+  },
+  {
+    "text": "than",
+    "start": 453.504,
+    "end": 453.665,
+    "score": 0.539,
+    "seg": 110
+  },
+  {
+    "text": "any",
+    "start": 453.705,
+    "end": 453.765,
+    "score": 0.3331,
+    "seg": 110
+  },
+  {
+    "text": "patrol",
+    "start": 453.765,
+    "end": 453.926,
+    "score": 0.0002,
+    "seg": 110
+  },
+  {
+    "text": "has",
+    "start": 453.926,
+    "end": 453.986,
+    "score": 0.0021,
+    "seg": 110
+  },
+  {
+    "text": "been",
+    "start": 453.986,
+    "end": 454.087,
+    "score": 0.004,
+    "seg": 110
+  },
+  {
+    "text": "searching",
+    "start": 454.087,
+    "end": 454.388,
+    "score": 0.207,
+    "seg": 110
+  },
+  {
+    "text": "it.",
+    "start": 454.388,
+    "end": 454.469,
+    "score": 0.0048,
+    "seg": 110
+  },
+  {
+    "text": "Forces",
+    "start": 454.971,
+    "end": 455.131,
+    "score": 0.3846,
+    "seg": 111
+  },
+  {
+    "text": "without",
+    "start": 455.131,
+    "end": 455.592,
+    "score": 0.2856,
+    "seg": 111
+  },
+  {
+    "text": "Catachan-born",
+    "start": 455.733,
+    "end": 456.655,
+    "score": 0.3326,
+    "seg": 111
+  },
+  {
+    "text": "soldiers",
+    "start": 456.755,
+    "end": 457.778,
+    "score": 0.4993,
+    "seg": 111
+  },
+  {
+    "text": "operate",
+    "start": 457.898,
+    "end": 458.46,
+    "score": 0.1428,
+    "seg": 111
+  },
+  {
+    "text": "at",
+    "start": 458.74,
+    "end": 458.841,
+    "score": 0.9998,
+    "seg": 111
+  },
+  {
+    "text": "a",
+    "start": 458.921,
+    "end": 458.941,
+    "score": 0.0002,
+    "seg": 111
+  },
+  {
+    "text": "deficit",
+    "start": 459.061,
+    "end": 459.603,
+    "score": 0.5623,
+    "seg": 111
+  },
+  {
+    "text": "that",
+    "start": 459.623,
+    "end": 459.763,
+    "score": 0.2499,
+    "seg": 111
+  },
+  {
+    "text": "no",
+    "start": 459.763,
+    "end": 459.904,
+    "score": 0.4998,
+    "seg": 111
+  },
+  {
+    "text": "amount",
+    "start": 460.024,
+    "end": 460.766,
+    "score": 0.6666,
+    "seg": 111
+  },
+  {
+    "text": "of",
+    "start": 461.026,
+    "end": 461.107,
+    "score": 0.0,
+    "seg": 111
+  },
+  {
+    "text": "preparation",
+    "start": 461.107,
+    "end": 461.648,
+    "score": 0.6239,
+    "seg": 111
+  },
+  {
+    "text": "closes.",
+    "start": 461.648,
+    "end": 462.129,
+    "score": 0.5699,
+    "seg": 111
+  },
+  {
+    "text": "The",
+    "start": 462.551,
+    "end": 462.632,
+    "score": 0.3333,
+    "seg": 112
+  },
+  {
+    "text": "jungle",
+    "start": 462.692,
+    "end": 462.873,
+    "score": 0.1697,
+    "seg": 112
+  },
+  {
+    "text": "doesn\u2019t",
+    "start": 462.873,
+    "end": 463.014,
+    "score": 0.4995,
+    "seg": 112
+  },
+  {
+    "text": "telegraph",
+    "start": 463.074,
+    "end": 463.96,
+    "score": 0.4414,
+    "seg": 112
+  },
+  {
+    "text": "its",
+    "start": 464.1,
+    "end": 464.704,
+    "score": 0.3333,
+    "seg": 112
+  },
+  {
+    "text": "threats.",
+    "start": 464.785,
+    "end": 465.549,
+    "score": 0.6225,
+    "seg": 112
+  },
+  {
+    "text": "It",
+    "start": 466.212,
+    "end": 466.372,
+    "score": 0.6076,
+    "seg": 113
+  },
+  {
+    "text": "withholds",
+    "start": 466.533,
+    "end": 467.576,
+    "score": 0.3989,
+    "seg": 113
+  },
+  {
+    "text": "them",
+    "start": 467.636,
+    "end": 468.238,
+    "score": 0.5963,
+    "seg": 113
+  },
+  {
+    "text": "until",
+    "start": 468.378,
+    "end": 468.759,
+    "score": 0.5997,
+    "seg": 113
+  },
+  {
+    "text": "they\u2019re",
+    "start": 468.86,
+    "end": 469.642,
+    "score": 0.6662,
+    "seg": 113
+  },
+  {
+    "text": "already",
+    "start": 469.702,
+    "end": 470.103,
+    "score": 0.4974,
+    "seg": 113
+  },
+  {
+    "text": "past",
+    "start": 470.204,
+    "end": 470.525,
+    "score": 0.2499,
+    "seg": 113
+  },
+  {
+    "text": "the",
+    "start": 470.625,
+    "end": 470.685,
+    "score": 0.6664,
+    "seg": 113
+  },
+  {
+    "text": "point",
+    "start": 470.725,
+    "end": 471.006,
+    "score": 0.5692,
+    "seg": 113
+  },
+  {
+    "text": "of",
+    "start": 471.126,
+    "end": 471.488,
+    "score": 0.0,
+    "seg": 113
+  },
+  {
+    "text": "response.",
+    "start": 471.528,
+    "end": 472.17,
+    "score": 0.3718,
+    "seg": 113
+  },
+  {
+    "text": "Catachan",
+    "start": 472.41,
+    "end": 473.414,
+    "score": 0.4995,
+    "seg": 114
+  },
+  {
+    "text": "regiments",
+    "start": 473.515,
+    "end": 474.077,
+    "score": 0.6004,
+    "seg": 114
+  },
+  {
+    "text": "work",
+    "start": 474.82,
+    "end": 475.362,
+    "score": 0.0,
+    "seg": 114
+  },
+  {
+    "text": "in",
+    "start": 475.382,
+    "end": 475.482,
+    "score": 0.4999,
+    "seg": 114
+  },
+  {
+    "text": "that",
+    "start": 475.542,
+    "end": 475.803,
+    "score": 0.4998,
+    "seg": 114
+  },
+  {
+    "text": "environment",
+    "start": 475.904,
+    "end": 477.169,
+    "score": 0.4545,
+    "seg": 114
+  },
+  {
+    "text": "because",
+    "start": 477.53,
+    "end": 477.731,
+    "score": 0.0,
+    "seg": 115
+  },
+  {
+    "text": "they",
+    "start": 477.731,
+    "end": 477.832,
+    "score": 0.7499,
+    "seg": 115
+  },
+  {
+    "text": "grew",
+    "start": 477.832,
+    "end": 477.953,
+    "score": 0.4998,
+    "seg": 115
+  },
+  {
+    "text": "up",
+    "start": 477.953,
+    "end": 477.993,
+    "score": 0.0,
+    "seg": 115
+  },
+  {
+    "text": "treating",
+    "start": 477.993,
+    "end": 478.295,
+    "score": 0.2499,
+    "seg": 115
+  },
+  {
+    "text": "survival",
+    "start": 478.315,
+    "end": 478.738,
+    "score": 0.125,
+    "seg": 115
+  },
+  {
+    "text": "as",
+    "start": 478.738,
+    "end": 478.798,
+    "score": 0.0,
+    "seg": 115
+  },
+  {
+    "text": "a",
+    "start": 479.0,
+    "end": 479.02,
+    "score": 0.9994,
+    "seg": 115
+  },
+  {
+    "text": "practical",
+    "start": 479.1,
+    "end": 479.624,
+    "score": 0.2222,
+    "seg": 115
+  },
+  {
+    "text": "discipline",
+    "start": 479.624,
+    "end": 479.865,
+    "score": 0.3212,
+    "seg": 115
+  },
+  {
+    "text": "rather",
+    "start": 479.865,
+    "end": 479.986,
+    "score": 0.0,
+    "seg": 115
+  },
+  {
+    "text": "than",
+    "start": 479.986,
+    "end": 480.066,
+    "score": 0.25,
+    "seg": 115
+  },
+  {
+    "text": "an",
+    "start": 480.066,
+    "end": 480.107,
+    "score": 0.0,
+    "seg": 115
+  },
+  {
+    "text": "expected",
+    "start": 480.107,
+    "end": 480.268,
+    "score": 0.1253,
+    "seg": 115
+  },
+  {
+    "text": "outcome.",
+    "start": 480.268,
+    "end": 480.429,
+    "score": 0.0,
+    "seg": 115
+  },
+  {
+    "text": "For",
+    "start": 480.61,
+    "end": 480.752,
+    "score": 0.0,
+    "seg": 116
+  },
+  {
+    "text": "everyone",
+    "start": 480.772,
+    "end": 480.954,
+    "score": 0.0164,
+    "seg": 116
+  },
+  {
+    "text": "else,",
+    "start": 480.974,
+    "end": 481.055,
+    "score": 0.2472,
+    "seg": 116
+  },
+  {
+    "text": "the",
+    "start": 481.055,
+    "end": 481.116,
+    "score": 0.0171,
+    "seg": 116
+  },
+  {
+    "text": "mission",
+    "start": 481.116,
+    "end": 481.379,
+    "score": 0.1572,
+    "seg": 116
+  },
+  {
+    "text": "doesn\u2019t",
+    "start": 481.379,
+    "end": 481.521,
+    "score": 0.0054,
+    "seg": 116
+  },
+  {
+    "text": "fail",
+    "start": 481.521,
+    "end": 481.763,
+    "score": 0.9702,
+    "seg": 116
+  },
+  {
+    "text": "on",
+    "start": 481.784,
+    "end": 481.824,
+    "score": 0.0001,
+    "seg": 116
+  },
+  {
+    "text": "Catachan.",
+    "start": 481.844,
+    "end": 482.229,
+    "score": 0.0009,
+    "seg": 116
+  },
+  {
+    "text": "The",
+    "start": 482.53,
+    "end": 482.59,
+    "score": 0.9994,
+    "seg": 117
+  },
+  {
+    "text": "jungle",
+    "start": 482.611,
+    "end": 483.212,
+    "score": 0.1665,
+    "seg": 117
+  },
+  {
+    "text": "absorbs",
+    "start": 483.312,
+    "end": 483.853,
+    "score": 0.4285,
+    "seg": 117
+  },
+  {
+    "text": "it",
+    "start": 483.913,
+    "end": 484.173,
+    "score": 0.9995,
+    "seg": 117
+  },
+  {
+    "text": "and",
+    "start": 485.335,
+    "end": 485.696,
+    "score": 0.2419,
+    "seg": 117
+  },
+  {
+    "text": "moves",
+    "start": 485.736,
+    "end": 486.117,
+    "score": 0.5996,
+    "seg": 117
+  },
+  {
+    "text": "on.",
+    "start": 486.958,
+    "end": 487.56,
+    "score": 0.9842,
+    "seg": 117
+  },
+  {
+    "text": "Number",
+    "start": 488.381,
+    "end": 489.504,
+    "score": 0.4996,
+    "seg": 118
+  },
+  {
+    "text": "Five,",
+    "start": 489.804,
+    "end": 491.027,
+    "score": 0.5005,
+    "seg": 118
+  },
+  {
+    "text": "Space",
+    "start": 491.127,
+    "end": 491.829,
+    "score": 0.6086,
+    "seg": 118
+  },
+  {
+    "text": "Hulks.",
+    "start": 491.849,
+    "end": 492.19,
+    "score": 0.2,
+    "seg": 118
+  },
+  {
+    "text": "A",
+    "start": 492.631,
+    "end": 492.651,
+    "score": 0.0,
+    "seg": 119
+  },
+  {
+    "text": "Space",
+    "start": 492.671,
+    "end": 492.991,
+    "score": 0.3992,
+    "seg": 119
+  },
+  {
+    "text": "Hulk",
+    "start": 493.031,
+    "end": 493.372,
+    "score": 0.0,
+    "seg": 119
+  },
+  {
+    "text": "is",
+    "start": 493.452,
+    "end": 493.572,
+    "score": 0.6509,
+    "seg": 119
+  },
+  {
+    "text": "centuries",
+    "start": 493.612,
+    "end": 494.033,
+    "score": 0.2254,
+    "seg": 119
+  },
+  {
+    "text": "of",
+    "start": 494.174,
+    "end": 494.294,
+    "score": 0.4999,
+    "seg": 119
+  },
+  {
+    "text": "accumulated",
+    "start": 494.414,
+    "end": 495.837,
+    "score": 0.4557,
+    "seg": 119
+  },
+  {
+    "text": "ships,",
+    "start": 495.917,
+    "end": 496.558,
+    "score": 0.3279,
+    "seg": 119
+  },
+  {
+    "text": "stations,",
+    "start": 496.739,
+    "end": 497.24,
+    "score": 0.6203,
+    "seg": 119
+  },
+  {
+    "text": "and",
+    "start": 497.62,
+    "end": 497.681,
+    "score": 0.0,
+    "seg": 120
+  },
+  {
+    "text": "debris,",
+    "start": 497.701,
+    "end": 497.841,
+    "score": 0.0,
+    "seg": 120
+  },
+  {
+    "text": "fused",
+    "start": 497.841,
+    "end": 497.941,
+    "score": 0.0,
+    "seg": 120
+  },
+  {
+    "text": "by",
+    "start": 497.941,
+    "end": 497.981,
+    "score": 0.0,
+    "seg": 120
+  },
+  {
+    "text": "warp",
+    "start": 497.981,
+    "end": 498.162,
+    "score": 0.4999,
+    "seg": 120
+  },
+  {
+    "text": "transit",
+    "start": 498.162,
+    "end": 498.383,
+    "score": 0.1429,
+    "seg": 120
+  },
+  {
+    "text": "into",
+    "start": 498.403,
+    "end": 498.483,
+    "score": 0.0,
+    "seg": 120
+  },
+  {
+    "text": "a",
+    "start": 498.503,
+    "end": 498.523,
+    "score": 0.0001,
+    "seg": 120
+  },
+  {
+    "text": "structure",
+    "start": 498.523,
+    "end": 498.704,
+    "score": 0.0029,
+    "seg": 120
+  },
+  {
+    "text": "too",
+    "start": 498.704,
+    "end": 498.804,
+    "score": 0.3327,
+    "seg": 120
+  },
+  {
+    "text": "massive",
+    "start": 498.804,
+    "end": 499.045,
+    "score": 0.0012,
+    "seg": 120
+  },
+  {
+    "text": "to",
+    "start": 499.045,
+    "end": 499.105,
+    "score": 0.4937,
+    "seg": 120
+  },
+  {
+    "text": "ignore",
+    "start": 499.105,
+    "end": 499.245,
+    "score": 0.0,
+    "seg": 120
+  },
+  {
+    "text": "and",
+    "start": 499.245,
+    "end": 499.325,
+    "score": 0.3358,
+    "seg": 120
+  },
+  {
+    "text": "too",
+    "start": 499.385,
+    "end": 499.506,
+    "score": 0.3333,
+    "seg": 120
+  },
+  {
+    "text": "unstable",
+    "start": 499.506,
+    "end": 499.787,
+    "score": 0.2498,
+    "seg": 120
+  },
+  {
+    "text": "for",
+    "start": 499.807,
+    "end": 499.907,
+    "score": 0.0,
+    "seg": 120
+  },
+  {
+    "text": "any",
+    "start": 499.927,
+    "end": 499.987,
+    "score": 0.0,
+    "seg": 120
+  },
+  {
+    "text": "chart",
+    "start": 499.987,
+    "end": 500.148,
+    "score": 0.1966,
+    "seg": 120
+  },
+  {
+    "text": "to",
+    "start": 500.188,
+    "end": 500.328,
+    "score": 0.5,
+    "seg": 120
+  },
+  {
+    "text": "stay",
+    "start": 500.368,
+    "end": 500.529,
+    "score": 0.25,
+    "seg": 120
+  },
+  {
+    "text": "current",
+    "start": 500.549,
+    "end": 500.749,
+    "score": 0.1428,
+    "seg": 120
+  },
+  {
+    "text": "on.",
+    "start": 500.769,
+    "end": 500.93,
+    "score": 0.0,
+    "seg": 120
+  },
+  {
+    "text": "Boarding",
+    "start": 501.371,
+    "end": 502.254,
+    "score": 0.5336,
+    "seg": 121
+  },
+  {
+    "text": "one",
+    "start": 502.395,
+    "end": 502.535,
+    "score": 0.6662,
+    "seg": 121
+  },
+  {
+    "text": "isn\u2019t",
+    "start": 502.656,
+    "end": 504.562,
+    "score": 0.9038,
+    "seg": 121
+  },
+  {
+    "text": "a",
+    "start": 504.602,
+    "end": 504.622,
+    "score": 0.0001,
+    "seg": 121
+  },
+  {
+    "text": "tactical",
+    "start": 504.803,
+    "end": 505.545,
+    "score": 0.9969,
+    "seg": 121
+  },
+  {
+    "text": "challenge.",
+    "start": 506.087,
+    "end": 506.829,
+    "score": 0.5525,
+    "seg": 121
+  },
+  {
+    "text": "It\u2019s",
+    "start": 507.01,
+    "end": 507.131,
+    "score": 0.0,
+    "seg": 122
+  },
+  {
+    "text": "a",
+    "start": 507.152,
+    "end": 507.172,
+    "score": 0.0,
+    "seg": 122
+  },
+  {
+    "text": "structural",
+    "start": 507.172,
+    "end": 507.414,
+    "score": 0.1471,
+    "seg": 122
+  },
+  {
+    "text": "impossibility",
+    "start": 507.414,
+    "end": 507.698,
+    "score": 0.0004,
+    "seg": 122
+  },
+  {
+    "text": "that",
+    "start": 507.698,
+    "end": 507.778,
+    "score": 0.0,
+    "seg": 122
+  },
+  {
+    "text": "command",
+    "start": 507.778,
+    "end": 508.001,
+    "score": 0.1424,
+    "seg": 122
+  },
+  {
+    "text": "has",
+    "start": 508.001,
+    "end": 508.062,
+    "score": 0.0,
+    "seg": 122
+  },
+  {
+    "text": "decided",
+    "start": 508.062,
+    "end": 508.223,
+    "score": 0.2844,
+    "seg": 122
+  },
+  {
+    "text": "cannot",
+    "start": 508.223,
+    "end": 508.365,
+    "score": 0.0,
+    "seg": 122
+  },
+  {
+    "text": "be",
+    "start": 508.365,
+    "end": 508.446,
+    "score": 0.001,
+    "seg": 122
+  },
+  {
+    "text": "avoided.",
+    "start": 508.506,
+    "end": 508.648,
+    "score": 0.035,
+    "seg": 122
+  },
+  {
+    "text": "The",
+    "start": 509.051,
+    "end": 509.131,
+    "score": 0.9978,
+    "seg": 123
+  },
+  {
+    "text": "corridors",
+    "start": 509.231,
+    "end": 510.314,
+    "score": 0.333,
+    "seg": 123
+  },
+  {
+    "text": "weren\u2019t",
+    "start": 511.056,
+    "end": 511.958,
+    "score": 0.7807,
+    "seg": 123
+  },
+  {
+    "text": "built.",
+    "start": 512.039,
+    "end": 512.42,
+    "score": 0.3996,
+    "seg": 123
+  },
+  {
+    "text": "They\u2019re",
+    "start": 512.6,
+    "end": 512.801,
+    "score": 0.0,
+    "seg": 124
+  },
+  {
+    "text": "the",
+    "start": 512.801,
+    "end": 512.862,
+    "score": 0.0,
+    "seg": 124
+  },
+  {
+    "text": "overlapping",
+    "start": 512.902,
+    "end": 513.265,
+    "score": 0.181,
+    "seg": 124
+  },
+  {
+    "text": "interiors",
+    "start": 513.345,
+    "end": 513.526,
+    "score": 0.1389,
+    "seg": 124
+  },
+  {
+    "text": "of",
+    "start": 513.526,
+    "end": 513.607,
+    "score": 0.0,
+    "seg": 124
+  },
+  {
+    "text": "vessels",
+    "start": 513.607,
+    "end": 513.949,
+    "score": 0.0,
+    "seg": 124
+  },
+  {
+    "text": "that",
+    "start": 513.949,
+    "end": 514.07,
+    "score": 0.4972,
+    "seg": 124
+  },
+  {
+    "text": "were",
+    "start": 514.09,
+    "end": 514.332,
+    "score": 0.4993,
+    "seg": 124
+  },
+  {
+    "text": "never",
+    "start": 514.332,
+    "end": 514.433,
+    "score": 0.0004,
+    "seg": 124
+  },
+  {
+    "text": "designed",
+    "start": 514.433,
+    "end": 514.735,
+    "score": 0.125,
+    "seg": 124
+  },
+  {
+    "text": "to",
+    "start": 514.755,
+    "end": 514.815,
+    "score": 0.4999,
+    "seg": 124
+  },
+  {
+    "text": "share",
+    "start": 514.835,
+    "end": 515.037,
+    "score": 0.3233,
+    "seg": 124
+  },
+  {
+    "text": "a",
+    "start": 515.037,
+    "end": 515.057,
+    "score": 0.0001,
+    "seg": 124
+  },
+  {
+    "text": "wall,",
+    "start": 515.057,
+    "end": 515.218,
+    "score": 0.4287,
+    "seg": 124
+  },
+  {
+    "text": "smashed",
+    "start": 516.323,
+    "end": 518.15,
+    "score": 0.666,
+    "seg": 125
+  },
+  {
+    "text": "into",
+    "start": 518.231,
+    "end": 518.893,
+    "score": 0.4995,
+    "seg": 125
+  },
+  {
+    "text": "adjacency",
+    "start": 518.934,
+    "end": 519.717,
+    "score": 0.4441,
+    "seg": 125
+  },
+  {
+    "text": "by",
+    "start": 519.717,
+    "end": 519.757,
+    "score": 0.0,
+    "seg": 125
+  },
+  {
+    "text": "warp",
+    "start": 519.777,
+    "end": 519.958,
+    "score": 0.5,
+    "seg": 125
+  },
+  {
+    "text": "physics.",
+    "start": 519.978,
+    "end": 520.359,
+    "score": 0.2857,
+    "seg": 125
+  },
+  {
+    "text": "Floors",
+    "start": 520.781,
+    "end": 521.081,
+    "score": 0.3333,
+    "seg": 126
+  },
+  {
+    "text": "become",
+    "start": 521.162,
+    "end": 521.603,
+    "score": 0.0002,
+    "seg": 126
+  },
+  {
+    "text": "ceilings",
+    "start": 521.984,
+    "end": 523.027,
+    "score": 0.6246,
+    "seg": 126
+  },
+  {
+    "text": "two",
+    "start": 523.087,
+    "end": 523.227,
+    "score": 0.6663,
+    "seg": 126
+  },
+  {
+    "text": "junctions",
+    "start": 523.307,
+    "end": 523.949,
+    "score": 0.3332,
+    "seg": 126
+  },
+  {
+    "text": "in.",
+    "start": 524.009,
+    "end": 524.069,
+    "score": 0.9999,
+    "seg": 126
+  },
+  {
+    "text": "Gravity",
+    "start": 524.511,
+    "end": 525.297,
+    "score": 0.1409,
+    "seg": 127
+  },
+  {
+    "text": "plates",
+    "start": 525.377,
+    "end": 525.559,
+    "score": 0.3304,
+    "seg": 127
+  },
+  {
+    "text": "from",
+    "start": 525.74,
+    "end": 525.861,
+    "score": 0.25,
+    "seg": 127
+  },
+  {
+    "text": "different",
+    "start": 525.881,
+    "end": 526.143,
+    "score": 0.3154,
+    "seg": 127
+  },
+  {
+    "text": "ships",
+    "start": 526.143,
+    "end": 526.264,
+    "score": 0.0598,
+    "seg": 127
+  },
+  {
+    "text": "pull",
+    "start": 526.264,
+    "end": 526.364,
+    "score": 0.2499,
+    "seg": 127
+  },
+  {
+    "text": "in",
+    "start": 526.405,
+    "end": 526.445,
+    "score": 0.4996,
+    "seg": 127
+  },
+  {
+    "text": "competing",
+    "start": 526.445,
+    "end": 526.948,
+    "score": 0.0001,
+    "seg": 127
+  },
+  {
+    "text": "directions",
+    "start": 527.391,
+    "end": 528.876,
+    "score": 0.2998,
+    "seg": 128
+  },
+  {
+    "text": "in",
+    "start": 529.037,
+    "end": 529.117,
+    "score": 0.5,
+    "seg": 128
+  },
+  {
+    "text": "rooms",
+    "start": 529.217,
+    "end": 529.92,
+    "score": 0.7996,
+    "seg": 128
+  },
+  {
+    "text": "separated",
+    "start": 530.02,
+    "end": 531.064,
+    "score": 0.5546,
+    "seg": 128
+  },
+  {
+    "text": "by",
+    "start": 531.064,
+    "end": 531.144,
+    "score": 0.0,
+    "seg": 128
+  },
+  {
+    "text": "a",
+    "start": 531.184,
+    "end": 531.204,
+    "score": 0.9997,
+    "seg": 128
+  },
+  {
+    "text": "single",
+    "start": 531.285,
+    "end": 531.746,
+    "score": 0.3953,
+    "seg": 128
+  },
+  {
+    "text": "bulkhead.",
+    "start": 531.827,
+    "end": 532.449,
+    "score": 0.4999,
+    "seg": 128
+  },
+  {
+    "text": "Sections",
+    "start": 532.77,
+    "end": 533.051,
+    "score": 0.0,
+    "seg": 129
+  },
+  {
+    "text": "pressurize",
+    "start": 533.051,
+    "end": 533.352,
+    "score": 0.1996,
+    "seg": 129
+  },
+  {
+    "text": "and",
+    "start": 533.352,
+    "end": 533.413,
+    "score": 0.0001,
+    "seg": 129
+  },
+  {
+    "text": "vent",
+    "start": 533.413,
+    "end": 533.513,
+    "score": 0.2498,
+    "seg": 129
+  },
+  {
+    "text": "without",
+    "start": 533.533,
+    "end": 533.814,
+    "score": 0.1461,
+    "seg": 129
+  },
+  {
+    "text": "warning",
+    "start": 533.835,
+    "end": 534.176,
+    "score": 0.1427,
+    "seg": 129
+  },
+  {
+    "text": "when",
+    "start": 534.176,
+    "end": 534.276,
+    "score": 0.0988,
+    "seg": 129
+  },
+  {
+    "text": "something",
+    "start": 534.276,
+    "end": 534.457,
+    "score": 0.0103,
+    "seg": 129
+  },
+  {
+    "text": "fails.",
+    "start": 534.517,
+    "end": 534.939,
+    "score": 0.6774,
+    "seg": 129
+  },
+  {
+    "text": "The",
+    "start": 535.24,
+    "end": 535.32,
+    "score": 0.966,
+    "seg": 130
+  },
+  {
+    "text": "atmosphere,",
+    "start": 535.38,
+    "end": 536.041,
+    "score": 0.2057,
+    "seg": 130
+  },
+  {
+    "text": "where",
+    "start": 536.101,
+    "end": 536.722,
+    "score": 0.2,
+    "seg": 130
+  },
+  {
+    "text": "it",
+    "start": 536.762,
+    "end": 536.922,
+    "score": 0.9996,
+    "seg": 130
+  },
+  {
+    "text": "exists",
+    "start": 537.002,
+    "end": 538.224,
+    "score": 0.1672,
+    "seg": 130
+  },
+  {
+    "text": "at",
+    "start": 538.244,
+    "end": 538.344,
+    "score": 0.9998,
+    "seg": 130
+  },
+  {
+    "text": "all,",
+    "start": 538.564,
+    "end": 538.925,
+    "score": 0.9996,
+    "seg": 130
+  },
+  {
+    "text": "is",
+    "start": 538.945,
+    "end": 539.025,
+    "score": 0.4999,
+    "seg": 130
+  },
+  {
+    "text": "a",
+    "start": 539.045,
+    "end": 539.065,
+    "score": 0.0,
+    "seg": 130
+  },
+  {
+    "text": "chemical",
+    "start": 539.105,
+    "end": 540.326,
+    "score": 0.7728,
+    "seg": 130
+  },
+  {
+    "text": "residue",
+    "start": 541.167,
+    "end": 542.429,
+    "score": 0.855,
+    "seg": 130
+  },
+  {
+    "text": "of",
+    "start": 543.47,
+    "end": 543.51,
+    "score": 0.0003,
+    "seg": 131
+  },
+  {
+    "text": "whatever",
+    "start": 543.55,
+    "end": 543.751,
+    "score": 0.0003,
+    "seg": 131
+  },
+  {
+    "text": "the",
+    "start": 543.751,
+    "end": 543.832,
+    "score": 0.3318,
+    "seg": 131
+  },
+  {
+    "text": "last",
+    "start": 543.912,
+    "end": 544.113,
+    "score": 0.4993,
+    "seg": 131
+  },
+  {
+    "text": "crew",
+    "start": 544.133,
+    "end": 544.234,
+    "score": 0.2504,
+    "seg": 131
+  },
+  {
+    "text": "left",
+    "start": 544.234,
+    "end": 544.314,
+    "score": 0.2495,
+    "seg": 131
+  },
+  {
+    "text": "behind,",
+    "start": 544.354,
+    "end": 544.575,
+    "score": 0.4129,
+    "seg": 131
+  },
+  {
+    "text": "which",
+    "start": 544.575,
+    "end": 544.736,
+    "score": 0.1494,
+    "seg": 131
+  },
+  {
+    "text": "includes",
+    "start": 544.756,
+    "end": 544.957,
+    "score": 0.2483,
+    "seg": 131
+  },
+  {
+    "text": "whatever",
+    "start": 544.957,
+    "end": 545.278,
+    "score": 0.1217,
+    "seg": 131
+  },
+  {
+    "text": "finished",
+    "start": 545.359,
+    "end": 545.54,
+    "score": 0.0099,
+    "seg": 131
+  },
+  {
+    "text": "them.",
+    "start": 545.54,
+    "end": 545.62,
+    "score": 0.0588,
+    "seg": 131
+  },
+  {
+    "text": "Genestealers",
+    "start": 545.62,
+    "end": 545.861,
+    "score": 0.0225,
+    "seg": 132
+  },
+  {
+    "text": "are",
+    "start": 545.861,
+    "end": 545.921,
+    "score": 0.0024,
+    "seg": 132
+  },
+  {
+    "text": "adapted",
+    "start": 545.921,
+    "end": 546.142,
+    "score": 0.2855,
+    "seg": 132
+  },
+  {
+    "text": "to",
+    "start": 546.362,
+    "end": 546.483,
+    "score": 0.0,
+    "seg": 132
+  },
+  {
+    "text": "this",
+    "start": 546.523,
+    "end": 546.623,
+    "score": 0.4999,
+    "seg": 132
+  },
+  {
+    "text": "geometry",
+    "start": 546.623,
+    "end": 546.784,
+    "score": 0.2497,
+    "seg": 132
+  },
+  {
+    "text": "in",
+    "start": 546.824,
+    "end": 546.884,
+    "score": 0.0,
+    "seg": 132
+  },
+  {
+    "text": "ways",
+    "start": 546.904,
+    "end": 547.205,
+    "score": 0.4998,
+    "seg": 132
+  },
+  {
+    "text": "that",
+    "start": 547.245,
+    "end": 547.426,
+    "score": 0.25,
+    "seg": 132
+  },
+  {
+    "text": "standard",
+    "start": 547.446,
+    "end": 547.627,
+    "score": 0.331,
+    "seg": 132
+  },
+  {
+    "text": "assault",
+    "start": 547.687,
+    "end": 548.028,
+    "score": 0.1431,
+    "seg": 132
+  },
+  {
+    "text": "doctrine",
+    "start": 548.048,
+    "end": 548.489,
+    "score": 0.2496,
+    "seg": 132
+  },
+  {
+    "text": "isn\u2019t.",
+    "start": 548.489,
+    "end": 548.59,
+    "score": 0.0,
+    "seg": 132
+  },
+  {
+    "text": "They",
+    "start": 548.871,
+    "end": 549.293,
+    "score": 0.7738,
+    "seg": 133
+  },
+  {
+    "text": "don\u2019t",
+    "start": 549.714,
+    "end": 550.036,
+    "score": 0.8664,
+    "seg": 133
+  },
+  {
+    "text": "need",
+    "start": 550.076,
+    "end": 550.518,
+    "score": 0.5333,
+    "seg": 133
+  },
+  {
+    "text": "consistent",
+    "start": 550.739,
+    "end": 552.104,
+    "score": 0.4705,
+    "seg": 133
+  },
+  {
+    "text": "gravity.",
+    "start": 552.285,
+    "end": 553.089,
+    "score": 0.1429,
+    "seg": 133
+  },
+  {
+    "text": "They",
+    "start": 553.59,
+    "end": 553.951,
+    "score": 0.7477,
+    "seg": 134
+  },
+  {
+    "text": "move",
+    "start": 554.552,
+    "end": 554.852,
+    "score": 0.4999,
+    "seg": 134
+  },
+  {
+    "text": "through",
+    "start": 554.892,
+    "end": 555.333,
+    "score": 0.5512,
+    "seg": 134
+  },
+  {
+    "text": "ventilation",
+    "start": 555.613,
+    "end": 557.055,
+    "score": 0.3633,
+    "seg": 134
+  },
+  {
+    "text": "shafts",
+    "start": 557.055,
+    "end": 557.476,
+    "score": 0.3316,
+    "seg": 134
+  },
+  {
+    "text": "with",
+    "start": 557.516,
+    "end": 557.676,
+    "score": 0.2554,
+    "seg": 134
+  },
+  {
+    "text": "the",
+    "start": 557.676,
+    "end": 557.836,
+    "score": 0.3333,
+    "seg": 134
+  },
+  {
+    "text": "velocity",
+    "start": 557.916,
+    "end": 558.537,
+    "score": 0.3744,
+    "seg": 134
+  },
+  {
+    "text": "of",
+    "start": 558.637,
+    "end": 558.798,
+    "score": 0.4999,
+    "seg": 134
+  },
+  {
+    "text": "a",
+    "start": 558.818,
+    "end": 558.838,
+    "score": 0.9998,
+    "seg": 134
+  },
+  {
+    "text": "launched",
+    "start": 558.898,
+    "end": 559.359,
+    "score": 0.4068,
+    "seg": 134
+  },
+  {
+    "text": "round",
+    "start": 559.699,
+    "end": 560.12,
+    "score": 0.3999,
+    "seg": 134
+  },
+  {
+    "text": "and",
+    "start": 560.662,
+    "end": 560.723,
+    "score": 0.3212,
+    "seg": 135
+  },
+  {
+    "text": "the",
+    "start": 560.743,
+    "end": 561.126,
+    "score": 0.3319,
+    "seg": 135
+  },
+  {
+    "text": "acoustic",
+    "start": 561.186,
+    "end": 561.569,
+    "score": 0.4986,
+    "seg": 135
+  },
+  {
+    "text": "signature",
+    "start": 561.63,
+    "end": 562.234,
+    "score": 0.3334,
+    "seg": 135
+  },
+  {
+    "text": "of",
+    "start": 562.275,
+    "end": 562.375,
+    "score": 0.0,
+    "seg": 135
+  },
+  {
+    "text": "a",
+    "start": 562.496,
+    "end": 562.517,
+    "score": 0.0,
+    "seg": 135
+  },
+  {
+    "text": "maintenance",
+    "start": 562.537,
+    "end": 562.879,
+    "score": 0.3207,
+    "seg": 135
+  },
+  {
+    "text": "fault.",
+    "start": 562.879,
+    "end": 562.98,
+    "score": 0.0134,
+    "seg": 135
+  },
+  {
+    "text": "Squad",
+    "start": 562.98,
+    "end": 563.08,
+    "score": 0.0001,
+    "seg": 136
+  },
+  {
+    "text": "formations",
+    "start": 563.1,
+    "end": 563.421,
+    "score": 0.2951,
+    "seg": 136
+  },
+  {
+    "text": "built",
+    "start": 563.421,
+    "end": 563.682,
+    "score": 0.1998,
+    "seg": 136
+  },
+  {
+    "text": "around",
+    "start": 563.702,
+    "end": 563.842,
+    "score": 0.0,
+    "seg": 136
+  },
+  {
+    "text": "structured",
+    "start": 563.842,
+    "end": 564.143,
+    "score": 0.1995,
+    "seg": 136
+  },
+  {
+    "text": "corridors",
+    "start": 564.204,
+    "end": 564.524,
+    "score": 0.2221,
+    "seg": 136
+  },
+  {
+    "text": "collapse",
+    "start": 564.524,
+    "end": 564.845,
+    "score": 0.1251,
+    "seg": 136
+  },
+  {
+    "text": "because",
+    "start": 564.845,
+    "end": 565.006,
+    "score": 0.1429,
+    "seg": 136
+  },
+  {
+    "text": "line-of-sight",
+    "start": 565.006,
+    "end": 565.227,
+    "score": 0.0909,
+    "seg": 136
+  },
+  {
+    "text": "inside",
+    "start": 565.227,
+    "end": 565.347,
+    "score": 0.086,
+    "seg": 136
+  },
+  {
+    "text": "a",
+    "start": 565.347,
+    "end": 565.367,
+    "score": 0.0,
+    "seg": 136
+  },
+  {
+    "text": "hulk",
+    "start": 565.367,
+    "end": 565.507,
+    "score": 0.0,
+    "seg": 136
+  },
+  {
+    "text": "rarely",
+    "start": 565.507,
+    "end": 565.728,
+    "score": 0.1722,
+    "seg": 136
+  },
+  {
+    "text": "extends",
+    "start": 565.728,
+    "end": 565.908,
+    "score": 0.003,
+    "seg": 136
+  },
+  {
+    "text": "six",
+    "start": 565.929,
+    "end": 565.989,
+    "score": 0.005,
+    "seg": 136
+  },
+  {
+    "text": "meters,",
+    "start": 566.069,
+    "end": 566.189,
+    "score": 0.1672,
+    "seg": 136
+  },
+  {
+    "text": "and",
+    "start": 566.59,
+    "end": 566.65,
+    "score": 0.0,
+    "seg": 137
+  },
+  {
+    "text": "flanking",
+    "start": 566.65,
+    "end": 566.911,
+    "score": 0.3741,
+    "seg": 137
+  },
+  {
+    "text": "acquires",
+    "start": 566.971,
+    "end": 567.391,
+    "score": 0.25,
+    "seg": 137
+  },
+  {
+    "text": "a",
+    "start": 567.492,
+    "end": 567.512,
+    "score": 0.0001,
+    "seg": 137
+  },
+  {
+    "text": "third",
+    "start": 567.592,
+    "end": 567.952,
+    "score": 0.2,
+    "seg": 137
+  },
+  {
+    "text": "dimension",
+    "start": 567.972,
+    "end": 568.854,
+    "score": 0.3333,
+    "seg": 137
+  },
+  {
+    "text": "when",
+    "start": 568.854,
+    "end": 568.994,
+    "score": 0.2499,
+    "seg": 137
+  },
+  {
+    "text": "the",
+    "start": 569.014,
+    "end": 569.074,
+    "score": 0.0244,
+    "seg": 137
+  },
+  {
+    "text": "threat",
+    "start": 569.114,
+    "end": 569.455,
+    "score": 0.4937,
+    "seg": 137
+  },
+  {
+    "text": "can",
+    "start": 569.475,
+    "end": 569.555,
+    "score": 0.0001,
+    "seg": 137
+  },
+  {
+    "text": "arrive",
+    "start": 569.595,
+    "end": 569.755,
+    "score": 0.5476,
+    "seg": 137
+  },
+  {
+    "text": "from",
+    "start": 569.755,
+    "end": 570.296,
+    "score": 0.2499,
+    "seg": 137
+  },
+  {
+    "text": "overhead",
+    "start": 570.336,
+    "end": 570.817,
+    "score": 0.4074,
+    "seg": 137
+  },
+  {
+    "text": "or",
+    "start": 570.857,
+    "end": 570.917,
+    "score": 0.4995,
+    "seg": 137
+  },
+  {
+    "text": "through",
+    "start": 570.977,
+    "end": 571.578,
+    "score": 0.428,
+    "seg": 137
+  },
+  {
+    "text": "the",
+    "start": 571.618,
+    "end": 571.758,
+    "score": 0.0,
+    "seg": 137
+  },
+  {
+    "text": "wall",
+    "start": 571.778,
+    "end": 571.999,
+    "score": 0.4999,
+    "seg": 137
+  },
+  {
+    "text": "itself.",
+    "start": 572.059,
+    "end": 572.64,
+    "score": 0.5006,
+    "seg": 137
+  },
+  {
+    "text": "Terminator",
+    "start": 573.04,
+    "end": 574.563,
+    "score": 0.3999,
+    "seg": 138
+  },
+  {
+    "text": "armor",
+    "start": 574.623,
+    "end": 574.843,
+    "score": 0.3997,
+    "seg": 138
+  },
+  {
+    "text": "was",
+    "start": 574.843,
+    "end": 575.023,
+    "score": 0.3325,
+    "seg": 138
+  },
+  {
+    "text": "developed",
+    "start": 575.183,
+    "end": 575.744,
+    "score": 0.1397,
+    "seg": 138
+  },
+  {
+    "text": "for",
+    "start": 575.764,
+    "end": 575.864,
+    "score": 0.349,
+    "seg": 138
+  },
+  {
+    "text": "this",
+    "start": 575.864,
+    "end": 576.746,
+    "score": 0.2387,
+    "seg": 138
+  },
+  {
+    "text": "specific",
+    "start": 576.786,
+    "end": 577.547,
+    "score": 0.1329,
+    "seg": 138
+  },
+  {
+    "text": "operational",
+    "start": 577.627,
+    "end": 578.588,
+    "score": 0.3887,
+    "seg": 138
+  },
+  {
+    "text": "context.",
+    "start": 578.709,
+    "end": 579.49,
+    "score": 0.5713,
+    "seg": 138
+  },
+  {
+    "text": "It",
+    "start": 579.89,
+    "end": 580.071,
+    "score": 0.0,
+    "seg": 139
+  },
+  {
+    "text": "still",
+    "start": 580.191,
+    "end": 580.932,
+    "score": 0.5986,
+    "seg": 139
+  },
+  {
+    "text": "doesn\u2019t",
+    "start": 580.932,
+    "end": 582.274,
+    "score": 0.6662,
+    "seg": 139
+  },
+  {
+    "text": "make",
+    "start": 582.594,
+    "end": 582.935,
+    "score": 0.7497,
+    "seg": 139
+  },
+  {
+    "text": "the",
+    "start": 583.035,
+    "end": 583.255,
+    "score": 0.3333,
+    "seg": 139
+  },
+  {
+    "text": "casualty",
+    "start": 583.275,
+    "end": 583.756,
+    "score": 0.0599,
+    "seg": 139
+  },
+  {
+    "text": "rates",
+    "start": 583.796,
+    "end": 584.077,
+    "score": 0.3987,
+    "seg": 139
+  },
+  {
+    "text": "acceptable.",
+    "start": 584.297,
+    "end": 585.859,
+    "score": 0.5238,
+    "seg": 139
+  },
+  {
+    "text": "It",
+    "start": 587.062,
+    "end": 587.122,
+    "score": 0.0103,
+    "seg": 140
+  },
+  {
+    "text": "makes",
+    "start": 587.222,
+    "end": 587.784,
+    "score": 0.2001,
+    "seg": 140
+  },
+  {
+    "text": "them",
+    "start": 587.884,
+    "end": 588.085,
+    "score": 0.4999,
+    "seg": 140
+  },
+  {
+    "text": "survivable",
+    "start": 588.085,
+    "end": 589.508,
+    "score": 0.2489,
+    "seg": 140
+  },
+  {
+    "text": "for",
+    "start": 589.749,
+    "end": 589.91,
+    "score": 0.6666,
+    "seg": 140
+  },
+  {
+    "text": "a",
+    "start": 590.05,
+    "end": 590.07,
+    "score": 0.0003,
+    "seg": 140
+  },
+  {
+    "text": "fraction",
+    "start": 590.351,
+    "end": 591.313,
+    "score": 0.7497,
+    "seg": 140
+  },
+  {
+    "text": "of",
+    "start": 591.674,
+    "end": 591.995,
+    "score": 0.4999,
+    "seg": 140
+  },
+  {
+    "text": "the",
+    "start": 592.055,
+    "end": 592.135,
+    "score": 0.3333,
+    "seg": 140
+  },
+  {
+    "text": "boarding",
+    "start": 592.496,
+    "end": 593.198,
+    "score": 0.4613,
+    "seg": 140
+  },
+  {
+    "text": "party.",
+    "start": 593.278,
+    "end": 593.479,
+    "score": 0.0262,
+    "seg": 140
+  },
+  {
+    "text": "That\u2019s",
+    "start": 594.02,
+    "end": 594.201,
+    "score": 0.0,
+    "seg": 141
+  },
+  {
+    "text": "the",
+    "start": 594.221,
+    "end": 594.321,
+    "score": 0.0,
+    "seg": 141
+  },
+  {
+    "text": "best",
+    "start": 594.381,
+    "end": 594.622,
+    "score": 0.2499,
+    "seg": 141
+  },
+  {
+    "text": "available",
+    "start": 594.682,
+    "end": 595.624,
+    "score": 0.2222,
+    "seg": 141
+  },
+  {
+    "text": "outcome",
+    "start": 595.765,
+    "end": 595.965,
+    "score": 0.4857,
+    "seg": 141
+  },
+  {
+    "text": "and",
+    "start": 596.086,
+    "end": 596.166,
+    "score": 0.3332,
+    "seg": 141
+  },
+  {
+    "text": "everyone",
+    "start": 596.166,
+    "end": 596.487,
+    "score": 0.3285,
+    "seg": 141
+  },
+  {
+    "text": "going",
+    "start": 596.487,
+    "end": 596.627,
+    "score": 0.0007,
+    "seg": 141
+  },
+  {
+    "text": "in",
+    "start": 596.928,
+    "end": 597.028,
+    "score": 0.4991,
+    "seg": 141
+  },
+  {
+    "text": "knows",
+    "start": 597.048,
+    "end": 597.529,
+    "score": 0.0001,
+    "seg": 141
+  },
+  {
+    "text": "it.",
+    "start": 597.549,
+    "end": 597.609,
+    "score": 0.0008,
+    "seg": 141
+  },
+  {
+    "text": "Number",
+    "start": 598.091,
+    "end": 599.155,
+    "score": 0.4891,
+    "seg": 142
+  },
+  {
+    "text": "Four,",
+    "start": 599.416,
+    "end": 599.597,
+    "score": 0.7883,
+    "seg": 142
+  },
+  {
+    "text": "Vraks.",
+    "start": 601.986,
+    "end": 603.15,
+    "score": 0.6155,
+    "seg": 142
+  },
+  {
+    "text": "Seventeen",
+    "start": 603.831,
+    "end": 607.016,
+    "score": 0.8924,
+    "seg": 143
+  },
+  {
+    "text": "years.",
+    "start": 607.517,
+    "end": 608.98,
+    "score": 0.5687,
+    "seg": 143
+  },
+  {
+    "text": "That",
+    "start": 609.421,
+    "end": 609.641,
+    "score": 0.554,
+    "seg": 144
+  },
+  {
+    "text": "number",
+    "start": 609.822,
+    "end": 610.103,
+    "score": 0.4168,
+    "seg": 144
+  },
+  {
+    "text": "starts",
+    "start": 610.123,
+    "end": 610.263,
+    "score": 0.3113,
+    "seg": 144
+  },
+  {
+    "text": "making",
+    "start": 610.263,
+    "end": 610.424,
+    "score": 0.4997,
+    "seg": 144
+  },
+  {
+    "text": "sense",
+    "start": 610.544,
+    "end": 610.845,
+    "score": 0.3993,
+    "seg": 144
+  },
+  {
+    "text": "once",
+    "start": 610.865,
+    "end": 611.025,
+    "score": 0.4638,
+    "seg": 144
+  },
+  {
+    "text": "you",
+    "start": 611.046,
+    "end": 611.126,
+    "score": 0.3284,
+    "seg": 144
+  },
+  {
+    "text": "understand",
+    "start": 611.146,
+    "end": 611.828,
+    "score": 0.2,
+    "seg": 144
+  },
+  {
+    "text": "what",
+    "start": 611.828,
+    "end": 612.169,
+    "score": 0.4999,
+    "seg": 144
+  },
+  {
+    "text": "the",
+    "start": 612.691,
+    "end": 612.771,
+    "score": 0.333,
+    "seg": 145
+  },
+  {
+    "text": "terrain",
+    "start": 612.831,
+    "end": 613.294,
+    "score": 0.4283,
+    "seg": 145
+  },
+  {
+    "text": "did",
+    "start": 613.414,
+    "end": 613.595,
+    "score": 0.0,
+    "seg": 145
+  },
+  {
+    "text": "to",
+    "start": 613.655,
+    "end": 613.715,
+    "score": 0.4945,
+    "seg": 145
+  },
+  {
+    "text": "every",
+    "start": 613.756,
+    "end": 614.218,
+    "score": 0.1999,
+    "seg": 145
+  },
+  {
+    "text": "assault",
+    "start": 614.439,
+    "end": 615.062,
+    "score": 0.1412,
+    "seg": 145
+  },
+  {
+    "text": "the",
+    "start": 615.524,
+    "end": 615.725,
+    "score": 0.331,
+    "seg": 145
+  },
+  {
+    "text": "Imperium",
+    "start": 615.745,
+    "end": 616.247,
+    "score": 0.0001,
+    "seg": 145
+  },
+  {
+    "text": "attempted.",
+    "start": 616.267,
+    "end": 616.769,
+    "score": 0.1839,
+    "seg": 145
+  },
+  {
+    "text": "Vraks",
+    "start": 616.93,
+    "end": 617.091,
+    "score": 0.0,
+    "seg": 146
+  },
+  {
+    "text": "was",
+    "start": 617.091,
+    "end": 617.151,
+    "score": 0.0001,
+    "seg": 146
+  },
+  {
+    "text": "an",
+    "start": 617.151,
+    "end": 617.191,
+    "score": 0.4866,
+    "seg": 146
+  },
+  {
+    "text": "armoury",
+    "start": 617.191,
+    "end": 617.332,
+    "score": 0.0001,
+    "seg": 146
+  },
+  {
+    "text": "world,",
+    "start": 617.332,
+    "end": 617.473,
+    "score": 0.1996,
+    "seg": 146
+  },
+  {
+    "text": "built",
+    "start": 617.473,
+    "end": 617.593,
+    "score": 0.2013,
+    "seg": 146
+  },
+  {
+    "text": "for",
+    "start": 617.593,
+    "end": 617.694,
+    "score": 0.0001,
+    "seg": 146
+  },
+  {
+    "text": "storage",
+    "start": 617.794,
+    "end": 618.015,
+    "score": 0.145,
+    "seg": 146
+  },
+  {
+    "text": "and",
+    "start": 618.015,
+    "end": 618.076,
+    "score": 0.0098,
+    "seg": 146
+  },
+  {
+    "text": "protection",
+    "start": 618.076,
+    "end": 618.357,
+    "score": 0.2584,
+    "seg": 146
+  },
+  {
+    "text": "rather",
+    "start": 618.357,
+    "end": 618.498,
+    "score": 0.0013,
+    "seg": 146
+  },
+  {
+    "text": "than",
+    "start": 618.498,
+    "end": 618.578,
+    "score": 0.1902,
+    "seg": 146
+  },
+  {
+    "text": "habitation.",
+    "start": 618.578,
+    "end": 618.819,
+    "score": 0.099,
+    "seg": 146
+  },
+  {
+    "text": "Thick",
+    "start": 619.101,
+    "end": 619.582,
+    "score": 0.5997,
+    "seg": 147
+  },
+  {
+    "text": "rockcrete",
+    "start": 619.763,
+    "end": 623.074,
+    "score": 0.6666,
+    "seg": 147
+  },
+  {
+    "text": "everywhere.",
+    "start": 623.516,
+    "end": 624.479,
+    "score": 0.3116,
+    "seg": 147
+  },
+  {
+    "text": "Deep",
+    "start": 624.86,
+    "end": 625.762,
+    "score": 0.2527,
+    "seg": 148
+  },
+  {
+    "text": "vaults",
+    "start": 626.163,
+    "end": 626.805,
+    "score": 0.1821,
+    "seg": 148
+  },
+  {
+    "text": "below",
+    "start": 627.045,
+    "end": 628.268,
+    "score": 0.3996,
+    "seg": 148
+  },
+  {
+    "text": "it.",
+    "start": 628.368,
+    "end": 628.569,
+    "score": 0.9984,
+    "seg": 148
+  },
+  {
+    "text": "Defensive",
+    "start": 629.651,
+    "end": 630.352,
+    "score": 0.3337,
+    "seg": 149
+  },
+  {
+    "text": "lines",
+    "start": 630.412,
+    "end": 630.753,
+    "score": 0.7998,
+    "seg": 149
+  },
+  {
+    "text": "pre-dating",
+    "start": 631.214,
+    "end": 632.396,
+    "score": 0.4752,
+    "seg": 149
+  },
+  {
+    "text": "the",
+    "start": 632.877,
+    "end": 632.937,
+    "score": 0.9975,
+    "seg": 149
+  },
+  {
+    "text": "siege",
+    "start": 632.937,
+    "end": 633.298,
+    "score": 0.1962,
+    "seg": 149
+  },
+  {
+    "text": "by",
+    "start": 633.358,
+    "end": 633.438,
+    "score": 0.0,
+    "seg": 149
+  },
+  {
+    "text": "centuries,",
+    "start": 633.598,
+    "end": 634.119,
+    "score": 0.3328,
+    "seg": 149
+  },
+  {
+    "text": "constructed",
+    "start": 634.46,
+    "end": 635.063,
+    "score": 0.0499,
+    "seg": 150
+  },
+  {
+    "text": "specifically",
+    "start": 635.144,
+    "end": 635.566,
+    "score": 0.2401,
+    "seg": 150
+  },
+  {
+    "text": "to",
+    "start": 635.566,
+    "end": 635.606,
+    "score": 0.0,
+    "seg": 150
+  },
+  {
+    "text": "resist",
+    "start": 635.727,
+    "end": 636.068,
+    "score": 0.4997,
+    "seg": 150
+  },
+  {
+    "text": "the",
+    "start": 636.109,
+    "end": 636.209,
+    "score": 0.0001,
+    "seg": 150
+  },
+  {
+    "text": "type",
+    "start": 636.209,
+    "end": 636.39,
+    "score": 0.25,
+    "seg": 150
+  },
+  {
+    "text": "of",
+    "start": 636.39,
+    "end": 636.471,
+    "score": 0.4997,
+    "seg": 150
+  },
+  {
+    "text": "assault",
+    "start": 636.471,
+    "end": 636.631,
+    "score": 0.0008,
+    "seg": 150
+  },
+  {
+    "text": "being",
+    "start": 636.631,
+    "end": 636.752,
+    "score": 0.1379,
+    "seg": 150
+  },
+  {
+    "text": "attempted",
+    "start": 636.772,
+    "end": 637.114,
+    "score": 0.0006,
+    "seg": 150
+  },
+  {
+    "text": "against",
+    "start": 637.114,
+    "end": 637.456,
+    "score": 0.2857,
+    "seg": 150
+  },
+  {
+    "text": "them.",
+    "start": 637.797,
+    "end": 637.958,
+    "score": 0.2414,
+    "seg": 150
+  },
+  {
+    "text": "The",
+    "start": 638.28,
+    "end": 638.34,
+    "score": 0.0,
+    "seg": 151
+  },
+  {
+    "text": "attacking",
+    "start": 638.36,
+    "end": 638.722,
+    "score": 0.2185,
+    "seg": 151
+  },
+  {
+    "text": "forces",
+    "start": 638.722,
+    "end": 638.984,
+    "score": 0.5831,
+    "seg": 151
+  },
+  {
+    "text": "had",
+    "start": 639.125,
+    "end": 639.386,
+    "score": 0.7106,
+    "seg": 151
+  },
+  {
+    "text": "to",
+    "start": 639.386,
+    "end": 639.466,
+    "score": 0.0,
+    "seg": 151
+  },
+  {
+    "text": "advance",
+    "start": 639.466,
+    "end": 639.949,
+    "score": 0.2592,
+    "seg": 151
+  },
+  {
+    "text": "into",
+    "start": 639.949,
+    "end": 640.17,
+    "score": 0.2498,
+    "seg": 151
+  },
+  {
+    "text": "ground",
+    "start": 640.331,
+    "end": 640.713,
+    "score": 0.8324,
+    "seg": 151
+  },
+  {
+    "text": "that",
+    "start": 640.753,
+    "end": 641.015,
+    "score": 0.4999,
+    "seg": 151
+  },
+  {
+    "text": "had",
+    "start": 641.015,
+    "end": 641.075,
+    "score": 0.0,
+    "seg": 151
+  },
+  {
+    "text": "been",
+    "start": 641.075,
+    "end": 641.176,
+    "score": 0.4992,
+    "seg": 151
+  },
+  {
+    "text": "engineered,",
+    "start": 641.176,
+    "end": 641.719,
+    "score": 0.4492,
+    "seg": 151
+  },
+  {
+    "text": "decades",
+    "start": 642.141,
+    "end": 642.904,
+    "score": 0.5074,
+    "seg": 152
+  },
+  {
+    "text": "before",
+    "start": 642.924,
+    "end": 643.707,
+    "score": 0.1667,
+    "seg": 152
+  },
+  {
+    "text": "they",
+    "start": 643.707,
+    "end": 643.948,
+    "score": 0.4935,
+    "seg": 152
+  },
+  {
+    "text": "arrived,",
+    "start": 644.491,
+    "end": 645.073,
+    "score": 0.571,
+    "seg": 152
+  },
+  {
+    "text": "to",
+    "start": 645.274,
+    "end": 645.515,
+    "score": 0.4992,
+    "seg": 152
+  },
+  {
+    "text": "stop",
+    "start": 645.595,
+    "end": 645.937,
+    "score": 0.4796,
+    "seg": 152
+  },
+  {
+    "text": "exactly",
+    "start": 645.997,
+    "end": 646.379,
+    "score": 0.2856,
+    "seg": 152
+  },
+  {
+    "text": "them.",
+    "start": 646.399,
+    "end": 646.539,
+    "score": 0.2469,
+    "seg": 152
+  },
+  {
+    "text": "Trenches",
+    "start": 646.921,
+    "end": 647.804,
+    "score": 0.4436,
+    "seg": 153
+  },
+  {
+    "text": "funnel",
+    "start": 647.864,
+    "end": 648.567,
+    "score": 0.3352,
+    "seg": 153
+  },
+  {
+    "text": "movement",
+    "start": 648.627,
+    "end": 649.189,
+    "score": 0.4996,
+    "seg": 153
+  },
+  {
+    "text": "and",
+    "start": 649.249,
+    "end": 649.47,
+    "score": 0.3333,
+    "seg": 153
+  },
+  {
+    "text": "eliminate",
+    "start": 649.591,
+    "end": 649.992,
+    "score": 0.2215,
+    "seg": 153
+  },
+  {
+    "text": "flanking",
+    "start": 650.012,
+    "end": 650.514,
+    "score": 0.4435,
+    "seg": 153
+  },
+  {
+    "text": "at",
+    "start": 650.855,
+    "end": 650.976,
+    "score": 0.4995,
+    "seg": 153
+  },
+  {
+    "text": "the",
+    "start": 651.056,
+    "end": 651.257,
+    "score": 0.3338,
+    "seg": 153
+  },
+  {
+    "text": "squad",
+    "start": 651.377,
+    "end": 651.618,
+    "score": 0.3946,
+    "seg": 153
+  },
+  {
+    "text": "level.",
+    "start": 651.799,
+    "end": 651.939,
+    "score": 0.186,
+    "seg": 153
+  },
+  {
+    "text": "The",
+    "start": 652.341,
+    "end": 652.461,
+    "score": 0.0,
+    "seg": 154
+  },
+  {
+    "text": "Chaos-aligned",
+    "start": 652.622,
+    "end": 653.425,
+    "score": 0.0833,
+    "seg": 154
+  },
+  {
+    "text": "defenders",
+    "start": 653.505,
+    "end": 654.288,
+    "score": 0.3935,
+    "seg": 154
+  },
+  {
+    "text": "added",
+    "start": 654.288,
+    "end": 654.729,
+    "score": 0.5998,
+    "seg": 154
+  },
+  {
+    "text": "persistent",
+    "start": 654.81,
+    "end": 655.271,
+    "score": 0.2991,
+    "seg": 154
+  },
+  {
+    "text": "acidic",
+    "start": 655.351,
+    "end": 655.813,
+    "score": 0.2526,
+    "seg": 154
+  },
+  {
+    "text": "chemical",
+    "start": 655.833,
+    "end": 656.174,
+    "score": 0.3282,
+    "seg": 154
+  },
+  {
+    "text": "compounds",
+    "start": 656.255,
+    "end": 656.676,
+    "score": 0.1195,
+    "seg": 154
+  },
+  {
+    "text": "to",
+    "start": 656.676,
+    "end": 656.777,
+    "score": 0.6214,
+    "seg": 154
+  },
+  {
+    "text": "that",
+    "start": 656.857,
+    "end": 657.078,
+    "score": 0.4999,
+    "seg": 154
+  },
+  {
+    "text": "problem,",
+    "start": 657.098,
+    "end": 657.519,
+    "score": 0.0,
+    "seg": 154
+  },
+  {
+    "text": "agents",
+    "start": 657.921,
+    "end": 658.362,
+    "score": 0.5695,
+    "seg": 155
+  },
+  {
+    "text": "that",
+    "start": 658.402,
+    "end": 658.543,
+    "score": 0.9992,
+    "seg": 155
+  },
+  {
+    "text": "pooled",
+    "start": 658.623,
+    "end": 658.904,
+    "score": 0.167,
+    "seg": 155
+  },
+  {
+    "text": "in",
+    "start": 658.904,
+    "end": 658.945,
+    "score": 0.0,
+    "seg": 155
+  },
+  {
+    "text": "low",
+    "start": 658.965,
+    "end": 659.085,
+    "score": 0.3333,
+    "seg": 155
+  },
+  {
+    "text": "ground,",
+    "start": 659.145,
+    "end": 659.547,
+    "score": 0.3975,
+    "seg": 155
+  },
+  {
+    "text": "degraded",
+    "start": 659.567,
+    "end": 660.169,
+    "score": 0.125,
+    "seg": 155
+  },
+  {
+    "text": "respirator",
+    "start": 660.169,
+    "end": 660.49,
+    "score": 0.0996,
+    "seg": 155
+  },
+  {
+    "text": "seals",
+    "start": 660.511,
+    "end": 660.731,
+    "score": 0.0104,
+    "seg": 155
+  },
+  {
+    "text": "over",
+    "start": 660.731,
+    "end": 660.812,
+    "score": 0.0001,
+    "seg": 155
+  },
+  {
+    "text": "extended",
+    "start": 660.812,
+    "end": 661.033,
+    "score": 0.2478,
+    "seg": 155
+  },
+  {
+    "text": "exposure,",
+    "start": 661.033,
+    "end": 661.193,
+    "score": 0.2476,
+    "seg": 155
+  },
+  {
+    "text": "and",
+    "start": 661.193,
+    "end": 661.253,
+    "score": 0.0,
+    "seg": 155
+  },
+  {
+    "text": "corrupted",
+    "start": 661.273,
+    "end": 661.615,
+    "score": 0.1152,
+    "seg": 155
+  },
+  {
+    "text": "the",
+    "start": 661.615,
+    "end": 661.695,
+    "score": 0.3324,
+    "seg": 155
+  },
+  {
+    "text": "soil",
+    "start": 661.695,
+    "end": 661.856,
+    "score": 0.0001,
+    "seg": 155
+  },
+  {
+    "text": "chemistry",
+    "start": 661.856,
+    "end": 662.097,
+    "score": 0.1974,
+    "seg": 155
+  },
+  {
+    "text": "across",
+    "start": 662.097,
+    "end": 662.317,
+    "score": 0.0,
+    "seg": 155
+  },
+  {
+    "text": "entire",
+    "start": 662.317,
+    "end": 662.478,
+    "score": 0.1666,
+    "seg": 155
+  },
+  {
+    "text": "operating",
+    "start": 662.498,
+    "end": 662.719,
+    "score": 0.1113,
+    "seg": 155
+  },
+  {
+    "text": "sectors.",
+    "start": 662.719,
+    "end": 662.88,
+    "score": 0.1416,
+    "seg": 155
+  },
+  {
+    "text": "Ground",
+    "start": 663.16,
+    "end": 663.702,
+    "score": 0.3347,
+    "seg": 156
+  },
+  {
+    "text": "that",
+    "start": 663.702,
+    "end": 663.842,
+    "score": 0.2497,
+    "seg": 156
+  },
+  {
+    "text": "should",
+    "start": 663.862,
+    "end": 664.163,
+    "score": 0.6914,
+    "seg": 156
+  },
+  {
+    "text": "have",
+    "start": 664.283,
+    "end": 664.423,
+    "score": 0.5976,
+    "seg": 156
+  },
+  {
+    "text": "been",
+    "start": 664.463,
+    "end": 664.564,
+    "score": 0.2499,
+    "seg": 156
+  },
+  {
+    "text": "traversable",
+    "start": 664.604,
+    "end": 665.285,
+    "score": 0.0012,
+    "seg": 156
+  },
+  {
+    "text": "became",
+    "start": 665.586,
+    "end": 665.847,
+    "score": 0.7989,
+    "seg": 156
+  },
+  {
+    "text": "toxic",
+    "start": 665.847,
+    "end": 665.947,
+    "score": 0.0001,
+    "seg": 156
+  },
+  {
+    "text": "inside",
+    "start": 665.947,
+    "end": 666.147,
+    "score": 0.1666,
+    "seg": 156
+  },
+  {
+    "text": "two",
+    "start": 666.147,
+    "end": 666.228,
+    "score": 0.0,
+    "seg": 156
+  },
+  {
+    "text": "weeks",
+    "start": 666.228,
+    "end": 666.348,
+    "score": 0.2008,
+    "seg": 156
+  },
+  {
+    "text": "of",
+    "start": 666.448,
+    "end": 666.528,
+    "score": 0.5012,
+    "seg": 156
+  },
+  {
+    "text": "sustained",
+    "start": 666.588,
+    "end": 666.829,
+    "score": 0.2187,
+    "seg": 156
+  },
+  {
+    "text": "fighting.",
+    "start": 666.829,
+    "end": 667.029,
+    "score": 0.0,
+    "seg": 156
+  },
+  {
+    "text": "Soldiers",
+    "start": 667.33,
+    "end": 667.651,
+    "score": 0.0,
+    "seg": 157
+  },
+  {
+    "text": "who",
+    "start": 667.651,
+    "end": 667.731,
+    "score": 0.0,
+    "seg": 157
+  },
+  {
+    "text": "crossed",
+    "start": 667.791,
+    "end": 667.992,
+    "score": 0.426,
+    "seg": 157
+  },
+  {
+    "text": "contaminated",
+    "start": 667.992,
+    "end": 668.573,
+    "score": 0.2499,
+    "seg": 157
+  },
+  {
+    "text": "sections",
+    "start": 668.593,
+    "end": 668.793,
+    "score": 0.2496,
+    "seg": 157
+  },
+  {
+    "text": "arrived",
+    "start": 668.793,
+    "end": 669.214,
+    "score": 0.286,
+    "seg": 157
+  },
+  {
+    "text": "at",
+    "start": 669.234,
+    "end": 669.315,
+    "score": 0.0,
+    "seg": 157
+  },
+  {
+    "text": "their",
+    "start": 669.335,
+    "end": 669.435,
+    "score": 0.1982,
+    "seg": 157
+  },
+  {
+    "text": "objectives",
+    "start": 669.455,
+    "end": 669.695,
+    "score": 0.0001,
+    "seg": 157
+  },
+  {
+    "text": "already",
+    "start": 669.736,
+    "end": 670.177,
+    "score": 0.4283,
+    "seg": 157
+  },
+  {
+    "text": "in",
+    "start": 670.197,
+    "end": 670.237,
+    "score": 0.0,
+    "seg": 157
+  },
+  {
+    "text": "physiological",
+    "start": 670.237,
+    "end": 670.838,
+    "score": 0.2308,
+    "seg": 157
+  },
+  {
+    "text": "decline",
+    "start": 670.838,
+    "end": 671.459,
+    "score": 0.5789,
+    "seg": 157
+  },
+  {
+    "text": "before",
+    "start": 671.902,
+    "end": 672.124,
+    "score": 0.1666,
+    "seg": 158
+  },
+  {
+    "text": "any",
+    "start": 672.144,
+    "end": 672.224,
+    "score": 0.6659,
+    "seg": 158
+  },
+  {
+    "text": "contact",
+    "start": 672.245,
+    "end": 672.87,
+    "score": 0.4285,
+    "seg": 158
+  },
+  {
+    "text": "occurred.",
+    "start": 672.89,
+    "end": 673.617,
+    "score": 0.1684,
+    "seg": 158
+  },
+  {
+    "text": "After",
+    "start": 673.98,
+    "end": 674.183,
+    "score": 0.0,
+    "seg": 159
+  },
+  {
+    "text": "seventeen",
+    "start": 674.183,
+    "end": 674.426,
+    "score": 0.0486,
+    "seg": 159
+  },
+  {
+    "text": "years",
+    "start": 674.426,
+    "end": 674.527,
+    "score": 0.0,
+    "seg": 159
+  },
+  {
+    "text": "of",
+    "start": 674.527,
+    "end": 674.608,
+    "score": 0.5,
+    "seg": 159
+  },
+  {
+    "text": "that,",
+    "start": 674.608,
+    "end": 674.831,
+    "score": 0.5461,
+    "seg": 159
+  },
+  {
+    "text": "the",
+    "start": 674.851,
+    "end": 674.912,
+    "score": 0.0001,
+    "seg": 159
+  },
+  {
+    "text": "battlefield",
+    "start": 674.912,
+    "end": 675.175,
+    "score": 0.002,
+    "seg": 159
+  },
+  {
+    "text": "substrate",
+    "start": 675.175,
+    "end": 675.438,
+    "score": 0.1111,
+    "seg": 159
+  },
+  {
+    "text": "changed.",
+    "start": 675.438,
+    "end": 675.6,
+    "score": 0.0,
+    "seg": 159
+  },
+  {
+    "text": "The",
+    "start": 675.841,
+    "end": 676.042,
+    "score": 0.0001,
+    "seg": 160
+  },
+  {
+    "text": "soil",
+    "start": 676.062,
+    "end": 676.645,
+    "score": 0.25,
+    "seg": 160
+  },
+  {
+    "text": "churned.",
+    "start": 676.725,
+    "end": 677.468,
+    "score": 0.4283,
+    "seg": 160
+  },
+  {
+    "text": "Contaminated",
+    "start": 677.93,
+    "end": 678.551,
+    "score": 0.3827,
+    "seg": 161
+  },
+  {
+    "text": "zones",
+    "start": 678.631,
+    "end": 679.032,
+    "score": 0.3998,
+    "seg": 161
+  },
+  {
+    "text": "developed",
+    "start": 679.052,
+    "end": 679.432,
+    "score": 0.3327,
+    "seg": 161
+  },
+  {
+    "text": "biological",
+    "start": 679.432,
+    "end": 679.692,
+    "score": 0.1118,
+    "seg": 161
+  },
+  {
+    "text": "properties",
+    "start": 679.692,
+    "end": 680.153,
+    "score": 0.299,
+    "seg": 161
+  },
+  {
+    "text": "that",
+    "start": 680.173,
+    "end": 680.413,
+    "score": 0.001,
+    "seg": 161
+  },
+  {
+    "text": "had",
+    "start": 680.433,
+    "end": 680.493,
+    "score": 0.3314,
+    "seg": 161
+  },
+  {
+    "text": "no",
+    "start": 680.493,
+    "end": 680.554,
+    "score": 0.4978,
+    "seg": 161
+  },
+  {
+    "text": "business",
+    "start": 680.554,
+    "end": 681.014,
+    "score": 0.3748,
+    "seg": 161
+  },
+  {
+    "text": "being",
+    "start": 681.114,
+    "end": 681.335,
+    "score": 0.301,
+    "seg": 161
+  },
+  {
+    "text": "there.",
+    "start": 681.355,
+    "end": 681.655,
+    "score": 0.2083,
+    "seg": 161
+  },
+  {
+    "text": "In",
+    "start": 681.655,
+    "end": 681.695,
+    "score": 0.0169,
+    "seg": 162
+  },
+  {
+    "text": "the",
+    "start": 681.695,
+    "end": 681.756,
+    "score": 0.0451,
+    "seg": 162
+  },
+  {
+    "text": "worst",
+    "start": 681.756,
+    "end": 681.957,
+    "score": 0.1995,
+    "seg": 162
+  },
+  {
+    "text": "sectors",
+    "start": 681.957,
+    "end": 682.381,
+    "score": 0.1423,
+    "seg": 162
+  },
+  {
+    "text": "the",
+    "start": 682.401,
+    "end": 682.482,
+    "score": 0.6996,
+    "seg": 162
+  },
+  {
+    "text": "distinction",
+    "start": 682.482,
+    "end": 682.724,
+    "score": 0.1256,
+    "seg": 162
+  },
+  {
+    "text": "between",
+    "start": 682.724,
+    "end": 682.965,
+    "score": 0.0007,
+    "seg": 162
+  },
+  {
+    "text": "a",
+    "start": 682.965,
+    "end": 682.986,
+    "score": 0.0003,
+    "seg": 162
+  },
+  {
+    "text": "minefield",
+    "start": 682.986,
+    "end": 683.288,
+    "score": 0.2222,
+    "seg": 162
+  },
+  {
+    "text": "and",
+    "start": 683.53,
+    "end": 683.59,
+    "score": 0.0,
+    "seg": 163
+  },
+  {
+    "text": "clear",
+    "start": 683.59,
+    "end": 683.691,
+    "score": 0.0,
+    "seg": 163
+  },
+  {
+    "text": "ground",
+    "start": 683.691,
+    "end": 683.811,
+    "score": 0.0,
+    "seg": 163
+  },
+  {
+    "text": "stopped",
+    "start": 683.811,
+    "end": 683.992,
+    "score": 0.1429,
+    "seg": 163
+  },
+  {
+    "text": "mattering",
+    "start": 683.992,
+    "end": 684.273,
+    "score": 0.1109,
+    "seg": 163
+  },
+  {
+    "text": "operationally",
+    "start": 684.273,
+    "end": 684.575,
+    "score": 0.0749,
+    "seg": 163
+  },
+  {
+    "text": "because",
+    "start": 684.575,
+    "end": 684.715,
+    "score": 0.0001,
+    "seg": 163
+  },
+  {
+    "text": "the",
+    "start": 684.736,
+    "end": 684.796,
+    "score": 0.0,
+    "seg": 163
+  },
+  {
+    "text": "outcomes",
+    "start": 684.796,
+    "end": 684.957,
+    "score": 0.0003,
+    "seg": 163
+  },
+  {
+    "text": "were",
+    "start": 684.957,
+    "end": 685.037,
+    "score": 0.0,
+    "seg": 163
+  },
+  {
+    "text": "roughly",
+    "start": 685.037,
+    "end": 685.198,
+    "score": 0.2857,
+    "seg": 163
+  },
+  {
+    "text": "comparable",
+    "start": 685.198,
+    "end": 685.439,
+    "score": 0.1008,
+    "seg": 163
+  },
+  {
+    "text": "either",
+    "start": 685.459,
+    "end": 685.599,
+    "score": 0.0,
+    "seg": 163
+  },
+  {
+    "text": "way.",
+    "start": 685.599,
+    "end": 685.68,
+    "score": 0.0,
+    "seg": 163
+  },
+  {
+    "text": "Fourteen",
+    "start": 685.941,
+    "end": 688.289,
+    "score": 0.4295,
+    "seg": 164
+  },
+  {
+    "text": "million",
+    "start": 688.369,
+    "end": 688.731,
+    "score": 0.7141,
+    "seg": 164
+  },
+  {
+    "text": "Krieg",
+    "start": 688.971,
+    "end": 689.273,
+    "score": 0.3923,
+    "seg": 164
+  },
+  {
+    "text": "Guardsmen",
+    "start": 689.353,
+    "end": 690.095,
+    "score": 0.333,
+    "seg": 164
+  },
+  {
+    "text": "died",
+    "start": 690.136,
+    "end": 690.376,
+    "score": 0.2496,
+    "seg": 164
+  },
+  {
+    "text": "at",
+    "start": 690.778,
+    "end": 690.878,
+    "score": 0.4999,
+    "seg": 164
+  },
+  {
+    "text": "Vraks.",
+    "start": 690.898,
+    "end": 691.199,
+    "score": 0.0,
+    "seg": 164
+  },
+  {
+    "text": "The",
+    "start": 691.621,
+    "end": 691.701,
+    "score": 0.9943,
+    "seg": 165
+  },
+  {
+    "text": "environment",
+    "start": 691.881,
+    "end": 693.585,
+    "score": 0.7256,
+    "seg": 165
+  },
+  {
+    "text": "wasn\u2019t",
+    "start": 693.625,
+    "end": 693.946,
+    "score": 0.1998,
+    "seg": 165
+  },
+  {
+    "text": "incidental",
+    "start": 693.986,
+    "end": 694.868,
+    "score": 0.3973,
+    "seg": 165
+  },
+  {
+    "text": "to",
+    "start": 694.888,
+    "end": 694.948,
+    "score": 0.0218,
+    "seg": 165
+  },
+  {
+    "text": "that",
+    "start": 694.968,
+    "end": 695.108,
+    "score": 0.2822,
+    "seg": 165
+  },
+  {
+    "text": "number.",
+    "start": 695.369,
+    "end": 695.81,
+    "score": 0.3286,
+    "seg": 165
+  },
+  {
+    "text": "It",
+    "start": 695.81,
+    "end": 695.85,
+    "score": 0.0659,
+    "seg": 166
+  },
+  {
+    "text": "was",
+    "start": 695.85,
+    "end": 695.911,
+    "score": 0.0469,
+    "seg": 166
+  },
+  {
+    "text": "built",
+    "start": 695.911,
+    "end": 696.011,
+    "score": 0.0015,
+    "seg": 166
+  },
+  {
+    "text": "into",
+    "start": 696.011,
+    "end": 696.092,
+    "score": 0.0032,
+    "seg": 166
+  },
+  {
+    "text": "the",
+    "start": 696.092,
+    "end": 696.192,
+    "score": 0.0008,
+    "seg": 166
+  },
+  {
+    "text": "calculation",
+    "start": 696.212,
+    "end": 696.474,
+    "score": 0.0907,
+    "seg": 166
+  },
+  {
+    "text": "from",
+    "start": 696.494,
+    "end": 696.655,
+    "score": 0.2492,
+    "seg": 166
+  },
+  {
+    "text": "the",
+    "start": 696.655,
+    "end": 696.876,
+    "score": 0.019,
+    "seg": 166
+  },
+  {
+    "text": "start.",
+    "start": 696.916,
+    "end": 697.52,
+    "score": 0.1998,
+    "seg": 166
+  },
+  {
+    "text": "Number",
+    "start": 697.821,
+    "end": 698.725,
+    "score": 0.3333,
+    "seg": 167
+  },
+  {
+    "text": "Three,",
+    "start": 698.745,
+    "end": 699.167,
+    "score": 0.4708,
+    "seg": 167
+  },
+  {
+    "text": "Necron",
+    "start": 699.167,
+    "end": 701.155,
+    "score": 0.6654,
+    "seg": 167
+  },
+  {
+    "text": "Tomb",
+    "start": 701.216,
+    "end": 701.336,
+    "score": 0.2499,
+    "seg": 167
+  },
+  {
+    "text": "Complexes.",
+    "start": 701.376,
+    "end": 702.039,
+    "score": 0.4202,
+    "seg": 167
+  },
+  {
+    "text": "A",
+    "start": 702.24,
+    "end": 702.26,
+    "score": 0.0,
+    "seg": 168
+  },
+  {
+    "text": "Necron",
+    "start": 702.28,
+    "end": 702.502,
+    "score": 0.0,
+    "seg": 168
+  },
+  {
+    "text": "tomb",
+    "start": 702.502,
+    "end": 702.643,
+    "score": 0.0,
+    "seg": 168
+  },
+  {
+    "text": "world",
+    "start": 702.643,
+    "end": 702.744,
+    "score": 0.0065,
+    "seg": 168
+  },
+  {
+    "text": "has",
+    "start": 702.744,
+    "end": 702.805,
+    "score": 0.0,
+    "seg": 168
+  },
+  {
+    "text": "been",
+    "start": 702.805,
+    "end": 702.905,
+    "score": 0.0005,
+    "seg": 168
+  },
+  {
+    "text": "a",
+    "start": 702.905,
+    "end": 702.925,
+    "score": 0.0,
+    "seg": 168
+  },
+  {
+    "text": "trap",
+    "start": 702.925,
+    "end": 703.006,
+    "score": 0.2494,
+    "seg": 168
+  },
+  {
+    "text": "for",
+    "start": 703.006,
+    "end": 703.067,
+    "score": 0.0,
+    "seg": 168
+  },
+  {
+    "text": "several",
+    "start": 703.067,
+    "end": 703.208,
+    "score": 0.0013,
+    "seg": 168
+  },
+  {
+    "text": "million",
+    "start": 703.208,
+    "end": 703.369,
+    "score": 0.0,
+    "seg": 168
+  },
+  {
+    "text": "years.",
+    "start": 703.369,
+    "end": 703.49,
+    "score": 0.0,
+    "seg": 168
+  },
+  {
+    "text": "The",
+    "start": 703.652,
+    "end": 703.733,
+    "score": 0.9837,
+    "seg": 169
+  },
+  {
+    "text": "exterior",
+    "start": 703.753,
+    "end": 704.077,
+    "score": 0.1812,
+    "seg": 169
+  },
+  {
+    "text": "looks",
+    "start": 704.117,
+    "end": 704.421,
+    "score": 0.382,
+    "seg": 169
+  },
+  {
+    "text": "like",
+    "start": 704.421,
+    "end": 704.542,
+    "score": 0.0001,
+    "seg": 169
+  },
+  {
+    "text": "a",
+    "start": 704.582,
+    "end": 704.603,
+    "score": 0.999,
+    "seg": 169
+  },
+  {
+    "text": "planet.",
+    "start": 704.643,
+    "end": 705.068,
+    "score": 0.1665,
+    "seg": 169
+  },
+  {
+    "text": "That\u2019s",
+    "start": 705.433,
+    "end": 705.555,
+    "score": 0.3982,
+    "seg": 170
+  },
+  {
+    "text": "where",
+    "start": 705.555,
+    "end": 705.717,
+    "score": 0.215,
+    "seg": 170
+  },
+  {
+    "text": "the",
+    "start": 705.717,
+    "end": 705.778,
+    "score": 0.0183,
+    "seg": 170
+  },
+  {
+    "text": "familiar",
+    "start": 705.778,
+    "end": 706.002,
+    "score": 0.0,
+    "seg": 170
+  },
+  {
+    "text": "part",
+    "start": 706.002,
+    "end": 706.144,
+    "score": 0.25,
+    "seg": 170
+  },
+  {
+    "text": "ends.",
+    "start": 706.205,
+    "end": 706.428,
+    "score": 0.0,
+    "seg": 170
+  },
+  {
+    "text": "Tomb",
+    "start": 706.55,
+    "end": 706.631,
+    "score": 0.0,
+    "seg": 171
+  },
+  {
+    "text": "complexes",
+    "start": 706.671,
+    "end": 706.934,
+    "score": 0.0,
+    "seg": 171
+  },
+  {
+    "text": "extend",
+    "start": 706.934,
+    "end": 707.055,
+    "score": 0.3323,
+    "seg": 171
+  },
+  {
+    "text": "kilometers",
+    "start": 707.055,
+    "end": 707.378,
+    "score": 0.1985,
+    "seg": 171
+  },
+  {
+    "text": "below",
+    "start": 707.378,
+    "end": 707.479,
+    "score": 0.1728,
+    "seg": 171
+  },
+  {
+    "text": "the",
+    "start": 707.479,
+    "end": 707.539,
+    "score": 0.3333,
+    "seg": 171
+  },
+  {
+    "text": "surface",
+    "start": 707.539,
+    "end": 707.681,
+    "score": 0.0,
+    "seg": 171
+  },
+  {
+    "text": "through",
+    "start": 707.681,
+    "end": 707.842,
+    "score": 0.2853,
+    "seg": 171
+  },
+  {
+    "text": "dimensionally",
+    "start": 707.842,
+    "end": 708.226,
+    "score": 0.2307,
+    "seg": 171
+  },
+  {
+    "text": "compressed",
+    "start": 708.226,
+    "end": 708.63,
+    "score": 0.1001,
+    "seg": 171
+  },
+  {
+    "text": "architecture,",
+    "start": 708.65,
+    "end": 709.013,
+    "score": 0.0,
+    "seg": 171
+  }
+]

@@ -1,0 +1,23 @@
+{
+  "label": "fa-jonatasgrosman",
+  "cmd": [
+    "measure-forced-alignment-hf.py",
+    "align",
+    "--segments-json",
+    "/tmp/fa-hf-inputs/segments-v6.json"
+  ],
+  "elapsed_sec": 384.17514104099973,
+  "model_load_sec": 154.63372381399677,
+  "align_only_sec": 229.15300988002855,
+  "peak_rss_bytes": 4182511616,
+  "returncode": 0,
+  "token_count": 3857,
+  "segment_count": 444,
+  "failed_segments": [],
+  "model": "transformers Wav2Vec2ForCTC (jonatasgrosman/wav2vec2-large-xlsr-53-english, Apache-2.0)",
+  "torch_version": "2.2.2",
+  "torchaudio_version": "2.2.2",
+  "pad_sec": 3.0,
+  "language": "en",
+  "dropped_unrepresentable": []
+}

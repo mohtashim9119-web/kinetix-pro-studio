@@ -1,0 +1,23 @@
+{
+  "label": "fa",
+  "cmd": [
+    "measure-forced-alignment.py",
+    "align",
+    "--segments-json",
+    "/private/tmp/claude-501/-Users-mohtashim-Drive-Vibe-Coding-Projects-4-kinetix-pro-studio/825cee87-2aaa-4aa9-8ab6-7ab2dde530e0/scratchpad/segments-v6.json"
+  ],
+  "elapsed_sec": 246.72159800000009,
+  "model_load_sec": 6.376756384001055,
+  "align_only_sec": 238.91569177605925,
+  "peak_rss_bytes": 3980214272,
+  "returncode": 0,
+  "token_count": 3857,
+  "segment_count": 444,
+  "failed_segments": [],
+  "model": "torchaudio MMS_FA (mling_uroman, with_star=True)",
+  "torch_version": "2.2.2",
+  "torchaudio_version": "2.2.2",
+  "pad_sec": 3.0,
+  "language": "en",
+  "dropped_unrepresentable": []
+}

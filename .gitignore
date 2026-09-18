@@ -45,7 +45,16 @@ scripts/ws2-49-measurement/*.json
 .answer-keys/
 .venv-phase4/
 .venv-phase4-fa/
-.work-phase4/
+# 2026-09-19 P1 gate-integrity pass — replay/ fixtures are irreplaceable
+# (P2 sweep) and gate scripts/phase4-restore-replay-inputs.py's regeneration
+# path for the v6/173/spanish trio; tracked so the machine-dependent npm
+# gate no longer depends on a fixture that only exists in the main worktree.
+# Everything else under .work-phase4/ (session backups, step-*.json scratch)
+# stays ignored — a parent-dir exclude can't be re-included by a child
+# negation, so this uses .work-phase4/* instead of .work-phase4/.
+.work-phase4/*
+!.work-phase4/replay/
+!.work-phase4/replay/**
 
 # graphify tool output — regeneratable, not source (2026-08-07)
 graphify-out/

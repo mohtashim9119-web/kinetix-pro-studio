@@ -1,0 +1,26 @@
+{
+  "runId": "ak-20260823T174719Z-7d9c1245",
+  "mintedAt": "2026-08-23T17:47:19.668Z",
+  "arms": {
+    "silences": {
+      "file": "silences_native.json",
+      "sha256": "767f689ca28060096f218186a28de6e7976c9e6e9fdabe8caa421c24167ab6b7",
+      "count": 237
+    },
+    "whisperRaw": {
+      "file": "whisper_raw_tokens.json",
+      "sha256": "27ac4f9b8bf39368678ddaa510906b625ed9f6c5d7d7a7547e1f46465aa97f56",
+      "count": 2082
+    },
+    "chunkPlan": {
+      "file": "fa_ah_chunks.json",
+      "sha256": "5b796632a44df299b78bcb9275fbcce63656d3cc1fd4df6c5ff4f7448791a9f8",
+      "count": 119
+    },
+    "faWords": {
+      "file": "fa_ah_words.json",
+      "sha256": "ae4f7dcc9ad0a1597af614e1456c0141a3eab9952d7dd449e14e3a708bd442a0",
+      "count": 1660
+    }
+  }
+}

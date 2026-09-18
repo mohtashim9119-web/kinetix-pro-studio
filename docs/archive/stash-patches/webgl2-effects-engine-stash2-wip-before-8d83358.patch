@@ -1,0 +1,2648 @@
+diff --git a/package.json b/package.json
+index 9cfa7d9..65454ac 100644
+--- a/package.json
++++ b/package.json
+@@ -9,7 +9,8 @@
+     "preview": "vite preview",
+     "clean": "rm -rf dist server.js",
+     "lint": "tsc --noEmit",
+-    "test": "vitest run",
++    "test": "npm run lint && vitest run",
++    "test:unit": "vitest run",
+     "test:watch": "vitest",
+     "tauri:dev": "tauri dev",
+     "tauri:build": "tauri build"
+diff --git a/scripts/phase4-step-aa-unlock-repro.test.ts b/scripts/phase4-step-aa-unlock-repro.test.ts
+index f5ca171..de272c3 100644
+--- a/scripts/phase4-step-aa-unlock-repro.test.ts
++++ b/scripts/phase4-step-aa-unlock-repro.test.ts
+@@ -1,17 +1,45 @@
+ // Phase 4 Step AA/K14 — LIVE repro of K14, the in-editor lock defect.
+-// INVERTED at the K14 implementation commit (Steps AA-AD -> implementation).
++//
++// -----------------------------------------------------------------------------
++// STATUS: K14 IS LIVE AGAIN. RE-INVERTED 2026-08-07.
++// -----------------------------------------------------------------------------
++// History of this file, in order:
++//   written  — asserted the DEFECT (same convention as the K13 repro)
++//   inverted — at the K14 implementation commit c52e67a, to assert the FIX
++//   RE-INVERTED — 2026-08-07, when `src/` was reverted to 18f5734 and the fix
++//                 went with it. It asserts the DEFECT again.
++//
++// It has never been deleted at any point, and must not be: it is the only proof
++// this defect was ever real. Each inversion preserves the other side's values in
++// comments, so both readings survive.
++//
++// The K14 fix is recoverable from tag `model-p-parked-2026-08-07` (commit
++// c52e67a). See docs/model-p-parked-inventory.md §2, syncEngine entry — note
++// that K14's withdrawal of the locked-growth exemption is the highest-
++// consequence change in the whole parked set, and is what made timeline gaps
++// producible at all.
++//
++// Values below were re-measured against the reverted code on 2026-08-07, NOT
++// copied from the pre-fix comments. Two of the old pre-fix comments turned out
++// to describe the blast radius imprecisely; the corrections are annotated inline
++// at PART 2. Note especially that a locked segment's anchor drift is only
++// observable BEFORE the toggle — the baseline locked branch closes the drift by
++// moving the segment, so reading it afterwards reports zero for a defect that
++// has already landed.
++// -----------------------------------------------------------------------------
+ //
+ // K14 is NOT K13. K13 is the Apply Sync clean-slate rebuild dropping the `locked`
+ // field (scripts/phase4-step-w-k13-repro.test.ts). K14 needs no resync at all: it
+ // fired inside the editor, on the lock toggle, and moved segments the user never
+ // touched — including OTHER LOCKED ONES.
+ //
+-// Mechanism (was, before this commit): `handleToggleLock` (src/App.tsx) ran
++// Mechanism (live again at baseline): `handleToggleLock` (src/App.tsx) runs
+ // `applyAnchorBasedTiming` over the WHOLE segments array, and that function
+ // re-derived every segment's startTime from its `anchorStart` — a field that
+ // `computeDragCascade` (src/App.tsx) never updated when a drag rewrote
+-// startTime/duration. So every drag left the anchor grid stale, and the next
+-// lock toggle anywhere snapped the whole timeline back onto it. Fixed by:
++// startTime/duration. So every drag leaves the anchor grid stale, and the next
++// lock toggle anywhere snaps segments back onto it. K14 fixed this by (all
++// three now REVERTED — recoverable from c52e67a):
+ //   1. `computeDragCascade` no longer writes `locked: true` anywhere (decision 9
+ //      point 1 — dragging locks nothing).
+ //   2. `recomputeStartTimes` (the tail of `computeDragCascade`) now writes
+@@ -22,11 +50,8 @@
+ //      grows/shrinks — and forces anchorStart to mirror startTime instead of
+ //      reading it as a separate, possibly-stale value.
+ //
+-// This file was written to assert the DEFECT (same convention as the K13
+-// repro) and was required to start failing once decision 9's lock semantics
+-// landed. It has NOT been deleted — inverted in place, per instruction, so the
+-// only proof this defect was ever real is not lost. Every assertion below now
+-// proves the FIX; the original buggy values are preserved in comments.
++// Every assertion below now proves the DEFECT again; the post-fix values are
++// preserved in comments alongside each one.
+ //
+ // Run: npx vitest run scripts/phase4-step-aa-unlock-repro.test.ts
+ import { describe, it, expect } from 'vitest';
+@@ -46,32 +71,41 @@ function seg(i: number, startTime: number, duration: number, anchorStart: number
+ 
+ /**
+  * Verbatim mirror of App.tsx's module-private `recomputeStartTimes`, which is
+- * the tail of `computeDragCascade`, POST-FIX. Reproduced rather than imported
+- * because it is not exported; the two must stay identical. The fix: every
+- * segment's `anchorStart` is now written in lockstep with the `startTime` this
+- * function commits, instead of being left untouched (the K14 root cause).
++ * the tail of `computeDragCascade`, PRE-FIX (RE-INVERTED 2026-08-07 — see the
++ * banner at the top of this file). Reproduced rather than imported because it
++ * is not exported; the two must stay identical.
++ *
++ * THE K14 ROOT CAUSE IS THE MISSING `anchorStart` WRITE BELOW. This function
++ * commits a fresh `startTime` for every segment and leaves `anchorStart` at
++ * whatever it was, so a drag silently desynchronises the anchor grid from the
++ * timeline the user is looking at. Nothing surfaces at drag time; the damage
++ * lands later, when any whole-array `applyAnchorBasedTiming` re-derivation
++ * (e.g. an unrelated lock toggle) snaps segments back onto those stale anchors.
+  */
+ function recomputeStartTimes(segs: VideoSegment[]): VideoSegment[] {
+   let acc = 0;
+   return segs.map(s => {
+     const t = Number(acc.toFixed(3));
+     acc += s.duration;
+-    return { ...s, startTime: t, anchorStart: t };
++    // K14 DEFECT (live again at baseline): `anchorStart` is NOT written here.
++    // Post-fix this was `return { ...s, startTime: t, anchorStart: t };`
++    return { ...s, startTime: t };
+   });
+ }
+ 
+ /**
+- * The drag half of `computeDragCascade`, POST-FIX: a drag changes duration on
+- * the dragged segment and its absorbing neighbour ONLY — no `locked` write at
+- * all (decision 9 point 1). Renamed from the pre-fix `dragAndAutoLock` to
+- * `drag`, since there is no more auto-lock to name.
++ * The drag half of `computeDragCascade`, PRE-FIX: a drag changes duration on
++ * the dragged segment and its absorbing neighbour AND silently marks both
++ * `locked`, without the user ever asking. Named `dragAndAutoLock` for exactly
++ * that reason (K14's fix renamed it to `drag` and dropped the `locked` writes;
++ * both are reverted here).
+  */
+-function drag(
++function dragAndAutoLock(
+   segs: VideoSegment[], draggedId: string, newDur: number, absorberId: string, absorberDur: number,
+ ): VideoSegment[] {
+   return recomputeStartTimes(segs.map(s =>
+-    s.id === draggedId ? { ...s, duration: newDur } :
+-    s.id === absorberId ? { ...s, duration: absorberDur } : s,
++    s.id === draggedId ? { ...s, duration: newDur, locked: true } :
++    s.id === absorberId ? { ...s, duration: absorberDur, locked: true } : s,
+   ));
+ }
+ 
+@@ -84,82 +118,91 @@ describe('K14 — in-editor lock toggle re-times the whole timeline (LIVE, produ
+     seg(3, 30, 10, 30), seg(4, 40, 10, 40), seg(5, 50, 10, 50),
+   ];
+ 
+-  it('PART 1 — a drag no longer desynchronises anchorStart from startTime, and locks nothing', () => {
+-    const after = drag(synced(), 's1', 13, 's2', 7);
++  it('PART 1 (DEFECT) — a drag desynchronises anchorStart from startTime, and silently auto-locks', () => {
++    const after = dragAndAutoLock(synced(), 's1', 13, 's2', 7);
+ 
+-    // What the user sees is still correct and contiguous.
++    // What the user sees is still correct and contiguous — which is precisely
++    // why K14 is invisible at drag time.
+     expect(after[1]!.startTime + after[1]!.duration).toBeCloseTo(after[2]!.startTime, 6);
+ 
+-    // FIXED: s2's anchor now tracks its real startTime (23), not a stale 20 —
+-    // the 3s lie is gone; nothing in the drag path can leave this out of sync
+-    // again. (Pre-fix: `expect(after[2]!.anchorStart).toBeCloseTo(20, 6)` —
+-    // the anchor stayed at its pre-drag value while startTime moved to 23.)
++    // DEFECT: s2's startTime moved to 23 but its anchor stayed at its pre-drag
++    // 20 — a 3s lie sitting in the array, waiting for the next whole-array
++    // re-derivation to act on it. (Post-K14 this asserted
++    // `expect(after[2]!.anchorStart).toBeCloseTo(23, 6)`.)
+     expect(after[2]!.startTime).toBeCloseTo(23, 6);
+-    expect(after[2]!.anchorStart).toBeCloseTo(23, 6);
++    expect(after[2]!.anchorStart).toBeCloseTo(20, 6);
+ 
+-    // FIXED: the drag auto-locked NOTHING — decision 9 point 1. (Pre-fix:
+-    // `expect(after[1]!.locked).toBe(true); expect(after[2]!.locked).toBe(true);`
+-    // — both cascade participants were silently locked without being asked.)
+-    expect(after[1]!.locked).toBe(false);
+-    expect(after[2]!.locked).toBe(false);
++    // DEFECT: both cascade participants were locked without the user asking —
++    // the auto-lock K14's decision 9 point 1 removed. (Post-K14 this asserted
++    // both were still `false`.)
++    expect(after[1]!.locked).toBe(true);
++    expect(after[2]!.locked).toBe(true);
+   });
+ 
+-  it('PART 2 — unlocking one segment moves NOTHING else; a different, still-locked '
+-    + 'segment survives byte-for-byte (this is C13\'s scenario)', () => {
+-    // Two drags, far apart on the timeline — same shape and same numeric
+-    // params as the original repro. Neither locks anything anymore (decision
+-    // 9 point 1), so the two segments the ORIGINAL repro found auto-locked
+-    // (s2, s5) are locked here EXPLICITLY instead, mirroring decision 9 point
+-    // 2 ("segments lock only when the user explicitly toggles them") — a user
+-    // action unrelated to either drag.
+-    let cur = drag(synced(), 's1', 13, 's2', 7);
+-    cur = drag(cur, 's4', 14, 's5', 6);
+-    cur = cur.map(s => (s.id === 's2' || s.id === 's5') ? { ...s, locked: true } : s);
++  it('PART 2 (DEFECT) — unlocking one segment makes a DIFFERENT, still-locked segment '
++    + 'snap backward onto a stale anchor and overlap its neighbour (C13\'s scenario)', () => {
++    // Two drags, far apart on the timeline. Pre-fix each one AUTO-LOCKS both
++    // its participants, so s1/s2 and s4/s5 end up locked without the user ever
++    // asking — no explicit lock step is needed to set the scenario up, which is
++    // itself part of the defect.
++    let cur = dragAndAutoLock(synced(), 's1', 13, 's2', 7);
++    cur = dragAndAutoLock(cur, 's4', 14, 's5', 6);
+     const s5Before = cur.find(s => s.id === 's5')!;
+     const s0Before = cur.find(s => s.id === 's0')!;
+     const s4Before = cur.find(s => s.id === 's4')!;
+ 
+-    // The user unlocks s2. Nothing else is touched.
++    // The user unlocks s2 — one deliberate action, on one segment.
+     const toggled = cur.map(s => (s.id === 's2' ? { ...s, locked: false } : s));
+     const after = applyAnchorBasedTiming(toggled, AUDIO);
+ 
+-    // FIXED: s2 itself does NOT jump backward — its anchor was never stale,
+-    // so unlocking it is a no-op on its position. (Pre-fix, same drag shape:
+-    // `expect(after[2]!.startTime - cur[2]!.startTime).toBeCloseTo(-3, 6)` —
+-    // s2 snapped back 3s onto a stale pre-drag anchor.)
++    // DEFECT: s2 snaps 3s BACKWARD onto the stale pre-drag anchor PART 1 left
++    // behind. The user unlocked it; they did not ask it to move.
++    // (Post-K14 this asserted `s2After.startTime` was unchanged.)
+     const s2Ref = cur.find(s => s.id === 's2')!;
+     const s2After = after.find(s => s.id === 's2')!;
+-    expect(s2After.startTime).toBeCloseTo(s2Ref.startTime, 6);
+-
+-    // THE FIX, directly: s5 — three positions away, in a different edit,
+-    // explicitly locked — is bit-for-bit unchanged: same startTime, duration,
+-    // anchorStart, and still locked. (Pre-fix: `expect(after[5]!.locked)
+-    // .toBe(true); expect(after[5]!.startTime - cur[5]!.startTime)
+-    // .toBeCloseTo(-4, 6);` — a segment neither dragged nor unlocked in this
+-    // action moved anyway, and being locked did not save it.)
++    expect(s2After.startTime - s2Ref.startTime).toBeCloseTo(-3, 6);
++
++    // THE DEFECT, directly: s5 — three positions away, part of a different
++    // edit, and still LOCKED — moves anyway. Being locked did not save it.
++    // (Post-K14 this asserted s5 was bit-for-bit unchanged.)
+     const s5After = after.find(s => s.id === 's5')!;
+     expect(s5After.locked).toBe(true);
+-    expect(s5After.startTime).toBeCloseTo(s5Before.startTime, 6);
+-    expect(s5After.duration).toBeCloseTo(s5Before.duration, 6);
+-    expect(s5After.anchorStart).toBeCloseTo(s5Before.anchorStart!, 6);
++    expect(s5After.startTime - s5Before.startTime).toBeCloseTo(-4, 6);
+ 
+-    // C13's own predicate: a locked segment's anchorStart never drifts from
+-    // its startTime.
+-    expect(s5After.anchorStart).toBeCloseTo(s5After.startTime, 6);
++    // C13's predicate, VIOLATED — but measured where the violation actually
++    // lives, which is BEFORE the re-derivation, not after.
++    //
++    // Observed 2026-08-07 while re-inverting: `after` shows ZERO drift on s5.
++    // That is not the defect being absent, it is the defect completing. At
++    // baseline `applyAnchorBasedTiming`'s locked branch DERIVES startTime FROM
++    // anchorStart, so it resolves the stale-anchor discrepancy by MOVING THE
++    // SEGMENT onto the stale value — after which the two agree again. The drift
++    // is therefore only observable in `cur`, and the evidence that it was acted
++    // on is s5's -4s move asserted just above.
++    const s5Stale = cur.find(s => s.id === 's5')!;
++    expect(Math.abs(s5Stale.anchorStart! - s5Stale.startTime)).toBeGreaterThan(1e-6);
++    // ...and the segment landed exactly ON that stale anchor — the mechanism,
++    // stated as an equality rather than inferred from the move.
++    expect(s5After.startTime).toBeCloseTo(s5Stale.anchorStart!, 6);
+ 
+-    // Every segment not dragged, absorbed, or toggled in this sequence
+-    // (s0, s4) is also untouched — the isolation C13 locks in.
++    // The blast radius, stated precisely rather than as "the whole array".
++    // Measured 2026-08-07 at baseline: s0 AND s4 are both entirely unchanged —
++    // s4 sits at startTime 40, duration 14, exactly as before. The damage is
++    // not that neighbours get dragged along; it is that the LOCKED s5 moves
++    // backward, on its own, into a span s4 legitimately still occupies. Worth
++    // stating precisely, because "an unrelated lock toggle re-times the whole
++    // timeline" overstates it and would send a future reader looking in the
++    // wrong place.
+     const s0After = after.find(s => s.id === 's0')!;
+     const s4After = after.find(s => s.id === 's4')!;
+     expect(s0After.startTime).toBeCloseTo(s0Before.startTime, 6);
+     expect(s4After.startTime).toBeCloseTo(s4Before.startTime, 6);
+     expect(s4After.duration).toBeCloseTo(s4Before.duration, 6);
+ 
+-    // FIXED: no self-overlap — s4 ends exactly where s5 (still locked, still
+-    // at its original position) begins. (Pre-fix: `expect(after[4]!.startTime
+-    // + after[4]!.duration).toBeGreaterThan(after[5]!.startTime)` — s4 ended
+-    // at 54, s5 started at 50: a self-overlapping timeline.)
+-    expect(s4After.startTime + s4After.duration).toBeLessThanOrEqual(s5After.startTime + 1e-6);
++    // DEFECT: a self-overlapping timeline. s4 still ends at 54 (untouched),
++    // while the still-locked s5 has snapped back to 50 — so two segments claim
++    // [50, 54) at once. (Post-K14 this asserted `<=`, i.e. no overlap.)
++    expect(s4After.startTime + s4After.duration).toBeGreaterThan(s5After.startTime);
+   });
+ 
+   it('PART 3 — the backward monotonic clamp is UNCHANGED (legitimate D16 defense-in-depth '
+@@ -177,19 +220,23 @@ describe('K14 — in-editor lock toggle re-times the whole timeline (LIVE, produ
+     expect(after[1]!.anchorStart).toBeCloseTo(12, 6);
+     expect(after[1]!.duration).toBeCloseTo(0.1, 6); // collapsed to MIN_SEGMENT_DURATION
+ 
+-    // THE ACTUAL K14 FIX, demonstrated: the scenario above had to be
+-    // hand-constructed with directly out-of-order anchors, because a REAL
+-    // drag sequence can no longer produce one. Before this commit, two drags
+-    // (auto-locking + a stale anchor grid) could desynchronise anchors enough
+-    // to go out of order and hit this exact destructive path. Reproduce two
+-    // drags here and confirm the anchors this fix produces are never
+-    // out-of-order, so the destructive clamp above is never triggered by
+-    // ordinary editor use anymore.
+-    let cur = drag(synced(), 's1', 13, 's2', 7);
+-    cur = drag(cur, 's4', 14, 's5', 6);
+-    for (let i = 1; i < cur.length; i++) {
+-      expect(cur[i]!.anchorStart!).toBeGreaterThanOrEqual(cur[i - 1]!.anchorStart!);
+-    }
++    // DEFECT (the K14 half of PART 3): the hand-constructed adversarial input
++    // above is NOT the only way to reach that destructive clamp — ordinary
++    // editor use gets there too. Two drags leave the anchor grid stale
++    // (recomputeStartTimes never updates it), and the resulting anchors no
++    // longer track the timeline the user sees, so the clamp above becomes
++    // reachable by dragging alone.
++    //
++    // Post-K14 this loop asserted the opposite — that a real drag sequence can
++    // never produce an out-of-order anchor — which is what made the clamp
++    // unreachable through ordinary use. Reverted: assert the staleness itself,
++    // which is the mechanism, rather than the ordering (two forward drags on a
++    // gapless array leave anchors stale but still ascending, so ordering alone
++    // understates the defect).
++    let cur = dragAndAutoLock(synced(), 's1', 13, 's2', 7);
++    cur = dragAndAutoLock(cur, 's4', 14, 's5', 6);
++    const stale = cur.filter(s => Math.abs(s.anchorStart! - s.startTime) > 1e-6);
++    expect(stale.length).toBeGreaterThan(0);
+   });
+ 
+   it('PART 4 — writes the C13 evidence artifact for the Step X harness', () => {
+@@ -199,9 +246,8 @@ describe('K14 — in-editor lock toggle re-times the whole timeline (LIVE, produ
+     // scripts/phase4-step-aa-unlock-repro.test.ts's PART 2, promoted from a
+     // demonstrated defect to a permanent regression lock (Step AD), the same
+     // way C11 is Step W's K13 repro promoted.
+-    let cur = drag(synced(), 's1', 13, 's2', 7);
+-    cur = drag(cur, 's4', 14, 's5', 6);
+-    cur = cur.map(s => (s.id === 's2' || s.id === 's5') ? { ...s, locked: true } : s);
++    let cur = dragAndAutoLock(synced(), 's1', 13, 's2', 7);
++    cur = dragAndAutoLock(cur, 's4', 14, 's5', 6);
+     const before = cur.map(s => ({ ...s }));
+     const toggled = cur.map(s => (s.id === 's2' ? { ...s, locked: false } : s));
+     const after = applyAnchorBasedTiming(toggled, AUDIO);
+@@ -212,7 +258,13 @@ describe('K14 — in-editor lock toggle re-times the whole timeline (LIVE, produ
+       const a = after.find(s => s.id === id)!;
+       return Math.abs(a.startTime - b.startTime) > 1e-6 || Math.abs(a.duration - b.duration) > 1e-6;
+     });
+-    const lockedDrifted = after.filter(s => s.locked && Math.abs((s.anchorStart ?? s.startTime) - s.startTime) > 1e-6);
++    // Measured on `before`, not `after` — see PART 2's note. At baseline the
++    // locked branch derives startTime FROM anchorStart, so it CLOSES the drift
++    // by moving the segment; reading `after` reports 0 for a defect that has
++    // already done its damage. `after`'s reading is kept alongside so the
++    // artifact records both and the distinction is not lost again.
++    const lockedDrifted = before.filter(s => s.locked && Math.abs((s.anchorStart ?? s.startTime) - s.startTime) > 1e-6);
++    const lockedDriftedAfter = after.filter(s => s.locked && Math.abs((s.anchorStart ?? s.startTime) - s.startTime) > 1e-6);
+     const s5Moved = (() => {
+       const b = before.find(s => s.id === 's5')!;
+       const a = after.find(s => s.id === 's5')!;
+@@ -224,16 +276,22 @@ describe('K14 — in-editor lock toggle re-times the whole timeline (LIVE, produ
+ 
+     const record = {
+       generatedAt: new Date().toISOString(),
+-      claim: 'K14 fixed — computeDragCascade no longer auto-locks (decision 9 point 1), '
+-        + 'recomputeStartTimes keeps anchorStart in lockstep with every startTime it '
+-        + 'commits, and applyAnchorBasedTiming\'s locked branch pins startTime/duration '
+-        + 'instead of snapping to anchorStart. A drag+cascade on one segment followed by '
+-        + 'an unrelated lock toggle moves nothing outside {dragged, absorbed, toggled}, '
+-        + 'and a still-locked segment survives byte-for-byte.',
+-      scenario: 'drag s1 (absorb s2), drag s4 (absorb s5), lock s2+s5, unlock s2',
++      claim: 'K14 LIVE (src/ reverted to 18f5734, 2026-08-07) — computeDragCascade '
++        + 'auto-locks both cascade participants, recomputeStartTimes leaves anchorStart '
++        + 'stale against every startTime it commits, and applyAnchorBasedTiming\'s locked '
++        + 'branch snaps a locked segment back onto that stale anchor. A drag+cascade on '
++        + 'one segment followed by an unrelated lock toggle re-times segments outside '
++        + '{dragged, absorbed, toggled}, and a still-locked segment moves anyway.',
++      scenario: 'drag s1 (absorb s2, both auto-locked), drag s4 (absorb s5, both '
++        + 'auto-locked), unlock s2',
+       untouchedSegmentsChecked: untouchedIds,
+       untouchedSegmentsMoved: untouchedMoved,
+-      lockedSegmentsWithDriftedAnchor: lockedDrifted.map(s => s.id),
++      lockedSegmentsWithDriftedAnchorBeforeToggle: lockedDrifted.map(s => s.id),
++      lockedSegmentsWithDriftedAnchorAfterToggle: lockedDriftedAfter.map(s => s.id),
++      note: 'Drift is measured BEFORE the toggle. The baseline locked branch '
++        + 'derives startTime from anchorStart, so it closes the drift by moving the '
++        + 'segment — the after-reading is 0 because the defect completed, not because '
++        + 'it is absent.',
+       stillLockedSegmentMoved: s5Moved,
+       verdict: untouchedMoved.length === 0 && lockedDrifted.length === 0 && !s5Moved
+         ? 'FIX CONFIRMED' : 'DEFECT STILL PRESENT',
+@@ -242,9 +300,10 @@ describe('K14 — in-editor lock toggle re-times the whole timeline (LIVE, produ
+     mkdirSync(OUT_DIR, { recursive: true });
+     writeFileSync(OUT, JSON.stringify(record, null, 2));
+ 
+-    expect(untouchedMoved).toEqual([]);
+-    expect(lockedDrifted).toEqual([]);
+-    expect(s5Moved).toBe(false);
+-    expect(record.verdict).toBe('FIX CONFIRMED');
++    // RE-INVERTED 2026-08-07: the defect is live again, so C13's predicate must
++    // be VIOLATED. Post-K14 these asserted the empty/false/'FIX CONFIRMED' side.
++    expect(lockedDrifted.length).toBeGreaterThan(0);
++    expect(s5Moved).toBe(true);
++    expect(record.verdict).toBe('DEFECT STILL PRESENT');
+   });
+ });
+diff --git a/scripts/phase4-step-x-verify.py b/scripts/phase4-step-x-verify.py
+index c5b06dd..ccb6e27 100644
+--- a/scripts/phase4-step-x-verify.py
++++ b/scripts/phase4-step-x-verify.py
+@@ -572,21 +572,25 @@ def run_c13():
+     rule("C13", "a locked segment whose anchorStart drifted from its startTime",
+          "a locked segment's anchorStart must equal its startTime, always — this IS the K14 "
+          "invariant (INVARIANT L2, docs/sync-pipeline-v2-plan.md Step AB)",
+-         "K14 was exactly this: a drag left a locked segment's anchor stale without moving "
++         "K14 is exactly this: a drag leaves a locked segment's anchor stale without moving "
+          "it, and\n                   the next unrelated lock toggle anywhere silently "
+-         "re-derived its position from that stale\n                   value. This check "
++         "re-derives its position from that stale\n                   value. This check "
+          "catches the staleness directly, at its source",
+          "A", "backed by a LIVE reproduction against production code — the same drag + "
+-         "explicit-lock +\n                   unlock sequence K14's own repro used, now "
+-         "required to stay clean")
++         "auto-lock +\n                   unlock sequence K14's own repro used, OPEN again "
++         "since the 2026-08-07 revert")
+     f = poison_for("C13")()
+     p = half("POISON HALF", "FIRE", "a locked segment with anchorStart 3s stale relative to "
+              "its startTime, plus a healthy control row",
+              f"{len(f)} finding(s) (control row correctly ignored): "
+              f"{f[0].detail if f else 'none'}", len(f) == 1)
+-    print("\n  REAL HALF, unlike C11, is NOT inverted: K14 is fixed, so this genuinely stays")
+-    print("  quiet. Mechanically it re-uses C11's pattern (a live vitest artifact) — the two")
+-    print("  rules look alike on screen but assert opposite things about their own defect.")
++    print("\n  REAL HALF is INVERTED for this rule as of 2026-08-07, exactly like C11's.")
++    print("  It was NOT inverted between the K14 fix (c52e67a) and that date, because K14")
++    print("  was fixed and the half genuinely stayed quiet. src/ has since been reverted to")
++    print("  18f5734, so K14 is an OPEN defect again and there is no clean corpus for this")
++    print("  to stay quiet on. The half now re-runs the live repro and requires it to still")
++    print("  reproduce. Recover the fix from tag model-p-parked-2026-08-07 (commit c52e67a);")
++    print("  see docs/model-p-parked-inventory.md.")
+     ok = False
+     started = time.time()
+     try:
+@@ -598,18 +602,24 @@ def run_c13():
+         print(f"    (could not run vitest: {e})")
+     art = json.loads(C13_ARTIFACT.read_text()) if C13_ARTIFACT.exists() else None
+     if art:
++        # Key renamed 2026-08-07: drift is only observable BEFORE the toggle. The
++        # reverted locked branch derives startTime FROM anchorStart, so it closes
++        # the drift by MOVING the segment — reading it after the pass reports 0
++        # for a defect that has already landed. `.get` keeps an artifact written
++        # by the pre-revert (post-K14) test readable rather than crashing on it.
++        drifted = art.get("lockedSegmentsWithDriftedAnchorBeforeToggle",
++                          art.get("lockedSegmentsWithDriftedAnchor", []))
+         saw = (f"{art['scenario']} -> "
+                f"{len(art['untouchedSegmentsMoved'])} untouched segment(s) moved, "
+-               f"{len(art['lockedSegmentsWithDriftedAnchor'])} locked segment(s) with a "
+-               f"drifted anchor, still-locked segment moved: {art['stillLockedSegmentMoved']}")
+-        ok = ran and art["verdict"] == "FIX CONFIRMED"
++               f"{len(drifted)} locked segment(s) with a drifted anchor before the "
++               f"toggle, still-locked segment moved: {art['stillLockedSegmentMoved']}")
++        ok = ran and art["verdict"] == "DEFECT STILL PRESENT"
+     else:
+         saw = "no artifact produced"
+-    r = half("REAL HALF", "STAY QUIET", f"live vitest run of {K14_TEST} "
++    r = half("REAL HALF", "REPRODUCE THE DEFECT", f"live vitest run of {K14_TEST} "
+              f"({time.time() - started:.0f}s)", saw, ok,
+-             "if this half ever starts failing, K14 has regressed — that is a real defect, "
+-             "not a\n             broken test, same convention as every other live-repro "
+-             "rule in this file")
++             "when K14's fix is restored this half MUST start failing — that is the signal "
++             "the fix\n             landed, not a broken test. Same convention as C11.")
+     record("C13", p, r, "A", "IN (as the K14 regression lock)")
+ 
+ 
+@@ -687,14 +697,17 @@ def main():
+             labels come from the diff of two committed scorer outputs, so they were
+             not produced by the rule being tested.
+        C11  a live reproduction against production code and the real 173 project.
+-       C13  a live reproduction against production code — the same drag + explicit-
+-            lock + unlock sequence K14's own repro used, run against the real
++       C13  a live reproduction against production code — the same drag + auto-lock
++            + unlock sequence K14's own repro used, run against the real
+             applyAnchorBasedTiming. Its own honest caveat, stated rather than
+             buried: unlike C11, whose real half runs against a real corpus project,
+             C13's scenario is a 6-segment synthetic timeline. It is graded A for
+             exercising production code on the exact defect shape, not for corpus
+             breadth — no committed baseline contains a locked segment to test
+             against (locks are cleared by resync: K13, still open).
++            INVERTED 2026-08-07 alongside C11: src/ was reverted to 18f5734, so
++            K14 is an open defect again and this half must REPRODUCE it, not stay
++            quiet. Restore the fix from tag model-p-parked-2026-08-07 (c52e67a).
+ 
+   B  good — fires exactly on defects this programme already knew about, and nowhere
+      else, but the ground truth is this programme's own analysis, not an outside ear
+diff --git a/src/App.tsx b/src/App.tsx
+index 48604ed..78843a4 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -56,21 +56,7 @@ import {
+   type TranscriptToken,
+ } from './types';
+ import { clearFrameRendererCache } from './services/frameRenderer';
+-import {
+-  computeDragCascade,
+-  resolveDragPreview,
+-  NEGLIGIBLE_DRAG_SEC,
+-  MIN_SEGMENT_DURATION,
+-} from './services/dragCascade';
+-import {
+-  timelineContentX,
+-  segmentEdgeContentX,
+-  computeGrabOffsetPx,
+-  resolveDragEdge,
+-  MIN_PLAYBACK_SPEED,
+-  MAX_PLAYBACK_SPEED,
+-} from './services/dragGeometry';
+-import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
++import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment } from './services/syncEngine';
+ import { syncMark } from './services/syncInstrument';
+ import {
+   computeCoverageSummary,
+@@ -109,7 +95,6 @@ import {
+   buildMalformedTokenEntry,
+   buildGroupedViolationEntry,
+   buildUnsupportedLanguageEntry,
+-  buildLockFindingLogEntries,
+   mintSyncLogId,
+ } from './services/syncLog';
+ import { buildWaveformPipeline } from './services/waveformPipeline';
+@@ -322,11 +307,12 @@ async function extractZipToAssets(projectId: string, zipFile: File): Promise<Ass
+   return newAssets;
+ }
+ 
++const MIN_SEGMENT_DURATION = 0.3; // seconds — minimum timeline slot width
+ const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
+ const EXPORT_SUCCESS_TOAST_DURATION_MS = 15000; // ms — auto-dismiss for the export-complete toast
+ // NOTE: playbackSpeed UI is hidden — feature deferred. See project-state.md.
+-// MIN_PLAYBACK_SPEED / MAX_PLAYBACK_SPEED moved to services/dragGeometry.ts (K16),
+-// alongside the drag math that applies them; imported back at the top of this file.
++const MIN_PLAYBACK_SPEED = 0.5;
++const MAX_PLAYBACK_SPEED = 2.0;
+ const MIN_TIMELINE_HEIGHT = 220; // px — absolute floor: ruler + 80px segments + 80px audio rows
+ 
+ // Enhanced parser that handles heading-voiceover logic
+@@ -1083,6 +1069,16 @@ export function clearSyncLog(project: Project): Project {
+   return { ...project, syncLog: [], syncRunSummaries: [] };
+ }
+ 
++/** Recomputes sequential startTimes from accumulated durations. Pure. */
++function recomputeStartTimes(segs: VideoSegment[]): VideoSegment[] {
++  let acc = 0;
++  return segs.map(s => {
++    const t = acc;
++    acc += s.duration;
++    return { ...s, startTime: Number(t.toFixed(3)) };
++  });
++}
++
+ /**
+  * Resolves the audioDuration to feed into applyAnchorBasedTiming, preferring
+  * the real, live <audio> element duration (same source Apply Sync uses,
+@@ -1101,6 +1097,47 @@ function resolveAudioDuration(audioEl: HTMLAudioElement | null, fallbackSegments
+   return fallbackSegments.reduce((sum, s) => sum + s.duration, 0);
+ }
+ 
++/**
++ * Applies a drag-resize delta to originalSegments, cascading overflow into neighbors.
++ * Affected segments (dragged + all that absorbed any portion) are auto-locked.
++ * Returns the updated array, or null if a locked neighbor blocked the cascade
++ * (caller should revert the live-preview state and show a toast).
++ */
++function computeDragCascade(
++  originalSegments: VideoSegment[],
++  draggedIdx: number,
++  finalDuration: number,
++  finalTrimStart: number,
++  direction: 'right' | 'left',
++  onLockedBlock: (segIndex: number, segId: string) => void,
++): VideoSegment[] | null {
++  const segs = originalSegments.map(s => ({ ...s }));
++  segs[draggedIdx] = { ...segs[draggedIdx]!, duration: finalDuration, trimStart: finalTrimStart, locked: true };
++  const delta = finalDuration - (originalSegments[draggedIdx]?.duration ?? finalDuration);
++  let remaining = -delta; // positive → neighbor must grow; negative → neighbor must shrink
++  const step = direction === 'right' ? 1 : -1;
++  let ni = draggedIdx + step;
++  while (Math.abs(remaining) > 0.001) {
++    if (ni < 0 || ni >= segs.length) break;
++    const neighbor = segs[ni]!;
++    if (neighbor.locked) {
++      onLockedBlock(ni, neighbor.id);
++      return null;
++    }
++    const newDur = neighbor.duration + remaining;
++    if (newDur >= MIN_SEGMENT_DURATION) {
++      segs[ni] = { ...neighbor, duration: newDur, locked: true };
++      remaining = 0;
++    } else {
++      // Clamp neighbor to MIN; pass overflow to next segment in same direction.
++      segs[ni] = { ...neighbor, duration: MIN_SEGMENT_DURATION, locked: true };
++      remaining += neighbor.duration - MIN_SEGMENT_DURATION; // remaining stays negative
++      ni += step;
++    }
++  }
++  return recomputeStartTimes(segs);
++}
++
+ const TEXT_ENTRY_INPUT_TYPES = new Set([
+   'text', 'number', 'password', 'email', 'search', 'tel', 'url',
+   'color', 'date', 'datetime-local', 'month', 'week', 'time', 'datetime',
+@@ -1492,18 +1529,10 @@ export default function App() {
+   }, []);
+ 
+   /**
+-   * Applies a duration change for one segment with the same cascade semantics
+-   * as a drag-resize. Shared by the drag-resize handler and the playback-speed
+-   * slider. Returns true if the cascade succeeded, false if a locked neighbor
+-   * blocked it (caller must revert live-preview state if any).
+-   *
+-   * The project's `transcriptTokens` are forwarded to the cascade as the source
+-   * of each absorbing neighbour's yield floor (K15b — services/dragCascade.ts's
+-   * `neighbourFloorDuration`). Times, not indices, are what the floor reads, so
+-   * the persisted (unfiltered) array is the right one here — unlike the
+-   * index-based `snapCoveredBoundaries` call site, which must use the filtered
+-   * array `useWhisper` returns. Undefined on a project with no voiceover yet,
+-   * which the floor handles by degrading to MIN_SEGMENT_DURATION.
++   * Applies a duration change for one segment with the same cascade + auto-lock
++   * semantics as a drag-resize. Shared by the drag-resize handler and the
++   * playback-speed slider. Returns true if the cascade succeeded, false if a
++   * locked neighbor blocked it (caller must revert live-preview state if any).
+    */
+   const applyDurationChange = useCallback((
+     originalSegments: VideoSegment[],
+@@ -1534,7 +1563,6 @@ export default function App() {
+           } : undefined,
+         );
+       },
+-      projectRef.current.transcriptTokens,
+     );
+     if (cascadeResult === null) return false;
+     const finalSegments = additionalUpdates
+@@ -1668,11 +1696,7 @@ export default function App() {
+         s.id === segmentId ? { ...s, locked: !s.locked } : s
+       );
+       const audioDuration = resolveAudioDuration(audioRef.current, toggled);
+-      const findings: LockFinding[] = [];
+-      const segments = applyAnchorBasedTiming(toggled, audioDuration, f => findings.push(f));
+-      const withTiming: Project = { ...prev, segments };
+-      if (findings.length === 0) return withTiming;
+-      return appendSyncLogEntries(withTiming, buildLockFindingLogEntries(mintSyncLogId(), findings));
++      return { ...prev, segments: applyAnchorBasedTiming(toggled, audioDuration) };
+     });
+   }, []);
+ 
+@@ -3902,7 +3926,7 @@ export default function App() {
+                   setCurrentTime(time);
+                   if (audioRef.current) audioRef.current.currentTime = time;
+                 }}
+-                onResizeStart={(id, type, downClientX) => {
++                onResizeStart={(id, type) => {
+                   setResizingId(id);
+                   setResizingType(type);
+                   document.body.classList.add('resizing');
+@@ -3911,181 +3935,101 @@ export default function App() {
+                   const draggedIdx = originalSegments.findIndex(s => s.id === id);
+                   const originalTarget = originalSegments[draggedIdx];
+                   if (draggedIdx < 0 || !originalTarget) return;
+-                  // K17 — pre-drag geometry, for restoring any card a later frame
+-                  // stops moving (see writeGeometry below).
+-                  const originalById = new Map(originalSegments.map(s => [s.id, s]));
+                   const pps = pixelsPerSecondRef.current;
+                   // B3 — cache the timeline element + its left edge ONCE at drag start.
+                   // rect.left is stable for the whole gesture, so re-measuring it (a
+-                  // layout read) on every move was pure thrash. scrollLeft is still
++                  // layout read) on every mousemove was pure thrash. scrollLeft is still
+                   // read live, but only at the top of each rAF frame, before any write.
+                   const timeline = document.getElementById('timeline-scroll-area');
+                   if (!timeline) return;
+                   const rectLeft = timeline.getBoundingClientRect().left;
+-                  // B1 — elements whose geometry we update directly during the drag,
+-                  // so we avoid a per-move setProject/full re-render. The real state
+-                  // change is committed ONCE on pointerup, below.
+-                  //
+-                  // K17 — indexed by segment id, for EVERY segment, not just the
+-                  // dragged one. The cascade moves neighbours, so the preview has to
+-                  // move them too; leaving them frozen is what let a growing segment's
+-                  // edge run straight through the next card and then snap everything
+-                  // into place on release (services/dragCascade.ts's resolveDragPreview
+-                  // documents the three symptoms). Both lanes tag their cell with the
+-                  // same data-seg-id, so one id can map to several elements.
+-                  const elsBySegId = new Map<string, HTMLElement[]>();
+-                  for (const el of Array.from(
+-                    timeline.querySelectorAll<HTMLElement>('[data-seg-id]'),
+-                  )) {
+-                    const segId = el.dataset.segId;
+-                    if (!segId) continue;
+-                    const bucket = elsBySegId.get(segId);
+-                    if (bucket) bucket.push(el);
+-                    else elsBySegId.set(segId, [el]);
+-                  }
++                  // B1 — elements whose width we update directly during the drag (visual
++                  // row + waveform row share the same data-seg-id), so we avoid a
++                  // per-frame setProject/full re-render. The real state change is
++                  // committed ONCE on mouseup via applyDurationChange (unchanged, below).
++                  const liveEls = Array.from(
++                    timeline.querySelectorAll<HTMLElement>(`[data-seg-id="${id}"]`),
++                  );
++                  let lastX = 0;
+                   let hasMoved = false;
+                   // Capture video context at drag-start for speed coupling.
+                   const dragAsset = assetsRef.current.find(a => a.id === originalTarget.assetId);
+                   const isVideoSeg = dragAsset?.type === 'video';
+-
+-                  // K16 — how far the pointer sat from the edge it grabbed, held
+-                  // constant for the whole gesture. Subtracting it on every move is
+-                  // what keeps the edge under the exact point of the handle the user
+-                  // is holding, instead of snapping it to the pointer on the first
+-                  // move (the handles are 8px wide, so that snap was worth up to 8px).
+-                  const grabOffsetPx = computeGrabOffsetPx(
+-                    timelineContentX(downClientX, rectLeft, timeline.scrollLeft),
+-                    originalTarget,
+-                    type,
+-                    pps,
+-                  );
+-                  // Content-space x the grabbed edge should sit at, for a given
+-                  // pointer position. timelineContentX carries NO padding correction —
+-                  // the container measures 0px padding / 0px border; the pre-K16 `- 24`
+-                  // was a stale constant from the initial commit's `p-6` container and
+-                  // was placing every dragged edge 24px left of the pointer.
+-                  const edgeXFor = (clientX: number): number =>
+-                    timelineContentX(clientX, rectLeft, timeline.scrollLeft) - grabOffsetPx;
+-                  let lastEdgeX = segmentEdgeContentX(originalTarget, type, pps);
+-                  const direction = type === 'end' ? 'right' as const : 'left' as const;
+-
+-                  // K17 — ids whose DOM geometry this drag has overwritten. Needed
+-                  // because we are writing behind React's back: React diffs the style
+-                  // props it rendered LAST against the ones it renders NEXT, and never
+-                  // looks at the DOM. So a card we moved on frame 10 and that the
+-                  // cascade no longer touches on frame 20 (the cascade window can
+-                  // shrink as the pointer comes back) would keep frame 10's inline
+-                  // styles forever — React sees no prop change and issues no write.
+-                  // Each frame therefore restores anything it did not itself move.
+-                  let writtenIds = new Set<string>();
+-
+-                  /** Writes `segs`' geometry straight to the DOM. `segs` is always a
+-                   *  full array in the original order, so index i lines up with
+-                   *  originalSegments[i]. */
+-                  const writeGeometry = (segs: VideoSegment[]): void => {
+-                    const moved = new Set<string>();
+-                    for (let i = 0; i < segs.length; i++) {
+-                      const s = segs[i]!;
+-                      const orig = originalSegments[i];
+-                      if (!orig) continue;
+-                      if (s.startTime === orig.startTime && s.duration === orig.duration) continue;
+-                      const els = elsBySegId.get(s.id);
+-                      if (!els) continue;
+-                      // Exactly Timeline.tsx's own layout expression
+-                      // (computeSegmentLayout): left = startTime * pps,
+-                      // width = duration * pps. Anything else here would make the
+-                      // preview and the post-commit render disagree by construction.
+-                      const l = `${s.startTime * pps}px`;
+-                      const w = `${s.duration * pps}px`;
+-                      for (const el of els) {
+-                        el.style.left = l;
+-                        el.style.width = w;
+-                      }
+-                      moved.add(s.id);
++                  const srcDur = originalTarget.sourceDuration ?? 0;
++
++                  // Pointer clientX -> content-space x (same formula + -24 gutter as before).
++                  const computeX = (clientX: number): number =>
++                    clientX - rectLeft + timeline.scrollLeft - 24;
++                  // Live duration implied by a content-space x — mirrors the mouseup math
++                  // so the width shown during the drag matches the value committed on drop.
++                  // Used for the visual width ONLY; the committed state is computed
++                  // independently in handleUp (kept identical to the pre-change path).
++                  const liveDurationForX = (x: number): number => {
++                    let liveDuration: number;
++                    let liveTrimStart: number = originalTarget.trimStart ?? 0;
++                    if (type === 'end') {
++                      liveDuration = Math.max(MIN_SEGMENT_DURATION, (x / pps) - originalTarget.startTime);
++                    } else {
++                      const rawDelta = (x / pps) - originalTarget.startTime;
++                      liveDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
++                      liveTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
+                     }
+-                    for (const prevId of writtenIds) {
+-                      if (moved.has(prevId)) continue;
+-                      const orig = originalById.get(prevId);
+-                      const els = elsBySegId.get(prevId);
+-                      if (!orig || !els) continue;
+-                      const l = `${orig.startTime * pps}px`;
+-                      const w = `${orig.duration * pps}px`;
+-                      for (const el of els) {
+-                        el.style.left = l;
+-                        el.style.width = w;
++                    if (isVideoSeg && srcDur > 0) {
++                      const liveClipLen = (originalTarget.trimEnd ?? srcDur) - liveTrimStart;
++                      if (liveClipLen > 0) {
++                        const maxDur = liveClipLen / MIN_PLAYBACK_SPEED;
++                        const minDur = Math.max(MIN_SEGMENT_DURATION, liveClipLen / MAX_PLAYBACK_SPEED);
++                        liveDuration = Math.max(minDur, Math.min(maxDur, liveDuration));
+                       }
+                     }
+-                    writtenIds = moved;
++                    return liveDuration;
+                   };
+ 
+-                  // B5 — coalesce pointermoves into a single rAF; only the latest
+-                  // pointer position matters per frame. The frame body stays the
+-                  // cheapest thing that can express the drag: one scrollLeft read, two
+-                  // pure calls, and two style writes per moved element. No React state
+-                  // is touched, so no render and no timing recomputation until release.
++                  // B5 — coalesce mousemoves into a single rAF; only the latest pointer
++                  // position matters per frame.
+                   let rafId: number | null = null;
+-                  let pendingEvent: PointerEvent | null = null;
++                  let pendingEvent: MouseEvent | null = null;
+                   const applyFrame = (): void => {
+                     rafId = null;
+                     if (!pendingEvent) return;
+-                    lastEdgeX = edgeXFor(pendingEvent.clientX);
+-                    // Same two functions the commit below resolves through, in the
+-                    // same order, so the live preview cannot drift from what will
+-                    // actually be committed:
+-                    //   resolveDragEdge   — pointer position → this segment's timing
+-                    //   resolveDragPreview — that timing → the whole array
+-                    // K16's pointer math is untouched; the edge still sits exactly
+-                    // under the grabbed point of the handle.
+-                    const live = resolveDragEdge({
+-                      segment: originalTarget,
+-                      edge: type,
+-                      edgeContentX: lastEdgeX,
+-                      pixelsPerSecond: pps,
+-                      isVideo: isVideoSeg,
+-                    });
+-                    // Read the tokens live rather than closing over a drag-start copy,
+-                    // so the preview's yield floor is the same input applyDurationChange
+-                    // will read at commit time.
+-                    writeGeometry(resolveDragPreview(
+-                      originalSegments,
+-                      draggedIdx,
+-                      live.duration,
+-                      live.trimStart,
+-                      direction,
+-                      projectRef.current.transcriptTokens,
+-                    ));
++                    lastX = computeX(pendingEvent.clientX);
++                    const w = `${liveDurationForX(lastX) * pps}px`;
++                    for (const el of liveEls) el.style.width = w;
+                   };
+-                  const handleMove = (e: PointerEvent): void => {
++                  const handleMove = (e: MouseEvent): void => {
+                     pendingEvent = e;
+                     hasMoved = true;
+                     if (rafId === null) rafId = requestAnimationFrame(applyFrame);
+                   };
+                   const handleUp = () => {
+                     if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+-                    // Ensure lastEdgeX reflects the final pointer position even if the
+-                    // last pointermove's rAF frame had not fired yet — so the committed
+-                    // size matches exactly where the user released.
+-                    if (pendingEvent) lastEdgeX = edgeXFor(pendingEvent.clientX);
++                    // Ensure lastX reflects the final pointer position even if the last
++                    // mousemove's rAF frame had not fired yet — so the committed size
++                    // matches exactly where the user released.
++                    if (pendingEvent) lastX = computeX(pendingEvent.clientX);
+                     setResizingId(null);
+                     setResizingType(null);
+                     document.body.classList.remove('resizing');
+-                    window.removeEventListener('pointermove', handleMove);
+-                    window.removeEventListener('pointerup', handleUp);
+-                    window.removeEventListener('pointercancel', handleUp);
++                    window.removeEventListener('mousemove', handleMove);
++                    window.removeEventListener('mouseup', handleUp);
+                     // isResizingRef is cleared by the resizingId effect below,
+                     // not here — see D12 fix note there.
+                     // D12 fix (round 4) — the real cause of the "playhead jumps to
+-                    // wherever I dragged" report: the left-edge handle sits at a fixed
+-                    // `left-0` inside the card, so after a left-edge drag the pointer
+-                    // ends up away from it and the browser's native 'click', hit-tested
+-                    // at the release position, lands on the segment ROW body instead of
+-                    // the handle — and that row's onClick is onSeek(s.startTime)
+-                    // (Timeline.tsx), a real, direct setCurrentTime call. Swallow
+-                    // exactly that one ghost click before any React handler can see it.
+-                    // (K16 note: the card now tracks the pointer on a left-edge drag,
+-                    // which narrows but does not close this — the handle is only 8px
+-                    // wide and the release can still land beside it — so the swallow
+-                    // stays.)
++                    // wherever I dragged" report: each segment row is a flex item, so
++                    // its on-screen left edge is the sum of every PRECEDING row's width,
++                    // which never changes while THIS row is being resized. The right-edge
++                    // handle sits at `right-0`, so it tracks the cursor continuously (row
++                    // width is driven live by cursor x) and the mouseup lands on it. The
++                    // left-edge handle sits at a fixed `left-0` that never moves during
++                    // the drag, so after any meaningful left-edge drag the cursor ends up
++                    // far from it at release. The browser fires a native 'click' right
++                    // after this mouseup, hit-tested at the release position — for a
++                    // left-edge drag that lands on the segment ROW body, not the handle,
++                    // whose onClick is onSeek(s.startTime) (Timeline.tsx) — a real,
++                    // direct setCurrentTime call, unrelated to anything currentSegment-
++                    // or transition-preview-derived. Swallow exactly that one ghost click
++                    // before any React handler (row onClick, ruler onMouseDown-installed
++                    // handlers, etc.) can see it.
+                     if (hasMoved) {
+                       const swallowGhostClick = (clickEvent: MouseEvent) => {
+                         clickEvent.stopPropagation();
+@@ -4094,42 +4038,44 @@ export default function App() {
+                       window.addEventListener('click', swallowGhostClick, { capture: true, once: true });
+                     }
+                     if (!hasMoved) return;
+-                    // Commit — one pure call, the identical one the live frames used.
+-                    const final = resolveDragEdge({
+-                      segment: originalTarget,
+-                      edge: type,
+-                      edgeContentX: lastEdgeX,
+-                      pixelsPerSecond: pps,
+-                      isVideo: isVideoSeg,
+-                    });
+-                    const speedUpdate = final.playbackSpeed === undefined
+-                      ? undefined
+-                      : { playbackSpeed: final.playbackSpeed };
+-                    // Negligible drag — nothing to commit. K17: the last preview frame
+-                    // resolved through the SAME threshold (resolveDragPreview) and so
+-                    // already restored the original geometry; this setProject is the
+-                    // state-side half of that and cannot move anything on screen.
+-                    if (Math.abs(final.duration - originalTarget.duration) < NEGLIGIBLE_DRAG_SEC) {
++                    // Compute final duration from last known mouse position.
++                    let finalDuration: number;
++                    let finalTrimStart: number = originalTarget.trimStart ?? 0;
++                    if (type === 'end') {
++                      finalDuration = Math.max(MIN_SEGMENT_DURATION, (lastX / pps) - originalTarget.startTime);
++                    } else {
++                      const rawDelta = (lastX / pps) - originalTarget.startTime;
++                      finalDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
++                      finalTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
++                    }
++                    // Speed coupling: clamp duration + compute new playbackSpeed for video.
++                    let speedUpdate: { playbackSpeed: number } | undefined;
++                    if (isVideoSeg && srcDur > 0) {
++                      const finalClipLen = (originalTarget.trimEnd ?? srcDur) - finalTrimStart;
++                      if (finalClipLen > 0) {
++                        const maxDur = finalClipLen / MIN_PLAYBACK_SPEED;
++                        const minDur = Math.max(MIN_SEGMENT_DURATION, finalClipLen / MAX_PLAYBACK_SPEED);
++                        finalDuration = Math.max(minDur, Math.min(maxDur, finalDuration));
++                        const newSpeed = Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, finalClipLen / finalDuration));
++                        speedUpdate = { playbackSpeed: newSpeed };
++                      }
++                    }
++                    // Negligible drag — revert live preview to original.
++                    if (Math.abs(finalDuration - originalTarget.duration) < 0.01) {
+                       setProject(prev => ({ ...prev, segments: originalSegments }));
+                       return;
+                     }
++                    const direction = type === 'end' ? 'right' as const : 'left' as const;
+                     speedBaselineRef.current = null;
+                     const succeeded = applyDurationChange(
+-                      originalSegments, id, final.duration, final.trimStart, direction, speedUpdate,
++                      originalSegments, id, finalDuration, finalTrimStart, direction, speedUpdate,
+                     );
+-                    // null cascade → locked neighbour blocked. K17: the preview frames
+-                    // resolved the same block to the same `originalSegments`, so the
+-                    // cards are already sitting at their pre-drag geometry and this
+-                    // revert moves nothing on screen — it only re-syncs state. Before
+-                    // K17 this was a visible snap-back at release.
++                    // null cascade → locked neighbor blocked: revert live preview.
+                     if (!succeeded) setProject(prev => ({ ...prev, segments: originalSegments }));
+                   };
+                   isResizingRef.current = true;
+-                  window.addEventListener('pointermove', handleMove);
+-                  window.addEventListener('pointerup', handleUp);
+-                  // A cancelled pointer (OS gesture takeover, device switch) must not
+-                  // leave the drag armed forever; treat it as a release.
+-                  window.addEventListener('pointercancel', handleUp);
++                  window.addEventListener('mousemove', handleMove);
++                  window.addEventListener('mouseup', handleUp);
+                 }}
+                 onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
+                 onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
+diff --git a/src/components/SyncLogPanel.tsx b/src/components/SyncLogPanel.tsx
+index c65db10..7b2829d 100644
+--- a/src/components/SyncLogPanel.tsx
++++ b/src/components/SyncLogPanel.tsx
+@@ -34,14 +34,6 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
+   // Phase 2a H.4 guard — red: outside the five verified languages, sync
+   // accuracy is unguaranteed, not merely degraded.
+   'unsupported-language': { label: 'LANGUAGE', className: 'bg-red-500/10 text-red-400 border-red-500/30' },
+-  // K14 fix (decision 9 / Step AB) — a locked span couldn't hold its (or its
+-  // trapped neighbour's) content even at the minimum slot. Warning, matching
+-  // the existing unscripted-gap/monotonic-clamp precedent.
+-  'lock-span-overflow': { label: 'LOCK OVERFLOW', className: 'bg-orange-500/10 text-orange-400 border-orange-500/30' },
+-  // K14 fix — a lock's hard wall bounded an unlocked neighbour's placement.
+-  // Informational: the output is correct, just worth knowing why a boundary
+-  // landed where it did.
+-  'lock-preserved-adjustment': { label: 'LOCK', className: 'bg-zinc-500/10 text-zinc-400 border-zinc-500/30' },
+ };
+ 
+ /** HH:MM:SS — entries within one run are seconds apart, so the date would be
+diff --git a/src/components/Timeline.tsx b/src/components/Timeline.tsx
+index a65660c..1edd614 100644
+--- a/src/components/Timeline.tsx
++++ b/src/components/Timeline.tsx
+@@ -59,12 +59,7 @@ interface Props {
+   waveformSource: WaveformSource | null;
+   onTogglePlay: () => void;
+   onSeek: (time: number) => void;
+-  /** K16 — `clientX` is the pointerdown position, required so the drag can hold
+-   *  the grabbed edge under the exact point of the handle the user pressed
+-   *  instead of snapping it to the pointer (services/dragGeometry.ts's
+-   *  `computeGrabOffsetPx`). Without it the edge jumps by up to the handle's
+-   *  own 8px on the first move. */
+-  onResizeStart: (id: string, type: 'start' | 'end', clientX: number) => void;
++  onResizeStart: (id: string, type: 'start' | 'end') => void;
+   onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
+   onOpenStockSearch: (segmentId: string) => void;
+   onSetTrimmingSegment: (id: string | null) => void;
+@@ -543,32 +538,12 @@ export function Timeline({
+                       </div>
+                     )}
+ 
+-                    {/* K16 — pointer events + pointer capture, not mousedown.
+-                        Capture guarantees this element keeps receiving
+-                        pointermove/pointerup for the whole gesture even when the
+-                        pointer leaves it, leaves the window, or the element is
+-                        re-rendered underneath — and the events still bubble to
+-                        App's window listeners. `touchAction: 'none'` stops the
+-                        browser claiming the gesture as a pan/scroll before the
+-                        first pointermove arrives. `e.clientX` is forwarded so
+-                        the drag can preserve the grab offset within the handle
+-                        (services/dragGeometry.ts). */}
+                     <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
+-                      style={{ touchAction: 'none' }}
+-                      onPointerDown={(e) => {
+-                        e.stopPropagation();
+-                        e.currentTarget.setPointerCapture(e.pointerId);
+-                        onResizeStart(s.id, 'start', e.clientX);
+-                      }}
++                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
+                       onClick={(e) => e.stopPropagation()}
+                     />
+                     <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
+-                      style={{ touchAction: 'none' }}
+-                      onPointerDown={(e) => {
+-                        e.stopPropagation();
+-                        e.currentTarget.setPointerCapture(e.pointerId);
+-                        onResizeStart(s.id, 'end', e.clientX);
+-                      }}
++                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
+                       onClick={(e) => e.stopPropagation()}
+                     />
+ 
+@@ -690,15 +665,6 @@ export function Timeline({
+                     return (
+                     <div
+                       key={`vo-new-${s.id}`}
+-                      // K16 — carries data-seg-id so App's resize-drag writes its
+-                      // live left/width here too. Without it only the thumbnail
+-                      // lane tracked during a drag and this lane's cell snapped
+-                      // into place at release, so the two lanes visibly
+-                      // disagreed for the whole gesture. Purely visual: this
+-                      // element has no handles and no click behaviour, and the
+-                      // shared waveform TILE layer above still deliberately
+-                      // carries no data-seg-id.
+-                      data-seg-id={s.id}
+                       style={{ position: 'absolute', left: `${voLayout.left}px`, width: `${voLayout.width}px` }}
+                       className={`h-full relative flex items-center flex-shrink-0 border-r border-[rgba(255,255,255,0.05)] ${i % 2 === 1 ? 'bg-white/[0.015]' : ''}`}
+                     >
+diff --git a/src/services/dragCascade.test.ts b/src/services/dragCascade.test.ts
+deleted file mode 100644
+index 1046eae..0000000
+--- a/src/services/dragCascade.test.ts
++++ /dev/null
+@@ -1,430 +0,0 @@
+-/**
+- * K15 — timeline drag-resize cascade regression tests.
+- *
+- * Every fixture here is hand-written; nothing is snapshotted off a live run.
+- * The three PARTs map 1:1 onto the two defects the owner reported and the
+- * question of which of them K14 introduced:
+- *
+- *   PART 1 — K15a, gap collapse. K14-INTRODUCED.
+- *   PART 2 — K15b, unbounded neighbour absorption. PREDATES K14; K14 removed
+- *            the auto-lock that had been masking it.
+- *   PART 3 — pre-K15 behaviour that must NOT change.
+- *
+- * PART 1 and PART 2's headline cases were each confirmed FAILING against the
+- * pre-K15 cascade before the fix landed; the failing values are recorded inline
+- * next to each assertion.
+- */
+-
+-import { describe, it, expect } from 'vitest';
+-import {
+-  computeDragCascade,
+-  neighbourYieldableSec,
+-  MIN_SEGMENT_DURATION,
+-  resolveDragPreview,
+-  NEGLIGIBLE_DRAG_SEC,
+-} from './dragCascade';
+-import { applyAnchorBasedTiming } from './syncEngine';
+-import { TransitionType, AnimationType, type TranscriptToken, type VideoSegment } from '../types';
+-
+-function seg(
+-  id: string,
+-  startTime: number,
+-  duration: number,
+-  extra: Partial<VideoSegment> = {},
+-): VideoSegment {
+-  return {
+-    id,
+-    text: `text-${id}`,
+-    startTime,
+-    duration,
+-    transition: TransitionType.NONE,
+-    animation: AnimationType.NONE,
+-    order: 0,
+-    anchorStart: startTime,
+-    ...extra,
+-  };
+-}
+-
+-/** One token per whole second in [from, to), 0.4s long — enough to give a
+- *  segment an unambiguous first/last owned word without hand-listing them. */
+-function tokens(from: number, to: number): TranscriptToken[] {
+-  const out: TranscriptToken[] = [];
+-  for (let t = from; t < to - 1e-9; t += 1) {
+-    out.push({ startSec: Number(t.toFixed(3)), endSec: Number((t + 0.4).toFixed(3)), text: 'w' });
+-  }
+-  return out;
+-}
+-
+-const spans = (segs: VideoSegment[] | null): string =>
+-  segs === null
+-    ? 'BLOCKED'
+-    : segs.map(s => `${s.id}[${s.startTime.toFixed(2)}..${(s.startTime + s.duration).toFixed(2)}]`).join(' ');
+-
+-const noBlock = (): void => {};
+-
+-// ---------------------------------------------------------------------------
+-// PART 1 — K15a: a gap anywhere in the array must survive a drag.
+-// ---------------------------------------------------------------------------
+-
+-describe('K15a — gap collapse (K14-introduced)', () => {
+-  /**
+-   * The gap is not hypothetical: this is the array `applyAnchorBasedTiming`
+-   * itself produces post-K14 whenever a locked segment's end falls before the
+-   * following segment's anchor. The pre-K14 locked branch grew the lock to fill
+-   * that span (`duration = max(preservedDuration, availableSpan)`), so its
+-   * output was contiguous by construction and no gap could reach a drag.
+-   */
+-  it('applyAnchorBasedTiming leaves a real gap after a locked segment (the K14 precondition)', () => {
+-    const out = applyAnchorBasedTiming(
+-      [
+-        seg('A', 0, 10),
+-        seg('B', 10, 2, { locked: true }),
+-        seg('C', 15, 3, { anchorStart: 15 }),
+-        seg('D', 18, 2, { anchorStart: 18 }),
+-      ],
+-      20,
+-    );
+-    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[15.00..18.00] D[18.00..20.00]');
+-    // 3.000s of dead air between the lock's end and C's start.
+-    expect(out[2]!.startTime - (out[1]!.startTime + out[1]!.duration)).toBeCloseTo(3, 6);
+-  });
+-
+-  it('a 0.2s drag on C does not move C — the 3s gap in front of it survives', () => {
+-    const gapped = applyAnchorBasedTiming(
+-      [
+-        seg('A', 0, 10),
+-        seg('B', 10, 2, { locked: true }),
+-        seg('C', 15, 3, { anchorStart: 15 }),
+-        seg('D', 18, 2, { anchorStart: 18 }),
+-      ],
+-      20,
+-    );
+-    const out = computeDragCascade(gapped, 2, gapped[2]!.duration + 0.2, 0, 'right', noBlock)!;
+-
+-    // PRE-K15 this returned 'A[0.00..10.00] B[10.00..12.00] C[12.00..15.20] D[15.20..17.00]'
+-    // — a 0.2s drag displaced C by 3.000s and D by 2.800s, putting both slots
+-    // entirely off their own audio. The old cascade rebuilt every startTime from
+-    // a running sum starting at 0, which deletes any gap in the array.
+-    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[15.00..18.20] D[18.20..20.00]');
+-    expect(out[2]!.startTime).toBe(gapped[2]!.startTime);
+-  });
+-
+-  it('dragging the LAST segment — no neighbour to cascade into — still cannot collapse the gap', () => {
+-    const gapped = applyAnchorBasedTiming(
+-      [
+-        seg('A', 0, 10),
+-        seg('B', 10, 2, { locked: true }),
+-        seg('C', 15, 3, { anchorStart: 15 }),
+-        seg('D', 18, 2, { anchorStart: 18 }),
+-      ],
+-      20,
+-    );
+-    const out = computeDragCascade(gapped, 3, gapped[3]!.duration + 0.2, 0, 'right', noBlock)!;
+-
+-    // PRE-K15: 'A[0.00..10.00] B[10.00..12.00] C[12.00..15.00] D[15.00..17.20]'.
+-    // The re-flow was unconditional, so it fired even with zero cascade work to
+-    // do — proof the collapse was never a cascade bug, but a restack-scope one.
+-    expect(spans(out)).toBe('A[0.00..10.00] B[10.00..12.00] C[15.00..18.00] D[18.00..20.20]');
+-  });
+-
+-  it('segments outside the touched window keep startTime AND anchorStart byte-identical', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5), seg('D', 15, 5)];
+-    const out = computeDragCascade(arr, 0, 5.5, 0, 'right', noBlock)!;
+-    // A grew 0.5s, B absorbed all of it; C and D were never asked for anything.
+-    expect(out[2]).toEqual(arr[2]);
+-    expect(out[3]).toEqual(arr[3]);
+-  });
+-
+-  it('a left-edge drag anchors on the far end of the cascade, leaving later segments untouched', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+-    // Drag B's left edge 0.5s earlier: B grows to 5.5, A shrinks to 4.5.
+-    const out = computeDragCascade(arr, 1, 5.5, 0, 'left', noBlock)!;
+-    expect(spans(out)).toBe('A[0.00..4.50] B[4.50..10.00] C[10.00..15.00]');
+-    expect(out[2]).toEqual(arr[2]);
+-  });
+-});
+-
+-// ---------------------------------------------------------------------------
+-// PART 2 — K15b: a neighbour may yield its silence, never its words.
+-// ---------------------------------------------------------------------------
+-
+-describe('K15b — neighbour yield floor (predates K14)', () => {
+-  it('neighbourYieldableSec: head yield is exactly the leading silence', () => {
+-    // Slot [5,10]; the words the slot owns run 6.0 → 9.4, so 1.0s of leading
+-    // silence is all a right-edge drag on the previous segment may take.
+-    expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'head', tokens(6, 10)))
+-      .toBeCloseTo(6 - 5, 6);
+-  });
+-
+-  it('neighbourYieldableSec: tail yield is exactly the trailing silence', () => {
+-    expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'tail', tokens(6, 10)))
+-      .toBeCloseTo(10 - 9.4, 6);
+-  });
+-
+-  it('neighbourYieldableSec is Infinity — i.e. no bound, pre-K15 behaviour — with no owned word', () => {
+-    // Nothing spoken anywhere near [5,10]: an unscripted heading, or a scene the
+-    // aligner skipped. Nothing to protect, so the MIN_SEGMENT_DURATION clamp
+-    // remains the only bound, exactly as before K15.
+-    expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'head', tokens(20, 30))).toBe(Infinity);
+-    expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'head', undefined)).toBe(Infinity);
+-    expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'head', [])).toBe(Infinity);
+-  });
+-
+-  it('neighbourYieldableSec is 0 when a word already straddles the yielding edge', () => {
+-    // Slot [5,6); the word it owns starts at 5.5 and runs past the slot end, so
+-    // there is no trailing silence to give.
+-    const tk: TranscriptToken[] = [{ startSec: 5.5, endSec: 6.4, text: 'w' }];
+-    expect(neighbourYieldableSec({ startTime: 5, duration: 1 }, 'tail', tk)).toBe(0);
+-  });
+-
+-  it('neighbourYieldableSec ignores malformed tokens instead of trusting their timestamps', () => {
+-    const tk: TranscriptToken[] = [
+-      { startSec: Number.NaN, endSec: 6, text: 'bad' },
+-      { startSec: 8, endSec: 8, text: 'zero-length' },
+-      { startSec: 6, endSec: 6.4, text: 'good' },
+-    ];
+-    expect(neighbourYieldableSec({ startTime: 5, duration: 5 }, 'head', tk)).toBeCloseTo(1, 6);
+-  });
+-
+-  it('a right-edge drag cannot eat past the next segment\'s first word', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+-    // Words: A 0.0-4.4, B 6.0-9.4 (1s of leading silence), C 11.0-14.4.
+-    const tk = [...tokens(0, 5), ...tokens(6, 10), ...tokens(11, 15)];
+-    // Ask A to grow by 3.0s — far past B's first word at 6.0.
+-    const out = computeDragCascade(arr, 0, 8, 0, 'right', noBlock, tk)!;
+-
+-    // PRE-K15 this returned 'A[0.00..8.00] B[8.00..10.00] C[10.00..15.00]': B
+-    // was cut from 5.0s to 2.0s and lost its words at 6.0, 7.0 and part of 8.0
+-    // into A's slot. B was nowhere near MIN_SEGMENT_DURATION, so the old 0.3s
+-    // floor never engaged — which is why "a few hundred ms" could still be
+-    // catastrophic for a long neighbour.
+-    //
+-    // Now: B yields its 1.0s of leading silence and not one frame more, and the
+-    // 2.0s the bound refused is handed back to A. The cascade never reaches C,
+-    // because for a right-edge drag B's start IS the dragged segment's end —
+-    // no amount of yielding further down the chain can move it back.
+-    expect(spans(out)).toBe('A[0.00..6.00] B[6.00..10.00] C[10.00..15.00]');
+-    // The headline invariant: B's own first word (6.0) is still inside B.
+-    expect(out[1]!.startTime).toBeLessThanOrEqual(6);
+-    expect(out[2]).toEqual(arr[2]);
+-    // And total timeline duration is conserved — nothing was invented or lost.
+-    const total = (s: VideoSegment[]) => s.reduce((a, x) => a + x.duration, 0);
+-    expect(total(out)).toBeCloseTo(total(arr), 6);
+-  });
+-
+-  it('a left-edge drag cannot eat past the previous segment\'s last word', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+-    // A's words end at 3.4, leaving 1.6s of trailing silence before B starts.
+-    const tk = [...tokens(0, 3.5), ...tokens(6, 10)];
+-    // Drag B's left edge 3.0s earlier (B 5 → 8).
+-    const out = computeDragCascade(arr, 1, 8, 0, 'left', noBlock, tk)!;
+-
+-    // PRE-K15: 'A[0.00..2.00] B[2.00..10.00] C[10.00..15.00]' — A cut to 2.0s,
+-    // losing its own word at 3.0 into B's slot.
+-    // Now A yields only its 1.6s of trailing silence; the other 1.4s is returned
+-    // to B, whose right edge never moved on a left-edge drag either way.
+-    expect(spans(out)).toBe('A[0.00..3.40] B[3.40..10.00] C[10.00..15.00]');
+-    expect(out[0]!.startTime + out[0]!.duration).toBeGreaterThanOrEqual(3.4);
+-    expect(out[2]).toEqual(arr[2]);
+-  });
+-
+-  it('repeated drags into the same neighbour stop at the floor instead of bottoming out at 0.3s', () => {
+-    // This is the shape K14 exposed. Pre-K14 the cascade auto-locked B on the
+-    // first drag, so the SECOND drag hit the locked-neighbour guard and was
+-    // refused with a toast — an accidental one-shot circuit breaker, not a
+-    // bound. Decision 9 point 1 forbids restoring it, so the floor has to hold
+-    // on its own across any number of drags.
+-    const tk = [...tokens(0, 5), ...tokens(6, 10), ...tokens(11, 15)];
+-    let cur: VideoSegment[] = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+-    for (let i = 0; i < 8; i++) {
+-      cur = computeDragCascade(cur, 0, cur[0]!.duration + 0.3, 0, 'right', noBlock, tk)!;
+-      expect(cur[1]!.startTime).toBeLessThanOrEqual(6);
+-    }
+-    // Eight 0.3s drags demanded 2.4s; B only ever gave up its 1.0s of leading
+-    // silence, and the remaining 1.4s was refused. B still holds its first word
+-    // and never came near MIN_SEGMENT_DURATION. Pre-K15 the same eight drags
+-    // left B at 5.0 - 2.4 = 2.6s starting at 7.4, with its words from 6.0 to 7.4
+-    // stranded in A's slot.
+-    expect(cur[0]!.duration).toBeCloseTo(6, 3);
+-    expect(cur[1]!.duration).toBeCloseTo(4, 3);
+-    expect(cur[1]!.duration).toBeGreaterThan(MIN_SEGMENT_DURATION);
+-  });
+-
+-  it('an already-locked neighbour still blocks the cascade outright (unchanged)', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 5, { locked: true }), seg('C', 10, 5)];
+-    const blocked: number[] = [];
+-    const out = computeDragCascade(arr, 0, 6, 0, 'right', i => blocked.push(i));
+-    expect(out).toBeNull();
+-    expect(blocked).toEqual([1]);
+-  });
+-
+-  it('dragging never sets `locked` on anything (decision 9 point 1)', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+-    const out = computeDragCascade(arr, 0, 5.5, 0, 'right', noBlock)!;
+-    expect(out.every(s => s.locked !== true)).toBe(true);
+-  });
+-});
+-
+-// ---------------------------------------------------------------------------
+-// PART 3 — behaviour that must NOT have changed.
+-// ---------------------------------------------------------------------------
+-
+-describe('K15 — unchanged behaviour', () => {
+-  it('a plain grow into a long neighbour on a token-less project is identical to pre-K15', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+-    const out = computeDragCascade(arr, 0, 5.3, 0, 'right', noBlock)!;
+-    expect(spans(out)).toBe('A[0.00..5.30] B[5.30..10.00] C[10.00..15.00]');
+-  });
+-
+-  it('a token-less short neighbour still clamps to MIN_SEGMENT_DURATION and passes overflow on', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 0.4), seg('C', 5.4, 5)];
+-    const out = computeDragCascade(arr, 0, 5.3, 0, 'right', noBlock)!;
+-    expect(spans(out)).toBe('A[0.00..5.30] B[5.30..5.60] C[5.60..10.40]');
+-  });
+-
+-  it('shrinking a segment hands the time to its neighbour, unchanged', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+-    const out = computeDragCascade(arr, 0, 4, 0, 'right', noBlock, tokens(0, 15))!;
+-    // Growth is never bounded by the floor — only shrinkage is.
+-    expect(spans(out)).toBe('A[0.00..4.00] B[4.00..10.00] C[10.00..15.00]');
+-  });
+-
+-  it('K14 INVARIANT L2 — every startTime this cascade writes carries anchorStart with it', () => {
+-    const arr = [seg('A', 0, 5, { anchorStart: 99 }), seg('B', 5, 5, { anchorStart: 99 }), seg('C', 10, 5)];
+-    const out = computeDragCascade(arr, 0, 5.5, 0, 'right', noBlock)!;
+-    expect(out[0]!.anchorStart).toBe(out[0]!.startTime);
+-    expect(out[1]!.anchorStart).toBe(out[1]!.startTime);
+-  });
+-
+-  it('an out-of-range dragged index is a no-op null, not a throw', () => {
+-    expect(computeDragCascade([seg('A', 0, 5)], 7, 6, 0, 'right', noBlock)).toBeNull();
+-  });
+-});
+-
+-// ---------------------------------------------------------------------------
+-// PART 4 — K17: the live drag preview must show what the commit will write.
+-//
+-// The defect these pin: the drag's live preview wrote `left`/`width` for the
+-// DRAGGED CARD ONLY, leaving every neighbour the cascade would move frozen at
+-// its pre-drag geometry. So a growing segment's edge ran through the next card
+-// (an overlap, illegal under BOTH candidate models of `segments`), and every
+-// neighbour snapped into place on release.
+-//
+-// `resolveDragPreview` is the array the preview now draws. What must hold is
+-// not "it looks right" but that it is the SAME array the commit path writes —
+-// App.tsx's applyDurationChange resolves through `computeDragCascade` with the
+-// identical arguments, so these compare the two directly.
+-// ---------------------------------------------------------------------------
+-
+-describe('K17 — live preview equals the committed cascade', () => {
+-  /** Three 5s slots, one spoken word centred in each, leaving exactly 1.0s of
+-   *  true silence at both edges of every slot. `tokens(0, 15)` is deliberately
+-   *  NOT used here: it puts a word onset at each slot's exact start, so K15b's
+-   *  word bound correctly refuses ALL yield and no neighbour can move — which
+-   *  makes it useless for asserting that neighbours DO move. */
+-  const SILENCE_TOKENS: TranscriptToken[] = [
+-    { startSec: 1, endSec: 4, text: 'a' },
+-    { startSec: 6, endSec: 9, text: 'b' },
+-    { startSec: 11, endSec: 14, text: 'c' },
+-  ];
+-  const threeSegs = (): VideoSegment[] => [seg('A', 0, 5), seg('B', 5, 5), seg('C', 10, 5)];
+-
+-  const CASES: ReadonlyArray<
+-    readonly [label: string, draggedIdx: number, duration: number, dir: 'right' | 'left']
+-  > = [
+-    ['grow right into next', 0, 5.8, 'right'],
+-    ['shrink right, next takes it back', 0, 3.5, 'right'],
+-    ['grow left into prev', 2, 5.8, 'left'],
+-    ['shrink left, prev takes it back', 2, 3.5, 'left'],
+-  ];
+-
+-  it.each(CASES)(
+-    'preview is byte-identical to the commit — %s',
+-    (_label, draggedIdx, duration, dir) => {
+-      const arr = threeSegs();
+-      const committed = computeDragCascade(arr, draggedIdx, duration, 0, dir, noBlock, SILENCE_TOKENS);
+-      const previewed = resolveDragPreview(arr, draggedIdx, duration, 0, dir, SILENCE_TOKENS);
+-      expect(previewed).toEqual(committed);
+-    },
+-  );
+-
+-  it.each(CASES)(
+-    'the preview actually MOVES a neighbour, not only the dragged card — %s',
+-    (_label, draggedIdx, duration, dir) => {
+-      const arr = threeSegs();
+-      const out = resolveDragPreview(arr, draggedIdx, duration, 0, dir, SILENCE_TOKENS);
+-      // The assertion this whole fix exists for, stated directly: some segment
+-      // OTHER than the dragged one has different geometry than it started with.
+-      // The pre-K17 preview moved only the dragged card and fails here.
+-      const movedOthers = out.filter((s, i) =>
+-        i !== draggedIdx &&
+-        (s.startTime !== arr[i]!.startTime || s.duration !== arr[i]!.duration),
+-      );
+-      expect(movedOthers.length).toBeGreaterThan(0);
+-    },
+-  );
+-
+-  it('previews a two-neighbour cascade — the second neighbour moves as well', () => {
+-    // B is token-less (yield floor = Infinity) and short, so MIN_SEGMENT_DURATION
+-    // clamps it and the overflow passes on to C. All three cards must move.
+-    const arr = [seg('A', 0, 5), seg('B', 5, 0.4), seg('C', 5.4, 5)];
+-    const out = resolveDragPreview(arr, 0, 5.3, 0, 'right');
+-    expect(spans(out)).toBe('A[0.00..5.30] B[5.30..5.60] C[5.60..10.40]');
+-    expect(out).toEqual(computeDragCascade(arr, 0, 5.3, 0, 'right', noBlock));
+-  });
+-
+-  it('no two cards ever overlap in a previewed frame, at any drag position', () => {
+-    // An overlap at ANY pointer position is the bug, so one hand-picked position
+-    // would not be evidence — sweep both edges densely, with and without tokens.
+-    for (const toks of [SILENCE_TOKENS, undefined]) {
+-      for (let d = 0.3; d <= 12; d += 0.1) {
+-        for (const [idx, dir] of [[0, 'right'], [2, 'left']] as const) {
+-          const out = resolveDragPreview(threeSegs(), idx, Number(d.toFixed(2)), 0, dir, toks);
+-          for (let i = 0; i + 1 < out.length; i++) {
+-            const end = out[i]!.startTime + out[i]!.duration;
+-            expect(end).toBeLessThanOrEqual(out[i + 1]!.startTime + 1e-9);
+-          }
+-        }
+-      }
+-    }
+-  });
+-
+-  it('a negligible drag previews the original array unchanged — nothing to un-draw on release', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 5)];
+-    // App.tsx's pointerup path declines to commit below this same threshold, so
+-    // a preview that had drawn the drag would have to snap back at release.
+-    const out = resolveDragPreview(arr, 0, 5 + NEGLIGIBLE_DRAG_SEC / 2, 0, 'right', SILENCE_TOKENS);
+-    expect(out).toBe(arr);
+-  });
+-
+-  it('a locked neighbour previews the original array — the blocked commit reverts to exactly this', () => {
+-    const arr = [seg('A', 0, 5), seg('B', 5, 5, { locked: true }), seg('C', 10, 5)];
+-    expect(computeDragCascade(arr, 0, 7, 0, 'right', noBlock, SILENCE_TOKENS)).toBeNull();
+-    expect(resolveDragPreview(arr, 0, 7, 0, 'right', SILENCE_TOKENS)).toBe(arr);
+-  });
+-
+-  it('K15a locality holds in the preview too — a gap outside the touched window survives', () => {
+-    // The K14-shaped array: B is locked and ends at 3.0, C starts at 5.0.
+-    const arr = [seg('A', 0, 2), seg('B', 2, 1, { locked: true }), seg('C', 5, 3), seg('D', 8, 3)];
+-    const out = resolveDragPreview(arr, 2, 4, 0, 'right', SILENCE_TOKENS);
+-    expect(out[0]).toEqual(arr[0]);
+-    expect(out[1]).toEqual(arr[1]);
+-    expect(out[2]!.startTime).toBe(5);
+-    // The 2.000s gap between B's end and C's start is untouched by the preview,
+-    // exactly as it is by the commit.
+-    expect(out[2]!.startTime - (out[1]!.startTime + out[1]!.duration)).toBeCloseTo(2, 9);
+-  });
+-
+-  it("previews K15b's bounded duration, not the raw pointer duration", () => {
+-    // B owns words from 6.0, so it can yield only 1.0s of leading silence; a drag
+-    // asking for 3.0s more is bounded and the refused 2.0s is given back to A.
+-    // Pre-K17 the preview drew the raw request and the commit wrote the bounded
+-    // value — a visible jump at release.
+-    const arr = threeSegs();
+-    const RAW = 8;
+-    const out = resolveDragPreview(arr, 0, RAW, 0, 'right', SILENCE_TOKENS);
+-    expect(out[0]!.duration).toBe(6);
+-    expect(out[0]!.duration).toBeLessThan(RAW);
+-    expect(out).toEqual(computeDragCascade(arr, 0, RAW, 0, 'right', noBlock, SILENCE_TOKENS));
+-  });
+-});
+diff --git a/src/services/dragCascade.ts b/src/services/dragCascade.ts
+deleted file mode 100644
+index 598bc06..0000000
+--- a/src/services/dragCascade.ts
++++ /dev/null
+@@ -1,341 +0,0 @@
+-/**
+- * Timeline drag-resize cascade — the pure timing half of a segment-boundary
+- * drag, extracted out of `App.tsx` (K15) so it can be unit-tested directly.
+- *
+- * `computeDragCascade` is the ONLY writer of segment timing on the drag path;
+- * `App.tsx`'s `applyDurationChange` is a thin wrapper that resolves the dragged
+- * index, forwards the project's transcript tokens, and commits the result.
+- *
+- * ---------------------------------------------------------------------------
+- * K15 — the two defects this file's current shape exists to close
+- * ---------------------------------------------------------------------------
+- *
+- * **K15a — gap collapse (catastrophic, K14-introduced).** The pre-K15 cascade
+- * ended by calling a module-private `recomputeStartTimes(segs)` that rebuilt
+- * EVERY segment's `startTime` from a running sum of durations starting at 0 —
+- * a flexbox-style global re-flow. That silently deletes any gap anywhere in the
+- * array, including gaps nowhere near the drag. Before K14 that was harmless
+- * because no upstream stage could produce a gap: `applyAnchorBasedTiming`'s
+- * then-current locked branch GREW a locked segment to fill any span that opened
+- * after it (`duration = max(preservedDuration, availableSpan)`), so its output
+- * was contiguous by construction. K14 withdrew that growth exemption to make a
+- * lock a hard wall in both directions, so a locked segment whose end falls
+- * before the following segment's anchor now leaves a REAL gap
+- * (`syncEngine.ts`'s `effectiveStart = max(rawAnchor, lockFloor)`). From that
+- * point on, ANY drag anywhere in the timeline collapsed that gap and pulled
+- * every following segment backwards by its full width — measured at 3.000s of
+- * displacement for a 0.200s drag, which moves a segment's slot completely off
+- * its own audio. It fired even when the drag had no neighbour to cascade into
+- * at all (dragging the last segment), because the re-flow was unconditional.
+- *
+- * The fix: the cascade is now STRICTLY LOCAL. Only the contiguous window the
+- * cascade actually touched is restacked, anchored on whichever edge of that
+- * window the drag does not move. Every segment outside the window keeps its
+- * `startTime` byte-identical, so a gap outside the window survives. This mirrors
+- * the locality rule K14 already established for `applyAnchorBasedTiming`
+- * ("DELIBERATELY LOCAL, never propagated through a running cursor").
+- *
+- * **K15b — unbounded neighbour absorption (predates K14).** The cascade floored
+- * an absorbing neighbour at `MIN_SEGMENT_DURATION` (0.3s) and nothing else, so
+- * a neighbour could be crushed from several seconds to 0.3s and lose every word
+- * it owns. That floor is original, not K14's — but K14 removed
+- * auto-lock-on-drag, which had been acting as an accidental one-shot circuit
+- * breaker: pre-K14 the cascade wrote `locked: true` onto every absorbing
+- * neighbour, so a SECOND drag into the same neighbour hit the locked-neighbour
+- * guard and was refused with a toast. Post-K14 nothing stops the user repeating
+- * the drag until the neighbour bottoms out. Decision 9 point 1 forbids
+- * restoring auto-lock, so the bound has to be a real one — see
+- * `neighbourYieldableSec` below.
+- */
+-
+-import type { TranscriptToken, VideoSegment } from '../types';
+-
+-/** Minimum timeline slot width, seconds. Moved here from `App.tsx` (K15) so the
+- *  cascade and its callers read one constant; `App.tsx` imports it back. */
+-export const MIN_SEGMENT_DURATION = 0.3;
+-
+-/** Duration comparisons below this are treated as zero — matches the 0.001s
+- *  granularity every `startTime`/`duration` in this pipeline is rounded to. */
+-const EPSILON_SEC = 0.001;
+-
+-/** Which end of an absorbing neighbour the drag moves. A right-edge drag grows
+- *  the dragged segment forward, pushing the NEXT segment's start later — that
+- *  neighbour yields from its HEAD. A left-edge drag grows it backward, pulling
+- *  the PREVIOUS segment's end earlier — that neighbour yields from its TAIL. */
+-export type YieldSide = 'head' | 'tail';
+-
+-function isUsableToken(t: TranscriptToken): boolean {
+-  return Number.isFinite(t.startSec) && Number.isFinite(t.endSec) && t.endSec > t.startSec;
+-}
+-
+-/**
+- * How many seconds a neighbour may give up on `yieldSide` before the drag would
+- * start pushing that neighbour's own words out of its slot — the K15b bound.
+- *
+- * **The floor, stated plainly: a neighbour's slot may never be moved past its
+- * own outermost word.** A head-yielding neighbour's start may not pass its own
+- * FIRST word's onset; a tail-yielding neighbour's end may not fall below its own
+- * LAST word's offset. Everything between the slot edge and that word is the
+- * neighbour's own leading/trailing silence, and silence is the only thing a drag
+- * is entitled to take. So the yieldable amount is exactly that silence.
+- *
+- * **Where the floor comes from:** the project's own `transcriptTokens` — the
+- * same word-level array the aligner and `snapBoundaries.ts` place every boundary
+- * against. Nothing new is measured or inferred here. A token belongs to this
+- * neighbour when its MIDPOINT falls inside the neighbour's slot; midpoint
+- * (rather than onset, or any-overlap) is chosen because a word straddling a slot
+- * edge then counts as the neighbour it is mostly inside, and the straddled edge
+- * yields nothing — the conservative answer at exactly the place this bound
+- * matters.
+- *
+- * **Returns `Infinity`** when there is no word to protect: no tokens at all (no
+- * voiceover yet, or a project whose transcript was never persisted) or no token
+- * owned by this neighbour (a zero-token segment — an unscripted heading, or a
+- * scene the aligner skipped). `Infinity` makes the caller's bound a no-op, which
+- * is deliberate: those cases fall through to the pre-K15 `MIN_SEGMENT_DURATION`
+- * clamp byte-for-byte, because inventing a larger floor for a segment with no
+- * words would only refuse drags the user is entitled to make.
+- *
+- * This is a POSITION bound expressed as an amount, not a duration floor. A
+- * duration floor is only equivalent while the neighbour's other edge is pinned,
+- * and it is not: when the cascade runs on past this neighbour, its far edge
+- * moves too. Computing `slotEnd - firstWordOnset` as a minimum duration was
+- * tried first and is wrong for exactly that reason — it let a two-neighbour
+- * cascade push a neighbour's start past its own first word while its duration
+- * still satisfied the floor.
+- */
+-export function neighbourYieldableSec(
+-  neighbour: Pick<VideoSegment, 'startTime' | 'duration'>,
+-  yieldSide: YieldSide,
+-  tokens: TranscriptToken[] | undefined,
+-): number {
+-  if (!tokens || tokens.length === 0) return Infinity;
+-
+-  const slotStart = neighbour.startTime;
+-  const slotEnd = neighbour.startTime + neighbour.duration;
+-
+-  let firstOwnedStart = Infinity;
+-  let lastOwnedEnd = -Infinity;
+-  for (const t of tokens) {
+-    if (!isUsableToken(t)) continue;
+-    const mid = (t.startSec + t.endSec) / 2;
+-    if (mid < slotStart || mid >= slotEnd) continue;
+-    if (t.startSec < firstOwnedStart) firstOwnedStart = t.startSec;
+-    if (t.endSec > lastOwnedEnd) lastOwnedEnd = t.endSec;
+-  }
+-  if (firstOwnedStart === Infinity) return Infinity;
+-
+-  const silence = yieldSide === 'head'
+-    ? firstOwnedStart - slotStart
+-    : slotEnd - lastOwnedEnd;
+-  // Never negative: a word already straddling the yielding edge means there is
+-  // no silence there to take, so the neighbour yields nothing.
+-  return Math.max(0, silence);
+-}
+-
+-/**
+- * Rewrites `startTime` (and, per K14's INVARIANT L2, `anchorStart` in lockstep
+- * with it) for the inclusive index window `[lo, hi]` ONLY, restacking those
+- * segments contiguously from `segs[lo]`'s own existing `startTime`.
+- *
+- * `segs[lo].startTime` is by construction the edge the drag does not move — the
+- * dragged segment's own start on a right-edge drag, or the far end of the
+- * cascade on a left-edge drag — so the window is anchored to a fixed point and
+- * nothing outside it needs to move. Segments outside `[lo, hi]` are returned
+- * untouched, which is what preserves a pre-existing gap (K15a).
+- */
+-function restackWindow(segs: VideoSegment[], lo: number, hi: number): VideoSegment[] {
+-  let acc = segs[lo]?.startTime ?? 0;
+-  return segs.map((s, i) => {
+-    if (i < lo || i > hi) return s;
+-    const t = Number(acc.toFixed(3));
+-    acc += s.duration;
+-    return { ...s, startTime: t, anchorStart: t };
+-  });
+-}
+-
+-/**
+- * Applies a drag-resize delta to `originalSegments`, cascading overflow into
+- * neighbours.
+- *
+- * K14 (decision 9 point 1) — dragging locks NOTHING. Neither the dragged
+- * segment nor any absorbing neighbour is auto-locked. An ALREADY-locked
+- * neighbour is still an impassable wall the cascade refuses to move through;
+- * that check is unrelated to auto-locking and is unchanged.
+- *
+- * K15 — the cascade is bounded and local, per this file's header: no neighbour
+- * is pushed past its own outermost word, and only the touched window is
+- * restacked.
+- *
+- * Returns the updated array, or null if a locked neighbour blocked the cascade
+- * (caller reverts the live-preview state and shows a toast).
+- */
+-export function computeDragCascade(
+-  originalSegments: VideoSegment[],
+-  draggedIdx: number,
+-  finalDuration: number,
+-  finalTrimStart: number,
+-  direction: 'right' | 'left',
+-  onLockedBlock: (segIndex: number, segId: string) => void,
+-  tokens?: TranscriptToken[],
+-): VideoSegment[] | null {
+-  const segs = originalSegments.map(s => ({ ...s }));
+-  const dragged = segs[draggedIdx];
+-  if (!dragged) return null;
+-  segs[draggedIdx] = { ...dragged, duration: finalDuration, trimStart: finalTrimStart };
+-  const delta = finalDuration - (originalSegments[draggedIdx]?.duration ?? finalDuration);
+-  let remaining = -delta; // positive → neighbour must grow; negative → neighbour must shrink
+-  const step = direction === 'right' ? 1 : -1;
+-  const yieldSide: YieldSide = direction === 'right' ? 'head' : 'tail';
+-  let ni = draggedIdx + step;
+-  // Highest/lowest index whose duration this cascade actually rewrote. Seeded to
+-  // the dragged segment so a drag that absorbs nothing still restacks (only) itself.
+-  let lastTouched = draggedIdx;
+-  // Shrink demand that the K15b word bound refused to let any neighbour absorb.
+-  let refused = 0;
+-
+-  while (Math.abs(remaining) > EPSILON_SEC) {
+-    if (ni < 0 || ni >= segs.length) break;
+-    const neighbor = segs[ni]!;
+-    if (neighbor.locked) {
+-      onLockedBlock(ni, neighbor.id);
+-      return null;
+-    }
+-
+-    if (remaining > 0) {
+-      // Neighbour GROWS to take back time the dragged segment gave up. There is
+-      // no upper bound to enforce and never was — the first neighbour absorbs
+-      // all of it, exactly as pre-K15.
+-      segs[ni] = { ...neighbor, duration: neighbor.duration + remaining };
+-      remaining = 0;
+-      lastTouched = ni;
+-      break;
+-    }
+-
+-    // Neighbour must SHRINK. `-remaining` is precisely the distance this
+-    // neighbour's yielding edge is being asked to move, so it is the quantity
+-    // the K15b bound applies to directly.
+-    const yieldable = neighbourYieldableSec(originalSegments[ni]!, yieldSide, tokens);
+-    if (-remaining > yieldable) {
+-      refused += -remaining - yieldable;
+-      remaining = -yieldable;
+-      if (Math.abs(remaining) <= EPSILON_SEC) break;
+-    }
+-    // Below the word bound, the pre-K15 MIN_SEGMENT_DURATION clamp still governs
+-    // how much this neighbour can give before the overflow passes on — that path
+-    // is unchanged, and is the whole behaviour when `yieldable` is Infinity.
+-    const slack = Math.max(0, neighbor.duration - MIN_SEGMENT_DURATION);
+-    const take = Math.min(-remaining, slack);
+-    segs[ni] = { ...neighbor, duration: neighbor.duration - take };
+-    remaining += take;
+-    lastTouched = ni;
+-    ni += step;
+-  }
+-
+-  // K15b — the shrink the word bound refused is handed BACK to the dragged
+-  // segment rather than dropped. Dropping it is what let a drag take time no
+-  // neighbour ever gave up: total duration of the touched window would change,
+-  // and the restack below would have had to push that difference into a
+-  // segment the drag never touched. Giving it back conserves the window's total
+-  // exactly, so the drag simply stops where the neighbour's words begin — the
+-  // CapCut/Premiere behaviour. Bounded by construction: `refused` can never
+-  // exceed the original delta, so the dragged segment is never pushed below the
+-  // duration it started the drag with.
+-  //
+-  // The separate case of `remaining` still being non-zero because the cascade
+-  // ran off the end of the array is deliberately left as it was pre-K15 — that
+-  // is not over-absorption, and changing it would move unrelated behaviour into
+-  // this fix.
+-  if (refused > EPSILON_SEC) {
+-    const cur = segs[draggedIdx]!;
+-    segs[draggedIdx] = {
+-      ...cur,
+-      duration: Number(Math.max(MIN_SEGMENT_DURATION, cur.duration - refused).toFixed(3)),
+-    };
+-  }
+-
+-  const lo = Math.min(draggedIdx, lastTouched);
+-  const hi = Math.max(draggedIdx, lastTouched);
+-  return restackWindow(segs, lo, hi);
+-}
+-
+-/**
+- * A drag whose resolved duration differs from the segment's own by less than
+- * this is treated as no drag at all: the gesture is a click, or a jitter, and
+- * both the live preview and the commit leave the array untouched.
+- *
+- * Exported so `App.tsx`'s pointerup path and `resolveDragPreview` below read
+- * ONE threshold. They used to hold two independent copies of `0.01`, which is
+- * the same drift risk `resolveDragEdge` (services/dragGeometry.ts) was created
+- * to remove on the geometry side.
+- */
+-export const NEGLIGIBLE_DRAG_SEC = 0.01;
+-
+-/**
+- * K17 — the array the timeline must DRAW for an in-progress drag.
+- *
+- * The live preview and the pointerup commit have to answer one question
+- * identically: given this pointer position, what does the whole segment array
+- * become? Before K17 they did not even ask the same question. The preview wrote
+- * `left`/`width` for the DRAGGED CARD ONLY and left every neighbour frozen at
+- * its pre-drag geometry, while the commit ran `computeDragCascade` and moved
+- * the neighbours too. Three consequences, all visible:
+- *
+- *   1. **Overlap.** Growing a segment's end pushed its right edge straight
+- *      through the frozen next card. Under the timeline's pre-2026-07-31
+- *      flexbox layout this was unrepresentable — a card's left edge WAS the sum
+- *      of its predecessors' widths, so neighbours were shoved along by the
+- *      browser for free. Absolute positioning (each card at its own
+- *      `startTime`) removed that accidental coupling and exposed the defect;
+- *      it did not introduce it. Overlap is illegal under BOTH candidate models
+- *      of `segments` (docs/segments-invariant-ruling.md §0), so this needs no
+- *      ruling to fix.
+- *   2. **A jump on release.** Every neighbour the cascade moved snapped from
+- *      its frozen position to its committed one the instant the pointer came
+- *      up. What the user saw during the gesture was never what they got.
+- *   3. **A dragged card that lied about its own size.** K15b's word-bound
+- *      giveback can hand refused shrink back to the dragged segment, so its
+- *      committed duration is smaller than the raw pointer geometry asked for.
+- *      The preview drew the raw value and the commit wrote the bounded one.
+- *
+- * The fix is to make the preview render this function's output, and to make
+- * the commit path resolve through the same call. It is deliberately NOT a
+- * second, preview-flavoured copy of the cascade rules — it is `computeDragCascade`
+- * plus the two fallbacks the commit path already applied, so the preview cannot
+- * drift from the commit without `computeDragCascade` itself changing.
+- *
+- * Returns `originalSegments` UNCHANGED in the two cases the commit also
+- * declines to write:
+- *   - a negligible drag (see `NEGLIGIBLE_DRAG_SEC`);
+- *   - a locked neighbour blocking the cascade (`computeDragCascade` → null).
+- * The locked case matters for more than tidiness: the commit path reverts to
+- * `originalSegments` on a block, so a preview that had drawn the drag anyway
+- * would have to un-draw it on release — the very jump (2) this exists to
+- * remove. Rendering the original array throughout means a blocked drag shows
+- * the user, truthfully and immediately, that nothing is moving.
+- *
+- * Pure. `onLockedBlock` is intentionally absent: a preview frame runs up to
+- * 60×/second and must not raise a toast. The commit path passes its own
+- * reporting callback straight to `computeDragCascade`.
+- */
+-export function resolveDragPreview(
+-  originalSegments: VideoSegment[],
+-  draggedIdx: number,
+-  finalDuration: number,
+-  finalTrimStart: number,
+-  direction: 'right' | 'left',
+-  tokens?: TranscriptToken[],
+-): VideoSegment[] {
+-  const dragged = originalSegments[draggedIdx];
+-  if (!dragged) return originalSegments;
+-  if (Math.abs(finalDuration - dragged.duration) < NEGLIGIBLE_DRAG_SEC) return originalSegments;
+-  return computeDragCascade(
+-    originalSegments,
+-    draggedIdx,
+-    finalDuration,
+-    finalTrimStart,
+-    direction,
+-    () => undefined,
+-    tokens,
+-  ) ?? originalSegments;
+-}
+diff --git a/src/services/dragGeometry.test.ts b/src/services/dragGeometry.test.ts
+deleted file mode 100644
+index 0985ced..0000000
+--- a/src/services/dragGeometry.test.ts
++++ /dev/null
+@@ -1,245 +0,0 @@
+-/**
+- * K16 — drag geometry tests.
+- *
+- * PART 1 is the constraint the owner set for this commit, discharged directly:
+- * **the smoothness/structure work must not alter any timing value.** The pre-K16
+- * commit expression is transcribed literally below, from `App.tsx`'s `handleUp`
+- * at commit f8aef7d, and `resolveDragEdge` is asserted equal to it across a
+- * sweep of edge positions, both edges, video and non-video, so the equality is
+- * not a single lucky point. If `resolveDragEdge` is ever changed such that a
+- * given `edgeContentX` means something different, PART 1 fails.
+- *
+- * PART 2 covers the pointer-accuracy fix itself, which DOES change which
+- * `edgeContentX` a given pointer position produces — that is the defect being
+- * fixed, and it is deliberately isolated from PART 1's surface.
+- */
+-
+-import { describe, it, expect } from 'vitest';
+-import {
+-  timelineContentX,
+-  segmentEdgeContentX,
+-  computeGrabOffsetPx,
+-  resolveDragEdge,
+-  MIN_PLAYBACK_SPEED,
+-  MAX_PLAYBACK_SPEED,
+-  type DragEdge,
+-} from './dragGeometry';
+-import { MIN_SEGMENT_DURATION } from './dragCascade';
+-import { TransitionType, AnimationType, type VideoSegment } from '../types';
+-
+-function seg(extra: Partial<VideoSegment> = {}): VideoSegment {
+-  return {
+-    id: 'S',
+-    text: 'text',
+-    startTime: 10,
+-    duration: 5,
+-    transition: TransitionType.NONE,
+-    animation: AnimationType.NONE,
+-    order: 0,
+-    ...extra,
+-  };
+-}
+-
+-// ---------------------------------------------------------------------------
+-// PART 1 — timing neutrality.
+-// ---------------------------------------------------------------------------
+-
+-/**
+- * `App.tsx`'s pre-K16 commit math, transcribed verbatim (commit f8aef7d,
+- * `handleUp`). `lastX` there is the content-space x this takes as `x`. Only the
+- * variable names are changed; every operation, clamp, and ordering is as it was.
+- */
+-function preK16Commit(
+-  originalTarget: VideoSegment,
+-  type: DragEdge,
+-  x: number,
+-  pps: number,
+-  isVideoSeg: boolean,
+-): { finalDuration: number; finalTrimStart: number; speedUpdate?: { playbackSpeed: number } } {
+-  const srcDur = originalTarget.sourceDuration ?? 0;
+-  let finalDuration: number;
+-  let finalTrimStart: number = originalTarget.trimStart ?? 0;
+-  if (type === 'end') {
+-    finalDuration = Math.max(MIN_SEGMENT_DURATION, (x / pps) - originalTarget.startTime);
+-  } else {
+-    const rawDelta = (x / pps) - originalTarget.startTime;
+-    finalDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
+-    finalTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
+-  }
+-  let speedUpdate: { playbackSpeed: number } | undefined;
+-  if (isVideoSeg && srcDur > 0) {
+-    const finalClipLen = (originalTarget.trimEnd ?? srcDur) - finalTrimStart;
+-    if (finalClipLen > 0) {
+-      const maxDur = finalClipLen / MIN_PLAYBACK_SPEED;
+-      const minDur = Math.max(MIN_SEGMENT_DURATION, finalClipLen / MAX_PLAYBACK_SPEED);
+-      finalDuration = Math.max(minDur, Math.min(maxDur, finalDuration));
+-      const newSpeed = Math.max(
+-        MIN_PLAYBACK_SPEED,
+-        Math.min(MAX_PLAYBACK_SPEED, finalClipLen / finalDuration),
+-      );
+-      speedUpdate = { playbackSpeed: newSpeed };
+-    }
+-  }
+-  return { finalDuration, finalTrimStart, speedUpdate };
+-}
+-
+-describe('K16 PART 1 — resolveDragEdge is timing-identical to the pre-K16 commit math', () => {
+-  const fixtures: { name: string; segment: VideoSegment; isVideo: boolean }[] = [
+-    { name: 'image segment (no speed coupling)', segment: seg(), isVideo: false },
+-    {
+-      name: 'video segment with sourceDuration',
+-      segment: seg({ sourceDuration: 12, trimStart: 1 }),
+-      isVideo: true,
+-    },
+-    {
+-      name: 'video segment with an explicit trimEnd',
+-      segment: seg({ sourceDuration: 30, trimStart: 2, trimEnd: 9 }),
+-      isVideo: true,
+-    },
+-    {
+-      name: 'video-flagged segment with NO sourceDuration (coupling must stay off)',
+-      segment: seg(),
+-      isVideo: true,
+-    },
+-    {
+-      name: 'segment already at the minimum slot width',
+-      segment: seg({ duration: MIN_SEGMENT_DURATION }),
+-      isVideo: false,
+-    },
+-  ];
+-  const edges: DragEdge[] = ['start', 'end'];
+-  const zooms = [20, 100, 400];
+-
+-  for (const f of fixtures) {
+-    for (const edge of edges) {
+-      for (const pps of zooms) {
+-        it(`${f.name} — ${edge} edge @ ${pps}px/s`, () => {
+-          // Sweep the edge across, and well past, the segment on both sides, so
+-          // every clamp branch is exercised rather than just the happy path.
+-          for (let sec = 0; sec <= 25; sec += 0.25) {
+-            const x = sec * pps;
+-            const old = preK16Commit(f.segment, edge, x, pps, f.isVideo);
+-            const now = resolveDragEdge({
+-              segment: f.segment,
+-              edge,
+-              edgeContentX: x,
+-              pixelsPerSecond: pps,
+-              isVideo: f.isVideo,
+-            });
+-            expect(now.duration).toBe(old.finalDuration);
+-            expect(now.trimStart).toBe(old.finalTrimStart);
+-            expect(now.playbackSpeed).toBe(old.speedUpdate?.playbackSpeed);
+-          }
+-        });
+-      }
+-    }
+-  }
+-
+-  it('the live-preview duration and the committed duration are now one value, not two copies', () => {
+-    // Pre-K16, `liveDurationForX` and `handleUp` each computed this from their
+-    // own copy of the expression. Same call, same inputs, same answer — the
+-    // preview cannot drift from what gets committed.
+-    const s = seg({ sourceDuration: 12, trimStart: 1 });
+-    const args = { segment: s, edge: 'end' as const, edgeContentX: 1740, pixelsPerSecond: 100, isVideo: true };
+-    expect(resolveDragEdge(args).duration).toBe(resolveDragEdge(args).duration);
+-    expect(resolveDragEdge(args)).toEqual(resolveDragEdge(args));
+-  });
+-});
+-
+-// ---------------------------------------------------------------------------
+-// PART 2 — pointer accuracy. This is the behaviour K16 intentionally changes.
+-// ---------------------------------------------------------------------------
+-
+-describe('K16 PART 2 — pointer accuracy', () => {
+-  it('timelineContentX carries no padding correction — the container has none', () => {
+-    // Measured live in the running app: #timeline-scroll-area computes
+-    // paddingLeft 0px / borderLeftWidth 0px, and its content origin sits exactly
+-    // 0px from getBoundingClientRect().left. Pre-K16 this subtracted a further
+-    // 24px, left over from the initial commit's `p-6` container (annotated
+-    // "// 24 is padding" there) which the layout redesign changed to `p-0`.
+-    expect(timelineContentX(500, 120, 0)).toBe(380);   // pre-K16: 356
+-    expect(timelineContentX(500, 120, 640)).toBe(1020); // pre-K16: 996
+-  });
+-
+-  it('the 24px error was constant in pixels — it is the SECONDS error that scaled with zoom', () => {
+-    // This is what distinguishes a stale-origin constant from a wrong
+-    // pixels-per-second: a scale fault would show a gap proportional to the
+-    // distance dragged, at a fixed number of SECONDS. This showed the opposite.
+-    for (const pps of [20, 100, 400]) {
+-      const correct = timelineContentX(800, 100, 0);
+-      const preK16 = correct - 24;
+-      expect(correct - preK16).toBe(24);                       // px error: constant
+-      expect((correct - preK16) / pps).toBeCloseTo(24 / pps, 9); // seconds error: 1.2s / 0.24s / 0.06s
+-    }
+-  });
+-
+-  it('the grab offset holds the edge under the exact point of the handle that was pressed', () => {
+-    const s = seg({ startTime: 10, duration: 5 });
+-    const pps = 100;
+-    // The end handle is 8px wide and sits flush INSIDE the segment's right edge
+-    // (1500px), i.e. it spans 1492..1500. The user presses at 1494.
+-    const grab = computeGrabOffsetPx(1494, s, 'end', pps);
+-    expect(grab).toBe(-6);
+-    // Moving the pointer 200px right must move the edge exactly 200px right, and
+-    // the edge must stay 6px right of the pointer for the whole gesture.
+-    const edgeAt = (pointerX: number) => pointerX - grab;
+-    expect(edgeAt(1494)).toBe(1500);
+-    expect(edgeAt(1694)).toBe(1700);
+-    expect(edgeAt(1294)).toBe(1300);
+-  });
+-
+-  it('without a grab offset the edge jumps by up to the handle width on the first move', () => {
+-    const s = seg({ startTime: 10, duration: 5 });
+-    // Pre-K16 the edge was set straight from the pointer: pressing at 1492 (the
+-    // far side of the 8px handle) snapped the 1500px edge to 1492 before the
+-    // pointer had moved at all.
+-    expect(segmentEdgeContentX(s, 'end', 100)).toBe(1500);
+-    expect(computeGrabOffsetPx(1492, s, 'end', 100)).toBe(-8);
+-  });
+-
+-  it('a start-edge drag moves the card LEFT and pins its right edge', () => {
+-    // Fault (3): pre-K16 only `style.width` was written, so on a start-edge drag
+-    // the grabbed edge never moved and the OPPOSITE edge moved instead — the lag
+-    // equalled the whole drag distance. Both properties are now derived here.
+-    const s = seg({ startTime: 10, duration: 5 }); // spans 1000..1500 px @100
+-    const r = resolveDragEdge({
+-      segment: s, edge: 'start', edgeContentX: 800, pixelsPerSecond: 100, isVideo: false,
+-    });
+-    expect(r.segmentLeftPx).toBe(800);                                 // left edge follows the pointer
+-    expect(r.segmentLeftPx + r.duration * 100).toBeCloseTo(1500, 9);   // right edge pinned
+-  });
+-
+-  it('an end-edge drag leaves the card\'s left edge exactly where it was', () => {
+-    const s = seg({ startTime: 10, duration: 5 });
+-    const r = resolveDragEdge({
+-      segment: s, edge: 'end', edgeContentX: 1700, pixelsPerSecond: 100, isVideo: false,
+-    });
+-    expect(r.segmentLeftPx).toBe(1000);
+-    expect(r.segmentLeftPx + r.duration * 100).toBeCloseTo(1700, 9);
+-  });
+-
+-  it('both edges track the pointer 1:1 across a sweep, at every zoom level', () => {
+-    const s = seg({ startTime: 10, duration: 5 });
+-    for (const pps of [20, 100, 400]) {
+-      for (const edge of ['start', 'end'] as DragEdge[]) {
+-        const edge0 = segmentEdgeContentX(s, edge, pps);
+-        const grab = computeGrabOffsetPx(edge0 + 3, s, edge, pps); // pressed 3px off the edge
+-        for (const move of [-150, -40, 0, 40, 150]) {
+-          const pointer = edge0 + 3 + move;
+-          const edgeX = pointer - grab;
+-          const r = resolveDragEdge({
+-            segment: s, edge, edgeContentX: edgeX, pixelsPerSecond: pps, isVideo: false,
+-          });
+-          const renderedEdge = edge === 'start'
+-            ? r.segmentLeftPx
+-            : r.segmentLeftPx + r.duration * pps;
+-          // Below the MIN_SEGMENT_DURATION clamp the edge legitimately stops
+-          // following; everywhere above it, it must sit exactly on the pointer.
+-          if (r.duration > MIN_SEGMENT_DURATION + 1e-9) {
+-            expect(renderedEdge).toBeCloseTo(edgeX, 6);
+-          }
+-        }
+-      }
+-    }
+-  });
+-});
+diff --git a/src/services/dragGeometry.ts b/src/services/dragGeometry.ts
+deleted file mode 100644
+index 8911f6d..0000000
+--- a/src/services/dragGeometry.ts
++++ /dev/null
+@@ -1,196 +0,0 @@
+-/**
+- * Timeline drag-resize GEOMETRY — pointer coordinates in, segment timing out.
+- * Pure: no DOM, no React, no I/O. Extracted from `App.tsx`'s `onResizeStart`
+- * (K16) for two reasons.
+- *
+- * 1. `onResizeStart` computed the same duration TWICE from two hand-written
+- *    copies of the same expression — once in `liveDurationForX` for the drag's
+- *    live width, once again in `handleUp` for the value actually committed. Two
+- *    copies of timing math that must agree is a drift risk by construction; the
+- *    live preview silently lying about what will be committed is exactly the
+- *    class of bug this file removes. There is now one function, called from both
+- *    places.
+- * 2. `resolveDragEdge` is the timing-neutrality proof surface for K16. Its
+- *    output for a given content-space edge position is asserted, in
+- *    `dragGeometry.test.ts`, to be byte-identical to the pre-K16 expression it
+- *    replaces. That is what makes it checkable that K16 changed WHERE the edge
+- *    is read from, and nothing about what a given edge position means.
+- *
+- * ---------------------------------------------------------------------------
+- * K16 — what was actually wrong with the pointer mapping
+- * ---------------------------------------------------------------------------
+- *
+- * Three independent faults, all measured before anything was changed. None of
+- * them scaled with zoom: every one is a constant pixel error, which rules out
+- * the "stale pixels-per-second" hypothesis outright.
+- *
+- * **(1) A stale container-origin constant — 24px, constant.** The pointer→content
+- * mapping was `clientX - rect.left + scrollLeft - 24`. That `- 24` is annotated
+- * `// 24 is padding` in the initial commit, where `#timeline-scroll-area`
+- * carried `p-6 pt-10` — 24px of real horizontal padding. The layout redesign
+- * changed the container to `p-0 pt-[15px]` and the constant was never removed.
+- * Measured live in the running app: the container's computed `paddingLeft` and
+- * `borderLeftWidth` are both `0px`, and its content origin sits exactly 0px from
+- * `getBoundingClientRect().left`. So the term was a pure 24px error, placing the
+- * dragged edge 24px to the LEFT of the pointer. Constant in pixels; in SECONDS
+- * it is `24 / pixelsPerSecond`, so it was worth 0.24s at the default 100 px/s
+- * and over a second when zoomed out — which is why its damage looked
+- * zoom-dependent even though the pixel gap never was.
+- *
+- * **(2) No grab offset — up to 8px, constant.** `onResizeStart` never received
+- * the pointer position, so the edge was snapped to wherever the pointer was
+- * rather than preserving where inside the handle the user actually grabbed. The
+- * handles are `w-2` — measured 8px — so this contributed a further 0-8px, in the
+- * same direction for the end handle and the opposite for the start handle.
+- *
+- * **(3) The dragged edge did not move at all on a left-edge drag — the whole
+- * drag distance.** This is the ~100px the owner reported, and it is not a
+- * coordinate error. Each segment card is absolutely positioned with `left` and
+- * `width` from React state; the drag loop wrote `style.width` and nothing else.
+- * On a right-edge drag that is correct — the left edge is meant to stay put and
+- * the right edge tracks. On a LEFT-edge drag it means the grabbed edge is
+- * pinned while the OPPOSITE edge moves, in the opposite direction. So the lag on
+- * a left-edge drag equalled the drag distance itself, unbounded, while a
+- * right-edge drag was off by the constant 24-32px of (1)+(2). "Roughly 100px,
+- * sometimes less" is those two cases.
+- *
+- * Fault (3) is why this module exposes `segmentLeftPx` alongside the duration:
+- * a left-edge drag has to move BOTH properties to keep the segment's right edge
+- * pinned where it belongs.
+- */
+-
+-import type { VideoSegment } from '../types';
+-import { MIN_SEGMENT_DURATION } from './dragCascade';
+-
+-/** Playback-speed clamp for a video segment whose duration is stretched or
+- *  squeezed by a drag. Moved here from `App.tsx` (K16) alongside the math that
+- *  uses them; `App.tsx` imports them back for the speed slider. */
+-export const MIN_PLAYBACK_SPEED = 0.5;
+-export const MAX_PLAYBACK_SPEED = 2.0;
+-
+-/** Which edge of the segment card the user grabbed. */
+-export type DragEdge = 'start' | 'end';
+-
+-/**
+- * Pointer clientX → timeline content-space x, in pixels.
+- *
+- * `#timeline-scroll-area` has zero horizontal padding and zero border (measured
+- * in the running app, see this file's header), so its content origin is exactly
+- * its border-box left and no correction term belongs here. Do NOT reintroduce
+- * one: if the container ever regains padding, read it from the live computed
+- * style rather than hard-coding a number that goes stale silently the next time
+- * the layout changes — which is precisely how the 24px error survived.
+- */
+-export function timelineContentX(
+-  clientX: number,
+-  timelineRectLeft: number,
+-  scrollLeft: number,
+-): number {
+-  return clientX - timelineRectLeft + scrollLeft;
+-}
+-
+-/** Content-space x of a segment's given edge at the current zoom. */
+-export function segmentEdgeContentX(
+-  segment: Pick<VideoSegment, 'startTime' | 'duration'>,
+-  edge: DragEdge,
+-  pixelsPerSecond: number,
+-): number {
+-  const seconds = edge === 'start'
+-    ? segment.startTime
+-    : segment.startTime + segment.duration;
+-  return seconds * pixelsPerSecond;
+-}
+-
+-/**
+- * Distance, in pixels, between where the user pressed and the edge they grabbed.
+- * Held constant for the whole gesture and subtracted from every subsequent
+- * pointer position, so the edge stays exactly under the point of the handle the
+- * user is holding rather than jumping to the pointer on the first move.
+- */
+-export function computeGrabOffsetPx(
+-  pointerContentX: number,
+-  segment: Pick<VideoSegment, 'startTime' | 'duration'>,
+-  edge: DragEdge,
+-  pixelsPerSecond: number,
+-): number {
+-  return pointerContentX - segmentEdgeContentX(segment, edge, pixelsPerSecond);
+-}
+-
+-export interface DragEdgeInput {
+-  /** The segment as it was at drag START — never a partially-dragged copy. */
+-  segment: Pick<VideoSegment, 'startTime' | 'duration' | 'trimStart' | 'trimEnd' | 'sourceDuration'>;
+-  edge: DragEdge;
+-  /** Content-space x the grabbed edge should sit at (grab offset already removed). */
+-  edgeContentX: number;
+-  pixelsPerSecond: number;
+-  /** True only for a segment backed by a video asset with a known source
+-   *  duration — gates the playback-speed coupling exactly as before. */
+-  isVideo: boolean;
+-}
+-
+-export interface DragEdgeResult {
+-  duration: number;
+-  trimStart: number;
+-  /** Present only when the speed coupling engaged, matching the pre-K16
+-   *  `speedUpdate` variable's own presence rule exactly. */
+-  playbackSpeed?: number;
+-  /** Content-space left edge, px — what the card's `style.left` must become.
+-   *  Unchanged from the segment's own start on an end-edge drag; on a
+-   *  start-edge drag the right edge is pinned, so this is
+-   *  `(originalEnd - duration) * pixelsPerSecond`. */
+-  segmentLeftPx: number;
+-}
+-
+-/**
+- * The single source of truth for what a dragged edge position means, in both
+- * the live preview and the committed result.
+- *
+- * Every arithmetic step below is carried over verbatim from `App.tsx`'s
+- * pre-K16 `handleUp`, including the order of the clamps and the exact
+- * `finalClipLen > 0` gate on the speed coupling. `dragGeometry.test.ts` pins it
+- * against a literal transcription of that expression: for the same
+- * `edgeContentX`, this must return what the old code returned. K16 changes which
+- * `edgeContentX` a given pointer position produces — it does not change what any
+- * given `edgeContentX` means.
+- */
+-export function resolveDragEdge(input: DragEdgeInput): DragEdgeResult {
+-  const { segment, edge, edgeContentX, pixelsPerSecond, isVideo } = input;
+-  const edgeSec = edgeContentX / pixelsPerSecond;
+-  const originalTrimStart = segment.trimStart ?? 0;
+-  const originalEnd = segment.startTime + segment.duration;
+-
+-  let duration: number;
+-  let trimStart: number = originalTrimStart;
+-  if (edge === 'end') {
+-    duration = Math.max(MIN_SEGMENT_DURATION, edgeSec - segment.startTime);
+-  } else {
+-    const rawDelta = edgeSec - segment.startTime;
+-    duration = Math.max(MIN_SEGMENT_DURATION, segment.duration - rawDelta);
+-    trimStart = Math.max(0, originalTrimStart + rawDelta);
+-  }
+-
+-  let playbackSpeed: number | undefined;
+-  const srcDur = segment.sourceDuration ?? 0;
+-  if (isVideo && srcDur > 0) {
+-    const clipLen = (segment.trimEnd ?? srcDur) - trimStart;
+-    if (clipLen > 0) {
+-      const maxDur = clipLen / MIN_PLAYBACK_SPEED;
+-      const minDur = Math.max(MIN_SEGMENT_DURATION, clipLen / MAX_PLAYBACK_SPEED);
+-      duration = Math.max(minDur, Math.min(maxDur, duration));
+-      playbackSpeed = Math.max(
+-        MIN_PLAYBACK_SPEED,
+-        Math.min(MAX_PLAYBACK_SPEED, clipLen / duration),
+-      );
+-    }
+-  }
+-
+-  // A start-edge drag pins the segment's RIGHT edge and moves its left one, so
+-  // the card's `left` has to move with the width. An end-edge drag leaves the
+-  // left edge exactly where it was. Getting this wrong in the DOM writer is
+-  // fault (3) in this file's header.
+-  const segmentLeftPx = edge === 'start'
+-    ? (originalEnd - duration) * pixelsPerSecond
+-    : segment.startTime * pixelsPerSecond;
+-
+-  return { duration, trimStart, playbackSpeed, segmentLeftPx };
+-}
+diff --git a/src/services/lockedOverlap.test.ts b/src/services/lockedOverlap.test.ts
+index e703020..c07a069 100644
+--- a/src/services/lockedOverlap.test.ts
++++ b/src/services/lockedOverlap.test.ts
+@@ -5,27 +5,16 @@ import { TransitionType, AnimationType } from '../types';
+ 
+ /**
+  * Regression test for the locked-overlap early-cutoff bug (fixed in App.tsx's
+- * handleToggleLock via resolveAudioDuration). A locked segment used to be
+- * able to carry a duration exceeding its available span (locks never shrink),
+- * inflating Σ duration by that overlap amount. Before that fix, downstream
+- * re-sync paths re-derived audioDuration self-referentially from the inflated
+- * Σ duration and fed it into PASS 3, baking the inflation into the last
+- * segment's declared end — it would claim to run past where the real audio
+- * physically ends, so its tail silently never played. The fix prefers the
+- * real live <audio> duration (mirroring how Apply Sync sources it,
+- * App.tsx:1498-1500) and only falls back to Σ duration when no live duration
+- * is available (no-voiceover projects) — that fallback discipline is still
+- * correct and is what the second test below still covers.
+- *
+- * UPDATED (K14 fix, decision 9 / Step AB, 2026-08-07): a locked segment is now
+- * a hard wall in BOTH directions (the prior one-directional growth exemption
+- * is withdrawn), and an unlocked segment can never start before an
+- * immediately preceding lock's actual end. The overlap this file used to
+- * "document as intended" no longer occurs at all — the unlocked neighbour is
+- * pushed forward to the lock's exact end instead, so Σ duration is no longer
+- * inflated by a locked segment in the first place. The first test below is
+- * updated to assert the new, non-overlapping outcome; the locked segment's
+- * own duration still never shrinking is unchanged.
++ * handleToggleLock via resolveAudioDuration). A locked segment can carry
++ * duration > its available span (locks never shrink — applyAnchorBasedTiming's
++ * locked branch, syncEngine.ts:94-98), inflating Σ duration by that overlap
++ * amount. Before the fix, downstream re-sync paths re-derived audioDuration
++ * self-referentially from that inflated Σ duration and fed it into PASS 3,
++ * baking the inflation into the last segment's declared end — it would claim
++ * to run past where the real audio physically ends, so its tail silently
++ * never played. The fix prefers the real live <audio> duration (mirroring how
++ * Apply Sync sources it, App.tsx:1498-1500) and only falls back to Σ duration
++ * when no live duration is available (no-voiceover projects).
+  */
+ 
+ function makeSegment(partial: Partial<VideoSegment> & { id: string; text: string; order: number }): VideoSegment {
+@@ -51,13 +40,9 @@ function resolveAudioDuration(liveDuration: number | undefined, fallbackSegments
+  * 8-segment timeline. Segment 3 (0-indexed, middle — not last, not
+  * second-to-last) is LOCKED with a manually-set duration of 8s from an
+  * earlier drag-resize. A re-sync has since moved segment 4's anchor closer
+- * (18 instead of the "clean" 20), shrinking segment 3's "natural" span to
+- * 3s while its locked duration (8s) is preserved. Pre-K14-fix this produced
+- * an "intended" overlap of G = 8 - 3 = 5s; post-fix, segment 4 is instead
+- * pushed forward to the lock's exact end (23) and its own 5s of natural
+- * space is entirely consumed by the lock's 5s overflow — a `lock-span-
+- * overflow` case (Step AB's "too short" trapped-segment shape), not an
+- * overlap.
++ * (18 instead of the "clean" 20), shrinking segment 3's available span to
++ * 3s while its locked duration (8s) is preserved — producing an intended
++ * overlap of G = 8 - 3 = 5s.
+  */
+ function buildInputWithLockedOverlap(): VideoSegment[] {
+   const anchors = [0, 5, 10, 15, 18, 23, 28, 33]; // s3->s4 gap shrunk from 5 to 3
+@@ -78,8 +63,7 @@ function buildInputWithLockedOverlap(): VideoSegment[] {
+ }
+ 
+ describe('locked-overlap early-cutoff regression', () => {
+-  it('K14 fix: a locked segment still never shrinks, but its neighbour is pushed forward '
+-    + 'instead of overlapping it (no more Σ-duration inflation)', () => {
++  it('documents the intended lock behavior: a locked segment can exceed its available span (overlap G)', () => {
+     const input = buildInputWithLockedOverlap();
+     const afterResync = applyAnchorBasedTiming(input, TRUE_AUDIO_DURATION);
+ 
+@@ -87,21 +71,12 @@ describe('locked-overlap early-cutoff regression', () => {
+     const next = afterResync[4]!;
+     const G = (locked.startTime + locked.duration) - next.startTime;
+ 
+-    // Locks never shrink — unchanged, still true post-fix.
++    // Locks never shrink — this overlap is intended behavior, not a bug in
++    // applyAnchorBasedTiming itself. The bug (fixed elsewhere) was in how
++    // the heading paths re-derived audioDuration from a Σ duration already
++    // inflated by this G.
+     expect(locked.duration).toBe(8);
+-
+-    // FIXED (was the bug this whole file used to "document as intended"):
+-    // the neighbour no longer overlaps the lock. It is pushed forward to
+-    // the lock's exact end (23), so G is now 0, not 5.
+-    // (Pre-fix: `expect(G).toBeCloseTo(5, 6);` — the neighbour kept its own
+-    // anchor-derived position (18) while the lock extended past it to 23.)
+-    expect(G).toBeCloseTo(0, 6);
+-    expect(next.startTime).toBeCloseTo(23, 6);
+-
+-    // The neighbour's own 5s natural window (anchor 18 to the next
+-    // segment's anchor 23) is entirely consumed by the lock's overflow —
+-    // it collapses to zero rather than overlapping the lock.
+-    expect(next.duration).toBeCloseTo(0, 6);
++    expect(G).toBeCloseTo(5, 6);
+   });
+ 
+   it('UNCHANGED — no-voiceover fallback still uses Σ duration when no live audio duration is available', () => {
+diff --git a/src/services/syncEngine.ts b/src/services/syncEngine.ts
+index e10a593..985d833 100644
+--- a/src/services/syncEngine.ts
++++ b/src/services/syncEngine.ts
+@@ -152,26 +152,6 @@ export function contiguousWordMatch(tagName: string, assetName: string): boolean
+   return false;
+ }
+ 
+-/**
+- * A lock (decision 9 / Step AB, docs/sync-pipeline-v2-plan.md) forced a
+- * different placement on an UNLOCKED neighbour than plain anchor-to-anchor
+- * derivation would have given it — `applyAnchorBasedTiming` reports every
+- * one of these via its optional `onLockFinding` callback rather than
+- * resolving them silently (Step AB: "never silence... every one of the
+- * above is answered because leaving any of them implicit is exactly how
+- * K14 happened"). `kind` maps 1:1 onto the two new `SyncLogEntryType`
+- * members these are built into (`syncLog.ts`'s `buildLockFindingLogEntries`).
+- */
+-export interface LockFinding {
+-  /** The bounded span couldn't hold even the minimum slot (Step AB's
+-   *  "too short" case) — warning severity. */
+-  kind: 'lock-span-overflow' | 'lock-preserved-adjustment';
+-  segmentId: string;
+-  /** Index into the array `applyAnchorBasedTiming` was called with. */
+-  segmentIndex: number;
+-  amountSec: number;
+-}
+-
+ /**
+  * Re-derives startTime and duration for each segment from its anchorStart,
+  * preserving surviving scene positions across re-sync after scene add/remove.
+@@ -185,63 +165,34 @@ export interface LockFinding {
+  * Postconditions:
+  *  - every segment has anchorStart, startTime, duration set
+  *  - startTimes are monotonically non-decreasing and contiguous
+- *  - first segment startTime = 0, UNLESS it is locked (see below)
+- *  - last segment duration = audioDuration - last.startTime, UNLESS it is
+- *    locked
+- *  - LOCKED SEGMENTS ARE A HARD WALL (K14 fix — decision 9 / Step AB):
+- *    `startTime` and `duration` are pinned — never derived from
+- *    `anchorStart`, never grown or shrunk to absorb a neighbour. The prior
+- *    one-directional growth exemption ("locked segments never shrink, but
+- *    grow to absorb a removal gap that opened up after them") is WITHDRAWN;
+- *    a lock no longer moves in either direction, full stop. `anchorStart` is
+- *    instead kept in lockstep with `startTime` at all times (INVARIANT L2)
+- *    rather than read as a separately-stale value — this is what closes
+- *    K14, where a drag left a locked segment's `anchorStart` stale and a
+- *    later, unrelated lock toggle silently re-derived its `startTime` from
+- *    that stale value, moving a segment the toggle never touched.
+- *  - an UNLOCKED segment can never start before an immediately preceding
+- *    LOCKED segment's actual end (that lock's own `startTime + duration` is
+- *    a hard floor on the very next segment's start) — this is what stops an
+- *    unlocked neighbour from overlapping a lock. An unlocked segment
+- *    immediately before a LOCKED segment is likewise bounded by that lock's
+- *    own `startTime`, not by the lock's `anchorStart` (Step AC's R.1(d)/R.2
+- *    substitution — a lock is a hard wall, not an ordinary neighbour
+- *    anchor). This bound is DELIBERATELY LOCAL, never propagated through a
+- *    running cursor past the one segment immediately touching the lock — a
+- *    lock is a non-cascading, single-segment-deep wall (Step AC: "a locked
+- *    boundary is always a run-boundary case, never same-run interior"), and
+- *    an ordinary unlocked-to-unlocked overshoot keeps its pre-existing,
+- *    LOCAL collapse-to-floor behaviour (the D16 backstop clamp above) rather
+- *    than rippling into a later, correctly-anchored segment. Multi-segment
+- *    windowing when a bounded span is too small for ALL of its trapped
+- *    content (more than one segment between two locks) is Step AC / forced-
+- *    alignment territory, out of K14's scope — only the segment directly
+- *    adjacent to each lock is bounded here.
+- *  - a lock-caused adjustment to an unlocked neighbour's placement is
+- *    reported via `onLockFinding`, never silent (Step AB) — `lock-span-
+- *    overflow` (warning) when the bounded span can't meet the minimum slot,
+- *    `lock-preserved-adjustment` (info) for any other lock-caused move.
++ *  - first segment startTime = 0
++ *  - last segment duration = audioDuration - last.startTime
++ *  - locked segments: duration is preserved UNLESS removal opened a gap
++ *    immediately after the segment, in which case duration grows to absorb it.
++ *    Locked segments never shrink and never move.
+  */
+ export function applyAnchorBasedTiming(
+   segments: VideoSegment[],
+   audioDuration: number,
+-  onLockFinding?: (finding: LockFinding) => void,
+ ): VideoSegment[] {
+   if (segments.length === 0) return segments;
+   if (audioDuration <= 0) return segments;
+ 
+   const out: VideoSegment[] = segments.map(s => ({ ...s }));
+ 
+-  // PASS 1 — normalize first-segment anchor to 0, UNLESS it is locked: a
+-  // lock is a hard wall even at the very front of the timeline (decision 9
+-  // point 3 is unconditional). A locked first segment's anchorStart is
+-  // corrected below, in the main pass, to match its own untouched startTime.
++  // PASS 1 — normalize first-segment anchor to 0. (PASS 2 deleted in 3d-2)
++  // If the new first segment was previously not first (its anchor > 0), or is brand-new
++  // (anchor undefined), shift it to 0 so there is never a silent gap at the front.
+   const first = out[0];
+-  if (first && !first.locked && ((first.anchorStart ?? 0) > 0 || first.anchorStart === undefined)) {
++  if (first && ((first.anchorStart ?? 0) > 0 || first.anchorStart === undefined)) {
+     if (first.anchorStart === undefined) first.anchorSource = 'estimate';
+     first.anchorStart = 0;
+   }
+ 
++  // PASS 2 — recompute startTime and duration from anchors.
++  // Locked-segment exemption: locked segments snap their startTime to their anchor
++  // and their duration grows to max(preserved, availableSpan) — absorbing removal gaps
++  // that opened up after them. They never shrink.
+   for (let i = 1; i < out.length; i++) {
+     const prev = out[i - 1]!;
+     const cur = out[i]!;
+@@ -271,78 +222,27 @@ export function applyAnchorBasedTiming(
+     }
+   }
+ 
+-  // PASS 2 — recompute startTime and duration. Left-to-right; each segment's
+-  // lock-boundedness is read directly off its immediate neighbours (`out[i -
+-  // 1]`/`out[i + 1]`), never propagated through a running cursor — a lock is
+-  // a non-cascading, single-segment-deep wall (Step AC: "a locked boundary
+-  // is always a run-boundary case, never same-run interior"), and an
+-  // ordinary unlocked-to-unlocked overshoot must keep its pre-existing,
+-  // LOCAL behaviour (the overshooting segment alone collapses to the floor;
+-  // it must never push a later, correctly-anchored segment forward — see the
+-  // D16 backstop clamp above, which this pass must not re-break).
+   for (let i = 0; i < out.length; i++) {
+     const seg = out[i];
+     if (!seg) continue;
+     const isLast = i === out.length - 1;
+-    const nextLocked = !isLast && out[i + 1]?.locked === true;
+-    const naiveNextAnchor = isLast
+-      ? audioDuration
+-      : (out[i + 1]?.anchorStart ?? out[i + 1]?.startTime ?? audioDuration);
+-    // A locked next segment's boundary is its startTime, unconditionally —
+-    // never its (possibly stale) anchorStart. This is the R.1(d)/R.2
+-    // substitution: a lock is a hard wall, not an ordinary neighbour anchor.
+-    const nextAnchor = nextLocked ? out[i + 1]!.startTime : naiveNextAnchor;
++    const nextAnchor = isLast ? audioDuration : (out[i + 1]?.anchorStart ?? out[i + 1]?.startTime ?? audioDuration);
++    const anchorStart = seg.anchorStart ?? seg.startTime ?? 0;
+ 
+     if (seg.locked) {
+-      // Hard wall (Step AB): startTime/duration are read-only here — never
+-      // snapped to anchorStart, never grown or shrunk. Only anchorStart
+-      // moves, to stay in lockstep with the pinned position (INVARIANT L2).
+-      seg.anchorStart = seg.startTime;
+-      continue;
+-    }
+-
+-    const rawAnchor = seg.anchorStart ?? seg.startTime ?? 0;
+-    const prevLocked = i > 0 && out[i - 1]?.locked === true;
+-    // Only a LOCKED predecessor's own end is a hard floor on this segment's
+-    // start. An unlocked predecessor's (possibly floor-collapsed) end is
+-    // deliberately NOT a floor here — that would re-introduce exactly the
+-    // ripple the D16 backstop clamp above is designed to contain locally.
+-    const lockFloor = prevLocked ? out[i - 1]!.startTime + out[i - 1]!.duration : -Infinity;
+-    const effectiveStart = Math.max(rawAnchor, lockFloor);
+-    const boundedByLock = prevLocked || nextLocked;
+-    const availableSpan = nextAnchor - effectiveStart;
+-    const tooShort = boundedByLock && availableSpan < 0.1;
+-
+-    seg.startTime = Number(effectiveStart.toFixed(3));
+-    seg.duration = Number((tooShort ? Math.max(0, availableSpan) : Math.max(0.1, availableSpan)).toFixed(3));
+-
+-    if (boundedByLock) {
+-      if (tooShort) {
+-        onLockFinding?.({
+-          kind: 'lock-span-overflow',
+-          segmentId: seg.id,
+-          segmentIndex: i,
+-          amountSec: Number((0.1 - availableSpan).toFixed(3)),
+-        });
+-      } else {
+-        const naiveDuration = Math.max(0.1, naiveNextAnchor - rawAnchor);
+-        const moved = Math.abs(effectiveStart - rawAnchor) + Math.abs(seg.duration - naiveDuration);
+-        if (moved > 0.001) {
+-          onLockFinding?.({
+-            kind: 'lock-preserved-adjustment',
+-            segmentId: seg.id,
+-            segmentIndex: i,
+-            amountSec: Number(moved.toFixed(3)),
+-          });
+-        }
+-      }
++      seg.startTime = Number(anchorStart.toFixed(3));
++      const preservedDuration = seg.duration ?? 0;
++      const availableSpan = Math.max(0, nextAnchor - seg.startTime);
++      seg.duration = Number(Math.max(preservedDuration, availableSpan).toFixed(3));
++    } else {
++      seg.startTime = Number(anchorStart.toFixed(3));
++      seg.duration = Number(Math.max(0.1, nextAnchor - seg.startTime).toFixed(3));
+     }
+   }
+ 
+-  // PASS 3 — clamp last segment exactly to audioDuration, UNLESS it is
+-  // locked (a hard wall, same as everywhere else in this pass).
++  // PASS 3 — clamp last segment exactly to audioDuration.
+   const last = out[out.length - 1];
+-  if (last && !last.locked) {
++  if (last) {
+     last.duration = Number(Math.max(0.1, audioDuration - last.startTime).toFixed(3));
+   }
+ 
+diff --git a/src/services/syncLog.ts b/src/services/syncLog.ts
+index 1ca9dc7..3370f15 100644
+--- a/src/services/syncLog.ts
++++ b/src/services/syncLog.ts
+@@ -14,7 +14,6 @@
+ import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem } from '../types';
+ import type { TokenDrop } from './whisperService';
+ import type { ContractViolation } from './syncContracts';
+-import type { LockFinding } from './syncEngine';
+ import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
+ 
+ /** `crypto.randomUUID` is present in every runtime this app ships in (Tauri
+@@ -101,41 +100,6 @@ export function buildUnsupportedLanguageEntry(
+   );
+ }
+ 
+-/**
+- * K14 fix (decision 9 / Step AB) — turns `applyAnchorBasedTiming`'s
+- * `LockFinding`s (syncEngine.ts) into `SyncLogEntry`s, one per finding.
+- * `segmentIndex` is 0-based into whatever segments array
+- * `applyAnchorBasedTiming` was called with, matching the convention every
+- * other segment-indexed entry (skip, no-asset, rescue) already uses;
+- * messages use the 1-based display number.
+- */
+-export function buildLockFindingLogEntries(
+-  syncRunId: string,
+-  findings: LockFinding[],
+-  timestamp: number = Date.now(),
+-): SyncLogEntry[] {
+-  return findings.map(f => {
+-    const displayNumber = f.segmentIndex + 1;
+-    if (f.kind === 'lock-span-overflow') {
+-      return makeSyncLogEntry(
+-        syncRunId,
+-        'lock-span-overflow',
+-        `Segment ${displayNumber} is squeezed by a locked boundary — its content is short `
+-        + `${f.amountSec.toFixed(2)}s of the space it needs.`,
+-        { segmentIndex: f.segmentIndex, severity: 'warning', fixHint: 'Unlock the bounding segment, or shorten its content, to give this segment more room.' },
+-        timestamp,
+-      );
+-    }
+-    return makeSyncLogEntry(
+-      syncRunId,
+-      'lock-preserved-adjustment',
+-      `Segment ${displayNumber}'s boundary moved ${f.amountSec.toFixed(2)}s to respect a locked neighbour.`,
+-      { segmentIndex: f.segmentIndex, severity: 'info' },
+-      timestamp,
+-    );
+-  });
+-}
+-
+ const DROP_REASON_LABELS: Record<TokenDrop['reason'], string> = {
+   'non-finite': 'unusable timestamp',
+   'negative-start': 'negative start time',
+diff --git a/src/types.ts b/src/types.ts
+index c6ae0e4..ead689c 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -396,9 +396,7 @@ export type SyncLogEntryType =
+   | 'malformed-token'
+   | 'no-asset'
+   | 'rescue'
+-  | 'unsupported-language'
+-  | 'lock-span-overflow'
+-  | 'lock-preserved-adjustment';
++  | 'unsupported-language';
+ 
+ /** One line in the sync log. Entries from a single Apply Sync run share a
+  *  `syncRunId`, so the UI can group them without a nested data structure. */

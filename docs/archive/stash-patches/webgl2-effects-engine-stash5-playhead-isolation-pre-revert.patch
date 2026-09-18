@@ -1,0 +1,1124 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index f76d96b..4124934 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -866,6 +866,206 @@ export default function App() {
+     return true;
+   }, [showToast]);
+ 
++  // ---------------------------------------------------------------------------
++  // Stable Timeline callbacks.
++  //
++  // These were previously inline arrows in the <Timeline> JSX, so they were a
++  // fresh reference on every App render — including every ~16ms playback tick
++  // (currentTime is App state). Timeline's heavy content is now a React.memo'd
++  // child (TimelineContent); an unstable callback prop would defeat that memo
++  // on every tick, re-rendering all ~294 segment rows anyway. useCallback with
++  // playback-stable deps keeps them referentially stable so the memo actually
++  // holds. (Refs and state setters are stable; applyDurationChange is itself
++  // useCallback'd on [showToast], stable during playback.)
++  // ---------------------------------------------------------------------------
++  // `project.headings ?? []` inline would mint a fresh array every App render
++  // (every playback tick), defeating TimelineContent's memo. Memoize on the
++  // underlying headings reference so it's stable until headings actually change.
++  const timelineHeadings = useMemo(() => project.headings ?? [], [project.headings]);
++
++  const handleTimelineSeek = useCallback((time: number): void => {
++    setCurrentTime(time);
++    if (audioRef.current) audioRef.current.currentTime = time;
++  }, []);
++
++  const handleTimelineSegmentUpdate = useCallback(
++    (updater: (prev: VideoSegment[]) => VideoSegment[]): void => {
++      setProject(prev => ({ ...prev, segments: updater(prev.segments) }));
++    },
++    [],
++  );
++
++  const handleTimelineOpenStockSearch = useCallback((segmentId: string): void => {
++    setStockTarget(segmentId);
++    setShowStockSearch(true);
++  }, []);
++
++  const handleTimelineSelectSegment = useCallback((id: string): void => {
++    setSelectedSegmentId(id);
++  }, []);
++
++  const handleTimelineHeadingResizeCommit = useCallback(
++    (id: string, next: { time: number; duration: number }): void => {
++      setProject(prev => ({
++        ...prev,
++        headings: (prev.headings ?? []).map(h => h.id === id ? { ...h, ...next } : h),
++      }));
++    },
++    [],
++  );
++
++  const handleTimelineResizeStart = useCallback((id: string, type: 'start' | 'end'): void => {
++    setResizingId(id);
++    setResizingType(type);
++    document.body.classList.add('resizing');
++    // Snapshot original segments at drag-start; used for cascade + revert.
++    const originalSegments = projectRef.current.segments;
++    const draggedIdx = originalSegments.findIndex(s => s.id === id);
++    const originalTarget = originalSegments[draggedIdx];
++    if (draggedIdx < 0 || !originalTarget) return;
++    const pps = pixelsPerSecondRef.current;
++    // B3 — cache the timeline element + its left edge ONCE at drag start.
++    // rect.left is stable for the whole gesture, so re-measuring it (a
++    // layout read) on every mousemove was pure thrash. scrollLeft is still
++    // read live, but only at the top of each rAF frame, before any write.
++    const timeline = document.getElementById('timeline-scroll-area');
++    if (!timeline) return;
++    const rectLeft = timeline.getBoundingClientRect().left;
++    // B1 — elements whose width we update directly during the drag (visual
++    // row + waveform row share the same data-seg-id), so we avoid a
++    // per-frame setProject/full re-render. The real state change is
++    // committed ONCE on mouseup via applyDurationChange (unchanged, below).
++    const liveEls = Array.from(
++      timeline.querySelectorAll<HTMLElement>(`[data-seg-id="${id}"]`),
++    );
++    let lastX = 0;
++    let hasMoved = false;
++    // Capture video context at drag-start for speed coupling.
++    const dragAsset = assetsRef.current.find(a => a.id === originalTarget.assetId);
++    const isVideoSeg = dragAsset?.type === 'video';
++    const srcDur = originalTarget.sourceDuration ?? 0;
++
++    // Pointer clientX -> content-space x (same formula + -24 gutter as before).
++    const computeX = (clientX: number): number =>
++      clientX - rectLeft + timeline.scrollLeft - 24;
++    // Live duration implied by a content-space x — mirrors the mouseup math
++    // so the width shown during the drag matches the value committed on drop.
++    // Used for the visual width ONLY; the committed state is computed
++    // independently in handleUp (kept identical to the pre-change path).
++    const liveDurationForX = (x: number): number => {
++      let liveDuration: number;
++      let liveTrimStart: number = originalTarget.trimStart ?? 0;
++      if (type === 'end') {
++        liveDuration = Math.max(MIN_SEGMENT_DURATION, (x / pps) - originalTarget.startTime);
++      } else {
++        const rawDelta = (x / pps) - originalTarget.startTime;
++        liveDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
++        liveTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
++      }
++      if (isVideoSeg && srcDur > 0) {
++        const liveClipLen = (originalTarget.trimEnd ?? srcDur) - liveTrimStart;
++        if (liveClipLen > 0) {
++          const maxDur = liveClipLen / MIN_PLAYBACK_SPEED;
++          const minDur = Math.max(MIN_SEGMENT_DURATION, liveClipLen / MAX_PLAYBACK_SPEED);
++          liveDuration = Math.max(minDur, Math.min(maxDur, liveDuration));
++        }
++      }
++      return liveDuration;
++    };
++
++    // B5 — coalesce mousemoves into a single rAF; only the latest pointer
++    // position matters per frame.
++    let rafId: number | null = null;
++    let pendingEvent: MouseEvent | null = null;
++    const applyFrame = (): void => {
++      rafId = null;
++      if (!pendingEvent) return;
++      lastX = computeX(pendingEvent.clientX);
++      const w = `${liveDurationForX(lastX) * pps}px`;
++      for (const el of liveEls) el.style.width = w;
++    };
++    const handleMove = (e: MouseEvent): void => {
++      pendingEvent = e;
++      hasMoved = true;
++      if (rafId === null) rafId = requestAnimationFrame(applyFrame);
++    };
++    const handleUp = () => {
++      if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
++      // Ensure lastX reflects the final pointer position even if the last
++      // mousemove's rAF frame had not fired yet — so the committed size
++      // matches exactly where the user released.
++      if (pendingEvent) lastX = computeX(pendingEvent.clientX);
++      setResizingId(null);
++      setResizingType(null);
++      document.body.classList.remove('resizing');
++      window.removeEventListener('mousemove', handleMove);
++      window.removeEventListener('mouseup', handleUp);
++      // isResizingRef is cleared by the resizingId effect below,
++      // not here — see D12 fix note there.
++      // D12 fix (round 4) — the real cause of the "playhead jumps to
++      // wherever I dragged" report: each segment row is a flex item, so
++      // its on-screen left edge is the sum of every PRECEDING row's width,
++      // which never changes while THIS row is being resized. The right-edge
++      // handle sits at `right-0`, so it tracks the cursor continuously (row
++      // width is driven live by cursor x) and the mouseup lands on it. The
++      // left-edge handle sits at a fixed `left-0` that never moves during
++      // the drag, so after any meaningful left-edge drag the cursor ends up
++      // far from it at release. The browser fires a native 'click' right
++      // after this mouseup, hit-tested at the release position — for a
++      // left-edge drag that lands on the segment ROW body, not the handle,
++      // whose onClick is onSeek(s.startTime) (Timeline.tsx) — a real,
++      // direct setCurrentTime call, unrelated to anything currentSegment-
++      // or transition-preview-derived. Swallow exactly that one ghost click
++      // before any React handler (row onClick, ruler onMouseDown-installed
++      // handlers, etc.) can see it.
++      if (hasMoved) {
++        const swallowGhostClick = (clickEvent: MouseEvent) => {
++          clickEvent.stopPropagation();
++          clickEvent.preventDefault();
++        };
++        window.addEventListener('click', swallowGhostClick, { capture: true, once: true });
++      }
++      if (!hasMoved) return;
++      // Compute final duration from last known mouse position.
++      let finalDuration: number;
++      let finalTrimStart: number = originalTarget.trimStart ?? 0;
++      if (type === 'end') {
++        finalDuration = Math.max(MIN_SEGMENT_DURATION, (lastX / pps) - originalTarget.startTime);
++      } else {
++        const rawDelta = (lastX / pps) - originalTarget.startTime;
++        finalDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
++        finalTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
++      }
++      // Speed coupling: clamp duration + compute new playbackSpeed for video.
++      let speedUpdate: { playbackSpeed: number } | undefined;
++      if (isVideoSeg && srcDur > 0) {
++        const finalClipLen = (originalTarget.trimEnd ?? srcDur) - finalTrimStart;
++        if (finalClipLen > 0) {
++          const maxDur = finalClipLen / MIN_PLAYBACK_SPEED;
++          const minDur = Math.max(MIN_SEGMENT_DURATION, finalClipLen / MAX_PLAYBACK_SPEED);
++          finalDuration = Math.max(minDur, Math.min(maxDur, finalDuration));
++          const newSpeed = Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, finalClipLen / finalDuration));
++          speedUpdate = { playbackSpeed: newSpeed };
++        }
++      }
++      // Negligible drag — revert live preview to original.
++      if (Math.abs(finalDuration - originalTarget.duration) < 0.01) {
++        setProject(prev => ({ ...prev, segments: originalSegments }));
++        return;
++      }
++      const direction = type === 'end' ? 'right' as const : 'left' as const;
++      speedBaselineRef.current = null;
++      const succeeded = applyDurationChange(
++        originalSegments, id, finalDuration, finalTrimStart, direction, speedUpdate,
++      );
++      // null cascade → locked neighbor blocked: revert live preview.
++      if (!succeeded) setProject(prev => ({ ...prev, segments: originalSegments }));
++    };
++    isResizingRef.current = true;
++    window.addEventListener('mousemove', handleMove);
++    window.addEventListener('mouseup', handleUp);
++  }, [applyDurationChange]);
++
+   // Rehydrate persisted project on mount
+   useEffect(() => {
+     (async () => {
+@@ -2430,7 +2630,7 @@ export default function App() {
+                 initialScrollLeft={initialTimelineScrollLeft}
+                 segments={project.segments}
+                 assets={project.assets}
+-                headings={project.headings ?? []}
++                headings={timelineHeadings}
+                 currentSegmentId={currentSegment?.id}
+                 currentTime={currentTime}
+                 isPlaying={isPlaying}
+@@ -2446,172 +2646,14 @@ export default function App() {
+                 voiceoverUrl={voiceover?.url}
+                 voiceoverFile={voiceover?.file}
+                 onTogglePlay={togglePlay}
+-                onSeek={(time) => {
+-                  setCurrentTime(time);
+-                  if (audioRef.current) audioRef.current.currentTime = time;
+-                }}
+-                onResizeStart={(id, type) => {
+-                  setResizingId(id);
+-                  setResizingType(type);
+-                  document.body.classList.add('resizing');
+-                  // Snapshot original segments at drag-start; used for cascade + revert.
+-                  const originalSegments = projectRef.current.segments;
+-                  const draggedIdx = originalSegments.findIndex(s => s.id === id);
+-                  const originalTarget = originalSegments[draggedIdx];
+-                  if (draggedIdx < 0 || !originalTarget) return;
+-                  const pps = pixelsPerSecondRef.current;
+-                  // B3 — cache the timeline element + its left edge ONCE at drag start.
+-                  // rect.left is stable for the whole gesture, so re-measuring it (a
+-                  // layout read) on every mousemove was pure thrash. scrollLeft is still
+-                  // read live, but only at the top of each rAF frame, before any write.
+-                  const timeline = document.getElementById('timeline-scroll-area');
+-                  if (!timeline) return;
+-                  const rectLeft = timeline.getBoundingClientRect().left;
+-                  // B1 — elements whose width we update directly during the drag (visual
+-                  // row + waveform row share the same data-seg-id), so we avoid a
+-                  // per-frame setProject/full re-render. The real state change is
+-                  // committed ONCE on mouseup via applyDurationChange (unchanged, below).
+-                  const liveEls = Array.from(
+-                    timeline.querySelectorAll<HTMLElement>(`[data-seg-id="${id}"]`),
+-                  );
+-                  let lastX = 0;
+-                  let hasMoved = false;
+-                  // Capture video context at drag-start for speed coupling.
+-                  const dragAsset = assetsRef.current.find(a => a.id === originalTarget.assetId);
+-                  const isVideoSeg = dragAsset?.type === 'video';
+-                  const srcDur = originalTarget.sourceDuration ?? 0;
+-
+-                  // Pointer clientX -> content-space x (same formula + -24 gutter as before).
+-                  const computeX = (clientX: number): number =>
+-                    clientX - rectLeft + timeline.scrollLeft - 24;
+-                  // Live duration implied by a content-space x — mirrors the mouseup math
+-                  // so the width shown during the drag matches the value committed on drop.
+-                  // Used for the visual width ONLY; the committed state is computed
+-                  // independently in handleUp (kept identical to the pre-change path).
+-                  const liveDurationForX = (x: number): number => {
+-                    let liveDuration: number;
+-                    let liveTrimStart: number = originalTarget.trimStart ?? 0;
+-                    if (type === 'end') {
+-                      liveDuration = Math.max(MIN_SEGMENT_DURATION, (x / pps) - originalTarget.startTime);
+-                    } else {
+-                      const rawDelta = (x / pps) - originalTarget.startTime;
+-                      liveDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
+-                      liveTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
+-                    }
+-                    if (isVideoSeg && srcDur > 0) {
+-                      const liveClipLen = (originalTarget.trimEnd ?? srcDur) - liveTrimStart;
+-                      if (liveClipLen > 0) {
+-                        const maxDur = liveClipLen / MIN_PLAYBACK_SPEED;
+-                        const minDur = Math.max(MIN_SEGMENT_DURATION, liveClipLen / MAX_PLAYBACK_SPEED);
+-                        liveDuration = Math.max(minDur, Math.min(maxDur, liveDuration));
+-                      }
+-                    }
+-                    return liveDuration;
+-                  };
+-
+-                  // B5 — coalesce mousemoves into a single rAF; only the latest pointer
+-                  // position matters per frame.
+-                  let rafId: number | null = null;
+-                  let pendingEvent: MouseEvent | null = null;
+-                  const applyFrame = (): void => {
+-                    rafId = null;
+-                    if (!pendingEvent) return;
+-                    lastX = computeX(pendingEvent.clientX);
+-                    const w = `${liveDurationForX(lastX) * pps}px`;
+-                    for (const el of liveEls) el.style.width = w;
+-                  };
+-                  const handleMove = (e: MouseEvent): void => {
+-                    pendingEvent = e;
+-                    hasMoved = true;
+-                    if (rafId === null) rafId = requestAnimationFrame(applyFrame);
+-                  };
+-                  const handleUp = () => {
+-                    if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+-                    // Ensure lastX reflects the final pointer position even if the last
+-                    // mousemove's rAF frame had not fired yet — so the committed size
+-                    // matches exactly where the user released.
+-                    if (pendingEvent) lastX = computeX(pendingEvent.clientX);
+-                    setResizingId(null);
+-                    setResizingType(null);
+-                    document.body.classList.remove('resizing');
+-                    window.removeEventListener('mousemove', handleMove);
+-                    window.removeEventListener('mouseup', handleUp);
+-                    // isResizingRef is cleared by the resizingId effect below,
+-                    // not here — see D12 fix note there.
+-                    // D12 fix (round 4) — the real cause of the "playhead jumps to
+-                    // wherever I dragged" report: each segment row is a flex item, so
+-                    // its on-screen left edge is the sum of every PRECEDING row's width,
+-                    // which never changes while THIS row is being resized. The right-edge
+-                    // handle sits at `right-0`, so it tracks the cursor continuously (row
+-                    // width is driven live by cursor x) and the mouseup lands on it. The
+-                    // left-edge handle sits at a fixed `left-0` that never moves during
+-                    // the drag, so after any meaningful left-edge drag the cursor ends up
+-                    // far from it at release. The browser fires a native 'click' right
+-                    // after this mouseup, hit-tested at the release position — for a
+-                    // left-edge drag that lands on the segment ROW body, not the handle,
+-                    // whose onClick is onSeek(s.startTime) (Timeline.tsx) — a real,
+-                    // direct setCurrentTime call, unrelated to anything currentSegment-
+-                    // or transition-preview-derived. Swallow exactly that one ghost click
+-                    // before any React handler (row onClick, ruler onMouseDown-installed
+-                    // handlers, etc.) can see it.
+-                    if (hasMoved) {
+-                      const swallowGhostClick = (clickEvent: MouseEvent) => {
+-                        clickEvent.stopPropagation();
+-                        clickEvent.preventDefault();
+-                      };
+-                      window.addEventListener('click', swallowGhostClick, { capture: true, once: true });
+-                    }
+-                    if (!hasMoved) return;
+-                    // Compute final duration from last known mouse position.
+-                    let finalDuration: number;
+-                    let finalTrimStart: number = originalTarget.trimStart ?? 0;
+-                    if (type === 'end') {
+-                      finalDuration = Math.max(MIN_SEGMENT_DURATION, (lastX / pps) - originalTarget.startTime);
+-                    } else {
+-                      const rawDelta = (lastX / pps) - originalTarget.startTime;
+-                      finalDuration = Math.max(MIN_SEGMENT_DURATION, originalTarget.duration - rawDelta);
+-                      finalTrimStart = Math.max(0, (originalTarget.trimStart ?? 0) + rawDelta);
+-                    }
+-                    // Speed coupling: clamp duration + compute new playbackSpeed for video.
+-                    let speedUpdate: { playbackSpeed: number } | undefined;
+-                    if (isVideoSeg && srcDur > 0) {
+-                      const finalClipLen = (originalTarget.trimEnd ?? srcDur) - finalTrimStart;
+-                      if (finalClipLen > 0) {
+-                        const maxDur = finalClipLen / MIN_PLAYBACK_SPEED;
+-                        const minDur = Math.max(MIN_SEGMENT_DURATION, finalClipLen / MAX_PLAYBACK_SPEED);
+-                        finalDuration = Math.max(minDur, Math.min(maxDur, finalDuration));
+-                        const newSpeed = Math.max(MIN_PLAYBACK_SPEED, Math.min(MAX_PLAYBACK_SPEED, finalClipLen / finalDuration));
+-                        speedUpdate = { playbackSpeed: newSpeed };
+-                      }
+-                    }
+-                    // Negligible drag — revert live preview to original.
+-                    if (Math.abs(finalDuration - originalTarget.duration) < 0.01) {
+-                      setProject(prev => ({ ...prev, segments: originalSegments }));
+-                      return;
+-                    }
+-                    const direction = type === 'end' ? 'right' as const : 'left' as const;
+-                    speedBaselineRef.current = null;
+-                    const succeeded = applyDurationChange(
+-                      originalSegments, id, finalDuration, finalTrimStart, direction, speedUpdate,
+-                    );
+-                    // null cascade → locked neighbor blocked: revert live preview.
+-                    if (!succeeded) setProject(prev => ({ ...prev, segments: originalSegments }));
+-                  };
+-                  isResizingRef.current = true;
+-                  window.addEventListener('mousemove', handleMove);
+-                  window.addEventListener('mouseup', handleUp);
+-                }}
+-                onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
+-                onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
++                onSeek={handleTimelineSeek}
++                onResizeStart={handleTimelineResizeStart}
++                onSegmentUpdate={handleTimelineSegmentUpdate}
++                onOpenStockSearch={handleTimelineOpenStockSearch}
+                 onSetTrimmingSegment={setTrimmingSegmentId}
+                 onSetAdjustingTrim={setIsAdjustingTrim}
+-                onSelectSegment={(id) => setSelectedSegmentId(id)}
+-                onHeadingResizeCommit={(id, next) => {
+-                  setProject(prev => ({
+-                    ...prev,
+-                    headings: (prev.headings ?? []).map(h => h.id === id ? { ...h, ...next } : h),
+-                  }));
+-                }}
++                onSelectSegment={handleTimelineSelectSegment}
++                onHeadingResizeCommit={handleTimelineHeadingResizeCommit}
+               />
+             </ErrorBoundary>
+           </div>
+diff --git a/src/components/Timeline.tsx b/src/components/Timeline.tsx
+index bc9b33b..205fbfe 100644
+--- a/src/components/Timeline.tsx
++++ b/src/components/Timeline.tsx
+@@ -3,7 +3,7 @@
+  * SPDX-License-Identifier: Apache-2.0
+  */
+ 
+-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
++import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+ import { motion } from 'motion/react';
+ import {
+   Play, Pause, RotateCcw, AlertCircle, Heading1,
+@@ -44,6 +44,380 @@ interface Props {
+   initialScrollLeft?: number;
+ }
+ 
++/**
++ * Heavy, currentTime-independent portion of the timeline: the heading lane, the
++ * segment track (thumbnails) and the voiceover waveform. Split out and wrapped
++ * in React.memo so that a playback tick — which changes only `currentTime` on
++ * the parent — no longer re-renders the ~294 segment rows or the waveform.
++ *
++ * Deliberately does NOT receive `currentTime`. Everything here changes only on
++ * real edits (segments/assets/headings), zoom (pixelsPerSecond), the active
++ * segment crossing a boundary (currentSegmentId) or a resize gesture. All
++ * callback props are stabilized by the parent (App.tsx useCallback / the
++ * useCallback'd handleHeadingResizeStart), so the memo actually holds when only
++ * currentTime changes.
++ */
++interface TimelineContentProps {
++  segments: VideoSegment[];
++  assets: Asset[];
++  headings: HeadingOverlay[];
++  currentSegmentId: string | undefined;
++  isSynced: boolean;
++  pixelsPerSecond: number;
++  totalDuration: number;
++  segmentStarts: number[];
++  waveformBars: number[];
++  containerWidth: number;
++  voiceoverName: string | undefined;
++  resizingId: string | null;
++  isAdjustingTrim: boolean;
++  trimmingSegmentId: string | null;
++  onSeek: (time: number) => void;
++  onResizeStart: (id: string, type: 'start' | 'end') => void;
++  onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
++  onOpenStockSearch: (segmentId: string) => void;
++  onSelectSegment?: (id: string) => void;
++  onHeadingResizeStart: (e: React.MouseEvent, heading: HeadingOverlay, edge: 'start' | 'end') => void;
++}
++
++const TimelineContent = memo(function TimelineContent({
++  segments,
++  assets,
++  headings,
++  currentSegmentId,
++  isSynced,
++  pixelsPerSecond,
++  totalDuration,
++  segmentStarts,
++  waveformBars,
++  containerWidth,
++  voiceoverName,
++  resizingId,
++  isAdjustingTrim,
++  trimmingSegmentId,
++  onSeek,
++  onResizeStart,
++  onSegmentUpdate,
++  onOpenStockSearch,
++  onSelectSegment,
++  onHeadingResizeStart,
++}: TimelineContentProps) {
++  // ---------------------------------------------------------------------------
++  // Waveform — fixed-size canvas TILES (replaces the former single sticky
++  // canvas + scroll-redraw, which itself replaced ~8,000 bar <div>s).
++  //
++  // The lane is `totalDuration * pixelsPerSecond` wide (up to ~126,000px on a
++  // 21-min project at max zoom). Rather than one full-width canvas (whose
++  // DPR-scaled backing store breaches WebKit's ~16.77M px² limit in the
++  // Retina + long-project + max-zoom corner) OR one viewport-pinned sticky
++  // canvas that had to REDRAW on every scroll event (which turned the App-level
++  // playhead-follow auto-scroll into a per-frame canvas repaint — the confirmed
++  // regression), the waveform is drawn into a row of fixed 2048px-wide canvas
++  // tiles, each absolutely positioned at `left: i * TILE` inside the lane.
++  //
++  // Consequences that matter:
++  //   • Scrolling — manual OR the App.tsx playhead-follow auto-scroll — is now
++  //     PURE native browser scroll. NOTHING here listens to 'scroll'. The tiles
++  //     are ordinary positioned DOM; the browser just translates them.
++  //   • Each tile draws ONCE, from `waveformBars`, when it mounts or when its
++  //     inputs change (waveformBars / totalDuration / pixelsPerSecond → and thus
++  //     tile count/boundaries). currentTime is never a dependency.
++  //   • Per-tile backing store at 2048×80 CSS × DPR 2 = 4096×160 = 655,360 px²,
++  //     ~25× under WebKit's ~16.77M px² per-canvas area limit.
++  //
++  // Bars are sampled on the GLOBAL 3px content grid (not tile-local), so the
++  // bar rhythm is continuous across tile seams — a bar never straddles a
++  // boundary with a phase jump. The per-segment hit-target <div>s below keep
++  // every existing interaction (resize handles, data-seg-id live-resize targets,
++  // active-segment tint) with byte-identical geometry.
++  // ---------------------------------------------------------------------------
++  const WAVEFORM_TILE_WIDTH_PX = 2048; // CSS px per tile (constant)
++  const WAVEFORM_LANE_HEIGHT_PX = 80;  // matches the h-20 lane height
++
++  const totalContentWidth = totalDuration * pixelsPerSecond;
++  const tileCount = totalContentWidth > 0
++    ? Math.ceil(totalContentWidth / WAVEFORM_TILE_WIDTH_PX)
++    : 0;
++
++  const tileCanvasRefs = useRef<(HTMLCanvasElement | null)[]>([]);
++
++  // Draw one tile: its own sub-range [tileLeft, tileLeft + tileW) of the
++  // waveform, reusing the exact bucket/peak/height math of the former single
++  // canvas — just offset to global content-pixel space and clipped to the tile.
++  const drawTile = useCallback((index: number, canvas: HTMLCanvasElement) => {
++    const ctx = canvas.getContext('2d');
++    if (!ctx) return;
++    const dpr = window.devicePixelRatio || 1;
++    const H = WAVEFORM_LANE_HEIGHT_PX;
++    const totalWidth = totalDuration * pixelsPerSecond;
++    const tileLeft = index * WAVEFORM_TILE_WIDTH_PX;
++    // Last tile is narrower — content width modulo tile width. Never overdraw.
++    const tileW = Math.max(0, Math.min(WAVEFORM_TILE_WIDTH_PX, totalWidth - tileLeft));
++
++    // CSS size (logical) + HiDPI backing store (scaled by devicePixelRatio).
++    canvas.style.width = `${tileW}px`;
++    canvas.style.height = `${H}px`;
++    const bw = Math.max(1, Math.round(tileW * dpr));
++    const bh = Math.round(H * dpr);
++    if (canvas.width !== bw) canvas.width = bw;
++    if (canvas.height !== bh) canvas.height = bh;
++    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
++    ctx.clearRect(0, 0, tileW, H);
++
++    const N = waveformBars.length;
++    if (N === 0 || totalWidth <= 0 || tileW <= 0) return;
++
++    ctx.fillStyle = 'rgba(242,125,38,0.6)';
++    const BAR_STEP = 3; // 2px bar + 1px gap, matching the old bar/gap rhythm
++    const BAR_W = 2;
++    // Start on the GLOBAL 3px grid (first grid position >= tileLeft) so bars
++    // land at the same content-x they would on one continuous canvas — no
++    // phase discontinuity at tile boundaries.
++    const startCx = Math.ceil(tileLeft / BAR_STEP) * BAR_STEP;
++    const tileRight = tileLeft + tileW;
++    for (let cx0 = startCx; cx0 < tileRight; cx0 += BAR_STEP) {
++      if (cx0 >= totalWidth) break;
++      const cx1 = cx0 + BAR_STEP;
++      let b0 = Math.floor((cx0 / totalWidth) * N);
++      let b1 = Math.floor((cx1 / totalWidth) * N);
++      if (b1 <= b0) b1 = b0 + 1;
++      if (b0 < 0) b0 = 0;
++      if (b1 > N) b1 = N;
++      let peak = 0;
++      for (let b = b0; b < b1; b++) {
++        const v = waveformBars[b] ?? 0;
++        if (v > peak) peak = v;
++      }
++      const h = Math.max(6, Math.pow(peak, 0.5) * 68);
++      ctx.fillRect(cx0 - tileLeft, (H - h) / 2, BAR_W, h); // local x = global - tileLeft
++    }
++  }, [waveformBars, totalDuration, pixelsPerSecond]);
++
++  // Draw ALL tiles once, on shape-affecting changes only: new audio decoded
++  // (waveformBars), zoom (pixelsPerSecond), or duration (totalDuration) — each
++  // of which also determines the tile count/boundaries. Never runs on scroll,
++  // never on currentTime. useLayoutEffect so tiles are painted before the
++  // browser shows the newly-committed (possibly re-tiled) frame.
++  useLayoutEffect(() => {
++    const refs = tileCanvasRefs.current;
++    refs.length = tileCount; // drop refs to any unmounted (over-count) tiles
++    for (let i = 0; i < tileCount; i++) {
++      const canvas = refs[i];
++      if (canvas) drawTile(i, canvas);
++    }
++  }, [drawTile, tileCount]);
++
++  return (
++    <>
++      {/* Heading lane — Path B new-layer headings (Phase 4). Own horizontal
++          lane; never overlaps the segment track below. pointer-events-none
++          on each band so clicks pass through; only the edge handles (and,
++          going forward, any lane-level interactions) are interactive. */}
++      {isSynced && headings.length > 0 && (
++        <div className="relative h-20 flex-shrink-0 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg">
++          {headings.map((h) => (
++            <div
++              key={h.id}
++              data-heading-id={h.id}
++              className="absolute top-0 bottom-0 z-30 bg-[#F27D26]/10 border-2 border-[#F27D26]/70 rounded-lg pointer-events-none flex items-center justify-center overflow-hidden"
++              style={{ left: `${h.time * pixelsPerSecond}px`, width: `${h.duration * pixelsPerSecond}px` }}
++            >
++              <div className="flex items-center gap-1 px-1 max-w-full">
++                <Heading1 size={11} className="text-[#F27D26] flex-shrink-0" />
++                <span className="text-[7px] font-black uppercase tracking-wide text-[#F27D26] truncate">
++                  {h.text || 'Heading'}
++                </span>
++              </div>
++              {h.needsReview && (
++                <div
++                  className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-[4px] bg-[rgba(255,193,7,0.15)]"
++                  title="Re-sync clamped this heading's time — review its position"
++                >
++                  <AlertCircle size={9} className="text-[#ffc107]" />
++                </div>
++              )}
++              <div
++                className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-[#F27D26]/40"
++                onMouseDown={(e) => onHeadingResizeStart(e, h, 'start')}
++              />
++              <div
++                className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-[#F27D26]/40"
++                onMouseDown={(e) => onHeadingResizeStart(e, h, 'end')}
++              />
++            </div>
++          ))}
++        </div>
++      )}
++
++      {/* Segment track (unchanged internals — segment thumbnails; playhead
++          lives at the lanes-wrapper level in the parent, spanning all lanes).
++          Bounded-lane border/background matches the heading lane and
++          waveform track for visual consistency across all three. */}
++      <div className="flex-shrink-0 flex gap-2 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg">
++      {/* Visual Track */}
++      {!isSynced ? (
++        <div className="flex-1 h-20 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg" style={{ minWidth: '100%' }} />
++      ) : (
++        <div className="flex h-full items-stretch">
++          {segments.map((s, i) => {
++            const asset = assets.find(a => a.id === s.assetId);
++            const isActive = currentSegmentId === s.id;
++            const isMissing = !asset && !!s.text;
++
++            return (
++              <div
++                key={s.id}
++                data-seg-id={s.id}
++                onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); }}
++                onDoubleClick={(e) => { e.stopPropagation(); onSeek(s.startTime); onSelectSegment?.(s.id); }}
++                onMouseDown={(e) => {
++                  if (isAdjustingTrim && trimmingSegmentId === s.id) {
++                    e.stopPropagation();
++                    const startX = e.clientX;
++                    const startTrim = s.trimStart ?? 0;
++
++                    const handleMouseMove = (moveEvent: MouseEvent) => {
++                      const deltaX = moveEvent.clientX - startX;
++                      const deltaTime = deltaX / pixelsPerSecond;
++                      const maxTrim = Math.max(0, (s.sourceDuration ?? 60) - s.duration);
++                      const newTrim = Math.max(0, Math.min(maxTrim, startTrim - deltaTime));
++                      onSegmentUpdate(prev => prev.map(seg => seg.id === s.id ? { ...seg, trimStart: newTrim } : seg));
++                    };
++                    const handleMouseUp = () => {
++                      window.removeEventListener('mousemove', handleMouseMove);
++                      window.removeEventListener('mouseup', handleMouseUp);
++                    };
++                    window.addEventListener('mousemove', handleMouseMove);
++                    window.addEventListener('mouseup', handleMouseUp);
++                  } else {
++                    e.stopPropagation();
++                    if (resizingId) return;
++                    onSeek(s.startTime);
++                  }
++                }}
++                style={{
++                  width: `${s.duration * pixelsPerSecond}px`,
++                  height: '80px',
++                  opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
++                  filter: isAdjustingTrim && trimmingSegmentId !== s.id ? 'grayscale(0.5)' : 'none',
++                  transform: isAdjustingTrim && trimmingSegmentId === s.id ? 'scale(1.02)' : 'scale(1)',
++                  boxShadow: isAdjustingTrim && trimmingSegmentId === s.id ? '0 0 30px rgba(242,125,38,0.3)' : 'none',
++                  zIndex: isAdjustingTrim && trimmingSegmentId === s.id ? 50 : (isActive ? 10 : 1),
++                }}
++                className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'} ${isAdjustingTrim && trimmingSegmentId === s.id ? 'ring-2 ring-[#F27D26] ring-offset-4 ring-offset-black' : ''}`}
++              >
++                {isAdjustingTrim && trimmingSegmentId === s.id && (
++                  <div className="absolute inset-x-0 top-0 h-4 bg-[#F27D26] flex items-center justify-center z-30">
++                    <span className="text-[7px] font-black uppercase tracking-widest text-black">Drag to Slip Content (Start: {(s.trimStart ?? 0).toFixed(2)}s)</span>
++                  </div>
++                )}
++
++                <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
++                  onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
++                  onClick={(e) => e.stopPropagation()}
++                />
++                <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
++                  onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
++                  onClick={(e) => e.stopPropagation()}
++                />
++
++                <div className="flex-1 relative bg-black/50">
++                  {asset?.url ? (
++                    asset.type === 'video' ? (
++                      <video src={asset.url} className={`w-full h-full object-cover opacity-40 ${isActive ? 'opacity-80' : ''}`} />
++                    ) : (
++                      <img src={asset.url} draggable={false} className={`w-full h-full object-cover opacity-30 transition-transform duration-700 ${isActive ? 'scale-110 opacity-70' : 'group-hover:scale-105'}`} alt={asset.name} />
++                    )
++                  ) : (
++                    <div className="w-full h-full flex items-center justify-center">
++                      <AlertCircle size={14} className={isMissing ? 'text-red-900 animate-pulse' : 'text-gray-900'} />
++                    </div>
++                  )}
++
++                  <div className="absolute inset-0 p-2 flex flex-col justify-between pointer-events-none">
++                    <div className="flex justify-between items-start">
++                      <div className="flex flex-col gap-1">
++                        <span className="px-1 py-0.5 bg-black/60 rounded-sm text-[7px] font-mono text-[#F27D26]">#{i + 1}</span>
++                        {s.playbackSpeed !== 1 && (
++                          <span className="px-1 py-0.5 bg-[#F27D26]/20 text-[#F27D26] rounded-sm text-[6px] font-mono">
++                            {(s.playbackSpeed ?? 1).toFixed(2)}x
++                          </span>
++                        )}
++                        {(s.trimStart ?? 0) > 0 && (
++                          <span className="px-1 py-0.5 bg-blue-500/20 text-blue-400 rounded-sm text-[6px] font-mono">
++                            Slip: {(s.trimStart ?? 0).toFixed(1)}s
++                          </span>
++                        )}
++                      </div>
++                      <button
++                        onClick={(e) => { e.stopPropagation(); onOpenStockSearch(s.id); }}
++                        className="px-1.5 py-1 bg-blue-500 text-white rounded text-[8px] font-black uppercase pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
++                      >
++                        Change
++                      </button>
++                    </div>
++                    <div className="space-y-0.5">
++                      <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">Scene</p>
++                      <p className="text-[7px] text-gray-500 font-medium truncate italic">{s.text}</p>
++                    </div>
++                  </div>
++
++                  {(s.trimStart ?? 0) > 0 && (
++                    <div className="absolute left-0 top-0 bottom-0 w-2 bg-red-500/20 border-r border-red-500/40" />
++                  )}
++                </div>
++              </div>
++            );
++          })}
++        </div>
++      )}
++      </div>
++
++      {/* Audio Track — the waveform is a row of fixed-width canvas TILES (see
++          drawTile), each absolutely positioned at left: i*TILE inside the
++          full-content-width lane. Scrolling (manual or the App.tsx playhead-
++          follow) is pure native scroll — no scroll listener, no per-frame
++          redraw. A thin per-segment hit-target layer sits OVER the tiles
++          carrying the resize handles, the data-seg-id targets the App.tsx
++          live-resize drag writes width to, and the active-segment tint — same
++          geometry as before. */}
++      {voiceoverName && (
++        <div
++          className="h-20 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg relative"
++          style={{ width: `${totalContentWidth}px` }}
++        >
++          {Array.from({ length: tileCount }).map((_, i) => (
++            <canvas
++              key={i}
++              ref={(el) => { tileCanvasRefs.current[i] = el; }}
++              className="absolute top-0 block pointer-events-none"
++              style={{ left: `${i * WAVEFORM_TILE_WIDTH_PX}px`, height: '80px' }}
++            />
++          ))}
++          <div className="absolute inset-0 flex h-full w-max">
++            {segments.map((s) => (
++              <div
++                key={`vo-${s.id}`}
++                data-seg-id={s.id}
++                style={{ width: `${s.duration * pixelsPerSecond}px` }}
++                className="h-full border-r border-[#2A2A2A] relative flex items-center group flex-shrink-0"
++              >
++                <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
++                  onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }} />
++                <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
++                  onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }} />
++                {currentSegmentId === s.id && (
++                  <div className="absolute inset-0 bg-[#F27D26]/5 pointer-events-none" />
++                )}
++              </div>
++            ))}
++          </div>
++        </div>
++      )}
++    </>
++  );
++});
++
+ export function Timeline({
+   segments,
+   assets,
+@@ -131,15 +505,35 @@ export function Timeline({
+         const decoded = await audioCtx.decodeAudioData(arrayBuf);
+         await audioCtx.close();
+         const raw = decoded.getChannelData(0);
+-        const BAR_COUNT = 300;
+-        const blockSize = Math.floor(raw.length / BAR_COUNT);
++        // Bar density scales with the voiceover's own duration (bars-per-second)
++        // instead of the old fixed 300-bar global pool, which — sliced across
++        // segments proportional to duration — collapsed to ~1 bar per segment on
++        // long projects (a solid block per cell) and averaged ~185k samples per
++        // bar on a 21-min track. decoded.duration is the true audio length and is
++        // available here without adding an effect dependency (deps stay
++        // [voiceoverUrl, voiceoverFile]); it tracks the timeline totalDuration the
++        // render maps against, since segments are proportioned to the voiceover.
++        const BARS_PER_SECOND = 12;
++        const MAX_TOTAL_BARS = 8000; // safety clamp for pathological multi-hour audio
++        const targetBars = Math.max(1, Math.round(decoded.duration * BARS_PER_SECOND));
++        const barCount = Math.min(targetBars, MAX_TOTAL_BARS);
++        const blockSize = Math.max(1, Math.floor(raw.length / barCount));
+         const bars: number[] = [];
+-        for (let i = 0; i < BAR_COUNT; i++) {
+-          let sum = 0;
+-          for (let j = 0; j < blockSize; j++) sum += Math.abs(raw[i * blockSize + j] ?? 0);
+-          bars.push(sum / blockSize);
++        for (let i = 0; i < barCount; i++) {
++          // Peak = max(|sample|) per block (optional quality change vs. the old
++          // mean(|sample|), which averaged real peaks toward the mean).
++          let peak = 0;
++          const base = i * blockSize;
++          for (let j = 0; j < blockSize; j++) {
++            const v = Math.abs(raw[base + j] ?? 0);
++            if (v > peak) peak = v;
++          }
++          bars.push(peak);
+         }
+-        const max = Math.max(...bars, 0.001);
++        // Normalize by the loudest bar. Loop instead of Math.max(...bars) — the
++        // array can now hold up to MAX_TOTAL_BARS entries, past the spread-arg limit.
++        let max = 0.001;
++        for (const b of bars) if (b > max) max = b;
+         if (!cancelled) setWaveformBars(bars.map(b => b / max));
+       } catch {
+         if (!cancelled) setWaveformBars([]);
+@@ -148,6 +542,16 @@ export function Timeline({
+     return () => { cancelled = true; };
+   }, [voiceoverUrl, voiceoverFile]);
+ 
++  // Cumulative start time per segment index, computed once per segments change.
++  // Replaces a per-segment slice(0, indexOf(s)).reduce(...) that ran inside the
++  // waveform render map — O(n²) across all segments on every render.
++  const segmentStarts = useMemo(() => {
++    const starts: number[] = [];
++    let acc = 0;
++    for (const s of segments) { starts.push(acc); acc += s.duration; }
++    return starts;
++  }, [segments]);
++
+   // One-shot scroll restore. Deferred until containerWidth first lands (non-zero)
+   // from the ResizeObserver above — only then are pixelsPerSecond and the segment
+   // (content) widths final. Restoring earlier (against the 800px fallback layout)
+@@ -253,7 +657,9 @@ export function Timeline({
+   // element (found via data-heading-id), the real commit fires exactly once on
+   // mouseup. Fully independent of segment resize/layout — a heading band is an
+   // absolutely-positioned overlay, not a flex track item.
+-  const handleHeadingResizeStart = (
++  // useCallback so its reference is stable across playback ticks — it is passed
++  // into the memoized TimelineContent, and an unstable ref would defeat the memo.
++  const handleHeadingResizeStart = useCallback((
+     e: React.MouseEvent,
+     heading: HeadingOverlay,
+     edge: 'start' | 'end',
+@@ -290,7 +696,7 @@ export function Timeline({
+     };
+     window.addEventListener('mousemove', handleMove);
+     window.addEventListener('mouseup', handleUp);
+-  };
++  }, [pixelsPerSecond, onHeadingResizeCommit]);
+ 
+   return (
+     <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
+@@ -368,7 +774,10 @@ export function Timeline({
+         <div className="flex-shrink-0 flex flex-col gap-1 relative">
+           {/* Playhead — absolutely positioned against the lanes wrapper above,
+               so top-0/bottom-0 spans every rendered lane. Horizontal position
+-              and smooth-follow animation are unchanged. */}
++              and smooth-follow animation are unchanged. This is the ONLY
++              currentTime-dependent element in the timeline: it is a sibling of
++              the memoized TimelineContent, so a playback tick moves the
++              playhead without re-rendering the segment/waveform subtree. */}
+           <motion.div
+             className="absolute top-0 bottom-0 w-px bg-[#F27D26] z-50 shadow-[0_0_10px_#F27D26]"
+             style={{
+@@ -380,216 +789,28 @@ export function Timeline({
+             <div className="absolute top-0 bottom-0 left-0 w-[2px] bg-white opacity-20" />
+           </motion.div>
+ 
+-          {/* Heading lane — Path B new-layer headings (Phase 4). Own horizontal
+-              lane; never overlaps the segment track below. pointer-events-none
+-              on each band so clicks pass through; only the edge handles (and,
+-              going forward, any lane-level interactions) are interactive. */}
+-          {isSynced && headings.length > 0 && (
+-            <div className="relative h-20 flex-shrink-0 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg">
+-              {headings.map((h) => (
+-                <div
+-                  key={h.id}
+-                  data-heading-id={h.id}
+-                  className="absolute top-0 bottom-0 z-30 bg-[#F27D26]/10 border-2 border-[#F27D26]/70 rounded-lg pointer-events-none flex items-center justify-center overflow-hidden"
+-                  style={{ left: `${h.time * pixelsPerSecond}px`, width: `${h.duration * pixelsPerSecond}px` }}
+-                >
+-                  <div className="flex items-center gap-1 px-1 max-w-full">
+-                    <Heading1 size={11} className="text-[#F27D26] flex-shrink-0" />
+-                    <span className="text-[7px] font-black uppercase tracking-wide text-[#F27D26] truncate">
+-                      {h.text || 'Heading'}
+-                    </span>
+-                  </div>
+-                  {h.needsReview && (
+-                    <div
+-                      className="absolute top-1 right-1 flex items-center gap-0.5 px-1 py-0.5 rounded-[4px] bg-[rgba(255,193,7,0.15)]"
+-                      title="Re-sync clamped this heading's time — review its position"
+-                    >
+-                      <AlertCircle size={9} className="text-[#ffc107]" />
+-                    </div>
+-                  )}
+-                  <div
+-                    className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-[#F27D26]/40"
+-                    onMouseDown={(e) => handleHeadingResizeStart(e, h, 'start')}
+-                  />
+-                  <div
+-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize pointer-events-auto hover:bg-[#F27D26]/40"
+-                    onMouseDown={(e) => handleHeadingResizeStart(e, h, 'end')}
+-                  />
+-                </div>
+-              ))}
+-            </div>
+-          )}
+-
+-          {/* Segment track (unchanged internals — segment thumbnails; playhead
+-              now lives at the lanes-wrapper level above, spanning all lanes).
+-              Bounded-lane border/background matches the heading lane and
+-              waveform track for visual consistency across all three. */}
+-          <div className="flex-shrink-0 flex gap-2 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg">
+-          {/* Visual Track */}
+-          {!isSynced ? (
+-            <div className="flex-1 h-20 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg" style={{ minWidth: '100%' }} />
+-          ) : (
+-            <div className="flex h-full items-stretch">
+-              {segments.map((s, i) => {
+-                const asset = assets.find(a => a.id === s.assetId);
+-                const isActive = currentSegmentId === s.id;
+-                const isMissing = !asset && !!s.text;
+-
+-                return (
+-                  <div
+-                    key={s.id}
+-                    data-seg-id={s.id}
+-                    onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); }}
+-                    onDoubleClick={(e) => { e.stopPropagation(); onSeek(s.startTime); onSelectSegment?.(s.id); }}
+-                    onMouseDown={(e) => {
+-                      if (isAdjustingTrim && trimmingSegmentId === s.id) {
+-                        e.stopPropagation();
+-                        const startX = e.clientX;
+-                        const startTrim = s.trimStart ?? 0;
+-
+-                        const handleMouseMove = (moveEvent: MouseEvent) => {
+-                          const deltaX = moveEvent.clientX - startX;
+-                          const deltaTime = deltaX / pixelsPerSecond;
+-                          const maxTrim = Math.max(0, (s.sourceDuration ?? 60) - s.duration);
+-                          const newTrim = Math.max(0, Math.min(maxTrim, startTrim - deltaTime));
+-                          onSegmentUpdate(prev => prev.map(seg => seg.id === s.id ? { ...seg, trimStart: newTrim } : seg));
+-                        };
+-                        const handleMouseUp = () => {
+-                          window.removeEventListener('mousemove', handleMouseMove);
+-                          window.removeEventListener('mouseup', handleMouseUp);
+-                        };
+-                        window.addEventListener('mousemove', handleMouseMove);
+-                        window.addEventListener('mouseup', handleMouseUp);
+-                      } else {
+-                        e.stopPropagation();
+-                        if (resizingId) return;
+-                        onSeek(s.startTime);
+-                      }
+-                    }}
+-                    style={{
+-                      width: `${s.duration * pixelsPerSecond}px`,
+-                      height: '80px',
+-                      opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
+-                      filter: isAdjustingTrim && trimmingSegmentId !== s.id ? 'grayscale(0.5)' : 'none',
+-                      transform: isAdjustingTrim && trimmingSegmentId === s.id ? 'scale(1.02)' : 'scale(1)',
+-                      boxShadow: isAdjustingTrim && trimmingSegmentId === s.id ? '0 0 30px rgba(242,125,38,0.3)' : 'none',
+-                      zIndex: isAdjustingTrim && trimmingSegmentId === s.id ? 50 : (isActive ? 10 : 1),
+-                    }}
+-                    className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'} ${isAdjustingTrim && trimmingSegmentId === s.id ? 'ring-2 ring-[#F27D26] ring-offset-4 ring-offset-black' : ''}`}
+-                  >
+-                    {isAdjustingTrim && trimmingSegmentId === s.id && (
+-                      <div className="absolute inset-x-0 top-0 h-4 bg-[#F27D26] flex items-center justify-center z-30">
+-                        <span className="text-[7px] font-black uppercase tracking-widest text-black">Drag to Slip Content (Start: {(s.trimStart ?? 0).toFixed(2)}s)</span>
+-                      </div>
+-                    )}
+-
+-                    <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
+-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
+-                      onClick={(e) => e.stopPropagation()}
+-                    />
+-                    <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
+-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
+-                      onClick={(e) => e.stopPropagation()}
+-                    />
+-
+-                    <div className="flex-1 relative bg-black/50">
+-                      {asset?.url ? (
+-                        asset.type === 'video' ? (
+-                          <video src={asset.url} className={`w-full h-full object-cover opacity-40 ${isActive ? 'opacity-80' : ''}`} />
+-                        ) : (
+-                          <img src={asset.url} draggable={false} className={`w-full h-full object-cover opacity-30 transition-transform duration-700 ${isActive ? 'scale-110 opacity-70' : 'group-hover:scale-105'}`} alt={asset.name} />
+-                        )
+-                      ) : (
+-                        <div className="w-full h-full flex items-center justify-center">
+-                          <AlertCircle size={14} className={isMissing ? 'text-red-900 animate-pulse' : 'text-gray-900'} />
+-                        </div>
+-                      )}
+-
+-                      <div className="absolute inset-0 p-2 flex flex-col justify-between pointer-events-none">
+-                        <div className="flex justify-between items-start">
+-                          <div className="flex flex-col gap-1">
+-                            <span className="px-1 py-0.5 bg-black/60 rounded-sm text-[7px] font-mono text-[#F27D26]">#{i + 1}</span>
+-                            {s.playbackSpeed !== 1 && (
+-                              <span className="px-1 py-0.5 bg-[#F27D26]/20 text-[#F27D26] rounded-sm text-[6px] font-mono">
+-                                {(s.playbackSpeed ?? 1).toFixed(2)}x
+-                              </span>
+-                            )}
+-                            {(s.trimStart ?? 0) > 0 && (
+-                              <span className="px-1 py-0.5 bg-blue-500/20 text-blue-400 rounded-sm text-[6px] font-mono">
+-                                Slip: {(s.trimStart ?? 0).toFixed(1)}s
+-                              </span>
+-                            )}
+-                          </div>
+-                          <button
+-                            onClick={(e) => { e.stopPropagation(); onOpenStockSearch(s.id); }}
+-                            className="px-1.5 py-1 bg-blue-500 text-white rounded text-[8px] font-black uppercase pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
+-                          >
+-                            Change
+-                          </button>
+-                        </div>
+-                        <div className="space-y-0.5">
+-                          <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">Scene</p>
+-                          <p className="text-[7px] text-gray-500 font-medium truncate italic">{s.text}</p>
+-                        </div>
+-                      </div>
+-
+-                      {(s.trimStart ?? 0) > 0 && (
+-                        <div className="absolute left-0 top-0 bottom-0 w-2 bg-red-500/20 border-r border-red-500/40" />
+-                      )}
+-                    </div>
+-                  </div>
+-                );
+-              })}
+-            </div>
+-          )}
+-          </div>
+-
+-          {/* Audio Track — moved inside the lanes wrapper (Path B corrective
+-              fix) so the playhead (top-0/bottom-0 on the wrapper above)
+-              naturally spans it too; lane-to-lane spacing now comes uniformly
+-              from the wrapper's gap-1 instead of this div's own former mt-1. */}
+-          {voiceoverName && (
+-            <div className="h-20 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg relative overflow-visible flex items-center">
+-              <div className="flex h-full w-max">
+-                {segments.map((s) => (
+-                  <div
+-                    key={`vo-${s.id}`}
+-                    data-seg-id={s.id}
+-                    style={{ width: `${s.duration * pixelsPerSecond}px` }}
+-                    className="h-full border-r border-[#2A2A2A] relative flex items-center group flex-shrink-0"
+-                  >
+-                    <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
+-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }} />
+-                    <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
+-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }} />
+-                    <div className="flex-1 flex items-center px-1">
+-                      {(() => {
+-                        const segStart = segments.slice(0, segments.indexOf(s)).reduce((a, seg) => a + seg.duration, 0);
+-                        const startBar = Math.floor((segStart / totalDuration) * waveformBars.length);
+-                        const endBar = Math.floor(((segStart + s.duration) / totalDuration) * waveformBars.length);
+-                        const bars = waveformBars.slice(startBar, endBar);
+-                        if (bars.length === 0) return <div className="h-px bg-[#2A2A2A] w-full self-center" />;
+-                        return (
+-                          <div className="flex items-center h-full w-full gap-px px-0.5">
+-                            {bars.map((amp, bi) => (
+-                              <div
+-                                key={bi}
+-                                className="flex-1 bg-[#F27D26]/60 rounded-[1px] min-w-[1px]"
+-                                style={{ height: `${Math.max(6, Math.pow(amp, 0.5) * 68)}px` }}
+-                              />
+-                            ))}
+-                          </div>
+-                        );
+-                      })()}
+-                    </div>
+-                    {currentSegmentId === s.id && (
+-                      <div className="absolute inset-0 bg-[#F27D26]/5" />
+-                    )}
+-                  </div>
+-                ))}
+-              </div>
+-            </div>
+-          )}
++          <TimelineContent
++            segments={segments}
++            assets={assets}
++            headings={headings}
++            currentSegmentId={currentSegmentId}
++            isSynced={isSynced}
++            pixelsPerSecond={pixelsPerSecond}
++            totalDuration={totalDuration}
++            segmentStarts={segmentStarts}
++            waveformBars={waveformBars}
++            containerWidth={containerWidth}
++            voiceoverName={voiceoverName}
++            resizingId={resizingId}
++            isAdjustingTrim={isAdjustingTrim}
++            trimmingSegmentId={trimmingSegmentId}
++            onSeek={onSeek}
++            onResizeStart={onResizeStart}
++            onSegmentUpdate={onSegmentUpdate}
++            onOpenStockSearch={onOpenStockSearch}
++            onSelectSegment={onSelectSegment}
++            onHeadingResizeStart={handleHeadingResizeStart}
++          />
+         </div>
+ 
+         {/* Captions track — hook-in for Task 9d (captionCues not yet wired) */}

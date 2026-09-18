@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: Round 28/29 consolidation merge on `main` @ `42988f1` (rollback tag `pre-round28-main` → `4d4922c`)
+Last updated: Baseline closeout — declaration ACCEPTED, D23 closed at cap (40), `ws1-plan-rewrite` (2026-09-19). Merge to `main` and the worktree wipe are staged but NOT yet executed — this session is scoped to the `ws1-plan-rewrite` worktree only and cannot merge into or delete other worktrees from here. See [`baseline-closeout-2026-09-19.md`](ws1-sync-pipeline/baseline-closeout-2026-09-19.md) for the full state and exact commands to finish from the main worktree.
 
 > **Single source of truth for project tracking.** Retired trackers live under
 > `docs/archive/history/` (`work-in-progress.md`, `project-state.md`). Update this file only;
@@ -13,24 +13,36 @@ Last updated: Round 28/29 consolidation merge on `main` @ `42988f1` (rollback ta
 Dated entries from the FA wiring ground-truth audit (`docs/architecture/fa-wiring-audit.md`, source SHA `ebec58a`, worktree `4.kinetix-pro-studio-cloud-asr`, branch `ws-cloud-asr-plan`).
 
 - **NR-1 (2026-09-17):** Forced alignment is an officially wired, first-class **local** feature. When the project high-precision toggle is ON, alignment must run; it must **never** silently substitute Whisper timings while presenting a successful sync. Evidence: production path `App.tsx:3960-4022` + fail-clean `forcedAlignmentRun.ts`; CI compiles `fa-inference` (`.github/workflows/build.yml:424`).
-- **NR-2 (2026-09-17):** Toggle default becomes ON for all builds and users, subject to migration: absent `Project.faHighPrecisionSync` adopts ON at read time without persisting; explicit `false` stays off (`faGate.ts` absent-key semantics — audit STEP 4).
-- **NR-3 (2026-09-17):** Silent FA → Whisper fallback while toggle ON is defect **D24** (see WS3 Open Bugs). Inventory: audit STEP 3; Sync Log `fa-fallback` is not sufficient under NR-1.
+- **NR-2 (2026-09-17) — SUPERSEDED 2026-09-19.** Was: toggle default becomes ON for all builds and users, subject to migration (`faGate.ts` absent-key semantics — audit STEP 4). NR-2 assumed the `faHighPrecisionSync` toggle persists and only its default changes. Operator ruling this pass (2026-09-19, recorded verbatim in [`operator-product-rulings-2026-09-19.md`](ws1-sync-pipeline/operator-product-rulings-2026-09-19.md)) replaces the premise entirely: cloud becomes the default sync engine and **no FA toggle will exist** — there is no toggle left for NR-2's default to apply to. Left in place rather than deleted so the FA wiring audit discovery trail (`ebec58a`) stays intact; do not implement NR-2's migration.
+- **NR-3 (2026-09-17):** Silent FA → Whisper fallback while toggle ON is defect **D24** (see WS1 Open Bugs — re-filed 2026-09-19, was WS3). Inventory: audit STEP 3; Sync Log `fa-fallback` is not sufficient under NR-1.
 - **NR-4 (2026-09-17):** Prior “FA disabled / not in shipped build / cloud-only first delivery” claims are stale. Index: audit STEP 5 + Amendment 3 in [`docs/architecture/cloud-asr-plan.md`](architecture/cloud-asr-plan.md). WS1 `sync-pipeline-v2-plan.md` body unchanged; one status line at file top points here.
-- **NR-5 (2026-09-17):** `main` moved **`4d4922c` → `42988f1`** (merge `ws3-export-integration` @ `45d5860`, then `ws-cloud-asr-plan` @ `eb1c4fa`). Rollback: annotated tag **`pre-round28-main`** on `4d4922c`. Windows verification of Round 29 D12–D22 passed before merge. **D23** and **D24** remain open and unblocked by this merge.
+- **NR-5 (2026-09-17):** `main` moved **`4d4922c` → `42988f1`** (merge `ws3-export-integration` @ `45d5860`, then `ws-cloud-asr-plan` @ `eb1c4fa`). Rollback: annotated tag **`pre-round28-main`** on `4d4922c`. Windows verification of Round 29 D12–D22 passed before merge. **D23** and **D24** were open and unblocked by this merge — D23 closed 2026-09-19 (RETIRED AS MOOT, operator ruling, see WS3 Open Bugs); **D24** remains open (re-filed to WS1).
+- **NR-6 (2026-09-19):** Product direction ruling set recorded verbatim in [`operator-product-rulings-2026-09-19.md`](ws1-sync-pipeline/operator-product-rulings-2026-09-19.md) — cloud default engine, FA toggle deletion (supersedes NR-2 above), Whisper-only as flagged degraded state, per-pack local readiness, pause-and-offer-local on disconnect, WPM warn-only band, cloud mid-coverage abort cost allocation, one-job/two-cache-stage cloud pipeline, SaaS/credits out of scope, partition invariant test approved, Wave 1 gating on both cache-race fixes below, fr/de/pt native-audio validation.
 
 ---
 
 ## WS1: Sync Pipeline
 
+### Charter (2026-09-19)
+Sync pipeline: transcription (local Whisper + cloud), forced alignment, boundary
+placement, the sync log. NR-6 sets product direction — see
+[`operator-product-rulings-2026-09-19.md`](ws1-sync-pipeline/operator-product-rulings-2026-09-19.md):
+cloud becomes the default engine, FA toggles are deleted, Whisper-only is a flagged
+degraded state, local is savable as default once Whisper + at least one selected pack
+is per-pack green. Both cache races below (`fa_dev.rs`, `whisper.rs`) are a Wave 1
+prerequisite, not a someday item. D24 lives in this lane (re-filed 2026-09-19 from WS3
+— it is a sync-behavior defect: silent FA→Whisper substitution, not an export/storage
+one).
+
 ### In Progress
-Phase 3 (Task 5); 3b/3c closed, 3d dormant. FA default toggle still OFF at read time ([faGate.ts:91](../src/services/faGate.ts), NR-2 pending implementation); CI installers compile `fa-inference` — see NR-1 / [`fa-wiring-audit.md`](architecture/fa-wiring-audit.md).
-**END GOAL:** all Stage 1 lock gates satisfied and `FA_PROJECT_DEFAULT_ON` → ON — `docs/ws1-sync-pipeline/stage1-live-run-prep.md`
+Phase 3 (Task 5); 3b/3c closed, 3d dormant. FA default toggle still OFF at read time ([faGate.ts:91](../src/services/faGate.ts)); CI installers compile `fa-inference` — see NR-1 / [`fa-wiring-audit.md`](architecture/fa-wiring-audit.md). NR-2's ON-by-default migration is superseded (NR-6) — do not implement it; the toggle is slated for deletion instead.
+**END GOAL:** all Stage 1 lock gates satisfied — target state per NR-6 supersedes `FA_PROJECT_DEFAULT_ON` → ON — `docs/ws1-sync-pipeline/stage1-live-run-prep.md`
 
 ### Next Tasks
 - [OPEN] Live acceptance run, owner verdict — `docs/ws1-sync-pipeline/stage1-live-run-prep.md`
-- [OPEN] Flip `FA_PROJECT_DEFAULT_ON` once three preconditions met (two 12/12 ear passes, empty Zero-Defect Register, runtime-cost ruling) — [faGate.ts:91](../src/services/faGate.ts)
-- [OPEN] Ratify R.7 confidence-flag handling; build skip-and-flag and force-split failure paths — `docs/ws1-sync-pipeline/sync-pipeline-v2-plan.md`
-- [OPEN] Produce `fa-vocab-<lang>.json` files; wire `project.language`/`vocabChars` into both `computeFaChunkPlan` call sites
+- [OPEN] Flip `FA_PROJECT_DEFAULT_ON` once three preconditions met (two 12/12 ear passes, empty Zero-Defect Register, runtime-cost ruling) — [faGate.ts:91](../src/services/faGate.ts) — superseded in direction by NR-6 (toggle deletion), left open pending the toggle-removal implementation pass
+- CLOSED (2026-09-19, mapping report §M3.11 / verification-sweep W7) — R.7 confidence-flag handling. Clauses 1–2 ship by other means: clause 1 via `CONF_MIN = 0.3` (`syncConstants.ts:536`, `fa.rs:416`, drift-guard `fa.rs:2156-2188`); clause 2 built and wired (`faAnchors.ts:319-333`, `faChunkPlan.ts:159`). Clause 3 retired: `CONF_MIN` has **no production consumer** implementing a skip-and-flag/force-split failure path — exhaustive grep (`verification-sweep-2026-09-18.md` W7, `grep -rnE "\bCONF_MIN\b" src/ src-tauri/src/ scripts/`, 57 hits, none a clause-3 consumer), not a restated assumption. Ratified per the V2 verdict rather than built as originally scoped.
+- [OPEN · PARTLY CLOSED] Produce `fa-vocab-<lang>.json` files; wire `project.language`/`vocabChars` into both `computeFaChunkPlan` call sites — fixtures exist (`scripts/fixtures/fa-vocab-<lang>.json`, `scripts/fixtures/fa-cardinal-<lang>.json`, mapping report §M3.9); what remains open is the **runtime loader** — a production data path for the vocab/cardinal files plus a defined failure mode for a missing pack (no silent fallback, per NR-6's per-pack-readiness ruling).
 - [OPEN] Task 2 — re-derive 50/50 silence-split rule in `snapBoundaries.ts` (breaks golden replay by design)
 - [OPEN] Task 3 — stale-anchor scroll degradation test (code-read only today)
 - [OPEN] Wire `FaEvent` to a UI progress consumer (none exists)
@@ -41,9 +53,21 @@ Phase 3 (Task 5); 3b/3c closed, 3d dormant. FA default toggle still OFF at read 
 - [OPEN] Phases 4–7 (Align&Select, Place, Finalize&Report restructure) — `sync-pipeline-v2-plan.md`
 - [OPEN] Rule-stage propose/arbitrate rebuild (R.11/R.12 collision root cause)
 
+### Rule register closures (2026-09-19, mapping report `final-shape-mapping-2026-09-18.md` §E1/E4/E5, table row "Formal closure")
+These were never separate lines in this file's Next Tasks — they are Zero-Defect-Register
+rule numbers formally closed by the mapping report's audit, recorded here so the closure
+has a STATUS.md citation:
+- **R.3 — CLOSED, RETIRE.** Not found as code; only `syncConstants.ts:126` records that R3's char-rate constants "are gone" (mapping report §E1).
+- **R.8 — CLOSED, RETIRE.** Not found as runtime code — a fixture-tuning pass only (`syncConstants.ts:35`, `whisperService.ts:148`) (mapping report §E4).
+- **R.9 — CLOSED, RETIRE.** Explicitly deleted, removed with `MAX_INTERPOLABLE_GAP` (`App.tsx:1120`) (mapping report §E5).
+- **R.5 — CLOSED, CONFORMS.** Ships via excision at `faChunkPlan.ts:924` (detector at `:413`; prior docs' `:422` citation was the detector wrapper, not the excision — corrected here) (mapping report §E2).
+
 ### Open Bugs
 - [OPEN · NON-BLOCKING] 5 Zero-Defect Register rows, no rule fix yet — `scripts/ws1-session-ak-step1-gate.ts:59`
 - [OPEN · NON-BLOCKING] Alignment cost unbounded for real inputs (Contract A4, `__ALIGN_INSTRUMENT__` dormant)
+- D24 [OPEN] (re-filed 2026-09-19 from WS3 — see Charter above; NR-3, FA wiring audit @ `ebec58a`) — With high-precision sync ON, Apply Sync still commits Whisper timings on any `runForcedAlignmentForSync` fallback (`forcedAlignmentRun.ts:200-206`, `App.tsx:3974-4022`) without aborting; user may miss Sync Log `fa-fallback`. Fix dispatch: typed error / no silent substitution — [`fa-wiring-audit.md`](architecture/fa-wiring-audit.md) STEP 3–4. NR-6 changes the surrounding contract (FA toggle deletion) but does not close this defect on its own — Whisper-only becoming a flagged degraded state still requires this fallback to be non-silent.
+- [NEW · OPEN · NON-BLOCKING] (2026-09-19, `baseline-p1b-p3-2026-09-19.md` "Flake A") `fa-dev-digest-memo-reset-race` — `verified_digest_cache()`'s process-global `Mutex<HashMap<...>>` (`src-tauri/src/fa_dev.rs:75-81`) is cleared wholesale by any test's `reset_verified_digest_cache_for_tests()` (`fa_dev.rs:87-91`), racing against `digest_probe_distinguishes_a_memo_hit_from_a_cold_full_hash` (`fa_dev.rs:848-876`) under `cargo test`'s default parallel execution — 2/10 reproduction rate across a ten-run sweep. Not a production-code defect (`digest_for_sidecar`, `reset_verified_digest_cache_for_tests` behave as designed) — a test-harness isolation gap. Fix options: `--test-threads=1` for the affected module, per-test key namespacing, or a `#[cfg(test)]`-only cap raise. **Wave 1 prerequisite per NR-6.**
+- [NEW · OPEN · NON-BLOCKING] (2026-09-19, `baseline-p1b-p3-2026-09-19.md` "Flake B") `whisper-terminal-buffer-cap-eviction-race` — `terminal_buffer()`'s process-global `Mutex<HashMap<String, Retained>>` (`src-tauri/src/whisper.rs:234-238`), capped at `TERMINAL_BUFFER_MAX_ENTRIES = 16` (`whisper.rs:206`) and evicted oldest-first by `enforce_cap` (`whisper.rs:243-254`), can evict a test's own just-inserted entry when >16 concurrent `in_flight_tests` insert between that test's write and its next-line read — 2/10 reproduction rate, same sweep. Not a production-code defect (`record_progress`, `enforce_cap` behave as designed) — the same class of test-harness isolation gap as Flake A. **Wave 1 prerequisite per NR-6.**
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03
@@ -53,6 +77,14 @@ Phase 3 (Task 5); 3b/3c closed, 3d dormant. FA default toggle still OFF at read 
 ---
 
 ## WS2: Editing Pipeline
+
+### Charter (2026-09-19)
+WS2 = timeline, editor, preview, storage. **The storage contract is FROZEN.** Future
+render-engine tenants (the WS3 wholesale replacement — see WS3 Charter below) conform
+to the existing storage contract (`storage_root.rs`'s `MANAGED_RELOCATION_SUBTREES`,
+`docs/ws3-export-pipeline/architecture-ledger.md`'s Round 29 contract table); they never
+extend it. A new render engine that needs a new persisted subtree is a signal to revisit
+this freeze explicitly, not to add a subtree silently.
 
 ### In Progress
 (none)
@@ -73,6 +105,29 @@ Phase 3 (Task 5); 3b/3c closed, 3d dormant. FA default toggle still OFF at read 
 
 ## WS3: Export & Storage Pipeline
 
+### Charter (2026-09-19)
+WS3 becomes **export-only**, carrying one standing task: the render engine is replaced
+wholesale per `docs/architecture/saas-target-architecture.md`'s reliability model
+(out-of-process render/export). Incremental work on the current in-process WebCodecs
+pipeline is abandoned as a strategy — see
+[`pipeline-audit-round28.md`](ws3-export-pipeline/pipeline-audit-round28.md) for why: it
+is crash-**tolerant** at best (a GL context loss is terminal for the whole piece's worker,
+not gracefully rotated — `pipeline-audit-round28.md` §4, `exportWorker.ts:1993-1999`),
+never crash-**immune**, because the render/encode work runs in-process (a Worker, not an
+OS subprocess). Out-of-process encode is the only real crash immunity available — a
+subprocess crash or GPU driver reset is detectable and retryable from outside, the way an
+in-process Worker's context loss is not. GPU context loss is fatal to the current
+architecture on Windows the same way it is elsewhere; the target architecture's reliability
+model addresses this by running render/export "out of process from the main application,
+so a GPU driver reset kills a subprocess... rather than taking the whole interface down
+with it" (`saas-target-architecture.md` "Reliability model").
+
+**Absorbed into this charter** (orphans and a log-line gap, not separately actioned this
+pass):
+- `ExportFinishShortfallCard` (verified exact name in tree: `src/components/recovery/ExportFinishShortfallCard.tsx` — the task brief's "ExportFinishShortcard" was a shorthand) — stays unwired pending the frame-accounting producer (Ruling D), tracked below; superseded in relevance by the wholesale render-engine replacement rather than closed.
+- `IdbToNativeMigrationView` (`src/components/recovery/IdbToNativeMigrationView.tsx`) — zero render call sites, scope/integration point unknown; same disposition, absorbed rather than separately scheduled.
+- D9's encoder-rotation log-line gap (`ExportLogPhase` has no `'session-rotate'` phase — `exportDiagnosticLog.ts:37-44`, `pipeline-audit-round28.md` §5) — a diagnostics gap in a pipeline being replaced wholesale, not worth instrumenting on its own.
+
 ### In Progress
 Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) assigned to CC — see Open Bugs D1–D2, D4–D9.
 **END GOAL:** Round 28 open bugs closed; remaining `windows-validation.md` hardware rows (W1–W24, E1–E12, W25–W30) executed on Machine 1.
@@ -81,7 +136,7 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 - [OPEN] Complete remaining `windows-validation.md` hardware rows — nine Round 27 smoke checks recorded @ `831c872`; W23 partial (retention pass, resume fail); W25–W30 added Round 29 (storage-root relocation cross-platform audit) — `docs/ws3-export-pipeline/windows-validation.md`
 - [OPEN] Append-path batching (`af6a300`) — 100:1 IPC batching shipped; no post-fix export run, throughput claim is call-count arithmetic only — `docs/archive/ws3/append-path-audit.md`
 - [OPEN] Part C 500-segment export — intermittent multi-second silent gaps (1/3 live runs 2026-09-07, longest 10.74s); root cause not isolated — `docs/ws3-export-pipeline/silent-gaps-diagnosis.md`
-- [OPEN] D23 — false "Timeline modified" on an unmodified project whose assets were imported via the zip-based bulk import path (`extractZipToAssets`, [App.tsx:479](../src/App.tsx)), which never sets `Asset.addedAt` — the timeline-hash fallback the fix relies on has nothing to fall back to for these assets. Root cause found and a fix implemented (Round 29), but held open at operator instruction pending further live verification — do not close on the strength of this line alone.
+- CLOSED (2026-09-19, RETIRED AS MOOT) — D23, false "Timeline modified" on an unmodified project whose assets were imported via the zip-based bulk import path (`extractZipToAssets`, [App.tsx:479](../src/App.tsx)), which never sets `Asset.addedAt` — the timeline-hash fallback the fix relies on has nothing to fall back to for these assets. **Consumer report (2026-09-19, T4, `383569d`):** every real consumer of `sourceTimelineHash`/`buildSourceTimelineHash`/`timelineIdentityFromProject` is part of the same checkpoint/resume/reexport-check mechanism — [`exportCheckpointWriter.ts:162,178,213,232`](../src/services/webcodecsExport/exportCheckpointWriter.ts), [`exportResumeSession.ts:121`](../src/services/webcodecsExport/exportResumeSession.ts), [`exportReexportCheck.ts:105-109`](../src/services/webcodecsExport/exportReexportCheck.ts) (the reexport-offer check D23 actually hits), [`exportPipelineWebCodecs.ts:3138-3140`](../src/services/webcodecsExport/exportPipelineWebCodecs.ts). `ffmpeg.rs:2822,2859` is test-fixture-only, not a real consumer — checkpoint invalidation is the only consumer. **Operator ruling (2026-09-19, recorded verbatim):** "D23 is RETIRED AS MOOT per the STATUS.md:139 recommendation — timeline-hash instability is superseded by the wholesale export-engine replacement; fixing it would be work under a rewrite." Signature: `docs/ws1-sync-pipeline/baseline-clean-declaration-2026-09-19.md`. **Cap arithmetic: 41 − 1 (D23) = 40, at cap.**
 
 ### Open Bugs
 - CLOSED (WS3 Batch 2, 3A) — `StorageRootRelocationView` now mounted from `App.tsx` as the modal target for `StorageSettingsSection`'s "Move storage root…", fed via a new `useStorageRootRelocation` hook — [App.tsx](../src/App.tsx), [useStorageRootRelocation.ts](../src/hooks/useStorageRootRelocation.ts).
@@ -118,9 +173,9 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
   integration-covered only — see the new "Machine 1 checklist" in `windows-validation.md`.
 - D5 CLOSED (WS3 Batch 2, 3B/3C) — `70d298e` — D5 was never a wiring gap (`StorageSettingsSection.tsx:130` genuinely called `storage_root_reclaim` all along — STEP 0b re-grep). Three separate defects fixed instead: D5a `reclaimable_dirs`'s backups path was discarded (`storage_root.rs`); D5b `sweep_stale_project_backups`'s freed-byte total was thrown away (now returns `u64`, `project_mirror.rs`); D5c (the one that mattered) — `size_report` advertised the ENTIRE backups directory as reclaimable regardless of staleness, a number that was never true. Now advertises exactly what the sweep would free (`project_mirror::store_backups_stale_bytes`), proven byte-exact-equal to what the sweep actually frees by a mixed aged/fresh fixture test. U36 (the export-failure modal's separate "Reclaim {bytes}" mechanism) is untouched, by design — see `docs/ws3-export-pipeline/reclaim-mechanisms.md` for which root each mechanism covers.
 - U36 CLOSED (WS3 Batch 2, STEP 0c) — `b973b8c` — resolved the ownership ambiguity between the export-failure modal's "Reclaim {bytes}" and the App Settings "Free up cached data" button; they are two separate, non-merged mechanisms with separate targets (see `docs/ws3-export-pipeline/reclaim-mechanisms.md` for which root each covers) — not a single bug, not merged.
-- [OPEN] D9 Twenty encoder sessions with eighteen restarts on RX 580 in one piece — Round 28, assigned to CC; investigated read-only this round, see Round 28 closeout report for conclusion
-- D24 [OPEN] (NR-3, FA wiring audit @ `ebec58a`) — With high-precision sync ON, Apply Sync still commits Whisper timings on any `runForcedAlignmentForSync` fallback (`forcedAlignmentRun.ts:200-206`, `App.tsx:3974-4022`) without aborting; user may miss Sync Log `fa-fallback`. Fix dispatch: typed error / no silent substitution — [`fa-wiring-audit.md`](architecture/fa-wiring-audit.md) STEP 3–4
+- [OPEN] D9 Twenty encoder sessions with eighteen restarts on RX 580 in one piece — Round 28, assigned to CC; investigated read-only this round, see Round 28 closeout report for conclusion — log-line gap absorbed into WS3 Charter above (no `'session-rotate'` `ExportLogPhase`)
 - D8 CLOSED (Round 28, addendum scope) — `216878f` — added `export_log_event` (Rust, `ffmpeg.rs`) and `logExportEvent` (TS, `exportDiagnosticLog.ts`), a general-purpose door into `kinetix-diagnostic.log` for the export lifecycle, wired at init, cancellation, disk-full-preflight, and session-cleanup (`exportPipelineWebCodecs.ts`). Flush: routes through the same `tauri_plugin_log` `Folder` target the pre-existing `ffmpeg_log_disk_preflight`/`ffmpeg_retain_session_for_resume` commands already use, backed by an unbuffered `std::fs::File::write_all` (no `BufWriter`) — verified by reading `tauri-plugin-log 2.8.0`'s file-target implementation, not assumed. NOT wired: encoder-config, frame-loop progress pulses, and watchdog-update events, which originate inside the WebCodecs Worker (a separate global scope with no direct IPC access) and would need `postMessage`-to-main-thread plumbing this pass didn't build — left for a future pass; see `App.tsx`/`exportWorker.ts` for where that would attach.
+- D24 — re-filed 2026-09-19 into WS1 (Open Bugs, above) — it is a sync-behavior defect (silent FA→Whisper substitution), not an export/storage one; see WS1 Charter for why.
 - D8 FOLLOW-UP FIX (Round 28, same session) — `8908a03` — the new in-app diagnostic log viewer (`DiagnosticLogModal.tsx`, App Settings → Diagnostics) surfaced that `lib.rs`'s `setup` debug-build branch (`cfg!(debug_assertions)`) attached `tauri_plugin_log` with its OWN DEFAULT targets (`Stdout`, `Webview`, `LogDir`) rather than the pinned `Folder` target at `diagnostic-logs/kinetix-diagnostic.log` — that pinned path was only ever written to by a release build launched with `KINETIX_DIAGNOSTIC_LOG=1`. Every `tauri:dev` session before this fix therefore had `export_log_event`/`ffmpeg_log_disk_preflight` calls succeeding (no error) while writing to a file `get_diagnostic_log_text`/the viewer never reads, so the log always read back empty under `tauri:dev` regardless of export activity — not a viewer bug, a debug-build target mismatch. Fixed by swapping `LogDir` for the same pinned `Folder` target in the debug branch too (keeping `Stdout`/`Webview` for DevTools/console visibility); debug logging itself was never gated, only its destination. `kinetix-diagnostic.log` is now populated live under `tauri:dev` as well as in an opted-in release build.
 - D12 CLOSED (Round 29) — transcription stuck "Pending" after Round 28's storage-root routing: [whisper.rs:590](../src-tauri/src/whisper.rs)'s `model_path()` only checked `app_local_data_dir()/models/`, while the presence-check path had moved to `storage_root::resolve_storage_root()` — the two diverged once storage was relocated. Fixed to resolve through the same storage-root function.
 - D13 CLOSED (Round 29) — diagnostic log not writing after 14 September: [lib.rs:451](../src-tauri/src/lib.rs) — the unconditional startup boot line was superseded by `216878f`'s export-lifecycle-only logging and never actually written. Boot line restored.
@@ -157,7 +212,7 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 - [OPEN · NON-BLOCKING] Part C longest silent interval (10.26s) lacks phase attribution — `exportWorkerDiagnostics.ts`
 - [OPEN · NON-BLOCKING] `GL_TRANSITION_SLUGS` duplicated — `compositeParams.ts:34`, `decodeCursorLifetime.ts:26`
 - [OPEN · NON-BLOCKING] Three parallel disk-size estimators (badge, dead destination module, live preflight) — consolidate to one — `diskFull.ts`
-- [OPEN · NON-BLOCKING] ~33 cloud CI test failures from missing `.work-phase4/replay/` fixtures — `scripts/phase4-restore-replay-inputs.py`
+- CLOSED (2026-09-19, P4b) — ~33 cloud CI test failures from missing `.work-phase4/replay/` fixtures — `scripts/phase4-restore-replay-inputs.py`. Fixtures committed as tracked content (`549ce63`); canonical zero-failure line reconfirmed at the current branch tip (`53449b9`, gate 6: `npm test` → 3925 passed / 78 skipped / 0 failed — `baseline-p1b-p3-2026-09-19.md`). The other 1 of the originally-observed 34 `npm test` failures (the WS1 single-tracker allowlist gap) was closed earlier by `2b7d33a`, not this line — that failure was never a "gitignored replay fixtures" issue and had no separate STATUS.md line of its own.
 - [OPEN · NON-BLOCKING] 10 local `archive/wt-*-2026-09-14` branches, none pushed to origin
 - SaaS target architecture (integration tip at record time `e8ffb6b`, one commit before docs tip `c463814`; branch now merged to `main` @ `42988f1`) — `docs/architecture/saas-target-architecture.md`, Round 28, commit `06c67a3`
 - Cloud ASR and alignment plan (branch `ws-cloud-asr-plan` @ `eb1c4fa`, merged to `main` @ `42988f1`) — `docs/architecture/cloud-asr-plan.md`
