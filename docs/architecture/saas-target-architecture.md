@@ -1,6 +1,6 @@
 # SaaS target architecture
 
-Recorded 2026-09-16, source SHA `e8ffb6b` (Round 28 closeout on `ws3-export-integration`; integration tip at merge was `c463814`, then `45d5860` on `main` @ `42988f1`). This is a
+Recorded 2026-09-16, source SHA `e8ffb6b` (Round 28 closeout on `ws3-export-integration`; integration tip at merge was `c463814`, then `45d5860` on `main` @ `42988f1`). Header refreshed 2026-09-19 (P4 lane re-charter pass, `ws1-plan-rewrite` @ `53449b9`) — `e8ffb6b` stays as the recorded-at SHA for provenance; `53449b9` is the current branch tip as of this refresh. Per NR-6 (`docs/ws1-sync-pipeline/operator-product-rulings-2026-09-19.md`), SaaS/credits mechanics are out of scope for this pass — the document's content is otherwise unchanged. This is a
 target-state design record, not a description of current behaviour — everything below is a
 destination the codebase does not yet occupy, except where a section is explicitly marked as
 describing the present.
