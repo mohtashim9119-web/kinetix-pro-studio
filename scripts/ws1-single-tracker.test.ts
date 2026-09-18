@@ -68,6 +68,9 @@ const ALLOWLIST = new Set<string>([
   'docs/ws1-sync-pipeline/final-shape-mapping-2026-09-18.md',
   'docs/ws1-sync-pipeline/verification-sweep-2026-09-18.md',
   'docs/ws1-sync-pipeline/baseline-p0-p2-2026-09-19.md',
+  // This P1 gate-integrity pass's own deliverable note (T6) — same shape as the
+  // four entries above.
+  'docs/ws1-sync-pipeline/baseline-p1-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
