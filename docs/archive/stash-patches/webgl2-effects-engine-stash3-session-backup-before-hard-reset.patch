@@ -1,0 +1,804 @@
+diff --git a/src/App.tsx b/src/App.tsx
+index f76d96b..aca66fb 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -95,6 +95,7 @@ import { usePlayback } from './hooks/usePlayback';
+ import { TranscriptionBar } from './components/TranscriptionBar';
+ import { isTauri, probeAudioDuration, probeVideoFps } from './services/tauriFfmpeg';
+ import { readUiState, patchUiState } from './services/uiStateStore';
++import { createPlaybackClock, type PlaybackClock } from './services/playbackClock';
+ import { invoke } from '@tauri-apps/api/core';
+ 
+ interface RawSegment {
+@@ -647,15 +648,30 @@ export default function App() {
+ 
+   const [isHydrating, setIsHydrating] = useState(true);
+   const [isPlaying, setIsPlaying] = useState(false);
+-  const [currentTime, setCurrentTime] = useState<number>(() => {
++  const [currentTime, setCurrentTimeState] = useState<number>(() => {
+     try { return (readUiState().currentTime as number) ?? 0; }
+     catch { return 0; }
+   });
++  // Playback clock — carries the live time to the timeline playhead WITHOUT
++  // re-rendering Timeline (see services/playbackClock.ts). Seeded from the same
++  // restored value as the state above; the initializer runs once.
++  const [playbackClock] = useState<PlaybackClock>(() => createPlaybackClock(currentTime));
++  // The only writer of currentTime. Publishes to the clock synchronously BEFORE
++  // setState, so subscribers (the playhead's position + the timeline's playback
++  // scroll) write the DOM inside the caller's own rAF tick rather than waiting on
++  // React's commit — the two used to land in different phases and desync by a
++  // frame. Stable identity; the raw setter is deliberately not used anywhere else,
++  // so the clock can never drift from the state.
++  const setCurrentTime = useCallback((v: number | ((p: number) => number)): void => {
++    const next = typeof v === 'function' ? v(playbackClock.get()) : v;
++    playbackClock.set(next);
++    setCurrentTimeState(next);
++  }, [playbackClock]);
+   const [isProcessing, setIsProcessing] = useState(false);
+   const [sliderT, setSliderT] = useState(0.5);
+   // Live pixels-per-second value from Timeline's zoom formula. Held in a ref so
+-  // App's two consumer sites (playback auto-scroll, resize-drag) read the current
+-  // value without re-rendering App on every zoom tick.
++  // App's consumer site (resize-drag) reads the current value without re-rendering
++  // App on every zoom tick.
+   const pixelsPerSecondRef = useRef(100);
+   const onPixelsPerSecondChange = useCallback((pps: number) => {
+     pixelsPerSecondRef.current = pps;
+@@ -1966,34 +1982,13 @@ export default function App() {
+     setSliderT(0.5);
+   }, [project.id]);
+ 
+-  // Auto-scroll timeline to keep playhead in view during playback
+-  useEffect(() => {
+-    if (isPlaying) {
+-      const scrollArea = document.getElementById('timeline-scroll-area');
+-      if (scrollArea) {
+-        const pixelsPerSecond = pixelsPerSecondRef.current;
+-        const playheadX = currentTime * pixelsPerSecond;
+-        const viewWidth = scrollArea.clientWidth;
+-        const scrollLeft = scrollArea.scrollLeft;
+-        const padding = 150; // threshold from edge to start scrolling
+-        // Max meaningful scroll, measured from the actual timeline CONTENT width
+-        // (segments, starting at x=0) — NOT scrollArea.scrollWidth. The decorative
+-        // time ruler overflows the content by a few px, so scrollWidth stays > view
+-        // even when the timeline visually fits, which let the auto-scroll nudge
+-        // segment 1 off the left edge near playback end. Content width = 0 maxScroll
+-        // when it fits, pinning scrollLeft to 0.
+-        const totalDur = projectRef.current.segments.reduce((acc, s) => acc + s.duration, 0);
+-        const contentWidth = totalDur * pixelsPerSecond;
+-        const maxScroll = Math.max(0, contentWidth - viewWidth);
+-
+-        if (playheadX > scrollLeft + viewWidth - padding) {
+-          scrollArea.scrollLeft = Math.min(maxScroll, Math.max(0, playheadX - viewWidth + padding));
+-        } else if (playheadX < scrollLeft + (padding / 2)) {
+-          scrollArea.scrollLeft = Math.min(maxScroll, Math.max(0, playheadX - (padding / 2)));
+-        }
+-      }
+-    }
+-  }, [currentTime, isPlaying, sliderT]);
++  // The playback auto-scroll (edge-follow) that used to live here now runs inside
++  // TimelinePlayhead.tsx, in the same clock-subscriber callback that positions the
++  // playhead. It was a passive effect keyed on currentTime, which meant the
++  // playhead's `left` (a render commit) and this scrollLeft write landed in
++  // different phases — a one-frame paint desync, since the playhead is positioned
++  // in content space and its screen position is `left - scrollLeft`. Both writes
++  // are now synchronous in one callback. Do not reintroduce a scroll writer here.
+ 
+   useEffect(() => {
+     if (!stockError) return;
+@@ -2432,7 +2427,7 @@ export default function App() {
+                 assets={project.assets}
+                 headings={project.headings ?? []}
+                 currentSegmentId={currentSegment?.id}
+-                currentTime={currentTime}
++                playbackClock={playbackClock}
+                 isPlaying={isPlaying}
+                 isSynced={isSynced}
+                 sliderT={sliderT}
+diff --git a/src/components/Timeline.tsx b/src/components/Timeline.tsx
+index bc9b33b..30bc44d 100644
+--- a/src/components/Timeline.tsx
++++ b/src/components/Timeline.tsx
+@@ -3,14 +3,16 @@
+  * SPDX-License-Identifier: Apache-2.0
+  */
+ 
+-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+-import { motion } from 'motion/react';
++import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+ import {
+   Play, Pause, RotateCcw, AlertCircle, Heading1,
+ } from 'lucide-react';
+ import { VideoSegment, Asset, HeadingOverlay } from '../types';
+ import { patchUiState } from '../services/uiStateStore';
+ import { resizeHeading } from '../services/headingLayer';
++import { computeVisibleRange, type VisibleRange } from '../services/timelineWindow';
++import type { PlaybackClock } from '../services/playbackClock';
++import { TimelinePlayhead } from './TimelinePlayhead';
+ 
+ const MIN_SEGMENT_DURATION = 0.3; // seconds — mirrors App.tsx constant
+ 
+@@ -19,7 +21,15 @@ interface Props {
+   assets: Asset[];
+   headings: HeadingOverlay[];
+   currentSegmentId: string | undefined;
+-  currentTime: number;
++  /**
++   * Live playback time, as a subscription rather than a value. Deliberately NOT
++   * a `currentTime: number` prop: that advanced ~60x/second and re-rendered this
++   * whole component — and with it every mounted clip + waveform row — purely to
++   * move the playhead. Only TimelinePlayhead subscribes; everything else here
++   * renders off segment-level state. Read it with `.get()` for one-shot needs
++   * (keyboard seek); never subscribe in this component's body.
++   */
++  playbackClock: PlaybackClock;
+   isPlaying: boolean;
+   isSynced: boolean;
+   sliderT: number;
+@@ -49,7 +59,7 @@ export function Timeline({
+   assets,
+   headings,
+   currentSegmentId,
+-  currentTime,
++  playbackClock,
+   isPlaying,
+   isSynced,
+   sliderT,
+@@ -78,6 +88,50 @@ export function Timeline({
+     [segments],
+   );
+ 
++  // --- Stable handler proxies -------------------------------------------------
++  // App re-creates every one of these callback props as a fresh inline lambda on
++  // each of its renders, and it re-renders on every playback frame. Referencing
++  // them directly inside the track useMemos below would therefore bust those
++  // memos 60x/second — i.e. exactly the ~3,500-element reconcile the memos exist
++  // to prevent. These proxies have permanently stable identities and forward to
++  // whatever closure App last supplied, so the memos can depend on real data
++  // only. The ref is refreshed after every render, so a proxy can never call a
++  // stale closure (an event cannot fire between render and the layout effect).
++  //
++  // This indirection lives here, on the consumer side, on purpose: the
++  // alternative is wrapping App's handlers in useCallback, which would mean
++  // restructuring the resize-drag handler that App passes as onResizeStart.
++  const handlersRef = useRef({
++    onSeek, onSelectSegment, onSegmentUpdate, onResizeStart, onOpenStockSearch,
++  });
++  useLayoutEffect(() => {
++    handlersRef.current = {
++      onSeek, onSelectSegment, onSegmentUpdate, onResizeStart, onOpenStockSearch,
++    };
++  });
++  const seekStable = useCallback((time: number) => handlersRef.current.onSeek(time), []);
++  const selectSegmentStable = useCallback((id: string) => handlersRef.current.onSelectSegment?.(id), []);
++  const segmentUpdateStable = useCallback(
++    (updater: (prev: VideoSegment[]) => VideoSegment[]) => handlersRef.current.onSegmentUpdate(updater),
++    [],
++  );
++  const resizeStartStable = useCallback(
++    (id: string, type: 'start' | 'end') => handlersRef.current.onResizeStart(id, type),
++    [],
++  );
++  const openStockSearchStable = useCallback(
++    (segmentId: string) => handlersRef.current.onOpenStockSearch(segmentId),
++    [],
++  );
++
++  // Asset lookup by id, built once per assets change. Replaces an inline
++  // assets.find() per clip row, which was O(rows x assets) on every render.
++  const assetById = useMemo(() => {
++    const map = new Map<string, Asset>();
++    for (const a of assets) map.set(a.id, a);
++    return map;
++  }, [assets]);
++
+   const [containerWidth, setContainerWidth] = useState(0);
+ 
+   // Measure the scroll container so the zoom formula can derive ppsMin from the
+@@ -131,13 +185,18 @@ export function Timeline({
+         const decoded = await audioCtx.decodeAudioData(arrayBuf);
+         await audioCtx.close();
+         const raw = decoded.getChannelData(0);
+-        const BAR_COUNT = 300;
+-        const blockSize = Math.floor(raw.length / BAR_COUNT);
++        const BARS_PER_SECOND = 12;
++        const MAX_TOTAL_BARS = 8000;
++        const totalBars = Math.max(1, Math.min(MAX_TOTAL_BARS, Math.round(decoded.duration * BARS_PER_SECOND)));
++        const blockSize = Math.floor(raw.length / totalBars);
+         const bars: number[] = [];
+-        for (let i = 0; i < BAR_COUNT; i++) {
+-          let sum = 0;
+-          for (let j = 0; j < blockSize; j++) sum += Math.abs(raw[i * blockSize + j] ?? 0);
+-          bars.push(sum / blockSize);
++        for (let i = 0; i < totalBars; i++) {
++          let peak = 0;
++          for (let j = 0; j < blockSize; j++) {
++            const v = Math.abs(raw[i * blockSize + j] ?? 0);
++            if (v > peak) peak = v;
++          }
++          bars.push(peak);
+         }
+         const max = Math.max(...bars, 0.001);
+         if (!cancelled) setWaveformBars(bars.map(b => b / max));
+@@ -148,6 +207,42 @@ export function Timeline({
+     return () => { cancelled = true; };
+   }, [voiceoverUrl, voiceoverFile]);
+ 
++  // Cumulative segment start times, computed once per segments change instead
++  // of via an O(n) slice+reduce per segment (which was O(n²) across the row).
++  const segmentStarts = useMemo(() => {
++    const starts: number[] = [];
++    let acc = 0;
++    for (const s of segments) {
++      starts.push(acc);
++      acc += s.duration;
++    }
++    return starts;
++  }, [segments]);
++
++  // --- Segment-track virtualization (Step 1) ---------------------------------
++  // Only the segments whose span is near the viewport are mounted; the rest are
++  // unmounted while an explicit-width phantom container (below) preserves the
++  // full scroll range. computeVisibleRange (services/timelineWindow.ts) is the
++  // pure, unit-tested binary-search core; this component adds the DOM read
++  // (scrollLeft/clientWidth) and, at render time, the resizing-id union.
++  // NOTE: this virtualizes the SEGMENT track only — the waveform track below is
++  // intentionally left full flex-flow for a later step.
++  const [visibleRange, setVisibleRange] = useState<VisibleRange>({ startIdx: 0, endIdx: -1 });
++  const visibleRangeRef = useRef<VisibleRange>(visibleRange);
++
++  const recomputeVisibleRange = useCallback(() => {
++    const el = document.getElementById('timeline-scroll-area');
++    if (!el) return;
++    const next = computeVisibleRange(segmentStarts, el.scrollLeft, el.clientWidth, pixelsPerSecond);
++    const prev = visibleRangeRef.current;
++    // Commit only on a genuine integer-index change, so sub-pixel scroll deltas
++    // don't churn React — that no-op stability is the whole point of windowing.
++    if (next.startIdx !== prev.startIdx || next.endIdx !== prev.endIdx) {
++      visibleRangeRef.current = next;
++      setVisibleRange(next);
++    }
++  }, [segmentStarts, pixelsPerSecond]);
++
+   // One-shot scroll restore. Deferred until containerWidth first lands (non-zero)
+   // from the ResizeObserver above — only then are pixelsPerSecond and the segment
+   // (content) widths final. Restoring earlier (against the 800px fallback layout)
+@@ -165,6 +260,17 @@ export function Timeline({
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, [containerWidth]);
+ 
++  // Virtualization trigger 2 — recompute the visible window whenever the
++  // pixel-space mapping shifts: zoom (pixelsPerSecond, via recomputeVisibleRange's
++  // deps), container resize (containerWidth), or a segments change (segmentStarts,
++  // also via the callback's deps). useLayoutEffect (not useEffect) and declared
++  // AFTER the scroll-restore layout effect above so that, on the reload/settle
++  // frame, it reads the ALREADY-restored scrollLeft and commits the correct
++  // window synchronously before paint — no blank-then-fill flash.
++  useLayoutEffect(() => {
++    recomputeVisibleRange();
++  }, [recomputeVisibleRange, containerWidth]);
++
+   // Attach the scroll listener here, where timeline-scroll-area is guaranteed
+   // to exist in the DOM.
+   useEffect(() => {
+@@ -186,14 +292,46 @@ export function Timeline({
+     // eslint-disable-next-line react-hooks/exhaustive-deps
+   }, []);
+ 
++  // Virtualization trigger 1 — rAF-throttled scroll listener: recompute the
++  // visible window as the user scrolls, coalescing multiple scroll events per
++  // animation frame into a single recomputation. Kept separate from the
++  // persistence listener above, which is a 300ms debounce for kinetix:ui:v1 (a
++  // different cadence and concern).
++  useEffect(() => {
++    const el = document.getElementById('timeline-scroll-area');
++    if (!el) return;
++    let rafId: number | null = null;
++    const onScroll = () => {
++      if (rafId !== null) return;
++      rafId = requestAnimationFrame(() => {
++        rafId = null;
++        recomputeVisibleRange();
++      });
++    };
++    el.addEventListener('scroll', onScroll, { passive: true });
++    return () => {
++      if (rafId !== null) cancelAnimationFrame(rafId);
++      el.removeEventListener('scroll', onScroll);
++    };
++  }, [recomputeVisibleRange]);
++
+   // Skip the first execution on mount so the restored scrollLeft from
+   // kinetix:ui:v1 is never overwritten before the user has interacted.
+   const hasMountedRef = useRef(false);
+ 
+   // Keep the active segment visible: when the current segment changes (a segment
+-  // clicked in the left-panel list, a timeline click, or playback crossing a
+-  // boundary), scroll the timeline horizontally so it comes into view. Only
+-  // scrolls when the segment is off-screen, so it never fights manual scrubbing.
++  // clicked in the left-panel list or a timeline click while paused), scroll the
++  // timeline horizontally so it comes into view. Only scrolls when the segment is
++  // off-screen, so it never fights manual scrubbing.
++  //
++  // Inert during playback: App.tsx's playhead edge-follow (deps [currentTime,
++  // isPlaying, sliderT]) is the sole scroll owner while playing. Both used to fire
++  // on the same commit at every segment boundary, targeting different scroll
++  // positions (playhead 150px from the right edge vs. segment edge 24px from the
++  // viewport edge) in different modes (instant write vs. smooth animation). The
++  // smooth sweep then drove a burst of scroll events, and with them a burst of
++  // recomputeVisibleRange calls that mounted/unmounted clip + waveform rows —
++  // the flicker and playhead lag at the right edge on large projects.
+   useEffect(() => {
+     // Gate until the one-shot scroll restore has applied, so the mount-time and
+     // width-settle runs can't override it. Checked before hasMountedRef so those
+@@ -201,6 +339,12 @@ export function Timeline({
+     // (the ResizeObserver pixelsPerSecond settle) is then absorbed by hasMountedRef.
+     if (!didRestoreRef.current) return;
+     if (!hasMountedRef.current) { hasMountedRef.current = true; return; }
++    // Plain per-run read, deliberately NOT an effect dep: this must stay a
++    // no-op during playback, but adding isPlaying to the deps would re-run the
++    // effect on the play->pause transition and smooth-scroll the segment the
++    // playhead happens to sit in, jumping the view on every pause. The deps that
++    // remain always change on a fresh render, so this read is never stale.
++    if (isPlaying) return;
+     if (!currentSegmentId) return;
+     const seg = segments.find(s => s.id === currentSegmentId);
+     if (!seg) return;
+@@ -232,11 +376,11 @@ export function Timeline({
+     if (!didRestoreRef.current) return;
+     const container = document.getElementById('timeline-scroll-area');
+     if (!container || !currentSegmentId) return;
+-    const seg = segments.find(s => s.id === currentSegmentId);
+-    if (!seg) return;
+-    const segStart = segments
+-      .slice(0, segments.indexOf(seg))
+-      .reduce((acc, s) => acc + s.duration, 0);
++    const segIdx = segments.findIndex(s => s.id === currentSegmentId);
++    if (segIdx === -1) return;
++    const seg = segments[segIdx];
++    const segStart = segmentStarts[segIdx];
++    if (!seg || segStart === undefined) return;
+     const segCenterX = (segStart + seg.duration / 2) * pixelsPerSecond;
+     const targetScrollLeft = segCenterX - container.clientWidth / 2;
+     // Clamp to the timeline CONTENT width (segments), not container.scrollWidth —
+@@ -292,6 +436,214 @@ export function Timeline({
+     window.addEventListener('mouseup', handleUp);
+   };
+ 
++  // Virtualization render window: the committed scroll-derived range, unioned
++  // with the actively resize-dragged segment's index so a mid-drag scroll can
++  // never unmount the segment whose DOM node App.tsx's resize handler captured
++  // at drag-start (querySelectorAll('[data-seg-id]')). min/max keeps that exact
++  // node continuously mounted (React reuses it by key across the shifting
++  // window), so the handler's captured ref stays live for the whole gesture.
++  const resizingIdx = resizingId ? segments.findIndex((s) => s.id === resizingId) : -1;
++  const renderStartIdx = resizingIdx >= 0 ? Math.min(visibleRange.startIdx, resizingIdx) : visibleRange.startIdx;
++  const renderEndIdx = resizingIdx >= 0 ? Math.max(visibleRange.endIdx, resizingIdx) : visibleRange.endIdx;
++
++  // --- Clip track rows --------------------------------------------------------
++  // Memoized on the data that actually shapes them. On a large project this slice
++  // is ~90 rows of ~12 nodes each; rebuilding the elements on every render meant
++  // React re-diffed all of it 60x/second during playback, since the playhead's
++  // time used to re-render this component. The memo returns identical element
++  // references when nothing here changed, so React bails out of the subtree
++  // entirely. Every dep below is either segment-level state or a stable proxy —
++  // add nothing that changes per frame.
++  const clipRows = useMemo(() => (
++    segments.slice(renderStartIdx, renderEndIdx + 1).map((s, sliceI) => {
++      const i = renderStartIdx + sliceI;
++      const asset = s.assetId ? assetById.get(s.assetId) : undefined;
++      const isActive = currentSegmentId === s.id;
++      const isMissing = !asset && !!s.text;
++
++      return (
++        <div
++          key={s.id}
++          data-seg-id={s.id}
++          onClick={(e) => { e.stopPropagation(); seekStable(s.startTime); }}
++          onDoubleClick={(e) => { e.stopPropagation(); seekStable(s.startTime); selectSegmentStable(s.id); }}
++          onMouseDown={(e) => {
++            if (isAdjustingTrim && trimmingSegmentId === s.id) {
++              e.stopPropagation();
++              const startX = e.clientX;
++              const startTrim = s.trimStart ?? 0;
++
++              const handleMouseMove = (moveEvent: MouseEvent) => {
++                const deltaX = moveEvent.clientX - startX;
++                const deltaTime = deltaX / pixelsPerSecond;
++                const maxTrim = Math.max(0, (s.sourceDuration ?? 60) - s.duration);
++                const newTrim = Math.max(0, Math.min(maxTrim, startTrim - deltaTime));
++                segmentUpdateStable(prev => prev.map(seg => seg.id === s.id ? { ...seg, trimStart: newTrim } : seg));
++              };
++              const handleMouseUp = () => {
++                window.removeEventListener('mousemove', handleMouseMove);
++                window.removeEventListener('mouseup', handleMouseUp);
++              };
++              window.addEventListener('mousemove', handleMouseMove);
++              window.addEventListener('mouseup', handleMouseUp);
++            } else {
++              e.stopPropagation();
++              if (resizingId) return;
++              seekStable(s.startTime);
++            }
++          }}
++          style={{
++            position: 'absolute',
++            left: `${(segmentStarts[i] ?? 0) * pixelsPerSecond}px`,
++            top: 0,
++            width: `${s.duration * pixelsPerSecond}px`,
++            height: '80px',
++            opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
++            filter: isAdjustingTrim && trimmingSegmentId !== s.id ? 'grayscale(0.5)' : 'none',
++            transform: isAdjustingTrim && trimmingSegmentId === s.id ? 'scale(1.02)' : 'scale(1)',
++            boxShadow: isAdjustingTrim && trimmingSegmentId === s.id ? '0 0 30px rgba(242,125,38,0.3)' : 'none',
++            zIndex: isAdjustingTrim && trimmingSegmentId === s.id ? 50 : (isActive ? 10 : 1),
++          }}
++          className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'} ${isAdjustingTrim && trimmingSegmentId === s.id ? 'ring-2 ring-[#F27D26] ring-offset-4 ring-offset-black' : ''}`}
++        >
++          {isAdjustingTrim && trimmingSegmentId === s.id && (
++            <div className="absolute inset-x-0 top-0 h-4 bg-[#F27D26] flex items-center justify-center z-30">
++              <span className="text-[7px] font-black uppercase tracking-widest text-black">Drag to Slip Content (Start: {(s.trimStart ?? 0).toFixed(2)}s)</span>
++            </div>
++          )}
++
++          <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
++            onMouseDown={(e) => { e.stopPropagation(); resizeStartStable(s.id, 'start'); }}
++            onClick={(e) => e.stopPropagation()}
++          />
++          <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
++            onMouseDown={(e) => { e.stopPropagation(); resizeStartStable(s.id, 'end'); }}
++            onClick={(e) => e.stopPropagation()}
++          />
++
++          <div className="flex-1 relative bg-black/50">
++            {asset?.url ? (
++              asset.type === 'video' ? (
++                <video src={asset.url} className={`w-full h-full object-cover opacity-40 ${isActive ? 'opacity-80' : ''}`} />
++              ) : (
++                <img src={asset.url} draggable={false} className={`w-full h-full object-cover opacity-30 transition-transform duration-700 ${isActive ? 'scale-110 opacity-70' : 'group-hover:scale-105'}`} alt={asset.name} />
++              )
++            ) : (
++              <div className="w-full h-full flex items-center justify-center">
++                <AlertCircle size={14} className={isMissing ? 'text-red-900 animate-pulse' : 'text-gray-900'} />
++              </div>
++            )}
++
++            <div className="absolute inset-0 p-2 flex flex-col justify-between pointer-events-none">
++              <div className="flex justify-between items-start">
++                <div className="flex flex-col gap-1">
++                  <span className="px-1 py-0.5 bg-black/60 rounded-sm text-[7px] font-mono text-[#F27D26]">#{i + 1}</span>
++                  {s.playbackSpeed !== 1 && (
++                    <span className="px-1 py-0.5 bg-[#F27D26]/20 text-[#F27D26] rounded-sm text-[6px] font-mono">
++                      {(s.playbackSpeed ?? 1).toFixed(2)}x
++                    </span>
++                  )}
++                  {(s.trimStart ?? 0) > 0 && (
++                    <span className="px-1 py-0.5 bg-blue-500/20 text-blue-400 rounded-sm text-[6px] font-mono">
++                      Slip: {(s.trimStart ?? 0).toFixed(1)}s
++                    </span>
++                  )}
++                </div>
++                <button
++                  onClick={(e) => { e.stopPropagation(); openStockSearchStable(s.id); }}
++                  className="px-1.5 py-1 bg-blue-500 text-white rounded text-[8px] font-black uppercase pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
++                >
++                  Change
++                </button>
++              </div>
++              <div className="space-y-0.5">
++                <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">Scene</p>
++                <p className="text-[7px] text-gray-500 font-medium truncate italic">{s.text}</p>
++              </div>
++            </div>
++
++            {(s.trimStart ?? 0) > 0 && (
++              <div className="absolute left-0 top-0 bottom-0 w-2 bg-red-500/20 border-r border-red-500/40" />
++            )}
++          </div>
++        </div>
++      );
++    })
++  ), [
++    segments, renderStartIdx, renderEndIdx, segmentStarts, pixelsPerSecond,
++    assetById, currentSegmentId, isAdjustingTrim, trimmingSegmentId, resizingId,
++    seekStable, selectSegmentStable, segmentUpdateStable, resizeStartStable,
++    openStockSearchStable,
++  ]);
++
++  // --- Waveform track rows ----------------------------------------------------
++  // Same memo contract as clipRows above, and the bigger of the two: ~90 rows x
++  // ~27 bar divs = ~2,400 elements. Per-segment bar-density math inside is
++  // unchanged. Deps must stay per-segment-level; nothing per frame.
++  const waveformRows = useMemo(() => (
++    segments.slice(renderStartIdx, renderEndIdx + 1).map((s, sliceI) => {
++      const segIndex = renderStartIdx + sliceI;
++      return (
++        <div
++          key={`vo-${s.id}`}
++          data-seg-id={s.id}
++          style={{
++            position: 'absolute',
++            left: `${(segmentStarts[segIndex] ?? 0) * pixelsPerSecond}px`,
++            top: 0,
++            bottom: 0,
++            width: `${s.duration * pixelsPerSecond}px`,
++          }}
++          className="border-r border-[#2A2A2A] flex items-center group"
++        >
++          <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
++            onMouseDown={(e) => { e.stopPropagation(); resizeStartStable(s.id, 'start'); }} />
++          <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
++            onMouseDown={(e) => { e.stopPropagation(); resizeStartStable(s.id, 'end'); }} />
++          <div className="flex-1 flex items-center px-1">
++            {(() => {
++              const segStart = segmentStarts[segIndex] ?? 0;
++              const startBar = Math.floor((segStart / totalDuration) * waveformBars.length);
++              const endBar = Math.floor(((segStart + s.duration) / totalDuration) * waveformBars.length);
++              let bars = waveformBars.slice(startBar, endBar);
++              const MAX_SEG_BARS = 120;
++              if (bars.length > MAX_SEG_BARS) {
++                const bucketSize = bars.length / MAX_SEG_BARS;
++                const reduced: number[] = [];
++                for (let i = 0; i < MAX_SEG_BARS; i++) {
++                  const bStart = Math.floor(i * bucketSize);
++                  const bEnd = Math.floor((i + 1) * bucketSize);
++                  let peak = 0;
++                  for (let j = bStart; j < bEnd; j++) { const v = bars[j] ?? 0; if (v > peak) peak = v; }
++                  reduced.push(peak);
++                }
++                bars = reduced;
++              }
++              if (bars.length === 0) return <div className="h-px bg-[#2A2A2A] w-full self-center" />;
++              return (
++                <div className="flex items-center h-full w-full gap-px px-0.5">
++                  {bars.map((amp, bi) => (
++                    <div
++                      key={bi}
++                      className="flex-1 bg-[#F27D26]/60 rounded-[1px] min-w-[1px]"
++                      style={{ height: `${Math.max(6, Math.pow(amp, 0.5) * 68)}px` }}
++                    />
++                  ))}
++                </div>
++              );
++            })()}
++          </div>
++          {currentSegmentId === s.id && (
++            <div className="absolute inset-0 bg-[#F27D26]/5" />
++          )}
++        </div>
++      );
++    })
++  ), [
++    segments, renderStartIdx, renderEndIdx, segmentStarts, pixelsPerSecond,
++    totalDuration, waveformBars, currentSegmentId, resizeStartStable,
++  ]);
++
+   return (
+     <div className="h-full flex flex-col bg-[#050505] overflow-hidden relative">
+       {/* Timeline Tracks Area */}
+@@ -300,18 +652,19 @@ export function Timeline({
+         role="slider"
+         tabIndex={0}
+         aria-label="Timeline position"
+-        aria-valuenow={Math.round(currentTime * 10) / 10}
+         aria-valuemin={0}
+         aria-valuemax={Math.round(totalDuration * 10) / 10}
+-        aria-valuetext={`${Math.floor(currentTime / 60).toString().padStart(2, '0')}:${Math.floor(currentTime % 60).toString().padStart(2, '0')}`}
++        // aria-valuenow / aria-valuetext are written imperatively by
++        // TimelinePlayhead's clock subscriber, not rendered here — as JSX they
++        // needed `currentTime`, which re-rendered this whole component ~60x/sec.
+         onKeyDown={(e) => {
+           const step = e.shiftKey ? 5 : 1;
+           if (e.key === 'ArrowRight') {
+             e.preventDefault();
+-            onSeek(Math.min(totalDuration, currentTime + step));
++            onSeek(Math.min(totalDuration, playbackClock.get() + step));
+           } else if (e.key === 'ArrowLeft') {
+             e.preventDefault();
+-            onSeek(Math.max(0, currentTime - step));
++            onSeek(Math.max(0, playbackClock.get() - step));
+           }
+         }}
+         className="flex-1 overflow-x-auto overflow-y-auto custom-scrollbar relative bg-[#030303] flex flex-col p-0 pt-[15px] cursor-crosshair focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F27D26] focus-visible:ring-inset"
+@@ -367,18 +720,16 @@ export function Timeline({
+             the segment track's own height. */}
+         <div className="flex-shrink-0 flex flex-col gap-1 relative">
+           {/* Playhead — absolutely positioned against the lanes wrapper above,
+-              so top-0/bottom-0 spans every rendered lane. Horizontal position
+-              and smooth-follow animation are unchanged. */}
+-          <motion.div
+-            className="absolute top-0 bottom-0 w-px bg-[#F27D26] z-50 shadow-[0_0_10px_#F27D26]"
+-            style={{
+-              left: `${currentTime * pixelsPerSecond}px`,
+-              transition: isPlaying ? 'none' : 'left 0.1s linear',
+-            }}
+-          >
+-            <div className="absolute -top-1 -left-1.5 w-3 h-3 bg-[#F27D26] rotate-45" />
+-            <div className="absolute top-0 bottom-0 left-0 w-[2px] bg-white opacity-20" />
+-          </motion.div>
++              so top-0/bottom-0 spans every rendered lane. Position is now driven
++              by a PlaybackClock subscription inside the component (direct DOM
++              write) rather than a currentTime prop, and it owns the playback
++              edge-follow scroll too — see TimelinePlayhead.tsx. */}
++          <TimelinePlayhead
++            playbackClock={playbackClock}
++            pixelsPerSecond={pixelsPerSecond}
++            totalDuration={totalDuration}
++            isPlaying={isPlaying}
++          />
+ 
+           {/* Heading lane — Path B new-layer headings (Phase 4). Own horizontal
+               lane; never overlaps the segment track below. pointer-events-none
+@@ -429,117 +780,8 @@ export function Timeline({
+           {!isSynced ? (
+             <div className="flex-1 h-20 bg-[#0A0A0A] border border-[#1A1A1A] rounded-lg" style={{ minWidth: '100%' }} />
+           ) : (
+-            <div className="flex h-full items-stretch">
+-              {segments.map((s, i) => {
+-                const asset = assets.find(a => a.id === s.assetId);
+-                const isActive = currentSegmentId === s.id;
+-                const isMissing = !asset && !!s.text;
+-
+-                return (
+-                  <div
+-                    key={s.id}
+-                    data-seg-id={s.id}
+-                    onClick={(e) => { e.stopPropagation(); onSeek(s.startTime); }}
+-                    onDoubleClick={(e) => { e.stopPropagation(); onSeek(s.startTime); onSelectSegment?.(s.id); }}
+-                    onMouseDown={(e) => {
+-                      if (isAdjustingTrim && trimmingSegmentId === s.id) {
+-                        e.stopPropagation();
+-                        const startX = e.clientX;
+-                        const startTrim = s.trimStart ?? 0;
+-
+-                        const handleMouseMove = (moveEvent: MouseEvent) => {
+-                          const deltaX = moveEvent.clientX - startX;
+-                          const deltaTime = deltaX / pixelsPerSecond;
+-                          const maxTrim = Math.max(0, (s.sourceDuration ?? 60) - s.duration);
+-                          const newTrim = Math.max(0, Math.min(maxTrim, startTrim - deltaTime));
+-                          onSegmentUpdate(prev => prev.map(seg => seg.id === s.id ? { ...seg, trimStart: newTrim } : seg));
+-                        };
+-                        const handleMouseUp = () => {
+-                          window.removeEventListener('mousemove', handleMouseMove);
+-                          window.removeEventListener('mouseup', handleMouseUp);
+-                        };
+-                        window.addEventListener('mousemove', handleMouseMove);
+-                        window.addEventListener('mouseup', handleMouseUp);
+-                      } else {
+-                        e.stopPropagation();
+-                        if (resizingId) return;
+-                        onSeek(s.startTime);
+-                      }
+-                    }}
+-                    style={{
+-                      width: `${s.duration * pixelsPerSecond}px`,
+-                      height: '80px',
+-                      opacity: isAdjustingTrim && trimmingSegmentId !== s.id ? 0.3 : 1,
+-                      filter: isAdjustingTrim && trimmingSegmentId !== s.id ? 'grayscale(0.5)' : 'none',
+-                      transform: isAdjustingTrim && trimmingSegmentId === s.id ? 'scale(1.02)' : 'scale(1)',
+-                      boxShadow: isAdjustingTrim && trimmingSegmentId === s.id ? '0 0 30px rgba(242,125,38,0.3)' : 'none',
+-                      zIndex: isAdjustingTrim && trimmingSegmentId === s.id ? 50 : (isActive ? 10 : 1),
+-                    }}
+-                    className={`rounded-lg border transition-[opacity,filter,transform,box-shadow,border-color,background-color] duration-300 cursor-pointer relative flex flex-col group overflow-hidden ${isActive ? 'bg-[#151515] border-[#F27D26]' : 'bg-[#080808] border-[#1A1A1A] hover:bg-[#0C0C0C]'} ${isAdjustingTrim && trimmingSegmentId === s.id ? 'ring-2 ring-[#F27D26] ring-offset-4 ring-offset-black' : ''}`}
+-                  >
+-                    {isAdjustingTrim && trimmingSegmentId === s.id && (
+-                      <div className="absolute inset-x-0 top-0 h-4 bg-[#F27D26] flex items-center justify-center z-30">
+-                        <span className="text-[7px] font-black uppercase tracking-widest text-black">Drag to Slip Content (Start: {(s.trimStart ?? 0).toFixed(2)}s)</span>
+-                      </div>
+-                    )}
+-
+-                    <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
+-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }}
+-                      onClick={(e) => e.stopPropagation()}
+-                    />
+-                    <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize z-20 hover:bg-[#F27D26]/20 transition-colors"
+-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }}
+-                      onClick={(e) => e.stopPropagation()}
+-                    />
+-
+-                    <div className="flex-1 relative bg-black/50">
+-                      {asset?.url ? (
+-                        asset.type === 'video' ? (
+-                          <video src={asset.url} className={`w-full h-full object-cover opacity-40 ${isActive ? 'opacity-80' : ''}`} />
+-                        ) : (
+-                          <img src={asset.url} draggable={false} className={`w-full h-full object-cover opacity-30 transition-transform duration-700 ${isActive ? 'scale-110 opacity-70' : 'group-hover:scale-105'}`} alt={asset.name} />
+-                        )
+-                      ) : (
+-                        <div className="w-full h-full flex items-center justify-center">
+-                          <AlertCircle size={14} className={isMissing ? 'text-red-900 animate-pulse' : 'text-gray-900'} />
+-                        </div>
+-                      )}
+-
+-                      <div className="absolute inset-0 p-2 flex flex-col justify-between pointer-events-none">
+-                        <div className="flex justify-between items-start">
+-                          <div className="flex flex-col gap-1">
+-                            <span className="px-1 py-0.5 bg-black/60 rounded-sm text-[7px] font-mono text-[#F27D26]">#{i + 1}</span>
+-                            {s.playbackSpeed !== 1 && (
+-                              <span className="px-1 py-0.5 bg-[#F27D26]/20 text-[#F27D26] rounded-sm text-[6px] font-mono">
+-                                {(s.playbackSpeed ?? 1).toFixed(2)}x
+-                              </span>
+-                            )}
+-                            {(s.trimStart ?? 0) > 0 && (
+-                              <span className="px-1 py-0.5 bg-blue-500/20 text-blue-400 rounded-sm text-[6px] font-mono">
+-                                Slip: {(s.trimStart ?? 0).toFixed(1)}s
+-                              </span>
+-                            )}
+-                          </div>
+-                          <button
+-                            onClick={(e) => { e.stopPropagation(); onOpenStockSearch(s.id); }}
+-                            className="px-1.5 py-1 bg-blue-500 text-white rounded text-[8px] font-black uppercase pointer-events-auto opacity-0 group-hover:opacity-100 transition-opacity"
+-                          >
+-                            Change
+-                          </button>
+-                        </div>
+-                        <div className="space-y-0.5">
+-                          <p className="text-[8px] font-black text-white/90 uppercase tracking-tight truncate">Scene</p>
+-                          <p className="text-[7px] text-gray-500 font-medium truncate italic">{s.text}</p>
+-                        </div>
+-                      </div>
+-
+-                      {(s.trimStart ?? 0) > 0 && (
+-                        <div className="absolute left-0 top-0 bottom-0 w-2 bg-red-500/20 border-r border-red-500/40" />
+-                      )}
+-                    </div>
+-                  </div>
+-                );
+-              })}
++            <div className="relative flex-shrink-0" style={{ width: `${totalDuration * pixelsPerSecond}px`, height: '80px' }}>
++              {clipRows}
+             </div>
+           )}
+           </div>
+@@ -550,43 +792,15 @@ export function Timeline({
+               from the wrapper's gap-1 instead of this div's own former mt-1. */}
+           {voiceoverName && (
+             <div className="h-20 bg-[#0A0A0A] border border-[#2A2A2A] rounded-lg relative overflow-visible flex items-center">
+-              <div className="flex h-full w-max">
+-                {segments.map((s) => (
+-                  <div
+-                    key={`vo-${s.id}`}
+-                    data-seg-id={s.id}
+-                    style={{ width: `${s.duration * pixelsPerSecond}px` }}
+-                    className="h-full border-r border-[#2A2A2A] relative flex items-center group flex-shrink-0"
+-                  >
+-                    <div className="absolute left-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
+-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'start'); }} />
+-                    <div className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-20 hover:bg-[#F27D26]/50"
+-                      onMouseDown={(e) => { e.stopPropagation(); onResizeStart(s.id, 'end'); }} />
+-                    <div className="flex-1 flex items-center px-1">
+-                      {(() => {
+-                        const segStart = segments.slice(0, segments.indexOf(s)).reduce((a, seg) => a + seg.duration, 0);
+-                        const startBar = Math.floor((segStart / totalDuration) * waveformBars.length);
+-                        const endBar = Math.floor(((segStart + s.duration) / totalDuration) * waveformBars.length);
+-                        const bars = waveformBars.slice(startBar, endBar);
+-                        if (bars.length === 0) return <div className="h-px bg-[#2A2A2A] w-full self-center" />;
+-                        return (
+-                          <div className="flex items-center h-full w-full gap-px px-0.5">
+-                            {bars.map((amp, bi) => (
+-                              <div
+-                                key={bi}
+-                                className="flex-1 bg-[#F27D26]/60 rounded-[1px] min-w-[1px]"
+-                                style={{ height: `${Math.max(6, Math.pow(amp, 0.5) * 68)}px` }}
+-                              />
+-                            ))}
+-                          </div>
+-                        );
+-                      })()}
+-                    </div>
+-                    {currentSegmentId === s.id && (
+-                      <div className="absolute inset-0 bg-[#F27D26]/5" />
+-                    )}
+-                  </div>
+-                ))}
++              {/* Waveform track virtualization (Step 2) — same windowing as the
++                  clip track: reuses renderStartIdx/renderEndIdx (the committed
++                  visibleRange unioned with the actively-resized segment), an
++                  explicit-width phantom container, and absolute per-segment
++                  positioning. The waveform rows are 1:1 with segments and share
++                  data-seg-id, so the SAME index range keeps clip + waveform rows
++                  perfectly aligned. Per-segment bar math below is unchanged. */}
++              <div className="relative flex-shrink-0 h-full" style={{ width: `${totalDuration * pixelsPerSecond}px` }}>
++                {waveformRows}
+               </div>
+             </div>
+           )}

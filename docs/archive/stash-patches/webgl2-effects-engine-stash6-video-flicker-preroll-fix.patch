@@ -1,0 +1,1255 @@
+diff --git a/docs/webgl-architecture-plan.md b/docs/webgl-architecture-plan.md
+index ac3d63b..3d88be4 100644
+--- a/docs/webgl-architecture-plan.md
++++ b/docs/webgl-architecture-plan.md
+@@ -61,7 +61,7 @@ This section is the single source of truth for where this effort stands, indepen
+ - **Transition-centering fix (2026-07-10) — closes D7 (project-state.md's Ignored Low Risk Bugs), a pre-existing bug not scoped to this plan's own phases.** All transitions previously played entirely AFTER the A/B boundary (window `[B.start, B.start+duration)`, a 100%-after/0%-before split — the "known 100/0-split timing question" Section 5.1 originally deferred). This was a **deliberate semantic change**, applied identically to preview and export so the two stay in parity: the window is now centered on the boundary, `[B.start - duration/2, B.start + duration/2)`, progress 0→1 linear across it, landing at exactly 0.5 at the boundary itself.
+   - **Shared fix, one source:** `resolveTransitionProgress(boundaryTime, duration, currentTime)` added to `transitionResolver.ts` — the single centered-window arithmetic now used by `compositeParams.ts` (GL preview, dev-gated), `useTransitionPreview.ts` (legacy preview, the shipped default), and `segmentEncoder.ts` (native export, via a new `resolveBlendFrameParams` wrapping it for segment-local blend math). No independent hand-duplicated window math remains in any of the three.
+   - **`compositeParams.ts` restructured:** `findContainingSegment`'s bounds-containment could no longer stand in for "the incoming side of the active transition" — under centering, the pre-boundary half of the window sits bounds-inside the OUTGOING segment. `resolveTransition`/`findPrevSegment` were replaced by `resolveActiveBoundary`, which iterates adjacent segment pairs directly (via a new `findNextSegment`) rather than inferring pairing from where `currentTime` happens to bounds-fall. Both `deriveCompositeParams` and `deriveSlotPlan` now call this one function, so the two can't disagree on which two segments are involved — `deriveSlotPlan` gained a required 4th `config` param as a consequence (it needs `resolveEffectiveTransition` to re-derive the pair, not just a null/non-null activation gate).
+-  - **`useTransitionPreview.ts` restructured:** the old "candidate A = pre-roll only, candidate B = the real active window" split (candidate A was NEVER blending, only pre-roll bookkeeping, because the window used to sit entirely inside candidate B's own span) now has candidate A become genuinely active — blending, not just pre-roll — for its own last `duration/2` seconds. `PRE_ROLL_LEAD_S` lead-in now triggers ahead of the (now-earlier) window open instead of the old window open.
++  - **`useTransitionPreview.ts` restructured:** the old "candidate A = pre-roll only, candidate B = the real active window" split (candidate A was NEVER blending, only pre-roll bookkeeping, because the window used to sit entirely inside candidate B's own span) now has candidate A become genuinely active — blending, not just pre-roll — for its own last `duration/2` seconds. The pre-roll lead-in (`BASE_PRE_ROLL_LEAD_S`/adaptive — see "Pre-roll snapshot starvation" below, this constant was originally named `PRE_ROLL_LEAD_S` and set to a static 0.8s at the time of this entry) now triggers ahead of the (now-earlier) window open instead of the old window open.
+   - **`segmentEncoder.ts`/`exportPipeline.ts`:** `startTimeOffset`/`trailingExtension` halved (each now `duration/2` instead of the full `duration`) since the blend zone straddles the boundary instead of sitting entirely past it. New `resolveBlendFrameParams(timeInSegment, segmentDuration, transitionDuration)` computes the blend zone in segment-local time; the incoming segment's rendered content is held at its own true `t=0` through the ENTIRE pre-boundary half (never asked to seek before its own official start — no source "handle" past `trimStart` required) and advances forward from 0 only in the post-boundary half. This intentionally matches `useTransitionPreview.ts`'s pre-existing static-snapshot design (which already held the incoming clip's frame-at-0 fixed through the whole window) — preview and export now agree on what the incoming side visually shows, not merely on the timing.
+   - **Two downstream consumers in `PreviewStage.tsx` needed matching fixes, found only by tracing what "the transition window moved" actually breaks:** (1) the caption-hold logic (`captionSegment`/`findOutgoingSegment`, itself a Phase A3 fix) assumed `currentSegment` — bounds-based, computed independently — was ALWAYS the incoming side for a window's entire active life; under centering that's only true for the post-boundary half. Fixed by exposing `outgoingSegmentId`/`incomingSegmentId` from `useTransitionPreview.ts`'s return value (the exact pair it already resolved), consumed with the old predecessor-lookup kept only as the fallback for the trailing "hold" period (where the hook's own per-render candidates have reset). (2) The B3 WebCodecs live-incoming-frame upgrade (blitting `webCodecsPreview.frame` onto the incoming snapshot canvas when decode has "caught up") relied on the same assumption — without a guard it would have blitted the OUTGOING segment's own live frame onto the incoming canvas for the entire pre-boundary half, silently, every transition. Fixed with an explicit `currentSegment?.id === transitionPreview.incomingSegmentId` gate.
+   - **Known follow-up gap, left undone at the time (not silently regressed — pre-existing, documented in `useGlPreview.ts` at the relevant call site):** the GL preview driver's texture-slot sourcing (`resolveVideoFrame` in `useGlPreview.ts`) had no live-pull path for the incoming segment before `useWebCodecsPreview` considers it "current" — during the pre-boundary half it fell back to blitting slot 'a' alone (no blend), converging to the real blend only once the boundary crossed. **Fixed 2026-07-10 — see "Video-video transition blend gap — closeout" immediately below.**
+@@ -73,6 +73,14 @@ This section is the single source of truth for where this effort stands, indepen
+   - **Export unaffected, confirmed by design, not just re-verified:** `segmentEncoder.ts`/`exportPipeline.ts` render every frame in the blend zone via a direct, synchronous per-frame `renderSegmentFrame` call for both sides (via `useBlendVideoCache`), with no "currently active segment" state tracking and no live-pull/chase mechanism at all — architecturally immune to either gap. Not touched by this fix.
+   - `tsc --noEmit` clean, `vitest` full suite green. Files touched: `src/hooks/useGlPreview.ts` (+test), `src/hooks/useTransitionPreview.ts`, `src/hooks/useTransitionPreview.test.ts` (new).
+ 
++- **Pre-roll snapshot starvation — root-caused and fixed architecturally (2026-07-10), follow-up to the closeout above.** After the retention fix shipped, `resolveRetainedBlend`'s fallback was found (via diagnostic logging added for this investigation, `FLICKER-DIAG`-tagged) to be activating on effectively **every single** video-video boundary, not the rare edge case it was designed as a safety net for. Root cause: the retention fix closed the *symptom* (hard cut with no blend) but never re-examined the *budget* it was covering for — a controlled in-app measurement (real `<video>` `seekVideo` calls, timed via `awaitSeeked`, same methodology as this plan's other real-hardware measurements) found actual cost is **747.6ms uncontended and 998.2ms when `useWebCodecsPreview`'s own decode-ahead sessions (current + next) are concurrently active** — the latter is continuous during ordinary playback, not just near boundaries. The prior `PRE_ROLL_LEAD_S` (0.8s/800ms) was sized against a **"~200ms per video" estimate that this measurement disproves** — against the real ~1000ms contended worst case, 800ms had *negative* margin, a deterministic miss, not an occasional near-miss.
++  - **Fix, four parts, all in `useTransitionPreview.ts`/`useWebCodecsPreview.ts`/`videoDecoderPool.ts` (no `segmentEncoder.ts`/`exportPipeline.ts` changes — export renders every transition-zone frame via a direct synchronous per-frame call with no "currently active segment" tracking, confirmed architecturally immune to this class of issue, same reasoning as the closeout entry above):**
++    1. **Real-margin budget.** `PRE_ROLL_LEAD_S` renamed `BASE_PRE_ROLL_LEAD_S` and raised 0.8s → **1.8s** — ~1.8x margin over the measured 998.2ms contended worst case (this fix's own 1.5–2x target band), vs. the old budget's negative margin.
++    2. **Adaptive lead + bounded retry.** New pure `computeAdaptiveLeadS(baseLeadS, lastMeasuredMs, safetyFactor, capS)` widens the lead for the NEXT boundary using the previous pre-roll render's own measured wall time (`ADAPTIVE_LEAD_SAFETY_FACTOR = 1.5`, `MAX_PRE_ROLL_LEAD_S = 3.5` cap) — a boundary slower than the base budget on a given device pushes future boundaries' triggers earlier automatically. New pure `renderPreRollWithRetry(renderFn)` retries a rejected pre-roll render exactly once before giving up — previously a genuinely *failed* render (a real seek error, or `awaitSeeked`'s own 5s hard timeout) had **zero recovery path**: one `console.warn` and that boundary was permanently dependent on retention for the rest of the session. A merely *slow* (not failing) render has nothing to retry — no reliable way to cancel an in-flight `HTMLVideoElement` seek — so that case is addressed by part 1 (raised budget) + this part's adaptive widening, not a cancel-and-restart.
++    3. **Contention reduction at the source.** New third pool set, `VideoDecoderPool.setPreRollPriorityIds`/`shouldDeferDecodeAhead` (`videoDecoderPool.ts`, deliberately independent of `protectedIds`/`transitionProtectedIds` — those gate LRU *eviction survival*, this gates *starting new decode-ahead work*). `useTransitionPreview.ts` declares the active transition pair `{outgoing, incoming}` as priority for the life of the pre-roll/active window; `useWebCodecsPreview.ts`'s decode-ahead effect skips starting a **brand-new** session for its own "next" segment when that segment isn't part of the pair (only possible once bounds-based `currentSegment` has itself become the transition's incoming side, at which point WebCodecs' own "next" pointer has moved past the transition entirely) — freeing decoder bandwidth for the transition-critical seeks during exactly the window the measurement found them contending. Accepted, bounded trade-off, stated explicitly rather than silently deferred: that off-transition segment's own decode-ahead warm-up is skipped for that one boundary crossing (this effect doesn't re-run mid-window to retry it) — no different from any segment's ordinary cold-start cost, and it gets a normal session the moment it becomes current.
++    4. **Retention preserved as the safety net, not removed.** `resolveRetainedBlend` (the closeout fix above) is unchanged — parts 1–3 are expected to make it activate rarely (the adversarial/near-timeout case) rather than on effectively every boundary as it was doing before this fix; it remains the last line of defense for whatever residual failures parts 1–3 don't prevent.
++  - **Tests:** `useTransitionPreview.test.ts` — `computeAdaptiveLeadS` (6 cases, including a regression pinning the old 800ms budget's negative margin against the real 998.2ms cost, and confirming the new base budget clears both measured real-world costs with ≥1.5x margin), `renderPreRollWithRetry` (6 cases: first-try success, fail-then-succeed retry, retries-exactly-once-not-unboundedly, and two realistic-timing regressions using `performance.now()` spies pinned to the measured 747.6ms/998.2ms values rather than the old disproven 200–400ms assumption), plus a budget-headroom-vs-retention-rarity integration check (2 cases). `videoDecoderPool.test.ts` — `setPreRollPriorityIds`/`shouldDeferDecodeAhead` (9 cases, including a full-replace-contract case, an already-warm-session-untouched case, and a simulated-2-concurrent-decode-session contention scenario). 437/437 `vitest` total (up from 415 pre-fix), `tsc --noEmit` clean. Files touched: `src/hooks/useTransitionPreview.ts` (+test), `src/hooks/useWebCodecsPreview.ts`, `src/services/videoDecoderPool.ts` (+test).
++
+ ### 🟡 IN PROGRESS / PARTIAL
+ 
+ - **Phase 3 — Preview integration, dual-gated.** Code + automated tests complete; a real WKWebView performance regression was found via manual real-app testing and fixed same-day (Step 2 below); **the planned manual verification checklist is the remaining gate** before this can move to COMPLETED (this repo can't unit-test `PreviewStage.tsx`-level behavior — no jsdom/@testing-library/react, established precedent). Built exactly per Section 6 Phase 3 + the pre-flight design:
+@@ -114,9 +122,9 @@ The same duplication exists for transitions: `frameRenderer.ts:674` (`applyTrans
+ Two fully independent video-frame-sourcing mechanisms are live in preview simultaneously:
+ 
+ - The **WebCodecs decode pool** (`videoDecoderPool.ts`) feeds ordinary playback — cheap per-tick `getFrameAt()` lookups once a window is warm.
+-- `frameRenderer.ts`'s **HTML5 `<video>`-seek cache** (`getOrCreateVideo`/`seekVideo`, `frameRenderer.ts:115/198`) feeds `useTransitionPreview.ts`'s transition snapshots — a seek-and-wait path costing **~200ms per video, ~400ms for the same-asset sequential fallback** (the hook's own `PRE_ROLL_LEAD_S` comment, `useTransitionPreview.ts:42-46`, documents these numbers; they're why pre-roll leads the window by 0.8s).
++- `frameRenderer.ts`'s **HTML5 `<video>`-seek cache** (`getOrCreateVideo`/`seekVideo`, `frameRenderer.ts:115/198`) feeds `useTransitionPreview.ts`'s transition snapshots — a seek-and-wait path originally estimated at "~200ms per video, ~400ms for the same-asset sequential fallback" (the hook's old `PRE_ROLL_LEAD_S` comment). A controlled in-app measurement (2026-07-10, see "Pre-roll snapshot starvation" in the Progress Tracker above) found that estimate **wrong for real content**: actual cost is **747.6ms uncontended, 998.2ms when `useWebCodecsPreview`'s own decode-ahead sessions are concurrently active** — the pre-roll lead was raised accordingly (`BASE_PRE_ROLL_LEAD_S`, 0.8s → 1.8s, now adaptive per-device on top of that).
+ 
+-Because a ~200–400ms seek cannot run per render tick, `useTransitionPreview.ts` renders each boundary's outgoing/incoming frames to offscreen canvases **once** at pre-roll and blends those static snapshots as a pure function of `progress` for the whole transition window. That is the documented root cause of the "frozen transition frame" symptom (project-state.md / webcodecs-architecture-plan.md, "frozen transition frame audited, deferred to Phase B", 2026-07-06): the blend-draw loop reruns every tick, but the two source canvases it draws from never advance. Export never had this problem — `segmentEncoder.ts` renders every transition frame live via `renderSegmentFrame`, each sampling its own segment's advancing time — so preview and export disagree *by construction* during every transition.
++Because a ~750–1000ms seek cannot run per render tick, `useTransitionPreview.ts` renders each boundary's outgoing/incoming frames to offscreen canvases **once** at pre-roll and blends those static snapshots as a pure function of `progress` for the whole transition window. That is the documented root cause of the "frozen transition frame" symptom (project-state.md / webcodecs-architecture-plan.md, "frozen transition frame audited, deferred to Phase B", 2026-07-06): the blend-draw loop reruns every tick, but the two source canvases it draws from never advance. Export never had this problem — `segmentEncoder.ts` renders every transition frame live via `renderSegmentFrame`, each sampling its own segment's advancing time — so preview and export disagree *by construction* during every transition.
+ 
+ The Item 4 B1–B3 fixes (shipped 2026-07-06) patched the outgoing side onto live pool pulls for WebCodecs-capable runtimes — at the cost of cross-hook plumbing (a second protected-session set in the pool, `pool`/`incomingFrame` params threaded through `PreviewStage.tsx`, reuse of another hook's chase-mutex primitives) layered **on top of** the still-present snapshot machinery, with image segments and the HTML5 path keeping frozen behavior by design. The result is a hybrid: one-shot snapshots + per-tick live pool pulls + a DOM overlay canvas + hold/release gating, coordinated across three hooks. B4 — the next patch on this stack — failed to fix its target symptom and surfaced an unrelated infinite-render loop, which is what triggered this plan.
+ 
+diff --git a/project-state.md b/project-state.md
+index 831b6b3..40f936b 100644
+--- a/project-state.md
++++ b/project-state.md
+@@ -47,6 +47,20 @@ An audit following the transition-centering fix above found that video-video bou
+ - Tests: `useGlPreview.test.ts` +7 cases (video-video pre-boundary dual-resolution is the key one), new `useTransitionPreview.test.ts` +7 cases (the core "new boundary opens before its own snapshot, previous boundary's frame holds frozen, then resumes seamlessly" sequence is the key one). `tsc --noEmit` clean, `vitest` full suite green. Files touched: `src/hooks/useGlPreview.ts` (+test), `src/hooks/useTransitionPreview.ts`, `src/hooks/useTransitionPreview.test.ts` (new).
+ </details>
+ 
++<details>
++<summary>Pre-roll snapshot starvation — root-caused and fixed architecturally — ✅ DONE 2026-07-10 (follow-up to the closeout above)</summary>
++
++Diagnostic logging (`FLICKER-DIAG`-tagged, added this session) found `resolveRetainedBlend`'s retention fallback — shipped in the closeout entry above as a rare safety net — was actually activating on **effectively every single video-video boundary**, not the rare case it was designed for. The retention fix closed the symptom (hard cut) but never re-examined the budget: `PRE_ROLL_LEAD_S` (0.8s) was sized against a **"~200ms per video" estimate that a controlled in-app measurement disproved for real content** — real `<video>` `seekVideo` cost (timed via `awaitSeeked`) is **747.6ms uncontended and 998.2ms when `useWebCodecsPreview`'s own decode-ahead sessions (current + next) are concurrently active** (continuous during ordinary playback, not just near boundaries). Against that real ~1000ms worst case, 800ms had negative margin — a deterministic miss, not an occasional near-miss.
++
++**Fix — four parts, architectural, not a timeout bump:**
++- **Real-margin budget:** `PRE_ROLL_LEAD_S` → `BASE_PRE_ROLL_LEAD_S`, 0.8s → 1.8s (~1.8x margin over the measured 998.2ms contended worst case).
++- **Adaptive lead + bounded retry:** new pure `computeAdaptiveLeadS` widens the NEXT boundary's lead using the previous pre-roll render's own measured latency (1.5x safety factor, 3.5s cap); new pure `renderPreRollWithRetry` retries a rejected render exactly once — previously a genuinely *failed* render (real seek error, or `awaitSeeked`'s 5s hard timeout) had zero recovery path and left that boundary permanently dependent on retention for the rest of the session.
++- **Contention reduction at the source:** new `VideoDecoderPool.setPreRollPriorityIds`/`shouldDeferDecodeAhead` (`videoDecoderPool.ts`) — a third pool set, independent of the two eviction-protection sets, that gates *starting new decode-ahead work* rather than eviction survival. `useTransitionPreview.ts` declares the active transition pair as priority for the life of the pre-roll/active window; `useWebCodecsPreview.ts` skips starting brand-new decode-ahead for a "next" segment outside that pair, freeing decoder bandwidth for the transition-critical seeks. Bounded, accepted trade-off: that off-transition segment's own decode-ahead warm-up is skipped for that one boundary crossing (no worse than an ordinary cold start), not retried mid-window.
++- **Retention preserved unchanged** as the safety net for whatever residual failures the above don't prevent — expected to now activate rarely instead of on every boundary.
++- **Export confirmed unaffected** — same reasoning as the closeout entry above (direct synchronous per-frame render, no live-session tracking); not touched.
++- Tests: `useTransitionPreview.test.ts` +20 cases (`computeAdaptiveLeadS`, `renderPreRollWithRetry` — including realistic-timing regressions pinned to the measured 747.6ms/998.2ms values via `performance.now()` spies, replacing the old disproven 200-400ms assumption — and a budget-headroom-vs-retention-rarity check), `videoDecoderPool.test.ts` +9 cases (priority/deferral contract, incl. a simulated-2-concurrent-decode-session scenario). `tsc --noEmit` clean, `vitest` **437/437** (up from 415). Files touched: `src/hooks/useTransitionPreview.ts` (+test), `src/hooks/useWebCodecsPreview.ts`, `src/services/videoDecoderPool.ts` (+test). Docs: `docs/webgl-architecture-plan.md` updated with the measured numbers (Progress Tracker + Section 1.2), replacing the disproven "~200ms per video" estimate throughout.
++</details>
++
+ <details>
+ <summary>Transition-blend video-element thrashing fix — ✅ DONE 2026-07-09 (commit d033cb1)</summary>
+ 
+diff --git a/src/components/PreviewStage.tsx b/src/components/PreviewStage.tsx
+index d1a8586..bd5fae0 100644
+--- a/src/components/PreviewStage.tsx
++++ b/src/components/PreviewStage.tsx
+@@ -32,6 +32,12 @@ import { PreviewCanvas } from './PreviewCanvas';
+ import { isWebGL2Supported } from '../services/gl/glContext';
+ import { useGlPreview } from '../hooks/useGlPreview';
+ 
++// FLICKER-DIAG: temporary diagnostic logging for the video-video
++// pre-boundary flicker investigation (see useTransitionPreview.ts's own
++// FLICKER_DIAG block). Additive-only. Safe to grep-and-delete once the
++// investigation concludes; grep FLICKER-DIAG across the repo.
++const FLICKER_DIAG = true;
++
+ // Live-preview side of the animation pipeline. The export side lives in
+ // src/services/canvasAnimations.ts (applySegmentAnimation) — every case
+ // below imports and calls that module's own helper functions (oscillate,
+@@ -591,6 +597,24 @@ export function PreviewStage({
+     const canvas = overlayCanvasRef.current;
+     if (!canvas) return;
+ 
++    // FLICKER-DIAG — item 4 (draw-level angle): does the overlay draw effect
++    // actually RE-FIRE and re-paint this tick, and with which canvas object
++    // identities (to catch rapid retained<->fresh reference thrashing at the
++    // point pixels actually change, as opposed to useTransitionPreview.ts's
++    // own per-render-tick log, which fires even when this effect's deps
++    // haven't changed and it doesn't re-run).
++    if (FLICKER_DIAG) {
++      console.log('[FLICKER-DIAG][PreviewStage draw effect fired]', {
++        ts: performance.now().toFixed(1),
++        isActive: transitionPreview.isActive,
++        hasOutgoing: !!transitionPreview.outgoing,
++        hasIncoming: !!transitionPreview.incoming,
++        progress: transitionPreview.progress.toFixed(3),
++        outgoingSegmentId: transitionPreview.outgoingSegmentId,
++        incomingSegmentId: transitionPreview.incomingSegmentId,
++      });
++    }
++
+     if (!transitionPreview.isActive || !transitionPreview.outgoing || !transitionPreview.incoming) {
+       // INTENTIONAL: do NOT clearRect here.
+       //
+diff --git a/src/hooks/usePlayback.ts b/src/hooks/usePlayback.ts
+index 0080b9e..6801ff4 100644
+--- a/src/hooks/usePlayback.ts
++++ b/src/hooks/usePlayback.ts
+@@ -36,6 +36,12 @@ export function usePlayback({
+ }: UsePlaybackParams): void {
+   const rafRef = useRef<number | null>(null);
+   const segmentsRef = useRef<VideoSegment[]>(segments);
++  // STACK-TRACE-DIAG: one-time console.trace() gates — temporary, for the
++  // tick()-reset-at-boundary root-cause investigation. Safe to grep-and-
++  // delete (grep STACK-TRACE-DIAG) once the investigation concludes.
++  const tracedFrameRef = useRef(false);
++  const tracedSegDurEndRef = useRef(false);
++  const tracedAudioEndedRef = useRef(false);
+ 
+   // Keep segmentsRef current so the setInterval closure always reads the latest
+   // durations without segments appearing in the interval's dependency array.
+@@ -67,6 +73,16 @@ export function usePlayback({
+       const audio = audioRef.current;
+       if (!audio) return;
+ 
++      // STACK-TRACE-DIAG: one-time trace for the per-frame setCurrentTime call site.
++      if (!tracedFrameRef.current) {
++        tracedFrameRef.current = true;
++        console.log('[STACK-TRACE-DIAG] per-frame setCurrentTime call site', {
++          ts: performance.now().toFixed(1),
++          audioCurrentTime: audio.currentTime,
++        });
++        console.trace('[STACK-TRACE-DIAG] per-frame setCurrentTime');
++      }
++
+       setCurrentTime(audio.currentTime);
+ 
+       // Defensive resume: if audio stalled mid-playback for any reason, restart it.
+@@ -77,6 +93,21 @@ export function usePlayback({
+ 
+       const segDur = segmentsRef.current.reduce((a, s) => a + s.duration, 0);
+       if (segDur > 0 && audio.currentTime >= segDur) {
++        // STACK-TRACE-DIAG: one-time trace + full state dump for the segDur
++        // end-of-playback branch — pins down whether segDur is computed
++        // shorter than the real timeline at the moment this fires.
++        if (!tracedSegDurEndRef.current) {
++          tracedSegDurEndRef.current = true;
++          console.log('[STACK-TRACE-DIAG] segDur end-of-playback branch fired', {
++            ts: performance.now().toFixed(1),
++            segDur,
++            audioCurrentTime: audio.currentTime,
++            audioDuration: audio.duration,
++            segmentCount: segmentsRef.current.length,
++            segments: segmentsRef.current.map(s => ({ id: s.id, startTime: s.startTime, duration: s.duration })),
++          });
++          console.trace('[STACK-TRACE-DIAG] segDur end-of-playback branch');
++        }
+         setIsPlaying(false);
+         audio.currentTime = 0;
+         setCurrentTime(0);
+@@ -85,6 +116,21 @@ export function usePlayback({
+ 
+       // End-of-audio detection via native HTMLMediaElement.ended flag.
+       if (audio.ended) {
++        // STACK-TRACE-DIAG: one-time trace + full state dump for the native
++        // `ended` branch — distinguishes "audio genuinely ended" from the
++        // segDur branch above.
++        if (!tracedAudioEndedRef.current) {
++          tracedAudioEndedRef.current = true;
++          console.log('[STACK-TRACE-DIAG] audio.ended end-of-playback branch fired', {
++            ts: performance.now().toFixed(1),
++            segDur,
++            audioCurrentTime: audio.currentTime,
++            audioDuration: audio.duration,
++            segmentCount: segmentsRef.current.length,
++            segments: segmentsRef.current.map(s => ({ id: s.id, startTime: s.startTime, duration: s.duration })),
++          });
++          console.trace('[STACK-TRACE-DIAG] audio.ended end-of-playback branch');
++        }
+         setIsPlaying(false);
+         audio.currentTime = 0;
+         setCurrentTime(0);
+diff --git a/src/hooks/useTransitionPreview.test.ts b/src/hooks/useTransitionPreview.test.ts
+index 1686d7d..e861f1e 100644
+--- a/src/hooks/useTransitionPreview.test.ts
++++ b/src/hooks/useTransitionPreview.test.ts
+@@ -1,7 +1,26 @@
+-import { describe, it, expect } from 'vitest';
+-import { resolveRetainedBlend, type RetainedBlend } from './useTransitionPreview';
++import { describe, it, expect, vi, afterEach } from 'vitest';
++import {
++  resolveRetainedBlend,
++  computeAdaptiveLeadS,
++  renderPreRollWithRetry,
++  BASE_PRE_ROLL_LEAD_S,
++  ADAPTIVE_LEAD_SAFETY_FACTOR,
++  MAX_PRE_ROLL_LEAD_S,
++  type RetainedBlend,
++} from './useTransitionPreview';
+ import { TransitionType } from '../types';
+ 
++/**
++ * Real measured seek costs from the 2026-07-10 controlled in-app
++ * experiment that root-caused the pre-roll starvation bug (see
++ * BASE_PRE_ROLL_LEAD_S's own doc in useTransitionPreview.ts) — used
++ * throughout the tests below in place of the old, disproven "~200-400ms per
++ * video" assumption the original PRE_ROLL_LEAD_S budget (and prior tests)
++ * were built on.
++ */
++const MEASURED_UNCONTENDED_MS = 747.6;
++const MEASURED_CONTENDED_MS = 998.2;
++
+ /**
+  * resolveRetainedBlend — the fix for the video-video pre-boundary blend gap
+  * on the legacy preview path (docs/webgl-architecture-plan.md's
+@@ -178,3 +197,185 @@ describe('resolveRetainedBlend', () => {
+     expect(result.incoming).toBe(canvasB);
+   });
+ });
++
++/**
++ * computeAdaptiveLeadS / BASE_PRE_ROLL_LEAD_S — the pre-roll starvation fix
++ * (docs/webgl-architecture-plan.md's "pre-roll snapshot starvation" entry).
++ * The old PRE_ROLL_LEAD_S (0.8s) was sized against a "~200ms per video"
++ * estimate; the 2026-07-10 controlled measurement found real cost is
++ * 747.6ms uncontended / 998.2ms contended, meaning the old budget had
++ * negative margin against the real worst case. These tests pin the NEW
++ * budget's margin against those real numbers directly, rather than the
++ * disproven assumption.
++ */
++describe('computeAdaptiveLeadS', () => {
++  it('returns the base lead when no prior render has ever completed (first transition of the session)', () => {
++    expect(computeAdaptiveLeadS(BASE_PRE_ROLL_LEAD_S, null, ADAPTIVE_LEAD_SAFETY_FACTOR, MAX_PRE_ROLL_LEAD_S)).toBe(
++      BASE_PRE_ROLL_LEAD_S,
++    );
++  });
++
++  it('does not shrink below the base lead for a fast prior render (floor, not a literal match of the last cost)', () => {
++    // A 200ms render * 1.5 safety factor = 300ms, well under the 1.8s base.
++    const result = computeAdaptiveLeadS(BASE_PRE_ROLL_LEAD_S, 200, ADAPTIVE_LEAD_SAFETY_FACTOR, MAX_PRE_ROLL_LEAD_S);
++    expect(result).toBe(BASE_PRE_ROLL_LEAD_S);
++  });
++
++  it('widens the lead beyond the base when the prior render was measured slower than the base budget covers', () => {
++    // A prior render costing 2000ms * 1.5 = 3000ms, above the base but under the cap.
++    const result = computeAdaptiveLeadS(BASE_PRE_ROLL_LEAD_S, 2000, ADAPTIVE_LEAD_SAFETY_FACTOR, MAX_PRE_ROLL_LEAD_S);
++    expect(result).toBeCloseTo(3.0, 5);
++  });
++
++  it('clamps to the cap so one pathologically slow measurement cannot push the lead unbounded', () => {
++    // Near awaitSeeked's own 5s hard timeout — would compute to 7.5s uncapped.
++    const result = computeAdaptiveLeadS(BASE_PRE_ROLL_LEAD_S, 5000, ADAPTIVE_LEAD_SAFETY_FACTOR, MAX_PRE_ROLL_LEAD_S);
++    expect(result).toBe(MAX_PRE_ROLL_LEAD_S);
++  });
++
++  it('REGRESSION — the base budget alone (no adaptive widening needed) already has real margin over both measured real-world costs, unlike the disproven old 0.8s budget', () => {
++    // Old budget: 0.8s (800ms) — LESS than even the uncontended cost (747.6ms
++    // itself leaves only 52ms of margin; the 998.2ms contended cost exceeds
++    // it outright). This is the actual root cause: not "sometimes tight."
++    const OLD_BUDGET_MS = 800;
++    expect(OLD_BUDGET_MS).toBeLessThan(MEASURED_CONTENDED_MS);
++
++    // New base budget (first-ever boundary, no adaptive data yet) must clear
++    // both measured costs with real (>=1.5x) margin — the fix's own stated
++    // target band.
++    const leadS = computeAdaptiveLeadS(BASE_PRE_ROLL_LEAD_S, null, ADAPTIVE_LEAD_SAFETY_FACTOR, MAX_PRE_ROLL_LEAD_S);
++    const leadMs = leadS * 1000;
++    expect(leadMs).toBeGreaterThanOrEqual(MEASURED_UNCONTENDED_MS * 1.5);
++    expect(leadMs).toBeGreaterThanOrEqual(MEASURED_CONTENDED_MS * 1.5);
++    expect(leadMs).toBeLessThanOrEqual(MEASURED_CONTENDED_MS * 2);
++  });
++
++  it('REGRESSION — adaptive widening after an actually-measured contended-cost render still clears a repeat of that same cost with real margin', () => {
++    // Boundary 1 measured at the real contended cost (998.2ms). Boundary 2's
++    // lead time is computed from that measurement.
++    const nextLeadS = computeAdaptiveLeadS(
++      BASE_PRE_ROLL_LEAD_S,
++      MEASURED_CONTENDED_MS,
++      ADAPTIVE_LEAD_SAFETY_FACTOR,
++      MAX_PRE_ROLL_LEAD_S,
++    );
++    // Base (1.8s) already exceeds 998.2ms * 1.5 = 1497.3ms, so the adaptive
++    // path stays at the base floor here — still real margin either way.
++    expect(nextLeadS * 1000).toBeGreaterThanOrEqual(MEASURED_CONTENDED_MS * 1.5);
++  });
++});
++
++/**
++ * renderPreRollWithRetry — the pre-roll starvation fix's retry mechanism.
++ * Before this, a boundary whose snapshot render genuinely rejected (a real
++ * seek error, or awaitSeeked's own 5s hard timeout) had no recovery path:
++ * one console.warn and the boundary was permanently dependent on
++ * resolveRetainedBlend's fallback for the rest of the session. These tests
++ * use a `performance.now()` spy to assert realistic (747.6-998.2ms) elapsed
++ * timings deterministically, without either a real wait or fake-timer setup
++ * (not used elsewhere in this repo's test suite).
++ */
++describe('renderPreRollWithRetry', () => {
++  afterEach(() => {
++    vi.restoreAllMocks();
++  });
++
++  it('succeeds on the first attempt — no retry issued', async () => {
++    const renderFn = vi.fn().mockResolvedValue(undefined);
++    const result = await renderPreRollWithRetry(renderFn);
++    expect(renderFn).toHaveBeenCalledTimes(1);
++    expect(result).toMatchObject({ succeeded: true, retried: false });
++  });
++
++  it('retries exactly once after a failure, and succeeds on the retry — does NOT fail silently for this boundary', async () => {
++    const renderFn = vi.fn().mockRejectedValueOnce(new Error('seek failed')).mockResolvedValueOnce(undefined);
++    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
++    const result = await renderPreRollWithRetry(renderFn);
++    expect(renderFn).toHaveBeenCalledTimes(2);
++    expect(result).toMatchObject({ succeeded: true, retried: true });
++    expect(warnSpy).toHaveBeenCalledTimes(1); // one warning for the failed first attempt, none for the successful retry
++  });
++
++  it('retries exactly ONCE, not unboundedly — two consecutive failures give up rather than looping', async () => {
++    const renderFn = vi.fn().mockRejectedValue(new Error('seek timed out'));
++    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
++    const result = await renderPreRollWithRetry(renderFn);
++    expect(renderFn).toHaveBeenCalledTimes(2); // first attempt + exactly one retry
++    expect(result).toMatchObject({ succeeded: false, retried: true });
++    expect(warnSpy).toHaveBeenCalledTimes(2); // one per failed attempt
++  });
++
++  it('REGRESSION — measures realistic (~750-1000ms) elapsed time on a slow-but-successful attempt, not the old optimistic 200-400ms assumption', async () => {
++    const nowSpy = vi.spyOn(performance, 'now');
++    nowSpy.mockReturnValueOnce(1_000).mockReturnValueOnce(1_000 + MEASURED_CONTENDED_MS); // start, end
++    const renderFn = vi.fn().mockResolvedValue(undefined);
++
++    const result = await renderPreRollWithRetry(renderFn);
++
++    expect(result.succeeded).toBe(true);
++    expect(result.durationMs).toBeCloseTo(MEASURED_CONTENDED_MS, 5);
++  });
++
++  it('REGRESSION — a simulated slow-seek boundary (contended-cost first attempt that errors, e.g. hitting awaitSeeked\'s own hard timeout, then a retry that succeeds) measures the FULL realistic elapsed wall time across both attempts — not just one attempt\'s cost', async () => {
++    // performance.now() is only sampled twice per call — once at the very
++    // start, once at final settlement — so durationMs is naturally the
++    // combined wall time of the failed first attempt PLUS the successful
++    // retry, exactly like a real caller measuring from "boundary entered
++    // pre-roll" to "snapshot finally ready" would see.
++    const totalElapsedMs = MEASURED_CONTENDED_MS + MEASURED_UNCONTENDED_MS;
++    const nowSpy = vi.spyOn(performance, 'now');
++    nowSpy.mockReturnValueOnce(0).mockReturnValueOnce(totalElapsedMs); // start, final settlement
++    const renderFn = vi.fn().mockRejectedValueOnce(new Error('awaitSeeked timeout')).mockResolvedValueOnce(undefined);
++    vi.spyOn(console, 'warn').mockImplementation(() => {});
++
++    const result = await renderPreRollWithRetry(renderFn);
++
++    expect(result).toMatchObject({ succeeded: true, retried: true });
++    expect(result.durationMs).toBeCloseTo(totalElapsedMs, 5);
++  });
++});
++
++/**
++ * Integration-style budget check — combines the real measured costs with
++ * the new base lead to demonstrate resolveRetainedBlend's fallback
++ * (docs/webgl-architecture-plan.md's "video-video transition blend gap"
++ * closeout entry) is now the RARE safety net it was designed to be, not the
++ * every-boundary crutch the old 0.8s budget forced it into.
++ */
++describe('pre-roll budget headroom vs. resolveRetainedBlend activation', () => {
++  it('a nominal-contention boundary (measured at the real contended cost) finishes with hundreds of ms to spare before the window opens — resolveRetainedBlend is never reached', () => {
++    const leadMs = BASE_PRE_ROLL_LEAD_S * 1000;
++    const marginMs = leadMs - MEASURED_CONTENDED_MS;
++    // Old budget (800ms) had a NEGATIVE margin here (800 - 998.2 = -198.2ms)
++    // — this is the actual starvation. New budget must be positive with
++    // real headroom, not just barely clearing zero.
++    expect(marginMs).toBeGreaterThan(500);
++  });
++
++  it('resolveRetainedBlend still correctly activates as the fallback for a boundary that genuinely exceeds even the widened budget (adversarial case, expected to stay rare)', () => {
++    const canvasA = { id: 'canvas-a' };
++    const canvasB = { id: 'canvas-b' };
++    // Simulates: previous boundary composited fully live...
++    const tick1 = resolveRetainedBlend(null, {
++      inTransitionWindow: true,
++      snapshotsReady: true,
++      outgoing: canvasA,
++      incoming: canvasB,
++      progress: 0.95,
++      effectiveTransition: 'cross-dissolve',
++    });
++    // ...then a NEW boundary's window opens before an adversarially slow
++    // (near the 5s awaitSeeked timeout) render has landed, even after
++    // adaptive widening. The safety net must still hold the last good frame.
++    const tick2 = resolveRetainedBlend(tick1.nextRetained, {
++      inTransitionWindow: true,
++      snapshotsReady: false,
++      outgoing: null,
++      incoming: null,
++      progress: 0.02,
++      effectiveTransition: 'dip-black',
++    });
++    expect(tick2.isActive).toBe(true);
++    expect(tick2.outgoing).toBe(canvasA);
++  });
++});
+diff --git a/src/hooks/useTransitionPreview.ts b/src/hooks/useTransitionPreview.ts
+index 1fefbb0..3485a82 100644
+--- a/src/hooks/useTransitionPreview.ts
++++ b/src/hooks/useTransitionPreview.ts
+@@ -34,16 +34,76 @@ import {
+   type ChaseMutex,
+ } from './useWebCodecsPreview';
+ 
++// FLICKER-DIAG: temporary diagnostic logging for the video-video
++// pre-boundary flicker investigation (after the retention fix, commit
++// 65b84ee). Every line tagged FLICKER-DIAG in this file (and in
++// frameRenderer.ts/videoDecoderPool.ts) is additive-only — no behavior
++// changes, only console.log calls and one new read-only pool accessor.
++// Safe to grep-and-delete once the investigation concludes; grep
++// FLICKER-DIAG across the repo to find every related line.
++const FLICKER_DIAG = true;
++
+ /** Snapshot resolution — 16:9 half-HD. Full resolution is unnecessary
+  *  for preview-quality blending. */
+ const SNAP_W = 960;
+ const SNAP_H = 540;
+ 
+-/** How many seconds before the transition window to trigger the pre-roll.
+- *  0.8s covers the worst-case parallel seek cost (~200ms per video) with a
+- *  600ms safety margin. Same-asset sequential fallback costs ~400ms — still
+- *  400ms of margin inside the 800ms window. */
+-const PRE_ROLL_LEAD_S = 0.8;
++/**
++ * Base pre-roll lead time — how many seconds before the transition window
++ * to trigger the pre-roll snapshot render.
++ *
++ * PRE-ROLL STARVATION FIX (docs/webgl-architecture-plan.md's "pre-roll
++ * snapshot starvation" entry) — this used to be 0.8s, sized against a
++ * "~200ms per video" estimate that a controlled in-app measurement
++ * (2026-07-10, real `<video>` `seekVideo` calls timed via `awaitSeeked` —
++ * see `frameRenderer.ts`) found to be wrong for real content: actual cost
++ * was **747.6ms uncontended** and **998.2ms** when `useWebCodecsPreview`'s
++ * own decode-ahead sessions (current + next — continuous during ordinary
++ * playback, not just near boundaries) are concurrently active. Against that
++ * ~1000ms real worst case, the old 800ms budget had *negative* margin — not
++ * "sometimes tight," a deterministic miss for any boundary that hit the
++ * contended path — which `resolveRetainedBlend`'s retention fallback was
++ * then papering over on effectively every single video-video boundary
++ * rather than the rare edge case it was designed for.
++ *
++ * 1.8s gives ~1.8x margin over the measured contended worst case (998.2ms)
++ * — inside this fix's 1.5–2x target band. `computeAdaptiveLeadS` widens
++ * this further, per boundary, if an attempt on THIS device is actually
++ * measured slower than that (see its own doc below).
++ */
++export const BASE_PRE_ROLL_LEAD_S = 1.8;
++
++/** Multiplier applied to the most recently measured pre-roll render
++ *  duration (successful or not — see `renderPreRollWithRetry`) to compute
++ *  the NEXT boundary's lead time. Gives real margin over the last observed
++ *  cost rather than just matching it, so a next boundary that's similarly
++ *  (or slightly more) contended still lands inside budget. */
++export const ADAPTIVE_LEAD_SAFETY_FACTOR = 1.5;
++
++/** Ceiling on the adaptive lead — keeps one pathologically slow measurement
++ *  (e.g. a near-miss of `awaitSeeked`'s own 5s hard timeout) from pushing
++ *  the pre-roll trigger absurdly early into the outgoing segment's own
++ *  span. */
++export const MAX_PRE_ROLL_LEAD_S = 3.5;
++
++/**
++ * Computes the effective pre-roll lead time for the NEXT boundary from the
++ * base budget and however long the LAST pre-roll render actually took on
++ * this device (null if none has ever completed yet — first transition of
++ * the session, or the only prior attempt is still pending). Pure so it's
++ * directly unit-testable without a hook-rendering harness (this repo has no
++ * jsdom — same precedent as every other pure helper in this file).
++ */
++export function computeAdaptiveLeadS(
++  baseLeadS: number,
++  lastMeasuredMs: number | null,
++  safetyFactor: number,
++  capS: number,
++): number {
++  if (lastMeasuredMs === null) return baseLeadS;
++  const adaptiveS = (lastMeasuredMs / 1000) * safetyFactor;
++  return Math.min(capS, Math.max(baseLeadS, adaptiveS));
++}
+ 
+ /** Tolerance for "does this segment start where that one ends" contiguity
+  *  checks — matches the rounding tolerance segment timing already accrues
+@@ -55,6 +115,55 @@ const CONTIGUITY_EPSILON_S = 0.001;
+  *  (or, from floating-point error, past) the source's own end. */
+ const OUTGOING_SNAPSHOT_EPSILON_S = 0.05;
+ 
++export interface PreRollRenderOutcome {
++  /** True if either the first attempt or the one retry succeeded. */
++  succeeded: boolean;
++  /** Total wall time across both attempts (ms) — fed into
++   *  `computeAdaptiveLeadS` for the NEXT boundary regardless of outcome,
++   *  since a slow OR failed attempt is equally real information about this
++   *  device's current decode contention. */
++  durationMs: number;
++  /** True if the first attempt failed and a retry was actually issued. */
++  retried: boolean;
++}
++
++/**
++ * Runs `renderFn` once; if it rejects, retries exactly once before giving
++ * up. Part 2 of the pre-roll starvation fix (docs/webgl-architecture-plan.md)
++ * — before this, a boundary whose snapshot render genuinely failed (a real
++ * seek error, or `awaitSeeked`'s own 5s hard timeout) had no recovery path
++ * at all: the render effect's catch block logged a warning and the boundary
++ * was left permanently dependent on `resolveRetainedBlend`'s retention
++ * fallback for the rest of the session — that boundary's real content was
++ * never attempted again. A bare SLOW (not failing) render has nothing to
++ * retry — the in-flight promise still lands eventually, and there is no
++ * reliable way to cancel an in-flight `HTMLVideoElement` seek — so that
++ * case is instead addressed by `computeAdaptiveLeadS` starting the NEXT
++ * boundary's pre-roll earlier, using this function's own measured
++ * `durationMs`.
++ *
++ * Pure/generic over what `renderFn` actually does (mirrors this codebase's
++ * existing `chaseLatestTarget`/`startChaseIfIdle` pattern in
++ * `useWebCodecsPreview.ts`) so it's directly unit-testable with a mock
++ * render function, without needing a real canvas/DOM.
++ */
++export async function renderPreRollWithRetry(renderFn: () => Promise<void>): Promise<PreRollRenderOutcome> {
++  const start = performance.now();
++  try {
++    await renderFn();
++    return { succeeded: true, durationMs: performance.now() - start, retried: false };
++  } catch (err) {
++    console.warn('[useTransitionPreview] snapshot render failed, retrying once:', err);
++    try {
++      await renderFn();
++      return { succeeded: true, durationMs: performance.now() - start, retried: true };
++    } catch (err2) {
++      console.warn('[useTransitionPreview] snapshot render retry also failed:', err2);
++      return { succeeded: false, durationMs: performance.now() - start, retried: true };
++    }
++  }
++}
++
+ interface SnapshotPair {
+   /** Unique key identifying this boundary: `${outId}:${inId}` */
+   key: string;
+@@ -107,10 +216,12 @@ export interface BlendRetentionResult<TCanvas> {
+  *
+  * A video-video boundary's pre-roll snapshot pair can need up to two
+  * concurrent <video> seeks (frameRenderer.ts's seekVideo/awaitSeeked,
+- * ~200-400ms each) racing against useWebCodecsPreview's own two concurrent
+- * decode sessions (current + next) for CPU/decoder time — on constrained
+- * hardware this can miss PRE_ROLL_LEAD_S's lead-in, so `snapshotsReady` is
+- * still false at the exact moment `inTransitionWindow` goes true. Falling
++ * measured 747.6ms uncontended / 998.2ms contended each — see
++ * BASE_PRE_ROLL_LEAD_S's own doc for the full measurement) racing against
++ * useWebCodecsPreview's own two concurrent decode sessions (current + next)
++ * for CPU/decoder time — on constrained hardware this can miss the pre-roll
++ * lead-in, so `snapshotsReady` is still false at the exact moment
++ * `inTransitionWindow` goes true. Falling
+  * straight through to "nothing to show" in that case drops the overlay's
+  * CSS opacity to 0 (PreviewStage.tsx) and reveals the raw underlying
+  * outgoing layer with no blend for however long the snapshot takes to
+@@ -299,8 +410,18 @@ export function useTransitionPreview({
+   // trigger a re-render (the state that actually changes visible output —
+   // snapshots/currentTime/etc. — already does).
+   const retainedBlendRef = useRef<RetainedBlend<HTMLCanvasElement> | null>(null);
++  // FLICKER-DIAG: previous snapshotsReady value + pair, so we can log only
++  // on actual false→true→false transitions rather than every render tick.
++  const diagPrevSnapshotsReadyRef = useRef<boolean>(false);
+   // Prevent concurrent or duplicate snapshot renders
+   const pendingKeyRef = useRef<string>('');
++  // Pre-roll starvation fix, part 1 (adaptive lead) — wall time (ms) the
++  // most recently COMPLETED pre-roll render actually took (see
++  // renderPreRollWithRetry), null until the first one ever settles. Fed
++  // into computeAdaptiveLeadS below so a boundary that turns out to be slow
++  // on this device pushes the NEXT boundary's own pre-roll trigger earlier,
++  // rather than every boundary forever using the same static budget.
++  const lastRenderDurationMsRef = useRef<number | null>(null);
+   // Guard against setState after unmount (async renderSegmentFrame can outlive the component)
+   const mountedRef = useRef<boolean>(true);
+   useEffect(() => {
+@@ -373,10 +494,19 @@ export function useTransitionPreview({
+     ? resolveTransitionProgress(nextSegA!.startTime, resolvedA.duration, currentTime)
+     : null;
+   const windowAStart = hasTransitionA ? nextSegA!.startTime - resolvedA.duration / 2 : 0;
++  // Pre-roll starvation fix, part 1 — widen the lead time on this device if
++  // the last pre-roll render actually measured slower than the static base
++  // budget (see computeAdaptiveLeadS's own doc).
++  const preRollLeadS = computeAdaptiveLeadS(
++    BASE_PRE_ROLL_LEAD_S,
++    lastRenderDurationMsRef.current,
++    ADAPTIVE_LEAD_SAFETY_FACTOR,
++    MAX_PRE_ROLL_LEAD_S,
++  );
+   const preRollOnlyActive =
+     hasTransitionA &&
+     progressA === null &&
+-    currentTime >= windowAStart - PRE_ROLL_LEAD_S &&
++    currentTime >= windowAStart - preRollLeadS &&
+     currentTime < windowAStart;
+ 
+   // Candidate B — containingSeg is the INCOMING side of the boundary behind.
+@@ -593,6 +723,26 @@ export function useTransitionPreview({
+   // ---------------------------------------------------------------------------
+   const needsPreRoll = !isResizingRef.current && !glPathActive && needsPreRollWindow;
+ 
++  // ---------------------------------------------------------------------------
++  // Pre-roll starvation fix, part 3 (docs/webgl-architecture-plan.md) — tell
++  // the pool which two segments matter for whatever boundary is currently
++  // being pre-rolled/actively blended, so useWebCodecsPreview.ts can defer
++  // starting brand-NEW decode-ahead work for anything else while the
++  // transition-critical seeks above are running. Mirrors the
++  // setTransitionProtectedIds effect above (re-asserted every time the
++  // boundary identity changes, cleared the moment there's nothing to
++  // pre-roll) but writes to a separate, independent pool set — see
++  // setPreRollPriorityIds'/shouldDeferDecodeAhead's own docs
++  // (videoDecoderPool.ts) for why: that set gates STARTING new decode work,
++  // not survival of already-warm sessions, so it must not be folded into
++  // either existing eviction-protection set. needsPreRoll already accounts
++  // for glPathActive/isResizingRef, so no separate guard is needed here.
++  // ---------------------------------------------------------------------------
++  useEffect(() => {
++    if (!pool) return;
++    pool.setPreRollPriorityIds(needsPreRoll && outgoingSeg && incomingSeg ? [outgoingSeg.id, incomingSeg.id] : null);
++  }, [pool, needsPreRoll, outgoingSeg?.id, incomingSeg?.id]);
++
+   useEffect(() => {
+     if (!needsPreRoll || !outgoingSeg || !incomingSeg) {
+       return;
+@@ -633,92 +783,101 @@ export function useTransitionPreview({
+     // Clamped below its own duration to avoid an out-of-range seek.
+     const outgoingTime = Math.max(0, outgoingSeg.duration - OUTGOING_SNAPSHOT_EPSILON_S);
+ 
++    // When both segments reference the same video URL, videoCache returns
++    // the same HTMLVideoElement. Concurrent seeks on the same element race
++    // (the second seek cancels the first), so fall back to sequential in
++    // that case. For all other combinations (distinct URLs, or non-video
++    // assets) parallel rendering is safe and halves the snapshot cost.
++    // Computed once (outside runRender) — stable across a retry attempt,
++    // not re-derived per attempt.
++    const sharesAsset =
++      currentAsset?.type === 'video' &&
++      nextAsset?.type === 'video' &&
++      currentAsset.url === nextAsset.url;
++
++    // Pre-roll starvation fix, part 2 — extracted so renderPreRollWithRetry
++    // can invoke it a second time on failure without duplicating the
++    // sequential-vs-parallel branch logic. Safe to call twice: on retry the
++    // only prior attempt was the one that just threw, so re-drawing into the
++    // same outCtx/inCtx cannot race a still-in-flight earlier draw.
++    const runRender = async (): Promise<void> => {
++      if (sharesAsset) {
++        // Same video element — seek sequentially to avoid race.
++        await renderSegmentFrame({
++          segment: outgoingSeg,
++          asset: currentAsset,
++          timeInSegment: outgoingTime,
++          ctx: outCtx,
++          width: SNAP_W,
++          height: SNAP_H,
++          // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
++          // transition, so this snapshot must not bake its own copy of the body
++          // caption underneath it — a size/position mismatch between the two was the
++          // source of a visible "pop" at the transition's end. Headings and extra
++          // overlays are unaffected by this flag.
++          skipCaption: true,
++          global: globalConfig,
++        });
++        await renderSegmentFrame({
++          segment: incomingSeg,
++          asset: nextAsset,
++          timeInSegment: 0,
++          ctx: inCtx,
++          width: SNAP_W,
++          height: SNAP_H,
++          // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
++          // transition, so this snapshot must not bake its own copy of the body
++          // caption underneath it — a size/position mismatch between the two was the
++          // source of a visible "pop" at the transition's end. Headings and extra
++          // overlays are unaffected by this flag.
++          skipCaption: true,
++          global: globalConfig,
++        });
++      } else {
++        // Distinct sources (or non-video) — parallel is safe.
++        const outgoingPromise = renderSegmentFrame({
++          segment: outgoingSeg,
++          asset: currentAsset,
++          timeInSegment: outgoingTime,
++          ctx: outCtx,
++          width: SNAP_W,
++          height: SNAP_H,
++          // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
++          // transition, so this snapshot must not bake its own copy of the body
++          // caption underneath it — a size/position mismatch between the two was the
++          // source of a visible "pop" at the transition's end. Headings and extra
++          // overlays are unaffected by this flag.
++          skipCaption: true,
++          global: globalConfig,
++        });
++
++        const incomingPromise = renderSegmentFrame({
++          segment: incomingSeg,
++          asset: nextAsset,
++          timeInSegment: 0,
++          ctx: inCtx,
++          width: SNAP_W,
++          height: SNAP_H,
++          // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
++          // transition, so this snapshot must not bake its own copy of the body
++          // caption underneath it — a size/position mismatch between the two was the
++          // source of a visible "pop" at the transition's end. Headings and extra
++          // overlays are unaffected by this flag.
++          skipCaption: true,
++          global: globalConfig,
++        });
++
++        await Promise.all([outgoingPromise, incomingPromise]);
++      }
++    };
++
+     void (async () => {
+       try {
+-        // When both segments reference the same video URL, videoCache returns
+-        // the same HTMLVideoElement. Concurrent seeks on the same element race
+-        // (the second seek cancels the first), so fall back to sequential in
+-        // that case. For all other combinations (distinct URLs, or non-video
+-        // assets) parallel rendering is safe and halves the snapshot cost.
+-        const sharesAsset =
+-          currentAsset?.type === 'video' &&
+-          nextAsset?.type === 'video' &&
+-          currentAsset.url === nextAsset.url;
+-
+-        if (sharesAsset) {
+-          // Same video element — seek sequentially to avoid race.
+-          await renderSegmentFrame({
+-            segment: outgoingSeg,
+-            asset: currentAsset,
+-            timeInSegment: outgoingTime,
+-            ctx: outCtx,
+-            width: SNAP_W,
+-            height: SNAP_H,
+-            // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
+-            // transition, so this snapshot must not bake its own copy of the body
+-            // caption underneath it — a size/position mismatch between the two was the
+-            // source of a visible "pop" at the transition's end. Headings and extra
+-            // overlays are unaffected by this flag.
+-            skipCaption: true,
+-            global: globalConfig,
+-          });
+-          await renderSegmentFrame({
+-            segment: incomingSeg,
+-            asset: nextAsset,
+-            timeInSegment: 0,
+-            ctx: inCtx,
+-            width: SNAP_W,
+-            height: SNAP_H,
+-            // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
+-            // transition, so this snapshot must not bake its own copy of the body
+-            // caption underneath it — a size/position mismatch between the two was the
+-            // source of a visible "pop" at the transition's end. Headings and extra
+-            // overlays are unaffected by this flag.
+-            skipCaption: true,
+-            global: globalConfig,
+-          });
+-        } else {
+-          // Distinct sources (or non-video) — parallel is safe.
+-          const outgoingPromise = renderSegmentFrame({
+-            segment: outgoingSeg,
+-            asset: currentAsset,
+-            timeInSegment: outgoingTime,
+-            ctx: outCtx,
+-            width: SNAP_W,
+-            height: SNAP_H,
+-            // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
+-            // transition, so this snapshot must not bake its own copy of the body
+-            // caption underneath it — a size/position mismatch between the two was the
+-            // source of a visible "pop" at the transition's end. Headings and extra
+-            // overlays are unaffected by this flag.
+-            skipCaption: true,
+-            global: globalConfig,
+-          });
+-
+-          const incomingPromise = renderSegmentFrame({
+-            segment: incomingSeg,
+-            asset: nextAsset,
+-            timeInSegment: 0,
+-            ctx: inCtx,
+-            width: SNAP_W,
+-            height: SNAP_H,
+-            // The live DOM caption (PreviewStage.tsx) now stays visible throughout the
+-            // transition, so this snapshot must not bake its own copy of the body
+-            // caption underneath it — a size/position mismatch between the two was the
+-            // source of a visible "pop" at the transition's end. Headings and extra
+-            // overlays are unaffected by this flag.
+-            skipCaption: true,
+-            global: globalConfig,
+-          });
+-
+-          await Promise.all([outgoingPromise, incomingPromise]);
+-        }
+-
+-        if (mountedRef.current) {
++        const outcome = await renderPreRollWithRetry(runRender);
++        lastRenderDurationMsRef.current = outcome.durationMs;
++        if (outcome.succeeded && mountedRef.current) {
+           setSnapshots({ key, outgoing: outCanvas, incoming: inCanvas });
+         }
+-      } catch (err) {
+-        console.warn('[useTransitionPreview] snapshot render failed:', err);
+       } finally {
+         if (pendingKeyRef.current === key) pendingKeyRef.current = '';
+       }
+@@ -746,6 +905,21 @@ export function useTransitionPreview({
+   // this doesn't just gate on `inTransitionWindow && snapshotsReady` anymore.
+   // ---------------------------------------------------------------------------
+   const snapshotsReady = snapshots !== null && snapshots.key === `${outgoingSeg?.id}:${incomingSeg?.id}`;
++
++  // FLICKER-DIAG — item 2: log every snapshotsReady transition
++  // (false→true→false), with the segment pair it corresponds to.
++  if (FLICKER_DIAG && diagPrevSnapshotsReadyRef.current !== snapshotsReady) {
++    console.log('[FLICKER-DIAG][snapshotsReady transition]', {
++      ts: performance.now().toFixed(1),
++      currentTime: currentTime.toFixed(3),
++      from: diagPrevSnapshotsReadyRef.current,
++      to: snapshotsReady,
++      outgoingId: outgoingSeg?.id ?? null,
++      incomingId: incomingSeg?.id ?? null,
++    });
++    diagPrevSnapshotsReadyRef.current = snapshotsReady;
++  }
++
+   const blend = resolveRetainedBlend(retainedBlendRef.current, {
+     inTransitionWindow,
+     snapshotsReady,
+@@ -757,6 +931,45 @@ export function useTransitionPreview({
+   retainedBlendRef.current = blend.nextRetained;
+   const isActive = blend.isActive;
+ 
++  // FLICKER-DIAG — items 1 + 4: log every resolveRetainedBlend call
++  // (timestamp, retained-vs-fresh selection, snapshotsReady at that instant)
++  // — this doubles as the "composited output selection per render tick" log,
++  // since the selection IS what gets composited a moment later in
++  // PreviewStage.tsx's draw effect.
++  if (FLICKER_DIAG && inTransitionWindow) {
++    const selection = inTransitionWindow && snapshotsReady
++      ? 'fresh'
++      : isActive
++        ? 'retained'
++        : 'inactive-no-fallback';
++    console.log('[FLICKER-DIAG][resolveRetainedBlend]', {
++      ts: performance.now().toFixed(1),
++      currentTime: currentTime.toFixed(3),
++      inTransitionWindow,
++      snapshotsReady,
++      selection,
++      progress: blend.progress.toFixed(3),
++      outgoingId: outgoingSeg?.id ?? null,
++      incomingId: incomingSeg?.id ?? null,
++    });
++  }
++
++  // FLICKER-DIAG — item 5: decode-ahead session state for B (incoming),
++  // logged specifically during A's tail (the pre-boundary half — progressA
++  // non-null means candidate A is the active/pre-roll candidate), alongside
++  // A's own outgoing session for comparison. Flags whether B's decode-ahead
++  // session is actively feeding/contending while A's tail snapshot logic
++  // (seekVideo calls, above) is also running.
++  if (FLICKER_DIAG && progressA !== null && pool) {
++    console.log('[FLICKER-DIAG][decode-pool state during A-tail]', {
++      ts: performance.now().toFixed(1),
++      currentTime: currentTime.toFixed(3),
++      progressA: progressA.toFixed(3),
++      outgoing_A: outgoingSeg ? pool.debugSessionSnapshot(outgoingSeg.id) : null,
++      incoming_B: incomingSeg ? pool.debugSessionSnapshot(incomingSeg.id) : null,
++    });
++  }
++
+   return {
+     isActive,
+     progress: blend.progress,
+diff --git a/src/hooks/useWebCodecsPreview.ts b/src/hooks/useWebCodecsPreview.ts
+index e9ac44f..0bc39ac 100644
+--- a/src/hooks/useWebCodecsPreview.ts
++++ b/src/hooks/useWebCodecsPreview.ts
+@@ -587,7 +587,26 @@ export function useWebCodecsPreview({
+         setError(err instanceof Error ? err.message : String(err));
+       });
+     }
+-    if (nextSegment && nextIsVideo && nextAsset) {
++    // Pre-roll starvation fix, part 3 (docs/webgl-architecture-plan.md) —
++    // shouldDeferDecodeAhead is false whenever no transition pre-roll is in
++    // progress (the overwhelming majority of renders), so this guard is a
++    // no-op outside a transition boundary and existing decode-ahead
++    // behavior is unchanged there. It only skips starting BRAND-NEW
++    // decode-ahead work for a "next" segment that is genuinely NOT part of
++    // whatever boundary useTransitionPreview.ts is currently pre-rolling —
++    // which only arises once `currentSegment` itself has already become the
++    // transition's INCOMING side (its own "next" is then a third,
++    // off-transition segment) — freeing decoder bandwidth for the
++    // transition-critical seeks during exactly the window the controlled
++    // measurement (see videoDecoderPool.ts's preRollPriorityIds doc) found
++    // they contend with. Accepted, bounded trade-off: that third segment's
++    // own decode-ahead warm-up is skipped for this one boundary crossing —
++    // no different from any segment's ordinary cold-start cost, and this
++    // effect does not re-run again until currentSegment/nextSegment
++    // identity next changes, so it is not retried mid-window; it gets a
++    // normal (not decode-ahead-warmed) session the moment it becomes
++    // current via the block above.
++    if (nextSegment && nextIsVideo && nextAsset && !pool.shouldDeferDecodeAhead(nextSegment.id)) {
+       const { start, end } = sourceRange(nextSegment);
+       // Decode-ahead failures for the *next* segment are non-fatal here —
+       // when it becomes the current segment its own ensureSession call
+diff --git a/src/services/frameRenderer.ts b/src/services/frameRenderer.ts
+index c01a006..f7137f6 100644
+--- a/src/services/frameRenderer.ts
++++ b/src/services/frameRenderer.ts
+@@ -5,6 +5,14 @@ import { TRANSITION_NONE } from '../effectsOptions';
+ import { getActiveHeadingAt } from './headingLayer';
+ import { waitForVideoFrame } from './waitForVideoFrame';
+ 
++// FLICKER-DIAG: temporary diagnostic logging for the video-video
++// pre-boundary flicker investigation (see useTransitionPreview.ts's own
++// FLICKER_DIAG block for the counterpart logs). Every line tagged
++// FLICKER-DIAG in this file is additive-only (no behavior change) and safe
++// to grep-and-delete once the investigation concludes — grep FLICKER-DIAG
++// across the repo to find every related line.
++const FLICKER_DIAG = true;
++
+ export interface FrameGlobalConfig {
+   overlayConfig: { color: string; backgroundColor: string; fontFamily: string; fontSize?: number };
+   globalOverlayFilter?: string;
+@@ -170,6 +178,15 @@ async function ensureMetadata(el: HTMLVideoElement): Promise<void> {
+ 
+ /** Await the `seeked` event with a 5s timeout. */
+ function awaitSeeked(el: HTMLVideoElement, targetForLog: number): Promise<void> {
++  // FLICKER-DIAG
++  if (FLICKER_DIAG) {
++    console.log('[FLICKER-DIAG][awaitSeeked start]', {
++      ts: performance.now().toFixed(1),
++      src: el.src.slice(-48),
++      target: targetForLog.toFixed(3),
++      currentTime: el.currentTime.toFixed(3),
++    });
++  }
+   return new Promise<void>((resolve, reject) => {
+     const start = Date.now();
+     const cleanup = () => {
+@@ -177,7 +194,19 @@ function awaitSeeked(el: HTMLVideoElement, targetForLog: number): Promise<void>
+       el.removeEventListener('error', onError);
+       clearTimeout(timer);
+     };
+-    const onSeeked = () => { cleanup(); resolve(); };
++    const onSeeked = () => {
++      cleanup();
++      // FLICKER-DIAG
++      if (FLICKER_DIAG) {
++        console.log('[FLICKER-DIAG][awaitSeeked resolved]', {
++          ts: performance.now().toFixed(1),
++          src: el.src.slice(-48),
++          target: targetForLog.toFixed(3),
++          elapsedMs: Date.now() - start,
++        });
++      }
++      resolve();
++    };
+     const onError = () => { cleanup(); reject(new Error('video seek failed')); };
+     const timer = setTimeout(() => {
+       cleanup();
+@@ -196,6 +225,18 @@ function awaitSeeked(el: HTMLVideoElement, targetForLog: number): Promise<void>
+ }
+ 
+ async function seekVideo(el: HTMLVideoElement, time: number): Promise<void> {
++  // FLICKER-DIAG
++  const __diagStart = FLICKER_DIAG ? performance.now() : 0;
++  if (FLICKER_DIAG) {
++    console.log('[FLICKER-DIAG][seekVideo start]', {
++      ts: __diagStart.toFixed(1),
++      src: el.src.slice(-48),
++      target: time.toFixed(3),
++      currentTime: el.currentTime.toFixed(3),
++      readyState: el.readyState,
++    });
++  }
++
+   // Step 1: ensure metadata is ready so duration is known.
+   await ensureMetadata(el);
+ 
+@@ -239,6 +280,16 @@ async function seekVideo(el: HTMLVideoElement, time: number): Promise<void> {
+   // instead of silently producing wrong frames — waitForVideoFrame itself
+   // never rejects, so it must not be the sole guard for a stuck seek.
+   await waitForVideoFrame(el);
++
++  // FLICKER-DIAG
++  if (FLICKER_DIAG) {
++    console.log('[FLICKER-DIAG][seekVideo resolved]', {
++      ts: performance.now().toFixed(1),
++      src: el.src.slice(-48),
++      target: time.toFixed(3),
++      elapsedMs: (performance.now() - __diagStart).toFixed(1),
++    });
++  }
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -506,6 +557,19 @@ export async function renderSegmentFrame(params: FrameRenderParams): Promise<voi
+       const rawTime = (segment.trimStart ?? 0) + timeInSegment * (segment.playbackSpeed ?? 1);
+       // undefined trimEnd = "play to end of media"; seekVideo clamps to el.duration internally
+       const videoTime = segment.trimEnd !== undefined ? Math.min(rawTime, segment.trimEnd) : rawTime;
++      // FLICKER-DIAG — tags the seek below with the segment it belongs to
++      // (seekVideo/awaitSeeked's own logs only know the <video> element, not
++      // which segment/purpose requested the seek).
++      if (FLICKER_DIAG) {
++        console.log('[FLICKER-DIAG][renderSegmentFrame video seek request]', {
++          ts: performance.now().toFixed(1),
++          segmentId: segment.id,
++          segmentText: (segment.text ?? '').slice(0, 24),
++          useBlendVideoCache: !!useBlendVideoCache,
++          timeInSegment: timeInSegment.toFixed(3),
++          videoTime: videoTime.toFixed(3),
++        });
++      }
+       await seekVideo(videoEl, videoTime);
+       drawImageCover(ctx, videoEl, w, h);
+     }
+diff --git a/src/services/videoDecoderPool.test.ts b/src/services/videoDecoderPool.test.ts
+index 1061c97..f23ee5f 100644
+--- a/src/services/videoDecoderPool.test.ts
++++ b/src/services/videoDecoderPool.test.ts
+@@ -854,4 +854,110 @@ describe('VideoDecoderPool — LRU eviction under a session/frame budget (Phase
+     expect(pool.hasSession('a')).toBe(false);
+     for (const f of framesForA) expect(f.closed).toBe(true);
+   });
++
++  // --- setPreRollPriorityIds / shouldDeferDecodeAhead ------------------------
++  //
++  // Pre-roll starvation fix, part 3 (docs/webgl-architecture-plan.md's
++  // "pre-roll snapshot starvation" entry). Unlike protectedIds/
++  // transitionProtectedIds (eviction survival), this pair governs whether
++  // useWebCodecsPreview.ts should even START brand-new decode-ahead work —
++  // see shouldDeferDecodeAhead's own doc for the contention this exists to
++  // reduce (a controlled measurement found decode-ahead sessions
++  // measurably slow down the real <video>-seek pre-roll snapshot render).
++
++  describe('setPreRollPriorityIds / shouldDeferDecodeAhead', () => {
++    it('defaults to never deferring — no transition in progress, existing decode-ahead behavior is completely unaffected', () => {
++      const pool = new VideoDecoderPool();
++      expect(pool.shouldDeferDecodeAhead('anything')).toBe(false);
++    });
++
++    it('defers a segment id NOT in the priority set once a transition boundary is declared', () => {
++      const pool = new VideoDecoderPool();
++      pool.setPreRollPriorityIds(['outgoing-a', 'incoming-b']);
++      expect(pool.shouldDeferDecodeAhead('next-next-c')).toBe(true);
++    });
++
++    it('does NOT defer either segment that IS part of the active transition pair', () => {
++      const pool = new VideoDecoderPool();
++      pool.setPreRollPriorityIds(['outgoing-a', 'incoming-b']);
++      expect(pool.shouldDeferDecodeAhead('outgoing-a')).toBe(false);
++      expect(pool.shouldDeferDecodeAhead('incoming-b')).toBe(false);
++    });
++
++    it('clearing with null reverts to "never defer" — mirrors the transition window closing', () => {
++      const pool = new VideoDecoderPool();
++      pool.setPreRollPriorityIds(['outgoing-a', 'incoming-b']);
++      expect(pool.shouldDeferDecodeAhead('next-next-c')).toBe(true);
++      pool.setPreRollPriorityIds(null);
++      expect(pool.shouldDeferDecodeAhead('next-next-c')).toBe(false);
++      expect(pool.shouldDeferDecodeAhead('outgoing-a')).toBe(false);
++    });
++
++    it('full-replace contract (not additive) — re-asserting for a NEW boundary drops the old pair from priority', () => {
++      const pool = new VideoDecoderPool();
++      pool.setPreRollPriorityIds(['a', 'b']);
++      expect(pool.shouldDeferDecodeAhead('a')).toBe(false);
++      // Boundary advances: the next transition pair is (b, c) — 'a' is no
++      // longer part of any active transition and becomes deferrable itself.
++      pool.setPreRollPriorityIds(['b', 'c']);
++      expect(pool.shouldDeferDecodeAhead('a')).toBe(true);
++      expect(pool.shouldDeferDecodeAhead('b')).toBe(false);
++      expect(pool.shouldDeferDecodeAhead('c')).toBe(false);
++    });
++
++    it('an empty priority set defers everything — distinct from null (which defers nothing)', () => {
++      const pool = new VideoDecoderPool();
++      pool.setPreRollPriorityIds([]);
++      expect(pool.shouldDeferDecodeAhead('anything')).toBe(true);
++    });
++
++    it('does not gate an already-existing session — only decides whether to START tracking a segment for the first time', async () => {
++      // hasSession/ensureSession behavior is untouched by this predicate;
++      // it is a pure advisory check the CALLER (useWebCodecsPreview.ts)
++      // consults before calling ensureSession, not an internal gate on the
++      // pool's own session methods.
++      const demuxed = makeDemuxed([0, 33_333]);
++      (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
++      const pool = new VideoDecoderPool();
++      await pool.ensureSession('c', 'blob:c', 0, 0.033);
++      pool.setPreRollPriorityIds(['a', 'b']); // 'c' is now outside priority
++      expect(pool.shouldDeferDecodeAhead('c')).toBe(true); // caller SHOULD skip new work for it
++      expect(pool.hasSession('c')).toBe(true); // but its already-warm session is untouched
++    });
++
++    it('dispose() clears preRollPriorityIds — a fresh mount after unmount does not inherit a stale deferral', () => {
++      const pool = new VideoDecoderPool();
++      pool.setPreRollPriorityIds(['a', 'b']);
++      pool.dispose();
++      expect(pool.shouldDeferDecodeAhead('c')).toBe(false);
++    });
++
++    it('SIMULATED CONTENTION — with two segments (outgoing + incoming) mid-transition, a genuinely unrelated third ("next-next") segment is correctly flagged for deferred decode-ahead while the transition pair is not', async () => {
++      // Mirrors the real scenario found in the controlled measurement:
++      // useWebCodecsPreview.ts keeps two concurrent decode-ahead sessions
++      // warm (here, 'outgoing'/'incoming', both actively created via
++      // ensureSession — the real source of decoder contention against the
++      // pre-roll snapshot's own <video> seeks) while a boundary is being
++      // pre-rolled. A caller about to start a THIRD, off-transition
++      // session ('next-next') should defer that specific one.
++      const demuxed = makeDemuxed([0, 33_333, 66_667]);
++      (getOrCreateDemux as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(demuxed);
++      const pool = new VideoDecoderPool();
++
++      await Promise.all([
++        pool.ensureSession('outgoing', 'blob:outgoing', 0, 0.1),
++        pool.ensureSession('incoming', 'blob:incoming', 0, 0.1),
++      ]);
++      pool.setPreRollPriorityIds(['outgoing', 'incoming']);
++
++      expect(pool.shouldDeferDecodeAhead('next-next')).toBe(true);
++      expect(pool.shouldDeferDecodeAhead('outgoing')).toBe(false);
++      expect(pool.shouldDeferDecodeAhead('incoming')).toBe(false);
++
++      // Once the transition window closes, the same segment is fair game
++      // for ordinary decode-ahead again.
++      pool.setPreRollPriorityIds(null);
++      expect(pool.shouldDeferDecodeAhead('next-next')).toBe(false);
++    });
++  });
+ });
+diff --git a/src/services/videoDecoderPool.ts b/src/services/videoDecoderPool.ts
+index 555b4b4..5c923ee 100644
+--- a/src/services/videoDecoderPool.ts
++++ b/src/services/videoDecoderPool.ts
+@@ -229,6 +229,27 @@ export class VideoDecoderPool {
+    *  distinct means one caller's setProtectedIds([...]) full-replace can
+    *  never accidentally clobber the other's contribution. */
+   private transitionProtectedIds = new Set<string>();
++  /**
++   * Third, independent set for the pre-roll-starvation fix
++   * (docs/webgl-architecture-plan.md's "pre-roll snapshot starvation"
++   * entry). Unlike protectedIds/transitionProtectedIds above (which govern
++   * LRU EVICTION — whether an already-warm session can be reclaimed), this
++   * one governs whether NEW decode-ahead work should even be started: while
++   * non-null, it names the segment ids that matter for whatever transition
++   * boundary useTransitionPreview.ts is currently pre-rolling/actively
++   * blending. A controlled in-app measurement (2026-07-10) found
++   * useWebCodecsPreview.ts's own continuous decode-ahead sessions
++   * (current + next) measurably slow down the real `<video>`-seek pre-roll
++   * snapshot render this set exists to protect (747.6ms uncontended vs.
++   * 998.2ms with a decode-ahead session concurrently active) — so during a
++   * transition's pre-roll/active window, useWebCodecsPreview.ts defers
++   * starting a BRAND NEW decode-ahead session for its own "next" segment
++   * when that segment isn't part of the current transition pair (see
++   * shouldDeferDecodeAhead below). null (the default) means "no transition
++   * in progress, never defer" — decode-ahead behavior outside a pre-roll
++   * window is completely unchanged.
++   */
++  private preRollPriorityIds: Set<string> | null = null;
+   private lastAccess = new Map<string, number>();
+   private touchCounter = 0;
+ 
+@@ -648,6 +669,31 @@ export class VideoDecoderPool {
+     return this.sessions.has(segmentId);
+   }
+ 
++  /**
++   * FLICKER-DIAG: temporary read-only snapshot of a session's internal
++   * state, added for the video-video pre-boundary flicker investigation
++   * (see useTransitionPreview.ts's FLICKER_DIAG block). Purely additive —
++   * does not read/write anything an existing method doesn't already
++   * touch, and no existing method's behavior changes. Safe to delete
++   * (along with every other FLICKER-DIAG block) once the investigation
++   * concludes; grep FLICKER-DIAG to find every related line across the repo.
++   */
++  debugSessionSnapshot(segmentId: string): {
++    closed: boolean;
++    feedInFlight: boolean;
++    fullyFed: boolean;
++    framesBuffered: number;
++  } | null {
++    const session = this.sessions.get(segmentId);
++    if (!session) return null;
++    return {
++      closed: session.closed,
++      feedInFlight: session.feedInFlight,
++      fullyFed: session.fullyFed,
++      framesBuffered: session.frames.length,
++    };
++  }
++
+   /**
+    * Closes and discards the decode session for `segmentId` — every
+    * buffered VideoFrame is closed immediately, and the underlying decoder
+@@ -843,6 +889,41 @@ export class VideoDecoderPool {
+     this.enforceBudget();
+   }
+ 
++  /**
++   * Declares which segment ids matter for whatever transition boundary is
++   * currently being pre-rolled/actively blended by useTransitionPreview.ts
++   * — see `preRollPriorityIds`' own doc above for the contention this
++   * exists to reduce. Pass `null` to clear (no transition in progress).
++   * Same re-assert-every-render, full-replace contract as
++   * `setTransitionProtectedIds` — NOT additive across calls. Does not
++   * itself evict or start anything — purely a signal `shouldDeferDecodeAhead`
++   * reads.
++   */
++  setPreRollPriorityIds(ids: Iterable<string> | null): void {
++    this.preRollPriorityIds = ids ? new Set(ids) : null;
++  }
++
++  /**
++   * True when a transition pre-roll/active window is currently in progress
++   * (`setPreRollPriorityIds` was last called with a non-null set) AND
++   * `segmentId` is not part of it. A caller about to start brand-new
++   * decode-ahead work for `segmentId` (useWebCodecsPreview.ts's own "next"
++   * prefetch) can check this first and defer that work for a moment,
++   * leaving decoder bandwidth for the transition-critical seeks instead.
++   * Always false while no transition is in progress — existing decode-ahead
++   * behavior is completely unaffected outside a pre-roll window.
++   *
++   * Deliberately does NOT gate an already-existing session — ensureSession
++   * is cheap/idempotent for one (see its own doc, the "existing" early
++   * return) — only a caller deciding whether to start tracking a segment
++   * for the FIRST time need consult this; an already-warm session stays
++   * exactly as warm, still governed by the normal protectedIds/
++   * transitionProtectedIds eviction rules, independent of this set.
++   */
++  shouldDeferDecodeAhead(segmentId: string): boolean {
++    return this.preRollPriorityIds !== null && !this.preRollPriorityIds.has(segmentId);
++  }
++
+   private touch(segmentId: string): void {
+     this.lastAccess.set(segmentId, ++this.touchCounter);
+   }
+@@ -895,6 +976,7 @@ export class VideoDecoderPool {
+     this.idleHandles.clear();
+     this.protectedIds = new Set();
+     this.transitionProtectedIds = new Set();
++    this.preRollPriorityIds = null;
+     this.lastAccess.clear();
+   }
+ }
