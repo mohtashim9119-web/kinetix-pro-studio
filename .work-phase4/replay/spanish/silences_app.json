@@ -1,0 +1,118 @@
+{
+  "source_wav": "/Users/mohtashim/Drive/Vibe Coding Projects/4.kinetix-pro-studio/.work-phase4/replay/spanish/audio_16k.wav",
+  "sample_rate": 16000,
+  "threshold_db": -45.0,
+  "min_duration_sec": 0.25,
+  "frame_size_ms": 20,
+  "n_silences": 27,
+  "silences": [
+    {
+      "startSec": 0.7,
+      "endSec": 1.42
+    },
+    {
+      "startSec": 5.8,
+      "endSec": 6.3
+    },
+    {
+      "startSec": 10.66,
+      "endSec": 10.92
+    },
+    {
+      "startSec": 12.62,
+      "endSec": 13.12
+    },
+    {
+      "startSec": 14.48,
+      "endSec": 14.92
+    },
+    {
+      "startSec": 17.12,
+      "endSec": 17.42
+    },
+    {
+      "startSec": 19.58,
+      "endSec": 20.16
+    },
+    {
+      "startSec": 22.74,
+      "endSec": 23.28
+    },
+    {
+      "startSec": 27.08,
+      "endSec": 27.96
+    },
+    {
+      "startSec": 32.06,
+      "endSec": 32.34
+    },
+    {
+      "startSec": 33.96,
+      "endSec": 34.46
+    },
+    {
+      "startSec": 41.14,
+      "endSec": 41.74
+    },
+    {
+      "startSec": 44.52,
+      "endSec": 45.28
+    },
+    {
+      "startSec": 46.92,
+      "endSec": 47.22
+    },
+    {
+      "startSec": 48.48,
+      "endSec": 48.86
+    },
+    {
+      "startSec": 52.76,
+      "endSec": 53.36
+    },
+    {
+      "startSec": 55.52,
+      "endSec": 56.14
+    },
+    {
+      "startSec": 58.48,
+      "endSec": 58.9
+    },
+    {
+      "startSec": 61.02,
+      "endSec": 61.36
+    },
+    {
+      "startSec": 64.66,
+      "endSec": 65.58
+    },
+    {
+      "startSec": 68.16,
+      "endSec": 68.5
+    },
+    {
+      "startSec": 71.72,
+      "endSec": 72.2
+    },
+    {
+      "startSec": 77.2,
+      "endSec": 77.62
+    },
+    {
+      "startSec": 81.06,
+      "endSec": 81.5
+    },
+    {
+      "startSec": 83.58,
+      "endSec": 84.32
+    },
+    {
+      "startSec": 86.18,
+      "endSec": 86.56
+    },
+    {
+      "startSec": 91.24,
+      "endSec": 92.04
+    }
+  ]
+}

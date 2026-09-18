@@ -1,0 +1,2010 @@
+{
+  "_runId": "p-20260819T134528Z-89e8823a",
+  "_provenance": {
+    "audio": "audio_16k.wav",
+    "audio_duration_sec": 92.04,
+    "chunk_count": 5,
+    "chunk_plan": "fa_live_chunks.json",
+    "corpus": "spanish",
+    "elapsed_sec": 15.654906503,
+    "engine": "real Rust fa_onnx::align_chunked (production path, whole-slice call) — WS1 Session P regeneration",
+    "language": "es",
+    "model": "/Users/mohtashim/Library/Application Support/com.kinetix.pro-studio/fa-models/es/model.onnx",
+    "needs_review_count": 14,
+    "word_count": 249
+  },
+  "words": [
+    {
+      "confidence": 0.014653335325419903,
+      "endSec": 0.68,
+      "needsReview": true,
+      "startSec": 0.32,
+      "word": "scylla",
+      "wordIndex": 0
+    },
+    {
+      "confidence": 0.012020455673336983,
+      "endSec": 1.76,
+      "needsReview": true,
+      "startSec": 1.48,
+      "word": "scylla",
+      "wordIndex": 1
+    },
+    {
+      "confidence": 0.9998409152030945,
+      "endSec": 2,
+      "needsReview": false,
+      "startSec": 1.94,
+      "word": "es",
+      "wordIndex": 2
+    },
+    {
+      "confidence": 0.9972463250160217,
+      "endSec": 2.12,
+      "needsReview": false,
+      "startSec": 2.08,
+      "word": "un",
+      "wordIndex": 3
+    },
+    {
+      "confidence": 0.9983956813812256,
+      "endSec": 2.52,
+      "needsReview": false,
+      "startSec": 2.18,
+      "word": "monstruo",
+      "wordIndex": 4
+    },
+    {
+      "confidence": 0.9805302023887634,
+      "endSec": 2.64,
+      "needsReview": false,
+      "startSec": 2.56,
+      "word": "que",
+      "wordIndex": 5
+    },
+    {
+      "confidence": 0.9999100565910339,
+      "endSec": 2.86,
+      "needsReview": false,
+      "startSec": 2.68,
+      "word": "vive",
+      "wordIndex": 6
+    },
+    {
+      "confidence": 0.9718623757362366,
+      "endSec": 3.12,
+      "needsReview": false,
+      "startSec": 2.9,
+      "word": "dentro",
+      "wordIndex": 7
+    },
+    {
+      "confidence": 0.9937134385108948,
+      "endSec": 3.2,
+      "needsReview": false,
+      "startSec": 3.16,
+      "word": "de",
+      "wordIndex": 8
+    },
+    {
+      "confidence": 0.9989785552024841,
+      "endSec": 3.3000000000000003,
+      "needsReview": false,
+      "startSec": 3.2600000000000002,
+      "word": "un",
+      "wordIndex": 9
+    },
+    {
+      "confidence": 0.9996697902679443,
+      "endSec": 3.9,
+      "needsReview": false,
+      "startSec": 3.38,
+      "word": "acantilado",
+      "wordIndex": 10
+    },
+    {
+      "confidence": 0.9998220205307007,
+      "endSec": 4.36,
+      "needsReview": false,
+      "startSec": 4.0600000000000005,
+      "word": "junto",
+      "wordIndex": 11
+    },
+    {
+      "confidence": 0.9947167038917542,
+      "endSec": 4.5,
+      "needsReview": false,
+      "startSec": 4.48,
+      "word": "a",
+      "wordIndex": 12
+    },
+    {
+      "confidence": 0.9997583031654358,
+      "endSec": 4.64,
+      "needsReview": false,
+      "startSec": 4.58,
+      "word": "un",
+      "wordIndex": 13
+    },
+    {
+      "confidence": 0.9404727816581726,
+      "endSec": 5,
+      "needsReview": false,
+      "startSec": 4.68,
+      "word": "estrecho",
+      "wordIndex": 14
+    },
+    {
+      "confidence": 0.9999385476112366,
+      "endSec": 5.28,
+      "needsReview": false,
+      "startSec": 5.08,
+      "word": "paso",
+      "wordIndex": 15
+    },
+    {
+      "confidence": 0.9999281167984009,
+      "endSec": 5.76,
+      "needsReview": false,
+      "startSec": 5.34,
+      "word": "marítimo",
+      "wordIndex": 16
+    },
+    {
+      "confidence": 0.9547391533851624,
+      "endSec": 6.5200000000000005,
+      "needsReview": false,
+      "startSec": 6.28,
+      "word": "tiene",
+      "wordIndex": 17
+    },
+    {
+      "confidence": 0.9783750772476196,
+      "endSec": 6.88,
+      "needsReview": false,
+      "startSec": 6.68,
+      "word": "seis",
+      "wordIndex": 18
+    },
+    {
+      "confidence": 0.9936425685882568,
+      "endSec": 7.26,
+      "needsReview": false,
+      "startSec": 6.96,
+      "word": "cuellos",
+      "wordIndex": 19
+    },
+    {
+      "confidence": 0.9999423027038574,
+      "endSec": 7.7,
+      "needsReview": false,
+      "startSec": 7.34,
+      "word": "largos",
+      "wordIndex": 20
+    },
+    {
+      "confidence": 0.957252562046051,
+      "endSec": 8.26,
+      "needsReview": false,
+      "startSec": 8.040000000000001,
+      "word": "seis",
+      "wordIndex": 21
+    },
+    {
+      "confidence": 0.9999372363090515,
+      "endSec": 8.76,
+      "needsReview": false,
+      "startSec": 8.32,
+      "word": "cabezas",
+      "wordIndex": 22
+    },
+    {
+      "confidence": 0.9973176121711731,
+      "endSec": 9.16,
+      "needsReview": false,
+      "startSec": 8.98,
+      "word": "tres",
+      "wordIndex": 23
+    },
+    {
+      "confidence": 0.9875833988189697,
+      "endSec": 9.52,
+      "needsReview": false,
+      "startSec": 9.22,
+      "word": "hileras",
+      "wordIndex": 24
+    },
+    {
+      "confidence": 0.9922437071800232,
+      "endSec": 9.620000000000001,
+      "needsReview": false,
+      "startSec": 9.56,
+      "word": "de",
+      "wordIndex": 25
+    },
+    {
+      "confidence": 0.9299191236495972,
+      "endSec": 9.98,
+      "needsReview": false,
+      "startSec": 9.66,
+      "word": "dientes",
+      "wordIndex": 26
+    },
+    {
+      "confidence": 0.9999050498008728,
+      "endSec": 10.08,
+      "needsReview": false,
+      "startSec": 10.040000000000001,
+      "word": "en",
+      "wordIndex": 27
+    },
+    {
+      "confidence": 0.9999656677246094,
+      "endSec": 10.28,
+      "needsReview": false,
+      "startSec": 10.14,
+      "word": "cada",
+      "wordIndex": 28
+    },
+    {
+      "confidence": 0.9999883770942688,
+      "endSec": 10.58,
+      "needsReview": false,
+      "startSec": 10.34,
+      "word": "boca",
+      "wordIndex": 29
+    },
+    {
+      "confidence": 0.9990873336791992,
+      "endSec": 10.98,
+      "needsReview": false,
+      "startSec": 10.96,
+      "word": "y",
+      "wordIndex": 30
+    },
+    {
+      "confidence": 0.9714382290840149,
+      "endSec": 11.26,
+      "needsReview": false,
+      "startSec": 11.040000000000001,
+      "word": "doce",
+      "wordIndex": 31
+    },
+    {
+      "confidence": 0.9998064637184143,
+      "endSec": 11.64,
+      "needsReview": false,
+      "startSec": 11.32,
+      "word": "patas",
+      "wordIndex": 32
+    },
+    {
+      "confidence": 0.9997845888137817,
+      "endSec": 12.040000000000001,
+      "needsReview": false,
+      "startSec": 11.72,
+      "word": "debajo",
+      "wordIndex": 33
+    },
+    {
+      "confidence": 0.9996197819709778,
+      "endSec": 12.120000000000001,
+      "needsReview": false,
+      "startSec": 12.08,
+      "word": "de",
+      "wordIndex": 34
+    },
+    {
+      "confidence": 0.9998062252998352,
+      "endSec": 12.24,
+      "needsReview": false,
+      "startSec": 12.18,
+      "word": "su",
+      "wordIndex": 35
+    },
+    {
+      "confidence": 0.9997444748878479,
+      "endSec": 12.6,
+      "needsReview": false,
+      "startSec": 12.3,
+      "word": "cuerpo",
+      "wordIndex": 36
+    },
+    {
+      "confidence": 6.075517831050092e-7,
+      "endSec": 13.1,
+      "needsReview": true,
+      "startSec": 12.66,
+      "word": "su",
+      "wordIndex": 37
+    },
+    {
+      "confidence": 0.8102549910545349,
+      "endSec": 13.66,
+      "needsReview": false,
+      "startSec": 13.28,
+      "word": "ataque",
+      "wordIndex": 38
+    },
+    {
+      "confidence": 0.8417032361030579,
+      "endSec": 13.92,
+      "needsReview": false,
+      "startSec": 13.84,
+      "word": "es",
+      "wordIndex": 39
+    },
+    {
+      "confidence": 0.9950394034385681,
+      "endSec": 14.459999999999999,
+      "needsReview": false,
+      "startSec": 13.959999999999999,
+      "word": "sencillo",
+      "wordIndex": 40
+    },
+    {
+      "confidence": 0.9998989701271057,
+      "endSec": 15.1,
+      "needsReview": false,
+      "startSec": 14.899999999999999,
+      "word": "cuando",
+      "wordIndex": 41
+    },
+    {
+      "confidence": 0.9997198581695557,
+      "endSec": 15.2,
+      "needsReview": false,
+      "startSec": 15.139999999999999,
+      "word": "un",
+      "wordIndex": 42
+    },
+    {
+      "confidence": 0.999970555305481,
+      "endSec": 15.479999999999999,
+      "needsReview": false,
+      "startSec": 15.26,
+      "word": "barco",
+      "wordIndex": 43
+    },
+    {
+      "confidence": 0.9999443292617798,
+      "endSec": 15.799999999999999,
+      "needsReview": false,
+      "startSec": 15.559999999999999,
+      "word": "pasa",
+      "wordIndex": 44
+    },
+    {
+      "confidence": 0.9999043941497803,
+      "endSec": 15.94,
+      "needsReview": false,
+      "startSec": 15.879999999999999,
+      "word": "lo",
+      "wordIndex": 45
+    },
+    {
+      "confidence": 0.992715060710907,
+      "endSec": 16.72,
+      "needsReview": false,
+      "startSec": 16,
+      "word": "suficientemente",
+      "wordIndex": 46
+    },
+    {
+      "confidence": 0.9969281554222107,
+      "endSec": 17.04,
+      "needsReview": false,
+      "startSec": 16.78,
+      "word": "cerca",
+      "wordIndex": 47
+    },
+    {
+      "confidence": 0.9998182654380798,
+      "endSec": 17.54,
+      "needsReview": false,
+      "startSec": 17.439999999999998,
+      "word": "las",
+      "wordIndex": 48
+    },
+    {
+      "confidence": 0.9999666213989258,
+      "endSec": 17.759999999999998,
+      "needsReview": false,
+      "startSec": 17.58,
+      "word": "seis",
+      "wordIndex": 49
+    },
+    {
+      "confidence": 0.9284529685974121,
+      "endSec": 18.2,
+      "needsReview": false,
+      "startSec": 17.799999999999997,
+      "word": "cabezas",
+      "wordIndex": 50
+    },
+    {
+      "confidence": 0.9998139142990112,
+      "endSec": 18.419999999999998,
+      "needsReview": false,
+      "startSec": 18.34,
+      "word": "se",
+      "wordIndex": 51
+    },
+    {
+      "confidence": 0.9792197346687317,
+      "endSec": 18.759999999999998,
+      "needsReview": false,
+      "startSec": 18.48,
+      "word": "mueven",
+      "wordIndex": 52
+    },
+    {
+      "confidence": 0.9987066984176636,
+      "endSec": 18.9,
+      "needsReview": false,
+      "startSec": 18.84,
+      "word": "al",
+      "wordIndex": 53
+    },
+    {
+      "confidence": 0.9999722838401794,
+      "endSec": 19.14,
+      "needsReview": false,
+      "startSec": 18.939999999999998,
+      "word": "mismo",
+      "wordIndex": 54
+    },
+    {
+      "confidence": 0.9999713897705078,
+      "endSec": 19.54,
+      "needsReview": false,
+      "startSec": 19.22,
+      "word": "tiempo",
+      "wordIndex": 55
+    },
+    {
+      "confidence": 0.9998509883880615,
+      "endSec": 20.32,
+      "needsReview": false,
+      "startSec": 20.16,
+      "word": "cada",
+      "wordIndex": 56
+    },
+    {
+      "confidence": 0.9999785423278809,
+      "endSec": 20.74,
+      "needsReview": false,
+      "startSec": 20.4,
+      "word": "cabeza",
+      "wordIndex": 57
+    },
+    {
+      "confidence": 0.9136863946914673,
+      "endSec": 21.26,
+      "needsReview": false,
+      "startSec": 20.9,
+      "word": "atrapa",
+      "wordIndex": 58
+    },
+    {
+      "confidence": 0.999115526676178,
+      "endSec": 21.4,
+      "needsReview": false,
+      "startSec": 21.38,
+      "word": "a",
+      "wordIndex": 59
+    },
+    {
+      "confidence": 0.9998456239700317,
+      "endSec": 21.56,
+      "needsReview": false,
+      "startSec": 21.5,
+      "word": "un",
+      "wordIndex": 60
+    },
+    {
+      "confidence": 0.9774345755577087,
+      "endSec": 21.98,
+      "needsReview": false,
+      "startSec": 21.6,
+      "word": "marinero",
+      "wordIndex": 61
+    },
+    {
+      "confidence": 0.9963212609291077,
+      "endSec": 22.08,
+      "needsReview": false,
+      "startSec": 22.02,
+      "word": "de",
+      "wordIndex": 62
+    },
+    {
+      "confidence": 0.998862624168396,
+      "endSec": 22.16,
+      "needsReview": false,
+      "startSec": 22.12,
+      "word": "la",
+      "wordIndex": 63
+    },
+    {
+      "confidence": 0.9999663829803467,
+      "endSec": 22.68,
+      "needsReview": false,
+      "startSec": 22.240000000000002,
+      "word": "cubierta",
+      "wordIndex": 64
+    },
+    {
+      "confidence": 0.9999715685844421,
+      "endSec": 23.54,
+      "needsReview": false,
+      "startSec": 23.32,
+      "word": "seis",
+      "wordIndex": 65
+    },
+    {
+      "confidence": 0.9999438524246216,
+      "endSec": 23.96,
+      "needsReview": false,
+      "startSec": 23.6,
+      "word": "cabezas",
+      "wordIndex": 66
+    },
+    {
+      "confidence": 0.9382510781288147,
+      "endSec": 24.5,
+      "needsReview": false,
+      "startSec": 24,
+      "word": "significan",
+      "wordIndex": 67
+    },
+    {
+      "confidence": 0.9999469518661499,
+      "endSec": 24.84,
+      "needsReview": false,
+      "startSec": 24.62,
+      "word": "seis",
+      "wordIndex": 68
+    },
+    {
+      "confidence": 0.9706618189811707,
+      "endSec": 25.38,
+      "needsReview": false,
+      "startSec": 24.9,
+      "word": "marineros",
+      "wordIndex": 69
+    },
+    {
+      "confidence": 0.8921453356742859,
+      "endSec": 25.72,
+      "needsReview": false,
+      "startSec": 25.64,
+      "word": "que",
+      "wordIndex": 70
+    },
+    {
+      "confidence": 0.9994298815727234,
+      "endSec": 26.34,
+      "needsReview": false,
+      "startSec": 25.76,
+      "word": "desaparecen",
+      "wordIndex": 71
+    },
+    {
+      "confidence": 0.9982240796089172,
+      "endSec": 26.52,
+      "needsReview": false,
+      "startSec": 26.46,
+      "word": "en",
+      "wordIndex": 72
+    },
+    {
+      "confidence": 0.9726068377494812,
+      "endSec": 26.62,
+      "needsReview": false,
+      "startSec": 26.560000000000002,
+      "word": "un",
+      "wordIndex": 73
+    },
+    {
+      "confidence": 0.9743035435676575,
+      "endSec": 26.84,
+      "needsReview": false,
+      "startSec": 26.68,
+      "word": "solo",
+      "wordIndex": 74
+    },
+    {
+      "confidence": 0.994586169719696,
+      "endSec": 27.22,
+      "needsReview": false,
+      "startSec": 26.9,
+      "word": "ataque",
+      "wordIndex": 75
+    },
+    {
+      "confidence": 0.9994471073150635,
+      "endSec": 28.08,
+      "needsReview": false,
+      "startSec": 28,
+      "word": "el",
+      "wordIndex": 76
+    },
+    {
+      "confidence": 0.9977614879608154,
+      "endSec": 28.42,
+      "needsReview": false,
+      "startSec": 28.1,
+      "word": "detalle",
+      "wordIndex": 77
+    },
+    {
+      "confidence": 0.9996452927589417,
+      "endSec": 29.02,
+      "needsReview": false,
+      "startSec": 28.46,
+      "word": "importante",
+      "wordIndex": 78
+    },
+    {
+      "confidence": 0.9998623728752136,
+      "endSec": 29.34,
+      "needsReview": false,
+      "startSec": 29.259999999999998,
+      "word": "es",
+      "wordIndex": 79
+    },
+    {
+      "confidence": 0.9820902943611145,
+      "endSec": 29.48,
+      "needsReview": false,
+      "startSec": 29.4,
+      "word": "que",
+      "wordIndex": 80
+    },
+    {
+      "confidence": 0.028147149831056595,
+      "endSec": 29.86,
+      "needsReview": true,
+      "startSec": 29.54,
+      "word": "scylla",
+      "wordIndex": 81
+    },
+    {
+      "confidence": 0.9999669790267944,
+      "endSec": 30.18,
+      "needsReview": false,
+      "startSec": 30.12,
+      "word": "no",
+      "wordIndex": 82
+    },
+    {
+      "confidence": 0.9963716268539429,
+      "endSec": 30.66,
+      "needsReview": false,
+      "startSec": 30.3,
+      "word": "persigue",
+      "wordIndex": 83
+    },
+    {
+      "confidence": 0.9180338978767395,
+      "endSec": 30.72,
+      "needsReview": false,
+      "startSec": 30.700000000000003,
+      "word": "a",
+      "wordIndex": 84
+    },
+    {
+      "confidence": 0.9981846213340759,
+      "endSec": 30.84,
+      "needsReview": false,
+      "startSec": 30.740000000000002,
+      "word": "los",
+      "wordIndex": 85
+    },
+    {
+      "confidence": 0.9838259220123291,
+      "endSec": 31.22,
+      "needsReview": false,
+      "startSec": 30.92,
+      "word": "barcos",
+      "wordIndex": 86
+    },
+    {
+      "confidence": 0.9997822642326355,
+      "endSec": 31.380000000000003,
+      "needsReview": false,
+      "startSec": 31.32,
+      "word": "en",
+      "wordIndex": 87
+    },
+    {
+      "confidence": 0.9999887943267822,
+      "endSec": 31.54,
+      "needsReview": false,
+      "startSec": 31.439999999999998,
+      "word": "mar",
+      "wordIndex": 88
+    },
+    {
+      "confidence": 0.9924208521842957,
+      "endSec": 32,
+      "needsReview": false,
+      "startSec": 31.58,
+      "word": "abierto",
+      "wordIndex": 89
+    },
+    {
+      "confidence": 0.8953918814659119,
+      "endSec": 32.480000000000004,
+      "needsReview": false,
+      "startSec": 32.38,
+      "word": "se",
+      "wordIndex": 90
+    },
+    {
+      "confidence": 0.9999261498451233,
+      "endSec": 32.88,
+      "needsReview": false,
+      "startSec": 32.54,
+      "word": "mantiene",
+      "wordIndex": 91
+    },
+    {
+      "confidence": 0.9999772310256958,
+      "endSec": 33.2,
+      "needsReview": false,
+      "startSec": 32.96,
+      "word": "cerca",
+      "wordIndex": 92
+    },
+    {
+      "confidence": 0.8688864707946777,
+      "endSec": 33.34,
+      "needsReview": false,
+      "startSec": 33.24,
+      "word": "del",
+      "wordIndex": 93
+    },
+    {
+      "confidence": 0.999954104423523,
+      "endSec": 33.96,
+      "needsReview": false,
+      "startSec": 33.4,
+      "word": "acantilado",
+      "wordIndex": 94
+    },
+    {
+      "confidence": 0.000003284863623775891,
+      "endSec": 34.44,
+      "needsReview": true,
+      "startSec": 34.3,
+      "word": "eso",
+      "wordIndex": 95
+    },
+    {
+      "confidence": 0.906417727470398,
+      "endSec": 35.160000000000004,
+      "needsReview": false,
+      "startSec": 34.68,
+      "word": "significa",
+      "wordIndex": 96
+    },
+    {
+      "confidence": 0.9732517004013062,
+      "endSec": 35.300000000000004,
+      "needsReview": false,
+      "startSec": 35.22,
+      "word": "que",
+      "wordIndex": 97
+    },
+    {
+      "confidence": 0.9996994733810425,
+      "endSec": 35.38,
+      "needsReview": false,
+      "startSec": 35.34,
+      "word": "la",
+      "wordIndex": 98
+    },
+    {
+      "confidence": 0.9712915420532227,
+      "endSec": 35.88,
+      "needsReview": false,
+      "startSec": 35.42,
+      "word": "estrategia",
+      "wordIndex": 99
+    },
+    {
+      "confidence": 0.9996152520179749,
+      "endSec": 36.06,
+      "needsReview": false,
+      "startSec": 35.96,
+      "word": "más",
+      "wordIndex": 100
+    },
+    {
+      "confidence": 0.9999672770500183,
+      "endSec": 36.44,
+      "needsReview": false,
+      "startSec": 36.120000000000005,
+      "word": "segura",
+      "wordIndex": 101
+    },
+    {
+      "confidence": 0.9999552369117737,
+      "endSec": 36.82,
+      "needsReview": false,
+      "startSec": 36.72,
+      "word": "no",
+      "wordIndex": 102
+    },
+    {
+      "confidence": 0.9999693632125854,
+      "endSec": 37,
+      "needsReview": false,
+      "startSec": 36.92,
+      "word": "es",
+      "wordIndex": 103
+    },
+    {
+      "confidence": 0.9775304794311523,
+      "endSec": 37.32,
+      "needsReview": false,
+      "startSec": 37.08,
+      "word": "luchar",
+      "wordIndex": 104
+    },
+    {
+      "confidence": 0.9891830086708069,
+      "endSec": 37.620000000000005,
+      "needsReview": false,
+      "startSec": 37.4,
+      "word": "contra",
+      "wordIndex": 105
+    },
+    {
+      "confidence": 0.9999362230300903,
+      "endSec": 37.92,
+      "needsReview": false,
+      "startSec": 37.7,
+      "word": "ella",
+      "wordIndex": 106
+    },
+    {
+      "confidence": 0.034895554184913635,
+      "endSec": 38.2,
+      "needsReview": true,
+      "startSec": 38.04,
+      "word": "es",
+      "wordIndex": 107
+    },
+    {
+      "confidence": 0.9997127652168274,
+      "endSec": 38.64,
+      "needsReview": false,
+      "startSec": 38.42,
+      "word": "seguir",
+      "wordIndex": 108
+    },
+    {
+      "confidence": 0.993850588798523,
+      "endSec": 39.24,
+      "needsReview": false,
+      "startSec": 38.7,
+      "word": "moviéndose",
+      "wordIndex": 109
+    },
+    {
+      "confidence": 0.9998700022697449,
+      "endSec": 39.68,
+      "needsReview": false,
+      "startSec": 39.44,
+      "word": "antes",
+      "wordIndex": 110
+    },
+    {
+      "confidence": 0.9997386336326599,
+      "endSec": 39.78,
+      "needsReview": false,
+      "startSec": 39.72,
+      "word": "de",
+      "wordIndex": 111
+    },
+    {
+      "confidence": 0.9726207256317139,
+      "endSec": 39.9,
+      "needsReview": false,
+      "startSec": 39.82,
+      "word": "que",
+      "wordIndex": 112
+    },
+    {
+      "confidence": 0.9814414381980896,
+      "endSec": 40.2,
+      "needsReview": false,
+      "startSec": 39.96,
+      "word": "pueda",
+      "wordIndex": 113
+    },
+    {
+      "confidence": 0.9237289428710938,
+      "endSec": 40.68,
+      "needsReview": false,
+      "startSec": 40.34,
+      "word": "atacar",
+      "wordIndex": 114
+    },
+    {
+      "confidence": 0.9995999336242676,
+      "endSec": 40.8,
+      "needsReview": false,
+      "startSec": 40.74,
+      "word": "de",
+      "wordIndex": 115
+    },
+    {
+      "confidence": 0.9991756677627563,
+      "endSec": 41.120000000000005,
+      "needsReview": false,
+      "startSec": 40.86,
+      "word": "nuevo",
+      "wordIndex": 116
+    },
+    {
+      "confidence": 0.990053653717041,
+      "endSec": 42.2,
+      "needsReview": false,
+      "startSec": 41.78,
+      "word": "odiseo",
+      "wordIndex": 117
+    },
+    {
+      "confidence": 0.9953231811523438,
+      "endSec": 42.3,
+      "needsReview": false,
+      "startSec": 42.24,
+      "word": "es",
+      "wordIndex": 118
+    },
+    {
+      "confidence": 0.9955911040306091,
+      "endSec": 42.78,
+      "needsReview": false,
+      "startSec": 42.36,
+      "word": "advertido",
+      "wordIndex": 119
+    },
+    {
+      "confidence": 0.9999399781227112,
+      "endSec": 43.04,
+      "needsReview": false,
+      "startSec": 42.86,
+      "word": "sobre",
+      "wordIndex": 120
+    },
+    {
+      "confidence": 0.9986405968666077,
+      "endSec": 43.28,
+      "needsReview": false,
+      "startSec": 43.1,
+      "word": "esto",
+      "wordIndex": 121
+    },
+    {
+      "confidence": 0.9999327659606934,
+      "endSec": 43.68,
+      "needsReview": false,
+      "startSec": 43.46,
+      "word": "antes",
+      "wordIndex": 122
+    },
+    {
+      "confidence": 0.9959762692451477,
+      "endSec": 43.78,
+      "needsReview": false,
+      "startSec": 43.72,
+      "word": "de",
+      "wordIndex": 123
+    },
+    {
+      "confidence": 0.999771773815155,
+      "endSec": 44.04,
+      "needsReview": false,
+      "startSec": 43.82,
+      "word": "llegar",
+      "wordIndex": 124
+    },
+    {
+      "confidence": 0.994901716709137,
+      "endSec": 44.160000000000004,
+      "needsReview": false,
+      "startSec": 44.1,
+      "word": "al",
+      "wordIndex": 125
+    },
+    {
+      "confidence": 0.1544404923915863,
+      "endSec": 44.5,
+      "needsReview": true,
+      "startSec": 44.24,
+      "word": "paso",
+      "wordIndex": 126
+    },
+    {
+      "confidence": 0.33269286155700684,
+      "endSec": 45.5,
+      "needsReview": false,
+      "startSec": 45.32,
+      "word": "aún",
+      "wordIndex": 127
+    },
+    {
+      "confidence": 0.9317067265510559,
+      "endSec": 45.74,
+      "needsReview": false,
+      "startSec": 45.56,
+      "word": "así",
+      "wordIndex": 128
+    },
+    {
+      "confidence": 0.9998645782470703,
+      "endSec": 46.32,
+      "needsReview": false,
+      "startSec": 46,
+      "word": "prepara",
+      "wordIndex": 129
+    },
+    {
+      "confidence": 0.9996945858001709,
+      "endSec": 46.5,
+      "needsReview": false,
+      "startSec": 46.38,
+      "word": "sus",
+      "wordIndex": 130
+    },
+    {
+      "confidence": 0.9996159672737122,
+      "endSec": 46.86,
+      "needsReview": false,
+      "startSec": 46.6,
+      "word": "armas",
+      "wordIndex": 131
+    },
+    {
+      "confidence": 0.9525187611579895,
+      "endSec": 47.36,
+      "needsReview": false,
+      "startSec": 47.2,
+      "word": "pero",
+      "wordIndex": 132
+    },
+    {
+      "confidence": 0.9992421865463257,
+      "endSec": 47.84,
+      "needsReview": false,
+      "startSec": 47.44,
+      "word": "resultan",
+      "wordIndex": 133
+    },
+    {
+      "confidence": 0.9994099736213684,
+      "endSec": 48.4,
+      "needsReview": false,
+      "startSec": 47.9,
+      "word": "inútiles",
+      "wordIndex": 134
+    },
+    {
+      "confidence": 0.02871699258685112,
+      "endSec": 49.18,
+      "needsReview": true,
+      "startSec": 48.9,
+      "word": "scylla",
+      "wordIndex": 135
+    },
+    {
+      "confidence": 0.9995977878570557,
+      "endSec": 49.34,
+      "needsReview": false,
+      "startSec": 49.260000000000005,
+      "word": "se",
+      "wordIndex": 136
+    },
+    {
+      "confidence": 0.9782464504241943,
+      "endSec": 49.6,
+      "needsReview": false,
+      "startSec": 49.38,
+      "word": "lleva",
+      "wordIndex": 137
+    },
+    {
+      "confidence": 0.9994744658470154,
+      "endSec": 49.72,
+      "needsReview": false,
+      "startSec": 49.7,
+      "word": "a",
+      "wordIndex": 138
+    },
+    {
+      "confidence": 0.9598415493965149,
+      "endSec": 50,
+      "needsReview": false,
+      "startSec": 49.8,
+      "word": "seis",
+      "wordIndex": 139
+    },
+    {
+      "confidence": 0.9998589754104614,
+      "endSec": 50.08,
+      "needsReview": false,
+      "startSec": 50.04,
+      "word": "de",
+      "wordIndex": 140
+    },
+    {
+      "confidence": 0.9977944493293762,
+      "endSec": 50.22,
+      "needsReview": false,
+      "startSec": 50.120000000000005,
+      "word": "sus",
+      "wordIndex": 141
+    },
+    {
+      "confidence": 0.9982390999794006,
+      "endSec": 50.620000000000005,
+      "needsReview": false,
+      "startSec": 50.28,
+      "word": "hombres",
+      "wordIndex": 142
+    },
+    {
+      "confidence": 0.9999446868896484,
+      "endSec": 51.2,
+      "needsReview": false,
+      "startSec": 50.900000000000006,
+      "word": "mientras",
+      "wordIndex": 143
+    },
+    {
+      "confidence": 0.9996272921562195,
+      "endSec": 51.34,
+      "needsReview": false,
+      "startSec": 51.28,
+      "word": "el",
+      "wordIndex": 144
+    },
+    {
+      "confidence": 0.9998799562454224,
+      "endSec": 51.64,
+      "needsReview": false,
+      "startSec": 51.38,
+      "word": "barco",
+      "wordIndex": 145
+    },
+    {
+      "confidence": 0.9942267537117004,
+      "endSec": 52.22,
+      "needsReview": false,
+      "startSec": 51.760000000000005,
+      "word": "continúa",
+      "wordIndex": 146
+    },
+    {
+      "confidence": 0.999894917011261,
+      "endSec": 52.36,
+      "needsReview": false,
+      "startSec": 52.3,
+      "word": "su",
+      "wordIndex": 147
+    },
+    {
+      "confidence": 0.9998423457145691,
+      "endSec": 52.78,
+      "needsReview": false,
+      "startSec": 52.44,
+      "word": "marcha",
+      "wordIndex": 148
+    },
+    {
+      "confidence": 0.9895820617675781,
+      "endSec": 53.86,
+      "needsReview": false,
+      "startSec": 53.38,
+      "word": "detenerse",
+      "wordIndex": 149
+    },
+    {
+      "confidence": 0.8072787523269653,
+      "endSec": 54.120000000000005,
+      "needsReview": false,
+      "startSec": 53.96,
+      "word": "solo",
+      "wordIndex": 150
+    },
+    {
+      "confidence": 0.9990979433059692,
+      "endSec": 54.24,
+      "needsReview": false,
+      "startSec": 54.18,
+      "word": "le",
+      "wordIndex": 151
+    },
+    {
+      "confidence": 0.9942657947540283,
+      "endSec": 54.519999999999996,
+      "needsReview": false,
+      "startSec": 54.28,
+      "word": "daría",
+      "wordIndex": 152
+    },
+    {
+      "confidence": 0.9999547004699707,
+      "endSec": 54.84,
+      "needsReview": false,
+      "startSec": 54.66,
+      "word": "otra",
+      "wordIndex": 153
+    },
+    {
+      "confidence": 0.9999670386314392,
+      "endSec": 55.519999999999996,
+      "needsReview": false,
+      "startSec": 54.92,
+      "word": "oportunidad",
+      "wordIndex": 154
+    },
+    {
+      "confidence": 0.052281659096479416,
+      "endSec": 56.44,
+      "needsReview": true,
+      "startSec": 56.16,
+      "word": "scylla",
+      "wordIndex": 155
+    },
+    {
+      "confidence": 0.9993529915809631,
+      "endSec": 56.78,
+      "needsReview": false,
+      "startSec": 56.5,
+      "word": "también",
+      "wordIndex": 156
+    },
+    {
+      "confidence": 0.999812126159668,
+      "endSec": 57.3,
+      "needsReview": false,
+      "startSec": 56.86,
+      "word": "comparte",
+      "wordIndex": 157
+    },
+    {
+      "confidence": 0.9986773133277893,
+      "endSec": 57.400000000000006,
+      "needsReview": false,
+      "startSec": 57.34,
+      "word": "el",
+      "wordIndex": 158
+    },
+    {
+      "confidence": 0.9998891949653625,
+      "endSec": 57.74,
+      "needsReview": false,
+      "startSec": 57.480000000000004,
+      "word": "paso",
+      "wordIndex": 159
+    },
+    {
+      "confidence": 0.9578176736831665,
+      "endSec": 57.94,
+      "needsReview": false,
+      "startSec": 57.82,
+      "word": "con",
+      "wordIndex": 160
+    },
+    {
+      "confidence": 0.9992263317108154,
+      "endSec": 58.46,
+      "needsReview": false,
+      "startSec": 57.980000000000004,
+      "word": "caribdis",
+      "wordIndex": 161
+    },
+    {
+      "confidence": 0.9998059272766113,
+      "endSec": 59.02,
+      "needsReview": false,
+      "startSec": 58.94,
+      "word": "un",
+      "wordIndex": 162
+    },
+    {
+      "confidence": 0.9996868968009949,
+      "endSec": 59.46,
+      "needsReview": false,
+      "startSec": 59.08,
+      "word": "remolino",
+      "wordIndex": 163
+    },
+    {
+      "confidence": 0.9999202489852905,
+      "endSec": 59.94,
+      "needsReview": false,
+      "startSec": 59.52,
+      "word": "gigante",
+      "wordIndex": 164
+    },
+    {
+      "confidence": 0.9983128905296326,
+      "endSec": 60.120000000000005,
+      "needsReview": false,
+      "startSec": 60.06,
+      "word": "en",
+      "wordIndex": 165
+    },
+    {
+      "confidence": 0.9878697991371155,
+      "endSec": 60.24,
+      "needsReview": false,
+      "startSec": 60.18,
+      "word": "el",
+      "wordIndex": 166
+    },
+    {
+      "confidence": 0.9998899102210999,
+      "endSec": 60.46,
+      "needsReview": false,
+      "startSec": 60.28,
+      "word": "lado",
+      "wordIndex": 167
+    },
+    {
+      "confidence": 0.9959558248519897,
+      "endSec": 60.980000000000004,
+      "needsReview": false,
+      "startSec": 60.540000000000006,
+      "word": "opuesto",
+      "wordIndex": 168
+    },
+    {
+      "confidence": 0.000009447122465644497,
+      "endSec": 61.28,
+      "needsReview": true,
+      "startSec": 61.2,
+      "word": "por",
+      "wordIndex": 169
+    },
+    {
+      "confidence": 0.0000035889013361156685,
+      "endSec": 61.34,
+      "needsReview": true,
+      "startSec": 61.3,
+      "word": "lo",
+      "wordIndex": 170
+    },
+    {
+      "confidence": 0.999883770942688,
+      "endSec": 61.68,
+      "needsReview": false,
+      "startSec": 61.62,
+      "word": "que",
+      "wordIndex": 171
+    },
+    {
+      "confidence": 0.9996160864830017,
+      "endSec": 61.78,
+      "needsReview": false,
+      "startSec": 61.74,
+      "word": "la",
+      "wordIndex": 172
+    },
+    {
+      "confidence": 0.9964484572410583,
+      "endSec": 62.46,
+      "needsReview": false,
+      "startSec": 61.839999999999996,
+      "word": "tripulación",
+      "wordIndex": 173
+    },
+    {
+      "confidence": 0.999963641166687,
+      "endSec": 62.7,
+      "needsReview": false,
+      "startSec": 62.64,
+      "word": "no",
+      "wordIndex": 174
+    },
+    {
+      "confidence": 0.9998876452445984,
+      "endSec": 63,
+      "needsReview": false,
+      "startSec": 62.8,
+      "word": "puede",
+      "wordIndex": 175
+    },
+    {
+      "confidence": 0.9998305439949036,
+      "endSec": 63.6,
+      "needsReview": false,
+      "startSec": 63.06,
+      "word": "simplemente",
+      "wordIndex": 176
+    },
+    {
+      "confidence": 0.9199375510215759,
+      "endSec": 64.3,
+      "needsReview": false,
+      "startSec": 63.8,
+      "word": "alejarse",
+      "wordIndex": 177
+    },
+    {
+      "confidence": 0.998772919178009,
+      "endSec": 64.56,
+      "needsReview": false,
+      "startSec": 64.36,
+      "word": "más",
+      "wordIndex": 178
+    },
+    {
+      "confidence": 0.9996187090873718,
+      "endSec": 65.98,
+      "needsReview": false,
+      "startSec": 65.62,
+      "word": "navegar",
+      "wordIndex": 179
+    },
+    {
+      "confidence": 0.9982653856277466,
+      "endSec": 66.36,
+      "needsReview": false,
+      "startSec": 66.1,
+      "word": "cerca",
+      "wordIndex": 180
+    },
+    {
+      "confidence": 0.9990595579147339,
+      "endSec": 66.46,
+      "needsReview": false,
+      "startSec": 66.4,
+      "word": "de",
+      "wordIndex": 181
+    },
+    {
+      "confidence": 0.012974641285836697,
+      "endSec": 66.84,
+      "needsReview": true,
+      "startSec": 66.53999999999999,
+      "word": "scylla",
+      "wordIndex": 182
+    },
+    {
+      "confidence": 0.9997041821479797,
+      "endSec": 67.26,
+      "needsReview": false,
+      "startSec": 66.96,
+      "word": "cuesta",
+      "wordIndex": 183
+    },
+    {
+      "confidence": 0.99968022108078,
+      "endSec": 67.53999999999999,
+      "needsReview": false,
+      "startSec": 67.36,
+      "word": "seis",
+      "wordIndex": 184
+    },
+    {
+      "confidence": 0.9999468922615051,
+      "endSec": 68.1,
+      "needsReview": false,
+      "startSec": 67.6,
+      "word": "marineros",
+      "wordIndex": 185
+    },
+    {
+      "confidence": 0.999707043170929,
+      "endSec": 68.92,
+      "needsReview": false,
+      "startSec": 68.6,
+      "word": "navegar",
+      "wordIndex": 186
+    },
+    {
+      "confidence": 0.9795246720314026,
+      "endSec": 69.26,
+      "needsReview": false,
+      "startSec": 69.02,
+      "word": "cerca",
+      "wordIndex": 187
+    },
+    {
+      "confidence": 0.999376118183136,
+      "endSec": 69.34,
+      "needsReview": false,
+      "startSec": 69.3,
+      "word": "de",
+      "wordIndex": 188
+    },
+    {
+      "confidence": 0.9964242577552795,
+      "endSec": 69.88,
+      "needsReview": false,
+      "startSec": 69.4,
+      "word": "caribdis",
+      "wordIndex": 189
+    },
+    {
+      "confidence": 0.9997464418411255,
+      "endSec": 70.34,
+      "needsReview": false,
+      "startSec": 70.12,
+      "word": "puede",
+      "wordIndex": 190
+    },
+    {
+      "confidence": 0.9863128066062927,
+      "endSec": 70.82,
+      "needsReview": false,
+      "startSec": 70.4,
+      "word": "destruir",
+      "wordIndex": 191
+    },
+    {
+      "confidence": 0.9993323683738708,
+      "endSec": 71.02,
+      "needsReview": false,
+      "startSec": 70.96,
+      "word": "el",
+      "wordIndex": 192
+    },
+    {
+      "confidence": 0.9271882176399231,
+      "endSec": 71.34,
+      "needsReview": false,
+      "startSec": 71.1,
+      "word": "barco",
+      "wordIndex": 193
+    },
+    {
+      "confidence": 0.9465785622596741,
+      "endSec": 71.7,
+      "needsReview": false,
+      "startSec": 71.38,
+      "word": "entero",
+      "wordIndex": 194
+    },
+    {
+      "confidence": 0.9998302459716797,
+      "endSec": 72.24,
+      "needsReview": false,
+      "startSec": 72.22,
+      "word": "a",
+      "wordIndex": 195
+    },
+    {
+      "confidence": 0.3673630952835083,
+      "endSec": 72.7,
+      "needsReview": false,
+      "startSec": 72.3,
+      "word": "odiseo",
+      "wordIndex": 196
+    },
+    {
+      "confidence": 0.9997707009315491,
+      "endSec": 72.82,
+      "needsReview": false,
+      "startSec": 72.76,
+      "word": "se",
+      "wordIndex": 197
+    },
+    {
+      "confidence": 0.9963290095329285,
+      "endSec": 72.92,
+      "needsReview": false,
+      "startSec": 72.86,
+      "word": "le",
+      "wordIndex": 198
+    },
+    {
+      "confidence": 0.9995487332344055,
+      "endSec": 73.2,
+      "needsReview": false,
+      "startSec": 72.98,
+      "word": "dice",
+      "wordIndex": 199
+    },
+    {
+      "confidence": 0.9994949102401733,
+      "endSec": 73.34,
+      "needsReview": false,
+      "startSec": 73.26,
+      "word": "que",
+      "wordIndex": 200
+    },
+    {
+      "confidence": 0.9981777667999268,
+      "endSec": 73.7,
+      "needsReview": false,
+      "startSec": 73.4,
+      "word": "elija",
+      "wordIndex": 201
+    },
+    {
+      "confidence": 0.999271810054779,
+      "endSec": 73.8,
+      "needsReview": false,
+      "startSec": 73.78,
+      "word": "a",
+      "wordIndex": 202
+    },
+    {
+      "confidence": 0.0404033325612545,
+      "endSec": 74.18,
+      "needsReview": true,
+      "startSec": 73.86,
+      "word": "scylla",
+      "wordIndex": 203
+    },
+    {
+      "confidence": 0.9719707369804382,
+      "endSec": 74.5,
+      "needsReview": false,
+      "startSec": 74.28,
+      "word": "porque",
+      "wordIndex": 204
+    },
+    {
+      "confidence": 0.992903470993042,
+      "endSec": 74.84,
+      "needsReview": false,
+      "startSec": 74.56,
+      "word": "perder",
+      "wordIndex": 205
+    },
+    {
+      "confidence": 0.9993863105773926,
+      "endSec": 74.92,
+      "needsReview": false,
+      "startSec": 74.9,
+      "word": "a",
+      "wordIndex": 206
+    },
+    {
+      "confidence": 0.9999700784683228,
+      "endSec": 75.16,
+      "needsReview": false,
+      "startSec": 75,
+      "word": "seis",
+      "wordIndex": 207
+    },
+    {
+      "confidence": 0.9995506405830383,
+      "endSec": 75.7,
+      "needsReview": false,
+      "startSec": 75.22,
+      "word": "personas",
+      "wordIndex": 208
+    },
+    {
+      "confidence": 0.9999723434448242,
+      "endSec": 76,
+      "needsReview": false,
+      "startSec": 75.94,
+      "word": "es",
+      "wordIndex": 209
+    },
+    {
+      "confidence": 0.9917511940002441,
+      "endSec": 76.32,
+      "needsReview": false,
+      "startSec": 76.06,
+      "word": "mejor",
+      "wordIndex": 210
+    },
+    {
+      "confidence": 0.9610356092453003,
+      "endSec": 76.44,
+      "needsReview": false,
+      "startSec": 76.36,
+      "word": "que",
+      "wordIndex": 211
+    },
+    {
+      "confidence": 0.9999432563781738,
+      "endSec": 76.88,
+      "needsReview": false,
+      "startSec": 76.5,
+      "word": "perderlo",
+      "wordIndex": 212
+    },
+    {
+      "confidence": 0.9782316088676453,
+      "endSec": 77.18,
+      "needsReview": false,
+      "startSec": 76.96,
+      "word": "todo",
+      "wordIndex": 213
+    },
+    {
+      "confidence": 0.9998204708099365,
+      "endSec": 78.12,
+      "needsReview": false,
+      "startSec": 77.62,
+      "word": "tradiciones",
+      "wordIndex": 214
+    },
+    {
+      "confidence": 0.9997583031654358,
+      "endSec": 78.74,
+      "needsReview": false,
+      "startSec": 78.2,
+      "word": "posteriores",
+      "wordIndex": 215
+    },
+    {
+      "confidence": 0.9999338984489441,
+      "endSec": 79.26,
+      "needsReview": false,
+      "startSec": 78.88,
+      "word": "situaron",
+      "wordIndex": 216
+    },
+    {
+      "confidence": 0.9991158843040466,
+      "endSec": 79.38,
+      "needsReview": false,
+      "startSec": 79.32,
+      "word": "el",
+      "wordIndex": 217
+    },
+    {
+      "confidence": 0.9997031092643738,
+      "endSec": 79.74,
+      "needsReview": false,
+      "startSec": 79.46000000000001,
+      "word": "paso",
+      "wordIndex": 218
+    },
+    {
+      "confidence": 0.9984670877456665,
+      "endSec": 79.96000000000001,
+      "needsReview": false,
+      "startSec": 79.9,
+      "word": "en",
+      "wordIndex": 219
+    },
+    {
+      "confidence": 0.985677182674408,
+      "endSec": 80.06,
+      "needsReview": false,
+      "startSec": 80,
+      "word": "el",
+      "wordIndex": 220
+    },
+    {
+      "confidence": 0.943759024143219,
+      "endSec": 80.48,
+      "needsReview": false,
+      "startSec": 80.12,
+      "word": "estrecho",
+      "wordIndex": 221
+    },
+    {
+      "confidence": 0.8892050981521606,
+      "endSec": 80.58,
+      "needsReview": false,
+      "startSec": 80.52,
+      "word": "de",
+      "wordIndex": 222
+    },
+    {
+      "confidence": 0.6653085947036743,
+      "endSec": 81.03999999999999,
+      "needsReview": false,
+      "startSec": 80.62,
+      "word": "mesina",
+      "wordIndex": 223
+    },
+    {
+      "confidence": 0.9920865893363953,
+      "endSec": 81.78,
+      "needsReview": false,
+      "startSec": 81.53999999999999,
+      "word": "entre",
+      "wordIndex": 224
+    },
+    {
+      "confidence": 0.9991971850395203,
+      "endSec": 82.34,
+      "needsReview": false,
+      "startSec": 81.84,
+      "word": "sicilia",
+      "wordIndex": 225
+    },
+    {
+      "confidence": 0.9992226362228394,
+      "endSec": 82.52,
+      "needsReview": false,
+      "startSec": 82.5,
+      "word": "e",
+      "wordIndex": 226
+    },
+    {
+      "confidence": 0.9373424053192139,
+      "endSec": 82.98,
+      "needsReview": false,
+      "startSec": 82.6,
+      "word": "italia",
+      "wordIndex": 227
+    },
+    {
+      "confidence": 0.9999409317970276,
+      "endSec": 83.6,
+      "needsReview": false,
+      "startSec": 83.08,
+      "word": "peninsular",
+      "wordIndex": 228
+    },
+    {
+      "confidence": 0.9997536540031433,
+      "endSec": 84.44,
+      "needsReview": false,
+      "startSec": 84.38,
+      "word": "la",
+      "wordIndex": 229
+    },
+    {
+      "confidence": 0.9998578429222107,
+      "endSec": 84.84,
+      "needsReview": false,
+      "startSec": 84.52,
+      "word": "frase",
+      "wordIndex": 230
+    },
+    {
+      "confidence": 0.9999579191207886,
+      "endSec": 85.18,
+      "needsReview": false,
+      "startSec": 85,
+      "word": "entre",
+      "wordIndex": 231
+    },
+    {
+      "confidence": 0.006237218622118235,
+      "endSec": 85.5,
+      "needsReview": true,
+      "startSec": 85.26,
+      "word": "scylla",
+      "wordIndex": 232
+    },
+    {
+      "confidence": 0.9966394305229187,
+      "endSec": 85.64,
+      "needsReview": false,
+      "startSec": 85.6,
+      "word": "y",
+      "wordIndex": 233
+    },
+    {
+      "confidence": 0.9985030293464661,
+      "endSec": 86.16,
+      "needsReview": false,
+      "startSec": 85.7,
+      "word": "caribdis",
+      "wordIndex": 234
+    },
+    {
+      "confidence": 0.9998950362205505,
+      "endSec": 86.68,
+      "needsReview": false,
+      "startSec": 86.6,
+      "word": "se",
+      "wordIndex": 235
+    },
+    {
+      "confidence": 0.9640286564826965,
+      "endSec": 87.14,
+      "needsReview": false,
+      "startSec": 86.74,
+      "word": "convirtió",
+      "wordIndex": 236
+    },
+    {
+      "confidence": 0.9983295798301697,
+      "endSec": 87.3,
+      "needsReview": false,
+      "startSec": 87.24,
+      "word": "en",
+      "wordIndex": 237
+    },
+    {
+      "confidence": 0.989686131477356,
+      "endSec": 87.44,
+      "needsReview": false,
+      "startSec": 87.34,
+      "word": "una",
+      "wordIndex": 238
+    },
+    {
+      "confidence": 0.9994411468505859,
+      "endSec": 87.76,
+      "needsReview": false,
+      "startSec": 87.52,
+      "word": "forma",
+      "wordIndex": 239
+    },
+    {
+      "confidence": 0.999752402305603,
+      "endSec": 87.86,
+      "needsReview": false,
+      "startSec": 87.8,
+      "word": "de",
+      "wordIndex": 240
+    },
+    {
+      "confidence": 0.9846092462539673,
+      "endSec": 88.38,
+      "needsReview": false,
+      "startSec": 87.92,
+      "word": "describir",
+      "wordIndex": 241
+    },
+    {
+      "confidence": 0.9972223043441772,
+      "endSec": 88.6,
+      "needsReview": false,
+      "startSec": 88.53999999999999,
+      "word": "el",
+      "wordIndex": 242
+    },
+    {
+      "confidence": 0.9996255040168762,
+      "endSec": 88.86,
+      "needsReview": false,
+      "startSec": 88.66,
+      "word": "estar",
+      "wordIndex": 243
+    },
+    {
+      "confidence": 0.9977267980575562,
+      "endSec": 89.38,
+      "needsReview": false,
+      "startSec": 88.92,
+      "word": "atrapado",
+      "wordIndex": 244
+    },
+    {
+      "confidence": 0.9994275569915771,
+      "endSec": 89.8,
+      "needsReview": false,
+      "startSec": 89.56,
+      "word": "entre",
+      "wordIndex": 245
+    },
+    {
+      "confidence": 0.9999788403511047,
+      "endSec": 90.03999999999999,
+      "needsReview": false,
+      "startSec": 89.88,
+      "word": "dos",
+      "wordIndex": 246
+    },
+    {
+      "confidence": 0.9980418682098389,
+      "endSec": 90.53999999999999,
+      "needsReview": false,
+      "startSec": 90.16,
+      "word": "opciones",
+      "wordIndex": 247
+    },
+    {
+      "confidence": 0.9442004561424255,
+      "endSec": 91.2,
+      "needsReview": false,
+      "startSec": 90.6,
+      "word": "peligrosas",
+      "wordIndex": 248
+    }
+  ]
+}

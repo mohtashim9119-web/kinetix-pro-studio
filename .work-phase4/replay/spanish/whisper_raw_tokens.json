@@ -1,0 +1,2001 @@
+{
+  "_runId": "p-20260819T134528Z-89e8823a",
+  "n_tokens": 399,
+  "tokens": [
+    {
+      "text": "S",
+      "startSec": 0.12,
+      "endSec": 0.24
+    },
+    {
+      "text": "illa",
+      "startSec": 0.24,
+      "endSec": 0.64
+    },
+    {
+      "text": ".",
+      "startSec": 0.64,
+      "endSec": 0.84
+    },
+    {
+      "text": "S",
+      "startSec": 0.84,
+      "endSec": 0.92
+    },
+    {
+      "text": "illa",
+      "startSec": 0.92,
+      "endSec": 1.21
+    },
+    {
+      "text": "es",
+      "startSec": 1.21,
+      "endSec": 1.42
+    },
+    {
+      "text": "un",
+      "startSec": 1.42,
+      "endSec": 1.5
+    },
+    {
+      "text": "mon",
+      "startSec": 1.5,
+      "endSec": 1.7
+    },
+    {
+      "text": "stru",
+      "startSec": 1.7,
+      "endSec": 1.99
+    },
+    {
+      "text": "o",
+      "startSec": 1.99,
+      "endSec": 2.06
+    },
+    {
+      "text": "que",
+      "startSec": 2.06,
+      "endSec": 2.27
+    },
+    {
+      "text": "vive",
+      "startSec": 2.27,
+      "endSec": 2.6
+    },
+    {
+      "text": "dentro",
+      "startSec": 2.6,
+      "endSec": 2.99
+    },
+    {
+      "text": "de",
+      "startSec": 2.99,
+      "endSec": 3.13
+    },
+    {
+      "text": "un",
+      "startSec": 3.13,
+      "endSec": 3.34
+    },
+    {
+      "text": "ac",
+      "startSec": 3.34,
+      "endSec": 3.48
+    },
+    {
+      "text": "ant",
+      "startSec": 3.48,
+      "endSec": 3.7
+    },
+    {
+      "text": "il",
+      "startSec": 3.7,
+      "endSec": 3.84
+    },
+    {
+      "text": "ado",
+      "startSec": 3.84,
+      "endSec": 4.12
+    },
+    {
+      "text": "junto",
+      "startSec": 4.12,
+      "endSec": 4.43
+    },
+    {
+      "text": "a",
+      "startSec": 4.43,
+      "endSec": 4.5
+    },
+    {
+      "text": "un",
+      "startSec": 4.5,
+      "endSec": 4.68
+    },
+    {
+      "text": "estre",
+      "startSec": 4.68,
+      "endSec": 4.94
+    },
+    {
+      "text": "cho",
+      "startSec": 4.94,
+      "endSec": 5.09
+    },
+    {
+      "text": "paso",
+      "startSec": 5.09,
+      "endSec": 5.25
+    },
+    {
+      "text": "mar",
+      "startSec": 5.25,
+      "endSec": 5.37
+    },
+    {
+      "text": "ít",
+      "startSec": 5.37,
+      "endSec": 5.49
+    },
+    {
+      "text": "imo",
+      "startSec": 5.49,
+      "endSec": 5.6
+    },
+    {
+      "text": ".",
+      "startSec": 5.6,
+      "endSec": 5.76
+    },
+    {
+      "text": "T",
+      "startSec": 6.32,
+      "endSec": 6.32
+    },
+    {
+      "text": "iene",
+      "startSec": 6.32,
+      "endSec": 6.35
+    },
+    {
+      "text": "6",
+      "startSec": 6.35,
+      "endSec": 6.42
+    },
+    {
+      "text": "c",
+      "startSec": 6.42,
+      "endSec": 6.56
+    },
+    {
+      "text": "uell",
+      "startSec": 6.56,
+      "endSec": 6.72
+    },
+    {
+      "text": "os",
+      "startSec": 6.72,
+      "endSec": 6.86
+    },
+    {
+      "text": "larg",
+      "startSec": 6.86,
+      "endSec": 7.16
+    },
+    {
+      "text": "os",
+      "startSec": 7.16,
+      "endSec": 7.32
+    },
+    {
+      "text": ",",
+      "startSec": 7.32,
+      "endSec": 7.55
+    },
+    {
+      "text": "6",
+      "startSec": 7.55,
+      "endSec": 7.74
+    },
+    {
+      "text": "cab",
+      "startSec": 7.74,
+      "endSec": 7.91
+    },
+    {
+      "text": "ez",
+      "startSec": 7.91,
+      "endSec": 8.06
+    },
+    {
+      "text": "as",
+      "startSec": 8.06,
+      "endSec": 8.24
+    },
+    {
+      "text": ",",
+      "startSec": 8.24,
+      "endSec": 8.37
+    },
+    {
+      "text": "3",
+      "startSec": 8.37,
+      "endSec": 8.58
+    },
+    {
+      "text": "h",
+      "startSec": 8.58,
+      "endSec": 8.65
+    },
+    {
+      "text": "iler",
+      "startSec": 8.65,
+      "endSec": 8.95
+    },
+    {
+      "text": "as",
+      "startSec": 8.95,
+      "endSec": 9.1
+    },
+    {
+      "text": "de",
+      "startSec": 9.1,
+      "endSec": 9.25
+    },
+    {
+      "text": "di",
+      "startSec": 9.25,
+      "endSec": 9.4
+    },
+    {
+      "text": "entes",
+      "startSec": 9.4,
+      "endSec": 9.78
+    },
+    {
+      "text": "en",
+      "startSec": 9.78,
+      "endSec": 9.93
+    },
+    {
+      "text": "cada",
+      "startSec": 9.93,
+      "endSec": 10.23
+    },
+    {
+      "text": "boca",
+      "startSec": 10.23,
+      "endSec": 10.53
+    },
+    {
+      "text": "y",
+      "startSec": 10.53,
+      "endSec": 10.63
+    },
+    {
+      "text": "12",
+      "startSec": 10.63,
+      "endSec": 11.13
+    },
+    {
+      "text": "pat",
+      "startSec": 11.13,
+      "endSec": 11.27
+    },
+    {
+      "text": "as",
+      "startSec": 11.27,
+      "endSec": 11.42
+    },
+    {
+      "text": "deb",
+      "startSec": 11.42,
+      "endSec": 11.64
+    },
+    {
+      "text": "ajo",
+      "startSec": 11.64,
+      "endSec": 11.88
+    },
+    {
+      "text": "de",
+      "startSec": 11.88,
+      "endSec": 12.3
+    },
+    {
+      "text": "su",
+      "startSec": 12.3,
+      "endSec": 12.3
+    },
+    {
+      "text": "cuerpo",
+      "startSec": 12.3,
+      "endSec": 12.7
+    },
+    {
+      "text": ".",
+      "startSec": 12.7,
+      "endSec": 12.89
+    },
+    {
+      "text": "Su",
+      "startSec": 12.89,
+      "endSec": 13.01
+    },
+    {
+      "text": "ataque",
+      "startSec": 13.01,
+      "endSec": 13.41
+    },
+    {
+      "text": "es",
+      "startSec": 13.41,
+      "endSec": 13.72
+    },
+    {
+      "text": "sencill",
+      "startSec": 13.72,
+      "endSec": 14.01
+    },
+    {
+      "text": "o",
+      "startSec": 14.01,
+      "endSec": 14.07
+    },
+    {
+      "text": ".",
+      "startSec": 14.07,
+      "endSec": 14.26
+    },
+    {
+      "text": "Cuando",
+      "startSec": 14.26,
+      "endSec": 14.66
+    },
+    {
+      "text": "un",
+      "startSec": 14.66,
+      "endSec": 14.79
+    },
+    {
+      "text": "bar",
+      "startSec": 14.79,
+      "endSec": 14.99
+    },
+    {
+      "text": "co",
+      "startSec": 14.99,
+      "endSec": 15.12
+    },
+    {
+      "text": "pasa",
+      "startSec": 15.12,
+      "endSec": 15.38
+    },
+    {
+      "text": "lo",
+      "startSec": 15.38,
+      "endSec": 15.51
+    },
+    {
+      "text": "su",
+      "startSec": 15.51,
+      "endSec": 15.64
+    },
+    {
+      "text": "fic",
+      "startSec": 15.64,
+      "endSec": 15.83
+    },
+    {
+      "text": "ient",
+      "startSec": 15.83,
+      "endSec": 16.09
+    },
+    {
+      "text": "emente",
+      "startSec": 16.09,
+      "endSec": 16.48
+    },
+    {
+      "text": "cerca",
+      "startSec": 16.48,
+      "endSec": 16.81
+    },
+    {
+      "text": ",",
+      "startSec": 16.81,
+      "endSec": 17.11
+    },
+    {
+      "text": "las",
+      "startSec": 17.11,
+      "endSec": 17.31
+    },
+    {
+      "text": "6",
+      "startSec": 17.31,
+      "endSec": 17.58
+    },
+    {
+      "text": "cab",
+      "startSec": 17.58,
+      "endSec": 17.87
+    },
+    {
+      "text": "ez",
+      "startSec": 17.87,
+      "endSec": 18.03
+    },
+    {
+      "text": "as",
+      "startSec": 18.03,
+      "endSec": 18.27
+    },
+    {
+      "text": "se",
+      "startSec": 18.27,
+      "endSec": 18.46
+    },
+    {
+      "text": "mue",
+      "startSec": 18.46,
+      "endSec": 18.7
+    },
+    {
+      "text": "ven",
+      "startSec": 18.7,
+      "endSec": 18.88
+    },
+    {
+      "text": "al",
+      "startSec": 18.88,
+      "endSec": 19.01
+    },
+    {
+      "text": "mismo",
+      "startSec": 19.01,
+      "endSec": 19.37
+    },
+    {
+      "text": "tiempo",
+      "startSec": 19.37,
+      "endSec": 19.88
+    },
+    {
+      "text": ".",
+      "startSec": 19.88,
+      "endSec": 20.02
+    },
+    {
+      "text": "Cada",
+      "startSec": 20.02,
+      "endSec": 20.38
+    },
+    {
+      "text": "cabeza",
+      "startSec": 20.38,
+      "endSec": 20.73
+    },
+    {
+      "text": "at",
+      "startSec": 20.73,
+      "endSec": 20.89
+    },
+    {
+      "text": "rap",
+      "startSec": 20.89,
+      "endSec": 21.08
+    },
+    {
+      "text": "a",
+      "startSec": 21.08,
+      "endSec": 21.15
+    },
+    {
+      "text": "a",
+      "startSec": 21.15,
+      "endSec": 21.22
+    },
+    {
+      "text": "un",
+      "startSec": 21.22,
+      "endSec": 21.36
+    },
+    {
+      "text": "marin",
+      "startSec": 21.36,
+      "endSec": 21.72
+    },
+    {
+      "text": "ero",
+      "startSec": 21.72,
+      "endSec": 21.93
+    },
+    {
+      "text": "de",
+      "startSec": 21.93,
+      "endSec": 22.07
+    },
+    {
+      "text": "la",
+      "startSec": 22.07,
+      "endSec": 22.21
+    },
+    {
+      "text": "cub",
+      "startSec": 22.21,
+      "endSec": 22.58
+    },
+    {
+      "text": "ier",
+      "startSec": 22.58,
+      "endSec": 22.63
+    },
+    {
+      "text": "ta",
+      "startSec": 22.63,
+      "endSec": 22.77
+    },
+    {
+      "text": ".",
+      "startSec": 22.77,
+      "endSec": 22.98
+    },
+    {
+      "text": "6",
+      "startSec": 22.98,
+      "endSec": 23.27
+    },
+    {
+      "text": "cab",
+      "startSec": 23.27,
+      "endSec": 23.4
+    },
+    {
+      "text": "ez",
+      "startSec": 23.4,
+      "endSec": 23.55
+    },
+    {
+      "text": "as",
+      "startSec": 23.55,
+      "endSec": 23.67
+    },
+    {
+      "text": "signific",
+      "startSec": 23.67,
+      "endSec": 24.2
+    },
+    {
+      "text": "an",
+      "startSec": 24.2,
+      "endSec": 24.77
+    },
+    {
+      "text": "6",
+      "startSec": 24.77,
+      "endSec": 24.84
+    },
+    {
+      "text": "mar",
+      "startSec": 25.03,
+      "endSec": 25.08
+    },
+    {
+      "text": "iner",
+      "startSec": 25.08,
+      "endSec": 25.35
+    },
+    {
+      "text": "os",
+      "startSec": 25.35,
+      "endSec": 25.48
+    },
+    {
+      "text": "que",
+      "startSec": 25.48,
+      "endSec": 26.26
+    },
+    {
+      "text": "desapare",
+      "startSec": 26.26,
+      "endSec": 26.34
+    },
+    {
+      "text": "cen",
+      "startSec": 26.34,
+      "endSec": 26.5
+    },
+    {
+      "text": "en",
+      "startSec": 26.5,
+      "endSec": 26.64
+    },
+    {
+      "text": "un",
+      "startSec": 26.64,
+      "endSec": 26.78
+    },
+    {
+      "text": "solo",
+      "startSec": 26.78,
+      "endSec": 27.07
+    },
+    {
+      "text": "ataque",
+      "startSec": 27.07,
+      "endSec": 27.51
+    },
+    {
+      "text": ".",
+      "startSec": 27.51,
+      "endSec": 27.72
+    },
+    {
+      "text": "El",
+      "startSec": 27.72,
+      "endSec": 27.86
+    },
+    {
+      "text": "det",
+      "startSec": 27.86,
+      "endSec": 28.08
+    },
+    {
+      "text": "alle",
+      "startSec": 28.08,
+      "endSec": 28.37
+    },
+    {
+      "text": "importante",
+      "startSec": 28.37,
+      "endSec": 29.1
+    },
+    {
+      "text": "es",
+      "startSec": 29.1,
+      "endSec": 29.24
+    },
+    {
+      "text": "que",
+      "startSec": 29.24,
+      "endSec": 29.46
+    },
+    {
+      "text": "S",
+      "startSec": 29.46,
+      "endSec": 29.53
+    },
+    {
+      "text": "illa",
+      "startSec": 29.53,
+      "endSec": 29.82
+    },
+    {
+      "text": "no",
+      "startSec": 29.82,
+      "endSec": 29.96
+    },
+    {
+      "text": "pers",
+      "startSec": 29.96,
+      "endSec": 30.25
+    },
+    {
+      "text": "igue",
+      "startSec": 30.25,
+      "endSec": 30.63
+    },
+    {
+      "text": "a",
+      "startSec": 30.63,
+      "endSec": 30.77
+    },
+    {
+      "text": "los",
+      "startSec": 30.77,
+      "endSec": 30.88
+    },
+    {
+      "text": "bar",
+      "startSec": 30.88,
+      "endSec": 31.12
+    },
+    {
+      "text": "cos",
+      "startSec": 31.12,
+      "endSec": 31.26
+    },
+    {
+      "text": "en",
+      "startSec": 31.26,
+      "endSec": 31.38
+    },
+    {
+      "text": "mar",
+      "startSec": 31.38,
+      "endSec": 31.55
+    },
+    {
+      "text": "ab",
+      "startSec": 31.55,
+      "endSec": 31.68
+    },
+    {
+      "text": "ierto",
+      "startSec": 31.68,
+      "endSec": 32
+    },
+    {
+      "text": ".",
+      "startSec": 32,
+      "endSec": 32.3
+    },
+    {
+      "text": "Se",
+      "startSec": 32.3,
+      "endSec": 32.38
+    },
+    {
+      "text": "mant",
+      "startSec": 32.38,
+      "endSec": 32.56
+    },
+    {
+      "text": "iene",
+      "startSec": 32.56,
+      "endSec": 32.81
+    },
+    {
+      "text": "cerca",
+      "startSec": 32.81,
+      "endSec": 33.12
+    },
+    {
+      "text": "del",
+      "startSec": 33.12,
+      "endSec": 33.3
+    },
+    {
+      "text": "ac",
+      "startSec": 33.3,
+      "endSec": 33.48
+    },
+    {
+      "text": "ant",
+      "startSec": 33.48,
+      "endSec": 33.62
+    },
+    {
+      "text": "il",
+      "startSec": 33.62,
+      "endSec": 33.74
+    },
+    {
+      "text": "ado",
+      "startSec": 33.74,
+      "endSec": 33.94
+    },
+    {
+      "text": ".",
+      "startSec": 33.94,
+      "endSec": 34.12
+    },
+    {
+      "text": "Eso",
+      "startSec": 34.12,
+      "endSec": 34.33
+    },
+    {
+      "text": "significa",
+      "startSec": 34.33,
+      "endSec": 35
+    },
+    {
+      "text": "que",
+      "startSec": 35,
+      "endSec": 35.07
+    },
+    {
+      "text": "la",
+      "startSec": 35.07,
+      "endSec": 35.19
+    },
+    {
+      "text": "estr",
+      "startSec": 35.19,
+      "endSec": 35.44
+    },
+    {
+      "text": "ateg",
+      "startSec": 35.44,
+      "endSec": 35.69
+    },
+    {
+      "text": "ia",
+      "startSec": 35.69,
+      "endSec": 35.97
+    },
+    {
+      "text": "más",
+      "startSec": 35.97,
+      "endSec": 36.1
+    },
+    {
+      "text": "seg",
+      "startSec": 36.1,
+      "endSec": 36.34
+    },
+    {
+      "text": "ura",
+      "startSec": 36.34,
+      "endSec": 36.46
+    },
+    {
+      "text": "no",
+      "startSec": 36.46,
+      "endSec": 36.58
+    },
+    {
+      "text": "es",
+      "startSec": 36.58,
+      "endSec": 36.7
+    },
+    {
+      "text": "l",
+      "startSec": 36.7,
+      "endSec": 36.76
+    },
+    {
+      "text": "uchar",
+      "startSec": 36.76,
+      "endSec": 37.06
+    },
+    {
+      "text": "contra",
+      "startSec": 37.06,
+      "endSec": 37.52
+    },
+    {
+      "text": "ella",
+      "startSec": 37.52,
+      "endSec": 37.69
+    },
+    {
+      "text": ",",
+      "startSec": 37.69,
+      "endSec": 37.81
+    },
+    {
+      "text": "sino",
+      "startSec": 37.81,
+      "endSec": 38.06
+    },
+    {
+      "text": "seguir",
+      "startSec": 38.06,
+      "endSec": 38.43
+    },
+    {
+      "text": "mov",
+      "startSec": 38.43,
+      "endSec": 38.61
+    },
+    {
+      "text": "i",
+      "startSec": 38.61,
+      "endSec": 38.7
+    },
+    {
+      "text": "énd",
+      "startSec": 38.7,
+      "endSec": 38.91
+    },
+    {
+      "text": "ose",
+      "startSec": 38.91,
+      "endSec": 39.09
+    },
+    {
+      "text": "antes",
+      "startSec": 39.09,
+      "endSec": 39.4
+    },
+    {
+      "text": "de",
+      "startSec": 39.4,
+      "endSec": 39.55
+    },
+    {
+      "text": "que",
+      "startSec": 39.55,
+      "endSec": 39.7
+    },
+    {
+      "text": "pueda",
+      "startSec": 39.7,
+      "endSec": 40.01
+    },
+    {
+      "text": "atac",
+      "startSec": 40.01,
+      "endSec": 40.26
+    },
+    {
+      "text": "ar",
+      "startSec": 40.26,
+      "endSec": 40.41
+    },
+    {
+      "text": "de",
+      "startSec": 40.41,
+      "endSec": 40.5
+    },
+    {
+      "text": "nuevo",
+      "startSec": 40.5,
+      "endSec": 40.81
+    },
+    {
+      "text": ".",
+      "startSec": 40.81,
+      "endSec": 41.1
+    },
+    {
+      "text": "Od",
+      "startSec": 41.74,
+      "endSec": 41.74
+    },
+    {
+      "text": "ise",
+      "startSec": 41.74,
+      "endSec": 41.74
+    },
+    {
+      "text": "o",
+      "startSec": 41.74,
+      "endSec": 41.74
+    },
+    {
+      "text": "es",
+      "startSec": 41.74,
+      "endSec": 41.98
+    },
+    {
+      "text": "advert",
+      "startSec": 41.98,
+      "endSec": 42.14
+    },
+    {
+      "text": "ido",
+      "startSec": 42.14,
+      "endSec": 42.36
+    },
+    {
+      "text": "sobre",
+      "startSec": 42.36,
+      "endSec": 42.73
+    },
+    {
+      "text": "esto",
+      "startSec": 42.73,
+      "endSec": 43.17
+    },
+    {
+      "text": "antes",
+      "startSec": 43.17,
+      "endSec": 43.42
+    },
+    {
+      "text": "de",
+      "startSec": 43.42,
+      "endSec": 43.66
+    },
+    {
+      "text": "llegar",
+      "startSec": 43.66,
+      "endSec": 44.02
+    },
+    {
+      "text": "al",
+      "startSec": 44.02,
+      "endSec": 44.16
+    },
+    {
+      "text": "p",
+      "startSec": 44.16,
+      "endSec": 44.24
+    },
+    {
+      "text": "so",
+      "startSec": 44.24,
+      "endSec": 44.39
+    },
+    {
+      "text": "e",
+      "startSec": 44.39,
+      "endSec": 44.46
+    },
+    {
+      "text": ".",
+      "startSec": 44.46,
+      "endSec": 44.68
+    },
+    {
+      "text": "A",
+      "startSec": 44.68,
+      "endSec": 44.75
+    },
+    {
+      "text": "ún",
+      "startSec": 44.75,
+      "endSec": 44.97
+    },
+    {
+      "text": "así",
+      "startSec": 44.97,
+      "endSec": 45.27
+    },
+    {
+      "text": ",",
+      "startSec": 45.27,
+      "endSec": 45.42
+    },
+    {
+      "text": "prepar",
+      "startSec": 45.42,
+      "endSec": 45.87
+    },
+    {
+      "text": "a",
+      "startSec": 45.87,
+      "endSec": 45.94
+    },
+    {
+      "text": "sus",
+      "startSec": 45.94,
+      "endSec": 46.16
+    },
+    {
+      "text": "armas",
+      "startSec": 46.16,
+      "endSec": 46.55
+    },
+    {
+      "text": ",",
+      "startSec": 46.55,
+      "endSec": 46.83
+    },
+    {
+      "text": "pero",
+      "startSec": 46.83,
+      "endSec": 47.15
+    },
+    {
+      "text": "result",
+      "startSec": 47.15,
+      "endSec": 47.68
+    },
+    {
+      "text": "an",
+      "startSec": 47.68,
+      "endSec": 47.86
+    },
+    {
+      "text": "in",
+      "startSec": 47.86,
+      "endSec": 48.1
+    },
+    {
+      "text": "út",
+      "startSec": 48.1,
+      "endSec": 48.21
+    },
+    {
+      "text": "iles",
+      "startSec": 48.21,
+      "endSec": 48.48
+    },
+    {
+      "text": ".",
+      "startSec": 48.48,
+      "endSec": 48.7
+    },
+    {
+      "text": "S",
+      "startSec": 48.7,
+      "endSec": 48.77
+    },
+    {
+      "text": "illa",
+      "startSec": 48.77,
+      "endSec": 49.05
+    },
+    {
+      "text": "se",
+      "startSec": 49.05,
+      "endSec": 49.29
+    },
+    {
+      "text": "lleva",
+      "startSec": 49.29,
+      "endSec": 49.54
+    },
+    {
+      "text": "a",
+      "startSec": 49.54,
+      "endSec": 49.61
+    },
+    {
+      "text": "6",
+      "startSec": 49.61,
+      "endSec": 49.82
+    },
+    {
+      "text": "de",
+      "startSec": 49.82,
+      "endSec": 49.96
+    },
+    {
+      "text": "sus",
+      "startSec": 49.96,
+      "endSec": 50.17
+    },
+    {
+      "text": "hombres",
+      "startSec": 50.17,
+      "endSec": 50.67
+    },
+    {
+      "text": "mientras",
+      "startSec": 50.67,
+      "endSec": 51.24
+    },
+    {
+      "text": "el",
+      "startSec": 51.24,
+      "endSec": 51.38
+    },
+    {
+      "text": "bar",
+      "startSec": 51.38,
+      "endSec": 51.59
+    },
+    {
+      "text": "co",
+      "startSec": 51.59,
+      "endSec": 51.73
+    },
+    {
+      "text": "contin",
+      "startSec": 51.73,
+      "endSec": 52.17
+    },
+    {
+      "text": "úa",
+      "startSec": 52.17,
+      "endSec": 52.37
+    },
+    {
+      "text": "su",
+      "startSec": 52.37,
+      "endSec": 52.51
+    },
+    {
+      "text": "march",
+      "startSec": 52.51,
+      "endSec": 52.86
+    },
+    {
+      "text": "a",
+      "startSec": 52.86,
+      "endSec": 52.95
+    },
+    {
+      "text": ".",
+      "startSec": 52.95,
+      "endSec": 53.14
+    },
+    {
+      "text": "Det",
+      "startSec": 53.14,
+      "endSec": 53.35
+    },
+    {
+      "text": "ener",
+      "startSec": 53.35,
+      "endSec": 53.62
+    },
+    {
+      "text": "se",
+      "startSec": 53.62,
+      "endSec": 54.09
+    },
+    {
+      "text": "solo",
+      "startSec": 54.09,
+      "endSec": 54.17
+    },
+    {
+      "text": "le",
+      "startSec": 54.17,
+      "endSec": 54.28
+    },
+    {
+      "text": "dar",
+      "startSec": 54.47,
+      "endSec": 54.52
+    },
+    {
+      "text": "ía",
+      "startSec": 54.52,
+      "endSec": 54.68
+    },
+    {
+      "text": "otra",
+      "startSec": 54.68,
+      "endSec": 54.94
+    },
+    {
+      "text": "oportunidad",
+      "startSec": 54.94,
+      "endSec": 55.78
+    },
+    {
+      "text": ".",
+      "startSec": 55.78,
+      "endSec": 55.91
+    },
+    {
+      "text": "S",
+      "startSec": 55.91,
+      "endSec": 55.98
+    },
+    {
+      "text": "illa",
+      "startSec": 55.98,
+      "endSec": 56.25
+    },
+    {
+      "text": "también",
+      "startSec": 56.25,
+      "endSec": 56.8
+    },
+    {
+      "text": "comp",
+      "startSec": 56.8,
+      "endSec": 57.07
+    },
+    {
+      "text": "arte",
+      "startSec": 57.07,
+      "endSec": 57.34
+    },
+    {
+      "text": "el",
+      "startSec": 57.34,
+      "endSec": 57.48
+    },
+    {
+      "text": "paso",
+      "startSec": 57.48,
+      "endSec": 57.75
+    },
+    {
+      "text": "con",
+      "startSec": 57.75,
+      "endSec": 57.95
+    },
+    {
+      "text": "Carib",
+      "startSec": 57.95,
+      "endSec": 58.4
+    },
+    {
+      "text": "dis",
+      "startSec": 58.4,
+      "endSec": 58.49
+    },
+    {
+      "text": ",",
+      "startSec": 58.49,
+      "endSec": 58.62
+    },
+    {
+      "text": "un",
+      "startSec": 58.62,
+      "endSec": 58.76
+    },
+    {
+      "text": "rem",
+      "startSec": 58.76,
+      "endSec": 58.96
+    },
+    {
+      "text": "ol",
+      "startSec": 58.96,
+      "endSec": 59.09
+    },
+    {
+      "text": "ino",
+      "startSec": 59.09,
+      "endSec": 59.29
+    },
+    {
+      "text": "gig",
+      "startSec": 59.29,
+      "endSec": 59.49
+    },
+    {
+      "text": "ante",
+      "startSec": 59.49,
+      "endSec": 59.93
+    },
+    {
+      "text": "en",
+      "startSec": 59.93,
+      "endSec": 60.28
+    },
+    {
+      "text": "el",
+      "startSec": 60.28,
+      "endSec": 60.28
+    },
+    {
+      "text": "lado",
+      "startSec": 60.28,
+      "endSec": 60.46
+    },
+    {
+      "text": "op",
+      "startSec": 60.46,
+      "endSec": 60.7
+    },
+    {
+      "text": "uesto",
+      "startSec": 60.7,
+      "endSec": 60.91
+    },
+    {
+      "text": ",",
+      "startSec": 60.91,
+      "endSec": 61.03
+    },
+    {
+      "text": "por",
+      "startSec": 61.03,
+      "endSec": 61.25
+    },
+    {
+      "text": "lo",
+      "startSec": 61.25,
+      "endSec": 61.35
+    },
+    {
+      "text": "que",
+      "startSec": 61.35,
+      "endSec": 61.54
+    },
+    {
+      "text": "la",
+      "startSec": 61.54,
+      "endSec": 61.88
+    },
+    {
+      "text": "trip",
+      "startSec": 61.88,
+      "endSec": 61.94
+    },
+    {
+      "text": "ul",
+      "startSec": 61.94,
+      "endSec": 62.05
+    },
+    {
+      "text": "ación",
+      "startSec": 62.05,
+      "endSec": 62.43
+    },
+    {
+      "text": "no",
+      "startSec": 62.43,
+      "endSec": 62.56
+    },
+    {
+      "text": "puede",
+      "startSec": 62.56,
+      "endSec": 62.89
+    },
+    {
+      "text": "simplemente",
+      "startSec": 62.89,
+      "endSec": 63.59
+    },
+    {
+      "text": "ale",
+      "startSec": 63.59,
+      "endSec": 63.78
+    },
+    {
+      "text": "jar",
+      "startSec": 63.78,
+      "endSec": 63.97
+    },
+    {
+      "text": "se",
+      "startSec": 63.97,
+      "endSec": 64.09
+    },
+    {
+      "text": "más",
+      "startSec": 64.09,
+      "endSec": 64.35
+    },
+    {
+      "text": ".",
+      "startSec": 64.35,
+      "endSec": 64.62
+    },
+    {
+      "text": "N",
+      "startSec": 64.62,
+      "endSec": 64.77
+    },
+    {
+      "text": "ave",
+      "startSec": 64.77,
+      "endSec": 65.16
+    },
+    {
+      "text": "gar",
+      "startSec": 65.16,
+      "endSec": 65.57
+    },
+    {
+      "text": "cerca",
+      "startSec": 65.57,
+      "endSec": 66.2
+    },
+    {
+      "text": "de",
+      "startSec": 66.2,
+      "endSec": 66.56
+    },
+    {
+      "text": "S",
+      "startSec": 66.56,
+      "endSec": 66.8
+    },
+    {
+      "text": "illa",
+      "startSec": 66.8,
+      "endSec": 66.92
+    },
+    {
+      "text": "cu",
+      "startSec": 66.92,
+      "endSec": 67.06
+    },
+    {
+      "text": "esta",
+      "startSec": 67.06,
+      "endSec": 67.34
+    },
+    {
+      "text": "6",
+      "startSec": 67.34,
+      "endSec": 67.57
+    },
+    {
+      "text": "mar",
+      "startSec": 67.57,
+      "endSec": 67.98
+    },
+    {
+      "text": "iner",
+      "startSec": 67.98,
+      "endSec": 68.09
+    },
+    {
+      "text": "os",
+      "startSec": 68.09,
+      "endSec": 68.22
+    },
+    {
+      "text": ".",
+      "startSec": 68.22,
+      "endSec": 68.48
+    },
+    {
+      "text": "N",
+      "startSec": 68.48,
+      "endSec": 68.5
+    },
+    {
+      "text": "ave",
+      "startSec": 68.5,
+      "endSec": 68.71000000000001
+    },
+    {
+      "text": "gar",
+      "startSec": 68.71000000000001,
+      "endSec": 68.99
+    },
+    {
+      "text": "cerca",
+      "startSec": 68.99,
+      "endSec": 69.28
+    },
+    {
+      "text": "de",
+      "startSec": 69.28,
+      "endSec": 69.42
+    },
+    {
+      "text": "Carib",
+      "startSec": 69.42,
+      "endSec": 69.78
+    },
+    {
+      "text": "dis",
+      "startSec": 69.78,
+      "endSec": 70.01
+    },
+    {
+      "text": "puede",
+      "startSec": 70.01,
+      "endSec": 70.35
+    },
+    {
+      "text": "destru",
+      "startSec": 70.35,
+      "endSec": 70.78
+    },
+    {
+      "text": "ir",
+      "startSec": 70.78,
+      "endSec": 70.92
+    },
+    {
+      "text": "el",
+      "startSec": 70.92,
+      "endSec": 71.06
+    },
+    {
+      "text": "bar",
+      "startSec": 71.06,
+      "endSec": 71.28
+    },
+    {
+      "text": "co",
+      "startSec": 71.28,
+      "endSec": 71.42
+    },
+    {
+      "text": "ent",
+      "startSec": 71.42,
+      "endSec": 71.65
+    },
+    {
+      "text": "ero",
+      "startSec": 71.65,
+      "endSec": 71.85
+    },
+    {
+      "text": ".",
+      "startSec": 71.85,
+      "endSec": 72.06
+    },
+    {
+      "text": "A",
+      "startSec": 72.06,
+      "endSec": 72.27
+    },
+    {
+      "text": "Od",
+      "startSec": 72.27,
+      "endSec": 72.56
+    },
+    {
+      "text": "ise",
+      "startSec": 72.56,
+      "endSec": 72.61
+    },
+    {
+      "text": "o",
+      "startSec": 72.61,
+      "endSec": 72.78999999999999
+    },
+    {
+      "text": "se",
+      "startSec": 72.78999999999999,
+      "endSec": 72.87
+    },
+    {
+      "text": "le",
+      "startSec": 72.87,
+      "endSec": 72.96000000000001
+    },
+    {
+      "text": "dice",
+      "startSec": 72.96000000000001,
+      "endSec": 73.22
+    },
+    {
+      "text": "que",
+      "startSec": 73.22,
+      "endSec": 73.4
+    },
+    {
+      "text": "el",
+      "startSec": 73.4,
+      "endSec": 73.53
+    },
+    {
+      "text": "ija",
+      "startSec": 73.53,
+      "endSec": 73.76
+    },
+    {
+      "text": "a",
+      "startSec": 73.76,
+      "endSec": 73.76
+    },
+    {
+      "text": "S",
+      "startSec": 73.76,
+      "endSec": 73.84
+    },
+    {
+      "text": "illa",
+      "startSec": 73.84,
+      "endSec": 74.38
+    },
+    {
+      "text": "porque",
+      "startSec": 74.38,
+      "endSec": 74.49
+    },
+    {
+      "text": "perder",
+      "startSec": 74.49,
+      "endSec": 74.88
+    },
+    {
+      "text": "a",
+      "startSec": 74.88,
+      "endSec": 74.91
+    },
+    {
+      "text": "6",
+      "startSec": 74.91,
+      "endSec": 75.1
+    },
+    {
+      "text": "personas",
+      "startSec": 75.1,
+      "endSec": 75.61
+    },
+    {
+      "text": "es",
+      "startSec": 75.61,
+      "endSec": 75.74
+    },
+    {
+      "text": "mejor",
+      "startSec": 75.74,
+      "endSec": 76.06
+    },
+    {
+      "text": "que",
+      "startSec": 76.06,
+      "endSec": 76.25
+    },
+    {
+      "text": "perder",
+      "startSec": 76.25,
+      "endSec": 76.63
+    },
+    {
+      "text": "lo",
+      "startSec": 76.63,
+      "endSec": 76.75
+    },
+    {
+      "text": "todo",
+      "startSec": 76.75,
+      "endSec": 77.08
+    },
+    {
+      "text": ".",
+      "startSec": 77.08,
+      "endSec": 77.19
+    },
+    {
+      "text": "Trad",
+      "startSec": 77.19,
+      "endSec": 77.44
+    },
+    {
+      "text": "iciones",
+      "startSec": 77.44,
+      "endSec": 77.9
+    },
+    {
+      "text": "poster",
+      "startSec": 77.9,
+      "endSec": 78.27
+    },
+    {
+      "text": "i",
+      "startSec": 78.27,
+      "endSec": 78.33
+    },
+    {
+      "text": "ores",
+      "startSec": 78.33,
+      "endSec": 78.74
+    },
+    {
+      "text": "situ",
+      "startSec": 78.95,
+      "endSec": 79.03999999999999
+    },
+    {
+      "text": "aron",
+      "startSec": 79.03999999999999,
+      "endSec": 79.34
+    },
+    {
+      "text": "el",
+      "startSec": 79.34,
+      "endSec": 79.48
+    },
+    {
+      "text": "paso",
+      "startSec": 79.48,
+      "endSec": 79.78999999999999
+    },
+    {
+      "text": "en",
+      "startSec": 79.78999999999999,
+      "endSec": 79.94
+    },
+    {
+      "text": "el",
+      "startSec": 79.94,
+      "endSec": 80.17
+    },
+    {
+      "text": "estre",
+      "startSec": 80.17,
+      "endSec": 80.47
+    },
+    {
+      "text": "cho",
+      "startSec": 80.47,
+      "endSec": 80.69
+    },
+    {
+      "text": "de",
+      "startSec": 80.69,
+      "endSec": 80.84
+    },
+    {
+      "text": "Mes",
+      "startSec": 80.84,
+      "endSec": 81.07
+    },
+    {
+      "text": "ina",
+      "startSec": 81.07,
+      "endSec": 81.34
+    },
+    {
+      "text": ",",
+      "startSec": 81.34,
+      "endSec": 81.44
+    },
+    {
+      "text": "entre",
+      "startSec": 81.44,
+      "endSec": 81.82
+    },
+    {
+      "text": "Sic",
+      "startSec": 81.82,
+      "endSec": 82.05
+    },
+    {
+      "text": "ilia",
+      "startSec": 82.05,
+      "endSec": 82.35
+    },
+    {
+      "text": "e",
+      "startSec": 82.35,
+      "endSec": 82.42
+    },
+    {
+      "text": "Italia",
+      "startSec": 82.42,
+      "endSec": 82.96000000000001
+    },
+    {
+      "text": "pen",
+      "startSec": 82.96000000000001,
+      "endSec": 83.18
+    },
+    {
+      "text": "ins",
+      "startSec": 83.18,
+      "endSec": 83.4
+    },
+    {
+      "text": "ular",
+      "startSec": 83.4,
+      "endSec": 83.69
+    },
+    {
+      "text": ".",
+      "startSec": 83.69,
+      "endSec": 83.92
+    },
+    {
+      "text": "La",
+      "startSec": 83.92,
+      "endSec": 84.15
+    },
+    {
+      "text": "frase",
+      "startSec": 84.15,
+      "endSec": 84.82
+    },
+    {
+      "text": "entre",
+      "startSec": 84.82,
+      "endSec": 85.16
+    },
+    {
+      "text": "S",
+      "startSec": 85.16,
+      "endSec": 85.22
+    },
+    {
+      "text": "illa",
+      "startSec": 85.22,
+      "endSec": 85.48
+    },
+    {
+      "text": "y",
+      "startSec": 85.48,
+      "endSec": 85.55
+    },
+    {
+      "text": "Carib",
+      "startSec": 85.55,
+      "endSec": 85.88
+    },
+    {
+      "text": "dis",
+      "startSec": 85.88,
+      "endSec": 86.16
+    },
+    {
+      "text": "se",
+      "startSec": 86.16,
+      "endSec": 86.32
+    },
+    {
+      "text": "conv",
+      "startSec": 86.32,
+      "endSec": 86.49
+    },
+    {
+      "text": "irt",
+      "startSec": 86.49,
+      "endSec": 86.74
+    },
+    {
+      "text": "ió",
+      "startSec": 86.74,
+      "endSec": 86.89
+    },
+    {
+      "text": "en",
+      "startSec": 86.89,
+      "endSec": 87.02
+    },
+    {
+      "text": "una",
+      "startSec": 87.02,
+      "endSec": 87.25
+    },
+    {
+      "text": "forma",
+      "startSec": 87.25,
+      "endSec": 87.56
+    },
+    {
+      "text": "de",
+      "startSec": 87.56,
+      "endSec": 87.69
+    },
+    {
+      "text": "descri",
+      "startSec": 87.69,
+      "endSec": 88.1
+    },
+    {
+      "text": "bir",
+      "startSec": 88.1,
+      "endSec": 88.3
+    },
+    {
+      "text": "el",
+      "startSec": 88.3,
+      "endSec": 88.43
+    },
+    {
+      "text": "estar",
+      "startSec": 88.43,
+      "endSec": 88.77
+    },
+    {
+      "text": "at",
+      "startSec": 88.77,
+      "endSec": 88.94
+    },
+    {
+      "text": "rap",
+      "startSec": 88.94,
+      "endSec": 89.13
+    },
+    {
+      "text": "ado",
+      "startSec": 89.13,
+      "endSec": 89.3
+    },
+    {
+      "text": "entre",
+      "startSec": 89.3,
+      "endSec": 89.76
+    },
+    {
+      "text": "dos",
+      "startSec": 89.76,
+      "endSec": 90.08
+    },
+    {
+      "text": "op",
+      "startSec": 90.08,
+      "endSec": 90.18
+    },
+    {
+      "text": "ciones",
+      "startSec": 90.18,
+      "endSec": 90.5
+    },
+    {
+      "text": "pelig",
+      "startSec": 90.5,
+      "endSec": 90.78
+    },
+    {
+      "text": "ros",
+      "startSec": 90.78,
+      "endSec": 90.95
+    },
+    {
+      "text": "as",
+      "startSec": 90.95,
+      "endSec": 91.05
+    },
+    {
+      "text": ".",
+      "startSec": 91.05,
+      "endSec": 91.24
+    }
+  ]
+}

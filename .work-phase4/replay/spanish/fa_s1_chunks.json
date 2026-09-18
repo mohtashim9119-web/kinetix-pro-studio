@@ -1,0 +1,44 @@
+{
+  "_source": {
+    "note": "WS1 Session AG — S1 (trailing-silence text fold) applied to the production four-argument computeFaChunkPlan call. Same segments/whisper/silences/duration as fa_live_chunks.json; the ONLY difference is foldPhantomTails=true.",
+    "baselinePlan": "fa_live_chunks.json",
+    "baselineRunId": "p-20260819T134528Z-89e8823a",
+    "baselineChunks": 5,
+    "folds": 3,
+    "wordsMoved": 4
+  },
+  "audioDuration": 92.04,
+  "language": "es",
+  "chunks": [
+    {
+      "startSec": 0,
+      "endSec": 13.12,
+      "text": "Scylla. Scylla es un monstruo que vive dentro de un acantilado junto a un estrecho paso marítimo. Tiene seis cuellos largos, seis cabezas, tres hileras de dientes en cada boca y 12 patas debajo de su cuerpo."
+    },
+    {
+      "startSec": 13.12,
+      "endSec": 20.16,
+      "text": "Su ataque es sencillo. Cuando un barco pasa lo suficientemente cerca, las seis cabezas se mueven al mismo tiempo."
+    },
+    {
+      "startSec": 20.16,
+      "endSec": 34.46,
+      "text": "Cada cabeza atrapa a un marinero de la cubierta. Seis cabezas significan seis marineros que desaparecen en un solo ataque. El detalle importante es que Scylla no persigue a los barcos en mar abierto. Se mantiene cerca del acantilado."
+    },
+    {
+      "startSec": 34.46,
+      "endSec": 61.36,
+      "text": "Eso significa que la estrategia más segura no es luchar contra ella. Es seguir moviéndose antes de que pueda atacar de nuevo. Odiseo es advertido sobre esto antes de llegar al paso. Aún así, prepara sus armas, pero resultan inútiles. Scylla se lleva a seis de sus hombres mientras el barco continúa su marcha. Detenerse solo le daría otra oportunidad. Scylla también comparte el paso con Caribdis, un remolino gigante en el lado opuesto,"
+    },
+    {
+      "startSec": 61.36,
+      "endSec": 65.58,
+      "text": "por lo"
+    },
+    {
+      "startSec": 65.58,
+      "endSec": 92.04,
+      "text": "que la tripulación no puede simplemente alejarse más. Navegar cerca de Scylla cuesta seis marineros. Navegar cerca de Caribdis puede destruir el barco entero. A Odiseo se le dice que elija a Scylla porque perder a seis personas es mejor que perderlo todo. Tradiciones posteriores situaron el paso en el estrecho de Mesina, entre Sicilia e Italia peninsular. La frase «entre Scylla y Caribdis» se convirtió en una forma de describir el estar atrapado entre dos opciones peligrosas."
+    }
+  ]
+}

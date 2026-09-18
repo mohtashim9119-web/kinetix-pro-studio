@@ -1,0 +1,10416 @@
+{
+  "_runId": "ak-20260823T174719Z-7d9c1245",
+  "n_tokens": 2082,
+  "tokens": [
+    {
+      "text": "Some",
+      "startSec": 0.16,
+      "endSec": 0.28
+    },
+    {
+      "text": "places",
+      "startSec": 0.28,
+      "endSec": 0.71
+    },
+    {
+      "text": "in",
+      "startSec": 0.71,
+      "endSec": 0.85
+    },
+    {
+      "text": "the",
+      "startSec": 0.85,
+      "endSec": 1.08
+    },
+    {
+      "text": "41",
+      "startSec": 1.08,
+      "endSec": 1.49
+    },
+    {
+      "text": "st",
+      "startSec": 1.49,
+      "endSec": 1.7
+    },
+    {
+      "text": "millenn",
+      "startSec": 1.7,
+      "endSec": 2.13
+    },
+    {
+      "text": "ium",
+      "startSec": 2.13,
+      "endSec": 2.38
+    },
+    {
+      "text": "don",
+      "startSec": 2.38,
+      "endSec": 2.63
+    },
+    {
+      "text": "'t",
+      "startSec": 2.63,
+      "endSec": 2.66
+    },
+    {
+      "text": "just",
+      "startSec": 2.66,
+      "endSec": 2.89
+    },
+    {
+      "text": "kill",
+      "startSec": 2.89,
+      "endSec": 3.23
+    },
+    {
+      "text": "soldiers",
+      "startSec": 3.23,
+      "endSec": 3.58
+    },
+    {
+      "text": ".",
+      "startSec": 3.58,
+      "endSec": 3.78
+    },
+    {
+      "text": "They",
+      "startSec": 4.36,
+      "endSec": 4.44
+    },
+    {
+      "text": "take",
+      "startSec": 4.44,
+      "endSec": 4.52
+    },
+    {
+      "text": "apart",
+      "startSec": 4.52,
+      "endSec": 4.9
+    },
+    {
+      "text": "the",
+      "startSec": 4.9,
+      "endSec": 5.1
+    },
+    {
+      "text": "conditions",
+      "startSec": 5.1,
+      "endSec": 6.06
+    },
+    {
+      "text": "under",
+      "startSec": 6.06,
+      "endSec": 6.29
+    },
+    {
+      "text": "which",
+      "startSec": 6.29,
+      "endSec": 6.58
+    },
+    {
+      "text": "a",
+      "startSec": 6.58,
+      "endSec": 6.64
+    },
+    {
+      "text": "soldier",
+      "startSec": 6.64,
+      "endSec": 7.1
+    },
+    {
+      "text": "can",
+      "startSec": 7.1,
+      "endSec": 7.29
+    },
+    {
+      "text": "function",
+      "startSec": 7.29,
+      "endSec": 7.82
+    },
+    {
+      "text": "in",
+      "startSec": 7.82,
+      "endSec": 7.93
+    },
+    {
+      "text": "the",
+      "startSec": 7.93,
+      "endSec": 8.1
+    },
+    {
+      "text": "first",
+      "startSec": 8.1,
+      "endSec": 8.66
+    },
+    {
+      "text": "place",
+      "startSec": 8.66,
+      "endSec": 8.73
+    },
+    {
+      "text": ".",
+      "startSec": 8.73,
+      "endSec": 8.86
+    },
+    {
+      "text": "Training",
+      "startSec": 9.36,
+      "endSec": 9.52
+    },
+    {
+      "text": ",",
+      "startSec": 9.52,
+      "endSec": 9.59
+    },
+    {
+      "text": "equipment",
+      "startSec": 9.59,
+      "endSec": 10.25
+    },
+    {
+      "text": ",",
+      "startSec": 10.25,
+      "endSec": 10.44
+    },
+    {
+      "text": "formation",
+      "startSec": 10.44,
+      "endSec": 11.06
+    },
+    {
+      "text": ",",
+      "startSec": 11.06,
+      "endSec": 11.19
+    },
+    {
+      "text": "doctrine",
+      "startSec": 11.19,
+      "endSec": 11.78
+    },
+    {
+      "text": ",",
+      "startSec": 11.78,
+      "endSec": 11.99
+    },
+    {
+      "text": "gone",
+      "startSec": 11.99,
+      "endSec": 12.24
+    },
+    {
+      "text": "before",
+      "startSec": 12.24,
+      "endSec": 12.59
+    },
+    {
+      "text": "the",
+      "startSec": 12.59,
+      "endSec": 12.78
+    },
+    {
+      "text": "first",
+      "startSec": 12.78,
+      "endSec": 13.1
+    },
+    {
+      "text": "contact",
+      "startSec": 13.1,
+      "endSec": 13.73
+    },
+    {
+      "text": "report",
+      "startSec": 13.73,
+      "endSec": 13.96
+    },
+    {
+      "text": ".",
+      "startSec": 13.96,
+      "endSec": 14.16
+    },
+    {
+      "text": "These",
+      "startSec": 14.64,
+      "endSec": 14.72
+    },
+    {
+      "text": "aren",
+      "startSec": 14.72,
+      "endSec": 14.8
+    },
+    {
+      "text": "'t",
+      "startSec": 14.8,
+      "endSec": 14.84
+    },
+    {
+      "text": "the",
+      "startSec": 14.84,
+      "endSec": 15.03
+    },
+    {
+      "text": "worst",
+      "startSec": 15.03,
+      "endSec": 15.33
+    },
+    {
+      "text": "battlefield",
+      "startSec": 15.33,
+      "endSec": 16.04
+    },
+    {
+      "text": "s",
+      "startSec": 16.04,
+      "endSec": 16.1
+    },
+    {
+      "text": "because",
+      "startSec": 16.1,
+      "endSec": 16.57
+    },
+    {
+      "text": "of",
+      "startSec": 16.57,
+      "endSec": 16.66
+    },
+    {
+      "text": "the",
+      "startSec": 16.66,
+      "endSec": 16.85
+    },
+    {
+      "text": "numbers",
+      "startSec": 16.85,
+      "endSec": 17.29
+    },
+    {
+      "text": ".",
+      "startSec": 17.29,
+      "endSec": 17.54
+    },
+    {
+      "text": "They",
+      "startSec": 18.1,
+      "endSec": 18.1
+    },
+    {
+      "text": "'re",
+      "startSec": 18.1,
+      "endSec": 18.21
+    },
+    {
+      "text": "the",
+      "startSec": 18.21,
+      "endSec": 18.26
+    },
+    {
+      "text": "worst",
+      "startSec": 18.26,
+      "endSec": 18.64
+    },
+    {
+      "text": "because",
+      "startSec": 18.64,
+      "endSec": 19.02
+    },
+    {
+      "text": "the",
+      "startSec": 19.02,
+      "endSec": 19.22
+    },
+    {
+      "text": "environment",
+      "startSec": 19.22,
+      "endSec": 20.03
+    },
+    {
+      "text": "was",
+      "startSec": 20.03,
+      "endSec": 20.17
+    },
+    {
+      "text": "already",
+      "startSec": 20.17,
+      "endSec": 20.73
+    },
+    {
+      "text": "doing",
+      "startSec": 20.73,
+      "endSec": 20.98
+    },
+    {
+      "text": "the",
+      "startSec": 20.98,
+      "endSec": 21.33
+    },
+    {
+      "text": "killing",
+      "startSec": 21.33,
+      "endSec": 21.72
+    },
+    {
+      "text": "before",
+      "startSec": 21.72,
+      "endSec": 22.04
+    },
+    {
+      "text": "the",
+      "startSec": 22.04,
+      "endSec": 22.47
+    },
+    {
+      "text": "enemy",
+      "startSec": 22.47,
+      "endSec": 22.49
+    },
+    {
+      "text": "showed",
+      "startSec": 22.49,
+      "endSec": 22.78
+    },
+    {
+      "text": "up",
+      "startSec": 22.78,
+      "endSec": 22.93
+    },
+    {
+      "text": ".",
+      "startSec": 22.93,
+      "endSec": 23.04
+    },
+    {
+      "text": "6",
+      "startSec": 23.42,
+      "endSec": 23.59
+    },
+    {
+      "text": ".",
+      "startSec": 23.59,
+      "endSec": 24.04
+    },
+    {
+      "text": "Cat",
+      "startSec": 24.04,
+      "endSec": 24.32
+    },
+    {
+      "text": "ac",
+      "startSec": 24.32,
+      "endSec": 24.49
+    },
+    {
+      "text": "an",
+      "startSec": 24.49,
+      "endSec": 24.7
+    },
+    {
+      "text": "Before",
+      "startSec": 24.7,
+      "endSec": 25.24
+    },
+    {
+      "text": "Cat",
+      "startSec": 25.24,
+      "endSec": 25.37
+    },
+    {
+      "text": "ac",
+      "startSec": 25.37,
+      "endSec": 25.52
+    },
+    {
+      "text": "an",
+      "startSec": 25.52,
+      "endSec": 25.67
+    },
+    {
+      "text": "produced",
+      "startSec": 25.67,
+      "endSec": 26.27
+    },
+    {
+      "text": "the",
+      "startSec": 26.27,
+      "endSec": 26.49
+    },
+    {
+      "text": "Imper",
+      "startSec": 26.49,
+      "endSec": 26.86
+    },
+    {
+      "text": "ium",
+      "startSec": 26.86,
+      "endSec": 27.08
+    },
+    {
+      "text": "'s",
+      "startSec": 27.08,
+      "endSec": 27.33
+    },
+    {
+      "text": "most",
+      "startSec": 27.33,
+      "endSec": 27.58
+    },
+    {
+      "text": "capable",
+      "startSec": 27.58,
+      "endSec": 28.05
+    },
+    {
+      "text": "baseline",
+      "startSec": 28.05,
+      "endSec": 28.64
+    },
+    {
+      "text": "human",
+      "startSec": 28.64,
+      "endSec": 29.09
+    },
+    {
+      "text": "soldiers",
+      "startSec": 29.09,
+      "endSec": 29.66
+    },
+    {
+      "text": ",",
+      "startSec": 29.66,
+      "endSec": 29.66
+    },
+    {
+      "text": "the",
+      "startSec": 30.16,
+      "endSec": 30.2
+    },
+    {
+      "text": "planet",
+      "startSec": 30.2,
+      "endSec": 30.6
+    },
+    {
+      "text": "had",
+      "startSec": 30.6,
+      "endSec": 30.8
+    },
+    {
+      "text": "a",
+      "startSec": 30.8,
+      "endSec": 30.86
+    },
+    {
+      "text": "simpler",
+      "startSec": 30.86,
+      "endSec": 31.37
+    },
+    {
+      "text": "reputation",
+      "startSec": 31.37,
+      "endSec": 32
+    },
+    {
+      "text": ".",
+      "startSec": 32,
+      "endSec": 32.24
+    },
+    {
+      "text": "It",
+      "startSec": 32.88,
+      "endSec": 32.94
+    },
+    {
+      "text": "killed",
+      "startSec": 32.94,
+      "endSec": 33.04
+    },
+    {
+      "text": "everything",
+      "startSec": 33.04,
+      "endSec": 33.82
+    },
+    {
+      "text": "on",
+      "startSec": 33.82,
+      "endSec": 33.99
+    },
+    {
+      "text": "it",
+      "startSec": 33.99,
+      "endSec": 34.25
+    },
+    {
+      "text": ".",
+      "startSec": 34.25,
+      "endSec": 34.46
+    },
+    {
+      "text": "The",
+      "startSec": 34.8,
+      "endSec": 34.96
+    },
+    {
+      "text": "jungle",
+      "startSec": 34.96,
+      "endSec": 35.06
+    },
+    {
+      "text": "didn",
+      "startSec": 35.06,
+      "endSec": 35.34
+    },
+    {
+      "text": "'t",
+      "startSec": 35.34,
+      "endSec": 35.46
+    },
+    {
+      "text": "evolve",
+      "startSec": 35.46,
+      "endSec": 35.88
+    },
+    {
+      "text": "around",
+      "startSec": 35.88,
+      "endSec": 36.26
+    },
+    {
+      "text": "human",
+      "startSec": 36.26,
+      "endSec": 36.59
+    },
+    {
+      "text": "warfare",
+      "startSec": 36.59,
+      "endSec": 37.06
+    },
+    {
+      "text": ".",
+      "startSec": 37.06,
+      "endSec": 37.3
+    },
+    {
+      "text": "It",
+      "startSec": 37.94,
+      "endSec": 37.94
+    },
+    {
+      "text": "spent",
+      "startSec": 37.94,
+      "endSec": 38.1
+    },
+    {
+      "text": "millions",
+      "startSec": 38.1,
+      "endSec": 38.61
+    },
+    {
+      "text": "of",
+      "startSec": 38.61,
+      "endSec": 38.78
+    },
+    {
+      "text": "years",
+      "startSec": 38.78,
+      "endSec": 39.31
+    },
+    {
+      "text": "optimizing",
+      "startSec": 39.31,
+      "endSec": 40.09
+    },
+    {
+      "text": "toward",
+      "startSec": 40.09,
+      "endSec": 40.61
+    },
+    {
+      "text": "a",
+      "startSec": 40.61,
+      "endSec": 40.69
+    },
+    {
+      "text": "single",
+      "startSec": 40.69,
+      "endSec": 41.21
+    },
+    {
+      "text": "outcome",
+      "startSec": 41.21,
+      "endSec": 41.88
+    },
+    {
+      "text": ",",
+      "startSec": 41.88,
+      "endSec": 41.88
+    },
+    {
+      "text": "and",
+      "startSec": 42.2,
+      "endSec": 42.36
+    },
+    {
+      "text": "anything",
+      "startSec": 42.36,
+      "endSec": 42.58
+    },
+    {
+      "text": "with",
+      "startSec": 42.58,
+      "endSec": 42.83
+    },
+    {
+      "text": "a",
+      "startSec": 42.83,
+      "endSec": 42.89
+    },
+    {
+      "text": "nervous",
+      "startSec": 42.89,
+      "endSec": 43.33
+    },
+    {
+      "text": "system",
+      "startSec": 43.33,
+      "endSec": 43.71
+    },
+    {
+      "text": "is",
+      "startSec": 43.71,
+      "endSec": 43.9
+    },
+    {
+      "text": "on",
+      "startSec": 43.9,
+      "endSec": 43.95
+    },
+    {
+      "text": "the",
+      "startSec": 43.95,
+      "endSec": 44.14
+    },
+    {
+      "text": "wrong",
+      "startSec": 44.14,
+      "endSec": 44.46
+    },
+    {
+      "text": "side",
+      "startSec": 44.46,
+      "endSec": 44.83
+    },
+    {
+      "text": "of",
+      "startSec": 44.83,
+      "endSec": 44.83
+    },
+    {
+      "text": "that",
+      "startSec": 44.83,
+      "endSec": 45.08
+    },
+    {
+      "text": "outcome",
+      "startSec": 45.08,
+      "endSec": 45.52
+    },
+    {
+      "text": ".",
+      "startSec": 45.52,
+      "endSec": 45.8
+    },
+    {
+      "text": "Hum",
+      "startSec": 46.26,
+      "endSec": 46.41
+    },
+    {
+      "text": "idity",
+      "startSec": 46.41,
+      "endSec": 46.44
+    },
+    {
+      "text": "wre",
+      "startSec": 46.44,
+      "endSec": 46.68
+    },
+    {
+      "text": "cks",
+      "startSec": 46.68,
+      "endSec": 46.92
+    },
+    {
+      "text": "un",
+      "startSec": 46.92,
+      "endSec": 47.08
+    },
+    {
+      "text": "prot",
+      "startSec": 47.08,
+      "endSec": 47.4
+    },
+    {
+      "text": "ected",
+      "startSec": 47.4,
+      "endSec": 47.8
+    },
+    {
+      "text": "electronics",
+      "startSec": 47.8,
+      "endSec": 48.68
+    },
+    {
+      "text": "inside",
+      "startSec": 48.68,
+      "endSec": 49.17
+    },
+    {
+      "text": "a",
+      "startSec": 49.17,
+      "endSec": 49.25
+    },
+    {
+      "text": "few",
+      "startSec": 49.25,
+      "endSec": 49.49
+    },
+    {
+      "text": "hours",
+      "startSec": 49.49,
+      "endSec": 49.89
+    },
+    {
+      "text": ".",
+      "startSec": 49.89,
+      "endSec": 50.18
+    },
+    {
+      "text": "Lost",
+      "startSec": 50.66,
+      "endSec": 50.82
+    },
+    {
+      "text": "charge",
+      "startSec": 50.82,
+      "endSec": 50.9
+    },
+    {
+      "text": "packs",
+      "startSec": 50.9,
+      "endSec": 51.26
+    },
+    {
+      "text": "corro",
+      "startSec": 51.26,
+      "endSec": 51.61
+    },
+    {
+      "text": "de",
+      "startSec": 51.61,
+      "endSec": 51.76
+    },
+    {
+      "text": ".",
+      "startSec": 51.76,
+      "endSec": 52
+    },
+    {
+      "text": "Opt",
+      "startSec": 52,
+      "endSec": 52.2
+    },
+    {
+      "text": "ical",
+      "startSec": 52.2,
+      "endSec": 52.54
+    },
+    {
+      "text": "sc",
+      "startSec": 52.54,
+      "endSec": 52.6
+    },
+    {
+      "text": "opes",
+      "startSec": 52.6,
+      "endSec": 52.87
+    },
+    {
+      "text": "fog",
+      "startSec": 52.87,
+      "endSec": 53.08
+    },
+    {
+      "text": "permanently",
+      "startSec": 53.08,
+      "endSec": 53.81
+    },
+    {
+      "text": ".",
+      "startSec": 53.81,
+      "endSec": 54.04
+    },
+    {
+      "text": "The",
+      "startSec": 54.56,
+      "endSec": 54.72
+    },
+    {
+      "text": "canopy",
+      "startSec": 54.72,
+      "endSec": 54.8
+    },
+    {
+      "text": "generates",
+      "startSec": 54.8,
+      "endSec": 55.56
+    },
+    {
+      "text": "a",
+      "startSec": 55.56,
+      "endSec": 55.64
+    },
+    {
+      "text": "biological",
+      "startSec": 55.64,
+      "endSec": 56.49
+    },
+    {
+      "text": "electrical",
+      "startSec": 56.49,
+      "endSec": 57.34
+    },
+    {
+      "text": "field",
+      "startSec": 57.34,
+      "endSec": 57.79
+    },
+    {
+      "text": "that",
+      "startSec": 57.79,
+      "endSec": 58.1
+    },
+    {
+      "text": "j",
+      "startSec": 58.1,
+      "endSec": 58.18
+    },
+    {
+      "text": "ams",
+      "startSec": 58.18,
+      "endSec": 58.43
+    },
+    {
+      "text": "vo",
+      "startSec": 58.43,
+      "endSec": 58.68
+    },
+    {
+      "text": "x",
+      "startSec": 58.68,
+      "endSec": 58.93
+    },
+    {
+      "text": "cas",
+      "startSec": 58.93,
+      "endSec": 58.95
+    },
+    {
+      "text": "ters",
+      "startSec": 58.95,
+      "endSec": 59.34
+    },
+    {
+      "text": ",",
+      "startSec": 59.34,
+      "endSec": 59.34
+    },
+    {
+      "text": "something",
+      "startSec": 59.93,
+      "endSec": 60.3
+    },
+    {
+      "text": "the",
+      "startSec": 60.3,
+      "endSec": 60.47
+    },
+    {
+      "text": "Mechan",
+      "startSec": 60.47,
+      "endSec": 60.83
+    },
+    {
+      "text": "icus",
+      "startSec": 60.83,
+      "endSec": 61.13
+    },
+    {
+      "text": "has",
+      "startSec": 61.13,
+      "endSec": 61.26
+    },
+    {
+      "text": "catalog",
+      "startSec": 61.26,
+      "endSec": 61.69
+    },
+    {
+      "text": "ed",
+      "startSec": 61.69,
+      "endSec": 61.8
+    },
+    {
+      "text": "and",
+      "startSec": 61.8,
+      "endSec": 61.98
+    },
+    {
+      "text": "never",
+      "startSec": 61.98,
+      "endSec": 62.39
+    },
+    {
+      "text": "adequately",
+      "startSec": 62.39,
+      "endSec": 62.99
+    },
+    {
+      "text": "explained",
+      "startSec": 62.99,
+      "endSec": 63.42
+    },
+    {
+      "text": ".",
+      "startSec": 63.42,
+      "endSec": 63.64
+    },
+    {
+      "text": "That",
+      "startSec": 64.04,
+      "endSec": 64.12
+    },
+    {
+      "text": "'s",
+      "startSec": 64.12,
+      "endSec": 64.21
+    },
+    {
+      "text": "before",
+      "startSec": 64.21,
+      "endSec": 64.6
+    },
+    {
+      "text": "anything",
+      "startSec": 64.6,
+      "endSec": 65.24
+    },
+    {
+      "text": "in",
+      "startSec": 65.24,
+      "endSec": 65.41
+    },
+    {
+      "text": "the",
+      "startSec": 65.41,
+      "endSec": 65.74
+    },
+    {
+      "text": "jungle",
+      "startSec": 65.74,
+      "endSec": 66.12
+    },
+    {
+      "text": "decides",
+      "startSec": 66.12,
+      "endSec": 66.68
+    },
+    {
+      "text": "to",
+      "startSec": 66.68,
+      "endSec": 66.84
+    },
+    {
+      "text": "engage",
+      "startSec": 66.84,
+      "endSec": 67.32
+    },
+    {
+      "text": ".",
+      "startSec": 67.32,
+      "endSec": 67.62
+    },
+    {
+      "text": "Cat",
+      "startSec": 68.12,
+      "endSec": 68.12
+    },
+    {
+      "text": "ac",
+      "startSec": 68.12,
+      "endSec": 68.28
+    },
+    {
+      "text": "an",
+      "startSec": 68.28,
+      "endSec": 68.32
+    },
+    {
+      "text": "devil",
+      "startSec": 68.32,
+      "endSec": 68.84
+    },
+    {
+      "text": ",",
+      "startSec": 68.84,
+      "endSec": 68.98
+    },
+    {
+      "text": "ants",
+      "startSec": 68.98,
+      "endSec": 69.27
+    },
+    {
+      "text": "dissolve",
+      "startSec": 69.27,
+      "endSec": 69.85
+    },
+    {
+      "text": "flesh",
+      "startSec": 69.85,
+      "endSec": 70.21000000000001
+    },
+    {
+      "text": "faster",
+      "startSec": 70.21000000000001,
+      "endSec": 70.75
+    },
+    {
+      "text": "than",
+      "startSec": 70.75,
+      "endSec": 70.94
+    },
+    {
+      "text": "combat",
+      "startSec": 70.94,
+      "endSec": 71.38
+    },
+    {
+      "text": "-",
+      "startSec": 71.38,
+      "endSec": 71.45
+    },
+    {
+      "text": "grade",
+      "startSec": 71.45,
+      "endSec": 71.8
+    },
+    {
+      "text": "acid",
+      "startSec": 71.8,
+      "endSec": 72.1
+    },
+    {
+      "text": ".",
+      "startSec": 72.1,
+      "endSec": 72.38
+    },
+    {
+      "text": "The",
+      "startSec": 72.86,
+      "endSec": 72.86
+    },
+    {
+      "text": "Cat",
+      "startSec": 72.86,
+      "endSec": 73
+    },
+    {
+      "text": "ac",
+      "startSec": 73,
+      "endSec": 73.03
+    },
+    {
+      "text": "an",
+      "startSec": 73.03,
+      "endSec": 73.16
+    },
+    {
+      "text": "devil",
+      "startSec": 73.16,
+      "endSec": 73.56
+    },
+    {
+      "text": "itself",
+      "startSec": 73.56,
+      "endSec": 74.03
+    },
+    {
+      "text": ",",
+      "startSec": 74.03,
+      "endSec": 74.23
+    },
+    {
+      "text": "six",
+      "startSec": 74.23,
+      "endSec": 74.57
+    },
+    {
+      "text": "limbs",
+      "startSec": 74.57,
+      "endSec": 75.16
+    },
+    {
+      "text": ",",
+      "startSec": 75.16,
+      "endSec": 75.49
+    },
+    {
+      "text": "ch",
+      "startSec": 75.49,
+      "endSec": 75.53999999999999
+    },
+    {
+      "text": "it",
+      "startSec": 75.53999999999999,
+      "endSec": 75.68
+    },
+    {
+      "text": "in",
+      "startSec": 75.68,
+      "endSec": 75.82
+    },
+    {
+      "text": "thick",
+      "startSec": 75.82,
+      "endSec": 76.18
+    },
+    {
+      "text": "enough",
+      "startSec": 76.18,
+      "endSec": 76.61
+    },
+    {
+      "text": "to",
+      "startSec": 76.61,
+      "endSec": 76.75
+    },
+    {
+      "text": "deflect",
+      "startSec": 76.75,
+      "endSec": 77.25
+    },
+    {
+      "text": "small",
+      "startSec": 77.25,
+      "endSec": 77.61
+    },
+    {
+      "text": "arms",
+      "startSec": 77.61,
+      "endSec": 77.89
+    },
+    {
+      "text": "fire",
+      "startSec": 77.89,
+      "endSec": 78.17
+    },
+    {
+      "text": ",",
+      "startSec": 78.17,
+      "endSec": 78.36
+    },
+    {
+      "text": "hun",
+      "startSec": 78.7,
+      "endSec": 78.7
+    },
+    {
+      "text": "ts",
+      "startSec": 78.7,
+      "endSec": 78.78
+    },
+    {
+      "text": "by",
+      "startSec": 78.78,
+      "endSec": 78.86
+    },
+    {
+      "text": "thermal",
+      "startSec": 78.86,
+      "endSec": 79.24
+    },
+    {
+      "text": "signature",
+      "startSec": 79.24,
+      "endSec": 79.77
+    },
+    {
+      "text": ".",
+      "startSec": 79.77,
+      "endSec": 79.96000000000001
+    },
+    {
+      "text": "Str",
+      "startSec": 80.56,
+      "endSec": 80.56
+    },
+    {
+      "text": "ang",
+      "startSec": 80.56,
+      "endSec": 80.65
+    },
+    {
+      "text": "ler",
+      "startSec": 80.65,
+      "endSec": 80.73
+    },
+    {
+      "text": "plants",
+      "startSec": 80.73,
+      "endSec": 81.12
+    },
+    {
+      "text": "drop",
+      "startSec": 81.12,
+      "endSec": 81.43
+    },
+    {
+      "text": "tend",
+      "startSec": 81.43,
+      "endSec": 81.74
+    },
+    {
+      "text": "rils",
+      "startSec": 81.74,
+      "endSec": 82.05
+    },
+    {
+      "text": "that",
+      "startSec": 82.05,
+      "endSec": 82.36
+    },
+    {
+      "text": "sever",
+      "startSec": 82.36,
+      "endSec": 82.75
+    },
+    {
+      "text": "limbs",
+      "startSec": 82.75,
+      "endSec": 83.19
+    },
+    {
+      "text": "before",
+      "startSec": 83.19,
+      "endSec": 83.61
+    },
+    {
+      "text": "the",
+      "startSec": 83.61,
+      "endSec": 83.84
+    },
+    {
+      "text": "soldier",
+      "startSec": 83.84,
+      "endSec": 84.39
+    },
+    {
+      "text": "registers",
+      "startSec": 84.39,
+      "endSec": 85.16
+    },
+    {
+      "text": "contact",
+      "startSec": 85.16,
+      "endSec": 85.65
+    },
+    {
+      "text": ".",
+      "startSec": 85.65,
+      "endSec": 85.98
+    },
+    {
+      "text": "My",
+      "startSec": 86.62,
+      "endSec": 86.64
+    },
+    {
+      "text": "ra",
+      "startSec": 86.64,
+      "endSec": 86.76
+    },
+    {
+      "text": "land",
+      "startSec": 86.76,
+      "endSec": 87.03999999999999
+    },
+    {
+      "text": "sharks",
+      "startSec": 87.03999999999999,
+      "endSec": 87.44
+    },
+    {
+      "text": "track",
+      "startSec": 87.44,
+      "endSec": 87.85
+    },
+    {
+      "text": "ground",
+      "startSec": 87.85,
+      "endSec": 88.23
+    },
+    {
+      "text": "vibration",
+      "startSec": 88.23,
+      "endSec": 88.86
+    },
+    {
+      "text": ".",
+      "startSec": 88.86,
+      "endSec": 89.08
+    },
+    {
+      "text": "Every",
+      "startSec": 89.7,
+      "endSec": 89.86
+    },
+    {
+      "text": "shadow",
+      "startSec": 89.86,
+      "endSec": 89.98
+    },
+    {
+      "text": "has",
+      "startSec": 89.98,
+      "endSec": 90.24
+    },
+    {
+      "text": "been",
+      "startSec": 90.24,
+      "endSec": 90.55
+    },
+    {
+      "text": "occup",
+      "startSec": 90.55,
+      "endSec": 91.07
+    },
+    {
+      "text": "ying",
+      "startSec": 91.07,
+      "endSec": 91.28
+    },
+    {
+      "text": "it",
+      "startSec": 91.28,
+      "endSec": 91.44
+    },
+    {
+      "text": "longer",
+      "startSec": 91.44,
+      "endSec": 91.93
+    },
+    {
+      "text": "than",
+      "startSec": 91.93,
+      "endSec": 92.33
+    },
+    {
+      "text": "any",
+      "startSec": 92.33,
+      "endSec": 92.5
+    },
+    {
+      "text": "patrol",
+      "startSec": 92.5,
+      "endSec": 92.99000000000001
+    },
+    {
+      "text": "has",
+      "startSec": 92.99000000000001,
+      "endSec": 93.22999999999999
+    },
+    {
+      "text": "been",
+      "startSec": 93.22999999999999,
+      "endSec": 93.56
+    },
+    {
+      "text": "searching",
+      "startSec": 93.56,
+      "endSec": 94.3
+    },
+    {
+      "text": "it",
+      "startSec": 94.3,
+      "endSec": 94.53
+    },
+    {
+      "text": ".",
+      "startSec": 94.53,
+      "endSec": 94.78
+    },
+    {
+      "text": "Forces",
+      "startSec": 94.84,
+      "endSec": 95.38
+    },
+    {
+      "text": "without",
+      "startSec": 95.38,
+      "endSec": 95.85
+    },
+    {
+      "text": "Cat",
+      "startSec": 95.85,
+      "endSec": 96.21000000000001
+    },
+    {
+      "text": "ac",
+      "startSec": 96.21000000000001,
+      "endSec": 96.27000000000001
+    },
+    {
+      "text": "an",
+      "startSec": 96.27000000000001,
+      "endSec": 96.50999999999999
+    },
+    {
+      "text": "-",
+      "startSec": 96.50999999999999,
+      "endSec": 96.53999999999999
+    },
+    {
+      "text": "born",
+      "startSec": 96.53999999999999,
+      "endSec": 96.84
+    },
+    {
+      "text": "soldiers",
+      "startSec": 96.84,
+      "endSec": 97.50999999999999
+    },
+    {
+      "text": "operate",
+      "startSec": 97.50999999999999,
+      "endSec": 98.09
+    },
+    {
+      "text": "at",
+      "startSec": 98.09,
+      "endSec": 98.25
+    },
+    {
+      "text": "a",
+      "startSec": 98.25,
+      "endSec": 98.32
+    },
+    {
+      "text": "deficit",
+      "startSec": 98.32,
+      "endSec": 99.21000000000001
+    },
+    {
+      "text": "that",
+      "startSec": 99.21000000000001,
+      "endSec": 99.24000000000001
+    },
+    {
+      "text": "no",
+      "startSec": 99.24000000000001,
+      "endSec": 99.44
+    },
+    {
+      "text": "amount",
+      "startSec": 99.44,
+      "endSec": 99.86
+    },
+    {
+      "text": "of",
+      "startSec": 99.86,
+      "endSec": 99.89
+    },
+    {
+      "text": "preparation",
+      "startSec": 99.89,
+      "endSec": 100.62
+    },
+    {
+      "text": "closes",
+      "startSec": 100.62,
+      "endSec": 101.05
+    },
+    {
+      "text": ".",
+      "startSec": 101.05,
+      "endSec": 101.24000000000001
+    },
+    {
+      "text": "The",
+      "startSec": 101.84,
+      "endSec": 101.88
+    },
+    {
+      "text": "jungle",
+      "startSec": 101.88,
+      "endSec": 102
+    },
+    {
+      "text": "doesn",
+      "startSec": 102,
+      "endSec": 102.24000000000001
+    },
+    {
+      "text": "'t",
+      "startSec": 102.24000000000001,
+      "endSec": 102.38
+    },
+    {
+      "text": "tele",
+      "startSec": 102.38,
+      "endSec": 102.67
+    },
+    {
+      "text": "graph",
+      "startSec": 102.67,
+      "endSec": 103.03
+    },
+    {
+      "text": "its",
+      "startSec": 103.03,
+      "endSec": 103.24000000000001
+    },
+    {
+      "text": "threats",
+      "startSec": 103.24000000000001,
+      "endSec": 103.77000000000001
+    },
+    {
+      "text": ".",
+      "startSec": 103.77000000000001,
+      "endSec": 104
+    },
+    {
+      "text": "It",
+      "startSec": 104.47999999999999,
+      "endSec": 104.64
+    },
+    {
+      "text": "withhold",
+      "startSec": 104.64,
+      "endSec": 104.71000000000001
+    },
+    {
+      "text": "s",
+      "startSec": 104.71000000000001,
+      "endSec": 104.78
+    },
+    {
+      "text": "them",
+      "startSec": 104.78,
+      "endSec": 105.07
+    },
+    {
+      "text": "until",
+      "startSec": 105.07,
+      "endSec": 105.42
+    },
+    {
+      "text": "they",
+      "startSec": 105.42,
+      "endSec": 105.85
+    },
+    {
+      "text": "'re",
+      "startSec": 105.85,
+      "endSec": 105.93
+    },
+    {
+      "text": "already",
+      "startSec": 105.93,
+      "endSec": 106.43
+    },
+    {
+      "text": "past",
+      "startSec": 106.43,
+      "endSec": 106.72
+    },
+    {
+      "text": "the",
+      "startSec": 106.72,
+      "endSec": 106.93
+    },
+    {
+      "text": "point",
+      "startSec": 106.93,
+      "endSec": 107.36
+    },
+    {
+      "text": "of",
+      "startSec": 107.36,
+      "endSec": 107.43
+    },
+    {
+      "text": "response",
+      "startSec": 107.43,
+      "endSec": 108
+    },
+    {
+      "text": ".",
+      "startSec": 108,
+      "endSec": 108.28
+    },
+    {
+      "text": "Cat",
+      "startSec": 108.93,
+      "endSec": 108.94
+    },
+    {
+      "text": "ac",
+      "startSec": 108.94,
+      "endSec": 109.03999999999999
+    },
+    {
+      "text": "an",
+      "startSec": 109.03999999999999,
+      "endSec": 109.14
+    },
+    {
+      "text": "reg",
+      "startSec": 109.14,
+      "endSec": 109.32
+    },
+    {
+      "text": "iments",
+      "startSec": 109.32,
+      "endSec": 109.62
+    },
+    {
+      "text": "work",
+      "startSec": 109.62,
+      "endSec": 109.85
+    },
+    {
+      "text": "in",
+      "startSec": 109.85,
+      "endSec": 109.93
+    },
+    {
+      "text": "that",
+      "startSec": 109.93,
+      "endSec": 110.15
+    },
+    {
+      "text": "environment",
+      "startSec": 110.15,
+      "endSec": 110.75999999999999
+    },
+    {
+      "text": "because",
+      "startSec": 110.75999999999999,
+      "endSec": 111.17
+    },
+    {
+      "text": "they",
+      "startSec": 111.17,
+      "endSec": 111.41
+    },
+    {
+      "text": "grew",
+      "startSec": 111.41,
+      "endSec": 111.66
+    },
+    {
+      "text": "up",
+      "startSec": 111.66,
+      "endSec": 111.74000000000001
+    },
+    {
+      "text": "treating",
+      "startSec": 111.74000000000001,
+      "endSec": 112.21000000000001
+    },
+    {
+      "text": "survival",
+      "startSec": 112.21000000000001,
+      "endSec": 112.72
+    },
+    {
+      "text": "as",
+      "startSec": 112.72,
+      "endSec": 112.97
+    },
+    {
+      "text": "a",
+      "startSec": 112.97,
+      "endSec": 113.16
+    },
+    {
+      "text": "practical",
+      "startSec": 113.16,
+      "endSec": 113.8
+    },
+    {
+      "text": "discipline",
+      "startSec": 113.8,
+      "endSec": 114.72
+    },
+    {
+      "text": "rather",
+      "startSec": 114.72,
+      "endSec": 115.17
+    },
+    {
+      "text": "than",
+      "startSec": 115.17,
+      "endSec": 115.47
+    },
+    {
+      "text": "an",
+      "startSec": 115.47,
+      "endSec": 115.62
+    },
+    {
+      "text": "expected",
+      "startSec": 115.62,
+      "endSec": 116.3
+    },
+    {
+      "text": "outcome",
+      "startSec": 116.3,
+      "endSec": 116.74000000000001
+    },
+    {
+      "text": ".",
+      "startSec": 116.74000000000001,
+      "endSec": 116.97999999999999
+    },
+    {
+      "text": "For",
+      "startSec": 116.97999999999999,
+      "endSec": 117.2
+    },
+    {
+      "text": "everyone",
+      "startSec": 117.2,
+      "endSec": 117.81
+    },
+    {
+      "text": "else",
+      "startSec": 117.81,
+      "endSec": 118.11
+    },
+    {
+      "text": ",",
+      "startSec": 118.11,
+      "endSec": 118.35
+    },
+    {
+      "text": "the",
+      "startSec": 118.35,
+      "endSec": 118.55
+    },
+    {
+      "text": "mission",
+      "startSec": 118.55,
+      "endSec": 119.18
+    },
+    {
+      "text": "doesn",
+      "startSec": 119.18,
+      "endSec": 119.63
+    },
+    {
+      "text": "'t",
+      "startSec": 119.63,
+      "endSec": 119.86
+    },
+    {
+      "text": "fail",
+      "startSec": 119.86,
+      "endSec": 120.21
+    },
+    {
+      "text": "on",
+      "startSec": 120.21,
+      "endSec": 120.35
+    },
+    {
+      "text": "Cat",
+      "startSec": 120.35,
+      "endSec": 120.62
+    },
+    {
+      "text": "ac",
+      "startSec": 120.62,
+      "endSec": 120.8
+    },
+    {
+      "text": "an",
+      "startSec": 120.8,
+      "endSec": 121.26
+    },
+    {
+      "text": ".",
+      "startSec": 121.26,
+      "endSec": 121.26
+    },
+    {
+      "text": "The",
+      "startSec": 121.6,
+      "endSec": 121.76
+    },
+    {
+      "text": "jungle",
+      "startSec": 121.76,
+      "endSec": 121.9
+    },
+    {
+      "text": "absorbs",
+      "startSec": 121.9,
+      "endSec": 122.4
+    },
+    {
+      "text": "it",
+      "startSec": 122.4,
+      "endSec": 122.54
+    },
+    {
+      "text": "and",
+      "startSec": 122.54,
+      "endSec": 122.75
+    },
+    {
+      "text": "moves",
+      "startSec": 122.75,
+      "endSec": 123.11
+    },
+    {
+      "text": "on",
+      "startSec": 123.11,
+      "endSec": 123.3
+    },
+    {
+      "text": ".",
+      "startSec": 123.3,
+      "endSec": 123.5
+    },
+    {
+      "text": "Number",
+      "startSec": 123.94,
+      "endSec": 124.1
+    },
+    {
+      "text": "five",
+      "startSec": 124.1,
+      "endSec": 124.36
+    },
+    {
+      "text": ",",
+      "startSec": 124.36,
+      "endSec": 124.53
+    },
+    {
+      "text": "space",
+      "startSec": 124.53,
+      "endSec": 124.96
+    },
+    {
+      "text": "h",
+      "startSec": 124.96,
+      "endSec": 125.04
+    },
+    {
+      "text": "ul",
+      "startSec": 125.04,
+      "endSec": 125.31
+    },
+    {
+      "text": "ks",
+      "startSec": 125.31,
+      "endSec": 125.38
+    },
+    {
+      "text": ".",
+      "startSec": 125.38,
+      "endSec": 125.68
+    },
+    {
+      "text": "A",
+      "startSec": 126.21,
+      "endSec": 126.3
+    },
+    {
+      "text": "space",
+      "startSec": 126.3,
+      "endSec": 126.65
+    },
+    {
+      "text": "h",
+      "startSec": 126.65,
+      "endSec": 126.68
+    },
+    {
+      "text": "ulk",
+      "startSec": 126.68,
+      "endSec": 126.87
+    },
+    {
+      "text": "is",
+      "startSec": 126.87,
+      "endSec": 127.02
+    },
+    {
+      "text": "centuries",
+      "startSec": 127.02,
+      "endSec": 127.7
+    },
+    {
+      "text": "of",
+      "startSec": 127.7,
+      "endSec": 127.85
+    },
+    {
+      "text": "accumulated",
+      "startSec": 127.85,
+      "endSec": 128.77
+    },
+    {
+      "text": "ships",
+      "startSec": 128.77,
+      "endSec": 129.05
+    },
+    {
+      "text": ",",
+      "startSec": 129.05,
+      "endSec": 129.37
+    },
+    {
+      "text": "stations",
+      "startSec": 129.37,
+      "endSec": 129.8
+    },
+    {
+      "text": ",",
+      "startSec": 129.8,
+      "endSec": 129.94
+    },
+    {
+      "text": "and",
+      "startSec": 129.94,
+      "endSec": 130.5
+    },
+    {
+      "text": "debris",
+      "startSec": 130.5,
+      "endSec": 130.74
+    },
+    {
+      "text": ",",
+      "startSec": 130.74,
+      "endSec": 130.86
+    },
+    {
+      "text": "f",
+      "startSec": 130.86,
+      "endSec": 130.97
+    },
+    {
+      "text": "used",
+      "startSec": 130.97,
+      "endSec": 131.31
+    },
+    {
+      "text": "by",
+      "startSec": 131.31,
+      "endSec": 131.48
+    },
+    {
+      "text": "warp",
+      "startSec": 131.48,
+      "endSec": 131.85
+    },
+    {
+      "text": "transit",
+      "startSec": 131.85,
+      "endSec": 132.48
+    },
+    {
+      "text": "into",
+      "startSec": 132.48,
+      "endSec": 132.84
+    },
+    {
+      "text": "a",
+      "startSec": 132.84,
+      "endSec": 132.93
+    },
+    {
+      "text": "structure",
+      "startSec": 132.93,
+      "endSec": 133.74
+    },
+    {
+      "text": "too",
+      "startSec": 133.74,
+      "endSec": 134.01
+    },
+    {
+      "text": "massive",
+      "startSec": 134.01,
+      "endSec": 134.68
+    },
+    {
+      "text": "to",
+      "startSec": 134.68,
+      "endSec": 134.82
+    },
+    {
+      "text": "ignore",
+      "startSec": 134.82,
+      "endSec": 135.49
+    },
+    {
+      "text": "and",
+      "startSec": 135.49,
+      "endSec": 135.58
+    },
+    {
+      "text": "too",
+      "startSec": 135.58,
+      "endSec": 135.78
+    },
+    {
+      "text": "unstable",
+      "startSec": 135.78,
+      "endSec": 136.37
+    },
+    {
+      "text": "for",
+      "startSec": 136.37,
+      "endSec": 136.71
+    },
+    {
+      "text": "any",
+      "startSec": 136.71,
+      "endSec": 136.73
+    },
+    {
+      "text": "chart",
+      "startSec": 136.73,
+      "endSec": 137.07
+    },
+    {
+      "text": "to",
+      "startSec": 137.07,
+      "endSec": 137.2
+    },
+    {
+      "text": "stay",
+      "startSec": 137.2,
+      "endSec": 137.64
+    },
+    {
+      "text": "current",
+      "startSec": 137.64,
+      "endSec": 137.95
+    },
+    {
+      "text": "on",
+      "startSec": 137.95,
+      "endSec": 138.07999999999998
+    },
+    {
+      "text": ".",
+      "startSec": 138.07999999999998,
+      "endSec": 138.36
+    },
+    {
+      "text": "Board",
+      "startSec": 138.74,
+      "endSec": 138.9
+    },
+    {
+      "text": "ing",
+      "startSec": 138.9,
+      "endSec": 138.95
+    },
+    {
+      "text": "one",
+      "startSec": 138.95,
+      "endSec": 139.28
+    },
+    {
+      "text": "isn",
+      "startSec": 139.28,
+      "endSec": 139.39
+    },
+    {
+      "text": "'t",
+      "startSec": 139.39,
+      "endSec": 139.52
+    },
+    {
+      "text": "a",
+      "startSec": 139.52,
+      "endSec": 139.6
+    },
+    {
+      "text": "tactical",
+      "startSec": 139.6,
+      "endSec": 140.19
+    },
+    {
+      "text": "challenge",
+      "startSec": 140.19,
+      "endSec": 140.85
+    },
+    {
+      "text": ".",
+      "startSec": 140.85,
+      "endSec": 141.1
+    },
+    {
+      "text": "It",
+      "startSec": 141.54,
+      "endSec": 141.54
+    },
+    {
+      "text": "'s",
+      "startSec": 141.54,
+      "endSec": 141.54
+    },
+    {
+      "text": "a",
+      "startSec": 141.54,
+      "endSec": 141.71
+    },
+    {
+      "text": "structural",
+      "startSec": 141.71,
+      "endSec": 142.07999999999998
+    },
+    {
+      "text": "imposs",
+      "startSec": 142.07999999999998,
+      "endSec": 142.48
+    },
+    {
+      "text": "ibility",
+      "startSec": 142.48,
+      "endSec": 142.94
+    },
+    {
+      "text": "that",
+      "startSec": 142.94,
+      "endSec": 143.24
+    },
+    {
+      "text": "command",
+      "startSec": 143.24,
+      "endSec": 143.66
+    },
+    {
+      "text": "has",
+      "startSec": 143.66,
+      "endSec": 143.86
+    },
+    {
+      "text": "decided",
+      "startSec": 143.86,
+      "endSec": 144.32
+    },
+    {
+      "text": "cannot",
+      "startSec": 144.32,
+      "endSec": 144.77
+    },
+    {
+      "text": "be",
+      "startSec": 144.77,
+      "endSec": 144.85
+    },
+    {
+      "text": "avoided",
+      "startSec": 144.85,
+      "endSec": 145.31
+    },
+    {
+      "text": ".",
+      "startSec": 145.31,
+      "endSec": 145.57999999999998
+    },
+    {
+      "text": "The",
+      "startSec": 145.74,
+      "endSec": 145.77
+    },
+    {
+      "text": "corridors",
+      "startSec": 145.77,
+      "endSec": 146.35
+    },
+    {
+      "text": "weren",
+      "startSec": 146.35,
+      "endSec": 146.68
+    },
+    {
+      "text": "'t",
+      "startSec": 146.68,
+      "endSec": 146.95
+    },
+    {
+      "text": "built",
+      "startSec": 146.95,
+      "endSec": 147.13
+    },
+    {
+      "text": ".",
+      "startSec": 147.13,
+      "endSec": 147.36
+    },
+    {
+      "text": "They",
+      "startSec": 147.84,
+      "endSec": 147.88
+    },
+    {
+      "text": "'re",
+      "startSec": 147.88,
+      "endSec": 148
+    },
+    {
+      "text": "the",
+      "startSec": 148,
+      "endSec": 148.11
+    },
+    {
+      "text": "overlapping",
+      "startSec": 148.11,
+      "endSec": 148.95
+    },
+    {
+      "text": "inter",
+      "startSec": 148.95,
+      "endSec": 149.32999999999998
+    },
+    {
+      "text": "iors",
+      "startSec": 149.32999999999998,
+      "endSec": 149.63
+    },
+    {
+      "text": "of",
+      "startSec": 149.63,
+      "endSec": 149.78
+    },
+    {
+      "text": "vessels",
+      "startSec": 149.78,
+      "endSec": 150.47
+    },
+    {
+      "text": "that",
+      "startSec": 150.47,
+      "endSec": 150.61
+    },
+    {
+      "text": "were",
+      "startSec": 150.61,
+      "endSec": 151.07
+    },
+    {
+      "text": "never",
+      "startSec": 151.07,
+      "endSec": 151.29
+    },
+    {
+      "text": "designed",
+      "startSec": 151.29,
+      "endSec": 152.05
+    },
+    {
+      "text": "to",
+      "startSec": 152.05,
+      "endSec": 152.22
+    },
+    {
+      "text": "share",
+      "startSec": 152.22,
+      "endSec": 152.44
+    },
+    {
+      "text": "a",
+      "startSec": 152.44,
+      "endSec": 152.5
+    },
+    {
+      "text": "wall",
+      "startSec": 152.5,
+      "endSec": 152.86
+    },
+    {
+      "text": ",",
+      "startSec": 152.86,
+      "endSec": 152.95
+    },
+    {
+      "text": "smashed",
+      "startSec": 152.95,
+      "endSec": 153.49
+    },
+    {
+      "text": "into",
+      "startSec": 153.49,
+      "endSec": 153.78
+    },
+    {
+      "text": "adjac",
+      "startSec": 153.78,
+      "endSec": 154.16
+    },
+    {
+      "text": "ency",
+      "startSec": 154.16,
+      "endSec": 154.46
+    },
+    {
+      "text": "by",
+      "startSec": 154.46,
+      "endSec": 154.61
+    },
+    {
+      "text": "warp",
+      "startSec": 154.61,
+      "endSec": 154.91
+    },
+    {
+      "text": "physics",
+      "startSec": 154.91,
+      "endSec": 155.44
+    },
+    {
+      "text": ".",
+      "startSec": 155.44,
+      "endSec": 155.8
+    },
+    {
+      "text": "Flo",
+      "startSec": 156.36,
+      "endSec": 156.36
+    },
+    {
+      "text": "ors",
+      "startSec": 156.36,
+      "endSec": 156.52
+    },
+    {
+      "text": "become",
+      "startSec": 156.52,
+      "endSec": 156.73
+    },
+    {
+      "text": "ce",
+      "startSec": 156.73,
+      "endSec": 156.9
+    },
+    {
+      "text": "il",
+      "startSec": 156.9,
+      "endSec": 157.03
+    },
+    {
+      "text": "ings",
+      "startSec": 157.03,
+      "endSec": 157.32
+    },
+    {
+      "text": "two",
+      "startSec": 157.32,
+      "endSec": 157.57
+    },
+    {
+      "text": "jun",
+      "startSec": 157.57,
+      "endSec": 157.8
+    },
+    {
+      "text": "ctions",
+      "startSec": 157.8,
+      "endSec": 158.29
+    },
+    {
+      "text": "in",
+      "startSec": 158.29,
+      "endSec": 158.42000000000002
+    },
+    {
+      "text": ".",
+      "startSec": 158.42000000000002,
+      "endSec": 158.72
+    },
+    {
+      "text": "Gravity",
+      "startSec": 159.2,
+      "endSec": 159.36
+    },
+    {
+      "text": "plates",
+      "startSec": 159.36,
+      "endSec": 159.74
+    },
+    {
+      "text": "from",
+      "startSec": 159.74,
+      "endSec": 159.97
+    },
+    {
+      "text": "different",
+      "startSec": 159.97,
+      "endSec": 160.66
+    },
+    {
+      "text": "ships",
+      "startSec": 160.66,
+      "endSec": 161.03
+    },
+    {
+      "text": "pull",
+      "startSec": 161.03,
+      "endSec": 161.32999999999998
+    },
+    {
+      "text": "in",
+      "startSec": 161.32999999999998,
+      "endSec": 161.48
+    },
+    {
+      "text": "competing",
+      "startSec": 161.48,
+      "endSec": 162.15
+    },
+    {
+      "text": "directions",
+      "startSec": 162.15,
+      "endSec": 162.89
+    },
+    {
+      "text": "in",
+      "startSec": 162.89,
+      "endSec": 163.05
+    },
+    {
+      "text": "rooms",
+      "startSec": 163.05,
+      "endSec": 163.57
+    },
+    {
+      "text": "separated",
+      "startSec": 163.57,
+      "endSec": 164.22
+    },
+    {
+      "text": "by",
+      "startSec": 164.22,
+      "endSec": 164.24
+    },
+    {
+      "text": "a",
+      "startSec": 164.24,
+      "endSec": 164.31
+    },
+    {
+      "text": "single",
+      "startSec": 164.31,
+      "endSec": 164.76
+    },
+    {
+      "text": "bulk",
+      "startSec": 164.76,
+      "endSec": 165.06
+    },
+    {
+      "text": "head",
+      "startSec": 165.06,
+      "endSec": 165.41
+    },
+    {
+      "text": ".",
+      "startSec": 165.41,
+      "endSec": 165.66
+    },
+    {
+      "text": "Sect",
+      "startSec": 166.18,
+      "endSec": 166.18
+    },
+    {
+      "text": "ions",
+      "startSec": 166.18,
+      "endSec": 166.34
+    },
+    {
+      "text": "press",
+      "startSec": 166.34,
+      "endSec": 166.51
+    },
+    {
+      "text": "ur",
+      "startSec": 166.51,
+      "endSec": 166.72
+    },
+    {
+      "text": "ize",
+      "startSec": 166.72,
+      "endSec": 166.84
+    },
+    {
+      "text": "and",
+      "startSec": 166.84,
+      "endSec": 167.04
+    },
+    {
+      "text": "vent",
+      "startSec": 167.04,
+      "endSec": 167.3
+    },
+    {
+      "text": "without",
+      "startSec": 167.3,
+      "endSec": 167.76
+    },
+    {
+      "text": "warning",
+      "startSec": 167.76,
+      "endSec": 168.22
+    },
+    {
+      "text": "when",
+      "startSec": 168.22,
+      "endSec": 168.48
+    },
+    {
+      "text": "something",
+      "startSec": 168.48,
+      "endSec": 169.07999999999998
+    },
+    {
+      "text": "fails",
+      "startSec": 169.07999999999998,
+      "endSec": 169.41
+    },
+    {
+      "text": ".",
+      "startSec": 169.41,
+      "endSec": 169.68
+    },
+    {
+      "text": "The",
+      "startSec": 169.84,
+      "endSec": 169.91
+    },
+    {
+      "text": "atmosphere",
+      "startSec": 169.91,
+      "endSec": 170.68
+    },
+    {
+      "text": ",",
+      "startSec": 170.68,
+      "endSec": 170.82999999999998
+    },
+    {
+      "text": "where",
+      "startSec": 170.82999999999998,
+      "endSec": 171.21
+    },
+    {
+      "text": "it",
+      "startSec": 171.21,
+      "endSec": 171.38
+    },
+    {
+      "text": "exists",
+      "startSec": 171.38,
+      "endSec": 171.82
+    },
+    {
+      "text": "at",
+      "startSec": 171.82,
+      "endSec": 171.97
+    },
+    {
+      "text": "all",
+      "startSec": 171.97,
+      "endSec": 172.31
+    },
+    {
+      "text": ",",
+      "startSec": 172.31,
+      "endSec": 172.35
+    },
+    {
+      "text": "is",
+      "startSec": 172.35,
+      "endSec": 172.56
+    },
+    {
+      "text": "a",
+      "startSec": 172.56,
+      "endSec": 172.57
+    },
+    {
+      "text": "chemical",
+      "startSec": 172.57,
+      "endSec": 173.18
+    },
+    {
+      "text": "residue",
+      "startSec": 173.18,
+      "endSec": 173.87
+    },
+    {
+      "text": "of",
+      "startSec": 173.87,
+      "endSec": 174.06
+    },
+    {
+      "text": "whatever",
+      "startSec": 174.06,
+      "endSec": 174.51
+    },
+    {
+      "text": "the",
+      "startSec": 174.51,
+      "endSec": 174.71
+    },
+    {
+      "text": "last",
+      "startSec": 174.71,
+      "endSec": 175.02
+    },
+    {
+      "text": "crew",
+      "startSec": 175.02,
+      "endSec": 175.32999999999998
+    },
+    {
+      "text": "left",
+      "startSec": 175.32999999999998,
+      "endSec": 175.64
+    },
+    {
+      "text": "behind",
+      "startSec": 175.64,
+      "endSec": 176.1
+    },
+    {
+      "text": ",",
+      "startSec": 176.1,
+      "endSec": 176.28
+    },
+    {
+      "text": "which",
+      "startSec": 176.28,
+      "endSec": 176.63
+    },
+    {
+      "text": "includes",
+      "startSec": 176.63,
+      "endSec": 177.24
+    },
+    {
+      "text": "whatever",
+      "startSec": 177.24,
+      "endSec": 177.85
+    },
+    {
+      "text": "finished",
+      "startSec": 177.85,
+      "endSec": 178.46
+    },
+    {
+      "text": "them",
+      "startSec": 178.46,
+      "endSec": 179.03
+    },
+    {
+      "text": ".",
+      "startSec": 179.03,
+      "endSec": 179.14
+    },
+    {
+      "text": "Gen",
+      "startSec": 179.56,
+      "endSec": 179.68
+    },
+    {
+      "text": "este",
+      "startSec": 179.68,
+      "endSec": 179.72
+    },
+    {
+      "text": "el",
+      "startSec": 179.72,
+      "endSec": 179.82999999999998
+    },
+    {
+      "text": "ers",
+      "startSec": 179.82999999999998,
+      "endSec": 180.1
+    },
+    {
+      "text": "are",
+      "startSec": 180.1,
+      "endSec": 180.29
+    },
+    {
+      "text": "adapted",
+      "startSec": 180.29,
+      "endSec": 180.93
+    },
+    {
+      "text": "to",
+      "startSec": 180.93,
+      "endSec": 180.99
+    },
+    {
+      "text": "this",
+      "startSec": 180.99,
+      "endSec": 181.3
+    },
+    {
+      "text": "geometry",
+      "startSec": 181.3,
+      "endSec": 181.92
+    },
+    {
+      "text": "in",
+      "startSec": 181.92,
+      "endSec": 182.19
+    },
+    {
+      "text": "ways",
+      "startSec": 182.19,
+      "endSec": 182.38
+    },
+    {
+      "text": "that",
+      "startSec": 182.38,
+      "endSec": 182.79
+    },
+    {
+      "text": "standard",
+      "startSec": 182.79,
+      "endSec": 183.31
+    },
+    {
+      "text": "assault",
+      "startSec": 183.31,
+      "endSec": 183.94
+    },
+    {
+      "text": "doctrine",
+      "startSec": 183.94,
+      "endSec": 184.58
+    },
+    {
+      "text": "isn",
+      "startSec": 184.58,
+      "endSec": 184.71
+    },
+    {
+      "text": "'t",
+      "startSec": 184.71,
+      "endSec": 184.88
+    },
+    {
+      "text": ".",
+      "startSec": 184.88,
+      "endSec": 185.2
+    },
+    {
+      "text": "They",
+      "startSec": 185.52,
+      "endSec": 185.55
+    },
+    {
+      "text": "don",
+      "startSec": 185.55,
+      "endSec": 185.65
+    },
+    {
+      "text": "'t",
+      "startSec": 185.65,
+      "endSec": 185.68
+    },
+    {
+      "text": "need",
+      "startSec": 185.68,
+      "endSec": 185.85
+    },
+    {
+      "text": "consistent",
+      "startSec": 185.85,
+      "endSec": 186.35
+    },
+    {
+      "text": "gravity",
+      "startSec": 186.35,
+      "endSec": 186.7
+    },
+    {
+      "text": ".",
+      "startSec": 186.7,
+      "endSec": 186.86
+    },
+    {
+      "text": "They",
+      "startSec": 187.48,
+      "endSec": 187.48
+    },
+    {
+      "text": "move",
+      "startSec": 187.48,
+      "endSec": 187.64
+    },
+    {
+      "text": "through",
+      "startSec": 187.64,
+      "endSec": 187.8
+    },
+    {
+      "text": "ventilation",
+      "startSec": 187.8,
+      "endSec": 188.5
+    },
+    {
+      "text": "shaft",
+      "startSec": 188.5,
+      "endSec": 188.85
+    },
+    {
+      "text": "s",
+      "startSec": 188.85,
+      "endSec": 188.87
+    },
+    {
+      "text": "with",
+      "startSec": 188.87,
+      "endSec": 189.18
+    },
+    {
+      "text": "the",
+      "startSec": 189.18,
+      "endSec": 189.31
+    },
+    {
+      "text": "velocity",
+      "startSec": 189.31,
+      "endSec": 189.82
+    },
+    {
+      "text": "of",
+      "startSec": 189.82,
+      "endSec": 189.93
+    },
+    {
+      "text": "a",
+      "startSec": 189.93,
+      "endSec": 190.11
+    },
+    {
+      "text": "launched",
+      "startSec": 190.11,
+      "endSec": 190.51
+    },
+    {
+      "text": "round",
+      "startSec": 190.51,
+      "endSec": 190.82
+    },
+    {
+      "text": "and",
+      "startSec": 190.82,
+      "endSec": 191.01
+    },
+    {
+      "text": "the",
+      "startSec": 191.01,
+      "endSec": 191.2
+    },
+    {
+      "text": "acoustic",
+      "startSec": 191.2,
+      "endSec": 191.86
+    },
+    {
+      "text": "signature",
+      "startSec": 191.86,
+      "endSec": 192.31
+    },
+    {
+      "text": "of",
+      "startSec": 192.31,
+      "endSec": 192.46
+    },
+    {
+      "text": "a",
+      "startSec": 192.46,
+      "endSec": 192.5
+    },
+    {
+      "text": "maintenance",
+      "startSec": 192.5,
+      "endSec": 193.16
+    },
+    {
+      "text": "fault",
+      "startSec": 193.16,
+      "endSec": 193.47
+    },
+    {
+      "text": ".",
+      "startSec": 193.47,
+      "endSec": 193.76
+    },
+    {
+      "text": "Squad",
+      "startSec": 194.12,
+      "endSec": 194.32
+    },
+    {
+      "text": "formations",
+      "startSec": 194.32,
+      "endSec": 195.04
+    },
+    {
+      "text": "built",
+      "startSec": 195.04,
+      "endSec": 195.41
+    },
+    {
+      "text": "around",
+      "startSec": 195.41,
+      "endSec": 195.89
+    },
+    {
+      "text": "structured",
+      "startSec": 195.89,
+      "endSec": 196.59
+    },
+    {
+      "text": "corridors",
+      "startSec": 196.59,
+      "endSec": 197.24
+    },
+    {
+      "text": "collapse",
+      "startSec": 197.24,
+      "endSec": 197.81
+    },
+    {
+      "text": "because",
+      "startSec": 197.81,
+      "endSec": 198.35
+    },
+    {
+      "text": "line",
+      "startSec": 198.35,
+      "endSec": 198.62
+    },
+    {
+      "text": "of",
+      "startSec": 198.62,
+      "endSec": 198.79
+    },
+    {
+      "text": "sight",
+      "startSec": 198.79,
+      "endSec": 199.12
+    },
+    {
+      "text": "inside",
+      "startSec": 199.12,
+      "endSec": 199.56
+    },
+    {
+      "text": "a",
+      "startSec": 199.56,
+      "endSec": 199.63
+    },
+    {
+      "text": "h",
+      "startSec": 199.63,
+      "endSec": 199.7
+    },
+    {
+      "text": "ulk",
+      "startSec": 199.7,
+      "endSec": 199.92000000000002
+    },
+    {
+      "text": "rarely",
+      "startSec": 199.92000000000002,
+      "endSec": 200.36
+    },
+    {
+      "text": "extends",
+      "startSec": 200.36,
+      "endSec": 200.87
+    },
+    {
+      "text": "six",
+      "startSec": 200.87,
+      "endSec": 201.09
+    },
+    {
+      "text": "meters",
+      "startSec": 201.09,
+      "endSec": 201.6
+    },
+    {
+      "text": ",",
+      "startSec": 201.6,
+      "endSec": 201.62
+    },
+    {
+      "text": "and",
+      "startSec": 202.14,
+      "endSec": 202.14
+    },
+    {
+      "text": "fl",
+      "startSec": 202.14,
+      "endSec": 202.21
+    },
+    {
+      "text": "anking",
+      "startSec": 202.21,
+      "endSec": 202.3
+    },
+    {
+      "text": "acqu",
+      "startSec": 202.3,
+      "endSec": 202.43
+    },
+    {
+      "text": "ires",
+      "startSec": 202.43,
+      "endSec": 202.68
+    },
+    {
+      "text": "a",
+      "startSec": 202.68,
+      "endSec": 202.69
+    },
+    {
+      "text": "third",
+      "startSec": 202.69,
+      "endSec": 202.96
+    },
+    {
+      "text": "dimension",
+      "startSec": 202.96,
+      "endSec": 203.51
+    },
+    {
+      "text": "when",
+      "startSec": 203.51,
+      "endSec": 203.67000000000002
+    },
+    {
+      "text": "the",
+      "startSec": 203.67000000000002,
+      "endSec": 203.84
+    },
+    {
+      "text": "threat",
+      "startSec": 203.84,
+      "endSec": 204.16
+    },
+    {
+      "text": "can",
+      "startSec": 204.16,
+      "endSec": 204.32
+    },
+    {
+      "text": "arrive",
+      "startSec": 204.32,
+      "endSec": 204.77
+    },
+    {
+      "text": "from",
+      "startSec": 204.77,
+      "endSec": 204.87
+    },
+    {
+      "text": "overhead",
+      "startSec": 204.87,
+      "endSec": 205.37
+    },
+    {
+      "text": "or",
+      "startSec": 205.37,
+      "endSec": 205.42000000000002
+    },
+    {
+      "text": "through",
+      "startSec": 205.42000000000002,
+      "endSec": 205.8
+    },
+    {
+      "text": "the",
+      "startSec": 205.8,
+      "endSec": 205.96
+    },
+    {
+      "text": "wall",
+      "startSec": 205.96,
+      "endSec": 206.5
+    },
+    {
+      "text": "itself",
+      "startSec": 206.5,
+      "endSec": 206.53
+    },
+    {
+      "text": ".",
+      "startSec": 206.53,
+      "endSec": 206.74
+    },
+    {
+      "text": "Term",
+      "startSec": 207.22,
+      "endSec": 207.38
+    },
+    {
+      "text": "inator",
+      "startSec": 207.38,
+      "endSec": 207.47
+    },
+    {
+      "text": "armor",
+      "startSec": 207.47,
+      "endSec": 207.84
+    },
+    {
+      "text": "was",
+      "startSec": 207.84,
+      "endSec": 208.06
+    },
+    {
+      "text": "developed",
+      "startSec": 208.06,
+      "endSec": 208.73
+    },
+    {
+      "text": "for",
+      "startSec": 208.73,
+      "endSec": 208.95
+    },
+    {
+      "text": "this",
+      "startSec": 208.95,
+      "endSec": 209.24
+    },
+    {
+      "text": "specific",
+      "startSec": 209.24,
+      "endSec": 209.85
+    },
+    {
+      "text": "operational",
+      "startSec": 209.85,
+      "endSec": 210.65
+    },
+    {
+      "text": "context",
+      "startSec": 210.65,
+      "endSec": 211.16
+    },
+    {
+      "text": ".",
+      "startSec": 211.16,
+      "endSec": 211.44
+    },
+    {
+      "text": "It",
+      "startSec": 211.92000000000002,
+      "endSec": 211.92000000000002
+    },
+    {
+      "text": "still",
+      "startSec": 211.92000000000002,
+      "endSec": 212.07999999999998
+    },
+    {
+      "text": "doesn",
+      "startSec": 212.07999999999998,
+      "endSec": 212.23
+    },
+    {
+      "text": "'t",
+      "startSec": 212.23,
+      "endSec": 212.46
+    },
+    {
+      "text": "make",
+      "startSec": 212.46,
+      "endSec": 212.63
+    },
+    {
+      "text": "the",
+      "startSec": 212.63,
+      "endSec": 212.81
+    },
+    {
+      "text": "casual",
+      "startSec": 212.81,
+      "endSec": 213.29
+    },
+    {
+      "text": "ty",
+      "startSec": 213.29,
+      "endSec": 213.32999999999998
+    },
+    {
+      "text": "rates",
+      "startSec": 213.32999999999998,
+      "endSec": 213.66
+    },
+    {
+      "text": "acceptable",
+      "startSec": 213.66,
+      "endSec": 214.32
+    },
+    {
+      "text": ".",
+      "startSec": 214.32,
+      "endSec": 214.56
+    },
+    {
+      "text": "It",
+      "startSec": 215.12,
+      "endSec": 215.12
+    },
+    {
+      "text": "makes",
+      "startSec": 215.12,
+      "endSec": 215.27
+    },
+    {
+      "text": "them",
+      "startSec": 215.27,
+      "endSec": 215.29
+    },
+    {
+      "text": "surviv",
+      "startSec": 215.29,
+      "endSec": 215.69
+    },
+    {
+      "text": "able",
+      "startSec": 215.69,
+      "endSec": 215.96
+    },
+    {
+      "text": "for",
+      "startSec": 215.96,
+      "endSec": 216.19
+    },
+    {
+      "text": "a",
+      "startSec": 216.19,
+      "endSec": 216.22
+    },
+    {
+      "text": "fraction",
+      "startSec": 216.22,
+      "endSec": 216.82
+    },
+    {
+      "text": "of",
+      "startSec": 216.82,
+      "endSec": 216.89
+    },
+    {
+      "text": "the",
+      "startSec": 216.89,
+      "endSec": 217.09
+    },
+    {
+      "text": "boarding",
+      "startSec": 217.09,
+      "endSec": 217.75
+    },
+    {
+      "text": "party",
+      "startSec": 217.75,
+      "endSec": 218
+    },
+    {
+      "text": ".",
+      "startSec": 218,
+      "endSec": 218.22
+    },
+    {
+      "text": "That",
+      "startSec": 218.66,
+      "endSec": 218.66
+    },
+    {
+      "text": "'s",
+      "startSec": 218.66,
+      "endSec": 218.8
+    },
+    {
+      "text": "the",
+      "startSec": 218.8,
+      "endSec": 218.82
+    },
+    {
+      "text": "best",
+      "startSec": 218.82,
+      "endSec": 219.07
+    },
+    {
+      "text": "available",
+      "startSec": 219.07,
+      "endSec": 219.74
+    },
+    {
+      "text": "outcome",
+      "startSec": 219.74,
+      "endSec": 220.14
+    },
+    {
+      "text": ",",
+      "startSec": 220.14,
+      "endSec": 220.36
+    },
+    {
+      "text": "and",
+      "startSec": 220.36,
+      "endSec": 220.47
+    },
+    {
+      "text": "everyone",
+      "startSec": 220.47,
+      "endSec": 221
+    },
+    {
+      "text": "going",
+      "startSec": 221,
+      "endSec": 221.32999999999998
+    },
+    {
+      "text": "and",
+      "startSec": 221.32999999999998,
+      "endSec": 221.54
+    },
+    {
+      "text": "knows",
+      "startSec": 221.54,
+      "endSec": 221.89
+    },
+    {
+      "text": "it",
+      "startSec": 221.89,
+      "endSec": 221.99
+    },
+    {
+      "text": ".",
+      "startSec": 221.99,
+      "endSec": 222.26
+    },
+    {
+      "text": "Number",
+      "startSec": 222.26,
+      "endSec": 222.8
+    },
+    {
+      "text": "four",
+      "startSec": 222.8,
+      "endSec": 223.14
+    },
+    {
+      "text": ",",
+      "startSec": 223.14,
+      "endSec": 223.32999999999998
+    },
+    {
+      "text": "V",
+      "startSec": 223.32999999999998,
+      "endSec": 223.39
+    },
+    {
+      "text": "RA",
+      "startSec": 223.39,
+      "endSec": 223.63
+    },
+    {
+      "text": "X",
+      "startSec": 223.63,
+      "endSec": 223.68
+    },
+    {
+      "text": ".",
+      "startSec": 223.68,
+      "endSec": 223.68
+    },
+    {
+      "text": "Sev",
+      "startSec": 224.12,
+      "endSec": 224.15
+    },
+    {
+      "text": "enteen",
+      "startSec": 224.15,
+      "endSec": 224.54
+    },
+    {
+      "text": "years",
+      "startSec": 224.54,
+      "endSec": 224.86
+    },
+    {
+      "text": ".",
+      "startSec": 224.86,
+      "endSec": 225.07999999999998
+    },
+    {
+      "text": "That",
+      "startSec": 225.52,
+      "endSec": 225.68
+    },
+    {
+      "text": "number",
+      "startSec": 225.68,
+      "endSec": 225.73
+    },
+    {
+      "text": "starts",
+      "startSec": 225.73,
+      "endSec": 226.12
+    },
+    {
+      "text": "making",
+      "startSec": 226.12,
+      "endSec": 226.5
+    },
+    {
+      "text": "sense",
+      "startSec": 226.5,
+      "endSec": 226.89
+    },
+    {
+      "text": "once",
+      "startSec": 226.89,
+      "endSec": 227.1
+    },
+    {
+      "text": "you",
+      "startSec": 227.1,
+      "endSec": 227.29
+    },
+    {
+      "text": "understand",
+      "startSec": 227.29,
+      "endSec": 227.95
+    },
+    {
+      "text": "what",
+      "startSec": 227.95,
+      "endSec": 228.21
+    },
+    {
+      "text": "the",
+      "startSec": 228.21,
+      "endSec": 228.4
+    },
+    {
+      "text": "terrain",
+      "startSec": 228.4,
+      "endSec": 228.86
+    },
+    {
+      "text": "did",
+      "startSec": 228.86,
+      "endSec": 229.05
+    },
+    {
+      "text": "to",
+      "startSec": 229.05,
+      "endSec": 229.18
+    },
+    {
+      "text": "every",
+      "startSec": 229.18,
+      "endSec": 229.88
+    },
+    {
+      "text": "assault",
+      "startSec": 229.88,
+      "endSec": 229.97
+    },
+    {
+      "text": "the",
+      "startSec": 229.97,
+      "endSec": 230.16
+    },
+    {
+      "text": "Imper",
+      "startSec": 230.16,
+      "endSec": 230.54
+    },
+    {
+      "text": "ium",
+      "startSec": 230.54,
+      "endSec": 230.68
+    },
+    {
+      "text": "attempted",
+      "startSec": 230.68,
+      "endSec": 231.27
+    },
+    {
+      "text": ".",
+      "startSec": 231.27,
+      "endSec": 231.57999999999998
+    },
+    {
+      "text": "V",
+      "startSec": 232.1,
+      "endSec": 232.1
+    },
+    {
+      "text": "RA",
+      "startSec": 232.1,
+      "endSec": 232.1
+    },
+    {
+      "text": "X",
+      "startSec": 232.1,
+      "endSec": 232.14
+    },
+    {
+      "text": "was",
+      "startSec": 232.14,
+      "endSec": 232.26
+    },
+    {
+      "text": "an",
+      "startSec": 232.26,
+      "endSec": 232.3
+    },
+    {
+      "text": "arm",
+      "startSec": 232.3,
+      "endSec": 232.64
+    },
+    {
+      "text": "ory",
+      "startSec": 232.64,
+      "endSec": 232.78
+    },
+    {
+      "text": "world",
+      "startSec": 232.78,
+      "endSec": 233.18
+    },
+    {
+      "text": "built",
+      "startSec": 233.18,
+      "endSec": 233.57999999999998
+    },
+    {
+      "text": "for",
+      "startSec": 233.57999999999998,
+      "endSec": 233.82
+    },
+    {
+      "text": "storage",
+      "startSec": 233.82,
+      "endSec": 234.38
+    },
+    {
+      "text": "and",
+      "startSec": 234.38,
+      "endSec": 234.73
+    },
+    {
+      "text": "protection",
+      "startSec": 234.73,
+      "endSec": 235.43
+    },
+    {
+      "text": "rather",
+      "startSec": 235.43,
+      "endSec": 235.9
+    },
+    {
+      "text": "than",
+      "startSec": 235.9,
+      "endSec": 236.47
+    },
+    {
+      "text": "hab",
+      "startSec": 236.47,
+      "endSec": 236.49
+    },
+    {
+      "text": "itation",
+      "startSec": 236.49,
+      "endSec": 237.12
+    },
+    {
+      "text": ".",
+      "startSec": 237.12,
+      "endSec": 237.34
+    },
+    {
+      "text": "Th",
+      "startSec": 237.9,
+      "endSec": 237.9
+    },
+    {
+      "text": "ick",
+      "startSec": 237.9,
+      "endSec": 238
+    },
+    {
+      "text": "rock",
+      "startSec": 238,
+      "endSec": 238.05
+    },
+    {
+      "text": "c",
+      "startSec": 238.05,
+      "endSec": 238.07
+    },
+    {
+      "text": "rete",
+      "startSec": 238.07,
+      "endSec": 238.44
+    },
+    {
+      "text": "everywhere",
+      "startSec": 238.44,
+      "endSec": 239.1
+    },
+    {
+      "text": ".",
+      "startSec": 239.1,
+      "endSec": 239.36
+    },
+    {
+      "text": "Deep",
+      "startSec": 239.96,
+      "endSec": 240.1
+    },
+    {
+      "text": "vault",
+      "startSec": 240.1,
+      "endSec": 240.12
+    },
+    {
+      "text": "s",
+      "startSec": 240.12,
+      "endSec": 240.18
+    },
+    {
+      "text": "below",
+      "startSec": 240.18,
+      "endSec": 240.59
+    },
+    {
+      "text": "it",
+      "startSec": 240.59,
+      "endSec": 240.73
+    },
+    {
+      "text": ".",
+      "startSec": 240.73,
+      "endSec": 241.02
+    },
+    {
+      "text": "Def",
+      "startSec": 241.4,
+      "endSec": 241.56
+    },
+    {
+      "text": "ensive",
+      "startSec": 241.56,
+      "endSec": 241.62
+    },
+    {
+      "text": "lines",
+      "startSec": 241.62,
+      "endSec": 241.95
+    },
+    {
+      "text": "pred",
+      "startSec": 241.95,
+      "endSec": 242.22
+    },
+    {
+      "text": "ating",
+      "startSec": 242.22,
+      "endSec": 242.55
+    },
+    {
+      "text": "the",
+      "startSec": 242.55,
+      "endSec": 242.77
+    },
+    {
+      "text": "siege",
+      "startSec": 242.77,
+      "endSec": 243.1
+    },
+    {
+      "text": "by",
+      "startSec": 243.1,
+      "endSec": 243.21
+    },
+    {
+      "text": "centuries",
+      "startSec": 243.21,
+      "endSec": 243.81
+    },
+    {
+      "text": "constructed",
+      "startSec": 243.81,
+      "endSec": 244.61
+    },
+    {
+      "text": "specifically",
+      "startSec": 244.61,
+      "endSec": 245.34
+    },
+    {
+      "text": "to",
+      "startSec": 245.34,
+      "endSec": 245.76
+    },
+    {
+      "text": "resist",
+      "startSec": 245.76,
+      "endSec": 245.88
+    },
+    {
+      "text": "the",
+      "startSec": 245.88,
+      "endSec": 246.08
+    },
+    {
+      "text": "type",
+      "startSec": 246.08,
+      "endSec": 246.42
+    },
+    {
+      "text": "of",
+      "startSec": 246.42,
+      "endSec": 246.48
+    },
+    {
+      "text": "assault",
+      "startSec": 246.48,
+      "endSec": 246.95
+    },
+    {
+      "text": "being",
+      "startSec": 246.95,
+      "endSec": 247.28
+    },
+    {
+      "text": "attempted",
+      "startSec": 247.28,
+      "endSec": 247.88
+    },
+    {
+      "text": "against",
+      "startSec": 247.88,
+      "endSec": 248.35
+    },
+    {
+      "text": "them",
+      "startSec": 248.35,
+      "endSec": 248.69
+    },
+    {
+      "text": ".",
+      "startSec": 248.69,
+      "endSec": 248.92
+    },
+    {
+      "text": "The",
+      "startSec": 249.08,
+      "endSec": 249.12
+    },
+    {
+      "text": "attacking",
+      "startSec": 249.12,
+      "endSec": 249.74
+    },
+    {
+      "text": "forces",
+      "startSec": 249.74,
+      "endSec": 250.29
+    },
+    {
+      "text": "had",
+      "startSec": 250.29,
+      "endSec": 250.35
+    },
+    {
+      "text": "to",
+      "startSec": 250.35,
+      "endSec": 250.48
+    },
+    {
+      "text": "advance",
+      "startSec": 250.48,
+      "endSec": 250.96
+    },
+    {
+      "text": "into",
+      "startSec": 250.96,
+      "endSec": 251.23
+    },
+    {
+      "text": "ground",
+      "startSec": 251.23,
+      "endSec": 251.64
+    },
+    {
+      "text": "that",
+      "startSec": 251.64,
+      "endSec": 251.91
+    },
+    {
+      "text": "had",
+      "startSec": 251.91,
+      "endSec": 252.15
+    },
+    {
+      "text": "been",
+      "startSec": 252.15,
+      "endSec": 252.38
+    },
+    {
+      "text": "engineered",
+      "startSec": 252.38,
+      "endSec": 253.29
+    },
+    {
+      "text": "decades",
+      "startSec": 253.29,
+      "endSec": 253.54
+    },
+    {
+      "text": "before",
+      "startSec": 253.54,
+      "endSec": 253.95
+    },
+    {
+      "text": "they",
+      "startSec": 253.95,
+      "endSec": 254.24
+    },
+    {
+      "text": "arrived",
+      "startSec": 254.24,
+      "endSec": 254.7
+    },
+    {
+      "text": "to",
+      "startSec": 254.7,
+      "endSec": 254.83
+    },
+    {
+      "text": "stop",
+      "startSec": 254.83,
+      "endSec": 255.13
+    },
+    {
+      "text": "exactly",
+      "startSec": 255.13,
+      "endSec": 255.58
+    },
+    {
+      "text": "them",
+      "startSec": 255.58,
+      "endSec": 255.85
+    },
+    {
+      "text": ".",
+      "startSec": 255.85,
+      "endSec": 256.16
+    },
+    {
+      "text": "T",
+      "startSec": 256.54,
+      "endSec": 256.54
+    },
+    {
+      "text": "ren",
+      "startSec": 256.54,
+      "endSec": 256.7
+    },
+    {
+      "text": "ches",
+      "startSec": 256.7,
+      "endSec": 256.77
+    },
+    {
+      "text": "funnel",
+      "startSec": 256.77,
+      "endSec": 257.24
+    },
+    {
+      "text": "movement",
+      "startSec": 257.24,
+      "endSec": 257.91
+    },
+    {
+      "text": "and",
+      "startSec": 257.91,
+      "endSec": 258.09
+    },
+    {
+      "text": "eliminate",
+      "startSec": 258.09,
+      "endSec": 258.79
+    },
+    {
+      "text": "fl",
+      "startSec": 258.79,
+      "endSec": 258.94
+    },
+    {
+      "text": "anking",
+      "startSec": 258.94,
+      "endSec": 259.42
+    },
+    {
+      "text": "at",
+      "startSec": 259.42,
+      "endSec": 259.55
+    },
+    {
+      "text": "the",
+      "startSec": 259.55,
+      "endSec": 259.78
+    },
+    {
+      "text": "squad",
+      "startSec": 259.78,
+      "endSec": 260.17
+    },
+    {
+      "text": "level",
+      "startSec": 260.17,
+      "endSec": 260.86
+    },
+    {
+      "text": ".",
+      "startSec": 260.86,
+      "endSec": 260.86
+    },
+    {
+      "text": "The",
+      "startSec": 261.02,
+      "endSec": 261.06
+    },
+    {
+      "text": "chaos",
+      "startSec": 261.06,
+      "endSec": 261.4
+    },
+    {
+      "text": "-",
+      "startSec": 261.4,
+      "endSec": 261.45
+    },
+    {
+      "text": "al",
+      "startSec": 261.45,
+      "endSec": 261.57
+    },
+    {
+      "text": "igned",
+      "startSec": 261.57,
+      "endSec": 261.94
+    },
+    {
+      "text": "defenders",
+      "startSec": 261.94,
+      "endSec": 262.56
+    },
+    {
+      "text": "added",
+      "startSec": 262.56,
+      "endSec": 262.84
+    },
+    {
+      "text": "persistent",
+      "startSec": 262.84,
+      "endSec": 263.51
+    },
+    {
+      "text": "acidic",
+      "startSec": 263.51,
+      "endSec": 264.09
+    },
+    {
+      "text": "chemical",
+      "startSec": 264.09,
+      "endSec": 264.45
+    },
+    {
+      "text": "compounds",
+      "startSec": 264.45,
+      "endSec": 265.18
+    },
+    {
+      "text": "to",
+      "startSec": 265.18,
+      "endSec": 265.25
+    },
+    {
+      "text": "that",
+      "startSec": 265.25,
+      "endSec": 265.46
+    },
+    {
+      "text": "problem",
+      "startSec": 265.46,
+      "endSec": 265.92
+    },
+    {
+      "text": ".",
+      "startSec": 265.92,
+      "endSec": 266.2
+    },
+    {
+      "text": "Ag",
+      "startSec": 266.74,
+      "endSec": 266.74
+    },
+    {
+      "text": "ents",
+      "startSec": 266.74,
+      "endSec": 266.9
+    },
+    {
+      "text": "that",
+      "startSec": 266.9,
+      "endSec": 267.05
+    },
+    {
+      "text": "pool",
+      "startSec": 267.05,
+      "endSec": 267.39
+    },
+    {
+      "text": "ed",
+      "startSec": 267.39,
+      "endSec": 267.56
+    },
+    {
+      "text": "in",
+      "startSec": 267.56,
+      "endSec": 267.72
+    },
+    {
+      "text": "low",
+      "startSec": 267.72,
+      "endSec": 268.11
+    },
+    {
+      "text": "ground",
+      "startSec": 268.11,
+      "endSec": 268.49
+    },
+    {
+      "text": "degrad",
+      "startSec": 268.49,
+      "endSec": 269
+    },
+    {
+      "text": "ed",
+      "startSec": 269,
+      "endSec": 269.17
+    },
+    {
+      "text": "respir",
+      "startSec": 269.17,
+      "endSec": 269.68
+    },
+    {
+      "text": "ator",
+      "startSec": 269.68,
+      "endSec": 270.02
+    },
+    {
+      "text": "seals",
+      "startSec": 270.02,
+      "endSec": 270.42
+    },
+    {
+      "text": "over",
+      "startSec": 270.42,
+      "endSec": 271.11
+    },
+    {
+      "text": "extended",
+      "startSec": 271.11,
+      "endSec": 271.46
+    },
+    {
+      "text": "exposure",
+      "startSec": 271.46,
+      "endSec": 272.2
+    },
+    {
+      "text": "and",
+      "startSec": 272.2,
+      "endSec": 272.39
+    },
+    {
+      "text": "corrupted",
+      "startSec": 272.39,
+      "endSec": 272.96
+    },
+    {
+      "text": "the",
+      "startSec": 272.96,
+      "endSec": 273.15
+    },
+    {
+      "text": "soil",
+      "startSec": 273.15,
+      "endSec": 273.4
+    },
+    {
+      "text": "chemistry",
+      "startSec": 273.4,
+      "endSec": 274.03
+    },
+    {
+      "text": "across",
+      "startSec": 274.03,
+      "endSec": 274.35
+    },
+    {
+      "text": "entire",
+      "startSec": 274.35,
+      "endSec": 274.81
+    },
+    {
+      "text": "operating",
+      "startSec": 274.81,
+      "endSec": 275.28
+    },
+    {
+      "text": "sectors",
+      "startSec": 275.28,
+      "endSec": 275.98
+    },
+    {
+      "text": ".",
+      "startSec": 275.98,
+      "endSec": 275.98
+    },
+    {
+      "text": "Ground",
+      "startSec": 276.14,
+      "endSec": 276.52
+    },
+    {
+      "text": "that",
+      "startSec": 276.52,
+      "endSec": 276.69
+    },
+    {
+      "text": "should",
+      "startSec": 276.69,
+      "endSec": 277.12
+    },
+    {
+      "text": "have",
+      "startSec": 277.12,
+      "endSec": 277.4
+    },
+    {
+      "text": "been",
+      "startSec": 277.4,
+      "endSec": 277.68
+    },
+    {
+      "text": "travers",
+      "startSec": 277.68,
+      "endSec": 278.18
+    },
+    {
+      "text": "able",
+      "startSec": 278.18,
+      "endSec": 278.61
+    },
+    {
+      "text": "became",
+      "startSec": 278.61,
+      "endSec": 278.89
+    },
+    {
+      "text": "toxic",
+      "startSec": 278.89,
+      "endSec": 279.24
+    },
+    {
+      "text": "inside",
+      "startSec": 279.24,
+      "endSec": 279.67
+    },
+    {
+      "text": "two",
+      "startSec": 279.67,
+      "endSec": 279.87
+    },
+    {
+      "text": "weeks",
+      "startSec": 279.87,
+      "endSec": 280.35
+    },
+    {
+      "text": "of",
+      "startSec": 280.35,
+      "endSec": 280.37
+    },
+    {
+      "text": "sustained",
+      "startSec": 280.37,
+      "endSec": 281.01
+    },
+    {
+      "text": "fighting",
+      "startSec": 281.01,
+      "endSec": 281.63
+    },
+    {
+      "text": ".",
+      "startSec": 281.63,
+      "endSec": 281.86
+    },
+    {
+      "text": "Sold",
+      "startSec": 282.36,
+      "endSec": 282.48
+    },
+    {
+      "text": "iers",
+      "startSec": 282.48,
+      "endSec": 282.52
+    },
+    {
+      "text": "who",
+      "startSec": 282.52,
+      "endSec": 282.71
+    },
+    {
+      "text": "crossed",
+      "startSec": 282.71,
+      "endSec": 283.25
+    },
+    {
+      "text": "contaminated",
+      "startSec": 283.25,
+      "endSec": 284.18
+    },
+    {
+      "text": "sections",
+      "startSec": 284.18,
+      "endSec": 284.79
+    },
+    {
+      "text": "arrived",
+      "startSec": 284.79,
+      "endSec": 285.34000000000003
+    },
+    {
+      "text": "at",
+      "startSec": 285.34000000000003,
+      "endSec": 285.59000000000003
+    },
+    {
+      "text": "their",
+      "startSec": 285.59000000000003,
+      "endSec": 285.88
+    },
+    {
+      "text": "objectives",
+      "startSec": 285.88,
+      "endSec": 286.74
+    },
+    {
+      "text": "already",
+      "startSec": 286.74,
+      "endSec": 287.2
+    },
+    {
+      "text": "in",
+      "startSec": 287.2,
+      "endSec": 287.38
+    },
+    {
+      "text": "physiological",
+      "startSec": 287.38,
+      "endSec": 288.36
+    },
+    {
+      "text": "decline",
+      "startSec": 288.36,
+      "endSec": 288.9
+    },
+    {
+      "text": "before",
+      "startSec": 288.9,
+      "endSec": 289.35
+    },
+    {
+      "text": "any",
+      "startSec": 289.35,
+      "endSec": 289.65
+    },
+    {
+      "text": "contact",
+      "startSec": 289.65,
+      "endSec": 290.13
+    },
+    {
+      "text": "occurred",
+      "startSec": 290.13,
+      "endSec": 290.75
+    },
+    {
+      "text": ".",
+      "startSec": 290.75,
+      "endSec": 291.1
+    },
+    {
+      "text": "After",
+      "startSec": 291.26,
+      "endSec": 291.45
+    },
+    {
+      "text": "seventeen",
+      "startSec": 291.45,
+      "endSec": 292.06
+    },
+    {
+      "text": "years",
+      "startSec": 292.06,
+      "endSec": 292.47
+    },
+    {
+      "text": "of",
+      "startSec": 292.47,
+      "endSec": 292.57
+    },
+    {
+      "text": "that",
+      "startSec": 292.57,
+      "endSec": 292.85
+    },
+    {
+      "text": ",",
+      "startSec": 292.85,
+      "endSec": 293.03
+    },
+    {
+      "text": "the",
+      "startSec": 293.03,
+      "endSec": 293.2
+    },
+    {
+      "text": "battlefield",
+      "startSec": 293.2,
+      "endSec": 293.98
+    },
+    {
+      "text": "substrate",
+      "startSec": 293.98,
+      "endSec": 294.6
+    },
+    {
+      "text": "changed",
+      "startSec": 294.6,
+      "endSec": 295.06
+    },
+    {
+      "text": ".",
+      "startSec": 295.06,
+      "endSec": 295.34000000000003
+    },
+    {
+      "text": "The",
+      "startSec": 295.74,
+      "endSec": 295.83
+    },
+    {
+      "text": "soil",
+      "startSec": 295.83,
+      "endSec": 295.9
+    },
+    {
+      "text": "ch",
+      "startSec": 295.9,
+      "endSec": 295.97
+    },
+    {
+      "text": "urn",
+      "startSec": 295.97,
+      "endSec": 296.28
+    },
+    {
+      "text": "ed",
+      "startSec": 296.28,
+      "endSec": 296.32
+    },
+    {
+      "text": ".",
+      "startSec": 296.32,
+      "endSec": 296.56
+    },
+    {
+      "text": "Cont",
+      "startSec": 296.96,
+      "endSec": 296.99
+    },
+    {
+      "text": "am",
+      "startSec": 296.99,
+      "endSec": 297.12
+    },
+    {
+      "text": "inated",
+      "startSec": 297.12,
+      "endSec": 297.5
+    },
+    {
+      "text": "zones",
+      "startSec": 297.5,
+      "endSec": 297.78
+    },
+    {
+      "text": "developed",
+      "startSec": 297.78,
+      "endSec": 298.43
+    },
+    {
+      "text": "biological",
+      "startSec": 298.43,
+      "endSec": 299.15999999999997
+    },
+    {
+      "text": "properties",
+      "startSec": 299.15999999999997,
+      "endSec": 299.89
+    },
+    {
+      "text": "that",
+      "startSec": 299.89,
+      "endSec": 300.19
+    },
+    {
+      "text": "had",
+      "startSec": 300.19,
+      "endSec": 300.39
+    },
+    {
+      "text": "no",
+      "startSec": 300.39,
+      "endSec": 300.53
+    },
+    {
+      "text": "business",
+      "startSec": 300.53,
+      "endSec": 301.32
+    },
+    {
+      "text": "being",
+      "startSec": 301.32,
+      "endSec": 301.56
+    },
+    {
+      "text": "there",
+      "startSec": 301.56,
+      "endSec": 301.83
+    },
+    {
+      "text": ".",
+      "startSec": 301.83,
+      "endSec": 302.12
+    },
+    {
+      "text": "In",
+      "startSec": 302.12,
+      "endSec": 302.28
+    },
+    {
+      "text": "the",
+      "startSec": 302.28,
+      "endSec": 302.44
+    },
+    {
+      "text": "worst",
+      "startSec": 302.44,
+      "endSec": 302.77
+    },
+    {
+      "text": "sectors",
+      "startSec": 302.77,
+      "endSec": 303.23
+    },
+    {
+      "text": ",",
+      "startSec": 303.23,
+      "endSec": 303.49
+    },
+    {
+      "text": "the",
+      "startSec": 303.49,
+      "endSec": 303.55
+    },
+    {
+      "text": "distinction",
+      "startSec": 303.55,
+      "endSec": 304.27
+    },
+    {
+      "text": "between",
+      "startSec": 304.27,
+      "endSec": 304.75
+    },
+    {
+      "text": "a",
+      "startSec": 304.75,
+      "endSec": 304.79
+    },
+    {
+      "text": "mine",
+      "startSec": 304.79,
+      "endSec": 305.05
+    },
+    {
+      "text": "field",
+      "startSec": 305.05,
+      "endSec": 305.37
+    },
+    {
+      "text": "and",
+      "startSec": 305.37,
+      "endSec": 305.56
+    },
+    {
+      "text": "clear",
+      "startSec": 305.56,
+      "endSec": 305.89
+    },
+    {
+      "text": "ground",
+      "startSec": 305.89,
+      "endSec": 306.49
+    },
+    {
+      "text": "stopped",
+      "startSec": 306.49,
+      "endSec": 306.74
+    },
+    {
+      "text": "mat",
+      "startSec": 306.74,
+      "endSec": 306.95
+    },
+    {
+      "text": "uring",
+      "startSec": 306.95,
+      "endSec": 307.25
+    },
+    {
+      "text": "operation",
+      "startSec": 307.25,
+      "endSec": 307.84
+    },
+    {
+      "text": "ally",
+      "startSec": 307.84,
+      "endSec": 308.33
+    },
+    {
+      "text": "because",
+      "startSec": 308.33,
+      "endSec": 308.58
+    },
+    {
+      "text": "the",
+      "startSec": 308.58,
+      "endSec": 308.74
+    },
+    {
+      "text": "outcomes",
+      "startSec": 308.74,
+      "endSec": 309.18
+    },
+    {
+      "text": "were",
+      "startSec": 309.18,
+      "endSec": 309.41
+    },
+    {
+      "text": "roughly",
+      "startSec": 309.41,
+      "endSec": 309.78
+    },
+    {
+      "text": "comparable",
+      "startSec": 309.78,
+      "endSec": 310.33
+    },
+    {
+      "text": "either",
+      "startSec": 310.33,
+      "endSec": 310.66
+    },
+    {
+      "text": "way",
+      "startSec": 310.66,
+      "endSec": 310.82
+    },
+    {
+      "text": ".",
+      "startSec": 310.82,
+      "endSec": 311.04
+    },
+    {
+      "text": "Four",
+      "startSec": 311.52,
+      "endSec": 311.68
+    },
+    {
+      "text": "teen",
+      "startSec": 311.68,
+      "endSec": 311.72
+    },
+    {
+      "text": "million",
+      "startSec": 311.72,
+      "endSec": 312.32
+    },
+    {
+      "text": "C",
+      "startSec": 312.32,
+      "endSec": 312.4
+    },
+    {
+      "text": "ree",
+      "startSec": 312.4,
+      "endSec": 312.66
+    },
+    {
+      "text": "guards",
+      "startSec": 312.66,
+      "endSec": 313.22
+    },
+    {
+      "text": "men",
+      "startSec": 313.22,
+      "endSec": 313.45
+    },
+    {
+      "text": "died",
+      "startSec": 313.45,
+      "endSec": 313.78
+    },
+    {
+      "text": "at",
+      "startSec": 313.78,
+      "endSec": 313.95
+    },
+    {
+      "text": "V",
+      "startSec": 313.95,
+      "endSec": 314.15
+    },
+    {
+      "text": "RA",
+      "startSec": 314.15,
+      "endSec": 314.2
+    },
+    {
+      "text": "X",
+      "startSec": 314.2,
+      "endSec": 314.28
+    },
+    {
+      "text": ".",
+      "startSec": 314.28,
+      "endSec": 314.6
+    },
+    {
+      "text": "The",
+      "startSec": 314.95,
+      "endSec": 314.97
+    },
+    {
+      "text": "environment",
+      "startSec": 314.97,
+      "endSec": 315.61
+    },
+    {
+      "text": "wasn",
+      "startSec": 315.61,
+      "endSec": 315.87
+    },
+    {
+      "text": "'t",
+      "startSec": 315.87,
+      "endSec": 315.95
+    },
+    {
+      "text": "incident",
+      "startSec": 315.95,
+      "endSec": 316.5
+    },
+    {
+      "text": "al",
+      "startSec": 316.5,
+      "endSec": 316.52
+    },
+    {
+      "text": "to",
+      "startSec": 316.52,
+      "endSec": 316.63
+    },
+    {
+      "text": "that",
+      "startSec": 316.63,
+      "endSec": 316.86
+    },
+    {
+      "text": "number",
+      "startSec": 316.86,
+      "endSec": 317.2
+    },
+    {
+      "text": ".",
+      "startSec": 317.2,
+      "endSec": 317.42
+    },
+    {
+      "text": "It",
+      "startSec": 317.42,
+      "endSec": 317.58
+    },
+    {
+      "text": "was",
+      "startSec": 317.58,
+      "endSec": 317.79
+    },
+    {
+      "text": "built",
+      "startSec": 317.79,
+      "endSec": 318.16
+    },
+    {
+      "text": "into",
+      "startSec": 318.16,
+      "endSec": 318.49
+    },
+    {
+      "text": "the",
+      "startSec": 318.49,
+      "endSec": 318.79
+    },
+    {
+      "text": "calculation",
+      "startSec": 318.79,
+      "endSec": 319.49
+    },
+    {
+      "text": "from",
+      "startSec": 319.49,
+      "endSec": 319.78
+    },
+    {
+      "text": "the",
+      "startSec": 319.78,
+      "endSec": 320.05
+    },
+    {
+      "text": "start",
+      "startSec": 320.05,
+      "endSec": 320.37
+    },
+    {
+      "text": ".",
+      "startSec": 320.37,
+      "endSec": 320.64
+    },
+    {
+      "text": "Number",
+      "startSec": 321.14,
+      "endSec": 321.31
+    },
+    {
+      "text": "three",
+      "startSec": 321.31,
+      "endSec": 321.69
+    },
+    {
+      "text": ",",
+      "startSec": 321.69,
+      "endSec": 321.88
+    },
+    {
+      "text": "Ne",
+      "startSec": 321.88,
+      "endSec": 322.07
+    },
+    {
+      "text": "c",
+      "startSec": 322.07,
+      "endSec": 322.15
+    },
+    {
+      "text": "ron",
+      "startSec": 322.15,
+      "endSec": 322.51
+    },
+    {
+      "text": "Tomb",
+      "startSec": 322.51,
+      "endSec": 322.84
+    },
+    {
+      "text": "Complex",
+      "startSec": 322.84,
+      "endSec": 323.49
+    },
+    {
+      "text": "es",
+      "startSec": 323.49,
+      "endSec": 323.72
+    },
+    {
+      "text": ".",
+      "startSec": 323.72,
+      "endSec": 323.72
+    },
+    {
+      "text": "A",
+      "startSec": 324.12,
+      "endSec": 324.12
+    },
+    {
+      "text": "Ne",
+      "startSec": 324.12,
+      "endSec": 324.12
+    },
+    {
+      "text": "c",
+      "startSec": 324.12,
+      "endSec": 324.27
+    },
+    {
+      "text": "ron",
+      "startSec": 324.27,
+      "endSec": 324.28
+    },
+    {
+      "text": "Tomb",
+      "startSec": 324.28,
+      "endSec": 324.66
+    },
+    {
+      "text": "world",
+      "startSec": 324.66,
+      "endSec": 325
+    },
+    {
+      "text": "has",
+      "startSec": 325,
+      "endSec": 325.24
+    },
+    {
+      "text": "been",
+      "startSec": 325.24,
+      "endSec": 325.56
+    },
+    {
+      "text": "a",
+      "startSec": 325.56,
+      "endSec": 325.64
+    },
+    {
+      "text": "trap",
+      "startSec": 325.64,
+      "endSec": 325.96
+    },
+    {
+      "text": "for",
+      "startSec": 325.96,
+      "endSec": 326.2
+    },
+    {
+      "text": "several",
+      "startSec": 326.2,
+      "endSec": 326.77
+    },
+    {
+      "text": "million",
+      "startSec": 326.77,
+      "endSec": 327.35
+    },
+    {
+      "text": "years",
+      "startSec": 327.35,
+      "endSec": 327.74
+    },
+    {
+      "text": ".",
+      "startSec": 327.74,
+      "endSec": 328.06
+    },
+    {
+      "text": "The",
+      "startSec": 328.56,
+      "endSec": 328.72
+    },
+    {
+      "text": "exterior",
+      "startSec": 328.72,
+      "endSec": 328.84
+    },
+    {
+      "text": "looks",
+      "startSec": 328.84,
+      "endSec": 329.2
+    },
+    {
+      "text": "like",
+      "startSec": 329.2,
+      "endSec": 329.48
+    },
+    {
+      "text": "a",
+      "startSec": 329.48,
+      "endSec": 329.64
+    },
+    {
+      "text": "planet",
+      "startSec": 329.64,
+      "endSec": 329.98
+    },
+    {
+      "text": ".",
+      "startSec": 329.98,
+      "endSec": 330.22
+    },
+    {
+      "text": "That",
+      "startSec": 330.78,
+      "endSec": 330.78
+    },
+    {
+      "text": "'s",
+      "startSec": 330.78,
+      "endSec": 330.93
+    },
+    {
+      "text": "where",
+      "startSec": 330.93,
+      "endSec": 330.96
+    },
+    {
+      "text": "the",
+      "startSec": 330.96,
+      "endSec": 331.16
+    },
+    {
+      "text": "familiar",
+      "startSec": 331.16,
+      "endSec": 331.71
+    },
+    {
+      "text": "part",
+      "startSec": 331.71,
+      "endSec": 331.98
+    },
+    {
+      "text": "ends",
+      "startSec": 331.98,
+      "endSec": 332.25
+    },
+    {
+      "text": ".",
+      "startSec": 332.25,
+      "endSec": 332.5
+    },
+    {
+      "text": "Tomb",
+      "startSec": 333.06,
+      "endSec": 333.22
+    },
+    {
+      "text": "complexes",
+      "startSec": 333.22,
+      "endSec": 333.38
+    },
+    {
+      "text": "extend",
+      "startSec": 333.38,
+      "endSec": 333.77
+    },
+    {
+      "text": "kilometers",
+      "startSec": 333.77,
+      "endSec": 334.46
+    },
+    {
+      "text": "below",
+      "startSec": 334.46,
+      "endSec": 334.8
+    },
+    {
+      "text": "the",
+      "startSec": 334.8,
+      "endSec": 335
+    },
+    {
+      "text": "surface",
+      "startSec": 335,
+      "endSec": 335.47
+    },
+    {
+      "text": "through",
+      "startSec": 335.47,
+      "endSec": 335.94
+    },
+    {
+      "text": "dimension",
+      "startSec": 335.94,
+      "endSec": 336.55
+    },
+    {
+      "text": "ally",
+      "startSec": 336.55,
+      "endSec": 336.82
+    },
+    {
+      "text": "compressed",
+      "startSec": 336.82,
+      "endSec": 337.5
+    },
+    {
+      "text": "architecture",
+      "startSec": 337.5,
+      "endSec": 338.38
+    },
+    {
+      "text": ".",
+      "startSec": 338.38,
+      "endSec": 338.56
+    },
+    {
+      "text": "Ro",
+      "startSec": 339.40999999999997,
+      "endSec": 339.46
+    },
+    {
+      "text": "oms",
+      "startSec": 339.46,
+      "endSec": 339.58
+    },
+    {
+      "text": "that",
+      "startSec": 339.58,
+      "endSec": 339.84000000000003
+    },
+    {
+      "text": "register",
+      "startSec": 339.84000000000003,
+      "endSec": 340.26
+    },
+    {
+      "text": "on",
+      "startSec": 340.26,
+      "endSec": 340.37
+    },
+    {
+      "text": "Aus",
+      "startSec": 340.37,
+      "endSec": 340.67
+    },
+    {
+      "text": "pex",
+      "startSec": 340.67,
+      "endSec": 340.72
+    },
+    {
+      "text": "scans",
+      "startSec": 340.72,
+      "endSec": 341.01
+    },
+    {
+      "text": "as",
+      "startSec": 341.01,
+      "endSec": 341.12
+    },
+    {
+      "text": "physically",
+      "startSec": 341.12,
+      "endSec": 341.7
+    },
+    {
+      "text": "larger",
+      "startSec": 341.7,
+      "endSec": 342.04
+    },
+    {
+      "text": "than",
+      "startSec": 342.04,
+      "endSec": 342.27
+    },
+    {
+      "text": "the",
+      "startSec": 342.27,
+      "endSec": 342.53
+    },
+    {
+      "text": "ge",
+      "startSec": 342.53,
+      "endSec": 342.55
+    },
+    {
+      "text": "ological",
+      "startSec": 342.55,
+      "endSec": 343
+    },
+    {
+      "text": "formation",
+      "startSec": 343,
+      "endSec": 343.67
+    },
+    {
+      "text": "around",
+      "startSec": 343.67,
+      "endSec": 343.9
+    },
+    {
+      "text": "them",
+      "startSec": 343.9,
+      "endSec": 344.13
+    },
+    {
+      "text": "should",
+      "startSec": 344.13,
+      "endSec": 344.44
+    },
+    {
+      "text": "permit",
+      "startSec": 344.44,
+      "endSec": 344.78
+    },
+    {
+      "text": ".",
+      "startSec": 344.78,
+      "endSec": 345.06
+    },
+    {
+      "text": "Whether",
+      "startSec": 345.06,
+      "endSec": 345.6
+    },
+    {
+      "text": "that",
+      "startSec": 345.6,
+      "endSec": 345.89
+    },
+    {
+      "text": "'s",
+      "startSec": 345.89,
+      "endSec": 346.04
+    },
+    {
+      "text": "a",
+      "startSec": 346.04,
+      "endSec": 346.14
+    },
+    {
+      "text": "sensor",
+      "startSec": 346.14,
+      "endSec": 346.56
+    },
+    {
+      "text": "artifact",
+      "startSec": 346.56,
+      "endSec": 347.15999999999997
+    },
+    {
+      "text": "or",
+      "startSec": 347.15999999999997,
+      "endSec": 347.31
+    },
+    {
+      "text": "accurate",
+      "startSec": 347.31,
+      "endSec": 347.94
+    },
+    {
+      "text": "data",
+      "startSec": 347.94,
+      "endSec": 348.29
+    },
+    {
+      "text": "is",
+      "startSec": 348.29,
+      "endSec": 348.36
+    },
+    {
+      "text": "not",
+      "startSec": 348.36,
+      "endSec": 348.58
+    },
+    {
+      "text": "a",
+      "startSec": 348.58,
+      "endSec": 348.65
+    },
+    {
+      "text": "question",
+      "startSec": 348.65,
+      "endSec": 349.44
+    },
+    {
+      "text": "anyone",
+      "startSec": 349.44,
+      "endSec": 349.7
+    },
+    {
+      "text": "fighting",
+      "startSec": 349.7,
+      "endSec": 350.38
+    },
+    {
+      "text": "inside",
+      "startSec": 350.38,
+      "endSec": 350.75
+    },
+    {
+      "text": "has",
+      "startSec": 350.75,
+      "endSec": 350.97
+    },
+    {
+      "text": "time",
+      "startSec": 350.97,
+      "endSec": 351.27
+    },
+    {
+      "text": "to",
+      "startSec": 351.27,
+      "endSec": 351.42
+    },
+    {
+      "text": "settle",
+      "startSec": 351.42,
+      "endSec": 351.87
+    },
+    {
+      "text": ".",
+      "startSec": 351.87,
+      "endSec": 352.22
+    },
+    {
+      "text": "The",
+      "startSec": 352.72,
+      "endSec": 352.88
+    },
+    {
+      "text": "defenders",
+      "startSec": 352.88,
+      "endSec": 353.08
+    },
+    {
+      "text": "re",
+      "startSec": 353.08,
+      "endSec": 353.26
+    },
+    {
+      "text": "assemble",
+      "startSec": 353.26,
+      "endSec": 353.8
+    },
+    {
+      "text": "after",
+      "startSec": 353.8,
+      "endSec": 354.15999999999997
+    },
+    {
+      "text": "being",
+      "startSec": 354.15999999999997,
+      "endSec": 354.52
+    },
+    {
+      "text": "destroyed",
+      "startSec": 354.52,
+      "endSec": 355.35
+    },
+    {
+      "text": ".",
+      "startSec": 355.35,
+      "endSec": 355.42
+    },
+    {
+      "text": "That",
+      "startSec": 355.98,
+      "endSec": 356.14
+    },
+    {
+      "text": "single",
+      "startSec": 356.14,
+      "endSec": 356.17
+    },
+    {
+      "text": "feature",
+      "startSec": 356.17,
+      "endSec": 356.69
+    },
+    {
+      "text": "separates",
+      "startSec": 356.69,
+      "endSec": 357.38
+    },
+    {
+      "text": "this",
+      "startSec": 357.38,
+      "endSec": 357.68
+    },
+    {
+      "text": "from",
+      "startSec": 357.68,
+      "endSec": 357.98
+    },
+    {
+      "text": "every",
+      "startSec": 357.98,
+      "endSec": 358.36
+    },
+    {
+      "text": "other",
+      "startSec": 358.36,
+      "endSec": 358.74
+    },
+    {
+      "text": "hostile",
+      "startSec": 358.74,
+      "endSec": 359.27
+    },
+    {
+      "text": "environment",
+      "startSec": 359.27,
+      "endSec": 360.26
+    },
+    {
+      "text": "on",
+      "startSec": 360.26,
+      "endSec": 360.36
+    },
+    {
+      "text": "this",
+      "startSec": 360.36,
+      "endSec": 360.58
+    },
+    {
+      "text": "list",
+      "startSec": 360.58,
+      "endSec": 360.86
+    },
+    {
+      "text": ".",
+      "startSec": 360.86,
+      "endSec": 361.16
+    },
+    {
+      "text": "A",
+      "startSec": 361.58,
+      "endSec": 361.61
+    },
+    {
+      "text": "fire",
+      "startSec": 361.61,
+      "endSec": 361.74
+    },
+    {
+      "text": "lane",
+      "startSec": 361.74,
+      "endSec": 361.97
+    },
+    {
+      "text": "is",
+      "startSec": 361.97,
+      "endSec": 362.15
+    },
+    {
+      "text": "cleared",
+      "startSec": 362.15,
+      "endSec": 362.79
+    },
+    {
+      "text": ".",
+      "startSec": 362.79,
+      "endSec": 363.1
+    },
+    {
+      "text": "Warriors",
+      "startSec": 363.58,
+      "endSec": 363.77
+    },
+    {
+      "text": "go",
+      "startSec": 363.77,
+      "endSec": 363.93
+    },
+    {
+      "text": "down",
+      "startSec": 363.93,
+      "endSec": 364.26
+    },
+    {
+      "text": ".",
+      "startSec": 364.26,
+      "endSec": 364.54
+    },
+    {
+      "text": "Twenty",
+      "startSec": 364.96,
+      "endSec": 365.13
+    },
+    {
+      "text": "minutes",
+      "startSec": 365.13,
+      "endSec": 365.5
+    },
+    {
+      "text": "later",
+      "startSec": 365.5,
+      "endSec": 365.85
+    },
+    {
+      "text": "they",
+      "startSec": 365.85,
+      "endSec": 366.14
+    },
+    {
+      "text": "'ve",
+      "startSec": 366.14,
+      "endSec": 366.36
+    },
+    {
+      "text": "partially",
+      "startSec": 366.36,
+      "endSec": 367.02
+    },
+    {
+      "text": "rebuilt",
+      "startSec": 367.02,
+      "endSec": 367.59
+    },
+    {
+      "text": "and",
+      "startSec": 367.59,
+      "endSec": 367.75
+    },
+    {
+      "text": "res",
+      "startSec": 367.75,
+      "endSec": 367.97
+    },
+    {
+      "text": "umed",
+      "startSec": 367.97,
+      "endSec": 368.26
+    },
+    {
+      "text": "patrol",
+      "startSec": 368.26,
+      "endSec": 368.7
+    },
+    {
+      "text": ".",
+      "startSec": 368.7,
+      "endSec": 368.96
+    },
+    {
+      "text": "Progress",
+      "startSec": 369.46,
+      "endSec": 369.84
+    },
+    {
+      "text": "measured",
+      "startSec": 369.84,
+      "endSec": 370.31
+    },
+    {
+      "text": "in",
+      "startSec": 370.31,
+      "endSec": 370.44
+    },
+    {
+      "text": "confirmed",
+      "startSec": 370.44,
+      "endSec": 371.01
+    },
+    {
+      "text": "elimination",
+      "startSec": 371.01,
+      "endSec": 371.71
+    },
+    {
+      "text": "stops",
+      "startSec": 371.71,
+      "endSec": 372.02
+    },
+    {
+      "text": "being",
+      "startSec": 372.02,
+      "endSec": 372.33
+    },
+    {
+      "text": "meaningful",
+      "startSec": 372.33,
+      "endSec": 372.96
+    },
+    {
+      "text": ".",
+      "startSec": 372.96,
+      "endSec": 373.2
+    },
+    {
+      "text": "The",
+      "startSec": 373.76,
+      "endSec": 373.92
+    },
+    {
+      "text": "structure",
+      "startSec": 373.92,
+      "endSec": 373.97
+    },
+    {
+      "text": "itself",
+      "startSec": 373.97,
+      "endSec": 374.36
+    },
+    {
+      "text": "continuously",
+      "startSec": 374.36,
+      "endSec": 375.14
+    },
+    {
+      "text": "recon",
+      "startSec": 375.14,
+      "endSec": 375.46
+    },
+    {
+      "text": "fig",
+      "startSec": 375.46,
+      "endSec": 375.69
+    },
+    {
+      "text": "ures",
+      "startSec": 375.69,
+      "endSec": 375.91
+    },
+    {
+      "text": "around",
+      "startSec": 375.91,
+      "endSec": 376.39
+    },
+    {
+      "text": "the",
+      "startSec": 376.39,
+      "endSec": 376.49
+    },
+    {
+      "text": "intr",
+      "startSec": 376.49,
+      "endSec": 376.75
+    },
+    {
+      "text": "usion",
+      "startSec": 376.75,
+      "endSec": 377.07
+    },
+    {
+      "text": ",",
+      "startSec": 377.07,
+      "endSec": 377.26
+    },
+    {
+      "text": "sealing",
+      "startSec": 377.26,
+      "endSec": 378.13
+    },
+    {
+      "text": "corridors",
+      "startSec": 378.13,
+      "endSec": 378.52
+    },
+    {
+      "text": ",",
+      "startSec": 378.52,
+      "endSec": 378.74
+    },
+    {
+      "text": "shifting",
+      "startSec": 378.74,
+      "endSec": 379.29
+    },
+    {
+      "text": "gravity",
+      "startSec": 379.29,
+      "endSec": 379.82
+    },
+    {
+      "text": "orient",
+      "startSec": 379.82,
+      "endSec": 380.27
+    },
+    {
+      "text": "ations",
+      "startSec": 380.27,
+      "endSec": 380.72
+    },
+    {
+      "text": ",",
+      "startSec": 380.72,
+      "endSec": 380.9
+    },
+    {
+      "text": "cycling",
+      "startSec": 381.48,
+      "endSec": 381.64
+    },
+    {
+      "text": "through",
+      "startSec": 381.64,
+      "endSec": 381.9
+    },
+    {
+      "text": "defensive",
+      "startSec": 381.9,
+      "endSec": 382.56
+    },
+    {
+      "text": "responses",
+      "startSec": 382.56,
+      "endSec": 383.2
+    },
+    {
+      "text": "the",
+      "startSec": 383.2,
+      "endSec": 383.41
+    },
+    {
+      "text": "way",
+      "startSec": 383.41,
+      "endSec": 383.62
+    },
+    {
+      "text": "a",
+      "startSec": 383.62,
+      "endSec": 383.69
+    },
+    {
+      "text": "biological",
+      "startSec": 383.69,
+      "endSec": 384.41
+    },
+    {
+      "text": "organism",
+      "startSec": 384.41,
+      "endSec": 384.99
+    },
+    {
+      "text": "cycles",
+      "startSec": 384.99,
+      "endSec": 385.84
+    },
+    {
+      "text": "through",
+      "startSec": 385.84,
+      "endSec": 385.92
+    },
+    {
+      "text": "immune",
+      "startSec": 385.92,
+      "endSec": 386.31
+    },
+    {
+      "text": "responses",
+      "startSec": 386.31,
+      "endSec": 386.93
+    },
+    {
+      "text": "automatic",
+      "startSec": 386.93,
+      "endSec": 387.44
+    },
+    {
+      "text": ",",
+      "startSec": 387.44,
+      "endSec": 387.69
+    },
+    {
+      "text": "tire",
+      "startSec": 387.69,
+      "endSec": 387.81
+    },
+    {
+      "text": "less",
+      "startSec": 387.81,
+      "endSec": 388.07
+    },
+    {
+      "text": ",",
+      "startSec": 388.07,
+      "endSec": 388.18
+    },
+    {
+      "text": "and",
+      "startSec": 388.18,
+      "endSec": 388.37
+    },
+    {
+      "text": "scaling",
+      "startSec": 388.37,
+      "endSec": 388.81
+    },
+    {
+      "text": "up",
+      "startSec": 388.81,
+      "endSec": 389
+    },
+    {
+      "text": ".",
+      "startSec": 389,
+      "endSec": 389.18
+    },
+    {
+      "text": "The",
+      "startSec": 389.52,
+      "endSec": 389.6
+    },
+    {
+      "text": "ast",
+      "startSec": 389.6,
+      "endSec": 389.68
+    },
+    {
+      "text": "ral",
+      "startSec": 389.68,
+      "endSec": 389.81
+    },
+    {
+      "text": "knights",
+      "startSec": 389.81,
+      "endSec": 390.32
+    },
+    {
+      "text": "found",
+      "startSec": 390.32,
+      "endSec": 390.68
+    },
+    {
+      "text": "this",
+      "startSec": 390.68,
+      "endSec": 390.97
+    },
+    {
+      "text": "out",
+      "startSec": 390.97,
+      "endSec": 391.22
+    },
+    {
+      "text": "aboard",
+      "startSec": 391.22,
+      "endSec": 391.61
+    },
+    {
+      "text": "the",
+      "startSec": 391.61,
+      "endSec": 391.82
+    },
+    {
+      "text": "world",
+      "startSec": 391.82,
+      "endSec": 392.18
+    },
+    {
+      "text": "engine",
+      "startSec": 392.18,
+      "endSec": 392.75
+    },
+    {
+      "text": ".",
+      "startSec": 392.75,
+      "endSec": 392.9
+    },
+    {
+      "text": "The",
+      "startSec": 393.06,
+      "endSec": 393.12
+    },
+    {
+      "text": "only",
+      "startSec": 393.12,
+      "endSec": 393.44
+    },
+    {
+      "text": "thing",
+      "startSec": 393.44,
+      "endSec": 393.77
+    },
+    {
+      "text": "that",
+      "startSec": 393.77,
+      "endSec": 394.06
+    },
+    {
+      "text": "worked",
+      "startSec": 394.06,
+      "endSec": 394.49
+    },
+    {
+      "text": "was",
+      "startSec": 394.49,
+      "endSec": 394.71
+    },
+    {
+      "text": "abandon",
+      "startSec": 394.71,
+      "endSec": 395.22
+    },
+    {
+      "text": "ing",
+      "startSec": 395.22,
+      "endSec": 395.53
+    },
+    {
+      "text": "the",
+      "startSec": 395.53,
+      "endSec": 395.65
+    },
+    {
+      "text": "model",
+      "startSec": 395.65,
+      "endSec": 396.13
+    },
+    {
+      "text": "of",
+      "startSec": 396.13,
+      "endSec": 396.15
+    },
+    {
+      "text": "fighting",
+      "startSec": 396.15,
+      "endSec": 396.72
+    },
+    {
+      "text": "through",
+      "startSec": 396.72,
+      "endSec": 397.27
+    },
+    {
+      "text": "an",
+      "startSec": 397.27,
+      "endSec": 397.38
+    },
+    {
+      "text": "enemy",
+      "startSec": 397.38,
+      "endSec": 397.74
+    },
+    {
+      "text": "position",
+      "startSec": 397.74,
+      "endSec": 398.35
+    },
+    {
+      "text": "entirely",
+      "startSec": 398.35,
+      "endSec": 399.02
+    },
+    {
+      "text": "and",
+      "startSec": 399.02,
+      "endSec": 399.19
+    },
+    {
+      "text": "treating",
+      "startSec": 399.19,
+      "endSec": 399.76
+    },
+    {
+      "text": "the",
+      "startSec": 399.76,
+      "endSec": 399.97
+    },
+    {
+      "text": "structure",
+      "startSec": 399.97,
+      "endSec": 400.61
+    },
+    {
+      "text": "as",
+      "startSec": 400.61,
+      "endSec": 400.75
+    },
+    {
+      "text": "a",
+      "startSec": 400.75,
+      "endSec": 400.82
+    },
+    {
+      "text": "demol",
+      "startSec": 400.82,
+      "endSec": 401.21
+    },
+    {
+      "text": "ition",
+      "startSec": 401.21,
+      "endSec": 401.52
+    },
+    {
+      "text": "target",
+      "startSec": 401.52,
+      "endSec": 402.25
+    },
+    {
+      "text": "instead",
+      "startSec": 402.25,
+      "endSec": 402.45
+    },
+    {
+      "text": ".",
+      "startSec": 402.45,
+      "endSec": 402.72
+    },
+    {
+      "text": "The",
+      "startSec": 403.32,
+      "endSec": 403.48
+    },
+    {
+      "text": "environment",
+      "startSec": 403.48,
+      "endSec": 403.63
+    },
+    {
+      "text": "didn",
+      "startSec": 403.63,
+      "endSec": 403.89
+    },
+    {
+      "text": "'t",
+      "startSec": 403.89,
+      "endSec": 404.02
+    },
+    {
+      "text": "stop",
+      "startSec": 404.02,
+      "endSec": 404.26
+    },
+    {
+      "text": "being",
+      "startSec": 404.26,
+      "endSec": 404.69
+    },
+    {
+      "text": "hostile",
+      "startSec": 404.69,
+      "endSec": 405.07
+    },
+    {
+      "text": "after",
+      "startSec": 405.07,
+      "endSec": 405.4
+    },
+    {
+      "text": "that",
+      "startSec": 405.4,
+      "endSec": 405.65999999999997
+    },
+    {
+      "text": "decision",
+      "startSec": 405.65999999999997,
+      "endSec": 406.2
+    },
+    {
+      "text": ".",
+      "startSec": 406.2,
+      "endSec": 406.42
+    },
+    {
+      "text": "It",
+      "startSec": 406.9,
+      "endSec": 406.9
+    },
+    {
+      "text": "just",
+      "startSec": 406.9,
+      "endSec": 407.06
+    },
+    {
+      "text": "became",
+      "startSec": 407.06,
+      "endSec": 407.3
+    },
+    {
+      "text": "a",
+      "startSec": 407.3,
+      "endSec": 407.44
+    },
+    {
+      "text": "problem",
+      "startSec": 407.44,
+      "endSec": 407.86
+    },
+    {
+      "text": "with",
+      "startSec": 407.86,
+      "endSec": 408.25
+    },
+    {
+      "text": "a",
+      "startSec": 408.25,
+      "endSec": 408.27
+    },
+    {
+      "text": "physical",
+      "startSec": 408.27,
+      "endSec": 408.84000000000003
+    },
+    {
+      "text": "solution",
+      "startSec": 408.84000000000003,
+      "endSec": 409.53
+    },
+    {
+      "text": "rather",
+      "startSec": 409.53,
+      "endSec": 409.87
+    },
+    {
+      "text": "than",
+      "startSec": 409.87,
+      "endSec": 410.15999999999997
+    },
+    {
+      "text": "a",
+      "startSec": 410.15999999999997,
+      "endSec": 410.23
+    },
+    {
+      "text": "tactical",
+      "startSec": 410.23,
+      "endSec": 410.77
+    },
+    {
+      "text": "one",
+      "startSec": 410.77,
+      "endSec": 411.26
+    },
+    {
+      "text": ".",
+      "startSec": 411.26,
+      "endSec": 411.36
+    },
+    {
+      "text": "Number",
+      "startSec": 411.53,
+      "endSec": 411.9
+    },
+    {
+      "text": "two",
+      "startSec": 411.9,
+      "endSec": 412.14
+    },
+    {
+      "text": ",",
+      "startSec": 412.14,
+      "endSec": 412.32
+    },
+    {
+      "text": "Cad",
+      "startSec": 412.32,
+      "endSec": 412.58
+    },
+    {
+      "text": "ia",
+      "startSec": 412.58,
+      "endSec": 412.75
+    },
+    {
+      "text": "sits",
+      "startSec": 412.75,
+      "endSec": 413.1
+    },
+    {
+      "text": "at",
+      "startSec": 413.1,
+      "endSec": 413.29
+    },
+    {
+      "text": "the",
+      "startSec": 413.29,
+      "endSec": 413.53
+    },
+    {
+      "text": "edge",
+      "startSec": 413.53,
+      "endSec": 413.99
+    },
+    {
+      "text": "of",
+      "startSec": 413.99,
+      "endSec": 414.05
+    },
+    {
+      "text": "a",
+      "startSec": 414.05,
+      "endSec": 414.13
+    },
+    {
+      "text": "permanent",
+      "startSec": 414.13,
+      "endSec": 414.92
+    },
+    {
+      "text": "spatial",
+      "startSec": 414.92,
+      "endSec": 415.7
+    },
+    {
+      "text": "ru",
+      "startSec": 415.7,
+      "endSec": 415.75
+    },
+    {
+      "text": "pture",
+      "startSec": 415.75,
+      "endSec": 416.19
+    },
+    {
+      "text": "where",
+      "startSec": 416.19,
+      "endSec": 416.68
+    },
+    {
+      "text": "the",
+      "startSec": 416.68,
+      "endSec": 416.84000000000003
+    },
+    {
+      "text": "laws",
+      "startSec": 416.84000000000003,
+      "endSec": 417.19
+    },
+    {
+      "text": "governing",
+      "startSec": 417.19,
+      "endSec": 417.98
+    },
+    {
+      "text": "material",
+      "startSec": 417.98,
+      "endSec": 418.68
+    },
+    {
+      "text": "reality",
+      "startSec": 418.68,
+      "endSec": 419.44
+    },
+    {
+      "text": "are",
+      "startSec": 419.44,
+      "endSec": 419.67
+    },
+    {
+      "text": "contest",
+      "startSec": 419.67,
+      "endSec": 420.15
+    },
+    {
+      "text": "ed",
+      "startSec": 420.15,
+      "endSec": 420.28
+    },
+    {
+      "text": "in",
+      "startSec": 420.28,
+      "endSec": 420.71
+    },
+    {
+      "text": "ways",
+      "startSec": 420.71,
+      "endSec": 420.72
+    },
+    {
+      "text": "standard",
+      "startSec": 420.72,
+      "endSec": 421.4
+    },
+    {
+      "text": "military",
+      "startSec": 421.4,
+      "endSec": 421.93
+    },
+    {
+      "text": "planning",
+      "startSec": 421.93,
+      "endSec": 422.46
+    },
+    {
+      "text": "doesn",
+      "startSec": 422.46,
+      "endSec": 422.87
+    },
+    {
+      "text": "'t",
+      "startSec": 422.87,
+      "endSec": 422.96
+    },
+    {
+      "text": "account",
+      "startSec": 422.96,
+      "endSec": 423.69
+    },
+    {
+      "text": "for",
+      "startSec": 423.69,
+      "endSec": 423.9
+    },
+    {
+      "text": ".",
+      "startSec": 423.9,
+      "endSec": 423.96
+    },
+    {
+      "text": "Nav",
+      "startSec": 424.4,
+      "endSec": 424.56
+    },
+    {
+      "text": "igation",
+      "startSec": 424.56,
+      "endSec": 424.65
+    },
+    {
+      "text": "through",
+      "startSec": 424.65,
+      "endSec": 425.13
+    },
+    {
+      "text": "the",
+      "startSec": 425.13,
+      "endSec": 425.34
+    },
+    {
+      "text": "outer",
+      "startSec": 425.34,
+      "endSec": 425.77
+    },
+    {
+      "text": "reaches",
+      "startSec": 425.77,
+      "endSec": 426.17
+    },
+    {
+      "text": "of",
+      "startSec": 426.17,
+      "endSec": 426.33
+    },
+    {
+      "text": "the",
+      "startSec": 426.33,
+      "endSec": 426.52
+    },
+    {
+      "text": "eye",
+      "startSec": 426.52,
+      "endSec": 426.73
+    },
+    {
+      "text": "of",
+      "startSec": 426.73,
+      "endSec": 427.03
+    },
+    {
+      "text": "terror",
+      "startSec": 427.03,
+      "endSec": 427.28
+    },
+    {
+      "text": "requires",
+      "startSec": 427.28,
+      "endSec": 427.83
+    },
+    {
+      "text": "specialized",
+      "startSec": 427.83,
+      "endSec": 428.77
+    },
+    {
+      "text": "instruments",
+      "startSec": 428.77,
+      "endSec": 429.42
+    },
+    {
+      "text": "that",
+      "startSec": 429.42,
+      "endSec": 429.72
+    },
+    {
+      "text": "themselves",
+      "startSec": 429.72,
+      "endSec": 430.32
+    },
+    {
+      "text": "de",
+      "startSec": 430.32,
+      "endSec": 430.62
+    },
+    {
+      "text": "grade",
+      "startSec": 430.62,
+      "endSec": 430.8
+    },
+    {
+      "text": "the",
+      "startSec": 430.8,
+      "endSec": 431.01
+    },
+    {
+      "text": "deeper",
+      "startSec": 431.01,
+      "endSec": 431.45
+    },
+    {
+      "text": "in",
+      "startSec": 431.45,
+      "endSec": 431.56
+    },
+    {
+      "text": "you",
+      "startSec": 431.56,
+      "endSec": 431.77
+    },
+    {
+      "text": "go",
+      "startSec": 431.77,
+      "endSec": 431.92
+    },
+    {
+      "text": ".",
+      "startSec": 431.92,
+      "endSec": 432.22
+    },
+    {
+      "text": "Hel",
+      "startSec": 432.84,
+      "endSec": 432.9
+    },
+    {
+      "text": "ms",
+      "startSec": 432.9,
+      "endSec": 433.04
+    },
+    {
+      "text": "men",
+      "startSec": 433.04,
+      "endSec": 433.26
+    },
+    {
+      "text": "on",
+      "startSec": 433.26,
+      "endSec": 433.39
+    },
+    {
+      "text": "those",
+      "startSec": 433.39,
+      "endSec": 433.77
+    },
+    {
+      "text": "routes",
+      "startSec": 433.77,
+      "endSec": 434.21
+    },
+    {
+      "text": "age",
+      "startSec": 434.21,
+      "endSec": 434.43
+    },
+    {
+      "text": "at",
+      "startSec": 434.43,
+      "endSec": 434.61
+    },
+    {
+      "text": "accelerated",
+      "startSec": 434.61,
+      "endSec": 435.38
+    },
+    {
+      "text": "rates",
+      "startSec": 435.38,
+      "endSec": 435.91
+    },
+    {
+      "text": ".",
+      "startSec": 435.91,
+      "endSec": 436.02
+    },
+    {
+      "text": "Sh",
+      "startSec": 436.58,
+      "endSec": 436.58
+    },
+    {
+      "text": "ips",
+      "startSec": 436.58,
+      "endSec": 436.73
+    },
+    {
+      "text": "that",
+      "startSec": 436.73,
+      "endSec": 436.75
+    },
+    {
+      "text": "enter",
+      "startSec": 436.75,
+      "endSec": 437.14
+    },
+    {
+      "text": "the",
+      "startSec": 437.14,
+      "endSec": 437.38
+    },
+    {
+      "text": "inner",
+      "startSec": 437.38,
+      "endSec": 437.78
+    },
+    {
+      "text": "eye",
+      "startSec": 437.78,
+      "endSec": 438.02
+    },
+    {
+      "text": "on",
+      "startSec": 438.02,
+      "endSec": 438.28
+    },
+    {
+      "text": "standard",
+      "startSec": 438.28,
+      "endSec": 438.83
+    },
+    {
+      "text": "transit",
+      "startSec": 438.83,
+      "endSec": 439.46
+    },
+    {
+      "text": "projections",
+      "startSec": 439.46,
+      "endSec": 440.27
+    },
+    {
+      "text": "sometimes",
+      "startSec": 440.27,
+      "endSec": 441.01
+    },
+    {
+      "text": "emerge",
+      "startSec": 441.01,
+      "endSec": 441.56
+    },
+    {
+      "text": "centuries",
+      "startSec": 441.56,
+      "endSec": 442.23
+    },
+    {
+      "text": "off",
+      "startSec": 442.23,
+      "endSec": 442.46
+    },
+    {
+      "text": "course",
+      "startSec": 442.46,
+      "endSec": 442.94
+    },
+    {
+      "text": ".",
+      "startSec": 442.94,
+      "endSec": 443.26
+    },
+    {
+      "text": "Some",
+      "startSec": 443.82,
+      "endSec": 443.82
+    },
+    {
+      "text": "don",
+      "startSec": 443.82,
+      "endSec": 443.95
+    },
+    {
+      "text": "'t",
+      "startSec": 443.95,
+      "endSec": 443.99
+    },
+    {
+      "text": "emerge",
+      "startSec": 443.99,
+      "endSec": 444.41
+    },
+    {
+      "text": ".",
+      "startSec": 444.41,
+      "endSec": 444.66
+    },
+    {
+      "text": "Fore",
+      "startSec": 445.24,
+      "endSec": 445.36
+    },
+    {
+      "text": "ground",
+      "startSec": 445.36,
+      "endSec": 445.41
+    },
+    {
+      "text": "forces",
+      "startSec": 445.41,
+      "endSec": 445.78
+    },
+    {
+      "text": "during",
+      "startSec": 445.78,
+      "endSec": 446.19
+    },
+    {
+      "text": "active",
+      "startSec": 446.19,
+      "endSec": 446.62
+    },
+    {
+      "text": "inc",
+      "startSec": 446.62,
+      "endSec": 446.94
+    },
+    {
+      "text": "urs",
+      "startSec": 446.94,
+      "endSec": 447.04
+    },
+    {
+      "text": "ions",
+      "startSec": 447.04,
+      "endSec": 447.32
+    },
+    {
+      "text": ".",
+      "startSec": 447.32,
+      "endSec": 447.56
+    },
+    {
+      "text": "The",
+      "startSec": 448.24,
+      "endSec": 448.4
+    },
+    {
+      "text": "problem",
+      "startSec": 448.4,
+      "endSec": 448.44
+    },
+    {
+      "text": "is",
+      "startSec": 448.44,
+      "endSec": 448.61
+    },
+    {
+      "text": "reality",
+      "startSec": 448.61,
+      "endSec": 449.2
+    },
+    {
+      "text": "as",
+      "startSec": 449.2,
+      "endSec": 449.4
+    },
+    {
+      "text": "an",
+      "startSec": 449.4,
+      "endSec": 449.61
+    },
+    {
+      "text": "unre",
+      "startSec": 449.61,
+      "endSec": 449.94
+    },
+    {
+      "text": "li",
+      "startSec": 449.94,
+      "endSec": 450.09
+    },
+    {
+      "text": "able",
+      "startSec": 450.09,
+      "endSec": 450.44
+    },
+    {
+      "text": "physical",
+      "startSec": 450.44,
+      "endSec": 451.15
+    },
+    {
+      "text": "substrate",
+      "startSec": 451.15,
+      "endSec": 451.95
+    },
+    {
+      "text": ".",
+      "startSec": 451.95,
+      "endSec": 452.28
+    },
+    {
+      "text": "During",
+      "startSec": 452.44,
+      "endSec": 452.82
+    },
+    {
+      "text": "the",
+      "startSec": 452.82,
+      "endSec": 452.95
+    },
+    {
+      "text": "13",
+      "startSec": 452.95,
+      "endSec": 453.4
+    },
+    {
+      "text": "th",
+      "startSec": 453.4,
+      "endSec": 453.65
+    },
+    {
+      "text": "Black",
+      "startSec": 453.65,
+      "endSec": 453.98
+    },
+    {
+      "text": "Crus",
+      "startSec": 453.98,
+      "endSec": 454.21
+    },
+    {
+      "text": "ade",
+      "startSec": 454.21,
+      "endSec": 454.43
+    },
+    {
+      "text": ",",
+      "startSec": 454.43,
+      "endSec": 454.57
+    },
+    {
+      "text": "corruption",
+      "startSec": 454.57,
+      "endSec": 455.32
+    },
+    {
+      "text": "radi",
+      "startSec": 455.32,
+      "endSec": 455.62
+    },
+    {
+      "text": "ating",
+      "startSec": 455.62,
+      "endSec": 455.98
+    },
+    {
+      "text": "from",
+      "startSec": 455.98,
+      "endSec": 456.44
+    },
+    {
+      "text": "Ab",
+      "startSec": 456.44,
+      "endSec": 456.58
+    },
+    {
+      "text": "ad",
+      "startSec": 456.58,
+      "endSec": 456.65
+    },
+    {
+      "text": "don",
+      "startSec": 456.65,
+      "endSec": 456.88
+    },
+    {
+      "text": "'s",
+      "startSec": 456.88,
+      "endSec": 456.94
+    },
+    {
+      "text": "fleet",
+      "startSec": 456.94,
+      "endSec": 457.31
+    },
+    {
+      "text": "dest",
+      "startSec": 457.31,
+      "endSec": 457.61
+    },
+    {
+      "text": "abil",
+      "startSec": 457.61,
+      "endSec": 457.93
+    },
+    {
+      "text": "ized",
+      "startSec": 457.93,
+      "endSec": 458.19
+    },
+    {
+      "text": "atmospheric",
+      "startSec": 458.19,
+      "endSec": 459.01
+    },
+    {
+      "text": "conditions",
+      "startSec": 459.01,
+      "endSec": 459.8
+    },
+    {
+      "text": "across",
+      "startSec": 459.8,
+      "endSec": 460.21
+    },
+    {
+      "text": "entire",
+      "startSec": 460.21,
+      "endSec": 460.65999999999997
+    },
+    {
+      "text": "operating",
+      "startSec": 460.65999999999997,
+      "endSec": 461.63
+    },
+    {
+      "text": "zones",
+      "startSec": 461.63,
+      "endSec": 461.7
+    },
+    {
+      "text": ".",
+      "startSec": 461.7,
+      "endSec": 462.04
+    },
+    {
+      "text": "Equ",
+      "startSec": 462.58,
+      "endSec": 462.58
+    },
+    {
+      "text": "ip",
+      "startSec": 462.58,
+      "endSec": 462.67
+    },
+    {
+      "text": "ment",
+      "startSec": 462.67,
+      "endSec": 462.74
+    },
+    {
+      "text": "failed",
+      "startSec": 462.74,
+      "endSec": 463.12
+    },
+    {
+      "text": "with",
+      "startSec": 463.12,
+      "endSec": 463.36
+    },
+    {
+      "text": "no",
+      "startSec": 463.36,
+      "endSec": 463.51
+    },
+    {
+      "text": "physical",
+      "startSec": 463.51,
+      "endSec": 464.07
+    },
+    {
+      "text": "damage",
+      "startSec": 464.07,
+      "endSec": 464.51
+    },
+    {
+      "text": "to",
+      "startSec": 464.51,
+      "endSec": 464.63
+    },
+    {
+      "text": "explain",
+      "startSec": 464.63,
+      "endSec": 465.21
+    },
+    {
+      "text": "it",
+      "startSec": 465.21,
+      "endSec": 465.26
+    },
+    {
+      "text": ".",
+      "startSec": 465.26,
+      "endSec": 465.5
+    },
+    {
+      "text": "Sold",
+      "startSec": 465.96,
+      "endSec": 466.06
+    },
+    {
+      "text": "iers",
+      "startSec": 466.06,
+      "endSec": 466.12
+    },
+    {
+      "text": "who",
+      "startSec": 466.12,
+      "endSec": 466.27
+    },
+    {
+      "text": "spent",
+      "startSec": 466.27,
+      "endSec": 466.62
+    },
+    {
+      "text": "extended",
+      "startSec": 466.62,
+      "endSec": 467.18
+    },
+    {
+      "text": "time",
+      "startSec": 467.18,
+      "endSec": 467.46
+    },
+    {
+      "text": "in",
+      "startSec": 467.46,
+      "endSec": 467.65999999999997
+    },
+    {
+      "text": "contaminated",
+      "startSec": 467.65999999999997,
+      "endSec": 468.59000000000003
+    },
+    {
+      "text": "sectors",
+      "startSec": 468.59000000000003,
+      "endSec": 468.94
+    },
+    {
+      "text": "reported",
+      "startSec": 468.94,
+      "endSec": 469.5
+    },
+    {
+      "text": "geography",
+      "startSec": 469.5,
+      "endSec": 470.33
+    },
+    {
+      "text": "that",
+      "startSec": 470.33,
+      "endSec": 470.40999999999997
+    },
+    {
+      "text": "didn",
+      "startSec": 470.40999999999997,
+      "endSec": 470.69
+    },
+    {
+      "text": "'t",
+      "startSec": 470.69,
+      "endSec": 470.83
+    },
+    {
+      "text": "match",
+      "startSec": 470.83,
+      "endSec": 471.28
+    },
+    {
+      "text": "survey",
+      "startSec": 471.28,
+      "endSec": 471.61
+    },
+    {
+      "text": "maps",
+      "startSec": 471.61,
+      "endSec": 471.88
+    },
+    {
+      "text": ",",
+      "startSec": 471.88,
+      "endSec": 472.1
+    },
+    {
+      "text": "vo",
+      "startSec": 472.46,
+      "endSec": 472.46
+    },
+    {
+      "text": "x",
+      "startSec": 472.46,
+      "endSec": 472.62
+    },
+    {
+      "text": "traffic",
+      "startSec": 472.62,
+      "endSec": 472.82
+    },
+    {
+      "text": "on",
+      "startSec": 472.82,
+      "endSec": 473
+    },
+    {
+      "text": "dead",
+      "startSec": 473,
+      "endSec": 473.23
+    },
+    {
+      "text": "frequencies",
+      "startSec": 473.23,
+      "endSec": 474.15999999999997
+    },
+    {
+      "text": ",",
+      "startSec": 474.15999999999997,
+      "endSec": 474.19
+    },
+    {
+      "text": "and",
+      "startSec": 474.19,
+      "endSec": 474.40999999999997
+    },
+    {
+      "text": "an",
+      "startSec": 474.40999999999997,
+      "endSec": 474.55
+    },
+    {
+      "text": "inability",
+      "startSec": 474.55,
+      "endSec": 475.21
+    },
+    {
+      "text": "to",
+      "startSec": 475.21,
+      "endSec": 475.35
+    },
+    {
+      "text": "track",
+      "startSec": 475.35,
+      "endSec": 475.71
+    },
+    {
+      "text": "time",
+      "startSec": 475.71,
+      "endSec": 476
+    },
+    {
+      "text": "between",
+      "startSec": 476,
+      "endSec": 476.82
+    },
+    {
+      "text": "events",
+      "startSec": 476.82,
+      "endSec": 476.95
+    },
+    {
+      "text": ".",
+      "startSec": 476.95,
+      "endSec": 477.24
+    },
+    {
+      "text": "These",
+      "startSec": 477.65999999999997,
+      "endSec": 477.82
+    },
+    {
+      "text": "were",
+      "startSec": 477.82,
+      "endSec": 477.89
+    },
+    {
+      "text": "documented",
+      "startSec": 477.89,
+      "endSec": 478.61
+    },
+    {
+      "text": "across",
+      "startSec": 478.61,
+      "endSec": 479.06
+    },
+    {
+      "text": "multiple",
+      "startSec": 479.06,
+      "endSec": 479.64
+    },
+    {
+      "text": "units",
+      "startSec": 479.64,
+      "endSec": 480
+    },
+    {
+      "text": ".",
+      "startSec": 480,
+      "endSec": 480.26
+    },
+    {
+      "text": "They",
+      "startSec": 480.42,
+      "endSec": 480.49
+    },
+    {
+      "text": "weren",
+      "startSec": 480.49,
+      "endSec": 480.8
+    },
+    {
+      "text": "'t",
+      "startSec": 480.8,
+      "endSec": 480.89
+    },
+    {
+      "text": "morale",
+      "startSec": 480.89,
+      "endSec": 481.23
+    },
+    {
+      "text": "failures",
+      "startSec": 481.23,
+      "endSec": 481.7
+    },
+    {
+      "text": ".",
+      "startSec": 481.7,
+      "endSec": 481.9
+    },
+    {
+      "text": "They",
+      "startSec": 482.52,
+      "endSec": 482.52
+    },
+    {
+      "text": "were",
+      "startSec": 482.52,
+      "endSec": 482.67
+    },
+    {
+      "text": "the",
+      "startSec": 482.67,
+      "endSec": 482.7
+    },
+    {
+      "text": "operational",
+      "startSec": 482.7,
+      "endSec": 483.6
+    },
+    {
+      "text": "signature",
+      "startSec": 483.6,
+      "endSec": 484.22
+    },
+    {
+      "text": "of",
+      "startSec": 484.22,
+      "endSec": 484.34
+    },
+    {
+      "text": "the",
+      "startSec": 484.34,
+      "endSec": 484.56
+    },
+    {
+      "text": "eye",
+      "startSec": 484.56,
+      "endSec": 484.78
+    },
+    {
+      "text": "'s",
+      "startSec": 484.78,
+      "endSec": 484.92
+    },
+    {
+      "text": "effect",
+      "startSec": 484.92,
+      "endSec": 485.4
+    },
+    {
+      "text": "on",
+      "startSec": 485.4,
+      "endSec": 485.51
+    },
+    {
+      "text": "personnel",
+      "startSec": 485.51,
+      "endSec": 486.18
+    },
+    {
+      "text": "without",
+      "startSec": 486.18,
+      "endSec": 486.9
+    },
+    {
+      "text": "shield",
+      "startSec": 486.9,
+      "endSec": 487.14
+    },
+    {
+      "text": "ing",
+      "startSec": 487.14,
+      "endSec": 487.36
+    },
+    {
+      "text": ".",
+      "startSec": 487.36,
+      "endSec": 487.66
+    },
+    {
+      "text": "Cad",
+      "startSec": 488.06,
+      "endSec": 488.06
+    },
+    {
+      "text": "ian",
+      "startSec": 488.06,
+      "endSec": 488.22
+    },
+    {
+      "text": "shock",
+      "startSec": 488.22,
+      "endSec": 488.36
+    },
+    {
+      "text": "troops",
+      "startSec": 488.36,
+      "endSec": 488.74
+    },
+    {
+      "text": "were",
+      "startSec": 488.74,
+      "endSec": 488.99
+    },
+    {
+      "text": "trained",
+      "startSec": 488.99,
+      "endSec": 489.43
+    },
+    {
+      "text": "from",
+      "startSec": 489.43,
+      "endSec": 489.76
+    },
+    {
+      "text": "the",
+      "startSec": 489.76,
+      "endSec": 489.87
+    },
+    {
+      "text": "start",
+      "startSec": 489.87,
+      "endSec": 490.19
+    },
+    {
+      "text": "with",
+      "startSec": 490.19,
+      "endSec": 490.44
+    },
+    {
+      "text": "all",
+      "startSec": 490.44,
+      "endSec": 490.69
+    },
+    {
+      "text": "of",
+      "startSec": 490.69,
+      "endSec": 490.75
+    },
+    {
+      "text": "this",
+      "startSec": 490.75,
+      "endSec": 491
+    },
+    {
+      "text": "as",
+      "startSec": 491,
+      "endSec": 491.18
+    },
+    {
+      "text": "a",
+      "startSec": 491.18,
+      "endSec": 491.29
+    },
+    {
+      "text": "baseline",
+      "startSec": 491.29,
+      "endSec": 491.69
+    },
+    {
+      "text": ".",
+      "startSec": 491.69,
+      "endSec": 491.96
+    },
+    {
+      "text": "They",
+      "startSec": 492.56,
+      "endSec": 492.71
+    },
+    {
+      "text": "treated",
+      "startSec": 492.71,
+      "endSec": 492.73
+    },
+    {
+      "text": "it",
+      "startSec": 492.73,
+      "endSec": 492.87
+    },
+    {
+      "text": "as",
+      "startSec": 492.87,
+      "endSec": 493.1
+    },
+    {
+      "text": "standard",
+      "startSec": 493.1,
+      "endSec": 493.64
+    },
+    {
+      "text": "operating",
+      "startSec": 493.64,
+      "endSec": 494.26
+    },
+    {
+      "text": "parameters",
+      "startSec": 494.26,
+      "endSec": 494.9
+    },
+    {
+      "text": "rather",
+      "startSec": 494.9,
+      "endSec": 495.32
+    },
+    {
+      "text": "than",
+      "startSec": 495.32,
+      "endSec": 495.6
+    },
+    {
+      "text": "emergency",
+      "startSec": 495.6,
+      "endSec": 496.22
+    },
+    {
+      "text": "conditions",
+      "startSec": 496.22,
+      "endSec": 496.95
+    },
+    {
+      "text": ".",
+      "startSec": 496.95,
+      "endSec": 497.16
+    },
+    {
+      "text": "That",
+      "startSec": 497.68,
+      "endSec": 497.68
+    },
+    {
+      "text": "gap",
+      "startSec": 497.68,
+      "endSec": 497.84
+    },
+    {
+      "text": "between",
+      "startSec": 497.84,
+      "endSec": 498.09
+    },
+    {
+      "text": "a",
+      "startSec": 498.09,
+      "endSec": 498.22
+    },
+    {
+      "text": "force",
+      "startSec": 498.22,
+      "endSec": 498.48
+    },
+    {
+      "text": "that",
+      "startSec": 498.48,
+      "endSec": 498.75
+    },
+    {
+      "text": "had",
+      "startSec": 498.75,
+      "endSec": 499.05
+    },
+    {
+      "text": "normalized",
+      "startSec": 499.05,
+      "endSec": 499.61
+    },
+    {
+      "text": "the",
+      "startSec": 499.61,
+      "endSec": 499.81
+    },
+    {
+      "text": "impossible",
+      "startSec": 499.81,
+      "endSec": 500.56
+    },
+    {
+      "text": "and",
+      "startSec": 500.56,
+      "endSec": 500.84
+    },
+    {
+      "text": "a",
+      "startSec": 500.84,
+      "endSec": 500.91
+    },
+    {
+      "text": "force",
+      "startSec": 500.91,
+      "endSec": 501.24
+    },
+    {
+      "text": "meeting",
+      "startSec": 501.24,
+      "endSec": 501.96
+    },
+    {
+      "text": "it",
+      "startSec": 501.96,
+      "endSec": 502.05
+    },
+    {
+      "text": "for",
+      "startSec": 502.05,
+      "endSec": 502.28
+    },
+    {
+      "text": "the",
+      "startSec": 502.28,
+      "endSec": 502.43
+    },
+    {
+      "text": "first",
+      "startSec": 502.43,
+      "endSec": 502.84
+    },
+    {
+      "text": "time",
+      "startSec": 502.84,
+      "endSec": 503.2
+    },
+    {
+      "text": "determined",
+      "startSec": 503.2,
+      "endSec": 503.68
+    },
+    {
+      "text": "most",
+      "startSec": 503.68,
+      "endSec": 503.97
+    },
+    {
+      "text": "of",
+      "startSec": 503.97,
+      "endSec": 504.11
+    },
+    {
+      "text": "the",
+      "startSec": 504.11,
+      "endSec": 504.32
+    },
+    {
+      "text": "tactical",
+      "startSec": 504.32,
+      "endSec": 504.97
+    },
+    {
+      "text": "results",
+      "startSec": 504.97,
+      "endSec": 505.42
+    },
+    {
+      "text": "at",
+      "startSec": 505.42,
+      "endSec": 505.56
+    },
+    {
+      "text": "the",
+      "startSec": 505.56,
+      "endSec": 505.78
+    },
+    {
+      "text": "Cad",
+      "startSec": 505.78,
+      "endSec": 506
+    },
+    {
+      "text": "ian",
+      "startSec": 506,
+      "endSec": 506.22
+    },
+    {
+      "text": "gate",
+      "startSec": 506.22,
+      "endSec": 506.5
+    },
+    {
+      "text": ".",
+      "startSec": 506.5,
+      "endSec": 506.76
+    },
+    {
+      "text": "The",
+      "startSec": 507.18,
+      "endSec": 507.18
+    },
+    {
+      "text": "Cad",
+      "startSec": 507.18,
+      "endSec": 507.34
+    },
+    {
+      "text": "ians",
+      "startSec": 507.34,
+      "endSec": 507.4
+    },
+    {
+      "text": "died",
+      "startSec": 507.4,
+      "endSec": 507.72
+    },
+    {
+      "text": "there",
+      "startSec": 507.72,
+      "endSec": 507.98
+    },
+    {
+      "text": ",",
+      "startSec": 507.98,
+      "endSec": 508.11
+    },
+    {
+      "text": "too",
+      "startSec": 508.11,
+      "endSec": 508.3
+    },
+    {
+      "text": ".",
+      "startSec": 508.3,
+      "endSec": 508.54
+    },
+    {
+      "text": "They",
+      "startSec": 508.7,
+      "endSec": 508.85
+    },
+    {
+      "text": "just",
+      "startSec": 508.85,
+      "endSec": 509.16
+    },
+    {
+      "text": "had",
+      "startSec": 509.16,
+      "endSec": 509.39
+    },
+    {
+      "text": "doctrine",
+      "startSec": 509.39,
+      "endSec": 510.01
+    },
+    {
+      "text": "that",
+      "startSec": 510.01,
+      "endSec": 510.32
+    },
+    {
+      "text": "already",
+      "startSec": 510.32,
+      "endSec": 510.87
+    },
+    {
+      "text": "had",
+      "startSec": 510.87,
+      "endSec": 511.17
+    },
+    {
+      "text": "a",
+      "startSec": 511.17,
+      "endSec": 511.17
+    },
+    {
+      "text": "line",
+      "startSec": 511.17,
+      "endSec": 511.48
+    },
+    {
+      "text": "item",
+      "startSec": 511.48,
+      "endSec": 511.79
+    },
+    {
+      "text": "for",
+      "startSec": 511.79,
+      "endSec": 512.02
+    },
+    {
+      "text": "it",
+      "startSec": 512.02,
+      "endSec": 512.17
+    },
+    {
+      "text": ".",
+      "startSec": 512.17,
+      "endSec": 512.48
+    },
+    {
+      "text": "Number",
+      "startSec": 512.84,
+      "endSec": 513
+    },
+    {
+      "text": "one",
+      "startSec": 513,
+      "endSec": 513.23
+    },
+    {
+      "text": ",",
+      "startSec": 513.23,
+      "endSec": 513.39
+    },
+    {
+      "text": "the",
+      "startSec": 513.39,
+      "endSec": 513.64
+    },
+    {
+      "text": "warp",
+      "startSec": 513.64,
+      "endSec": 513.97
+    },
+    {
+      "text": "uncont",
+      "startSec": 513.97,
+      "endSec": 514.54
+    },
+    {
+      "text": "rolled",
+      "startSec": 514.54,
+      "endSec": 514.97
+    },
+    {
+      "text": ".",
+      "startSec": 514.97,
+      "endSec": 515.24
+    },
+    {
+      "text": "Every",
+      "startSec": 515.74,
+      "endSec": 515.9
+    },
+    {
+      "text": "inter",
+      "startSec": 515.9,
+      "endSec": 515.96
+    },
+    {
+      "text": "stell",
+      "startSec": 515.96,
+      "endSec": 516.32
+    },
+    {
+      "text": "ar",
+      "startSec": 516.32,
+      "endSec": 516.45
+    },
+    {
+      "text": "vessel",
+      "startSec": 516.45,
+      "endSec": 516.89
+    },
+    {
+      "text": "passes",
+      "startSec": 516.89,
+      "endSec": 517.32
+    },
+    {
+      "text": "through",
+      "startSec": 517.32,
+      "endSec": 517.82
+    },
+    {
+      "text": "the",
+      "startSec": 517.82,
+      "endSec": 518.03
+    },
+    {
+      "text": "warp",
+      "startSec": 518.03,
+      "endSec": 518.37
+    },
+    {
+      "text": "to",
+      "startSec": 518.37,
+      "endSec": 518.46
+    },
+    {
+      "text": "reach",
+      "startSec": 518.46,
+      "endSec": 518.97
+    },
+    {
+      "text": "the",
+      "startSec": 518.97,
+      "endSec": 519.03
+    },
+    {
+      "text": "next",
+      "startSec": 519.03,
+      "endSec": 519.32
+    },
+    {
+      "text": "star",
+      "startSec": 519.32,
+      "endSec": 519.61
+    },
+    {
+      "text": "system",
+      "startSec": 519.61,
+      "endSec": 520.13
+    },
+    {
+      "text": ".",
+      "startSec": 520.13,
+      "endSec": 520.34
+    },
+    {
+      "text": "Nobody",
+      "startSec": 520.8,
+      "endSec": 520.96
+    },
+    {
+      "text": "has",
+      "startSec": 520.96,
+      "endSec": 521.04
+    },
+    {
+      "text": "survived",
+      "startSec": 521.04,
+      "endSec": 521.66
+    },
+    {
+      "text": "losing",
+      "startSec": 521.66,
+      "endSec": 522.17
+    },
+    {
+      "text": "control",
+      "startSec": 522.17,
+      "endSec": 522.73
+    },
+    {
+      "text": "of",
+      "startSec": 522.73,
+      "endSec": 522.83
+    },
+    {
+      "text": "that",
+      "startSec": 522.83,
+      "endSec": 523.14
+    },
+    {
+      "text": "crossing",
+      "startSec": 523.14,
+      "endSec": 523.76
+    },
+    {
+      "text": ".",
+      "startSec": 523.76,
+      "endSec": 524.04
+    },
+    {
+      "text": "The",
+      "startSec": 524.54,
+      "endSec": 524.54
+    },
+    {
+      "text": "warp",
+      "startSec": 524.54,
+      "endSec": 524.7
+    },
+    {
+      "text": "enables",
+      "startSec": 524.7,
+      "endSec": 525.08
+    },
+    {
+      "text": "faster",
+      "startSec": 525.08,
+      "endSec": 525.44
+    },
+    {
+      "text": "-",
+      "startSec": 525.44,
+      "endSec": 525.5
+    },
+    {
+      "text": "than",
+      "startSec": 525.5,
+      "endSec": 525.86
+    },
+    {
+      "text": "-",
+      "startSec": 525.86,
+      "endSec": 525.91
+    },
+    {
+      "text": "light",
+      "startSec": 525.91,
+      "endSec": 526.24
+    },
+    {
+      "text": "travel",
+      "startSec": 526.24,
+      "endSec": 526.63
+    },
+    {
+      "text": ".",
+      "startSec": 526.63,
+      "endSec": 526.86
+    },
+    {
+      "text": "It",
+      "startSec": 527.44,
+      "endSec": 527.44
+    },
+    {
+      "text": "also",
+      "startSec": 527.44,
+      "endSec": 527.6
+    },
+    {
+      "text": "operates",
+      "startSec": 527.6,
+      "endSec": 527.98
+    },
+    {
+      "text": "under",
+      "startSec": 527.98,
+      "endSec": 528.33
+    },
+    {
+      "text": "conditions",
+      "startSec": 528.33,
+      "endSec": 529.14
+    },
+    {
+      "text": "where",
+      "startSec": 529.14,
+      "endSec": 529.5
+    },
+    {
+      "text": "stable",
+      "startSec": 529.5,
+      "endSec": 530.07
+    },
+    {
+      "text": "matter",
+      "startSec": 530.07,
+      "endSec": 530.45
+    },
+    {
+      "text": "has",
+      "startSec": 530.45,
+      "endSec": 530.67
+    },
+    {
+      "text": "no",
+      "startSec": 530.67,
+      "endSec": 530.82
+    },
+    {
+      "text": "particular",
+      "startSec": 530.82,
+      "endSec": 531.81
+    },
+    {
+      "text": "standing",
+      "startSec": 531.81,
+      "endSec": 532.27
+    },
+    {
+      "text": ".",
+      "startSec": 532.27,
+      "endSec": 532.5
+    },
+    {
+      "text": "A",
+      "startSec": 532.57,
+      "endSec": 532.66
+    },
+    {
+      "text": "ship",
+      "startSec": 532.66,
+      "endSec": 532.87
+    },
+    {
+      "text": "that",
+      "startSec": 532.87,
+      "endSec": 533.17
+    },
+    {
+      "text": "loses",
+      "startSec": 533.17,
+      "endSec": 533.57
+    },
+    {
+      "text": "its",
+      "startSec": 533.57,
+      "endSec": 533.83
+    },
+    {
+      "text": "G",
+      "startSec": 533.83,
+      "endSec": 533.87
+    },
+    {
+      "text": "eller",
+      "startSec": 533.87,
+      "endSec": 534.2
+    },
+    {
+      "text": "field",
+      "startSec": 534.2,
+      "endSec": 534.57
+    },
+    {
+      "text": ",",
+      "startSec": 534.57,
+      "endSec": 534.72
+    },
+    {
+      "text": "the",
+      "startSec": 534.72,
+      "endSec": 534.94
+    },
+    {
+      "text": "containment",
+      "startSec": 534.94,
+      "endSec": 535.76
+    },
+    {
+      "text": "system",
+      "startSec": 535.76,
+      "endSec": 536.2
+    },
+    {
+      "text": ",",
+      "startSec": 536.2,
+      "endSec": 536.36
+    },
+    {
+      "text": "maintaining",
+      "startSec": 536.36,
+      "endSec": 537.18
+    },
+    {
+      "text": "a",
+      "startSec": 537.18,
+      "endSec": 537.25
+    },
+    {
+      "text": "bubble",
+      "startSec": 537.25,
+      "endSec": 537.82
+    },
+    {
+      "text": "of",
+      "startSec": 537.82,
+      "endSec": 537.85
+    },
+    {
+      "text": "material",
+      "startSec": 537.85,
+      "endSec": 538.45
+    },
+    {
+      "text": "reality",
+      "startSec": 538.45,
+      "endSec": 539.04
+    },
+    {
+      "text": "coher",
+      "startSec": 539.04,
+      "endSec": 539.31
+    },
+    {
+      "text": "ence",
+      "startSec": 539.31,
+      "endSec": 539.52
+    },
+    {
+      "text": "around",
+      "startSec": 539.52,
+      "endSec": 539.85
+    },
+    {
+      "text": "the",
+      "startSec": 539.85,
+      "endSec": 540.02
+    },
+    {
+      "text": "hull",
+      "startSec": 540.02,
+      "endSec": 540.23
+    },
+    {
+      "text": ",",
+      "startSec": 540.23,
+      "endSec": 540.36
+    },
+    {
+      "text": "isn",
+      "startSec": 540.36,
+      "endSec": 540.57
+    },
+    {
+      "text": "'t",
+      "startSec": 540.57,
+      "endSec": 540.66
+    },
+    {
+      "text": "a",
+      "startSec": 540.66,
+      "endSec": 540.81
+    },
+    {
+      "text": "vessel",
+      "startSec": 540.81,
+      "endSec": 541.09
+    },
+    {
+      "text": "in",
+      "startSec": 541.09,
+      "endSec": 541.21
+    },
+    {
+      "text": "a",
+      "startSec": 541.21,
+      "endSec": 541.27
+    },
+    {
+      "text": "dangerous",
+      "startSec": 541.27,
+      "endSec": 541.86
+    },
+    {
+      "text": "environment",
+      "startSec": 541.86,
+      "endSec": 542.51
+    },
+    {
+      "text": "anymore",
+      "startSec": 542.51,
+      "endSec": 543.07
+    },
+    {
+      "text": ".",
+      "startSec": 543.07,
+      "endSec": 543.18
+    },
+    {
+      "text": "It",
+      "startSec": 543.58,
+      "endSec": 543.58
+    },
+    {
+      "text": "'s",
+      "startSec": 543.58,
+      "endSec": 543.74
+    },
+    {
+      "text": "matter",
+      "startSec": 543.74,
+      "endSec": 543.8
+    },
+    {
+      "text": "trying",
+      "startSec": 543.8,
+      "endSec": 544.18
+    },
+    {
+      "text": "to",
+      "startSec": 544.18,
+      "endSec": 544.3
+    },
+    {
+      "text": "hold",
+      "startSec": 544.3,
+      "endSec": 544.54
+    },
+    {
+      "text": "its",
+      "startSec": 544.54,
+      "endSec": 544.74
+    },
+    {
+      "text": "shape",
+      "startSec": 544.74,
+      "endSec": 545.05
+    },
+    {
+      "text": "somewhere",
+      "startSec": 545.05,
+      "endSec": 545.62
+    },
+    {
+      "text": "that",
+      "startSec": 545.62,
+      "endSec": 545.87
+    },
+    {
+      "text": "actively",
+      "startSec": 545.87,
+      "endSec": 546.37
+    },
+    {
+      "text": "works",
+      "startSec": 546.37,
+      "endSec": 546.81
+    },
+    {
+      "text": "against",
+      "startSec": 546.81,
+      "endSec": 547.12
+    },
+    {
+      "text": "the",
+      "startSec": 547.12,
+      "endSec": 547.31
+    },
+    {
+      "text": "concept",
+      "startSec": 547.31,
+      "endSec": 547.87
+    },
+    {
+      "text": "of",
+      "startSec": 547.87,
+      "endSec": 547.97
+    },
+    {
+      "text": "shape",
+      "startSec": 547.97,
+      "endSec": 548.18
+    },
+    {
+      "text": ".",
+      "startSec": 548.18,
+      "endSec": 548.46
+    },
+    {
+      "text": "The",
+      "startSec": 548.62,
+      "endSec": 548.71
+    },
+    {
+      "text": "crew",
+      "startSec": 548.71,
+      "endSec": 549.04
+    },
+    {
+      "text": "doesn",
+      "startSec": 549.04,
+      "endSec": 549.44
+    },
+    {
+      "text": "'t",
+      "startSec": 549.44,
+      "endSec": 549.61
+    },
+    {
+      "text": "die",
+      "startSec": 549.61,
+      "endSec": 549.86
+    },
+    {
+      "text": "the",
+      "startSec": 549.86,
+      "endSec": 550.16
+    },
+    {
+      "text": "way",
+      "startSec": 550.16,
+      "endSec": 550.39
+    },
+    {
+      "text": "crews",
+      "startSec": 550.39,
+      "endSec": 550.77
+    },
+    {
+      "text": "die",
+      "startSec": 550.77,
+      "endSec": 551.09
+    },
+    {
+      "text": "when",
+      "startSec": 551.09,
+      "endSec": 551.35
+    },
+    {
+      "text": "life",
+      "startSec": 551.35,
+      "endSec": 551.69
+    },
+    {
+      "text": "'s",
+      "startSec": 551.69,
+      "endSec": 551.84
+    },
+    {
+      "text": "support",
+      "startSec": 551.84,
+      "endSec": 552.42
+    },
+    {
+      "text": "fails",
+      "startSec": 552.42,
+      "endSec": 552.85
+    },
+    {
+      "text": ".",
+      "startSec": 552.85,
+      "endSec": 553.14
+    },
+    {
+      "text": "The",
+      "startSec": 553.14,
+      "endSec": 553.35
+    },
+    {
+      "text": "deterior",
+      "startSec": 553.35,
+      "endSec": 553.91
+    },
+    {
+      "text": "ation",
+      "startSec": 553.91,
+      "endSec": 554.27
+    },
+    {
+      "text": "comes",
+      "startSec": 554.27,
+      "endSec": 554.62
+    },
+    {
+      "text": "from",
+      "startSec": 554.62,
+      "endSec": 554.9
+    },
+    {
+      "text": "outside",
+      "startSec": 554.9,
+      "endSec": 555.4
+    },
+    {
+      "text": ",",
+      "startSec": 555.4,
+      "endSec": 555.54
+    },
+    {
+      "text": "in",
+      "startSec": 555.54,
+      "endSec": 555.77
+    },
+    {
+      "text": ",",
+      "startSec": 555.77,
+      "endSec": 555.82
+    },
+    {
+      "text": "and",
+      "startSec": 555.82,
+      "endSec": 556.03
+    },
+    {
+      "text": "doesn",
+      "startSec": 556.03,
+      "endSec": 556.38
+    },
+    {
+      "text": "'t",
+      "startSec": 556.38,
+      "endSec": 556.52
+    },
+    {
+      "text": "follow",
+      "startSec": 556.52,
+      "endSec": 556.94
+    },
+    {
+      "text": "a",
+      "startSec": 556.94,
+      "endSec": 557.02
+    },
+    {
+      "text": "sequence",
+      "startSec": 557.02,
+      "endSec": 557.59
+    },
+    {
+      "text": "anyone",
+      "startSec": 557.59,
+      "endSec": 558.02
+    },
+    {
+      "text": "has",
+      "startSec": 558.02,
+      "endSec": 558.23
+    },
+    {
+      "text": "successfully",
+      "startSec": 558.23,
+      "endSec": 559.09
+    },
+    {
+      "text": "predicted",
+      "startSec": 559.09,
+      "endSec": 559.74
+    },
+    {
+      "text": ".",
+      "startSec": 559.74,
+      "endSec": 560.04
+    },
+    {
+      "text": "What",
+      "startSec": 560.58,
+      "endSec": 560.64
+    },
+    {
+      "text": "makes",
+      "startSec": 560.64,
+      "endSec": 560.74
+    },
+    {
+      "text": "this",
+      "startSec": 560.74,
+      "endSec": 560.91
+    },
+    {
+      "text": "the",
+      "startSec": 560.91,
+      "endSec": 561.12
+    },
+    {
+      "text": "worst",
+      "startSec": 561.12,
+      "endSec": 561.44
+    },
+    {
+      "text": "environment",
+      "startSec": 561.44,
+      "endSec": 562.28
+    },
+    {
+      "text": "in",
+      "startSec": 562.28,
+      "endSec": 562.31
+    },
+    {
+      "text": "the",
+      "startSec": 562.31,
+      "endSec": 562.51
+    },
+    {
+      "text": "setting",
+      "startSec": 562.51,
+      "endSec": 562.98
+    },
+    {
+      "text": "is",
+      "startSec": 562.98,
+      "endSec": 563.21
+    },
+    {
+      "text": "what",
+      "startSec": 563.21,
+      "endSec": 563.38
+    },
+    {
+      "text": "gets",
+      "startSec": 563.38,
+      "endSec": 563.81
+    },
+    {
+      "text": "stripped",
+      "startSec": 563.81,
+      "endSec": 564.19
+    },
+    {
+      "text": "away",
+      "startSec": 564.19,
+      "endSec": 564.45
+    },
+    {
+      "text": "the",
+      "startSec": 564.45,
+      "endSec": 564.94
+    },
+    {
+      "text": "moment",
+      "startSec": 564.94,
+      "endSec": 565.06
+    },
+    {
+      "text": "control",
+      "startSec": 565.06,
+      "endSec": 565.56
+    },
+    {
+      "text": "fails",
+      "startSec": 565.56,
+      "endSec": 565.9
+    },
+    {
+      "text": ".",
+      "startSec": 565.9,
+      "endSec": 566.14
+    },
+    {
+      "text": "Nav",
+      "startSec": 566.62,
+      "endSec": 566.78
+    },
+    {
+      "text": "igation",
+      "startSec": 566.78,
+      "endSec": 566.85
+    },
+    {
+      "text": "stops",
+      "startSec": 566.85,
+      "endSec": 567.21
+    },
+    {
+      "text": "working",
+      "startSec": 567.21,
+      "endSec": 567.71
+    },
+    {
+      "text": "because",
+      "startSec": 567.71,
+      "endSec": 568.21
+    },
+    {
+      "text": "warp",
+      "startSec": 568.21,
+      "endSec": 568.55
+    },
+    {
+      "text": "currents",
+      "startSec": 568.55,
+      "endSec": 569.25
+    },
+    {
+      "text": "have",
+      "startSec": 569.25,
+      "endSec": 569.37
+    },
+    {
+      "text": "no",
+      "startSec": 569.37,
+      "endSec": 569.51
+    },
+    {
+      "text": "fixed",
+      "startSec": 569.51,
+      "endSec": 569.87
+    },
+    {
+      "text": "relationship",
+      "startSec": 569.87,
+      "endSec": 570.88
+    },
+    {
+      "text": "to",
+      "startSec": 570.88,
+      "endSec": 571
+    },
+    {
+      "text": "physical",
+      "startSec": 571,
+      "endSec": 571.46
+    },
+    {
+      "text": "distances",
+      "startSec": 571.46,
+      "endSec": 572.11
+    },
+    {
+      "text": ".",
+      "startSec": 572.11,
+      "endSec": 572.4
+    },
+    {
+      "text": "Time",
+      "startSec": 572.96,
+      "endSec": 573.12
+    },
+    {
+      "text": "becomes",
+      "startSec": 573.12,
+      "endSec": 573.68
+    },
+    {
+      "text": "operation",
+      "startSec": 573.68,
+      "endSec": 574.5
+    },
+    {
+      "text": "ally",
+      "startSec": 574.5,
+      "endSec": 574.73
+    },
+    {
+      "text": "non",
+      "startSec": 574.73,
+      "endSec": 574.96
+    },
+    {
+      "text": "-",
+      "startSec": 574.96,
+      "endSec": 575.04
+    },
+    {
+      "text": "linear",
+      "startSec": 575.04,
+      "endSec": 575.52
+    },
+    {
+      "text": ".",
+      "startSec": 575.52,
+      "endSec": 575.8
+    },
+    {
+      "text": "V",
+      "startSec": 576.6,
+      "endSec": 576.6
+    },
+    {
+      "text": "ess",
+      "startSec": 576.6,
+      "endSec": 576.6
+    },
+    {
+      "text": "els",
+      "startSec": 576.6,
+      "endSec": 576.6
+    },
+    {
+      "text": "have",
+      "startSec": 576.6,
+      "endSec": 576.68
+    },
+    {
+      "text": "ex",
+      "startSec": 576.68,
+      "endSec": 576.76
+    },
+    {
+      "text": "ited",
+      "startSec": 576.76,
+      "endSec": 576.95
+    },
+    {
+      "text": "transit",
+      "startSec": 576.95,
+      "endSec": 577.43
+    },
+    {
+      "text": "weeks",
+      "startSec": 577.43,
+      "endSec": 577.77
+    },
+    {
+      "text": "before",
+      "startSec": 577.77,
+      "endSec": 578.18
+    },
+    {
+      "text": "they",
+      "startSec": 578.18,
+      "endSec": 578.45
+    },
+    {
+      "text": "entered",
+      "startSec": 578.45,
+      "endSec": 578.93
+    },
+    {
+      "text": ",",
+      "startSec": 578.93,
+      "endSec": 579.2
+    },
+    {
+      "text": "as",
+      "startSec": 579.2,
+      "endSec": 579.23
+    },
+    {
+      "text": "measured",
+      "startSec": 579.23,
+      "endSec": 579.83
+    },
+    {
+      "text": "by",
+      "startSec": 579.83,
+      "endSec": 579.89
+    },
+    {
+      "text": "external",
+      "startSec": 579.89,
+      "endSec": 580.44
+    },
+    {
+      "text": "observers",
+      "startSec": 580.44,
+      "endSec": 581.06
+    },
+    {
+      "text": ",",
+      "startSec": 581.06,
+      "endSec": 581.32
+    },
+    {
+      "text": "and",
+      "startSec": 581.32,
+      "endSec": 581.62
+    },
+    {
+      "text": "some",
+      "startSec": 581.62,
+      "endSec": 581.92
+    },
+    {
+      "text": "have",
+      "startSec": 581.92,
+      "endSec": 582.17
+    },
+    {
+      "text": "never",
+      "startSec": 582.17,
+      "endSec": 582.56
+    },
+    {
+      "text": "ex",
+      "startSec": 582.56,
+      "endSec": 582.81
+    },
+    {
+      "text": "ited",
+      "startSec": 582.81,
+      "endSec": 583.02
+    },
+    {
+      "text": "despite",
+      "startSec": 583.02,
+      "endSec": 583.57
+    },
+    {
+      "text": "correct",
+      "startSec": 583.57,
+      "endSec": 584.12
+    },
+    {
+      "text": "departure",
+      "startSec": 584.12,
+      "endSec": 584.82
+    },
+    {
+      "text": "coordinates",
+      "startSec": 584.82,
+      "endSec": 585.95
+    },
+    {
+      "text": ".",
+      "startSec": 585.95,
+      "endSec": 585.96
+    },
+    {
+      "text": "Crew",
+      "startSec": 586.12,
+      "endSec": 586.28
+    },
+    {
+      "text": "psychological",
+      "startSec": 586.28,
+      "endSec": 587.33
+    },
+    {
+      "text": "integrity",
+      "startSec": 587.33,
+      "endSec": 588.06
+    },
+    {
+      "text": "decl",
+      "startSec": 588.06,
+      "endSec": 588.38
+    },
+    {
+      "text": "ines",
+      "startSec": 588.38,
+      "endSec": 588.7
+    },
+    {
+      "text": "in",
+      "startSec": 588.7,
+      "endSec": 588.86
+    },
+    {
+      "text": "proportion",
+      "startSec": 588.86,
+      "endSec": 589.67
+    },
+    {
+      "text": "to",
+      "startSec": 589.67,
+      "endSec": 589.83
+    },
+    {
+      "text": "transit",
+      "startSec": 589.83,
+      "endSec": 590.39
+    },
+    {
+      "text": "duration",
+      "startSec": 590.39,
+      "endSec": 591.04
+    },
+    {
+      "text": "and",
+      "startSec": 591.04,
+      "endSec": 591.28
+    },
+    {
+      "text": "proximity",
+      "startSec": 591.28,
+      "endSec": 592.01
+    },
+    {
+      "text": "to",
+      "startSec": 592.01,
+      "endSec": 592.17
+    },
+    {
+      "text": "warp",
+      "startSec": 592.17,
+      "endSec": 592.49
+    },
+    {
+      "text": "anom",
+      "startSec": 592.49,
+      "endSec": 592.81
+    },
+    {
+      "text": "alies",
+      "startSec": 592.81,
+      "endSec": 593.25
+    },
+    {
+      "text": ".",
+      "startSec": 593.25,
+      "endSec": 593.52
+    },
+    {
+      "text": "Communication",
+      "startSec": 594.08,
+      "endSec": 594.62
+    },
+    {
+      "text": "with",
+      "startSec": 594.62,
+      "endSec": 594.89
+    },
+    {
+      "text": "anything",
+      "startSec": 594.89,
+      "endSec": 595.54
+    },
+    {
+      "text": "outside",
+      "startSec": 595.54,
+      "endSec": 596.11
+    },
+    {
+      "text": "the",
+      "startSec": 596.11,
+      "endSec": 596.35
+    },
+    {
+      "text": "hull",
+      "startSec": 596.35,
+      "endSec": 596.71
+    },
+    {
+      "text": "is",
+      "startSec": 596.71,
+      "endSec": 596.83
+    },
+    {
+      "text": "sever",
+      "startSec": 596.83,
+      "endSec": 597.31
+    },
+    {
+      "text": "ed",
+      "startSec": 597.31,
+      "endSec": 597.39
+    },
+    {
+      "text": ".",
+      "startSec": 597.39,
+      "endSec": 597.68
+    },
+    {
+      "text": "Supp",
+      "startSec": 598.08,
+      "endSec": 598.08
+    },
+    {
+      "text": "ly",
+      "startSec": 598.08,
+      "endSec": 598.24
+    },
+    {
+      "text": "lines",
+      "startSec": 598.24,
+      "endSec": 598.36
+    },
+    {
+      "text": ",",
+      "startSec": 598.36,
+      "endSec": 598.48
+    },
+    {
+      "text": "reinforce",
+      "startSec": 598.48,
+      "endSec": 599.02
+    },
+    {
+      "text": "ments",
+      "startSec": 599.02,
+      "endSec": 599.45
+    },
+    {
+      "text": ",",
+      "startSec": 599.45,
+      "endSec": 599.47
+    },
+    {
+      "text": "intelligence",
+      "startSec": 599.47,
+      "endSec": 600.22
+    },
+    {
+      "text": ",",
+      "startSec": 600.22,
+      "endSec": 600.34
+    },
+    {
+      "text": "extraction",
+      "startSec": 600.34,
+      "endSec": 600.97
+    },
+    {
+      "text": ",",
+      "startSec": 600.97,
+      "endSec": 601.09
+    },
+    {
+      "text": "everything",
+      "startSec": 601.09,
+      "endSec": 601.72
+    },
+    {
+      "text": "a",
+      "startSec": 601.72,
+      "endSec": 601.76
+    },
+    {
+      "text": "military",
+      "startSec": 601.76,
+      "endSec": 602.45
+    },
+    {
+      "text": "force",
+      "startSec": 602.45,
+      "endSec": 602.68
+    },
+    {
+      "text": "depends",
+      "startSec": 602.68,
+      "endSec": 603.1
+    },
+    {
+      "text": "on",
+      "startSec": 603.1,
+      "endSec": 603.15
+    },
+    {
+      "text": "for",
+      "startSec": 603.15,
+      "endSec": 603.4
+    },
+    {
+      "text": "sustained",
+      "startSec": 603.4,
+      "endSec": 603.9
+    },
+    {
+      "text": "operation",
+      "startSec": 603.9,
+      "endSec": 604.46
+    },
+    {
+      "text": ",",
+      "startSec": 604.46,
+      "endSec": 604.7
+    },
+    {
+      "text": "ce",
+      "startSec": 605.34,
+      "endSec": 605.34
+    },
+    {
+      "text": "ases",
+      "startSec": 605.34,
+      "endSec": 605.42
+    },
+    {
+      "text": "to",
+      "startSec": 605.42,
+      "endSec": 605.51
+    },
+    {
+      "text": "function",
+      "startSec": 605.51,
+      "endSec": 606.16
+    },
+    {
+      "text": "the",
+      "startSec": 606.16,
+      "endSec": 606.43
+    },
+    {
+      "text": "moment",
+      "startSec": 606.43,
+      "endSec": 607.04
+    },
+    {
+      "text": "the",
+      "startSec": 607.04,
+      "endSec": 607.27
+    },
+    {
+      "text": "G",
+      "startSec": 607.27,
+      "endSec": 607.34
+    },
+    {
+      "text": "eller",
+      "startSec": 607.34,
+      "endSec": 607.97
+    },
+    {
+      "text": "field",
+      "startSec": 607.97,
+      "endSec": 608.26
+    },
+    {
+      "text": "goes",
+      "startSec": 608.26,
+      "endSec": 608.63
+    },
+    {
+      "text": ".",
+      "startSec": 608.63,
+      "endSec": 608.96
+    },
+    {
+      "text": "The",
+      "startSec": 609.12,
+      "endSec": 609.21
+    },
+    {
+      "text": "final",
+      "startSec": 609.21,
+      "endSec": 609.63
+    },
+    {
+      "text": "boarding",
+      "startSec": 609.63,
+      "endSec": 610.33
+    },
+    {
+      "text": "of",
+      "startSec": 610.33,
+      "endSec": 610.46
+    },
+    {
+      "text": "the",
+      "startSec": 610.46,
+      "endSec": 610.71
+    },
+    {
+      "text": "venge",
+      "startSec": 610.71,
+      "endSec": 611.13
+    },
+    {
+      "text": "ful",
+      "startSec": 611.13,
+      "endSec": 611.38
+    },
+    {
+      "text": "spirit",
+      "startSec": 611.38,
+      "endSec": 611.88
+    },
+    {
+      "text": "illustrated",
+      "startSec": 611.88,
+      "endSec": 612.79
+    },
+    {
+      "text": "what",
+      "startSec": 612.79,
+      "endSec": 613.33
+    },
+    {
+      "text": "even",
+      "startSec": 613.33,
+      "endSec": 613.46
+    },
+    {
+      "text": "partial",
+      "startSec": 613.46,
+      "endSec": 614.04
+    },
+    {
+      "text": "warp",
+      "startSec": 614.04,
+      "endSec": 614.41
+    },
+    {
+      "text": "exposure",
+      "startSec": 614.41,
+      "endSec": 615.18
+    },
+    {
+      "text": "does",
+      "startSec": 615.18,
+      "endSec": 615.37
+    },
+    {
+      "text": "at",
+      "startSec": 615.37,
+      "endSec": 615.56
+    },
+    {
+      "text": "close",
+      "startSec": 615.56,
+      "endSec": 615.95
+    },
+    {
+      "text": "range",
+      "startSec": 615.95,
+      "endSec": 616.48
+    },
+    {
+      "text": ".",
+      "startSec": 616.48,
+      "endSec": 616.7
+    },
+    {
+      "text": "A",
+      "startSec": 616.7,
+      "endSec": 616.87
+    },
+    {
+      "text": "targeted",
+      "startSec": 616.87,
+      "endSec": 617.28
+    },
+    {
+      "text": "teleport",
+      "startSec": 617.28,
+      "endSec": 617.79
+    },
+    {
+      "text": "assault",
+      "startSec": 617.79,
+      "endSec": 618.26
+    },
+    {
+      "text": ",",
+      "startSec": 618.26,
+      "endSec": 618.4
+    },
+    {
+      "text": "the",
+      "startSec": 618.4,
+      "endSec": 618.63
+    },
+    {
+      "text": "most",
+      "startSec": 618.63,
+      "endSec": 618.84
+    },
+    {
+      "text": "controlled",
+      "startSec": 618.84,
+      "endSec": 619.49
+    },
+    {
+      "text": "form",
+      "startSec": 619.49,
+      "endSec": 619.89
+    },
+    {
+      "text": "of",
+      "startSec": 619.89,
+      "endSec": 619.93
+    },
+    {
+      "text": "warp",
+      "startSec": 619.93,
+      "endSec": 620.15
+    },
+    {
+      "text": "-",
+      "startSec": 620.15,
+      "endSec": 620.21
+    },
+    {
+      "text": "ad",
+      "startSec": 620.21,
+      "endSec": 620.34
+    },
+    {
+      "text": "jac",
+      "startSec": 620.34,
+      "endSec": 620.52
+    },
+    {
+      "text": "ent",
+      "startSec": 620.52,
+      "endSec": 621.06
+    },
+    {
+      "text": "transit",
+      "startSec": 621.06,
+      "endSec": 621.18
+    },
+    {
+      "text": "available",
+      "startSec": 621.18,
+      "endSec": 621.77
+    },
+    {
+      "text": ",",
+      "startSec": 621.77,
+      "endSec": 622.01
+    },
+    {
+      "text": "was",
+      "startSec": 622.01,
+      "endSec": 622.22
+    },
+    {
+      "text": "used",
+      "startSec": 622.22,
+      "endSec": 622.52
+    },
+    {
+      "text": "as",
+      "startSec": 622.52,
+      "endSec": 622.67
+    },
+    {
+      "text": "a",
+      "startSec": 622.67,
+      "endSec": 622.74
+    },
+    {
+      "text": "dispers",
+      "startSec": 622.74,
+      "endSec": 623.3
+    },
+    {
+      "text": "ion",
+      "startSec": 623.3,
+      "endSec": 623.48
+    },
+    {
+      "text": "mechanism",
+      "startSec": 623.48,
+      "endSec": 624.22
+    },
+    {
+      "text": ".",
+      "startSec": 624.22,
+      "endSec": 624.42
+    },
+    {
+      "text": "The",
+      "startSec": 624.86,
+      "endSec": 624.88
+    },
+    {
+      "text": "Loy",
+      "startSec": 624.88,
+      "endSec": 625.01
+    },
+    {
+      "text": "al",
+      "startSec": 625.01,
+      "endSec": 625.03
+    },
+    {
+      "text": "ist",
+      "startSec": 625.03,
+      "endSec": 625.25
+    },
+    {
+      "text": "strike",
+      "startSec": 625.25,
+      "endSec": 625.7
+    },
+    {
+      "text": "force",
+      "startSec": 625.7,
+      "endSec": 626.08
+    },
+    {
+      "text": "scattered",
+      "startSec": 626.08,
+      "endSec": 626.79
+    },
+    {
+      "text": "across",
+      "startSec": 626.79,
+      "endSec": 627.21
+    },
+    {
+      "text": "a",
+      "startSec": 627.21,
+      "endSec": 627.28
+    },
+    {
+      "text": "corrupted",
+      "startSec": 627.28,
+      "endSec": 628.09
+    },
+    {
+      "text": "interior",
+      "startSec": 628.09,
+      "endSec": 628.57
+    },
+    {
+      "text": ".",
+      "startSec": 628.57,
+      "endSec": 628.86
+    },
+    {
+      "text": "Pocket",
+      "startSec": 629.46,
+      "endSec": 629.62
+    },
+    {
+      "text": "inst",
+      "startSec": 629.62,
+      "endSec": 629.67
+    },
+    {
+      "text": "abilities",
+      "startSec": 629.67,
+      "endSec": 630.4
+    },
+    {
+      "text": "isolated",
+      "startSec": 630.4,
+      "endSec": 631.05
+    },
+    {
+      "text": "individuals",
+      "startSec": 631.05,
+      "endSec": 632.09
+    },
+    {
+      "text": "from",
+      "startSec": 632.09,
+      "endSec": 632.34
+    },
+    {
+      "text": "their",
+      "startSec": 632.34,
+      "endSec": 632.69
+    },
+    {
+      "text": "units",
+      "startSec": 632.69,
+      "endSec": 633.09
+    },
+    {
+      "text": "mid",
+      "startSec": 633.09,
+      "endSec": 633.33
+    },
+    {
+      "text": "-",
+      "startSec": 633.33,
+      "endSec": 633.41
+    },
+    {
+      "text": "trans",
+      "startSec": 633.41,
+      "endSec": 633.84
+    },
+    {
+      "text": "it",
+      "startSec": 633.84,
+      "endSec": 634.06
+    },
+    {
+      "text": ".",
+      "startSec": 634.06,
+      "endSec": 634.28
+    },
+    {
+      "text": "Dor",
+      "startSec": 634.68,
+      "endSec": 634.68
+    },
+    {
+      "text": "ne",
+      "startSec": 634.68,
+      "endSec": 634.84
+    },
+    {
+      "text": "was",
+      "startSec": 634.84,
+      "endSec": 634.87
+    },
+    {
+      "text": "displaced",
+      "startSec": 634.87,
+      "endSec": 635.55
+    },
+    {
+      "text": "into",
+      "startSec": 635.55,
+      "endSec": 635.85
+    },
+    {
+      "text": "a",
+      "startSec": 635.85,
+      "endSec": 636.05
+    },
+    {
+      "text": "pocket",
+      "startSec": 636.05,
+      "endSec": 636.38
+    },
+    {
+      "text": "dimension",
+      "startSec": 636.38,
+      "endSec": 637.05
+    },
+    {
+      "text": "entirely",
+      "startSec": 637.05,
+      "endSec": 637.65
+    },
+    {
+      "text": ".",
+      "startSec": 637.65,
+      "endSec": 637.94
+    },
+    {
+      "text": "Cor",
+      "startSec": 638.65,
+      "endSec": 638.68
+    },
+    {
+      "text": "rid",
+      "startSec": 638.68,
+      "endSec": 638.86
+    },
+    {
+      "text": "ors",
+      "startSec": 638.86,
+      "endSec": 639.04
+    },
+    {
+      "text": "changed",
+      "startSec": 639.04,
+      "endSec": 639.45
+    },
+    {
+      "text": "geometry",
+      "startSec": 639.45,
+      "endSec": 639.94
+    },
+    {
+      "text": "around",
+      "startSec": 639.94,
+      "endSec": 640.3
+    },
+    {
+      "text": "active",
+      "startSec": 640.3,
+      "endSec": 640.66
+    },
+    {
+      "text": "engagements",
+      "startSec": 640.66,
+      "endSec": 641.38
+    },
+    {
+      "text": ".",
+      "startSec": 641.38,
+      "endSec": 641.56
+    },
+    {
+      "text": "That",
+      "startSec": 642.08,
+      "endSec": 642.1
+    },
+    {
+      "text": "was",
+      "startSec": 642.1,
+      "endSec": 642.24
+    },
+    {
+      "text": "one",
+      "startSec": 642.24,
+      "endSec": 642.33
+    },
+    {
+      "text": "ship",
+      "startSec": 642.33,
+      "endSec": 642.64
+    },
+    {
+      "text": "partially",
+      "startSec": 642.64,
+      "endSec": 643.45
+    },
+    {
+      "text": "dest",
+      "startSec": 643.45,
+      "endSec": 643.66
+    },
+    {
+      "text": "abil",
+      "startSec": 643.66,
+      "endSec": 644.01
+    },
+    {
+      "text": "ized",
+      "startSec": 644.01,
+      "endSec": 644.28
+    },
+    {
+      "text": "by",
+      "startSec": 644.28,
+      "endSec": 644.43
+    },
+    {
+      "text": "prolonged",
+      "startSec": 644.43,
+      "endSec": 645.31
+    },
+    {
+      "text": "warp",
+      "startSec": 645.31,
+      "endSec": 645.45
+    },
+    {
+      "text": "exposure",
+      "startSec": 645.45,
+      "endSec": 646.4
+    },
+    {
+      "text": ".",
+      "startSec": 646.4,
+      "endSec": 646.4
+    },
+    {
+      "text": "The",
+      "startSec": 646.4,
+      "endSec": 646.62
+    },
+    {
+      "text": "open",
+      "startSec": 646.62,
+      "endSec": 646.94
+    },
+    {
+      "text": "warp",
+      "startSec": 646.94,
+      "endSec": 647.22
+    },
+    {
+      "text": "produces",
+      "startSec": 647.22,
+      "endSec": 647.82
+    },
+    {
+      "text": "those",
+      "startSec": 647.82,
+      "endSec": 648.19
+    },
+    {
+      "text": "conditions",
+      "startSec": 648.19,
+      "endSec": 649.03
+    },
+    {
+      "text": "as",
+      "startSec": 649.03,
+      "endSec": 649.09
+    },
+    {
+      "text": "its",
+      "startSec": 649.09,
+      "endSec": 649.31
+    },
+    {
+      "text": "starting",
+      "startSec": 649.31,
+      "endSec": 649.91
+    },
+    {
+      "text": "point",
+      "startSec": 649.91,
+      "endSec": 650.27
+    },
+    {
+      "text": ",",
+      "startSec": 650.27,
+      "endSec": 650.65
+    },
+    {
+      "text": "not",
+      "startSec": 650.65,
+      "endSec": 650.77
+    },
+    {
+      "text": "its",
+      "startSec": 650.77,
+      "endSec": 650.87
+    },
+    {
+      "text": "worst",
+      "startSec": 650.87,
+      "endSec": 651.24
+    },
+    {
+      "text": "case",
+      "startSec": 651.24,
+      "endSec": 651.54
+    },
+    {
+      "text": ".",
+      "startSec": 651.54,
+      "endSec": 651.82
+    },
+    {
+      "text": "No",
+      "startSec": 652.36,
+      "endSec": 652.52
+    },
+    {
+      "text": "military",
+      "startSec": 652.52,
+      "endSec": 652.57
+    },
+    {
+      "text": "force",
+      "startSec": 652.57,
+      "endSec": 652.94
+    },
+    {
+      "text": "has",
+      "startSec": 652.94,
+      "endSec": 653.16
+    },
+    {
+      "text": "operated",
+      "startSec": 653.16,
+      "endSec": 653.76
+    },
+    {
+      "text": "effectively",
+      "startSec": 653.76,
+      "endSec": 654.58
+    },
+    {
+      "text": "inside",
+      "startSec": 654.58,
+      "endSec": 655.03
+    },
+    {
+      "text": "the",
+      "startSec": 655.03,
+      "endSec": 655.25
+    },
+    {
+      "text": "open",
+      "startSec": 655.25,
+      "endSec": 655.59
+    },
+    {
+      "text": "warp",
+      "startSec": 655.59,
+      "endSec": 655.84
+    },
+    {
+      "text": "without",
+      "startSec": 655.84,
+      "endSec": 656.73
+    },
+    {
+      "text": "navigation",
+      "startSec": 656.73,
+      "endSec": 657.19
+    },
+    {
+      "text": ".",
+      "startSec": 657.19,
+      "endSec": 657.4
+    },
+    {
+      "text": "The",
+      "startSec": 657.94,
+      "endSec": 657.96
+    },
+    {
+      "text": "ones",
+      "startSec": 657.96,
+      "endSec": 658.1
+    },
+    {
+      "text": "that",
+      "startSec": 658.1,
+      "endSec": 658.28
+    },
+    {
+      "text": "lost",
+      "startSec": 658.28,
+      "endSec": 658.6
+    },
+    {
+      "text": "control",
+      "startSec": 658.6,
+      "endSec": 659.31
+    },
+    {
+      "text": "going",
+      "startSec": 659.31,
+      "endSec": 659.64
+    },
+    {
+      "text": "in",
+      "startSec": 659.64,
+      "endSec": 659.73
+    },
+    {
+      "text": "didn",
+      "startSec": 659.73,
+      "endSec": 660.05
+    },
+    {
+      "text": "'t",
+      "startSec": 660.05,
+      "endSec": 660.21
+    },
+    {
+      "text": "return",
+      "startSec": 660.21,
+      "endSec": 660.7
+    },
+    {
+      "text": "to",
+      "startSec": 660.7,
+      "endSec": 660.86
+    },
+    {
+      "text": "write",
+      "startSec": 660.86,
+      "endSec": 661.26
+    },
+    {
+      "text": "up",
+      "startSec": 661.26,
+      "endSec": 661.42
+    },
+    {
+      "text": "what",
+      "startSec": 661.42,
+      "endSec": 661.73
+    },
+    {
+      "text": "happened",
+      "startSec": 661.73,
+      "endSec": 662.39
+    },
+    {
+      "text": ".",
+      "startSec": 662.39,
+      "endSec": 662.72
+    },
+    {
+      "text": "The",
+      "startSec": 663.26,
+      "endSec": 663.29
+    },
+    {
+      "text": "environment",
+      "startSec": 663.29,
+      "endSec": 664
+    },
+    {
+      "text": "holds",
+      "startSec": 664,
+      "endSec": 664.32
+    },
+    {
+      "text": "that",
+      "startSec": 664.32,
+      "endSec": 664.57
+    },
+    {
+      "text": "record",
+      "startSec": 664.57,
+      "endSec": 664.95
+    },
+    {
+      "text": "not",
+      "startSec": 664.95,
+      "endSec": 665.14
+    },
+    {
+      "text": "because",
+      "startSec": 665.14,
+      "endSec": 665.71
+    },
+    {
+      "text": "it",
+      "startSec": 665.71,
+      "endSec": 665.73
+    },
+    {
+      "text": "kills",
+      "startSec": 665.73,
+      "endSec": 666.03
+    },
+    {
+      "text": "efficiently",
+      "startSec": 666.03,
+      "endSec": 666.74
+    },
+    {
+      "text": ",",
+      "startSec": 666.74,
+      "endSec": 666.92
+    },
+    {
+      "text": "but",
+      "startSec": 666.92,
+      "endSec": 667.47
+    },
+    {
+      "text": "because",
+      "startSec": 667.47,
+      "endSec": 667.76
+    },
+    {
+      "text": "it",
+      "startSec": 667.76,
+      "endSec": 667.93
+    },
+    {
+      "text": "removes",
+      "startSec": 667.93,
+      "endSec": 668.55
+    },
+    {
+      "text": "the",
+      "startSec": 668.55,
+      "endSec": 668.8
+    },
+    {
+      "text": "prec",
+      "startSec": 668.8,
+      "endSec": 669.06
+    },
+    {
+      "text": "ond",
+      "startSec": 669.06,
+      "endSec": 669.31
+    },
+    {
+      "text": "itions",
+      "startSec": 669.31,
+      "endSec": 669.64
+    },
+    {
+      "text": "for",
+      "startSec": 669.64,
+      "endSec": 669.83
+    },
+    {
+      "text": "any",
+      "startSec": 669.83,
+      "endSec": 670.02
+    },
+    {
+      "text": "organized",
+      "startSec": 670.02,
+      "endSec": 670.62
+    },
+    {
+      "text": "response",
+      "startSec": 670.62,
+      "endSec": 671.18
+    },
+    {
+      "text": ".",
+      "startSec": 671.18,
+      "endSec": 671.36
+    },
+    {
+      "text": "You",
+      "startSec": 671.44,
+      "endSec": 671.61
+    },
+    {
+      "text": "cannot",
+      "startSec": 671.61,
+      "endSec": 672
+    },
+    {
+      "text": "establish",
+      "startSec": 672,
+      "endSec": 672.64
+    },
+    {
+      "text": "a",
+      "startSec": 672.64,
+      "endSec": 672.81
+    },
+    {
+      "text": "perimeter",
+      "startSec": 672.81,
+      "endSec": 673.37
+    },
+    {
+      "text": ".",
+      "startSec": 673.37,
+      "endSec": 673.6
+    },
+    {
+      "text": "You",
+      "startSec": 674.22,
+      "endSec": 674.29
+    },
+    {
+      "text": "cannot",
+      "startSec": 674.29,
+      "endSec": 674.38
+    },
+    {
+      "text": "hold",
+      "startSec": 674.38,
+      "endSec": 674.59
+    },
+    {
+      "text": "ground",
+      "startSec": 674.59,
+      "endSec": 675.05
+    },
+    {
+      "text": ".",
+      "startSec": 675.05,
+      "endSec": 675.3
+    },
+    {
+      "text": "You",
+      "startSec": 675.86,
+      "endSec": 675.9
+    },
+    {
+      "text": "cannot",
+      "startSec": 675.9,
+      "endSec": 676.02
+    },
+    {
+      "text": "advance",
+      "startSec": 676.02,
+      "endSec": 676.4
+    },
+    {
+      "text": "on",
+      "startSec": 676.4,
+      "endSec": 676.5
+    },
+    {
+      "text": "an",
+      "startSec": 676.5,
+      "endSec": 676.62
+    },
+    {
+      "text": "objective",
+      "startSec": 676.62,
+      "endSec": 677.24
+    },
+    {
+      "text": ".",
+      "startSec": 677.24,
+      "endSec": 677.48
+    },
+    {
+      "text": "Stay",
+      "startSec": 678.18,
+      "endSec": 678.18
+    },
+    {
+      "text": "ing",
+      "startSec": 678.18,
+      "endSec": 678.34
+    },
+    {
+      "text": "coherent",
+      "startSec": 678.34,
+      "endSec": 678.46
+    },
+    {
+      "text": "long",
+      "startSec": 678.46,
+      "endSec": 678.72
+    },
+    {
+      "text": "enough",
+      "startSec": 678.72,
+      "endSec": 679.11
+    },
+    {
+      "text": "to",
+      "startSec": 679.11,
+      "endSec": 679.26
+    },
+    {
+      "text": "matter",
+      "startSec": 679.26,
+      "endSec": 679.63
+    },
+    {
+      "text": "is",
+      "startSec": 679.63,
+      "endSec": 679.76
+    },
+    {
+      "text": "about",
+      "startSec": 679.76,
+      "endSec": 680.11
+    },
+    {
+      "text": "the",
+      "startSec": 680.11,
+      "endSec": 680.28
+    },
+    {
+      "text": "best",
+      "startSec": 680.28,
+      "endSec": 680.54
+    },
+    {
+      "text": "available",
+      "startSec": 680.54,
+      "endSec": 681.13
+    },
+    {
+      "text": "outcome",
+      "startSec": 681.13,
+      "endSec": 681.59
+    },
+    {
+      "text": ",",
+      "startSec": 681.59,
+      "endSec": 681.72
+    },
+    {
+      "text": "and",
+      "startSec": 681.72,
+      "endSec": 681.91
+    },
+    {
+      "text": "that",
+      "startSec": 681.91,
+      "endSec": 682.16
+    },
+    {
+      "text": "'s",
+      "startSec": 682.16,
+      "endSec": 682.49
+    },
+    {
+      "text": "not",
+      "startSec": 682.49,
+      "endSec": 682.55
+    },
+    {
+      "text": "a",
+      "startSec": 682.55,
+      "endSec": 682.57
+    },
+    {
+      "text": "given",
+      "startSec": 682.57,
+      "endSec": 682.88
+    },
+    {
+      "text": ".",
+      "startSec": 682.88,
+      "endSec": 683.2
+    },
+    {
+      "text": "Some",
+      "startSec": 683.82,
+      "endSec": 683.88
+    },
+    {
+      "text": "environments",
+      "startSec": 683.88,
+      "endSec": 684.56
+    },
+    {
+      "text": "kill",
+      "startSec": 684.56,
+      "endSec": 684.78
+    },
+    {
+      "text": "soldiers",
+      "startSec": 684.78,
+      "endSec": 685.23
+    },
+    {
+      "text": ".",
+      "startSec": 685.23,
+      "endSec": 685.42
+    },
+    {
+      "text": "These",
+      "startSec": 685.92,
+      "endSec": 686.08
+    },
+    {
+      "text": "kill",
+      "startSec": 686.08,
+      "endSec": 686.17
+    },
+    {
+      "text": "the",
+      "startSec": 686.17,
+      "endSec": 686.46
+    },
+    {
+      "text": "structure",
+      "startSec": 686.46,
+      "endSec": 687.29
+    },
+    {
+      "text": "of",
+      "startSec": 687.29,
+      "endSec": 687.35
+    },
+    {
+      "text": "a",
+      "startSec": 687.35,
+      "endSec": 687.42
+    },
+    {
+      "text": "mission",
+      "startSec": 687.42,
+      "endSec": 688.02
+    },
+    {
+      "text": "before",
+      "startSec": 688.02,
+      "endSec": 688.55
+    },
+    {
+      "text": "the",
+      "startSec": 688.55,
+      "endSec": 688.8
+    },
+    {
+      "text": "First",
+      "startSec": 688.8,
+      "endSec": 689.19
+    },
+    {
+      "text": "Order",
+      "startSec": 689.19,
+      "endSec": 689.6
+    },
+    {
+      "text": "reaches",
+      "startSec": 689.6,
+      "endSec": 690.31
+    },
+    {
+      "text": "anyone",
+      "startSec": 690.31,
+      "endSec": 690.75
+    },
+    {
+      "text": ".",
+      "startSec": 690.75,
+      "endSec": 691.02
+    },
+    {
+      "text": "The",
+      "startSec": 691.54,
+      "endSec": 691.7
+    },
+    {
+      "text": "officers",
+      "startSec": 691.7,
+      "endSec": 691.8
+    },
+    {
+      "text": "who",
+      "startSec": 691.8,
+      "endSec": 692.08
+    },
+    {
+      "text": "sent",
+      "startSec": 692.08,
+      "endSec": 692.29
+    },
+    {
+      "text": "men",
+      "startSec": 692.29,
+      "endSec": 692.48
+    },
+    {
+      "text": "into",
+      "startSec": 692.48,
+      "endSec": 692.91
+    },
+    {
+      "text": "these",
+      "startSec": 692.91,
+      "endSec": 693.24
+    },
+    {
+      "text": "places",
+      "startSec": 693.24,
+      "endSec": 693.56
+    },
+    {
+      "text": "had",
+      "startSec": 693.56,
+      "endSec": 693.77
+    },
+    {
+      "text": "the",
+      "startSec": 693.77,
+      "endSec": 693.97
+    },
+    {
+      "text": "parameters",
+      "startSec": 693.97,
+      "endSec": 694.77
+    },
+    {
+      "text": "in",
+      "startSec": 694.77,
+      "endSec": 694.83
+    },
+    {
+      "text": "front",
+      "startSec": 694.83,
+      "endSec": 695.18
+    },
+    {
+      "text": "of",
+      "startSec": 695.18,
+      "endSec": 695.31
+    },
+    {
+      "text": "them",
+      "startSec": 695.31,
+      "endSec": 695.81
+    },
+    {
+      "text": "and",
+      "startSec": 695.81,
+      "endSec": 695.91
+    },
+    {
+      "text": "sent",
+      "startSec": 695.91,
+      "endSec": 696.14
+    },
+    {
+      "text": "them",
+      "startSec": 696.14,
+      "endSec": 696.37
+    },
+    {
+      "text": "anyway",
+      "startSec": 696.37,
+      "endSec": 696.86
+    },
+    {
+      "text": ".",
+      "startSec": 696.86,
+      "endSec": 697.14
+    },
+    {
+      "text": "The",
+      "startSec": 697.66,
+      "endSec": 697.82
+    },
+    {
+      "text": "calculation",
+      "startSec": 697.82,
+      "endSec": 698.2
+    },
+    {
+      "text": "kept",
+      "startSec": 698.2,
+      "endSec": 698.37
+    },
+    {
+      "text": "producing",
+      "startSec": 698.37,
+      "endSec": 699.03
+    },
+    {
+      "text": "the",
+      "startSec": 699.03,
+      "endSec": 699.19
+    },
+    {
+      "text": "same",
+      "startSec": 699.19,
+      "endSec": 699.46
+    },
+    {
+      "text": "answer",
+      "startSec": 699.46,
+      "endSec": 699.87
+    },
+    {
+      "text": ".",
+      "startSec": 699.87,
+      "endSec": 700.12
+    },
+    {
+      "text": "The",
+      "startSec": 700.66,
+      "endSec": 700.82
+    },
+    {
+      "text": "alternative",
+      "startSec": 700.82,
+      "endSec": 701.2
+    },
+    {
+      "text": "cost",
+      "startSec": 701.2,
+      "endSec": 701.42
+    },
+    {
+      "text": "more",
+      "startSec": 701.42,
+      "endSec": 701.73
+    },
+    {
+      "text": ".",
+      "startSec": 701.73,
+      "endSec": 701.96
+    },
+    {
+      "text": "Usually",
+      "startSec": 702.46,
+      "endSec": 702.62
+    },
+    {
+      "text": "it",
+      "startSec": 702.62,
+      "endSec": 702.72
+    },
+    {
+      "text": "did",
+      "startSec": 702.72,
+      "endSec": 703
+    },
+    {
+      "text": ".",
+      "startSec": 703,
+      "endSec": 703.24
+    },
+    {
+      "text": "The",
+      "startSec": 703.6,
+      "endSec": 703.74
+    },
+    {
+      "text": "hard",
+      "startSec": 703.74,
+      "endSec": 703.77
+    },
+    {
+      "text": "places",
+      "startSec": 703.77,
+      "endSec": 704.19
+    },
+    {
+      "text": "stay",
+      "startSec": 704.19,
+      "endSec": 704.48
+    },
+    {
+      "text": "hard",
+      "startSec": 704.48,
+      "endSec": 704.77
+    },
+    {
+      "text": ".",
+      "startSec": 704.77,
+      "endSec": 705.02
+    },
+    {
+      "text": "The",
+      "startSec": 705.42,
+      "endSec": 705.51
+    },
+    {
+      "text": "wars",
+      "startSec": 705.51,
+      "endSec": 705.58
+    },
+    {
+      "text": "don",
+      "startSec": 705.58,
+      "endSec": 705.72
+    },
+    {
+      "text": "'t",
+      "startSec": 705.72,
+      "endSec": 705.96
+    },
+    {
+      "text": "stop",
+      "startSec": 705.96,
+      "endSec": 706.14
+    },
+    {
+      "text": ".",
+      "startSec": 706.14,
+      "endSec": 706.38
+    },
+    {
+      "text": "Somebody",
+      "startSec": 706.96,
+      "endSec": 707.34
+    },
+    {
+      "text": "else",
+      "startSec": 707.34,
+      "endSec": 707.47
+    },
+    {
+      "text": "gets",
+      "startSec": 707.47,
+      "endSec": 707.69
+    },
+    {
+      "text": "the",
+      "startSec": 707.69,
+      "endSec": 707.88
+    },
+    {
+      "text": "briefing",
+      "startSec": 707.88,
+      "endSec": 708.31
+    },
+    {
+      "text": "next",
+      "startSec": 708.31,
+      "endSec": 708.56
+    },
+    {
+      "text": ".",
+      "startSec": 708.56,
+      "endSec": 708.56
+    }
+  ]
+}
