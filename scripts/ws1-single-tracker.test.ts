@@ -59,6 +59,15 @@ const ALLOWLIST = new Set<string>([
   // content now lives in docs/archive/history/history-2.md under the matching dated Session
   // entry. Full original text remains retrievable via `git show` at the
   // fold commit — see docs/archive/history/history-2.md's own Round 2 note.
+  //
+  // 2026-09-19 P1 gate-integrity pass — deliberate additions, each a dated,
+  // read-only, docs-only verification/audit note (not a live tracker; status
+  // content still lives in docs/archive/history/work-in-progress.md per the
+  // rule above). Self-describes as such in its own opening line.
+  'docs/ws1-sync-pipeline/gap-closing-verification-2026-09-18.md',
+  'docs/ws1-sync-pipeline/final-shape-mapping-2026-09-18.md',
+  'docs/ws1-sync-pipeline/verification-sweep-2026-09-18.md',
+  'docs/ws1-sync-pipeline/baseline-p0-p2-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
