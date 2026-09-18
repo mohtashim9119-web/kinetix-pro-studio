@@ -426,8 +426,10 @@ export function formatBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return '?';
   const gib = 1024 ** 3;
   const mib = 1024 ** 2;
+  const kib = 1024;
   if (bytes >= gib) return `${(bytes / gib).toFixed(2)} GiB`;
   if (bytes >= mib) return `${(bytes / mib).toFixed(0)} MiB`;
+  if (bytes >= kib) return `${(bytes / kib).toFixed(0)} KiB`;
   return `${bytes} B`;
 }
 

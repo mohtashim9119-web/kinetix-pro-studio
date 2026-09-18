@@ -1,6 +1,6 @@
 # SaaS target architecture
 
-Recorded 2026-09-16, source SHA `e8ffb6b` (branch `ws3-export-integration`). This is a
+Recorded 2026-09-16, source SHA `e8ffb6b` (Round 28 closeout on `ws3-export-integration`; integration tip at merge was `c463814`, then `45d5860` on `main` @ `42988f1`). This is a
 target-state design record, not a description of current behaviour — everything below is a
 destination the codebase does not yet occupy, except where a section is explicitly marked as
 describing the present.

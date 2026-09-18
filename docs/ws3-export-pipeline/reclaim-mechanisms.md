@@ -17,8 +17,10 @@ modal's button uses, which was the actual D5/U36 confusion).
 
 **Scope — the configurable storage root**, i.e. whatever
 `resolve_storage_root` currently points at (`assets/`, `projects/`,
-`models/` — never touched; `cache/` and `project-store-backups/` — the
-only two reclaimable subtrees):
+`models/`, `project-mirror/`, `diagnostic-logs/` — all relocate with the
+root as of Round 29's `MANAGED_RELOCATION_SUBTREES` unification, but are
+never RECLAIMED/deleted by this button; `cache/` and
+`project-store-backups/` — the only two reclaimable subtrees):
 
 - `cache/` — cleared unconditionally (everything in it, always).
 - `project-store-backups/` — only the AGED, ORPHANED subset:
@@ -63,6 +65,39 @@ never the configurable storage root at all. A session is reclaimable when
 its `class !== 'live'` (not currently held by a claim) — abandoned/orphaned
 export sessions from crashed or otherwise-uncollected runs, entirely
 independent of the storage-root cache/backups concept above.
+
+## 3. Stale-root cleanup — "Clean up all stale storage locations" (App Settings)
+
+**UI surface:** `StorageSettingsSection.tsx`'s cleanup button, shown only
+when at least one stale root is recorded — a THIRD mechanism, added
+Round 29, deliberately not merged into mechanism 1 above despite living in
+the same Settings section.
+
+**Native command:** `storage_root_cleanup_all_stale_roots` (`storage_root.rs`).
+
+**Scope — every location this app knows still holds a full or partial
+copy of managed data that ISN'T the current root**: a completed
+relocation's old location, and/or a failed/cancelled relocation's
+abandoned target, accumulated across as many hops as the operator makes
+(`stale_roots: Vec<String>` in `storage-root.json`, dedup, never
+overwritten). One action clears every recorded location in one pass — per
+an explicit operator decision ("just add up, one cleanup deletes
+everything") — deleting every `MANAGED_RELOCATION_SUBTREES` entry found at
+each stale path EXCEPT `diagnostic-logs/` (Windows-audit fix — that one
+subtree can still hold the app's own actively-open log file; see
+`docs/ws3-export-pipeline/architecture-ledger.md`'s Round 29 entry for
+why). The whole `stale_roots` list clears unconditionally afterward, even
+if an individual subtree's deletion failed, mirroring every other
+best-effort cleanup in this module.
+
+**Why it's separate from mechanism 1:** mechanism 1 reclaims bytes WITHOUT
+changing what/where the current root is (cache churn, aged backups — an
+ongoing maintenance action against the live root). This mechanism instead
+cleans up the DEBRIS of past relocations — a different root entirely, not
+touched by normal use, that only exists because relocation deliberately
+stopped auto-deleting the old copy the instant a new one verified (an
+earlier Round 29 fix, so a failed/interrupted relocation is recoverable
+rather than silently losing data).
 
 ## Why they stay separate
 

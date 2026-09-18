@@ -1,5 +1,9 @@
 # WS3 Export — Architecture Ledger
 
+> **Main line (2026-09-17):** `main` @ **`42988f1`** after Round 28/29 + cloud-asr consolidation.
+> Pre-merge baseline **`4d4922c`** (`pre-round28-main`). Older entries below cite `4d4922c` as the
+> then-current rollback anchor — read those as historical unless a line explicitly post-dates NR-5.
+
 > **A note on taxonomy, read before trusting the numbers below.** No prior committed doc
 > in this repo defines a 0-5 "Rung" scale or a "Tier 1-4" scale under those exact names —
 > `docs/ws3-export/recovery-architecture.md` uses its OWN 1-13 rung numbering (different
@@ -2676,7 +2680,7 @@ rather than assumed: `npm test` 3,651/0/78 = 3,729; `cargo test --lib -- --test-
 356/0/6 = 362; `cargo test --lib --features fa-inference -- --test-threads=1` 442/0/36 = 478;
 `tsc`/`lint` clean; eight frozen constants and four fixture digests present and unchanged (grepped
 directly post-merge, not inferred from the fast-forward). Pushed `ws3-export-integration` @
-`0bdc8a5`. No merge to main, no PR; `main` confirmed still `4d4922c`.
+`0bdc8a5`. No merge to main, no PR; `main` confirmed still `4d4922c` (pre-round28-main baseline; superseded 2026-09-17 — see NR-5 in `docs/STATUS.md`).
 
 #### Round 25 candidates
 
@@ -2877,3 +2881,76 @@ Fixture SHA-256 values:
 `af89ca66bbb7447312547e54d8ded6e9ac460b51d8e09f5a327ac82cf5a88d44`,
 `1abf9839f658ae5b9f83f2411542b86fe0490c055e1ec739f00d4bd2a6458035`,
 `fb9cdda22d69cac8af96ef1f7f1cd5a9dfaf486ef7d8efb46fe01a0c7fb6198b`.
+
+### Round 29 (2026-09-17) — D12–D22 closed under live verification, Windows cross-platform audit, storage-root relocation contract
+
+D12–D22 (transcription model-path resolution, diagnostic-log boot writing, the missing reclaim
+control, the UI-thread hang on relocation, modal stacking, free-space validation, live progress,
+stale-status refresh, subtree naming/stray directories, a stray `src-tauri` dir, and FA model
+discovery) were each fixed and confirmed by the operator via live manual testing, one at a time,
+per that round's own working method — see `docs/STATUS.md`'s Round 29 WS3 entry for the
+per-defect root cause / fix / files list. D23 (false timeline-modified hash instability, root
+cause traced to zip-bulk-imported assets never setting `Asset.addedAt`,
+[App.tsx:479](../../src/App.tsx)) was investigated and fixed but held open at operator
+instruction pending further verification — do not close it from this entry alone.
+
+That defect-fixing pass grew into an extended, operator-driven refinement of the storage-root
+relocation feature itself (resume support, no-auto-delete-on-failure, an accumulating stale-root
+list with one-button cleanup, live progress/verify feedback, several React StrictMode
+double-invoke bugs). This entry formalizes the two pieces of that work an owner-facing record
+should carry forward: what the relocation feature actually moves, and why the copy-verification
+hash changed.
+
+#### The storage-root relocation contract — what moves, what doesn't, and why
+
+`storage_root.rs`'s `MANAGED_RELOCATION_SUBTREES` is the single source of truth for what a
+relocation copies, verifies, and (on later explicit cleanup) deletes from the old location. As of
+this round it names all seven subtrees below — every one of them moves together, per an explicit
+operator decision this round to unify everything rather than leave some subtrees pinned to the OS
+default:
+
+| Subtree | Holds | Notes |
+|---|---|---|
+| `assets/` | Project media (images/video/audio blobs) | Original member, largest by count for most projects |
+| `projects/` | Project JSON | Original member |
+| `cache/` | General app cache, including FA's audio-transcode cache (`fa_audio_cache_dir`, merged in this round — previously hardcoded to `app_local_data_dir()`, bypassing the storage root entirely) | Fully reclaimable via "Free up cached data" |
+| `project-store-backups/` | `project_mirror.rs`'s primary-store rolling backups | Aged/orphaned entries reclaimable; live-project backups never touched |
+| `models/` | Downloaded Whisper + FA models, including the legacy top-level `fa-models/` (merged into the modern nested `models/fa-models/` on relocation — a language already present at the destination is left alone, never overwritten) | Never reclaimable — user-chosen, re-download is expensive |
+| `project-mirror/` | The mirror store's registry + live project JSON (not just its backups) | Added this round — previously fixed-location, reconsidered as unnecessary given `storage-root.json` already provides the fixed anchor these needed |
+| `diagnostic-logs/` | `kinetix-diagnostic.log` | Added this round; see the live-writer caveat below — the app's OWN log-file handle is the one thing this subtree needs special handling for |
+
+**What does NOT move, and why:** `storage-root.json` itself — the pointer file that records
+which of the above is current — stays permanently at the fixed `app_local_data_dir()` location.
+This is load-bearing, not an oversight: a relocation needs a location that doesn't itself move to
+find out where everything else currently lives, the same reason a filesystem's superblock isn't
+relocatable by the filesystem it describes.
+
+**The one live-writer caveat:** `tauri_plugin_log`'s file handle for `kinetix-diagnostic.log` is
+opened once, at boot, bound to whatever root was current at that moment. A relocation later in
+the same session moves the historical log files, but this session's own subsequent log lines keep
+landing in the old (unlinked, still-open) file until the next restart — the log only fully
+"follows" the new root after a restart. This is also why the live file itself (not the directory)
+is excluded from copy/verify (`is_ignored_entry`, alongside `.DS_Store`/`Thumbs.db`/`desktop.ini`)
+and why stale-root cleanup skips the whole `diagnostic-logs/` subtree specifically — see
+`docs/ws3-export-pipeline/windows-validation.md`'s Round 29 checklist rows W25/W26 for the
+Windows-specific version of this same caveat (an open file cannot be deleted at all on Windows,
+not just left growing).
+
+#### CRC32 substitution — a deliberate choice, not an oversight
+
+Relocation copy-verification hashed every byte with a hand-rolled, scalar SHA-256
+(`sha256.rs`, originally written for one narrow ~1.2 GB dev-tool use case) with no hardware
+acceleration, capping throughput at roughly 16 MB/s regardless of build profile. The first
+diagnosis (missing SHA-NI hardware instructions) was specific to the reporting machine (Coffee
+Lake, predates SHA-NI) and would not have generalized. The actual fix — and the one worth
+recording as deliberate — is that relocation verification does not need a cryptographic hash at
+all: its job is detecting accidental copy corruption (a truncated write, a flipped bit from a
+flaky cable/controller), not defending against a malicious adversary who could engineer a
+collision. `crc32fast` (SSE4.2/PCLMULQDQ-accelerated, auto-detected at runtime, already resolved
+transitively so this added no new package to `Cargo.lock`) is sufficient for that job and gives a
+roughly sixteen-fold throughput gain over the scalar SHA-256 it replaced. `sha256.rs` itself is
+untouched and remains the correct choice everywhere it's still used — asset content-identity
+(`asset_store.rs`), model digest sidecars (`models.rs`, `model_download.rs`), FA cache keys
+(`fa.rs`, `fa_dev.rs`), and export segment hashing (`ffmpeg.rs`) — all cases where a stronger
+identity/collision guarantee than CRC32 provides is the actual requirement, not a copy-corruption
+check. `storage_root.rs` itself has zero remaining `sha256` references after this round.

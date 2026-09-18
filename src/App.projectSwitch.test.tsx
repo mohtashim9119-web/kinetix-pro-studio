@@ -663,6 +663,13 @@ describe('WS3 item B — launch-time repair heals a cache miss before it can poi
 // (above) show was the only exit before this wiring pass.
 // ---------------------------------------------------------------------------
 describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens normally', () => {
+  beforeEach(() => {
+    // Guard state is module-global; parallel vitest workers can interleave
+    // other files that touch projectStore between this describe's tests.
+    // afterEach alone leaves the *opening* test vulnerable to stale poison.
+    __resetStoreGuardsForTests();
+  });
+
   afterEach(() => {
     __resetStoreGuardsForTests();
   });

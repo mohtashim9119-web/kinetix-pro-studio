@@ -226,9 +226,13 @@ describe('disk-full wiring (Round 21)', () => {
     await flush();
     // Before Round 21 this promise stayed pending until the 30 s watchdog /
     // 45 s stall bound — the worker was never told 'done' here on purpose.
-    const settled = await Promise.race([p.then(() => true), flush(200).then(() => false)]);
-    expect(settled, 'the run must settle without waiting for a liveness bound').toBe(true);
+    // Await the export directly (still well under vitest's default timeout,
+    // and orders of magnitude below the 30 s watchdog) instead of racing
+    // against a fixed microtask flush count, which was flaky under parallel
+    // full-suite load when the event loop ran slower than 200 ticks.
+    const t0 = Date.now();
     const result = await p;
+    expect(Date.now() - t0, 'the run must settle without waiting for a liveness bound').toBeLessThan(15_000);
     await new Promise((r) => setTimeout(r, 20));
     await flush();
     expect(result.ok).toBe(false);

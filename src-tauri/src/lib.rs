@@ -448,8 +448,8 @@ pub fn run() {
         .manage(ffmpeg::FfmpegProcessState::default())
         .manage(fa::FaState::default())
         .manage(fa::FaModelCache::default())
+        .manage(storage_root::RelocationCancelFlag::default())
         .setup(|app| {
-            use tauri::Manager;
             if cfg!(debug_assertions) {
                 // Round 28 — `Stdout`/`Webview` kept (a dev build has both a
                 // console and DevTools to read them from) but `LogDir`
@@ -466,7 +466,20 @@ pub fn run() {
                 // logging itself was never gated behind that env var (this
                 // branch already ran unconditionally); only the FILE
                 // DESTINATION changes here.
-                let log_dir = app.path().app_local_data_dir()?.join("diagnostic-logs");
+                //
+                // D20 fix (WS3 Round 29) — now resolved through the
+                // configured storage root, per an explicit operator
+                // decision to unify every managed subtree under one root
+                // rather than leave any pinned to the OS default. See
+                // `storage_root::diagnostic_logs_dir`'s own doc comment for
+                // the one caveat this carries: the file handle this plugin
+                // opens below stays bound to whatever path was current AT
+                // THIS BOOT — a relocation later in the same session moves
+                // the historical files, but this session's own subsequent
+                // log lines keep landing in the (unlinked, still-open) old
+                // file until the next restart.
+                let storage_root = crate::storage_root::resolve_storage_root(app.handle())?;
+                let log_dir = crate::storage_root::diagnostic_logs_dir(&storage_root);
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
@@ -495,14 +508,14 @@ pub fn run() {
                 // one part of the debug-build default this must not carry
                 // over) — `Folder`, not `LogDir`, so the path is pinned and
                 // documented exactly rather than left to
-                // tauri_plugin_log's own app_name-derived filename:
-                // `<app_local_data_dir>/diagnostic-logs/kinetix-diagnostic.log`
-                // — on Windows `%LOCALAPPDATA%\com.kinetix.pro-studio\
-                // diagnostic-logs\kinetix-diagnostic.log`, on macOS
-                // `~/Library/Application Support/com.kinetix.pro-studio/
-                // diagnostic-logs/kinetix-diagnostic.log`. See
-                // docs/ws3-export-pipeline/w23-machine1-validation.md.
-                let log_dir = app.path().app_local_data_dir()?.join("diagnostic-logs");
+                // tauri_plugin_log's own app_name-derived filename. D20 fix
+                // (WS3 Round 29): now under the configured storage root
+                // (`<root>/diagnostic-logs/kinetix-diagnostic.log`), not
+                // unconditionally `app_local_data_dir()` — see this branch's
+                // sibling above for the one relocation-timing caveat this
+                // carries. See docs/ws3-export-pipeline/w23-machine1-validation.md.
+                let storage_root = crate::storage_root::resolve_storage_root(app.handle())?;
+                let log_dir = crate::storage_root::diagnostic_logs_dir(&storage_root);
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
@@ -515,6 +528,22 @@ pub fn run() {
                         .build(),
                 )?;
             }
+            // D13 fix (WS3 Round 29): the unconditional startup line this
+            // block originally scoped ("Batch Q"/Q5/D8) was superseded by
+            // `216878f`'s export-lifecycle logging and never actually
+            // written — leaving a diagnostic log with zero entries on any
+            // install that never runs an export. Restored here so a boot is
+            // always recorded whenever the plugin above was actually
+            // attached (debug build unconditionally; release build only
+            // with `KINETIX_DIAGNOSTIC_LOG` set — a release build without it
+            // has no logger attached, so this is a harmless no-op there, by
+            // the same opt-in design as the block above).
+            log::info!(
+                target: "kinetix::boot",
+                "kinetix-pro-studio boot version={} debug={}",
+                env!("CARGO_PKG_VERSION"),
+                cfg!(debug_assertions)
+            );
             #[cfg(all(target_os = "windows", debug_assertions))]
             {
                 app.get_webview_window("main")
@@ -618,8 +647,11 @@ pub fn run() {
             project_mirror::project_store_list_ids,
             storage_root::storage_root_status,
             storage_root::storage_root_relocate,
+            storage_root::storage_root_relocate_cancel,
             storage_root::size_report,
             storage_root::storage_root_reclaim,
+            storage_root::storage_root_stale_roots,
+            storage_root::storage_root_cleanup_all_stale_roots,
             asset_store::asset_store_write,
             asset_store::asset_store_write_from_path,
             asset_store::asset_store_read,

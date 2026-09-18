@@ -41,10 +41,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
-use tauri::Manager;
 
-/// Directory under `app_local_data_dir()` holding the mirror.
-const MIRROR_DIRNAME: &str = "project-mirror";
 /// How many timestamped backups of a project's previous good state to retain.
 /// Ten is deliberately generous: a project JSON is a few hundred KiB, so the
 /// whole retained set for one project stays in single-digit MiB.
@@ -72,12 +69,21 @@ pub struct MirrorSnapshot {
     projects: Vec<(String, String)>,
 }
 
+/// D20 fix (WS3 Round 29) — resolves through the configured storage root,
+/// same as the primary project store (`store_root` below). Originally
+/// pinned to `app_local_data_dir()` unconditionally, on the reasoning that
+/// this cross-origin adoption tree (see this module's own top-of-file doc
+/// comment) needs a location independent of wherever the storage root
+/// points — but per an explicit operator decision to unify every managed
+/// subtree under one root, that reasoning was reconsidered: the property
+/// this tree actually needs is a way to find "where is the current data"
+/// at boot regardless of relocation history, and `resolve_storage_root`
+/// already provides exactly that by reading the ALWAYS-fixed
+/// `storage-root.json` pointer first. This directory itself never needed
+/// to be the fixed anchor — only that one pointer file does.
 fn mirror_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let dir = app
-        .path()
-        .app_local_data_dir()
-        .map_err(|e| format!("cannot resolve app_local_data_dir for the project mirror: {e}"))?;
-    Ok(dir.join(MIRROR_DIRNAME))
+    let root = crate::storage_root::resolve_storage_root(app)?;
+    Ok(crate::storage_root::project_mirror_dir(&root))
 }
 
 fn projects_dir(root: &Path) -> PathBuf {

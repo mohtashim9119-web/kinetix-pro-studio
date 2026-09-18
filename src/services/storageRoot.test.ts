@@ -7,7 +7,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock } from 'vitest';
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+// D18 fix (WS3 Round 29) — `relocateStorageRoot` now opens a real
+// `Channel<RelocationEvent>` (live copy-progress IPC) alongside `invoke`, so
+// the mock must supply a minimal but functioning `Channel` too — a bare
+// class with the one property (`onmessage`) the service assigns is enough;
+// nothing in these tests actually needs it to deliver an event.
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+  Channel: class {
+    onmessage: ((event: unknown) => void) | undefined;
+  },
+}));
 vi.mock('./tauriFfmpeg', () => ({ isTauri: () => true }));
 
 import { invoke } from '@tauri-apps/api/core';
@@ -34,7 +44,7 @@ describe('relocateStorageRoot', () => {
     const report = { from: '/a', to: '/b', moved: ['assets', 'projects'], bytesMoved: 500 };
     mockInvoke.mockResolvedValueOnce(report);
     const result = await relocateStorageRoot('/b');
-    expect(mockInvoke).toHaveBeenCalledWith('storage_root_relocate', { newRoot: '/b' });
+    expect(mockInvoke).toHaveBeenCalledWith('storage_root_relocate', { newRoot: '/b', onEvent: expect.anything() });
     expect(result).toEqual(report);
   });
 

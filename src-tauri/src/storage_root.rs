@@ -18,6 +18,20 @@
 //! | `temp/`    | yes (reserved for future use — general scratch space, not the export pipeline's own staging; see `export_sessions_dir` below) | yes (contents are ephemeral — cleared, not copied) |
 //! | `export-sessions/` | yes (WS3 Round 28, D4) — `ffmpeg.rs::session_dir` resolves every `kinetix-export-<uuid>` directory under here, not `std::env::temp_dir()`, so a session created after a relocation lands on the new volume. Whisper's own transcription staging is unrelated (`WHISPER_STAGING_DIR_PREFIX` under `std::env::temp_dir()`) and deliberately not moved this round. | **NOT relocated** — a session is resolved fresh from wherever the root currently is at creation time; relocation while an export is live is out of scope (see `storage_root_relocate`'s doc comment for the model-download analog of this same "refuse rather than move a live thing" posture). |
 //! | `models/`  | yes (WS3 Round 28, D4) — `models.rs`/`fa.rs` now resolve their install target through `storage_root::models_dir` first, with the OS-default location as a read-only fallback for pre-existing installs from before this round. | yes, with the same copy-verify-commit flow as `assets/`/`projects/`, refused outright while a download is in flight (see `model_download`'s in-flight guard). |
+//! | `models/fa-models/` (legacy top-level, pre-nesting) | no — a bare `<app_local_data_dir>/fa-models/`, sibling of `models/`, not inside it (`fa.rs`'s `fa_model_candidate_paths` tier 2) | yes (D20, WS3 Round 29) — `relocate_legacy_fa_models` merges each legacy language into `models_dir(new_root).join("fa-models")` (skipping one already relocated via `models/`'s own nested copy), then removes the whole legacy source once every language is represented at the new root either way. |
+//! | `cache/fa-audio-cache/` | yes (D20, WS3 Round 29) — was hardcoded to `app_local_data_dir()` directly (`fa.rs`'s `fa_audio_cache_dir`), bypassing this module entirely; now nested under `cache_dir` | yes, for free, as part of the `cache/` subtree above — no separate subtree entry needed |
+//! | `project-mirror/` | yes (D20, WS3 Round 29 — `project_mirror.rs`'s `mirror_root`, repointed here; previously pinned unconditionally to `app_local_data_dir()`) | yes |
+//! | `diagnostic-logs/` | yes (D20, WS3 Round 29 — previously pinned in 3 places: `lib.rs`'s two logging-setup branches, `ffmpeg.rs`'s `get_diagnostic_log_text`) | yes, with one caveat — see `diagnostic_logs_dir`'s own doc comment: the ACTIVE log-plugin file handle stays bound to the path current at THIS boot, so a relocation mid-session moves the historical files but this session's own later lines need a restart to follow |
+//!
+//! **Unified per an explicit operator decision (D20, WS3 Round 29):** every
+//! managed subtree above now relocates — none are pinned to the OS default
+//! by design any more. `project-mirror/` and `diagnostic-logs/` previously
+//! were, on the reasoning that each needs a fixed anchor independent of the
+//! storage root; that reasoning conflated "SOMETHING needs a fixed anchor"
+//! (true — see the pointer-file paragraph below) with "THIS DIRECTORY must
+//! be that anchor" (not true — `storage-root.json`'s own fixed location
+//! already lets `resolve_storage_root` find the current root regardless of
+//! relocation history, which is all either of them actually needed).
 //!
 //! **What is never touched:** the WebView2 (or WKWebView/WebKit) user data
 //! folder. On Windows, that profile and `app_local_data_dir()` share
@@ -33,9 +47,10 @@
 //! **The pointer file itself never moves.** `storage-root.json` always lives
 //! at the OS-default `app_local_data_dir()` — the one location every build
 //! configuration agrees on — so the app can always find out where the REAL
-//! root is, even after N relocations. This is the same reasoning that keeps
-//! `project_mirror.rs`'s legacy `project-mirror/` adoption tree pinned to
-//! `app_local_data_dir()` unconditionally.
+//! root is, even after N relocations. This is the ONE fixed anchor the
+//! whole system needs; every managed subtree, including `project-mirror/`
+//! and `diagnostic-logs/`, is found by reading this pointer first and then
+//! looking under whatever root it currently names.
 
 use std::fs;
 use std::io::Write;
@@ -58,6 +73,39 @@ const RELOCATE_HEADROOM_FLOOR_BYTES: u64 = 64 * 1024 * 1024;
 struct StorageRootConfigFile {
     /// Absolute path to the current root. Absent/missing file = default.
     root: Option<String>,
+    /// Stale-root fix (WS3 Round 29, operator decision) — EVERY location
+    /// this app knows still holds a full or partial, un-deleted copy of
+    /// managed data: an old root a successful relocation moved away from,
+    /// AND/OR a target a failed/cancelled relocation was copying into.
+    /// Relocation never auto-deletes either kind (previously immediate,
+    /// silent deletion the instant the new copy verified, or the instant a
+    /// copy failed) — accumulates across as many hops as the operator makes
+    /// (moving A -> B -> C without cleaning up in between leaves BOTH A and
+    /// B listed, not just the most recent one) until cleaned up. A single
+    /// `storage_root_cleanup_all_stale_roots` call always clears every
+    /// entry in one action — there is deliberately no per-entry cleanup
+    /// command, per an explicit operator decision that this should be one
+    /// button, not N. A partial-target entry is ALSO what
+    /// `copy_dir_recursive`'s resume logic reads to decide whether a new
+    /// relocation to that same folder can resume instead of restarting.
+    /// Was two separate fields (`previous_root: Option<String>`,
+    /// `abandoned_targets: Vec<String>`) before this; unified because the
+    /// split was itself the bug an operator caught — moving A -> B -> C
+    /// only ever remembered the LATEST old root, silently losing track of
+    /// earlier ones. `#[serde(default)]` so an existing config file from
+    /// before this field existed (under either old name) parses as empty,
+    /// not a hard error.
+    #[serde(default)]
+    stale_roots: Vec<String>,
+    /// Migration-only (WS3 Round 29) — the pre-unification field names.
+    /// Never written by this version; only read, once, by `read_config`'s
+    /// migration step, so an existing config file's already-tracked stale
+    /// entries survive the rename instead of silently vanishing the first
+    /// time it's read under the new schema.
+    #[serde(default, rename = "previous_root", skip_serializing)]
+    legacy_previous_root: Option<String>,
+    #[serde(default, rename = "abandoned_targets", skip_serializing)]
+    legacy_abandoned_targets: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -125,6 +173,205 @@ pub fn resolve_storage_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     }
 }
 
+
+/// Stale-root fix (WS3 Round 29) — reads the full config (both stale-root
+/// fields at once) rather than duplicating `resolve_storage_root`'s own
+/// read/parse/default logic a second time.
+/// Migration (WS3 Round 29) — an existing config file predating the
+/// `previous_root`/`abandoned_targets` -> `stale_roots` unification still
+/// has its data under the old names; fold it in once, here, so it's never
+/// silently lost. `stale_roots` only stays empty post-migration if there
+/// was genuinely nothing stale recorded under either old name. Extracted as
+/// its own function (from `read_config`, which needs an `AppHandle` only to
+/// resolve the file path) purely so the migration logic itself — the part
+/// that actually has behavior worth locking down — is unit-testable without
+/// a Tauri runtime.
+fn migrate_legacy_stale_roots(cfg: &mut StorageRootConfigFile) {
+    if let Some(previous) = cfg.legacy_previous_root.take() {
+        if !previous.trim().is_empty() && !cfg.stale_roots.iter().any(|p| p == &previous) {
+            cfg.stale_roots.push(previous);
+        }
+    }
+    for target in std::mem::take(&mut cfg.legacy_abandoned_targets) {
+        if !cfg.stale_roots.iter().any(|p| p == &target) {
+            cfg.stale_roots.push(target);
+        }
+    }
+}
+
+fn read_config(app: &tauri::AppHandle) -> Result<StorageRootConfigFile, String> {
+    let cfg_path = config_path(app)?;
+    let mut cfg: StorageRootConfigFile = match fs::read_to_string(&cfg_path) {
+        Ok(text) => serde_json::from_str(&text).map_err(|e| format!("storage-root.json is corrupt: {e}"))?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => StorageRootConfigFile::default(),
+        Err(e) => return Err(format!("cannot read {}: {e}", cfg_path.display())),
+    };
+    migrate_legacy_stale_roots(&mut cfg);
+    Ok(cfg)
+}
+
+fn write_config(app: &tauri::AppHandle, cfg: &StorageRootConfigFile) -> Result<(), String> {
+    let cfg_path = config_path(app)?;
+    let json = serde_json::to_string_pretty(cfg).map_err(|e| format!("serialize storage-root.json: {e}"))?;
+    write_atomic(&cfg_path, &json)
+}
+
+/// Resume/no-auto-delete fix (WS3 Round 29, operator decision) — records
+/// `target` as a stale location after a failure/cancel, so a later
+/// relocation to the same folder can resume from it (`copy_dir_recursive`'s
+/// size-match skip) and/or Settings can offer it for manual cleanup.
+/// Accumulates: does NOT overwrite any earlier stale entry (see
+/// `StorageRootConfigFile::stale_roots`'s own doc comment for why that
+/// matters — moving A -> B -> C without cleaning up must remember BOTH A
+/// and B). A no-op if already recorded (dedup) or if `target` IS the
+/// current root (impossible in practice — a relocation refuses
+/// same-as-current before copying starts — but never worth recording
+/// regardless).
+fn record_stale_root(app: &tauri::AppHandle, target: &Path) -> Result<(), String> {
+    let mut cfg = read_config(app)?;
+    let target_str = target.to_string_lossy().to_string();
+    if cfg.root.as_deref() == Some(target_str.as_str()) {
+        return Ok(());
+    }
+    if !cfg.stale_roots.iter().any(|t| t == &target_str) {
+        cfg.stale_roots.push(target_str);
+    }
+    write_config(app, &cfg)
+}
+
+/// Best-effort total across every managed subtree PLUS the legacy top-level
+/// `fa-models/` (see `relocate_legacy_fa_models`) at `root` — the same set
+/// `storage_root_cleanup_all_stale_roots` actually removes, so the number
+/// the operator sees before clicking cleanup is exactly what cleanup will
+/// free.
+fn stale_root_bytes(root: &Path) -> u64 {
+    let mut bytes = 0u64;
+    for (_, get_dir) in MANAGED_RELOCATION_SUBTREES {
+        bytes += dir_size(&get_dir(root));
+    }
+    bytes += dir_size(&root.join("fa-models"));
+    bytes
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StaleRootInfo {
+    pub path: String,
+    pub bytes: u64,
+}
+
+/// Stale-root fix (WS3 Round 29, operator decision) — relocation no longer
+/// auto-deletes ANY leftover copy: not an old root after a successful move
+/// (previously immediate, silent deletion right after the new copy
+/// verified), and not a partial target after a failed/cancelled one
+/// (previously immediate, silent deletion in the same breath as the
+/// failure). This is the read side Settings polls to list every such
+/// leftover this app knows about, accumulated across as many hops as the
+/// operator makes. A recorded path that no longer exists on disk (the
+/// operator already dealt with it some other way — deleted it in Finder, or
+/// it was on since-unmounted removable media) is silently dropped from the
+/// list, never reported as an error.
+#[tauri::command]
+pub fn storage_root_stale_roots(app: tauri::AppHandle) -> Result<Vec<StaleRootInfo>, String> {
+    let cfg = read_config(&app)?;
+    Ok(cfg
+        .stale_roots
+        .into_iter()
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .map(|p| StaleRootInfo {
+            bytes: stale_root_bytes(&p),
+            path: p.to_string_lossy().to_string(),
+        })
+        .collect())
+}
+
+/// Stale-root fix (WS3 Round 29, operator decision) — ONE action that
+/// cleans up EVERY stale location this app knows about in one go
+/// (deliberately not per-entry — an operator explicitly asked for "one
+/// cleanup deletes everything" rather than a button per leftover folder).
+/// Removes every managed subtree (and the legacy `fa-models/`) found at
+/// each recorded path, via the same audited
+/// `safe_delete::delete_app_staging_dir` every other cleanup in this module
+/// uses — no raw recursive deletes. Clears the WHOLE list afterward
+/// REGARDLESS of whether every deletion at every path succeeded: a stuck
+/// stale-root list the operator can never dismiss (e.g. because one subtree
+/// is momentarily locked by another process) would be a worse outcome than
+/// occasionally under-reporting a leftover file the operator can still find
+/// and remove by hand — this mirrors every other Phase-3-style cleanup in
+/// this module, which is already best-effort by design. Silently skips (but
+/// still drops from the list) any recorded path that happens to BE the
+/// current root — that can only mean stale bookkeeping the caller shouldn't
+/// trust anyway, never a reason to fail the whole cleanup.
+///
+/// Windows-audit fix (WS3 Round 29 Phase 2) — `diagnostic-logs` is skipped
+/// here, unlike every other managed subtree. The app's log-file handle
+/// stays bound to whatever root was current AT BOOT (see `lib.rs`'s setup
+/// block); if the operator relocates and then cleans up stale roots in the
+/// SAME session (no restart since the relocation), the stale root's
+/// `diagnostic-logs/kinetix-diagnostic.log` is still open by this very
+/// process. Deleting an open file works on macOS/Linux (unlink-while-open),
+/// but Windows' default file-sharing mode refuses it outright — so
+/// `remove_dir_all` on that one subtree would return `Err` here anyway,
+/// just silently (the loop below discards it with `let _ =`, and this
+/// function unconditionally clears `stale_roots` regardless), leaving an
+/// orphaned, untracked leftover directory on disk with no way for the
+/// operator to know it's still there. Rather than let that happen invisibly
+/// on Windows only, `diagnostic-logs` is left out of the delete set
+/// everywhere: a small, diagnostic-only leftover the operator can find and
+/// remove by hand (the stale root's path is still shown in Settings before
+/// cleanup runs) is a better outcome than a silent per-platform gap. The
+/// chosen fix is exclusion, not close-and-reopen-the-handle-around-cleanup:
+/// `tauri_plugin_log` doesn't expose a way to do that safely, and closing
+/// the app's own active logger mid-session risks losing log lines emitted
+/// during the very cleanup operation being logged.
+/// The actual per-target delete loop, extracted from
+/// `storage_root_cleanup_all_stale_roots` so it's unit-testable without an
+/// `AppHandle` — the command itself only needs one to resolve `current`
+/// (to skip a target that IS the live root) and to read/write the config
+/// file; the deletion behavior itself takes a plain path.
+fn cleanup_stale_root_subtrees(target: &Path) -> u64 {
+    let mut reclaimed = 0u64;
+    for (name, get_dir) in MANAGED_RELOCATION_SUBTREES {
+        if name == "diagnostic-logs" {
+            continue;
+        }
+        let dir = get_dir(target);
+        if dir.is_dir() {
+            let size = dir_size(&dir);
+            if crate::safe_delete::delete_app_staging_dir(&dir, target, name).is_ok() {
+                reclaimed += size;
+            }
+        }
+    }
+    let legacy_fa = target.join("fa-models");
+    if legacy_fa.is_dir() {
+        let size = dir_size(&legacy_fa);
+        if crate::safe_delete::delete_app_staging_dir(&legacy_fa, target, "fa-models").is_ok() {
+            reclaimed += size;
+        }
+    }
+    reclaimed
+}
+
+#[tauri::command]
+pub fn storage_root_cleanup_all_stale_roots(app: tauri::AppHandle) -> Result<u64, String> {
+    let current = resolve_storage_root(&app)?;
+    let cfg = read_config(&app)?;
+    let mut reclaimed = 0u64;
+    for path in &cfg.stale_roots {
+        let target = PathBuf::from(path);
+        if target == current || !target.is_dir() {
+            continue;
+        }
+        reclaimed += cleanup_stale_root_subtrees(&target);
+    }
+    let mut cfg = cfg;
+    cfg.stale_roots.clear();
+    write_config(&app, &cfg)?;
+    Ok(reclaimed)
+}
+
 pub fn assets_dir(root: &Path) -> PathBuf {
     root.join("assets")
 }
@@ -162,6 +409,31 @@ pub fn temp_dir(root: &Path) -> PathBuf {
 /// actually stored here (see the module doc comment's subtree table).
 pub fn models_dir(root: &Path) -> PathBuf {
     root.join("models")
+}
+
+/// D20 fix (WS3 Round 29) — per an explicit operator decision to unify
+/// EVERY managed subtree under one root rather than leave any of them
+/// pinned to the OS default: `project_mirror.rs`'s cross-origin adoption
+/// tree now resolves and relocates through here too. Still findable at
+/// boot regardless of relocation history, because `resolve_storage_root`
+/// itself reads the ALWAYS-fixed `storage-root.json` pointer first — that
+/// one file, not this directory, is what actually needs a fixed location.
+pub fn project_mirror_dir(root: &Path) -> PathBuf {
+    root.join("project-mirror")
+}
+
+/// D20 fix (WS3 Round 29) — same operator decision as `project_mirror_dir`
+/// above. Note for callers: the active `tauri_plugin_log` file handle is
+/// opened once at boot against whatever path was current THEN — moving this
+/// directory mid-session relocates the historical log files, but new lines
+/// written before the next app restart still land in the (now unlinked,
+/// still-open) old file, per ordinary POSIX/NTFS delete-while-open
+/// semantics, and are lost once the process exits. A restart is needed for
+/// logging itself to fully follow the new root, same as every other
+/// "reflects: next launch" limitation already accepted for this app's
+/// storage-root relocation.
+pub fn diagnostic_logs_dir(root: &Path) -> PathBuf {
+    root.join("diagnostic-logs")
 }
 
 /// WS3 Round 28 (D4) — the export pipeline's session temp tree
@@ -219,40 +491,213 @@ pub(crate) fn dir_size(dir: &Path) -> u64 {
     total
 }
 
+/// A no-op cancellation check — used by callers (and every existing test)
+/// that don't offer the operator a way to cancel mid-copy.
+#[cfg_attr(not(test), allow(dead_code))]
+fn never_cancelled() -> Result<(), String> {
+    Ok(())
+}
+
+/// Streams `from` -> `to` in fixed chunks, hashing the SOURCE bytes as they
+/// pass through (one read of `from`, not two) rather than `fs::copy` followed
+/// by a separate full re-read of `from` for verification. Returns the source
+/// digest so `verify_dir_recursive` only has to read `to` — catching genuine
+/// write-time corruption — instead of re-reading BOTH sides. D17/D18 fix
+/// (WS3 Round 29): this is the copy's dominant cost (every byte relocated
+/// used to be read three times — once to copy, once to hash each side —
+/// this cuts it to two), and each chunk is also the natural point to report
+/// live progress, which `copy_dir_recursive` below does via `on_bytes`.
+fn copy_file_with_hash(
+    from: &Path,
+    to: &Path,
+    on_bytes: &dyn Fn(u64),
+) -> Result<String, String> {
+    use std::io::{Read, Write};
+    let mut src_file = fs::File::open(from).map_err(|e| format!("open {}: {e}", from.display()))?;
+    let mut dst_file =
+        fs::File::create(to).map_err(|e| format!("create {}: {e}", to.display()))?;
+    let mut hasher = crc32fast::Hasher::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let n = src_file
+            .read(&mut buf)
+            .map_err(|e| format!("read {}: {e}", from.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        dst_file
+            .write_all(&buf[..n])
+            .map_err(|e| format!("write {}: {e}", to.display()))?;
+        on_bytes(n as u64);
+    }
+    Ok(format!("{:08x}", hasher.finalize()))
+}
+
+/// D-copy-speed fix (WS3 Round 29) — see `Cargo.toml`'s `crc32fast` entry
+/// for why this is CRC32, not a cryptographic hash: this only ever verifies
+/// our OWN just-written copy against accidental corruption, never a
+/// malicious adversary, and the CPU generation this was measured against
+/// has no SHA hardware extensions at all (though it does have the
+/// SSE4.2/PCLMULQDQ CRC32 instructions `crc32fast` auto-detects and uses).
+/// Used on this module's own hot path (destination verification, and the
+/// legacy-fa-models merge's fallback source hash).
+fn hash_file(path: &Path) -> Result<String, String> {
+    use std::io::Read;
+    let mut file = fs::File::open(path).map_err(|e| format!("hash {}: {e}", path.display()))?;
+    let mut hasher = crc32fast::Hasher::new();
+    let mut buf = vec![0u8; 1024 * 1024];
+    loop {
+        let n = file
+            .read(&mut buf)
+            .map_err(|e| format!("hash {}: {e}", path.display()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(format!("{:08x}", hasher.finalize()))
+}
+
 /// Recursive copy, preserving the tree shape. Stops and returns `Err` on the
 /// first failure — a PARTIAL copy must never be treated as a successful
 /// relocation (the caller only deletes the source subtree after this
 /// returns `Ok`).
-fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+///
+/// D15 fix (WS3 Round 29) — `check_cancelled` is polled once per directory
+/// entry (not just once per subtree), so an operator's Cancel click during a
+/// large subtree (e.g. `assets/`, easily hundreds of files) takes effect
+/// within one file rather than only at the next subtree boundary. Callers
+/// with nothing to cancel pass `&never_cancelled`.
+///
+/// D17/D18 fix (WS3 Round 29) — `on_bytes` reports live progress as each
+/// file streams through `copy_file_with_hash`, and `source_hashes` collects
+/// that file's digest (keyed by its DESTINATION path) so `verify_dir_recursive`
+/// never has to re-read the source side at all.
+/// D-DS_Store fix (WS3 Round 29) — Finder rewrites `.DS_Store` on its own
+/// schedule, entirely outside this app's control, purely to cache icon
+/// positions/view state — never real project data. Excluding it (never
+/// copied, never verified) sidesteps a real hazard the resume-skip logic
+/// above surfaced: a `.DS_Store` left at the destination by an earlier
+/// aborted attempt can match the CURRENT source file's size while Finder
+/// has since rewritten its content, which the resume skip (correctly, by
+/// design) cannot tell apart from a genuinely-already-copied file — and
+/// verification (also correctly) then refuses to commit over a real digest
+/// mismatch, failing the whole relocation over a file that was never
+/// supposed to be meaningful in the first place. `.DS_Store` is safe to
+/// simply not carry across at all — Finder recreates it on demand at the
+/// new location the next time it's browsed.
+///
+/// D-diagnostic-log fix (WS3 Round 29) — `kinetix-diagnostic.log` is the
+/// app's own live log file: this very process keeps an open file handle on
+/// it and appends to it for as long as the app runs, INCLUDING while a
+/// relocation copies and verifies it. Its size at copy time and its size at
+/// verify time are therefore never guaranteed to match — every relocation
+/// log line the copy/verify pass itself emits grows the source file out
+/// from under its own snapshot. Copying a live, growing file byte-for-byte
+/// isn't safely verifiable at all, so it's excluded the same way
+/// `.DS_Store` is: never copied, never verified. Nothing meaningful is
+/// lost — the log is diagnostic-only, and `tauri_plugin_log` creates a
+/// fresh file at the new root the next time the app launches.
+///
+/// Windows-audit fix (WS3 Round 29 Phase 2) — `Thumbs.db` (Explorer's
+/// per-folder thumbnail cache) and `desktop.ini` (folder customization
+/// metadata: custom icon, localized display name) are Explorer's equivalent
+/// of `.DS_Store` — written independently of this app, on Explorer's own
+/// schedule, whenever a folder is browsed. Left unexcluded, a leftover copy
+/// from an earlier aborted relocation attempt can match the CURRENT source
+/// file's size (the resume-skip heuristic in `copy_dir_recursive` can't
+/// tell that apart from a genuinely-already-copied file) while Explorer has
+/// since rewritten its content — the exact same false verify-mismatch class
+/// `.DS_Store` was excluded to prevent. Comparison is case-insensitive
+/// (`eq_ignore_ascii_case`) because Windows filenames are case-insensitive
+/// regardless of what case Explorer happens to have written.
+fn is_ignored_entry(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    name.eq_ignore_ascii_case(".DS_Store")
+        || name.eq_ignore_ascii_case("kinetix-diagnostic.log")
+        || name.eq_ignore_ascii_case("Thumbs.db")
+        || name.eq_ignore_ascii_case("desktop.ini")
+}
+
+fn copy_dir_recursive(
+    src: &Path,
+    dst: &Path,
+    check_cancelled: &dyn Fn() -> Result<(), String>,
+    on_bytes: &dyn Fn(u64),
+    source_hashes: &mut std::collections::HashMap<PathBuf, String>,
+) -> Result<(), String> {
     fs::create_dir_all(dst).map_err(|e| format!("create_dir_all {}: {e}", dst.display()))?;
     for entry in fs::read_dir(src).map_err(|e| format!("read_dir {}: {e}", src.display()))? {
+        check_cancelled()?;
         let entry = entry.map_err(|e| format!("read_dir entry in {}: {e}", src.display()))?;
+        if is_ignored_entry(&entry.file_name()) {
+            continue;
+        }
         let from = entry.path();
         let to = dst.join(entry.file_name());
         let meta = entry
             .metadata()
             .map_err(|e| format!("metadata {}: {e}", from.display()))?;
         if meta.is_dir() {
-            copy_dir_recursive(&from, &to)?;
+            copy_dir_recursive(&from, &to, check_cancelled, on_bytes, source_hashes)?;
         } else {
-            fs::copy(&from, &to)
-                .map_err(|e| format!("copy {} -> {}: {e}", from.display(), to.display()))?;
+            // Resume fix (WS3 Round 29, operator decision) — `to` may
+            // already hold a complete copy of this exact file, left behind
+            // by an earlier attempt that failed or was cancelled partway
+            // through THIS SAME subtree (see `do_relocate`'s
+            // `record_stale_root` and the no-auto-delete change that
+            // makes this possible). A size match is treated as "already
+            // copied" and skipped outright — cheap (one `fs::metadata`,
+            // no read of either side) — rather than re-copying and
+            // re-hashing bytes that are already there. `on_bytes` still
+            // counts them toward progress, so the bar reflects real
+            // remaining work, not a mysterious jump. `verify_dir_recursive`
+            // never sees `to` in `source_hashes` for a skipped file, so its
+            // existing "hash `from` fresh" fallback (see that function's
+            // own comment) is what actually confirms this skip was safe —
+            // a size match that turns out to be a false positive (rare, but
+            // not impossible: same size, different bytes) still fails
+            // verification and the whole relocation still refuses to
+            // commit, exactly as if this file had been freshly copied and
+            // failed to verify.
+            let already_copied = fs::metadata(&to).map(|m| m.len() == meta.len()).unwrap_or(false);
+            if already_copied {
+                on_bytes(meta.len());
+            } else {
+                let hash = copy_file_with_hash(&from, &to, on_bytes)?;
+                source_hashes.insert(to, hash);
+            }
         }
     }
     Ok(())
 }
 
-fn verify_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
+fn verify_dir_recursive(
+    src: &Path,
+    dst: &Path,
+    check_cancelled: &dyn Fn() -> Result<(), String>,
+    source_hashes: &std::collections::HashMap<PathBuf, String>,
+) -> Result<(), String> {
+    check_cancelled()?;
     let mut source_names = Vec::new();
     for entry in fs::read_dir(src).map_err(|e| format!("verify read_dir {}: {e}", src.display()))? {
         let entry =
             entry.map_err(|e| format!("verify read_dir entry in {}: {e}", src.display()))?;
+        if is_ignored_entry(&entry.file_name()) {
+            continue;
+        }
         source_names.push(entry.file_name());
     }
     let mut destination_names = Vec::new();
     for entry in fs::read_dir(dst).map_err(|e| format!("verify read_dir {}: {e}", dst.display()))? {
         let entry =
             entry.map_err(|e| format!("verify read_dir entry in {}: {e}", dst.display()))?;
+        if is_ignored_entry(&entry.file_name()) {
+            continue;
+        }
         destination_names.push(entry.file_name());
     }
     source_names.sort();
@@ -280,8 +725,9 @@ fn verify_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
             ));
         }
         if source_meta.is_dir() {
-            verify_dir_recursive(&from, &to)?;
+            verify_dir_recursive(&from, &to, check_cancelled, source_hashes)?;
         } else {
+            check_cancelled()?;
             if source_meta.len() != destination_meta.len() {
                 return Err(format!(
                     "relocation verification failed: size differs for {} and {}",
@@ -289,10 +735,15 @@ fn verify_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
                     to.display()
                 ));
             }
-            let source_hash = crate::sha256::hash_file(&from)
-                .map_err(|e| format!("verify hash {}: {e}", from.display()))?;
-            let destination_hash = crate::sha256::hash_file(&to)
-                .map_err(|e| format!("verify hash {}: {e}", to.display()))?;
+            // The digest `copy_dir_recursive` already computed while
+            // streaming this exact file — falls back to a fresh read of
+            // `from` only if that map is somehow missing an entry (never
+            // expected outside a test calling this function directly).
+            let source_hash = match source_hashes.get(&to) {
+                Some(hash) => hash.clone(),
+                None => hash_file(&from)?,
+            };
+            let destination_hash = hash_file(&to)?;
             if source_hash != destination_hash {
                 return Err(format!(
                     "relocation verification failed: digest differs for {} and {}",
@@ -305,13 +756,67 @@ fn verify_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-const MANAGED_RELOCATION_SUBTREES: [(&str, fn(&Path) -> PathBuf); 5] = [
+const MANAGED_RELOCATION_SUBTREES: [(&str, fn(&Path) -> PathBuf); 7] = [
     ("assets", assets_dir),
     ("projects", projects_dir),
     ("cache", cache_dir),
     ("project-store-backups", project_backups_dir),
     ("models", models_dir),
+    // D20 fix (WS3 Round 29) — unified per an explicit operator decision:
+    // every managed subtree moves with the root, none stay pinned to the
+    // OS default. See `project_mirror_dir`/`diagnostic_logs_dir`'s own doc
+    // comments for what each requires from callers.
+    ("project-mirror", project_mirror_dir),
+    ("diagnostic-logs", diagnostic_logs_dir),
 ];
+
+/// D20 fix (WS3 Round 29) — a legacy, TOP-LEVEL `<root>/fa-models/<lang>/`
+/// tree (`fa.rs`'s `fa_model_candidate_paths` tier 2 — predates FA models
+/// moving under `models/`) is not itself a `MANAGED_RELOCATION_SUBTREES`
+/// entry, so it was silently left behind by every relocation while the
+/// MODERN nested `models/fa-models/<lang>/` tree (already inside the
+/// `models` subtree above) correctly moved. Merges each legacy language
+/// directory into `models_dir(new_root).join("fa-models")`, the same
+/// nested location a fresh download already uses, SKIPPING a language the
+/// new root already has there (from the old root's own nested copy, which
+/// `MANAGED_RELOCATION_SUBTREES` handles first — never overwriting a
+/// possibly-newer copy with a possibly-older legacy one). Returns whether a
+/// legacy tree was found at all: on success, EVERY legacy language is by
+/// definition now represented at the new root (freshly merged, or already
+/// there from the nested copy) — a `true` return is what tells the caller
+/// it's safe to delete the WHOLE legacy source wholesale afterward, no
+/// per-language bookkeeping needed.
+fn relocate_legacy_fa_models(
+    current: &Path,
+    new_root: &Path,
+    check_cancelled: &dyn Fn() -> Result<(), String>,
+    on_bytes: &dyn Fn(u64),
+) -> Result<bool, String> {
+    let legacy_src = current.join("fa-models");
+    if !legacy_src.is_dir() {
+        return Ok(false);
+    }
+    let dest_root = models_dir(new_root).join("fa-models");
+    for entry in fs::read_dir(&legacy_src).map_err(|e| format!("read_dir {}: {e}", legacy_src.display()))? {
+        check_cancelled()?;
+        let entry = entry.map_err(|e| format!("read_dir entry in {}: {e}", legacy_src.display()))?;
+        if !entry
+            .file_type()
+            .map_err(|e| format!("file_type {}: {e}", entry.path().display()))?
+            .is_dir()
+        {
+            continue;
+        }
+        let lang_dest = dest_root.join(entry.file_name());
+        if lang_dest.is_dir() {
+            continue;
+        }
+        let mut hashes = std::collections::HashMap::new();
+        copy_dir_recursive(&entry.path(), &lang_dest, check_cancelled, on_bytes, &mut hashes)?;
+        verify_dir_recursive(&entry.path(), &lang_dest, check_cancelled, &hashes)?;
+    }
+    Ok(true)
+}
 
 fn relocation_required_bytes(used: u64) -> u64 {
     ((used as f64) * (1.0 + RELOCATE_HEADROOM_RATIO)) as u64 + RELOCATE_HEADROOM_FLOOR_BYTES
@@ -328,11 +833,40 @@ fn ensure_relocation_space(used: u64, available: u64) -> Result<(), String> {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn relocate_managed_subtrees_with<F, D>(
     current: &Path,
     new_root: &Path,
     commit_pointer: F,
+    delete_source: D,
+) -> Result<(Vec<String>, u64, Vec<String>), String>
+where
+    F: FnOnce() -> Result<(), String>,
+    D: FnMut(&Path, &Path, &str) -> Result<(), String>,
+{
+    relocate_managed_subtrees_cancellable(
+        current,
+        new_root,
+        commit_pointer,
+        delete_source,
+        &never_cancelled,
+        &|_| {},
+        &|| {},
+    )
+}
+
+/// D15/D18 fix (WS3 Round 29) — the cancellable, progress-reporting variant
+/// `storage_root_relocate` actually calls; `relocate_managed_subtrees_with`
+/// above (kept for its existing callers/tests, none of which offer either)
+/// is now a thin wrapper over this with `&never_cancelled`/a no-op reporter.
+fn relocate_managed_subtrees_cancellable<F, D>(
+    current: &Path,
+    new_root: &Path,
+    commit_pointer: F,
     mut delete_source: D,
+    check_cancelled: &dyn Fn() -> Result<(), String>,
+    on_bytes: &dyn Fn(u64),
+    on_verify_start: &dyn Fn(),
 ) -> Result<(Vec<String>, u64, Vec<String>), String>
 where
     F: FnOnce() -> Result<(), String>,
@@ -343,14 +877,32 @@ where
 
     // Phase 1: copy and byte-verify EVERY subtree. No source deletion is
     // reachable until the entire set has passed.
+    //
+    // D-verify-feedback fix (WS3 Round 29) — `on_verify_start` fires for
+    // EVERY subtree's verify, unconditionally. An earlier attempt tried to
+    // fire it only for the loop's last subtree, on the theory that only the
+    // "final" verify should surface a label — but which subtree is slow
+    // enough to actually need one has nothing to do with loop position: the
+    // large `models`/fa-models data (the one verify that can genuinely take
+    // 30-50s+) sorts near the FRONT of `MANAGED_RELOCATION_SUBTREES`, while
+    // `diagnostic-logs` — trivially small, and now nearly empty after the
+    // live-writer-race fix excludes its one file — sorts LAST. Gating on
+    // "last" showed nothing during the one verify that actually stalls the
+    // UI, and showed a label too briefly to read on the one that doesn't.
+    // The right signal for "is this worth showing" is duration, which only
+    // the frontend can observe live — see `useStorageRootRelocation.ts`'s
+    // debounced handling of this same event for that half of the fix.
     for (name, get_dir) in MANAGED_RELOCATION_SUBTREES {
+        check_cancelled()?;
         let from = get_dir(current);
         if !from.is_dir() {
             continue;
         }
         let to = get_dir(new_root);
-        copy_dir_recursive(&from, &to)?;
-        verify_dir_recursive(&from, &to)?;
+        let mut source_hashes = std::collections::HashMap::new();
+        copy_dir_recursive(&from, &to, check_cancelled, on_bytes, &mut source_hashes)?;
+        on_verify_start();
+        verify_dir_recursive(&from, &to, check_cancelled, &source_hashes)?;
         moved.push(name.to_string());
         bytes_moved += dir_size(&to);
     }
@@ -377,15 +929,29 @@ where
 }
 
 #[tauri::command]
-pub fn storage_root_status(app: tauri::AppHandle) -> Result<StorageRootStatus, String> {
+pub async fn storage_root_status(app: tauri::AppHandle) -> Result<StorageRootStatus, String> {
     let current = resolve_storage_root(&app)?;
     let default = default_root(&app)?;
     let managed_bytes = if current.is_dir() {
+        // Round 29 (D14 follow-up) — models/ was excluded from this total
+        // even though it's real, user-chosen data under management (never
+        // reclaimable, but still "managed"), the same gap `size_report`'s
+        // own "Downloaded models" row exists to cover. Resolved the same
+        // way that row is: `check_installed_models`, since models are not
+        // (yet) relocated onto the storage root itself — see the module doc
+        // comment's subtree table — so a plain `dir_size` over `models_dir`
+        // would silently miss whatever `model_download`/`fa` actually used.
+        let installed = crate::models::check_installed_models(app.clone()).await?;
+        let mut model_bytes = installed.whisper.map(|s| s.bytes).unwrap_or(0);
+        for status in installed.fa.values() {
+            model_bytes += status.bytes;
+        }
         Some(
             dir_size(&assets_dir(&current))
                 + dir_size(&projects_dir(&current))
                 + dir_size(&cache_dir(&current))
-                + dir_size(&project_backups_dir(&current)),
+                + dir_size(&project_backups_dir(&current))
+                + model_bytes,
         )
     } else {
         None
@@ -468,37 +1034,6 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
     // `reclaimableBytes` changes.
     let backups_reclaimable_bytes = crate::project_mirror::store_backups_stale_bytes(&app);
 
-    let mut rows = vec![
-        row(
-            &assets_dir(&root),
-            "Project assets",
-            assets_bytes,
-            0,
-            "never-reclaimable",
-        ),
-        row(
-            &projects_dir(&root),
-            "Projects",
-            projects_bytes,
-            0,
-            "never-reclaimable",
-        ),
-        row(
-            &backups_path,
-            "Project backups",
-            backups_bytes,
-            backups_reclaimable_bytes,
-            "reclaimable",
-        ),
-        row(
-            &cache_path,
-            "Cache",
-            cache_bytes,
-            cache_bytes,
-            "reclaimable",
-        ),
-    ];
-
     // Whisper and FA models resolve through their OWN, separate schemes
     // (see this file's module doc comment) — `model_download::models_dir` is
     // the whisper target dir specifically; FA models can additionally live
@@ -506,18 +1041,66 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
     // Reported as one approximate row (the whisper dir as the representative
     // `path`) rather than pretending a single directory holds all of it.
     let models_path = crate::model_download::models_dir(&app).unwrap_or_else(|_| models_dir(&root));
-    let installed = crate::models::check_installed_models(app).await?;
+    let installed = crate::models::check_installed_models(app.clone()).await?;
     let mut model_bytes = installed.whisper.map(|s| s.bytes).unwrap_or(0);
     for status in installed.fa.values() {
         model_bytes += status.bytes;
     }
-    rows.push(row(
-        &models_path,
-        "Downloaded models",
-        model_bytes,
-        0,
-        "never-reclaimable",
-    ));
+
+    // D14 fix (WS3 Round 29): Round 28 (683ebe2) moved the export-session
+    // temp tree onto the storage root (`export_sessions_dir`, a sibling of
+    // `cache/`) but never added it to `reclaimable_dirs`/this report, so an
+    // orphaned export session's bytes were structurally invisible to
+    // Settings — `totalReclaimable` stayed 0 in the overwhelming majority of
+    // sessions and the "Free up cached data" button never rendered
+    // (`StorageSettingsSection.tsx`'s `totalReclaimable > 0` gate). Only the
+    // `orphan` class counts here (a manifestless, unclaimed session) — a
+    // `resumable` session is left alone, same posture as the boot-time
+    // `sweep_manifestless_orphans` sweep, so this row never reports bytes
+    // the operator might still want to resume.
+    let export_sessions_path = export_sessions_dir(&root);
+    let export_orphan_bytes = crate::session_claim::report_reclaimable_sessions(&export_sessions_path)
+        .map(|r| r.orphan_bytes)
+        .unwrap_or(0);
+
+    // Stale-root fix (WS3 Round 29, operator decision) — surfaced last, one
+    // row per leftover this app knows about (a completed relocation's old
+    // location, and/or any failed/cancelled relocation's abandoned
+    // target) — see `storage_root_stale_roots`'s own doc comment.
+    let stale_roots = storage_root_stale_roots(app.clone())?;
+
+    // Ordering below is an explicit operator decision (WS3 Round 29): most
+    // valuable/expensive data first (models, assets), down to the smallest
+    // and most disposable (orphaned sessions, stale roots) last.
+    let mut rows = vec![
+        row(&models_path, "Downloaded models", model_bytes, 0, "never-reclaimable"),
+        row(&assets_dir(&root), "Project assets", assets_bytes, 0, "never-reclaimable"),
+        row(
+            &backups_path,
+            "Project backups",
+            backups_bytes,
+            backups_reclaimable_bytes,
+            "reclaimable",
+        ),
+        row(&projects_dir(&root), "Projects", projects_bytes, 0, "never-reclaimable"),
+        row(&cache_path, "Cache", cache_bytes, cache_bytes, "reclaimable"),
+        row(
+            &export_sessions_path,
+            "Orphaned export sessions",
+            export_orphan_bytes,
+            export_orphan_bytes,
+            "reclaimable",
+        ),
+    ];
+    for stale in stale_roots {
+        // Deliberately its own classification, not "reclaimable" — the
+        // generic "Free up cached data" button (`storage_root_reclaim`)
+        // does NOT clean this up; only the dedicated
+        // `storage_root_cleanup_all_stale_roots` does. Folding it into
+        // "reclaimable" would make that generic button's advertised total
+        // include bytes it can't actually free.
+        rows.push(row(Path::new(&stale.path), "Stale root", stale.bytes, stale.bytes, "stale-root"));
+    }
 
     Ok(rows)
 }
@@ -553,6 +1136,28 @@ pub fn storage_root_reclaim(app: tauri::AppHandle) -> Result<u64, String> {
         fs::create_dir_all(&cache)
             .map_err(|e| format!("recreate cache {}: {e}", cache.display()))?;
     }
+
+    // D14 fix (WS3 Round 29) — see `size_report`'s matching comment. Only
+    // `orphan`-class sessions are swept (never `live`/`resumable`), the same
+    // selection `sweep_manifestless_orphans` already applies at boot, via
+    // the existing `reclaim_sessions` helper which itself refuses anything a
+    // live process still claims.
+    let export_sessions_path = export_sessions_dir(&root);
+    if export_sessions_path.is_dir() {
+        if let Ok(report) = crate::session_claim::report_reclaimable_sessions(&export_sessions_path) {
+            let orphan_ids: Vec<String> = report
+                .entries
+                .iter()
+                .filter(|e| e.class == "orphan")
+                .map(|e| e.session_id.clone())
+                .collect();
+            if !orphan_ids.is_empty() {
+                let reclaim_report = crate::session_claim::reclaim_sessions(&export_sessions_path, &orphan_ids)?;
+                reclaimed += reclaim_report.bytes_reclaimed;
+            }
+        }
+    }
+
     Ok(reclaimed)
 }
 
@@ -563,10 +1168,80 @@ pub fn storage_root_reclaim(app: tauri::AppHandle) -> Result<u64, String> {
 /// an interrupted relocation leaves the OLD data intact and the NEW location
 /// either absent or partially populated, never a state where neither copy is
 /// complete.
+///
+/// D15 fix (WS3 Round 29) — this used to be a plain synchronous
+/// `#[tauri::command] fn` doing every bit of this (free-space `dir_size`
+/// walks, then `copy_dir_recursive`'s file-by-file `fs::copy`, then
+/// `verify_dir_recursive`'s file-by-file SHA-256 hash of both copies) inline
+/// on the thread Tauri's IPC/event dispatch shares — with zero yield points
+/// across possibly thousands of small-file syscalls, that starves the whole
+/// webview's event loop for the operation's entire duration (a hang sized by
+/// file COUNT, not total bytes, which is why it froze solid even though the
+/// underlying copy finished in well under a minute of real I/O time). Now an
+/// `async fn` that hands the actual work to `tauri::async_runtime::
+/// spawn_blocking`, so the executor's other worker threads stay free to
+/// service every other command/event — including the Cancel button's own
+/// click — for the whole duration. `do_relocate` below is the exact
+/// previous, unchanged synchronous body.
 #[tauri::command]
-pub fn storage_root_relocate(
+pub async fn storage_root_relocate(
     app: tauri::AppHandle,
     new_root: String,
+    cancel_state: tauri::State<'_, RelocationCancelFlag>,
+    on_event: tauri::ipc::Channel<RelocationEvent>,
+) -> Result<StorageRootRelocateReport, String> {
+    let cancel_flag = cancel_state.0.clone();
+    cancel_flag.store(false, std::sync::atomic::Ordering::SeqCst);
+    tauri::async_runtime::spawn_blocking(move || do_relocate(app, new_root, cancel_flag, on_event))
+        .await
+        .map_err(|e| format!("relocation task panicked: {e}"))?
+}
+
+/// D18 fix (WS3 Round 29) — live copy progress, same `tag`/`content` shape
+/// `ModelDownloadEvent` already uses (see that enum's own comment for why:
+/// a bare `#[serde(tag = "...")]` without `content` was caught silently
+/// lower-casing variant names and breaking the JS side's `msg.event ===`
+/// checks). `bytes_total` is the same `used` figure the free-space check
+/// computed — the two are the same walk, done once and reused here rather
+/// than a second `dir_size` pass.
+#[derive(serde::Serialize, Clone)]
+#[serde(tag = "event", content = "data")]
+pub enum RelocationEvent {
+    #[serde(rename_all = "camelCase")]
+    Progress { bytes_done: u64, bytes_total: u64 },
+    /// D-verify-feedback fix (WS3 Round 29) — the copy phase's own
+    /// `Progress` events cover only the copy loop; `verify_dir_recursive`'s
+    /// re-hash of every destination file (real work — often 30+ real
+    /// seconds on a large relocation, even at `crc32fast` speeds) ran with
+    /// zero events after it, so the progress bar sat at a stale "100%" for
+    /// that whole span with no way to tell "still working" apart from
+    /// "hung". Sent once, the first time ANY subtree's verify starts.
+    Verifying,
+    Done,
+}
+
+/// D15 fix (WS3 Round 29) — the shared flag `storage_root_relocate` polls
+/// (via `copy_dir_recursive`/`verify_dir_recursive`, once per directory
+/// entry) and `storage_root_relocate_cancel` sets. Reset to `false` at the
+/// start of every relocation, so a stale cancel from a PREVIOUS run can
+/// never abort a new one.
+#[derive(Default)]
+pub struct RelocationCancelFlag(pub std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+/// The operator's Cancel button. Cooperative, not preemptive: takes effect
+/// at the next file/subtree boundary `do_relocate` checks, not mid-syscall —
+/// same posture as every other cancel path in this codebase (export cancel,
+/// model-download cancel).
+#[tauri::command]
+pub fn storage_root_relocate_cancel(cancel_state: tauri::State<'_, RelocationCancelFlag>) {
+    cancel_state.0.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn do_relocate(
+    app: tauri::AppHandle,
+    new_root: String,
+    cancel_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    on_event: tauri::ipc::Channel<RelocationEvent>,
 ) -> Result<StorageRootRelocateReport, String> {
     // WS3 Round 28 (D4) — a model (whisper or FA) currently downloading
     // writes into the very `models/` subtree this call is about to copy and
@@ -616,36 +1291,156 @@ pub fn storage_root_relocate(
         )
     })?;
 
-    // Free-space check, with headroom, against what will actually be copied.
-    let used = dir_size(&assets_dir(&real_current))
-        + dir_size(&projects_dir(&real_current))
-        + dir_size(&cache_dir(&real_current))
-        + dir_size(&project_backups_dir(&real_current))
-        + dir_size(&models_dir(&real_current));
+    // Free-space check, with headroom, against what will actually be
+    // copied. D-progress-total fix (WS3 Round 29) — this used to hardcode
+    // 5 subtree names, and silently fell out of sync when D20 added
+    // `project-mirror`/`diagnostic-logs` to `MANAGED_RELOCATION_SUBTREES`:
+    // both `used` (this free-space check) AND `bytes_total` below (which
+    // reuses `used`) under-counted the real total by however much of those
+    // two subtrees existed, so the progress bar hit "100%" while the copy
+    // loop still had those two subtrees left to go — indistinguishable
+    // from a hang. Summing over the same const both the copy loop and the
+    // legacy-fa-models merge already iterate keeps this from silently
+    // drifting out of sync again the next time a subtree is added.
+    let used = MANAGED_RELOCATION_SUBTREES
+        .iter()
+        .map(|(_, get_dir)| dir_size(&get_dir(&real_current)))
+        .sum::<u64>()
+        + dir_size(&real_current.join("fa-models"));
     let available = fs4::available_space(&real_new)
         .map_err(|e| format!("cannot read free space on {}: {e}", real_new.display()))?;
     ensure_relocation_space(used, available)
         .map_err(|e| format!("{e} at {}", real_new.display()))?;
+    // Stale-root fix (WS3 Round 29, operator decision) — ADDS where we're
+    // moving FROM to the accumulated stale-roots list, never overwrites it:
+    // moving A -> B -> C without cleaning up in between must remember BOTH
+    // A and B, not just the latest hop. The old copy is no longer deleted
+    // as part of this call (see the `delete_source` closure below) — this
+    // list is what lets Settings surface every leftover as one cleanup-able
+    // group instead of silently losing track of all but the most recent.
+    //
+    // Resume fix (WS3 Round 29) — if `real_new` was itself a previously
+    // stale target (this run is a resume, per `copy_dir_recursive`'s
+    // size-match skip), it's no longer stale once it becomes the live root
+    // — dropped from the list here rather than left to linger as an entry
+    // for a location that's now authoritative.
+    let real_new_str = real_new.to_string_lossy().to_string();
+    let real_current_str = real_current.to_string_lossy().to_string();
+    let mut stale_roots = read_config(&app)?.stale_roots;
+    stale_roots.retain(|t| t != &real_new_str);
+    if !stale_roots.iter().any(|t| t == &real_current_str) {
+        stale_roots.push(real_current_str);
+    }
     let cfg = StorageRootConfigFile {
-        root: Some(real_new.to_string_lossy().to_string()),
+        root: Some(real_new_str),
+        stale_roots,
+        legacy_previous_root: None,
+        legacy_abandoned_targets: Vec::new(),
     };
     let json = serde_json::to_string_pretty(&cfg)
         .map_err(|e| format!("serialize storage-root.json: {e}"))?;
     let config = config_path(&app)?;
-    let (moved, bytes_moved, cleanup_warnings) = relocate_managed_subtrees_with(
+    let check_cancelled = || -> Result<(), String> {
+        if cancel_flag.load(std::sync::atomic::Ordering::SeqCst) {
+            Err("relocation cancelled by operator".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    // D18 fix (WS3 Round 29) — `used` above is already the exact total this
+    // call will copy, from the SAME walk the free-space check needed anyway;
+    // reused as `bytes_total` rather than a second `dir_size` pass. Emits
+    // are throttled to roughly every 16 MiB of progress (plus always at
+    // completion) rather than per-file or per-chunk, so an 8 GiB relocation
+    // sends dozens of IPC messages, not thousands.
+    const PROGRESS_EMIT_THRESHOLD_BYTES: u64 = 16 * 1024 * 1024;
+    let bytes_total = used;
+    let bytes_done = std::cell::Cell::new(0u64);
+    let last_emitted = std::cell::Cell::new(0u64);
+    let on_bytes = |n: u64| {
+        let done = bytes_done.get() + n;
+        bytes_done.set(done);
+        if done.saturating_sub(last_emitted.get()) >= PROGRESS_EMIT_THRESHOLD_BYTES || done >= bytes_total {
+            last_emitted.set(done);
+            let _ = on_event.send(RelocationEvent::Progress { bytes_done: done, bytes_total });
+        }
+    };
+    // D20 fix (WS3 Round 29) — the legacy top-level `fa-models/` merge runs
+    // as part of Phase 2 (inside `commit_pointer`, right before the pointer
+    // write), i.e. AFTER every normal subtree — including the modern nested
+    // `models/fa-models/` — has already copied and verified. That ordering
+    // is load-bearing: `relocate_legacy_fa_models` needs to see whatever the
+    // old root's OWN nested copy already produced at the new root before it
+    // can correctly skip a language that's already there. A failure here
+    // fails `commit_pointer` itself, so the existing Phase-1-failure cleanup
+    // below (which deletes the whole partial `models/` subtree at the new
+    // root on any error) already covers a partial legacy merge too, since
+    // it lands nested inside that same `models/` directory.
+    let found_legacy_fa_models = std::cell::Cell::new(false);
+    let relocation = relocate_managed_subtrees_cancellable(
         &real_current,
         &real_new,
-        || write_atomic(&config, &json),
-        |from, bounds, name| {
-            crate::safe_delete::delete_app_staging_dir(from, bounds, name).map_err(|e| {
-                format!(
-                    "new root is authoritative, but old {name} copy at {} could not be removed: {e}",
-                    from.display()
-                )
-            })
+        || {
+            found_legacy_fa_models.set(relocate_legacy_fa_models(
+                &real_current,
+                &real_new,
+                &check_cancelled,
+                &on_bytes,
+            )?);
+            write_atomic(&config, &json)
         },
-    )?;
+        // Stale-root fix (WS3 Round 29, operator decision) — no longer
+        // deletes the old copy here. `stale_roots` (set above) is what lets
+        // the operator clean it up explicitly and on their own schedule,
+        // via `storage_root_cleanup_all_stale_roots`, instead of an
+        // immediate, silent, un-reversible deletion the instant the new
+        // copy verifies.
+        |_from, _bounds, _name| Ok(()),
+        &check_cancelled,
+        &on_bytes,
+        &|| {
+            let _ = on_event.send(RelocationEvent::Verifying);
+        },
+    );
+    let (mut moved, bytes_moved, cleanup_warnings) = match relocation {
+        Ok(result) => result,
+        Err(err) => {
+            // A cancel (or any other Phase-1 failure) is caught BEFORE
+            // `commit_pointer` ever runs — see `relocate_managed_subtrees_cancellable`'s
+            // own phase ordering — so the old root is still authoritative and
+            // untouched. Resume/no-auto-delete fix (WS3 Round 29, operator
+            // decision) — the partial, never-adopted copy at the new root is
+            // no longer deleted here: a later relocation to this SAME target
+            // resumes from it (`copy_dir_recursive`'s size-match skip)
+            // instead of restarting at 0, and it's recorded as an
+            // "abandoned target" so Settings can ALSO offer it for manual
+            // cleanup if the operator would rather just discard it. Only
+            // recorded if something was actually written — an instant
+            // failure (bad path, no space, refused before any subtree
+            // started) leaves nothing worth tracking.
+            if MANAGED_RELOCATION_SUBTREES
+                .iter()
+                .any(|(_, get_dir)| get_dir(&real_new).is_dir())
+            {
+                let _ = record_stale_root(&app, &real_new);
+            }
+            return Err(err);
+        }
+    };
 
+    // Stale-root fix (WS3 Round 29, operator decision) — the legacy source
+    // is no longer deleted here either. By the time we're here every legacy
+    // language IS fully represented at the new root (freshly merged, or
+    // already present from the old root's own nested copy — see
+    // `relocate_legacy_fa_models`'s own doc comment), so it's redundant,
+    // stale data — left in place under the old root for the operator's
+    // explicit `storage_root_cleanup_previous` cleanup, same as every other
+    // subtree, rather than deleted immediately and silently.
+    if found_legacy_fa_models.get() {
+        moved.push("fa-models (legacy)".to_string());
+    }
+
+    let _ = on_event.send(RelocationEvent::Done);
     Ok(StorageRootRelocateReport {
         from: real_current.to_string_lossy().to_string(),
         to: real_new.to_string_lossy().to_string(),
@@ -691,7 +1486,7 @@ mod tests {
         fs::write(src.join("a/one.txt"), b"one").unwrap();
         fs::write(src.join("a/b/two.txt"), b"two-bytes").unwrap();
 
-        copy_dir_recursive(&src, &dst).unwrap();
+        copy_dir_recursive(&src, &dst, &never_cancelled, &|_| {}, &mut std::collections::HashMap::new()).unwrap();
 
         assert_eq!(fs::read_to_string(dst.join("root.txt")).unwrap(), "root");
         assert_eq!(fs::read_to_string(dst.join("a/one.txt")).unwrap(), "one");
@@ -718,7 +1513,7 @@ mod tests {
         fs::remove_dir_all(&dst).ok();
         fs::write(&dst, b"i am a file, not a directory").unwrap(); // blocks create_dir_all(dst)
 
-        let result = copy_dir_recursive(&src, &dst);
+        let result = copy_dir_recursive(&src, &dst, &never_cancelled, &|_| {}, &mut std::collections::HashMap::new());
         assert!(result.is_err());
 
         fs::remove_dir_all(&src).ok();
@@ -896,7 +1691,7 @@ mod tests {
     fn status_and_size_report_commands_are_filesystem_read_only() {
         let source = include_str!("storage_root.rs");
         for (start, end) in [
-            ("pub fn storage_root_status", "/// WS3 item H — one row"),
+            ("pub async fn storage_root_status", "/// WS3 item H — one row"),
             ("pub async fn size_report", "/// Clears reclaimable subtrees"),
         ] {
             let body = source
@@ -920,5 +1715,472 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── Round 29 Windows-verification run — Phase 3 tests ──────────────
+    //
+    // Every test below targets a genuinely `AppHandle`-free (pure or
+    // path-parameterized) surface. A spike attempt to build a real
+    // `tauri::Builder::<tauri::Wry>::build()` mock app for D12/D19/D22's
+    // `AppHandle`-only wrappers panicked with "On macOS, `EventLoop` must be
+    // created on the main thread!" — libtest always runs `#[test]` fns on a
+    // spawned thread, never the process main thread, which is exactly the
+    // documented constraint this file's own menu-swap test comment (see
+    // `lib.rs`) already records for the same reason. Those three fixes stay
+    // covered by your live manual verification this round, consistent with
+    // this repo's established policy for AppHandle-only logic (same posture
+    // CLAUDE.md already states for DOM-touching hooks) — not a gap unique to
+    // this batch.
+
+    // D13 — diagnostic log directory resolves under the configured root
+    // (not silently back to some other hardcoded location), so the boot-time
+    // `Folder` log target in `lib.rs` actually gets created under whatever
+    // root is current.
+    #[test]
+    fn d13_diagnostic_logs_dir_resolves_under_the_given_root() {
+        let root = tmpdir("d13-root");
+        let dir = diagnostic_logs_dir(&root);
+        assert!(dir.starts_with(&root));
+        assert_eq!(dir.file_name().and_then(|n| n.to_str()), Some("diagnostic-logs"));
+        fs::remove_dir_all(&root).ok();
+    }
+
+    // D14 — the export-sessions tree's orphan bytes (the data D14's fix
+    // wired into `size_report`) are actually detected by the same reader the
+    // report row uses, given a real orphaned (manifestless, unclaimed)
+    // session directory on disk.
+    #[test]
+    fn d14_export_sessions_orphan_bytes_are_detected() {
+        let base = tmpdir("d14-export-sessions");
+        // `export_session_dirs` only recognizes `kinetix-export-<uuid>`
+        // names — anything else (including a stray directory) is skipped
+        // entirely, so the fixture must match that exact shape.
+        let session_id = "550e8400-e29b-41d4-a716-446655440000";
+        let orphan = base.join(format!("kinetix-export-{session_id}"));
+        fs::create_dir_all(&orphan).unwrap();
+        fs::write(orphan.join("frame_0001.raw"), vec![0u8; 4096]).unwrap();
+        // No manifest (`export_state.json*`) and no session-claim record —
+        // matches the "manifestless, unclaimed" orphan shape
+        // `report_reclaimable_sessions` classifies as reclaimable.
+        let report = crate::session_claim::report_reclaimable_sessions(&base).unwrap();
+        assert!(report.orphan_bytes > 0, "an unclaimed session directory must count as orphan bytes");
+        assert_eq!(report.entries.len(), 1);
+        assert_eq!(report.entries[0].class, "orphan");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    // D15 — the cancel flag halts the copy within a bounded number of file
+    // operations (not "eventually", and not only between subtrees): with
+    // `check_cancelled` wired to fail after a small fixed number of calls,
+    // only a bounded prefix of files is copied, and every source file is
+    // still there — the transactional guarantee (nothing partial ever
+    // becomes visible) holds regardless of where in the file list the
+    // cancellation lands.
+    #[test]
+    fn d15_cancel_flag_halts_copy_within_a_bounded_number_of_file_operations() {
+        let src = tmpdir("d15-cancel-src");
+        for i in 0..50 {
+            fs::write(src.join(format!("file-{i:03}.bin")), vec![0u8; 1024]).unwrap();
+        }
+        let dst = tmpdir("d15-cancel-dst");
+        fs::remove_dir_all(&dst).ok();
+
+        const ALLOWED_CALLS: u32 = 5;
+        let calls = std::cell::Cell::new(0u32);
+        let check_cancelled = || -> Result<(), String> {
+            let n = calls.get() + 1;
+            calls.set(n);
+            if n > ALLOWED_CALLS {
+                Err("relocation cancelled by operator".to_string())
+            } else {
+                Ok(())
+            }
+        };
+
+        let result = copy_dir_recursive(&src, &dst, &check_cancelled, &|_| {}, &mut std::collections::HashMap::new());
+        assert!(result.is_err(), "copy must stop once check_cancelled reports cancellation");
+        assert!(
+            calls.get() <= ALLOWED_CALLS + 1,
+            "cancellation must be observed within one file-operation's worth of calls, not after the whole tree copies"
+        );
+        // Every source file must still be present and unmodified — a
+        // cancelled copy never touches the source side.
+        for i in 0..50 {
+            assert_eq!(fs::read(src.join(format!("file-{i:03}.bin"))).unwrap(), vec![0u8; 1024]);
+        }
+
+        fs::remove_dir_all(&src).ok();
+        fs::remove_dir_all(&dst).ok();
+    }
+
+    // Cancelled relocation leaves the old root untouched and never partially
+    // commits — `relocate_managed_subtrees_cancellable`'s own transactional
+    // guarantee (Phase 2's `commit_pointer` is unreachable until every
+    // subtree has copied AND verified), exercised end to end with a
+    // cancellation landing mid-way through the SECOND subtree.
+    #[test]
+    fn cancelled_relocation_never_commits_and_leaves_old_root_untouched() {
+        let current = tmpdir("cancel-e2e-source");
+        let destination = tmpdir("cancel-e2e-dest");
+        fs::remove_dir_all(&destination).ok();
+        fs::create_dir_all(assets_dir(&current)).unwrap();
+        fs::write(assets_dir(&current).join("a.bin"), b"asset-bytes").unwrap();
+        fs::create_dir_all(projects_dir(&current)).unwrap();
+        fs::write(projects_dir(&current).join("p.json"), b"project-bytes").unwrap();
+
+        let subtree_starts = std::cell::Cell::new(0u32);
+        let check_cancelled = || -> Result<(), String> { Ok(()) };
+        let committed = std::cell::Cell::new(false);
+        let on_bytes = |_n: u64| {
+            // Cancel partway through the SECOND subtree's copy (after
+            // `assets` has already fully copied and verified).
+        };
+
+        // Drive the cancellable variant directly with a check_cancelled that
+        // flips to "cancelled" only once the first subtree is done, by
+        // counting on_verify_start calls (fires once per subtree, right
+        // after its copy).
+        let cancel_after_first_verify = std::cell::Cell::new(false);
+        let on_verify_start = || {
+            let n = subtree_starts.get() + 1;
+            subtree_starts.set(n);
+            if n >= 1 {
+                cancel_after_first_verify.set(true);
+            }
+        };
+        let check_cancelled_dynamic = || -> Result<(), String> {
+            if cancel_after_first_verify.get() {
+                Err("relocation cancelled by operator".to_string())
+            } else {
+                check_cancelled()
+            }
+        };
+
+        let result = relocate_managed_subtrees_cancellable(
+            &current,
+            &destination,
+            || {
+                committed.set(true);
+                Ok(())
+            },
+            |_, _, _| Ok(()),
+            &check_cancelled_dynamic,
+            &on_bytes,
+            &on_verify_start,
+        );
+
+        assert!(result.is_err(), "a cancellation observed before every subtree verifies must fail the call");
+        assert!(!committed.get(), "commit_pointer must never run on a cancelled relocation");
+        assert_eq!(
+            fs::read(assets_dir(&current).join("a.bin")).unwrap(),
+            b"asset-bytes",
+            "old root's already-copied-and-verified subtree must still be intact — cancel never deletes source"
+        );
+        assert_eq!(
+            fs::read(projects_dir(&current).join("p.json")).unwrap(),
+            b"project-bytes",
+            "old root's not-yet-reached subtree must be completely untouched"
+        );
+
+        fs::remove_dir_all(&current).ok();
+        fs::remove_dir_all(&destination).ok();
+    }
+
+    // Stale-root list accumulates across multiple hops (A -> B -> C without
+    // cleanup remembers BOTH A and B), via the same migration/accumulation
+    // data shape `do_relocate` writes to — and one cleanup clears the whole
+    // list, exercised through the real `storage_root_cleanup_all_stale_roots`
+    // deletion loop's per-subtree logic (extracted below as a plain
+    // Vec<String> operation, matching exactly what that command does to
+    // `cfg.stale_roots`).
+    #[test]
+    fn stale_root_list_accumulates_across_multiple_hops_and_dedups() {
+        let mut cfg = StorageRootConfigFile {
+            root: Some("/roots/C".to_string()),
+            stale_roots: Vec::new(),
+            legacy_previous_root: None,
+            legacy_abandoned_targets: Vec::new(),
+        };
+        // Hop 1: A -> B. The old root (A) is recorded.
+        cfg.stale_roots.push("/roots/A".to_string());
+        // Hop 2: B -> C. The old root (B) is ADDED, not overwritten.
+        if !cfg.stale_roots.iter().any(|p| p == "/roots/B") {
+            cfg.stale_roots.push("/roots/B".to_string());
+        }
+        assert_eq!(cfg.stale_roots, vec!["/roots/A".to_string(), "/roots/B".to_string()]);
+
+        // A resume back onto an already-stale target drops it from the list
+        // (do_relocate's own `retain` step) rather than leaving a stale
+        // entry for a location that's now authoritative.
+        cfg.stale_roots.retain(|t| t != "/roots/B");
+        assert_eq!(cfg.stale_roots, vec!["/roots/A".to_string()]);
+
+        // "One cleanup deletes everything" — the whole list clears in one
+        // action regardless of how many hops accumulated it.
+        cfg.stale_roots.clear();
+        assert!(cfg.stale_roots.is_empty());
+    }
+
+    // The legacy `previous_root`/`abandoned_targets` fields (pre-unification
+    // schema) migrate into the unified `stale_roots` list exactly once, with
+    // no duplication against anything already present.
+    #[test]
+    fn legacy_stale_root_fields_migrate_into_the_unified_list_without_duplication() {
+        let mut cfg = StorageRootConfigFile {
+            root: Some("/roots/current".to_string()),
+            stale_roots: vec!["/roots/already-tracked".to_string()],
+            legacy_previous_root: Some("/roots/legacy-previous".to_string()),
+            legacy_abandoned_targets: vec![
+                "/roots/legacy-abandoned-1".to_string(),
+                "/roots/already-tracked".to_string(), // duplicate of an already-migrated entry
+            ],
+        };
+        migrate_legacy_stale_roots(&mut cfg);
+        assert_eq!(
+            cfg.stale_roots,
+            vec![
+                "/roots/already-tracked".to_string(),
+                "/roots/legacy-previous".to_string(),
+                "/roots/legacy-abandoned-1".to_string(),
+            ]
+        );
+        assert!(cfg.legacy_previous_root.is_none(), "legacy field must be drained, never re-serialized");
+        assert!(cfg.legacy_abandoned_targets.is_empty());
+    }
+
+    // Windows-audit fix (Phase 1 item 1 / Phase 2 fix) — stale-root cleanup
+    // deletes every managed subtree at a leftover root EXCEPT
+    // `diagnostic-logs`, since that's the one directory that can still
+    // contain the app's own actively-open log file on Windows if the
+    // operator cleans up in the same session as the relocation (no
+    // restart). Other subtrees at the same stale root must still be
+    // deleted normally.
+    #[test]
+    fn diagnostic_logs_is_excluded_from_stale_root_cleanup_but_other_subtrees_are_not() {
+        let target = tmpdir("cleanup-skip-diagnostic-logs");
+        fs::create_dir_all(assets_dir(&target)).unwrap();
+        fs::write(assets_dir(&target).join("a.bin"), b"asset").unwrap();
+        fs::create_dir_all(diagnostic_logs_dir(&target)).unwrap();
+        fs::write(diagnostic_logs_dir(&target).join("kinetix-diagnostic.log"), b"still-open-on-windows").unwrap();
+
+        let reclaimed = cleanup_stale_root_subtrees(&target);
+
+        assert!(reclaimed > 0, "the assets subtree must still be reclaimed");
+        assert!(!assets_dir(&target).exists(), "assets must be deleted");
+        assert!(
+            diagnostic_logs_dir(&target).exists(),
+            "diagnostic-logs must survive cleanup — it may still be open on Windows"
+        );
+        assert!(diagnostic_logs_dir(&target).join("kinetix-diagnostic.log").exists());
+
+        fs::remove_dir_all(&target).ok();
+    }
+
+    // D20 — all seven managed subtrees are present in the relocation set
+    // (the same const `size_report`, the cleanup command, and the copy loop
+    // all iterate), pinned by name so a future addition/removal to either
+    // side is caught here rather than silently drifting out of sync (the
+    // exact class of bug D18's progress-total fix existed to close).
+    #[test]
+    fn d20_all_seven_managed_subtrees_are_present_and_named() {
+        let names: Vec<&str> = MANAGED_RELOCATION_SUBTREES.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            names,
+            vec![
+                "assets",
+                "projects",
+                "cache",
+                "project-store-backups",
+                "models",
+                "project-mirror",
+                "diagnostic-logs",
+            ]
+        );
+    }
+
+    // D20 — legacy top-level `fa-models/<lang>/` merges into the modern
+    // nested `models/fa-models/<lang>/` on relocation, and a language
+    // already present at the destination (from the modern tree's own copy)
+    // is left alone rather than overwritten.
+    #[test]
+    fn d20_legacy_fa_models_merge_moves_languages_not_already_at_the_destination() {
+        let current = tmpdir("d20-legacy-fa-source");
+        let destination = tmpdir("d20-legacy-fa-dest");
+        fs::remove_dir_all(&destination).ok();
+
+        // Legacy top-level location: two languages.
+        fs::create_dir_all(current.join("fa-models/en")).unwrap();
+        fs::write(current.join("fa-models/en/model.onnx"), b"legacy-en").unwrap();
+        fs::create_dir_all(current.join("fa-models/de")).unwrap();
+        fs::write(current.join("fa-models/de/model.onnx"), b"legacy-de").unwrap();
+
+        // Modern nested location at the DESTINATION already has "en" from
+        // its own normal `models` subtree copy — must be left untouched by
+        // the legacy merge, not overwritten by the legacy copy.
+        fs::create_dir_all(models_dir(&destination).join("fa-models/en")).unwrap();
+        fs::write(models_dir(&destination).join("fa-models/en/model.onnx"), b"modern-en").unwrap();
+
+        let merged_any =
+            relocate_legacy_fa_models(&current, &destination, &never_cancelled, &|_| {}).unwrap();
+        assert!(merged_any);
+
+        // "en" untouched (still the modern copy's content).
+        assert_eq!(
+            fs::read(models_dir(&destination).join("fa-models/en/model.onnx")).unwrap(),
+            b"modern-en"
+        );
+        // "de" newly merged in from the legacy location.
+        assert_eq!(
+            fs::read(models_dir(&destination).join("fa-models/de/model.onnx")).unwrap(),
+            b"legacy-de"
+        );
+
+        fs::remove_dir_all(&current).ok();
+        fs::remove_dir_all(&destination).ok();
+    }
+
+    // D21 — the model-not-found guidance in whisper.rs no longer suggests a
+    // relative `curl -o src-tauri/models/...` command with no `mkdir -p`,
+    // which is exactly what produced the stray `<cwd>/src-tauri/models/`
+    // directory when run from the wrong working directory.
+    #[test]
+    fn d21_model_guidance_no_longer_suggests_a_relative_curl_path() {
+        let source = include_str!("whisper.rs");
+        assert!(
+            !source.contains("curl -o src-tauri/models/"),
+            "D21 regression: whisper.rs still suggests a relative path that can create a stray src-tauri/ directory"
+        );
+    }
+
+    // D22 — FA model discovery walks the SAME three-tier candidate ladder
+    // the real alignment loader uses (storage-root slot, app-local-data-dir
+    // slot, exe-dir "manually placed" slot), so a model dropped in at a
+    // non-managed tier is found without ever needing to be "imported" once.
+    #[test]
+    fn d22_fa_model_candidate_ladder_checks_all_three_tiers_in_order() {
+        let storage_root_dir = tmpdir("d22-storage-root-models");
+        let local_data_dir = tmpdir("d22-local-data-models");
+        let exe_dir = tmpdir("d22-exe-dir-models");
+
+        let candidates = crate::fa::fa_model_candidate_paths(
+            Some(&storage_root_dir),
+            Some(&local_data_dir),
+            Some(&exe_dir),
+            "en",
+        );
+        assert_eq!(candidates.len(), 3, "all three tiers must be offered as candidates");
+        assert!(candidates[0].starts_with(&storage_root_dir), "storage-root slot must be checked first");
+        assert!(candidates[1].starts_with(&local_data_dir));
+        assert!(candidates[2].starts_with(&exe_dir), "exe-dir manual-placement slot must still be a candidate");
+
+        fs::remove_dir_all(&storage_root_dir).ok();
+        fs::remove_dir_all(&local_data_dir).ok();
+        fs::remove_dir_all(&exe_dir).ok();
+    }
+
+    // D18 — progress reporting is driven by REAL cumulative bytes copied,
+    // not a fake animation: `on_bytes` fires with the true per-file sizes,
+    // sums to the real total copied, and the total matches `dir_size` of
+    // the fully copied destination tree.
+    #[test]
+    fn d18_progress_callback_reports_real_cumulative_bytes() {
+        let src = tmpdir("d18-progress-src");
+        fs::write(src.join("a.bin"), vec![0u8; 5000]).unwrap();
+        fs::write(src.join("b.bin"), vec![0u8; 7000]).unwrap();
+        let dst = tmpdir("d18-progress-dst");
+        fs::remove_dir_all(&dst).ok();
+
+        let total_reported = std::cell::Cell::new(0u64);
+        let on_bytes = |n: u64| total_reported.set(total_reported.get() + n);
+
+        copy_dir_recursive(&src, &dst, &never_cancelled, &on_bytes, &mut std::collections::HashMap::new()).unwrap();
+
+        assert_eq!(total_reported.get(), 12000);
+        assert_eq!(total_reported.get(), dir_size(&dst));
+
+        fs::remove_dir_all(&src).ok();
+        fs::remove_dir_all(&dst).ok();
+    }
+
+    // Windows-audit fix (Phase 1 item 2 / Phase 2 fix) — OS metadata files
+    // are excluded from copy AND verify on both platforms: `.DS_Store`
+    // (macOS/Finder), `Thumbs.db` and `desktop.ini` (Windows/Explorer), plus
+    // the app's own live diagnostic log — case-insensitively, since Windows
+    // filenames are case-insensitive regardless of what case Explorer wrote.
+    #[test]
+    fn os_metadata_files_are_ignored_on_both_platforms_case_insensitively() {
+        for name in [".DS_Store", "Thumbs.db", "thumbs.db", "desktop.ini", "Desktop.INI", "kinetix-diagnostic.log"] {
+            assert!(is_ignored_entry(std::ffi::OsStr::new(name)), "{name} must be ignored");
+        }
+        for name in ["real-asset.png", "Thumbs.db.bak", "not-desktop.ini", "project.json"] {
+            assert!(!is_ignored_entry(std::ffi::OsStr::new(name)), "{name} must NOT be ignored");
+        }
+    }
+
+    // A stale/rewritten `Thumbs.db`/`desktop.ini` at the destination (same
+    // hazard class as the `.DS_Store` case these were added alongside) must
+    // never fail verification even when its content genuinely differs from
+    // the source — because it's excluded from the comparison entirely, on
+    // both platforms.
+    #[test]
+    fn verify_ignores_windows_metadata_files_even_when_content_differs() {
+        let src = tmpdir("verify-win-meta-src");
+        let dst = tmpdir("verify-win-meta-dst");
+        fs::remove_dir_all(&dst).ok();
+        fs::create_dir_all(&dst).unwrap();
+        fs::write(src.join("real.txt"), b"real-content").unwrap();
+        fs::write(dst.join("real.txt"), b"real-content").unwrap();
+        // Mismatched, stale Explorer metadata at the destination only —
+        // must not affect the verify result at all.
+        fs::write(dst.join("Thumbs.db"), b"stale-thumbnail-cache-bytes").unwrap();
+        fs::write(dst.join("desktop.ini"), b"stale-folder-customization").unwrap();
+
+        let mut hashes = std::collections::HashMap::new();
+        copy_dir_recursive(&src, &tmpdir("verify-win-meta-unused"), &never_cancelled, &|_| {}, &mut hashes).ok();
+        // Build the expected hash map the way the real copy path would, for
+        // just the one real file (Thumbs.db/desktop.ini were never in src).
+        let mut real_hashes = std::collections::HashMap::new();
+        let hash = hash_file(&src.join("real.txt")).unwrap();
+        real_hashes.insert(dst.join("real.txt"), hash);
+
+        let result = verify_dir_recursive(&src, &dst, &never_cancelled, &real_hashes);
+        assert!(result.is_ok(), "stale Thumbs.db/desktop.ini at destination must not fail verification: {result:?}");
+
+        fs::remove_dir_all(&src).ok();
+        fs::remove_dir_all(&dst).ok();
+    }
+
+    // Insufficient space blocks relocation rather than proceeding (D17) —
+    // `ensure_relocation_space` is the exact gate `do_relocate` calls before
+    // any copying starts.
+    #[test]
+    fn d17_insufficient_space_blocks_relocation_rather_than_proceeding() {
+        let used = 500 * 1024 * 1024;
+        let required = relocation_required_bytes(used);
+        let result = ensure_relocation_space(used, required - 1);
+        assert!(result.is_err(), "one byte short of the required (used + headroom) total must be refused");
+        assert!(result.unwrap_err().contains("not enough free space"));
+        assert!(ensure_relocation_space(used, required).is_ok());
+    }
+
+    // Forbidden-path tripwire (Round 27/28's own convention) extended to
+    // every production file this Round 29 batch touched — `fa.rs` (the D20
+    // `fa_audio_cache_dir` fix, now routed through `storage_root::cache_dir`
+    // rather than a hardcoded path) had no raw-delete exposure before this
+    // batch either, but was never in the pinned file list; adding it here so
+    // a future change to it is caught by the same guard as everything else.
+    #[test]
+    fn round_29_fa_rs_has_no_raw_recursive_delete() {
+        let source = include_str!("fa.rs");
+        let production = source.split("\n#[cfg(test)]").next().unwrap_or(source);
+        let raw_calls: Vec<&str> = production
+            .lines()
+            .filter(|line| {
+                line.contains("fs::remove_dir_all")
+                    && !line.trim_start().starts_with("//")
+                    && !line.trim_start().starts_with("//!")
+            })
+            .collect();
+        assert!(raw_calls.is_empty(), "fa.rs introduced raw recursive deletion outside safe_delete: {raw_calls:?}");
     }
 }

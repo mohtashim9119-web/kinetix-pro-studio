@@ -589,12 +589,28 @@ pub(crate) const MODEL_FILENAME: &str = "ggml-large-v3-turbo.bin";
 
 fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     // In-app acquisition (bug 4 fix): the model is downloaded on demand into
-    // app_local_data_dir()/models/ (see model_download.rs) rather than bundled
-    // — tauri.conf.json's resources map no longer ships models/* at all. This
-    // is checked FIRST, ahead of every bundle/dev fallback below, so a user who
-    // has downloaded the model always gets it; every existing fallback is kept
-    // unchanged underneath for a hand-placed file (dev checkout, or a build
-    // from before this change).
+    // the configured storage root's models/ dir (see model_download.rs /
+    // storage_root.rs) rather than bundled — tauri.conf.json's resources map
+    // no longer ships models/* at all. This is checked FIRST, ahead of every
+    // bundle/dev fallback below, so a user who has downloaded the model
+    // always gets it; every existing fallback is kept unchanged underneath
+    // for a hand-placed file (dev checkout, or a build from before this
+    // change).
+    //
+    // D12 fix (WS3 Round 29): this used to check only
+    // app_local_data_dir()/models/, which is what model_download.rs's
+    // models_dir() also resolved to BEFORE Round 28's storage-root routing.
+    // Since Round 28, model_download.rs (the download target AND the
+    // "DOWNLOAD MODEL" presence check) resolves through
+    // storage_root::resolve_storage_root() instead, which diverges from
+    // app_local_data_dir() once the user has relocated storage — leaving
+    // this function unable to find a model the UI reports as installed.
+    if let Ok(storage_root) = crate::storage_root::resolve_storage_root(app) {
+        let model = crate::storage_root::models_dir(&storage_root).join(MODEL_FILENAME);
+        if model.exists() {
+            return Ok(model);
+        }
+    }
     if let Ok(local_data_dir) = app.path().app_local_data_dir() {
         let model = local_data_dir.join("models").join(MODEL_FILENAME);
         if model.exists() {
@@ -644,9 +660,23 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         return Ok(dev_model);
     }
 
+    // D21 fix (WS3 Round 29) — the dev-checkout suggestion below used to be
+    // a bare relative path (`src-tauri/models/...`) handed to the operator
+    // as a literal shell command with no `mkdir -p`. `curl -o` does not
+    // create missing intermediate directories, so the command only "works"
+    // if `src-tauri/models/` already exists relative to wherever the
+    // shell's cwd happens to be when it's pasted — e.g. a terminal opened
+    // via "reveal in folder" from the app-data directory while
+    // troubleshooting this very error, which reproduces the exact stray
+    // `<app-data-dir>/src-tauri/models/` structure reported as D21. No Rust
+    // code ever computed or created that path; only this suggested command
+    // could, and only when run from the wrong directory. Now explicit about
+    // where it must run, and self-creating so it can't half-succeed into a
+    // wrong location.
     Err(format!(
         "{MODEL_FILENAME} not found. Use the model download panel in Settings, \
-         or for a dev checkout: curl -L -o src-tauri/models/{MODEL_FILENAME} \
+         or from the project's repository root (NOT the app data folder): \
+         mkdir -p src-tauri/models && curl -L -o src-tauri/models/{MODEL_FILENAME} \
          https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL_FILENAME}"
     ))
 }
