@@ -71,6 +71,10 @@ const ALLOWLIST = new Set<string>([
   // This P1 gate-integrity pass's own deliverable note (T6) — same shape as the
   // four entries above.
   'docs/ws1-sync-pipeline/baseline-p1-2026-09-19.md',
+  // P1b/P3 pass (2026-09-19) — ffmpeg pin, whisper sidecar build, gates 4-6,
+  // flake hunt, stash/worktree disposition. Same shape as the entries above:
+  // dated, read-only, docs-only verification note, not a live tracker.
+  'docs/ws1-sync-pipeline/baseline-p1b-p3-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

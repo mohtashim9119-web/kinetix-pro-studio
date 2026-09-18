@@ -29,12 +29,31 @@ Linkage:  static (only system libs per otool -L verification)
 License:  GPL (includes --enable-libx264)
 ```
 
+**Pin note (2026-09-19):** `evermeet.cx/ffmpeg/getrelease/zip` is a rolling "latest
+release" pointer — it silently moved 8.1.1→9.0.2 between the reference build and a
+later re-provision, breaking byte-for-byte reproducibility (see
+`docs/ws1-sync-pipeline/baseline-p1-2026-09-19.md` T3). evermeet.cx also publishes
+per-version snapshot URLs (`ffmpeg-<version>.zip`) that redirect to a stable mirror and
+do NOT move once published — use the versioned URL below, not the rolling one, and
+verify the SHA-256 after every fetch regardless, since the mirror target is outside our
+control.
+
 To re-provision on a fresh checkout:
 ```sh
-curl -L -o /tmp/ffmpeg.zip https://evermeet.cx/ffmpeg/getrelease/zip
+curl -L -o /tmp/ffmpeg.zip https://evermeet.cx/ffmpeg/ffmpeg-8.1.1.zip
 unzip /tmp/ffmpeg.zip -d /tmp/
 cp /tmp/ffmpeg src-tauri/binaries/ffmpeg-x86_64-apple-darwin
 chmod +x src-tauri/binaries/ffmpeg-x86_64-apple-darwin
+```
+
+Verify the fetch against the pinned reference hash — fail loudly (stop, do not install)
+if it does not match, since the mirror behind the versioned URL is third-party
+infrastructure we don't control:
+```sh
+shasum -a 256 src-tauri/binaries/ffmpeg-x86_64-apple-darwin
+# Must equal: 3a0ea97adddecfbf87b865da3bcbb321edfce4bab18a98ae1ba4ba9f0bd1f93a
+# (ffmpeg 8.1.1-tessus, 80,126,240 bytes). Any other hash = do not use; report the
+# mismatch instead of silently accepting a different build.
 ```
 
 Verify portability before use:
