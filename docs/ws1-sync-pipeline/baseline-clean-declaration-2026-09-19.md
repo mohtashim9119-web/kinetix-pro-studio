@@ -45,6 +45,14 @@ task brief's "36" does not hold under the evidence gathered this pass. Flagged f
 operator rather than adjusted to match by fabricating additional closures — per the
 standing conservative-default-logged rule for this session.
 
+> **Superseded 2026-09-19 (P4b).** The "40" used as this section's starting baseline was
+> itself wrong — a direct recount immediately pre-P4 showed **41**, not 40 (the P4 pass
+> undercounted its own starting point). Corrected accounting, and this pass's resolution
+> (closing the gitignored-replay-fixtures line with evidence, landing at a final 41), are
+> in [`p4b-cap-resolution-2026-09-19.md`](p4b-cap-resolution-2026-09-19.md). This
+> section's numbers above are left as-is, as the historical record of the original
+> (imperfect) accounting — do not treat them as current.
+
 ## Merge proposal
 
 One merge, `ws1-plan-rewrite` → `main`, after this pass — **not executed by this pass**;

@@ -85,6 +85,11 @@ const ALLOWLIST = new Set<string>([
   // table, cap-arithmetic caveat, merge proposal, Decision Log, command log).
   // A fixed dated record for operator sign-off, not a live tracker.
   'docs/ws1-sync-pipeline/baseline-clean-declaration-2026-09-19.md',
+  // P4b pass (2026-09-19) — cap-resolution note: corrects the P4 pass's
+  // undercounted pre-P4 baseline (41, not 40), enumerates the open list,
+  // closes the one available evidence-backed line, re-shows the arithmetic.
+  // Dated, read-only, docs-only note, not a live tracker.
+  'docs/ws1-sync-pipeline/p4b-cap-resolution-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
