@@ -96,6 +96,11 @@ const ALLOWLIST = new Set<string>([
   // staged commands for whoever runs T1/T3 next. Dated, docs-only, not a
   // live tracker.
   'docs/ws1-sync-pipeline/baseline-closeout-2026-09-19.md',
+  // Baseline completion pass (2026-09-19, main worktree) — T1 merge SHA and
+  // chain confirmation, six gates re-run fresh from main, T3 wipe log, final
+  // worktree list, cap 40/40. Closes the baseline. Dated, docs-only, not a
+  // live tracker.
+  'docs/ws1-sync-pipeline/baseline-completion-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
