@@ -1,9 +1,21 @@
-# Baseline-clean declaration — draft for operator signature (2026-09-19)
+# Baseline-clean declaration — operator-signed (2026-09-19)
 
-This is a draft, unsigned. It states the criteria this multi-pass baseline effort was
-scoped against and the evidence commit for each, so the operator can sign off on
-`ws1-plan-rewrite` as a clean baseline in one place rather than re-deriving it from six
-passes' worth of notes.
+> **ACCEPTED — operator, 2026-09-19, via architect session.**
+>
+> Recorded verbatim, this pass: "D23 is RETIRED AS MOOT per the STATUS.md:139
+> recommendation — timeline-hash instability is superseded by the wholesale
+> export-engine replacement; fixing it would be work under a rewrite." This ruling
+> closes D23 (see `docs/STATUS.md`'s WS3 section, closure cited to the consumer report
+> at `383569d` plus this ruling) and moves the cap: **41 − 1 (D23) = 40, at cap.**
+>
+> This declaration itself — the baseline criteria × evidence table below, drafted
+> `9d50d58`, verified complete in `083f31a`'s T4 — is accepted by the operator as of
+> today's date.
+
+This is now an accepted, not draft, record. It states the criteria this multi-pass
+baseline effort was scoped against and the evidence commit for each, so the operator
+signature above applies to `ws1-plan-rewrite` as a clean baseline in one place rather
+than re-deriving it from the passes' worth of notes.
 
 ## Baseline criteria × evidence
 
