@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: Baseline closeout — declaration ACCEPTED, D23 closed at cap (40), `ws1-plan-rewrite` (2026-09-19). Merge to `main` and the worktree wipe are proposed but NOT yet executed by this pass — see [`p4b-cap-resolution-2026-09-19.md`](ws1-sync-pipeline/p4b-cap-resolution-2026-09-19.md) and the closeout note pointer below for why.
+Last updated: Baseline closeout — declaration ACCEPTED, D23 closed at cap (40), `ws1-plan-rewrite` (2026-09-19). Merge to `main` and the worktree wipe are staged but NOT yet executed — this session is scoped to the `ws1-plan-rewrite` worktree only and cannot merge into or delete other worktrees from here. See [`baseline-closeout-2026-09-19.md`](ws1-sync-pipeline/baseline-closeout-2026-09-19.md) for the full state and exact commands to finish from the main worktree.
 
 > **Single source of truth for project tracking.** Retired trackers live under
 > `docs/archive/history/` (`work-in-progress.md`, `project-state.md`). Update this file only;

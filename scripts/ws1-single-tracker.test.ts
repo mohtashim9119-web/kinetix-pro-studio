@@ -90,6 +90,12 @@ const ALLOWLIST = new Set<string>([
   // closes the one available evidence-backed line, re-shows the arithmetic.
   // Dated, read-only, docs-only note, not a live tracker.
   'docs/ws1-sync-pipeline/p4b-cap-resolution-2026-09-19.md',
+  // Baseline closeout pass (2026-09-19) — T0/T2 completion record, T1/T3
+  // deferral rationale (this session is scoped to the ws1-plan-rewrite
+  // worktree and cannot merge into or delete other worktrees from here),
+  // staged commands for whoever runs T1/T3 next. Dated, docs-only, not a
+  // live tracker.
+  'docs/ws1-sync-pipeline/baseline-closeout-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
