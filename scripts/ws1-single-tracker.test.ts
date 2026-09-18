@@ -75,6 +75,16 @@ const ALLOWLIST = new Set<string>([
   // flake hunt, stash/worktree disposition. Same shape as the entries above:
   // dated, read-only, docs-only verification note, not a live tracker.
   'docs/ws1-sync-pipeline/baseline-p1b-p3-2026-09-19.md',
+  // P4 lane re-charter pass (2026-09-19) — operator product rulings recorded
+  // verbatim as the plan doc's source of truth (cloud-default engine, FA
+  // toggle deletion, Whisper-only as flagged degraded state, etc.). A fixed
+  // dated record of a decision, not a live tracker — status content stays in
+  // docs/STATUS.md.
+  'docs/ws1-sync-pipeline/operator-product-rulings-2026-09-19.md',
+  // Same P4 pass — T6's baseline-clean declaration draft (criteria × evidence
+  // table, cap-arithmetic caveat, merge proposal, Decision Log, command log).
+  // A fixed dated record for operator sign-off, not a live tracker.
+  'docs/ws1-sync-pipeline/baseline-clean-declaration-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
