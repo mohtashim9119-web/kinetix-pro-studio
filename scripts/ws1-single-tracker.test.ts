@@ -101,6 +101,16 @@ const ALLOWLIST = new Set<string>([
   // worktree list, cap 40/40. Closes the baseline. Dated, docs-only, not a
   // live tracker.
   'docs/ws1-sync-pipeline/baseline-completion-2026-09-19.md',
+  // Baseline reconciliation pass (2026-09-19, main worktree) — drive-vs-git
+  // audit, cloud-asr merge SHA, 1560ac5 worktree disposition, merged-ref
+  // deletions, stash mirror completed. Created after that pass's npm test run
+  // and allowlisted here one commit late. Dated, docs-only, not a live tracker.
+  'docs/ws1-sync-pipeline/baseline-reconciliation-2026-09-19.md',
+  // Final consolidation pass (2026-09-19) — one folder, one branch, pushed:
+  // worktree sweep + preservation commit, drive cleanup, refs/stash cleared,
+  // push record, TRUE-CLEAN-BASELINE checklist. Dated, docs-only, not a live
+  // tracker.
+  'docs/ws1-sync-pipeline/final-consolidation-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
