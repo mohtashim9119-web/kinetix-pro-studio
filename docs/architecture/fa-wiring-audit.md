@@ -124,9 +124,9 @@ export function isFaEnabledForProject(
 | Zero words | `forcedAlignmentRun.ts:187-189` | Empty `Done.words` | warn + `fa-fallback` | Sync Log |
 | IPC / inference catch-all | `forcedAlignmentRun.ts:200-206` | Any throw/reject in try | warn + `fa-fallback` `inference-error` | Sync Log + optional `errorMessage` |
 | Gate closed | `App.tsx:3960-3974` | `isFaGateOpenForProject` false | `fa-gate-closed` entry if capable | Sync Log only |
-| Gate open, preflight not ready | `faPreflight.ts:134-177` | Model/runtime/feature | `fa-preflight` warning | Sync Log; **FA still attempted** |
+| Gate open, preflight not ready | `faPreflight.ts:134-177` | Model/runtime/feature | `fa-preflight` warning | Sync Log; **FA still attempted** — verified non-substituting 2026-09-19 (observational only; see STATUS.md D24 CLOSED @ `4e36080`) |
 | CTC-infeasible chunk (native) | `fa_onnx.rs:1572-1578` | Lattice S=2L+1 vs frames | Rust `log` line | **No** — run may `status: ok` with placeholder words (`fallback_words_for_infeasible_chunk`), not Whisper fallback |
-| Silence detect fail inside FA | `forcedAlignmentRun.ts:136-140` | `detectSilences` error | warn; run continues | Optional `silence-error` sync entry on success (`App.tsx:3988-3989`) |
+| Silence detect fail inside FA | `forcedAlignmentRun.ts:136-140` | `detectSilences` error | warn; run continues | Optional `silence-error` sync entry on success (`App.tsx:3988-3989`) — verified non-substituting 2026-09-19 (see STATUS.md D24 CLOSED @ `4e36080`) |
 
 ### Failure-mode classification
 

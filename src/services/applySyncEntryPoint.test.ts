@@ -95,17 +95,22 @@ describe('WS2-50 — a single Apply Sync entry point', () => {
     ).toBe('const staged: StagedFiles = stagedFilesRef.current;');
   });
 
-  it('the shared ref is read in exactly one place', () => {
-    // Assignments (`stagedFilesRef.current = ...`) are writes and are exempt;
-    // any second READ is a second place the app can disagree with itself about
-    // what is staged.
+  it('the shared ref is read only from Apply Sync and pause-retry hydrate', () => {
+    // Assignments (`stagedFilesRef.current = ...`) are writes and are exempt.
+    // Apply Sync is the sole reader on the main path; `handleSyncPausedRetry`
+    // may read once to pass the live snapshot into `ensureStagedSnapshotReady`
+    // when DropZone’s async IDB restore has not published yet — it never
+    // manufactures a parallel StagedFiles input for Apply Sync.
     const reads = APP_SRC.split('\n').filter(
       l => l.includes('stagedFilesRef.current') && !/stagedFilesRef\.current\s*=/.test(l),
     );
     expect(
       reads.map(l => l.trim()),
-      'the shared staged-files ref is read somewhere other than the Apply Sync entry point.',
-    ).toEqual(['const staged: StagedFiles = stagedFilesRef.current;']);
+      'the shared staged-files ref is read somewhere other than Apply Sync or pause-retry hydrate.',
+    ).toEqual([
+      'const staged: StagedFiles = stagedFilesRef.current;',
+      'stagedFilesRef.current,',
+    ]);
   });
 
   it('no call site in App.tsx constructs a StagedFiles value', () => {

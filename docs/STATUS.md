@@ -1,6 +1,6 @@
 # Project Status
 
-Last updated: Baseline closeout — declaration ACCEPTED, D23 closed at cap (40), `ws1-plan-rewrite` (2026-09-19). Merge to `main` and the worktree wipe are staged but NOT yet executed — this session is scoped to the `ws1-plan-rewrite` worktree only and cannot merge into or delete other worktrees from here. See [`baseline-closeout-2026-09-19.md`](ws1-sync-pipeline/baseline-closeout-2026-09-19.md) for the full state and exact commands to finish from the main worktree.
+Last updated: Wave 1 landing on `main` (merge `ws1-wave1`, 2026-09-20). Tracked open-item cap **40 → 36** (four lines closed below: D24, Flake A, Flake B, `fa_cancel`). Eight other Wave 1 deliverables had no prior STATUS line — SHAs in landing report only.
 
 > **Single source of truth for project tracking.** Retired trackers live under
 > `docs/archive/history/` (`work-in-progress.md`, `project-state.md`). Update this file only;
@@ -65,9 +65,9 @@ has a STATUS.md citation:
 ### Open Bugs
 - [OPEN · NON-BLOCKING] 5 Zero-Defect Register rows, no rule fix yet — `scripts/ws1-session-ak-step1-gate.ts:59`
 - [OPEN · NON-BLOCKING] Alignment cost unbounded for real inputs (Contract A4, `__ALIGN_INSTRUMENT__` dormant)
-- D24 [OPEN] (re-filed 2026-09-19 from WS3 — see Charter above; NR-3, FA wiring audit @ `ebec58a`) — With high-precision sync ON, Apply Sync still commits Whisper timings on any `runForcedAlignmentForSync` fallback (`forcedAlignmentRun.ts:200-206`, `App.tsx:3974-4022`) without aborting; user may miss Sync Log `fa-fallback`. Fix dispatch: typed error / no silent substitution — [`fa-wiring-audit.md`](architecture/fa-wiring-audit.md) STEP 3–4. NR-6 changes the surrounding contract (FA toggle deletion) but does not close this defect on its own — Whisper-only becoming a flagged degraded state still requires this fallback to be non-silent.
-- [NEW · OPEN · NON-BLOCKING] (2026-09-19, `baseline-p1b-p3-2026-09-19.md` "Flake A") `fa-dev-digest-memo-reset-race` — `verified_digest_cache()`'s process-global `Mutex<HashMap<...>>` (`src-tauri/src/fa_dev.rs:75-81`) is cleared wholesale by any test's `reset_verified_digest_cache_for_tests()` (`fa_dev.rs:87-91`), racing against `digest_probe_distinguishes_a_memo_hit_from_a_cold_full_hash` (`fa_dev.rs:848-876`) under `cargo test`'s default parallel execution — 2/10 reproduction rate across a ten-run sweep. Not a production-code defect (`digest_for_sidecar`, `reset_verified_digest_cache_for_tests` behave as designed) — a test-harness isolation gap. Fix options: `--test-threads=1` for the affected module, per-test key namespacing, or a `#[cfg(test)]`-only cap raise. **Wave 1 prerequisite per NR-6.**
-- [NEW · OPEN · NON-BLOCKING] (2026-09-19, `baseline-p1b-p3-2026-09-19.md` "Flake B") `whisper-terminal-buffer-cap-eviction-race` — `terminal_buffer()`'s process-global `Mutex<HashMap<String, Retained>>` (`src-tauri/src/whisper.rs:234-238`), capped at `TERMINAL_BUFFER_MAX_ENTRIES = 16` (`whisper.rs:206`) and evicted oldest-first by `enforce_cap` (`whisper.rs:243-254`), can evict a test's own just-inserted entry when >16 concurrent `in_flight_tests` insert between that test's write and its next-line read — 2/10 reproduction rate, same sweep. Not a production-code defect (`record_progress`, `enforce_cap` behave as designed) — the same class of test-harness isolation gap as Flake A. **Wave 1 prerequisite per NR-6.**
+- D24 CLOSED (Wave 1, `4e36080`) — Silent FA→Whisper substitution removed on the six typed fallback sites in `forcedAlignmentRun.ts` / `App.tsx`; preflight and silence-detect audit rows verified **non-substituting** (observational / continue-on-error only — see [`fa-wiring-audit.md`](architecture/fa-wiring-audit.md) STEP 3 annotations). Degraded paths are explicit (`degraded`, abort, or flagged ok-with-log); no successful sync that presents FA while committing Whisper timings from those sites.
+- CLOSED (Wave 1, `5243e78`) — `fa-dev-digest-memo-reset-race` (Flake A): per-test digest memo namespacing / isolation in `fa_dev.rs` test harness.
+- CLOSED (Wave 1, `c6c7428`) — `whisper-terminal-buffer-cap-eviction-race` (Flake B): terminal attach buffer test isolation in `whisper.rs`.
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03
@@ -200,7 +200,7 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 ## Backlog Items
 
 - [OPEN · NON-BLOCKING] ORT intra-op thread ceiling undecided (32 recommended) — `fa_onnx.rs:503`
-- [OPEN · NON-BLOCKING] `fa_cancel` has zero frontend callers — `fa.rs:296`
+- CLOSED (Wave 1, `b547132`) — `fa_cancel` wired from sync cancel path (`useWhisper` / Apply Sync abort); no longer zero frontend callers.
 - [OPEN · NON-BLOCKING] `faBoundaryTypes.ts` missing one-way drift entries — `faBoundaryTypes.ts:64`
 - [OPEN · NON-BLOCKING] `.digest.json` not removed on model delete — `models.rs:664`
 - [OPEN · NON-BLOCKING] Two `fa_dev` digest tests share process-global memo — `fa_dev.rs:731`
@@ -213,14 +213,7 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 - [OPEN · NON-BLOCKING] `GL_TRANSITION_SLUGS` duplicated — `compositeParams.ts:34`, `decodeCursorLifetime.ts:26`
 - [OPEN · NON-BLOCKING] Three parallel disk-size estimators (badge, dead destination module, live preflight) — consolidate to one — `diskFull.ts`
 - CLOSED (2026-09-19, P4b) — ~33 cloud CI test failures from missing `.work-phase4/replay/` fixtures — `scripts/phase4-restore-replay-inputs.py`. Fixtures committed as tracked content (`549ce63`); canonical zero-failure line reconfirmed at the current branch tip (`53449b9`, gate 6: `npm test` → 3925 passed / 78 skipped / 0 failed — `baseline-p1b-p3-2026-09-19.md`). The other 1 of the originally-observed 34 `npm test` failures (the WS1 single-tracker allowlist gap) was closed earlier by `2b7d33a`, not this line — that failure was never a "gitignored replay fixtures" issue and had no separate STATUS.md line of its own.
-- CANONICAL LINE UPDATE (2026-09-19, zero-leftover-finish pass) — `npm test` → **3931
-  passed / 78 skipped / 0 failed**, superseding the 3925/78/0 line recorded above at
-  `53449b9`. The +6 tests arrive with `ws2-44-zip-blob-leak`'s merge (`673a3b0`,
-  `src/services/zipAssetMerge.test.ts`) — no defect, no new open item. Not a STATUS.md
-  line closure on its own: no prior open line named this leak (grepped `ws2-44`,
-  `zipAssetMerge`, `leak` — zero hits before this merge), so there is nothing to close,
-  only the canonical count to carry forward. Cap arithmetic unaffected — this is a test-
-  count note, not a Next-Tasks/Open-Bugs line.
+- CANONICAL LINE UPDATE (2026-09-20, Wave 1 landing on `main` @ merge `3c3868e`) — `npm test` → **3992 passed / 78 skipped / 0 failed** (262 test files passed), superseding the 3931/78/0 line. Identity: `npm run lint` ≡ `tsc --noEmit`.
 - [OPEN · NON-BLOCKING] 10 local `archive/wt-*-2026-09-14` branches, none pushed to origin
 - SaaS target architecture (integration tip at record time `e8ffb6b`, one commit before docs tip `c463814`; branch now merged to `main` @ `42988f1`) — `docs/architecture/saas-target-architecture.md`, Round 28, commit `06c67a3`
 - Cloud ASR and alignment plan (branch `ws-cloud-asr-plan` @ `eb1c4fa`, merged to `main` @ `42988f1`) — `docs/architecture/cloud-asr-plan.md`
