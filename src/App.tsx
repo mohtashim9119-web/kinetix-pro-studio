@@ -117,8 +117,9 @@ import {
 import {
   AUTO_DETECT, readNewProjectDefaults, NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON,
 } from './services/appDefaults';
-import { runForcedAlignmentForSync } from './services/forcedAlignmentRun';
+import { runForcedAlignmentForSync, type FaFailureKind, type FaRunResult } from './services/forcedAlignmentRun';
 import { runFaPreflight } from './services/faPreflight';
+import { saveFaPause, readFaPause, clearFaPause, type FaPauseRecord } from './services/faSyncPauseStore';
 import {
   detectUnspokenScriptSegmentsFromWhisper,
   applyUnspokenScriptGate,
@@ -174,11 +175,12 @@ import {
   buildLockFindingLogEntries,
   buildLockRefusedLogEntry,
   mintSyncLogId,
-  // WS1 Session J — rule-firing / engine / FA-fallback log builders.
+  // WS1 Session J — rule-firing / engine log builders.
   buildSyncEngineEntry,
-  buildFaFallbackEntry,
+  buildFaPausedEntry,
   buildFaPreflightEntry,
   buildFaGateClosedEntry,
+  buildFaUserChoseWhisperEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -272,6 +274,7 @@ import { ReviewMappingModal } from './components/ReviewMappingModal';
 import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
 import { SyncLoadingOverlay } from './components/SyncLoadingOverlay';
+import { SyncPausedDialog } from './components/SyncPausedDialog';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
 );
@@ -1820,6 +1823,26 @@ export default function App() {
     catch { return 0; }
   });
   const [isProcessing, setIsProcessing] = useState(false);
+  // plan-v3 item 4 — the currently-shown SyncPausedDialog's record, or null
+  // when no run-level FA failure is awaiting an answer. Driven by
+  // `faSyncPauseStore.ts` (restart-safe, app/session-scoped) so a pause the
+  // user didn't answer before closing the app re-presents — see the
+  // hydration effect below.
+  const [faPauseDialog, setFaPauseDialog] = useState<FaPauseRecord | null>(null);
+  // plan-v3 item 4 — consumed ONCE by the very next handleApplySyncFromFiles
+  // call, then reset to null. Set by the SyncPausedDialog's "continue with
+  // Whisper" action so that ONE retry skips FA even though the project's own
+  // faHighPrecisionSync toggle stays ON — a one-off run choice, never a
+  // silent standing default (see forcedAlignmentRun.ts's FaDegradedReason
+  // 'user-chose-whisper' doc comment). Carries the ORIGINAL pause reason
+  // (not just a boolean) so the log entry can say what was actually skipped.
+  const faForceWhisperOnceRef = useRef<FaFailureKind | null>(null);
+  // plan-v3 item 5 — whole-run cancel. A fresh controller is created at the
+  // start of every handleApplySyncFromFiles call and overwrites this ref
+  // unconditionally, so the Cancel button always aborts the CURRENTLY
+  // in-flight run; a stale reference to an already-finished run's controller
+  // is harmless (nothing still listens to its signal).
+  const syncAbortControllerRef = useRef<AbortController | null>(null);
   // D15 fix — restore the persisted zoom level instead of always starting at the
   // 0.5 midpoint, so a raw pixel timelineScrollLeft (persisted at whatever zoom
   // was active) maps back to the same timeline position on reload.
@@ -2537,6 +2560,19 @@ export default function App() {
       setIsHydrating(false);
     })();
   }, []);
+
+  // plan-v3 item 4 — restart-safe re-presentation. Runs whenever hydration
+  // finishes and whenever the active project changes (switch, or a fresh
+  // hydration resuming the last-opened one) — covers both "closed the app
+  // mid-pause, reopened it" and "switched to a different project that has
+  // its own unanswered pause" in the same check. `project.id` is empty on
+  // the pre-hydration default project, so the read is skipped until a real
+  // project is loaded.
+  useEffect(() => {
+    if (isHydrating || !project.id) return;
+    const pending = readFaPause(project.id);
+    if (pending) setFaPauseDialog(pending);
+  }, [project.id, isHydrating]);
 
   const { saveNow, saveSnapshot, lastSavedAt, saveError } = usePersistProject(project, !isHydrating);
 
@@ -3685,6 +3721,26 @@ export default function App() {
     syncMark('applySync:entry', { reset: true });
     setIsProcessing(true);
 
+    // plan-v3 item 4 — a fresh Apply Sync supersedes whatever a PRIOR run
+    // was asking about; clear it before this run does anything else, so a
+    // stale pause never re-presents once a newer run is underway.
+    clearFaPause(projectRef.current.id);
+    setFaPauseDialog(null);
+
+    // plan-v3 item 5 — whole-run cancel. Fresh per call; overwrites the ref
+    // unconditionally so the overlay's Cancel button (and Escape) always
+    // reach the CURRENTLY in-flight run. See the ref's own doc comment.
+    const syncAbortController = new AbortController();
+    syncAbortControllerRef.current = syncAbortController;
+    // plan-v3 item 4 — consumed once, for this call only. Read immediately
+    // and reset synchronously so a concurrent/later call (there shouldn't be
+    // one — Apply Sync is single-flight — but this makes it true by
+    // construction rather than by scheduling luck) never inherits a stale
+    // one-shot choice it didn't ask for. Non-null names the reason the
+    // ORIGINAL paused run gave, for the log entry below.
+    const forceWhisperReason = faForceWhisperOnceRef.current;
+    faForceWhisperOnceRef.current = null;
+
     // WS-logs — one id for every entry this run emits, plus one timestamp so a
     // run's entries sort together rather than smearing across the ms boundary
     // of a long sync. Minted before the first await so it's stable end-to-end.
@@ -3708,6 +3764,22 @@ export default function App() {
           abortReason: message,
         },
       ));
+    };
+
+    /** plan-v3 item 5 — the one shared exit for every cancellation check
+     *  below. Logs via the SAME `logSyncAbort` every other abort path uses
+     *  (so a cancelled run is visible in the Sync Log exactly like any other
+     *  abort) and returns before any `setProject` that would commit segments
+     *  — "cancel is free and leaves the project untouched" is therefore true
+     *  by the same construction every pre-existing abort path already relies
+     *  on, not a new mechanism. `totalSegments` defaults to 0 since most call
+     *  sites below run before segments are parsed; the one call site after
+     *  parsing passes the real count. */
+    const cancelledResult = (totalSegments = 0): ApplySyncResult => {
+      console.warn('[sync] cancelled by user');
+      logSyncAbort('Sync cancelled.', totalSegments);
+      setIsProcessing(false);
+      return { ok: false, message: 'Sync cancelled.' };
     };
 
     // 1. Read text files — strip RTF markup if the file is an .rtf document
@@ -3787,6 +3859,15 @@ export default function App() {
       setIsProcessing(false);
       return { ok: false, message: NO_VOICEOVER_MESSAGE };
     }
+
+    // plan-v3 item 5 — STAGING boundary. Everything above this point was
+    // asset persistence (files already written to durable storage by
+    // persistFileToAsset et al, independent of the project commit below); a
+    // cancel here returns before any setProject, so the project's own
+    // assets/voiceoverId are untouched even though the persisted BYTES stay
+    // on disk (the same orphan the asset store's own GC already tolerates,
+    // not a new leak this cancel introduces).
+    if (syncAbortController.signal.aborted) return cancelledResult();
 
     // 3. Get audio duration from the voiceover asset we just created (or existing)
     let audioDuration = audioRef.current?.duration || 0;
@@ -3924,29 +4005,38 @@ export default function App() {
       // default for a project expressing no preference was flipped back to
       // OFF by WS1 Session H, value-only (`faGate.ts`'s
       // `FA_PROJECT_DEFAULT_ON` doc comment has the exact flip-back
-      // condition) — when the gate is off, `faTokens` stays null and this
-      // whole branch is a no-op, so
-      // behavior is byte-identical to before this branch existed. When the
-      // gate is on, `runForcedAlignmentForSync` fails CLEAN on any error (no
-      // model present, hash mismatch, inference error, unsupported language,
-      // empty chunk plan) — it returns null rather than throwing, so a
-      // failed FA attempt always falls through to the cached Whisper tokens
-      // below, never aborts the sync and never half-applies timing.
+      // condition).
+      //
+      // plan-v3 item 3 (D24) — this branch no longer has a silent fallback.
+      // `faRun` is ALWAYS a fully-typed `FaRunResult`, never `null`: a
+      // closed gate (or a one-shot "use Whisper" answer from a prior pause,
+      // `forceWhisperReason`) synthesizes an explicit `'degraded'` result
+      // rather than skipping FA with no record of the decision. When the
+      // gate is open, `runForcedAlignmentForSync` PAUSES on a run-level
+      // failure rather than silently committing Whisper timing — see the
+      // 'paused'/'cancelled' handling immediately below, which returns
+      // before anything downstream of this point ever runs.
       //
       // Read off `projectRef.current`, the same snapshot every other input in
       // this branch comes from — never off the module-global it replaced, so
       // two projects open in two windows can disagree.
-      const faGateOpen = isFaGateOpenForProject(projectRef.current);
+      const faGateOpen = isFaGateOpenForProject(projectRef.current) && forceWhisperReason === null;
       // WS1 Session M — FA readiness PRE-FLIGHT, before inference. When the gate
       // is open, report up front whether forced alignment can actually run
       // (runtime library load, model presence, resolved language) so a run that
       // is going to fall back is visible as such BEFORE the multi-minute sync,
       // not only after. Purely observational: it never changes whether FA is
-      // attempted — `runForcedAlignmentForSync` stays the single fail-clean
+      // attempted — `runForcedAlignmentForSync` stays the single typed
       // authority on what actually happened.
       if (faGateOpen) {
         const preflight = await runFaPreflight(projectRef.current);
         ruleLogEntries.push(buildFaPreflightEntry(syncRunId, preflight, syncRunAt));
+      } else if (forceWhisperReason !== null) {
+        // plan-v3 item 4 — the user answered a SyncPausedDialog with "use
+        // Whisper timing" for this one run. Distinct from the gate-closed
+        // entry below: the toggle is still ON, this is a one-off, EXPLICIT
+        // choice, not a silent standing default.
+        ruleLogEntries.push(buildFaUserChoseWhisperEntry(syncRunId, forceWhisperReason, syncRunAt));
       } else if (isFaCapable()) {
         // WS2 Step 3 A5 (bug 2 visibility fix) — the gate being closed used to
         // produce NO Sync Log signal at all (this whole block was skipped).
@@ -3955,7 +4045,7 @@ export default function App() {
         // FA-capable (plain browser dev server) — there is nothing to turn on.
         ruleLogEntries.push(buildFaGateClosedEntry(syncRunId, syncRunAt));
       }
-      const faRun = faGateOpen
+      const faRun: FaRunResult = faGateOpen
         ? await runForcedAlignmentForSync(
             voiceoverAsset!,
             anchorTimed,
@@ -3965,32 +4055,77 @@ export default function App() {
             // `language` when set, else Whisper's own `-l auto` detection. The
             // auto path used to pass `projectRef.current.language` alone, which
             // could be undefined even after a correct detection, sending the run
-            // to an 'unsupported-language' fallback the pre-flight now catches
+            // to an 'unsupported-language' pause the pre-flight now catches
             // first.
             resolveFaLanguage(projectRef.current),
+            // plan-v3 item 5 — lets a whole-run cancel reach FA's own chunk
+            // loop via `fa_cancel`, and turns an in-flight FA run into
+            // `{status:'cancelled'}` rather than a 'paused' run-level
+            // failure.
+            syncAbortController.signal,
           )
-        : null;
-      const faTokens = faRun?.status === 'ok' ? faRun.tokens : null;
-      // WS1 Session J — the FA fallback, made durable. `runForcedAlignment
-      // ForSync` is fail-clean by contract and stays so; this only records
-      // WHICH failure path fired, and only when the gate was open (a
-      // gate-closed run never attempted FA and owes no fallback entry — the
-      // engine entry below already says it ran on Whisper).
-      if (faRun?.status === 'fallback') {
-        ruleLogEntries.push(buildFaFallbackEntry(syncRunId, faRun.reason, faRun.detail, syncRunAt));
+        : {
+            status: 'degraded',
+            reason: forceWhisperReason !== null ? 'user-chose-whisper' : 'gate-closed',
+            tokens: projectRef.current.transcriptTokens!,
+            unscriptedRuns: [],
+          };
+
+      // plan-v3 item 5 — cancellation must never present as a failure. The
+      // run holds nothing (FA's own IPC layer already unwound on `fa_cancel`)
+      // so this returns immediately, same as every other cancel check.
+      if (faRun.status === 'cancelled') return cancelledResult(newSegmentsRaw.length);
+
+      // plan-v3 items 3/4 (D24) — a run-level FA failure PAUSES rather than
+      // silently committing Whisper timing. Persist the ask (restart-safe,
+      // `faSyncPauseStore.ts`), log it, show `SyncPausedDialog`, and return
+      // BEFORE the commit below — nothing about this project changes.
+      if (faRun.status === 'paused') {
+        const pauseRecord: FaPauseRecord = {
+          projectId: projectRef.current.id,
+          syncRunId,
+          reason: faRun.reason,
+          detail: faRun.detail,
+          timestamp: syncRunAt,
+        };
+        saveFaPause(pauseRecord);
+        setProject(prev => appendSyncLogEntries(
+          prev,
+          [buildFaPausedEntry(syncRunId, faRun.reason, faRun.detail, syncRunAt)],
+          {
+            syncRunId,
+            timestamp: syncRunAt,
+            totalSegments: newSegmentsRaw.length,
+            coveredSegments: 0,
+            skippedSegments: 0,
+            aborted: true,
+            abortReason: 'fa-paused',
+          },
+        ));
+        setFaPauseDialog(pauseRecord);
+        setIsProcessing(false);
+        return { ok: false, message: 'Sync paused — waiting for you to choose how to proceed.' };
       }
+
+      // Only 'ok' and 'degraded' remain — both carry real tokens, so
+      // downstream code never sees a null/missing timing source. Only 'ok'
+      // is genuine forced-alignment output; 'degraded' tokens are Whisper's
+      // (gate-closed or a one-shot "use Whisper" choice) — see
+      // `FaDegradedReason`'s own doc comment for why the two are never
+      // conflated.
+      const faTokens = faRun.tokens;
       // A silence-detection failure INSIDE the FA pass is distinct from
       // `aligned.silenceError` below: it degraded the CHUNK PLAN (built
       // against zero silences) rather than the boundary snap, and was
       // console-only until now.
-      if (faRun?.status === 'ok' && faRun.silenceError !== undefined) {
+      if (faRun.status === 'ok' && faRun.silenceError !== undefined) {
         ruleLogEntries.push(buildSilenceErrorEntry(syncRunId, faRun.silenceError, syncRunAt));
       }
       // R-G: 'forced-alignment' > 'whisper' > 'estimate', demote-only —
       // stated explicitly by this branch (the code path that actually
       // produced `faTokens`), never inferred downstream.
-      const anchorSourceForRun: 'whisper' | 'forced-alignment' = faTokens ? 'forced-alignment' : 'whisper';
-      if (faTokens) faWordTimingsResult = faTokens;
+      const anchorSourceForRun: 'whisper' | 'forced-alignment' = faRun.status === 'ok' ? 'forced-alignment' : 'whisper';
+      if (faRun.status === 'ok') faWordTimingsResult = faTokens;
       // WHICH ENGINE RAN — unconditional, so its absence is never ambiguous.
       ruleLogEntries.push(buildSyncEngineEntry(
         syncRunId,
@@ -4013,6 +4148,12 @@ export default function App() {
         stagedUnscriptedRuns = faRun.unscriptedRuns;
         unscriptedRunLogInsertAt = ruleLogEntries.length;
       }
+
+      // plan-v3 item 5 — MATCHER boundary. FA (if it ran) already committed
+      // to its own outcome above; a cancel from here on stops before the
+      // matcher/rules pass does any work, same guarantee as every earlier
+      // check.
+      if (syncAbortController.signal.aborted) return cancelledResult(newSegmentsRaw.length);
 
       const aligned = await alignFromCache(
         voiceoverAsset!,
@@ -4627,6 +4768,12 @@ export default function App() {
       if (residualViolations.length > 0) logResidualOrderingViolations(residualViolations);
     }
 
+    // plan-v3 item 5 — COMMIT boundary, the last and most important check:
+    // everything above this point computed values into LOCAL variables only
+    // (lockRestoredSegments, allAssets, etc.) — nothing has touched
+    // `project` yet. A cancel here is still completely free.
+    if (syncAbortController.signal.aborted) return cancelledResult(lockRestoredSegments.length);
+
     // 8. Single atomic state update — segments are already final.
     //    New-layer headings (Path B Decision 2) never move on re-sync; only
     //    clamp+flag any whose fixed timestamp now exceeds the resynced audio.
@@ -4764,6 +4911,46 @@ export default function App() {
     // is gone. The conservative direction is the recoverable one.
     return { ok: true };
   };
+
+  // plan-v3 item 4 — SyncPausedDialog's three answers. Each clears the
+  // dialog/persisted record FIRST (so a click mid-re-run can't leave a
+  // stale record around if the retry itself gets cancelled) then re-drives
+  // handleApplySyncFromFiles. No staged files are re-supplied — the function
+  // falls back to the project's already-committed script/scene/voiceover
+  // (the unapplied-transcript recovery handler below relies on the same fallback),
+  // which is correct for a re-sync of a project that has synced before.
+  // (Known gap, not solved here: a pause on a project's very FIRST-ever sync
+  // — new script/scene/voiceover staged and never yet committed — cannot
+  // retry after an app restart from this dialog alone, since the raw staged
+  // files themselves are not restart-safe; the user would re-stage and run
+  // Apply Sync fresh. Solving that would mean persisting staged input
+  // remnants somewhere durable, which starts to look like `projectStore`
+  // entanglement — exactly what this item's brief says to stop and report
+  // on rather than force.)
+  const handleSyncPausedRetry = useCallback((): void => {
+    setFaPauseDialog(null);
+    clearFaPause(liveProjectRef.current.id);
+    void handleApplySyncFromFiles();
+  }, []);
+
+  const handleSyncPausedUseWhisper = useCallback((): void => {
+    setFaPauseDialog(null);
+    clearFaPause(liveProjectRef.current.id);
+    faForceWhisperOnceRef.current = faPauseDialog?.reason ?? 'inference-failed';
+    void handleApplySyncFromFiles();
+  }, [faPauseDialog]);
+
+  const handleSyncPausedCancel = useCallback((): void => {
+    setFaPauseDialog(null);
+    clearFaPause(liveProjectRef.current.id);
+  }, []);
+
+  // plan-v3 item 5 — the overlay's Cancel control and its Escape handler
+  // both funnel through this one function, so there is exactly one place
+  // that decides what "cancel" means.
+  const handleCancelSync = useCallback((): void => {
+    syncAbortControllerRef.current?.abort();
+  }, []);
 
   // -------------------------------------------------------------------------
   // WS2 T4.7 Requirement 3 — unapplied-transcript recovery.
@@ -7870,7 +8057,18 @@ export default function App() {
         </div>
       )}
 
-      <SyncLoadingOverlay isProcessing={isProcessing} />
+      <SyncLoadingOverlay isProcessing={isProcessing} onCancel={handleCancelSync} />
+
+      {faPauseDialog && (
+        <SyncPausedDialog
+          reason={faPauseDialog.reason}
+          detail={faPauseDialog.detail}
+          timestamp={faPauseDialog.timestamp}
+          onRetry={handleSyncPausedRetry}
+          onUseWhisper={handleSyncPausedUseWhisper}
+          onCancel={handleSyncPausedCancel}
+        />
+      )}
 
     </div>
   );

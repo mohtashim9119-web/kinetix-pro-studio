@@ -81,7 +81,15 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // NOT red: the sync succeeded and the timeline is usable, but the user asked
   // for forced alignment and got Whisper timing, which they would otherwise
   // have no way to find out.
+  // RETIRED (plan-v3 item 3) — nothing produces this type any more; kept only
+  // so a pre-Wave-1 persisted project's old entries still render. See
+  // 'fa-paused' below for its replacement.
   'fa-fallback': { label: 'FA FALLBACK', className: 'bg-orange-500/10 text-orange-400 border-orange-500/30' },
+  // plan-v3 items 3/4 — the run STOPPED and is waiting on the user
+  // (SyncPausedDialog), not a silent Whisper substitution. Purple: distinct
+  // from both the retired orange fallback badge and the red 'abort' badge —
+  // this is neither a quiet degradation nor a dead run, it is a question.
+  'fa-paused': { label: 'FA PAUSED', className: 'bg-purple-500/10 text-purple-400 border-purple-500/30' },
   // WS1 Session M — the FA readiness pre-flight. Neutral badge; the entry's own
   // severity (info when ready, warning when not) and detail line carry the
   // meaning. Emitted before inference so the user sees readiness up front.
@@ -174,7 +182,7 @@ function formatDetailLine(entry: SyncLogEntry): string | undefined {
   // one entry a user most needs the cause of. `errorMessage` is the raw
   // backend text; `fixHint` is the actionable next step. Both defended for
   // pre-Session-M entries that carry neither.
-  if (entry.type === 'fa-fallback') {
+  if (entry.type === 'fa-fallback' || entry.type === 'fa-paused') {
     const detail = entry.errorMessage?.trim();
     const fix = entry.fixHint?.trim();
     const parts: string[] = [];

@@ -663,23 +663,28 @@ export type SyncLogEntryType =
    *  severity taxonomy reserves 'warning' for "the user should do something",
    *  and there is nothing for them to do here. */
   | 'rule-correction'
-  /** 'fa-fallback' — WS1 Session J. The FA gate was OPEN for this project and
-   *  forced alignment did NOT produce the timing: the run committed on Whisper
-   *  tokens instead. Carries `reason` (which of the failure paths fired) and,
-   *  where the failure came back from the IPC layer, `errorMessage`.
-   *
-   *  THIS IS THE SPECIFIC HOLE IT CLOSES. `runForcedAlignmentForSync` is
-   *  fail-clean by contract — every failure returns rather than throwing, and
-   *  the sync proceeds. That is correct behaviour and stays. But it made a run
-   *  where FA silently failed INDISTINGUISHABLE, in the log, from a run where
-   *  FA succeeded: the user got Whisper timing while believing they had
-   *  forced-alignment timing, and no persisted artifact disagreed. Fail-clean
-   *  must not mean fail-silent.
-   *
-   *  severity:'warning', unlike 'rule-correction': the user asked for
-   *  high-precision sync in Project Settings and did not get it, and the
-   *  fixHint names what to check. */
+  /** 'fa-fallback' — RETIRED, WS1 Session J → plan-v3 Wave 1 item 3 (D24).
+   *  Nothing produces this type any more — `FaRunResult` has no `'fallback'`
+   *  arm, so a run-level FA failure can no longer silently commit Whisper
+   *  timing. Kept in this union (and in `SyncLogPanel`'s renderer) ONLY so a
+   *  persisted project's pre-Wave-1 log entries still render instead of
+   *  falling through to the generic 'info' badge. See 'fa-paused' below for
+   *  the entry type that replaced it. */
   | 'fa-fallback'
+  /** 'fa-paused' — plan-v3 Wave 1 items 3/4 (D24). A run-level FA failure (or
+   *  a precondition equivalent to one — unsupported language, empty chunk
+   *  plan, zero words, any typed IPC failure kind) STOPPED the run rather
+   *  than silently committing Whisper timing. Carries `reason`
+   *  (`FaFailureKind`, `forcedAlignmentRun.ts`) and, where the failure came
+   *  back from the IPC layer, `errorMessage`. The run holds — nothing is
+   *  committed — and `SyncPausedDialog` asks the user how to proceed; a
+   *  restart-safe record of the pause lives in `faSyncPauseStore.ts` (app/
+   *  session-scoped local storage, NOT `projectStore`) so the ask
+   *  re-presents if the app closes before the user answers.
+   *
+   *  severity:'warning': the user turned high-precision sync ON for this
+   *  project and the run could not honour it without their input. */
+  | 'fa-paused'
   /** 'fa-preflight' — WS1 Session M. Emitted ONCE per Apply Sync when the FA
    *  gate is OPEN, BEFORE inference runs, recording whether forced alignment is
    *  actually ready: runtime library load, model presence, and the resolved

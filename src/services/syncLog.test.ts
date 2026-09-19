@@ -30,8 +30,10 @@ import {
   buildLockRefusedLogEntry,
   makeSyncLogEntry,
   buildSyncEngineEntry,
-  buildFaFallbackEntry,
+  buildFaPausedEntry,
+  buildFaUserChoseWhisperEntry,
   buildFaPreflightEntry,
+  buildFaGateClosedEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -1034,29 +1036,56 @@ describe('buildSyncEngineEntry — which engine ran', () => {
   });
 });
 
-describe('buildFaFallbackEntry — fail-clean stops meaning fail-silent', () => {
+describe('buildFaPausedEntry — plan-v3 item 3/4: pause replaces silent substitution', () => {
   it('records the reason as a queryable field, not only inside the message', () => {
-    const entry = buildFaFallbackEntry(RUN_ID, 'inference-error', 'model hash mismatch', AT);
-    expect(entry.type).toBe('fa-fallback');
-    expect(entry.reason).toBe('inference-error');
+    const entry = buildFaPausedEntry(RUN_ID, 'inference-failed', 'model hash mismatch', AT);
+    expect(entry.type).toBe('fa-paused');
+    expect(entry.reason).toBe('inference-failed');
     expect(entry.owningRule).toBe('FA');
     expect(entry.errorMessage).toBe('model hash mismatch');
   });
 
-  it('is a WARNING with a fix hint — the user asked for FA and did not get it', () => {
-    const entry = buildFaFallbackEntry(RUN_ID, 'unsupported-language', 'zz', AT);
+  it('is a WARNING with a fix hint — the user asked for FA and the run stopped', () => {
+    const entry = buildFaPausedEntry(RUN_ID, 'unsupported-language', 'zz', AT);
     expect(entry.severity).toBe('warning');
     expect(entry.fixHint).toBeTruthy();
   });
 
-  it('gives every failure path its own distinguishable text', () => {
-    const reasons = ['unsupported-language', 'empty-chunk-plan', 'zero-words', 'inference-error'] as const;
-    const messages = reasons.map(r => buildFaFallbackEntry(RUN_ID, r, undefined, AT).message);
+  it('gives every FaFailureKind its own distinguishable text — exhaustive over the type, not just a sample', () => {
+    const reasons = [
+      'unsupported-language', 'empty-chunk-plan', 'zero-words', 'model-not-found',
+      'model-hash-mismatch', 'runtime-load-failed', 'audio-stage-failed',
+      'inference-failed', 'already-running', 'out-of-memory', 'offline',
+    ] as const;
+    const messages = reasons.map(r => buildFaPausedEntry(RUN_ID, r, undefined, AT).message);
     expect(new Set(messages).size).toBe(reasons.length);
   });
 
   it('omits errorMessage entirely when there is no backend detail to carry', () => {
-    expect(buildFaFallbackEntry(RUN_ID, 'zero-words', undefined, AT).errorMessage).toBeUndefined();
+    expect(buildFaPausedEntry(RUN_ID, 'zero-words', undefined, AT).errorMessage).toBeUndefined();
+  });
+
+  it('says the run is WAITING, never that it silently used Whisper — the exact hole plan-v3 item 3 closes', () => {
+    const entry = buildFaPausedEntry(RUN_ID, 'zero-words', undefined, AT);
+    expect(entry.message).not.toMatch(/used whisper/i);
+    expect(entry.message).toMatch(/paused|waiting/i);
+  });
+});
+
+describe('buildFaUserChoseWhisperEntry — plan-v3 item 4: an explicit, logged choice', () => {
+  it('is distinct from buildFaGateClosedEntry\'s own message even though it shares the badge type', () => {
+    const chose = buildFaUserChoseWhisperEntry(RUN_ID, 'zero-words', AT);
+    const gateClosed = buildFaGateClosedEntry(RUN_ID, AT);
+    expect(chose.type).toBe('fa-gate-closed');
+    expect(chose.message).not.toBe(gateClosed.message);
+    expect(chose.severity).toBe('warning');
+    expect(gateClosed.severity).toBe('info');
+  });
+
+  it('names the reason the ORIGINAL paused run gave', () => {
+    const entry = buildFaUserChoseWhisperEntry(RUN_ID, 'model-not-found', AT);
+    expect(entry.reason).toBe('model-not-found');
+    expect(entry.message).toContain('model-not-found');
   });
 });
 

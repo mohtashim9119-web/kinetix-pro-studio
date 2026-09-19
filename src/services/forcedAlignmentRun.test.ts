@@ -5,8 +5,8 @@
 
 // ---------------------------------------------------------------------------
 // WS1 Task 5, docs/archive/history/work-in-progress.md §11 item 1 — the production
-// forced-alignment caller's own FAIL-CLEAN contract: `runForcedAlignmentForSync`
-// must resolve (never throw) on every failure a real gate-on-without-a-model
+// forced-alignment caller's own contract: `runForcedAlignmentForSync` must
+// resolve (never throw) on every failure a real gate-on-without-a-model
 // session will hit — unsupported language, an empty chunk plan, a Tauri command
 // rejection (the `ModelNotFound`/`InferenceFailed`/`ModelHashMismatch` shapes
 // `fa.rs`/`fa_production.rs` actually return with no model present), and an
@@ -15,13 +15,16 @@
 // session's brief) — every branch below is exercised explicitly, not just the
 // happy path.
 //
-// WS1 SESSION J WIDENED WHAT IS ASSERTED. The contract used to be satisfied by
-// returning `null`, and these tests asserted exactly that. But `null` is the
-// same answer for all five failure paths, which is how a run that silently fell
-// back to Whisper timing became indistinguishable from a clean FA run in the
-// persisted log. The contract now additionally requires the result to NAME the
-// path that fired, so each test below asserts the reason, not just the absence
-// of tokens. "Never throws" is unchanged and still asserted.
+// PLAN-V3 WAVE 1 ITEM 3 (D24) REMOVED THE `'fallback'` ARM. Every failure
+// this module used to resolve as `{status:'fallback', reason}` (a SILENT
+// Whisper substitution the caller could not tell apart from success without
+// reading the log) now resolves `{status:'paused', reason, resumable:true}`
+// instead — the run holds, nothing commits, and the caller must ask the
+// user (`SyncPausedDialog`). "Never throws" is unchanged; what changed is
+// that there is no more branch a caller can silently treat as ok. Item 5
+// added `signal`-driven cancellation on top of the same never-throws
+// contract: an aborted run resolves `{status:'cancelled'}`, never as a
+// failure.
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -121,27 +124,27 @@ beforeEach(() => {
   mockComputeUnscriptedRuns.mockReturnValue([]);
 });
 
-describe('runForcedAlignmentForSync — fail-clean fallback, and the reason it names', () => {
-  it('falls back on an unsupported language, naming it, without ever calling invoke', async () => {
+describe('runForcedAlignmentForSync — pauses (never falls back), and names why', () => {
+  it('pauses on an unsupported language, naming it, without ever calling invoke', async () => {
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'zz');
-    expect(result).toEqual({ status: 'fallback', reason: 'unsupported-language', detail: 'zz' });
+    expect(result).toEqual({ status: 'paused', reason: 'unsupported-language', detail: 'zz', resumable: true });
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it('falls back when project.language is undefined, without ever calling invoke', async () => {
+  it('pauses when project.language is undefined, without ever calling invoke', async () => {
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, undefined);
-    expect(result).toEqual({ status: 'fallback', reason: 'unsupported-language', detail: 'undefined' });
+    expect(result).toEqual({ status: 'paused', reason: 'unsupported-language', detail: 'undefined', resumable: true });
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it('falls back when the chunk plan is empty, without ever calling invoke', async () => {
+  it('pauses when the chunk plan is empty, without ever calling invoke', async () => {
     mockComputeFaChunkPlan.mockReturnValue([]);
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
-    expect(result).toEqual({ status: 'fallback', reason: 'empty-chunk-plan' });
+    expect(result).toEqual({ status: 'paused', reason: 'empty-chunk-plan', resumable: true });
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it('falls back when invoke rejects — the real shape of a gate-on-without-a-model run (ModelNotFound/InferenceFailed)', async () => {
+  it('pauses with reason model-not-found when invoke rejects with that typed kind — the real shape of a gate-on-without-a-model run', async () => {
     // The model lookup that can fail this way lives in fa_align_production
     // (resolve_wav_and_align), not in fa_stage_audio_raw (which only writes
     // a file) — so staging succeeds and the alignment call is the one that
@@ -151,32 +154,55 @@ describe('runForcedAlignmentForSync — fail-clean fallback, and the reason it n
       throw { kind: 'modelNotFound', message: 'no model.onnx found for language "en"' };
     });
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
-    expect(result).toMatchObject({ status: 'fallback', reason: 'inference-error' });
+    // The typed `kind` on the rejected FaError is what makes this
+    // 'model-not-found' rather than the generic 'inference-failed' catch-all
+    // — the exact "split the catch-all at the IPC boundary" fix plan-v3
+    // item 3 asks for at this site (M3.1 site 4).
+    expect(result).toMatchObject({ status: 'paused', reason: 'model-not-found' });
     expect(mockInvoke).toHaveBeenCalledWith('fa_align_production', expect.objectContaining({ language: 'en' }));
   });
 
-  it('carries the backend message through as `detail`, so the log can say WHICH inference error', async () => {
-    // The whole reason 'inference-error' is one member rather than three: no
-    // model / hash mismatch / runtime failure all arrive here, and only this
-    // string tells them apart. Dropping it would put the fallback back to being
-    // unattributable, which is the defect this contract change exists to fix.
+  it('pauses with reason already-running when invoke rejects with that typed kind', async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'fa_stage_audio_raw') return FAKE_STAGED_INPUT_PATH;
+      throw { kind: 'alreadyRunning', message: 'a run is already in flight for this key' };
+    });
+    const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
+    expect(result).toMatchObject({ status: 'paused', reason: 'already-running' });
+  });
+
+  it('pauses with reason audio-stage-failed when fa_stage_audio_raw itself rejects — distinct from an inference failure', async () => {
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'fa_stage_audio_raw') throw 'disk full';
+      throw new Error('should not reach fa_align_production');
+    });
+    const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
+    expect(result).toEqual({ status: 'paused', reason: 'audio-stage-failed', detail: 'disk full', resumable: true });
+  });
+
+  it('carries the backend message through as `detail`, so the log can say WHICH failure — defaults to inference-failed when the channel Error carries no typed kind', async () => {
+    // FaEvent::Error is message-only (no `kind` field) — this is the one
+    // path that genuinely cannot be split further without guessing at
+    // backend prose, matching the old 'inference-error' catch-all's own
+    // documented reasoning.
     mockStageThenAlign((args) => {
       args.onEvent.onmessage({ event: 'Error', data: { message: 'model hash mismatch for "en"' } });
     });
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
     expect(result).toEqual({
-      status: 'fallback',
-      reason: 'inference-error',
+      status: 'paused',
+      reason: 'inference-failed',
       detail: 'model hash mismatch for "en"',
+      resumable: true,
     });
   });
 
-  it('falls back when the run completes with zero words, distinctly from an inference error', async () => {
+  it('pauses when the run completes with zero words, distinctly from an inference failure', async () => {
     mockStageThenAlign((args) => {
       args.onEvent.onmessage({ event: 'Done', data: { words: [] } });
     });
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
-    expect(result).toEqual({ status: 'fallback', reason: 'zero-words' });
+    expect(result).toEqual({ status: 'paused', reason: 'zero-words', resumable: true });
   });
 
   it('never throws even if invoke throws synchronously', async () => {
@@ -185,10 +211,10 @@ describe('runForcedAlignmentForSync — fail-clean fallback, and the reason it n
     });
     await expect(
       runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en'),
-    ).resolves.toMatchObject({ status: 'fallback', reason: 'inference-error' });
+    ).resolves.toMatchObject({ status: 'paused' });
   });
 
-  it('never reports a fallback as a success — no failure path can yield status "ok"', async () => {
+  it('never reports a paused run as a success — no failure path can yield status "ok"', async () => {
     // The property that makes the discriminated result worth having: a caller
     // that branches on `status === 'ok'` cannot be handed tokens from a failed
     // run, whichever path failed.
@@ -206,8 +232,73 @@ describe('runForcedAlignmentForSync — fail-clean fallback, and the reason it n
       mockComputeFaChunkPlan.mockReturnValue([{ startSec: 0, endSec: 1, text: 'hello world' }]);
       setUp();
       const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
-      expect(result.status).toBe('fallback');
+      expect(result.status).toBe('paused');
     }
+  });
+});
+
+describe('runForcedAlignmentForSync — cancellation (plan-v3 item 5)', () => {
+  it('resolves cancelled immediately when the signal is already aborted, without calling invoke', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en', controller.signal);
+    expect(result).toEqual({ status: 'cancelled' });
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('invokes fa_cancel and resolves cancelled — never as a paused failure — when aborted mid-alignment', async () => {
+    const controller = new AbortController();
+    let capturedOnEvent: FakeChannel<unknown> | undefined;
+    mockInvoke.mockImplementation(async (cmd: string, args?: { onEvent: FakeChannel<unknown> }) => {
+      if (cmd === 'fa_stage_audio_raw') return FAKE_STAGED_INPUT_PATH;
+      if (cmd === 'fa_cancel') return undefined;
+      if (cmd === 'fa_align_production') {
+        capturedOnEvent = args!.onEvent;
+        // Never resolves on its own — only the abort settles the outer promise.
+        return new Promise(() => {});
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const resultPromise = runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en', controller.signal);
+    // Let the real awaits between here and fa_align_production actually
+    // being called settle (detectSilences, voiceoverBlob.arrayBuffer(),
+    // fa_stage_audio_raw) — these are real Promise/Blob machinery, not just
+    // one microtask tick, so poll rather than assume a fixed tick count.
+    for (let i = 0; i < 50 && !capturedOnEvent; i++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    expect(capturedOnEvent).toBeDefined();
+    controller.abort();
+    const result = await resultPromise;
+
+    expect(result).toEqual({ status: 'cancelled' });
+    expect(mockInvoke).toHaveBeenCalledWith('fa_cancel', {});
+  });
+
+  it('never falls into a paused-failure result once cancelled, even if a later Error event also arrives', async () => {
+    const controller = new AbortController();
+    mockInvoke.mockImplementation(async (cmd: string, args?: { onEvent: FakeChannel<unknown> }) => {
+      if (cmd === 'fa_stage_audio_raw') return FAKE_STAGED_INPUT_PATH;
+      if (cmd === 'fa_cancel') return undefined;
+      if (cmd === 'fa_align_production') {
+        controller.abort();
+        // A real fa_align_production, once cancelled, rejects with
+        // FaErrorKind::Cancelled rather than sending an Error event — this
+        // asserts the SAME outcome even if a caller's channel handler saw
+        // something else first, since classifyFaError treats a `{kind:
+        // 'cancelled'}` rejection as cancelled regardless of source.
+        args!.onEvent.onmessage({ event: 'Error', data: { message: 'should not win' } });
+        return Promise.reject({ kind: 'cancelled', message: 'cancelled' });
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en', controller.signal);
+    // The abort listener rejects the outer promise FIRST (abort() dispatches
+    // synchronously, before the mock's own onmessage call below it runs), so
+    // this is 'cancelled' outright, not merely "not paused".
+    expect(result).toEqual({ status: 'cancelled' });
   });
 });
 
