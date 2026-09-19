@@ -184,7 +184,27 @@ npx vitest run scripts/ws1-single-tracker.test.ts
 git push origin main; git push origin pre-round28-main
 ```
 
-## T7 / T8
+## T7 — Push
 
-Recorded in the commit that follows this note (push SHAs are not known until the push
-runs); see the session report and the final `git log`.
+| | SHA |
+|---|---|
+| `origin/main` before | `4bd18ce` |
+| `git push origin main` | `4bd18ce..6918f1e  main -> main` — accepted, no rejection |
+| `origin/main` after | `6918f1e` == local `main` |
+| `git push origin pre-round28-main` | "Everything up-to-date" — tag already on origin at `4096d91` |
+
+This note's own commit (`6918f1e`) was the pushed tip; the T7/T8 addendum below is a
+one-line follow-up commit pushed the same way so `origin/main == main` still holds.
+
+## T8 — TRUE-CLEAN-BASELINE checklist
+
+| # | Criterion | Result | Evidence |
+|---|---|---|---|
+| 1 | One app folder on drive | **PASS** | `ls -d *kinetix*` → 1 (`4.kinetix-pro-studio`) |
+| 2 | `git worktree list` = one entry | **PASS** | `…/4.kinetix-pro-studio 6918f1e [main]` |
+| 3 | `git status` clean, +0 −0 | **PASS** | 0 status lines; `git diff HEAD --shortstat` empty |
+| 4 | `origin/main == main` | **PASS** | both `6918f1e` (re-fetched after push) |
+| 5 | Only branch = main, tag intact | **PARTIAL** | tag `pre-round28-main` @ `4096d91`, local == origin ✓. Checked-out branch is `main` and the two active-lane refs are gone ✓. But **16 other local branch refs remain** — T5 authorized deleting exactly `ws1-plan-rewrite` and `ws-cloud-asr-plan`; deleting the rest was not authorized, so not done. Merged (safe `-d` candidates): `ws3-docs-restructure`, `ws3-relink-menu-entry`, `ws3-round27`, `ws3-storage-unified`. Unmerged (need review): `final-crash-audit`, `model-p-editor-work`, `phase-7-sync-audit`, `preserve/indexeddb-project-store`, `session-docs-2a`, `wip/preserve-2026-08-07`, `ws2-44-zip-blob-leak`, `ws3-120fps-preview`, `ws3-docs-baseline`, `ws3-persistence-audit`, `ws3-recovery-ui`, `ws3-win-perf-audit`. |
+| 6 | Stash empty (mirrored) | **PASS** | `git stash list` → 0; 7 patches in `docs/archive/stash-patches/` (`f5d6dcf`, `dcb8f43`) |
+| 7 | Cap 40/40 on record | **PASS** | `baseline-completion-2026-09-19.md:98` — "At cap (40/40), unchanged by this pass." Nothing here changes the count. |
+| 8 | Nothing in T1–T6 touched `src/` or `src-tauri/` | **PASS** | `git diff --name-only cbbbfcb 6918f1e \| grep -E '^(src\|src-tauri)/'` → none. Files touched: `cloud/fixtures/**` (21), this note, `scripts/ws1-single-tracker.test.ts`. Standing fresh-green: `05b011f` (six gates) / `4c1bce7` (lint + npm test, 3925 passed). Single-tracker test re-run green after the allowlist edit; tsc clean. |
