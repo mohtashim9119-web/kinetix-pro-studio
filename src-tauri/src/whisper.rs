@@ -1321,9 +1321,66 @@ mod in_flight_tests {
     // Keys are unique per test: the registry is a process-wide `static` and
     // cargo runs tests in parallel threads, so a shared key would make these
     // tests contend with each other rather than with what they are testing.
+    //
+    // Unique keys are not enough on their own, though: `TERMINAL_BUFFER` is
+    // ALSO a process-wide `static`, capped at `TERMINAL_BUFFER_MAX_ENTRIES`
+    // (16) and evicted globally oldest-first with no notion of which test an
+    // entry belongs to (operator ruling 2026-09-19, plan-v3 item 2 — the
+    // "whisper.rs 16-entry terminal-buffer eviction race"). With ~24 tests
+    // in this module sharing that one map, a test that legitimately writes
+    // past the cap — see `the_retention_cap_evicts_oldest_and_never_grows_
+    // past_the_bound`, below — can evict a live entry a concurrently-running
+    // sibling has buffered and not yet read back, and any two tests with
+    // long-lived entries can otherwise collectively exceed the cap the same
+    // way. `in_flight_test_guard` closes that: every test in this module
+    // takes it for its entire body, so only one is ever touching the shared
+    // statics at a time — mirroring `fa_dev.rs`'s `digest_test_guard` for
+    // its own sibling process-global-memo race.
+    static IN_FLIGHT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn in_flight_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        IN_FLIGHT_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn a_flood_of_evictions_does_not_stomp_a_sibling_tests_live_entry() {
+        // Regression test for the race described above. An `mpsc` handoff
+        // plus a short sleep gives the flood a fair, high-probability shot
+        // at the window between this test's own buffer and read-back — not
+        // a `Barrier`, which would need both threads to hold the (mutually
+        // exclusive) guard at once to rendezvous inside it, impossible once
+        // the guard is actually in place.
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+
+        let flooder = std::thread::spawn(move || {
+            rx.recv().ok();
+            let _guard = in_flight_test_guard();
+            let now = Instant::now();
+            for i in 0..(TERMINAL_BUFFER_MAX_ENTRIES + 5) {
+                buffer_terminal_at(&format!("proj-flood-race-{i}"), done_event(), now, now);
+            }
+        });
+
+        let key = "proj-flood-race-owner";
+        let survived = {
+            let _guard = in_flight_test_guard();
+            buffer_terminal(key, done_event());
+            let _ = tx.send(());
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            take_buffered_terminal(key)
+        };
+
+        flooder.join().unwrap();
+
+        assert!(
+            survived.is_some(),
+            "a sibling test's cap-overflow flood evicted this test's own live entry"
+        );
+    }
 
     #[test]
     fn second_transcription_for_the_same_key_is_refused_not_granted() {
+        let _guard = in_flight_test_guard();
         let key = "proj-refusal";
         let first = try_acquire_transcription(key, noop_sink())
             .expect("the first job must be granted the key");
@@ -1339,6 +1396,7 @@ mod in_flight_tests {
 
     #[test]
     fn the_refusal_message_is_machine_distinguishable_from_other_errors() {
+        let _guard = in_flight_test_guard();
         // The frontend receives every failure in this module as the same
         // `Err(String)`/`WhisperEvent::Error` shape — a spawn failure, a
         // missing model, an ffmpeg transcode failure. Only the prefix lets it
@@ -1360,6 +1418,7 @@ mod in_flight_tests {
 
     #[test]
     fn distinct_keys_stay_independently_concurrent() {
+        let _guard = in_flight_test_guard();
         let a = try_acquire_transcription("proj-conc-a", noop_sink()).expect("a");
         let b = try_acquire_transcription("proj-conc-b", noop_sink())
             .expect("a different project must not be blocked by another's job — refusing \
@@ -1377,6 +1436,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_reattached_page_receives_subsequent_events_and_the_terminal_done() {
+        let _guard = in_flight_test_guard();
         let key = "proj-reload";
         let (first_page, first_log) = recording_channel();
         let sink = sink_for(first_page);
@@ -1415,6 +1475,7 @@ mod in_flight_tests {
 
     #[test]
     fn attach_reports_false_when_no_job_holds_the_key() {
+        let _guard = in_flight_test_guard();
         // Not an error: a job can finish between a page loading and its attach
         // call, and the caller must read that as "nothing running", not "failed".
         assert!(!attach_transcription("proj-nothing-running", Channel::new(|_b| Ok(()))));
@@ -1422,6 +1483,7 @@ mod in_flight_tests {
 
     #[test]
     fn the_entry_is_released_on_success_error_and_panic_paths() {
+        let _guard = in_flight_test_guard();
         // The three exits `whisper_transcribe` actually has. Each is modelled by
         // a scope holding a real guard, because the release mechanism under test
         // is `Drop` — the reason there is no explicit release call in the
@@ -1501,7 +1563,9 @@ mod in_flight_tests {
         emitted
     }
 
-    /// The common case: a job that finished successfully.
+    /// The common case: a job that finished successfully. Callers already
+    /// hold `in_flight_test_guard()` for their whole body — this must NOT
+    /// take it again (the guard's `Mutex` is not reentrant).
     fn run_job_to_done(key: &str) {
         assert!(run_job_to_exit(key, 0), "exit 0 must emit a terminal event");
     }
@@ -1518,6 +1582,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_page_attaching_after_done_fired_receives_the_retained_done() {
+        let _guard = in_flight_test_guard();
         // THE DEFECT THIS PINS. The terminal event fires while the webview is
         // tearing down; the fresh page attaches to a job whose claim is
         // already gone. Before the buffer this returned `false` with the
@@ -1546,6 +1611,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_retained_event_is_delivered_exactly_once() {
+        let _guard = in_flight_test_guard();
         // Deliver-once, stated as the frontend sees it: the first attach is a
         // reattach, the second is "nothing running" and must lead to a fresh
         // transcribe rather than a replay.
@@ -1571,6 +1637,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_retained_event_expires_and_then_reports_no_live_job() {
+        let _guard = in_flight_test_guard();
         // The bound must produce "start a fresh job", never a hang. The clock
         // is injected rather than slept through — a 30s sleep in the suite
         // would be its own defect.
@@ -1606,6 +1673,7 @@ mod in_flight_tests {
 
     #[test]
     fn an_error_terminal_event_is_retained_and_replayed_like_done() {
+        let _guard = in_flight_test_guard();
         // A failed run must reach the reloaded page too: a page told `false`
         // for a job that already failed starts a second one that fails the
         // same way, instead of reporting the failure it could have had.
@@ -1630,6 +1698,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_cancelled_job_retains_nothing() {
+        let _guard = in_flight_test_guard();
         // Exit 143 (SIGTERM, `whisper_cancel`) and 130 (SIGINT) take the
         // silent arm of the terminal `match`: no event is emitted, so
         // `emit_terminal` is never reached and nothing can be retained. The
@@ -1672,6 +1741,7 @@ mod in_flight_tests {
 
     #[test]
     fn the_retention_cap_evicts_oldest_and_never_grows_past_the_bound() {
+        let _guard = in_flight_test_guard();
         // Memory bound, asserted directly on the map. Keys are namespaced to
         // this test, but the cap is global, so the assertion is on the count
         // of THIS test's surviving keys against the cap, and on the identity
@@ -1721,6 +1791,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_reattached_page_resumes_at_the_last_known_percent() {
+        let _guard = in_flight_test_guard();
         // THE DEFECT THIS PINS. Reload at 37%, click Transcribe: the page has
         // no percent of its own (progress is persisted nowhere and a reload is
         // a fresh JS context), so it painted its initial 0% and sat there
@@ -1752,6 +1823,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_job_with_no_progress_yet_replays_nothing() {
+        let _guard = in_flight_test_guard();
         // The complement: during whisper-cli's model load no progress line has
         // been printed, so there is genuinely nothing to resume from.
         // Inventing a 0 here would be indistinguishable from the flicker.
@@ -1768,6 +1840,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_terminal_event_supersedes_a_retained_percent() {
+        let _guard = in_flight_test_guard();
         // Ordering rule. A page attaching after the job finished must receive
         // the Done ALONE — replaying a stale 58% alongside it would drive the
         // bar backwards from finished, and for an Error would show progress
@@ -1794,6 +1867,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_late_progress_cannot_resurrect_a_finished_job() {
+        let _guard = in_flight_test_guard();
         // Provenance is one-directional: once terminal, always terminal. A
         // straggling Progress arriving after Done must not put the entry back
         // into a running-looking state, or the next attach would resume a
@@ -1823,6 +1897,7 @@ mod in_flight_tests {
     // Round 17). Re-run with `--test-threads=1` to get a trustworthy result.
     #[ignore]
     fn a_retained_percent_is_peeked_not_consumed() {
+        let _guard = in_flight_test_guard();
         // Unlike the terminal event, progress is idempotent: two pages
         // attaching in succession (a double reload) must both resume at the
         // real percent. Consuming it would leave the second at 0%.
@@ -1845,6 +1920,7 @@ mod in_flight_tests {
 
     #[test]
     fn an_orphaned_percent_is_never_replayed_without_a_live_job() {
+        let _guard = in_flight_test_guard();
         // A job that died without reaching an emission site (a panic mid-loop)
         // leaves a percent behind with no claim and no terminal event.
         // Replaying it would animate a bar for a job that is gone; the caller
@@ -1867,6 +1943,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_cancelled_job_retains_no_percent_either() {
+        let _guard = in_flight_test_guard();
         let key = "proj-resume-cancelled";
         let sink = noop_sink();
         let guard = try_acquire_transcription(key, sink.clone()).expect("claim");
@@ -1883,6 +1960,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_running_jobs_entry_does_not_age_out_while_it_reports() {
+        let _guard = in_flight_test_guard();
         // The TTL measures SILENCE, not total job length: a transcription can
         // legitimately run far longer than the window, and its percent must
         // still be there for a reload at minute ten. Each update refreshes
@@ -1921,6 +1999,7 @@ mod in_flight_tests {
 
     #[test]
     fn retained_events_for_distinct_keys_stay_independent() {
+        let _guard = in_flight_test_guard();
         // Regression guard on the existing concurrency property, now that a
         // second per-key map exists alongside the registry: two projects'
         // retained events must not consume or evict one another.
@@ -1942,6 +2021,7 @@ mod in_flight_tests {
 
     #[test]
     fn a_live_job_is_still_reattached_and_a_duplicate_still_refused() {
+        let _guard = in_flight_test_guard();
         // Regression guard: the buffer must not have changed either behaviour
         // of the live path. A retained event exists for this key at the same
         // time, so this also pins the interleaving the ordering in
@@ -1985,6 +2065,7 @@ mod in_flight_tests {
 
     #[test]
     fn an_omitted_job_key_collapses_to_one_shared_bucket() {
+        let _guard = in_flight_test_guard();
         // Not a per-call unique key: that would grant every id-less caller a
         // claim and silently disable single-flight for exactly the callers that
         // have not been updated to pass an id yet.
