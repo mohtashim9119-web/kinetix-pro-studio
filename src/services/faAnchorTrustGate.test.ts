@@ -22,6 +22,7 @@ import {
   detectAnchorTrustDefects, applyAnchorTrustCorrections,
   type AnchorTrustAlignment,
 } from './faAnchorTrustGate';
+import { buildAnchorTrustLogEntries } from './syncLog';
 import { CONF_MIN_FALLBACK, SILENCE_MIN_DETECTABLE_SEC, FA_FRAME_SEC } from './syncConstants';
 import type { SilenceInterval } from './silenceDetector';
 import type { TranscriptToken, VideoSegment } from '../types';
@@ -255,5 +256,27 @@ describe('applyAnchorTrustCorrections — Model P', () => {
     const findings = detectAnchorTrustDefects(f.committed, f.alignments, f.tokens, f.silences);
     const dropped = [seg('a', 0, 10.00, 'left'), seg('z', 10.00, 10.00, 'other')];
     expect(applyAnchorTrustCorrections(dropped, findings)[1]!.startTime).toBe(10.00);
+  });
+});
+
+describe('R.14 / R.15 log entries (plan-v3 item 7)', () => {
+  it('a run that triggers R.14 produces an entry naming R.14', () => {
+    const f = placementFixture();
+    const findings = detectAnchorTrustDefects(f.committed, f.alignments, f.tokens, f.silences);
+    expect(findings[0]!.rule).toBe('R.14');
+    const entries = buildAnchorTrustLogEntries('run', findings, f.committed, 1);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.owningRule).toBe('R.14');
+    expect(entries[0]!.message.startsWith('R.14 ')).toBe(true);
+  });
+
+  it('a run that triggers R.15 produces an entry naming R.15', () => {
+    const f = attributionFixture();
+    const findings = detectAnchorTrustDefects(f.committed, f.alignments, f.tokens, f.silences);
+    expect(findings[0]!.rule).toBe('R.15');
+    const entries = buildAnchorTrustLogEntries('run', findings, f.committed, 1);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.owningRule).toBe('R.15');
+    expect(entries[0]!.message.startsWith('R.15 ')).toBe(true);
   });
 });
