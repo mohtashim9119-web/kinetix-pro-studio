@@ -1,0 +1,1833 @@
+From 038654279eb141d63e32dd153d79d4afa9b1bb57 Mon Sep 17 00:00:00 2001
+From: Mohtashim <mohtashim9119@gmail.com>
+Date: Thu, 27 Aug 2026 15:20:55 +0500
+Subject: [PATCH] preserve: IndexedDB project-body store (from stray worktree,
+ unreviewed)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Preserved VERBATIM from uncommitted working-tree state found in
+.claude/worktrees/elated-haibt-ab90e1, based on 2f699ab (branch
+claude/elated-haibt-ab90e1, already fully merged into main). Fixes a real
+reported bug: localStorage.setItem QuotaExceededError on project autosave
+once serialized project JSON reaches ~915,000 chars, because localStorage
+is a single ~5-10 MB budget shared across every project body + registry +
+thumbnails on the origin.
+
+STATUS: NOT rebased onto current main. NOT reviewed. NOT merged. This is a
+preservation commit only (WS2 Step 17 Part 0) — main's docs/history.md
+freeze does not apply to this side branch, so the diff's own history.md
+hunk is included as-is below. Before any merge to main, that hunk MUST be
+relocated to docs/history-2.md per the current docs scheme (this branch
+predates that split and still targets the old docs/history.md).
+
+Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+---
+ docs/history.md                            |  80 ++++++
+ src/App.tsx                                |  52 +++-
+ src/components/ProjectDashboard.tsx        |   4 +-
+ src/dev/buildCheckpoint2Fixture.ts         |   4 +-
+ src/dev/buildPhase5Fixture.ts              |   2 +-
+ src/dev/buildScaleFixture.ts               |   2 +-
+ src/hooks/usePersistProject.ts             |  50 +++-
+ src/services/d1RegressionChecklist.test.ts |  25 +-
+ src/services/faGate.test.ts                |  39 +--
+ src/services/faWordTimingsSchema.test.ts   |  13 +-
+ src/services/projectDataStore.ts           | 116 +++++++++
+ src/services/projectMirrorAdoption.test.ts |  84 +++---
+ src/services/projectStore.ts               | 248 +++++++++++++-----
+ src/services/projectStoreGuard.test.ts     | 289 ++++++++++++---------
+ 14 files changed, 713 insertions(+), 295 deletions(-)
+ create mode 100644 src/services/projectDataStore.ts
+
+diff --git a/docs/history.md b/docs/history.md
+index 173bf59..57a91ea 100644
+--- a/docs/history.md
++++ b/docs/history.md
+@@ -9661,3 +9661,83 @@ separate row allocations.
+ boundary). `cargo test` 31 passed, 0 failed (19 -> 31, +12, exactly the tests added). `npm test`
+ 74 files / 1857 passed / 1 skipped / 0 failed (unchanged). `npm run lint` clean. Golden replay 6/6
+ (unchanged). `git diff --stat` on `Cargo.toml`/`Cargo.lock`: empty (no dependency added).
++
++## Project Persistence — localStorage QuotaExceededError (2026-08-25)
++
++**Report.** A real desktop run (V8 project, ~21 min audio) hit `QuotaExceededError` repeatedly
++on `projectStore.ts`'s debounced autosave once the serialized project reached ~915,000 chars —
++logged (`[Kinetix] FAILED to save project ... QuotaExceededError`) but every edit since the last
++successful save was silently unpersisted from the user's point of view.
++
++**Root cause, confirmed by reading the code rather than reproducing the exact byte count.**
++Two independent defects, both real:
++
++1. **The reporting plumbing already existed and was already discarded.** `saveProject` (WS1
++   Session O) already returned a typed `SaveOutcome` distinguishing `quota-exceeded` from success
++   — but every call site (`usePersistProject.ts`'s debounced autosave and `saveNow`, `App.tsx`'s
++   `handleNewProjectConfirm`) discarded the return value. Worse: `usePersistProject.ts`
++   unconditionally called `setLastSavedAt(ts)` after firing `saveProject`, regardless of whether
++   it succeeded — so the footer's "Saved" label was driven by "a save was attempted," not "a save
++   landed." A failed autosave was **indistinguishable in the UI from a successful one.**
++2. **`localStorage` is a single ~5-10 MB budget shared across every project's JSON, the registry,
++   and per-project thumbnail data URLs on the origin** (the same ceiling already measured
++   elsewhere in this codebase — 20 history snapshots of the largest known corpus project alone is
++   6.02 MB, see the "history persistence" ruling above). A single ~915,000-char project is not
++   itself near that ceiling; it is the write that tips an origin already holding several other
++   projects over the edge. The threshold that actually mattered was never "how big is one
++   project" — it was "how much is already on this origin," which nothing surfaced to the user
++   either.
++
++**Fix — full localStorage → IndexedDB migration for project bodies**, scoped per owner decision
++(the alternative — a visible-warning-only fix — was explicitly declined in favor of removing the
++shared-budget problem at its root, matching the fix already applied to assets (`assetStore.ts`)
++and waveform peaks (`waveformStore.ts`)):
++
++- New `src/services/projectDataStore.ts` — an IndexedDB store (`kinetix-projects` DB,
++  `projects-v1` object store, keyed by project id), mirroring `assetStore.ts`'s existing
++  open/transaction pattern. `projectStore.ts`'s `saveProject`/`loadProject`/`loadProjectDetailed`/
++  `deleteProjectData`/`migrateLegacyIfNeeded`/`adoptMirroredProjects` all became `async`, backed
++  by this store instead of `localStorage.setItem(kinetix:project:<id>:v1, ...)`. The registry
++  (`ProjectMeta[]`, small — no segment/heading bodies) and `kinetix:lastOpenedProjectId` stay in
++  `localStorage`, synchronous, unchanged — they were never the problem.
++- **`migrateLocalStorageProjectsToIndexedDB()`** (new, `projectStore.ts`) — a one-time,
++  idempotent boot-time migration for projects an existing installed build already saved under the
++  old per-project `localStorage` keys: copies each into IndexedDB, then removes the `localStorage`
++  key, freeing exactly the budget that was going stale. A per-id failure (bad JSON, wrong shape)
++  leaves that id's `localStorage` copy untouched for a retry on the next boot, matching this
++  module's existing "never destroy unreadable evidence" posture. Runs in `App.tsx`'s boot effect,
++  before mirror adoption (whose own "already present locally" check now looks at IndexedDB, not
++  `localStorage`).
++- **The UI wiring gap is closed.** `usePersistProject.ts` now tracks the latest in-flight save
++  attempt and only stamps `lastSavedAt` on a genuine success; a failure is exposed as `saveError`
++  instead. `App.tsx` shows a red "Save failed" label (replacing "Saved"/"Unsaved") with the
++  failure reason as a tooltip, plus a one-shot toast per distinct failure reason (not once per
++  500 ms retry, since the underlying condition typically persists across several autosave ticks).
++- `saveProject`'s Guard 3 (write verified by reading it back, not merely trusted) was kept in the
++  IndexedDB form — a transaction resolving is normally durability itself, but the read-back is one
++  cheap indexed lookup and preserves the same "verified, not trusted" posture Session O
++  established for `localStorage`. The `parse-error` `StoreFailureReason` is now effectively
++  unreachable via `loadProjectDetailed` (IndexedDB records are structured, not JSON text to
++  `JSON.parse`) — left in the union rather than removed, since `adoptMirroredProjects` still
++  parses JSON text arriving from the Rust-side durable mirror.
++
++**Verified:**
++- `npm run lint` (tsc --noEmit) clean.
++- `npm test`: the 5 directly-touched suites (`projectStoreGuard.test.ts` — rewritten to mock
++  `projectDataStore.ts` with a Map-backed fake plus injectable put/get failures rather than
++  simulating real IndexedDB quota enforcement (`fake-indexeddb` does not enforce one);
++  `projectMirrorAdoption.test.ts`, `faGate.test.ts`, `faWordTimingsSchema.test.ts`,
++  `d1RegressionChecklist.test.ts` — updated for the new `async` signatures, polyfilled via
++  `fake-indexeddb/auto`) — 87/87 passing. Full `npm test`: 29 pre-existing failures, all in
++  `scripts/ws1-*` FA-pipeline replay suites failing on a missing local fixture
++  (`Missing replay input: .../audio_16k.wav` — needs `python3
++  scripts/phase4-restore-replay-inputs.py`), unrelated to this change and unchanged by it.
++- Manual verification in the running dev app (`npm run dev`, browser preview): a new project
++  saves and reloads correctly with its data confirmed to live in the `kinetix-projects` IndexedDB
++  database and NOT in any `kinetix:project:*` `localStorage` key. A simulated quota failure
++  (monkey-patched `IDBObjectStore.prototype.put` to throw `QuotaExceededError`) produced the red
++  "Save failed" footer label and the expected toast; un-patching and retrying recovered cleanly.
++  A simulated pre-migration project (seeded directly into the legacy `kinetix:project:<id>:v1`
++  `localStorage` key + registry, as an already-installed build would have it) was migrated into
++  IndexedDB on the next boot, its `localStorage` key removed, and the project opened from the
++  dashboard with its segment intact.
+diff --git a/src/App.tsx b/src/App.tsx
+index ad47a65..e85c05b 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -191,6 +191,7 @@ import {
+   loadAllMetas,
+   deleteProjectData,
+   migrateLegacyIfNeeded,
++  migrateLocalStorageProjectsToIndexedDB,
+   upsertProjectMeta,
+   setLastOpenedProjectId,
+   getLastOpenedProjectId,
+@@ -1989,7 +1990,7 @@ export default function App() {
+       //    If migration ran, copy assets from the v1 IDB store to the new v2
+       //    store scoped by projectId.
+       // -----------------------------------------------------------------------
+-      const migrated = migrateLegacyIfNeeded();
++      const migrated = await migrateLegacyIfNeeded();
+       if (migrated) {
+         const legacyBlobs = await getLegacyAssets();
+         await Promise.all(
+@@ -2007,6 +2008,15 @@ export default function App() {
+         );
+       }
+ 
++      // -----------------------------------------------------------------------
++      // 1a. 2026-08-25 — one-time migration of any project still sitting under
++      //     the old per-project localStorage keys into IndexedDB, freeing the
++      //     shared ~5-10 MB origin budget that was causing QuotaExceededError
++      //     on large projects. Must run BEFORE mirror adoption below, whose
++      //     "already present locally" check now looks at IndexedDB.
++      // -----------------------------------------------------------------------
++      await migrateLocalStorageProjectsToIndexedDB();
++
+       // -----------------------------------------------------------------------
+       // 2. Route on launch:
+       //    • No projects yet  → new-project modal (first ever launch).
+@@ -2061,7 +2071,29 @@ export default function App() {
+     })();
+   }, []);
+ 
+-  const { saveNow, lastSavedAt } = usePersistProject(project, !isHydrating);
++  const { saveNow, lastSavedAt, saveError } = usePersistProject(project, !isHydrating);
++
++  // Surface a save failure the moment it happens — a debounced autosave
++  // failing (e.g. QuotaExceededError) must never be silent: previously
++  // `lastSavedAt` was stamped regardless of outcome, so the footer's
++  // "Saved" label looked identical whether or not the write actually landed.
++  // Toast once per distinct failure (by reason) rather than once per 500 ms
++  // retry, since the underlying condition (e.g. storage still full) can
++  // easily persist across several autosave ticks.
++  const lastToastedSaveErrorReasonRef = useRef<string | null>(null);
++  useEffect(() => {
++    if (!saveError) {
++      lastToastedSaveErrorReasonRef.current = null;
++      return;
++    }
++    if (lastToastedSaveErrorReasonRef.current === saveError.reason) return;
++    lastToastedSaveErrorReasonRef.current = saveError.reason;
++    showToast(
++      saveError.reason === 'quota-exceeded'
++        ? "Couldn't save — storage is full. Free up space (delete an unused project) or your latest edits won't persist."
++        : `Couldn't save your project (${saveError.reason}). Your latest edits may be lost if you close the app now.`,
++    );
++  }, [saveError, showToast]);
+ 
+   const updateSegment = (idx: number, updates: Partial<VideoSegment>): void => {
+     setProject(prev => ({
+@@ -4782,7 +4814,7 @@ export default function App() {
+     setShowNewProjectModal(true);
+   };
+ 
+-  const handleNewProjectConfirm = (name: string, aspectRatio: AspectRatio, resolutionTier: ResolutionTier): void => {
++  const handleNewProjectConfirm = async (name: string, aspectRatio: AspectRatio, resolutionTier: ResolutionTier): Promise<void> => {
+     setShowNewProjectModal(false);
+     // Discard any staging-time voiceover transcription left over from the
+     // outgoing project — otherwise effectiveVoiceoverId keeps pointing at its
+@@ -4802,7 +4834,10 @@ export default function App() {
+     fresh.resolutionTier = resolutionTier;
+     // Mark as confirmed so auto-save and saveNow will persist it going forward.
+     fresh.confirmed = true;
+-    saveProject(fresh); // persist full project JSON
++    const outcome = await saveProject(fresh); // persist full project JSON
++    if (!outcome.ok) {
++      showToast(`Couldn't save the new project (${outcome.reason}). Try again, or check available storage.`);
++    }
+     setLastOpenedProjectId(fresh.id);
+     upsertProjectMeta({ // ensure registry entry exists right away
+       id: fresh.id,
+@@ -4844,7 +4879,7 @@ export default function App() {
+     // has already recorded a poison flag for this id, which makes `saveProject`
+     // refuse every subsequent write to it, so the unreadable raw bytes stay on
+     // disk exactly as they are rather than being autosaved over.
+-    const outcome = loadProjectDetailed(id);
++    const outcome = await loadProjectDetailed(id);
+     if (outcome === null) {
+       console.error('[kinetix] Cannot switch to project — not found in storage:', id);
+       showToast('That project could not be found in storage.');
+@@ -5361,8 +5396,11 @@ export default function App() {
+             {/* Project name + save status */}
+             <div className="flex-shrink-0 px-3 pt-3 pb-2 border-b border-[#1A1A1A]">
+               <p className="text-xs text-zinc-400 truncate">{project.name}</p>
+-              <p className="text-[10px] text-zinc-600 mt-0.5">
+-                {lastSavedAt ? `Saved` : `Unsaved`}
++              <p
++                className={`text-[10px] mt-0.5 ${saveError ? 'text-red-400 font-medium' : 'text-zinc-600'}`}
++                title={saveError ? saveError.message : undefined}
++              >
++                {saveError ? 'Save failed' : lastSavedAt ? 'Saved' : 'Unsaved'}
+               </p>
+             </div>
+ 
+diff --git a/src/components/ProjectDashboard.tsx b/src/components/ProjectDashboard.tsx
+index 494a6a8..6ba4e9d 100644
+--- a/src/components/ProjectDashboard.tsx
++++ b/src/components/ProjectDashboard.tsx
+@@ -51,7 +51,7 @@ export function ProjectDashboard({
+   async function handleDelete(id: string): Promise<void> {
+     await deleteAllAssets(id);
+     await deleteAllWaveforms(id);
+-    deleteProjectData(id);
++    await deleteProjectData(id);
+     setMetas(prev => prev.filter(m => m.id !== id));
+     setConfirmDeleteId(null);
+     setMenuOpenId(null);
+@@ -86,7 +86,7 @@ export function ProjectDashboard({
+     for (const id of ids) {
+       await deleteAllAssets(id);
+       await deleteAllWaveforms(id);
+-      deleteProjectData(id);
++      await deleteProjectData(id);
+     }
+     setMetas(prev => prev.filter(m => !selectedIds.has(m.id)));
+     setSelectedIds(new Set());
+diff --git a/src/dev/buildCheckpoint2Fixture.ts b/src/dev/buildCheckpoint2Fixture.ts
+index 202e11a..a272394 100644
+--- a/src/dev/buildCheckpoint2Fixture.ts
++++ b/src/dev/buildCheckpoint2Fixture.ts
+@@ -78,7 +78,7 @@ export async function buildSingleSegmentFixture(): Promise<{ projectId: string }
+     confirmed: true,
+   };
+ 
+-  saveProject(project);
++  await saveProject(project);
+   setLastOpenedProjectId(projectId);
+   return { projectId };
+ }
+@@ -125,7 +125,7 @@ export async function buildBoundaryFixture(): Promise<{ projectId: string }> {
+     confirmed: true,
+   };
+ 
+-  saveProject(project);
++  await saveProject(project);
+   setLastOpenedProjectId(projectId);
+   return { projectId };
+ }
+diff --git a/src/dev/buildPhase5Fixture.ts b/src/dev/buildPhase5Fixture.ts
+index 4ef7d22..afc6348 100644
+--- a/src/dev/buildPhase5Fixture.ts
++++ b/src/dev/buildPhase5Fixture.ts
+@@ -155,7 +155,7 @@ export async function buildPhase5Fixture(): Promise<{ projectId: string }> {
+     confirmed: true,
+   };
+ 
+-  saveProject(project);
++  await saveProject(project);
+   setLastOpenedProjectId(projectId);
+   return { projectId };
+ }
+diff --git a/src/dev/buildScaleFixture.ts b/src/dev/buildScaleFixture.ts
+index 961923a..e1ce52d 100644
+--- a/src/dev/buildScaleFixture.ts
++++ b/src/dev/buildScaleFixture.ts
+@@ -113,7 +113,7 @@ export async function buildScaleFixture(segmentCount = 500): Promise<ScaleFixtur
+     confirmed: true,
+   };
+ 
+-  saveProject(project);
++  await saveProject(project);
+   setLastOpenedProjectId(projectId);
+ 
+   const totalTimelineDurationSec = segmentCount * SEGMENT_TIMELINE_DURATION_SEC;
+diff --git a/src/hooks/usePersistProject.ts b/src/hooks/usePersistProject.ts
+index d8b23ba..bc74afd 100644
+--- a/src/hooks/usePersistProject.ts
++++ b/src/hooks/usePersistProject.ts
+@@ -1,12 +1,19 @@
+ import { useCallback, useEffect, useRef, useState } from 'react';
+ import type { Project } from '../types';
+-import { saveProject, upsertProjectMeta } from '../services/projectStore';
++import { saveProject, upsertProjectMeta, type SaveOutcome } from '../services/projectStore';
+ 
+ export interface PersistHandle {
+-  /** Immediately writes the project to localStorage (bypasses the 500 ms debounce). */
++  /** Immediately writes the project (bypasses the 500 ms debounce). */
+   saveNow: () => void;
+   /** Unix timestamp of the last successful save, or null if not yet saved this session. */
+   lastSavedAt: number | null;
++  /**
++   * The most recent FAILED save outcome, or null if the last save (if any)
++   * succeeded. Cleared the moment a save succeeds again. `lastSavedAt` is
++   * intentionally NOT updated while this is set — a failed save must never
++   * look like a successful one to the caller.
++   */
++  saveError: SaveOutcome & { ok: false } | null;
+ }
+ 
+ /**
+@@ -67,21 +74,42 @@ async function persistMeta(project: Project, savedAt: number): Promise<void> {
+ export function usePersistProject(project: Project, enabled = true): PersistHandle {
+   const isFirstRender = useRef(true);
+   const [lastSavedAt, setLastSavedAt] = useState<number | null>(null);
++  const [saveError, setSaveError] = useState<SaveOutcome & { ok: false } | null>(null);
+ 
+   // Keep a ref so saveNow always sees the latest project without deps churn.
+   const projectRef = useRef(project);
+   projectRef.current = project;
+ 
++  // Guards against an in-flight save's result landing after a LATER save has
++  // already resolved (saveNow + the debounced effect can both fire close
++  // together) — only the most recently STARTED attempt is allowed to write
++  // lastSavedAt/saveError.
++  const latestAttemptRef = useRef(0);
++
++  const runSave = useCallback((proj: Project) => {
++    const attempt = ++latestAttemptRef.current;
++    const ts = Date.now();
++    void saveProject(proj).then(outcome => {
++      if (latestAttemptRef.current !== attempt) return; // superseded by a newer save
++      if (!outcome.ok) {
++        setSaveError(outcome);
++        return;
++      }
++      setSaveError(null);
++      void persistMeta(proj, ts).then(() => {
++        if (latestAttemptRef.current === attempt) setLastSavedAt(ts);
++      });
++    });
++  }, []);
++
+   // saveNow is typed () => void so callers can fire-and-forget; the async
+   // work happens inside without blocking the caller.
+   const saveNow = useCallback(() => {
+     if (!enabled) return;
+     // Never persist a project the user hasn't explicitly named yet.
+     if (!projectRef.current.confirmed) return;
+-    const ts = Date.now();
+-    saveProject(projectRef.current);
+-    void persistMeta(projectRef.current, ts).then(() => setLastSavedAt(ts));
+-  }, [enabled]);
++    runSave(projectRef.current);
++  }, [enabled, runSave]);
+ 
+   // Debounced auto-save: fires 500 ms after any project change.
+   useEffect(() => {
+@@ -93,13 +121,9 @@ export function usePersistProject(project: Project, enabled = true): PersistHand
+     // Never auto-save a project the user hasn't explicitly named yet —
+     // prevents blank "Untitled Project" entries appearing in the registry.
+     if (!project.confirmed) return;
+-    const timer = setTimeout(() => {
+-      const ts = Date.now();
+-      saveProject(project);
+-      void persistMeta(project, ts).then(() => setLastSavedAt(ts));
+-    }, 500);
++    const timer = setTimeout(() => runSave(project), 500);
+     return () => clearTimeout(timer);
+-  }, [project, enabled]);
++  }, [project, enabled, runSave]);
+ 
+-  return { saveNow, lastSavedAt };
++  return { saveNow, lastSavedAt, saveError };
+ }
+diff --git a/src/services/d1RegressionChecklist.test.ts b/src/services/d1RegressionChecklist.test.ts
+index 562014c..b4edc59 100644
+--- a/src/services/d1RegressionChecklist.test.ts
++++ b/src/services/d1RegressionChecklist.test.ts
+@@ -29,6 +29,7 @@
+ // are NOT decidable here, which is exactly why they are not claimed.
+ // ---------------------------------------------------------------------------
+ 
++import 'fake-indexeddb/auto';
+ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+ import { readFileSync } from 'fs';
+ import { resolve, dirname } from 'path';
+@@ -310,28 +311,28 @@ describe('D.-1 item 7 — PERSISTENCE/RELOAD: timeline identical, no re-transcri
+     } as unknown as Project;
+   }
+ 
+-  it('every segment startTime/duration survives a save→load round-trip bit-identically', () => {
++  it('every segment startTime/duration survives a save→load round-trip bit-identically', async () => {
+     const p = realProject();
+-    saveProject(p);
+-    const back = loadProject('d1-item7')!;
++    await saveProject(p);
++    const back = (await loadProject('d1-item7'))!;
+     expect(back.project.segments.length).toBe(p.segments.length);
+     expect(back.project.segments.map(s => [s.startTime, s.duration]))
+       .toEqual(p.segments.map(s => [s.startTime, s.duration]));
+   });
+ 
+-  it('`lastTranscribedFileIdentity` survives the round-trip intact — the thing that prevents a re-transcription', () => {
+-    saveProject(realProject());
+-    const back = loadProject('d1-item7')!;
++  it('`lastTranscribedFileIdentity` survives the round-trip intact — the thing that prevents a re-transcription', async () => {
++    await saveProject(realProject());
++    const back = (await loadProject('d1-item7'))!;
+     expect(back.project.lastTranscribedFileIdentity).toBe(IDENTITY);
+     expect(back.project.transcriptTokens?.length).toBe(1);
+   });
+ 
+-  it('the identity a reloaded file produces MATCHES the stored one, so no re-transcription is triggered', () => {
++  it('the identity a reloaded file produces MATCHES the stored one, so no re-transcription is triggered', async () => {
+     // The real production key-builder, not a restatement of its format.
+     const file = { name: 'voice.m4a', size: 8123456, lastModified: 1750000000000 } as unknown as File;
+     expect(getFileIdentity(file)).toBe(IDENTITY);
+-    saveProject(realProject());
+-    expect(loadProject('d1-item7')!.project.lastTranscribedFileIdentity).toBe(getFileIdentity(file));
++    await saveProject(realProject());
++    expect((await loadProject('d1-item7'))!.project.lastTranscribedFileIdentity).toBe(getFileIdentity(file));
+   });
+ 
+   it('a DIFFERENT file does not match — proving the check above is discriminating, not constant-true', () => {
+@@ -339,12 +340,12 @@ describe('D.-1 item 7 — PERSISTENCE/RELOAD: timeline identical, no re-transcri
+     expect(getFileIdentity(other)).not.toBe(IDENTITY);
+   });
+ 
+-  it('reload does not resurrect the retired per-segment legacy fields', () => {
++  it('reload does not resurrect the retired per-segment legacy fields', async () => {
+     const p = realProject();
+     (p.segments[0] as unknown as { playbackSpeed?: number }).playbackSpeed = 2;
+     (p.segments[0] as unknown as { sourceDuration?: number }).sourceDuration = 9;
+-    saveProject(p);
+-    const back = loadProject('d1-item7')!;
++    await saveProject(p);
++    const back = (await loadProject('d1-item7'))!;
+     expect('playbackSpeed' in back.project.segments[0]!).toBe(false);
+     expect('sourceDuration' in back.project.segments[0]!).toBe(false);
+     // ...and stripping them did not disturb the timeline.
+diff --git a/src/services/faGate.test.ts b/src/services/faGate.test.ts
+index bff9075..41d9be9 100644
+--- a/src/services/faGate.test.ts
++++ b/src/services/faGate.test.ts
+@@ -3,6 +3,7 @@
+  * SPDX-License-Identifier: Apache-2.0
+  */
+ 
++import 'fake-indexeddb/auto';
+ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+ import {
+   isFaCapable,
+@@ -15,6 +16,7 @@ import {
+   LEGACY_GLOBAL_FA_TOGGLE_KEY,
+ } from './faGate';
+ import { saveProject, loadProject } from './projectStore';
++import { putProjectRecord } from './projectDataStore';
+ import type { Project, VideoSegment } from '../types';
+ 
+ function installLocalStorage(): void {
+@@ -266,20 +268,21 @@ function preChangeProjectJson(): string {
+ }
+ 
+ describe('G1 proof — loading a pre-change project neither retimes nor acquires a preference', () => {
+-  beforeEach(() => {
++  beforeEach(async () => {
+     installLocalStorage();
+     __resetFaCapabilityForTests();
+     vi.stubGlobal('window', { __TAURI_INTERNALS__: {} });
+-    localStorage.setItem('kinetix:project:pre-change-1:v1', preChangeProjectJson());
++    const stored = JSON.parse(preChangeProjectJson());
++    await putProjectRecord({ id: 'pre-change-1', ...stored });
+   });
+   afterEach(() => {
+     vi.unstubAllGlobals();
+     __resetFaCapabilityForTests();
+   });
+ 
+-  it('loads every segment timing BYTE-IDENTICALLY to what was stored — loading is not a retime', () => {
++  it('loads every segment timing BYTE-IDENTICALLY to what was stored — loading is not a retime', async () => {
+     const before = JSON.parse(preChangeProjectJson()).project.segments;
+-    const loaded = loadProject('pre-change-1');
++    const loaded = await loadProject('pre-change-1');
+     expect(loaded).not.toBeNull();
+     expect(loaded!.project.segments).toEqual(before);
+     // Spelled out, because this is the claim G1 actually makes: every
+@@ -289,39 +292,39 @@ describe('G1 proof — loading a pre-change project neither retimes nor acquires
+     expect(loaded!.project.segments.every(s => s.anchorSource === 'whisper')).toBe(true);
+   });
+ 
+-  it('does not acquire a stored `faHighPrecisionSync` on load — "no preference" survives', () => {
+-    const loaded = loadProject('pre-change-1')!;
++  it('does not acquire a stored `faHighPrecisionSync` on load — "no preference" survives', async () => {
++    const loaded = (await loadProject('pre-change-1'))!;
+     expect(Object.prototype.hasOwnProperty.call(loaded.project, 'faHighPrecisionSync')).toBe(false);
+     expect(loaded.project.faHighPrecisionSync).toBeUndefined();
+   });
+ 
+-  it('resolves to the (OFF) default WITHOUT writing it back — reading the gate is not a migration', () => {
+-    const loaded = loadProject('pre-change-1')!;
++  it('resolves to the (OFF) default WITHOUT writing it back — reading the gate is not a migration', async () => {
++    const loaded = (await loadProject('pre-change-1'))!;
+     expect(isFaGateOpenForProject(loaded.project)).toBe(false);
+     expect(Object.prototype.hasOwnProperty.call(loaded.project, 'faHighPrecisionSync')).toBe(false);
+     // and nothing was persisted either
+-    const reloaded = loadProject('pre-change-1')!;
++    const reloaded = (await loadProject('pre-change-1'))!;
+     expect(Object.prototype.hasOwnProperty.call(reloaded.project, 'faHighPrecisionSync')).toBe(false);
+   });
+ 
+-  it('survives a save/load round-trip still preference-free and still un-retimed', () => {
+-    const loaded = loadProject('pre-change-1')!;
++  it('survives a save/load round-trip still preference-free and still un-retimed', async () => {
++    const loaded = (await loadProject('pre-change-1'))!;
+     isFaGateOpenForProject(loaded.project);
+-    saveProject(loaded.project);
+-    const again = loadProject('pre-change-1')!;
++    await saveProject(loaded.project);
++    const again = (await loadProject('pre-change-1'))!;
+     expect(Object.prototype.hasOwnProperty.call(again.project, 'faHighPrecisionSync')).toBe(false);
+     expect(again.project.segments.map(s => [s.startTime, s.duration]))
+       .toEqual([[0, 5.64], [5.64, 4.11], [9.75, 3.02]]);
+   });
+ 
+-  it('an explicit OFF written by the user round-trips and is never overwritten by the default', () => {
+-    const loaded = loadProject('pre-change-1')!;
+-    saveProject({ ...loaded.project, faHighPrecisionSync: false } as Project);
+-    const again = loadProject('pre-change-1')!;
++  it('an explicit OFF written by the user round-trips and is never overwritten by the default', async () => {
++    const loaded = (await loadProject('pre-change-1'))!;
++    await saveProject({ ...loaded.project, faHighPrecisionSync: false } as Project);
++    const again = (await loadProject('pre-change-1'))!;
+     expect(again.project.faHighPrecisionSync).toBe(false);
+     expect(isFaGateOpenForProject(again.project)).toBe(false);
+     // reading it again must not "repair" it towards the default
+     isFaEnabledForProject(again.project);
+-    expect(loadProject('pre-change-1')!.project.faHighPrecisionSync).toBe(false);
++    expect((await loadProject('pre-change-1'))!.project.faHighPrecisionSync).toBe(false);
+   });
+ });
+diff --git a/src/services/faWordTimingsSchema.test.ts b/src/services/faWordTimingsSchema.test.ts
+index 180c917..6c7fd2a 100644
+--- a/src/services/faWordTimingsSchema.test.ts
++++ b/src/services/faWordTimingsSchema.test.ts
+@@ -25,6 +25,7 @@
+  * it to match.
+  */
+ 
++import 'fake-indexeddb/auto';
+ import { describe, it, expect, beforeEach } from 'vitest';
+ import { readFileSync } from 'fs';
+ import { dirname, resolve } from 'path';
+@@ -138,12 +139,12 @@ describe('Project.faWordTimings — real-scale schema round trip (WS1 Task 5 Sli
+     }
+   });
+ 
+-  it('survives a real saveProject/loadProject round trip byte-for-byte, at full 1645-entry scale', () => {
++  it('survives a real saveProject/loadProject round trip byte-for-byte, at full 1645-entry scale', async () => {
+     const faWordTimings = load173RealFaWordTimings();
+     const project = buildProject(faWordTimings);
+ 
+-    saveProject(project);
+-    const loaded = loadProject(project.id);
++    await saveProject(project);
++    const loaded = await loadProject(project.id);
+ 
+     expect(loaded).not.toBeNull();
+     expect(loaded!.project.faWordTimings).toEqual(faWordTimings);
+@@ -161,11 +162,11 @@ describe('Project.faWordTimings — real-scale schema round trip (WS1 Task 5 Sli
+     expect(roundTripped).toEqual(faWordTimings);
+   });
+ 
+-  it('a Project WITHOUT faWordTimings still round-trips identically (field stays fully optional)', () => {
++  it('a Project WITHOUT faWordTimings still round-trips identically (field stays fully optional)', async () => {
+     const project = buildProject(load173RealFaWordTimings());
+     const { faWordTimings: _drop, ...withoutField } = project;
+-    saveProject(withoutField as Project);
+-    const loaded = loadProject(withoutField.id);
++    await saveProject(withoutField as Project);
++    const loaded = await loadProject(withoutField.id);
+     expect(loaded!.project.faWordTimings).toBeUndefined();
+     expect(loaded!.project.segments).toEqual(withoutField.segments);
+   });
+diff --git a/src/services/projectDataStore.ts b/src/services/projectDataStore.ts
+new file mode 100644
+index 0000000..bee9621
+--- /dev/null
++++ b/src/services/projectDataStore.ts
+@@ -0,0 +1,116 @@
++/**
++ * @license
++ * SPDX-License-Identifier: Apache-2.0
++ */
++
++/**
++ * IndexedDB-backed store for a project's full serialized JSON — the payload
++ * `projectStore.ts` used to write into `localStorage` under
++ * `kinetix:project:<id>:v1`.
++ *
++ * WHY THIS EXISTS. A real 21-minute-audio project's serialized JSON reached
++ * ~915,000 characters and started failing `localStorage.setItem` with
++ * `QuotaExceededError` on every autosave — silently, repeatedly, with every
++ * edit since the last successful save unpersisted. `localStorage` is a single
++ * ~5-10 MB budget SHARED by every project's JSON, the project registry, and
++ * per-project thumbnail data URLs on this origin (measured elsewhere in this
++ * codebase: 20 history snapshots of the largest known corpus project alone is
++ * 6.02 MB). One large project does not need to be anywhere near that ceiling
++ * on its own to be the write that tips a origin already carrying several
++ * projects over the edge. IndexedDB has no such shared low ceiling — origins
++ * are typically granted a quota on the order of the available disk (browsers)
++ * or effectively unbounded for a native WKWebView origin (Tauri) — and it is
++ * exactly the store `assetStore.ts` and `waveformStore.ts` already use for
++ * this project's other bulky, per-project data.
++ *
++ * The project registry (`ProjectMeta[]`, small — no segment/heading bodies)
++ * and `kinetix:lastOpenedProjectId` stay in `localStorage`: both are read
++ * synchronously in places (`ProjectDashboard`'s initial render, boot routing)
++ * and are cheap enough that the shared budget was never their problem.
++ */
++
++const DB_NAME = 'kinetix-projects';
++const DB_VERSION = 1;
++const STORE = 'projects-v1';
++
++/** What this store persists for one project — the id doubles as the IDB key. */
++export interface ProjectRecord {
++  id: string;
++  version: 2;
++  savedAt: number;
++  /** `Omit<Project, 'assets'> & { assets: StoredAsset[] }` — kept as `unknown` here so this module has no dependency on `Project`/`types.ts`; `projectStore.ts` owns the real shape. */
++  project: unknown;
++}
++
++function openProjectDB(): Promise<IDBDatabase> {
++  return new Promise((resolve, reject) => {
++    const request = indexedDB.open(DB_NAME, DB_VERSION);
++    request.onupgradeneeded = () => {
++      const db = request.result;
++      if (!db.objectStoreNames.contains(STORE)) {
++        db.createObjectStore(STORE, { keyPath: 'id' });
++      }
++    };
++    request.onsuccess = () => resolve(request.result);
++    request.onerror = () => reject(request.error);
++  });
++}
++
++/**
++ * Writes a project record. Rejects on failure (quota exceeded included) —
++ * callers are expected to catch and translate, mirroring `assetStore.ts`'s
++ * contract rather than swallowing anything here.
++ */
++export function putProjectRecord(record: ProjectRecord): Promise<void> {
++  return openProjectDB().then(
++    (db) =>
++      new Promise<void>((resolve, reject) => {
++        const tx = db.transaction(STORE, 'readwrite');
++        const req = tx.objectStore(STORE).put(record);
++        req.onerror = () => reject(req.error);
++        tx.oncomplete = () => { db.close(); resolve(); };
++        tx.onerror = () => reject(tx.error);
++        tx.onabort = () => reject(tx.error ?? new Error('project save transaction aborted'));
++      }),
++  );
++}
++
++export function getProjectRecord(id: string): Promise<ProjectRecord | null> {
++  return openProjectDB().then(
++    (db) =>
++      new Promise<ProjectRecord | null>((resolve, reject) => {
++        const tx = db.transaction(STORE, 'readonly');
++        const req = tx.objectStore(STORE).get(id);
++        req.onsuccess = () => resolve((req.result as ProjectRecord | undefined) ?? null);
++        req.onerror = () => reject(req.error);
++        tx.oncomplete = () => db.close();
++      }),
++  );
++}
++
++export function deleteProjectRecord(id: string): Promise<void> {
++  return openProjectDB().then(
++    (db) =>
++      new Promise<void>((resolve, reject) => {
++        const tx = db.transaction(STORE, 'readwrite');
++        const req = tx.objectStore(STORE).delete(id);
++        req.onerror = () => reject(req.error);
++        tx.oncomplete = () => { db.close(); resolve(); };
++        tx.onerror = () => reject(tx.error);
++      }),
++  );
++}
++
++/** Every stored project id — used by the one-time localStorage migration to skip ids already adopted. */
++export function getAllProjectIds(): Promise<string[]> {
++  return openProjectDB().then(
++    (db) =>
++      new Promise<string[]>((resolve, reject) => {
++        const tx = db.transaction(STORE, 'readonly');
++        const req = tx.objectStore(STORE).getAllKeys();
++        req.onsuccess = () => resolve(req.result as string[]);
++        req.onerror = () => reject(req.error);
++        tx.oncomplete = () => db.close();
++      }),
++  );
++}
+diff --git a/src/services/projectMirrorAdoption.test.ts b/src/services/projectMirrorAdoption.test.ts
+index ce4de33..3b22646 100644
+--- a/src/services/projectMirrorAdoption.test.ts
++++ b/src/services/projectMirrorAdoption.test.ts
+@@ -11,8 +11,13 @@
+  * the bundled build, so any "newest wins" reconciliation would let launching an
+  * older build silently roll a project backwards. Adoption may only ever add
+  * project ids this origin does not already have.
++ *
++ * Project bodies now live in IndexedDB (`projectDataStore.ts`, polyfilled here
++ * via `fake-indexeddb/auto` — see `projectStore.ts`'s 2026-08-25 note for why);
++ * the registry stays in localStorage and is still exercised via a real mock.
+  */
+ 
++import 'fake-indexeddb/auto';
+ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+ 
+ const readMirror = vi.fn();
+@@ -23,6 +28,7 @@ vi.mock('./projectMirror', () => ({
+ }));
+ 
+ import { adoptMirroredProjects, loadProject, loadAllMetas, __resetStoreGuardsForTests } from './projectStore';
++import { putProjectRecord } from './projectDataStore';
+ 
+ let backing: Map<string, string>;
+ function installLocalStorage(): void {
+@@ -37,8 +43,14 @@ function installLocalStorage(): void {
+   } as unknown as Storage);
+ }
+ 
+-function storedProject(id: string, name: string, segments: number, savedAt = 1000): string {
+-  return JSON.stringify({
++interface StoredProjectFixture {
++  version: 2;
++  savedAt: number;
++  project: Record<string, unknown> & { id: string; segments: unknown[] };
++}
++
++function storedProject(id: string, name: string, segments: number, savedAt = 1000): StoredProjectFixture {
++  return {
+     version: 2,
+     savedAt,
+     project: {
+@@ -51,10 +63,18 @@ function storedProject(id: string, name: string, segments: number, savedAt = 100
+       globalOverlayConfig: { color: '#FFF', backgroundColor: '#000', fontFamily: 'Inter' },
+       confirmed: true, aspectRatio: '16:9', resolutionTier: '1080p',
+     },
+-  });
++  };
+ }
+ 
+-const key = (id: string): string => `kinetix:project:${id}:v1`;
++function storedProjectJson(id: string, name: string, segments: number, savedAt = 1000): string {
++  return JSON.stringify(storedProject(id, name, segments, savedAt));
++}
++
++/** Seeds IndexedDB as if `id` had already been saved locally (pre-adoption). */
++async function seedLocal(id: string, name: string, segments: number, savedAt = 1000): Promise<void> {
++  const fixture = storedProject(id, name, segments, savedAt);
++  await putProjectRecord({ id, ...fixture });
++}
+ 
+ beforeEach(() => {
+   __resetStoreGuardsForTests();
+@@ -74,56 +94,52 @@ describe('adoptMirroredProjects', () => {
+ 
+   it('adopts a project this origin has never seen, and registers it', async () => {
+     readMirror.mockResolvedValue({
+-      registry: JSON.stringify([{ id: 'v6', name: 'V6 New Audio Long Pauses', savedAt: 2000, segmentCount: 447 }]),
+-      projects: [['v6', storedProject('v6', 'V6 New Audio Long Pauses', 447, 2000)]],
++      registry: JSON.stringify([{ id: 'v6-a', name: 'V6 New Audio Long Pauses', savedAt: 2000, segmentCount: 447 }]),
++      projects: [['v6-a', storedProjectJson('v6-a', 'V6 New Audio Long Pauses', 447, 2000)]],
+     });
+ 
+     const report = await adoptMirroredProjects();
+ 
+     expect(report.mirrorAvailable).toBe(true);
+-    expect(report.adopted).toEqual(['v6']);
+-    expect(loadProject('v6')!.project.segments).toHaveLength(447);
+-    expect(loadAllMetas().map(m => m.id)).toContain('v6');
+-    expect(loadAllMetas().find(m => m.id === 'v6')!.segmentCount).toBe(447);
++    expect(report.adopted).toEqual(['v6-a']);
++    expect((await loadProject('v6-a'))!.project.segments).toHaveLength(447);
++    expect(loadAllMetas().map(m => m.id)).toContain('v6-a');
++    expect(loadAllMetas().find(m => m.id === 'v6-a')!.segmentCount).toBe(447);
+   });
+ 
+   it('NEVER overwrites a project this origin already has — even a newer, bigger mirrored one', async () => {
+-    const localBytes = storedProject('v6', 'Local V6', 3, 500);
+-    backing.set(key('v6'), localBytes);
++    await seedLocal('v6-b', 'Local V6', 3, 500);
+     readMirror.mockResolvedValue({
+       registry: null,
+-      projects: [['v6', storedProject('v6', 'Mirrored V6', 447, 999999)]],
++      projects: [['v6-b', storedProjectJson('v6-b', 'Mirrored V6', 447, 999999)]],
+     });
+ 
+     const report = await adoptMirroredProjects();
+ 
+     expect(report.adopted).toEqual([]);
+-    expect(report.skippedAlreadyLocal).toEqual(['v6']);
+-    // Byte-for-byte untouched.
+-    expect(backing.get(key('v6'))).toBe(localBytes);
+-    expect(loadProject('v6')!.project.segments).toHaveLength(3);
+-    expect(loadProject('v6')!.project.name).toBe('Local V6');
++    expect(report.skippedAlreadyLocal).toEqual(['v6-b']);
++    expect((await loadProject('v6-b'))!.project.segments).toHaveLength(3);
++    expect((await loadProject('v6-b'))!.project.name).toBe('Local V6');
+   });
+ 
+   it('adopts the missing ones and leaves the present ones alone, in one pass', async () => {
+-    const localBytes = storedProject('a', 'Local A', 5);
+-    backing.set(key('a'), localBytes);
++    await seedLocal('a2', 'Local A', 5);
+     readMirror.mockResolvedValue({
+       registry: null,
+       projects: [
+-        ['a', storedProject('a', 'Mirror A', 99)],
+-        ['b', storedProject('b', 'Mirror B', 27)],
+-        ['c', storedProject('c', 'Mirror C', 26)],
++        ['a2', storedProjectJson('a2', 'Mirror A', 99)],
++        ['b2', storedProjectJson('b2', 'Mirror B', 27)],
++        ['c2', storedProjectJson('c2', 'Mirror C', 26)],
+       ],
+     });
+ 
+     const report = await adoptMirroredProjects();
+ 
+-    expect(report.adopted.sort()).toEqual(['b', 'c']);
+-    expect(report.skippedAlreadyLocal).toEqual(['a']);
+-    expect(backing.get(key('a'))).toBe(localBytes);
+-    expect(loadProject('b')!.project.segments).toHaveLength(27);
+-    expect(loadProject('c')!.project.segments).toHaveLength(26);
++    expect(report.adopted.sort()).toEqual(['b2', 'c2']);
++    expect(report.skippedAlreadyLocal).toEqual(['a2']);
++    expect((await loadProject('a2'))!.project.name).toBe('Local A');
++    expect((await loadProject('b2'))!.project.segments).toHaveLength(27);
++    expect((await loadProject('c2'))!.project.segments).toHaveLength(26);
+   });
+ 
+   it('refuses to inject a malformed mirrored value into this origin', async () => {
+@@ -132,7 +148,7 @@ describe('adoptMirroredProjects', () => {
+       projects: [
+         ['bad', '{"version":2,"project":{'],
+         ['worse', JSON.stringify({ version: 2, savedAt: 1, project: { id: 'worse' } })],
+-        ['good', storedProject('good', 'Good', 4)],
++        ['good', storedProjectJson('good', 'Good', 4)],
+       ],
+     });
+ 
+@@ -140,20 +156,20 @@ describe('adoptMirroredProjects', () => {
+ 
+     expect(report.adopted).toEqual(['good']);
+     expect(report.failed.map(f => f.id).sort()).toEqual(['bad', 'worse']);
+-    expect(backing.has(key('bad'))).toBe(false);
+-    expect(backing.has(key('worse'))).toBe(false);
++    expect(await loadProject('bad')).toBeNull();
++    expect(await loadProject('worse')).toBeNull();
+   });
+ 
+   it('survives an unparseable mirror registry by synthesising metas from the projects', async () => {
+     readMirror.mockResolvedValue({
+       registry: 'not json',
+-      projects: [['v6', storedProject('v6', 'V6 New Audio Long Pauses', 447, 2000)]],
++      projects: [['v6-c', storedProjectJson('v6-c', 'V6 New Audio Long Pauses', 447, 2000)]],
+     });
+ 
+     const report = await adoptMirroredProjects();
+ 
+-    expect(report.adopted).toEqual(['v6']);
+-    const meta = loadAllMetas().find(m => m.id === 'v6')!;
++    expect(report.adopted).toEqual(['v6-c']);
++    const meta = loadAllMetas().find(m => m.id === 'v6-c')!;
+     expect(meta.name).toBe('V6 New Audio Long Pauses');
+     expect(meta.segmentCount).toBe(447);
+     expect(meta.savedAt).toBe(2000);
+diff --git a/src/services/projectStore.ts b/src/services/projectStore.ts
+index 14f96b4..6f824cf 100644
+--- a/src/services/projectStore.ts
++++ b/src/services/projectStore.ts
+@@ -1,15 +1,20 @@
+ import type { Asset, Project, ProjectMeta, VideoSegment } from '../types';
+ import { writeMirroredProject, deleteMirroredProject, readMirror } from './projectMirror';
++import {
++  putProjectRecord,
++  getProjectRecord,
++  deleteProjectRecord,
++  type ProjectRecord,
++} from './projectDataStore';
+ 
+ /** Registry key — stores ProjectMeta[] (newest-first sorted on write). */
+ const REGISTRY_KEY = 'kinetix:projects:v1';
+ 
+-/** Per-project data key. */
+-function projectKey(id: string): string {
+-  return `kinetix:project:${id}:v1`;
+-}
++/** Legacy per-project localStorage key prefix/suffix — `kinetix:project:<id>:v1`, read once during the IndexedDB migration below, then removed. */
++const LEGACY_PROJECT_KEY_PREFIX = 'kinetix:project:';
++const LEGACY_PROJECT_KEY_SUFFIX = ':v1';
+ 
+-/** Legacy single-project key — read-once for migration then removed. */
++/** Legacy single-project key (pre-multi-project format) — read-once for migration then removed. */
+ const LEGACY_KEY = 'kinetix:project:v1';
+ 
+ // ---------------------------------------------------------------------------
+@@ -20,7 +25,7 @@ interface StoredAsset extends Omit<Asset, 'url' | 'file'> {
+   url: '';
+ }
+ 
+-interface StoredProject {
++interface StoredProjectData {
+   version: 2;
+   savedAt: number;
+   project: Omit<Project, 'assets'> & { assets: StoredAsset[] };
+@@ -55,6 +60,22 @@ function stripAsset(asset: Asset): StoredAsset {
+ //   3. Nothing stopped a zero-segment project overwriting a stored non-empty
+ //      one — so any future bug that produced an empty in-memory project would
+ //      have been persisted over good data at the next 500 ms autosave tick.
++//
++// 2026-08-25 — a real desktop run (V8 project, ~21 min audio) hit a FOURTH,
++// previously-unseen failure mode of the same shape: `QuotaExceededError`
++// itself, repeatedly, once the serialized project reached ~915,000 chars.
++// Guard 3 already reported it as `quota-exceeded` instead of swallowing it —
++// but nothing read that return value (`usePersistProject.ts` discarded it and
++// stamped "Saved" regardless), so the report was as silent in practice as no
++// report at all. That UI gap is fixed alongside this change. The deeper cause
++// is structural, not a threshold bug: `localStorage` is a single ~5-10 MB
++// budget SHARED across every project's JSON + the registry + thumbnails on
++// this origin, so any one project can be the write that tips an origin
++// already holding several others over the edge. This module now stores each
++// project's JSON in IndexedDB (`projectDataStore.ts`) instead — the same fix
++// already applied to assets (`assetStore.ts`) and waveform peaks
++// (`waveformStore.ts`). `localStorage` keeps only the registry and
++// last-opened-id, both of which are cheap and were never the problem.
+ 
+ /** Why a save was refused, or why a load failed. */
+ export type StoreFailureReason =
+@@ -78,7 +99,7 @@ export interface LoadFailure {
+   id: string;
+   reason: StoreFailureReason;
+   message: string;
+-  /** Byte length of the raw stored value, which is left UNTOUCHED on disk. */
++  /** Approximate serialized size of the value that failed, which is left UNTOUCHED in storage. */
+   rawLength: number;
+   at: number;
+ }
+@@ -113,15 +134,13 @@ export function __resetStoreGuardsForTests(): void {
+ }
+ 
+ /** Reads the CURRENTLY stored segment count for `id`, or null if unknown. */
+-function storedSegmentCount(id: string): number | null {
++async function storedSegmentCount(id: string): Promise<number | null> {
+   try {
+-    const raw = localStorage.getItem(projectKey(id));
+-    if (!raw) return null;
+-    const parsed = JSON.parse(raw) as StoredProject;
+-    const segs = parsed?.project?.segments;
++    const record = await getProjectRecord(id);
++    const segs = (record?.project as StoredProjectData['project'] | undefined)?.segments;
+     return Array.isArray(segs) ? segs.length : null;
+   } catch {
+-    // Unparseable stored value — the empty-over-nonempty guard cannot make a
++    // Unreadable stored value — the empty-over-nonempty guard cannot make a
+     // judgement, so it declines to (the poison flag from loadProject is what
+     // protects this case instead).
+     return null;
+@@ -142,20 +161,22 @@ export interface SaveOptions {
+ }
+ 
+ /**
+- * Persists a project and upserts its entry in the registry.
++ * Persists a project (into IndexedDB — see the 2026-08-25 note above) and
++ * upserts its registry entry (`localStorage`, unaffected by that move).
+  *
+- * Returns a `SaveOutcome` rather than the old `void`: a refusal or a quota
+- * failure is now reported instead of swallowed. Existing callers that ignore
+- * the return value keep compiling and keep their previous behaviour on the
+- * success path.
++ * Returns a `SaveOutcome` rather than `void`: a refusal or a quota failure is
++ * reported instead of swallowed. Callers MUST check it — nothing here retries
++ * or queues a failed write, and no UI updates that imply success (a "Saved"
++ * label, a cleared dirty flag) may be driven off anything but this return
++ * value.
+  */
+-export function saveProject(project: Project, opts: SaveOptions = {}): SaveOutcome {
++export async function saveProject(project: Project, opts: SaveOptions = {}): Promise<SaveOutcome> {
+   // Guard 2 — a project whose load failed is poisoned for writing.
+   const poisoned = loadFailures.get(project.id);
+   if (poisoned) {
+     const message =
+       `[kinetix] REFUSING to save project ${project.id} ("${project.name}"): its last load failed ` +
+-      `(${poisoned.reason}: ${poisoned.message}). The ${poisoned.rawLength}-byte stored value is ` +
++      `(${poisoned.reason}: ${poisoned.message}). The ${poisoned.rawLength}-char stored value is ` +
+       `left untouched so it stays recoverable. Autosave stays blocked for this project until the ` +
+       `failure is acknowledged.`;
+     console.error(message);
+@@ -164,7 +185,7 @@ export function saveProject(project: Project, opts: SaveOptions = {}): SaveOutco
+ 
+   // Guard 1 — never let an empty project overwrite a stored non-empty one.
+   if (!opts.allowEmptying && project.segments.length === 0) {
+-    const existing = storedSegmentCount(project.id);
++    const existing = await storedSegmentCount(project.id);
+     if (existing !== null && existing > 0) {
+       const message =
+         `[kinetix] REFUSING to overwrite project ${project.id} ("${project.name}") — the in-memory ` +
+@@ -177,23 +198,21 @@ export function saveProject(project: Project, opts: SaveOptions = {}): SaveOutco
+   }
+ 
+   const savedAt = Date.now();
+-  const stored: StoredProject = {
++  const storedData: StoredProjectData = {
+     version: 2,
+     savedAt,
+     project: { ...project, assets: project.assets.map(stripAsset) },
+   };
+-  const payload = JSON.stringify(stored);
+-
+-  // Guard 3 — a `localStorage` write is atomic per key (one row, REPLACE on
+-  // conflict), so there is no truncate-in-place window to close here the way
+-  // there is for a file. What CAN silently fail is the write as a whole
+-  // (quota), so the write is verified by reading the value back rather than
+-  // trusted. The durable mirror below is where real temp-file+rename atomicity
+-  // applies, in `project_mirror.rs`.
++  // Still computed: (a) the durable Rust-side mirror wants a JSON string, and
++  // (b) it is the one honest measure of "how big is this write" for logging.
++  const payload = JSON.stringify(storedData);
++  const record: ProjectRecord = { id: project.id, ...storedData };
++
+   try {
+-    localStorage.setItem(projectKey(project.id), payload);
++    await putProjectRecord(record);
+   } catch (err) {
+-    const quota = err instanceof Error && /quota|exceeded/i.test(err.name + err.message);
++    const name = err instanceof DOMException ? err.name : (err instanceof Error ? err.name : '');
++    const quota = /quota/i.test(name) || /quota|exceeded/i.test(String(err));
+     const message =
+       `[kinetix] FAILED to save project ${project.id} ("${project.name}", ${payload.length} chars): ` +
+       `${String(err)}. The previously stored value is unchanged.`;
+@@ -201,11 +220,15 @@ export function saveProject(project: Project, opts: SaveOptions = {}): SaveOutco
+     return { ok: false, reason: quota ? 'quota-exceeded' : 'storage-unavailable', message };
+   }
+ 
+-  const readBack = localStorage.getItem(projectKey(project.id));
+-  if (readBack === null || readBack.length !== payload.length) {
++  // Verified, not trusted — an IndexedDB transaction resolving is normally
++  // durability itself, but this is the same "read it back rather than assume
++  // it landed" posture Guard 3 originally applied to `localStorage`, and it is
++  // cheap enough (one indexed key lookup) to keep.
++  const readBack = await getProjectRecord(project.id).catch(() => null);
++  if (readBack === null || readBack.savedAt !== savedAt) {
+     const message =
+       `[kinetix] Save verification FAILED for project ${project.id} ("${project.name}"): wrote ` +
+-      `${payload.length} chars, read back ${readBack === null ? 'null' : `${readBack.length} chars`}.`;
++      `savedAt ${savedAt}, read back ${readBack === null ? 'nothing' : readBack.savedAt}.`;
+     console.error(message);
+     return { ok: false, reason: 'verify-failed', message };
+   }
+@@ -250,12 +273,12 @@ export function saveProject(project: Project, opts: SaveOptions = {}): SaveOutco
+  * subsequent autosave can overwrite the raw bytes that failed to parse. The
+  * stored value is never modified, deleted, or rewritten by this function.
+  */
+-export function loadProjectDetailed(id: string): LoadOutcome | null {
+-  let raw: string | null;
++export async function loadProjectDetailed(id: string): Promise<LoadOutcome | null> {
++  let record: ProjectRecord | null;
+   try {
+-    raw = localStorage.getItem(projectKey(id));
++    record = await getProjectRecord(id);
+   } catch (err) {
+-    const message = `localStorage unavailable while reading project ${id}: ${String(err)}`;
++    const message = `IndexedDB unavailable while reading project ${id}: ${String(err)}`;
+     console.error(`[kinetix] ${message}`);
+     const failure: LoadFailure = { id, reason: 'storage-unavailable', message, rawLength: 0, at: Date.now() };
+     loadFailures.set(id, failure);
+@@ -264,35 +287,26 @@ export function loadProjectDetailed(id: string): LoadOutcome | null {
+ 
+   // Genuinely absent is NOT a failure — it is the "no such project" answer, and
+   // must stay distinguishable from "present but broken".
+-  if (!raw) return null;
++  if (!record) return null;
+ 
+-  let stored: StoredProject;
+-  try {
+-    stored = JSON.parse(raw) as StoredProject;
+-  } catch (err) {
+-    const message =
+-      `Project ${id} is present in storage (${raw.length} chars) but is not valid JSON: ${String(err)}. ` +
+-      `The raw bytes have been left untouched; autosave is blocked for this project.`;
+-    console.error(`[kinetix] ${message}`);
+-    const failure: LoadFailure = { id, reason: 'parse-error', message, rawLength: raw.length, at: Date.now() };
+-    loadFailures.set(id, failure);
+-    return { ok: false, reason: 'parse-error', message, rawLength: raw.length };
+-  }
++  const rawLength = JSON.stringify(record).length;
+ 
+-  if (!stored || typeof stored !== 'object' || !stored.project || !Array.isArray(stored.project.segments)) {
++  if (!record.project || typeof record.project !== 'object' || !Array.isArray((record.project as { segments?: unknown }).segments)) {
+     const message =
+-      `Project ${id} parsed as JSON but does not have the expected shape (missing ` +
+-      `\`project\` or \`project.segments\`). The raw ${raw.length} bytes have been left untouched; ` +
++      `Project ${id} is present in storage but does not have the expected shape (missing ` +
++      `\`project\` or \`project.segments\`). The stored record has been left untouched; ` +
+       `autosave is blocked for this project.`;
+     console.error(`[kinetix] ${message}`);
+-    const failure: LoadFailure = { id, reason: 'shape-invalid', message, rawLength: raw.length, at: Date.now() };
++    const failure: LoadFailure = { id, reason: 'shape-invalid', message, rawLength, at: Date.now() };
+     loadFailures.set(id, failure);
+-    return { ok: false, reason: 'shape-invalid', message, rawLength: raw.length };
++    return { ok: false, reason: 'shape-invalid', message, rawLength };
+   }
+ 
++  const storedProject = record.project as StoredProjectData['project'];
++
+   // Path B heading layer (Decision 5): no migration — just default to [] when
+   // absent, for projects saved before the `headings` field existed.
+-  const project = { headings: [], ...stored.project } as unknown as Project;
++  const project = { headings: [], ...storedProject } as unknown as Project;
+   // WS3 Batch B, Piece 2 back-compat — `playbackSpeed` was removed as a
+   // concept (a video clip always plays at its native rate). A project
+   // saved before this change may still carry a per-segment value; strip it
+@@ -317,7 +331,7 @@ export function loadProjectDetailed(id: string): LoadOutcome | null {
+ 
+   // A previously-poisoned id that now loads cleanly is un-poisoned.
+   loadFailures.delete(id);
+-  return { ok: true, project, savedAt: stored.savedAt };
++  return { ok: true, project, savedAt: record.savedAt };
+ }
+ 
+ /**
+@@ -326,8 +340,8 @@ export function loadProjectDetailed(id: string): LoadOutcome | null {
+  * need to tell those two apart, and to surface the failure, use
+  * `loadProjectDetailed`.
+  */
+-export function loadProject(id: string): { project: Project; savedAt: number } | null {
+-  const outcome = loadProjectDetailed(id);
++export async function loadProject(id: string): Promise<{ project: Project; savedAt: number } | null> {
++  const outcome = await loadProjectDetailed(id);
+   if (!outcome || !outcome.ok) return null;
+   return { project: outcome.project, savedAt: outcome.savedAt };
+ }
+@@ -335,6 +349,10 @@ export function loadProject(id: string): { project: Project; savedAt: number } |
+ /**
+  * Returns all project metas from the registry, newest first.
+  * Returns empty array on any error.
++ *
++ * Stays synchronous and `localStorage`-backed on purpose — the registry is
++ * small (no segment/heading bodies) and several call sites (dashboard's
++ * initial render, boot routing) read it without an await.
+  */
+ export function loadAllMetas(): ProjectMeta[] {
+   try {
+@@ -368,9 +386,11 @@ export function upsertProjectMeta(meta: ProjectMeta): void {
+   }
+ }
+ 
+-/** Removes a project's per-project key and its registry entry. */
+-export function deleteProjectData(id: string): void {
+-  localStorage.removeItem(projectKey(id));
++/** Removes a project's stored record and its registry entry. */
++export async function deleteProjectData(id: string): Promise<void> {
++  await deleteProjectRecord(id).catch(err =>
++    console.error(`[kinetix] Failed to delete stored project ${id}:`, err),
++  );
+   clearLoadFailure(id);
+   const metas = loadAllMetas().filter(m => m.id !== id);
+   let registryJson: string | undefined;
+@@ -391,7 +411,7 @@ export function deleteProjectData(id: string): void {
+ export interface AdoptionReport {
+   /** True when a mirror was actually readable (false outside Tauri). */
+   mirrorAvailable: boolean;
+-  /** Ids copied from the mirror into this origin's localStorage. */
++  /** Ids copied from the mirror into this origin's storage. */
+   adopted: string[];
+   /** Ids present in the mirror but already present locally — left alone. */
+   skippedAlreadyLocal: string[];
+@@ -400,7 +420,7 @@ export interface AdoptionReport {
+ }
+ 
+ /**
+- * Copies into THIS origin's `localStorage` any project the durable mirror holds
++ * Copies into THIS origin's storage any project the durable mirror holds
+  * that this origin does not.
+  *
+  * STRICTLY ADDITIVE, and that is the whole safety argument: a project id that
+@@ -411,7 +431,10 @@ export interface AdoptionReport {
+  * "newest wins" rule across those would let opening an old build silently roll
+  * a project backwards.
+  *
+- * Call once at boot, before `loadAllMetas()`.
++ * Call once at boot, before `loadAllMetas()`, and after
++ * `migrateLocalStorageProjectsToIndexedDB()` so "already present locally"
++ * checks IndexedDB rather than a `localStorage` key this migration may have
++ * already drained.
+  */
+ export async function adoptMirroredProjects(): Promise<AdoptionReport> {
+   const report: AdoptionReport = {
+@@ -437,18 +460,18 @@ export async function adoptMirroredProjects(): Promise<AdoptionReport> {
+ 
+   for (const [id, contents] of snapshot.projects) {
+     try {
+-      if (localStorage.getItem(projectKey(id)) !== null) {
++      if ((await getProjectRecord(id)) !== null) {
+         report.skippedAlreadyLocal.push(id);
+         continue;
+       }
+       // Validate before writing — the mirror must never be able to inject a
+       // value this origin's own loader would then choke on.
+-      const parsed = JSON.parse(contents) as StoredProject;
++      const parsed = JSON.parse(contents) as StoredProjectData;
+       if (!parsed?.project || !Array.isArray(parsed.project.segments)) {
+         report.failed.push({ id, message: 'mirrored value has the wrong shape' });
+         continue;
+       }
+-      localStorage.setItem(projectKey(id), contents);
++      await putProjectRecord({ id, ...parsed });
+ 
+       const metas = loadAllMetas();
+       if (!metas.some(m => m.id === id)) {
+@@ -478,6 +501,87 @@ export async function adoptMirroredProjects(): Promise<AdoptionReport> {
+   return report;
+ }
+ 
++// ---------------------------------------------------------------------------
++// 2026-08-25 — localStorage → IndexedDB migration for existing per-project data
++// ---------------------------------------------------------------------------
++
++export interface StorageMigrationReport {
++  /** Ids successfully copied into IndexedDB and removed from localStorage. */
++  migrated: string[];
++  /** Ids whose localStorage value could not be migrated — LEFT IN localStorage untouched. */
++  failed: { id: string; message: string }[];
++}
++
++/**
++ * One-time migration for a build that has already saved projects under the
++ * old `kinetix:project:<id>:v1` localStorage keys. Copies each into
++ * IndexedDB, then removes the localStorage key — freeing exactly the budget
++ * that was going stale and shared across every other project on this origin.
++ *
++ * Idempotent and safe to call on every boot: an id already present in
++ * IndexedDB is skipped without inspecting its localStorage copy, so a second
++ * run after a successful first one is a no-op scan. A per-id failure (bad
++ * JSON, wrong shape) leaves that id's localStorage key exactly as it was —
++ * mirroring the rest of this module's "never destroy unreadable evidence"
++ * posture — so it is retried on the next boot rather than silently dropped.
++ */
++export async function migrateLocalStorageProjectsToIndexedDB(): Promise<StorageMigrationReport> {
++  const report: StorageMigrationReport = { migrated: [], failed: [] };
++
++  let keys: string[];
++  try {
++    keys = Object.keys(localStorage).filter(
++      k => k.startsWith(LEGACY_PROJECT_KEY_PREFIX) && k.endsWith(LEGACY_PROJECT_KEY_SUFFIX) && k !== LEGACY_KEY,
++    );
++  } catch (err) {
++    console.warn('[kinetix] localStorage unavailable during project migration scan:', err);
++    return report;
++  }
++
++  for (const key of keys) {
++    // `kinetix:project:<id>:v1` — id is a crypto.randomUUID(), never contains ':'.
++    const id = key.slice(LEGACY_PROJECT_KEY_PREFIX.length, key.length - LEGACY_PROJECT_KEY_SUFFIX.length);
++    if (!id) continue;
++
++    try {
++      if ((await getProjectRecord(id)) !== null) {
++        // Already migrated (or adopted from the mirror this boot) — just
++        // drop the now-redundant localStorage copy.
++        localStorage.removeItem(key);
++        continue;
++      }
++
++      const raw = localStorage.getItem(key);
++      if (!raw) continue;
++      const parsed = JSON.parse(raw) as StoredProjectData;
++      if (!parsed?.project || !Array.isArray(parsed.project.segments)) {
++        report.failed.push({ id, message: 'stored value has the wrong shape' });
++        continue;
++      }
++
++      await putProjectRecord({ id, ...parsed });
++      localStorage.removeItem(key);
++      report.migrated.push(id);
++    } catch (err) {
++      report.failed.push({ id, message: String(err) });
++    }
++  }
++
++  if (report.migrated.length > 0) {
++    console.info(
++      `[kinetix] Migrated ${report.migrated.length} project(s) from localStorage to IndexedDB: ` +
++        `${report.migrated.join(', ')}`,
++    );
++  }
++  if (report.failed.length > 0) {
++    console.error(
++      `[kinetix] ${report.failed.length} project(s) could NOT be migrated from localStorage — left ` +
++        `untouched there for a retry: ${report.failed.map(f => `${f.id} (${f.message})`).join(', ')}`,
++    );
++  }
++  return report;
++}
++
+ // ---------------------------------------------------------------------------
+ // Last-opened project tracking
+ // ---------------------------------------------------------------------------
+@@ -547,7 +651,7 @@ export function clearLastOpenedProjectId(): void {
+  * Returns the migrated `{ project, savedAt }` if migration was performed, or
+  * null if no legacy data was present.
+  */
+-export function migrateLegacyIfNeeded(): { project: Project; savedAt: number } | null {
++export async function migrateLegacyIfNeeded(): Promise<{ project: Project; savedAt: number } | null> {
+   try {
+     const raw = localStorage.getItem(LEGACY_KEY);
+     if (!raw) return null;
+@@ -564,7 +668,7 @@ export function migrateLegacyIfNeeded(): { project: Project; savedAt: number } |
+     }
+ 
+     // Re-save under the new per-project key and update registry
+-    saveProject(stored.project);
++    await saveProject(stored.project);
+ 
+     // Remove legacy key so migration only runs once
+     localStorage.removeItem(LEGACY_KEY);
+diff --git a/src/services/projectStoreGuard.test.ts b/src/services/projectStoreGuard.test.ts
+index 01a60b6..874e814 100644
+--- a/src/services/projectStoreGuard.test.ts
++++ b/src/services/projectStoreGuard.test.ts
+@@ -11,19 +11,64 @@
+  * both origin stores hydrated cleanly through the production `loadProject`
+  * path (12/12, registry `segmentCount` matching hydrated `segments.length`),
+  * so NOTHING here is regression-locking a measured corruption — there was
+- * none. What these tests lock is the guard that makes the three SILENT failure
++ * none. What these tests lock is the guard that makes the silent failure
+  * modes the store previously had impossible to hit silently again:
+  *
+  *   1. a zero-segment project overwriting a stored non-empty one,
+- *   2. a quota/write failure swallowed by a bare `catch {}`,
+- *   3. a parse failure indistinguishable from "no such project", followed by
+- *      an autosave over the very bytes that failed to parse.
++ *   2. a quota/write failure swallowed instead of reported,
++ *   3. a malformed stored record indistinguishable from "no such project",
++ *      followed by an autosave over the very record that failed to load.
++ *
++ * 2026-08-25 — project bodies moved from `localStorage` (a shared ~5-10 MB
++ * origin budget that a real 21-min-audio project's ~915,000-char JSON started
++ * blowing through) to IndexedDB (`projectDataStore.ts`). This suite now mocks
++ * that module directly with a Map-backed fake plus per-test failure
++ * injection, rather than a `localStorage` stub — it is testing `saveProject`
++ * / `loadProjectDetailed`'s GUARD LOGIC (poisoning, empty-over-nonempty,
++ * quota/verify reporting), not IndexedDB itself.
+  *
+  * The `faHighPrecisionSync` round trip and the pre-change fixture cover the
+  * schema-change half of Step 3(c).
+  */
+ 
+ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
++import type { ProjectRecord } from './projectDataStore';
++
++// ---------------------------------------------------------------------------
++// Fake `projectDataStore` — a Map-backed IndexedDB stand-in with injectable
++// failures, so quota/verify-failure paths can be tested deterministically
++// without depending on a real engine's quota enforcement (fake-indexeddb
++// does not enforce one).
++// ---------------------------------------------------------------------------
++
++let idbBacking: Map<string, ProjectRecord>;
++let putFailure: (() => Error) | null = null;
++let getFailure: (() => Error) | null = null;
++/** When set, `getProjectRecord` returns this instead of the real backing entry — for the verify-failed path. */
++let getOverride: ((id: string) => ProjectRecord | null) | null = null;
++
++function clone<T>(v: T): T {
++  return JSON.parse(JSON.stringify(v)) as T;
++}
++
++vi.mock('./projectDataStore', () => ({
++  putProjectRecord: (record: ProjectRecord) => {
++    if (putFailure) return Promise.reject(putFailure());
++    idbBacking.set(record.id, clone(record));
++    return Promise.resolve();
++  },
++  getProjectRecord: (id: string) => {
++    if (getFailure) return Promise.reject(getFailure());
++    if (getOverride) return Promise.resolve(getOverride(id));
++    return Promise.resolve(idbBacking.has(id) ? clone(idbBacking.get(id)!) : null);
++  },
++  deleteProjectRecord: (id: string) => {
++    idbBacking.delete(id);
++    return Promise.resolve();
++  },
++  getAllProjectIds: () => Promise.resolve([...idbBacking.keys()]),
++}));
++
+ import {
+   saveProject,
+   loadProject,
+@@ -39,22 +84,18 @@ import { AnimationType, TransitionType } from '../types';
+ // Harness
+ // ---------------------------------------------------------------------------
+ 
+-let backing: Map<string, string>;
++let registryBacking: Map<string, string>;
+ 
+-function installLocalStorage(opts: { throwOnSet?: () => Error | null } = {}): void {
+-  backing = new Map<string, string>();
++function installLocalStorage(): void {
++  registryBacking = new Map<string, string>();
+   vi.stubGlobal('localStorage', {
+-    getItem: (k: string) => (backing.has(k) ? backing.get(k)! : null),
+-    setItem: (k: string, v: string) => {
+-      const err = opts.throwOnSet?.();
+-      if (err) throw err;
+-      backing.set(k, String(v));
+-    },
+-    removeItem: (k: string) => void backing.delete(k),
+-    clear: () => backing.clear(),
+-    key: (i: number) => [...backing.keys()][i] ?? null,
++    getItem: (k: string) => (registryBacking.has(k) ? registryBacking.get(k)! : null),
++    setItem: (k: string, v: string) => registryBacking.set(k, String(v)),
++    removeItem: (k: string) => void registryBacking.delete(k),
++    clear: () => registryBacking.clear(),
++    key: (i: number) => [...registryBacking.keys()][i] ?? null,
+     get length() {
+-      return backing.size;
++      return registryBacking.size;
+     },
+   } as Storage);
+   vi.stubGlobal('sessionStorage', {
+@@ -98,11 +139,13 @@ function projectWith(segments: number, over: Partial<Project> = {}): Project {
+   } as Project;
+ }
+ 
+-const KEY = 'kinetix:project:p-guard:v1';
+-
+ beforeEach(() => {
+   __resetStoreGuardsForTests();
+   installLocalStorage();
++  idbBacking = new Map();
++  putFailure = null;
++  getFailure = null;
++  getOverride = null;
+ });
+ afterEach(() => {
+   vi.unstubAllGlobals();
+@@ -119,7 +162,8 @@ describe('pre-change project fixture', () => {
+    * carries the retired `playbackSpeed`/`sourceDuration` per-segment fields,
+    * carries no `headings` layer, and carries no `faHighPrecisionSync`.
+    */
+-  const PRE_CHANGE = JSON.stringify({
++  const PRE_CHANGE: ProjectRecord = {
++    id: 'p-guard',
+     version: 2,
+     savedAt: 1_700_000_000_000,
+     project: {
+@@ -142,11 +186,11 @@ describe('pre-change project fixture', () => {
+       aspectRatio: '16:9',
+       resolutionTier: '1080p',
+     },
+-  });
++  };
+ 
+-  it('hydrates fully — every segment survives, retired fields are stripped, headings default to []', () => {
+-    backing.set(KEY, PRE_CHANGE);
+-    const loaded = loadProject('p-guard');
++  it('hydrates fully — every segment survives, retired fields are stripped, headings default to []', async () => {
++    idbBacking.set('p-guard', PRE_CHANGE);
++    const loaded = await loadProject('p-guard');
+     expect(loaded).not.toBeNull();
+     expect(loaded!.project.segments).toHaveLength(3);
+     expect(loaded!.project.segments.map(s => s.text)).toEqual(['a', 'b', 'c']);
+@@ -160,17 +204,17 @@ describe('pre-change project fixture', () => {
+     expect(loaded!.project.segments.map(s => s.duration)).toEqual([2, 2, 2]);
+   });
+ 
+-  it('a subsequent empty-project autosave does NOT write back over it', () => {
+-    backing.set(KEY, PRE_CHANGE);
+-    const before = backing.get(KEY)!;
++  it('a subsequent empty-project autosave does NOT write back over it', async () => {
++    idbBacking.set('p-guard', PRE_CHANGE);
++    const before = clone(idbBacking.get('p-guard')!);
+ 
+-    const outcome = saveProject(projectWith(0));
++    const outcome = await saveProject(projectWith(0));
+ 
+     expect(outcome.ok).toBe(false);
+     expect(outcome.ok === false && outcome.reason).toBe('empty-over-nonempty');
+-    // The decisive assertion: the stored bytes are byte-for-byte unchanged.
+-    expect(backing.get(KEY)).toBe(before);
+-    expect(loadProject('p-guard')!.project.segments).toHaveLength(3);
++    // The decisive assertion: the stored record is byte-for-byte unchanged.
++    expect(idbBacking.get('p-guard')).toEqual(before);
++    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(3);
+   });
+ });
+ 
+@@ -179,22 +223,22 @@ describe('pre-change project fixture', () => {
+ // ---------------------------------------------------------------------------
+ 
+ describe('empty-over-nonempty guard', () => {
+-  it('refuses a 0-segment write over a stored 447-segment project', () => {
+-    saveProject(projectWith(447));
+-    expect(loadProject('p-guard')!.project.segments).toHaveLength(447);
+-    const before = backing.get(KEY)!;
++  it('refuses a 0-segment write over a stored 447-segment project', async () => {
++    await saveProject(projectWith(447));
++    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(447);
++    const before = clone(idbBacking.get('p-guard')!);
+ 
+-    const outcome = saveProject(projectWith(0));
++    const outcome = await saveProject(projectWith(0));
+ 
+     expect(outcome).toEqual({ ok: false, reason: 'empty-over-nonempty', message: expect.any(String) });
+-    expect(backing.get(KEY)).toBe(before);
+-    expect(loadProject('p-guard')!.project.segments).toHaveLength(447);
++    expect(idbBacking.get('p-guard')).toEqual(before);
++    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(447);
+   });
+ 
+-  it('logs loudly, naming both counts, so the refusal is never silent', () => {
++  it('logs loudly, naming both counts, so the refusal is never silent', async () => {
+     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+-    saveProject(projectWith(447));
+-    saveProject(projectWith(0));
++    await saveProject(projectWith(447));
++    await saveProject(projectWith(0));
+     expect(err).toHaveBeenCalled();
+     const msg = err.mock.calls.map(c => String(c[0])).join('\n');
+     expect(msg).toMatch(/REFUSING/);
+@@ -203,66 +247,66 @@ describe('empty-over-nonempty guard', () => {
+     err.mockRestore();
+   });
+ 
+-  it('ALLOWS an empty first save — a brand-new project is not an overwrite', () => {
+-    expect(saveProject(projectWith(0)).ok).toBe(true);
+-    expect(loadProject('p-guard')!.project.segments).toHaveLength(0);
++  it('ALLOWS an empty first save — a brand-new project is not an overwrite', async () => {
++    expect((await saveProject(projectWith(0))).ok).toBe(true);
++    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(0);
+   });
+ 
+-  it('allows a deliberate emptying through the explicit opt-in', () => {
+-    saveProject(projectWith(447));
+-    expect(saveProject(projectWith(0), { allowEmptying: true }).ok).toBe(true);
+-    expect(loadProject('p-guard')!.project.segments).toHaveLength(0);
++  it('allows a deliberate emptying through the explicit opt-in', async () => {
++    await saveProject(projectWith(447));
++    expect((await saveProject(projectWith(0), { allowEmptying: true })).ok).toBe(true);
++    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(0);
+   });
+ 
+-  it('a non-empty write over a non-empty project is unaffected', () => {
+-    saveProject(projectWith(447));
+-    expect(saveProject(projectWith(448)).ok).toBe(true);
+-    expect(loadProject('p-guard')!.project.segments).toHaveLength(448);
++  it('a non-empty write over a non-empty project is unaffected', async () => {
++    await saveProject(projectWith(447));
++    expect((await saveProject(projectWith(448))).ok).toBe(true);
++    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(448);
+   });
+ });
+ 
+ // ---------------------------------------------------------------------------
+-// 3. Corrupt / truncated / partial JSON — loud AND non-destructive
++// 3. Malformed stored records — loud AND non-destructive
+ // ---------------------------------------------------------------------------
+ 
+-describe('corrupt stored values', () => {
+-  const CASES: [string, string][] = [
+-    ['truncated mid-object', '{"version":2,"savedAt":1,"project":{"id":"p-guard","segments":[{"id":"s0"'],
+-    ['empty string body', '{'],
+-    ['garbage', 'not json at all'],
+-    ['partial write / trailing cut', '{"version":2,"savedAt":1,"project":{"segments":[]}'],
++describe('malformed stored records', () => {
++  const CASES: [string, unknown][] = [
++    ['missing project entirely', { id: 'p-guard', version: 2, savedAt: 1 }],
++    ['project present but no segments array', { id: 'p-guard', version: 2, savedAt: 1, project: { id: 'p-guard' } }],
++    ['segments is not an array', { id: 'p-guard', version: 2, savedAt: 1, project: { id: 'p-guard', segments: 'nope' } }],
+   ];
+ 
+   for (const [label, bad] of CASES) {
+-    it(`${label}: raw bytes survive, the error is reported, and nothing is rewritten`, () => {
++    it(`${label}: the stored record survives, the error is reported, and nothing is rewritten`, async () => {
+       const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+-      backing.set(KEY, bad);
++      idbBacking.set('p-guard', bad as ProjectRecord);
+ 
+-      const outcome = loadProjectDetailed('p-guard');
++      const outcome = await loadProjectDetailed('p-guard');
+ 
+       expect(outcome).not.toBeNull();
+       expect(outcome!.ok).toBe(false);
+-      expect(outcome!.ok === false && outcome!.reason).toBe('parse-error');
+-      expect(outcome!.ok === false && outcome!.rawLength).toBe(bad.length);
+-      // Non-destructive: the exact bytes are still there.
+-      expect(backing.get(KEY)).toBe(bad);
++      expect(outcome!.ok === false && outcome!.reason).toBe('shape-invalid');
++      // Non-destructive: the exact record is still there.
++      expect(idbBacking.get('p-guard')).toEqual(bad);
+       expect(err).toHaveBeenCalled();
+       err.mockRestore();
+     });
+   }
+ 
+-  it('valid JSON of the wrong shape is reported as shape-invalid, not silently accepted', () => {
++  it('a genuinely unreadable store (IndexedDB open/read throws) is reported as storage-unavailable', async () => {
+     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+-    const wrong = JSON.stringify({ version: 2, savedAt: 1, project: { id: 'p-guard' } });
+-    backing.set(KEY, wrong);
+-    const outcome = loadProjectDetailed('p-guard');
+-    expect(outcome!.ok === false && outcome!.reason).toBe('shape-invalid');
+-    expect(backing.get(KEY)).toBe(wrong);
++    getFailure = () => new Error('IndexedDB is not available');
++
++    const outcome = await loadProjectDetailed('p-guard');
++
++    expect(outcome!.ok).toBe(false);
++    expect(outcome!.ok === false && outcome!.reason).toBe('storage-unavailable');
++    expect(err).toHaveBeenCalled();
+     err.mockRestore();
+   });
+ 
+-  it('an ABSENT project stays distinguishable from a broken one', () => {
+-    expect(loadProjectDetailed('p-guard')).toBeNull();
++  it('an ABSENT project stays distinguishable from a broken one', async () => {
++    expect(await loadProjectDetailed('p-guard')).toBeNull();
+     expect(getLoadFailure('p-guard')).toBeUndefined();
+   });
+ });
+@@ -272,53 +316,53 @@ describe('corrupt stored values', () => {
+ // ---------------------------------------------------------------------------
+ 
+ describe('load failure blocks the autosave that follows it', () => {
+-  it('a failed load poisons the id, and the next save is refused with the raw bytes intact', () => {
++  it('a failed load poisons the id, and the next save is refused with the stored record intact', async () => {
+     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+-    const corrupt = '{"version":2,"project":{"segments":[{"id"';
+-    backing.set(KEY, corrupt);
++    const corrupt = { id: 'p-guard', version: 2, savedAt: 1, project: { id: 'p-guard' } } as ProjectRecord;
++    idbBacking.set('p-guard', corrupt);
+ 
+     // The app tries to open it and fails...
+-    const outcome = loadProjectDetailed('p-guard');
++    const outcome = await loadProjectDetailed('p-guard');
+     expect(outcome!.ok).toBe(false);
+     expect(getLoadFailure('p-guard')).toBeDefined();
+ 
+     // ...and 500 ms later the debounced autosave fires with whatever the app
+     // has in memory. THIS is the write that used to destroy the evidence.
+-    const saved = saveProject(projectWith(0));
++    const saved = await saveProject(projectWith(0));
+     expect(saved.ok).toBe(false);
+     expect(saved.ok === false && saved.reason).toBe('blocked-by-load-failure');
+-    expect(backing.get(KEY)).toBe(corrupt);
++    expect(idbBacking.get('p-guard')).toEqual(corrupt);
+ 
+     // Even a well-populated project is refused — the id stays poisoned until
+     // the user acts, because the app cannot know the in-memory state is right.
+-    const savedFull = saveProject(projectWith(447));
++    const savedFull = await saveProject(projectWith(447));
+     expect(savedFull.ok === false && savedFull.reason).toBe('blocked-by-load-failure');
+-    expect(backing.get(KEY)).toBe(corrupt);
++    expect(idbBacking.get('p-guard')).toEqual(corrupt);
+ 
+     err.mockRestore();
+   });
+ 
+-  it('clearLoadFailure is the escape hatch, and un-poisons the id', () => {
++  it('clearLoadFailure is the escape hatch, and un-poisons the id', async () => {
+     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+-    backing.set(KEY, 'broken{');
+-    loadProjectDetailed('p-guard');
+-    expect(saveProject(projectWith(447)).ok).toBe(false);
++    idbBacking.set('p-guard', { id: 'p-guard', version: 2, savedAt: 1, project: {} } as ProjectRecord);
++    await loadProjectDetailed('p-guard');
++    expect((await saveProject(projectWith(447))).ok).toBe(false);
+ 
+     clearLoadFailure('p-guard');
+-    expect(saveProject(projectWith(447)).ok).toBe(true);
+-    expect(loadProject('p-guard')!.project.segments).toHaveLength(447);
++    expect((await saveProject(projectWith(447))).ok).toBe(true);
++    expect((await loadProject('p-guard'))!.project.segments).toHaveLength(447);
+     err.mockRestore();
+   });
+ 
+-  it('a later CLEAN load of the same id un-poisons it automatically', () => {
++  it('a later CLEAN load of the same id un-poisons it automatically', async () => {
+     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+-    backing.set(KEY, 'broken{');
+-    loadProjectDetailed('p-guard');
++    idbBacking.set('p-guard', { id: 'p-guard', version: 2, savedAt: 1, project: {} } as ProjectRecord);
++    await loadProjectDetailed('p-guard');
+     expect(getLoadFailure('p-guard')).toBeDefined();
+ 
+     // Repaired out-of-band (e.g. adopted from the mirror).
+-    backing.set(KEY, JSON.stringify({ version: 2, savedAt: 5, project: projectWith(3) }));
+-    const good = loadProjectDetailed('p-guard');
++    idbBacking.set('p-guard', { id: 'p-guard', version: 2, savedAt: 5, project: projectWith(3) } as unknown as ProjectRecord);
++    const good = await loadProjectDetailed('p-guard');
+     expect(good!.ok).toBe(true);
+     expect(getLoadFailure('p-guard')).toBeUndefined();
+     err.mockRestore();
+@@ -330,13 +374,14 @@ describe('load failure blocks the autosave that follows it', () => {
+ // ---------------------------------------------------------------------------
+ 
+ describe('write failures are reported', () => {
+-  it('a QuotaExceededError is surfaced as quota-exceeded instead of being swallowed', () => {
++  it('a QuotaExceededError is surfaced as quota-exceeded instead of being swallowed', async () => {
+     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+-    const quota = new Error('The quota has been exceeded.');
+-    quota.name = 'QuotaExceededError';
+-    installLocalStorage({ throwOnSet: () => quota });
++    putFailure = () => {
++      const e = new DOMException('The quota has been exceeded.', 'QuotaExceededError');
++      return e as unknown as Error;
++    };
+ 
+-    const outcome = saveProject(projectWith(10));
++    const outcome = await saveProject(projectWith(10));
+ 
+     expect(outcome.ok).toBe(false);
+     expect(outcome.ok === false && outcome.reason).toBe('quota-exceeded');
+@@ -344,22 +389,12 @@ describe('write failures are reported', () => {
+     err.mockRestore();
+   });
+ 
+-  it('a write that silently does not land is caught by read-back verification', () => {
++  it('a write that resolves but does not land is caught by read-back verification', async () => {
+     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+-    installLocalStorage();
+-    // A store that accepts writes but drops project payloads on the floor.
+-    const real = localStorage.setItem.bind(localStorage);
+-    vi.stubGlobal('localStorage', {
+-      ...localStorage,
+-      getItem: (k: string) => (backing.has(k) ? backing.get(k)! : null),
+-      setItem: (k: string, v: string) => {
+-        if (k.startsWith('kinetix:project:')) return;
+-        real(k, v);
+-      },
+-      removeItem: (k: string) => void backing.delete(k),
+-    } as unknown as Storage);
+-
+-    const outcome = saveProject(projectWith(10));
++    // put() "succeeds" (does nothing) but get() reports the record is not there.
++    getOverride = () => null;
++
++    const outcome = await saveProject(projectWith(10));
+     expect(outcome.ok).toBe(false);
+     expect(outcome.ok === false && outcome.reason).toBe('verify-failed');
+     err.mockRestore();
+@@ -371,30 +406,30 @@ describe('write failures are reported', () => {
+ // ---------------------------------------------------------------------------
+ 
+ describe('faHighPrecisionSync round trip', () => {
+-  it('round-trips true', () => {
+-    saveProject(projectWith(3, { faHighPrecisionSync: true }));
+-    expect(loadProject('p-guard')!.project.faHighPrecisionSync).toBe(true);
++  it('round-trips true', async () => {
++    await saveProject(projectWith(3, { faHighPrecisionSync: true }));
++    expect((await loadProject('p-guard'))!.project.faHighPrecisionSync).toBe(true);
+   });
+ 
+-  it('round-trips false (an explicit opt-out is not lost)', () => {
+-    saveProject(projectWith(3, { faHighPrecisionSync: false }));
+-    expect(loadProject('p-guard')!.project.faHighPrecisionSync).toBe(false);
++  it('round-trips false (an explicit opt-out is not lost)', async () => {
++    await saveProject(projectWith(3, { faHighPrecisionSync: false }));
++    expect((await loadProject('p-guard'))!.project.faHighPrecisionSync).toBe(false);
+   });
+ 
+-  it('an ABSENT key stays absent — "no preference" is never written back as a value', () => {
++  it('an ABSENT key stays absent — "no preference" is never written back as a value', async () => {
+     const p = projectWith(3);
+     delete (p as { faHighPrecisionSync?: boolean }).faHighPrecisionSync;
+-    saveProject(p);
+-    const back = loadProject('p-guard')!.project;
++    await saveProject(p);
++    const back = (await loadProject('p-guard'))!.project;
+     expect('faHighPrecisionSync' in back).toBe(false);
+     expect(back.faHighPrecisionSync).toBeUndefined();
+   });
+ 
+-  it('survives a save→load→save→load double round trip unchanged', () => {
+-    saveProject(projectWith(3, { faHighPrecisionSync: true }));
+-    const once = loadProject('p-guard')!.project;
+-    saveProject(once);
+-    const twice = loadProject('p-guard')!.project;
++  it('survives a save→load→save→load double round trip unchanged', async () => {
++    await saveProject(projectWith(3, { faHighPrecisionSync: true }));
++    const once = (await loadProject('p-guard'))!.project;
++    await saveProject(once);
++    const twice = (await loadProject('p-guard'))!.project;
+     expect(twice.faHighPrecisionSync).toBe(true);
+     expect(twice.segments).toHaveLength(3);
+   });
+-- 
+2.53.0
+

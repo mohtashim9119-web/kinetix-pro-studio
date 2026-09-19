@@ -213,6 +213,14 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 - [OPEN · NON-BLOCKING] `GL_TRANSITION_SLUGS` duplicated — `compositeParams.ts:34`, `decodeCursorLifetime.ts:26`
 - [OPEN · NON-BLOCKING] Three parallel disk-size estimators (badge, dead destination module, live preflight) — consolidate to one — `diskFull.ts`
 - CLOSED (2026-09-19, P4b) — ~33 cloud CI test failures from missing `.work-phase4/replay/` fixtures — `scripts/phase4-restore-replay-inputs.py`. Fixtures committed as tracked content (`549ce63`); canonical zero-failure line reconfirmed at the current branch tip (`53449b9`, gate 6: `npm test` → 3925 passed / 78 skipped / 0 failed — `baseline-p1b-p3-2026-09-19.md`). The other 1 of the originally-observed 34 `npm test` failures (the WS1 single-tracker allowlist gap) was closed earlier by `2b7d33a`, not this line — that failure was never a "gitignored replay fixtures" issue and had no separate STATUS.md line of its own.
+- CANONICAL LINE UPDATE (2026-09-19, zero-leftover-finish pass) — `npm test` → **3931
+  passed / 78 skipped / 0 failed**, superseding the 3925/78/0 line recorded above at
+  `53449b9`. The +6 tests arrive with `ws2-44-zip-blob-leak`'s merge (`673a3b0`,
+  `src/services/zipAssetMerge.test.ts`) — no defect, no new open item. Not a STATUS.md
+  line closure on its own: no prior open line named this leak (grepped `ws2-44`,
+  `zipAssetMerge`, `leak` — zero hits before this merge), so there is nothing to close,
+  only the canonical count to carry forward. Cap arithmetic unaffected — this is a test-
+  count note, not a Next-Tasks/Open-Bugs line.
 - [OPEN · NON-BLOCKING] 10 local `archive/wt-*-2026-09-14` branches, none pushed to origin
 - SaaS target architecture (integration tip at record time `e8ffb6b`, one commit before docs tip `c463814`; branch now merged to `main` @ `42988f1`) — `docs/architecture/saas-target-architecture.md`, Round 28, commit `06c67a3`
 - Cloud ASR and alignment plan (branch `ws-cloud-asr-plan` @ `eb1c4fa`, merged to `main` @ `42988f1`) — `docs/architecture/cloud-asr-plan.md`

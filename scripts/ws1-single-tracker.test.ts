@@ -127,6 +127,13 @@ const ALLOWLIST = new Set<string>([
   // signed-plan commit, and final six-gate verification. Dated, docs-only, not a
   // live tracker.
   'docs/ws1-sync-pipeline/zero-leftover-finish-2026-09-19.md',
+  // Terminal pass (2026-09-19) — P0-P6 record: push, 72MB split-gzip end-state
+  // verification, terminal disposition of the 3 parked refs (patches exported,
+  // apply-clean tested and honestly reported as failing, refs deleted, remote
+  // copies retained), STATUS.md canonical-line sync, 29-branch remote tidy,
+  // final six-gate + zero-leftover checklist. Dated, docs-only, not a live
+  // tracker.
+  'docs/ws1-sync-pipeline/terminal-pass-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
