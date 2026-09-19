@@ -199,6 +199,50 @@ describe('SyncLogPanel — WS4 entry kinds', () => {
     expect(html).not.toContain('undefined');
   });
 
+  // plan-v3 item 3 — 'fa-fallback' is retired (nothing produces it any more)
+  // but the two tests above must keep passing unchanged: a project synced
+  // before this change can still have 'fa-fallback' entries on disk, and the
+  // panel must go on rendering them. 'fa-paused' is what NEW runs emit.
+  it('renders an fa-paused entry with its verbatim backend error and fix hint', () => {
+    const html = renderPanel([{
+      id: 'e-fa-paused',
+      timestamp: AT,
+      syncRunId: 'run-1',
+      type: 'fa-paused',
+      message: 'High-precision sync paused — the alignment engine reported an error. Waiting for you to choose how to proceed.',
+      owningRule: 'FA',
+      reason: 'inference-failed',
+      severity: 'warning',
+      errorMessage: 'failed to initialize onnxruntime: ORT_DYLIB_PATH not set',
+      fixHint: 'Try again. If it keeps happening, continue with Whisper timing for this run.',
+    }]);
+
+    expect(html).toContain('FA PAUSED');
+    expect(html).toContain('Waiting for you to choose');
+    expect(html).toContain('error: failed to initialize onnxruntime: ORT_DYLIB_PATH not set');
+    expect(html).toContain('Try again');
+    expect(html).not.toContain('undefined');
+  });
+
+  it('renders an fa-paused entry with no errorMessage without printing undefined', () => {
+    const html = renderPanel([{
+      id: 'e-fa-paused-2',
+      timestamp: AT,
+      syncRunId: 'run-1',
+      type: 'fa-paused',
+      message: 'High-precision sync paused — the chunk plan came out empty. Waiting for you to choose how to proceed.',
+      owningRule: 'FA',
+      reason: 'empty-chunk-plan',
+      severity: 'warning',
+      fixHint: 'Check that the scene document has text for at least one scene, then try again.',
+    }]);
+
+    expect(html).toContain('FA PAUSED');
+    expect(html).not.toContain('error:');
+    expect(html).toContain('Check that the scene document has text');
+    expect(html).not.toContain('undefined');
+  });
+
   it('still renders pre-WS4 entry kinds unchanged', () => {
     const html = renderPanel([
       { id: 'a', timestamp: AT, syncRunId: 'run-1', type: 'info', message: 'Sync completed: 8 of 8 segments matched.' },

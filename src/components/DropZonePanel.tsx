@@ -53,6 +53,7 @@ import {
   deleteStagedFile,
   getStagedFilesForProject,
 } from '../services/stagedFilesStore';
+import { shouldClearStagedAfterSync } from '../services/applySyncAbort';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -922,12 +923,18 @@ export function DropZonePanel({
     // duration probe), so a synchronous clear here raced every one of those
     // reads and killed the bytes underneath them mid-run. Snapshotting the ref
     // preserves the handle, not the data it points at.
-    void Promise.resolve(onApplySync()).finally(() => {
-      // Slots switch to the green persisted indicator once the run is done with
-      // them. Runs on failure too: an aborted sync must not strand the panel
-      // holding rows it will never consume.
-      updateStaged(() => EMPTY_STAGED);
-    });
+    void Promise.resolve(onApplySync()).then(
+      (result) => {
+        // plan-v3 item 9 completion — pause keeps staged rows so a first-sync
+        // restart can retry FA from the same audio. Commit and cancel clear.
+        if (shouldClearStagedAfterSync(result)) {
+          updateStaged(() => EMPTY_STAGED);
+        }
+      },
+      () => {
+        updateStaged(() => EMPTY_STAGED);
+      },
+    );
     setActiveTab('segments');
   };
 

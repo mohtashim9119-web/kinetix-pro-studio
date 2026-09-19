@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import {
   transcribeWithProgress,
+  classifyWhisperFailure,
   alignScenestoTranscript,
   distributeSegmentTimes,
   filterMalformedTokens,
@@ -15,6 +16,7 @@ import { validate1to2 } from '../services/syncContracts';
 import { buildSilenceErrorEntry, buildMalformedTokenEntry, buildContractViolationEntry, appendSyncLogEntries } from '../services/syncLog';
 import { buildUnappliedTranscript } from '../services/unappliedTranscript';
 import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken, SyncLogEntry } from '../types';
+import { stampWhisperProvenance } from '../services/timingProvenance';
 
 /**
  * Fetches the voiceover blob and scans it for silence.
@@ -470,6 +472,16 @@ export function useWhisper(): UseWhisperApi {
             ? getFileIdentity(audioAsset.file)
             : p.lastTranscribedFileIdentity,
           transcriptTokens: tokens,
+          // plan-v3 item 8 — stamp the engine that actually produced these
+          // tokens, in the SAME update. A follow-up write would leave a
+          // window of unstamped timings.
+          timingProvenance: {
+            ...p.timingProvenance,
+            transcription: stampWhisperProvenance({
+              language: p.language ?? detectedLanguage,
+              completedAt: syncRunAt,
+            }),
+          },
           // Phase 2a (H.1/H.7) — detection is a SUGGESTION that fills the gap
           // only once: only ever written when the project has no language yet.
           // An already-set value (from a prior detection OR an explicit
@@ -552,9 +564,12 @@ export function useWhisper(): UseWhisperApi {
         // IN_FLIGHT_REFUSAL_PREFIX). Reached only in the narrow race where a
         // job terminates between this run's attach probe and its start; the
         // user gets a sentence about what is happening rather than the tag.
+        const kind = classifyWhisperFailure(raw);
         const message = raw.startsWith(NATIVE_IN_FLIGHT_REFUSAL_PREFIX)
           ? 'A transcription for this audio is already running — wait for it to finish or cancel it first.'
-          : raw;
+          : kind === 'model-hash-mismatch'
+            ? 'The Whisper model failed its integrity check. Re-download ggml-large-v3-turbo — the run will not switch to another model.'
+            : raw;
         setTranscriptionStatus({ phase: 'error', message, jobId });
       } finally {
         // Release the single-flight gate on EVERY exit — clean finish, empty

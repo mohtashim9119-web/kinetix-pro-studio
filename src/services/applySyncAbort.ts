@@ -38,7 +38,22 @@ export const VOICEOVER_DURATION_ABORT_PREFIX = "Couldn't read the voiceover's du
 
 export type SyncAbortClassification = 'transcript_unrelated' | 'timeline_failure';
 
-export type ApplySyncResult = { ok: true } | { ok: false; message: string };
+/** Must match `App.tsx`'s pause return (plan-v3 item 9 completion). */
+export const SYNC_PAUSED_MESSAGE =
+  'Sync paused — waiting for you to choose how to proceed.';
+
+export type ApplySyncResult =
+  | { ok: true }
+  | { ok: false; message: string; holdStaged?: boolean };
+
+/** Pause keeps staged IndexedDB rows so a first-sync retry can read them.
+ *  Commit and cancel (and every other failure) still clear. */
+export function shouldClearStagedAfterSync(result: unknown): boolean {
+  if (result !== null && typeof result === 'object' && 'holdStaged' in result) {
+    return (result as { holdStaged?: unknown }).holdStaged !== true;
+  }
+  return true;
+}
 
 export function classifySyncAbortMessage(message: string): SyncAbortClassification {
   if (message === EMPTY_SCENE_DOC_MESSAGE) return 'transcript_unrelated';

@@ -61,9 +61,25 @@ export interface FaWordSpan {
  *  Tag values stay PascalCase, matching `WhisperEvent`'s own convention
  *  (`whisperService.ts`'s `WhisperEvent` type) — only the payload fields are
  *  camelCase. */
+/** Mirrors `fa.rs`'s `FaInfeasibleChunk` (plan-v3 item 6). */
+export interface FaInfeasibleChunk {
+  chunkIndex: number;
+  startSec: number;
+  endSec: number;
+  wordCount: number;
+}
+
 export type FaEvent =
   | { event: 'Progress'; data: { index: number; total: number } }
-  | { event: 'Done'; data: { words: FaWordSpan[] } }
+  | {
+      event: 'Done';
+      data: {
+        words: FaWordSpan[];
+        /** Cloud-parity name. Absent when zero (Rust skip_serializing_if). */
+        nFallbackChunks?: number;
+        infeasibleChunks?: FaInfeasibleChunk[];
+      };
+    }
   | { event: 'Error'; data: { message: string } };
 
 /** Mirrors `fa.rs`'s `FaErrorKind` (`#[serde(rename_all = "camelCase")]`).

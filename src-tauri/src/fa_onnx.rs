@@ -1379,7 +1379,7 @@ pub fn align_chunked_for_language(
     is_cancelled: impl Fn() -> bool,
     on_progress: impl FnMut(u32),
     timings: &mut crate::fa_timing::FaInferenceTimings,
-) -> Result<Vec<WordSpan>, FaOnnxError> {
+) -> Result<AlignChunkedOutput, FaOnnxError> {
     // WS1 Session M (R-N): make the bundled onnxruntime C runtime loadable
     // before any `load_session` runs. In production this sets `ORT_DYLIB_PATH`
     // from the bundled resource; under tests/manual override it is already set
@@ -1458,6 +1458,52 @@ fn fallback_words_for_infeasible_chunk(chunk: &crate::fa::FaChunkInput, lang: La
         .collect()
 }
 
+/// One CTC-infeasible chunk recorded for the `Done` payload (plan-v3 item 6).
+/// Mirrors the cloud-side `nFallbackChunks` accounting: index + window +
+/// how many placeholder words were auto-filled. The run still completes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InfeasibleChunkFinding {
+    pub chunk_index: u32,
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub word_count: u32,
+}
+
+/// Stitched words plus the infeasible-chunk record for one `align_chunked`
+/// run. `align_chunked` (the ~25 existing test callers) still returns only
+/// the words; the production `fa_align` path reads this full shape so the
+/// count can cross IPC.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlignChunkedOutput {
+    pub words: Vec<WordSpan>,
+    pub infeasible_chunks: Vec<InfeasibleChunkFinding>,
+}
+
+impl AlignChunkedOutput {
+    pub fn n_fallback_chunks(&self) -> u32 {
+        self.infeasible_chunks.len() as u32
+    }
+}
+
+/// Placeholder words + the grouped-finding row for one infeasible chunk.
+/// Pulled out of the loop so the D20 fixture can assert count, flag, and
+/// finding without an ONNX session.
+fn infeasible_chunk_placeholders(
+    chunk_index: usize,
+    chunk: &crate::fa::FaChunkInput,
+    lang: Language,
+    vocab: &Vocab,
+) -> (Vec<WordSpan>, InfeasibleChunkFinding) {
+    let words = fallback_words_for_infeasible_chunk(chunk, lang, vocab);
+    let finding = InfeasibleChunkFinding {
+        chunk_index: chunk_index as u32,
+        start_sec: chunk.start_sec,
+        end_sec: chunk.end_sec,
+        word_count: words.len() as u32,
+    };
+    (words, finding)
+}
+
 /// Real `fa_align` implementation (WS1 Task 5 Slice D11): decodes
 /// `audio_path` ONCE (not once per chunk), gets-or-loads a cached `Session`
 /// for `model_path`/`language` (see the session-cache section above), then
@@ -1509,6 +1555,7 @@ pub fn align_chunked(
         on_progress,
         &mut crate::fa_timing::FaInferenceTimings::default(),
     )
+    .map(|out| out.words)
 }
 
 /// [`align_chunked`] with timing (WS3 fa-perf-foundation) — see
@@ -1533,7 +1580,7 @@ pub fn align_chunked_timed(
     is_cancelled: impl Fn() -> bool,
     mut on_progress: impl FnMut(u32),
     timings: &mut crate::fa_timing::FaInferenceTimings,
-) -> Result<Vec<WordSpan>, FaOnnxError> {
+) -> Result<AlignChunkedOutput, FaOnnxError> {
     if is_cancelled() {
         return Err(FaOnnxError::Cancelled);
     }
@@ -1550,6 +1597,7 @@ pub fn align_chunked_timed(
     let chunk_acc = &mut timings.chunks;
     with_cached_session(cache, model_path, language, &mut timings.model, move |session| {
         let mut all_words = Vec::new();
+        let mut infeasible_chunks = Vec::new();
         for (i, chunk) in chunks.iter().enumerate() {
             if is_cancelled() {
                 return Err(FaOnnxError::Cancelled);
@@ -1575,13 +1623,16 @@ pub fn align_chunked_timed(
                          timing, every word flagged needs_review; run continues",
                         chunk.start_sec, chunk.end_sec,
                     );
-                    all_words.extend(fallback_words_for_infeasible_chunk(chunk, lang_enum, &vocab));
+                    let (placeholders, finding) =
+                        infeasible_chunk_placeholders(i, chunk, lang_enum, &vocab);
+                    all_words.extend(placeholders);
+                    infeasible_chunks.push(finding);
                 }
                 Err(e) => return Err(e),
             }
             on_progress(i as u32 + 1);
         }
-        Ok(all_words)
+        Ok(AlignChunkedOutput { words: all_words, infeasible_chunks })
     })
 }
 
@@ -5579,6 +5630,38 @@ mod ctc_infeasibility_fallback {
                 assert!(confidence < 0.3, "fallback confidence must be below CONF_MIN");
             }
         }
+    }
+
+    #[test]
+    fn infeasible_chunk_count_flag_and_finding_all_surface() {
+        // plan-v3 item 6 — the D20 fixture already reproduces TooManyRepeats
+        // for these two real chunks. This assertion is what was missing:
+        // count, needs_review flag, and the grouped finding all surface from
+        // the same helper the production loop now calls.
+        let vocab = load_vocab("en").unwrap();
+        let mut findings = Vec::new();
+        let mut flagged = 0usize;
+        for (i, chunk) in [real_chunk_4(), real_chunk_52()].into_iter().enumerate() {
+            let (words, finding) = infeasible_chunk_placeholders(i, &chunk, Language::En, &vocab);
+            assert!(!words.is_empty(), "real chunk must produce placeholder words");
+            for w in &words {
+                assert_eq!(w.score, CTC_INFEASIBLE_FALLBACK_SCORE);
+                assert!(w.score.exp() < 0.3, "placeholder must surface as needs_review");
+                flagged += 1;
+            }
+            assert_eq!(finding.chunk_index, i as u32);
+            assert_eq!(finding.start_sec, chunk.start_sec);
+            assert_eq!(finding.end_sec, chunk.end_sec);
+            assert_eq!(finding.word_count as usize, words.len());
+            findings.push(finding);
+        }
+        let output = AlignChunkedOutput { words: vec![], infeasible_chunks: findings };
+        assert_eq!(output.n_fallback_chunks(), 2, "count must name both real infeasible chunks");
+        assert!(flagged > 0, "at least one word must carry the estimated flag");
+        assert_eq!(output.infeasible_chunks.len(), 2);
+        assert_eq!(output.infeasible_chunks[0].chunk_index, 0);
+        assert_eq!(output.infeasible_chunks[1].chunk_index, 1);
+        assert!(output.infeasible_chunks[0].start_sec < output.infeasible_chunks[1].start_sec);
     }
 
     #[test]

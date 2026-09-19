@@ -163,6 +163,7 @@ const {
 } = await import('./services/projectStore');
 const { getAppSessionToken } = await import('./services/historyPersist');
 const { canPersistRecoveredProject } = await import('./services/assetRecovery');
+const { saveFaPause, readFaPause } = await import('./services/faSyncPauseStore');
 
 async function armInSessionReload(projectId: string): Promise<void> {
   setLastOpenedProjectId(projectId);
@@ -662,6 +663,67 @@ describe('WS3 item B — launch-time repair heals a cache miss before it can poi
 // editor — rather than the toast-and-refuse this file's WS3 item A tests
 // (above) show was the only exit before this wiring pass.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Group B closeout (plan-v3 item 4 pause-store semantics) — the SyncPausedDialog
+// is one piece of App-level state shared across every project in the window,
+// while `faSyncPauseStore.ts`'s persisted record is keyed PER PROJECT. Switching
+// away from a paused project to one with no pending pause must clear the
+// dialog — otherwise it stays on screen misattributed to the newly-active
+// project, and its answer handlers (which clear/act via the NOW-active
+// project id) would clear a pause record the new project never had while
+// leaving the outgoing project's real one unresolved.
+// ---------------------------------------------------------------------------
+describe('Group B closeout — stale SyncPausedDialog does not resurface across a project switch', () => {
+  it('clears the dialog when switching to a project with no pending pause', async () => {
+    saveFaPause({
+      projectId: OUTGOING_ID,
+      syncRunId: 'run-outgoing',
+      reason: 'inference-failed',
+      timestamp: Date.now(),
+    });
+    // The outgoing project is also the one the app opens into, via the
+    // in-session-reload path — so the dialog is showing before the switch.
+    await armInSessionReload(OUTGOING_ID);
+    mockLoadProjectDetailed.mockResolvedValueOnce({
+      ok: true,
+      project: storedProject(OUTGOING_ID, 'Outgoing'),
+      savedAt: Date.now(),
+    });
+
+    await mountApp();
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+    expect(view()).toEqual({ view: 'editor', projectId: OUTGOING_ID });
+    expect(document.querySelector('[role="dialog"][aria-label="High-precision sync paused"]')).not.toBeNull();
+
+    // Back to the dashboard, then switch to TARGET_ID, which has no pause
+    // record at all.
+    const backBtn = Array.from(container.querySelectorAll('button'))
+      .find(b => b.textContent?.trim() === 'Projects');
+    expect(backBtn, '"Projects" back button not found').toBeDefined();
+    await act(async () => { backBtn!.click(); });
+    expect(view().view).toBe('dashboard');
+
+    mockLoadProjectDetailed.mockResolvedValueOnce({
+      ok: true,
+      project: storedProject(TARGET_ID, 'Target'),
+      savedAt: Date.now(),
+    });
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${TARGET_ID}"]`);
+    expect(card).not.toBeNull();
+    await act(async () => { card!.click(); });
+    await act(async () => {
+      for (let i = 0; i < 8; i++) await Promise.resolve();
+    });
+
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
+    // The stale dialog is gone — it must not carry over onto the new project.
+    expect(document.querySelector('[role="dialog"][aria-label="High-precision sync paused"]')).toBeNull();
+    // The outgoing project's real pause record is untouched — it was never
+    // "answered" on the new project's behalf.
+    expect(readFaPause(OUTGOING_ID)).not.toBeNull();
+  });
+});
+
 describe('WS3 recovery-ui — Machine 1: opens into recovery, re-links, reopens normally', () => {
   beforeEach(() => {
     // Guard state is module-global; parallel vitest workers can interleave

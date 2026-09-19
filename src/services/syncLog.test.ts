@@ -30,13 +30,18 @@ import {
   buildLockRefusedLogEntry,
   makeSyncLogEntry,
   buildSyncEngineEntry,
-  buildFaFallbackEntry,
+  buildFaPausedEntry,
+  buildFaUserChoseWhisperEntry,
   buildFaPreflightEntry,
+  buildFaGateClosedEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
   buildRunPlacementLogEntries,
   buildUtterancePlacementLogEntries,
+  buildAnchorTrustLogEntries,
+  buildRunEdgeViolationLogEntries,
+  buildCtcInfeasibleLogEntry,
 } from './syncLog';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 import { TransitionType, AnimationType } from '../types';
@@ -1034,29 +1039,56 @@ describe('buildSyncEngineEntry — which engine ran', () => {
   });
 });
 
-describe('buildFaFallbackEntry — fail-clean stops meaning fail-silent', () => {
+describe('buildFaPausedEntry — plan-v3 item 3/4: pause replaces silent substitution', () => {
   it('records the reason as a queryable field, not only inside the message', () => {
-    const entry = buildFaFallbackEntry(RUN_ID, 'inference-error', 'model hash mismatch', AT);
-    expect(entry.type).toBe('fa-fallback');
-    expect(entry.reason).toBe('inference-error');
+    const entry = buildFaPausedEntry(RUN_ID, 'inference-failed', 'model hash mismatch', AT);
+    expect(entry.type).toBe('fa-paused');
+    expect(entry.reason).toBe('inference-failed');
     expect(entry.owningRule).toBe('FA');
     expect(entry.errorMessage).toBe('model hash mismatch');
   });
 
-  it('is a WARNING with a fix hint — the user asked for FA and did not get it', () => {
-    const entry = buildFaFallbackEntry(RUN_ID, 'unsupported-language', 'zz', AT);
+  it('is a WARNING with a fix hint — the user asked for FA and the run stopped', () => {
+    const entry = buildFaPausedEntry(RUN_ID, 'unsupported-language', 'zz', AT);
     expect(entry.severity).toBe('warning');
     expect(entry.fixHint).toBeTruthy();
   });
 
-  it('gives every failure path its own distinguishable text', () => {
-    const reasons = ['unsupported-language', 'empty-chunk-plan', 'zero-words', 'inference-error'] as const;
-    const messages = reasons.map(r => buildFaFallbackEntry(RUN_ID, r, undefined, AT).message);
+  it('gives every FaFailureKind its own distinguishable text — exhaustive over the type, not just a sample', () => {
+    const reasons = [
+      'unsupported-language', 'empty-chunk-plan', 'zero-words', 'model-not-found',
+      'model-hash-mismatch', 'runtime-load-failed', 'audio-stage-failed',
+      'inference-failed', 'already-running', 'out-of-memory', 'offline',
+    ] as const;
+    const messages = reasons.map(r => buildFaPausedEntry(RUN_ID, r, undefined, AT).message);
     expect(new Set(messages).size).toBe(reasons.length);
   });
 
   it('omits errorMessage entirely when there is no backend detail to carry', () => {
-    expect(buildFaFallbackEntry(RUN_ID, 'zero-words', undefined, AT).errorMessage).toBeUndefined();
+    expect(buildFaPausedEntry(RUN_ID, 'zero-words', undefined, AT).errorMessage).toBeUndefined();
+  });
+
+  it('says the run is WAITING, never that it silently used Whisper — the exact hole plan-v3 item 3 closes', () => {
+    const entry = buildFaPausedEntry(RUN_ID, 'zero-words', undefined, AT);
+    expect(entry.message).not.toMatch(/used whisper/i);
+    expect(entry.message).toMatch(/paused|waiting/i);
+  });
+});
+
+describe('buildFaUserChoseWhisperEntry — plan-v3 item 4: an explicit, logged choice', () => {
+  it('is distinct from buildFaGateClosedEntry\'s own message even though it shares the badge type', () => {
+    const chose = buildFaUserChoseWhisperEntry(RUN_ID, 'zero-words', AT);
+    const gateClosed = buildFaGateClosedEntry(RUN_ID, AT);
+    expect(chose.type).toBe('fa-gate-closed');
+    expect(chose.message).not.toBe(gateClosed.message);
+    expect(chose.severity).toBe('warning');
+    expect(gateClosed.severity).toBe('info');
+  });
+
+  it('names the reason the ORIGINAL paused run gave', () => {
+    const entry = buildFaUserChoseWhisperEntry(RUN_ID, 'model-not-found', AT);
+    expect(entry.reason).toBe('model-not-found');
+    expect(entry.message).toContain('model-not-found');
   });
 });
 
@@ -1246,5 +1278,76 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
       }], segs, AT)[0]!.owningRule,
     ];
     expect(names).toEqual(['R.5', 'R.10', 'R.11', 'R.12', 'R.13']);
+  });
+
+  it('R.14 / R.15 each produce one log entry naming the rule', () => {
+    const r14 = buildAnchorTrustLogEntries(
+      RUN_ID,
+      [{
+        rule: 'R.14', segmentIndex: 1, segmentId: 'b', segmentTag: 'right',
+        committedValue: 10, correctedValue: 10.4, delta: 0.4, ordinalDelta: 0,
+        gapStartSec: 9.98, gapEndSec: 10.02,
+        backingSilence: { startSec: 10.1, endSec: 10.7 },
+        leftAnchorConfidence: 0.999, rightAnchorConfidence: 1e-6,
+      }],
+      segs,
+      AT,
+    );
+    expect(r14).toHaveLength(1);
+    expect(r14[0]!.owningRule).toBe('R.14');
+    expect(r14[0]!.message).toContain('R.14');
+    expect(r14[0]!.type).toBe('rule-correction');
+
+    const r15 = buildAnchorTrustLogEntries(
+      RUN_ID,
+      [{
+        rule: 'R.15', segmentIndex: 1, segmentId: 'b',
+        committedValue: 5, correctedValue: 5.4, delta: 0.4, ordinalDelta: -2,
+        gapStartSec: 4.9, gapEndSec: 5.4,
+        leftAnchorConfidence: 0.96, rightAnchorConfidence: 0.99,
+      }],
+      segs,
+      AT,
+    );
+    expect(r15).toHaveLength(1);
+    expect(r15[0]!.owningRule).toBe('R.15');
+    expect(r15[0]!.message).toContain('R.15');
+  });
+
+  it('R-AP produces a warning-severity entry naming the rule', () => {
+    const [entry] = buildRunEdgeViolationLogEntries(
+      RUN_ID,
+      [{
+        segmentId: 'b', segmentTag: 'right',
+        originValue: 10, finalValue: 12,
+        runIndex: 1, runStartSec: 11, runEndSec: 13,
+        kind: 'moved-across-run-edge',
+      }],
+      segs,
+      AT,
+    );
+    expect(entry!.owningRule).toBe('R-AP');
+    expect(entry!.type).toBe('warning');
+    expect(entry!.message).toContain('R-AP');
+  });
+
+  it('a run with infeasible chunks emits ONE grouped finding, not N', () => {
+    const tokens = [
+      { startSec: 18.1, endSec: 18.2, text: 'because', needsReview: true },
+      { startSec: 18.3, endSec: 18.4, text: 'the', needsReview: true },
+      { startSec: 20.0, endSec: 20.2, text: 'ok', needsReview: false },
+    ];
+    const chunks = [
+      { chunkIndex: 4, startSec: 18.08, endSec: 18.70, wordCount: 13 },
+      { chunkIndex: 52, startSec: 405.58, endSec: 406.98, wordCount: 12 },
+    ];
+    const entry = buildCtcInfeasibleLogEntry(RUN_ID, tokens, chunks, AT);
+    expect(entry).toBeDefined();
+    expect(entry!.message).toContain('2 alignment chunks');
+    expect(entry!.message).toContain('18.08');
+    expect(entry!.message).toContain('406.98');
+    expect(entry!.message).toContain('Estimated');
+    expect(entry!.owningRule).toBe('FA');
+    expect(buildCtcInfeasibleLogEntry(RUN_ID, tokens, [], AT)).toBeUndefined();
   });
 });

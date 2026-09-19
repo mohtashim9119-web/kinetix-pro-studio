@@ -356,6 +356,43 @@ export interface UnappliedTranscript {
   completedAt: string;
 }
 
+/**
+ * Provenance for one committed timing set (plan-v3 Wave 1 item 8 / M3.4).
+ * Additive-optional. Absent on any project written before this field existed
+ * — the v4→v5 load path labels that `'unknown'`, NEVER inferred from which
+ * tokens happen to be present or from the FA toggle.
+ *
+ * Engines are the ones this wave actually produces: `whisper` | `fa`.
+ * `unknown` is the only honest label for pre-stamp data. Cloud values arrive
+ * in Wave 3 and are not named here.
+ */
+export type TimingEngine = 'whisper' | 'fa' | 'unknown';
+
+/** Why a committed timing set is flagged degraded rather than clean. */
+export type TimingDegradedKind =
+  | 'fa-chunk-infeasible'
+  | 'silence-detect-failed'
+  | 'gate-closed'
+  | 'user-chose-whisper';
+
+export interface TimingProvenance {
+  engine: TimingEngine;
+  /** Model id that actually produced the timings, or `'unknown'` on legacy. */
+  model: string;
+  /** Model revision / digest pin, or `'unknown'` on legacy. */
+  modelVersion: string;
+  /** Provenance-record schema, independent of `projectStore`'s envelope version. */
+  schemaVersion: number;
+  language?: string;
+  completedAt: number;
+  /** Present only when the run completed in a degraded state. */
+  degraded?: {
+    kind: TimingDegradedKind;
+    chunkCount?: number;
+    sceneIds?: string[];
+  };
+}
+
 export interface TranscriptToken {
   startSec: number;
   endSec: number;
@@ -525,13 +562,22 @@ export interface Project {
    *  every entry too.
    *
    *  SCHEMA ONLY THIS SLICE — no production writer populates this field yet
-   *  (R.2/R.5/R.7 and any real per-word UI are unbuilt), and no `version`
-   *  concept exists on `Project` to migrate through: an absent field is
+   *  (R.2/R.5/R.7 and any real per-word UI are unbuilt). An absent field is
    *  read as "no FA word timings," the same convention every other optional
    *  `Project` field here already uses (see `headings`, `resolutionTier`).
-   *  Undefined on every project until whichever later slice adds the first
-   *  real writer. */
+   *  Envelope versioning for the *stamp* that describes these timings lives
+   *  on `timingProvenance` / `projectStore` v5 (plan-v3 item 8), not here. */
   faWordTimings?: TranscriptToken[];
+  /**
+   * plan-v3 Wave 1 item 8 — one provenance record per pipeline stage.
+   * The two stages can come from different engines and different runs
+   * (a cached Whisper transcript re-aligned after a script edit).
+   * Absent on every project saved before v5; the load path labels that
+   * `'unknown'` rather than guessing. */
+  timingProvenance?: {
+    transcription?: TimingProvenance;
+    alignment?: TimingProvenance;
+  };
   /** WS2 T4.1 Step 2 — what THIS project's freshly minted segments start their
    *  `showOverlay` at, seeded ONCE at creation from App Settings' New Project
    *  Defaults (`services/appDefaults.ts`) and never re-read from that global
@@ -663,23 +709,28 @@ export type SyncLogEntryType =
    *  severity taxonomy reserves 'warning' for "the user should do something",
    *  and there is nothing for them to do here. */
   | 'rule-correction'
-  /** 'fa-fallback' — WS1 Session J. The FA gate was OPEN for this project and
-   *  forced alignment did NOT produce the timing: the run committed on Whisper
-   *  tokens instead. Carries `reason` (which of the failure paths fired) and,
-   *  where the failure came back from the IPC layer, `errorMessage`.
-   *
-   *  THIS IS THE SPECIFIC HOLE IT CLOSES. `runForcedAlignmentForSync` is
-   *  fail-clean by contract — every failure returns rather than throwing, and
-   *  the sync proceeds. That is correct behaviour and stays. But it made a run
-   *  where FA silently failed INDISTINGUISHABLE, in the log, from a run where
-   *  FA succeeded: the user got Whisper timing while believing they had
-   *  forced-alignment timing, and no persisted artifact disagreed. Fail-clean
-   *  must not mean fail-silent.
-   *
-   *  severity:'warning', unlike 'rule-correction': the user asked for
-   *  high-precision sync in Project Settings and did not get it, and the
-   *  fixHint names what to check. */
+  /** 'fa-fallback' — RETIRED, WS1 Session J → plan-v3 Wave 1 item 3 (D24).
+   *  Nothing produces this type any more — `FaRunResult` has no `'fallback'`
+   *  arm, so a run-level FA failure can no longer silently commit Whisper
+   *  timing. Kept in this union (and in `SyncLogPanel`'s renderer) ONLY so a
+   *  persisted project's pre-Wave-1 log entries still render instead of
+   *  falling through to the generic 'info' badge. See 'fa-paused' below for
+   *  the entry type that replaced it. */
   | 'fa-fallback'
+  /** 'fa-paused' — plan-v3 Wave 1 items 3/4 (D24). A run-level FA failure (or
+   *  a precondition equivalent to one — unsupported language, empty chunk
+   *  plan, zero words, any typed IPC failure kind) STOPPED the run rather
+   *  than silently committing Whisper timing. Carries `reason`
+   *  (`FaFailureKind`, `forcedAlignmentRun.ts`) and, where the failure came
+   *  back from the IPC layer, `errorMessage`. The run holds — nothing is
+   *  committed — and `SyncPausedDialog` asks the user how to proceed; a
+   *  restart-safe record of the pause lives in `faSyncPauseStore.ts` (app/
+   *  session-scoped local storage, NOT `projectStore`) so the ask
+   *  re-presents if the app closes before the user answers.
+   *
+   *  severity:'warning': the user turned high-precision sync ON for this
+   *  project and the run could not honour it without their input. */
+  | 'fa-paused'
   /** 'fa-preflight' — WS1 Session M. Emitted ONCE per Apply Sync when the FA
    *  gate is OPEN, BEFORE inference runs, recording whether forced alignment is
    *  actually ready: runtime library load, model presence, and the resolved

@@ -36,6 +36,7 @@
  */
 
 import type { StagedFile, StagedFiles } from '../components/DropZonePanel';
+import { getStagedFilesForProject } from './stagedFilesStore';
 import type { StoredStagedFile } from './stagedFilesStore';
 
 /** Which slots this build persists. Widened as the cost of each slot is paid
@@ -190,6 +191,13 @@ export function restoreStagedFiles(rows: readonly StoredStagedFile[]): StagedFil
     else if (row.slotKey.startsWith('zip:')) out.zipFiles.push(file);
   }
   return out;
+}
+
+/** Loads persisted staged rows for one project, or `null` when none exist. */
+export async function loadStagedFromStore(projectId: string): Promise<StagedFiles | null> {
+  const rows = await getStagedFilesForProject(projectId);
+  if (rows.length === 0) return null;
+  return restoreStagedFiles(rows);
 }
 
 /** True when nothing at all is staged — used to skip a pointless restore. */

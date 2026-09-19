@@ -21,6 +21,7 @@ import {
 } from './faRuleStageExclusion';
 import type { RunExtent } from './faRuleStageExclusion';
 import { detectRunPlacementDefects, applyRunPlacementCorrections } from './faRunPlacementGate';
+import { buildRunEdgeViolationLogEntries } from './syncLog';
 import { computeUnscriptedRuns } from './faChunkPlan';
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
@@ -219,5 +220,18 @@ describe('R-AP — the R.11-FIRST ordering (the defect this invariant exists for
     // ...and without the exemption the identical arrays are a violation, which
     // is what makes the exemption load-bearing rather than decorative.
     expect(findRunEdgeViolations(origin, corrected, extents, new Set())).toHaveLength(1);
+  });
+
+  it('a run that triggers R-AP produces a log entry naming R-AP (plan-v3 item 7)', () => {
+    const { parsed, tokens, silences, audioDuration } = baseFixture();
+    const extents = computeRunExtents(parsed, tokens, silences, audioDuration);
+    const origin = committedFrom(parsed);
+    const afterR11 = moveBoundary(origin, 'seg1', R11_TARGET);
+    const violations = findRunEdgeViolations(origin, afterR11, extents, new Set());
+    expect(violations.length).toBeGreaterThan(0);
+    const entries = buildRunEdgeViolationLogEntries('run', violations, afterR11, 1);
+    expect(entries).toHaveLength(violations.length);
+    expect(entries[0]!.owningRule).toBe('R-AP');
+    expect(entries[0]!.message).toContain('R-AP');
   });
 });

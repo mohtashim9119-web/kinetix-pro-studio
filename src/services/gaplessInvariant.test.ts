@@ -9,6 +9,7 @@ import { applyAnchorBasedTiming } from './syncEngine';
 import { findPartitionViolations, checkTimelineIsGapless, PARTITION_EPSILON_SEC } from './timelinePartition';
 import { snapCoveredBoundaries } from './snapBoundaries';
 import { extractSegmentAlignments } from './whisperService';
+import { detectAnchorTrustDefects, applyAnchorTrustCorrections, type AnchorTrustAlignment } from './faAnchorTrustGate';
 import type { VideoSegment, TranscriptToken } from '../types';
 import { TransitionType, AnimationType } from '../types';
 
@@ -553,5 +554,83 @@ describe('gapless invariant — the Whisper path (snapCoveredBoundaries)', () =>
     expect(out[0]!.duration).toBeCloseTo(1.75, 6);
     expect(out[1]!.duration).toBeCloseTo(3.25, 6);
     assertGapless(out, 'all-written run');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// plan-v3 item 11 — word-ownership partition.
+//
+// DETERMINATION: this file already proves Model P *timeline* gaplessness
+// (adjacent start+duration) on drag, applyAnchorBasedTiming, export guard,
+// session restack, and snapCoveredBoundaries (lines 89–173 drag; 173–249
+// sync/applyAnchorBasedTiming; 251+ export; 315+ session; 440–557 snap).
+// It does NOT prove "every word is owned by exactly one scene" at snap /
+// rules / commit. Word ownership is a different invariant (onset membership
+// in a half-open scene interval). The tests below add only that missing
+// claim; they do not restate gaplessness.
+// ---------------------------------------------------------------------------
+
+function assertEachWordOwnedByExactlyOneScene(
+  tokens: TranscriptToken[],
+  segments: VideoSegment[],
+  context: string,
+): void {
+  for (const t of tokens) {
+    const owners = segments.filter((s) => {
+      const start = s.startTime;
+      const end = s.startTime + s.duration;
+      return t.startSec >= start - PARTITION_EPSILON_SEC && t.startSec < end - PARTITION_EPSILON_SEC;
+    });
+    expect(
+      owners.length,
+      `${context}: word "${t.text}" @ ${t.startSec} owned by ${owners.length} scene(s) [${owners.map((s) => s.id).join(',')}]`,
+    ).toBe(1);
+  }
+}
+
+describe('word-ownership partition — every word owned by exactly one scene', () => {
+  it('after snap', () => {
+    const segments = [
+      snapSeg('s0', 'alpha bravo', 0, 2),
+      snapSeg('s1', 'charlie delta', 2, 3),
+    ];
+    const toks = [...wordTokensAt('alpha bravo', 0, 0.5), ...wordTokensAt('charlie delta', 2, 0.5)];
+    const alignments = extractSegmentAlignments(segments, toks);
+    const afterSnap = snapCoveredBoundaries(segments, alignments, toks, [{ startSec: 1.6, endSec: 1.9 }], 5);
+    assertEachWordOwnedByExactlyOneScene(toks, afterSnap, 'after snap');
+  });
+
+  it('after rules (R.14 applied to a snapped array)', () => {
+    const committed = [
+      snapSeg('a', 'left words', 0, 10),
+      snapSeg('b', 'right words', 10, 10),
+    ];
+    const tokens: TranscriptToken[] = [
+      { text: 'cyclical', startSec: 9.20, endSec: 9.60, confidence: 0.999 },
+      { text: 'darkness', startSec: 9.60, endSec: 9.98, confidence: 0.999 },
+      { text: 'and', startSec: 10.02, endSec: 10.08, confidence: 1e-6 },
+      { text: 'the', startSec: 10.10, endSec: 10.20, confidence: 1e-6 },
+      { text: 'embers', startSec: 11.00, endSec: 11.40, confidence: 0.999 },
+    ];
+    const alignments: AnchorTrustAlignment[] = [
+      { firstTokenIdx: 0, lastTokenIdx: 1 },
+      { firstTokenIdx: 2, lastTokenIdx: 4 },
+    ];
+    const findings = detectAnchorTrustDefects(
+      committed, alignments, tokens, [{ startSec: 10.10, endSec: 10.70 }],
+    );
+    expect(findings.some((f) => f.rule === 'R.14')).toBe(true);
+    const afterRules = applyAnchorTrustCorrections(committed, findings);
+    assertEachWordOwnedByExactlyOneScene(tokens, afterRules, 'after rules');
+  });
+
+  it('after commit (post-rule array is the committed shape)', () => {
+    // Commit writes that same post-rule array; there is no third transformer.
+    const committed = [
+      snapSeg('s0', 'alpha bravo', 0, 1.75),
+      snapSeg('s1', 'charlie delta', 1.75, 3.25),
+    ];
+    const toks = [...wordTokensAt('alpha bravo', 0, 0.5), ...wordTokensAt('charlie delta', 2, 0.5)];
+    assertEachWordOwnedByExactlyOneScene(toks, committed, 'after commit');
   });
 });

@@ -11,7 +11,7 @@
 // buildSyncInfoEntry, buildSyncAbortEntry, buildNoAssetSummaryEntry,
 // buildRescueLogEntries, clearSyncLog) remains in App.tsx and imports
 // makeSyncLogEntry from this module.
-import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem, VideoSegment } from '../types';
+import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem, VideoSegment, TranscriptToken } from '../types';
 import type { TokenDrop } from './whisperService';
 import type { ContractViolation } from './syncContracts';
 import type { LockFinding } from './syncEngine';
@@ -23,7 +23,15 @@ import type { UnscriptedRun } from './faChunkPlan';
 import type { UnspokenScriptFinding } from './faUnspokenGate';
 import type { SeamFitFinding } from './faSeamFitGate';
 import type { RunPlacementFinding, UtterancePlacementFinding } from './faRunPlacementGate';
-import type { FaFallbackReason } from './forcedAlignmentRun';
+import type { FaFailureKind } from './forcedAlignmentRun';
+import type { FaInfeasibleChunk } from './faBoundaryTypes';
+import type { AnchorTrustFinding } from './faAnchorTrustGate';
+import type { RunEdgeViolation } from './faRuleStageExclusion';
+import {
+  estimatedTokensInInfeasibleChunks,
+  infeasibleChunkSpan,
+  INFEASIBLE_COPY,
+} from './faInfeasibleFinding';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 
 /** `crypto.randomUUID` is present in every runtime this app ships in (Tauri
@@ -394,45 +402,79 @@ export function buildSyncEngineEntry(
   );
 }
 
-/** Plain-language cause per failure path, for the log line a user reads. */
-const FA_FALLBACK_TEXT: Record<FaFallbackReason, { what: string; fix: string }> = {
+/** Plain-language cause per pause reason, for the log line and the
+ *  `SyncPausedDialog` body a user reads. Keyed by `FaFailureKind`
+ *  (`forcedAlignmentRun.ts`) — exhaustive by construction, same as that
+ *  type's own doc comment promises: a new failure kind without an entry here
+ *  is a compile error, not a silently blank dialog. */
+const FA_PAUSED_TEXT: Record<FaFailureKind, { what: string; fix: string }> = {
   'unsupported-language': {
     what: 'the project language has no forced-alignment model',
-    fix: 'Set the project language to English, Spanish, French, Portuguese, or German in Project Settings, or leave high-precision sync off for this project.',
+    fix: 'Set the project language to English, Spanish, French, Portuguese, or German in Project Settings, or continue with Whisper timing for this run.',
   },
   'empty-chunk-plan': {
     what: 'the chunk plan came out empty (no scene carried any text to align)',
-    fix: 'Check that the scene document has text for at least one scene, then run Apply Sync again.',
+    fix: 'Check that the scene document has text for at least one scene, then try again.',
   },
   'zero-words': {
     what: 'alignment returned no words',
-    fix: 'Re-run Apply Sync. If it keeps happening, the voiceover may be silent or unreadable for this language.',
+    fix: 'The voiceover may be silent or unreadable for this language. Try again, or continue with Whisper timing.',
   },
-  'inference-error': {
+  'model-not-found': {
+    what: 'no forced-alignment model is installed for this language',
+    fix: 'Install the model for this language in Manage Models, then try again.',
+  },
+  'model-hash-mismatch': {
+    what: 'the installed forced-alignment model failed its integrity check',
+    fix: 'Reinstall the model for this language in Manage Models, then try again.',
+  },
+  'runtime-load-failed': {
+    what: 'the forced-alignment runtime failed to load',
+    fix: 'Check the app installation, then try again, or continue with Whisper timing.',
+  },
+  'audio-stage-failed': {
+    what: 'the voiceover could not be staged for alignment',
+    fix: 'Check available disk space, then try again.',
+  },
+  'inference-failed': {
     what: 'the alignment engine reported an error',
-    fix: 'Check that the alignment model is installed for this language, then run Apply Sync again.',
+    fix: 'Try again. If it keeps happening, continue with Whisper timing for this run.',
+  },
+  'already-running': {
+    what: 'a forced-alignment run for this project is already in progress',
+    fix: 'Wait for the current run to finish, or cancel it, then try again.',
+  },
+  'out-of-memory': {
+    what: 'the alignment engine ran out of memory',
+    fix: 'Close other applications and try again, or continue with Whisper timing.',
+  },
+  offline: {
+    what: 'the cloud alignment engine could not be reached',
+    fix: 'Check your network connection, then try again, or switch to local alignment.',
   },
 };
 
 /**
- * THE FA FALLBACK — the entry that makes fail-clean stop meaning fail-silent.
+ * THE FA PAUSE — plan-v3 item 3/4 (D24). Replaces the old silent-substitution
+ * `buildFaFallbackEntry`: a run-level FA failure no longer commits Whisper
+ * timing on the user's behalf. This entry records that the run STOPPED and
+ * is waiting on the user's choice (`SyncPausedDialog`) rather than that it
+ * quietly used a different engine.
  *
- * severity 'warning', not 'info': the user turned high-precision sync ON for
- * this project and did not get it. That is a degradation with something they
- * can act on, which is exactly what the severity taxonomy reserves 'warning'
- * for.
+ * severity 'warning': the user turned high-precision sync ON for this project
+ * and the run could not honour it without their input.
  */
-export function buildFaFallbackEntry(
+export function buildFaPausedEntry(
   syncRunId: string,
-  reason: FaFallbackReason,
+  reason: FaFailureKind,
   detail: string | undefined,
   timestamp: number = Date.now(),
 ): SyncLogEntry {
-  const { what, fix } = FA_FALLBACK_TEXT[reason];
+  const { what, fix } = FA_PAUSED_TEXT[reason];
   return makeSyncLogEntry(
     syncRunId,
-    'fa-fallback',
-    `High-precision sync was ON but did not run — ${what}. This run used Whisper timing instead.`,
+    'fa-paused',
+    `High-precision sync paused — ${what}. Waiting for you to choose how to proceed.`,
     {
       owningRule: 'FA',
       reason,
@@ -454,7 +496,7 @@ export function buildFaFallbackEntry(
  *
  * Shape mirrors the `FaPreflightResult` fields the caller already computed; kept
  * in `syncLog.ts` (not `faPreflight.ts`) so every durable-log builder lives in
- * one file, exactly like `buildFaFallbackEntry` above.
+ * one file, exactly like `buildFaPausedEntry` above.
  */
 export function buildFaPreflightEntry(
   syncRunId: string,
@@ -501,6 +543,35 @@ export function buildFaGateClosedEntry(
       owningRule: 'FA',
       severity: 'info',
       fixHint: 'Turn it on in Project Settings → Sync → High-Precision Auto-Sync.',
+    },
+    timestamp,
+  );
+}
+
+/**
+ * plan-v3 item 4 — logged when the user answers a `SyncPausedDialog` by
+ * explicitly choosing Whisper timing for one run, after a run-level FA
+ * failure. Distinct from `buildFaGateClosedEntry`: the FA toggle is still ON
+ * (a later run may succeed), the user made a one-off, EXPLICIT choice —
+ * never the automatic behavior a paused run falls into on its own. Reuses
+ * the 'fa-gate-closed' entry TYPE for its badge/rendering (both describe "this
+ * run used Whisper on purpose, not by silent default"), but its OWN message
+ * says so plainly rather than implying the toggle is off.
+ */
+export function buildFaUserChoseWhisperEntry(
+  syncRunId: string,
+  pausedReason: FaFailureKind,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'fa-gate-closed',
+    `High-precision sync paused (${pausedReason}) and you chose to continue with Whisper timing for this run.`,
+    {
+      owningRule: 'FA',
+      severity: 'warning',
+      reason: pausedReason,
+      fixHint: 'Run Apply Sync again to retry forced alignment.',
     },
     timestamp,
   );
@@ -768,6 +839,112 @@ export function buildUtterancePlacementLogEntries(
       timestamp,
     );
   });
+}
+
+/**
+ * R.14 / R.15 — THE ANCHOR-TRUST GATE, one entry per corrected boundary,
+ * on the exact pattern of `buildSeamFitLogEntries`.
+ */
+export function buildAnchorTrustLogEntries(
+  syncRunId: string,
+  findings: readonly AnchorTrustFinding[],
+  committedSegments: readonly VideoSegment[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return findings.map(f => {
+    const ci = committedIndexOf(committedSegments, f.segmentId);
+    const rule = f.rule;
+    return makeSyncLogEntry(
+      syncRunId,
+      'rule-correction',
+      `${rule} moved ${ci !== undefined ? `scene ${ci + 1}` : 'a scene'}${f.segmentTag ? ` (${f.segmentTag})` : ''} ` +
+        `from ${fmtSec(f.committedValue)}s to ${fmtSec(f.correctedValue)}s ` +
+        `(${f.delta >= 0 ? '+' : ''}${fmtSec(f.delta)}s).`,
+      {
+        owningRule: rule,
+        ...(ci !== undefined ? { segmentIndex: ci } : {}),
+        ...(f.segmentTag ? { segmentTag: f.segmentTag } : {}),
+        severity: 'info',
+        ruleDetail: {
+          committedValue: f.committedValue,
+          correctedValue: f.correctedValue,
+          reason: rule === 'R.14'
+            ? `Incoming anchor was sub-reliable (ordinal Δ ${f.ordinalDelta}); re-anchored to the silence midpoint` +
+              (f.backingSilence
+                ? ` [${fmtSec(f.backingSilence.startSec)}, ${fmtSec(f.backingSilence.endSec)}].`
+                : '.')
+            : `Outgoing words started after the committed cut (ordinal Δ ${f.ordinalDelta}); boundary pulled back to one frame before the incoming line.`,
+        },
+      },
+      timestamp,
+    );
+  });
+}
+
+/**
+ * R-AP — run-edge detection over the whole rule stage. Warning-severity,
+ * never a throw (App.tsx's own comment: detection, not enforcement).
+ */
+export function buildRunEdgeViolationLogEntries(
+  syncRunId: string,
+  violations: readonly RunEdgeViolation[],
+  committedSegments: readonly VideoSegment[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return violations.map(v => {
+    const ci = committedIndexOf(committedSegments, v.segmentId);
+    return makeSyncLogEntry(
+      syncRunId,
+      'warning',
+      `R-AP: ${v.segmentTag ?? (ci !== undefined ? `scene ${ci + 1}` : v.segmentId)} ` +
+        `moved from ${fmtSec(v.originValue)}s to ${fmtSec(v.finalValue)}s — ` +
+        `${v.kind === 'moved-out-of-r12s-run' ? 'origin was inside' : 'crossed an edge of'} ` +
+        `unscripted run ${v.runIndex} [${fmtSec(v.runStartSec)}, ${fmtSec(v.runEndSec)}].`,
+      {
+        owningRule: 'R-AP',
+        ...(ci !== undefined ? { segmentIndex: ci } : {}),
+        ...(v.segmentTag ? { segmentTag: v.segmentTag } : {}),
+        severity: 'warning',
+        ruleDetail: {
+          committedValue: v.originValue,
+          correctedValue: v.finalValue,
+          reason: v.kind,
+        },
+      },
+      timestamp,
+    );
+  });
+}
+
+/**
+ * plan-v3 item 6 — ONE grouped finding for every infeasible chunk in the
+ * run. Never N per-chunk entries. Reads FA word-token `needsReview` to
+ * count estimated words (first consumer of that flag).
+ */
+export function buildCtcInfeasibleLogEntry(
+  syncRunId: string,
+  tokens: readonly TranscriptToken[],
+  chunks: readonly FaInfeasibleChunk[],
+  timestamp: number = Date.now(),
+): SyncLogEntry | undefined {
+  if (chunks.length === 0) return undefined;
+  const span = infeasibleChunkSpan(chunks);
+  if (!span) return undefined;
+  const estimated = estimatedTokensInInfeasibleChunks(tokens, chunks);
+  return makeSyncLogEntry(
+    syncRunId,
+    'warning',
+    INFEASIBLE_COPY.groupedFinding(chunks.length, span.startSec, span.endSec, estimated.length),
+    {
+      owningRule: 'FA',
+      severity: 'warning',
+      fixHint: INFEASIBLE_COPY.fixHint,
+      ruleDetail: {
+        reason: `${chunks.length} CTC-infeasible chunk(s); ${estimated.length} needsReview word(s) in those windows.`,
+      },
+    },
+    timestamp,
+  );
 }
 
 /**
