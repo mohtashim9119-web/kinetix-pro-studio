@@ -1,4 +1,5 @@
 import type React from 'react';
+import { useEffect } from 'react';
 
 interface SyncLoadingOverlayProps {
   /** True for the whole handleApplySyncFromFiles run (App.tsx) — covers the
@@ -6,6 +7,13 @@ interface SyncLoadingOverlayProps {
    *  the overlay never appears on a plain project reload/open (waveform drawing
    *  is now a single instant canvas, no per-segment fan-out to wait on). */
   isProcessing: boolean;
+  /** plan-v3 item 5 (M3.5/C8) — whole-run cancel. Fans out to whatever is in
+   *  flight (asset persistence, FA's own `fa_cancel`, the matcher pass) via
+   *  an `AbortSignal` checked at every stage boundary in
+   *  `handleApplySyncFromFiles`; every one of those checks returns BEFORE
+   *  the sync's single commit, so cancelling here is always free — the
+   *  project is left exactly as it was before Apply Sync started. */
+  onCancel: () => void;
 }
 
 /**
@@ -16,7 +24,21 @@ interface SyncLoadingOverlayProps {
  */
 export function SyncLoadingOverlay({
   isProcessing,
+  onCancel,
 }: SyncLoadingOverlayProps): React.ReactElement | null {
+  // Escape cancels the sync, same as every other blocking dialog in this app
+  // (NewProjectModal, ExportSettingsModal). Only listens while the overlay is
+  // actually showing — this effect's own cleanup handles the isProcessing
+  // flip from true to false, so no stray listener survives the sync finishing.
+  useEffect(() => {
+    if (!isProcessing) return;
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isProcessing, onCancel]);
+
   if (!isProcessing) return null;
 
   return (
@@ -30,6 +52,13 @@ export function SyncLoadingOverlay({
         <span className="text-sm font-medium tracking-wide">
           Preparing your project…
         </span>
+        <button
+          data-testid="sync-loading-cancel"
+          onClick={onCancel}
+          className="text-xs text-gray-500 hover:text-white transition-colors underline underline-offset-2"
+        >
+          Cancel
+        </button>
       </div>
     </div>
   );
