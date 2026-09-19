@@ -407,6 +407,32 @@ pub struct FaWordSpan {
     pub word_index: u32,
 }
 
+/// One CTC-infeasible chunk in `FaEvent::Done` (plan-v3 item 6).
+#[derive(serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FaInfeasibleChunk {
+    pub chunk_index: u32,
+    pub start_sec: f64,
+    pub end_sec: f64,
+    pub word_count: u32,
+}
+
+fn is_zero_u32(n: &u32) -> bool {
+    *n == 0
+}
+
+#[cfg(feature = "fa-inference")]
+impl From<crate::fa_onnx::InfeasibleChunkFinding> for FaInfeasibleChunk {
+    fn from(f: crate::fa_onnx::InfeasibleChunkFinding) -> Self {
+        FaInfeasibleChunk {
+            chunk_index: f.chunk_index,
+            start_sec: f.start_sec,
+            end_sec: f.end_sec,
+            word_count: f.word_count,
+        }
+    }
+}
+
 /// Mirrors `syncConstants.ts`'s `CONF_MIN = 0.3` (TS file itself is off
 /// limits to this slice) — the floor `needs_review` compares `confidence`
 /// against. Kept as a Rust-side literal rather than read across the IPC
@@ -504,7 +530,15 @@ pub enum FaEvent {
     /// sends `Done` — it errors first — so this variant stays theoretically
     /// dead in that configuration, same reason `Progress` above does.
     #[allow(dead_code)]
-    Done { words: Vec<FaWordSpan> },
+    Done {
+        words: Vec<FaWordSpan>,
+        /// Cloud-parity name (`nFallbackChunks`). Zero is omitted on the
+        /// wire so existing Done payloads stay byte-identical.
+        #[serde(default, skip_serializing_if = "is_zero_u32")]
+        n_fallback_chunks: u32,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        infeasible_chunks: Vec<FaInfeasibleChunk>,
+    },
     Error { message: String },
     /// Permanent production stage timing for the run (WS3 fa-perf-
     /// foundation), emitted exactly ONCE per run, immediately before that
@@ -1134,9 +1168,12 @@ pub(crate) async fn fa_align_with_prefix(
             ),
         });
         return match result {
-            Ok(word_spans) => {
-                let words: Vec<FaWordSpan> = word_spans_to_dtos(word_spans);
-                let _ = on_event.send(FaEvent::Done { words });
+            Ok(output) => {
+                let words: Vec<FaWordSpan> = word_spans_to_dtos(output.words);
+                let infeasible_chunks: Vec<FaInfeasibleChunk> =
+                    output.infeasible_chunks.into_iter().map(FaInfeasibleChunk::from).collect();
+                let n_fallback_chunks = infeasible_chunks.len() as u32;
+                let _ = on_event.send(FaEvent::Done { words, n_fallback_chunks, infeasible_chunks });
                 Ok(())
             }
             Err(e) => {
@@ -1765,6 +1802,8 @@ mod tests {
                 needs_review: false,
                 word_index: 0,
             }],
+            n_fallback_chunks: 0,
+            infeasible_chunks: vec![],
         };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(
@@ -1782,7 +1821,7 @@ mod tests {
 
     #[test]
     fn fa_event_done_serializes_empty_words_as_empty_array() {
-        let event = FaEvent::Done { words: vec![] };
+        let event = FaEvent::Done { words: vec![], n_fallback_chunks: 0, infeasible_chunks: vec![] };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json, serde_json::json!({ "event": "Done", "data": { "words": [] } }));
     }

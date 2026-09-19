@@ -192,6 +192,9 @@ import {
   buildSeamFitLogEntries,
   buildRunPlacementLogEntries,
   buildUtterancePlacementLogEntries,
+  buildAnchorTrustLogEntries,
+  buildRunEdgeViolationLogEntries,
+  buildCtcInfeasibleLogEntry,
 } from './services/syncLog';
 import { canLockSegment, findPartitionViolations, repairTimelineGaps, MAX_REPAIRABLE_GAP_SEC, PARTITION_EPSILON_SEC } from './services/timelinePartition';
 import { buildWaveformPipeline } from './services/waveformPipeline';
@@ -265,6 +268,7 @@ import {
 } from './services/unappliedTranscript';
 import {
   classifySyncAbortMessage,
+  SYNC_PAUSED_MESSAGE,
   type ApplySyncResult,
 } from './services/applySyncAbort';
 import { armRecoveryBannerFromPersistedProject } from './services/recoveryBannerVisibility';
@@ -4124,15 +4128,15 @@ export default function App() {
         ));
         setFaPauseDialog(pauseRecord);
         setIsProcessing(false);
-        return { ok: false, message: 'Sync paused — waiting for you to choose how to proceed.' };
+        return { ok: false, message: SYNC_PAUSED_MESSAGE, holdStaged: true };
       }
 
       // Only 'ok' and 'degraded' remain — both carry real tokens, so
-      // downstream code never sees a null/missing timing source. Only 'ok'
-      // is genuine forced-alignment output; 'degraded' tokens are Whisper's
-      // (gate-closed or a one-shot "use Whisper" choice) — see
-      // `FaDegradedReason`'s own doc comment for why the two are never
-      // conflated.
+      // downstream code never sees a null/missing timing source. 'ok' is
+      // clean FA. `ctc-infeasible-chunk` is FA that ran with auto-filled
+      // chunks (still FA tokens). Other degraded reasons are Whisper's.
+      const faCompleted = faRun.status === 'ok'
+        || (faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk');
       const faTokens = faRun.tokens;
       // plan-v3 item 8 — stamp the engine that actually produced the
       // committed timings. A degraded Whisper-only run is `whisper` +
@@ -4172,14 +4176,23 @@ export default function App() {
       // `aligned.silenceError` below: it degraded the CHUNK PLAN (built
       // against zero silences) rather than the boundary snap, and was
       // console-only until now.
-      if (faRun.status === 'ok' && faRun.silenceError !== undefined) {
+      if (faCompleted && faRun.silenceError !== undefined) {
         ruleLogEntries.push(buildSilenceErrorEntry(syncRunId, faRun.silenceError, syncRunAt));
+      }
+      if (faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk') {
+        const infeasibleEntry = buildCtcInfeasibleLogEntry(
+          syncRunId,
+          faRun.tokens,
+          faRun.infeasibleChunks ?? [],
+          syncRunAt,
+        );
+        if (infeasibleEntry) ruleLogEntries.push(infeasibleEntry);
       }
       // R-G: 'forced-alignment' > 'whisper' > 'estimate', demote-only —
       // stated explicitly by this branch (the code path that actually
       // produced `faTokens`), never inferred downstream.
-      const anchorSourceForRun: 'whisper' | 'forced-alignment' = faRun.status === 'ok' ? 'forced-alignment' : 'whisper';
-      if (faRun.status === 'ok') faWordTimingsResult = faTokens;
+      const anchorSourceForRun: 'whisper' | 'forced-alignment' = faCompleted ? 'forced-alignment' : 'whisper';
+      if (faCompleted) faWordTimingsResult = faTokens;
       // WHICH ENGINE RAN — unconditional, so its absence is never ambiguous.
       ruleLogEntries.push(buildSyncEngineEntry(
         syncRunId,
@@ -4198,7 +4211,7 @@ export default function App() {
       // indices are the parse space). The runs are staged now and spliced back
       // into this exact position below, so the documented R.5 -> R.10 -> R.11
       // -> R.12 -> R.13 log order is unchanged.
-      if (faRun?.status === 'ok' && faRun.unscriptedRuns.length > 0) {
+      if (faCompleted && faRun.unscriptedRuns.length > 0) {
         stagedUnscriptedRuns = faRun.unscriptedRuns;
         unscriptedRunLogInsertAt = ruleLogEntries.length;
       }
@@ -4660,6 +4673,9 @@ export default function App() {
             `[sync] R.14/R.15 — ${anchorTrustFindings.length} anchor-trust boundary correction(s):`,
             anchorTrustFindings,
           );
+          ruleLogEntries.push(
+            ...buildAnchorTrustLogEntries(syncRunId, anchorTrustFindings, finalTimedSegments, syncRunAt),
+          );
         }
         finalTimedSegments = applyAnchorTrustCorrections(finalTimedSegments, anchorTrustFindings);
 
@@ -4689,6 +4705,9 @@ export default function App() {
             `unscripted-run edge by a rule that does not own them:\n  ` +
             runEdgeViolations.map(describeRunEdgeViolation).join('\n  '),
             runEdgeViolations,
+          );
+          ruleLogEntries.push(
+            ...buildRunEdgeViolationLogEntries(syncRunId, runEdgeViolations, finalTimedSegments, syncRunAt),
           );
         }
       }
@@ -4976,14 +4995,10 @@ export default function App() {
   // falls back to the project's already-committed script/scene/voiceover
   // (the unapplied-transcript recovery handler below relies on the same fallback),
   // which is correct for a re-sync of a project that has synced before.
-  // (Known gap, not solved here: a pause on a project's very FIRST-ever sync
-  // — new script/scene/voiceover staged and never yet committed — cannot
-  // retry after an app restart from this dialog alone, since the raw staged
-  // files themselves are not restart-safe; the user would re-stage and run
-  // Apply Sync fresh. Solving that would mean persisting staged input
-  // remnants somewhere durable, which starts to look like `projectStore`
-  // entanglement — exactly what this item's brief says to stop and report
-  // on rather than force.)
+  // First-sync pause retry (plan-v3 item 9 completion): DropZonePanel keeps
+  // staged IndexedDB rows on pause (`holdStaged`). After a restart the panel
+  // remounts and restores those rows into `stagedFilesRef` before a retry
+  // click — this function still just re-enters handleApplySyncFromFiles.
   const handleSyncPausedRetry = useCallback((): void => {
     setFaPauseDialog(null);
     clearFaPause(liveProjectRef.current.id);

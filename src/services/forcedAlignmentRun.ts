@@ -46,7 +46,7 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import { detectSilences } from './silenceDetector';
 import { describeInvokeError } from './invokeError';
 import { computeFaChunkPlan, computeUnscriptedRuns, type UnscriptedRun } from './faChunkPlan';
-import { faWordSpansToTranscriptTokens, type FaEvent, type FaWordSpan } from './faBoundaryTypes';
+import { faWordSpansToTranscriptTokens, type FaEvent, type FaInfeasibleChunk } from './faBoundaryTypes';
 import type { FaLanguageCode } from './faTextNormalize';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
 
@@ -97,13 +97,9 @@ export type FaFailureKind =
  *
  * `'ctc-infeasible-chunk'`: `fa_onnx.rs`'s CTC lattice was infeasible for one
  * or more chunks and placeholder timing was auto-filled for them
- * (`fallback_words_for_infeasible_chunk`). Defined here now so the type can
- * express it (plan-v3 item 3's scope); the Rust-side infeasible-chunk COUNT
- * is not yet threaded through the `Done` IPC payload, so nothing produces
- * this reason live yet — that wiring, plus the log finding and UI flag, is
- * plan-v3 item 6 (Group D), out of scope here. Left reachable-by-type,
- * unreachable-by-value on purpose: a future Group D change adds a producer,
- * not a new type.
+ * (`fallback_words_for_infeasible_chunk`). Produced when `FaEvent::Done`
+ * carries a non-zero `nFallbackChunks` / non-empty `infeasibleChunks`
+ * (plan-v3 item 6). The run still returns tokens; the caller must flag it.
  *
  * `'user-chose-whisper'`: the user answered a `SyncPausedDialog` (item 4) by
  * explicitly picking Whisper timing for this one run, after a `'paused'`
@@ -148,14 +144,17 @@ export type FaRunResult =
   | {
       status: 'degraded';
       reason: FaDegradedReason;
-      /** Whisper tokens (gate-closed) or FA tokens with an auto-filled span
-       *  (ctc-infeasible-chunk, once Group D wires it) — always present, so a
+      /** Whisper tokens (gate-closed / user-chose-whisper) or FA tokens with
+       *  an auto-filled span (`ctc-infeasible-chunk`) — always present, so a
        *  degraded run still commits a real timeline. Never read as if it were
        *  a clean 'ok' result. */
       tokens: TranscriptToken[];
       unscriptedRuns: UnscriptedRun[];
       detail?: string;
       silenceError?: string;
+      /** Present only for `ctc-infeasible-chunk`. */
+      nFallbackChunks?: number;
+      infeasibleChunks?: FaInfeasibleChunk[];
     }
   | {
       status: 'paused';
@@ -330,9 +329,9 @@ async function runFaAttempt(
   }
 
   const channel = new Channel<FaEvent>();
-  let words: FaWordSpan[];
+  let done: Extract<FaEvent, { event: 'Done' }>['data'];
   try {
-    words = await new Promise<FaWordSpan[]>((resolve, reject) => {
+    done = await new Promise<Extract<FaEvent, { event: 'Done' }>['data']>((resolve, reject) => {
       const onAbort = (): void => {
         invoke('fa_cancel', {}).catch(() => {});
         reject({ kind: 'cancelled' });
@@ -341,7 +340,7 @@ async function runFaAttempt(
       channel.onmessage = (msg) => {
         signal?.removeEventListener('abort', onAbort);
         if (msg.event === 'Done') {
-          resolve(msg.data.words);
+          resolve(msg.data);
         } else if (msg.event === 'Error') {
           // Carries the ORIGINAL FaEvent::Error payload shape rather than
           // wrapping it into a plain Error — the channel's Error variant is
@@ -373,17 +372,33 @@ async function runFaAttempt(
     return { status: 'paused', reason: kind, detail: describeInvokeError(err), resumable: true };
   }
 
+  const words = done.words;
+  const infeasibleChunks: FaInfeasibleChunk[] = done.infeasibleChunks ?? [];
+  const nFallbackChunks = done.nFallbackChunks ?? infeasibleChunks.length;
   if (words.length === 0) {
     console.warn('[fa] forced alignment returned zero words — pausing for the user to choose.');
     return { status: 'paused', reason: 'zero-words', resumable: true };
   }
+  const tokens = faWordSpansToTranscriptTokens(words);
+  const unscriptedRuns = computeUnscriptedRuns(anchorTimedSegments, whisperTokens, silences, audioDuration);
+  if (nFallbackChunks > 0 || infeasibleChunks.length > 0) {
+    return {
+      status: 'degraded',
+      reason: 'ctc-infeasible-chunk',
+      tokens,
+      unscriptedRuns,
+      silenceError,
+      nFallbackChunks: nFallbackChunks > 0 ? nFallbackChunks : infeasibleChunks.length,
+      infeasibleChunks,
+    };
+  }
   return {
     status: 'ok',
-    tokens: faWordSpansToTranscriptTokens(words),
+    tokens,
     // Same four arguments `computeFaChunkPlan` was given three statements
     // above, so these are R.5's OWN excisions for this run — not a
     // re-derivation against different inputs.
-    unscriptedRuns: computeUnscriptedRuns(anchorTimedSegments, whisperTokens, silences, audioDuration),
+    unscriptedRuns,
     silenceError,
   };
 }

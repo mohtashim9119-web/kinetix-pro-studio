@@ -11,7 +11,7 @@
 // buildSyncInfoEntry, buildSyncAbortEntry, buildNoAssetSummaryEntry,
 // buildRescueLogEntries, clearSyncLog) remains in App.tsx and imports
 // makeSyncLogEntry from this module.
-import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem, VideoSegment } from '../types';
+import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem, VideoSegment, TranscriptToken } from '../types';
 import type { TokenDrop } from './whisperService';
 import type { ContractViolation } from './syncContracts';
 import type { LockFinding } from './syncEngine';
@@ -24,6 +24,14 @@ import type { UnspokenScriptFinding } from './faUnspokenGate';
 import type { SeamFitFinding } from './faSeamFitGate';
 import type { RunPlacementFinding, UtterancePlacementFinding } from './faRunPlacementGate';
 import type { FaFailureKind } from './forcedAlignmentRun';
+import type { FaInfeasibleChunk } from './faBoundaryTypes';
+import type { AnchorTrustFinding } from './faAnchorTrustGate';
+import type { RunEdgeViolation } from './faRuleStageExclusion';
+import {
+  estimatedTokensInInfeasibleChunks,
+  infeasibleChunkSpan,
+  INFEASIBLE_COPY,
+} from './faInfeasibleFinding';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 
 /** `crypto.randomUUID` is present in every runtime this app ships in (Tauri
@@ -831,6 +839,112 @@ export function buildUtterancePlacementLogEntries(
       timestamp,
     );
   });
+}
+
+/**
+ * R.14 / R.15 — THE ANCHOR-TRUST GATE, one entry per corrected boundary,
+ * on the exact pattern of `buildSeamFitLogEntries`.
+ */
+export function buildAnchorTrustLogEntries(
+  syncRunId: string,
+  findings: readonly AnchorTrustFinding[],
+  committedSegments: readonly VideoSegment[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return findings.map(f => {
+    const ci = committedIndexOf(committedSegments, f.segmentId);
+    const rule = f.rule;
+    return makeSyncLogEntry(
+      syncRunId,
+      'rule-correction',
+      `${rule} moved ${ci !== undefined ? `scene ${ci + 1}` : 'a scene'}${f.segmentTag ? ` (${f.segmentTag})` : ''} ` +
+        `from ${fmtSec(f.committedValue)}s to ${fmtSec(f.correctedValue)}s ` +
+        `(${f.delta >= 0 ? '+' : ''}${fmtSec(f.delta)}s).`,
+      {
+        owningRule: rule,
+        ...(ci !== undefined ? { segmentIndex: ci } : {}),
+        ...(f.segmentTag ? { segmentTag: f.segmentTag } : {}),
+        severity: 'info',
+        ruleDetail: {
+          committedValue: f.committedValue,
+          correctedValue: f.correctedValue,
+          reason: rule === 'R.14'
+            ? `Incoming anchor was sub-reliable (ordinal Δ ${f.ordinalDelta}); re-anchored to the silence midpoint` +
+              (f.backingSilence
+                ? ` [${fmtSec(f.backingSilence.startSec)}, ${fmtSec(f.backingSilence.endSec)}].`
+                : '.')
+            : `Outgoing words started after the committed cut (ordinal Δ ${f.ordinalDelta}); boundary pulled back to one frame before the incoming line.`,
+        },
+      },
+      timestamp,
+    );
+  });
+}
+
+/**
+ * R-AP — run-edge detection over the whole rule stage. Warning-severity,
+ * never a throw (App.tsx's own comment: detection, not enforcement).
+ */
+export function buildRunEdgeViolationLogEntries(
+  syncRunId: string,
+  violations: readonly RunEdgeViolation[],
+  committedSegments: readonly VideoSegment[],
+  timestamp: number = Date.now(),
+): SyncLogEntry[] {
+  return violations.map(v => {
+    const ci = committedIndexOf(committedSegments, v.segmentId);
+    return makeSyncLogEntry(
+      syncRunId,
+      'warning',
+      `R-AP: ${v.segmentTag ?? (ci !== undefined ? `scene ${ci + 1}` : v.segmentId)} ` +
+        `moved from ${fmtSec(v.originValue)}s to ${fmtSec(v.finalValue)}s — ` +
+        `${v.kind === 'moved-out-of-r12s-run' ? 'origin was inside' : 'crossed an edge of'} ` +
+        `unscripted run ${v.runIndex} [${fmtSec(v.runStartSec)}, ${fmtSec(v.runEndSec)}].`,
+      {
+        owningRule: 'R-AP',
+        ...(ci !== undefined ? { segmentIndex: ci } : {}),
+        ...(v.segmentTag ? { segmentTag: v.segmentTag } : {}),
+        severity: 'warning',
+        ruleDetail: {
+          committedValue: v.originValue,
+          correctedValue: v.finalValue,
+          reason: v.kind,
+        },
+      },
+      timestamp,
+    );
+  });
+}
+
+/**
+ * plan-v3 item 6 — ONE grouped finding for every infeasible chunk in the
+ * run. Never N per-chunk entries. Reads FA word-token `needsReview` to
+ * count estimated words (first consumer of that flag).
+ */
+export function buildCtcInfeasibleLogEntry(
+  syncRunId: string,
+  tokens: readonly TranscriptToken[],
+  chunks: readonly FaInfeasibleChunk[],
+  timestamp: number = Date.now(),
+): SyncLogEntry | undefined {
+  if (chunks.length === 0) return undefined;
+  const span = infeasibleChunkSpan(chunks);
+  if (!span) return undefined;
+  const estimated = estimatedTokensInInfeasibleChunks(tokens, chunks);
+  return makeSyncLogEntry(
+    syncRunId,
+    'warning',
+    INFEASIBLE_COPY.groupedFinding(chunks.length, span.startSec, span.endSec, estimated.length),
+    {
+      owningRule: 'FA',
+      severity: 'warning',
+      fixHint: INFEASIBLE_COPY.fixHint,
+      ruleDetail: {
+        reason: `${chunks.length} CTC-infeasible chunk(s); ${estimated.length} needsReview word(s) in those windows.`,
+      },
+    },
+    timestamp,
+  );
 }
 
 /**

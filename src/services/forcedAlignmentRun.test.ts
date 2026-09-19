@@ -356,6 +356,28 @@ describe('runForcedAlignmentForSync — success path', () => {
     expect(result.status === 'ok' && result.unscriptedRuns).toEqual(runs);
   });
 
+  it('a Done payload with infeasible chunks is degraded, never a clean ok', async () => {
+    mockStageThenAlign((args) => {
+      args.onEvent.onmessage({
+        event: 'Done',
+        data: {
+          words: [
+            { word: 'because', startSec: 18.08, endSec: 18.12, confidence: 0, needsReview: true, wordIndex: 0 },
+            { word: 'the', startSec: 18.12, endSec: 18.20, confidence: 0, needsReview: true, wordIndex: 1 },
+          ],
+          nFallbackChunks: 1,
+          infeasibleChunks: [{ chunkIndex: 4, startSec: 18.08, endSec: 18.70, wordCount: 2 }],
+        },
+      });
+    });
+    const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
+    expect(result.status).toBe('degraded');
+    expect(result.status === 'degraded' && result.reason).toBe('ctc-infeasible-chunk');
+    expect(result.status === 'degraded' && result.nFallbackChunks).toBe(1);
+    expect(result.status === 'degraded' && result.infeasibleChunks).toHaveLength(1);
+    expect(result.status === 'ok').toBe(false);
+  });
+
   it('reports a silence-detection failure on the SUCCESS result rather than swallowing it', async () => {
     // A chunk plan built against zero silences still produces real FA tokens,
     // so this is not a fallback — but it is a real degradation that was

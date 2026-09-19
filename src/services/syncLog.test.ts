@@ -39,6 +39,9 @@ import {
   buildSeamFitLogEntries,
   buildRunPlacementLogEntries,
   buildUtterancePlacementLogEntries,
+  buildAnchorTrustLogEntries,
+  buildRunEdgeViolationLogEntries,
+  buildCtcInfeasibleLogEntry,
 } from './syncLog';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 import { TransitionType, AnimationType } from '../types';
@@ -1275,5 +1278,76 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
       }], segs, AT)[0]!.owningRule,
     ];
     expect(names).toEqual(['R.5', 'R.10', 'R.11', 'R.12', 'R.13']);
+  });
+
+  it('R.14 / R.15 each produce one log entry naming the rule', () => {
+    const r14 = buildAnchorTrustLogEntries(
+      RUN_ID,
+      [{
+        rule: 'R.14', segmentIndex: 1, segmentId: 'b', segmentTag: 'right',
+        committedValue: 10, correctedValue: 10.4, delta: 0.4, ordinalDelta: 0,
+        gapStartSec: 9.98, gapEndSec: 10.02,
+        backingSilence: { startSec: 10.1, endSec: 10.7 },
+        leftAnchorConfidence: 0.999, rightAnchorConfidence: 1e-6,
+      }],
+      segs,
+      AT,
+    );
+    expect(r14).toHaveLength(1);
+    expect(r14[0]!.owningRule).toBe('R.14');
+    expect(r14[0]!.message).toContain('R.14');
+    expect(r14[0]!.type).toBe('rule-correction');
+
+    const r15 = buildAnchorTrustLogEntries(
+      RUN_ID,
+      [{
+        rule: 'R.15', segmentIndex: 1, segmentId: 'b',
+        committedValue: 5, correctedValue: 5.4, delta: 0.4, ordinalDelta: -2,
+        gapStartSec: 4.9, gapEndSec: 5.4,
+        leftAnchorConfidence: 0.96, rightAnchorConfidence: 0.99,
+      }],
+      segs,
+      AT,
+    );
+    expect(r15).toHaveLength(1);
+    expect(r15[0]!.owningRule).toBe('R.15');
+    expect(r15[0]!.message).toContain('R.15');
+  });
+
+  it('R-AP produces a warning-severity entry naming the rule', () => {
+    const [entry] = buildRunEdgeViolationLogEntries(
+      RUN_ID,
+      [{
+        segmentId: 'b', segmentTag: 'right',
+        originValue: 10, finalValue: 12,
+        runIndex: 1, runStartSec: 11, runEndSec: 13,
+        kind: 'moved-across-run-edge',
+      }],
+      segs,
+      AT,
+    );
+    expect(entry!.owningRule).toBe('R-AP');
+    expect(entry!.type).toBe('warning');
+    expect(entry!.message).toContain('R-AP');
+  });
+
+  it('a run with infeasible chunks emits ONE grouped finding, not N', () => {
+    const tokens = [
+      { startSec: 18.1, endSec: 18.2, text: 'because', needsReview: true },
+      { startSec: 18.3, endSec: 18.4, text: 'the', needsReview: true },
+      { startSec: 20.0, endSec: 20.2, text: 'ok', needsReview: false },
+    ];
+    const chunks = [
+      { chunkIndex: 4, startSec: 18.08, endSec: 18.70, wordCount: 13 },
+      { chunkIndex: 52, startSec: 405.58, endSec: 406.98, wordCount: 12 },
+    ];
+    const entry = buildCtcInfeasibleLogEntry(RUN_ID, tokens, chunks, AT);
+    expect(entry).toBeDefined();
+    expect(entry!.message).toContain('2 alignment chunks');
+    expect(entry!.message).toContain('18.08');
+    expect(entry!.message).toContain('406.98');
+    expect(entry!.message).toContain('Estimated');
+    expect(entry!.owningRule).toBe('FA');
+    expect(buildCtcInfeasibleLogEntry(RUN_ID, tokens, [], AT)).toBeUndefined();
   });
 });
