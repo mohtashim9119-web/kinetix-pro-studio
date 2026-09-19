@@ -134,6 +134,21 @@ const ALLOWLIST = new Set<string>([
   // final six-gate + zero-leftover checklist. Dated, docs-only, not a live
   // tracker.
   'docs/ws1-sync-pipeline/terminal-pass-2026-09-19.md',
+  // Kickoff verification pass (2026-09-19) — read-only V1-V4 checks against the
+  // proposed Wave 1 plan before any edit authorization: sidecar precondition,
+  // §M7 Wave-1 item count, needsReview/fa_cancel/D24 grep re-verification,
+  // STATUS.md cap arithmetic, and remote branch/tag inventory. Zero code
+  // edits made. Dated, docs-only, not a live tracker.
+  'docs/ws1-sync-pipeline/ws1-kickoff-verification-2026-09-19.md',
+  // Wave 1 list reconciliation pass (2026-09-19) — read-only pass 2: settles
+  // plan-v3 vs §M7 vs the briefing's 11-item list (they agree; only the
+  // superseded §M7 draft differs, and it loses on wave placement per this
+  // pass's tie-break), maps §M7's ten items to proving tests file:line,
+  // re-verifies the two skipped D24 rows, traces the STATUS.md cap
+  // arithmetic to source (40 is correct, no two-item gap), and hash-compares
+  // the two whisper binaries. Zero code edits made. Dated, docs-only, not a
+  // live tracker.
+  'docs/ws1-sync-pipeline/ws1-wave1-list-reconciliation-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
