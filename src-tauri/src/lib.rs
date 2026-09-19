@@ -27,6 +27,7 @@ mod relink;
 mod project_mirror;
 mod safe_delete;
 mod sha256;
+mod atomic_stage;
 mod storage_root;
 mod whisper;
 

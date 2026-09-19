@@ -756,7 +756,9 @@ pub fn whisper_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<Strin
 
     let audio_ext = audio_extension_from_bytes(bytes);
     let audio_path = tmp_dir.join(format!("input.{}", audio_ext));
-    fs::write(&audio_path, bytes).map_err(|e| format!("write audio: {e}"))?;
+    // plan-v3 item 9 — write-then-rename. A death mid-write leaves no
+    // `input.*` (or the previous complete file), never a truncated dest.
+    crate::atomic_stage::write_bytes_atomic(&audio_path, bytes)?;
 
     Ok(audio_path.to_string_lossy().to_string())
 }

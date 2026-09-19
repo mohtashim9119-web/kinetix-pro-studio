@@ -542,7 +542,11 @@ pub fn fa_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<String, St
     let content_key = crate::sha256::hex_digest(&hasher.finish());
     let input_path = input_dir.join(format!("{content_key}.{}", extension_for(ext_hint)));
     if !input_path.exists() {
-        fs::write(&input_path, bytes).map_err(|e| format!("write audio: {e}"))?;
+        // plan-v3 item 9 — write-then-rename. `exists()` is the cache-hit
+        // guard: a torn in-place write would poison the next run. A death
+        // mid-write now leaves the previous complete file or no file.
+        crate::atomic_stage::write_bytes_atomic(&input_path, bytes)
+            .map_err(|e| format!("write audio: {e}"))?;
         // WS3 STEP 4 — only on an actual write, mirroring
         // `fa.rs::evict_lru_until_under_cap`'s own "never on a cache HIT"
         // policy (a hit already re-stamped nothing before this step, and
