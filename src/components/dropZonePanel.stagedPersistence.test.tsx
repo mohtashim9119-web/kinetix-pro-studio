@@ -405,4 +405,73 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
     ).toBe(0);
     panel.unmount();
   });
+
+  it('pause keeps staged rows; cancel and commit still clear them', async () => {
+    const clickApply = async (onApplySync: () => Promise<unknown>) => {
+      await seedStaged(SYNC_PROJECT, {
+        voiceover: new File(['AUDIO'], 'vo.m4a', { type: 'audio/mp4', lastModified: 42 }),
+      });
+      const panel = mountPanel({
+        projectId: SYNC_PROJECT,
+        onVoiceoverRestored: () => true,
+        onApplySync,
+      });
+      await settle();
+      const applyButton = [...panel.container.querySelectorAll('button')]
+        .find(b => b.textContent?.toLowerCase().includes('apply sync'));
+      await act(async () => {
+        applyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      await settle();
+      const n = await countStagedFiles(SYNC_PROJECT);
+      panel.unmount();
+      return n;
+    };
+
+    expect(await clickApply(async () => ({ ok: false, message: 'paused', holdStaged: true }))).toBe(1);
+    expect(await clickApply(async () => ({ ok: false, message: 'Sync cancelled.' }))).toBe(0);
+    expect(await clickApply(async () => ({ ok: true }))).toBe(0);
+  });
+
+  it('first-sync pause -> remount restore -> retry still sees staged audio', async () => {
+    await seedStaged(SYNC_PROJECT, {
+      voiceover: new File(['AUDIO'], 'vo.m4a', { type: 'audio/mp4', lastModified: 7 }),
+    });
+
+    const first = mountPanel({
+      projectId: SYNC_PROJECT,
+      onVoiceoverRestored: () => true,
+      onApplySync: async () => ({ ok: false, message: 'Sync paused', holdStaged: true }),
+    });
+    await settle();
+    const apply1 = [...first.container.querySelectorAll('button')]
+      .find(b => b.textContent?.toLowerCase().includes('apply sync'));
+    await act(async () => {
+      apply1!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await settle();
+    expect(await countStagedFiles(SYNC_PROJECT)).toBe(1);
+    first.unmount();
+
+    let retrySawVoiceover = false;
+    const restarted = mountPanel({
+      projectId: SYNC_PROJECT,
+      onVoiceoverRestored: () => true,
+      onApplySync: async () => {
+        retrySawVoiceover = restarted.published()?.voiceoverFile != null;
+        return { ok: true };
+      },
+    });
+    await settle();
+    expect(await countStagedFiles(SYNC_PROJECT)).toBe(1);
+    const apply2 = [...restarted.container.querySelectorAll('button')]
+      .find(b => b.textContent?.toLowerCase().includes('apply sync'));
+    await act(async () => {
+      apply2!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    await settle();
+    expect(retrySawVoiceover, 'retry after remount must read the restored staged voiceover').toBe(true);
+    expect(await countStagedFiles(SYNC_PROJECT)).toBe(0);
+    restarted.unmount();
+  });
 });
