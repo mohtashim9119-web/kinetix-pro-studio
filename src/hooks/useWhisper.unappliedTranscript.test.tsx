@@ -419,6 +419,33 @@ describe('Requirement 4 — duplicate-run refusal', () => {
     h.unmount();
   });
 
+  // Group B closeout (plan-v3 item 5's TRANSCRIPTION-stage proof) — a real
+  // project-state assertion, not an implication from `cancelTranscription`'s
+  // own body never mentioning `Project`. `startTranscription`'s only two
+  // channels back into the caller's project are `onSegmentsUpdated` and
+  // `onProjectUpdated`; this proves neither ever fires once a run has been
+  // cancelled, for a job that was genuinely still in flight (never resolves
+  // on its own — `hangingRun`, not `hangFirstThenResolve`).
+  it('cancel touches neither onSegmentsUpdated nor onProjectUpdated — a mid-flight run never writes project state', async () => {
+    hangingRun();
+    const h = mountWhisper();
+    const onSegmentsUpdated = vi.fn();
+    const onProjectUpdated = vi.fn();
+
+    await act(async () => {
+      void h.api().startTranscription(
+        audioAsset(), 30, [], undefined, onSegmentsUpdated, onProjectUpdated, { projectId: 'project-1' },
+      );
+    });
+    act(() => { h.api().cancelTranscription(); });
+    // Drain any microtasks the abort's rejection might still schedule.
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(onSegmentsUpdated).not.toHaveBeenCalled();
+    expect(onProjectUpdated).not.toHaveBeenCalled();
+    h.unmount();
+  });
+
   it('an id-less caller is never refused — pre-T4.7 behaviour is unchanged', async () => {
     hangFirstThenResolve();
     const h = mountWhisper();
