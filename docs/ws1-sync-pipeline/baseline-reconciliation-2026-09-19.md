@@ -154,6 +154,5 @@ git commit -m "docs(archive): T5 — mirror the remaining two stash entries as p
 
 ## Commit SHA
 
-This note's own commit SHA is recorded in the commit that adds it (see repo log for
-`docs(ws1): baseline reconciliation — T1 drive audit, T2 cloud merge, T3 1560ac5
-removal, T4 ref tidy, T5 stash mirror complete`).
+**`8c61ea3`** — `docs(ws1): baseline reconciliation — T1 drive audit, T2 cloud merge, T3
+1560ac5 removal, T4 ref tidy, T5 stash mirror complete`.
