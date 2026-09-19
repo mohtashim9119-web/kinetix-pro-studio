@@ -52,7 +52,7 @@ const COPY = {
   bodyPrefix: 'Apply Sync stopped before writing anything to your timeline.',
   retryLabel: 'Try forced alignment again',
   useWhisperLabel: 'Continue with Whisper timing',
-  useWhisperHint: '(flagged as degraded — you can switch back on in Project Settings later)',
+  useWhisperHint: '(flagged as degraded — re-run Apply Sync later to retry high-precision alignment)',
   cancelLabel: 'Cancel',
   staleHint: (minutesAgo: number): string =>
     minutesAgo < 1

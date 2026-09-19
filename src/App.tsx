@@ -2568,10 +2568,20 @@ export default function App() {
   // its own unanswered pause" in the same check. `project.id` is empty on
   // the pre-hydration default project, so the read is skipped until a real
   // project is loaded.
+  //
+  // Group B closeout — MUST also clear when the newly-active project has no
+  // pending record. The store is keyed per project (`faSyncPauseStore.ts`),
+  // but `faPauseDialog` is one piece of component state shared across every
+  // project in the window: without this `else`, switching from a paused
+  // project A to an unpaused project B left A's dialog on screen while B was
+  // active, and its three answer handlers clear/act using
+  // `liveProjectRef.current.id` (B) — clearing a pause record B never had
+  // while leaving A's real one unresolved, and driving a fresh Apply Sync on
+  // B with A's stale failure reason.
   useEffect(() => {
     if (isHydrating || !project.id) return;
     const pending = readFaPause(project.id);
-    if (pending) setFaPauseDialog(pending);
+    setFaPauseDialog(pending);
   }, [project.id, isHydrating]);
 
   const { saveNow, saveSnapshot, lastSavedAt, saveError } = usePersistProject(project, !isHydrating);
