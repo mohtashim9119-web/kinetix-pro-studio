@@ -117,6 +117,11 @@ const ALLOWLIST = new Set<string>([
   // decision) and records the R4 regen proof for the hour_16k.wav exclusion.
   // Dated, docs-only, not a live tracker.
   'docs/ws1-sync-pipeline/baseline-residue-closeout-2026-09-19.md',
+  // Zero-leftover finish pass (2026-09-19) — operator-signed sync-pipeline-plan-v3,
+  // assembled from the committed record (operator-product-rulings-2026-09-19.md,
+  // final-shape-mapping-2026-09-18.md M2/M7). Supersedes sync-pipeline-v2-plan.md.
+  // Dated, docs-only, not a live tracker.
+  'docs/ws1-sync-pipeline/sync-pipeline-plan-v3.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

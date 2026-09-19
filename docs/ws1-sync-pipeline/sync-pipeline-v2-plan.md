@@ -1,5 +1,11 @@
 Status note: partially superseded — see NEW RULINGS in docs/STATUS.md (2026-09-17)
 
+**SUPERSEDED (2026-09-19):** this document is superseded in full by
+`docs/ws1-sync-pipeline/sync-pipeline-plan-v3.md` ("Operator-signed 2026-09-19; supersedes
+sync-pipeline-v2-plan (archived e0e3653)"). Part AL below ("Frozen Assets: Canonical Digests
+and Byte Constants") REMAINS the canonical frozen-assets registry in place — v3 does not
+restate or replace it — per operator directive.
+
 Status: Accepted architecture — pending implementation
 Date: 2026-08-03 (Revision 2, same day — stage contracts, stage locking, Stage 1 observability, Russian descope, adversarial audit; see Part K)
 Verified-against-HEAD: 124ad3dd34a580cbfc0fb34b34d5c058338296d2
