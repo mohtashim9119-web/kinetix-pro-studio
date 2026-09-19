@@ -1,0 +1,367 @@
+{
+  "localCount": 4556,
+  "cloudCount": 3960,
+  "matchedCount": 3830,
+  "identicalTextCount": 3349,
+  "onlyLocalCount": 726,
+  "onlyCloudCount": 130,
+  "startAbsDiffSec": {
+    "mean": 0.2953681462141005,
+    "max": 8.349999999999994,
+    "median": 0.2300000000000182
+  },
+  "endAbsDiffSec": {
+    "mean": 0.28479895561357765,
+    "max": 7.310000000000002,
+    "median": 0.22000000000002728
+  },
+  "interchangeableForSync": false,
+  "onlyLocalHead": [
+    {
+      "startSec": 0.46,
+      "endSec": 0.55,
+      "text": "."
+    },
+    {
+      "startSec": 3.4,
+      "endSec": 3.57,
+      "text": ","
+    },
+    {
+      "startSec": 5.05,
+      "endSec": 5.29,
+      "text": "."
+    },
+    {
+      "startSec": 7.04,
+      "endSec": 7.04,
+      "text": "-"
+    },
+    {
+      "startSec": 7.04,
+      "endSec": 7.43,
+      "text": "cover"
+    },
+    {
+      "startSec": 7.43,
+      "endSec": 7.74,
+      "text": "ed"
+    },
+    {
+      "startSec": 9.68,
+      "endSec": 9.88,
+      "text": "."
+    },
+    {
+      "startSec": 13.34,
+      "endSec": 13.36,
+      "text": "scor"
+    },
+    {
+      "startSec": 13.36,
+      "endSec": 13.62,
+      "text": "ched"
+    },
+    {
+      "startSec": 13.9,
+      "endSec": 14.11,
+      "text": "."
+    },
+    {
+      "startSec": 16.91,
+      "endSec": 17.18,
+      "text": "."
+    },
+    {
+      "startSec": 19.14,
+      "endSec": 19.38,
+      "text": "."
+    },
+    {
+      "startSec": 20.67,
+      "endSec": 20.89,
+      "text": "."
+    },
+    {
+      "startSec": 23.07,
+      "endSec": 23.32,
+      "text": "."
+    },
+    {
+      "startSec": 24.96,
+      "endSec": 25.25,
+      "text": "."
+    },
+    {
+      "startSec": 27.25,
+      "endSec": 27.52,
+      "text": ","
+    },
+    {
+      "startSec": 28.08,
+      "endSec": 28.23,
+      "text": ","
+    },
+    {
+      "startSec": 31.42,
+      "endSec": 32.08,
+      "text": "."
+    },
+    {
+      "startSec": 33.64,
+      "endSec": 33.9,
+      "text": "."
+    },
+    {
+      "startSec": 35.48,
+      "endSec": 35.75,
+      "text": "."
+    }
+  ],
+  "onlyCloudHead": [
+    {
+      "startSec": 7.18,
+      "endSec": 7.72,
+      "text": "-covered"
+    },
+    {
+      "startSec": 13.06,
+      "endSec": 13.54,
+      "text": "scorched"
+    },
+    {
+      "startSec": 46.6,
+      "endSec": 47.08,
+      "text": "stillness"
+    },
+    {
+      "startSec": 58.08,
+      "endSec": 58.54,
+      "text": "firelight"
+    },
+    {
+      "startSec": 70.92,
+      "endSec": 71.26,
+      "text": "hearth."
+    },
+    {
+      "startSec": 78.56,
+      "endSec": 79.12,
+      "text": "But"
+    },
+    {
+      "startSec": 79.12,
+      "endSec": 79.52,
+      "text": "something"
+    },
+    {
+      "startSec": 79.52,
+      "endSec": 79.86,
+      "text": "stayed"
+    },
+    {
+      "startSec": 79.86,
+      "endSec": 80.08,
+      "text": "in"
+    },
+    {
+      "startSec": 80.08,
+      "endSec": 80.3,
+      "text": "you."
+    },
+    {
+      "startSec": 81.06,
+      "endSec": 81.66,
+      "text": "Small"
+    },
+    {
+      "startSec": 81.66,
+      "endSec": 82.32,
+      "text": "and"
+    },
+    {
+      "startSec": 82.32,
+      "endSec": 82.76,
+      "text": "permanent."
+    },
+    {
+      "startSec": 83.64,
+      "endSec": 84.24,
+      "text": "A"
+    },
+    {
+      "startSec": 84.24,
+      "endSec": 84.42,
+      "text": "new"
+    },
+    {
+      "startSec": 84.42,
+      "endSec": 85.02,
+      "text": "understanding"
+    },
+    {
+      "startSec": 85.02,
+      "endSec": 85.22,
+      "text": "of"
+    },
+    {
+      "startSec": 85.22,
+      "endSec": 85.34,
+      "text": "what"
+    },
+    {
+      "startSec": 85.34,
+      "endSec": 85.48,
+      "text": "the"
+    },
+    {
+      "startSec": 85.48,
+      "endSec": 85.68,
+      "text": "night"
+    }
+  ],
+  "worstStart": [
+    {
+      "local": {
+        "startSec": 78.97,
+        "endSec": 80.57,
+        "text": "You"
+      },
+      "cloud": {
+        "startSec": 87.32,
+        "endSec": 87.88,
+        "text": "You"
+      },
+      "dStart": 8.349999999999994,
+      "dEnd": 7.310000000000002
+    },
+    {
+      "local": {
+        "startSec": 80.57,
+        "endSec": 83.05,
+        "text": "start"
+      },
+      "cloud": {
+        "startSec": 87.88,
+        "endSec": 88.1,
+        "text": "start"
+      },
+      "dStart": 7.310000000000002,
+      "dEnd": 5.049999999999997
+    },
+    {
+      "local": {
+        "startSec": 83.05,
+        "endSec": 87.12,
+        "text": "watching"
+      },
+      "cloud": {
+        "startSec": 88.1,
+        "endSec": 88.44,
+        "text": "watching"
+      },
+      "dStart": 5.049999999999997,
+      "dEnd": 1.3199999999999932
+    },
+    {
+      "local": {
+        "startSec": 191.11,
+        "endSec": 191.58,
+        "text": "holds"
+      },
+      "cloud": {
+        "startSec": 192.82,
+        "endSec": 193.14,
+        "text": "holds"
+      },
+      "dStart": 1.7099999999999795,
+      "dEnd": 1.5599999999999739
+    },
+    {
+      "local": {
+        "startSec": 191.58,
+        "endSec": 191.97,
+        "text": "it"
+      },
+      "cloud": {
+        "startSec": 193.14,
+        "endSec": 193.3,
+        "text": "it"
+      },
+      "dStart": 1.5599999999999739,
+      "dEnd": 1.3300000000000125
+    }
+  ],
+  "worstEnd": [
+    {
+      "local": {
+        "startSec": 78.97,
+        "endSec": 80.57,
+        "text": "You"
+      },
+      "cloud": {
+        "startSec": 87.32,
+        "endSec": 87.88,
+        "text": "You"
+      },
+      "dStart": 8.349999999999994,
+      "dEnd": 7.310000000000002
+    },
+    {
+      "local": {
+        "startSec": 80.57,
+        "endSec": 83.05,
+        "text": "start"
+      },
+      "cloud": {
+        "startSec": 87.88,
+        "endSec": 88.1,
+        "text": "start"
+      },
+      "dStart": 7.310000000000002,
+      "dEnd": 5.049999999999997
+    },
+    {
+      "local": {
+        "startSec": 191.04,
+        "endSec": 191.11,
+        "text": "He"
+      },
+      "cloud": {
+        "startSec": 192.26,
+        "endSec": 192.82,
+        "text": "He"
+      },
+      "dStart": 1.2199999999999989,
+      "dEnd": 1.7099999999999795
+    },
+    {
+      "local": {
+        "startSec": 191.11,
+        "endSec": 191.58,
+        "text": "holds"
+      },
+      "cloud": {
+        "startSec": 192.82,
+        "endSec": 193.14,
+        "text": "holds"
+      },
+      "dStart": 1.7099999999999795,
+      "dEnd": 1.5599999999999739
+    },
+    {
+      "local": {
+        "startSec": 932.27,
+        "endSec": 932.37,
+        "text": "their"
+      },
+      "cloud": {
+        "startSec": 933.64,
+        "endSec": 933.82,
+        "text": "their"
+      },
+      "dStart": 1.3700000000000045,
+      "dEnd": 1.4500000000000455
+    }
+  ]
+}

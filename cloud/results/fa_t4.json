@@ -1,0 +1,184 @@
+{
+  "primeSec": 33.949,
+  "prime": {
+    "ok": true,
+    "loadSec": 15.984,
+    "loadedLangs": [
+      "en"
+    ],
+    "gpuMemory": {
+      "name": "Tesla T4",
+      "usedMb": 2618.2,
+      "totalMb": 15360.0
+    }
+  },
+  "coldRuns": [
+    {
+      "clientSec": 10.505,
+      "payload": {
+        "ok": true,
+        "loadSec": 3.645,
+        "loadedLangs": [
+          "en"
+        ],
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 2614.8,
+          "totalMb": 15360.0
+        }
+      }
+    },
+    {
+      "clientSec": 26.611,
+      "payload": {
+        "ok": true,
+        "loadSec": 4.382,
+        "loadedLangs": [
+          "en"
+        ],
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 2614.2,
+          "totalMb": 15360.0
+        }
+      }
+    },
+    {
+      "clientSec": 11.19,
+      "payload": {
+        "ok": true,
+        "loadSec": 3.435,
+        "loadedLangs": [
+          "en"
+        ],
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 2614.2,
+          "totalMb": 15360.0
+        }
+      }
+    }
+  ],
+  "warmPingSec": 26.82,
+  "warmPing": {
+    "ok": true,
+    "loadSec": 3.133,
+    "loadedLangs": [
+      "en"
+    ],
+    "gpuMemory": {
+      "name": "Tesla T4",
+      "usedMb": 2614.2,
+      "totalMb": 15360.0
+    }
+  },
+  "alignClientSec": 8.012,
+  "align": {
+    "nWords": 24,
+    "processingSec": 4.662,
+    "modelLoadSec": 3.133,
+    "gpuMemory": {
+      "name": "Tesla T4",
+      "usedMb": 2624.2,
+      "totalMb": 15360.0
+    },
+    "wordsHead": [
+      {
+        "word": "Level",
+        "startSec": 0.0,
+        "endSec": 1.241655540720961,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 0
+      },
+      {
+        "word": "one.",
+        "startSec": 1.241655540720961,
+        "endSec": 2.5033377837116157,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 1
+      },
+      {
+        "word": "The",
+        "startSec": 2.5033377837116157,
+        "endSec": 3.744993324432577,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 2
+      },
+      {
+        "word": "child",
+        "startSec": 3.744993324432577,
+        "endSec": 5.0066755674232315,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 3
+      },
+      {
+        "word": "who",
+        "startSec": 5.0066755674232315,
+        "endSec": 6.248331108144193,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 4
+      },
+      {
+        "word": "does",
+        "startSec": 6.248331108144193,
+        "endSec": 7.489986648865154,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 5
+      },
+      {
+        "word": "not",
+        "startSec": 7.489986648865154,
+        "endSec": 8.751668891855807,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 6
+      },
+      {
+        "word": "yet",
+        "startSec": 8.751668891855807,
+        "endSec": 9.993324432576769,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 7
+      },
+      {
+        "word": "know",
+        "startSec": 9.993324432576769,
+        "endSec": 11.255006675567424,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 8
+      },
+      {
+        "word": "what",
+        "startSec": 11.255006675567424,
+        "endSec": 12.496662216288385,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 9
+      },
+      {
+        "word": "dark",
+        "startSec": 12.496662216288385,
+        "endSec": 13.758344459279039,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 10
+      },
+      {
+        "word": "means,",
+        "startSec": 13.758344459279039,
+        "endSec": 15.0,
+        "confidence": 0.5,
+        "needsReview": false,
+        "wordIndex": 11
+      }
+    ]
+  }
+}

@@ -1,0 +1,53 @@
+{
+  "pingSec": 14.557,
+  "ping": {
+    "ok": true,
+    "loadSec": 2.683,
+    "gpuMemory": {
+      "name": "Tesla T4",
+      "usedMb": 2504.2,
+      "totalMb": 15360.0
+    },
+    "host": {
+      "modalRegion": "us-east-1",
+      "modalCloud": "CLOUD_PROVIDER_AWS",
+      "cudaVisible": null
+    },
+    "gpu": "T4",
+    "snapshots": false
+  },
+  "v6": {
+    "clientSec": 45.611,
+    "processingSec": 41.971,
+    "audioDurationSec": 1421.293438,
+    "rtf": 33.863702032355675,
+    "nTokens": 3960,
+    "gpuMemory": {
+      "name": "Tesla T4",
+      "usedMb": 2646.2,
+      "totalMb": 15360.0
+    },
+    "host": {
+      "modalRegion": "us-east-1",
+      "modalCloud": "CLOUD_PROVIDER_AWS",
+      "cudaVisible": null
+    }
+  },
+  "hour": {
+    "clientSec": 114.153,
+    "processingSec": 110.513,
+    "audioDurationSec": 3600.0,
+    "rtf": 32.57535312587659,
+    "nTokens": 9980,
+    "gpuMemory": {
+      "name": "Tesla T4",
+      "usedMb": 2646.2,
+      "totalMb": 15360.0
+    },
+    "host": {
+      "modalRegion": "us-east-1",
+      "modalCloud": "CLOUD_PROVIDER_AWS",
+      "cudaVisible": null
+    }
+  }
+}

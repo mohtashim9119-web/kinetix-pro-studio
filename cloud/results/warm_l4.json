@@ -1,0 +1,36 @@
+{
+  "pingSec": 11.902,
+  "ping": {
+    "ok": true,
+    "loadSec": 2.978,
+    "gpuMemory": {
+      "name": "NVIDIA L4",
+      "usedMb": 2616.9,
+      "totalMb": 23034.0
+    },
+    "host": {
+      "modalRegion": "us-central1",
+      "modalCloud": "CLOUD_PROVIDER_GCP",
+      "cudaVisible": null
+    },
+    "gpu": "L4",
+    "snapshots": false
+  },
+  "v6": {
+    "clientSec": 40.938,
+    "processingSec": 36.934,
+    "audioDurationSec": 1421.293438,
+    "rtf": 38.48197969350734,
+    "nTokens": 3959,
+    "gpuMemory": {
+      "name": "NVIDIA L4",
+      "usedMb": 2762.9,
+      "totalMb": 23034.0
+    },
+    "host": {
+      "modalRegion": "us-central1",
+      "modalCloud": "CLOUD_PROVIDER_GCP",
+      "cudaVisible": null
+    }
+  }
+}

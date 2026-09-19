@@ -1,0 +1,70 @@
+{
+  "coldRuns": [
+    {
+      "clientSec": 7.31,
+      "payload": {
+        "ok": true,
+        "loadSec": 3.718,
+        "loadedLangs": [
+          "en"
+        ],
+        "loadSecByLang": {
+          "en": 3.718
+        },
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 2614.2,
+          "totalMb": 15360.0
+        },
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      }
+    },
+    {
+      "clientSec": 26.514,
+      "payload": {
+        "ok": true,
+        "loadSec": 3.558,
+        "loadedLangs": [
+          "en"
+        ],
+        "loadSecByLang": {
+          "en": 3.558
+        },
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 2614.2,
+          "totalMb": 15360.0
+        },
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      }
+    },
+    {
+      "clientSec": 29.622,
+      "payload": {
+        "ok": true,
+        "loadSec": 3.404,
+        "loadedLangs": [
+          "en"
+        ],
+        "loadSecByLang": {
+          "en": 3.404
+        },
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 2614.2,
+          "totalMb": 15360.0
+        },
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      }
+    }
+  ]
+}

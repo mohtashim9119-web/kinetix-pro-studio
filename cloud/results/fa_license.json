@@ -1,0 +1,10 @@
+{
+  "repo": "mohtashim9/kinetix-fa-models",
+  "sha": "fa3db136daa49d3809e744fb8aacd06430a7442e",
+  "license": "apache-2.0",
+  "cardData": {
+    "license": "apache-2.0"
+  },
+  "ok": true,
+  "gate": "stop FA deploy unless ok"
+}

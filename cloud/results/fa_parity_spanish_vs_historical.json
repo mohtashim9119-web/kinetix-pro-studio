@@ -1,0 +1,24 @@
+{
+  "nLocal": 249,
+  "nCloud": 249,
+  "nCompared": 249,
+  "identicalText": 249,
+  "onlyLocal": 0,
+  "onlyCloud": 0,
+  "meanAbsStartSec": 0.0008835341365464317,
+  "meanAbsEndSec": 0.0008032128514058355,
+  "maxAbsStartSec": 0.020000000000010232,
+  "maxAbsEndSec": 0.020000000000003126,
+  "startDistribution": {
+    "le10ms": 238,
+    "le50ms": 249,
+    "gt50ms": 0
+  },
+  "endDistribution": {
+    "le10ms": 239,
+    "le50ms": 249,
+    "gt50ms": 0
+  },
+  "interchangeableUnderOwnerThreshold": true,
+  "textMismatchesHead": []
+}

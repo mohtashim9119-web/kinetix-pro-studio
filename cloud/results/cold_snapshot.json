@@ -1,0 +1,79 @@
+{
+  "className": "TranscriberT4Snapshot",
+  "primeSec": 30.551,
+  "prime": {
+    "ok": true,
+    "loadSec": 2.357,
+    "gpuMemory": {
+      "name": "Tesla T4",
+      "usedMb": 2504.2,
+      "totalMb": 15360.0
+    },
+    "host": {
+      "modalRegion": "us-east-1",
+      "modalCloud": "CLOUD_PROVIDER_AWS",
+      "cudaVisible": null
+    },
+    "gpu": "T4",
+    "snapshots": true
+  },
+  "runs": [
+    {
+      "clientSec": 24.226,
+      "payload": {
+        "ok": true,
+        "loadSec": 2.357,
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 2504.2,
+          "totalMb": 15360.0
+        },
+        "host": {
+          "modalRegion": "us-east-1",
+          "modalCloud": "CLOUD_PROVIDER_AWS",
+          "cudaVisible": null
+        },
+        "gpu": "T4",
+        "snapshots": true
+      }
+    },
+    {
+      "clientSec": 26.463,
+      "payload": {
+        "ok": true,
+        "loadSec": 2.357,
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 2504.2,
+          "totalMb": 15360.0
+        },
+        "host": {
+          "modalRegion": "us-east-1",
+          "modalCloud": "CLOUD_PROVIDER_AWS",
+          "cudaVisible": null
+        },
+        "gpu": "T4",
+        "snapshots": true
+      }
+    },
+    {
+      "clientSec": 31.642,
+      "payload": {
+        "ok": true,
+        "loadSec": 2.357,
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 2504.2,
+          "totalMb": 15360.0
+        },
+        "host": {
+          "modalRegion": "us-east-1",
+          "modalCloud": "CLOUD_PROVIDER_AWS",
+          "cudaVisible": null
+        },
+        "gpu": "T4",
+        "snapshots": true
+      }
+    }
+  ]
+}

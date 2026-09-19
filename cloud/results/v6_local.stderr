@@ -1,0 +1,56 @@
+whisper_init_from_file_with_params_no_state: loading model from '/Users/mohtashim/Drive/TEST/models/ggml-large-v3-turbo.bin'
+whisper_init_with_params_no_state: use gpu    = 1
+whisper_init_with_params_no_state: flash attn = 1
+whisper_init_with_params_no_state: gpu_device = 0
+whisper_init_with_params_no_state: dtw        = 0
+whisper_init_with_params_no_state: devices    = 2
+whisper_init_with_params_no_state: backends   = 2
+whisper_model_load: loading model
+whisper_model_load: n_vocab       = 51866
+whisper_model_load: n_audio_ctx   = 1500
+whisper_model_load: n_audio_state = 1280
+whisper_model_load: n_audio_head  = 20
+whisper_model_load: n_audio_layer = 32
+whisper_model_load: n_text_ctx    = 448
+whisper_model_load: n_text_state  = 1280
+whisper_model_load: n_text_head   = 20
+whisper_model_load: n_text_layer  = 4
+whisper_model_load: n_mels        = 128
+whisper_model_load: ftype         = 1
+whisper_model_load: qntvr         = 0
+whisper_model_load: type          = 5 (large v3)
+whisper_model_load: adding 1609 extra tokens
+whisper_model_load: n_langs       = 100
+whisper_model_load:          CPU total size =  1623.92 MB
+whisper_model_load: model size    = 1623.92 MB
+whisper_backend_init_gpu: device 0: BLAS (type: 3)
+whisper_backend_init_gpu: device 1: CPU (type: 0)
+whisper_backend_init_gpu: no GPU found
+whisper_backend_init: using BLAS backend
+whisper_init_state: kv self size  =   10.49 MB
+whisper_init_state: kv cross size =   31.46 MB
+whisper_init_state: kv pad  size  =    7.86 MB
+whisper_init_state: compute buffer (conv)   =   36.15 MB
+whisper_init_state: compute buffer (encode) =   55.35 MB
+whisper_init_state: compute buffer (cross)  =    9.27 MB
+whisper_init_state: compute buffer (decode) =   99.12 MB
+read_audio_data: reading audio data from '/Users/mohtashim/Drive/Vibe Coding Projects/4.kinetix-pro-studio-cloud-asr/cloud/fixtures/v6_16k.wav' ...
+read_audio_data: trying to decode with miniaudio
+
+system_info: n_threads = 4 / 16 | WHISPER : COREML = 0 | OPENVINO = 0 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | ACCELERATE = 1 | REPACK = 1 | 
+
+main: processing '/Users/mohtashim/Drive/Vibe Coding Projects/4.kinetix-pro-studio-cloud-asr/cloud/fixtures/v6_16k.wav' (22740695 samples, 1421.3 sec), 4 threads, 1 processors, 5 beams + best of 5, lang = en, task = transcribe, timestamps = 1 ...
+
+
+whisper_print_timings:     load time =  1959.74 ms
+whisper_print_timings:     fallbacks =   0 p /   0 h
+whisper_print_timings:      mel time =  1336.24 ms
+whisper_print_timings:   sample time = 25759.82 ms / 25792 runs (     1.00 ms per run)
+whisper_print_timings:   encode time = 727093.00 ms /    60 runs ( 12118.22 ms per run)
+whisper_print_timings:   decode time =  1229.55 ms /    66 runs (    18.63 ms per run)
+whisper_print_timings:   batchd time = 230285.28 ms / 25429 runs (     9.06 ms per run)
+whisper_print_timings:   prompt time = 27092.01 ms / 13240 runs (     2.05 ms per run)
+whisper_print_timings:    total time = 1018007.06 ms
+real 1018.42
+user 6882.81
+sys 187.82
