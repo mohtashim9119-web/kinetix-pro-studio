@@ -1,0 +1,176 @@
+{
+  "nExpectedRepresentable": 3874,
+  "nGot": 3874,
+  "nChunks": 280,
+  "everyWordExactlyOnce": true,
+  "wordIndexGapless": true,
+  "nMissing": 0,
+  "nExtra": 0,
+  "nDuplicatesByTextAndStart": 0,
+  "nGapsGt50ms": 2721,
+  "nOverlaps": 0,
+  "missingHead": [],
+  "extraHead": [],
+  "duplicatesHead": [],
+  "gapsHead": [
+    {
+      "index": 1,
+      "gapSec": 0.3599999999999999,
+      "prev": "you",
+      "word": "are",
+      "t": 3.1
+    },
+    {
+      "index": 2,
+      "gapSec": 1.1400000000000006,
+      "prev": "are",
+      "word": "seven",
+      "t": 4.5200000000000005
+    },
+    {
+      "index": 4,
+      "gapSec": 0.09999999999999964,
+      "prev": "years",
+      "word": "old",
+      "t": 5.12
+    },
+    {
+      "index": 5,
+      "gapSec": 0.1200000000000001,
+      "prev": "old",
+      "word": "you",
+      "t": 5.38
+    },
+    {
+      "index": 6,
+      "gapSec": 0.17999999999999972,
+      "prev": "you",
+      "word": "live",
+      "t": 6.12
+    },
+    {
+      "index": 8,
+      "gapSec": 0.0600000000000005,
+      "prev": "inside",
+      "word": "a",
+      "t": 6.74
+    },
+    {
+      "index": 9,
+      "gapSec": 0.10000000000000053,
+      "prev": "a",
+      "word": "skin-covered",
+      "t": 6.86
+    },
+    {
+      "index": 11,
+      "gapSec": 0.08000000000000007,
+      "prev": "shelter",
+      "word": "at",
+      "t": 8.22
+    },
+    {
+      "index": 13,
+      "gapSec": 0.09999999999999964,
+      "prev": "the",
+      "word": "edge",
+      "t": 8.5
+    },
+    {
+      "index": 15,
+      "gapSec": 0.0600000000000005,
+      "prev": "of",
+      "word": "a",
+      "t": 8.8
+    },
+    {
+      "index": 17,
+      "gapSec": 0.0600000000000005,
+      "prev": "shallow",
+      "word": "valley",
+      "t": 9.24
+    },
+    {
+      "index": 18,
+      "gapSec": 0.6599999999999984,
+      "prev": "valley",
+      "word": "the",
+      "t": 10.219999999999999
+    },
+    {
+      "index": 19,
+      "gapSec": 0.05999999999999872,
+      "prev": "the",
+      "word": "fire",
+      "t": 10.36
+    },
+    {
+      "index": 20,
+      "gapSec": 0.0600000000000005,
+      "prev": "fire",
+      "word": "your",
+      "t": 10.76
+    },
+    {
+      "index": 21,
+      "gapSec": 0.0600000000000005,
+      "prev": "your",
+      "word": "mother",
+      "t": 10.92
+    },
+    {
+      "index": 23,
+      "gapSec": 0.16000000000000014,
+      "prev": "tends",
+      "word": "smells",
+      "t": 11.7
+    },
+    {
+      "index": 25,
+      "gapSec": 0.08000000000000007,
+      "prev": "like",
+      "word": "pine",
+      "t": 12.24
+    },
+    {
+      "index": 27,
+      "gapSec": 0.16000000000000014,
+      "prev": "resin",
+      "word": "and",
+      "t": 13.0
+    },
+    {
+      "index": 28,
+      "gapSec": 0.09999999999999964,
+      "prev": "and",
+      "word": "scorched",
+      "t": 13.16
+    },
+    {
+      "index": 29,
+      "gapSec": 0.08000000000000185,
+      "prev": "scorched",
+      "word": "bone",
+      "t": 13.620000000000001
+    }
+  ],
+  "overlapsHead": [],
+  "firstLast": {
+    "first": {
+      "word": "you",
+      "startSec": 0.24,
+      "endSec": 2.74,
+      "confidence": 0.0007529322197211225,
+      "needsReview": true,
+      "wordIndex": 0
+    },
+    "last": {
+      "word": "it",
+      "startSec": 1420.3000000000002,
+      "endSec": 1420.38,
+      "confidence": 0.9999679785819525,
+      "needsReview": false,
+      "wordIndex": 3873
+    }
+  }
+}

@@ -1,0 +1,234 @@
+{
+  "1": {
+    "n": 1,
+    "wallSec": 118.494,
+    "sumProcessingSec": 112.289,
+    "maxProcessingSec": 112.289,
+    "nTokens": 10004,
+    "seams": {
+      "n": 1,
+      "seams": []
+    },
+    "perChunkProcessingSec": [
+      112.289
+    ]
+  },
+  "4": {
+    "n": 4,
+    "wallSec": 52.326,
+    "sumProcessingSec": 115.733,
+    "maxProcessingSec": 32.811,
+    "nTokens": 10188,
+    "seams": {
+      "n": 4,
+      "seams": [
+        {
+          "t": 900.0,
+          "lastBefore": {
+            "startSec": 899.68,
+            "endSec": 899.96,
+            "text": "experience."
+          },
+          "firstAfter": {
+            "startSec": 900.0,
+            "endSec": 900.46,
+            "text": "allow,"
+          },
+          "gapSec": 0.03999999999996362,
+          "overlapSec": -0.03999999999996362
+        },
+        {
+          "t": 1800.0,
+          "lastBefore": {
+            "startSec": 1799.98,
+            "endSec": 1799.98,
+            "text": "are"
+          },
+          "firstAfter": {
+            "startSec": 1799.96,
+            "endSec": 1799.96,
+            "text": "you"
+          },
+          "gapSec": -0.01999999999998181,
+          "overlapSec": 0.01999999999998181
+        },
+        {
+          "t": 2700.0,
+          "lastBefore": {
+            "startSec": 2699.58,
+            "endSec": 2699.92,
+            "text": "1st."
+          },
+          "firstAfter": null,
+          "gapSec": null,
+          "overlapSec": null
+        }
+      ]
+    },
+    "perChunkProcessingSec": [
+      27.811,
+      32.811,
+      29.247,
+      25.864
+    ]
+  },
+  "10": {
+    "n": 10,
+    "wallSec": 324.232,
+    "sumProcessingSec": 157.656,
+    "maxProcessingSec": 20.293,
+    "nTokens": 10015,
+    "seams": {
+      "n": 10,
+      "seams": [
+        {
+          "t": 360.0,
+          "lastBefore": {
+            "startSec": 359.84,
+            "endSec": 359.98,
+            "text": "it."
+          },
+          "firstAfter": {
+            "startSec": 360.0,
+            "endSec": 360.56,
+            "text": "Your"
+          },
+          "gapSec": 0.01999999999998181,
+          "overlapSec": -0.01999999999998181
+        },
+        {
+          "t": 720.0,
+          "lastBefore": {
+            "startSec": 719.98,
+            "endSec": 719.98,
+            "text": "time."
+          },
+          "firstAfter": {
+            "startSec": 719.98,
+            "endSec": 719.98,
+            "text": "make"
+          },
+          "gapSec": 0.0,
+          "overlapSec": 0.0
+        },
+        {
+          "t": 1080.0,
+          "lastBefore": {
+            "startSec": 1079.98,
+            "endSec": 1079.98,
+            "text": "name."
+          },
+          "firstAfter": {
+            "startSec": 1079.98,
+            "endSec": 1079.98,
+            "text": "bands"
+          },
+          "gapSec": 0.0,
+          "overlapSec": 0.0
+        },
+        {
+          "t": 1440.0,
+          "lastBefore": {
+            "startSec": 1439.98,
+            "endSec": 1439.98,
+            "text": "night."
+          },
+          "firstAfter": {
+            "startSec": 1439.98,
+            "endSec": 1439.98,
+            "text": "night."
+          },
+          "gapSec": 0.0,
+          "overlapSec": 0.0
+        },
+        {
+          "t": 1800.0,
+          "lastBefore": {
+            "startSec": 1799.98,
+            "endSec": 1799.98,
+            "text": "down."
+          },
+          "firstAfter": {
+            "startSec": 1799.98,
+            "endSec": 1799.98,
+            "text": "let's"
+          },
+          "gapSec": 0.0,
+          "overlapSec": 0.0
+        },
+        {
+          "t": 2160.0,
+          "lastBefore": {
+            "startSec": 2158.74,
+            "endSec": 2159.08,
+            "text": "have."
+          },
+          "firstAfter": {
+            "startSec": 2160.0,
+            "endSec": 2160.32,
+            "text": "run"
+          },
+          "gapSec": 0.9200000000000728,
+          "overlapSec": -0.9200000000000728
+        },
+        {
+          "t": 2520.0,
+          "lastBefore": {
+            "startSec": 2519.6,
+            "endSec": 2519.98,
+            "text": "following"
+          },
+          "firstAfter": {
+            "startSec": 2520.0,
+            "endSec": 2520.18,
+            "text": "you"
+          },
+          "gapSec": 0.01999999999998181,
+          "overlapSec": -0.01999999999998181
+        },
+        {
+          "t": 2880.0,
+          "lastBefore": {
+            "startSec": 2879.94,
+            "endSec": 2879.94,
+            "text": "you."
+          },
+          "firstAfter": {
+            "startSec": 2880.0,
+            "endSec": 2880.16,
+            "text": "tight"
+          },
+          "gapSec": 0.05999999999994543,
+          "overlapSec": -0.05999999999994543
+        },
+        {
+          "t": 3240.0,
+          "lastBefore": {
+            "startSec": 3239.88,
+            "endSec": 3239.98,
+            "text": "dreaming."
+          },
+          "firstAfter": {
+            "startSec": 3240.0,
+            "endSec": 3240.3,
+            "text": "Drifting."
+          },
+          "gapSec": 0.01999999999998181,
+          "overlapSec": -0.01999999999998181
+        }
+      ]
+    },
+    "perChunkProcessingSec": [
+      12.733,
+      18.343,
+      20.293,
+      14.888,
+      19.111,
+      12.257,
+      15.868,
+      16.509,
+      16.064,
+      11.59
+    ]
+  }
+}

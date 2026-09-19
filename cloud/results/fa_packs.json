@@ -1,0 +1,350 @@
+{
+  "warmPingSec": 9.926,
+  "ping": {
+    "ok": true,
+    "loadSec": 3.589,
+    "loadedLangs": [
+      "en"
+    ],
+    "loadSecByLang": {
+      "en": 3.589
+    },
+    "gpuMemory": {
+      "name": "Tesla T4",
+      "usedMb": 2614.2,
+      "totalMb": 15360.0
+    },
+    "providers": [
+      "CUDAExecutionProvider",
+      "CPUExecutionProvider"
+    ]
+  },
+  "packs": {
+    "en": {
+      "clientSec": 39.346,
+      "metrics": {
+        "modelLoadSec": 4.021,
+        "processingSec": 4.102,
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 2624.2,
+          "totalMb": 15360.0
+        },
+        "nWords": 12,
+        "nChunks": 1,
+        "nFallbackChunks": 0,
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "nWords": 12,
+      "wordsHead": [
+        {
+          "word": "you",
+          "startSec": 2.38,
+          "endSec": 4.26,
+          "confidence": 0.9999421793609474,
+          "needsReview": false,
+          "wordIndex": 0
+        },
+        {
+          "word": "are",
+          "startSec": 4.34,
+          "endSec": 4.42,
+          "confidence": 0.9999665739041833,
+          "needsReview": false,
+          "wordIndex": 1
+        },
+        {
+          "word": "seven",
+          "startSec": 4.5200000000000005,
+          "endSec": 4.76,
+          "confidence": 0.9504961199634551,
+          "needsReview": false,
+          "wordIndex": 2
+        },
+        {
+          "word": "years",
+          "startSec": 4.82,
+          "endSec": 5.0200000000000005,
+          "confidence": 0.9745648052031795,
+          "needsReview": false,
+          "wordIndex": 3
+        },
+        {
+          "word": "old",
+          "startSec": 5.12,
+          "endSec": 5.26,
+          "confidence": 0.9999687823811795,
+          "needsReview": false,
+          "wordIndex": 4
+        },
+        {
+          "word": "you",
+          "startSec": 5.94,
+          "endSec": 6.04,
+          "confidence": 0.999889954956016,
+          "needsReview": false,
+          "wordIndex": 5
+        },
+        {
+          "word": "live",
+          "startSec": 6.12,
+          "endSec": 6.32,
+          "confidence": 0.947588940485458,
+          "needsReview": false,
+          "wordIndex": 6
+        },
+        {
+          "word": "inside",
+          "startSec": 6.36,
+          "endSec": 6.68,
+          "confidence": 0.9998804817965947,
+          "needsReview": false,
+          "wordIndex": 7
+        }
+      ]
+    },
+    "es": {
+      "clientSec": 4.051,
+      "metrics": {
+        "modelLoadSec": 2.276,
+        "processingSec": 0.577,
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 4694.2,
+          "totalMb": 15360.0
+        },
+        "nWords": 10,
+        "nChunks": 1,
+        "nFallbackChunks": 0,
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "nWords": 10,
+      "wordsHead": [
+        {
+          "word": "scylla",
+          "startSec": 0.32,
+          "endSec": 1.76,
+          "confidence": 0.02977890200055541,
+          "needsReview": true,
+          "wordIndex": 0
+        },
+        {
+          "word": "es",
+          "startSec": 1.94,
+          "endSec": 2.0,
+          "confidence": 0.9998448813507499,
+          "needsReview": false,
+          "wordIndex": 1
+        },
+        {
+          "word": "un",
+          "startSec": 2.08,
+          "endSec": 2.12,
+          "confidence": 0.9984807389961154,
+          "needsReview": false,
+          "wordIndex": 2
+        },
+        {
+          "word": "monstruo",
+          "startSec": 2.18,
+          "endSec": 2.52,
+          "confidence": 0.9990888512451762,
+          "needsReview": false,
+          "wordIndex": 3
+        },
+        {
+          "word": "que",
+          "startSec": 2.56,
+          "endSec": 2.64,
+          "confidence": 0.9975139326122289,
+          "needsReview": false,
+          "wordIndex": 4
+        },
+        {
+          "word": "vive",
+          "startSec": 2.68,
+          "endSec": 2.86,
+          "confidence": 0.9999241861586591,
+          "needsReview": false,
+          "wordIndex": 5
+        },
+        {
+          "word": "dentro",
+          "startSec": 2.9,
+          "endSec": 3.12,
+          "confidence": 0.9202824308915624,
+          "needsReview": false,
+          "wordIndex": 6
+        },
+        {
+          "word": "de",
+          "startSec": 3.16,
+          "endSec": 3.2,
+          "confidence": 0.998485318750476,
+          "needsReview": false,
+          "wordIndex": 7
+        }
+      ]
+    },
+    "fr": {
+      "clientSec": 13.825,
+      "metrics": {
+        "modelLoadSec": 4.145,
+        "processingSec": 3.744,
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 6764.2,
+          "totalMb": 15360.0
+        },
+        "nWords": 4,
+        "nChunks": 1,
+        "nFallbackChunks": 0,
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "nWords": 4,
+      "wordsHead": [
+        {
+          "word": "ce",
+          "startSec": 1.56,
+          "endSec": 1.8800000000000001,
+          "confidence": 0.9266555432520476,
+          "needsReview": false,
+          "wordIndex": 0
+        },
+        {
+          "word": "n'est",
+          "startSec": 2.2,
+          "endSec": 2.96,
+          "confidence": 0.006725429126670398,
+          "needsReview": true,
+          "wordIndex": 1
+        },
+        {
+          "word": "pas",
+          "startSec": 3.04,
+          "endSec": 3.22,
+          "confidence": 0.0001928351620274207,
+          "needsReview": true,
+          "wordIndex": 2
+        },
+        {
+          "word": "juste",
+          "startSec": 3.3200000000000003,
+          "endSec": 3.98,
+          "confidence": 3.1552634659608855e-05,
+          "needsReview": true,
+          "wordIndex": 3
+        }
+      ]
+    },
+    "de": {
+      "clientSec": 13.458,
+      "metrics": {
+        "modelLoadSec": 4.787,
+        "processingSec": 3.883,
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 8842.2,
+          "totalMb": 15360.0
+        },
+        "nWords": 4,
+        "nChunks": 1,
+        "nFallbackChunks": 0,
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "nWords": 4,
+      "wordsHead": [
+        {
+          "word": "das",
+          "startSec": 0.08,
+          "endSec": 1.46,
+          "confidence": 5.2663218832401175e-05,
+          "needsReview": true,
+          "wordIndex": 0
+        },
+        {
+          "word": "ist",
+          "startSec": 1.7,
+          "endSec": 2.52,
+          "confidence": 0.922695611043656,
+          "needsReview": false,
+          "wordIndex": 1
+        },
+        {
+          "word": "nicht",
+          "startSec": 2.62,
+          "endSec": 2.96,
+          "confidence": 0.009836521014973305,
+          "needsReview": true,
+          "wordIndex": 2
+        },
+        {
+          "word": "fair",
+          "startSec": 3.02,
+          "endSec": 3.98,
+          "confidence": 0.0002709358340256743,
+          "needsReview": true,
+          "wordIndex": 3
+        }
+      ]
+    },
+    "pt": {
+      "clientSec": 20.048,
+      "metrics": {
+        "modelLoadSec": 11.977,
+        "processingSec": 3.852,
+        "gpuMemory": {
+          "name": "Tesla T4",
+          "usedMb": 10912.2,
+          "totalMb": 15360.0
+        },
+        "nWords": 3,
+        "nChunks": 1,
+        "nFallbackChunks": 0,
+        "providers": [
+          "CUDAExecutionProvider",
+          "CPUExecutionProvider"
+        ]
+      },
+      "nWords": 3,
+      "wordsHead": [
+        {
+          "word": "o",
+          "startSec": 0.14,
+          "endSec": 0.16,
+          "confidence": 0.9776676484203184,
+          "needsReview": false,
+          "wordIndex": 0
+        },
+        {
+          "word": "site",
+          "startSec": 1.56,
+          "endSec": 2.08,
+          "confidence": 0.007745154230557025,
+          "needsReview": true,
+          "wordIndex": 1
+        },
+        {
+          "word": "publico",
+          "startSec": 3.04,
+          "endSec": 3.98,
+          "confidence": 5.237994602869541e-05,
+          "needsReview": true,
+          "wordIndex": 2
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,176 @@
+{
+  "nExpectedRepresentable": 249,
+  "nGot": 249,
+  "nChunks": 5,
+  "everyWordExactlyOnce": true,
+  "wordIndexGapless": true,
+  "nMissing": 0,
+  "nExtra": 0,
+  "nDuplicatesByTextAndStart": 0,
+  "nGapsGt50ms": 187,
+  "nOverlaps": 0,
+  "missingHead": [],
+  "extraHead": [],
+  "duplicatesHead": [],
+  "gapsHead": [
+    {
+      "index": 1,
+      "gapSec": 0.7999999999999999,
+      "prev": "scylla",
+      "word": "scylla",
+      "t": 1.48
+    },
+    {
+      "index": 2,
+      "gapSec": 0.17999999999999994,
+      "prev": "scylla",
+      "word": "es",
+      "t": 1.94
+    },
+    {
+      "index": 3,
+      "gapSec": 0.08000000000000007,
+      "prev": "es",
+      "word": "un",
+      "t": 2.08
+    },
+    {
+      "index": 4,
+      "gapSec": 0.06000000000000005,
+      "prev": "un",
+      "word": "monstruo",
+      "t": 2.18
+    },
+    {
+      "index": 9,
+      "gapSec": 0.06000000000000005,
+      "prev": "de",
+      "word": "un",
+      "t": 3.2600000000000002
+    },
+    {
+      "index": 10,
+      "gapSec": 0.05999999999999961,
+      "prev": "un",
+      "word": "acantilado",
+      "t": 3.38
+    },
+    {
+      "index": 11,
+      "gapSec": 0.1600000000000006,
+      "prev": "acantilado",
+      "word": "junto",
+      "t": 4.0600000000000005
+    },
+    {
+      "index": 12,
+      "gapSec": 0.1200000000000001,
+      "prev": "junto",
+      "word": "a",
+      "t": 4.48
+    },
+    {
+      "index": 13,
+      "gapSec": 0.08000000000000007,
+      "prev": "a",
+      "word": "un",
+      "t": 4.58
+    },
+    {
+      "index": 15,
+      "gapSec": 0.08000000000000007,
+      "prev": "estrecho",
+      "word": "paso",
+      "t": 5.08
+    },
+    {
+      "index": 16,
+      "gapSec": 0.05999999999999961,
+      "prev": "paso",
+      "word": "mar\u00edtimo",
+      "t": 5.34
+    },
+    {
+      "index": 17,
+      "gapSec": 0.5200000000000005,
+      "prev": "mar\u00edtimo",
+      "word": "tiene",
+      "t": 6.28
+    },
+    {
+      "index": 18,
+      "gapSec": 0.15999999999999925,
+      "prev": "tiene",
+      "word": "seis",
+      "t": 6.68
+    },
+    {
+      "index": 19,
+      "gapSec": 0.08000000000000007,
+      "prev": "seis",
+      "word": "cuellos",
+      "t": 6.96
+    },
+    {
+      "index": 20,
+      "gapSec": 0.08000000000000007,
+      "prev": "cuellos",
+      "word": "largos",
+      "t": 7.34
+    },
+    {
+      "index": 21,
+      "gapSec": 0.34000000000000075,
+      "prev": "largos",
+      "word": "seis",
+      "t": 8.040000000000001
+    },
+    {
+      "index": 22,
+      "gapSec": 0.0600000000000005,
+      "prev": "seis",
+      "word": "cabezas",
+      "t": 8.32
+    },
+    {
+      "index": 23,
+      "gapSec": 0.22000000000000064,
+      "prev": "cabezas",
+      "word": "tres",
+      "t": 8.98
+    },
+    {
+      "index": 24,
+      "gapSec": 0.0600000000000005,
+      "prev": "tres",
+      "word": "hileras",
+      "t": 9.22
+    },
+    {
+      "index": 26,
+      "gapSec": 0.05999999999999872,
+      "prev": "de",
+      "word": "dientes",
+      "t": 9.68
+    }
+  ],
+  "overlapsHead": [],
+  "firstLast": {
+    "first": {
+      "word": "scylla",
+      "startSec": 0.32,
+      "endSec": 0.68,
+      "confidence": 0.01234326063017962,
+      "needsReview": true,
+      "wordIndex": 0
+    },
+    "last": {
+      "word": "peligrosas",
+      "startSec": 90.6,
+      "endSec": 91.2,
+      "confidence": 0.9996070032931911,
+      "needsReview": false,
+      "wordIndex": 248
+    }
+  }
+}

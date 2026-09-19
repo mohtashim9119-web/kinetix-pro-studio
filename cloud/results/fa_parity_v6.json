@@ -1,0 +1,24 @@
+{
+  "nLocal": 3874,
+  "nCloud": 3874,
+  "nCompared": 3874,
+  "identicalText": 3874,
+  "onlyLocal": 0,
+  "onlyCloud": 0,
+  "meanAbsStartSec": 0.00816210635002561,
+  "meanAbsEndSec": 0.0067578729994835305,
+  "maxAbsStartSec": 1.8400000000000034,
+  "maxAbsEndSec": 1.8399999999999892,
+  "startDistribution": {
+    "le10ms": 3588,
+    "le50ms": 3766,
+    "gt50ms": 108
+  },
+  "endDistribution": {
+    "le10ms": 3612,
+    "le50ms": 3788,
+    "gt50ms": 86
+  },
+  "interchangeableUnderOwnerThreshold": false,
+  "textMismatchesHead": []
+}

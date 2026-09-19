@@ -1,0 +1,34 @@
+[
+  {
+    "file": "v6_16k.wav",
+    "bytes": 45481468,
+    "durationSec": 1421.293438,
+    "planScaledWav": 45481420.810691155,
+    "planScaledOpus": 2952107.405491219
+  },
+  {
+    "file": "v6_16k_cbr16k.opus",
+    "bytes": 2952316,
+    "durationSec": 1421.299938,
+    "planScaledWav": 45481628.810831994,
+    "planScaledOpus": 2952120.9063613582
+  },
+  {
+    "file": "hour_16k.wav",
+    "bytes": 115200078,
+    "durationSec": 3600.0,
+    "planScaledWav": 115200078.0,
+    "planScaledOpus": 7477405.0,
+    "deltaVsPlanWav": 0,
+    "deltaVsPlanOpus": null
+  },
+  {
+    "file": "hour_16k_cbr16k.opus",
+    "bytes": 7477405,
+    "durationSec": 3600.0065,
+    "planScaledWav": 115200286.00014085,
+    "planScaledOpus": 7477418.500870138,
+    "deltaVsPlanWav": null,
+    "deltaVsPlanOpus": 0
+  }
+]
