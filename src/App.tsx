@@ -271,6 +271,7 @@ import {
   SYNC_PAUSED_MESSAGE,
   type ApplySyncResult,
 } from './services/applySyncAbort';
+import { ensureStagedSnapshotReady } from './services/stagedSyncRetry';
 import { armRecoveryBannerFromPersistedProject } from './services/recoveryBannerVisibility';
 import { useFocusTrap } from './hooks/useFocusTrap';
 import { FONT_FAMILIES, FILTERS, TEXT_ANIMATIONS, getFilterStyle, getMotionProps, SUPPORTED_LANGUAGE_CODES } from './constants';
@@ -5001,9 +5002,21 @@ export default function App() {
   // click — this function still just re-enters handleApplySyncFromFiles.
   const handleSyncPausedRetry = useCallback((): void => {
     setFaPauseDialog(null);
-    clearFaPause(liveProjectRef.current.id);
-    void handleApplySyncFromFiles();
-  }, []);
+    const projectId = liveProjectRef.current.id;
+    clearFaPause(projectId);
+    void (async () => {
+      const ready = await ensureStagedSnapshotReady(
+        projectId,
+        stagedFilesRef.current,
+        handleStagedFilesChange,
+      );
+      if (!ready.ready) {
+        showToast(ready.message);
+        return;
+      }
+      await handleApplySyncFromFiles();
+    })();
+  }, [handleStagedFilesChange, showToast]);
 
   const handleSyncPausedUseWhisper = useCallback((): void => {
     setFaPauseDialog(null);
