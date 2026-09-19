@@ -1,0 +1,693 @@
+From 88f5d200c0766a63435ba01b520c58e8938fc2f8 Mon Sep 17 00:00:00 2001
+From: Mohtashim <mohtashim9119@gmail.com>
+Date: Sun, 13 Sep 2026 01:35:15 +0500
+Subject: [PATCH] feat(ws3): add WebGL2 export failure diagnosis module
+
+Pure injectable probe that returns stable reason codes and renderer identity when the export gate's WebGL2 clause fails, with headless fakes for every branch.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+---
+ .../webcodecsExport/webgl2Diagnosis.test.ts   | 271 ++++++++++++
+ .../webcodecsExport/webgl2Diagnosis.ts        | 392 ++++++++++++++++++
+ 2 files changed, 663 insertions(+)
+ create mode 100644 src/services/webcodecsExport/webgl2Diagnosis.test.ts
+ create mode 100644 src/services/webcodecsExport/webgl2Diagnosis.ts
+
+diff --git a/src/services/webcodecsExport/webgl2Diagnosis.test.ts b/src/services/webcodecsExport/webgl2Diagnosis.test.ts
+new file mode 100644
+index 0000000..97044e0
+--- /dev/null
++++ b/src/services/webcodecsExport/webgl2Diagnosis.test.ts
+@@ -0,0 +1,271 @@
++import { describe, expect, it, vi } from 'vitest';
++import {
++  diagnoseWebGl2ExportCapability,
++  GL_COMPOSITOR_MIN_TEXTURE_SIZE,
++  GL_COMPOSITOR_REQUIRED_EXTENSIONS,
++  type DiagnosisCanvasLike,
++  type DiagnosisGlContextLike,
++  type WebGl2DiagnosisDependencies,
++} from './webgl2Diagnosis';
++
++const MAX_TEXTURE_SIZE = 0x0d33;
++const MAX_RENDERBUFFER_SIZE = 0x84e8;
++const MAX_VIEWPORT_DIMS = 0x0d3a;
++const RENDERER_PARAMETER = 0x9246;
++const VENDOR_PARAMETER = 0x9245;
++
++interface FakeContextOptions {
++  lost?: boolean;
++  maxTextureSize?: number;
++  maxRenderbufferSize?: number;
++  maxViewportMin?: number;
++  renderer?: string | null;
++  vendor?: string | null;
++  exposeDebugInfo?: boolean;
++  loseContextExtension?: { loseContext: ReturnType<typeof vi.fn> } | null;
++}
++
++function fakeGlContext(options: FakeContextOptions = {}): DiagnosisGlContextLike {
++  const {
++    lost = false,
++    maxTextureSize = 8192,
++    maxRenderbufferSize = 8192,
++    maxViewportMin = 8192,
++    renderer = 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3050 Direct3D11)',
++    vendor = 'Google Inc. (NVIDIA)',
++    exposeDebugInfo = true,
++    loseContextExtension = { loseContext: vi.fn() },
++  } = options;
++
++  return {
++    isContextLost: () => lost,
++    getExtension: (name: string) => {
++      if (name === 'WEBGL_lose_context') return loseContextExtension;
++      if (name === 'WEBGL_debug_renderer_info' && exposeDebugInfo) {
++        return {
++          UNMASKED_RENDERER_WEBGL: RENDERER_PARAMETER,
++          UNMASKED_VENDOR_WEBGL: VENDOR_PARAMETER,
++        };
++      }
++      return null;
++    },
++    getParameter: (parameter: number) => {
++      if (parameter === MAX_TEXTURE_SIZE) return maxTextureSize;
++      if (parameter === MAX_RENDERBUFFER_SIZE) return maxRenderbufferSize;
++      if (parameter === MAX_VIEWPORT_DIMS) return new Int32Array([maxViewportMin, maxViewportMin]);
++      if (parameter === RENDERER_PARAMETER) return renderer;
++      if (parameter === VENDOR_PARAMETER) return vendor;
++      return null;
++    },
++  };
++}
++
++function fakeCanvas(
++  contexts: Record<string, DiagnosisGlContextLike | null | (() => never)>,
++): DiagnosisCanvasLike {
++  return {
++    getContext(contextId: string) {
++      const entry = contexts[contextId];
++      if (typeof entry === 'function') throw entry();
++      return entry ?? null;
++    },
++  };
++}
++
++function deps(overrides: Partial<WebGl2DiagnosisDependencies>): WebGl2DiagnosisDependencies {
++  return {
++    hasDocument: true,
++    createCanvas: () => fakeCanvas({ webgl2: fakeGlContext() }),
++    ...overrides,
++  };
++}
++
++describe('diagnoseWebGl2ExportCapability', () => {
++  it('reports ok for a healthy WebGL2 context with sufficient limits', () => {
++    const loseContext = vi.fn();
++    const report = diagnoseWebGl2ExportCapability(
++      deps({
++        createCanvas: () =>
++          fakeCanvas({
++            webgl2: fakeGlContext({ loseContextExtension: { loseContext: loseContext } }),
++          }),
++      }),
++    );
++
++    expect(report.reasonCode).toBe('ok');
++    expect(report.ok).toBe(true);
++    expect(report.webgl2Available).toBe(true);
++    expect(report.unmaskedRendererWebGL).toContain('RTX 3050');
++    expect(report.missingLimits).toEqual([]);
++    expect(report.missingExtensions).toEqual([]);
++    expect(GL_COMPOSITOR_REQUIRED_EXTENSIONS).toEqual([]);
++    expect(loseContext).toHaveBeenCalledOnce();
++  });
++
++  it('get-context-null — webgl2 and webgl1 both unavailable', () => {
++    const report = diagnoseWebGl2ExportCapability(
++      deps({
++        createCanvas: () => fakeCanvas({ webgl2: null, webgl: null, 'experimental-webgl': null }),
++      }),
++    );
++
++    expect(report).toMatchObject({
++      ok: false,
++      reasonCode: 'get-context-null',
++      webgl2Available: false,
++      webgl1Available: false,
++    });
++    expect(report.reasonDetail).toContain('returned null');
++  });
++
++  it('get-context-threw — surfaces the thrown message without propagating', () => {
++    const report = diagnoseWebGl2ExportCapability(
++      deps({
++        createCanvas: () => ({
++          getContext(contextId: string) {
++            if (contextId === 'webgl2') throw new Error('GPU process blocked WebGL2');
++            return null;
++          },
++        }),
++      }),
++    );
++
++    expect(report).toMatchObject({
++      ok: false,
++      reasonCode: 'get-context-threw',
++      webgl2Available: false,
++    });
++    expect(report.reasonDetail).toBe('GPU process blocked WebGL2');
++  });
++
++  it('webgl2-unavailable-webgl1-available — partial capability', () => {
++    const loseContext = vi.fn();
++    const report = diagnoseWebGl2ExportCapability(
++      deps({
++        createCanvas: () =>
++          fakeCanvas({
++            webgl2: null,
++            webgl: fakeGlContext({ loseContextExtension: { loseContext: loseContext } }),
++          }),
++      }),
++    );
++
++    expect(report).toMatchObject({
++      ok: false,
++      reasonCode: 'webgl2-unavailable-webgl1-available',
++      webgl2Available: false,
++      webgl1Available: true,
++    });
++    expect(loseContext).toHaveBeenCalledOnce();
++  });
++
++  it('context-immediately-lost — isContextLost() true right after creation', () => {
++    const report = diagnoseWebGl2ExportCapability(
++      deps({
++        createCanvas: () => fakeCanvas({ webgl2: fakeGlContext({ lost: true }) }),
++      }),
++    );
++
++    expect(report).toMatchObject({
++      ok: false,
++      reasonCode: 'context-immediately-lost',
++      contextLost: true,
++      webgl2Available: false,
++    });
++  });
++
++  it('software-renderer — SwiftShader identity via shared isSoftwareRasterizer markers', () => {
++    const report = diagnoseWebGl2ExportCapability(
++      deps({
++        createCanvas: () =>
++          fakeCanvas({
++            webgl2: fakeGlContext({
++              renderer: 'ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero)))',
++              vendor: 'Google Inc.',
++            }),
++          }),
++      }),
++    );
++
++    expect(report).toMatchObject({
++      ok: false,
++      reasonCode: 'software-renderer',
++      webgl2Available: true,
++      softwareRasterizationDetected: true,
++    });
++  });
++
++  it('canvas-unavailable — worker scope with no canvas factory', () => {
++    const report = diagnoseWebGl2ExportCapability({
++      hasDocument: false,
++      createCanvas: () => null,
++    });
++
++    expect(report).toMatchObject({
++      ok: false,
++      reasonCode: 'canvas-unavailable',
++      webgl2Available: false,
++    });
++    expect(report.reasonDetail).toContain('worker scope');
++  });
++
++  it('canvas-unavailable — createCanvas throws without diagnosis throwing', () => {
++    const report = diagnoseWebGl2ExportCapability({
++      hasDocument: true,
++      createCanvas: () => {
++        throw new Error('document.createElement is not a function');
++      },
++    });
++
++    expect(report.reasonCode).toBe('canvas-unavailable');
++    expect(report.reasonDetail).toContain('createCanvas threw');
++  });
++
++  it('missing-required-limit — MAX_TEXTURE_SIZE below export minimum', () => {
++    const report = diagnoseWebGl2ExportCapability(
++      deps({
++        createCanvas: () =>
++          fakeCanvas({
++            webgl2: fakeGlContext({
++              maxTextureSize: 1024,
++              maxRenderbufferSize: 8192,
++              maxViewportMin: 8192,
++            }),
++          }),
++        minTextureSize: GL_COMPOSITOR_MIN_TEXTURE_SIZE,
++      }),
++    );
++
++    expect(report).toMatchObject({
++      ok: false,
++      reasonCode: 'missing-required-limit',
++      webgl2Available: true,
++    });
++    expect(report.missingLimits).toContain('MAX_TEXTURE_SIZE');
++    expect(report.limits.find((l) => l.name === 'MAX_TEXTURE_SIZE')?.value).toBe(1024);
++  });
++
++  it('degrades gracefully when WEBGL_debug_renderer_info is absent', () => {
++    const report = diagnoseWebGl2ExportCapability(
++      deps({
++        createCanvas: () => fakeCanvas({ webgl2: fakeGlContext({ exposeDebugInfo: false }) }),
++      }),
++    );
++
++    expect(report.reasonCode).toBe('ok');
++    expect(report.unmaskedRendererWebGL).toBeNull();
++    expect(report.unmaskedVendorWebGL).toBeNull();
++    expect(report.softwareRasterizationDetected).toBe(false);
++  });
++
++  it('never throws from diagnoseWebGl2ExportCapability itself', () => {
++    expect(() =>
++      diagnoseWebGl2ExportCapability({
++        hasDocument: false,
++        createCanvas: () => {
++          throw new RangeError('totally broken');
++        },
++      }),
++    ).not.toThrow();
++  });
++});
+diff --git a/src/services/webcodecsExport/webgl2Diagnosis.ts b/src/services/webcodecsExport/webgl2Diagnosis.ts
+new file mode 100644
+index 0000000..aba2256
+--- /dev/null
++++ b/src/services/webcodecsExport/webgl2Diagnosis.ts
+@@ -0,0 +1,392 @@
++/**
++ * Read-only WebGL2 export-capability diagnosis.
++ *
++ * Self-contained: no imports from pipeline, hooks, or glContext. Answers
++ * "why not WebGL2" for field diagnosis when isWebCodecsExportCapable()'s
++ * boolean gate fails silently. All platform entry points are injected.
++ */
++
++import { isSoftwareRasterizer } from './gpuCapabilityProbe';
++
++/** WebGL enum values — inlined so this module needs no DOM/WebGL types at runtime. */
++const MAX_TEXTURE_SIZE = 0x0d33;
++const MAX_RENDERBUFFER_SIZE = 0x84e8;
++const MAX_VIEWPORT_DIMS = 0x0d3a;
++
++/**
++ * Extensions queried by this module for diagnosis only. glCompositor.ts uses
++ * no optional getExtension() calls — core WebGL2 (GLSL ES 3.0) only.
++ */
++export const GL_COMPOSITOR_REQUIRED_EXTENSIONS: readonly string[] = [];
++
++/** Largest export width the app ships today (1080p tier, resolutionConfig.ts). */
++export const GL_COMPOSITOR_MIN_TEXTURE_SIZE = 1920;
++
++export type WebGl2DiagnosisReasonCode =
++  | 'ok'
++  | 'canvas-unavailable'
++  | 'get-context-null'
++  | 'get-context-threw'
++  | 'webgl2-unavailable-webgl1-available'
++  | 'context-immediately-lost'
++  | 'software-renderer'
++  | 'missing-required-limit';
++
++export interface WebGl2LimitReport {
++  name: 'MAX_TEXTURE_SIZE' | 'MAX_RENDERBUFFER_SIZE' | 'MAX_VIEWPORT_DIMS';
++  value: number | null;
++  requiredMinimum: number;
++  sufficient: boolean;
++}
++
++export interface WebGl2DiagnosisReport {
++  ok: boolean;
++  reasonCode: WebGl2DiagnosisReasonCode;
++  /** Human-readable detail for operators / diagnostics blob. */
++  reasonDetail: string | null;
++  webgl2Available: boolean;
++  webgl1Available: boolean;
++  contextLost: boolean;
++  unmaskedRendererWebGL: string | null;
++  unmaskedVendorWebGL: string | null;
++  softwareRasterizationDetected: boolean;
++  limits: readonly WebGl2LimitReport[];
++  missingLimits: readonly string[];
++  /** Always empty today — glCompositor.ts requires no optional extensions. */
++  missingExtensions: readonly string[];
++  /** Milliseconds spent inside diagnoseWebGl2ExportCapability (for cost reporting). */
++  elapsedMs: number;
++}
++
++export interface WebGl2LoseContextExtension {
++  loseContext(): void;
++}
++
++export interface WebGl2DebugRendererInfoExtension {
++  readonly UNMASKED_RENDERER_WEBGL: number;
++  readonly UNMASKED_VENDOR_WEBGL: number;
++}
++
++export interface DiagnosisGlContextLike {
++  getExtension(name: string): unknown;
++  getParameter(parameter: number): unknown;
++  isContextLost(): boolean;
++}
++
++export interface DiagnosisCanvasLike {
++  getContext(contextId: string, attrs?: WebGLContextAttributes): DiagnosisGlContextLike | null;
++}
++
++export interface WebGl2DiagnosisDependencies {
++  /** False in workers and other scopes without document.createElement. */
++  hasDocument: boolean;
++  /** Returns a throwaway canvas, or null when none can be allocated. */
++  createCanvas: () => DiagnosisCanvasLike | null;
++  minTextureSize?: number;
++}
++
++function stringParameter(context: DiagnosisGlContextLike, parameter: number): string | null {
++  const value = context.getParameter(parameter);
++  return typeof value === 'string' && value.length > 0 ? value : null;
++}
++
++function intParameter(context: DiagnosisGlContextLike, parameter: number): number | null {
++  const value = context.getParameter(parameter);
++  return typeof value === 'number' && Number.isFinite(value) ? value : null;
++}
++
++function viewportMinimum(context: DiagnosisGlContextLike): number | null {
++  const value = context.getParameter(MAX_VIEWPORT_DIMS);
++  if (value instanceof Int32Array && value.length >= 2) {
++    return Math.min(value[0]!, value[1]!);
++  }
++  if (Array.isArray(value) && value.length >= 2) {
++    const w = value[0];
++    const h = value[1];
++    if (typeof w === 'number' && typeof h === 'number') return Math.min(w, h);
++  }
++  return null;
++}
++
++function readRendererIdentity(context: DiagnosisGlContextLike): {
++  unmaskedRendererWebGL: string | null;
++  unmaskedVendorWebGL: string | null;
++} {
++  const debugInfo = context.getExtension('WEBGL_debug_renderer_info') as WebGl2DebugRendererInfoExtension | null;
++  if (!debugInfo) {
++    return { unmaskedRendererWebGL: null, unmaskedVendorWebGL: null };
++  }
++  return {
++    unmaskedRendererWebGL: stringParameter(context, debugInfo.UNMASKED_RENDERER_WEBGL),
++    unmaskedVendorWebGL: stringParameter(context, debugInfo.UNMASKED_VENDOR_WEBGL),
++  };
++}
++
++function collectLimits(
++  context: DiagnosisGlContextLike,
++  minTextureSize: number,
++): { limits: WebGl2LimitReport[]; missingLimits: string[] } {
++  const limits: WebGl2LimitReport[] = [
++    {
++      name: 'MAX_TEXTURE_SIZE',
++      value: intParameter(context, MAX_TEXTURE_SIZE),
++      requiredMinimum: minTextureSize,
++      sufficient: (intParameter(context, MAX_TEXTURE_SIZE) ?? 0) >= minTextureSize,
++    },
++    {
++      name: 'MAX_RENDERBUFFER_SIZE',
++      value: intParameter(context, MAX_RENDERBUFFER_SIZE),
++      requiredMinimum: minTextureSize,
++      sufficient: (intParameter(context, MAX_RENDERBUFFER_SIZE) ?? 0) >= minTextureSize,
++    },
++    {
++      name: 'MAX_VIEWPORT_DIMS',
++      value: viewportMinimum(context),
++      requiredMinimum: minTextureSize,
++      sufficient: (viewportMinimum(context) ?? 0) >= minTextureSize,
++    },
++  ];
++  const missingLimits = limits.filter((l) => !l.sufficient).map((l) => l.name);
++  return { limits, missingLimits };
++}
++
++function releaseContext(context: DiagnosisGlContextLike): void {
++  try {
++    const loseExt = context.getExtension('WEBGL_lose_context') as WebGl2LoseContextExtension | null;
++    loseExt?.loseContext();
++  } catch {
++    // Best-effort release only — diagnosis must never throw from cleanup.
++  }
++}
++
++function tryGetContext(
++  canvas: DiagnosisCanvasLike,
++  contextId: string,
++): { context: DiagnosisGlContextLike | null; threw: unknown | null } {
++  try {
++    return { context: canvas.getContext(contextId), threw: null };
++  } catch (err) {
++    return { context: null, threw: err };
++  }
++}
++
++function errorMessage(error: unknown): string {
++  return error instanceof Error ? error.message : String(error);
++}
++
++function buildReport(
++  partial: Omit<WebGl2DiagnosisReport, 'elapsedMs'>,
++  startedAt: number,
++): WebGl2DiagnosisReport {
++  return { ...partial, elapsedMs: Math.round((performance.now() - startedAt) * 100) / 100 };
++}
++
++/**
++ * Probes WebGL2 export readiness on a throwaway canvas. Never throws — a
++ * diagnosis module that throws during diagnosis is worse than no module.
++ */
++export function diagnoseWebGl2ExportCapability(
++  dependencies: WebGl2DiagnosisDependencies,
++): WebGl2DiagnosisReport {
++  const startedAt = performance.now();
++  const minTextureSize = dependencies.minTextureSize ?? GL_COMPOSITOR_MIN_TEXTURE_SIZE;
++
++  let canvas: DiagnosisCanvasLike | null = null;
++  try {
++    canvas = dependencies.createCanvas();
++  } catch (err) {
++    return buildReport(
++      {
++        ok: false,
++        reasonCode: 'canvas-unavailable',
++        reasonDetail: `createCanvas threw: ${errorMessage(err)}`,
++        webgl2Available: false,
++        webgl1Available: false,
++        contextLost: false,
++        unmaskedRendererWebGL: null,
++        unmaskedVendorWebGL: null,
++        softwareRasterizationDetected: false,
++        limits: [],
++        missingLimits: [],
++        missingExtensions: [...GL_COMPOSITOR_REQUIRED_EXTENSIONS],
++      },
++      startedAt,
++    );
++  }
++
++  if (!canvas) {
++    const scope = dependencies.hasDocument ? 'document scope' : 'worker scope';
++    return buildReport(
++      {
++        ok: false,
++        reasonCode: 'canvas-unavailable',
++        reasonDetail: `No canvas could be allocated (${scope}; OffscreenCanvas absent or createElement unavailable).`,
++        webgl2Available: false,
++        webgl1Available: false,
++        contextLost: false,
++        unmaskedRendererWebGL: null,
++        unmaskedVendorWebGL: null,
++        softwareRasterizationDetected: false,
++        limits: [],
++        missingLimits: [],
++        missingExtensions: [...GL_COMPOSITOR_REQUIRED_EXTENSIONS],
++      },
++      startedAt,
++    );
++  }
++
++  const webgl2Attempt = tryGetContext(canvas, 'webgl2');
++  if (webgl2Attempt.threw !== null) {
++    return buildReport(
++      {
++        ok: false,
++        reasonCode: 'get-context-threw',
++        reasonDetail: errorMessage(webgl2Attempt.threw),
++        webgl2Available: false,
++        webgl1Available: false,
++        contextLost: false,
++        unmaskedRendererWebGL: null,
++        unmaskedVendorWebGL: null,
++        softwareRasterizationDetected: false,
++        limits: [],
++        missingLimits: [],
++        missingExtensions: [...GL_COMPOSITOR_REQUIRED_EXTENSIONS],
++      },
++      startedAt,
++    );
++  }
++
++  const gl2 = webgl2Attempt.context;
++  if (!gl2) {
++    const webgl1Attempt = tryGetContext(canvas, 'webgl');
++    const webgl1 =
++      webgl1Attempt.context ??
++      (webgl1Attempt.threw === null ? tryGetContext(canvas, 'experimental-webgl').context : null);
++    if (webgl1) {
++      releaseContext(webgl1);
++      return buildReport(
++        {
++          ok: false,
++          reasonCode: 'webgl2-unavailable-webgl1-available',
++          reasonDetail: 'WebGL1 context succeeded but WebGL2 returned null — partial GPU capability only.',
++          webgl2Available: false,
++          webgl1Available: true,
++          contextLost: false,
++          unmaskedRendererWebGL: null,
++          unmaskedVendorWebGL: null,
++          softwareRasterizationDetected: false,
++          limits: [],
++          missingLimits: [],
++          missingExtensions: [...GL_COMPOSITOR_REQUIRED_EXTENSIONS],
++        },
++        startedAt,
++      );
++    }
++    return buildReport(
++      {
++        ok: false,
++        reasonCode: 'get-context-null',
++        reasonDetail: 'canvas.getContext("webgl2") returned null and no WebGL1 fallback context was created.',
++        webgl2Available: false,
++        webgl1Available: false,
++        contextLost: false,
++        unmaskedRendererWebGL: null,
++        unmaskedVendorWebGL: null,
++        softwareRasterizationDetected: false,
++        limits: [],
++        missingLimits: [],
++        missingExtensions: [...GL_COMPOSITOR_REQUIRED_EXTENSIONS],
++      },
++      startedAt,
++    );
++  }
++
++  try {
++    if (gl2.isContextLost()) {
++      return buildReport(
++        {
++          ok: false,
++          reasonCode: 'context-immediately-lost',
++          reasonDetail: 'WebGL2 context was created but isContextLost() is already true.',
++          webgl2Available: false,
++          webgl1Available: false,
++          contextLost: true,
++          unmaskedRendererWebGL: null,
++          unmaskedVendorWebGL: null,
++          softwareRasterizationDetected: false,
++          limits: [],
++          missingLimits: [],
++          missingExtensions: [...GL_COMPOSITOR_REQUIRED_EXTENSIONS],
++        },
++        startedAt,
++      );
++    }
++
++    const identity = readRendererIdentity(gl2);
++    const { limits, missingLimits } = collectLimits(gl2, minTextureSize);
++
++    if (missingLimits.length > 0) {
++      return buildReport(
++        {
++          ok: false,
++          reasonCode: 'missing-required-limit',
++          reasonDetail: `Insufficient GL limits for ${minTextureSize}px export: ${missingLimits.join(', ')}.`,
++          webgl2Available: true,
++          webgl1Available: false,
++          contextLost: false,
++          unmaskedRendererWebGL: identity.unmaskedRendererWebGL,
++          unmaskedVendorWebGL: identity.unmaskedVendorWebGL,
++          softwareRasterizationDetected: isSoftwareRasterizer(
++            identity.unmaskedRendererWebGL,
++            identity.unmaskedVendorWebGL,
++          ),
++          limits,
++          missingLimits,
++          missingExtensions: [],
++        },
++        startedAt,
++      );
++    }
++
++    const software = isSoftwareRasterizer(identity.unmaskedRendererWebGL, identity.unmaskedVendorWebGL);
++    if (software) {
++      return buildReport(
++        {
++          ok: false,
++          reasonCode: 'software-renderer',
++          reasonDetail: 'WebGL2 context reports a software rasterizer (SwiftShader or equivalent).',
++          webgl2Available: true,
++          webgl1Available: false,
++          contextLost: false,
++          unmaskedRendererWebGL: identity.unmaskedRendererWebGL,
++          unmaskedVendorWebGL: identity.unmaskedVendorWebGL,
++          softwareRasterizationDetected: true,
++          limits,
++          missingLimits: [],
++          missingExtensions: [],
++        },
++        startedAt,
++      );
++    }
++
++    return buildReport(
++      {
++        ok: true,
++        reasonCode: 'ok',
++        reasonDetail: null,
++        webgl2Available: true,
++        webgl1Available: false,
++        contextLost: false,
++        unmaskedRendererWebGL: identity.unmaskedRendererWebGL,
++        unmaskedVendorWebGL: identity.unmaskedVendorWebGL,
++        softwareRasterizationDetected: false,
++        limits,
++        missingLimits: [],
++        missingExtensions: [],
++      },
++      startedAt,
++    );
++  } finally {
++    releaseContext(gl2);
++  }
++}
+-- 
+2.53.0
+

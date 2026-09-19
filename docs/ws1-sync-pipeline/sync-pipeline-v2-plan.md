@@ -10689,3 +10689,65 @@ version pointing here):
 > ledger, and the Changelog) moved to `docs/archive/history/history-2.md` on 2026-08-25. This file tracks WS1's
 > current phase status (Finished / In progress / Open bugs / Not started) plus the constraints
 > that still bind it — full session detail lives in `docs/archive/history/history-2.md`.
+
+---
+
+## Part AL — Frozen Assets: Canonical Digests and Byte Constants (Baseline Residue Closeout, 2026-09-19, append-only)
+
+**Scope.** Lands the canonical home proposed but not written by `verification-sweep-2026-09-18.md`
+§W6(b): "append the eight constants + four fixture rows as a small new Part to
+`sync-pipeline-v2-plan.md`." That pass could not obtain the four digests — the fixture files were
+absent from the machine entirely. This pass ran from the main worktree with `cloud/fixtures/`
+populated (via `48bfcd9`) and captured them directly with `shasum -a 256`.
+
+### AL.1 — Eight frozen byte constants
+
+Re-verified empty-diff at `HEAD` against every prior audit base (`§W6(c)` above); unchanged since
+first pinned.
+
+| # | Value | Source |
+|---|---|---|
+| 1 | 1,624,555,275 | `MODEL_SIZE_BYTES`, `src-tauri/src/model_download.rs:140` |
+| 2 | 6,312,776,755 | Five FA packs total, `docs/architecture/cloud-asr-plan.md:13,96` |
+| 3 | 7,937,332,030 | Whisper + all five packs, `docs/architecture/cloud-asr-plan.md:96` |
+| 4 | 32,851,696 | V6 source `6.m4a`, `docs/architecture/cloud-asr-measurements.md:54` |
+| 5 | 45,481,468 | `v6_16k.wav`, `docs/architecture/cloud-asr-measurements.md:63` |
+| 6 | 2,952,316 | `v6_16k_cbr16k.opus`, `:64` |
+| 7 | 115,200,078 | `hour_16k.wav`, `:65` |
+| 8 | 7,477,405 | `hour_16k_cbr16k.opus`, `:66` |
+
+### AL.2 — Four fixture SHA-256 digests (captured this pass)
+
+`shasum -a 256` against `cloud/fixtures/{v6_16k.wav,v6_16k_cbr16k.opus,hour_16k.wav,hour_16k_cbr16k.opus}`,
+committed in `48bfcd9`:
+
+| File | Bytes | SHA-256 |
+|---|---|---|
+| `v6_16k.wav` | 45,481,468 | `131932349a559dbc59ab983170e61ad4195f855707e3b981f3f9801dac51f85b` |
+| `v6_16k_cbr16k.opus` | 2,952,316 | `26cdaf246555c3762550947886873781bba4d46015a226614cd3d980f33decf0` |
+| `hour_16k.wav` | 115,200,078 | `cddd5a931379ac45bad551595033dfcbb04893e4a6101eb9a9c26b800b9ef53b` |
+| `hour_16k_cbr16k.opus` | 7,477,405 | `7a6316a9bb782c5711908183797f9fe2e7e36188d2c13fd42ddfcfba1fd9c973` |
+
+All four bytes counts match AL.1 rows 5-8 exactly.
+
+### AL.3 — `hour_16k.wav`: committed on disk, excluded from git
+
+`hour_16k.wav` is present in `cloud/fixtures/` on disk (gitignored) but was **not** included in the
+`48bfcd9` preservation commit: at 115,200,078 bytes it exceeds GitHub's 100 MB per-file hard limit,
+and committing it would have manufactured a guaranteed push rejection. It is regenerable losslessly
+from the committed `6.m4a` — see AL.4 for the proof.
+
+### AL.4 — `6.m4a` committed identity, and the exclusion's regen proof
+
+`6.m4a` (the frozen V6 corpus voiceover) is tracked at `cloud/fixtures/6.m4a`, committed in `48bfcd9`:
+32,851,696 bytes (matches AL.1 row 4 exactly), SHA-256
+`23c5eaba60b95dff774c84c100665240fc024b3f8c1415ac65b98dfac2978492` — cross-checked byte-for-byte
+against main's IndexedDB forensics blob (`.work-phase4/forensics-20260819-033211/…/3714.blob`).
+
+**Regen proof (this pass).** Ran `cloud/prepare_fixtures.sh`'s `hour_16k.wav` derivation
+(`ffmpeg -ar 16000 -ac 1` on tracked `6.m4a` → `v6_16k.wav`, then 3× concat + `-t 3600` trim) in an
+isolated scratch directory, from the committed `6.m4a` — no worktree files touched. Output:
+**115,200,078 bytes**, SHA-256 `cddd5a931379ac45bad551595033dfcbb04893e4a6101eb9a9c26b800b9ef53b` —
+**identical on both counts** to the disk-preserved `cloud/fixtures/hour_16k.wav` (AL.2). The
+exclusion is provably lossless: nothing found in `cloud/fixtures/` on disk (or in `48bfcd9`, or in
+this doc) cannot be reconstructed byte-for-byte from what is actually in git.

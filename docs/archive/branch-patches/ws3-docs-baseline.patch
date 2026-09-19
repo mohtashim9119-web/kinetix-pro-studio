@@ -1,0 +1,184 @@
+From bbb159eb7ac3abe295873848ac6ad6cb89ac66c8 Mon Sep 17 00:00:00 2001
+From: Mohtashim <mohtashim9119@gmail.com>
+Date: Sun, 13 Sep 2026 22:19:41 +0500
+Subject: [PATCH] docs(ws3): round-log headers, link fixes, baseline
+ reconciliation note
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Add missing Round 8 and 11–13 cross-reference headers in the architecture
+ledger, repair archive path links, document the w23 validation runbook in the
+lane README, and record corrected Vitest delta arithmetic in .cursor/.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+---
+ .cursor/ws3-export-baseline-reconciliation.md | 29 +++++++++++++++++++
+ docs/archive/history/history.md               |  4 +--
+ docs/archive/ws2/bug3-diagnosis.md            | 20 ++++++-------
+ docs/ws3-export/README.md                     |  7 +++++
+ docs/ws3-export/architecture-ledger.md        | 26 +++++++++++++++++
+ 5 files changed, 74 insertions(+), 12 deletions(-)
+ create mode 100644 .cursor/ws3-export-baseline-reconciliation.md
+
+diff --git a/.cursor/ws3-export-baseline-reconciliation.md b/.cursor/ws3-export-baseline-reconciliation.md
+new file mode 100644
+index 0000000..877c08d
+--- /dev/null
++++ b/.cursor/ws3-export-baseline-reconciliation.md
+@@ -0,0 +1,29 @@
++# WS3 export baseline reconciliation (Cursor modal rebase vs integration)
++
++> `.cursor/` note only — not part of `docs/`. Prevents the next cloud run from misreading a
++> stale delta against CC's last reported gate.
++
++## Vitest total arithmetic
++
++| Anchor | Vitest total (pass / fail / skip = total) | Notes |
++|---|---|---|
++| CC integration baseline (pre-modal rebase) | **3729** total | CC's last reported figure before modal work landed |
++| Cursor modal rebase (misread) | **+49 lane delta** | Rebase arithmetic treated growth as +49 vs 3729 → implied **3778** |
++| `ws3-export-integration` @ **`b80ba40`** (2026-09-13) | **3663 / 0 / 78 = 3741** | Measured single-threaded cargo gates on `ws3-docs-baseline`; Vitest matches expected baseline |
++| **Corrected delta** | **3741 − 3729 = +12** | Not +49. A cloud run reporting 3741 against a 3729 anchor is **+12**, not a regression from 3778 |
++
++## Branch divergence
++
++| Branch | HEAD | Relationship |
++|---|---|---|
++| `ws3-export-integration` | `b80ba40` | Integration tip after Round 24a diagnostic logging |
++| `ws3-export-modal` (Cursor) | `0bdc8a5` | Modal/docs work; **not** rebased onto `b80ba40` yet |
++
++Do not compare modal-branch gate figures directly to integration @ `b80ba40` without rebasing first.
++
++## Single-threaded cargo gates @ `b80ba40`
++
++- `cargo test --lib -- --test-threads=1`: **360 / 0 / 6 = 366**
++- `cargo test --features fa-inference -- --test-threads=1`: **446 / 0 / 36 = 482**
++
++Parallel cargo runs are not a clean gate (whisper LRU flake).
+diff --git a/docs/archive/history/history.md b/docs/archive/history/history.md
+index 6f0c672..217dbc1 100644
+--- a/docs/archive/history/history.md
++++ b/docs/archive/history/history.md
+@@ -1498,8 +1498,8 @@ Because `main` is never touched during this effort, infeasibility at any phase h
+ 
+ #### What was built (throwaway, delete before Phase 1 lands)
+ 
+-- [spike-webcodecs.html](../spike-webcodecs.html) — new HTML entry at repo root. Vite's dev server serves any root-level `.html` file automatically; it is not referenced by `vite.config.ts` and is not part of `npm run build`'s output (build only bundles `index.html` unless configured otherwise), so it cannot affect the production app.
+-- [src/dev/webcodecsSpike/main.ts](../src/dev/webcodecsSpike/main.ts) — the actual spike logic (demux → decode → paint → measure). Not imported by any real app file.
++- [spike-webcodecs.html](../../../spike-webcodecs.html) — new HTML entry at repo root. Vite's dev server serves any root-level `.html` file automatically; it is not referenced by `vite.config.ts` and is not part of `npm run build`'s output (build only bundles `index.html` unless configured otherwise), so it cannot affect the production app.
++- [src/dev/webcodecsSpike/main.ts](../../../src/dev/webcodecsSpike/main.ts) — the actual spike logic (demux → decode → paint → measure). Not imported by any real app file.
+ - `public/_spike/sample.mp4` — a **real** test asset, not synthetic: fetched live from the Pexels video API (the same API `src/services/stockService.ts` already integrates with, using the existing `VITE_PEXELS_API_KEY` from `.env.local`) via the exact request shape `stockService.ts` uses. Confirmed via `ffprobe` before use: H.264 **High profile**, 1280×720, 30fps, `yuv420p`, and critically a real B-frame GOP structure (`I,B,B,B,P,B,B,B,P,B,B,B,P,P,P,P,P,B,P,...`) — this is what makes Check 4 (frame-reorder correctness) a real test rather than a trivial all-I-frame case. This file is gitignored (`public/_spike/`, added to `.gitignore` in this change) and was never staged.
+ - `mp4box` (v2.4.1) added to `package.json` dependencies — the demuxer library. Chosen over hand-rolled MP4 box parsing per Section 1.4's recommendation; no alternative was evaluated because this one worked correctly once the two issues below were resolved, and it's the same library the official [W3C WebCodecs samples repo](https://github.com/w3c/webcodecs) uses in its reference `MP4Demuxer`, which this spike's demux logic is directly adapted from.
+ 
+diff --git a/docs/archive/ws2/bug3-diagnosis.md b/docs/archive/ws2/bug3-diagnosis.md
+index 1b35cba..559fa6e 100644
+--- a/docs/archive/ws2/bug3-diagnosis.md
++++ b/docs/archive/ws2/bug3-diagnosis.md
+@@ -95,32 +95,32 @@ reproduces the symptom without one.)
+ ## B3 — where playback derives timing (MEASURED, file:line)
+ 
+ Playback timing/decode for the WebCodecs preview path lives in
+-[`src/services/videoDecoderPool.ts`](../../src/services/videoDecoderPool.ts). Two constants
++[`src/services/videoDecoderPool.ts`](../../../src/services/videoDecoderPool.ts). Two constants
+ govern the decode-ahead window and its buffer:
+ 
+-- `WINDOW_AHEAD_SEC = 1.5` ([videoDecoderPool.ts:76](../../src/services/videoDecoderPool.ts#L76))
++- `WINDOW_AHEAD_SEC = 1.5` ([videoDecoderPool.ts:76](../../../src/services/videoDecoderPool.ts#L76))
+   — a **time**-based decode-ahead horizon: `feedWindow` decodes every chunk whose presentation
+   timestamp is `<= (targetSec + WINDOW_AHEAD_SEC) * 1e6`
+-  ([videoDecoderPool.ts:586](../../src/services/videoDecoderPool.ts#L586)), in one synchronous
++  ([videoDecoderPool.ts:586](../../../src/services/videoDecoderPool.ts#L586)), in one synchronous
+   loop of `decoder.decode(chunk)` calls with no yield between them
+-  ([videoDecoderPool.ts:598-605](../../src/services/videoDecoderPool.ts#L598-L605)).
++  ([videoDecoderPool.ts:598-605](../../../src/services/videoDecoderPool.ts#L598-L605)).
+ - `MAX_BUFFERED_FRAMES_PER_SESSION = 90`
+-  ([videoDecoderPool.ts:107](../../src/services/videoDecoderPool.ts#L107)) — a **frame-count**
++  ([videoDecoderPool.ts:107](../../../src/services/videoDecoderPool.ts#L107)) — a **frame-count**
+   cap on simultaneously-buffered decoded `VideoFrame`s. `handleDecoderOutput`
+-  ([videoDecoderPool.ts:1081-1094](../../src/services/videoDecoderPool.ts#L1081-L1094)) drops
++  ([videoDecoderPool.ts:1081-1094](../../../src/services/videoDecoderPool.ts#L1081-L1094)) drops
+   (closes without buffering) any decoder output arriving once this cap is hit, unless
+   `slideWindowForward` can first evict already-passed frames to make room.
+-- `slideWindowForward` ([videoDecoderPool.ts:1062-1079](../../src/services/videoDecoderPool.ts#L1062-L1079))
++- `slideWindowForward` ([videoDecoderPool.ts:1062-1079](../../../src/services/videoDecoderPool.ts#L1062-L1079))
+   can only evict frames older than `session.windowTargetUs - RETAIN_BEHIND_SEC`, and
+   `windowTargetUs` is only updated at the **start** of a `fillWindow` call
+-  ([videoDecoderPool.ts:660](../../src/services/videoDecoderPool.ts#L660)) — i.e. once per
++  ([videoDecoderPool.ts:660](../../../src/services/videoDecoderPool.ts#L660)) — i.e. once per
+   `getFrameAt` turn, not once per decoded frame.
+ 
+ Both constants' own comments state the tuning assumption explicitly: `MAX_BUFFERED_FRAMES_
+ PER_SESSION`'s doc says "roughly 3s of 30fps content"
+-([videoDecoderPool.ts:97](../../src/services/videoDecoderPool.ts#L97)); `RETAIN_BEHIND_SEC`'s
++([videoDecoderPool.ts:97](../../../src/services/videoDecoderPool.ts#L97)); `RETAIN_BEHIND_SEC`'s
+ doc says "0.5s is ~12 frames at 24fps / ~15 at 30fps"
+-([videoDecoderPool.ts:83](../../src/services/videoDecoderPool.ts#L83)). **The code assumes
++([videoDecoderPool.ts:83](../../../src/services/videoDecoderPool.ts#L83)). **The code assumes
+ content in the ~24-30fps range; nothing reads the source's actual `avg_frame_rate` to adjust
+ either constant.** This is not a VFR-treated-as-CFR bug (the file genuinely is CFR, §B1) — it is
+ a fixed TIME window sized against a frame-count cap that was never made proportional to the
+diff --git a/docs/ws3-export/README.md b/docs/ws3-export/README.md
+index 99bf7c2..c387a69 100644
+--- a/docs/ws3-export/README.md
++++ b/docs/ws3-export/README.md
+@@ -13,5 +13,12 @@ preamble (Rung/Tier taxonomy) — not restated here.
+ | `silent-gaps-diagnosis.md` | Timer-starvation / occlusion diagnosis (code-cited) |
+ | `recovery-architecture.md` | Flush-timeout / rung failover architecture (code-cited living spec) |
+ | `speed-architecture-audit.md` | Export speed optimization feasibility study |
++| `w23-machine1-validation.md` | Machine 1 mux-stage disk-full validation runbook (Round 24a, active) |
+ 
+ **Archive:** closed round audits → [`docs/archive/ws3/`](../archive/ws3/).
++
++**Lane cap note:** WS3 living-doc cap is ≤7 (`docs/README.md`). This lane currently has **8** content
++docs (table above). Round 23 brought the count to 7; `w23-machine1-validation.md` is the +1 and stays
++in-lane this week. If the cap must be enforced before archiving the runbook, fold
++`silent-gaps-diagnosis.md` or `pipeline-audit.md` (static PROMPT 12 audit — dispositions now in the
++ledger) to `docs/archive/ws3/` first.
+diff --git a/docs/ws3-export/architecture-ledger.md b/docs/ws3-export/architecture-ledger.md
+index 9020402..261751a 100644
+--- a/docs/ws3-export/architecture-ledger.md
++++ b/docs/ws3-export/architecture-ledger.md
+@@ -223,6 +223,12 @@ future change doesn't have to re-derive "is this measured or assumed."
+ 1. A resumed run's own `sessionAt` reset to 0 on its 'session-plan' message regardless of where it actually resumed, corrupting a SECOND rewind's boundary computation (silently resuming from frame 0 instead of the correct frame) — found by `boundedRerenderWiring.test.ts`'s "stops rewinding" test once its message timing was corrected, fixed via `resumeSessionIndex`, destructively re-probed (RED with the bootstrap removed, GREEN restored).
+ 2. The Step 4 completeness test's own generic leaf-scan was initially defeated by the diagnostics blob's `error: err` field trivially re-including the original (untouched) `liveness` object regardless of what the rest of the function did — caught by the test's own destructive probe going unexpectedly GREEN, fixed by excluding `blob.error` from the scan so the check exercises the function's own logic.
+ 
++### Round 8 (2026-09-10) — Cargo arithmetic, mux measurement, conservative final-AU, seams
++
++> **Cross-lineage entry (Cursor, `ws3-durable-resume`).** Full round log:
++> [`docs/ws3-export/durable-state.md`](durable-state.md) § "Round 8 — Cargo arithmetic, mux
++> measurement, conservative final-AU, seams". See Round 16 round-number map.
++
+ ### Round 9 (2026-09-10) — Rung 5 + ledger authority + seam closure
+ 
+ **Branch:** `ws3-tier3-failover`, cut from `ws3-tier1-close` @ `51e1f6b` (commits `a6581d2`, `eb95bac`, `265fcae`, `51e1f6b`). **Base main SHA:** `4d4922c`. **Rollback:** `15002e5`. Parallel round — Cursor on `ws3-durable-resume` @ `81bde88`, not read from this round per Part 0.
+@@ -526,6 +532,26 @@ Cursor's):
+ 
+ **Tier 2: CLOSED.** Rungs 2b, 3 and 4 are all wired, and verified together rather than only apart.
+ 
++### Round 11 (2026-09-10) — Audit remediation: fence, mutation invariant, identity v2, budget
++
++> **Cross-lineage entry (Cursor, `ws3-durable-resume`).** Full round log:
++> [`docs/ws3-export/durable-state.md`](durable-state.md) § "Round 11 — Audit remediation…".
++> Findings dispositions: `docs/ws3-export/pipeline-audit.md` Part 7 "Round 11 dispositions". See
++> Round 16 round-number map.
++
++### Round 12 (2026-09-10/11) — Hardening STEPs 0–2 (merge, resume-refusal notice, 512 KiB batch cap)
++
++> **Cross-lineage entry (CC, `ws3-hardening-windows` STEPs 0–2: `d6eff3b`, `4a3e584`, `0d397f7`).**
++> No standalone doc entry was written — recorded in code comments (`WS3 Round 12` in `App.tsx`,
++> `useExport.ts`, `exportResumeSession.ts`, `flushSalvage.test.ts`). See Round 16 round-number map.
++
++### Round 13 (2026-09-11) — Realistic fixtures, kill bound, claim, orphan sweep, exhaustion variant
++
++> **Cross-lineage entry (Cursor, `ws3-durable-resume`).** Full round log:
++> [`docs/ws3-export/durable-state.md`](durable-state.md) § "Round 13 — Realistic fixtures…".
++> Findings dispositions: `docs/ws3-export/pipeline-audit.md` Part 7 "Round 13 dispositions". See
++> Round 16 round-number map.
++
+ ### Round 14 (2026-09-11) — Findings-register close-out: C5/C6/C7 + H5/H10 consumer wiring + H9
+ 
+ **Branch:** `ws3-hardening-windows`, a fresh session (no memory of prior rounds), picking up from
+-- 
+2.53.0
+

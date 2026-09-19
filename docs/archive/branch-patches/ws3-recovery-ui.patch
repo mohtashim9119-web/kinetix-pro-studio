@@ -1,0 +1,4236 @@
+From 80f93b5a0a7d7ec2df296cabff11dcba626f378e Mon Sep 17 00:00:00 2001
+From: Mohtashim <mohtashim9119@gmail.com>
+Date: Sun, 13 Sep 2026 23:48:29 +0500
+Subject: [PATCH 1/5] Add degraded-load, migration, and storage-root recovery
+ views as pure components.
+
+Keep persistence and native I/O out of the UI so a metadata-only project cannot silently autosave, and record the disk-estimator consolidation constraint for CC.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+---
+ .cursor/ws3-size-estimators.md                |  41 ++++
+ .../DegradedProjectRecoveryScreen.test.tsx    | 166 ++++++++++++++
+ .../DegradedProjectRecoveryScreen.tsx         | 203 ++++++++++++++++++
+ .../IdbToNativeMigrationView.test.tsx         | 152 +++++++++++++
+ .../recovery/IdbToNativeMigrationView.tsx     | 141 ++++++++++++
+ .../StorageRootRelocationView.test.tsx        |  89 ++++++++
+ .../recovery/StorageRootRelocationView.tsx    | 119 ++++++++++
+ src/components/recovery/degradedLoad.test.ts  |  66 ++++++
+ src/components/recovery/degradedLoad.ts       |  39 ++++
+ src/components/recovery/index.ts              |  26 +++
+ .../recovery/recoveryActionsFake.test.ts      |  19 ++
+ .../recovery/recoveryActionsFake.ts           |  59 +++++
+ 12 files changed, 1120 insertions(+)
+ create mode 100644 .cursor/ws3-size-estimators.md
+ create mode 100644 src/components/recovery/DegradedProjectRecoveryScreen.test.tsx
+ create mode 100644 src/components/recovery/DegradedProjectRecoveryScreen.tsx
+ create mode 100644 src/components/recovery/IdbToNativeMigrationView.test.tsx
+ create mode 100644 src/components/recovery/IdbToNativeMigrationView.tsx
+ create mode 100644 src/components/recovery/StorageRootRelocationView.test.tsx
+ create mode 100644 src/components/recovery/StorageRootRelocationView.tsx
+ create mode 100644 src/components/recovery/degradedLoad.test.ts
+ create mode 100644 src/components/recovery/degradedLoad.ts
+ create mode 100644 src/components/recovery/index.ts
+ create mode 100644 src/components/recovery/recoveryActionsFake.test.ts
+ create mode 100644 src/components/recovery/recoveryActionsFake.ts
+
+diff --git a/.cursor/ws3-size-estimators.md b/.cursor/ws3-size-estimators.md
+new file mode 100644
+index 0000000..c77b9ff
+--- /dev/null
++++ b/.cursor/ws3-size-estimators.md
+@@ -0,0 +1,41 @@
++# WS3 size estimators — UI constraint
++
++CC owns which module survives. This note records the UI-side constraint so
++the recovery / relocation views do not grow a fourth copy of "required vs
++available bytes."
++
++## The three estimators
++
++1. **Badge estimator** — `src/services/exportOutputEstimate.ts` on
++   `ws3-export-modal` (`f81674e`). Not present at `b80ba40`. Live file-size
++   badge in the unified export modal. Formula: `bitrateKbps × 125 × duration`
++   + AAC (`EXPORT_DISK_AAC_BYTES_PER_SECOND`) then `applyHeadroom` from
++   `diskFull.ts`. Destination gate uses `destinationRequiredBytes`.
++
++2. **CC destination module** — `src/services/webcodecsExport/exportDestinationDiskEstimate.ts`
++   at `b80ba40`. Same bitrate-aware destination formula as (1). Tests only;
++   nothing in the live export pipeline imports it. CC has called this dead.
++   Do not delete it from this branch.
++
++3. **Live session preflight** — `src/services/webcodecsExport/diskFull.ts`
++   `estimateExportDiskBytes`, wired from `exportPipelineWebCodecs.ts`. Models
++   peak bytes in the *session temp tree* at the frozen 8 Mbps GL rate, plus a
++   destination term at that same fixed rate. This is the estimator export
++   actually runs.
++
++## Constraint for the relocation / recovery modal
++
++- There must be **one** source of truth for the numbers fed into
++  `StorageRootRelocationView` (`requiredBytes` / `availableBytes`). The view
++  itself computes nothing.
++- After CC consolidates, the host that fills those props **must import the
++  surviving estimator** — not a new helper and not a copy of the badge
++  formula.
++- `diskFull.ts` has to remain for the live pipeline (temp-peak + ENOSPC).
++  The bitrate-aware destination term (badge + `exportDestinationDiskEstimate`)
++  should collapse into whatever single API CC keeps. The modal then imports
++  that API's required-bytes result.
++- Do not implement the consolidation here.
++
++Dashboard `navigator.storage.estimate()` (origin quota bar) is a different
++question and is not this estimator.
+diff --git a/src/components/recovery/DegradedProjectRecoveryScreen.test.tsx b/src/components/recovery/DegradedProjectRecoveryScreen.test.tsx
+new file mode 100644
+index 0000000..732ef45
+--- /dev/null
++++ b/src/components/recovery/DegradedProjectRecoveryScreen.test.tsx
+@@ -0,0 +1,166 @@
++// @vitest-environment jsdom
++(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
++
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { createRoot, type Root } from 'react-dom/client';
++import { act } from 'react';
++import { DegradedProjectRecoveryScreen } from './DegradedProjectRecoveryScreen';
++import { createRecoveryActionsFake } from './recoveryActionsFake';
++import type { RecoveryAsset, RecoverySegment } from './degradedLoad';
++
++let container: HTMLDivElement;
++let root: Root;
++
++beforeEach(() => {
++  container = document.createElement('div');
++  document.body.appendChild(container);
++});
++
++afterEach(() => {
++  act(() => root.unmount());
++  container.remove();
++});
++
++const resolvedAsset: RecoveryAsset = {
++  id: 'asset-resolved',
++  name: 'hero.mp4',
++  unresolved: false,
++  nativeCopyExists: true,
++  backupExists: true,
++};
++
++const missingAsset: RecoveryAsset = {
++  id: 'asset-missing',
++  name: 'b-roll.mp4',
++  unresolved: true,
++  nativeCopyExists: false,
++  backupExists: false,
++};
++
++const nativeCopyAsset: RecoveryAsset = {
++  id: 'asset-native',
++  name: 'cutaway.mp4',
++  unresolved: true,
++  nativeCopyExists: true,
++  backupExists: false,
++};
++
++const backupAsset: RecoveryAsset = {
++  id: 'asset-backup',
++  name: 'vo.wav',
++  unresolved: true,
++  nativeCopyExists: false,
++  backupExists: true,
++};
++
++const segments: RecoverySegment[] = [
++  { id: 'seg-1', label: 'Hook', assetId: 'asset-resolved', resolutionStatus: 'resolved' },
++  { id: 'seg-2', label: 'B-roll', assetId: 'asset-missing', resolutionStatus: 'missing-asset' },
++  { id: 'seg-3', label: 'Cutaway', assetId: 'asset-native', resolutionStatus: 'unresolved' },
++];
++
++async function renderScreen(props: {
++  assets: readonly RecoveryAsset[];
++  segments: readonly RecoverySegment[];
++}): Promise<ReturnType<typeof createRecoveryActionsFake>> {
++  const fake = createRecoveryActionsFake();
++  root = createRoot(container);
++  await act(async () => {
++    root.render(
++      <DegradedProjectRecoveryScreen
++        projectName="Machine 1 talk"
++        segments={props.segments}
++        assets={props.assets}
++        onRelink={fake.onRelink}
++        onSave={fake.onSave}
++      />,
++    );
++  });
++  return fake;
++}
++
++describe('DegradedProjectRecoveryScreen — no-save invariant', () => {
++  it('omits the Save affordance while any asset is unresolved, even if onSave was passed', async () => {
++    await renderScreen({
++      assets: [resolvedAsset, missingAsset],
++      segments,
++    });
++    expect(container.querySelector('[data-testid="recovery-save"]')).toBeNull();
++    expect(container.querySelector('[data-testid="recovery-ready-to-save"]')).toBeNull();
++    expect(container.querySelector('[data-testid="recovery-no-save-banner"]')).not.toBeNull();
++    expect(container.querySelector('[data-testid="degraded-project-recovery"]')?.getAttribute('data-can-save'))
++      .toBe('false');
++  });
++
++  it('shows Save and the ready-to-save state only when every asset and segment is resolved', async () => {
++    const fake = await renderScreen({
++      assets: [resolvedAsset],
++      segments: [{ id: 'seg-1', label: 'Hook', assetId: 'asset-resolved', resolutionStatus: 'resolved' }],
++    });
++    const save = container.querySelector<HTMLButtonElement>('[data-testid="recovery-save"]');
++    expect(save).not.toBeNull();
++    expect(container.querySelector('[data-testid="recovery-ready-to-save"]')).not.toBeNull();
++    expect(container.querySelector('[data-testid="recovery-no-save-banner"]')).toBeNull();
++    await act(async () => { save!.click(); });
++    expect(fake.saveCount).toBe(1);
++  });
++});
++
++describe('DegradedProjectRecoveryScreen — status rendering', () => {
++  it('renders per-segment resolution status from props', async () => {
++    await renderScreen({
++      assets: [resolvedAsset, missingAsset, nativeCopyAsset],
++      segments,
++    });
++    const rows = [...container.querySelectorAll('[data-testid="recovery-segment"]')];
++    expect(rows.map((el) => el.getAttribute('data-resolution-status'))).toEqual([
++      'resolved',
++      'missing-asset',
++      'unresolved',
++    ]);
++    expect(container.textContent).toMatch(/Hook/);
++    expect(container.textContent).toMatch(/Missing asset/);
++  });
++
++  it('distinguishes missing vs native-copy vs backup indicators', async () => {
++    await renderScreen({
++      assets: [missingAsset, nativeCopyAsset, backupAsset],
++      segments,
++    });
++    const byId = (id: string): Element => {
++      const el = container.querySelector(`[data-testid="recovery-asset"][data-asset-id="${id}"]`);
++      if (!el) throw new Error(`missing asset row ${id}`);
++      return el;
++    };
++    expect(byId('asset-missing').getAttribute('data-location')).toBe('missing');
++    expect(byId('asset-native').getAttribute('data-location')).toBe('native-copy');
++    expect(byId('asset-backup').getAttribute('data-location')).toBe('backup');
++    expect(byId('asset-native').textContent).toMatch(/Native copy available/);
++    expect(byId('asset-backup').textContent).toMatch(/Backup available/);
++    expect(byId('asset-missing').textContent).toMatch(/Missing/);
++  });
++
++  it('invokes the re-link fake with the unresolved asset id', async () => {
++    const fake = await renderScreen({
++      assets: [missingAsset, nativeCopyAsset],
++      segments,
++    });
++    const buttons = [...container.querySelectorAll<HTMLButtonElement>('[data-testid="recovery-relink"]')];
++    expect(buttons).toHaveLength(2);
++    await act(async () => { buttons[0]!.click(); });
++    expect(fake.relinked).toEqual(['asset-missing']);
++    await act(async () => { buttons[1]!.click(); });
++    expect(fake.relinked).toEqual(['asset-missing', 'asset-native']);
++  });
++
++  it('summarises unresolved assets and never offers re-link on a resolved row', async () => {
++    await renderScreen({
++      assets: [resolvedAsset, missingAsset],
++      segments,
++    });
++    expect(container.querySelector('[data-testid="recovery-unresolved-summary"]')?.textContent)
++      .toMatch(/1 unresolved asset/);
++    const resolvedRow = container.querySelector('[data-testid="recovery-asset"][data-asset-id="asset-resolved"]');
++    expect(resolvedRow?.querySelector('[data-testid="recovery-relink"]')).toBeNull();
++  });
++});
+diff --git a/src/components/recovery/DegradedProjectRecoveryScreen.tsx b/src/components/recovery/DegradedProjectRecoveryScreen.tsx
+new file mode 100644
+index 0000000..7822a3b
+--- /dev/null
++++ b/src/components/recovery/DegradedProjectRecoveryScreen.tsx
+@@ -0,0 +1,203 @@
++/**
++ * Degraded-project recovery screen — presentation only.
++ *
++ * Shown when a project loads with asset metadata present but bytes
++ * unresolvable. The user must see per-segment status and missing assets
++ * instead of an empty timeline. This component never writes storage:
++ * Save is omitted while any asset is unresolved, even if the caller
++ * passed `onSave`. Re-link is a callback; there is no file picker here.
++ */
++
++import React from 'react';
++import { AlertTriangle, FolderOpen, HardDrive, Link2 } from 'lucide-react';
++import { useFocusTrap } from '../../hooks/useFocusTrap';
++import {
++  canPersistRecoveredProject,
++  unresolvedAssetIds,
++  type RecoveryAsset,
++  type RecoverySegment,
++} from './degradedLoad';
++
++export interface DegradedProjectRecoveryScreenProps {
++  projectName: string;
++  segments: readonly RecoverySegment[];
++  assets: readonly RecoveryAsset[];
++  /** Fake or real re-link. This view does not open a picker. */
++  onRelink: (assetId: string) => void;
++  /**
++   * Optional persist callback. Ignored while any asset is unresolved —
++   * the no-save invariant is enforced here, not by the caller.
++   */
++  onSave?: () => void;
++}
++
++function assetLocationLabel(asset: RecoveryAsset): string {
++  if (!asset.unresolved) return 'Resolved';
++  if (asset.nativeCopyExists) return 'Native copy available';
++  if (asset.backupExists) return 'Backup available';
++  return 'Missing';
++}
++
++function assetLocationKind(asset: RecoveryAsset): 'resolved' | 'native-copy' | 'backup' | 'missing' {
++  if (!asset.unresolved) return 'resolved';
++  if (asset.nativeCopyExists) return 'native-copy';
++  if (asset.backupExists) return 'backup';
++  return 'missing';
++}
++
++function segmentStatusLabel(status: RecoverySegment['resolutionStatus']): string {
++  if (status === 'resolved') return 'Resolved';
++  if (status === 'missing-asset') return 'Missing asset';
++  return 'Unresolved';
++}
++
++export function DegradedProjectRecoveryScreen({
++  projectName,
++  segments,
++  assets,
++  onRelink,
++  onSave,
++}: DegradedProjectRecoveryScreenProps): React.ReactElement {
++  const trapRef = useFocusTrap<HTMLDivElement>();
++  const canSave = canPersistRecoveredProject({ assets, segments });
++  const missingIds = unresolvedAssetIds(assets);
++  const unresolvedCount = missingIds.length;
++
++  return (
++    <div
++      role="dialog"
++      aria-modal="true"
++      aria-label="Project recovery"
++      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm"
++    >
++      <div
++        ref={trapRef}
++        data-testid="degraded-project-recovery"
++        data-can-save={canSave ? 'true' : 'false'}
++        className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-xl shadow-2xl max-h-[85vh] overflow-y-auto"
++      >
++        <div className="flex items-start gap-3 mb-6">
++          <AlertTriangle size={18} className="shrink-0 text-amber-400 mt-0.5" />
++          <div>
++            <h2 className="text-sm font-black uppercase tracking-[0.2em]">Project media missing</h2>
++            <p data-testid="recovery-project-name" className="text-[11px] text-gray-400 mt-1">
++              {projectName}
++            </p>
++          </div>
++        </div>
++
++        <p className="text-[11px] text-gray-400 mb-4">
++          This project still has its timeline metadata, but some media bytes
++          cannot be resolved. Saving is blocked so this view cannot be
++          written back over the last good project.
++        </p>
++
++        <p
++          data-testid="recovery-unresolved-summary"
++          className="text-[10px] font-bold uppercase tracking-widest text-amber-300 mb-4"
++        >
++          {unresolvedCount} unresolved asset{unresolvedCount === 1 ? '' : 's'}
++        </p>
++
++        {!canSave && (
++          <div
++            data-testid="recovery-no-save-banner"
++            role="status"
++            className="mb-5 border border-amber-500/40 bg-amber-500/10 rounded-lg px-3 py-2 text-[11px] text-amber-200"
++          >
++            Saving is blocked until every asset is resolved. Re-link your
++            original files — they are the realistic recovery path.
++          </div>
++        )}
++
++        {canSave && (
++          <div
++            data-testid="recovery-ready-to-save"
++            role="status"
++            className="mb-5 border border-emerald-500/40 bg-emerald-500/10 rounded-lg px-3 py-2 text-[11px] text-emerald-200"
++          >
++            All assets are resolved. This project is ready to save.
++          </div>
++        )}
++
++        <section className="space-y-2 mb-6" data-testid="recovery-segment-list">
++          <h3 className="text-[8px] uppercase tracking-widest text-gray-600">Segments</h3>
++          {segments.map((segment) => (
++            <div
++              key={segment.id}
++              data-testid="recovery-segment"
++              data-segment-id={segment.id}
++              data-resolution-status={segment.resolutionStatus}
++              className="flex items-center justify-between gap-3 bg-[#1A1A1A] border border-[#282828] rounded-lg px-3 py-2"
++            >
++              <div className="min-w-0">
++                <p className="text-[11px] font-bold text-gray-200 truncate">{segment.label}</p>
++                <p className="text-[9px] text-gray-600">
++                  {segment.assetId ? `asset ${segment.assetId}` : 'no asset'}
++                </p>
++              </div>
++              <span
++                data-testid="recovery-segment-status"
++                className="shrink-0 text-[9px] font-black uppercase tracking-widest text-gray-400"
++              >
++                {segmentStatusLabel(segment.resolutionStatus)}
++              </span>
++            </div>
++          ))}
++        </section>
++
++        <section className="space-y-2 mb-6" data-testid="recovery-asset-list">
++          <h3 className="text-[8px] uppercase tracking-widest text-gray-600">Assets</h3>
++          {assets.map((asset) => {
++            const kind = assetLocationKind(asset);
++            return (
++              <div
++                key={asset.id}
++                data-testid="recovery-asset"
++                data-asset-id={asset.id}
++                data-unresolved={asset.unresolved ? 'true' : 'false'}
++                data-location={kind}
++                className="flex items-center justify-between gap-3 bg-[#1A1A1A] border border-[#282828] rounded-lg px-3 py-2"
++              >
++                <div className="min-w-0">
++                  <p className="text-[11px] font-bold text-gray-200 truncate">{asset.name}</p>
++                  <p
++                    data-testid="recovery-asset-location"
++                    className="text-[9px] text-gray-500 flex items-center gap-1"
++                  >
++                    {kind === 'native-copy' && <HardDrive size={11} />}
++                    {kind === 'backup' && <FolderOpen size={11} />}
++                    {assetLocationLabel(asset)}
++                  </p>
++                </div>
++                {asset.unresolved && (
++                  <button
++                    type="button"
++                    data-testid="recovery-relink"
++                    data-asset-id={asset.id}
++                    onClick={() => onRelink(asset.id)}
++                    className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[9px] font-black uppercase tracking-widest border border-[#282828] rounded-lg text-gray-300 hover:text-white hover:border-gray-500"
++                  >
++                    <Link2 size={11} />
++                    Re-link
++                  </button>
++                )}
++              </div>
++            );
++          })}
++        </section>
++
++        {canSave && onSave && (
++          <button
++            type="button"
++            data-testid="recovery-save"
++            onClick={onSave}
++            className="w-full bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all focus:outline-none focus:ring-2 focus:ring-orange-400"
++          >
++            Save
++          </button>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/src/components/recovery/IdbToNativeMigrationView.test.tsx b/src/components/recovery/IdbToNativeMigrationView.test.tsx
+new file mode 100644
+index 0000000..57a7db3
+--- /dev/null
++++ b/src/components/recovery/IdbToNativeMigrationView.test.tsx
+@@ -0,0 +1,152 @@
++// @vitest-environment jsdom
++(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
++
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { createRoot, type Root } from 'react-dom/client';
++import { act } from 'react';
++import {
++  IdbToNativeMigrationView,
++  type IdbToNativeMigrationStatus,
++  type IdbToNativeMigrationViewProps,
++} from './IdbToNativeMigrationView';
++import { createRecoveryActionsFake } from './recoveryActionsFake';
++
++let container: HTMLDivElement;
++let root: Root;
++
++beforeEach(() => {
++  container = document.createElement('div');
++  document.body.appendChild(container);
++});
++
++afterEach(() => {
++  act(() => root.unmount());
++  container.remove();
++});
++
++async function renderView(
++  over: Partial<IdbToNativeMigrationViewProps> & { status: IdbToNativeMigrationStatus },
++): Promise<ReturnType<typeof createRecoveryActionsFake>> {
++  const fake = createRecoveryActionsFake();
++  const props: IdbToNativeMigrationViewProps = {
++    total: 10,
++    completed: 0,
++    failed: 0,
++    remaining: 10,
++    failedAssets: [],
++    resumable: false,
++    onResume: fake.onResume,
++    ...over,
++  };
++  root = createRoot(container);
++  await act(async () => {
++    root.render(<IdbToNativeMigrationView {...props} />);
++  });
++  return fake;
++}
++
++function counts(): { total: string; completed: string; failed: string; remaining: string } {
++  return {
++    total: container.querySelector('[data-testid="migration-total"]')?.textContent ?? '',
++    completed: container.querySelector('[data-testid="migration-completed"]')?.textContent ?? '',
++    failed: container.querySelector('[data-testid="migration-failed"]')?.textContent ?? '',
++    remaining: container.querySelector('[data-testid="migration-remaining"]')?.textContent ?? '',
++  };
++}
++
++describe('IdbToNativeMigrationView — four states from props', () => {
++  it('in-progress: shows the counts as given and offers neither resume nor retry', async () => {
++    await renderView({
++      status: 'in-progress',
++      total: 8,
++      completed: 3,
++      failed: 0,
++      remaining: 5,
++      resumable: false,
++    });
++    expect(container.querySelector('[data-testid="idb-native-migration"]')?.getAttribute('data-status'))
++      .toBe('in-progress');
++    expect(container.querySelector('[data-testid="migration-status-label"]')?.textContent)
++      .toMatch(/Migrating assets/i);
++    expect(counts()).toEqual({ total: '8', completed: '3', failed: '0', remaining: '5' });
++    expect(container.querySelector('[data-testid="migration-resume"]')).toBeNull();
++    expect(container.querySelector('[data-testid="migration-retry-failed"]')).toBeNull();
++  });
++
++  it('per-asset-failure: lists failed identities and fires the retry fake', async () => {
++    const fake = createRecoveryActionsFake();
++    root = createRoot(container);
++    await act(async () => {
++      root.render(
++        <IdbToNativeMigrationView
++          status="per-asset-failure"
++          total={4}
++          completed={2}
++          failed={2}
++          remaining={0}
++          failedAssets={[
++            { id: 'a-fail-1', name: 'clip-one.mp4' },
++            { id: 'a-fail-2', name: 'clip-two.mp4' },
++          ]}
++          resumable={false}
++          onRetryFailed={fake.onRetryFailed}
++        />,
++      );
++    });
++    const rows = [...container.querySelectorAll('[data-testid="migration-failed-asset"]')];
++    expect(rows.map((el) => el.getAttribute('data-asset-id'))).toEqual(['a-fail-1', 'a-fail-2']);
++    expect(container.textContent).toMatch(/clip-one\.mp4/);
++    const retry = container.querySelector<HTMLButtonElement>('[data-testid="migration-retry-failed"]');
++    expect(retry).not.toBeNull();
++    await act(async () => { retry!.click(); });
++    expect(fake.retryFailedCount).toBe(1);
++  });
++
++  it('partial: renders completed and remaining from props without recomputing them', async () => {
++    await renderView({
++      status: 'partial',
++      total: 10,
++      completed: 6,
++      failed: 1,
++      remaining: 99,
++      failedAssets: [{ id: 'a-fail-1', name: 'stuck.mp4' }],
++      resumable: false,
++      onRetryFailed: () => {},
++    });
++    expect(container.querySelector('[data-testid="idb-native-migration"]')?.getAttribute('data-status'))
++      .toBe('partial');
++    expect(container.querySelector('[data-testid="migration-status-label"]')?.textContent)
++      .toMatch(/partially complete/i);
++    // remaining is 99, not total-completed-failed (3). The view must not "fix" it.
++    expect(counts()).toEqual({ total: '10', completed: '6', failed: '1', remaining: '99' });
++  });
++
++  it('resumable: shows Resume from the resumable flag and fires the fake', async () => {
++    const fake = await renderView({
++      status: 'resumable',
++      total: 10,
++      completed: 4,
++      failed: 0,
++      remaining: 6,
++      resumable: true,
++    });
++    expect(container.querySelector('[data-testid="idb-native-migration"]')?.getAttribute('data-resumable'))
++      .toBe('true');
++    const resume = container.querySelector<HTMLButtonElement>('[data-testid="migration-resume"]');
++    expect(resume).not.toBeNull();
++    await act(async () => { resume!.click(); });
++    expect(fake.resumeCount).toBe(1);
++  });
++
++  it('does not infer resumable from leftover remaining counts', async () => {
++    await renderView({
++      status: 'in-progress',
++      total: 10,
++      completed: 4,
++      failed: 0,
++      remaining: 6,
++      resumable: false,
++    });
++    expect(container.querySelector('[data-testid="migration-resume"]')).toBeNull();
++  });
++});
+diff --git a/src/components/recovery/IdbToNativeMigrationView.tsx b/src/components/recovery/IdbToNativeMigrationView.tsx
+new file mode 100644
+index 0000000..b4ecd47
+--- /dev/null
++++ b/src/components/recovery/IdbToNativeMigrationView.tsx
+@@ -0,0 +1,141 @@
++/**
++ * IndexedDB → native asset migration progress — presentation only.
++ *
++ * Every count arrives as a prop. This view formats those numbers; it does
++ * not derive remaining from total/completed, and it does not decide
++ * resumability from the counts. Resume / retry are caller-owned.
++ */
++
++import React from 'react';
++import { AlertCircle, Loader2 } from 'lucide-react';
++
++export type IdbToNativeMigrationStatus =
++  | 'in-progress'
++  | 'per-asset-failure'
++  | 'partial'
++  | 'resumable';
++
++export interface MigrationFailedAsset {
++  id: string;
++  name: string;
++}
++
++export interface IdbToNativeMigrationViewProps {
++  status: IdbToNativeMigrationStatus;
++  total: number;
++  completed: number;
++  failed: number;
++  remaining: number;
++  failedAssets: readonly MigrationFailedAsset[];
++  /** Caller-owned. Resume is shown only when this flag is true. */
++  resumable: boolean;
++  onResume?: () => void;
++  onRetryFailed?: () => void;
++}
++
++const STATUS_LABEL: Record<IdbToNativeMigrationStatus, string> = {
++  'in-progress': 'Migrating assets',
++  'per-asset-failure': 'Asset copy failed',
++  partial: 'Migration partially complete',
++  resumable: 'Migration can be resumed',
++};
++
++export function IdbToNativeMigrationView({
++  status,
++  total,
++  completed,
++  failed,
++  remaining,
++  failedAssets,
++  resumable,
++  onResume,
++  onRetryFailed,
++}: IdbToNativeMigrationViewProps): React.ReactElement {
++  return (
++    <div
++      data-testid="idb-native-migration"
++      data-status={status}
++      data-resumable={resumable ? 'true' : 'false'}
++      className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-md shadow-2xl"
++    >
++      <div className="flex items-center gap-3 mb-6">
++        {status === 'in-progress' ? (
++          <Loader2 size={16} className="animate-spin text-[#F27D26]" />
++        ) : (
++          <AlertCircle size={16} className="text-amber-400" />
++        )}
++        <h2
++          data-testid="migration-status-label"
++          className="text-sm font-black uppercase tracking-[0.2em]"
++        >
++          {STATUS_LABEL[status]}
++        </h2>
++      </div>
++
++      <dl className="space-y-2 mb-6">
++        <CountRow testId="migration-total" label="Total" value={total} />
++        <CountRow testId="migration-completed" label="Completed" value={completed} />
++        <CountRow testId="migration-failed" label="Failed" value={failed} />
++        <CountRow testId="migration-remaining" label="Remaining" value={remaining} />
++      </dl>
++
++      {failedAssets.length > 0 && (
++        <section data-testid="migration-failed-list" className="space-y-2 mb-6">
++          <h3 className="text-[8px] uppercase tracking-widest text-gray-600">Failed assets</h3>
++          {failedAssets.map((asset) => (
++            <div
++              key={asset.id}
++              data-testid="migration-failed-asset"
++              data-asset-id={asset.id}
++              className="bg-[#1A1A1A] border border-[#282828] rounded-lg px-3 py-2 text-[11px] text-gray-200"
++            >
++              {asset.name}
++            </div>
++          ))}
++        </section>
++      )}
++
++      <div className="flex gap-3">
++        {resumable && (
++          <button
++            type="button"
++            data-testid="migration-resume"
++            onClick={() => onResume?.()}
++            className="flex-1 bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
++          >
++            Resume
++          </button>
++        )}
++        {onRetryFailed && (
++          <button
++            type="button"
++            data-testid="migration-retry-failed"
++            onClick={onRetryFailed}
++            className="flex-1 bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all"
++          >
++            Retry failed
++          </button>
++        )}
++      </div>
++    </div>
++  );
++}
++
++function CountRow({
++  testId,
++  label,
++  value,
++}: {
++  testId: string;
++  label: string;
++  value: number;
++}): React.ReactElement {
++  return (
++    <div className="flex items-center justify-between">
++      <dt className="text-[8px] uppercase tracking-widest text-gray-600">{label}</dt>
++      <dd data-testid={testId} className="text-[11px] font-bold text-gray-200">
++        {value}
++      </dd>
++    </div>
++  );
++}
+diff --git a/src/components/recovery/StorageRootRelocationView.test.tsx b/src/components/recovery/StorageRootRelocationView.test.tsx
+new file mode 100644
+index 0000000..ca11a44
+--- /dev/null
++++ b/src/components/recovery/StorageRootRelocationView.test.tsx
+@@ -0,0 +1,89 @@
++// @vitest-environment jsdom
++(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
++
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { createRoot, type Root } from 'react-dom/client';
++import { act } from 'react';
++import {
++  StorageRootRelocationView,
++  type StorageRootRelocationViewProps,
++  type StorageRootValidationState,
++} from './StorageRootRelocationView';
++import { formatBytes } from '../../services/webcodecsExport/diskFull';
++import { createRecoveryActionsFake } from './recoveryActionsFake';
++
++let container: HTMLDivElement;
++let root: Root;
++
++beforeEach(() => {
++  container = document.createElement('div');
++  document.body.appendChild(container);
++});
++
++afterEach(() => {
++  act(() => root.unmount());
++  container.remove();
++});
++
++const REQUIRED = 5_450_000_000;
++const AVAILABLE = 120_000_000;
++
++async function renderView(
++  over: Partial<StorageRootRelocationViewProps> = {},
++): Promise<ReturnType<typeof createRecoveryActionsFake>> {
++  const fake = createRecoveryActionsFake();
++  const props: StorageRootRelocationViewProps = {
++    currentRoot: '/Users/me/Library/Application Support/com.kinetix.pro-studio',
++    targetVolume: '/Volumes/Media',
++    requiredBytes: REQUIRED,
++    availableBytes: AVAILABLE,
++    validationState: 'insufficient',
++    onChooseFolder: fake.onChooseFolder,
++    ...over,
++  };
++  root = createRoot(container);
++  await act(async () => {
++    root.render(<StorageRootRelocationView {...props} />);
++  });
++  return fake;
++}
++
++describe('StorageRootRelocationView — props in, no arithmetic', () => {
++  it('renders current root, target volume, required bytes, and available bytes from props', async () => {
++    await renderView();
++    expect(container.querySelector('[data-testid="relocation-current-root"]')?.textContent)
++      .toBe('/Users/me/Library/Application Support/com.kinetix.pro-studio');
++    expect(container.querySelector('[data-testid="relocation-target-volume"]')?.textContent)
++      .toBe('/Volumes/Media');
++    expect(container.querySelector('[data-testid="relocation-required-bytes"]')?.textContent)
++      .toBe(formatBytes(REQUIRED));
++    expect(container.querySelector('[data-testid="relocation-available-bytes"]')?.textContent)
++      .toBe(formatBytes(AVAILABLE));
++  });
++
++  it.each<[StorageRootValidationState, string]>([
++    ['ok', 'Target volume has enough space'],
++    ['insufficient', 'Not enough space on the target volume'],
++    ['error', 'Could not validate the target volume'],
++  ])('validationState %s is displayed, not derived from the byte props', async (validationState, label) => {
++    await renderView({
++      validationState,
++      // Deliberately contradictory numbers: ok + available << required.
++      requiredBytes: 9_000_000_000,
++      availableBytes: 1,
++    });
++    const el = container.querySelector('[data-testid="relocation-validation"]');
++    expect(el?.getAttribute('data-state')).toBe(validationState);
++    expect(el?.textContent).toBe(label);
++    expect(container.querySelector('[data-testid="storage-root-relocation"]')?.getAttribute('data-validation'))
++      .toBe(validationState);
++  });
++
++  it('fires the choose-folder fake without inspecting the filesystem', async () => {
++    const fake = await renderView();
++    const button = container.querySelector<HTMLButtonElement>('[data-testid="relocation-choose-folder"]');
++    expect(button).not.toBeNull();
++    await act(async () => { button!.click(); });
++    expect(fake.chooseFolderCount).toBe(1);
++  });
++});
+diff --git a/src/components/recovery/StorageRootRelocationView.tsx b/src/components/recovery/StorageRootRelocationView.tsx
+new file mode 100644
+index 0000000..8a7bd96
+--- /dev/null
++++ b/src/components/recovery/StorageRootRelocationView.tsx
+@@ -0,0 +1,119 @@
++/**
++ * Storage-root relocation view — presentation only.
++ *
++ * Current root, target volume, required bytes, available bytes, and
++ * validation state all arrive as props. This view displays them; it does
++ * not compare required vs available to decide ok / insufficient / error.
++ * A later host feeds those numbers from the surviving disk estimator
++ * (see `.cursor/ws3-size-estimators.md`).
++ */
++
++import React from 'react';
++import { FolderOpen } from 'lucide-react';
++import { formatBytes } from '../../services/webcodecsExport/diskFull';
++import { useFocusTrap } from '../../hooks/useFocusTrap';
++
++export type StorageRootValidationState = 'ok' | 'insufficient' | 'error';
++
++export interface StorageRootRelocationViewProps {
++  currentRoot: string;
++  targetVolume: string;
++  requiredBytes: number;
++  availableBytes: number;
++  validationState: StorageRootValidationState;
++  onChooseFolder?: () => void;
++}
++
++const VALIDATION_LABEL: Record<StorageRootValidationState, string> = {
++  ok: 'Target volume has enough space',
++  insufficient: 'Not enough space on the target volume',
++  error: 'Could not validate the target volume',
++};
++
++export function StorageRootRelocationView({
++  currentRoot,
++  targetVolume,
++  requiredBytes,
++  availableBytes,
++  validationState,
++  onChooseFolder,
++}: StorageRootRelocationViewProps): React.ReactElement {
++  const trapRef = useFocusTrap<HTMLDivElement>();
++
++  return (
++    <div
++      role="dialog"
++      aria-modal="true"
++      aria-label="Move storage root"
++      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/80 backdrop-blur-sm"
++    >
++      <div
++        ref={trapRef}
++        data-testid="storage-root-relocation"
++        data-validation={validationState}
++        className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-md shadow-2xl"
++      >
++        <h2 className="text-sm font-black uppercase tracking-[0.2em] mb-6">Move storage root</h2>
++
++        <dl className="space-y-3 mb-6">
++          <div>
++            <dt className="text-[8px] uppercase tracking-widest text-gray-600">Current root</dt>
++            <dd
++              data-testid="relocation-current-root"
++              className="text-[11px] font-bold text-gray-200 break-all"
++            >
++              {currentRoot}
++            </dd>
++          </div>
++          <div>
++            <dt className="text-[8px] uppercase tracking-widest text-gray-600">Target volume</dt>
++            <dd
++              data-testid="relocation-target-volume"
++              className="text-[11px] font-bold text-gray-200 break-all"
++            >
++              {targetVolume}
++            </dd>
++          </div>
++          <div className="flex items-center justify-between">
++            <dt className="text-[8px] uppercase tracking-widest text-gray-600">Required</dt>
++            <dd data-testid="relocation-required-bytes" className="text-[11px] font-bold text-gray-200">
++              {formatBytes(requiredBytes)}
++            </dd>
++          </div>
++          <div className="flex items-center justify-between">
++            <dt className="text-[8px] uppercase tracking-widest text-gray-600">Available</dt>
++            <dd data-testid="relocation-available-bytes" className="text-[11px] font-bold text-gray-200">
++              {formatBytes(availableBytes)}
++            </dd>
++          </div>
++        </dl>
++
++        <p
++          data-testid="relocation-validation"
++          data-state={validationState}
++          className={`mb-6 text-[11px] ${
++            validationState === 'ok'
++              ? 'text-emerald-300'
++              : validationState === 'insufficient'
++                ? 'text-amber-300'
++                : 'text-red-300'
++          }`}
++        >
++          {VALIDATION_LABEL[validationState]}
++        </p>
++
++        {onChooseFolder && (
++          <button
++            type="button"
++            data-testid="relocation-choose-folder"
++            onClick={onChooseFolder}
++            className="w-full inline-flex items-center justify-center gap-2 bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all"
++          >
++            <FolderOpen size={14} />
++            Choose folder
++          </button>
++        )}
++      </div>
++    </div>
++  );
++}
+diff --git a/src/components/recovery/degradedLoad.test.ts b/src/components/recovery/degradedLoad.test.ts
+new file mode 100644
+index 0000000..cc629c7
+--- /dev/null
++++ b/src/components/recovery/degradedLoad.test.ts
+@@ -0,0 +1,66 @@
++import { describe, it, expect } from 'vitest';
++import {
++  canPersistRecoveredProject,
++  unresolvedAssetIds,
++  type RecoveryAsset,
++  type RecoverySegment,
++} from './degradedLoad';
++
++const resolved: RecoveryAsset = {
++  id: 'a1',
++  name: 'clip.mp4',
++  unresolved: false,
++  nativeCopyExists: true,
++  backupExists: false,
++};
++
++const missing: RecoveryAsset = {
++  id: 'a2',
++  name: 'vo.wav',
++  unresolved: true,
++  nativeCopyExists: false,
++  backupExists: false,
++};
++
++const okSegment: RecoverySegment = {
++  id: 's1',
++  label: 'Intro',
++  assetId: 'a1',
++  resolutionStatus: 'resolved',
++};
++
++const brokenSegment: RecoverySegment = {
++  id: 's2',
++  label: 'Voiceover',
++  assetId: 'a2',
++  resolutionStatus: 'unresolved',
++};
++
++describe('canPersistRecoveredProject', () => {
++  it('is false while any asset is unresolved', () => {
++    expect(canPersistRecoveredProject({
++      assets: [resolved, missing],
++      segments: [okSegment, brokenSegment],
++    })).toBe(false);
++  });
++
++  it('is false when every asset is resolved but a segment is still unresolved', () => {
++    expect(canPersistRecoveredProject({
++      assets: [resolved],
++      segments: [okSegment, brokenSegment],
++    })).toBe(false);
++  });
++
++  it('is true only when every asset and segment is resolved', () => {
++    expect(canPersistRecoveredProject({
++      assets: [resolved],
++      segments: [okSegment],
++    })).toBe(true);
++  });
++});
++
++describe('unresolvedAssetIds', () => {
++  it('lists only unresolved ids', () => {
++    expect(unresolvedAssetIds([resolved, missing])).toEqual(['a2']);
++  });
++});
+diff --git a/src/components/recovery/degradedLoad.ts b/src/components/recovery/degradedLoad.ts
+new file mode 100644
+index 0000000..aa9d905
+--- /dev/null
++++ b/src/components/recovery/degradedLoad.ts
+@@ -0,0 +1,39 @@
++/**
++ * Degraded-load model — props a future App.tsx can pass without this
++ * slice knowing about IndexedDB, native copies, or autosave.
++ *
++ * A project can keep segment metadata after Chromium evicts media bytes
++ * (`docs/ws3-export/persistence-layer-audit.md` at 01e565d). Opening that
++ * project must not persist. `canPersistRecoveredProject` is the UI-side
++ * gate: if any asset is unresolved, Save is not a legal affordance.
++ */
++
++export type SegmentResolutionStatus = 'resolved' | 'unresolved' | 'missing-asset';
++
++export interface RecoverySegment {
++  id: string;
++  label: string;
++  assetId: string | null;
++  resolutionStatus: SegmentResolutionStatus;
++}
++
++export interface RecoveryAsset {
++  id: string;
++  name: string;
++  unresolved: boolean;
++  nativeCopyExists: boolean;
++  backupExists: boolean;
++}
++
++export function canPersistRecoveredProject(input: {
++  assets: readonly RecoveryAsset[];
++  segments: readonly RecoverySegment[];
++}): boolean {
++  if (input.assets.some((asset) => asset.unresolved)) return false;
++  if (input.segments.some((segment) => segment.resolutionStatus !== 'resolved')) return false;
++  return true;
++}
++
++export function unresolvedAssetIds(assets: readonly RecoveryAsset[]): string[] {
++  return assets.filter((asset) => asset.unresolved).map((asset) => asset.id);
++}
+diff --git a/src/components/recovery/index.ts b/src/components/recovery/index.ts
+new file mode 100644
+index 0000000..fb00ccb
+--- /dev/null
++++ b/src/components/recovery/index.ts
+@@ -0,0 +1,26 @@
++export {
++  canPersistRecoveredProject,
++  unresolvedAssetIds,
++  type RecoveryAsset,
++  type RecoverySegment,
++  type SegmentResolutionStatus,
++} from './degradedLoad';
++export {
++  DegradedProjectRecoveryScreen,
++  type DegradedProjectRecoveryScreenProps,
++} from './DegradedProjectRecoveryScreen';
++export {
++  IdbToNativeMigrationView,
++  type IdbToNativeMigrationStatus,
++  type IdbToNativeMigrationViewProps,
++  type MigrationFailedAsset,
++} from './IdbToNativeMigrationView';
++export {
++  StorageRootRelocationView,
++  type StorageRootRelocationViewProps,
++  type StorageRootValidationState,
++} from './StorageRootRelocationView';
++export {
++  createRecoveryActionsFake,
++  type RecoveryActionsFake,
++} from './recoveryActionsFake';
+diff --git a/src/components/recovery/recoveryActionsFake.test.ts b/src/components/recovery/recoveryActionsFake.test.ts
+new file mode 100644
+index 0000000..8906fab
+--- /dev/null
++++ b/src/components/recovery/recoveryActionsFake.test.ts
+@@ -0,0 +1,19 @@
++import { describe, it, expect } from 'vitest';
++import { createRecoveryActionsFake } from './recoveryActionsFake';
++
++describe('createRecoveryActionsFake', () => {
++  it('records relink, save, resume, retry, and choose-folder without I/O', () => {
++    const fake = createRecoveryActionsFake();
++    fake.onRelink('asset-1');
++    fake.onRelink('asset-2');
++    fake.onSave();
++    fake.onResume();
++    fake.onRetryFailed();
++    fake.onChooseFolder();
++    expect(fake.relinked).toEqual(['asset-1', 'asset-2']);
++    expect(fake.saveCount).toBe(1);
++    expect(fake.resumeCount).toBe(1);
++    expect(fake.retryFailedCount).toBe(1);
++    expect(fake.chooseFolderCount).toBe(1);
++  });
++});
+diff --git a/src/components/recovery/recoveryActionsFake.ts b/src/components/recovery/recoveryActionsFake.ts
+new file mode 100644
+index 0000000..baa5455
+--- /dev/null
++++ b/src/components/recovery/recoveryActionsFake.ts
+@@ -0,0 +1,59 @@
++/**
++ * In-memory doubles for recovery UI actions. Tests and browser-dev hosts
++ * inject these; a later App.tsx swap-in talks to a file picker / native
++ * migrate / folder chooser. This module never imports Tauri or IndexedDB.
++ */
++
++export interface RecoveryActionsFake {
++  onRelink: (assetId: string) => void;
++  onSave: () => void;
++  onResume: () => void;
++  onRetryFailed: () => void;
++  onChooseFolder: () => void;
++  relinked: readonly string[];
++  saveCount: number;
++  resumeCount: number;
++  retryFailedCount: number;
++  chooseFolderCount: number;
++}
++
++export function createRecoveryActionsFake(): RecoveryActionsFake {
++  const relinked: string[] = [];
++  let saveCount = 0;
++  let resumeCount = 0;
++  let retryFailedCount = 0;
++  let chooseFolderCount = 0;
++
++  return {
++    onRelink(assetId: string): void {
++      relinked.push(assetId);
++    },
++    onSave(): void {
++      saveCount += 1;
++    },
++    onResume(): void {
++      resumeCount += 1;
++    },
++    onRetryFailed(): void {
++      retryFailedCount += 1;
++    },
++    onChooseFolder(): void {
++      chooseFolderCount += 1;
++    },
++    get relinked(): readonly string[] {
++      return relinked.slice();
++    },
++    get saveCount(): number {
++      return saveCount;
++    },
++    get resumeCount(): number {
++      return resumeCount;
++    },
++    get retryFailedCount(): number {
++      return retryFailedCount;
++    },
++    get chooseFolderCount(): number {
++      return chooseFolderCount;
++    },
++  };
++}
+-- 
+2.53.0
+
+
+From 2bdabd88f20e4e477e4116569c836d9d2fa09384 Mon Sep 17 00:00:00 2001
+From: Mohtashim <mohtashim9119@gmail.com>
+Date: Sun, 13 Sep 2026 23:54:27 +0500
+Subject: [PATCH 2/5] Add an export-failure message layer keyed to
+ ExportErrorKind with retention-gated Resume.
+
+Keep Resume off unless retainForResume actually retained a manifest, hide raw errors behind Technical details, and route asset_missing to degraded recovery without a save affordance.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+---
+ .cursor/ws3-export-failure-unseen.md          |  16 ++
+ .../recovery/ExportFailureMessage.test.tsx    | 193 ++++++++++++++++++
+ .../recovery/ExportFailureMessage.tsx         | 184 +++++++++++++++++
+ .../ExportFinishShortfallCard.test.tsx        |  42 ++++
+ .../recovery/ExportFinishShortfallCard.tsx    |  62 ++++++
+ .../ExportResumeUnavailableCard.test.tsx      |  36 ++++
+ .../recovery/ExportResumeUnavailableCard.tsx  |  27 +++
+ .../recovery/exportFailureActionsFake.ts      |  40 ++++
+ src/components/recovery/index.ts              |  13 ++
+ .../exportFailure/exportFailureCopy.test.ts   |  55 +++++
+ .../exportFailure/exportFailureCopy.ts        | 106 ++++++++++
+ src/services/exportFailure/index.ts           |  25 +++
+ .../exportFailure/resumeEligibility.test.ts   | 144 +++++++++++++
+ .../exportFailure/resumeEligibility.ts        | 144 +++++++++++++
+ 14 files changed, 1087 insertions(+)
+ create mode 100644 .cursor/ws3-export-failure-unseen.md
+ create mode 100644 src/components/recovery/ExportFailureMessage.test.tsx
+ create mode 100644 src/components/recovery/ExportFailureMessage.tsx
+ create mode 100644 src/components/recovery/ExportFinishShortfallCard.test.tsx
+ create mode 100644 src/components/recovery/ExportFinishShortfallCard.tsx
+ create mode 100644 src/components/recovery/ExportResumeUnavailableCard.test.tsx
+ create mode 100644 src/components/recovery/ExportResumeUnavailableCard.tsx
+ create mode 100644 src/components/recovery/exportFailureActionsFake.ts
+ create mode 100644 src/services/exportFailure/exportFailureCopy.test.ts
+ create mode 100644 src/services/exportFailure/exportFailureCopy.ts
+ create mode 100644 src/services/exportFailure/index.ts
+ create mode 100644 src/services/exportFailure/resumeEligibility.test.ts
+ create mode 100644 src/services/exportFailure/resumeEligibility.ts
+
+diff --git a/.cursor/ws3-export-failure-unseen.md b/.cursor/ws3-export-failure-unseen.md
+new file mode 100644
+index 0000000..1d82013
+--- /dev/null
++++ b/.cursor/ws3-export-failure-unseen.md
+@@ -0,0 +1,16 @@
++# UNSEEN — export-failure message layer
++
++The Prompt-37 register (`U1`–`U24`) lives on `ws3-export-modal`
++(`.cursor/prompt-37-rebase-plan.md` at `c0c0c26`). It is not on this
++branch. New rows for this slice start at **U25**.
++
++| ID | Assumption | How to resolve |
++|---|---|---|
++| U25 | `ExportErrorKind` may gain entries | `EXPORT_FAILURE_COPY` is a **total record** (`satisfies` + `[K in ExportErrorKind]`). A new kind is a `tsc` error until copy is added. Do not invent names; wait for CC's `satisfies`-checked policy record. |
++| U26 | Resume is never keyed on `kind` | Gate is `retentionAttempted` + `source: 'retainForResume'` + `disposition: 'retained'` + `manifestPresent`. `retainForResume` and `destroySession` both emit `"destroyed"` — do not read that string alone. |
++| U27 | `cancelled` and `asset_missing` never resume | Policy exceptions. `asset_missing` routes to `DegradedProjectRecoveryScreen` via `onOpenDegradedRecovery` and never offers Save. |
++| U28 | disk_full is two cards | Preflight (bytes + reclaim, no Resume) vs mid-export (Resume only under U26). Numbers are props. |
++| U29 | Raw errors stay in Technical details | Primary body is dictionary copy only. Tests feed stack/panic/`rawError` and assert they are absent from `[data-testid="export-failure-primary"]`. |
++
++Wiring into `App.tsx` / `useExport` is rebase work — **UNSEEN** which parent
++CC wants. This slice does not mount the cards.
+diff --git a/src/components/recovery/ExportFailureMessage.test.tsx b/src/components/recovery/ExportFailureMessage.test.tsx
+new file mode 100644
+index 0000000..6010c89
+--- /dev/null
++++ b/src/components/recovery/ExportFailureMessage.test.tsx
+@@ -0,0 +1,193 @@
++// @vitest-environment jsdom
++(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
++
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { createRoot, type Root } from 'react-dom/client';
++import { act } from 'react';
++import type { ExportErrorKind } from '../../services/exportPipeline';
++import { formatBytes } from '../../services/webcodecsExport/diskFull';
++import {
++  destroySessionDestroyedDisposition,
++  retainForResumeDestroyedDisposition,
++  retainedForResumeDisposition,
++} from '../../services/exportFailure/resumeEligibility';
++import { ExportFailureMessage, type ExportFailureMessageProps } from './ExportFailureMessage';
++import { createExportFailureActionsFake } from './exportFailureActionsFake';
++
++let container: HTMLDivElement;
++let root: Root;
++
++beforeEach(() => {
++  container = document.createElement('div');
++  document.body.appendChild(container);
++});
++
++afterEach(() => {
++  act(() => root.unmount());
++  container.remove();
++});
++
++const RAW_ERROR = 'thread panicked at src/ffmpeg.rs:442: assertion failed: offset < len';
++const STACK = 'Error: boom\n    at encode (exportWorker.ts:12:3)\n    at driveGlRun (exportPipelineWebCodecs.ts:9:1)';
++const PANIC = 'PANIC: index out of bounds — rustc abort';
++
++const ELIGIBLE = {
++  retentionAttempted: true,
++  sessionDisposition: retainedForResumeDisposition(4_096, '/tmp/kinetix-export-kept'),
++  manifestPresent: true,
++};
++
++const RESUME_CAPABLE_KINDS = [
++  'disk_full',
++  'encode',
++  'concat',
++  'mux',
++  'unknown',
++  'destination_path',
++  'timeline_gap',
++  'ffmpeg_load',
++  'grade_loss_refused',
++] as const satisfies readonly ExportErrorKind[];
++
++async function renderMessage(
++  over: Partial<ExportFailureMessageProps> & Pick<ExportFailureMessageProps, 'kind'>,
++): Promise<ReturnType<typeof createExportFailureActionsFake>> {
++  const fake = createExportFailureActionsFake();
++  const props: ExportFailureMessageProps = {
++    retentionAttempted: false,
++    manifestPresent: false,
++    rawError: RAW_ERROR,
++    stack: STACK,
++    panicText: PANIC,
++    onResume: fake.onResume,
++    onReclaim: fake.onReclaim,
++    onOpenDegradedRecovery: fake.onOpenDegradedRecovery,
++    ...over,
++  };
++  root = createRoot(container);
++  await act(async () => {
++    root.render(<ExportFailureMessage {...props} />);
++  });
++  return fake;
++}
++
++function primaryText(): string {
++  return container.querySelector('[data-testid="export-failure-primary"]')?.textContent ?? '';
++}
++
++describe('ExportFailureMessage — raw diagnostics stay collapsed', () => {
++  it('keeps raw error, stack, and panic out of the primary body', async () => {
++    await renderMessage({ kind: 'unknown', ...ELIGIBLE });
++    const primary = primaryText();
++    expect(primary).not.toContain(RAW_ERROR);
++    expect(primary).not.toContain(STACK);
++    expect(primary).not.toContain(PANIC);
++    expect(primary).not.toContain('ffmpeg.rs:442');
++    expect(primary).not.toContain('PANIC');
++    expect(container.querySelector('[data-testid="export-failure-body"]')?.textContent)
++      .not.toMatch(/destroyed|retained_bytes|assertion failed/i);
++
++    const details = container.querySelector('[data-testid="export-failure-technical-body"]')?.textContent ?? '';
++    expect(details).toContain(RAW_ERROR);
++    expect(details).toContain(STACK);
++    expect(details).toContain(PANIC);
++  });
++});
++
++describe('ExportFailureMessage — Resume from evidence, both branches per kind', () => {
++  it.each(RESUME_CAPABLE_KINDS)('%s shows Resume when retainForResume retained a manifest', async (kind) => {
++    const fake = await renderMessage({
++      kind,
++      ...ELIGIBLE,
++      diskFullVariant: kind === 'disk_full' ? 'mid-export' : undefined,
++    });
++    const resume = container.querySelector<HTMLButtonElement>('[data-testid="export-failure-resume"]');
++    expect(resume).not.toBeNull();
++    expect(primaryText()).toMatch(/resume/i);
++    await act(async () => { resume!.click(); });
++    expect(fake.resumeCount).toBe(1);
++  });
++
++  it.each(RESUME_CAPABLE_KINDS)('%s hides Resume when destroySession emitted destroyed', async (kind) => {
++    await renderMessage({
++      kind,
++      retentionAttempted: true,
++      sessionDisposition: destroySessionDestroyedDisposition(),
++      manifestPresent: false,
++      diskFullVariant: kind === 'disk_full' ? 'mid-export' : undefined,
++    });
++    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
++    expect(container.querySelector('[data-testid="export-resume-unavailable"]')).not.toBeNull();
++  });
++
++  it('does not show Resume for retainForResume.destroyed + retained_bytes=0 (the diagnostic-log case)', async () => {
++    await renderMessage({
++      kind: 'disk_full',
++      diskFullVariant: 'mid-export',
++      retentionAttempted: true,
++      sessionDisposition: retainForResumeDestroyedDisposition('/tmp/gone'),
++      manifestPresent: false,
++    });
++    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
++    expect(container.querySelector('[data-testid="export-resume-unavailable"]')).not.toBeNull();
++  });
++
++  it.each(['cancelled', 'asset_missing'] as const)('%s never shows Resume', async (kind) => {
++    await renderMessage({ kind, ...ELIGIBLE });
++    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
++  });
++});
++
++describe('ExportFailureMessage — disk_full cards', () => {
++  it('preflight shows required / available / reclaimable from props and a reclaim action', async () => {
++    const fake = await renderMessage({
++      kind: 'disk_full',
++      diskFullVariant: 'preflight',
++      requiredBytes: 5_450_000_000,
++      availableBytes: 120_000_000,
++      reclaimableBytes: 400_000_000,
++      showReclaimAction: true,
++      retentionAttempted: false,
++      manifestPresent: false,
++    });
++    expect(container.querySelector('[data-testid="export-failure-preflight-disk"]')).not.toBeNull();
++    expect(container.querySelector('[data-testid="export-failure-required"]')?.textContent)
++      .toBe(formatBytes(5_450_000_000));
++    expect(container.querySelector('[data-testid="export-failure-available"]')?.textContent)
++      .toBe(formatBytes(120_000_000));
++    expect(container.querySelector('[data-testid="export-failure-reclaimable"]')?.textContent)
++      .toBe(formatBytes(400_000_000));
++    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
++    const reclaim = container.querySelector<HTMLButtonElement>('[data-testid="export-failure-reclaim"]');
++    expect(reclaim).not.toBeNull();
++    await act(async () => { reclaim!.click(); });
++    expect(fake.reclaimCount).toBe(1);
++  });
++
++  it('preflight hides Reclaim when showReclaimAction is false, even if the numbers would fit', async () => {
++    await renderMessage({
++      kind: 'disk_full',
++      diskFullVariant: 'preflight',
++      requiredBytes: 100,
++      availableBytes: 40,
++      reclaimableBytes: 80,
++      showReclaimAction: false,
++      retentionAttempted: false,
++      manifestPresent: false,
++    });
++    expect(container.querySelector('[data-testid="export-failure-reclaim"]')).toBeNull();
++  });
++});
++
++describe('ExportFailureMessage — asset_missing', () => {
++  it('never offers Resume or Save and routes to degraded recovery', async () => {
++    const fake = await renderMessage({ kind: 'asset_missing', ...ELIGIBLE });
++    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
++    expect(container.querySelector('[data-testid="recovery-save"]')).toBeNull();
++    expect(primaryText()).not.toMatch(/\bSave\b/);
++    const open = container.querySelector<HTMLButtonElement>('[data-testid="export-failure-open-recovery"]');
++    expect(open).not.toBeNull();
++    await act(async () => { open!.click(); });
++    expect(fake.openDegradedRecoveryCount).toBe(1);
++  });
++});
+diff --git a/src/components/recovery/ExportFailureMessage.tsx b/src/components/recovery/ExportFailureMessage.tsx
+new file mode 100644
+index 0000000..6baabd0
+--- /dev/null
++++ b/src/components/recovery/ExportFailureMessage.tsx
+@@ -0,0 +1,184 @@
++/**
++ * Export-failure message layer — presentation only.
++ *
++ * Copy comes from the total `EXPORT_FAILURE_COPY` record. Resume is derived
++ * from retention evidence inside this tree, never from `kind === 'disk_full'`.
++ * Raw errors, stacks, panics, and disposition strings live only under
++ * Technical details.
++ */
++
++import React from 'react';
++import type { ExportError, ExportErrorKind } from '../../services/exportPipeline';
++import { formatBytes } from '../../services/webcodecsExport/diskFull';
++import {
++  resolveExportFailurePresentation,
++  type DiskFullCardVariant,
++} from '../../services/exportFailure/resumeEligibility';
++import { ExportResumeUnavailableCard } from './ExportResumeUnavailableCard';
++
++export interface ExportFailureMessageProps {
++  kind: ExportErrorKind;
++  retentionAttempted: boolean;
++  sessionDisposition?: ExportError['sessionDisposition'] | null;
++  manifestPresent: boolean;
++  diskFullVariant?: DiskFullCardVariant;
++  requiredBytes?: number;
++  availableBytes?: number;
++  reclaimableBytes?: number;
++  /** Caller-owned. This view does not compare required vs available. */
++  showReclaimAction?: boolean;
++  hardwareFailoverUsed?: boolean;
++  failureVia?: string | null;
++  rawError?: string | null;
++  stack?: string | null;
++  panicText?: string | null;
++  onResume?: () => void;
++  onReclaim?: () => void;
++  onOpenDegradedRecovery?: () => void;
++}
++
++export function ExportFailureMessage({
++  kind,
++  retentionAttempted,
++  sessionDisposition,
++  manifestPresent,
++  diskFullVariant,
++  requiredBytes,
++  availableBytes,
++  reclaimableBytes,
++  showReclaimAction = false,
++  hardwareFailoverUsed,
++  failureVia,
++  rawError,
++  stack,
++  panicText,
++  onResume,
++  onReclaim,
++  onOpenDegradedRecovery,
++}: ExportFailureMessageProps): React.ReactElement {
++  const presentation = resolveExportFailurePresentation({
++    kind,
++    retentionAttempted,
++    sessionDisposition,
++    manifestPresent,
++    diskFullVariant,
++    hardwareFailoverUsed,
++    failureVia,
++  });
++
++  const technicalLines = [
++    `kind=${kind}`,
++    `retentionAttempted=${String(retentionAttempted)}`,
++    `manifestPresent=${String(manifestPresent)}`,
++    sessionDisposition
++      ? `sessionDisposition.source=${sessionDisposition.source}`
++      : 'sessionDisposition=(absent)',
++    sessionDisposition
++      ? `sessionDisposition.disposition=${sessionDisposition.disposition}`
++      : null,
++    failureVia ? `failureVia=${failureVia}` : null,
++    rawError ? `rawError=${rawError}` : null,
++    stack ? `stack=${stack}` : null,
++    panicText ? `panic=${panicText}` : null,
++  ].filter((line): line is string => line !== null);
++
++  return (
++    <div
++      data-testid="export-failure-message"
++      data-kind={kind}
++      data-offer-resume={presentation.offerResume ? 'true' : 'false'}
++      className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-md shadow-2xl"
++    >
++      <div data-testid="export-failure-primary">
++        <h2
++          data-testid="export-failure-title"
++          className="text-sm font-black uppercase tracking-[0.2em] mb-3"
++        >
++          {presentation.title}
++        </h2>
++        <p data-testid="export-failure-body" className="text-[11px] text-gray-300 mb-4">
++          {presentation.body}
++        </p>
++        {presentation.hardwareNote && (
++          <p data-testid="export-failure-hardware" className="text-[11px] text-gray-400 mb-4">
++            {presentation.hardwareNote}
++          </p>
++        )}
++
++        {presentation.showPreflightDisk && (
++          <dl data-testid="export-failure-preflight-disk" className="space-y-2 mb-4">
++            <ByteRow testId="export-failure-required" label="Required" bytes={requiredBytes} />
++            <ByteRow testId="export-failure-available" label="Available" bytes={availableBytes} />
++            <ByteRow testId="export-failure-reclaimable" label="Reclaimable" bytes={reclaimableBytes} />
++          </dl>
++        )}
++
++        {presentation.showResumeUnavailable && <div className="mb-4"><ExportResumeUnavailableCard /></div>}
++
++        <div className="flex flex-col gap-2 mb-4">
++          {presentation.offerResume && (
++            <button
++              type="button"
++              data-testid="export-failure-resume"
++              onClick={() => onResume?.()}
++              className="w-full bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
++            >
++              Resume
++            </button>
++          )}
++          {presentation.showPreflightDisk && showReclaimAction && (
++            <button
++              type="button"
++              data-testid="export-failure-reclaim"
++              onClick={() => onReclaim?.()}
++              className="w-full bg-transparent border border-[#282828] p-3 rounded-xl text-[10px] font-black uppercase tracking-widest text-gray-500 hover:text-white hover:border-gray-500 transition-all"
++            >
++              Reclaim
++            </button>
++          )}
++          {presentation.showDegradedRecovery && (
++            <button
++              type="button"
++              data-testid="export-failure-open-recovery"
++              onClick={() => onOpenDegradedRecovery?.()}
++              className="w-full bg-[#F27D26] text-white p-3 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-400 transition-all"
++            >
++              Open project recovery
++            </button>
++          )}
++        </div>
++      </div>
++
++      <details data-testid="export-failure-technical" className="text-left">
++        <summary className="text-[9px] font-black uppercase tracking-widest text-gray-600 cursor-pointer">
++          Technical details
++        </summary>
++        <pre
++          data-testid="export-failure-technical-body"
++          className="mt-2 text-[10px] text-gray-500 whitespace-pre-wrap break-all"
++        >
++          {technicalLines.join('\n')}
++        </pre>
++      </details>
++    </div>
++  );
++}
++
++function ByteRow({
++  testId,
++  label,
++  bytes,
++}: {
++  testId: string;
++  label: string;
++  bytes: number | undefined;
++}): React.ReactElement {
++  return (
++    <div className="flex items-center justify-between">
++      <dt className="text-[8px] uppercase tracking-widest text-gray-600">{label}</dt>
++      <dd data-testid={testId} className="text-[11px] font-bold text-gray-200">
++        {bytes === undefined ? '—' : formatBytes(bytes)}
++      </dd>
++    </div>
++  );
++}
+diff --git a/src/components/recovery/ExportFinishShortfallCard.test.tsx b/src/components/recovery/ExportFinishShortfallCard.test.tsx
+new file mode 100644
+index 0000000..a1289fe
+--- /dev/null
++++ b/src/components/recovery/ExportFinishShortfallCard.test.tsx
+@@ -0,0 +1,42 @@
++// @vitest-environment jsdom
++(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
++
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { createRoot, type Root } from 'react-dom/client';
++import { act } from 'react';
++import { ExportFinishShortfallCard } from './ExportFinishShortfallCard';
++import { FINISH_SHORTFALL_COPY } from '../../services/exportFailure/exportFailureCopy';
++
++let container: HTMLDivElement;
++let root: Root;
++
++beforeEach(() => {
++  container = document.createElement('div');
++  document.body.appendChild(container);
++});
++
++afterEach(() => {
++  act(() => root.unmount());
++  container.remove();
++});
++
++describe('ExportFinishShortfallCard', () => {
++  it('renders expected, produced, and shortfall from props without subtracting them', async () => {
++    root = createRoot(container);
++    await act(async () => {
++      root.render(
++        <ExportFinishShortfallCard
++          expectedFrames={100}
++          producedFrames={90}
++          shortfallFrames={7}
++        />,
++      );
++    });
++    expect(container.querySelector('[data-testid="export-finish-shortfall-title"]')?.textContent)
++      .toBe(FINISH_SHORTFALL_COPY.title);
++    expect(container.querySelector('[data-testid="export-shortfall-expected"]')?.textContent).toBe('100');
++    expect(container.querySelector('[data-testid="export-shortfall-produced"]')?.textContent).toBe('90');
++    // 7, not 10 — the view must not compute expected - produced.
++    expect(container.querySelector('[data-testid="export-shortfall-missing"]')?.textContent).toBe('7');
++  });
++});
+diff --git a/src/components/recovery/ExportFinishShortfallCard.tsx b/src/components/recovery/ExportFinishShortfallCard.tsx
+new file mode 100644
+index 0000000..ae85c8e
+--- /dev/null
++++ b/src/components/recovery/ExportFinishShortfallCard.tsx
+@@ -0,0 +1,62 @@
++/**
++ * Successful-but-degraded finish (W17 frame shortfall) — presentation only.
++ * Expected / produced / shortfall all arrive as props. This view does not
++ * subtract them.
++ */
++
++import React from 'react';
++import { FINISH_SHORTFALL_COPY } from '../../services/exportFailure/exportFailureCopy';
++
++export interface ExportFinishShortfallCardProps {
++  expectedFrames: number;
++  producedFrames: number;
++  shortfallFrames: number;
++}
++
++export function ExportFinishShortfallCard({
++  expectedFrames,
++  producedFrames,
++  shortfallFrames,
++}: ExportFinishShortfallCardProps): React.ReactElement {
++  return (
++    <div
++      data-testid="export-finish-shortfall"
++      role="status"
++      className="bg-[#111] border border-[#282828] rounded-2xl p-8 w-full max-w-md shadow-2xl"
++    >
++      <h2
++        data-testid="export-finish-shortfall-title"
++        className="text-sm font-black uppercase tracking-[0.2em] mb-3"
++      >
++        {FINISH_SHORTFALL_COPY.title}
++      </h2>
++      <p data-testid="export-finish-shortfall-body" className="text-[11px] text-gray-400 mb-6">
++        {FINISH_SHORTFALL_COPY.body}
++      </p>
++      <dl className="space-y-2">
++        <CountRow testId="export-shortfall-expected" label="Expected frames" value={expectedFrames} />
++        <CountRow testId="export-shortfall-produced" label="Produced frames" value={producedFrames} />
++        <CountRow testId="export-shortfall-missing" label="Shortfall" value={shortfallFrames} />
++      </dl>
++    </div>
++  );
++}
++
++function CountRow({
++  testId,
++  label,
++  value,
++}: {
++  testId: string;
++  label: string;
++  value: number;
++}): React.ReactElement {
++  return (
++    <div className="flex items-center justify-between">
++      <dt className="text-[8px] uppercase tracking-widest text-gray-600">{label}</dt>
++      <dd data-testid={testId} className="text-[11px] font-bold text-gray-200">
++        {value}
++      </dd>
++    </div>
++  );
++}
+diff --git a/src/components/recovery/ExportResumeUnavailableCard.test.tsx b/src/components/recovery/ExportResumeUnavailableCard.test.tsx
+new file mode 100644
+index 0000000..b000479
+--- /dev/null
++++ b/src/components/recovery/ExportResumeUnavailableCard.test.tsx
+@@ -0,0 +1,36 @@
++// @vitest-environment jsdom
++(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
++
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { createRoot, type Root } from 'react-dom/client';
++import { act } from 'react';
++import { ExportResumeUnavailableCard } from './ExportResumeUnavailableCard';
++import { RESUME_UNAVAILABLE_COPY } from '../../services/exportFailure/exportFailureCopy';
++
++let container: HTMLDivElement;
++let root: Root;
++
++beforeEach(() => {
++  container = document.createElement('div');
++  document.body.appendChild(container);
++});
++
++afterEach(() => {
++  act(() => root.unmount());
++  container.remove();
++});
++
++describe('ExportResumeUnavailableCard', () => {
++  it('explains that the session could not be preserved, without naming a kind', async () => {
++    root = createRoot(container);
++    await act(async () => {
++      root.render(<ExportResumeUnavailableCard />);
++    });
++    expect(container.querySelector('[data-testid="export-resume-unavailable-title"]')?.textContent)
++      .toBe(RESUME_UNAVAILABLE_COPY.title);
++    expect(container.querySelector('[data-testid="export-resume-unavailable-body"]')?.textContent)
++      .toBe(RESUME_UNAVAILABLE_COPY.body);
++    expect(container.textContent).not.toMatch(/disk_full|Windows|graphics card paused/i);
++    expect(container.querySelector('[data-testid="export-failure-resume"]')).toBeNull();
++  });
++});
+diff --git a/src/components/recovery/ExportResumeUnavailableCard.tsx b/src/components/recovery/ExportResumeUnavailableCard.tsx
+new file mode 100644
+index 0000000..ad01164
+--- /dev/null
++++ b/src/components/recovery/ExportResumeUnavailableCard.tsx
+@@ -0,0 +1,27 @@
++/**
++ * Resume-unavailable — the no-progress / retention-failed explanation.
++ * Not kind-specific. Presentation only.
++ */
++
++import React from 'react';
++import { RESUME_UNAVAILABLE_COPY } from '../../services/exportFailure/exportFailureCopy';
++
++export function ExportResumeUnavailableCard(): React.ReactElement {
++  return (
++    <div
++      data-testid="export-resume-unavailable"
++      role="status"
++      className="border border-amber-500/40 bg-amber-500/10 rounded-lg px-3 py-2 text-left"
++    >
++      <p
++        data-testid="export-resume-unavailable-title"
++        className="text-[9px] font-black uppercase tracking-widest text-amber-300 mb-1"
++      >
++        {RESUME_UNAVAILABLE_COPY.title}
++      </p>
++      <p data-testid="export-resume-unavailable-body" className="text-[11px] text-amber-100">
++        {RESUME_UNAVAILABLE_COPY.body}
++      </p>
++    </div>
++  );
++}
+diff --git a/src/components/recovery/exportFailureActionsFake.ts b/src/components/recovery/exportFailureActionsFake.ts
+new file mode 100644
+index 0000000..7d5d688
+--- /dev/null
++++ b/src/components/recovery/exportFailureActionsFake.ts
+@@ -0,0 +1,40 @@
++/**
++ * In-memory doubles for the export-failure message layer. No Tauri, no
++ * session directory, no file picker.
++ */
++
++export interface ExportFailureActionsFake {
++  onResume: () => void;
++  onReclaim: () => void;
++  onOpenDegradedRecovery: () => void;
++  resumeCount: number;
++  reclaimCount: number;
++  openDegradedRecoveryCount: number;
++}
++
++export function createExportFailureActionsFake(): ExportFailureActionsFake {
++  let resumeCount = 0;
++  let reclaimCount = 0;
++  let openDegradedRecoveryCount = 0;
++
++  return {
++    onResume(): void {
++      resumeCount += 1;
++    },
++    onReclaim(): void {
++      reclaimCount += 1;
++    },
++    onOpenDegradedRecovery(): void {
++      openDegradedRecoveryCount += 1;
++    },
++    get resumeCount(): number {
++      return resumeCount;
++    },
++    get reclaimCount(): number {
++      return reclaimCount;
++    },
++    get openDegradedRecoveryCount(): number {
++      return openDegradedRecoveryCount;
++    },
++  };
++}
+diff --git a/src/components/recovery/index.ts b/src/components/recovery/index.ts
+index fb00ccb..45c8d4f 100644
+--- a/src/components/recovery/index.ts
++++ b/src/components/recovery/index.ts
+@@ -24,3 +24,16 @@ export {
+   createRecoveryActionsFake,
+   type RecoveryActionsFake,
+ } from './recoveryActionsFake';
++export {
++  ExportFailureMessage,
++  type ExportFailureMessageProps,
++} from './ExportFailureMessage';
++export {
++  ExportFinishShortfallCard,
++  type ExportFinishShortfallCardProps,
++} from './ExportFinishShortfallCard';
++export { ExportResumeUnavailableCard } from './ExportResumeUnavailableCard';
++export {
++  createExportFailureActionsFake,
++  type ExportFailureActionsFake,
++} from './exportFailureActionsFake';
+diff --git a/src/services/exportFailure/exportFailureCopy.test.ts b/src/services/exportFailure/exportFailureCopy.test.ts
+new file mode 100644
+index 0000000..478f00b
+--- /dev/null
++++ b/src/services/exportFailure/exportFailureCopy.test.ts
+@@ -0,0 +1,55 @@
++import { describe, it, expect } from 'vitest';
++import type { ExportErrorKind } from '../exportPipeline';
++import {
++  EXPORT_FAILURE_COPY,
++  NEVER_RESUME_KINDS,
++  RESUME_UNAVAILABLE_COPY,
++} from './exportFailureCopy';
++
++const ALL_KINDS = [
++  'cancelled',
++  'disk_full',
++  'encode',
++  'concat',
++  'mux',
++  'unknown',
++  'destination_path',
++  'asset_missing',
++  'timeline_gap',
++  'ffmpeg_load',
++  'grade_loss_refused',
++] as const satisfies readonly ExportErrorKind[];
++
++type MissingKind = Exclude<ExportErrorKind, (typeof ALL_KINDS)[number]>;
++type ExtraKind = Exclude<(typeof ALL_KINDS)[number], ExportErrorKind>;
++type _UnionLocked = [MissingKind] extends [never] ? ([ExtraKind] extends [never] ? true : never) : never;
++const _unionLocked: _UnionLocked = true;
++void _unionLocked;
++
++describe('EXPORT_FAILURE_COPY — total record over ExportErrorKind', () => {
++  it('has a title and body for every kind, with no invented names', () => {
++    for (const kind of ALL_KINDS) {
++      expect(EXPORT_FAILURE_COPY[kind].title.length).toBeGreaterThan(0);
++      expect(EXPORT_FAILURE_COPY[kind].body.length).toBeGreaterThan(0);
++    }
++    expect(Object.keys(EXPORT_FAILURE_COPY).sort()).toEqual([...ALL_KINDS].sort());
++  });
++
++  it('shared copy does not name a platform or an unproven GPU pause', () => {
++    const joined = ALL_KINDS.map((kind) => {
++      const row = EXPORT_FAILURE_COPY[kind];
++      return `${row.title} ${row.body}`;
++    }).join(' ');
++    expect(joined).not.toMatch(/windows/i);
++    expect(joined).not.toMatch(/graphics card paused/i);
++  });
++
++  it('never-resume kinds are only cancelled and asset_missing', () => {
++    expect([...NEVER_RESUME_KINDS]).toEqual(['cancelled', 'asset_missing']);
++  });
++
++  it('resume-unavailable copy is kind-agnostic', () => {
++    expect(RESUME_UNAVAILABLE_COPY.body).toMatch(/could not be preserved/i);
++    expect(RESUME_UNAVAILABLE_COPY.body).not.toMatch(/disk_full|encode|mux/);
++  });
++});
+diff --git a/src/services/exportFailure/exportFailureCopy.ts b/src/services/exportFailure/exportFailureCopy.ts
+new file mode 100644
+index 0000000..ba77e1f
+--- /dev/null
++++ b/src/services/exportFailure/exportFailureCopy.ts
+@@ -0,0 +1,106 @@
++/**
++ * Operator-facing copy for every `ExportErrorKind`.
++ *
++ * Total record: `tsc` fails if CC adds a kind without a row. Do not invent
++ * kind names. The union may grow — see `.cursor/ws3-export-failure-unseen.md`.
++ *
++ * Shared copy is platform-neutral (no "Windows blocked") and does not
++ * attribute GPU/hardware causes. Hardware wording is a separate optional
++ * note, only when `hardwareFailoverUsed` or a supporting `failureVia` is set.
++ */
++
++import type { ExportErrorKind } from '../exportPipeline';
++
++export interface ExportFailureKindCopy {
++  title: string;
++  body: string;
++}
++
++export type ExportFailureCopyMap = {
++  [K in ExportErrorKind]: ExportFailureKindCopy;
++} & {
++  disk_full: ExportFailureKindCopy & {
++    preflightTitle: string;
++    preflightBody: string;
++    midExportTitle: string;
++    midExportBody: string;
++  };
++};
++
++export const NEVER_RESUME_KINDS = ['cancelled', 'asset_missing'] as const;
++
++type NeverResumeKind = (typeof NEVER_RESUME_KINDS)[number];
++type _NeverResumeIsSubset = NeverResumeKind extends ExportErrorKind ? true : never;
++const _neverResumeIsSubset: _NeverResumeIsSubset = true;
++void _neverResumeIsSubset;
++
++export const EXPORT_FAILURE_COPY = {
++  cancelled: {
++    title: 'Export cancelled',
++    body: 'The export was cancelled. The destination file was not written.',
++  },
++  disk_full: {
++    title: 'Not enough disk space',
++    body: 'The volume ran out of space before the export could finish.',
++    preflightTitle: 'Not enough space to start',
++    preflightBody: 'There is not enough free space to start this export. Free space or reclaim unused export data, then try again.',
++    midExportTitle: 'Disk filled during export',
++    midExportBody: 'The volume ran out of space after encoding had already started.',
++  },
++  encode: {
++    title: 'Encoding stopped',
++    body: 'A video piece could not be finished. The destination file was not written.',
++  },
++  concat: {
++    title: 'Pieces could not be joined',
++    body: 'Encoded pieces were produced, but they could not be joined into one video.',
++  },
++  mux: {
++    title: 'Could not finish the file',
++    body: 'Video and audio could not be combined into the final file.',
++  },
++  unknown: {
++    title: 'Export stopped unexpectedly',
++    body: 'The export stopped before a finished file was written.',
++  },
++  destination_path: {
++    title: 'Save path cannot be used',
++    body: 'The chosen destination cannot be used for this export. Pick a different folder or file name.',
++  },
++  asset_missing: {
++    title: 'Project media is missing',
++    body: 'Media used by this project cannot be resolved. Open recovery to re-link the original files. Saving is blocked until every asset is resolved.',
++  },
++  timeline_gap: {
++    title: 'Timeline is not gapless',
++    body: 'Export refused to start because the timeline is not a gapless partition.',
++  },
++  ffmpeg_load: {
++    title: 'Export engine unavailable',
++    body: 'The export engine could not be loaded, so nothing was encoded.',
++  },
++  grade_loss_refused: {
++    title: 'Export refused to drop grades',
++    body: 'This export would drop visual grades the selected path cannot render, so it was refused before encoding started.',
++  },
++} as const satisfies ExportFailureCopyMap;
++
++export const RESUME_UNAVAILABLE_COPY = {
++  title: 'Nothing to resume',
++  body: 'This export session could not be preserved. There is no checkpoint to continue from — start a new export after addressing the problem.',
++} as const;
++
++export const FINISH_SHORTFALL_COPY = {
++  title: 'Export finished with missing frames',
++  body: 'A file was written, but fewer frames were produced than this timeline required.',
++} as const;
++
++export const HARDWARE_FAILOVER_NOTE =
++  'This export already switched away from hardware encoding after a previous failure on this run.';
++
++export const GRAPHICS_CONTEXT_LOST_NOTE =
++  'The graphics context was lost during this export.';
++
++export function isNeverResumeKind(kind: ExportErrorKind): boolean {
++  return (NEVER_RESUME_KINDS as readonly ExportErrorKind[]).includes(kind);
++}
+diff --git a/src/services/exportFailure/index.ts b/src/services/exportFailure/index.ts
+new file mode 100644
+index 0000000..ca71339
+--- /dev/null
++++ b/src/services/exportFailure/index.ts
+@@ -0,0 +1,25 @@
++export {
++  EXPORT_FAILURE_COPY,
++  FINISH_SHORTFALL_COPY,
++  GRAPHICS_CONTEXT_LOST_NOTE,
++  HARDWARE_FAILOVER_NOTE,
++  NEVER_RESUME_KINDS,
++  RESUME_UNAVAILABLE_COPY,
++  isNeverResumeKind,
++  type ExportFailureCopyMap,
++  type ExportFailureKindCopy,
++} from './exportFailureCopy';
++export {
++  destroySessionDestroyedDisposition,
++  hardwareNoteFor,
++  isResumeEligible,
++  resolveExportFailurePresentation,
++  retainForResumeDestroyedDisposition,
++  retainedForResumeDisposition,
++  shouldMentionHardware,
++  shouldOfferResume,
++  type DiskFullCardVariant,
++  type ExportFailurePresentation,
++  type ExportFailurePresentationInput,
++  type RetentionEvidence,
++} from './resumeEligibility';
+diff --git a/src/services/exportFailure/resumeEligibility.test.ts b/src/services/exportFailure/resumeEligibility.test.ts
+new file mode 100644
+index 0000000..dcc6831
+--- /dev/null
++++ b/src/services/exportFailure/resumeEligibility.test.ts
+@@ -0,0 +1,144 @@
++import { describe, it, expect } from 'vitest';
++import type { ExportErrorKind } from '../exportPipeline';
++import {
++  destroySessionDestroyedDisposition,
++  isResumeEligible,
++  resolveExportFailurePresentation,
++  retainForResumeDestroyedDisposition,
++  retainedForResumeDisposition,
++  shouldOfferResume,
++} from './resumeEligibility';
++
++const ELIGIBLE = {
++  retentionAttempted: true,
++  sessionDisposition: retainedForResumeDisposition(1_024, '/tmp/kinetix-export-1'),
++  manifestPresent: true,
++};
++
++const RESUME_CAPABLE_KINDS = [
++  'disk_full',
++  'encode',
++  'concat',
++  'mux',
++  'unknown',
++  'destination_path',
++  'timeline_gap',
++  'ffmpeg_load',
++  'grade_loss_refused',
++] as const satisfies readonly ExportErrorKind[];
++
++describe('isResumeEligible — retention evidence, not kind', () => {
++  it('is true only when attempted + retainForResume/retained + manifest', () => {
++    expect(isResumeEligible(ELIGIBLE)).toBe(true);
++  });
++
++  it('is false when retention was never attempted', () => {
++    expect(isResumeEligible({ ...ELIGIBLE, retentionAttempted: false })).toBe(false);
++  });
++
++  it('is false when the manifest is absent even if retainForResume says retained', () => {
++    expect(isResumeEligible({ ...ELIGIBLE, manifestPresent: false })).toBe(false);
++  });
++
++  it('does not treat retainForResume.destroyed as resume — even with a manifest (diagnostic log: retained_bytes=0)', () => {
++    expect(isResumeEligible({
++      retentionAttempted: true,
++      sessionDisposition: retainForResumeDestroyedDisposition('/tmp/kinetix-export-1'),
++      manifestPresent: true,
++    })).toBe(false);
++  });
++
++  it('does not treat destroySession.destroyed as resume — same raw string, different enum', () => {
++    const retainDestroyed = retainForResumeDestroyedDisposition('/tmp/a');
++    const destroyDestroyed = destroySessionDestroyedDisposition();
++    expect(retainDestroyed.disposition).toBe('destroyed');
++    expect(destroyDestroyed.disposition).toBe('destroyed');
++    expect(retainDestroyed.source).not.toBe(destroyDestroyed.source);
++    expect(isResumeEligible({
++      retentionAttempted: true,
++      sessionDisposition: destroyDestroyed,
++      manifestPresent: true,
++    })).toBe(false);
++  });
++});
++
++describe('shouldOfferResume — both branches for every resume-capable kind', () => {
++  it.each(RESUME_CAPABLE_KINDS)('%s offers Resume when retention evidence is complete', (kind) => {
++    expect(shouldOfferResume(kind, ELIGIBLE, kind === 'disk_full' ? 'mid-export' : undefined)).toBe(true);
++  });
++
++  it.each(RESUME_CAPABLE_KINDS)('%s hides Resume when destroySession emitted destroyed', (kind) => {
++    expect(shouldOfferResume(kind, {
++      retentionAttempted: true,
++      sessionDisposition: destroySessionDestroyedDisposition(),
++      manifestPresent: false,
++    }, kind === 'disk_full' ? 'mid-export' : undefined)).toBe(false);
++  });
++
++  it.each(['cancelled', 'asset_missing'] as const)(
++    '%s never offers Resume even with complete retention evidence',
++    (kind) => {
++      expect(shouldOfferResume(kind, ELIGIBLE)).toBe(false);
++    },
++  );
++
++  it('disk_full preflight never offers Resume — nothing was encoded', () => {
++    expect(shouldOfferResume('disk_full', ELIGIBLE, 'preflight')).toBe(false);
++  });
++});
++
++describe('resolveExportFailurePresentation', () => {
++  it('routes asset_missing to degraded recovery and forbids save', () => {
++    const view = resolveExportFailurePresentation({ kind: 'asset_missing', ...ELIGIBLE });
++    expect(view.showDegradedRecovery).toBe(true);
++    expect(view.offerResume).toBe(false);
++    expect(view.showSave).toBe(false);
++  });
++
++  it('uses the preflight disk card without resume-unavailable', () => {
++    const view = resolveExportFailurePresentation({
++      kind: 'disk_full',
++      diskFullVariant: 'preflight',
++      retentionAttempted: false,
++      manifestPresent: false,
++    });
++    expect(view.showPreflightDisk).toBe(true);
++    expect(view.offerResume).toBe(false);
++    expect(view.showResumeUnavailable).toBe(false);
++    expect(view.title).toMatch(/start/i);
++  });
++
++  it('shows resume-unavailable on a mid-export failure with no retention', () => {
++    const view = resolveExportFailurePresentation({
++      kind: 'mux',
++      retentionAttempted: true,
++      sessionDisposition: destroySessionDestroyedDisposition(),
++      manifestPresent: false,
++    });
++    expect(view.offerResume).toBe(false);
++    expect(view.showResumeUnavailable).toBe(true);
++  });
++
++  it('mentions hardware only when evidence supports it', () => {
++    const bare = resolveExportFailurePresentation({ kind: 'encode', ...ELIGIBLE });
++    expect(bare.hardwareNote).toBeNull();
++    const failedOver = resolveExportFailurePresentation({
++      kind: 'encode',
++      ...ELIGIBLE,
++      hardwareFailoverUsed: true,
++    });
++    expect(failedOver.hardwareNote).toMatch(/hardware encoding/i);
++    const contextLost = resolveExportFailurePresentation({
++      kind: 'encode',
++      ...ELIGIBLE,
++      failureVia: 'gl-context-lost',
++    });
++    expect(contextLost.hardwareNote).toMatch(/graphics context/i);
++    const watchdog = resolveExportFailurePresentation({
++      kind: 'encode',
++      ...ELIGIBLE,
++      failureVia: 'watchdog',
++    });
++    expect(watchdog.hardwareNote).toBeNull();
++  });
++});
+diff --git a/src/services/exportFailure/resumeEligibility.ts b/src/services/exportFailure/resumeEligibility.ts
+new file mode 100644
+index 0000000..6320608
+--- /dev/null
++++ b/src/services/exportFailure/resumeEligibility.ts
+@@ -0,0 +1,144 @@
++/**
++ * Resume is gated on retention evidence, never on `ExportError.kind`.
++ *
++ * `retainForResume` and `destroySession` both emit the string `destroyed`
++ * from different enums. Never treat `disposition === 'destroyed'` as a
++ * signal either way — require `source: 'retainForResume'` AND
++ * `disposition: 'retained'` AND a confirmed manifest.
++ */
++
++import type { ExportError, ExportErrorKind } from '../exportPipeline';
++import {
++  EXPORT_FAILURE_COPY,
++  GRAPHICS_CONTEXT_LOST_NOTE,
++  HARDWARE_FAILOVER_NOTE,
++  isNeverResumeKind,
++} from './exportFailureCopy';
++
++export type DiskFullCardVariant = 'preflight' | 'mid-export';
++
++export interface RetentionEvidence {
++  retentionAttempted: boolean;
++  sessionDisposition?: ExportError['sessionDisposition'] | null;
++  /** Independent post-hoc reading: `diskStateAfterFailure.manifestPresent`. */
++  manifestPresent: boolean;
++}
++
++export function isResumeEligible(evidence: RetentionEvidence): boolean {
++  if (evidence.retentionAttempted !== true) return false;
++  const disposition = evidence.sessionDisposition;
++  if (!disposition || disposition.source !== 'retainForResume') return false;
++  if (disposition.disposition !== 'retained') return false;
++  return evidence.manifestPresent === true;
++}
++
++export function shouldOfferResume(
++  kind: ExportErrorKind,
++  evidence: RetentionEvidence,
++  diskFullVariant?: DiskFullCardVariant,
++): boolean {
++  if (isNeverResumeKind(kind)) return false;
++  if (kind === 'disk_full' && diskFullVariant === 'preflight') return false;
++  return isResumeEligible(evidence);
++}
++
++export function shouldMentionHardware(input: {
++  hardwareFailoverUsed?: boolean;
++  failureVia?: string | null;
++}): boolean {
++  return input.hardwareFailoverUsed === true || input.failureVia === 'gl-context-lost';
++}
++
++export function hardwareNoteFor(input: {
++  hardwareFailoverUsed?: boolean;
++  failureVia?: string | null;
++}): string | null {
++  if (input.hardwareFailoverUsed === true) return HARDWARE_FAILOVER_NOTE;
++  if (input.failureVia === 'gl-context-lost') return GRAPHICS_CONTEXT_LOST_NOTE;
++  return null;
++}
++
++export interface ExportFailurePresentationInput extends RetentionEvidence {
++  kind: ExportErrorKind;
++  diskFullVariant?: DiskFullCardVariant;
++  hardwareFailoverUsed?: boolean;
++  failureVia?: string | null;
++}
++
++export interface ExportFailurePresentation {
++  title: string;
++  body: string;
++  hardwareNote: string | null;
++  offerResume: boolean;
++  showResumeUnavailable: boolean;
++  showDegradedRecovery: boolean;
++  showPreflightDisk: boolean;
++  showSave: false;
++}
++
++export function resolveExportFailurePresentation(
++  input: ExportFailurePresentationInput,
++): ExportFailurePresentation {
++  const copy = EXPORT_FAILURE_COPY[input.kind];
++  const preflight = input.kind === 'disk_full' && input.diskFullVariant === 'preflight';
++  const offerResume = shouldOfferResume(input.kind, input, input.diskFullVariant);
++
++  let title: string = copy.title;
++  let body: string = copy.body;
++  if (input.kind === 'disk_full') {
++    const disk = EXPORT_FAILURE_COPY.disk_full;
++    if (preflight) {
++      title = disk.preflightTitle;
++      body = disk.preflightBody;
++    } else if (input.diskFullVariant === 'mid-export') {
++      title = disk.midExportTitle;
++      body = disk.midExportBody;
++    }
++  }
++
++  const showDegradedRecovery = input.kind === 'asset_missing';
++  const showResumeUnavailable =
++    !offerResume &&
++    !isNeverResumeKind(input.kind) &&
++    !preflight;
++
++  return {
++    title,
++    body,
++    hardwareNote: hardwareNoteFor(input),
++    offerResume,
++    showResumeUnavailable,
++    showDegradedRecovery,
++    showPreflightDisk: preflight,
++    showSave: false,
++  };
++}
++
++export function retainedForResumeDisposition(
++  retainedBytes: number,
++  path: string,
++): NonNullable<ExportError['sessionDisposition']> {
++  return {
++    source: 'retainForResume',
++    disposition: 'retained',
++    retainedBytes,
++    reclaimedBytes: 0,
++    path,
++  };
++}
++
++export function retainForResumeDestroyedDisposition(
++  path: string,
++): NonNullable<ExportError['sessionDisposition']> {
++  return {
++    source: 'retainForResume',
++    disposition: 'destroyed',
++    retainedBytes: 0,
++    reclaimedBytes: 0,
++    path,
++  };
++}
++
++export function destroySessionDestroyedDisposition(): NonNullable<ExportError['sessionDisposition']> {
++  return { source: 'destroySession', disposition: 'destroyed' };
++}
+-- 
+2.53.0
+
+
+From ce521a4493c5a653f20dce879335620ea7e56dcc Mon Sep 17 00:00:00 2001
+From: Mohtashim <mohtashim9119@gmail.com>
+Date: Mon, 14 Sep 2026 00:06:29 +0500
+Subject: [PATCH 3/5] Add pure re-link matching and a per-asset state machine
+ as the only exit from item A's degraded load.
+
+Never auto-accept a non-exact proposal, and keep the project poisoned until every asset is written, without guessing item B's command names.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+---
+ .cursor/ws3-export-failure-unseen.md          |   2 +-
+ .cursor/ws3-relink-unseen.md                  |  16 ++
+ .../folderBatchRelink.test.ts                 |  43 +++++
+ .../relinkResolution/folderBatchRelink.ts     |  23 +++
+ src/services/relinkResolution/index.ts        |  33 ++++
+ .../relinkResolution/matchProposals.test.ts   | 102 +++++++++++
+ .../relinkResolution/matchProposals.ts        | 167 ++++++++++++++++++
+ .../relinkStateMachine.test.ts                | 136 ++++++++++++++
+ .../relinkResolution/relinkStateMachine.ts    | 142 +++++++++++++++
+ src/services/relinkResolution/types.ts        |  60 +++++++
+ 10 files changed, 723 insertions(+), 1 deletion(-)
+ create mode 100644 .cursor/ws3-relink-unseen.md
+ create mode 100644 src/services/relinkResolution/folderBatchRelink.test.ts
+ create mode 100644 src/services/relinkResolution/folderBatchRelink.ts
+ create mode 100644 src/services/relinkResolution/index.ts
+ create mode 100644 src/services/relinkResolution/matchProposals.test.ts
+ create mode 100644 src/services/relinkResolution/matchProposals.ts
+ create mode 100644 src/services/relinkResolution/relinkStateMachine.test.ts
+ create mode 100644 src/services/relinkResolution/relinkStateMachine.ts
+ create mode 100644 src/services/relinkResolution/types.ts
+
+diff --git a/.cursor/ws3-export-failure-unseen.md b/.cursor/ws3-export-failure-unseen.md
+index 1d82013..d0e8ab2 100644
+--- a/.cursor/ws3-export-failure-unseen.md
++++ b/.cursor/ws3-export-failure-unseen.md
+@@ -6,7 +6,7 @@ branch. New rows for this slice start at **U25**.
+ 
+ | ID | Assumption | How to resolve |
+ |---|---|---|
+-| U25 | `ExportErrorKind` may gain entries | `EXPORT_FAILURE_COPY` is a **total record** (`satisfies` + `[K in ExportErrorKind]`). A new kind is a `tsc` error until copy is added. Do not invent names; wait for CC's `satisfies`-checked policy record. |
++| U25 | `ExportErrorKind` may gain or be renamed by item F | `EXPORT_FAILURE_COPY` is a **total record** (`satisfies` + `[K in ExportErrorKind]`). Adding/renaming a kind without a matching copy row is a `tsc` error. Verified still total after rebase onto `64d2c5f` (same 11 kinds). Do not invent names. |
+ | U26 | Resume is never keyed on `kind` | Gate is `retentionAttempted` + `source: 'retainForResume'` + `disposition: 'retained'` + `manifestPresent`. `retainForResume` and `destroySession` both emit `"destroyed"` — do not read that string alone. |
+ | U27 | `cancelled` and `asset_missing` never resume | Policy exceptions. `asset_missing` routes to `DegradedProjectRecoveryScreen` via `onOpenDegradedRecovery` and never offers Save. |
+ | U28 | disk_full is two cards | Preflight (bytes + reclaim, no Resume) vs mid-export (Resume only under U26). Numbers are props. |
+diff --git a/.cursor/ws3-relink-unseen.md b/.cursor/ws3-relink-unseen.md
+new file mode 100644
+index 0000000..4172d3f
+--- /dev/null
++++ b/.cursor/ws3-relink-unseen.md
+@@ -0,0 +1,16 @@
++# UNSEEN — re-link resolution (item B)
++
++CC item A (`64d2c5f`) poisons a project whose `project.json` metadata
++survived but whose bytes are unresolvable. Re-link is the only exit.
++Item B will expose the real resolution payload and native command.
++**Do not guess command names.** This slice is pure matching + a state
++machine against caller-supplied descriptors.
++
++| ID | Assumption | How to resolve |
++|---|---|---|
++| U30 | Unresolved-asset props are `{ id, name, type, duration }` from `Asset` in project.json | Item B's real row may add `nativeFps`, `addedAt`, mime, or a native-copy path. Map in the host; do not invent fields here. |
++| U31 | Candidate files arrive as `{ id, name, type, duration, path }` | Whether the picker yields a path, a file descriptor, or a mime-probed blob is **unverified**. Duration/type are props — this module does not probe. |
++| U32 | Item B command name / IPC args | Unknown. Do not name a Tauri command. Host wires `confirm`/`written` after the real write. |
++| U33 | Native copy / backup existence | Recovery UI already treats these as booleans. Whether item B returns paths or only flags is unverified. |
++| U34 | Folder pick listing | This slice assumes the host already enumerated candidates. Directory walk is item B's job. |
++| U35 | Item F may add/rename `ExportErrorKind` | `EXPORT_FAILURE_COPY` remains a total record (`satisfies` + `[K in ExportErrorKind]`). A new/renamed kind is a `tsc` error until copy is added. See U25. |
+diff --git a/src/services/relinkResolution/folderBatchRelink.test.ts b/src/services/relinkResolution/folderBatchRelink.test.ts
+new file mode 100644
+index 0000000..9846fea
+--- /dev/null
++++ b/src/services/relinkResolution/folderBatchRelink.test.ts
+@@ -0,0 +1,43 @@
++import { describe, it, expect } from 'vitest';
++import { proposeFolderBatchRelink } from './folderBatchRelink';
++import { canLeaveDegradedRelinkFlow, confirmRelinkProposal, markRelinkWritten } from './relinkStateMachine';
++import { proposalsForAsset } from './matchProposals';
++import type { RelinkCandidate, UnresolvedAssetMetadata } from './types';
++
++const assets: UnresolvedAssetMetadata[] = [
++  { id: 'a1', name: 'hero-clip.mp4', type: 'video', duration: 10 },
++  { id: 'a2', name: 'vo.wav', type: 'audio', duration: 30 },
++  { id: 'a3', name: 'still.png', type: 'image', duration: null },
++];
++
++const folder: RelinkCandidate[] = [
++  { id: 'c1', name: 'hero-clip.mp4', type: 'video', duration: 10, path: '/Footage/hero-clip.mp4' },
++  { id: 'c2', name: 'vo.wav', type: 'audio', duration: 30, path: '/Footage/vo.wav' },
++  { id: 'c3', name: 'still.png', type: 'image', duration: null, path: '/Footage/still.png' },
++  { id: 'c4', name: 'scratch.mp4', type: 'video', duration: 2, path: '/Footage/scratch.mp4' },
++];
++
++describe('proposeFolderBatchRelink', () => {
++  it('matches many assets from one candidate set without writing or confirming', () => {
++    const { proposals, flow } = proposeFolderBatchRelink(assets, folder);
++    expect(flow.map((row) => row.phase)).toEqual(['proposed', 'proposed', 'proposed']);
++    expect(proposalsForAsset(proposals, 'a1')[0]?.confidence).toBe('exact');
++    expect(proposalsForAsset(proposals, 'a2')[0]?.confidence).toBe('exact');
++    expect(proposalsForAsset(proposals, 'a3')[0]?.confidence).toBe('exact');
++    expect(canLeaveDegradedRelinkFlow(flow)).toBe(false);
++  });
++
++  it('still requires a confirm+written step per asset after a folder pick', () => {
++    const { flow } = proposeFolderBatchRelink(assets, folder);
++    let next = flow;
++    for (const [assetId, candidateId] of [['a1', 'c1'], ['a2', 'c2'], ['a3', 'c3']] as const) {
++      const confirmed = confirmRelinkProposal(next, assetId, candidateId);
++      expect(confirmed.ok).toBe(true);
++      const written = markRelinkWritten(confirmed.flow, assetId);
++      expect(written.ok).toBe(true);
++      next = written.flow;
++      if (assetId !== 'a3') expect(canLeaveDegradedRelinkFlow(next)).toBe(false);
++    }
++    expect(canLeaveDegradedRelinkFlow(next)).toBe(true);
++  });
++});
+diff --git a/src/services/relinkResolution/folderBatchRelink.ts b/src/services/relinkResolution/folderBatchRelink.ts
+new file mode 100644
+index 0000000..500a505
+--- /dev/null
++++ b/src/services/relinkResolution/folderBatchRelink.ts
+@@ -0,0 +1,23 @@
++/**
++ * Folder pick → one batch of candidate descriptors → per-asset proposals.
++ * Pure: the caller already listed the folder. This does not walk a path.
++ */
++
++import { proposeRelinkMatches } from './matchProposals';
++import { applyRelinkProposals, createRelinkFlow } from './relinkStateMachine';
++import type { RelinkAssetRecord, RelinkCandidate, RelinkProposal, UnresolvedAssetMetadata } from './types';
++
++export interface FolderBatchRelinkResult {
++  proposals: RelinkProposal[];
++  flow: RelinkAssetRecord[];
++}
++
++export function proposeFolderBatchRelink(
++  assets: readonly UnresolvedAssetMetadata[],
++  candidates: readonly RelinkCandidate[],
++): FolderBatchRelinkResult {
++  const proposals = proposeRelinkMatches(assets, candidates);
++  const seeded = createRelinkFlow(assets.map((asset) => asset.id));
++  const applied = applyRelinkProposals(seeded, proposals);
++  return { proposals, flow: applied.flow };
++}
+diff --git a/src/services/relinkResolution/index.ts b/src/services/relinkResolution/index.ts
+new file mode 100644
+index 0000000..f430786
+--- /dev/null
++++ b/src/services/relinkResolution/index.ts
+@@ -0,0 +1,33 @@
++export {
++  EXACT_DURATION_ABS_SECONDS,
++  EXACT_DURATION_RATIO,
++  PROBABLE_DURATION_ABS_SECONDS,
++  PROBABLE_DURATION_RATIO,
++  classifyRelinkMatch,
++  confirmableProposals,
++  normalizeRelinkName,
++  proposeRelinkMatches,
++  proposalsForAsset,
++  relinkNameStem,
++} from './matchProposals';
++export {
++  applyRelinkProposals,
++  canLeaveDegradedRelinkFlow,
++  confirmRelinkProposal,
++  createRelinkFlow,
++  markRelinkFailed,
++  markRelinkWritten,
++  phasesOf,
++} from './relinkStateMachine';
++export { proposeFolderBatchRelink, type FolderBatchRelinkResult } from './folderBatchRelink';
++export type {
++  RelinkAssetRecord,
++  RelinkAssetType,
++  RelinkCandidate,
++  RelinkConfidence,
++  RelinkMatchBasis,
++  RelinkPhase,
++  RelinkProposal,
++  RelinkTransitionResult,
++  UnresolvedAssetMetadata,
++} from './types';
+diff --git a/src/services/relinkResolution/matchProposals.test.ts b/src/services/relinkResolution/matchProposals.test.ts
+new file mode 100644
+index 0000000..8574fad
+--- /dev/null
++++ b/src/services/relinkResolution/matchProposals.test.ts
+@@ -0,0 +1,102 @@
++import { describe, it, expect } from 'vitest';
++import {
++  classifyRelinkMatch,
++  proposeRelinkMatches,
++  proposalsForAsset,
++} from './matchProposals';
++import type { RelinkCandidate, UnresolvedAssetMetadata } from './types';
++
++const video = (over: Partial<UnresolvedAssetMetadata> & Pick<UnresolvedAssetMetadata, 'id' | 'name'>): UnresolvedAssetMetadata => ({
++  type: 'video',
++  duration: 12.5,
++  ...over,
++});
++
++const candidate = (over: Partial<RelinkCandidate> & Pick<RelinkCandidate, 'id' | 'name'>): RelinkCandidate => ({
++  type: 'video',
++  duration: 12.5,
++  path: `/Users/me/Footage/${over.name}`,
++  ...over,
++});
++
++describe('classifyRelinkMatch', () => {
++  it('is exact when normalized name, type, and duration all agree', () => {
++    const result = classifyRelinkMatch(
++      video({ id: 'a1', name: 'Hero_Clip.MP4' }),
++      candidate({ id: 'c1', name: 'hero clip.mp4' }),
++    );
++    expect(result.confidence).toBe('exact');
++    expect(result.basis).toEqual({ name: 'exact', type: 'match', duration: 'within-exact' });
++  });
++
++  it('is exact for images when name and type match and duration is absent on both', () => {
++    const result = classifyRelinkMatch(
++      { id: 'a1', name: 'still.png', type: 'image', duration: null },
++      { id: 'c1', name: 'still.png', type: 'image', duration: null, path: '/stills/still.png' },
++    );
++    expect(result.confidence).toBe('exact');
++    expect(result.basis.duration).toBe('not-applicable');
++  });
++
++  it('is probable when the name is similar or duration is only within probable slack', () => {
++    const similar = classifyRelinkMatch(
++      video({ id: 'a1', name: 'hero-clip.mp4' }),
++      candidate({ id: 'c1', name: 'hero-clip-final.mp4' }),
++    );
++    expect(similar.confidence).toBe('probable');
++    expect(similar.basis.name).toBe('similar');
++
++    const durationOff = classifyRelinkMatch(
++      video({ id: 'a1', name: 'hero-clip.mp4' }),
++      candidate({ id: 'c1', name: 'hero-clip.mp4', duration: 13.4 }),
++    );
++    expect(durationOff.confidence).toBe('probable');
++    expect(durationOff.basis.duration).toBe('within-probable');
++  });
++
++  it('rejects type mismatch and duration way outside tolerance', () => {
++    const typeMismatch = classifyRelinkMatch(
++      video({ id: 'a1', name: 'hero-clip.mp4' }),
++      candidate({ id: 'c1', name: 'hero-clip.mp4', type: 'audio', duration: 12.5 }),
++    );
++    expect(typeMismatch.confidence).toBe('rejected');
++    expect(typeMismatch.notes.join(' ')).toMatch(/type mismatch/);
++
++    const durationWayOff = classifyRelinkMatch(
++      video({ id: 'a1', name: 'hero-clip.mp4' }),
++      candidate({ id: 'c1', name: 'hero-clip.mp4', duration: 120 }),
++    );
++    expect(durationWayOff.confidence).toBe('rejected');
++    expect(durationWayOff.notes.join(' ')).toMatch(/duration/);
++  });
++});
++
++describe('proposeRelinkMatches — ambiguity', () => {
++  it('ranks one-to-many: one asset, several candidates, exact before probable', () => {
++    const proposals = proposeRelinkMatches(
++      [video({ id: 'a1', name: 'hero-clip.mp4' })],
++      [
++        candidate({ id: 'c-off', name: 'hero-clip-final.mp4' }),
++        candidate({ id: 'c-exact', name: 'hero-clip.mp4' }),
++        candidate({ id: 'c-wrong', name: 'other.mp4', duration: 3, type: 'audio' }),
++      ],
++    );
++    const forAsset = proposalsForAsset(proposals, 'a1');
++    expect(forAsset.map((row) => row.candidateId)).toEqual(['c-exact', 'c-off', 'c-wrong']);
++    expect(forAsset.map((row) => row.confidence)).toEqual(['exact', 'probable', 'rejected']);
++  });
++
++  it('flags many-to-one: two assets, one confirmable candidate', () => {
++    const proposals = proposeRelinkMatches(
++      [video({ id: 'a1', name: 'hero-clip.mp4' }), video({ id: 'a2', name: 'hero-clip.mp4' })],
++      [candidate({ id: 'c-shared', name: 'hero-clip.mp4' })],
++    );
++    const a1 = proposalsForAsset(proposals, 'a1')[0];
++    const a2 = proposalsForAsset(proposals, 'a2')[0];
++    expect(a1?.confidence).toBe('exact');
++    expect(a2?.confidence).toBe('exact');
++    expect(a1?.manyToOneAssetIds).toEqual(['a2']);
++    expect(a2?.manyToOneAssetIds).toEqual(['a1']);
++    expect(a1?.notes.join(' ')).toMatch(/also matches a2/);
++  });
++});
+diff --git a/src/services/relinkResolution/matchProposals.ts b/src/services/relinkResolution/matchProposals.ts
+new file mode 100644
+index 0000000..c1f36b6
+--- /dev/null
++++ b/src/services/relinkResolution/matchProposals.ts
+@@ -0,0 +1,167 @@
++/**
++ * Pure ranking of re-link candidates against unresolved asset metadata.
++ * Never auto-accepts. Even an `exact` row is only a proposal.
++ */
++
++import type {
++  RelinkCandidate,
++  RelinkConfidence,
++  RelinkMatchBasis,
++  RelinkProposal,
++  UnresolvedAssetMetadata,
++} from './types';
++
++/** Absolute slack (seconds) for an exact duration match. */
++export const EXACT_DURATION_ABS_SECONDS = 0.25;
++/** Relative slack for an exact duration match. */
++export const EXACT_DURATION_RATIO = 0.02;
++/** Absolute slack (seconds) for a probable duration match. */
++export const PROBABLE_DURATION_ABS_SECONDS = 2;
++/** Relative slack for a probable duration match. */
++export const PROBABLE_DURATION_RATIO = 0.15;
++
++export function normalizeRelinkName(name: string): string {
++  return name.trim().toLowerCase().replace(/[_]+/g, ' ').replace(/\s+/g, ' ');
++}
++
++export function relinkNameStem(name: string): string {
++  const normalized = normalizeRelinkName(name);
++  return normalized.replace(/\.[a-z0-9]+$/, '');
++}
++
++function levenshtein(a: string, b: string): number {
++  if (a === b) return 0;
++  if (a.length === 0) return b.length;
++  if (b.length === 0) return a.length;
++  const prev: number[] = Array.from({ length: b.length + 1 }, (_, i) => i);
++  const curr: number[] = Array.from({ length: b.length + 1 }, () => 0);
++  for (let i = 1; i <= a.length; i += 1) {
++    curr[0] = i;
++    for (let j = 1; j <= b.length; j += 1) {
++      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
++      curr[j] = Math.min((prev[j] ?? 0) + 1, (curr[j - 1] ?? 0) + 1, (prev[j - 1] ?? 0) + cost);
++    }
++    for (let j = 0; j <= b.length; j += 1) prev[j] = curr[j] ?? 0;
++  }
++  return prev[b.length] ?? b.length;
++}
++
++function nameSimilarity(assetName: string, candidateName: string): RelinkMatchBasis['name'] {
++  const a = relinkNameStem(assetName);
++  const b = relinkNameStem(candidateName);
++  if (a === b && a.length > 0) return 'exact';
++  if (a.length >= 3 && b.length >= 3 && (a.includes(b) || b.includes(a))) return 'similar';
++  const longest = Math.max(a.length, b.length, 1);
++  const ratio = 1 - levenshtein(a, b) / longest;
++  return ratio >= 0.75 ? 'similar' : 'unrelated';
++}
++
++function durationBand(
++  assetDuration: number | null,
++  candidateDuration: number | null,
++): RelinkMatchBasis['duration'] {
++  if (assetDuration === null && candidateDuration === null) return 'not-applicable';
++  if (assetDuration === null || candidateDuration === null) return 'within-probable';
++  const delta = Math.abs(assetDuration - candidateDuration);
++  const exactSlack = Math.max(EXACT_DURATION_ABS_SECONDS, assetDuration * EXACT_DURATION_RATIO);
++  const probableSlack = Math.max(PROBABLE_DURATION_ABS_SECONDS, assetDuration * PROBABLE_DURATION_RATIO);
++  if (delta <= exactSlack) return 'within-exact';
++  if (delta <= probableSlack) return 'within-probable';
++  return 'mismatch';
++}
++
++export function classifyRelinkMatch(
++  asset: UnresolvedAssetMetadata,
++  candidate: RelinkCandidate,
++): { confidence: RelinkConfidence; basis: RelinkMatchBasis; notes: string[] } {
++  const name = nameSimilarity(asset.name, candidate.name);
++  const type: RelinkMatchBasis['type'] = asset.type === candidate.type ? 'match' : 'mismatch';
++  const duration = durationBand(asset.duration, candidate.duration);
++  const basis: RelinkMatchBasis = { name, type, duration };
++  const notes: string[] = [];
++
++  if (type === 'mismatch') {
++    notes.push(`type mismatch (${asset.type} vs ${candidate.type})`);
++    return { confidence: 'rejected', basis, notes };
++  }
++  if (duration === 'mismatch') {
++    notes.push('duration outside probable tolerance');
++    return { confidence: 'rejected', basis, notes };
++  }
++  if (name === 'exact' && (duration === 'within-exact' || duration === 'not-applicable')) {
++    return { confidence: 'exact', basis, notes };
++  }
++  if (name === 'unrelated' && duration !== 'within-exact') {
++    notes.push('name unrelated and duration not an exact match');
++    return { confidence: 'rejected', basis, notes };
++  }
++  if (name === 'similar') notes.push('name is similar, not exact');
++  if (duration === 'within-probable') notes.push('duration is within probable tolerance only');
++  return { confidence: 'probable', basis, notes };
++}
++
++function rankScore(proposal: RelinkProposal): number {
++  const confidenceRank = proposal.confidence === 'exact' ? 0 : proposal.confidence === 'probable' ? 1 : 2;
++  const nameRank = proposal.basis.name === 'exact' ? 0 : proposal.basis.name === 'similar' ? 1 : 2;
++  return confidenceRank * 10 + nameRank;
++}
++
++function annotateManyToOne(proposals: RelinkProposal[]): RelinkProposal[] {
++  const confirmableByCandidate = new Map<string, string[]>();
++  for (const proposal of proposals) {
++    if (proposal.confidence === 'rejected') continue;
++    const ids = confirmableByCandidate.get(proposal.candidateId) ?? [];
++    ids.push(proposal.assetId);
++    confirmableByCandidate.set(proposal.candidateId, ids);
++  }
++  return proposals.map((proposal) => {
++    const claimants = confirmableByCandidate.get(proposal.candidateId) ?? [];
++    if (claimants.length <= 1 || proposal.confidence === 'rejected') return proposal;
++    const others = claimants.filter((id) => id !== proposal.assetId);
++    return {
++      ...proposal,
++      manyToOneAssetIds: others,
++      notes: [...proposal.notes, `candidate also matches ${others.join(', ')}`],
++    };
++  });
++}
++
++/**
++ * Rank every candidate against every unresolved asset. One-to-many is the
++ * natural per-asset list; many-to-one is flagged on each shared candidate.
++ */
++export function proposeRelinkMatches(
++  assets: readonly UnresolvedAssetMetadata[],
++  candidates: readonly RelinkCandidate[],
++): RelinkProposal[] {
++  const raw: RelinkProposal[] = [];
++  for (const asset of assets) {
++    const perAsset: RelinkProposal[] = candidates.map((candidate) => {
++      const classified = classifyRelinkMatch(asset, candidate);
++      return {
++        assetId: asset.id,
++        candidateId: candidate.id,
++        confidence: classified.confidence,
++        basis: classified.basis,
++        manyToOneAssetIds: [],
++        notes: classified.notes,
++      };
++    });
++    perAsset.sort((a, b) => rankScore(a) - rankScore(b));
++    raw.push(...perAsset);
++  }
++  return annotateManyToOne(raw);
++}
++
++export function proposalsForAsset(
++  proposals: readonly RelinkProposal[],
++  assetId: string,
++): RelinkProposal[] {
++  return proposals.filter((proposal) => proposal.assetId === assetId);
++}
++
++export function confirmableProposals(
++  proposals: readonly RelinkProposal[],
++): RelinkProposal[] {
++  return proposals.filter((proposal) => proposal.confidence !== 'rejected');
++}
+diff --git a/src/services/relinkResolution/relinkStateMachine.test.ts b/src/services/relinkResolution/relinkStateMachine.test.ts
+new file mode 100644
+index 0000000..583f6d6
+--- /dev/null
++++ b/src/services/relinkResolution/relinkStateMachine.test.ts
+@@ -0,0 +1,136 @@
++import { describe, it, expect } from 'vitest';
++import { canPersistRecoveredProject } from '../../components/recovery/degradedLoad';
++import { proposeRelinkMatches } from './matchProposals';
++import {
++  applyRelinkProposals,
++  canLeaveDegradedRelinkFlow,
++  confirmRelinkProposal,
++  createRelinkFlow,
++  markRelinkFailed,
++  markRelinkWritten,
++  phasesOf,
++} from './relinkStateMachine';
++import type { RelinkAssetRecord, RelinkCandidate, RelinkPhase, UnresolvedAssetMetadata } from './types';
++
++const assetA: UnresolvedAssetMetadata = { id: 'a1', name: 'hero-clip.mp4', type: 'video', duration: 10 };
++const assetB: UnresolvedAssetMetadata = { id: 'a2', name: 'b-roll.mp4', type: 'video', duration: 8 };
++const candA: RelinkCandidate = { id: 'c1', name: 'hero-clip.mp4', type: 'video', duration: 10, path: '/m/hero-clip.mp4' };
++const candB: RelinkCandidate = { id: 'c2', name: 'b-roll.mp4', type: 'video', duration: 8, path: '/m/b-roll.mp4' };
++
++function seedProposed(assets: UnresolvedAssetMetadata[], candidates: RelinkCandidate[]): RelinkAssetRecord[] {
++  const applied = applyRelinkProposals(createRelinkFlow(assets.map((a) => a.id)), proposeRelinkMatches(assets, candidates));
++  expect(applied.ok).toBe(true);
++  return applied.flow;
++}
++
++function writeAll(flow: RelinkAssetRecord[], pairs: Array<[string, string]>): RelinkAssetRecord[] {
++  let next = flow;
++  for (const [assetId, candidateId] of pairs) {
++    const confirmed = confirmRelinkProposal(next, assetId, candidateId);
++    expect(confirmed.ok).toBe(true);
++    const written = markRelinkWritten(confirmed.flow, assetId);
++    expect(written.ok).toBe(true);
++    next = written.flow;
++  }
++  return next;
++}
++
++describe('relink state machine', () => {
++  it('starts unresolved and never auto-confirms an exact match', () => {
++    const flow = seedProposed([assetA], [candA]);
++    expect(phasesOf(flow)).toEqual(['proposed']);
++    expect(flow[0]?.proposals[0]?.confidence).toBe('exact');
++    expect(flow[0]?.confirmedCandidateId).toBeNull();
++    expect(canLeaveDegradedRelinkFlow(flow)).toBe(false);
++  });
++
++  it('walks unresolved → proposed → confirmed → written', () => {
++    let flow = seedProposed([assetA], [candA]);
++    const confirmed = confirmRelinkProposal(flow, 'a1', 'c1');
++    expect(confirmed.ok).toBe(true);
++    expect(phasesOf(confirmed.flow)).toEqual(['confirmed']);
++    const written = markRelinkWritten(confirmed.flow, 'a1');
++    expect(written.ok).toBe(true);
++    expect(phasesOf(written.flow)).toEqual(['written']);
++    expect(canLeaveDegradedRelinkFlow(written.flow)).toBe(true);
++  });
++
++  it('refuses to confirm a rejected proposal or to skip proposed', () => {
++    const flow = seedProposed(
++      [assetA],
++      [{ id: 'c-audio', name: 'hero-clip.mp4', type: 'audio', duration: 10, path: '/m/x.wav' }],
++    );
++    expect(phasesOf(flow)).toEqual(['unresolved']);
++    expect(confirmRelinkProposal(flow, 'a1', 'c-audio').ok).toBe(false);
++    expect(markRelinkWritten(createRelinkFlow(['a1']), 'a1').ok).toBe(false);
++  });
++
++  it('will not confirm the same candidate onto two assets', () => {
++    const shared: RelinkCandidate = { id: 'c-shared', name: 'hero-clip.mp4', type: 'video', duration: 10, path: '/m/hero-clip.mp4' };
++    const twin: UnresolvedAssetMetadata = { id: 'a2', name: 'hero-clip.mp4', type: 'video', duration: 10 };
++    let flow = seedProposed([assetA, twin], [shared]);
++    const first = confirmRelinkProposal(flow, 'a1', 'c-shared');
++    expect(first.ok).toBe(true);
++    const second = confirmRelinkProposal(first.flow, 'a2', 'c-shared');
++    expect(second.ok).toBe(false);
++    if (second.ok) throw new Error('expected confirm to fail');
++    expect(second.reason).toMatch(/already confirmed/);
++    expect(canLeaveDegradedRelinkFlow(first.flow)).toBe(false);
++  });
++
++  it('marks failed as terminal and blocks leave-degraded', () => {
++    const failed = markRelinkFailed(createRelinkFlow(['a1']), 'a1');
++    expect(failed.ok).toBe(true);
++    expect(phasesOf(failed.flow)).toEqual(['failed']);
++    expect(canLeaveDegradedRelinkFlow(failed.flow)).toBe(false);
++    expect(markRelinkWritten(failed.flow, 'a1').ok).toBe(false);
++    expect(markRelinkFailed(writeAll(seedProposed([assetA], [candA]), [['a1', 'c1']]), 'a1').ok).toBe(false);
++  });
++});
++
++describe('canLeaveDegradedRelinkFlow — extends the no-save invariant', () => {
++  it('is false while any asset is short of written', () => {
++    const short: RelinkPhase[] = ['unresolved', 'proposed', 'confirmed', 'failed'];
++    for (const phase of short) {
++      const flow: RelinkAssetRecord[] = [{
++        assetId: 'a1',
++        phase,
++        proposals: [],
++        confirmedCandidateId: phase === 'confirmed' ? 'c1' : null,
++      }];
++      expect(canLeaveDegradedRelinkFlow(flow)).toBe(false);
++    }
++  });
++
++  it('agrees with canPersistRecoveredProject: not written ≡ still unresolved', () => {
++    const mid = seedProposed([assetA, assetB], [candA, candB]);
++    expect(canLeaveDegradedRelinkFlow(mid)).toBe(false);
++    expect(canPersistRecoveredProject({
++      assets: [
++        { id: 'a1', name: assetA.name, unresolved: true, nativeCopyExists: false, backupExists: false },
++        { id: 'a2', name: assetB.name, unresolved: true, nativeCopyExists: false, backupExists: false },
++      ],
++      segments: [
++        { id: 's1', label: 'A', assetId: 'a1', resolutionStatus: 'unresolved' },
++        { id: 's2', label: 'B', assetId: 'a2', resolutionStatus: 'unresolved' },
++      ],
++    })).toBe(false);
++
++    const done = writeAll(mid, [['a1', 'c1'], ['a2', 'c2']]);
++    expect(canLeaveDegradedRelinkFlow(done)).toBe(true);
++    expect(canPersistRecoveredProject({
++      assets: [
++        { id: 'a1', name: assetA.name, unresolved: false, nativeCopyExists: true, backupExists: false },
++        { id: 'a2', name: assetB.name, unresolved: false, nativeCopyExists: true, backupExists: false },
++      ],
++      segments: [
++        { id: 's1', label: 'A', assetId: 'a1', resolutionStatus: 'resolved' },
++        { id: 's2', label: 'B', assetId: 'a2', resolutionStatus: 'resolved' },
++      ],
++    })).toBe(true);
++  });
++
++  it('is false for an empty flow — there is no recovered project to persist', () => {
++    expect(canLeaveDegradedRelinkFlow([])).toBe(false);
++  });
++});
+diff --git a/src/services/relinkResolution/relinkStateMachine.ts b/src/services/relinkResolution/relinkStateMachine.ts
+new file mode 100644
+index 0000000..6e61a0a
+--- /dev/null
++++ b/src/services/relinkResolution/relinkStateMachine.ts
+@@ -0,0 +1,142 @@
++/**
++ * Per-asset re-link state machine.
++ *
++ *   unresolved → proposed → confirmed → written
++ *                               ↘ failed
++ *   unresolved / proposed → failed
++ *
++ * `written` and `failed` are terminal. Nothing auto-confirms: even an
++ * exact proposal stays in `proposed` until `confirmRelinkProposal`.
++ */
++
++import { confirmableProposals, proposalsForAsset } from './matchProposals';
++import type { RelinkAssetRecord, RelinkPhase, RelinkProposal, RelinkTransitionResult } from './types';
++
++const TERMINAL: ReadonlySet<RelinkPhase> = new Set(['written', 'failed']);
++
++function cloneFlow(flow: readonly RelinkAssetRecord[]): RelinkAssetRecord[] {
++  return flow.map((record) => ({
++    ...record,
++    proposals: [...record.proposals],
++  }));
++}
++
++function replaceRecord(
++  flow: readonly RelinkAssetRecord[],
++  assetId: string,
++  next: RelinkAssetRecord,
++): RelinkAssetRecord[] {
++  return flow.map((record) => (record.assetId === assetId ? next : record));
++}
++
++export function createRelinkFlow(assetIds: readonly string[]): RelinkAssetRecord[] {
++  return assetIds.map((assetId) => ({
++    assetId,
++    phase: 'unresolved',
++    proposals: [],
++    confirmedCandidateId: null,
++  }));
++}
++
++export function applyRelinkProposals(
++  flow: readonly RelinkAssetRecord[],
++  proposals: readonly RelinkProposal[],
++): RelinkTransitionResult {
++  const next = cloneFlow(flow);
++  for (let i = 0; i < next.length; i += 1) {
++    const record = next[i];
++    if (!record || TERMINAL.has(record.phase) || record.phase === 'confirmed') continue;
++    const forAsset = proposalsForAsset(proposals, record.assetId);
++    next[i] = {
++      ...record,
++      proposals: forAsset,
++      phase: confirmableProposals(forAsset).length > 0 ? 'proposed' : 'unresolved',
++      confirmedCandidateId: null,
++    };
++  }
++  return { ok: true, flow: next };
++}
++
++export function confirmRelinkProposal(
++  flow: readonly RelinkAssetRecord[],
++  assetId: string,
++  candidateId: string,
++): RelinkTransitionResult {
++  const record = flow.find((row) => row.assetId === assetId);
++  if (!record) return { ok: false, reason: `unknown asset ${assetId}`, flow: cloneFlow(flow) };
++  if (record.phase !== 'proposed') {
++    return { ok: false, reason: `cannot confirm from ${record.phase}`, flow: cloneFlow(flow) };
++  }
++  const proposal = record.proposals.find((row) => row.candidateId === candidateId);
++  if (!proposal) {
++    return { ok: false, reason: `no proposal for candidate ${candidateId}`, flow: cloneFlow(flow) };
++  }
++  if (proposal.confidence === 'rejected') {
++    return { ok: false, reason: 'rejected proposals cannot be confirmed', flow: cloneFlow(flow) };
++  }
++  const taken = flow.some(
++    (row) =>
++      row.assetId !== assetId &&
++      row.confirmedCandidateId === candidateId &&
++      (row.phase === 'confirmed' || row.phase === 'written'),
++  );
++  if (taken) {
++    return { ok: false, reason: `candidate ${candidateId} is already confirmed on another asset`, flow: cloneFlow(flow) };
++  }
++  return {
++    ok: true,
++    flow: replaceRecord(flow, assetId, {
++      ...record,
++      phase: 'confirmed',
++      confirmedCandidateId: candidateId,
++    }),
++  };
++}
++
++export function markRelinkWritten(
++  flow: readonly RelinkAssetRecord[],
++  assetId: string,
++): RelinkTransitionResult {
++  const record = flow.find((row) => row.assetId === assetId);
++  if (!record) return { ok: false, reason: `unknown asset ${assetId}`, flow: cloneFlow(flow) };
++  if (record.phase !== 'confirmed' || record.confirmedCandidateId === null) {
++    return { ok: false, reason: `cannot mark written from ${record.phase}`, flow: cloneFlow(flow) };
++  }
++  return {
++    ok: true,
++    flow: replaceRecord(flow, assetId, { ...record, phase: 'written' }),
++  };
++}
++
++export function markRelinkFailed(
++  flow: readonly RelinkAssetRecord[],
++  assetId: string,
++): RelinkTransitionResult {
++  const record = flow.find((row) => row.assetId === assetId);
++  if (!record) return { ok: false, reason: `unknown asset ${assetId}`, flow: cloneFlow(flow) };
++  if (record.phase === 'written') {
++    return { ok: false, reason: 'written is terminal', flow: cloneFlow(flow) };
++  }
++  return {
++    ok: true,
++    flow: replaceRecord(flow, assetId, {
++      ...record,
++      phase: 'failed',
++      confirmedCandidateId: null,
++    }),
++  };
++}
++
++/**
++ * The only exit from item A's degraded / poisoned load: every unresolved
++ * asset has been confirmed and marked written. Aligns with
++ * `canPersistRecoveredProject` — anything short of `written` keeps Save illegal.
++ */
++export function canLeaveDegradedRelinkFlow(flow: readonly RelinkAssetRecord[]): boolean {
++  if (flow.length === 0) return false;
++  return flow.every((record) => record.phase === 'written');
++}
++
++export function phasesOf(flow: readonly RelinkAssetRecord[]): RelinkPhase[] {
++  return flow.map((record) => record.phase);
++}
+diff --git a/src/services/relinkResolution/types.ts b/src/services/relinkResolution/types.ts
+new file mode 100644
+index 0000000..f88c1f7
+--- /dev/null
++++ b/src/services/relinkResolution/types.ts
+@@ -0,0 +1,60 @@
++/**
++ * Re-link resolution — types only.
++ *
++ * Metadata is whatever survived in project.json after item A poisoned the
++ * load (`asset-unresolvable`). Candidate files are caller-supplied descriptors;
++ * this module never reads the filesystem. CC item B will expose the real
++ * payload and command — field names here are UI-lane assumptions
++ * (`.cursor/ws3-relink-unseen.md`).
++ */
++
++export type RelinkAssetType = 'image' | 'video' | 'audio';
++
++export type RelinkConfidence = 'exact' | 'probable' | 'rejected';
++
++export type RelinkPhase = 'unresolved' | 'proposed' | 'confirmed' | 'written' | 'failed';
++
++export interface UnresolvedAssetMetadata {
++  id: string;
++  name: string;
++  type: RelinkAssetType;
++  /** Seconds. Absent on images and on videos whose probe never landed. */
++  duration: number | null;
++}
++
++export interface RelinkCandidate {
++  id: string;
++  /** File name or last path segment. Not a live handle. */
++  name: string;
++  type: RelinkAssetType;
++  duration: number | null;
++  /** Display / identity only. Never opened here. */
++  path: string;
++}
++
++export interface RelinkMatchBasis {
++  name: 'exact' | 'similar' | 'unrelated';
++  type: 'match' | 'mismatch';
++  duration: 'within-exact' | 'within-probable' | 'mismatch' | 'not-applicable';
++}
++
++export interface RelinkProposal {
++  assetId: string;
++  candidateId: string;
++  confidence: RelinkConfidence;
++  basis: RelinkMatchBasis;
++  /** Set when more than one asset ranks this candidate confirmable. */
++  manyToOneAssetIds: readonly string[];
++  notes: readonly string[];
++}
++
++export interface RelinkAssetRecord {
++  assetId: string;
++  phase: RelinkPhase;
++  proposals: readonly RelinkProposal[];
++  confirmedCandidateId: string | null;
++}
++
++export type RelinkTransitionResult =
++  | { ok: true; flow: RelinkAssetRecord[] }
++  | { ok: false; reason: string; flow: RelinkAssetRecord[] };
+-- 
+2.53.0
+
+
+From 6fa68783cbe786fd063528d41a6806ebb28a4e35 Mon Sep 17 00:00:00 2001
+From: Mohtashim <mohtashim9119@gmail.com>
+Date: Mon, 14 Sep 2026 01:44:32 +0500
+Subject: [PATCH 4/5] Align recovery-UI with CC's nativeResolved contract and
+ the surviving diskFull estimator.
+
+Item F left ExportErrorKind unchanged so the total copy record compiles; item G deleted the old destination module, so the badge estimator now imports estimateExportDestinationDiskBytes from diskFull.ts instead of defending a three-state native/backup render.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+---
+ .cursor/ws3-export-failure-unseen.md          |   2 +-
+ .cursor/ws3-size-estimators.md                |  42 +++---
+ .../DegradedProjectRecoveryScreen.test.tsx    |  74 +++++-----
+ .../DegradedProjectRecoveryScreen.tsx         |  37 ++---
+ src/components/recovery/degradedLoad.test.ts  |  55 ++++++--
+ src/components/recovery/degradedLoad.ts       |  35 +++--
+ src/components/recovery/index.ts              |   1 +
+ src/services/exportOutputEstimate.test.ts     | 126 ++++++++++++++++++
+ src/services/exportOutputEstimate.ts          | 120 +++++++++++++++++
+ .../relinkStateMachine.test.ts                |   8 +-
+ 10 files changed, 391 insertions(+), 109 deletions(-)
+ create mode 100644 src/services/exportOutputEstimate.test.ts
+ create mode 100644 src/services/exportOutputEstimate.ts
+
+diff --git a/.cursor/ws3-export-failure-unseen.md b/.cursor/ws3-export-failure-unseen.md
+index d0e8ab2..1569949 100644
+--- a/.cursor/ws3-export-failure-unseen.md
++++ b/.cursor/ws3-export-failure-unseen.md
+@@ -6,7 +6,7 @@ branch. New rows for this slice start at **U25**.
+ 
+ | ID | Assumption | How to resolve |
+ |---|---|---|
+-| U25 | `ExportErrorKind` may gain or be renamed by item F | `EXPORT_FAILURE_COPY` is a **total record** (`satisfies` + `[K in ExportErrorKind]`). Adding/renaming a kind without a matching copy row is a `tsc` error. Verified still total after rebase onto `64d2c5f` (same 11 kinds). Do not invent names. |
++| U25 | `ExportErrorKind` may gain or be renamed by item F | `EXPORT_FAILURE_COPY` is a **total record** (`satisfies` + `[K in ExportErrorKind]`). Adding/renaming a kind without a matching copy row is a `tsc` error. Verified still total after rebase onto `5a96f92` (item F mapped `ExportFailureVia` onto the same 11 kinds; no copy rows added). Do not invent names. |
+ | U26 | Resume is never keyed on `kind` | Gate is `retentionAttempted` + `source: 'retainForResume'` + `disposition: 'retained'` + `manifestPresent`. `retainForResume` and `destroySession` both emit `"destroyed"` — do not read that string alone. |
+ | U27 | `cancelled` and `asset_missing` never resume | Policy exceptions. `asset_missing` routes to `DegradedProjectRecoveryScreen` via `onOpenDegradedRecovery` and never offers Save. |
+ | U28 | disk_full is two cards | Preflight (bytes + reclaim, no Resume) vs mid-export (Resume only under U26). Numbers are props. |
+diff --git a/.cursor/ws3-size-estimators.md b/.cursor/ws3-size-estimators.md
+index c77b9ff..808eb5d 100644
+--- a/.cursor/ws3-size-estimators.md
++++ b/.cursor/ws3-size-estimators.md
+@@ -1,41 +1,31 @@
+ # WS3 size estimators — UI constraint
+ 
+-CC owns which module survives. This note records the UI-side constraint so
+-the recovery / relocation views do not grow a fourth copy of "required vs
+-available bytes."
++Item G landed on `ws3-export-integration` (`76cac7e`): `exportDestinationDiskEstimate.ts`
++is deleted. The surviving destination API is
++`estimateExportDestinationDiskBytes` in `src/services/webcodecsExport/diskFull.ts`.
+ 
+-## The three estimators
++## The two estimators
+ 
+-1. **Badge estimator** — `src/services/exportOutputEstimate.ts` on
+-   `ws3-export-modal` (`f81674e`). Not present at `b80ba40`. Live file-size
+-   badge in the unified export modal. Formula: `bitrateKbps × 125 × duration`
+-   + AAC (`EXPORT_DISK_AAC_BYTES_PER_SECOND`) then `applyHeadroom` from
+-   `diskFull.ts`. Destination gate uses `destinationRequiredBytes`.
++1. **Badge estimator** — `src/services/exportOutputEstimate.ts` on this branch.
++   Imports `estimateExportDestinationDiskBytes` from `diskFull.ts`. Live file-size
++   badge + relocation required-bytes host. Selector snap / fps / resolution stay
++   here; byte arithmetic does not.
+ 
+-2. **CC destination module** — `src/services/webcodecsExport/exportDestinationDiskEstimate.ts`
+-   at `b80ba40`. Same bitrate-aware destination formula as (1). Tests only;
+-   nothing in the live export pipeline imports it. CC has called this dead.
+-   Do not delete it from this branch.
+-
+-3. **Live session preflight** — `src/services/webcodecsExport/diskFull.ts`
++2. **Live session preflight** — `src/services/webcodecsExport/diskFull.ts`
+    `estimateExportDiskBytes`, wired from `exportPipelineWebCodecs.ts`. Models
+    peak bytes in the *session temp tree* at the frozen 8 Mbps GL rate, plus a
+    destination term at that same fixed rate. This is the estimator export
+    actually runs.
+ 
++Current-storage usage for relocation (`managedBytes`, size report) is
++`storageRoot.ts` (`getStorageRootStatus` / `getSizeReport`) — do not conflate
++with the destination-file estimate.
++
+ ## Constraint for the relocation / recovery modal
+ 
+ - There must be **one** source of truth for the numbers fed into
+   `StorageRootRelocationView` (`requiredBytes` / `availableBytes`). The view
+   itself computes nothing.
+-- After CC consolidates, the host that fills those props **must import the
+-  surviving estimator** — not a new helper and not a copy of the badge
+-  formula.
+-- `diskFull.ts` has to remain for the live pipeline (temp-peak + ENOSPC).
+-  The bitrate-aware destination term (badge + `exportDestinationDiskEstimate`)
+-  should collapse into whatever single API CC keeps. The modal then imports
+-  that API's required-bytes result.
+-- Do not implement the consolidation here.
+-
+-Dashboard `navigator.storage.estimate()` (origin quota bar) is a different
+-question and is not this estimator.
++- The host that fills those props imports `estimateExportOutputBytes` (badge)
++  or `estimateExportDestinationDiskBytes` (raw destination term) — not a
++  third helper and not a copy of the formula.
+diff --git a/src/components/recovery/DegradedProjectRecoveryScreen.test.tsx b/src/components/recovery/DegradedProjectRecoveryScreen.test.tsx
+index 732ef45..27b4ac6 100644
+--- a/src/components/recovery/DegradedProjectRecoveryScreen.test.tsx
++++ b/src/components/recovery/DegradedProjectRecoveryScreen.test.tsx
+@@ -22,41 +22,36 @@ afterEach(() => {
+ });
+ 
+ const resolvedAsset: RecoveryAsset = {
+-  id: 'asset-resolved',
++  assetId: 'asset-resolved',
+   name: 'hero.mp4',
+-  unresolved: false,
+-  nativeCopyExists: true,
+-  backupExists: true,
++  type: 'video',
++  cacheResolved: true,
++  nativeResolved: true,
++  resolved: true,
+ };
+ 
+-const missingAsset: RecoveryAsset = {
+-  id: 'asset-missing',
+-  name: 'b-roll.mp4',
+-  unresolved: true,
+-  nativeCopyExists: false,
+-  backupExists: false,
+-};
+-
+-const nativeCopyAsset: RecoveryAsset = {
+-  id: 'asset-native',
++const cacheOnlyAsset: RecoveryAsset = {
++  assetId: 'asset-cache',
+   name: 'cutaway.mp4',
+-  unresolved: true,
+-  nativeCopyExists: true,
+-  backupExists: false,
++  type: 'video',
++  cacheResolved: true,
++  nativeResolved: false,
++  resolved: true,
+ };
+ 
+-const backupAsset: RecoveryAsset = {
+-  id: 'asset-backup',
+-  name: 'vo.wav',
+-  unresolved: true,
+-  nativeCopyExists: false,
+-  backupExists: true,
++const missingAsset: RecoveryAsset = {
++  assetId: 'asset-missing',
++  name: 'b-roll.mp4',
++  type: 'video',
++  cacheResolved: false,
++  nativeResolved: false,
++  resolved: false,
+ };
+ 
+ const segments: RecoverySegment[] = [
+   { id: 'seg-1', label: 'Hook', assetId: 'asset-resolved', resolutionStatus: 'resolved' },
+   { id: 'seg-2', label: 'B-roll', assetId: 'asset-missing', resolutionStatus: 'missing-asset' },
+-  { id: 'seg-3', label: 'Cutaway', assetId: 'asset-native', resolutionStatus: 'unresolved' },
++  { id: 'seg-3', label: 'Cutaway', assetId: 'asset-cache', resolutionStatus: 'resolved' },
+ ];
+ 
+ async function renderScreen(props: {
+@@ -106,25 +101,25 @@ describe('DegradedProjectRecoveryScreen — no-save invariant', () => {
+   });
+ });
+ 
+-describe('DegradedProjectRecoveryScreen — status rendering', () => {
++describe('DegradedProjectRecoveryScreen — collapsed nativeResolved contract', () => {
+   it('renders per-segment resolution status from props', async () => {
+     await renderScreen({
+-      assets: [resolvedAsset, missingAsset, nativeCopyAsset],
++      assets: [resolvedAsset, missingAsset, cacheOnlyAsset],
+       segments,
+     });
+     const rows = [...container.querySelectorAll('[data-testid="recovery-segment"]')];
+     expect(rows.map((el) => el.getAttribute('data-resolution-status'))).toEqual([
+       'resolved',
+       'missing-asset',
+-      'unresolved',
++      'resolved',
+     ]);
+     expect(container.textContent).toMatch(/Hook/);
+     expect(container.textContent).toMatch(/Missing asset/);
+   });
+ 
+-  it('distinguishes missing vs native-copy vs backup indicators', async () => {
++  it('renders missing vs nativeResolved without a backup state', async () => {
+     await renderScreen({
+-      assets: [missingAsset, nativeCopyAsset, backupAsset],
++      assets: [missingAsset, resolvedAsset, cacheOnlyAsset],
+       segments,
+     });
+     const byId = (id: string): Element => {
+@@ -133,24 +128,27 @@ describe('DegradedProjectRecoveryScreen — status rendering', () => {
+       return el;
+     };
+     expect(byId('asset-missing').getAttribute('data-location')).toBe('missing');
+-    expect(byId('asset-native').getAttribute('data-location')).toBe('native-copy');
+-    expect(byId('asset-backup').getAttribute('data-location')).toBe('backup');
+-    expect(byId('asset-native').textContent).toMatch(/Native copy available/);
+-    expect(byId('asset-backup').textContent).toMatch(/Backup available/);
++    expect(byId('asset-missing').getAttribute('data-native-resolved')).toBe('false');
+     expect(byId('asset-missing').textContent).toMatch(/Missing/);
++    expect(byId('asset-resolved').getAttribute('data-location')).toBe('native');
++    expect(byId('asset-resolved').getAttribute('data-native-resolved')).toBe('true');
++    expect(byId('asset-resolved').textContent).toMatch(/Native copy available/);
++    expect(byId('asset-cache').getAttribute('data-location')).toBe('resolved');
++    expect(byId('asset-cache').getAttribute('data-unresolved')).toBe('false');
++    expect(container.textContent).not.toMatch(/Backup available/);
++    expect(container.querySelector('[data-location="backup"]')).toBeNull();
++    expect(container.querySelector('[data-location="native-copy"]')).toBeNull();
+   });
+ 
+-  it('invokes the re-link fake with the unresolved asset id', async () => {
++  it('invokes the re-link fake only for unresolved asset ids', async () => {
+     const fake = await renderScreen({
+-      assets: [missingAsset, nativeCopyAsset],
++      assets: [missingAsset, resolvedAsset],
+       segments,
+     });
+     const buttons = [...container.querySelectorAll<HTMLButtonElement>('[data-testid="recovery-relink"]')];
+-    expect(buttons).toHaveLength(2);
++    expect(buttons).toHaveLength(1);
+     await act(async () => { buttons[0]!.click(); });
+     expect(fake.relinked).toEqual(['asset-missing']);
+-    await act(async () => { buttons[1]!.click(); });
+-    expect(fake.relinked).toEqual(['asset-missing', 'asset-native']);
+   });
+ 
+   it('summarises unresolved assets and never offers re-link on a resolved row', async () => {
+diff --git a/src/components/recovery/DegradedProjectRecoveryScreen.tsx b/src/components/recovery/DegradedProjectRecoveryScreen.tsx
+index 7822a3b..30164f0 100644
+--- a/src/components/recovery/DegradedProjectRecoveryScreen.tsx
++++ b/src/components/recovery/DegradedProjectRecoveryScreen.tsx
+@@ -6,10 +6,13 @@
+  * instead of an empty timeline. This component never writes storage:
+  * Save is omitted while any asset is unresolved, even if the caller
+  * passed `onSave`. Re-link is a callback; there is no file picker here.
++ *
++ * Location copy follows CC's collapsed contract: `nativeResolved` is the
++ * one durable-copy fact. An unresolved row is Missing — never "backup".
+  */
+ 
+ import React from 'react';
+-import { AlertTriangle, FolderOpen, HardDrive, Link2 } from 'lucide-react';
++import { AlertTriangle, HardDrive, Link2 } from 'lucide-react';
+ import { useFocusTrap } from '../../hooks/useFocusTrap';
+ import {
+   canPersistRecoveredProject,
+@@ -32,17 +35,15 @@ export interface DegradedProjectRecoveryScreenProps {
+ }
+ 
+ function assetLocationLabel(asset: RecoveryAsset): string {
+-  if (!asset.unresolved) return 'Resolved';
+-  if (asset.nativeCopyExists) return 'Native copy available';
+-  if (asset.backupExists) return 'Backup available';
+-  return 'Missing';
++  if (!asset.resolved) return 'Missing';
++  if (asset.nativeResolved) return 'Native copy available';
++  return 'Resolved';
+ }
+ 
+-function assetLocationKind(asset: RecoveryAsset): 'resolved' | 'native-copy' | 'backup' | 'missing' {
+-  if (!asset.unresolved) return 'resolved';
+-  if (asset.nativeCopyExists) return 'native-copy';
+-  if (asset.backupExists) return 'backup';
+-  return 'missing';
++function assetLocationKind(asset: RecoveryAsset): 'resolved' | 'native' | 'missing' {
++  if (!asset.resolved) return 'missing';
++  if (asset.nativeResolved) return 'native';
++  return 'resolved';
+ }
+ 
+ function segmentStatusLabel(status: RecoverySegment['resolutionStatus']): string {
+@@ -152,11 +153,12 @@ export function DegradedProjectRecoveryScreen({
+             const kind = assetLocationKind(asset);
+             return (
+               <div
+-                key={asset.id}
++                key={asset.assetId}
+                 data-testid="recovery-asset"
+-                data-asset-id={asset.id}
+-                data-unresolved={asset.unresolved ? 'true' : 'false'}
++                data-asset-id={asset.assetId}
++                data-unresolved={asset.resolved ? 'false' : 'true'}
+                 data-location={kind}
++                data-native-resolved={asset.nativeResolved ? 'true' : 'false'}
+                 className="flex items-center justify-between gap-3 bg-[#1A1A1A] border border-[#282828] rounded-lg px-3 py-2"
+               >
+                 <div className="min-w-0">
+@@ -165,17 +167,16 @@ export function DegradedProjectRecoveryScreen({
+                     data-testid="recovery-asset-location"
+                     className="text-[9px] text-gray-500 flex items-center gap-1"
+                   >
+-                    {kind === 'native-copy' && <HardDrive size={11} />}
+-                    {kind === 'backup' && <FolderOpen size={11} />}
++                    {kind === 'native' && <HardDrive size={11} />}
+                     {assetLocationLabel(asset)}
+                   </p>
+                 </div>
+-                {asset.unresolved && (
++                {!asset.resolved && (
+                   <button
+                     type="button"
+                     data-testid="recovery-relink"
+-                    data-asset-id={asset.id}
+-                    onClick={() => onRelink(asset.id)}
++                    data-asset-id={asset.assetId}
++                    onClick={() => onRelink(asset.assetId)}
+                     className="shrink-0 inline-flex items-center gap-1 px-2 py-1 text-[9px] font-black uppercase tracking-widest border border-[#282828] rounded-lg text-gray-300 hover:text-white hover:border-gray-500"
+                   >
+                     <Link2 size={11} />
+diff --git a/src/components/recovery/degradedLoad.test.ts b/src/components/recovery/degradedLoad.test.ts
+index cc629c7..8a9c63a 100644
+--- a/src/components/recovery/degradedLoad.test.ts
++++ b/src/components/recovery/degradedLoad.test.ts
+@@ -1,25 +1,38 @@
+ import { describe, it, expect } from 'vitest';
++import type { ProjectAssetRecoveryStatus } from '../../services/assetRecovery';
+ import {
+   canPersistRecoveredProject,
++  recoveryAssetsFromStatus,
+   unresolvedAssetIds,
+   type RecoveryAsset,
+   type RecoverySegment,
+ } from './degradedLoad';
+ 
+ const resolved: RecoveryAsset = {
+-  id: 'a1',
++  assetId: 'a1',
+   name: 'clip.mp4',
+-  unresolved: false,
+-  nativeCopyExists: true,
+-  backupExists: false,
++  type: 'video',
++  cacheResolved: true,
++  nativeResolved: true,
++  resolved: true,
+ };
+ 
+ const missing: RecoveryAsset = {
+-  id: 'a2',
++  assetId: 'a2',
+   name: 'vo.wav',
+-  unresolved: true,
+-  nativeCopyExists: false,
+-  backupExists: false,
++  type: 'audio',
++  cacheResolved: false,
++  nativeResolved: false,
++  resolved: false,
++};
++
++const nativeOnly: RecoveryAsset = {
++  assetId: 'a3',
++  name: 'still.png',
++  type: 'image',
++  cacheResolved: false,
++  nativeResolved: true,
++  resolved: true,
+ };
+ 
+ const okSegment: RecoverySegment = {
+@@ -57,10 +70,34 @@ describe('canPersistRecoveredProject', () => {
+       segments: [okSegment],
+     })).toBe(true);
+   });
++
++  it('treats nativeResolved as resolved — there is no separate backup flag', () => {
++    expect(canPersistRecoveredProject({
++      assets: [nativeOnly],
++      segments: [{ id: 's3', label: 'Still', assetId: 'a3', resolutionStatus: 'resolved' }],
++    })).toBe(true);
++    expect(nativeOnly.resolved).toBe(nativeOnly.cacheResolved || nativeOnly.nativeResolved);
++  });
+ });
+ 
+ describe('unresolvedAssetIds', () => {
+   it('lists only unresolved ids', () => {
+-    expect(unresolvedAssetIds([resolved, missing])).toEqual(['a2']);
++    expect(unresolvedAssetIds([resolved, missing, nativeOnly])).toEqual(['a2']);
++  });
++});
++
++describe('recoveryAssetsFromStatus', () => {
++  it('copies CC ProjectAssetRecoveryStatus rows without inventing a backup field', () => {
++    const status: ProjectAssetRecoveryStatus = {
++      projectId: 'p1',
++      projectName: 'Talk',
++      loadFailure: null,
++      allResolved: false,
++      assets: [resolved, missing, nativeOnly],
++    };
++    const rows = recoveryAssetsFromStatus(status);
++    expect(rows).toEqual([resolved, missing, nativeOnly]);
++    expect(rows.some((row) => 'backupExists' in row || 'nativeCopyExists' in row)).toBe(false);
++    expect(rows.map((row) => row.nativeResolved)).toEqual([true, false, true]);
+   });
+ });
+diff --git a/src/components/recovery/degradedLoad.ts b/src/components/recovery/degradedLoad.ts
+index aa9d905..df8914c 100644
+--- a/src/components/recovery/degradedLoad.ts
++++ b/src/components/recovery/degradedLoad.ts
+@@ -1,13 +1,15 @@
+ /**
+  * Degraded-load model — props a future App.tsx can pass without this
+- * slice knowing about IndexedDB, native copies, or autosave.
++ * slice writing IndexedDB, the native store, or autosave.
+  *
+- * A project can keep segment metadata after Chromium evicts media bytes
+- * (`docs/ws3-export/persistence-layer-audit.md` at 01e565d). Opening that
+- * project must not persist. `canPersistRecoveredProject` is the UI-side
+- * gate: if any asset is unresolved, Save is not a legal affordance.
++ * Shape is CC's published `AssetRecoveryEntry`: one `nativeResolved` fact
++ * (the native store IS the durable copy; there is no separate backup flag).
++ * `resolved` is `cacheResolved || nativeResolved`. Saving stays illegal
++ * while any asset is short of that.
+  */
+ 
++import type { AssetRecoveryEntry, ProjectAssetRecoveryStatus } from '../../services/assetRecovery';
++
+ export type SegmentResolutionStatus = 'resolved' | 'unresolved' | 'missing-asset';
+ 
+ export interface RecoverySegment {
+@@ -17,23 +19,30 @@ export interface RecoverySegment {
+   resolutionStatus: SegmentResolutionStatus;
+ }
+ 
+-export interface RecoveryAsset {
+-  id: string;
+-  name: string;
+-  unresolved: boolean;
+-  nativeCopyExists: boolean;
+-  backupExists: boolean;
++export type RecoveryAsset = AssetRecoveryEntry;
++
++export function recoveryAssetsFromStatus(
++  status: ProjectAssetRecoveryStatus,
++): RecoveryAsset[] {
++  return status.assets.map((entry) => ({
++    assetId: entry.assetId,
++    name: entry.name,
++    type: entry.type,
++    cacheResolved: entry.cacheResolved,
++    nativeResolved: entry.nativeResolved,
++    resolved: entry.resolved,
++  }));
+ }
+ 
+ export function canPersistRecoveredProject(input: {
+   assets: readonly RecoveryAsset[];
+   segments: readonly RecoverySegment[];
+ }): boolean {
+-  if (input.assets.some((asset) => asset.unresolved)) return false;
++  if (input.assets.some((asset) => !asset.resolved)) return false;
+   if (input.segments.some((segment) => segment.resolutionStatus !== 'resolved')) return false;
+   return true;
+ }
+ 
+ export function unresolvedAssetIds(assets: readonly RecoveryAsset[]): string[] {
+-  return assets.filter((asset) => asset.unresolved).map((asset) => asset.id);
++  return assets.filter((asset) => !asset.resolved).map((asset) => asset.assetId);
+ }
+diff --git a/src/components/recovery/index.ts b/src/components/recovery/index.ts
+index 45c8d4f..77e98ef 100644
+--- a/src/components/recovery/index.ts
++++ b/src/components/recovery/index.ts
+@@ -1,5 +1,6 @@
+ export {
+   canPersistRecoveredProject,
++  recoveryAssetsFromStatus,
+   unresolvedAssetIds,
+   type RecoveryAsset,
+   type RecoverySegment,
+diff --git a/src/services/exportOutputEstimate.test.ts b/src/services/exportOutputEstimate.test.ts
+new file mode 100644
+index 0000000..56352e5
+--- /dev/null
++++ b/src/services/exportOutputEstimate.test.ts
+@@ -0,0 +1,126 @@
++import { describe, it, expect } from 'vitest';
++import {
++  DEFAULT_EXPORT_BITRATE_KBPS,
++  DEFAULT_EXPORT_BITRATE_BPS,
++  MIN_EXPORT_BITRATE_KBPS,
++  MAX_EXPORT_BITRATE_KBPS,
++  EXPORT_BITRATE_STEP_KBPS,
++  exportBitrateKbpsOptions,
++  snapExportBitrateKbps,
++  estimateExportOutputBytes,
++  defaultBitrateMatchesDiskModel,
++} from './exportOutputEstimate';
++import {
++  EXPORT_DISK_AAC_BYTES_PER_SECOND,
++  EXPORT_DISK_VIDEO_BYTES_PER_SECOND,
++  estimateExportDestinationDiskBytes,
++} from './webcodecsExport/diskFull';
++
++const D28 = 28 * 60; // 1680 s
++const BASE = {
++  fps: 30,
++  resolution: '1080p' as const,
++  aspectRatio: '16:9' as const,
++  durationSeconds: D28,
++  hasAudio: true,
++};
++
++describe('export bitrate selector grid', () => {
++  it('is generated from min/max/step — not a hardcoded option table', () => {
++    const opts = exportBitrateKbpsOptions();
++    expect(opts[0]).toBe(MIN_EXPORT_BITRATE_KBPS);
++    expect(opts[opts.length - 1]).toBe(MAX_EXPORT_BITRATE_KBPS);
++    expect(opts.every((v) => (v - MIN_EXPORT_BITRATE_KBPS) % EXPORT_BITRATE_STEP_KBPS === 0 || v === MAX_EXPORT_BITRATE_KBPS)).toBe(true);
++    expect(opts).toContain(1500);
++    expect(opts).toContain(3000);
++    expect(opts).toContain(DEFAULT_EXPORT_BITRATE_KBPS);
++    expect(opts).not.toContain(1000);
++    expect(opts).not.toContain(8500);
++  });
++
++  it('defaults to today\'s 1080p encoder target (8000 kbps = 8_000_000 bit/s)', () => {
++    expect(DEFAULT_EXPORT_BITRATE_KBPS).toBe(8000);
++    expect(DEFAULT_EXPORT_BITRATE_BPS).toBe(8_000_000);
++    expect(defaultBitrateMatchesDiskModel()).toBe(true);
++    expect(DEFAULT_EXPORT_BITRATE_BPS / 8).toBe(EXPORT_DISK_VIDEO_BYTES_PER_SECOND);
++    expect(exportBitrateKbpsOptions()).toContain(DEFAULT_EXPORT_BITRATE_KBPS);
++  });
++
++  it('snaps onto the 500 kbps grid and clamps to [1500, 8000]', () => {
++    expect(snapExportBitrateKbps(3000)).toBe(3000);
++    expect(snapExportBitrateKbps(3100)).toBe(3000);
++    expect(snapExportBitrateKbps(3250)).toBe(3500);
++    expect(snapExportBitrateKbps(0)).toBe(1500);
++    expect(snapExportBitrateKbps(99999)).toBe(8000);
++    expect(snapExportBitrateKbps(Number.NaN)).toBe(DEFAULT_EXPORT_BITRATE_KBPS);
++  });
++});
++
++describe('estimateExportOutputBytes — delegates to diskFull.ts', () => {
++  it('matches estimateExportDestinationDiskBytes for video, audio, and required bytes', () => {
++    const dest = estimateExportDestinationDiskBytes({
++      bitrateKbps: 1500,
++      durationSeconds: D28,
++      hasAudio: true,
++    });
++    const badge = estimateExportOutputBytes({ ...BASE, bitrateKbps: 1500 });
++    expect(badge.videoBytes).toBe(dest.videoBytes);
++    expect(badge.audioBytes).toBe(dest.audioBytes);
++    expect(badge.destinationRequiredBytes).toBe(dest.destinationRequiredBytes);
++    expect(badge.estimatedFileBytes).toBe(dest.videoBytes + dest.audioBytes);
++    expect(badge.audioBytes).toBe(EXPORT_DISK_AAC_BYTES_PER_SECOND * D28);
++  });
++
++  it('omits AAC when hasAudio is false', () => {
++    const dest = estimateExportDestinationDiskBytes({
++      bitrateKbps: 8000,
++      durationSeconds: D28,
++      hasAudio: false,
++    });
++    const e = estimateExportOutputBytes({ ...BASE, bitrateKbps: 8000, hasAudio: false });
++    expect(e.audioBytes).toBe(0);
++    expect(e.audioBytes).toBe(dest.audioBytes);
++    expect(e.estimatedFileBytes).toBe(dest.videoBytes);
++  });
++
++  it('fps and resolution do not change the byte term at a fixed bitrate', () => {
++    const a = estimateExportOutputBytes({ ...BASE, bitrateKbps: 3000, fps: 24, resolution: '720p' });
++    const b = estimateExportOutputBytes({ ...BASE, bitrateKbps: 3000, fps: 60, resolution: '1080p' });
++    expect(a.estimatedFileBytes).toBe(b.estimatedFileBytes);
++    expect(a.videoBytes).toBe(b.videoBytes);
++    expect(a.width).toBe(1280);
++    expect(a.height).toBe(720);
++    expect(b.width).toBe(1920);
++    expect(b.height).toBe(1080);
++    expect(a.frameCount).toBe(Math.round(D28 * 24));
++    expect(b.frameCount).toBe(Math.round(D28 * 60));
++  });
++
++  it('at 8000 kbps the video term equals today\'s fixed 8 Mbps preflight', () => {
++    const e = estimateExportOutputBytes({ ...BASE, bitrateKbps: DEFAULT_EXPORT_BITRATE_KBPS });
++    expect(e.videoBytes).toBe(EXPORT_DISK_VIDEO_BYTES_PER_SECOND * D28);
++  });
++});
++
++describe('estimateExportOutputBytes — 28-minute 1080p30 worked examples', () => {
++  it('1500 kbps → 355,320,000 B', () => {
++    const e = estimateExportOutputBytes({ ...BASE, bitrateKbps: 1500 });
++    expect(e.videoBytes).toBe(315_000_000);
++    expect(e.audioBytes).toBe(40_320_000);
++    expect(e.estimatedFileBytes).toBe(355_320_000);
++  });
++
++  it('3000 kbps → 670,320,000 B', () => {
++    const e = estimateExportOutputBytes({ ...BASE, bitrateKbps: 3000 });
++    expect(e.videoBytes).toBe(630_000_000);
++    expect(e.audioBytes).toBe(40_320_000);
++    expect(e.estimatedFileBytes).toBe(670_320_000);
++  });
++
++  it('8000 kbps → 1,720,320,000 B (today\'s default, output-neutral)', () => {
++    const e = estimateExportOutputBytes({ ...BASE, bitrateKbps: 8000 });
++    expect(e.videoBytes).toBe(1_680_000_000);
++    expect(e.audioBytes).toBe(40_320_000);
++    expect(e.estimatedFileBytes).toBe(1_720_320_000);
++  });
++});
+diff --git a/src/services/exportOutputEstimate.ts b/src/services/exportOutputEstimate.ts
+new file mode 100644
+index 0000000..e209a5d
+--- /dev/null
++++ b/src/services/exportOutputEstimate.ts
+@@ -0,0 +1,120 @@
++/**
++ * Export-modal / relocation size badge — pure, no Tauri, no DOM.
++ *
++ * Byte arithmetic lives in `diskFull.ts` (`estimateExportDestinationDiskBytes`).
++ * This module snaps the bitrate selector and records fps/resolution metadata
++ * the badge displays; it does not re-derive the destination formula.
++ */
++
++import type { ResolutionTier } from '../types';
++import { resolveDimensions, type AspectRatio } from './resolutionConfig';
++import {
++  estimateExportDestinationDiskBytes,
++  EXPORT_DISK_VIDEO_BYTES_PER_SECOND,
++} from './webcodecsExport/diskFull';
++
++/** `exportWorker.ts` EXPORT_BITRATE = 8_000_000 bit/s, expressed in kbps. */
++export const DEFAULT_EXPORT_BITRATE_KBPS = 8_000;
++
++export const MIN_EXPORT_BITRATE_KBPS = 1_500;
++export const MAX_EXPORT_BITRATE_KBPS = 8_000;
++export const EXPORT_BITRATE_STEP_KBPS = 500;
++
++/** Bits-per-second form of the selector default — equals EXPORT_BITRATE. */
++export const DEFAULT_EXPORT_BITRATE_BPS = DEFAULT_EXPORT_BITRATE_KBPS * 1_000;
++
++export interface ExportSizeEstimateInput {
++  bitrateKbps: number;
++  fps: number;
++  resolution: ResolutionTier;
++  aspectRatio: AspectRatio;
++  durationSeconds: number;
++  hasAudio: boolean;
++}
++
++export interface ExportSizeEstimate {
++  bitrateKbps: number;
++  fps: number;
++  resolution: ResolutionTier;
++  width: number;
++  height: number;
++  durationSeconds: number;
++  frameCount: number;
++  videoBytes: number;
++  audioBytes: number;
++  /** Delivered MP4 size — the live badge. */
++  estimatedFileBytes: number;
++  /**
++   * Destination-volume requirement from `estimateExportDestinationDiskBytes`
++   * (10 % + 64 MiB headroom). Modal disables Export when free space is below this.
++   */
++  destinationRequiredBytes: number;
++}
++
++/**
++ * Inclusive list of legal bitrate selector values. Generated from
++ * min/max/step so the dropdown is not a hardcoded table of every option.
++ */
++export function exportBitrateKbpsOptions(
++  minKbps: number = MIN_EXPORT_BITRATE_KBPS,
++  maxKbps: number = MAX_EXPORT_BITRATE_KBPS,
++  stepKbps: number = EXPORT_BITRATE_STEP_KBPS,
++): number[] {
++  if (!(stepKbps > 0) || !(maxKbps >= minKbps)) return [];
++  const out: number[] = [];
++  for (let v = minKbps; v <= maxKbps; v += stepKbps) out.push(v);
++  if (out[out.length - 1] !== maxKbps) out.push(maxKbps);
++  return out;
++}
++
++/**
++ * Snap a candidate onto the selector grid. Values outside [min, max] clamp;
++ * in-range values round to the nearest step.
++ */
++export function snapExportBitrateKbps(
++  kbps: number,
++  minKbps: number = MIN_EXPORT_BITRATE_KBPS,
++  maxKbps: number = MAX_EXPORT_BITRATE_KBPS,
++  stepKbps: number = EXPORT_BITRATE_STEP_KBPS,
++): number {
++  if (!Number.isFinite(kbps)) return DEFAULT_EXPORT_BITRATE_KBPS;
++  const clamped = Math.min(maxKbps, Math.max(minKbps, kbps));
++  const snapped = minKbps + Math.round((clamped - minKbps) / stepKbps) * stepKbps;
++  return Math.min(maxKbps, Math.max(minKbps, snapped));
++}
++
++export function estimateExportOutputBytes(input: ExportSizeEstimateInput): ExportSizeEstimate {
++  const durationSeconds = Number.isFinite(input.durationSeconds) && input.durationSeconds > 0
++    ? input.durationSeconds
++    : 0;
++  const fps = Number.isFinite(input.fps) && input.fps > 0 ? input.fps : 30;
++  const bitrateKbps = snapExportBitrateKbps(input.bitrateKbps);
++  const dest = estimateExportDestinationDiskBytes({
++    bitrateKbps,
++    durationSeconds,
++    hasAudio: input.hasAudio,
++  });
++  const dims = resolveDimensions(input.aspectRatio, input.resolution);
++  return {
++    bitrateKbps,
++    fps,
++    resolution: input.resolution,
++    width: dims.width,
++    height: dims.height,
++    durationSeconds,
++    frameCount: Math.round(durationSeconds * fps),
++    videoBytes: dest.videoBytes,
++    audioBytes: dest.audioBytes,
++    estimatedFileBytes: dest.videoBytes + dest.audioBytes,
++    destinationRequiredBytes: dest.destinationRequiredBytes,
++  };
++}
++
++/**
++ * Pin: at the selector default, the video term equals today's fixed-rate
++ * preflight (`EXPORT_DISK_VIDEO_BYTES_PER_SECOND × D`). If this ever fails,
++ * either this estimator or the 8 Mbps encoder target moved without the other.
++ */
++export function defaultBitrateMatchesDiskModel(): boolean {
++  return DEFAULT_EXPORT_BITRATE_BPS / 8 === EXPORT_DISK_VIDEO_BYTES_PER_SECOND;
++}
+diff --git a/src/services/relinkResolution/relinkStateMachine.test.ts b/src/services/relinkResolution/relinkStateMachine.test.ts
+index 583f6d6..3577ac0 100644
+--- a/src/services/relinkResolution/relinkStateMachine.test.ts
++++ b/src/services/relinkResolution/relinkStateMachine.test.ts
+@@ -107,8 +107,8 @@ describe('canLeaveDegradedRelinkFlow — extends the no-save invariant', () => {
+     expect(canLeaveDegradedRelinkFlow(mid)).toBe(false);
+     expect(canPersistRecoveredProject({
+       assets: [
+-        { id: 'a1', name: assetA.name, unresolved: true, nativeCopyExists: false, backupExists: false },
+-        { id: 'a2', name: assetB.name, unresolved: true, nativeCopyExists: false, backupExists: false },
++        { assetId: 'a1', name: assetA.name, type: 'video', cacheResolved: false, nativeResolved: false, resolved: false },
++        { assetId: 'a2', name: assetB.name, type: 'video', cacheResolved: false, nativeResolved: false, resolved: false },
+       ],
+       segments: [
+         { id: 's1', label: 'A', assetId: 'a1', resolutionStatus: 'unresolved' },
+@@ -120,8 +120,8 @@ describe('canLeaveDegradedRelinkFlow — extends the no-save invariant', () => {
+     expect(canLeaveDegradedRelinkFlow(done)).toBe(true);
+     expect(canPersistRecoveredProject({
+       assets: [
+-        { id: 'a1', name: assetA.name, unresolved: false, nativeCopyExists: true, backupExists: false },
+-        { id: 'a2', name: assetB.name, unresolved: false, nativeCopyExists: true, backupExists: false },
++        { assetId: 'a1', name: assetA.name, type: 'video', cacheResolved: false, nativeResolved: true, resolved: true },
++        { assetId: 'a2', name: assetB.name, type: 'video', cacheResolved: false, nativeResolved: true, resolved: true },
+       ],
+       segments: [
+         { id: 's1', label: 'A', assetId: 'a1', resolutionStatus: 'resolved' },
+-- 
+2.53.0
+
+
+From 645ccf3099fa783c61fc92cef4b0509406b9d612 Mon Sep 17 00:00:00 2001
+From: Mohtashim <mohtashim9119@gmail.com>
+Date: Mon, 14 Sep 2026 01:45:38 +0500
+Subject: [PATCH 5/5] Map CC's published Asset and AssetRecoveryEntry rows onto
+ re-link matching.
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Keep the existing unresolved→written machine, but stop inventing a parallel schema now that item B published nativeResolved and relinkAsset.
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+---
+ .cursor/ws3-relink-unseen.md                  | 20 ++++----
+ .../fromRecoveryAssets.test.ts                | 49 +++++++++++++++++++
+ .../relinkResolution/fromRecoveryAssets.ts    | 25 ++++++++++
+ src/services/relinkResolution/index.ts        |  1 +
+ .../relinkResolution/relinkStateMachine.ts    |  3 +-
+ src/services/relinkResolution/types.ts        | 11 +++--
+ 6 files changed, 93 insertions(+), 16 deletions(-)
+ create mode 100644 src/services/relinkResolution/fromRecoveryAssets.test.ts
+ create mode 100644 src/services/relinkResolution/fromRecoveryAssets.ts
+
+diff --git a/.cursor/ws3-relink-unseen.md b/.cursor/ws3-relink-unseen.md
+index 4172d3f..c194825 100644
+--- a/.cursor/ws3-relink-unseen.md
++++ b/.cursor/ws3-relink-unseen.md
+@@ -1,16 +1,16 @@
+-# UNSEEN — re-link resolution (item B)
++# UNSEEN — re-link resolution (item B landed)
+ 
+ CC item A (`64d2c5f`) poisons a project whose `project.json` metadata
+ survived but whose bytes are unresolvable. Re-link is the only exit.
+-Item B will expose the real resolution payload and native command.
+-**Do not guess command names.** This slice is pure matching + a state
+-machine against caller-supplied descriptors.
++Item B published `assetRecovery.ts` (`relinkAsset`, `ProjectAssetRecoveryStatus`)
++and `nativeAssetStore.ts`. This slice stays pure matching + a state machine;
++the host still owns the write.
+ 
+ | ID | Assumption | How to resolve |
+ |---|---|---|
+-| U30 | Unresolved-asset props are `{ id, name, type, duration }` from `Asset` in project.json | Item B's real row may add `nativeFps`, `addedAt`, mime, or a native-copy path. Map in the host; do not invent fields here. |
+-| U31 | Candidate files arrive as `{ id, name, type, duration, path }` | Whether the picker yields a path, a file descriptor, or a mime-probed blob is **unverified**. Duration/type are props — this module does not probe. |
+-| U32 | Item B command name / IPC args | Unknown. Do not name a Tauri command. Host wires `confirm`/`written` after the real write. |
+-| U33 | Native copy / backup existence | Recovery UI already treats these as booleans. Whether item B returns paths or only flags is unverified. |
+-| U34 | Folder pick listing | This slice assumes the host already enumerated candidates. Directory walk is item B's job. |
+-| U35 | Item F may add/rename `ExportErrorKind` | `EXPORT_FAILURE_COPY` remains a total record (`satisfies` + `[K in ExportErrorKind]`). A new/renamed kind is a `tsc` error until copy is added. See U25. |
++| U30 | Unresolved-asset props are `{ id, name, type, duration }` from `Asset` | Mapped via `unresolvedMetadataFromAssets`. Extra Asset fields (`nativeFps`, `addedAt`) stay on the host. |
++| U31 | Candidate files arrive as `{ id, name, type, duration, path }` | Duration/type are props — this module does not probe. |
++| U32 | Item B command name / IPC args | Host wires `confirm`/`written` after `relinkAsset`. This module does not name a Tauri command. |
++| U33 | Native copy existence | CC's one fact is `nativeResolved` (no separate `backupExists`). |
++| U34 | Folder pick listing | This slice assumes the host already enumerated candidates. Directory walk is native. |
++| U35 | Item F may add/rename `ExportErrorKind` | `EXPORT_FAILURE_COPY` remains a total record. Verified still the same 11 kinds after rebase onto `5a96f92`. |
+diff --git a/src/services/relinkResolution/fromRecoveryAssets.test.ts b/src/services/relinkResolution/fromRecoveryAssets.test.ts
+new file mode 100644
+index 0000000..aeb99b2
+--- /dev/null
++++ b/src/services/relinkResolution/fromRecoveryAssets.test.ts
+@@ -0,0 +1,49 @@
++import { describe, it, expect } from 'vitest';
++import type { Asset } from '../../types';
++import type { AssetRecoveryEntry } from '../assetRecovery';
++import { unresolvedMetadataFromAssets } from './fromRecoveryAssets';
++
++const hero: Asset = {
++  id: 'a1',
++  name: 'hero-clip.mp4',
++  url: 'blob:hero',
++  type: 'video',
++  duration: 10,
++};
++
++const vo: Asset = {
++  id: 'a2',
++  name: 'vo.wav',
++  url: 'blob:vo',
++  type: 'audio',
++  duration: 30,
++};
++
++const still: Asset = {
++  id: 'a3',
++  name: 'still.png',
++  url: 'blob:still',
++  type: 'image',
++};
++
++const rows: AssetRecoveryEntry[] = [
++  { assetId: 'a1', name: hero.name, type: 'video', cacheResolved: false, nativeResolved: false, resolved: false },
++  { assetId: 'a2', name: vo.name, type: 'audio', cacheResolved: false, nativeResolved: true, resolved: true },
++  { assetId: 'a3', name: still.name, type: 'image', cacheResolved: false, nativeResolved: false, resolved: false },
++];
++
++describe('unresolvedMetadataFromAssets', () => {
++  it('keeps only assets that are short of CC resolved (cache or native)', () => {
++    expect(unresolvedMetadataFromAssets([hero, vo, still], rows)).toEqual([
++      { id: 'a1', name: 'hero-clip.mp4', type: 'video', duration: 10 },
++      { id: 'a3', name: 'still.png', type: 'image', duration: null },
++    ]);
++  });
++
++  it('does not treat nativeResolved as a separate backup that still needs re-link', () => {
++    const onlyNative: AssetRecoveryEntry[] = [
++      { assetId: 'a2', name: vo.name, type: 'audio', cacheResolved: false, nativeResolved: true, resolved: true },
++    ];
++    expect(unresolvedMetadataFromAssets([vo], onlyNative)).toEqual([]);
++  });
++});
+diff --git a/src/services/relinkResolution/fromRecoveryAssets.ts b/src/services/relinkResolution/fromRecoveryAssets.ts
+new file mode 100644
+index 0000000..327c1f0
+--- /dev/null
++++ b/src/services/relinkResolution/fromRecoveryAssets.ts
+@@ -0,0 +1,25 @@
++/**
++ * Map CC's published project/asset rows onto the pure re-link descriptors.
++ * No Tauri, no store writes — the host still owns `relinkAsset`.
++ */
++
++import type { Asset } from '../../types';
++import type { AssetRecoveryEntry } from '../assetRecovery';
++import type { UnresolvedAssetMetadata } from './types';
++
++export function unresolvedMetadataFromAssets(
++  assets: readonly Asset[],
++  recoveryRows: readonly AssetRecoveryEntry[],
++): UnresolvedAssetMetadata[] {
++  const unresolved = new Set(
++    recoveryRows.filter((row) => !row.resolved).map((row) => row.assetId),
++  );
++  return assets
++    .filter((asset) => unresolved.has(asset.id))
++    .map((asset) => ({
++      id: asset.id,
++      name: asset.name,
++      type: asset.type,
++      duration: typeof asset.duration === 'number' ? asset.duration : null,
++    }));
++}
+diff --git a/src/services/relinkResolution/index.ts b/src/services/relinkResolution/index.ts
+index f430786..94b7ad2 100644
+--- a/src/services/relinkResolution/index.ts
++++ b/src/services/relinkResolution/index.ts
+@@ -20,6 +20,7 @@ export {
+   phasesOf,
+ } from './relinkStateMachine';
+ export { proposeFolderBatchRelink, type FolderBatchRelinkResult } from './folderBatchRelink';
++export { unresolvedMetadataFromAssets } from './fromRecoveryAssets';
+ export type {
+   RelinkAssetRecord,
+   RelinkAssetType,
+diff --git a/src/services/relinkResolution/relinkStateMachine.ts b/src/services/relinkResolution/relinkStateMachine.ts
+index 6e61a0a..ebf5495 100644
+--- a/src/services/relinkResolution/relinkStateMachine.ts
++++ b/src/services/relinkResolution/relinkStateMachine.ts
+@@ -130,7 +130,8 @@ export function markRelinkFailed(
+ /**
+  * The only exit from item A's degraded / poisoned load: every unresolved
+  * asset has been confirmed and marked written. Aligns with
+- * `canPersistRecoveredProject` — anything short of `written` keeps Save illegal.
++ * `canPersistRecoveredProject` and CC's `allResolved` — anything short of
++ * `written` keeps Save illegal and the project poisoned.
+  */
+ export function canLeaveDegradedRelinkFlow(flow: readonly RelinkAssetRecord[]): boolean {
+   if (flow.length === 0) return false;
+diff --git a/src/services/relinkResolution/types.ts b/src/services/relinkResolution/types.ts
+index f88c1f7..c868b2e 100644
+--- a/src/services/relinkResolution/types.ts
++++ b/src/services/relinkResolution/types.ts
+@@ -3,12 +3,13 @@
+  *
+  * Metadata is whatever survived in project.json after item A poisoned the
+  * load (`asset-unresolvable`). Candidate files are caller-supplied descriptors;
+- * this module never reads the filesystem. CC item B will expose the real
+- * payload and command — field names here are UI-lane assumptions
+- * (`.cursor/ws3-relink-unseen.md`).
++ * this module never reads the filesystem. Field names follow CC's published
++ * `Asset` / `AssetRecoveryEntry` (`assetRecovery.ts`, `nativeAssetStore.ts`).
+  */
+ 
+-export type RelinkAssetType = 'image' | 'video' | 'audio';
++import type { Asset } from '../../types';
++
++export type RelinkAssetType = Asset['type'];
+ 
+ export type RelinkConfidence = 'exact' | 'probable' | 'rejected';
+ 
+@@ -18,7 +19,7 @@ export interface UnresolvedAssetMetadata {
+   id: string;
+   name: string;
+   type: RelinkAssetType;
+-  /** Seconds. Absent on images and on videos whose probe never landed. */
++  /** Seconds. `Asset.duration` when probed; null on images and probe misses. */
+   duration: number | null;
+ }
+ 
+-- 
+2.53.0
+

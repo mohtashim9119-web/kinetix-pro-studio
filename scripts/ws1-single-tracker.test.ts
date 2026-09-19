@@ -111,6 +111,12 @@ const ALLOWLIST = new Set<string>([
   // push record, TRUE-CLEAN-BASELINE checklist. Dated, docs-only, not a live
   // tracker.
   'docs/ws1-sync-pipeline/final-consolidation-2026-09-19.md',
+  // Baseline residue closeout pass (2026-09-19) — disposes the 12 unmerged
+  // local refs final-consolidation's T8(5) left open (patches exported,
+  // SUPERSEDED/ABANDONED refs deleted, UNIQUE-WORK refs kept for operator
+  // decision) and records the R4 regen proof for the hour_16k.wav exclusion.
+  // Dated, docs-only, not a live tracker.
+  'docs/ws1-sync-pipeline/baseline-residue-closeout-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
