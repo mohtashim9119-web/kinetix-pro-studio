@@ -192,6 +192,7 @@ import { getWaveform as getPersistedWaveform, putWaveform as putPersistedWavefor
 import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadingOnBoundary, DEFAULT_HEADING_DURATION } from './services/headingLayer';
 import { stripRtfIfNeeded } from './services/textUtils';
 import { assignSegmentIds, type SegmentIdSource } from './services/segmentId';
+import { mergeExtractedZipAssets } from './services/zipAssetMerge';
 import {
   putAsset,
   getAsset,
@@ -3769,14 +3770,11 @@ export default function App() {
     }
     for (const sf of staged.zipFiles) {
       const extracted = await extractZipToAssets(projectRef.current.id, sf.file);
-      for (const asset of extracted) {
-        if (allAssets.some(a => a.name === asset.name)) {
-          URL.revokeObjectURL(asset.url); // won't be used — clean up
-          continue;
-        }
-        allAssets.push(asset);
-        if (asset.type === 'audio') newVoiceoverId = asset.id;
-      }
+      const { kept, audioAssetId } = await mergeExtractedZipAssets(
+        projectRef.current.id, allAssets, extracted,
+      );
+      allAssets.push(...kept);
+      if (audioAssetId !== undefined) newVoiceoverId = audioAssetId;
     }
 
     // WS2 quick-close — operator ruling (2026-09-05): no resolvable voiceover
