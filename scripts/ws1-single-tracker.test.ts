@@ -122,6 +122,11 @@ const ALLOWLIST = new Set<string>([
   // final-shape-mapping-2026-09-18.md M2/M7). Supersedes sync-pipeline-v2-plan.md.
   // Dated, docs-only, not a live tracker.
   'docs/ws1-sync-pipeline/sync-pipeline-plan-v3.md',
+  // Zero-leftover finish closeout (2026-09-19) — T1-T6 record: merges/parks with
+  // evidence, STATUS.md sync (no-op), ref deletions, the 72MB patch split-gzip,
+  // signed-plan commit, and final six-gate verification. Dated, docs-only, not a
+  // live tracker.
+  'docs/ws1-sync-pipeline/zero-leftover-finish-2026-09-19.md',
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {
