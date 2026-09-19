@@ -3,6 +3,7 @@ import { writeMirroredProject, deleteMirroredProject, readMirror } from './proje
 import { osStoreRead, osStoreWrite, osStoreDelete } from './projectStoreClient';
 import { isTauri } from './tauriFfmpeg';
 import { backfillSegmentIds } from './segmentId';
+import { migrateLegacyTimingProvenance } from './timingProvenance';
 
 /** Registry key — stores ProjectMeta[] (newest-first sorted on write). */
 const REGISTRY_KEY = 'kinetix:projects:v1';
@@ -33,10 +34,14 @@ interface StoredAsset extends Omit<Asset, 'url' | 'file'> {
 }
 
 interface StoredProjectData {
-  version: 2 | 3 | 4;
+  version: 2 | 3 | 4 | 5;
   savedAt: number;
   project: Omit<Project, 'assets'> & { assets: StoredAsset[] };
 }
+
+/** Current on-disk envelope. v5 is the first version the loader branches on
+ *  (plan-v3 item 8 — timing provenance). Prior markers were inert. */
+export const PROJECT_STORE_VERSION = 5 as const;
 
 function stripAsset(asset: Asset): StoredAsset {
   const { url: _url, file: _file, ...rest } = asset;
@@ -338,13 +343,12 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
     // WS2 T2.1 — bumped from 3 to 4: a segment could carry `absorbedGaps`
     // (types.ts), restore-UI bookkeeping. WS2 ws2-26 (round 1 of the
     // operator's revert request) removed that field again along with the
-    // whole restore feature it supported — nothing currently on `Project` or
-    // `VideoSegment` actually needs version 4 any more, but the marker is
-    // left at 4 rather than rolled back: it was never read/branched on
-    // (additive-optional fields need no structural migration either way),
-    // and un-bumping a shipped marker would misrepresent history more than
-    // a now-purposeless one does.
-    version: 4,
+    // whole restore feature it supported — the marker stayed at 4 rather
+    // than rolled back.
+    // plan-v3 item 8 — bumped from 4 to 5: `Project.timingProvenance`. This
+    // is the first envelope version the loader actually branches on: a
+    // stored version < 5 with timing arrays is labelled engine-unknown.
+    version: PROJECT_STORE_VERSION,
     savedAt,
     project: { ...project, assets: project.assets.map(stripAsset) },
   };
@@ -495,6 +499,16 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
   // already carrying a current-version id is left untouched, so re-loading
   // an already-backfilled project is a no-op here.
   project.segments = backfillSegmentIds(project.segments);
+
+  // plan-v3 item 8 — v4→v5: a stored envelope older than 5 that already
+  // carries timing arrays is labelled engine-unknown. Never a guess. A v5
+  // (or newer) envelope is left as written, including an absent stamp on a
+  // project that has never stored timings.
+  const storedVersion = typeof stored.version === 'number' ? stored.version : 0;
+  if (storedVersion < PROJECT_STORE_VERSION) {
+    const migrated = migrateLegacyTimingProvenance(project);
+    project.timingProvenance = migrated.timingProvenance;
+  }
 
   // A previously-poisoned id that now loads cleanly is un-poisoned — but
   // only when its reason's OWN policy (`LOAD_FAILURE_CLEARANCE`) says a clean

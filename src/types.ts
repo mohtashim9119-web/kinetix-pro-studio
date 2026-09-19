@@ -356,6 +356,43 @@ export interface UnappliedTranscript {
   completedAt: string;
 }
 
+/**
+ * Provenance for one committed timing set (plan-v3 Wave 1 item 8 / M3.4).
+ * Additive-optional. Absent on any project written before this field existed
+ * — the v4→v5 load path labels that `'unknown'`, NEVER inferred from which
+ * tokens happen to be present or from the FA toggle.
+ *
+ * Engines are the ones this wave actually produces: `whisper` | `fa`.
+ * `unknown` is the only honest label for pre-stamp data. Cloud values arrive
+ * in Wave 3 and are not named here.
+ */
+export type TimingEngine = 'whisper' | 'fa' | 'unknown';
+
+/** Why a committed timing set is flagged degraded rather than clean. */
+export type TimingDegradedKind =
+  | 'fa-chunk-infeasible'
+  | 'silence-detect-failed'
+  | 'gate-closed'
+  | 'user-chose-whisper';
+
+export interface TimingProvenance {
+  engine: TimingEngine;
+  /** Model id that actually produced the timings, or `'unknown'` on legacy. */
+  model: string;
+  /** Model revision / digest pin, or `'unknown'` on legacy. */
+  modelVersion: string;
+  /** Provenance-record schema, independent of `projectStore`'s envelope version. */
+  schemaVersion: number;
+  language?: string;
+  completedAt: number;
+  /** Present only when the run completed in a degraded state. */
+  degraded?: {
+    kind: TimingDegradedKind;
+    chunkCount?: number;
+    sceneIds?: string[];
+  };
+}
+
 export interface TranscriptToken {
   startSec: number;
   endSec: number;
@@ -525,13 +562,22 @@ export interface Project {
    *  every entry too.
    *
    *  SCHEMA ONLY THIS SLICE — no production writer populates this field yet
-   *  (R.2/R.5/R.7 and any real per-word UI are unbuilt), and no `version`
-   *  concept exists on `Project` to migrate through: an absent field is
+   *  (R.2/R.5/R.7 and any real per-word UI are unbuilt). An absent field is
    *  read as "no FA word timings," the same convention every other optional
    *  `Project` field here already uses (see `headings`, `resolutionTier`).
-   *  Undefined on every project until whichever later slice adds the first
-   *  real writer. */
+   *  Envelope versioning for the *stamp* that describes these timings lives
+   *  on `timingProvenance` / `projectStore` v5 (plan-v3 item 8), not here. */
   faWordTimings?: TranscriptToken[];
+  /**
+   * plan-v3 Wave 1 item 8 — one provenance record per pipeline stage.
+   * The two stages can come from different engines and different runs
+   * (a cached Whisper transcript re-aligned after a script edit).
+   * Absent on every project saved before v5; the load path labels that
+   * `'unknown'` rather than guessing. */
+  timingProvenance?: {
+    transcription?: TimingProvenance;
+    alignment?: TimingProvenance;
+  };
   /** WS2 T4.1 Step 2 — what THIS project's freshly minted segments start their
    *  `showOverlay` at, seeded ONCE at creation from App Settings' New Project
    *  Defaults (`services/appDefaults.ts`) and never re-read from that global

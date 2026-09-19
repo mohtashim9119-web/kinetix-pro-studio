@@ -121,6 +121,12 @@ import { runForcedAlignmentForSync, type FaFailureKind, type FaRunResult } from 
 import { runFaPreflight } from './services/faPreflight';
 import { saveFaPause, readFaPause, clearFaPause, type FaPauseRecord } from './services/faSyncPauseStore';
 import {
+  stampFaProvenance,
+  stampWhisperProvenance,
+  whisperDegradedKind,
+} from './services/timingProvenance';
+import type { TimingProvenance } from './types';
+import {
   detectUnspokenScriptSegmentsFromWhisper,
   applyUnspokenScriptGate,
   R10_SKIP_REASON,
@@ -3964,6 +3970,10 @@ export default function App() {
     // Stays undefined on every gate-off run — a project synced with the gate
     // off never gains this field, matching every pre-FA project's shape.
     let faWordTimingsResult: TranscriptToken[] | undefined;
+    // plan-v3 item 8 — staged here, written in the same atomic setProject as
+    // `faWordTimings`. Undefined when this run never produced a new timing
+    // set (the character-based fallback), so a prior stamp is left intact.
+    let nextTimingProvenance: Project['timingProvenance'] | undefined;
     // Boundary-quality checker (waveform-watcher program, Phase 1) — captured
     // only on the cachedTokensReady/Whisper-snapped branch below, since only
     // that branch has real per-segment token alignments to check a fallback
@@ -4124,6 +4134,40 @@ export default function App() {
       // `FaDegradedReason`'s own doc comment for why the two are never
       // conflated.
       const faTokens = faRun.tokens;
+      // plan-v3 item 8 — stamp the engine that actually produced the
+      // committed timings. A degraded Whisper-only run is `whisper` +
+      // `degraded`, never `fa`. Cloud names are Wave 3 and are not used.
+      {
+        const stampLang = resolveFaLanguage(projectRef.current)
+          ?? projectRef.current.language
+          ?? projectRef.current.detectedLanguage;
+        const transcriptionDegraded = faRun.status === 'degraded'
+          && faRun.reason !== 'ctc-infeasible-chunk'
+          ? { kind: whisperDegradedKind(faRun.reason) }
+          : undefined;
+        const transcription: TimingProvenance = stampWhisperProvenance({
+          language: stampLang,
+          completedAt: syncRunAt,
+          degraded: transcriptionDegraded,
+        });
+        let alignment: TimingProvenance | undefined;
+        if (faRun.status === 'ok') {
+          alignment = stampFaProvenance({
+            language: stampLang,
+            completedAt: syncRunAt,
+            degraded: faRun.silenceError !== undefined
+              ? { kind: 'silence-detect-failed' }
+              : undefined,
+          });
+        } else if (faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk') {
+          alignment = stampFaProvenance({
+            language: stampLang,
+            completedAt: syncRunAt,
+            degraded: { kind: 'fa-chunk-infeasible' },
+          });
+        }
+        nextTimingProvenance = { transcription, alignment };
+      }
       // A silence-detection failure INSIDE the FA pass is distinct from
       // `aligned.silenceError` below: it degraded the CHUNK PLAN (built
       // against zero silences) rather than the boundary snap, and was
@@ -4809,6 +4853,9 @@ export default function App() {
       // leaving stale word indices attached to a segment structure they no
       // longer describe.
       faWordTimings: faWordTimingsResult,
+      // plan-v3 item 8 — same object literal as `faWordTimings`. A follow-up
+      // setProject would allow timings to exist unstamped.
+      timingProvenance: nextTimingProvenance ?? prev.timingProvenance,
       // WS2 T4.7 Requirement 3 — the ONLY success-side clear of the
       // unapplied-transcript record, and it sits inside the atomic commit
       // rather than after it on purpose: the record means "a finished

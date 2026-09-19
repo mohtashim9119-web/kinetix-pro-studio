@@ -15,6 +15,7 @@ import { validate1to2 } from '../services/syncContracts';
 import { buildSilenceErrorEntry, buildMalformedTokenEntry, buildContractViolationEntry, appendSyncLogEntries } from '../services/syncLog';
 import { buildUnappliedTranscript } from '../services/unappliedTranscript';
 import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken, SyncLogEntry } from '../types';
+import { stampWhisperProvenance } from '../services/timingProvenance';
 
 /**
  * Fetches the voiceover blob and scans it for silence.
@@ -470,6 +471,16 @@ export function useWhisper(): UseWhisperApi {
             ? getFileIdentity(audioAsset.file)
             : p.lastTranscribedFileIdentity,
           transcriptTokens: tokens,
+          // plan-v3 item 8 — stamp the engine that actually produced these
+          // tokens, in the SAME update. A follow-up write would leave a
+          // window of unstamped timings.
+          timingProvenance: {
+            ...p.timingProvenance,
+            transcription: stampWhisperProvenance({
+              language: p.language ?? detectedLanguage,
+              completedAt: syncRunAt,
+            }),
+          },
           // Phase 2a (H.1/H.7) — detection is a SUGGESTION that fills the gap
           // only once: only ever written when the project has no language yet.
           // An already-set value (from a prior detection OR an explicit
