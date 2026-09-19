@@ -87,17 +87,33 @@ above) plus the `pre-round28-main` tag.
 
 ## P6 — Terminal verification
 
-### a) Six gates, fresh, at `2ecd62c` (pre-existing content unchanged since T6's run in
-the prior pass — no code changed between that run and this push, only this addendum's docs)
+### a) Six gates, fresh, re-run again at the true final SHA (`3ab75ba`, this note's own
+commit) rather than stopping at `2ecd62c`
 
 | # | Gate | Result | Match |
 |---|---|---|---|
 | 1 | `tsc --noEmit` | exit 0, no output | pass |
 | 2 | `npm run lint` | exit 0, no output | pass |
 | 3 | `npm test` | 3931 passed / 78 skipped / 0 failed | pass — canonical line (P3) |
-| 4 | `cargo test` | 437 passed; 0 failed; 6 ignored | pass |
+| 4 | `cargo test` | 437 passed; 0 failed; 6 ignored | pass (see flake note below) |
 | 5 | `cargo test --features fa-inference` | 523 passed; 0 failed; 36 ignored | pass |
 | 6 | `cargo build --release --features fa-inference` | Finished release profile, 0 warnings/errors | pass |
+
+**Flake observed and logged, not silently discarded:** the first of four `cargo test` runs
+at this SHA reported `436 passed; 1 failed` —
+`whisper::in_flight_tests::a_retained_event_is_delivered_exactly_once`
+(`src-tauri/src/whisper.rs:1548`) failed once, then passed clean on the next 3 consecutive
+runs (437/0/6 each time, matching the canonical baseline exactly). Root-caused as
+pre-existing, not introduced by this pass: no `src-tauri/` file was touched by any commit
+in either this pass (P0-P6) or the prior one (T1-T6) — every commit this session is
+docs-only except `673a3b0`, which touches only `src/App.tsx` and
+`src/services/zipAssetMerge.*` (frontend, not Rust). The failing test's own name and file
+match exactly the "`whisper.rs` 16-entry terminal-buffer eviction race" already registered
+as a known defect in `docs/STATUS.md` and named as a Wave 1 prerequisite fix in
+`docs/ws1-sync-pipeline/operator-product-rulings-2026-09-19.md` — i.e. this is the tracked
+defect surfacing under test, not a new one. The gate is reported PASS on the reproducible
+437/0/6 majority result, with this flake recorded as evidence for why Wave 1 opens with
+that exact race fix.
 
 ### b) Repo state
 
