@@ -1,0 +1,267 @@
+diff --git a/src/dev/exportLivenessProbe/generateGlWatchdogFixture.ts b/src/dev/exportLivenessProbe/generateGlWatchdogFixture.ts
+index cd43487..d9c1105 100644
+--- a/src/dev/exportLivenessProbe/generateGlWatchdogFixture.ts
++++ b/src/dev/exportLivenessProbe/generateGlWatchdogFixture.ts
+@@ -81,7 +81,9 @@ export async function generateGlWatchdogFixture(): Promise<GlWatchdogFixtureResu
+     });
+   }
+ 
+-  const timelineDurationSec = FIXTURE_SEGMENT_COUNT * FIXTURE_SEG_DURATION_SEC;
++  const framesPerSeg = Math.max(1, Math.round(FIXTURE_SEG_DURATION_SEC * FIXTURE_FPS));
++  const segDur = framesPerSeg / FIXTURE_FPS;
++  const timelineDurationSec = FIXTURE_SEGMENT_COUNT * segDur;
+   const voBlob = makeSilentWav(timelineDurationSec);
+   const voiceoverId = crypto.randomUUID();
+   await putAsset(projectId, voiceoverId, voBlob, { name: 'voiceover.wav', mimeType: 'audio/wav' });
+@@ -100,8 +102,8 @@ export async function generateGlWatchdogFixture(): Promise<GlWatchdogFixtureResu
+       id: crypto.randomUUID(),
+       text: `Caption ${i + 1}`,
+       assetId: video.id,
+-      startTime: i * FIXTURE_SEG_DURATION_SEC,
+-      duration: FIXTURE_SEG_DURATION_SEC,
++      startTime: (i * framesPerSeg) / FIXTURE_FPS,
++      duration: segDur,
+       transition: TransitionType.NONE,
+       animation: AnimationType.NONE,
+       order: i,
+diff --git a/src/dev/exportLivenessProbe/runVariantQuantities.ts b/src/dev/exportLivenessProbe/runVariantQuantities.ts
+index aaa9ac8..c5062b5 100644
+--- a/src/dev/exportLivenessProbe/runVariantQuantities.ts
++++ b/src/dev/exportLivenessProbe/runVariantQuantities.ts
+@@ -37,6 +37,7 @@ export interface VariantQuantityRow {
+   decodersOpen: number | null;
+   cursorsCreated: number | null;
+   openCursors: number | null;
++  peakOpenCursors: number | null;
+   openImageBitmaps: number | null;
+   workerHeapBytes: number | null;
+   terminalSilentInterval: { durationMs: number; phase: string | null } | null;
+@@ -144,6 +145,7 @@ export async function runVariantQuantities(variantIds?: string[]): Promise<Varia
+       decodersOpen: gl?.decodersOpen ?? null,
+       cursorsCreated: gl?.cursorsCreated ?? null,
+       openCursors: gl?.openCursors ?? null,
++      peakOpenCursors: gl?.peakOpenCursors ?? null,
+       openImageBitmaps: gl?.openImageBitmaps ?? null,
+       workerHeapBytes: gl?.workerHeapBytes ?? null,
+       terminalSilentInterval: terminal
+diff --git a/src/hooks/webcodecsToggleConsumers.test.ts b/src/hooks/webcodecsToggleConsumers.test.ts
+index dc71e17..f6f1804 100644
+--- a/src/hooks/webcodecsToggleConsumers.test.ts
++++ b/src/hooks/webcodecsToggleConsumers.test.ts
+@@ -95,6 +95,10 @@ const ALLOWED: ReadonlyArray<{ path: string; why: string }> = [
+     path: 'dev/exportLivenessProbe/runVariantQuantities.ts',
+     why: 'dev-only Round 4 variant-quantity harness under src/dev/, same reach as runCeilingBisect',
+   },
++  {
++    path: 'dev/exportLivenessProbe/runRound6.ts',
++    why: 'dev-only Round 6 cursor-release harness under src/dev/, same reach as runVariantQuantities',
++  },
+ ];
+ 
+ const ALLOWED_PATHS = new Set(ALLOWED.map((a) => a.path));
+diff --git a/src/main.tsx b/src/main.tsx
+index 0ac6e92..6cf501f 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -4,8 +4,8 @@ import App from './App.tsx';
+ import './index.css';
+ 
+ if (import.meta.env.DEV) {
+-  // Round 5 pipeline bisection autorun (dev-only).
+-  void import('./dev/exportLivenessProbe/maybeAutorunRound5');
++  // Round 6 cursor-release verification autorun (dev-only).
++  void import('./dev/exportLivenessProbe/maybeAutorunRound6');
+ }
+ 
+ createRoot(document.getElementById('root')!).render(
+diff --git a/src/services/webcodecsExport/driveGlRun.test.ts b/src/services/webcodecsExport/driveGlRun.test.ts
+index 39b313f..6cfb7f1 100644
+--- a/src/services/webcodecsExport/driveGlRun.test.ts
++++ b/src/services/webcodecsExport/driveGlRun.test.ts
+@@ -138,6 +138,7 @@ function diagnostics(
+     decodersOpen: 0,
+     cursorsCreated: 0,
+     openCursors: 0,
++    peakOpenCursors: 0,
+     openImageBitmaps: 0,
+     ...overrides,
+   };
+diff --git a/src/services/webcodecsExport/exportPipelineWebCodecs.ts b/src/services/webcodecsExport/exportPipelineWebCodecs.ts
+index c699479..d3505c3 100644
+--- a/src/services/webcodecsExport/exportPipelineWebCodecs.ts
++++ b/src/services/webcodecsExport/exportPipelineWebCodecs.ts
+@@ -644,6 +644,7 @@ export function driveGlRun(
+         decodersOpen: 0,
+         cursorsCreated: 0,
+         openCursors: 0,
++        peakOpenCursors: 0,
+         openImageBitmaps: 0,
+       };
+     };
+@@ -1292,6 +1293,7 @@ export async function exportProjectWebCodecs(
+             decodersOpen: 0,
+             cursorsCreated: 0,
+             openCursors: 0,
++            peakOpenCursors: 0,
+             openImageBitmaps: 0,
+           }),
+           maxSilentMs: driveResult.error.liveness?.maxSilentMs ?? 0,
+diff --git a/src/services/webcodecsExport/exportWorker.ts b/src/services/webcodecsExport/exportWorker.ts
+index 3ec2235..90bb936 100644
+--- a/src/services/webcodecsExport/exportWorker.ts
++++ b/src/services/webcodecsExport/exportWorker.ts
+@@ -50,6 +50,7 @@ import { deriveCompositeParams, deriveSlotPlan, type ProjectEffectConfig } from
+ import { acquireOffscreenGlContext } from '../gl/glContext';
+ import { computeObjectCoverUvRect } from '../gl/uvRect';
+ import { decodeSegmentFrames, decodeResourceCounts } from './sequentialDecode';
++import { DecodeCursorRegistry } from './decodeCursorLifetime';
+ import { GLTextRenderer, type FontConfig, type TextRenderGlobalConfig } from './textRenderer';
+ import { ExportPhaseTracker, type ExportDemuxSplit } from './exportPhaseTracker';
+ import { demuxCacheSize } from '../videoDemuxer';
+@@ -212,6 +213,7 @@ function buildDiagnostics(
+     decodersOpen: resourceCounts.decodersOpen,
+     cursorsCreated: resourceCounts.cursorsCreated,
+     openCursors: resourceCounts.openCursors,
++    peakOpenCursors: resourceCounts.peakOpenCursors,
+     openImageBitmaps: resourceCounts.openImageBitmaps,
+   };
+ }
+@@ -398,14 +400,14 @@ interface SlotSource {
+ }
+ 
+ class RunState {
+-  private cursors = new Map<string, DecodeCursor>();
++  private cursors = new DecodeCursorRegistry<DecodeCursor>();
+   private imageBitmaps = new Map<string, ImageBitmap>();
+   private assetById: Map<string, Asset>;
+   private tracker: ExportPhaseTracker;
+   private startIndex: number;
+   private segments: readonly VideoSegment[];
++  private config: ProjectEffectConfig;
+   decodedSourceFrames = 0;
+-  cursorsCreated = 0;
+   private decodersCreatedAtStart = 0;
+ 
+   constructor(
+@@ -413,11 +415,13 @@ class RunState {
+     tracker: ExportPhaseTracker,
+     startIndex: number,
+     segments: readonly VideoSegment[],
++    config: ProjectEffectConfig,
+   ) {
+     this.assetById = new Map(assets.map((a) => [a.id, a]));
+     this.tracker = tracker;
+     this.startIndex = startIndex;
+     this.segments = segments;
++    this.config = config;
+     this.decodersCreatedAtStart = decodeResourceCounts().decodersCreated;
+   }
+ 
+@@ -426,18 +430,26 @@ class RunState {
+     decodersOpen: number;
+     cursorsCreated: number;
+     openCursors: number;
++    peakOpenCursors: number;
+     openImageBitmaps: number;
+   } {
+     const { decodersCreated, decodersOpen } = decodeResourceCounts();
+     return {
+       decodersCreated: decodersCreated - this.decodersCreatedAtStart,
+       decodersOpen,
+-      cursorsCreated: this.cursorsCreated,
++      cursorsCreated: this.cursors.cursorsCreated,
+       openCursors: this.cursors.size,
++      peakOpenCursors: this.cursors.peakOpenCursors,
+       openImageBitmaps: this.imageBitmaps.size,
+     };
+   }
+ 
++  /** Close every cursor the playhead has definitively left. Safe: lastNeeded
++   *  is exclusive-end, matching deriveSlotPlan, so a later frame cannot read it. */
++  async releaseStaleCursors(currentTime: number): Promise<void> {
++    await this.cursors.releaseStale(currentTime, this.segments, this.config, closeCursor);
++  }
++
+   private projectSegmentIndex(seg: VideoSegment): number {
+     const local = this.segments.findIndex((s) => s.id === seg.id);
+     return local >= 0 ? this.startIndex + local : this.startIndex;
+@@ -453,8 +465,7 @@ class RunState {
+       if (!cursor) {
+         this.tracker.enter('demux');
+         cursor = openCursor(seg, asset.url, asset.duration, this.tracker, asset.id);
+-        this.cursors.set(seg.id, cursor);
+-        this.cursorsCreated++;
++        this.cursors.open(seg.id, cursor);
+         const targetSec = toSourceTime(seg, currentTime, asset.duration);
+         const frame = await frameAt(cursor, targetSec, () => {
+           this.decodedSourceFrames++;
+@@ -498,8 +509,7 @@ class RunState {
+   }
+ 
+   async disposeAll(): Promise<void> {
+-    for (const cursor of this.cursors.values()) await closeCursor(cursor);
+-    this.cursors.clear();
++    await this.cursors.disposeAll(closeCursor);
+     for (const bmp of this.imageBitmaps.values()) bmp.close();
+     this.imageBitmaps.clear();
+   }
+@@ -681,6 +691,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
+         decodersOpen: decodeResourceCounts().decodersOpen,
+         cursorsCreated: 0,
+         openCursors: 0,
++        peakOpenCursors: 0,
+         openImageBitmaps: 0,
+       },
+     );
+@@ -786,7 +797,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
+     return;
+   }
+ 
+-  const runState = new RunState(assets, tracker, startIndex, segments);
++  const runState = new RunState(assets, tracker, startIndex, segments, config);
+   activeRunState = runState;
+   const first = segments[0]!;
+   const last = segments[segments.length - 1]!;
+@@ -837,6 +848,7 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
+       // exactly as well as a whole-project index would.
+       const currentTime = runStartSec + i / fps;
+ 
++      try {
+       const rawParams = deriveCompositeParams(segments, currentTime, config);
+       const plan = deriveSlotPlan(segments, currentTime, rawParams.transition, config);
+ 
+@@ -894,6 +906,13 @@ async function runExport(payload: ExportWorkerInitMessage): Promise<void> {
+       tracker.setFramesEncoded(framesEmitted);
+       tracker.pulse();
+       if (i % 5 === 0) postOut({ type: 'queue-sample', frameIndex: i, size: encoder.encodeQueueSize });
++      } finally {
++        // Release after this tick's slot reads (or an early continue / throw)
++        // so a transition pair stays live through compositing, then the
++        // outgoing cursor closes once currentTime has passed its lastNeeded.
++        // cancel / error / success also hit disposeAll in the outer finally.
++        await runState.releaseStaleCursors(currentTime);
++      }
+     }
+ 
+     if (cancelled) {
+@@ -956,6 +975,7 @@ self.onmessage = (ev: MessageEvent<ExportWorkerInboundMessage>) => {
+         decodersOpen: decodeResourceCounts().decodersOpen,
+         cursorsCreated: 0,
+         openCursors: 0,
++        peakOpenCursors: 0,
+         openImageBitmaps: 0,
+       },
+     );
+diff --git a/src/services/webcodecsExport/exportWorkerDiagnostics.ts b/src/services/webcodecsExport/exportWorkerDiagnostics.ts
+index c976e7f..348d8db 100644
+--- a/src/services/webcodecsExport/exportWorkerDiagnostics.ts
++++ b/src/services/webcodecsExport/exportWorkerDiagnostics.ts
+@@ -69,6 +69,8 @@ export interface ExportWorkerDiagnosticsPayload {
+   cursorsCreated: number;
+   /** Decode cursors still resident at terminal snapshot. */
+   openCursors: number;
++  /** High-water mark of simultaneously open decode cursors this run. */
++  peakOpenCursors: number;
+   /** Cached ImageBitmaps still open at terminal snapshot. */
+   openImageBitmaps: number;
+ }

@@ -1,15 +1,16 @@
-# Stash preservation patches (2026-09-19, baseline closeout T2)
+# Stash preservation patches (2026-09-19, baseline closeout T2 + T5)
 
 Exported from the shared stash stack (`git stash list`, same across all worktrees of this
 repo) per the disposition table in
 `docs/ws1-sync-pipeline/baseline-p1b-p3-2026-09-19.md` (T5). The stash stack itself was
 left untouched — these are read-only exports (`git stash show -p`), not drops or pops.
+As of the baseline reconciliation pass (T5), all 7 stash entries are now mirrored here.
 
 ## What's here and why
 
-Only entries the disposition table marked **unique, unmerged** (content that exists
-nowhere else — not superseded by later committed work, not contained in an existing
-branch) were exported. All five are on the `webgl2-effects-engine` line of work, an
+The first five entries the disposition table marked **unique, unmerged** (content that
+exists nowhere else — not superseded by later committed work, not contained in an
+existing branch). All five are on the `webgl2-effects-engine` line of work, an
 abandoned/unconfirmed experiment:
 
 | File | Stash | Base commit | Subject |
@@ -28,13 +29,30 @@ committed here: `git read-tree --index-output=<tmp> <base>` followed by
 so the check touched neither this worktree's real index nor its working directory. All
 five passed.
 
-## Not exported
+## Remaining two (exported 2026-09-19, T5)
+
+These were left out of the first pass — one flagged "likely superseded", the other
+"cannot determine without a fresh diff" — but were exported this pass for
+completeness. Their disposition question is unchanged by exporting them: a patch on
+disk is not a claim of uniqueness, just a mirror of stash content that would otherwise
+vanish if the stack were ever dropped.
+
+| File | Stash | Base commit | Subject |
+|---|---|---|---|
+| `stash0-detached-367a873-pre-ws3-export-integration.patch` | `stash@{0}` | `367a873372b6555bbba596e3e471a3d318bcfc72` | "backup: detached-367a873 working tree before switching to ws3-export-integration (2026-09-13)" |
+| `stash1-ws3-export-liveness-cursor-cloud-agent.patch` | `stash@{1}` | `1b3c03f284cb989901fd2f85aa7eb1971b4fa7f7` | "Cursor: moved local changes to cloud agent (source agent 2f264114-f91b-4957-bbee-38f6f3282750)" |
 
 - `stash@{0}` — disposition table: "Likely superseded" (later committed work on the same
-  files exists in the `ws3-export-integration` worktree past this stash's parent).
+  files exists in the `ws3-export-integration` worktree past this stash's parent). Not
+  re-adjudicated here — still not confirmed superseded vs. unique, just no longer
+  unmirrored.
 - `stash@{1}` — disposition table: "Cannot determine without a fresh diff" (the named
-  branch `ws3-export-liveness` doesn't exist to compare against). Not confirmed
-  unique/unmerged, so not exported this pass — flagged, not guessed.
+  branch `ws3-export-liveness` doesn't exist to compare against). Same caveat.
+
+Both verified to apply cleanly to their recorded base commit via the same throwaway-index
+method as the first five (`git read-tree --index-output=<tmp> <base>` +
+`GIT_INDEX_FILE=<tmp> git apply --check --cached <patch>`), touching neither this
+worktree's real index nor its working directory.
 
 ## To apply one of these later
 

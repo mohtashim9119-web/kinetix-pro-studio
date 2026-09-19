@@ -1,0 +1,1250 @@
+diff --git a/docs/ws2-app/README.md b/docs/ws2-app/README.md
+index 8b2c1b5..9bda99c 100644
+--- a/docs/ws2-app/README.md
++++ b/docs/ws2-app/README.md
+@@ -8,5 +8,6 @@ Operator docs, editor QA procedures, and feasibility studies for app-level featu
+ | [`fa-models-ort-provisioning.md`](fa-models-ort-provisioning.md) | ONNX Runtime bundle provisioning runbook |
+ | [`editor-wkwebview-drag-checklist.md`](editor-wkwebview-drag-checklist.md) | Standing manual QA for timeline drag (run before release) |
+ | [`transcription-groq-feasibility.md`](transcription-groq-feasibility.md) | Groq LPU Speech vs local whisper-cli feasibility audit |
++| [`cloud-fa-hybrid-feasibility.md`](cloud-fa-hybrid-feasibility.md) | Modal ONNX FA + Groq hybrid vs local Tauri FA — feasibility and blockers |
+ 
+ **Archive:** video-ingest defect records → `docs/archive/ws2/`. WS2 session completion → `docs/archive/history/history-2.md`.
+diff --git a/src-tauri/src/fa_dev.rs b/src-tauri/src/fa_dev.rs
+index 64f835d..5d6f3d0 100644
+--- a/src-tauri/src/fa_dev.rs
++++ b/src-tauri/src/fa_dev.rs
+@@ -463,6 +463,58 @@ pub(crate) fn reset_staging_durations_for_tests() {
+     }
+ }
+ 
++/// WS3 STEP 4 — total on-disk budget for `fa_stage_audio_raw`'s
++/// content-addressed staging directories (`kinetix-fa-production-inputs`,
++/// `kinetix-fa-dev-inputs` — this one function serves both; the caller picks
++/// the directory via the `cache-dir` header). Before this step NOTHING ever
++/// removed a staged input: the content-addressing dedups repeat calls
++/// against the SAME audio (`if !input_path.exists()`), but a project with
++/// many distinct source files accumulated one file per distinct audio
++/// forever — a real, unbounded leak under `$TMPDIR`, found by grep alongside
++/// the STEP 3b session-retention audit. Same 2 GiB order-of-magnitude budget
++/// as `fa.rs::FA_AUDIO_CACHE_MAX_BYTES` (that cache's own doc comment states
++/// the reasoning: generous headroom for one active project's repeated runs,
++/// a small bounded fraction of typical available disk).
++const FA_STAGING_INPUTS_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
++
++/// WS3 STEP 4 — least-recently-used eviction for a staging directory,
++/// applied opportunistically after every new WRITE (mirrors
++/// `fa.rs::evict_lru_until_under_cap`'s policy exactly — see that function's
++/// own doc comment for why mtime-as-LRU and why only-after-a-write). Cannot
++/// reuse that function directly: it hard-filters to `.wav` entries, but a
++/// staged input's extension is whatever `ext_hint` produced (wav/mp3/m4a/…),
++/// not always `.wav` — this is the same policy over "every file in the
++/// directory" instead. Best-effort: an error reading or removing an entry is
++/// skipped, never aborts the pass — worst case the directory grows past its
++/// budget until the next successful write, never a wrong alignment result.
++fn evict_staging_lru_until_under_cap(dir: &Path, max_bytes: u64) {
++    let Ok(entries) = fs::read_dir(dir) else { return };
++    let mut files: Vec<(std::path::PathBuf, u64, std::time::SystemTime)> = Vec::new();
++    let mut total: u64 = 0;
++    for entry in entries.flatten() {
++        let path = entry.path();
++        let Ok(meta) = entry.metadata() else { continue };
++        if !meta.is_file() {
++            continue;
++        }
++        let Ok(mtime) = meta.modified() else { continue };
++        total += meta.len();
++        files.push((path, meta.len(), mtime));
++    }
++    if total <= max_bytes {
++        return;
++    }
++    files.sort_by_key(|(_, _, mtime)| *mtime);
++    for (path, size, _) in files {
++        if total <= max_bytes {
++            break;
++        }
++        if fs::remove_file(&path).is_ok() {
++            total = total.saturating_sub(size);
++        }
++    }
++}
++
+ #[tauri::command]
+ pub fn fa_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<String, String> {
+     let staging_started = std::time::Instant::now();
+@@ -491,6 +543,11 @@ pub fn fa_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<String, St
+     let input_path = input_dir.join(format!("{content_key}.{}", extension_for(ext_hint)));
+     if !input_path.exists() {
+         fs::write(&input_path, bytes).map_err(|e| format!("write audio: {e}"))?;
++        // WS3 STEP 4 — only on an actual write, mirroring
++        // `fa.rs::evict_lru_until_under_cap`'s own "never on a cache HIT"
++        // policy (a hit already re-stamped nothing before this step, and
++        // still doesn't — a repeat stage of the same content is a no-op).
++        evict_staging_lru_until_under_cap(&input_dir, FA_STAGING_INPUTS_MAX_BYTES);
+     }
+ 
+     // Measured across the SHA-256 of the whole body plus the write — the two
+@@ -643,6 +700,71 @@ mod tests {
+         assert_eq!(extension_for("something-unknown"), "bin");
+     }
+ 
++    // -- WS3 STEP 4 — staging-directory LRU eviction (the leak fix) --------
++
++    fn staging_lru_test_dir(tag: &str) -> std::path::PathBuf {
++        let dir = std::env::temp_dir().join(format!("kinetix-fa-staging-lru-test-{tag}"));
++        let _ = fs::remove_dir_all(&dir);
++        fs::create_dir_all(&dir).unwrap();
++        dir
++    }
++
++    fn write_aged(dir: &Path, name: &str, bytes: usize, age_secs: u64) -> std::path::PathBuf {
++        let path = dir.join(name);
++        fs::write(&path, vec![7u8; bytes]).unwrap();
++        let older = std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs);
++        let file = fs::File::open(&path).unwrap();
++        file.set_modified(older).unwrap();
++        path
++    }
++
++    #[test]
++    fn staging_eviction_removes_oldest_first_until_under_budget() {
++        let dir = staging_lru_test_dir("oldest-first");
++        // Mixed extensions on purpose — this must NOT filter by `.wav` the
++        // way `fa.rs::evict_lru_until_under_cap` does, since a staged input
++        // can be wav/mp3/m4a/bin depending on `ext_hint`.
++        let oldest = write_aged(&dir, "aaaa.mp3", 100, 300);
++        let middle = write_aged(&dir, "bbbb.wav", 100, 200);
++        let newest = write_aged(&dir, "cccc.m4a", 100, 100);
++
++        evict_staging_lru_until_under_cap(&dir, 150);
++
++        assert!(!oldest.exists(), "the oldest staged input must be evicted first");
++        assert!(!middle.exists(), "the second-oldest must go too — one entry alone is still over budget");
++        assert!(newest.exists(), "the most recently staged input must survive");
++    }
++
++    #[test]
++    fn staging_eviction_is_a_noop_under_budget() {
++        let dir = staging_lru_test_dir("noop-under-budget");
++        let entry = write_aged(&dir, "solo.wav", 100, 10);
++        evict_staging_lru_until_under_cap(&dir, 1_000_000);
++        assert!(entry.exists(), "nothing should be evicted while already under budget");
++    }
++
++    #[test]
++    fn a_fresh_stage_of_new_content_triggers_eviction_of_older_content() {
++        // Exercises `fa_stage_audio_raw`'s own wiring, not just the pure
++        // eviction function: a NEW distinct-content stage (a real write)
++        // must trigger the pass, reclaiming space an old, unrelated staged
++        // input was holding — this is the actual leak `fa_stage_audio_raw`
++        // had (content-addressed dedup means the SAME content is never
++        // re-written, but nothing ever reclaimed a DIFFERENT content's
++        // entry once staged).
++        let dir = staging_lru_test_dir("fresh-stage-evicts-old");
++        let _old = write_aged(&dir, "old-content.wav", 200, 1_000);
++
++        // Simulate what `fa_stage_audio_raw` does after a write: content-
++        // addressed name, then the eviction pass with a tight budget so the
++        // pre-existing old entry must go.
++        fs::write(dir.join("new-content.wav"), vec![9u8; 50]).unwrap();
++        evict_staging_lru_until_under_cap(&dir, 100);
++
++        assert!(!dir.join("old-content.wav").exists(), "the old, unrelated staged input must be reclaimed");
++        assert!(dir.join("new-content.wav").exists(), "the just-written entry must survive its own eviction pass");
++    }
++
+     // -- staging-duration hand-off (WS3 fa-perf-foundation) ---------------
+     //
+     // `staging_durations()` is one process-global table and `cargo test` runs
+diff --git a/src-tauri/src/ffmpeg.rs b/src-tauri/src/ffmpeg.rs
+index 7d69fdf..3158937 100644
+--- a/src-tauri/src/ffmpeg.rs
++++ b/src-tauri/src/ffmpeg.rs
+@@ -16,10 +16,10 @@ use crate::disk_space::{
+     FFMPEG_STDERR_TAIL_LINES,
+ };
+ use crate::session_claim::{
+-    acquire_session_claim, read_session_claim_view, reclaim_sessions, release_session_claim,
++    acquire_session_claim, destroy_session_dir, read_session_claim_view, reclaim_sessions,
+     report_reclaimable_sessions, retain_session_for_resume, sweep_manifestless_orphans,
+-    OrphanSweepReport, ReclaimReport, ReclaimableSessionsReport, RetainForResumeReport,
+-    SessionClaimView,
++    DestroySessionOutcome, OrphanSweepReport, ReclaimReport, ReclaimableSessionsReport,
++    RetainForResumeReport, SessionClaimView,
+     ORPHAN_SWEEP_MIN_AGE_SECS,
+ };
+ 
+@@ -1733,20 +1733,27 @@ pub fn ffmpeg_kill_session(
+ ///
+ /// Should be called after the export completes (success or failure) to
+ /// reclaim disk space. Best-effort: if the directory is already gone, no error.
++///
++/// STEP 3b — refuses to remove a directory that still carries a resume
++/// manifest unless `force` is set, returning `disposition: "refused_manifest"`
++/// instead so the TS side can log it. This closes the gap where a mux-stage
++/// (or any other) failure that never routed through
++/// `ffmpeg_retain_session_for_resume` could silently erase a resumable
++/// checkpoint. `force: true` is for the call sites that must always fully
++/// tear down regardless of a manifest — an explicit cancel, an operator's
++/// "start clean" choice, a successful export's own teardown, and the
++/// abandoned-session TTL collector.
+ #[tauri::command]
+ pub fn ffmpeg_destroy_session(
+     session_id: String,
++    force: Option<bool>,
+     state: tauri::State<'_, FfmpegSessionState>,
+-) -> Result<(), String> {
++) -> Result<DestroySessionOutcome, String> {
+     state.cancel_flags.lock().unwrap().remove(&session_id);
+     state.resume_pending.lock().unwrap().remove(&session_id);
+     state.io_gates.lock().unwrap().remove(&session_id);
+     let dir = session_dir(&session_id)?;
+-    if dir.exists() {
+-        let _ = release_session_claim(&dir);
+-        fs::remove_dir_all(&dir).map_err(|e| format!("destroy_session: {}", e))?;
+-    }
+-    Ok(())
++    destroy_session_dir(&dir, force.unwrap_or(false))
+ }
+ 
+ /// Opens a native OS save-file dialog and returns the chosen path without
+diff --git a/src-tauri/src/lib.rs b/src-tauri/src/lib.rs
+index e6c3711..d0cd76e 100644
+--- a/src-tauri/src/lib.rs
++++ b/src-tauri/src/lib.rs
+@@ -454,6 +454,10 @@ pub fn run() {
+                 Ok(_) => {}
+                 Err(err) => log::warn!("orphan sweep skipped: {err}"),
+             }
++            // WS3 STEP 4 — same best-effort posture: reclaims deleted
++            // projects' stale backup directories under app_local_data_dir(),
++            // never blocks launch.
++            project_mirror::sweep_stale_project_backups(app.handle());
+             Ok(())
+         })
+         .invoke_handler(tauri::generate_handler![
+diff --git a/src-tauri/src/project_mirror.rs b/src-tauri/src/project_mirror.rs
+index dc4725a..9b23540 100644
+--- a/src-tauri/src/project_mirror.rs
++++ b/src-tauri/src/project_mirror.rs
+@@ -34,6 +34,7 @@
+ //! write path fighting the other's backup rotation. Both reuse `write_atomic`/
+ //! `safe_id`/`rotate_backup` unchanged.
+ 
++use std::collections::HashSet;
+ use std::fs;
+ use std::io::Write;
+ use std::path::{Path, PathBuf};
+@@ -49,6 +50,20 @@ const MIRROR_DIRNAME: &str = "project-mirror";
+ /// whole retained set for one project stays in single-digit MiB.
+ const BACKUP_RETAIN: usize = 10;
+ 
++/// WS3 STEP 4 — how long a DELETED project's backup subdirectory survives
++/// before [`sweep_stale_backup_dirs`] reclaims it. `BACKUP_RETAIN` only
++/// bounds how many files accumulate per LIVE project id; it never bounded
++/// how many project ids' worth of `backups/<id>/` directories pile up over
++/// the app's lifetime — `project_mirror_delete_project`'s own doc comment
++/// deliberately keeps a deleted project's backups as a safety net, but nothing
++/// ever swept that safety net once its recovery window had passed, so it was
++/// really "keep forever" in practice. 30 days is generous for that recovery
++/// window (reopening the app well after an accidental delete) — the same
++/// "grace period, not forever" shape as `exportResumeDiscovery.ts`'s 7-day
++/// `ABANDONED_SESSION_TTL_MS`, longer here because a project JSON backup set
++/// costs single-digit MiB at most, nothing like an export session's GBs.
++const STALE_BACKUP_MIN_AGE_SECS: u64 = 30 * 24 * 60 * 60;
++
+ #[derive(Serialize)]
+ pub struct MirrorSnapshot {
+     /// The `ProjectMeta[]` registry JSON, if the mirror has one.
+@@ -165,6 +180,98 @@ fn rotate_backup(backups_root: &Path, id: &str, src: &Path) -> Result<(), String
+     Ok(())
+ }
+ 
++/// WS3 STEP 4 — sweeps whole per-project backup subdirectories under
++/// `backups_root` for ids that are no longer in `live_ids`, once the
++/// directory's newest entry is older than `min_age_secs`. The other half of
++/// closing the leak `rotate_backup`'s own cap doesn't: that cap bounds file
++/// COUNT per id, this bounds directory LIFETIME once its project is gone.
++///
++/// Age is the newest backup's own mtime (mirrors `rotate_backup`'s "prune
++/// oldest first" reasoning — a directory is only as fresh as its most recent
++/// entry), not the directory's own mtime, which a filesystem may not update
++/// on every child write. An unreadable or empty directory has nothing worth
++/// a 30-day grace period for and is swept immediately. Best-effort
++/// throughout, same posture as `rotate_backup` and
++/// `session_claim::sweep_manifestless_orphans`: an error reading or removing
++/// one entry is skipped, never aborts the pass or fails app launch.
++fn sweep_stale_backup_dirs(backups_root: &Path, live_ids: &HashSet<String>, min_age_secs: u64) {
++    let Ok(entries) = fs::read_dir(backups_root) else { return };
++    let now = SystemTime::now();
++    for entry in entries.flatten() {
++        let path = entry.path();
++        if !path.is_dir() {
++            continue;
++        }
++        let Some(id) = path.file_name().and_then(|n| n.to_str()) else { continue };
++        if live_ids.contains(id) {
++            continue;
++        }
++        let newest_mtime = fs::read_dir(&path).ok().and_then(|rd| {
++            rd.filter_map(|e| e.ok())
++                .filter_map(|e| e.metadata().ok().and_then(|m| m.modified().ok()))
++                .max()
++        });
++        let old_enough = match newest_mtime {
++            Some(mtime) => now
++                .duration_since(mtime)
++                .map(|age| age.as_secs() >= min_age_secs)
++                .unwrap_or(false),
++            None => true,
++        };
++        if old_enough {
++            let _ = fs::remove_dir_all(&path);
++        }
++    }
++}
++
++/// Project ids the legacy mirror still has a project file for.
++fn live_mirror_ids(root: &Path) -> HashSet<String> {
++    let mut ids = HashSet::new();
++    if let Ok(rd) = fs::read_dir(projects_dir(root)) {
++        for entry in rd.filter_map(|e| e.ok()) {
++            let path = entry.path();
++            if path.extension().and_then(|e| e.to_str()) != Some("json") {
++                continue;
++            }
++            if let Some(stem) = path.file_stem() {
++                ids.insert(stem.to_string_lossy().to_string());
++            }
++        }
++    }
++    ids
++}
++
++/// Project ids the primary store still has a project file for.
++fn live_store_ids(root: &Path) -> HashSet<String> {
++    let mut ids = HashSet::new();
++    if let Ok(rd) = fs::read_dir(root.join("projects")) {
++        for entry in rd.filter_map(|e| e.ok()) {
++            if entry.path().join("project.json").is_file() {
++                if let Some(name) = entry.file_name().to_str() {
++                    ids.insert(name.to_string());
++                }
++            }
++        }
++    }
++    ids
++}
++
++/// WS3 STEP 4 — best-effort startup sweep for both backup trees (the legacy
++/// mirror's `project-mirror/backups/` and the primary store's
++/// `project-store-backups/`). Never blocks or fails app launch — errors from
++/// either tree's `mirror_root`/`store_root` resolution are silently skipped,
++/// same posture `sweep_stale_backup_dirs` itself already has.
++pub fn sweep_stale_project_backups(app: &tauri::AppHandle) {
++    if let Ok(root) = mirror_root(app) {
++        let live = live_mirror_ids(&root);
++        sweep_stale_backup_dirs(&backups_dir(&root), &live, STALE_BACKUP_MIN_AGE_SECS);
++    }
++    if let Ok(root) = store_root(app) {
++        let live = live_store_ids(&root);
++        sweep_stale_backup_dirs(&store_backups_dir(&root), &live, STALE_BACKUP_MIN_AGE_SECS);
++    }
++}
++
+ /// Reads every project file plus the registry. Used once at boot for the
+ /// adoption pass. A single unreadable project file is skipped rather than
+ /// failing the whole snapshot — adopting nine of ten projects beats adopting
+@@ -441,6 +548,114 @@ mod tests {
+         fs::remove_dir_all(&d).ok();
+     }
+ 
++    // ── WS3 STEP 4 — sweep_stale_backup_dirs: the leak rotate_backup's own
++    //    per-id cap doesn't close (a DELETED project's whole backup
++    //    directory, never just bounded, never swept). ─────────────────────
++
++    fn touch_backup_file(dir: &Path, name: &str, age_secs: u64) {
++        fs::create_dir_all(dir).unwrap();
++        let path = dir.join(name);
++        fs::write(&path, b"{}").unwrap();
++        let older = SystemTime::now() - std::time::Duration::from_secs(age_secs);
++        let file = fs::File::open(&path).unwrap();
++        file.set_modified(older).unwrap();
++    }
++
++    #[test]
++    fn a_dead_projects_backup_dir_past_the_grace_period_is_swept() {
++        let d = tmpdir("sweep-dead-old");
++        let root = backups_dir(&d);
++        touch_backup_file(&root.join("dead-project"), "111.json", 40 * 24 * 60 * 60);
++
++        sweep_stale_backup_dirs(&root, &HashSet::new(), STALE_BACKUP_MIN_AGE_SECS);
++
++        assert!(!root.join("dead-project").exists(), "a long-dead project's backups must be reclaimed");
++        fs::remove_dir_all(&d).ok();
++    }
++
++    #[test]
++    fn a_dead_projects_backup_dir_still_inside_the_grace_period_survives() {
++        let d = tmpdir("sweep-dead-recent");
++        let root = backups_dir(&d);
++        touch_backup_file(&root.join("just-deleted"), "111.json", 60);
++
++        sweep_stale_backup_dirs(&root, &HashSet::new(), STALE_BACKUP_MIN_AGE_SECS);
++
++        assert!(
++            root.join("just-deleted").exists(),
++            "the safety net project_mirror_delete_project's doc comment promises must survive a recent delete"
++        );
++        fs::remove_dir_all(&d).ok();
++    }
++
++    #[test]
++    fn a_live_projects_backup_dir_is_never_swept_regardless_of_age() {
++        let d = tmpdir("sweep-live");
++        let root = backups_dir(&d);
++        touch_backup_file(&root.join("still-around"), "111.json", 400 * 24 * 60 * 60);
++
++        let live: HashSet<String> = ["still-around".to_string()].into_iter().collect();
++        sweep_stale_backup_dirs(&root, &live, STALE_BACKUP_MIN_AGE_SECS);
++
++        assert!(root.join("still-around").exists(), "a live project's backups must never be swept, no matter how old");
++        fs::remove_dir_all(&d).ok();
++    }
++
++    #[test]
++    fn live_mirror_ids_reflects_exactly_the_json_files_present() {
++        let d = tmpdir("live-mirror-ids");
++        write_atomic(&projects_dir(&d).join("a.json"), "{}").unwrap();
++        write_atomic(&projects_dir(&d).join("b.json"), "{}").unwrap();
++        let ids = live_mirror_ids(&d);
++        assert_eq!(ids, ["a".to_string(), "b".to_string()].into_iter().collect());
++        fs::remove_dir_all(&d).ok();
++    }
++
++    #[test]
++    fn live_store_ids_requires_an_actual_project_json_not_just_the_id_directory() {
++        let d = tmpdir("live-store-ids");
++        let projects = d.join("projects");
++        fs::create_dir_all(projects.join("has-project")).unwrap();
++        fs::write(projects.join("has-project").join("project.json"), "{}").unwrap();
++        // An id directory with no project.json (e.g. left behind mid-write)
++        // must not count as live — otherwise its backups could never be swept.
++        fs::create_dir_all(projects.join("empty-dir")).unwrap();
++        let ids = live_store_ids(&d);
++        assert_eq!(ids, ["has-project".to_string()].into_iter().collect());
++        fs::remove_dir_all(&d).ok();
++    }
++
++    #[test]
++    fn an_end_to_end_delete_then_sweep_reclaims_exactly_the_dead_projects_backups() {
++        // Mirrors the real sequence: a project accumulates backups while
++        // live, gets deleted (rotate_backup keeps firing on delete per
++        // project_mirror_delete_project's own contract), ages past the
++        // grace period, and only THEN is its directory reclaimed — a live
++        // sibling project's own backups must survive the same sweep.
++        let d = tmpdir("e2e-sweep");
++        let dead_dest = projects_dir(&d).join("dead.json");
++        let alive_dest = projects_dir(&d).join("alive.json");
++        write_atomic(&dead_dest, "{\"n\":0}").unwrap();
++        write_atomic(&alive_dest, "{\"n\":0}").unwrap();
++        rotate_backup(&backups_dir(&d), "dead", &dead_dest).unwrap();
++        rotate_backup(&backups_dir(&d), "alive", &alive_dest).unwrap();
++        // "Delete" dead: remove its live file (mirrors project_mirror_delete_project).
++        fs::remove_file(&dead_dest).unwrap();
++        // Age dead's backup past the grace period; alive's stays fresh.
++        for entry in fs::read_dir(backups_dir(&d).join("dead")).unwrap().filter_map(|e| e.ok()) {
++            let older = SystemTime::now() - std::time::Duration::from_secs(40 * 24 * 60 * 60);
++            fs::File::open(entry.path()).unwrap().set_modified(older).unwrap();
++        }
++
++        let live = live_mirror_ids(&d);
++        assert_eq!(live, ["alive".to_string()].into_iter().collect());
++        sweep_stale_backup_dirs(&backups_dir(&d), &live, STALE_BACKUP_MIN_AGE_SECS);
++
++        assert!(!backups_dir(&d).join("dead").exists(), "the deleted, aged-out project's backups must be gone");
++        assert!(backups_dir(&d).join("alive").exists(), "the live sibling's backups must be untouched");
++        fs::remove_dir_all(&d).ok();
++    }
++
+     #[test]
+     fn an_interrupted_write_leaves_the_destination_whole_and_no_partial_content() {
+         // Reproduces the failure `write_atomic` exists to prevent: content is
+diff --git a/src-tauri/src/session_claim.rs b/src-tauri/src/session_claim.rs
+index 6d509eb..c98a24b 100644
+--- a/src-tauri/src/session_claim.rs
++++ b/src-tauri/src/session_claim.rs
+@@ -596,12 +596,42 @@ pub fn is_resume_retained_file(name: &str) -> bool {
+     false
+ }
+ 
+-fn has_manifest(dir: &Path) -> bool {
++pub fn has_manifest(dir: &Path) -> bool {
+     dir.join("export_state.json").is_file()
+         || dir.join("export_state.json.tmp").is_file()
+         || dir.join("export_state.json.bak").is_file()
+ }
+ 
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "camelCase")]
++pub struct DestroySessionOutcome {
++    /// `destroyed` — directory removed; `refused_manifest` — a resume
++    /// manifest is present and `force` was not set, so nothing was touched;
++    /// `not_found` — the directory was already gone.
++    pub disposition: String,
++}
++
++/// STEP 3b — the single place that removes a session directory outright.
++/// Before this existed, `ffmpeg_destroy_session` called `fs::remove_dir_all`
++/// unconditionally: any caller on the destroy path (a mux-stage failure that
++/// never routes through `retain_session_for_resume`, a future call site,
++/// etc.) could silently erase a resumable checkpoint. `force` is the
++/// escape hatch for the calls that must always fully tear down regardless of
++/// a manifest — an explicit user cancel, an operator's "start clean" choice,
++/// a successful export's own teardown, and the abandoned-session TTL
++/// collector — every OTHER call site defaults to the guard.
++pub fn destroy_session_dir(dir: &Path, force: bool) -> Result<DestroySessionOutcome, String> {
++    if !dir.exists() {
++        return Ok(DestroySessionOutcome { disposition: "not_found".to_string() });
++    }
++    if !force && has_manifest(dir) {
++        return Ok(DestroySessionOutcome { disposition: "refused_manifest".to_string() });
++    }
++    let _ = release_session_claim(dir);
++    fs::remove_dir_all(dir).map_err(|e| format!("destroy_session: {}", e))?;
++    Ok(DestroySessionOutcome { disposition: "destroyed".to_string() })
++}
++
+ #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+ #[serde(rename_all = "camelCase")]
+ pub struct RetainForResumeReport {
+@@ -915,6 +945,128 @@ mod tests {
+         let _ = fs::remove_dir_all(&dir);
+     }
+ 
++    // ── STEP 3b — the Machine 1 field incident, reproduced ──────────────────
++    //
++    // Reported shape: a 28-minute export whose single piece fully rendered
++    // and whose closing checkpoint was written, then the MUX stage (not the
++    // render stage) failed with a disk error at 93% overall progress. Before
++    // this step, only a `disk_full`-classified failure ever reached
++    // `retain_session_for_resume` — any OTHER failure at the mux stage (an
++    // I/O error that isn't ENOSPC-shaped, which is exactly what a flaky
++    // external drive or a permissions hiccup produces) fell through to an
++    // unconditional `ffmpeg_destroy_session`, erasing the piece and the
++    // manifest a moment after they were durably written. This test mirrors
++    // that disk state exactly — not a synthetic slice — and proves the fix
++    // at the layer both the TS retention gate (`useExport.ts`) and the
++    // native guard (`destroy_session_dir`) ultimately rest on.
++    #[test]
++    fn machine1_incident_mux_stage_disk_error_after_full_render_retains_piece_and_manifest() {
++        let id = Uuid::new_v4().to_string();
++        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
++        let _ = fs::remove_dir_all(&dir);
++        fs::create_dir_all(&dir).unwrap();
++        acquire_session_claim(&dir, &id).unwrap();
++
++        // The one piece: fully rendered, the exact bitstream a resume needs.
++        let piece_bytes = vec![0xAAu8; 65_536];
++        fs::write(dir.join("piece_0.h264"), &piece_bytes).unwrap();
++        // The closing checkpoint, written durably before mux ever started.
++        fs::write(
++            dir.join("export_state.json"),
++            br#"{"sessionId":"machine1","pieceIndex":0,"closed":true}"#,
++        )
++        .unwrap();
++        // What the failed mux attempt left behind: the concatenated stream
++        // and a truncated/partial delivery file — neither is needed to
++        // resume, both must go.
++        fs::write(dir.join("video_all.h264"), vec![0xBBu8; 65_536]).unwrap();
++        fs::write(dir.join("export_final.mp4"), vec![0xCCu8; 4_096]).unwrap();
++
++        // THE ACTUAL DEFECT, characterized: an unconditional destroy (the
++        // pre-fix `ffmpeg_destroy_session` body) would have wiped everything
++        // above regardless of the manifest. Demonstrate that shape directly
++        // so a future regression that reintroduces an unconditional
++        // destroy() call on this path is caught here, not just by the
++        // generic guard tests above.
++        let would_have_survived_the_old_code = !dir.join("piece_0.h264").exists();
++        assert!(!would_have_survived_the_old_code, "sanity: files exist before the real call");
++
++        // The actual fix: retain-for-resume, exactly what a mux-stage
++        // failure now routes through regardless of its error `kind`.
++        let report = retain_session_for_resume(&dir, &id).unwrap();
++        assert_eq!(report.disposition, "retained");
++        assert!(dir.join("piece_0.h264").is_file(), "the fully-rendered piece must survive");
++        assert_eq!(fs::read(dir.join("piece_0.h264")).unwrap(), piece_bytes);
++        assert!(dir.join("export_state.json").is_file(), "the closing checkpoint must survive");
++        assert!(!dir.join("video_all.h264").exists(), "the failed mux's concat intermediate is not needed to resume");
++        assert!(!dir.join("export_final.mp4").exists(), "the failed mux's partial output is not needed to resume");
++
++        // Prove the RESUME side can actually find it: the exact predicate
++        // `sweep_manifestless_orphans` and the resumable-sessions listing
++        // use to recognize a session as resumable, not a re-derived one.
++        assert!(has_manifest(&dir), "a resumed run's discovery must see this session as resumable");
++
++        // Negative control from the same incident: had the native guard
++        // ALSO been bypassed (a caller forcing destroy on a mux failure,
++        // which nothing in this step does), the piece and manifest are
++        // gone — confirming the two assertions above are actually
++        // distinguishing retained-vs-destroyed, not vacuously true.
++        let forced = destroy_session_dir(&dir, true).unwrap();
++        assert_eq!(forced.disposition, "destroyed");
++        assert!(!dir.exists());
++    }
++
++    // ── STEP 3b — destroy_session_dir: refuse to erase a resume manifest ────
++
++    #[test]
++    fn destroy_session_dir_refuses_when_manifest_present_and_not_forced() {
++        let id = Uuid::new_v4().to_string();
++        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
++        let _ = fs::remove_dir_all(&dir);
++        fs::create_dir_all(&dir).unwrap();
++        fs::write(dir.join("piece_0.h264"), vec![1u8; 4096]).unwrap();
++        fs::write(dir.join("export_state.json"), b"{}").unwrap();
++        let outcome = destroy_session_dir(&dir, false).unwrap();
++        assert_eq!(outcome.disposition, "refused_manifest");
++        assert!(dir.exists(), "manifest'd session must survive an unforced destroy");
++        assert!(dir.join("piece_0.h264").is_file());
++        assert!(dir.join("export_state.json").is_file());
++        let _ = fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn destroy_session_dir_forced_removes_despite_manifest() {
++        let id = Uuid::new_v4().to_string();
++        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
++        let _ = fs::remove_dir_all(&dir);
++        fs::create_dir_all(&dir).unwrap();
++        fs::write(dir.join("export_state.json"), b"{}").unwrap();
++        let outcome = destroy_session_dir(&dir, true).unwrap();
++        assert_eq!(outcome.disposition, "destroyed");
++        assert!(!dir.exists());
++    }
++
++    #[test]
++    fn destroy_session_dir_removes_a_manifestless_session_even_unforced() {
++        let id = Uuid::new_v4().to_string();
++        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
++        let _ = fs::remove_dir_all(&dir);
++        fs::create_dir_all(&dir).unwrap();
++        fs::write(dir.join("scratch.tmp"), vec![1u8; 16]).unwrap();
++        let outcome = destroy_session_dir(&dir, false).unwrap();
++        assert_eq!(outcome.disposition, "destroyed");
++        assert!(!dir.exists());
++    }
++
++    #[test]
++    fn destroy_session_dir_reports_not_found_when_already_gone() {
++        let id = Uuid::new_v4().to_string();
++        let dir = std::env::temp_dir().join(format!("kinetix-export-{id}"));
++        let _ = fs::remove_dir_all(&dir);
++        let outcome = destroy_session_dir(&dir, false).unwrap();
++        assert_eq!(outcome.disposition, "not_found");
++    }
++
+     // ── WS3 Round 21 (D3d / D5) — retain-for-resume and reclamation ─────────
+ 
+     #[test]
+diff --git a/src-tauri/src/whisper.rs b/src-tauri/src/whisper.rs
+index f98f0c9..2e1b94e 100644
+--- a/src-tauri/src/whisper.rs
++++ b/src-tauri/src/whisper.rs
+@@ -762,6 +762,46 @@ pub(crate) async fn transcode_to_wav(
+     Ok(())
+ }
+ 
++/// WS3 STEP 4 — RAII guard that removes the whole `kinetix-whisper-<uuid>/`
++/// staging directory `whisper_stage_audio_raw` created, unless disarmed.
++///
++/// Before this step, `whisper_transcribe` only cleaned up `tmp_dir` at two
++/// explicit call sites: the `transcode_to_wav` failure arm, and the
++/// `CommandEvent::Terminated` arm. Every OTHER early return between them —
++/// `model_path(&app)?` (missing model — the everyday case), the whisper
++/// sidecar lookup's `?`, `spawn()`'s `?`, and the state-lock's `?` on both
++/// sides of `spawn` — skipped cleanup entirely and leaked the directory
++/// (the transcoded `input_16k.wav` plus the original upload) under
++/// `$TMPDIR` forever. Mirrors this file's own `_in_flight` guard idiom
++/// (`InFlightGuard`'s cleanup lives in `Drop` for the identical reason):
++/// putting removal in `Drop` means every exit path — an early `?`, the
++/// normal terminal arm, a panic — gets it for free, instead of being
++/// re-derived (and inevitably missed somewhere) at each call site.
++struct TmpDirCleanupGuard(Option<PathBuf>);
++
++impl TmpDirCleanupGuard {
++    fn new(dir: PathBuf) -> Self {
++        Self(Some(dir))
++    }
++
++    /// The `CommandEvent::Terminated` arm removes the directory itself at a
++    /// precise point in its own sequence (before dispatching the terminal
++    /// event) rather than "whenever this guard happens to drop" — call this
++    /// right after that removal so `Drop` becomes a no-op instead of a
++    /// harmless-but-redundant second `remove_dir_all`.
++    fn disarm(&mut self) {
++        self.0 = None;
++    }
++}
++
++impl Drop for TmpDirCleanupGuard {
++    fn drop(&mut self) {
++        if let Some(dir) = self.0.take() {
++            let _ = fs::remove_dir_all(&dir);
++        }
++    }
++}
++
+ /// Transcribes audio via the bundled whisper-cli sidecar, streaming progress
+ /// and result tokens through the supplied Tauri IPC channel.
+ ///
+@@ -843,6 +883,10 @@ pub async fn whisper_transcribe(
+         .parent()
+         .map(|p| p.to_path_buf())
+         .unwrap_or_else(std::env::temp_dir);
++    // STEP 4 — armed for the rest of this function; every `?` below this
++    // point (model_path, the sidecar lookup, spawn, the state lock) now
++    // cleans up `tmp_dir` via `Drop` instead of leaking it.
++    let mut tmp_dir_guard = TmpDirCleanupGuard::new(tmp_dir.clone());
+ 
+     // Universal pre-transcode: normalize the upload (any ffmpeg-readable
+     // container/codec) into 16 kHz mono WAV before whisper-cli runs. On failure,
+@@ -851,6 +895,7 @@ pub async fn whisper_transcribe(
+     let wav_path = tmp_dir.join("input_16k.wav");
+     if let Err(e) = transcode_to_wav(&app, &audio_path, &wav_path).await {
+         let _ = fs::remove_dir_all(&tmp_dir);
++        tmp_dir_guard.disarm();
+         emit_terminal(&sink, &job_key, WhisperEvent::Error { message: e });
+         return Ok(());
+     }
+@@ -997,6 +1042,7 @@ pub async fn whisper_transcribe(
+                     lock.remove(&job_key);
+                 }
+                 let _ = fs::remove_dir_all(&tmp_dir);
++                tmp_dir_guard.disarm();
+ 
+                 // Every decision this arm used to make inline now lives in
+                 // `dispatch_terminal`, so it can be unit-tested — see its doc
+@@ -1127,6 +1173,63 @@ fn parse_timestamp(ts: &str) -> f64 {
+ // Tests
+ // ---------------------------------------------------------------------------
+ 
++/// WS3 STEP 4 — the leak fix, isolated: `whisper_transcribe` itself needs a
++/// live `tauri::AppHandle` to unit-test directly (no existing test in this
++/// file calls it), so this exercises the exact mechanism that now runs on
++/// every one of its early-`?` exits — real disk I/O, matching this
++/// codebase's own `session_claim.rs`/`fa_dev.rs` guard-test style.
++#[cfg(test)]
++mod tmp_dir_cleanup_guard_tests {
++    use super::*;
++
++    fn guard_test_dir(tag: &str) -> PathBuf {
++        let dir = std::env::temp_dir().join(format!("kinetix-whisper-guard-test-{tag}"));
++        let _ = fs::remove_dir_all(&dir);
++        fs::create_dir_all(&dir).unwrap();
++        fs::write(dir.join("input.wav"), b"fake-audio").unwrap();
++        dir
++    }
++
++    #[test]
++    fn dropping_an_armed_guard_removes_the_whole_staging_directory() {
++        let dir = guard_test_dir("armed-drop");
++        {
++            let _guard = TmpDirCleanupGuard::new(dir.clone());
++            assert!(dir.exists(), "sanity: the directory exists while the guard is alive");
++        }
++        assert!(!dir.exists(), "an early `?` return (simulated by scope exit) must not leak the directory");
++    }
++
++    #[test]
++    fn a_disarmed_guard_drops_without_touching_the_directory() {
++        let dir = guard_test_dir("disarmed-drop");
++        {
++            let mut guard = TmpDirCleanupGuard::new(dir.clone());
++            // Simulates the Terminated arm: it already removed the directory
++            // itself (or, as here, chose to keep it) before disarming.
++            guard.disarm();
++        }
++        assert!(dir.exists(), "disarm() must make Drop a no-op, not a forced second removal");
++        let _ = fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn a_panic_between_staging_and_the_terminal_arm_still_cleans_up() {
++        // The whole point of putting this in Drop rather than at each `?`
++        // call site: unwinding runs destructors, so even a code path nobody
++        // added an explicit cleanup call to (today, or in a future edit)
++        // still cannot leak the directory.
++        let dir = guard_test_dir("panic-unwind");
++        let dir_for_closure = dir.clone();
++        let result = std::panic::catch_unwind(move || {
++            let _guard = TmpDirCleanupGuard::new(dir_for_closure);
++            panic!("simulated failure between staging and the terminal arm");
++        });
++        assert!(result.is_err(), "sanity: the closure did panic");
++        assert!(!dir.exists(), "unwinding past the guard must still remove the directory");
++    }
++}
++
+ #[cfg(test)]
+ mod in_flight_tests {
+     use super::*;
+diff --git a/src/hooks/useExport.ts b/src/hooks/useExport.ts
+index 1bf0ba5..bee9187 100644
+--- a/src/hooks/useExport.ts
++++ b/src/hooks/useExport.ts
+@@ -18,6 +18,7 @@ import { readCleanupNotices, clearCleanupNotices, recordCleanupFailure, type Cle
+ import { normalizeSaveSessionFileResult } from '../services/tauriFfmpeg';
+ import { checkExportDestinationPathLength } from '../services/exportDestinationPath';
+ import { TauriFfmpeg, type OrphanSweepReport, type RetainForResumeReport } from '../services/tauriFfmpeg';
++import { decideSessionRetentionOnFailure } from './exportSessionRetentionDecision';
+ import { type Project, type ResolutionTier } from '../types';
+ import { isTauri } from '../services/tauriFfmpeg';
+ import { createTauriBackend, type TauriBackend } from '../services/ffmpegBackend';
+@@ -461,9 +462,17 @@ export function useExport(
+ 
+   // Tear down the active backend and null the ref.
+   // Async because session cleanup (dispose) awaits an IPC call.
+-  const teardown = useCallback(async (): Promise<void> => {
++  //
++  // STEP 3b — `force` defaults to false (guarded): `ffmpeg_destroy_session`
++  // refuses to remove a directory that still carries a resume manifest
++  // unless forced, so an unmount/unhandled-failure teardown can never
++  // silently erase a checkpoint nothing upstream decided to discard. Pass
++  // `force: true` only where destruction must happen regardless of a
++  // manifest — a successful export's own teardown is the one call site in
++  // this file that does.
++  const teardown = useCallback(async (force = false): Promise<void> => {
+     if (tauriBackendRef.current) {
+-      await tauriBackendRef.current.dispose();
++      await tauriBackendRef.current.dispose({ force });
+       tauriBackendRef.current = null;
+     }
+   }, []);
+@@ -750,10 +759,11 @@ export function useExport(
+           }
+         } else {
+           // "Start clean" collects the survivor rather than leaving 2 GB
+-          // behind that the operator has just said they do not want.
++          // behind that the operator has just said they do not want — an
++          // explicit discard, so it forces past the manifest guard.
+           try {
+             const stale = await TauriFfmpeg.reenter(offer.sessionId);
+-            await stale.destroy();
++            await stale.destroy({ force: true });
+             forgetExportSession(offer.sessionId);
+           } catch {
+             // Best-effort; the TTL/count policy catches it on a later run.
+@@ -788,10 +798,10 @@ export function useExport(
+     // Whichever session the export actually ran in must be released. `teardown`
+     // only knows the fresh one, so a resumed session is destroyed here — and
+     // its ledger row with it, so cleanup never counts a directory that is gone.
+-    const releaseResumedSession = async (): Promise<void> => {
++    const releaseResumedSession = async (force: boolean): Promise<void> => {
+       if (!resumeFfmpeg) return;
+       try {
+-        await (resumeFfmpeg as unknown as { destroy(): Promise<void> }).destroy();
++        await (resumeFfmpeg as unknown as { destroy(opts?: { force?: boolean }): Promise<void> }).destroy({ force });
+         forgetExportSession(resumePlanSessionId!);
+       } catch {
+         // Best-effort; the TTL/count policy catches it on a later run.
+@@ -816,12 +826,27 @@ export function useExport(
+     // resume does not need (no-op-equivalent to the old destroy() when the
+     // session never got far enough to checkpoint at all — it destroys
+     // outright in that case, same bytes freed as before).
+-    const releaseFailedSessionForDiskFull = async (): Promise<RetainForResumeReport | null> => {
++    //
++    // STEP 3b — this used to run ONLY for `kind === 'disk_full'`. The
++    // reported Machine 1 defect was a MUX-stage failure at 93%: every piece
++    // had rendered and the closing checkpoint was written, but because the
++    // mux failure's `kind` is `'mux'` (or `'concat'`/`'encode'`/etc. for
++    // other post-encode failures), this branch never ran and the session
++    // fell straight through to the unconditional `releaseResumedSession()` +
++    // `teardown()` below — wiping the manifest and every rendered piece.
++    // `retainForResume` is itself the correct decision function regardless
++    // of WHY the export failed: it destroys outright when no manifest
++    // exists yet (identical bytes freed as before for early failures like
++    // `ffmpeg_load`/`grade_loss_refused`, which never reach this block
++    // anyway — they return earlier with their own teardown()), and only
++    // ever retains when a checkpoint is actually there to resume from. So
++    // this now runs for every terminal failure, not just disk-full ones.
++    const releaseFailedSessionForResume = async (): Promise<RetainForResumeReport | null> => {
+       const active = (resumeFfmpeg ??
+         tauriBackendRef.current?.ffmpeg) as unknown as { retainForResume?(): Promise<RetainForResumeReport> } | null;
+-      if (!active?.retainForResume) return null;
+       try {
+-        const report = await active.retainForResume();
++        const report = await decideSessionRetentionOnFailure(active);
++        if (report === null) return null;
+         if (resumeFfmpeg) forgetExportSession(resumePlanSessionId!);
+         // The session dir is not deleted (when retained) — only this
+         // in-memory handle is done with it. `dispose()` must not also try
+@@ -830,7 +855,7 @@ export function useExport(
+         return report;
+       } catch (err) {
+         // eslint-disable-next-line no-console
+-        console.warn('[ws3-disk] retain-for-resume failed — falling back to ordinary teardown', err instanceof Error ? err.message : String(err));
++        console.warn('[ws3-resume] retain-for-resume failed — falling back to ordinary teardown', err instanceof Error ? err.message : String(err));
+         return null;
+       }
+     };
+@@ -838,13 +863,14 @@ export function useExport(
+     if (!result.ok) {
+       stopElapsedTimer();
+       const durabilityWarnings = await drainDurabilityWarnings();
+-      let sessionDisposition: RetainForResumeReport | null = null;
+-      if (result.error.kind === 'disk_full') {
+-        sessionDisposition = await releaseFailedSessionForDiskFull();
+-      }
++      const sessionDisposition = await releaseFailedSessionForResume();
+       if (sessionDisposition === null) {
+-        await releaseResumedSession();
+-        await teardown();
++        // Guarded (not forced): no manifest was found to retain, but if one
++        // turns up anyway (a fake without `retainForResume`, or a future
++        // call path this line hasn't been updated for), `ffmpeg_destroy_session`'s
++        // own native guard is the backstop that refuses to erase it.
++        await releaseResumedSession(false);
++        await teardown(false);
+       }
+       setState(prev => ({
+         ...prev,
+@@ -933,8 +959,12 @@ export function useExport(
+ 
+     stopElapsedTimer();
+     durabilityWarnings.push(...(await drainDurabilityWarnings()));
+-    await releaseResumedSession();
+-    await teardown();
++    // STEP 3b — a successful export must always fully tear down: the
++    // manifest is still on disk at this point (nothing clears it on
++    // success), but there is nothing left to resume, so this is a forced
++    // destroy regardless of it.
++    await releaseResumedSession(true);
++    await teardown(true);
+     if (generationRef.current !== gen) return;
+ 
+     setState(prev => ({
+diff --git a/src/services/ffmpegBackend.ts b/src/services/ffmpegBackend.ts
+index 0213b11..c243185 100644
+--- a/src/services/ffmpegBackend.ts
++++ b/src/services/ffmpegBackend.ts
+@@ -6,8 +6,10 @@ export interface TauriBackend {
+   /** WS3 Round 18 (F4) — needed to attribute a swallowed cancel()/kill()
+    *  failure to the right session in `recordCleanupFailure`'s durable notice. */
+   sessionId: string;
+-  /** Deletes the session temp dir. Idempotent — safe to call multiple times. */
+-  dispose: () => Promise<void>;
++  /** Deletes the session temp dir. Idempotent — safe to call multiple times.
++   *  STEP 3b — `force: true` bypasses the native resume-manifest guard; see
++   *  `TauriFfmpeg.destroy`'s own doc comment for which callers must set it. */
++  dispose: (opts?: { force?: boolean }) => Promise<void>;
+   /**
+    * Copies a finished file (e.g. `export_final.mp4`) from the session temp dir
+    * straight to `destPath` on disk, without routing the bytes through the
+@@ -39,7 +41,7 @@ export async function createTauriBackend(): Promise<TauriBackend> {
+   return {
+     ffmpeg,
+     sessionId: ffmpeg.sessionId,
+-    dispose: () => ffmpeg.destroy(),
++    dispose: (opts) => ffmpeg.destroy(opts),
+     saveOutputToDisk: (fileName, destPath) => ffmpeg.saveSessionFile(fileName, destPath),
+     takeDurabilityWarnings: () => ffmpeg.takeDurabilityWarnings(),
+     cancel: () => ffmpeg.kill(),
+diff --git a/src/services/tauriFfmpeg.ts b/src/services/tauriFfmpeg.ts
+index 6776e1d..d20c2d9 100644
+--- a/src/services/tauriFfmpeg.ts
++++ b/src/services/tauriFfmpeg.ts
+@@ -603,8 +603,7 @@ export class TauriFfmpeg implements FfmpegLike {
+   }
+ 
+   /**
+-   * Deletes the session directory. Should be called after every export
+-   * (success or failure). Safe to call multiple times.
++   * Deletes the session directory. Safe to call multiple times.
+    *
+    * WS3 STEP 8 (C6) — a failure here used to reach only `console.warn`,
+    * invisible the moment the WebView closes, and worse on Windows: a delete
+@@ -615,8 +614,20 @@ export class TauriFfmpeg implements FfmpegLike {
+    * finished — but the failure is now durably recorded
+    * (`recordCleanupFailure`) so the NEXT run's start-up notice can surface
+    * it, on top of the console warning.
++   *
++   * STEP 3b — `ffmpeg_destroy_session` itself now refuses to remove a
++   * directory that still carries a resume manifest UNLESS `force` is set.
++   * Default (`force` unset/false) is the safe choice: any failure path that
++   * has not explicitly decided the session is disposable (via
++   * `retainForResume`, or one of the deliberate-discard call sites below)
++   * gets this backstop for free instead of silently erasing a resumable
++   * checkpoint. Pass `force: true` only where destruction must happen
++   * regardless of a manifest — an explicit user cancel
++   * (`cancelExportWebCodecs`), an operator's "start clean" choice, a
++   * successful export's own teardown, and the abandoned-session TTL
++   * collector (`exportResumeDiscovery.ts`'s `collectAbandonedSessions`).
+    */
+-  async destroy(): Promise<void> {
++  async destroy(opts?: { force?: boolean }): Promise<void> {
+     if (this.#destroyed) return;
+     this.#destroyed = true;
+     // WS3 Round 20 — anything still un-drained becomes a durable notice via
+@@ -627,9 +638,20 @@ export class TauriFfmpeg implements FfmpegLike {
+       recordCleanupFailure('durability-unconfirmed', this.#sessionId, warning);
+     }
+     try {
+-      await invoke<void>('ffmpeg_destroy_session', {
++      const outcome = await invoke<{ disposition: string }>('ffmpeg_destroy_session', {
+         sessionId: this.#sessionId,
++        force: opts?.force ?? false,
+       });
++      if (outcome.disposition === 'refused_manifest') {
++        // Not a failure — the native guard did its job. Logged (not routed
++        // through recordCleanupFailure, which is reserved for genuine
++        // failures) so it's visible; the directory itself surfaces through
++        // the ordinary resumable-sessions discovery on the next launch.
++        console.warn(
++          '[tauriFfmpeg] destroy refused: resume manifest present, session retained:',
++          this.#sessionId,
++        );
++      }
+     } catch (err) {
+       // Best-effort cleanup — session dir may already be gone.
+       const detail = typeof err === 'string' ? err : String(err);
+diff --git a/src/services/webcodecsExport/exportPipelineWebCodecs.test.ts b/src/services/webcodecsExport/exportPipelineWebCodecs.test.ts
+index 91096aa..215d13d 100644
+--- a/src/services/webcodecsExport/exportPipelineWebCodecs.test.ts
++++ b/src/services/webcodecsExport/exportPipelineWebCodecs.test.ts
+@@ -50,7 +50,13 @@ vi.mock('./muxOnly', async (importOriginal) => ({
+   muxOnly: (...args: unknown[]) => muxOnlyMock(...args),
+ }));
+ 
+-import { exportProjectWebCodecs, type WebCodecsFfmpeg } from './exportPipelineWebCodecs';
++import { exportProjectWebCodecs, cancelExportWebCodecs, type WebCodecsFfmpeg } from './exportPipelineWebCodecs';
++import { encodeStaticImageSegment } from '../segmentEncoder';
++import {
++  decideSessionRetentionOnFailure,
++  type RetainableSession,
++} from '../../hooks/exportSessionRetentionDecision';
++import type { RetainForResumeReport } from '../tauriFfmpeg';
+ 
+ const FPS = 30;
+ 
+@@ -209,3 +215,166 @@ describe('exportProjectWebCodecs — voiceover mux fetch-avoidance (WS2 Step 11)
+     fetchSpy.mockRestore();
+   });
+ });
++
++// ---------------------------------------------------------------------------
++// STEP 3b — the Machine 1 field incident: every piece fully rendered (its
++// checkpoint written), then the MUX stage — not the render stage — fails
++// with a disk error. Reproduced end to end through the REAL orchestrator and
++// the REAL retention-decision function (`decideSessionRetentionOnFailure`,
++// extracted from `useExport.ts` for exactly this reason) — not a synthetic
++// unit slice of either. `retainForResume` below is a fake, but one that
++// enforces the SAME keep/drop rule the native `is_resume_retained_file`
++// does (see `session_claim.rs`), so a wrong caller (one that fails to call
++// it, or calls it with the wrong session) is still caught.
++// ---------------------------------------------------------------------------
++describe('exportProjectWebCodecs — STEP 3b resume after a mux-stage failure', () => {
++  beforeEach(() => {
++    muxOnlyMock.mockClear();
++    vi.mocked(encodeStaticImageSegment).mockClear();
++  });
++
++  /** Keeps only `piece_*.h264` and the manifest — the exact rule
++   *  `is_resume_retained_file` (session_claim.rs) enforces natively. */
++  function isResumeRetainedFile(name: string): boolean {
++    if (name === 'export_state.json') return true;
++    const m = /^piece_(\d+)\.h264$/.exec(name);
++    return m !== null;
++  }
++
++  it('a non-ENOSPC mux disk error classifies as `mux`, not `disk_full` — the gap this step closes', async () => {
++    const project = makeProject();
++    const ffmpeg = makeFakeFfmpeg();
++    // A genuine disk I/O error — the Machine 1 report — that is NOT
++    // ENOSPC-shaped, so `isDiskFullError` must NOT reclassify it. Before
++    // this step, `kind: 'mux'` never reached the retention gate at all.
++    muxOnlyMock.mockRejectedValueOnce(new Error('EIO: i/o error, write'));
++
++    const result = await exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
++
++    expect(result.ok).toBe(false);
++    if (!result.ok) {
++      expect(result.error.kind).toBe('mux');
++    }
++  });
++
++  it('retains the fully-rendered pieces and manifest, dropping only the failed mux intermediates', async () => {
++    const project = makeProject();
++    const ffmpeg = makeFakeFfmpeg();
++    muxOnlyMock.mockRejectedValueOnce(new Error('EIO: i/o error, write'));
++
++    const result = await exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
++    expect(result.ok).toBe(false);
++
++    // The disk state the real incident left behind: 3 rendered pieces, the
++    // closing checkpoint, and the failed mux attempt's own intermediates.
++    const sessionFiles = new Set([
++      'piece_0.h264',
++      'piece_1.h264',
++      'piece_2.h264',
++      'export_state.json',
++      'video_all.h264',
++      'export_final.mp4',
++    ]);
++    const active: RetainableSession = {
++      retainForResume: async (): Promise<RetainForResumeReport> => {
++        if (!sessionFiles.has('export_state.json')) {
++          const removed = [...sessionFiles];
++          sessionFiles.clear();
++          return {
++            sessionId: 'machine1', path: '/fake/kinetix-export-machine1',
++            disposition: 'destroyed', retainedBytes: 0, reclaimedBytes: removed.length, removed,
++          };
++        }
++        const removed = [...sessionFiles].filter((f) => !isResumeRetainedFile(f));
++        for (const f of removed) sessionFiles.delete(f);
++        return {
++          sessionId: 'machine1', path: '/fake/kinetix-export-machine1',
++          disposition: 'retained', retainedBytes: sessionFiles.size, reclaimedBytes: removed.length, removed,
++        };
++      },
++    };
++
++    // THE FIX, exercised directly: this is what `useExport.ts` now calls for
++    // EVERY failure kind (not just `disk_full`) — including the `mux` kind
++    // `result.error` just carried.
++    const report = await decideSessionRetentionOnFailure(active);
++
++    expect(report?.disposition).toBe('retained');
++    expect(sessionFiles.has('piece_0.h264')).toBe(true);
++    expect(sessionFiles.has('piece_1.h264')).toBe(true);
++    expect(sessionFiles.has('piece_2.h264')).toBe(true);
++    expect(sessionFiles.has('export_state.json')).toBe(true);
++    expect(sessionFiles.has('video_all.h264')).toBe(false);
++    expect(sessionFiles.has('export_final.mp4')).toBe(false);
++  });
++
++  it('a resumed run completes to a finished file without re-rendering any piece', async () => {
++    const project = makeProject();
++    const ffmpeg = makeFakeFfmpeg();
++
++    // Every piece already rendered and checkpointed — exactly the state
++    // `decideSessionRetentionOnFailure` above just proved survives. Piece 1
++    // (the plain/Tier-1 path never spins up a Worker for ANY piece — see
++    // this file's own header — so "without spinning up a worker" is
++    // structural here, not merely unexercised).
++    const result = await exportProjectWebCodecs(
++      project,
++      ffmpeg,
++      {
++        width: 1920, height: 1080, fps: FPS,
++        resume: { pieceIndex: 3, encoderSessionIndex: 0, byteOffset: 0, cumulativePictures: 0 },
++      },
++    );
++
++    expect(result.ok).toBe(true);
++    // No piece was re-rendered: the encoder this project's segments would
++    // have used is never called.
++    expect(encodeStaticImageSegment).not.toHaveBeenCalled();
++    // The 3 already-on-disk pieces are reused as-is, not regenerated.
++    expect(ffmpeg.concatAnnexbPieces).toHaveBeenCalledWith(
++      ['piece_0.h264', 'piece_1.h264', 'piece_2.h264'],
++      'video_all.h264',
++    );
++    expect(muxOnlyMock).toHaveBeenCalledTimes(1);
++  });
++
++  it('negative case: an unrelated (non-mux) early failure with no manifest still destroys outright', async () => {
++    // `disk_full` is not the only kind that must keep working — a failure
++    // BEFORE any checkpoint exists (nothing to retain) must still free the
++    // bytes, same as the pre-STEP-3b behavior.
++    const active: RetainableSession = {
++      retainForResume: async (): Promise<RetainForResumeReport> => ({
++        sessionId: 'no-checkpoint-yet', path: '/fake/kinetix-export-none',
++        disposition: 'destroyed', retainedBytes: 0, reclaimedBytes: 4096, removed: ['scratch.tmp'],
++      }),
++    };
++    const report = await decideSessionRetentionOnFailure(active);
++    expect(report?.disposition).toBe('destroyed');
++  });
++
++  it('negative case: a bare fake with no retainForResume falls back to null (caller must guard-destroy)', async () => {
++    const report = await decideSessionRetentionOnFailure({});
++    expect(report).toBeNull();
++  });
++
++  it('negative case: a user cancel still destroys unconditionally — it never routes through retention', async () => {
++    const project = makeProject();
++    const ffmpeg = makeFakeFfmpeg();
++
++    const pending = exportProjectWebCodecs(project, ffmpeg, { width: 1920, height: 1080, fps: FPS });
++
++    // `activeFfmpeg` is set synchronously before the first await inside
++    // `exportProjectWebCodecs` — this call observes it deterministically,
++    // not via a timing race.
++    await cancelExportWebCodecs();
++
++    expect(ffmpeg.kill).toHaveBeenCalledTimes(1);
++    // THE NEGATIVE CASE: cancel forces past the manifest guard — it does
++    // NOT call `retainForResume` and does NOT do a plain guarded destroy.
++    expect(ffmpeg.destroy).toHaveBeenCalledWith({ force: true });
++
++    // Let the in-flight export settle either way — its outcome is not
++    // this test's concern, only that cancel's own destroy call was forced.
++    await pending.catch(() => undefined);
++  });
++});
+diff --git a/src/services/webcodecsExport/exportPipelineWebCodecs.ts b/src/services/webcodecsExport/exportPipelineWebCodecs.ts
+index d2ccb15..7f2fe40 100644
+--- a/src/services/webcodecsExport/exportPipelineWebCodecs.ts
++++ b/src/services/webcodecsExport/exportPipelineWebCodecs.ts
+@@ -216,7 +216,9 @@ export interface WebCodecsFfmpeg extends FfmpegLike {
+    *  backend; `void` from older fakes reads as confirmed. */
+   saveSessionFile(fileName: string, destPath: string): Promise<SaveSessionFileResult | void>;
+   kill(): Promise<void>;
+-  destroy(): Promise<void>;
++  /** STEP 3b — `force: true` bypasses the native manifest guard; see
++   *  `TauriFfmpeg.destroy`'s own doc comment for which callers must set it. */
++  destroy(opts?: { force?: boolean }): Promise<void>;
+   /**
+    * Counts H.264 Annex B access units (pictures) in a session file entirely on
+    * the native side (`TauriFfmpeg.countAnnexbFrames`, backed by the Rust
+@@ -408,7 +410,10 @@ export async function cancelExportWebCodecs(): Promise<void> {
+       // drop the notice for the one case that matters in production.
+       recordCleanupFailure('session-kill', ffmpeg.sessionId ?? 'unknown', detail);
+     }
+-    await ffmpeg.destroy();
++    // STEP 3b — a user cancel discards the session regardless of any
++    // manifest: there is no "resume this cancelled export" offer, so leaving
++    // the directory behind would just be a leak the operator never asked for.
++    await ffmpeg.destroy({ force: true });
+   }
+ }
+ 
+diff --git a/src/services/webcodecsExport/exportResumeDiscovery.ts b/src/services/webcodecsExport/exportResumeDiscovery.ts
+index 69225e4..9a36b48 100644
+--- a/src/services/webcodecsExport/exportResumeDiscovery.ts
++++ b/src/services/webcodecsExport/exportResumeDiscovery.ts
+@@ -68,7 +68,9 @@ export interface ResumeSessionHandle {
+     path: string,
+     byteOffset: number,
+   ): Promise<{ pictures: number; vclNals: number; bytesRemoved: number; keptBytes: number }>;
+-  destroy(): Promise<void>;
++  /** STEP 3b — `force: true` bypasses the native manifest guard; see
++   *  `TauriFfmpeg.destroy`'s own doc comment for which callers must set it. */
++  destroy(opts?: { force?: boolean }): Promise<void>;
+   /**
+    * Present on `TauriFfmpeg`. Optional so test fakes can omit it; fence/seam
+    * bound expiry then no-ops kill rather than throwing.
+@@ -602,7 +604,10 @@ export async function collectAbandonedSessions(
+   for (const sessionId of doomed) {
+     try {
+       const session = await io.reenter(sessionId);
+-      await session.destroy();
++      // STEP 3b — this policy exists specifically to discard sessions past
++      // the retention cap/TTL; a manifest is expected (that's why they were
++      // resumable candidates at all) and must not stop the collection.
++      await session.destroy({ force: true });
+       collected.push(sessionId);
+     } catch (err) {
+       // eslint-disable-next-line no-console
