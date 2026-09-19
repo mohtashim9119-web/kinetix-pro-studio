@@ -851,14 +851,16 @@ mod tests {
 
     #[test]
     fn digest_probe_distinguishes_a_memo_hit_from_a_cold_full_hash() {
-        // Deliberately does NOT call `reset_verified_digest_cache_for_tests`.
-        // That memo is process-global and two sibling tests here already
-        // reset it; a third resetter clobbers them mid-flight under parallel
-        // execution. MEASURED: adding a reset here turned
-        // `digest_for_sidecar_computes_and_caches_on_a_cold_call` and
-        // `digest_memo_caches_by_identity_and_resets_cleanly` red on one run
-        // in six. A UUID-unique path is cold by construction and needs no
-        // reset to prove it.
+        // Deliberately does NOT call `reset_verified_digest_cache_for_tests`
+        // (a UUID-unique path is cold by construction and needs no reset to
+        // prove it) — but it still inserts then reads the SAME process-global
+        // memo across two separate `.lock()` calls, so it is a potential
+        // VICTIM of a sibling test's reset landing in that gap, same as the
+        // resetting tests are of each other. `digest_test_guard` below closes
+        // that window for every test that touches the memo, not just the
+        // ones that reset it — see the guard's own doc comment for the full
+        // race writeup (operator ruling 2026-09-19, plan-v3 item 1).
+        let _guard = digest_test_guard();
         let dir = std::env::temp_dir().join(format!("kinetix-fa-digest-probe-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("model.onnx");
@@ -889,6 +891,76 @@ mod tests {
         assert_eq!(hash.len(), 64, "sha256 hex digest must be 64 chars");
     }
 
+    // -- digest-memo reset race (operator ruling 2026-09-19, plan-v3 item 1) --
+    //
+    // `verified_digest_cache` is one process-global map and
+    // `reset_verified_digest_cache_for_tests` clears the WHOLE thing, not just
+    // the caller's own entries. `cargo test` runs `#[test]` functions on a
+    // thread pool by default, so two sibling tests below that each reset and
+    // then read the memo can interleave: one test's reset can wipe an entry a
+    // concurrently-running sibling just inserted, in the gap between that
+    // insert's `.lock()` and the very next, SEPARATE `.lock()` that reads it
+    // back. A prior instance of exactly this (a fourth test that used to also
+    // reset) was MEASURED to turn `digest_for_sidecar_computes_and_caches_on_
+    // a_cold_call` and `digest_memo_caches_by_identity_and_resets_cleanly` red
+    // on one run in six — see that test's own comment, below.
+    //
+    // `digest_test_guard` below is the fix: every test that touches the
+    // shared memo takes it, mirroring `staging_test_guard` above for the
+    // sibling `staging_durations()` global. The regression test uses an
+    // `mpsc` handoff plus a short sleep, not a `Barrier` — a `Barrier` would
+    // need both threads to hold the (mutually exclusive) guard at once to
+    // rendezvous inside it, which can't happen once the guard is in place.
+    // The handoff instead gives the racer a fair, high-probability shot at
+    // the real window between the owner's two separate `.lock()` calls:
+    // pre-fix, nothing gates the racer's reset and it reliably lands inside
+    // the owner's sleep; post-fix, the racer blocks on the guard until the
+    // owner's whole insert-sleep-read sequence has released it, so the
+    // window closes entirely rather than merely narrowing.
+    static DIGEST_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn digest_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        DIGEST_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    #[test]
+    fn concurrent_test_resets_do_not_stomp_a_sibling_tests_live_entry() {
+        let (tx, rx) = std::sync::mpsc::channel::<()>();
+
+        let racer = std::thread::spawn(move || {
+            rx.recv().ok();
+            // Simulates a sibling test's `reset_verified_digest_cache_for_tests()`
+            // call landing while this test's entry is live.
+            let _guard = digest_test_guard();
+            reset_verified_digest_cache_for_tests();
+        });
+
+        let dir = std::env::temp_dir().join(format!("fa-dev-digest-race-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("model.onnx");
+        fs::write(&path, b"owned by this test alone, nobody else touches this identity").unwrap();
+        let meta = fs::metadata(&path).unwrap();
+        let identity: ModelIdentity = (path.clone(), meta.len(), meta.modified().ok());
+        let digest = crate::sha256::hash_file(&path).unwrap();
+
+        let survived = {
+            let _guard = digest_test_guard();
+            verified_digest_cache().lock().unwrap().insert(identity.clone(), digest.clone());
+            let _ = tx.send(());
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            verified_digest_cache().lock().unwrap().get(&identity).cloned()
+        };
+
+        racer.join().unwrap();
+        let _ = fs::remove_dir_all(&dir);
+
+        assert_eq!(
+            survived,
+            Some(digest),
+            "a sibling test's reset wiped this test's own live entry out from under it"
+        );
+    }
+
     /// WS2 T4.8: `digest_for_sidecar` must reuse whatever `verify_model_
     /// manifest` already cached for this exact file identity, not re-hash.
     /// Proven the same way `model_download.rs`'s finalize test proves it: seed
@@ -897,6 +969,7 @@ mod tests {
     /// returns exactly that value — a cache hit, not a second read.
     #[test]
     fn digest_for_sidecar_reuses_verify_model_manifests_cache_not_a_re_hash() {
+        let _guard = digest_test_guard();
         reset_verified_digest_cache_for_tests();
         let dir = std::env::temp_dir().join(format!("fa-dev-digest-sidecar-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -919,6 +992,7 @@ mod tests {
     /// itself does.
     #[test]
     fn digest_for_sidecar_computes_and_caches_on_a_cold_call() {
+        let _guard = digest_test_guard();
         reset_verified_digest_cache_for_tests();
         let dir = std::env::temp_dir().join(format!("fa-dev-digest-sidecar-cold-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1096,6 +1170,7 @@ mod tests {
     /// — here the memo is observed through its own public-in-crate reset.
     #[test]
     fn digest_memo_caches_by_identity_and_resets_cleanly() {
+        let _guard = digest_test_guard();
         let dir = std::env::temp_dir().join(format!("fa-g-memo-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("model.onnx");
