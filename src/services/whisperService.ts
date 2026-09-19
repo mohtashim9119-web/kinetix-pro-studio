@@ -23,6 +23,27 @@ type WhisperEvent =
   | { event: 'Done'; data: { tokens: TranscriptToken[]; detectedLanguage?: string } }
   | { event: 'Error'; data: { message: string } };
 
+/**
+ * plan-v3 item 10 — typed Whisper run-level failures. Mirrors FA's
+ * `FaFailureKind` shape for the reasons this wave can actually produce.
+ * `model-hash-mismatch` is the weight-integrity gate; it is never silent
+ * and never auto-switches to another model.
+ */
+export type WhisperFailureKind =
+  | 'model-hash-mismatch'
+  | 'already-running'
+  | 'inference-failed';
+
+/** Mirrors `whisper.rs`'s `WHISPER_MODEL_HASH_MISMATCH_PREFIX`. */
+export const WHISPER_MODEL_HASH_MISMATCH_PREFIX = 'whisper:model-hash-mismatch:';
+
+export function classifyWhisperFailure(err: unknown): WhisperFailureKind {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (raw.startsWith(WHISPER_MODEL_HASH_MISMATCH_PREFIX)) return 'model-hash-mismatch';
+  if (raw.startsWith('whisper:already-running:')) return 'already-running';
+  return 'inference-failed';
+}
+
 // ---------------------------------------------------------------------------
 // Alignment tokenizer (architecture doc §3.2, R1)
 // ---------------------------------------------------------------------------

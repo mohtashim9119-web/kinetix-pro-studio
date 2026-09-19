@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import {
   transcribeWithProgress,
+  classifyWhisperFailure,
   alignScenestoTranscript,
   distributeSegmentTimes,
   filterMalformedTokens,
@@ -563,9 +564,12 @@ export function useWhisper(): UseWhisperApi {
         // IN_FLIGHT_REFUSAL_PREFIX). Reached only in the narrow race where a
         // job terminates between this run's attach probe and its start; the
         // user gets a sentence about what is happening rather than the tag.
+        const kind = classifyWhisperFailure(raw);
         const message = raw.startsWith(NATIVE_IN_FLIGHT_REFUSAL_PREFIX)
           ? 'A transcription for this audio is already running — wait for it to finish or cancel it first.'
-          : raw;
+          : kind === 'model-hash-mismatch'
+            ? 'The Whisper model failed its integrity check. Re-download ggml-large-v3-turbo — the run will not switch to another model.'
+            : raw;
         setTranscriptionStatus({ phase: 'error', message, jobId });
       } finally {
         // Release the single-flight gate on EVERY exit — clean finish, empty

@@ -959,6 +959,14 @@ pub async fn whisper_transcribe(
     }
 
     let model = model_path(&app)?;
+    // plan-v3 item 10 — weight-integrity gate. Size precheck + (path, size,
+    // mtime) memo + SHA-256 against `model_download::MODEL_SHA256`. A
+    // mismatch is a run-level failure: typed prefix, never silent, never
+    // an auto-switch to another model.
+    if let Err(e) = verify_whisper_weights(&model) {
+        emit_terminal(&sink, &job_key, WhisperEvent::Error { message: e.clone() });
+        return Err(e);
+    }
 
     // Phase 2a — language argument (docs/sync-pipeline-v2-plan.md, Step 3
     // decisions): "-l auto" (re-enabled now that the model is multilingual)
@@ -1212,6 +1220,103 @@ fn parse_stdout_tokens(lines: &[String]) -> Vec<TranscriptToken> {
         }
     }
     tokens
+}
+
+// ---------------------------------------------------------------------------
+// plan-v3 Wave 1 item 10 — Whisper weight-integrity gate
+// ---------------------------------------------------------------------------
+//
+// MEASURED on this machine (2026-09-20) against the real
+// `src-tauri/models/ggml-large-v3-turbo.bin` (1,624,555,275 bytes, matches
+// Part AL row 1 and `model_download::MODEL_SIZE_BYTES`):
+//   Python hashlib SHA-256 (1 MiB chunks): 3.968 s
+//   `shasum -a 256`:                        6.86 s real
+// Digest: 1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69
+// — identical to `model_download::MODEL_SHA256`. Part AL records SIZE only;
+// the digest lives in shipped code, not in Part AL (frozen, not edited).
+//
+// STRATEGY CHOSEN: hash-once-per-path + staleness (size/mtime), not
+// hash-every-load. A ~4–7 s full-file hash on every `whisper_transcribe`
+// would tax every staging-time run; a memo keyed on the exact file identity
+// pays that once per process (and again only if the file is replaced).
+
+/// Machine-readable prefix the frontend classifies as `model-hash-mismatch`.
+pub(crate) const WHISPER_MODEL_HASH_MISMATCH_PREFIX: &str = "whisper:model-hash-mismatch:";
+
+type WhisperModelIdentity = (PathBuf, u64, Option<std::time::SystemTime>);
+
+fn whisper_digest_memo() -> &'static Mutex<HashMap<WhisperModelIdentity, String>> {
+    static MEMO: OnceLock<Mutex<HashMap<WhisperModelIdentity, String>>> = OnceLock::new();
+    MEMO.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(test)]
+pub(crate) fn reset_whisper_digest_memo_for_tests() {
+    if let Ok(mut m) = whisper_digest_memo().lock() {
+        m.clear();
+    }
+}
+
+/// Production gate: expected size + digest from `model_download.rs`.
+pub(crate) fn verify_whisper_weights(path: &std::path::Path) -> Result<(), String> {
+    verify_whisper_weights_with(
+        path,
+        crate::model_download::MODEL_SIZE_BYTES,
+        crate::model_download::MODEL_SHA256,
+    )
+}
+
+/// Injectable expected size/digest so proving tests can use a tiny fixture
+/// instead of the 1.62 GiB model.
+pub(crate) fn verify_whisper_weights_with(
+    path: &std::path::Path,
+    expected_size: u64,
+    expected_sha256: &str,
+) -> Result<(), String> {
+    let meta = std::fs::metadata(path).map_err(|e| {
+        format!("{WHISPER_MODEL_HASH_MISMATCH_PREFIX}failed to stat {}: {e}", path.display())
+    })?;
+    let actual_size = meta.len();
+    if actual_size != expected_size {
+        return Err(format!(
+            "{WHISPER_MODEL_HASH_MISMATCH_PREFIX}model at {} is {actual_size} bytes but \
+             the committed pin records {expected_size} — wrong or truncated file. \
+             Re-download the model; do not trust a mismatched file.",
+            path.display()
+        ));
+    }
+
+    let mtime = meta.modified().ok();
+    let identity: WhisperModelIdentity = (path.to_path_buf(), actual_size, mtime);
+    let cached = whisper_digest_memo()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&identity).cloned());
+    let actual = match cached {
+        Some(digest) => digest,
+        None => {
+            let digest = crate::sha256::hash_file(path).map_err(|e| {
+                format!(
+                    "{WHISPER_MODEL_HASH_MISMATCH_PREFIX}failed to hash {}: {e}",
+                    path.display()
+                )
+            })?;
+            if let Ok(mut m) = whisper_digest_memo().lock() {
+                m.insert(identity, digest.clone());
+            }
+            digest
+        }
+    };
+
+    if actual != expected_sha256 {
+        return Err(format!(
+            "{WHISPER_MODEL_HASH_MISMATCH_PREFIX}model at {} hashed to {actual} but the \
+             committed pin is {expected_sha256}. Re-download the model; the run will \
+             not switch to another file.",
+            path.display()
+        ));
+    }
+    Ok(())
 }
 
 /// Parses whisper timestamp strings (`HH:MM:SS.mmm` or `HH:MM:SS,mmm`) into
@@ -2074,6 +2179,76 @@ mod in_flight_tests {
         assert_eq!(resolve_job_key(None), DEFAULT_JOB_KEY);
         assert_eq!(resolve_job_key(Some("   ".into())), DEFAULT_JOB_KEY);
         assert_eq!(resolve_job_key(Some("proj-7".into())), "proj-7");
+    }
+}
+
+#[cfg(test)]
+mod whisper_weight_integrity_tests {
+    use super::*;
+
+    fn fixture_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "kinetix-whisper-weight-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn digest_of(bytes: &[u8]) -> String {
+        let mut h = crate::sha256::Sha256::new();
+        h.update(bytes);
+        crate::sha256::hex_digest(&h.finish())
+    }
+
+    #[test]
+    fn short_fixture_is_a_typed_hash_mismatch_not_a_silent_ok() {
+        reset_whisper_digest_memo_for_tests();
+        let dir = fixture_dir();
+        let path = dir.join("ggml-large-v3-turbo.bin");
+        fs::write(&path, b"SHORT").unwrap();
+
+        let err = verify_whisper_weights_with(&path, 16, "deadbeef")
+            .expect_err("a short stand-in must fail the gate");
+        assert!(
+            err.starts_with(WHISPER_MODEL_HASH_MISMATCH_PREFIX),
+            "mismatch must be typed, got: {err}"
+        );
+        assert!(err.contains("5 bytes"), "size must be in the message: {err}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn same_size_corrupt_fixture_is_a_typed_digest_mismatch() {
+        reset_whisper_digest_memo_for_tests();
+        let dir = fixture_dir();
+        let path = dir.join("corrupt.bin");
+        let bytes = b"CORRUPT-MODEL-BYTES";
+        fs::write(&path, bytes).unwrap();
+        let expected_size = bytes.len() as u64;
+        let wrong_digest = "0000000000000000000000000000000000000000000000000000000000000000";
+
+        let err = verify_whisper_weights_with(&path, expected_size, wrong_digest)
+            .expect_err("corrupt same-size stand-in must fail");
+        assert!(err.starts_with(WHISPER_MODEL_HASH_MISMATCH_PREFIX));
+        assert!(err.contains("will not switch"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn matching_tiny_fixture_passes_and_second_call_reuses_the_memo() {
+        reset_whisper_digest_memo_for_tests();
+        let dir = fixture_dir();
+        let path = dir.join("ok.bin");
+        let bytes = b"tiny-ok-weights";
+        fs::write(&path, bytes).unwrap();
+        let digest = digest_of(bytes);
+        let size = bytes.len() as u64;
+
+        verify_whisper_weights_with(&path, size, &digest).expect("matching fixture must pass");
+        verify_whisper_weights_with(&path, size, &digest).expect("memoized second call must pass");
+        let _ = fs::remove_dir_all(&dir);
     }
 }
 
