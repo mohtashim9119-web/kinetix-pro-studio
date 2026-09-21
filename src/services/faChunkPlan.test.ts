@@ -3,13 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
-import { coalesceRuns, computeFaChunkPlan, computeFaChunkPlanCoalesced, computeFaChunkPlanS2, computeFaChunkPlanWithAttribution, computeRuns, detectUnscriptedRuns } from './faChunkPlan';
+import {
+  __getRunContextComputeCountForTests,
+  __resetRunContextCacheForTests,
+  coalesceRuns,
+  computeFaChunkPlan,
+  computeFaChunkPlanCoalesced,
+  computeFaChunkPlanS2,
+  computeFaChunkPlanWithAttribution,
+  computeRuns,
+  computeUnscriptedRuns,
+  detectUnscriptedRuns,
+} from './faChunkPlan';
 import type { FaRun } from './faAnchors';
 import { MAX_RUN_SEC } from './syncConstants';
 import { vocabCharsFromRawVocab, type FaCardinalData } from './faTextNormalize';
@@ -1028,5 +1039,103 @@ describe('computeFaChunkPlanS2 (WS1 Session AI — measurement arm, not called b
     const before = JSON.stringify(segments);
     computeFaChunkPlanS2(segments, silences, 6, 1, 30);
     expect(JSON.stringify(segments)).toBe(before);
+  });
+});
+
+// WS2 Wave 2 Group 2, item 1 — DEDUP computeRunContext 6->1 (actual current
+// count re-verified at 7: forcedAlignmentRun.ts's `runFaAttempt` calls
+// computeFaChunkPlan + computeUnscriptedRuns on the SAME args (2), and one
+// sync's post-FA correction block calls detectSeamFitDefects (which itself
+// calls computeFaChunkPlan + computeRuns on the same args, 2 more),
+// computeRunExtents, detectRunPlacementDefects and detectUtterancePlacement-
+// Defects (3 more) — all on the SAME (segments, tokens, silences,
+// audioDuration) reference tuple within each of those two scopes). Each call
+// independently re-ran a full Hirschberg alignment pass
+// (`alignQueryToSubject`, "seconds" at production scale per this file's own
+// R.5 section header). The fix is a reference-identity memo inside
+// `computeRunContext` itself (see its own doc comment) — this block proves it
+// fires (old-bug reproduction: asserts the count on CURRENT, unmemoized-call-
+// site code and pins it at 1) without changing any of the ~80 call sites
+// elsewhere in the codebase that exercise these functions' rule logic
+// directly with their own fixtures.
+describe('computeRunContext dedup (WS2 Wave 2 Group 2, item 1)', () => {
+  beforeEach(() => {
+    __resetRunContextCacheForTests();
+  });
+
+  // Same fixture as the first `computeFaChunkPlan` test above — a real
+  // 4-segment, 3-anchor corpus, not a degenerate empty-input case, so the
+  // memo is proven on a fixture that actually reaches `alignQueryToSubject`.
+  function fixture(): { segments: VideoSegment[]; tokens: TranscriptToken[]; silences: SilenceInterval[] } {
+    const segments = [
+      seg('s0', 'kittens likes purple hats', 0, 2),
+      seg('s1', 'dragons chase silver moons', 2, 2),
+      seg('s2', 'wizards brew golden potions', 4, 2),
+      seg('s3', 'falcons guard hidden castles', 6, 2),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
+    return { segments, tokens, silences };
+  }
+
+  it('computes the run context exactly ONCE for the same (segments, tokens, silences, audioDuration) call repeated across every real production call site (old-bug proof: fails without the memo)', () => {
+    const { segments, tokens, silences } = fixture();
+    const audioDuration = 8;
+
+    // Mirrors `forcedAlignmentRun.ts`'s `runFaAttempt`: computeFaChunkPlan
+    // then computeUnscriptedRuns, same args.
+    const chunksA = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+    const unscriptedA = computeUnscriptedRuns(segments, tokens, silences, audioDuration);
+
+    // Mirrors `faSeamFitGate.ts`'s `detectSeamFitDefects`: computeFaChunkPlan
+    // then computeRuns, same args (a fresh call, not reusing chunksA, exactly
+    // as the two independent production call sites do).
+    const chunksB = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+    const runsB = computeRuns(segments, tokens, silences, audioDuration);
+
+    // Mirrors the App.tsx post-FA block: computeRunExtents,
+    // detectRunPlacementDefects and detectUtterancePlacementDefects each call
+    // computeUnscriptedRuns on the same tuple again.
+    const unscriptedC = computeUnscriptedRuns(segments, tokens, silences, audioDuration);
+    const unscriptedD = computeUnscriptedRuns(segments, tokens, silences, audioDuration);
+
+    // 6 calls into the public API, same reference tuple throughout -> the
+    // underlying Hirschberg-backed computation must run exactly once.
+    expect(__getRunContextComputeCountForTests()).toBe(1);
+
+    // The memo must not change any answer: every call returns the
+    // byte-identical result the unmemoized path would have produced.
+    expect(chunksA).toEqual(chunksB);
+    expect(unscriptedA).toEqual(unscriptedC);
+    expect(unscriptedC).toEqual(unscriptedD);
+    expect(runsB.length).toBeGreaterThan(0);
+  });
+
+  it('does NOT merge calls whose silences array is a different reference, even when content-identical (proves the memo cannot silently couple two independently-detected silence arrays)', () => {
+    const { segments, tokens, silences } = fixture();
+    const audioDuration = 8;
+    const silencesCopy: SilenceInterval[] = silences.map(s => ({ ...s }));
+
+    computeFaChunkPlan(segments, tokens, silences, audioDuration);
+    expect(__getRunContextComputeCountForTests()).toBe(1);
+
+    // A content-identical but distinct array (mirrors two independent
+    // `detectSilences` calls on the same audio) must miss the cache.
+    computeFaChunkPlan(segments, tokens, silencesCopy, audioDuration);
+    expect(__getRunContextComputeCountForTests()).toBe(2);
+  });
+
+  it('recomputes when audioDuration or languageCode differs, even with everything else identical', () => {
+    const { segments, tokens, silences } = fixture();
+
+    computeFaChunkPlan(segments, tokens, silences, 8);
+    expect(__getRunContextComputeCountForTests()).toBe(1);
+
+    computeFaChunkPlan(segments, tokens, silences, 9);
+    expect(__getRunContextComputeCountForTests()).toBe(2);
+
+    computeFaChunkPlan(segments, tokens, silences, 9, 'script-word-index', 'en');
+    expect(__getRunContextComputeCountForTests()).toBe(3);
   });
 });

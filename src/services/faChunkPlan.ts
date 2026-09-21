@@ -111,6 +111,61 @@ interface RunContext {
  * a corpus where the two diverge fails loudly instead of silently mis-cutting
  * text.
  */
+/**
+ * WS2 G2 Group 2, item 1 (Wave 2). `computeRunContext` runs a full Hirschberg
+ * alignment pass (`alignQueryToSubject` below — "seconds" at production
+ * scale, this section's own header a few lines up). One sync run reaches this
+ * function from up to 7 call sites (`computeFaChunkPlan`, `computeRuns`,
+ * `computeUnscriptedRuns`, and — through those — `detectSeamFitDefects`,
+ * `computeRunExtents`, `detectRunPlacementDefects`,
+ * `detectUtterancePlacementDefects`) on the SAME (segments, tokens, silences,
+ * audioDuration, languageCode) reference tuple, re-running the same alignment
+ * every time. A size-1 REFERENCE-IDENTITY memo collapses every same-tuple
+ * call in a run to one pass, with the result passed straight through, without
+ * touching any of the ~80 test call sites that exercise these functions' rule
+ * logic in isolation with their own fixtures.
+ *
+ * Reference identity, not deep equality, is the deliberate choice: two
+ * independently-produced `silences` arrays (e.g. `forcedAlignmentRun.ts`'s
+ * own `detectSilences` call vs. `useWhisper.ts`'s `alignFromCache` — a
+ * separate detection pass on the same audio, not the same array) are content-
+ * equal but must NOT be treated as the same input — that would silently
+ * couple two call sites the codebase does not currently guarantee agree (see
+ * G2 end-of-group report, "computeRunContext dedup scope" sighting). A fresh
+ * array reference always misses the cache and recomputes, so this can only
+ * ever skip a provably-redundant pass, never merge two that might differ.
+ */
+let lastRunContextCall:
+  | {
+      segments: readonly VideoSegment[];
+      tokens: readonly TranscriptToken[];
+      silences: readonly SilenceInterval[];
+      audioDuration: number;
+      languageCode: FaLanguageCode | undefined;
+      result: RunContext;
+    }
+  | undefined;
+
+/** Test-only instrumentation — count of actual (cache-missed)
+ *  `computeRunContext` executions, so a call-count test can assert the dedup
+ *  fires without relying on ESM spy tricks. Never read in production code. */
+let runContextComputeCount = 0;
+
+/** Clears the memo and the compute-count instrumentation. Call from a test's
+ *  `beforeEach` — the cache is module-level and otherwise persists across
+ *  tests in the same file (mirrors `__resetFaCapabilityForTests` in
+ *  `faGate.ts`, `__resetDownloadStoreForTests` in `modelDownloadStore.ts`). */
+export function __resetRunContextCacheForTests(): void {
+  lastRunContextCall = undefined;
+  runContextComputeCount = 0;
+}
+
+/** Test-only: how many times `computeRunContext` actually ran (cache misses)
+ *  since the last reset. */
+export function __getRunContextComputeCountForTests(): number {
+  return runContextComputeCount;
+}
+
 function computeRunContext(
   segments: readonly VideoSegment[],
   tokens: readonly TranscriptToken[],
@@ -118,6 +173,30 @@ function computeRunContext(
   audioDuration: number,
   languageCode?: FaLanguageCode,
 ): RunContext {
+  const cached = lastRunContextCall;
+  if (
+    cached !== undefined &&
+    cached.segments === segments &&
+    cached.tokens === tokens &&
+    cached.silences === silences &&
+    cached.audioDuration === audioDuration &&
+    cached.languageCode === languageCode
+  ) {
+    return cached.result;
+  }
+  const result = computeRunContextUncached(segments, tokens, silences, audioDuration, languageCode);
+  lastRunContextCall = { segments, tokens, silences, audioDuration, languageCode, result };
+  return result;
+}
+
+function computeRunContextUncached(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  languageCode?: FaLanguageCode,
+): RunContext {
+  runContextComputeCount++;
   // Mirrors whisperService.ts's extractSegmentAlignments `tokenWords`
   // expansion: a Whisper token may canonicalize to multiple (or zero) words.
   // `languageCode` (Phase 3c, qi-bookkeeping-only — see textNormalize.ts's
