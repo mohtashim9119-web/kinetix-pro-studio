@@ -298,6 +298,7 @@ import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
 import { SyncLoadingOverlay } from './components/SyncLoadingOverlay';
 import { SyncPausedDialog } from './components/SyncPausedDialog';
+import { WhisperModelFailureDialog, WHISPER_MODEL_FAILURE_COPY } from './components/WhisperModelFailureDialog';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
 );
@@ -333,6 +334,7 @@ import { checkExistingCheckpoint, type ReexportCheckOutcome } from './services/w
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
+import { getWhisperModelStatus } from './services/modelDownload';
 import { isTauri, probeAudioDuration, probeVideoFps, TauriFfmpeg } from './services/tauriFfmpeg';
 import { formatBytes } from './services/webcodecsExport/diskFull';
 import { readUiState, patchUiState } from './services/uiStateStore';
@@ -6284,6 +6286,21 @@ export default function App() {
     (effectiveVoiceoverId !== undefined && !transcriptionReady)
     || voiceoverNeedsExplicitTranscribe;
 
+  // Wave 1 hotfix (operator-ordered) — the two Whisper model-integrity
+  // failures (never 'already-running' / 'inference-failed', which keep using
+  // TranscriptionBar's existing inline banner). Set whenever the SAME
+  // startTranscription catch block useWhisper.ts's staging auto-fire and the
+  // explicit "Transcribe this file" re-attempt both funnel through lands on
+  // one of these two typed reasons. Computed once and reused below to both
+  // suppress TranscriptionBar's redundant banner (the dialog replaces it, per
+  // operator instruction — never shown alongside) and drive
+  // WhisperModelFailureDialog.
+  const whisperModelFailureKind =
+    transcriptionStatus.phase === 'error'
+    && (transcriptionStatus.kind === 'model-not-found' || transcriptionStatus.kind === 'model-hash-mismatch')
+      ? transcriptionStatus.kind
+      : null;
+
   usePlayback({
     isPlaying,
     setIsPlaying,
@@ -7405,7 +7422,7 @@ export default function App() {
             onActiveLeftTabChange={setActiveLeftTab}
             isPlaying={isPlaying}
           />
-          {transcriptionStatus.phase !== 'idle' && (
+          {transcriptionStatus.phase !== 'idle' && whisperModelFailureKind === null && (
             <div className="flex-shrink-0">
               <TranscriptionBar
                 status={transcriptionStatus}
@@ -7968,7 +7985,31 @@ export default function App() {
           old whisper-only ModelDownloadPanel. */}
       {showManageModelsModal && (
         <ManageModelsModal
-          onClose={() => setShowManageModelsModal(false)}
+          onClose={() => {
+            setShowManageModelsModal(false);
+            if (whisperModelFailureKind === null) return;
+            // Wave 1 hotfix — conservative choice, logged either branch:
+            // auto-retry only when the SAME staged file that hit the model
+            // failure is still the pending voiceover (same file, same job,
+            // no new engine/model choice being made on the user's behalf —
+            // trivially safe). A user who navigated away or unstaged it
+            // while the modal was open leaves nothing safe to retry against;
+            // fall back to a message rather than guessing at, or silently
+            // reusing, a different file.
+            void (async () => {
+              const status = await getWhisperModelStatus().catch(() => null);
+              if (!status?.present) return; // still missing/mismatched — WhisperModelFailureDialog re-shows itself, nothing else to do
+              const file = pendingVoiceoverRef.current?.file;
+              if (file) {
+                console.info('[whisper] model downloaded — auto-retrying transcription for the still-staged file');
+                handleVoiceoverTranscribeRequested(file);
+              } else {
+                console.info('[whisper] model downloaded — no staged file left to auto-retry, asking the user to redo it');
+                dismissError();
+                showToast(WHISPER_MODEL_FAILURE_COPY.downloadedRetryMessage);
+              }
+            })();
+          }}
           projectLanguage={project.language}
         />
       )}
@@ -8335,6 +8376,22 @@ export default function App() {
           onRetry={handleSyncPausedRetry}
           onUseWhisper={handleSyncPausedUseWhisper}
           onCancel={handleSyncPausedCancel}
+        />
+      )}
+
+      {/* Wave 1 hotfix (operator-ordered) — replaces TranscriptionBar's old
+          half-hidden inline banner for the two Whisper model-integrity
+          failures (see whisperModelFailureKind above, which also suppresses
+          that banner while this is showing). Suspended — not rendered —
+          while ManageModelsModal is open (lower z-index; both mounted at
+          once would put this dialog on top, blocking the download UI it just
+          opened) and re-appears on its own if the model is still missing
+          after that modal closes. */}
+      {whisperModelFailureKind !== null && !showManageModelsModal && (
+        <WhisperModelFailureDialog
+          kind={whisperModelFailureKind}
+          onDownloadModel={() => setShowManageModelsModal(true)}
+          onCancel={dismissError}
         />
       )}
 

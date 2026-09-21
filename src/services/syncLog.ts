@@ -12,7 +12,7 @@
 // buildRescueLogEntries, clearSyncLog) remains in App.tsx and imports
 // makeSyncLogEntry from this module.
 import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem, VideoSegment, TranscriptToken } from '../types';
-import type { TokenDrop } from './whisperService';
+import type { TokenDrop, WhisperFailureKind } from './whisperService';
 import type { ContractViolation } from './syncContracts';
 import type { LockFinding } from './syncEngine';
 // WS1 Session J — rule-firing log builders. All four are TYPE-only imports, so
@@ -492,6 +492,56 @@ export function buildFaPausedEntry(
       fixHint: fix,
       ...(detail !== undefined ? { errorMessage: detail } : {}),
     },
+    timestamp,
+  );
+}
+
+/** Only the two Whisper failure kinds the fail-loud dialog
+ *  (`WhisperModelFailureDialog`) and this log entry fire for — a Whisper
+ *  model-integrity failure. `'already-running'` / `'inference-failed'` never
+ *  reach `buildWhisperModelFailureEntry`; useWhisper.ts's catch block only
+ *  calls it for these two. */
+type WhisperModelFailureKind = Extract<WhisperFailureKind, 'model-not-found' | 'model-hash-mismatch'>;
+
+/** Plain-language cause per Whisper model-integrity reason — same source of
+ *  truth `WhisperModelFailureDialog`'s own COPY block restates for the dialog
+ *  body, kept here (not imported from the component) so this dependency-light
+ *  module never pulls in React. */
+const WHISPER_MODEL_FAILURE_TEXT: Record<WhisperModelFailureKind, { what: string; fix: string }> = {
+  'model-not-found': {
+    what: 'the Whisper transcription model (ggml-large-v3-turbo.bin) was not found',
+    fix: 'Download the model from Settings, then try again.',
+  },
+  'model-hash-mismatch': {
+    what: 'the installed Whisper model failed its integrity check',
+    fix: 'Re-download the model from Settings, then try again.',
+  },
+};
+
+/**
+ * Wave 1 hotfix (operator-ordered) — the Whisper fail-loud dialog's log
+ * counterpart. Fires on BOTH reasons that halt a fresh transcription run
+ * without a usable model, from whichever path triggered it (staging-time
+ * auto-transcribe or an explicit re-transcribe — both route through
+ * useWhisper.ts's single `startTranscription` catch block). The dialog is
+ * for attention and is not restart-persisted; this entry is for the record —
+ * it survives the dialog being dismissed and a reload, exactly like
+ * `buildFaPausedEntry` is for `SyncPausedDialog`.
+ *
+ * severity:'warning': the user needs to act (download/re-download the model)
+ * before transcription can proceed.
+ */
+export function buildWhisperModelFailureEntry(
+  syncRunId: string,
+  kind: WhisperModelFailureKind,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const { what, fix } = WHISPER_MODEL_FAILURE_TEXT[kind];
+  return makeSyncLogEntry(
+    syncRunId,
+    'whisper-model-failure',
+    `Transcription halted — ${what}.`,
+    { severity: 'warning', fixHint: fix },
     timestamp,
   );
 }

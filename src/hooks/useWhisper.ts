@@ -13,7 +13,7 @@ import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval, SilenceDetectResult } from '../services/silenceDetector';
 import { applyAnchorBasedTiming, getFileIdentity } from '../services/syncEngine';
 import { validate1to2 } from '../services/syncContracts';
-import { buildSilenceErrorEntry, buildMalformedTokenEntry, buildContractViolationEntry, appendSyncLogEntries } from '../services/syncLog';
+import { buildSilenceErrorEntry, buildMalformedTokenEntry, buildContractViolationEntry, buildWhisperModelFailureEntry, appendSyncLogEntries } from '../services/syncLog';
 import { buildUnappliedTranscript } from '../services/unappliedTranscript';
 import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken, SyncLogEntry } from '../types';
 import { stampWhisperProvenance } from '../services/timingProvenance';
@@ -572,7 +572,16 @@ export function useWhisper(): UseWhisperApi {
             : kind === 'model-not-found'
               ? 'The Whisper model (ggml-large-v3-turbo.bin) was not found. Download or restore it from Settings — the run will not switch to another model.'
               : raw;
-        setTranscriptionStatus({ phase: 'error', message, jobId });
+        setTranscriptionStatus({ phase: 'error', message, jobId, kind });
+        // Wave 1 hotfix (operator-ordered) — the fail-loud dialog's log
+        // counterpart. Fires on the same two reasons the dialog does
+        // (WhisperModelFailureDialog), from this one catch block that both
+        // the staging auto-fire and the explicit re-transcribe funnel
+        // through. Modal is for attention (and not restart-persisted); this
+        // entry is for the record.
+        if (kind === 'model-not-found' || kind === 'model-hash-mismatch') {
+          onProjectUpdated(p => appendSyncLogEntries(p, [buildWhisperModelFailureEntry(jobId, kind)], undefined));
+        }
       } finally {
         // Release the single-flight gate on EVERY exit — clean finish, empty
         // tokens, cancel, throw. One un-released path would lock the user out
