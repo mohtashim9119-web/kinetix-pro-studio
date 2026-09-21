@@ -44,13 +44,18 @@
 // ---------------------------------------------------------------------------
 
 import type { FaFailureKind } from './forcedAlignmentRun';
+import type { FaVictimPauseReason } from './faVictimGate';
 
 const KEY_PREFIX = 'kinetix:fa-pause:v1:';
 
 export interface FaPauseRecord {
   projectId: string;
   syncRunId: string;
-  reason: FaFailureKind;
+  /** `FaFailureKind` (a `runForcedAlignmentForSync` bail-out) OR
+   *  `FaVictimPauseReason` (FIX 1 REDO item 4's run-level all-fabricated
+   *  edge, decided later in `App.tsx`'s pipeline, after FA already
+   *  completed). */
+  reason: FaFailureKind | FaVictimPauseReason;
   detail?: string;
   /** Date.now() when the pause was recorded — shown in the re-presented
    *  dialog so a user who left it overnight knows how stale the ask is. */

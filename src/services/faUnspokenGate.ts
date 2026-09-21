@@ -165,11 +165,37 @@ export function detectUnspokenScriptSegmentsFromWhisper(
   audioDuration: number,
   languageCode?: AlignmentLanguageCode,
 ): UnspokenScriptFinding[] {
-  if (segments.length === 0 || faTokens.length === 0 || whisperTokens.length === 0) return [];
+  return detectUnspokenScriptSegmentsFromWhisperFull(
+    segments, whisperTokens, faTokens, silences, audioDuration, languageCode,
+  ).findings;
+}
+
+/**
+ * FIX 1 REDO (Wave 1 hotfix) — the FULL form of the convenience detector
+ * above. Same computation, but also returns the Whisper-space alignment this
+ * function used to derive and then discard for every segment R.10 doesn't
+ * flag. A genuinely-spoken segment (Whisper attests it, so it is NOT
+ * unspoken) can still have FABRICATED FA timing if its chunk was
+ * CTC-infeasible (plan-v3 item 6) — that segment's own entry here, index-
+ * parallel with `segments`, is its trusted replacement evidence. See
+ * `faVictimGate.ts`.
+ */
+export function detectUnspokenScriptSegmentsFromWhisperFull(
+  segments: readonly VideoSegment[],
+  whisperTokens: readonly TranscriptToken[],
+  faTokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  languageCode?: AlignmentLanguageCode,
+): { findings: UnspokenScriptFinding[]; whisperAlignments: SegmentAlignment[]; whisperTokensFiltered: TranscriptToken[] } {
+  if (segments.length === 0 || faTokens.length === 0 || whisperTokens.length === 0) {
+    return { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
+  }
   const usable = filterMalformedTokens([...whisperTokens], audioDuration, languageCode).tokens;
-  if (usable.length === 0) return [];
+  if (usable.length === 0) return { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
   const alignments = alignScenestoTranscript([...segments], usable, [...silences], audioDuration, languageCode);
-  return detectUnspokenScriptSegments(segments, alignments, faTokens);
+  const findings = detectUnspokenScriptSegments(segments, alignments, faTokens);
+  return { findings, whisperAlignments: alignments, whisperTokensFiltered: usable };
 }
 
 /**

@@ -127,10 +127,16 @@ import {
 } from './services/timingProvenance';
 import type { TimingProvenance } from './types';
 import {
-  detectUnspokenScriptSegmentsFromWhisper,
+  detectUnspokenScriptSegmentsFromWhisperFull,
   applyUnspokenScriptGate,
   R10_SKIP_REASON,
 } from './services/faUnspokenGate';
+import {
+  detectAndRetimeFaVictims,
+  applyVictimReplacement,
+  allCoveredSegmentsAreVictims,
+  type FaVictimPauseReason,
+} from './services/faVictimGate';
 import { detectSeamFitDefects, applySeamFitCorrections } from './services/faSeamFitGate';
 import {
   computeRunExtents,
@@ -200,6 +206,7 @@ import {
   buildAnchorTrustLogEntries,
   buildRunEdgeViolationLogEntries,
   buildCtcInfeasibleLogEntry,
+  buildFaVictimRetimedLogEntry,
 } from './services/syncLog';
 import { canLockSegment, findPartitionViolations, repairTimelineGaps, MAX_REPAIRABLE_GAP_SEC, PARTITION_EPSILON_SEC } from './services/timelinePartition';
 import { buildWaveformPipeline } from './services/waveformPipeline';
@@ -1873,7 +1880,7 @@ export default function App() {
   // silent standing default (see forcedAlignmentRun.ts's FaDegradedReason
   // 'user-chose-whisper' doc comment). Carries the ORIGINAL pause reason
   // (not just a boolean) so the log entry can say what was actually skipped.
-  const faForceWhisperOnceRef = useRef<FaFailureKind | null>(null);
+  const faForceWhisperOnceRef = useRef<FaFailureKind | FaVictimPauseReason | null>(null);
   // plan-v3 item 5 — whole-run cancel. A fresh controller is created at the
   // start of every handleApplySyncFromFiles call and overwrites this ref
   // unconditionally, so the Cancel button always aborts the CURRENTLY
@@ -4221,6 +4228,13 @@ export default function App() {
         );
         if (infeasibleEntry) ruleLogEntries.push(infeasibleEntry);
       }
+      // FIX 1 REDO (Wave 1 hotfix) — the run's infeasible-chunk windows,
+      // captured once here (same narrowing site item 6's own entry above
+      // uses) for the victim detector below. [] on every other run/reason —
+      // that call is then a guaranteed no-op (faVictimGate.ts's own guard).
+      const infeasibleChunksForRun = faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk'
+        ? (faRun.infeasibleChunks ?? [])
+        : [];
       // R-G: 'forced-alignment' > 'whisper' > 'estimate', demote-only —
       // stated explicitly by this branch (the code path that actually
       // produced `faTokens`), never inferred downstream.
@@ -4302,8 +4316,8 @@ export default function App() {
       // Its conjunct (1) is the WHISPER alignment's own `matched`, which is why
       // `projectRef.current.transcriptTokens` (not `aligned.tokens`, which are
       // the FA tokens on this branch) is what goes in.
-      const unspokenScript = faTokens
-        ? detectUnspokenScriptSegmentsFromWhisper(
+      const unspokenGate = faTokens
+        ? detectUnspokenScriptSegmentsFromWhisperFull(
             aligned.segments,
             projectRef.current.transcriptTokens!,
             faTokens,
@@ -4311,7 +4325,8 @@ export default function App() {
             audioDuration,
             toAlignmentLanguageCode(projectRef.current.language),
           )
-        : [];
+        : { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
+      const unspokenScript = unspokenGate.findings;
       const coverageAfterR10 = applyUnspokenScriptGate(aligned.coverage, unspokenScript);
       if (unspokenScript.length > 0) {
         console.warn(
@@ -4319,6 +4334,70 @@ export default function App() {
           unspokenScript,
         );
         ruleLogEntries.push(...buildUnspokenScriptLogEntries(syncRunId, unspokenScript, syncRunAt));
+      }
+
+      // FIX 1 REDO (Wave 1 hotfix) — FA VICTIMS. A segment Whisper attests
+      // (so R.10 correctly keeps it) can still carry FABRICATED FA timing
+      // when its own chunk was CTC-infeasible (item 6). Detected against the
+      // SAME committed FA token array (`aligned.tokens`) `coverageAfterR10`'s
+      // indices address, and re-timed from `unspokenGate`'s own discarded
+      // Whisper-space alignment — no new compute. See `faVictimGate.ts`.
+      const faVictims = detectAndRetimeFaVictims(
+        aligned.segments,
+        coverageAfterR10,
+        aligned.tokens,
+        infeasibleChunksForRun,
+        unspokenGate.whisperAlignments,
+        unspokenGate.whisperTokensFiltered,
+        new Set(unspokenScript.map(f => f.segmentIndex)),
+      );
+
+      // Item 4's run-level edge — every covered segment fabricated is a
+      // run-level failure, typed paused (never auto-fallback): the SAME
+      // restart-safe pause-and-ask machinery `faRun.status === 'paused'`
+      // uses above, decided HERE because the victim set is only known after
+      // R.10 has run. Nothing below this point is committed when it fires.
+      if (allCoveredSegmentsAreVictims(coverageAfterR10, faVictims.candidates)) {
+        const victimPauseReason: FaVictimPauseReason = 'all-covered-fabricated';
+        const victimPauseDetail = `${faVictims.candidates.length} covered segment(s), all fabricated.`;
+        const pauseRecord: FaPauseRecord = {
+          projectId: projectRef.current.id,
+          syncRunId,
+          reason: victimPauseReason,
+          detail: victimPauseDetail,
+          timestamp: syncRunAt,
+        };
+        saveFaPause(pauseRecord);
+        setProject(prev => appendSyncLogEntries(
+          prev,
+          [buildFaPausedEntry(syncRunId, victimPauseReason, victimPauseDetail, syncRunAt)],
+          {
+            syncRunId,
+            timestamp: syncRunAt,
+            totalSegments: newSegmentsRaw.length,
+            coveredSegments: 0,
+            skippedSegments: 0,
+            aborted: true,
+            abortReason: 'fa-all-covered-fabricated',
+          },
+        ));
+        setFaPauseDialog(pauseRecord);
+        setIsProcessing(false);
+        return { ok: false, message: SYNC_PAUSED_MESSAGE, holdStaged: true };
+      }
+
+      if (faVictims.retimed.length > 0) {
+        console.warn(
+          `[sync] FIX 1 REDO — ${faVictims.retimed.length} FA victim segment(s) re-timed from Whisper alignment:`,
+          faVictims.retimed,
+        );
+        const victimEntry = buildFaVictimRetimedLogEntry(syncRunId, faVictims.retimed, syncRunAt);
+        if (victimEntry) ruleLogEntries.push(victimEntry);
+        if (faWordTimingsResult) {
+          faWordTimingsResult = applyVictimReplacement(
+            faWordTimingsResult, faVictims.replacement, faVictims.replacementByWordIndex,
+          );
+        }
       }
 
       // R4-1/R4-2 — skip unmatched. Only audio-covered segments reach the
@@ -4469,7 +4548,16 @@ export default function App() {
       // keptAlignments' firstTokenIdx/lastTokenIdx are indices into the filtered
       // array; reading the raw one with them would resolve to the wrong tokens
       // whenever anything was filtered.
-      const transcriptTokens = aligned.tokens;
+      // FIX 1 REDO (Wave 1 hotfix) — victim replacement applied HERE, once,
+      // before this array is threaded into snap / placeholder-insertion /
+      // R.14-R.15 below. Same indices as `aligned.tokens` (never renumbers),
+      // so every one of those stages reads trusted (victim-replaced or
+      // healthy-FA) boundary timestamps at the exact positions it already
+      // dereferences — see `faVictimGate.ts`'s module doc comment for why
+      // that keeps this a single-array, single-index-space read throughout.
+      const transcriptTokens = applyVictimReplacement(
+        aligned.tokens, faVictims.replacement, faVictims.replacementByWordIndex,
+      );
       finalTimedSegments = transcriptTokens.length > 0
         ? snapCoveredBoundaries(kept, keptAlignments, transcriptTokens, aligned.silences, audioDuration)
         : retileCoveredSegments(kept, audioDuration);
