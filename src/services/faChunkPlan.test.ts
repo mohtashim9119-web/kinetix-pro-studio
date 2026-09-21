@@ -17,6 +17,7 @@ import {
   computeFaChunkPlanCoalesced,
   computeFaChunkPlanS2,
   computeFaChunkPlanWithAttribution,
+  computeRunContextAsync,
   computeRuns,
   computeUnscriptedRuns,
   detectUnscriptedRuns,
@@ -1137,5 +1138,75 @@ describe('computeRunContext dedup (WS2 Wave 2 Group 2, item 1)', () => {
 
     computeFaChunkPlan(segments, tokens, silences, 9, 'script-word-index', 'en');
     expect(__getRunContextComputeCountForTests()).toBe(3);
+  });
+});
+
+// WS2 Wave 2 Group 2, item 2 — the async, worker-backed twin
+// (`computeRunContextAsync`) must be a pure migration: byte-identical output
+// to the sync path on the same inputs. This test environment has no global
+// `Worker` (verified: `typeof Worker === 'undefined'` under vitest/Node), so
+// `hirschbergMatchClient.ts`'s `alignQueryToSubjectAsync` takes its
+// documented fallback branch — calls the same `alignQueryToSubject`
+// synchronously, wrapped in a resolved Promise. That IS the code path this
+// test exercises, and it is sufficient to pin output equality: both entry
+// points share `buildRunContextInputs`/`finishRunContext`, so the only thing
+// that could differ between them is which `alignQueryToSubject` call ran —
+// and the fallback runs the exact same one.
+describe('computeRunContextAsync (WS2 Wave 2 Group 2, item 2 — worker migration, zero-output-change pin)', () => {
+  beforeEach(() => {
+    __resetRunContextCacheForTests();
+  });
+
+  it('produces byte-identical runs/unscripted/chunks to the sync path on the V6-shaped recitation fixture', async () => {
+    // Reuses the R.5 recitation-excision fixture from later in this file's
+    // "computeUnscriptedRuns / R.5" suite would duplicate a lot of setup;
+    // instead this pins against the same 4-segment/3-anchor fixture the
+    // dedup tests above use, which already exercises a non-trivial
+    // multi-anchor alignment (not just a degenerate single-segment case).
+    const segments = [
+      seg('s0', 'kittens likes purple hats', 0, 2),
+      seg('s1', 'dragons chase silver moons', 2, 2),
+      seg('s2', 'wizards brew golden potions', 4, 2),
+      seg('s3', 'falcons guard hidden castles', 6, 2),
+    ];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const silences: SilenceInterval[] = [3, 7, 11].map(i => silence(tokens[i]!.startSec));
+    const audioDuration = 8;
+
+    __resetRunContextCacheForTests();
+    const runsSync = computeRuns(segments, tokens, silences, audioDuration);
+    const unscriptedSync = computeUnscriptedRuns(segments, tokens, silences, audioDuration);
+    const chunksSync = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+
+    __resetRunContextCacheForTests();
+    const ctxAsync = await computeRunContextAsync(segments, tokens, silences, audioDuration);
+
+    expect(ctxAsync.runs).toEqual(runsSync);
+    expect(ctxAsync.unscripted).toEqual(unscriptedSync);
+
+    // The async context must also warm the cache correctly: a synchronous
+    // call right after, on the SAME reference tuple, must hit the cache
+    // (compute count stays at 1) and return the async result verbatim.
+    const chunksAfterWarm = computeFaChunkPlan(segments, tokens, silences, audioDuration);
+    expect(__getRunContextComputeCountForTests()).toBe(1);
+    expect(chunksAfterWarm).toEqual(chunksSync);
+  });
+
+  it('honors an already-aborted signal: rejects with MatchCancelledError and never populates the cache', async () => {
+    const segments = [seg('s0', 'kittens likes purple hats', 0, 2)];
+    const tokens: TranscriptToken[] = segments[0]!.text.split(' ').map((w, i) => token(w, i * 0.5, i * 0.5 + 0.4));
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      computeRunContextAsync(segments, tokens, [], 2, undefined, controller.signal),
+    ).rejects.toThrow('cancelled');
+    expect(__getRunContextComputeCountForTests()).toBe(0);
+
+    // A normal (non-aborted) call right after must still work — an aborted
+    // call must not leave the module in a broken state.
+    const chunks = computeFaChunkPlan(segments, tokens, [], 2);
+    expect(chunks.length).toBeGreaterThan(0);
   });
 });

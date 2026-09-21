@@ -9,6 +9,7 @@ import {
   type SegmentAlignment,
   type AlignmentLanguageCode,
 } from '../services/whisperService';
+import { alignScenestoTranscriptAsync } from '../services/syncMatchAsync';
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval, SilenceDetectResult } from '../services/silenceDetector';
 import { applyAnchorBasedTiming, getFileIdentity } from '../services/syncEngine';
@@ -101,6 +102,12 @@ export async function alignSegmentsFromCachedTranscript(
   // `undefined` (unset/unsupported) reproduces this function's pre-T3.1
   // behavior exactly — see `toAlignmentLanguageCode`'s doc comment.
   languageCode?: AlignmentLanguageCode,
+  // WS2 G2 item 2/4 — reaches the worker-backed matcher below
+  // (`alignScenestoTranscriptAsync`) so a whole-run cancel can interrupt the
+  // Hirschberg pass this function runs on EVERY sync (FA on or off), not
+  // just check before/after it. Optional and unused when omitted, so every
+  // existing caller/test keeps its exact pre-migration behavior.
+  signal?: AbortSignal,
 ): Promise<AlignFromCacheResult> {
   const silenceResult = await fetchAndDetectSilences(audioAsset);
   // Fail-loud, but never fail-stop: a silence-scan failure degrades boundary
@@ -123,7 +130,7 @@ export async function alignSegmentsFromCachedTranscript(
     );
   }
 
-  const alignments = alignScenestoTranscript(segments, usableTokens, silences, durationSecs, languageCode);
+  const alignments = await alignScenestoTranscriptAsync(segments, usableTokens, silences, durationSecs, languageCode, signal);
   const updated = distributeSegmentTimes(segments, alignments, anchorSource);
   // Re-derive every segment's span from its (now whisper-tagged) anchor — the
   // same normalization click 2 currently gets for free in App.tsx before
@@ -294,6 +301,7 @@ export interface UseWhisperApi {
     durationSecs: number,
     anchorSource?: 'whisper' | 'forced-alignment',
     languageCode?: AlignmentLanguageCode,
+    signal?: AbortSignal,
   ) => Promise<AlignFromCacheResult>;
 }
 
@@ -470,7 +478,11 @@ export function useWhisper(): UseWhisperApi {
           ...violations.map(v => buildContractViolationEntry(syncRunId, v, syncRunAt)),
         ];
 
-        const alignments = alignScenestoTranscript(segments, filtered.tokens, silences, durationSecs, languageCode);
+        // WS2 G2 item 2/4 — off-main-thread matcher, reachable by this job's
+        // own `controller` (the abort target `abortRef.current?.abort()`
+        // above already uses to cancel a superseded/duplicate run).
+        const alignments = await alignScenestoTranscriptAsync(segments, filtered.tokens, silences, durationSecs, languageCode, controller.signal);
+        if (generationRef.current !== generation) return { started: true };
         const finalSegments = distributeSegmentTimes(segments, alignments);
 
         // Store transcript tokens before the segment gate — the transcript is valid

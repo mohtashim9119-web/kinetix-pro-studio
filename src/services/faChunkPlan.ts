@@ -41,7 +41,8 @@
 
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
-import { alignQueryToSubject, normalize, normalizeSceneDoc } from './whisperService';
+import { alignQueryToSubject, normalize, normalizeSceneDoc, type TokenAlignment } from './whisperService';
+import { alignQueryToSubjectAsync } from './hirschbergMatchClient';
 import { computeFaAnchors, type FaAnchor, type FaRun } from './faAnchors';
 import { normalizeForForcedAlignment, type FaLanguageCode, type FaCardinalData } from './faTextNormalize';
 
@@ -189,14 +190,22 @@ function computeRunContext(
   return result;
 }
 
-function computeRunContextUncached(
+/** The cheap, pure half of `computeRunContext`/`computeRunContextAsync` —
+ *  everything BEFORE the Hirschberg pass. Extracted (WS2 G2 item 2) so the
+ *  async, worker-backed twin can build the exact same `queryWords`/
+ *  `subjectWords` the sync path does without duplicating this construction —
+ *  same function, called from both. */
+function buildRunContextInputs(
   segments: readonly VideoSegment[],
   tokens: readonly TranscriptToken[],
-  silences: readonly SilenceInterval[],
-  audioDuration: number,
   languageCode?: FaLanguageCode,
-): RunContext {
-  runContextComputeCount++;
+): {
+  subjectWords: string[];
+  subjectTokenIdx: number[];
+  queryWords: string[];
+  rawTokens: RawScriptToken[];
+  segQiRanges: Array<{ start: number; end: number }>;
+} {
   // Mirrors whisperService.ts's extractSegmentAlignments `tokenWords`
   // expansion: a Whisper token may canonicalize to multiple (or zero) words.
   // `languageCode` (Phase 3c, qi-bookkeeping-only — see textNormalize.ts's
@@ -231,14 +240,95 @@ function computeRunContextUncached(
     assertQiMapConsistent(qi, queryWords.length, seg.id);
   }
 
-  const subjectWords = tokenWords.map(t => t.word);
-  const subjectTokenIdx = tokenWords.map(t => t.tokenIdx);
-  const alignment = alignQueryToSubject(queryWords, subjectWords);
+  return {
+    subjectWords: tokenWords.map(t => t.word),
+    subjectTokenIdx: tokenWords.map(t => t.tokenIdx),
+    queryWords,
+    rawTokens,
+    segQiRanges,
+  };
+}
 
+/** The cheap, pure half AFTER the Hirschberg pass — turns a `TokenAlignment`
+ *  (from either `alignQueryToSubject` or its worker-backed async twin) into a
+ *  `RunContext`. Extracted alongside `buildRunContextInputs` for the same
+ *  reason: one body, called from both the sync and async entry points, so
+ *  they cannot diverge. */
+function finishRunContext(
+  alignment: TokenAlignment,
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  subjectTokenIdx: number[],
+  segQiRanges: Array<{ start: number; end: number }>,
+  rawTokens: RawScriptToken[],
+  totalQi: number,
+): RunContext {
   const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, subjectTokenIdx);
   const unscripted = detectUnscriptedRuns(alignment.matchedSubjectOf, subjectTokenIdx, segQiRanges, tokens);
 
-  return { runs, anchors, rawTokens, totalQi: queryWords.length, unscripted };
+  return { runs, anchors, rawTokens, totalQi, unscripted };
+}
+
+function computeRunContextUncached(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  languageCode?: FaLanguageCode,
+): RunContext {
+  runContextComputeCount++;
+  const { subjectWords, subjectTokenIdx, queryWords, rawTokens, segQiRanges } =
+    buildRunContextInputs(segments, tokens, languageCode);
+  const alignment = alignQueryToSubject(queryWords, subjectWords);
+  return finishRunContext(alignment, tokens, silences, audioDuration, subjectTokenIdx, segQiRanges, rawTokens, queryWords.length);
+}
+
+/**
+ * Async, worker-backed twin of `computeRunContext` (WS2 G2 item 2 — "migrate
+ * the Hirschberg matcher off the main thread"). Shares the SAME reference-
+ * identity memo (`lastRunContextCall`) as the sync path: a production call
+ * site awaits this ONCE to warm the cache off-thread, and every synchronous
+ * `computeFaChunkPlan`/`computeRuns`/`computeUnscriptedRuns` call downstream
+ * on the same (segments, tokens, silences, audioDuration, languageCode)
+ * tuple then hits the cache and returns instantly — no signature changes
+ * needed anywhere else in the sync pipeline (see the G2 report's "worker
+ * scope" note for why this shape was chosen over threading an async result
+ * through every caller and their ~80 test call sites).
+ *
+ * `signal`, when aborted (before dispatch or mid-flight), rejects with
+ * `MatchCancelledError` and never populates the cache — a caller that
+ * catches this must treat it as this sync run's own `'cancelled'` outcome,
+ * never as "the run context is empty."
+ */
+export async function computeRunContextAsync(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  languageCode?: FaLanguageCode,
+  signal?: AbortSignal,
+): Promise<RunContext> {
+  const cached = lastRunContextCall;
+  if (
+    cached !== undefined &&
+    cached.segments === segments &&
+    cached.tokens === tokens &&
+    cached.silences === silences &&
+    cached.audioDuration === audioDuration &&
+    cached.languageCode === languageCode
+  ) {
+    return cached.result;
+  }
+
+  const { subjectWords, subjectTokenIdx, queryWords, rawTokens, segQiRanges } =
+    buildRunContextInputs(segments, tokens, languageCode);
+  const alignment = await alignQueryToSubjectAsync(queryWords, subjectWords, undefined, signal);
+  const result = finishRunContext(alignment, tokens, silences, audioDuration, subjectTokenIdx, segQiRanges, rawTokens, queryWords.length);
+
+  runContextComputeCount++;
+  lastRunContextCall = { segments, tokens, silences, audioDuration, languageCode, result };
+  return result;
 }
 
 // ---------------------------------------------------------------------------

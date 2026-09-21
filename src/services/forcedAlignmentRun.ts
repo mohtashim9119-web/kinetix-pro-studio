@@ -45,7 +45,8 @@
 import { invoke, Channel } from '@tauri-apps/api/core';
 import { detectSilences } from './silenceDetector';
 import { describeInvokeError } from './invokeError';
-import { computeFaChunkPlan, computeUnscriptedRuns, type UnscriptedRun } from './faChunkPlan';
+import { computeFaChunkPlan, computeRunContextAsync, computeUnscriptedRuns, type UnscriptedRun } from './faChunkPlan';
+import { MatchCancelledError } from './hirschbergMatchClient';
 import { faWordSpansToTranscriptTokens, type FaEvent, type FaInfeasibleChunk } from './faBoundaryTypes';
 import type { FaLanguageCode } from './faTextNormalize';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
@@ -280,6 +281,22 @@ async function runFaAttempt(
   const silenceError = silenceResult.status === 'ok' ? undefined : silenceResult.errorMessage;
   if (silenceError !== undefined) {
     console.warn('[fa] silence detection failed, chunking with zero silences:', silenceError);
+  }
+  if (signal?.aborted) return { status: 'cancelled' };
+
+  // WS2 G2 item 2 — off-main-thread matcher. Warms `computeRunContext`'s
+  // reference-identity memo (item 1) by running the ONE Hirschberg pass this
+  // scope needs in a worker; `computeFaChunkPlan` and `computeUnscriptedRuns`
+  // below then hit that cache and return synchronously without re-running
+  // it. `signal` reaching here is the M3.6 "AbortSignal so C8's cancel
+  // reaches it" requirement — an abort mid-match terminates the worker
+  // (`hirschbergMatchClient.ts`) and surfaces as this run's own typed
+  // `'cancelled'` outcome, never a paused/failed one.
+  try {
+    await computeRunContextAsync(anchorTimedSegments, whisperTokens, silences, audioDuration, undefined, signal);
+  } catch (err) {
+    if (err instanceof MatchCancelledError) return { status: 'cancelled' };
+    throw err;
   }
   if (signal?.aborted) return { status: 'cancelled' };
 

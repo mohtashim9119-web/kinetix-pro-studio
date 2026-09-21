@@ -58,10 +58,17 @@ vi.mock('./faChunkPlan', () => ({
   // a unit test of the CALLER; `faChunkPlan`'s own behaviour is covered by
   // `faChunkPlan.test.ts` and by the FA replay gate against real corpora.
   computeUnscriptedRuns: vi.fn(() => []),
+  // WS2 G2 item 2 — `runFaAttempt` awaits this (cache-warming, off-thread)
+  // before the two mocks above; this suite is a unit test of the CALLER, not
+  // of the worker migration itself (that's `faChunkPlan.test.ts`'s and
+  // `syncMatchAsync.test.ts`'s job), so it resolves to an unused value and
+  // never rejects — every existing test's expectations about
+  // computeFaChunkPlan/computeUnscriptedRuns stay exactly as they were.
+  computeRunContextAsync: vi.fn(async () => undefined),
 }));
 
 import { invoke } from '@tauri-apps/api/core';
-import { computeFaChunkPlan, computeUnscriptedRuns } from './faChunkPlan';
+import { computeFaChunkPlan, computeRunContextAsync, computeUnscriptedRuns } from './faChunkPlan';
 import { runForcedAlignmentForSync } from './forcedAlignmentRun';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
 import { TransitionType, AnimationType } from '../types';
@@ -69,6 +76,7 @@ import { TransitionType, AnimationType } from '../types';
 const mockInvoke = invoke as unknown as Mock;
 const mockComputeFaChunkPlan = computeFaChunkPlan as unknown as Mock;
 const mockComputeUnscriptedRuns = computeUnscriptedRuns as unknown as Mock;
+const mockComputeRunContextAsync = computeRunContextAsync as unknown as Mock;
 
 // `runForcedAlignmentForSync` now makes TWO invoke calls in sequence:
 // 'fa_stage_audio_raw' (stages the raw audio bytes, returns a path string)
@@ -122,6 +130,8 @@ beforeEach(() => {
   mockComputeFaChunkPlan.mockReturnValue([{ startSec: 0, endSec: 1, text: 'hello world' }]);
   mockComputeUnscriptedRuns.mockReset();
   mockComputeUnscriptedRuns.mockReturnValue([]);
+  mockComputeRunContextAsync.mockReset();
+  mockComputeRunContextAsync.mockResolvedValue(undefined);
 });
 
 describe('runForcedAlignmentForSync — pauses (never falls back), and names why', () => {

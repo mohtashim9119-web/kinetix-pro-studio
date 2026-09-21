@@ -108,8 +108,9 @@ import {
   type SegmentAlignment,
 } from './services/whisperService';
 import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunkInput as FaDevChunkInput, type FaWordSpan as FaDevWordSpan } from './services/faBoundaryTypes';
-import { computeFaChunkPlan } from './services/faChunkPlan';
+import { computeFaChunkPlan, computeRunContextAsync } from './services/faChunkPlan';
 import type { UnscriptedRun } from './services/faChunkPlan';
+import { MatchCancelledError } from './services/hirschbergMatchClient';
 import type { FaLanguageCode } from './services/faTextNormalize';
 import {
   isFaGateOpenForProject, isFaEnabledForProject, isFaCapable, resolveFaLanguage,
@@ -4364,14 +4365,28 @@ export default function App() {
       // check.
       if (syncAbortController.signal.aborted) return cancelledResult(newSegmentsRaw.length);
 
-      const aligned = await alignFromCache(
-        voiceoverAsset!,
-        anchorTimed,
-        faTokens ?? projectRef.current.transcriptTokens!,
-        audioDuration,
-        anchorSourceForRun,
-        toAlignmentLanguageCode(projectRef.current.language),
-      );
+      // WS2 G2 item 2/4 — `signal` reaches INTO the match loop now (off-
+      // main-thread via `alignScenestoTranscriptAsync`), not just the
+      // pre-check above: a cancel that lands mid-Hirschberg-pass now
+      // terminates the worker and rejects with `MatchCancelledError`,
+      // surfaced here as this run's own typed cancelled outcome — the same
+      // guarantee every earlier check gives, now extended through the
+      // matcher itself rather than stopping short of it.
+      let aligned: Awaited<ReturnType<typeof alignFromCache>>;
+      try {
+        aligned = await alignFromCache(
+          voiceoverAsset!,
+          anchorTimed,
+          faTokens ?? projectRef.current.transcriptTokens!,
+          audioDuration,
+          anchorSourceForRun,
+          toAlignmentLanguageCode(projectRef.current.language),
+          syncAbortController.signal,
+        );
+      } catch (err) {
+        if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
+        throw err;
+      }
 
       // WS1b — bidirectional coverage metric (§3.3) + two-signal abort gate
       // (§3.4/R13), applied BEFORE the commit (doc §3.4(b): "immediately after
@@ -4692,6 +4707,29 @@ export default function App() {
       // real chunk plan FA was run against — required for the detector's
       // own word-index attribution to mean anything.
       if (faTokens) {
+        // WS2 G2 item 2 — off-main-thread matcher. computeRunExtents,
+        // detectSeamFitDefects, detectRunPlacementDefects and
+        // detectUtterancePlacementDefects below all call, directly or via
+        // computeUnscriptedRuns/computeFaChunkPlan, the SAME
+        // computeRunContext on this SAME (anchorTimed, transcriptTokens,
+        // aligned.silences, audioDuration) tuple with languageCode omitted
+        // (item 1's dedup memo) — warming it here, once, off the main
+        // thread, means every one of those synchronous calls below hits the
+        // cache instead of re-running the Hirschberg pass. `syncAbortController
+        // .signal` reaching this call is the M3.6 "AbortSignal so C8's
+        // cancel reaches it" requirement: previously the whole-run cancel
+        // chain only checked before/after this block, never during the
+        // match itself.
+        try {
+          await computeRunContextAsync(
+            anchorTimed, projectRef.current.transcriptTokens!, aligned.silences, audioDuration,
+            undefined, syncAbortController.signal,
+          );
+        } catch (err) {
+          if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
+          throw err;
+        }
+
         // WS1 Session S, ruling R-AP — THE RUN-EDGE EXCLUSION INVARIANT.
         //
         // `preRuleSegments` is the ORIGIN array: the committed boundaries as

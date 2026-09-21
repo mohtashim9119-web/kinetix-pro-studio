@@ -921,19 +921,20 @@ export function backwardSpineRejects(nodes: ReadonlyArray<SpineNode | null>, can
  * it carries the same "can only add, never steal" guarantee as Pass 1 — it
  * just isn't temporally bounded.
  */
-export function extractSegmentAlignments(
+/** The cheap, pure half of `extractSegmentAlignments`/`extractSegmentAlignmentsAsync`
+ *  — everything BEFORE the Hirschberg pass. Extracted (WS2 G2 item 2) so the
+ *  async, worker-backed twin builds the exact same `queryWords`/
+ *  `subjectWords` the sync path does without duplicating this construction. */
+export function buildSegmentAlignmentInputs(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
-  audioDuration?: number,
   languageCode?: AlignmentLanguageCode,
-): AlignResult[] {
-  if (!tokens.length || !segments.length) {
-    return segments.map(() => ({
-      t0: 0, t1: 0, firstTokenIdx: -1, lastTokenIdx: -1,
-      confidence: 0, matched: false, matchedWords: 0, totalWords: 0, longestRun: 0,
-    }));
-  }
-
+): {
+  tokenWords: Array<{ word: string; tokenIdx: number; startSec: number }>;
+  queryWords: string[];
+  segRanges: Array<{ start: number; end: number }>;
+  subjectWords: string[];
+} {
   // Expand each token into all its words — Whisper tokens may contain multiple
   // words (e.g. " hello world") and every word must be individually matchable.
   // `startSec` is the OWNING TOKEN's start (a token's internal words have no
@@ -964,8 +965,29 @@ export function extractSegmentAlignments(
     segRanges.push({ start, end: queryWords.length });
   }
 
-  const subjectWords = tokenWords.map(t => t.word);
-  const matchedSubjectOf = alignQueryToSubject(queryWords, subjectWords).matchedSubjectOf;
+  return { tokenWords, queryWords, segRanges, subjectWords: tokenWords.map(t => t.word) };
+}
+
+export function extractSegmentAlignments(
+  segments: VideoSegment[],
+  tokens: TranscriptToken[],
+  audioDuration?: number,
+  languageCode?: AlignmentLanguageCode,
+  // WS2 G2 item 2 — when supplied (by `extractSegmentAlignmentsAsync`, whose
+  // Hirschberg pass already ran, off the main thread), skips the sync
+  // `alignQueryToSubject` call below and uses this instead. Every existing
+  // caller omits it and gets the exact pre-migration behavior.
+  precomputedMatchedSubjectOf?: Int32Array,
+): AlignResult[] {
+  if (!tokens.length || !segments.length) {
+    return segments.map(() => ({
+      t0: 0, t1: 0, firstTokenIdx: -1, lastTokenIdx: -1,
+      confidence: 0, matched: false, matchedWords: 0, totalWords: 0, longestRun: 0,
+    }));
+  }
+
+  const { tokenWords, queryWords, segRanges, subjectWords } = buildSegmentAlignmentInputs(segments, tokens, languageCode);
+  const matchedSubjectOf = precomputedMatchedSubjectOf ?? alignQueryToSubject(queryWords, subjectWords).matchedSubjectOf;
 
   // Every transcript-word index any segment TRULY matched, system-wide — the
   // rescue below must never touch these (see the function-level doc comment).
@@ -1533,6 +1555,35 @@ export function filterMalformedTokens(
   };
 }
 
+/**
+ * "Step 2" of `alignScenestoTranscript`/`alignScenestoTranscriptAsync` —
+ * override each unlocked segment's `t1` from its neighbor's `t0` anchor, then
+ * clamp the last segment to audio end. Extracted (WS2 G2 item 2) so the
+ * async twin shares this, not a copy of it — mutates `results` in place and
+ * returns it, matching the pre-extraction inline behavior exactly. */
+export function applyNeighborAnchorOverride(
+  results: SegmentAlignment[],
+  segments: VideoSegment[],
+  tokens: TranscriptToken[],
+): SegmentAlignment[] {
+  // Each unlocked segment's right boundary is set to the next segment's t0 anchor
+  // before the gap-fill runs. This breaks the bestEnd → lastTokenIdx → t1 chain so
+  // that editing scene description text cannot shift a segment's duration via word count.
+  // Locked segments are skipped: their t1 is immovable.
+  const audioEnd = tokens[tokens.length - 1]?.endSec ?? 0;
+  for (let i = 0; i < results.length - 1; i++) {
+    if (segments[i]?.locked) continue;
+    results[i]!.t1 = results[i + 1]!.t0;
+  }
+
+  // Clamp last segment to actual audio end (skip if locked).
+  if (results.length > 0 && !segments[results.length - 1]?.locked) {
+    results[results.length - 1]!.t1 = audioEnd;
+  }
+
+  return results;
+}
+
 export function alignScenestoTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
@@ -1551,23 +1602,10 @@ export function alignScenestoTranscript(
   }
 
   // Hirschberg semi-global alignment + per-segment extraction (doc §3.1/§3.1.1).
-  const results = extractSegmentAlignments(segments, tokens, audioDuration, languageCode);
-
-  // Step 2 — override t1 from neighbor anchors.
-  // Each unlocked segment's right boundary is set to the next segment's t0 anchor
-  // before the gap-fill runs. This breaks the bestEnd → lastTokenIdx → t1 chain so
-  // that editing scene description text cannot shift a segment's duration via word count.
-  // Locked segments are skipped: their t1 is immovable.
-  const audioEnd = tokens[tokens.length - 1]?.endSec ?? 0;
-  for (let i = 0; i < results.length - 1; i++) {
-    if (segments[i]?.locked) continue;
-    results[i]!.t1 = results[i + 1]!.t0;
-  }
-
-  // Clamp last segment to actual audio end (skip if locked).
-  if (results.length > 0 && !segments[results.length - 1]?.locked) {
-    results[results.length - 1]!.t1 = audioEnd;
-  }
+  const results = applyNeighborAnchorOverride(
+    extractSegmentAlignments(segments, tokens, audioDuration, languageCode),
+    segments, tokens,
+  );
 
   if (_instrOn) {
     const totalMs = performance.now() - _passT0;
