@@ -30,15 +30,22 @@ type WhisperEvent =
  * and never auto-switches to another model.
  */
 export type WhisperFailureKind =
+  | 'model-not-found'
   | 'model-hash-mismatch'
   | 'already-running'
   | 'inference-failed';
 
 /** Mirrors `whisper.rs`'s `WHISPER_MODEL_HASH_MISMATCH_PREFIX`. */
 export const WHISPER_MODEL_HASH_MISMATCH_PREFIX = 'whisper:model-hash-mismatch:';
+/** Mirrors `whisper.rs`'s `WHISPER_MODEL_NOT_FOUND_PREFIX` (Wave 1 hotfix
+ *  FIX 2): the pinned model file is missing — renamed, moved or never
+ *  downloaded. Its own kind so it is never read as a generic inference
+ *  failure. */
+export const WHISPER_MODEL_NOT_FOUND_PREFIX = 'whisper:model-not-found:';
 
 export function classifyWhisperFailure(err: unknown): WhisperFailureKind {
   const raw = err instanceof Error ? err.message : String(err);
+  if (raw.startsWith(WHISPER_MODEL_NOT_FOUND_PREFIX)) return 'model-not-found';
   if (raw.startsWith(WHISPER_MODEL_HASH_MISMATCH_PREFIX)) return 'model-hash-mismatch';
   if (raw.startsWith('whisper:already-running:')) return 'already-running';
   return 'inference-failed';

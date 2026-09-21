@@ -569,7 +569,9 @@ export function useWhisper(): UseWhisperApi {
           ? 'A transcription for this audio is already running — wait for it to finish or cancel it first.'
           : kind === 'model-hash-mismatch'
             ? 'The Whisper model failed its integrity check. Re-download ggml-large-v3-turbo — the run will not switch to another model.'
-            : raw;
+            : kind === 'model-not-found'
+              ? 'The Whisper model (ggml-large-v3-turbo.bin) was not found. Download or restore it from Settings — the run will not switch to another model.'
+              : raw;
         setTranscriptionStatus({ phase: 'error', message, jobId });
       } finally {
         // Release the single-flight gate on EVERY exit — clean finish, empty
