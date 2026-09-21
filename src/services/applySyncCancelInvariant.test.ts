@@ -121,16 +121,29 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     for (let i = start; i < end; i++) {
       if (/\bsetProject\(/.test(LINES[i]!)) setProjectLines.push(i + 1);
     }
-    // Exactly three: logSyncAbort's own (shared by every abort/cancel path),
-    // the 'paused' branch's (same appendSyncLogEntries shape, not a cancel
-    // path but equally reference-preserving), and the one real commit.
+    // Exactly four: logSyncAbort's own (shared by every abort/cancel path),
+    // the run-level 'paused' branch's (same appendSyncLogEntries shape, not a
+    // cancel path but equally reference-preserving), the victim-pause branch
+    // added by 18b3d5f — 'all covered segments fabricated' — which uses the
+    // SAME appendSyncLogEntries-only shape as the 'paused' branch (verified
+    // below), and the one real commit.
     expect(
       setProjectLines,
       'the number of setProject calls in handleApplySyncFromFiles changed — a ' +
         'new one needs its own cancel-safety argument, not silent coverage by this file',
-    ).toHaveLength(3);
+    ).toHaveLength(4);
 
-    const realCommit = setProjectLines[2]!;
+    // The victim-pause branch's setProject call: same appendSyncLogEntries-only
+    // shape as the pre-existing 'paused' branch — no segments/assets/voiceoverId
+    // field, just the shared log-append helper.
+    const victimPauseLine = setProjectLines[2]!;
+    const victimPauseBody = LINES.slice(victimPauseLine - 1, victimPauseLine + 12).join('\n');
+    expect(victimPauseBody).toContain('appendSyncLogEntries(');
+    expect(victimPauseBody).not.toMatch(/segments\s*:/);
+    expect(victimPauseBody).not.toMatch(/\bassets\s*:/);
+    expect(victimPauseBody).not.toMatch(/voiceoverId\s*:/);
+
+    const realCommit = setProjectLines[3]!;
     const commitCheck = lineNumbersOf('if (syncAbortController.signal.aborted) return cancelledResult(lockRestoredSegments.length);')[0]!;
     expect(
       realCommit,
