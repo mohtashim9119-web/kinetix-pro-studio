@@ -145,6 +145,11 @@ import {
   applyUtterancePlacementCorrections,
 } from './services/faRunPlacementGate';
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
+import {
+  insertSkippedScenePlaceholders,
+  stampEstimatedWordTimings,
+  type SkippedScenePlaceholder,
+} from './services/skippedScenePlaceholders';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { computeAbsorbedGaps, measureOtherNeighborGain } from './services/absorbedGaps';
 import { splitSelectedSegment, deleteSelectedSegment } from './services/segmentSplitDelete';
@@ -1409,9 +1414,15 @@ export function buildSkipLogEntries(
   skipped: SkippedSegmentRecord[],
   timestamp: number = Date.now(),
   absorbedInfoBySkipIndex?: ReadonlyMap<number, AbsorbedGapLogInfo>,
+  // Wave 1 hotfix FIX 1 — skips that kept an Estimated placeholder slot.
+  // A record present here is NEVER also absorbed (App.tsx builds the two
+  // maps disjointly); the entry names the slot and links to the
+  // placeholder segment itself rather than to an absorbing neighbour.
+  placeholderBySkipIndex?: ReadonlyMap<number, SkippedScenePlaceholder>,
 ): SyncLogEntry[] {
   return skipped.map(record => {
-    const absorbed = absorbedInfoBySkipIndex?.get(record.segmentIndex);
+    const placeholder = placeholderBySkipIndex?.get(record.segmentIndex);
+    const absorbed = placeholder ? undefined : absorbedInfoBySkipIndex?.get(record.segmentIndex);
     // WS2 ws2-25 Commit 5 — TWO NUMBERING SPACES, both named explicitly.
     // "S{n}" is record.segmentIndex+1, the ORIGINAL SCRIPT POSITION (the scene
     // the user wrote — this record has no other index, since a dropped scene
@@ -1425,6 +1436,14 @@ export function buildSkipLogEntries(
     const sTag = `S${record.segmentIndex + 1}`;
     const clipTag = absorbed ? ` / Clip ${absorbed.hostDisplayIndex + 1}` : '';
     let message = `${sTag}${clipTag} skipped — ${record.reason}.`;
+    if (placeholder) {
+      const slotDuration = placeholder.slotEndSec - placeholder.slotStartSec;
+      message += ` Kept as an Estimated placeholder ${placeholder.slotStartSec.toFixed(3)}s → `
+        + `${slotDuration.toFixed(3)}s → ${placeholder.slotEndSec.toFixed(3)}s; neighbours untouched`
+        + (placeholder.estimatedWordCount > 0
+          ? ` (${placeholder.estimatedWordCount} word${placeholder.estimatedWordCount === 1 ? '' : 's'} marked Estimated).`
+          : '.');
+    }
     if (absorbed) {
       const gapDuration = absorbed.span.end - absorbed.span.start;
       message += ` Absorbed ${absorbed.span.start.toFixed(3)}s → ${gapDuration.toFixed(3)}s → `
@@ -1470,8 +1489,15 @@ export function buildSkipLogEntries(
           confidence: record.confidence,
           longestRun: record.longestRun,
         }),
-        segmentId: absorbed?.hostSegmentId,
+        segmentId: placeholder?.segmentId ?? absorbed?.hostSegmentId,
         absorbedByDisplayIndex: absorbed?.hostDisplayIndex,
+        ...(placeholder ? {
+          ruleDetail: {
+            spanStartSec: placeholder.slotStartSec,
+            spanEndSec: placeholder.slotEndSec,
+            reason: 'Estimated placeholder slot — the reserved gap between the neighbours\' own spoken words.',
+          },
+        } : {}),
       },
       timestamp,
     );
@@ -4005,6 +4031,12 @@ export default function App() {
     // ran. Empty in the fallback branch — correctly reports zero violations,
     // since a violation is only possible when a rescue was involved.
     let residualCheckAlignments: SegmentAlignment[] = [];
+    // Wave 1 hotfix FIX 1 — the placeholder-carrying alignment array (index-
+    // parallel with `finalTimedSegments` once placeholders are in) and the
+    // placeholders themselves, staged for the skip-log patch below. Both stay
+    // empty on the Whisper arm, where no placeholder is ever inserted.
+    let placeholderAlignments: SegmentAlignment[] = [];
+    let skippedScenePlaceholders: SkippedScenePlaceholder[] = [];
     // WS1 Session J — rule-firing / engine / FA-fallback entries, staged
     // SEPARATELY from `pendingLogEntries` for one structural reason: the
     // audio-timed branch below ASSIGNS `pendingLogEntries` wholesale partway
@@ -4467,7 +4499,12 @@ export default function App() {
       // above (built before this array was final); patched in place below
       // rather than rebuilding the whole array, so nothing else about their
       // position or the surrounding entries changes.
-      if (skipped.length > 0 && absorbedGapsByHostId.size > 0) {
+      // Wave 1 hotfix FIX 1 — a skipped scene that got a placeholder slot
+      // absorbed into NOTHING, so its entry says where its slot is instead of
+      // naming an absorbing clip. The absorbed-gap patch below still applies
+      // to any skip that stayed dropped (Whisper arm, or an unplaceable one).
+      const placeholderBySkipIndex = new Map(skippedScenePlaceholders.map(p => [p.segmentIndex, p]));
+      if (skipped.length > 0 && (absorbedGapsByHostId.size > 0 || placeholderBySkipIndex.size > 0)) {
         const absorbedInfoBySkipIndex = new Map<number, AbsorbedGapLogInfo>();
         for (const [hostId, gaps] of absorbedGapsByHostId) {
           const hostDisplayIndex = finalTimedSegments.findIndex(s => s.id === hostId);
@@ -4491,7 +4528,7 @@ export default function App() {
           }
           for (const gap of gaps) {
             const skipRecord = skipped.find(r => aligned.segments[r.segmentIndex]?.id === gap.segmentId);
-            if (skipRecord) {
+            if (skipRecord && !placeholderBySkipIndex.has(skipRecord.segmentIndex)) {
               absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
                 hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
                 otherNeighbor,
@@ -4499,7 +4536,9 @@ export default function App() {
             }
           }
         }
-        const correctedSkipEntries = buildSkipLogEntries(syncRunId, skipped, syncRunAt, absorbedInfoBySkipIndex);
+        const correctedSkipEntries = buildSkipLogEntries(
+          syncRunId, skipped, syncRunAt, absorbedInfoBySkipIndex, placeholderBySkipIndex,
+        );
         const correctedByIndex = new Map(correctedSkipEntries.map(e => [e.segmentIndex, e]));
         pendingLogEntries = pendingLogEntries.map(e =>
           e.type === 'skip' && e.segmentIndex !== undefined && correctedByIndex.has(e.segmentIndex)
@@ -4645,6 +4684,43 @@ export default function App() {
         }
         finalTimedSegments = applyUtterancePlacementCorrections(finalTimedSegments, keptUtterance);
 
+        // Wave 1 hotfix FIX 1 (skippedScenePlaceholders.ts) — SKIPPED-SCENE
+        // PLACEHOLDERS. Every R.10-skipped scene is re-inserted at its
+        // script position as an Estimated placeholder occupying the reserved
+        // gap between its neighbours' OWN spoken edges. Runs AFTER R.11–R.13
+        // (which keep working on the survivor array exactly as before) and
+        // BEFORE R.14/R.15, because R.14's ordering guard must see the
+        // placeholder's start as "the next boundary" — otherwise a silence
+        // inside the skipped scene's gap is a legal re-anchor target for the
+        // preceding scene's start (operator smoke: "R.14 moved scene 2 from
+        // 0.304s to 3.05s" right after "S3 skipped — scripted text never
+        // spoken"). `keptAlignments` is superseded from here on by the
+        // index-parallel `placeholderAlignments` (sentinels on the
+        // placeholders), which every downstream index-parallel consumer
+        // (R.14/R.15, the boundary-quality checker) reads instead.
+        const placeholderInsertion = insertSkippedScenePlaceholders(
+          finalTimedSegments, keptAlignments, aligned.segments,
+          new Set(skipped.map(r => r.segmentIndex)), coverageAfterR10, transcriptTokens, audioDuration,
+        );
+        finalTimedSegments = placeholderInsertion.segments;
+        placeholderAlignments = placeholderInsertion.alignments;
+        skippedScenePlaceholders = placeholderInsertion.placeholders;
+        if (placeholderInsertion.unplaceable.length > 0) {
+          console.warn(
+            `[sync] FIX 1 — ${placeholderInsertion.unplaceable.length} skipped scene(s) could not be given a ` +
+            'placeholder slot (both neighbours at the minimum duration); left dropped:',
+            placeholderInsertion.unplaceable,
+          );
+        }
+        if (faWordTimingsResult) {
+          faWordTimingsResult = stampEstimatedWordTimings(
+            faWordTimingsResult, skippedScenePlaceholders, aligned.coverage, transcriptTokens,
+          );
+        }
+        if (pendingBoundaryCheckInput) {
+          pendingBoundaryCheckInput = { ...pendingBoundaryCheckInput, alignments: placeholderAlignments };
+        }
+
         // WS1 Session AE, R.14 / R.15 (faAnchorTrustGate.ts) — THE ANCHOR-TRUST
         // GATE. Last in the stage, and deliberately so: both rules read the
         // per-segment token attribution `snapCoveredBoundaries` itself snapped
@@ -4667,7 +4743,7 @@ export default function App() {
         // R.11/R.12/R.13's, measured. The whole-stage R-AP check below still
         // sees their output, which is the point of it being whole-stage.
         const anchorTrustFindings = detectAnchorTrustDefects(
-          finalTimedSegments, keptAlignments, transcriptTokens, aligned.silences,
+          finalTimedSegments, placeholderAlignments, transcriptTokens, aligned.silences,
         );
         if (anchorTrustFindings.length > 0) {
           console.warn(

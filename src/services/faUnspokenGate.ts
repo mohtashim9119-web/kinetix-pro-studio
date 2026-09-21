@@ -51,13 +51,14 @@
 // two `alignConfidence` figures (0.769 / 0.778) that measurement showed do not
 // exist; the fix was to delete the conjunct, not re-threshold it.
 //
-// WHAT A DETECTED SEGMENT BECOMES. It is dropped, by being handed to the
-// EXISTING skip path (`App.tsx`'s `filterToCoveredSegments`): the following
-// survivor's start is re-derived by `snapCoveredBoundaries` from its own spoken
-// edges, so the preceding neighbour simply absorbs the span. Model P stays a
-// gapless partition and Sigma stays audioDuration — measured, not assumed. A
-// drop at index 0 is head-extended back to 0 by `headExtendFirstSegment`, which
-// is exactly what ear-pass item 10 asks for.
+// WHAT A DETECTED SEGMENT BECOMES. It is handed to the EXISTING skip path
+// (`App.tsx`'s `filterToCoveredSegments`), so the survivor layout
+// (`snapCoveredBoundaries`) never reads its phantom tokens. Wave 1 hotfix
+// FIX 1 (`skippedScenePlaceholders.ts`): it is then RE-INSERTED at its script
+// position as an Estimated placeholder occupying the reserved gap between its
+// neighbours' own spoken edges — no neighbour absorbs the span, and R.14's
+// ordering guard sees the placeholder's start as the next boundary. Model P
+// stays a gapless partition and Sigma stays audioDuration.
 // ---------------------------------------------------------------------------
 
 import { filterMalformedTokens, alignScenestoTranscript } from './whisperService';
