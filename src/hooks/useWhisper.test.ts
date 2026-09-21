@@ -26,14 +26,17 @@ import { fetchAndDetectSilences } from './useWhisper';
 import type { Asset } from '../types';
 
 vi.mock('../services/silenceDetector', () => ({
-  detectSilences: vi.fn(async (blob: Blob) => ({
+  // WS2 G2 completion, Unit 2 — `fetchAndDetectSilences` now calls this
+  // single-flight wrapper, not `detectSilences` directly (see
+  // silenceDetector.ts's own doc comment). Mocked with the same shape.
+  detectSilencesSingleFlight: vi.fn(async (_audioHash: string | undefined, blob: Blob) => ({
     status: 'ok' as const,
     silences: [],
     __receivedBlob: blob,
   })),
 }));
 
-import { detectSilences } from '../services/silenceDetector';
+import { detectSilencesSingleFlight } from '../services/silenceDetector';
 
 const audioAsset = (overrides: Partial<Asset> = {}): Asset => ({
   id: 'voiceover-1',
@@ -58,7 +61,7 @@ describe('fetchAndDetectSilences', () => {
 
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(result.status).toBe('ok');
-    expect(detectSilences).toHaveBeenCalledWith(file);
+    expect(detectSilencesSingleFlight).toHaveBeenCalledWith(undefined, file);
   });
 
   it('falls back to fetch(asset.url) when asset.file is absent (post-reload asset)', async () => {
@@ -73,7 +76,7 @@ describe('fetchAndDetectSilences', () => {
 
     expect(fetchSpy).toHaveBeenCalledWith(asset.url);
     expect(result.status).toBe('ok');
-    expect(detectSilences).toHaveBeenCalledWith(blob);
+    expect(detectSilencesSingleFlight).toHaveBeenCalledWith(undefined, blob);
   });
 
   it('reports a structured error (not a throw) when fetch rejects and no asset.file exists', async () => {
@@ -86,7 +89,7 @@ describe('fetchAndDetectSilences', () => {
     if (result.status === 'error') {
       expect(result.errorMessage).toBe('voiceover fetch failed: Failed to fetch');
     }
-    expect(detectSilences).not.toHaveBeenCalled();
+    expect(detectSilencesSingleFlight).not.toHaveBeenCalled();
   });
 
   it('reports a structured error for a non-ok fetch response when no asset.file exists', async () => {

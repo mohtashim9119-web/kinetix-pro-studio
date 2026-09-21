@@ -50,6 +50,12 @@ vi.mock('@tauri-apps/api/core', () => {
 });
 vi.mock('./silenceDetector', () => ({
   detectSilences: vi.fn(async () => ({ status: 'ok', silences: [] })),
+  // WS2 G2 completion, Unit 2 — runFaAttempt now calls this single-flight
+  // wrapper instead of detectSilences directly (see silenceDetector.ts's own
+  // doc comment). Mocked with the same shape so this suite stays a unit test
+  // of the CALLER; the cache's own behavior is covered by
+  // silenceDetector.test.ts.
+  detectSilencesSingleFlight: vi.fn(async () => ({ status: 'ok', silences: [] })),
 }));
 vi.mock('./faChunkPlan', () => ({
   computeFaChunkPlan: vi.fn(() => [{ startSec: 0, endSec: 1, text: 'hello world' }]),
@@ -436,8 +442,8 @@ describe('runForcedAlignmentForSync — success path', () => {
     // so this is not a fallback — but it is a real degradation that was
     // console-only before, and the run it degrades is one the acceptance pass
     // would otherwise record as clean.
-    const { detectSilences } = await import('./silenceDetector');
-    (detectSilences as unknown as Mock).mockResolvedValueOnce({ status: 'error', errorMessage: 'ffmpeg not found' });
+    const { detectSilencesSingleFlight } = await import('./silenceDetector');
+    (detectSilencesSingleFlight as unknown as Mock).mockResolvedValueOnce({ status: 'error', errorMessage: 'ffmpeg not found' });
     resolveWithTwoWords();
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
     expect(result.status).toBe('ok');

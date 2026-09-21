@@ -50,6 +50,10 @@ vi.mock('../services/whisperService', async () => {
 
 vi.mock('../services/silenceDetector', () => ({
   detectSilences: vi.fn(async () => ({ status: 'ok' as const, silences: [] })),
+  // WS2 G2 completion, Unit 2 — startTranscription now calls this
+  // single-flight wrapper via fetchAndDetectSilences (silenceDetector.ts's
+  // own doc comment); mocked with the same shape here too.
+  detectSilencesSingleFlight: vi.fn(async () => ({ status: 'ok' as const, silences: [] })),
 }));
 
 const { useWhisper } = await import('./useWhisper');

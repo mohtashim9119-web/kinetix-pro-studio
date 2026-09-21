@@ -73,6 +73,12 @@ vi.mock('./silenceDetector', () => ({
     // real S4|S5 seam.
     silences: [{ startSec: 2.90, endSec: 3.20 }, { startSec: 3.30, endSec: 4.90 }, { startSec: 6.30, endSec: 6.80 }],
   })),
+  // WS2 G2 completion, Unit 2 — runForcedAlignmentForSync's runFaAttempt now
+  // calls this single-flight wrapper instead of detectSilences directly.
+  detectSilencesSingleFlight: vi.fn(async () => ({
+    status: 'ok',
+    silences: [{ startSec: 2.90, endSec: 3.20 }, { startSec: 3.30, endSec: 4.90 }, { startSec: 6.30, endSec: 6.80 }],
+  })),
 }));
 
 import { invoke } from '@tauri-apps/api/core';

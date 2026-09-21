@@ -43,7 +43,7 @@
 // ---------------------------------------------------------------------------
 
 import { invoke, Channel } from '@tauri-apps/api/core';
-import { detectSilences } from './silenceDetector';
+import { detectSilencesSingleFlight } from './silenceDetector';
 import { describeInvokeError } from './invokeError';
 import { computeFaChunkPlan, computeRunContextAsync, computeUnscriptedRuns, type UnscriptedRun } from './faChunkPlan';
 import { MatchCancelledError } from './hirschbergMatchClient';
@@ -227,6 +227,15 @@ export async function runForcedAlignmentForSync(
   audioDuration: number,
   languageCode: string | undefined,
   signal?: AbortSignal,
+  // WS2 G2 completion, Unit 2 — the staged audio's content hash
+  // (`spine.ts`'s `computeAudioHash`, already computed once by App.tsx's
+  // Apply Sync flow before this call). Threaded through to
+  // `detectSilencesSingleFlight` so this run's `detectSilences` pass can be
+  // shared with `useWhisper.ts`'s `alignSegmentsFromCachedTranscript` later
+  // in the SAME sync — see `silenceDetector.ts`'s own doc comment.
+  // `undefined` (no computable hash) always detects fresh, exactly the
+  // pre-Unit-2 behavior.
+  audioHash?: string,
 ): Promise<FaRunResult> {
   if (signal?.aborted) return { status: 'cancelled' };
 
@@ -246,7 +255,7 @@ export async function runForcedAlignmentForSync(
   // resolves rather than propagates. The two inner try/catches return early
   // on their own catch, so they never fall through into this one.
   try {
-    return await runFaAttempt(voiceoverAsset, anchorTimedSegments, whisperTokens, audioDuration, language, signal);
+    return await runFaAttempt(voiceoverAsset, anchorTimedSegments, whisperTokens, audioDuration, language, signal, audioHash);
   } catch (err) {
     // Anything reaching here is NOT one of the two invoke() calls (they have
     // their own inner try/catches and always return, never rethrow) — an
@@ -273,10 +282,11 @@ async function runFaAttempt(
   audioDuration: number,
   language: FaLanguageCode,
   signal: AbortSignal | undefined,
+  audioHash?: string,
 ): Promise<FaRunResult> {
   const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
 
-  const silenceResult = await detectSilences(voiceoverBlob);
+  const silenceResult = await detectSilencesSingleFlight(audioHash, voiceoverBlob);
   const silences = silenceResult.status === 'ok' ? silenceResult.silences : [];
   const silenceError = silenceResult.status === 'ok' ? undefined : silenceResult.errorMessage;
   if (silenceError !== undefined) {

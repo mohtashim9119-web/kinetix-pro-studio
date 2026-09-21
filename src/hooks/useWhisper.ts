@@ -9,7 +9,7 @@ import {
   type SegmentAlignment,
   type AlignmentLanguageCode,
 } from '../services/whisperService';
-import { detectSilences } from '../services/silenceDetector';
+import { detectSilencesSingleFlight } from '../services/silenceDetector';
 import type { SilenceInterval, SilenceDetectResult } from '../services/silenceDetector';
 import { applyAnchorBasedTiming, getFileIdentity } from '../services/syncEngine';
 import { computeAudioHash } from '../services/spine';
@@ -37,8 +37,16 @@ import { stampWhisperProvenance } from '../services/timingProvenance';
  * Falls back to `fetch(asset.url)` only when `.file` is absent (a project
  * asset reconstructed from IndexedDB after a reload never carries a `File`
  * reference — `projectStore.ts` strips it before persisting).
+ *
+ * `audioHash` (WS2 G2 completion, Unit 2 — single-flight `detectSilences`):
+ * when the caller already knows the staged audio's content hash, threading
+ * it through lets this call SHARE a silence-detection pass with any other
+ * caller using the same hash within the same sync (`forcedAlignmentRun.ts`'s
+ * `runFaAttempt`, in particular — see `silenceDetector.ts`'s own doc
+ * comment). Omitted, this is byte-identical to the pre-Unit-2 behavior:
+ * always detects fresh.
  */
-export async function fetchAndDetectSilences(asset: Asset): Promise<SilenceDetectResult> {
+export async function fetchAndDetectSilences(asset: Asset, audioHash?: string): Promise<SilenceDetectResult> {
   let blob: Blob;
   try {
     if (asset.file) {
@@ -54,7 +62,7 @@ export async function fetchAndDetectSilences(asset: Asset): Promise<SilenceDetec
     const message = err instanceof Error ? err.message || err.name : String(err);
     return { status: 'error', errorMessage: `voiceover fetch failed: ${message}` };
   }
-  return detectSilences(blob);
+  return detectSilencesSingleFlight(audioHash, blob);
 }
 
 /** What `alignFromCache` hands back to the orchestrator (App.tsx). */
@@ -107,8 +115,15 @@ export async function alignSegmentsFromCachedTranscript(
   // just check before/after it. Optional and unused when omitted, so every
   // existing caller/test keeps its exact pre-migration behavior.
   signal?: AbortSignal,
+  // WS2 G2 completion, Unit 2 — the staged audio's content hash, threaded
+  // into `fetchAndDetectSilences` so this call's `detectSilences` pass can
+  // be shared with `forcedAlignmentRun.ts`'s `runFaAttempt` (same audio,
+  // same sync) instead of running independently. `undefined` reproduces the
+  // pre-Unit-2 behavior exactly — see `silenceDetector.ts`'s own doc
+  // comment.
+  audioHash?: string,
 ): Promise<AlignFromCacheResult> {
-  const silenceResult = await fetchAndDetectSilences(audioAsset);
+  const silenceResult = await fetchAndDetectSilences(audioAsset, audioHash);
   // Fail-loud, but never fail-stop: a silence-scan failure degrades boundary
   // placement to token midpoints (the documented fallback) and is reported
   // upward, rather than aborting a sync that can still produce a timeline.
@@ -301,6 +316,7 @@ export interface UseWhisperApi {
     anchorSource?: 'whisper' | 'forced-alignment',
     languageCode?: AlignmentLanguageCode,
     signal?: AbortSignal,
+    audioHash?: string,
   ) => Promise<AlignFromCacheResult>;
 }
 
@@ -432,7 +448,11 @@ export function useWhisper(): UseWhisperApi {
         const resolvedAudioHash = opts?.audioHash
           ?? (audioAsset.file ? await computeAudioHash(audioAsset.file) : undefined);
 
-        const silenceResult = await fetchAndDetectSilences(audioAsset);
+        // WS2 G2 completion, Unit 2 — same single-flight cache
+        // `alignSegmentsFromCachedTranscript` participates in: if the
+        // operator transcribes and immediately clicks Apply Sync, both
+        // detectSilences passes for this SAME audio share one array.
+        const silenceResult = await fetchAndDetectSilences(audioAsset, resolvedAudioHash);
         if (generationRef.current !== generation) return { started: true };
 
         // WS4 Features 3 + 4 on the fresh-transcription path, plus the R11

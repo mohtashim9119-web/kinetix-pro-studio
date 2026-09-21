@@ -44,6 +44,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../services/silenceDetector', () => ({
   detectSilences: vi.fn(async () => ({ status: 'ok' as const, silences: [] })),
+  // WS2 G2 completion, Unit 2 — `alignSegmentsFromCachedTranscript` now
+  // routes silence detection through this single-flight wrapper.
+  detectSilencesSingleFlight: vi.fn(async () => ({ status: 'ok' as const, silences: [] })),
 }));
 
 vi.mock('../services/whisperService', async (importOriginal) => {

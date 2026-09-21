@@ -6,8 +6,13 @@
 //
 // AudioContext does not exist in the node test environment, so it is stubbed —
 // which is also what lets the decode-failure path be exercised deterministically.
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { detectSilences } from './silenceDetector';
+import { beforeEach, describe, it, expect, vi, afterEach } from 'vitest';
+import {
+  __getSilenceDetectionDispatchCountForTests,
+  __resetSilenceDetectionCacheForTests,
+  detectSilences,
+  detectSilencesSingleFlight,
+} from './silenceDetector';
 
 const SAMPLE_RATE = 1000;
 
@@ -162,5 +167,82 @@ describe('detectSilences — detection behaviour (regression)', () => {
 
     stubDecodeOk(signal([0.5, 1000], [0.1, 1000], [0.5, 1000]));
     await expect(detectSilences(blob())).resolves.toEqual({ status: 'ok', silences: [] });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 Wave 2 Group 2 completion, Unit 2 — single-flight detectSilences,
+// keyed by audioHash. Today `forcedAlignmentRun.ts`'s `runFaAttempt` and
+// `useWhisper.ts`'s `alignSegmentsFromCachedTranscript` each run an
+// independent `detectSilences` pass on the SAME staged audio within one
+// Apply Sync — same audio, content-equal output, never the same array
+// reference, which is why `computeRunContext`'s own reference-identity memo
+// (`faChunkPlan.ts`, G2 item 1) has to hold TWO entries per sync instead of
+// one (G2 end-of-group report, sighting #2). This closes that gap.
+// ---------------------------------------------------------------------------
+describe('detectSilencesSingleFlight (WS2 G2 completion, Unit 2)', () => {
+  beforeEach(() => {
+    __resetSilenceDetectionCacheForTests();
+  });
+
+  it('a second call with the SAME audioHash reuses the first dispatch and returns the SAME array reference (old-bug proof: fails without the cache — the pre-Unit-2 call shape dispatches twice and never shares a reference)', async () => {
+    stubDecodeOk(signal([0.5, 1000], [0, 100], [0.5, 1000]));
+    const b = blob();
+
+    const first = await detectSilencesSingleFlight('hash-a', b);
+    const second = await detectSilencesSingleFlight('hash-a', b);
+
+    expect(__getSilenceDetectionDispatchCountForTests()).toBe(1);
+    expect(second).toBe(first); // SAME object reference, not just equal.
+    expect(first.status === 'ok' && second.status === 'ok' && second.silences).toBe(
+      first.status === 'ok' ? first.silences : undefined,
+    );
+  });
+
+  it('joins the SAME in-flight promise when the second call arrives before the first settles (true single-flight, not just result caching)', async () => {
+    let resolveDecode!: (buf: unknown) => void;
+    vi.stubGlobal('AudioContext', class {
+      decodeAudioData = (): Promise<unknown> => new Promise(r => { resolveDecode = r; });
+      close = closeSpy;
+    });
+    const b = blob();
+
+    const p1 = detectSilencesSingleFlight('hash-b', b);
+    const p2 = detectSilencesSingleFlight('hash-b', b);
+    expect(__getSilenceDetectionDispatchCountForTests()).toBe(1);
+
+    // Let the microtask queue drain up to the `blob.arrayBuffer()` await
+    // inside `detectSilences` so `decodeAudioData` (and therefore
+    // `resolveDecode`) has actually been called before we resolve it.
+    await Promise.resolve();
+    await Promise.resolve();
+    resolveDecode(fakeBuffer(signal([0.5, 500])));
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r2).toBe(r1);
+  });
+
+  it('a DIFFERENT audioHash (an audio swap) always misses and detects fresh — silence data cannot go stale across a swap', async () => {
+    stubDecodeOk(signal([0.5, 1000], [0, 500], [0.5, 1000]));
+    const first = await detectSilencesSingleFlight('hash-old', blob());
+
+    stubDecodeOk(signal([0.5, 1000])); // a different audio: no silence at all.
+    const second = await detectSilencesSingleFlight('hash-new', blob());
+
+    expect(__getSilenceDetectionDispatchCountForTests()).toBe(2);
+    expect(second).not.toBe(first);
+    expect(first.status === 'ok' && first.silences.length).toBeGreaterThan(0);
+    expect(second.status === 'ok' && second.silences.length).toBe(0);
+  });
+
+  it('an undefined audioHash (no computable hash) never caches — always dispatches fresh, matching pre-Unit-2 behavior exactly', async () => {
+    stubDecodeOk(signal([0.5, 1000], [0, 100], [0.5, 1000]));
+    const b = blob();
+
+    const first = await detectSilencesSingleFlight(undefined, b);
+    const second = await detectSilencesSingleFlight(undefined, b);
+
+    expect(__getSilenceDetectionDispatchCountForTests()).toBe(2);
+    expect(second).not.toBe(first);
+    expect(second).toEqual(first); // still content-equal, just not the same object.
   });
 });
