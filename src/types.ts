@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { SyncSpine } from './services/spine';
+
 export enum TransitionType {
   FADE = 'fade',
   SLIDE = 'slide',
@@ -448,8 +450,20 @@ export interface Project {
   lastTranscribedAssetId?: string;
   /** `${file.name}|${file.size}|${file.lastModified}` of the file that produced
    *  transcriptTokens — lets re-staging the same file be recognized even though
-   *  every stage event mints a fresh Asset id. See services/syncEngine.ts getFileIdentity. */
+   *  every stage event mints a fresh Asset id. See services/syncEngine.ts getFileIdentity.
+   *  DEPRECATED AS A CACHE KEY (plan-v3 Wave 2 item 4): kept only as the fast
+   *  pre-filter's own persisted trace; `lastTranscribedAudioHash` below is
+   *  authoritative. Still written on every transcription for back-compat with
+   *  any code path not yet moved onto the hash. */
   lastTranscribedFileIdentity?: string;
+  /** SHA-256 of the audio bytes that produced `transcriptTokens`
+   *  (`services/spine.ts`'s `computeAudioHash`) — plan-v3 Wave 2 item 4 /
+   *  final-shape-mapping row A5. THE authoritative transcript cache key: a
+   *  media swap whose bytes are identical to this value is a cache HIT even
+   *  under a new name/mtime. Absent on any project synced before this field
+   *  existed — treated as "no known hash", never inferred from
+   *  `lastTranscribedFileIdentity`. */
+  lastTranscribedAudioHash?: string;
   transcriptTokens?: TranscriptToken[];
   globalTransition: TransitionType;
   globalTransitionDuration: number;
@@ -578,6 +592,17 @@ export interface Project {
     transcription?: TimingProvenance;
     alignment?: TimingProvenance;
   };
+  /**
+   * plan-v3 Wave 2 item 4 / final-shape-mapping row H3 — the content-hash
+   * spine (`services/spine.ts`'s `SyncSpine`) of the audio + normalized
+   * script/scene text that produced THIS project's current, committed
+   * segments. Stamped once per successful Apply Sync commit; read by the
+   * "honest Apply Sync" UI gate to grey the button out, with a stated
+   * reason, when neither input has actually changed since this stamp.
+   * Absent on any project synced before this field existed — an absent
+   * value never disables the button (there is nothing proven unchanged),
+   * it only enables the new gate once a first stamp exists. */
+  lastSyncSpine?: SyncSpine;
   /** WS2 T4.1 Step 2 — what THIS project's freshly minted segments start their
    *  `showOverlay` at, seeded ONCE at creation from App Settings' New Project
    *  Defaults (`services/appDefaults.ts`) and never re-read from that global

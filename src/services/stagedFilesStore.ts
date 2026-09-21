@@ -59,11 +59,13 @@ export interface StoredStagedFile {
   key: string;
   name: string;
   mimeType: string;
-  /** MUST be preserved. `getFileIdentity` (`syncEngine.ts:383`) is
-   *  `${name}|${size}|${lastModified}` and is the transcription cache key. A
-   *  `File` rebuilt without it gets `Date.now()`, which changes the identity,
-   *  invalidates the cached transcript, and forces a re-transcription of audio
-   *  that was already transcribed. */
+  /** Preserved so a restored `File` reproduces `getFileIdentity`
+   *  (`syncEngine.ts`) exactly — that identity is now only a fast
+   *  pre-filter (plan-v3 Wave 2 item 4; the transcription cache key is
+   *  `spine.ts`'s content-hash `computeAudioHash`, immune to this metadata),
+   *  but staleness here still defeats that pre-filter's same-object
+   *  dedup and skews `stagedAt`-adjacent diagnostics, so it stays
+   *  round-tripped. */
   lastModified: number;
   size: number;
   blob: Blob;

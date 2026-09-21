@@ -12,6 +12,7 @@ import {
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval, SilenceDetectResult } from '../services/silenceDetector';
 import { applyAnchorBasedTiming, getFileIdentity } from '../services/syncEngine';
+import { computeAudioHash } from '../services/spine';
 import { validate1to2 } from '../services/syncContracts';
 import { buildSilenceErrorEntry, buildMalformedTokenEntry, buildContractViolationEntry, buildWhisperModelFailureEntry, appendSyncLogEntries } from '../services/syncLog';
 import { buildUnappliedTranscript } from '../services/unappliedTranscript';
@@ -231,6 +232,18 @@ export interface StartTranscriptionOptions {
    * a failed flush must not turn a successful transcription into an error.
    */
   onCompleted?: () => void | Promise<void>;
+  /**
+   * plan-v3 Wave 2 item 4 — the caller's already-computed
+   * `spine.ts#computeAudioHash(audioAsset.file)`, stamped onto
+   * `Project.lastTranscribedAudioHash` in the same update that writes the
+   * tokens. Optional so every pre-Wave-2 call site (this hook's own tests
+   * included) keeps compiling unchanged; when omitted, computed here from
+   * `audioAsset.file` if present. Threading it through from the caller
+   * avoids hashing a large voiceover a second time — `handleVoiceoverStaged`
+   * (App.tsx) already computes it before deciding whether to call this at
+   * all.
+   */
+  audioHash?: string;
 }
 
 export interface UseWhisperApi {
@@ -405,6 +418,13 @@ export function useWhisper(): UseWhisperApi {
           return { started: true };
         }
 
+        // plan-v3 Wave 2 item 4 — the real content hash this run's tokens get
+        // stamped with below. Prefer the caller's already-computed value
+        // (the ordinary path: App.tsx's handleVoiceoverStaged hashes before
+        // ever calling this) over hashing audioAsset.file a second time.
+        const resolvedAudioHash = opts?.audioHash
+          ?? (audioAsset.file ? await computeAudioHash(audioAsset.file) : undefined);
+
         const silenceResult = await fetchAndDetectSilences(audioAsset);
         if (generationRef.current !== generation) return { started: true };
 
@@ -471,6 +491,9 @@ export function useWhisper(): UseWhisperApi {
           lastTranscribedFileIdentity: audioAsset.file
             ? getFileIdentity(audioAsset.file)
             : p.lastTranscribedFileIdentity,
+          // plan-v3 Wave 2 item 4 — the authoritative cache key (A5). Same
+          // fallback-to-existing-value reasoning as the identity field above.
+          lastTranscribedAudioHash: resolvedAudioHash ?? p.lastTranscribedAudioHash,
           transcriptTokens: tokens,
           // plan-v3 item 8 — stamp the engine that actually produced these
           // tokens, in the SAME update. A follow-up write would leave a

@@ -159,6 +159,43 @@ describe('Requirement 3 — the completion write', () => {
     h.unmount();
   });
 
+  // plan-v3 Wave 2 item 4 — Project.lastTranscribedAudioHash, the
+  // AUTHORITATIVE cache key (the field above, fileIdentity, is now only a
+  // fast pre-filter — see syncEngine.ts's getFileIdentity doc comment).
+  it('stamps lastTranscribedAudioHash from the caller-supplied opts.audioHash', async () => {
+    mockTranscribe.mockResolvedValue({ tokens: TOKENS, detectedLanguage: 'en' });
+    const h = mountWhisper();
+    let committed: Project | null = null;
+
+    await act(async () => {
+      await h.api().startTranscription(
+        audioAsset(), 30, [], undefined, () => {},
+        updater => { committed = updater(project()); },
+        { audioHash: 'precomputed-hash-abc123' },
+      );
+    });
+
+    expect(committed!.lastTranscribedAudioHash).toBe('precomputed-hash-abc123');
+    h.unmount();
+  });
+
+  it('computes the hash itself from audioAsset.file when opts.audioHash is omitted', async () => {
+    mockTranscribe.mockResolvedValue({ tokens: TOKENS, detectedLanguage: 'en' });
+    const h = mountWhisper();
+    let committed: Project | null = null;
+
+    await act(async () => {
+      await h.api().startTranscription(
+        audioAsset(), 30, [], undefined, () => {},
+        updater => { committed = updater(project()); },
+      );
+    });
+
+    // 64-char lowercase hex — a real SHA-256 digest, not a placeholder.
+    expect(committed!.lastTranscribedAudioHash).toMatch(/^[0-9a-f]{64}$/);
+    h.unmount();
+  });
+
   it('fires onCompleted after the project update and before the terminal "done" status', async () => {
     mockTranscribe.mockResolvedValue({ tokens: TOKENS, detectedLanguage: 'en' });
     const h = mountWhisper();

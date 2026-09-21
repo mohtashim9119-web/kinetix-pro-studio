@@ -163,7 +163,7 @@ function makeDropZonePanelProps(overrides: Partial<DropZonePanelProps> = {}): Dr
     stagedFilesClearSignal: 0,
     onVoiceoverStaged: noop,
     onVoiceoverUnstaged: noop,
-    onVoiceoverRestored: () => true,
+    onVoiceoverRestored: () => Promise.resolve(true),
     onVoiceoverTranscribeRequested: noop,
     voiceoverNeedsExplicitTranscribe: false,
     applySyncDisabled: false,

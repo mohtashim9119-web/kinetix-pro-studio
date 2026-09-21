@@ -371,8 +371,11 @@ interface Props {
   onVoiceoverUnstaged: () => void;
   /** WS2-50 — offers a voiceover recovered from the staged store back to the
    *  app on mount. When adoptable, App.tsx runs `handleVoiceoverStaged`; when
-   *  not, the slot and row stay put and the user must tap Transcribe. */
-  onVoiceoverRestored: (file: File) => boolean;
+   *  not, the slot and row stay put and the user must tap Transcribe.
+   *  Async (plan-v3 Wave 2 item 4): the adopt decision now hashes the
+   *  restored file's bytes (`services/spine.ts`), off the main thread but
+   *  still a promise. */
+  onVoiceoverRestored: (file: File) => Promise<boolean>;
   /** User-initiated transcription for a restored-but-unadopted voiceover. */
   onVoiceoverTranscribeRequested: (file: File) => void;
   /** True when a staged voiceover is visible but Whisper must not run until
@@ -380,6 +383,12 @@ interface Props {
   voiceoverNeedsExplicitTranscribe: boolean;
   /** True while Apply Sync should be inert — voiceover staged/persisted but not yet transcribed. */
   applySyncDisabled: boolean;
+  /** plan-v3 Wave 2 item 4 — "honest Apply Sync". Set to a user-facing reason
+   *  string (shown in the button's tooltip) when the currently staged
+   *  content hashes identically to what the last successful sync already
+   *  committed — greyed with a stated reason rather than silently allowed to
+   *  re-run a no-op sync. `undefined` means nothing is proven unchanged. */
+  applySyncSpineUnchangedReason?: string;
   /** Undo/redo (Phase 2, 2026-08-08). Placed here — immediately left of Apply
    *  sync — per the owner's ruling on button placement. Note the consequence,
    *  stated rather than hidden: this row is the Script tab's pinned footer, so
@@ -505,6 +514,7 @@ export function DropZonePanel({
   onVoiceoverTranscribeRequested,
   voiceoverNeedsExplicitTranscribe,
   applySyncDisabled,
+  applySyncSpineUnchangedReason,
   onUndo,
   onRedo,
   canUndo,
@@ -760,7 +770,12 @@ export function DropZonePanel({
         // is true; otherwise the slot and row stay so the user can tap
         // Transcribe explicitly — nothing auto-runs on load.
         if (restored.voiceoverFile) {
-          const adopted = onVoiceoverRestored(restored.voiceoverFile.file);
+          // plan-v3 Wave 2 item 4 — onVoiceoverRestored now hashes the file
+          // (async, can take real time for a large voiceover), widening this
+          // await's window; re-check cancellation on the far side so a
+          // project switch mid-hash can't act on a stale result.
+          const adopted = await onVoiceoverRestored(restored.voiceoverFile.file);
+          if (cancelled) return;
           if (!adopted) {
             setExpanded('voiceover');
           }
@@ -1492,13 +1507,13 @@ export function DropZonePanel({
             </button>
             <button
               onClick={handleApplySync}
-              disabled={applySyncDisabled || isStagedEmpty}
+              disabled={applySyncDisabled || isStagedEmpty || !!applySyncSpineUnchangedReason}
               title={
                 applySyncDisabled
                   ? 'Waiting for transcription to finish…'
                   : isStagedEmpty
                     ? 'Stage a new file to sync'
-                    : undefined
+                    : applySyncSpineUnchangedReason
               }
               className="flex-1 min-w-0 h-12 rounded-[13px] flex items-center justify-center gap-2.5
                          font-semibold text-[14.5px] tracking-[0.3px] text-[#1a1003]

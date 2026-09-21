@@ -63,7 +63,7 @@ function makeProps(overrides: Partial<DropZonePanelProps> = {}): DropZonePanelPr
     onDeleteAsset: noop, onDeleteAllAssets: noop, onDeleteVoiceover: noop, onOpenRelinkMedia: noop,
     onApplySync: noop, onStagedFilesChange: noop, stagedFilesClearSignal: 0,
     onVoiceoverStaged: noop, onVoiceoverUnstaged: noop, applySyncDisabled: false,
-    onVoiceoverRestored: () => true,
+    onVoiceoverRestored: () => Promise.resolve(true),
     onVoiceoverTranscribeRequested: noop,
     voiceoverNeedsExplicitTranscribe: false,
     onSegmentClick: noop, onToggleLock: noop, onLockAll: noop, onUnlockAll: noop,
@@ -264,7 +264,7 @@ describe('WS2-50 — a restored voiceover is offered, and a refusal leaves nothi
     const offered: string[] = [];
     const panel = mountPanel({
       projectId: VO_PROJECT,
-      onVoiceoverRestored: (f: File) => { offered.push(f.name); return true; },
+      onVoiceoverRestored: (f: File) => { offered.push(f.name); return Promise.resolve(true); },
     });
     await settle();
     expect(offered, 'the panel never offered the restored voiceover to the app').toEqual(['vo.m4a']);
@@ -283,7 +283,7 @@ describe('WS2-50 — a restored voiceover is offered, and a refusal leaves nothi
     expect(await countStagedFiles(VO_PROJECT)).toBe(2);
     const panel = mountPanel({
       projectId: VO_PROJECT,
-      onVoiceoverRestored: () => false,
+      onVoiceoverRestored: () => Promise.resolve(false),
       voiceoverNeedsExplicitTranscribe: true,
     });
     await settle();
@@ -310,7 +310,7 @@ describe('WS2-50 — a restored voiceover is offered, and a refusal leaves nothi
     });
     const panel = mountPanel({
       projectId: VO_PROJECT,
-      onVoiceoverRestored: () => false,
+      onVoiceoverRestored: () => Promise.resolve(false),
       voiceoverNeedsExplicitTranscribe: true,
       onVoiceoverTranscribeRequested: (f: File) => { transcribeCalls.push(f.name); },
       onVoiceoverStaged: (f: File) => { transcribeCalls.push(`staged:${f.name}`); },
@@ -332,7 +332,7 @@ describe('WS2-50 — a restored voiceover is offered, and a refusal leaves nothi
       asset: new File(['IMG'], 'a.png', { type: 'image/png' }),
       zip: new File(['ZIP'], 'pack.zip', { type: 'application/zip' }),
     });
-    const panel = mountPanel({ projectId: VO_PROJECT, onVoiceoverRestored: () => true });
+    const panel = mountPanel({ projectId: VO_PROJECT, onVoiceoverRestored: () => Promise.resolve(true) });
     await settle();
     const p = panel.published();
     expect(p?.scriptFile?.file.name).toBe('script.txt');
@@ -375,7 +375,7 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
 
     const panel = mountPanel({
       projectId: SYNC_PROJECT,
-      onVoiceoverRestored: () => true,
+      onVoiceoverRestored: () => Promise.resolve(true),
       onApplySync: () => syncRunning,
     });
     await settle();
@@ -413,7 +413,7 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
       });
       const panel = mountPanel({
         projectId: SYNC_PROJECT,
-        onVoiceoverRestored: () => true,
+        onVoiceoverRestored: () => Promise.resolve(true),
         onApplySync,
       });
       await settle();
@@ -440,7 +440,7 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
 
     const first = mountPanel({
       projectId: SYNC_PROJECT,
-      onVoiceoverRestored: () => true,
+      onVoiceoverRestored: () => Promise.resolve(true),
       onApplySync: async () => ({ ok: false, message: 'Sync paused', holdStaged: true }),
     });
     await settle();
@@ -456,7 +456,7 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
     let retrySawVoiceover = false;
     const restarted = mountPanel({
       projectId: SYNC_PROJECT,
-      onVoiceoverRestored: () => true,
+      onVoiceoverRestored: () => Promise.resolve(true),
       onApplySync: async () => {
         retrySawVoiceover = restarted.published()?.voiceoverFile != null;
         return { ok: true };

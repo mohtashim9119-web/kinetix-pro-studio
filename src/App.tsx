@@ -95,6 +95,7 @@ import {
 } from './services/historyPersist';
 import { flushWithBudget } from './services/teardownFlush';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
+import { computeAudioHash, computeScriptHash, spineEquals } from './services/spine';
 import { syncMark } from './services/syncInstrument';
 import { detectResidualOrderingViolations, logResidualOrderingViolations } from './services/residualOrderingDetector';
 import {
@@ -427,6 +428,15 @@ const nearestExportFps = (fps: number): ExportFps =>
   EXPORT_FPS_OPTIONS.reduce((closest, candidate) =>
     Math.abs(candidate - fps) < Math.abs(closest - fps) ? candidate : closest
   );
+
+/**
+ * Option C — an ephemeral voiceover staged before Apply Sync, tracked by
+ * `pendingVoiceoverRef`/`pendingVoiceover`. `audioHash` (plan-v3 Wave 2 item
+ * 4) is the SHA-256 of `file`'s bytes (`services/spine.ts`'s
+ * `computeAudioHash`), filled in asynchronously by `handleVoiceoverStaged`
+ * after the object is first set — absent until that resolves.
+ */
+type PendingVoiceoverSync = { file: File; asset: Asset; audioHash?: string };
 
 // ---------------------------------------------------------------------------
 // Module-level helpers for the atomic Apply Sync flow
@@ -2246,20 +2256,43 @@ export default function App() {
   // flush. `DropZonePanel` writes it synchronously from `updateStaged`.
   const stagedFilesRef = useRef<StagedFiles>(EMPTY_STAGED);
   const [stagedVoiceoverFile, setStagedVoiceoverFile] = useState<File | null>(null);
+  // plan-v3 Wave 2 item 4 — mirrored the same way stagedVoiceoverFile is,
+  // purely for the "honest Apply Sync" spine comparison below (script/scene
+  // editing itself still flows through the panel's own staged state; these
+  // are a read-only copy).
+  const [stagedScriptFile, setStagedScriptFile] = useState<File | null>(null);
+  const [stagedSceneFile, setStagedSceneFile] = useState<File | null>(null);
   const handleStagedFilesChange = useCallback((next: StagedFiles): void => {
     stagedFilesRef.current = next;
     setStagedVoiceoverFile(next.voiceoverFile?.file ?? null);
+    setStagedScriptFile(next.scriptFile?.file ?? null);
+    setStagedSceneFile(next.sceneFile?.file ?? null);
   }, []);
+  // plan-v3 Wave 2 item 4 — handleVoiceoverRestored's computeAudioHash
+  // result for a restored-but-refused voiceover (WS2-50: kept in the slot,
+  // not auto-adopted). stagedVoiceoverNeedsExplicitTranscribe needs a hash
+  // at RENDER time and can't compute one itself (hashing is async), so this
+  // caches the one async site that already knows it. Only meaningful while
+  // `hasStagedVoiceover && !hasPendingVoiceover` — both guards in
+  // stagedVoiceoverNeedsExplicitTranscribe — so a stale value from a
+  // previous mount/project is harmless: it's never read once either guard
+  // flips (a live stage always sets pendingVoiceover, short-circuiting it).
+  const [restoredUnadoptedAudioHash, setRestoredUnadoptedAudioHash] = useState<string | null>(null);
   // Option C: ephemeral voiceover staged before Apply Sync is clicked — minted by
   // handleVoiceoverStaged, consumed (id/url reused) by handleApplySyncFromFiles.
   // Not part of project state; never persisted until commit.
-  const [pendingVoiceover, setPendingVoiceover] = useState<{ file: File; asset: Asset } | null>(null);
+  //
+  // `audioHash` (plan-v3 Wave 2 item 4) is undefined until
+  // handleVoiceoverStaged's async hash computation resolves — the object is
+  // set once synchronously (asset minted, no hash yet) and again once the
+  // hash is known, so callers must not assume it's always present.
+  const [pendingVoiceover, setPendingVoiceover] = useState<PendingVoiceoverSync | null>(null);
   // Mirrors pendingVoiceover synchronously — written at every setPendingVoiceoverSync
   // call, not just after the next render's effect. Two stage events firing within the
   // same render (rapid re-stage, double-fire) must see each other's writes immediately;
   // a post-render-only mirror lets the second one read a one-render-stale value.
-  const pendingVoiceoverRef = useRef<{ file: File; asset: Asset } | null>(null);
-  const setPendingVoiceoverSync = useCallback((value: { file: File; asset: Asset } | null) => {
+  const pendingVoiceoverRef = useRef<PendingVoiceoverSync | null>(null);
+  const setPendingVoiceoverSync = useCallback((value: PendingVoiceoverSync | null) => {
     pendingVoiceoverRef.current = value;
     setPendingVoiceover(value);
   }, []);
@@ -3606,35 +3639,50 @@ export default function App() {
     };
     setPendingVoiceoverSync({ file, asset });
 
-    // Same-file detection: this exact file was already transcribed and its
-    // tokens are still cached — skip the Whisper run entirely. Apply Sync
-    // stays enabled via the lastTranscribedFileIdentity clause below.
-    const cachedTokensExist = (projectRef.current.transcriptTokens?.length ?? 0) > 0;
-    if (projectRef.current.lastTranscribedFileIdentity === incomingIdentity && cachedTokensExist) {
-      // The asset above just minted a BRAND NEW ephemeral id — startTranscription
-      // (which normally moves lastTranscribedAssetId forward) never runs on this
-      // path, so without this, lastTranscribedAssetId is left pointing at the OLD
-      // asset id forever. Once this new asset is committed by Apply Sync,
-      // transcriptionReady's id comparisons can never match again, and the button
-      // gets stuck disabled with no event left that could re-enable it.
-      setProject(p => ({ ...p, lastTranscribedAssetId: asset.id }));
-      return;
-    }
-
-    // Genuinely different file (neither guard above fired): clear the stale
-    // cached transcript so Apply Sync's gating (applySyncDisabled /
-    // cachedTokensReady) can't mistake leftover tokens — transcribed against
-    // the PREVIOUS audio — for "ready" against this one. This forces
-    // re-transcription before Apply Sync re-enables.
-    // (anchorSource demotion removed in 3e: nothing branches on anchorSource
-    // post-clean-slate, and the next sync rebuilds segments from scratch via
-    // parseProjectData anyway, so demoting the outgoing segments was dead work.)
-    setProject(p => ({
-      ...p,
-      transcriptTokens: undefined,
-    }));
-
     void (async () => {
+      // plan-v3 Wave 2 item 4 / A5 — the AUTHORITATIVE cache key is the
+      // audio's actual content hash, not name/size/lastModified: a media
+      // swap that happens to carry identical bytes (re-export, re-copy under
+      // a new name/mtime) must not force a re-transcription. Computed here,
+      // before the same-content skip decision below and before the duration
+      // probe, so a cache hit never pays for a probe it doesn't need.
+      const audioHash = await computeAudioHash(file);
+      // Ownership recheck: a later stage event may have superseded this file
+      // while the hash was computing.
+      if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
+      // Stamp the hash onto the pending record now that it's known, so
+      // downstream readers (transcriptionReady, cachedTokensReady) never
+      // need to recompute it.
+      setPendingVoiceoverSync({ file, asset, audioHash });
+
+      // Same-content detection: this exact audio was already transcribed and
+      // its tokens are still cached — skip the Whisper run entirely. Apply
+      // Sync stays enabled via the lastTranscribedAudioHash clause below.
+      const cachedTokensExist = (projectRef.current.transcriptTokens?.length ?? 0) > 0;
+      if (projectRef.current.lastTranscribedAudioHash === audioHash && cachedTokensExist) {
+        // The asset above just minted a BRAND NEW ephemeral id — startTranscription
+        // (which normally moves lastTranscribedAssetId forward) never runs on this
+        // path, so without this, lastTranscribedAssetId is left pointing at the OLD
+        // asset id forever. Once this new asset is committed by Apply Sync,
+        // transcriptionReady's id comparisons can never match again, and the button
+        // gets stuck disabled with no event left that could re-enable it.
+        setProject(p => ({ ...p, lastTranscribedAssetId: asset.id }));
+        return;
+      }
+
+      // Genuinely different content (neither guard above fired): clear the
+      // stale cached transcript so Apply Sync's gating (applySyncDisabled /
+      // cachedTokensReady) can't mistake leftover tokens — transcribed against
+      // the PREVIOUS audio — for "ready" against this one. This forces
+      // re-transcription before Apply Sync re-enables.
+      // (anchorSource demotion removed in 3e: nothing branches on anchorSource
+      // post-clean-slate, and the next sync rebuilds segments from scratch via
+      // parseProjectData anyway, so demoting the outgoing segments was dead work.)
+      setProject(p => ({
+        ...p,
+        transcriptTokens: undefined,
+      }));
+
       let duration: number;
       try {
         duration = await resolveVoiceoverDuration(asset, projectRef.current.id);
@@ -3657,7 +3705,7 @@ export default function App() {
       // a staged `File` is built over an IndexedDB-backed blob, and once that
       // backing store is released WebKit fails the read outright ("The object
       // can not be found here") on a handle that worked minutes earlier.
-      setPendingVoiceoverSync({ file, asset: { ...asset, duration } });
+      setPendingVoiceoverSync({ file, asset: { ...asset, duration }, audioHash });
       transcriptionTargetIdRef.current = asset.id;
       const outcome = await startTranscription(
         asset,
@@ -3679,6 +3727,9 @@ export default function App() {
           // project, so a duplicate attempt for the SAME project is refused
           // while switching projects still cancels-and-restarts.
           projectId: projectIdRef.current,
+          // plan-v3 Wave 2 item 4 — already computed above; avoids hashing
+          // this file a second time inside useWhisper.
+          audioHash,
           // WS2 T4.7 Requirement 3 — flush the just-written
           // `unappliedTranscript` immediately, past `usePersistProject`'s
           // 500 ms debounce.
@@ -3753,13 +3804,24 @@ export default function App() {
    * A refusal keeps the slot and IndexedDB row intact; the panel shows an
    * explicit Transcribe action instead of auto-running Whisper on load.
    */
-  const handleVoiceoverRestored = useCallback((file: File): boolean => {
+  const handleVoiceoverRestored = useCallback(async (file: File): Promise<boolean> => {
+    // plan-v3 Wave 2 item 4 — same content-hash key handleVoiceoverStaged now
+    // uses, kept in lockstep per this function's own doc comment (the
+    // predicate must stay the SAME condition as the early return it mirrors).
+    const audioHash = await computeAudioHash(file);
     const adoptable = canAdoptRestoredVoiceover({
-      fileIdentity: getFileIdentity(file),
-      lastTranscribedFileIdentity: projectRef.current.lastTranscribedFileIdentity,
+      audioHash,
+      lastTranscribedAudioHash: projectRef.current.lastTranscribedAudioHash,
       cachedTokenCount: projectRef.current.transcriptTokens?.length ?? 0,
     });
-    if (!adoptable) return false;
+    if (!adoptable) {
+      // Refused: the slot stays, showing an explicit Transcribe affordance
+      // instead. stagedVoiceoverNeedsExplicitTranscribe needs this hash at
+      // render time and can't compute it itself (hashing is async, render
+      // isn't), so it's recorded here, once, where the hash is already known.
+      setRestoredUnadoptedAudioHash(audioHash);
+      return false;
+    }
     handleVoiceoverStaged(file);
     return true;
   }, [handleVoiceoverStaged]);
@@ -3845,12 +3907,23 @@ export default function App() {
     const sceneText = staged.sceneFile
       ? stripRtfIfNeeded(await staged.sceneFile.file.text())
       : projectRef.current.sceneDetails;
+    // plan-v3 Wave 2 item 4 / B2 — the alignment half of the content-hash
+    // spine, from the SAME text just read above (post-RTF-strip, whichever
+    // of staged/persisted supplied it), never re-read.
+    const scriptHash = await computeScriptHash(scriptText, sceneText);
 
     // 2. Persist media files without touching React state.
     //    allAssets starts with existing assets so dedup checks are against the
     //    full accumulated list (prevents duplicating on re-upload or re-sync).
     const allAssets: Asset[] = [...projectRef.current.assets];
     let newVoiceoverId = projectRef.current.voiceoverId;
+    // plan-v3 Wave 2 item 4 — the staged voiceover's already-computed content
+    // hash (handleVoiceoverStaged), captured here before pendingVoiceoverRef
+    // is cleared below. undefined when this sync isn't reusing a staged
+    // pending voiceover (re-sync with no fresh staging, or the hash hasn't
+    // resolved yet) — the audioHash resolution after this block falls back
+    // to hashing voiceoverAsset.file directly in that case.
+    let stagedAudioHash: string | undefined;
     // Snapshot of pre-sync segments, used by preserveEffectFields below to carry
     // forward per-segment effect selections by assetId. Captured now, before any
     // await, so it can't observe state this same sync has already committed.
@@ -3859,6 +3932,7 @@ export default function App() {
     if (staged.voiceoverFile) {
       const pending = pendingVoiceoverRef.current;
       const reusingPending = pending !== null && pending.file === staged.voiceoverFile.file;
+      if (reusingPending) stagedAudioHash = pending!.audioHash;
       const asset = reusingPending
         ? await persistPendingVoiceoverAsset(projectRef.current.id, pending!.asset)
         : await persistFileToAsset(projectRef.current.id, staged.voiceoverFile.file, 'audio');
@@ -3915,6 +3989,22 @@ export default function App() {
       setIsProcessing(false);
       return { ok: false, message: NO_VOICEOVER_MESSAGE };
     }
+
+    // plan-v3 Wave 2 item 4 / H3 — the audio half of the content-hash spine.
+    // Three-way fallback, in order: (1) the staged voiceover's already-
+    // computed hash (the common Option-C path — Apply Sync clicked shortly
+    // after staging — never re-hash hundreds of MB a second time); (2) a
+    // fresh hash when this run has real file bytes but wasn't reusing a
+    // staged pending voiceover (a re-sync after a script-only edit, same
+    // committed audio); (3) the last recorded spine hash, valid ONLY because
+    // `cachedTokensReady` below independently proves the SAME asset id was
+    // already transcribed — asset-id identity is itself sufficient proof
+    // nothing about the audio changed when no File is available to hash.
+    const audioHash = stagedAudioHash
+      ?? (voiceoverAsset.file ? await computeAudioHash(voiceoverAsset.file) : undefined)
+      ?? (projectRef.current.lastTranscribedAssetId === voiceoverAsset.id
+          ? projectRef.current.lastSyncSpine?.audioHash
+          : undefined);
 
     // plan-v3 item 5 — STAGING boundary. Everything above this point was
     // asset persistence (files already written to durable storage by
@@ -3983,8 +4073,11 @@ export default function App() {
     //    ms-perfect. No character-based timing ever reaches the screen.
     const cachedTokensReady = !!voiceoverAsset
       && (projectRef.current.lastTranscribedAssetId === voiceoverAsset.id
-          || (!!voiceoverAsset.file
-              && projectRef.current.lastTranscribedFileIdentity === getFileIdentity(voiceoverAsset.file)))
+          // plan-v3 Wave 2 item 4 / A5 — content-hash fallback, replacing the
+          // former getFileIdentity comparison: a media swap whose bytes are
+          // identical to what was last transcribed is a cache HIT even under
+          // a new name/mtime.
+          || (audioHash !== undefined && projectRef.current.lastTranscribedAudioHash === audioHash))
       && (projectRef.current.transcriptTokens?.length ?? 0) > 0;
 
     // WS1b — empty transcript hard abort (doc §3.4/§3.11, S15): a voiceover
@@ -5061,6 +5154,16 @@ export default function App() {
       // plan-v3 item 8 — same object literal as `faWordTimings`. A follow-up
       // setProject would allow timings to exist unstamped.
       timingProvenance: nextTimingProvenance ?? prev.timingProvenance,
+      // plan-v3 Wave 2 item 4 / H3 — the content-hash spine this commit's
+      // segments were actually built from, for the "honest Apply Sync" UI
+      // gate (DropZonePanel) to compare future staged/edited content
+      // against. `audioHash` is undefined only when neither a staged file
+      // nor a File-bearing committed asset nor a prior spine could supply
+      // one (a very first sync of a project whose asset was rehydrated with
+      // no File — practically unreachable, since the no-voiceover abort
+      // above already requires a resolvable asset) — in that edge case the
+      // spine is left as it was rather than stamped with a guess.
+      lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash } : prev.lastSyncSpine,
       // WS2 T4.7 Requirement 3 — the ONLY success-side clear of the
       // unapplied-transcript record, and it sits inside the atomic commit
       // rather than after it on purpose: the record means "a finished
@@ -6269,22 +6372,88 @@ export default function App() {
     || (effectiveVoiceoverId !== undefined
         && project.lastTranscribedAssetId === effectiveVoiceoverId
         && (project.transcriptTokens?.length ?? 0) > 0)
-    // Same-file detection (handleVoiceoverStaged): a freshly staged file always
-    // gets a brand-new Asset id, so the clause above never matches it even when
-    // its content was already transcribed and Whisper was deliberately skipped.
+    // Same-content detection (handleVoiceoverStaged): a freshly staged file
+    // always gets a brand-new Asset id, so the clause above never matches it
+    // even when its content was already transcribed and Whisper was
+    // deliberately skipped. Uses the precomputed hash (plan-v3 Wave 2 item 4)
+    // — undefined until handleVoiceoverStaged's async hash resolves, in
+    // which case this clause simply can't fire yet (the id clause above, or
+    // the terminal-phase clause, cover the gap until it does).
     || (pendingVoiceover !== null
-        && project.lastTranscribedFileIdentity === getFileIdentity(pendingVoiceover.file)
+        && pendingVoiceover.audioHash !== undefined
+        && project.lastTranscribedAudioHash === pendingVoiceover.audioHash
         && (project.transcriptTokens?.length ?? 0) > 0);
   const voiceoverNeedsExplicitTranscribe = stagedVoiceoverNeedsExplicitTranscribe({
     hasStagedVoiceover: stagedVoiceoverFile !== null,
     hasPendingVoiceover: pendingVoiceover !== null,
-    fileIdentity: stagedVoiceoverFile ? getFileIdentity(stagedVoiceoverFile) : null,
-    lastTranscribedFileIdentity: project.lastTranscribedFileIdentity,
+    audioHash: restoredUnadoptedAudioHash,
+    lastTranscribedAudioHash: project.lastTranscribedAudioHash,
     cachedTokenCount: project.transcriptTokens?.length ?? 0,
   });
   const applySyncDisabled =
     (effectiveVoiceoverId !== undefined && !transcriptionReady)
     || voiceoverNeedsExplicitTranscribe;
+
+  // plan-v3 Wave 2 item 4 — "honest Apply Sync". `isStagedEmpty`
+  // (DropZonePanel) already gates the "nothing at all staged" case; this
+  // covers the gap it can't: something WAS re-staged, but its content is
+  // byte-identical to what `lastSyncSpine` already reflects (a media swap
+  // that re-copies the same audio, a script re-save with no real edit).
+  //
+  // Starts `false` (never blocks) and only flips true once BOTH halves are
+  // proven equal — an unresolved hash, a project with no prior spine yet, or
+  // any real difference all fall through to "not proven unchanged", which is
+  // the safe default: this gate exists to save a redundant sync, never to
+  // block a real one.
+  //
+  // Cheap by construction: when a slot isn't staged, that slot's OWN
+  // contribution to the spine is trivially unchanged (Apply Sync always
+  // reads the persisted project value for an unstaged slot and stamps the
+  // spine from exactly that same commit — see handleApplySyncFromFiles'
+  // step 1 / step 8), so only a slot that IS staged needs a fresh hash.
+  const [spineUnchanged, setSpineUnchanged] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const spine = project.lastSyncSpine;
+    if (!spine || (!stagedVoiceoverFile && !stagedScriptFile && !stagedSceneFile)) {
+      setSpineUnchanged(false);
+      return;
+    }
+    void (async () => {
+      let audioHash: string | undefined;
+      if (stagedVoiceoverFile) {
+        audioHash = pendingVoiceover?.file === stagedVoiceoverFile
+          ? pendingVoiceover.audioHash
+          : await computeAudioHash(stagedVoiceoverFile);
+      } else {
+        audioHash = spine.audioHash;
+      }
+      if (cancelled) return;
+
+      let scriptHash: string;
+      if (stagedScriptFile || stagedSceneFile) {
+        const scriptText = stagedScriptFile
+          ? stripRtfIfNeeded(await stagedScriptFile.text())
+          : project.script;
+        const sceneText = stagedSceneFile
+          ? stripRtfIfNeeded(await stagedSceneFile.text())
+          : project.sceneDetails;
+        if (cancelled) return;
+        scriptHash = await computeScriptHash(scriptText, sceneText);
+      } else {
+        scriptHash = spine.scriptHash;
+      }
+      if (cancelled) return;
+
+      setSpineUnchanged(audioHash !== undefined && spineEquals(spine, { audioHash, scriptHash }));
+    })();
+    return () => { cancelled = true; };
+  }, [project.lastSyncSpine, project.script, project.sceneDetails, stagedVoiceoverFile, stagedScriptFile, stagedSceneFile, pendingVoiceover]);
+  // Copy proposal (flagged for operator review, per Wave 2 house rules) —
+  // swap this string freely; nothing else depends on its exact wording.
+  const applySyncSpineUnchangedReason = spineUnchanged
+    ? 'Nothing to sync — this audio and script match your last sync.'
+    : undefined;
 
   // Wave 1 hotfix (operator-ordered) — the two Whisper model-integrity
   // failures (never 'already-running' / 'inference-failed', which keep using
@@ -7353,6 +7522,7 @@ export default function App() {
             onVoiceoverTranscribeRequested={handleVoiceoverTranscribeRequested}
             voiceoverNeedsExplicitTranscribe={voiceoverNeedsExplicitTranscribe}
             applySyncDisabled={applySyncDisabled}
+            applySyncSpineUnchangedReason={applySyncSpineUnchangedReason}
             onUndo={handleUndo}
             onRedo={handleRedo}
             canUndo={undoAvailable}
