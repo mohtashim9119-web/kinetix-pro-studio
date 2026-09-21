@@ -15,7 +15,7 @@
 // Whisper output, the same reasoning `faChunkPlan.test.ts`'s own R.5 block
 // states for its corpus cases.
 
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
@@ -27,6 +27,11 @@ import {
   acousticRunExtent,
 } from './faRunPlacementGate';
 import { computeUnscriptedRuns, computeFaChunkPlan } from './faChunkPlan';
+import {
+  __getExtractAlignmentsComputeCountForTests,
+  __resetExtractAlignmentsCacheForTests,
+  alignScenestoTranscriptAsync,
+} from './whisperService';
 import { R11_MAX_SPAN_WORD_CONF, R12_MIN_CORRECTION_SEC } from './syncConstants';
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
@@ -1363,5 +1368,57 @@ describe('acousticRunExtent — languageCode reaches isSubstantiveToken', () => 
 
     const withEs = acousticRunExtent(run, tokens, [], 'es');
     expect(withEs.onsetIndex).toBe(0); // 'π' survives under 'es' -> counted.
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 G2 completion, Unit 1 — `detectUtterancePlacementDefects` (R.13) calls
+// `alignScenestoTranscript` internally and stays fully synchronous (its ~29
+// existing test call sites above are untouched). Production
+// (`App.tsx`'s post-FA block) instead warms `extractSegmentAlignments`'
+// reference-identity memo via `alignScenestoTranscriptAsync` on the SAME
+// (parsedSegments, tokens, audioDuration, languageCode) tuple before calling
+// this function — this proves that warm-up actually lands: the async call
+// populates the memo, and R.13's own internal sync call then hits it instead
+// of re-running the Hirschberg pass, with byte-identical findings either way.
+// ---------------------------------------------------------------------------
+describe('detectUtterancePlacementDefects — warmed by alignScenestoTranscriptAsync (WS2 G2 completion, Unit 1)', () => {
+  beforeEach(() => {
+    __resetExtractAlignmentsCacheForTests();
+  });
+
+  it('a prior async warm-up on the same reference tuple is reused by R.13\'s own internal sync call (old-bug proof: fails without the memo)', async () => {
+    const f = baseFixture();
+    const committed = committedFrom(f.parsed);
+
+    // Unwarmed baseline: what R.13 finds without any prior async call.
+    const findingsCold = detectUtterancePlacementDefects(f.parsed, committed, f.tokens, f.silences, f.audioDuration);
+    expect(__getExtractAlignmentsComputeCountForTests()).toBe(1);
+
+    __resetExtractAlignmentsCacheForTests();
+
+    // Warm exactly as App.tsx's post-FA block does: same segments/tokens/
+    // audioDuration/languageCode reference tuple R.13 will pass internally.
+    await alignScenestoTranscriptAsync(f.parsed, f.tokens, f.silences, f.audioDuration, undefined);
+    expect(__getExtractAlignmentsComputeCountForTests()).toBe(1);
+
+    const findingsWarm = detectUtterancePlacementDefects(f.parsed, committed, f.tokens, f.silences, f.audioDuration);
+    // Still 1: R.13's own internal alignScenestoTranscript call hit the memo
+    // the async warm-up populated, rather than recomputing.
+    expect(__getExtractAlignmentsComputeCountForTests()).toBe(1);
+    expect(findingsWarm).toEqual(findingsCold);
+  });
+
+  it('a warm-up with a DIFFERENT languageCode does not satisfy R.13\'s own (matching the App.tsx call site, which forwards the real languageCode)', async () => {
+    const f = baseFixture();
+    const committed = committedFrom(f.parsed);
+
+    await alignScenestoTranscriptAsync(f.parsed, f.tokens, f.silences, f.audioDuration, 'es');
+    expect(__getExtractAlignmentsComputeCountForTests()).toBe(1);
+
+    // R.13 called with no languageCode (undefined) — a different cache key —
+    // must miss and recompute, not silently reuse the 'es' result.
+    detectUtterancePlacementDefects(f.parsed, committed, f.tokens, f.silences, f.audioDuration);
+    expect(__getExtractAlignmentsComputeCountForTests()).toBe(2);
   });
 });

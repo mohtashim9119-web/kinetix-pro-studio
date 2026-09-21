@@ -10,19 +10,22 @@
 // change) threads its `languageCode` parameter through to both
 // `filterMalformedTokens` and `alignScenestoTranscriptAsync` unchanged. Those
 // functions are separately proven (whisperService.languageThread.test.ts,
-// syncMatchAsync.test.ts) to thread that value into `canonicalize()`/the
-// sync `alignScenestoTranscript` it delegates to — this file closes the
-// remaining link in the chain for this specific call site.
+// whisperService.test.ts's async-twin pin tests) to thread that value into
+// `canonicalize()`/the sync `alignScenestoTranscript` it delegates to — this
+// file closes the remaining link in the chain for this specific call site.
 //
 // WS2 G2 item 2 (worker migration) repointed the internal call from the sync
 // `alignScenestoTranscript` to the async, worker-backed
-// `alignScenestoTranscriptAsync` (`../services/syncMatchAsync`) — this test
-// now mocks THAT function instead. It is a thin wrapper that immediately
-// forwards to `extractSegmentAlignmentsAsync`/`alignQueryToSubjectAsync`
-// (proven byte-identical to the sync path in `syncMatchAsync.test.ts`), so
-// mocking it here still tests exactly what this file's name promises: does
-// `alignSegmentsFromCachedTranscript` thread `languageCode` to the matcher
-// call, unchanged.
+// `alignScenestoTranscriptAsync`. G2 completion Unit 1 folded that function
+// (and `extractSegmentAlignmentsAsync`) into `whisperService.ts` itself
+// (previously a separate `syncMatchAsync.ts`, deleted — see
+// `whisperService.ts`'s own header comment for why: the async twin needs to
+// share a memo with `extractSegmentAlignments` in the same file) — this test
+// mocks it from `whisperService.ts` accordingly. It is a thin wrapper that
+// immediately forwards to `extractSegmentAlignmentsAsync`/
+// `alignQueryToSubjectAsync`, so mocking it here still tests exactly what
+// this file's name promises: does `alignSegmentsFromCachedTranscript` thread
+// `languageCode` to the matcher call, unchanged.
 //
 // `startTranscription` (useWhisper.ts:316, the other useWhisper.ts call
 // site) is NOT covered here: its languageCode wiring lives inside a
@@ -48,20 +51,12 @@ vi.mock('../services/whisperService', async (importOriginal) => {
   return {
     ...actual,
     filterMalformedTokens: vi.fn(actual.filterMalformedTokens),
-  };
-});
-
-vi.mock('../services/syncMatchAsync', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../services/syncMatchAsync')>();
-  return {
-    ...actual,
     alignScenestoTranscriptAsync: vi.fn(actual.alignScenestoTranscriptAsync),
   };
 });
 
 import { alignSegmentsFromCachedTranscript } from './useWhisper';
-import { filterMalformedTokens } from '../services/whisperService';
-import { alignScenestoTranscriptAsync } from '../services/syncMatchAsync';
+import { filterMalformedTokens, alignScenestoTranscriptAsync } from '../services/whisperService';
 import type { Asset, VideoSegment, TranscriptToken } from '../types';
 
 const audioAsset = (): Asset => ({

@@ -104,6 +104,7 @@ import {
   filterMalformedTokens,
   extractSegmentAlignments,
   alignScenestoTranscript,
+  alignScenestoTranscriptAsync,
   toAlignmentLanguageCode,
   type SegmentAlignment,
 } from './services/whisperService';
@@ -129,9 +130,10 @@ import {
 } from './services/timingProvenance';
 import type { TimingProvenance } from './types';
 import {
-  detectUnspokenScriptSegmentsFromWhisperFull,
+  detectUnspokenScriptSegmentsFromWhisperFullAsync,
   applyUnspokenScriptGate,
   R10_SKIP_REASON,
+  type UnspokenScriptFinding,
 } from './services/faUnspokenGate';
 import {
   detectAndRetimeFaVictims,
@@ -4426,16 +4428,32 @@ export default function App() {
       // Its conjunct (1) is the WHISPER alignment's own `matched`, which is why
       // `projectRef.current.transcriptTokens` (not `aligned.tokens`, which are
       // the FA tokens on this branch) is what goes in.
-      const unspokenGate = faTokens
-        ? detectUnspokenScriptSegmentsFromWhisperFull(
+      //
+      // WS2 G2 completion, Unit 1 — off-main-thread matcher. This gate's own
+      // `alignScenestoTranscript` call spread-copies its segments/silences
+      // arguments (`faUnspokenGate.ts`'s own doc comment on its async twin),
+      // which defeats `extractSegmentAlignments`' reference-identity memo —
+      // no warm-up trick applies here, so this call site uses the true async
+      // twin directly rather than the sync function.
+      let unspokenGate: { findings: UnspokenScriptFinding[]; whisperAlignments: SegmentAlignment[]; whisperTokensFiltered: TranscriptToken[] };
+      if (faTokens) {
+        try {
+          unspokenGate = await detectUnspokenScriptSegmentsFromWhisperFullAsync(
             aligned.segments,
             projectRef.current.transcriptTokens!,
             faTokens,
             aligned.silences,
             audioDuration,
             toAlignmentLanguageCode(projectRef.current.language),
-          )
-        : { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
+            syncAbortController.signal,
+          );
+        } catch (err) {
+          if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
+          throw err;
+        }
+      } else {
+        unspokenGate = { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
+      }
       const unspokenScript = unspokenGate.findings;
       const coverageAfterR10 = applyUnspokenScriptGate(aligned.coverage, unspokenScript);
       if (unspokenScript.length > 0) {
@@ -4724,6 +4742,29 @@ export default function App() {
           await computeRunContextAsync(
             anchorTimed, projectRef.current.transcriptTokens!, aligned.silences, audioDuration,
             undefined, syncAbortController.signal,
+          );
+        } catch (err) {
+          if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
+          throw err;
+        }
+
+        // WS2 G2 completion, Unit 1 — a SECOND, independent matcher pass:
+        // `detectUtterancePlacementDefects` (R.13, below) calls
+        // `alignScenestoTranscript` directly, not through `computeRunContext`
+        // — a different word-tokenization pipeline (`extractSegmentAlignments`'s
+        // own, not `computeRunContext`'s parallel-but-separate one), so it
+        // cannot share the warm-up above. Same `anchorTimed`/`transcriptTokens`/
+        // `aligned.silences`/`audioDuration` R.13 will use, WITH the real
+        // languageCode this time (R.13 forwards it, unlike R.11's
+        // `computeFaChunkPlan`/`computeRuns` calls, which don't — the
+        // pre-existing languageCode split logged in the G2 report). Warmed
+        // here, right after the first, so both off-thread passes have the
+        // maximum possible head start before R.13's synchronous call is
+        // reached — R.10 through R.12 do no Hirschberg work of their own.
+        try {
+          await alignScenestoTranscriptAsync(
+            anchorTimed, projectRef.current.transcriptTokens!, aligned.silences, audioDuration,
+            toAlignmentLanguageCode(projectRef.current.language), syncAbortController.signal,
           );
         } catch (err) {
           if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);

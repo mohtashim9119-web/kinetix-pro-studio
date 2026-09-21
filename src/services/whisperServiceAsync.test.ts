@@ -3,22 +3,34 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-// WS2 Wave 2 Group 2, item 2 — the async, worker-backed matcher entry points
-// for the DEFAULT Whisper-timing path (`extractSegmentAlignmentsAsync`,
-// `alignScenestoTranscriptAsync`). This test environment has no global
-// `Worker` (verified: `typeof Worker === 'undefined'` under vitest/Node), so
-// `hirschbergMatchClient.ts` takes its documented fallback branch — the same
-// `alignQueryToSubject` call, synchronous, wrapped in a resolved Promise.
-// That is sufficient to pin output equality: `extractSegmentAlignmentsAsync`
-// and `alignScenestoTranscriptAsync` share `buildSegmentAlignmentInputs` and
-// `applyNeighborAnchorOverride` with their sync counterparts, so the fallback
-// path proves the migration changed nothing but which call ran.
+// WS2 Wave 2 Group 2 — the async, worker-backed matcher entry points for the
+// DEFAULT Whisper-timing path (`extractSegmentAlignmentsAsync`,
+// `alignScenestoTranscriptAsync`, both in `whisperService.ts`). This test
+// environment has no global `Worker` (verified: `typeof Worker ===
+// 'undefined'` under vitest/Node), so `hirschbergMatchClient.ts` takes its
+// documented fallback branch — the same `alignQueryToSubject` call,
+// synchronous, wrapped in a resolved Promise. That is sufficient to pin
+// output equality: `extractSegmentAlignmentsAsync` and
+// `alignScenestoTranscriptAsync` share `buildSegmentAlignmentInputs` and
+// `applyNeighborAnchorOverride` with their sync counterparts, so the
+// fallback path proves the migration changed nothing but which call ran.
+//
+// Originally a separate file (`syncMatchAsync.ts`/`.test.ts`) — folded into
+// `whisperService.ts` at G2 completion Unit 1 so `extractSegmentAlignmentsAsync`
+// can share `extractSegmentAlignments`' reference-identity memo (see that
+// file's own header comment for why). This test file moved with it.
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
-import { alignScenestoTranscript, extractSegmentAlignments } from './whisperService';
-import { alignScenestoTranscriptAsync, extractSegmentAlignmentsAsync } from './syncMatchAsync';
+import {
+  __getExtractAlignmentsComputeCountForTests,
+  __resetExtractAlignmentsCacheForTests,
+  alignScenestoTranscript,
+  alignScenestoTranscriptAsync,
+  extractSegmentAlignments,
+  extractSegmentAlignmentsAsync,
+} from './whisperService';
 import { MatchCancelledError } from './hirschbergMatchClient';
 
 function seg(id: string, text: string, locked = false): VideoSegment {
@@ -30,6 +42,10 @@ function token(text: string, startSec: number, endSec: number): TranscriptToken 
 }
 
 describe('extractSegmentAlignmentsAsync (worker migration, zero-output-change pin)', () => {
+  beforeEach(() => {
+    __resetExtractAlignmentsCacheForTests();
+  });
+
   it('produces byte-identical AlignResult[] to the sync path on a multi-segment fixture', async () => {
     const segments = [
       seg('s0', 'the quick brown fox'),
@@ -40,6 +56,7 @@ describe('extractSegmentAlignmentsAsync (worker migration, zero-output-change pi
     const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.4, i * 0.4 + 0.35));
 
     const sync = extractSegmentAlignments(segments, tokens, 6);
+    __resetExtractAlignmentsCacheForTests();
     const async_ = await extractSegmentAlignmentsAsync(segments, tokens, 6);
 
     expect(async_).toEqual(sync);
@@ -61,9 +78,28 @@ describe('extractSegmentAlignmentsAsync (worker migration, zero-output-change pi
     await expect(extractSegmentAlignmentsAsync(segments, tokens, 1, undefined, controller.signal))
       .rejects.toBeInstanceOf(MatchCancelledError);
   });
+
+  it('warms the memo: the async call populates it, and the FOLLOWING sync call on the same reference tuple hits it (old-bug proof: fails without the memo write)', async () => {
+    const segments = [seg('s0', 'the quick brown fox'), seg('s1', 'jumps over the lazy dog')];
+    const words = segments.flatMap(s => s.text.split(' '));
+    const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.4, i * 0.4 + 0.35));
+
+    const asyncResult = await extractSegmentAlignmentsAsync(segments, tokens, 4);
+    expect(__getExtractAlignmentsComputeCountForTests()).toBe(1);
+
+    const syncResult = extractSegmentAlignments(segments, tokens, 4);
+    // Still 1: the sync call hit the memo the async call warmed, rather than
+    // recomputing.
+    expect(__getExtractAlignmentsComputeCountForTests()).toBe(1);
+    expect(syncResult).toEqual(asyncResult);
+  });
 });
 
 describe('alignScenestoTranscriptAsync (worker migration, zero-output-change pin)', () => {
+  beforeEach(() => {
+    __resetExtractAlignmentsCacheForTests();
+  });
+
   it('produces byte-identical SegmentAlignment[] to the sync path, including the neighbor-anchor override step', async () => {
     const segments = [
       seg('s0', 'the quick brown fox'),
@@ -75,6 +111,7 @@ describe('alignScenestoTranscriptAsync (worker migration, zero-output-change pin
     const silences: SilenceInterval[] = [{ startSec: 1.9, endSec: 2.3 }];
 
     const sync = alignScenestoTranscript(segments, tokens, silences, 6);
+    __resetExtractAlignmentsCacheForTests();
     const async_ = await alignScenestoTranscriptAsync(segments, tokens, silences, 6);
 
     expect(async_).toEqual(sync);
@@ -95,6 +132,7 @@ describe('alignScenestoTranscriptAsync (worker migration, zero-output-change pin
     const tokens: TranscriptToken[] = words.map((w, i) => token(w, i * 0.4, i * 0.4 + 0.35));
 
     const sync = alignScenestoTranscript(segments, tokens, [], 4);
+    __resetExtractAlignmentsCacheForTests();
     const async_ = await alignScenestoTranscriptAsync(segments, tokens, [], 4);
     expect(async_).toEqual(sync);
     expect(sync[0]!.t1).not.toBe(sync[1]!.t0);

@@ -61,7 +61,7 @@
 // stays a gapless partition and Sigma stays audioDuration.
 // ---------------------------------------------------------------------------
 
-import { filterMalformedTokens, alignScenestoTranscript } from './whisperService';
+import { filterMalformedTokens, alignScenestoTranscript, alignScenestoTranscriptAsync } from './whisperService';
 import { R10_MAX_WORD_CONF, R10_MIN_WORD_COUNT } from './syncConstants';
 import type { SegmentAlignment, AlignmentLanguageCode } from './whisperService';
 import type { SilenceInterval } from './silenceDetector';
@@ -194,6 +194,42 @@ export function detectUnspokenScriptSegmentsFromWhisperFull(
   const usable = filterMalformedTokens([...whisperTokens], audioDuration, languageCode).tokens;
   if (usable.length === 0) return { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
   const alignments = alignScenestoTranscript([...segments], usable, [...silences], audioDuration, languageCode);
+  const findings = detectUnspokenScriptSegments(segments, alignments, faTokens);
+  return { findings, whisperAlignments: alignments, whisperTokensFiltered: usable };
+}
+
+/**
+ * Async, worker-backed twin of `detectUnspokenScriptSegmentsFromWhisperFull`
+ * (WS2 G2 completion, Unit 1 — R.10, off-main-thread). NOT a "warm the memo,
+ * then call the sync version" wrapper like `detectUtterancePlacementDefects`'s
+ * treatment: the sync version spreads its `segments`/`silences` arguments
+ * into new arrays (`[...segments]`, `[...silences]`) before calling
+ * `alignScenestoTranscript`, which breaks `extractSegmentAlignments`'
+ * reference-identity memo on purpose (defends against the possibility of
+ * this call's own arrays being mutated by something else later — unrelated
+ * to this migration, not touched here). A true async twin is the only shape
+ * that works: identical body, `alignScenestoTranscriptAsync` in place of the
+ * sync call, same spread-copy convention preserved exactly.
+ *
+ * `signal`, aborted before dispatch or mid-flight, rejects with
+ * `MatchCancelledError` (`hirschbergMatchClient.ts`) — the caller must treat
+ * that as this run's own cancelled outcome.
+ */
+export async function detectUnspokenScriptSegmentsFromWhisperFullAsync(
+  segments: readonly VideoSegment[],
+  whisperTokens: readonly TranscriptToken[],
+  faTokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  languageCode?: AlignmentLanguageCode,
+  signal?: AbortSignal,
+): Promise<{ findings: UnspokenScriptFinding[]; whisperAlignments: SegmentAlignment[]; whisperTokensFiltered: TranscriptToken[] }> {
+  if (segments.length === 0 || faTokens.length === 0 || whisperTokens.length === 0) {
+    return { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
+  }
+  const usable = filterMalformedTokens([...whisperTokens], audioDuration, languageCode).tokens;
+  if (usable.length === 0) return { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
+  const alignments = await alignScenestoTranscriptAsync([...segments], usable, [...silences], audioDuration, languageCode, signal);
   const findings = detectUnspokenScriptSegments(segments, alignments, faTokens);
   return { findings, whisperAlignments: alignments, whisperTokensFiltered: usable };
 }

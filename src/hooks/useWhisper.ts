@@ -2,14 +2,13 @@ import { useCallback, useRef, useState } from 'react';
 import {
   transcribeWithProgress,
   classifyWhisperFailure,
-  alignScenestoTranscript,
+  alignScenestoTranscriptAsync,
   distributeSegmentTimes,
   filterMalformedTokens,
   toAlignmentLanguageCode,
   type SegmentAlignment,
   type AlignmentLanguageCode,
 } from '../services/whisperService';
-import { alignScenestoTranscriptAsync } from '../services/syncMatchAsync';
 import { detectSilences } from '../services/silenceDetector';
 import type { SilenceInterval, SilenceDetectResult } from '../services/silenceDetector';
 import { applyAnchorBasedTiming, getFileIdentity } from '../services/syncEngine';
