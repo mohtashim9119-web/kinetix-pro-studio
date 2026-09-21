@@ -338,6 +338,13 @@ async function runFaAttempt(
       };
       signal?.addEventListener('abort', onAbort, { once: true });
       channel.onmessage = (msg) => {
+        // Wave 1 hotfix FIX 3 — detach the abort listener ONLY on a TERMINAL
+        // event. This used to run on every message, so the first per-chunk
+        // `Progress` silently disarmed cancel for the rest of the run: an
+        // early Cancel (before any chunk finished) worked, a Cancel minutes
+        // into a long project did nothing and the run continued to commit
+        // (`forcedAlignmentRun.test.ts`'s late-cancel case is the repro).
+        if (msg.event === 'Progress') return;
         signal?.removeEventListener('abort', onAbort);
         if (msg.event === 'Done') {
           resolve(msg.data);
