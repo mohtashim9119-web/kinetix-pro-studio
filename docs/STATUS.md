@@ -69,6 +69,12 @@ has a STATUS.md citation:
 - CLOSED (Wave 1, `5243e78`) — `fa-dev-digest-memo-reset-race` (Flake A): per-test digest memo namespacing / isolation in `fa_dev.rs` test harness.
 - CLOSED (Wave 1, `c6c7428`) — `whisper-terminal-buffer-cap-eviction-race` (Flake B): terminal attach buffer test isolation in `whisper.rs`.
 
+**Wave 1 formal close (2026-09-21, merge `e039c4d`, `ws1-wave1-hotfix` → `main`).** Six hotfixes plus a rebuilt end-to-end test layer closed the operator's manual-verification findings on top of the `ws1-wave1` landing: R.10-skipped placeholder gap (`a80cc74`), typed whisper model-not-found (`faf1d33`), late whole-run cancel abort-listener fix (`8e199d4`), FA victim re-timing (`18b3d5f`), infeasible-chunk serde snake_case fix (`1fd9c98`), fail-loud whisper model-failure modal (`fb51358`), and a real end-to-end FA-arm test (`0c85e6d`). The `applySyncCancelInvariant.test.ts` setProject-count invariant (stale at 3 after `18b3d5f`'s victim-pause branch) was found on first full-suite run and fixed pre-merge (`bb8b805`), not left open. Operator manual verification passed, including the new whisper fail-loud dialog — this is the acceptance gate per standing ruling. Canonical gate numbers from `main` at merge tip: `npm test` 4027 passed / 78 skipped / 0 failed; `cargo test` 449/0/5; `cargo test --features fa-inference` 536/0/35; `tsc --noEmit` / release build / `vite build` all clean.
+
+### Open Bugs — Wave 2 queue (added at Wave 1 close, 2026-09-21)
+- [OPEN] Settings model-status divergence — `whisper_model_status` checks storage-root only while `model_path` resolves 5 locations; dev builds mask a storage-root rename. Fold into the Wave 2 Settings Sync tab rebuild. Standing ruling reaffirmed 2026-09-21.
+- [OPEN] Per-scene pre-flight gate (operator design) — script word-count vs. its audio window (~2-3 words/sec norm); impossible density (e.g. 100 words in a 10s window) warns BEFORE FA runs; warn-only, actionable copy. Sharpens the planned WPM + pre-FA coverage checks.
+
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03
 - [DEFERRED] Bounded-memory options for residual OOM (capped `FaModelCache` or process isolation) — pending owner call
