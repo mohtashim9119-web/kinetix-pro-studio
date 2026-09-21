@@ -112,6 +112,7 @@ import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunk
 import { computeFaChunkPlan, computeRunContextAsync } from './services/faChunkPlan';
 import type { UnscriptedRun } from './services/faChunkPlan';
 import { MatchCancelledError } from './services/hirschbergMatchClient';
+import { matchEtaStageMessage } from './services/matchEta';
 import type { FaLanguageCode } from './services/faTextNormalize';
 import {
   isFaGateOpenForProject, isFaEnabledForProject, isFaCapable, resolveFaLanguage,
@@ -1882,6 +1883,12 @@ export default function App() {
     catch { return 0; }
   });
   const [isProcessing, setIsProcessing] = useState(false);
+  // WS2 G2 completion, Unit 3 (operator-approved) — a swappable status line
+  // shown by SyncLoadingOverlay only when the matcher's measured-ETA
+  // estimate (matchEta.ts) clears MATCH_ETA_THRESHOLD_MS. null the rest of
+  // the time (the common case), so the overlay falls back to its plain
+  // "Preparing your project…" copy — purely additive, no behavior change.
+  const [syncStageMessage, setSyncStageMessage] = useState<string | null>(null);
   // plan-v3 item 4 — the currently-shown SyncPausedDialog's record, or null
   // when no run-level FA failure is awaiting an answer. Driven by
   // `faSyncPauseStore.ts` (restart-safe, app/session-scoped) so a pause the
@@ -3841,6 +3848,9 @@ export default function App() {
     const staged: StagedFiles = stagedFilesRef.current;
     syncMark('applySync:entry', { reset: true });
     setIsProcessing(true);
+    // WS2 G2 completion, Unit 3 — clean start every run: never carries a
+    // stale ETA message from a previous sync into this one's overlay.
+    setSyncStageMessage(null);
 
     // plan-v3 item 4 — a fresh Apply Sync supersedes whatever a PRIOR run
     // was asking about; clear it before this run does anything else, so a
@@ -4225,6 +4235,10 @@ export default function App() {
             // `{status:'cancelled'}` rather than a 'paused' run-level
             // failure.
             syncAbortController.signal,
+            // WS2 G2 completion, Unit 2 — single-flight detectSilences: lets
+            // this run's silence scan be shared with `alignFromCache` below
+            // (same audioHash, same audio) instead of decoding it twice.
+            audioHash,
           )
         : {
             status: 'degraded',
@@ -4374,20 +4388,39 @@ export default function App() {
       // surfaced here as this run's own typed cancelled outcome — the same
       // guarantee every earlier check gives, now extended through the
       // matcher itself rather than stopping short of it.
+      // WS2 G2 completion, Unit 3 (operator-approved) — additive only: a
+      // stage status line when the fitted measured-ETA (matchEta.ts) clears
+      // the ~2s threshold. Word counts are a cheap estimate (script text
+      // split on whitespace; transcript/FA token count as the subject-side
+      // proxy) — precise enough for a "this will take a while" line,
+      // nowhere near precise enough (or used) for anything behavior-
+      // affecting. Never blocks, never caps, no change below the threshold.
+      const matcherTokensForRun = faTokens ?? projectRef.current.transcriptTokens!;
+      const scriptWordCountForEta = anchorTimed.reduce(
+        (n, s) => n + (s.text?.trim() ? s.text.trim().split(/\s+/).length : 0), 0,
+      );
+      setSyncStageMessage(matchEtaStageMessage(scriptWordCountForEta, matcherTokensForRun.length));
+
       let aligned: Awaited<ReturnType<typeof alignFromCache>>;
       try {
         aligned = await alignFromCache(
           voiceoverAsset!,
           anchorTimed,
-          faTokens ?? projectRef.current.transcriptTokens!,
+          matcherTokensForRun,
           audioDuration,
           anchorSourceForRun,
           toAlignmentLanguageCode(projectRef.current.language),
           syncAbortController.signal,
+          // WS2 G2 completion, Unit 2 — shares this run's detectSilences
+          // pass with runForcedAlignmentForSync above (same audioHash, same
+          // audio) instead of decoding it a second time.
+          audioHash,
         );
       } catch (err) {
         if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
         throw err;
+      } finally {
+        setSyncStageMessage(null);
       }
 
       // WS1b — bidirectional coverage metric (§3.3) + two-signal abort gate
@@ -4437,6 +4470,10 @@ export default function App() {
       // twin directly rather than the sync function.
       let unspokenGate: { findings: UnspokenScriptFinding[]; whisperAlignments: SegmentAlignment[]; whisperTokensFiltered: TranscriptToken[] };
       if (faTokens) {
+        // WS2 G2 completion, Unit 3 — same additive ETA line as the other
+        // matcher passes, for this gate's own alignScenestoTranscriptAsync
+        // call.
+        setSyncStageMessage(matchEtaStageMessage(scriptWordCountForEta, projectRef.current.transcriptTokens!.length));
         try {
           unspokenGate = await detectUnspokenScriptSegmentsFromWhisperFullAsync(
             aligned.segments,
@@ -4450,6 +4487,8 @@ export default function App() {
         } catch (err) {
           if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
           throw err;
+        } finally {
+          setSyncStageMessage(null);
         }
       } else {
         unspokenGate = { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
@@ -4725,6 +4764,12 @@ export default function App() {
       // real chunk plan FA was run against — required for the detector's
       // own word-index attribution to mean anything.
       if (faTokens) {
+        // WS2 G2 completion, Unit 3 (operator-approved) — same additive
+        // ETA line as the default-path match above, for this block's own
+        // two off-thread passes (computeRunContextAsync,
+        // alignScenestoTranscriptAsync below).
+        setSyncStageMessage(matchEtaStageMessage(scriptWordCountForEta, faTokens.length));
+
         // WS2 G2 item 2 — off-main-thread matcher. computeRunExtents,
         // detectSeamFitDefects, detectRunPlacementDefects and
         // detectUtterancePlacementDefects below all call, directly or via
@@ -4769,6 +4814,8 @@ export default function App() {
         } catch (err) {
           if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
           throw err;
+        } finally {
+          setSyncStageMessage(null);
         }
 
         // WS1 Session S, ruling R-AP — THE RUN-EDGE EXCLUSION INVARIANT.
@@ -8617,7 +8664,7 @@ export default function App() {
         </div>
       )}
 
-      <SyncLoadingOverlay isProcessing={isProcessing} onCancel={handleCancelSync} />
+      <SyncLoadingOverlay isProcessing={isProcessing} onCancel={handleCancelSync} stageMessage={syncStageMessage} />
 
       {faPauseDialog && (
         <SyncPausedDialog
