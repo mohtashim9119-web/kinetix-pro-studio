@@ -4587,54 +4587,6 @@ export default function App() {
       // above (built before this array was final); patched in place below
       // rather than rebuilding the whole array, so nothing else about their
       // position or the surrounding entries changes.
-      // Wave 1 hotfix FIX 1 — a skipped scene that got a placeholder slot
-      // absorbed into NOTHING, so its entry says where its slot is instead of
-      // naming an absorbing clip. The absorbed-gap patch below still applies
-      // to any skip that stayed dropped (Whisper arm, or an unplaceable one).
-      const placeholderBySkipIndex = new Map(skippedScenePlaceholders.map(p => [p.segmentIndex, p]));
-      if (skipped.length > 0 && (absorbedGapsByHostId.size > 0 || placeholderBySkipIndex.size > 0)) {
-        const absorbedInfoBySkipIndex = new Map<number, AbsorbedGapLogInfo>();
-        for (const [hostId, gaps] of absorbedGapsByHostId) {
-          const hostDisplayIndex = finalTimedSegments.findIndex(s => s.id === hostId);
-          if (hostDisplayIndex < 0) continue;
-          // WS2 ws2-27, option (a) + gated note — every gap in `gaps` shares
-          // the same `otherNeighborId` (absorbedGaps.ts's own invariant, same
-          // as `span`/`gapAudio` above), so this is resolved once per host,
-          // not once per skipped record. `kept` (pre-boundary-snap) and
-          // `finalTimedSegments` (post-snap) are the same before/after pair
-          // `measureOtherNeighborGain` needs; only a gain that exceeds
-          // MIN_SEGMENT_DURATION becomes a note — the operator's own decision
-          // for what counts as "the other clip visibly moved too".
-          const otherNeighborId = gaps[0]?.otherNeighborId;
-          let otherNeighbor: AbsorbedGapLogInfo['otherNeighbor'];
-          if (otherNeighborId) {
-            const otherDisplayIndex = finalTimedSegments.findIndex(s => s.id === otherNeighborId);
-            const gainSec = measureOtherNeighborGain(hostId, otherNeighborId, kept, finalTimedSegments);
-            if (otherDisplayIndex >= 0 && gainSec !== undefined && gainSec > MIN_SEGMENT_DURATION) {
-              otherNeighbor = { displayIndex: otherDisplayIndex, gainSec };
-            }
-          }
-          for (const gap of gaps) {
-            const skipRecord = skipped.find(r => aligned.segments[r.segmentIndex]?.id === gap.segmentId);
-            if (skipRecord && !placeholderBySkipIndex.has(skipRecord.segmentIndex)) {
-              absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
-                hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
-                otherNeighbor,
-              });
-            }
-          }
-        }
-        const correctedSkipEntries = buildSkipLogEntries(
-          syncRunId, skipped, syncRunAt, absorbedInfoBySkipIndex, placeholderBySkipIndex,
-        );
-        const correctedByIndex = new Map(correctedSkipEntries.map(e => [e.segmentIndex, e]));
-        pendingLogEntries = pendingLogEntries.map(e =>
-          e.type === 'skip' && e.segmentIndex !== undefined && correctedByIndex.has(e.segmentIndex)
-            ? correctedByIndex.get(e.segmentIndex)!
-            : e
-        );
-      }
-
       // WS1 R.11 (faSeamFitGate.ts) — CHUNK-FIT BOUNDARY CORRECTION. Runs
       // ONLY when FA actually produced the tokens (mirrors R.10's own
       // gating) and only AFTER the final committed array exists, since
@@ -4875,6 +4827,73 @@ export default function App() {
             ...buildRunEdgeViolationLogEntries(syncRunId, runEdgeViolations, finalTimedSegments, syncRunAt),
           );
         }
+      }
+
+      // Wave 1 hotfix FIX 1 — a skipped scene that got a placeholder slot
+      // absorbed into NOTHING, so its entry says where its slot is instead of
+      // naming an absorbing clip. The absorbed-gap patch below still applies
+      // to any skip that stayed dropped (Whisper arm, or an unplaceable one).
+      //
+      // FIX 1 REDO round 3 — MOVED HERE (was right after `filterToCovered
+      // Segments`, before R.11-R.13/placeholder-insertion/R.14-R.15 had run).
+      // `skippedScenePlaceholders` is only populated inside the `if
+      // (faTokens)` block above (`insertSkippedScenePlaceholders`'s own
+      // assignment); reading it before that block ran always saw its
+      // initial `[]`, so `placeholderBySkipIndex` was always empty and
+      // `buildSkipLogEntries` always fell through to its "Absorbed..."
+      // branch — even on a run where a placeholder was correctly inserted
+      // into `finalTimedSegments` (verified against a real committed
+      // project: the skipped segment sat exactly at [prevSegment.end,
+      // nextSegment.start], but its own sync-log entry still read
+      // "Absorbed ... Clip 2 also holds ..."). Placed here, after the whole
+      // `if (faTokens)` stage (R.11-R.13, placeholder insertion, R.14/R.15,
+      // the R-AP whole-stage check) has finished, so both
+      // `skippedScenePlaceholders` and `finalTimedSegments` are genuinely
+      // final — the same "against the final committed array, never an
+      // intermediate one" rule the WS2 ws2-25 Commit 5 note above already
+      // states for this exact correction.
+      const placeholderBySkipIndex = new Map(skippedScenePlaceholders.map(p => [p.segmentIndex, p]));
+      if (skipped.length > 0 && (absorbedGapsByHostId.size > 0 || placeholderBySkipIndex.size > 0)) {
+        const absorbedInfoBySkipIndex = new Map<number, AbsorbedGapLogInfo>();
+        for (const [hostId, gaps] of absorbedGapsByHostId) {
+          const hostDisplayIndex = finalTimedSegments.findIndex(s => s.id === hostId);
+          if (hostDisplayIndex < 0) continue;
+          // WS2 ws2-27, option (a) + gated note — every gap in `gaps` shares
+          // the same `otherNeighborId` (absorbedGaps.ts's own invariant, same
+          // as `span`/`gapAudio` above), so this is resolved once per host,
+          // not once per skipped record. `kept` (pre-boundary-snap) and
+          // `finalTimedSegments` (post-snap) are the same before/after pair
+          // `measureOtherNeighborGain` needs; only a gain that exceeds
+          // MIN_SEGMENT_DURATION becomes a note — the operator's own decision
+          // for what counts as "the other clip visibly moved too".
+          const otherNeighborId = gaps[0]?.otherNeighborId;
+          let otherNeighbor: AbsorbedGapLogInfo['otherNeighbor'];
+          if (otherNeighborId) {
+            const otherDisplayIndex = finalTimedSegments.findIndex(s => s.id === otherNeighborId);
+            const gainSec = measureOtherNeighborGain(hostId, otherNeighborId, kept, finalTimedSegments);
+            if (otherDisplayIndex >= 0 && gainSec !== undefined && gainSec > MIN_SEGMENT_DURATION) {
+              otherNeighbor = { displayIndex: otherDisplayIndex, gainSec };
+            }
+          }
+          for (const gap of gaps) {
+            const skipRecord = skipped.find(r => aligned.segments[r.segmentIndex]?.id === gap.segmentId);
+            if (skipRecord && !placeholderBySkipIndex.has(skipRecord.segmentIndex)) {
+              absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
+                hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
+                otherNeighbor,
+              });
+            }
+          }
+        }
+        const correctedSkipEntries = buildSkipLogEntries(
+          syncRunId, skipped, syncRunAt, absorbedInfoBySkipIndex, placeholderBySkipIndex,
+        );
+        const correctedByIndex = new Map(correctedSkipEntries.map(e => [e.segmentIndex, e]));
+        pendingLogEntries = pendingLogEntries.map(e =>
+          e.type === 'skip' && e.segmentIndex !== undefined && correctedByIndex.has(e.segmentIndex)
+            ? correctedByIndex.get(e.segmentIndex)!
+            : e
+        );
       }
 
       // R.5's staged entries, built now that `finalTimedSegments` is final and
