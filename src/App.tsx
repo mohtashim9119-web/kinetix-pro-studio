@@ -127,10 +127,16 @@ import {
 } from './services/timingProvenance';
 import type { TimingProvenance } from './types';
 import {
-  detectUnspokenScriptSegmentsFromWhisper,
+  detectUnspokenScriptSegmentsFromWhisperFull,
   applyUnspokenScriptGate,
   R10_SKIP_REASON,
 } from './services/faUnspokenGate';
+import {
+  detectAndRetimeFaVictims,
+  applyVictimReplacement,
+  allCoveredSegmentsAreVictims,
+  type FaVictimPauseReason,
+} from './services/faVictimGate';
 import { detectSeamFitDefects, applySeamFitCorrections } from './services/faSeamFitGate';
 import {
   computeRunExtents,
@@ -145,6 +151,11 @@ import {
   applyUtterancePlacementCorrections,
 } from './services/faRunPlacementGate';
 import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './services/faAnchorTrustGate';
+import {
+  insertSkippedScenePlaceholders,
+  stampEstimatedWordTimings,
+  type SkippedScenePlaceholder,
+} from './services/skippedScenePlaceholders';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
 import { computeAbsorbedGaps, measureOtherNeighborGain } from './services/absorbedGaps';
 import { splitSelectedSegment, deleteSelectedSegment } from './services/segmentSplitDelete';
@@ -195,6 +206,7 @@ import {
   buildAnchorTrustLogEntries,
   buildRunEdgeViolationLogEntries,
   buildCtcInfeasibleLogEntry,
+  buildFaVictimRetimedLogEntry,
 } from './services/syncLog';
 import { canLockSegment, findPartitionViolations, repairTimelineGaps, MAX_REPAIRABLE_GAP_SEC, PARTITION_EPSILON_SEC } from './services/timelinePartition';
 import { buildWaveformPipeline } from './services/waveformPipeline';
@@ -286,6 +298,7 @@ import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
 import { SyncLoadingOverlay } from './components/SyncLoadingOverlay';
 import { SyncPausedDialog } from './components/SyncPausedDialog';
+import { WhisperModelFailureDialog, WHISPER_MODEL_FAILURE_COPY } from './components/WhisperModelFailureDialog';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
 );
@@ -321,6 +334,7 @@ import { checkExistingCheckpoint, type ReexportCheckOutcome } from './services/w
 import { useWhisper } from './hooks/useWhisper';
 import { usePlayback } from './hooks/usePlayback';
 import { TranscriptionBar } from './components/TranscriptionBar';
+import { getWhisperModelStatus } from './services/modelDownload';
 import { isTauri, probeAudioDuration, probeVideoFps, TauriFfmpeg } from './services/tauriFfmpeg';
 import { formatBytes } from './services/webcodecsExport/diskFull';
 import { readUiState, patchUiState } from './services/uiStateStore';
@@ -1409,9 +1423,15 @@ export function buildSkipLogEntries(
   skipped: SkippedSegmentRecord[],
   timestamp: number = Date.now(),
   absorbedInfoBySkipIndex?: ReadonlyMap<number, AbsorbedGapLogInfo>,
+  // Wave 1 hotfix FIX 1 — skips that kept an Estimated placeholder slot.
+  // A record present here is NEVER also absorbed (App.tsx builds the two
+  // maps disjointly); the entry names the slot and links to the
+  // placeholder segment itself rather than to an absorbing neighbour.
+  placeholderBySkipIndex?: ReadonlyMap<number, SkippedScenePlaceholder>,
 ): SyncLogEntry[] {
   return skipped.map(record => {
-    const absorbed = absorbedInfoBySkipIndex?.get(record.segmentIndex);
+    const placeholder = placeholderBySkipIndex?.get(record.segmentIndex);
+    const absorbed = placeholder ? undefined : absorbedInfoBySkipIndex?.get(record.segmentIndex);
     // WS2 ws2-25 Commit 5 — TWO NUMBERING SPACES, both named explicitly.
     // "S{n}" is record.segmentIndex+1, the ORIGINAL SCRIPT POSITION (the scene
     // the user wrote — this record has no other index, since a dropped scene
@@ -1425,6 +1445,14 @@ export function buildSkipLogEntries(
     const sTag = `S${record.segmentIndex + 1}`;
     const clipTag = absorbed ? ` / Clip ${absorbed.hostDisplayIndex + 1}` : '';
     let message = `${sTag}${clipTag} skipped — ${record.reason}.`;
+    if (placeholder) {
+      const slotDuration = placeholder.slotEndSec - placeholder.slotStartSec;
+      message += ` Kept as an Estimated placeholder ${placeholder.slotStartSec.toFixed(3)}s → `
+        + `${slotDuration.toFixed(3)}s → ${placeholder.slotEndSec.toFixed(3)}s; neighbours untouched`
+        + (placeholder.estimatedWordCount > 0
+          ? ` (${placeholder.estimatedWordCount} word${placeholder.estimatedWordCount === 1 ? '' : 's'} marked Estimated).`
+          : '.');
+    }
     if (absorbed) {
       const gapDuration = absorbed.span.end - absorbed.span.start;
       message += ` Absorbed ${absorbed.span.start.toFixed(3)}s → ${gapDuration.toFixed(3)}s → `
@@ -1470,8 +1498,15 @@ export function buildSkipLogEntries(
           confidence: record.confidence,
           longestRun: record.longestRun,
         }),
-        segmentId: absorbed?.hostSegmentId,
+        segmentId: placeholder?.segmentId ?? absorbed?.hostSegmentId,
         absorbedByDisplayIndex: absorbed?.hostDisplayIndex,
+        ...(placeholder ? {
+          ruleDetail: {
+            spanStartSec: placeholder.slotStartSec,
+            spanEndSec: placeholder.slotEndSec,
+            reason: 'Estimated placeholder slot — the reserved gap between the neighbours\' own spoken words.',
+          },
+        } : {}),
       },
       timestamp,
     );
@@ -1847,7 +1882,7 @@ export default function App() {
   // silent standing default (see forcedAlignmentRun.ts's FaDegradedReason
   // 'user-chose-whisper' doc comment). Carries the ORIGINAL pause reason
   // (not just a boolean) so the log entry can say what was actually skipped.
-  const faForceWhisperOnceRef = useRef<FaFailureKind | null>(null);
+  const faForceWhisperOnceRef = useRef<FaFailureKind | FaVictimPauseReason | null>(null);
   // plan-v3 item 5 — whole-run cancel. A fresh controller is created at the
   // start of every handleApplySyncFromFiles call and overwrites this ref
   // unconditionally, so the Cancel button always aborts the CURRENTLY
@@ -4005,6 +4040,12 @@ export default function App() {
     // ran. Empty in the fallback branch — correctly reports zero violations,
     // since a violation is only possible when a rescue was involved.
     let residualCheckAlignments: SegmentAlignment[] = [];
+    // Wave 1 hotfix FIX 1 — the placeholder-carrying alignment array (index-
+    // parallel with `finalTimedSegments` once placeholders are in) and the
+    // placeholders themselves, staged for the skip-log patch below. Both stay
+    // empty on the Whisper arm, where no placeholder is ever inserted.
+    let placeholderAlignments: SegmentAlignment[] = [];
+    let skippedScenePlaceholders: SkippedScenePlaceholder[] = [];
     // WS1 Session J — rule-firing / engine / FA-fallback entries, staged
     // SEPARATELY from `pendingLogEntries` for one structural reason: the
     // audio-timed branch below ASSIGNS `pendingLogEntries` wholesale partway
@@ -4189,6 +4230,13 @@ export default function App() {
         );
         if (infeasibleEntry) ruleLogEntries.push(infeasibleEntry);
       }
+      // FIX 1 REDO (Wave 1 hotfix) — the run's infeasible-chunk windows,
+      // captured once here (same narrowing site item 6's own entry above
+      // uses) for the victim detector below. [] on every other run/reason —
+      // that call is then a guaranteed no-op (faVictimGate.ts's own guard).
+      const infeasibleChunksForRun = faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk'
+        ? (faRun.infeasibleChunks ?? [])
+        : [];
       // R-G: 'forced-alignment' > 'whisper' > 'estimate', demote-only —
       // stated explicitly by this branch (the code path that actually
       // produced `faTokens`), never inferred downstream.
@@ -4270,8 +4318,8 @@ export default function App() {
       // Its conjunct (1) is the WHISPER alignment's own `matched`, which is why
       // `projectRef.current.transcriptTokens` (not `aligned.tokens`, which are
       // the FA tokens on this branch) is what goes in.
-      const unspokenScript = faTokens
-        ? detectUnspokenScriptSegmentsFromWhisper(
+      const unspokenGate = faTokens
+        ? detectUnspokenScriptSegmentsFromWhisperFull(
             aligned.segments,
             projectRef.current.transcriptTokens!,
             faTokens,
@@ -4279,7 +4327,8 @@ export default function App() {
             audioDuration,
             toAlignmentLanguageCode(projectRef.current.language),
           )
-        : [];
+        : { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
+      const unspokenScript = unspokenGate.findings;
       const coverageAfterR10 = applyUnspokenScriptGate(aligned.coverage, unspokenScript);
       if (unspokenScript.length > 0) {
         console.warn(
@@ -4287,6 +4336,70 @@ export default function App() {
           unspokenScript,
         );
         ruleLogEntries.push(...buildUnspokenScriptLogEntries(syncRunId, unspokenScript, syncRunAt));
+      }
+
+      // FIX 1 REDO (Wave 1 hotfix) — FA VICTIMS. A segment Whisper attests
+      // (so R.10 correctly keeps it) can still carry FABRICATED FA timing
+      // when its own chunk was CTC-infeasible (item 6). Detected against the
+      // SAME committed FA token array (`aligned.tokens`) `coverageAfterR10`'s
+      // indices address, and re-timed from `unspokenGate`'s own discarded
+      // Whisper-space alignment — no new compute. See `faVictimGate.ts`.
+      const faVictims = detectAndRetimeFaVictims(
+        aligned.segments,
+        coverageAfterR10,
+        aligned.tokens,
+        infeasibleChunksForRun,
+        unspokenGate.whisperAlignments,
+        unspokenGate.whisperTokensFiltered,
+        new Set(unspokenScript.map(f => f.segmentIndex)),
+      );
+
+      // Item 4's run-level edge — every covered segment fabricated is a
+      // run-level failure, typed paused (never auto-fallback): the SAME
+      // restart-safe pause-and-ask machinery `faRun.status === 'paused'`
+      // uses above, decided HERE because the victim set is only known after
+      // R.10 has run. Nothing below this point is committed when it fires.
+      if (allCoveredSegmentsAreVictims(coverageAfterR10, faVictims.candidates)) {
+        const victimPauseReason: FaVictimPauseReason = 'all-covered-fabricated';
+        const victimPauseDetail = `${faVictims.candidates.length} covered segment(s), all fabricated.`;
+        const pauseRecord: FaPauseRecord = {
+          projectId: projectRef.current.id,
+          syncRunId,
+          reason: victimPauseReason,
+          detail: victimPauseDetail,
+          timestamp: syncRunAt,
+        };
+        saveFaPause(pauseRecord);
+        setProject(prev => appendSyncLogEntries(
+          prev,
+          [buildFaPausedEntry(syncRunId, victimPauseReason, victimPauseDetail, syncRunAt)],
+          {
+            syncRunId,
+            timestamp: syncRunAt,
+            totalSegments: newSegmentsRaw.length,
+            coveredSegments: 0,
+            skippedSegments: 0,
+            aborted: true,
+            abortReason: 'fa-all-covered-fabricated',
+          },
+        ));
+        setFaPauseDialog(pauseRecord);
+        setIsProcessing(false);
+        return { ok: false, message: SYNC_PAUSED_MESSAGE, holdStaged: true };
+      }
+
+      if (faVictims.retimed.length > 0) {
+        console.warn(
+          `[sync] FIX 1 REDO — ${faVictims.retimed.length} FA victim segment(s) re-timed from Whisper alignment:`,
+          faVictims.retimed,
+        );
+        const victimEntry = buildFaVictimRetimedLogEntry(syncRunId, faVictims.retimed, syncRunAt);
+        if (victimEntry) ruleLogEntries.push(victimEntry);
+        if (faWordTimingsResult) {
+          faWordTimingsResult = applyVictimReplacement(
+            faWordTimingsResult, faVictims.replacement, faVictims.replacementByWordIndex,
+          );
+        }
       }
 
       // R4-1/R4-2 — skip unmatched. Only audio-covered segments reach the
@@ -4437,7 +4550,16 @@ export default function App() {
       // keptAlignments' firstTokenIdx/lastTokenIdx are indices into the filtered
       // array; reading the raw one with them would resolve to the wrong tokens
       // whenever anything was filtered.
-      const transcriptTokens = aligned.tokens;
+      // FIX 1 REDO (Wave 1 hotfix) — victim replacement applied HERE, once,
+      // before this array is threaded into snap / placeholder-insertion /
+      // R.14-R.15 below. Same indices as `aligned.tokens` (never renumbers),
+      // so every one of those stages reads trusted (victim-replaced or
+      // healthy-FA) boundary timestamps at the exact positions it already
+      // dereferences — see `faVictimGate.ts`'s module doc comment for why
+      // that keeps this a single-array, single-index-space read throughout.
+      const transcriptTokens = applyVictimReplacement(
+        aligned.tokens, faVictims.replacement, faVictims.replacementByWordIndex,
+      );
       finalTimedSegments = transcriptTokens.length > 0
         ? snapCoveredBoundaries(kept, keptAlignments, transcriptTokens, aligned.silences, audioDuration)
         : retileCoveredSegments(kept, audioDuration);
@@ -4467,47 +4589,6 @@ export default function App() {
       // above (built before this array was final); patched in place below
       // rather than rebuilding the whole array, so nothing else about their
       // position or the surrounding entries changes.
-      if (skipped.length > 0 && absorbedGapsByHostId.size > 0) {
-        const absorbedInfoBySkipIndex = new Map<number, AbsorbedGapLogInfo>();
-        for (const [hostId, gaps] of absorbedGapsByHostId) {
-          const hostDisplayIndex = finalTimedSegments.findIndex(s => s.id === hostId);
-          if (hostDisplayIndex < 0) continue;
-          // WS2 ws2-27, option (a) + gated note — every gap in `gaps` shares
-          // the same `otherNeighborId` (absorbedGaps.ts's own invariant, same
-          // as `span`/`gapAudio` above), so this is resolved once per host,
-          // not once per skipped record. `kept` (pre-boundary-snap) and
-          // `finalTimedSegments` (post-snap) are the same before/after pair
-          // `measureOtherNeighborGain` needs; only a gain that exceeds
-          // MIN_SEGMENT_DURATION becomes a note — the operator's own decision
-          // for what counts as "the other clip visibly moved too".
-          const otherNeighborId = gaps[0]?.otherNeighborId;
-          let otherNeighbor: AbsorbedGapLogInfo['otherNeighbor'];
-          if (otherNeighborId) {
-            const otherDisplayIndex = finalTimedSegments.findIndex(s => s.id === otherNeighborId);
-            const gainSec = measureOtherNeighborGain(hostId, otherNeighborId, kept, finalTimedSegments);
-            if (otherDisplayIndex >= 0 && gainSec !== undefined && gainSec > MIN_SEGMENT_DURATION) {
-              otherNeighbor = { displayIndex: otherDisplayIndex, gainSec };
-            }
-          }
-          for (const gap of gaps) {
-            const skipRecord = skipped.find(r => aligned.segments[r.segmentIndex]?.id === gap.segmentId);
-            if (skipRecord) {
-              absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
-                hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
-                otherNeighbor,
-              });
-            }
-          }
-        }
-        const correctedSkipEntries = buildSkipLogEntries(syncRunId, skipped, syncRunAt, absorbedInfoBySkipIndex);
-        const correctedByIndex = new Map(correctedSkipEntries.map(e => [e.segmentIndex, e]));
-        pendingLogEntries = pendingLogEntries.map(e =>
-          e.type === 'skip' && e.segmentIndex !== undefined && correctedByIndex.has(e.segmentIndex)
-            ? correctedByIndex.get(e.segmentIndex)!
-            : e
-        );
-      }
-
       // WS1 R.11 (faSeamFitGate.ts) — CHUNK-FIT BOUNDARY CORRECTION. Runs
       // ONLY when FA actually produced the tokens (mirrors R.10's own
       // gating) and only AFTER the final committed array exists, since
@@ -4645,6 +4726,43 @@ export default function App() {
         }
         finalTimedSegments = applyUtterancePlacementCorrections(finalTimedSegments, keptUtterance);
 
+        // Wave 1 hotfix FIX 1 (skippedScenePlaceholders.ts) — SKIPPED-SCENE
+        // PLACEHOLDERS. Every R.10-skipped scene is re-inserted at its
+        // script position as an Estimated placeholder occupying the reserved
+        // gap between its neighbours' OWN spoken edges. Runs AFTER R.11–R.13
+        // (which keep working on the survivor array exactly as before) and
+        // BEFORE R.14/R.15, because R.14's ordering guard must see the
+        // placeholder's start as "the next boundary" — otherwise a silence
+        // inside the skipped scene's gap is a legal re-anchor target for the
+        // preceding scene's start (operator smoke: "R.14 moved scene 2 from
+        // 0.304s to 3.05s" right after "S3 skipped — scripted text never
+        // spoken"). `keptAlignments` is superseded from here on by the
+        // index-parallel `placeholderAlignments` (sentinels on the
+        // placeholders), which every downstream index-parallel consumer
+        // (R.14/R.15, the boundary-quality checker) reads instead.
+        const placeholderInsertion = insertSkippedScenePlaceholders(
+          finalTimedSegments, keptAlignments, aligned.segments,
+          new Set(skipped.map(r => r.segmentIndex)), coverageAfterR10, transcriptTokens, audioDuration,
+        );
+        finalTimedSegments = placeholderInsertion.segments;
+        placeholderAlignments = placeholderInsertion.alignments;
+        skippedScenePlaceholders = placeholderInsertion.placeholders;
+        if (placeholderInsertion.unplaceable.length > 0) {
+          console.warn(
+            `[sync] FIX 1 — ${placeholderInsertion.unplaceable.length} skipped scene(s) could not be given a ` +
+            'placeholder slot (both neighbours at the minimum duration); left dropped:',
+            placeholderInsertion.unplaceable,
+          );
+        }
+        if (faWordTimingsResult) {
+          faWordTimingsResult = stampEstimatedWordTimings(
+            faWordTimingsResult, skippedScenePlaceholders, aligned.coverage, transcriptTokens,
+          );
+        }
+        if (pendingBoundaryCheckInput) {
+          pendingBoundaryCheckInput = { ...pendingBoundaryCheckInput, alignments: placeholderAlignments };
+        }
+
         // WS1 Session AE, R.14 / R.15 (faAnchorTrustGate.ts) — THE ANCHOR-TRUST
         // GATE. Last in the stage, and deliberately so: both rules read the
         // per-segment token attribution `snapCoveredBoundaries` itself snapped
@@ -4667,7 +4785,7 @@ export default function App() {
         // R.11/R.12/R.13's, measured. The whole-stage R-AP check below still
         // sees their output, which is the point of it being whole-stage.
         const anchorTrustFindings = detectAnchorTrustDefects(
-          finalTimedSegments, keptAlignments, transcriptTokens, aligned.silences,
+          finalTimedSegments, placeholderAlignments, transcriptTokens, aligned.silences,
         );
         if (anchorTrustFindings.length > 0) {
           console.warn(
@@ -4711,6 +4829,73 @@ export default function App() {
             ...buildRunEdgeViolationLogEntries(syncRunId, runEdgeViolations, finalTimedSegments, syncRunAt),
           );
         }
+      }
+
+      // Wave 1 hotfix FIX 1 — a skipped scene that got a placeholder slot
+      // absorbed into NOTHING, so its entry says where its slot is instead of
+      // naming an absorbing clip. The absorbed-gap patch below still applies
+      // to any skip that stayed dropped (Whisper arm, or an unplaceable one).
+      //
+      // FIX 1 REDO round 3 — MOVED HERE (was right after `filterToCovered
+      // Segments`, before R.11-R.13/placeholder-insertion/R.14-R.15 had run).
+      // `skippedScenePlaceholders` is only populated inside the `if
+      // (faTokens)` block above (`insertSkippedScenePlaceholders`'s own
+      // assignment); reading it before that block ran always saw its
+      // initial `[]`, so `placeholderBySkipIndex` was always empty and
+      // `buildSkipLogEntries` always fell through to its "Absorbed..."
+      // branch — even on a run where a placeholder was correctly inserted
+      // into `finalTimedSegments` (verified against a real committed
+      // project: the skipped segment sat exactly at [prevSegment.end,
+      // nextSegment.start], but its own sync-log entry still read
+      // "Absorbed ... Clip 2 also holds ..."). Placed here, after the whole
+      // `if (faTokens)` stage (R.11-R.13, placeholder insertion, R.14/R.15,
+      // the R-AP whole-stage check) has finished, so both
+      // `skippedScenePlaceholders` and `finalTimedSegments` are genuinely
+      // final — the same "against the final committed array, never an
+      // intermediate one" rule the WS2 ws2-25 Commit 5 note above already
+      // states for this exact correction.
+      const placeholderBySkipIndex = new Map(skippedScenePlaceholders.map(p => [p.segmentIndex, p]));
+      if (skipped.length > 0 && (absorbedGapsByHostId.size > 0 || placeholderBySkipIndex.size > 0)) {
+        const absorbedInfoBySkipIndex = new Map<number, AbsorbedGapLogInfo>();
+        for (const [hostId, gaps] of absorbedGapsByHostId) {
+          const hostDisplayIndex = finalTimedSegments.findIndex(s => s.id === hostId);
+          if (hostDisplayIndex < 0) continue;
+          // WS2 ws2-27, option (a) + gated note — every gap in `gaps` shares
+          // the same `otherNeighborId` (absorbedGaps.ts's own invariant, same
+          // as `span`/`gapAudio` above), so this is resolved once per host,
+          // not once per skipped record. `kept` (pre-boundary-snap) and
+          // `finalTimedSegments` (post-snap) are the same before/after pair
+          // `measureOtherNeighborGain` needs; only a gain that exceeds
+          // MIN_SEGMENT_DURATION becomes a note — the operator's own decision
+          // for what counts as "the other clip visibly moved too".
+          const otherNeighborId = gaps[0]?.otherNeighborId;
+          let otherNeighbor: AbsorbedGapLogInfo['otherNeighbor'];
+          if (otherNeighborId) {
+            const otherDisplayIndex = finalTimedSegments.findIndex(s => s.id === otherNeighborId);
+            const gainSec = measureOtherNeighborGain(hostId, otherNeighborId, kept, finalTimedSegments);
+            if (otherDisplayIndex >= 0 && gainSec !== undefined && gainSec > MIN_SEGMENT_DURATION) {
+              otherNeighbor = { displayIndex: otherDisplayIndex, gainSec };
+            }
+          }
+          for (const gap of gaps) {
+            const skipRecord = skipped.find(r => aligned.segments[r.segmentIndex]?.id === gap.segmentId);
+            if (skipRecord && !placeholderBySkipIndex.has(skipRecord.segmentIndex)) {
+              absorbedInfoBySkipIndex.set(skipRecord.segmentIndex, {
+                hostSegmentId: hostId, hostDisplayIndex, span: gap.span, gapAudio: gap.gapAudio,
+                otherNeighbor,
+              });
+            }
+          }
+        }
+        const correctedSkipEntries = buildSkipLogEntries(
+          syncRunId, skipped, syncRunAt, absorbedInfoBySkipIndex, placeholderBySkipIndex,
+        );
+        const correctedByIndex = new Map(correctedSkipEntries.map(e => [e.segmentIndex, e]));
+        pendingLogEntries = pendingLogEntries.map(e =>
+          e.type === 'skip' && e.segmentIndex !== undefined && correctedByIndex.has(e.segmentIndex)
+            ? correctedByIndex.get(e.segmentIndex)!
+            : e
+        );
       }
 
       // R.5's staged entries, built now that `finalTimedSegments` is final and
@@ -6101,6 +6286,21 @@ export default function App() {
     (effectiveVoiceoverId !== undefined && !transcriptionReady)
     || voiceoverNeedsExplicitTranscribe;
 
+  // Wave 1 hotfix (operator-ordered) — the two Whisper model-integrity
+  // failures (never 'already-running' / 'inference-failed', which keep using
+  // TranscriptionBar's existing inline banner). Set whenever the SAME
+  // startTranscription catch block useWhisper.ts's staging auto-fire and the
+  // explicit "Transcribe this file" re-attempt both funnel through lands on
+  // one of these two typed reasons. Computed once and reused below to both
+  // suppress TranscriptionBar's redundant banner (the dialog replaces it, per
+  // operator instruction — never shown alongside) and drive
+  // WhisperModelFailureDialog.
+  const whisperModelFailureKind =
+    transcriptionStatus.phase === 'error'
+    && (transcriptionStatus.kind === 'model-not-found' || transcriptionStatus.kind === 'model-hash-mismatch')
+      ? transcriptionStatus.kind
+      : null;
+
   usePlayback({
     isPlaying,
     setIsPlaying,
@@ -7222,7 +7422,7 @@ export default function App() {
             onActiveLeftTabChange={setActiveLeftTab}
             isPlaying={isPlaying}
           />
-          {transcriptionStatus.phase !== 'idle' && (
+          {transcriptionStatus.phase !== 'idle' && whisperModelFailureKind === null && (
             <div className="flex-shrink-0">
               <TranscriptionBar
                 status={transcriptionStatus}
@@ -7785,7 +7985,31 @@ export default function App() {
           old whisper-only ModelDownloadPanel. */}
       {showManageModelsModal && (
         <ManageModelsModal
-          onClose={() => setShowManageModelsModal(false)}
+          onClose={() => {
+            setShowManageModelsModal(false);
+            if (whisperModelFailureKind === null) return;
+            // Wave 1 hotfix — conservative choice, logged either branch:
+            // auto-retry only when the SAME staged file that hit the model
+            // failure is still the pending voiceover (same file, same job,
+            // no new engine/model choice being made on the user's behalf —
+            // trivially safe). A user who navigated away or unstaged it
+            // while the modal was open leaves nothing safe to retry against;
+            // fall back to a message rather than guessing at, or silently
+            // reusing, a different file.
+            void (async () => {
+              const status = await getWhisperModelStatus().catch(() => null);
+              if (!status?.present) return; // still missing/mismatched — WhisperModelFailureDialog re-shows itself, nothing else to do
+              const file = pendingVoiceoverRef.current?.file;
+              if (file) {
+                console.info('[whisper] model downloaded — auto-retrying transcription for the still-staged file');
+                handleVoiceoverTranscribeRequested(file);
+              } else {
+                console.info('[whisper] model downloaded — no staged file left to auto-retry, asking the user to redo it');
+                dismissError();
+                showToast(WHISPER_MODEL_FAILURE_COPY.downloadedRetryMessage);
+              }
+            })();
+          }}
           projectLanguage={project.language}
         />
       )}
@@ -8152,6 +8376,22 @@ export default function App() {
           onRetry={handleSyncPausedRetry}
           onUseWhisper={handleSyncPausedUseWhisper}
           onCancel={handleSyncPausedCancel}
+        />
+      )}
+
+      {/* Wave 1 hotfix (operator-ordered) — replaces TranscriptionBar's old
+          half-hidden inline banner for the two Whisper model-integrity
+          failures (see whisperModelFailureKind above, which also suppresses
+          that banner while this is showing). Suspended — not rendered —
+          while ManageModelsModal is open (lower z-index; both mounted at
+          once would put this dialog on top, blocking the download UI it just
+          opened) and re-appears on its own if the model is still missing
+          after that modal closes. */}
+      {whisperModelFailureKind !== null && !showManageModelsModal && (
+        <WhisperModelFailureDialog
+          kind={whisperModelFailureKind}
+          onDownloadModel={() => setShowManageModelsModal(true)}
+          onCancel={dismissError}
         />
       )}
 

@@ -98,6 +98,11 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // fix). Neutral/info, matching 'fa-preflight': nothing is wrong, the user
   // just may not know high-precision sync is available to turn on.
   'fa-gate-closed': { label: 'FA OFF', className: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30' },
+  // Wave 1 hotfix — a fresh transcription attempt halted on a typed Whisper
+  // model-integrity failure (WhisperModelFailureDialog's log counterpart).
+  // Red, matching 'silence-error'/'unsupported-language': transcription did
+  // not run, not a degradation the pipeline absorbed.
+  'whisper-model-failure': { label: 'WHISPER MODEL', className: 'bg-red-500/10 text-red-400 border-red-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be

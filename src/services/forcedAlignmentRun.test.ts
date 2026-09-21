@@ -276,6 +276,49 @@ describe('runForcedAlignmentForSync — cancellation (plan-v3 item 5)', () => {
     expect(mockInvoke).toHaveBeenCalledWith('fa_cancel', {});
   });
 
+  // Wave 1 hotfix FIX 3 — LATE cancel. The case above aborts before the
+  // native side has emitted anything; the operator's dead cancel is the one
+  // that comes minutes in, after `Progress` events have been flowing. A long
+  // run is simulated by streaming chunk-progress events on the same channel
+  // the terminal event uses, THEN aborting — the cancel must still reach
+  // `fa_cancel` and settle the run as 'cancelled' rather than being ignored.
+  it('a cancel that arrives AFTER progress events have flowed still invokes fa_cancel and resolves cancelled', async () => {
+    const controller = new AbortController();
+    let capturedOnEvent: FakeChannel<unknown> | undefined;
+    mockInvoke.mockImplementation(async (cmd: string, args?: { onEvent: FakeChannel<unknown> }) => {
+      if (cmd === 'fa_stage_audio_raw') return FAKE_STAGED_INPUT_PATH;
+      if (cmd === 'fa_cancel') return undefined;
+      if (cmd === 'fa_align_production') {
+        capturedOnEvent = args!.onEvent;
+        // A long project: never resolves on its own within the test.
+        return new Promise(() => {});
+      }
+      throw new Error(`unexpected invoke: ${cmd}`);
+    });
+
+    const resultPromise = runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en', controller.signal);
+    for (let i = 0; i < 50 && !capturedOnEvent; i++) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+    expect(capturedOnEvent).toBeDefined();
+
+    // "A few minutes in": 40 chunks of progress before anyone clicks Cancel.
+    for (let index = 1; index <= 40; index++) {
+      capturedOnEvent!.onmessage({ event: 'Progress', data: { index, total: 200 } });
+    }
+    controller.abort();
+
+    // The old bug leaves the run promise pending forever (the click "does
+    // nothing"), so race it against a short deadline instead of hanging.
+    const settled = await Promise.race([
+      resultPromise.then(r => ({ settled: true as const, result: r })),
+      new Promise<{ settled: false }>(resolve => setTimeout(() => resolve({ settled: false }), 200)),
+    ]);
+    expect(settled.settled, 'late cancel was ignored — the run kept going').toBe(true);
+    if (settled.settled) expect(settled.result).toEqual({ status: 'cancelled' });
+    expect(mockInvoke).toHaveBeenCalledWith('fa_cancel', {});
+  });
+
   it('never falls into a paused-failure result once cancelled, even if a later Error event also arrives', async () => {
     const controller = new AbortController();
     mockInvoke.mockImplementation(async (cmd: string, args?: { onEvent: FakeChannel<unknown> }) => {

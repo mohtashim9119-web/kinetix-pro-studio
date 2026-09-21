@@ -753,7 +753,16 @@ export type SyncLogEntryType =
    *  behavior change. severity:'info' — nothing is wrong, the user just may
    *  not know the option exists. Never emitted when `isFaCapable()` is false
    *  (plain browser dev server) — there is nothing to turn on there either. */
-  | 'fa-gate-closed';
+  | 'fa-gate-closed'
+  /** 'whisper-model-failure' — Wave 1 hotfix (operator-ordered). A fresh
+   *  transcription attempt halted on a typed Whisper model-integrity failure
+   *  (`WhisperFailureKind` 'model-not-found' | 'model-hash-mismatch',
+   *  whisperService.ts) — the sync-log counterpart of
+   *  `WhisperModelFailureDialog`: the dialog is for attention (and is not
+   *  restart-persisted), this entry is for the record. severity:'warning',
+   *  with `fixHint` naming the action. See `syncLog.ts`'s
+   *  `buildWhisperModelFailureEntry`. */
+  | 'whisper-model-failure';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */
@@ -963,4 +972,16 @@ export type TranscriptionStatus =
   // text, so sync proceeds on estimate timing. Surfaced so a silent decode
   // failure isn't invisible. See useWhisper's empty-token branch.
   | { phase: 'warning'; message: string; jobId: string }
-  | { phase: 'error'; message: string; jobId: string };
+  // Wave 1 hotfix — `kind` mirrors whisperService.ts's `WhisperFailureKind`,
+  // set by useWhisper.ts's catch block via `classifyWhisperFailure`.
+  // Optional (older/synthetic error statuses may omit it) so a caller that
+  // only cares about the message keeps working unchanged; a caller that
+  // needs to single out the two model-integrity reasons (the fail-loud
+  // dialog, WhisperModelFailureDialog) checks it instead of re-parsing
+  // `message`.
+  | {
+      phase: 'error';
+      message: string;
+      jobId: string;
+      kind?: 'model-not-found' | 'model-hash-mismatch' | 'already-running' | 'inference-failed';
+    };

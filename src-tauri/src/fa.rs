@@ -506,8 +506,28 @@ fn fa_onnx_error_to_fa_error(e: crate::fa_onnx::FaOnnxError) -> FaError {
     }
 }
 
+// FIX 1 REDO round 3 — runtime capture (not a code-reading guess) showed the
+// wire payload for `Done` carries `n_fallback_chunks`/`infeasible_chunks`
+// verbatim, snake_case, never `nFallbackChunks`/`infeasibleChunks` —
+// `#[serde(rename_all = "camelCase")]` was missing at this enum's own
+// `#[derive(Serialize)]` (every ONE of its member structs, `FaWordSpan`/
+// `FaInfeasibleChunk`/`FaRunTiming`, has its own; this enum never did). The
+// frontend's `FaEvent`/`Done` type (`faBoundaryTypes.ts`) always declared
+// camelCase, so `done.infeasibleChunks`/`done.nFallbackChunks` silently read
+// `undefined` and the run fell through to `status: 'ok'` — no case in
+// `fa.rs`'s own `fa_event_done_serializes_camelcase_tagged_shape` test
+// caught it because that test leaves both fields at their zero/empty
+// default, which `skip_serializing_if` omits from the JSON entirely before
+// casing is ever checked. `words`/`index`/`total`/`message`/`timing` are
+// single-word identifiers, unaffected by this rename; nested struct fields
+// (e.g. `FaRunTiming`'s own `chunkCount`) are governed by their OWN derive,
+// not this one.
 #[derive(serde::Serialize, Clone, Debug)]
-#[serde(tag = "event", content = "data")]
+// `rename_all_fields`, NOT `rename_all` — the latter would ALSO camelCase
+// the tag values themselves ("Done" -> "done"), breaking every
+// `msg.event === 'Done'` check on the TS side. This renames only the
+// FIELDS inside each variant.
+#[serde(tag = "event", content = "data", rename_all_fields = "camelCase")]
 pub enum FaEvent {
     /// Sent once per completed chunk (WS1 Task 5 Slice D11) — `index` is the
     /// 0-based count of chunks FINISHED so far (never sent for chunk 0
@@ -1824,6 +1844,44 @@ mod tests {
         let event = FaEvent::Done { words: vec![], n_fallback_chunks: 0, infeasible_chunks: vec![] };
         let json = serde_json::to_value(&event).unwrap();
         assert_eq!(json, serde_json::json!({ "event": "Done", "data": { "words": [] } }));
+    }
+
+    /// FIX 1 REDO round 3 regression — `fa_event_done_serializes_camelcase_
+    /// tagged_shape` above always left `n_fallback_chunks`/`infeasible_chunks`
+    /// at their zero/empty default, which `skip_serializing_if` omits from
+    /// the JSON before casing is ever checked — so it never actually
+    /// asserted these two fields' wire names, and a missing `#[serde(rename_
+    /// all_fields = "camelCase")]` on `FaEvent` (they were serializing
+    /// verbatim as `n_fallback_chunks`/`infeasible_chunks`) went undetected
+    /// through every unit test while silently making every CTC-infeasible
+    /// run present to the frontend as a clean 'ok' result. This is the case
+    /// that must exercise them non-default.
+    #[test]
+    fn fa_event_done_serializes_infeasible_chunk_fields_camelcase() {
+        let event = FaEvent::Done {
+            words: vec![],
+            n_fallback_chunks: 1,
+            infeasible_chunks: vec![FaInfeasibleChunk {
+                chunk_index: 0,
+                start_sec: 0.0,
+                end_sec: 20.52,
+                word_count: 218,
+            }],
+        };
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "event": "Done",
+                "data": {
+                    "words": [],
+                    "nFallbackChunks": 1,
+                    "infeasibleChunks": [
+                        { "chunkIndex": 0, "startSec": 0.0, "endSec": 20.52, "wordCount": 218 }
+                    ]
+                }
+            })
+        );
     }
 
     // -- FaWordSpan: field names + exponentiation (WS1 Task 5 Slice D9) -----

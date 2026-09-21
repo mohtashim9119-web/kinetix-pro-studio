@@ -673,8 +673,13 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     // could, and only when run from the wrong directory. Now explicit about
     // where it must run, and self-creating so it can't half-succeed into a
     // wrong location.
+    // Wave 1 hotfix FIX 2 — TYPED. This is the first place a renamed or
+    // never-downloaded model is noticed on the fresh-audio path; an untyped
+    // string here could only reach the frontend as a generic
+    // 'inference-failed', which is not the model-not-found / hash-mismatch
+    // family the weight gate owes the run.
     Err(format!(
-        "{MODEL_FILENAME} not found. Use the model download panel in Settings, \
+        "{WHISPER_MODEL_NOT_FOUND_PREFIX}{MODEL_FILENAME} not found. Use the model download panel in Settings, \
          or from the project's repository root (NOT the app data folder): \
          mkdir -p src-tauri/models && curl -L -o src-tauri/models/{MODEL_FILENAME} \
          https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL_FILENAME}"
@@ -1242,6 +1247,11 @@ fn parse_stdout_tokens(lines: &[String]) -> Vec<TranscriptToken> {
 
 /// Machine-readable prefix the frontend classifies as `model-hash-mismatch`.
 pub(crate) const WHISPER_MODEL_HASH_MISMATCH_PREFIX: &str = "whisper:model-hash-mismatch:";
+/// Wave 1 hotfix FIX 2 — the pinned model file is simply not there (the
+/// operator's rename). Its own kind, distinct from a hash mismatch: the
+/// remedy is "download/restore it", not "re-download a corrupt file". Mirrored
+/// in `whisperService.ts`'s `WHISPER_MODEL_NOT_FOUND_PREFIX`.
+pub(crate) const WHISPER_MODEL_NOT_FOUND_PREFIX: &str = "whisper:model-not-found:";
 
 type WhisperModelIdentity = (PathBuf, u64, Option<std::time::SystemTime>);
 
@@ -1274,7 +1284,18 @@ pub(crate) fn verify_whisper_weights_with(
     expected_sha256: &str,
 ) -> Result<(), String> {
     let meta = std::fs::metadata(path).map_err(|e| {
-        format!("{WHISPER_MODEL_HASH_MISMATCH_PREFIX}failed to stat {}: {e}", path.display())
+        // Wave 1 hotfix FIX 2 — a missing file is its own typed kind; every
+        // other stat failure (permissions, I/O) stays in the mismatch family.
+        if e.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "{WHISPER_MODEL_NOT_FOUND_PREFIX}{} not found at {}. Download or restore the pinned \
+                 model; the run will not switch to another file.",
+                MODEL_FILENAME,
+                path.display()
+            )
+        } else {
+            format!("{WHISPER_MODEL_HASH_MISMATCH_PREFIX}failed to stat {}: {e}", path.display())
+        }
     })?;
     let actual_size = meta.len();
     if actual_size != expected_size {
@@ -2225,6 +2246,34 @@ mod whisper_weight_integrity_tests {
             .expect_err("corrupt same-size stand-in must fail");
         assert!(err.starts_with(WHISPER_MODEL_HASH_MISMATCH_PREFIX));
         assert!(err.contains("will not switch"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Wave 1 hotfix FIX 2 — the operator's rename, headlessly: the pinned
+    /// filename simply is not there. Must be the TYPED model-not-found
+    /// failure (the rename is a missing model, not a corrupt one), never a
+    /// hash-mismatch-shaped stat error and never a silent Ok. A tiny sibling
+    /// fixture stands in for the real model directory — no real blobs, no
+    /// renaming the real model.
+    #[test]
+    fn renamed_model_is_a_typed_model_not_found_failure_not_a_stat_error() {
+        reset_whisper_digest_memo_for_tests();
+        let dir = fixture_dir();
+        // The operator's shape: the pinned name was renamed away; the bytes
+        // still exist under another name, which the gate must NOT switch to.
+        let renamed = dir.join("ggml-large-v3-turbo.bin.renamed");
+        let bytes = b"tiny-ok-weights";
+        fs::write(&renamed, bytes).unwrap();
+        let pinned = dir.join(MODEL_FILENAME);
+        assert!(!pinned.exists(), "sanity: the pinned filename is gone");
+
+        let err = verify_whisper_weights_with(&pinned, bytes.len() as u64, &digest_of(bytes))
+            .expect_err("a missing pinned model must fail the gate");
+        assert!(
+            err.starts_with(WHISPER_MODEL_NOT_FOUND_PREFIX),
+            "a missing model must be typed model-not-found, got: {err}"
+        );
+        assert!(!err.contains("renamed"), "the gate must not name (or switch to) the renamed file: {err}");
         let _ = fs::remove_dir_all(&dir);
     }
 

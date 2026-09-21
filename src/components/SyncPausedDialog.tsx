@@ -29,11 +29,13 @@
 import type React from 'react';
 import { useEffect } from 'react';
 import type { FaFailureKind } from '../services/forcedAlignmentRun';
+import type { FaVictimPauseReason } from '../services/faVictimGate';
 
 /** One line of plain-language cause per pause reason, for the dialog body.
- *  Exhaustive over `FaFailureKind` by construction — a new failure kind
- *  without an entry here is a compile error, not a blank dialog line. */
-const PAUSE_COPY: Record<FaFailureKind, string> = {
+ *  Exhaustive over `FaFailureKind | FaVictimPauseReason` by construction — a
+ *  new failure kind without an entry here is a compile error, not a blank
+ *  dialog line. */
+const PAUSE_COPY: Record<FaFailureKind | FaVictimPauseReason, string> = {
   'unsupported-language': 'The project language has no forced-alignment model.',
   'empty-chunk-plan': 'The chunk plan came out empty — no scene carried any text to align.',
   'zero-words': 'Forced alignment ran but returned no words.',
@@ -45,6 +47,7 @@ const PAUSE_COPY: Record<FaFailureKind, string> = {
   'already-running': 'A forced-alignment run for this project is already in progress.',
   'out-of-memory': 'The alignment engine ran out of memory.',
   offline: 'The cloud alignment engine could not be reached — check your network connection.',
+  'all-covered-fabricated': 'Every covered scene’s forced-alignment timing was fabricated — no chunk in this run aligned successfully.',
 };
 
 const COPY = {
@@ -61,7 +64,7 @@ const COPY = {
 } as const;
 
 interface Props {
-  reason: FaFailureKind;
+  reason: FaFailureKind | FaVictimPauseReason;
   detail?: string;
   /** Date.now() the pause was recorded, for the "this happened N minutes
    *  ago" hint on a re-presented (post-restart) dialog. */

@@ -12,7 +12,7 @@
 // buildRescueLogEntries, clearSyncLog) remains in App.tsx and imports
 // makeSyncLogEntry from this module.
 import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem, VideoSegment, TranscriptToken } from '../types';
-import type { TokenDrop } from './whisperService';
+import type { TokenDrop, WhisperFailureKind } from './whisperService';
 import type { ContractViolation } from './syncContracts';
 import type { LockFinding } from './syncEngine';
 // WS1 Session J — rule-firing log builders. All four are TYPE-only imports, so
@@ -24,6 +24,7 @@ import type { UnspokenScriptFinding } from './faUnspokenGate';
 import type { SeamFitFinding } from './faSeamFitGate';
 import type { RunPlacementFinding, UtterancePlacementFinding } from './faRunPlacementGate';
 import type { FaFailureKind } from './forcedAlignmentRun';
+import type { FaVictimFinding, FaVictimPauseReason } from './faVictimGate';
 import type { FaInfeasibleChunk } from './faBoundaryTypes';
 import type { AnchorTrustFinding } from './faAnchorTrustGate';
 import type { RunEdgeViolation } from './faRuleStageExclusion';
@@ -407,7 +408,7 @@ export function buildSyncEngineEntry(
  *  (`forcedAlignmentRun.ts`) — exhaustive by construction, same as that
  *  type's own doc comment promises: a new failure kind without an entry here
  *  is a compile error, not a silently blank dialog. */
-const FA_PAUSED_TEXT: Record<FaFailureKind, { what: string; fix: string }> = {
+const FA_PAUSED_TEXT: Record<FaFailureKind | FaVictimPauseReason, { what: string; fix: string }> = {
   'unsupported-language': {
     what: 'the project language has no forced-alignment model',
     fix: 'Set the project language to English, Spanish, French, Portuguese, or German in Project Settings, or continue with Whisper timing for this run.',
@@ -452,6 +453,15 @@ const FA_PAUSED_TEXT: Record<FaFailureKind, { what: string; fix: string }> = {
     what: 'the cloud alignment engine could not be reached',
     fix: 'Check your network connection, then try again, or switch to local alignment.',
   },
+  // FIX 1 REDO (Wave 1 hotfix) item 4 — every covered segment's committed FA
+  // span overlapped an infeasible chunk, so there is no healthy FA timing
+  // left in this run to anchor anything against. Decided in App.tsx's
+  // pipeline AFTER a 'ctc-infeasible-chunk' FA run already completed —
+  // `forcedAlignmentRun.ts` never returns this reason itself.
+  'all-covered-fabricated': {
+    what: 'every covered scene’s forced-alignment timing was fabricated (no chunk in this run aligned successfully)',
+    fix: 'Try again, or continue with Whisper timing for this run.',
+  },
 };
 
 /**
@@ -466,7 +476,7 @@ const FA_PAUSED_TEXT: Record<FaFailureKind, { what: string; fix: string }> = {
  */
 export function buildFaPausedEntry(
   syncRunId: string,
-  reason: FaFailureKind,
+  reason: FaFailureKind | FaVictimPauseReason,
   detail: string | undefined,
   timestamp: number = Date.now(),
 ): SyncLogEntry {
@@ -482,6 +492,56 @@ export function buildFaPausedEntry(
       fixHint: fix,
       ...(detail !== undefined ? { errorMessage: detail } : {}),
     },
+    timestamp,
+  );
+}
+
+/** Only the two Whisper failure kinds the fail-loud dialog
+ *  (`WhisperModelFailureDialog`) and this log entry fire for — a Whisper
+ *  model-integrity failure. `'already-running'` / `'inference-failed'` never
+ *  reach `buildWhisperModelFailureEntry`; useWhisper.ts's catch block only
+ *  calls it for these two. */
+type WhisperModelFailureKind = Extract<WhisperFailureKind, 'model-not-found' | 'model-hash-mismatch'>;
+
+/** Plain-language cause per Whisper model-integrity reason — same source of
+ *  truth `WhisperModelFailureDialog`'s own COPY block restates for the dialog
+ *  body, kept here (not imported from the component) so this dependency-light
+ *  module never pulls in React. */
+const WHISPER_MODEL_FAILURE_TEXT: Record<WhisperModelFailureKind, { what: string; fix: string }> = {
+  'model-not-found': {
+    what: 'the Whisper transcription model (ggml-large-v3-turbo.bin) was not found',
+    fix: 'Download the model from Settings, then try again.',
+  },
+  'model-hash-mismatch': {
+    what: 'the installed Whisper model failed its integrity check',
+    fix: 'Re-download the model from Settings, then try again.',
+  },
+};
+
+/**
+ * Wave 1 hotfix (operator-ordered) — the Whisper fail-loud dialog's log
+ * counterpart. Fires on BOTH reasons that halt a fresh transcription run
+ * without a usable model, from whichever path triggered it (staging-time
+ * auto-transcribe or an explicit re-transcribe — both route through
+ * useWhisper.ts's single `startTranscription` catch block). The dialog is
+ * for attention and is not restart-persisted; this entry is for the record —
+ * it survives the dialog being dismissed and a reload, exactly like
+ * `buildFaPausedEntry` is for `SyncPausedDialog`.
+ *
+ * severity:'warning': the user needs to act (download/re-download the model)
+ * before transcription can proceed.
+ */
+export function buildWhisperModelFailureEntry(
+  syncRunId: string,
+  kind: WhisperModelFailureKind,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const { what, fix } = WHISPER_MODEL_FAILURE_TEXT[kind];
+  return makeSyncLogEntry(
+    syncRunId,
+    'whisper-model-failure',
+    `Transcription halted — ${what}.`,
+    { severity: 'warning', fixHint: fix },
     timestamp,
   );
 }
@@ -560,7 +620,7 @@ export function buildFaGateClosedEntry(
  */
 export function buildFaUserChoseWhisperEntry(
   syncRunId: string,
-  pausedReason: FaFailureKind,
+  pausedReason: FaFailureKind | FaVictimPauseReason,
   timestamp: number = Date.now(),
 ): SyncLogEntry {
   return makeSyncLogEntry(
@@ -941,6 +1001,41 @@ export function buildCtcInfeasibleLogEntry(
       fixHint: INFEASIBLE_COPY.fixHint,
       ruleDetail: {
         reason: `${chunks.length} CTC-infeasible chunk(s); ${estimated.length} needsReview word(s) in those windows.`,
+      },
+    },
+    timestamp,
+  );
+}
+
+/**
+ * FIX 1 REDO (Wave 1 hotfix) — ONE grouped finding naming every genuinely-
+ * spoken segment `faVictimGate.ts` re-timed from its own Whisper-space
+ * alignment after its FA chunk was infeasible. Joins the item-6 grouped-
+ * finding pattern (`buildCtcInfeasibleLogEntry` above): never N per-segment
+ * entries. Distinct from the item-6 finding — that one flags the raw
+ * fabricated span; this one names the segments that were actively corrected
+ * away from it.
+ */
+export function buildFaVictimRetimedLogEntry(
+  syncRunId: string,
+  victims: readonly FaVictimFinding[],
+  timestamp: number = Date.now(),
+): SyncLogEntry | undefined {
+  if (victims.length === 0) return undefined;
+  const names = victims.map(v => v.segmentTag || v.segmentId).join(', ');
+  const totalWords = victims.reduce((a, v) => a + v.estimatedWordCount, 0);
+  return makeSyncLogEntry(
+    syncRunId,
+    'warning',
+    victims.length === 1
+      ? `1 scene (${names}) re-timed from Whisper alignment after its FA chunk was infeasible — marked Estimated.`
+      : `${victims.length} scenes (${names}) re-timed from Whisper alignment after their FA chunk was infeasible — marked Estimated.`,
+    {
+      owningRule: 'FA',
+      severity: 'warning',
+      fixHint: 'Review the re-timed scenes — their boundaries come from Whisper, not forced alignment. Accept the estimate, or re-run Apply Sync after tightening the affected scene tags.',
+      ruleDetail: {
+        reason: `${victims.length} FA victim segment(s), engine fa degraded reason fa-chunk-infeasible; ${totalWords} word(s) marked Estimated from Whisper timing.`,
       },
     },
     timestamp,
