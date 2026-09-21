@@ -1525,7 +1525,11 @@ export function DropZonePanel({
                          transition-all"
             >
               <RefreshCw size={17} className={applySyncDisabled ? 'animate-spin' : ''} />
-              {applySyncDisabled ? 'Syncing…' : 'Apply sync'}
+              {applySyncDisabled
+                ? 'Syncing…'
+                : applySyncSpineUnchangedReason
+                  ? 'Already synced'
+                  : 'Apply sync'}
             </button>
             </div>
           </div>

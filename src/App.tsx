@@ -6449,10 +6449,12 @@ export default function App() {
     })();
     return () => { cancelled = true; };
   }, [project.lastSyncSpine, project.script, project.sceneDetails, stagedVoiceoverFile, stagedScriptFile, stagedSceneFile, pendingVoiceover]);
-  // Copy proposal (flagged for operator review, per Wave 2 house rules) —
-  // swap this string freely; nothing else depends on its exact wording.
+  // Operator-approved copy (Wave 2 G1 sign-off). Reason + hint combined into
+  // one tooltip sentence pair; the button's own visible label ("Already
+  // synced" — see DropZonePanel's applySyncSpineUnchangedReason ternary)
+  // carries the stated-reason requirement visibly, not hover-only.
   const applySyncSpineUnchangedReason = spineUnchanged
-    ? 'Nothing to sync — this audio and script match your last sync.'
+    ? "Your audio and script haven't changed since the last sync. Edit the script or swap the voiceover to re-sync."
     : undefined;
 
   // Wave 1 hotfix (operator-ordered) — the two Whisper model-integrity
