@@ -587,7 +587,7 @@ pub fn whisper_transcribe_attach(
 // ~2.1-2.2 GiB resident during inference (docs/sync-pipeline-v2-plan.md H.9).
 pub(crate) const MODEL_FILENAME: &str = "ggml-large-v3-turbo.bin";
 
-fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+pub(crate) fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     // In-app acquisition (bug 4 fix): the model is downloaded on demand into
     // the configured storage root's models/ dir (see model_download.rs /
     // storage_root.rs) rather than bundled — tauri.conf.json's resources map

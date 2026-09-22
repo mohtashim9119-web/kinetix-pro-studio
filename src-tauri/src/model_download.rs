@@ -860,7 +860,24 @@ pub(crate) fn status_for_target(target: &Path, expected_size: u64) -> ModelDownl
 #[tauri::command]
 pub fn whisper_model_status(app: tauri::AppHandle) -> Result<ModelDownloadStatus, String> {
     let dir = models_dir(&app)?;
-    Ok(status_for_target(&dir.join(MODEL_FILENAME), MODEL_SIZE_BYTES))
+    let mut status = status_for_target(&dir.join(MODEL_FILENAME), MODEL_SIZE_BYTES);
+    // G3 Unit 2 (STATUS queue item 1) — this used to report `present` from the
+    // storage-root target alone, while `whisper.rs::model_path()` (what a real
+    // transcription run actually resolves against) additionally checks
+    // `app_local_data_dir()`, the bundled `resource_dir`, and two
+    // exe-relative fallbacks (production app-bundle and dev-checkout). A
+    // model placed in any of those other four locations — a hand-placed dev
+    // checkout, an older bundled-resource build, a storage root relocated
+    // after the model was already found via a fallback — made the app
+    // transcribe successfully while Settings kept reporting "not detected".
+    // Widen `present` to match what the app actually resolves.
+    // `partial_bytes`/`in_flight` stay scoped to the storage-root target
+    // specifically: it is the only location a download ever WRITES to, so a
+    // resume affordance only ever makes sense against it.
+    if !status.present {
+        status.present = crate::whisper::model_path(&app).is_ok();
+    }
+    Ok(status)
 }
 
 /// Hands a freshly loaded page the event stream of a download that is already
