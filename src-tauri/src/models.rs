@@ -288,6 +288,44 @@ fn fa_installed_status(app: &tauri::AppHandle, lang: &'static str) -> Option<Ins
     candidates.iter().find_map(|p| status_for(ModelId::Fa(lang), p))
 }
 
+/// Step 0 fix (G3 tail, STATUS queue item 1) — the whisper sibling of
+/// `fa_installed_status` above, closing the exact D22-shaped gap D22 itself
+/// only closed for FA. `check_installed_models` used to ask whisper's
+/// `target_path` alone (the single managed download slot), while
+/// `crate::whisper::model_path` — what a real transcription run resolves
+/// against, and what `model_download::whisper_model_status` used to widen
+/// its OWN `present` flag to match (G3 Unit 2) — walks five candidate
+/// locations. Widening the cheap `whisper_model_status` probe fixed
+/// "Settings says not detected while the app transcribes fine" but created a
+/// new bug: `present` also gates whether Download/Import render at all, so a
+/// model found only via a fallback location (not the managed slot) now
+/// showed a permanently "Unverified" row with no download affordance —
+/// Delete could not touch it (it targets the managed slot too), and
+/// Download was withheld even though the managed slot was genuinely empty
+/// and a fresh download there would have worked. That widening is reverted
+/// in `model_download.rs` alongside this fix: `present` goes back to meaning
+/// "the exact download target already holds this file" (matching FA's
+/// `fa_model_status`, which was never widened and is why FA's row never got
+/// stuck this way), and the candidate-widening + real hash verification
+/// moves here, to the authoritative badge, exactly where D22 already put it
+/// for FA.
+fn whisper_installed_status(app: &tauri::AppHandle) -> Option<InstalledModelStatus> {
+    let storage_root_models_dir = crate::storage_root::resolve_storage_root(app)
+        .ok()
+        .map(|root| crate::storage_root::models_dir(&root));
+    let local_data_dir = app.path().app_local_data_dir().ok();
+    let resource_dir = app.path().resource_dir().ok();
+    let exe_path = std::env::current_exe().ok();
+
+    let candidates = crate::whisper::whisper_model_candidate_paths(
+        storage_root_models_dir.as_deref(),
+        local_data_dir.as_deref(),
+        resource_dir.as_deref(),
+        exe_path.as_deref(),
+    );
+    candidates.iter().find_map(|p| status_for(ModelId::Whisper, p))
+}
+
 fn target_path(app: &tauri::AppHandle, id: ModelId) -> Result<PathBuf, String> {
     match id {
         ModelId::Whisper => Ok(models_dir(app)?.join(MODEL_FILENAME)),
@@ -428,7 +466,7 @@ pub async fn check_installed_models(app: tauri::AppHandle) -> Result<InstalledMo
 
     let whisper_app = app.clone();
     tasks.push(Box::new(move || {
-        let result = target_path(&whisper_app, ModelId::Whisper).map(|p| status_for(ModelId::Whisper, &p));
+        let result: Result<Option<InstalledModelStatus>, String> = Ok(whisper_installed_status(&whisper_app));
         (None, result)
     }));
 
@@ -779,6 +817,85 @@ mod tests {
         for id in bad {
             assert!(ModelId::parse(id).is_err(), "expected \"{id}\" to be rejected");
         }
+    }
+
+    // -- whisper_installed_status (Step 0 fix, G3 tail — mirrors D22 for FA) --
+    //
+    // Old-bug-first: before this fix, `check_installed_models`'s whisper task
+    // asked only `target_path` (the single managed storage-root slot). A
+    // verified model sitting at any OTHER candidate — e.g. the exe-relative
+    // dev-checkout fallback `whisper.rs::model_path` already accepted for a
+    // real transcription run — read as "not installed" in Settings, which
+    // combined with `whisper_model_status`'s (then-widened) `present` flag to
+    // produce the operator's stuck "Unverified, no download option" row: a
+    // real file, genuinely usable by the app, that this authoritative check
+    // could never confirm no matter how many times "Verify" was pressed.
+
+    #[test]
+    fn old_bug_single_candidate_check_misses_a_verified_model_at_a_fallback_location() {
+        let dir = std::env::temp_dir().join(format!("kinetix-whisper-oldbug-{}", std::process::id()));
+        let storage_root_models = dir.join("storage-root").join("models");
+        fs::create_dir_all(&storage_root_models).unwrap();
+
+        // A verified model exists ONLY at the exe-relative dev-checkout
+        // fallback tier — nothing at the managed storage-root slot. Only
+        // path ARITHMETIC needs `exe_path`; nothing stats the exe itself.
+        let exe_path = dir.join("target").join("debug").join("kinetix");
+        let dev_model_dir = dir.join("models"); // exe.parent().parent().parent() == dir
+        fs::create_dir_all(&dev_model_dir).unwrap();
+        let dev_model = dev_model_dir.join("ggml-large-v3-turbo.bin");
+        sparse_file_of_len(&dev_model, MODEL_SIZE_BYTES);
+        fs::write(sidecar_path(&dev_model), MODEL_SHA256).unwrap();
+
+        // OLD BEHAVIOR: checking only the managed target (candidate[0]) —
+        // this is what `check_installed_models` did before the fix.
+        let managed_target = storage_root_models.join("ggml-large-v3-turbo.bin");
+        assert!(
+            status_for(ModelId::Whisper, &managed_target).is_none(),
+            "old bug reproduction: nothing at the managed slot, so the pre-fix check finds nothing \
+             even though a verified model exists at a fallback location"
+        );
+
+        // FIX: the widened candidate ladder finds and verifies it.
+        let candidates = crate::whisper::whisper_model_candidate_paths(
+            Some(&storage_root_models),
+            None,
+            None,
+            Some(&exe_path),
+        );
+        let found = candidates
+            .iter()
+            .find_map(|p| status_for(ModelId::Whisper, p))
+            .expect("the widened ladder must find the model at the dev-checkout fallback tier");
+        assert!(found.installed, "the model at the fallback tier is byte- and hash-verified and must read installed");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// The managed-target-only status (what `model_download::whisper_model_status`
+    /// reports as `present`, used to gate whether Download/Import render at
+    /// all) must stay scoped to the managed slot alone — this is the other
+    /// half of the Step 0 fix: `present` no longer widens to the fallback
+    /// ladder, so a model found only at a fallback location no longer hides
+    /// the Download button over a managed slot that is actually empty.
+    #[test]
+    fn managed_target_status_ignores_a_model_present_only_at_a_fallback_location() {
+        let dir = std::env::temp_dir().join(format!("kinetix-whisper-managedonly-{}", std::process::id()));
+        let storage_root_models = dir.join("storage-root").join("models");
+        fs::create_dir_all(&storage_root_models).unwrap();
+        let dev_model_dir = dir.join("models");
+        fs::create_dir_all(&dev_model_dir).unwrap();
+        let dev_model = dev_model_dir.join("ggml-large-v3-turbo.bin");
+        sparse_file_of_len(&dev_model, MODEL_SIZE_BYTES);
+        fs::write(sidecar_path(&dev_model), MODEL_SHA256).unwrap();
+
+        let managed_target = storage_root_models.join("ggml-large-v3-turbo.bin");
+        assert!(
+            status_for(ModelId::Whisper, &managed_target).is_none(),
+            "the managed slot is genuinely empty — Download must be offered, not withheld"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     // -- status_for (WS2 Step 13 Phase 1.5 — status-check bug regression) --

@@ -860,24 +860,25 @@ pub(crate) fn status_for_target(target: &Path, expected_size: u64) -> ModelDownl
 #[tauri::command]
 pub fn whisper_model_status(app: tauri::AppHandle) -> Result<ModelDownloadStatus, String> {
     let dir = models_dir(&app)?;
-    let mut status = status_for_target(&dir.join(MODEL_FILENAME), MODEL_SIZE_BYTES);
-    // G3 Unit 2 (STATUS queue item 1) — this used to report `present` from the
-    // storage-root target alone, while `whisper.rs::model_path()` (what a real
-    // transcription run actually resolves against) additionally checks
-    // `app_local_data_dir()`, the bundled `resource_dir`, and two
-    // exe-relative fallbacks (production app-bundle and dev-checkout). A
-    // model placed in any of those other four locations — a hand-placed dev
-    // checkout, an older bundled-resource build, a storage root relocated
-    // after the model was already found via a fallback — made the app
-    // transcribe successfully while Settings kept reporting "not detected".
-    // Widen `present` to match what the app actually resolves.
-    // `partial_bytes`/`in_flight` stay scoped to the storage-root target
-    // specifically: it is the only location a download ever WRITES to, so a
-    // resume affordance only ever makes sense against it.
-    if !status.present {
-        status.present = crate::whisper::model_path(&app).is_ok();
-    }
-    Ok(status)
+    // G3 Unit 2 (STATUS queue item 1) widened `present` here to also cover
+    // `whisper.rs::model_path()`'s four fallback locations, so Settings would
+    // stop reporting "not detected" for a model the app could already
+    // transcribe with. That fixed one divergence but caused another (G3 tail
+    // Step 0, found by operator click-through): `present` is also what gates
+    // whether Download/Import render at all, and a model found ONLY via a
+    // fallback — not this storage-root target — left the row stuck
+    // "Unverified" with Delete as the only action, and Delete only ever
+    // touches this same target, so it did nothing. `present` reverts to
+    // meaning exactly what a download would check before writing — "does
+    // *this* target already hold the file" — mirroring `fa_model_status`
+    // below, which was never widened and never got stuck this way. The
+    // candidate-widening this command used to do, PLUS real hash
+    // verification (this command was existence-only), now lives in
+    // `models.rs::whisper_installed_status`, reached through
+    // `check_installed_models` — the authoritative report this row's
+    // "Ready"/"Unverified" badge is actually drawn from — mirroring D22's
+    // identical fix for the FA row (`fa_installed_status`).
+    Ok(status_for_target(&dir.join(MODEL_FILENAME), MODEL_SIZE_BYTES))
 }
 
 /// Hands a freshly loaded page the event stream of a download that is already
