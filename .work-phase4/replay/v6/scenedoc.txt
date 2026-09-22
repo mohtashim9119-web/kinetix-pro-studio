@@ -1,0 +1,1340 @@
+[001_child_seven]
+You are seven years old.
+
+[002_skin_shelter]
+You live inside a skin-covered shelter at the edge of a shallow valley.
+
+[003_mother_fire]
+The fire your mother tends smells like pine resin and scorched bone.
+
+[004_grandmother_asleep]
+Your grandmother is asleep against the far wall.
+
+[005_deep_night]
+It is deep in the night.
+
+[006_boy_alert]
+You are wide awake.
+
+[007_listening_outside]
+You can hear something outside.
+
+[008_unknown_void]
+You do not know what it is.
+
+[009_large_shadow]
+You only know the sound is large
+
+[010_close_danger]
+it is close
+
+[011_shivering_by_fire]
+and the fire is the only reason you are not screaming.
+
+[012_sudden_hush]
+The sound stops.
+
+[013_silent_prehistoric_night]
+The night goes quiet.
+
+[014_chest_tightens_fear]
+Your chest is tight in a way you have no word for.
+
+[015_mother_unmoved]
+Your mother does not look up.
+
+[016_feeding_the_hearth]
+She feeds the fire another stick without turning her head.
+
+[017_heavy_stillness]
+That stillness tells you something.
+
+[018_listening_mother_profile]
+She has been listening the whole time.
+
+[019_silent_observation]
+You watch her face and you learn your first lesson without a word being spoken.
+
+[020_lurking_darkness]
+The darkness past the firelight is not empty.
+
+[021_heavy_flint_spear]
+It has weight.
+
+[022_fire_boundary_void]
+The fire is the line between you and whatever lives on the other side of it.
+
+[023_sleeping_mother_side]
+You fall asleep against her side
+
+[024_hand_warm_stones]
+one hand on the warm stones ringing the hearth.
+
+[025_dream_sound_shapes]
+You dream about the sound.
+
+[026_frosty_morning_run]
+Morning comes bright and cold and you run out into the frost like nothing happened.
+
+[027_internal_change_face]
+But something stayed in you.
+
+[028_small_permanent_flake]
+Small and permanent.
+
+[029_night_understanding]
+A new understanding of what the night actually is.
+
+[030_watching_older_hunters]
+You start watching the older hunters differently.
+
+[031_sunset_gaze]
+You notice where their eyes go when the sun drops.
+
+[032_fire_gathering]
+You notice how they arrange themselves around the fire before full dark.
+
+[033_watchful_eyes]
+Nobody told them to do it.
+
+[034_natural_order]
+They just do.
+
+[035_nocturnal_formation]
+The band has a shape at night it does not have during the day.
+
+[036_outward_sentry]
+Certain men always face outward.
+
+[037_inner_circle]
+Certain men sleep closest to the fire’s edge.
+
+[038_spear_glint]
+The arrangement is not accidental.
+
+[039_river_trap]
+It is as deliberate as any trap your father sets in the river shallows.
+
+[040_outside_circle]
+You are not old enough to hold a position in that shape.
+
+[041_elder_lesson]
+But you are old enough to start learning what it means.
+
+[042_eleven_years]
+You are eleven.
+
+[043_night_migration]
+On nights when the band moves between camps
+
+[044_carrying_torch]
+your job is to carry one of the torches.
+
+[045_torch_materials]
+Birch bark and fat-soaked moss
+
+[046_sinew_binding]
+bound with sinew
+
+[047_proper_hold]
+held in both hands out in front of your body.
+
+[048_flickering_wind]
+The flame bends in the wind and you curve yourself around it
+
+[049_chest_protection]
+using your chest against the cold air.
+
+[050_hunters_ahead]
+The hunters move ahead.
+
+[051_center_column]
+You stay in the center column with the women and older children.
+
+[052_rear_guards]
+Behind you, two of the most experienced men walk the rear with thrusting spears angled outward into the dark.
+
+[053_silent_men]
+They do not speak on night marches.
+
+[054_silent_tool]
+Their silence is a tool
+
+[055_spear_comparison]
+same as the spear.
+
+[056_dropping_torch]
+You drop the torch on the third night of your second season carrying it.
+
+[057_root_trip]
+You catch a root you did not see and the flame hits the ground and sputters and for three full heartbeats the column loses half its light.
+
+[058_silent_reaction]
+Nobody shouts.
+
+[059_daret_approaches]
+But Daret, the rear guard
+
+[060_reassuring_hand]
+moves up beside you and puts his hand flat on your shoulder.
+
+[061_elder_touch]
+Not hard.
+
+[062_firm_grip]
+Not gentle.
+
+[063_scout_silhouette]
+Just there.
+
+[064_lighting_torch]
+He holds it until you have the torch burning again from the second carrier’s coals.
+
+[065_elder_leaves]
+Then he walks back to his post without a word.
+
+[066_torch_reflection]
+The lesson in that touch
+
+[067_group_danger]
+your mistake put people in danger.
+
+[068_scout_solitude]
+You are not punished for it.
+
+[069_scout_resolve]
+You are expected to understand that on your own.
+
+[070_scout_advancing]
+You do not drop a torch again.
+
+[071_night_column_walk]
+Those long column walks teach you how to read the night by its sounds.
+
+[072_neutral_owl]
+An owl is neutral.
+
+[073_sudden_silence]
+Every animal going silent at once is not.
+
+[074_erratic_wind]
+Wind through pine moves without any pattern.
+
+[075_rhythmic_movement]
+Something large moving through pine has a rhythm even when it is trying to suppress one.
+
+[076_feeling_change]
+You learn to feel the column change before you see it change.
+
+[077_lead_hunter_slows]
+When the lead hunter slows
+
+[078_column_stops]
+every person slows.
+
+[079_no_signal]
+No signal.
+
+[080_no_sound]
+No sound.
+
+[081_hearth_shift]
+The shift moves back through the group the way cold moves through water.
+
+[082_sleepless_vigil]
+You sleep lightly now even at camp.
+
+[083_unbidden_alertness]
+You did not decide to.
+
+[084_instinctive_grip]
+Your body made that choice without asking.
+
+[085_the_spear_bearer]
+You are sixteen and you carry your own spear.
+
+[086_spear_contrast]
+Not the heavy thrusting spear of the senior hunters.
+
+[087_throwing_spear_poise]
+A throwing spear
+
+[088_spear_craftsmanship]
+its flint point knapped by hand and bound to the shaft with pine pitch and wet sinew that dried hard as rock.
+
+[089_forward_scouting]
+They start sending you on forward runs.
+
+[090_tethered_distance]
+Never far.
+
+[091_scouts_walking]
+Never alone.
+
+[092_moving_with_korik]
+You go with Korik
+
+[093_korik_scout]
+twenty-two, who has been scouting for four years.
+
+[094_scouts_ahead]
+The two of you move ahead of the main group by about the distance a man can shout and be heard.
+
+[095_reading_ground]
+Your job is to read the ground before everyone else walks onto it.
+
+[096_smell_first]
+You learn to smell before you look.
+
+[097_predator_presence]
+A predator’s presence reaches your nose before your mind names it.
+
+[098_thick_musky]
+Something thick, musky, wrong in a way that is hard to describe.
+
+[099_sudden_stop]
+You catch it on your third run and stop walking.
+
+[100_korik_stops]
+Korik stops half a step after you.
+
+[101_shared_realization]
+He has it too.
+
+[102_frozen_scouts]
+The two of you stand without moving for a long count
+
+[103_held_breath]
+long enough for your own breathing to feel very loud.
+
+[104_silent_retreat]
+You back out the way water runs in reverse.
+
+[105_careful_steps]
+Slow, continuous, nothing sudden enough to announce you.
+
+[106_empty_night]
+You never see the cave lion that night.
+
+[107_frost_tracks]
+But you find its tracks in the frost the next morning
+
+[108_spear_measure]
+two spear-lengths from where you stood.
+
+[109_giant_print]
+The print is wider than both your hands laid side by side.
+
+[110_long_stare]
+You look at it for a long time.
+
+[111_scout_returning_camp]
+You bring the information back.
+
+[112_scout_reporting_mission]
+That is the job.
+
+[113_scout_hiding_shadows]
+Not to engage.
+
+[114_scout_restrained_grip]
+Not to prove anything.
+
+[115_scout_observing_turning]
+See, register, return.
+
+[116_scout_missed_threat]
+A scout who sees too little endangers the band.
+
+[117_scout_imagined_monster]
+A scout who imagines too much does the same.
+
+[118_scout_delivering_truth]
+What the job requires is exact truth delivered without drama.
+
+[119_scout_inner_tremble]
+You are not yet calm about it.
+
+[120_scout_steady_voice]
+Your voice holds when you report
+
+[121_still_hands]
+but your hands do not.
+
+[122_daret_watching]
+Daret watches your hands when you speak.
+
+[123_catching_gaze]
+You see him doing it.
+
+[124_working_hands]
+You start working on the hands.
+
+[125_night_circle]
+You are twenty and you have your first real position in the night circle.
+
+[126_eastern_post]
+The eastern post
+
+[127_river_treeline]
+facing the tree line where the river bends out of sight.
+
+[128_back_to_fire]
+You sit with your back to the fire so your eyes can adjust fully to the dark beyond the camp’s edge.
+
+[129_warmth_and_cold]
+The fire’s warmth is on your back and the night’s cold is on your face.
+
+[130_discomfort_point]
+The discomfort is the point.
+
+[131_drifting_guard]
+It keeps you from drifting.
+
+[132_guarding_stretch]
+You guard your stretch
+
+[133_wake_man]
+wake the next man
+
+[134_exhausted_sleep]
+sleep.
+
+[135_three_hours]
+Three hours at most before you are back up.
+
+[136_nightly_rotation]
+This runs every night
+
+[137_harsh_weather]
+no matter the weather.
+
+[138_cracking_ice]
+On the coldest nights when the river ice cracks and carries those sounds through the valley
+
+[139_restless_tribe]
+nobody sleeps deep and nobody sleeps long.
+
+[140_sudden_alertness]
+The body does not wait for the mind to decide if a sound is worth waking for.
+
+[141_night_listening]
+Night is not quiet.
+
+[142_noisy_void]
+It is full of noise
+
+[143_meaningless_noises]
+almost all of it meaningless.
+
+[144_howling_wind]
+Wind.
+
+[145_scurrying_creature]
+Small animals.
+
+[146_fire_settling]
+The fire settling.
+
+[147_frozen_branches]
+Branches pulling tight in the cold.
+
+[148_breathing_clan]
+Sleeping people breathing.
+
+[149_month_rotation]
+You spend your second month in rotation learning to separate the sounds that matter from the enormous volume that do not.
+
+[150_listening_intent]
+You are not listening for a sound.
+
+[151_scout_listening_void]
+You are listening for the absence of one.
+
+[152_frozen_brush_mice]
+When the brush mice stop moving through dry leaves
+
+[153_something_stopped_them]
+something stopped them.
+
+[154_silent_night_birds]
+When the night birds cut off mid-call
+
+[155_predator_passing_under]
+something passed under them.
+
+[156_scout_deep_realization]
+These gaps tell you more than any loud noise could.
+
+[157_scout_nervous_reflection]
+You get it wrong twice in your first season.
+
+[158_scout_false_alert]
+The first time you raise an alert for a branch dropping from a snow-loaded tree.
+
+[159_camp_standing_alert]
+The whole camp stands up and it takes several minutes to settle.
+
+[160_camp_forgiveness]
+Nobody is angry with you.
+
+[161_waste_chest]
+But the waste of it stays in your chest
+
+[162_false_alarm_burn]
+the specific burn of a false alarm
+
+[163_not_carrying_feeling]
+and you do not want to carry that feeling again.
+
+[164_waiting_too_long]
+The second time you wait too long.
+
+[165_talking_out_trust]
+You hear the interruption and you talk yourself out of trusting it.
+
+[166_dire_wolf_perimeter]
+The threat is a lone dire wolf testing the perimeter
+
+[167_smell_of_butchery]
+drawn by the smell of the previous day’s butchering.
+
+[168_daret_thrown_stone]
+Daret spots it from his post and turns it back with a thrown stone before it gets close.
+
+[169_daret_meets_scout]
+He finds you at your post afterward.
+
+[170_daret_speaks]
+He tells you one thing
+
+[171_scout_carrying_load]
+and you never stop carrying it.
+
+[172_body_instinct_grip]
+The body knows before the mind agrees.
+
+[173_broken_track_pattern]
+When something in you says a pattern has broken
+
+[174_enough_standing_tall]
+that is enough.
+
+[175_stepping_into_void]
+Stop waiting for your mind to finish arguing.
+
+[176_twenty_six_scout]
+You are twenty-six.
+
+[177_leading_in_darkness]
+Fear no longer leads when you move in darkness.
+
+[178_fear_running_alongside]
+It runs alongside you now
+
+[179_not_in_charge]
+present but not in charge.
+
+[180_late_autumn_transformation]
+The night that changes you comes in late autumn.
+
+[181_aurochs_drive]
+Your group drives a small aurochs herd toward a valley narrowing
+
+[182_breaking_aurochs]
+and three animals break sideways into the trees instead of funneling through.
+
+[183_chasing_hunters]
+Two hunters go after them.
+
+[184_mc_running]
+You are one.
+
+[185_yaro_running]
+The other is Yaro
+
+[186_yaro_age]
+thirty years old
+
+[187_composed_yaro]
+the most composed man on any hunt you have been on.
+
+[188_fading_light]
+The light is going fast.
+
+[189_heavy_timber]
+You push through the tree line into heavier timber and the animals are already gone ahead of you into the dark.
+
+[190_yaro_signal]
+Yaro signals to stop.
+
+[191_both_still]
+You both go still.
+
+[192_scout_listening]
+You listen.
+
+[193_low_ground]
+What you hear instead of aurochs is something low and close to the ground.
+
+[194_breathing_tension]
+A breathing that belongs to neither of you.
+
+[195_unseen_woods]
+You cannot locate it in the trees.
+
+[196_main_frozen]
+You do not move.
+
+[197_yaro_still]
+Yaro does not move.
+
+[198_stopped_breathing]
+The breathing stops.
+
+[199_three_seconds]
+Three seconds.
+
+[200_yaro_shifts]
+Then Yaro shifts his weight back
+
+[201_stealthy_footstep]
+one foot at a time
+
+[202_mirroring_scout]
+and you mirror him exactly.
+
+[203_backward_retreat]
+You walk backward out of the forest with your spear forward and your free hand trailing behind you to feel for the tree line.
+
+[204_meadow_run]
+You reach the open meadow and you both run
+
+[205_instinctual_flight]
+not deciding to run
+
+[206_scouts_sprinting]
+just running.
+
+[207_reporting_to_leader]
+You return to the main group and report.
+
+[208_leader_decision]
+The hunt leader listens and sends nobody back.
+
+[209_empty_meadow]
+The aurochs are gone.
+
+[210_ominous_timber]
+Whatever shared that timber with you was not worth finding.
+
+[211_hearth_reflection]
+That night by the fire you think about the three seconds after the breathing stopped.
+
+[212_watching_eyes]
+Something in the dark assessed you and made a decision.
+
+[213_pensive_stare]
+You do not know what it decided or why.
+
+[214_solitary_fire]
+You only know you are at the fire because whatever it was let you leave.
+
+[215_spear_grip]
+That is a different kind of knowledge than anything you were taught.
+
+[216_chest_revelation]
+It does not sit in the same place.
+
+[217_still_silence]
+You get quieter after that.
+
+[218_upright_posture]
+Not afraid, but rearranged inside.
+
+[219_starry_void]
+You understand that surviving is not only about what you do.
+
+[220_lethal_gap]
+There is a space between your action and something else’s action
+
+[221_skill_removes]
+and in that space lives an element that no amount of skill removes entirely.
+
+[222_long_silence]
+You do not say this to anyone for a long time.
+
+[223_carrying_weight]
+You carry it.
+
+[224_thirty_three]
+You are thirty-three.
+
+[225_night_scouts]
+You lead the night scouts now.
+
+[226_four_scouts]
+Four of them besides yourself
+
+[227_scout_ages]
+ranging from seventeen to twenty-four.
+
+[228_informal_bond]
+They are not yours in any formal sense.
+
+[229_no_formal_sense]
+There is no formal sense here.
+
+[230_slowing_pace]
+But when you slow
+
+[231_slowing_pace]
+they slow.
+
+[232_sudden_halt]
+When you stop, they stop.
+
+[233_firelight_speech]
+When you speak at the fire before a hard night
+
+[234_focused_attention]
+their attention is different from what they give anyone else.
+
+[235_unasked_burden]
+You did not ask for this.
+
+[236_uncertain_start]
+You are not sure when it started.
+
+[237_heavy_weight]
+The weight of it is not the same as the fear from your younger years.
+
+[238_youthful_fear]
+That fear was about your own body.
+
+[239_internal_burden]
+This sits differently.
+
+[240_tribal_survival]
+It is about theirs.
+
+[241_fen_young_scout]
+Your youngest scout is Fen.
+
+[242_fen_excited_run]
+He has the instincts but his feet carry his excitement on runs.
+
+[243_fen_too_quick]
+Too quick, consistently.
+
+[244_elder_watching_fen]
+You watch him for two full seasons and say almost nothing.
+
+[245_seasonal_contrast]
+You let him see the contrast.
+
+[246_elder_speaks_plainly]
+Then one evening before a run you tell him plainly
+
+[247_danger_lesson]
+slow is not about the danger being less.
+
+[248_stealthy_movement]
+Slow is about being harder to detect.
+
+[249_fast_after_decision]
+Fast is for after the decision has already been made.
+
+[250_before_the_moment]
+Before that moment
+
+[251_main_focused_observation]
+slow is the sharpest thing you have.
+
+[252_fen_slowing_run]
+On the next run he slows.
+
+[253_fen_measured_movement]
+Not completely.
+
+[254_main_observing_fen]
+But you can see it.
+
+[255_daret_hand_on_shoulder]
+You remember Daret’s hand on your shoulder over the dropped torch.
+
+[256_korik_stopping_in_dark]
+You remember Korik stopping half a step after you in the dark
+
+[257_wordless_confirmation_scent]
+that wordless confirmation that your nose had caught something real.
+
+[258_main_contemplative_ridge]
+The things that kept you alive were not only your own choices.
+
+[259_mentors_around_hearth]
+They were built into you by people who made room for you to learn without killing your willingness to try.
+
+[260_main_teaching_fen]
+You try to build that same room for Fen.
+
+[261_weary_leader]
+You do not always manage it.
+
+[262_stern_warning]
+Some nights the danger is too close and you have to be hard with them in ways you regret by the time you are sitting at the fire watching their faces.
+
+[263_temporary_dawn]
+Every dawn is temporary.
+
+[264_feeding_fire]
+The dark comes back the same way your mother fed the fire
+
+[265_unending_dark]
+without announcement, without end.
+
+[266_forty_one_burden]
+You are forty-one.
+
+[267_leader_of_children]
+There are children here who have never known a night where someone other than you was the person the adults looked to when something moved at the perimeter.
+
+[268_morning_visitor]
+That reaches you one morning when a girl of about nine walks to you at the fire’s edge
+
+[269_gift_of_meat]
+puts a piece of dried meat in your hand
+
+[270_silent_departure]
+and walks away without any explanation.
+
+[271_holding_meat]
+You hold the meat and understand you have become something this group has no simple word for.
+
+[272_hunched_back]
+Your back has decades stored in it.
+
+[273_cold_grass]
+Long crouches in cold grass.
+
+[274_stillness_ache]
+The particular ache of held stillness.
+
+[275_morning_knees]
+Your knees announce themselves on cold mornings before you are fully awake.
+
+[276_not_old]
+You are not old by some measures.
+
+[277_night_body]
+But you are old the way that twenty years of moving at night makes a body old.
+
+[278_faster_men]
+There are faster men now.
+
+[279_sharper_ears]
+There are scouts with sharper ears.
+
+[280_saying_so]
+You say so.
+
+[281_hearth_counsel]
+You tell Fen
+
+[282_fen_leading]
+twenty-five now and leading runs you no longer go on
+
+[283_fen_keen_ears]
+that his ears are better than yours in the birch stands.
+
+[284_fen_modesty]
+He takes it as modesty at first.
+
+[285_elder_seriousness]
+You explain that it is not.
+
+[286_fact_to_act]
+It is a fact he needs to act on
+
+[287_growing_responsibility]
+and acting on it correctly means his responsibility at night is larger than it was
+
+[288_not_smaller]
+not smaller.
+
+[289_winter_predator_breach]
+A predator gets through the western perimeter on a winter night and kills one of the youngest members of the band before anyone can reach the site.
+
+[290_tragic_aftermath]
+The child is barely four years old.
+
+[291_eastern_post]
+You are at the eastern post.
+
+[292_distant_attack]
+The attack comes from the direction that is not yours.
+
+[293_sitting_brooding]
+You sit with that for a long time.
+
+[294_intense_thought]
+You go back through every decision of that night.
+
+[295_defensive_positioning]
+The positioning was right.
+
+[296_orderly_rotations]
+The rotations were right.
+
+[297_standard_arrangement]
+The arrangement was what it has always been.
+
+[298_heavy_burden]
+None of that lifts the weight.
+
+[299_realization_moment]
+What you arrive at
+
+[300_night_gap]
+eventually, is that you can build the best structure knowledge and experience allow and the night will still find the gap that structure cannot close.
+
+[301_hearth_reflection]
+Accepting that without it hollowing out your readiness is harder than any technique you have ever learned.
+
+[302_night_sprint]
+Harder than any night run in open ground.
+
+[303_rebuilding_shelter]
+You rebuild.
+
+[304_closing_gap]
+You add a post that covers the gap the night found.
+
+[305_carrying_grief]
+You do not put down the grief.
+
+[306_flint_knapping]
+You carry it alongside everything else and you keep working.
+
+[307_forty_nine_years]
+You are forty-nine.
+
+[308_scouts_leading]
+Three of your old scouts lead their own groups now in different parts of the territory.
+
+[309_wide_river_meeting]
+When the bands come together at the seasonal meeting place by the wide river
+
+[310_scouts_at_fire]
+those men find you at the fire
+
+[311_quiet_hearth_talk]
+sit close, and the talk moves between ordinary things and the kind of talk that only happens between people who have shared a particular kind of night.
+
+[312_fen_scouts_introduction]
+Fen brings two young scouts to you at the gathering.
+
+[313_fen_silent_gaze]
+He does not ask you to teach them anything.
+
+[314_scouts_settle_down]
+He places them near you and you understand what he is asking.
+
+[315_observing_over_time]
+You watch the two of them over several evenings.
+
+[316_scout_instinct_fear]
+One has good instincts but is afraid of fear
+
+[317_sharpening_bone_tool]
+which is the worst combination you know.
+
+[318_scout_on_ridge]
+The fear itself is not the problem.
+
+[319_eye_reflection_awareness]
+Fear is information.
+
+[320_body_warning_signal]
+The problem is what happens when the body’s warning triggers a second signal that overrides the first.
+
+[321_hearth_counsel]
+That young man needs to understand that the tightness in his chest before a hard night is not a sign of weakness arriving.
+
+[322_body_readiness]
+It is the body getting ready.
+
+[323_direct_speech]
+You tell him directly because he is young enough that direct still works.
+
+[324_youth_realization]
+You see it take in his face.
+
+[325_contrasting_student]
+The other one is nearly the opposite.
+
+[326_careless_ease]
+She moves into dark terrain with an ease that looks like calm but is actually the absence of proper attention.
+
+[327_perimeter_lesson]
+You take her to the perimeter edge one evening and ask her to stand still and report what she notices.
+
+[328_obvious_sights]
+At first she reports the obvious.
+
+[329_patient_silence]
+You wait.
+
+[330_finer_observations]
+The reports get finer.
+
+[331_scent_at_slope]
+A smell change at the base of a slope.
+
+[332_fading_sound]
+A sound she had not consciously registered until it was gone.
+
+[333_passing_knowledge]
+You tell her that.
+
+[334_internal_noticing]
+That second kind of noticing.
+
+[335_tracking_skill]
+That is where the whole skill lives.
+
+[336_uncertain_mentorship]
+You are not certain you gave either of them what they needed.
+
+[337_mutual_exchange]
+You were not certain Daret and Korik gave you everything you needed.
+
+[338_final_gift]
+You gave what you had.
+
+[339_night_voyage]
+The rest belongs to the nights they will face without you.
+
+[340_fifty_eight]
+You are fifty-eight.
+
+[341_aging_temples]
+Your hair has gone pale at the edges.
+
+[342_steady_grip]
+Your hands are steady now
+
+[343_shaking_scout]
+the same hands that could not hold still over your first real guarding post.
+
+[344_marked_palms]
+They are also marked with everything the years put into them.
+
+[345_palm_scar]
+The white line across your left palm from a night in the limestone hills.
+
+[346_shortened_finger]
+The shortened finger on your right hand from something you do not describe in detail.
+
+[347_thickened_knuckles]
+The thickened knuckles from four decades of gripping things hard in the cold.
+
+[348_distant_bands]
+Other bands know your name.
+
+[349_stoic_presence]
+Not the way a man is known for a single event.
+
+[350_mountain_ridge]
+The way a specific ridge is known
+
+[351_river_crossing]
+or a reliable river crossing.
+
+[352_orient_landmark]
+A feature of the world that people orient by.
+
+[353_gathering_bands]
+When the bands gather and the talk turns to the night
+
+[354_dark_beast]
+to what lives in it
+
+[355_reading_tracks]
+to how to read an animal that is following you against one that only crossed your path
+
+[356_respectful_glance]
+people look toward where you are sitting.
+
+[357_sitting_quietly]
+Not because you stand and announce anything.
+
+[358_knowledge_face]
+Because over enough years your name has attached to a kind of knowledge people understand is not easily replaced.
+
+[359_listening_hunters]
+Young hunters from other bands sit near your fire and listen.
+
+[360_scout_wisdom]
+You know what they see.
+
+[361_daret_observation]
+The same thing you saw when you first looked at Daret.
+
+[362_survival_proof]
+Proof that surviving a long time is possible.
+
+[363_facing_night]
+An answer to the question of whether you can face the night across a whole life without it eventually winning.
+
+[364_the_full_cost]
+You tell them the full cost
+
+[365_recurrent_storytelling]
+same as you always do.
+
+[366_missing_calm]
+You tell them the calm they see was not always there.
+
+[367_dropped_torch]
+You tell them about the dropped torch
+
+[368_forest_terror]
+the three seconds in the forest
+
+[369_unreached_child]
+the child you could not reach in time.
+
+[370_dark_mercy]
+You tell them about the nights you got it right only because something in the dark chose to let you.
+
+[371_listening_scouts]
+Most of them hear the strength.
+
+[372_wide_eyed_fear]
+Fear as a tool.
+
+[373_slow_blade_draw]
+Slow as a weapon.
+
+[374_scout_instinct]
+The body ahead of the mind.
+
+[375_group_incomprehension]
+They do not take in the losses the same way.
+
+[376_observing_the_unready]
+They are not ready for them yet.
+
+[377_main_character_memory]
+You know this because you were not ready either
+
+[378_flashback_fire]
+sitting at someone else’s fire at their age
+
+[379_partial_understanding]
+being told the whole truth and only catching part of it.
+
+[380_scarred_hands_experience]
+The knowledge that comes from actual experience cannot be handed over by talking.
+
+[381_growth_lesson]
+It has to grow inside the living of it.
+
+[382_honesty_transfer]
+All you can do is be honest and let them take what they are able to carry right now.
+
+[383_sixty_four]
+You are sixty-four.
+
+[384_night_scouts]
+The night runs belong to someone else now.
+
+[385_lost_precision]
+Your legs still work but your eyes have lost the edge-of-darkness precision that forward scouting demands.
+
+[386_quiet_knowing]
+You know this without needing anyone to tell you.
+
+[387_handing_spear]
+Three winters ago you stepped back from active perimeter work and gave it fully to Fen’s people
+
+[388_fen_teaching]
+who have by now become the ones teaching the people after them.
+
+[389_unnamed_role]
+What you do now is harder to put a name to.
+
+[390_center_fire]
+You sit at the center fire on long winter nights when the band is settled deep in the valley and the cold has pulled everything close.
+
+[391_children_gathering]
+Children gather near you.
+
+[392_young_hunters_fire]
+Young hunters too new for real posts sit at the outer edge of your fire ring and listen to what you say in the dark hours.
+
+[393_intense_speaker]
+You are not telling stories to fill time.
+
+[394_passing_knowledge]
+You are passing something.
+
+[395_darets_hand]
+You describe what Daret’s hand felt like on your shoulder and what it meant.
+
+[396_forest_yaro]
+You describe the three seconds in the forest with Yaro when something in the dark made a choice.
+
+[397_failed_rescue]
+You describe the child you could not save and what you did in the weeks after
+
+[398_carrying_on]
+and why you did not let that weight take the work from you.
+
+[399_fens_realization]
+You describe the look on Fen’s face the first time slowing his feet made a difference he could feel in his whole body.
+
+[400_endless_dark]
+You tell them the dark cannot be finished.
+
+[401_nightfall_encroaching]
+It comes back every night
+
+[402_cyclical_darkness]
+the same as it always has
+
+[403_vigilant_embers]
+and it expects the same quality of attention on the thousandth night as it did on the first.
+
+[404_the_fire_line]
+You tell them the fire is the line and they are the ones responsible for keeping it fed.
+
+[405_ancient_hearth]
+You sit in the warmth of a hearth your family has tended across more seasons than you
+
+[406_listening_darkness]
+can count and you listen to the night the way you have listened to it for fifty years.
+
+[407_shadow_movement]
+You still catch the interruptions.
+
+[408_shifting_air]
+You still feel when the air outside the camp shifts in a certain way.
+
+[409_wise_gaze]
+The knowledge has not left you.
+
+[410_internal_instinct]
+It lives in a different place now
+
+[411_scout_transition]
+the place a thing moves to when it stops being something you do and becomes something you simply are.
+
+[412_youngest_scout]
+Fen’s youngest scout
+
+[413_fifteen_girl]
+a girl of fifteen
+
+[414_past_firelight]
+sits just past your firelight on a clear cold night
+
+[415_watching_treeline]
+watching the tree line.
+
+[416_straight_posture]
+Back straight but not locked.
+
+[417_balanced_weight]
+Weight even.
+
+[418_eyes_sweep]
+Eyes moving in a slow sweep rather than fixed on one point.
+
+[419_spear_hand]
+One hand loose on her spear shaft.
+
+[420_silent_watch]
+You watch her for a long time without making a sound.
+
+[421_hidden_observer_perspective]
+She does not know you are watching.
+
+[422_focused_work_detail]
+She is entirely in her work.
+
+[423_teaching_through_motion]
+She is doing the thing that cannot be scratched into bone or pressed into clay or passed through any medium other than one watching body alongside another watching body
+
+[424_generations_of_repetition]
+repeated across more generations than anyone alive can count.
+
+[425_passing_the_torch]
+She will teach the one after her.
+
+[426_next_generation_teaching]
+That one will teach the next.
+
+[427_knowledge_in_motion]
+The knowledge traveling the only way it has ever traveled
+
+[428_through_the_living]
+through the living
+
+[429_night_after_night]
+night after night
+
+[430_edge_of_light_and_dark]
+along the line where firelight ends and the dark begins.
+
+[431_child_huddling_mother]
+Somewhere right now a child is pressed against their mother’s side.
+
+[432_cave_entrance_vigil]
+There is a sound from outside.
+
+[433_child_eyes_firelight]
+The child has no word for what they feel.
+
+[434_tight_chest_anxiety]
+The tightness in the chest.
+
+[435_focused_attention_void]
+The sudden, total attention.
+
+[436_solemn_child_profile]
+The understanding, arriving without explanation
+
+[437_glowing_eyes_shadows]
+that the space past the firelight is not empty.
+
+[438_child_standing_resolve]
+That child will learn.
+
+[439_child_ear_listening]
+They will learn what the sounds mean.
+
+[440_slow_silent_tread]
+They will learn to slow their feet.
+
+[441_scout_cold_post]
+One day they will sit a cold post with their back to the fire and their face toward the dark.
+
+[442_scout_torch_wind]
+They will carry a torch in both hands and guard it with their body against the wind.
+
+[443_scout_cliff_edge]
+They will spend a whole life finding out what the night holds.
+
+[444_scout_past_watch]
+They always have.
+
+[445_scout_future_watch]
+They always will.
+
+[446_dark_landscape]
+The dark does not change.
+
+[447_scout_facing_dark]
+Only the ones who learn to face it.
