@@ -21,7 +21,7 @@ vi.mock('./tauriFfmpeg', () => ({ isTauri: vi.fn(() => true) }));
 
 import { invoke } from '@tauri-apps/api/core';
 import { isTauri } from './tauriFfmpeg';
-import { runFaPreflight, computeSyncEngineKey } from './faPreflight';
+import { runFaPreflight, computeSyncEngineKey, resolveSyncEngine } from './faPreflight';
 import { __resetFaCapabilityForTests } from './faGate';
 
 const mockInvoke = invoke as unknown as Mock;
@@ -169,5 +169,51 @@ describe('computeSyncEngineKey — the engine half of the honest-Apply-Sync spin
     expect(beforeDownload).toBe('fa:not-ready');
     expect(afterDownload).toBe('fa:ready');
     expect(beforeDownload).not.toBe(afterDownload);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G3 Unit 1 — `resolveSyncEngine`, the single resolver `computeSyncEngineKey`
+// now delegates to and Apply Sync gating (`App.tsx`) now calls directly
+// instead of running its own `isFaGateOpenForProject` + `runFaPreflight`
+// chain. Proves the wrapper relationship holds (its `.key` always equals
+// what `computeSyncEngineKey` returns for the same input) and that the
+// richer fields (`engine`/`gateOpen`/`ready`/`preflight`) carry the
+// information Apply Sync gating and the Settings Sync tab need.
+// ---------------------------------------------------------------------------
+describe('resolveSyncEngine — the single toggle+pack+model resolver', () => {
+  it('gate closed: engine "whisper", ready, no preflight, no backend call', async () => {
+    const r = await resolveSyncEngine({ faHighPrecisionSync: false });
+    expect(r).toEqual({ engine: 'whisper', gateOpen: false, ready: true, preflight: undefined, key: 'whisper' });
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('gate open + ready: engine "fa", gateOpen true, ready true, preflight populated', async () => {
+    mockInvoke.mockResolvedValue(READY_REPORT);
+    const r = await resolveSyncEngine({ faHighPrecisionSync: true, language: 'en' });
+    expect(r.engine).toBe('fa');
+    expect(r.gateOpen).toBe(true);
+    expect(r.ready).toBe(true);
+    expect(r.key).toBe('fa:ready');
+    expect(r.preflight?.ready).toBe(true);
+  });
+
+  it('gate open + not ready: engine "fa", ready false, key "fa:not-ready"', async () => {
+    mockInvoke.mockResolvedValue({ ...READY_REPORT, modelPresent: false, modelDetail: 'No FA model found for language "en".' });
+    const r = await resolveSyncEngine({ faHighPrecisionSync: true, language: 'en' });
+    expect(r.engine).toBe('fa');
+    expect(r.gateOpen).toBe(true);
+    expect(r.ready).toBe(false);
+    expect(r.key).toBe('fa:not-ready');
+  });
+
+  it('`.key` always matches what computeSyncEngineKey returns for the same input (wrapper relationship)', async () => {
+    for (const report of [READY_REPORT, { ...READY_REPORT, modelPresent: false, modelDetail: 'missing' }]) {
+      mockInvoke.mockResolvedValue(report);
+      const project = { faHighPrecisionSync: true, language: 'en' };
+      const resolution = await resolveSyncEngine(project);
+      const key = await computeSyncEngineKey(project);
+      expect(resolution.key).toBe(key);
+    }
   });
 });

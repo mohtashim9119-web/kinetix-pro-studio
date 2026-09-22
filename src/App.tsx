@@ -115,14 +115,14 @@ import { MatchCancelledError } from './services/hirschbergMatchClient';
 import { matchEtaStageMessage } from './services/matchEta';
 import type { FaLanguageCode } from './services/faTextNormalize';
 import {
-  isFaGateOpenForProject, isFaEnabledForProject, isFaCapable, resolveFaLanguage,
+  isFaEnabledForProject, isFaCapable, resolveFaLanguage,
   shouldPersistFaChoice, FA_PROJECT_DEFAULT_ON,
 } from './services/faGate';
 import {
   AUTO_DETECT, readNewProjectDefaults, NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON,
 } from './services/appDefaults';
 import { runForcedAlignmentForSync, type FaFailureKind, type FaRunResult } from './services/forcedAlignmentRun';
-import { runFaPreflight, computeSyncEngineKey } from './services/faPreflight';
+import { computeSyncEngineKey, resolveSyncEngine } from './services/faPreflight';
 import { saveFaPause, readFaPause, clearFaPause, type FaPauseRecord } from './services/faSyncPauseStore';
 import {
   stampFaProvenance,
@@ -4196,7 +4196,17 @@ export default function App() {
       // Read off `projectRef.current`, the same snapshot every other input in
       // this branch comes from — never off the module-global it replaced, so
       // two projects open in two windows can disagree.
-      const faGateOpen = isFaGateOpenForProject(projectRef.current) && forceWhisperReason === null;
+      // G3 Unit 1 — single engine resolver (`resolveSyncEngine`,
+      // faPreflight.ts). Replaces two independent calls
+      // (`isFaGateOpenForProject` here + a second `runFaPreflight` below)
+      // with one: the gate check and the pre-flight are now computed by the
+      // same function the spine's `computeSyncEngineKey` calls, so there is
+      // exactly one place "toggle + pack readiness + model status -> engine"
+      // is decided. `forceWhisperReason` (a one-off per-run override) is
+      // folded in HERE, at the call site, never inside the resolver — see
+      // its doc comment for why.
+      const engineResolution = await resolveSyncEngine(projectRef.current);
+      const faGateOpen = engineResolution.gateOpen && forceWhisperReason === null;
       // WS1 Session M — FA readiness PRE-FLIGHT, before inference. When the gate
       // is open, report up front whether forced alignment can actually run
       // (runtime library load, model presence, resolved language) so a run that
@@ -4205,7 +4215,7 @@ export default function App() {
       // attempted — `runForcedAlignmentForSync` stays the single typed
       // authority on what actually happened.
       if (faGateOpen) {
-        const preflight = await runFaPreflight(projectRef.current);
+        const preflight = engineResolution.preflight!;
         ruleLogEntries.push(buildFaPreflightEntry(syncRunId, preflight, syncRunAt));
       } else if (forceWhisperReason !== null) {
         // plan-v3 item 4 — the user answered a SyncPausedDialog with "use

@@ -235,14 +235,94 @@ export async function probeFaReadiness(language: string): Promise<FaPreflightRep
  * configuration, and must not itself gate whether a LATER Apply Sync looks
  * "already synced".
  *
- * Kept as a plain `Promise<string>` (not a typed union) specifically so a
- * later engine resolver (G3) can widen what feeds this key without every
- * caller changing shape.
+ * Kept as a plain `Promise<string>` (not a typed union) for spine
+ * compatibility. As of G3 Unit 1 this is a thin wrapper over
+ * `resolveSyncEngine` below — the actual toggle+pack+model decision now
+ * lives in exactly one place, shared with Apply Sync gating and the
+ * Settings Sync tab's "current engine" readout.
  */
 export async function computeSyncEngineKey(
   project: Pick<Project, 'faHighPrecisionSync' | 'language' | 'detectedLanguage'> | null | undefined,
 ): Promise<string> {
-  if (!isFaGateOpenForProject(project)) return 'whisper';
+  const resolution = await resolveSyncEngine(project);
+  return resolution.key;
+}
+
+// ---------------------------------------------------------------------------
+// G3 Unit 1 — the single engine resolver.
+//
+// Before this, "which engine will Apply Sync actually use" was answered by
+// two independent call sites that both happened to agree: `App.tsx`'s
+// Apply-Sync branch computed `isFaGateOpenForProject(...)` and then
+// separately ran `runFaPreflight(...)`, while `computeSyncEngineKey` above
+// (the spine's "already synced" comparison) chained the exact same two
+// calls a second time. Nothing enforced that they stay in sync — they just
+// always had, by construction, because both sites called the same two
+// functions in the same order. This makes that chain a single function so
+// there is exactly one place "toggle position + pack readiness + model
+// status -> engine" is decided. Every consumer (Apply Sync gating,
+// provenance stamps via the branch Apply Sync actually takes, and the
+// Settings Sync tab's "current engine" readout) reads off it.
+//
+// Still NOT a user-facing engine picker — resolving "which engine WOULD
+// run" is not the same as offering a choice. The Whisper/FA toggle
+// (`Project.faHighPrecisionSync`, `faGate.ts`) remains the only standing
+// choice a user makes; `forceWhisperReason` (`SyncPausedDialog`'s "use
+// Whisper timing" answer) remains an explicit one-off override layered on
+// top of THIS run only, at the call site — deliberately NOT folded in here,
+// for the same reason `computeSyncEngineKey`'s doc comment above gives: a
+// one-off override must not itself change what a LATER Apply Sync looks
+// like it will do.
+// ---------------------------------------------------------------------------
+
+export type SyncEngine = 'whisper' | 'fa';
+
+/** The resolver's full verdict — toggle position + pack/model readiness,
+ *  nothing else. Consumers that need only the eventual engine name or only
+ *  the spine's string key can read `.engine` / `.key`; consumers that need
+ *  to explain WHY (Settings, Sync Log) can read `.preflight`. */
+export interface SyncEngineResolution {
+  /** The engine a fresh Apply Sync would actually commit with, standing
+   *  configuration only (no one-off override folded in). */
+  engine: SyncEngine;
+  /** Whether the per-project switch is on AND the app is FA-capable — the
+   *  same two conditions `isFaGateOpenForProject` checks. */
+  gateOpen: boolean;
+  /** Whisper is always ready (it ships in every build). For `engine: 'fa'`,
+   *  whether the pack/runtime/model checks actually passed — an open gate
+   *  can still resolve to `ready: false` (a not-ready FA run falls back to
+   *  Whisper tokens, see `App.tsx`'s `faCompleted` derivation), while the
+   *  resolver keeps reporting `engine: 'fa'` — the DECISION was FA, the
+   *  OUTCOME degrades. Callers that want "what will actually commit" should
+   *  treat `ready: false` as Whisper-shaped. */
+  ready: boolean;
+  /** Full pre-flight detail when the gate was open (undefined when closed —
+   *  there was nothing to check). */
+  preflight: FaPreflightResult | undefined;
+  /** The exact string `computeSyncEngineKey` has always returned, preserved
+   *  byte-for-byte for spine compatibility: `'whisper'` | `'fa:ready'` |
+   *  `'fa:not-ready'`. */
+  key: string;
+}
+
+/**
+ * The one function that decides "which engine, and is it ready" from
+ * standing project configuration. Never throws — `runFaPreflight` already
+ * guarantees that, and the gate check is pure and total.
+ */
+export async function resolveSyncEngine(
+  project: Pick<Project, 'faHighPrecisionSync' | 'language' | 'detectedLanguage'> | null | undefined,
+): Promise<SyncEngineResolution> {
+  const gateOpen = isFaGateOpenForProject(project);
+  if (!gateOpen) {
+    return { engine: 'whisper', gateOpen, ready: true, preflight: undefined, key: 'whisper' };
+  }
   const preflight = await runFaPreflight(project);
-  return `fa:${preflight.ready ? 'ready' : 'not-ready'}`;
+  return {
+    engine: 'fa',
+    gateOpen,
+    ready: preflight.ready,
+    preflight,
+    key: `fa:${preflight.ready ? 'ready' : 'not-ready'}`,
+  };
 }
