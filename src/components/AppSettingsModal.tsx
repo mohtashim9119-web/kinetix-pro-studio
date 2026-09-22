@@ -214,14 +214,22 @@ export function AppSettingsModal({ onClose, onOpenStorageRelocation, storageRefr
           )}
         </section>
 
-        {/* ── Block 2: Models & Add-ons ───────────────────────────────────
+        {/* ── Block 2: Sync Engine ────────────────────────────────────────
             Rendered INLINE, not behind a link and not in a nested dialog.
             Install and delete are immediate filesystem side effects and are
             exempt from this modal's draft-then-commit discipline (owner
             ruling) — the copy below says so explicitly, so nothing in this
-            block reads as pending until Save. */}
+            block reads as pending until Save.
+            Retitled from "Models & Add-ons" (G3 tail Step 0, operator
+            ruling, Settings IA Option A — retitle only, no tab strip): this
+            is where the transcription/alignment engines Sync uses live, and
+            "Models & Add-ons" read as generic app plumbing rather than what
+            it actually gates. `ManageModelsModal`'s own title is untouched —
+            that dialog is a failure-path remediation deep-link
+            (TranscriptionBar / SyncLogPanel "download the missing model"),
+            not Settings IA, and keeps its own name. */}
         <section data-testid="app-settings-block-models" className={HAIRLINE}>
-          <p className={BLOCK_TITLE}>Models &amp; Add-ons</p>
+          <p className={BLOCK_TITLE}>Sync Engine</p>
           <p className="text-[9px] text-gray-600 leading-snug mt-1 mb-3">
             Downloaded once per computer and shared by every project. Downloads and deletions here
             take effect immediately — they are not held until Save.
