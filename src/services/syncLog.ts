@@ -95,6 +95,29 @@ export function buildSilenceErrorEntry(
 }
 
 /**
+ * G4 Unit 4 — the pre-FA coverage check's 'marginal' band
+ * (localFaCoverageGate.ts). Warn-only: FA already ran with real results by
+ * the time this is built (only 'hopeless' pauses before FA starts), so this
+ * is purely informational — the user may want to double-check the pairing,
+ * but nothing about this run was stopped or degraded because of it.
+ */
+export function buildLocalCoverageWarningEntry(
+  syncRunId: string,
+  coverage: { coverage: number; scriptWordCount: number },
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const percent = Math.round(coverage.coverage * 100);
+  return makeSyncLogEntry(
+    syncRunId,
+    'warning',
+    `Only ${percent}% of this script's ${coverage.scriptWordCount} words were found in the transcribed audio — ` +
+      'double-check the script and audio are the right pair for this project.',
+    { severity: 'warning', fixHint: 'If they look right, this can be a false alarm on a script with heavy paraphrasing or stage directions.' },
+    timestamp,
+  );
+}
+
+/**
  * Phase 2a H.4 guard — the 'unsupported-language' entry. Fired when
  * `Project.language` is set (by detection or an explicit override) to a code
  * outside `constants.ts`'s `SUPPORTED_LANGUAGES`. Error severity: whitespace
@@ -414,6 +437,11 @@ const FA_PAUSED_TEXT: Record<FaFailureKind | FaVictimPauseReason, { what: string
   'unsupported-language': {
     what: 'the project language has no forced-alignment model',
     fix: 'Set the project language to English, Spanish, French, Portuguese, or German in Project Settings, or continue with Whisper timing for this run.',
+  },
+  // G4 Unit 4 — pre-FA coverage check (localFaCoverageGate.ts).
+  'hopeless-local-coverage': {
+    what: 'the script and the transcribed audio share very few matching words',
+    fix: 'Double-check the script and audio file are the right pair for this project — continue anyway if you\'re sure they are, or cancel and fix the pairing first.',
   },
   'empty-chunk-plan': {
     what: 'the chunk plan came out empty (no scene carried any text to align)',

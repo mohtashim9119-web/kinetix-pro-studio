@@ -84,6 +84,7 @@ describe('SyncPausedDialog', () => {
       'unsupported-language', 'empty-chunk-plan', 'zero-words', 'model-not-found',
       'model-hash-mismatch', 'runtime-load-failed', 'audio-stage-failed',
       'inference-failed', 'already-running', 'out-of-memory', 'offline',
+      'hopeless-local-coverage', // G4 Unit 4
     ] as const;
     for (const reason of reasons) {
       root = createRoot(container);

@@ -47,6 +47,7 @@ import { detectSilencesSingleFlight } from './silenceDetector';
 import { describeInvokeError } from './invokeError';
 import { computeFaChunkPlan, computeRunContextAsync, computeUnscriptedRuns, type UnscriptedRun } from './faChunkPlan';
 import { loadFaLanguageData } from './faLanguageData';
+import { computeLocalPreFaCoverage, type LocalCoverageResult } from './localFaCoverageGate';
 import { MatchCancelledError } from './hirschbergMatchClient';
 import { faWordSpansToTranscriptTokens, type FaEvent, type FaInfeasibleChunk } from './faBoundaryTypes';
 import type { FaLanguageCode } from './faTextNormalize';
@@ -74,6 +75,14 @@ export const FA_SUPPORTED_LANGUAGES: readonly FaLanguageCode[] = ['en', 'es', 'f
  */
 export type FaFailureKind =
   | 'unsupported-language'
+  /** G4 Unit 4 — the cheap, pre-FA bag-of-words coverage check
+   *  (localFaCoverageGate.ts) found the script and the cached transcript
+   *  sharing 20% or fewer of the script's own words. A precondition pause,
+   *  like 'unsupported-language' above: computed before any FA compute is
+   *  spent, never after. `detail` carries the coverage percentage and script
+   *  word count. `resumable: true`, same as every other pause — the cached
+   *  Whisper transcript this check read is untouched either way. */
+  | 'hopeless-local-coverage'
   | 'empty-chunk-plan'
   | 'zero-words'
   | 'model-not-found'
@@ -142,6 +151,12 @@ export type FaRunResult =
        *  FA tokens — but a real degradation of chunk placement that was
        *  previously `console.warn`-only. */
       silenceError?: string;
+      /** G4 Unit 4 — set when the pre-FA coverage check (localFaCoverageGate.ts)
+       *  landed 'marginal' for this run: real FA still ran (only 'hopeless'
+       *  pauses before this point), but the script and the cached transcript
+       *  matched fewer words than a clean pairing normally would. Warn-only —
+       *  App.tsx logs it, nothing here treats it as a failure. */
+      localCoverageWarning?: LocalCoverageResult;
     }
   | {
       status: 'degraded';
@@ -157,6 +172,8 @@ export type FaRunResult =
       /** Present only for `ctc-infeasible-chunk`. */
       nFallbackChunks?: number;
       infeasibleChunks?: FaInfeasibleChunk[];
+      /** G4 Unit 4 — see the 'ok' variant's own doc comment; same meaning. */
+      localCoverageWarning?: LocalCoverageResult;
     }
   | {
       status: 'paused';
@@ -237,6 +254,13 @@ export async function runForcedAlignmentForSync(
   // `undefined` (no computable hash) always detects fresh, exactly the
   // pre-Unit-2 behavior.
   audioHash?: string,
+  // G4 Unit 4 — set by App.tsx from a one-shot ref when the user answered a
+  // 'hopeless-local-coverage' SyncPausedDialog with "continue anyway", so
+  // the very next attempt does not immediately re-pause on the identical
+  // coverage number. `undefined`/`false` (every existing call site) runs the
+  // check normally — this parameter WIDENS what a caller may opt into, it
+  // narrows nothing.
+  skipLocalCoverageCheck?: boolean,
 ): Promise<FaRunResult> {
   if (signal?.aborted) return { status: 'cancelled' };
 
@@ -249,6 +273,27 @@ export async function runForcedAlignmentForSync(
   }
   const language = languageCode as FaLanguageCode;
 
+  // G4 Unit 4 — local pre-FA coverage check (STATUS.md-adjacent, operator
+  // design; local sibling of Wave 3's planned cloud mid-coverage abort — see
+  // localFaCoverageGate.ts's own header for the full rationale). Cheap
+  // (bag-of-words, no alignment) and synchronous, so it runs before any of
+  // the real compute below. 'hopeless' PAUSES — never auto-aborts — so the
+  // user decides; 'marginal' rides along on the eventual ok/degraded result
+  // as a warn-only finding App.tsx logs, and does not stop this attempt.
+  const coverage = computeLocalPreFaCoverage(anchorTimedSegments, whisperTokens, language);
+  if (coverage.band === 'hopeless' && !skipLocalCoverageCheck) {
+    console.warn(
+      `[fa] local pre-FA coverage is hopeless (${(coverage.coverage * 100).toFixed(0)}% of ${coverage.scriptWordCount} ` +
+      'script words found in the cached transcript) — pausing for the user to choose.',
+    );
+    return {
+      status: 'paused',
+      reason: 'hopeless-local-coverage',
+      detail: `${(coverage.coverage * 100).toFixed(0)}% of ${coverage.scriptWordCount} script words matched`,
+      resumable: true,
+    };
+  }
+
   // Everything below this point is wrapped in one try/catch — matching the
   // pre-existing "never throws" contract — so an unexpected throw from
   // fetch/blob conversion/chunk planning (not just the two invoke() calls,
@@ -256,7 +301,10 @@ export async function runForcedAlignmentForSync(
   // resolves rather than propagates. The two inner try/catches return early
   // on their own catch, so they never fall through into this one.
   try {
-    return await runFaAttempt(voiceoverAsset, anchorTimedSegments, whisperTokens, audioDuration, language, signal, audioHash);
+    return await runFaAttempt(
+      voiceoverAsset, anchorTimedSegments, whisperTokens, audioDuration, language, signal, audioHash,
+      coverage.band === 'marginal' ? coverage : undefined,
+    );
   } catch (err) {
     // Anything reaching here is NOT one of the two invoke() calls (they have
     // their own inner try/catches and always return, never rethrow) — an
@@ -284,6 +332,11 @@ async function runFaAttempt(
   language: FaLanguageCode,
   signal: AbortSignal | undefined,
   audioHash?: string,
+  // G4 Unit 4 — set only when the caller's own coverage check landed
+  // 'marginal' (never 'hopeless' — that pauses before this function is ever
+  // called). Rides along on the eventual ok/degraded result so App.tsx can
+  // log a warn-only finding; nothing in this function branches on it.
+  localCoverageWarning?: LocalCoverageResult,
 ): Promise<FaRunResult> {
   const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
 
@@ -452,6 +505,7 @@ async function runFaAttempt(
       silenceError,
       nFallbackChunks: nFallbackChunks > 0 ? nFallbackChunks : infeasibleChunks.length,
       infeasibleChunks,
+      localCoverageWarning,
     };
   }
   return {
@@ -462,5 +516,6 @@ async function runFaAttempt(
     // re-derivation against different inputs.
     unscriptedRuns,
     silenceError,
+    localCoverageWarning,
   };
 }

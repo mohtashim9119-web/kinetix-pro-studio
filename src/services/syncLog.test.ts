@@ -24,6 +24,7 @@ import type { TranscriptToken } from '../types';
 import {
   appendSyncLogEntries,
   buildSilenceErrorEntry,
+  buildLocalCoverageWarningEntry,
   buildMalformedTokenEntry,
   buildContractViolationEntry,
   buildGroupedViolationEntry,
@@ -650,6 +651,19 @@ describe('buildSilenceErrorEntry (WS4 Feature 3)', () => {
     const entry = buildSilenceErrorEntry(RUN_ID, 'boom', AT);
     expect(entry.segmentIndex).toBeUndefined();
     expect(entry.segmentText).toBeUndefined();
+  });
+});
+
+describe('buildLocalCoverageWarningEntry (G4 Unit 4)', () => {
+  it('builds a warn-only entry naming the coverage percentage and script word count', () => {
+    const entry = buildLocalCoverageWarningEntry(RUN_ID, { coverage: 1 / 3, scriptWordCount: 9 }, AT);
+    expect(entry.type).toBe('warning');
+    expect(entry.severity).toBe('warning');
+    expect(entry.syncRunId).toBe(RUN_ID);
+    expect(entry.timestamp).toBe(AT);
+    expect(entry.message).toContain('33%');
+    expect(entry.message).toContain('9 words');
+    expect(entry.fixHint).toBeDefined();
   });
 });
 

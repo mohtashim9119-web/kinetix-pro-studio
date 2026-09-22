@@ -214,6 +214,7 @@ import {
   buildAnchorTrustLogEntries,
   buildRunEdgeViolationLogEntries,
   buildCtcInfeasibleLogEntry,
+  buildLocalCoverageWarningEntry,
   buildFaVictimRetimedLogEntry,
 } from './services/syncLog';
 import { canLockSegment, findPartitionViolations, repairTimelineGaps, MAX_REPAIRABLE_GAP_SEC, PARTITION_EPSILON_SEC } from './services/timelinePartition';
@@ -1909,6 +1910,14 @@ export default function App() {
   // 'user-chose-whisper' doc comment). Carries the ORIGINAL pause reason
   // (not just a boolean) so the log entry can say what was actually skipped.
   const faForceWhisperOnceRef = useRef<FaFailureKind | FaVictimPauseReason | null>(null);
+  // G4 Unit 4 — consumed ONCE by the very next handleApplySyncFromFiles call,
+  // same one-shot pattern as `faForceWhisperOnceRef` immediately above. Set
+  // by SyncPausedDialog's "Retry" action when the pause being answered was
+  // 'hopeless-local-coverage' — the user explicitly chose to continue anyway,
+  // so the identical coverage number must not immediately re-pause the very
+  // next attempt (see `runForcedAlignmentForSync`'s own
+  // `skipLocalCoverageCheck` doc comment).
+  const faSkipCoverageCheckOnceRef = useRef<boolean>(false);
   // plan-v3 item 5 — whole-run cancel. A fresh controller is created at the
   // start of every handleApplySyncFromFiles call and overwrites this ref
   // unconditionally, so the Cancel button always aborts the CURRENTLY
@@ -3877,6 +3886,10 @@ export default function App() {
     // ORIGINAL paused run gave, for the log entry below.
     const forceWhisperReason = faForceWhisperOnceRef.current;
     faForceWhisperOnceRef.current = null;
+    // G4 Unit 4 — same one-shot consume-and-reset discipline as
+    // `forceWhisperReason` immediately above.
+    const skipLocalCoverageCheck = faSkipCoverageCheckOnceRef.current;
+    faSkipCoverageCheckOnceRef.current = false;
 
     // WS-logs — one id for every entry this run emits, plus one timestamp so a
     // run's entries sort together rather than smearing across the ms boundary
@@ -4268,6 +4281,8 @@ export default function App() {
             // this run's silence scan be shared with `alignFromCache` below
             // (same audioHash, same audio) instead of decoding it twice.
             audioHash,
+            // G4 Unit 4 — one-shot bypass, consumed above this branch.
+            skipLocalCoverageCheck,
           )
         : {
             status: 'degraded',
@@ -4359,6 +4374,15 @@ export default function App() {
       // console-only until now.
       if (faCompleted && faRun.silenceError !== undefined) {
         ruleLogEntries.push(buildSilenceErrorEntry(syncRunId, faRun.silenceError, syncRunAt));
+      }
+      // G4 Unit 4 — the pre-FA coverage check's 'marginal' band. Only ever
+      // set on 'ok'/'degraded' results (`runForcedAlignmentForSync`'s own
+      // doc comment) — 'hopeless' pauses before FA runs at all, so `faRun`
+      // would be 'paused' instead and this field would not exist to read.
+      // `faRun.status` is already narrowed to 'ok' | 'degraded' here by the
+      // earlier `'cancelled'`/`'paused'` early returns above.
+      if (faCompleted && faRun.localCoverageWarning) {
+        ruleLogEntries.push(buildLocalCoverageWarningEntry(syncRunId, faRun.localCoverageWarning, syncRunAt));
       }
       if (faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk') {
         const infeasibleEntry = buildCtcInfeasibleLogEntry(
@@ -5514,6 +5538,14 @@ export default function App() {
   // remounts and restores those rows into `stagedFilesRef` before a retry
   // click — this function still just re-enters handleApplySyncFromFiles.
   const handleSyncPausedRetry = useCallback((): void => {
+    // G4 Unit 4 — "continue anyway" over a hopeless-coverage pause is
+    // answered by Retry (there is no separate fourth button — see this
+    // module's own THREE CHOICES doc comment). Without this, the identical
+    // coverage number would immediately re-pause the very next attempt; see
+    // `faSkipCoverageCheckOnceRef`'s own doc comment.
+    if (faPauseDialog?.reason === 'hopeless-local-coverage') {
+      faSkipCoverageCheckOnceRef.current = true;
+    }
     setFaPauseDialog(null);
     const projectId = liveProjectRef.current.id;
     clearFaPause(projectId);
@@ -5529,7 +5561,7 @@ export default function App() {
       }
       await handleApplySyncFromFiles();
     })();
-  }, [handleStagedFilesChange, showToast]);
+  }, [handleStagedFilesChange, showToast, faPauseDialog]);
 
   const handleSyncPausedUseWhisper = useCallback((): void => {
     setFaPauseDialog(null);

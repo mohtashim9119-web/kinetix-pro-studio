@@ -37,6 +37,9 @@ import type { FaVictimPauseReason } from '../services/faVictimGate';
  *  dialog line. */
 const PAUSE_COPY: Record<FaFailureKind | FaVictimPauseReason, string> = {
   'unsupported-language': 'The project language has no forced-alignment model.',
+  // G4 Unit 4 — pre-FA coverage check (localFaCoverageGate.ts). `detail`
+  // (rendered separately, below this line) carries the exact percentage.
+  'hopeless-local-coverage': 'The script barely matches the transcribed audio — this may be the wrong script or the wrong audio file.',
   'empty-chunk-plan': 'The chunk plan came out empty — no scene carried any text to align.',
   'zero-words': 'Forced alignment ran but returned no words.',
   'model-not-found': 'No forced-alignment model is installed for this language.',

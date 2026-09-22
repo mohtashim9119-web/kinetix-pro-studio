@@ -256,6 +256,95 @@ describe('runForcedAlignmentForSync — pauses (never falls back), and names why
   });
 });
 
+// ---------------------------------------------------------------------------
+// G4 Unit 4 — local pre-FA coverage check. OLD-BUG-FIRST: before this unit,
+// nothing checked script/transcript overlap before spending FA compute — a
+// completely wrong script/audio pairing ran the full, multi-minute FA
+// attempt with no earlier warning at all. `hopelessSegments`/`hopelessTokens`
+// below share ZERO words by construction (`makeSegments()`/`whisperTokens`
+// above share 100% — every other test in this file relies on that, and this
+// new gate must not disturb it, verified explicitly below too).
+// ---------------------------------------------------------------------------
+describe('runForcedAlignmentForSync — local pre-FA coverage check (G4 Unit 4)', () => {
+  function hopelessSegments(): VideoSegment[] {
+    return [{
+      id: 's1',
+      text: 'zzxq wqvbf jklpx',
+      startTime: 0,
+      duration: 1,
+      transition: TransitionType.NONE,
+      animation: AnimationType.NONE,
+      order: 0,
+    }];
+  }
+  const hopelessTokens: TranscriptToken[] = [
+    { text: 'completely', startSec: 0, endSec: 0.4 },
+    { text: 'unrelated', startSec: 0.4, endSec: 1 },
+  ];
+
+  it('OLD BUG: pauses on hopeless coverage, naming the percentage, without ever calling invoke', async () => {
+    const result = await runForcedAlignmentForSync(makeAsset(), hopelessSegments(), hopelessTokens, 1, 'en');
+    expect(result.status).toBe('paused');
+    expect(result.status === 'paused' && result.reason).toBe('hopeless-local-coverage');
+    expect(result.status === 'paused' && result.detail).toMatch(/0% of 3 script words matched/);
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('a perfectly-matching script (every other test\'s fixture) is completely unaffected by this gate', async () => {
+    mockStageThenAlign((args) => {
+      args.onEvent.onmessage({ event: 'Done', data: { words: [] } });
+    });
+    const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
+    // Zero words -> paused for an UNRELATED reason (zero-words), proving FA
+    // actually ran — the coverage gate did not intercept this call at all.
+    expect(result.status).toBe('paused');
+    expect(result.status === 'paused' && result.reason).toBe('zero-words');
+  });
+
+  it('skipLocalCoverageCheck bypasses the hopeless pause and lets FA actually run', async () => {
+    mockStageThenAlign((args) => {
+      args.onEvent.onmessage({ event: 'Done', data: { words: [] } });
+    });
+    const result = await runForcedAlignmentForSync(
+      makeAsset(), hopelessSegments(), hopelessTokens, 1, 'en',
+      undefined, undefined, true,
+    );
+    // Reaches the SAME zero-words pause `makeSegments()` reaches above —
+    // proof FA was actually attempted this time, not intercepted again.
+    expect(result.status).toBe('paused');
+    expect(result.status === 'paused' && result.reason).toBe('zero-words');
+  });
+
+  it('marginal coverage still runs FA and attaches localCoverageWarning to the ok result', async () => {
+    // 1 of 3 script words present in the transcript = 33% — inside the
+    // marginal band (20%-50%), not hopeless.
+    const marginalSegments: VideoSegment[] = [{
+      id: 's1',
+      text: 'hello zzxq wqvbf',
+      startTime: 0,
+      duration: 1,
+      transition: TransitionType.NONE,
+      animation: AnimationType.NONE,
+      order: 0,
+    }];
+    mockStageThenAlign((args) => {
+      args.onEvent.onmessage({
+        event: 'Done',
+        data: {
+          words: [
+            { word: 'hello', startSec: 0, endSec: 0.4, confidence: 0.9, needsReview: false, wordIndex: 0 },
+            { word: 'world', startSec: 0.4, endSec: 1, confidence: 0.05, needsReview: true, wordIndex: 1 },
+          ],
+        },
+      });
+    });
+    const result = await runForcedAlignmentForSync(makeAsset(), marginalSegments, whisperTokens, 1, 'en');
+    expect(result.status).toBe('ok');
+    expect(result.status === 'ok' && result.localCoverageWarning?.band).toBe('marginal');
+    expect(result.status === 'ok' && result.localCoverageWarning?.scriptWordCount).toBe(3);
+  });
+});
+
 describe('runForcedAlignmentForSync — cancellation (plan-v3 item 5)', () => {
   it('resolves cancelled immediately when the signal is already aborted, without calling invoke', async () => {
     const controller = new AbortController();
