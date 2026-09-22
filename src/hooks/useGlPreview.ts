@@ -512,6 +512,23 @@ export function useGlPreview({
     };
 
     if (!plan.a) return; // outside every segment — retain last frame
+    // G2 close-out FIX 4 (media layer) — OLD BUG: a segment with NO assetId
+    // at all (an Estimated placeholder scene, `skippedScenePlaceholders.ts`)
+    // fell into the exact same "retain last frame" branch as a video frame
+    // that simply isn't decoded YET, so the canvas just kept showing the
+    // PREVIOUS segment's last frame for the placeholder's whole span — read
+    // by the operator as "the previous scene's clip bleeding into this one."
+    // `!plan.a.assetId` is checked BEFORE `resolveSlotSource` specifically
+    // because it can never become true later the way a decode race can: an
+    // assetless segment has nothing to eventually resolve, so this is not a
+    // race to wait out — it is this tick's honest, final answer, and gets an
+    // explicit black frame instead of the wait-for-it retain discipline
+    // below (which stays exactly as before for every segment that DOES have
+    // an assetId).
+    if (!plan.a.assetId) {
+      compositor.clearToBlack();
+      return;
+    }
     const aSrc = resolveSlotSource(plan.a);
     if (!aSrc || !uploadSlot('a', aSrc)) return; // slot a not ready — retain
 

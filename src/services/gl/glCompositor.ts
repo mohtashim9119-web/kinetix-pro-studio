@@ -509,6 +509,29 @@ export class GlCompositor {
   }
 
   /**
+   * G2 close-out FIX 4 (media layer) — paints the canvas a solid black,
+   * bypassing texture slots A/B entirely. The ONE explicit "this segment
+   * genuinely has no asset" visual: `useGlPreview.ts`'s render effect calls
+   * this instead of its usual retain-on-no-source branch when the segment at
+   * the playhead has no `assetId` at all (an Estimated placeholder scene,
+   * `skippedScenePlaceholders.ts`) — never for a transiently-unready decode,
+   * which still retains the last frame exactly as before. Matches
+   * `Timeline.tsx`'s own no-asset convention (a black segment-chip
+   * background), so preview and timeline agree on what "no asset" looks
+   * like, and — critically — ensures the canvas actually CHANGES for this
+   * span instead of visually holding over the previous segment's last frame,
+   * which is what read as "the previous scene's clip bleeding into this
+   * one" before this fix.
+   */
+  clearToBlack(): void {
+    const gl = this.gl;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+
+  /**
    * Renders one composited frame from whatever is currently in texture
    * slots 'a'/'b' to the canvas, per `params`. Synchronous, one call.
    * Dispatches to the single-slot path (no transition) or the per-slot

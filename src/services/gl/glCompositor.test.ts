@@ -146,6 +146,15 @@ class MockWebGL2 {
   drawArrays(): void { this.calls.push('drawArrays'); }
   viewport(): void {}
 
+  /** G2 close-out FIX 4 (media layer) — GlCompositor.clearToBlack(). */
+  readonly COLOR_BUFFER_BIT = 22;
+  clearColorArgs: number[] | null = null;
+  clearColor(r: number, g: number, b: number, a: number): void {
+    this.calls.push('clearColor');
+    this.clearColorArgs = [r, g, b, a];
+  }
+  clear(_mask: number): void { this.calls.push('clear'); }
+
   /** Most-recent call to a given uniform name. */
   lastUniform(name: string): number[] | undefined {
     for (let i = this.uniformCalls.length - 1; i >= 0; i--) {
@@ -900,5 +909,50 @@ describe('GlCompositor — context loss at the point of use (WS3 Step 3)', () =>
     expect(caught).toBeInstanceOf(Error);
     expect(caught).not.toBeInstanceOf(GlContextLostError);
     expect((caught as Error).message).toMatch(/gl\.createTexture\(\) returned null$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G2 close-out FIX 4 (media layer) — GlCompositor.clearToBlack().
+//
+// OLD BUG: `useGlPreview.ts`'s render effect had no way to paint an honest
+// "this segment has no asset" frame — its only tools were `uploadFrame` +
+// `renderFrame`, both of which require a real texture source. A genuinely
+// assetless segment (an Estimated placeholder, `skippedScenePlaceholders.ts`)
+// therefore fell into the SAME early-return ("retain last frame") branch as
+// a video frame that simply hasn't decoded yet, so the canvas visually kept
+// showing the PREVIOUS segment's content for the placeholder's whole span.
+// `clearToBlack` is the missing tool: an explicit, texture-free draw that
+// always changes what's on screen, matching Timeline.tsx's own no-asset
+// convention (a black segment-chip background).
+// ---------------------------------------------------------------------------
+describe('GlCompositor — clearToBlack (G2 close-out FIX 4)', () => {
+  it('binds the canvas framebuffer (not an offscreen target), clears to opaque black, and draws nothing else', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    gl.calls = []; // ignore construction-time calls
+
+    compositor.clearToBlack();
+
+    expect(gl.calls).toContain('bindFramebuffer:canvas');
+    expect(gl.calls).not.toContain('bindFramebuffer:target');
+    expect(gl.clearColorArgs).toEqual([0, 0, 0, 1]);
+    expect(gl.calls).toContain('clear');
+    // No texture upload, no program use, no draw call — this is a bare clear,
+    // never a 1x1-black-texture blit through the normal render path.
+    expect(gl.calls).not.toContain('useProgram');
+    expect(gl.calls).not.toContain('drawArrays');
+    expect(gl.calls).not.toContain('texImage2D');
+  });
+
+  it('is idempotent and safe to call every tick (no allocation, no state left dangling)', () => {
+    const gl = makeGl();
+    const compositor = new GlCompositor(gl as unknown as WebGL2RenderingContext);
+    compositor.clearToBlack();
+    compositor.clearToBlack();
+    compositor.clearToBlack();
+    expect(gl.calls.filter((c) => c === 'clear')).toHaveLength(3);
+    expect(gl.calls.filter((c) => c === 'createFramebuffer')).toHaveLength(0);
+    expect(gl.calls.filter((c) => c === 'createTexture')).toHaveLength(2); // constructor's texA/texB only
   });
 });

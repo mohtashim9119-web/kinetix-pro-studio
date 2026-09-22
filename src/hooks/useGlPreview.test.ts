@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { computeObjectCoverUvRect, computeObjectContainUvRect } from './useGlPreview';
 
 /**
@@ -215,5 +217,40 @@ describe('GL-init effect dependency-array shallow-compare — pure re-statement 
     const prevDepsNoCanvas = [true, 0]; // enabled, currentTime
     const nextDepsNoCanvas = [true, 0];
     expect(depsChanged(prevDepsNoCanvas, nextDepsNoCanvas)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G2 close-out FIX 4 (media layer) — the render effect's assetless-segment
+// branch. Same constraint as every other describe block in this file: no
+// jsdom WebGL2 context exists to mount the hook against, so this is a
+// source-scan proof (same convention as `applySyncSpine.test.ts`'s private-
+// to-App.tsx checks) that the wiring exists at the exact point the render
+// effect resolves `plan.a`, not a runtime exercise of it. `glCompositor.
+// test.ts`'s "clearToBlack" suite proves the compositor method itself works;
+// this proves useGlPreview.ts actually calls it for this case, BEFORE it
+// would otherwise fall into the retain-on-no-source branch.
+// ---------------------------------------------------------------------------
+describe('G2 close-out FIX 4 — render effect calls clearToBlack for an assetless segment', () => {
+  const HOOK_TSX = resolve(import.meta.dirname, 'useGlPreview.ts');
+  const SRC = readFileSync(HOOK_TSX, 'utf-8');
+
+  it('checks !plan.a.assetId BEFORE resolveSlotSource, and calls compositor.clearToBlack()', () => {
+    const aGuardIdx = SRC.indexOf('if (!plan.a) return;');
+    expect(aGuardIdx, 'the "outside every segment" guard not found — this test has lost its target').toBeGreaterThan(-1);
+    const assetlessIdx = SRC.indexOf('if (!plan.a.assetId) {', aGuardIdx);
+    const resolveIdx = SRC.indexOf('const aSrc = resolveSlotSource(plan.a);', aGuardIdx);
+    expect(assetlessIdx, 'the assetless-segment check was not found after the "outside every segment" guard').toBeGreaterThan(-1);
+    expect(resolveIdx).toBeGreaterThan(-1);
+    expect(
+      assetlessIdx,
+      'the assetless check must run BEFORE resolveSlotSource — otherwise an assetless segment ' +
+        'falls through to the same "retain last frame" branch a transient decode race uses, which ' +
+        'is the exact OLD BUG this fix closes',
+    ).toBeLessThan(resolveIdx);
+
+    const body = SRC.slice(assetlessIdx, resolveIdx);
+    expect(body).toContain('compositor.clearToBlack();');
+    expect(body).toContain('return;');
   });
 });
