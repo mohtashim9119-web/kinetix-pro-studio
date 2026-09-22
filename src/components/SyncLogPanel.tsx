@@ -8,6 +8,7 @@
 import React, { useState } from 'react';
 import { ChevronDown, ChevronRight, Trash2, Copy } from 'lucide-react';
 import type { SyncLogEntry, SyncLogEntryType } from '../types';
+import { SKIPPED_SCENE_COPY } from '../services/skippedScenePlaceholders';
 
 interface Props {
   syncLog: SyncLogEntry[];
@@ -225,7 +226,7 @@ export function formatEntryText(entry: SyncLogEntry): string {
   const isSkip = entry.type === 'skip' && entry.segmentIndex !== undefined;
 
   if (isSkip) {
-    const lines = [`${header} ${skipEntryLabel(entry)} skipped — ${entry.reason ?? 'no text match'}`];
+    const lines = [`${header} ${skipEntryLabel(entry)}: ${SKIPPED_SCENE_COPY.label} — ${entry.reason ?? 'no text match'}`];
     if (entry.segmentText) {
       const tag = entry.segmentTag ? `[${entry.segmentTag}] ` : '';
       lines.push(`${tag}${entry.segmentText}`);
@@ -387,7 +388,7 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToS
                   {isSkip ? (
                     <>
                       <p className="text-[10px] text-gray-300 mt-1 leading-snug break-words">
-                        {skipEntryLabel(entry)} skipped — {entry.reason ?? 'no text match'}
+                        {skipEntryLabel(entry)}: {SKIPPED_SCENE_COPY.label} — {entry.reason ?? 'no text match'}
                       </p>
                       {entry.segmentText && (
                         <p className="text-[9px] text-gray-500 mt-0.5 pl-1.5 leading-snug break-words">

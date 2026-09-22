@@ -159,6 +159,7 @@ import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './service
 import {
   insertSkippedScenePlaceholders,
   stampEstimatedWordTimings,
+  SKIPPED_SCENE_COPY,
   type SkippedScenePlaceholder,
 } from './services/skippedScenePlaceholders';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
@@ -1458,7 +1459,10 @@ export function buildSkipLogEntries(
     // unreadable as a bug: both numbers looked like the same kind of thing.
     const sTag = `S${record.segmentIndex + 1}`;
     const clipTag = absorbed ? ` / Clip ${absorbed.hostDisplayIndex + 1}` : '';
-    let message = `${sTag}${clipTag} skipped — ${record.reason}.`;
+    // G2 close-out FIX 3 — operator-ordered copy rename, one swappable block
+    // (SKIPPED_SCENE_COPY, skippedScenePlaceholders.ts). Copy only: `record`
+    // and the placeholder/absorbed trailers below are unchanged.
+    let message = `${sTag}${clipTag}: ${SKIPPED_SCENE_COPY.label} — ${record.reason}.`;
     if (placeholder) {
       const slotDuration = placeholder.slotEndSec - placeholder.slotStartSec;
       message += ` Kept as an Estimated placeholder ${placeholder.slotStartSec.toFixed(3)}s → `
@@ -1539,7 +1543,7 @@ export function buildSyncInfoMessage(
   skippedSegments: number,
 ): string {
   const base = `Sync completed: ${matchedSegments} of ${totalSegments} segments matched.`;
-  return skippedSegments > 0 ? `${base} ${skippedSegments} skipped.` : base;
+  return skippedSegments > 0 ? `${base} ${SKIPPED_SCENE_COPY.summary(skippedSegments)}` : base;
 }
 
 /**

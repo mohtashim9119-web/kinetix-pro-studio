@@ -310,7 +310,8 @@ describe('insertSkippedScenePlaceholders — shapes beyond the operator\'s', () 
     const [entry] = buildSkipLogEntries('run', run.skipped, 0, undefined, byIndex);
     expect(entry!.type).toBe('skip');
     expect(entry!.reason).toBe(R10_SKIP_REASON);
-    expect(entry!.message).toContain('S3 skipped — scripted text never spoken.');
+    // G2 close-out FIX 3 — operator-ordered copy rename.
+    expect(entry!.message).toContain('S3: Unmatched scene — kept as Estimated placeholder — scripted text never spoken.');
     expect(entry!.message).toContain('Kept as an Estimated placeholder 2.900s → 2.100s → 5.000s; neighbours untouched (4 words marked Estimated).');
     expect(entry!.message).not.toContain('Absorbed');
     expect(entry!.message).not.toContain('Clip');

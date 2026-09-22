@@ -276,7 +276,7 @@ describe('buildSkipLogEntries', () => {
 
   it('renders a 1-based S{n} label in the message while storing the 0-based index', () => {
     const [first] = buildSkipLogEntries(RUN_ID, skipped, AT);
-    expect(first!.message).toBe('S3 skipped — no text match.');
+    expect(first!.message).toBe('S3: Unmatched scene — kept as Estimated placeholder — no text match.');
     expect(first!.segmentIndex).toBe(2);
   });
 
@@ -368,7 +368,7 @@ describe('buildSkipLogEntries', () => {
       new Map([[111, absorbedInfo(109)]]),
     );
     expect(entry!.message).toBe(
-      'S112 / Clip 110 skipped — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech).',
+      'S112 / Clip 110: Unmatched scene — kept as Estimated placeholder — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech).',
     );
     expect(entry!.absorbedByDisplayIndex).toBe(109);
   });
@@ -379,7 +379,7 @@ describe('buildSkipLogEntries', () => {
       [{ segmentIndex: 2, segmentText: 'Untethered scene.', reason: 'no text match' }],
       AT,
     );
-    expect(entry!.message).toBe('S3 skipped — no text match.');
+    expect(entry!.message).toBe('S3: Unmatched scene — kept as Estimated placeholder — no text match.');
     expect(entry!.absorbedByDisplayIndex).toBeUndefined();
   });
 
@@ -415,7 +415,7 @@ describe('buildSkipLogEntries', () => {
       new Map([[111, absorbedInfo(109, { otherNeighbor: { displayIndex: 108, gainSec: 0.63 } })]]),
     );
     expect(entry!.message).toBe(
-      'S112 / Clip 110 skipped — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech). '
+      'S112 / Clip 110: Unmatched scene — kept as Estimated placeholder — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech). '
       + 'Clip 109 also holds 0.63s.',
     );
   });
@@ -428,7 +428,7 @@ describe('buildSkipLogEntries', () => {
       new Map([[26, absorbedInfo(26, { span: { start: 78.73, end: 78.97 }, gapAudio: 'speech' })]]),
     );
     expect(entry!.message).toBe(
-      'S27 / Clip 27 skipped — no text match. Absorbed 78.730s → 0.240s → 78.970s (speech).',
+      'S27 / Clip 27: Unmatched scene — kept as Estimated placeholder — no text match. Absorbed 78.730s → 0.240s → 78.970s (speech).',
     );
     expect(entry!.message).not.toContain('also holds');
   });
@@ -471,7 +471,7 @@ describe('buildSkipLogEntries', () => {
       AT,
       absorbedInfoBySkipIndex,
     );
-    expect(entry!.message).toBe('S2 / Clip 1 skipped — no text match. Absorbed 1.700s → 1.300s → 3.000s (unknown).');
+    expect(entry!.message).toBe('S2 / Clip 1: Unmatched scene — kept as Estimated placeholder — no text match. Absorbed 1.700s → 1.300s → 3.000s (unknown).');
     expect(entry!.message).not.toContain('NaN');
     expect(entry!.message).not.toMatch(/Clip\s*(?:undefined)?$/);
     expect(entry!.segmentId).toBe('s0');
@@ -493,8 +493,8 @@ describe('buildSkipLogEntries', () => {
       ],
       AT,
     );
-    expect(e0!.message).toBe('S1 skipped — no text match.');
-    expect(e1!.message).toBe('S2 skipped — no text match.');
+    expect(e0!.message).toBe('S1: Unmatched scene — kept as Estimated placeholder — no text match.');
+    expect(e1!.message).toBe('S2: Unmatched scene — kept as Estimated placeholder — no text match.');
     expect(e0!.segmentId).toBeUndefined();
     expect(e1!.segmentId).toBeUndefined();
   });
@@ -594,7 +594,8 @@ describe('buildSyncInfoEntry', () => {
   it('appends a skipped-count sentence when the run had skips (Bug 1)', () => {
     const entry = buildSyncInfoEntry(RUN_ID, 10, 8, 2, AT);
     expect(entry.type).toBe('info');
-    expect(entry.message).toBe('Sync completed: 8 of 10 segments matched. 2 skipped.');
+    // G2 close-out FIX 3 — operator-ordered copy rename.
+    expect(entry.message).toBe('Sync completed: 8 of 10 segments matched. 2 unmatched scenes — kept as Estimated placeholders.');
   });
 });
 
@@ -603,8 +604,12 @@ describe('buildSyncInfoMessage (Bug 1)', () => {
     expect(buildSyncInfoMessage(8, 8, 0)).toBe('Sync completed: 8 of 8 segments matched.');
   });
 
-  it('appends "N skipped." when skippedSegments > 0', () => {
-    expect(buildSyncInfoMessage(10, 8, 2)).toBe('Sync completed: 8 of 10 segments matched. 2 skipped.');
+  it('appends the unmatched-count sentence when skippedSegments > 0', () => {
+    expect(buildSyncInfoMessage(10, 8, 2)).toBe('Sync completed: 8 of 10 segments matched. 2 unmatched scenes — kept as Estimated placeholders.');
+  });
+
+  it('uses singular phrasing for exactly one skip', () => {
+    expect(buildSyncInfoMessage(10, 9, 1)).toBe('Sync completed: 9 of 10 segments matched. 1 unmatched scene — kept as Estimated placeholder.');
   });
 });
 

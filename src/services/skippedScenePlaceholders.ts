@@ -65,6 +65,22 @@
 import type { SegmentAlignment } from './whisperService';
 import type { TranscriptToken, VideoSegment } from '../types';
 
+// ---------------------------------------------------------------------------
+// G2 close-out FIX 3 — operator-ordered copy rename. Every "skipped"/
+// "N skipped" surface (SyncLogPanel's skip line, App.tsx's buildSkipLogEntries
+// / buildSyncInfoMessage) reads from this ONE block instead of repeating the
+// phrase inline, so it can never drift between call sites. Copy-only — no
+// field, reason code, or log-entry shape changed by this rename.
+// ---------------------------------------------------------------------------
+export const SKIPPED_SCENE_COPY = {
+  /** The skip line's lead phrase, replacing the old bare "skipped". */
+  label: 'Unmatched scene — kept as Estimated placeholder',
+  /** The trailing summary clause on a successful-sync info line
+   *  (was "`N` skipped."). */
+  summary: (n: number): string =>
+    `${n} unmatched scene${n === 1 ? '' : 's'} — kept as Estimated placeholder${n === 1 ? '' : 's'}.`,
+} as const;
+
 const round3 = (v: number): number => Number(v.toFixed(3));
 
 /** The ENGINE floor — `snapBoundaries.ts`'s own 0.1s copy, not App.tsx/

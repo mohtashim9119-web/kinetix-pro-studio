@@ -30,7 +30,7 @@ describe('SyncLogPanel — skip entry 3-line format', () => {
         onClearLog={() => {}}
       />,
     );
-    expect(html).toContain('S135 skipped — no text match');
+    expect(html).toContain('S135: Unmatched scene — kept as Estimated placeholder — no text match');
     expect(html).toContain('[missing1]');
     expect(html).toContain('This is a test missing segment.');
     expect(html).toContain('matched 2 of 8 words (confidence 0.25)');
@@ -65,10 +65,13 @@ describe('SyncLogPanel — skip entry 3-line format', () => {
         onClearLog={() => {}}
       />,
     );
-    expect(html).not.toContain('matched');
+    // G2 close-out FIX 3's copy rename put the substring "matched" into the
+    // skip label itself ("Unmatched scene"), so this checks for the
+    // match-count line's own shape rather than the bare word.
+    expect(html).not.toMatch(/matched \d+ of \d+ words/);
     expect(html).not.toContain('confidence');
     // The rest of the entry still renders without crashing.
-    expect(html).toContain('S135 skipped — no text match');
+    expect(html).toContain('S135: Unmatched scene — kept as Estimated placeholder — no text match');
     expect(html).toContain('This is a test missing segment.');
   });
 
@@ -402,13 +405,13 @@ describe('SyncLogPanel — S/Clip numbering and longestRun annotation', () => {
       absorbedByDisplayIndex: 109,
       reason: 'no text match',
     })]);
-    expect(html).toContain('S112 / Clip 110 skipped');
+    expect(html).toContain('S112 / Clip 110: Unmatched scene');
     expect(html).not.toContain('Segment 112');
   });
 
   it('renders plain "S{n}" with no Clip suffix when there is no absorbing host', () => {
     const html = renderPanel([makeSkipEntry({ segmentIndex: 2, absorbedByDisplayIndex: undefined })]);
-    expect(html).toContain('S3 skipped');
+    expect(html).toContain('S3: Unmatched scene');
     expect(html).not.toContain('Clip');
   });
 
