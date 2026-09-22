@@ -4,6 +4,7 @@ import { osStoreRead, osStoreWrite, osStoreDelete } from './projectStoreClient';
 import { isTauri } from './tauriFfmpeg';
 import { backfillSegmentIds } from './segmentId';
 import { migrateLegacyTimingProvenance } from './timingProvenance';
+import { spineEquals, type SyncSpine } from './spine';
 
 /** Registry key — stores ProjectMeta[] (newest-first sorted on write). */
 const REGISTRY_KEY = 'kinetix:projects:v1';
@@ -220,6 +221,11 @@ interface StoredGuardSnapshot {
   segmentCount: number;
   /** Stored segment id -> its stored `assetId`, for segments that had a non-empty one. */
   assetIdBySegment: Map<string, string>;
+  /** G2 close-out FIX 2 — the stored project's own `lastSyncSpine`, so Guard
+   *  1b (below) can tell "an ordinary Apply Sync re-matched this segment's
+   *  asset differently" from "something silently dropped a reference this
+   *  save never meant to change". See the guard's own comment for why. */
+  lastSyncSpine: SyncSpine | undefined;
 }
 
 /** Reads the CURRENTLY stored guard snapshot for `id`, or null if unknown/unreadable. */
@@ -236,13 +242,26 @@ async function storedGuardSnapshot(id: string): Promise<StoredGuardSnapshot | nu
         assetIdBySegment.set(s.id, s.assetId);
       }
     }
-    return { segmentCount: segs.length, assetIdBySegment };
+    return { segmentCount: segs.length, assetIdBySegment, lastSyncSpine: parsed?.project?.lastSyncSpine };
   } catch {
     // Unreadable stored value — Guards 1/1b cannot make a judgement, so they
     // decline to (the poison flag from loadProject is what protects this case
     // instead).
     return null;
   }
+}
+
+/** G2 close-out FIX 2 — true when both spines are absent (neither project has
+ *  ever synced, or the spine feature predates both — nothing to compare) OR
+ *  both present and equal. Distinct from `spineEquals` itself, which treats
+ *  an absent spine as never a match (correct for its own "is this content
+ *  still what we synced" question) — here an absent-on-both-sides pair means
+ *  "no sync happened between these two saves", which is the case Guard 1b
+ *  must still treat as suspicious, not the case it should wave through. */
+function syncSpineUnchanged(a: SyncSpine | undefined, b: SyncSpine | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return spineEquals(a, b);
 }
 
 // ---------------------------------------------------------------------------
@@ -312,10 +331,37 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
   // its only way to reach it does. Not gated behind `allowEmptying`, which is
   // Guard 1's own escape hatch for a different shape (zero segments); this
   // guard has no escape hatch because no legitimate save produces its shape.
+  //
+  // G2 close-out FIX 2 — OLD BUG, root-caused: this guard also fired on a
+  // completely legitimate Apply Sync result. Every Apply Sync rebuilds each
+  // segment's `assetId` from scratch against the CURRENT asset pool
+  // (`parseProjectData`/`autoMatchSegments`, App.tsx/syncEngine.ts) rather
+  // than carrying the previous run's assignment forward, and segment ids are
+  // stable across re-syncs (`segmentId.ts`'s content-key join) — so a scene
+  // whose fresh match legitimately failed this run (an FA-arm Estimated
+  // placeholder scene, an asset claimed earlier in document order by a
+  // different scene this pass) reproduces EXACTLY the shape this guard was
+  // built to catch, under the stable id of a scene that DID have a match in
+  // the last saved project. The guard had no way to tell "an authoritative
+  // fresh sync re-matched this" from "something silently dropped a
+  // reference nothing meant to change" — so it refused the save, the FA
+  // sync was never persisted, and closing the app reverted to the stale
+  // pre-sync copy.
+  //
+  // THE FIX: a completed Apply Sync stamps `Project.lastSyncSpine`
+  // (`spine.ts`) in the SAME commit as the segments it produced. When the
+  // incoming project's spine differs from the stored snapshot's — including
+  // the first-ever stamp, spine absent -> present — this save is the direct,
+  // authoritative product of a fresh sync run, and that run's own matching
+  // decision is trusted rather than re-litigated here. The guard stays fully
+  // armed for every save NOT explained by a spine change, which is exactly
+  // the rehydration-on-project-switch shape the incident happened in — that
+  // path never touches `lastSyncSpine` at all.
   if (!opts.allowEmptying && project.segments.length > 0) {
     guardSnapshot ??= await storedGuardSnapshot(project.id);
     if (guardSnapshot !== null && guardSnapshot.segmentCount === project.segments.length
-      && guardSnapshot.assetIdBySegment.size > 0) {
+      && guardSnapshot.assetIdBySegment.size > 0
+      && syncSpineUnchanged(project.lastSyncSpine, guardSnapshot.lastSyncSpine)) {
       const incomingAssetIds = new Set(project.assets.map(a => a.id));
       const incomingAssetIdBySegment = new Map<string, string>();
       for (const s of project.segments) {

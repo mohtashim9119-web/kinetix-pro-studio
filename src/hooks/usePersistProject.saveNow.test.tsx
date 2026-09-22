@@ -195,3 +195,120 @@ describe('usePersistProject — saveNow() awaitability (WS2 T4.6)', () => {
     expect(secondDone).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// G2 close-out FIX 2 — bounded auto-retry on a plausibly-transient save
+// failure. "Loud, never silent": saveError is set on every failed attempt,
+// including the ones that are about to retry — a retry is never a reason to
+// go quiet in the meantime.
+// ---------------------------------------------------------------------------
+describe('usePersistProject — bounded auto-retry (G2 close-out FIX 2)', () => {
+  beforeEach(() => {
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    handle = null;
+    saveProjectMock.mockReset();
+    upsertProjectMetaMock.mockReset();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(async () => {
+    await act(async () => { root.unmount(); });
+    container.remove();
+    vi.restoreAllMocks();
+  });
+
+  it('retries a "verify-failed" (transient) failure and succeeds on the retry', async () => {
+    vi.useFakeTimers();
+    try {
+      saveProjectMock
+        .mockResolvedValueOnce({ ok: false, reason: 'verify-failed', message: 'mismatch' })
+        .mockResolvedValueOnce({ ok: true });
+
+      await mount(project());
+      await act(async () => { await handle!.saveNow(); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(1);
+      expect(handle!.saveError).not.toBeNull(); // loud immediately, before the retry lands
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(2);
+      expect(handle!.saveError).toBeNull(); // cleared once the retry succeeds
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops retrying after MAX_SAVE_RETRIES (3) and leaves saveError set — loud, not silently dropped', async () => {
+    vi.useFakeTimers();
+    try {
+      saveProjectMock.mockResolvedValue({ ok: false, reason: 'storage-unavailable', message: 'ipc down' });
+
+      await mount(project());
+      await act(async () => { await handle!.saveNow(); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(1);
+
+      // Retries back off: 2s, 4s, 6s — advance generously past all three.
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(4); // 1 initial + 3 retries
+      expect(handle!.saveError).not.toBeNull();
+
+      // No further retries fire even given more time — the budget is exhausted.
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT retry a data-loss guard refusal (asset-reference-loss) — retrying it would defeat the guard', async () => {
+    vi.useFakeTimers();
+    try {
+      saveProjectMock.mockResolvedValue({ ok: false, reason: 'asset-reference-loss', message: 'dangling ref' });
+
+      await mount(project());
+      await act(async () => { await handle!.saveNow(); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(1);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(1); // no retry attempted
+      expect(handle!.saveError).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does NOT retry a quota-exceeded failure — nothing here can free space on its own', async () => {
+    vi.useFakeTimers();
+    try {
+      saveProjectMock.mockResolvedValue({ ok: false, reason: 'quota-exceeded', message: 'full' });
+
+      await mount(project());
+      await act(async () => { await handle!.saveNow(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a fresh (non-retry) save gets its own full retry budget, independent of an earlier exhausted one', async () => {
+    vi.useFakeTimers();
+    try {
+      saveProjectMock.mockResolvedValue({ ok: false, reason: 'storage-unavailable', message: 'ipc down' });
+
+      await mount(project());
+      await act(async () => { await handle!.saveNow(); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(4); // budget exhausted
+
+      // A genuinely new save attempt (not a scheduled retry) resets the budget.
+      await act(async () => { await handle!.saveNow(); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(5);
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(saveProjectMock).toHaveBeenCalledTimes(8); // another full 1+3 budget
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

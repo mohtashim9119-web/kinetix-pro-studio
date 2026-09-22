@@ -377,6 +377,99 @@ describe('asset-reference-loss guard', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 2c. G2 close-out FIX 2 — Guard 1b trusts a fresh Apply Sync's own re-match
+// ---------------------------------------------------------------------------
+//
+// OLD BUG THIS PROVES FIXED: Guard 1b (above) also fired on a completely
+// legitimate Apply Sync result — every Apply Sync rebuilds each segment's
+// `assetId` from scratch against the CURRENT asset pool rather than carrying
+// the previous run's assignment forward, so a scene whose fresh match
+// legitimately failed this run reproduces the exact "same segment id, lost
+// assetId, asset still present" shape under a stable segment id that DID
+// have a match in the last saved project. A real operator hit this: an FA
+// sync completed in the UI, the very next autosave was refused
+// 'asset-reference-loss', and closing the app reverted to the stale
+// pre-sync project. The fix: a completed Apply Sync stamps
+// `Project.lastSyncSpine` in the SAME commit as the segments it produced;
+// Guard 1b now only fires when the spine is UNCHANGED from the stored
+// snapshot — i.e. when nothing about a fresh sync explains the loss, which
+// is exactly the rehydration-on-project-switch shape the guard exists for.
+describe('G2 close-out FIX 2 — asset-reference-loss guard trusts a spine change', () => {
+  const spineA = { audioHash: 'audio-a', scriptHash: 'script-a' };
+  const spineB = { audioHash: 'audio-b', scriptHash: 'script-b' };
+
+  it('ALLOWS the dangling-reference shape when it is the direct product of a fresh Apply Sync (spine changed)', async () => {
+    await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, 'a1'), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+      lastSyncSpine: spineA,
+    }));
+
+    // A real re-sync: the spine moved (new audio/script content matched),
+    // and this run's fresh matching legitimately left seg-0 without a1.
+    const outcome = await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, undefined), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+      lastSyncSpine: spineB,
+    }));
+
+    expect(outcome.ok).toBe(true);
+    expect((await loadProject('p-guard'))!.project.segments.map(s => s.assetId)).toEqual([undefined, 'a2']);
+  });
+
+  it('ALLOWS the shape on a project\'s very FIRST sync (spine absent -> present)', async () => {
+    await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, 'a1'), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+      // No lastSyncSpine yet — never synced under this feature.
+    }));
+
+    const outcome = await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, undefined), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+      lastSyncSpine: spineA,
+    }));
+
+    expect(outcome.ok).toBe(true);
+  });
+
+  it('STILL REFUSES the shape when the spine is UNCHANGED — the guard stays fully armed for the real incident shape', async () => {
+    await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, 'a1'), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+      lastSyncSpine: spineA,
+    }));
+    const before = getStored('p-guard');
+
+    // No sync happened — same spine, but seg-0 silently lost its pointer.
+    // This is the rehydration-on-project-switch shape from the original
+    // incident: it must still be refused.
+    const outcome = await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, undefined), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+      lastSyncSpine: spineA,
+    }));
+
+    expect(outcome).toEqual({ ok: false, reason: 'asset-reference-loss', message: expect.any(String) });
+    expect(getStored('p-guard')).toEqual(before);
+  });
+
+  it('STILL REFUSES when neither save has ever synced (both spines absent) — no sync means no free pass', async () => {
+    await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, 'a1'), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+    }));
+
+    const outcome = await saveProject(projectWith(0, {
+      segments: [segWithAsset(0, undefined), segWithAsset(1, 'a2')],
+      assets: [asset('a1'), asset('a2')],
+    }));
+
+    expect(outcome).toEqual({ ok: false, reason: 'asset-reference-loss', message: expect.any(String) });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 3. Malformed stored records — loud AND non-destructive
 // ---------------------------------------------------------------------------
 
