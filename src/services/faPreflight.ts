@@ -25,7 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import { invoke } from '@tauri-apps/api/core';
-import { isFaCapable, resolveFaLanguage } from './faGate';
+import { isFaCapable, isFaGateOpenForProject, resolveFaLanguage } from './faGate';
 import { describeInvokeError } from './invokeError';
 import { FA_SUPPORTED_LANGUAGES } from './forcedAlignmentRun';
 import type { FaLanguageCode } from './faTextNormalize';
@@ -216,4 +216,33 @@ export async function probeFaReadiness(language: string): Promise<FaPreflightRep
   } catch {
     return null;
   }
+}
+
+/**
+ * G2 close-out FIX 1 — the "engine state" half of the honest-Apply-Sync
+ * spine (`services/spine.ts`'s `SyncSpine.engineKey`). Two runs with
+ * identical audio+script content can still owe a re-sync when the arm a
+ * fresh run would actually take has changed since the last commit — the
+ * toggle was flipped, or the FA pack finished downloading after a run that
+ * had to fall back. `'whisper'` when the gate is closed (nothing else about
+ * readiness matters in that case); `'fa:ready'` / `'fa:not-ready'` when open,
+ * from the SAME pre-flight check Apply Sync itself runs before committing to
+ * FA inference — never a second, independently-derived readiness answer.
+ *
+ * Deliberately NOT parameterized by a one-off `forceWhisperReason`
+ * (`SyncPausedDialog`'s per-run "use Whisper timing" override) — that is an
+ * explicit choice for THIS run only, not a change to the project's standing
+ * configuration, and must not itself gate whether a LATER Apply Sync looks
+ * "already synced".
+ *
+ * Kept as a plain `Promise<string>` (not a typed union) specifically so a
+ * later engine resolver (G3) can widen what feeds this key without every
+ * caller changing shape.
+ */
+export async function computeSyncEngineKey(
+  project: Pick<Project, 'faHighPrecisionSync' | 'language' | 'detectedLanguage'> | null | undefined,
+): Promise<string> {
+  if (!isFaGateOpenForProject(project)) return 'whisper';
+  const preflight = await runFaPreflight(project);
+  return `fa:${preflight.ready ? 'ready' : 'not-ready'}`;
 }

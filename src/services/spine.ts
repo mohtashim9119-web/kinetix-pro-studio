@@ -21,6 +21,13 @@ import { normalizeScriptForHash } from './scriptNormalize';
 export interface SyncSpine {
   audioHash: string;
   scriptHash: string;
+  /** G2 close-out FIX 1 — which sync engine a fresh run would actually take
+   *  (and, for FA, whether the pack was ready), from `faPreflight.ts`'s
+   *  `computeSyncEngineKey`. Optional so a spine stamped before this field
+   *  existed still round-trips; an absent value can only ever compare
+   *  UNEQUAL to a freshly computed key (never silently treated as a match),
+   *  which is this gate's existing safe default — see `spineEquals`. */
+  engineKey?: string;
 }
 
 function toHex(digest: ArrayBuffer): string {
@@ -71,9 +78,13 @@ export async function computeScriptHash(scriptText: string, sceneText: string): 
   return hashText(normalized);
 }
 
-/** True only when both halves of the spine match — a partial match (e.g. the
- *  audio is the same but the script changed) is a real change, not a hit. */
+/** True only when audio, script, AND engine state all match — a partial
+ *  match (e.g. the audio is the same but the script changed, or the engine
+ *  toggle was flipped) is a real change, not a hit. `engineKey` compares by
+ *  plain equality like the two hashes: an absent value (a spine stamped
+ *  before FIX 1) can only ever mismatch a freshly computed key, never be
+ *  treated as a match by omission. */
 export function spineEquals(a: SyncSpine | null | undefined, b: SyncSpine | null | undefined): boolean {
   if (!a || !b) return false;
-  return a.audioHash === b.audioHash && a.scriptHash === b.scriptHash;
+  return a.audioHash === b.audioHash && a.scriptHash === b.scriptHash && a.engineKey === b.engineKey;
 }

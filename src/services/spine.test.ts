@@ -128,3 +128,37 @@ describe('spineEquals', () => {
     expect(spineEquals(null, s)).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// G2 close-out FIX 1 — `engineKey`, the third spine half.
+//
+// OLD BUG THIS PROVES FIXED: before FIX 1, `SyncSpine` had only audioHash/
+// scriptHash, so two runs with identical audio+script content but a DIFFERENT
+// engine (the FA/Whisper toggle flipped, or the FA pack finishing its
+// download between runs) compared equal — "Already synced" stayed greyed out
+// with no route back to a re-run on the new engine short of editing the
+// audio/script. `engineKey` closes that: it participates in equality exactly
+// like the two hashes, so a same-content, different-engine pair now
+// correctly compares UNEQUAL.
+// ---------------------------------------------------------------------------
+describe('spineEquals — engineKey (G2 FIX 1)', () => {
+  const base: SyncSpine = { audioHash: 'aa', scriptHash: 'bb', engineKey: 'whisper' };
+
+  it('true when all three — audio, script, AND engine — match', () => {
+    expect(spineEquals(base, { audioHash: 'aa', scriptHash: 'bb', engineKey: 'whisper' })).toBe(true);
+  });
+
+  it('OLD BUG — a same-content spine whose engine differs must NOT compare equal (toggle flip)', () => {
+    expect(spineEquals(base, { audioHash: 'aa', scriptHash: 'bb', engineKey: 'fa:ready' })).toBe(false);
+  });
+
+  it('OLD BUG — FA readiness changing (same toggle position) must NOT compare equal', () => {
+    const faSpine: SyncSpine = { audioHash: 'aa', scriptHash: 'bb', engineKey: 'fa:not-ready' };
+    expect(spineEquals(faSpine, { audioHash: 'aa', scriptHash: 'bb', engineKey: 'fa:ready' })).toBe(false);
+  });
+
+  it('a spine stamped before FIX 1 (no engineKey) never matches a freshly computed key', () => {
+    const legacySpine: SyncSpine = { audioHash: 'aa', scriptHash: 'bb' };
+    expect(spineEquals(legacySpine, { audioHash: 'aa', scriptHash: 'bb', engineKey: 'whisper' })).toBe(false);
+  });
+});

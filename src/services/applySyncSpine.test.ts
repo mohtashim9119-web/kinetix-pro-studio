@@ -79,7 +79,12 @@ describe('plan-v3 Wave 2 item 4 — the audio hash is computed once, not per bra
   });
 
   it('the commit stamps lastSyncSpine so the next Apply Sync can prove nothing changed', () => {
-    expect(SRC).toContain('lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash } : prev.lastSyncSpine');
+    // G2 close-out FIX 1 — the commit now also stamps `engineKey` (toggle
+    // position + FA pack readiness), the third half of the "honest Apply
+    // Sync" gate. Same shape, one more field.
+    expect(SRC).toContain(
+      'lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash, engineKey: syncEngineKey } : prev.lastSyncSpine',
+    );
   });
 });
 
@@ -148,5 +153,23 @@ describe('H4 — swapping every visual asset leaves the spine hash and all timin
 
     // And the asset swap fixture itself never entered either hash computation.
     expect(assetSet('before')).not.toEqual(assetSet('after'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G2 close-out FIX 1 — the "honest Apply Sync" gate's read side
+// (`spineUnchanged` effect) must recompute and compare `engineKey`, not just
+// the two hashes, and must re-run when the FA toggle or language changes —
+// same private-to-App.tsx source-scan constraint as the rest of this file.
+// ---------------------------------------------------------------------------
+describe('G2 close-out FIX 1 — spineUnchanged effect reads the engine key too', () => {
+  it('computes engineKey via computeSyncEngineKey before comparing the spine', () => {
+    expect(SRC).toContain('const engineKey = await computeSyncEngineKey(project);');
+    expect(SRC).toContain('spineEquals(spine, { audioHash, scriptHash, engineKey })');
+  });
+
+  it('the effect re-runs when the FA toggle or language changes, not just staged files', () => {
+    // The exact dependency array FIX 1 added to the spineUnchanged effect.
+    expect(SRC).toContain('project.faHighPrecisionSync, project.language, project.detectedLanguage,');
   });
 });

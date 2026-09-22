@@ -122,7 +122,7 @@ import {
   AUTO_DETECT, readNewProjectDefaults, NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON,
 } from './services/appDefaults';
 import { runForcedAlignmentForSync, type FaFailureKind, type FaRunResult } from './services/forcedAlignmentRun';
-import { runFaPreflight } from './services/faPreflight';
+import { runFaPreflight, computeSyncEngineKey } from './services/faPreflight';
 import { saveFaPause, readFaPause, clearFaPause, type FaPauseRecord } from './services/faSyncPauseStore';
 import {
   stampFaProvenance,
@@ -5256,6 +5256,16 @@ export default function App() {
     // `project` yet. A cancel here is still completely free.
     if (syncAbortController.signal.aborted) return cancelledResult(lockRestoredSegments.length);
 
+    // G2 close-out FIX 1 — the engine half of `lastSyncSpine`, computed at
+    // this same commit boundary (after the abort check, so a cancelled run
+    // never pays for the extra IPC round trip). Reads `projectRef.current`
+    // fresh rather than reusing `faGateOpen`/the pre-flight run above those
+    // are gated by `forceWhisperReason`, this run's one-off override, while
+    // the spine must record the project's STANDING toggle position so a
+    // later toggle flip (with nothing re-staged) is what makes the NEXT
+    // Apply Sync's "already synced" comparison see a real difference.
+    const syncEngineKey = await computeSyncEngineKey(projectRef.current);
+
     // 8. Single atomic state update — segments are already final.
     //    New-layer headings (Path B Decision 2) never move on re-sync; only
     //    clamp+flag any whose fixed timestamp now exceeds the resynced audio.
@@ -5293,7 +5303,7 @@ export default function App() {
       // no File — practically unreachable, since the no-voiceover abort
       // above already requires a resolvable asset) — in that edge case the
       // spine is left as it was rather than stamped with a guess.
-      lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash } : prev.lastSyncSpine,
+      lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash, engineKey: syncEngineKey } : prev.lastSyncSpine,
       // WS2 T4.7 Requirement 3 — the ONLY success-side clear of the
       // unapplied-transcript record, and it sits inside the atomic commit
       // rather than after it on purpose: the record means "a finished
@@ -6575,10 +6585,24 @@ export default function App() {
       }
       if (cancelled) return;
 
-      setSpineUnchanged(audioHash !== undefined && spineEquals(spine, { audioHash, scriptHash }));
+      // G2 close-out FIX 1 — the third spine half: does a fresh run's
+      // engine (toggle position + FA pack readiness, `faPreflight.ts`'s
+      // `computeSyncEngineKey`) match what THIS spine was stamped from? A
+      // toggle flip, or the FA pack finishing its download since the last
+      // run, must make the comparison fail even when neither hash moved —
+      // re-checked fresh every time this effect fires, so it always reads
+      // current readiness rather than a stale snapshot.
+      const engineKey = await computeSyncEngineKey(project);
+      if (cancelled) return;
+
+      setSpineUnchanged(audioHash !== undefined && spineEquals(spine, { audioHash, scriptHash, engineKey }));
     })();
     return () => { cancelled = true; };
-  }, [project.lastSyncSpine, project.script, project.sceneDetails, stagedVoiceoverFile, stagedScriptFile, stagedSceneFile, pendingVoiceover]);
+  }, [
+    project.lastSyncSpine, project.script, project.sceneDetails,
+    project.faHighPrecisionSync, project.language, project.detectedLanguage,
+    stagedVoiceoverFile, stagedScriptFile, stagedSceneFile, pendingVoiceover,
+  ]);
   // Operator-approved copy (Wave 2 G1 sign-off). Reason + hint combined into
   // one tooltip sentence pair; the button's own visible label ("Already
   // synced" — see DropZonePanel's applySyncSpineUnchangedReason ternary)
