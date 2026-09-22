@@ -560,8 +560,9 @@ export function computeRuns(
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  languageCode?: FaLanguageCode,
 ): FaRun[] {
-  return computeRunContext(segments, tokens, silences, audioDuration).runs;
+  return computeRunContext(segments, tokens, silences, audioDuration, languageCode).runs;
 }
 
 /**

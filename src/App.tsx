@@ -4784,19 +4784,33 @@ export default function App() {
         // alignScenestoTranscriptAsync below).
         setSyncStageMessage(matchEtaStageMessage(scriptWordCountForEta, faTokens.length));
 
-        // WS2 G2 item 2 — off-main-thread matcher. computeRunExtents,
-        // detectSeamFitDefects, detectRunPlacementDefects and
-        // detectUtterancePlacementDefects below all call, directly or via
-        // computeUnscriptedRuns/computeFaChunkPlan, the SAME
-        // computeRunContext on this SAME (anchorTimed, transcriptTokens,
-        // aligned.silences, audioDuration) tuple with languageCode omitted
-        // (item 1's dedup memo) — warming it here, once, off the main
-        // thread, means every one of those synchronous calls below hits the
-        // cache instead of re-running the Hirschberg pass. `syncAbortController
-        // .signal` reaching this call is the M3.6 "AbortSignal so C8's
-        // cancel reaches it" requirement: previously the whole-run cancel
-        // chain only checked before/after this block, never during the
-        // match itself.
+        // WS2 G2 item 2 — off-main-thread matcher. computeRunExtents and
+        // detectRunPlacementDefects below (via computeUnscriptedRuns) call
+        // the SAME computeRunContext on this SAME (anchorTimed,
+        // transcriptTokens, aligned.silences, audioDuration) tuple with
+        // languageCode omitted (item 1's dedup memo) — warming it here,
+        // once, off the main thread, means those synchronous calls below hit
+        // the cache instead of re-running the Hirschberg pass.
+        // `syncAbortController.signal` reaching this call is the M3.6
+        // "AbortSignal so C8's cancel reaches it" requirement: previously
+        // the whole-run cancel chain only checked before/after this block,
+        // never during the match itself.
+        //
+        // G4 Unit 1 — `detectSeamFitDefects` (R.11) used to also land in
+        // this omitted-language bucket by omission (a bug: it forwarded no
+        // `languageCode` to `computeFaChunkPlan`/`computeRuns` at all, so an
+        // es/fr/de/pt project's chunk plan canonicalized differently than
+        // every other gate on the same run). It now forwards the real
+        // language below, which means its own `computeRunContext` call no
+        // longer matches this warm-up's memo key on a non-English project —
+        // a synchronous cache MISS (one extra main-thread Hirschberg pass)
+        // where there used to be a hit. The single-slot memo (`lastRunContext
+        // Call`, faChunkPlan.ts) cannot warm two `languageCode` variants at
+        // once without evicting whichever ran second, and R.10/R.12 (via
+        // `computeRunExtents`/`computeUnscriptedRuns`) still outnumber R.11
+        // here, so this warm-up deliberately keeps favoring `undefined`
+        // rather than restructuring the memo — correctness over an
+        // optimization that was never in Unit 1's scope.
         try {
           await computeRunContextAsync(
             anchorTimed, projectRef.current.transcriptTokens!, aligned.silences, audioDuration,
@@ -4814,10 +4828,10 @@ export default function App() {
         // own, not `computeRunContext`'s parallel-but-separate one), so it
         // cannot share the warm-up above. Same `anchorTimed`/`transcriptTokens`/
         // `aligned.silences`/`audioDuration` R.13 will use, WITH the real
-        // languageCode this time (R.13 forwards it, unlike R.11's
-        // `computeFaChunkPlan`/`computeRuns` calls, which don't — the
-        // pre-existing languageCode split logged in the G2 report). Warmed
-        // here, right after the first, so both off-thread passes have the
+        // languageCode this time — R.13 always forwarded it, through its own
+        // separate pipeline, unaffected by the memo-key tradeoff G4 Unit 1's
+        // comment above describes for R.11. Warmed here, right after the
+        // first, so both off-thread passes have the
         // maximum possible head start before R.13's synchronous call is
         // reached — R.10 through R.12 do no Hirschberg work of their own.
         try {
@@ -4867,6 +4881,7 @@ export default function App() {
           faTokens,
           aligned.silences,
           audioDuration,
+          toAlignmentLanguageCode(projectRef.current.language),
         );
         // R-AP, clause (1) and (2), applied to R.11: it may not touch a
         // boundary whose ORIGIN lies inside a run (that row is R.12's), and it

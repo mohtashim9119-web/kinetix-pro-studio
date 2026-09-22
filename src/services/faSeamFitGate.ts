@@ -99,6 +99,7 @@
 
 import { computeFaChunkPlan, computeRuns } from './faChunkPlan';
 import type { FaChunk } from './faChunkPlan';
+import type { FaLanguageCode } from './faTextNormalize';
 import type { FaRun } from './faAnchors';
 import { R11_MIN_FIT_DEVIATION, R11_MIN_CORRECTION_SEC, R11_MAX_SPAN_WORD_CONF } from './syncConstants';
 import type { SilenceInterval } from './silenceDetector';
@@ -169,6 +170,22 @@ function scriptWordCount(text: string): number {
  * EVIDENCE, never as zero, the same rule `faUnspokenGate.ts` follows and for
  * the same reason (a missing-confidence harness bug must never look like a
  * confirmed-empty span).
+ *
+ * `languageCode` (G4 Unit 1) — forwarded to `computeFaChunkPlan`/
+ * `computeRuns` so a non-English project's chunk plan and run partition use
+ * the SAME canonicalization every sibling gate (R.10/R.12/R.13,
+ * `computeRunExtents`) already gets from its own `App.tsx` call site. Before
+ * this parameter existed, `App.tsx` had nothing to pass — these two calls ran
+ * with `languageCode` omitted regardless of the project's real language,
+ * while `computeRunExtents`/`alignScenestoTranscriptAsync`/R.13's own
+ * `computeRunContext` call all received the real code. On an es/fr/de/pt
+ * project this meant R.11's fit measurement (`scriptWordCount`, chunk word
+ * boundaries) canonicalized text differently than the rest of the rule
+ * stage's shared `computeRunContext` memo — a silent divergence, not a
+ * crash, so it produced wrong `fit`/`fitDeviation` numbers rather than an
+ * error. `undefined` (an English or language-unset project) is byte-for-byte
+ * unchanged: every default stays the same, this only widens what a caller MAY
+ * pass.
  */
 export function detectSeamFitDefects(
   segments: readonly VideoSegment[],
@@ -177,6 +194,7 @@ export function detectSeamFitDefects(
   faTokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  languageCode?: FaLanguageCode,
 ): SeamFitFinding[] {
   if (segments.length === 0 || committedSegments.length === 0 || tokens.length === 0) return [];
 
@@ -187,8 +205,8 @@ export function detectSeamFitDefects(
   // committed value), not boundaries anything committed.
   const committedById = new Map(committedSegments.map(s => [s.id, s.startTime]));
 
-  const chunks: FaChunk[] = computeFaChunkPlan(segments, tokens, silences, audioDuration);
-  const runs: FaRun[] = computeRuns(segments, tokens, silences, audioDuration);
+  const chunks: FaChunk[] = computeFaChunkPlan(segments, tokens, silences, audioDuration, undefined, languageCode);
+  const runs: FaRun[] = computeRuns(segments, tokens, silences, audioDuration, languageCode);
   if (chunks.length === 0) return [];
 
   // Word-index attribution: chunk text is a contiguous partition of the
