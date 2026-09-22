@@ -76,6 +76,9 @@ vi.mock('./faChunkPlan', () => ({
 import { invoke } from '@tauri-apps/api/core';
 import { computeFaChunkPlan, computeRunContextAsync, computeUnscriptedRuns } from './faChunkPlan';
 import { runForcedAlignmentForSync } from './forcedAlignmentRun';
+// G4 Unit 2 — real (unmocked) loader: `runFaAttempt` now forwards its real
+// return for 'en' as computeFaChunkPlan's vocabChars/cardinalData arguments.
+import { loadFaLanguageData } from './faLanguageData';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
 import { TransitionType, AnimationType } from '../types';
 
@@ -392,7 +395,13 @@ describe('runForcedAlignmentForSync — success path', () => {
     });
     const segments = makeSegments();
     await runForcedAlignmentForSync(makeAsset(), segments, whisperTokens, 1, 'en');
-    expect(mockComputeFaChunkPlan).toHaveBeenCalledWith(segments, whisperTokens, [], 1);
+    // G4 Unit 2 — computeFaChunkPlan now also receives the real language and
+    // this build's shipped en vocab/cardinal data (attribution stays
+    // default/undefined — the 5th positional argument).
+    const en = loadFaLanguageData('en')!;
+    expect(mockComputeFaChunkPlan).toHaveBeenCalledWith(
+      segments, whisperTokens, [], 1, undefined, 'en', en.vocabChars, en.cardinalData,
+    );
   });
 
   it('derives R.5 excisions from the IDENTICAL four arguments the chunk plan was built from', async () => {
@@ -403,8 +412,19 @@ describe('runForcedAlignmentForSync — success path', () => {
     resolveWithTwoWords();
     const segments = makeSegments();
     await runForcedAlignmentForSync(makeAsset(), segments, whisperTokens, 1, 'en');
-    expect(mockComputeUnscriptedRuns).toHaveBeenCalledWith(segments, whisperTokens, [], 1);
-    expect(mockComputeUnscriptedRuns.mock.calls[0]).toEqual(mockComputeFaChunkPlan.mock.calls[0]);
+    expect(mockComputeUnscriptedRuns).toHaveBeenCalledWith(segments, whisperTokens, [], 1, 'en');
+    // G4 Unit 2 — computeFaChunkPlan legitimately takes MORE arguments than
+    // computeUnscriptedRuns can structurally accept (attribution,
+    // vocabChars, cardinalData — computeUnscriptedRuns's own signature has
+    // no such parameters), so a full-array equality no longer holds. The
+    // REAL provenance invariant this test guards — both derived from the
+    // identical (segments, tokens, silences, audioDuration, languageCode)
+    // tuple that actually determines computeRunContext's run/anchor
+    // partition (vocabChars/cardinalData affect only chunk TEXT, a
+    // post-partition step — faLanguageData.ts's own header) — is the shared
+    // PREFIX, asserted directly here instead.
+    expect(mockComputeFaChunkPlan.mock.calls[0]!.slice(0, 4)).toEqual(mockComputeUnscriptedRuns.mock.calls[0]!.slice(0, 4));
+    expect(mockComputeFaChunkPlan.mock.calls[0]![5]).toBe(mockComputeUnscriptedRuns.mock.calls[0]![4]); // languageCode
   });
 
   it('returns the excised runs on the result so the caller can log them', async () => {
@@ -448,6 +468,9 @@ describe('runForcedAlignmentForSync — success path', () => {
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
     expect(result.status).toBe('ok');
     expect(result.status === 'ok' && result.silenceError).toBe('ffmpeg not found');
-    expect(mockComputeFaChunkPlan).toHaveBeenCalledWith(makeSegments(), whisperTokens, [], 1);
+    const en = loadFaLanguageData('en')!;
+    expect(mockComputeFaChunkPlan).toHaveBeenCalledWith(
+      makeSegments(), whisperTokens, [], 1, undefined, 'en', en.vocabChars, en.cardinalData,
+    );
   });
 });

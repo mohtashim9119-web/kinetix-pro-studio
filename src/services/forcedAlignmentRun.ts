@@ -46,6 +46,7 @@ import { invoke, Channel } from '@tauri-apps/api/core';
 import { detectSilencesSingleFlight } from './silenceDetector';
 import { describeInvokeError } from './invokeError';
 import { computeFaChunkPlan, computeRunContextAsync, computeUnscriptedRuns, type UnscriptedRun } from './faChunkPlan';
+import { loadFaLanguageData } from './faLanguageData';
 import { MatchCancelledError } from './hirschbergMatchClient';
 import { faWordSpansToTranscriptTokens, type FaEvent, type FaInfeasibleChunk } from './faBoundaryTypes';
 import type { FaLanguageCode } from './faTextNormalize';
@@ -302,15 +303,42 @@ async function runFaAttempt(
   // reaches it" requirement — an abort mid-match terminates the worker
   // (`hirschbergMatchClient.ts`) and surfaces as this run's own typed
   // `'cancelled'` outcome, never a paused/failed one.
+  //
+  // G4 Unit 2 — `language` (below, and at the two calls after this one) is
+  // real and already validated here, unlike App.tsx's shared multi-gate
+  // memo where R.10/R.12 still outnumber R.11's real-language call and the
+  // warm-up deliberately keeps favoring `undefined` (see App.tsx's own
+  // comment). This function is the single, self-contained owner of all
+  // three `computeRunContext`-backed calls in this one FA run — there is no
+  // competing majority to favor, so all three consistently use the real,
+  // known language and the memo stays warm end to end.
   try {
-    await computeRunContextAsync(anchorTimedSegments, whisperTokens, silences, audioDuration, undefined, signal);
+    await computeRunContextAsync(anchorTimedSegments, whisperTokens, silences, audioDuration, language, signal);
   } catch (err) {
     if (err instanceof MatchCancelledError) return { status: 'cancelled' };
     throw err;
   }
   if (signal?.aborted) return { status: 'cancelled' };
 
-  const chunks = computeFaChunkPlan(anchorTimedSegments, whisperTokens, silences, audioDuration);
+  // G4 Unit 2 — `loadFaLanguageData` is the TS-side production data path for
+  // `scripts/fixtures/fa-vocab-<lang>.json`/`fa-cardinal-<lang>.json`
+  // (`faLanguageData.ts`'s own header has the full mechanism). Before this,
+  // `computeFaChunkPlan` here received no `languageCode` at all — not even
+  // the languageCode-alone canonicalization G4 Unit 1 gave `detectSeamFit
+  // Defects` — so this run's own chunk-text word count could disagree with
+  // the text Rust's `fa_onnx.rs` actually normalizes and aligns against
+  // (its OWN embedded copy of the same five files, `include_str!`, already
+  // correct — this wiring is TS-side qi-bookkeeping parity, not an
+  // inference-quality fix). `languageData` is `undefined` only for a
+  // language this build has no shipped pack for (NR-6, no silent
+  // fallback) — `computeFaChunkPlan`'s own `vocabChars`/`cardinalData`
+  // params are optional and fall back to `languageCode`-alone behavior in
+  // that case, exactly as before this unit for any such language.
+  const languageData = loadFaLanguageData(language);
+  const chunks = computeFaChunkPlan(
+    anchorTimedSegments, whisperTokens, silences, audioDuration, undefined, language,
+    languageData?.vocabChars, languageData?.cardinalData,
+  );
   if (chunks.length === 0) {
     console.warn('[fa] chunk plan is empty (every segment has empty text) — pausing for the user to choose.');
     return { status: 'paused', reason: 'empty-chunk-plan', resumable: true };
@@ -414,7 +442,7 @@ async function runFaAttempt(
     return { status: 'paused', reason: 'zero-words', resumable: true };
   }
   const tokens = faWordSpansToTranscriptTokens(words);
-  const unscriptedRuns = computeUnscriptedRuns(anchorTimedSegments, whisperTokens, silences, audioDuration);
+  const unscriptedRuns = computeUnscriptedRuns(anchorTimedSegments, whisperTokens, silences, audioDuration, language);
   if (nFallbackChunks > 0 || infeasibleChunks.length > 0) {
     return {
       status: 'degraded',

@@ -14,7 +14,9 @@
 // `scripts/fixtures/fa-vocab-<lang>.json`'s committed `vocab` object via
 // `vocabCharsFromRawVocab` below) — this module never reads a file itself, so
 // it stays usable from a worker or a native/Rust FFI boundary later without
-// carrying a filesystem dependency. NOT wired into Apply Sync — no caller yet.
+// carrying a filesystem dependency. Wired into Apply Sync (G4 Unit 2,
+// `faLanguageData.ts`'s runtime loader) via `forcedAlignmentRun.ts`'s
+// production `computeFaChunkPlan` call.
 //
 // DELIBERATELY PARALLEL to `textNormalize.ts`'s `canonicalize`, not built on
 // top of it, and `canonicalize`/`stripStageDirections` are untouched by this

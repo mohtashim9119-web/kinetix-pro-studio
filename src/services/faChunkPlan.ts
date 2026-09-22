@@ -585,8 +585,9 @@ export function computeUnscriptedRuns(
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  languageCode?: FaLanguageCode,
 ): UnscriptedRun[] {
-  return computeRunContext(segments, tokens, silences, audioDuration).unscripted;
+  return computeRunContext(segments, tokens, silences, audioDuration, languageCode).unscripted;
 }
 
 /**
