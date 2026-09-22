@@ -121,8 +121,8 @@ import {
 import {
   AUTO_DETECT, readNewProjectDefaults, NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON,
 } from './services/appDefaults';
-import { runForcedAlignmentForSync, type FaFailureKind, type FaRunResult } from './services/forcedAlignmentRun';
-import { computeSyncEngineKey, resolveSyncEngine } from './services/faPreflight';
+import { runForcedAlignmentForSync, FA_SUPPORTED_LANGUAGES, type FaFailureKind, type FaRunResult } from './services/forcedAlignmentRun';
+import { computeSyncEngineKey, resolveSyncEngine, probeFaReadiness } from './services/faPreflight';
 import { saveFaPause, readFaPause, clearFaPause, type FaPauseRecord } from './services/faSyncPauseStore';
 import {
   stampFaProvenance,
@@ -205,6 +205,7 @@ import {
   buildFaPausedEntry,
   buildFaPreflightEntry,
   buildFaGateClosedEntry,
+  buildFaNotCompiledEntry,
   buildFaUserChoseWhisperEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
@@ -4257,7 +4258,24 @@ export default function App() {
         // FA_PROJECT_DEFAULT_ON stays false (WS1 Session H); this only makes
         // the closed-gate state visible instead of silent. Skipped when not
         // FA-capable (plain browser dev server) — there is nothing to turn on.
-        ruleLogEntries.push(buildFaGateClosedEntry(syncRunId, syncRunAt));
+        //
+        // G6 Step 0a — `isFaCapable()` is just `isTauri()`; it is true in a
+        // plain `tauri:dev` build that was never compiled with `fa-inference`,
+        // and `buildFaGateClosedEntry`'s "available but turned off" is false
+        // in that build — no toggle would ever make it available. A direct,
+        // local `fa_preflight` probe (never folded into `resolveSyncEngine`
+        // itself — that resolver's gate-closed branch is asserted elsewhere
+        // to never call the backend, since it also runs on the spine's
+        // "already synced" comparison path, not just a real Apply Sync) picks
+        // the honest entry instead.
+        const faCompiledProbe = await probeFaReadiness(
+          resolveFaLanguage(projectRef.current) ?? FA_SUPPORTED_LANGUAGES[0]!,
+        );
+        if (faCompiledProbe !== null && !faCompiledProbe.featureCompiled) {
+          ruleLogEntries.push(buildFaNotCompiledEntry(syncRunId, syncRunAt));
+        } else {
+          ruleLogEntries.push(buildFaGateClosedEntry(syncRunId, syncRunAt));
+        }
       }
       const faRun: FaRunResult = faGateOpen
         ? await runForcedAlignmentForSync(

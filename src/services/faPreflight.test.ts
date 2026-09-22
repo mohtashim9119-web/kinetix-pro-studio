@@ -115,6 +115,20 @@ describe('runFaPreflight — readiness verdict, never throws', () => {
     expect(r.ready).toBe(false);
     expect(r.blockingDetail).toBe('IPC channel closed');
   });
+
+  it('G6 Step 0a — says plainly the build was never compiled, never that forced alignment merely needs a retry', async () => {
+    mockInvoke.mockResolvedValue({
+      ...READY_REPORT,
+      featureCompiled: false,
+      runtimeOk: false,
+      runtimeDetail: 'fa-inference feature not compiled',
+    });
+    const r = await runFaPreflight({ language: 'en' });
+    expect(r.ready).toBe(false);
+    expect(r.featureCompiled).toBe(false);
+    expect(r.fixHint).toMatch(/isn't compiled into this build/i);
+    expect(r.fixHint).toMatch(/tauri:dev:fa/i);
+  });
 });
 
 // ---------------------------------------------------------------------------

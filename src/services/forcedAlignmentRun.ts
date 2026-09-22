@@ -92,7 +92,15 @@ export type FaFailureKind =
   | 'inference-failed'
   | 'already-running'
   | 'out-of-memory'
-  | 'offline';
+  | 'offline'
+  /** G6 Step 0a — this binary was compiled without the `fa-inference`
+   *  feature (`FaErrorKind::NotImplemented`, `fa.rs`'s
+   *  `#[cfg(not(feature = "fa-inference"))]` arm). Split out of the
+   *  'inference-failed' catch-all it used to fall into: "the alignment
+   *  engine reported an error" implies a transient/fixable-by-retry failure,
+   *  which this is not — retrying can never succeed without a different
+   *  build. */
+  | 'not-compiled';
 
 /**
  * Why a run is DEGRADED rather than clean — FA tokens (or Whisper tokens
@@ -208,11 +216,16 @@ function classifyFaError(err: unknown): FaFailureKind | 'cancelled' {
     case 'modelHashMismatch': return 'model-hash-mismatch';
     case 'alreadyRunning': return 'already-running';
     case 'inferenceFailed': return 'inference-failed';
-    // 'notImplemented' (fa-inference compiled out), 'stateLockPoisoned', and
-    // anything else (a plain Error, a staging-call rejection with no `kind`
-    // at all) fall into the same catch-all a caller cannot usefully split
-    // further without guessing at backend prose — matches the old
-    // 'inference-error' fallback reason's own documented reasoning.
+    // G6 Step 0a — split out of the catch-all below: this is a build-config
+    // fact, not an inference error, and telling the user to "try again"
+    // (the 'inference-failed' copy) would be dishonest — retrying can never
+    // succeed without a different build.
+    case 'notImplemented': return 'not-compiled';
+    // 'stateLockPoisoned' and anything else (a plain Error, a staging-call
+    // rejection with no `kind` at all) fall into the same catch-all a
+    // caller cannot usefully split further without guessing at backend
+    // prose — matches the old 'inference-error' fallback reason's own
+    // documented reasoning.
     default: return 'inference-failed';
   }
 }

@@ -51,6 +51,10 @@ const PAUSE_COPY: Record<FaFailureKind | FaVictimPauseReason, string> = {
   'out-of-memory': 'The alignment engine ran out of memory.',
   offline: 'The cloud alignment engine could not be reached — check your network connection.',
   'all-covered-fabricated': 'Every covered scene’s forced-alignment timing was fabricated — no chunk in this run aligned successfully.',
+  // G6 Step 0a — identical wording to faPreflight.ts's fixHint / syncLog.ts's
+  // FA_PAUSED_TEXT.'not-compiled' (duplicated, not imported — see
+  // faPreflight.ts's comment for why).
+  'not-compiled': "High-precision sync isn't compiled into this build — launch with tauri:dev:fa.",
 };
 
 const COPY = {

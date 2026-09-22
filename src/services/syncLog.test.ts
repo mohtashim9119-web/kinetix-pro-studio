@@ -35,6 +35,7 @@ import {
   buildFaUserChoseWhisperEntry,
   buildFaPreflightEntry,
   buildFaGateClosedEntry,
+  buildFaNotCompiledEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -1078,6 +1079,7 @@ describe('buildFaPausedEntry — plan-v3 item 3/4: pause replaces silent substit
       'unsupported-language', 'empty-chunk-plan', 'zero-words', 'model-not-found',
       'model-hash-mismatch', 'runtime-load-failed', 'audio-stage-failed',
       'inference-failed', 'already-running', 'out-of-memory', 'offline',
+      'not-compiled', // G6 Step 0a
     ] as const;
     const messages = reasons.map(r => buildFaPausedEntry(RUN_ID, r, undefined, AT).message);
     expect(new Set(messages).size).toBe(reasons.length);
@@ -1108,6 +1110,33 @@ describe('buildFaUserChoseWhisperEntry — plan-v3 item 4: an explicit, logged c
     const entry = buildFaUserChoseWhisperEntry(RUN_ID, 'model-not-found', AT);
     expect(entry.reason).toBe('model-not-found');
     expect(entry.message).toContain('model-not-found');
+  });
+});
+
+describe('buildFaNotCompiledEntry — G6 Step 0a: the honest no-FA-build entry', () => {
+  // OLD BUG this proves fixed: `App.tsx` used to push `buildFaGateClosedEntry`
+  // for BOTH "toggle off" and "never compiled with fa-inference" as long as
+  // `isFaCapable()` (just `isTauri()`) was true — a plain `tauri:dev` build
+  // said "available but turned off", which is false: no toggle would ever
+  // have made it available.
+  it('shares the fa-gate-closed badge type but never says "turned off"', () => {
+    const entry = buildFaNotCompiledEntry(RUN_ID, AT);
+    expect(entry.type).toBe('fa-gate-closed');
+    expect(entry.message).not.toMatch(/turned off/i);
+    expect(entry.message).not.toMatch(/not implemented yet/i);
+  });
+
+  it('says plainly that the build was never compiled with forced alignment, and names the fix', () => {
+    const entry = buildFaNotCompiledEntry(RUN_ID, AT);
+    expect(entry.message).toMatch(/isn't compiled into this build/i);
+    expect(entry.fixHint).toMatch(/tauri:dev:fa/i);
+  });
+
+  it('is distinct from buildFaGateClosedEntry\'s own message even though it shares the badge type', () => {
+    const notCompiled = buildFaNotCompiledEntry(RUN_ID, AT);
+    const gateClosed = buildFaGateClosedEntry(RUN_ID, AT);
+    expect(notCompiled.message).not.toBe(gateClosed.message);
+    expect(notCompiled.severity).toBe('info');
   });
 });
 

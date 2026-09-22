@@ -492,6 +492,13 @@ const FA_PAUSED_TEXT: Record<FaFailureKind | FaVictimPauseReason, { what: string
     what: 'every covered scene’s forced-alignment timing was fabricated (no chunk in this run aligned successfully)',
     fix: 'Try again, or continue with Whisper timing for this run.',
   },
+  // G6 Step 0a — see faPreflight.ts's matching fixHint comment: identical
+  // wording, duplicated rather than imported to keep this module dependency-
+  // light. Distinct from 'inference-failed': retrying can never succeed here.
+  'not-compiled': {
+    what: 'this build was never compiled with forced alignment (fa-inference)',
+    fix: "High-precision sync isn't compiled into this build — launch with tauri:dev:fa.",
+  },
 };
 
 /**
@@ -633,6 +640,38 @@ export function buildFaGateClosedEntry(
       owningRule: 'FA',
       severity: 'info',
       fixHint: 'Turn it on in Project Settings → Sync → High-Precision Auto-Sync.',
+    },
+    timestamp,
+  );
+}
+
+/**
+ * G6 STEP 0A — THE HONEST NO-FA-BUILD ENTRY. Emitted in place of
+ * `buildFaGateClosedEntry` above when the gate is closed AND the binary was
+ * never compiled with `fa-inference` (`App.tsx`'s Apply-Sync branch checks
+ * `fa_preflight`'s `featureCompiled` before choosing which of the two to
+ * push). OLD BUG: `buildFaGateClosedEntry` fired for BOTH cases as long as
+ * `isFaCapable()` (which is just `isTauri()`, true in every desktop build
+ * regardless of feature flags) — a plain `tauri:dev` build with the toggle
+ * off said "available but turned off", which is false: it was never
+ * available, no toggle would have changed anything. This entry names the
+ * real, unfixable-by-toggle cause instead.
+ */
+export function buildFaNotCompiledEntry(
+  syncRunId: string,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'fa-gate-closed',
+    // Keep identical to faPreflight.ts's fixHint / SyncPausedDialog.tsx's
+    // PAUSE_COPY.'not-compiled' — see faPreflight.ts's comment for why this
+    // is duplicated rather than imported.
+    "High-precision sync isn't compiled into this build — launch with tauri:dev:fa.",
+    {
+      owningRule: 'FA',
+      severity: 'info',
+      fixHint: 'Restart with npm run tauri:dev:fa (or a build compiled with the fa-inference feature).',
     },
     timestamp,
   );

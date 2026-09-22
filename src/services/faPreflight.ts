@@ -153,7 +153,12 @@ export async function runFaPreflight(
   let fixHint: string;
   if (!report.featureCompiled) {
     blockingDetail = report.runtimeDetail;
-    fixHint = 'This build was compiled without forced alignment. Use a tauri:dev:fa / fa-inference build.';
+    // G6 Step 0a — canonical honest copy for "not compiled", duplicated
+    // (not imported) in syncLog.ts / SyncPausedDialog.tsx: those modules
+    // deliberately stay dependency-light and must not pull this module's
+    // `@tauri-apps/api` import into their runtime graph. Keep the wording
+    // identical in all four spots (search "isn't compiled into this build").
+    fixHint = "High-precision sync isn't compiled into this build — launch with tauri:dev:fa.";
   } else if (!report.runtimeOk) {
     blockingDetail = report.runtimeDetail;
     fixHint = 'The onnxruntime library could not load — re-provision it per src-tauri/onnxruntime/README.md.';

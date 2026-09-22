@@ -190,6 +190,20 @@ describe('runForcedAlignmentForSync — pauses (never falls back), and names why
     expect(result).toMatchObject({ status: 'paused', reason: 'already-running' });
   });
 
+  it('G6 Step 0a — pauses with reason not-compiled (never the generic inference-failed) when invoke rejects with notImplemented', async () => {
+    // fa.rs's `#[cfg(not(feature = "fa-inference"))]` arm rejects with this
+    // exact typed kind. Before this fix, classifyFaError's catch-all folded
+    // it into 'inference-failed', whose copy ("the alignment engine reported
+    // an error... try again") is dishonest here — no retry fixes a build
+    // that was never compiled with fa-inference.
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'fa_stage_audio_raw') return FAKE_STAGED_INPUT_PATH;
+      throw { kind: 'notImplemented', message: 'Forced alignment inference is not implemented yet.' };
+    });
+    const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
+    expect(result).toMatchObject({ status: 'paused', reason: 'not-compiled' });
+  });
+
   it('pauses with reason audio-stage-failed when fa_stage_audio_raw itself rejects — distinct from an inference failure', async () => {
     mockInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'fa_stage_audio_raw') throw 'disk full';

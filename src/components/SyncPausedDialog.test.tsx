@@ -85,6 +85,7 @@ describe('SyncPausedDialog', () => {
       'model-hash-mismatch', 'runtime-load-failed', 'audio-stage-failed',
       'inference-failed', 'already-running', 'out-of-memory', 'offline',
       'hopeless-local-coverage', // G4 Unit 4
+      'not-compiled', // G6 Step 0a
     ] as const;
     for (const reason of reasons) {
       root = createRoot(container);
@@ -113,5 +114,16 @@ describe('SyncPausedDialog', () => {
       );
     });
     expect(container.textContent).toContain('no model.onnx found for language en');
+  });
+
+  it('G6 Step 0a — the not-compiled reason says the build is not compiled in, never that anything is merely "turned off"', async () => {
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <SyncPausedDialog reason="not-compiled" timestamp={Date.now()} onRetry={() => {}} onUseWhisper={() => {}} onCancel={() => {}} />,
+      );
+    });
+    expect(container.textContent).toMatch(/isn't compiled/i);
+    expect(container.textContent).not.toMatch(/turned off/i);
   });
 });
