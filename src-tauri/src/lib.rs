@@ -26,7 +26,14 @@ mod asset_store;
 mod relink;
 mod project_mirror;
 mod safe_delete;
-mod sha256;
+// G6 Step 1 — widened `mod` -> `pub mod`, same reasoning as `fa`/`fa_dev`
+// above: `tests/media_hash_throughput_live.rs` (a separate `harness = false`
+// integration-test crate) needs to name `sha256::hash_file` to measure real
+// throughput against a real media library. No item's own visibility changed
+// (everything inside was already `pub`, promoted from `pub(crate)` in the
+// same step for the Media Vault registry that will call it from a sibling
+// module) and no runtime behavior changed.
+pub mod sha256;
 mod atomic_stage;
 mod storage_root;
 mod whisper;

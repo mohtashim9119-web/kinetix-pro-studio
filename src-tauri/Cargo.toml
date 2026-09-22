@@ -156,3 +156,11 @@ harness = false
 name = "fa_download_live"
 path = "tests/fa_download_live.rs"
 harness = false
+
+# G6 Step 1 — real-file throughput measurement for the Media Vault's
+# content-hash primitive. Needs no Tauri runtime (plain `std::fs`); see the
+# file's own header for why it is still `harness = false`.
+[[test]]
+name = "media_hash_throughput_live"
+path = "tests/media_hash_throughput_live.rs"
+harness = false
