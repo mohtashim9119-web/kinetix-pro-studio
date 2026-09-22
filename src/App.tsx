@@ -5052,6 +5052,36 @@ export default function App() {
             ...buildRunEdgeViolationLogEntries(syncRunId, runEdgeViolations, finalTimedSegments, syncRunAt),
           );
         }
+      } else {
+        // G2 close-out FIX 4 — WHISPER-ARM PARITY (skippedScenePlaceholders.ts).
+        // Until this fix, only the FA arm re-inserted a skipped scene as an
+        // Estimated placeholder; the Whisper arm's skipped scenes stayed
+        // genuinely dropped, their reserved gap silently absorbed into
+        // whichever neighbour `snapCoveredBoundaries` gave it (reported only
+        // as an "absorbed" log line, never restored as a visible segment) —
+        // the same "no text match" skip path the operator's spec calls out
+        // for parity. No R.11-R.15 stage runs on this arm (those rules are
+        // FA-chunk-plan-specific), so there is no ordering constraint to
+        // respect here the way the FA branch has against R.14 — this can run
+        // right where the FA branch's own call runs relative to the shared
+        // merge point below.
+        const placeholderInsertion = insertSkippedScenePlaceholders(
+          finalTimedSegments, keptAlignments, aligned.segments,
+          new Set(skipped.map(r => r.segmentIndex)), coverageAfterR10, transcriptTokens, audioDuration,
+        );
+        finalTimedSegments = placeholderInsertion.segments;
+        placeholderAlignments = placeholderInsertion.alignments;
+        skippedScenePlaceholders = placeholderInsertion.placeholders;
+        if (placeholderInsertion.unplaceable.length > 0) {
+          console.warn(
+            `[sync] FIX 1 (Whisper arm) — ${placeholderInsertion.unplaceable.length} skipped scene(s) could not ` +
+            'be given a placeholder slot (both neighbours at the minimum duration); left dropped:',
+            placeholderInsertion.unplaceable,
+          );
+        }
+        if (pendingBoundaryCheckInput) {
+          pendingBoundaryCheckInput = { ...pendingBoundaryCheckInput, alignments: placeholderAlignments };
+        }
       }
 
       // Wave 1 hotfix FIX 1 — a skipped scene that got a placeholder slot

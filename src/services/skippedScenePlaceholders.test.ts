@@ -39,6 +39,8 @@
 // ---------------------------------------------------------------------------
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { filterToCoveredSegments, buildSkipLogEntries } from '../App';
 import { snapCoveredBoundaries } from './snapBoundaries';
 import { headExtendFirstSegment } from './syncEngine';
@@ -318,5 +320,135 @@ describe('insertSkippedScenePlaceholders — shapes beyond the operator\'s', () 
     expect(entry!.segmentId).toBe('s3');
     expect(entry!.absorbedByDisplayIndex).toBeUndefined();
     expect(entry!.ruleDetail).toEqual(expect.objectContaining({ spanStartSec: 2.9, spanEndSec: 5.0 }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G2 close-out FIX 4 — WHISPER-ARM PARITY.
+//
+// OLD BUG THIS PROVES FIXED: only the FA arm ever called
+// `insertSkippedScenePlaceholders`. The Whisper arm's skip path has no R.10
+// gate at all — a scene is skipped purely on `filterToCoveredSegments`'s own
+// `matched: false` determination (genuinely no text match found) — but
+// App.tsx's `if (faTokens)` branch was the ONLY call site, so a Whisper-arm
+// skip stayed dropped forever: its reserved gap was silently absorbed into
+// whichever neighbour `snapCoveredBoundaries` gave it, reported only as an
+// "absorbed" log line, never restored as a visible timeline segment. This
+// mirrors App.tsx's Whisper-arm stage order exactly: `filterToCoveredSegments`
+// → `snapCoveredBoundaries` → `headExtendFirstSegment` → (FIX 4's new)
+// `insertSkippedScenePlaceholders` — no R.10 gate, no R.11-R.15 (those rules
+// are FA-chunk-plan-specific and never run on this arm), so there is no
+// ordering constraint to respect the way the FA branch has against R.14.
+// ---------------------------------------------------------------------------
+describe('G2 close-out FIX 4 — Whisper-arm parity: skipped scenes get the same Estimated placeholder', () => {
+  /** Whisper arm's own stage order — no R.10 gate, no R.11-R.15. */
+  function whisperPipeline(f: ReturnType<typeof fixture>, opts: { skipS3: boolean }) {
+    // No R.10 gate on this arm: a scene is skipped purely because
+    // filterToCoveredSegments's own coverage says `matched: false` — the
+    // genuine "no text match" shape, never R10_SKIP_REASON.
+    const coverage = opts.skipS3
+      ? f.coverage.map((c, i) => (i === 2 ? { ...c, matched: false, matchedWords: 0, longestRun: 0 } : c))
+      : f.coverage;
+    const { kept, skipped, keptAlignments } = filterToCoveredSegments(f.segments, coverage, new Set());
+    let committed = snapCoveredBoundaries(kept, keptAlignments, f.tokens, f.silences, AUDIO_DURATION);
+    committed = headExtendFirstSegment(committed);
+    const skippedIndices = new Set(skipped.map(r => r.segmentIndex));
+    const insertion = insertSkippedScenePlaceholders(
+      committed, keptAlignments, f.segments, skippedIndices, coverage, f.tokens, AUDIO_DURATION,
+    );
+    return { committed: insertion.segments, skipped, insertion };
+  }
+
+  it('a genuine Whisper-arm "no text match" skip (not R.10) is the fixture used here', () => {
+    const run = whisperPipeline(fixture(), { skipS3: true });
+    expect(run.skipped).toHaveLength(1);
+    expect(run.skipped[0]!.segmentIndex).toBe(2);
+    expect(run.skipped[0]!.reason).not.toBe(R10_SKIP_REASON);
+  });
+
+  it('OLD BUG — the skipped scene now stays in the sequence as an Estimated placeholder, same as the FA arm', () => {
+    const run = whisperPipeline(fixture(), { skipS3: true });
+    expect(run.committed.map(s => s.id)).toEqual(['s1', 's2', 's3', 's4', 's5']);
+    const s3 = byId(run.committed, 's3')!;
+    expect(s3.startTime).toBe(2.9);
+    expect(endOf(s3)).toBe(5.0);
+    expect(s3.anchorSource).toBe('estimate');
+    expect(run.insertion.placeholders).toHaveLength(1);
+    expect(run.insertion.unplaceable).toEqual([]);
+  });
+
+  it('OLD BUG — neighbours\' committed timings are unaffected: S2 ends at its OWN last spoken word, nothing absorbed', () => {
+    const withSkip = whisperPipeline(fixture(), { skipS3: true });
+    const control = whisperPipeline(fixture(), { skipS3: false });
+    // Starts are untouched either way — the placeholder mechanism never
+    // moves a survivor's own onset.
+    expect(byId(withSkip.committed, 's1')!.startTime).toBe(byId(control.committed, 's1')!.startTime);
+    expect(byId(withSkip.committed, 's2')!.startTime).toBe(byId(control.committed, 's2')!.startTime);
+    // S2 ends at its own last spoken word (2.9), not stretched to swallow
+    // S3's reserved gap the way the pre-FIX-4 absorption would have.
+    expect(endOf(byId(withSkip.committed, 's2')!)).toBe(2.9);
+    // S4 starts at its own first spoken word, same as the FA-arm shape.
+    expect(byId(withSkip.committed, 's4')!.startTime).toBe(5.0);
+  });
+
+  it('the placeholder-carrying array is still a Model P gapless partition of the audio', () => {
+    const run = whisperPipeline(fixture(), { skipS3: true });
+    expect(findPartitionViolations(run.committed)).toEqual([]);
+    expect(run.committed[0]!.startTime).toBe(0);
+    expect(endOf(run.committed[run.committed.length - 1]!)).toBe(AUDIO_DURATION);
+    for (const s of run.committed) expect(s.duration).toBeGreaterThan(0);
+  });
+
+  it('the [SKIP] entry reads "Unmatched scene — kept as Estimated placeholder", same copy as the FA arm', () => {
+    const run = whisperPipeline(fixture(), { skipS3: true });
+    const byIndex = new Map(run.insertion.placeholders.map(p => [p.segmentIndex, p]));
+    const [entry] = buildSkipLogEntries('run', run.skipped, 0, undefined, byIndex);
+    expect(entry!.type).toBe('skip');
+    expect(entry!.message).toContain('S3: Unmatched scene — kept as Estimated placeholder');
+    expect(entry!.message).toContain('Kept as an Estimated placeholder');
+    expect(entry!.message).not.toContain('Absorbed');
+    expect(entry!.segmentId).toBe('s3');
+    expect(entry!.absorbedByDisplayIndex).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G2 close-out FIX 4 — source-scan proof that App.tsx's real Whisper-arm
+// branch (not just this file's reimplementation of its stage order) actually
+// calls `insertSkippedScenePlaceholders`. `handleApplySyncFromFiles` is
+// private to a 6,900-line component this repo verifies manually by standing
+// convention (same constraint as `applySyncSpine.test.ts`) — a source scan is
+// the only way to pin the WIRING decision itself: that the call exists in an
+// `else` branch of the FA-only `if (faTokens)` guard, not only inside it.
+// ---------------------------------------------------------------------------
+describe('G2 close-out FIX 4 — App.tsx actually calls insertSkippedScenePlaceholders on the Whisper arm', () => {
+  const APP_TSX = resolve(import.meta.dirname, '..', 'App.tsx');
+  const SRC = readFileSync(APP_TSX, 'utf-8');
+
+  it('the FA-only guard has an else branch, not just the FA-arm call', () => {
+    const faArmMarker = 'if (faTokens) {';
+    const faArmStart = SRC.indexOf(faArmMarker);
+    expect(faArmStart, 'if (faTokens) guard not found — this test has lost its target').toBeGreaterThan(-1);
+    // The else branch must exist and must itself call insertSkippedScenePlaceholders
+    // — two calls total in this stage (one per arm), not one.
+    const occurrences = SRC.split('insertSkippedScenePlaceholders(').length - 1;
+    expect(
+      occurrences,
+      'insertSkippedScenePlaceholders must be called exactly twice in App.tsx: once inside ' +
+        'if (faTokens) for the FA arm, once in its else branch for the Whisper arm. A count of 1 ' +
+        'means FIX 4\'s whisper-arm wiring regressed back to FA-only.',
+    ).toBe(2);
+    expect(SRC).toContain('} else {\n        // G2 close-out FIX 4');
+  });
+
+  it('the Whisper-arm branch uses the SAME inputs (skipped/keptAlignments/coverageAfterR10/transcriptTokens) as the FA arm', () => {
+    const marker = '// G2 close-out FIX 4 — WHISPER-ARM PARITY';
+    const start = SRC.indexOf(marker);
+    expect(start).toBeGreaterThan(-1);
+    const body = SRC.slice(start, start + 1500);
+    expect(body).toContain('finalTimedSegments, keptAlignments, aligned.segments,');
+    expect(body).toContain('new Set(skipped.map(r => r.segmentIndex)), coverageAfterR10, transcriptTokens, audioDuration,');
+    expect(body).toContain('finalTimedSegments = placeholderInsertion.segments;');
+    expect(body).toContain('skippedScenePlaceholders = placeholderInsertion.placeholders;');
   });
 });
