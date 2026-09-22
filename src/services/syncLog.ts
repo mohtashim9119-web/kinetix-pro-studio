@@ -274,6 +274,8 @@ const GROUPED_RULE_SUMMARIES: Record<string, (count: number) => string> = {
   'loud-fallback-boundary': (n) => `${n} cuts landed on audio that's still playing.`,
   'low-word-coverage': (n) =>
     `${n} scenes matched fewer than ${Math.round(WORD_COVERAGE_MIN_RATIO * 100)}% of their words.`,
+  // G4 Unit 3 — per-scene density gate.
+  'scene-density': (n) => `${n} scenes matched words denser than natural speech — check for leftover/duplicated text.`,
 };
 
 function summarizeGroupedRule(rule: string, count: number): string {

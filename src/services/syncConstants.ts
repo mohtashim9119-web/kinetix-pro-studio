@@ -816,3 +816,72 @@ export const SILENCE_MIN_DETECTABLE_SEC = 0.25;
  * below the 50 ms verification tolerance.
  */
 export const FA_FRAME_SEC = 0.02;
+
+// ---------------------------------------------------------------------------
+// G4 Unit 3 — WPM sanity + per-scene density gate (warn-only, two bands).
+//
+// PURPOSE: catch the "planted 100 extra words" class of user error — a
+// script that has drifted from its voiceover (a stale draft pasted back in,
+// a duplicated paragraph, a wrong take) — BEFORE any FA/Whisper compute
+// spends time aligning text that was never spoken. WARN-ONLY: this gate
+// never blocks Apply Sync and never auto-switches sync engine; it only
+// writes a sync-log entry the user can act on or ignore. STATUS.md Wave 2
+// queue item 2 (operator design).
+//
+// TWO INDEPENDENT CHECKS, at two different points in the pipeline:
+//   1. PRE-sync TOTAL WPM (`classifyScriptWpm` below) — script total words
+//      over audio duration, checked BEFORE compute starts (audio duration is
+//      known from the initial probe; script word count from the parsed
+//      segments — no alignment needed). Catches a GLOBAL mismatch cheaply.
+//   2. POST-match PER-SCENE DENSITY (`syncDensityGate.ts`) — after matching,
+//      any single scene whose matched-word count crammed into its own
+//      committed duration is implausibly dense. Catches a LOCALIZED mismatch
+//      the total can hide (e.g. one bloated scene offset by several sparse
+//      ones averaging out to a normal total WPM).
+// ---------------------------------------------------------------------------
+
+/** Normal narration band, lower bound — below this the pre-sync WPM check
+ *  soft-warns ("slower than typical narration"). Ordinary spoken-word
+ *  narration (audiobooks, e-learning, corporate video voiceover — the genre
+ *  this app targets) is widely documented at ~130-160 WPM for a measured,
+ *  clear read and up to ~160-180 for a brisker conversational pace; 140 sits
+ *  just inside that measured floor rather than at its edge, so a normal slow
+ *  narrator is not flagged, but a script that is mostly silence relative to
+ *  its word count is. */
+export const WPM_NORMAL_MIN = 140;
+
+/** Normal narration band, upper bound — above this (and up to
+ *  `WPM_HARD_IMPOSSIBLE_MIN`) the pre-sync WPM check soft-warns ("faster than
+ *  typical narration"). 180 is the conventional upper edge of the same
+ *  narration-pace literature `WPM_NORMAL_MIN` cites — a fast but still
+ *  humanly-normal read sits at or just under it; sustained delivery above it
+ *  is unusual for this app's target content (not implausible on its own,
+ *  which is why this band is a soft warn, not the hard one below). */
+export const WPM_NORMAL_MAX = 180;
+
+/** The hard-impossible band floor — above this, the pre-sync WPM check warns
+ *  with STRONG "check your files" wording rather than the soft one.
+ *  Documented fast-but-real human speech (competitive debate "spreading",
+ *  rapid-fire narration) tops out in the 250-350+ WPM range, and ordinary
+ *  narration rarely sustains above ~200-210 even at its fastest natural
+ *  pace — so 220 sits above every normal narration outcome while still
+ *  leaving headroom below genuinely-possible-but-extreme fast speech,
+ *  favoring "warn strongly, do not claim certainty" over a threshold so high
+ *  it only catches the most extreme drift. This is the exact number the G4
+ *  brief itself proposed as an example; kept as literally proposed rather
+ *  than re-derived, since no shipped corpus measurement motivates a
+ *  different one — SWAPPABLE, propose a different value in review if this
+ *  one proves too tight or too loose in practice. */
+export const WPM_HARD_IMPOSSIBLE_MIN = 220;
+
+/** POST-match per-scene density threshold, words per SECOND (not minute) —
+ *  a scene whose `matchedWords / committedDurationSec` exceeds this is
+ *  flagged. 3.5 words/sec = 210 WPM sustained for that one scene alone,
+ *  already at `WPM_HARD_IMPOSSIBLE_MIN`'s own boundary — chosen so the
+ *  per-scene check catches the SAME order of implausibility the pre-sync
+ *  total check does, just localized to one scene instead of averaged across
+ *  the whole script (the brief's own "~3.5+ words/sec" proposal, kept
+ *  as-proposed for the same reason as `WPM_HARD_IMPOSSIBLE_MIN` above).
+ *  SWAPPABLE — propose a different value in review if it proves too tight
+ *  or too loose in practice. */
+export const SCENE_DENSITY_WORDS_PER_SEC = 3.5;

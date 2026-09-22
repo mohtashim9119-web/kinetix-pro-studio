@@ -171,8 +171,10 @@ import type { SilenceInterval } from './services/silenceDetector';
 import {
   validateBoundaryQuality,
   validateWordCoverage,
+  validateSceneDensity,
   type BoundaryQualityMeasurement,
 } from './services/syncContracts';
+import { buildWpmCheckLogEntry } from './services/syncWpmGate';
 import {
   buildTranscriptInspectorRun,
   compareTranscriptInspectorRuns,
@@ -4083,6 +4085,19 @@ export default function App() {
       return { ok: false, message: sceneDocAbortMsg };
     }
 
+    // G4 Unit 3 — PRE-sync total WPM sanity check (STATUS.md Wave 2 queue
+    // item 2). Deliberately HERE: script word count and audio duration are
+    // both already known, and nothing below this point has spent any
+    // transcription/FA compute yet — the cheapest possible place to catch a
+    // script/audio mismatch before paying for alignment work against text
+    // that was never spoken. Warn-only: `undefined` on a normal WPM, folded
+    // into `pendingLogEntries` alongside the POST-match scene-density check
+    // below, never blocks this function's control flow either way.
+    const wpmCheckTotalWords = newSegmentsRaw.reduce(
+      (n, s) => n + (s.text?.trim() ? s.text.trim().split(/\s+/).length : 0), 0,
+    );
+    const wpmCheckEntry = buildWpmCheckLogEntry(syncRunId, wpmCheckTotalWords, audioDuration, syncRunAt);
+
     // 7. Option C — resolve final timing BEFORE the commit, never after.
     //    If Whisper tokens are already cached for this exact voiceover (the
     //    normal case: Apply Sync is gated until staging-time transcription
@@ -4673,6 +4688,15 @@ export default function App() {
       const wordCoverageViolations = validateWordCoverage(kept, keptAlignments);
       const wordCoverageEntry = buildGroupedViolationEntry(syncRunId, wordCoverageViolations, syncRunAt);
 
+      // G4 Unit 3 — POST-match per-scene density (STATUS.md Wave 2 queue item
+      // 2). Sibling of the word-coverage check right above: same kept/
+      // keptAlignments input, same grouping mechanism. Warn-only, never
+      // blocks, never auto-switches — see syncContracts.ts's
+      // validateSceneDensity and syncConstants.ts's SCENE_DENSITY_WORDS_PER_SEC
+      // for the threshold and its derivation.
+      const sceneDensityViolations = validateSceneDensity(kept, keptAlignments);
+      const sceneDensityEntry = buildGroupedViolationEntry(syncRunId, sceneDensityViolations, syncRunAt);
+
       // WS-logs (R4-4) — the skip records are no longer DEV-console-only: one
       // 'skip' entry per dropped scene. Bug 1 fix: a summary 'info' entry is now
       // emitted on EVERY successful run — alongside the skip entries, not
@@ -4689,6 +4713,7 @@ export default function App() {
       //   'malformed-token' (Feature 4) tokens with unusable timestamps were
       //                     dropped before alignment
       pendingLogEntries = [
+        ...(wpmCheckEntry ? [wpmCheckEntry] : []),
         ...(aligned.silenceError ? [buildSilenceErrorEntry(syncRunId, aligned.silenceError, syncRunAt)] : []),
         ...(aligned.malformedTokenCount > 0
           ? [buildMalformedTokenEntry(syncRunId, aligned.malformedTokenCount, aligned.totalTokenCount, syncRunAt)]
@@ -4696,6 +4721,7 @@ export default function App() {
         ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt) : []),
         ...(rescued.length > 0 ? buildRescueLogEntries(syncRunId, rescued, syncRunAt) : []),
         ...(wordCoverageEntry ? [wordCoverageEntry] : []),
+        ...(sceneDensityEntry ? [sceneDensityEntry] : []),
         buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, syncRunAt),
       ];
       pendingLogSummary = {
@@ -5212,6 +5238,10 @@ export default function App() {
       // a 'warning' rather than an 'info' — the same signal as the console.warn
       // above, but one a teammate can still see tomorrow.
       pendingLogEntries = [
+        // G4 Unit 3 — the WPM check runs before either branch is chosen (it
+        // needs only script word count + audio duration), so this fallback
+        // branch owes it the same inclusion the audio-timed branch gives it.
+        ...(wpmCheckEntry ? [wpmCheckEntry] : []),
         makeSyncLogEntry(
           syncRunId,
           unexpectedFallback ? 'warning' : 'info',
