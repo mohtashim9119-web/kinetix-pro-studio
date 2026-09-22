@@ -15,7 +15,7 @@
     "test:record": "node scripts/ws3-record-test-run.mjs",
     "tauri:dev": "tauri dev",
     "tauri:dev:fa": "tauri dev -f fa-inference",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build -f fa-inference"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
