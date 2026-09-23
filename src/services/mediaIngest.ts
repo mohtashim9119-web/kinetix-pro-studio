@@ -114,7 +114,11 @@ export async function ingestOneMediaFile(
   const url = URL.createObjectURL(blob);
   const duration = type === 'video' ? await getMediaDuration(url, 'video') : undefined;
   counts.imported += 1;
-  return { id, name, url, type, file: new File([blob], name), nativeFps, duration, addedAt: Date.now() };
+  // G6 Step 5 — stamped here for free: this function already computed the
+  // hash above for dedup, so a freshly-imported asset never needs the
+  // lazy backfill (`backfillAssetContentHashes.ts`) at all — only assets
+  // imported BEFORE this field existed do.
+  return { id, name, url, type, file: new File([blob], name), nativeFps, duration, addedAt: Date.now(), contentHash };
 }
 
 export interface LooseFilesIngestResult {

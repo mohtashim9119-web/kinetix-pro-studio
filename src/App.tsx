@@ -259,6 +259,7 @@ import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative
 import { applySilentProvenanceResolution } from './services/assetResolutionLadder';
 import { withAssetLoadTimeout } from './services/assetLoadTimeout';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
+import { backfillAssetContentHashes } from './services/backfillAssetContentHashes';
 import { getProjectAssetRecoveryStatus, relinkAsset, attachNewAssetToSegment, attachNewAssetToSegmentFromPath } from './services/assetRecovery';
 import { findExpectedFileNameForSegmentText } from './services/sceneTagLookup';
 import { DegradedProjectRecoveryScreen, type FolderRelinkView, type RelinkTarget } from './components/recovery/DegradedProjectRecoveryScreen';
@@ -2653,6 +2654,25 @@ export default function App() {
     if (isHydrating || !project.id) return;
     const pending = readFaPause(project.id);
     setFaPauseDialog(pending);
+  }, [project.id, isHydrating]);
+
+  // G6 Step 5 — lazy, non-blocking Asset.contentHash backfill for whichever
+  // project is currently open. Keyed on [project.id, isHydrating] (not
+  // project.assets) so this runs ONCE per actual project switch, not on
+  // every edit — see backfillAssetContentHashes.ts's own doc comment for why
+  // this is scoped to the open project rather than a boot-time sweep across
+  // the whole registry (a background save for an project the user is
+  // actively editing could race the live autosave).
+  useEffect(() => {
+    if (isHydrating || !project.id) return;
+    let cancelled = false;
+    const projectId = project.id;
+    void backfillAssetContentHashes(projectId, project.assets).then(result => {
+      if (cancelled || result === project.assets) return;
+      setProject(prev => (prev.id === projectId ? { ...prev, assets: result } : prev));
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, isHydrating]);
 
   const { saveNow, saveSnapshot, lastSavedAt, saveError } = usePersistProject(project, !isHydrating);

@@ -35,14 +35,39 @@ interface StoredAsset extends Omit<Asset, 'url' | 'file'> {
 }
 
 interface StoredProjectData {
-  version: 2 | 3 | 4 | 5;
+  version: 2 | 3 | 4 | 5 | 6;
   savedAt: number;
   project: Omit<Project, 'assets'> & { assets: StoredAsset[] };
 }
 
 /** Current on-disk envelope. v5 is the first version the loader branches on
- *  (plan-v3 item 8 — timing provenance). Prior markers were inert. */
-export const PROJECT_STORE_VERSION = 5 as const;
+ *  (plan-v3 item 8 — timing provenance). Prior markers were inert.
+ *
+ *  G6 Step 5 — bumped from 5 to 6: `Asset.contentHash` (optional, additive —
+ *  `assetId` stays the binding field everywhere). No loader migration is
+ *  needed for this bump: the field is absent-safe (undefined on anything
+ *  saved before it existed) and already round-trips through
+ *  `{ ...storedProject }`/`stripAsset`'s `Omit<Asset, ...>` spread with zero
+ *  special-casing. A v5-or-earlier project loads unchanged and simply saves
+ *  as v6 on its next write; `services/backfillAssetContentHashes.ts`
+ *  fills in the field itself, lazily, for whichever project is currently
+ *  open — see that module's own doc comment for why it is scoped that way
+ *  rather than a loader-time migration. */
+export const PROJECT_STORE_VERSION = 6 as const;
+
+/** plan-v3 item 8's OWN threshold for the v4→v5 timing-provenance migration
+ *  below — kept as its own literal, NOT `PROJECT_STORE_VERSION`. That
+ *  migration's whole contract is "a stored envelope older than 5 gets
+ *  labelled engine-unknown; v5 and newer are left exactly as written" — a
+ *  fixed fact about what changed at v5, unrelated to whatever the CURRENT
+ *  envelope version happens to be. Comparing against `PROJECT_STORE_VERSION`
+ *  directly would have silently re-widened this migration to also catch
+ *  every v5 project the moment this file's version bumped to 6 for Step 5's
+ *  unrelated `Asset.contentHash` addition — re-running it on an already-v5
+ *  project with real tokens but no timingProvenance stamp would have
+ *  overwritten the "absent means never synced" state this migration is
+ *  explicitly documented to leave alone. */
+const TIMING_PROVENANCE_MIGRATION_THRESHOLD = 5;
 
 function stripAsset(asset: Asset): StoredAsset {
   const { url: _url, file: _file, ...rest } = asset;
@@ -551,7 +576,7 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
   // (or newer) envelope is left as written, including an absent stamp on a
   // project that has never stored timings.
   const storedVersion = typeof stored.version === 'number' ? stored.version : 0;
-  if (storedVersion < PROJECT_STORE_VERSION) {
+  if (storedVersion < TIMING_PROVENANCE_MIGRATION_THRESHOLD) {
     const migrated = migrateLegacyTimingProvenance(project);
     project.timingProvenance = migrated.timingProvenance;
   }

@@ -58,6 +58,14 @@ describe('ingestOneMediaFile — the shared write-through (zip + loose-file/fold
     expect(mockMediaVaultImportBytes).toHaveBeenCalledTimes(1);
   });
 
+  it('G6 Step 5 — stamps contentHash on the returned Asset, so a freshly-imported asset never needs the lazy backfill', async () => {
+    const asset = await ingestOneMediaFile(
+      PROJECT_ID, 'photo.jpg', new Blob([new Uint8Array([1, 2, 3])]), 'image', new Set(), emptyCounts(),
+    );
+    expect(asset!.contentHash).toBeDefined();
+    expect(asset!.contentHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   it('dedupes against a caller-supplied seenHashes set, across calls', async () => {
     const counts = emptyCounts();
     const seenHashes = new Set<string>();

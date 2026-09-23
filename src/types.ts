@@ -162,6 +162,22 @@ export interface Asset {
    * stays blocked while any asset in the project carries this flag.
    */
   unresolved?: boolean;
+  /**
+   * G6 Step 5 — sha256 of this asset's bytes, hex-encoded (same algorithm
+   * and encoding `services/mediaIngest.ts`'s `sha256Hex` and the media
+   * vault's own Rust hasher use). Enrichment only — `assetId` stays the
+   * binding field every segment/UI reference resolves through; nothing
+   * treats `contentHash` as required or authoritative for identity.
+   * Populated at import time by `mediaIngest.ts`/`zipIngest.ts`'s
+   * write-through (Steps 3/4), and lazily backfilled for assets saved
+   * before this field existed by
+   * `services/backfillAssetContentHashes.ts` (non-blocking — see that
+   * module's own doc comment for why it is scoped to the currently-open
+   * project rather than a boot-time sweep). Absent on an asset whose bytes
+   * have never been hashed (backfill not yet run, or its bytes could not be
+   * read) — never guessed, never backfilled with a stale value.
+   */
+  contentHash?: string;
 }
 
 /**
