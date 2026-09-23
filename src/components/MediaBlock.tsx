@@ -104,6 +104,27 @@ function compareBySortOrder(order: SortOrder, a: Asset, b: Asset): number {
   }
 }
 
+// G6 polish item 6 — toolbar compaction. Row 2's type/usage filters become
+// compact chip buttons (icon + tooltip for type, short label for usage)
+// instead of two more <select>s, so row 1 (search + sort) and row 2 (type
+// chips + usage chips) both fit the left panel's width with no horizontal
+// scroll, even at a narrow panel width — a <select>'s own rendered width
+// can't compress the way a small icon button can.
+const TYPE_FILTER_OPTIONS: { value: TypeFilter; label: string; Icon: typeof Film | null }[] = [
+  { value: 'all', label: 'All', Icon: null },
+  { value: 'video', label: 'Video', Icon: Film },
+  { value: 'image', label: 'Image', Icon: ImageIcon },
+  { value: 'audio', label: 'Audio', Icon: Music },
+];
+const USAGE_FILTER_OPTIONS: { value: UsageFilter; label: string }[] = [
+  { value: 'all', label: 'All' },
+  { value: 'used', label: 'Used' },
+  { value: 'unused', label: 'Unused' },
+];
+const CHIP_BASE = 'px-1.5 py-1 rounded text-[10px] leading-none flex items-center gap-1 shrink-0';
+const CHIP_ACTIVE = 'bg-[#F27D26] text-white';
+const CHIP_INACTIVE = 'bg-[var(--kx-surface-2)] text-[var(--kx-faint)] hover:text-white';
+
 const TYPE_ICON: Record<Asset['type'], typeof Film> = {
   image: ImageIcon,
   video: Film,
@@ -396,14 +417,15 @@ export function MediaBlock({
         onChange={(e) => { handleZipChosen(e.target.files?.[0]); e.target.value = ''; }}
       />
 
-      <div className="flex items-center gap-1.5 px-1 mb-2">
-        <div className="flex-1 flex items-center gap-1.5 bg-[var(--kx-surface-2)] rounded-lg px-2 py-1">
+      {/* Row 1 — search (flex) + sort. */}
+      <div className="flex items-center gap-1.5 px-1 mb-1.5">
+        <div className="flex-1 min-w-0 flex items-center gap-1.5 bg-[var(--kx-surface-2)] rounded-lg px-2 py-1">
           <Search size={12} className="text-[var(--kx-faint)] shrink-0" />
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search media…"
-            className="bg-transparent text-[11px] flex-1 outline-none placeholder:text-[var(--kx-faint)]"
+            className="bg-transparent text-[11px] flex-1 min-w-0 outline-none placeholder:text-[var(--kx-faint)]"
           />
         </div>
         <select
@@ -411,32 +433,48 @@ export function MediaBlock({
           value={sortOrder}
           onChange={(e) => handleSortOrderChange(e.target.value as SortOrder)}
           title="Sort"
-          className="text-[11px] bg-[var(--kx-surface-2)] rounded-lg px-1.5 py-1 outline-none"
+          className="shrink-0 text-[11px] bg-[var(--kx-surface-2)] rounded-lg px-1.5 py-1 outline-none"
         >
           {SORT_OPTIONS.map(({ value, label }) => (
             <option key={value} value={value}>{label}</option>
           ))}
         </select>
-        <select
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}
-          className="text-[11px] bg-[var(--kx-surface-2)] rounded-lg px-1.5 py-1 outline-none"
-        >
-          <option value="all">All types</option>
-          <option value="image">Images</option>
-          <option value="video">Videos</option>
-          <option value="audio">Audio</option>
-        </select>
-        <select
-          value={usageFilter}
-          onChange={(e) => setUsageFilter(e.target.value as UsageFilter)}
-          className="text-[11px] bg-[var(--kx-surface-2)] rounded-lg px-1.5 py-1 outline-none"
-          title={`${unusedCount} unused`}
-        >
-          <option value="all">Used + unused</option>
-          <option value="used">Used only</option>
-          <option value="unused">{`Unused only (${unusedCount})`}</option>
-        </select>
+      </div>
+
+      {/* Row 2 — type chips + usage chips, as compact toggle-button groups
+          (never <select>s — a select's own min rendered width doesn't
+          compress the way an icon/short-label chip does). */}
+      <div className="flex items-center justify-between gap-1.5 px-1 mb-2">
+        <div role="radiogroup" aria-label="Filter by type" className="flex items-center gap-1">
+          {TYPE_FILTER_OPTIONS.map(({ value, label, Icon }) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={typeFilter === value}
+              title={`${label} only`}
+              onClick={() => setTypeFilter(value)}
+              className={`${CHIP_BASE} ${typeFilter === value ? CHIP_ACTIVE : CHIP_INACTIVE}`}
+            >
+              {Icon ? <Icon size={11} /> : label}
+            </button>
+          ))}
+        </div>
+        <div role="radiogroup" aria-label="Filter by usage" className="flex items-center gap-1">
+          {USAGE_FILTER_OPTIONS.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={usageFilter === value}
+              title={value === 'unused' ? `${label} only (${unusedCount})` : `${label} only`}
+              onClick={() => setUsageFilter(value)}
+              className={`${CHIP_BASE} ${usageFilter === value ? CHIP_ACTIVE : CHIP_INACTIVE}`}
+            >
+              {value === 'unused' ? `${label} (${unusedCount})` : label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {rows.length === 0 ? (

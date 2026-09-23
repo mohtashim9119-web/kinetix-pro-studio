@@ -217,6 +217,59 @@ describe('MediaBlock', () => {
     expect(container.querySelectorAll('[data-testid="media-block-tile"]').length).toBe(1);
   });
 
+  // G6 polish item 6 — type/usage filters are chip buttons, not <select>s.
+  describe('type/usage chip filters', () => {
+    it('the type chips filter the grid, and clicking one marks it aria-checked', async () => {
+      const assets = [
+        makeAsset({ id: 'v1', type: 'video', name: 'clip.mp4' }),
+        makeAsset({ id: 'i1', type: 'image', name: 'photo.jpg' }),
+      ];
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={assets} segments={[]} voiceoverId={undefined}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      expect(container.querySelectorAll('[data-testid="media-block-tile"]').length).toBe(2);
+
+      const typeGroup = container.querySelector('[role="radiogroup"][aria-label="Filter by type"]') as HTMLElement;
+      const videoChip = Array.from(typeGroup.querySelectorAll('[role="radio"]'))
+        .find(el => el.getAttribute('title') === 'Video only') as HTMLButtonElement;
+      await act(async () => { videoChip.click(); });
+
+      expect(container.querySelectorAll('[data-testid="media-block-tile"]').length).toBe(1);
+      expect(videoChip.getAttribute('aria-checked')).toBe('true');
+    });
+
+    it('the usage chips filter the grid and the Unused chip carries the live count', async () => {
+      const assets = [makeAsset({ id: 'used-1' }), makeAsset({ id: 'unused-1' })];
+      const segments = [makeSegment({ id: 's1', assetId: 'used-1' })];
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={assets} segments={segments} voiceoverId={undefined}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const usageGroup = container.querySelector('[role="radiogroup"][aria-label="Filter by usage"]') as HTMLElement;
+      const unusedChip = Array.from(usageGroup.querySelectorAll('[role="radio"]'))
+        .find(el => el.textContent?.startsWith('Unused')) as HTMLButtonElement;
+      expect(unusedChip.textContent).toBe('Unused (1)');
+
+      await act(async () => { unusedChip.click(); });
+      const tileNames = Array.from(container.querySelectorAll('[data-testid="media-block-tile"] p[title]'))
+        .map(p => p.getAttribute('title'));
+      expect(tileNames).toEqual(['unused-1.jpg']);
+    });
+  });
+
   // G6 polish item 2 — sort control.
   describe('sort control', () => {
     function tileOrder(): (string | null)[] {
