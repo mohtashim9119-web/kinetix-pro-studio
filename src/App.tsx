@@ -226,6 +226,7 @@ import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadi
 import { stripRtfIfNeeded } from './services/textUtils';
 import { assignSegmentIds, type SegmentIdSource } from './services/segmentId';
 import { mergeExtractedZipAssets } from './services/zipAssetMerge';
+import { ingestZip, ZipTooLargeError } from './services/zipIngest';
 import {
   putAsset,
   getAsset,
@@ -490,48 +491,12 @@ async function persistPendingVoiceoverAsset(projectId: string, pending: Asset): 
   return pending;
 }
 
-/**
- * Extracts all media files from a zip archive, persists them to IndexedDB,
- * and returns the resulting Asset array. Does NOT call setProject.
- */
-async function extractZipToAssets(projectId: string, zipFile: File): Promise<Asset[]> {
-  const newAssets: Asset[] = [];
-  try {
-    let JSZipModule: typeof import('jszip');
-    try {
-      ({ default: JSZipModule } = await import('jszip'));
-    } catch (loadErr) {
-      console.error('[extractZipToAssets] Failed to load jszip:', loadErr);
-      return [];
-    }
-    const zip = new JSZipModule();
-    const content = await zip.loadAsync(zipFile);
-    const filePromises = Object.keys(content.files).map(async (filename) => {
-      const fileData = content.files[filename];
-      if (!fileData || fileData.dir) return;
-      const blob = await fileData.async('blob');
-      let type: Asset['type'] = 'image';
-      if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
-      else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
-      const id = crypto.randomUUID();
-      const name = filename.split('/').pop() || filename;
-      try {
-        await putAsset(projectId, id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
-      } catch (err) {
-        console.error('[extractZipToAssets] Skipping file:', name, err);
-        return;
-      }
-      const nativeFps = type === 'video' ? await resolveVideoNativeFps(blob) : undefined;
-      const url = URL.createObjectURL(blob);
-      const duration = type === 'video' ? await getMediaDuration(url, 'video') : undefined;
-      newAssets.push({ id, name, url, type, file: new File([blob], filename), nativeFps, duration, addedAt: Date.now() });
-    });
-    await Promise.all(filePromises);
-  } catch (err) {
-    console.error('[extractZipToAssets] Error:', err);
-  }
-  return newAssets;
-}
+// G6 Step 3 — zip ingest lives in services/zipIngest.ts now (`ingestZip`,
+// `ZipTooLargeError`), extracted rather than left here so it can be unit
+// tested directly, same reason `zipAssetMerge.ts` was split out. See that
+// module's own doc comment for the three old bugs it replaces
+// (`extractZipToAssets` and `processZipFile` used to live at this spot and
+// in the manual-upload handler below, respectively).
 
 const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
 const EXPORT_SUCCESS_TOAST_DURATION_MS = 15000; // ms — auto-dismiss for the export-complete toast
@@ -4004,9 +3969,9 @@ export default function App() {
       if (asset) allAssets.push(asset);
     }
     for (const sf of staged.zipFiles) {
-      const extracted = await extractZipToAssets(projectRef.current.id, sf.file);
+      const ingested = await ingestZip(projectRef.current.id, sf.file);
       const { kept, audioAssetId } = await mergeExtractedZipAssets(
-        projectRef.current.id, allAssets, extracted,
+        projectRef.current.id, allAssets, ingested.assets,
       );
       allAssets.push(...kept);
       if (audioAssetId !== undefined) newVoiceoverId = audioAssetId;
@@ -6366,69 +6331,43 @@ export default function App() {
     });
   }, []);
 
-  /** Core zip-extraction logic for handleZipUpload. */
+  /** Core zip-extraction logic for handleZipUpload — G6 Step 3: thin wrapper
+   *  around the one consolidated `ingestZip` (see its own doc comment for
+   *  what used to live here and why). */
   const processZipFile = useCallback(async (file: File): Promise<void> => {
     setIsProcessing(true);
     try {
-      let JSZip: typeof import('jszip');
-      try {
-        ({ default: JSZip } = await import('jszip'));
-      } catch (loadErr) {
-        console.error('Failed to load jszip:', loadErr);
-        return;
-      }
-      const zip = new JSZip();
-      const content = await zip.loadAsync(file);
-      const newAssets: Asset[] = [];
-
-      const filePromises = Object.keys(content.files).map(async (filename) => {
-        const fileData = content.files[filename];
-        if (!fileData || fileData.dir) return;
-        const name = filename.split('/').pop() || filename;
-        // Skip files whose name already exists in the current asset list
-        if (assetsRef.current.some(a => a.name === name)) return;
-        const blob = await fileData.async('blob');
-        let type: Asset['type'] = 'image';
-        if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
-        else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
-
-        const id = crypto.randomUUID();
-        try {
-          await putAsset(projectIdRef.current, id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
-        } catch (err) {
-          console.error('Failed to persist ZIP asset to IndexedDB, skipping:', name, err);
-          return;
-        }
-        const zipUrl = URL.createObjectURL(blob);
-        newAssets.push({
-          id,
-          name,
-          url: zipUrl,
-          type,
-          file: new File([blob], filename),
-          duration: type === 'video' ? await getMediaDuration(zipUrl, 'video') : undefined,
-          addedAt: Date.now(),
-        });
-      });
-
-      await Promise.all(filePromises);
+      const ingested = await ingestZip(projectIdRef.current, file);
       setProject(prev => {
-        // Final dedup against the latest project state (catches concurrent adds)
-        const dedupedNew = newAssets.filter(na => !prev.assets.some(a => a.name === na.name));
-        const allAssets = [...prev.assets, ...dedupedNew];
+        const allAssets = [...prev.assets, ...ingested.assets];
         return {
           ...prev,
           assets: allAssets,
           segments: autoMatchSegments(allAssets, prev.segments),
-          voiceoverId: resolveZipImportVoiceoverId(newAssets, allAssets, prev.voiceoverId),
+          voiceoverId: resolveZipImportVoiceoverId(ingested.assets, allAssets, prev.voiceoverId),
         };
       });
+      // One grouped finding per ingest — Step 4 replaces this with a proper
+      // Sync Log entry (new SyncLogEntryType); a toast is the interim,
+      // still-visible summary until then.
+      const { imported, deduped, unsupportedSkipped, failed } = ingested.counts;
+      if (imported + deduped + unsupportedSkipped + failed > 0) {
+        const parts = [`${imported} imported`];
+        if (deduped > 0) parts.push(`${deduped} deduped`);
+        if (unsupportedSkipped > 0) parts.push(`${unsupportedSkipped} unsupported`);
+        if (failed > 0) parts.push(`${failed} failed`);
+        showToast(`Zip import: ${parts.join(', ')}.`);
+      }
     } catch (err) {
-      console.error("ZIP Error:", err);
+      if (err instanceof ZipTooLargeError) {
+        showToast(err.message);
+      } else {
+        console.error("ZIP Error:", err);
+      }
     } finally {
       setIsProcessing(false);
     }
-  }, []);
+  }, [showToast]);
 
   const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

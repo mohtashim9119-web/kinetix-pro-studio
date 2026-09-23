@@ -33,25 +33,26 @@
 //! was written yet at all) — this module's writes are synchronous and
 //! durable at import time, so that window does not exist for vault blobs.
 //!
-//! `#![allow(dead_code)]`: this step (G6 Step 2) lands the vault as pure
-//! foundation, ahead of its first real caller — Step 3 (the very next step)
-//! wires the frontend's zip/loose-file ingest paths to actually call
-//! `media_vault_import_bytes` through a new `#[tauri::command]`. Every item
-//! here IS exercised, today, by this module's own `#[cfg(test)]` suite; only
-//! a non-test build sees it as unreferenced in the meantime. REMOVE this
-//! attribute in Step 3 once a real caller lands — its continued presence
-//! after that point would hide genuinely dead code.
-#![allow(dead_code)]
+//! G6 Step 3 wires this up: `media_vault_import` is the `#[tauri::command]`
+//! the frontend's consolidated zip-ingest path (`App.tsx`'s `ingestZip`)
+//! calls per file. The display name arrives base64-encoded in its own
+//! header (`decode_display_name_header`), never raw — an HTTP-style header
+//! value cannot safely carry arbitrary UTF-8 (non-ISO-8859-1 bytes are
+//! rejected or mangled depending on the platform), and this command's whole
+//! reason for existing is to fix exactly this class of "unicode naivety"
+//! bug in the old zip-ingest code, not reintroduce a new instance of it one
+//! layer down.
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
 use crate::atomic_stage::write_bytes_atomic;
 use crate::sha256::{hex_digest, Sha256};
-use crate::storage_root::media_vault_dir;
+use crate::storage_root::{media_vault_dir, resolve_storage_root};
 
 fn now_millis() -> u128 {
     std::time::SystemTime::now()
@@ -197,6 +198,11 @@ pub fn media_vault_import_bytes(
 /// "registered but the blob went missing"; that check is a separate concern
 /// (the same missing/offline pattern the existing relink machinery already
 /// has, per Step 4's plan), not this function's job.
+///
+/// `#[allow(dead_code)]`: no `#[tauri::command]` calls this yet — Step 4
+/// wires the Media block UI to it. Exercised today by this module's own
+/// tests; remove the attribute once Step 4 lands a real caller.
+#[allow(dead_code)]
 pub fn media_vault_list(root: &Path) -> Result<Vec<MediaVaultEntry>, String> {
     Ok(load_registry(root)?.entries.into_values().collect())
 }
@@ -207,6 +213,11 @@ pub fn media_vault_list(root: &Path) -> Result<Vec<MediaVaultEntry>, String> {
 /// registered on `safe_delete.rs`'s pinned tripwire list per that step's own
 /// plan — can check this FIRST and never reach the filesystem for a blob any
 /// project still references.
+///
+/// `#[allow(dead_code)]`: no caller yet — Step 6 builds the Reclaim flow
+/// that calls this. Exercised today by this module's own tests; remove the
+/// attribute once Step 6 lands a real caller.
+#[allow(dead_code)]
 pub fn refuse_delete_if_referenced(entry: &MediaVaultEntry) -> Result<(), String> {
     if entry.referenced_by_project_ids.is_empty() {
         Ok(())
@@ -217,6 +228,52 @@ pub fn refuse_delete_if_referenced(entry: &MediaVaultEntry) -> Result<(), String
             entry.referenced_by_project_ids.len()
         ))
     }
+}
+
+/// Decodes the `display-name-b64` header (see module doc comment for why
+/// base64, not a raw header value). Factored out as a pure function so it is
+/// unit-testable without constructing a real `tauri::ipc::Request`, the same
+/// reason `asset_store.rs`'s write path splits its actual logic from its
+/// `#[tauri::command]` shell.
+fn decode_display_name_header(encoded: &str) -> Result<String, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .map_err(|e| format!("media_vault_import: invalid display-name-b64: {e}"))?;
+    String::from_utf8(bytes)
+        .map_err(|e| format!("media_vault_import: display-name-b64 was not valid UTF-8: {e}"))
+}
+
+/// G6 Step 3 — the write-through import's IPC surface. Bytes arrive as the
+/// raw request body (never base64 — that do-not applies to the MEDIA bytes,
+/// which can be gigabytes; it never applied to the few-byte display-name
+/// header, which is base64'd for the opposite reason: header values have no
+/// safe way to carry arbitrary UTF-8 at all). See `media_vault_import_bytes`
+/// for the actual two-phase write-through logic this only wires up.
+#[tauri::command]
+pub fn media_vault_import(
+    request: tauri::ipc::Request<'_>,
+    app: tauri::AppHandle,
+) -> Result<MediaVaultEntry, String> {
+    let bytes = match request.body() {
+        tauri::ipc::InvokeBody::Raw(data) => data,
+        tauri::ipc::InvokeBody::Json(_) => {
+            return Err("media_vault_import: expected a raw byte body, got JSON".to_string())
+        }
+    };
+    let headers = request.headers();
+    let header = |name: &str| -> Result<String, String> {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .ok_or_else(|| format!("media_vault_import: missing or invalid '{name}' header"))
+    };
+    let project_id = header("project-id")?;
+    let display_name = decode_display_name_header(&header("display-name-b64")?)?;
+    let mime_type = header("mime-type")?;
+
+    let root = resolve_storage_root(&app)?;
+    media_vault_import_bytes(&root, &project_id, bytes, &display_name, &mime_type)
 }
 
 #[cfg(test)]
@@ -351,5 +408,23 @@ mod tests {
         fs::create_dir_all(media_vault_dir(&root)).unwrap();
         fs::write(registry_path(&root), b"{ not json").unwrap();
         assert!(media_vault_list(&root).is_err());
+    }
+
+    #[test]
+    fn decode_display_name_header_round_trips_non_ascii_names() {
+        // G6 Step 3's own reason for existing: a raw header value cannot
+        // safely carry this. base64 of the UTF-8 bytes can.
+        let name = "café_🎬_日本語.mp4";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(name.as_bytes());
+        assert_eq!(decode_display_name_header(&encoded).unwrap(), name);
+    }
+
+    #[test]
+    fn decode_display_name_header_rejects_invalid_base64_and_invalid_utf8() {
+        assert!(decode_display_name_header("not valid base64!!!").is_err());
+        // Valid base64 that decodes to bytes which are NOT valid UTF-8
+        // (0xFF, 0xFE is an invalid UTF-8 sequence).
+        let invalid_utf8 = base64::engine::general_purpose::STANDARD.encode([0xFFu8, 0xFE]);
+        assert!(decode_display_name_header(&invalid_utf8).is_err());
     }
 }

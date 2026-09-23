@@ -668,6 +668,7 @@ pub fn run() {
             asset_store::asset_store_attempt_resolution,
             asset_store::asset_store_delete,
             asset_store::asset_store_delete_project,
+            media_vault::media_vault_import,
             relink::relink_pick_folder,
             relink::relink_list_folder,
             fetch_url_bytes,
