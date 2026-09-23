@@ -41,6 +41,7 @@ beforeEach(() => {
   mockIngestZip.mockReset();
   mockGenerateThumbnail.mockReset().mockResolvedValue(false);
   mockReadThumbnail.mockReset().mockResolvedValue(null);
+  sessionStorage.clear();
 });
 
 afterEach(() => {
@@ -83,6 +84,15 @@ function setInputValue(input: HTMLInputElement, value: string): void {
  *  `.length`, `[0]`). */
 function setInputFiles(input: HTMLInputElement, files: File[]): void {
   Object.defineProperty(input, 'files', { value: files, configurable: true });
+}
+
+/** Same React value-tracker workaround as `setInputValue`, but for
+ *  `<select>` — its native value setter lives on `HTMLSelectElement`, a
+ *  different prototype than `HTMLInputElement`'s. */
+function setSelectValue(select: HTMLSelectElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value')!.set!;
+  setter.call(select, value);
+  select.dispatchEvent(new Event('change', { bubbles: true }));
 }
 
 describe('MediaBlock', () => {
@@ -205,6 +215,93 @@ describe('MediaBlock', () => {
     const input = container.querySelector('input[placeholder="Search media…"]') as HTMLInputElement;
     await act(async () => { setInputValue(input, 'sunset'); });
     expect(container.querySelectorAll('[data-testid="media-block-tile"]').length).toBe(1);
+  });
+
+  // G6 polish item 2 — sort control.
+  describe('sort control', () => {
+    function tileOrder(): (string | null)[] {
+      return Array.from(container.querySelectorAll('[data-testid="media-block-tile"] p[title]'))
+        .map(p => p.getAttribute('title'));
+    }
+
+    const sortAssets = [
+      makeAsset({ id: 'b', name: 'banana.jpg', addedAt: 200 }),
+      makeAsset({ id: 'a', name: 'apple.jpg', addedAt: 300 }),
+      makeAsset({ id: 'c', name: 'cherry.jpg', addedAt: 100 }),
+    ];
+
+    it('defaults to Newest first', async () => {
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={sortAssets} segments={[]} voiceoverId={undefined}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const select = container.querySelector('[data-testid="media-block-sort"]') as HTMLSelectElement;
+      expect(select.value).toBe('newest');
+      expect(tileOrder()).toEqual(['apple.jpg', 'banana.jpg', 'cherry.jpg']);
+    });
+
+    it('all four sort orders reorder the grid correctly', async () => {
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={sortAssets} segments={[]} voiceoverId={undefined}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const select = container.querySelector('[data-testid="media-block-sort"]') as HTMLSelectElement;
+
+      await act(async () => { setSelectValue(select, 'oldest'); });
+      expect(tileOrder()).toEqual(['cherry.jpg', 'banana.jpg', 'apple.jpg']);
+
+      await act(async () => { setSelectValue(select, 'name-asc'); });
+      expect(tileOrder()).toEqual(['apple.jpg', 'banana.jpg', 'cherry.jpg']);
+
+      await act(async () => { setSelectValue(select, 'name-desc'); });
+      expect(tileOrder()).toEqual(['cherry.jpg', 'banana.jpg', 'apple.jpg']);
+
+      await act(async () => { setSelectValue(select, 'newest'); });
+      expect(tileOrder()).toEqual(['apple.jpg', 'banana.jpg', 'cherry.jpg']);
+    });
+
+    it('persists the choice for the session (sessionStorage) and a remount reads it back', async () => {
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={sortAssets} segments={[]} voiceoverId={undefined}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const select = container.querySelector('[data-testid="media-block-sort"]') as HTMLSelectElement;
+      await act(async () => { setSelectValue(select, 'name-asc'); });
+      expect(sessionStorage.getItem('kx-media-block-sort')).toBe('name-asc');
+
+      act(() => root.unmount());
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={sortAssets} segments={[]} voiceoverId={undefined}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const select2 = container.querySelector('[data-testid="media-block-sort"]') as HTMLSelectElement;
+      expect(select2.value).toBe('name-asc');
+      expect(tileOrder()).toEqual(['apple.jpg', 'banana.jpg', 'cherry.jpg']);
+    });
   });
 
   it('adding loose files calls ingestLooseFiles and reports the result via onIngestComplete', async () => {

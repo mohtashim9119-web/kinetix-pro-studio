@@ -69,6 +69,40 @@ interface MediaBlockProps {
 
 type TypeFilter = 'all' | 'image' | 'video' | 'audio';
 type UsageFilter = 'all' | 'used' | 'unused';
+type SortOrder = 'newest' | 'oldest' | 'name-asc' | 'name-desc';
+
+// G6 polish item 2 — sort control, session-persisted (sessionStorage, not
+// the project file — a UI display preference, not project state). Default
+// Newest first, per operator decision.
+const SORT_STORAGE_KEY = 'kx-media-block-sort';
+const SORT_OPTIONS: { value: SortOrder; label: string }[] = [
+  { value: 'newest', label: 'Newest first' },
+  { value: 'oldest', label: 'Oldest first' },
+  { value: 'name-asc', label: 'Name A-Z' },
+  { value: 'name-desc', label: 'Name Z-A' },
+];
+
+function isSortOrder(v: string | null): v is SortOrder {
+  return v === 'newest' || v === 'oldest' || v === 'name-asc' || v === 'name-desc';
+}
+
+function readStoredSortOrder(): SortOrder {
+  try {
+    const v = sessionStorage.getItem(SORT_STORAGE_KEY);
+    return isSortOrder(v) ? v : 'newest';
+  } catch {
+    return 'newest'; // sessionStorage unavailable (private mode, etc.)
+  }
+}
+
+function compareBySortOrder(order: SortOrder, a: Asset, b: Asset): number {
+  switch (order) {
+    case 'name-asc': return a.name.localeCompare(b.name);
+    case 'name-desc': return b.name.localeCompare(a.name);
+    case 'oldest': return (a.addedAt ?? 0) - (b.addedAt ?? 0);
+    case 'newest': return (b.addedAt ?? 0) - (a.addedAt ?? 0);
+  }
+}
 
 const TYPE_ICON: Record<Asset['type'], typeof Film> = {
   image: ImageIcon,
@@ -143,6 +177,7 @@ export function MediaBlock({
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
   const [usageFilter, setUsageFilter] = useState<UsageFilter>('all');
+  const [sortOrder, setSortOrderState] = useState<SortOrder>(readStoredSortOrder);
   const [busy, setBusy] = useState(false);
   const [videoThumbUrls, setVideoThumbUrls] = useState<Record<string, string>>({});
   const thumbRequestedRef = useRef<Set<string>>(new Set());
@@ -158,14 +193,27 @@ export function MediaBlock({
     [assets, voiceoverId],
   );
 
+  // G6 polish item 2 — persists across remounts within the session
+  // (sessionStorage), never across app restarts — a display preference,
+  // not project state.
+  const handleSortOrderChange = useCallback((next: SortOrder) => {
+    setSortOrderState(next);
+    try {
+      sessionStorage.setItem(SORT_STORAGE_KEY, next);
+    } catch {
+      // sessionStorage unavailable — the choice just doesn't outlive this render
+    }
+  }, []);
+
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return mediaAssets
       .map(asset => ({ asset, uses: usageCount(segments, asset.id, voiceoverId) }))
       .filter(({ asset }) => typeFilter === 'all' || asset.type === typeFilter)
       .filter(({ uses }) => usageFilter === 'all' || (usageFilter === 'used' ? uses > 0 : uses === 0))
-      .filter(({ asset }) => q === '' || asset.name.toLowerCase().includes(q));
-  }, [mediaAssets, segments, search, typeFilter, usageFilter, voiceoverId]);
+      .filter(({ asset }) => q === '' || asset.name.toLowerCase().includes(q))
+      .sort((a, b) => compareBySortOrder(sortOrder, a.asset, b.asset));
+  }, [mediaAssets, segments, search, typeFilter, usageFilter, voiceoverId, sortOrder]);
 
   // G6 polish item 3 — the ids behind "Delete unused (N)"'s live count AND
   // its bulk-delete action, computed once so the button's count and its
@@ -358,6 +406,17 @@ export function MediaBlock({
             className="bg-transparent text-[11px] flex-1 outline-none placeholder:text-[var(--kx-faint)]"
           />
         </div>
+        <select
+          data-testid="media-block-sort"
+          value={sortOrder}
+          onChange={(e) => handleSortOrderChange(e.target.value as SortOrder)}
+          title="Sort"
+          className="text-[11px] bg-[var(--kx-surface-2)] rounded-lg px-1.5 py-1 outline-none"
+        >
+          {SORT_OPTIONS.map(({ value, label }) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
         <select
           value={typeFilter}
           onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}
