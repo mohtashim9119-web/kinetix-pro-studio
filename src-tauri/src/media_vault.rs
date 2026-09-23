@@ -202,17 +202,10 @@ pub fn media_vault_list(root: &Path) -> Result<Vec<MediaVaultEntry>, String> {
     Ok(load_registry(root)?.entries.into_values().collect())
 }
 
-/// G6 Step 2's delete-refusal invariant, factored out as a pure function
-/// (no filesystem access) so Step 6's Reclaim flow — which will add the
-/// actual blob removal via a NEW hash-addressed single-file delete helper,
-/// registered on `safe_delete.rs`'s pinned tripwire list per that step's own
-/// plan — can check this FIRST and never reach the filesystem for a blob any
-/// project still references.
-///
-/// `#[allow(dead_code)]`: no caller yet — Step 6 builds the Reclaim flow
-/// that calls this. Exercised today by this module's own tests; remove the
-/// attribute once Step 6 lands a real caller.
-#[allow(dead_code)]
+/// G6 Step 2's delete-refusal invariant, factored out as a pure function (no
+/// filesystem access) so `reclaim_unreferenced_blobs` (Step 6) can check
+/// this FIRST and never reach the filesystem for a blob any project still
+/// references.
 pub fn refuse_delete_if_referenced(entry: &MediaVaultEntry) -> Result<(), String> {
     if entry.referenced_by_project_ids.is_empty() {
         Ok(())
@@ -426,6 +419,66 @@ pub fn media_vault_read_thumbnail(app: tauri::AppHandle, content_hash: String) -
     read_thumbnail(&resolve_storage_root(&app)?, &content_hash)
 }
 
+/// G6 Step 6 — read-only counterpart to `reclaim_unreferenced_blobs`, for
+/// `size_report`'s "reclaimable" figure. Same shape as
+/// `project_mirror::store_backups_stale_bytes` (the read-only twin of its
+/// own sweep) — the number shown to the operator must always match what a
+/// reclaim would actually free, never the whole subtree's current size.
+pub fn zero_ref_bytes(root: &Path) -> Result<u64, String> {
+    Ok(load_registry(root)?
+        .entries
+        .values()
+        .filter(|e| e.referenced_by_project_ids.is_empty())
+        .map(|e| e.size_bytes)
+        .sum())
+}
+
+/// G6 Step 6 — the Reclaim button's media-vault sweep: deletes every
+/// zero-ref blob (via `safe_delete::delete_media_vault_blob`, the ONLY
+/// permitted way — see that function's own doc comment) and removes its
+/// registry entry, returning total bytes freed. A per-blob delete failure is
+/// logged and skipped, leaving that entry's registry row in place so the
+/// NEXT reclaim pass retries it — one stuck blob must never block reclaiming
+/// the rest. Only `load_registry`/`save_registry` failing (a corrupt
+/// registry) propagates as `Err`; per-blob failures never do.
+pub fn reclaim_unreferenced_blobs(root: &Path) -> Result<u64, String> {
+    let mut registry = load_registry(root)?;
+    let zero_ref: Vec<String> = registry
+        .entries
+        .iter()
+        .filter(|(_, e)| e.referenced_by_project_ids.is_empty())
+        .map(|(hash, _)| hash.clone())
+        .collect();
+    if zero_ref.is_empty() {
+        return Ok(0);
+    }
+
+    let mut reclaimed = 0u64;
+    let mut removed_any = false;
+    for hash in zero_ref {
+        let Some(entry) = registry.entries.get(&hash) else { continue };
+        // Defense in depth: re-check the invariant right before deleting,
+        // even though `zero_ref` was already filtered on it above — this is
+        // the ONE call site `refuse_delete_if_referenced` exists for.
+        if refuse_delete_if_referenced(entry).is_err() {
+            continue;
+        }
+        let size = entry.size_bytes;
+        match crate::safe_delete::delete_media_vault_blob(&media_vault_dir(root), &hash) {
+            Ok(()) => {
+                reclaimed += size;
+                registry.entries.remove(&hash);
+                removed_any = true;
+            }
+            Err(e) => eprintln!("[media_vault] reclaim: failed to delete blob {hash}, will retry next reclaim: {e}"),
+        }
+    }
+    if removed_any {
+        save_registry(root, &registry)?;
+    }
+    Ok(reclaimed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -620,5 +673,70 @@ mod tests {
         fs::create_dir_all(media_vault_dir(&root)).unwrap();
         fs::write(thumbnail_path(&root, "deadbeef"), b"fake jpeg bytes").unwrap();
         assert_eq!(read_thumbnail(&root, "deadbeef").unwrap(), Some(b"fake jpeg bytes".to_vec()));
+    }
+
+    // -----------------------------------------------------------------
+    // G6 Step 6 — storage hygiene. The operator's own named test list:
+    // "referenced blob -> refused; orphan -> deleted; disk space drops."
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn zero_ref_bytes_counts_only_unreferenced_entries() {
+        let root = tmpdir("zero-ref-bytes");
+        media_vault_import_bytes(&root, "proj-1", b"referenced", "a.jpg", "image/jpeg").unwrap();
+        let orphan = media_vault_import_bytes(&root, "proj-1", b"orphaned bytes!!", "b.jpg", "image/jpeg").unwrap();
+        // Manually unreference the second entry (Step 6 doesn't build the
+        // "un-reference on delete-from-project" wiring itself — see
+        // media_vault.rs's own module doc comment on why that's out of
+        // scope — so this test drives the registry directly to reach a
+        // real zero-ref state).
+        let mut registry = load_registry(&root).unwrap();
+        registry.entries.get_mut(&orphan.content_hash).unwrap().referenced_by_project_ids.clear();
+        save_registry(&root, &registry).unwrap();
+
+        assert_eq!(zero_ref_bytes(&root).unwrap(), orphan.size_bytes);
+    }
+
+    #[test]
+    fn reclaim_deletes_only_the_orphan_a_referenced_blob_is_refused_and_survives() {
+        let root = tmpdir("reclaim-mixed");
+        let referenced = media_vault_import_bytes(&root, "proj-1", b"still used", "a.jpg", "image/jpeg").unwrap();
+        let orphan = media_vault_import_bytes(&root, "proj-1", b"nobody wants this", "b.jpg", "image/jpeg").unwrap();
+        let mut registry = load_registry(&root).unwrap();
+        registry.entries.get_mut(&orphan.content_hash).unwrap().referenced_by_project_ids.clear();
+        save_registry(&root, &registry).unwrap();
+
+        let disk_before = dir_size_for_test(&root);
+        let reclaimed = reclaim_unreferenced_blobs(&root).unwrap();
+        let disk_after = dir_size_for_test(&root);
+
+        assert_eq!(reclaimed, orphan.size_bytes, "reclaimed bytes must equal exactly the orphan's size");
+        assert!(disk_after < disk_before, "disk space must actually drop");
+        assert!(!blob_path(&root, &orphan.content_hash).exists(), "the orphan blob must be gone");
+        assert!(blob_path(&root, &referenced.content_hash).exists(), "the still-referenced blob must survive — refused, not deleted");
+
+        let listed = media_vault_list(&root).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].content_hash, referenced.content_hash);
+    }
+
+    #[test]
+    fn reclaim_is_a_no_op_when_nothing_is_unreferenced() {
+        let root = tmpdir("reclaim-noop");
+        media_vault_import_bytes(&root, "proj-1", b"in use", "a.jpg", "image/jpeg").unwrap();
+        assert_eq!(reclaim_unreferenced_blobs(&root).unwrap(), 0);
+        assert_eq!(media_vault_list(&root).unwrap().len(), 1);
+    }
+
+    fn dir_size_for_test(dir: &Path) -> u64 {
+        let mut total = 0u64;
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                if let Ok(meta) = entry.metadata() {
+                    total += meta.len();
+                }
+            }
+        }
+        total
     }
 }

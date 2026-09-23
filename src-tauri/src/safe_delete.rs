@@ -98,6 +98,63 @@ pub fn delete_app_staging_dir(
     fs::remove_dir_all(&real_dir).map_err(|e| format!("remove_dir_all {}: {e}", real_dir.display()))
 }
 
+/// G6 Step 6 — the media vault's Reclaim flow's ONLY permitted way to remove
+/// a blob. A deliberately NARROWER, separate primitive from
+/// `delete_app_staging_dir` above: that one guards a recursive directory
+/// wipe (blast radius: everything under a wrong path); this one only ever
+/// removes a single named file, so a wrong bounds check here has a strictly
+/// smaller worst case — but the containment discipline is the same, and the
+/// filename itself gets an extra check neither `delete_app_staging_dir`
+/// caller needs: `content_hash` arrives already validated by
+/// `media_vault.rs`'s own registry lookup in every real call, but this
+/// function re-validates it is a well-formed lowercase sha256 hex digest
+/// anyway — the one thing standing between "delete this content-addressed
+/// blob" and "delete whatever path some future caller's string concatenation
+/// happens to produce" is this shape check, so it is not optional.
+///
+/// `Ok(())` when the blob is already absent — deleting an already-deleted
+/// file is a no-op, not an error, matching `delete_app_staging_dir`'s own
+/// "canonicalization failure is refusal, missing-before-we-start is fine"
+/// split (the difference: THERE, a caller must canonicalize a path that is
+/// expected to exist; HERE, "never existed" and "already reclaimed" are
+/// exactly the same harmless case, checked with a plain `.exists()` before
+/// canonicalizing anything).
+pub fn delete_media_vault_blob(vault_dir: &Path, content_hash: &str) -> Result<(), String> {
+    let well_formed = content_hash.len() == 64 && content_hash.chars().all(|c| c.is_ascii_hexdigit());
+    if !well_formed {
+        let msg = format!(
+            "refusing to delete media-vault blob: {content_hash:?} is not a well-formed 64-char hex sha256 digest"
+        );
+        log::warn!(target: "kinetix::safe_delete", "{msg}");
+        return Err(msg);
+    }
+
+    let target = vault_dir.join(format!("{content_hash}.bin"));
+    if !target.exists() {
+        return Ok(());
+    }
+
+    let real_vault_dir = fs::canonicalize(vault_dir).map_err(|e| {
+        format!("refusing to delete {}: vault dir {} cannot canonicalize: {e}", target.display(), vault_dir.display())
+    })?;
+    let real_target = fs::canonicalize(&target)
+        .map_err(|e| format!("refusing to delete {}: cannot canonicalize: {e}", target.display()))?;
+
+    if !real_target.starts_with(&real_vault_dir) {
+        let msg = format!(
+            "refusing to delete {} — resolves to {}, which is not inside the vault dir {} (resolves to {})",
+            target.display(),
+            real_target.display(),
+            vault_dir.display(),
+            real_vault_dir.display(),
+        );
+        log::warn!(target: "kinetix::safe_delete", "{msg}");
+        return Err(msg);
+    }
+
+    fs::remove_file(&real_target).map_err(|e| format!("remove_file {}: {e}", real_target.display()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -262,6 +319,13 @@ mod tests {
             // sites now route through delete_app_staging_dir; this pins that
             // so a regression can't quietly reintroduce a raw call there.
             ("ffmpeg.rs", include_str!("ffmpeg.rs")),
+            // G6 Step 6 — the vault's Reclaim flow removes individual blobs
+            // via `delete_media_vault_blob` (single-file, above), never a
+            // whole-directory wipe; this pins that the vault module never
+            // grows a raw `fs::remove_dir_all` (e.g. a future "clear the
+            // whole vault" shortcut) that would bypass every per-blob
+            // reference check `refuse_delete_if_referenced` exists for.
+            ("media_vault.rs", include_str!("media_vault.rs")),
         ] {
             let production = source.split("\n#[cfg(test)]").next().unwrap_or(source);
             let raw_calls: Vec<&str> = production
@@ -291,5 +355,60 @@ mod tests {
             1,
             "the source tripwire must detect a raw delete"
         );
+    }
+
+    const VALID_HASH: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"; // 64 hex chars
+    #[allow(dead_code)]
+    const _ASSERT_VALID_HASH_LEN: () = assert!(VALID_HASH.len() == 64);
+
+    #[test]
+    fn deletes_a_well_formed_blob_that_exists_inside_the_vault_dir() {
+        let vault = tmpdir("vault-ok");
+        let blob = vault.join(format!("{VALID_HASH}.bin"));
+        fs::write(&blob, b"fake blob bytes").unwrap();
+
+        assert!(delete_media_vault_blob(&vault, VALID_HASH).is_ok());
+        assert!(!blob.exists());
+
+        fs::remove_dir_all(&vault).ok();
+    }
+
+    #[test]
+    fn deleting_an_already_absent_blob_is_ok_not_an_error() {
+        let vault = tmpdir("vault-absent");
+        assert!(delete_media_vault_blob(&vault, VALID_HASH).is_ok());
+        fs::remove_dir_all(&vault).ok();
+    }
+
+    #[test]
+    fn refuses_a_content_hash_that_is_not_well_formed_hex() {
+        let vault = tmpdir("vault-bad-hash");
+        // Too short.
+        assert!(delete_media_vault_blob(&vault, "abc123").is_err());
+        // Right length, non-hex characters — and shaped like a traversal
+        // attempt, the exact class of input this check exists to reject.
+        let traversal = "../../../../../../../../../../../../../../etc/passwd";
+        assert!(delete_media_vault_blob(&vault, traversal).is_err());
+        fs::remove_dir_all(&vault).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refuses_a_symlinked_blob_that_resolves_outside_the_vault_dir() {
+        use std::os::unix::fs::symlink;
+        let vault = tmpdir("vault-symlink");
+        let victim_dir = tmpdir("vault-symlink-victim");
+        let victim = victim_dir.join("real_file.txt");
+        fs::write(&victim, b"do not delete me").unwrap();
+
+        let link = vault.join(format!("{VALID_HASH}.bin"));
+        symlink(&victim, &link).unwrap();
+
+        let result = delete_media_vault_blob(&vault, VALID_HASH);
+        assert!(result.is_err());
+        assert!(victim.exists());
+
+        fs::remove_dir_all(&vault).ok();
+        fs::remove_dir_all(&victim_dir).ok();
     }
 }

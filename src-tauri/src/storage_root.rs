@@ -1025,6 +1025,7 @@ fn reclaimable_dirs(root: &Path) -> [PathBuf; 2] {
 /// | `models/` | never-reclaimable | Downloaded whisper/FA models — re-downloading is expensive (100s of MB–GB) and the user chose to install them. |
 /// | `project-store-backups/` | reclaimable | `rotate_backup`'s own safety net — bounded by `BACKUP_RETAIN`/`STALE_BACKUP_MIN_AGE_SECS` already, but every byte of it can be cleared without losing current data. |
 /// | `cache/` | reclaimable | A cache by construction — nothing here is the only copy of anything. |
+/// | `media-vault/` | reclaimable (zero-ref entries only) | G6 Step 6 — content-addressed blobs still referenced by a project are never reclaimable (they're that project's authoritative bytes, same as `assets/`); a blob no project references any more is exactly the reclaimable subset, per `media_vault::zero_ref_bytes`. |
 ///
 /// `models/` bytes come from `models::check_installed_models` (whisper +
 /// every installed FA language's `InstalledModelStatus.bytes`), NOT from
@@ -1084,12 +1085,24 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
     // target) — see `storage_root_stale_roots`'s own doc comment.
     let stale_roots = storage_root_stale_roots(app.clone())?;
 
+    // G6 Step 6 — "free via registration": media_vault_dir was already added
+    // to MANAGED_RELOCATION_SUBTREES (Step 2), so this is the one new row
+    // needed to surface it here. `reclaimableBytes` is the sum of zero-ref
+    // registry entries only (`zero_ref_bytes`, the read-only counterpart to
+    // `reclaim_unreferenced_blobs`) — same WS3 Batch 2 (D5c) discipline as
+    // `backups_reclaimable_bytes` above: never advertise more than a reclaim
+    // would actually free.
+    let vault_path = media_vault_dir(&root);
+    let vault_bytes = dir_size(&vault_path);
+    let vault_reclaimable_bytes = crate::media_vault::zero_ref_bytes(&root).unwrap_or(0);
+
     // Ordering below is an explicit operator decision (WS3 Round 29): most
     // valuable/expensive data first (models, assets), down to the smallest
     // and most disposable (orphaned sessions, stale roots) last.
     let mut rows = vec![
         row(&models_path, "Downloaded models", model_bytes, 0, "never-reclaimable"),
         row(&assets_dir(&root), "Project assets", assets_bytes, 0, "never-reclaimable"),
+        row(&vault_path, "Media vault", vault_bytes, vault_reclaimable_bytes, "reclaimable"),
         row(
             &backups_path,
             "Project backups",
@@ -1172,6 +1185,12 @@ pub fn storage_root_reclaim(app: tauri::AppHandle) -> Result<u64, String> {
             }
         }
     }
+
+    // G6 Step 6 — the same "Free up cached data" button also sweeps
+    // zero-ref media-vault blobs, "for free" via the subtree's own
+    // registration (`media_vault_dir` is already a managed subtree; this is
+    // the reclaim half `size_report`'s matching row advertises).
+    reclaimed += crate::media_vault::reclaim_unreferenced_blobs(&root)?;
 
     Ok(reclaimed)
 }
