@@ -67,3 +67,49 @@ export async function mediaVaultImportBytes(
     },
   });
 }
+
+/** G6 Step 4 — every vault entry, for the Media block. `[]` outside Tauri. */
+export async function mediaVaultListEntries(): Promise<MediaVaultEntry[]> {
+  if (!isTauri()) return [];
+  return invoke<MediaVaultEntry[]>('media_vault_list_entries');
+}
+
+/** G6 Step 4 — reads one vault blob's raw bytes (used for image-type
+ *  entries, which are their own thumbnail — no separate thumbnail file is
+ *  generated for them). `null` outside Tauri; throws on a real read failure
+ *  (missing/corrupt blob), which the caller should treat as "show a fallback
+ *  icon", not surface to the user as an error. */
+export async function mediaVaultReadBlob(contentHash: string): Promise<Uint8Array | null> {
+  if (!isTauri()) return null;
+  const bytes = await invoke<number[]>('media_vault_read_blob', { contentHash });
+  return new Uint8Array(bytes);
+}
+
+/** G6 Step 4a — generates (or reuses) a video's thumbnail. `false` outside
+ *  Tauri and on any generation failure (corrupt/0-byte video, missing blob)
+ *  — never throws; the caller falls back to a generic icon, the same
+ *  posture `resolveVideoNativeFps` already has for its own probe. */
+export async function mediaVaultGenerateThumbnail(contentHash: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  try {
+    return await invoke<boolean>('media_vault_generate_thumbnail', { contentHash });
+  } catch (err) {
+    console.warn('[mediaVaultClient] thumbnail generation failed, falling back to an icon:', contentHash, err);
+    return false;
+  }
+}
+
+/** G6 Step 4a — reads back a previously generated thumbnail. `null` outside
+ *  Tauri, when none has been generated yet, or on any read failure — every
+ *  case renders identically (fall back to a generic icon), so this never
+ *  throws. */
+export async function mediaVaultReadThumbnail(contentHash: string): Promise<Uint8Array | null> {
+  if (!isTauri()) return null;
+  try {
+    const bytes = await invoke<number[] | null>('media_vault_read_thumbnail', { contentHash });
+    return bytes === null ? null : new Uint8Array(bytes);
+  } catch (err) {
+    console.warn('[mediaVaultClient] thumbnail read failed, falling back to an icon:', contentHash, err);
+    return null;
+  }
+}

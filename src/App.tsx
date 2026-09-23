@@ -207,6 +207,7 @@ import {
   buildFaGateClosedEntry,
   buildFaNotCompiledEntry,
   buildFaUserChoseWhisperEntry,
+  buildMediaImportEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -226,7 +227,7 @@ import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadi
 import { stripRtfIfNeeded } from './services/textUtils';
 import { assignSegmentIds, type SegmentIdSource } from './services/segmentId';
 import { mergeExtractedZipAssets } from './services/zipAssetMerge';
-import { ingestZip, ZipTooLargeError } from './services/zipIngest';
+import { ingestZip } from './services/zipIngest';
 import {
   putAsset,
   getAsset,
@@ -6248,6 +6249,48 @@ export default function App() {
     });
   }, []);
 
+  // G6 Step 4 — the Media block's "used in N scenes" chip click target:
+  // switches to the Segments tab and selects every segment currently bound
+  // to this asset, reusing the EXISTING batch-selection mechanism
+  // (selectedSegmentIds/onToggleSegmentSelect, built for the Effects tab)
+  // rather than inventing a new highlight concept.
+  const handleHighlightAssetUsage = useCallback((assetId: string) => {
+    const matching = projectRef.current.segments.filter(s => s.assetId === assetId).map(s => s.id);
+    setSelectedSegmentIds(new Set(matching));
+    setActiveLeftTab('segments');
+  }, []);
+
+  // G6 Step 4 — the Media block's "add media" door (loose files / folder /
+  // zip) commits through the same ingest paths Step 3 built. Mirrors
+  // `processZipFile`'s own commit shape (merge new assets, autoMatchSegments,
+  // resolveZipImportVoiceoverId) plus ONE grouped Sync Log finding —
+  // `mediaIngest.ts`'s `ingestLooseFiles` and `zipIngest.ts`'s `ingestZip`
+  // already write through IndexedDB + the vault per file; this only commits
+  // the resulting Asset[] into the project.
+  const handleMediaIngestComplete = useCallback((outcome: {
+    assets: Asset[];
+    audioAssetId: string | undefined;
+    counts: { imported: number; deduped: number; unsupportedSkipped: number; failed: number };
+    source: 'zip' | 'files' | 'folder';
+  }) => {
+    setProject(prev => {
+      const allAssets = [...prev.assets, ...outcome.assets];
+      const next = {
+        ...prev,
+        assets: allAssets,
+        segments: autoMatchSegments(allAssets, prev.segments),
+        voiceoverId: resolveZipImportVoiceoverId(outcome.assets, allAssets, prev.voiceoverId),
+      };
+      const total = outcome.counts.imported + outcome.counts.deduped + outcome.counts.unsupportedSkipped + outcome.counts.failed;
+      if (total === 0) return next;
+      return appendSyncLogEntries(next, [buildMediaImportEntry(mintSyncLogId(), outcome.source, outcome.counts)]);
+    });
+  }, []);
+
+  const handleMediaIngestError = useCallback((message: string) => {
+    showToast(message);
+  }, [showToast]);
+
   const handleDeleteAllAssets = useCallback(() => {
     const nonAudio = assetsRef.current.filter(a => a.type !== 'audio');
     nonAudio.forEach(a => URL.revokeObjectURL(a.url));
@@ -6331,49 +6374,12 @@ export default function App() {
     });
   }, []);
 
-  /** Core zip-extraction logic for handleZipUpload — G6 Step 3: thin wrapper
-   *  around the one consolidated `ingestZip` (see its own doc comment for
-   *  what used to live here and why). */
-  const processZipFile = useCallback(async (file: File): Promise<void> => {
-    setIsProcessing(true);
-    try {
-      const ingested = await ingestZip(projectIdRef.current, file);
-      setProject(prev => {
-        const allAssets = [...prev.assets, ...ingested.assets];
-        return {
-          ...prev,
-          assets: allAssets,
-          segments: autoMatchSegments(allAssets, prev.segments),
-          voiceoverId: resolveZipImportVoiceoverId(ingested.assets, allAssets, prev.voiceoverId),
-        };
-      });
-      // One grouped finding per ingest — Step 4 replaces this with a proper
-      // Sync Log entry (new SyncLogEntryType); a toast is the interim,
-      // still-visible summary until then.
-      const { imported, deduped, unsupportedSkipped, failed } = ingested.counts;
-      if (imported + deduped + unsupportedSkipped + failed > 0) {
-        const parts = [`${imported} imported`];
-        if (deduped > 0) parts.push(`${deduped} deduped`);
-        if (unsupportedSkipped > 0) parts.push(`${unsupportedSkipped} unsupported`);
-        if (failed > 0) parts.push(`${failed} failed`);
-        showToast(`Zip import: ${parts.join(', ')}.`);
-      }
-    } catch (err) {
-      if (err instanceof ZipTooLargeError) {
-        showToast(err.message);
-      } else {
-        console.error("ZIP Error:", err);
-      }
-    } finally {
-      setIsProcessing(false);
-    }
-  }, [showToast]);
-
-  const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    await processZipFile(file);
-  };
+  // G6 Step 4 — `processZipFile`/`handleZipUpload` (the manual-upload zip
+  // handler this spot used to hold) were confirmed dead code: no button or
+  // `<input>` called `handleZipUpload` anywhere in the app. The Media
+  // block's own "add zip" door (`MediaBlock.tsx`, via `handleMediaIngestComplete`
+  // above) is the live replacement — same `ingestZip` underneath, actually
+  // reachable from the UI.
 
   const currentSegment = useMemo(() => {
     if (isResizingRef.current) {
@@ -7743,6 +7749,9 @@ export default function App() {
             onDeleteAllAssets={handleDeleteAllAssets}
             onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
             onOpenRelinkMedia={() => { void refreshDegradedRecovery(project.id); }}
+            onHighlightUsage={handleHighlightAssetUsage}
+            onIngestComplete={handleMediaIngestComplete}
+            onIngestError={handleMediaIngestError}
             onApplySync={handleApplySyncFromFiles}
             stagedFilesClearSignal={stagedFilesClearSignal}
             onStagedFilesChange={handleStagedFilesChange}

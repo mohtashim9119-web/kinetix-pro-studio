@@ -198,11 +198,6 @@ pub fn media_vault_import_bytes(
 /// "registered but the blob went missing"; that check is a separate concern
 /// (the same missing/offline pattern the existing relink machinery already
 /// has, per Step 4's plan), not this function's job.
-///
-/// `#[allow(dead_code)]`: no `#[tauri::command]` calls this yet — Step 4
-/// wires the Media block UI to it. Exercised today by this module's own
-/// tests; remove the attribute once Step 4 lands a real caller.
-#[allow(dead_code)]
 pub fn media_vault_list(root: &Path) -> Result<Vec<MediaVaultEntry>, String> {
     Ok(load_registry(root)?.entries.into_values().collect())
 }
@@ -274,6 +269,161 @@ pub fn media_vault_import(
 
     let root = resolve_storage_root(&app)?;
     media_vault_import_bytes(&root, &project_id, bytes, &display_name, &mime_type)
+}
+
+/// G6 Step 4 — the Media block's listing IPC surface. Thin wrapper: all the
+/// actual logic is `media_vault_list` above (kept `root`-based and
+/// AppHandle-free specifically so it stays unit-testable without a real
+/// Tauri app).
+#[tauri::command]
+pub fn media_vault_list_entries(app: tauri::AppHandle) -> Result<Vec<MediaVaultEntry>, String> {
+    media_vault_list(&resolve_storage_root(&app)?)
+}
+
+/// G6 Step 4 — reads one vault blob's raw bytes back to the frontend, the
+/// same `Result<Vec<u8>, String>` / JSON-array-over-IPC convention
+/// `asset_store.rs`'s `asset_store_read` already uses. Used for image-type
+/// entries, which are their own thumbnail (per the operator's "images use
+/// themselves" ruling — no separate thumbnail file is generated for them).
+#[tauri::command]
+pub fn media_vault_read_blob(app: tauri::AppHandle, content_hash: String) -> Result<Vec<u8>, String> {
+    let root = resolve_storage_root(&app)?;
+    fs::read(blob_path(&root, &content_hash))
+        .map_err(|e| format!("media_vault_read_blob({content_hash}): {e}"))
+}
+
+fn thumbnail_path(root: &Path, content_hash: &str) -> PathBuf {
+    media_vault_dir(root).join(format!("{content_hash}.thumb.jpg"))
+}
+
+/// G6 Step 4a — one fixed timestamp, chosen once for every video rather than
+/// a per-video "interesting frame" search: simple, deterministic, and good
+/// enough for a grid thumbnail (a black first-frame is the main real-world
+/// risk `-ss` this far in avoids).
+const THUMBNAIL_AT_SECONDS: f64 = 1.0;
+/// ffmpeg's `-q:v` MJPEG quality scale is 2 (best) to 31 (worst) — a
+/// thumbnail-sized JPEG has no reason to spend bytes near the top of that
+/// range.
+const THUMBNAIL_JPEG_QUALITY: &str = "5";
+
+/// Runs the ffmpeg sidecar to grab one frame from `input` (a video already
+/// on disk — a vault blob has no file extension, but ffmpeg's demuxer probes
+/// file content, not the extension, for `-i`) into `output` as a small JPEG.
+/// Same sidecar-invocation shape as `ffmpeg.rs`'s `ffmpeg_probe_fps`
+/// (`app.shell().sidecar("ffmpeg")`, one-shot `.output()`, no cancellation —
+/// this is a fast, non-interactive extraction, not an export-length run).
+async fn ffmpeg_extract_thumbnail(
+    app: &tauri::AppHandle,
+    input: &Path,
+    output: &Path,
+) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+    let result = app
+        .shell()
+        .sidecar("ffmpeg")
+        .map_err(|e| format!("ffmpeg sidecar lookup: {e}"))?
+        .args([
+            "-hide_banner",
+            "-y",
+            "-ss",
+            &THUMBNAIL_AT_SECONDS.to_string(),
+            "-i",
+            input.to_str().ok_or("media_vault: input path is not valid UTF-8")?,
+            "-frames:v",
+            "1",
+            "-q:v",
+            THUMBNAIL_JPEG_QUALITY,
+            output.to_str().ok_or("media_vault: output path is not valid UTF-8")?,
+        ])
+        .output()
+        .await
+        .map_err(|e| format!("ffmpeg spawn failed: {e}"))?;
+    if !result.status.success() {
+        return Err(format!(
+            "ffmpeg thumbnail extraction failed: {}",
+            String::from_utf8_lossy(&result.stderr)
+        ));
+    }
+    Ok(())
+}
+
+/// Pure precheck `media_vault_generate_thumbnail` runs before ever touching
+/// ffmpeg or a `tauri::AppHandle` — unit-testable on its own.
+enum ThumbnailPrecheck {
+    /// The blob does not exist — nothing to thumbnail. Caller returns
+    /// `Ok(false)` without spawning ffmpeg.
+    NoBlob,
+    /// A thumbnail already exists — idempotent no-op. Caller returns
+    /// `Ok(true)` without spawning ffmpeg.
+    AlreadyGenerated,
+    /// Neither — the caller must actually run ffmpeg.
+    NeedsGeneration { blob_path: PathBuf, thumb_path: PathBuf },
+}
+
+fn precheck_thumbnail(root: &Path, content_hash: &str) -> ThumbnailPrecheck {
+    let blob = blob_path(root, content_hash);
+    if !blob.exists() {
+        return ThumbnailPrecheck::NoBlob;
+    }
+    let thumb = thumbnail_path(root, content_hash);
+    if thumb.exists() {
+        return ThumbnailPrecheck::AlreadyGenerated;
+    }
+    ThumbnailPrecheck::NeedsGeneration { blob_path: blob, thumb_path: thumb }
+}
+
+/// G6 Step 4a — generates (or reuses) a video's thumbnail, idempotently.
+/// NEVER returns `Err` for a bad/corrupt/0-byte video or a missing blob —
+/// every content-level failure is `Ok(false)`, mirroring the
+/// `resolveVideoNativeFps` probe-failure pattern (App.tsx): a thumbnail is a
+/// display convenience, never something the caller should have to treat as
+/// fatal. Only an infrastructure-level failure (the storage root itself
+/// unresolvable) propagates as `Err`.
+#[tauri::command]
+pub async fn media_vault_generate_thumbnail(app: tauri::AppHandle, content_hash: String) -> Result<bool, String> {
+    let root = resolve_storage_root(&app)?;
+    let (blob, thumb) = match precheck_thumbnail(&root, &content_hash) {
+        ThumbnailPrecheck::NoBlob => return Ok(false),
+        ThumbnailPrecheck::AlreadyGenerated => return Ok(true),
+        ThumbnailPrecheck::NeedsGeneration { blob_path, thumb_path } => (blob_path, thumb_path),
+    };
+    let tmp = media_vault_dir(&root).join(format!("{content_hash}.thumb.jpg.part"));
+    match ffmpeg_extract_thumbnail(&app, &blob, &tmp).await {
+        Ok(()) => match fs::rename(&tmp, &thumb) {
+            Ok(()) => Ok(true),
+            Err(e) => {
+                eprintln!("[media_vault] thumbnail rename failed for {content_hash}: {e}");
+                let _ = fs::remove_file(&tmp);
+                Ok(false)
+            }
+        },
+        Err(e) => {
+            eprintln!("[media_vault] thumbnail extraction failed for {content_hash}: {e}");
+            let _ = fs::remove_file(&tmp);
+            Ok(false)
+        }
+    }
+}
+
+/// `root`-based core of `media_vault_read_thumbnail`, split out for
+/// testability without a `tauri::AppHandle` (same pattern as
+/// `media_vault_import_bytes`/`media_vault_import`).
+fn read_thumbnail(root: &Path, content_hash: &str) -> Result<Option<Vec<u8>>, String> {
+    match fs::read(thumbnail_path(root, content_hash)) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("media_vault_read_thumbnail({content_hash}): {e}")),
+    }
+}
+
+/// G6 Step 4a — reads back a previously generated thumbnail. `Ok(None)`
+/// (never `Err`) when none exists yet — the caller (the Media block) reads
+/// this AFTER `media_vault_generate_thumbnail`, but a missing file here is
+/// exactly the same "nothing to show, fall back to an icon" case as a
+/// generation failure, not a distinguishable error.
+#[tauri::command]
+pub fn media_vault_read_thumbnail(app: tauri::AppHandle, content_hash: String) -> Result<Option<Vec<u8>>, String> {
+    read_thumbnail(&resolve_storage_root(&app)?, &content_hash)
 }
 
 #[cfg(test)]
@@ -426,5 +576,49 @@ mod tests {
         // (0xFF, 0xFE is an invalid UTF-8 sequence).
         let invalid_utf8 = base64::engine::general_purpose::STANDARD.encode([0xFFu8, 0xFE]);
         assert!(decode_display_name_header(&invalid_utf8).is_err());
+    }
+
+    #[test]
+    fn precheck_thumbnail_reports_no_blob_when_nothing_was_ever_imported() {
+        let root = tmpdir("thumb-no-blob");
+        assert!(matches!(precheck_thumbnail(&root, "deadbeef"), ThumbnailPrecheck::NoBlob));
+    }
+
+    #[test]
+    fn precheck_thumbnail_reports_already_generated_and_skips_regeneration() {
+        let root = tmpdir("thumb-already");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"fake video bytes", "clip.mp4", "video/mp4").unwrap();
+        fs::write(thumbnail_path(&root, &entry.content_hash), b"fake jpeg").unwrap();
+        assert!(matches!(
+            precheck_thumbnail(&root, &entry.content_hash),
+            ThumbnailPrecheck::AlreadyGenerated
+        ));
+    }
+
+    #[test]
+    fn precheck_thumbnail_reports_needs_generation_for_an_imported_blob_with_no_thumb_yet() {
+        let root = tmpdir("thumb-needs-gen");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"fake video bytes", "clip.mp4", "video/mp4").unwrap();
+        match precheck_thumbnail(&root, &entry.content_hash) {
+            ThumbnailPrecheck::NeedsGeneration { blob_path, thumb_path } => {
+                assert!(blob_path.exists());
+                assert!(!thumb_path.exists());
+            }
+            _ => panic!("expected NeedsGeneration"),
+        }
+    }
+
+    #[test]
+    fn read_thumbnail_is_none_not_an_error_when_nothing_was_generated() {
+        let root = tmpdir("read-thumb-missing");
+        assert_eq!(read_thumbnail(&root, "deadbeef").unwrap(), None);
+    }
+
+    #[test]
+    fn read_thumbnail_returns_the_bytes_once_present() {
+        let root = tmpdir("read-thumb-present");
+        fs::create_dir_all(media_vault_dir(&root)).unwrap();
+        fs::write(thumbnail_path(&root, "deadbeef"), b"fake jpeg bytes").unwrap();
+        assert_eq!(read_thumbnail(&root, "deadbeef").unwrap(), Some(b"fake jpeg bytes".to_vec()));
     }
 }

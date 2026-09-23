@@ -104,6 +104,11 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // Red, matching 'silence-error'/'unsupported-language': transcription did
   // not run, not a degradation the pipeline absorbed.
   'whisper-model-failure': { label: 'WHISPER MODEL', className: 'bg-red-500/10 text-red-400 border-red-500/30' },
+  // G6 Step 4 — emerald, a fresh color in this table: a media-vault ingest is
+  // its own kind of event (not tied to an Apply Sync run), and none of the
+  // existing categories (FA cyan/purple, lock amber, rule blue, error red)
+  // fit "here's what happened when you added media."
+  'media-import': { label: 'MEDIA', className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be

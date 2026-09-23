@@ -1,0 +1,360 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+// ---------------------------------------------------------------------------
+// G6 Step 4 — the Media block: a library view over `project.assets`, shown
+// in the Files tab below the 4 upload slots (operator decision — name "media
+// vault" for the underlying store, this block is its UI). Large thumbnails,
+// name/type/duration, a "used in N scenes" chip (click highlights those
+// scenes), used/unused + type filters, search, and an "add media" door
+// (loose files / folder / zip) through the same `mediaIngest.ts`/
+// `zipIngest.ts` write-through Step 3 built.
+//
+// Missing/offline reuses the EXISTING unresolved/relink machinery AS-IS —
+// `asset.unresolved` (already set by the native asset store's resolution
+// ladder) and `onOpenRelinkMedia` (already wired in App.tsx to
+// `refreshDegradedRecovery`, the same call slot 4's own "Relink Media…"
+// button makes) are the only two things this block reads/calls for that;
+// no new relink UI or state was built.
+//
+// Thumbnails: images use themselves (`asset.url`, same as everywhere else in
+// this app — DropZonePanel's own slot list does this too). Videos generate a
+// real JPEG via the vault's ffmpeg-backed `media_vault_generate_thumbnail`
+// (Step 4a), keyed by content hash. `Asset.contentHash` does not exist on
+// the type yet (Step 5 adds it) — this block computes the hash from the
+// asset's own bytes on demand and caches it in a ref for the component's
+// lifetime, accepting the one-time re-hash cost until Step 5's stored field
+// makes it free.
+// ---------------------------------------------------------------------------
+
+import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
+import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle } from 'lucide-react';
+import type { Asset, VideoSegment } from '../types';
+import { formatTime } from '../services/timeFormat';
+import { getAsset } from '../services/assetStore';
+import { sha256Hex, ingestLooseFiles, type MediaIngestCounts } from '../services/mediaIngest';
+import { ingestZip, ZipTooLargeError } from '../services/zipIngest';
+import { mediaVaultGenerateThumbnail, mediaVaultReadThumbnail } from '../services/mediaVaultClient';
+
+export interface MediaIngestOutcome {
+  assets: Asset[];
+  audioAssetId: string | undefined;
+  counts: MediaIngestCounts;
+  source: 'zip' | 'files' | 'folder';
+}
+
+interface MediaBlockProps {
+  projectId: string;
+  assets: Asset[];
+  segments: VideoSegment[];
+  onDeleteAsset: (assetId: string) => void;
+  onOpenRelinkMedia: () => void;
+  /** Switches to the Segments tab and selects every segment using this
+   *  asset — the "used in N scenes" chip's click target. */
+  onHighlightUsage: (assetId: string) => void;
+  onIngestComplete: (outcome: MediaIngestOutcome) => void;
+  onIngestError: (message: string) => void;
+}
+
+type TypeFilter = 'all' | 'image' | 'video' | 'audio';
+type UsageFilter = 'all' | 'used' | 'unused';
+
+const TYPE_ICON: Record<Asset['type'], typeof Film> = {
+  image: ImageIcon,
+  video: Film,
+  audio: Music,
+};
+
+function usageCount(segments: VideoSegment[], assetId: string): number {
+  return segments.filter(s => s.assetId === assetId).length;
+}
+
+/** Hashes a video asset's bytes (from its staged `File`, falling back to the
+ *  IndexedDB-stored blob for an asset restored across a reload — same
+ *  fallback `resolveVoiceoverDuration` in App.tsx already uses) and asks the
+ *  vault to generate/read back its thumbnail. `null` on ANY failure — every
+ *  failure mode renders identically here (fall back to the type icon). */
+async function loadVideoThumbnailUrl(projectId: string, asset: Asset): Promise<string | null> {
+  try {
+    let bytes: Uint8Array;
+    if (asset.file) {
+      bytes = new Uint8Array(await asset.file.arrayBuffer());
+    } else {
+      const stored = await getAsset(projectId, asset.id);
+      if (!stored?.blob) return null;
+      bytes = new Uint8Array(await stored.blob.arrayBuffer());
+    }
+    const contentHash = await sha256Hex(bytes);
+    const generated = await mediaVaultGenerateThumbnail(contentHash);
+    if (!generated) return null;
+    const thumbBytes = await mediaVaultReadThumbnail(contentHash);
+    if (!thumbBytes) return null;
+    return URL.createObjectURL(new Blob([thumbBytes.slice()], { type: 'image/jpeg' }));
+  } catch (err) {
+    console.warn('[MediaBlock] thumbnail load failed, falling back to an icon:', asset.id, err);
+    return null;
+  }
+}
+
+export function MediaBlock({
+  projectId,
+  assets,
+  segments,
+  onDeleteAsset,
+  onOpenRelinkMedia,
+  onHighlightUsage,
+  onIngestComplete,
+  onIngestError,
+}: MediaBlockProps) {
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
+  const [usageFilter, setUsageFilter] = useState<UsageFilter>('all');
+  const [busy, setBusy] = useState(false);
+  const [videoThumbUrls, setVideoThumbUrls] = useState<Record<string, string>>({});
+  const thumbRequestedRef = useRef<Set<string>>(new Set());
+
+  const filesInputRef = useRef<HTMLInputElement>(null);
+  const folderInputRef = useRef<HTMLInputElement>(null);
+  const zipInputRef = useRef<HTMLInputElement>(null);
+
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return assets
+      .map(asset => ({ asset, uses: usageCount(segments, asset.id) }))
+      .filter(({ asset }) => typeFilter === 'all' || asset.type === typeFilter)
+      .filter(({ uses }) => usageFilter === 'all' || (usageFilter === 'used' ? uses > 0 : uses === 0))
+      .filter(({ asset }) => q === '' || asset.name.toLowerCase().includes(q));
+  }, [assets, segments, search, typeFilter, usageFilter]);
+
+  const unusedCount = useMemo(() => assets.filter(a => usageCount(segments, a.id) === 0).length, [assets, segments]);
+
+  // Lazily generate/fetch a thumbnail for each VISIBLE video row, once,
+  // caching the resulting blob URL for the component's lifetime — not
+  // reactive to scroll position (no virtualization here), but bounded to
+  // whatever the current filter/search actually shows.
+  useEffect(() => {
+    let cancelled = false;
+    for (const { asset } of rows) {
+      if (asset.type !== 'video') continue;
+      if (thumbRequestedRef.current.has(asset.id)) continue;
+      thumbRequestedRef.current.add(asset.id);
+      void loadVideoThumbnailUrl(projectId, asset).then(url => {
+        if (cancelled || url === null) return;
+        setVideoThumbUrls(prev => ({ ...prev, [asset.id]: url }));
+      });
+    }
+    return () => { cancelled = true; };
+  }, [rows, projectId]);
+
+  const runIngest = useCallback(async (
+    source: 'zip' | 'files' | 'folder',
+    run: () => Promise<{ assets: Asset[]; audioAssetId: string | undefined; counts: MediaIngestCounts }>,
+  ) => {
+    setBusy(true);
+    try {
+      const result = await run();
+      onIngestComplete({ ...result, source });
+    } catch (err) {
+      const message = err instanceof ZipTooLargeError
+        ? err.message
+        : 'This import could not be completed — see the console for details.';
+      console.error(`[MediaBlock] ${source} ingest failed:`, err);
+      onIngestError(message);
+    } finally {
+      setBusy(false);
+    }
+  }, [onIngestComplete, onIngestError]);
+
+  const handleFilesChosen = useCallback((fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    void runIngest('files', () => ingestLooseFiles(projectId, Array.from(fileList)));
+  }, [projectId, runIngest]);
+
+  const handleFolderChosen = useCallback((fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    void runIngest('folder', () => ingestLooseFiles(projectId, Array.from(fileList)));
+  }, [projectId, runIngest]);
+
+  const handleZipChosen = useCallback((file: File | undefined) => {
+    if (!file) return;
+    void runIngest('zip', () => ingestZip(projectId, file));
+  }, [projectId, runIngest]);
+
+  if (assets.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="border-t border-[var(--kx-border)] pt-3 mt-1" data-testid="media-block">
+      <div className="flex items-center justify-between px-1 mb-2">
+        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--kx-faint)]">
+          Media ({assets.length})
+        </h3>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            title="Add loose files"
+            disabled={busy}
+            onClick={() => filesInputRef.current?.click()}
+            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+          >
+            <FileUp size={13} />
+          </button>
+          <button
+            type="button"
+            title="Add a folder"
+            disabled={busy}
+            onClick={() => folderInputRef.current?.click()}
+            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+          >
+            <FolderPlus size={13} />
+          </button>
+          <button
+            type="button"
+            title="Add a zip"
+            disabled={busy}
+            onClick={() => zipInputRef.current?.click()}
+            className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+          >
+            <FileArchive size={13} />
+          </button>
+        </div>
+      </div>
+
+      <input
+        ref={filesInputRef}
+        type="file"
+        multiple
+        accept="image/*,video/*,audio/*"
+        className="hidden"
+        onChange={(e) => { handleFilesChosen(e.target.files); e.target.value = ''; }}
+      />
+      <input
+        ref={(el) => {
+          // React has no typed prop for `webkitdirectory` — a non-standard
+          // but universally-supported (Chromium/WebKit, hence Tauri's
+          // webview) attribute that turns a file input into a folder picker.
+          folderInputRef.current = el;
+          el?.setAttribute('webkitdirectory', '');
+        }}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => { handleFolderChosen(e.target.files); e.target.value = ''; }}
+      />
+      <input
+        ref={zipInputRef}
+        type="file"
+        accept=".zip"
+        className="hidden"
+        onChange={(e) => { handleZipChosen(e.target.files?.[0]); e.target.value = ''; }}
+      />
+
+      <div className="flex items-center gap-1.5 px-1 mb-2">
+        <div className="flex-1 flex items-center gap-1.5 bg-[var(--kx-surface-2)] rounded-lg px-2 py-1">
+          <Search size={12} className="text-[var(--kx-faint)] shrink-0" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search media…"
+            className="bg-transparent text-[11px] flex-1 outline-none placeholder:text-[var(--kx-faint)]"
+          />
+        </div>
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value as TypeFilter)}
+          className="text-[11px] bg-[var(--kx-surface-2)] rounded-lg px-1.5 py-1 outline-none"
+        >
+          <option value="all">All types</option>
+          <option value="image">Images</option>
+          <option value="video">Videos</option>
+          <option value="audio">Audio</option>
+        </select>
+        <select
+          value={usageFilter}
+          onChange={(e) => setUsageFilter(e.target.value as UsageFilter)}
+          className="text-[11px] bg-[var(--kx-surface-2)] rounded-lg px-1.5 py-1 outline-none"
+          title={`${unusedCount} unused`}
+        >
+          <option value="all">Used + unused</option>
+          <option value="used">Used only</option>
+          <option value="unused">{`Unused only (${unusedCount})`}</option>
+        </select>
+      </div>
+
+      {rows.length === 0 ? (
+        <p className="text-[11px] text-[var(--kx-faint)] px-1 pb-2">No media matches this filter.</p>
+      ) : (
+        <div className="grid grid-cols-3 gap-2 px-1 pb-2" data-testid="media-block-grid">
+          {rows.map(({ asset, uses }) => {
+            const TypeIcon = TYPE_ICON[asset.type];
+            const thumbUrl = asset.type === 'image' ? asset.url : videoThumbUrls[asset.id];
+            return (
+              <div
+                key={asset.id}
+                data-testid="media-block-tile"
+                className="relative aspect-square rounded-lg overflow-hidden bg-[var(--kx-surface-2)] group"
+              >
+                {asset.unresolved ? (
+                  <button
+                    type="button"
+                    data-testid="media-block-relink"
+                    onClick={onOpenRelinkMedia}
+                    title="Relink this file"
+                    className="w-full h-full flex flex-col items-center justify-center gap-1 text-[var(--kx-danger)]"
+                  >
+                    <AlertCircle size={18} />
+                    <span className="text-[9px]">Offline</span>
+                    <Link2 size={11} />
+                  </button>
+                ) : thumbUrl ? (
+                  <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <TypeIcon size={20} className="text-[var(--kx-faint)]" />
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  title="Delete"
+                  onClick={() => onDeleteAsset(asset.id)}
+                  className="absolute top-1 right-1 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <Trash2 size={11} />
+                </button>
+
+                {asset.duration !== undefined && (
+                  <span className="absolute bottom-1 right-1 text-[9px] bg-black/70 text-white rounded px-1">
+                    {formatTime(asset.duration)}
+                  </span>
+                )}
+
+                <button
+                  type="button"
+                  data-testid="media-block-usage-chip"
+                  onClick={() => onHighlightUsage(asset.id)}
+                  disabled={uses === 0}
+                  title={uses === 0 ? 'Not used in any scene' : `Used in ${uses} scene(s) — click to highlight`}
+                  className={`absolute bottom-1 left-1 text-[9px] rounded px-1 ${
+                    uses === 0
+                      ? 'bg-black/40 text-[var(--kx-faint)] cursor-default'
+                      : 'bg-black/70 text-white hover:bg-black/90 cursor-pointer'
+                  }`}
+                >
+                  {uses === 0 ? 'Unused' : `${uses}×`}
+                </button>
+
+                <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/60 to-transparent px-1 py-0.5">
+                  <p className="text-[9px] text-white truncate" title={asset.name}>{asset.name}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}

@@ -40,11 +40,16 @@
 //      An unrecognized extension is now a counted `unsupportedSkipped`
 //      finding, never a silently-wrong asset type (the "unsupported ->
 //      finding" operator ruling).
+//
+// G6 Step 4 — the per-file write-through (hash, dedupe, IndexedDB + vault)
+// moved to `mediaIngest.ts`'s `ingestOneMediaFile`, shared with the Media
+// block's "add loose files / add folder" door (`ingestLooseFiles`, same
+// module). This file keeps only what is genuinely zip-specific: jszip
+// loading, traversal rejection, and the bomb caps (which need the
+// decompressed-entry loop zip alone has).
 // ---------------------------------------------------------------------------
 
-import { putAsset, deleteAsset } from './assetStore';
-import { mediaVaultImportBytes } from './mediaVaultClient';
-import { probeVideoFps } from './tauriFfmpeg';
+import { detectMediaType, ingestOneMediaFile, type MediaIngestCounts } from './mediaIngest';
 import type { Asset } from '../types';
 
 /** Typed failure for "oversized total" — distinguishable from a generic
@@ -64,16 +69,7 @@ export const ZIP_MAX_ENTRIES = 5000;
 export const ZIP_MAX_ENTRY_BYTES = 4 * 1024 * 1024 * 1024; // 4 GiB — one very large source clip
 export const ZIP_MAX_TOTAL_BYTES = 20 * 1024 * 1024 * 1024; // 20 GiB — a whole project's assets
 
-const ZIP_VIDEO_EXT = /\.(mp4|webm|mov|m4v)$/i;
-const ZIP_AUDIO_EXT = /\.(mp3|wav|ogg|m4a)$/i;
-const ZIP_IMAGE_EXT = /\.(jpe?g|png|gif|webp|bmp)$/i;
-
-export interface ZipIngestCounts {
-  imported: number;
-  deduped: number;
-  unsupportedSkipped: number;
-  failed: number;
-}
+export type ZipIngestCounts = MediaIngestCounts;
 
 export interface ZipIngestResult {
   assets: Asset[];
@@ -83,37 +79,6 @@ export interface ZipIngestResult {
   /** ONE grouped finding per ingest, not one per file — Step 4 renders this
    *  as a single Sync Log entry. */
   counts: ZipIngestCounts;
-}
-
-async function sha256Hex(bytes: Uint8Array): Promise<string> {
-  const digest = await crypto.subtle.digest('SHA-256', bytes);
-  return Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-/** Duplicated from App.tsx's own `getMediaDuration` (a tiny, pure DOM-probe
- *  helper with no App.tsx-specific dependency) rather than imported — same
- *  small-helper-duplication convention this codebase already uses in Rust
- *  (`now_millis`, `write_atomic_bytes`) to avoid a cross-module coupling for
- *  a few lines. */
-function getMediaDuration(url: string, type: 'video' | 'audio'): Promise<number> {
-  return new Promise((resolve) => {
-    const media = type === 'video' ? document.createElement('video') : document.createElement('audio');
-    media.src = url;
-    media.onloadedmetadata = () => resolve(media.duration);
-    media.onerror = () => resolve(0);
-  });
-}
-
-/** Mirrors App.tsx's own `resolveVideoNativeFps`: a failure here is
- *  non-fatal — fps auto-match is a convenience, not something the sync flow
- *  depends on — so this swallows errors and returns undefined. */
-async function resolveVideoNativeFps(blob: Blob): Promise<number | undefined> {
-  try {
-    return await probeVideoFps(blob);
-  } catch (err) {
-    console.warn('[zipIngest] fps probe failed, leaving nativeFps unset:', err);
-    return undefined;
-  }
 }
 
 /**
@@ -174,10 +139,7 @@ export async function ingestZip(projectId: string, zipFile: File): Promise<ZipIn
 
     const filename = fileData.name;
     const name = filename.split('/').pop() || filename;
-    let type: Asset['type'] | undefined;
-    if (ZIP_VIDEO_EXT.test(filename)) type = 'video';
-    else if (ZIP_AUDIO_EXT.test(filename)) type = 'audio';
-    else if (ZIP_IMAGE_EXT.test(filename)) type = 'image';
+    const type = detectMediaType(filename);
     if (type === undefined) {
       counts.unsupportedSkipped += 1;
       continue;
@@ -192,43 +154,11 @@ export async function ingestZip(projectId: string, zipFile: File): Promise<ZipIn
       throw new ZipTooLargeError(`This zip's total size exceeds the ${ZIP_MAX_TOTAL_BYTES}-byte limit.`);
     }
 
-    const bytes = new Uint8Array(await blob.arrayBuffer());
-    const contentHash = await sha256Hex(bytes);
-    if (seenHashes.has(contentHash)) {
-      counts.deduped += 1;
-      continue;
+    const asset = await ingestOneMediaFile(projectId, name, blob, type, seenHashes, counts);
+    if (asset) {
+      assets.push(asset);
+      if (asset.type === 'audio' && audioAssetId === undefined) audioAssetId = asset.id;
     }
-    seenHashes.add(contentHash);
-
-    const id = crypto.randomUUID();
-    const mimeType = blob.type || 'application/octet-stream';
-    try {
-      await putAsset(projectId, id, blob, { name, mimeType });
-    } catch (err) {
-      console.error('[ingestZip] Failed to persist to IndexedDB, skipping:', name, err);
-      counts.failed += 1;
-      continue;
-    }
-    try {
-      await mediaVaultImportBytes(projectId, bytes, name, mimeType);
-    } catch (err) {
-      // Never leave a file IndexedDB-only with a failed vault write — same
-      // "never swallow a write failure" doctrine `writeAssetNative` already
-      // follows for loose-file import. `null` (outside Tauri) is not a
-      // failure; only a genuine throw is.
-      console.error('[ingestZip] Failed to write to media vault, skipping:', name, err);
-      await deleteAsset(projectId, id).catch(() => {});
-      counts.failed += 1;
-      continue;
-    }
-
-    const nativeFps = type === 'video' ? await resolveVideoNativeFps(blob) : undefined;
-    const url = URL.createObjectURL(blob);
-    const duration = type === 'video' ? await getMediaDuration(url, 'video') : undefined;
-    const asset: Asset = { id, name, url, type, file: new File([blob], name), nativeFps, duration, addedAt: Date.now() };
-    assets.push(asset);
-    counts.imported += 1;
-    if (type === 'audio' && audioAssetId === undefined) audioAssetId = id;
   }
 
   return { assets, audioAssetId, counts };

@@ -54,6 +54,7 @@ import {
   getStagedFilesForProject,
 } from '../services/stagedFilesStore';
 import { shouldClearStagedAfterSync } from '../services/applySyncAbort';
+import { MediaBlock, type MediaIngestOutcome } from './MediaBlock';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -346,6 +347,12 @@ interface Props {
   onDeleteVoiceover: () => void;
   /** Opens the recovery/relink screen for the current project's assets. */
   onOpenRelinkMedia: () => void;
+  // G6 Step 4 — the Media block, below the 4 slots.
+  /** Switches to the Segments tab and selects every segment using this
+   *  asset — the Media block's "used in N scenes" chip click target. */
+  onHighlightUsage: (assetId: string) => void;
+  onIngestComplete: (outcome: MediaIngestOutcome) => void;
+  onIngestError: (message: string) => void;
   // File actions
   /** Starts an Apply Sync. Takes NO argument on purpose (WS2-50): the staged
    *  files are read by `App.tsx`'s single entry point from the shared live ref
@@ -505,6 +512,9 @@ export function DropZonePanel({
   onDeleteAllAssets,
   onDeleteVoiceover,
   onOpenRelinkMedia,
+  onHighlightUsage,
+  onIngestComplete,
+  onIngestError,
   onApplySync,
   onStagedFilesChange,
   stagedFilesClearSignal,
@@ -1459,6 +1469,18 @@ export function DropZonePanel({
                 </div>
               )}
             </div>
+
+            {/* G6 Step 4 — the Media block, below the 4 slots. */}
+            <MediaBlock
+              projectId={projectId}
+              assets={assets}
+              segments={segments}
+              onDeleteAsset={onDeleteAsset}
+              onOpenRelinkMedia={onOpenRelinkMedia}
+              onHighlightUsage={onHighlightUsage}
+              onIngestComplete={onIngestComplete}
+              onIngestError={onIngestError}
+            />
 
           </div>{/* end scrollable */}
 

@@ -1,0 +1,119 @@
+// @vitest-environment jsdom
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const mockPutAsset = vi.fn();
+const mockDeleteAsset = vi.fn();
+vi.mock('./assetStore', () => ({
+  putAsset: (...args: unknown[]) => mockPutAsset(...args),
+  deleteAsset: (...args: unknown[]) => mockDeleteAsset(...args),
+}));
+
+const mockMediaVaultImportBytes = vi.fn();
+vi.mock('./mediaVaultClient', () => ({
+  mediaVaultImportBytes: (...args: unknown[]) => mockMediaVaultImportBytes(...args),
+}));
+
+vi.mock('./tauriFfmpeg', () => ({ probeVideoFps: vi.fn() }));
+
+import { detectMediaType, ingestOneMediaFile, ingestLooseFiles, type MediaIngestCounts } from './mediaIngest';
+
+const PROJECT_ID = 'proj-1';
+
+beforeEach(() => {
+  mockPutAsset.mockReset().mockResolvedValue(undefined);
+  mockDeleteAsset.mockReset().mockResolvedValue(undefined);
+  mockMediaVaultImportBytes.mockReset().mockResolvedValue(null);
+});
+
+function emptyCounts(): MediaIngestCounts {
+  return { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 };
+}
+
+describe('detectMediaType', () => {
+  it('recognizes video/audio/image extensions and returns undefined for anything else', () => {
+    expect(detectMediaType('clip.mp4')).toBe('video');
+    expect(detectMediaType('song.mp3')).toBe('audio');
+    expect(detectMediaType('photo.jpg')).toBe('image');
+    expect(detectMediaType('notes.txt')).toBeUndefined();
+    expect(detectMediaType('.DS_Store')).toBeUndefined();
+  });
+});
+
+describe('ingestOneMediaFile — the shared write-through (zip + loose-file/folder ingest)', () => {
+  it('writes through IndexedDB and the vault, returning a fully-formed Asset', async () => {
+    const counts = emptyCounts();
+    const asset = await ingestOneMediaFile(
+      PROJECT_ID, 'photo.jpg', new Blob([new Uint8Array([1, 2, 3])]), 'image', new Set(), counts,
+    );
+    expect(asset).not.toBeNull();
+    expect(asset!.name).toBe('photo.jpg');
+    expect(asset!.type).toBe('image');
+    expect(counts).toEqual({ imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 });
+    expect(mockPutAsset).toHaveBeenCalledTimes(1);
+    expect(mockMediaVaultImportBytes).toHaveBeenCalledTimes(1);
+  });
+
+  it('dedupes against a caller-supplied seenHashes set, across calls', async () => {
+    const counts = emptyCounts();
+    const seenHashes = new Set<string>();
+    const bytes = new Uint8Array([9, 9, 9]);
+    const first = await ingestOneMediaFile(PROJECT_ID, 'a.jpg', new Blob([bytes]), 'image', seenHashes, counts);
+    const second = await ingestOneMediaFile(PROJECT_ID, 'b.jpg', new Blob([bytes]), 'image', seenHashes, counts);
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+    expect(counts).toEqual({ imported: 1, deduped: 1, unsupportedSkipped: 0, failed: 0 });
+  });
+
+  it('rolls back the IndexedDB write when the vault write fails, never leaving it IndexedDB-only', async () => {
+    mockMediaVaultImportBytes.mockRejectedValueOnce(new Error('vault down'));
+    const counts = emptyCounts();
+    const asset = await ingestOneMediaFile(
+      PROJECT_ID, 'photo.jpg', new Blob([new Uint8Array([1])]), 'image', new Set(), counts,
+    );
+    expect(asset).toBeNull();
+    expect(counts.failed).toBe(1);
+    expect(mockDeleteAsset).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('ingestLooseFiles — the Media block\'s "add loose files / add folder" door', () => {
+  it('imports every supported file and counts unsupported ones as unsupportedSkipped', async () => {
+    // Images and audio only here — jsdom's <video>/<audio> elements never
+    // fire loadedmetadata/error for a fake blob URL, so a video fixture
+    // would hang `getMediaDuration` forever. Video-extension recognition is
+    // already covered by the `detectMediaType` unit test above.
+    const files = [
+      new File([new Uint8Array([1])], 'photo.jpg'),
+      new File([new Uint8Array([2])], 'notes.txt'),
+      new File([new Uint8Array([3, 3])], 'voice.mp3'),
+    ];
+    const result = await ingestLooseFiles(PROJECT_ID, files);
+    expect(result.counts).toEqual({ imported: 2, deduped: 0, unsupportedSkipped: 1, failed: 0 });
+    expect(result.assets.map(a => a.name).sort()).toEqual(['photo.jpg', 'voice.mp3']);
+  });
+
+  it('a folder picker\'s duplicate files (same content) dedupe within the batch, same as zip ingest', async () => {
+    const bytes = new Uint8Array([7, 7, 7]);
+    const files = [
+      new File([bytes], 'a.jpg'),
+      new File([bytes], 'a-copy.jpg'),
+    ];
+    const result = await ingestLooseFiles(PROJECT_ID, files);
+    expect(result.counts).toEqual({ imported: 1, deduped: 1, unsupportedSkipped: 0, failed: 0 });
+  });
+
+  it('the first audio file becomes audioAssetId', async () => {
+    const files = [
+      new File([new Uint8Array([1])], 'photo.jpg'),
+      new File([new Uint8Array([2])], 'voice.mp3'),
+    ];
+    const result = await ingestLooseFiles(PROJECT_ID, files);
+    const audioAsset = result.assets.find(a => a.type === 'audio');
+    expect(result.audioAssetId).toBe(audioAsset?.id);
+  });
+});

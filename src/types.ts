@@ -787,7 +787,18 @@ export type SyncLogEntryType =
    *  restart-persisted), this entry is for the record. severity:'warning',
    *  with `fixHint` naming the action. See `syncLog.ts`'s
    *  `buildWhisperModelFailureEntry`. */
-  | 'whisper-model-failure';
+  | 'whisper-model-failure'
+  /** 'media-import' — G6 Step 4. ONE grouped finding per media-vault ingest
+   *  (zip / loose files / folder — `services/mediaIngest.ts`,
+   *  `services/zipIngest.ts`), not one entry per file: the
+   *  imported/deduped/unsupportedSkipped/failed counts are folded into
+   *  `message` itself (see `syncLog.ts`'s `buildMediaImportEntry`) rather
+   *  than a new structured field, since nothing else renders one for this
+   *  type. NOT tied to an Apply Sync run — the Media block's "add media"
+   *  door can fire this at any time, so `syncRunId` here is a freshly minted
+   *  grouping key for this one ingest, not a real sync run's id.
+   *  severity:'info' when nothing failed, 'warning' when `failed > 0`. */
+  | 'media-import';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */

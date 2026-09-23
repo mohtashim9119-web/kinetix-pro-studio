@@ -36,6 +36,7 @@ import {
   buildFaPreflightEntry,
   buildFaGateClosedEntry,
   buildFaNotCompiledEntry,
+  buildMediaImportEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -1397,5 +1398,34 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
     expect(entry!.message).toContain('Estimated');
     expect(entry!.owningRule).toBe('FA');
     expect(buildCtcInfeasibleLogEntry(RUN_ID, tokens, [], AT)).toBeUndefined();
+  });
+});
+
+describe('buildMediaImportEntry — G6 Step 4: one grouped finding per media-vault ingest', () => {
+  it('is info severity with no fixHint when nothing failed', () => {
+    const entry = buildMediaImportEntry(RUN_ID, 'zip', { imported: 3, deduped: 1, unsupportedSkipped: 0, failed: 0 }, AT);
+    expect(entry.type).toBe('media-import');
+    expect(entry.severity).toBe('info');
+    expect(entry.fixHint).toBeUndefined();
+    expect(entry.message).toBe('Zip import: 3 imported, 1 deduped.');
+  });
+
+  it('is warning severity with a fixHint when at least one file failed', () => {
+    const entry = buildMediaImportEntry(RUN_ID, 'files', { imported: 2, deduped: 0, unsupportedSkipped: 1, failed: 1 }, AT);
+    expect(entry.severity).toBe('warning');
+    expect(entry.fixHint).toBeTruthy();
+    expect(entry.message).toBe('File import: 2 imported, 1 unsupported, 1 failed.');
+  });
+
+  it('names the source (zip / files / folder) distinctly', () => {
+    const counts = { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 };
+    expect(buildMediaImportEntry(RUN_ID, 'zip', counts, AT).message).toContain('Zip import');
+    expect(buildMediaImportEntry(RUN_ID, 'files', counts, AT).message).toContain('File import');
+    expect(buildMediaImportEntry(RUN_ID, 'folder', counts, AT).message).toContain('Folder import');
+  });
+
+  it('omits zero-valued counts from the message, keeping only imported when nothing else happened', () => {
+    const entry = buildMediaImportEntry(RUN_ID, 'zip', { imported: 5, deduped: 0, unsupportedSkipped: 0, failed: 0 }, AT);
+    expect(entry.message).toBe('Zip import: 5 imported.');
   });
 });

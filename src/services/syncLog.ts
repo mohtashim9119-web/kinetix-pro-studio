@@ -584,6 +584,40 @@ export function buildWhisperModelFailureEntry(
 }
 
 /**
+ * G6 Step 4 — THE MEDIA-IMPORT ENTRY. One grouped finding per media-vault
+ * ingest (zip / loose files / folder), never one entry per file — mirrors
+ * `zipIngest.ts`/`mediaIngest.ts`'s own `counts` shape exactly, so a caller
+ * never has to reshape anything to log it. `syncRunId` here is a freshly
+ * minted grouping key (`mintSyncLogId()`), not a real Apply Sync run's id —
+ * the Media block's "add media" door can fire this independent of syncing.
+ * severity:'info' when nothing failed; 'warning' when `counts.failed > 0`,
+ * since that means at least one file genuinely did not make it in.
+ */
+export function buildMediaImportEntry(
+  syncRunId: string,
+  source: 'zip' | 'files' | 'folder',
+  counts: { imported: number; deduped: number; unsupportedSkipped: number; failed: number },
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const { imported, deduped, unsupportedSkipped, failed } = counts;
+  const sourceLabel = source === 'zip' ? 'Zip import' : source === 'folder' ? 'Folder import' : 'File import';
+  const parts = [`${imported} imported`];
+  if (deduped > 0) parts.push(`${deduped} deduped`);
+  if (unsupportedSkipped > 0) parts.push(`${unsupportedSkipped} unsupported`);
+  if (failed > 0) parts.push(`${failed} failed`);
+  return makeSyncLogEntry(
+    syncRunId,
+    'media-import',
+    `${sourceLabel}: ${parts.join(', ')}.`,
+    {
+      severity: failed > 0 ? 'warning' : 'info',
+      ...(failed > 0 ? { fixHint: 'Check the console for which file(s) failed and why, then try adding them again.' } : {}),
+    },
+    timestamp,
+  );
+}
+
+/**
  * THE FA PRE-FLIGHT ENTRY (WS1 Session M). Emitted once per Apply Sync when the
  * FA gate is OPEN, BEFORE inference, recording whether forced alignment is ready
  * (runtime + model + resolved language). `info` when ready — the pipeline is set
