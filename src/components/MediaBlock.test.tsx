@@ -29,7 +29,7 @@ vi.mock('../services/assetStore', () => ({
   getAsset: vi.fn(async () => null),
 }));
 
-import { MediaBlock } from './MediaBlock';
+import { MediaBlock, usageCount } from './MediaBlock';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -91,7 +91,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={[]} segments={[]}
+          projectId="p1" assets={[]} segments={[]} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
           onIngestComplete={noop} onIngestError={noop}
         />,
@@ -106,7 +106,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={assets} segments={[]}
+          projectId="p1" assets={assets} segments={[]} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
           onIngestComplete={noop} onIngestError={noop}
         />,
@@ -125,7 +125,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={assets} segments={segments}
+          projectId="p1" assets={assets} segments={segments} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
           onIngestComplete={noop} onIngestError={noop}
         />,
@@ -143,7 +143,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={assets} segments={segments}
+          projectId="p1" assets={assets} segments={segments} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={onHighlightUsage}
           onIngestComplete={noop} onIngestError={noop}
         />,
@@ -161,7 +161,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={assets} segments={[]}
+          projectId="p1" assets={assets} segments={[]} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={onHighlightUsage}
           onIngestComplete={noop} onIngestError={noop}
         />,
@@ -178,7 +178,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={assets} segments={[]}
+          projectId="p1" assets={assets} segments={[]} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={onOpenRelinkMedia} onHighlightUsage={noop}
           onIngestComplete={noop} onIngestError={noop}
         />,
@@ -196,7 +196,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={assets} segments={[]}
+          projectId="p1" assets={assets} segments={[]} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
           onIngestComplete={noop} onIngestError={noop}
         />,
@@ -219,7 +219,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={[makeAsset({ id: 'a1' })]} segments={[]}
+          projectId="p1" assets={[makeAsset({ id: 'a1' })]} segments={[]} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
           onIngestComplete={onIngestComplete} onIngestError={noop}
         />,
@@ -261,7 +261,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={existing} segments={[]}
+          projectId="p1" assets={existing} segments={[]} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
           onIngestComplete={noop} onIngestError={noop}
         />,
@@ -286,7 +286,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={existing} segments={[]}
+          projectId="p1" assets={existing} segments={[]} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
           onIngestComplete={noop} onIngestError={noop}
         />,
@@ -307,7 +307,7 @@ describe('MediaBlock', () => {
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={[makeAsset({ id: 'a1' })]} segments={[]}
+          projectId="p1" assets={[makeAsset({ id: 'a1' })]} segments={[]} voiceoverId={undefined}
           onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
           onIngestComplete={noop} onIngestError={onIngestError}
         />,
@@ -321,13 +321,66 @@ describe('MediaBlock', () => {
     expect(onIngestError).toHaveBeenCalledTimes(1);
   });
 
+  // G6 polish item 4 — the project's voiceover is spine, not presentation
+  // media. OLD BUG (documented via the underlying primitive, since the
+  // component itself is now fixed and can no longer reproduce it): plain
+  // segment-reference counting alone reads a voiceover asset as "Unused"
+  // (0) because a voiceover is referenced via `project.voiceoverId`, never
+  // via any `VideoSegment.assetId` — this is exactly why deleting it from
+  // the old, unfiltered media grid both killed the timeline voiceover
+  // (handleDeleteAsset clears voiceoverId on delete, App.tsx:6274) AND the
+  // grid showed it as "Unused" right up until the delete.
+  it('OLD BUG (documented): plain segment-reference counting alone reads a voiceover asset as unused', () => {
+    expect(usageCount([], 'voice-1', undefined)).toBe(0);
+  });
+
+  it('FIXED (4b, defense in depth): a spine-referenced asset always counts as used, never 0, even with no segment references', () => {
+    expect(usageCount([], 'voice-1', 'voice-1')).toBeGreaterThan(0);
+  });
+
+  it('FIXED (4a): the project voiceover is excluded from the grid entirely — no tile, no delete affordance', async () => {
+    const assets = [
+      makeAsset({ id: 'voice-1', type: 'audio', name: 'narration.mp3' }),
+      makeAsset({ id: 'img-1', name: 'photo.jpg' }),
+    ];
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1" assets={assets} segments={[]} voiceoverId="voice-1"
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop}
+        />,
+      );
+    });
+    const tiles = container.querySelectorAll('[data-testid="media-block-tile"]');
+    expect(tiles.length).toBe(1);
+    expect(container.textContent).not.toContain('narration.mp3');
+    expect(container.querySelector('h3')?.textContent).toBe('Media (1)');
+  });
+
+  it('FIXED (4a): a project whose ONLY asset is the voiceover renders nothing, same as an empty project', async () => {
+    const assets = [makeAsset({ id: 'voice-1', type: 'audio', name: 'narration.mp3' })];
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1" assets={assets} segments={[]} voiceoverId="voice-1"
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop}
+        />,
+      );
+    });
+    expect(container.querySelector('[data-testid="media-block"]')).toBeNull();
+  });
+
   it('deleting a tile calls onDeleteAsset with that asset\'s id', async () => {
     const onDeleteAsset = vi.fn();
     root = createRoot(container);
     await act(async () => {
       root.render(
         <MediaBlock
-          projectId="p1" assets={[makeAsset({ id: 'a1' })]} segments={[]}
+          projectId="p1" assets={[makeAsset({ id: 'a1' })]} segments={[]} voiceoverId={undefined}
           onDeleteAsset={onDeleteAsset} onOpenRelinkMedia={noop} onHighlightUsage={noop}
           onIngestComplete={noop} onIngestError={noop}
         />,

@@ -1475,6 +1475,7 @@ export function DropZonePanel({
               projectId={projectId}
               assets={assets}
               segments={segments}
+              voiceoverId={voiceoverId}
               onDeleteAsset={onDeleteAsset}
               onOpenRelinkMedia={onOpenRelinkMedia}
               onHighlightUsage={onHighlightUsage}

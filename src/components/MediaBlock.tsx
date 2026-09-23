@@ -52,6 +52,11 @@ interface MediaBlockProps {
   projectId: string;
   assets: Asset[];
   segments: VideoSegment[];
+  /** G6 polish item 4 — the project's spine voiceover (slot 3's own home,
+   *  above this block). Excluded from the grid entirely: no tile, no delete
+   *  affordance here, no way to kill the timeline voiceover from the media
+   *  door — use slot 3 / "Delete voiceover" for that. */
+  voiceoverId: string | undefined;
   onDeleteAsset: (assetId: string) => void;
   onOpenRelinkMedia: () => void;
   /** Switches to the Segments tab and selects every segment using this
@@ -70,8 +75,15 @@ const TYPE_ICON: Record<Asset['type'], typeof Film> = {
   audio: Music,
 };
 
-function usageCount(segments: VideoSegment[], assetId: string): number {
-  return segments.filter(s => s.assetId === assetId).length;
+/**
+ * G6 polish item 4b — defense in depth. `voiceoverId` (spine reference) is
+ * ALWAYS counted as used, on top of any segment references, so an asset the
+ * project's voiceover is pointed at can never read "Unused" — even if some
+ * future caller passes it into this grid despite item 4a's exclusion.
+ */
+export function usageCount(segments: VideoSegment[], assetId: string, voiceoverId: string | undefined): number {
+  const segmentUses = segments.filter(s => s.assetId === assetId).length;
+  return assetId === voiceoverId ? segmentUses + 1 : segmentUses;
 }
 
 /** Hashes a video asset's bytes (from its staged `File`, falling back to the
@@ -105,6 +117,7 @@ export function MediaBlock({
   projectId,
   assets,
   segments,
+  voiceoverId,
   onDeleteAsset,
   onOpenRelinkMedia,
   onHighlightUsage,
@@ -122,16 +135,26 @@ export function MediaBlock({
   const folderInputRef = useRef<HTMLInputElement>(null);
   const zipInputRef = useRef<HTMLInputElement>(null);
 
+  // G6 polish item 4a — the project's voiceover is spine, not presentation
+  // media: slot 3 (above this block) is its home, never this grid.
+  const mediaAssets = useMemo(
+    () => assets.filter(a => a.id !== voiceoverId),
+    [assets, voiceoverId],
+  );
+
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return assets
-      .map(asset => ({ asset, uses: usageCount(segments, asset.id) }))
+    return mediaAssets
+      .map(asset => ({ asset, uses: usageCount(segments, asset.id, voiceoverId) }))
       .filter(({ asset }) => typeFilter === 'all' || asset.type === typeFilter)
       .filter(({ uses }) => usageFilter === 'all' || (usageFilter === 'used' ? uses > 0 : uses === 0))
       .filter(({ asset }) => q === '' || asset.name.toLowerCase().includes(q));
-  }, [assets, segments, search, typeFilter, usageFilter]);
+  }, [mediaAssets, segments, search, typeFilter, usageFilter, voiceoverId]);
 
-  const unusedCount = useMemo(() => assets.filter(a => usageCount(segments, a.id) === 0).length, [assets, segments]);
+  const unusedCount = useMemo(
+    () => mediaAssets.filter(a => usageCount(segments, a.id, voiceoverId) === 0).length,
+    [mediaAssets, segments, voiceoverId],
+  );
 
   // Lazily generate/fetch a thumbnail for each VISIBLE video row, once,
   // caching the resulting blob URL for the component's lifetime — not
@@ -197,7 +220,7 @@ export function MediaBlock({
     void runIngest('zip', () => ingestZip(projectId, file, existingHashes));
   }, [projectId, runIngest, existingHashes]);
 
-  if (assets.length === 0) {
+  if (mediaAssets.length === 0) {
     return null;
   }
 
@@ -205,7 +228,7 @@ export function MediaBlock({
     <div className="border-t border-[var(--kx-border)] pt-3 mt-1" data-testid="media-block">
       <div className="flex items-center justify-between px-1 mb-2">
         <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--kx-faint)]">
-          Media ({assets.length})
+          Media ({mediaAssets.length})
         </h3>
         <div className="flex items-center gap-1.5">
           <button
