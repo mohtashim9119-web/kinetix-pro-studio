@@ -43,6 +43,9 @@ export interface MediaIngestOutcome {
   audioAssetId: string | undefined;
   counts: MediaIngestCounts;
   source: 'zip' | 'files' | 'folder';
+  /** Names of files dropped as duplicates of an already-in-project asset or
+   *  of another file in the same import (G6 polish item 1). */
+  duplicateNames: string[];
 }
 
 interface MediaBlockProps {
@@ -148,9 +151,21 @@ export function MediaBlock({
     return () => { cancelled = true; };
   }, [rows, projectId]);
 
+  // G6 polish item 1 — every ingest door needs the project's own already-
+  // imported content hashes to dedupe AGAINST THE PROJECT, not just within
+  // one ingest call's own batch (the bug: two separate "add files" clicks
+  // for the same bytes each got a fresh dedup set, so the second stacked a
+  // duplicate Asset record). `.filter(Boolean)` drops assets not yet
+  // hashed (pre-v6, backfill not yet run) — those simply can't be matched,
+  // same as before this fix.
+  const existingHashes = useMemo(
+    () => assets.map(a => a.contentHash).filter((h): h is string => !!h),
+    [assets],
+  );
+
   const runIngest = useCallback(async (
     source: 'zip' | 'files' | 'folder',
-    run: () => Promise<{ assets: Asset[]; audioAssetId: string | undefined; counts: MediaIngestCounts }>,
+    run: () => Promise<{ assets: Asset[]; audioAssetId: string | undefined; counts: MediaIngestCounts; duplicateNames: string[] }>,
   ) => {
     setBusy(true);
     try {
@@ -169,18 +184,18 @@ export function MediaBlock({
 
   const handleFilesChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    void runIngest('files', () => ingestLooseFiles(projectId, Array.from(fileList)));
-  }, [projectId, runIngest]);
+    void runIngest('files', () => ingestLooseFiles(projectId, Array.from(fileList), existingHashes));
+  }, [projectId, runIngest, existingHashes]);
 
   const handleFolderChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    void runIngest('folder', () => ingestLooseFiles(projectId, Array.from(fileList)));
-  }, [projectId, runIngest]);
+    void runIngest('folder', () => ingestLooseFiles(projectId, Array.from(fileList), existingHashes));
+  }, [projectId, runIngest, existingHashes]);
 
   const handleZipChosen = useCallback((file: File | undefined) => {
     if (!file) return;
-    void runIngest('zip', () => ingestZip(projectId, file));
-  }, [projectId, runIngest]);
+    void runIngest('zip', () => ingestZip(projectId, file, existingHashes));
+  }, [projectId, runIngest, existingHashes]);
 
   if (assets.length === 0) {
     return null;

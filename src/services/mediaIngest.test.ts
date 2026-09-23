@@ -124,4 +124,40 @@ describe('ingestLooseFiles — the Media block\'s "add loose files / add folder"
     const audioAsset = result.assets.find(a => a.type === 'audio');
     expect(result.audioAssetId).toBe(audioAsset?.id);
   });
+
+  // G6 polish item 1 — OLD BUG proof: two separate `ingestLooseFiles` calls
+  // (i.e. two separate "add files" clicks, exactly what MediaBlock used to
+  // do — no `existingHashes` arg existed at all) each get their own fresh
+  // dedup set, so the SAME bytes imported twice via two doors produces TWO
+  // Asset records sharing one contentHash. This is intentional/expected
+  // when the caller passes nothing — it documents why `existingHashes` had
+  // to be threaded through from the caller (MediaBlock), not fixed here.
+  it('OLD BUG (documented): two separate calls with no existingHashes each dedupe only within their own batch, stacking a duplicate Asset', async () => {
+    const bytes = new Uint8Array([5, 5, 5]);
+    const first = await ingestLooseFiles(PROJECT_ID, [new File([bytes], 'clip.mp3')]);
+    const second = await ingestLooseFiles(PROJECT_ID, [new File([bytes], 'clip.mp3')]);
+    expect(first.assets).toHaveLength(1);
+    expect(second.assets).toHaveLength(1); // bug: not deduped against the first call
+    expect(second.assets[0]!.contentHash).toBe(first.assets[0]!.contentHash);
+    expect(second.assets[0]!.id).not.toBe(first.assets[0]!.id);
+  });
+
+  it('FIXED: seeding existingHashes with the first call\'s contentHash makes the second import dedupe, producing NO new Asset record', async () => {
+    const bytes = new Uint8Array([5, 5, 5]);
+    const first = await ingestLooseFiles(PROJECT_ID, [new File([bytes], 'clip.mp3')]);
+    const existingHashes = first.assets.map(a => a.contentHash!);
+    const second = await ingestLooseFiles(PROJECT_ID, [new File([bytes], 'clip.mp3')], existingHashes);
+    expect(second.assets).toHaveLength(0);
+    expect(second.counts).toEqual({ imported: 0, deduped: 1, unsupportedSkipped: 0, failed: 0 });
+    expect(second.duplicateNames).toEqual(['clip.mp3']);
+  });
+
+  it('different bytes, same name -> both kept (not treated as a duplicate)', async () => {
+    const first = await ingestLooseFiles(PROJECT_ID, [new File([new Uint8Array([1])], 'clip.mp3')]);
+    const existingHashes = first.assets.map(a => a.contentHash!);
+    const second = await ingestLooseFiles(PROJECT_ID, [new File([new Uint8Array([2])], 'clip.mp3')], existingHashes);
+    expect(second.assets).toHaveLength(1);
+    expect(second.counts).toEqual({ imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 });
+    expect(second.duplicateNames).toEqual([]);
+  });
 });

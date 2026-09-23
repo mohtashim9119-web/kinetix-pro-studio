@@ -212,6 +212,7 @@ describe('MediaBlock', () => {
     mockIngestLooseFiles.mockResolvedValue({
       assets: [asset], audioAssetId: undefined,
       counts: { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 },
+      duplicateNames: [],
     });
     const onIngestComplete = vi.fn();
     root = createRoot(container);
@@ -229,12 +230,74 @@ describe('MediaBlock', () => {
     setInputFiles(fileInput, [file]);
     await act(async () => { fileInput.dispatchEvent(new Event('change', { bubbles: true })); });
 
-    expect(mockIngestLooseFiles).toHaveBeenCalledWith('p1', [file]);
+    expect(mockIngestLooseFiles).toHaveBeenCalledWith('p1', [file], []);
     expect(onIngestComplete).toHaveBeenCalledWith({
       assets: [asset], audioAssetId: undefined,
       counts: { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 },
+      duplicateNames: [],
       source: 'files',
     });
+  });
+
+  // G6 polish item 1 — OLD BUG: this call used to be
+  // `mockIngestLooseFiles).toHaveBeenCalledWith('p1', [file])`, i.e. the
+  // project's own already-imported content hashes were never threaded
+  // through, so a second "add files" for identical bytes got a fresh dedup
+  // set every time and silently stacked a duplicate Asset record. Fixed by
+  // passing every existing asset's `contentHash` as ingestLooseFiles'/
+  // ingestZip's third argument.
+  it('passes the project\'s existing asset content hashes to ingestLooseFiles, so a re-import of identical bytes dedupes against the project', async () => {
+    mockIngestLooseFiles.mockResolvedValue({
+      assets: [], audioAssetId: undefined,
+      counts: { imported: 0, deduped: 1, unsupportedSkipped: 0, failed: 0 },
+      duplicateNames: ['photo.jpg'],
+    });
+    const existing = [
+      makeAsset({ id: 'a1', contentHash: 'hash-a' }),
+      makeAsset({ id: 'a2', contentHash: 'hash-b' }),
+      makeAsset({ id: 'a3' }), // no contentHash yet (pre-backfill) — must not crash/appear as 'undefined'
+    ];
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1" assets={existing} segments={[]}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop}
+        />,
+      );
+    });
+    const fileInput = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
+    const file = new File([new Uint8Array([1])], 'photo.jpg');
+    setInputFiles(fileInput, [file]);
+    await act(async () => { fileInput.dispatchEvent(new Event('change', { bubbles: true })); });
+
+    expect(mockIngestLooseFiles).toHaveBeenCalledWith('p1', [file], ['hash-a', 'hash-b']);
+  });
+
+  it('passes the project\'s existing asset content hashes to ingestZip too', async () => {
+    mockIngestZip.mockResolvedValue({
+      assets: [], audioAssetId: undefined,
+      counts: { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 },
+      duplicateNames: [],
+    });
+    const existing = [makeAsset({ id: 'a1', contentHash: 'hash-a' })];
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1" assets={existing} segments={[]}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop}
+        />,
+      );
+    });
+    const zipInput = container.querySelector('input[accept=".zip"]') as HTMLInputElement;
+    const file = new File([new Uint8Array([1])], 'archive.zip');
+    setInputFiles(zipInput, [file]);
+    await act(async () => { zipInput.dispatchEvent(new Event('change', { bubbles: true })); });
+
+    expect(mockIngestZip).toHaveBeenCalledWith('p1', file, ['hash-a']);
   });
 
   it('a rejected zip ingest reports its message via onIngestError, never throws uncaught', async () => {

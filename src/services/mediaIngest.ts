@@ -83,11 +83,13 @@ export async function ingestOneMediaFile(
   type: Asset['type'],
   seenHashes: Set<string>,
   counts: MediaIngestCounts,
+  duplicateNames?: string[],
 ): Promise<Asset | null> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const contentHash = await sha256Hex(bytes);
   if (seenHashes.has(contentHash)) {
     counts.deduped += 1;
+    duplicateNames?.push(name);
     return null;
   }
   seenHashes.add(contentHash);
@@ -125,6 +127,10 @@ export interface LooseFilesIngestResult {
   assets: Asset[];
   audioAssetId: string | undefined;
   counts: MediaIngestCounts;
+  /** Names of files this call dropped as duplicates (of `existingHashes` OR
+   *  of another file earlier in this same batch) — for a caller that wants
+   *  to name the duplicate rather than just count it (G6 polish item 1). */
+  duplicateNames: string[];
 }
 
 /**
@@ -133,12 +139,24 @@ export interface LooseFilesIngestResult {
  * different front end for gathering candidate files). Sequential, same as
  * `ingestZip`, for the same reason: bounding memory use file-by-file rather
  * than decompressing/reading everything into memory via `Promise.all` first.
+ *
+ * `existingHashes` (G6 polish item 1) seeds the dedup set with the content
+ * hashes already present in the project — without this, dedup only ever
+ * caught duplicates WITHIN one ingest call (a fresh `Set` per call), so
+ * importing the same file twice via two separate "add media" actions
+ * silently stacked a second Asset record with the same bytes. Callers
+ * should pass every already-imported asset's `contentHash`.
  */
-export async function ingestLooseFiles(projectId: string, files: File[]): Promise<LooseFilesIngestResult> {
+export async function ingestLooseFiles(
+  projectId: string,
+  files: File[],
+  existingHashes: Iterable<string> = [],
+): Promise<LooseFilesIngestResult> {
   const counts: MediaIngestCounts = { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 };
   const assets: Asset[] = [];
   let audioAssetId: string | undefined;
-  const seenHashes = new Set<string>();
+  const seenHashes = new Set<string>(existingHashes);
+  const duplicateNames: string[] = [];
 
   for (const file of files) {
     const type = detectMediaType(file.name);
@@ -146,12 +164,12 @@ export async function ingestLooseFiles(projectId: string, files: File[]): Promis
       counts.unsupportedSkipped += 1;
       continue;
     }
-    const asset = await ingestOneMediaFile(projectId, file.name, file, type, seenHashes, counts);
+    const asset = await ingestOneMediaFile(projectId, file.name, file, type, seenHashes, counts, duplicateNames);
     if (asset) {
       assets.push(asset);
       if (asset.type === 'audio' && audioAssetId === undefined) audioAssetId = asset.id;
     }
   }
 
-  return { assets, audioAssetId, counts };
+  return { assets, audioAssetId, counts, duplicateNames };
 }

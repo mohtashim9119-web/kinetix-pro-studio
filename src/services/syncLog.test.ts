@@ -1428,4 +1428,20 @@ describe('buildMediaImportEntry — G6 Step 4: one grouped finding per media-vau
     const entry = buildMediaImportEntry(RUN_ID, 'zip', { imported: 5, deduped: 0, unsupportedSkipped: 0, failed: 0 }, AT);
     expect(entry.message).toBe('Zip import: 5 imported.');
   });
+
+  // G6 polish item 1 — names the duplicate(s) instead of the bare count
+  // when the caller has them.
+  it('names the duplicate(s) as "already in your project: <name>" when duplicateNames is given', () => {
+    const entry = buildMediaImportEntry(
+      RUN_ID, 'files', { imported: 1, deduped: 1, unsupportedSkipped: 0, failed: 0 }, AT, ['clip.mp4'],
+    );
+    expect(entry.message).toBe('File import: 1 imported, already in your project: clip.mp4.');
+  });
+
+  it('lists multiple duplicate names, comma-separated', () => {
+    const entry = buildMediaImportEntry(
+      RUN_ID, 'folder', { imported: 1, deduped: 2, unsupportedSkipped: 0, failed: 0 }, AT, ['a.jpg', 'b.jpg'],
+    );
+    expect(entry.message).toBe('Folder import: 1 imported, already in your project: a.jpg, b.jpg.');
+  });
 });

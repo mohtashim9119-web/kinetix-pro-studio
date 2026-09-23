@@ -79,6 +79,9 @@ export interface ZipIngestResult {
   /** ONE grouped finding per ingest, not one per file — Step 4 renders this
    *  as a single Sync Log entry. */
   counts: ZipIngestCounts;
+  /** Names of archive entries dropped as duplicates of `existingHashes` or of
+   *  another entry earlier in this same archive (G6 polish item 1). */
+  duplicateNames: string[];
 }
 
 /**
@@ -97,11 +100,16 @@ export interface ZipIngestResult {
  * it never got to see. Never throws for a per-file problem (traversal,
  * unsupported type, a persist failure) — those are counted, not fatal.
  */
-export async function ingestZip(projectId: string, zipFile: File): Promise<ZipIngestResult> {
+export async function ingestZip(
+  projectId: string,
+  zipFile: File,
+  existingHashes: Iterable<string> = [],
+): Promise<ZipIngestResult> {
   const counts: ZipIngestCounts = { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 };
   const assets: Asset[] = [];
   let audioAssetId: string | undefined;
-  const seenHashes = new Set<string>();
+  const seenHashes = new Set<string>(existingHashes);
+  const duplicateNames: string[] = [];
 
   let JSZipModule: typeof import('jszip');
   try {
@@ -109,7 +117,7 @@ export async function ingestZip(projectId: string, zipFile: File): Promise<ZipIn
   } catch (loadErr) {
     console.error('[ingestZip] Failed to load jszip:', loadErr);
     counts.failed += 1;
-    return { assets, audioAssetId, counts };
+    return { assets, audioAssetId, counts, duplicateNames };
   }
 
   const zip = new JSZipModule();
@@ -160,12 +168,12 @@ export async function ingestZip(projectId: string, zipFile: File): Promise<ZipIn
       throw new ZipTooLargeError(`This zip's total size exceeds the ${ZIP_MAX_TOTAL_BYTES}-byte limit.`);
     }
 
-    const asset = await ingestOneMediaFile(projectId, name, blob, type, seenHashes, counts);
+    const asset = await ingestOneMediaFile(projectId, name, blob, type, seenHashes, counts, duplicateNames);
     if (asset) {
       assets.push(asset);
       if (asset.type === 'audio' && audioAssetId === undefined) audioAssetId = asset.id;
     }
   }
 
-  return { assets, audioAssetId, counts };
+  return { assets, audioAssetId, counts, duplicateNames };
 }

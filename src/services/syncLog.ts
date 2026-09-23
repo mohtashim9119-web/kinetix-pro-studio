@@ -598,11 +598,21 @@ export function buildMediaImportEntry(
   source: 'zip' | 'files' | 'folder',
   counts: { imported: number; deduped: number; unsupportedSkipped: number; failed: number },
   timestamp: number = Date.now(),
+  duplicateNames: string[] = [],
 ): SyncLogEntry {
   const { imported, deduped, unsupportedSkipped, failed } = counts;
   const sourceLabel = source === 'zip' ? 'Zip import' : source === 'folder' ? 'Folder import' : 'File import';
   const parts = [`${imported} imported`];
-  if (deduped > 0) parts.push(`${deduped} deduped`);
+  // G6 polish item 1 — name the duplicate(s) when known (already-in-project
+  // dedup, threaded from the ingest call's own `duplicateNames`); fall back
+  // to the bare count for a caller that doesn't have names (kept so the
+  // pre-existing "N deduped" phrasing/tests still hold when this 5th param
+  // is omitted).
+  if (duplicateNames.length > 0) {
+    parts.push(`already in your project: ${duplicateNames.join(', ')}`);
+  } else if (deduped > 0) {
+    parts.push(`${deduped} deduped`);
+  }
   if (unsupportedSkipped > 0) parts.push(`${unsupportedSkipped} unsupported`);
   if (failed > 0) parts.push(`${failed} failed`);
   return makeSyncLogEntry(
