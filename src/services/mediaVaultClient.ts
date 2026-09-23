@@ -113,3 +113,23 @@ export async function mediaVaultReadThumbnail(contentHash: string): Promise<Uint
     return null;
   }
 }
+
+/**
+ * G6 Step 6 (dead-feature-gap fix) — removes `projectId` from `contentHash`'s
+ * referencers, so a subsequent reclaim can see the blob as zero-ref once
+ * every project that used it has done this. Best-effort / never throws —
+ * same posture as `deleteAssetNative`: an asset delete or project delete
+ * must not fail just because storage-hygiene bookkeeping hit a snag, and a
+ * blob that stays over-referenced only wastes disk (recoverable by rerunning
+ * this), never corrupts anything. No-op outside Tauri and for an unknown
+ * hash (the Rust side already treats an unknown hash as a no-op, not an
+ * error — see `media_vault.rs`'s `unreference_project`).
+ */
+export async function mediaVaultUnreference(contentHash: string, projectId: string): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke<void>('media_vault_unreference', { contentHash, projectId });
+  } catch (err) {
+    console.warn('[mediaVaultClient] unreference failed (non-fatal):', contentHash, projectId, err);
+  }
+}

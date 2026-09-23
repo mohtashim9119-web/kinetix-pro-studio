@@ -11,8 +11,10 @@ import type { ProjectMeta } from '../types';
 
 const mockLoadAllMetas = vi.fn();
 const mockDeleteProjectData = vi.fn(async (_id: string): Promise<void> => undefined);
+const mockLoadProject = vi.fn(async (_id: string): Promise<{ project: { assets: unknown[] }; savedAt: number } | null> => null);
 vi.mock('../services/projectStore', () => ({
   loadAllMetas: () => mockLoadAllMetas(),
+  loadProject: (id: string) => mockLoadProject(id),
   deleteProjectData: (id: string) => mockDeleteProjectData(id),
 }));
 
@@ -32,6 +34,11 @@ vi.mock('../services/nativeAssetStore', () => ({
 
 vi.mock('../services/waveformStore', () => ({
   deleteAllWaveforms: vi.fn(async () => undefined),
+}));
+
+const mockMediaVaultUnreference = vi.fn(async (_contentHash: string, _projectId: string): Promise<void> => undefined);
+vi.mock('../services/mediaVaultClient', () => ({
+  mediaVaultUnreference: (contentHash: string, projectId: string) => mockMediaVaultUnreference(contentHash, projectId),
 }));
 
 // eslint-disable-next-line import/first
@@ -78,6 +85,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockLoadAllMetas.mockReturnValue([meta('p1', 'Project One')]);
   mockDeleteProjectAssetsNativeStrict.mockResolvedValue(undefined);
+  mockLoadProject.mockResolvedValue(null);
+  mockMediaVaultUnreference.mockResolvedValue(undefined);
 });
 afterEach(() => {
   act(() => root.unmount());
@@ -113,5 +122,48 @@ describe('ProjectDashboard bulk delete — native asset cleanup', () => {
     mockDeleteProjectAssetsNativeStrict.mockRejectedValueOnce(new Error('permission denied'));
     await mount(); // no onAssetCleanupFailed passed at all
     await expect(selectAndDelete('p1')).resolves.toBeUndefined();
+  });
+});
+
+describe('ProjectDashboard bulk delete — media-vault unreference wiring (G6 Step 6)', () => {
+  it('unreferences every distinct contentHash the deleted project\'s assets carried', async () => {
+    mockLoadProject.mockResolvedValue({
+      project: {
+        assets: [
+          { id: 'a1', contentHash: 'hash-1' },
+          { id: 'a2', contentHash: 'hash-2' },
+          // A second asset sharing hash-1 (a twin) must not cause a duplicate
+          // unreference call — one call per DISTINCT hash.
+          { id: 'a3', contentHash: 'hash-1' },
+        ],
+      },
+      savedAt: 0,
+    });
+    await mount();
+    await selectAndDelete('p1');
+
+    expect(mockMediaVaultUnreference).toHaveBeenCalledTimes(2);
+    expect(mockMediaVaultUnreference).toHaveBeenCalledWith('hash-1', 'p1');
+    expect(mockMediaVaultUnreference).toHaveBeenCalledWith('hash-2', 'p1');
+  });
+
+  it('skips unreference entirely for assets with no contentHash (legacy non-vault assets)', async () => {
+    mockLoadProject.mockResolvedValue({
+      project: { assets: [{ id: 'a1' }, { id: 'a2', contentHash: undefined }] },
+      savedAt: 0,
+    });
+    await mount();
+    await selectAndDelete('p1');
+
+    expect(mockMediaVaultUnreference).not.toHaveBeenCalled();
+  });
+
+  it('a project whose record fails to load still deletes cleanly — no contentHashes to unreference', async () => {
+    mockLoadProject.mockRejectedValue(new Error('corrupt project record'));
+    await mount();
+    await expect(selectAndDelete('p1')).resolves.toBeUndefined();
+
+    expect(mockMediaVaultUnreference).not.toHaveBeenCalled();
+    expect(mockDeleteProjectData).toHaveBeenCalledWith('p1');
   });
 });

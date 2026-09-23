@@ -279,6 +279,7 @@ import { relinkPickFolder, relinkListFolder, inferMimeType, type RelinkCandidate
 import { writeAssetFromPath } from './services/nativeAssetStore';
 import type { RecoveryAsset, RecoverySegment } from './components/recovery/degradedLoad';
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
+import { mediaVaultUnreference } from './services/mediaVaultClient';
 import { requestStoragePersistence } from './services/storagePersistence';
 import { getAppSessionToken } from './services/historyPersist';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
@@ -6251,7 +6252,21 @@ export default function App() {
       deleteAsset(projectIdRef.current, assetId).catch(err =>
         console.error('Failed to delete asset from IndexedDB:', err)
       );
-      void deleteAssetNative(projectIdRef.current, assetId); // WS3 item B — native-store parity
+      // G6 Step 6 (dead-feature-gap fix) — unreference the vault blob only
+      // AFTER the native delete settles, and only when no OTHER asset in
+      // this project still carries the same contentHash. That TWIN CASE
+      // matters because legacy projects can hold same-bytes-different-name
+      // duplicates that Step 5's backfill mapped onto one shared hash —
+      // deleting one twin must not unreference the blob while its sibling
+      // still resolves through it.
+      const contentHash = asset.contentHash;
+      const hasSurvivingTwin = contentHash != null &&
+        prev.assets.some(a => a.id !== assetId && a.contentHash === contentHash);
+      void deleteAssetNative(projectIdRef.current, assetId).then(() => { // WS3 item B — native-store parity
+        if (contentHash && !hasSurvivingTwin) {
+          void mediaVaultUnreference(contentHash, projectIdRef.current);
+        }
+      });
       clearFrameRendererCache();
       return {
         ...prev,

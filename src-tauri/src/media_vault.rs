@@ -441,6 +441,47 @@ pub fn media_vault_read_thumbnail(app: tauri::AppHandle, content_hash: String) -
     read_thumbnail(&resolve_storage_root(&app)?, &content_hash)
 }
 
+/// G6 Step 6 (the dead-feature-gap fix) — removes `project_id` from
+/// `content_hash`'s `referenced_by_project_ids`, so a subsequent reclaim can
+/// see it as zero-ref once every referencer has done this. An unknown hash
+/// (never imported, or a legacy/foreign hash from another vault) is a no-op,
+/// not an error — the caller (asset delete, project delete) has no reliable
+/// way to know in advance whether a given `contentHash` was ever actually
+/// committed to THIS vault's registry, and refusing would turn an ordinary
+/// "nothing to unreference" case into a spurious failure. Uses
+/// `load_registry`/`save_registry` — the module's only registry
+/// read/write pair — so this shares the exact same atomic-write discipline
+/// (`write_bytes_atomic`, temp-file + rename) as `commit_registry_entry`;
+/// there is no separate crash window here because unlike import, there is no
+/// second phase to interleave with (removing a reference never touches the
+/// blob file, only the registry).
+pub fn unreference_project(root: &Path, content_hash: &str, project_id: &str) -> Result<(), String> {
+    let mut registry = load_registry(root)?;
+    let Some(entry) = registry.entries.get_mut(content_hash) else {
+        return Ok(());
+    };
+    let before = entry.referenced_by_project_ids.len();
+    entry.referenced_by_project_ids.retain(|p| p != project_id);
+    if entry.referenced_by_project_ids.len() == before {
+        return Ok(());
+    }
+    save_registry(root, &registry)
+}
+
+/// G6 Step 6 (dead-feature-gap fix) — the unreference IPC surface. Thin
+/// wrapper, same shape as `media_vault_list_entries`: all the logic lives in
+/// the `root`-based `unreference_project` above, kept AppHandle-free for
+/// unit testability.
+#[tauri::command]
+pub fn media_vault_unreference(
+    app: tauri::AppHandle,
+    content_hash: String,
+    project_id: String,
+) -> Result<(), String> {
+    let root = resolve_storage_root(&app)?;
+    unreference_project(&root, &content_hash, &project_id)
+}
+
 /// G6 Step 6 — read-only counterpart to `reclaim_unreferenced_blobs`, for
 /// `size_report`'s "reclaimable" figure. Same shape as
 /// `project_mirror::store_backups_stale_bytes` (the read-only twin of its
@@ -726,11 +767,10 @@ mod tests {
         let root = tmpdir("zero-ref-bytes");
         media_vault_import_bytes(&root, "proj-1", b"referenced", "a.jpg", "image/jpeg").unwrap();
         let orphan = media_vault_import_bytes(&root, "proj-1", b"orphaned bytes!!", "b.jpg", "image/jpeg").unwrap();
-        // Manually unreference the second entry (Step 6 doesn't build the
-        // "un-reference on delete-from-project" wiring itself — see
-        // media_vault.rs's own module doc comment on why that's out of
-        // scope — so this test drives the registry directly to reach a
-        // real zero-ref state).
+        // Drives the registry directly (rather than through
+        // `unreference_project`) to reach a real zero-ref state — this test
+        // is about `zero_ref_bytes`'s own counting logic, not the
+        // unreference wiring, which has its own tests below.
         let mut registry = load_registry(&root).unwrap();
         registry.entries.get_mut(&orphan.content_hash).unwrap().referenced_by_project_ids.clear();
         save_registry(&root, &registry).unwrap();
@@ -779,5 +819,101 @@ mod tests {
             }
         }
         total
+    }
+
+    // -----------------------------------------------------------------
+    // G6 Step 6 (dead-feature-gap fix) — `unreference_project`. OLD BUG
+    // FIRST: before this landed, nothing ever called anything that removed a
+    // project id from `referenced_by_project_ids`, so a blob reached zero-ref
+    // status only via a hand-edited registry (exactly what
+    // `zero_ref_bytes_counts_only_unreferenced_entries` above does). These
+    // tests exercise the real path end to end: import -> use -> delete ->
+    // reclaimable.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn a_blob_referenced_by_one_project_is_not_reclaimable_before_unreference_and_is_after() {
+        let root = tmpdir("unref-single");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"one project's asset", "a.mp4", "video/mp4").unwrap();
+
+        assert_eq!(zero_ref_bytes(&root).unwrap(), 0, "still referenced — not reclaimable yet");
+
+        unreference_project(&root, &entry.content_hash, "proj-1").unwrap();
+
+        assert_eq!(zero_ref_bytes(&root).unwrap(), entry.size_bytes, "no referencers left — now reclaimable");
+        let reclaimed = reclaim_unreferenced_blobs(&root).unwrap();
+        assert_eq!(reclaimed, entry.size_bytes);
+        assert!(!blob_path(&root, &entry.content_hash).exists());
+    }
+
+    #[test]
+    fn a_blob_referenced_by_two_projects_survives_one_deletion_reclaimable_only_after_both() {
+        let root = tmpdir("unref-two-projects");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"shared bytes", "a.mp4", "video/mp4").unwrap();
+        media_vault_import_bytes(&root, "proj-2", b"shared bytes", "a-copy.mp4", "video/mp4").unwrap();
+
+        unreference_project(&root, &entry.content_hash, "proj-1").unwrap();
+        assert_eq!(zero_ref_bytes(&root).unwrap(), 0, "proj-2 still references it");
+        assert!(blob_path(&root, &entry.content_hash).exists());
+
+        unreference_project(&root, &entry.content_hash, "proj-2").unwrap();
+        assert_eq!(zero_ref_bytes(&root).unwrap(), entry.size_bytes, "both referencers gone — reclaimable now");
+        reclaim_unreferenced_blobs(&root).unwrap();
+        assert!(!blob_path(&root, &entry.content_hash).exists());
+    }
+
+    #[test]
+    fn unreferencing_an_unknown_hash_is_a_no_op_not_an_error() {
+        let root = tmpdir("unref-unknown-hash");
+        media_vault_import_bytes(&root, "proj-1", b"real entry", "a.mp4", "video/mp4").unwrap();
+        // A hash never imported into THIS vault (legacy/foreign) must not
+        // error — the caller (asset/project delete) cannot know in advance
+        // whether a given contentHash was ever actually committed here.
+        assert!(unreference_project(&root, "never-imported-hash", "proj-1").is_ok());
+        assert_eq!(media_vault_list(&root).unwrap().len(), 1, "the unrelated real entry is untouched");
+    }
+
+    #[test]
+    fn unreferencing_a_project_that_is_not_a_referencer_is_a_no_op() {
+        let root = tmpdir("unref-not-a-referencer");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"bytes", "a.mp4", "video/mp4").unwrap();
+        unreference_project(&root, &entry.content_hash, "proj-never-used-this").unwrap();
+        let listed = media_vault_list(&root).unwrap();
+        assert_eq!(listed[0].referenced_by_project_ids, vec!["proj-1".to_string()], "proj-1's reference must survive untouched");
+    }
+
+    #[test]
+    fn unreferencing_the_same_project_twice_is_idempotent() {
+        let root = tmpdir("unref-idempotent");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"bytes", "a.mp4", "video/mp4").unwrap();
+        unreference_project(&root, &entry.content_hash, "proj-1").unwrap();
+        // Second call finds proj-1 already gone from the list — must stay Ok,
+        // not error on "already removed."
+        assert!(unreference_project(&root, &entry.content_hash, "proj-1").is_ok());
+        assert_eq!(zero_ref_bytes(&root).unwrap(), entry.size_bytes);
+    }
+
+    // Crash-safety: `unreference_project` goes through the same
+    // `load_registry`/`save_registry` pair as every other registry mutator in
+    // this module, so it inherits `write_bytes_atomic`'s temp-file+rename
+    // guarantee — a kill mid-write leaves the PREVIOUS registry contents on
+    // disk (the rename never happened), never a half-written file. This test
+    // pins the no-op case's OTHER half of that guarantee: when nothing
+    // actually changes, this function must not touch the registry file at
+    // all, so a no-op call can never be the thing a crash catches mid-write.
+    #[test]
+    fn a_no_op_unreference_never_rewrites_the_registry_file() {
+        let root = tmpdir("unref-noop-no-write");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"bytes", "a.mp4", "video/mp4").unwrap();
+        let mtime_before = fs::metadata(registry_path(&root)).unwrap().modified().unwrap();
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        // Neither branch here changes anything: an unknown hash, and a known
+        // hash with a project id that was never a referencer.
+        unreference_project(&root, "unknown-hash", "proj-1").unwrap();
+        unreference_project(&root, &entry.content_hash, "proj-never-referenced-this").unwrap();
+
+        let mtime_after = fs::metadata(registry_path(&root)).unwrap().modified().unwrap();
+        assert_eq!(mtime_before, mtime_after, "a no-op unreference must skip the registry write entirely");
     }
 }

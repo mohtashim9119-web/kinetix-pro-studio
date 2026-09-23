@@ -673,6 +673,7 @@ pub fn run() {
             media_vault::media_vault_read_blob,
             media_vault::media_vault_generate_thumbnail,
             media_vault::media_vault_read_thumbnail,
+            media_vault::media_vault_unreference,
             relink::relink_pick_folder,
             relink::relink_list_folder,
             fetch_url_bytes,
