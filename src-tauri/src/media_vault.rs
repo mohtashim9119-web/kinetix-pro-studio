@@ -299,6 +299,37 @@ const THUMBNAIL_AT_SECONDS: f64 = 1.0;
 /// range.
 const THUMBNAIL_JPEG_QUALITY: &str = "5";
 
+/// Builds the ffmpeg arg list for `ffmpeg_extract_thumbnail`, split out as a
+/// pure function so its shape is unit-testable without a `tauri::AppHandle`
+/// or the ffmpeg sidecar binary itself (both are unavailable in a plain
+/// `cargo test` run). ffmpeg's INPUT side probes file content regardless of
+/// extension (a vault blob has none, and that's fine), but its OUTPUT
+/// muxer only ever looks at the filename's final extension to pick a
+/// format — and `output` here is a `.thumb.jpg.part` atomic-write staging
+/// path, whose final extension is `.part`, not `.jpg`. Without an explicit
+/// `-f mjpeg`, ffmpeg fails with "Unable to choose an output format" and
+/// writes nothing, which the caller was already treating as a normal,
+/// silent `Ok(false)` — exactly why this shipped invisibly (confirmed by
+/// actually running the real ffmpeg binary against a real video with this
+/// exact input/output shape, not by reading this code).
+fn ffmpeg_thumbnail_args<'a>(input: &'a str, output: &'a str, seconds: &'a str) -> Vec<&'a str> {
+    vec![
+        "-hide_banner",
+        "-y",
+        "-ss",
+        seconds,
+        "-i",
+        input,
+        "-frames:v",
+        "1",
+        "-q:v",
+        THUMBNAIL_JPEG_QUALITY,
+        "-f",
+        "mjpeg",
+        output,
+    ]
+}
+
 /// Runs the ffmpeg sidecar to grab one frame from `input` (a video already
 /// on disk — a vault blob has no file extension, but ffmpeg's demuxer probes
 /// file content, not the extension, for `-i`) into `output` as a small JPEG.
@@ -311,23 +342,14 @@ async fn ffmpeg_extract_thumbnail(
     output: &Path,
 ) -> Result<(), String> {
     use tauri_plugin_shell::ShellExt;
+    let input_str = input.to_str().ok_or("media_vault: input path is not valid UTF-8")?;
+    let output_str = output.to_str().ok_or("media_vault: output path is not valid UTF-8")?;
+    let seconds = THUMBNAIL_AT_SECONDS.to_string();
     let result = app
         .shell()
         .sidecar("ffmpeg")
         .map_err(|e| format!("ffmpeg sidecar lookup: {e}"))?
-        .args([
-            "-hide_banner",
-            "-y",
-            "-ss",
-            &THUMBNAIL_AT_SECONDS.to_string(),
-            "-i",
-            input.to_str().ok_or("media_vault: input path is not valid UTF-8")?,
-            "-frames:v",
-            "1",
-            "-q:v",
-            THUMBNAIL_JPEG_QUALITY,
-            output.to_str().ok_or("media_vault: output path is not valid UTF-8")?,
-        ])
+        .args(ffmpeg_thumbnail_args(input_str, output_str, &seconds))
         .output()
         .await
         .map_err(|e| format!("ffmpeg spawn failed: {e}"))?;
@@ -487,6 +509,25 @@ mod tests {
         let d = std::env::temp_dir().join(format!("kinetix-media-vault-test-{tag}-{}", now_millis()));
         fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    // OLD BUG (G6 fix round) — ffmpeg's output muxer picks a format from the
+    // filename's FINAL extension only. The real `output` path passed here is
+    // `{hash}.thumb.jpg.part` (atomic-write staging), whose final extension
+    // is `.part` — with no explicit `-f`, ffmpeg refused to write anything
+    // ("Unable to choose an output format"), silently swallowed by this
+    // command's `Ok(false)` contract for any content-level failure. Verified
+    // against the real ffmpeg binary + a real video by hand (both are
+    // gitignored, so not wired into this suite) before this fix landed; this
+    // guards the arg SHAPE so `-f mjpeg` can never silently drop again.
+    #[test]
+    fn thumbnail_args_pin_an_explicit_output_format_after_the_dot_part_staging_path() {
+        let args = ffmpeg_thumbnail_args("/vault/blobs/abc123", "/vault/media/abc123.thumb.jpg.part", "1");
+
+        let f_pos = args.iter().position(|a| *a == "-f").expect("-f flag must be present");
+        assert_eq!(args[f_pos + 1], "mjpeg", "must force mjpeg — the output filename's final extension is .part, not .jpg");
+        assert_eq!(args.last(), Some(&"/vault/media/abc123.thumb.jpg.part"));
+        assert_eq!(args[f_pos + 1..].len(), 2, "-f mjpeg must come right before the output path, not after it");
     }
 
     #[test]
