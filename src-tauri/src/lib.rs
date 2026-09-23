@@ -23,6 +23,7 @@ mod event_sink;
 pub mod model_download;
 pub mod models;
 mod asset_store;
+mod media_vault;
 mod relink;
 mod project_mirror;
 mod safe_delete;
