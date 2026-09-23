@@ -30,7 +30,15 @@ vi.mock('./mediaVaultClient', () => ({
 vi.mock('./tauriFfmpeg', () => ({ probeVideoFps: vi.fn() }));
 
 /** A fake JSZipObject — enough of the shape `ingestZip` actually reads
- *  (`name`, `dir`, `unsafeOriginalName`, `async('blob')`). */
+ *  (`name`, `dir`, `unsafeOriginalName`, `async('blob')`).
+ *
+ *  Real jszip (3.x) sets `unsafeOriginalName` on EVERY non-directory entry,
+ *  unconditionally — it equals `name` (the resolved path) for a safe entry,
+ *  and differs from it only for a genuine traversal entry whose raw path
+ *  `resolve()` rewrote. Defaulting it to `undefined` here (as this fixture
+ *  used to) doesn't match that contract and previously masked the
+ *  `unsafeOriginalName !== undefined` bug — see `zipIngest.realjszip.test.ts`
+ *  for coverage against the real dependency. */
 function fakeEntry(
   name: string,
   bytes: Uint8Array,
@@ -44,7 +52,7 @@ function fakeEntry(
   return {
     name,
     dir: false,
-    unsafeOriginalName: opts.unsafeOriginalName,
+    unsafeOriginalName: opts.unsafeOriginalName ?? name,
     async: async (kind: string) => {
       if (kind !== 'blob') throw new Error(`fakeEntry only supports 'blob', got ${kind}`);
       const blob = new Blob([bytes]);
@@ -133,7 +141,10 @@ describe('ingestZip — content-hash dedup replaces the old filename dedup', () 
 describe('ingestZip — traversal hardening (OLD BUG: neither retired function checked this)', () => {
   it('an unsafe (../) entry is rejected, never extracted', async () => {
     mockZipFiles = {
-      '../../etc/passwd': fakeEntry('../../etc/passwd', new Uint8Array([1]), {
+      // Real jszip resolves the raw `../../etc/passwd` entry to `etc/passwd`
+      // (its `name`) while `unsafeOriginalName` keeps the raw, unresolved
+      // path — the mismatch between the two is the actual unsafe signal.
+      'etc/passwd': fakeEntry('etc/passwd', new Uint8Array([1]), {
         unsafeOriginalName: '../../etc/passwd',
       }),
       'safe.jpg': fakeEntry('safe.jpg', new Uint8Array([2, 2])),

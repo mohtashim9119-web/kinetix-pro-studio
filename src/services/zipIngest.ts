@@ -131,7 +131,13 @@ export async function ingestZip(projectId: string, zipFile: File): Promise<ZipIn
   // extraction would decompress everything into memory before this loop
   // ever got a chance to abort.
   for (const fileData of entries) {
-    if (fileData.unsafeOriginalName !== undefined) {
+    // jszip (3.x) sets `unsafeOriginalName` on EVERY non-directory entry,
+    // unconditionally, to the raw pre-resolve() path — it equals `name` for
+    // a safe entry and differs from it only when resolve() actually rewrote
+    // the path (a genuine `../` traversal/zip-slip attempt). Checking
+    // `!== undefined` alone is true for every real entry and rejects 100%
+    // of any zip; the actual signal is a MISMATCH between the two.
+    if (fileData.unsafeOriginalName !== undefined && fileData.unsafeOriginalName !== fileData.name) {
       console.warn('[ingestZip] rejected unsafe (traversal) zip entry:', fileData.unsafeOriginalName);
       counts.failed += 1;
       continue;
