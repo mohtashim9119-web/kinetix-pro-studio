@@ -31,6 +31,7 @@
 
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
 import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle } from 'lucide-react';
+import { ConfirmDialog } from './ConfirmDialog';
 import type { Asset, VideoSegment } from '../types';
 import { formatTime } from '../services/timeFormat';
 import { getAsset } from '../services/assetStore';
@@ -74,6 +75,21 @@ const TYPE_ICON: Record<Asset['type'], typeof Film> = {
   video: Film,
   audio: Music,
 };
+
+// G6 polish items 3/5 — swappable copy block for the media block's two
+// delete-confirmation dialogs (operator sign-off point, same pattern as
+// SyncPausedDialog.tsx's own PAUSE_COPY/COPY blocks).
+const DELETE_COPY = {
+  bulkTitle: 'Delete unused media?',
+  bulkBody: (count: number): string =>
+    `Delete ${count} unused item${count === 1 ? '' : 's'}? Their files stay in the vault until you free up cached data.`,
+  bulkConfirmLabel: 'Delete unused',
+  usedTitle: 'Delete used media?',
+  usedBody: (uses: number): string =>
+    `Used in ${uses} scene${uses === 1 ? '' : 's'}. Delete anyway? Those scenes will show as missing until you relink or replace.`,
+  usedConfirmLabel: 'Delete anyway',
+  cancelLabel: 'Cancel',
+} as const;
 
 /**
  * G6 polish item 4b — defense in depth. `voiceoverId` (spine reference) is
@@ -151,10 +167,14 @@ export function MediaBlock({
       .filter(({ asset }) => q === '' || asset.name.toLowerCase().includes(q));
   }, [mediaAssets, segments, search, typeFilter, usageFilter, voiceoverId]);
 
-  const unusedCount = useMemo(
-    () => mediaAssets.filter(a => usageCount(segments, a.id, voiceoverId) === 0).length,
+  // G6 polish item 3 — the ids behind "Delete unused (N)"'s live count AND
+  // its bulk-delete action, computed once so the button's count and its
+  // confirm handler can never disagree about which assets are unused.
+  const unusedAssetIds = useMemo(
+    () => mediaAssets.filter(a => usageCount(segments, a.id, voiceoverId) === 0).map(a => a.id),
     [mediaAssets, segments, voiceoverId],
   );
+  const unusedCount = unusedAssetIds.length;
 
   // Lazily generate/fetch a thumbnail for each VISIBLE video row, once,
   // caching the resulting blob URL for the component's lifetime — not
@@ -220,6 +240,28 @@ export function MediaBlock({
     void runIngest('zip', () => ingestZip(projectId, file, existingHashes));
   }, [projectId, runIngest, existingHashes]);
 
+  // G6 polish item 3 — bulk "Delete unused". Routes every unused asset
+  // through the SAME `onDeleteAsset` prop a single-tile delete uses, so the
+  // native-store delete + media-vault unreference wiring (App.tsx's
+  // `handleDeleteAsset`) fires per asset — no separate bulk-delete path to
+  // keep in sync with that wiring.
+  const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const handleConfirmDeleteUnused = useCallback(() => {
+    for (const id of unusedAssetIds) onDeleteAsset(id);
+    setConfirmBulkDelete(false);
+  }, [unusedAssetIds, onDeleteAsset]);
+
+  // G6 polish item 5 — used-media delete needs a confirmation naming how
+  // many scenes it's used in; unused single-delete stays direct (no dialog).
+  const [confirmDeleteAsset, setConfirmDeleteAsset] = useState<{ id: string; uses: number } | null>(null);
+  const handleTileDeleteClick = useCallback((assetId: string, uses: number) => {
+    if (uses > 0) {
+      setConfirmDeleteAsset({ id: assetId, uses });
+    } else {
+      onDeleteAsset(assetId);
+    }
+  }, [onDeleteAsset]);
+
   if (mediaAssets.length === 0) {
     return null;
   }
@@ -257,6 +299,22 @@ export function MediaBlock({
             className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
           >
             <FileArchive size={13} />
+          </button>
+          <button
+            type="button"
+            data-testid="media-block-delete-unused"
+            title={`Delete unused (${unusedCount})`}
+            aria-label={`Delete unused (${unusedCount})`}
+            disabled={unusedCount === 0}
+            onClick={() => setConfirmBulkDelete(true)}
+            className="relative p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+          >
+            <Trash2 size={13} />
+            {unusedCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-[13px] h-[13px] px-[3px] rounded-full bg-[var(--kx-danger)] text-white text-[8px] leading-[13px] text-center">
+                {unusedCount}
+              </span>
+            )}
           </button>
         </div>
       </div>
@@ -358,7 +416,7 @@ export function MediaBlock({
                 <button
                   type="button"
                   title="Delete"
-                  onClick={() => onDeleteAsset(asset.id)}
+                  onClick={() => handleTileDeleteClick(asset.id, uses)}
                   className="absolute top-1 right-1 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition-opacity"
                 >
                   <Trash2 size={11} />
@@ -392,6 +450,28 @@ export function MediaBlock({
             );
           })}
         </div>
+      )}
+
+      {confirmBulkDelete && (
+        <ConfirmDialog
+          title={DELETE_COPY.bulkTitle}
+          body={DELETE_COPY.bulkBody(unusedCount)}
+          confirmLabel={DELETE_COPY.bulkConfirmLabel}
+          cancelLabel={DELETE_COPY.cancelLabel}
+          onConfirm={handleConfirmDeleteUnused}
+          onCancel={() => setConfirmBulkDelete(false)}
+        />
+      )}
+
+      {confirmDeleteAsset && (
+        <ConfirmDialog
+          title={DELETE_COPY.usedTitle}
+          body={DELETE_COPY.usedBody(confirmDeleteAsset.uses)}
+          confirmLabel={DELETE_COPY.usedConfirmLabel}
+          cancelLabel={DELETE_COPY.cancelLabel}
+          onConfirm={() => { onDeleteAsset(confirmDeleteAsset.id); setConfirmDeleteAsset(null); }}
+          onCancel={() => setConfirmDeleteAsset(null)}
+        />
       )}
     </div>
   );

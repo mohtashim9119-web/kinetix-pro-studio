@@ -374,6 +374,144 @@ describe('MediaBlock', () => {
     expect(container.querySelector('[data-testid="media-block"]')).toBeNull();
   });
 
+  // G6 polish item 3 — bulk "Delete unused".
+  describe('bulk "Delete unused"', () => {
+    it('the button is disabled and shows (0) when nothing is unused', async () => {
+      const assets = [makeAsset({ id: 'a1' })];
+      const segments = [makeSegment({ id: 's1', assetId: 'a1' })];
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={assets} segments={segments} voiceoverId={undefined}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const button = container.querySelector('[data-testid="media-block-delete-unused"]') as HTMLButtonElement;
+      expect(button.disabled).toBe(true);
+      expect(button.title).toBe('Delete unused (0)');
+    });
+
+    it('shows the live unused count and, on confirm, deletes every unused asset through onDeleteAsset (the existing per-asset delete path)', async () => {
+      const assets = [
+        makeAsset({ id: 'used-1' }),
+        makeAsset({ id: 'unused-1' }),
+        makeAsset({ id: 'unused-2' }),
+      ];
+      const segments = [makeSegment({ id: 's1', assetId: 'used-1' })];
+      const onDeleteAsset = vi.fn();
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={assets} segments={segments} voiceoverId={undefined}
+            onDeleteAsset={onDeleteAsset} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const button = container.querySelector('[data-testid="media-block-delete-unused"]') as HTMLButtonElement;
+      expect(button.disabled).toBe(false);
+      expect(button.title).toBe('Delete unused (2)');
+
+      await act(async () => { button.click(); });
+      const dialog = container.querySelector('[role="dialog"]') as HTMLElement;
+      expect(dialog.textContent).toContain('Delete 2 unused items?');
+      expect(dialog.textContent).toContain('Their files stay in the vault until you free up cached data.');
+
+      const confirmButton = dialog.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLButtonElement;
+      await act(async () => { confirmButton.click(); });
+
+      expect(onDeleteAsset).toHaveBeenCalledTimes(2);
+      expect(onDeleteAsset).toHaveBeenCalledWith('unused-1');
+      expect(onDeleteAsset).toHaveBeenCalledWith('unused-2');
+      expect(onDeleteAsset).not.toHaveBeenCalledWith('used-1');
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    it('cancel closes the dialog without deleting anything', async () => {
+      const assets = [makeAsset({ id: 'unused-1' })];
+      const onDeleteAsset = vi.fn();
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={assets} segments={[]} voiceoverId={undefined}
+            onDeleteAsset={onDeleteAsset} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const button = container.querySelector('[data-testid="media-block-delete-unused"]') as HTMLButtonElement;
+      await act(async () => { button.click(); });
+      const cancelButton = container.querySelector('[data-testid="confirm-dialog-cancel"]') as HTMLButtonElement;
+      await act(async () => { cancelButton.click(); });
+
+      expect(onDeleteAsset).not.toHaveBeenCalled();
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+    });
+  });
+
+  // G6 polish item 5 — single-delete confirmations.
+  describe('single-delete confirmation', () => {
+    it('an unused asset deletes directly, no dialog', async () => {
+      const onDeleteAsset = vi.fn();
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={[makeAsset({ id: 'a1' })]} segments={[]} voiceoverId={undefined}
+            onDeleteAsset={onDeleteAsset} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const deleteButton = container.querySelector('[title="Delete"]') as HTMLButtonElement;
+      await act(async () => { deleteButton.click(); });
+      expect(onDeleteAsset).toHaveBeenCalledWith('a1');
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+    });
+
+    it('a used asset shows a confirmation naming the scene count; cancel deletes nothing; confirm deletes it', async () => {
+      const assets = [makeAsset({ id: 'a1' })];
+      const segments = [
+        makeSegment({ id: 's1', assetId: 'a1' }),
+        makeSegment({ id: 's2', assetId: 'a1' }),
+        makeSegment({ id: 's3', assetId: 'a1' }),
+      ];
+      const onDeleteAsset = vi.fn();
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={assets} segments={segments} voiceoverId={undefined}
+            onDeleteAsset={onDeleteAsset} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const deleteButton = container.querySelector('[title="Delete"]') as HTMLButtonElement;
+      await act(async () => { deleteButton.click(); });
+      expect(onDeleteAsset).not.toHaveBeenCalled();
+
+      const dialog = container.querySelector('[role="dialog"]') as HTMLElement;
+      expect(dialog.textContent).toContain('Used in 3 scenes. Delete anyway?');
+      expect(dialog.textContent).toContain('Those scenes will show as missing until you relink or replace.');
+
+      const cancelButton = dialog.querySelector('[data-testid="confirm-dialog-cancel"]') as HTMLButtonElement;
+      await act(async () => { cancelButton.click(); });
+      expect(onDeleteAsset).not.toHaveBeenCalled();
+      expect(container.querySelector('[role="dialog"]')).toBeNull();
+
+      await act(async () => { deleteButton.click(); });
+      const confirmButton = container.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLButtonElement;
+      await act(async () => { confirmButton.click(); });
+      expect(onDeleteAsset).toHaveBeenCalledWith('a1');
+    });
+  });
+
   it('deleting a tile calls onDeleteAsset with that asset\'s id', async () => {
     const onDeleteAsset = vi.fn();
     root = createRoot(container);
