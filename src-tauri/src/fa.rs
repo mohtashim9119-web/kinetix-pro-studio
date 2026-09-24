@@ -1197,10 +1197,12 @@ pub(crate) async fn fa_align_with_prefix(
         });
         return match result {
             Ok(output) => {
+                // Read before `output` is moved apart below — the one
+                // definition of the wire count (`AlignChunkedOutput`).
+                let n_fallback_chunks = output.n_fallback_chunks();
                 let words: Vec<FaWordSpan> = word_spans_to_dtos(output.words);
                 let infeasible_chunks: Vec<FaInfeasibleChunk> =
                     output.infeasible_chunks.into_iter().map(FaInfeasibleChunk::from).collect();
-                let n_fallback_chunks = infeasible_chunks.len() as u32;
                 let _ = on_event.send(FaEvent::Done { words, n_fallback_chunks, infeasible_chunks });
                 Ok(())
             }
