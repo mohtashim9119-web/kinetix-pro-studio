@@ -3944,6 +3944,9 @@ export default function App() {
     // resolved yet) — the audioHash resolution after this block falls back
     // to hashing voiceoverAsset.file directly in that case.
     let stagedAudioHash: string | undefined;
+    // Item A — the committed voiceover a staged one replaces; its bytes are
+    // deleted only once this run commits (see the step-2 comment below).
+    let supersededVoiceover: Asset | undefined;
     // Snapshot of pre-sync segments, used by preserveEffectFields below to carry
     // forward per-segment effect selections by assetId. Captured now, before any
     // await, so it can't observe state this same sync has already committed.
@@ -3963,18 +3966,17 @@ export default function App() {
         // assets, which skipped this whole block (and silently kept the OLD
         // voiceoverId) whenever a re-staged file happened to share a name with
         // an already-committed asset.
+        //
+        // Item A — only the LOCAL list drops it here. Its bytes are deleted
+        // after the commit below (`supersededVoiceover`): every abort exit
+        // between here and there keeps `project.voiceoverId` pointing at this
+        // asset, and deleting its bytes first left that pointer naming bytes
+        // that no longer existed — an unopenable project.
         const oldIdx = allAssets.findIndex(a => a.id === projectRef.current.voiceoverId);
         const oldAsset = allAssets[oldIdx];
         if (oldAsset) {
           allAssets.splice(oldIdx, 1);
-          URL.revokeObjectURL(oldAsset.url);
-          deleteAsset(projectRef.current.id, oldAsset.id).catch(err =>
-            console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
-          );
-          void deleteAssetNative(projectRef.current.id, oldAsset.id); // WS3 item B — native-store parity
-          deletePersistedWaveform(projectRef.current.id, oldAsset.id).catch(err =>
-            console.error('[kinetix] Failed to delete old voiceover peaks:', err),
-          );
+          supersededVoiceover = oldAsset;
         }
         allAssets.push(asset);
         newVoiceoverId = asset.id;
@@ -5427,6 +5429,20 @@ export default function App() {
       unappliedTranscript: undefined,
     }));
     syncMark('setProject:called');
+
+    // Item A — the replaced voiceover's bytes go only now that the commit
+    // above has moved `voiceoverId` off it (moved here from step 2).
+    if (supersededVoiceover) {
+      const oldAsset = supersededVoiceover;
+      URL.revokeObjectURL(oldAsset.url);
+      deleteAsset(projectRef.current.id, oldAsset.id).catch(err =>
+        console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
+      );
+      void deleteAssetNative(projectRef.current.id, oldAsset.id); // WS3 item B — native-store parity
+      deletePersistedWaveform(projectRef.current.id, oldAsset.id).catch(err =>
+        console.error('[kinetix] Failed to delete old voiceover peaks:', err),
+      );
+    }
     // Post-commit paint boundary: rAF fires after React commits + the browser
     // paints the new segment DOM. The waveform-pipeline marks (below) then
     // attribute the decode/peak-build cost that lands AFTER this first paint.
