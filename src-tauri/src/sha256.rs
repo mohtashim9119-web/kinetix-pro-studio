@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Minimal streaming SHA-256 (FIPS 180-4), hand-rolled — no crate added.
 //
-// Exists solely for `fa_dev.rs`'s pre-use model-integrity check (WS1 Task 5
+// Exists solely for `fa_shared.rs`'s pre-use model-integrity check (WS1 Task 5
 // Slice D10): verifying a manually-placed `fa-models/<lang>/model.onnx`
 // against `scripts/fixtures/fa-onnx-manifest.json`'s committed hash before
 // `fa_align_dev` hands it to `ort`. `sha2` already resolves transitively in
@@ -11,7 +11,7 @@
 // dependency-free implementation is the correct fit for a single, narrow,
 // dev-only use site.
 //
-// Streaming (`update`/`finish`) rather than one-shot: `fa_dev.rs` hashes a
+// Streaming (`update`/`finish`) rather than one-shot: `fa_shared.rs` hashes a
 // ~1.2 GiB `model.onnx` file, and this reads it in fixed-size chunks rather
 // than holding the whole file in memory twice (once as raw bytes, once as
 // hash state).

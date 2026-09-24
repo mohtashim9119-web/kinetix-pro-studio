@@ -108,12 +108,10 @@ import {
   toAlignmentLanguageCode,
   type SegmentAlignment,
 } from './services/whisperService';
-import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunkInput as FaDevChunkInput, type FaWordSpan as FaDevWordSpan } from './services/faBoundaryTypes';
 import { computeFaChunkPlan, computeRunContextAsync } from './services/faChunkPlan';
 import type { UnscriptedRun } from './services/faChunkPlan';
 import { MatchCancelledError } from './services/hirschbergMatchClient';
 import { matchEtaStageMessage } from './services/matchEta';
-import type { FaLanguageCode } from './services/faTextNormalize';
 import {
   isFaEnabledForProject, isFaCapable, resolveFaLanguage,
   shouldPersistFaChoice, FA_PROJECT_DEFAULT_ON,
@@ -354,7 +352,7 @@ import { formatBytes } from './services/webcodecsExport/diskFull';
 import { readUiState, patchUiState } from './services/uiStateStore';
 import { compactRanges } from './services/rangeCompact';
 import { formatTime } from './services/timeFormat';
-import { invoke, Channel } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 
 interface RawSegment {
   text: string;
@@ -5997,177 +5995,6 @@ export default function App() {
     (window as unknown as { __transcriptInspector: TranscriptInspectorFn }).__transcriptInspector = inspectorFn;
     return () => {
       delete (window as unknown as { __transcriptInspector?: TranscriptInspectorFn }).__transcriptInspector;
-    };
-  }, []);
-
-  // Forced-alignment dev-only invocation path (WS1 Task 5 Slice D10) —
-  // DEV-only, in-app; not wired to any UI. Follows __transcriptInspector's
-  // (and __calibrateBoundaryQuality's) own precedent exactly: a DEV-gated
-  // window global invoked from the devtools console, never referenced from
-  // any component's render output or event handler — the only way to reach
-  // it is by typing its name into devtools.
-  //
-  // `await __faDevAlign()` runs the CURRENT project's voiceover + segments
-  // through the real `fa_align_dev` Tauri command (src-tauri/src/fa_dev.rs —
-  // transcodes to a throwaway 16kHz WAV, verifies the resolved model against
-  // the committed SHA-256 manifest, then delegates to the unmodified,
-  // production `fa_align`), reshapes the result via
-  // `faWordSpansToTranscriptTokens` (the D9 reshape), and feeds those tokens
-  // through the REAL, unmodified `alignScenestoTranscript`/
-  // `extractSegmentAlignments` (same functions the production Apply Sync
-  // path calls) to get a `t0` per segment — the FA analog of `anchorStart`.
-  // NEVER writes anything back into the live project: no `setProject`, no
-  // history entry, no persistence. Purely observational — prints a
-  // console.table comparing each segment's FA-derived `t0` against its
-  // currently-stored (Whisper-derived) `anchorStart`, and returns the full
-  // result so it can be captured/compared across runs the same way
-  // `__transcriptInspector`'s return value is.
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-
-    const faDevAlign = async (options?: { language?: FaLanguageCode }) => {
-      const project = projectRef.current;
-      const voiceoverAsset = project.assets.find(a => a.id === project.voiceoverId);
-      if (!voiceoverAsset) {
-        console.warn('[fa-dev] no voiceover asset on the current project.');
-        return undefined;
-      }
-      if (project.segments.length === 0) {
-        console.warn('[fa-dev] project has no segments — run Apply Sync first.');
-        return undefined;
-      }
-      if (!project.transcriptTokens || project.transcriptTokens.length === 0) {
-        console.warn('[fa-dev] project has no cached Whisper transcriptTokens — run Apply Sync first.');
-        return undefined;
-      }
-
-      const SUPPORTED_FA_LANGUAGES: FaLanguageCode[] = ['en', 'es', 'fr', 'de', 'pt'];
-      const language = options?.language ?? (project.language as FaLanguageCode | undefined);
-      if (!language || !SUPPORTED_FA_LANGUAGES.includes(language)) {
-        console.warn(
-          `[fa-dev] project.language (${String(project.language)}) is not one of the 5 FA ` +
-          `languages (${SUPPORTED_FA_LANGUAGES.join(', ')}) — pass { language } explicitly.`,
-        );
-        return undefined;
-      }
-
-      const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
-      const buffer = await voiceoverBlob.arrayBuffer();
-      const audioExtHint = voiceoverAsset.file?.type
-        || voiceoverAsset.file?.name.split('.').pop()
-        || '';
-      // Raw IPC body, staged by fa_stage_audio_raw into 'kinetix-fa-dev-inputs'
-      // — see forcedAlignmentRun.ts's own call for the full base64-avoidance
-      // rationale, identical here.
-      const inputPath = await invoke<string>('fa_stage_audio_raw', new Uint8Array(buffer), {
-        headers: {
-          'cache-dir': 'kinetix-fa-dev-inputs',
-          'ext-hint': audioExtHint,
-        },
-      });
-
-      // WS1 Task 5 Slice D11: whole-file FA is infeasible at production
-      // audio length (D10) — build the windowed chunk plan via
-      // computeFaChunkPlan (faAnchors.ts's run structure; text attribution
-      // defaults to script-word-index text attribution since WS1 Task 5
-      // Slice D23 — segment-startTime remains reachable via computeFaChunkPlan's
-      // 5th argument, see that function's own doc comment) instead of the
-      // pre-D11 single whole-file segment list.
-      const audioDuration = await probeAudioDuration(voiceoverBlob);
-      const silenceResult = await detectSilences(voiceoverBlob);
-      const silences: SilenceInterval[] = silenceResult.status === 'ok' ? silenceResult.silences : [];
-      if (silenceResult.status !== 'ok') {
-        console.warn('[fa-dev] silence detection failed, chunking with zero silences:', silenceResult.errorMessage);
-      }
-      const chunks: FaDevChunkInput[] = computeFaChunkPlan(
-        project.segments,
-        project.transcriptTokens,
-        silences,
-        audioDuration,
-      );
-      if (chunks.length === 0) {
-        console.warn('[fa-dev] chunk plan is empty (every segment has empty text) — nothing to align.');
-        return undefined;
-      }
-
-      console.log(
-        `[fa-dev] running fa_align_dev — language=${language}, chunks=${chunks.length}, ` +
-        `audio bytes=${buffer.byteLength}`,
-      );
-
-      const wallClockStartMs = performance.now();
-      const channel = new Channel<FaDevEvent>();
-      const words = await new Promise<FaDevWordSpan[]>(
-        (resolve, reject) => {
-          channel.onmessage = (msg) => {
-            if (msg.event === 'Progress') {
-              console.log(`[fa-dev] progress ${msg.data.index}/${msg.data.total}`);
-            } else if (msg.event === 'Done') {
-              resolve(msg.data.words);
-            } else if (msg.event === 'Error') {
-              reject(new Error(msg.data.message));
-            }
-          };
-          invoke('fa_align_dev', {
-            inputPath,
-            chunks,
-            language,
-            onEvent: channel,
-          }).catch((err: unknown) => reject(err instanceof Error ? err : new Error(String(err))));
-        },
-      );
-      const wallClockMs = performance.now() - wallClockStartMs;
-
-      const tokens = faWordSpansToTranscriptTokens(words);
-
-      // Real, unmodified production functions — the same ones the Apply
-      // Sync commit path calls (see App.tsx's own `cachedTokensReady`
-      // branch). `t0` is the FA analog of `anchorStart` here: this dev tool
-      // never runs the full commit pipeline (applyAnchorBasedTiming ->
-      // snapCoveredBoundaries -> headExtendFirstSegment), so `t0` is
-      // reported directly rather than a literal `segment.anchorStart` write.
-      const alignments = alignScenestoTranscript(project.segments, tokens, [], audioDuration, language);
-
-      const rows = project.segments.map((seg, i) => {
-        const faAnchorStart = alignments[i]?.t0;
-        const oldAnchorStart = seg.anchorStart;
-        const deltaSec = (faAnchorStart !== undefined && oldAnchorStart !== undefined)
-          ? faAnchorStart - oldAnchorStart
-          : undefined;
-        return {
-          index: i,
-          text: seg.text.slice(0, 40),
-          oldAnchorStart,
-          faAnchorStart,
-          deltaSec,
-          anchorSource: 'forced-alignment' as const,
-        };
-      });
-
-      const deltas = rows.map(r => r.deltaSec).filter((d): d is number => d !== undefined).sort((a, b) => a - b);
-      const min = deltas.length > 0 ? deltas[0] : undefined;
-      const max = deltas.length > 0 ? deltas[deltas.length - 1] : undefined;
-      const median = deltas.length > 0 ? deltas[Math.floor(deltas.length / 2)] : undefined;
-
-      console.log(
-        `[fa-dev] done — wallClockMs=${wallClockMs.toFixed(1)}, words=${words.length}, ` +
-        `segments=${rows.length}, anchorStart delta (s) min=${min?.toFixed(3) ?? 'n/a'} ` +
-        `median=${median?.toFixed(3) ?? 'n/a'} max=${max?.toFixed(3) ?? 'n/a'}`,
-      );
-      console.table(rows.map(r => ({
-        idx: r.index,
-        text: r.text,
-        oldAnchorStart: r.oldAnchorStart?.toFixed(3) ?? '',
-        faAnchorStart: r.faAnchorStart?.toFixed(3) ?? '',
-        deltaSec: r.deltaSec?.toFixed(3) ?? '',
-      })));
-
-      return { wallClockMs, wordCount: words.length, rows, deltaStats: { min, median, max } };
-    };
-
-    (window as unknown as { __faDevAlign: typeof faDevAlign }).__faDevAlign = faDevAlign;
-    return () => {
-      delete (window as unknown as { __faDevAlign?: typeof faDevAlign }).__faDevAlign;
     };
   }, []);
 

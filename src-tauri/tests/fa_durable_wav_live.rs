@@ -4,31 +4,33 @@
 // resolution and the real `whisper::transcode_to_wav` ffmpeg-sidecar call.
 // D24 B3 proved every PURE function `ensure_durable_wav` delegates to; this
 // file proves the two thin `AppHandle`-based wrappers around them, by
-// calling the REAL, unmodified `fa_align_dev` (the only production caller,
-// per D25 A1) twice against the real 173 corpus audio.
+// calling the REAL, unmodified `resolve_wav_and_align` (the shared body
+// behind production's `fa_align_production`, G5 fa_shared retirement — formerly
+// reached via the now-deleted dev-only `fa_align_dev` wrapper) twice against
+// the real 173 corpus audio.
 //
 // Why a separate `harness = false` integration-test binary (Cargo.toml),
-// not a `#[cfg(test)]` unit test inside `fa.rs`/`fa_dev.rs` itself: getting
-// a real `tauri::AppHandle` — `fa_align_dev`'s own signature is hardcoded to
-// `AppHandle<Wry>` via tauri's `#[default_runtime]` macro, and so is
-// `whisper.rs::transcode_to_wav`'s (unmodified/protected this slice) — means
-// building a REAL (not `tauri::test::MockRuntime`) `tauri::App`. That needs
-// the underlying wry/tao `EventLoop::new()`, which on macOS is an AppKit
-// main-thread-only operation. Libtest (the harness `cargo test`'s `#[test]`
-// functions run under) always runs each test on its OWN worker thread, never
-// the process's actual main thread — so this can only work as a plain
-// `fn main()` in its own binary, which IS the process main thread. Making
-// this an integration-test crate (rather than a unit test) also means it can
-// only reach `pub` items — `fa`/`fa_dev` were widened from `mod` to `pub mod`
-// in `lib.rs` for exactly this (a compile-time-only visibility change, zero
-// runtime effect — see that edit's own comment).
+// not a `#[cfg(test)]` unit test inside `fa.rs`/`fa_shared.rs` itself: getting
+// a real `tauri::AppHandle` — `resolve_wav_and_align`'s own signature is
+// hardcoded to `AppHandle<Wry>` via tauri's `#[default_runtime]` macro, and
+// so is `whisper.rs::transcode_to_wav`'s (unmodified/protected this slice) —
+// means building a REAL (not `tauri::test::MockRuntime`) `tauri::App`. That
+// needs the underlying wry/tao `EventLoop::new()`, which on macOS is an
+// AppKit main-thread-only operation. Libtest (the harness `cargo test`'s
+// `#[test]` functions run under) always runs each test on its OWN worker
+// thread, never the process's actual main thread — so this can only work as
+// a plain `fn main()` in its own binary, which IS the process main thread.
+// Making this an integration-test crate (rather than a unit test) also means
+// it can only reach `pub` items — `fa`/`fa_shared` were widened from `mod` to
+// `pub mod` in `lib.rs` for exactly this (a compile-time-only visibility
+// change, zero runtime effect — see that edit's own comment).
 //
 // `tauri::test::mock_context::<tauri::Wry, _>(tauri::test::noop_assets())`
 // (not the real `tauri::generate_context!()`) supplies a `Context<Wry>` with
 // an EMPTY `app.windows` list, so `Builder::<Wry>::build()` never needs to
 // create an actual webview/window — avoiding any dependency on a running
 // Vite dev server or a built `dist/` — while still using the REAL runtime,
-// so `AppHandle<Wry>` really is what `fa_align_dev` expects. The identifier
+// so `AppHandle<Wry>` really is what `resolve_wav_and_align` expects. The identifier
 // is set to the real `com.kinetix.pro-studio` (mock_context's own default is
 // an empty string) so `app_local_data_dir()` resolves to the SAME path
 // production does — reused by `fa_onnx.rs`'s own `real_corpus_measurement`/
@@ -42,7 +44,7 @@
 // ---------------------------------------------------------------------------
 
 use app_lib::fa::{FaChunkInput, FaModelCache, FaState};
-use app_lib::fa_dev::fa_align_dev;
+use app_lib::fa_shared::resolve_wav_and_align;
 use tauri::Manager;
 
 fn repo_root() -> std::path::PathBuf {
@@ -112,12 +114,13 @@ fn main() {
         "app_local_data_dir() must resolve to the same path production does"
     );
 
-    // `fa_align_dev` now takes an already-staged `input_path` (WS1 — the
-    // audio_b64/audio_ext_hint IPC shape was replaced by a raw-body staging
-    // command, `fa_stage_audio_raw`, to avoid a 5-8x base64/JSON memory
-    // multiplication across the JS heap and the WKWebView IPC bridge on a
-    // long voiceover). This probe calls `fa_align_dev` directly as a Rust
-    // function, bypassing the Tauri IPC dispatcher entirely, so it can't
+    // `resolve_wav_and_align` now takes an already-staged `input_path` (WS1
+    // — the audio_b64/audio_ext_hint IPC shape was replaced by a raw-body
+    // staging command, `fa_stage_audio_raw`, to avoid a 5-8x base64/JSON
+    // memory multiplication across the JS heap and the WKWebView IPC bridge
+    // on a long voiceover). This probe calls `resolve_wav_and_align`
+    // directly as a Rust function, bypassing the Tauri IPC dispatcher
+    // entirely, so it can't
     // invoke `fa_stage_audio_raw` (which extracts its raw body from a real
     // `tauri::ipc::Request`) — instead it replicates that command's own
     // content-addressed write by hand: same `kinetix-fa-dev-inputs` dir,
@@ -135,7 +138,7 @@ fn main() {
         let model_cache = app_handle.state::<FaModelCache>();
         let on_event = tauri::ipc::Channel::new(|_body| Ok(()));
         let start = std::time::Instant::now();
-        let result = tauri::async_runtime::block_on(fa_align_dev(
+        let result = tauri::async_runtime::block_on(resolve_wav_and_align(
             app_handle.clone(),
             state,
             model_cache,
@@ -146,7 +149,7 @@ fn main() {
         ));
         let elapsed = start.elapsed();
         // `fa-inference` is OFF in this probe build (default features), so
-        // `fa_align_dev` always finishes with `Err(NotImplemented)` AFTER
+        // `resolve_wav_and_align` always finishes with `Err(NotImplemented)` AFTER
         // the transcode/cache step already ran — that's the expected,
         // correct outcome here; only a DIFFERENT error kind is a real
         // failure of this probe.
@@ -199,7 +202,7 @@ fn main() {
     assert!(mtime_after_run2 > aged, "re-stamped mtime must be after the artificial aging, proving the hit path ran");
 
     println!(
-        "fa_durable_wav_live: PART A (full fa_align_dev, includes the ~1.2GiB model.onnx SHA-256 \
+        "fa_durable_wav_live: PART A (full resolve_wav_and_align, includes the ~1.2GiB model.onnx SHA-256 \
          manifest-verification step that runs unconditionally on every call — a pre-existing D10 fixed \
          cost, UNRELATED to the durable cache, expected to swamp the miss-vs-hit delta at this scale) \
          run1(miss)={:.3}s run2(hit)={:.3}s content_identical={} mtime_restamped={}",
@@ -212,7 +215,7 @@ fn main() {
     // -- PART B: ensure_durable_wav in isolation, no manifest verification --
     //
     // Same real 173 corpus audio, but passed DIRECTLY as `source_path` (not
-    // through fa_align_dev's base64/content-addressed-dev-input layer), and
+    // through resolve_wav_and_align's base64/content-addressed-dev-input layer), and
     // a FRESH cache dir, so this measures ONLY the durable-cache mechanism
     // Part A's wall-clock couldn't isolate.
     let _ = std::fs::remove_dir_all(&cache_dir);

@@ -1170,7 +1170,7 @@ fn collapse_word_fragments(fragment_words: Vec<WordSpan>, fragment_counts: &[usi
 // sync run... evicted on language change or app/session end").
 //
 // SHA-256 model-integrity verification is a SEPARATE, unchanged concern —
-// `fa_dev.rs`'s `verify_model_manifest` already runs it exactly once per
+// `fa_shared.rs`'s `verify_model_manifest` already runs it exactly once per
 // `fa_align_dev` call, upstream of `fa_align`/`align_chunked` entirely, and
 // is untouched by this slice. This cache's own key (size + mtime, not a
 // hash) exists only to answer "is my cached `Session` still the file I just

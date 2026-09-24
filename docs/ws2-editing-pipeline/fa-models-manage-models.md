@@ -76,7 +76,7 @@ immediate, in-UI rejection message if the file is wrong.
 ## What Import validates
 
 `models.rs::validate_import` (via the pre-existing, already-tested
-`fa_dev::verify_model_manifest`) checks the imported file's exact byte size
+`fa_shared::verify_model_manifest`) checks the imported file's exact byte size
 AND sha256 against the committed manifest entry for that language — not a
 live ONNX graph/session inspection. This was a deliberate choice over
 opening an ONNX session and inspecting `input_values`/`logits`/vocab-dim
@@ -94,7 +94,7 @@ and needs no ORT runtime, so it runs unconditionally.
 `models::fa_model_download`, which streams from the pinned HF revision above
 via `stream_download_verified` (`.part` file, HTTP Range resume, sha256
 verification against `fa-onnx-manifest.json` via the pre-existing
-`fa_dev::verify_model_manifest`, atomic rename on success, disk-space
+`fa_shared::verify_model_manifest`, atomic rename on success, disk-space
 precheck via `fs4` with a 200 MiB margin). Cancellation is per-model
 (`ModelDownloadState`'s cancel flag is keyed by `"whisper"`/`"fa-<lang>"`),
 so a whisper and an FA download can be cancelled independently. The wire

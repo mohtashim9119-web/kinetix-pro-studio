@@ -81,7 +81,7 @@ export function faModelStatus(languageCode: string): Promise<ModelDownloadStatus
 }
 
 /** Starts (or resumes) the FA pack download for `languageCode`. Resolves once
- *  `fa_dev::verify_model_manifest` has confirmed the downloaded file against
+ *  `fa_shared::verify_model_manifest` has confirmed the downloaded file against
  *  the committed manifest and the atomic rename has landed; rejects on any
  *  failure (network, disk, cancellation, manifest mismatch).
  *

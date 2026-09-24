@@ -16,7 +16,7 @@
 //     the preferred slot per ruling R-D (fa.rs's own doc comment on that
 //     function).
 //
-// Import validation reuses `fa_dev::verify_model_manifest` — an EXACT
+// Import validation reuses `fa_shared::verify_model_manifest` — an EXACT
 // sha256 + byte-size check against the already-committed, already-tested
 // `fa-onnx-manifest.json` (WS1 Task 5 Slice D2) — rather than parsing the
 // ONNX graph at import time. This was a late change from the original plan
@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 use crate::fa::fa_model_candidate_paths;
-use crate::fa_dev::{manifest_byte_size_for, verify_model_manifest};
+use crate::fa_shared::{manifest_byte_size_for, verify_model_manifest};
 use crate::model_download::{
     attach_to_target, cancel_flag_for, models_dir, part_meta_path_for, part_path_for, status_for_target,
     stream_download_verified, ModelDownloadEvent, ModelDownloadState, ModelDownloadStatus,
@@ -74,7 +74,7 @@ const FA_MODEL_REPO_ID: &str = "mohtashim9/kinetix-fa-models";
 /// files permanently unreachable at that revision once pushed in a later
 /// commit). Now that the upload is confirmed complete and stable, pinning
 /// protects against a future silent re-upload to `main` silently changing
-/// what a fresh download fetches without `fa_dev::verify_model_manifest`'s
+/// what a fresh download fetches without `fa_shared::verify_model_manifest`'s
 /// hash gate being the only thing standing between that and an install.
 /// ACTION NEEDED if the owner ever re-uploads/reorganizes this repo: re-run
 /// the HEAD/API probe and update this single constant — the URL builder,
@@ -116,7 +116,7 @@ fn ensure_disk_space(app: &tauri::AppHandle, needed_bytes: u64) -> Result<(), St
 /// — `.part` + HTTP Range resume + progress `Channel` + cancel, reusing that
 /// module's `ModelDownloadEvent`/`ModelDownloadState` types unchanged (no
 /// second event shape for the frontend to handle). Verification runs
-/// `fa_dev::verify_model_manifest` against the `.part` file BEFORE the
+/// `fa_shared::verify_model_manifest` against the `.part` file BEFORE the
 /// atomic rename — introduces no new pinned hash/size constant; a mismatch
 /// deletes the `.part` and leaves any previously-installed model at the
 /// target path untouched, and is reported with the manifest's own specific
@@ -157,14 +157,14 @@ pub async fn fa_model_download(
     // time, MEASURED hanging past 90 seconds on the operator's machine while
     // competing with macOS Spotlight indexing the file it had just finished
     // writing. `verify_model_manifest` already caches its digest by file
-    // identity (`fa_dev.rs`'s `verified_digest_cache`) for this EXACT path,
+    // identity (`fa_shared.rs`'s `verified_digest_cache`) for this EXACT path,
     // so `digest_for_sidecar` below is a guaranteed cache hit, not a second
     // read under a different name.
     stream_download_verified(url, target.clone(), part_path, expected_size, cancel_flag, on_event, {
         let lang_owned = lang_owned.clone();
         move |path: &Path| {
             verify_model_manifest(path, &lang_owned).map_err(|e| e.message)?;
-            crate::fa_dev::digest_for_sidecar(path).map_err(|e| e.to_string())
+            crate::fa_shared::digest_for_sidecar(path).map_err(|e| e.to_string())
         }
     })
     .await
@@ -218,7 +218,7 @@ pub fn fa_model_status(app: tauri::AppHandle, language: String) -> Result<ModelD
 }
 
 /// Canonical FA language allowlist. Mirrors `fa_onnx.rs::vocab_json_for`'s
-/// match arms and `fa_dev.rs`/`fa_onnx.rs`'s own test-loop literals — no
+/// match arms and `fa_shared.rs`/`fa_onnx.rs`'s own test-loop literals — no
 /// single shared Rust constant existed before this module (confirmed by
 /// grep across `src-tauri/src/*.rs`), so this becomes it.
 pub(crate) const FA_LANGUAGES: [&str; 5] = ["en", "es", "fr", "de", "pt"];
@@ -679,7 +679,7 @@ fn import_to_target(id: ModelId, source: &Path, target: &Path) -> Result<(), Str
 /// Rejects a bad import with a SPECIFIC message naming what was wrong —
 /// never a generic string. Whisper: ggml magic bytes, then exact size, then
 /// the pinned sha256 (`model_download.rs`'s own constants, the same ones the
-/// downloader verifies against). FA: `fa_dev::verify_model_manifest`, which
+/// downloader verifies against). FA: `fa_shared::verify_model_manifest`, which
 /// already produces specific "wrong size" / "wrong hash for language X"
 /// messages — this is the check that catches a Spanish model imported into
 /// the English slot, since the manifest's sha256 differs per language even
@@ -1279,7 +1279,7 @@ mod tests {
     /// past 90 seconds regardless of which thread ran it. The actual fix
     /// deletes that second read: `fa_model_download`'s closure now returns
     /// the digest `verify_model_manifest` already computed
-    /// (`fa_dev::digest_for_sidecar`, a cache hit under the SAME file
+    /// (`fa_shared::digest_for_sidecar`, a cache hit under the SAME file
     /// identity), and `finalize_verified_download` writes the sidecar from
     /// it directly. Structural proof this file no longer calls the raw
     /// hasher a second time for this purpose — `hash_file` appears in this
@@ -1294,7 +1294,7 @@ mod tests {
         assert!(
             !body.contains("hash_file("),
             "fa_model_download must not hash the file itself at all — the digest comes from \
-             verify_model_manifest via fa_dev::digest_for_sidecar, never a fresh hash_file call. \
+             verify_model_manifest via fa_shared::digest_for_sidecar, never a fresh hash_file call. \
              body searched: {body}"
         );
         assert!(

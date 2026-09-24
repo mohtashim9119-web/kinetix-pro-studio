@@ -562,57 +562,14 @@ pub fn fa_stage_audio_raw(request: tauri::ipc::Request<'_>) -> Result<String, St
     Ok(input_path.to_string_lossy().to_string())
 }
 
-/// Dev-only end-to-end FA entry point (WS1 Task 5 Slice D10): resolves +
-/// manifest-verifies the model for `language`, then (WS1 Task 5 Slice D25
-/// A1) obtains a 16kHz mono WAV via `fa::ensure_durable_wav` — the durable,
-/// LRU-evicted cache under `app_local_data_dir()/fa-audio-cache/` (WS1 Task
-/// 5 Slice D24 B1/B2) — rather than transcoding to a throwaway per-call WAV
-/// as before, then delegates to the real `fa_align` unmodified.
-///
-/// `input_path` is a content-addressed file `fa_stage_audio_raw` (above)
-/// already staged under `kinetix-fa-dev-inputs` — the frontend calls that
-/// command first, with the raw audio bytes as the request body, and passes
-/// the returned path here.
-///
-/// Neither the dev-input cache nor the durable WAV cache is cleaned up at
-/// the end of this call (both are deliberately persistent, unlike the old
-/// per-call temp directory) — that's the durable cache's whole point: a
-/// second `fa_align_dev` call against the same clip should skip transcoding
-/// entirely.
-///
-/// `chunks` (WS1 Task 5 Slice D11) replaces the pre-D11 `segments` param —
-/// `src/services/faChunkPlan.ts` builds the ordered `{startSec, endSec,
-/// text}` windows this now takes, one per `fa_align` forward pass, instead
-/// of a single segment list implicitly aligned against the whole file.
-/// Manifest verification above stays exactly once per `fa_align_dev` call
-/// (unchanged) — the model-file SHA-256 is independent of, and unaffected
-/// by, `fa_align`'s own internal per-chunk `Session` cache (`fa_onnx.rs`'s
-/// `CachedSession`, keyed separately on file size+mtime for staleness).
-#[tauri::command]
-pub async fn fa_align_dev(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, FaState>,
-    model_cache: tauri::State<'_, FaModelCache>,
-    input_path: String,
-    chunks: Vec<FaChunkInput>,
-    language: String,
-    on_event: Channel<FaEvent>,
-) -> Result<(), FaError> {
-    resolve_wav_and_align(app, state, model_cache, input_path, chunks, language, on_event).await
-}
-
-/// Shared body behind both `fa_align_dev` (above) and the production,
-/// capability-gated `fa_align_production` (`fa_production.rs`,
-/// docs/archive/history/work-in-progress.md §11 item 1): resolves + manifest-verifies the
-/// model, obtains a durable 16kHz mono WAV via `fa::ensure_durable_wav` from
-/// the already-staged `input_path` (see `fa_stage_audio_raw` above — the
-/// caller runs that first and passes its result here), then delegates to
-/// the real, unmodified `fa_align`. Extracted as its own function (rather
-/// than duplicated) so the production command is provably running the exact
-/// same resolve-then-delegate path this dev command has already been
-/// live-verified against a real `AppHandle<Wry>` (D25 A1) — one
-/// implementation, two thin command wrappers.
-pub(crate) async fn resolve_wav_and_align(
+/// Body of the production, capability-gated `fa_align_production`
+/// (`fa_production.rs`, docs/archive/history/work-in-progress.md §11 item
+/// 1): resolves + manifest-verifies the model, obtains a durable 16kHz mono
+/// WAV via `fa::ensure_durable_wav` from the already-staged `input_path`
+/// (see `fa_stage_audio_raw` above — the caller runs that first and passes
+/// its result here), then delegates to the real, unmodified `fa_align`.
+/// Extracted as its own function so it stays independently testable.
+pub async fn resolve_wav_and_align(
     app: tauri::AppHandle,
     state: tauri::State<'_, FaState>,
     model_cache: tauri::State<'_, FaModelCache>,
@@ -1531,7 +1488,7 @@ mod persisted_digest_cache {
     /// `#[ignore]`d. Last run green on the WS3 fa-threads-production branch.
     ///
     ///   cargo test --features fa-inference -- --ignored --exact \
-    ///     fa_dev::persisted_digest_cache::a_corrupt_cache_forces_a_real_re_hash_end_to_end
+    ///     fa_shared::persisted_digest_cache::a_corrupt_cache_forces_a_real_re_hash_end_to_end
     #[test]
     #[ignore]
     fn a_corrupt_cache_forces_a_real_re_hash_end_to_end() {

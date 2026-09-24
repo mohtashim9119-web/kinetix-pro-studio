@@ -124,10 +124,10 @@ pub struct FaInferenceTimings {
 }
 
 /// The stages that run BEFORE `fa_align` is entered — measured by
-/// `fa_dev::resolve_wav_and_align` (manifest verification, durable WAV) and
+/// `fa_shared::resolve_wav_and_align` (manifest verification, durable WAV) and
 /// by `fa_stage_audio_raw` itself (raw-body staging, recorded against the
 /// path it returns and claimed back here — see
-/// `fa_dev::take_staging_duration` for why that hand-off is needed at all).
+/// `fa_shared::take_staging_duration` for why that hand-off is needed at all).
 ///
 /// `staging_nanos` is an `Option` because it is genuinely unknown, not zero,
 /// when the caller reached `fa_align_production` with a path this process
@@ -219,7 +219,7 @@ pub struct FaRunTiming {
     pub durable_wav_ms: f64,
     pub durable_wav_cache_hit: bool,
     pub manifest_verify_ms: f64,
-    /// `true` when `fa_dev`'s in-process digest memo answered, `false` when
+    /// `true` when `fa_shared`'s in-process digest memo answered, `false` when
     /// the full ~1.26 GiB stream hash ran.
     pub manifest_digest_cache_hit: bool,
     pub model_cache_hit: bool,
@@ -701,7 +701,7 @@ mod tests {
         );
     }
 
-    const FA_DEV_SOURCE: &str = include_str!("fa_dev.rs");
+    const FA_SHARED_SOURCE: &str = include_str!("fa_shared.rs");
 
     #[test]
     fn the_single_flight_claim_is_actually_wired_into_the_run_entry_point() {
@@ -711,7 +711,7 @@ mod tests {
         // nothing in the suite executes it. Deleting the claim from it would
         // leave every single-flight test green while the command it guards ran
         // unprotected. This reads the source instead.
-        let body = braced_block_after(FA_DEV_SOURCE, "pub(crate) async fn resolve_wav_and_align(");
+        let body = braced_block_after(FA_SHARED_SOURCE, "pub async fn resolve_wav_and_align(");
         let claim_at = body.find("try_acquire_fa_run(&key, sink.clone())").expect(
             "resolve_wav_and_align no longer takes a single-flight claim — two concurrent              fa_align_production calls would both proceed and the second would clobber the first's              cancel state, which is the exact bug this guard exists for",
         );

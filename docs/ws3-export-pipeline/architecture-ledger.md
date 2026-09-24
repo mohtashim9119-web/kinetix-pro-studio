@@ -2549,7 +2549,7 @@ deliberate-discard call sites:
    `tmp_dir` (the transcoded WAV + original upload) under `$TMPDIR` forever. Fixed with an RAII
    `TmpDirCleanupGuard` (`Drop` removes the dir unless `disarm()`ed), so unwinding — an early `?`,
    a panic — cleans up for free instead of being re-derived per call site.
-2. **`fa_stage_audio_raw` staging inputs** (`fa_dev.rs`): content-addressed dedup means the SAME
+2. **`fa_stage_audio_raw` staging inputs** (`fa_shared.rs`): content-addressed dedup means the SAME
    audio is never re-written, but nothing ever reclaimed a DIFFERENT content's entry once staged —
    unbounded growth under `$TMPDIR` for a project touching many distinct source files. Fixed with
    `evict_staging_lru_until_under_cap` (2 GiB budget, same order of magnitude as
@@ -2611,7 +2611,7 @@ odds (reproduced live this round: 3 failures in 5 runs, on three DIFFERENT tests
 `an_orphaned_percent_is_never_replayed_without_a_live_job`,
 `a_terminal_event_supersedes_a_retained_percent`, `retained_events_for_distinct_keys_stay_independent`
 — never the same one twice). **Pre-existing on `fd547ce`, not introduced by this round**: none of
-Round 24a's new tests (`whisper::tmp_dir_cleanup_guard_tests`, `fa_dev`'s staging-LRU tests) touch
+Round 24a's new tests (`whisper::tmp_dir_cleanup_guard_tests`, `fa_shared`'s staging-LRU tests) touch
 the racing mechanism, and all of them passed clean in every one of the 5 runs.
 
 **Shared resource, identified:** `whisper.rs`'s two process-global `static`s — `IN_FLIGHT`
@@ -2951,6 +2951,6 @@ transitively so this added no new package to `Cargo.lock`) is sufficient for tha
 roughly sixteen-fold throughput gain over the scalar SHA-256 it replaced. `sha256.rs` itself is
 untouched and remains the correct choice everywhere it's still used — asset content-identity
 (`asset_store.rs`), model digest sidecars (`models.rs`, `model_download.rs`), FA cache keys
-(`fa.rs`, `fa_dev.rs`), and export segment hashing (`ffmpeg.rs`) — all cases where a stronger
+(`fa.rs`, `fa_shared.rs`), and export segment hashing (`ffmpeg.rs`) — all cases where a stronger
 identity/collision guarantee than CRC32 provides is the actual requirement, not a copy-corruption
 check. `storage_root.rs` itself has zero remaining `sha256` references after this round.

@@ -436,7 +436,7 @@ async function runFaAttempt(
       },
     });
   } catch (err) {
-    // fa_stage_audio_raw returns Result<String, String> (fa_dev.rs) — a bare
+    // fa_stage_audio_raw returns Result<String, String> (fa_shared.rs) — a bare
     // string, never a typed FaError — so this site is classified by WHICH
     // call failed (staging), not by decoding backend prose. Distinct from
     // 'inference-failed' in the mapping table because the failure is

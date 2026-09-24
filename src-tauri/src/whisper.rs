@@ -1449,7 +1449,7 @@ fn parse_timestamp(ts: &str) -> f64 {
 /// live `tauri::AppHandle` to unit-test directly (no existing test in this
 /// file calls it), so this exercises the exact mechanism that now runs on
 /// every one of its early-`?` exits — real disk I/O, matching this
-/// codebase's own `session_claim.rs`/`fa_dev.rs` guard-test style.
+/// codebase's own `session_claim.rs`/`fa_shared.rs` guard-test style.
 #[cfg(test)]
 mod tmp_dir_cleanup_guard_tests {
     use super::*;
@@ -1549,7 +1549,7 @@ mod in_flight_tests {
     // long-lived entries can otherwise collectively exceed the cap the same
     // way. `in_flight_test_guard` closes that: every test in this module
     // takes it for its entire body, so only one is ever touching the shared
-    // statics at a time — mirroring `fa_dev.rs`'s `digest_test_guard` for
+    // statics at a time — mirroring `fa_shared.rs`'s `digest_test_guard` for
     // its own sibling process-global-memo race.
     static IN_FLIGHT_TEST_LOCK: Mutex<()> = Mutex::new(());
 

@@ -165,7 +165,7 @@ fn main() {
         "fa_download_live: RESULT — pass1 fresh download: {bytes} bytes / {:.1}s; \
          pass2 cancel-then-resume: cancelled at {partial_bytes_at_cancel} bytes, resumed and \
          finished at {final_bytes} bytes in {:.1}s; manifest verification passed both times \
-         (fa_dev::verify_model_manifest ran inside fa_model_download before each finalize).",
+         (fa_shared::verify_model_manifest ran inside fa_model_download before each finalize).",
         elapsed.as_secs_f64(),
         resume_start.elapsed().as_secs_f64()
     );

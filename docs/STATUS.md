@@ -29,7 +29,7 @@ placement, the sync log. NR-6 sets product direction — see
 [`operator-product-rulings-2026-09-19.md`](ws1-sync-pipeline/operator-product-rulings-2026-09-19.md):
 cloud becomes the default engine, FA toggles are deleted, Whisper-only is a flagged
 degraded state, local is savable as default once Whisper + at least one selected pack
-is per-pack green. Both cache races below (`fa_dev.rs`, `whisper.rs`) are a Wave 1
+is per-pack green. Both cache races below (`fa_shared.rs`, `whisper.rs`) are a Wave 1
 prerequisite, not a someday item. D24 lives in this lane (re-filed 2026-09-19 from WS3
 — it is a sync-behavior defect: silent FA→Whisper substitution, not an export/storage
 one).
@@ -66,7 +66,7 @@ has a STATUS.md citation:
 - [OPEN · NON-BLOCKING] 5 Zero-Defect Register rows, no rule fix yet — `scripts/ws1-session-ak-step1-gate.ts:59`
 - [OPEN · NON-BLOCKING] Alignment cost unbounded for real inputs (Contract A4, `__ALIGN_INSTRUMENT__` dormant)
 - D24 CLOSED (Wave 1, `4e36080`) — Silent FA→Whisper substitution removed on the six typed fallback sites in `forcedAlignmentRun.ts` / `App.tsx`; preflight and silence-detect audit rows verified **non-substituting** (observational / continue-on-error only — see [`fa-wiring-audit.md`](architecture/fa-wiring-audit.md) STEP 3 annotations). Degraded paths are explicit (`degraded`, abort, or flagged ok-with-log); no successful sync that presents FA while committing Whisper timings from those sites.
-- CLOSED (Wave 1, `5243e78`) — `fa-dev-digest-memo-reset-race` (Flake A): per-test digest memo namespacing / isolation in `fa_dev.rs` test harness.
+- CLOSED (Wave 1, `5243e78`) — `fa-dev-digest-memo-reset-race` (Flake A): per-test digest memo namespacing / isolation in `fa_shared.rs` test harness.
 - CLOSED (Wave 1, `c6c7428`) — `whisper-terminal-buffer-cap-eviction-race` (Flake B): terminal attach buffer test isolation in `whisper.rs`.
 
 **Wave 1 formal close (2026-09-21, merge `e039c4d`, `ws1-wave1-hotfix` → `main`).** Six hotfixes plus a rebuilt end-to-end test layer closed the operator's manual-verification findings on top of the `ws1-wave1` landing: R.10-skipped placeholder gap (`a80cc74`), typed whisper model-not-found (`faf1d33`), late whole-run cancel abort-listener fix (`8e199d4`), FA victim re-timing (`18b3d5f`), infeasible-chunk serde snake_case fix (`1fd9c98`), fail-loud whisper model-failure modal (`fb51358`), and a real end-to-end FA-arm test (`0c85e6d`). The `applySyncCancelInvariant.test.ts` setProject-count invariant (stale at 3 after `18b3d5f`'s victim-pause branch) was found on first full-suite run and fixed pre-merge (`bb8b805`), not left open. Operator manual verification passed, including the new whisper fail-loud dialog — this is the acceptance gate per standing ruling. Canonical gate numbers from `main` at merge tip: `npm test` 4027 passed / 78 skipped / 0 failed; `cargo test` 449/0/5; `cargo test --features fa-inference` 536/0/35; `tsc --noEmit` / release build / `vite build` all clean.
@@ -209,7 +209,7 @@ Round 28 hardware findings (build `831c872`, branch `ws3-export-integration`) as
 - CLOSED (Wave 1, `b547132`) — `fa_cancel` wired from sync cancel path (`useWhisper` / Apply Sync abort); no longer zero frontend callers.
 - [OPEN · NON-BLOCKING] `faBoundaryTypes.ts` missing one-way drift entries — `faBoundaryTypes.ts:64`
 - [OPEN · NON-BLOCKING] `.digest.json` not removed on model delete — `models.rs:664`
-- [OPEN · NON-BLOCKING] Two `fa_dev` digest tests share process-global memo — `fa_dev.rs:731`
+- [OPEN · NON-BLOCKING] Two `fa_shared` digest tests share process-global memo — `fa_shared.rs` (line shifted by the G5 `fa_dev.rs` -> `fa_shared.rs` rename; re-locate before acting on this line)
 - [OPEN · NON-BLOCKING] Whisper attach buffer 30s stale-replay window; panic path can orphan registry key — `whisper.rs:172`
 - [OPEN · NON-BLOCKING] React max update depth during V8 FA run; trigger unlocated
 - [OPEN · NON-BLOCKING] Dev-profile WebKit IDB holds 469MB legacy v1 data; packaged build 15.7MB

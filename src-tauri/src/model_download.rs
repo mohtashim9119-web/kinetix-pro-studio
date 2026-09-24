@@ -13,7 +13,7 @@
 // streamed progress, resumable partial downloads via a `.part` file + HTTP
 // Range, atomic rename on completion, and a caller-supplied verification
 // closure run before the rename (whisper: the sha256 check that lived here
-// inline before this refactor; FA: `fa_dev::verify_model_manifest`, already
+// inline before this refactor; FA: `fa_shared::verify_model_manifest`, already
 // exact-size+sha256 against the committed manifest — no new pinned constant
 // added for FA). `ModelDownloadEvent`/`ModelDownloadState` stay generic
 // (never whisper-specific in shape) and are reused as-is by both callers.
@@ -143,7 +143,7 @@ pub(crate) const MODEL_SHA256: &str = "1fc70f774d38eb169993ac391eea357ef47c88757
 /// bytes of `0x67676d6c` — measured against the real local model
 /// (`ggml-large-v3-turbo.bin`'s first 4 bytes: `6c 6d 67 67`). Cheap
 /// first-line-of-defense precheck for `import_local_model` before paying for
-/// a full stream hash, mirroring `fa_dev.rs::verify_model_manifest`'s own
+/// a full stream hash, mirroring `fa_shared.rs::verify_model_manifest`'s own
 /// size-precheck-before-hash structure.
 pub(crate) const GGML_MAGIC: [u8; 4] = [0x6c, 0x6d, 0x67, 0x67];
 
