@@ -759,14 +759,6 @@ export type SyncLogEntryType =
    *  severity taxonomy reserves 'warning' for "the user should do something",
    *  and there is nothing for them to do here. */
   | 'rule-correction'
-  /** 'fa-fallback' — RETIRED, WS1 Session J → plan-v3 Wave 1 item 3 (D24).
-   *  Nothing produces this type any more — `FaRunResult` has no `'fallback'`
-   *  arm, so a run-level FA failure can no longer silently commit Whisper
-   *  timing. Kept in this union (and in `SyncLogPanel`'s renderer) ONLY so a
-   *  persisted project's pre-Wave-1 log entries still render instead of
-   *  falling through to the generic 'info' badge. See 'fa-paused' below for
-   *  the entry type that replaced it. */
-  | 'fa-fallback'
   /** 'fa-paused' — plan-v3 Wave 1 items 3/4 (D24). A run-level FA failure (or
    *  a precondition equivalent to one — unsupported language, empty chunk
    *  plan, zero words, any typed IPC failure kind) STOPPED the run rather
@@ -827,6 +819,27 @@ export type SyncLogEntryType =
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */
+/** Machine-readable identity of an entry whose `type` alone does not say what
+ *  it is — the generic 'warning'/'info' entries several builders share. Set
+ *  AT BUILD TIME by the builder itself, so the sync log's user view
+ *  (`syncLogUserView.ts`) classifies by this field and never by display text:
+ *  a copy edit to a message or fix hint cannot move an entry to a different
+ *  attention kind. Absent on entries persisted before this field existed —
+ *  those fall back to the view's legacy text matching. */
+export type SyncLogFindingKind =
+  | 'ctc-infeasible'
+  | 'fa-victim-retimed'
+  | 'scene-density'
+  | 'weak-match'
+  | 'wpm'
+  | 'local-coverage'
+  | 'bundle-import-failed'
+  | 'character-fallback'
+  | 'freeze-frame'
+  | 'engine-forced-alignment'
+  | 'engine-whisper'
+  | 'engine-character';
+
 export interface SyncLogEntry {
   id: string;
   /** Date.now() at creation. */
@@ -919,8 +932,8 @@ export interface SyncLogEntry {
    *  this file. */
   groupedItems?: GroupedLogItem[];
   /** WS1 Session J — WHICH RULE OWNS THIS ENTRY. `'R.5' | 'R.10' | 'R.11' |
-   *  'R.12'` today; also set on 'fa-fallback' entries, where it names the FA
-   *  entry point (`'FA'`) rather than a post-inference rule.
+   *  'R.12'` today; also set on FA entries ('fa-paused', 'fa-preflight', …),
+   *  where it names the FA entry point (`'FA'`) rather than a post-inference rule.
    *
    *  Deliberately a WIDENED `string`, not a union, and the reason is concrete:
    *  this workstream has added four rules in five sessions, and a union would
@@ -976,6 +989,10 @@ export interface SyncLogEntry {
    *  never conflates the two, the confusion this field exists to end: see
    *  `buildSkipLogEntries`'s "S{n} / Clip {n}" message format. */
   absorbedByDisplayIndex?: number;
+  /** See `SyncLogFindingKind`. `count` carries the number the view needs
+   *  from the finding (re-timed scenes, character-placed segments) so it is
+   *  never parsed back out of prose. */
+  finding?: { kind: SyncLogFindingKind; count?: number };
 }
 
 /** One violation's worth of detail inside a grouped `SyncLogEntry` — a

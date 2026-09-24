@@ -32,6 +32,15 @@ import {
 /** One contract violation — shared shape across every pair's validator (§3
  *  Step 3). `severity` and `detail` feed a SyncLogEntry at the wiring call
  *  site; `detail` is for the log only, never for control flow. */
+/** The two per-scene validators' fix hints, exported so the sync log's user
+ *  view (`syncLogUserView.ts`) can recognise their entries — single or
+ *  grouped (`buildGroupedViolationEntry` keeps a shared hint verbatim) —
+ *  without parsing prose. Wording unchanged from the inline originals. */
+export const WORD_COVERAGE_FIX_HINT =
+  "Some of this scene's words may have been matched into a neighboring scene — check its cut points and its neighbors' on the timeline.";
+export const SCENE_DENSITY_FIX_HINT =
+  'Check this scene\'s script against its actual audio — this may be leftover or duplicated text that was never spoken here.';
+
 export interface ContractViolation {
   contract: '1->2' | '2->3' | '3->4' | '4->5' | '5->6' | '6->7';
   rule: string;
@@ -448,7 +457,7 @@ export function validateWordCoverage(
       rule: 'low-word-coverage',
       severity: 'warning',
       message: `Segment ${i + 1} ("${segmentName}") matched only ${matchedWords} of ${totalWords} words (${percent}%).`,
-      fixHint: "Some of this scene's words may have been matched into a neighboring scene — check its cut points and its neighbors' on the timeline.",
+      fixHint: WORD_COVERAGE_FIX_HINT,
       detail: { segmentIndex: i, segmentName, matchedWords, totalWords, missingWords },
     });
   }
@@ -498,7 +507,7 @@ export function validateSceneDensity(
       severity: 'warning',
       message: `Segment ${i + 1} ("${segmentName}") matched ${matchedWords} words into ${seg.duration.toFixed(2)}s ` +
         `(${wordsPerSec.toFixed(1)} words/sec) — denser than natural speech.`,
-      fixHint: 'Check this scene\'s script against its actual audio — this may be leftover or duplicated text that was never spoken here.',
+      fixHint: SCENE_DENSITY_FIX_HINT,
       detail: { segmentIndex: i, segmentName, matchedWords, durationSec: seg.duration, wordsPerSec },
     });
   }

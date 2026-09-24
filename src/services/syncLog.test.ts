@@ -45,10 +45,12 @@ import {
   buildAnchorTrustLogEntries,
   buildRunEdgeViolationLogEntries,
   buildCtcInfeasibleLogEntry,
+  isKnownSyncLogEntryType,
+  filterKnownSyncLogEntries,
 } from './syncLog';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 import { TransitionType, AnimationType } from '../types';
-import type { Project, SyncLogEntry, SyncRunSummary, VideoSegment } from '../types';
+import type { Project, SyncLogEntry, SyncRunSummary, VideoSegment, SyncLogEntryType } from '../types';
 import type { ContractViolation } from './syncContracts';
 
 const RUN_ID = 'run-1';
@@ -1443,5 +1445,41 @@ describe('buildMediaImportEntry — G6 Step 4: one grouped finding per media-vau
       RUN_ID, 'folder', { imported: 1, deduped: 2, unsupportedSkipped: 0, failed: 0 }, AT, ['a.jpg', 'b.jpg'],
     );
     expect(entry.message).toBe('Folder import: 1 imported, already in your project: a.jpg, b.jpg.');
+  });
+});
+
+// Operator ruling (sync-log user view) — 'fa-fallback' retired from the
+// union. The runtime known-type table is what lets an old project's
+// persisted 'fa-fallback' entries be dropped on load instead of rendering an
+// unstyled type; the six-group `syncLogGroupForType` it replaces is gone
+// (its role is now `syncLogUserView.ts`'s details-count aggregation).
+describe('isKnownSyncLogEntryType / filterKnownSyncLogEntries — retired types filtered', () => {
+  const ALL_TYPES: SyncLogEntryType[] = [
+    'skip', 'abort', 'warning', 'info', 'silence-error', 'malformed-token', 'no-asset', 'rescue',
+    'unsupported-language', 'lock-span-overflow', 'lock-preserved-adjustment', 'lock-refused',
+    'lock-not-restored', 'rule-correction', 'fa-paused', 'fa-preflight',
+    'fa-gate-closed', 'whisper-model-failure', 'media-import',
+  ];
+
+  it('knows every current entry type', () => {
+    for (const type of ALL_TYPES) expect(isKnownSyncLogEntryType(type), type).toBe(true);
+  });
+
+  it("does not know the retired 'fa-fallback', nor junk", () => {
+    expect(isKnownSyncLogEntryType('fa-fallback')).toBe(false);
+    expect(isKnownSyncLogEntryType('toString')).toBe(false);
+    expect(isKnownSyncLogEntryType(undefined)).toBe(false);
+    expect(isKnownSyncLogEntryType(42)).toBe(false);
+  });
+
+  it('drops fa-fallback and malformed entries, keeps every known one in order', () => {
+    const kept = buildSyncEngineEntry(RUN_ID, 'whisper', 10, AT);
+    const legacy = { ...kept, id: 'legacy', type: 'fa-fallback' };
+    const out = filterKnownSyncLogEntries([legacy, kept, null, 'x', { id: 'no-type' }]);
+    expect(out).toEqual([kept]);
+  });
+
+  it('passes an absent log through as undefined (pre-WS-logs project)', () => {
+    expect(filterKnownSyncLogEntries(undefined)).toBeUndefined();
   });
 });

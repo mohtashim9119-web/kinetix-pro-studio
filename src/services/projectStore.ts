@@ -3,6 +3,7 @@ import { writeMirroredProject, deleteMirroredProject, readMirror } from './proje
 import { osStoreRead, osStoreWrite, osStoreDelete } from './projectStoreClient';
 import { isTauri } from './tauriFfmpeg';
 import { backfillSegmentIds } from './segmentId';
+import { filterKnownSyncLogEntries } from './syncLog';
 import { migrateLegacyTimingProvenance } from './timingProvenance';
 import { spineEquals, type SyncSpine } from './spine';
 
@@ -570,6 +571,13 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
   // already carrying a current-version id is left untouched, so re-loading
   // an already-backfilled project is a no-op here.
   project.segments = backfillSegmentIds(project.segments);
+
+  // Operator ruling (sync-log user view) — 'fa-fallback' is retired from the
+  // entry-type union. A project synced before plan-v3 Wave 1 can still carry
+  // such entries; drop them (and anything else of an unknown type) so the log
+  // loads and renders instead of holding a type nothing styles or classifies.
+  const knownSyncLog = filterKnownSyncLogEntries(project.syncLog);
+  if (knownSyncLog) project.syncLog = knownSyncLog;
 
   // plan-v3 item 8 — v4→v5: a stored envelope older than 5 that already
   // carries timing arrays is labelled engine-unknown. Never a guess. A v5

@@ -194,6 +194,7 @@ import {
   buildSilenceErrorEntry,
   buildMalformedTokenEntry,
   buildGroupedViolationEntry,
+  buildCharacterTimingEntry,
   buildUnsupportedLanguageEntry,
   buildLockFindingLogEntries,
   buildLockRefusedLogEntry,
@@ -1629,7 +1630,7 @@ export function buildFreezeFrameEntries(
       `Segment #${i + 1}: source clip (${availableClipLen.toFixed(1)}s) is shorter than the `
       + `segment duration (${s.duration.toFixed(1)}s); the final frame will hold for the `
       + `remaining ${heldFor.toFixed(1)}s.`,
-      { segmentIndex: i },
+      { segmentIndex: i, finding: { kind: 'freeze-frame' } },
       timestamp,
     ));
   });
@@ -5270,15 +5271,7 @@ export default function App() {
         // needs only script word count + audio duration), so this fallback
         // branch owes it the same inclusion the audio-timed branch gives it.
         ...(wpmCheckEntry ? [wpmCheckEntry] : []),
-        makeSyncLogEntry(
-          syncRunId,
-          unexpectedFallback ? 'warning' : 'info',
-          unexpectedFallback
-            ? `Sync completed on character-based timing — no cached transcript was available for the voiceover. ${finalTimedSegments.length} segment(s) placed.`
-            : `Sync completed: ${finalTimedSegments.length} segment(s) placed using character-based timing (no voiceover transcript).`,
-          undefined,
-          syncRunAt,
-        ),
+        buildCharacterTimingEntry(syncRunId, unexpectedFallback, finalTimedSegments.length, syncRunAt),
       ];
       pendingLogSummary = {
         syncRunId,
@@ -6255,6 +6248,13 @@ export default function App() {
   // block's own "add zip" door (`MediaBlock.tsx`, via `handleMediaIngestComplete`
   // above) is the live replacement — same `ingestZip` underneath, actually
   // reachable from the UI.
+
+  // Sync-log user view, attention kind 7 — offline media is live project
+  // state (`Asset.unresolved`, set at open), not a log entry.
+  const offlineAssetNames = useMemo(
+    () => project.assets.filter(a => a.unresolved).map(a => a.name),
+    [project.assets],
+  );
 
   const currentSegment = useMemo(() => {
     if (isResizingRef.current) {
@@ -8030,7 +8030,10 @@ export default function App() {
           style={{ width: rightPanelCollapsed ? 0 : '15vw' }}
           className="flex-shrink-0 flex flex-col h-full border-l border-[#1A1A1A] bg-[#080808] overflow-hidden transition-[width] duration-300 ease-in-out"
         >
-          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+          {/* overflow-y: scroll, not auto — the right panel's scrollbar track is
+              always reserved (transparent when idle), so expanding the sync
+              log's Details past the panel height never narrows the panel. */}
+          <div className="flex-1 min-h-0 overflow-y-scroll custom-scrollbar">
             {/* Project name + save status */}
             <div className="flex-shrink-0 px-3 pt-3 pb-2 border-b border-[#1A1A1A]">
               <p className="text-xs text-zinc-400 truncate">{project.name}</p>
@@ -8068,6 +8071,9 @@ export default function App() {
                 project; `?? []` is what makes a pre-WS-logs project render. */}
             <SyncLogPanel
               syncLog={project.syncLog ?? []}
+              syncRunSummaries={project.syncRunSummaries}
+              offlineAssetNames={offlineAssetNames}
+              segments={project.segments}
               onClearLog={handleClearSyncLog}
               onOpenModelsModal={() => setShowManageModelsModal(true)}
               onSeekToSegment={handleSegmentClick}

@@ -11,7 +11,7 @@
 // buildSyncInfoEntry, buildSyncAbortEntry, buildNoAssetSummaryEntry,
 // buildRescueLogEntries, clearSyncLog) remains in App.tsx and imports
 // makeSyncLogEntry from this module.
-import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem, VideoSegment, TranscriptToken } from '../types';
+import type { Project, SyncLogEntry, SyncLogEntryType, SyncLogFindingKind, SyncRunSummary, GroupedLogItem, VideoSegment, TranscriptToken } from '../types';
 import type { TokenDrop, WhisperFailureKind } from './whisperService';
 import type { ContractViolation } from './syncContracts';
 import type { LockFinding } from './syncEngine';
@@ -34,6 +34,48 @@ import {
   INFEASIBLE_COPY,
 } from './faInfeasibleFinding';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
+
+// ---------------------------------------------------------------------------
+// Known entry types — the runtime mirror of `SyncLogEntryType`. A `Record`
+// over the union, so adding a type without listing it here is a compile
+// error. Used to drop entries of a RETIRED type ('fa-fallback', plan-v3
+// item 3 → operator ruling) from an old project's persisted log on load
+// (`projectStore.ts`) and again at render (`syncLogUserView.ts`), so the
+// project opens and renders instead of carrying a type nothing styles.
+// ---------------------------------------------------------------------------
+const KNOWN_SYNC_LOG_ENTRY_TYPES: Record<SyncLogEntryType, true> = {
+  skip: true,
+  abort: true,
+  warning: true,
+  info: true,
+  'silence-error': true,
+  'malformed-token': true,
+  'no-asset': true,
+  rescue: true,
+  'unsupported-language': true,
+  'lock-span-overflow': true,
+  'lock-preserved-adjustment': true,
+  'lock-refused': true,
+  'lock-not-restored': true,
+  'rule-correction': true,
+  'fa-paused': true,
+  'fa-preflight': true,
+  'fa-gate-closed': true,
+  'whisper-model-failure': true,
+  'media-import': true,
+};
+
+export function isKnownSyncLogEntryType(type: unknown): type is SyncLogEntryType {
+  return typeof type === 'string' && Object.prototype.hasOwnProperty.call(KNOWN_SYNC_LOG_ENTRY_TYPES, type);
+}
+
+/** Load-time filter: keeps only well-formed entries of a known type. A
+ *  non-array (absent on a pre-WS-logs project) passes through as-is. */
+export function filterKnownSyncLogEntries(log: unknown): SyncLogEntry[] | undefined {
+  if (!Array.isArray(log)) return undefined;
+  return log.filter((e): e is SyncLogEntry =>
+    !!e && typeof e === 'object' && isKnownSyncLogEntryType((e as { type?: unknown }).type));
+}
 
 /** `crypto.randomUUID` is present in every runtime this app ships in (Tauri
  *  WKWebView/WebView2, and Vite dev over localhost — a secure context). The
@@ -58,7 +100,7 @@ export function makeSyncLogEntry(
     SyncLogEntry,
     'segmentIndex' | 'segmentText' | 'reason' | 'segmentTag' | 'matchedWords' | 'totalWords' | 'confidence'
     | 'longestRun' | 'errorMessage' | 'skippedTokenCount' | 'totalTokenCount' | 'severity' | 'fixHint'
-    | 'groupedItems' | 'owningRule' | 'ruleDetail' | 'segmentId' | 'absorbedByDisplayIndex'
+    | 'groupedItems' | 'owningRule' | 'ruleDetail' | 'segmentId' | 'absorbedByDisplayIndex' | 'finding'
   >,
   timestamp: number = Date.now(),
 ): SyncLogEntry {
@@ -94,6 +136,11 @@ export function buildSilenceErrorEntry(
   );
 }
 
+/** Exported so `syncLogUserView.ts` can recognise this entry by its hint
+ *  rather than by parsing its message. */
+export const LOCAL_COVERAGE_FIX_HINT =
+  'If they look right, this can be a false alarm on a script with heavy paraphrasing or stage directions.';
+
 /**
  * G4 Unit 4 — the pre-FA coverage check's 'marginal' band
  * (localFaCoverageGate.ts). Warn-only: FA already ran with real results by
@@ -112,7 +159,7 @@ export function buildLocalCoverageWarningEntry(
     'warning',
     `Only ${percent}% of this script's ${coverage.scriptWordCount} words were found in the transcribed audio — ` +
       'double-check the script and audio are the right pair for this project.',
-    { severity: 'warning', fixHint: 'If they look right, this can be a false alarm on a script with heavy paraphrasing or stage directions.' },
+    { severity: 'warning', fixHint: LOCAL_COVERAGE_FIX_HINT, finding: { kind: 'local-coverage' } },
     timestamp,
   );
 }
@@ -278,9 +325,22 @@ export function buildContractViolationEntry(
     syncRunId,
     'warning',
     violation.message,
-    { severity: violation.severity, fixHint: violation.fixHint },
+    { severity: violation.severity, fixHint: violation.fixHint, ...findingForRule(violation.rule, 1) },
     timestamp,
   );
+}
+
+/** `ContractViolation.rule` → the entry's machine-readable finding, for the
+ *  rules the sync log's user view raises as attention kinds. Rules not
+ *  listed carry no finding (they are details-only either way). */
+const RULE_FINDING_KIND: Partial<Record<string, SyncLogFindingKind>> = {
+  'low-word-coverage': 'weak-match',
+  'scene-density': 'scene-density',
+};
+
+function findingForRule(rule: string, count: number): Pick<SyncLogEntry, 'finding'> {
+  const kind = RULE_FINDING_KIND[rule];
+  return kind ? { finding: { kind, count } } : {};
 }
 
 /**
@@ -347,7 +407,7 @@ export function buildGroupedViolationEntry(
   if (violations.length === 0) return undefined;
   if (violations.length === 1) {
     const v = violations[0]!;
-    return makeSyncLogEntry(syncRunId, entryType, v.message, { severity: v.severity, fixHint: v.fixHint }, timestamp);
+    return makeSyncLogEntry(syncRunId, entryType, v.message, { severity: v.severity, fixHint: v.fixHint, ...findingForRule(v.rule, 1) }, timestamp);
   }
 
   const severity: 'warning' | 'error' = violations.some(v => v.severity === 'error') ? 'error' : 'warning';
@@ -363,7 +423,7 @@ export function buildGroupedViolationEntry(
     syncRunId,
     entryType,
     summarizeGroupedRule(violations[0]!.rule, violations.length),
-    { severity, fixHint, groupedItems },
+    { severity, fixHint, groupedItems, ...findingForRule(violations[0]!.rule, violations.length) },
     timestamp,
   );
 }
@@ -423,7 +483,7 @@ export function buildSyncEngineEntry(
     engine === 'forced-alignment'
       ? `Timing engine: forced alignment (${tokenCount} aligned word(s)).`
       : `Timing engine: Whisper transcript (${tokenCount} token(s)).`,
-    { severity: 'info' },
+    { severity: 'info', finding: { kind: engine === 'forced-alignment' ? 'engine-forced-alignment' : 'engine-whisper' } },
     timestamp,
   );
 }
@@ -630,6 +690,9 @@ export function buildMediaImportEntry(
   );
 }
 
+/** Exported for the same reason as `LOCAL_COVERAGE_FIX_HINT`. */
+export const BUNDLE_IMPORT_FAILED_FIX_HINT = 'Fix the bundle and drop it again — nothing was imported this time.';
+
 /**
  * G5 — bundle ingest's failure path (`bundleIngest.ts::classifyAndIngestBundleZip`
  * returning `{ kind: 'failure' }`, either a corrupt/oversized archive or a
@@ -647,7 +710,7 @@ export function buildBundleImportFailedEntry(
     syncRunId,
     'warning',
     message,
-    { severity: 'warning', fixHint: 'Fix the bundle and drop it again — nothing was imported this time.' },
+    { severity: 'warning', fixHint: BUNDLE_IMPORT_FAILED_FIX_HINT, finding: { kind: 'bundle-import-failed' } },
     timestamp,
   );
 }
@@ -1137,6 +1200,7 @@ export function buildCtcInfeasibleLogEntry(
       owningRule: 'FA',
       severity: 'warning',
       fixHint: INFEASIBLE_COPY.fixHint,
+      finding: { kind: 'ctc-infeasible', count: estimated.length },
       ruleDetail: {
         reason: `${chunks.length} CTC-infeasible chunk(s); ${estimated.length} needsReview word(s) in those windows.`,
       },
@@ -1172,10 +1236,36 @@ export function buildFaVictimRetimedLogEntry(
       owningRule: 'FA',
       severity: 'warning',
       fixHint: 'Review the re-timed scenes — their boundaries come from Whisper, not forced alignment. Accept the estimate, or re-run Apply Sync after tightening the affected scene tags.',
+      finding: { kind: 'fa-victim-retimed', count: victims.length },
       ruleDetail: {
         reason: `${victims.length} FA victim segment(s), engine fa degraded reason fa-chunk-infeasible; ${totalWords} word(s) marked Estimated from Whisper timing.`,
       },
     },
+    timestamp,
+  );
+}
+
+/**
+ * The character-timing branch's one entry (App.tsx — no voiceover transcript
+ * to align against, so every segment is placed by text weight). Extracted
+ * from an inline `makeSyncLogEntry` so its machine-readable finding is set in
+ * one place: `'character-fallback'` when a transcript SHOULD have existed
+ * (the defensive case — a 'warning'), `'engine-character'` when there is no
+ * voiceover at all (an 'info'). Messages unchanged from the inline originals.
+ */
+export function buildCharacterTimingEntry(
+  syncRunId: string,
+  unexpectedFallback: boolean,
+  placedCount: number,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    unexpectedFallback ? 'warning' : 'info',
+    unexpectedFallback
+      ? `Sync completed on character-based timing — no cached transcript was available for the voiceover. ${placedCount} segment(s) placed.`
+      : `Sync completed: ${placedCount} segment(s) placed using character-based timing (no voiceover transcript).`,
+    { finding: { kind: unexpectedFallback ? 'character-fallback' : 'engine-character', count: placedCount } },
     timestamp,
   );
 }

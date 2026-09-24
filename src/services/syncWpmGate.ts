@@ -88,5 +88,6 @@ export function buildWpmCheckLogEntry(
   return makeSyncLogEntry(syncRunId, 'warning', message, {
     severity: 'warning',
     fixHint,
+    finding: { kind: 'wpm' },
   }, timestamp);
 }
