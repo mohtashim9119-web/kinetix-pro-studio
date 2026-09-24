@@ -208,6 +208,7 @@ import {
   buildFaUserChoseWhisperEntry,
   buildMediaImportEntry,
   buildMediaNameCollisionEntry,
+  buildMediaMatchEntry,
   buildBundleImportFailedEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
@@ -282,6 +283,7 @@ import type { RecoveryAsset, RecoverySegment } from './components/recovery/degra
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
 import { mediaVaultUnreference, mediaVaultRename } from './services/mediaVaultClient';
 import { applyAssetRename } from './services/mediaRename';
+import { matchMediaToScenes } from './services/matchMediaToScenes';
 import { requestStoragePersistence } from './services/storagePersistence';
 import { getAppSessionToken } from './services/historyPersist';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
@@ -6182,6 +6184,21 @@ export default function App() {
     if (asset.contentHash) void mediaVaultRename(asset.contentHash, newName);
   }, []);
 
+  // Media workflow Unit 2 — "Match media to scenes". Assignment only: the
+  // segments' assetIds (overwritten wherever a scene's tag names an asset,
+  // kept otherwise) plus one summary finding, persisted by the ordinary
+  // autosave. No sync runs; timings, provenance and lastSyncSpine are never
+  // touched, so "Already synced" is unaffected.
+  const handleMatchMedia = useCallback(() => {
+    setProject(prev => {
+      const result = matchMediaToScenes(prev.assets, prev.segments);
+      return appendSyncLogEntries(
+        { ...prev, segments: result.segments },
+        [buildMediaMatchEntry(mintSyncLogId(), result)],
+      );
+    });
+  }, []);
+
   const handleMediaIngestError = useCallback((message: string) => {
     showToast(message);
   }, [showToast]);
@@ -7671,6 +7688,7 @@ export default function App() {
             onIngestComplete={handleMediaIngestComplete}
             onIngestError={handleMediaIngestError}
             onRenameAsset={handleRenameAsset}
+            onMatchMedia={handleMatchMedia}
             onBundleImportFailed={handleBundleImportFailed}
             onApplySync={handleApplySyncFromFiles}
             stagedFilesClearSignal={stagedFilesClearSignal}

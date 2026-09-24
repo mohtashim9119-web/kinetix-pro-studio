@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle, Loader2, Copy } from 'lucide-react';
+import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle, Loader2, Copy, Wand2 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Asset, VideoSegment } from '../types';
 import { formatTime } from '../services/timeFormat';
@@ -72,6 +72,10 @@ interface MediaBlockProps {
    *  never empty, never unchanged). The name is the match key for "Match
    *  media to scenes". Absent -> the name renders read-only. */
   onRenameAsset?: (assetId: string, newName: string) => void;
+  /** Media workflow Unit 2 — the header's "Match media to scenes" button:
+   *  re-assigns every scene whose tag names an asset (overwriting), keeps
+   *  the rest. Absent -> no button. */
+  onMatchMedia?: () => void;
 }
 
 type TypeFilter = 'all' | 'image' | 'video' | 'audio';
@@ -271,6 +275,7 @@ export function MediaBlock({
   onIngestComplete,
   onIngestError,
   onRenameAsset,
+  onMatchMedia,
 }: MediaBlockProps) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
@@ -450,6 +455,19 @@ export function MediaBlock({
           </span>
         )}
         <div className="flex items-center gap-1.5">
+          {onMatchMedia && (
+            <button
+              type="button"
+              data-testid="media-block-match"
+              title="Match media to scenes — assign each scene the file its tag names"
+              aria-label="Match media to scenes"
+              disabled={busy}
+              onClick={onMatchMedia}
+              className="p-1 rounded hover:bg-[var(--kx-surface-2)] text-[var(--kx-faint)] disabled:opacity-40"
+            >
+              <Wand2 size={13} />
+            </button>
+          )}
           <button
             type="button"
             title="Add loose files"

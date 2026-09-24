@@ -281,8 +281,9 @@ export interface VideoSegment {
   effectGrade?: SegmentGrade;
   /** WS-logs skip display — the cleaned scene-doc tag name (no brackets, e.g.
    *  "missing1") parseProjectData matched against assets for this segment.
-   *  Undefined for an untagged scene (empty `[]`). Display-only — nothing
-   *  downstream branches on it. */
+   *  Undefined for an untagged scene (empty `[]`). Display, plus the key
+   *  "Match media to scenes" (`matchMediaToScenes.ts`) re-matches against
+   *  current asset names — nothing in the sync pipeline branches on it. */
   tag?: string;
   /** Id of the original NATIVE segment this one is ultimately descended
    *  from — itself for a native segment (set to `id` by parseProjectData on

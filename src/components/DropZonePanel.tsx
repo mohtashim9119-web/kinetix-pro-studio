@@ -358,6 +358,8 @@ interface Props {
   onIngestError: (message: string) => void;
   /** Media workflow Unit 1 — a Media block tile's inline rename. */
   onRenameAsset?: (assetId: string, newName: string) => void;
+  /** Media workflow Unit 2 — the Media block's "Match media to scenes". */
+  onMatchMedia?: () => void;
   /** G5 — a bundle zip (dropped on any of the 4 slots below) that failed
    *  validation: corrupt/oversized archive, or bundle-shaped but missing one
    *  of its four required pieces. Logs ONE grouped sync-log finding naming
@@ -526,6 +528,7 @@ export function DropZonePanel({
   onIngestComplete,
   onIngestError,
   onRenameAsset,
+  onMatchMedia,
   onBundleImportFailed,
   onApplySync,
   onStagedFilesChange,
@@ -1585,6 +1588,7 @@ export function DropZonePanel({
               onIngestComplete={onIngestComplete}
               onIngestError={onIngestError}
               onRenameAsset={onRenameAsset}
+              onMatchMedia={onMatchMedia}
             />
 
           </div>{/* end scrollable */}
