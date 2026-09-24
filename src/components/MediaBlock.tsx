@@ -38,6 +38,7 @@ import { getAsset } from '../services/assetStore';
 import { sha256Hex, ingestLooseFiles, type MediaIngestCounts } from '../services/mediaIngest';
 import { ingestZip, ZipTooLargeError } from '../services/zipIngest';
 import { mediaVaultGenerateThumbnail, mediaVaultReadThumbnail } from '../services/mediaVaultClient';
+import { ASSET_DRAG_MIME } from '../services/assetDragChannel';
 
 export interface MediaIngestOutcome {
   assets: Asset[];
@@ -201,7 +202,12 @@ async function loadVideoThumbnailUrl(projectId: string, asset: Asset): Promise<s
  * commits, Escape cancels. The committed value is trimmed; empty or unchanged
  * commits nothing. The copy icon puts the current name on the clipboard.
  */
-function TileName({ name, onRename }: { name: string; onRename?: (newName: string) => void }) {
+function TileName({ name, onRename, onEditingChange }: {
+  name: string;
+  onRename?: (newName: string) => void;
+  /** Lets the tile stop being a drag source while its name is edited. */
+  onEditingChange?: (editing: boolean) => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(name);
   // Escape unmounts the input, and a focused element's removal can still
@@ -212,11 +218,13 @@ function TileName({ name, onRename }: { name: string; onRename?: (newName: strin
     settledRef.current = false;
     setDraft(name);
     setEditing(true);
+    onEditingChange?.(true);
   };
   const finish = (commit: boolean) => {
     if (settledRef.current) return;
     settledRef.current = true;
     setEditing(false);
+    onEditingChange?.(false);
     const next = draft.trim();
     if (commit && next !== '' && next !== name) onRename?.(next);
   };
@@ -282,6 +290,8 @@ export function MediaBlock({
   const [usageFilter, setUsageFilter] = useState<UsageFilter>('all');
   const [sortOrder, setSortOrderState] = useState<SortOrder>(readStoredSortOrder);
   const [busy, setBusy] = useState(false);
+  // Unit 3 — the tile whose name is being edited is not a drag source.
+  const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
   const [videoThumbUrls, setVideoThumbUrls] = useState<Record<string, string>>({});
   const thumbRequestedRef = useRef<Set<string>>(new Set());
 
@@ -614,7 +624,14 @@ export function MediaBlock({
               <div
                 key={asset.id}
                 data-testid="media-block-tile"
-                className="relative aspect-square rounded-lg overflow-hidden bg-[var(--kx-surface-2)] group"
+                // Media workflow Unit 3 — drag onto a timeline segment to
+                // assign it (dedicated asset channel; payload = asset id).
+                draggable={editingAssetId !== asset.id}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(ASSET_DRAG_MIME, asset.id);
+                  e.dataTransfer.effectAllowed = 'copy';
+                }}
+                className="relative aspect-square rounded-lg overflow-hidden bg-[var(--kx-surface-2)] group cursor-grab active:cursor-grabbing"
               >
                 {asset.unresolved ? (
                   <button
@@ -629,7 +646,7 @@ export function MediaBlock({
                     <Link2 size={11} />
                   </button>
                 ) : thumbUrl ? (
-                  <img src={thumbUrl} alt="" className="w-full h-full object-cover" />
+                  <img src={thumbUrl} alt="" draggable={false} className="w-full h-full object-cover" />
                 ) : (
                   <div className="w-full h-full flex items-center justify-center">
                     <TypeIcon size={20} className="text-[var(--kx-faint)]" />
@@ -670,6 +687,7 @@ export function MediaBlock({
                   <TileName
                     name={asset.name}
                     onRename={onRenameAsset ? (next) => onRenameAsset(asset.id, next) : undefined}
+                    onEditingChange={(editing) => setEditingAssetId(editing ? asset.id : null)}
                   />
                 </div>
               </div>

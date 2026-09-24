@@ -284,6 +284,7 @@ import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } fr
 import { mediaVaultUnreference, mediaVaultRename } from './services/mediaVaultClient';
 import { applyAssetRename } from './services/mediaRename';
 import { matchMediaToScenes } from './services/matchMediaToScenes';
+import { assignAssetToSegment } from './services/assetDragChannel';
 import { requestStoragePersistence } from './services/storagePersistence';
 import { getAppSessionToken } from './services/historyPersist';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
@@ -6199,6 +6200,16 @@ export default function App() {
     });
   }, []);
 
+  // Media workflow Unit 3 — a Media block tile dropped on a timeline
+  // segment. The user's pick is authoritative (no name logic); assignment
+  // only, persisted by the ordinary autosave — no sync, timings untouched.
+  const handleAssignAssetToSegment = useCallback((segmentId: string, assetId: string) => {
+    setProject(prev => {
+      const segments = assignAssetToSegment(prev.segments, prev.assets, segmentId, assetId);
+      return segments === prev.segments ? prev : { ...prev, segments };
+    });
+  }, []);
+
   const handleMediaIngestError = useCallback((message: string) => {
     showToast(message);
   }, [showToast]);
@@ -8025,6 +8036,7 @@ export default function App() {
                 historyAnchor={historyAnchor}
                 onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
                 onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
+                onAssignAssetToSegment={handleAssignAssetToSegment}
                 onSelectSegment={(id) => setSelectedSegmentId(id)}
                 // WS2 ws2-23 (bugs 4/6) — a single click RETARGETS an already-
                 // open scene drawer and never opens a closed one, exactly the

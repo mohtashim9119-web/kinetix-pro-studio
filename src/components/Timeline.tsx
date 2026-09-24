@@ -14,6 +14,7 @@ import { resizeHeading } from '../services/headingLayer';
 import { isDragEdgeLocked } from '../services/dragCascade';
 import { WaveformSource } from '../services/waveformPeaks';
 import { useTimelineWaveform } from './TimelineWaveform';
+import { ASSET_DRAG_MIME, carriesAssetDrag } from '../services/assetDragChannel';
 import {
   computeZoomPixelsPerSecond,
   computeBoundaryMarkerPositions,
@@ -79,6 +80,9 @@ interface Props {
   onResizeStart: (id: string, type: 'start' | 'end', clientX: number) => void;
   onSegmentUpdate: (updater: (prev: VideoSegment[]) => VideoSegment[]) => void;
   onOpenStockSearch: (segmentId: string) => void;
+  /** Media workflow Unit 3 — a Media block tile dropped on this segment
+   *  (ASSET_DRAG_MIME channel). Assignment only; absent -> not a drop target. */
+  onAssignAssetToSegment?: (segmentId: string, assetId: string) => void;
   onSelectSegment?: (id: string) => void;
   /** WS2 ws2-23 (bugs 4/6) — a SINGLE click on a clip. Distinct from
    *  `onSelectSegment` (double-click, which OPENS the scene drawer): this
@@ -111,6 +115,7 @@ export function Timeline({
   onResizeStart,
   onSegmentUpdate,
   onOpenStockSearch,
+  onAssignAssetToSegment,
   onSelectSegment,
   onClipClick,
   onHeadingResizeCommit,
@@ -331,6 +336,8 @@ export function Timeline({
   // user would have no confirmation their undo did anything.
   // ---------------------------------------------------------------------------
   const [flashSegmentId, setFlashSegmentId] = useState<string | null>(null);
+  // Media workflow Unit 3 — the segment a Media block tile is hovering over.
+  const [assetDropTargetId, setAssetDropTargetId] = useState<string | null>(null);
   useEffect(() => {
     const container = document.getElementById('timeline-scroll-area');
     const action = resolveHistoryAnchorAction({
@@ -649,6 +656,27 @@ export function Timeline({
                       if (resizingId) return;
                       onSeek(s.startTime);
                     }}
+                    data-asset-drop-target={assetDropTargetId === s.id ? 'true' : undefined}
+                    onDragOver={onAssignAssetToSegment ? (e) => {
+                      if (!carriesAssetDrag(e.dataTransfer)) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'copy';
+                      if (assetDropTargetId !== s.id) setAssetDropTargetId(s.id);
+                    } : undefined}
+                    onDragLeave={onAssignAssetToSegment ? (e) => {
+                      // Moving onto one of this card's own children also fires
+                      // dragleave here — only a real exit clears the highlight.
+                      if (e.relatedTarget instanceof Node && e.currentTarget.contains(e.relatedTarget)) return;
+                      setAssetDropTargetId(prev => (prev === s.id ? null : prev));
+                    } : undefined}
+                    onDrop={onAssignAssetToSegment ? (e) => {
+                      if (!carriesAssetDrag(e.dataTransfer)) return;
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setAssetDropTargetId(null);
+                      const assetId = e.dataTransfer.getData(ASSET_DRAG_MIME);
+                      if (assetId) onAssignAssetToSegment(s.id, assetId);
+                    } : undefined}
                     style={{
                       position: 'absolute',
                       left: `${segLayout.left}px`,
@@ -662,7 +690,9 @@ export function Timeline({
                       // box-shadow, so the flash inherits that easing for free.
                       boxShadow: flashSegmentId === s.id
                         ? '0 0 0 2px #F27D26, 0 0 36px rgba(242,125,38,0.55)'
-                        : 'none',
+                        : assetDropTargetId === s.id
+                          ? 'inset 0 0 0 2px rgba(242,125,38,0.9), inset 0 0 24px rgba(242,125,38,0.25)'
+                          : 'none',
                       zIndex: flashSegmentId === s.id
                         ? 60
                         : (isActive ? 10 : 1),
