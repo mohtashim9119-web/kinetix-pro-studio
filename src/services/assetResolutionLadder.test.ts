@@ -142,6 +142,33 @@ describe('applySilentProvenanceResolution', () => {
     expect(writeAssetFromPath).not.toHaveBeenCalled();
   });
 
+  // Item A (project corruption) — the operator's two unopenable projects
+  // each held an asset row whose bytes were gone from IndexedDB AND the
+  // native store, so the native store also had no `.meta.json` for it. The
+  // Rust probe answers that with an Err (the exact string below, captured
+  // from the live dev log on click), and one such asset used to reject the
+  // whole ladder — and with it the entire project switch — before D6's
+  // "open with the asset marked offline" path was ever reached.
+  it('a probe that fails for one asset routes it to folder-pick; the open continues', async () => {
+    mockInvoke
+      .mockRejectedValueOnce('asset_store_attempt_resolution: no metadata for vo-gone')
+      .mockResolvedValueOnce({
+        assetId: 'a1',
+        rung: 'exact_path',
+        confidence: 'exact',
+        silent: true,
+        candidatePath: '/media/clip.mp4',
+        reason: null,
+      });
+    const report = await applySilentProvenanceResolution(
+      'p1',
+      [{ ...asset, id: 'vo-gone', name: '3. Voiceover.mp3' }, asset],
+      ['vo-gone', 'a1'],
+    );
+    expect(report.folderPickOnly).toEqual(['vo-gone']);
+    expect(report.resolved).toEqual(['a1']);
+  });
+
   it('bounds a 448-asset project open and never creates 448 write transactions', async () => {
     const population = Array.from({ length: 448 }, (_, index) => ({
       ...asset,
