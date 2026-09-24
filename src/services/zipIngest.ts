@@ -50,6 +50,7 @@
 // ---------------------------------------------------------------------------
 
 import { detectMediaType, ingestOneMediaFile, type MediaIngestCounts } from './mediaIngest';
+import { isMacOSMetadataPath } from './macosMetadata';
 import type { Asset } from '../types';
 
 /** Typed failure for "oversized total" — distinguishable from a generic
@@ -84,6 +85,92 @@ export interface ZipIngestResult {
   duplicateNames: string[];
 }
 
+type JSZipCtor = typeof import('jszip');
+
+export interface ZipMediaWalkResult {
+  /** Entries with an unrecognized extension (macOS metadata excluded). */
+  unsupportedSkipped: number;
+  /** Entries rejected by the traversal (zip-slip) check. */
+  unsafeRejected: number;
+  /** Paths of `.zip` entries found inside this archive — NOT opened here.
+   *  Each caller decides: `ingestZip` counts them unsupported (unchanged
+   *  plain-media-zip behavior); bundle ingest opens a bundle's own top-level
+   *  zips exactly once and reports anything deeper as skipped. */
+  nestedZipNames: string[];
+}
+
+/**
+ * The one zip-walking loop shared by `ingestZip` and bundle ingest's inner
+ * media zip: open, drop macOS metadata (`isMacOSMetadataPath` — silently,
+ * never counted), reject traversal entries, enforce the bomb caps, and hand
+ * each supported media entry to `onMedia` in archive order. Sequential, not
+ * Promise.all — JSZip exposes no public, reliable pre-decompression size
+ * (its own type definitions mark `_data.uncompressedSize`
+ * private/unofficial), so the running-total bomb check can only happen
+ * BETWEEN entries; parallel extraction would decompress everything before
+ * this loop ever got a chance to abort.
+ *
+ * THROWS `ZipTooLargeError` for an oversized archive; a corrupt archive
+ * throws whatever `loadAsync` throws.
+ */
+export async function walkZipMediaEntries(
+  JSZipModule: JSZipCtor,
+  zipSource: Blob,
+  onMedia: (name: string, blob: Blob, type: Asset['type']) => Promise<void>,
+): Promise<ZipMediaWalkResult> {
+  const result: ZipMediaWalkResult = { unsupportedSkipped: 0, unsafeRejected: 0, nestedZipNames: [] };
+  const content = await new JSZipModule().loadAsync(zipSource);
+  // Metadata filtered BEFORE the entry-count cap: a Finder zip carries one
+  // `__MACOSX/._` twin per real file, so counting them would halve the
+  // effective limit for every Mac user.
+  const entries = Object.values(content.files).filter(f => !f.dir && !isMacOSMetadataPath(f.name));
+
+  if (entries.length > ZIP_MAX_ENTRIES) {
+    throw new ZipTooLargeError(
+      `This zip has ${entries.length} files, more than the ${ZIP_MAX_ENTRIES}-file limit.`,
+    );
+  }
+
+  let totalBytes = 0;
+  for (const fileData of entries) {
+    // jszip (3.x) sets `unsafeOriginalName` on EVERY non-directory entry,
+    // unconditionally, to the raw pre-resolve() path — it equals `name` for
+    // a safe entry and differs from it only when resolve() actually rewrote
+    // the path (a genuine `../` traversal/zip-slip attempt). Checking
+    // `!== undefined` alone is true for every real entry and rejects 100%
+    // of any zip; the actual signal is a MISMATCH between the two.
+    if (fileData.unsafeOriginalName !== undefined && fileData.unsafeOriginalName !== fileData.name) {
+      console.warn('[ingestZip] rejected unsafe (traversal) zip entry:', fileData.unsafeOriginalName);
+      result.unsafeRejected += 1;
+      continue;
+    }
+
+    const filename = fileData.name;
+    const name = filename.split('/').pop() || filename;
+    if (/\.zip$/i.test(name)) {
+      result.nestedZipNames.push(filename);
+      continue;
+    }
+    const type = detectMediaType(filename);
+    if (type === undefined) {
+      result.unsupportedSkipped += 1;
+      continue;
+    }
+
+    const blob = await fileData.async('blob');
+    totalBytes += blob.size;
+    if (blob.size > ZIP_MAX_ENTRY_BYTES) {
+      throw new ZipTooLargeError(`"${name}" is larger than the ${ZIP_MAX_ENTRY_BYTES}-byte per-file limit.`);
+    }
+    if (totalBytes > ZIP_MAX_TOTAL_BYTES) {
+      throw new ZipTooLargeError(`This zip's total size exceeds the ${ZIP_MAX_TOTAL_BYTES}-byte limit.`);
+    }
+
+    await onMedia(name, blob, type);
+  }
+  return result;
+}
+
 /**
  * Extracts all supported media from a zip archive, hardens against
  * traversal/bomb archives, dedupes by content hash, and write-throughs every
@@ -111,7 +198,7 @@ export async function ingestZip(
   const seenHashes = new Set<string>(existingHashes);
   const duplicateNames: string[] = [];
 
-  let JSZipModule: typeof import('jszip');
+  let JSZipModule: JSZipCtor;
   try {
     ({ default: JSZipModule } = await import('jszip'));
   } catch (loadErr) {
@@ -120,60 +207,18 @@ export async function ingestZip(
     return { assets, audioAssetId, counts, duplicateNames };
   }
 
-  const zip = new JSZipModule();
-  const content = await zip.loadAsync(zipFile);
-  const entries = Object.values(content.files).filter(f => !f.dir);
-
-  if (entries.length > ZIP_MAX_ENTRIES) {
-    throw new ZipTooLargeError(
-      `This zip has ${entries.length} files, more than the ${ZIP_MAX_ENTRIES}-file limit.`,
-    );
-  }
-
-  let totalBytes = 0;
-
-  // Sequential, not Promise.all — JSZip exposes no public, reliable
-  // pre-decompression size (its own type definitions mark
-  // `_data.uncompressedSize` private/unofficial), so the running-total bomb
-  // check can only happen BETWEEN entries, not before any of them. Parallel
-  // extraction would decompress everything into memory before this loop
-  // ever got a chance to abort.
-  for (const fileData of entries) {
-    // jszip (3.x) sets `unsafeOriginalName` on EVERY non-directory entry,
-    // unconditionally, to the raw pre-resolve() path — it equals `name` for
-    // a safe entry and differs from it only when resolve() actually rewrote
-    // the path (a genuine `../` traversal/zip-slip attempt). Checking
-    // `!== undefined` alone is true for every real entry and rejects 100%
-    // of any zip; the actual signal is a MISMATCH between the two.
-    if (fileData.unsafeOriginalName !== undefined && fileData.unsafeOriginalName !== fileData.name) {
-      console.warn('[ingestZip] rejected unsafe (traversal) zip entry:', fileData.unsafeOriginalName);
-      counts.failed += 1;
-      continue;
-    }
-
-    const filename = fileData.name;
-    const name = filename.split('/').pop() || filename;
-    const type = detectMediaType(filename);
-    if (type === undefined) {
-      counts.unsupportedSkipped += 1;
-      continue;
-    }
-
-    const blob = await fileData.async('blob');
-    totalBytes += blob.size;
-    if (blob.size > ZIP_MAX_ENTRY_BYTES) {
-      throw new ZipTooLargeError(`"${name}" is larger than the ${ZIP_MAX_ENTRY_BYTES}-byte per-file limit.`);
-    }
-    if (totalBytes > ZIP_MAX_TOTAL_BYTES) {
-      throw new ZipTooLargeError(`This zip's total size exceeds the ${ZIP_MAX_TOTAL_BYTES}-byte limit.`);
-    }
-
+  const walk = await walkZipMediaEntries(JSZipModule, zipFile, async (name, blob, type) => {
     const asset = await ingestOneMediaFile(projectId, name, blob, type, seenHashes, counts, duplicateNames);
     if (asset) {
       assets.push(asset);
       if (asset.type === 'audio' && audioAssetId === undefined) audioAssetId = asset.id;
     }
-  }
+  });
+  counts.failed += walk.unsafeRejected;
+  // A plain media zip never unpacks a zip inside it (only a bundle's own
+  // top-level zips are opened — see `bundleIngest.ts`) — unchanged
+  // pre-G5 behavior: an inner zip is an unsupported entry.
+  counts.unsupportedSkipped += walk.unsupportedSkipped + walk.nestedZipNames.length;
 
   return { assets, audioAssetId, counts, duplicateNames };
 }

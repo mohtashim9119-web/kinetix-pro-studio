@@ -47,6 +47,9 @@ export interface MediaIngestOutcome {
   /** Names of files dropped as duplicates of an already-in-project asset or
    *  of another file in the same import (G6 polish item 1). */
   duplicateNames: string[];
+  /** Bundle ingest only — zips nested inside a bundle's own inner zip,
+   *  never opened (one nesting level). Named in the same grouped finding. */
+  nestedZipsSkipped?: string[];
 }
 
 interface MediaBlockProps {

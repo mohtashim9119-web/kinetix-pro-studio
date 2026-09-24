@@ -6129,6 +6129,7 @@ export default function App() {
     counts: { imported: number; deduped: number; unsupportedSkipped: number; failed: number };
     source: 'zip' | 'files' | 'folder' | 'bundle';
     duplicateNames: string[];
+    nestedZipsSkipped?: string[];
   }) => {
     setProject(prev => {
       const allAssets = [...prev.assets, ...outcome.assets];
@@ -6139,9 +6140,10 @@ export default function App() {
         voiceoverId: resolveZipImportVoiceoverId(outcome.assets, allAssets, prev.voiceoverId),
       };
       const total = outcome.counts.imported + outcome.counts.deduped + outcome.counts.unsupportedSkipped + outcome.counts.failed;
-      if (total === 0) return next;
+      const nestedZipsSkipped = outcome.nestedZipsSkipped ?? [];
+      if (total === 0 && nestedZipsSkipped.length === 0) return next;
       return appendSyncLogEntries(next, [
-        buildMediaImportEntry(mintSyncLogId(), outcome.source, outcome.counts, Date.now(), outcome.duplicateNames),
+        buildMediaImportEntry(mintSyncLogId(), outcome.source, outcome.counts, Date.now(), outcome.duplicateNames, nestedZipsSkipped),
       ]);
     });
   }, []);

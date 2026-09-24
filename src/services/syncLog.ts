@@ -659,6 +659,7 @@ export function buildMediaImportEntry(
   counts: { imported: number; deduped: number; unsupportedSkipped: number; failed: number },
   timestamp: number = Date.now(),
   duplicateNames: string[] = [],
+  nestedZipsSkipped: string[] = [],
 ): SyncLogEntry {
   const { imported, deduped, unsupportedSkipped, failed } = counts;
   const sourceLabel = source === 'zip' ? 'Zip import'
@@ -678,13 +679,24 @@ export function buildMediaImportEntry(
   }
   if (unsupportedSkipped > 0) parts.push(`${unsupportedSkipped} unsupported`);
   if (failed > 0) parts.push(`${failed} failed`);
+  // Bundle ingest opens a bundle's own inner zip once; a zip inside THAT is
+  // never opened (bounded, non-recursive) — named here, nothing imported from it.
+  if (nestedZipsSkipped.length > 0) {
+    parts.push(`nested zip${nestedZipsSkipped.length === 1 ? '' : 's'} not opened (only one level is unpacked): ${nestedZipsSkipped.join(', ')}`);
+  }
+  const warn = failed > 0 || nestedZipsSkipped.length > 0;
+  const fixHint = failed > 0
+    ? 'Check the console for which file(s) failed and why, then try adding them again.'
+    : nestedZipsSkipped.length > 0
+      ? 'Unzip the nested archive and add its files directly.'
+      : undefined;
   return makeSyncLogEntry(
     syncRunId,
     'media-import',
     `${sourceLabel}: ${parts.join(', ')}.`,
     {
-      severity: failed > 0 ? 'warning' : 'info',
-      ...(failed > 0 ? { fixHint: 'Check the console for which file(s) failed and why, then try adding them again.' } : {}),
+      severity: warn ? 'warning' : 'info',
+      ...(fixHint ? { fixHint } : {}),
     },
     timestamp,
   );

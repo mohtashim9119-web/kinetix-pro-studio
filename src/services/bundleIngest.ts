@@ -29,11 +29,25 @@
 // is transactional across the FOUR SLOTS as a set (either all four fill, or
 // none do) — it does not add a rollback mechanism across individual already-
 // committed vault writes, since none happen before validation passes.
+//
+// macOS metadata (`._` AppleDouble twins, `.DS_Store`, `__MACOSX/`) is
+// dropped before classification — see `macosMetadata.ts`. Without that, a
+// Finder-made bundle's `._1. Script.txt` twin claimed the Script slot and
+// `._voiceover.mp3` the Voiceover slot, pushing the real files aside.
+//
+// NESTED ZIP: a `.zip` entry in the bundle is media — opened through
+// `zipIngest.ts`'s own `walkZipMediaEntries` (same metadata filter, traversal
+// check and bomb caps, applied to the inner archive as-is), still inside
+// Pass 1, so its media is classified in memory and persisted in Pass 2 with
+// everything else, content-hash deduped against the same set. ONE level
+// only: a zip inside that inner zip is never opened — its path is reported
+// in `nestedZipsSkipped` (one grouped finding), bounding the work.
 // ---------------------------------------------------------------------------
 
 import { detectMediaType, ingestOneMediaFile, type MediaIngestCounts } from './mediaIngest';
 import { stripRtfIfNeeded, detectTextFileRole } from './textUtils';
-import { ZIP_MAX_ENTRIES, ZIP_MAX_ENTRY_BYTES, ZIP_MAX_TOTAL_BYTES } from './zipIngest';
+import { ZIP_MAX_ENTRIES, ZIP_MAX_ENTRY_BYTES, ZIP_MAX_TOTAL_BYTES, ZipTooLargeError, walkZipMediaEntries } from './zipIngest';
+import { isMacOSMetadataPath } from './macosMetadata';
 import type { Asset } from '../types';
 
 export interface BundleIngestSuccess {
@@ -44,6 +58,9 @@ export interface BundleIngestSuccess {
   mediaAssets: Asset[];
   counts: MediaIngestCounts;
   duplicateNames: string[];
+  /** `inner.zip/deeper.zip`-style paths of zips found inside one of the
+   *  bundle's own zips — never opened (one nesting level only). */
+  nestedZipsSkipped: string[];
 }
 
 export type BundleZipOutcome =
@@ -91,7 +108,7 @@ export async function classifyAndIngestBundleZip(
     return { kind: 'failure', message: `"${zipFile.name}" could not be read — the archive appears corrupt.` };
   }
 
-  const entries = Object.values(content.files).filter(f => !f.dir);
+  const entries = Object.values(content.files).filter(f => !f.dir && !isMacOSMetadataPath(f.name));
   if (entries.length > ZIP_MAX_ENTRIES) {
     return { kind: 'failure', message: `"${zipFile.name}" has ${entries.length} files, more than the ${ZIP_MAX_ENTRIES}-file limit.` };
   }
@@ -101,6 +118,8 @@ export async function classifyAndIngestBundleZip(
   const audioEntries: { name: string; blob: Blob }[] = [];
   const mediaEntries: { name: string; blob: Blob; type: Asset['type'] }[] = [];
   let unsupportedSkipped = 0;
+  let unsafeRejected = 0;
+  const nestedZipsSkipped: string[] = [];
   let totalBytes = 0;
 
   for (const entry of entries) {
@@ -108,6 +127,7 @@ export async function classifyAndIngestBundleZip(
     // comment for why the MISMATCH (not mere presence) is the real signal.
     if (entry.unsafeOriginalName !== undefined && entry.unsafeOriginalName !== entry.name) {
       console.warn('[bundleIngest] rejected unsafe (traversal) zip entry:', entry.unsafeOriginalName);
+      unsafeRejected += 1;
       continue;
     }
 
@@ -122,8 +142,9 @@ export async function classifyAndIngestBundleZip(
       continue;
     }
 
-    const type = detectMediaType(name);
-    if (type === undefined) {
+    const isInnerZip = ext === 'zip';
+    const type = isInnerZip ? undefined : detectMediaType(name);
+    if (!isInnerZip && type === undefined) {
       unsupportedSkipped += 1;
       continue;
     }
@@ -137,10 +158,27 @@ export async function classifyAndIngestBundleZip(
       return { kind: 'failure', message: `"${zipFile.name}"'s total size exceeds the ${ZIP_MAX_TOTAL_BYTES}-byte limit — nothing in this bundle was imported.` };
     }
 
-    if (type === 'audio') {
+    if (isInnerZip) {
+      // Inner zip = media. Its audio is media too, never a voiceover
+      // candidate — only a top-level bundle entry can fill the slot.
+      try {
+        const walk = await walkZipMediaEntries(JSZipModule, blob, async (innerName, innerBlob, innerType) => {
+          mediaEntries.push({ name: innerName, blob: innerBlob, type: innerType });
+        });
+        unsupportedSkipped += walk.unsupportedSkipped;
+        unsafeRejected += walk.unsafeRejected;
+        nestedZipsSkipped.push(...walk.nestedZipNames.map(n => `${name}/${n}`));
+      } catch (err) {
+        if (err instanceof ZipTooLargeError) {
+          return { kind: 'failure', message: `"${name}" inside "${zipFile.name}": ${err.message} Nothing in this bundle was imported.` };
+        }
+        console.error('[bundleIngest] Failed to open inner zip:', name, err);
+        return { kind: 'failure', message: `"${name}" inside "${zipFile.name}" could not be read — the archive appears corrupt. Nothing in this bundle was imported.` };
+      }
+    } else if (type === 'audio') {
       audioEntries.push({ name, blob });
     } else {
-      mediaEntries.push({ name, blob, type });
+      mediaEntries.push({ name, blob, type: type! });
     }
   }
 
@@ -187,7 +225,7 @@ export async function classifyAndIngestBundleZip(
   }
 
   // ---- Pass 2: validation passed — persist media through the vault door. ----
-  const counts: MediaIngestCounts = { imported: 0, deduped: 0, unsupportedSkipped, failed: 0 };
+  const counts: MediaIngestCounts = { imported: 0, deduped: 0, unsupportedSkipped, failed: unsafeRejected };
   const seenHashes = new Set<string>(existingHashes);
   const duplicateNames: string[] = [];
   const mediaAssets: Asset[] = [];
@@ -204,5 +242,6 @@ export async function classifyAndIngestBundleZip(
     mediaAssets,
     counts,
     duplicateNames,
+    nestedZipsSkipped,
   };
 }

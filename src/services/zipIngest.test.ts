@@ -132,7 +132,9 @@ describe('ingestZip — content-hash dedup replaces the old filename dedup', () 
 
     const result = await ingestZip(PROJECT_ID, zipFile());
 
-    expect(result.counts).toEqual({ imported: 1, deduped: 0, unsupportedSkipped: 2, failed: 0 });
+    // `.DS_Store` is macOS noise, dropped before classification and never
+    // counted (see macosMetadata.ts) — only `notes.txt` is a real finding.
+    expect(result.counts).toEqual({ imported: 1, deduped: 0, unsupportedSkipped: 1, failed: 0 });
     expect(result.assets).toHaveLength(1);
     expect(result.assets[0]!.type).toBe('image');
   });

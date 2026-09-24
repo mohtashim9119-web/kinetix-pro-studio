@@ -56,6 +56,7 @@ import {
 import { shouldClearStagedAfterSync } from '../services/applySyncAbort';
 import { MediaBlock, type MediaIngestOutcome } from './MediaBlock';
 import { classifyAndIngestBundleZip } from '../services/bundleIngest';
+import { isMacOSMetadataPath } from '../services/macosMetadata';
 import type { MediaIngestCounts } from '../services/mediaIngest';
 
 // ---------------------------------------------------------------------------
@@ -842,6 +843,9 @@ export function DropZonePanel({
     const zipCandidates: { file: File; key: string }[] = [];
 
     for (const file of files) {
+      // `._` twins / `.DS_Store` from a Finder drop — noise, dropped silently
+      // before any slot routing (a `._script.txt` must never claim a slot).
+      if (isMacOSMetadataPath(file.webkitRelativePath || file.name)) continue;
       const key = crypto.randomUUID();
       const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
 
@@ -913,6 +917,7 @@ export function DropZonePanel({
     const bundleMediaAssets: Asset[] = [];
     let bundleCounts: MediaIngestCounts | null = null;
     let bundleDuplicateNames: string[] = [];
+    let bundleNestedZipsSkipped: string[] = [];
     let bundleZipNames: string[] = [];
 
     for (const z of zipCandidates) {
@@ -936,6 +941,7 @@ export function DropZonePanel({
             }
           : outcome.counts;
         bundleDuplicateNames = [...bundleDuplicateNames, ...outcome.duplicateNames];
+        bundleNestedZipsSkipped = [...bundleNestedZipsSkipped, ...outcome.nestedZipsSkipped];
         bundleZipNames = [...bundleZipNames, z.file.name];
       }
     }
@@ -947,6 +953,7 @@ export function DropZonePanel({
         counts: bundleCounts,
         source: 'bundle',
         duplicateNames: bundleDuplicateNames,
+        nestedZipsSkipped: bundleNestedZipsSkipped,
       });
       setBundleNotice(
         `Imported bundle ${bundleZipNames.map(n => `"${n}"`).join(', ')}: script, scene details, ` +

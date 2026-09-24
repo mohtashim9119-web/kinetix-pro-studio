@@ -137,6 +137,7 @@ describe('DropZonePanel — a bundle zip dropped on ANY slot is detected before 
       mediaAssets: [{ id: 'a1', name: 'shot.jpg', url: 'blob:1', type: 'image' }],
       counts: { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 },
       duplicateNames: [],
+      nestedZipsSkipped: [],
     });
 
     const onIngestComplete = vi.fn();
@@ -165,6 +166,7 @@ describe('DropZonePanel — a bundle zip dropped on ANY slot is detected before 
       mediaAssets: [],
       counts: { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 },
       duplicateNames: [],
+      nestedZipsSkipped: [],
     });
 
     const panel = mountPanel();
@@ -201,5 +203,46 @@ describe('DropZonePanel — a bundle zip dropped on ANY slot is detected before 
     expect(staged?.sceneFile).toBeNull();
     expect(staged?.voiceoverFile).toBeNull();
     expect(staged?.zipFiles).toHaveLength(0);
+  });
+
+  it('a bundle\'s nestedZipsSkipped reaches onIngestComplete for the grouped finding', async () => {
+    mockClassify.mockResolvedValue({
+      kind: 'success',
+      scriptFile: new File(['s'], 'script.txt'), sceneFile: new File(['[a]'], 'scene.txt'),
+      voiceoverFile: new File([new Uint8Array([1])], 'voice.mp3'),
+      mediaAssets: [], counts: { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 },
+      duplicateNames: [], nestedZipsSkipped: ['media.zip/deeper.zip'],
+    });
+    const onIngestComplete = vi.fn();
+    const panel = mountPanel({ onIngestComplete });
+    await dropZipOn(panel.container, 3, zipFile());
+    expect(onIngestComplete).toHaveBeenCalledWith(expect.objectContaining({ nestedZipsSkipped: ['media.zip/deeper.zip'] }));
+  });
+});
+
+describe('DropZonePanel — a loose Finder drop: macOS metadata never claims a slot', () => {
+  it('`._` twins and .DS_Store are dropped before slot routing; the real files fill the slots', async () => {
+    const appleDouble = new Uint8Array([0x00, 0x05, 0x16, 0x07, 0x00, 0x02]);
+    const files = [
+      new File([appleDouble], '._1. Script.txt'),
+      new File(['A lone figure crests the ridge.'], '1. Script.txt'),
+      new File(['[a] one\n[b] two\n[c] three'], '2. Scene.txt'),
+      new File([new Uint8Array([9])], '3. voiceover.mp3', { type: 'audio/mpeg' }),
+      new File([appleDouble], '._3. voiceover.mp3', { type: 'audio/mpeg' }),
+      new File([new Uint8Array([0, 0, 1])], '.DS_Store'),
+    ];
+    const panel = mountPanel();
+    const input = slotInput(panel.container, 3);
+    Object.defineProperty(input, 'files', { value: files, configurable: true });
+    await act(async () => {
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(r => setTimeout(r, 10));
+    });
+    const staged = panel.published();
+    expect(staged?.scriptFile?.file.name).toBe('1. Script.txt');
+    expect(staged?.sceneFile?.file.name).toBe('2. Scene.txt');
+    expect(staged?.voiceoverFile?.file.name).toBe('3. voiceover.mp3');
+    expect(staged?.assetFiles).toHaveLength(0);
+    expect(mockClassify).not.toHaveBeenCalled();
   });
 });

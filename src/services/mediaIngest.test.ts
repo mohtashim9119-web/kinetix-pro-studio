@@ -105,6 +105,26 @@ describe('ingestLooseFiles — the Media block\'s "add loose files / add folder"
     expect(result.assets.map(a => a.name).sort()).toEqual(['photo.jpg', 'voice.mp3']);
   });
 
+  it('a macOS folder\'s `.DS_Store` and `._` twins are dropped silently — not assets, not unsupported', async () => {
+    // A `<input webkitdirectory>` File carries its folder-relative path in
+    // `webkitRelativePath`; jsdom's File leaves it '' so set it the way a
+    // real folder pick would.
+    const inFolder = (bytes: Uint8Array, rel: string): File => {
+      const f = new File([bytes], rel.split('/').pop()!);
+      Object.defineProperty(f, 'webkitRelativePath', { value: rel });
+      return f;
+    };
+    const files = [
+      inFolder(new Uint8Array([0, 0, 1]), 'Shoot/.DS_Store'),
+      inFolder(new Uint8Array([0, 5, 22, 7]), 'Shoot/._photo.jpg'),
+      inFolder(new Uint8Array([1]), 'Shoot/photo.jpg'),
+      inFolder(new Uint8Array([0, 5, 22, 7, 1]), 'Shoot/__MACOSX/whatever.jpg'),
+    ];
+    const result = await ingestLooseFiles(PROJECT_ID, files);
+    expect(result.counts).toEqual({ imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 });
+    expect(result.assets.map(a => a.name)).toEqual(['photo.jpg']);
+  });
+
   it('a folder picker\'s duplicate files (same content) dedupe within the batch, same as zip ingest', async () => {
     const bytes = new Uint8Array([7, 7, 7]);
     const files = [

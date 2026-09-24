@@ -16,6 +16,7 @@
 import { putAsset, deleteAsset } from './assetStore';
 import { mediaVaultImportBytes } from './mediaVaultClient';
 import { probeVideoFps } from './tauriFfmpeg';
+import { isMacOSMetadataPath } from './macosMetadata';
 import type { Asset } from '../types';
 
 const MEDIA_VIDEO_EXT = /\.(mp4|webm|mov|m4v)$/i;
@@ -159,6 +160,9 @@ export async function ingestLooseFiles(
   const duplicateNames: string[] = [];
 
   for (const file of files) {
+    // A folder picked on a Mac (or on an exFAT/network volume) carries
+    // `.DS_Store` and `._` twins — noise, dropped silently, never counted.
+    if (isMacOSMetadataPath(file.webkitRelativePath || file.name)) continue;
     const type = detectMediaType(file.name);
     if (type === undefined) {
       counts.unsupportedSkipped += 1;
