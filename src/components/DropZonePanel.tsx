@@ -925,10 +925,13 @@ export function DropZonePanel({
     let bundleDuplicateNames: string[] = [];
     let bundleNestedZipsSkipped: string[] = [];
     let bundleZipNames: string[] = [];
+    let bundleReconnected: NonNullable<MediaIngestOutcome['reconnected']> = [];
 
     for (const z of zipCandidates) {
       const existingHashes = assets.map(a => a.contentHash).filter((h): h is string => !!h);
-      const outcome = await classifyAndIngestBundleZip(projectId, z.file, existingHashes);
+      // Media workflow Unit 4 — an offline asset's bytes inside the bundle reconnect it.
+      const offlineHashes = assets.filter(a => a.unresolved && a.contentHash).map(a => a.contentHash!);
+      const outcome = await classifyAndIngestBundleZip(projectId, z.file, existingHashes, offlineHashes);
       if (outcome.kind === 'not-a-bundle') {
         zipEntries.push(z);
       } else if (outcome.kind === 'failure') {
@@ -948,6 +951,7 @@ export function DropZonePanel({
           : outcome.counts;
         bundleDuplicateNames = [...bundleDuplicateNames, ...outcome.duplicateNames];
         bundleNestedZipsSkipped = [...bundleNestedZipsSkipped, ...outcome.nestedZipsSkipped];
+        bundleReconnected = [...bundleReconnected, ...(outcome.reconnected ?? [])];
         bundleZipNames = [...bundleZipNames, z.file.name];
       }
     }
@@ -960,6 +964,7 @@ export function DropZonePanel({
         source: 'bundle',
         duplicateNames: bundleDuplicateNames,
         nestedZipsSkipped: bundleNestedZipsSkipped,
+        reconnected: bundleReconnected,
       });
       setBundleNotice(
         `Imported bundle ${bundleZipNames.map(n => `"${n}"`).join(', ')}: script, scene details, ` +

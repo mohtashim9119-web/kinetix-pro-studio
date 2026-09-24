@@ -35,7 +35,7 @@ import { ConfirmDialog } from './ConfirmDialog';
 import type { Asset, VideoSegment } from '../types';
 import { formatTime } from '../services/timeFormat';
 import { getAsset } from '../services/assetStore';
-import { sha256Hex, ingestLooseFiles, type MediaIngestCounts } from '../services/mediaIngest';
+import { sha256Hex, ingestLooseFiles, type MediaIngestCounts, type OfflineReconnect } from '../services/mediaIngest';
 import { ingestZip, ZipTooLargeError } from '../services/zipIngest';
 import { mediaVaultGenerateThumbnail, mediaVaultReadThumbnail } from '../services/mediaVaultClient';
 import { ASSET_DRAG_MIME } from '../services/assetDragChannel';
@@ -51,6 +51,9 @@ export interface MediaIngestOutcome {
   /** Bundle ingest only — zips nested inside a bundle's own inner zip,
    *  never opened (one nesting level). Named in the same grouped finding. */
   nestedZipsSkipped?: string[];
+  /** Media workflow Unit 4 — re-uploaded bytes of an OFFLINE asset; the
+   *  caller reconnects that asset in place instead of adding a new one. */
+  reconnected?: OfflineReconnect[];
 }
 
 interface MediaBlockProps {
@@ -366,6 +369,12 @@ export function MediaBlock({
     () => assets.map(a => a.contentHash).filter((h): h is string => !!h),
     [assets],
   );
+  // Media workflow Unit 4 — offline assets' hashes (voiceover included): a
+  // re-upload of these bytes through any door here reconnects the asset.
+  const offlineHashes = useMemo(
+    () => assets.filter(a => a.unresolved && a.contentHash).map(a => a.contentHash!),
+    [assets],
+  );
 
   // G5 Unit 5 — import progress adequacy. Hashing/vault-writing a multi-GB
   // folder is real, measured seconds of work (Step 1: ~150 MiB/s) and
@@ -384,7 +393,7 @@ export function MediaBlock({
   const runIngest = useCallback(async (
     source: 'zip' | 'files' | 'folder',
     label: string,
-    run: () => Promise<{ assets: Asset[]; audioAssetId: string | undefined; counts: MediaIngestCounts; duplicateNames: string[] }>,
+    run: () => Promise<{ assets: Asset[]; audioAssetId: string | undefined; counts: MediaIngestCounts; duplicateNames: string[]; reconnected?: OfflineReconnect[] }>,
   ) => {
     setBusy(true);
     setBusyLabel(label);
@@ -406,21 +415,21 @@ export function MediaBlock({
   const handleFilesChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     const files = Array.from(fileList);
-    void runIngest('files', `Importing ${files.length} file${files.length === 1 ? '' : 's'}…`, () => ingestLooseFiles(projectId, files, existingHashes));
-  }, [projectId, runIngest, existingHashes]);
+    void runIngest('files', `Importing ${files.length} file${files.length === 1 ? '' : 's'}…`, () => ingestLooseFiles(projectId, files, existingHashes, offlineHashes));
+  }, [projectId, runIngest, existingHashes, offlineHashes]);
 
   const handleFolderChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
     const files = Array.from(fileList);
-    void runIngest('folder', `Importing folder (${files.length} file${files.length === 1 ? '' : 's'})…`, () => ingestLooseFiles(projectId, files, existingHashes));
-  }, [projectId, runIngest, existingHashes]);
+    void runIngest('folder', `Importing folder (${files.length} file${files.length === 1 ? '' : 's'})…`, () => ingestLooseFiles(projectId, files, existingHashes, offlineHashes));
+  }, [projectId, runIngest, existingHashes, offlineHashes]);
 
   const handleZipChosen = useCallback((file: File | undefined) => {
     if (!file) return;
     // The zip's entry count isn't known without opening it (the expensive
     // part), so this stays generic rather than guessing a number.
-    void runIngest('zip', 'Importing zip…', () => ingestZip(projectId, file, existingHashes));
-  }, [projectId, runIngest, existingHashes]);
+    void runIngest('zip', 'Importing zip…', () => ingestZip(projectId, file, existingHashes, offlineHashes));
+  }, [projectId, runIngest, existingHashes, offlineHashes]);
 
   // G6 polish item 3 — bulk "Delete unused". Routes every unused asset
   // through the SAME `onDeleteAsset` prop a single-tile delete uses, so the

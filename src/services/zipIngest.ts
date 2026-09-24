@@ -49,7 +49,7 @@
 // decompressed-entry loop zip alone has).
 // ---------------------------------------------------------------------------
 
-import { detectMediaType, ingestOneMediaFile, type MediaIngestCounts } from './mediaIngest';
+import { detectMediaType, ingestOneMediaFile, makeOfflineReconnectSink, type MediaIngestCounts, type OfflineReconnect } from './mediaIngest';
 import { isMacOSMetadataPath } from './macosMetadata';
 import type { Asset } from '../types';
 
@@ -83,6 +83,8 @@ export interface ZipIngestResult {
   /** Names of archive entries dropped as duplicates of `existingHashes` or of
    *  another entry earlier in this same archive (G6 polish item 1). */
   duplicateNames: string[];
+  /** Media workflow Unit 4 — present only when `offlineHashes` was passed. */
+  reconnected?: OfflineReconnect[];
 }
 
 type JSZipCtor = typeof import('jszip');
@@ -191,8 +193,11 @@ export async function ingestZip(
   projectId: string,
   zipFile: File,
   existingHashes: Iterable<string> = [],
+  offlineHashes?: Iterable<string>,
 ): Promise<ZipIngestResult> {
   const counts: ZipIngestCounts = { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 };
+  const offline = makeOfflineReconnectSink(offlineHashes);
+  const reconnectedField = () => (offline ? { reconnected: offline.found } : {});
   const assets: Asset[] = [];
   let audioAssetId: string | undefined;
   const seenHashes = new Set<string>(existingHashes);
@@ -204,11 +209,11 @@ export async function ingestZip(
   } catch (loadErr) {
     console.error('[ingestZip] Failed to load jszip:', loadErr);
     counts.failed += 1;
-    return { assets, audioAssetId, counts, duplicateNames };
+    return { assets, audioAssetId, counts, duplicateNames, ...reconnectedField() };
   }
 
   const walk = await walkZipMediaEntries(JSZipModule, zipFile, async (name, blob, type) => {
-    const asset = await ingestOneMediaFile(projectId, name, blob, type, seenHashes, counts, duplicateNames);
+    const asset = await ingestOneMediaFile(projectId, name, blob, type, seenHashes, counts, duplicateNames, offline);
     if (asset) {
       assets.push(asset);
       if (asset.type === 'audio' && audioAssetId === undefined) audioAssetId = asset.id;
@@ -220,5 +225,5 @@ export async function ingestZip(
   // pre-G5 behavior: an inner zip is an unsupported entry.
   counts.unsupportedSkipped += walk.unsupportedSkipped + walk.nestedZipNames.length;
 
-  return { assets, audioAssetId, counts, duplicateNames };
+  return { assets, audioAssetId, counts, duplicateNames, ...reconnectedField() };
 }

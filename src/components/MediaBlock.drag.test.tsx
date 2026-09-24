@@ -54,3 +54,29 @@ describe('Media block tile — drag source (Unit 3)', () => {
     expect(tile.getAttribute('draggable')).toBe('false');
   });
 });
+
+describe('Media block — offline hashes reach the ingest doors (Unit 4)', () => {
+  it('an offline asset\'s contentHash is passed as the doors\' 4th argument', async () => {
+    const { ingestLooseFiles } = await import('../services/mediaIngest');
+    vi.mocked(ingestLooseFiles).mockResolvedValue({ assets: [], audioAssetId: undefined, counts: { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 }, duplicateNames: [] });
+    root = createRoot(container);
+    await act(async () => {
+      root.render(
+        <MediaBlock
+          projectId="p1"
+          assets={[
+            { id: 'ok', name: 'ok.png', url: 'blob:ok', type: 'image', contentHash: 'h-ok' },
+            { id: 'off', name: 'off.png', url: '', type: 'image', contentHash: 'h-off', unresolved: true },
+          ]}
+          segments={[]} voiceoverId={undefined}
+          onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+          onIngestComplete={noop} onIngestError={noop}
+        />,
+      );
+    });
+    const input = container.querySelector<HTMLInputElement>('input[type="file"][multiple][accept]')!;
+    Object.defineProperty(input, 'files', { value: [new File([new Uint8Array([1])], 'off.png')], configurable: true });
+    await act(async () => { input.dispatchEvent(new Event('change', { bubbles: true })); });
+    expect(ingestLooseFiles).toHaveBeenCalledWith('p1', expect.any(Array), ['h-ok', 'h-off'], ['h-off']);
+  });
+});

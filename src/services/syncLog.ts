@@ -1354,3 +1354,25 @@ export function buildMediaMatchEntry(
     timestamp,
   );
 }
+
+/**
+ * Media workflow Unit 4 — a re-upload through an ingest door carried an
+ * OFFLINE asset's exact bytes and reconnected it in place. Grouped under
+ * 'media-import' (it is what happened when media was added).
+ */
+export function buildMediaReconnectEntry(
+  syncRunId: string,
+  names: string[],
+  allResolved: boolean,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const n = names.length;
+  return makeSyncLogEntry(
+    syncRunId,
+    'media-import',
+    `Reconnected ${n} offline file${n === 1 ? '' : 's'}: ${names.join(', ')}.` +
+      (allResolved ? ' All media is back online — saving is re-enabled.' : ''),
+    { severity: 'info' },
+    timestamp,
+  );
+}

@@ -44,7 +44,7 @@
 // in `nestedZipsSkipped` (one grouped finding), bounding the work.
 // ---------------------------------------------------------------------------
 
-import { detectMediaType, ingestOneMediaFile, type MediaIngestCounts } from './mediaIngest';
+import { detectMediaType, ingestOneMediaFile, makeOfflineReconnectSink, type MediaIngestCounts, type OfflineReconnect } from './mediaIngest';
 import { stripRtfIfNeeded, detectTextFileRole } from './textUtils';
 import { ZIP_MAX_ENTRIES, ZIP_MAX_ENTRY_BYTES, ZIP_MAX_TOTAL_BYTES, ZipTooLargeError, walkZipMediaEntries } from './zipIngest';
 import { isMacOSMetadataPath } from './macosMetadata';
@@ -61,6 +61,8 @@ export interface BundleIngestSuccess {
   /** `inner.zip/deeper.zip`-style paths of zips found inside one of the
    *  bundle's own zips — never opened (one nesting level only). */
   nestedZipsSkipped: string[];
+  /** Media workflow Unit 4 — present only when `offlineHashes` was passed. */
+  reconnected?: OfflineReconnect[];
 }
 
 export type BundleZipOutcome =
@@ -91,6 +93,7 @@ export async function classifyAndIngestBundleZip(
   projectId: string,
   zipFile: File,
   existingHashes: Iterable<string> = [],
+  offlineHashes?: Iterable<string>,
 ): Promise<BundleZipOutcome> {
   let JSZipModule: typeof import('jszip');
   try {
@@ -229,8 +232,9 @@ export async function classifyAndIngestBundleZip(
   const seenHashes = new Set<string>(existingHashes);
   const duplicateNames: string[] = [];
   const mediaAssets: Asset[] = [];
+  const offline = makeOfflineReconnectSink(offlineHashes);
   for (const m of mediaEntries) {
-    const asset = await ingestOneMediaFile(projectId, m.name, m.blob, m.type, seenHashes, counts, duplicateNames);
+    const asset = await ingestOneMediaFile(projectId, m.name, m.blob, m.type, seenHashes, counts, duplicateNames, offline);
     if (asset) mediaAssets.push(asset);
   }
 
@@ -243,5 +247,6 @@ export async function classifyAndIngestBundleZip(
     counts,
     duplicateNames,
     nestedZipsSkipped,
+    ...(offline ? { reconnected: offline.found } : {}),
   };
 }

@@ -67,6 +67,28 @@ export interface MediaIngestCounts {
 }
 
 /**
+ * Media workflow Unit 4 — a re-uploaded copy of an OFFLINE asset's bytes.
+ * The door hands it back instead of importing it; the caller writes it into
+ * that asset's own slot (`assetRecovery.relinkAsset`) so the asset — and
+ * every scene pointing at it — reconnects in place.
+ */
+export interface OfflineReconnect {
+  contentHash: string;
+  file: File;
+}
+
+/** Caller-owned, one per ingest batch: the offline assets' hashes in, the
+ *  reconnect candidates out. */
+export interface OfflineReconnectSink {
+  hashes: ReadonlySet<string>;
+  found: OfflineReconnect[];
+}
+
+export function makeOfflineReconnectSink(offlineHashes: Iterable<string> | undefined): OfflineReconnectSink | undefined {
+  return offlineHashes === undefined ? undefined : { hashes: new Set(offlineHashes), found: [] };
+}
+
+/**
  * Ingests ONE candidate file already known to be a supported type: hashes
  * it, dedupes against `seenHashes` (mutated — caller owns its lifetime, one
  * `Set` per ingest batch), and on a fresh hash write-throughs to IndexedDB
@@ -85,9 +107,29 @@ export async function ingestOneMediaFile(
   seenHashes: Set<string>,
   counts: MediaIngestCounts,
   duplicateNames?: string[],
+  offline?: OfflineReconnectSink,
 ): Promise<Asset | null> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   const contentHash = await sha256Hex(bytes);
+  // Unit 4 — checked BEFORE the dedup below: an offline asset's hash IS in
+  // `seenHashes` (every project hash is), which is exactly why a re-upload
+  // used to read as a duplicate. First copy in a batch reconnects; any
+  // further copy dedupes normally.
+  if (offline?.hashes.has(contentHash) && !offline.found.some(r => r.contentHash === contentHash)) {
+    seenHashes.add(contentHash);
+    const mimeType = blob.type || 'application/octet-stream';
+    try {
+      // The vault may never have held these bytes (a pre-vault asset) —
+      // this re-upload is its chance to.
+      await mediaVaultImportBytes(projectId, bytes, name, mimeType);
+    } catch (err) {
+      console.error('[mediaIngest] Failed to write a reconnecting file to the media vault, skipping:', name, err);
+      counts.failed += 1;
+      return null;
+    }
+    offline.found.push({ contentHash, file: new File([blob], name, { type: blob.type }) });
+    return null;
+  }
   if (seenHashes.has(contentHash)) {
     counts.deduped += 1;
     duplicateNames?.push(name);
@@ -132,6 +174,8 @@ export interface LooseFilesIngestResult {
    *  of another file earlier in this same batch) — for a caller that wants
    *  to name the duplicate rather than just count it (G6 polish item 1). */
   duplicateNames: string[];
+  /** Unit 4 — present only when `offlineHashes` was passed. */
+  reconnected?: OfflineReconnect[];
 }
 
 /**
@@ -152,8 +196,10 @@ export async function ingestLooseFiles(
   projectId: string,
   files: File[],
   existingHashes: Iterable<string> = [],
+  offlineHashes?: Iterable<string>,
 ): Promise<LooseFilesIngestResult> {
   const counts: MediaIngestCounts = { imported: 0, deduped: 0, unsupportedSkipped: 0, failed: 0 };
+  const offline = makeOfflineReconnectSink(offlineHashes);
   const assets: Asset[] = [];
   let audioAssetId: string | undefined;
   const seenHashes = new Set<string>(existingHashes);
@@ -168,12 +214,12 @@ export async function ingestLooseFiles(
       counts.unsupportedSkipped += 1;
       continue;
     }
-    const asset = await ingestOneMediaFile(projectId, file.name, file, type, seenHashes, counts, duplicateNames);
+    const asset = await ingestOneMediaFile(projectId, file.name, file, type, seenHashes, counts, duplicateNames, offline);
     if (asset) {
       assets.push(asset);
       if (asset.type === 'audio' && audioAssetId === undefined) audioAssetId = asset.id;
     }
   }
 
-  return { assets, audioAssetId, counts, duplicateNames };
+  return { assets, audioAssetId, counts, duplicateNames, ...(offline ? { reconnected: offline.found } : {}) };
 }

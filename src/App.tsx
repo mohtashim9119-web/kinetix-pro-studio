@@ -209,6 +209,7 @@ import {
   buildMediaImportEntry,
   buildMediaNameCollisionEntry,
   buildMediaMatchEntry,
+  buildMediaReconnectEntry,
   buildBundleImportFailedEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
@@ -285,6 +286,8 @@ import { mediaVaultUnreference, mediaVaultRename } from './services/mediaVaultCl
 import { applyAssetRename } from './services/mediaRename';
 import { matchMediaToScenes } from './services/matchMediaToScenes';
 import { assignAssetToSegment } from './services/assetDragChannel';
+import { reconnectOfflineAssets } from './services/reconnectOfflineAssets';
+import type { OfflineReconnect } from './services/mediaIngest';
 import { requestStoragePersistence } from './services/storagePersistence';
 import { getAppSessionToken } from './services/historyPersist';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
@@ -6151,6 +6154,7 @@ export default function App() {
     source: 'zip' | 'files' | 'folder' | 'bundle';
     duplicateNames: string[];
     nestedZipsSkipped?: string[];
+    reconnected?: OfflineReconnect[];
   }) => {
     setProject(prev => {
       const allAssets = [...prev.assets, ...outcome.assets];
@@ -6167,6 +6171,35 @@ export default function App() {
         buildMediaImportEntry(mintSyncLogId(), outcome.source, outcome.counts, Date.now(), outcome.duplicateNames, nestedZipsSkipped),
       ]);
     });
+
+    // Media workflow Unit 4 — re-uploaded bytes of OFFLINE assets: write
+    // them into those assets' own slots (existing relink machinery — the
+    // poison clears itself once everything resolves), then drop the
+    // offline flag in live state so the badge clears without a reopen.
+    const reconnects = outcome.reconnected ?? [];
+    if (reconnects.length > 0) {
+      const projectId = projectIdRef.current;
+      void reconnectOfflineAssets(projectId, projectRef.current.assets, reconnects).then(result => {
+        if (projectIdRef.current !== projectId) return;
+        if (result.failed.length > 0) {
+          showToast(`Could not reconnect ${result.failed.length} offline file(s) — see the console.`);
+          console.error('[kinetix] offline reconnect failed:', result.failed);
+        }
+        if (result.reconnected.length === 0) return;
+        const byId = new Map(result.reconnected.map(r => [r.assetId, r.file]));
+        clearFrameRendererCache();
+        setProject(prev => appendSyncLogEntries(
+          {
+            ...prev,
+            assets: prev.assets.map(a => {
+              const file = byId.get(a.id);
+              return file ? { ...a, url: URL.createObjectURL(file), file, unresolved: false } : a;
+            }),
+          },
+          [buildMediaReconnectEntry(mintSyncLogId(), result.reconnected.map(r => r.name), result.allResolved)],
+        ));
+      });
+    }
   }, []);
 
   // Media workflow Unit 1 — inline rename from a Media block tile. Renames
