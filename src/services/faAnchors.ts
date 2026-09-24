@@ -11,8 +11,10 @@
 // between them, entirely from data that already exists before any forced-
 // alignment pass runs — the Hirschberg alignment (`whisperService.ts`'s
 // `alignQueryToSubject`), the Whisper token array, the detected-silence array,
-// and the audio duration. NOT wired into Apply Sync or any live path (Slice
-// D1) — this module has no caller yet.
+// and the audio duration. STALE-CLAIM CORRECTION (§M3.10 C1): this used to
+// say "NOT wired into Apply Sync or any live path — this module has no
+// caller yet." `computeFaAnchors` is called from `faChunkPlan.ts`, which is
+// itself wired into the production FA run (`forcedAlignmentRun.ts`).
 //
 // SCOPE NOTE on R.7's `CONF_MIN`: that gate rejects a run's FIRST/LAST word as
 // a boundary when forced alignment's OWN per-word confidence (an FA OUTPUT)

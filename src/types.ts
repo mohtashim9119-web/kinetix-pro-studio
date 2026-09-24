@@ -418,8 +418,10 @@ export interface TranscriptToken {
   /** Forced-alignment per-word confidence (WS1 Task 5 Slice D9), a
    *  probability in [0,1] comparable to `syncConstants.ts`'s `CONF_MIN`.
    *  Optional and additive-only: Whisper-sourced tokens never set it — only
-   *  `faBoundaryTypes.ts`'s `faWordSpansToTranscriptTokens` reshape does,
-   *  and that reshape has no live caller yet. */
+   *  `faBoundaryTypes.ts`'s `faWordSpansToTranscriptTokens` reshape does.
+   *  STALE-CLAIM CORRECTION (§M3.10 N2): this used to say "and that reshape
+   *  has no live caller yet" — it is called in production, from
+   *  `forcedAlignmentRun.ts`'s own run function. */
   confidence?: number;
   /** Forced-alignment script-word index (WS1 Task 5 Slice D18) — this
    *  word's 0-based position in the full script word sequence
@@ -591,10 +593,17 @@ export interface Project {
    *  `Project.transcriptTokens` (Whisper's own output), `confidence` set on
    *  every entry too.
    *
-   *  SCHEMA ONLY THIS SLICE — no production writer populates this field yet
-   *  (R.2/R.5/R.7 and any real per-word UI are unbuilt). An absent field is
-   *  read as "no FA word timings," the same convention every other optional
-   *  `Project` field here already uses (see `headings`, `resolutionTier`).
+   *  WRITTEN BY PRODUCTION (stale-claim correction, §M3.10 N1 — this
+   *  comment previously said "no production writer populates this field
+   *  yet"; that was wrong even when written and is corrected here): the
+   *  Apply Sync commit (`App.tsx`'s single `setProject` object literal,
+   *  `faWordTimings: faWordTimingsResult`) sets it on every run that
+   *  completed forced alignment. An absent field is read as "no FA word
+   *  timings," the same convention every other optional `Project` field
+   *  here already uses (see `headings`, `resolutionTier`). What is STILL
+   *  true from the original claim: no `version` concept exists on
+   *  `Project` to migrate through (see H2 / plan-v3 item 8) — that part is
+   *  load-bearing and unchanged.
    *  Envelope versioning for the *stamp* that describes these timings lives
    *  on `timingProvenance` / `projectStore` v5 (plan-v3 item 8), not here. */
   faWordTimings?: TranscriptToken[];

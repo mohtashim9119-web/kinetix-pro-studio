@@ -1,6 +1,13 @@
 # Project Status
 
-Last updated: Wave 1 landing on `main` (merge `ws1-wave1`, 2026-09-20). Tracked open-item cap **40 → 36** (four lines closed below: D24, Flake A, Flake B, `fa_cancel`). Eight other Wave 1 deliverables had no prior STATUS line — SHAs in landing report only.
+Last updated: G5 (Wave 2, `ws1-wave2`, in progress — not yet landed on `main`). The **40 → 36**
+figure below describes the Wave 1 landing itself (merge `ws1-wave1`, 2026-09-20: four lines
+closed — D24, Flake A, Flake B, `fa_cancel`; eight other Wave 1 deliverables had no prior STATUS
+line, SHAs in that landing report only) — stale-prose fix only (§M3.10 sweep, G5): that header
+previously read as if Wave 1's landing were still the most recent update, when Wave 2 work (G3,
+G4, G6, this G5 pass) has since added and closed further lines below. This pass's own
+open/closed arithmetic is prepared in the not-yet-landed G5 landing-package draft, not written
+into this header — it lands (and this line updates again) only at actual merge time.
 
 > **Single source of truth for project tracking.** Retired trackers live under
 > `docs/archive/history/` (`work-in-progress.md`, `project-state.md`). Update this file only;

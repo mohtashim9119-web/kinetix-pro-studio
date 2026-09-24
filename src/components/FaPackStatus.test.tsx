@@ -113,7 +113,10 @@ describe('WS2 T4.1 Step 3 — the detector distinguishes five conditions', () =>
     const el = await render('es');
     expect(el.dataset.state).toBe('missing');
     expect(el.textContent).toMatch(/Spanish alignment pack is not installed/i);
-    expect(el.textContent).toMatch(/fall back to standard timing/i);
+    // §M3.10 C6 (G5) — the copy no longer describes a silent fallback (Wave 1
+    // removed that behavior); it says the run pauses and asks instead.
+    expect(el.textContent).toMatch(/pause and ask you/i);
+    expect(el.textContent).not.toMatch(/will fall back to/i);
     expect(el.querySelector('[data-testid="fa-pack-install-link"]')).not.toBeNull();
   });
 
