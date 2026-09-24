@@ -55,6 +55,8 @@ import {
 } from '../services/stagedFilesStore';
 import { shouldClearStagedAfterSync } from '../services/applySyncAbort';
 import { MediaBlock, type MediaIngestOutcome } from './MediaBlock';
+import { classifyAndIngestBundleZip } from '../services/bundleIngest';
+import type { MediaIngestCounts } from '../services/mediaIngest';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -353,6 +355,11 @@ interface Props {
   onHighlightUsage: (assetId: string) => void;
   onIngestComplete: (outcome: MediaIngestOutcome) => void;
   onIngestError: (message: string) => void;
+  /** G5 — a bundle zip (dropped on any of the 4 slots below) that failed
+   *  validation: corrupt/oversized archive, or bundle-shaped but missing one
+   *  of its four required pieces. Logs ONE grouped sync-log finding naming
+   *  what and why; no slot is touched either way. */
+  onBundleImportFailed: (message: string) => void;
   // File actions
   /** Starts an Apply Sync. Takes NO argument on purpose (WS2-50): the staged
    *  files are read by `App.tsx`'s single entry point from the shared live ref
@@ -515,6 +522,7 @@ export function DropZonePanel({
   onHighlightUsage,
   onIngestComplete,
   onIngestError,
+  onBundleImportFailed,
   onApplySync,
   onStagedFilesChange,
   stagedFilesClearSignal,
@@ -599,6 +607,9 @@ export function DropZonePanel({
   // ── Collapsible section state ──────────────────────────────────────────────
   const [expanded, setExpanded] = useState<ExpandKey>(null);
   const [slotError, setSlotError] = useState<string | null>(null);
+  // G5 — bundle ingest's own confirmation line (success only; a failure uses
+  // `slotError` above, matching every other slot-drop error already does).
+  const [bundleNotice, setBundleNotice] = useState<string | null>(null);
 
   // ── Staged file state ─────────────────────────────────────────────────────
   const [staged, setStaged] = useState<StagedFiles>(EMPTY_STAGED);
@@ -823,10 +834,21 @@ export function DropZonePanel({
     const voiceoverEntries: { file: File; key: string }[] = [];
     const assetEntries: { file: File; key: string }[] = [];
     const zipEntries: { file: File; key: string }[] = [];
+    // G5 — every zip in this drop, regardless of forceSlot: a bundle can be
+    // dropped on ANY of the four slots, so it must be checked before any
+    // slot-specific routing (which would otherwise misfire — e.g. forceSlot
+    // 'voiceover' rejecting a zip as "not audio", or forceSlot 'script'
+    // reading its raw zip bytes as text).
+    const zipCandidates: { file: File; key: string }[] = [];
 
     for (const file of files) {
       const key = crypto.randomUUID();
       const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+
+      if (ext === 'zip') {
+        zipCandidates.push({ file, key });
+        continue;
+      }
 
       // A file dropped/browsed directly ONTO the Voiceover slot targets that
       // slot on purpose. Accept it if it classifies as audio (broad extension
@@ -873,11 +895,64 @@ export function DropZonePanel({
         textEntries.push({ file, key, role });
       } else if (isAudioFile(file)) {
         voiceoverEntries.push({ file, key });
-      } else if (ext === 'zip') {
-        zipEntries.push({ file, key });
       } else {
         assetEntries.push({ file, key });
       }
+    }
+
+    // G5 — classify every zip candidate: a bundle (script/scene-doc/
+    // voiceover-pattern markers alongside media) is fully validated and
+    // ingested right here (see `bundleIngest.ts`'s own doc comment for the
+    // all-or-nothing contract); a plain media zip falls through to the
+    // existing deferred `zipEntries` path (unchanged — `ingestZip` at Apply
+    // Sync time). Sequential, not `Promise.all`, for the same reason
+    // `ingestZip`/`ingestLooseFiles` are: bounded memory, one archive at a time.
+    let bundleScript: { file: File; key: string } | null = null;
+    let bundleScene: { file: File; key: string } | null = null;
+    let bundleVoiceover: { file: File; key: string } | null = null;
+    const bundleMediaAssets: Asset[] = [];
+    let bundleCounts: MediaIngestCounts | null = null;
+    let bundleDuplicateNames: string[] = [];
+    let bundleZipNames: string[] = [];
+
+    for (const z of zipCandidates) {
+      const existingHashes = assets.map(a => a.contentHash).filter((h): h is string => !!h);
+      const outcome = await classifyAndIngestBundleZip(projectId, z.file, existingHashes);
+      if (outcome.kind === 'not-a-bundle') {
+        zipEntries.push(z);
+      } else if (outcome.kind === 'failure') {
+        onBundleImportFailed(outcome.message);
+      } else {
+        bundleScript = { file: outcome.scriptFile, key: crypto.randomUUID() };
+        bundleScene = { file: outcome.sceneFile, key: crypto.randomUUID() };
+        bundleVoiceover = { file: outcome.voiceoverFile, key: crypto.randomUUID() };
+        bundleMediaAssets.push(...outcome.mediaAssets);
+        bundleCounts = bundleCounts
+          ? {
+              imported: bundleCounts.imported + outcome.counts.imported,
+              deduped: bundleCounts.deduped + outcome.counts.deduped,
+              unsupportedSkipped: bundleCounts.unsupportedSkipped + outcome.counts.unsupportedSkipped,
+              failed: bundleCounts.failed + outcome.counts.failed,
+            }
+          : outcome.counts;
+        bundleDuplicateNames = [...bundleDuplicateNames, ...outcome.duplicateNames];
+        bundleZipNames = [...bundleZipNames, z.file.name];
+      }
+    }
+
+    if (bundleCounts) {
+      onIngestComplete({
+        assets: bundleMediaAssets,
+        audioAssetId: undefined,
+        counts: bundleCounts,
+        source: 'bundle',
+        duplicateNames: bundleDuplicateNames,
+      });
+      setBundleNotice(
+        `Imported bundle ${bundleZipNames.map(n => `"${n}"`).join(', ')}: script, scene details, ` +
+        `voiceover, and ${bundleMediaAssets.length} media file${bundleMediaAssets.length === 1 ? '' : 's'}.`,
+      );
+      setTimeout(() => setBundleNotice(null), 6000);
     }
 
     updateStaged(prev => {
@@ -912,12 +987,21 @@ export function DropZonePanel({
       if (pendingScript) scriptFile = { file: pendingScript.file, key: pendingScript.key };
       if (pendingScene) sceneFile = { file: pendingScene.file, key: pendingScene.key };
 
+      // A validated bundle's own script/scene/voiceover take final priority
+      // over any loose text/audio file dropped in the same batch — a bundle
+      // is the more complete, more deliberate signal.
+      if (bundleScript) scriptFile = bundleScript;
+      if (bundleScene) sceneFile = bundleScene;
+      if (bundleVoiceover) voiceoverFile = bundleVoiceover;
+
       return { scriptFile, sceneFile, voiceoverFile, assetFiles, zipFiles };
     });
 
     // Option C — trigger transcription the moment a voiceover is staged,
-    // independent of Apply Sync. Last-one-wins, mirroring the staging loop above.
-    const lastVoiceoverEntry = voiceoverEntries.at(-1);
+    // independent of Apply Sync. Last-one-wins, mirroring the staging loop
+    // above; a bundle's voiceover wins over a loose one in the same drop,
+    // matching the same-batch priority `updateStaged` above just applied.
+    const lastVoiceoverEntry = bundleVoiceover ?? voiceoverEntries.at(-1);
     if (lastVoiceoverEntry) {
       onVoiceoverStaged(lastVoiceoverEntry.file);
     }
@@ -1179,6 +1263,15 @@ export function DropZonePanel({
               <div className="mx-3 mb-2 px-3 py-2 rounded-[9px] bg-[rgba(255,107,107,.12)] border border-[rgba(255,107,107,.35)] text-[var(--kx-danger)] text-[12.5px] flex items-center justify-between gap-2">
                 <span>{slotError}</span>
                 <button onClick={() => setSlotError(null)} className="hover:opacity-70 shrink-0">✕</button>
+              </div>
+            )}
+
+            {/* G5 — bundle ingest confirmation line (minimal visuals: a
+                confirmation line + the sync-log finding; no slot restyle). */}
+            {bundleNotice && (
+              <div className="mx-3 mb-2 px-3 py-2 rounded-[9px] bg-[rgba(80,200,120,.12)] border border-[rgba(80,200,120,.35)] text-[#50C878] text-[12.5px] flex items-center justify-between gap-2">
+                <span>{bundleNotice}</span>
+                <button onClick={() => setBundleNotice(null)} className="hover:opacity-70 shrink-0">✕</button>
               </div>
             )}
 

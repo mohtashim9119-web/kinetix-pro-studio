@@ -206,6 +206,7 @@ import {
   buildFaNotCompiledEntry,
   buildFaUserChoseWhisperEntry,
   buildMediaImportEntry,
+  buildBundleImportFailedEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -6133,7 +6134,7 @@ export default function App() {
     assets: Asset[];
     audioAssetId: string | undefined;
     counts: { imported: number; deduped: number; unsupportedSkipped: number; failed: number };
-    source: 'zip' | 'files' | 'folder';
+    source: 'zip' | 'files' | 'folder' | 'bundle';
     duplicateNames: string[];
   }) => {
     setProject(prev => {
@@ -6154,6 +6155,15 @@ export default function App() {
 
   const handleMediaIngestError = useCallback((message: string) => {
     showToast(message);
+  }, [showToast]);
+
+  // G5 — a bundle zip that failed validation (corrupt/oversized, or missing
+  // one of its four required pieces): a toast for the moment, plus ONE
+  // grouped sync-log finding naming what and why, so the reason survives
+  // after the toast disappears. No slot was touched either way.
+  const handleBundleImportFailed = useCallback((message: string) => {
+    showToast(message);
+    setProject(prev => appendSyncLogEntries(prev, [buildBundleImportFailedEntry(mintSyncLogId(), message)]));
   }, [showToast]);
 
   const handleDeleteAllAssets = useCallback(() => {
@@ -7617,6 +7627,7 @@ export default function App() {
             onHighlightUsage={handleHighlightAssetUsage}
             onIngestComplete={handleMediaIngestComplete}
             onIngestError={handleMediaIngestError}
+            onBundleImportFailed={handleBundleImportFailed}
             onApplySync={handleApplySyncFromFiles}
             stagedFilesClearSignal={stagedFilesClearSignal}
             onStagedFilesChange={handleStagedFilesChange}

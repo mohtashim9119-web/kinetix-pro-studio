@@ -595,13 +595,16 @@ export function buildWhisperModelFailureEntry(
  */
 export function buildMediaImportEntry(
   syncRunId: string,
-  source: 'zip' | 'files' | 'folder',
+  source: 'zip' | 'files' | 'folder' | 'bundle',
   counts: { imported: number; deduped: number; unsupportedSkipped: number; failed: number },
   timestamp: number = Date.now(),
   duplicateNames: string[] = [],
 ): SyncLogEntry {
   const { imported, deduped, unsupportedSkipped, failed } = counts;
-  const sourceLabel = source === 'zip' ? 'Zip import' : source === 'folder' ? 'Folder import' : 'File import';
+  const sourceLabel = source === 'zip' ? 'Zip import'
+    : source === 'folder' ? 'Folder import'
+    : source === 'bundle' ? 'Bundle import (script, scene details, voiceover, and media)'
+    : 'File import';
   const parts = [`${imported} imported`];
   // G6 polish item 1 — name the duplicate(s) when known (already-in-project
   // dedup, threaded from the ingest call's own `duplicateNames`); fall back
@@ -623,6 +626,28 @@ export function buildMediaImportEntry(
       severity: failed > 0 ? 'warning' : 'info',
       ...(failed > 0 ? { fixHint: 'Check the console for which file(s) failed and why, then try adding them again.' } : {}),
     },
+    timestamp,
+  );
+}
+
+/**
+ * G5 — bundle ingest's failure path (`bundleIngest.ts::classifyAndIngestBundleZip`
+ * returning `{ kind: 'failure' }`, either a corrupt/oversized archive or a
+ * bundle-shaped zip missing one of its four required pieces). ONE grouped
+ * finding, warning severity: no slot was touched and nothing was imported —
+ * `message` (from `bundleIngest.ts`) already names what and why, so this is
+ * a thin, typed wrapper rather than a second place that composes the text.
+ */
+export function buildBundleImportFailedEntry(
+  syncRunId: string,
+  message: string,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'warning',
+    message,
+    { severity: 'warning', fixHint: 'Fix the bundle and drop it again — nothing was imported this time.' },
     timestamp,
   );
 }

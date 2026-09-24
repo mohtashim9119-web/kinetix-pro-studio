@@ -43,7 +43,7 @@ export interface MediaIngestOutcome {
   assets: Asset[];
   audioAssetId: string | undefined;
   counts: MediaIngestCounts;
-  source: 'zip' | 'files' | 'folder';
+  source: 'zip' | 'files' | 'folder' | 'bundle';
   /** Names of files dropped as duplicates of an already-in-project asset or
    *  of another file in the same import (G6 polish item 1). */
   duplicateNames: string[];

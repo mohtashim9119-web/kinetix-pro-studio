@@ -160,6 +160,7 @@ function makeDropZonePanelProps(overrides: Partial<DropZonePanelProps> = {}): Dr
     onHighlightUsage: noop,
     onIngestComplete: noop,
     onIngestError: noop,
+    onBundleImportFailed: noop,
     projectId: 'render-test-project',
     onApplySync: noop,
     onStagedFilesChange: noop,

@@ -224,3 +224,30 @@ describe('ingestZip — voiceover auto-assignment', () => {
     expect(result.audioAssetId).toBe(audioAsset?.id);
   });
 });
+
+describe('ingestZip — OLD BUG (pre-G5): a full project-bundle zip silently loses its script/scene text', () => {
+  it('drops script.txt and scene.txt as unsupportedSkipped — nothing routes them to the script/scene slots', async () => {
+    // Exactly the shape `bundleIngest.ts::classifyAndIngestBundleZip` (G5)
+    // now detects and routes correctly. Before that module existed, the
+    // only zip path was this one — plain `ingestZip`, which has no concept
+    // of script/scene/voiceover slots and only ever recognizes media
+    // extensions. This test documents that bug shape so a regression that
+    // reintroduces plain `ingestZip` on a bundle-shaped drop is caught.
+    mockZipFiles = {
+      'script.txt': fakeEntry('script.txt', new TextEncoder().encode('A lone figure crests the ridge.')),
+      'scene.txt': fakeEntry('scene.txt', new TextEncoder().encode(
+        '[shot_one] a ridge at dawn\n[shot_two] a valley\n[shot_three] a river',
+      )),
+      'voice.mp3': fakeEntry('voice.mp3', new Uint8Array([1, 1])),
+      'shot_one.jpg': fakeEntry('shot_one.jpg', new Uint8Array([2, 2])),
+    };
+
+    const result = await ingestZip(PROJECT_ID, zipFile());
+
+    // The bug: both text files vanish into the generic unsupported count —
+    // no script, no scene details, and no indication of what was lost.
+    expect(result.counts.unsupportedSkipped).toBe(2);
+    expect(result.assets.every(a => a.type !== undefined)).toBe(true);
+    expect(result.assets.some(a => a.name === 'script.txt' || a.name === 'scene.txt')).toBe(false);
+  });
+});
