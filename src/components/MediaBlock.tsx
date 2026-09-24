@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle } from 'lucide-react';
+import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle, Loader2 } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Asset, VideoSegment } from '../types';
 import { formatTime } from '../services/timeFormat';
@@ -275,11 +275,27 @@ export function MediaBlock({
     [assets],
   );
 
+  // G5 Unit 5 — import progress adequacy. Hashing/vault-writing a multi-GB
+  // folder is real, measured seconds of work (Step 1: ~150 MiB/s) and
+  // `ingestLooseFiles`/`ingestZip` are both sequential (one file at a time,
+  // by design — see either module's own doc comment), so a large drop can
+  // sit for a visible while with the buttons merely `disabled={busy}` and
+  // NOTHING else on screen — indistinguishable from a frozen UI. This is
+  // the smallest HONEST fix: a static label naming what's running and, where
+  // known up front, how many files — not a fake ticking counter, since
+  // neither ingest function reports per-file progress today (adding that
+  // would mean threading a callback through `ingestLooseFiles`/`ingestZip`/
+  // `ingestOneMediaFile` and every one of their call sites and tests — not
+  // small; queued for the UI revamp per the operator's own scoping call).
+  const [busyLabel, setBusyLabel] = useState<string | null>(null);
+
   const runIngest = useCallback(async (
     source: 'zip' | 'files' | 'folder',
+    label: string,
     run: () => Promise<{ assets: Asset[]; audioAssetId: string | undefined; counts: MediaIngestCounts; duplicateNames: string[] }>,
   ) => {
     setBusy(true);
+    setBusyLabel(label);
     try {
       const result = await run();
       onIngestComplete({ ...result, source });
@@ -291,22 +307,27 @@ export function MediaBlock({
       onIngestError(message);
     } finally {
       setBusy(false);
+      setBusyLabel(null);
     }
   }, [onIngestComplete, onIngestError]);
 
   const handleFilesChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    void runIngest('files', () => ingestLooseFiles(projectId, Array.from(fileList), existingHashes));
+    const files = Array.from(fileList);
+    void runIngest('files', `Importing ${files.length} file${files.length === 1 ? '' : 's'}…`, () => ingestLooseFiles(projectId, files, existingHashes));
   }, [projectId, runIngest, existingHashes]);
 
   const handleFolderChosen = useCallback((fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
-    void runIngest('folder', () => ingestLooseFiles(projectId, Array.from(fileList), existingHashes));
+    const files = Array.from(fileList);
+    void runIngest('folder', `Importing folder (${files.length} file${files.length === 1 ? '' : 's'})…`, () => ingestLooseFiles(projectId, files, existingHashes));
   }, [projectId, runIngest, existingHashes]);
 
   const handleZipChosen = useCallback((file: File | undefined) => {
     if (!file) return;
-    void runIngest('zip', () => ingestZip(projectId, file, existingHashes));
+    // The zip's entry count isn't known without opening it (the expensive
+    // part), so this stays generic rather than guessing a number.
+    void runIngest('zip', 'Importing zip…', () => ingestZip(projectId, file, existingHashes));
   }, [projectId, runIngest, existingHashes]);
 
   // G6 polish item 3 — bulk "Delete unused". Routes every unused asset
@@ -341,6 +362,16 @@ export function MediaBlock({
         <h3 className="text-[11px] font-semibold uppercase tracking-wide text-[var(--kx-faint)]">
           Media ({mediaAssets.length})
         </h3>
+        {busyLabel && (
+          <span
+            className="flex items-center gap-1 text-[10px] text-[var(--kx-faint)]"
+            role="status"
+            aria-live="polite"
+          >
+            <Loader2 size={11} className="animate-spin" />
+            {busyLabel}
+          </span>
+        )}
         <div className="flex items-center gap-1.5">
           <button
             type="button"

@@ -389,6 +389,65 @@ describe('MediaBlock', () => {
     });
   });
 
+  describe('G5 Unit 5 — import progress adequacy', () => {
+    it('shows a live "Importing N files…" label while ingestLooseFiles is in flight, then clears it', async () => {
+      let resolveIngest: (v: unknown) => void = () => {};
+      mockIngestLooseFiles.mockReturnValue(new Promise((resolve) => { resolveIngest = resolve; }));
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={[makeAsset({ id: "seed" })]} segments={[]} voiceoverId={undefined}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const fileInput = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
+      const files = [new File([new Uint8Array([1])], 'a.jpg'), new File([new Uint8Array([2])], 'b.jpg')];
+      setInputFiles(fileInput, files);
+      await act(async () => { fileInput.dispatchEvent(new Event('change', { bubbles: true })); });
+
+      expect(container.textContent).toContain('Importing 2 files…');
+
+      await act(async () => {
+        resolveIngest({
+          assets: [], audioAssetId: undefined,
+          counts: { imported: 2, deduped: 0, unsupportedSkipped: 0, failed: 0 },
+          duplicateNames: [],
+        });
+        await Promise.resolve();
+      });
+      expect(container.textContent).not.toContain('Importing 2 files…');
+    });
+
+    it('a single-file import is singular: "Importing 1 file…", not "1 files"', async () => {
+      let resolveIngest: (v: unknown) => void = () => {};
+      mockIngestLooseFiles.mockReturnValue(new Promise((resolve) => { resolveIngest = resolve; }));
+      root = createRoot(container);
+      await act(async () => {
+        root.render(
+          <MediaBlock
+            projectId="p1" assets={[makeAsset({ id: "seed" })]} segments={[]} voiceoverId={undefined}
+            onDeleteAsset={noop} onOpenRelinkMedia={noop} onHighlightUsage={noop}
+            onIngestComplete={noop} onIngestError={noop}
+          />,
+        );
+      });
+      const fileInput = container.querySelector('input[type="file"][multiple]:not([webkitdirectory])') as HTMLInputElement;
+      setInputFiles(fileInput, [new File([new Uint8Array([1])], 'a.jpg')]);
+      await act(async () => { fileInput.dispatchEvent(new Event('change', { bubbles: true })); });
+
+      expect(container.textContent).toContain('Importing 1 file…');
+      expect(container.textContent).not.toContain('Importing 1 files…');
+
+      await act(async () => {
+        resolveIngest({ assets: [], audioAssetId: undefined, counts: { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 }, duplicateNames: [] });
+        await Promise.resolve();
+      });
+    });
+  });
+
   // G6 polish item 1 — OLD BUG: this call used to be
   // `mockIngestLooseFiles).toHaveBeenCalledWith('p1', [file])`, i.e. the
   // project's own already-imported content hashes were never threaded
