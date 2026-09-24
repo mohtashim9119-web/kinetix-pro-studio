@@ -177,6 +177,9 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // existing categories (FA cyan/purple, lock amber, rule blue, error red)
   // fit "here's what happened when you added media."
   'media-import': { label: 'MEDIA', className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
+  // Media workflow Units 1-2 — same emerald family as 'media-import': a
+  // Media-block event, not a sync-run outcome.
+  'media-match': { label: 'MATCH', className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be

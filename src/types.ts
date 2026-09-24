@@ -815,7 +815,15 @@ export type SyncLogEntryType =
    *  door can fire this at any time, so `syncRunId` here is a freshly minted
    *  grouping key for this one ingest, not a real sync run's id.
    *  severity:'info' when nothing failed, 'warning' when `failed > 0`. */
-  | 'media-import';
+  | 'media-import'
+  /** 'media-match' — media workflow Units 1-2. A Media-block name event not
+   *  tied to an Apply Sync run: "Match media to scenes"'s one summary finding
+   *  (N matched · M unmatched, naming the unmatched scenes and any same-name
+   *  ambiguity), or an inline rename that left 2+ files matching as the same
+   *  name. `syncRunId` is a freshly minted grouping key, same as
+   *  'media-import'. See `syncLog.ts`'s `buildMediaMatchEntry` /
+   *  `buildMediaNameCollisionEntry`. */
+  | 'media-match';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */

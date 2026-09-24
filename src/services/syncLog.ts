@@ -63,6 +63,7 @@ const KNOWN_SYNC_LOG_ENTRY_TYPES: Record<SyncLogEntryType, true> = {
   'fa-gate-closed': true,
   'whisper-model-failure': true,
   'media-import': true,
+  'media-match': true,
 };
 
 export function isKnownSyncLogEntryType(type: unknown): type is SyncLogEntryType {
@@ -1307,4 +1308,49 @@ export function appendSyncLogEntries(
       ? nextSummaries.slice(-MAX_SYNC_RUN_SUMMARIES)
       : nextSummaries,
   };
+}
+
+/**
+ * Media workflow Unit 1 — an inline rename left `count` (2+) assets matching
+ * as `name`. Allowed, not blocked: matching takes the oldest.
+ */
+export function buildMediaNameCollisionEntry(
+  syncRunId: string,
+  name: string,
+  count: number,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'media-match',
+    `${count} files named "${name}" — matching uses the oldest; rename to disambiguate.`,
+    { severity: 'warning' },
+    timestamp,
+  );
+}
+
+/**
+ * Media workflow Unit 2 — "Match media to scenes"'s ONE summary finding.
+ * `unmatched` are scene labels (tag, or `S<n>` for an untagged scene) that
+ * kept whatever they had; `ambiguous` are tags 2+ assets matched as, where
+ * the oldest was used.
+ */
+export function buildMediaMatchEntry(
+  syncRunId: string,
+  outcome: { matched: number; unmatched: string[]; ambiguous: { name: string; count: number }[] },
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const { matched, unmatched, ambiguous } = outcome;
+  let message = `Match media to scenes: ${matched} scene${matched === 1 ? '' : 's'} matched · ${unmatched.length} unmatched`;
+  message += unmatched.length > 0 ? ` (kept their current media): ${unmatched.join(', ')}.` : '.';
+  for (const { name, count } of ambiguous) {
+    message += ` ${count} files named "${name}" — matching used the oldest; rename to disambiguate.`;
+  }
+  return makeSyncLogEntry(
+    syncRunId,
+    'media-match',
+    message,
+    { severity: unmatched.length > 0 || ambiguous.length > 0 ? 'warning' : 'info' },
+    timestamp,
+  );
 }

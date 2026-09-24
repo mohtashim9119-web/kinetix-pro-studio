@@ -255,6 +255,7 @@ export function attentionKindForEntry(entry: SyncLogEntry): AttentionKind | unde
     case 'rule-correction':
     case 'fa-preflight':
     case 'media-import':
+    case 'media-match':
       return undefined;
   }
 }
@@ -279,6 +280,7 @@ function detailsCategoryForUnflagged(entry: SyncLogEntry): DetailsCategory {
     case 'fa-gate-closed':
       return 'preflight';
     case 'media-import':
+    case 'media-match':
       return 'imports';
     case 'warning': {
       const kind = findingOf(entry)?.kind;

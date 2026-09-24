@@ -207,6 +207,7 @@ import {
   buildFaNotCompiledEntry,
   buildFaUserChoseWhisperEntry,
   buildMediaImportEntry,
+  buildMediaNameCollisionEntry,
   buildBundleImportFailedEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
@@ -279,7 +280,8 @@ import { relinkPickFolder, relinkListFolder, inferMimeType, type RelinkCandidate
 import { writeAssetFromPath } from './services/nativeAssetStore';
 import type { RecoveryAsset, RecoverySegment } from './components/recovery/degradedLoad';
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
-import { mediaVaultUnreference } from './services/mediaVaultClient';
+import { mediaVaultUnreference, mediaVaultRename } from './services/mediaVaultClient';
+import { applyAssetRename } from './services/mediaRename';
 import { requestStoragePersistence } from './services/storagePersistence';
 import { getAppSessionToken } from './services/historyPersist';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
@@ -6164,6 +6166,22 @@ export default function App() {
     });
   }, []);
 
+  // Media workflow Unit 1 — inline rename from a Media block tile. Renames
+  // the Asset record (persisted by the ordinary autosave; `Asset.name` is
+  // the match key from now on) AND the vault registry's display name. A name
+  // that now matches 2+ assets is allowed, with one finding.
+  const handleRenameAsset = useCallback((assetId: string, newName: string) => {
+    const asset = projectRef.current.assets.find(a => a.id === assetId);
+    if (!asset) return;
+    setProject(prev => {
+      const { project: next, collision } = applyAssetRename(prev, assetId, newName);
+      return collision
+        ? appendSyncLogEntries(next, [buildMediaNameCollisionEntry(mintSyncLogId(), collision.name, collision.count)])
+        : next;
+    });
+    if (asset.contentHash) void mediaVaultRename(asset.contentHash, newName);
+  }, []);
+
   const handleMediaIngestError = useCallback((message: string) => {
     showToast(message);
   }, [showToast]);
@@ -7652,6 +7670,7 @@ export default function App() {
             onHighlightUsage={handleHighlightAssetUsage}
             onIngestComplete={handleMediaIngestComplete}
             onIngestError={handleMediaIngestError}
+            onRenameAsset={handleRenameAsset}
             onBundleImportFailed={handleBundleImportFailed}
             onApplySync={handleApplySyncFromFiles}
             stagedFilesClearSignal={stagedFilesClearSignal}

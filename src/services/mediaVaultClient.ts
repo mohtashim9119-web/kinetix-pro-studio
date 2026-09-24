@@ -133,3 +133,20 @@ export async function mediaVaultUnreference(contentHash: string, projectId: stri
     console.warn('[mediaVaultClient] unreference failed (non-fatal):', contentHash, projectId, err);
   }
 }
+
+/**
+ * Media workflow Unit 1 — renames the vault registry's display name for
+ * `contentHash` (the project's own `Asset.name` is renamed in App state).
+ * Best-effort / never throws, same posture as `mediaVaultUnreference`: the
+ * registry label is the vault's own bookkeeping, and the rename that matters
+ * for matching (`Asset.name`) has already happened. No-op outside Tauri and
+ * for an unknown hash (Rust treats that as a no-op too).
+ */
+export async function mediaVaultRename(contentHash: string, displayName: string): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke<void>('media_vault_rename', { contentHash, displayName });
+  } catch (err) {
+    console.warn('[mediaVaultClient] rename failed (non-fatal):', contentHash, err);
+  }
+}

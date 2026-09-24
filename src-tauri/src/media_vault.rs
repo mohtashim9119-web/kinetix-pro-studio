@@ -468,6 +468,42 @@ pub fn unreference_project(root: &Path, content_hash: &str, project_id: &str) ->
     save_registry(root, &registry)
 }
 
+/// Media workflow Unit 1 — renames `content_hash`'s registry display name
+/// (inline rename in the Media block; the project's own `Asset.name` is
+/// renamed by the frontend). Trimmed; empty is refused. An unknown hash is a
+/// no-op, same reasoning as `unreference_project`: a pre-vault asset has no
+/// entry here, and its project-side rename must not fail over that. Same
+/// `load_registry`/`save_registry` pair — the module's only registry
+/// read/write — so the same atomic temp-file + rename write; the blob file
+/// is never touched.
+pub fn rename_display_name(root: &Path, content_hash: &str, display_name: &str) -> Result<(), String> {
+    let name = display_name.trim();
+    if name.is_empty() {
+        return Err("media-vault: refusing to rename to an empty name".into());
+    }
+    let mut registry = load_registry(root)?;
+    let Some(entry) = registry.entries.get_mut(content_hash) else {
+        return Ok(());
+    };
+    if entry.display_name == name {
+        return Ok(());
+    }
+    entry.display_name = name.to_string();
+    save_registry(root, &registry)
+}
+
+/// Media workflow Unit 1 — the rename IPC surface; thin wrapper over the
+/// `root`-based `rename_display_name`.
+#[tauri::command]
+pub fn media_vault_rename(
+    app: tauri::AppHandle,
+    content_hash: String,
+    display_name: String,
+) -> Result<(), String> {
+    let root = resolve_storage_root(&app)?;
+    rename_display_name(&root, &content_hash, &display_name)
+}
+
 /// G6 Step 6 (dead-feature-gap fix) — the unreference IPC surface. Thin
 /// wrapper, same shape as `media_vault_list_entries`: all the logic lives in
 /// the `root`-based `unreference_project` above, kept AppHandle-free for
@@ -915,5 +951,45 @@ mod tests {
 
         let mtime_after = fs::metadata(registry_path(&root)).unwrap().modified().unwrap();
         assert_eq!(mtime_before, mtime_after, "a no-op unreference must skip the registry write entirely");
+    }
+
+    // Media workflow Unit 1 — inline rename in the Media block renames the
+    // registry's display name too (the project's Asset.name is the match key;
+    // this keeps the vault's own label in step).
+    #[test]
+    fn rename_updates_only_the_display_name_and_persists_it() {
+        let root = tmpdir("rename");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"rename me", "wrong.png", "image/png").unwrap();
+        let blob_before = fs::read(blob_path(&root, &entry.content_hash)).unwrap();
+
+        rename_display_name(&root, &entry.content_hash, "  001_intro.png  ").unwrap();
+
+        let listed = media_vault_list(&root).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].display_name, "001_intro.png", "trimmed, and read back from disk");
+        assert_eq!(listed[0].referenced_by_project_ids, entry.referenced_by_project_ids);
+        assert_eq!(listed[0].size_bytes, entry.size_bytes);
+        assert_eq!(fs::read(blob_path(&root, &entry.content_hash)).unwrap(), blob_before, "the blob is never touched");
+    }
+
+    #[test]
+    fn rename_to_an_empty_name_is_refused_and_writes_nothing() {
+        let root = tmpdir("rename-empty");
+        let entry = media_vault_import_bytes(&root, "proj-1", b"x", "keep.png", "image/png").unwrap();
+        assert!(rename_display_name(&root, &entry.content_hash, "   ").is_err());
+        assert_eq!(media_vault_list(&root).unwrap()[0].display_name, "keep.png");
+    }
+
+    #[test]
+    fn rename_of_an_unknown_hash_is_a_no_op_not_an_error() {
+        // A pre-vault (legacy) asset has no registry entry — renaming it in
+        // the project must still work, so the vault half declines quietly.
+        let root = tmpdir("rename-unknown");
+        media_vault_import_bytes(&root, "proj-1", b"y", "a.png", "image/png").unwrap();
+        let mtime_before = fs::metadata(registry_path(&root)).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        rename_display_name(&root, "unknown-hash", "b.png").unwrap();
+        let mtime_after = fs::metadata(registry_path(&root)).unwrap().modified().unwrap();
+        assert_eq!(mtime_before, mtime_after);
     }
 }

@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 
 import { useState, useRef, useCallback, useMemo, useEffect } from 'react';
-import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle, Loader2 } from 'lucide-react';
+import { Search, Film, Image as ImageIcon, Music, Link2, Trash2, FolderPlus, FileUp, FileArchive, AlertCircle, Loader2, Copy } from 'lucide-react';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { Asset, VideoSegment } from '../types';
 import { formatTime } from '../services/timeFormat';
@@ -68,6 +68,10 @@ interface MediaBlockProps {
   onHighlightUsage: (assetId: string) => void;
   onIngestComplete: (outcome: MediaIngestOutcome) => void;
   onIngestError: (message: string) => void;
+  /** Media workflow Unit 1 — commits an inline rename (already trimmed,
+   *  never empty, never unchanged). The name is the match key for "Match
+   *  media to scenes". Absent -> the name renders read-only. */
+  onRenameAsset?: (assetId: string, newName: string) => void;
 }
 
 type TypeFilter = 'all' | 'image' | 'video' | 'audio';
@@ -187,6 +191,75 @@ async function loadVideoThumbnailUrl(projectId: string, asset: Asset): Promise<s
   }
 }
 
+/**
+ * Media workflow Unit 1 — a tile's name, inline-editable. Click the name ->
+ * text input (native select/copy/paste work inside it); Enter or click-away
+ * commits, Escape cancels. The committed value is trimmed; empty or unchanged
+ * commits nothing. The copy icon puts the current name on the clipboard.
+ */
+function TileName({ name, onRename }: { name: string; onRename?: (newName: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+  // Escape unmounts the input, and a focused element's removal can still
+  // deliver a blur — which would otherwise commit the draft being cancelled.
+  const settledRef = useRef(false);
+
+  const begin = () => {
+    settledRef.current = false;
+    setDraft(name);
+    setEditing(true);
+  };
+  const finish = (commit: boolean) => {
+    if (settledRef.current) return;
+    settledRef.current = true;
+    setEditing(false);
+    const next = draft.trim();
+    if (commit && next !== '' && next !== name) onRename?.(next);
+  };
+
+  if (editing) {
+    return (
+      <input
+        data-testid="media-block-name-input"
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onFocus={(e) => e.target.select()}
+        onBlur={() => finish(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+          else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+        }}
+        className="w-full text-[9px] bg-black/80 text-white rounded px-0.5 outline-none ring-1 ring-[#F27D26]"
+      />
+    );
+  }
+  return (
+    <div className="flex items-center gap-0.5 min-w-0">
+      <p
+        data-testid="media-block-name"
+        role={onRename ? 'button' : undefined}
+        tabIndex={onRename ? 0 : undefined}
+        onClick={onRename ? begin : undefined}
+        onKeyDown={onRename ? (e) => { if (e.key === 'Enter') begin(); } : undefined}
+        title={name}
+        className={`flex-1 min-w-0 text-[9px] text-white truncate ${onRename ? 'cursor-text hover:underline' : ''}`}
+      >
+        {name}
+      </p>
+      <button
+        type="button"
+        data-testid="media-block-copy-name"
+        title="Copy name"
+        onClick={() => { void navigator.clipboard?.writeText(name).catch(() => {}); }}
+        className="shrink-0 p-0.5 rounded text-white/70 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+      >
+        <Copy size={9} />
+      </button>
+    </div>
+  );
+}
+
 export function MediaBlock({
   projectId,
   assets,
@@ -197,6 +270,7 @@ export function MediaBlock({
   onHighlightUsage,
   onIngestComplete,
   onIngestError,
+  onRenameAsset,
 }: MediaBlockProps) {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<TypeFilter>('all');
@@ -574,8 +648,11 @@ export function MediaBlock({
                   {uses === 0 ? 'Unused' : `${uses}×`}
                 </button>
 
-                <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/60 to-transparent px-1 py-0.5">
-                  <p className="text-[9px] text-white truncate" title={asset.name}>{asset.name}</p>
+                <div className="absolute inset-x-0 top-0 bg-gradient-to-b from-black/60 to-transparent px-1 py-0.5 pr-6">
+                  <TileName
+                    name={asset.name}
+                    onRename={onRenameAsset ? (next) => onRenameAsset(asset.id, next) : undefined}
+                  />
                 </div>
               </div>
             );
