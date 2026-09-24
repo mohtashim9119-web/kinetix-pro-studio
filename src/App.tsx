@@ -255,7 +255,7 @@ import {
   reportAssetResolutionFailure,
   clearLoadFailure,
 } from './services/projectStore';
-import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative';
+import { repairMissingAssetsFromNative, repairMissingAssetsFromVault } from './services/repairAssetsFromNative';
 import { applySilentProvenanceResolution } from './services/assetResolutionLadder';
 import { withAssetLoadTimeout } from './services/assetLoadTimeout';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
@@ -7396,6 +7396,13 @@ export default function App() {
       if (missingIds.length > 0) {
         const repair = await repairMissingAssetsFromNative(saved.project.id, saved.project.assets, missingIds);
         for (const repaired of repair.repaired) blobMap.set(repaired.id, repaired);
+        missingIds = missingIds.filter(id => !blobMap.has(id));
+      }
+      // Item A — second rung: missing from BOTH stores, but the media vault
+      // still holds the same bytes under the row's contentHash.
+      if (missingIds.length > 0) {
+        const vaultRepair = await repairMissingAssetsFromVault(saved.project.id, saved.project.assets, missingIds);
+        for (const repaired of vaultRepair.repaired) blobMap.set(repaired.id, repaired);
         missingIds = missingIds.filter(id => !blobMap.has(id));
       }
 
