@@ -10757,3 +10757,19 @@ isolated scratch directory, from the committed `6.m4a` — no worktree files tou
 **identical on both counts** to the disk-preserved `cloud/fixtures/hour_16k.wav` (AL.2). The
 exclusion is provably lossless: nothing found in `cloud/fixtures/` on disk (or in `48bfcd9`, or in
 this doc) cannot be reconstructed byte-for-byte from what is actually in git.
+
+### AL.5 — ADDENDUM (operator-approved 2026-09-24, Wave 2 landing): six G3 golden-replay fixture digests
+
+**Addendum — appended at Wave 2 landing; AL.1–AL.4 above are untouched.** Records the six frozen
+scene-doc/script snapshots committed in `f7fe690` (G3 Step 0), which replaced the golden replay
+harness's live `~/Downloads` reads. Read by hardcoded path from
+`scripts/phase4-restore-replay-inputs.py`. Captured with `shasum -a 256` at the Wave 2 landing tip.
+
+| File (`scripts/fixtures/`) | Bytes | SHA-256 | Purpose |
+|---|---|---|---|
+| `phase4-baseline-173-scenedoc.txt` | 14,790 | `9dca212514845bee72bc93cb9843d426a6b61117258cc7b581f7d8faa6536f24` | Golden-replay input: 173 corpus scene doc |
+| `phase4-baseline-173-script.txt` | 11,097 | `d688fa38d058023687a488444b1eaaf8a1d8e95f5bc8274de2c2cecf6c7ecaa0` | Golden-replay input: 173 corpus script |
+| `phase4-baseline-spanish-scenedoc.txt` | 2,214 | `b9cc104127d7d03055d6ae34a51424246f2de5dd4e5e1e24019ef134c91a3af9` | Golden-replay input: Spanish corpus scene doc |
+| `phase4-baseline-spanish-script.txt` | 1,497 | `6ca73e78ffe2cb42f4583ac7556db65d47510436d4053cd835fb5d8a4c27aca4` | Golden-replay input: Spanish corpus script |
+| `phase4-baseline-v6-scenedoc.txt` | 31,048 | `09f6c44c3d0f74d6f1878a6739dd57edeb6a331848d41d83f7a4706491a696b1` | Golden-replay input: V6 corpus scene doc |
+| `phase4-baseline-v6-script.txt` | 20,786 | `56f9c32d72dd119ea3d074b0775df4a3bf0ac2bf510d4a35531e01adeec36374` | Golden-replay input: V6 corpus script |
