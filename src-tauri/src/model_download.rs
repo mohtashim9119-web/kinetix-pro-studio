@@ -13,7 +13,7 @@
 // streamed progress, resumable partial downloads via a `.part` file + HTTP
 // Range, atomic rename on completion, and a caller-supplied verification
 // closure run before the rename (whisper: the sha256 check that lived here
-// inline before this refactor; FA: `fa_dev::verify_model_manifest`, already
+// inline before this refactor; FA: `fa_shared::verify_model_manifest`, already
 // exact-size+sha256 against the committed manifest — no new pinned constant
 // added for FA). `ModelDownloadEvent`/`ModelDownloadState` stay generic
 // (never whisper-specific in shape) and are reused as-is by both callers.
@@ -143,7 +143,7 @@ pub(crate) const MODEL_SHA256: &str = "1fc70f774d38eb169993ac391eea357ef47c88757
 /// bytes of `0x67676d6c` — measured against the real local model
 /// (`ggml-large-v3-turbo.bin`'s first 4 bytes: `6c 6d 67 67`). Cheap
 /// first-line-of-defense precheck for `import_local_model` before paying for
-/// a full stream hash, mirroring `fa_dev.rs::verify_model_manifest`'s own
+/// a full stream hash, mirroring `fa_shared.rs::verify_model_manifest`'s own
 /// size-precheck-before-hash structure.
 pub(crate) const GGML_MAGIC: [u8; 4] = [0x6c, 0x6d, 0x67, 0x67];
 
@@ -860,6 +860,24 @@ pub(crate) fn status_for_target(target: &Path, expected_size: u64) -> ModelDownl
 #[tauri::command]
 pub fn whisper_model_status(app: tauri::AppHandle) -> Result<ModelDownloadStatus, String> {
     let dir = models_dir(&app)?;
+    // G3 Unit 2 (STATUS queue item 1) widened `present` here to also cover
+    // `whisper.rs::model_path()`'s four fallback locations, so Settings would
+    // stop reporting "not detected" for a model the app could already
+    // transcribe with. That fixed one divergence but caused another (G3 tail
+    // Step 0, found by operator click-through): `present` is also what gates
+    // whether Download/Import render at all, and a model found ONLY via a
+    // fallback — not this storage-root target — left the row stuck
+    // "Unverified" with Delete as the only action, and Delete only ever
+    // touches this same target, so it did nothing. `present` reverts to
+    // meaning exactly what a download would check before writing — "does
+    // *this* target already hold the file" — mirroring `fa_model_status`
+    // below, which was never widened and never got stuck this way. The
+    // candidate-widening this command used to do, PLUS real hash
+    // verification (this command was existence-only), now lives in
+    // `models.rs::whisper_installed_status`, reached through
+    // `check_installed_models` — the authoritative report this row's
+    // "Ready"/"Unverified" badge is actually drawn from — mirroring D22's
+    // identical fix for the FA row (`fa_installed_status`).
     Ok(status_for_target(&dir.join(MODEL_FILENAME), MODEL_SIZE_BYTES))
 }
 

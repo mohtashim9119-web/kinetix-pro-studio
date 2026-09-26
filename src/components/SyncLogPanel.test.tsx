@@ -3,7 +3,11 @@
 // library dependency, just render-to-string and assert on the HTML.
 import { describe, it, expect } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SyncLogPanel, formatEntryText } from './SyncLogPanel';
+// Operator ruling (sync-log user view): these suites cover the RAW entry
+// renderer — what Details ▸ category shows, badges and all — so they render
+// `SyncLogRawEntries` directly. The default view itself is covered by
+// SyncLogPanel.userView.test.tsx.
+import { SyncLogRawEntries, formatEntryText } from './SyncLogPanel';
 import type { SyncLogEntry } from '../types';
 
 const AT = 1_700_000_000_000;
@@ -25,12 +29,11 @@ function makeSkipEntry(partial: Partial<SyncLogEntry> = {}): SyncLogEntry {
 describe('SyncLogPanel — skip entry 3-line format', () => {
   it('renders "Segment N skipped — reason", "[tag] text" and the match-count line', () => {
     const html = renderToStaticMarkup(
-      <SyncLogPanel
-        syncLog={[makeSkipEntry({ segmentTag: 'missing1', matchedWords: 2, totalWords: 8, confidence: 0.25 })]}
-        onClearLog={() => {}}
+      <SyncLogRawEntries
+        entries={[makeSkipEntry({ segmentTag: 'missing1', matchedWords: 2, totalWords: 8, confidence: 0.25 })]}
       />,
     );
-    expect(html).toContain('S135 skipped — no text match');
+    expect(html).toContain('S135: Unmatched scene — kept as Estimated placeholder — no text match');
     expect(html).toContain('[missing1]');
     expect(html).toContain('This is a test missing segment.');
     expect(html).toContain('matched 2 of 8 words (confidence 0.25)');
@@ -38,9 +41,8 @@ describe('SyncLogPanel — skip entry 3-line format', () => {
 
   it('omits the bracket prefix when segmentTag is empty/missing', () => {
     const html = renderToStaticMarkup(
-      <SyncLogPanel
-        syncLog={[makeSkipEntry({ segmentTag: undefined, matchedWords: 0, totalWords: 5, confidence: 0 })]}
-        onClearLog={() => {}}
+      <SyncLogRawEntries
+        entries={[makeSkipEntry({ segmentTag: undefined, matchedWords: 0, totalWords: 5, confidence: 0 })]}
       />,
     );
     expect(html).not.toContain('[undefined]');
@@ -50,9 +52,8 @@ describe('SyncLogPanel — skip entry 3-line format', () => {
 
   it('renders "matched 0 of 0 words (no content to match)" when totalWords is 0', () => {
     const html = renderToStaticMarkup(
-      <SyncLogPanel
-        syncLog={[makeSkipEntry({ matchedWords: 0, totalWords: 0, confidence: 0 })]}
-        onClearLog={() => {}}
+      <SyncLogRawEntries
+        entries={[makeSkipEntry({ matchedWords: 0, totalWords: 0, confidence: 0 })]}
       />,
     );
     expect(html).toContain('matched 0 of 0 words (no content to match)');
@@ -60,26 +61,27 @@ describe('SyncLogPanel — skip entry 3-line format', () => {
 
   it('omits the match-count line entirely for an old entry missing the new fields (backward compat)', () => {
     const html = renderToStaticMarkup(
-      <SyncLogPanel
-        syncLog={[makeSkipEntry({ segmentTag: undefined, matchedWords: undefined, totalWords: undefined, confidence: undefined })]}
-        onClearLog={() => {}}
+      <SyncLogRawEntries
+        entries={[makeSkipEntry({ segmentTag: undefined, matchedWords: undefined, totalWords: undefined, confidence: undefined })]}
       />,
     );
-    expect(html).not.toContain('matched');
+    // G2 close-out FIX 3's copy rename put the substring "matched" into the
+    // skip label itself ("Unmatched scene"), so this checks for the
+    // match-count line's own shape rather than the bare word.
+    expect(html).not.toMatch(/matched \d+ of \d+ words/);
     expect(html).not.toContain('confidence');
     // The rest of the entry still renders without crashing.
-    expect(html).toContain('S135 skipped — no text match');
+    expect(html).toContain('S135: Unmatched scene — kept as Estimated placeholder — no text match');
     expect(html).toContain('This is a test missing segment.');
   });
 
   it('does not crash and renders normally for a non-skip entry', () => {
     const html = renderToStaticMarkup(
-      <SyncLogPanel
-        syncLog={[{
+      <SyncLogRawEntries
+        entries={[{
           id: 'e2', timestamp: AT, syncRunId: 'run-1', type: 'info',
           message: 'Sync completed: 8 of 8 segments matched.',
         }]}
-        onClearLog={() => {}}
       />,
     );
     expect(html).toContain('Sync completed: 8 of 8 segments matched.');
@@ -91,7 +93,7 @@ describe('SyncLogPanel — skip entry 3-line format', () => {
 // ---------------------------------------------------------------------------
 
 function renderPanel(entries: SyncLogEntry[]): string {
-  return renderToStaticMarkup(<SyncLogPanel syncLog={entries} onClearLog={() => {}} />);
+  return renderToStaticMarkup(<SyncLogRawEntries entries={entries} />);
 }
 
 describe('SyncLogPanel — WS4 entry kinds', () => {
@@ -156,53 +158,10 @@ describe('SyncLogPanel — WS4 entry kinds', () => {
     expect(html).not.toContain('undefined');
   });
 
-  // WS1 Session M — THE FA FALLBACK's underlying error must reach the panel.
-  it('renders an fa-fallback entry with its verbatim backend error and fix hint', () => {
-    const html = renderPanel([{
-      id: 'e-fa',
-      timestamp: AT,
-      syncRunId: 'run-1',
-      type: 'fa-fallback',
-      message: 'High-precision sync was ON but did not run — the alignment engine reported an error. This run used Whisper timing instead.',
-      owningRule: 'FA',
-      reason: 'inference-error',
-      severity: 'warning',
-      errorMessage: 'failed to initialize onnxruntime: ORT_DYLIB_PATH not set',
-      fixHint: 'Check that the alignment model is installed for this language, then run Apply Sync again.',
-    }]);
-
-    expect(html).toContain('FA FALLBACK');
-    expect(html).toContain('did not run');
-    // The whole point of Session M: the raw backend cause is on screen, not
-    // only on stderr.
-    expect(html).toContain('error: failed to initialize onnxruntime: ORT_DYLIB_PATH not set');
-    expect(html).toContain('Check that the alignment model is installed');
-    expect(html).not.toContain('undefined');
-  });
-
-  it('renders an fa-fallback entry with no errorMessage without printing undefined', () => {
-    const html = renderPanel([{
-      id: 'e-fa2',
-      timestamp: AT,
-      syncRunId: 'run-1',
-      type: 'fa-fallback',
-      message: 'High-precision sync was ON but did not run — the chunk plan came out empty. This run used Whisper timing instead.',
-      owningRule: 'FA',
-      reason: 'empty-chunk-plan',
-      severity: 'warning',
-      fixHint: 'Check that the scene document has text for at least one scene, then run Apply Sync again.',
-    }]);
-
-    expect(html).toContain('FA FALLBACK');
-    expect(html).not.toContain('error:');
-    expect(html).toContain('Check that the scene document has text');
-    expect(html).not.toContain('undefined');
-  });
-
-  // plan-v3 item 3 — 'fa-fallback' is retired (nothing produces it any more)
-  // but the two tests above must keep passing unchanged: a project synced
-  // before this change can still have 'fa-fallback' entries on disk, and the
-  // panel must go on rendering them. 'fa-paused' is what NEW runs emit.
+  // 'fa-fallback' is retired (operator ruling): it is no longer in the type
+  // union and old persisted entries are filtered on load — see
+  // SyncLogPanel.userView.test.tsx's old-project test. 'fa-paused' is what
+  // runs emit, and its backend error must still reach the raw view.
   it('renders an fa-paused entry with its verbatim backend error and fix hint', () => {
     const html = renderPanel([{
       id: 'e-fa-paused',
@@ -276,9 +235,8 @@ describe('SyncLogPanel — models-modal deep-link', () => {
 
   it('renders a "Manage models & add-ons" link when the detail names a missing FA model and a handler is given', () => {
     const html = renderToStaticMarkup(
-      <SyncLogPanel
-        syncLog={[makePreflightEntry('No FA model found for language "es". Tried: /a, /b.')]}
-        onClearLog={() => {}}
+      <SyncLogRawEntries
+        entries={[makePreflightEntry('No FA model found for language "es". Tried: /a, /b.')]}
         onOpenModelsModal={() => {}}
       />,
     );
@@ -292,9 +250,8 @@ describe('SyncLogPanel — models-modal deep-link', () => {
 
   it('omits the link when the detail is not about a missing model', () => {
     const html = renderToStaticMarkup(
-      <SyncLogPanel
-        syncLog={[makePreflightEntry('failed to initialize onnxruntime: ORT_DYLIB_PATH not set')]}
-        onClearLog={() => {}}
+      <SyncLogRawEntries
+        entries={[makePreflightEntry('failed to initialize onnxruntime: ORT_DYLIB_PATH not set')]}
         onOpenModelsModal={() => {}}
       />,
     );
@@ -350,13 +307,19 @@ describe('SyncLogPanel — grouped entries', () => {
       message: 'A single plain warning.', severity: 'warning', fixHint: 'do something',
     }]);
     expect(html).toContain('A single plain warning.');
-    expect(html).not.toContain('aria-expanded');
+    // G5's group-header toggle legitimately carries its own aria-expanded —
+    // this checks for the per-ENTRY grouped-item expand button specifically,
+    // identified by its distinct className (renderEntry's `isGrouped` arm).
+    expect(html).not.toContain('flex items-start gap-1 mt-1 text-left');
   });
 
   it('renders normally and does not crash when groupedItems is an empty array', () => {
     const html = renderPanel([makeGroupedEntry({ groupedItems: [] })]);
     expect(html).toContain('4 scenes matched fewer than 60% of their words.');
-    expect(html).not.toContain('aria-expanded'); // treated as non-grouped (isGrouped requires length > 0)
+    // treated as non-grouped (isGrouped requires length > 0) — no per-entry
+    // expand button around the message; the group-header toggle above it
+    // legitimately has its own aria-expanded (G5).
+    expect(html).not.toContain('flex items-start gap-1 mt-1 text-left');
   });
 });
 
@@ -402,13 +365,13 @@ describe('SyncLogPanel — S/Clip numbering and longestRun annotation', () => {
       absorbedByDisplayIndex: 109,
       reason: 'no text match',
     })]);
-    expect(html).toContain('S112 / Clip 110 skipped');
+    expect(html).toContain('S112 / Clip 110: Unmatched scene');
     expect(html).not.toContain('Segment 112');
   });
 
   it('renders plain "S{n}" with no Clip suffix when there is no absorbing host', () => {
     const html = renderPanel([makeSkipEntry({ segmentIndex: 2, absorbedByDisplayIndex: undefined })]);
-    expect(html).toContain('S3 skipped');
+    expect(html).toContain('S3: Unmatched scene');
     expect(html).not.toContain('Clip');
   });
 

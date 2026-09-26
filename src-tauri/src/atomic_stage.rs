@@ -2,7 +2,7 @@
 //!
 //! A process death mid-`fs::write` onto the destination leaves a truncated
 //! file whose name still exists, so the next run's `exists()`-only cache
-//! hit (fa_dev.rs) treats poison as valid. Writing a sibling `.part` and
+//! hit (fa_shared.rs) treats poison as valid. Writing a sibling `.part` and
 //! renaming it over the destination makes the visible name either the
 //! previous complete file or absent — never a torn prefix.
 

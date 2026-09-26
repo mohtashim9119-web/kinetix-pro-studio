@@ -21,7 +21,7 @@ vi.mock('./tauriFfmpeg', () => ({ isTauri: vi.fn(() => true) }));
 
 import { invoke } from '@tauri-apps/api/core';
 import { isTauri } from './tauriFfmpeg';
-import { runFaPreflight } from './faPreflight';
+import { runFaPreflight, computeSyncEngineKey, resolveSyncEngine } from './faPreflight';
 import { __resetFaCapabilityForTests } from './faGate';
 
 const mockInvoke = invoke as unknown as Mock;
@@ -114,5 +114,120 @@ describe('runFaPreflight — readiness verdict, never throws', () => {
     const r = await runFaPreflight({ language: 'en' });
     expect(r.ready).toBe(false);
     expect(r.blockingDetail).toBe('IPC channel closed');
+  });
+
+  it('G6 Step 0a — says plainly the build was never compiled, never that forced alignment merely needs a retry', async () => {
+    mockInvoke.mockResolvedValue({
+      ...READY_REPORT,
+      featureCompiled: false,
+      runtimeOk: false,
+      runtimeDetail: 'fa-inference feature not compiled',
+    });
+    const r = await runFaPreflight({ language: 'en' });
+    expect(r.ready).toBe(false);
+    expect(r.featureCompiled).toBe(false);
+    expect(r.fixHint).toMatch(/isn't compiled into this build/i);
+    expect(r.fixHint).toMatch(/tauri:dev:fa/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G2 close-out FIX 1 — `computeSyncEngineKey`, the "engine state" half of the
+// honest-Apply-Sync spine (`spine.ts`'s `SyncSpine.engineKey`). OLD BUG this
+// proves fixed: before FIX 1, `lastSyncSpine` carried only audioHash +
+// scriptHash, so `spineEquals` reported "unchanged" (greying Apply Sync out)
+// purely off content — flipping the FA toggle, or the FA pack finishing its
+// download, after a sync changed NOTHING this key would have compared, so
+// the button stayed stuck on "Already synced" with no way to re-run on the
+// new engine short of editing the audio/script. `computeSyncEngineKey` is
+// the value that closes that gap; `spine.test.ts` proves `spineEquals`
+// actually consumes it.
+// ---------------------------------------------------------------------------
+describe('computeSyncEngineKey — the engine half of the honest-Apply-Sync spine', () => {
+  it('is "whisper" when the FA gate is closed (toggle off), no backend call made', async () => {
+    const key = await computeSyncEngineKey({ faHighPrecisionSync: false });
+    expect(key).toBe('whisper');
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('is "whisper" when FA-capable but the project never opted in (default off)', async () => {
+    const key = await computeSyncEngineKey({ faHighPrecisionSync: undefined });
+    expect(key).toBe('whisper');
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('is "fa:ready" when the toggle is on and the pre-flight reports ready', async () => {
+    mockInvoke.mockResolvedValue(READY_REPORT);
+    const key = await computeSyncEngineKey({ faHighPrecisionSync: true, language: 'en' });
+    expect(key).toBe('fa:ready');
+  });
+
+  it('is "fa:not-ready" when the toggle is on but the model pack is missing', async () => {
+    mockInvoke.mockResolvedValue({ ...READY_REPORT, modelPresent: false, modelDetail: 'No FA model found for language "en".' });
+    const key = await computeSyncEngineKey({ faHighPrecisionSync: true, language: 'en' });
+    expect(key).toBe('fa:not-ready');
+  });
+
+  it('OLD BUG — toggling on turns a "whisper" key into a real "fa:*" key (was invisible to the spine before FIX 1)', async () => {
+    const before = await computeSyncEngineKey({ faHighPrecisionSync: false });
+    mockInvoke.mockResolvedValue(READY_REPORT);
+    const after = await computeSyncEngineKey({ faHighPrecisionSync: true, language: 'en' });
+    expect(before).not.toBe(after);
+  });
+
+  it('OLD BUG — the FA pack finishing its download flips "fa:not-ready" to "fa:ready" for the SAME toggle position', async () => {
+    mockInvoke.mockResolvedValue({ ...READY_REPORT, modelPresent: false, modelDetail: 'No FA model found for language "en".' });
+    const beforeDownload = await computeSyncEngineKey({ faHighPrecisionSync: true, language: 'en' });
+    mockInvoke.mockResolvedValue(READY_REPORT);
+    const afterDownload = await computeSyncEngineKey({ faHighPrecisionSync: true, language: 'en' });
+    expect(beforeDownload).toBe('fa:not-ready');
+    expect(afterDownload).toBe('fa:ready');
+    expect(beforeDownload).not.toBe(afterDownload);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G3 Unit 1 — `resolveSyncEngine`, the single resolver `computeSyncEngineKey`
+// now delegates to and Apply Sync gating (`App.tsx`) now calls directly
+// instead of running its own `isFaGateOpenForProject` + `runFaPreflight`
+// chain. Proves the wrapper relationship holds (its `.key` always equals
+// what `computeSyncEngineKey` returns for the same input) and that the
+// richer fields (`engine`/`gateOpen`/`ready`/`preflight`) carry the
+// information Apply Sync gating and the Settings Sync tab need.
+// ---------------------------------------------------------------------------
+describe('resolveSyncEngine — the single toggle+pack+model resolver', () => {
+  it('gate closed: engine "whisper", ready, no preflight, no backend call', async () => {
+    const r = await resolveSyncEngine({ faHighPrecisionSync: false });
+    expect(r).toEqual({ engine: 'whisper', gateOpen: false, ready: true, preflight: undefined, key: 'whisper' });
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('gate open + ready: engine "fa", gateOpen true, ready true, preflight populated', async () => {
+    mockInvoke.mockResolvedValue(READY_REPORT);
+    const r = await resolveSyncEngine({ faHighPrecisionSync: true, language: 'en' });
+    expect(r.engine).toBe('fa');
+    expect(r.gateOpen).toBe(true);
+    expect(r.ready).toBe(true);
+    expect(r.key).toBe('fa:ready');
+    expect(r.preflight?.ready).toBe(true);
+  });
+
+  it('gate open + not ready: engine "fa", ready false, key "fa:not-ready"', async () => {
+    mockInvoke.mockResolvedValue({ ...READY_REPORT, modelPresent: false, modelDetail: 'No FA model found for language "en".' });
+    const r = await resolveSyncEngine({ faHighPrecisionSync: true, language: 'en' });
+    expect(r.engine).toBe('fa');
+    expect(r.gateOpen).toBe(true);
+    expect(r.ready).toBe(false);
+    expect(r.key).toBe('fa:not-ready');
+  });
+
+  it('`.key` always matches what computeSyncEngineKey returns for the same input (wrapper relationship)', async () => {
+    for (const report of [READY_REPORT, { ...READY_REPORT, modelPresent: false, modelDetail: 'missing' }]) {
+      mockInvoke.mockResolvedValue(report);
+      const project = { faHighPrecisionSync: true, language: 'en' };
+      const resolution = await resolveSyncEngine(project);
+      const key = await computeSyncEngineKey(project);
+      expect(resolution.key).toBe(key);
+    }
   });
 });

@@ -9,7 +9,9 @@ import {
   validate1to2,
   validateBoundaryQuality,
   validateWordCoverage,
+  validateSceneDensity,
 } from './syncContracts';
+import { SCENE_DENSITY_WORDS_PER_SEC } from './syncConstants';
 import type { TokenDrop, SegmentAlignment } from './whisperService';
 import type { WaveformSource } from './waveformPeaks';
 import type { SilenceInterval } from './silenceDetector';
@@ -455,6 +457,92 @@ describe('validateWordCoverage (Contract 3→4, low-word-coverage — segment 28
     const alignmentsCopy = alignments.map(a => ({ ...a }));
 
     validateWordCoverage(segments, alignments);
+
+    expect(segments).toEqual(segmentsCopy);
+    expect(alignments).toEqual(alignmentsCopy);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G4 Unit 3 — validateSceneDensity (Contract 3->4, scene-density). Old-bug-
+// first framing: before this unit, NOTHING checked per-scene word density —
+// a scene whose matched words were crammed far denser than natural speech
+// (the "planted extra words" class of script/audio mismatch, localized to
+// one scene rather than visible in the script's overall average) produced no
+// signal at all. Every "flags" test below is a case that fires now and was
+// silently invisible before this unit existed.
+// ---------------------------------------------------------------------------
+describe('validateSceneDensity (Contract 3->4, scene-density — G4 Unit 3)', () => {
+  function s(id: string, order: number, text: string, durationSec: number): VideoSegment {
+    return seg({ id, order, text, startTime: order, duration: durationSec });
+  }
+
+  it(`OLD BUG: flags a scene whose matched words exceed ${SCENE_DENSITY_WORDS_PER_SEC} words/sec (nothing caught this before G4 Unit 3)`, () => {
+    // 20 matched words in a 2s window = 10 words/sec — an order of magnitude
+    // over the threshold, the exact shape of a duplicated-paragraph scene.
+    const segments = [s('s0', 0, 'a scene with twenty crammed words', 2)];
+    const alignments = [alignWords(20, 20)];
+
+    const violations = validateSceneDensity(segments, alignments);
+
+    expect(violations).toHaveLength(1);
+    const v = violations[0]!;
+    expect(v.contract).toBe('3->4');
+    expect(v.rule).toBe('scene-density');
+    expect(v.severity).toBe('warning');
+    expect(v.message).toMatch(/10\.0 words\/sec/);
+    expect(v.fixHint.length).toBeGreaterThan(0);
+    expect(v.detail).toEqual({
+      segmentIndex: 0,
+      segmentName: 'a scene with twenty crammed words',
+      matchedWords: 20,
+      durationSec: 2,
+      wordsPerSec: 10,
+    });
+  });
+
+  it('does not flag natural-speech density (2.5 words/sec)', () => {
+    const segments = [s('s0', 0, 'five words in two seconds ok', 2)];
+    const alignments = [alignWords(5, 5)];
+    expect(validateSceneDensity(segments, alignments)).toEqual([]);
+  });
+
+  it('does not flag exactly AT the threshold (strict > gate, matching every other rule\'s comparison convention)', () => {
+    const segments = [s('s0', 0, 'seven words exactly at the line', 2)];
+    const alignments = [alignWords(SCENE_DENSITY_WORDS_PER_SEC * 2, SCENE_DENSITY_WORDS_PER_SEC * 2)];
+    expect(validateSceneDensity(segments, alignments)).toEqual([]);
+  });
+
+  it('does not flag a scene with zero matched words, however short its duration', () => {
+    const segments = [s('s0', 0, '', 0.01)];
+    const alignments = [alignWords(0, 0)];
+    expect(validateSceneDensity(segments, alignments)).toEqual([]);
+  });
+
+  it('does not flag a near-zero-duration segment even with real matched words (a different defect class, not this check\'s job)', () => {
+    const segments = [s('s0', 0, 'word', 0.001)];
+    const alignments = [alignWords(1, 1)];
+    expect(validateSceneDensity(segments, alignments)).toEqual([]);
+  });
+
+  it('flags every dense scene independently, in order, for grouping by the caller', () => {
+    const segments = [
+      s('s0', 0, 'dense one here now', 1),
+      s('s1', 1, 'a perfectly normal scene', 2),
+      s('s2', 2, 'dense two right here', 1),
+    ];
+    const alignments = [alignWords(10, 10), alignWords(2, 2), alignWords(9, 9)];
+    const violations = validateSceneDensity(segments, alignments);
+    expect(violations.map(v => v.detail!.segmentIndex)).toEqual([0, 2]);
+  });
+
+  it('never mutates its inputs', () => {
+    const segments = [s('s0', 0, 'dense scene text here', 1)];
+    const alignments = [alignWords(10, 10)];
+    const segmentsCopy = segments.map(sg => ({ ...sg }));
+    const alignmentsCopy = alignments.map(a => ({ ...a }));
+
+    validateSceneDensity(segments, alignments);
 
     expect(segments).toEqual(segmentsCopy);
     expect(alignments).toEqual(alignmentsCopy);

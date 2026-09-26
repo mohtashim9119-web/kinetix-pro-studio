@@ -6,11 +6,88 @@
 // (App.tsx), so this file holds no log policy and no persistence of its own —
 // the log rides along on the Project blob the existing projectStore already saves.
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Trash2, Copy } from 'lucide-react';
-import type { SyncLogEntry, SyncLogEntryType } from '../types';
+import { ChevronDown, ChevronRight, Trash2, Copy, X } from 'lucide-react';
+import type { SyncLogEntry, SyncLogEntryType, SyncRunSummary } from '../types';
+import { SKIPPED_SCENE_COPY } from '../services/skippedScenePlaceholders';
+import {
+  buildSyncLogUserView,
+  resolveAttentionItemSegmentId,
+  skipEntryLabel,
+  SYNC_LOG_USER_COPY,
+  type AttentionLine,
+  type SyncLogHeadline,
+} from '../services/syncLogUserView';
+
+// Operator ruling (sync-log user view) — the default view is headline +
+// attention list + one collapsed Details line (services/syncLogUserView.ts
+// decides WHAT goes where; this file only draws it). The raw per-entry cards
+// with their type badges survive unchanged, one level down inside Details.
+
+/** Which user-view sections are OPEN, session-persisted (sessionStorage, not
+ *  the project file — a UI display preference, not project state), the same
+ *  pattern the six-group UI used. Ids: 'details', 'details:<category>',
+ *  'attention:<kind>'. Absent = closed, so a fresh session shows the calm
+ *  default: attention lines folded, Details folded. */
+const OPEN_SECTIONS_STORAGE_KEY = 'kx-sync-log-open-sections';
+
+function readStoredOpenSections(): Set<string> {
+  try {
+    const raw = sessionStorage.getItem(OPEN_SECTIONS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.filter((v): v is string => typeof v === 'string')) : new Set();
+  } catch {
+    return new Set(); // sessionStorage unavailable (private mode, SSR, etc.)
+  }
+}
+
+function writeStoredOpenSections(sections: Set<string>): void {
+  try {
+    sessionStorage.setItem(OPEN_SECTIONS_STORAGE_KEY, JSON.stringify([...sections]));
+  } catch {
+    // sessionStorage unavailable — the choice just doesn't outlive this render
+  }
+}
+
+/** Attention lines the user dismissed, as `${kind}@${windowKey}` — scoped to
+ *  the run that raised them, so the same kind reappears when a NEW run raises
+ *  it again. localStorage (outlives a restart): a dismissal is a statement
+ *  about this run, not a per-session view toggle. Hides the line only — the
+ *  log entries themselves stay recorded and reachable under Details. */
+const DISMISSED_STORAGE_KEY = 'kx-sync-log-dismissed';
+const DISMISSED_CAP = 200;
+
+function readStoredDismissed(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DISMISSED_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.filter((v): v is string => typeof v === 'string')) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function writeStoredDismissed(keys: Set<string>): void {
+  try {
+    localStorage.setItem(DISMISSED_STORAGE_KEY, JSON.stringify([...keys].slice(-DISMISSED_CAP)));
+  } catch {
+    // storage unavailable — the dismissal just doesn't outlive this mount
+  }
+}
 
 interface Props {
   syncLog: SyncLogEntry[];
+  /** `project.syncRunSummaries` — locates the latest run (the attention
+   *  window) and supplies the headline's N/N. Optional: without it the view
+   *  falls back to the log's own run markers. */
+  syncRunSummaries?: SyncRunSummary[];
+  /** Names of the project's assets currently offline (`Asset.unresolved`) —
+   *  attention kind 7. Live project state, not a log entry. */
+  offlineAssetNames?: string[];
+  /** The live timeline (`project.segments`), used only to resolve a grouped
+   *  finding's scene to a jump target (`resolveAttentionItemSegmentId`). */
+  segments?: { id: string; text?: string }[];
   onClearLog: () => void;
   /** WS2 Step 12 (A3) — opens ManageModelsModal. Optional so a caller that
    *  has no model UI wired (e.g. a future embedding) can omit it; the
@@ -23,7 +100,7 @@ interface Props {
   onSeekToSegment?: (segmentId: string) => void;
 }
 
-/** True when an fa-preflight/fa-fallback entry's own detail names a missing
+/** True when an fa-preflight/fa-paused entry's own detail names a missing
  *  FA model — the one blocking cause ManageModelsModal can actually fix.
  *  Text-matched against `fa.rs::no_model_found_error`'s verbatim message
  *  ("No FA model found for language ...") rather than a new typed field,
@@ -77,17 +154,9 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // is intentionally generic; the entry's own `owningRule` names which rule,
   // and the message leads with it.
   'rule-correction': { label: 'RULE', className: 'bg-blue-500/10 text-blue-400 border-blue-500/30' },
-  // WS1 Session J — high-precision sync was ON and did not run. Orange/warn,
-  // NOT red: the sync succeeded and the timeline is usable, but the user asked
-  // for forced alignment and got Whisper timing, which they would otherwise
-  // have no way to find out.
-  // RETIRED (plan-v3 item 3) — nothing produces this type any more; kept only
-  // so a pre-Wave-1 persisted project's old entries still render. See
-  // 'fa-paused' below for its replacement.
-  'fa-fallback': { label: 'FA FALLBACK', className: 'bg-orange-500/10 text-orange-400 border-orange-500/30' },
   // plan-v3 items 3/4 — the run STOPPED and is waiting on the user
   // (SyncPausedDialog), not a silent Whisper substitution. Purple: distinct
-  // from both the retired orange fallback badge and the red 'abort' badge —
+  // from both the orange warn badges and the red 'abort' badge —
   // this is neither a quiet degradation nor a dead run, it is a question.
   'fa-paused': { label: 'FA PAUSED', className: 'bg-purple-500/10 text-purple-400 border-purple-500/30' },
   // WS1 Session M — the FA readiness pre-flight. Neutral badge; the entry's own
@@ -103,6 +172,14 @@ const TYPE_STYLES: Record<SyncLogEntryType, { label: string; className: string }
   // Red, matching 'silence-error'/'unsupported-language': transcription did
   // not run, not a degradation the pipeline absorbed.
   'whisper-model-failure': { label: 'WHISPER MODEL', className: 'bg-red-500/10 text-red-400 border-red-500/30' },
+  // G6 Step 4 — emerald, a fresh color in this table: a media-vault ingest is
+  // its own kind of event (not tied to an Apply Sync run), and none of the
+  // existing categories (FA cyan/purple, lock amber, rule blue, error red)
+  // fit "here's what happened when you added media."
+  'media-import': { label: 'MEDIA', className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
+  // Media workflow Units 1-2 — same emerald family as 'media-import': a
+  // Media-block event, not a sync-run outcome.
+  'media-match': { label: 'MATCH', className: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' },
 };
 
 /** HH:MM:SS — entries within one run are seconds apart, so the date would be
@@ -150,19 +227,9 @@ function formatMatchLine(
   return `matched ${matchedWords} of ${totalWords} words (confidence ${confidence.toFixed(2)})${runSuffix}`;
 }
 
-/** WS2 ws2-25 Commit 5 — the skip-line label, printing BOTH numbering spaces
- *  explicitly: "S{n}" (the dropped scene's own original script position —
- *  `entry.segmentIndex`, PRE-filter, this record's only index) and, when the
- *  drop was absorbed, "Clip {n}" (the absorbing neighbour's position in the
- *  FINAL committed array — `entry.absorbedByDisplayIndex`, the number the
- *  Timeline actually renders for that clip; see `SyncLogEntry`'s own doc
- *  comment for why it must be resolved post-rehydration). The two used to
- *  share the word "scene" for both, which is what made a real off-by-one
- *  (an earlier restore shifting every later clip index) unreadable as a bug. */
-function skipEntryLabel(entry: SyncLogEntry): string {
-  const s = `S${entry.segmentIndex! + 1}`;
-  return entry.absorbedByDisplayIndex !== undefined ? `${s} / Clip ${entry.absorbedByDisplayIndex + 1}` : s;
-}
+// `skipEntryLabel` (the "S{n}" / "S{n} / Clip {n}" skip-line label) lives in
+// syncLogUserView.ts now — the attention list's unmatched-scene items use it
+// too, so the two surfaces can never number a scene differently.
 
 /** The optional second line for WS4's run-level entries. Every field access is
  *  defensive: an entry persisted before WS4 carries none of them, and must
@@ -179,15 +246,11 @@ function formatDetailLine(entry: SyncLogEntry): string | undefined {
     if (skipped === undefined || total === undefined) return undefined;
     return `${skipped} of ${total} tokens had invalid timestamps`;
   }
-  // WS1 Session M — THE FA FALLBACK's underlying error, surfaced. Before this,
-  // `buildFaFallbackEntry` stored the backend's verbatim message in
-  // `errorMessage` (e.g. "failed to initialize onnxruntime: ORT_DYLIB_PATH not
-  // set") but this function returned undefined for 'fa-fallback', so it landed
-  // only on stderr — the whole point of the durable log was defeated for the
-  // one entry a user most needs the cause of. `errorMessage` is the raw
-  // backend text; `fixHint` is the actionable next step. Both defended for
-  // pre-Session-M entries that carry neither.
-  if (entry.type === 'fa-fallback' || entry.type === 'fa-paused') {
+  // WS1 Session M — the FA pause's underlying error, surfaced (the retired
+  // 'fa-fallback' entry used to land this only on stderr). `errorMessage` is
+  // the raw backend text; `fixHint` is the actionable next step. Both
+  // defended for entries that carry neither.
+  if (entry.type === 'fa-paused') {
     const detail = entry.errorMessage?.trim();
     const fix = entry.fixHint?.trim();
     const parts: string[] = [];
@@ -225,7 +288,7 @@ export function formatEntryText(entry: SyncLogEntry): string {
   const isSkip = entry.type === 'skip' && entry.segmentIndex !== undefined;
 
   if (isSkip) {
-    const lines = [`${header} ${skipEntryLabel(entry)} skipped — ${entry.reason ?? 'no text match'}`];
+    const lines = [`${header} ${skipEntryLabel(entry)}: ${SKIPPED_SCENE_COPY.label} — ${entry.reason ?? 'no text match'}`];
     if (entry.segmentText) {
       const tag = entry.segmentTag ? `[${entry.segmentTag}] ` : '';
       lines.push(`${tag}${entry.segmentText}`);
@@ -248,7 +311,203 @@ export function formatEntryText(entry: SyncLogEntry): string {
   return lines.join('\n');
 }
 
-export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToSegment }: Props): React.ReactElement {
+interface RawEntryProps {
+  entry: SyncLogEntry;
+  expanded: boolean;
+  onToggleExpanded: (id: string) => void;
+  onOpenModelsModal?: () => void;
+  onSeekToSegment?: (segmentId: string) => void;
+}
+
+/** One raw log entry — timestamp, type badge, and its type-specific body —
+ *  exactly as the flat list rendered it before the user view existed. Now
+ *  reached through Details ▸ category; the badge zoo lives only here. */
+export function SyncLogRawEntry({
+  entry, expanded, onToggleExpanded, onOpenModelsModal, onSeekToSegment,
+}: RawEntryProps): React.ReactElement {
+  const style = TYPE_STYLES[entry.type] ?? TYPE_STYLES.info;
+  // Skip entries get a dedicated 3-line layout (segment number +
+  // reason, tag + text preview, match-count detail) instead of the
+  // generic message line — built from the entry's own fields
+  // rather than `message` so it renders the same regardless of
+  // which wording an older persisted entry's message happens to
+  // carry. Line 3 (match-count) is omitted for entries logged
+  // before those fields existed (backward compat).
+  const isSkip = entry.type === 'skip' && entry.segmentIndex !== undefined;
+  const matchLine = isSkip
+    ? formatMatchLine(entry.matchedWords, entry.totalWords, entry.confidence, entry.longestRun)
+    : undefined;
+  // WS4 — run-level entries (silence-error / malformed-token) use
+  // the generic branch below plus one optional detail line.
+  const detailLine = isSkip ? undefined : formatDetailLine(entry);
+  // Log-grouping feature (2026-08-03) — a grouped entry renders
+  // its summary (entry.message) collapsed by default, with an
+  // expand affordance revealing one line per underlying
+  // violation. Mutually exclusive with the skip layout above
+  // (a grouped entry is never also a skip entry).
+  const isGrouped = !isSkip && (entry.groupedItems?.length ?? 0) > 0;
+  return (
+    <div data-testid="sync-log-raw-entry" className="py-2">
+      <div className="flex items-center gap-2">
+        <span className="text-[11px] font-mono text-gray-600 flex-shrink-0">
+          {formatTime(entry.timestamp)}
+        </span>
+        <span
+          className={`text-[10px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border flex-shrink-0 ${style.className}`}
+        >
+          {style.label}
+        </span>
+      </div>
+      {isSkip ? (
+        <>
+          <p className="text-xs text-gray-300 mt-1 leading-snug break-words">
+            {skipEntryLabel(entry)}: {SKIPPED_SCENE_COPY.label} — {entry.reason ?? 'no text match'}
+          </p>
+          {entry.segmentText && (
+            <p className="text-[11px] text-gray-500 mt-0.5 leading-snug break-words">
+              {entry.segmentTag && (
+                <span className="font-mono text-gray-400">[{entry.segmentTag}] </span>
+              )}
+              {entry.segmentText}
+            </p>
+          )}
+          {matchLine && (
+            <p className="text-[11px] text-gray-600 mt-0.5 leading-snug break-words">
+              {matchLine}
+            </p>
+          )}
+          <div className="flex items-center gap-3 mt-0.5">
+            {entry.segmentId && onSeekToSegment && (
+              <button
+                type="button"
+                onClick={() => onSeekToSegment(entry.segmentId!)}
+                className="text-[11px] text-[#F27D26] hover:text-[#E06A15] leading-snug underline underline-offset-2"
+              >
+                Jump to absorbing scene
+              </button>
+            )}
+          </div>
+        </>
+      ) : isGrouped ? (
+        <>
+          <button
+            type="button"
+            onClick={() => onToggleExpanded(entry.id)}
+            className="w-full flex items-start gap-1 mt-1 text-left"
+            aria-expanded={expanded}
+          >
+            {expanded
+              ? <ChevronDown size={12} className="text-gray-600 flex-shrink-0 mt-0.5" />
+              : <ChevronRight size={12} className="text-gray-600 flex-shrink-0 mt-0.5" />
+            }
+            <span className="text-xs text-gray-300 leading-snug break-words">
+              {entry.message}
+            </span>
+          </button>
+          {expanded && (
+            <div className="mt-1 space-y-1">
+              {entry.groupedItems!.map((item, idx) => (
+                <p
+                  key={idx}
+                  className="text-[11px] text-gray-500 leading-snug break-words"
+                >
+                  {item.message}
+                </p>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-gray-300 mt-1 leading-snug break-words">
+            {entry.message}
+          </p>
+          {detailLine && (
+            <p className="text-[11px] text-gray-600 mt-0.5 leading-snug break-words">
+              {detailLine}
+            </p>
+          )}
+          {onOpenModelsModal && isMissingModelDetail(detailLine) && (
+            <button
+              type="button"
+              onClick={onOpenModelsModal}
+              className="mt-1 text-[11px] font-bold uppercase tracking-widest text-[#FF7300] hover:underline"
+            >
+              Manage models &amp; add-ons →
+            </button>
+          )}
+          {entry.segmentText && (
+            <p className="text-[11px] text-gray-600 mt-1 italic leading-snug break-words">
+              {entry.segmentIndex !== undefined && (
+                <span className="not-italic font-bold text-gray-500">
+                  Scene {entry.segmentIndex + 1}:{' '}
+                </span>
+              )}
+              &ldquo;{entry.segmentText}&rdquo;
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+interface RawEntriesProps {
+  entries: SyncLogEntry[];
+  onOpenModelsModal?: () => void;
+  onSeekToSegment?: (segmentId: string) => void;
+}
+
+/** A list of raw entries with its own grouped-entry expand state (keyed by
+ *  entry id, collapsed by default). */
+export function SyncLogRawEntries({ entries, onOpenModelsModal, onSeekToSegment }: RawEntriesProps): React.ReactElement {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const toggleExpanded = (id: string): void => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  return (
+    <div className="divide-y divide-white/[0.06] border-t border-white/[0.06]">
+      {entries.map(entry => (
+        <SyncLogRawEntry
+          key={entry.id}
+          entry={entry}
+          expanded={expandedIds.has(entry.id)}
+          onToggleExpanded={toggleExpanded}
+          onOpenModelsModal={onOpenModelsModal}
+          onSeekToSegment={onSeekToSegment}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Headline parts, in the ruling's order. Placeholder and estimated counts
+ *  are unconditional — printed at zero too — so a degraded run can never
+ *  render a headline that reads as clean (the honesty pin). */
+export function formatHeadline(headline: SyncLogHeadline): string {
+  const copy = SYNC_LOG_USER_COPY.headline;
+  if (!headline.hasRun) return copy.noRun;
+  const parts: string[] = [copy.engine[headline.engine]];
+  if (headline.matched !== undefined && headline.total !== undefined) {
+    parts.push(copy.matched(headline.matched, headline.total));
+  }
+  parts.push(copy.placeholders(headline.placeholders), copy.estimated(headline.estimated));
+  if (headline.timestamp !== undefined) parts.push(formatTime(headline.timestamp));
+  return parts.join(' · ');
+}
+
+const TONE_CLASSES: Record<AttentionLine['tone'], { dot: string; text: string }> = {
+  red: { dot: 'bg-red-500', text: 'text-red-400' },
+  amber: { dot: 'bg-amber-500', text: 'text-amber-400' },
+};
+
+export function SyncLogPanel({
+  syncLog, syncRunSummaries, offlineAssetNames, segments = [], onClearLog, onOpenModelsModal, onSeekToSegment,
+}: Props): React.ReactElement {
   // Collapsed by default only when there's nothing to show — an empty section
   // shouldn't occupy the panel, but a run that just skipped scenes should be
   // visible without a click. `null` = the user hasn't expressed a preference,
@@ -259,14 +518,15 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToS
   const collapsed = manualCollapsed ?? syncLog.length === 0;
   const [showClearConfirm, setShowClearConfirm] = useState(false);
   const [copied, setCopied] = useState(false);
-  // Grouped-entry expand state (log-grouping feature, 2026-08-03) — collapsed
-  // by default (one-line summary), keyed by entry id so expanding one grouped
-  // entry doesn't affect any other.
-  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
-  const toggleExpanded = (id: string): void => {
-    setExpandedIds(prev => {
+
+  // Open user-view sections, lazily read from sessionStorage once per mount
+  // (functional initializer, matching MediaBlock.tsx's sort control).
+  const [openSections, setOpenSections] = useState<Set<string>>(readStoredOpenSections);
+  const toggleSection = (id: string): void => {
+    setOpenSections(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
+      writeStoredOpenSections(next);
       return next;
     });
   };
@@ -274,6 +534,20 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToS
   // Newest first. `syncLog` is append-ordered (oldest first) on the Project;
   // reverse a COPY so the prop array is never mutated.
   const entries = [...syncLog].reverse();
+  const view = buildSyncLogUserView(syncLog, syncRunSummaries, offlineAssetNames);
+  const isEmpty = syncLog.length === 0 && view.attention.length === 0;
+
+  const [dismissed, setDismissed] = useState<Set<string>>(readStoredDismissed);
+  const dismissKey = (kind: string): string => `${kind}@${view.windowKey}`;
+  const dismissLine = (kind: string): void => {
+    setDismissed(prev => {
+      const next = new Set(prev);
+      next.add(dismissKey(kind));
+      writeStoredDismissed(next);
+      return next;
+    });
+  };
+  const visibleAttention = view.attention.filter(line => !dismissed.has(dismissKey(line.kind)));
 
   const handleCopy = (e: React.MouseEvent): void => {
     e.stopPropagation();
@@ -299,8 +573,13 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToS
     });
   };
 
+  const detailsOpen = openSections.has('details');
+  const detailsCounts = view.details.counts
+    .map(c => `${c.count} ${SYNC_LOG_USER_COPY.categories[c.category]}`)
+    .join(' · ');
+
   return (
-    <div className="border-b border-[#1A1A1A] flex-shrink-0">
+    <div className="flex-shrink-0">
       {/* Section header */}
       <div
         className="flex items-center gap-2 px-4 py-2 cursor-pointer select-none"
@@ -311,7 +590,7 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToS
           : <ChevronDown size={12} className="text-gray-600" />
         }
         <span className="text-[9px] font-black uppercase tracking-widest text-gray-500 flex-1">
-          Sync Log ({syncLog.length})
+          Sync Log
         </span>
         {syncLog.length > 0 && (
           <button
@@ -340,143 +619,178 @@ export function SyncLogPanel({ syncLog, onClearLog, onOpenModelsModal, onSeekToS
       </div>
 
       {!collapsed && (
-        <div className="px-3 pb-2 space-y-1 max-h-64 overflow-y-auto custom-scrollbar">
-          {entries.length === 0 ? (
-            <p className="text-[10px] text-gray-700 italic px-1 py-1">
+        <div className="px-4 pb-3">
+          {isEmpty ? (
+            <p className="text-xs text-gray-600 italic py-1">
               No sync activity yet. Run Apply Sync to populate this log.
             </p>
           ) : (
-            entries.map((entry) => {
-              const style = TYPE_STYLES[entry.type] ?? TYPE_STYLES.info;
-              // Skip entries get a dedicated 3-line layout (segment number +
-              // reason, tag + text preview, match-count detail) instead of the
-              // generic message line — built from the entry's own fields
-              // rather than `message` so it renders the same regardless of
-              // which wording an older persisted entry's message happens to
-              // carry. Line 3 (match-count) is omitted for entries logged
-              // before those fields existed (backward compat).
-              const isSkip = entry.type === 'skip' && entry.segmentIndex !== undefined;
-              const matchLine = isSkip
-                ? formatMatchLine(entry.matchedWords, entry.totalWords, entry.confidence, entry.longestRun)
-                : undefined;
-              // WS4 — run-level entries (silence-error / malformed-token) use
-              // the generic branch below plus one optional detail line.
-              const detailLine = isSkip ? undefined : formatDetailLine(entry);
-              // Log-grouping feature (2026-08-03) — a grouped entry renders
-              // its summary (entry.message) collapsed by default, with an
-              // expand affordance revealing one line per underlying
-              // violation. Mutually exclusive with the skip layout above
-              // (a grouped entry is never also a skip entry).
-              const isGrouped = !isSkip && (entry.groupedItems?.length ?? 0) > 0;
-              const isExpanded = expandedIds.has(entry.id);
-              return (
-                <div
-                  key={entry.id}
-                  className="bg-[#0A0A0A] border border-[#1A1A1A] rounded-xl px-3 py-2"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-[9px] font-mono text-gray-600 flex-shrink-0">
-                      {formatTime(entry.timestamp)}
-                    </span>
-                    <span
-                      className={`text-[8px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded border flex-shrink-0 ${style.className}`}
-                    >
-                      {style.label}
-                    </span>
-                  </div>
-                  {isSkip ? (
-                    <>
-                      <p className="text-[10px] text-gray-300 mt-1 leading-snug break-words">
-                        {skipEntryLabel(entry)} skipped — {entry.reason ?? 'no text match'}
-                      </p>
-                      {entry.segmentText && (
-                        <p className="text-[9px] text-gray-500 mt-0.5 pl-1.5 leading-snug break-words">
-                          {entry.segmentTag && (
-                            <span className="font-mono text-gray-400">[{entry.segmentTag}] </span>
+            <>
+              {/* 1. Status card — the one block the user reads. Green pulsing
+                  dot + "all clear" when nothing is flagged; red dot + count
+                  and the list of items to clear otherwise. Fixed width: it
+                  sits outside the scroller, so a scrollbar never narrows it.
+                  A degraded run always raises at least one line (placeholders
+                  → unmatched scene, estimated timing → estimated), so it can
+                  never read green — the honesty pin, carried by the status. */}
+              <div data-testid="sync-status-card">
+                <div className="flex items-center gap-2 min-w-0" data-testid="sync-status" data-state={visibleAttention.length === 0 ? 'clear' : 'attention'}>
+                  <span className="relative flex w-2 h-2 flex-shrink-0 self-start mt-[5px]">
+                    {visibleAttention.length === 0 && (
+                      <span className="absolute inline-flex w-full h-full rounded-full bg-emerald-400 opacity-60 animate-ping" />
+                    )}
+                    <span className={`relative inline-flex w-2 h-2 rounded-full ${visibleAttention.length === 0 ? 'bg-emerald-400' : 'bg-red-500'}`} />
+                  </span>
+                  <span className="text-xs text-gray-200 leading-snug break-words">
+                    {visibleAttention.length === 0
+                      ? SYNC_LOG_USER_COPY.status.clear
+                      : SYNC_LOG_USER_COPY.status.attention(visibleAttention.length)}
+                  </span>
+                </div>
+
+                {visibleAttention.length > 0 && (
+                  <div className="mt-2 space-y-0.5">
+                    {visibleAttention.map(line => {
+                      const sectionId = `attention:${line.kind}`;
+                      const open = openSections.has(sectionId);
+                      const tone = TONE_CLASSES[line.tone];
+                      return (
+                        <div key={line.kind} data-testid="sync-attention-line" data-kind={line.kind} data-tone={line.tone}>
+                          <div className="flex items-center gap-2 rounded-md hover:bg-white/[0.03]">
+                            <button
+                              type="button"
+                              onClick={() => toggleSection(sectionId)}
+                              className="flex-1 min-w-0 flex items-center gap-2 py-1 text-left"
+                              aria-expanded={open}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${tone.dot}`} />
+                              <span className="text-xs text-gray-300 leading-snug break-words flex-1">
+                                {line.summary}
+                              </span>
+                              {open
+                                ? <ChevronDown size={12} className="text-gray-500 flex-shrink-0" />
+                                : <ChevronRight size={12} className="text-gray-500 flex-shrink-0" />
+                              }
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => dismissLine(line.kind)}
+                              className="p-0.5 rounded text-gray-600 hover:text-gray-300 flex-shrink-0"
+                              title="Dismiss"
+                              aria-label={`Dismiss: ${line.summary}`}
+                              data-testid="sync-attention-dismiss"
+                            >
+                              <X size={11} />
+                            </button>
+                          </div>
+                          {open && (
+                            <div className="pb-1 space-y-px">
+                              {line.items.map((item, idx) => {
+                                const targetId = onSeekToSegment ? resolveAttentionItemSegmentId(item, segments) : undefined;
+                                return targetId ? (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => onSeekToSegment!(targetId)}
+                                    data-testid="sync-attention-item"
+                                    className="w-full text-left text-[11px] text-gray-400 hover:text-gray-100 hover:bg-white/[0.04] rounded px-2 py-1 leading-snug break-words"
+                                    title={SYNC_LOG_USER_COPY.jumpToScene}
+                                  >
+                                    {item.text}
+                                  </button>
+                                ) : (
+                                  <p key={idx} data-testid="sync-attention-item" className="text-[11px] text-gray-500 px-2 py-1 leading-snug break-words">
+                                    {item.text}
+                                  </p>
+                                );
+                              })}
+                              {line.offerManageModels && onOpenModelsModal && (
+                                <button
+                                  type="button"
+                                  onClick={onOpenModelsModal}
+                                  className="px-2 py-1 text-[11px] text-gray-400 hover:text-gray-100 underline underline-offset-2"
+                                >
+                                  {SYNC_LOG_USER_COPY.manageModels}
+                                </button>
+                              )}
+                            </div>
                           )}
-                          {entry.segmentText}
-                        </p>
-                      )}
-                      {matchLine && (
-                        <p className="text-[9px] text-gray-600 mt-0.5 pl-1.5 leading-snug break-words">
-                          {matchLine}
-                        </p>
-                      )}
-                      <div className="flex items-center gap-3 mt-0.5 pl-1.5">
-                        {entry.segmentId && onSeekToSegment && (
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* 2. Details — outside the card, quiet, and the ONLY part that
+                  scrolls. The negative right margin + matching padding put
+                  the scrollbar in the panel gutter, so everything inside
+                  keeps the card's exact width. */}
+              <div data-testid="sync-details-line" className="mt-3 pt-3 border-t border-white/[0.06]">
+                <button
+                  type="button"
+                  onClick={() => toggleSection('details')}
+                  className="w-full min-w-0 flex items-start gap-1.5 py-0.5 text-left text-gray-700 hover:text-gray-500 transition-colors"
+                  aria-expanded={detailsOpen}
+                >
+                  {detailsOpen
+                    ? <ChevronDown size={11} className="flex-shrink-0 mt-[3px]" />
+                    : <ChevronRight size={11} className="flex-shrink-0 mt-[3px]" />
+                  }
+                  <span className="text-[11px] leading-snug break-words">
+                    {SYNC_LOG_USER_COPY.details(view.details.total)}
+                    {detailsCounts && ` · ${detailsCounts}`}
+                  </span>
+                </button>
+                {detailsOpen && (
+                  <div
+                    // Always-on track (overflow-y: scroll, transparent until
+                    // there is something to scroll), so the rows' width never
+                    // changes. WKWebView draws the thumb OVER the content, so
+                    // the rows stop 16px short of the track: the thumb gets
+                    // its own lane (9px into the panel gutter + pr-4) instead
+                    // of covering text.
+                    className="mt-1 max-h-72 overflow-y-scroll custom-scrollbar -mr-[9px] pr-4 divide-y divide-white/[0.06]"
+                  >
+                    {/* The run summary lives here now, out of the way. */}
+                    <p data-testid="sync-headline" className="text-[11px] text-gray-600 py-1.5 leading-snug break-words">
+                      {formatHeadline(view.headline)}
+                    </p>
+                    {view.details.counts.map(({ category, count, entries: categoryEntries }) => {
+                      const sectionId = `details:${category}`;
+                      const open = openSections.has(sectionId);
+                      return (
+                        <div key={category} data-testid="sync-details-count" data-category={category}>
                           <button
                             type="button"
-                            onClick={() => onSeekToSegment(entry.segmentId!)}
-                            className="text-[9px] text-[#F27D26] hover:text-[#E06A15] leading-snug underline underline-offset-2"
+                            onClick={() => toggleSection(sectionId)}
+                            className="w-full flex items-center gap-1.5 py-1.5 text-left text-gray-600 hover:text-gray-400 transition-colors"
+                            aria-expanded={open}
                           >
-                            Jump to absorbing scene
-                          </button>
-                        )}
-                      </div>
-                    </>
-                  ) : isGrouped ? (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => toggleExpanded(entry.id)}
-                        className="w-full flex items-start gap-1 mt-1 text-left"
-                        aria-expanded={isExpanded}
-                      >
-                        {isExpanded
-                          ? <ChevronDown size={10} className="text-gray-600 flex-shrink-0 mt-0.5" />
-                          : <ChevronRight size={10} className="text-gray-600 flex-shrink-0 mt-0.5" />
-                        }
-                        <span className="text-[10px] text-gray-300 leading-snug break-words">
-                          {entry.message}
-                        </span>
-                      </button>
-                      {isExpanded && (
-                        <div className="mt-1 pl-4 space-y-1">
-                          {entry.groupedItems!.map((item, idx) => (
-                            <p
-                              key={idx}
-                              className="text-[9px] text-gray-500 leading-snug break-words"
-                            >
-                              {item.message}
-                            </p>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  ) : (
-                    <>
-                      <p className="text-[10px] text-gray-300 mt-1 leading-snug break-words">
-                        {entry.message}
-                      </p>
-                      {detailLine && (
-                        <p className="text-[9px] text-gray-600 mt-0.5 pl-1.5 leading-snug break-words">
-                          {detailLine}
-                        </p>
-                      )}
-                      {onOpenModelsModal && isMissingModelDetail(detailLine) && (
-                        <button
-                          type="button"
-                          onClick={onOpenModelsModal}
-                          className="mt-1 ml-1.5 text-[9px] font-bold uppercase tracking-widest text-[#FF7300] hover:underline"
-                        >
-                          Manage models &amp; add-ons →
-                        </button>
-                      )}
-                      {entry.segmentText && (
-                        <p className="text-[9px] text-gray-600 mt-1 italic leading-snug break-words">
-                          {entry.segmentIndex !== undefined && (
-                            <span className="not-italic font-bold text-gray-500">
-                              Scene {entry.segmentIndex + 1}:{' '}
+                            {open
+                              ? <ChevronDown size={11} className="flex-shrink-0" />
+                              : <ChevronRight size={11} className="flex-shrink-0" />
+                            }
+                            <span className="text-[11px]">
+                              {count} {SYNC_LOG_USER_COPY.categories[category]}
                             </span>
+                          </button>
+                          {open && (
+                            <div className="pb-1">
+                              <SyncLogRawEntries
+                                entries={categoryEntries}
+                                onOpenModelsModal={onOpenModelsModal}
+                                onSeekToSegment={onSeekToSegment}
+                              />
+                            </div>
                           )}
-                          &ldquo;{entry.segmentText}&rdquo;
-                        </p>
-                      )}
-                    </>
-                  )}
-                </div>
-              );
-            })
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       )}

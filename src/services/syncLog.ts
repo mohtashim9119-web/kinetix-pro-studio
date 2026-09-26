@@ -11,7 +11,7 @@
 // buildSyncInfoEntry, buildSyncAbortEntry, buildNoAssetSummaryEntry,
 // buildRescueLogEntries, clearSyncLog) remains in App.tsx and imports
 // makeSyncLogEntry from this module.
-import type { Project, SyncLogEntry, SyncLogEntryType, SyncRunSummary, GroupedLogItem, VideoSegment, TranscriptToken } from '../types';
+import type { Project, SyncLogEntry, SyncLogEntryType, SyncLogFindingKind, SyncRunSummary, GroupedLogItem, VideoSegment, TranscriptToken } from '../types';
 import type { TokenDrop, WhisperFailureKind } from './whisperService';
 import type { ContractViolation } from './syncContracts';
 import type { LockFinding } from './syncEngine';
@@ -34,6 +34,49 @@ import {
   INFEASIBLE_COPY,
 } from './faInfeasibleFinding';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
+
+// ---------------------------------------------------------------------------
+// Known entry types — the runtime mirror of `SyncLogEntryType`. A `Record`
+// over the union, so adding a type without listing it here is a compile
+// error. Used to drop entries of a RETIRED type ('fa-fallback', plan-v3
+// item 3 → operator ruling) from an old project's persisted log on load
+// (`projectStore.ts`) and again at render (`syncLogUserView.ts`), so the
+// project opens and renders instead of carrying a type nothing styles.
+// ---------------------------------------------------------------------------
+const KNOWN_SYNC_LOG_ENTRY_TYPES: Record<SyncLogEntryType, true> = {
+  skip: true,
+  abort: true,
+  warning: true,
+  info: true,
+  'silence-error': true,
+  'malformed-token': true,
+  'no-asset': true,
+  rescue: true,
+  'unsupported-language': true,
+  'lock-span-overflow': true,
+  'lock-preserved-adjustment': true,
+  'lock-refused': true,
+  'lock-not-restored': true,
+  'rule-correction': true,
+  'fa-paused': true,
+  'fa-preflight': true,
+  'fa-gate-closed': true,
+  'whisper-model-failure': true,
+  'media-import': true,
+  'media-match': true,
+};
+
+export function isKnownSyncLogEntryType(type: unknown): type is SyncLogEntryType {
+  return typeof type === 'string' && Object.prototype.hasOwnProperty.call(KNOWN_SYNC_LOG_ENTRY_TYPES, type);
+}
+
+/** Load-time filter: keeps only well-formed entries of a known type. A
+ *  non-array (absent on a pre-WS-logs project) passes through as-is. */
+export function filterKnownSyncLogEntries(log: unknown): SyncLogEntry[] | undefined {
+  if (!Array.isArray(log)) return undefined;
+  return log.filter((e): e is SyncLogEntry =>
+    !!e && typeof e === 'object' && isKnownSyncLogEntryType((e as { type?: unknown }).type));
+}
 
 /** `crypto.randomUUID` is present in every runtime this app ships in (Tauri
  *  WKWebView/WebView2, and Vite dev over localhost — a secure context). The
@@ -58,7 +101,7 @@ export function makeSyncLogEntry(
     SyncLogEntry,
     'segmentIndex' | 'segmentText' | 'reason' | 'segmentTag' | 'matchedWords' | 'totalWords' | 'confidence'
     | 'longestRun' | 'errorMessage' | 'skippedTokenCount' | 'totalTokenCount' | 'severity' | 'fixHint'
-    | 'groupedItems' | 'owningRule' | 'ruleDetail' | 'segmentId' | 'absorbedByDisplayIndex'
+    | 'groupedItems' | 'owningRule' | 'ruleDetail' | 'segmentId' | 'absorbedByDisplayIndex' | 'finding'
   >,
   timestamp: number = Date.now(),
 ): SyncLogEntry {
@@ -90,6 +133,34 @@ export function buildSilenceErrorEntry(
     'silence-error',
     'Silence detection failed — segment boundaries fall back to spoken-word midpoints instead of audio gaps.',
     { errorMessage },
+    timestamp,
+  );
+}
+
+/** Exported so `syncLogUserView.ts` can recognise this entry by its hint
+ *  rather than by parsing its message. */
+export const LOCAL_COVERAGE_FIX_HINT =
+  'If they look right, this can be a false alarm on a script with heavy paraphrasing or stage directions.';
+
+/**
+ * G4 Unit 4 — the pre-FA coverage check's 'marginal' band
+ * (localFaCoverageGate.ts). Warn-only: FA already ran with real results by
+ * the time this is built (only 'hopeless' pauses before FA starts), so this
+ * is purely informational — the user may want to double-check the pairing,
+ * but nothing about this run was stopped or degraded because of it.
+ */
+export function buildLocalCoverageWarningEntry(
+  syncRunId: string,
+  coverage: { coverage: number; scriptWordCount: number },
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const percent = Math.round(coverage.coverage * 100);
+  return makeSyncLogEntry(
+    syncRunId,
+    'warning',
+    `Only ${percent}% of this script's ${coverage.scriptWordCount} words were found in the transcribed audio — ` +
+      'double-check the script and audio are the right pair for this project.',
+    { severity: 'warning', fixHint: LOCAL_COVERAGE_FIX_HINT, finding: { kind: 'local-coverage' } },
     timestamp,
   );
 }
@@ -255,9 +326,22 @@ export function buildContractViolationEntry(
     syncRunId,
     'warning',
     violation.message,
-    { severity: violation.severity, fixHint: violation.fixHint },
+    { severity: violation.severity, fixHint: violation.fixHint, ...findingForRule(violation.rule, 1) },
     timestamp,
   );
+}
+
+/** `ContractViolation.rule` → the entry's machine-readable finding, for the
+ *  rules the sync log's user view raises as attention kinds. Rules not
+ *  listed carry no finding (they are details-only either way). */
+const RULE_FINDING_KIND: Partial<Record<string, SyncLogFindingKind>> = {
+  'low-word-coverage': 'weak-match',
+  'scene-density': 'scene-density',
+};
+
+function findingForRule(rule: string, count: number): Pick<SyncLogEntry, 'finding'> {
+  const kind = RULE_FINDING_KIND[rule];
+  return kind ? { finding: { kind, count } } : {};
 }
 
 /**
@@ -274,6 +358,8 @@ const GROUPED_RULE_SUMMARIES: Record<string, (count: number) => string> = {
   'loud-fallback-boundary': (n) => `${n} cuts landed on audio that's still playing.`,
   'low-word-coverage': (n) =>
     `${n} scenes matched fewer than ${Math.round(WORD_COVERAGE_MIN_RATIO * 100)}% of their words.`,
+  // G4 Unit 3 — per-scene density gate.
+  'scene-density': (n) => `${n} scenes matched words denser than natural speech — check for leftover/duplicated text.`,
 };
 
 function summarizeGroupedRule(rule: string, count: number): string {
@@ -322,7 +408,7 @@ export function buildGroupedViolationEntry(
   if (violations.length === 0) return undefined;
   if (violations.length === 1) {
     const v = violations[0]!;
-    return makeSyncLogEntry(syncRunId, entryType, v.message, { severity: v.severity, fixHint: v.fixHint }, timestamp);
+    return makeSyncLogEntry(syncRunId, entryType, v.message, { severity: v.severity, fixHint: v.fixHint, ...findingForRule(v.rule, 1) }, timestamp);
   }
 
   const severity: 'warning' | 'error' = violations.some(v => v.severity === 'error') ? 'error' : 'warning';
@@ -338,7 +424,7 @@ export function buildGroupedViolationEntry(
     syncRunId,
     entryType,
     summarizeGroupedRule(violations[0]!.rule, violations.length),
-    { severity, fixHint, groupedItems },
+    { severity, fixHint, groupedItems, ...findingForRule(violations[0]!.rule, violations.length) },
     timestamp,
   );
 }
@@ -398,7 +484,7 @@ export function buildSyncEngineEntry(
     engine === 'forced-alignment'
       ? `Timing engine: forced alignment (${tokenCount} aligned word(s)).`
       : `Timing engine: Whisper transcript (${tokenCount} token(s)).`,
-    { severity: 'info' },
+    { severity: 'info', finding: { kind: engine === 'forced-alignment' ? 'engine-forced-alignment' : 'engine-whisper' } },
     timestamp,
   );
 }
@@ -412,6 +498,11 @@ const FA_PAUSED_TEXT: Record<FaFailureKind | FaVictimPauseReason, { what: string
   'unsupported-language': {
     what: 'the project language has no forced-alignment model',
     fix: 'Set the project language to English, Spanish, French, Portuguese, or German in Project Settings, or continue with Whisper timing for this run.',
+  },
+  // G4 Unit 4 — pre-FA coverage check (localFaCoverageGate.ts).
+  'hopeless-local-coverage': {
+    what: 'the script and the transcribed audio share very few matching words',
+    fix: 'Double-check the script and audio file are the right pair for this project — continue anyway if you\'re sure they are, or cancel and fix the pairing first.',
   },
   'empty-chunk-plan': {
     what: 'the chunk plan came out empty (no scene carried any text to align)',
@@ -461,6 +552,13 @@ const FA_PAUSED_TEXT: Record<FaFailureKind | FaVictimPauseReason, { what: string
   'all-covered-fabricated': {
     what: 'every covered scene’s forced-alignment timing was fabricated (no chunk in this run aligned successfully)',
     fix: 'Try again, or continue with Whisper timing for this run.',
+  },
+  // G6 Step 0a — see faPreflight.ts's matching fixHint comment: identical
+  // wording, duplicated rather than imported to keep this module dependency-
+  // light. Distinct from 'inference-failed': retrying can never succeed here.
+  'not-compiled': {
+    what: 'this build was never compiled with forced alignment (fa-inference)',
+    fix: "High-precision sync isn't compiled into this build — launch with tauri:dev:fa.",
   },
 };
 
@@ -547,6 +645,90 @@ export function buildWhisperModelFailureEntry(
 }
 
 /**
+ * G6 Step 4 — THE MEDIA-IMPORT ENTRY. One grouped finding per media-vault
+ * ingest (zip / loose files / folder), never one entry per file — mirrors
+ * `zipIngest.ts`/`mediaIngest.ts`'s own `counts` shape exactly, so a caller
+ * never has to reshape anything to log it. `syncRunId` here is a freshly
+ * minted grouping key (`mintSyncLogId()`), not a real Apply Sync run's id —
+ * the Media block's "add media" door can fire this independent of syncing.
+ * severity:'info' when nothing failed; 'warning' when `counts.failed > 0`,
+ * since that means at least one file genuinely did not make it in.
+ */
+export function buildMediaImportEntry(
+  syncRunId: string,
+  source: 'zip' | 'files' | 'folder' | 'bundle',
+  counts: { imported: number; deduped: number; unsupportedSkipped: number; failed: number },
+  timestamp: number = Date.now(),
+  duplicateNames: string[] = [],
+  nestedZipsSkipped: string[] = [],
+): SyncLogEntry {
+  const { imported, deduped, unsupportedSkipped, failed } = counts;
+  const sourceLabel = source === 'zip' ? 'Zip import'
+    : source === 'folder' ? 'Folder import'
+    : source === 'bundle' ? 'Bundle import (script, scene details, voiceover, and media)'
+    : 'File import';
+  const parts = [`${imported} imported`];
+  // G6 polish item 1 — name the duplicate(s) when known (already-in-project
+  // dedup, threaded from the ingest call's own `duplicateNames`); fall back
+  // to the bare count for a caller that doesn't have names (kept so the
+  // pre-existing "N deduped" phrasing/tests still hold when this 5th param
+  // is omitted).
+  if (duplicateNames.length > 0) {
+    parts.push(`already in your project: ${duplicateNames.join(', ')}`);
+  } else if (deduped > 0) {
+    parts.push(`${deduped} deduped`);
+  }
+  if (unsupportedSkipped > 0) parts.push(`${unsupportedSkipped} unsupported`);
+  if (failed > 0) parts.push(`${failed} failed`);
+  // Bundle ingest opens a bundle's own inner zip once; a zip inside THAT is
+  // never opened (bounded, non-recursive) — named here, nothing imported from it.
+  if (nestedZipsSkipped.length > 0) {
+    parts.push(`nested zip${nestedZipsSkipped.length === 1 ? '' : 's'} not opened (only one level is unpacked): ${nestedZipsSkipped.join(', ')}`);
+  }
+  const warn = failed > 0 || nestedZipsSkipped.length > 0;
+  const fixHint = failed > 0
+    ? 'Check the console for which file(s) failed and why, then try adding them again.'
+    : nestedZipsSkipped.length > 0
+      ? 'Unzip the nested archive and add its files directly.'
+      : undefined;
+  return makeSyncLogEntry(
+    syncRunId,
+    'media-import',
+    `${sourceLabel}: ${parts.join(', ')}.`,
+    {
+      severity: warn ? 'warning' : 'info',
+      ...(fixHint ? { fixHint } : {}),
+    },
+    timestamp,
+  );
+}
+
+/** Exported for the same reason as `LOCAL_COVERAGE_FIX_HINT`. */
+export const BUNDLE_IMPORT_FAILED_FIX_HINT = 'Fix the bundle and drop it again — nothing was imported this time.';
+
+/**
+ * G5 — bundle ingest's failure path (`bundleIngest.ts::classifyAndIngestBundleZip`
+ * returning `{ kind: 'failure' }`, either a corrupt/oversized archive or a
+ * bundle-shaped zip missing one of its four required pieces). ONE grouped
+ * finding, warning severity: no slot was touched and nothing was imported —
+ * `message` (from `bundleIngest.ts`) already names what and why, so this is
+ * a thin, typed wrapper rather than a second place that composes the text.
+ */
+export function buildBundleImportFailedEntry(
+  syncRunId: string,
+  message: string,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'warning',
+    message,
+    { severity: 'warning', fixHint: BUNDLE_IMPORT_FAILED_FIX_HINT, finding: { kind: 'bundle-import-failed' } },
+    timestamp,
+  );
+}
+
+/**
  * THE FA PRE-FLIGHT ENTRY (WS1 Session M). Emitted once per Apply Sync when the
  * FA gate is OPEN, BEFORE inference, recording whether forced alignment is ready
  * (runtime + model + resolved language). `info` when ready — the pipeline is set
@@ -603,6 +785,38 @@ export function buildFaGateClosedEntry(
       owningRule: 'FA',
       severity: 'info',
       fixHint: 'Turn it on in Project Settings → Sync → High-Precision Auto-Sync.',
+    },
+    timestamp,
+  );
+}
+
+/**
+ * G6 STEP 0A — THE HONEST NO-FA-BUILD ENTRY. Emitted in place of
+ * `buildFaGateClosedEntry` above when the gate is closed AND the binary was
+ * never compiled with `fa-inference` (`App.tsx`'s Apply-Sync branch checks
+ * `fa_preflight`'s `featureCompiled` before choosing which of the two to
+ * push). OLD BUG: `buildFaGateClosedEntry` fired for BOTH cases as long as
+ * `isFaCapable()` (which is just `isTauri()`, true in every desktop build
+ * regardless of feature flags) — a plain `tauri:dev` build with the toggle
+ * off said "available but turned off", which is false: it was never
+ * available, no toggle would have changed anything. This entry names the
+ * real, unfixable-by-toggle cause instead.
+ */
+export function buildFaNotCompiledEntry(
+  syncRunId: string,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'fa-gate-closed',
+    // Keep identical to faPreflight.ts's fixHint / SyncPausedDialog.tsx's
+    // PAUSE_COPY.'not-compiled' — see faPreflight.ts's comment for why this
+    // is duplicated rather than imported.
+    "High-precision sync isn't compiled into this build — launch with tauri:dev:fa.",
+    {
+      owningRule: 'FA',
+      severity: 'info',
+      fixHint: 'Restart with npm run tauri:dev:fa (or a build compiled with the fa-inference feature).',
     },
     timestamp,
   );
@@ -999,6 +1213,7 @@ export function buildCtcInfeasibleLogEntry(
       owningRule: 'FA',
       severity: 'warning',
       fixHint: INFEASIBLE_COPY.fixHint,
+      finding: { kind: 'ctc-infeasible', count: estimated.length },
       ruleDetail: {
         reason: `${chunks.length} CTC-infeasible chunk(s); ${estimated.length} needsReview word(s) in those windows.`,
       },
@@ -1034,10 +1249,36 @@ export function buildFaVictimRetimedLogEntry(
       owningRule: 'FA',
       severity: 'warning',
       fixHint: 'Review the re-timed scenes — their boundaries come from Whisper, not forced alignment. Accept the estimate, or re-run Apply Sync after tightening the affected scene tags.',
+      finding: { kind: 'fa-victim-retimed', count: victims.length },
       ruleDetail: {
         reason: `${victims.length} FA victim segment(s), engine fa degraded reason fa-chunk-infeasible; ${totalWords} word(s) marked Estimated from Whisper timing.`,
       },
     },
+    timestamp,
+  );
+}
+
+/**
+ * The character-timing branch's one entry (App.tsx — no voiceover transcript
+ * to align against, so every segment is placed by text weight). Extracted
+ * from an inline `makeSyncLogEntry` so its machine-readable finding is set in
+ * one place: `'character-fallback'` when a transcript SHOULD have existed
+ * (the defensive case — a 'warning'), `'engine-character'` when there is no
+ * voiceover at all (an 'info'). Messages unchanged from the inline originals.
+ */
+export function buildCharacterTimingEntry(
+  syncRunId: string,
+  unexpectedFallback: boolean,
+  placedCount: number,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    unexpectedFallback ? 'warning' : 'info',
+    unexpectedFallback
+      ? `Sync completed on character-based timing — no cached transcript was available for the voiceover. ${placedCount} segment(s) placed.`
+      : `Sync completed: ${placedCount} segment(s) placed using character-based timing (no voiceover transcript).`,
+    { finding: { kind: unexpectedFallback ? 'character-fallback' : 'engine-character', count: placedCount } },
     timestamp,
   );
 }
@@ -1067,4 +1308,71 @@ export function appendSyncLogEntries(
       ? nextSummaries.slice(-MAX_SYNC_RUN_SUMMARIES)
       : nextSummaries,
   };
+}
+
+/**
+ * Media workflow Unit 1 — an inline rename left `count` (2+) assets matching
+ * as `name`. Allowed, not blocked: matching takes the oldest.
+ */
+export function buildMediaNameCollisionEntry(
+  syncRunId: string,
+  name: string,
+  count: number,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'media-match',
+    `${count} files named "${name}" — matching uses the oldest; rename to disambiguate.`,
+    { severity: 'warning' },
+    timestamp,
+  );
+}
+
+/**
+ * Media workflow Unit 2 — "Match media to scenes"'s ONE summary finding.
+ * `unmatched` are scene labels (tag, or `S<n>` for an untagged scene) that
+ * kept whatever they had; `ambiguous` are tags 2+ assets matched as, where
+ * the oldest was used.
+ */
+export function buildMediaMatchEntry(
+  syncRunId: string,
+  outcome: { matched: number; unmatched: string[]; ambiguous: { name: string; count: number }[] },
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const { matched, unmatched, ambiguous } = outcome;
+  let message = `Match media to scenes: ${matched} scene${matched === 1 ? '' : 's'} matched · ${unmatched.length} unmatched`;
+  message += unmatched.length > 0 ? ` (kept their current media): ${unmatched.join(', ')}.` : '.';
+  for (const { name, count } of ambiguous) {
+    message += ` ${count} files named "${name}" — matching used the oldest; rename to disambiguate.`;
+  }
+  return makeSyncLogEntry(
+    syncRunId,
+    'media-match',
+    message,
+    { severity: unmatched.length > 0 || ambiguous.length > 0 ? 'warning' : 'info' },
+    timestamp,
+  );
+}
+
+/**
+ * Media workflow Unit 4 — a re-upload through an ingest door carried an
+ * OFFLINE asset's exact bytes and reconnected it in place. Grouped under
+ * 'media-import' (it is what happened when media was added).
+ */
+export function buildMediaReconnectEntry(
+  syncRunId: string,
+  names: string[],
+  allResolved: boolean,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  const n = names.length;
+  return makeSyncLogEntry(
+    syncRunId,
+    'media-import',
+    `Reconnected ${n} offline file${n === 1 ? '' : 's'}: ${names.join(', ')}.` +
+      (allResolved ? ' All media is back online — saving is re-enabled.' : ''),
+    { severity: 'info' },
+    timestamp,
+  );
 }

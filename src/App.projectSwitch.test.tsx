@@ -143,9 +143,15 @@ interface FakeStoredAsset { projectId: string; id: string; blob: Blob; name: str
 const mockRepairMissingAssetsFromNative = vi.fn(async (
   _projectId: string, _assets: unknown[], _missingIds: string[],
 ): Promise<{ repaired: FakeStoredAsset[]; failed: unknown[] }> => ({ repaired: [], failed: [] }));
+// Item A — the vault rung, run on whatever the native rung could not fill.
+const mockRepairMissingAssetsFromVault = vi.fn(async (
+  _projectId: string, _assets: unknown[], _missingIds: string[],
+): Promise<{ repaired: FakeStoredAsset[]; failed: unknown[] }> => ({ repaired: [], failed: [] }));
 vi.mock('./services/repairAssetsFromNative', () => ({
   repairMissingAssetsFromNative: (projectId: string, assets: unknown[], missingIds: string[]) =>
     mockRepairMissingAssetsFromNative(projectId, assets, missingIds),
+  repairMissingAssetsFromVault: (projectId: string, assets: unknown[], missingIds: string[]) =>
+    mockRepairMissingAssetsFromVault(projectId, assets, missingIds),
 }));
 
 vi.mock('./services/historyPersist', async () => {
@@ -622,6 +628,30 @@ describe('WS3 item B — launch-time repair heals a cache miss before it can poi
     expect(getLoadFailure(TARGET_ID)).toBeUndefined();
     // App.tsx called the repair with the right arguments before the orphan check.
     expect(mockRepairMissingAssetsFromNative).toHaveBeenCalledWith(TARGET_ID, targetProject.assets, ['a1']);
+  });
+
+  it('Item A — missing from BOTH stores but held by the media vault: the vault rung heals it, no poisoning', async () => {
+    const targetProject = {
+      ...storedProject(TARGET_ID, 'Target'),
+      assets: [{ id: 'a1', name: '005_need_a_car.mp4', url: '', type: 'image', contentHash: 'ca92f0bd' }],
+      segments: [{ id: 'seg-0', assetId: 'a1', text: '', startTime: 0, duration: 1 }],
+    } as unknown as Project;
+    mockLoadProjectDetailed.mockResolvedValue({ ok: true, project: targetProject, savedAt: Date.now() });
+    mockGetAllAssetsForProject.mockResolvedValue([]);
+    mockRepairMissingAssetsFromNative.mockResolvedValue({ repaired: [], failed: [] });
+    mockRepairMissingAssetsFromVault.mockResolvedValueOnce({
+      repaired: [{ projectId: TARGET_ID, id: 'a1', blob: new Blob([new Uint8Array([1])]), name: '005_need_a_car.mp4', mimeType: '' }],
+      failed: [],
+    });
+
+    await mountApp();
+    const card = container.querySelector<HTMLElement>(`[data-testid="project-card-${TARGET_ID}"]`);
+    await act(async () => { card!.click(); });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+
+    expect(view()).toEqual({ view: 'editor', projectId: TARGET_ID });
+    expect(mockRepairMissingAssetsFromVault).toHaveBeenCalledWith(TARGET_ID, targetProject.assets, ['a1']);
+    expect(getLoadFailure(TARGET_ID)).toBeUndefined();
   });
 
   it('an asset missing from BOTH stores still poisons the project (D6: opens degraded, not refused) — repair is not a substitute for the orphan guard', async () => {

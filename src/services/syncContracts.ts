@@ -25,11 +25,22 @@ import {
   BOUNDARY_QUALITY_MIN_DISTANCE_SEC,
   WORD_COVERAGE_MIN_RATIO,
   WORD_COVERAGE_MIN_MISSING,
+  SCENE_DENSITY_WORDS_PER_SEC,
+  SILENCE_MIN_DETECTABLE_SEC,
 } from './syncConstants';
 
 /** One contract violation — shared shape across every pair's validator (§3
  *  Step 3). `severity` and `detail` feed a SyncLogEntry at the wiring call
  *  site; `detail` is for the log only, never for control flow. */
+/** The two per-scene validators' fix hints, exported so the sync log's user
+ *  view (`syncLogUserView.ts`) can recognise their entries — single or
+ *  grouped (`buildGroupedViolationEntry` keeps a shared hint verbatim) —
+ *  without parsing prose. Wording unchanged from the inline originals. */
+export const WORD_COVERAGE_FIX_HINT =
+  "Some of this scene's words may have been matched into a neighboring scene — check its cut points and its neighbors' on the timeline.";
+export const SCENE_DENSITY_FIX_HINT =
+  'Check this scene\'s script against its actual audio — this may be leftover or duplicated text that was never spoken here.';
+
 export interface ContractViolation {
   contract: '1->2' | '2->3' | '3->4' | '4->5' | '5->6' | '6->7';
   rule: string;
@@ -446,8 +457,58 @@ export function validateWordCoverage(
       rule: 'low-word-coverage',
       severity: 'warning',
       message: `Segment ${i + 1} ("${segmentName}") matched only ${matchedWords} of ${totalWords} words (${percent}%).`,
-      fixHint: "Some of this scene's words may have been matched into a neighboring scene — check its cut points and its neighbors' on the timeline.",
+      fixHint: WORD_COVERAGE_FIX_HINT,
       detail: { segmentIndex: i, segmentName, matchedWords, totalWords, missingWords },
+    });
+  }
+
+  return violations;
+}
+
+/**
+ * G4 Unit 3 — POST-match per-scene density (STATUS.md Wave 2 queue item 2,
+ * operator design). Sibling of `validateWordCoverage` above: same `kept`/
+ * `keptAlignments` input, same stage ('3->4'), warn-only. Catches a scene
+ * whose matched words are crammed implausibly densely into its own
+ * committed duration — the LOCALIZED counterpart of the PRE-sync total-WPM
+ * check (`classifyScriptWpm`, `syncDensityGate.ts`), which a single bloated
+ * scene can hide from a total average (several sparse scenes offsetting one
+ * dense one). Density is `matchedWords / seg.duration` — words per SECOND,
+ * not per minute; see `SCENE_DENSITY_WORDS_PER_SEC`'s own doc comment
+ * (syncConstants.ts) for the threshold's derivation.
+ *
+ * A zero/near-zero `duration` segment is skipped rather than flagged — an
+ * infinite or absurd words/sec here is a DIFFERENT defect (the timeline
+ * partition itself), not a script/audio mismatch, and would drown out real
+ * findings with a divide-by-near-zero artifact.
+ */
+export function validateSceneDensity(
+  segments: VideoSegment[],
+  alignments: SegmentAlignment[],
+): ContractViolation[] {
+  const violations: ContractViolation[] = [];
+
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i];
+    const align = alignments[i];
+    if (!seg || !align) continue;
+    if (!(seg.duration > SILENCE_MIN_DETECTABLE_SEC)) continue;
+
+    const { matchedWords } = align;
+    if (matchedWords <= 0) continue;
+
+    const wordsPerSec = matchedWords / seg.duration;
+    if (wordsPerSec <= SCENE_DENSITY_WORDS_PER_SEC) continue;
+
+    const segmentName = truncateForDisplay(seg.text ?? '');
+    violations.push({
+      contract: '3->4',
+      rule: 'scene-density',
+      severity: 'warning',
+      message: `Segment ${i + 1} ("${segmentName}") matched ${matchedWords} words into ${seg.duration.toFixed(2)}s ` +
+        `(${wordsPerSec.toFixed(1)} words/sec) — denser than natural speech.`,
+      fixHint: SCENE_DENSITY_FIX_HINT,
+      detail: { segmentIndex: i, segmentName, matchedWords, durationSec: seg.duration, wordsPerSec },
     });
   }
 

@@ -529,6 +529,12 @@ export function ModelsSection({
                 </div>
               )}
             </div>
+            {!whisperInstalled && whisperOccupied && !awaitingVerification && whisperState.phase === 'idle' && (
+              <p className="text-[9px] text-gray-500 pl-1.5" data-testid="whisper-unverified-explainer">
+                A file is here, but it didn't match the expected model — wrong size or a failed
+                download. Delete it, then Download will fetch a verified copy.
+              </p>
+            )}
             {whisperState.phase === 'importing' && (
               <p className="text-[9px] text-gray-500 pl-1.5">
                 Copying a ~1.51 GiB file — this can take a while for a large source; the dialog stays
@@ -672,6 +678,12 @@ export function ModelsSection({
                     </div>
                   )}
                 </div>
+                {!installed && occupied && !awaitingVerification && rowState.phase === 'idle' && (
+                  <p className="text-[9px] text-gray-500 pl-1.5" data-testid={`fa-unverified-explainer-${lang}`}>
+                    A file is here, but it didn't match the expected model — wrong size or a failed
+                    download. Delete it, then Download will fetch a verified copy.
+                  </p>
+                )}
                 {rowState.phase === 'importing' && (
                   <p className="text-[9px] text-gray-500 pl-1.5">
                     Copying a ~1.26 GiB file — this can take a while; the dialog stays open until

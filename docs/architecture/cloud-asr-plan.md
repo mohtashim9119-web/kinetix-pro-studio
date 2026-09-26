@@ -99,6 +99,31 @@ Local fallback cannot be implemented until model path resolution is unified. At 
 
 If cloud becomes primary, local models can be made optional at install time. They already are: a fresh install has no ggml file and no FA packs until the user downloads them. What breaks if a user never downloads them is exactly the fallback. Staging-time transcription fails with the existing "model not found" error when the gateway is unreachable and no local ggml is present. Apply Sync then hard-aborts if `transcriptTokens` is empty. Preview, editing, and export of a project that already has tokens continue to work. FA without a local pack already fail-cleans to Whisper timing, so an optional FA download is the current behaviour. The whisper-cli sidecar would still ship in the bundle unless a later packaging change removes it; leaving it in costs little compared with the 1,624,555,275-byte weights. A settings row that downloads the local engine when the user wants offline use is the right shape, not a mandatory first-run fetch of 7,937,332,030 bytes.
 
+### Offline contract (G3 ruling; recorded here in full for the first time — plan-v3 Wave 2 item 13)
+
+**Pause-and-offer-local, never auto-switch.** Losing connectivity mid-job — at submit, mid-upload,
+or waiting on a result — PAUSES the run and presents the local option; it never silently reroutes
+to the local engine. This is the same shape Wave 1 already shipped for local FA's own failure
+modes (`fa-paused` entries, `SyncPausedDialog` — "zero silent fallbacks," plan-v3 scorecard
+criterion 1): a network-caused stall is not a new exception to that rule, it is the SAME rule
+applied to a different cause. Concretely, once the cloud path exists:
+
+- A submit, upload, or poll that cannot reach the gateway (timeout, DNS failure, no route) stops
+  the run at that point — nothing already sent is discarded, nothing further is attempted
+  automatically — and asks the user: retry cloud, or switch to local for this run. Neither choice
+  is silent, and switching to local for one run never changes the standing default
+  (`defaultSyncEngine`, per-run override only — mirrors G2's own per-run FA override design).
+- The gateway itself is authoritative for "unreachable" vs. "reachable but failing" (auth
+  rejected, quota exhausted, 5xx, job too long) — see "Proposed design" above for what each
+  failure kind means; every one of them is a typed, named outcome (scorecard criterion 1 again),
+  never a bare exception the UI has to guess the meaning of.
+- A job that already partially completed server-side (e.g. transcription succeeded, alignment's
+  upload stalls) does not lose the completed stage: the content-hash cache (above) means a retry —
+  cloud or, after switching, local — never re-does work the server already has cached.
+- This contract governs CONNECTIVITY loss specifically. It does not relax "retry-once, then
+  pause" (Wave 3 item 4) or the one-hour job cap (Wave 3 item 9) — those fire on their own terms
+  regardless of why a job is slow.
+
 ---
 
 ## Proposed design

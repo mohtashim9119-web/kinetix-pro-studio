@@ -24,6 +24,7 @@ import type { TranscriptToken } from '../types';
 import {
   appendSyncLogEntries,
   buildSilenceErrorEntry,
+  buildLocalCoverageWarningEntry,
   buildMalformedTokenEntry,
   buildContractViolationEntry,
   buildGroupedViolationEntry,
@@ -34,6 +35,8 @@ import {
   buildFaUserChoseWhisperEntry,
   buildFaPreflightEntry,
   buildFaGateClosedEntry,
+  buildFaNotCompiledEntry,
+  buildMediaImportEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -42,10 +45,12 @@ import {
   buildAnchorTrustLogEntries,
   buildRunEdgeViolationLogEntries,
   buildCtcInfeasibleLogEntry,
+  isKnownSyncLogEntryType,
+  filterKnownSyncLogEntries,
 } from './syncLog';
 import { MAX_LOG_ENTRIES, MAX_SYNC_RUN_SUMMARIES, WORD_COVERAGE_MIN_RATIO } from './syncConstants';
 import { TransitionType, AnimationType } from '../types';
-import type { Project, SyncLogEntry, SyncRunSummary, VideoSegment } from '../types';
+import type { Project, SyncLogEntry, SyncRunSummary, VideoSegment, SyncLogEntryType } from '../types';
 import type { ContractViolation } from './syncContracts';
 
 const RUN_ID = 'run-1';
@@ -276,7 +281,7 @@ describe('buildSkipLogEntries', () => {
 
   it('renders a 1-based S{n} label in the message while storing the 0-based index', () => {
     const [first] = buildSkipLogEntries(RUN_ID, skipped, AT);
-    expect(first!.message).toBe('S3 skipped — no text match.');
+    expect(first!.message).toBe('S3: Unmatched scene — kept as Estimated placeholder — no text match.');
     expect(first!.segmentIndex).toBe(2);
   });
 
@@ -368,7 +373,7 @@ describe('buildSkipLogEntries', () => {
       new Map([[111, absorbedInfo(109)]]),
     );
     expect(entry!.message).toBe(
-      'S112 / Clip 110 skipped — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech).',
+      'S112 / Clip 110: Unmatched scene — kept as Estimated placeholder — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech).',
     );
     expect(entry!.absorbedByDisplayIndex).toBe(109);
   });
@@ -379,7 +384,7 @@ describe('buildSkipLogEntries', () => {
       [{ segmentIndex: 2, segmentText: 'Untethered scene.', reason: 'no text match' }],
       AT,
     );
-    expect(entry!.message).toBe('S3 skipped — no text match.');
+    expect(entry!.message).toBe('S3: Unmatched scene — kept as Estimated placeholder — no text match.');
     expect(entry!.absorbedByDisplayIndex).toBeUndefined();
   });
 
@@ -415,7 +420,7 @@ describe('buildSkipLogEntries', () => {
       new Map([[111, absorbedInfo(109, { otherNeighbor: { displayIndex: 108, gainSec: 0.63 } })]]),
     );
     expect(entry!.message).toBe(
-      'S112 / Clip 110 skipped — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech). '
+      'S112 / Clip 110: Unmatched scene — kept as Estimated placeholder — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech). '
       + 'Clip 109 also holds 0.63s.',
     );
   });
@@ -428,7 +433,7 @@ describe('buildSkipLogEntries', () => {
       new Map([[26, absorbedInfo(26, { span: { start: 78.73, end: 78.97 }, gapAudio: 'speech' })]]),
     );
     expect(entry!.message).toBe(
-      'S27 / Clip 27 skipped — no text match. Absorbed 78.730s → 0.240s → 78.970s (speech).',
+      'S27 / Clip 27: Unmatched scene — kept as Estimated placeholder — no text match. Absorbed 78.730s → 0.240s → 78.970s (speech).',
     );
     expect(entry!.message).not.toContain('also holds');
   });
@@ -471,7 +476,7 @@ describe('buildSkipLogEntries', () => {
       AT,
       absorbedInfoBySkipIndex,
     );
-    expect(entry!.message).toBe('S2 / Clip 1 skipped — no text match. Absorbed 1.700s → 1.300s → 3.000s (unknown).');
+    expect(entry!.message).toBe('S2 / Clip 1: Unmatched scene — kept as Estimated placeholder — no text match. Absorbed 1.700s → 1.300s → 3.000s (unknown).');
     expect(entry!.message).not.toContain('NaN');
     expect(entry!.message).not.toMatch(/Clip\s*(?:undefined)?$/);
     expect(entry!.segmentId).toBe('s0');
@@ -493,8 +498,8 @@ describe('buildSkipLogEntries', () => {
       ],
       AT,
     );
-    expect(e0!.message).toBe('S1 skipped — no text match.');
-    expect(e1!.message).toBe('S2 skipped — no text match.');
+    expect(e0!.message).toBe('S1: Unmatched scene — kept as Estimated placeholder — no text match.');
+    expect(e1!.message).toBe('S2: Unmatched scene — kept as Estimated placeholder — no text match.');
     expect(e0!.segmentId).toBeUndefined();
     expect(e1!.segmentId).toBeUndefined();
   });
@@ -594,7 +599,8 @@ describe('buildSyncInfoEntry', () => {
   it('appends a skipped-count sentence when the run had skips (Bug 1)', () => {
     const entry = buildSyncInfoEntry(RUN_ID, 10, 8, 2, AT);
     expect(entry.type).toBe('info');
-    expect(entry.message).toBe('Sync completed: 8 of 10 segments matched. 2 skipped.');
+    // G2 close-out FIX 3 — operator-ordered copy rename.
+    expect(entry.message).toBe('Sync completed: 8 of 10 segments matched. 2 unmatched scenes — kept as Estimated placeholders.');
   });
 });
 
@@ -603,8 +609,12 @@ describe('buildSyncInfoMessage (Bug 1)', () => {
     expect(buildSyncInfoMessage(8, 8, 0)).toBe('Sync completed: 8 of 8 segments matched.');
   });
 
-  it('appends "N skipped." when skippedSegments > 0', () => {
-    expect(buildSyncInfoMessage(10, 8, 2)).toBe('Sync completed: 8 of 10 segments matched. 2 skipped.');
+  it('appends the unmatched-count sentence when skippedSegments > 0', () => {
+    expect(buildSyncInfoMessage(10, 8, 2)).toBe('Sync completed: 8 of 10 segments matched. 2 unmatched scenes — kept as Estimated placeholders.');
+  });
+
+  it('uses singular phrasing for exactly one skip', () => {
+    expect(buildSyncInfoMessage(10, 9, 1)).toBe('Sync completed: 9 of 10 segments matched. 1 unmatched scene — kept as Estimated placeholder.');
   });
 });
 
@@ -645,6 +655,19 @@ describe('buildSilenceErrorEntry (WS4 Feature 3)', () => {
     const entry = buildSilenceErrorEntry(RUN_ID, 'boom', AT);
     expect(entry.segmentIndex).toBeUndefined();
     expect(entry.segmentText).toBeUndefined();
+  });
+});
+
+describe('buildLocalCoverageWarningEntry (G4 Unit 4)', () => {
+  it('builds a warn-only entry naming the coverage percentage and script word count', () => {
+    const entry = buildLocalCoverageWarningEntry(RUN_ID, { coverage: 1 / 3, scriptWordCount: 9 }, AT);
+    expect(entry.type).toBe('warning');
+    expect(entry.severity).toBe('warning');
+    expect(entry.syncRunId).toBe(RUN_ID);
+    expect(entry.timestamp).toBe(AT);
+    expect(entry.message).toContain('33%');
+    expect(entry.message).toContain('9 words');
+    expect(entry.fixHint).toBeDefined();
   });
 });
 
@@ -1059,6 +1082,7 @@ describe('buildFaPausedEntry — plan-v3 item 3/4: pause replaces silent substit
       'unsupported-language', 'empty-chunk-plan', 'zero-words', 'model-not-found',
       'model-hash-mismatch', 'runtime-load-failed', 'audio-stage-failed',
       'inference-failed', 'already-running', 'out-of-memory', 'offline',
+      'not-compiled', // G6 Step 0a
     ] as const;
     const messages = reasons.map(r => buildFaPausedEntry(RUN_ID, r, undefined, AT).message);
     expect(new Set(messages).size).toBe(reasons.length);
@@ -1089,6 +1113,33 @@ describe('buildFaUserChoseWhisperEntry — plan-v3 item 4: an explicit, logged c
     const entry = buildFaUserChoseWhisperEntry(RUN_ID, 'model-not-found', AT);
     expect(entry.reason).toBe('model-not-found');
     expect(entry.message).toContain('model-not-found');
+  });
+});
+
+describe('buildFaNotCompiledEntry — G6 Step 0a: the honest no-FA-build entry', () => {
+  // OLD BUG this proves fixed: `App.tsx` used to push `buildFaGateClosedEntry`
+  // for BOTH "toggle off" and "never compiled with fa-inference" as long as
+  // `isFaCapable()` (just `isTauri()`) was true — a plain `tauri:dev` build
+  // said "available but turned off", which is false: no toggle would ever
+  // have made it available.
+  it('shares the fa-gate-closed badge type but never says "turned off"', () => {
+    const entry = buildFaNotCompiledEntry(RUN_ID, AT);
+    expect(entry.type).toBe('fa-gate-closed');
+    expect(entry.message).not.toMatch(/turned off/i);
+    expect(entry.message).not.toMatch(/not implemented yet/i);
+  });
+
+  it('says plainly that the build was never compiled with forced alignment, and names the fix', () => {
+    const entry = buildFaNotCompiledEntry(RUN_ID, AT);
+    expect(entry.message).toMatch(/isn't compiled into this build/i);
+    expect(entry.fixHint).toMatch(/tauri:dev:fa/i);
+  });
+
+  it('is distinct from buildFaGateClosedEntry\'s own message even though it shares the badge type', () => {
+    const notCompiled = buildFaNotCompiledEntry(RUN_ID, AT);
+    const gateClosed = buildFaGateClosedEntry(RUN_ID, AT);
+    expect(notCompiled.message).not.toBe(gateClosed.message);
+    expect(notCompiled.severity).toBe('info');
   });
 });
 
@@ -1349,5 +1400,86 @@ describe('rule-correction entries — R.5 / R.10 / R.11 / R.12', () => {
     expect(entry!.message).toContain('Estimated');
     expect(entry!.owningRule).toBe('FA');
     expect(buildCtcInfeasibleLogEntry(RUN_ID, tokens, [], AT)).toBeUndefined();
+  });
+});
+
+describe('buildMediaImportEntry — G6 Step 4: one grouped finding per media-vault ingest', () => {
+  it('is info severity with no fixHint when nothing failed', () => {
+    const entry = buildMediaImportEntry(RUN_ID, 'zip', { imported: 3, deduped: 1, unsupportedSkipped: 0, failed: 0 }, AT);
+    expect(entry.type).toBe('media-import');
+    expect(entry.severity).toBe('info');
+    expect(entry.fixHint).toBeUndefined();
+    expect(entry.message).toBe('Zip import: 3 imported, 1 deduped.');
+  });
+
+  it('is warning severity with a fixHint when at least one file failed', () => {
+    const entry = buildMediaImportEntry(RUN_ID, 'files', { imported: 2, deduped: 0, unsupportedSkipped: 1, failed: 1 }, AT);
+    expect(entry.severity).toBe('warning');
+    expect(entry.fixHint).toBeTruthy();
+    expect(entry.message).toBe('File import: 2 imported, 1 unsupported, 1 failed.');
+  });
+
+  it('names the source (zip / files / folder) distinctly', () => {
+    const counts = { imported: 1, deduped: 0, unsupportedSkipped: 0, failed: 0 };
+    expect(buildMediaImportEntry(RUN_ID, 'zip', counts, AT).message).toContain('Zip import');
+    expect(buildMediaImportEntry(RUN_ID, 'files', counts, AT).message).toContain('File import');
+    expect(buildMediaImportEntry(RUN_ID, 'folder', counts, AT).message).toContain('Folder import');
+  });
+
+  it('omits zero-valued counts from the message, keeping only imported when nothing else happened', () => {
+    const entry = buildMediaImportEntry(RUN_ID, 'zip', { imported: 5, deduped: 0, unsupportedSkipped: 0, failed: 0 }, AT);
+    expect(entry.message).toBe('Zip import: 5 imported.');
+  });
+
+  // G6 polish item 1 — names the duplicate(s) instead of the bare count
+  // when the caller has them.
+  it('names the duplicate(s) as "already in your project: <name>" when duplicateNames is given', () => {
+    const entry = buildMediaImportEntry(
+      RUN_ID, 'files', { imported: 1, deduped: 1, unsupportedSkipped: 0, failed: 0 }, AT, ['clip.mp4'],
+    );
+    expect(entry.message).toBe('File import: 1 imported, already in your project: clip.mp4.');
+  });
+
+  it('lists multiple duplicate names, comma-separated', () => {
+    const entry = buildMediaImportEntry(
+      RUN_ID, 'folder', { imported: 1, deduped: 2, unsupportedSkipped: 0, failed: 0 }, AT, ['a.jpg', 'b.jpg'],
+    );
+    expect(entry.message).toBe('Folder import: 1 imported, already in your project: a.jpg, b.jpg.');
+  });
+});
+
+// Operator ruling (sync-log user view) — 'fa-fallback' retired from the
+// union. The runtime known-type table is what lets an old project's
+// persisted 'fa-fallback' entries be dropped on load instead of rendering an
+// unstyled type; the six-group `syncLogGroupForType` it replaces is gone
+// (its role is now `syncLogUserView.ts`'s details-count aggregation).
+describe('isKnownSyncLogEntryType / filterKnownSyncLogEntries — retired types filtered', () => {
+  const ALL_TYPES: SyncLogEntryType[] = [
+    'skip', 'abort', 'warning', 'info', 'silence-error', 'malformed-token', 'no-asset', 'rescue',
+    'unsupported-language', 'lock-span-overflow', 'lock-preserved-adjustment', 'lock-refused',
+    'lock-not-restored', 'rule-correction', 'fa-paused', 'fa-preflight',
+    'fa-gate-closed', 'whisper-model-failure', 'media-import',
+  ];
+
+  it('knows every current entry type', () => {
+    for (const type of ALL_TYPES) expect(isKnownSyncLogEntryType(type), type).toBe(true);
+  });
+
+  it("does not know the retired 'fa-fallback', nor junk", () => {
+    expect(isKnownSyncLogEntryType('fa-fallback')).toBe(false);
+    expect(isKnownSyncLogEntryType('toString')).toBe(false);
+    expect(isKnownSyncLogEntryType(undefined)).toBe(false);
+    expect(isKnownSyncLogEntryType(42)).toBe(false);
+  });
+
+  it('drops fa-fallback and malformed entries, keeps every known one in order', () => {
+    const kept = buildSyncEngineEntry(RUN_ID, 'whisper', 10, AT);
+    const legacy = { ...kept, id: 'legacy', type: 'fa-fallback' };
+    const out = filterKnownSyncLogEntries([legacy, kept, null, 'x', { id: 'no-type' }]);
+    expect(out).toEqual([kept]);
+  });
+
+  it('passes an absent log through as undefined (pre-WS-logs project)', () => {
+    expect(filterKnownSyncLogEntries(undefined)).toBeUndefined();
   });
 });

@@ -23,7 +23,7 @@
 // in `lib.rs` so this crate can name `fa_align_production` and measure the
 // REAL production command rather than its dev-command sibling (a
 // compile-time-only visibility change, zero runtime effect, matching the
-// widening already done for `fa`/`fa_dev`).
+// widening already done for `fa`/`fa_shared`).
 //
 // Self-gated, mirroring this codebase's existing convention: a plain
 // `cargo test` sweep compiles this binary and exits immediately without

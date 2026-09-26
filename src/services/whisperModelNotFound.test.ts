@@ -65,10 +65,23 @@ describe('FIX 2 — fresh-audio path: a missing model is a TYPED model-not-found
     const modelPath = bodyOf(WHISPER_RS, 'fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {', '\n// ----');
     expect(WHISPER_RS).toContain('pub(crate) const WHISPER_MODEL_NOT_FOUND_PREFIX: &str = "whisper:model-not-found:";');
     expect(modelPath).toContain('WHISPER_MODEL_NOT_FOUND_PREFIX');
-    // Never auto-switch: the only filename model_path ever resolves is the pinned one.
-    expect(modelPath.match(/MODEL_FILENAME/g)!.length).toBeGreaterThan(0);
     expect(modelPath).not.toMatch(/ggml-[a-z0-9.-]+\.bin/);
   });
+
+  it(
+    "whisper.rs's whisper_model_candidate_paths — the pure resolution ladder model_path delegates " +
+      'to (Step 0 fix, G3 tail: extracted so models.rs::whisper_installed_status can reuse it) — ' +
+      'never auto-switches: the only filename it ever resolves is the pinned one',
+    () => {
+      const candidatePaths = bodyOf(
+        WHISPER_RS,
+        'pub(crate) fn whisper_model_candidate_paths(',
+        '\npub(crate) fn model_path(',
+      );
+      expect(candidatePaths.match(/MODEL_FILENAME/g)!.length).toBeGreaterThan(0);
+      expect(candidatePaths).not.toMatch(/ggml-[a-z0-9.-]+\.bin/);
+    },
+  );
 
   it('whisper_transcribe still cannot proceed past a missing or mismatched model to a spawn', () => {
     const cmd = bodyOf(WHISPER_RS, 'let model = model_path(&app)?;', 'whisper-cli');

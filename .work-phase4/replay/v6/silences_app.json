@@ -1,5 +1,5 @@
 {
-  "source_wav": "/Users/mohtashim/Drive/Vibe Coding Projects/4.kinetix-pro-studio/.work-phase4/replay/v6/audio_16k.wav",
+  "source_wav": "/Users/mohtashim/Drive/Vibe-Coding-Projects/4.kinetix-pro-studio/.work-phase4/replay/v6/audio_16k.wav",
   "sample_rate": 16000,
   "threshold_db": -45.0,
   "min_duration_sec": 0.25,

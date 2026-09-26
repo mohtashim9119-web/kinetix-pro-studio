@@ -3,6 +3,20 @@ import type { Asset, VideoSegment, TranscriptToken } from '../types';
 import type { SilenceInterval } from './silenceDetector';
 import { canonicalize, canonicalizeSceneDoc } from './textNormalize';
 import { SUPPORTED_LANGUAGE_CODES } from '../constants';
+// WS2 Wave 2 Group 2 (G2 completion, Unit 1) — `hirschbergMatchClient.ts`
+// itself imports `alignQueryToSubject` FROM this file (its fallback path,
+// used when `Worker` is unavailable), so this is a two-file import cycle.
+// Safe under ESM live bindings because the value is only ever used inside a
+// function body here (`extractSegmentAlignmentsAsync`), never at module
+// top-level evaluation time on either side — verified by `tsc --noEmit` and
+// the full test suite after this change, not assumed. Chosen over the
+// alternative (a third file re-exporting the async twins, as G2's first
+// pass did with `syncMatchAsync.ts`) because `extractSegmentAlignmentsAsync`
+// needs to read/write the SAME reference-identity memo `extractSegmentAlignments`
+// owns below, to let `detectUtterancePlacementDefects`
+// (`faRunPlacementGate.ts`) be warmed by one awaited call without becoming
+// async itself — that requires both to be one module.
+import { alignQueryToSubjectAsync } from './hirschbergMatchClient';
 import {
   ALIGN_MATCH_SCORE, ALIGN_MISMATCH_SCORE, ALIGN_GAP_SCORE,
   LOW_CONFIDENCE_RATIO, MALFORMED_TOKEN_DURATION_TOLERANCE_SEC,
@@ -921,19 +935,20 @@ export function backwardSpineRejects(nodes: ReadonlyArray<SpineNode | null>, can
  * it carries the same "can only add, never steal" guarantee as Pass 1 — it
  * just isn't temporally bounded.
  */
-export function extractSegmentAlignments(
+/** The cheap, pure half of `extractSegmentAlignments`/`extractSegmentAlignmentsAsync`
+ *  — everything BEFORE the Hirschberg pass. Extracted (WS2 G2 item 2) so the
+ *  async, worker-backed twin builds the exact same `queryWords`/
+ *  `subjectWords` the sync path does without duplicating this construction. */
+export function buildSegmentAlignmentInputs(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
-  audioDuration?: number,
   languageCode?: AlignmentLanguageCode,
-): AlignResult[] {
-  if (!tokens.length || !segments.length) {
-    return segments.map(() => ({
-      t0: 0, t1: 0, firstTokenIdx: -1, lastTokenIdx: -1,
-      confidence: 0, matched: false, matchedWords: 0, totalWords: 0, longestRun: 0,
-    }));
-  }
-
+): {
+  tokenWords: Array<{ word: string; tokenIdx: number; startSec: number }>;
+  queryWords: string[];
+  segRanges: Array<{ start: number; end: number }>;
+  subjectWords: string[];
+} {
   // Expand each token into all its words — Whisper tokens may contain multiple
   // words (e.g. " hello world") and every word must be individually matchable.
   // `startSec` is the OWNING TOKEN's start (a token's internal words have no
@@ -964,8 +979,79 @@ export function extractSegmentAlignments(
     segRanges.push({ start, end: queryWords.length });
   }
 
-  const subjectWords = tokenWords.map(t => t.word);
-  const matchedSubjectOf = alignQueryToSubject(queryWords, subjectWords).matchedSubjectOf;
+  return { tokenWords, queryWords, segRanges, subjectWords: tokenWords.map(t => t.word) };
+}
+
+/**
+ * WS2 G2 completion, Unit 1 — reference-identity memo, same design as
+ * `computeRunContext`'s (`faChunkPlan.ts`): a fresh array reference always
+ * misses and recomputes, so this can only ever skip a provably-redundant
+ * pass, never silently merge two inputs that happen to be content-equal.
+ * Exists specifically so `extractSegmentAlignmentsAsync` (below) can warm
+ * this cache off-thread once, and `detectUtterancePlacementDefects`
+ * (`faRunPlacementGate.ts`) — which calls the plain sync
+ * `alignScenestoTranscript` internally, and stays sync, unlike the ~29 test
+ * sites that would otherwise need to change — hits the cache instead of
+ * re-running the Hirschberg pass.
+ */
+let lastExtractAlignmentsCall:
+  | {
+      segments: VideoSegment[];
+      tokens: TranscriptToken[];
+      audioDuration: number | undefined;
+      languageCode: AlignmentLanguageCode | undefined;
+      result: AlignResult[];
+    }
+  | undefined;
+
+/** Test-only instrumentation, mirrors `faChunkPlan.ts`'s
+ *  `__getRunContextComputeCountForTests`. */
+let extractAlignmentsComputeCount = 0;
+
+export function __resetExtractAlignmentsCacheForTests(): void {
+  lastExtractAlignmentsCall = undefined;
+  extractAlignmentsComputeCount = 0;
+}
+
+export function __getExtractAlignmentsComputeCountForTests(): number {
+  return extractAlignmentsComputeCount;
+}
+
+export function extractSegmentAlignments(
+  segments: VideoSegment[],
+  tokens: TranscriptToken[],
+  audioDuration?: number,
+  languageCode?: AlignmentLanguageCode,
+  // WS2 G2 item 2 — when supplied (by `extractSegmentAlignmentsAsync`, whose
+  // Hirschberg pass already ran, off the main thread), skips the sync
+  // `alignQueryToSubject` call below, uses this instead, and (unconditionally)
+  // writes the result into the memo above so a subsequent plain sync call on
+  // the same reference tuple hits it. Every existing caller omits it and
+  // gets the exact pre-migration behavior, including participating in the
+  // memo as a reader.
+  precomputedMatchedSubjectOf?: Int32Array,
+): AlignResult[] {
+  if (!tokens.length || !segments.length) {
+    return segments.map(() => ({
+      t0: 0, t1: 0, firstTokenIdx: -1, lastTokenIdx: -1,
+      confidence: 0, matched: false, matchedWords: 0, totalWords: 0, longestRun: 0,
+    }));
+  }
+
+  if (
+    precomputedMatchedSubjectOf === undefined &&
+    lastExtractAlignmentsCall !== undefined &&
+    lastExtractAlignmentsCall.segments === segments &&
+    lastExtractAlignmentsCall.tokens === tokens &&
+    lastExtractAlignmentsCall.audioDuration === audioDuration &&
+    lastExtractAlignmentsCall.languageCode === languageCode
+  ) {
+    return lastExtractAlignmentsCall.result;
+  }
+  extractAlignmentsComputeCount++;
+
+  const { tokenWords, queryWords, segRanges, subjectWords } = buildSegmentAlignmentInputs(segments, tokens, languageCode);
+  const matchedSubjectOf = precomputedMatchedSubjectOf ?? alignQueryToSubject(queryWords, subjectWords).matchedSubjectOf;
 
   // Every transcript-word index any segment TRULY matched, system-wide — the
   // rescue below must never touch these (see the function-level doc comment).
@@ -1408,7 +1494,43 @@ export function extractSegmentAlignments(
     });
   }
 
+  lastExtractAlignmentsCall = { segments, tokens, audioDuration, languageCode, result: results };
   return results;
+}
+
+/**
+ * Async, worker-backed twin of `extractSegmentAlignments` (WS2 G2 item 2,
+ * folded here at Unit 1 completion — see the memo/cache comment above for
+ * why this lives in the SAME file as `extractSegmentAlignments` rather than
+ * a separate one: it needs to populate `lastExtractAlignmentsCall` so
+ * `detectUtterancePlacementDefects` (`faRunPlacementGate.ts`), which stays
+ * fully synchronous, can be warmed by one awaited call instead of becoming
+ * async itself). Builds the exact same `queryWords`/`subjectWords` via
+ * `buildSegmentAlignmentInputs`, runs the Hirschberg pass off the main
+ * thread, then delegates every remaining line of `extractSegmentAlignments`
+ * (unchanged) via its `precomputedMatchedSubjectOf` parameter — so the two
+ * entry points cannot diverge in anything but which `alignQueryToSubject`
+ * call ran, and the sync entry point always benefits from whatever this one
+ * already computed on the same reference tuple.
+ *
+ * `signal`, aborted before dispatch or mid-flight, rejects with
+ * `MatchCancelledError` (from `hirschbergMatchClient.ts`) — the caller must
+ * treat that as this run's own cancelled outcome, not as "zero alignments,"
+ * and the memo is never populated on a cancelled call.
+ */
+export async function extractSegmentAlignmentsAsync(
+  segments: VideoSegment[],
+  tokens: TranscriptToken[],
+  audioDuration?: number,
+  languageCode?: AlignmentLanguageCode,
+  signal?: AbortSignal,
+): Promise<AlignResult[]> {
+  if (!tokens.length || !segments.length) {
+    return extractSegmentAlignments(segments, tokens, audioDuration, languageCode);
+  }
+  const { queryWords, subjectWords } = buildSegmentAlignmentInputs(segments, tokens, languageCode);
+  const alignment = await alignQueryToSubjectAsync(queryWords, subjectWords, undefined, signal);
+  return extractSegmentAlignments(segments, tokens, audioDuration, languageCode, alignment.matchedSubjectOf);
 }
 
 // ---------------------------------------------------------------------------
@@ -1533,6 +1655,35 @@ export function filterMalformedTokens(
   };
 }
 
+/**
+ * "Step 2" of `alignScenestoTranscript`/`alignScenestoTranscriptAsync` —
+ * override each unlocked segment's `t1` from its neighbor's `t0` anchor, then
+ * clamp the last segment to audio end. Extracted (WS2 G2 item 2) so the
+ * async twin shares this, not a copy of it — mutates `results` in place and
+ * returns it, matching the pre-extraction inline behavior exactly. */
+export function applyNeighborAnchorOverride(
+  results: SegmentAlignment[],
+  segments: VideoSegment[],
+  tokens: TranscriptToken[],
+): SegmentAlignment[] {
+  // Each unlocked segment's right boundary is set to the next segment's t0 anchor
+  // before the gap-fill runs. This breaks the bestEnd → lastTokenIdx → t1 chain so
+  // that editing scene description text cannot shift a segment's duration via word count.
+  // Locked segments are skipped: their t1 is immovable.
+  const audioEnd = tokens[tokens.length - 1]?.endSec ?? 0;
+  for (let i = 0; i < results.length - 1; i++) {
+    if (segments[i]?.locked) continue;
+    results[i]!.t1 = results[i + 1]!.t0;
+  }
+
+  // Clamp last segment to actual audio end (skip if locked).
+  if (results.length > 0 && !segments[results.length - 1]?.locked) {
+    results[results.length - 1]!.t1 = audioEnd;
+  }
+
+  return results;
+}
+
 export function alignScenestoTranscript(
   segments: VideoSegment[],
   tokens: TranscriptToken[],
@@ -1551,23 +1702,10 @@ export function alignScenestoTranscript(
   }
 
   // Hirschberg semi-global alignment + per-segment extraction (doc §3.1/§3.1.1).
-  const results = extractSegmentAlignments(segments, tokens, audioDuration, languageCode);
-
-  // Step 2 — override t1 from neighbor anchors.
-  // Each unlocked segment's right boundary is set to the next segment's t0 anchor
-  // before the gap-fill runs. This breaks the bestEnd → lastTokenIdx → t1 chain so
-  // that editing scene description text cannot shift a segment's duration via word count.
-  // Locked segments are skipped: their t1 is immovable.
-  const audioEnd = tokens[tokens.length - 1]?.endSec ?? 0;
-  for (let i = 0; i < results.length - 1; i++) {
-    if (segments[i]?.locked) continue;
-    results[i]!.t1 = results[i + 1]!.t0;
-  }
-
-  // Clamp last segment to actual audio end (skip if locked).
-  if (results.length > 0 && !segments[results.length - 1]?.locked) {
-    results[results.length - 1]!.t1 = audioEnd;
-  }
+  const results = applyNeighborAnchorOverride(
+    extractSegmentAlignments(segments, tokens, audioDuration, languageCode),
+    segments, tokens,
+  );
 
   if (_instrOn) {
     const totalMs = performance.now() - _passT0;
@@ -1585,6 +1723,38 @@ export function alignScenestoTranscript(
   // orchestrator (App.tsx) needs matched/confidence/matchedWords/totalWords
   // for the coverage metric (§3.3) and the abort gate (§3.4/R13, §3.5/R12).
   return results;
+}
+
+/**
+ * Async, worker-backed twin of `alignScenestoTranscript` — the function
+ * `useWhisper.ts`'s `alignSegmentsFromCachedTranscript` calls on every sync,
+ * FA on or off. Mirrors `alignScenestoTranscript`'s own body exactly
+ * (empty-input short-circuit, then `extractSegmentAlignmentsAsync` +
+ * `applyNeighborAnchorOverride`) — no instrumentation-log side effect (that
+ * is diagnostic-only, dormant by default, and does not affect the returned
+ * value). Output is byte-identical to the sync path for the same inputs.
+ *
+ * `silences` is accepted, unused, for signature parity with
+ * `alignScenestoTranscript` (which itself does not read it either — see
+ * that function's own signature).
+ */
+export async function alignScenestoTranscriptAsync(
+  segments: VideoSegment[],
+  tokens: TranscriptToken[],
+  silences: SilenceInterval[] = [],
+  audioDuration?: number,
+  languageCode?: AlignmentLanguageCode,
+  signal?: AbortSignal,
+): Promise<SegmentAlignment[]> {
+  if (!tokens.length || !segments.length) {
+    return segments.map(() => ({
+      t0: 0, t1: 0, firstTokenIdx: -1, lastTokenIdx: -1,
+      confidence: 0, matched: false, matchedWords: 0, totalWords: 0, longestRun: 0,
+    }));
+  }
+
+  const results = await extractSegmentAlignmentsAsync(segments, tokens, audioDuration, languageCode, signal);
+  return applyNeighborAnchorOverride(results, segments, tokens);
 }
 
 // ---------------------------------------------------------------------------

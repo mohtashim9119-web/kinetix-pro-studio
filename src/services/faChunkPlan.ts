@@ -41,7 +41,8 @@
 
 import type { TranscriptToken, VideoSegment } from '../types';
 import type { SilenceInterval } from './silenceDetector';
-import { alignQueryToSubject, normalize, normalizeSceneDoc } from './whisperService';
+import { alignQueryToSubject, normalize, normalizeSceneDoc, type TokenAlignment } from './whisperService';
+import { alignQueryToSubjectAsync } from './hirschbergMatchClient';
 import { computeFaAnchors, type FaAnchor, type FaRun } from './faAnchors';
 import { normalizeForForcedAlignment, type FaLanguageCode, type FaCardinalData } from './faTextNormalize';
 
@@ -111,6 +112,61 @@ interface RunContext {
  * a corpus where the two diverge fails loudly instead of silently mis-cutting
  * text.
  */
+/**
+ * WS2 G2 Group 2, item 1 (Wave 2). `computeRunContext` runs a full Hirschberg
+ * alignment pass (`alignQueryToSubject` below — "seconds" at production
+ * scale, this section's own header a few lines up). One sync run reaches this
+ * function from up to 7 call sites (`computeFaChunkPlan`, `computeRuns`,
+ * `computeUnscriptedRuns`, and — through those — `detectSeamFitDefects`,
+ * `computeRunExtents`, `detectRunPlacementDefects`,
+ * `detectUtterancePlacementDefects`) on the SAME (segments, tokens, silences,
+ * audioDuration, languageCode) reference tuple, re-running the same alignment
+ * every time. A size-1 REFERENCE-IDENTITY memo collapses every same-tuple
+ * call in a run to one pass, with the result passed straight through, without
+ * touching any of the ~80 test call sites that exercise these functions' rule
+ * logic in isolation with their own fixtures.
+ *
+ * Reference identity, not deep equality, is the deliberate choice: two
+ * independently-produced `silences` arrays (e.g. `forcedAlignmentRun.ts`'s
+ * own `detectSilences` call vs. `useWhisper.ts`'s `alignFromCache` — a
+ * separate detection pass on the same audio, not the same array) are content-
+ * equal but must NOT be treated as the same input — that would silently
+ * couple two call sites the codebase does not currently guarantee agree (see
+ * G2 end-of-group report, "computeRunContext dedup scope" sighting). A fresh
+ * array reference always misses the cache and recomputes, so this can only
+ * ever skip a provably-redundant pass, never merge two that might differ.
+ */
+let lastRunContextCall:
+  | {
+      segments: readonly VideoSegment[];
+      tokens: readonly TranscriptToken[];
+      silences: readonly SilenceInterval[];
+      audioDuration: number;
+      languageCode: FaLanguageCode | undefined;
+      result: RunContext;
+    }
+  | undefined;
+
+/** Test-only instrumentation — count of actual (cache-missed)
+ *  `computeRunContext` executions, so a call-count test can assert the dedup
+ *  fires without relying on ESM spy tricks. Never read in production code. */
+let runContextComputeCount = 0;
+
+/** Clears the memo and the compute-count instrumentation. Call from a test's
+ *  `beforeEach` — the cache is module-level and otherwise persists across
+ *  tests in the same file (mirrors `__resetFaCapabilityForTests` in
+ *  `faGate.ts`, `__resetDownloadStoreForTests` in `modelDownloadStore.ts`). */
+export function __resetRunContextCacheForTests(): void {
+  lastRunContextCall = undefined;
+  runContextComputeCount = 0;
+}
+
+/** Test-only: how many times `computeRunContext` actually ran (cache misses)
+ *  since the last reset. */
+export function __getRunContextComputeCountForTests(): number {
+  return runContextComputeCount;
+}
+
 function computeRunContext(
   segments: readonly VideoSegment[],
   tokens: readonly TranscriptToken[],
@@ -118,6 +174,38 @@ function computeRunContext(
   audioDuration: number,
   languageCode?: FaLanguageCode,
 ): RunContext {
+  const cached = lastRunContextCall;
+  if (
+    cached !== undefined &&
+    cached.segments === segments &&
+    cached.tokens === tokens &&
+    cached.silences === silences &&
+    cached.audioDuration === audioDuration &&
+    cached.languageCode === languageCode
+  ) {
+    return cached.result;
+  }
+  const result = computeRunContextUncached(segments, tokens, silences, audioDuration, languageCode);
+  lastRunContextCall = { segments, tokens, silences, audioDuration, languageCode, result };
+  return result;
+}
+
+/** The cheap, pure half of `computeRunContext`/`computeRunContextAsync` —
+ *  everything BEFORE the Hirschberg pass. Extracted (WS2 G2 item 2) so the
+ *  async, worker-backed twin can build the exact same `queryWords`/
+ *  `subjectWords` the sync path does without duplicating this construction —
+ *  same function, called from both. */
+function buildRunContextInputs(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  languageCode?: FaLanguageCode,
+): {
+  subjectWords: string[];
+  subjectTokenIdx: number[];
+  queryWords: string[];
+  rawTokens: RawScriptToken[];
+  segQiRanges: Array<{ start: number; end: number }>;
+} {
   // Mirrors whisperService.ts's extractSegmentAlignments `tokenWords`
   // expansion: a Whisper token may canonicalize to multiple (or zero) words.
   // `languageCode` (Phase 3c, qi-bookkeeping-only — see textNormalize.ts's
@@ -152,14 +240,95 @@ function computeRunContext(
     assertQiMapConsistent(qi, queryWords.length, seg.id);
   }
 
-  const subjectWords = tokenWords.map(t => t.word);
-  const subjectTokenIdx = tokenWords.map(t => t.tokenIdx);
-  const alignment = alignQueryToSubject(queryWords, subjectWords);
+  return {
+    subjectWords: tokenWords.map(t => t.word),
+    subjectTokenIdx: tokenWords.map(t => t.tokenIdx),
+    queryWords,
+    rawTokens,
+    segQiRanges,
+  };
+}
 
+/** The cheap, pure half AFTER the Hirschberg pass — turns a `TokenAlignment`
+ *  (from either `alignQueryToSubject` or its worker-backed async twin) into a
+ *  `RunContext`. Extracted alongside `buildRunContextInputs` for the same
+ *  reason: one body, called from both the sync and async entry points, so
+ *  they cannot diverge. */
+function finishRunContext(
+  alignment: TokenAlignment,
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  subjectTokenIdx: number[],
+  segQiRanges: Array<{ start: number; end: number }>,
+  rawTokens: RawScriptToken[],
+  totalQi: number,
+): RunContext {
   const { anchors, runs } = computeFaAnchors(alignment, tokens, silences, audioDuration, subjectTokenIdx);
   const unscripted = detectUnscriptedRuns(alignment.matchedSubjectOf, subjectTokenIdx, segQiRanges, tokens);
 
-  return { runs, anchors, rawTokens, totalQi: queryWords.length, unscripted };
+  return { runs, anchors, rawTokens, totalQi, unscripted };
+}
+
+function computeRunContextUncached(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  languageCode?: FaLanguageCode,
+): RunContext {
+  runContextComputeCount++;
+  const { subjectWords, subjectTokenIdx, queryWords, rawTokens, segQiRanges } =
+    buildRunContextInputs(segments, tokens, languageCode);
+  const alignment = alignQueryToSubject(queryWords, subjectWords);
+  return finishRunContext(alignment, tokens, silences, audioDuration, subjectTokenIdx, segQiRanges, rawTokens, queryWords.length);
+}
+
+/**
+ * Async, worker-backed twin of `computeRunContext` (WS2 G2 item 2 — "migrate
+ * the Hirschberg matcher off the main thread"). Shares the SAME reference-
+ * identity memo (`lastRunContextCall`) as the sync path: a production call
+ * site awaits this ONCE to warm the cache off-thread, and every synchronous
+ * `computeFaChunkPlan`/`computeRuns`/`computeUnscriptedRuns` call downstream
+ * on the same (segments, tokens, silences, audioDuration, languageCode)
+ * tuple then hits the cache and returns instantly — no signature changes
+ * needed anywhere else in the sync pipeline (see the G2 report's "worker
+ * scope" note for why this shape was chosen over threading an async result
+ * through every caller and their ~80 test call sites).
+ *
+ * `signal`, when aborted (before dispatch or mid-flight), rejects with
+ * `MatchCancelledError` and never populates the cache — a caller that
+ * catches this must treat it as this sync run's own `'cancelled'` outcome,
+ * never as "the run context is empty."
+ */
+export async function computeRunContextAsync(
+  segments: readonly VideoSegment[],
+  tokens: readonly TranscriptToken[],
+  silences: readonly SilenceInterval[],
+  audioDuration: number,
+  languageCode?: FaLanguageCode,
+  signal?: AbortSignal,
+): Promise<RunContext> {
+  const cached = lastRunContextCall;
+  if (
+    cached !== undefined &&
+    cached.segments === segments &&
+    cached.tokens === tokens &&
+    cached.silences === silences &&
+    cached.audioDuration === audioDuration &&
+    cached.languageCode === languageCode
+  ) {
+    return cached.result;
+  }
+
+  const { subjectWords, subjectTokenIdx, queryWords, rawTokens, segQiRanges } =
+    buildRunContextInputs(segments, tokens, languageCode);
+  const alignment = await alignQueryToSubjectAsync(queryWords, subjectWords, undefined, signal);
+  const result = finishRunContext(alignment, tokens, silences, audioDuration, subjectTokenIdx, segQiRanges, rawTokens, queryWords.length);
+
+  runContextComputeCount++;
+  lastRunContextCall = { segments, tokens, silences, audioDuration, languageCode, result };
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -391,8 +560,9 @@ export function computeRuns(
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  languageCode?: FaLanguageCode,
 ): FaRun[] {
-  return computeRunContext(segments, tokens, silences, audioDuration).runs;
+  return computeRunContext(segments, tokens, silences, audioDuration, languageCode).runs;
 }
 
 /**
@@ -415,8 +585,9 @@ export function computeUnscriptedRuns(
   tokens: readonly TranscriptToken[],
   silences: readonly SilenceInterval[],
   audioDuration: number,
+  languageCode?: FaLanguageCode,
 ): UnscriptedRun[] {
-  return computeRunContext(segments, tokens, silences, audioDuration).unscripted;
+  return computeRunContext(segments, tokens, silences, audioDuration, languageCode).unscripted;
 }
 
 /**

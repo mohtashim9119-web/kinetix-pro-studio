@@ -374,11 +374,16 @@ export function applyAnchorBasedTiming(
 }
 
 /**
- * Stable identity string for a File, used to detect re-staging the same
- * underlying file across separate selections. A fresh `File` object (and a
- * fresh Asset id) is minted on every stage event even when the user picks
- * the exact same file again, so reference/id equality can't catch this —
- * name+size+lastModified can.
+ * FAST PRE-FILTER ONLY, not the transcript cache key (plan-v3 Wave 2 item 4
+ * / final-shape-mapping row A5) — `services/spine.ts`'s `computeAudioHash`
+ * (a real SHA-256 of the audio's bytes) is now authoritative for "has this
+ * audio actually changed". This volatile `name|size|lastModified` triple
+ * stays for cheap, synchronous re-entrancy guards where the cost of a false
+ * negative is at most one redundant hash — e.g. detecting the exact same
+ * `File` object re-staged twice in the same tick — never for a decision
+ * that skips a re-transcription or gates Apply Sync: a media swap that
+ * happens to carry identical bytes under a new name/mtime must not force
+ * one, and this triple can't tell the difference.
  */
 export function getFileIdentity(file: File): string {
   return `${file.name}|${file.size}|${file.lastModified}`;

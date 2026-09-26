@@ -11,6 +11,19 @@ docs/sync-pipeline-v2-plan.md Part K).
     .work-phase4/replay/<project>/transcript_tokens.json
     .work-phase4/replay/<project>/silences_app.json
     .work-phase4/replay/<project>/audio_16k.wav        (intermediate)
+    .work-phase4/replay/<project>/scenedoc.txt
+    .work-phase4/replay/<project>/script.txt
+
+STEP 0 (2026-09-22) — scenedoc.txt/script.txt added. The harness previously
+read these two straight from the live corpus path under
+~/Downloads/All Projects Test Data/, which is NOT under git and can drift
+without leaving any trail (it did: the V6 corpus's Sync.txt picked up a
+one-word edit — "night" -> "nights" in scene 005_deep_night — sometime after
+the Step M baseline was captured on 2026-09-01, and every replay run after
+that silently diffed against a moving target). They are now copied from
+committed, frozen snapshots (`scripts/fixtures/phase4-baseline-<project>-{scenedoc,script}.txt`)
+exactly like transcript_tokens.json/silences_app.json are — no live
+Downloads read remains anywhere in this path.
 
 Both are regenerated from sources that are COMMITTED to this repo or are the
 corpus audio itself — no whisper-cli run is required, and none should be
@@ -59,6 +72,8 @@ PROJECTS = [
         "key": "v6",
         "smear_csv": REPO / "scripts" / "fixtures" / "V6-Smear-Phase2a.csv",
         "audio": CORPUS / "V6 Natural Long Pause Segs" / "6.m4a",
+        "scenedoc_fixture": REPO / "scripts" / "fixtures" / "phase4-baseline-v6-scenedoc.txt",
+        "script_fixture": REPO / "scripts" / "fixtures" / "phase4-baseline-v6-script.txt",
         "expect_tokens": 3989,
         "expect_silences": 547,
     },
@@ -66,6 +81,8 @@ PROJECTS = [
         "key": "173",
         "smear_csv": REPO / "scripts" / "fixtures" / "173-Smear-Phase2a.csv",
         "audio": CORPUS / "173 Segs Project" / "voiceover.m4a",
+        "scenedoc_fixture": REPO / "scripts" / "fixtures" / "phase4-baseline-173-scenedoc.txt",
+        "script_fixture": REPO / "scripts" / "fixtures" / "phase4-baseline-173-script.txt",
         "expect_tokens": 1836,
         "expect_silences": 239,
     },
@@ -73,6 +90,8 @@ PROJECTS = [
         "key": "spanish",
         "smear_csv": REPO / "scripts" / "fixtures" / "Spanish-Smear-Phase2a.csv",
         "audio": CORPUS / "Spanish Project" / "Spanish VOiceover.m4a",
+        "scenedoc_fixture": REPO / "scripts" / "fixtures" / "phase4-baseline-spanish-scenedoc.txt",
+        "script_fixture": REPO / "scripts" / "fixtures" / "phase4-baseline-spanish-script.txt",
         "expect_tokens": 363,
         "expect_silences": 27,
     },
@@ -99,6 +118,12 @@ def regenerate(p: dict) -> None:
     run([sys.executable, REPO / "scripts" / "extract-full-transcript.py",
          "--csv", p["smear_csv"], "--out", outdir / "transcript_tokens.json"])
 
+    for src_key, dest_name in (("scenedoc_fixture", "scenedoc.txt"), ("script_fixture", "script.txt")):
+        src = p[src_key]
+        if not src.exists():
+            raise SystemExit(f"missing committed source: {src}")
+        (outdir / dest_name).write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+
     if not p["audio"].exists():
         raise SystemExit(
             f"missing corpus audio: {p['audio']}\n"
@@ -117,6 +142,13 @@ def verify(p: dict) -> list:
     """Value-for-value check against the committed Step M outputs. Returns failures."""
     failures = []
     outdir = WORKROOT / p["key"]
+
+    for dest_name, src_key in (("scenedoc.txt", "scenedoc_fixture"), ("script.txt", "script_fixture")):
+        dest = outdir / dest_name
+        if not dest.exists():
+            failures.append(f"{p['key']}: {dest} does not exist")
+        elif dest.read_text(encoding="utf-8") != p[src_key].read_text(encoding="utf-8"):
+            failures.append(f"{p['key']}: {dest} does not match committed {p[src_key]}")
 
     tok_path = outdir / "transcript_tokens.json"
     if not tok_path.exists():

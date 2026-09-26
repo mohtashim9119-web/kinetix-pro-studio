@@ -108,3 +108,69 @@ export async function detectSilences(
 
   return { status: 'ok', silences };
 }
+
+/**
+ * WS2 Wave 2 Group 2 completion, Unit 2 — single-flight `detectSilences`,
+ * keyed by the staged audio's content hash (`spine.ts`'s `computeAudioHash`).
+ *
+ * Today `forcedAlignmentRun.ts`'s `runFaAttempt` and `useWhisper.ts`'s
+ * `alignSegmentsFromCachedTranscript` (via `fetchAndDetectSilences`) each run
+ * an independent `detectSilences` pass on the SAME voiceover within one
+ * Apply Sync — same audio, content-equal output, but never the same array
+ * reference, which is exactly why `computeRunContext`'s reference-identity
+ * memo (`faChunkPlan.ts`, G2 item 1) has to hold TWO entries per sync
+ * instead of one (see the G2 end-of-group report's sighting #2). Keying by
+ * `audioHash` closes that gap without deep-equality comparison anywhere: two
+ * calls for the SAME audio get the SAME `SilenceInterval[]` reference, and a
+ * caller with no computable hash (`audioHash === undefined` — no `File`
+ * available to hash, `spine.ts`'s own fallback case) always detects fresh,
+ * never joining a cache it cannot safely key into.
+ *
+ * Caches the in-flight PROMISE, not just the settled result: a second call
+ * for the same `audioHash` that arrives WHILE the first is still decoding
+ * joins that same promise rather than starting a second decode. Single-slot
+ * (mirrors `computeRunContext`'s own memo) — this is not a general-purpose
+ * LRU, it exists specifically to collapse the ONE known redundant pair per
+ * sync; a call for a DIFFERENT `audioHash` (a real audio swap, or a
+ * completely unrelated later sync) always misses and replaces the slot, so
+ * silence data can never go stale across an audio change.
+ */
+let lastDetectSilencesCall: { audioHash: string; promise: Promise<SilenceDetectResult> } | undefined;
+
+/** Test-only instrumentation — count of actual `detectSilences` dispatches
+ *  (cache misses / unkeyed calls) since the last reset. */
+let detectSilencesDispatchCount = 0;
+
+export function __resetSilenceDetectionCacheForTests(): void {
+  lastDetectSilencesCall = undefined;
+  detectSilencesDispatchCount = 0;
+}
+
+export function __getSilenceDetectionDispatchCountForTests(): number {
+  return detectSilencesDispatchCount;
+}
+
+export function detectSilencesSingleFlight(
+  audioHash: string | undefined,
+  audioBlob: Blob,
+  options?: {
+    thresholdDb?: number;
+    minDurationSec?: number;
+    frameSizeMs?: number;
+  },
+): Promise<SilenceDetectResult> {
+  if (audioHash === undefined) {
+    detectSilencesDispatchCount++;
+    return detectSilences(audioBlob, options);
+  }
+
+  const cached = lastDetectSilencesCall;
+  if (cached !== undefined && cached.audioHash === audioHash) {
+    return cached.promise;
+  }
+
+  detectSilencesDispatchCount++;
+  const promise = detectSilences(audioBlob, options);
+  lastDetectSilencesCall = { audioHash, promise };
+  return promise;
+}

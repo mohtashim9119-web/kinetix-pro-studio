@@ -28,6 +28,33 @@ describe('SyncLoadingOverlay — static content', () => {
   });
 });
 
+// WS2 G2 completion, Unit 3 (operator-approved) — the swappable stage status
+// line. `stageMessage` omitted/null is the common case (most syncs are well
+// under the ETA threshold) and must be byte-identical to the pre-Unit-3
+// "Preparing your project…" copy — additive only, no behavior change below
+// the threshold.
+describe('SyncLoadingOverlay — stageMessage (WS2 G2 completion, Unit 3)', () => {
+  it('falls back to the plain "Preparing your project…" copy when stageMessage is omitted', () => {
+    const html = renderToStaticMarkup(<SyncLoadingOverlay isProcessing={true} onCancel={() => {}} />);
+    expect(html).toContain('Preparing your project');
+  });
+
+  it('falls back to the plain copy when stageMessage is explicitly null', () => {
+    const html = renderToStaticMarkup(
+      <SyncLoadingOverlay isProcessing={true} onCancel={() => {}} stageMessage={null} />,
+    );
+    expect(html).toContain('Preparing your project');
+  });
+
+  it('shows the ETA stage message in place of the plain copy when supplied', () => {
+    const html = renderToStaticMarkup(
+      <SyncLoadingOverlay isProcessing={true} onCancel={() => {}} stageMessage="Matching a long script — about 12s." />,
+    );
+    expect(html).toContain('Matching a long script — about 12s.');
+    expect(html).not.toContain('Preparing your project');
+  });
+});
+
 // plan-v3 item 5 (M3.5/C8) — the overlay's own Cancel control, and the
 // Escape shortcut that mirrors every other blocking dialog in this app.
 // beforeEach/afterEach are scoped INSIDE this describe (not module-level) so

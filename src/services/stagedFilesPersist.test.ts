@@ -365,7 +365,7 @@ describe('WS2-50 — the delete contract is actually invoked', () => {
 describe('WS2-50 — a restored voiceover never starts a transcription', () => {
   /** `handleVoiceoverRestored`'s body. */
   function restoredBody(): string {
-    const marker = 'const handleVoiceoverRestored = useCallback((file: File): boolean => {';
+    const marker = 'const handleVoiceoverRestored = useCallback(async (file: File): Promise<boolean> => {';
     const start = APP_SRC.indexOf(marker);
     expect(start, 'handleVoiceoverRestored not found — this guard has lost its target')
       .toBeGreaterThan(-1);
@@ -386,40 +386,47 @@ describe('WS2-50 — a restored voiceover never starts a transcription', () => {
       'handleVoiceoverRestored no longer calls canAdoptRestoredVoiceover — the gate has been ' +
         'reinlined, where a source scan cannot see a missing clause.',
     ).toContain('canAdoptRestoredVoiceover({');
-    expect(body, 'the gate no longer refuses anything').toContain('if (!adoptable) return false;');
+    // plan-v3 Wave 2 item 4 — the refusal branch grew a body (it also
+    // records the hash for stagedVoiceoverNeedsExplicitTranscribe), so the
+    // guard no longer scans for a single-line `if (!adoptable) return false;`.
+    expect(body, 'the gate no longer refuses anything').toContain('if (!adoptable) {');
+    expect(body, 'the refused branch no longer returns false').toContain('return false;');
   });
 
   describe('canAdoptRestoredVoiceover — the full truth table', () => {
-    const ID = 'vo.m4a|31354992|1784882086000';
+    // plan-v3 Wave 2 item 4 — a content hash now, not `${name}|${size}|${mtime}`;
+    // stands in for a real SHA-256 hex digest since the predicate only ever
+    // compares two of these for equality.
+    const ID = 'a1b2c3d4e5f6';
 
-    it('adopts only when the file matches AND tokens are cached', () => {
+    it('adopts only when the audio hash matches AND tokens are cached', () => {
       expect(canAdoptRestoredVoiceover({
-        fileIdentity: ID, lastTranscribedFileIdentity: ID, cachedTokenCount: 4618,
+        audioHash: ID, lastTranscribedAudioHash: ID, cachedTokenCount: 4618,
       })).toBe(true);
     });
 
-    it('refuses a DIFFERENT file even with tokens cached', () => {
+    it('refuses DIFFERENT audio even with tokens cached', () => {
       // Adopting here would bind one audio file to another file's tokens.
       expect(canAdoptRestoredVoiceover({
-        fileIdentity: ID, lastTranscribedFileIdentity: 'other.m4a|1|1', cachedTokenCount: 4618,
+        audioHash: ID, lastTranscribedAudioHash: 'f6e5d4c3b2a1', cachedTokenCount: 4618,
       })).toBe(false);
     });
 
-    it('refuses the SAME file when no tokens are cached', () => {
+    it('refuses the SAME audio when no tokens are cached', () => {
       // handleVoiceoverStaged would have nothing to skip the transcription
       // with, so whisper-cli launches on app load.
       expect(canAdoptRestoredVoiceover({
-        fileIdentity: ID, lastTranscribedFileIdentity: ID, cachedTokenCount: 0,
+        audioHash: ID, lastTranscribedAudioHash: ID, cachedTokenCount: 0,
       })).toBe(false);
     });
 
     it('refuses when nothing was ever transcribed', () => {
       expect(canAdoptRestoredVoiceover({
-        fileIdentity: ID, lastTranscribedFileIdentity: undefined, cachedTokenCount: 0,
+        audioHash: ID, lastTranscribedAudioHash: undefined, cachedTokenCount: 0,
       })).toBe(false);
-      // And an undefined identity must never be treated as a wildcard match.
+      // And an undefined hash must never be treated as a wildcard match.
       expect(canAdoptRestoredVoiceover({
-        fileIdentity: ID, lastTranscribedFileIdentity: undefined, cachedTokenCount: 4618,
+        audioHash: ID, lastTranscribedAudioHash: undefined, cachedTokenCount: 4618,
       })).toBe(false);
     });
   });
@@ -428,7 +435,7 @@ describe('WS2-50 — a restored voiceover never starts a transcription', () => {
     // Ordering matters: the guard must return BEFORE handleVoiceoverStaged is
     // called, not after it.
     const body = restoredBody();
-    const refuse = body.indexOf('if (!adoptable) return false;');
+    const refuse = body.indexOf('if (!adoptable) {');
     const adopt = body.indexOf('handleVoiceoverStaged(file);');
     expect(refuse, 'no refusal in handleVoiceoverRestored').toBeGreaterThan(-1);
     expect(adopt, 'handleVoiceoverRestored never adopts').toBeGreaterThan(-1);
@@ -455,14 +462,14 @@ describe('WS2-50 — a restored voiceover never starts a transcription', () => {
   });
 
   describe('stagedVoiceoverNeedsExplicitTranscribe', () => {
-    const ID = 'vo.m4a|31354992|1784882086000';
+    const ID = 'a1b2c3d4e5f6';
 
     it('is true for a staged untranscribed voiceover with no pending job', () => {
       expect(stagedVoiceoverNeedsExplicitTranscribe({
         hasStagedVoiceover: true,
         hasPendingVoiceover: false,
-        fileIdentity: ID,
-        lastTranscribedFileIdentity: undefined,
+        audioHash: ID,
+        lastTranscribedAudioHash: undefined,
         cachedTokenCount: 0,
       })).toBe(true);
     });
@@ -471,8 +478,8 @@ describe('WS2-50 — a restored voiceover never starts a transcription', () => {
       expect(stagedVoiceoverNeedsExplicitTranscribe({
         hasStagedVoiceover: true,
         hasPendingVoiceover: false,
-        fileIdentity: ID,
-        lastTranscribedFileIdentity: ID,
+        audioHash: ID,
+        lastTranscribedAudioHash: ID,
         cachedTokenCount: 4618,
       })).toBe(false);
     });
@@ -481,8 +488,19 @@ describe('WS2-50 — a restored voiceover never starts a transcription', () => {
       expect(stagedVoiceoverNeedsExplicitTranscribe({
         hasStagedVoiceover: true,
         hasPendingVoiceover: true,
-        fileIdentity: ID,
-        lastTranscribedFileIdentity: undefined,
+        audioHash: ID,
+        lastTranscribedAudioHash: undefined,
+        cachedTokenCount: 0,
+      })).toBe(false);
+    });
+
+    it('is false while a staged voiceover\'s hash has not resolved yet', () => {
+      // The async computeAudioHash call hasn't settled — never guess.
+      expect(stagedVoiceoverNeedsExplicitTranscribe({
+        hasStagedVoiceover: true,
+        hasPendingVoiceover: false,
+        audioHash: null,
+        lastTranscribedAudioHash: undefined,
         cachedTokenCount: 0,
       })).toBe(false);
     });

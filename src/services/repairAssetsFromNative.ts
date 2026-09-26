@@ -19,7 +19,8 @@
 
 import type { Asset } from '../types';
 import { putAsset, type StoredAsset } from './assetStore';
-import { getAssetStatusNative, readAssetNative } from './nativeAssetStore';
+import { getAssetStatusNative, readAssetNative, writeAssetNative } from './nativeAssetStore';
+import { mediaVaultReadBlob } from './mediaVaultClient';
 import { isTauri } from './tauriFfmpeg';
 import { withAssetLoadTimeout } from './assetLoadTimeout';
 
@@ -81,6 +82,55 @@ export async function repairMissingAssetsFromNative(
       const message = err instanceof Error ? err.message : String(err);
       report.failed.push({ assetId: entry.assetId, message });
       console.error(`[assetRepair] FAILED to rebuild asset ${entry.assetId} from its native copy: ${message}`);
+    }
+  }
+  return report;
+}
+
+/**
+ * Item A — the second repair rung, run after `repairMissingAssetsFromNative`
+ * on whatever it could not fill: an asset missing from BOTH IndexedDB and the
+ * per-project native store whose `contentHash` the media vault still holds.
+ * That shape is real, not theoretical — an undone delete restores the row but
+ * not the bytes the delete destroyed, and G6's ingest doors write only
+ * IndexedDB + the vault. The vault bytes are written into the native store
+ * (so the next open resolves at the first rung) and IndexedDB. A row with no
+ * `contentHash`, or a hash the vault no longer has, is left for the ladder
+ * and the offline path exactly as before.
+ */
+export async function repairMissingAssetsFromVault(
+  projectId: string,
+  assets: readonly Asset[],
+  missingIds: readonly string[],
+): Promise<AssetRepairReport> {
+  const report: AssetRepairReport = { repaired: [], failed: [] };
+  if (!isTauri() || missingIds.length === 0) return report;
+
+  const byId = new Map(assets.map((a) => [a.id, a]));
+  for (const assetId of missingIds) {
+    const asset = byId.get(assetId);
+    if (!asset?.contentHash) continue;
+    let bytes: Uint8Array | null;
+    try {
+      bytes = await withAssetLoadTimeout(mediaVaultReadBlob(asset.contentHash), `mediaVaultReadBlob(${assetId})`);
+    } catch {
+      continue; // the vault no longer has these bytes — not repairable here
+    }
+    if (!bytes) continue;
+    const mimeType = asset.file?.type ?? '';
+    try {
+      await writeAssetNative(projectId, assetId, bytes, asset.name, mimeType);
+      const blob = new Blob([bytes.slice().buffer], { type: mimeType });
+      await putAsset(projectId, assetId, blob, { name: asset.name, mimeType });
+      report.repaired.push({ projectId, id: assetId, blob, name: asset.name, mimeType });
+      console.info(
+        `[assetRepair] rebuilt asset ${assetId} ("${asset.name}", project ${projectId}) from the media vault ` +
+          `(contentHash ${asset.contentHash}) — native store and IndexedDB were both missing it.`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      report.failed.push({ assetId, message });
+      console.error(`[assetRepair] FAILED to rebuild asset ${assetId} from the media vault: ${message}`);
     }
   }
   return report;

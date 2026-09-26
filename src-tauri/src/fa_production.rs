@@ -2,7 +2,7 @@
 // Production, capability-gated forced-alignment entry point
 // (docs/archive/history/work-in-progress.md §11 item 1).
 //
-// Reachable from the real running app — unlike `fa_dev.rs`'s `fa_align_dev`
+// Reachable from the real running app — unlike `fa_shared.rs`'s `fa_align_dev`
 // (devtools-console-only, `import.meta.env.DEV`-gated on the TS side), this
 // command is the one a real Apply Sync run invokes when
 // `faGate.ts::isFaGateOpenForProject(project)` is true. It has no gate of its
@@ -14,10 +14,10 @@
 // project in Settings), and this command's own behavior with no model
 // present is identical to `fa_align`'s: a clean `Err`, never a panic.
 //
-// Body is `fa_dev.rs`'s `resolve_wav_and_align` — the exact same
+// Body is `fa_shared.rs`'s `resolve_wav_and_align` — the exact same
 // resolve-model / durable-WAV / delegate-to-`fa_align` path `fa_align_dev`
 // already runs, live-verified against a real `AppHandle<Wry>` (D25 A1).
-// `input_path` is a file `fa_stage_audio_raw` (`fa_dev.rs`) already staged
+// `input_path` is a file `fa_stage_audio_raw` (`fa_shared.rs`) already staged
 // under this command's OWN temp-directory namespace
 // (`kinetix-fa-production-inputs`, distinct from `fa_align_dev`'s
 // `kinetix-fa-dev-inputs` — the frontend passes that namespace as
@@ -27,7 +27,7 @@
 // ---------------------------------------------------------------------------
 
 use crate::fa::{FaChunkInput, FaError, FaEvent, FaModelCache, FaState};
-use crate::fa_dev::resolve_wav_and_align;
+use crate::fa_shared::resolve_wav_and_align;
 use tauri::ipc::Channel;
 
 #[tauri::command]

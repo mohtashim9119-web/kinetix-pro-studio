@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -587,7 +587,34 @@ pub fn whisper_transcribe_attach(
 // ~2.1-2.2 GiB resident during inference (docs/sync-pipeline-v2-plan.md H.9).
 pub(crate) const MODEL_FILENAME: &str = "ggml-large-v3-turbo.bin";
 
-fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+/// Pure path builder — no filesystem access, no `AppHandle` — every location
+/// `model_path` will accept the whisper model at, in preference order.
+/// Mirrors this codebase's established "pure core, thin `AppHandle` wrapper"
+/// split (`fa.rs`'s `fa_model_candidate_paths`/`fa_model_path`), extracted so
+/// `models.rs::whisper_installed_status` (Step 0 fix, mirroring D22's
+/// `fa_installed_status`) can run the same real presence/verification check
+/// `check_installed_models` reports through the Settings badge, instead of
+/// only the single managed-slot candidate — and so the ordering itself is
+/// directly unit-testable without a live `AppHandle`, the same way
+/// `fa_model_candidate_paths` already is.
+///
+/// This is a candidate LIST — it does not check existence — so a caller that
+/// wants "does the model verify" still has to stat/hash each one itself;
+/// that is deliberate, `status_for` (models.rs) already owns that logic for
+/// both whisper and FA and this must not fork a second copy of it.
+///
+/// `exe_path` is the RAW executable path (not a pre-ascended directory) —
+/// unlike FA's single exe-relative candidate, whisper needs two different
+/// ascension depths from the same exe (a production app-bundle layout and a
+/// dev-checkout layout), so the ascension happens inside this function.
+pub(crate) fn whisper_model_candidate_paths(
+    storage_root_models_dir: Option<&Path>,
+    local_data_dir: Option<&Path>,
+    resource_dir: Option<&Path>,
+    exe_path: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
     // In-app acquisition (bug 4 fix): the model is downloaded on demand into
     // the configured storage root's models/ dir (see model_download.rs /
     // storage_root.rs) rather than bundled — tauri.conf.json's resources map
@@ -605,59 +632,61 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     // storage_root::resolve_storage_root() instead, which diverges from
     // app_local_data_dir() once the user has relocated storage — leaving
     // this function unable to find a model the UI reports as installed.
-    if let Ok(storage_root) = crate::storage_root::resolve_storage_root(app) {
-        let model = crate::storage_root::models_dir(&storage_root).join(MODEL_FILENAME);
-        if model.exists() {
-            return Ok(model);
-        }
+    if let Some(dir) = storage_root_models_dir {
+        candidates.push(dir.join(MODEL_FILENAME));
     }
-    if let Ok(local_data_dir) = app.path().app_local_data_dir() {
-        let model = local_data_dir.join("models").join(MODEL_FILENAME);
-        if model.exists() {
-            return Ok(model);
-        }
+    if let Some(dir) = local_data_dir {
+        candidates.push(dir.join("models").join(MODEL_FILENAME));
     }
 
     // Production: resource_dir bundled by tauri
-    if let Ok(resource_dir) = app.path().resource_dir() {
-        let model = resource_dir.join("models").join(MODEL_FILENAME);
-        if model.exists() {
-            return Ok(model);
-        }
+    if let Some(resource_dir) = resource_dir {
+        candidates.push(resource_dir.join("models").join(MODEL_FILENAME));
         // Windows: Tauri v2 resource_dir may include a _up_ segment — try one level up too
         #[cfg(target_os = "windows")]
         {
             if let Some(parent) = resource_dir.parent() {
-                let model = parent.join("models").join(MODEL_FILENAME);
-                if model.exists() {
-                    return Ok(model);
-                }
+                candidates.push(parent.join("models").join(MODEL_FILENAME));
             }
         }
     }
 
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("cannot get exe path: {e}"))?;
+    if let Some(exe) = exe_path {
+        // Production fallback: <bundle>/Contents/MacOS/../models/ (macOS app bundle)
+        candidates.push(exe.parent().unwrap_or(exe).join("models").join(MODEL_FILENAME));
 
-    // Production fallback: <bundle>/Contents/MacOS/../models/ (macOS app bundle)
-    let prod_model = exe
-        .parent()
-        .unwrap_or(&exe)
-        .join("models")
-        .join(MODEL_FILENAME);
-    if prod_model.exists() {
-        return Ok(prod_model);
+        // Development: target/debug/ → target/ → src-tauri/ → models/
+        candidates.push(
+            exe.parent().unwrap_or(exe) // target/debug/
+                .parent().unwrap_or(exe) // target/
+                .parent().unwrap_or(exe) // src-tauri/
+                .join("models")
+                .join(MODEL_FILENAME),
+        );
     }
 
-    // Development: target/debug/ → target/ → src-tauri/ → models/
-    let dev_model = exe
-        .parent().unwrap_or(&exe)   // target/debug/
-        .parent().unwrap_or(&exe)   // target/
-        .parent().unwrap_or(&exe)   // src-tauri/
-        .join("models")
-        .join(MODEL_FILENAME);
-    if dev_model.exists() {
-        return Ok(dev_model);
+    candidates
+}
+
+/// Thin `AppHandle` wrapper around [`whisper_model_candidate_paths`] —
+/// resolves the four `AppHandle`-derived roots and asks for the first
+/// candidate that actually exists on disk, mirroring `fa.rs::fa_model_path`.
+pub(crate) fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let storage_root_models_dir = crate::storage_root::resolve_storage_root(app)
+        .ok()
+        .map(|root| crate::storage_root::models_dir(&root));
+    let local_data_dir = app.path().app_local_data_dir().ok();
+    let resource_dir = app.path().resource_dir().ok();
+    let exe_path = std::env::current_exe().ok();
+
+    let candidates = whisper_model_candidate_paths(
+        storage_root_models_dir.as_deref(),
+        local_data_dir.as_deref(),
+        resource_dir.as_deref(),
+        exe_path.as_deref(),
+    );
+    if let Some(found) = candidates.into_iter().find(|p| p.exists()) {
+        return Ok(found);
     }
 
     // D21 fix (WS3 Round 29) — the dev-checkout suggestion below used to be
@@ -684,6 +713,64 @@ fn model_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
          mkdir -p src-tauri/models && curl -L -o src-tauri/models/{MODEL_FILENAME} \
          https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{MODEL_FILENAME}"
     ))
+}
+
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod whisper_model_candidate_paths_tests {
+    use super::*;
+
+    #[test]
+    fn prefers_storage_root_then_local_data_then_resource_dir_then_exe_tiers_in_order() {
+        let storage = PathBuf::from("/fake/storage-root/models");
+        let local = PathBuf::from("/fake/local-data");
+        let resource = PathBuf::from("/fake/resource-dir");
+        let exe = PathBuf::from("/fake/target/debug/kinetix");
+        let candidates =
+            whisper_model_candidate_paths(Some(&storage), Some(&local), Some(&resource), Some(&exe));
+
+        let mut expected = vec![
+            PathBuf::from("/fake/storage-root/models/ggml-large-v3-turbo.bin"),
+            PathBuf::from("/fake/local-data/models/ggml-large-v3-turbo.bin"),
+            PathBuf::from("/fake/resource-dir/models/ggml-large-v3-turbo.bin"),
+        ];
+        #[cfg(target_os = "windows")]
+        expected.push(PathBuf::from("/fake/models/ggml-large-v3-turbo.bin")); // resource_dir's _up_ variant
+        expected.push(PathBuf::from("/fake/target/debug/models/ggml-large-v3-turbo.bin")); // prod bundle
+        expected.push(PathBuf::from("/fake/models/ggml-large-v3-turbo.bin")); // dev checkout (exe ascended 3x)
+
+        assert_eq!(candidates, expected);
+    }
+
+    #[test]
+    fn omits_missing_tiers() {
+        let exe = PathBuf::from("/fake/target/debug/kinetix");
+        let candidates = whisper_model_candidate_paths(None, None, None, Some(&exe));
+        assert_eq!(
+            candidates,
+            vec![
+                PathBuf::from("/fake/target/debug/models/ggml-large-v3-turbo.bin"),
+                PathBuf::from("/fake/models/ggml-large-v3-turbo.bin"),
+            ]
+        );
+
+        assert!(whisper_model_candidate_paths(None, None, None, None).is_empty());
+    }
+
+    #[test]
+    fn never_targets_src_tauri_models_directly() {
+        // D21: the dev-checkout candidate ascends from the exe path via path
+        // arithmetic — it must never be a literal "src-tauri/models" string,
+        // which only ever appeared in the error message's suggested shell
+        // command, not in any resolved candidate.
+        let exe = PathBuf::from("/fake/target/debug/kinetix");
+        let candidates = whisper_model_candidate_paths(None, None, None, Some(&exe));
+        for c in &candidates {
+            let s = c.display().to_string();
+            assert!(!s.contains("src-tauri"), "candidate must not literally target src-tauri: {s}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1362,7 +1449,7 @@ fn parse_timestamp(ts: &str) -> f64 {
 /// live `tauri::AppHandle` to unit-test directly (no existing test in this
 /// file calls it), so this exercises the exact mechanism that now runs on
 /// every one of its early-`?` exits — real disk I/O, matching this
-/// codebase's own `session_claim.rs`/`fa_dev.rs` guard-test style.
+/// codebase's own `session_claim.rs`/`fa_shared.rs` guard-test style.
 #[cfg(test)]
 mod tmp_dir_cleanup_guard_tests {
     use super::*;
@@ -1462,7 +1549,7 @@ mod in_flight_tests {
     // long-lived entries can otherwise collectively exceed the cap the same
     // way. `in_flight_test_guard` closes that: every test in this module
     // takes it for its entire body, so only one is ever touching the shared
-    // statics at a time — mirroring `fa_dev.rs`'s `digest_test_guard` for
+    // statics at a time — mirroring `fa_shared.rs`'s `digest_test_guard` for
     // its own sibling process-global-memo race.
     static IN_FLIGHT_TEST_LOCK: Mutex<()> = Mutex::new(());
 

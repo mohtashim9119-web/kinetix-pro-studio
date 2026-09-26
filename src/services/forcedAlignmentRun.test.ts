@@ -50,6 +50,12 @@ vi.mock('@tauri-apps/api/core', () => {
 });
 vi.mock('./silenceDetector', () => ({
   detectSilences: vi.fn(async () => ({ status: 'ok', silences: [] })),
+  // WS2 G2 completion, Unit 2 — runFaAttempt now calls this single-flight
+  // wrapper instead of detectSilences directly (see silenceDetector.ts's own
+  // doc comment). Mocked with the same shape so this suite stays a unit test
+  // of the CALLER; the cache's own behavior is covered by
+  // silenceDetector.test.ts.
+  detectSilencesSingleFlight: vi.fn(async () => ({ status: 'ok', silences: [] })),
 }));
 vi.mock('./faChunkPlan', () => ({
   computeFaChunkPlan: vi.fn(() => [{ startSec: 0, endSec: 1, text: 'hello world' }]),
@@ -58,17 +64,28 @@ vi.mock('./faChunkPlan', () => ({
   // a unit test of the CALLER; `faChunkPlan`'s own behaviour is covered by
   // `faChunkPlan.test.ts` and by the FA replay gate against real corpora.
   computeUnscriptedRuns: vi.fn(() => []),
+  // WS2 G2 item 2 — `runFaAttempt` awaits this (cache-warming, off-thread)
+  // before the two mocks above; this suite is a unit test of the CALLER, not
+  // of the worker migration itself (that's `faChunkPlan.test.ts`'s and
+  // `syncMatchAsync.test.ts`'s job), so it resolves to an unused value and
+  // never rejects — every existing test's expectations about
+  // computeFaChunkPlan/computeUnscriptedRuns stay exactly as they were.
+  computeRunContextAsync: vi.fn(async () => undefined),
 }));
 
 import { invoke } from '@tauri-apps/api/core';
-import { computeFaChunkPlan, computeUnscriptedRuns } from './faChunkPlan';
+import { computeFaChunkPlan, computeRunContextAsync, computeUnscriptedRuns } from './faChunkPlan';
 import { runForcedAlignmentForSync } from './forcedAlignmentRun';
+// G4 Unit 2 — real (unmocked) loader: `runFaAttempt` now forwards its real
+// return for 'en' as computeFaChunkPlan's vocabChars/cardinalData arguments.
+import { loadFaLanguageData } from './faLanguageData';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
 import { TransitionType, AnimationType } from '../types';
 
 const mockInvoke = invoke as unknown as Mock;
 const mockComputeFaChunkPlan = computeFaChunkPlan as unknown as Mock;
 const mockComputeUnscriptedRuns = computeUnscriptedRuns as unknown as Mock;
+const mockComputeRunContextAsync = computeRunContextAsync as unknown as Mock;
 
 // `runForcedAlignmentForSync` now makes TWO invoke calls in sequence:
 // 'fa_stage_audio_raw' (stages the raw audio bytes, returns a path string)
@@ -122,6 +139,8 @@ beforeEach(() => {
   mockComputeFaChunkPlan.mockReturnValue([{ startSec: 0, endSec: 1, text: 'hello world' }]);
   mockComputeUnscriptedRuns.mockReset();
   mockComputeUnscriptedRuns.mockReturnValue([]);
+  mockComputeRunContextAsync.mockReset();
+  mockComputeRunContextAsync.mockResolvedValue(undefined);
 });
 
 describe('runForcedAlignmentForSync — pauses (never falls back), and names why', () => {
@@ -169,6 +188,20 @@ describe('runForcedAlignmentForSync — pauses (never falls back), and names why
     });
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
     expect(result).toMatchObject({ status: 'paused', reason: 'already-running' });
+  });
+
+  it('G6 Step 0a — pauses with reason not-compiled (never the generic inference-failed) when invoke rejects with notImplemented', async () => {
+    // fa.rs's `#[cfg(not(feature = "fa-inference"))]` arm rejects with this
+    // exact typed kind. Before this fix, classifyFaError's catch-all folded
+    // it into 'inference-failed', whose copy ("the alignment engine reported
+    // an error... try again") is dishonest here — no retry fixes a build
+    // that was never compiled with fa-inference.
+    mockInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'fa_stage_audio_raw') return FAKE_STAGED_INPUT_PATH;
+      throw { kind: 'notImplemented', message: 'Forced alignment inference is not implemented yet.' };
+    });
+    const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
+    expect(result).toMatchObject({ status: 'paused', reason: 'not-compiled' });
   });
 
   it('pauses with reason audio-stage-failed when fa_stage_audio_raw itself rejects — distinct from an inference failure', async () => {
@@ -234,6 +267,95 @@ describe('runForcedAlignmentForSync — pauses (never falls back), and names why
       const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
       expect(result.status).toBe('paused');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G4 Unit 4 — local pre-FA coverage check. OLD-BUG-FIRST: before this unit,
+// nothing checked script/transcript overlap before spending FA compute — a
+// completely wrong script/audio pairing ran the full, multi-minute FA
+// attempt with no earlier warning at all. `hopelessSegments`/`hopelessTokens`
+// below share ZERO words by construction (`makeSegments()`/`whisperTokens`
+// above share 100% — every other test in this file relies on that, and this
+// new gate must not disturb it, verified explicitly below too).
+// ---------------------------------------------------------------------------
+describe('runForcedAlignmentForSync — local pre-FA coverage check (G4 Unit 4)', () => {
+  function hopelessSegments(): VideoSegment[] {
+    return [{
+      id: 's1',
+      text: 'zzxq wqvbf jklpx',
+      startTime: 0,
+      duration: 1,
+      transition: TransitionType.NONE,
+      animation: AnimationType.NONE,
+      order: 0,
+    }];
+  }
+  const hopelessTokens: TranscriptToken[] = [
+    { text: 'completely', startSec: 0, endSec: 0.4 },
+    { text: 'unrelated', startSec: 0.4, endSec: 1 },
+  ];
+
+  it('OLD BUG: pauses on hopeless coverage, naming the percentage, without ever calling invoke', async () => {
+    const result = await runForcedAlignmentForSync(makeAsset(), hopelessSegments(), hopelessTokens, 1, 'en');
+    expect(result.status).toBe('paused');
+    expect(result.status === 'paused' && result.reason).toBe('hopeless-local-coverage');
+    expect(result.status === 'paused' && result.detail).toMatch(/0% of 3 script words matched/);
+    expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  it('a perfectly-matching script (every other test\'s fixture) is completely unaffected by this gate', async () => {
+    mockStageThenAlign((args) => {
+      args.onEvent.onmessage({ event: 'Done', data: { words: [] } });
+    });
+    const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
+    // Zero words -> paused for an UNRELATED reason (zero-words), proving FA
+    // actually ran — the coverage gate did not intercept this call at all.
+    expect(result.status).toBe('paused');
+    expect(result.status === 'paused' && result.reason).toBe('zero-words');
+  });
+
+  it('skipLocalCoverageCheck bypasses the hopeless pause and lets FA actually run', async () => {
+    mockStageThenAlign((args) => {
+      args.onEvent.onmessage({ event: 'Done', data: { words: [] } });
+    });
+    const result = await runForcedAlignmentForSync(
+      makeAsset(), hopelessSegments(), hopelessTokens, 1, 'en',
+      undefined, undefined, true,
+    );
+    // Reaches the SAME zero-words pause `makeSegments()` reaches above —
+    // proof FA was actually attempted this time, not intercepted again.
+    expect(result.status).toBe('paused');
+    expect(result.status === 'paused' && result.reason).toBe('zero-words');
+  });
+
+  it('marginal coverage still runs FA and attaches localCoverageWarning to the ok result', async () => {
+    // 1 of 3 script words present in the transcript = 33% — inside the
+    // marginal band (20%-50%), not hopeless.
+    const marginalSegments: VideoSegment[] = [{
+      id: 's1',
+      text: 'hello zzxq wqvbf',
+      startTime: 0,
+      duration: 1,
+      transition: TransitionType.NONE,
+      animation: AnimationType.NONE,
+      order: 0,
+    }];
+    mockStageThenAlign((args) => {
+      args.onEvent.onmessage({
+        event: 'Done',
+        data: {
+          words: [
+            { word: 'hello', startSec: 0, endSec: 0.4, confidence: 0.9, needsReview: false, wordIndex: 0 },
+            { word: 'world', startSec: 0.4, endSec: 1, confidence: 0.05, needsReview: true, wordIndex: 1 },
+          ],
+        },
+      });
+    });
+    const result = await runForcedAlignmentForSync(makeAsset(), marginalSegments, whisperTokens, 1, 'en');
+    expect(result.status).toBe('ok');
+    expect(result.status === 'ok' && result.localCoverageWarning?.band).toBe('marginal');
+    expect(result.status === 'ok' && result.localCoverageWarning?.scriptWordCount).toBe(3);
   });
 });
 
@@ -376,7 +498,13 @@ describe('runForcedAlignmentForSync — success path', () => {
     });
     const segments = makeSegments();
     await runForcedAlignmentForSync(makeAsset(), segments, whisperTokens, 1, 'en');
-    expect(mockComputeFaChunkPlan).toHaveBeenCalledWith(segments, whisperTokens, [], 1);
+    // G4 Unit 2 — computeFaChunkPlan now also receives the real language and
+    // this build's shipped en vocab/cardinal data (attribution stays
+    // default/undefined — the 5th positional argument).
+    const en = loadFaLanguageData('en')!;
+    expect(mockComputeFaChunkPlan).toHaveBeenCalledWith(
+      segments, whisperTokens, [], 1, undefined, 'en', en.vocabChars, en.cardinalData,
+    );
   });
 
   it('derives R.5 excisions from the IDENTICAL four arguments the chunk plan was built from', async () => {
@@ -387,8 +515,19 @@ describe('runForcedAlignmentForSync — success path', () => {
     resolveWithTwoWords();
     const segments = makeSegments();
     await runForcedAlignmentForSync(makeAsset(), segments, whisperTokens, 1, 'en');
-    expect(mockComputeUnscriptedRuns).toHaveBeenCalledWith(segments, whisperTokens, [], 1);
-    expect(mockComputeUnscriptedRuns.mock.calls[0]).toEqual(mockComputeFaChunkPlan.mock.calls[0]);
+    expect(mockComputeUnscriptedRuns).toHaveBeenCalledWith(segments, whisperTokens, [], 1, 'en');
+    // G4 Unit 2 — computeFaChunkPlan legitimately takes MORE arguments than
+    // computeUnscriptedRuns can structurally accept (attribution,
+    // vocabChars, cardinalData — computeUnscriptedRuns's own signature has
+    // no such parameters), so a full-array equality no longer holds. The
+    // REAL provenance invariant this test guards — both derived from the
+    // identical (segments, tokens, silences, audioDuration, languageCode)
+    // tuple that actually determines computeRunContext's run/anchor
+    // partition (vocabChars/cardinalData affect only chunk TEXT, a
+    // post-partition step — faLanguageData.ts's own header) — is the shared
+    // PREFIX, asserted directly here instead.
+    expect(mockComputeFaChunkPlan.mock.calls[0]!.slice(0, 4)).toEqual(mockComputeUnscriptedRuns.mock.calls[0]!.slice(0, 4));
+    expect(mockComputeFaChunkPlan.mock.calls[0]![5]).toBe(mockComputeUnscriptedRuns.mock.calls[0]![4]); // languageCode
   });
 
   it('returns the excised runs on the result so the caller can log them', async () => {
@@ -426,12 +565,15 @@ describe('runForcedAlignmentForSync — success path', () => {
     // so this is not a fallback — but it is a real degradation that was
     // console-only before, and the run it degrades is one the acceptance pass
     // would otherwise record as clean.
-    const { detectSilences } = await import('./silenceDetector');
-    (detectSilences as unknown as Mock).mockResolvedValueOnce({ status: 'error', errorMessage: 'ffmpeg not found' });
+    const { detectSilencesSingleFlight } = await import('./silenceDetector');
+    (detectSilencesSingleFlight as unknown as Mock).mockResolvedValueOnce({ status: 'error', errorMessage: 'ffmpeg not found' });
     resolveWithTwoWords();
     const result = await runForcedAlignmentForSync(makeAsset(), makeSegments(), whisperTokens, 1, 'en');
     expect(result.status).toBe('ok');
     expect(result.status === 'ok' && result.silenceError).toBe('ffmpeg not found');
-    expect(mockComputeFaChunkPlan).toHaveBeenCalledWith(makeSegments(), whisperTokens, [], 1);
+    const en = loadFaLanguageData('en')!;
+    expect(mockComputeFaChunkPlan).toHaveBeenCalledWith(
+      makeSegments(), whisperTokens, [], 1, undefined, 'en', en.vocabChars, en.cardinalData,
+    );
   });
 });

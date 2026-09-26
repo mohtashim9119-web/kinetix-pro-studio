@@ -43,9 +43,12 @@
 // ---------------------------------------------------------------------------
 
 import { invoke, Channel } from '@tauri-apps/api/core';
-import { detectSilences } from './silenceDetector';
+import { detectSilencesSingleFlight } from './silenceDetector';
 import { describeInvokeError } from './invokeError';
-import { computeFaChunkPlan, computeUnscriptedRuns, type UnscriptedRun } from './faChunkPlan';
+import { computeFaChunkPlan, computeRunContextAsync, computeUnscriptedRuns, type UnscriptedRun } from './faChunkPlan';
+import { loadFaLanguageData } from './faLanguageData';
+import { computeLocalPreFaCoverage, type LocalCoverageResult } from './localFaCoverageGate';
+import { MatchCancelledError } from './hirschbergMatchClient';
 import { faWordSpansToTranscriptTokens, type FaEvent, type FaInfeasibleChunk } from './faBoundaryTypes';
 import type { FaLanguageCode } from './faTextNormalize';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
@@ -72,6 +75,14 @@ export const FA_SUPPORTED_LANGUAGES: readonly FaLanguageCode[] = ['en', 'es', 'f
  */
 export type FaFailureKind =
   | 'unsupported-language'
+  /** G4 Unit 4 — the cheap, pre-FA bag-of-words coverage check
+   *  (localFaCoverageGate.ts) found the script and the cached transcript
+   *  sharing 20% or fewer of the script's own words. A precondition pause,
+   *  like 'unsupported-language' above: computed before any FA compute is
+   *  spent, never after. `detail` carries the coverage percentage and script
+   *  word count. `resumable: true`, same as every other pause — the cached
+   *  Whisper transcript this check read is untouched either way. */
+  | 'hopeless-local-coverage'
   | 'empty-chunk-plan'
   | 'zero-words'
   | 'model-not-found'
@@ -81,7 +92,15 @@ export type FaFailureKind =
   | 'inference-failed'
   | 'already-running'
   | 'out-of-memory'
-  | 'offline';
+  | 'offline'
+  /** G6 Step 0a — this binary was compiled without the `fa-inference`
+   *  feature (`FaErrorKind::NotImplemented`, `fa.rs`'s
+   *  `#[cfg(not(feature = "fa-inference"))]` arm). Split out of the
+   *  'inference-failed' catch-all it used to fall into: "the alignment
+   *  engine reported an error" implies a transient/fixable-by-retry failure,
+   *  which this is not — retrying can never succeed without a different
+   *  build. */
+  | 'not-compiled';
 
 /**
  * Why a run is DEGRADED rather than clean — FA tokens (or Whisper tokens
@@ -140,6 +159,12 @@ export type FaRunResult =
        *  FA tokens — but a real degradation of chunk placement that was
        *  previously `console.warn`-only. */
       silenceError?: string;
+      /** G4 Unit 4 — set when the pre-FA coverage check (localFaCoverageGate.ts)
+       *  landed 'marginal' for this run: real FA still ran (only 'hopeless'
+       *  pauses before this point), but the script and the cached transcript
+       *  matched fewer words than a clean pairing normally would. Warn-only —
+       *  App.tsx logs it, nothing here treats it as a failure. */
+      localCoverageWarning?: LocalCoverageResult;
     }
   | {
       status: 'degraded';
@@ -155,6 +180,8 @@ export type FaRunResult =
       /** Present only for `ctc-infeasible-chunk`. */
       nFallbackChunks?: number;
       infeasibleChunks?: FaInfeasibleChunk[];
+      /** G4 Unit 4 — see the 'ok' variant's own doc comment; same meaning. */
+      localCoverageWarning?: LocalCoverageResult;
     }
   | {
       status: 'paused';
@@ -189,11 +216,16 @@ function classifyFaError(err: unknown): FaFailureKind | 'cancelled' {
     case 'modelHashMismatch': return 'model-hash-mismatch';
     case 'alreadyRunning': return 'already-running';
     case 'inferenceFailed': return 'inference-failed';
-    // 'notImplemented' (fa-inference compiled out), 'stateLockPoisoned', and
-    // anything else (a plain Error, a staging-call rejection with no `kind`
-    // at all) fall into the same catch-all a caller cannot usefully split
-    // further without guessing at backend prose — matches the old
-    // 'inference-error' fallback reason's own documented reasoning.
+    // G6 Step 0a — split out of the catch-all below: this is a build-config
+    // fact, not an inference error, and telling the user to "try again"
+    // (the 'inference-failed' copy) would be dishonest — retrying can never
+    // succeed without a different build.
+    case 'notImplemented': return 'not-compiled';
+    // 'stateLockPoisoned' and anything else (a plain Error, a staging-call
+    // rejection with no `kind` at all) fall into the same catch-all a
+    // caller cannot usefully split further without guessing at backend
+    // prose — matches the old 'inference-error' fallback reason's own
+    // documented reasoning.
     default: return 'inference-failed';
   }
 }
@@ -226,6 +258,22 @@ export async function runForcedAlignmentForSync(
   audioDuration: number,
   languageCode: string | undefined,
   signal?: AbortSignal,
+  // WS2 G2 completion, Unit 2 — the staged audio's content hash
+  // (`spine.ts`'s `computeAudioHash`, already computed once by App.tsx's
+  // Apply Sync flow before this call). Threaded through to
+  // `detectSilencesSingleFlight` so this run's `detectSilences` pass can be
+  // shared with `useWhisper.ts`'s `alignSegmentsFromCachedTranscript` later
+  // in the SAME sync — see `silenceDetector.ts`'s own doc comment.
+  // `undefined` (no computable hash) always detects fresh, exactly the
+  // pre-Unit-2 behavior.
+  audioHash?: string,
+  // G4 Unit 4 — set by App.tsx from a one-shot ref when the user answered a
+  // 'hopeless-local-coverage' SyncPausedDialog with "continue anyway", so
+  // the very next attempt does not immediately re-pause on the identical
+  // coverage number. `undefined`/`false` (every existing call site) runs the
+  // check normally — this parameter WIDENS what a caller may opt into, it
+  // narrows nothing.
+  skipLocalCoverageCheck?: boolean,
 ): Promise<FaRunResult> {
   if (signal?.aborted) return { status: 'cancelled' };
 
@@ -238,6 +286,27 @@ export async function runForcedAlignmentForSync(
   }
   const language = languageCode as FaLanguageCode;
 
+  // G4 Unit 4 — local pre-FA coverage check (STATUS.md-adjacent, operator
+  // design; local sibling of Wave 3's planned cloud mid-coverage abort — see
+  // localFaCoverageGate.ts's own header for the full rationale). Cheap
+  // (bag-of-words, no alignment) and synchronous, so it runs before any of
+  // the real compute below. 'hopeless' PAUSES — never auto-aborts — so the
+  // user decides; 'marginal' rides along on the eventual ok/degraded result
+  // as a warn-only finding App.tsx logs, and does not stop this attempt.
+  const coverage = computeLocalPreFaCoverage(anchorTimedSegments, whisperTokens, language);
+  if (coverage.band === 'hopeless' && !skipLocalCoverageCheck) {
+    console.warn(
+      `[fa] local pre-FA coverage is hopeless (${(coverage.coverage * 100).toFixed(0)}% of ${coverage.scriptWordCount} ` +
+      'script words found in the cached transcript) — pausing for the user to choose.',
+    );
+    return {
+      status: 'paused',
+      reason: 'hopeless-local-coverage',
+      detail: `${(coverage.coverage * 100).toFixed(0)}% of ${coverage.scriptWordCount} script words matched`,
+      resumable: true,
+    };
+  }
+
   // Everything below this point is wrapped in one try/catch — matching the
   // pre-existing "never throws" contract — so an unexpected throw from
   // fetch/blob conversion/chunk planning (not just the two invoke() calls,
@@ -245,7 +314,10 @@ export async function runForcedAlignmentForSync(
   // resolves rather than propagates. The two inner try/catches return early
   // on their own catch, so they never fall through into this one.
   try {
-    return await runFaAttempt(voiceoverAsset, anchorTimedSegments, whisperTokens, audioDuration, language, signal);
+    return await runFaAttempt(
+      voiceoverAsset, anchorTimedSegments, whisperTokens, audioDuration, language, signal, audioHash,
+      coverage.band === 'marginal' ? coverage : undefined,
+    );
   } catch (err) {
     // Anything reaching here is NOT one of the two invoke() calls (they have
     // their own inner try/catches and always return, never rethrow) — an
@@ -272,10 +344,16 @@ async function runFaAttempt(
   audioDuration: number,
   language: FaLanguageCode,
   signal: AbortSignal | undefined,
+  audioHash?: string,
+  // G4 Unit 4 — set only when the caller's own coverage check landed
+  // 'marginal' (never 'hopeless' — that pauses before this function is ever
+  // called). Rides along on the eventual ok/degraded result so App.tsx can
+  // log a warn-only finding; nothing in this function branches on it.
+  localCoverageWarning?: LocalCoverageResult,
 ): Promise<FaRunResult> {
   const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
 
-  const silenceResult = await detectSilences(voiceoverBlob);
+  const silenceResult = await detectSilencesSingleFlight(audioHash, voiceoverBlob);
   const silences = silenceResult.status === 'ok' ? silenceResult.silences : [];
   const silenceError = silenceResult.status === 'ok' ? undefined : silenceResult.errorMessage;
   if (silenceError !== undefined) {
@@ -283,7 +361,50 @@ async function runFaAttempt(
   }
   if (signal?.aborted) return { status: 'cancelled' };
 
-  const chunks = computeFaChunkPlan(anchorTimedSegments, whisperTokens, silences, audioDuration);
+  // WS2 G2 item 2 — off-main-thread matcher. Warms `computeRunContext`'s
+  // reference-identity memo (item 1) by running the ONE Hirschberg pass this
+  // scope needs in a worker; `computeFaChunkPlan` and `computeUnscriptedRuns`
+  // below then hit that cache and return synchronously without re-running
+  // it. `signal` reaching here is the M3.6 "AbortSignal so C8's cancel
+  // reaches it" requirement — an abort mid-match terminates the worker
+  // (`hirschbergMatchClient.ts`) and surfaces as this run's own typed
+  // `'cancelled'` outcome, never a paused/failed one.
+  //
+  // G4 Unit 2 — `language` (below, and at the two calls after this one) is
+  // real and already validated here, unlike App.tsx's shared multi-gate
+  // memo where R.10/R.12 still outnumber R.11's real-language call and the
+  // warm-up deliberately keeps favoring `undefined` (see App.tsx's own
+  // comment). This function is the single, self-contained owner of all
+  // three `computeRunContext`-backed calls in this one FA run — there is no
+  // competing majority to favor, so all three consistently use the real,
+  // known language and the memo stays warm end to end.
+  try {
+    await computeRunContextAsync(anchorTimedSegments, whisperTokens, silences, audioDuration, language, signal);
+  } catch (err) {
+    if (err instanceof MatchCancelledError) return { status: 'cancelled' };
+    throw err;
+  }
+  if (signal?.aborted) return { status: 'cancelled' };
+
+  // G4 Unit 2 — `loadFaLanguageData` is the TS-side production data path for
+  // `scripts/fixtures/fa-vocab-<lang>.json`/`fa-cardinal-<lang>.json`
+  // (`faLanguageData.ts`'s own header has the full mechanism). Before this,
+  // `computeFaChunkPlan` here received no `languageCode` at all — not even
+  // the languageCode-alone canonicalization G4 Unit 1 gave `detectSeamFit
+  // Defects` — so this run's own chunk-text word count could disagree with
+  // the text Rust's `fa_onnx.rs` actually normalizes and aligns against
+  // (its OWN embedded copy of the same five files, `include_str!`, already
+  // correct — this wiring is TS-side qi-bookkeeping parity, not an
+  // inference-quality fix). `languageData` is `undefined` only for a
+  // language this build has no shipped pack for (NR-6, no silent
+  // fallback) — `computeFaChunkPlan`'s own `vocabChars`/`cardinalData`
+  // params are optional and fall back to `languageCode`-alone behavior in
+  // that case, exactly as before this unit for any such language.
+  const languageData = loadFaLanguageData(language);
+  const chunks = computeFaChunkPlan(
+    anchorTimedSegments, whisperTokens, silences, audioDuration, undefined, language,
+    languageData?.vocabChars, languageData?.cardinalData,
+  );
   if (chunks.length === 0) {
     console.warn('[fa] chunk plan is empty (every segment has empty text) — pausing for the user to choose.');
     return { status: 'paused', reason: 'empty-chunk-plan', resumable: true };
@@ -315,7 +436,7 @@ async function runFaAttempt(
       },
     });
   } catch (err) {
-    // fa_stage_audio_raw returns Result<String, String> (fa_dev.rs) — a bare
+    // fa_stage_audio_raw returns Result<String, String> (fa_shared.rs) — a bare
     // string, never a typed FaError — so this site is classified by WHICH
     // call failed (staging), not by decoding backend prose. Distinct from
     // 'inference-failed' in the mapping table because the failure is
@@ -387,7 +508,7 @@ async function runFaAttempt(
     return { status: 'paused', reason: 'zero-words', resumable: true };
   }
   const tokens = faWordSpansToTranscriptTokens(words);
-  const unscriptedRuns = computeUnscriptedRuns(anchorTimedSegments, whisperTokens, silences, audioDuration);
+  const unscriptedRuns = computeUnscriptedRuns(anchorTimedSegments, whisperTokens, silences, audioDuration, language);
   if (nFallbackChunks > 0 || infeasibleChunks.length > 0) {
     return {
       status: 'degraded',
@@ -397,6 +518,7 @@ async function runFaAttempt(
       silenceError,
       nFallbackChunks: nFallbackChunks > 0 ? nFallbackChunks : infeasibleChunks.length,
       infeasibleChunks,
+      localCoverageWarning,
     };
   }
   return {
@@ -407,5 +529,6 @@ async function runFaAttempt(
     // re-derivation against different inputs.
     unscriptedRuns,
     silenceError,
+    localCoverageWarning,
   };
 }

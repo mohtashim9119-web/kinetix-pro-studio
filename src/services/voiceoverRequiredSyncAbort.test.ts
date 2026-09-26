@@ -105,7 +105,10 @@ describe('NO_VOICEOVER_MESSAGE — App.tsx wiring (source guards)', () => {
   it('does not fall through to character-based timing without a voiceover', () => {
     const body = applySyncBody();
     const noVoiceoverGuard = body.indexOf('if (!voiceoverAsset)');
-    const charFallback = body.indexOf('placed using character-based timing (no voiceover transcript)');
+    // The character-timing entry's text lives in syncLog.ts's
+    // buildCharacterTimingEntry (classification hardening); its CALL SITE is
+    // what marks the character-timing branch inside Apply Sync.
+    const charFallback = body.indexOf('buildCharacterTimingEntry(');
     expect(noVoiceoverGuard).toBeGreaterThan(-1);
     expect(charFallback).toBeGreaterThan(noVoiceoverGuard);
   });

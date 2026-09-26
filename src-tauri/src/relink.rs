@@ -180,18 +180,6 @@ fn seed() -> u128 {
 mod tests {
     use super::*;
 
-    fn tmpdir(tag: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!(
-            "kinetix-relink-test-{tag}-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        ));
-        fs::create_dir_all(&d).unwrap();
-        d
-    }
-
     #[test]
     fn infer_media_type_recognizes_common_media_extensions() {
         assert_eq!(infer_media_type(Path::new("a/b/clip.MP4")), Some("video"));

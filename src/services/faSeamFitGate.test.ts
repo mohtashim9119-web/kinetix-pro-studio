@@ -327,6 +327,27 @@ describe('R.11 — detectSeamFitDefects, real corpus fixtures', () => {
     expect(findings.find(f => f.segmentIndex === 0)).toBeUndefined();
     expect(findings.find(f => f.segmentTag === '001_scylla_intro')).toBeUndefined();
   });
+
+  // G4 Unit 1 — real-corpus companion to `faSeamFitGate.languageCode.test.ts`'s
+  // synthetic, argument-level proof: the same real spanish fixture the test
+  // above uses, run through the actual production `computeFaChunkPlan` with
+  // `languageCode: 'es'` forwarded, must not throw and must not silently
+  // ignore the argument. OLD BUG: `detectSeamFitDefects` never forwarded
+  // `languageCode` at all, so this corpus's chunk plan always canonicalized
+  // as English regardless of what was passed here — undetectable from a
+  // returned `SeamFitFinding[]` alone (which is exactly why the dedicated
+  // spy-based suite exists), but this still proves the real production path
+  // accepts and runs with the real language on real data, not just synthetic
+  // fixtures.
+  it('spanish: detectSeamFitDefects runs to completion with languageCode="es" on the real corpus (no throw, same structural exclusion)', () => {
+    const { segments, tokens, silences } = loadCorpus('spanish');
+    const spanishFaWords: TranscriptToken[] = [
+      { text: 'scylla', startSec: 0.32, endSec: 0.68, confidence: 0.014653 },
+      { text: 'scylla', startSec: 1.48, endSec: 1.76, confidence: 0.01202 },
+    ];
+    const findings = detectSeamFitDefects(segments, segments, tokens, spanishFaWords, silences, AUDIO_DURATION.spanish, 'es');
+    expect(findings.find(f => f.segmentIndex === 0)).toBeUndefined();
+  });
 });
 
 describe('R.11 — threshold strictness, both sides (synthetic, isolated from real-corpus noise)', () => {

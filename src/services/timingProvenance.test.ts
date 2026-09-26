@@ -93,7 +93,12 @@ describe('legacy v4 load — engine-unknown, never a guess', () => {
       version: number;
       project: Project;
     };
-    expect(raw.version).toBe(5);
+    // >= 5, not ===5: a later additive bump (G6 Step 5's Asset.contentHash,
+    // 5 -> 6) is a real, deliberate schema advance, not a regression of this
+    // test's own concern (the v4 timing-provenance migration, verified
+    // above) — same idiom projectStoreSegmentId.test.ts's own version
+    // assertion already uses for exactly this reason.
+    expect(raw.version).toBeGreaterThanOrEqual(5);
     expect(raw.project.timingProvenance?.transcription?.engine).toBe('unknown');
   });
 

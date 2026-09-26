@@ -1,6 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Project } from '../types';
-import { saveProject, upsertProjectMeta, type SaveOutcome } from '../services/projectStore';
+import { saveProject, upsertProjectMeta, type SaveOutcome, type StoreFailureReason } from '../services/projectStore';
+
+// ---------------------------------------------------------------------------
+// G2 close-out FIX 2 — bounded auto-retry for a save failure.
+//
+// Only reasons that are plausibly TRANSIENT are worth retrying — a native IPC
+// hiccup (`storage-unavailable`) or a read-back that briefly didn't match
+// what was just written (`verify-failed`). A data-loss GUARD refusal
+// (`empty-over-nonempty`, `asset-reference-loss`, `blocked-by-load-failure`)
+// or a real `quota-exceeded` ceiling would fail identically on retry — retrying
+// those would only mask the loud state this fix requires, and
+// `asset-reference-loss` specifically must never look retriable: retrying a
+// save a data-loss guard correctly refused, byte-for-byte, is the guard doing
+// its job, not a transient blip.
+const RETRYABLE_SAVE_REASONS: ReadonlySet<StoreFailureReason> = new Set(['storage-unavailable', 'verify-failed']);
+const MAX_SAVE_RETRIES = 3;
+const SAVE_RETRY_DELAY_MS = 2000;
 
 export interface PersistHandle {
   /**
@@ -131,20 +147,36 @@ export function usePersistProject(project: Project, enabled = true): PersistHand
   // lastSavedAt/saveError.
   const latestAttemptRef = useRef(0);
 
+  // G2 close-out FIX 2 — retry budget for the CURRENT run of failures on one
+  // logical save target. Reset to 0 whenever a fresh (non-retry) call comes
+  // in — a new edit deserves its own full budget, not whatever was left over
+  // from an earlier, unrelated failure.
+  const saveRetryCountRef = useRef(0);
+
   // Returns a promise that settles once the PROJECT bytes are written and
   // verified. The trailing `persistMeta` pass is intentionally left off that
   // promise (see `PersistHandle.saveNow`'s note) — it is fire-and-forget here
   // exactly as it was before, so the debounced autosave's behaviour is
   // unchanged and only the teardown path gains something to await.
-  const runSave = useCallback(async (proj: Project): Promise<void> => {
+  const runSave = useCallback(async (proj: Project, isRetry = false): Promise<void> => {
+    if (!isRetry) saveRetryCountRef.current = 0;
     const attempt = ++latestAttemptRef.current;
     const ts = Date.now();
     const outcome = await saveProject(proj);
     if (latestAttemptRef.current !== attempt) return; // superseded by a newer save
     if (!outcome.ok) {
+      // LOUD, never silent — set immediately and stays set through every
+      // retry below; a retry that succeeds clears it as usual, and
+      // exhausting the budget leaves it set for the caller to see.
       setSaveError(outcome);
+      if (RETRYABLE_SAVE_REASONS.has(outcome.reason) && saveRetryCountRef.current < MAX_SAVE_RETRIES) {
+        saveRetryCountRef.current += 1;
+        const delay = SAVE_RETRY_DELAY_MS * saveRetryCountRef.current;
+        setTimeout(() => { void runSave(proj, true); }, delay);
+      }
       return;
     }
+    saveRetryCountRef.current = 0;
     setSaveError(null);
     void persistMeta(proj, ts).then(() => {
       if (latestAttemptRef.current === attempt) setLastSavedAt(ts);

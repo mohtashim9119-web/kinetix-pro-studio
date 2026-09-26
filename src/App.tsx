@@ -95,6 +95,7 @@ import {
 } from './services/historyPersist';
 import { flushWithBudget } from './services/teardownFlush';
 import { findAssetByContext, autoMatchSegments, applyAnchorBasedTiming, getFileIdentity, isExactFilenameMatch, contiguousWordMatch, cleanTagName, headExtendFirstSegment, type LockFinding } from './services/syncEngine';
+import { computeAudioHash, computeScriptHash, spineEquals } from './services/spine';
 import { syncMark } from './services/syncInstrument';
 import { detectResidualOrderingViolations, logResidualOrderingViolations } from './services/residualOrderingDetector';
 import {
@@ -103,22 +104,23 @@ import {
   filterMalformedTokens,
   extractSegmentAlignments,
   alignScenestoTranscript,
+  alignScenestoTranscriptAsync,
   toAlignmentLanguageCode,
   type SegmentAlignment,
 } from './services/whisperService';
-import { faWordSpansToTranscriptTokens, type FaEvent as FaDevEvent, type FaChunkInput as FaDevChunkInput, type FaWordSpan as FaDevWordSpan } from './services/faBoundaryTypes';
-import { computeFaChunkPlan } from './services/faChunkPlan';
+import { computeFaChunkPlan, computeRunContextAsync } from './services/faChunkPlan';
 import type { UnscriptedRun } from './services/faChunkPlan';
-import type { FaLanguageCode } from './services/faTextNormalize';
+import { MatchCancelledError } from './services/hirschbergMatchClient';
+import { matchEtaStageMessage } from './services/matchEta';
 import {
-  isFaGateOpenForProject, isFaEnabledForProject, isFaCapable, resolveFaLanguage,
+  isFaEnabledForProject, isFaCapable, resolveFaLanguage,
   shouldPersistFaChoice, FA_PROJECT_DEFAULT_ON,
 } from './services/faGate';
 import {
   AUTO_DETECT, readNewProjectDefaults, NEW_PROJECT_TEXT_OVERLAY_DEFAULT_ON,
 } from './services/appDefaults';
-import { runForcedAlignmentForSync, type FaFailureKind, type FaRunResult } from './services/forcedAlignmentRun';
-import { runFaPreflight } from './services/faPreflight';
+import { runForcedAlignmentForSync, FA_SUPPORTED_LANGUAGES, type FaFailureKind, type FaRunResult } from './services/forcedAlignmentRun';
+import { computeSyncEngineKey, resolveSyncEngine, probeFaReadiness } from './services/faPreflight';
 import { saveFaPause, readFaPause, clearFaPause, type FaPauseRecord } from './services/faSyncPauseStore';
 import {
   stampFaProvenance,
@@ -127,9 +129,10 @@ import {
 } from './services/timingProvenance';
 import type { TimingProvenance } from './types';
 import {
-  detectUnspokenScriptSegmentsFromWhisperFull,
+  detectUnspokenScriptSegmentsFromWhisperFullAsync,
   applyUnspokenScriptGate,
   R10_SKIP_REASON,
+  type UnspokenScriptFinding,
 } from './services/faUnspokenGate';
 import {
   detectAndRetimeFaVictims,
@@ -154,6 +157,7 @@ import { detectAnchorTrustDefects, applyAnchorTrustCorrections } from './service
 import {
   insertSkippedScenePlaceholders,
   stampEstimatedWordTimings,
+  SKIPPED_SCENE_COPY,
   type SkippedScenePlaceholder,
 } from './services/skippedScenePlaceholders';
 import { snapCoveredBoundaries } from './services/snapBoundaries';
@@ -165,8 +169,10 @@ import type { SilenceInterval } from './services/silenceDetector';
 import {
   validateBoundaryQuality,
   validateWordCoverage,
+  validateSceneDensity,
   type BoundaryQualityMeasurement,
 } from './services/syncContracts';
+import { buildWpmCheckLogEntry } from './services/syncWpmGate';
 import {
   buildTranscriptInspectorRun,
   compareTranscriptInspectorRuns,
@@ -188,6 +194,7 @@ import {
   buildSilenceErrorEntry,
   buildMalformedTokenEntry,
   buildGroupedViolationEntry,
+  buildCharacterTimingEntry,
   buildUnsupportedLanguageEntry,
   buildLockFindingLogEntries,
   buildLockRefusedLogEntry,
@@ -197,7 +204,13 @@ import {
   buildFaPausedEntry,
   buildFaPreflightEntry,
   buildFaGateClosedEntry,
+  buildFaNotCompiledEntry,
   buildFaUserChoseWhisperEntry,
+  buildMediaImportEntry,
+  buildMediaNameCollisionEntry,
+  buildMediaMatchEntry,
+  buildMediaReconnectEntry,
+  buildBundleImportFailedEntry,
   buildUnscriptedRunLogEntries,
   buildUnspokenScriptLogEntries,
   buildSeamFitLogEntries,
@@ -206,6 +219,7 @@ import {
   buildAnchorTrustLogEntries,
   buildRunEdgeViolationLogEntries,
   buildCtcInfeasibleLogEntry,
+  buildLocalCoverageWarningEntry,
   buildFaVictimRetimedLogEntry,
 } from './services/syncLog';
 import { canLockSegment, findPartitionViolations, repairTimelineGaps, MAX_REPAIRABLE_GAP_SEC, PARTITION_EPSILON_SEC } from './services/timelinePartition';
@@ -216,6 +230,7 @@ import { createHeading, boundaryTimeForGap, clampHeadingsToDuration, centerHeadi
 import { stripRtfIfNeeded } from './services/textUtils';
 import { assignSegmentIds, type SegmentIdSource } from './services/segmentId';
 import { mergeExtractedZipAssets } from './services/zipAssetMerge';
+import { ingestZip } from './services/zipIngest';
 import {
   putAsset,
   getAsset,
@@ -243,10 +258,11 @@ import {
   reportAssetResolutionFailure,
   clearLoadFailure,
 } from './services/projectStore';
-import { repairMissingAssetsFromNative } from './services/repairAssetsFromNative';
+import { repairMissingAssetsFromNative, repairMissingAssetsFromVault } from './services/repairAssetsFromNative';
 import { applySilentProvenanceResolution } from './services/assetResolutionLadder';
 import { withAssetLoadTimeout } from './services/assetLoadTimeout';
 import { migrateIndexedDbAssetsToNative } from './services/migrateAssetsToNative';
+import { backfillAssetContentHashes } from './services/backfillAssetContentHashes';
 import { getProjectAssetRecoveryStatus, relinkAsset, attachNewAssetToSegment, attachNewAssetToSegmentFromPath } from './services/assetRecovery';
 import { findExpectedFileNameForSegmentText } from './services/sceneTagLookup';
 import { DegradedProjectRecoveryScreen, type FolderRelinkView, type RelinkTarget } from './components/recovery/DegradedProjectRecoveryScreen';
@@ -266,6 +282,12 @@ import { relinkPickFolder, relinkListFolder, inferMimeType, type RelinkCandidate
 import { writeAssetFromPath } from './services/nativeAssetStore';
 import type { RecoveryAsset, RecoverySegment } from './components/recovery/degradedLoad';
 import { writeAssetBlobNative, deleteAssetNative, deleteProjectAssetsNative } from './services/nativeAssetStore';
+import { mediaVaultUnreference, mediaVaultRename } from './services/mediaVaultClient';
+import { applyAssetRename } from './services/mediaRename';
+import { matchMediaToScenes } from './services/matchMediaToScenes';
+import { assignAssetToSegment } from './services/assetDragChannel';
+import { reconnectOfflineAssets } from './services/reconnectOfflineAssets';
+import type { OfflineReconnect } from './services/mediaIngest';
 import { requestStoragePersistence } from './services/storagePersistence';
 import { getAppSessionToken } from './services/historyPersist';
 import { usePersistProject, buildThumbnailBase64 } from './hooks/usePersistProject';
@@ -340,7 +362,7 @@ import { formatBytes } from './services/webcodecsExport/diskFull';
 import { readUiState, patchUiState } from './services/uiStateStore';
 import { compactRanges } from './services/rangeCompact';
 import { formatTime } from './services/timeFormat';
-import { invoke, Channel } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 
 interface RawSegment {
   text: string;
@@ -428,6 +450,15 @@ const nearestExportFps = (fps: number): ExportFps =>
     Math.abs(candidate - fps) < Math.abs(closest - fps) ? candidate : closest
   );
 
+/**
+ * Option C — an ephemeral voiceover staged before Apply Sync, tracked by
+ * `pendingVoiceoverRef`/`pendingVoiceover`. `audioHash` (plan-v3 Wave 2 item
+ * 4) is the SHA-256 of `file`'s bytes (`services/spine.ts`'s
+ * `computeAudioHash`), filled in asynchronously by `handleVoiceoverStaged`
+ * after the object is first set — absent until that resolves.
+ */
+type PendingVoiceoverSync = { file: File; asset: Asset; audioHash?: string };
+
 // ---------------------------------------------------------------------------
 // Module-level helpers for the atomic Apply Sync flow
 // ---------------------------------------------------------------------------
@@ -471,48 +502,12 @@ async function persistPendingVoiceoverAsset(projectId: string, pending: Asset): 
   return pending;
 }
 
-/**
- * Extracts all media files from a zip archive, persists them to IndexedDB,
- * and returns the resulting Asset array. Does NOT call setProject.
- */
-async function extractZipToAssets(projectId: string, zipFile: File): Promise<Asset[]> {
-  const newAssets: Asset[] = [];
-  try {
-    let JSZipModule: typeof import('jszip');
-    try {
-      ({ default: JSZipModule } = await import('jszip'));
-    } catch (loadErr) {
-      console.error('[extractZipToAssets] Failed to load jszip:', loadErr);
-      return [];
-    }
-    const zip = new JSZipModule();
-    const content = await zip.loadAsync(zipFile);
-    const filePromises = Object.keys(content.files).map(async (filename) => {
-      const fileData = content.files[filename];
-      if (!fileData || fileData.dir) return;
-      const blob = await fileData.async('blob');
-      let type: Asset['type'] = 'image';
-      if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
-      else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
-      const id = crypto.randomUUID();
-      const name = filename.split('/').pop() || filename;
-      try {
-        await putAsset(projectId, id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
-      } catch (err) {
-        console.error('[extractZipToAssets] Skipping file:', name, err);
-        return;
-      }
-      const nativeFps = type === 'video' ? await resolveVideoNativeFps(blob) : undefined;
-      const url = URL.createObjectURL(blob);
-      const duration = type === 'video' ? await getMediaDuration(url, 'video') : undefined;
-      newAssets.push({ id, name, url, type, file: new File([blob], filename), nativeFps, duration, addedAt: Date.now() });
-    });
-    await Promise.all(filePromises);
-  } catch (err) {
-    console.error('[extractZipToAssets] Error:', err);
-  }
-  return newAssets;
-}
+// G6 Step 3 — zip ingest lives in services/zipIngest.ts now (`ingestZip`,
+// `ZipTooLargeError`), extracted rather than left here so it can be unit
+// tested directly, same reason `zipAssetMerge.ts` was split out. See that
+// module's own doc comment for the three old bugs it replaces
+// (`extractZipToAssets` and `processZipFile` used to live at this spot and
+// in the manual-upload handler below, respectively).
 
 const TOAST_DURATION = 5000; // ms — auto-dismiss for lock-block toast
 const EXPORT_SUCCESS_TOAST_DURATION_MS = 15000; // ms — auto-dismiss for the export-complete toast
@@ -1444,7 +1439,10 @@ export function buildSkipLogEntries(
     // unreadable as a bug: both numbers looked like the same kind of thing.
     const sTag = `S${record.segmentIndex + 1}`;
     const clipTag = absorbed ? ` / Clip ${absorbed.hostDisplayIndex + 1}` : '';
-    let message = `${sTag}${clipTag} skipped — ${record.reason}.`;
+    // G2 close-out FIX 3 — operator-ordered copy rename, one swappable block
+    // (SKIPPED_SCENE_COPY, skippedScenePlaceholders.ts). Copy only: `record`
+    // and the placeholder/absorbed trailers below are unchanged.
+    let message = `${sTag}${clipTag}: ${SKIPPED_SCENE_COPY.label} — ${record.reason}.`;
     if (placeholder) {
       const slotDuration = placeholder.slotEndSec - placeholder.slotStartSec;
       message += ` Kept as an Estimated placeholder ${placeholder.slotStartSec.toFixed(3)}s → `
@@ -1525,7 +1523,7 @@ export function buildSyncInfoMessage(
   skippedSegments: number,
 ): string {
   const base = `Sync completed: ${matchedSegments} of ${totalSegments} segments matched.`;
-  return skippedSegments > 0 ? `${base} ${skippedSegments} skipped.` : base;
+  return skippedSegments > 0 ? `${base} ${SKIPPED_SCENE_COPY.summary(skippedSegments)}` : base;
 }
 
 /**
@@ -1640,7 +1638,7 @@ export function buildFreezeFrameEntries(
       `Segment #${i + 1}: source clip (${availableClipLen.toFixed(1)}s) is shorter than the `
       + `segment duration (${s.duration.toFixed(1)}s); the final frame will hold for the `
       + `remaining ${heldFor.toFixed(1)}s.`,
-      { segmentIndex: i },
+      { segmentIndex: i, finding: { kind: 'freeze-frame' } },
       timestamp,
     ));
   });
@@ -1869,6 +1867,12 @@ export default function App() {
     catch { return 0; }
   });
   const [isProcessing, setIsProcessing] = useState(false);
+  // WS2 G2 completion, Unit 3 (operator-approved) — a swappable status line
+  // shown by SyncLoadingOverlay only when the matcher's measured-ETA
+  // estimate (matchEta.ts) clears MATCH_ETA_THRESHOLD_MS. null the rest of
+  // the time (the common case), so the overlay falls back to its plain
+  // "Preparing your project…" copy — purely additive, no behavior change.
+  const [syncStageMessage, setSyncStageMessage] = useState<string | null>(null);
   // plan-v3 item 4 — the currently-shown SyncPausedDialog's record, or null
   // when no run-level FA failure is awaiting an answer. Driven by
   // `faSyncPauseStore.ts` (restart-safe, app/session-scoped) so a pause the
@@ -1883,6 +1887,14 @@ export default function App() {
   // 'user-chose-whisper' doc comment). Carries the ORIGINAL pause reason
   // (not just a boolean) so the log entry can say what was actually skipped.
   const faForceWhisperOnceRef = useRef<FaFailureKind | FaVictimPauseReason | null>(null);
+  // G4 Unit 4 — consumed ONCE by the very next handleApplySyncFromFiles call,
+  // same one-shot pattern as `faForceWhisperOnceRef` immediately above. Set
+  // by SyncPausedDialog's "Retry" action when the pause being answered was
+  // 'hopeless-local-coverage' — the user explicitly chose to continue anyway,
+  // so the identical coverage number must not immediately re-pause the very
+  // next attempt (see `runForcedAlignmentForSync`'s own
+  // `skipLocalCoverageCheck` doc comment).
+  const faSkipCoverageCheckOnceRef = useRef<boolean>(false);
   // plan-v3 item 5 — whole-run cancel. A fresh controller is created at the
   // start of every handleApplySyncFromFiles call and overwrites this ref
   // unconditionally, so the Cancel button always aborts the CURRENTLY
@@ -2246,20 +2258,43 @@ export default function App() {
   // flush. `DropZonePanel` writes it synchronously from `updateStaged`.
   const stagedFilesRef = useRef<StagedFiles>(EMPTY_STAGED);
   const [stagedVoiceoverFile, setStagedVoiceoverFile] = useState<File | null>(null);
+  // plan-v3 Wave 2 item 4 — mirrored the same way stagedVoiceoverFile is,
+  // purely for the "honest Apply Sync" spine comparison below (script/scene
+  // editing itself still flows through the panel's own staged state; these
+  // are a read-only copy).
+  const [stagedScriptFile, setStagedScriptFile] = useState<File | null>(null);
+  const [stagedSceneFile, setStagedSceneFile] = useState<File | null>(null);
   const handleStagedFilesChange = useCallback((next: StagedFiles): void => {
     stagedFilesRef.current = next;
     setStagedVoiceoverFile(next.voiceoverFile?.file ?? null);
+    setStagedScriptFile(next.scriptFile?.file ?? null);
+    setStagedSceneFile(next.sceneFile?.file ?? null);
   }, []);
+  // plan-v3 Wave 2 item 4 — handleVoiceoverRestored's computeAudioHash
+  // result for a restored-but-refused voiceover (WS2-50: kept in the slot,
+  // not auto-adopted). stagedVoiceoverNeedsExplicitTranscribe needs a hash
+  // at RENDER time and can't compute one itself (hashing is async), so this
+  // caches the one async site that already knows it. Only meaningful while
+  // `hasStagedVoiceover && !hasPendingVoiceover` — both guards in
+  // stagedVoiceoverNeedsExplicitTranscribe — so a stale value from a
+  // previous mount/project is harmless: it's never read once either guard
+  // flips (a live stage always sets pendingVoiceover, short-circuiting it).
+  const [restoredUnadoptedAudioHash, setRestoredUnadoptedAudioHash] = useState<string | null>(null);
   // Option C: ephemeral voiceover staged before Apply Sync is clicked — minted by
   // handleVoiceoverStaged, consumed (id/url reused) by handleApplySyncFromFiles.
   // Not part of project state; never persisted until commit.
-  const [pendingVoiceover, setPendingVoiceover] = useState<{ file: File; asset: Asset } | null>(null);
+  //
+  // `audioHash` (plan-v3 Wave 2 item 4) is undefined until
+  // handleVoiceoverStaged's async hash computation resolves — the object is
+  // set once synchronously (asset minted, no hash yet) and again once the
+  // hash is known, so callers must not assume it's always present.
+  const [pendingVoiceover, setPendingVoiceover] = useState<PendingVoiceoverSync | null>(null);
   // Mirrors pendingVoiceover synchronously — written at every setPendingVoiceoverSync
   // call, not just after the next render's effect. Two stage events firing within the
   // same render (rapid re-stage, double-fire) must see each other's writes immediately;
   // a post-render-only mirror lets the second one read a one-render-stale value.
-  const pendingVoiceoverRef = useRef<{ file: File; asset: Asset } | null>(null);
-  const setPendingVoiceoverSync = useCallback((value: { file: File; asset: Asset } | null) => {
+  const pendingVoiceoverRef = useRef<PendingVoiceoverSync | null>(null);
+  const setPendingVoiceoverSync = useCallback((value: PendingVoiceoverSync | null) => {
     pendingVoiceoverRef.current = value;
     setPendingVoiceover(value);
   }, []);
@@ -2628,6 +2663,25 @@ export default function App() {
     if (isHydrating || !project.id) return;
     const pending = readFaPause(project.id);
     setFaPauseDialog(pending);
+  }, [project.id, isHydrating]);
+
+  // G6 Step 5 — lazy, non-blocking Asset.contentHash backfill for whichever
+  // project is currently open. Keyed on [project.id, isHydrating] (not
+  // project.assets) so this runs ONCE per actual project switch, not on
+  // every edit — see backfillAssetContentHashes.ts's own doc comment for why
+  // this is scoped to the open project rather than a boot-time sweep across
+  // the whole registry (a background save for an project the user is
+  // actively editing could race the live autosave).
+  useEffect(() => {
+    if (isHydrating || !project.id) return;
+    let cancelled = false;
+    const projectId = project.id;
+    void backfillAssetContentHashes(projectId, project.assets).then(result => {
+      if (cancelled || result === project.assets) return;
+      setProject(prev => (prev.id === projectId ? { ...prev, assets: result } : prev));
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, isHydrating]);
 
   const { saveNow, saveSnapshot, lastSavedAt, saveError } = usePersistProject(project, !isHydrating);
@@ -3606,35 +3660,50 @@ export default function App() {
     };
     setPendingVoiceoverSync({ file, asset });
 
-    // Same-file detection: this exact file was already transcribed and its
-    // tokens are still cached — skip the Whisper run entirely. Apply Sync
-    // stays enabled via the lastTranscribedFileIdentity clause below.
-    const cachedTokensExist = (projectRef.current.transcriptTokens?.length ?? 0) > 0;
-    if (projectRef.current.lastTranscribedFileIdentity === incomingIdentity && cachedTokensExist) {
-      // The asset above just minted a BRAND NEW ephemeral id — startTranscription
-      // (which normally moves lastTranscribedAssetId forward) never runs on this
-      // path, so without this, lastTranscribedAssetId is left pointing at the OLD
-      // asset id forever. Once this new asset is committed by Apply Sync,
-      // transcriptionReady's id comparisons can never match again, and the button
-      // gets stuck disabled with no event left that could re-enable it.
-      setProject(p => ({ ...p, lastTranscribedAssetId: asset.id }));
-      return;
-    }
-
-    // Genuinely different file (neither guard above fired): clear the stale
-    // cached transcript so Apply Sync's gating (applySyncDisabled /
-    // cachedTokensReady) can't mistake leftover tokens — transcribed against
-    // the PREVIOUS audio — for "ready" against this one. This forces
-    // re-transcription before Apply Sync re-enables.
-    // (anchorSource demotion removed in 3e: nothing branches on anchorSource
-    // post-clean-slate, and the next sync rebuilds segments from scratch via
-    // parseProjectData anyway, so demoting the outgoing segments was dead work.)
-    setProject(p => ({
-      ...p,
-      transcriptTokens: undefined,
-    }));
-
     void (async () => {
+      // plan-v3 Wave 2 item 4 / A5 — the AUTHORITATIVE cache key is the
+      // audio's actual content hash, not name/size/lastModified: a media
+      // swap that happens to carry identical bytes (re-export, re-copy under
+      // a new name/mtime) must not force a re-transcription. Computed here,
+      // before the same-content skip decision below and before the duration
+      // probe, so a cache hit never pays for a probe it doesn't need.
+      const audioHash = await computeAudioHash(file);
+      // Ownership recheck: a later stage event may have superseded this file
+      // while the hash was computing.
+      if (pendingVoiceoverRef.current?.asset.id !== asset.id) return;
+      // Stamp the hash onto the pending record now that it's known, so
+      // downstream readers (transcriptionReady, cachedTokensReady) never
+      // need to recompute it.
+      setPendingVoiceoverSync({ file, asset, audioHash });
+
+      // Same-content detection: this exact audio was already transcribed and
+      // its tokens are still cached — skip the Whisper run entirely. Apply
+      // Sync stays enabled via the lastTranscribedAudioHash clause below.
+      const cachedTokensExist = (projectRef.current.transcriptTokens?.length ?? 0) > 0;
+      if (projectRef.current.lastTranscribedAudioHash === audioHash && cachedTokensExist) {
+        // The asset above just minted a BRAND NEW ephemeral id — startTranscription
+        // (which normally moves lastTranscribedAssetId forward) never runs on this
+        // path, so without this, lastTranscribedAssetId is left pointing at the OLD
+        // asset id forever. Once this new asset is committed by Apply Sync,
+        // transcriptionReady's id comparisons can never match again, and the button
+        // gets stuck disabled with no event left that could re-enable it.
+        setProject(p => ({ ...p, lastTranscribedAssetId: asset.id }));
+        return;
+      }
+
+      // Genuinely different content (neither guard above fired): clear the
+      // stale cached transcript so Apply Sync's gating (applySyncDisabled /
+      // cachedTokensReady) can't mistake leftover tokens — transcribed against
+      // the PREVIOUS audio — for "ready" against this one. This forces
+      // re-transcription before Apply Sync re-enables.
+      // (anchorSource demotion removed in 3e: nothing branches on anchorSource
+      // post-clean-slate, and the next sync rebuilds segments from scratch via
+      // parseProjectData anyway, so demoting the outgoing segments was dead work.)
+      setProject(p => ({
+        ...p,
+        transcriptTokens: undefined,
+      }));
+
       let duration: number;
       try {
         duration = await resolveVoiceoverDuration(asset, projectRef.current.id);
@@ -3657,7 +3726,7 @@ export default function App() {
       // a staged `File` is built over an IndexedDB-backed blob, and once that
       // backing store is released WebKit fails the read outright ("The object
       // can not be found here") on a handle that worked minutes earlier.
-      setPendingVoiceoverSync({ file, asset: { ...asset, duration } });
+      setPendingVoiceoverSync({ file, asset: { ...asset, duration }, audioHash });
       transcriptionTargetIdRef.current = asset.id;
       const outcome = await startTranscription(
         asset,
@@ -3679,6 +3748,9 @@ export default function App() {
           // project, so a duplicate attempt for the SAME project is refused
           // while switching projects still cancels-and-restarts.
           projectId: projectIdRef.current,
+          // plan-v3 Wave 2 item 4 — already computed above; avoids hashing
+          // this file a second time inside useWhisper.
+          audioHash,
           // WS2 T4.7 Requirement 3 — flush the just-written
           // `unappliedTranscript` immediately, past `usePersistProject`'s
           // 500 ms debounce.
@@ -3753,13 +3825,24 @@ export default function App() {
    * A refusal keeps the slot and IndexedDB row intact; the panel shows an
    * explicit Transcribe action instead of auto-running Whisper on load.
    */
-  const handleVoiceoverRestored = useCallback((file: File): boolean => {
+  const handleVoiceoverRestored = useCallback(async (file: File): Promise<boolean> => {
+    // plan-v3 Wave 2 item 4 — same content-hash key handleVoiceoverStaged now
+    // uses, kept in lockstep per this function's own doc comment (the
+    // predicate must stay the SAME condition as the early return it mirrors).
+    const audioHash = await computeAudioHash(file);
     const adoptable = canAdoptRestoredVoiceover({
-      fileIdentity: getFileIdentity(file),
-      lastTranscribedFileIdentity: projectRef.current.lastTranscribedFileIdentity,
+      audioHash,
+      lastTranscribedAudioHash: projectRef.current.lastTranscribedAudioHash,
       cachedTokenCount: projectRef.current.transcriptTokens?.length ?? 0,
     });
-    if (!adoptable) return false;
+    if (!adoptable) {
+      // Refused: the slot stays, showing an explicit Transcribe affordance
+      // instead. stagedVoiceoverNeedsExplicitTranscribe needs this hash at
+      // render time and can't compute it itself (hashing is async, render
+      // isn't), so it's recorded here, once, where the hash is already known.
+      setRestoredUnadoptedAudioHash(audioHash);
+      return false;
+    }
     handleVoiceoverStaged(file);
     return true;
   }, [handleVoiceoverStaged]);
@@ -3776,6 +3859,9 @@ export default function App() {
     const staged: StagedFiles = stagedFilesRef.current;
     syncMark('applySync:entry', { reset: true });
     setIsProcessing(true);
+    // WS2 G2 completion, Unit 3 — clean start every run: never carries a
+    // stale ETA message from a previous sync into this one's overlay.
+    setSyncStageMessage(null);
 
     // plan-v3 item 4 — a fresh Apply Sync supersedes whatever a PRIOR run
     // was asking about; clear it before this run does anything else, so a
@@ -3796,6 +3882,10 @@ export default function App() {
     // ORIGINAL paused run gave, for the log entry below.
     const forceWhisperReason = faForceWhisperOnceRef.current;
     faForceWhisperOnceRef.current = null;
+    // G4 Unit 4 — same one-shot consume-and-reset discipline as
+    // `forceWhisperReason` immediately above.
+    const skipLocalCoverageCheck = faSkipCoverageCheckOnceRef.current;
+    faSkipCoverageCheckOnceRef.current = false;
 
     // WS-logs — one id for every entry this run emits, plus one timestamp so a
     // run's entries sort together rather than smearing across the ms boundary
@@ -3845,12 +3935,26 @@ export default function App() {
     const sceneText = staged.sceneFile
       ? stripRtfIfNeeded(await staged.sceneFile.file.text())
       : projectRef.current.sceneDetails;
+    // plan-v3 Wave 2 item 4 / B2 — the alignment half of the content-hash
+    // spine, from the SAME text just read above (post-RTF-strip, whichever
+    // of staged/persisted supplied it), never re-read.
+    const scriptHash = await computeScriptHash(scriptText, sceneText);
 
     // 2. Persist media files without touching React state.
     //    allAssets starts with existing assets so dedup checks are against the
     //    full accumulated list (prevents duplicating on re-upload or re-sync).
     const allAssets: Asset[] = [...projectRef.current.assets];
     let newVoiceoverId = projectRef.current.voiceoverId;
+    // plan-v3 Wave 2 item 4 — the staged voiceover's already-computed content
+    // hash (handleVoiceoverStaged), captured here before pendingVoiceoverRef
+    // is cleared below. undefined when this sync isn't reusing a staged
+    // pending voiceover (re-sync with no fresh staging, or the hash hasn't
+    // resolved yet) — the audioHash resolution after this block falls back
+    // to hashing voiceoverAsset.file directly in that case.
+    let stagedAudioHash: string | undefined;
+    // Item A — the committed voiceover a staged one replaces; its bytes are
+    // deleted only once this run commits (see the step-2 comment below).
+    let supersededVoiceover: Asset | undefined;
     // Snapshot of pre-sync segments, used by preserveEffectFields below to carry
     // forward per-segment effect selections by assetId. Captured now, before any
     // await, so it can't observe state this same sync has already committed.
@@ -3859,6 +3963,7 @@ export default function App() {
     if (staged.voiceoverFile) {
       const pending = pendingVoiceoverRef.current;
       const reusingPending = pending !== null && pending.file === staged.voiceoverFile.file;
+      if (reusingPending) stagedAudioHash = pending!.audioHash;
       const asset = reusingPending
         ? await persistPendingVoiceoverAsset(projectRef.current.id, pending!.asset)
         : await persistFileToAsset(projectRef.current.id, staged.voiceoverFile.file, 'audio');
@@ -3869,18 +3974,17 @@ export default function App() {
         // assets, which skipped this whole block (and silently kept the OLD
         // voiceoverId) whenever a re-staged file happened to share a name with
         // an already-committed asset.
+        //
+        // Item A — only the LOCAL list drops it here. Its bytes are deleted
+        // after the commit below (`supersededVoiceover`): every abort exit
+        // between here and there keeps `project.voiceoverId` pointing at this
+        // asset, and deleting its bytes first left that pointer naming bytes
+        // that no longer existed — an unopenable project.
         const oldIdx = allAssets.findIndex(a => a.id === projectRef.current.voiceoverId);
         const oldAsset = allAssets[oldIdx];
         if (oldAsset) {
           allAssets.splice(oldIdx, 1);
-          URL.revokeObjectURL(oldAsset.url);
-          deleteAsset(projectRef.current.id, oldAsset.id).catch(err =>
-            console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
-          );
-          void deleteAssetNative(projectRef.current.id, oldAsset.id); // WS3 item B — native-store parity
-          deletePersistedWaveform(projectRef.current.id, oldAsset.id).catch(err =>
-            console.error('[kinetix] Failed to delete old voiceover peaks:', err),
-          );
+          supersededVoiceover = oldAsset;
         }
         allAssets.push(asset);
         newVoiceoverId = asset.id;
@@ -3897,9 +4001,9 @@ export default function App() {
       if (asset) allAssets.push(asset);
     }
     for (const sf of staged.zipFiles) {
-      const extracted = await extractZipToAssets(projectRef.current.id, sf.file);
+      const ingested = await ingestZip(projectRef.current.id, sf.file);
       const { kept, audioAssetId } = await mergeExtractedZipAssets(
-        projectRef.current.id, allAssets, extracted,
+        projectRef.current.id, allAssets, ingested.assets,
       );
       allAssets.push(...kept);
       if (audioAssetId !== undefined) newVoiceoverId = audioAssetId;
@@ -3915,6 +4019,22 @@ export default function App() {
       setIsProcessing(false);
       return { ok: false, message: NO_VOICEOVER_MESSAGE };
     }
+
+    // plan-v3 Wave 2 item 4 / H3 — the audio half of the content-hash spine.
+    // Three-way fallback, in order: (1) the staged voiceover's already-
+    // computed hash (the common Option-C path — Apply Sync clicked shortly
+    // after staging — never re-hash hundreds of MB a second time); (2) a
+    // fresh hash when this run has real file bytes but wasn't reusing a
+    // staged pending voiceover (a re-sync after a script-only edit, same
+    // committed audio); (3) the last recorded spine hash, valid ONLY because
+    // `cachedTokensReady` below independently proves the SAME asset id was
+    // already transcribed — asset-id identity is itself sufficient proof
+    // nothing about the audio changed when no File is available to hash.
+    const audioHash = stagedAudioHash
+      ?? (voiceoverAsset.file ? await computeAudioHash(voiceoverAsset.file) : undefined)
+      ?? (projectRef.current.lastTranscribedAssetId === voiceoverAsset.id
+          ? projectRef.current.lastSyncSpine?.audioHash
+          : undefined);
 
     // plan-v3 item 5 — STAGING boundary. Everything above this point was
     // asset persistence (files already written to durable storage by
@@ -3976,6 +4096,19 @@ export default function App() {
       return { ok: false, message: sceneDocAbortMsg };
     }
 
+    // G4 Unit 3 — PRE-sync total WPM sanity check (STATUS.md Wave 2 queue
+    // item 2). Deliberately HERE: script word count and audio duration are
+    // both already known, and nothing below this point has spent any
+    // transcription/FA compute yet — the cheapest possible place to catch a
+    // script/audio mismatch before paying for alignment work against text
+    // that was never spoken. Warn-only: `undefined` on a normal WPM, folded
+    // into `pendingLogEntries` alongside the POST-match scene-density check
+    // below, never blocks this function's control flow either way.
+    const wpmCheckTotalWords = newSegmentsRaw.reduce(
+      (n, s) => n + (s.text?.trim() ? s.text.trim().split(/\s+/).length : 0), 0,
+    );
+    const wpmCheckEntry = buildWpmCheckLogEntry(syncRunId, wpmCheckTotalWords, audioDuration, syncRunAt);
+
     // 7. Option C — resolve final timing BEFORE the commit, never after.
     //    If Whisper tokens are already cached for this exact voiceover (the
     //    normal case: Apply Sync is gated until staging-time transcription
@@ -3983,8 +4116,11 @@ export default function App() {
     //    ms-perfect. No character-based timing ever reaches the screen.
     const cachedTokensReady = !!voiceoverAsset
       && (projectRef.current.lastTranscribedAssetId === voiceoverAsset.id
-          || (!!voiceoverAsset.file
-              && projectRef.current.lastTranscribedFileIdentity === getFileIdentity(voiceoverAsset.file)))
+          // plan-v3 Wave 2 item 4 / A5 — content-hash fallback, replacing the
+          // former getFileIdentity comparison: a media swap whose bytes are
+          // identical to what was last transcribed is a cache HIT even under
+          // a new name/mtime.
+          || (audioHash !== undefined && projectRef.current.lastTranscribedAudioHash === audioHash))
       && (projectRef.current.transcriptTokens?.length ?? 0) > 0;
 
     // WS1b — empty transcript hard abort (doc §3.4/§3.11, S15): a voiceover
@@ -4086,7 +4222,17 @@ export default function App() {
       // Read off `projectRef.current`, the same snapshot every other input in
       // this branch comes from — never off the module-global it replaced, so
       // two projects open in two windows can disagree.
-      const faGateOpen = isFaGateOpenForProject(projectRef.current) && forceWhisperReason === null;
+      // G3 Unit 1 — single engine resolver (`resolveSyncEngine`,
+      // faPreflight.ts). Replaces two independent calls
+      // (`isFaGateOpenForProject` here + a second `runFaPreflight` below)
+      // with one: the gate check and the pre-flight are now computed by the
+      // same function the spine's `computeSyncEngineKey` calls, so there is
+      // exactly one place "toggle + pack readiness + model status -> engine"
+      // is decided. `forceWhisperReason` (a one-off per-run override) is
+      // folded in HERE, at the call site, never inside the resolver — see
+      // its doc comment for why.
+      const engineResolution = await resolveSyncEngine(projectRef.current);
+      const faGateOpen = engineResolution.gateOpen && forceWhisperReason === null;
       // WS1 Session M — FA readiness PRE-FLIGHT, before inference. When the gate
       // is open, report up front whether forced alignment can actually run
       // (runtime library load, model presence, resolved language) so a run that
@@ -4095,7 +4241,7 @@ export default function App() {
       // attempted — `runForcedAlignmentForSync` stays the single typed
       // authority on what actually happened.
       if (faGateOpen) {
-        const preflight = await runFaPreflight(projectRef.current);
+        const preflight = engineResolution.preflight!;
         ruleLogEntries.push(buildFaPreflightEntry(syncRunId, preflight, syncRunAt));
       } else if (forceWhisperReason !== null) {
         // plan-v3 item 4 — the user answered a SyncPausedDialog with "use
@@ -4109,7 +4255,24 @@ export default function App() {
         // FA_PROJECT_DEFAULT_ON stays false (WS1 Session H); this only makes
         // the closed-gate state visible instead of silent. Skipped when not
         // FA-capable (plain browser dev server) — there is nothing to turn on.
-        ruleLogEntries.push(buildFaGateClosedEntry(syncRunId, syncRunAt));
+        //
+        // G6 Step 0a — `isFaCapable()` is just `isTauri()`; it is true in a
+        // plain `tauri:dev` build that was never compiled with `fa-inference`,
+        // and `buildFaGateClosedEntry`'s "available but turned off" is false
+        // in that build — no toggle would ever make it available. A direct,
+        // local `fa_preflight` probe (never folded into `resolveSyncEngine`
+        // itself — that resolver's gate-closed branch is asserted elsewhere
+        // to never call the backend, since it also runs on the spine's
+        // "already synced" comparison path, not just a real Apply Sync) picks
+        // the honest entry instead.
+        const faCompiledProbe = await probeFaReadiness(
+          resolveFaLanguage(projectRef.current) ?? FA_SUPPORTED_LANGUAGES[0]!,
+        );
+        if (faCompiledProbe !== null && !faCompiledProbe.featureCompiled) {
+          ruleLogEntries.push(buildFaNotCompiledEntry(syncRunId, syncRunAt));
+        } else {
+          ruleLogEntries.push(buildFaGateClosedEntry(syncRunId, syncRunAt));
+        }
       }
       const faRun: FaRunResult = faGateOpen
         ? await runForcedAlignmentForSync(
@@ -4129,6 +4292,12 @@ export default function App() {
             // `{status:'cancelled'}` rather than a 'paused' run-level
             // failure.
             syncAbortController.signal,
+            // WS2 G2 completion, Unit 2 — single-flight detectSilences: lets
+            // this run's silence scan be shared with `alignFromCache` below
+            // (same audioHash, same audio) instead of decoding it twice.
+            audioHash,
+            // G4 Unit 4 — one-shot bypass, consumed above this branch.
+            skipLocalCoverageCheck,
           )
         : {
             status: 'degraded',
@@ -4221,6 +4390,15 @@ export default function App() {
       if (faCompleted && faRun.silenceError !== undefined) {
         ruleLogEntries.push(buildSilenceErrorEntry(syncRunId, faRun.silenceError, syncRunAt));
       }
+      // G4 Unit 4 — the pre-FA coverage check's 'marginal' band. Only ever
+      // set on 'ok'/'degraded' results (`runForcedAlignmentForSync`'s own
+      // doc comment) — 'hopeless' pauses before FA runs at all, so `faRun`
+      // would be 'paused' instead and this field would not exist to read.
+      // `faRun.status` is already narrowed to 'ok' | 'degraded' here by the
+      // earlier `'cancelled'`/`'paused'` early returns above.
+      if (faCompleted && faRun.localCoverageWarning) {
+        ruleLogEntries.push(buildLocalCoverageWarningEntry(syncRunId, faRun.localCoverageWarning, syncRunAt));
+      }
       if (faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk') {
         const infeasibleEntry = buildCtcInfeasibleLogEntry(
           syncRunId,
@@ -4271,14 +4449,47 @@ export default function App() {
       // check.
       if (syncAbortController.signal.aborted) return cancelledResult(newSegmentsRaw.length);
 
-      const aligned = await alignFromCache(
-        voiceoverAsset!,
-        anchorTimed,
-        faTokens ?? projectRef.current.transcriptTokens!,
-        audioDuration,
-        anchorSourceForRun,
-        toAlignmentLanguageCode(projectRef.current.language),
+      // WS2 G2 item 2/4 — `signal` reaches INTO the match loop now (off-
+      // main-thread via `alignScenestoTranscriptAsync`), not just the
+      // pre-check above: a cancel that lands mid-Hirschberg-pass now
+      // terminates the worker and rejects with `MatchCancelledError`,
+      // surfaced here as this run's own typed cancelled outcome — the same
+      // guarantee every earlier check gives, now extended through the
+      // matcher itself rather than stopping short of it.
+      // WS2 G2 completion, Unit 3 (operator-approved) — additive only: a
+      // stage status line when the fitted measured-ETA (matchEta.ts) clears
+      // the ~2s threshold. Word counts are a cheap estimate (script text
+      // split on whitespace; transcript/FA token count as the subject-side
+      // proxy) — precise enough for a "this will take a while" line,
+      // nowhere near precise enough (or used) for anything behavior-
+      // affecting. Never blocks, never caps, no change below the threshold.
+      const matcherTokensForRun = faTokens ?? projectRef.current.transcriptTokens!;
+      const scriptWordCountForEta = anchorTimed.reduce(
+        (n, s) => n + (s.text?.trim() ? s.text.trim().split(/\s+/).length : 0), 0,
       );
+      setSyncStageMessage(matchEtaStageMessage(scriptWordCountForEta, matcherTokensForRun.length));
+
+      let aligned: Awaited<ReturnType<typeof alignFromCache>>;
+      try {
+        aligned = await alignFromCache(
+          voiceoverAsset!,
+          anchorTimed,
+          matcherTokensForRun,
+          audioDuration,
+          anchorSourceForRun,
+          toAlignmentLanguageCode(projectRef.current.language),
+          syncAbortController.signal,
+          // WS2 G2 completion, Unit 2 — shares this run's detectSilences
+          // pass with runForcedAlignmentForSync above (same audioHash, same
+          // audio) instead of decoding it a second time.
+          audioHash,
+        );
+      } catch (err) {
+        if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
+        throw err;
+      } finally {
+        setSyncStageMessage(null);
+      }
 
       // WS1b — bidirectional coverage metric (§3.3) + two-signal abort gate
       // (§3.4/R13), applied BEFORE the commit (doc §3.4(b): "immediately after
@@ -4318,16 +4529,38 @@ export default function App() {
       // Its conjunct (1) is the WHISPER alignment's own `matched`, which is why
       // `projectRef.current.transcriptTokens` (not `aligned.tokens`, which are
       // the FA tokens on this branch) is what goes in.
-      const unspokenGate = faTokens
-        ? detectUnspokenScriptSegmentsFromWhisperFull(
+      //
+      // WS2 G2 completion, Unit 1 — off-main-thread matcher. This gate's own
+      // `alignScenestoTranscript` call spread-copies its segments/silences
+      // arguments (`faUnspokenGate.ts`'s own doc comment on its async twin),
+      // which defeats `extractSegmentAlignments`' reference-identity memo —
+      // no warm-up trick applies here, so this call site uses the true async
+      // twin directly rather than the sync function.
+      let unspokenGate: { findings: UnspokenScriptFinding[]; whisperAlignments: SegmentAlignment[]; whisperTokensFiltered: TranscriptToken[] };
+      if (faTokens) {
+        // WS2 G2 completion, Unit 3 — same additive ETA line as the other
+        // matcher passes, for this gate's own alignScenestoTranscriptAsync
+        // call.
+        setSyncStageMessage(matchEtaStageMessage(scriptWordCountForEta, projectRef.current.transcriptTokens!.length));
+        try {
+          unspokenGate = await detectUnspokenScriptSegmentsFromWhisperFullAsync(
             aligned.segments,
             projectRef.current.transcriptTokens!,
             faTokens,
             aligned.silences,
             audioDuration,
             toAlignmentLanguageCode(projectRef.current.language),
-          )
-        : { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
+            syncAbortController.signal,
+          );
+        } catch (err) {
+          if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
+          throw err;
+        } finally {
+          setSyncStageMessage(null);
+        }
+      } else {
+        unspokenGate = { findings: [], whisperAlignments: [], whisperTokensFiltered: [] };
+      }
       const unspokenScript = unspokenGate.findings;
       const coverageAfterR10 = applyUnspokenScriptGate(aligned.coverage, unspokenScript);
       if (unspokenScript.length > 0) {
@@ -4494,6 +4727,15 @@ export default function App() {
       const wordCoverageViolations = validateWordCoverage(kept, keptAlignments);
       const wordCoverageEntry = buildGroupedViolationEntry(syncRunId, wordCoverageViolations, syncRunAt);
 
+      // G4 Unit 3 — POST-match per-scene density (STATUS.md Wave 2 queue item
+      // 2). Sibling of the word-coverage check right above: same kept/
+      // keptAlignments input, same grouping mechanism. Warn-only, never
+      // blocks, never auto-switches — see syncContracts.ts's
+      // validateSceneDensity and syncConstants.ts's SCENE_DENSITY_WORDS_PER_SEC
+      // for the threshold and its derivation.
+      const sceneDensityViolations = validateSceneDensity(kept, keptAlignments);
+      const sceneDensityEntry = buildGroupedViolationEntry(syncRunId, sceneDensityViolations, syncRunAt);
+
       // WS-logs (R4-4) — the skip records are no longer DEV-console-only: one
       // 'skip' entry per dropped scene. Bug 1 fix: a summary 'info' entry is now
       // emitted on EVERY successful run — alongside the skip entries, not
@@ -4510,6 +4752,7 @@ export default function App() {
       //   'malformed-token' (Feature 4) tokens with unusable timestamps were
       //                     dropped before alignment
       pendingLogEntries = [
+        ...(wpmCheckEntry ? [wpmCheckEntry] : []),
         ...(aligned.silenceError ? [buildSilenceErrorEntry(syncRunId, aligned.silenceError, syncRunAt)] : []),
         ...(aligned.malformedTokenCount > 0
           ? [buildMalformedTokenEntry(syncRunId, aligned.malformedTokenCount, aligned.totalTokenCount, syncRunAt)]
@@ -4517,6 +4760,7 @@ export default function App() {
         ...(skipped.length > 0 ? buildSkipLogEntries(syncRunId, skipped, syncRunAt) : []),
         ...(rescued.length > 0 ? buildRescueLogEntries(syncRunId, rescued, syncRunAt) : []),
         ...(wordCoverageEntry ? [wordCoverageEntry] : []),
+        ...(sceneDensityEntry ? [sceneDensityEntry] : []),
         buildSyncInfoEntry(syncRunId, aligned.segments.length, kept.length, skipped.length, syncRunAt),
       ];
       pendingLogSummary = {
@@ -4599,6 +4843,74 @@ export default function App() {
       // real chunk plan FA was run against — required for the detector's
       // own word-index attribution to mean anything.
       if (faTokens) {
+        // WS2 G2 completion, Unit 3 (operator-approved) — same additive
+        // ETA line as the default-path match above, for this block's own
+        // two off-thread passes (computeRunContextAsync,
+        // alignScenestoTranscriptAsync below).
+        setSyncStageMessage(matchEtaStageMessage(scriptWordCountForEta, faTokens.length));
+
+        // WS2 G2 item 2 — off-main-thread matcher. computeRunExtents and
+        // detectRunPlacementDefects below (via computeUnscriptedRuns) call
+        // the SAME computeRunContext on this SAME (anchorTimed,
+        // transcriptTokens, aligned.silences, audioDuration) tuple with
+        // languageCode omitted (item 1's dedup memo) — warming it here,
+        // once, off the main thread, means those synchronous calls below hit
+        // the cache instead of re-running the Hirschberg pass.
+        // `syncAbortController.signal` reaching this call is the M3.6
+        // "AbortSignal so C8's cancel reaches it" requirement: previously
+        // the whole-run cancel chain only checked before/after this block,
+        // never during the match itself.
+        //
+        // G4 Unit 1 — `detectSeamFitDefects` (R.11) used to also land in
+        // this omitted-language bucket by omission (a bug: it forwarded no
+        // `languageCode` to `computeFaChunkPlan`/`computeRuns` at all, so an
+        // es/fr/de/pt project's chunk plan canonicalized differently than
+        // every other gate on the same run). It now forwards the real
+        // language below, which means its own `computeRunContext` call no
+        // longer matches this warm-up's memo key on a non-English project —
+        // a synchronous cache MISS (one extra main-thread Hirschberg pass)
+        // where there used to be a hit. The single-slot memo (`lastRunContext
+        // Call`, faChunkPlan.ts) cannot warm two `languageCode` variants at
+        // once without evicting whichever ran second, and R.10/R.12 (via
+        // `computeRunExtents`/`computeUnscriptedRuns`) still outnumber R.11
+        // here, so this warm-up deliberately keeps favoring `undefined`
+        // rather than restructuring the memo — correctness over an
+        // optimization that was never in Unit 1's scope.
+        try {
+          await computeRunContextAsync(
+            anchorTimed, projectRef.current.transcriptTokens!, aligned.silences, audioDuration,
+            undefined, syncAbortController.signal,
+          );
+        } catch (err) {
+          if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
+          throw err;
+        }
+
+        // WS2 G2 completion, Unit 1 — a SECOND, independent matcher pass:
+        // `detectUtterancePlacementDefects` (R.13, below) calls
+        // `alignScenestoTranscript` directly, not through `computeRunContext`
+        // — a different word-tokenization pipeline (`extractSegmentAlignments`'s
+        // own, not `computeRunContext`'s parallel-but-separate one), so it
+        // cannot share the warm-up above. Same `anchorTimed`/`transcriptTokens`/
+        // `aligned.silences`/`audioDuration` R.13 will use, WITH the real
+        // languageCode this time — R.13 always forwarded it, through its own
+        // separate pipeline, unaffected by the memo-key tradeoff G4 Unit 1's
+        // comment above describes for R.11. Warmed here, right after the
+        // first, so both off-thread passes have the
+        // maximum possible head start before R.13's synchronous call is
+        // reached — R.10 through R.12 do no Hirschberg work of their own.
+        try {
+          await alignScenestoTranscriptAsync(
+            anchorTimed, projectRef.current.transcriptTokens!, aligned.silences, audioDuration,
+            toAlignmentLanguageCode(projectRef.current.language), syncAbortController.signal,
+          );
+        } catch (err) {
+          if (err instanceof MatchCancelledError) return cancelledResult(newSegmentsRaw.length);
+          throw err;
+        } finally {
+          setSyncStageMessage(null);
+        }
+
         // WS1 Session S, ruling R-AP — THE RUN-EDGE EXCLUSION INVARIANT.
         //
         // `preRuleSegments` is the ORIGIN array: the committed boundaries as
@@ -4634,6 +4946,7 @@ export default function App() {
           faTokens,
           aligned.silences,
           audioDuration,
+          toAlignmentLanguageCode(projectRef.current.language),
         );
         // R-AP, clause (1) and (2), applied to R.11: it may not touch a
         // boundary whose ORIGIN lies inside a run (that row is R.12's), and it
@@ -4829,6 +5142,36 @@ export default function App() {
             ...buildRunEdgeViolationLogEntries(syncRunId, runEdgeViolations, finalTimedSegments, syncRunAt),
           );
         }
+      } else {
+        // G2 close-out FIX 4 — WHISPER-ARM PARITY (skippedScenePlaceholders.ts).
+        // Until this fix, only the FA arm re-inserted a skipped scene as an
+        // Estimated placeholder; the Whisper arm's skipped scenes stayed
+        // genuinely dropped, their reserved gap silently absorbed into
+        // whichever neighbour `snapCoveredBoundaries` gave it (reported only
+        // as an "absorbed" log line, never restored as a visible segment) —
+        // the same "no text match" skip path the operator's spec calls out
+        // for parity. No R.11-R.15 stage runs on this arm (those rules are
+        // FA-chunk-plan-specific), so there is no ordering constraint to
+        // respect here the way the FA branch has against R.14 — this can run
+        // right where the FA branch's own call runs relative to the shared
+        // merge point below.
+        const placeholderInsertion = insertSkippedScenePlaceholders(
+          finalTimedSegments, keptAlignments, aligned.segments,
+          new Set(skipped.map(r => r.segmentIndex)), coverageAfterR10, transcriptTokens, audioDuration,
+        );
+        finalTimedSegments = placeholderInsertion.segments;
+        placeholderAlignments = placeholderInsertion.alignments;
+        skippedScenePlaceholders = placeholderInsertion.placeholders;
+        if (placeholderInsertion.unplaceable.length > 0) {
+          console.warn(
+            `[sync] FIX 1 (Whisper arm) — ${placeholderInsertion.unplaceable.length} skipped scene(s) could not ` +
+            'be given a placeholder slot (both neighbours at the minimum duration); left dropped:',
+            placeholderInsertion.unplaceable,
+          );
+        }
+        if (pendingBoundaryCheckInput) {
+          pendingBoundaryCheckInput = { ...pendingBoundaryCheckInput, alignments: placeholderAlignments };
+        }
       }
 
       // Wave 1 hotfix FIX 1 — a skipped scene that got a placeholder slot
@@ -4934,15 +5277,11 @@ export default function App() {
       // a 'warning' rather than an 'info' — the same signal as the console.warn
       // above, but one a teammate can still see tomorrow.
       pendingLogEntries = [
-        makeSyncLogEntry(
-          syncRunId,
-          unexpectedFallback ? 'warning' : 'info',
-          unexpectedFallback
-            ? `Sync completed on character-based timing — no cached transcript was available for the voiceover. ${finalTimedSegments.length} segment(s) placed.`
-            : `Sync completed: ${finalTimedSegments.length} segment(s) placed using character-based timing (no voiceover transcript).`,
-          undefined,
-          syncRunAt,
-        ),
+        // G4 Unit 3 — the WPM check runs before either branch is chosen (it
+        // needs only script word count + audio duration), so this fallback
+        // branch owes it the same inclusion the audio-timed branch gives it.
+        ...(wpmCheckEntry ? [wpmCheckEntry] : []),
+        buildCharacterTimingEntry(syncRunId, unexpectedFallback, finalTimedSegments.length, syncRunAt),
       ];
       pendingLogSummary = {
         syncRunId,
@@ -5033,6 +5372,16 @@ export default function App() {
     // `project` yet. A cancel here is still completely free.
     if (syncAbortController.signal.aborted) return cancelledResult(lockRestoredSegments.length);
 
+    // G2 close-out FIX 1 — the engine half of `lastSyncSpine`, computed at
+    // this same commit boundary (after the abort check, so a cancelled run
+    // never pays for the extra IPC round trip). Reads `projectRef.current`
+    // fresh rather than reusing `faGateOpen`/the pre-flight run above those
+    // are gated by `forceWhisperReason`, this run's one-off override, while
+    // the spine must record the project's STANDING toggle position so a
+    // later toggle flip (with nothing re-staged) is what makes the NEXT
+    // Apply Sync's "already synced" comparison see a real difference.
+    const syncEngineKey = await computeSyncEngineKey(projectRef.current);
+
     // 8. Single atomic state update — segments are already final.
     //    New-layer headings (Path B Decision 2) never move on re-sync; only
     //    clamp+flag any whose fixed timestamp now exceeds the resynced audio.
@@ -5061,6 +5410,16 @@ export default function App() {
       // plan-v3 item 8 — same object literal as `faWordTimings`. A follow-up
       // setProject would allow timings to exist unstamped.
       timingProvenance: nextTimingProvenance ?? prev.timingProvenance,
+      // plan-v3 Wave 2 item 4 / H3 — the content-hash spine this commit's
+      // segments were actually built from, for the "honest Apply Sync" UI
+      // gate (DropZonePanel) to compare future staged/edited content
+      // against. `audioHash` is undefined only when neither a staged file
+      // nor a File-bearing committed asset nor a prior spine could supply
+      // one (a very first sync of a project whose asset was rehydrated with
+      // no File — practically unreachable, since the no-voiceover abort
+      // above already requires a resolvable asset) — in that edge case the
+      // spine is left as it was rather than stamped with a guess.
+      lastSyncSpine: audioHash !== undefined ? { audioHash, scriptHash, engineKey: syncEngineKey } : prev.lastSyncSpine,
       // WS2 T4.7 Requirement 3 — the ONLY success-side clear of the
       // unapplied-transcript record, and it sits inside the atomic commit
       // rather than after it on purpose: the record means "a finished
@@ -5078,6 +5437,20 @@ export default function App() {
       unappliedTranscript: undefined,
     }));
     syncMark('setProject:called');
+
+    // Item A — the replaced voiceover's bytes go only now that the commit
+    // above has moved `voiceoverId` off it (moved here from step 2).
+    if (supersededVoiceover) {
+      const oldAsset = supersededVoiceover;
+      URL.revokeObjectURL(oldAsset.url);
+      deleteAsset(projectRef.current.id, oldAsset.id).catch(err =>
+        console.error('[kinetix] Failed to delete old voiceover from IndexedDB:', err),
+      );
+      void deleteAssetNative(projectRef.current.id, oldAsset.id); // WS3 item B — native-store parity
+      deletePersistedWaveform(projectRef.current.id, oldAsset.id).catch(err =>
+        console.error('[kinetix] Failed to delete old voiceover peaks:', err),
+      );
+    }
     // Post-commit paint boundary: rAF fires after React commits + the browser
     // paints the new segment DOM. The waveform-pipeline marks (below) then
     // attribute the decode/peak-build cost that lands AFTER this first paint.
@@ -5186,6 +5559,14 @@ export default function App() {
   // remounts and restores those rows into `stagedFilesRef` before a retry
   // click — this function still just re-enters handleApplySyncFromFiles.
   const handleSyncPausedRetry = useCallback((): void => {
+    // G4 Unit 4 — "continue anyway" over a hopeless-coverage pause is
+    // answered by Retry (there is no separate fourth button — see this
+    // module's own THREE CHOICES doc comment). Without this, the identical
+    // coverage number would immediately re-pause the very next attempt; see
+    // `faSkipCoverageCheckOnceRef`'s own doc comment.
+    if (faPauseDialog?.reason === 'hopeless-local-coverage') {
+      faSkipCoverageCheckOnceRef.current = true;
+    }
     setFaPauseDialog(null);
     const projectId = liveProjectRef.current.id;
     clearFaPause(projectId);
@@ -5201,7 +5582,7 @@ export default function App() {
       }
       await handleApplySyncFromFiles();
     })();
-  }, [handleStagedFilesChange, showToast]);
+  }, [handleStagedFilesChange, showToast, faPauseDialog]);
 
   const handleSyncPausedUseWhisper = useCallback((): void => {
     setFaPauseDialog(null);
@@ -5635,177 +6016,6 @@ export default function App() {
     };
   }, []);
 
-  // Forced-alignment dev-only invocation path (WS1 Task 5 Slice D10) —
-  // DEV-only, in-app; not wired to any UI. Follows __transcriptInspector's
-  // (and __calibrateBoundaryQuality's) own precedent exactly: a DEV-gated
-  // window global invoked from the devtools console, never referenced from
-  // any component's render output or event handler — the only way to reach
-  // it is by typing its name into devtools.
-  //
-  // `await __faDevAlign()` runs the CURRENT project's voiceover + segments
-  // through the real `fa_align_dev` Tauri command (src-tauri/src/fa_dev.rs —
-  // transcodes to a throwaway 16kHz WAV, verifies the resolved model against
-  // the committed SHA-256 manifest, then delegates to the unmodified,
-  // production `fa_align`), reshapes the result via
-  // `faWordSpansToTranscriptTokens` (the D9 reshape), and feeds those tokens
-  // through the REAL, unmodified `alignScenestoTranscript`/
-  // `extractSegmentAlignments` (same functions the production Apply Sync
-  // path calls) to get a `t0` per segment — the FA analog of `anchorStart`.
-  // NEVER writes anything back into the live project: no `setProject`, no
-  // history entry, no persistence. Purely observational — prints a
-  // console.table comparing each segment's FA-derived `t0` against its
-  // currently-stored (Whisper-derived) `anchorStart`, and returns the full
-  // result so it can be captured/compared across runs the same way
-  // `__transcriptInspector`'s return value is.
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-
-    const faDevAlign = async (options?: { language?: FaLanguageCode }) => {
-      const project = projectRef.current;
-      const voiceoverAsset = project.assets.find(a => a.id === project.voiceoverId);
-      if (!voiceoverAsset) {
-        console.warn('[fa-dev] no voiceover asset on the current project.');
-        return undefined;
-      }
-      if (project.segments.length === 0) {
-        console.warn('[fa-dev] project has no segments — run Apply Sync first.');
-        return undefined;
-      }
-      if (!project.transcriptTokens || project.transcriptTokens.length === 0) {
-        console.warn('[fa-dev] project has no cached Whisper transcriptTokens — run Apply Sync first.');
-        return undefined;
-      }
-
-      const SUPPORTED_FA_LANGUAGES: FaLanguageCode[] = ['en', 'es', 'fr', 'de', 'pt'];
-      const language = options?.language ?? (project.language as FaLanguageCode | undefined);
-      if (!language || !SUPPORTED_FA_LANGUAGES.includes(language)) {
-        console.warn(
-          `[fa-dev] project.language (${String(project.language)}) is not one of the 5 FA ` +
-          `languages (${SUPPORTED_FA_LANGUAGES.join(', ')}) — pass { language } explicitly.`,
-        );
-        return undefined;
-      }
-
-      const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
-      const buffer = await voiceoverBlob.arrayBuffer();
-      const audioExtHint = voiceoverAsset.file?.type
-        || voiceoverAsset.file?.name.split('.').pop()
-        || '';
-      // Raw IPC body, staged by fa_stage_audio_raw into 'kinetix-fa-dev-inputs'
-      // — see forcedAlignmentRun.ts's own call for the full base64-avoidance
-      // rationale, identical here.
-      const inputPath = await invoke<string>('fa_stage_audio_raw', new Uint8Array(buffer), {
-        headers: {
-          'cache-dir': 'kinetix-fa-dev-inputs',
-          'ext-hint': audioExtHint,
-        },
-      });
-
-      // WS1 Task 5 Slice D11: whole-file FA is infeasible at production
-      // audio length (D10) — build the windowed chunk plan via
-      // computeFaChunkPlan (faAnchors.ts's run structure; text attribution
-      // defaults to script-word-index text attribution since WS1 Task 5
-      // Slice D23 — segment-startTime remains reachable via computeFaChunkPlan's
-      // 5th argument, see that function's own doc comment) instead of the
-      // pre-D11 single whole-file segment list.
-      const audioDuration = await probeAudioDuration(voiceoverBlob);
-      const silenceResult = await detectSilences(voiceoverBlob);
-      const silences: SilenceInterval[] = silenceResult.status === 'ok' ? silenceResult.silences : [];
-      if (silenceResult.status !== 'ok') {
-        console.warn('[fa-dev] silence detection failed, chunking with zero silences:', silenceResult.errorMessage);
-      }
-      const chunks: FaDevChunkInput[] = computeFaChunkPlan(
-        project.segments,
-        project.transcriptTokens,
-        silences,
-        audioDuration,
-      );
-      if (chunks.length === 0) {
-        console.warn('[fa-dev] chunk plan is empty (every segment has empty text) — nothing to align.');
-        return undefined;
-      }
-
-      console.log(
-        `[fa-dev] running fa_align_dev — language=${language}, chunks=${chunks.length}, ` +
-        `audio bytes=${buffer.byteLength}`,
-      );
-
-      const wallClockStartMs = performance.now();
-      const channel = new Channel<FaDevEvent>();
-      const words = await new Promise<FaDevWordSpan[]>(
-        (resolve, reject) => {
-          channel.onmessage = (msg) => {
-            if (msg.event === 'Progress') {
-              console.log(`[fa-dev] progress ${msg.data.index}/${msg.data.total}`);
-            } else if (msg.event === 'Done') {
-              resolve(msg.data.words);
-            } else if (msg.event === 'Error') {
-              reject(new Error(msg.data.message));
-            }
-          };
-          invoke('fa_align_dev', {
-            inputPath,
-            chunks,
-            language,
-            onEvent: channel,
-          }).catch((err: unknown) => reject(err instanceof Error ? err : new Error(String(err))));
-        },
-      );
-      const wallClockMs = performance.now() - wallClockStartMs;
-
-      const tokens = faWordSpansToTranscriptTokens(words);
-
-      // Real, unmodified production functions — the same ones the Apply
-      // Sync commit path calls (see App.tsx's own `cachedTokensReady`
-      // branch). `t0` is the FA analog of `anchorStart` here: this dev tool
-      // never runs the full commit pipeline (applyAnchorBasedTiming ->
-      // snapCoveredBoundaries -> headExtendFirstSegment), so `t0` is
-      // reported directly rather than a literal `segment.anchorStart` write.
-      const alignments = alignScenestoTranscript(project.segments, tokens, [], audioDuration, language);
-
-      const rows = project.segments.map((seg, i) => {
-        const faAnchorStart = alignments[i]?.t0;
-        const oldAnchorStart = seg.anchorStart;
-        const deltaSec = (faAnchorStart !== undefined && oldAnchorStart !== undefined)
-          ? faAnchorStart - oldAnchorStart
-          : undefined;
-        return {
-          index: i,
-          text: seg.text.slice(0, 40),
-          oldAnchorStart,
-          faAnchorStart,
-          deltaSec,
-          anchorSource: 'forced-alignment' as const,
-        };
-      });
-
-      const deltas = rows.map(r => r.deltaSec).filter((d): d is number => d !== undefined).sort((a, b) => a - b);
-      const min = deltas.length > 0 ? deltas[0] : undefined;
-      const max = deltas.length > 0 ? deltas[deltas.length - 1] : undefined;
-      const median = deltas.length > 0 ? deltas[Math.floor(deltas.length / 2)] : undefined;
-
-      console.log(
-        `[fa-dev] done — wallClockMs=${wallClockMs.toFixed(1)}, words=${words.length}, ` +
-        `segments=${rows.length}, anchorStart delta (s) min=${min?.toFixed(3) ?? 'n/a'} ` +
-        `median=${median?.toFixed(3) ?? 'n/a'} max=${max?.toFixed(3) ?? 'n/a'}`,
-      );
-      console.table(rows.map(r => ({
-        idx: r.index,
-        text: r.text,
-        oldAnchorStart: r.oldAnchorStart?.toFixed(3) ?? '',
-        faAnchorStart: r.faAnchorStart?.toFixed(3) ?? '',
-        deltaSec: r.deltaSec?.toFixed(3) ?? '',
-      })));
-
-      return { wallClockMs, wordCount: words.length, rows, deltaStats: { min, median, max } };
-    };
-
-    (window as unknown as { __faDevAlign: typeof faDevAlign }).__faDevAlign = faDevAlign;
-    return () => {
-      delete (window as unknown as { __faDevAlign?: typeof faDevAlign }).__faDevAlign;
-    };
-  }, []);
-
   // WS-logs — empties both log fields. The setProject alone persists it (the
   // debounced usePersistProject save writes the whole Project).
   const handleClearSyncLog = useCallback(() => {
@@ -5887,7 +6097,21 @@ export default function App() {
       deleteAsset(projectIdRef.current, assetId).catch(err =>
         console.error('Failed to delete asset from IndexedDB:', err)
       );
-      void deleteAssetNative(projectIdRef.current, assetId); // WS3 item B — native-store parity
+      // G6 Step 6 (dead-feature-gap fix) — unreference the vault blob only
+      // AFTER the native delete settles, and only when no OTHER asset in
+      // this project still carries the same contentHash. That TWIN CASE
+      // matters because legacy projects can hold same-bytes-different-name
+      // duplicates that Step 5's backfill mapped onto one shared hash —
+      // deleting one twin must not unreference the blob while its sibling
+      // still resolves through it.
+      const contentHash = asset.contentHash;
+      const hasSurvivingTwin = contentHash != null &&
+        prev.assets.some(a => a.id !== assetId && a.contentHash === contentHash);
+      void deleteAssetNative(projectIdRef.current, assetId).then(() => { // WS3 item B — native-store parity
+        if (contentHash && !hasSurvivingTwin) {
+          void mediaVaultUnreference(contentHash, projectIdRef.current);
+        }
+      });
       clearFrameRendererCache();
       return {
         ...prev,
@@ -5904,6 +6128,133 @@ export default function App() {
       };
     });
   }, []);
+
+  // G6 Step 4 — the Media block's "used in N scenes" chip click target:
+  // switches to the Segments tab and selects every segment currently bound
+  // to this asset, reusing the EXISTING batch-selection mechanism
+  // (selectedSegmentIds/onToggleSegmentSelect, built for the Effects tab)
+  // rather than inventing a new highlight concept.
+  const handleHighlightAssetUsage = useCallback((assetId: string) => {
+    const matching = projectRef.current.segments.filter(s => s.assetId === assetId).map(s => s.id);
+    setSelectedSegmentIds(new Set(matching));
+    setActiveLeftTab('segments');
+  }, []);
+
+  // G6 Step 4 — the Media block's "add media" door (loose files / folder /
+  // zip) commits through the same ingest paths Step 3 built. Mirrors
+  // `processZipFile`'s own commit shape (merge new assets, autoMatchSegments,
+  // resolveZipImportVoiceoverId) plus ONE grouped Sync Log finding —
+  // `mediaIngest.ts`'s `ingestLooseFiles` and `zipIngest.ts`'s `ingestZip`
+  // already write through IndexedDB + the vault per file; this only commits
+  // the resulting Asset[] into the project.
+  const handleMediaIngestComplete = useCallback((outcome: {
+    assets: Asset[];
+    audioAssetId: string | undefined;
+    counts: { imported: number; deduped: number; unsupportedSkipped: number; failed: number };
+    source: 'zip' | 'files' | 'folder' | 'bundle';
+    duplicateNames: string[];
+    nestedZipsSkipped?: string[];
+    reconnected?: OfflineReconnect[];
+  }) => {
+    setProject(prev => {
+      const allAssets = [...prev.assets, ...outcome.assets];
+      const next = {
+        ...prev,
+        assets: allAssets,
+        segments: autoMatchSegments(allAssets, prev.segments),
+        voiceoverId: resolveZipImportVoiceoverId(outcome.assets, allAssets, prev.voiceoverId),
+      };
+      const total = outcome.counts.imported + outcome.counts.deduped + outcome.counts.unsupportedSkipped + outcome.counts.failed;
+      const nestedZipsSkipped = outcome.nestedZipsSkipped ?? [];
+      if (total === 0 && nestedZipsSkipped.length === 0) return next;
+      return appendSyncLogEntries(next, [
+        buildMediaImportEntry(mintSyncLogId(), outcome.source, outcome.counts, Date.now(), outcome.duplicateNames, nestedZipsSkipped),
+      ]);
+    });
+
+    // Media workflow Unit 4 — re-uploaded bytes of OFFLINE assets: write
+    // them into those assets' own slots (existing relink machinery — the
+    // poison clears itself once everything resolves), then drop the
+    // offline flag in live state so the badge clears without a reopen.
+    const reconnects = outcome.reconnected ?? [];
+    if (reconnects.length > 0) {
+      const projectId = projectIdRef.current;
+      void reconnectOfflineAssets(projectId, projectRef.current.assets, reconnects).then(result => {
+        if (projectIdRef.current !== projectId) return;
+        if (result.failed.length > 0) {
+          showToast(`Could not reconnect ${result.failed.length} offline file(s) — see the console.`);
+          console.error('[kinetix] offline reconnect failed:', result.failed);
+        }
+        if (result.reconnected.length === 0) return;
+        const byId = new Map(result.reconnected.map(r => [r.assetId, r.file]));
+        clearFrameRendererCache();
+        setProject(prev => appendSyncLogEntries(
+          {
+            ...prev,
+            assets: prev.assets.map(a => {
+              const file = byId.get(a.id);
+              return file ? { ...a, url: URL.createObjectURL(file), file, unresolved: false } : a;
+            }),
+          },
+          [buildMediaReconnectEntry(mintSyncLogId(), result.reconnected.map(r => r.name), result.allResolved)],
+        ));
+      });
+    }
+  }, []);
+
+  // Media workflow Unit 1 — inline rename from a Media block tile. Renames
+  // the Asset record (persisted by the ordinary autosave; `Asset.name` is
+  // the match key from now on) AND the vault registry's display name. A name
+  // that now matches 2+ assets is allowed, with one finding.
+  const handleRenameAsset = useCallback((assetId: string, newName: string) => {
+    const asset = projectRef.current.assets.find(a => a.id === assetId);
+    if (!asset) return;
+    setProject(prev => {
+      const { project: next, collision } = applyAssetRename(prev, assetId, newName);
+      return collision
+        ? appendSyncLogEntries(next, [buildMediaNameCollisionEntry(mintSyncLogId(), collision.name, collision.count)])
+        : next;
+    });
+    if (asset.contentHash) void mediaVaultRename(asset.contentHash, newName);
+  }, []);
+
+  // Media workflow Unit 2 — "Match media to scenes". Assignment only: the
+  // segments' assetIds (overwritten wherever a scene's tag names an asset,
+  // kept otherwise) plus one summary finding, persisted by the ordinary
+  // autosave. No sync runs; timings, provenance and lastSyncSpine are never
+  // touched, so "Already synced" is unaffected.
+  const handleMatchMedia = useCallback(() => {
+    setProject(prev => {
+      const result = matchMediaToScenes(prev.assets, prev.segments);
+      return appendSyncLogEntries(
+        { ...prev, segments: result.segments },
+        [buildMediaMatchEntry(mintSyncLogId(), result)],
+      );
+    });
+  }, []);
+
+  // Media workflow Unit 3 — a Media block tile dropped on a timeline
+  // segment. The user's pick is authoritative (no name logic); assignment
+  // only, persisted by the ordinary autosave — no sync, timings untouched.
+  const handleAssignAssetToSegment = useCallback((segmentId: string, assetId: string) => {
+    setProject(prev => {
+      const segments = assignAssetToSegment(prev.segments, prev.assets, segmentId, assetId);
+      return segments === prev.segments ? prev : { ...prev, segments };
+    });
+  }, []);
+
+  const handleMediaIngestError = useCallback((message: string) => {
+    showToast(message);
+  }, [showToast]);
+
+  // G5 — a bundle zip that failed validation (corrupt/oversized, or missing
+  // one of its four required pieces): a toast for the moment, plus ONE
+  // grouped sync-log finding naming what and why, so the reason survives
+  // after the toast disappears. No slot was touched either way.
+  const handleBundleImportFailed = useCallback((message: string) => {
+    showToast(message);
+    setProject(prev => appendSyncLogEntries(prev, [buildBundleImportFailedEntry(mintSyncLogId(), message)]));
+  }, [showToast]);
 
   const handleDeleteAllAssets = useCallback(() => {
     const nonAudio = assetsRef.current.filter(a => a.type !== 'audio');
@@ -5988,75 +6339,19 @@ export default function App() {
     });
   }, []);
 
-  /** Core zip-extraction logic for handleZipUpload. */
-  const processZipFile = useCallback(async (file: File): Promise<void> => {
-    setIsProcessing(true);
-    try {
-      let JSZip: typeof import('jszip');
-      try {
-        ({ default: JSZip } = await import('jszip'));
-      } catch (loadErr) {
-        console.error('Failed to load jszip:', loadErr);
-        return;
-      }
-      const zip = new JSZip();
-      const content = await zip.loadAsync(file);
-      const newAssets: Asset[] = [];
+  // G6 Step 4 — `processZipFile`/`handleZipUpload` (the manual-upload zip
+  // handler this spot used to hold) were confirmed dead code: no button or
+  // `<input>` called `handleZipUpload` anywhere in the app. The Media
+  // block's own "add zip" door (`MediaBlock.tsx`, via `handleMediaIngestComplete`
+  // above) is the live replacement — same `ingestZip` underneath, actually
+  // reachable from the UI.
 
-      const filePromises = Object.keys(content.files).map(async (filename) => {
-        const fileData = content.files[filename];
-        if (!fileData || fileData.dir) return;
-        const name = filename.split('/').pop() || filename;
-        // Skip files whose name already exists in the current asset list
-        if (assetsRef.current.some(a => a.name === name)) return;
-        const blob = await fileData.async('blob');
-        let type: Asset['type'] = 'image';
-        if (filename.match(/\.(mp3|wav|ogg|m4a)$/i)) type = 'audio';
-        else if (filename.match(/\.(mp4|webm|mov|m4v)$/i)) type = 'video';
-
-        const id = crypto.randomUUID();
-        try {
-          await putAsset(projectIdRef.current, id, blob, { name, mimeType: blob.type || 'application/octet-stream' });
-        } catch (err) {
-          console.error('Failed to persist ZIP asset to IndexedDB, skipping:', name, err);
-          return;
-        }
-        const zipUrl = URL.createObjectURL(blob);
-        newAssets.push({
-          id,
-          name,
-          url: zipUrl,
-          type,
-          file: new File([blob], filename),
-          duration: type === 'video' ? await getMediaDuration(zipUrl, 'video') : undefined,
-          addedAt: Date.now(),
-        });
-      });
-
-      await Promise.all(filePromises);
-      setProject(prev => {
-        // Final dedup against the latest project state (catches concurrent adds)
-        const dedupedNew = newAssets.filter(na => !prev.assets.some(a => a.name === na.name));
-        const allAssets = [...prev.assets, ...dedupedNew];
-        return {
-          ...prev,
-          assets: allAssets,
-          segments: autoMatchSegments(allAssets, prev.segments),
-          voiceoverId: resolveZipImportVoiceoverId(newAssets, allAssets, prev.voiceoverId),
-        };
-      });
-    } catch (err) {
-      console.error("ZIP Error:", err);
-    } finally {
-      setIsProcessing(false);
-    }
-  }, []);
-
-  const handleZipUpload = async (e: ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    await processZipFile(file);
-  };
+  // Sync-log user view, attention kind 7 — offline media is live project
+  // state (`Asset.unresolved`, set at open), not a log entry.
+  const offlineAssetNames = useMemo(
+    () => project.assets.filter(a => a.unresolved).map(a => a.name),
+    [project.assets],
+  );
 
   const currentSegment = useMemo(() => {
     if (isResizingRef.current) {
@@ -6269,22 +6564,104 @@ export default function App() {
     || (effectiveVoiceoverId !== undefined
         && project.lastTranscribedAssetId === effectiveVoiceoverId
         && (project.transcriptTokens?.length ?? 0) > 0)
-    // Same-file detection (handleVoiceoverStaged): a freshly staged file always
-    // gets a brand-new Asset id, so the clause above never matches it even when
-    // its content was already transcribed and Whisper was deliberately skipped.
+    // Same-content detection (handleVoiceoverStaged): a freshly staged file
+    // always gets a brand-new Asset id, so the clause above never matches it
+    // even when its content was already transcribed and Whisper was
+    // deliberately skipped. Uses the precomputed hash (plan-v3 Wave 2 item 4)
+    // — undefined until handleVoiceoverStaged's async hash resolves, in
+    // which case this clause simply can't fire yet (the id clause above, or
+    // the terminal-phase clause, cover the gap until it does).
     || (pendingVoiceover !== null
-        && project.lastTranscribedFileIdentity === getFileIdentity(pendingVoiceover.file)
+        && pendingVoiceover.audioHash !== undefined
+        && project.lastTranscribedAudioHash === pendingVoiceover.audioHash
         && (project.transcriptTokens?.length ?? 0) > 0);
   const voiceoverNeedsExplicitTranscribe = stagedVoiceoverNeedsExplicitTranscribe({
     hasStagedVoiceover: stagedVoiceoverFile !== null,
     hasPendingVoiceover: pendingVoiceover !== null,
-    fileIdentity: stagedVoiceoverFile ? getFileIdentity(stagedVoiceoverFile) : null,
-    lastTranscribedFileIdentity: project.lastTranscribedFileIdentity,
+    audioHash: restoredUnadoptedAudioHash,
+    lastTranscribedAudioHash: project.lastTranscribedAudioHash,
     cachedTokenCount: project.transcriptTokens?.length ?? 0,
   });
   const applySyncDisabled =
     (effectiveVoiceoverId !== undefined && !transcriptionReady)
     || voiceoverNeedsExplicitTranscribe;
+
+  // plan-v3 Wave 2 item 4 — "honest Apply Sync". `isStagedEmpty`
+  // (DropZonePanel) already gates the "nothing at all staged" case; this
+  // covers the gap it can't: something WAS re-staged, but its content is
+  // byte-identical to what `lastSyncSpine` already reflects (a media swap
+  // that re-copies the same audio, a script re-save with no real edit).
+  //
+  // Starts `false` (never blocks) and only flips true once BOTH halves are
+  // proven equal — an unresolved hash, a project with no prior spine yet, or
+  // any real difference all fall through to "not proven unchanged", which is
+  // the safe default: this gate exists to save a redundant sync, never to
+  // block a real one.
+  //
+  // Cheap by construction: when a slot isn't staged, that slot's OWN
+  // contribution to the spine is trivially unchanged (Apply Sync always
+  // reads the persisted project value for an unstaged slot and stamps the
+  // spine from exactly that same commit — see handleApplySyncFromFiles'
+  // step 1 / step 8), so only a slot that IS staged needs a fresh hash.
+  const [spineUnchanged, setSpineUnchanged] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const spine = project.lastSyncSpine;
+    if (!spine || (!stagedVoiceoverFile && !stagedScriptFile && !stagedSceneFile)) {
+      setSpineUnchanged(false);
+      return;
+    }
+    void (async () => {
+      let audioHash: string | undefined;
+      if (stagedVoiceoverFile) {
+        audioHash = pendingVoiceover?.file === stagedVoiceoverFile
+          ? pendingVoiceover.audioHash
+          : await computeAudioHash(stagedVoiceoverFile);
+      } else {
+        audioHash = spine.audioHash;
+      }
+      if (cancelled) return;
+
+      let scriptHash: string;
+      if (stagedScriptFile || stagedSceneFile) {
+        const scriptText = stagedScriptFile
+          ? stripRtfIfNeeded(await stagedScriptFile.text())
+          : project.script;
+        const sceneText = stagedSceneFile
+          ? stripRtfIfNeeded(await stagedSceneFile.text())
+          : project.sceneDetails;
+        if (cancelled) return;
+        scriptHash = await computeScriptHash(scriptText, sceneText);
+      } else {
+        scriptHash = spine.scriptHash;
+      }
+      if (cancelled) return;
+
+      // G2 close-out FIX 1 — the third spine half: does a fresh run's
+      // engine (toggle position + FA pack readiness, `faPreflight.ts`'s
+      // `computeSyncEngineKey`) match what THIS spine was stamped from? A
+      // toggle flip, or the FA pack finishing its download since the last
+      // run, must make the comparison fail even when neither hash moved —
+      // re-checked fresh every time this effect fires, so it always reads
+      // current readiness rather than a stale snapshot.
+      const engineKey = await computeSyncEngineKey(project);
+      if (cancelled) return;
+
+      setSpineUnchanged(audioHash !== undefined && spineEquals(spine, { audioHash, scriptHash, engineKey }));
+    })();
+    return () => { cancelled = true; };
+  }, [
+    project.lastSyncSpine, project.script, project.sceneDetails,
+    project.faHighPrecisionSync, project.language, project.detectedLanguage,
+    stagedVoiceoverFile, stagedScriptFile, stagedSceneFile, pendingVoiceover,
+  ]);
+  // Operator-approved copy (Wave 2 G1 sign-off). Reason + hint combined into
+  // one tooltip sentence pair; the button's own visible label ("Already
+  // synced" — see DropZonePanel's applySyncSpineUnchangedReason ternary)
+  // carries the stated-reason requirement visibly, not hover-only.
+  const applySyncSpineUnchangedReason = spineUnchanged
+    ? "Your audio and script haven't changed since the last sync. Edit the script or swap the voiceover to re-sync."
+    : undefined;
 
   // Wave 1 hotfix (operator-ordered) — the two Whisper model-integrity
   // failures (never 'already-running' / 'inference-failed', which keep using
@@ -7100,6 +7477,13 @@ export default function App() {
         for (const repaired of repair.repaired) blobMap.set(repaired.id, repaired);
         missingIds = missingIds.filter(id => !blobMap.has(id));
       }
+      // Item A — second rung: missing from BOTH stores, but the media vault
+      // still holds the same bytes under the row's contentHash.
+      if (missingIds.length > 0) {
+        const vaultRepair = await repairMissingAssetsFromVault(saved.project.id, saved.project.assets, missingIds);
+        for (const repaired of vaultRepair.repaired) blobMap.set(repaired.id, repaired);
+        missingIds = missingIds.filter(id => !blobMap.has(id));
+      }
 
       // Round 27 Step 4 — silently re-import assets whose exact path + size +
       // hash still match; weaker rungs and pre-provenance assets fall through
@@ -7344,6 +7728,12 @@ export default function App() {
             onDeleteAllAssets={handleDeleteAllAssets}
             onDeleteVoiceover={() => { if (project.voiceoverId) handleDeleteAsset(project.voiceoverId); }}
             onOpenRelinkMedia={() => { void refreshDegradedRecovery(project.id); }}
+            onHighlightUsage={handleHighlightAssetUsage}
+            onIngestComplete={handleMediaIngestComplete}
+            onIngestError={handleMediaIngestError}
+            onRenameAsset={handleRenameAsset}
+            onMatchMedia={handleMatchMedia}
+            onBundleImportFailed={handleBundleImportFailed}
             onApplySync={handleApplySyncFromFiles}
             stagedFilesClearSignal={stagedFilesClearSignal}
             onStagedFilesChange={handleStagedFilesChange}
@@ -7353,6 +7743,7 @@ export default function App() {
             onVoiceoverTranscribeRequested={handleVoiceoverTranscribeRequested}
             voiceoverNeedsExplicitTranscribe={voiceoverNeedsExplicitTranscribe}
             applySyncDisabled={applySyncDisabled}
+            applySyncSpineUnchangedReason={applySyncSpineUnchangedReason}
             onUndo={handleUndo}
             onRedo={handleRedo}
             canUndo={undoAvailable}
@@ -7678,6 +8069,7 @@ export default function App() {
                 historyAnchor={historyAnchor}
                 onSegmentUpdate={(updater) => setProject(prev => ({ ...prev, segments: updater(prev.segments) }))}
                 onOpenStockSearch={(segmentId) => { setStockTarget(segmentId); setShowStockSearch(true); }}
+                onAssignAssetToSegment={handleAssignAssetToSegment}
                 onSelectSegment={(id) => setSelectedSegmentId(id)}
                 // WS2 ws2-23 (bugs 4/6) — a single click RETARGETS an already-
                 // open scene drawer and never opens a closed one, exactly the
@@ -7745,7 +8137,10 @@ export default function App() {
           style={{ width: rightPanelCollapsed ? 0 : '15vw' }}
           className="flex-shrink-0 flex flex-col h-full border-l border-[#1A1A1A] bg-[#080808] overflow-hidden transition-[width] duration-300 ease-in-out"
         >
-          <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
+          {/* overflow-y: scroll, not auto — the right panel's scrollbar track is
+              always reserved (transparent when idle), so expanding the sync
+              log's Details past the panel height never narrows the panel. */}
+          <div className="flex-1 min-h-0 overflow-y-scroll custom-scrollbar">
             {/* Project name + save status */}
             <div className="flex-shrink-0 px-3 pt-3 pb-2 border-b border-[#1A1A1A]">
               <p className="text-xs text-zinc-400 truncate">{project.name}</p>
@@ -7783,6 +8178,9 @@ export default function App() {
                 project; `?? []` is what makes a pre-WS-logs project render. */}
             <SyncLogPanel
               syncLog={project.syncLog ?? []}
+              syncRunSummaries={project.syncRunSummaries}
+              offlineAssetNames={offlineAssetNames}
+              segments={project.segments}
               onClearLog={handleClearSyncLog}
               onOpenModelsModal={() => setShowManageModelsModal(true)}
               onSeekToSegment={handleSegmentClick}
@@ -8366,7 +8764,7 @@ export default function App() {
         </div>
       )}
 
-      <SyncLoadingOverlay isProcessing={isProcessing} onCancel={handleCancelSync} />
+      <SyncLoadingOverlay isProcessing={isProcessing} onCancel={handleCancelSync} stageMessage={syncStageMessage} />
 
       {faPauseDialog && (
         <SyncPausedDialog

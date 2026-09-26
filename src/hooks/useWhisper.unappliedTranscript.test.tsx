@@ -50,6 +50,10 @@ vi.mock('../services/whisperService', async () => {
 
 vi.mock('../services/silenceDetector', () => ({
   detectSilences: vi.fn(async () => ({ status: 'ok' as const, silences: [] })),
+  // WS2 G2 completion, Unit 2 — startTranscription now calls this
+  // single-flight wrapper via fetchAndDetectSilences (silenceDetector.ts's
+  // own doc comment); mocked with the same shape here too.
+  detectSilencesSingleFlight: vi.fn(async () => ({ status: 'ok' as const, silences: [] })),
 }));
 
 const { useWhisper } = await import('./useWhisper');
@@ -156,6 +160,43 @@ describe('Requirement 3 — the completion write', () => {
     expect(Number.isNaN(Date.parse(rec!.completedAt))).toBe(false);
     // Same update, not a follow-up one.
     expect(committed!.transcriptTokens).toEqual(TOKENS);
+    h.unmount();
+  });
+
+  // plan-v3 Wave 2 item 4 — Project.lastTranscribedAudioHash, the
+  // AUTHORITATIVE cache key (the field above, fileIdentity, is now only a
+  // fast pre-filter — see syncEngine.ts's getFileIdentity doc comment).
+  it('stamps lastTranscribedAudioHash from the caller-supplied opts.audioHash', async () => {
+    mockTranscribe.mockResolvedValue({ tokens: TOKENS, detectedLanguage: 'en' });
+    const h = mountWhisper();
+    let committed: Project | null = null;
+
+    await act(async () => {
+      await h.api().startTranscription(
+        audioAsset(), 30, [], undefined, () => {},
+        updater => { committed = updater(project()); },
+        { audioHash: 'precomputed-hash-abc123' },
+      );
+    });
+
+    expect(committed!.lastTranscribedAudioHash).toBe('precomputed-hash-abc123');
+    h.unmount();
+  });
+
+  it('computes the hash itself from audioAsset.file when opts.audioHash is omitted', async () => {
+    mockTranscribe.mockResolvedValue({ tokens: TOKENS, detectedLanguage: 'en' });
+    const h = mountWhisper();
+    let committed: Project | null = null;
+
+    await act(async () => {
+      await h.api().startTranscription(
+        audioAsset(), 30, [], undefined, () => {},
+        updater => { committed = updater(project()); },
+      );
+    });
+
+    // 64-char lowercase hex — a real SHA-256 digest, not a placeholder.
+    expect(committed!.lastTranscribedAudioHash).toMatch(/^[0-9a-f]{64}$/);
     h.unmount();
   });
 

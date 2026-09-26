@@ -94,7 +94,7 @@ export type FaErrorKind =
   | 'modelNotFound'
   | 'stateLockPoisoned'
   | 'inferenceFailed'
-  /** Only ever constructed by `fa_dev.rs`'s pre-use manifest check (WS1
+  /** Only ever constructed by `fa_shared.rs`'s pre-use manifest check (WS1
    *  Task 5 Slice D10) — never returned by the production `fa_align`
    *  command. */
   | 'modelHashMismatch'

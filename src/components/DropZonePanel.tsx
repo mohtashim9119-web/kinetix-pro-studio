@@ -54,6 +54,10 @@ import {
   getStagedFilesForProject,
 } from '../services/stagedFilesStore';
 import { shouldClearStagedAfterSync } from '../services/applySyncAbort';
+import { MediaBlock, type MediaIngestOutcome } from './MediaBlock';
+import { classifyAndIngestBundleZip } from '../services/bundleIngest';
+import { isMacOSMetadataPath } from '../services/macosMetadata';
+import type { MediaIngestCounts } from '../services/mediaIngest';
 
 // ---------------------------------------------------------------------------
 // Exported types (consumed by App.tsx)
@@ -346,6 +350,21 @@ interface Props {
   onDeleteVoiceover: () => void;
   /** Opens the recovery/relink screen for the current project's assets. */
   onOpenRelinkMedia: () => void;
+  // G6 Step 4 — the Media block, below the 4 slots.
+  /** Switches to the Segments tab and selects every segment using this
+   *  asset — the Media block's "used in N scenes" chip click target. */
+  onHighlightUsage: (assetId: string) => void;
+  onIngestComplete: (outcome: MediaIngestOutcome) => void;
+  onIngestError: (message: string) => void;
+  /** Media workflow Unit 1 — a Media block tile's inline rename. */
+  onRenameAsset?: (assetId: string, newName: string) => void;
+  /** Media workflow Unit 2 — the Media block's "Match media to scenes". */
+  onMatchMedia?: () => void;
+  /** G5 — a bundle zip (dropped on any of the 4 slots below) that failed
+   *  validation: corrupt/oversized archive, or bundle-shaped but missing one
+   *  of its four required pieces. Logs ONE grouped sync-log finding naming
+   *  what and why; no slot is touched either way. */
+  onBundleImportFailed: (message: string) => void;
   // File actions
   /** Starts an Apply Sync. Takes NO argument on purpose (WS2-50): the staged
    *  files are read by `App.tsx`'s single entry point from the shared live ref
@@ -371,8 +390,11 @@ interface Props {
   onVoiceoverUnstaged: () => void;
   /** WS2-50 — offers a voiceover recovered from the staged store back to the
    *  app on mount. When adoptable, App.tsx runs `handleVoiceoverStaged`; when
-   *  not, the slot and row stay put and the user must tap Transcribe. */
-  onVoiceoverRestored: (file: File) => boolean;
+   *  not, the slot and row stay put and the user must tap Transcribe.
+   *  Async (plan-v3 Wave 2 item 4): the adopt decision now hashes the
+   *  restored file's bytes (`services/spine.ts`), off the main thread but
+   *  still a promise. */
+  onVoiceoverRestored: (file: File) => Promise<boolean>;
   /** User-initiated transcription for a restored-but-unadopted voiceover. */
   onVoiceoverTranscribeRequested: (file: File) => void;
   /** True when a staged voiceover is visible but Whisper must not run until
@@ -380,6 +402,12 @@ interface Props {
   voiceoverNeedsExplicitTranscribe: boolean;
   /** True while Apply Sync should be inert — voiceover staged/persisted but not yet transcribed. */
   applySyncDisabled: boolean;
+  /** plan-v3 Wave 2 item 4 — "honest Apply Sync". Set to a user-facing reason
+   *  string (shown in the button's tooltip) when the currently staged
+   *  content hashes identically to what the last successful sync already
+   *  committed — greyed with a stated reason rather than silently allowed to
+   *  re-run a no-op sync. `undefined` means nothing is proven unchanged. */
+  applySyncSpineUnchangedReason?: string;
   /** Undo/redo (Phase 2, 2026-08-08). Placed here — immediately left of Apply
    *  sync — per the owner's ruling on button placement. Note the consequence,
    *  stated rather than hidden: this row is the Script tab's pinned footer, so
@@ -496,6 +524,12 @@ export function DropZonePanel({
   onDeleteAllAssets,
   onDeleteVoiceover,
   onOpenRelinkMedia,
+  onHighlightUsage,
+  onIngestComplete,
+  onIngestError,
+  onRenameAsset,
+  onMatchMedia,
+  onBundleImportFailed,
   onApplySync,
   onStagedFilesChange,
   stagedFilesClearSignal,
@@ -505,6 +539,7 @@ export function DropZonePanel({
   onVoiceoverTranscribeRequested,
   voiceoverNeedsExplicitTranscribe,
   applySyncDisabled,
+  applySyncSpineUnchangedReason,
   onUndo,
   onRedo,
   canUndo,
@@ -579,6 +614,9 @@ export function DropZonePanel({
   // ── Collapsible section state ──────────────────────────────────────────────
   const [expanded, setExpanded] = useState<ExpandKey>(null);
   const [slotError, setSlotError] = useState<string | null>(null);
+  // G5 — bundle ingest's own confirmation line (success only; a failure uses
+  // `slotError` above, matching every other slot-drop error already does).
+  const [bundleNotice, setBundleNotice] = useState<string | null>(null);
 
   // ── Staged file state ─────────────────────────────────────────────────────
   const [staged, setStaged] = useState<StagedFiles>(EMPTY_STAGED);
@@ -760,7 +798,12 @@ export function DropZonePanel({
         // is true; otherwise the slot and row stay so the user can tap
         // Transcribe explicitly — nothing auto-runs on load.
         if (restored.voiceoverFile) {
-          const adopted = onVoiceoverRestored(restored.voiceoverFile.file);
+          // plan-v3 Wave 2 item 4 — onVoiceoverRestored now hashes the file
+          // (async, can take real time for a large voiceover), widening this
+          // await's window; re-check cancellation on the far side so a
+          // project switch mid-hash can't act on a stale result.
+          const adopted = await onVoiceoverRestored(restored.voiceoverFile.file);
+          if (cancelled) return;
           if (!adopted) {
             setExpanded('voiceover');
           }
@@ -798,10 +841,24 @@ export function DropZonePanel({
     const voiceoverEntries: { file: File; key: string }[] = [];
     const assetEntries: { file: File; key: string }[] = [];
     const zipEntries: { file: File; key: string }[] = [];
+    // G5 — every zip in this drop, regardless of forceSlot: a bundle can be
+    // dropped on ANY of the four slots, so it must be checked before any
+    // slot-specific routing (which would otherwise misfire — e.g. forceSlot
+    // 'voiceover' rejecting a zip as "not audio", or forceSlot 'script'
+    // reading its raw zip bytes as text).
+    const zipCandidates: { file: File; key: string }[] = [];
 
     for (const file of files) {
+      // `._` twins / `.DS_Store` from a Finder drop — noise, dropped silently
+      // before any slot routing (a `._script.txt` must never claim a slot).
+      if (isMacOSMetadataPath(file.webkitRelativePath || file.name)) continue;
       const key = crypto.randomUUID();
       const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
+
+      if (ext === 'zip') {
+        zipCandidates.push({ file, key });
+        continue;
+      }
 
       // A file dropped/browsed directly ONTO the Voiceover slot targets that
       // slot on purpose. Accept it if it classifies as audio (broad extension
@@ -848,11 +905,72 @@ export function DropZonePanel({
         textEntries.push({ file, key, role });
       } else if (isAudioFile(file)) {
         voiceoverEntries.push({ file, key });
-      } else if (ext === 'zip') {
-        zipEntries.push({ file, key });
       } else {
         assetEntries.push({ file, key });
       }
+    }
+
+    // G5 — classify every zip candidate: a bundle (script/scene-doc/
+    // voiceover-pattern markers alongside media) is fully validated and
+    // ingested right here (see `bundleIngest.ts`'s own doc comment for the
+    // all-or-nothing contract); a plain media zip falls through to the
+    // existing deferred `zipEntries` path (unchanged — `ingestZip` at Apply
+    // Sync time). Sequential, not `Promise.all`, for the same reason
+    // `ingestZip`/`ingestLooseFiles` are: bounded memory, one archive at a time.
+    let bundleScript: { file: File; key: string } | null = null;
+    let bundleScene: { file: File; key: string } | null = null;
+    let bundleVoiceover: { file: File; key: string } | null = null;
+    const bundleMediaAssets: Asset[] = [];
+    let bundleCounts: MediaIngestCounts | null = null;
+    let bundleDuplicateNames: string[] = [];
+    let bundleNestedZipsSkipped: string[] = [];
+    let bundleZipNames: string[] = [];
+    let bundleReconnected: NonNullable<MediaIngestOutcome['reconnected']> = [];
+
+    for (const z of zipCandidates) {
+      const existingHashes = assets.map(a => a.contentHash).filter((h): h is string => !!h);
+      // Media workflow Unit 4 — an offline asset's bytes inside the bundle reconnect it.
+      const offlineHashes = assets.filter(a => a.unresolved && a.contentHash).map(a => a.contentHash!);
+      const outcome = await classifyAndIngestBundleZip(projectId, z.file, existingHashes, offlineHashes);
+      if (outcome.kind === 'not-a-bundle') {
+        zipEntries.push(z);
+      } else if (outcome.kind === 'failure') {
+        onBundleImportFailed(outcome.message);
+      } else {
+        bundleScript = { file: outcome.scriptFile, key: crypto.randomUUID() };
+        bundleScene = { file: outcome.sceneFile, key: crypto.randomUUID() };
+        bundleVoiceover = { file: outcome.voiceoverFile, key: crypto.randomUUID() };
+        bundleMediaAssets.push(...outcome.mediaAssets);
+        bundleCounts = bundleCounts
+          ? {
+              imported: bundleCounts.imported + outcome.counts.imported,
+              deduped: bundleCounts.deduped + outcome.counts.deduped,
+              unsupportedSkipped: bundleCounts.unsupportedSkipped + outcome.counts.unsupportedSkipped,
+              failed: bundleCounts.failed + outcome.counts.failed,
+            }
+          : outcome.counts;
+        bundleDuplicateNames = [...bundleDuplicateNames, ...outcome.duplicateNames];
+        bundleNestedZipsSkipped = [...bundleNestedZipsSkipped, ...outcome.nestedZipsSkipped];
+        bundleReconnected = [...bundleReconnected, ...(outcome.reconnected ?? [])];
+        bundleZipNames = [...bundleZipNames, z.file.name];
+      }
+    }
+
+    if (bundleCounts) {
+      onIngestComplete({
+        assets: bundleMediaAssets,
+        audioAssetId: undefined,
+        counts: bundleCounts,
+        source: 'bundle',
+        duplicateNames: bundleDuplicateNames,
+        nestedZipsSkipped: bundleNestedZipsSkipped,
+        reconnected: bundleReconnected,
+      });
+      setBundleNotice(
+        `Imported bundle ${bundleZipNames.map(n => `"${n}"`).join(', ')}: script, scene details, ` +
+        `voiceover, and ${bundleMediaAssets.length} media file${bundleMediaAssets.length === 1 ? '' : 's'}.`,
+      );
+      setTimeout(() => setBundleNotice(null), 6000);
     }
 
     updateStaged(prev => {
@@ -887,12 +1005,21 @@ export function DropZonePanel({
       if (pendingScript) scriptFile = { file: pendingScript.file, key: pendingScript.key };
       if (pendingScene) sceneFile = { file: pendingScene.file, key: pendingScene.key };
 
+      // A validated bundle's own script/scene/voiceover take final priority
+      // over any loose text/audio file dropped in the same batch — a bundle
+      // is the more complete, more deliberate signal.
+      if (bundleScript) scriptFile = bundleScript;
+      if (bundleScene) sceneFile = bundleScene;
+      if (bundleVoiceover) voiceoverFile = bundleVoiceover;
+
       return { scriptFile, sceneFile, voiceoverFile, assetFiles, zipFiles };
     });
 
     // Option C — trigger transcription the moment a voiceover is staged,
-    // independent of Apply Sync. Last-one-wins, mirroring the staging loop above.
-    const lastVoiceoverEntry = voiceoverEntries.at(-1);
+    // independent of Apply Sync. Last-one-wins, mirroring the staging loop
+    // above; a bundle's voiceover wins over a loose one in the same drop,
+    // matching the same-batch priority `updateStaged` above just applied.
+    const lastVoiceoverEntry = bundleVoiceover ?? voiceoverEntries.at(-1);
     if (lastVoiceoverEntry) {
       onVoiceoverStaged(lastVoiceoverEntry.file);
     }
@@ -1154,6 +1281,15 @@ export function DropZonePanel({
               <div className="mx-3 mb-2 px-3 py-2 rounded-[9px] bg-[rgba(255,107,107,.12)] border border-[rgba(255,107,107,.35)] text-[var(--kx-danger)] text-[12.5px] flex items-center justify-between gap-2">
                 <span>{slotError}</span>
                 <button onClick={() => setSlotError(null)} className="hover:opacity-70 shrink-0">✕</button>
+              </div>
+            )}
+
+            {/* G5 — bundle ingest confirmation line (minimal visuals: a
+                confirmation line + the sync-log finding; no slot restyle). */}
+            {bundleNotice && (
+              <div className="mx-3 mb-2 px-3 py-2 rounded-[9px] bg-[rgba(80,200,120,.12)] border border-[rgba(80,200,120,.35)] text-[#50C878] text-[12.5px] flex items-center justify-between gap-2">
+                <span>{bundleNotice}</span>
+                <button onClick={() => setBundleNotice(null)} className="hover:opacity-70 shrink-0">✕</button>
               </div>
             )}
 
@@ -1445,6 +1581,21 @@ export function DropZonePanel({
               )}
             </div>
 
+            {/* G6 Step 4 — the Media block, below the 4 slots. */}
+            <MediaBlock
+              projectId={projectId}
+              assets={assets}
+              segments={segments}
+              voiceoverId={voiceoverId}
+              onDeleteAsset={onDeleteAsset}
+              onOpenRelinkMedia={onOpenRelinkMedia}
+              onHighlightUsage={onHighlightUsage}
+              onIngestComplete={onIngestComplete}
+              onIngestError={onIngestError}
+              onRenameAsset={onRenameAsset}
+              onMatchMedia={onMatchMedia}
+            />
+
           </div>{/* end scrollable */}
 
           {/* Pinned bottom: Apply Sync */}
@@ -1492,13 +1643,13 @@ export function DropZonePanel({
             </button>
             <button
               onClick={handleApplySync}
-              disabled={applySyncDisabled || isStagedEmpty}
+              disabled={applySyncDisabled || isStagedEmpty || !!applySyncSpineUnchangedReason}
               title={
                 applySyncDisabled
                   ? 'Waiting for transcription to finish…'
                   : isStagedEmpty
                     ? 'Stage a new file to sync'
-                    : undefined
+                    : applySyncSpineUnchangedReason
               }
               className="flex-1 min-w-0 h-12 rounded-[13px] flex items-center justify-center gap-2.5
                          font-semibold text-[14.5px] tracking-[0.3px] text-[#1a1003]
@@ -1510,7 +1661,11 @@ export function DropZonePanel({
                          transition-all"
             >
               <RefreshCw size={17} className={applySyncDisabled ? 'animate-spin' : ''} />
-              {applySyncDisabled ? 'Syncing…' : 'Apply sync'}
+              {applySyncDisabled
+                ? 'Syncing…'
+                : applySyncSpineUnchangedReason
+                  ? 'Already synced'
+                  : 'Apply sync'}
             </button>
             </div>
           </div>

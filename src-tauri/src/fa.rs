@@ -18,10 +18,13 @@ pub mod text;
 // full slice-by-slice record (`task5-slice-ledger.md`, its original source,
 // was deleted 2026-08-14, `9cf5867`; retrieve: `git show
 // 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`). Still not wired
-// into Apply Sync: the only caller of `fa_align` anywhere in `src/` is the
-// DEV-only `fa_align_dev` (`fa_dev.rs`) reached via `window.__faDevAlign`
-// (Slice D10) — production wiring (a capability-gated Settings toggle) is a
-// later, separately-scoped slice per that same ledger's rulings.
+// into Apply Sync: the only caller of `fa_align` anywhere in `src/` is
+// `resolve_wav_and_align` (`fa_shared.rs`), the shared body behind the
+// production, capability-gated `fa_align_production` (`fa_production.rs`) —
+// the dev-only `fa_align_dev`/`window.__faDevAlign` path this comment
+// originally described was retired (G5). Apply Sync itself still does not
+// call it; that remains a later, separately-scoped slice per that same
+// ledger's rulings.
 //
 // Deliberately mirrors three established patterns from `whisper.rs` rather
 // than inventing parallel ones (see that file for line numbers as of
@@ -81,7 +84,7 @@ impl Default for FaState {
 /// `fa_onnx.rs`'s "Session cache" section for the full design rationale
 /// (key, staleness argument, eviction). Managed as Tauri `State` (`lib.rs`)
 /// alongside `FaState`, so it lives for the app process's lifetime and is
-/// shared across every `fa_align`/`fa_align_dev` call in one session.
+/// shared across every `fa_align`/`resolve_wav_and_align` call in one session.
 ///
 /// The slot type is feature-conditional (`FaModelCacheSlot`) because the
 /// cached value itself — `fa_onnx::CachedSession`, which holds a real
@@ -101,7 +104,7 @@ pub(crate) type FaModelCacheSlot = ();
 //
 // The tuple field is `pub(crate)`, not `pub` (WS1 Task 5 Slice D25 A1 —
 // `fa` became `pub mod fa;` in `lib.rs` so `tests/fa_durable_wav_live.rs`
-// could reach `fa_align_dev`, which made this struct externally reachable
+// could reach `resolve_wav_and_align`, which made this struct externally reachable
 // too): a `pub` field's DECLARED type, `Mutex<FaModelCacheSlot>`, names
 // `FaModelCacheSlot`, itself `pub(crate)` (holding `fa_onnx::CachedSession`,
 // also `pub(crate)`) — `cargo check --features fa-inference` correctly
@@ -123,7 +126,7 @@ impl Default for FaModelCache {
 /// WS3 fa-perf-foundation: this used to be described as deliberately
 /// permissive, mirroring `whisper_transcribe`'s old kill-and-replace shape.
 /// That is no longer the policy. Concurrency is now refused UPSTREAM of here,
-/// at the single-flight claim in `fa_dev::resolve_wav_and_align` (see
+/// at the single-flight claim in `fa_shared::resolve_wav_and_align` (see
 /// [`IN_FLIGHT`]) — taken before any expensive work and released on every
 /// exit by `Drop`. This function stays an unconditional write on purpose:
 /// duplicating the in-flight test here would be a second, independently
@@ -191,10 +194,10 @@ pub enum FaErrorKind {
     // an empty/unusable tokenization of the requested segments' text.
     #[cfg_attr(not(feature = "fa-inference"), allow(dead_code))]
     InferenceFailed,
-    // Constructed only by `fa_dev.rs`'s pre-use manifest check (WS1 Task 5
+    // Constructed only by `fa_shared.rs`'s pre-use manifest check (WS1 Task 5
     // Slice D10) — a resolved `model.onnx` whose SHA-256 doesn't match
     // `scripts/fixtures/fa-onnx-manifest.json`'s committed hash for that
-    // language, or has no manifest entry at all. `fa_dev` is unconditionally
+    // language, or has no manifest entry at all. `fa_shared` is unconditionally
     // compiled (unlike `fa_onnx.rs`), so this variant is never `dead_code`.
     ModelHashMismatch,
     // WS1 Task 5 Slice D11: `fa_cancel` flipped `FaState` to `Cancelled`
@@ -700,9 +703,10 @@ pub(crate) fn fa_model_path(app: &tauri::AppHandle, language_code: &str) -> Resu
 // that PRODUCES such a WAV is `whisper.rs::transcode_to_wav` — its one
 // production caller (`whisper_transcribe`) deletes that WAV
 // (`fs::remove_dir_all`) the moment whisper-cli exits, a lifetime
-// `fa_align` could never observe. `fa_align_dev` (`fa_dev.rs`) works around
-// this today by making its OWN throwaway WAV per dev invocation; a future
-// real Apply-Sync caller needs one that (a) survives past the call that
+// `fa_align` could never observe. `resolve_wav_and_align` (`fa_shared.rs`,
+// reached via the now-retired dev-only `fa_align_dev` at the time this was
+// written) works around this by making its OWN durable WAV per call; a
+// future real Apply-Sync caller needs one that (a) survives past the call that
 // requested it and (b) is reused across repeated FA runs against the SAME
 // source media, rather than re-transcoding a multi-minute file every time —
 // the same reload-cost shape D10/D11 already measured and fixed for the
@@ -750,7 +754,8 @@ fn fa_audio_cache_dir_from_local_data_dir(local_data_dir: &Path) -> PathBuf {
 /// `AppHandle`-based wrapper — see the pure builder above for the tested
 /// half, mirroring `fa_model_path`'s own split. Reachable in every build (not
 /// just `cfg(test)`) since WS1 Task 5 Slice D25 A1 wired `ensure_durable_wav`
-/// into `fa_dev.rs`'s `fa_align_dev` — no longer `allow(dead_code)`.
+/// into `fa_shared.rs`'s `resolve_wav_and_align` (then reached via the
+/// now-retired dev-only `fa_align_dev`) — no longer `allow(dead_code)`.
 ///
 /// D20 fix (WS3 Round 29) — this used to resolve straight off
 /// `app_local_data_dir()`, so a relocated storage root left this cache
@@ -943,25 +948,25 @@ fn finalize_cache_write(tmp_path: &Path, final_path: &Path, cache_dir: &Path) ->
     Ok(final_path.to_path_buf())
 }
 
-/// Production-shaped entry point (WS1 Task 5 Slice D24 B1). Its only caller
-/// is `fa_dev.rs`'s dev-only `fa_align_dev` (WS1 Task 5 Slice D25 A1) —
-/// still no production/UI-reachable caller; `fa_align_dev` itself is
-/// console-only, per its own module doc comment. Resolves the cache
-/// directory via a live `AppHandle` and transcodes for real via
-/// `whisper.rs::transcode_to_wav` (unchanged, reused as-is per D24's own
-/// scope — Track B never modified `whisper.rs`) rather than a
+/// Production-shaped entry point (WS1 Task 5 Slice D24 B1). Its caller is
+/// `fa_shared.rs`'s `resolve_wav_and_align` (WS1 Task 5 Slice D25 A1) — the
+/// shared body behind production's `fa_align_production`, reached at the
+/// time this was written via the now-retired dev-only `fa_align_dev`.
+/// Resolves the cache directory via a live `AppHandle` and transcodes for
+/// real via `whisper.rs::transcode_to_wav` (unchanged, reused as-is per D24's
+/// own scope — Track B never modified `whisper.rs`) rather than a
 /// reimplementation. On a cache hit, this never spawns ffmpeg at all.
 ///
-/// `pub`, not `pub(crate)` (WS1 Task 5 Slice D25 A1): `fa_align_dev`'s own
-/// `verify_model_manifest` step hashes the full ~1.2 GiB `model.onnx` on
+/// `pub`, not `pub(crate)` (WS1 Task 5 Slice D25 A1): `resolve_wav_and_align`'s
+/// own `verify_model_manifest` step hashes the full ~1.2 GiB `model.onnx` on
 /// EVERY call (a pre-existing, unrelated D10 fixed cost, independent of this
-/// function), which dominates an end-to-end `fa_align_dev` wall-clock
+/// function), which dominates an end-to-end `resolve_wav_and_align` wall-clock
 /// measurement and would mask this function's own miss-vs-hit timing signal.
 /// `tests/fa_durable_wav_live.rs` (an integration-test crate, so it can only
 /// reach `pub` items) calls this directly for an isolated measurement, in
-/// addition to going through the real `fa_align_dev` for the end-to-end
+/// addition to going through the real `resolve_wav_and_align` for the end-to-end
 /// wiring proof. A compile-time-only visibility widening — zero runtime
-/// effect, same as the `mod fa`/`mod fa_dev` widening in `lib.rs`.
+/// effect, same as the `mod fa`/`mod fa_shared` widening in `lib.rs`.
 pub async fn ensure_durable_wav(app: &tauri::AppHandle, source_path: &Path) -> Result<PathBuf, FaError> {
     ensure_durable_wav_timed(app, source_path).await.map(|(path, _hit)| path)
 }
@@ -1018,13 +1023,16 @@ pub async fn ensure_durable_wav_timed(
 /// Neither path panics, blocks the main thread indefinitely, or silently
 /// succeeds.
 ///
-/// Not called from `src/` for production timing in either configuration yet
-/// — the only caller anywhere is the DEV-only `fa_align_dev` (`fa_dev.rs`,
-/// Slice D10), unreachable from any UI control. Real frontend wiring (a
-/// capability-gated Settings toggle, per `docs/archive/history/work-in-progress.md` §11
-/// item 1's ruling — `task5-slice-ledger.md`, the original source, was
+/// Called from `src/` for production timing via `fa_align_production`
+/// (`fa_production.rs`, capability-gated) -> `resolve_wav_and_align`
+/// (`fa_shared.rs`) -> `fa_align`, wired from `App.tsx` through
+/// `forcedAlignmentRun.ts`. At the time this comment was first written, the
+/// only caller anywhere was the DEV-only `fa_align_dev` (Slice D10),
+/// unreachable from any UI control; that dev-only path was retired (G5) once
+/// the real capability-gated wiring — per `docs/archive/history/work-in-progress.md`
+/// §11 item 1's ruling (`task5-slice-ledger.md`, the original source, was
 /// deleted 2026-08-14, `9cf5867`; retrieve: `git show
-/// 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`) is a later, separately-scoped slice.
+/// 251be64:docs/ws1-sync-pipeline/task5-slice-ledger.md`) — shipped.
 ///
 /// * `audio_path`   — filesystem path to the audio FA would align against
 ///   (reuses whatever the caller already has on disk, e.g. the same
@@ -1189,10 +1197,12 @@ pub(crate) async fn fa_align_with_prefix(
         });
         return match result {
             Ok(output) => {
+                // Read before `output` is moved apart below — the one
+                // definition of the wire count (`AlignChunkedOutput`).
+                let n_fallback_chunks = output.n_fallback_chunks();
                 let words: Vec<FaWordSpan> = word_spans_to_dtos(output.words);
                 let infeasible_chunks: Vec<FaInfeasibleChunk> =
                     output.infeasible_chunks.into_iter().map(FaInfeasibleChunk::from).collect();
-                let n_fallback_chunks = infeasible_chunks.len() as u32;
                 let _ = on_event.send(FaEvent::Done { words, n_fallback_chunks, infeasible_chunks });
                 Ok(())
             }

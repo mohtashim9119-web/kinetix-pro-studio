@@ -1,14 +1,16 @@
-// `fa`/`fa_dev` are `pub` (WS1 Task 5 Slice D25 A1) solely so the live,
+// `fa`/`fa_shared` are `pub` (WS1 Task 5 Slice D25 A1) solely so the live,
 // real-`AppHandle` durable-cache probe under `tests/fa_durable_wav_live.rs`
 // (a separate `harness = false` integration-test crate — the only way to get
 // the real Wry runtime's `EventLoop::new()` to run on the actual process
-// main thread, which macOS/AppKit requires) can reach `fa_align_dev` and its
-// `FaState`/`FaModelCache`/`FaChunkInput`/`FaEvent` types, all already `pub`
-// within the crate. No item's own visibility (`pub`/`pub(crate)`) changed,
-// and no runtime behavior changed — this is a compile-time-only widening of
-// which OTHER CRATES may name these modules.
+// main thread, which macOS/AppKit requires) can reach `resolve_wav_and_align`
+// and its `FaState`/`FaModelCache`/`FaChunkInput`/`FaEvent` types, all
+// already `pub` within the crate. No item's own visibility (`pub`/
+// `pub(crate)`) changed beyond `resolve_wav_and_align` itself (widened from
+// `pub(crate)` to `pub` for the same reason, G5 fa_align_dev retirement), and no
+// runtime behavior changed — this is a compile-time-only widening of which
+// OTHER CRATES may name these items.
 pub mod fa;
-pub mod fa_dev;
+pub mod fa_shared;
 pub mod fa_timing;
 mod fa_preflight;
 pub mod fa_production;
@@ -23,10 +25,18 @@ mod event_sink;
 pub mod model_download;
 pub mod models;
 mod asset_store;
+mod media_vault;
 mod relink;
 mod project_mirror;
 mod safe_delete;
-mod sha256;
+// G6 Step 1 — widened `mod` -> `pub mod`, same reasoning as `fa`/`fa_shared`
+// above: `tests/media_hash_throughput_live.rs` (a separate `harness = false`
+// integration-test crate) needs to name `sha256::hash_file` to measure real
+// throughput against a real media library. No item's own visibility changed
+// (everything inside was already `pub`, promoted from `pub(crate)` in the
+// same step for the Media Vault registry that will call it from a sibling
+// module) and no runtime behavior changed.
+pub mod sha256;
 mod atomic_stage;
 mod storage_root;
 mod whisper;
@@ -635,8 +645,7 @@ pub fn run() {
             models::fa_model_status,
             fa::fa_align,
             fa::fa_cancel,
-            fa_dev::fa_align_dev,
-            fa_dev::fa_stage_audio_raw,
+            fa_shared::fa_stage_audio_raw,
             fa_production::fa_align_production,
             fa_preflight::fa_preflight,
             project_mirror::project_mirror_read_all,
@@ -660,6 +669,13 @@ pub fn run() {
             asset_store::asset_store_attempt_resolution,
             asset_store::asset_store_delete,
             asset_store::asset_store_delete_project,
+            media_vault::media_vault_import,
+            media_vault::media_vault_list_entries,
+            media_vault::media_vault_read_blob,
+            media_vault::media_vault_generate_thumbnail,
+            media_vault::media_vault_read_thumbnail,
+            media_vault::media_vault_unreference,
+            media_vault::media_vault_rename,
             relink::relink_pick_folder,
             relink::relink_list_folder,
             fetch_url_bytes,

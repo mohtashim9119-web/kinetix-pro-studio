@@ -2,16 +2,17 @@ import { useCallback, useRef, useState } from 'react';
 import {
   transcribeWithProgress,
   classifyWhisperFailure,
-  alignScenestoTranscript,
+  alignScenestoTranscriptAsync,
   distributeSegmentTimes,
   filterMalformedTokens,
   toAlignmentLanguageCode,
   type SegmentAlignment,
   type AlignmentLanguageCode,
 } from '../services/whisperService';
-import { detectSilences } from '../services/silenceDetector';
+import { detectSilencesSingleFlight } from '../services/silenceDetector';
 import type { SilenceInterval, SilenceDetectResult } from '../services/silenceDetector';
 import { applyAnchorBasedTiming, getFileIdentity } from '../services/syncEngine';
+import { computeAudioHash } from '../services/spine';
 import { validate1to2 } from '../services/syncContracts';
 import { buildSilenceErrorEntry, buildMalformedTokenEntry, buildContractViolationEntry, buildWhisperModelFailureEntry, appendSyncLogEntries } from '../services/syncLog';
 import { buildUnappliedTranscript } from '../services/unappliedTranscript';
@@ -36,8 +37,16 @@ import { stampWhisperProvenance } from '../services/timingProvenance';
  * Falls back to `fetch(asset.url)` only when `.file` is absent (a project
  * asset reconstructed from IndexedDB after a reload never carries a `File`
  * reference — `projectStore.ts` strips it before persisting).
+ *
+ * `audioHash` (WS2 G2 completion, Unit 2 — single-flight `detectSilences`):
+ * when the caller already knows the staged audio's content hash, threading
+ * it through lets this call SHARE a silence-detection pass with any other
+ * caller using the same hash within the same sync (`forcedAlignmentRun.ts`'s
+ * `runFaAttempt`, in particular — see `silenceDetector.ts`'s own doc
+ * comment). Omitted, this is byte-identical to the pre-Unit-2 behavior:
+ * always detects fresh.
  */
-export async function fetchAndDetectSilences(asset: Asset): Promise<SilenceDetectResult> {
+export async function fetchAndDetectSilences(asset: Asset, audioHash?: string): Promise<SilenceDetectResult> {
   let blob: Blob;
   try {
     if (asset.file) {
@@ -53,7 +62,7 @@ export async function fetchAndDetectSilences(asset: Asset): Promise<SilenceDetec
     const message = err instanceof Error ? err.message || err.name : String(err);
     return { status: 'error', errorMessage: `voiceover fetch failed: ${message}` };
   }
-  return detectSilences(blob);
+  return detectSilencesSingleFlight(audioHash, blob);
 }
 
 /** What `alignFromCache` hands back to the orchestrator (App.tsx). */
@@ -100,8 +109,21 @@ export async function alignSegmentsFromCachedTranscript(
   // `undefined` (unset/unsupported) reproduces this function's pre-T3.1
   // behavior exactly — see `toAlignmentLanguageCode`'s doc comment.
   languageCode?: AlignmentLanguageCode,
+  // WS2 G2 item 2/4 — reaches the worker-backed matcher below
+  // (`alignScenestoTranscriptAsync`) so a whole-run cancel can interrupt the
+  // Hirschberg pass this function runs on EVERY sync (FA on or off), not
+  // just check before/after it. Optional and unused when omitted, so every
+  // existing caller/test keeps its exact pre-migration behavior.
+  signal?: AbortSignal,
+  // WS2 G2 completion, Unit 2 — the staged audio's content hash, threaded
+  // into `fetchAndDetectSilences` so this call's `detectSilences` pass can
+  // be shared with `forcedAlignmentRun.ts`'s `runFaAttempt` (same audio,
+  // same sync) instead of running independently. `undefined` reproduces the
+  // pre-Unit-2 behavior exactly — see `silenceDetector.ts`'s own doc
+  // comment.
+  audioHash?: string,
 ): Promise<AlignFromCacheResult> {
-  const silenceResult = await fetchAndDetectSilences(audioAsset);
+  const silenceResult = await fetchAndDetectSilences(audioAsset, audioHash);
   // Fail-loud, but never fail-stop: a silence-scan failure degrades boundary
   // placement to token midpoints (the documented fallback) and is reported
   // upward, rather than aborting a sync that can still produce a timeline.
@@ -122,7 +144,7 @@ export async function alignSegmentsFromCachedTranscript(
     );
   }
 
-  const alignments = alignScenestoTranscript(segments, usableTokens, silences, durationSecs, languageCode);
+  const alignments = await alignScenestoTranscriptAsync(segments, usableTokens, silences, durationSecs, languageCode, signal);
   const updated = distributeSegmentTimes(segments, alignments, anchorSource);
   // Re-derive every segment's span from its (now whisper-tagged) anchor — the
   // same normalization click 2 currently gets for free in App.tsx before
@@ -231,6 +253,18 @@ export interface StartTranscriptionOptions {
    * a failed flush must not turn a successful transcription into an error.
    */
   onCompleted?: () => void | Promise<void>;
+  /**
+   * plan-v3 Wave 2 item 4 — the caller's already-computed
+   * `spine.ts#computeAudioHash(audioAsset.file)`, stamped onto
+   * `Project.lastTranscribedAudioHash` in the same update that writes the
+   * tokens. Optional so every pre-Wave-2 call site (this hook's own tests
+   * included) keeps compiling unchanged; when omitted, computed here from
+   * `audioAsset.file` if present. Threading it through from the caller
+   * avoids hashing a large voiceover a second time — `handleVoiceoverStaged`
+   * (App.tsx) already computes it before deciding whether to call this at
+   * all.
+   */
+  audioHash?: string;
 }
 
 export interface UseWhisperApi {
@@ -281,6 +315,8 @@ export interface UseWhisperApi {
     durationSecs: number,
     anchorSource?: 'whisper' | 'forced-alignment',
     languageCode?: AlignmentLanguageCode,
+    signal?: AbortSignal,
+    audioHash?: string,
   ) => Promise<AlignFromCacheResult>;
 }
 
@@ -405,7 +441,18 @@ export function useWhisper(): UseWhisperApi {
           return { started: true };
         }
 
-        const silenceResult = await fetchAndDetectSilences(audioAsset);
+        // plan-v3 Wave 2 item 4 — the real content hash this run's tokens get
+        // stamped with below. Prefer the caller's already-computed value
+        // (the ordinary path: App.tsx's handleVoiceoverStaged hashes before
+        // ever calling this) over hashing audioAsset.file a second time.
+        const resolvedAudioHash = opts?.audioHash
+          ?? (audioAsset.file ? await computeAudioHash(audioAsset.file) : undefined);
+
+        // WS2 G2 completion, Unit 2 — same single-flight cache
+        // `alignSegmentsFromCachedTranscript` participates in: if the
+        // operator transcribes and immediately clicks Apply Sync, both
+        // detectSilences passes for this SAME audio share one array.
+        const silenceResult = await fetchAndDetectSilences(audioAsset, resolvedAudioHash);
         if (generationRef.current !== generation) return { started: true };
 
         // WS4 Features 3 + 4 on the fresh-transcription path, plus the R11
@@ -450,7 +497,11 @@ export function useWhisper(): UseWhisperApi {
           ...violations.map(v => buildContractViolationEntry(syncRunId, v, syncRunAt)),
         ];
 
-        const alignments = alignScenestoTranscript(segments, filtered.tokens, silences, durationSecs, languageCode);
+        // WS2 G2 item 2/4 — off-main-thread matcher, reachable by this job's
+        // own `controller` (the abort target `abortRef.current?.abort()`
+        // above already uses to cancel a superseded/duplicate run).
+        const alignments = await alignScenestoTranscriptAsync(segments, filtered.tokens, silences, durationSecs, languageCode, controller.signal);
+        if (generationRef.current !== generation) return { started: true };
         const finalSegments = distributeSegmentTimes(segments, alignments);
 
         // Store transcript tokens before the segment gate — the transcript is valid
@@ -471,6 +522,9 @@ export function useWhisper(): UseWhisperApi {
           lastTranscribedFileIdentity: audioAsset.file
             ? getFileIdentity(audioAsset.file)
             : p.lastTranscribedFileIdentity,
+          // plan-v3 Wave 2 item 4 — the authoritative cache key (A5). Same
+          // fallback-to-existing-value reasoning as the identity field above.
+          lastTranscribedAudioHash: resolvedAudioHash ?? p.lastTranscribedAudioHash,
           transcriptTokens: tokens,
           // plan-v3 item 8 — stamp the engine that actually produced these
           // tokens, in the SAME update. A follow-up write would leave a

@@ -3,7 +3,9 @@ import { writeMirroredProject, deleteMirroredProject, readMirror } from './proje
 import { osStoreRead, osStoreWrite, osStoreDelete } from './projectStoreClient';
 import { isTauri } from './tauriFfmpeg';
 import { backfillSegmentIds } from './segmentId';
+import { filterKnownSyncLogEntries } from './syncLog';
 import { migrateLegacyTimingProvenance } from './timingProvenance';
+import { spineEquals, type SyncSpine } from './spine';
 
 /** Registry key — stores ProjectMeta[] (newest-first sorted on write). */
 const REGISTRY_KEY = 'kinetix:projects:v1';
@@ -34,14 +36,39 @@ interface StoredAsset extends Omit<Asset, 'url' | 'file'> {
 }
 
 interface StoredProjectData {
-  version: 2 | 3 | 4 | 5;
+  version: 2 | 3 | 4 | 5 | 6;
   savedAt: number;
   project: Omit<Project, 'assets'> & { assets: StoredAsset[] };
 }
 
 /** Current on-disk envelope. v5 is the first version the loader branches on
- *  (plan-v3 item 8 — timing provenance). Prior markers were inert. */
-export const PROJECT_STORE_VERSION = 5 as const;
+ *  (plan-v3 item 8 — timing provenance). Prior markers were inert.
+ *
+ *  G6 Step 5 — bumped from 5 to 6: `Asset.contentHash` (optional, additive —
+ *  `assetId` stays the binding field everywhere). No loader migration is
+ *  needed for this bump: the field is absent-safe (undefined on anything
+ *  saved before it existed) and already round-trips through
+ *  `{ ...storedProject }`/`stripAsset`'s `Omit<Asset, ...>` spread with zero
+ *  special-casing. A v5-or-earlier project loads unchanged and simply saves
+ *  as v6 on its next write; `services/backfillAssetContentHashes.ts`
+ *  fills in the field itself, lazily, for whichever project is currently
+ *  open — see that module's own doc comment for why it is scoped that way
+ *  rather than a loader-time migration. */
+export const PROJECT_STORE_VERSION = 6 as const;
+
+/** plan-v3 item 8's OWN threshold for the v4→v5 timing-provenance migration
+ *  below — kept as its own literal, NOT `PROJECT_STORE_VERSION`. That
+ *  migration's whole contract is "a stored envelope older than 5 gets
+ *  labelled engine-unknown; v5 and newer are left exactly as written" — a
+ *  fixed fact about what changed at v5, unrelated to whatever the CURRENT
+ *  envelope version happens to be. Comparing against `PROJECT_STORE_VERSION`
+ *  directly would have silently re-widened this migration to also catch
+ *  every v5 project the moment this file's version bumped to 6 for Step 5's
+ *  unrelated `Asset.contentHash` addition — re-running it on an already-v5
+ *  project with real tokens but no timingProvenance stamp would have
+ *  overwritten the "absent means never synced" state this migration is
+ *  explicitly documented to leave alone. */
+const TIMING_PROVENANCE_MIGRATION_THRESHOLD = 5;
 
 function stripAsset(asset: Asset): StoredAsset {
   const { url: _url, file: _file, ...rest } = asset;
@@ -220,6 +247,11 @@ interface StoredGuardSnapshot {
   segmentCount: number;
   /** Stored segment id -> its stored `assetId`, for segments that had a non-empty one. */
   assetIdBySegment: Map<string, string>;
+  /** G2 close-out FIX 2 — the stored project's own `lastSyncSpine`, so Guard
+   *  1b (below) can tell "an ordinary Apply Sync re-matched this segment's
+   *  asset differently" from "something silently dropped a reference this
+   *  save never meant to change". See the guard's own comment for why. */
+  lastSyncSpine: SyncSpine | undefined;
 }
 
 /** Reads the CURRENTLY stored guard snapshot for `id`, or null if unknown/unreadable. */
@@ -236,13 +268,26 @@ async function storedGuardSnapshot(id: string): Promise<StoredGuardSnapshot | nu
         assetIdBySegment.set(s.id, s.assetId);
       }
     }
-    return { segmentCount: segs.length, assetIdBySegment };
+    return { segmentCount: segs.length, assetIdBySegment, lastSyncSpine: parsed?.project?.lastSyncSpine };
   } catch {
     // Unreadable stored value — Guards 1/1b cannot make a judgement, so they
     // decline to (the poison flag from loadProject is what protects this case
     // instead).
     return null;
   }
+}
+
+/** G2 close-out FIX 2 — true when both spines are absent (neither project has
+ *  ever synced, or the spine feature predates both — nothing to compare) OR
+ *  both present and equal. Distinct from `spineEquals` itself, which treats
+ *  an absent spine as never a match (correct for its own "is this content
+ *  still what we synced" question) — here an absent-on-both-sides pair means
+ *  "no sync happened between these two saves", which is the case Guard 1b
+ *  must still treat as suspicious, not the case it should wave through. */
+function syncSpineUnchanged(a: SyncSpine | undefined, b: SyncSpine | undefined): boolean {
+  if (!a && !b) return true;
+  if (!a || !b) return false;
+  return spineEquals(a, b);
 }
 
 // ---------------------------------------------------------------------------
@@ -312,10 +357,37 @@ export async function saveProject(project: Project, opts: SaveOptions = {}): Pro
   // its only way to reach it does. Not gated behind `allowEmptying`, which is
   // Guard 1's own escape hatch for a different shape (zero segments); this
   // guard has no escape hatch because no legitimate save produces its shape.
+  //
+  // G2 close-out FIX 2 — OLD BUG, root-caused: this guard also fired on a
+  // completely legitimate Apply Sync result. Every Apply Sync rebuilds each
+  // segment's `assetId` from scratch against the CURRENT asset pool
+  // (`parseProjectData`/`autoMatchSegments`, App.tsx/syncEngine.ts) rather
+  // than carrying the previous run's assignment forward, and segment ids are
+  // stable across re-syncs (`segmentId.ts`'s content-key join) — so a scene
+  // whose fresh match legitimately failed this run (an FA-arm Estimated
+  // placeholder scene, an asset claimed earlier in document order by a
+  // different scene this pass) reproduces EXACTLY the shape this guard was
+  // built to catch, under the stable id of a scene that DID have a match in
+  // the last saved project. The guard had no way to tell "an authoritative
+  // fresh sync re-matched this" from "something silently dropped a
+  // reference nothing meant to change" — so it refused the save, the FA
+  // sync was never persisted, and closing the app reverted to the stale
+  // pre-sync copy.
+  //
+  // THE FIX: a completed Apply Sync stamps `Project.lastSyncSpine`
+  // (`spine.ts`) in the SAME commit as the segments it produced. When the
+  // incoming project's spine differs from the stored snapshot's — including
+  // the first-ever stamp, spine absent -> present — this save is the direct,
+  // authoritative product of a fresh sync run, and that run's own matching
+  // decision is trusted rather than re-litigated here. The guard stays fully
+  // armed for every save NOT explained by a spine change, which is exactly
+  // the rehydration-on-project-switch shape the incident happened in — that
+  // path never touches `lastSyncSpine` at all.
   if (!opts.allowEmptying && project.segments.length > 0) {
     guardSnapshot ??= await storedGuardSnapshot(project.id);
     if (guardSnapshot !== null && guardSnapshot.segmentCount === project.segments.length
-      && guardSnapshot.assetIdBySegment.size > 0) {
+      && guardSnapshot.assetIdBySegment.size > 0
+      && syncSpineUnchanged(project.lastSyncSpine, guardSnapshot.lastSyncSpine)) {
       const incomingAssetIds = new Set(project.assets.map(a => a.id));
       const incomingAssetIdBySegment = new Map<string, string>();
       for (const s of project.segments) {
@@ -500,12 +572,19 @@ export async function loadProjectDetailed(id: string): Promise<LoadOutcome | nul
   // an already-backfilled project is a no-op here.
   project.segments = backfillSegmentIds(project.segments);
 
+  // Operator ruling (sync-log user view) — 'fa-fallback' is retired from the
+  // entry-type union. A project synced before plan-v3 Wave 1 can still carry
+  // such entries; drop them (and anything else of an unknown type) so the log
+  // loads and renders instead of holding a type nothing styles or classifies.
+  const knownSyncLog = filterKnownSyncLogEntries(project.syncLog);
+  if (knownSyncLog) project.syncLog = knownSyncLog;
+
   // plan-v3 item 8 — v4→v5: a stored envelope older than 5 that already
   // carries timing arrays is labelled engine-unknown. Never a guess. A v5
   // (or newer) envelope is left as written, including an absent stamp on a
   // project that has never stored timings.
   const storedVersion = typeof stored.version === 'number' ? stored.version : 0;
-  if (storedVersion < PROJECT_STORE_VERSION) {
+  if (storedVersion < TIMING_PROVENANCE_MIGRATION_THRESHOLD) {
     const migrated = migrateLegacyTimingProvenance(project);
     project.timingProvenance = migrated.timingProvenance;
   }

@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import type { SyncSpine } from './services/spine';
+
 export enum TransitionType {
   FADE = 'fade',
   SLIDE = 'slide',
@@ -160,6 +162,22 @@ export interface Asset {
    * stays blocked while any asset in the project carries this flag.
    */
   unresolved?: boolean;
+  /**
+   * G6 Step 5 — sha256 of this asset's bytes, hex-encoded (same algorithm
+   * and encoding `services/mediaIngest.ts`'s `sha256Hex` and the media
+   * vault's own Rust hasher use). Enrichment only — `assetId` stays the
+   * binding field every segment/UI reference resolves through; nothing
+   * treats `contentHash` as required or authoritative for identity.
+   * Populated at import time by `mediaIngest.ts`/`zipIngest.ts`'s
+   * write-through (Steps 3/4), and lazily backfilled for assets saved
+   * before this field existed by
+   * `services/backfillAssetContentHashes.ts` (non-blocking — see that
+   * module's own doc comment for why it is scoped to the currently-open
+   * project rather than a boot-time sweep). Absent on an asset whose bytes
+   * have never been hashed (backfill not yet run, or its bytes could not be
+   * read) — never guessed, never backfilled with a stale value.
+   */
+  contentHash?: string;
 }
 
 /**
@@ -263,8 +281,9 @@ export interface VideoSegment {
   effectGrade?: SegmentGrade;
   /** WS-logs skip display — the cleaned scene-doc tag name (no brackets, e.g.
    *  "missing1") parseProjectData matched against assets for this segment.
-   *  Undefined for an untagged scene (empty `[]`). Display-only — nothing
-   *  downstream branches on it. */
+   *  Undefined for an untagged scene (empty `[]`). Display, plus the key
+   *  "Match media to scenes" (`matchMediaToScenes.ts`) re-matches against
+   *  current asset names — nothing in the sync pipeline branches on it. */
   tag?: string;
   /** Id of the original NATIVE segment this one is ultimately descended
    *  from — itself for a native segment (set to `id` by parseProjectData on
@@ -400,8 +419,10 @@ export interface TranscriptToken {
   /** Forced-alignment per-word confidence (WS1 Task 5 Slice D9), a
    *  probability in [0,1] comparable to `syncConstants.ts`'s `CONF_MIN`.
    *  Optional and additive-only: Whisper-sourced tokens never set it — only
-   *  `faBoundaryTypes.ts`'s `faWordSpansToTranscriptTokens` reshape does,
-   *  and that reshape has no live caller yet. */
+   *  `faBoundaryTypes.ts`'s `faWordSpansToTranscriptTokens` reshape does.
+   *  STALE-CLAIM CORRECTION (§M3.10 N2): this used to say "and that reshape
+   *  has no live caller yet" — it is called in production, from
+   *  `forcedAlignmentRun.ts`'s own run function. */
   confidence?: number;
   /** Forced-alignment script-word index (WS1 Task 5 Slice D18) — this
    *  word's 0-based position in the full script word sequence
@@ -448,8 +469,20 @@ export interface Project {
   lastTranscribedAssetId?: string;
   /** `${file.name}|${file.size}|${file.lastModified}` of the file that produced
    *  transcriptTokens — lets re-staging the same file be recognized even though
-   *  every stage event mints a fresh Asset id. See services/syncEngine.ts getFileIdentity. */
+   *  every stage event mints a fresh Asset id. See services/syncEngine.ts getFileIdentity.
+   *  DEPRECATED AS A CACHE KEY (plan-v3 Wave 2 item 4): kept only as the fast
+   *  pre-filter's own persisted trace; `lastTranscribedAudioHash` below is
+   *  authoritative. Still written on every transcription for back-compat with
+   *  any code path not yet moved onto the hash. */
   lastTranscribedFileIdentity?: string;
+  /** SHA-256 of the audio bytes that produced `transcriptTokens`
+   *  (`services/spine.ts`'s `computeAudioHash`) — plan-v3 Wave 2 item 4 /
+   *  final-shape-mapping row A5. THE authoritative transcript cache key: a
+   *  media swap whose bytes are identical to this value is a cache HIT even
+   *  under a new name/mtime. Absent on any project synced before this field
+   *  existed — treated as "no known hash", never inferred from
+   *  `lastTranscribedFileIdentity`. */
+  lastTranscribedAudioHash?: string;
   transcriptTokens?: TranscriptToken[];
   globalTransition: TransitionType;
   globalTransitionDuration: number;
@@ -561,10 +594,17 @@ export interface Project {
    *  `Project.transcriptTokens` (Whisper's own output), `confidence` set on
    *  every entry too.
    *
-   *  SCHEMA ONLY THIS SLICE — no production writer populates this field yet
-   *  (R.2/R.5/R.7 and any real per-word UI are unbuilt). An absent field is
-   *  read as "no FA word timings," the same convention every other optional
-   *  `Project` field here already uses (see `headings`, `resolutionTier`).
+   *  WRITTEN BY PRODUCTION (stale-claim correction, §M3.10 N1 — this
+   *  comment previously said "no production writer populates this field
+   *  yet"; that was wrong even when written and is corrected here): the
+   *  Apply Sync commit (`App.tsx`'s single `setProject` object literal,
+   *  `faWordTimings: faWordTimingsResult`) sets it on every run that
+   *  completed forced alignment. An absent field is read as "no FA word
+   *  timings," the same convention every other optional `Project` field
+   *  here already uses (see `headings`, `resolutionTier`). What is STILL
+   *  true from the original claim: no `version` concept exists on
+   *  `Project` to migrate through (see H2 / plan-v3 item 8) — that part is
+   *  load-bearing and unchanged.
    *  Envelope versioning for the *stamp* that describes these timings lives
    *  on `timingProvenance` / `projectStore` v5 (plan-v3 item 8), not here. */
   faWordTimings?: TranscriptToken[];
@@ -578,6 +618,17 @@ export interface Project {
     transcription?: TimingProvenance;
     alignment?: TimingProvenance;
   };
+  /**
+   * plan-v3 Wave 2 item 4 / final-shape-mapping row H3 — the content-hash
+   * spine (`services/spine.ts`'s `SyncSpine`) of the audio + normalized
+   * script/scene text that produced THIS project's current, committed
+   * segments. Stamped once per successful Apply Sync commit; read by the
+   * "honest Apply Sync" UI gate to grey the button out, with a stated
+   * reason, when neither input has actually changed since this stamp.
+   * Absent on any project synced before this field existed — an absent
+   * value never disables the button (there is nothing proven unchanged),
+   * it only enables the new gate once a first stamp exists. */
+  lastSyncSpine?: SyncSpine;
   /** WS2 T4.1 Step 2 — what THIS project's freshly minted segments start their
    *  `showOverlay` at, seeded ONCE at creation from App Settings' New Project
    *  Defaults (`services/appDefaults.ts`) and never re-read from that global
@@ -709,14 +760,6 @@ export type SyncLogEntryType =
    *  severity taxonomy reserves 'warning' for "the user should do something",
    *  and there is nothing for them to do here. */
   | 'rule-correction'
-  /** 'fa-fallback' — RETIRED, WS1 Session J → plan-v3 Wave 1 item 3 (D24).
-   *  Nothing produces this type any more — `FaRunResult` has no `'fallback'`
-   *  arm, so a run-level FA failure can no longer silently commit Whisper
-   *  timing. Kept in this union (and in `SyncLogPanel`'s renderer) ONLY so a
-   *  persisted project's pre-Wave-1 log entries still render instead of
-   *  falling through to the generic 'info' badge. See 'fa-paused' below for
-   *  the entry type that replaced it. */
-  | 'fa-fallback'
   /** 'fa-paused' — plan-v3 Wave 1 items 3/4 (D24). A run-level FA failure (or
    *  a precondition equivalent to one — unsupported language, empty chunk
    *  plan, zero words, any typed IPC failure kind) STOPPED the run rather
@@ -762,10 +805,50 @@ export type SyncLogEntryType =
    *  restart-persisted), this entry is for the record. severity:'warning',
    *  with `fixHint` naming the action. See `syncLog.ts`'s
    *  `buildWhisperModelFailureEntry`. */
-  | 'whisper-model-failure';
+  | 'whisper-model-failure'
+  /** 'media-import' — G6 Step 4. ONE grouped finding per media-vault ingest
+   *  (zip / loose files / folder — `services/mediaIngest.ts`,
+   *  `services/zipIngest.ts`), not one entry per file: the
+   *  imported/deduped/unsupportedSkipped/failed counts are folded into
+   *  `message` itself (see `syncLog.ts`'s `buildMediaImportEntry`) rather
+   *  than a new structured field, since nothing else renders one for this
+   *  type. NOT tied to an Apply Sync run — the Media block's "add media"
+   *  door can fire this at any time, so `syncRunId` here is a freshly minted
+   *  grouping key for this one ingest, not a real sync run's id.
+   *  severity:'info' when nothing failed, 'warning' when `failed > 0`. */
+  | 'media-import'
+  /** 'media-match' — media workflow Units 1-2. A Media-block name event not
+   *  tied to an Apply Sync run: "Match media to scenes"'s one summary finding
+   *  (N matched · M unmatched, naming the unmatched scenes and any same-name
+   *  ambiguity), or an inline rename that left 2+ files matching as the same
+   *  name. `syncRunId` is a freshly minted grouping key, same as
+   *  'media-import'. See `syncLog.ts`'s `buildMediaMatchEntry` /
+   *  `buildMediaNameCollisionEntry`. */
+  | 'media-match';
 
 /** One line in the sync log. Entries from a single Apply Sync run share a
  *  `syncRunId`, so the UI can group them without a nested data structure. */
+/** Machine-readable identity of an entry whose `type` alone does not say what
+ *  it is — the generic 'warning'/'info' entries several builders share. Set
+ *  AT BUILD TIME by the builder itself, so the sync log's user view
+ *  (`syncLogUserView.ts`) classifies by this field and never by display text:
+ *  a copy edit to a message or fix hint cannot move an entry to a different
+ *  attention kind. Absent on entries persisted before this field existed —
+ *  those fall back to the view's legacy text matching. */
+export type SyncLogFindingKind =
+  | 'ctc-infeasible'
+  | 'fa-victim-retimed'
+  | 'scene-density'
+  | 'weak-match'
+  | 'wpm'
+  | 'local-coverage'
+  | 'bundle-import-failed'
+  | 'character-fallback'
+  | 'freeze-frame'
+  | 'engine-forced-alignment'
+  | 'engine-whisper'
+  | 'engine-character';
+
 export interface SyncLogEntry {
   id: string;
   /** Date.now() at creation. */
@@ -858,8 +941,8 @@ export interface SyncLogEntry {
    *  this file. */
   groupedItems?: GroupedLogItem[];
   /** WS1 Session J — WHICH RULE OWNS THIS ENTRY. `'R.5' | 'R.10' | 'R.11' |
-   *  'R.12'` today; also set on 'fa-fallback' entries, where it names the FA
-   *  entry point (`'FA'`) rather than a post-inference rule.
+   *  'R.12'` today; also set on FA entries ('fa-paused', 'fa-preflight', …),
+   *  where it names the FA entry point (`'FA'`) rather than a post-inference rule.
    *
    *  Deliberately a WIDENED `string`, not a union, and the reason is concrete:
    *  this workstream has added four rules in five sessions, and a union would
@@ -915,6 +998,10 @@ export interface SyncLogEntry {
    *  never conflates the two, the confusion this field exists to end: see
    *  `buildSkipLogEntries`'s "S{n} / Clip {n}" message format. */
   absorbedByDisplayIndex?: number;
+  /** See `SyncLogFindingKind`. `count` carries the number the view needs
+   *  from the finding (re-timed scenes, character-placed segments) so it is
+   *  never parsed back out of prose. */
+  finding?: { kind: SyncLogFindingKind; count?: number };
 }
 
 /** One violation's worth of detail inside a grouped `SyncLogEntry` — a

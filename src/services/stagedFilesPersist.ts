@@ -160,10 +160,11 @@ export async function toStoredRow(
 /**
  * Rebuilds a `StagedFiles` from stored rows.
  *
- * `lastModified` IS RESTORED, and that is not cosmetic: `getFileIdentity`
- * (`syncEngine.ts:383`) is `${name}|${size}|${lastModified}`, so a `File` built
- * without it takes `Date.now()`, changes identity, and invalidates the cached
- * transcript for audio that was already transcribed.
+ * `lastModified` IS RESTORED. It no longer gates the transcript cache
+ * (plan-v3 Wave 2 item 4 moved that to `spine.ts`'s content-hash
+ * `computeAudioHash`, which reads the restored `Blob`'s bytes and is immune
+ * to this metadata) but still keeps `getFileIdentity`'s fast pre-filter
+ * stable across a restore — see `stagedFilesStore.ts`'s `StoredStagedFile`.
  */
 export function restoreStagedFiles(rows: readonly StoredStagedFile[]): StagedFiles {
   const out: StagedFiles = {
@@ -230,14 +231,17 @@ export function isStagedEmpty(staged: StagedFiles): boolean {
  * skip the transcription, so Whisper runs anyway.
  */
 export function canAdoptRestoredVoiceover(input: {
-  /** `getFileIdentity(file)` for the restored file. */
-  fileIdentity: string;
-  /** `Project.lastTranscribedFileIdentity`. */
-  lastTranscribedFileIdentity: string | undefined;
+  /** `computeAudioHash(file)` (`services/spine.ts`) for the restored file —
+   *  plan-v3 Wave 2 item 4. Replaces the former `getFileIdentity` comparison
+   *  so a restored file whose bytes are unchanged (but whose name/mtime
+   *  drifted, e.g. a re-copy) still adopts safely. */
+  audioHash: string;
+  /** `Project.lastTranscribedAudioHash`. */
+  lastTranscribedAudioHash: string | undefined;
   /** `Project.transcriptTokens?.length ?? 0`. */
   cachedTokenCount: number;
 }): boolean {
-  return input.lastTranscribedFileIdentity === input.fileIdentity
+  return input.lastTranscribedAudioHash === input.audioHash
     && input.cachedTokenCount > 0;
 }
 
@@ -252,17 +256,21 @@ export function canAdoptRestoredVoiceover(input: {
 export function stagedVoiceoverNeedsExplicitTranscribe(input: {
   hasStagedVoiceover: boolean;
   hasPendingVoiceover: boolean;
-  /** `getFileIdentity(stagedVoiceoverFile)` when staged. */
-  fileIdentity: string | null;
-  lastTranscribedFileIdentity: string | undefined;
+  /** `computeAudioHash(stagedVoiceoverFile)` (`services/spine.ts`) when
+   *  staged and the hash is known — plan-v3 Wave 2 item 4. `null` while
+   *  staged but not yet hashed (the async computation hasn't resolved) as
+   *  well as when nothing is staged; either way, this returns `false` rather
+   *  than guessing. */
+  audioHash: string | null;
+  lastTranscribedAudioHash: string | undefined;
   cachedTokenCount: number;
 }): boolean {
-  if (!input.hasStagedVoiceover || input.hasPendingVoiceover || !input.fileIdentity) {
+  if (!input.hasStagedVoiceover || input.hasPendingVoiceover || !input.audioHash) {
     return false;
   }
   return !canAdoptRestoredVoiceover({
-    fileIdentity: input.fileIdentity,
-    lastTranscribedFileIdentity: input.lastTranscribedFileIdentity,
+    audioHash: input.audioHash,
+    lastTranscribedAudioHash: input.lastTranscribedAudioHash,
     cachedTokenCount: input.cachedTokenCount,
   });
 }

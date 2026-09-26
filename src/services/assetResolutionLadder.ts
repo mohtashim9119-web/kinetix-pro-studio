@@ -96,7 +96,19 @@ export async function applySilentProvenanceResolution(
   report.folderPickOnly.push(...missingIds.slice(MAX_PROJECT_OPEN_LADDER_ASSETS));
 
   for (const assetId of attemptedIds) {
-    const result = await attemptAssetResolution(projectId, assetId);
+    // Item A — one asset's probe failing (e.g. Rust's "no metadata for <id>"
+    // when its bytes never reached the native store) must not reject the
+    // whole ladder: that aborted the project switch before the open-offline
+    // path below it in App.tsx ever ran, so the dashboard click did nothing.
+    // The asset falls through to folder-pick like any other unresolved one.
+    let result: AssetResolutionResult | null;
+    try {
+      result = await attemptAssetResolution(projectId, assetId);
+    } catch (err) {
+      console.warn(`[assetResolution] probe failed for asset ${assetId} — routing to folder-pick:`, err);
+      report.folderPickOnly.push(assetId);
+      continue;
+    }
     if (!result) continue;
 
     if (result.silent && result.candidatePath) {

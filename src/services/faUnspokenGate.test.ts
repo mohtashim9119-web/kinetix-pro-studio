@@ -25,8 +25,11 @@ import { describe, it, expect } from 'vitest';
 import {
   detectUnspokenScriptSegments,
   applyUnspokenScriptGate,
+  detectUnspokenScriptSegmentsFromWhisperFull,
+  detectUnspokenScriptSegmentsFromWhisperFullAsync,
   R10_SKIP_REASON,
 } from './faUnspokenGate';
+import { MatchCancelledError } from './hirschbergMatchClient';
 import { R10_MAX_WORD_CONF, R10_MIN_WORD_COUNT, CONF_MIN } from './syncConstants';
 import { snapCoveredBoundaries } from './snapBoundaries';
 import { headExtendFirstSegment } from './syncEngine';
@@ -354,5 +357,61 @@ describe('R.10 — Model P survives the drop (contiguity, no gaps, sigma)', () =
     const alignments: SegmentAlignment[] = [align(false, 0), align(true, 1), align(false, 0), align(true, 1)];
     const { skipped } = filterToCoveredSegments(segments, alignments, new Set([2]));
     expect(skipped.map(s => s.reason)).toEqual(['no text match', R10_SKIP_REASON]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WS2 G2 completion, Unit 1 — `detectUnspokenScriptSegmentsFromWhisperFullAsync`
+// (off-main-thread twin). Unlike R.13's treatment, this one is NOT a "warm
+// the memo" wrapper — the sync function spread-copies its arguments before
+// calling `alignScenestoTranscript`, which deliberately defeats
+// `extractSegmentAlignments`' reference-identity memo (see the async twin's
+// own doc comment in faUnspokenGate.ts) — so this pins a TRUE async twin
+// against its sync counterpart directly.
+// ---------------------------------------------------------------------------
+describe('detectUnspokenScriptSegmentsFromWhisperFullAsync (WS2 G2 completion, Unit 1 — worker migration, zero-output-change pin)', () => {
+  it('produces byte-identical output to the sync path on a real script/transcript fixture', async () => {
+    const segments = [
+      seg('kittens likes purple hats', 0, 2),
+      seg('unspoken planted title never voiced', 2, 2),
+      seg('dragons chase silver moons', 4, 2),
+    ];
+    // Whisper only ever heard s0 and s2's words — s1's text has no audio.
+    const spokenWords = ['kittens', 'likes', 'purple', 'hats', 'dragons', 'chase', 'silver', 'moons'];
+    const whisperTokens: TranscriptToken[] = spokenWords.map((w, i) => ({ text: w, startSec: i * 0.5, endSec: i * 0.5 + 0.4 }));
+    const faTokens: TranscriptToken[] = whisperTokens; // shape only matters: non-empty.
+    const silences: SilenceInterval[] = [];
+    const audioDuration = 4;
+
+    const sync = detectUnspokenScriptSegmentsFromWhisperFull(segments, whisperTokens, faTokens, silences, audioDuration);
+    const async_ = await detectUnspokenScriptSegmentsFromWhisperFullAsync(segments, whisperTokens, faTokens, silences, audioDuration);
+
+    expect(async_).toEqual(sync);
+    // Sanity: the alignment step actually ran and matched real words (not a
+    // vacuous zero-token pass) — s0 and s2's words are genuinely in the
+    // transcript.
+    expect(sync.whisperAlignments.some(a => a.matched)).toBe(true);
+  });
+
+  it('matches the sync path on every empty-input short-circuit', async () => {
+    const segments = [seg('hello world', 0, 1)];
+    const tokens: TranscriptToken[] = [{ text: 'hello', startSec: 0, endSec: 0.4 }];
+    const sync = detectUnspokenScriptSegmentsFromWhisperFull([], tokens, tokens, [], 1);
+    const async_ = await detectUnspokenScriptSegmentsFromWhisperFullAsync([], tokens, tokens, [], 1);
+    expect(async_).toEqual(sync);
+
+    const sync2 = detectUnspokenScriptSegmentsFromWhisperFull(segments, [], tokens, [], 1);
+    const async2 = await detectUnspokenScriptSegmentsFromWhisperFullAsync(segments, [], tokens, [], 1);
+    expect(async2).toEqual(sync2);
+  });
+
+  it('rejects with MatchCancelledError on an already-aborted signal, without running the aligner', async () => {
+    const segments = [seg('hello world', 0, 1)];
+    const tokens: TranscriptToken[] = [{ text: 'hello', startSec: 0, endSec: 0.4 }, { text: 'world', startSec: 0.4, endSec: 0.8 }];
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      detectUnspokenScriptSegmentsFromWhisperFullAsync(segments, tokens, tokens, [], 1, undefined, controller.signal),
+    ).rejects.toBeInstanceOf(MatchCancelledError);
   });
 });

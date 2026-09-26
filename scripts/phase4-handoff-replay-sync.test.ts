@@ -80,8 +80,6 @@ const RESTORE_CMD = 'python3 scripts/phase4-restore-replay-inputs.py';
 
 interface ProjectSpec {
   key: string;
-  sceneDetailsPath: string;
-  scriptPath: string;
   audioDuration: number;
   /** The corpus project's real `project.language`, threaded through exactly as
    *  `App.tsx` threads `toAlignmentLanguageCode(projectRef.current.language)` —
@@ -91,27 +89,9 @@ interface ProjectSpec {
 }
 
 const PROJECTS: ProjectSpec[] = [
-  {
-    key: 'v6',
-    sceneDetailsPath: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Sync.txt',
-    scriptPath: '/Users/mohtashim/Downloads/All Projects Test Data/V6 Natural Long Pause Segs/All Text Files/Script.txt',
-    audioDuration: 1421.29,
-    languageCode: 'en',
-  },
-  {
-    key: '173',
-    sceneDetailsPath: '/Users/mohtashim/Downloads/All Projects Test Data/173 Segs Project/sync.txt',
-    scriptPath: '/Users/mohtashim/Downloads/All Projects Test Data/173 Segs Project/script.txt',
-    audioDuration: 709.01,
-    languageCode: 'en',
-  },
-  {
-    key: 'spanish',
-    sceneDetailsPath: '/Users/mohtashim/Downloads/All Projects Test Data/Spanish Project/Spanish Sync.txt',
-    scriptPath: '/Users/mohtashim/Downloads/All Projects Test Data/Spanish Project/Spanish Script.txt',
-    audioDuration: 92.04,
-    languageCode: 'es',
-  },
+  { key: 'v6', audioDuration: 1421.29, languageCode: 'en' },
+  { key: '173', audioDuration: 709.01, languageCode: 'en' },
+  { key: 'spanish', audioDuration: 92.04, languageCode: 'es' },
 ];
 
 /** Reads a required replay input, failing with the regeneration command rather
@@ -171,8 +151,8 @@ function loadBaselineCsv(name: string): Record<string, string>[] {
 describe('Phase 3->4 handoff Step M — golden baseline replay', () => {
   for (const spec of PROJECTS) {
     it(`replays the shipped Apply-Sync pipeline for ${spec.key}`, async () => {
-      const sceneDetails = readFileSync(spec.sceneDetailsPath, 'utf-8');
-      const script = readFileSync(spec.scriptPath, 'utf-8');
+      const sceneDetails = requireInput(spec.key, 'scenedoc.txt');
+      const script = requireInput(spec.key, 'script.txt');
       const tokens = loadTokens(spec.key);
       const silences = loadSilences(spec.key);
       const assets: Asset[] = [];

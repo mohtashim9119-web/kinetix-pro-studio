@@ -14,6 +14,13 @@ interface SyncLoadingOverlayProps {
    *  the sync's single commit, so cancelling here is always free — the
    *  project is left exactly as it was before Apply Sync started. */
   onCancel: () => void;
+  /** WS2 G2 completion, Unit 3 (operator-approved) — a swappable stage
+   *  status line, set by App.tsx only when the Hirschberg matcher's
+   *  measured-ETA estimate clears `matchEta.ts`'s `MATCH_ETA_THRESHOLD_MS`.
+   *  `null`/`undefined` (the common case — most syncs are well under the
+   *  threshold) falls back to the plain "Preparing your project…" copy, so
+   *  this is purely additive: no behavior change below the threshold. */
+  stageMessage?: string | null;
 }
 
 /**
@@ -25,6 +32,7 @@ interface SyncLoadingOverlayProps {
 export function SyncLoadingOverlay({
   isProcessing,
   onCancel,
+  stageMessage,
 }: SyncLoadingOverlayProps): React.ReactElement | null {
   // Escape cancels the sync, same as every other blocking dialog in this app
   // (NewProjectModal, ExportSettingsModal). Only listens while the overlay is
@@ -49,8 +57,8 @@ export function SyncLoadingOverlay({
     >
       <div className="flex flex-col items-center gap-4 bg-[var(--kx-panel)] border border-[var(--kx-line)] rounded-xl px-8 py-6">
         <div className="w-8 h-8 rounded-full border-2 border-t-[#F27D26] border-r-transparent border-b-transparent border-l-transparent animate-spin" />
-        <span className="text-sm font-medium tracking-wide">
-          Preparing your project…
+        <span className="text-sm font-medium tracking-wide" data-testid="sync-loading-stage">
+          {stageMessage ?? 'Preparing your project…'}
         </span>
         <button
           data-testid="sync-loading-cancel"

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Minimal streaming SHA-256 (FIPS 180-4), hand-rolled — no crate added.
 //
-// Exists solely for `fa_dev.rs`'s pre-use model-integrity check (WS1 Task 5
+// Exists solely for `fa_shared.rs`'s pre-use model-integrity check (WS1 Task 5
 // Slice D10): verifying a manually-placed `fa-models/<lang>/model.onnx`
 // against `scripts/fixtures/fa-onnx-manifest.json`'s committed hash before
 // `fa_align_dev` hands it to `ort`. `sha2` already resolves transitively in
@@ -11,10 +11,15 @@
 // dependency-free implementation is the correct fit for a single, narrow,
 // dev-only use site.
 //
-// Streaming (`update`/`finish`) rather than one-shot: `fa_dev.rs` hashes a
+// Streaming (`update`/`finish`) rather than one-shot: `fa_shared.rs` hashes a
 // ~1.2 GiB `model.onnx` file, and this reads it in fixed-size chunks rather
 // than holding the whole file in memory twice (once as raw bytes, once as
 // hash state).
+//
+// G6 Step 1 — promoted from `pub(crate)` to `pub` (additive, no item's
+// behavior changed) so the Media Vault's content-hash registry (a sibling
+// module) and `tests/media_hash_throughput_live.rs` (a separate crate; see
+// `lib.rs`'s `pub mod sha256` comment) can both call it directly.
 // ---------------------------------------------------------------------------
 
 const H0: [u32; 8] = [
@@ -32,18 +37,18 @@ const K: [u32; 64] = [
     0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
 ];
 
-pub(crate) struct Sha256 {
+pub struct Sha256 {
     state: [u32; 8],
     buf: Vec<u8>,
     len_bits: u64,
 }
 
 impl Sha256 {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Sha256 { state: H0, buf: Vec::with_capacity(64), len_bits: 0 }
     }
 
-    pub(crate) fn update(&mut self, mut data: &[u8]) {
+    pub fn update(&mut self, mut data: &[u8]) {
         self.len_bits = self.len_bits.wrapping_add((data.len() as u64) * 8);
 
         if !self.buf.is_empty() {
@@ -69,7 +74,7 @@ impl Sha256 {
         }
     }
 
-    pub(crate) fn finish(mut self) -> [u8; 32] {
+    pub fn finish(mut self) -> [u8; 32] {
         let len_bits = self.len_bits;
         // Append 0x80, then zero-pad until length ≡ 56 (mod 64), leaving
         // exactly 8 bytes for the trailing big-endian bit-length.
@@ -142,7 +147,7 @@ fn process_block(state: &mut [u32; 8], block: &[u8; 64]) {
     state[7] = state[7].wrapping_add(h);
 }
 
-pub(crate) fn hex_digest(bytes: &[u8]) -> String {
+pub fn hex_digest(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
         s.push_str(&format!("{:02x}", b));
@@ -152,7 +157,7 @@ pub(crate) fn hex_digest(bytes: &[u8]) -> String {
 
 /// Streams `path` through SHA-256 in fixed 1 MiB chunks — never holds the
 /// whole file in memory. Returns the lowercase hex digest.
-pub(crate) fn hash_file(path: &std::path::Path) -> std::io::Result<String> {
+pub fn hash_file(path: &std::path::Path) -> std::io::Result<String> {
     use std::io::Read;
     let mut file = std::fs::File::open(path)?;
     let mut hasher = Sha256::new();

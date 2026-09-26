@@ -148,8 +148,9 @@ describe('WS2 ws2-27 — Clip-N off-by-one fix, real corpora', () => {
     const { committed, entriesByS } = await run(PROJECTS[1]!);
     const entry = entriesByS.get(1);
     expect(entry).toBeDefined();
+    // G2 close-out FIX 3 — operator-ordered copy rename.
     expect(entry!.message).toBe(
-      'S1 / Clip 1 skipped — no text match. Absorbed 0.000s → 0.160s → 0.160s (speech).',
+      'S1 / Clip 1: Unmatched scene — kept as Estimated placeholder — no text match. Absorbed 0.000s → 0.160s → 0.160s (speech).',
     );
     expect(entry!.segmentId).toBe(committed[0]!.id);
   }, 120_000);
@@ -175,8 +176,9 @@ describe('WS2 ws2-27 — Clip-N off-by-one fix, real corpora', () => {
 
     const entry = entriesByS.get(112);
     expect(entry).toBeDefined();
+    // G2 close-out FIX 3 — operator-ordered copy rename.
     expect(entry!.message).toBe(
-      'S112 / Clip 110 skipped — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech). '
+      'S112 / Clip 110: Unmatched scene — kept as Estimated placeholder — no text match. Absorbed 442.940s → 2.420s → 445.360s (speech). '
       + 'Clip 109 also holds 0.63s.',
     );
     expect(entry!.segmentId).toBe(host!.id);

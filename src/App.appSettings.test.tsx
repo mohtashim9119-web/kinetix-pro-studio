@@ -163,6 +163,18 @@ describe('WS2 T4.1 Step 1 — all three blocks render on one flat surface', () =
     expect(modal.querySelector('[data-testid="app-settings-block-new-project-defaults"]')).not.toBeNull();
   });
 
+  it('block 2 is titled "Sync Engine", not the old "Models & Add-ons" (G3 tail Step 0, Settings IA Option A)', async () => {
+    await mountApp();
+    const modal = await openAppSettings();
+    const models = modal.querySelector('[data-testid="app-settings-block-models"]');
+    expect(models!.textContent).toContain('Sync Engine');
+    // The old title must be gone from Settings IA specifically — the
+    // separate ManageModelsModal remediation dialog keeps its own name and
+    // is asserted absent from Settings by the next test.
+    const title = models!.querySelector('p');
+    expect(title?.textContent?.trim()).toBe('Sync Engine');
+  });
+
   it('block 2 is the models section INLINE — no nested dialog is raised', async () => {
     await mountApp();
     const modal = await openAppSettings();

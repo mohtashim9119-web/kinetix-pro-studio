@@ -1,11 +1,12 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Plus, Trash2, Search, Check, Loader2, Settings, ChevronDown, Play, Image as ImageIcon } from 'lucide-react';
 import type { ProjectMeta } from '../types';
-import { loadAllMetas, deleteProjectData } from '../services/projectStore';
+import { loadAllMetas, loadProject, deleteProjectData } from '../services/projectStore';
 import { deleteAllStagedForProject } from '../services/stagedFilesStore';
 import { deleteAllAssets } from '../services/assetStore';
 import { deleteProjectAssetsNativeStrict } from '../services/nativeAssetStore';
 import { deleteAllWaveforms } from '../services/waveformStore';
+import { mediaVaultUnreference } from '../services/mediaVaultClient';
 import './ProjectDashboard.css';
 
 /**
@@ -150,6 +151,19 @@ export function ProjectDashboard({
     // never finding out.
     const cleanupFailures: string[] = [];
     for (const id of ids) {
+      // G6 Step 6 (dead-feature-gap fix) — read the project's assets BEFORE
+      // any deletion, so the media-vault reference this project holds on
+      // each distinct contentHash can be dropped. Project gone means all its
+      // references are gone, same as if every asset had been deleted
+      // individually. Best-effort: a project record that fails to load
+      // (already-corrupt/missing) simply has no known contentHashes to
+      // unreference — mirrors this loop's existing non-fatal cleanup
+      // posture for waveforms/staged files.
+      const loaded = await loadProject(id).catch(() => null);
+      const contentHashes = new Set(
+        (loaded?.project.assets ?? []).map(a => a.contentHash).filter((h): h is string => !!h),
+      );
+
       await deleteAllAssets(id);
       await deleteAllWaveforms(id);
       // WS2-50 — a deleted project's staged slots go with it. Without this the
@@ -162,6 +176,7 @@ export function ProjectDashboard({
         cleanupFailures.push(`${id}: ${message}`);
         console.error(`[ProjectDashboard] native asset cleanup FAILED for deleted project ${id}:`, message);
       }
+      await Promise.all(Array.from(contentHashes, hash => mediaVaultUnreference(hash, id)));
       await deleteProjectData(id);
     }
     setMetas(prev => prev.filter(m => !selectedIds.has(m.id)));

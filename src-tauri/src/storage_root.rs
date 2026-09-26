@@ -22,6 +22,7 @@
 //! | `cache/fa-audio-cache/` | yes (D20, WS3 Round 29) — was hardcoded to `app_local_data_dir()` directly (`fa.rs`'s `fa_audio_cache_dir`), bypassing this module entirely; now nested under `cache_dir` | yes, for free, as part of the `cache/` subtree above — no separate subtree entry needed |
 //! | `project-mirror/` | yes (D20, WS3 Round 29 — `project_mirror.rs`'s `mirror_root`, repointed here; previously pinned unconditionally to `app_local_data_dir()`) | yes |
 //! | `diagnostic-logs/` | yes (D20, WS3 Round 29 — previously pinned in 3 places: `lib.rs`'s two logging-setup branches, `ffmpeg.rs`'s `get_diagnostic_log_text`) | yes, with one caveat — see `diagnostic_logs_dir`'s own doc comment: the ACTIVE log-plugin file handle stays bound to the path current at THIS boot, so a relocation mid-session moves the historical files but this session's own later lines need a restart to follow |
+//! | `media-vault/` | yes (G6 Step 2 — `media_vault.rs`'s content-addressed registry + blobs) | yes, same copy-verify-commit flow as `assets/` |
 //!
 //! **Unified per an explicit operator decision (D20, WS3 Round 29):** every
 //! managed subtree above now relocates — none are pinned to the OS default
@@ -411,6 +412,17 @@ pub fn models_dir(root: &Path) -> PathBuf {
     root.join("models")
 }
 
+/// G6 Step 2 — the Media Vault's own subtree: `media_vault.rs`'s
+/// content-addressed blobs (`<hash>.bin`) plus its `registry.json` index.
+/// Sibling of `assets/` (the existing PER-PROJECT, assetId-keyed store,
+/// `asset_store.rs`) rather than nested inside it — the vault is
+/// project-independent by design (one blob can be referenced by many
+/// projects), so it needs its own root-level directory to relocate as a
+/// unit the same way `assets/` does.
+pub fn media_vault_dir(root: &Path) -> PathBuf {
+    root.join("media-vault")
+}
+
 /// D20 fix (WS3 Round 29) — per an explicit operator decision to unify
 /// EVERY managed subtree under one root rather than leave any of them
 /// pinned to the OS default: `project_mirror.rs`'s cross-origin adoption
@@ -756,7 +768,7 @@ fn verify_dir_recursive(
     Ok(())
 }
 
-const MANAGED_RELOCATION_SUBTREES: [(&str, fn(&Path) -> PathBuf); 7] = [
+const MANAGED_RELOCATION_SUBTREES: [(&str, fn(&Path) -> PathBuf); 8] = [
     ("assets", assets_dir),
     ("projects", projects_dir),
     ("cache", cache_dir),
@@ -768,6 +780,9 @@ const MANAGED_RELOCATION_SUBTREES: [(&str, fn(&Path) -> PathBuf); 7] = [
     // comments for what each requires from callers.
     ("project-mirror", project_mirror_dir),
     ("diagnostic-logs", diagnostic_logs_dir),
+    // G6 Step 2 — the Media Vault's blobs + registry.json move as a unit,
+    // same as every other managed subtree per the D20 decision above.
+    ("media-vault", media_vault_dir),
 ];
 
 /// D20 fix (WS3 Round 29) — a legacy, TOP-LEVEL `<root>/fa-models/<lang>/`
@@ -1010,6 +1025,7 @@ fn reclaimable_dirs(root: &Path) -> [PathBuf; 2] {
 /// | `models/` | never-reclaimable | Downloaded whisper/FA models — re-downloading is expensive (100s of MB–GB) and the user chose to install them. |
 /// | `project-store-backups/` | reclaimable | `rotate_backup`'s own safety net — bounded by `BACKUP_RETAIN`/`STALE_BACKUP_MIN_AGE_SECS` already, but every byte of it can be cleared without losing current data. |
 /// | `cache/` | reclaimable | A cache by construction — nothing here is the only copy of anything. |
+/// | `media-vault/` | reclaimable (zero-ref entries only) | G6 Step 6 — content-addressed blobs still referenced by a project are never reclaimable (they're that project's authoritative bytes, same as `assets/`); a blob no project references any more is exactly the reclaimable subset, per `media_vault::zero_ref_bytes`. |
 ///
 /// `models/` bytes come from `models::check_installed_models` (whisper +
 /// every installed FA language's `InstalledModelStatus.bytes`), NOT from
@@ -1069,12 +1085,24 @@ pub async fn size_report(app: tauri::AppHandle) -> Result<Vec<SizeReportRow>, St
     // target) — see `storage_root_stale_roots`'s own doc comment.
     let stale_roots = storage_root_stale_roots(app.clone())?;
 
+    // G6 Step 6 — "free via registration": media_vault_dir was already added
+    // to MANAGED_RELOCATION_SUBTREES (Step 2), so this is the one new row
+    // needed to surface it here. `reclaimableBytes` is the sum of zero-ref
+    // registry entries only (`zero_ref_bytes`, the read-only counterpart to
+    // `reclaim_unreferenced_blobs`) — same WS3 Batch 2 (D5c) discipline as
+    // `backups_reclaimable_bytes` above: never advertise more than a reclaim
+    // would actually free.
+    let vault_path = media_vault_dir(&root);
+    let vault_bytes = dir_size(&vault_path);
+    let vault_reclaimable_bytes = crate::media_vault::zero_ref_bytes(&root).unwrap_or(0);
+
     // Ordering below is an explicit operator decision (WS3 Round 29): most
     // valuable/expensive data first (models, assets), down to the smallest
     // and most disposable (orphaned sessions, stale roots) last.
     let mut rows = vec![
         row(&models_path, "Downloaded models", model_bytes, 0, "never-reclaimable"),
         row(&assets_dir(&root), "Project assets", assets_bytes, 0, "never-reclaimable"),
+        row(&vault_path, "Media vault", vault_bytes, vault_reclaimable_bytes, "reclaimable"),
         row(
             &backups_path,
             "Project backups",
@@ -1157,6 +1185,12 @@ pub fn storage_root_reclaim(app: tauri::AppHandle) -> Result<u64, String> {
             }
         }
     }
+
+    // G6 Step 6 — the same "Free up cached data" button also sweeps
+    // zero-ref media-vault blobs, "for free" via the subtree's own
+    // registration (`media_vault_dir` is already a managed subtree; this is
+    // the reclaim half `size_report`'s matching row advertises).
+    reclaimed += crate::media_vault::reclaim_unreferenced_blobs(&root)?;
 
     Ok(reclaimed)
 }
@@ -1976,13 +2010,14 @@ mod tests {
         fs::remove_dir_all(&target).ok();
     }
 
-    // D20 — all seven managed subtrees are present in the relocation set
-    // (the same const `size_report`, the cleanup command, and the copy loop
-    // all iterate), pinned by name so a future addition/removal to either
-    // side is caught here rather than silently drifting out of sync (the
-    // exact class of bug D18's progress-total fix existed to close).
+    // D20 — all managed subtrees are present in the relocation set (the same
+    // const `size_report`, the cleanup command, and the copy loop all
+    // iterate), pinned by name so a future addition/removal to either side
+    // is caught here rather than silently drifting out of sync (the exact
+    // class of bug D18's progress-total fix existed to close). Grew from
+    // seven to eight in G6 Step 2 (`media-vault`, `media_vault_dir`).
     #[test]
-    fn d20_all_seven_managed_subtrees_are_present_and_named() {
+    fn d20_all_managed_subtrees_are_present_and_named() {
         let names: Vec<&str> = MANAGED_RELOCATION_SUBTREES.iter().map(|(name, _)| *name).collect();
         assert_eq!(
             names,
@@ -1994,6 +2029,7 @@ mod tests {
                 "models",
                 "project-mirror",
                 "diagnostic-logs",
+                "media-vault",
             ]
         );
     }

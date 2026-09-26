@@ -65,7 +65,7 @@ Completed work → `docs/archive/history/history.md` (+ `history-2.md` overflow)
 
 ## 5. Invariants (standing — detail in archive)
 
-**Segment timing:** Model P gapless partition; headings in `project.headings`; `anchorSource` demote-only; transcription cache keyed by file identity.
+**Segment timing:** Model P gapless partition; headings in `project.headings`; `anchorSource` demote-only; transcription cache keyed by audio content hash (`services/spine.ts`), not file name/size/mtime.
 
 **Undo/redo:** Whole-`Project` snapshots; 20-state cap; lock blocks traversal; lock/unlock not undoable; never `setProjectRaw` outside wrappers; never restore through `computeDragCascade`.
 
