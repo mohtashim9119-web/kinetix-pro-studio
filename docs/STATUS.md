@@ -1,13 +1,11 @@
 # Project Status
 
-Last updated: G5 (Wave 2, `ws1-wave2`, in progress — not yet landed on `main`). The **40 → 36**
-figure below describes the Wave 1 landing itself (merge `ws1-wave1`, 2026-09-20: four lines
-closed — D24, Flake A, Flake B, `fa_cancel`; eight other Wave 1 deliverables had no prior STATUS
-line, SHAs in that landing report only) — stale-prose fix only (§M3.10 sweep, G5): that header
-previously read as if Wave 1's landing were still the most recent update, when Wave 2 work (G3,
-G4, G6, this G5 pass) has since added and closed further lines below. This pass's own
-open/closed arithmetic is prepared in the not-yet-landed G5 landing-package draft, not written
-into this header — it lands (and this line updates again) only at actual merge time.
+Last updated: 2026-09-27 — Wave 2 landed on `main` (merge `c895007`, `ws1-wave2` → `main`).
+Open count **38 → 37** (37/40, under cap): two closures (38 − 2 = 36 — Settings model-status
+divergence, per-scene pre-flight gate), one addition (36 + 1 = 37 — byte-deletion lifecycle).
+Nothing else opens or closes this pass. Prior header's 40 → 36 figure described the Wave 1
+landing (merge `ws1-wave1`, 2026-09-20); Wave 1 formal close (`e039c4d`) then queued two Wave 2
+lines (36 → 38).
 
 > **Single source of truth for project tracking.** Retired trackers live under
 > `docs/archive/history/` (`work-in-progress.md`, `project-state.md`). Update this file only;
@@ -79,8 +77,13 @@ has a STATUS.md citation:
 **Wave 1 formal close (2026-09-21, merge `e039c4d`, `ws1-wave1-hotfix` → `main`).** Six hotfixes plus a rebuilt end-to-end test layer closed the operator's manual-verification findings on top of the `ws1-wave1` landing: R.10-skipped placeholder gap (`a80cc74`), typed whisper model-not-found (`faf1d33`), late whole-run cancel abort-listener fix (`8e199d4`), FA victim re-timing (`18b3d5f`), infeasible-chunk serde snake_case fix (`1fd9c98`), fail-loud whisper model-failure modal (`fb51358`), and a real end-to-end FA-arm test (`0c85e6d`). The `applySyncCancelInvariant.test.ts` setProject-count invariant (stale at 3 after `18b3d5f`'s victim-pause branch) was found on first full-suite run and fixed pre-merge (`bb8b805`), not left open. Operator manual verification passed, including the new whisper fail-loud dialog — this is the acceptance gate per standing ruling. Canonical gate numbers from `main` at merge tip: `npm test` 4027 passed / 78 skipped / 0 failed; `cargo test` 449/0/5; `cargo test --features fa-inference` 536/0/35; `tsc --noEmit` / release build / `vite build` all clean.
 
 ### Open Bugs — Wave 2 queue (added at Wave 1 close, 2026-09-21)
-- [OPEN] Settings model-status divergence — `whisper_model_status` checks storage-root only while `model_path` resolves 5 locations; dev builds mask a storage-root rename. Fold into the Wave 2 Settings Sync tab rebuild. Standing ruling reaffirmed 2026-09-21.
-- [OPEN] Per-scene pre-flight gate (operator design) — script word-count vs. its audio window (~2-3 words/sec norm); impossible density (e.g. 100 words in a 10s window) warns BEFORE FA runs; warn-only, actionable copy. Sharpens the planned WPM + pre-FA coverage checks.
+- CLOSED (Wave 2, `ecc5f38` + `a4e2799`) — Settings model-status divergence — `whisper_model_status` checks storage-root only while `model_path` resolves 5 locations; dev builds mask a storage-root rename. Fold into the Wave 2 Settings Sync tab rebuild. Standing ruling reaffirmed 2026-09-21.
+- CLOSED (Wave 2, `87607e4`) — Per-scene pre-flight gate (operator design) — script word-count vs. its audio window (~2-3 words/sec norm); impossible density (e.g. 100 words in a 10s window) warns BEFORE FA runs; warn-only, actionable copy. Sharpens the planned WPM + pre-FA coverage checks.
+
+**Wave 2 landing (2026-09-27, merge `c895007`, `ws1-wave2` → `main`).** G1 content-hash spine + honest Apply Sync, G2 off-thread matcher + single-flight + ETA, G3 engine resolver + truthful settings, G4 language checks + pre-FA gates, G6 media vault, G5 cleanup + sync-log user view + bundle ingest, macOS metadata fix, Item A corruption fixes (`6dc650b`, `5bd893c`, `447dd62`), media workflow units 1–4. Operator acceptance: 2-item smoke (rename + Match) passed; the remaining four items of the 6-item media click protocol were **waived by operator ruling** — risk logged: any user-visible media-workflow bug surfacing later lands on a Wave 2 hotfix branch. Canonical gate numbers from `main` at merge tip: `npm test` 4422 passed / 78 skipped / 0 failed; `cargo test` 486/0/5; `cargo test --features fa-inference` 573/0/35; `tsc --noEmit` (≡ `npm run lint`) / release build with `fa-inference` (0 warnings) / `vite build` all clean.
+
+### Open Bugs — added at Wave 2 landing (2026-09-27)
+- [OPEN] Byte-deletion lifecycle — delete-then-undo destroys an asset's bytes at source; G6 imports write vault + IDB only (the native store lags until boot). Rescued today by the vault rung (`447dd62`) + boot migration. Source fix — defer byte deletion until undo history drops the step — is a deferred design change.
 
 ### Deferred Tasks
 - [DEFERRED · ASR ENGINE LIMITATION] Row 52 ("Llívia") — Whisper never transcribed isolated token; owner ruling 2026-09-03
