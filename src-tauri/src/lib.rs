@@ -38,6 +38,8 @@ mod safe_delete;
 // module) and no runtime behavior changed.
 pub mod sha256;
 mod atomic_stage;
+// Wave 3 U1 — the only module that talks to the cloud sync gateway.
+mod cloud_gateway;
 mod storage_root;
 mod whisper;
 
@@ -648,6 +650,16 @@ pub fn run() {
             fa_shared::fa_stage_audio_raw,
             fa_production::fa_align_production,
             fa_preflight::fa_preflight,
+            cloud_gateway::cloud_key_status,
+            cloud_gateway::cloud_key_set,
+            cloud_gateway::cloud_key_clear,
+            cloud_gateway::cloud_ping,
+            cloud_gateway::cloud_opus_cached,
+            cloud_gateway::cloud_stage_audio_raw,
+            cloud_gateway::cloud_encode_opus,
+            cloud_gateway::cloud_upload_audio,
+            cloud_gateway::cloud_run_job,
+            cloud_gateway::cloud_cancel_run,
             project_mirror::project_mirror_read_all,
             project_mirror::project_mirror_write_project,
             project_mirror::project_mirror_delete_project,
