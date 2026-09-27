@@ -164,7 +164,10 @@ describe('H4 — swapping every visual asset leaves the spine hash and all timin
 // ---------------------------------------------------------------------------
 describe('G2 close-out FIX 1 — spineUnchanged effect reads the engine key too', () => {
   it('computes engineKey via computeSyncEngineKey before comparing the spine', () => {
-    expect(SRC).toContain('const engineKey = await computeSyncEngineKey(project);');
+    // Wave 3 U2 — with the standing Cloud/Local host, which is also an
+    // effect dependency so switching engines re-runs this comparison.
+    expect(SRC).toContain('const engineKey = await computeSyncEngineKey(project, syncEngineHost);');
+    expect(SRC).toMatch(/pendingVoiceover,\s*\n\s*syncEngineHost,\s*\n\s*\]\);/);
     expect(SRC).toContain('spineEquals(spine, { audioHash, scriptHash, engineKey })');
   });
 

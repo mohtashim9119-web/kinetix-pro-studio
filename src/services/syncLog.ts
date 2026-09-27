@@ -477,14 +477,23 @@ export function buildSyncEngineEntry(
   engine: 'forced-alignment' | 'whisper',
   tokenCount: number,
   timestamp: number = Date.now(),
+  /** Wave 3 U2 — present when the cloud gateway produced these timings: the
+   *  provenance actually stamped on the project, named in the line so the
+   *  log alone answers "which engine, which model, which revision". */
+  cloud?: { model: string; modelVersion: string },
 ): SyncLogEntry {
+  const fa = engine === 'forced-alignment';
+  const where = cloud ? ` on the cloud (${cloud.model} @ ${cloud.modelVersion.slice(0, 12)})` : '';
+  const kind = fa
+    ? (cloud ? 'engine-forced-alignment-cloud' : 'engine-forced-alignment')
+    : (cloud ? 'engine-whisper-cloud' : 'engine-whisper');
   return makeSyncLogEntry(
     syncRunId,
     'info',
-    engine === 'forced-alignment'
-      ? `Timing engine: forced alignment (${tokenCount} aligned word(s)).`
-      : `Timing engine: Whisper transcript (${tokenCount} token(s)).`,
-    { severity: 'info', finding: { kind: engine === 'forced-alignment' ? 'engine-forced-alignment' : 'engine-whisper' } },
+    fa
+      ? `Timing engine: forced alignment${where} (${tokenCount} aligned word(s)).`
+      : `Timing engine: Whisper transcript${where} (${tokenCount} token(s)).`,
+    { severity: 'info', finding: { kind } },
     timestamp,
   );
 }

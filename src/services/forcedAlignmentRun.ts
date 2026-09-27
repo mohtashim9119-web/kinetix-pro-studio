@@ -52,6 +52,10 @@ import { MatchCancelledError } from './hirschbergMatchClient';
 import { faWordSpansToTranscriptTokens, type FaEvent, type FaInfeasibleChunk } from './faBoundaryTypes';
 import type { FaLanguageCode } from './faTextNormalize';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
+import { alignViaCloud } from './cloudSyncEngine';
+import { describeCloudError } from './cloudGateway';
+import type { SyncEngineHost } from './syncEngineHost';
+import type { GatewayProvenance } from './timingProvenance';
 
 /** Mirrors `App.tsx`'s `__faDevAlign` harness's own `SUPPORTED_FA_LANGUAGES`
  *  list — the 5 languages a real jonatasgrosman ONNX model exists for
@@ -165,6 +169,9 @@ export type FaRunResult =
        *  matched fewer words than a clean pairing normally would. Warn-only —
        *  App.tsx logs it, nothing here treats it as a failure. */
       localCoverageWarning?: LocalCoverageResult;
+      /** Wave 3 U2 — set only when the cloud gateway produced these words:
+       *  the model + revision it reported, for the provenance stamp. */
+      cloudProvenance?: GatewayProvenance;
     }
   | {
       status: 'degraded';
@@ -182,6 +189,9 @@ export type FaRunResult =
       infeasibleChunks?: FaInfeasibleChunk[];
       /** G4 Unit 4 — see the 'ok' variant's own doc comment; same meaning. */
       localCoverageWarning?: LocalCoverageResult;
+      /** Wave 3 U2 — set only when the cloud gateway produced these words:
+       *  the model + revision it reported, for the provenance stamp. */
+      cloudProvenance?: GatewayProvenance;
     }
   | {
       status: 'paused';
@@ -274,6 +284,13 @@ export async function runForcedAlignmentForSync(
   // check normally — this parameter WIDENS what a caller may opt into, it
   // narrows nothing.
   skipLocalCoverageCheck?: boolean,
+  // Wave 3 U2 — where the alignment runs. `'cloud'` sends the SAME chunk plan
+  // this function builds to the sync gateway instead of `fa_align_production`;
+  // every precondition above the compute (language, the G4 coverage check —
+  // Wave 3's mid-coverage abort, which therefore stops a mismatched script
+  // before any cloud FA is charged) and every outcome mapping below is
+  // shared. Default `'local'` keeps every existing caller unchanged.
+  host: SyncEngineHost = 'local',
 ): Promise<FaRunResult> {
   if (signal?.aborted) return { status: 'cancelled' };
 
@@ -317,6 +334,7 @@ export async function runForcedAlignmentForSync(
     return await runFaAttempt(
       voiceoverAsset, anchorTimedSegments, whisperTokens, audioDuration, language, signal, audioHash,
       coverage.band === 'marginal' ? coverage : undefined,
+      host,
     );
   } catch (err) {
     // Anything reaching here is NOT one of the two invoke() calls (they have
@@ -350,6 +368,7 @@ async function runFaAttempt(
   // called). Rides along on the eventual ok/degraded result so App.tsx can
   // log a warn-only finding; nothing in this function branches on it.
   localCoverageWarning?: LocalCoverageResult,
+  host: SyncEngineHost = 'local',
 ): Promise<FaRunResult> {
   const voiceoverBlob = voiceoverAsset.file ?? await (await fetch(voiceoverAsset.url)).blob();
 
@@ -408,6 +427,13 @@ async function runFaAttempt(
   if (chunks.length === 0) {
     console.warn('[fa] chunk plan is empty (every segment has empty text) — pausing for the user to choose.');
     return { status: 'paused', reason: 'empty-chunk-plan', resumable: true };
+  }
+
+  if (host === 'cloud') {
+    return runCloudFaAttempt(
+      voiceoverBlob, audioHash, chunks, anchorTimedSegments, whisperTokens, silences, silenceError,
+      audioDuration, language, signal, localCoverageWarning,
+    );
   }
 
   const buffer = await voiceoverBlob.arrayBuffer();
@@ -531,4 +557,68 @@ async function runFaAttempt(
     silenceError,
     localCoverageWarning,
   };
+}
+
+/**
+ * Wave 3 U2 — the cloud arm of `runFaAttempt`, entered after the shared chunk
+ * plan is built. Outcome mapping mirrors the local arm: no words → 'zero-words'
+ * pause; any infeasible chunk → 'degraded'/'ctc-infeasible-chunk' (the gateway
+ * reports the count, not per-chunk detail, so `infeasibleChunks` is empty);
+ * a gateway that could not be reached → the 'offline' pause Wave 1 reserved
+ * for exactly this; any other cloud failure → 'inference-failed' with the
+ * typed reason in `detail`. Never a silent switch to the local engine
+ * (the G3 offline contract): the pause dialog offers that choice.
+ */
+async function runCloudFaAttempt(
+  voiceoverBlob: Blob,
+  audioHash: string | undefined,
+  chunks: ReturnType<typeof computeFaChunkPlan>,
+  anchorTimedSegments: VideoSegment[],
+  whisperTokens: TranscriptToken[],
+  silences: Parameters<typeof computeUnscriptedRuns>[2],
+  silenceError: string | undefined,
+  audioDuration: number,
+  language: FaLanguageCode,
+  signal: AbortSignal | undefined,
+  localCoverageWarning: LocalCoverageResult | undefined,
+): Promise<FaRunResult> {
+  if (!audioHash) {
+    return {
+      status: 'paused', reason: 'audio-stage-failed',
+      detail: 'cloud alignment needs the voiceover content hash, which was not available', resumable: true,
+    };
+  }
+  if (signal?.aborted) return { status: 'cancelled' };
+  const outcome = await alignViaCloud({ voiceoverBlob, audioHash, chunks, language, signal });
+  if (outcome.status === 'cancelled') return { status: 'cancelled' };
+  if (outcome.status === 'failed') {
+    const offline = outcome.error.kind === 'unreachable' || outcome.error.kind === 'timeout';
+    console.warn('[fa] cloud forced alignment failed — pausing for the user to choose:', outcome.error);
+    return {
+      status: 'paused',
+      reason: offline ? 'offline' : 'inference-failed',
+      detail: describeCloudError(outcome.error),
+      resumable: true,
+    };
+  }
+  if (outcome.words.length === 0) {
+    console.warn('[fa] cloud forced alignment returned zero words — pausing for the user to choose.');
+    return { status: 'paused', reason: 'zero-words', resumable: true };
+  }
+  const tokens = faWordSpansToTranscriptTokens(outcome.words);
+  const unscriptedRuns = computeUnscriptedRuns(anchorTimedSegments, whisperTokens, silences, audioDuration, language);
+  if (outcome.nFallbackChunks > 0) {
+    return {
+      status: 'degraded',
+      reason: 'ctc-infeasible-chunk',
+      tokens,
+      unscriptedRuns,
+      silenceError,
+      nFallbackChunks: outcome.nFallbackChunks,
+      infeasibleChunks: [],
+      localCoverageWarning,
+      cloudProvenance: outcome.provenance,
+    };
+  }
+  return { status: 'ok', tokens, unscriptedRuns, silenceError, localCoverageWarning, cloudProvenance: outcome.provenance };
 }

@@ -121,29 +121,46 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     for (let i = start; i < end; i++) {
       if (/\bsetProject\(/.test(LINES[i]!)) setProjectLines.push(i + 1);
     }
-    // Exactly four: logSyncAbort's own (shared by every abort/cancel path),
-    // the run-level 'paused' branch's (same appendSyncLogEntries shape, not a
-    // cancel path but equally reference-preserving), the victim-pause branch
-    // added by 18b3d5f — 'all covered segments fabricated' — which uses the
-    // SAME appendSyncLogEntries-only shape as the 'paused' branch (verified
+    // Exactly five: logSyncAbort's own (shared by every abort/cancel path),
+    // Wave 3 U2's engine-switch transcript patch (a fresh transcript for the
+    // selected host — tokens + provenance only, verified below; a cancel
+    // after it leaves a transcript that is valid for this audio and host,
+    // never a partially committed timeline), the run-level 'paused' branch's
+    // (same appendSyncLogEntries shape, not a cancel path but equally
+    // reference-preserving), the victim-pause branch added by 18b3d5f — 'all
+    // covered segments fabricated' — which uses the SAME
+    // appendSyncLogEntries-only shape as the 'paused' branch (verified
     // below), and the one real commit.
     expect(
       setProjectLines,
       'the number of setProject calls in handleApplySyncFromFiles changed — a ' +
         'new one needs its own cancel-safety argument, not silent coverage by this file',
-    ).toHaveLength(4);
+    ).toHaveLength(5);
+
+    // Wave 3 U2 — the engine-switch transcript patch writes the transcript and
+    // its provenance, and no timeline field.
+    const transcriptPatchLine = setProjectLines[1]!;
+    const patchStart = LINES.findIndex(l => l.includes('const patch: Partial<Project> = {'));
+    expect(patchStart + 1, 'engine-switch transcript patch not found').toBeGreaterThan(0);
+    expect(patchStart + 1).toBeLessThan(transcriptPatchLine);
+    const patchBody = LINES.slice(patchStart, transcriptPatchLine).join('\n');
+    expect(patchBody).toContain('transcriptTokens: fresh.tokens');
+    expect(patchBody).toContain('timingProvenance:');
+    expect(patchBody).not.toMatch(/segments\s*:/);
+    expect(patchBody).not.toMatch(/\bassets\s*:/);
+    expect(patchBody).not.toMatch(/voiceoverId\s*:/);
 
     // The victim-pause branch's setProject call: same appendSyncLogEntries-only
     // shape as the pre-existing 'paused' branch — no segments/assets/voiceoverId
     // field, just the shared log-append helper.
-    const victimPauseLine = setProjectLines[2]!;
+    const victimPauseLine = setProjectLines[3]!;
     const victimPauseBody = LINES.slice(victimPauseLine - 1, victimPauseLine + 12).join('\n');
     expect(victimPauseBody).toContain('appendSyncLogEntries(');
     expect(victimPauseBody).not.toMatch(/segments\s*:/);
     expect(victimPauseBody).not.toMatch(/\bassets\s*:/);
     expect(victimPauseBody).not.toMatch(/voiceoverId\s*:/);
 
-    const realCommit = setProjectLines[3]!;
+    const realCommit = setProjectLines[4]!;
     const commitCheck = lineNumbersOf('if (syncAbortController.signal.aborted) return cancelledResult(lockRestoredSegments.length);')[0]!;
     expect(
       realCommit,

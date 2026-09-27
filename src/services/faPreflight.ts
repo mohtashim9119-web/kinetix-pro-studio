@@ -25,7 +25,8 @@
 // ---------------------------------------------------------------------------
 
 import { invoke } from '@tauri-apps/api/core';
-import { isFaCapable, isFaGateOpenForProject, resolveFaLanguage } from './faGate';
+import { isFaCapable, isFaEnabledForProject, isFaGateOpenForProject, resolveFaLanguage } from './faGate';
+import { readSyncEngineHost, type SyncEngineHost } from './syncEngineHost';
 import { describeInvokeError } from './invokeError';
 import { FA_SUPPORTED_LANGUAGES } from './forcedAlignmentRun';
 import type { FaLanguageCode } from './faTextNormalize';
@@ -248,8 +249,9 @@ export async function probeFaReadiness(language: string): Promise<FaPreflightRep
  */
 export async function computeSyncEngineKey(
   project: Pick<Project, 'faHighPrecisionSync' | 'language' | 'detectedLanguage'> | null | undefined,
+  host: SyncEngineHost = readSyncEngineHost(),
 ): Promise<string> {
-  const resolution = await resolveSyncEngine(project);
+  const resolution = await resolveSyncEngine(project, host);
   return resolution.key;
 }
 
@@ -280,7 +282,9 @@ export async function computeSyncEngineKey(
 // like it will do.
 // ---------------------------------------------------------------------------
 
-export type SyncEngine = 'whisper' | 'fa';
+/** Wave 3 U2 — `'cloud'`: the sync gateway runs transcription and (when the
+ *  per-project FA toggle is on) forced alignment. */
+export type SyncEngine = 'whisper' | 'fa' | 'cloud';
 
 /** The resolver's full verdict — toggle position + pack/model readiness,
  *  nothing else. Consumers that need only the eventual engine name or only
@@ -306,8 +310,12 @@ export interface SyncEngineResolution {
   preflight: FaPreflightResult | undefined;
   /** The exact string `computeSyncEngineKey` has always returned, preserved
    *  byte-for-byte for spine compatibility: `'whisper'` | `'fa:ready'` |
-   *  `'fa:not-ready'`. */
+   *  `'fa:not-ready'` — plus, Wave 3 U2, `'cloud:fa'` | `'cloud:whisper'`.
+   *  Every cloud key differs from every local one, so switching host is a
+   *  spine mismatch ("not synced"), never a silent hit. */
   key: string;
+  /** Wave 3 U2 — where this run would execute. */
+  host: SyncEngineHost;
 }
 
 /**
@@ -317,10 +325,28 @@ export interface SyncEngineResolution {
  */
 export async function resolveSyncEngine(
   project: Pick<Project, 'faHighPrecisionSync' | 'language' | 'detectedLanguage'> | null | undefined,
+  host: SyncEngineHost = readSyncEngineHost(),
 ): Promise<SyncEngineResolution> {
+  if (host === 'cloud') {
+    // Wave 3 U2 — CONFIG-ONLY by construction: no preflight, no ping, no
+    // IPC. The FA toggle applies under Cloud exactly as under Local (operator
+    // D3 — Session H's default-off ruling governs cloud FA too); only the
+    // local-capability half of the gate is irrelevant, since the gateway,
+    // not this build, runs the alignment. Reachability is a run-time outcome
+    // (a pause), not standing configuration, so it never enters the key.
+    const gateOpen = isFaEnabledForProject(project);
+    return {
+      engine: 'cloud',
+      gateOpen,
+      ready: true,
+      preflight: undefined,
+      key: gateOpen ? 'cloud:fa' : 'cloud:whisper',
+      host,
+    };
+  }
   const gateOpen = isFaGateOpenForProject(project);
   if (!gateOpen) {
-    return { engine: 'whisper', gateOpen, ready: true, preflight: undefined, key: 'whisper' };
+    return { engine: 'whisper', gateOpen, ready: true, preflight: undefined, key: 'whisper', host };
   }
   const preflight = await runFaPreflight(project);
   return {
@@ -329,5 +355,6 @@ export async function resolveSyncEngine(
     ready: preflight.ready,
     preflight,
     key: `fa:${preflight.ready ? 'ready' : 'not-ready'}`,
+    host,
   };
 }

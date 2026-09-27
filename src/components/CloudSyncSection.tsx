@@ -10,12 +10,15 @@
  * straight to Rust and is never read back — the field clears on save and the
  * row only ever shows "connected as <member>", never the key.
  *
- * Choosing Cloud vs Local is NOT here: that picker is Wave 3 U7. This row
- * only proves this computer can reach the sync server with a valid key.
+ * Wave 3 U2 — an INTERIM "use cloud for sync" switch lives here so the
+ * cloud engine can be exercised before the real Cloud/Local picker (U7)
+ * replaces it. Shown only once the key tests connected; it writes the same
+ * app-level `syncEngineHost` the picker will. Default stays Local (D3).
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { isTauri } from '../services/tauriFfmpeg';
+import { onSyncEngineHostChange, readSyncEngineHost, writeSyncEngineHost, type SyncEngineHost } from '../services/syncEngineHost';
 import {
   cloudKeyClear,
   cloudKeySet,
@@ -39,6 +42,8 @@ export function CloudSyncSection(): React.ReactElement {
   const available = isTauri();
   const [state, setState] = useState<RowState>({ phase: 'loading' });
   const [draftKey, setDraftKey] = useState('');
+  const [host, setHost] = useState<SyncEngineHost>(readSyncEngineHost);
+  useEffect(() => onSyncEngineHostChange(setHost), []);
 
   const test = useCallback(async (): Promise<void> => {
     setState({ phase: 'testing' });
@@ -75,6 +80,9 @@ export function CloudSyncSection(): React.ReactElement {
   const remove = async (): Promise<void> => {
     try {
       await cloudKeyClear();
+      // No key, no cloud: never leave sync pointed at an engine that can
+      // only fail.
+      if (readSyncEngineHost() === 'cloud') writeSyncEngineHost('local');
       setState({ phase: 'unconfigured' });
     } catch (err) {
       setState({ phase: 'failed', error: describeCloudError(toCloudError(err)) });
@@ -145,6 +153,23 @@ export function CloudSyncSection(): React.ReactElement {
             <button type="button" data-testid="cloud-sync-key-remove" onClick={() => void remove()} className={BUTTON}>Remove key</button>
           </div>
         </div>
+      )}
+
+      {available && state.phase === 'connected' && (
+        <label className="flex items-center justify-between gap-4 text-[10px] uppercase tracking-widest text-gray-500 font-bold pt-1">
+          <span>Use cloud for sync</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={host === 'cloud'}
+            aria-label={host === 'cloud' ? 'Run sync on this computer' : 'Run sync on the cloud'}
+            data-testid="cloud-sync-host-toggle"
+            onClick={() => writeSyncEngineHost(host === 'cloud' ? 'local' : 'cloud')}
+            className={`w-10 h-5 rounded-full transition-colors relative shrink-0 ${host === 'cloud' ? 'bg-[#F27D26]' : 'bg-[#1A1A1A] border border-[#282828]'}`}
+          >
+            <div className={`absolute top-1 left-1 w-3 h-3 rounded-full bg-white transition-all ${host === 'cloud' ? 'translate-x-5' : ''}`} />
+          </button>
+        </label>
       )}
     </div>
   );

@@ -381,11 +381,15 @@ export interface UnappliedTranscript {
  * — the v4→v5 load path labels that `'unknown'`, NEVER inferred from which
  * tokens happen to be present or from the FA toggle.
  *
- * Engines are the ones this wave actually produces: `whisper` | `fa`.
- * `unknown` is the only honest label for pre-stamp data. Cloud values arrive
- * in Wave 3 and are not named here.
+ * Local engines: `whisper` (whisper.cpp) | `fa` (local ONNX FA). Cloud
+ * engines (Wave 3 U2): `whisper-cloud` (faster-whisper on the sync gateway)
+ * | `fa-cloud` (the gateway's ONNX FA port). Recorded distinctly because the
+ * two are measurably NOT interchangeable (cloud-asr-measurements.md: 295 ms
+ * mean token delta for transcription; 108 English FA words > 50 ms), so a
+ * project must always say which one produced its timings. `unknown` is the
+ * only honest label for pre-stamp data.
  */
-export type TimingEngine = 'whisper' | 'fa' | 'unknown';
+export type TimingEngine = 'whisper' | 'fa' | 'whisper-cloud' | 'fa-cloud' | 'unknown';
 
 /** Why a committed timing set is flagged degraded rather than clean. */
 export type TimingDegradedKind =
@@ -847,6 +851,9 @@ export type SyncLogFindingKind =
   | 'freeze-frame'
   | 'engine-forced-alignment'
   | 'engine-whisper'
+  /** Wave 3 U2 — the same two engine lines when the cloud gateway ran them. */
+  | 'engine-forced-alignment-cloud'
+  | 'engine-whisper-cloud'
   | 'engine-character';
 
 export interface SyncLogEntry {

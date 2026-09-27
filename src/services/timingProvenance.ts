@@ -11,8 +11,9 @@
 // older) envelope get `'unknown'` — never a guess from `faHighPrecisionSync`,
 // `anchorSource`, or which token array happens to be present.
 //
-// Cloud engine names are Wave 3. This module only stamps `whisper` | `fa` |
-// `unknown`.
+// Wave 3 U2 — cloud runs stamp `whisper-cloud` | `fa-cloud` with the model
+// and revision the gateway itself reported (`stampCloudProvenance`), never a
+// client-side guess.
 // ---------------------------------------------------------------------------
 
 import type {
@@ -111,6 +112,36 @@ export function stampFaProvenance(args: {
     completedAt: args.completedAt,
     ...(args.degraded ? { degraded: args.degraded } : {}),
   };
+}
+
+/** The engine-level record the gateway returns with every result
+ *  (`cloud/sync_core.py`'s `transcribe_provenance` / `align_provenance`). */
+export interface GatewayProvenance {
+  engine: 'whisper-cloud' | 'fa-cloud';
+  model: string;
+  modelVersion: string;
+}
+
+export function stampCloudProvenance(
+  gateway: GatewayProvenance,
+  args: { language?: string; completedAt: number; degraded?: TimingProvenance['degraded'] },
+): TimingProvenance {
+  return {
+    engine: gateway.engine,
+    model: gateway.model,
+    modelVersion: gateway.modelVersion,
+    schemaVersion: TIMING_PROVENANCE_SCHEMA_VERSION,
+    language: args.language,
+    completedAt: args.completedAt,
+    ...(args.degraded ? { degraded: args.degraded } : {}),
+  };
+}
+
+/** Which host produced a transcription record. `undefined` for none/legacy. */
+export function transcriptionHost(p: TimingProvenance | undefined): 'local' | 'cloud' | undefined {
+  if (p?.engine === 'whisper') return 'local';
+  if (p?.engine === 'whisper-cloud') return 'cloud';
+  return undefined;
 }
 
 /**

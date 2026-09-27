@@ -88,7 +88,7 @@ export const DETAILS_ORDER: readonly DetailsCategory[] = [
   'issues', 'adjustments', 'locks', 'tokens', 'recoveries', 'preflight', 'engine', 'imports',
 ];
 
-export type HeadlineEngine = 'forced-alignment' | 'whisper' | 'character' | 'unknown';
+export type HeadlineEngine = 'forced-alignment' | 'whisper' | 'forced-alignment-cloud' | 'whisper-cloud' | 'character' | 'unknown';
 
 const plural = (n: number, one = '', many = 's'): string => (n === 1 ? one : many);
 
@@ -101,6 +101,8 @@ export const SYNC_LOG_USER_COPY = {
     engine: {
       'forced-alignment': 'Forced alignment',
       whisper: 'Whisper',
+      'forced-alignment-cloud': 'Forced alignment (cloud)',
+      'whisper-cloud': 'Whisper (cloud)',
       character: 'Estimated from text (no transcript)',
       unknown: 'Engine not recorded',
     } satisfies Record<HeadlineEngine, string>,
@@ -203,6 +205,8 @@ const FINDING_ATTENTION: Record<SyncLogFindingKind, AttentionKind | undefined> =
   'bundle-import-failed': undefined,
   'freeze-frame': undefined,
   'engine-forced-alignment': undefined,
+  'engine-forced-alignment-cloud': undefined,
+  'engine-whisper-cloud': undefined,
   'engine-whisper': undefined,
   'engine-character': undefined,
 };
@@ -367,7 +371,11 @@ export function knownSyncLogEntries(log: readonly SyncLogEntry[]): SyncLogEntry[
 function isRunMarker(entry: SyncLogEntry): boolean {
   if (entry.type === 'abort' || entry.type === 'fa-paused') return true;
   const kind = findingOf(entry)?.kind;
-  if (kind === 'engine-forced-alignment' || kind === 'engine-whisper' || kind === 'engine-character' || kind === 'character-fallback') return true;
+  if (
+    kind === 'engine-forced-alignment' || kind === 'engine-whisper'
+    || kind === 'engine-forced-alignment-cloud' || kind === 'engine-whisper-cloud'
+    || kind === 'engine-character' || kind === 'character-fallback'
+  ) return true;
   return entry.type === 'info' && entry.message.startsWith('Sync completed');
 }
 
@@ -381,6 +389,8 @@ function engineOf(entries: readonly SyncLogEntry[]): HeadlineEngine {
     switch (findingOf(e)?.kind) {
       case 'engine-forced-alignment': return 'forced-alignment';
       case 'engine-whisper': return 'whisper';
+      case 'engine-forced-alignment-cloud': return 'forced-alignment-cloud';
+      case 'engine-whisper-cloud': return 'whisper-cloud';
       case 'engine-character':
       case 'character-fallback': return 'character';
       default: break;

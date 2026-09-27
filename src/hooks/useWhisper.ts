@@ -1,6 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
 import {
-  transcribeWithProgress,
   classifyWhisperFailure,
   alignScenestoTranscriptAsync,
   distributeSegmentTimes,
@@ -17,7 +16,8 @@ import { validate1to2 } from '../services/syncContracts';
 import { buildSilenceErrorEntry, buildMalformedTokenEntry, buildContractViolationEntry, buildWhisperModelFailureEntry, appendSyncLogEntries } from '../services/syncLog';
 import { buildUnappliedTranscript } from '../services/unappliedTranscript';
 import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken, SyncLogEntry } from '../types';
-import { stampWhisperProvenance } from '../services/timingProvenance';
+import { transcribeForHost } from '../services/cloudSyncEngine';
+import { readSyncEngineHost } from '../services/syncEngineHost';
 
 /**
  * Fetches the voiceover blob and scans it for silence.
@@ -399,17 +399,27 @@ export function useWhisper(): UseWhisperApi {
       setTranscriptionStatus({ phase: 'transcribing', percent: 0, jobId });
 
       try {
-        const { tokens, detectedLanguage } = await transcribeWithProgress(
-          audioAsset,
+        // Wave 3 U2 — routed by the standing engine host (`syncEngineHost.ts`).
+        // The cloud arm keys everything on the audio's content hash, so it is
+        // resolved BEFORE the run there (and after it on the local arm, as
+        // before — no extra hash for a local-only user).
+        const host = readSyncEngineHost();
+        const preRunAudioHash = opts?.audioHash
+          ?? (host === 'cloud' && audioAsset.file ? await computeAudioHash(audioAsset.file) : undefined);
+        if (generationRef.current !== generation) return { started: true };
+        const { tokens, detectedLanguage, stamp } = await transcribeForHost({
+          host,
+          asset: audioAsset,
           durationSecs,
           language,
-          (percent) => {
+          onProgress: (percent) => {
             if (generationRef.current !== generation) return;
             setTranscriptionStatus({ phase: 'transcribing', percent, jobId });
           },
-          controller.signal,
-          nativeJobKey(projectId, audioAsset),
-        );
+          signal: controller.signal,
+          jobKey: nativeJobKey(projectId, audioAsset),
+          audioHash: preRunAudioHash,
+        });
 
         if (generationRef.current !== generation) return { started: true };
 
@@ -445,7 +455,7 @@ export function useWhisper(): UseWhisperApi {
         // stamped with below. Prefer the caller's already-computed value
         // (the ordinary path: App.tsx's handleVoiceoverStaged hashes before
         // ever calling this) over hashing audioAsset.file a second time.
-        const resolvedAudioHash = opts?.audioHash
+        const resolvedAudioHash = preRunAudioHash
           ?? (audioAsset.file ? await computeAudioHash(audioAsset.file) : undefined);
 
         // WS2 G2 completion, Unit 2 — same single-flight cache
@@ -531,7 +541,9 @@ export function useWhisper(): UseWhisperApi {
           // window of unstamped timings.
           timingProvenance: {
             ...p.timingProvenance,
-            transcription: stampWhisperProvenance({
+            // Wave 3 U2 — the arm that actually ran stamps itself
+            // (`whisper` or `whisper-cloud` + the gateway's model/revision).
+            transcription: stamp({
               language: p.language ?? detectedLanguage,
               completedAt: syncRunAt,
             }),

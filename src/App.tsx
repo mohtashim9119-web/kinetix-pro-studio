@@ -123,10 +123,15 @@ import { runForcedAlignmentForSync, FA_SUPPORTED_LANGUAGES, type FaFailureKind, 
 import { computeSyncEngineKey, resolveSyncEngine, probeFaReadiness } from './services/faPreflight';
 import { saveFaPause, readFaPause, clearFaPause, type FaPauseRecord } from './services/faSyncPauseStore';
 import {
+  stampCloudProvenance,
   stampFaProvenance,
   stampWhisperProvenance,
+  transcriptionHost,
   whisperDegradedKind,
+  type GatewayProvenance,
 } from './services/timingProvenance';
+import { onSyncEngineHostChange, readSyncEngineHost } from './services/syncEngineHost';
+import { prepareCloudAudioOnce, transcribeForHost } from './services/cloudSyncEngine';
 import type { TimingProvenance } from './types';
 import {
   detectUnspokenScriptSegmentsFromWhisperFullAsync,
@@ -3676,6 +3681,18 @@ export default function App() {
       // need to recompute it.
       setPendingVoiceoverSync({ file, asset, audioHash });
 
+      // Wave 3 U2 — start the local Opus encode + upload NOW, in the
+      // background, when sync runs on the cloud: the bundled libopus needs
+      // ~47 s for a 24-minute voiceover, and this is the earliest moment the
+      // bytes and their content hash are both known. Single-flight by hash
+      // (`prepareCloudAudioOnce`), so the transcription below and Apply
+      // Sync's alignment await this same work rather than repeating it. A
+      // failure here is not surfaced — the stage that needs the audio retries
+      // and reports it with a typed reason.
+      if (readSyncEngineHost() === 'cloud') {
+        void prepareCloudAudioOnce(file, audioHash).catch(() => {});
+      }
+
       // Same-content detection: this exact audio was already transcribed and
       // its tokens are still cached — skip the Whisper run entirely. Apply
       // Sync stays enabled via the lastTranscribedAudioHash clause below.
@@ -4114,6 +4131,58 @@ export default function App() {
     //    normal case: Apply Sync is gated until staging-time transcription
     //    reaches 'done'), align inline so the very first commit is already
     //    ms-perfect. No character-based timing ever reaches the screen.
+    // Wave 3 U2 — an engine switch never silently reuses the other engine's
+    // transcript (cloud-asr-plan.md: "a later fallback run against the same
+    // audio must not silently replace cloud tokens, and a later cloud run must
+    // not silently replace local ones; the user, or an explicit re-run,
+    // chooses"). The standing host IS the user's choice, so a cached
+    // transcript produced by the OTHER host is re-transcribed here, through
+    // the same `transcribeForHost` seam staging uses — on the cloud that is a
+    // gateway cache hit whenever this audio was transcribed there before.
+    // Legacy/unstamped transcripts count as local (they can only have come
+    // from whisper.cpp).
+    const engineHost = readSyncEngineHost();
+    const cachedTranscriptHost = transcriptionHost(projectRef.current.timingProvenance?.transcription) ?? 'local';
+    if ((projectRef.current.transcriptTokens?.length ?? 0) > 0 && cachedTranscriptHost !== engineHost) {
+      setSyncStageMessage(engineHost === 'cloud' ? 'Transcribing on the cloud…' : 'Transcribing on this computer…');
+      try {
+        const fresh = await transcribeForHost({
+          host: engineHost,
+          asset: voiceoverAsset,
+          durationSecs: audioDuration,
+          language: projectRef.current.language,
+          onProgress: () => {},
+          signal: syncAbortController.signal,
+          audioHash,
+        });
+        const stampLanguage = projectRef.current.language ?? fresh.detectedLanguage;
+        const patch: Partial<Project> = {
+          transcriptTokens: fresh.tokens,
+          lastTranscribedAssetId: voiceoverAsset.id,
+          lastTranscribedAudioHash: audioHash ?? projectRef.current.lastTranscribedAudioHash,
+          language: stampLanguage,
+          detectedLanguage: fresh.detectedLanguage ?? projectRef.current.detectedLanguage,
+          timingProvenance: {
+            ...projectRef.current.timingProvenance,
+            transcription: fresh.stamp({ language: stampLanguage, completedAt: Date.now() }),
+          },
+        };
+        // The rest of this run reads `projectRef`, which otherwise only
+        // advances on the next render.
+        projectRef.current = { ...projectRef.current, ...patch };
+        setProject(p => ({ ...p, ...patch }));
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return cancelledResult(newSegmentsRaw.length);
+        const msg = `Couldn't re-transcribe for the selected sync engine — sync aborted. ${err instanceof Error ? err.message : String(err)}`;
+        showToast(msg);
+        logSyncAbort(msg, newSegmentsRaw.length);
+        setIsProcessing(false);
+        return { ok: false, message: msg };
+      } finally {
+        setSyncStageMessage(null);
+      }
+    }
+
     const cachedTokensReady = !!voiceoverAsset
       && (projectRef.current.lastTranscribedAssetId === voiceoverAsset.id
           // plan-v3 Wave 2 item 4 / A5 — content-hash fallback, replacing the
@@ -4241,14 +4310,21 @@ export default function App() {
       // attempted — `runForcedAlignmentForSync` stays the single typed
       // authority on what actually happened.
       if (faGateOpen) {
-        const preflight = engineResolution.preflight!;
-        ruleLogEntries.push(buildFaPreflightEntry(syncRunId, preflight, syncRunAt));
+        // Wave 3 U2 — the cloud resolution carries no local preflight (the
+        // gateway, not this build, runs the alignment).
+        if (engineResolution.preflight) {
+          ruleLogEntries.push(buildFaPreflightEntry(syncRunId, engineResolution.preflight, syncRunAt));
+        }
       } else if (forceWhisperReason !== null) {
         // plan-v3 item 4 — the user answered a SyncPausedDialog with "use
         // Whisper timing" for this one run. Distinct from the gate-closed
         // entry below: the toggle is still ON, this is a one-off, EXPLICIT
         // choice, not a silent standing default.
         ruleLogEntries.push(buildFaUserChoseWhisperEntry(syncRunId, forceWhisperReason, syncRunAt));
+      } else if (engineResolution.host === 'cloud') {
+        // FA toggle off under Cloud: say so; the local-compile probe below
+        // describes this build, which is not what would run the alignment.
+        ruleLogEntries.push(buildFaGateClosedEntry(syncRunId, syncRunAt));
       } else if (isFaCapable()) {
         // WS2 Step 3 A5 (bug 2 visibility fix) — the gate being closed used to
         // produce NO Sync Log signal at all (this whole block was skipped).
@@ -4298,6 +4374,8 @@ export default function App() {
             audioHash,
             // G4 Unit 4 — one-shot bypass, consumed above this branch.
             skipLocalCoverageCheck,
+            // Wave 3 U2 — cloud or local compute for the same chunk plan.
+            engineResolution.host,
           )
         : {
             status: 'degraded',
@@ -4360,26 +4438,26 @@ export default function App() {
           && faRun.reason !== 'ctc-infeasible-chunk'
           ? { kind: whisperDegradedKind(faRun.reason) }
           : undefined;
-        const transcription: TimingProvenance = stampWhisperProvenance({
-          language: stampLang,
-          completedAt: syncRunAt,
-          degraded: transcriptionDegraded,
-        });
+        // Wave 3 U2 — the transcript's own record says which host produced
+        // it (staging, or the engine-switch re-transcription above, stamped
+        // it); the cloud FA result carries the gateway's model + revision.
+        const cachedTranscription = projectRef.current.timingProvenance?.transcription;
+        const stampTranscription = (degraded: TimingProvenance['degraded']): TimingProvenance =>
+          cachedTranscription?.engine === 'whisper-cloud'
+            ? stampCloudProvenance(cachedTranscription as GatewayProvenance & TimingProvenance, { language: stampLang, completedAt: syncRunAt, degraded })
+            : stampWhisperProvenance({ language: stampLang, completedAt: syncRunAt, degraded });
+        const stampAlignment = (degraded: TimingProvenance['degraded']): TimingProvenance => {
+          const cloudProvenance = faRun.status === 'ok' || faRun.status === 'degraded' ? faRun.cloudProvenance : undefined;
+          return cloudProvenance
+            ? stampCloudProvenance(cloudProvenance, { language: stampLang, completedAt: syncRunAt, degraded })
+            : stampFaProvenance({ language: stampLang, completedAt: syncRunAt, degraded });
+        };
+        const transcription: TimingProvenance = stampTranscription(transcriptionDegraded);
         let alignment: TimingProvenance | undefined;
         if (faRun.status === 'ok') {
-          alignment = stampFaProvenance({
-            language: stampLang,
-            completedAt: syncRunAt,
-            degraded: faRun.silenceError !== undefined
-              ? { kind: 'silence-detect-failed' }
-              : undefined,
-          });
+          alignment = stampAlignment(faRun.silenceError !== undefined ? { kind: 'silence-detect-failed' } : undefined);
         } else if (faRun.status === 'degraded' && faRun.reason === 'ctc-infeasible-chunk') {
-          alignment = stampFaProvenance({
-            language: stampLang,
-            completedAt: syncRunAt,
-            degraded: { kind: 'fa-chunk-infeasible' },
-          });
+          alignment = stampAlignment({ kind: 'fa-chunk-infeasible' });
         }
         nextTimingProvenance = { transcription, alignment };
       }
@@ -4426,6 +4504,14 @@ export default function App() {
         anchorSourceForRun,
         faTokens ? faTokens.length : projectRef.current.transcriptTokens!.length,
         syncRunAt,
+        // Wave 3 U2 — names the cloud model + revision when the gateway
+        // produced the timings this run commits (the provenance just staged).
+        (() => {
+          const committed = faCompleted ? nextTimingProvenance?.alignment : nextTimingProvenance?.transcription;
+          return committed && (committed.engine === 'fa-cloud' || committed.engine === 'whisper-cloud')
+            ? { model: committed.model, modelVersion: committed.modelVersion }
+            : undefined;
+        })(),
       ));
       // R.5 — the excisions this run's chunk plan actually made, surfaced by
       // `runForcedAlignmentForSync` from the same `computeRunContext` pass
@@ -6603,6 +6689,12 @@ export default function App() {
   // reads the persisted project value for an unstaged slot and stamps the
   // spine from exactly that same commit — see handleApplySyncFromFiles'
   // step 1 / step 8), so only a slot that IS staged needs a fresh hash.
+  // Wave 3 U2 — the standing Cloud/Local choice, mirrored into state so the
+  // "already synced" comparison below re-runs the moment it changes (an
+  // engine switch is a real change: every cloud engineKey differs from
+  // every local one).
+  const [syncEngineHost, setSyncEngineHostState] = useState(readSyncEngineHost);
+  useEffect(() => onSyncEngineHostChange(setSyncEngineHostState), []);
   const [spineUnchanged, setSpineUnchanged] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -6644,7 +6736,7 @@ export default function App() {
       // run, must make the comparison fail even when neither hash moved —
       // re-checked fresh every time this effect fires, so it always reads
       // current readiness rather than a stale snapshot.
-      const engineKey = await computeSyncEngineKey(project);
+      const engineKey = await computeSyncEngineKey(project, syncEngineHost);
       if (cancelled) return;
 
       setSpineUnchanged(audioHash !== undefined && spineEquals(spine, { audioHash, scriptHash, engineKey }));
@@ -6654,6 +6746,7 @@ export default function App() {
     project.lastSyncSpine, project.script, project.sceneDetails,
     project.faHighPrecisionSync, project.language, project.detectedLanguage,
     stagedVoiceoverFile, stagedScriptFile, stagedSceneFile, pendingVoiceover,
+    syncEngineHost,
   ]);
   // Operator-approved copy (Wave 2 G1 sign-off). Reason + hint combined into
   // one tooltip sentence pair; the button's own visible label ("Already

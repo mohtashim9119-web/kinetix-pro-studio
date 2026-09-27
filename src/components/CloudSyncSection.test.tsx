@@ -26,6 +26,7 @@ vi.mock('../services/cloudGateway', async (importOriginal) => {
 });
 
 import { CloudSyncSection } from './CloudSyncSection';
+import { readSyncEngineHost, writeSyncEngineHost } from '../services/syncEngineHost';
 
 const PING = { member: 'operator', schema: 1, engines: { transcribe: 't', align: 'a' }, limits: { maxAudioSec: 3600, maxUploadBytes: 1 }, latencyMs: 312 };
 
@@ -87,5 +88,22 @@ describe('CloudSyncSection', () => {
     expect(ping).not.toHaveBeenCalled();
     expect(q('cloud-sync-error')?.textContent).toContain('start with kx_');
     expect(q('cloud-sync-key-input')).toBeTruthy();
+  });
+
+  it('Wave 3 U2 interim switch: only once connected; persists Cloud; removing the key falls back to Local', async () => {
+    localStorage.clear();
+    status.mockResolvedValue({ configured: true, gateway: 'g' });
+    ping.mockResolvedValue(PING);
+    clearKey.mockResolvedValue({ configured: false, gateway: 'g' });
+    await act(async () => { root.render(<CloudSyncSection />); });
+    const toggle = q('cloud-sync-host-toggle') as HTMLButtonElement;
+    expect(toggle.getAttribute('aria-checked')).toBe('false');
+    await act(async () => { toggle.click(); });
+    expect(readSyncEngineHost()).toBe('cloud');
+    expect((q('cloud-sync-host-toggle') as HTMLButtonElement).getAttribute('aria-checked')).toBe('true');
+    await act(async () => { (q('cloud-sync-key-remove') as HTMLButtonElement).click(); });
+    expect(readSyncEngineHost()).toBe('local');
+    expect(q('cloud-sync-host-toggle')).toBeNull();
+    writeSyncEngineHost('local');
   });
 });
