@@ -659,6 +659,7 @@ pub fn run() {
             cloud_gateway::cloud_encode_opus,
             cloud_gateway::cloud_upload_audio,
             cloud_gateway::cloud_cache_lookup,
+            cloud_gateway::cloud_release_job,
             cloud_gateway::cloud_run_job,
             cloud_gateway::cloud_cancel_run,
             project_mirror::project_mirror_read_all,

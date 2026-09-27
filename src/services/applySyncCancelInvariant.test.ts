@@ -93,6 +93,14 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     const faCancelled = lineNumbersOf("if (faRun.status === 'cancelled') return cancelledResult(newSegmentsRaw.length);");
     expect(faCancelled, 'FA branch\'s own cancelled short-circuit not found').toHaveLength(1);
 
+    // Wave 3 U4.5 — the REVEAL wait (a background cloud intent for this
+    // spine): cancel during the wait returns before anything is written,
+    // strictly between STAGING and FA's own cancelled arm.
+    const reveal = lineNumbersOf('if (revealCancelled) return cancelledResult(newSegmentsRaw.length);');
+    expect(reveal, 'U4.5 reveal-wait cancel check not found').toHaveLength(1);
+    expect(staging[0]!).toBeLessThan(reveal[0]!);
+    expect(reveal[0]!).toBeLessThan(faCancelled[0]!);
+
     // MATCHER and COMMIT share an identical literal
     // (`cancelledResult(newSegmentsRaw.length)` / `cancelledResult(lockRestoredSegments.length)`
     // respectively) — matched by their distinct argument expressions so this

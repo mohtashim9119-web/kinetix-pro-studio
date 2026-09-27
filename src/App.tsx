@@ -139,7 +139,14 @@ import {
   saveRunHostOverride,
   shouldStartStaging,
 } from './services/syncEngineHost';
-import { CloudStageError, cloudPauseReason, transcribeForHost } from './services/cloudSyncEngine';
+import { CloudStageError, cloudPauseReason, releaseHeldTranscription, transcribeForHost } from './services/cloudSyncEngine';
+import {
+  INTENT_PHASE_COPY,
+  cancelOtherSyncIntents,
+  getSyncIntent,
+  startSyncIntent,
+  subscribeSyncIntents,
+} from './services/cloudSyncIntent';
 import type { TimingProvenance } from './types';
 import {
   detectUnspokenScriptSegmentsFromWhisperFullAsync,
@@ -3760,6 +3767,10 @@ export default function App() {
       // can not be found here") on a handle that worked minutes earlier.
       setPendingVoiceoverSync({ file, asset: { ...asset, duration }, audioHash });
       transcriptionTargetIdRef.current = asset.id;
+      const stagingHost = hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
+        projectId: projectRef.current.id,
+        audioHash,
+      });
       const outcome = await startTranscription(
         asset,
         duration,
@@ -3785,10 +3796,11 @@ export default function App() {
           audioHash,
           // Wave 3 U4 — a one-run "transcribe on this computer" answer to a
           // cloud pause applies to exactly this project + audio.
-          host: hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
-            projectId: projectRef.current.id,
-            audioHash,
-          }),
+          host: stagingHost,
+          // Wave 3 U4.5 — on the cloud, keep the GPU container for this
+          // audio's alignment (one boot per sync). The spine effect below
+          // releases it at once if there is nothing to align yet.
+          cloudHold: stagingHost === 'cloud',
           // WS2 T4.7 Requirement 3 — flush the just-written
           // `unappliedTranscript` immediately, past `usePersistProject`'s
           // 500 ms debounce.
@@ -4183,6 +4195,34 @@ export default function App() {
       projectId: projectRef.current.id,
       audioHash,
     });
+    // Wave 3 U4.5 — REVEAL. On the cloud, a background intent may already be
+    // aligning this exact spine; wait for it (showing what the cloud is
+    // actually doing) instead of starting a second run. Its result lands in
+    // the gateway cache, so the pipeline below reads it as two cache hits.
+    // Waits only on work that is really pending; cancel stops the wait.
+    if (engineHost === 'cloud' && audioHash) {
+      const engineKey = await computeSyncEngineKey(projectRef.current, 'cloud');
+      const intent = getSyncIntent(`${audioHash}|${scriptHash}|${engineKey}`);
+      if (intent && !intent.outcome) {
+        const showPhase = (): void => {
+          const live = getSyncIntent(intent.spineKey);
+          if (live) setSyncStageMessage(INTENT_PHASE_COPY[live.phase]);
+        };
+        showPhase();
+        const off = subscribeSyncIntents(showPhase);
+        try {
+          await Promise.race([
+            intent.promise,
+            new Promise<void>(resolve => syncAbortController.signal.addEventListener('abort', () => resolve(), { once: true })),
+          ]);
+        } finally {
+          off();
+        }
+        const revealCancelled = syncAbortController.signal.aborted;
+        if (revealCancelled) return cancelledResult(newSegmentsRaw.length);
+        setSyncStageMessage(INTENT_PHASE_COPY.ready);
+      }
+    }
     const cachedTranscriptHost = transcriptionHost(projectRef.current.timingProvenance?.transcription) ?? 'local';
     if ((projectRef.current.transcriptTokens?.length ?? 0) > 0 && cachedTranscriptHost !== engineHost) {
       setSyncStageMessage(engineHost === 'cloud' ? 'Transcribing on the cloud…' : 'Transcribing on this computer…');
@@ -6853,6 +6893,90 @@ export default function App() {
   // one tooltip sentence pair; the button's own visible label ("Already
   // synced" — see DropZonePanel's applySyncSpineUnchangedReason ternary)
   // carries the stated-reason requirement visibly, not hover-only.
+  // Wave 3 U4.5 — the cloud sync intent. When the spine is complete on the
+  // cloud (script + scene doc + a voiceover with its CLOUD transcript) and
+  // not already synced, align in the background — in the staging
+  // transcription's held container when it is still there (one boot) — so
+  // the Apply Sync click only reveals. Anything short of that releases a
+  // held container at once: the GPU never waits for files. Inputs are the
+  // SAME values Apply Sync feeds `parseProjectData` / the FA runner, so the
+  // reveal's alignment lookup is a cache hit. Local path: untouched.
+  useEffect(() => {
+    if (isProcessing) return; // Apply Sync is running; it owns this spine now.
+    let cancelled = false;
+    const p = project;
+    const audioHash = pendingVoiceover?.audioHash ?? p.lastTranscribedAudioHash;
+    if (!audioHash) return;
+    const host = hostForRun(syncEngineHost, readRunHostOverride(p.id), { projectId: p.id, audioHash });
+    const noIntent = (): void => {
+      releaseHeldTranscription(audioHash);
+      cancelOtherSyncIntents(undefined);
+    };
+    if (host !== 'cloud') { noIntent(); return; }
+    const tokens = p.transcriptTokens;
+    const cloudTranscriptForThisAudio = (tokens?.length ?? 0) > 0
+      && p.lastTranscribedAudioHash === audioHash
+      && p.timingProvenance?.transcription?.engine === 'whisper-cloud';
+    // No transcript yet: staging is still running (nothing is held yet).
+    if (!cloudTranscriptForThisAudio) return;
+    const voiceoverAsset = pendingVoiceover?.audioHash === audioHash ? pendingVoiceover.asset : voiceover;
+    void (async () => {
+      const scriptText = stagedScriptFile ? stripRtfIfNeeded(await stagedScriptFile.text()) : p.script;
+      const sceneText = stagedSceneFile ? stripRtfIfNeeded(await stagedSceneFile.text()) : p.sceneDetails;
+      if (cancelled) return;
+      if (!scriptText.trim() || !sceneText.trim() || !voiceoverAsset) { noIntent(); return; }
+      const resolution = await resolveSyncEngine(p, 'cloud');
+      if (cancelled) return;
+      if (!resolution.gateOpen) { noIntent(); return; }
+      const scriptHash = await computeScriptHash(scriptText, sceneText);
+      if (cancelled) return;
+      const spine = { audioHash, scriptHash, engineKey: resolution.key };
+      if (p.lastSyncSpine && spineEquals(p.lastSyncSpine, spine)) { noIntent(); return; }
+      // Same duration rule Apply Sync uses.
+      const audioDurationSec = voiceoverAsset.duration !== undefined && voiceoverAsset.duration > 0
+        ? voiceoverAsset.duration
+        : audioRef.current?.src === voiceoverAsset.url ? (audioRef.current?.duration || 0) : 0;
+      if (!(audioDurationSec > 0)) { noIntent(); return; }
+      const spineKey = `${audioHash}|${scriptHash}|${resolution.key}`;
+      cancelOtherSyncIntents(spineKey);
+      if (getSyncIntent(spineKey)) return;
+      const entry = startSyncIntent({
+        spineKey,
+        voiceover: voiceoverAsset,
+        audioHash,
+        audioDurationSec,
+        tokens: tokens!,
+        language: resolveFaLanguage(p),
+        prepareSegments: () => parseProjectData(
+          scriptText, sceneText, p.assets, audioDurationSec, p.segments, p.defaultTextOverlay ?? false,
+        ),
+      });
+      void entry.promise.then(outcome => {
+        if (outcome.status !== 'paused') return;
+        // Pause-and-ask inside the background job: the SAME restart-safe
+        // dialog and log entry Apply Sync raises — never silent.
+        const runId = mintSyncLogId();
+        const at = Date.now();
+        const record: FaPauseRecord = {
+          projectId: p.id, syncRunId: runId, reason: outcome.faRun.reason, detail: outcome.faRun.detail,
+          timestamp: at, host: 'cloud', audioHash,
+        };
+        saveFaPause(record);
+        setProject(prev => appendSyncLogEntries(
+          prev, [buildFaPausedEntry(runId, outcome.faRun.reason, outcome.faRun.detail, at)], undefined,
+        ));
+        setFaPauseDialog(record);
+      });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    isProcessing, project.transcriptTokens, project.lastTranscribedAudioHash, project.timingProvenance,
+    project.script, project.sceneDetails, project.lastSyncSpine, project.faHighPrecisionSync,
+    project.language, project.detectedLanguage, project.segments,
+    stagedScriptFile, stagedSceneFile, pendingVoiceover, voiceover, syncEngineHost,
+  ]);
+
   const applySyncSpineUnchangedReason = spineUnchanged
     ? "Your audio and script haven't changed since the last sync. Edit the script or swap the voiceover to re-sync."
     : undefined;

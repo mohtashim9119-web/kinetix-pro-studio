@@ -218,3 +218,39 @@ def test_hit_line_is_not_a_meter_line_and_carries_no_text():
     line = core.hit_line("operator", "align", AUDIO, "en", 7.0)
     assert set(line) == {"ts", "member", "stage", "audioHash", "language"}
     assert "workerSec" not in line and "estimatedUsd" not in line
+
+
+# ---------------------------------------------------------------------------
+# Wave 3 U4.5 — held transcription, one-boot hand-off.
+# ---------------------------------------------------------------------------
+
+
+def test_handoff_target_only_names_a_real_job():
+    assert core.handoff_target("abc123") == "abc123"
+    for not_a_job in (core.HANDOFF_RELEASE, core.HANDOFF_CLOSED, None, 5, ""):
+        assert core.handoff_target(not_a_job) is None
+    assert core.handoff_key("j1") == "handoff:j1"
+
+
+def test_only_this_members_held_transcription_can_take_an_alignment():
+    held = dict(core.new_job("t1", "operator", "transcribe", AUDIO, "en", "k" * 64, 20.0, 1.0), hold=True)
+    assert core.can_hold_for(held, "operator")
+    assert core.can_hold_for(dict(held, status="done"), "operator")
+    assert not core.can_hold_for(held, "someone-else")
+    assert not core.can_hold_for(dict(held, hold=False), "operator")
+    assert not core.can_hold_for(dict(held, stage="align"), "operator")
+    for dead in ("failed", "cancelled"):
+        assert not core.can_hold_for(dict(held, status=dead), "operator")
+    assert not core.can_hold_for(None, "operator")
+
+
+def test_hold_is_bounded_and_short():
+    # Held for the client's planning seconds, never for files to arrive.
+    assert 0 < core.HOLD_FOR_PLAN_SEC <= 60
+
+
+def test_public_job_reports_the_container_and_handoff():
+    job = core.new_job("j1", "operator", "align", AUDIO, "en", "k" * 64, None, 5.0)
+    out = core.public_job(dict(job, taskId="ta-123", handedOff=True))
+    assert out["taskId"] == "ta-123" and out["handedOff"] is True
+    assert core.public_job(job)["taskId"] is None

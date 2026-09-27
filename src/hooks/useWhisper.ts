@@ -271,6 +271,12 @@ export interface StartTranscriptionOptions {
    * `syncEngineHost.ts`'s `hostForRun`). Omitted: the standing choice.
    */
   host?: SyncEngineHost;
+  /**
+   * Wave 3 U4.5 — cloud only: ask the gateway to keep this transcription's
+   * GPU container for the alignment hand-off (one boot per sync). The
+   * caller releases it at once if there turns out to be nothing to align.
+   */
+  cloudHold?: boolean;
 }
 
 export interface UseWhisperApi {
@@ -425,6 +431,7 @@ export function useWhisper(): UseWhisperApi {
           signal: controller.signal,
           jobKey: nativeJobKey(projectId, audioAsset),
           audioHash: preRunAudioHash,
+          hold: opts?.cloudHold === true,
         });
 
         if (generationRef.current !== generation) return { started: true };

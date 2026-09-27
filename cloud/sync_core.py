@@ -368,6 +368,47 @@ def reusable_inflight(job: dict[str, Any] | None, member: str) -> bool:
     return job is not None and job.get("member") == member and job.get("status") not in TERMINAL_STATUSES
 
 
+# ---------------------------------------------------------------------------
+# Wave 3 U4.5 — one boot per sync ("sync intent"). A transcription job may ask
+# to be HELD: after its transcript is written, its GPU container waits (at
+# most HOLD_FOR_PLAN_SEC) for the client's coverage check + chunk plan, then
+# runs the alignment in the SAME container. The client releases the hold at
+# once when there is nothing to align (spine incomplete, coverage mismatch,
+# alignment already cached) — the GPU is never held waiting for FILES, only
+# for the seconds the client needs to plan. The hand-off is one atomic
+# put-if-absent on `handoff_key`: the worker closing the hold and the gateway
+# handing it a job cannot both win, so an alignment is never lost (a closed
+# hold just means a normal spawn).
+# ---------------------------------------------------------------------------
+
+HOLD_FOR_PLAN_SEC = 30.0
+HANDOFF_RELEASE = "RELEASE"
+HANDOFF_CLOSED = "CLOSED"
+
+
+def handoff_key(job_id: str) -> str:
+    return f"handoff:{job_id}"
+
+
+def handoff_target(value: Any) -> str | None:
+    """The job id a hold was handed, or None for release/closed/absent."""
+    if not isinstance(value, str) or not value or value in (HANDOFF_RELEASE, HANDOFF_CLOSED):
+        return None
+    return value
+
+
+def can_hold_for(holder: dict[str, Any] | None, member: str) -> bool:
+    """A job an alignment may be handed to: this member's transcription that
+    asked to be held and has not been released/closed by its own record."""
+    return (
+        holder is not None
+        and holder.get("member") == member
+        and holder.get("stage") == "transcribe"
+        and bool(holder.get("hold"))
+        and holder.get("status") in ("queued", "running", "done")
+    )
+
+
 def lookup_reply(result: dict[str, Any] | None, audio_duration_sec: float | None) -> dict[str, Any]:
     """Wave 3 U3 — the answer to "is this stage already computed?".
 
@@ -405,4 +446,7 @@ def public_job(job: dict[str, Any]) -> dict[str, Any]:
         "finishedAt": job.get("finishedAt"),
         "workerSec": job.get("workerSec"),
         "error": job.get("error"),
+        # Wave 3 U4.5 — the container that ran it (None until it ran).
+        "taskId": job.get("taskId"),
+        "handedOff": bool(job.get("handedOff")),
     }

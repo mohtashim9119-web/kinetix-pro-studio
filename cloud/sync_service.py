@@ -266,6 +266,39 @@ class SyncWorker:
         # model load and volume attach land on the meter, not in a gap.
         began = self.booted_at if self.first_job else time.time()
         self.first_job = False
+        outcome = self._execute(job_id, began)
+        job = jobs.get(job_id) or {}
+        if outcome == "done" and job.get("stage") == "transcribe" and job.get("hold"):
+            self._hold_for_alignment(job)
+        return outcome
+
+    def _hold_for_alignment(self, job: dict[str, Any]) -> None:
+        """Wave 3 U4.5 — wait (bounded) for the client's alignment hand-off.
+
+        The idle seconds are real GPU time, so they get their own meter line
+        (`held`) rather than hiding in a gap the reconciliation can't explain.
+        """
+        key = core.handoff_key(job["jobId"])
+        held_from = time.time()
+        target: str | None = None
+        while time.time() - held_from < core.HOLD_FOR_PLAN_SEC:
+            value = jobs.get(key)
+            if value == core.HANDOFF_RELEASE:
+                break
+            target = core.handoff_target(value)
+            if target:
+                break
+            time.sleep(0.25)
+        if target is None and not jobs.put(key, core.HANDOFF_CLOSED, skip_if_exists=True):
+            # Lost the race to a hand-off that landed as the hold expired.
+            target = core.handoff_target(jobs.get(key))
+        now = time.time()
+        _write_meter(core.meter_line(dict(job, jobId=f"{job['jobId']}-hold"), "held", now - held_from, now))
+        cache_vol.commit()
+        if target:
+            self._execute(target, time.time())
+
+    def _execute(self, job_id: str, began: float) -> str:
         job = jobs.get(job_id)
         if job is None or job["status"] != "queued":
             return "skipped"
@@ -276,6 +309,9 @@ class SyncWorker:
             cache_vol.reload()
             result = self._transcribe(job) if job["stage"] == "transcribe" else self._align(job)
             result["createdAt"] = time.time()
+            # Wave 3 U4.5 — which container ran it: two stages of one sync
+            # sharing a task id is the "one boot" claim, checkable.
+            job["taskId"] = os.environ.get("MODAL_TASK_ID")
             _write_json_atomic(core.result_path(CACHE_ROOT, job["stage"], job["cacheKey"]), result)
             # Committed BEFORE the job flips to done: the gateway serves a
             # done job by reading this file, so it must already be visible.
@@ -289,7 +325,9 @@ class SyncWorker:
             # DELETE already metered the time this job burned; the result
             # (if any) stays cached so a retry is a cache hit, not a re-bill.
             return "cancelled"
-        latest.update(status=outcome, finishedAt=now, workerSec=round(now - began, 3), error=error)
+        latest.update(
+            status=outcome, finishedAt=now, workerSec=round(now - began, 3), error=error, taskId=job.get("taskId"),
+        )
         _write_meter(core.meter_line(latest, outcome, now - began, now))
         cache_vol.commit()
         jobs.put(job_id, latest)
@@ -539,10 +577,30 @@ def gateway() -> Any:
         if meta is None:
             raise GatewayError(409, "audio-missing", "upload the audio for this hash before submitting")
 
+        body = await request.json()
         if chunks is not None:
             job["chunks"] = chunks
+        # Wave 3 U4.5 — a transcription may ask its container to wait for the
+        # alignment (one boot per sync); an alignment may name that held job.
+        if stage == "transcribe" and body.get("hold") is True:
+            job["hold"] = True
+        hold_job_id = body.get("holdJobId") if stage == "align" else None
         await jobs.put.aio(job_id, job)
         await jobs.put.aio(inflight, job_id)
+        if isinstance(hold_job_id, str) and hold_job_id:
+            holder = await jobs.get.aio(hold_job_id)
+            if core.can_hold_for(holder, member) and await jobs.put.aio(
+                core.handoff_key(hold_job_id), job_id, skip_if_exists=True
+            ):
+                # The held container runs it: no spawn, no second boot. Its
+                # FunctionCall is the holder's, so crash detection still works.
+                holder_call = await jobs.get.aio(f"call:{hold_job_id}")
+                job["handedOff"] = True
+                await jobs.put.aio(job_id, job)
+                if holder_call:
+                    await jobs.put.aio(f"call:{job_id}", holder_call)
+                return core.public_job(job)
+            # Released, closed, or not holdable: an ordinary spawn below.
         call = await SyncWorker().run.spawn.aio(job_id)
         # Stored under its own key: the worker rewrites the job record as it
         # runs, and a second put of the whole record here could race it.
@@ -551,6 +609,16 @@ def gateway() -> Any:
             await touch_audio(audio_hash)
             await cache_vol.commit.aio()
         return core.public_job(job)
+
+    @web.post("/v1/jobs/{job_id}/release")
+    async def release(job_id: str, request: Request) -> dict[str, Any]:
+        """Wave 3 U4.5 — nothing to align for this held transcription (the
+        client's coverage check failed, the spine is incomplete, or the
+        alignment was already cached): let its container exit now."""
+        member = member_of(request)
+        job = await owned_job(job_id, member)
+        released = await jobs.put.aio(core.handoff_key(job_id), core.HANDOFF_RELEASE, skip_if_exists=True)
+        return {"jobId": job["jobId"], "released": bool(released)}
 
     @web.get("/v1/jobs/{job_id}")
     async def status(job_id: str, request: Request) -> dict[str, Any]:

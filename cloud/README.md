@@ -17,6 +17,11 @@
 > `audioPresent`. The alignment key folds in each pack's vocab + cardinal
 > digest. Design record: `docs/ws1-sync-pipeline/wave3-operator-rulings-2026-09-27.md`.
 >
+> Wave 3 U4.5: a transcription submitted with `hold: true` keeps its GPU
+> container (≤30 s) for an alignment naming it via `holdJobId`
+> (`POST /v1/jobs/{id}/release` lets it go). `python cloud/smoke_one_boot.py`
+> proves one boot live (~$0.02, three fresh clips).
+>
 > Everything below describes the measurement harness (`app.py`, `align.py`,
 > `measure.py`), which is kept as-is for reproducibility.
 

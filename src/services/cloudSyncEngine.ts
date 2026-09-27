@@ -44,6 +44,7 @@ import type { Asset, TimingProvenance, TranscriptToken } from '../types';
 import {
   lookupCloudCache,
   prepareCloudAudio,
+  releaseCloudJob,
   runCloudJob,
   toCloudError,
   type CloudAlignResult,
@@ -103,6 +104,83 @@ export interface CloudStageRun<R> {
   /** Wave 3 U4 — the first attempt failed transiently and this is the
    *  result of the one retry. */
   retried: boolean;
+  /** Wave 3 U4.5 — the job that produced it (absent on a lookup hit). */
+  jobId?: string;
+  /** Wave 3 U4.5 — a held transcription's container ran it (no boot). */
+  handedOff?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Wave 3 U4.5 — held transcriptions (one boot per sync). A staging
+// transcription on the cloud asks the gateway to keep its GPU container for
+// up to `HELD_TRANSCRIPTION_TTL_MS` after the transcript is written. The
+// alignment for the same audio takes it (`takeHeldTranscription`) and names
+// it on submit, so it runs in that container; anything that decides there is
+// nothing to align RELEASES it at once — the GPU waits for the client's
+// planning seconds, never for files. A stale entry is harmless: the gateway
+// just spawns normally for a hold that already closed.
+// ---------------------------------------------------------------------------
+
+/** Mirrors `cloud/sync_core.py`'s HOLD_FOR_PLAN_SEC, minus a margin. */
+export const HELD_TRANSCRIPTION_TTL_MS = 25_000;
+
+const heldTranscriptions = new Map<string, { jobId: string; at: number }>();
+
+function rememberHeld(audioHash: string, jobId: string): void {
+  heldTranscriptions.set(audioHash, { jobId, at: Date.now() });
+}
+
+/** The live held transcription for this audio, removed from the registry. */
+export function takeHeldTranscription(audioHash: string): string | undefined {
+  const held = heldTranscriptions.get(audioHash);
+  heldTranscriptions.delete(audioHash);
+  if (!held || Date.now() - held.at > HELD_TRANSCRIPTION_TTL_MS) return undefined;
+  return held.jobId;
+}
+
+export function hasHeldTranscription(audioHash: string): boolean {
+  const held = heldTranscriptions.get(audioHash);
+  return held !== undefined && Date.now() - held.at <= HELD_TRANSCRIPTION_TTL_MS;
+}
+
+/** Let this audio's held container exit now. Never throws: a failed release
+ *  only means the hold runs out on its own (bounded, and metered). */
+export function releaseHeldTranscription(audioHash: string): void {
+  const jobId = takeHeldTranscription(audioHash);
+  if (jobId) void releaseCloudJob(jobId).catch(() => {});
+}
+
+/** Test-only. */
+export function __resetHeldTranscriptionsForTests(): void {
+  heldTranscriptions.clear();
+}
+
+// ---------------------------------------------------------------------------
+// Wave 3 U4.5 — honest phase, per audio: what the cloud is doing for it RIGHT
+// NOW, from the gateway's own job states. Read by the reveal overlay.
+// ---------------------------------------------------------------------------
+
+export type CloudPhase = 'waiting-gpu' | 'transcribing' | 'aligning';
+
+const phaseListeners = new Map<string, Set<(phase: CloudPhase) => void>>();
+
+export function onCloudPhase(audioHash: string, listener: (phase: CloudPhase) => void): () => void {
+  let set = phaseListeners.get(audioHash);
+  if (!set) { set = new Set(); phaseListeners.set(audioHash, set); }
+  set.add(listener);
+  return () => { set!.delete(listener); };
+}
+
+function reportPhase(audioHash: string, phase: CloudPhase): void {
+  for (const listener of phaseListeners.get(audioHash) ?? []) listener(phase);
+}
+
+/** A job event as the phase it means: queued = waiting for a GPU (unbilled). */
+export function phaseForEvent(stage: 'transcribe' | 'align', event: CloudJobEvent): CloudPhase | undefined {
+  if (event.type === 'submitted') return event.cached ? undefined : 'waiting-gpu';
+  if (event.status === 'queued') return 'waiting-gpu';
+  if (event.status === 'running') return stage === 'transcribe' ? 'transcribing' : 'aligning';
+  return undefined;
 }
 
 /** Wave 3 U4 — failures a second attempt can plausibly fix. Everything
@@ -215,7 +293,10 @@ async function attemptStageCacheFirst<R>(
     await prepare();
     view = await runCloudJob<R>(request, { signal, onEvent });
   }
-  return { result: view.result!, cached: view.cached, uploaded, encoded, retried: false };
+  return {
+    result: view.result!, cached: view.cached, uploaded, encoded, retried: false,
+    jobId: view.jobId, handedOff: view.handedOff === true,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -271,17 +352,28 @@ export async function transcribeViaCloud(args: {
   language: string | undefined;
   onProgress: (percent: number) => void;
   signal: AbortSignal;
+  /** Wave 3 U4.5 — keep the container for this audio's alignment. */
+  hold?: boolean;
 }): Promise<HostTranscribeResult> {
-  const { asset, audioHash, durationSecs, language, onProgress, signal } = args;
+  const { asset, audioHash, durationSecs, language, onProgress, signal, hold } = args;
   if (signal.aborted) throw abortError();
   try {
     onProgress(1);
     const run = await runStageCacheFirst<CloudTranscribeResult>(
-      { stage: 'transcribe', audioHash, language: language ?? 'auto' },
+      { stage: 'transcribe', audioHash, language: language ?? 'auto', ...(hold ? { hold: true } : {}) },
       () => assetBlob(asset),
-      { signal, onEvent: e => onProgress(cloudProgressPercent(e, durationSecs)) },
+      {
+        signal,
+        onEvent: e => {
+          onProgress(cloudProgressPercent(e, durationSecs));
+          const phase = phaseForEvent('transcribe', e);
+          if (phase) reportPhase(audioHash, phase);
+        },
+      },
     );
     logStageRun('transcript', run);
+    // A cache hit has no container to hold; a computed one does.
+    if (hold && !run.cached && run.jobId) rememberHeld(audioHash, run.jobId);
     const result = run.result;
     const provenance = result.provenance as GatewayProvenance;
     return {
@@ -336,6 +428,8 @@ export async function transcribeForHost(args: {
   signal: AbortSignal;
   jobKey?: string;
   audioHash?: string;
+  /** Wave 3 U4.5 — cloud only; ignored locally. */
+  hold?: boolean;
 }): Promise<HostTranscribeResult> {
   if (args.host === 'cloud') {
     if (!args.audioHash) {
@@ -362,7 +456,11 @@ export async function transcribeForHost(args: {
 // ---------------------------------------------------------------------------
 
 export type CloudAlignOutcome =
-  | { status: 'ok'; words: FaWordSpan[]; nFallbackChunks: number; provenance: GatewayProvenance; cached: boolean }
+  | {
+      status: 'ok'; words: FaWordSpan[]; nFallbackChunks: number; provenance: GatewayProvenance; cached: boolean;
+      /** Wave 3 U4.5 — ran in the held transcription's container. */
+      handedOff: boolean;
+    }
   | { status: 'cancelled' }
   | { status: 'failed'; error: CloudError };
 
@@ -375,6 +473,8 @@ export async function alignViaCloud(args: {
   language: string;
   signal?: AbortSignal;
 }): Promise<CloudAlignOutcome> {
+  // Wave 3 U4.5 — hand this to the held transcription's container, if any.
+  const holdJobId = takeHeldTranscription(args.audioHash);
   try {
     const run = await runStageCacheFirst<CloudAlignResult>(
       {
@@ -382,11 +482,20 @@ export async function alignViaCloud(args: {
         audioHash: args.audioHash,
         language: args.language,
         chunks: args.chunks.map(c => ({ startSec: c.startSec, endSec: c.endSec, text: c.text })),
+        ...(holdJobId ? { holdJobId } : {}),
       },
       async () => args.voiceoverBlob,
-      { signal: args.signal },
+      {
+        signal: args.signal,
+        onEvent: e => {
+          const phase = phaseForEvent('align', e);
+          if (phase) reportPhase(args.audioHash, phase);
+        },
+      },
     );
     logStageRun('alignment', run);
+    // Answered from the cache: the held container has nothing to do.
+    if (holdJobId && run.cached) void releaseCloudJob(holdJobId).catch(() => {});
     const result = run.result;
     return {
       status: 'ok',
@@ -394,8 +503,10 @@ export async function alignViaCloud(args: {
       nFallbackChunks: result.nFallbackChunks,
       provenance: result.provenance as GatewayProvenance,
       cached: run.cached,
+      handedOff: run.handedOff === true,
     };
   } catch (err) {
+    if (holdJobId) void releaseCloudJob(holdJobId).catch(() => {});
     const error = toCloudError(err);
     if (error.kind === 'cancelled') return { status: 'cancelled' };
     return { status: 'failed', error };

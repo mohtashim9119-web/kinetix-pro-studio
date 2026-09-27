@@ -96,6 +96,16 @@ describe('useWhisper — Wave 3 U4 cloud pause', () => {
     await act(async () => {
       await h.api().startTranscription(asset(), 30, [], 'en', () => {}, () => {}, { audioHash: HASH, projectId: 'p1' });
     });
-    expect(mockTranscribeForHost.mock.calls[0]![0]).toMatchObject({ host: 'cloud' });
+    expect(mockTranscribeForHost.mock.calls[0]![0]).toMatchObject({ host: 'cloud', hold: false });
+  });
+
+  it('Wave 3 U4.5 — cloudHold reaches the engine seam as hold: true', async () => {
+    writeSyncEngineHost('cloud');
+    mockTranscribeForHost.mockResolvedValue({ tokens: [], stamp: () => ({}), host: 'cloud' });
+    const h = mount();
+    await act(async () => {
+      await h.api().startTranscription(asset(), 30, [], 'en', () => {}, () => {}, { audioHash: HASH, projectId: 'p1', cloudHold: true });
+    });
+    expect(mockTranscribeForHost.mock.calls[0]![0]).toMatchObject({ host: 'cloud', hold: true });
   });
 });

@@ -1,6 +1,6 @@
 # Wave 3 — operator rulings and unit designs (2026-09-27)
 
-Recorded at Wave 3 U3; U4 appended. Extends plan-v3's Wave 3 section
+Recorded at Wave 3 U3; U4 and U4.5 appended. Extends plan-v3's Wave 3 section
 ([`sync-pipeline-plan-v3.md`](sync-pipeline-plan-v3.md)) without editing its signed body:
 item 2 (one job, two cached stages) is where U3 and U4.5 land; items 3–5 still govern
 everything below.
@@ -93,6 +93,38 @@ Operator-designed, approved. Scope: **cloud path only**.
    the same job shape.
 6. **Local path unchanged:** local keeps its two-moment flow (transcription at staging is local
    UX). *Logged here as the U4.5 scope note.*
+
+### U4.5 — as built
+
+- **One boot = a held transcription + an atomic hand-off.** A cloud staging transcription is
+  submitted with `hold: true`. After its transcript is written, the worker keeps the container
+  for at most `HOLD_FOR_PLAN_SEC` (30 s), polling for a hand-off. The alignment names it
+  (`holdJobId`), and the gateway hands it over with one put-if-absent on `handoff:<jobId>`.
+  The worker closing the hold and the gateway handing it a job can't both win, so a plan is
+  never lost: a closed hold just means a normal spawn. The idle seconds get their own `held`
+  meter line. Live proof (`cloud/smoke_one_boot.py`): transcribe and align ran in the same
+  task id; the hand-off idled 3.7 s; a released hold idled 2.5 s; an unanswered hold closed
+  at 30.1 s and the late alignment still completed in its own container.
+- **The coverage gate runs in the session, on the client.** The intent
+  (`src/services/cloudSyncIntent.ts`) runs Apply Sync's own `parseProjectData` →
+  `applyAnchorBasedTiming` → `runForcedAlignmentForSync(..., 'cloud')` against the cloud
+  transcript while the container is held. The G4 check and the chunk planner are the same
+  code as local; nothing is ported to Python. A mismatch pauses (`hopeless-local-coverage`)
+  and releases the container before any alignment is submitted. *Mechanism note, open to
+  operator veto:* "inside the job" is met as "inside the one held session, before FA
+  compute". The check itself executes in the app.
+- **The GPU never waits for files.** The App's spine effect releases a held container on every
+  "nothing to align" path: not Cloud, spine incomplete, FA gate closed, already synced, no
+  duration.
+- **Spine complete → the intent starts on its own**, one per spine (`audioHash|scriptHash|engineKey`),
+  and a spine change aborts the stale intent. A background pause raises the same restart-safe
+  `SyncPausedDialog` and Sync Log entry as Apply Sync.
+- **Reveal:** Apply Sync on Cloud waits on a running intent for its spine, showing the
+  gateway's own phase (checking / waiting for a GPU / aligning / building). It then runs the
+  normal pipeline, where both stages are cache hits. Cancel stops the wait.
+- **Scope held to the recorded split:** the rename, 4-slot gating and progress-bar removal
+  are U4.6. Until then Apply Sync stays disabled while staging transcription runs, so an early
+  click can only land during planning/alignment, not transcription.
 
 ## U4.6 — flow UI (new unit) — slot and rulings
 

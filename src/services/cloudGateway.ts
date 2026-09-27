@@ -112,6 +112,11 @@ export interface CloudJobRequest {
   /** `'auto'` or a code for transcribe; one of the FA pack codes for align. */
   language: string;
   chunks?: CloudChunk[];
+  /** Wave 3 U4.5 — transcribe only: keep the container for the alignment
+   *  hand-off (one boot per sync). */
+  hold?: boolean;
+  /** Wave 3 U4.5 — align only: the held transcription to hand this to. */
+  holdJobId?: string;
 }
 
 export interface CloudProvenance {
@@ -154,6 +159,10 @@ export interface CloudJobView<R> {
   audioDurationSec: number | null;
   workerSec: number | null;
   error: { code: string; detail: string } | null;
+  /** Wave 3 U4.5 — the container that ran it; a held transcription's
+   *  container took it (no second boot). */
+  taskId?: string | null;
+  handedOff?: boolean;
   result?: R;
 }
 
@@ -210,6 +219,12 @@ export async function prepareCloudAudio(file: Blob, audioHash: string): Promise<
  *  created, no GPU is touched, and no meter line is written. */
 export function lookupCloudCache<R>(request: CloudJobRequest): Promise<CloudCacheLookup<R>> {
   return call('cloud_cache_lookup', { job: request });
+}
+
+/** Wave 3 U4.5 — let a held transcription's container exit now (nothing to
+ *  align: coverage mismatch, spine incomplete, alignment already cached). */
+export function releaseCloudJob(jobId: string): Promise<boolean> {
+  return call('cloud_release_job', { jobId });
 }
 
 const CANCEL_RETRY_MS = 200;

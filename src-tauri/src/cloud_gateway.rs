@@ -187,6 +187,13 @@ pub struct JobRequest {
     pub language: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chunks: Option<Vec<ChunkInput>>,
+    /// Wave 3 U4.5 — transcribe only: keep the GPU container for the
+    /// alignment hand-off (one boot per sync).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<bool>,
+    /// Wave 3 U4.5 — align only: the held transcription to hand this to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hold_job_id: Option<String>,
 }
 
 /// `POST /v1/cache/lookup` (`sync_core.lookup_reply`).
@@ -216,6 +223,12 @@ pub struct JobView {
     pub audio_duration_sec: Option<f64>,
     pub worker_sec: Option<f64>,
     pub error: Option<ErrorDetail>,
+    /// Wave 3 U4.5 — the container that ran it, and whether a held
+    /// transcription's container took it (no second boot).
+    #[serde(default)]
+    pub task_id: Option<String>,
+    #[serde(default)]
+    pub handed_off: bool,
     /// Present only on `done`: `{tokens, detectedLanguage, provenance}` for
     /// transcribe, `{words, nChunks, nFallbackChunks, provenance}` for align.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -359,6 +372,18 @@ impl GatewayClient {
 
     pub async fn job(&self, job_id: &str) -> Result<JobView, CloudError> {
         self.send_json(self.request(reqwest::Method::GET, &format!("/v1/jobs/{job_id}"), REQUEST_TIMEOUT)).await
+    }
+
+    /// Wave 3 U4.5 — nothing to align for this held transcription.
+    pub async fn release(&self, job_id: &str) -> Result<bool, CloudError> {
+        #[derive(Deserialize)]
+        struct Reply {
+            released: bool,
+        }
+        let reply: Reply = self
+            .send_json(self.request(reqwest::Method::POST, &format!("/v1/jobs/{job_id}/release"), REQUEST_TIMEOUT))
+            .await?;
+        Ok(reply.released)
     }
 
     pub async fn cancel(&self, job_id: &str) -> Result<JobView, CloudError> {
@@ -754,6 +779,16 @@ pub async fn cloud_run_job(
     client.run_job(&job, &flag, &emit).await
 }
 
+/// Wave 3 U4.5 — release a held transcription's container (coverage
+/// mismatch, incomplete spine, alignment already cached). Idempotent.
+#[tauri::command]
+pub async fn cloud_release_job(app: tauri::AppHandle, job_id: String) -> Result<bool, CloudError> {
+    if job_id.is_empty() || !job_id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(CloudError::Protocol { detail: "jobId must be hex".to_string() });
+    }
+    client_for(&app)?.release(&job_id).await
+}
+
 /// Trips the cancel flag of an in-flight `cloud_run_job`. Returns whether a
 /// run by that id was found. Idempotent.
 #[tauri::command]
@@ -817,12 +852,27 @@ mod tests {
             audio_hash: "a".repeat(64),
             language: "en".into(),
             chunks: Some(vec![ChunkInput { start_sec: 0.0, end_sec: 1.5, text: "hi".into() }]),
+            hold: None,
+            hold_job_id: None,
         };
         let v = serde_json::to_value(&req).unwrap();
         assert_eq!(v["audioHash"], "a".repeat(64));
         assert_eq!(v["chunks"][0]["startSec"], 0.0);
-        let transcribe = JobRequest { stage: "transcribe".into(), audio_hash: "a".repeat(64), language: "auto".into(), chunks: None };
-        assert!(serde_json::to_value(&transcribe).unwrap().get("chunks").is_none());
+        let transcribe = JobRequest {
+            stage: "transcribe".into(), audio_hash: "a".repeat(64), language: "auto".into(), chunks: None,
+            hold: None, hold_job_id: None,
+        };
+        let plain = serde_json::to_value(&transcribe).unwrap();
+        assert!(plain.get("chunks").is_none() && plain.get("hold").is_none() && plain.get("holdJobId").is_none());
+        // Wave 3 U4.5 wire names.
+        let held = JobRequest { hold: Some(true), ..transcribe.clone() };
+        assert_eq!(serde_json::to_value(&held).unwrap()["hold"], true);
+        let handoff = JobRequest { hold_job_id: Some("ab12".into()), ..req.clone() };
+        assert_eq!(serde_json::to_value(&handoff).unwrap()["holdJobId"], "ab12");
+        let view: JobView = serde_json::from_str(
+            r#"{"jobId":"j","stage":"align","status":"done","audioDurationSec":1.0,"workerSec":1.0,"error":null,"taskId":"ta-1","handedOff":true}"#,
+        ).unwrap();
+        assert!(view.handed_off && view.task_id.as_deref() == Some("ta-1"));
     }
 
     #[test]
@@ -957,14 +1007,14 @@ mod tests {
             // gzip-negotiated, with the full result in hand.
             let t0 = Instant::now();
             let hit = api
-                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None })
+                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None, hold: None, hold_job_id: None })
                 .await
                 .expect("lookup");
             assert!(hit.cached);
             assert_eq!(hit.result.as_ref().unwrap()["tokens"].as_array().unwrap().len(), 3960);
             println!("lookup transcribe: cached={} {}ms", hit.cached, t0.elapsed().as_millis());
             let unknown = api
-                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: "d".repeat(64), language: "en".into(), chunks: None })
+                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: "d".repeat(64), language: "en".into(), chunks: None, hold: None, hold_job_id: None })
                 .await
                 .expect("lookup miss");
             assert_eq!(unknown, CacheLookup { cached: false, result: None, audio_present: false, audio_duration_sec: None });
@@ -974,7 +1024,7 @@ mod tests {
             let events = Mutex::new(Vec::new());
             let emit = |e: CloudJobEvent| events.lock().unwrap().push(e);
             let transcript = api
-                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None }, &never, &emit)
+                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None, hold: None, hold_job_id: None }, &never, &emit)
                 .await
                 .expect("transcribe cache hit");
             assert!(transcript.cached);
@@ -995,7 +1045,7 @@ mod tests {
                 })
                 .collect();
             let aligned = api
-                .run_job(&JobRequest { stage: "align".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: Some(chunks) }, &never, &emit)
+                .run_job(&JobRequest { stage: "align".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: Some(chunks), hold: None, hold_job_id: None }, &never, &emit)
                 .await
                 .expect("align cache hit");
             let n_words = aligned.result.as_ref().unwrap()["words"].as_array().unwrap().len();
@@ -1010,6 +1060,8 @@ mod tests {
                         audio_hash: "f".repeat(64),
                         language: "en".into(),
                         chunks: Some(vec![ChunkInput { start_sec: 0.0, end_sec: 1.0, text: "x".into() }]),
+                        hold: None,
+                        hold_job_id: None,
                     },
                     &never,
                     &emit,
@@ -1021,7 +1073,7 @@ mod tests {
             // A pre-tripped cancel never submits.
             let tripped = AtomicBool::new(true);
             let r = api
-                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash, language: "en".into(), chunks: None }, &tripped, &emit)
+                .run_job(&JobRequest { stage: "transcribe".into(), audio_hash, language: "en".into(), chunks: None, hold: None, hold_job_id: None }, &tripped, &emit)
                 .await;
             assert_eq!(r.unwrap_err(), CloudError::Cancelled);
             println!("events: {:?}", events.lock().unwrap());
