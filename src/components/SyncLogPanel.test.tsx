@@ -229,7 +229,7 @@ describe('SyncLogPanel — models-modal deep-link', () => {
       type: 'fa-preflight',
       message: 'High-precision sync is not ready for this run.',
       errorMessage,
-      fixHint: 'Install the alignment model for this language, then run Apply Sync again.',
+      fixHint: 'Install the alignment model for this language, then run Build Timeline again.',
     };
   }
 

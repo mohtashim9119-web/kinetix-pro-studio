@@ -63,3 +63,53 @@ describe('Wave 3 U4.5 — App wiring', () => {
     expect(b).toMatch(/INTENT_PHASE_COPY/);
   });
 });
+
+// Wave 3 U4.6 — the flow UI on top of the intent: the click is a reveal on
+// the cloud even while transcription runs, the background job never waits on
+// media, and local keeps click-to-run.
+describe('Wave 3 U4.6 — App wiring', () => {
+  function earlyClickBlock(): string {
+    const start = APP.indexOf('// Wave 3 U4.6 — EARLY-CLICK REVEAL.');
+    expect(start, 'the early-click reveal is gone').toBeGreaterThan(-1);
+    return APP.slice(start, APP.indexOf('// 1. Read text files', start));
+  }
+
+  it('an early cloud click waits for the staging transcript BEFORE the voiceover is persisted (which would orphan the staging write-back)', () => {
+    const wait = APP.indexOf('await waitForStagingTranscript(');
+    const persist = APP.indexOf('await persistPendingVoiceoverAsset(');
+    expect(wait).toBeGreaterThan(-1);
+    expect(wait).toBeLessThan(persist);
+    const b = earlyClickBlock();
+    expect(b).toMatch(/=== 'cloud'/);
+    expect(b).toMatch(/pendingForWait\.file === staged\.voiceoverFile\.file/);
+  });
+
+  it('the wait shows the cloud\'s own phase, and cancel or a pause ends it keeping the staged files', () => {
+    const b = earlyClickBlock();
+    expect(b).toMatch(/onCloudPhase\(pendingForWait\.audioHash/);
+    expect(b).toMatch(/INTENT_PHASE_COPY\[phase\]/);
+    expect(b).toMatch(/waitForStagingTranscript\(\s*\(\) => stagingTranscriptStateRef\.current, stagingTranscriptWaitersRef\.current, syncAbortController\.signal,/);
+    expect(b).toMatch(/holdStaged: true/);
+    expect(b).toMatch(/offPhase\(\)/);
+  });
+
+  it('a staging failure wakes the wait as a pause — the click never hangs on a stopped run', () => {
+    expect(APP).toMatch(/paused: cloudTranscriptionPause !== null \|\| whisperModelFailureKind !== null/);
+    expect(APP).toMatch(/for \(const wake of \[\.\.\.stagingTranscriptWaitersRef\.current\]\) wake\(\);/);
+  });
+
+  it('on the cloud an in-flight staging transcription does not grey Build Timeline; local and explicit-transcribe still do', () => {
+    expect(APP).toMatch(/applySyncDisabled=\{buildTimelineWaitsOnTranscription\}/);
+    expect(APP).toMatch(/const buildTimelineWaitsOnTranscription = applySyncDisabled\s*&& \(voiceoverNeedsExplicitTranscribe \|\| !cloudStagingInFlight\);/);
+    expect(APP).toMatch(/transcriptionStatus\.phase === 'transcribing'/);
+  });
+
+  it('the background intent never waits on media: nothing in the spine effect gates on assets', () => {
+    const b = effectBody();
+    expect(b).not.toMatch(/assets\.length|assetFiles|zipFiles|persistedAssetCount/);
+  });
+
+  it('the purple transcription bar is not mounted while transcribing', () => {
+    expect(APP).toMatch(/transcriptionStatus\.phase !== 'idle' && transcriptionStatus\.phase !== 'transcribing' && whisperModelFailureKind === null/);
+  });
+});

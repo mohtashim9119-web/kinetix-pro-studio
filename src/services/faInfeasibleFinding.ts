@@ -31,7 +31,7 @@ export const INFEASIBLE_COPY = {
     count === 1
       ? `1 alignment chunk (${spanStartSec.toFixed(2)}–${spanEndSec.toFixed(2)}s) could not be timed precisely — ${estimatedWordCount} word${estimatedWordCount === 1 ? '' : 's'} marked Estimated.`
       : `${count} alignment chunks (${spanStartSec.toFixed(2)}–${spanEndSec.toFixed(2)}s) could not be timed precisely — ${estimatedWordCount} words marked Estimated.`,
-  fixHint: 'Review the Estimated scenes. Re-run Apply Sync after tightening those scene tags, or accept the placeholder timing.',
+  fixHint: 'Review the Estimated scenes. Re-run Build Timeline after tightening those scene tags, or accept the placeholder timing.',
 } as const;
 
 /** First real consumer of FA word-token `needsReview`: words flagged for

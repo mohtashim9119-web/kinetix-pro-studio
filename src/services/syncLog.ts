@@ -861,7 +861,7 @@ export function buildFaUserChoseWhisperEntry(
       owningRule: 'FA',
       severity: 'warning',
       reason: pausedReason,
-      fixHint: 'Run Apply Sync again to retry forced alignment.',
+      fixHint: 'Run Build Timeline again to retry forced alignment.',
     },
     timestamp,
   );
@@ -1283,7 +1283,7 @@ export function buildFaVictimRetimedLogEntry(
     {
       owningRule: 'FA',
       severity: 'warning',
-      fixHint: 'Review the re-timed scenes — their boundaries come from Whisper, not forced alignment. Accept the estimate, or re-run Apply Sync after tightening the affected scene tags.',
+      fixHint: 'Review the re-timed scenes — their boundaries come from Whisper, not forced alignment. Accept the estimate, or re-run Build Timeline after tightening the affected scene tags.',
       finding: { kind: 'fa-victim-retimed', count: victims.length },
       ruleDetail: {
         reason: `${victims.length} FA victim segment(s), engine fa degraded reason fa-chunk-infeasible; ${totalWords} word(s) marked Estimated from Whisper timing.`,

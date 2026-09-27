@@ -1,6 +1,6 @@
 # Wave 3 — operator rulings and unit designs (2026-09-27)
 
-Recorded at Wave 3 U3; U4 and U4.5 appended. Extends plan-v3's Wave 3 section
+Recorded at Wave 3 U3; U4, U4.5 and U4.6 appended. Extends plan-v3's Wave 3 section
 ([`sync-pipeline-plan-v3.md`](sync-pipeline-plan-v3.md)) without editing its signed body:
 item 2 (one job, two cached stages) is where U3 and U4.5 land; items 3–5 still govern
 everything below.
@@ -168,3 +168,39 @@ units sit next to each other.
    overlay shows the phase: waiting for cloud GPU / transcribing / aligning / building.
 5. **Bulk queue (post-U7):** identical flow. A project must fill all 4 slots before it enters
    the queue, and the queue submits the same intents back-to-back.
+
+### U4.6 — as built
+
+*Rename note:* this document's earlier sections say "Apply Sync". The button is now
+**Build Timeline**; internal identifiers (`handleApplySyncFromFiles`, `onApplySync`,
+`applySync*` files) keep their names.
+
+- **Rename:** every user-facing string (button, recovery banner, pause dialog, FA pack notice,
+  Sync Log empty state and fix hints, gapless-export message, empty Segments tab) says Build
+  Timeline. The button's copy lives in `BUILD_TIMELINE_COPY` (`src/services/buildTimelineGate.ts`).
+- **Post-sync label: NOT swapped.** "Timeline ready" had not been signed when this unit shipped,
+  so the signed Wave 2 label "Already synced" stays. It's a one-line swap
+  (`BUILD_TIMELINE_COPY.syncedLabel`) once the operator signs.
+- **4-slot gate:** a slot counts as filled if it's staged or persisted, so a bundle zip fills all
+  four at once. The reason is visible above the button and in its tooltip ("Add a voiceover and
+  media to build the timeline"). The sync intent still fires at spine complete, and a pin makes
+  sure the spine effect never gates on media. The `no-asset` attention kind is unchanged.
+- **Early click on the cloud:** while the staged voiceover is still transcribing on the cloud, the
+  button stays enabled. A click waits for the transcript and shows the cloud's own phase through
+  `onCloudPhase` (waiting for a GPU / transcribing). The ordinary pipeline then runs, and its
+  alignment takes the held container, so there is still one boot. The wait sits before step 2
+  on purpose: persisting the voiceover clears the pending reference, and the staging run writes
+  its tokens back only while it owns that reference. A staging failure (cloud pause or model
+  dialog) wakes the wait as `paused`, so the click never hangs. That path and cancel both end
+  with the staged files kept (`holdStaged`).
+- **Local keeps click-to-run:** the button is greyed with "Transcribing…" while local staging
+  transcription runs. A restored voiceover that needs an explicit Transcribe greys the button on
+  both engines.
+- **Progress bar removed (both engines):** `TranscriptionBar` renders nothing while transcribing.
+  Warning and error strips, the cloud pause dialog and the model dialogs are unchanged. With the
+  bar gone, its ✕ ("cancel transcription") is gone too. Removing or replacing the voiceover still
+  supersedes a run. *Operator-vetoable.*
+- **Known residue:** if an early click's pipeline aborts after the transcript lands but before
+  alignment (e.g. an empty scene doc), the held container isn't released explicitly. The worker
+  closes it at `HOLD_FOR_PLAN_SEC` (≤ 30 s of `held` meter). The spine effect releases it
+  earlier if it runs first.

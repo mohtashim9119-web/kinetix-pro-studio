@@ -64,7 +64,7 @@ describe('old project with persisted fa-fallback entries', () => {
       id: 'legacy-fa', timestamp: AT, syncRunId: 'run-old', type: 'fa-fallback',
       message: 'High-precision sync was ON but did not run — the alignment engine reported an error. This run used Whisper timing instead.',
       owningRule: 'FA', reason: 'inference-error', severity: 'warning',
-      errorMessage: 'failed to initialize onnxruntime', fixHint: 'Run Apply Sync again.',
+      errorMessage: 'failed to initialize onnxruntime', fixHint: 'Run Build Timeline again.',
     };
     const record = {
       version: 4,

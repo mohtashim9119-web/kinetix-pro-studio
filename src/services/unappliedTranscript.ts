@@ -79,7 +79,7 @@ export function clearUnappliedTranscript(project: Project): Project {
 
 /** Toast copy for the recovery fallback when scene structure blocks a timeline write. */
 export const TRANSCRIPT_SAVED_NEED_SCENE_TAGS_TOAST =
-  'Transcript saved. Add scene tags to your scene doc, then run Apply Sync to build the timeline.';
+  'Transcript saved. Add scene tags to your scene doc, then click Build Timeline.';
 
 /**
  * Fallback when Apply Sync aborts for a reason unrelated to the transcript:

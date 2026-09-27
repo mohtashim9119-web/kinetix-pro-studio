@@ -128,7 +128,7 @@ export async function runFaPreflight(
       languageSupported,
       summary: 'FA pre-flight: could not be checked — the readiness probe was rejected.',
       blockingDetail: detail,
-      fixHint: 'Re-run Apply Sync. If it keeps happening, restart the app.',
+      fixHint: 'Re-run Build Timeline. If it keeps happening, restart the app.',
     };
   }
 
@@ -165,7 +165,7 @@ export async function runFaPreflight(
     fixHint = 'The onnxruntime library could not load — re-provision it per src-tauri/onnxruntime/README.md.';
   } else {
     blockingDetail = report.modelDetail;
-    fixHint = `Install the forced-alignment model for "${resolvedLanguage}" (see the searched paths above), then run Apply Sync again.`;
+    fixHint = `Install the forced-alignment model for "${resolvedLanguage}" (see the searched paths above), then run Build Timeline again.`;
   }
 
   return {

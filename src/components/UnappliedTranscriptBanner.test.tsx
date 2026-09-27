@@ -120,7 +120,7 @@ describe('rendering', () => {
     });
     expect(banner()!.textContent).toMatch(/voiceover has changed/i);
     // Staleness downgrades the wording; it never removes the choice.
-    expect(button(/Apply Sync to Timeline/).disabled).toBe(false);
+    expect(button(/Build Timeline/).disabled).toBe(false);
     expect(button(/Discard/).disabled).toBe(false);
   });
 
@@ -153,7 +153,7 @@ describe('Apply', () => {
   it('vanishes on a successful Apply', async () => {
     const onApply = vi.fn(async () => true);
     act(() => { root.render(<Host onApply={onApply} />); });
-    await act(async () => { button(/Apply Sync to Timeline/).click(); });
+    await act(async () => { button(/Build Timeline/).click(); });
     expect(onApply).toHaveBeenCalledTimes(1);
     expect(banner()).toBeNull();
   });
@@ -165,13 +165,13 @@ describe('Apply', () => {
     const onApply = vi.fn(() => new Promise<boolean>(res => { release = res; }));
     act(() => { root.render(<Host onApply={onApply} />); });
 
-    await act(async () => { button(/Applying|Apply Sync/).click(); });
-    expect(button(/Applying/).disabled).toBe(true);
+    await act(async () => { button(/Building|Build Timeline/).click(); });
+    expect(button(/Building…/).disabled).toBe(true);
     expect(button(/Discard/).disabled).toBe(true);
-    expect(button(/Applying/).textContent).toMatch(/Applying/);
+    expect(button(/Building…/).textContent).toMatch(/Building…/);
 
     // A second click while in flight must not start a second apply.
-    click(button(/Applying/));
+    click(button(/Building…/));
     expect(onApply).toHaveBeenCalledTimes(1);
 
     await act(async () => { release(true); });
@@ -181,10 +181,10 @@ describe('Apply', () => {
   it('STAYS on screen with both buttons live when the apply fails', async () => {
     const onApply = vi.fn(async () => false);
     act(() => { root.render(<Host onApply={onApply} />); });
-    await act(async () => { button(/Apply Sync to Timeline/).click(); });
+    await act(async () => { button(/Build Timeline/).click(); });
 
     expect(banner(), 'a failed apply must leave the offer on screen').not.toBeNull();
-    expect(button(/Apply Sync to Timeline/).disabled).toBe(false);
+    expect(button(/Build Timeline/).disabled).toBe(false);
     expect(button(/Discard/).disabled).toBe(false);
   });
 
@@ -193,11 +193,11 @@ describe('Apply', () => {
     const onApply = vi.fn(async () => ok);
     act(() => { root.render(<Host onApply={onApply} />); });
 
-    await act(async () => { button(/Apply Sync to Timeline/).click(); });
+    await act(async () => { button(/Build Timeline/).click(); });
     expect(banner()).not.toBeNull();
 
     ok = true;
-    await act(async () => { button(/Apply Sync to Timeline/).click(); });
+    await act(async () => { button(/Build Timeline/).click(); });
     expect(onApply).toHaveBeenCalledTimes(2);
     expect(banner()).toBeNull();
   });
@@ -207,10 +207,10 @@ describe('Apply', () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     act(() => { root.render(<Host onApply={onApply} />); });
 
-    await act(async () => { button(/Apply Sync to Timeline/).click(); });
+    await act(async () => { button(/Build Timeline/).click(); });
 
     expect(banner()).not.toBeNull();
-    expect(button(/Apply Sync to Timeline/).disabled).toBe(false);
+    expect(button(/Build Timeline/).disabled).toBe(false);
     // ...and the throw was absorbed and reported, not left to escape the click
     // handler as an unhandled rejection (invisible in the WKWebView shell).
     expect(logged).toHaveBeenCalled();

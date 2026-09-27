@@ -134,6 +134,14 @@ async function dropOnSlot(container: HTMLElement, slot: 'script' | 'scene', file
 
 const PROJECT = 'staged-persistence-project';
 
+// U4.6 — Build Timeline needs all four slots; these runs stage only the
+// voiceover, so the other three are already persisted.
+const FOUR_SLOTS_BESIDES_VOICEOVER = {
+  persistedScript: 'Hello.', persistedScriptName: 'script.txt',
+  persistedSceneDetails: '[Scene 1] Intro', persistedSceneDetailsName: 'scenes.txt',
+  persistedAssetCount: 1,
+} as const;
+
 describe('WS2-50 — a staged slot survives a dashboard round trip and a reload', () => {
   beforeEach(async () => {
     await deleteAllStagedForProject(PROJECT);
@@ -362,7 +370,7 @@ describe('WS2-50 — a restored voiceover is offered, and a refusal leaves nothi
 // the store inspected while it is still running — the same reason WS2 T4.7's
 // download test holds a row mid-download instead of asserting the end state.
 // ---------------------------------------------------------------------------
-describe('Apply Sync — staged rows outlive the run that reads them', () => {
+describe('Build Timeline (renamed from Apply Sync, U4.6) — staged rows outlive the run that reads them', () => {
   const SYNC_PROJECT = 'staged-apply-sync-project';
   beforeEach(async () => { await deleteAllStagedForProject(SYNC_PROJECT); });
 
@@ -375,6 +383,7 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
     const syncRunning = new Promise<void>(resolve => { finishSync = resolve; });
 
     const panel = mountPanel({
+      ...FOUR_SLOTS_BESIDES_VOICEOVER,
       projectId: SYNC_PROJECT,
       onVoiceoverRestored: () => Promise.resolve(true),
       onApplySync: () => syncRunning,
@@ -383,8 +392,8 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
     expect(await countStagedFiles(SYNC_PROJECT)).toBe(1);
 
     const applyButton = [...panel.container.querySelectorAll('button')]
-      .find(b => b.textContent?.toLowerCase().includes('apply sync'));
-    expect(applyButton, 'no Apply Sync button rendered').toBeDefined();
+      .find(b => b.textContent?.toLowerCase().includes('build timeline'));
+    expect(applyButton, 'no Build Timeline button rendered').toBeDefined();
     await act(async () => {
       applyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       await new Promise(r => setTimeout(r, 25));
@@ -413,13 +422,14 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
         voiceover: new File(['AUDIO'], 'vo.m4a', { type: 'audio/mp4', lastModified: 42 }),
       });
       const panel = mountPanel({
+        ...FOUR_SLOTS_BESIDES_VOICEOVER,
         projectId: SYNC_PROJECT,
         onVoiceoverRestored: () => Promise.resolve(true),
         onApplySync,
       });
       await settle();
       const applyButton = [...panel.container.querySelectorAll('button')]
-        .find(b => b.textContent?.toLowerCase().includes('apply sync'));
+        .find(b => b.textContent?.toLowerCase().includes('build timeline'));
       await act(async () => {
         applyButton!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       });
@@ -440,13 +450,14 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
     });
 
     const first = mountPanel({
+      ...FOUR_SLOTS_BESIDES_VOICEOVER,
       projectId: SYNC_PROJECT,
       onVoiceoverRestored: () => Promise.resolve(true),
       onApplySync: async () => ({ ok: false, message: 'Sync paused', holdStaged: true }),
     });
     await settle();
     const apply1 = [...first.container.querySelectorAll('button')]
-      .find(b => b.textContent?.toLowerCase().includes('apply sync'));
+      .find(b => b.textContent?.toLowerCase().includes('build timeline'));
     await act(async () => {
       apply1!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
@@ -456,6 +467,7 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
 
     let retrySawVoiceover = false;
     const restarted = mountPanel({
+      ...FOUR_SLOTS_BESIDES_VOICEOVER,
       projectId: SYNC_PROJECT,
       onVoiceoverRestored: () => Promise.resolve(true),
       onApplySync: async () => {
@@ -466,7 +478,7 @@ describe('Apply Sync — staged rows outlive the run that reads them', () => {
     await settle();
     expect(await countStagedFiles(SYNC_PROJECT)).toBe(1);
     const apply2 = [...restarted.container.querySelectorAll('button')]
-      .find(b => b.textContent?.toLowerCase().includes('apply sync'));
+      .find(b => b.textContent?.toLowerCase().includes('build timeline'));
     await act(async () => {
       apply2!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });

@@ -64,10 +64,10 @@ const COPY = {
   retryCloudLabel: 'Try the cloud again',
   useLocalLabel: 'Run this sync on this computer',
   useLocalHint: '(this run only — your Cloud setting stays as it is)',
-  bodyPrefix: 'Apply Sync stopped before writing anything to your timeline.',
+  bodyPrefix: 'Build Timeline stopped before writing anything to your timeline.',
   retryLabel: 'Try forced alignment again',
   useWhisperLabel: 'Continue with Whisper timing',
-  useWhisperHint: '(flagged as degraded — re-run Apply Sync later to retry high-precision alignment)',
+  useWhisperHint: '(flagged as degraded — re-run Build Timeline later to retry high-precision alignment)',
   cancelLabel: 'Cancel',
   staleHint: (minutesAgo: number): string =>
     minutesAgo < 1

@@ -622,7 +622,7 @@ export function SyncLogPanel({
         <div className="px-4 pb-3">
           {isEmpty ? (
             <p className="text-xs text-gray-600 italic py-1">
-              No sync activity yet. Run Apply Sync to populate this log.
+              No sync activity yet. Build the timeline to populate this log.
             </p>
           ) : (
             <>

@@ -139,7 +139,13 @@ import {
   saveRunHostOverride,
   shouldStartStaging,
 } from './services/syncEngineHost';
-import { CloudStageError, cloudPauseReason, releaseHeldTranscription, transcribeForHost } from './services/cloudSyncEngine';
+import { CloudStageError, cloudPauseReason, onCloudPhase, releaseHeldTranscription, transcribeForHost } from './services/cloudSyncEngine';
+import {
+  BUILD_TIMELINE_COPY,
+  waitForStagingTranscript,
+  type StagingTranscriptState,
+  type StagingTranscriptWait,
+} from './services/buildTimelineGate';
 import {
   INTENT_PHASE_COPY,
   cancelOtherSyncIntents,
@@ -2321,6 +2327,10 @@ export default function App() {
   // same render (rapid re-stage, double-fire) must see each other's writes immediately;
   // a post-render-only mirror lets the second one read a one-render-stale value.
   const pendingVoiceoverRef = useRef<PendingVoiceoverSync | null>(null);
+  // Wave 3 U4.6 — the staged voiceover's transcript readiness, mirrored by
+  // an effect below, and the early-click waiters it wakes.
+  const stagingTranscriptStateRef = useRef<StagingTranscriptState>({ ready: true, paused: false });
+  const stagingTranscriptWaitersRef = useRef(new Set<() => void>());
   const setPendingVoiceoverSync = useCallback((value: PendingVoiceoverSync | null) => {
     pendingVoiceoverRef.current = value;
     setPendingVoiceover(value);
@@ -3994,6 +4004,45 @@ export default function App() {
       setIsProcessing(false);
       return { ok: false, message: 'Sync cancelled.' };
     };
+
+    // Wave 3 U4.6 — EARLY-CLICK REVEAL. On the cloud, Build Timeline is
+    // clickable while the staged voiceover is still transcribing; the click
+    // waits for that transcript (showing the cloud's own phase) and then runs
+    // the ordinary pipeline, whose alignment takes the transcription's held
+    // container — still one boot. Deliberately BEFORE step 2: persisting the
+    // staged voiceover clears the pending reference, and the staging run only
+    // writes its tokens back while it still owns that reference. A pause or a
+    // cancel here keeps the staged files — nothing was built yet.
+    const pendingForWait = pendingVoiceoverRef.current;
+    if (
+      staged.voiceoverFile
+      && pendingForWait !== null
+      && pendingForWait.file === staged.voiceoverFile.file
+      && pendingForWait.audioHash !== undefined
+      && !stagingTranscriptStateRef.current.ready
+      && hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
+        projectId: projectRef.current.id,
+        audioHash: pendingForWait.audioHash,
+      }) === 'cloud'
+    ) {
+      setSyncStageMessage(INTENT_PHASE_COPY.transcribing);
+      const offPhase = onCloudPhase(pendingForWait.audioHash, phase => setSyncStageMessage(INTENT_PHASE_COPY[phase]));
+      let waited: StagingTranscriptWait;
+      try {
+        waited = await waitForStagingTranscript(
+          () => stagingTranscriptStateRef.current, stagingTranscriptWaitersRef.current, syncAbortController.signal,
+        );
+      } finally {
+        offPhase();
+      }
+      if (waited !== 'ready') {
+        const waitMessage = waited === 'aborted' ? 'Sync cancelled.' : BUILD_TIMELINE_COPY.stagingPausedMessage;
+        logSyncAbort(waitMessage, 0);
+        setIsProcessing(false);
+        return { ok: false, message: waitMessage, holdStaged: true };
+      }
+      setSyncStageMessage(INTENT_PHASE_COPY.ready);
+    }
 
     // 1. Read text files — strip RTF markup if the file is an .rtf document
     const scriptText = staged.scriptFile
@@ -6836,6 +6885,20 @@ export default function App() {
   // every local one).
   const [syncEngineHost, setSyncEngineHostState] = useState(readSyncEngineHost);
   useEffect(() => onSyncEngineHostChange(setSyncEngineHostState), []);
+  // Wave 3 U4.6 — on the cloud, a staged voiceover that is transcribing
+  // right now does not grey Build Timeline: the click is a reveal and waits
+  // with the honest phase. Local keeps click-to-run (greyed, "Transcribing…").
+  // A voiceover that is NOT transcribing (restored, needs an explicit
+  // Transcribe) still greys on both engines.
+  const cloudStagingInFlight = pendingVoiceover !== null
+    && transcriptionStatus.phase === 'transcribing'
+    && transcriptionTargetIdRef.current === pendingVoiceover.asset.id
+    && hostForRun(syncEngineHost, readRunHostOverride(project.id), {
+      projectId: project.id,
+      audioHash: pendingVoiceover.audioHash,
+    }) === 'cloud';
+  const buildTimelineWaitsOnTranscription = applySyncDisabled
+    && (voiceoverNeedsExplicitTranscribe || !cloudStagingInFlight);
   const [spineUnchanged, setSpineUnchanged] = useState(false);
   useEffect(() => {
     let cancelled = false;
@@ -7001,6 +7064,20 @@ export default function App() {
     transcriptionStatus.phase === 'error' && transcriptionStatus.cloudReason
       ? { reason: transcriptionStatus.cloudReason, detail: transcriptionStatus.message }
       : null;
+
+  // Wave 3 U4.6 — what an early Build Timeline click waits on (see the
+  // early-click reveal in handleApplySyncFromFiles). Mirrored after every
+  // render, AFTER `projectRef` is (that effect is declared earlier), so a
+  // waiter woken by "ready" already reads the fresh transcript. A failure
+  // wakes it as "paused": the pause/model dialog is the loud surface; the
+  // click never hangs on a run that has stopped.
+  useEffect(() => {
+    stagingTranscriptStateRef.current = {
+      ready: transcriptionReady,
+      paused: cloudTranscriptionPause !== null || whisperModelFailureKind !== null,
+    };
+    for (const wake of [...stagingTranscriptWaitersRef.current]) wake();
+  });
 
   usePlayback({
     isPlaying,
@@ -8066,7 +8143,7 @@ export default function App() {
             onVoiceoverRestored={handleVoiceoverRestored}
             onVoiceoverTranscribeRequested={handleVoiceoverTranscribeRequested}
             voiceoverNeedsExplicitTranscribe={voiceoverNeedsExplicitTranscribe}
-            applySyncDisabled={applySyncDisabled}
+            applySyncDisabled={buildTimelineWaitsOnTranscription}
             applySyncSpineUnchangedReason={applySyncSpineUnchangedReason}
             onUndo={handleUndo}
             onRedo={handleRedo}
@@ -8137,7 +8214,7 @@ export default function App() {
             onActiveLeftTabChange={setActiveLeftTab}
             isPlaying={isPlaying}
           />
-          {transcriptionStatus.phase !== 'idle' && whisperModelFailureKind === null && cloudTranscriptionPause === null && (
+          {transcriptionStatus.phase !== 'idle' && transcriptionStatus.phase !== 'transcribing' && whisperModelFailureKind === null && cloudTranscriptionPause === null && (
             <div className="flex-shrink-0">
               <TranscriptionBar
                 status={transcriptionStatus}

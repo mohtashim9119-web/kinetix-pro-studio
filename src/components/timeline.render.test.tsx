@@ -350,9 +350,9 @@ describe('DropZonePanel static markup — undo/redo buttons', () => {
       <DropZonePanel {...makeDropZonePanelProps({ activeLeftTab: 'files', ...over })} />,
     );
 
-  it('renders both buttons on the tab that hosts Apply sync', () => {
+  it('renders both buttons on the tab that hosts Build Timeline (renamed from Apply sync, U4.6)', () => {
     const html = filesTab();
-    expect(html).toContain('Apply sync');
+    expect(html).toContain('Build Timeline');
     expect(html).toMatch(/aria-label="(Undo [^"]*|Nothing to undo)"/);
     expect(html).toMatch(/aria-label="(Redo [^"]*|Nothing to redo)"/);
   });
