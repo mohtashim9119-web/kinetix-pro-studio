@@ -480,10 +480,13 @@ export function buildSyncEngineEntry(
   /** Wave 3 U2 — present when the cloud gateway produced these timings: the
    *  provenance actually stamped on the project, named in the line so the
    *  log alone answers "which engine, which model, which revision". */
-  cloud?: { model: string; modelVersion: string },
+  cloud?: { model: string; modelVersion: string; cached?: boolean },
 ): SyncLogEntry {
   const fa = engine === 'forced-alignment';
-  const where = cloud ? ` on the cloud (${cloud.model} @ ${cloud.modelVersion.slice(0, 12)})` : '';
+  // Wave 3 U3 — a cache-served run says so: the same engine and revision
+  // produced these timings earlier, and this run sent and spent nothing.
+  const fromCache = cloud?.cached ? ', served from the cloud cache — nothing uploaded, no GPU charge' : '';
+  const where = cloud ? ` on the cloud (${cloud.model} @ ${cloud.modelVersion.slice(0, 12)}${fromCache})` : '';
   const kind = fa
     ? (cloud ? 'engine-forced-alignment-cloud' : 'engine-forced-alignment')
     : (cloud ? 'engine-whisper-cloud' : 'engine-whisper');

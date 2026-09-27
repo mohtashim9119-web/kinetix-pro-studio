@@ -11,6 +11,11 @@ Cache keys are content hashes end to end (plan-v3 Wave 3 item 2, the
 hash, the alignment stage on the audio hash plus a hash of the chunk plan
 actually sent. Both keys fold in the exact engine revision, so a model or
 decode-parameter change can never return a stale cached result.
+
+Wave 3 U3 — the alignment key also folds in the language pack's own
+revision: the model repo commit AND a digest of the vocab + cardinal files
+baked into the image beside it (`pack_digests`). Those files steer the
+decoder, and they change in this repo without the model repo moving.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ import hashlib
 import json
 import math
 import re
+from pathlib import Path
 from typing import Any
 
 SERVICE_SCHEMA = 1
@@ -245,12 +251,34 @@ def chunk_plan_hash(chunks: list[dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def pack_digests(vocab_dir: str | Path) -> dict[str, str]:
+    """Per-language digest of the decoder-side pack files (vocab + cardinal).
+
+    Refuses to guess: a missing file is an error at import, not a key that
+    silently stops covering the pack.
+    """
+    root = Path(vocab_dir)
+    out: dict[str, str] = {}
+    for lang in FA_LANGS:
+        h = hashlib.sha256()
+        for name in (f"fa-vocab-{lang}.json", f"fa-cardinal-{lang}.json"):
+            data = (root / name).read_bytes()
+            h.update(name.encode("utf-8") + b"\0" + len(data).to_bytes(8, "big") + data)
+        out[lang] = h.hexdigest()
+    return out
+
+
+def pack_revision(language: str, digests: dict[str, str]) -> str:
+    """The revision of ONE language pack: model repo commit + its file digest."""
+    return f"{FA_REPO}/{language}@{FA_REVISION}+files-{digests[language]}"
+
+
 def transcript_cache_key(audio_hash: str, language: str) -> str:
     return sha256_hex(f"transcribe|{SERVICE_SCHEMA}|{audio_hash}|{language}|{TRANSCRIBE_ENGINE_REV}")
 
 
-def alignment_cache_key(audio_hash: str, plan_hash: str, language: str) -> str:
-    return sha256_hex(f"align|{SERVICE_SCHEMA}|{audio_hash}|{plan_hash}|{language}|{ALIGN_ENGINE_REV}")
+def alignment_cache_key(audio_hash: str, plan_hash: str, language: str, pack_rev: str) -> str:
+    return sha256_hex(f"align|{SERVICE_SCHEMA}|{audio_hash}|{plan_hash}|{language}|{pack_rev}|{ALIGN_ENGINE_REV}")
 
 
 def audio_path(root: str, audio_hash: str) -> str:
@@ -326,6 +354,30 @@ def meter_line(job: dict[str, Any], outcome: str, worker_sec: float, now: float)
         "workerSec": round(worker_sec, 3),
         "estimatedUsd": round(worker_sec * USD_PER_WORKER_SEC, 6),
     }
+
+
+def lookup_reply(result: dict[str, Any] | None, audio_duration_sec: float | None) -> dict[str, Any]:
+    """Wave 3 U3 — the answer to "is this stage already computed?".
+
+    A hit carries the result itself, so the client needs no job, no upload,
+    and no encode: nothing is spawned and nothing is metered. A miss says
+    whether the gateway already holds the audio, so the client knows before
+    encoding whether it has anything to send at all.
+    """
+    if result is not None:
+        return {"cached": True, "result": result}
+    return {
+        "cached": False,
+        "audioPresent": audio_duration_sec is not None,
+        "audioDurationSec": audio_duration_sec,
+    }
+
+
+def hit_line(member: str, stage: str, audio_hash: str, language: str, now: float) -> dict[str, Any]:
+    """A cache hit served by lookup — counted for the billing report's
+    reconciliation, but NOT a meter line: it never spent a GPU-second. Same
+    D4 contract as the meter: hashes only, no text."""
+    return {"ts": now, "member": member, "stage": stage, "audioHash": audio_hash, "language": language}
 
 
 def public_job(job: dict[str, Any]) -> dict[str, Any]:

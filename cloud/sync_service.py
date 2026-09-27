@@ -11,6 +11,9 @@ One Modal app, one deployment (operator D1 / Amendment 2):
   calls. Bearer key per team member (Modal Secret `kinetix-gateway-keys`,
   holding sha256 digests only). Stores uploaded Opus audio by content hash,
   answers result-cache hits without touching a GPU, and spawns worker jobs.
+  Wave 3 U3: `POST /v1/cache/lookup` answers "is this stage already
+  computed?" BEFORE the client encodes or uploads anything — a hit returns
+  the result with no job, no GPU, and no meter line.
 - `SyncWorker` — one T4 class that serves BOTH stages (faster-whisper
   transcription and ONNX forced alignment), loading each model lazily on
   first use. One class, not two, so a batch of transcribe+align jobs can
@@ -69,6 +72,9 @@ whisper_vol = modal.Volume.from_name("kinetix-whisper-weights", create_if_missin
 fa_vol = modal.Volume.from_name("kinetix-fa-weights", create_if_missing=True)
 cache_vol = modal.Volume.from_name("kinetix-sync-cache", create_if_missing=True)
 jobs = modal.Dict.from_name("kinetix-sync-jobs", create_if_missing=True)
+# Wave 3 U3 — lookup hits, for the billing report's reconciliation only.
+# Not the meter: a hit spends no GPU-second, so it has no meter line.
+hits = modal.Dict.from_name("kinetix-sync-hits", create_if_missing=True)
 keys_secret = modal.Secret.from_name("kinetix-gateway-keys")
 
 gpu_image = (
@@ -101,8 +107,26 @@ gateway_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
     .pip_install("fastapi[standard]==0.115.12", "huggingface_hub==0.30.2")
-    .add_local_python_source("sync_core")
 )
+# Wave 3 U3 — the gateway computes the alignment cache key, which folds in
+# each pack's vocab + cardinal digest, so it carries the SAME files the
+# worker decodes with (one source: scripts/fixtures).
+for _lang in core.FA_LANGS:
+    gateway_image = gateway_image.add_local_file(
+        str(FIXTURE_DIR / f"fa-vocab-{_lang}.json"), f"/vocabs/fa-vocab-{_lang}.json"
+    ).add_local_file(str(FIXTURE_DIR / f"fa-cardinal-{_lang}.json"), f"/vocabs/fa-cardinal-{_lang}.json")
+gateway_image = gateway_image.add_local_python_source("sync_core")
+
+_PACK_DIGESTS: dict[str, str] | None = None
+
+
+def pack_digests() -> dict[str, str]:
+    """In a container the image's /vocabs; on the deploying laptop the repo
+    fixtures (the same bytes — the image is built from them)."""
+    global _PACK_DIGESTS
+    if _PACK_DIGESTS is None:
+        _PACK_DIGESTS = core.pack_digests("/vocabs" if os.path.isdir("/vocabs") else FIXTURE_DIR)
+    return _PACK_DIGESTS
 
 
 # ---------------------------------------------------------------------------
@@ -292,11 +316,19 @@ def gateway() -> Any:
     from fastapi import FastAPI, Request, Response
     from fastapi.responses import JSONResponse
 
+    from fastapi.middleware.gzip import GZipMiddleware
+
     web = FastAPI(title="Kinetix cloud sync", docs_url=None, redoc_url=None, openapi_url=None)
+    # Wave 3 U3 — results are 200-500 KB of JSON numbers (~5x compressible),
+    # and on a high-RTT link TCP slow start, not bandwidth, sets the time of
+    # a cache hit. Only for clients that send Accept-Encoding: gzip.
+    web.add_middleware(GZipMiddleware, minimum_size=4096)
     registry = core.parse_key_registry(os.environ.get("KINETIX_GATEWAY_KEYS"))
     # One volume op at a time per container: Modal's reload() refuses to run
     # with files open, and concurrent commits race.
     vol_lock = asyncio.Lock()
+    # Strong refs to fire-and-forget tasks (asyncio keeps only weak ones).
+    background: set[asyncio.Task[Any]] = set()
 
     class GatewayError(Exception):
         def __init__(self, status: int, code: str, detail: str) -> None:
@@ -406,9 +438,13 @@ def gateway() -> Any:
             os.unlink(staged)
         return {"audioHash": audio_hash, "durationSec": duration, "bytes": len(body)}
 
-    @web.post("/v1/jobs")
-    async def submit(request: Request) -> dict[str, Any]:
-        member = member_of(request)
+    async def resolve(request: Request, *, fresh: bool = True) -> dict[str, Any]:
+        """Validate a stage request and compute its cache key — the ONE
+        derivation both lookup and submit use, so a lookup miss and the
+        submit that follows it can never disagree about the key.
+
+        `fresh=False` skips the volume reload (lookup's fast path). The key
+        never depends on it: the audio duration only bounds chunk windows."""
         try:
             body = await request.json()
         except ValueError:
@@ -418,15 +454,64 @@ def gateway() -> Any:
             raise GatewayError(400, "bad-stage", f"stage must be one of {', '.join(core.STAGES)}")
         audio_hash = core.validate_audio_hash(body.get("audioHash"))
         language = core.validate_language(stage, body.get("language"))
-        await reload()
+        if fresh:
+            await reload()
         meta = _read_json(core.audio_meta_path(CACHE_ROOT, audio_hash))
+        if meta is not None and not os.path.isfile(core.audio_path(CACHE_ROOT, audio_hash)):
+            meta = None
         duration = meta["durationSec"] if meta else None
         chunks: list[dict[str, Any]] | None = None
         if stage == "transcribe":
             cache_key = core.transcript_cache_key(audio_hash, language)
         else:
             chunks = core.canonical_chunks(body.get("chunks"), duration)
-            cache_key = core.alignment_cache_key(audio_hash, core.chunk_plan_hash(chunks), language)
+            cache_key = core.alignment_cache_key(
+                audio_hash, core.chunk_plan_hash(chunks), language, core.pack_revision(language, pack_digests())
+            )
+        return {
+            "stage": stage, "audioHash": audio_hash, "language": language,
+            "chunks": chunks, "cacheKey": cache_key, "meta": meta, "duration": duration,
+        }
+
+    def read_result_bytes(stage: str, cache_key: str) -> bytes | None:
+        try:
+            with open(core.result_path(CACHE_ROOT, stage, cache_key), "rb") as fh:
+                return fh.read()
+        except FileNotFoundError:
+            return None
+
+    @web.post("/v1/cache/lookup")
+    async def lookup(request: Request) -> Response:
+        member = member_of(request)
+        # Results are content-addressed and never rewritten, so a result this
+        # container can already see is the answer — no reload. Only a miss
+        # pays for a fresh view (another container may have just written it).
+        req = await resolve(request, fresh=False)
+        raw = read_result_bytes(req["stage"], req["cacheKey"])
+        if raw is None:
+            req = await resolve(request, fresh=True)
+            raw = read_result_bytes(req["stage"], req["cacheKey"])
+        if raw is not None:
+            # Off the response path: the hit log must never slow the hit.
+            task = asyncio.create_task(
+                hits.put.aio(
+                    f"{time.time():.6f}:{uuid.uuid4().hex[:8]}",
+                    core.hit_line(member, req["stage"], req["audioHash"], req["language"], time.time()),
+                )
+            )
+            background.add(task)
+            task.add_done_callback(background.discard)
+            # The stored result is already JSON (written by `_write_json_atomic`);
+            # splicing its bytes skips a parse + re-encode of every token.
+            return Response(content=b'{"cached":true,"result":' + raw + b"}", media_type="application/json")
+        return JSONResponse(core.lookup_reply(None, req["duration"]))
+
+    @web.post("/v1/jobs")
+    async def submit(request: Request) -> dict[str, Any]:
+        member = member_of(request)
+        req = await resolve(request)
+        stage, audio_hash, language = req["stage"], req["audioHash"], req["language"]
+        chunks, cache_key, meta, duration = req["chunks"], req["cacheKey"], req["meta"], req["duration"]
 
         job_id = uuid.uuid4().hex
         now = time.time()
@@ -443,7 +528,7 @@ def gateway() -> Any:
                 await cache_vol.commit.aio()
             return core.public_job(job)
 
-        if meta is None or not os.path.isfile(core.audio_path(CACHE_ROOT, audio_hash)):
+        if meta is None:
             raise GatewayError(409, "audio-missing", "upload the audio for this hash before submitting")
 
         if chunks is not None:
@@ -557,6 +642,12 @@ def meter_lines(since_ts: float = 0.0) -> list[dict[str, Any]]:
         if line and line.get("ts", 0) >= since_ts:
             lines.append(line)
     return sorted(lines, key=lambda line: line["ts"])
+
+
+@app.function(image=gateway_image, timeout=120)
+def hit_lines(since_ts: float = 0.0) -> list[dict[str, Any]]:
+    """Every lookup hit at or after `since_ts` (billing reconciliation)."""
+    return sorted((v for _, v in hits.items() if v.get("ts", 0) >= since_ts), key=lambda v: v["ts"])
 
 
 @app.function(image=gateway_image, volumes={WHISPER_ROOT: whisper_vol}, timeout=30 * 60, cpu=2, memory=4096)

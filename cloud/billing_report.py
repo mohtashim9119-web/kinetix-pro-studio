@@ -3,7 +3,7 @@
 
     python cloud/billing_report.py [--since-ts EPOCH]
 
-Two sources, never blended:
+Two sources, never blended (plus one count that is neither):
 
 - **Meter** — one line per job from the gateway/worker (`meter_lines`):
   worker-seconds measured in-container and a rate-card estimate. Per-job,
@@ -12,6 +12,11 @@ Two sources, never blended:
   what is actually charged, per app and resource, in whole-hour buckets
   (and lagging by up to an hour). Cumulative spend is checked against the
   operator's $25 Wave 3 cap (D2).
+- **Lookup hits** (Wave 3 U3) — cache hits answered by `/v1/cache/lookup`
+  before any upload. They spend no GPU-second, so they are NOT meter lines;
+  they are counted here so a reconciliation can show the work the cache
+  absorbed. Their only real cost is the gateway's CPU time, which appears in
+  Modal's `kinetix-sync` row, not per hit.
 """
 
 import argparse
@@ -49,6 +54,15 @@ def meter_section(since_ts: float) -> None:
     print(f"  {'TOTAL':<21} worker={total_sec:8.1f} s  est=${total_usd:.4f}")
 
 
+def hits_section(since_ts: float) -> None:
+    lines = modal.Function.from_name("kinetix-sync", "hit_lines").remote(since_ts)
+    by_stage: dict[str, int] = defaultdict(int)
+    for line in lines:
+        by_stage[line["stage"]] += 1
+    detail = ", ".join(f"{stage}={n}" for stage, n in sorted(by_stage.items())) or "none"
+    print(f"LOOKUP HITS — {len(lines)} since {since_ts} ({detail}); $0 GPU, no meter line, no upload")
+
+
 def modal_section() -> None:
     # An explicit end past today: with `--start` alone Modal reports only
     # complete intervals and drops the hour in progress.
@@ -76,6 +90,8 @@ def main() -> None:
     parser.add_argument("--since-ts", type=float, default=0.0)
     args = parser.parse_args()
     meter_section(args.since_ts)
+    print()
+    hits_section(args.since_ts)
     print()
     modal_section()
 

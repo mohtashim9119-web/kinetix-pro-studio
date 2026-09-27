@@ -172,6 +172,9 @@ export type FaRunResult =
       /** Wave 3 U2 — set only when the cloud gateway produced these words:
        *  the model + revision it reported, for the provenance stamp. */
       cloudProvenance?: GatewayProvenance;
+      /** Wave 3 U3 — the cloud words came from the gateway's alignment cache
+       *  (nothing uploaded, no GPU charge). Log-only; never branched on. */
+      cloudCached?: boolean;
     }
   | {
       status: 'degraded';
@@ -192,6 +195,9 @@ export type FaRunResult =
       /** Wave 3 U2 — set only when the cloud gateway produced these words:
        *  the model + revision it reported, for the provenance stamp. */
       cloudProvenance?: GatewayProvenance;
+      /** Wave 3 U3 — the cloud words came from the gateway's alignment cache
+       *  (nothing uploaded, no GPU charge). Log-only; never branched on. */
+      cloudCached?: boolean;
     }
   | {
       status: 'paused';
@@ -618,7 +624,11 @@ async function runCloudFaAttempt(
       infeasibleChunks: [],
       localCoverageWarning,
       cloudProvenance: outcome.provenance,
+      cloudCached: outcome.cached,
     };
   }
-  return { status: 'ok', tokens, unscriptedRuns, silenceError, localCoverageWarning, cloudProvenance: outcome.provenance };
+  return {
+    status: 'ok', tokens, unscriptedRuns, silenceError, localCoverageWarning,
+    cloudProvenance: outcome.provenance, cloudCached: outcome.cached,
+  };
 }

@@ -106,6 +106,19 @@ describe('Sync Log names the cloud engine', () => {
     expect(formatHeadline(buildSyncLogUserView([whisperCloud]).headline)).toMatch(/^Whisper \(cloud\)/);
   });
 
+  it('Wave 3 U3 — a cache-served cloud run says so in the engine line; the headline is unchanged', () => {
+    const entry = buildSyncEngineEntry('run1', 'forced-alignment', 3874, 1000, {
+      model: 'mohtashim9/kinetix-fa-models/en', modelVersion: 'f618960d71728eba5f12528d5571838a10d262bf+ort-1.23.2+port-1', cached: true,
+    });
+    expect(entry.message).toBe(
+      'Timing engine: forced alignment on the cloud (mohtashim9/kinetix-fa-models/en @ f618960d7172, served from the cloud cache — nothing uploaded, no GPU charge) (3874 aligned word(s)).',
+    );
+    expect(entry.finding).toEqual({ kind: 'engine-forced-alignment-cloud' });
+    expect(formatHeadline(buildSyncLogUserView([entry]).headline)).toMatch(/^Forced alignment \(cloud\)/);
+    const computed = buildSyncEngineEntry('run2', 'forced-alignment', 3874, 1000, { model: 'm', modelVersion: 'v', cached: false });
+    expect(computed.message).not.toContain('cache');
+  });
+
   it('a local run reads exactly as before', () => {
     const entry = buildSyncEngineEntry('run1', 'whisper', 12, 1000);
     expect(entry.message).toBe('Timing engine: Whisper transcript (12 token(s)).');

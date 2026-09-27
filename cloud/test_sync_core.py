@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+from pathlib import Path
 
 import pytest
 
@@ -93,11 +95,16 @@ def test_bad_chunks_are_typed_refusals(chunks):
     assert e.value.code == "bad-chunks"
 
 
+FIXTURES = Path(__file__).resolve().parent.parent / "scripts" / "fixtures"
+DIGESTS = core.pack_digests(FIXTURES)
+REV_EN = core.pack_revision("en", DIGESTS)
+
+
 def test_two_cache_stages_are_independent():
     t_en = core.transcript_cache_key(AUDIO, "en")
     t_auto = core.transcript_cache_key(AUDIO, "auto")
-    a1 = core.alignment_cache_key(AUDIO, "1" * 64, "en")
-    a2 = core.alignment_cache_key(AUDIO, "2" * 64, "en")
+    a1 = core.alignment_cache_key(AUDIO, "1" * 64, "en", REV_EN)
+    a2 = core.alignment_cache_key(AUDIO, "2" * 64, "en", REV_EN)
     # A script fix changes only the alignment key: the transcript stays cached.
     assert len({t_en, t_auto, a1, a2}) == 4
     assert core.transcript_cache_key(AUDIO, "en") == t_en
@@ -141,3 +148,61 @@ def test_provenance_names_pinned_revisions():
     assert t["engine"] == "whisper-cloud" and core.WHISPER_REVISION in t["modelVersion"]
     a = core.align_provenance("es")
     assert a["engine"] == "fa-cloud" and a["model"].endswith("/es") and core.FA_REVISION in a["modelVersion"]
+
+
+# ---------------------------------------------------------------------------
+# Wave 3 U3 — pack revision in the alignment key; lookup contract.
+# ---------------------------------------------------------------------------
+
+
+def test_every_pack_has_a_distinct_digest_from_the_real_fixtures():
+    assert set(DIGESTS) == set(core.FA_LANGS)
+    assert all(core.HEX64.match(d) for d in DIGESTS.values())
+    assert len(set(DIGESTS.values())) == len(core.FA_LANGS)
+    assert core.FA_REVISION in REV_EN and DIGESTS["en"] in REV_EN
+
+
+def test_pack_file_edit_misses_alignment_but_not_transcript(tmp_path):
+    for f in FIXTURES.glob("fa-vocab-*.json"):
+        shutil.copy(f, tmp_path / f.name)
+    for f in FIXTURES.glob("fa-cardinal-*.json"):
+        shutil.copy(f, tmp_path / f.name)
+    assert core.pack_digests(tmp_path) == DIGESTS
+    before_t = core.transcript_cache_key(AUDIO, "en")
+    before_a = core.alignment_cache_key(AUDIO, "1" * 64, "en", REV_EN)
+    card = tmp_path / "fa-cardinal-en.json"
+    card.write_text(card.read_text() + " ")
+    edited = core.pack_digests(tmp_path)
+    assert edited["en"] != DIGESTS["en"]
+    assert {k: v for k, v in edited.items() if k != "en"} == {k: v for k, v in DIGESTS.items() if k != "en"}
+    assert core.alignment_cache_key(AUDIO, "1" * 64, "en", core.pack_revision("en", edited)) != before_a
+    assert core.transcript_cache_key(AUDIO, "en") == before_t
+
+
+def test_missing_pack_file_refuses_rather_than_guessing(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        core.pack_digests(tmp_path)
+
+
+def test_alignment_key_covers_language_and_model_revision(monkeypatch):
+    rev_es = core.pack_revision("es", DIGESTS)
+    base = core.alignment_cache_key(AUDIO, "1" * 64, "en", REV_EN)
+    assert core.alignment_cache_key(AUDIO, "1" * 64, "es", rev_es) != base
+    monkeypatch.setattr(core, "FA_REVISION", "0" * 40)
+    assert core.alignment_cache_key(AUDIO, "1" * 64, "en", core.pack_revision("en", DIGESTS)) != base
+
+
+def test_lookup_hit_carries_the_result_and_nothing_else():
+    result = {"tokens": [{"startSec": 0.0, "endSec": 0.5, "text": "hi"}]}
+    assert core.lookup_reply(result, 12.0) == {"cached": True, "result": result}
+
+
+def test_lookup_miss_says_whether_audio_must_be_sent():
+    assert core.lookup_reply(None, 1421.3) == {"cached": False, "audioPresent": True, "audioDurationSec": 1421.3}
+    assert core.lookup_reply(None, None) == {"cached": False, "audioPresent": False, "audioDurationSec": None}
+
+
+def test_hit_line_is_not_a_meter_line_and_carries_no_text():
+    line = core.hit_line("operator", "align", AUDIO, "en", 7.0)
+    assert set(line) == {"ts", "member", "stage", "audioHash", "language"}
+    assert "workerSec" not in line and "estimatedUsd" not in line

@@ -11,6 +11,12 @@
 > python cloud/billing_report.py                      # meter vs Modal invoice, $25 Wave 3 cap
 > ```
 >
+> Wave 3 U3: `POST /v1/cache/lookup` (same body as `POST /v1/jobs`) answers
+> "already computed?" before the client encodes or uploads anything — a hit
+> returns the result with no job, no GPU, and no meter line; a miss reports
+> `audioPresent`. The alignment key folds in each pack's vocab + cardinal
+> digest. Design record: `docs/ws1-sync-pipeline/wave3-operator-rulings-2026-09-27.md`.
+>
 > Everything below describes the measurement harness (`app.py`, `align.py`,
 > `measure.py`), which is kept as-is for reproducibility.
 

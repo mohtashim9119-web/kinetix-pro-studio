@@ -15,6 +15,9 @@
 // `CloudError` — so callers branch on `kind`, never on message text. This
 // layer makes exactly one attempt; retry-once-then-pause lives one layer up
 // (Wave 3 U4).
+//
+// Wave 3 U3 — `lookupCloudCache` is asked BEFORE `prepareCloudAudio`: a hit
+// carries the result, so nothing is encoded, uploaded, spawned, or metered.
 // ---------------------------------------------------------------------------
 
 import { invoke, Channel } from '@tauri-apps/api/core';
@@ -133,6 +136,13 @@ export interface CloudAlignResult {
   createdAt: number;
 }
 
+/** `POST /v1/cache/lookup` (`cloud/sync_core.py`'s `lookup_reply`). */
+export type CloudCacheLookup<R> =
+  | { cached: true; result: R }
+  /** `audioPresent` — the gateway already holds this audio, so running the
+   *  stage needs no encode and no upload. */
+  | { cached: false; audioPresent: boolean; audioDurationSec: number | null };
+
 export type CloudJobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
 
 export interface CloudJobView<R> {
@@ -194,6 +204,12 @@ export async function prepareCloudAudio(file: Blob, audioHash: string): Promise<
   }
   const upload = await call<CloudUpload>('cloud_upload_audio', { audioHash });
   return { ...upload, encoded };
+}
+
+/** Is this stage already computed on the gateway? One read: no job is
+ *  created, no GPU is touched, and no meter line is written. */
+export function lookupCloudCache<R>(request: CloudJobRequest): Promise<CloudCacheLookup<R>> {
+  return call('cloud_cache_lookup', { job: request });
 }
 
 const CANCEL_RETRY_MS = 200;

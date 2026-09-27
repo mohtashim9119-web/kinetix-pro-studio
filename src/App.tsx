@@ -131,7 +131,7 @@ import {
   type GatewayProvenance,
 } from './services/timingProvenance';
 import { onSyncEngineHostChange, readSyncEngineHost } from './services/syncEngineHost';
-import { prepareCloudAudioOnce, transcribeForHost } from './services/cloudSyncEngine';
+import { transcribeForHost } from './services/cloudSyncEngine';
 import type { TimingProvenance } from './types';
 import {
   detectUnspokenScriptSegmentsFromWhisperFullAsync,
@@ -3681,17 +3681,11 @@ export default function App() {
       // need to recompute it.
       setPendingVoiceoverSync({ file, asset, audioHash });
 
-      // Wave 3 U2 — start the local Opus encode + upload NOW, in the
-      // background, when sync runs on the cloud: the bundled libopus needs
-      // ~47 s for a 24-minute voiceover, and this is the earliest moment the
-      // bytes and their content hash are both known. Single-flight by hash
-      // (`prepareCloudAudioOnce`), so the transcription below and Apply
-      // Sync's alignment await this same work rather than repeating it. A
-      // failure here is not surfaced — the stage that needs the audio retries
-      // and reports it with a typed reason.
-      if (readSyncEngineHost() === 'cloud') {
-        void prepareCloudAudioOnce(file, audioHash).catch(() => {});
-      }
+      // Wave 3 U3 — no speculative cloud encode/upload here (U2 had one).
+      // The staging transcription below asks the gateway's cache FIRST
+      // (`runStageCacheFirst`) and prepares the audio only on a miss, so a
+      // voiceover the cloud has already transcribed is never re-encoded or
+      // re-uploaded.
 
       // Same-content detection: this exact audio was already transcribed and
       // its tokens are still cached — skip the Whisper run entirely. Apply
@@ -4508,9 +4502,11 @@ export default function App() {
         // produced the timings this run commits (the provenance just staged).
         (() => {
           const committed = faCompleted ? nextTimingProvenance?.alignment : nextTimingProvenance?.transcription;
-          return committed && (committed.engine === 'fa-cloud' || committed.engine === 'whisper-cloud')
-            ? { model: committed.model, modelVersion: committed.modelVersion }
-            : undefined;
+          if (!committed || (committed.engine !== 'fa-cloud' && committed.engine !== 'whisper-cloud')) return undefined;
+          // Wave 3 U3 — only the alignment stage runs inside Apply Sync; say
+          // when the gateway's cache answered it.
+          const cached = faCompleted && (faRun.status === 'ok' || faRun.status === 'degraded') && faRun.cloudCached === true;
+          return { model: committed.model, modelVersion: committed.modelVersion, cached };
         })(),
       ));
       // R.5 — the excisions this run's chunk plan actually made, surfaced by

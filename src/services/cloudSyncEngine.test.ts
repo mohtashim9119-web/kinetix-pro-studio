@@ -4,6 +4,7 @@
  */
 
 // Wave 3 U2 — engine routing, single-flight audio prep, and cloud provenance.
+// Wave 3 U3 — cache first: the lookup is asked before any encode/upload.
 // Real `cloudSyncEngine` + `cloudGateway` + `timingProvenance`; only the Tauri
 // IPC boundary and the local whisper.cpp arm are mocked.
 
@@ -27,6 +28,7 @@ import {
   __resetCloudAudioInFlightForTests,
   cloudProgressPercent,
   prepareCloudAudioOnce,
+  runStageCacheFirst,
   transcribeForHost,
 } from './cloudSyncEngine';
 import type { Asset } from '../types';
@@ -45,9 +47,16 @@ const asset = (): Asset => ({
   file: new File([new Uint8Array([5, 6, 7])], 'vo.m4a'),
 });
 
-function gateway(runJob: (args: { job: { language: string } }) => unknown, opusCached: number | null = 99): void {
+const MISS_NO_AUDIO = { cached: false, audioPresent: false, audioDurationSec: null };
+
+function gateway(
+  runJob: (args: { job: { language: string } }) => unknown,
+  opusCached: number | null = 99,
+  lookup: () => unknown = () => MISS_NO_AUDIO,
+): void {
   mockInvoke.mockImplementation(async (cmd: string, args: unknown) => {
     switch (cmd) {
+      case 'cloud_cache_lookup': return lookup();
       case 'cloud_opus_cached': return opusCached;
       case 'cloud_stage_audio_raw': return HASH;
       case 'cloud_encode_opus': return 99;
@@ -138,7 +147,7 @@ describe('transcribeForHost', () => {
   });
 });
 
-describe('prepareCloudAudioOnce — background encode at voiceover-add, shared with the stages', () => {
+describe('prepareCloudAudioOnce — single-flight audio prep shared by both stages', () => {
   it('two concurrent callers for one hash share ONE encode + upload', async () => {
     gateway(() => doneTranscript('en'), null);
     const file = new Blob([new Uint8Array([1])]);
@@ -160,6 +169,113 @@ describe('prepareCloudAudioOnce — background encode at voiceover-add, shared w
     });
     await expect(prepareCloudAudioOnce(new Blob([]), HASH)).rejects.toMatchObject({ kind: 'unreachable' });
     await expect(prepareCloudAudioOnce(new Blob([]), HASH)).resolves.toMatchObject({ uploaded: true });
+  });
+});
+
+describe('Wave 3 U3 — cache first: nothing is encoded or uploaded before the lookup says it must be', () => {
+  const PREP_COMMANDS = ['cloud_opus_cached', 'cloud_stage_audio_raw', 'cloud_encode_opus', 'cloud_upload_audio'];
+  const commands = (): string[] => mockInvoke.mock.calls.map(c => c[0] as string);
+  const stage = (lang = 'en') => transcribeForHost({
+    host: 'cloud', asset: asset(), durationSecs: 60, language: lang, onProgress: () => {},
+    signal: new AbortController().signal, audioHash: HASH,
+  });
+
+  // The U2 bug this unit fixes: a transcript the gateway already had still
+  // cost an encode, a HEAD/upload, and a job. Fails on U2's code.
+  it('transcript cache hit: ONE lookup call — no encode, no upload, no job', async () => {
+    gateway(() => { throw new Error('must not submit'); }, null, () => ({ cached: true, result: doneTranscript('en').result }));
+    const r = await stage();
+    expect(commands()).toEqual(['cloud_cache_lookup']);
+    expect(r.cached).toBe(true);
+    expect(r.tokens[0]!.text).toBe('cloud');
+    expect(r.stamp({ language: 'en', completedAt: 1 }).engine).toBe('whisper-cloud');
+  });
+
+  it('the lookup asks with the SAME request the submit would send', async () => {
+    const sent: unknown[] = [];
+    mockInvoke.mockImplementation(async (cmd: string, args: { job?: unknown }) => {
+      if (cmd === 'cloud_cache_lookup' || cmd === 'cloud_run_job') sent.push(args.job);
+      if (cmd === 'cloud_cache_lookup') return { cached: false, audioPresent: true, audioDurationSec: 60 };
+      if (cmd === 'cloud_run_job') return doneTranscript(null);
+      throw new Error(cmd);
+    });
+    await transcribeForHost({
+      host: 'cloud', asset: asset(), durationSecs: 60, language: undefined, onProgress: () => {},
+      signal: new AbortController().signal, audioHash: HASH,
+    });
+    expect(sent).toEqual([
+      { stage: 'transcribe', audioHash: HASH, language: 'auto' },
+      { stage: 'transcribe', audioHash: HASH, language: 'auto' },
+    ]);
+  });
+
+  it('miss on audio the gateway already holds: job runs, but nothing is encoded or uploaded', async () => {
+    gateway(() => doneTranscript('en'), null, () => ({ cached: false, audioPresent: true, audioDurationSec: 60 }));
+    const r = await stage();
+    expect(commands()).toEqual(['cloud_cache_lookup', 'cloud_run_job']);
+    expect(r.cached).toBe(false);
+  });
+
+  it('miss on audio the gateway lacks: lookup first, THEN one encode + upload, then the job', async () => {
+    gateway(() => doneTranscript('en'), null);
+    await stage();
+    const c = commands();
+    expect(c[0]).toBe('cloud_cache_lookup');
+    expect(c.filter(x => x === 'cloud_encode_opus')).toHaveLength(1);
+    expect(c.filter(x => x === 'cloud_upload_audio')).toHaveLength(1);
+    expect(c.at(-1)).toBe('cloud_run_job');
+  });
+
+  it('audio purged between lookup and submit: the typed audio-missing refusal uploads once and resubmits', async () => {
+    let submits = 0;
+    gateway(() => {
+      submits += 1;
+      if (submits === 1) throw { kind: 'rejected', status: 409, code: 'audio-missing', detail: 'upload first' };
+      return doneTranscript('en');
+    }, 99, () => ({ cached: false, audioPresent: true, audioDurationSec: 60 }));
+    const r = await stage();
+    expect(submits).toBe(2);
+    expect(commands().filter(x => x === 'cloud_upload_audio')).toHaveLength(1);
+    expect(r.tokens[0]!.text).toBe('cloud');
+  });
+
+  it('any other refusal is NOT retried with an upload', async () => {
+    gateway(() => { throw { kind: 'rejected', status: 400, code: 'bad-chunks', detail: 'x' }; }, 99,
+      () => ({ cached: false, audioPresent: true, audioDurationSec: 60 }));
+    await expect(stage()).rejects.toMatchObject({ cloud: { code: 'bad-chunks' } });
+    expect(commands().filter(x => PREP_COMMANDS.includes(x))).toEqual([]);
+  });
+
+  it('offline at the lookup is the same typed failure as before — and nothing was encoded', async () => {
+    gateway(() => doneTranscript('en'), null, () => { throw { kind: 'unreachable', detail: 'dns' }; });
+    await expect(stage()).rejects.toMatchObject({ cloud: { kind: 'unreachable' } });
+    expect(commands()).toEqual(['cloud_cache_lookup']);
+  });
+
+  it('an abort before the lookup never reaches IPC; an abort after a miss prepares nothing', async () => {
+    const aborted = new AbortController();
+    aborted.abort();
+    await expect(runStageCacheFirst({ stage: 'transcribe', audioHash: HASH, language: 'en' }, async () => new Blob([]), { signal: aborted.signal }))
+      .rejects.toEqual({ kind: 'cancelled' });
+    expect(mockInvoke).not.toHaveBeenCalled();
+
+    const late = new AbortController();
+    gateway(() => doneTranscript('en'), null, () => { late.abort(); return MISS_NO_AUDIO; });
+    await expect(runStageCacheFirst({ stage: 'transcribe', audioHash: HASH, language: 'en' }, async () => new Blob([]), { signal: late.signal }))
+      .rejects.toEqual({ kind: 'cancelled' });
+    expect(commands()).toEqual(['cloud_cache_lookup']);
+  });
+
+  it('the audio source is only read when bytes must actually be sent', async () => {
+    const audio = vi.fn(async () => new Blob([new Uint8Array([1])]));
+    gateway(() => doneTranscript('en'), null, () => ({ cached: false, audioPresent: true, audioDurationSec: 60 }));
+    await runStageCacheFirst({ stage: 'transcribe', audioHash: HASH, language: 'en' }, audio);
+    expect(audio).not.toHaveBeenCalled();
+    mockInvoke.mockReset();
+    gateway(() => doneTranscript('en'), null);
+    const r = await runStageCacheFirst({ stage: 'transcribe', audioHash: HASH, language: 'en' }, audio);
+    expect(audio).toHaveBeenCalledTimes(1);
+    expect(r).toMatchObject({ cached: false, uploaded: true, encoded: true });
   });
 });
 

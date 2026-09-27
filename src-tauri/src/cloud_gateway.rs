@@ -16,6 +16,14 @@
 // "has this audio already been uploaded / transcribed" is one question with
 // one answer (plan-v3 Wave 3 item 2).
 //
+// Wave 3 U3 — `cloud_cache_lookup` asks the gateway whether a stage is
+// already computed BEFORE anything is encoded or uploaded. A hit returns the
+// result itself (no job, no GPU, no meter line); a miss says whether the
+// gateway already holds the audio. Responses are gzip-negotiated (results
+// are 200-500 KB of JSON; on a high-RTT link slow start, not bandwidth,
+// sets a hit's time), and one pooled HTTP client is shared across commands
+// so a lookup and the submit after it reuse the TLS connection.
+//
 // Every failure is a typed `CloudError` (serialized with a `kind` tag), never
 // a bare string the UI has to parse. Retry policy is NOT here: this layer
 // makes exactly one attempt and reports what happened (retry-once-then-pause
@@ -120,7 +128,15 @@ fn classify_status(status: u16, body: &str) -> CloudError {
 }
 
 fn classify_transport(err: &reqwest::Error) -> CloudError {
-    let detail = err.to_string();
+    // reqwest's own message ("error sending request for url ...") hides the
+    // cause; the source chain names it (DNS, TLS, refused, reset).
+    let mut detail = err.to_string();
+    let mut source = std::error::Error::source(err);
+    while let Some(cause) = source {
+        detail.push_str(": ");
+        detail.push_str(&cause.to_string());
+        source = cause.source();
+    }
     if err.is_timeout() {
         CloudError::Timeout { detail }
     } else if err.is_decode() {
@@ -173,6 +189,22 @@ pub struct JobRequest {
     pub chunks: Option<Vec<ChunkInput>>,
 }
 
+/// `POST /v1/cache/lookup` (`sync_core.lookup_reply`).
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct CacheLookup {
+    pub cached: bool,
+    /// Present only on a hit — the same body a finished job would carry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<serde_json::Value>,
+    /// On a miss: whether the gateway already holds this audio, i.e. whether
+    /// running the stage needs an upload at all.
+    #[serde(default)]
+    pub audio_present: bool,
+    #[serde(default)]
+    pub audio_duration_sec: Option<f64>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct JobView {
@@ -216,14 +248,37 @@ pub struct GatewayClient {
     http: reqwest::Client,
 }
 
+fn build_http() -> Result<reqwest::Client, CloudError> {
+    reqwest::Client::builder()
+        .user_agent(concat!("KinetixProStudio/", env!("CARGO_PKG_VERSION")))
+        .connect_timeout(CONNECT_TIMEOUT)
+        .gzip(true)
+        .build()
+        .map_err(|e| CloudError::Io { detail: format!("http client: {e}") })
+}
+
+/// One connection pool for every command (reqwest clients are cheap `Arc`
+/// clones): a cache lookup and the upload/submit after it share a TLS
+/// session instead of each paying a fresh handshake.
+fn shared_http() -> Result<reqwest::Client, CloudError> {
+    static HTTP: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(http) = HTTP.get() {
+        return Ok(http.clone());
+    }
+    let http = build_http()?;
+    Ok(HTTP.get_or_init(|| http).clone())
+}
+
 impl GatewayClient {
+    /// A client with its own connection pool — the live test's entry point.
+    /// The app goes through `client_for` (the shared pool) instead.
+    #[cfg(test)]
     pub fn new(base: &str, key: &str) -> Result<Self, CloudError> {
-        let http = reqwest::Client::builder()
-            .user_agent(concat!("KinetixProStudio/", env!("CARGO_PKG_VERSION")))
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-            .map_err(|e| CloudError::Io { detail: format!("http client: {e}") })?;
-        Ok(Self { base: base.trim_end_matches('/').to_string(), key: key.to_string(), http })
+        Ok(Self::with_http(base, key, build_http()?))
+    }
+
+    fn with_http(base: &str, key: &str, http: reqwest::Client) -> Self {
+        Self { base: base.trim_end_matches('/').to_string(), key: key.to_string(), http }
     }
 
     fn request(&self, method: reqwest::Method, path: &str, timeout: Duration) -> reqwest::RequestBuilder {
@@ -286,6 +341,16 @@ impl GatewayClient {
             )
             .await?;
         Ok(UploadReply { uploaded: true, duration_sec: reply.duration_sec, opus_bytes: opus.len() as u64 })
+    }
+
+    /// Is this stage already computed? Asked before any encode or upload.
+    pub async fn lookup(&self, job: &JobRequest) -> Result<CacheLookup, CloudError> {
+        let reply: CacheLookup =
+            self.send_json(self.request(reqwest::Method::POST, "/v1/cache/lookup", REQUEST_TIMEOUT).json(job)).await?;
+        if reply.cached && reply.result.is_none() {
+            return Err(CloudError::Protocol { detail: "cache hit with no result".to_string() });
+        }
+        Ok(reply)
     }
 
     pub async fn submit(&self, job: &JobRequest) -> Result<JobView, CloudError> {
@@ -427,7 +492,8 @@ fn gateway_url() -> String {
 }
 
 fn client_for(app: &tauri::AppHandle) -> Result<GatewayClient, CloudError> {
-    GatewayClient::new(&gateway_url(), &read_key(app)?)
+    let key = read_key(app)?;
+    Ok(GatewayClient::with_http(&gateway_url(), &key, shared_http()?))
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -636,6 +702,16 @@ pub async fn cloud_upload_audio(app: tauri::AppHandle, audio_hash: String) -> Re
     client.ensure_audio(&audio_hash, &opus).await
 }
 
+/// Wave 3 U3 — the cache question, asked before the audio is prepared. The
+/// same `JobRequest` a submit would send, so both compute the same key.
+#[tauri::command]
+pub async fn cloud_cache_lookup(app: tauri::AppHandle, job: JobRequest) -> Result<CacheLookup, CloudError> {
+    if !is_audio_hash(&job.audio_hash) {
+        return Err(CloudError::Protocol { detail: "audioHash must be sha256 hex".to_string() });
+    }
+    client_for(&app)?.lookup(&job).await
+}
+
 // ---------------------------------------------------------------------------
 // Jobs, with a per-run cancel flag the frontend's AbortSignal trips.
 // ---------------------------------------------------------------------------
@@ -750,6 +826,21 @@ mod tests {
     }
 
     #[test]
+    fn cache_lookup_wire_shape() {
+        let hit: CacheLookup = serde_json::from_str(r#"{"cached":true,"result":{"tokens":[]}}"#).unwrap();
+        assert!(hit.cached && hit.result.is_some() && !hit.audio_present);
+        let miss: CacheLookup =
+            serde_json::from_str(r#"{"cached":false,"audioPresent":true,"audioDurationSec":1421.3}"#).unwrap();
+        assert_eq!(
+            miss,
+            CacheLookup { cached: false, result: None, audio_present: true, audio_duration_sec: Some(1421.3) }
+        );
+        let v = serde_json::to_value(&miss).unwrap();
+        assert_eq!(v["audioPresent"], true);
+        assert!(v.get("result").is_none());
+    }
+
+    #[test]
     fn lru_keeps_the_file_just_written() {
         let dir = std::env::temp_dir().join(format!("kx-opus-lru-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir).unwrap();
@@ -861,6 +952,22 @@ mod tests {
             let clip_up = api.ensure_audio(&clip_hash, &fs::read(&clip_opus).unwrap()).await.unwrap();
             println!("clip ensure_audio: uploaded={} duration={:.3}s", clip_up.uploaded, clip_up.duration_sec);
             assert!((clip_up.duration_sec - 5.0).abs() < 0.1);
+
+            // Wave 3 U3 — the lookup answers both stages before any upload,
+            // gzip-negotiated, with the full result in hand.
+            let t0 = Instant::now();
+            let hit = api
+                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: audio_hash.clone(), language: "en".into(), chunks: None })
+                .await
+                .expect("lookup");
+            assert!(hit.cached);
+            assert_eq!(hit.result.as_ref().unwrap()["tokens"].as_array().unwrap().len(), 3960);
+            println!("lookup transcribe: cached={} {}ms", hit.cached, t0.elapsed().as_millis());
+            let unknown = api
+                .lookup(&JobRequest { stage: "transcribe".into(), audio_hash: "d".repeat(64), language: "en".into(), chunks: None })
+                .await
+                .expect("lookup miss");
+            assert_eq!(unknown, CacheLookup { cached: false, result: None, audio_present: false, audio_duration_sec: None });
 
             // Both cache stages answer through run_job without a GPU.
             let never = AtomicBool::new(false);

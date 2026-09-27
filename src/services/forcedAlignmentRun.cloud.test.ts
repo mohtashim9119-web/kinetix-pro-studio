@@ -61,9 +61,13 @@ const tokens: TranscriptToken[] = [
   { text: 'world', startSec: 0.4, endSec: 1 },
 ];
 
-function gateway(runJob: (args: { job: unknown }) => unknown): void {
+function gateway(
+  runJob: (args: { job: unknown }) => unknown,
+  lookup: () => unknown = () => ({ cached: false, audioPresent: false, audioDurationSec: null }),
+): void {
   mockInvoke.mockImplementation(async (cmd: string, args: unknown) => {
     switch (cmd) {
+      case 'cloud_cache_lookup': return lookup();
       case 'cloud_opus_cached': return 1234;
       case 'cloud_upload_audio': return { uploaded: false, durationSec: 1, opusBytes: 1234 };
       case 'cloud_run_job': return runJob(args as { job: unknown });
@@ -133,6 +137,32 @@ describe('runForcedAlignmentForSync — cloud arm (Wave 3 U2)', () => {
     gateway(() => { throw new Error('must not submit'); });
     expect(await run(undefined, '')).toMatchObject({ status: 'paused', reason: 'audio-stage-failed' });
     expect(mockInvoke).not.toHaveBeenCalled();
+  });
+
+  // Wave 3 U3 — Apply Sync on content the cloud has already aligned.
+  it('alignment cache hit: ok with the cached words, ONE lookup call — no upload, no job', async () => {
+    let lookedUp: unknown;
+    mockInvoke.mockImplementation(async (cmd: string, args: { job?: unknown }) => {
+      if (cmd !== 'cloud_cache_lookup') throw new Error(`must not run on a cache hit: ${cmd}`);
+      lookedUp = args.job;
+      return { cached: true, result: { words: WORDS, nChunks: 1, nFallbackChunks: 0, provenance: PROVENANCE, createdAt: 1 } };
+    });
+    const result = await run();
+    expect(lookedUp).toEqual({ stage: 'align', audioHash: HASH, language: 'en', chunks: [{ startSec: 0, endSec: 1, text: 'hello world' }] });
+    expect(result).toMatchObject({ status: 'ok', cloudProvenance: PROVENANCE, cloudCached: true });
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('a computed (non-cache) alignment is marked cloudCached false', async () => {
+    gateway(() => ({ jobId: 'j', stage: 'align', status: 'done', cached: false, audioDurationSec: 1, workerSec: 30, error: null,
+      result: { words: WORDS, nChunks: 1, nFallbackChunks: 0, provenance: PROVENANCE, createdAt: 1 } }));
+    expect(await run()).toMatchObject({ status: 'ok', cloudCached: false });
+  });
+
+  it('offline at the lookup still PAUSES as offline (the pause-and-ask ruling is unchanged)', async () => {
+    gateway(() => { throw new Error('must not submit'); }, () => { throw { kind: 'unreachable', detail: 'dns' }; });
+    expect(await run()).toMatchObject({ status: 'paused', reason: 'offline', resumable: true });
+    expect(mockInvoke.mock.calls.map(c => c[0])).toEqual(['cloud_cache_lookup']);
   });
 
   it('the mid-coverage abort (G4 hopeless band) stops a mismatched script BEFORE any cloud call', async () => {
