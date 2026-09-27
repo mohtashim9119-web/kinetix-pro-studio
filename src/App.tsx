@@ -130,7 +130,15 @@ import {
   whisperDegradedKind,
   type GatewayProvenance,
 } from './services/timingProvenance';
-import { hostForRun, onSyncEngineHostChange, readSyncEngineHost, type RunHostOverride } from './services/syncEngineHost';
+import {
+  clearRunHostOverride,
+  hostForRun,
+  onSyncEngineHostChange,
+  readRunHostOverride,
+  readSyncEngineHost,
+  saveRunHostOverride,
+  shouldStartStaging,
+} from './services/syncEngineHost';
 import { CloudStageError, cloudPauseReason, transcribeForHost } from './services/cloudSyncEngine';
 import type { TimingProvenance } from './types';
 import {
@@ -1904,9 +1912,9 @@ export default function App() {
   const faSkipCoverageCheckOnceRef = useRef<boolean>(false);
   // Wave 3 U4 — "run this sync on this computer" after a cloud pause: one
   // project + one voiceover hash, carried from staging through Apply Sync
-  // and cleared when that Apply Sync commits. In memory only; the standing
+  // and cleared when that Apply Sync commits. Persisted per project (U4
+  // hotfix: survives a reload — `syncEngineHost.ts`); the standing
   // Cloud/Local choice is never written (see `hostForRun`).
-  const runHostOverrideRef = useRef<RunHostOverride | null>(null);
   // plan-v3 item 5 — whole-run cancel. A fresh controller is created at the
   // start of every handleApplySyncFromFiles call and overwrites this ref
   // unconditionally, so the Cancel button always aborts the CURRENTLY
@@ -3643,7 +3651,7 @@ export default function App() {
   // handleApplySyncFromFiles commits. onSegmentsUpdated is a no-op — this
   // call is cache-only, it never mutates live segments (only Apply Sync does).
   // --------------------------------------------------------------------------
-  const handleVoiceoverStaged = useCallback((file: File) => {
+  const handleVoiceoverStaged = useCallback((file: File, opts?: { rerun?: boolean }) => {
     if (!isTauri()) return;
 
     const incomingIdentity = getFileIdentity(file);
@@ -3653,7 +3661,13 @@ export default function App() {
     // session. Don't cancel/restart an in-flight job or mint a redundant
     // asset + blob URL for a file we're already tracking.
     const previous = pendingVoiceoverRef.current;
-    if (previous && getFileIdentity(previous.file) === incomingIdentity) {
+    // U4 hotfix — an explicit re-run (a pause dialog's answer) restarts
+    // staging for the same file; only a plain re-drop is a no-op.
+    if (!shouldStartStaging({
+      pendingIdentity: previous ? getFileIdentity(previous.file) : undefined,
+      incomingIdentity,
+      rerun: opts?.rerun === true,
+    })) {
       return;
     }
 
@@ -3771,7 +3785,7 @@ export default function App() {
           audioHash,
           // Wave 3 U4 — a one-run "transcribe on this computer" answer to a
           // cloud pause applies to exactly this project + audio.
-          host: hostForRun(readSyncEngineHost(), runHostOverrideRef.current, {
+          host: hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
             projectId: projectRef.current.id,
             audioHash,
           }),
@@ -3881,15 +3895,15 @@ export default function App() {
   const handleCloudTranscriptionRetry = useCallback((): void => {
     const pending = pendingVoiceoverRef.current;
     dismissError();
-    if (pending) handleVoiceoverStaged(pending.file);
+    if (pending) handleVoiceoverStaged(pending.file, { rerun: true });
   }, [dismissError, handleVoiceoverStaged]);
 
   const handleCloudTranscriptionUseLocal = useCallback((reason: string): void => {
     const pending = pendingVoiceoverRef.current;
     dismissError();
     if (!pending?.audioHash) return;
-    runHostOverrideRef.current = { projectId: projectRef.current.id, audioHash: pending.audioHash, host: 'local', reason };
-    handleVoiceoverStaged(pending.file);
+    saveRunHostOverride({ projectId: projectRef.current.id, audioHash: pending.audioHash, host: 'local', reason });
+    handleVoiceoverStaged(pending.file, { rerun: true });
   }, [dismissError, handleVoiceoverStaged]);
 
   const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {
@@ -4165,7 +4179,7 @@ export default function App() {
     // gateway cache hit whenever this audio was transcribed there before.
     // Legacy/unstamped transcripts count as local (they can only have come
     // from whisper.cpp).
-    const engineHost = hostForRun(readSyncEngineHost(), runHostOverrideRef.current, {
+    const engineHost = hostForRun(readSyncEngineHost(), readRunHostOverride(projectRef.current.id), {
       projectId: projectRef.current.id,
       audioHash,
     });
@@ -4362,8 +4376,9 @@ export default function App() {
       // its doc comment for why.
       const engineResolution = await resolveSyncEngine(projectRef.current, engineHost);
       // Wave 3 U4 — the user's one-run answer to a cloud pause, on the record.
-      if (engineHost !== readSyncEngineHost() && runHostOverrideRef.current) {
-        ruleLogEntries.push(buildHostOverrideEntry(syncRunId, runHostOverrideRef.current.reason, syncRunAt));
+      const runOverride = readRunHostOverride(projectRef.current.id);
+      if (engineHost !== readSyncEngineHost() && runOverride) {
+        ruleLogEntries.push(buildHostOverrideEntry(syncRunId, runOverride.reason, syncRunAt));
       }
       const faGateOpen = engineResolution.gateOpen && forceWhisperReason === null;
       // WS1 Session M — FA readiness PRE-FLIGHT, before inference. When the gate
@@ -5702,7 +5717,7 @@ export default function App() {
     // visible and one click from being discarded, while a wrongly-cleared one
     // is gone. The conservative direction is the recoverable one.
     // Wave 3 U4 — the one-run override is spent once its run commits.
-    runHostOverrideRef.current = null;
+    clearRunHostOverride(projectRef.current.id);
     return { ok: true };
   };
 
@@ -5750,9 +5765,9 @@ export default function App() {
   const handleSyncPausedUseLocal = useCallback((): void => {
     const pause = faPauseDialog;
     if (!pause?.audioHash) return;
-    runHostOverrideRef.current = {
+    saveRunHostOverride({
       projectId: liveProjectRef.current.id, audioHash: pause.audioHash, host: 'local', reason: pause.reason,
-    };
+    });
     handleSyncPausedRetry();
   }, [faPauseDialog, handleSyncPausedRetry]);
 

@@ -19,8 +19,12 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   DEFAULT_SYNC_ENGINE_HOST,
   SYNC_ENGINE_HOST_KEY,
+  clearRunHostOverride,
   hostForRun,
   onSyncEngineHostChange,
+  readRunHostOverride,
+  saveRunHostOverride,
+  shouldStartStaging,
   readSyncEngineHost,
   writeSyncEngineHost,
 } from './syncEngineHost';
@@ -52,6 +56,45 @@ describe('Wave 3 U4 — hostForRun (one-run local override)', () => {
     hostForRun(readSyncEngineHost(), override, { projectId: 'p1', audioHash: 'h1' });
     expect(readSyncEngineHost()).toBe('cloud');
     expect(localStorage.getItem(SYNC_ENGINE_HOST_KEY)).toBe('cloud');
+  });
+});
+
+// U4 hotfix — the operator's click check: "Transcribe on this computer" (and
+// "Try the cloud again") did nothing, and a reload lost the choice. Runtime
+// probes showed both answers re-driving staging with the file already
+// pending, which the plain re-drop guard refuses. These fail on dac689a.
+describe('U4 hotfix — explicit re-run restarts staging; the choice survives a reload', () => {
+  const ID = 'vo20.m4a|317996|1790536224000';
+  it('a dialog answer (rerun) restarts staging for the SAME pending file', () => {
+    expect(shouldStartStaging({ pendingIdentity: ID, incomingIdentity: ID, rerun: true })).toBe(true);
+  });
+  it('a plain re-drop of the pending file stays a no-op; a new file always starts', () => {
+    expect(shouldStartStaging({ pendingIdentity: ID, incomingIdentity: ID, rerun: false })).toBe(false);
+    expect(shouldStartStaging({ pendingIdentity: ID, incomingIdentity: 'other|1|1', rerun: false })).toBe(true);
+    expect(shouldStartStaging({ pendingIdentity: undefined, incomingIdentity: ID, rerun: false })).toBe(true);
+  });
+  it('a recorded local choice is read back per project, and cleared when its sync commits', () => {
+    const o = { projectId: 'p1', audioHash: 'h1', host: 'local' as const, reason: 'offline' };
+    saveRunHostOverride(o);
+    expect(readRunHostOverride('p1')).toEqual(o);
+    expect(readRunHostOverride('p2')).toBeNull();
+    clearRunHostOverride('p1');
+    expect(readRunHostOverride('p1')).toBeNull();
+  });
+  it('survives a fresh module load (a reload) — the gap the click check hit', async () => {
+    saveRunHostOverride({ projectId: 'p1', audioHash: 'h1', host: 'local', reason: 'offline' });
+    vi.resetModules();
+    const fresh = await import('./syncEngineHost');
+    const override = fresh.readRunHostOverride('p1');
+    expect(fresh.hostForRun('cloud', override, { projectId: 'p1', audioHash: 'h1' })).toBe('local');
+    // The standing choice was never written by the override.
+    expect(localStorage.getItem(SYNC_ENGINE_HOST_KEY)).toBeNull();
+  });
+  it('refuses a malformed stored record rather than guessing an engine', () => {
+    localStorage.setItem('kinetix:run-host-override:v1:p1', JSON.stringify({ projectId: 'p1', audioHash: 'h1', host: 'cloud', reason: 'x' }));
+    expect(readRunHostOverride('p1')).toBeNull();
+    localStorage.setItem('kinetix:run-host-override:v1:p1', '{not json');
+    expect(readRunHostOverride('p1')).toBeNull();
   });
 });
 

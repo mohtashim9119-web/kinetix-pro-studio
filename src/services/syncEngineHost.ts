@@ -50,8 +50,13 @@ export function writeSyncEngineHost(host: SyncEngineHost): void {
 // content hash, so it follows that run from staging transcription through
 // Apply Sync (U2's engine honesty would otherwise re-transcribe on the cloud
 // the moment Apply Sync read the standing host) and cannot leak onto any
-// other audio or project. Held in memory by the caller, never persisted,
-// and NEVER written through `writeSyncEngineHost`.
+// other audio or project. NEVER written through `writeSyncEngineHost`.
+//
+// U4 hotfix — PERSISTED per project (localStorage, like `faSyncPauseStore`),
+// not held in a React ref: the operator's click check reloaded after choosing
+// local and the in-memory choice was gone, so the next staging run went back
+// to the cloud. A recorded choice now survives a reload until the Apply Sync
+// it was made for commits (`clearRunHostOverride`).
 // ---------------------------------------------------------------------------
 
 export interface RunHostOverride {
@@ -60,6 +65,57 @@ export interface RunHostOverride {
   host: 'local';
   /** What the cloud run paused on, for the Sync Log line. */
   reason: string;
+}
+
+const RUN_HOST_OVERRIDE_PREFIX = 'kinetix:run-host-override:v1:';
+
+export function saveRunHostOverride(override: RunHostOverride): void {
+  try {
+    globalThis.localStorage?.setItem(RUN_HOST_OVERRIDE_PREFIX + override.projectId, JSON.stringify(override));
+  } catch {
+    // Storage unavailable: the choice lasts for this page load only.
+  }
+}
+
+/** This project's recorded one-run choice, or null (none / unreadable). */
+export function readRunHostOverride(projectId: string): RunHostOverride | null {
+  try {
+    const raw = globalThis.localStorage?.getItem(RUN_HOST_OVERRIDE_PREFIX + projectId);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<RunHostOverride>;
+    if (
+      parsed.projectId !== projectId || parsed.host !== 'local'
+      || typeof parsed.audioHash !== 'string' || typeof parsed.reason !== 'string'
+    ) {
+      return null;
+    }
+    return parsed as RunHostOverride;
+  } catch {
+    return null;
+  }
+}
+
+export function clearRunHostOverride(projectId: string): void {
+  try {
+    globalThis.localStorage?.removeItem(RUN_HOST_OVERRIDE_PREFIX + projectId);
+  } catch {
+    // nothing to clear
+  }
+}
+
+/**
+ * U4 hotfix — whether a stage event for `incoming` should (re)start staging.
+ * A plain re-drop of the file already pending is a no-op (its run is in
+ * flight or done). An EXPLICIT re-run — a pause dialog's "try the cloud
+ * again" / "transcribe on this computer" — must restart it: routing those
+ * answers through the plain path is exactly how both buttons became no-ops.
+ */
+export function shouldStartStaging(args: {
+  pendingIdentity: string | undefined;
+  incomingIdentity: string;
+  rerun: boolean;
+}): boolean {
+  return args.rerun || args.pendingIdentity !== args.incomingIdentity;
 }
 
 /** The host a run for this project + audio should use. */
