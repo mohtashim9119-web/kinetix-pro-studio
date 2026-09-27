@@ -49,7 +49,8 @@ const PAUSE_COPY: Record<FaFailureKind | FaVictimPauseReason, string> = {
   'inference-failed': 'The alignment engine reported an error.',
   'already-running': 'A forced-alignment run for this project is already in progress.',
   'out-of-memory': 'The alignment engine ran out of memory.',
-  offline: 'The cloud alignment engine could not be reached — check your network connection.',
+  offline: 'The cloud sync engine could not be reached, even after one automatic retry — check your network connection.',
+  'cloud-auth': 'The cloud sync server did not accept this computer’s key — check it in App Settings → Sync Engine → Cloud sync.',
   'all-covered-fabricated': 'Every covered scene’s forced-alignment timing was fabricated — no chunk in this run aligned successfully.',
   // G6 Step 0a — identical wording to faPreflight.ts's fixHint / syncLog.ts's
   // FA_PAUSED_TEXT.'not-compiled' (duplicated, not imported — see
@@ -59,6 +60,10 @@ const PAUSE_COPY: Record<FaFailureKind | FaVictimPauseReason, string> = {
 
 const COPY = {
   title: 'High-precision sync paused',
+  // Wave 3 U4 — shown only when the paused run was on the cloud.
+  retryCloudLabel: 'Try the cloud again',
+  useLocalLabel: 'Run this sync on this computer',
+  useLocalHint: '(this run only — your Cloud setting stays as it is)',
   bodyPrefix: 'Apply Sync stopped before writing anything to your timeline.',
   retryLabel: 'Try forced alignment again',
   useWhisperLabel: 'Continue with Whisper timing',
@@ -80,11 +85,16 @@ interface Props {
    *  since the cached Whisper transcript this run already had is untouched. */
   onRetry: () => void;
   /** Explicitly, visibly chooses Whisper-only timing for this run — never
-   *  the automatic behavior; see module doc comment. */
-  onUseWhisper: () => void;
+   *  the automatic behavior; see module doc comment. Wave 3 U4: absent when
+   *  the run paused before a transcript for this engine existed. */
+  onUseWhisper?: () => void;
   /** Dismisses the dialog and clears the pause record. Nothing was
    *  committed by a paused run, so this leaves the project untouched. */
   onCancel: () => void;
+  /** Wave 3 U4 — present only when the paused run computed on the cloud:
+   *  re-runs THIS sync on this computer, once, without touching the
+   *  standing Cloud/Local choice (the G3 offline contract's local option). */
+  onUseLocal?: () => void;
 }
 
 export function SyncPausedDialog({
@@ -94,6 +104,7 @@ export function SyncPausedDialog({
   onRetry,
   onUseWhisper,
   onCancel,
+  onUseLocal,
 }: Props): React.ReactElement {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent): void => {
@@ -128,16 +139,28 @@ export function SyncPausedDialog({
             onClick={onRetry}
             className="w-full bg-[#F27D26] text-black font-bold text-sm py-3 rounded-xl hover:brightness-110 transition"
           >
-            {COPY.retryLabel}
+            {onUseLocal ? COPY.retryCloudLabel : COPY.retryLabel}
           </button>
-          <button
-            data-testid="sync-paused-use-whisper"
-            onClick={onUseWhisper}
-            className="w-full bg-[#1A1A1A] border border-[#282828] text-sm py-3 rounded-xl hover:border-[#F27D26] transition"
-          >
-            {COPY.useWhisperLabel}
-            <span className="block text-[10px] text-gray-500 mt-1">{COPY.useWhisperHint}</span>
-          </button>
+          {onUseLocal && (
+            <button
+              data-testid="sync-paused-use-local"
+              onClick={onUseLocal}
+              className="w-full bg-[#1A1A1A] border border-[#282828] text-sm py-3 rounded-xl hover:border-[#F27D26] transition"
+            >
+              {COPY.useLocalLabel}
+              <span className="block text-[10px] text-gray-500 mt-1">{COPY.useLocalHint}</span>
+            </button>
+          )}
+          {onUseWhisper && (
+            <button
+              data-testid="sync-paused-use-whisper"
+              onClick={onUseWhisper}
+              className="w-full bg-[#1A1A1A] border border-[#282828] text-sm py-3 rounded-xl hover:border-[#F27D26] transition"
+            >
+              {COPY.useWhisperLabel}
+              <span className="block text-[10px] text-gray-500 mt-1">{COPY.useWhisperHint}</span>
+            </button>
+          )}
           <button
             data-testid="sync-paused-cancel"
             onClick={onCancel}

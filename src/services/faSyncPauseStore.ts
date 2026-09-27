@@ -45,6 +45,7 @@
 
 import type { FaFailureKind } from './forcedAlignmentRun';
 import type { FaVictimPauseReason } from './faVictimGate';
+import type { SyncEngineHost } from './syncEngineHost';
 
 const KEY_PREFIX = 'kinetix:fa-pause:v1:';
 
@@ -60,6 +61,18 @@ export interface FaPauseRecord {
   /** Date.now() when the pause was recorded — shown in the re-presented
    *  dialog so a user who left it overnight knows how stale the ask is. */
   timestamp: number;
+  /** Wave 3 U4 — where the paused run was computing. `'cloud'` adds the
+   *  "run this sync on this computer" answer; absent on pre-U4 records
+   *  (read as local — the only host that existed). */
+  host?: SyncEngineHost;
+  /** Wave 3 U4 — the voiceover content hash the paused run was syncing, so
+   *  a one-run local override (answered even after a restart) applies to
+   *  exactly that audio and nothing else. */
+  audioHash?: string;
+  /** Wave 3 U4 — `'transcribe'` when the run paused re-transcribing for the
+   *  selected engine (before any alignment): there is no transcript for
+   *  this host yet, so "continue with Whisper timing" is not offered. */
+  stage?: 'transcribe';
 }
 
 /** Persists a paused run's ask so it survives an app restart. Overwrites any
@@ -90,6 +103,9 @@ export function readFaPause(projectId: string): FaPauseRecord | null {
       || typeof parsed.syncRunId !== 'string'
       || typeof parsed.reason !== 'string'
       || typeof parsed.timestamp !== 'number'
+      || (parsed.host !== undefined && parsed.host !== 'cloud' && parsed.host !== 'local')
+      || (parsed.audioHash !== undefined && typeof parsed.audioHash !== 'string')
+      || (parsed.stage !== undefined && parsed.stage !== 'transcribe')
     ) {
       return null;
     }

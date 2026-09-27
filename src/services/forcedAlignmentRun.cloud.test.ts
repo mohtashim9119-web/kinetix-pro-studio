@@ -30,7 +30,7 @@ vi.mock('./faChunkPlan', () => ({
 
 import { invoke } from '@tauri-apps/api/core';
 import { runForcedAlignmentForSync } from './forcedAlignmentRun';
-import { __resetCloudAudioInFlightForTests } from './cloudSyncEngine';
+import { __resetCloudAudioInFlightForTests, __setCloudRetryDelayForTests } from './cloudSyncEngine';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
 import { TransitionType, AnimationType } from '../types';
 
@@ -83,6 +83,7 @@ const run = (signal?: AbortSignal, audioHash: string | undefined = HASH) =>
 beforeEach(() => {
   mockInvoke.mockReset();
   __resetCloudAudioInFlightForTests();
+  __setCloudRetryDelayForTests(0);
 });
 
 describe('runForcedAlignmentForSync — cloud arm (Wave 3 U2)', () => {
@@ -114,6 +115,23 @@ describe('runForcedAlignmentForSync — cloud arm (Wave 3 U2)', () => {
     const result = await run();
     expect(result).toMatchObject({ status: 'paused', reason: 'offline', resumable: true });
     expect(mockInvoke.mock.calls.map(c => c[0])).not.toContain('fa_stage_audio_raw');
+  });
+
+  it('Wave 3 U4 — a refused key pauses as cloud-auth (not retried, not inference-failed)', async () => {
+    gateway(() => { throw { kind: 'auth' }; });
+    expect(await run()).toMatchObject({ status: 'paused', reason: 'cloud-auth', resumable: true });
+    expect(mockInvoke.mock.calls.filter(c => c[0] === 'cloud_run_job')).toHaveLength(1);
+  });
+
+  it('Wave 3 U4 — one offline blip mid-alignment is absorbed by the retry: the run succeeds', async () => {
+    let n = 0;
+    gateway(() => {
+      n += 1;
+      if (n === 1) throw { kind: 'unreachable', detail: 'reset' };
+      return { jobId: 'j', stage: 'align', status: 'done', cached: false, audioDurationSec: 1, workerSec: 30, error: null,
+        result: { words: WORDS, nChunks: 1, nFallbackChunks: 0, provenance: PROVENANCE, createdAt: 1 } };
+    });
+    expect(await run()).toMatchObject({ status: 'ok' });
   });
 
   it('any other cloud failure pauses as inference-failed with the typed reason in detail', async () => {
@@ -159,10 +177,10 @@ describe('runForcedAlignmentForSync — cloud arm (Wave 3 U2)', () => {
     expect(await run()).toMatchObject({ status: 'ok', cloudCached: false });
   });
 
-  it('offline at the lookup still PAUSES as offline (the pause-and-ask ruling is unchanged)', async () => {
+  it('offline at the lookup, after the one retry, still PAUSES as offline', async () => {
     gateway(() => { throw new Error('must not submit'); }, () => { throw { kind: 'unreachable', detail: 'dns' }; });
     expect(await run()).toMatchObject({ status: 'paused', reason: 'offline', resumable: true });
-    expect(mockInvoke.mock.calls.map(c => c[0])).toEqual(['cloud_cache_lookup']);
+    expect(mockInvoke.mock.calls.map(c => c[0])).toEqual(['cloud_cache_lookup', 'cloud_cache_lookup']);
   });
 
   it('the mid-coverage abort (G4 hopeless band) stops a mismatched script BEFORE any cloud call', async () => {

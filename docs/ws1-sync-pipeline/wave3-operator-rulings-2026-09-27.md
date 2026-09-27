@@ -1,6 +1,6 @@
 # Wave 3 — operator rulings and unit designs (2026-09-27)
 
-Recorded at Wave 3 U3. Extends plan-v3's Wave 3 section
+Recorded at Wave 3 U3; U4 appended. Extends plan-v3's Wave 3 section
 ([`sync-pipeline-plan-v3.md`](sync-pipeline-plan-v3.md)) without editing its signed body:
 item 2 (one job, two cached stages) is where U3 and U4.5 land; items 3–5 still govern
 everything below.
@@ -39,6 +39,39 @@ Unit order after this ruling: **U3 → U4 → U4.5 → U4.6 → U5 → … → U
 meters 0 s, correctly. But Modal may already have started the GPU container, and that
 container's boot and 2 s scaledown are billed. Zero-charge holds at the job level, not the
 container level. U5 must decide whether that residue is acceptable or needs a pre-spawn hold.
+
+---
+
+## U4 — retry once, then pause and offer local (as built)
+
+Plan-v3 Wave 3 item 4 plus the G3 offline contract (`docs/architecture/cloud-asr-plan.md`,
+"Offline contract").
+
+- **Retry once, transient failures only** (`runStageCacheFirst`, `isRetryableCloudError`):
+  unreachable, timeout, gateway 5xx, a lost/crashed worker. After a 3 s cancellable wait the
+  whole cache-first stage runs again from its lookup, so anything that finished meanwhile is a
+  free hit. **Not retried:** auth, too-long, refusals, `worker-error` and the job-time cap. A
+  retry can't change those and would re-bill. *Operator-vetoable default:* `worker-error` is
+  treated as deterministic.
+- **No double billing on retry:** the gateway re-attaches a resubmit to the member's job still
+  in flight for that cache key (`inflight_key` / `reusable_inflight`). A retry after a lost
+  poll never spawns a second GPU run.
+- **Pause-and-ask:** a cloud failure past its retry maps to one typed reason
+  (`cloudPauseReason`): `offline`, `cloud-auth` (new, split out of `inference-failed`), or
+  `inference-failed`.
+  - *Apply Sync* (alignment, or the engine-switch re-transcription): the restart-safe
+    `SyncPausedDialog` records `host` + `audioHash` and adds **"Run this sync on this
+    computer"**. The re-transcription pause omits "continue with Whisper", because no
+    transcript for that engine exists yet.
+  - *Staging transcription:* the new `CloudTranscriptionPausedDialog` offers try the cloud
+    again, transcribe on this computer, or cancel. It replaces the inline error strip for
+    these failures.
+- **Per-run local override** (`hostForRun`, `RunHostOverride`): one project plus one voiceover
+  hash, carried from staging through Apply Sync, cleared when that Apply Sync commits. It lives
+  in memory only and never writes the standing Cloud/Local choice. The Sync Log records it,
+  and the spine stamps the local engine key, so a later cloud run reads as a real change.
+- **Quota:** the gateway has no quota today (the $25 Wave 3 cap is monitored by the operator,
+  not enforced). A quota pause needs a server-side quota first. Not built.
 
 ---
 

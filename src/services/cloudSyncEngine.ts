@@ -28,6 +28,16 @@
 // audio the gateway lacks prepares it. (U2's unconditional encode + upload
 // at voiceover-add is gone for the same reason: it spent the encode before
 // anyone had asked whether the result was already cached.)
+//
+// Wave 3 U4 — retry once, then pause (plan-v3 Wave 3 item 4). A TRANSIENT
+// failure (unreachable, timeout, gateway 5xx, a lost/crashed worker) retries
+// the whole cache-first run exactly once after a short, cancellable wait:
+// the lookup answers for anything that finished meanwhile, the gateway's
+// HEAD skips a re-upload, and the gateway re-attaches a resubmit to a job
+// still in flight — so a retry never re-bills work already done. A second
+// failure, or any failure a retry cannot change (auth, too long, a refusal,
+// a worker error, the job-time cap), goes straight to the caller, which
+// PAUSES and asks. Never a silent loop, never a silent switch to local.
 // ---------------------------------------------------------------------------
 
 import type { Asset, TimingProvenance, TranscriptToken } from '../types';
@@ -90,6 +100,56 @@ export interface CloudStageRun<R> {
   uploaded: boolean;
   /** This run encoded Opus locally (false on a local Opus-cache hit). */
   encoded: boolean;
+  /** Wave 3 U4 — the first attempt failed transiently and this is the
+   *  result of the one retry. */
+  retried: boolean;
+}
+
+/** Wave 3 U4 — failures a second attempt can plausibly fix. Everything
+ *  else is deterministic for the same request (retrying would only
+ *  re-bill or re-refuse). */
+const RETRYABLE_JOB_CODES: ReadonlySet<string> = new Set(['worker-lost', 'worker-crashed']);
+
+export function isRetryableCloudError(error: CloudError): boolean {
+  switch (error.kind) {
+    case 'unreachable':
+    case 'timeout':
+    case 'server':
+      return true;
+    case 'jobFailed':
+      return RETRYABLE_JOB_CODES.has(error.code);
+    default:
+      return false;
+  }
+}
+
+/** Wave 3 U4 — the pause reason a cloud failure (already past its one
+ *  retry, where retryable) presents as. One mapping for every cloud stage. */
+export type CloudPauseReason = 'offline' | 'cloud-auth' | 'inference-failed';
+
+export function cloudPauseReason(error: CloudError): CloudPauseReason {
+  if (error.kind === 'unreachable' || error.kind === 'timeout') return 'offline';
+  if (error.kind === 'auth' || error.kind === 'notConfigured') return 'cloud-auth';
+  return 'inference-failed';
+}
+
+/** The one retry's wait: long enough for a network blip or a gateway
+ *  container restart, short enough not to feel like a hang. */
+export const CLOUD_RETRY_DELAY_MS = 3000;
+let retryDelayMs = CLOUD_RETRY_DELAY_MS;
+
+/** Test-only: the retry's wait, so unit tests don't sleep. */
+export function __setCloudRetryDelayForTests(ms: number): void {
+  retryDelayMs = ms;
+}
+
+function cancellableDelay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject({ kind: 'cancelled' } satisfies CloudError); return; }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, ms);
+    const onAbort = (): void => { clearTimeout(timer); reject({ kind: 'cancelled' } satisfies CloudError); };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 function isAudioMissing(err: unknown): boolean {
@@ -106,13 +166,36 @@ function isAudioMissing(err: unknown): boolean {
 export async function runStageCacheFirst<R>(
   request: CloudJobRequest,
   audio: () => Promise<Blob>,
-  options: { signal?: AbortSignal; onEvent?: (event: CloudJobEvent) => void } = {},
+  options: {
+    signal?: AbortSignal;
+    onEvent?: (event: CloudJobEvent) => void;
+    /** Wave 3 U4 — told once, before the retry's wait, with the first failure. */
+    onRetry?: (error: CloudError) => void;
+  } = {},
+): Promise<CloudStageRun<R>> {
+  try {
+    return await attemptStageCacheFirst<R>(request, audio, options);
+  } catch (err) {
+    const first = toCloudError(err);
+    if (!isRetryableCloudError(first)) throw first;
+    console.warn(`[cloud] ${request.stage} failed (${first.kind}) — retrying once in ${retryDelayMs / 1000}s:`, first);
+    options.onRetry?.(first);
+    await cancellableDelay(retryDelayMs, options.signal);
+    const run = await attemptStageCacheFirst<R>(request, audio, options);
+    return { ...run, retried: true };
+  }
+}
+
+async function attemptStageCacheFirst<R>(
+  request: CloudJobRequest,
+  audio: () => Promise<Blob>,
+  options: { signal?: AbortSignal; onEvent?: (event: CloudJobEvent) => void },
 ): Promise<CloudStageRun<R>> {
   const { signal, onEvent } = options;
   const cancelled: CloudError = { kind: 'cancelled' };
   if (signal?.aborted) throw cancelled;
   const lookup = await lookupCloudCache<R>(request);
-  if (lookup.cached) return { result: lookup.result, cached: true, uploaded: false, encoded: false };
+  if (lookup.cached) return { result: lookup.result, cached: true, uploaded: false, encoded: false, retried: false };
   if (signal?.aborted) throw cancelled;
 
   let uploaded = false;
@@ -132,7 +215,7 @@ export async function runStageCacheFirst<R>(
     await prepare();
     view = await runCloudJob<R>(request, { signal, onEvent });
   }
-  return { result: view.result!, cached: view.cached, uploaded, encoded };
+  return { result: view.result!, cached: view.cached, uploaded, encoded, retried: false };
 }
 
 // ---------------------------------------------------------------------------

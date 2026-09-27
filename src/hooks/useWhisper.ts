@@ -16,8 +16,8 @@ import { validate1to2 } from '../services/syncContracts';
 import { buildSilenceErrorEntry, buildMalformedTokenEntry, buildContractViolationEntry, buildWhisperModelFailureEntry, appendSyncLogEntries } from '../services/syncLog';
 import { buildUnappliedTranscript } from '../services/unappliedTranscript';
 import type { TranscriptionStatus, Asset, VideoSegment, Project, TranscriptToken, SyncLogEntry } from '../types';
-import { transcribeForHost } from '../services/cloudSyncEngine';
-import { readSyncEngineHost } from '../services/syncEngineHost';
+import { CloudStageError, cloudPauseReason, transcribeForHost } from '../services/cloudSyncEngine';
+import { readSyncEngineHost, type SyncEngineHost } from '../services/syncEngineHost';
 
 /**
  * Fetches the voiceover blob and scans it for silence.
@@ -265,6 +265,12 @@ export interface StartTranscriptionOptions {
    * all.
    */
   audioHash?: string;
+  /**
+   * Wave 3 U4 — where THIS run transcribes, when the caller has resolved it
+   * (a one-run "transcribe on this computer" answer to a cloud pause —
+   * `syncEngineHost.ts`'s `hostForRun`). Omitted: the standing choice.
+   */
+  host?: SyncEngineHost;
 }
 
 export interface UseWhisperApi {
@@ -403,7 +409,7 @@ export function useWhisper(): UseWhisperApi {
         // The cloud arm keys everything on the audio's content hash, so it is
         // resolved BEFORE the run there (and after it on the local arm, as
         // before — no extra hash for a local-only user).
-        const host = readSyncEngineHost();
+        const host = opts?.host ?? readSyncEngineHost();
         const preRunAudioHash = opts?.audioHash
           ?? (host === 'cloud' && audioAsset.file ? await computeAudioHash(audioAsset.file) : undefined);
         if (generationRef.current !== generation) return { started: true };
@@ -622,6 +628,12 @@ export function useWhisper(): UseWhisperApi {
         if (generationRef.current !== generation) return { started: true };
         if (err instanceof DOMException && err.name === 'AbortError') {
           setTranscriptionStatus({ phase: 'idle' });
+          return { started: true };
+        }
+        // Wave 3 U4 — a cloud failure past its one retry is a PAUSE that
+        // asks (CloudTranscriptionPausedDialog), not an inline error strip.
+        if (err instanceof CloudStageError) {
+          setTranscriptionStatus({ phase: 'error', message: err.message, jobId, cloudReason: cloudPauseReason(err.cloud) });
           return { started: true };
         }
         const raw = err instanceof Error ? err.message : String(err);

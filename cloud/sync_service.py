@@ -528,12 +528,21 @@ def gateway() -> Any:
                 await cache_vol.commit.aio()
             return core.public_job(job)
 
+        # Wave 3 U4 — a retry of a request whose job is still queued/running
+        # (the client lost a poll, not the job) re-attaches to that job.
+        inflight = core.inflight_key(member, cache_key)
+        existing_id = await jobs.get.aio(inflight)
+        existing = await jobs.get.aio(existing_id) if existing_id else None
+        if core.reusable_inflight(existing, member):
+            return core.public_job(existing)
+
         if meta is None:
             raise GatewayError(409, "audio-missing", "upload the audio for this hash before submitting")
 
         if chunks is not None:
             job["chunks"] = chunks
         await jobs.put.aio(job_id, job)
+        await jobs.put.aio(inflight, job_id)
         call = await SyncWorker().run.spawn.aio(job_id)
         # Stored under its own key: the worker rewrites the job record as it
         # runs, and a second put of the whole record here could race it.

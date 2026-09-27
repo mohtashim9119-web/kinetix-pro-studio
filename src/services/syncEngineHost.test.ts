@@ -19,6 +19,7 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   DEFAULT_SYNC_ENGINE_HOST,
   SYNC_ENGINE_HOST_KEY,
+  hostForRun,
   onSyncEngineHostChange,
   readSyncEngineHost,
   writeSyncEngineHost,
@@ -34,6 +35,24 @@ const mockInvoke = invoke as unknown as Mock;
 beforeEach(() => {
   localStorage.clear();
   mockInvoke.mockReset();
+});
+
+describe('Wave 3 U4 — hostForRun (one-run local override)', () => {
+  const override = { projectId: 'p1', audioHash: 'h1', host: 'local' as const, reason: 'offline' };
+  it('applies to exactly its project + audio, and nothing else', () => {
+    expect(hostForRun('cloud', override, { projectId: 'p1', audioHash: 'h1' })).toBe('local');
+    expect(hostForRun('cloud', override, { projectId: 'p1', audioHash: 'h2' })).toBe('cloud');
+    expect(hostForRun('cloud', override, { projectId: 'p2', audioHash: 'h1' })).toBe('cloud');
+    expect(hostForRun('cloud', override, { projectId: 'p1', audioHash: undefined })).toBe('cloud');
+    expect(hostForRun('cloud', null, { projectId: 'p1', audioHash: 'h1' })).toBe('cloud');
+    expect(hostForRun('local', null, { projectId: 'p1', audioHash: 'h1' })).toBe('local');
+  });
+  it('never touches the standing choice', () => {
+    writeSyncEngineHost('cloud');
+    hostForRun(readSyncEngineHost(), override, { projectId: 'p1', audioHash: 'h1' });
+    expect(readSyncEngineHost()).toBe('cloud');
+    expect(localStorage.getItem(SYNC_ENGINE_HOST_KEY)).toBe('cloud');
+  });
 });
 
 describe('syncEngineHost', () => {

@@ -356,6 +356,18 @@ def meter_line(job: dict[str, Any], outcome: str, worker_sec: float, now: float)
     }
 
 
+def inflight_key(member: str, cache_key: str) -> str:
+    """Wave 3 U4 — the jobs-dict key naming a member's non-terminal job for
+    one cache key. A client retry after a lost poll resubmits the SAME
+    request; the gateway answers with the job already running instead of
+    spawning (and billing) a second one."""
+    return f"inflight:{member}:{cache_key}"
+
+
+def reusable_inflight(job: dict[str, Any] | None, member: str) -> bool:
+    return job is not None and job.get("member") == member and job.get("status") not in TERMINAL_STATUSES
+
+
 def lookup_reply(result: dict[str, Any] | None, audio_duration_sec: float | None) -> dict[str, Any]:
     """Wave 3 U3 — the answer to "is this stage already computed?".
 

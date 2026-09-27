@@ -202,6 +202,18 @@ def test_lookup_miss_says_whether_audio_must_be_sent():
     assert core.lookup_reply(None, None) == {"cached": False, "audioPresent": False, "audioDurationSec": None}
 
 
+def test_inflight_dedup_only_reuses_this_members_live_job():
+    key = core.inflight_key("operator", "k" * 64)
+    assert key != core.inflight_key("other", "k" * 64)
+    job = core.new_job("j1", "operator", "align", AUDIO, "en", "k" * 64, 10.0, 1.0)
+    assert core.reusable_inflight(job, "operator")
+    assert not core.reusable_inflight(job, "other")
+    for terminal in core.TERMINAL_STATUSES:
+        assert not core.reusable_inflight(dict(job, status=terminal), "operator")
+    assert core.reusable_inflight(dict(job, status="running"), "operator")
+    assert not core.reusable_inflight(None, "operator")
+
+
 def test_hit_line_is_not_a_meter_line_and_carries_no_text():
     line = core.hit_line("operator", "align", AUDIO, "en", 7.0)
     assert set(line) == {"ts", "member", "stage", "audioHash", "language"}

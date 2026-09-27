@@ -207,6 +207,10 @@ def main() -> None:
     report["meterLines"] = {"beforeTranscribeLookup": meters_before, "beforeAlignLookups": meters_mid, "afterLookups": meters_after}
     status, miss, _ = api.call("POST", "/v1/jobs", json_body={"stage": "align", "audioHash": audio_hash, "language": "en", "chunks": edited})
     check(miss["status"] == "queued", "script edit -> alignment cache miss (transcript untouched)", report)
+    # Wave 3 U4 — the client's retry-once resubmits the same request after a
+    # lost poll; it must re-attach to the live job, not spawn a second one.
+    status, again, _ = api.call("POST", "/v1/jobs", json_body={"stage": "align", "audioHash": audio_hash, "language": "en", "chunks": edited})
+    check(status == 200 and again["jobId"] == miss["jobId"], "resubmit of an in-flight miss -> same job (no second GPU run)", report)
     status, cancelled, _ = api.call("DELETE", f"/v1/jobs/{miss['jobId']}")
     check(cancelled["status"] == "cancelled", "cancel queued job -> cancelled", report)
     report["cancel"] = cancelled

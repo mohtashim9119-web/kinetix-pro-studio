@@ -130,8 +130,8 @@ import {
   whisperDegradedKind,
   type GatewayProvenance,
 } from './services/timingProvenance';
-import { onSyncEngineHostChange, readSyncEngineHost } from './services/syncEngineHost';
-import { transcribeForHost } from './services/cloudSyncEngine';
+import { hostForRun, onSyncEngineHostChange, readSyncEngineHost, type RunHostOverride } from './services/syncEngineHost';
+import { CloudStageError, cloudPauseReason, transcribeForHost } from './services/cloudSyncEngine';
 import type { TimingProvenance } from './types';
 import {
   detectUnspokenScriptSegmentsFromWhisperFullAsync,
@@ -211,6 +211,7 @@ import {
   buildFaGateClosedEntry,
   buildFaNotCompiledEntry,
   buildFaUserChoseWhisperEntry,
+  buildHostOverrideEntry,
   buildMediaImportEntry,
   buildMediaNameCollisionEntry,
   buildMediaMatchEntry,
@@ -325,6 +326,7 @@ import { TextLayersPanel } from './components/TextLayersPanel';
 import { BottomDrawer } from './components/BottomDrawer';
 import { SyncLoadingOverlay } from './components/SyncLoadingOverlay';
 import { SyncPausedDialog } from './components/SyncPausedDialog';
+import { CloudTranscriptionPausedDialog } from './components/CloudTranscriptionPausedDialog';
 import { WhisperModelFailureDialog, WHISPER_MODEL_FAILURE_COPY } from './components/WhisperModelFailureDialog';
 const StockSearchModal = lazy(() =>
   import('./components/StockSearchModal').then(m => ({ default: m.StockSearchModal }))
@@ -1900,6 +1902,11 @@ export default function App() {
   // next attempt (see `runForcedAlignmentForSync`'s own
   // `skipLocalCoverageCheck` doc comment).
   const faSkipCoverageCheckOnceRef = useRef<boolean>(false);
+  // Wave 3 U4 — "run this sync on this computer" after a cloud pause: one
+  // project + one voiceover hash, carried from staging through Apply Sync
+  // and cleared when that Apply Sync commits. In memory only; the standing
+  // Cloud/Local choice is never written (see `hostForRun`).
+  const runHostOverrideRef = useRef<RunHostOverride | null>(null);
   // plan-v3 item 5 — whole-run cancel. A fresh controller is created at the
   // start of every handleApplySyncFromFiles call and overwrites this ref
   // unconditionally, so the Cancel button always aborts the CURRENTLY
@@ -3762,6 +3769,12 @@ export default function App() {
           // plan-v3 Wave 2 item 4 — already computed above; avoids hashing
           // this file a second time inside useWhisper.
           audioHash,
+          // Wave 3 U4 — a one-run "transcribe on this computer" answer to a
+          // cloud pause applies to exactly this project + audio.
+          host: hostForRun(readSyncEngineHost(), runHostOverrideRef.current, {
+            projectId: projectRef.current.id,
+            audioHash,
+          }),
           // WS2 T4.7 Requirement 3 — flush the just-written
           // `unappliedTranscript` immediately, past `usePersistProject`'s
           // 500 ms debounce.
@@ -3861,6 +3874,23 @@ export default function App() {
   const handleVoiceoverTranscribeRequested = useCallback((file: File): void => {
     handleVoiceoverStaged(file);
   }, [handleVoiceoverStaged]);
+
+  // Wave 3 U4 — CloudTranscriptionPausedDialog's answers. Both re-drive the
+  // SAME staging path an explicit "Transcribe this file" uses; the retry is a
+  // cloud cache lookup first, so nothing already done is paid for twice.
+  const handleCloudTranscriptionRetry = useCallback((): void => {
+    const pending = pendingVoiceoverRef.current;
+    dismissError();
+    if (pending) handleVoiceoverStaged(pending.file);
+  }, [dismissError, handleVoiceoverStaged]);
+
+  const handleCloudTranscriptionUseLocal = useCallback((reason: string): void => {
+    const pending = pendingVoiceoverRef.current;
+    dismissError();
+    if (!pending?.audioHash) return;
+    runHostOverrideRef.current = { projectId: projectRef.current.id, audioHash: pending.audioHash, host: 'local', reason };
+    handleVoiceoverStaged(pending.file);
+  }, [dismissError, handleVoiceoverStaged]);
 
   const handleApplySyncFromFiles = async (): Promise<ApplySyncResult> => {
     // THE ONE READ OF THE LIVE STAGED STATE, and it is the first statement on
@@ -4135,7 +4165,10 @@ export default function App() {
     // gateway cache hit whenever this audio was transcribed there before.
     // Legacy/unstamped transcripts count as local (they can only have come
     // from whisper.cpp).
-    const engineHost = readSyncEngineHost();
+    const engineHost = hostForRun(readSyncEngineHost(), runHostOverrideRef.current, {
+      projectId: projectRef.current.id,
+      audioHash,
+    });
     const cachedTranscriptHost = transcriptionHost(projectRef.current.timingProvenance?.transcription) ?? 'local';
     if ((projectRef.current.transcriptTokens?.length ?? 0) > 0 && cachedTranscriptHost !== engineHost) {
       setSyncStageMessage(engineHost === 'cloud' ? 'Transcribing on the cloud…' : 'Transcribing on this computer…');
@@ -4167,6 +4200,39 @@ export default function App() {
         setProject(p => ({ ...p, ...patch }));
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return cancelledResult(newSegmentsRaw.length);
+        // Wave 3 U4 — a cloud failure here (past its one retry) PAUSES and
+        // asks, same record and dialog as an alignment pause — never a toast
+        // the user can miss, never a silent switch to local.
+        if (err instanceof CloudStageError) {
+          const reason = cloudPauseReason(err.cloud);
+          const pauseRecord: FaPauseRecord = {
+            projectId: projectRef.current.id,
+            syncRunId,
+            reason,
+            detail: err.message,
+            timestamp: syncRunAt,
+            host: 'cloud',
+            audioHash,
+            stage: 'transcribe',
+          };
+          saveFaPause(pauseRecord);
+          setProject(prev => appendSyncLogEntries(
+            prev,
+            [buildFaPausedEntry(syncRunId, reason, err.message, syncRunAt)],
+            {
+              syncRunId,
+              timestamp: syncRunAt,
+              totalSegments: newSegmentsRaw.length,
+              coveredSegments: 0,
+              skippedSegments: 0,
+              aborted: true,
+              abortReason: 'fa-paused',
+            },
+          ));
+          setFaPauseDialog(pauseRecord);
+          setIsProcessing(false);
+          return { ok: false, message: SYNC_PAUSED_MESSAGE, holdStaged: true };
+        }
         const msg = `Couldn't re-transcribe for the selected sync engine — sync aborted. ${err instanceof Error ? err.message : String(err)}`;
         showToast(msg);
         logSyncAbort(msg, newSegmentsRaw.length);
@@ -4294,7 +4360,11 @@ export default function App() {
       // is decided. `forceWhisperReason` (a one-off per-run override) is
       // folded in HERE, at the call site, never inside the resolver — see
       // its doc comment for why.
-      const engineResolution = await resolveSyncEngine(projectRef.current);
+      const engineResolution = await resolveSyncEngine(projectRef.current, engineHost);
+      // Wave 3 U4 — the user's one-run answer to a cloud pause, on the record.
+      if (engineHost !== readSyncEngineHost() && runHostOverrideRef.current) {
+        ruleLogEntries.push(buildHostOverrideEntry(syncRunId, runHostOverrideRef.current.reason, syncRunAt));
+      }
       const faGateOpen = engineResolution.gateOpen && forceWhisperReason === null;
       // WS1 Session M — FA readiness PRE-FLIGHT, before inference. When the gate
       // is open, report up front whether forced alignment can actually run
@@ -4394,6 +4464,8 @@ export default function App() {
           reason: faRun.reason,
           detail: faRun.detail,
           timestamp: syncRunAt,
+          host: engineResolution.host,
+          audioHash,
         };
         saveFaPause(pauseRecord);
         setProject(prev => appendSyncLogEntries(
@@ -5462,7 +5534,10 @@ export default function App() {
     // the spine must record the project's STANDING toggle position so a
     // later toggle flip (with nothing re-staged) is what makes the NEXT
     // Apply Sync's "already synced" comparison see a real difference.
-    const syncEngineKey = await computeSyncEngineKey(projectRef.current);
+    // Wave 3 U4 — the host THIS run used (a one-run local override stamps a
+    // local key, so the standing Cloud choice later reads as "not synced
+    // with this engine" — honest, and re-syncable).
+    const syncEngineKey = await computeSyncEngineKey(projectRef.current, engineHost);
 
     // 8. Single atomic state update — segments are already final.
     //    New-layer headings (Path B Decision 2) never move on re-sync; only
@@ -5626,6 +5701,8 @@ export default function App() {
     // fact written. That asymmetry is deliberate: a retained transcript is
     // visible and one click from being discarded, while a wrongly-cleared one
     // is gone. The conservative direction is the recoverable one.
+    // Wave 3 U4 — the one-run override is spent once its run commits.
+    runHostOverrideRef.current = null;
     return { ok: true };
   };
 
@@ -5665,6 +5742,19 @@ export default function App() {
       await handleApplySyncFromFiles();
     })();
   }, [handleStagedFilesChange, showToast, faPauseDialog]);
+
+  // Wave 3 U4 — the G3 offline contract's local option: this sync, this
+  // voiceover, on this computer; never the standing default.
+  // Arms the one-run override, then takes the SAME path as Retry (so the
+  // staged-snapshot hydrate stays one read, in one place).
+  const handleSyncPausedUseLocal = useCallback((): void => {
+    const pause = faPauseDialog;
+    if (!pause?.audioHash) return;
+    runHostOverrideRef.current = {
+      projectId: liveProjectRef.current.id, audioHash: pause.audioHash, host: 'local', reason: pause.reason,
+    };
+    handleSyncPausedRetry();
+  }, [faPauseDialog, handleSyncPausedRetry]);
 
   const handleSyncPausedUseWhisper = useCallback((): void => {
     setFaPauseDialog(null);
@@ -6765,6 +6855,12 @@ export default function App() {
     transcriptionStatus.phase === 'error'
     && (transcriptionStatus.kind === 'model-not-found' || transcriptionStatus.kind === 'model-hash-mismatch')
       ? transcriptionStatus.kind
+      : null;
+  // Wave 3 U4 — a cloud staging failure past its one retry: the pause dialog
+  // replaces TranscriptionBar's strip (never shown alongside it).
+  const cloudTranscriptionPause =
+    transcriptionStatus.phase === 'error' && transcriptionStatus.cloudReason
+      ? { reason: transcriptionStatus.cloudReason, detail: transcriptionStatus.message }
       : null;
 
   usePlayback({
@@ -7902,7 +7998,7 @@ export default function App() {
             onActiveLeftTabChange={setActiveLeftTab}
             isPlaying={isPlaying}
           />
-          {transcriptionStatus.phase !== 'idle' && whisperModelFailureKind === null && (
+          {transcriptionStatus.phase !== 'idle' && whisperModelFailureKind === null && cloudTranscriptionPause === null && (
             <div className="flex-shrink-0">
               <TranscriptionBar
                 status={transcriptionStatus}
@@ -8861,8 +8957,9 @@ export default function App() {
           detail={faPauseDialog.detail}
           timestamp={faPauseDialog.timestamp}
           onRetry={handleSyncPausedRetry}
-          onUseWhisper={handleSyncPausedUseWhisper}
+          onUseWhisper={faPauseDialog.stage === 'transcribe' ? undefined : handleSyncPausedUseWhisper}
           onCancel={handleSyncPausedCancel}
+          onUseLocal={faPauseDialog.host === 'cloud' && faPauseDialog.audioHash ? handleSyncPausedUseLocal : undefined}
         />
       )}
 
@@ -8874,6 +8971,16 @@ export default function App() {
           once would put this dialog on top, blocking the download UI it just
           opened) and re-appears on its own if the model is still missing
           after that modal closes. */}
+      {cloudTranscriptionPause !== null && (
+        <CloudTranscriptionPausedDialog
+          reason={cloudTranscriptionPause.reason}
+          detail={cloudTranscriptionPause.detail}
+          onRetry={handleCloudTranscriptionRetry}
+          onUseLocal={() => handleCloudTranscriptionUseLocal(cloudTranscriptionPause.reason)}
+          onCancel={dismissError}
+        />
+      )}
+
       {whisperModelFailureKind !== null && !showManageModelsModal && (
         <WhisperModelFailureDialog
           kind={whisperModelFailureKind}

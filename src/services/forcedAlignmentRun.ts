@@ -52,7 +52,7 @@ import { MatchCancelledError } from './hirschbergMatchClient';
 import { faWordSpansToTranscriptTokens, type FaEvent, type FaInfeasibleChunk } from './faBoundaryTypes';
 import type { FaLanguageCode } from './faTextNormalize';
 import type { Asset, TranscriptToken, VideoSegment } from '../types';
-import { alignViaCloud } from './cloudSyncEngine';
+import { alignViaCloud, cloudPauseReason } from './cloudSyncEngine';
 import { describeCloudError } from './cloudGateway';
 import type { SyncEngineHost } from './syncEngineHost';
 import type { GatewayProvenance } from './timingProvenance';
@@ -97,6 +97,10 @@ export type FaFailureKind =
   | 'already-running'
   | 'out-of-memory'
   | 'offline'
+  /** Wave 3 U4 — the cloud gateway refused this computer's key, or no key
+   *  is set. Split out of 'inference-failed': retrying cannot fix it, and
+   *  the user's way forward (fix the key, or run locally) is different. */
+  | 'cloud-auth'
   /** G6 Step 0a — this binary was compiled without the `fa-inference`
    *  feature (`FaErrorKind::NotImplemented`, `fa.rs`'s
    *  `#[cfg(not(feature = "fa-inference"))]` arm). Split out of the
@@ -598,11 +602,13 @@ async function runCloudFaAttempt(
   const outcome = await alignViaCloud({ voiceoverBlob, audioHash, chunks, language, signal });
   if (outcome.status === 'cancelled') return { status: 'cancelled' };
   if (outcome.status === 'failed') {
-    const offline = outcome.error.kind === 'unreachable' || outcome.error.kind === 'timeout';
+    // Wave 3 U4 — reached only after `runStageCacheFirst`'s one retry (for
+    // the transient kinds) already failed.
+    const reason: FaFailureKind = cloudPauseReason(outcome.error);
     console.warn('[fa] cloud forced alignment failed — pausing for the user to choose:', outcome.error);
     return {
       status: 'paused',
-      reason: offline ? 'offline' : 'inference-failed',
+      reason,
       detail: describeCloudError(outcome.error),
       resumable: true,
     };

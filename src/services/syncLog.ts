@@ -553,8 +553,12 @@ const FA_PAUSED_TEXT: Record<FaFailureKind | FaVictimPauseReason, { what: string
     fix: 'Close other applications and try again, or continue with Whisper timing.',
   },
   offline: {
-    what: 'the cloud alignment engine could not be reached',
-    fix: 'Check your network connection, then try again, or switch to local alignment.',
+    what: 'the cloud sync engine could not be reached (after one automatic retry)',
+    fix: 'Check your network connection, then try again, or run this sync on this computer.',
+  },
+  'cloud-auth': {
+    what: 'the cloud sync server did not accept this computer’s key',
+    fix: 'Check the key in App Settings → Sync Engine → Cloud sync, or run this sync on this computer.',
   },
   // FIX 1 REDO (Wave 1 hotfix) item 4 — every covered segment's committed FA
   // span overlapped an infeasible chunk, so there is no healthy FA timing
@@ -859,6 +863,25 @@ export function buildFaUserChoseWhisperEntry(
       reason: pausedReason,
       fixHint: 'Run Apply Sync again to retry forced alignment.',
     },
+    timestamp,
+  );
+}
+
+/**
+ * Wave 3 U4 — a cloud run paused and the user chose to run THIS sync on this
+ * computer. Explicit and one-off: the standing Cloud/Local choice is unchanged,
+ * which is why the log says so.
+ */
+export function buildHostOverrideEntry(
+  syncRunId: string,
+  pausedReason: string,
+  timestamp: number = Date.now(),
+): SyncLogEntry {
+  return makeSyncLogEntry(
+    syncRunId,
+    'info',
+    `The cloud run paused (${pausedReason}) and you chose to run this sync on this computer. Your Cloud setting is unchanged.`,
+    { severity: 'info', fixHint: 'Run the sync again once the cloud is reachable to use the cloud engine.' },
     timestamp,
   );
 }

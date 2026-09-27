@@ -1078,4 +1078,7 @@ export type TranscriptionStatus =
       message: string;
       jobId: string;
       kind?: 'model-not-found' | 'model-hash-mismatch' | 'already-running' | 'inference-failed';
+      /** Wave 3 U4 — set when the CLOUD engine failed (past its one retry):
+       *  drives CloudTranscriptionPausedDialog instead of the inline strip. */
+      cloudReason?: 'offline' | 'cloud-auth' | 'inference-failed';
     };

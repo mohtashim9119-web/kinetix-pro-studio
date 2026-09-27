@@ -26,7 +26,10 @@ import { transcribeWithProgress } from './whisperService';
 import {
   CloudStageError,
   __resetCloudAudioInFlightForTests,
+  __setCloudRetryDelayForTests,
+  cloudPauseReason,
   cloudProgressPercent,
+  isRetryableCloudError,
   prepareCloudAudioOnce,
   runStageCacheFirst,
   transcribeForHost,
@@ -77,6 +80,7 @@ beforeEach(() => {
   mockInvoke.mockReset();
   (transcribeWithProgress as unknown as Mock).mockClear();
   __resetCloudAudioInFlightForTests();
+  __setCloudRetryDelayForTests(0);
 });
 
 describe('transcribeForHost', () => {
@@ -246,10 +250,10 @@ describe('Wave 3 U3 — cache first: nothing is encoded or uploaded before the l
     expect(commands().filter(x => PREP_COMMANDS.includes(x))).toEqual([]);
   });
 
-  it('offline at the lookup is the same typed failure as before — and nothing was encoded', async () => {
+  it('offline at the lookup (twice: U4 retries once) is the same typed failure — and nothing was encoded', async () => {
     gateway(() => doneTranscript('en'), null, () => { throw { kind: 'unreachable', detail: 'dns' }; });
     await expect(stage()).rejects.toMatchObject({ cloud: { kind: 'unreachable' } });
-    expect(commands()).toEqual(['cloud_cache_lookup']);
+    expect(commands()).toEqual(['cloud_cache_lookup', 'cloud_cache_lookup']);
   });
 
   it('an abort before the lookup never reaches IPC; an abort after a miss prepares nothing', async () => {
@@ -276,6 +280,82 @@ describe('Wave 3 U3 — cache first: nothing is encoded or uploaded before the l
     const r = await runStageCacheFirst({ stage: 'transcribe', audioHash: HASH, language: 'en' }, audio);
     expect(audio).toHaveBeenCalledTimes(1);
     expect(r).toMatchObject({ cached: false, uploaded: true, encoded: true });
+  });
+});
+
+describe('Wave 3 U4 — retry once, then surface (never a silent loop)', () => {
+  const REQ = { stage: 'transcribe' as const, audioHash: HASH, language: 'en' };
+  const HELD = () => ({ cached: false, audioPresent: true, audioDurationSec: 60 });
+  const submits = (): number => mockInvoke.mock.calls.filter(c => c[0] === 'cloud_run_job').length;
+
+  // The U3 bug this unit fixes: one network blip ended the run. Fails on U3.
+  it('a transient failure is retried exactly once, and the retry\'s result is returned', async () => {
+    let n = 0;
+    const onRetry = vi.fn();
+    gateway(() => { n += 1; if (n === 1) throw { kind: 'unreachable', detail: 'reset' }; return doneTranscript('en'); }, 99, HELD);
+    const run = await runStageCacheFirst(REQ, async () => new Blob([]), { onRetry });
+    expect(run).toMatchObject({ retried: true, cached: false });
+    expect(submits()).toBe(2);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onRetry).toHaveBeenCalledWith({ kind: 'unreachable', detail: 'reset' });
+  });
+
+  it('the retry starts from the cache lookup — a job that finished meanwhile is a free hit', async () => {
+    let lookups = 0;
+    gateway(() => { throw { kind: 'timeout', detail: 'poll' }; }, 99, () => {
+      lookups += 1;
+      return lookups === 1 ? HELD() : { cached: true, result: doneTranscript('en').result };
+    });
+    const run = await runStageCacheFirst(REQ, async () => new Blob([]));
+    expect(run).toMatchObject({ retried: true, cached: true });
+    expect(submits()).toBe(1);
+  });
+
+  it('two transient failures in a row surface the second — two attempts, never a third', async () => {
+    gateway(() => { throw { kind: 'server', status: 502, detail: 'bad gateway' }; }, 99, HELD);
+    await expect(runStageCacheFirst(REQ, async () => new Blob([]))).rejects.toMatchObject({ kind: 'server' });
+    expect(submits()).toBe(2);
+  });
+
+  it.each([
+    [{ kind: 'auth' }],
+    [{ kind: 'tooLong', detail: 'x' }],
+    [{ kind: 'rejected', status: 400, code: 'bad-chunks', detail: 'x' }],
+    [{ kind: 'jobFailed', jobId: 'j', code: 'worker-error', detail: 'x' }],
+    [{ kind: 'jobFailed', jobId: 'j', code: 'worker-timeout', detail: 'x' }],
+  ])('a failure a retry cannot change is NOT retried (and so never re-billed): %j', async (err) => {
+    gateway(() => { throw err; }, 99, HELD);
+    await expect(runStageCacheFirst(REQ, async () => new Blob([]))).rejects.toMatchObject({ kind: err.kind });
+    expect(submits()).toBe(1);
+  });
+
+  it('a lost or crashed worker IS retried', async () => {
+    let n = 0;
+    gateway(() => { n += 1; if (n === 1) throw { kind: 'jobFailed', jobId: 'j', code: 'worker-lost', detail: 'x' }; return doneTranscript('en'); }, 99, HELD);
+    await expect(runStageCacheFirst(REQ, async () => new Blob([]))).resolves.toMatchObject({ retried: true });
+  });
+
+  it('cancel during the retry wait ends the run as cancelled with no second attempt', async () => {
+    __setCloudRetryDelayForTests(60_000);
+    const controller = new AbortController();
+    gateway(() => { throw { kind: 'unreachable', detail: 'x' }; }, 99, HELD);
+    const p = runStageCacheFirst(REQ, async () => new Blob([]), { signal: controller.signal, onRetry: () => controller.abort() });
+    await expect(p).rejects.toEqual({ kind: 'cancelled' });
+    expect(submits()).toBe(1);
+  });
+
+  it('retryable and pause-reason tables', () => {
+    expect(isRetryableCloudError({ kind: 'unreachable', detail: '' })).toBe(true);
+    expect(isRetryableCloudError({ kind: 'timeout', detail: '' })).toBe(true);
+    expect(isRetryableCloudError({ kind: 'server', status: 503, detail: '' })).toBe(true);
+    expect(isRetryableCloudError({ kind: 'notConfigured' })).toBe(false);
+    expect(isRetryableCloudError({ kind: 'cancelled' })).toBe(false);
+    expect(isRetryableCloudError({ kind: 'encode', detail: '' })).toBe(false);
+    expect(cloudPauseReason({ kind: 'unreachable', detail: '' })).toBe('offline');
+    expect(cloudPauseReason({ kind: 'timeout', detail: '' })).toBe('offline');
+    expect(cloudPauseReason({ kind: 'auth' })).toBe('cloud-auth');
+    expect(cloudPauseReason({ kind: 'notConfigured' })).toBe('cloud-auth');
+    expect(cloudPauseReason({ kind: 'server', status: 500, detail: '' })).toBe('inference-failed');
   });
 });
 

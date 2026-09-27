@@ -130,12 +130,16 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     // reference-preserving), the victim-pause branch added by 18b3d5f — 'all
     // covered segments fabricated' — which uses the SAME
     // appendSyncLogEntries-only shape as the 'paused' branch (verified
-    // below), and the one real commit.
+    // below), and the one real commit. Wave 3 U4 adds a sixth: the cloud
+    // re-transcription PAUSE (the engine-switch transcript could not be
+    // fetched past its one retry) — the same appendSyncLogEntries-only shape
+    // as the 'paused' branch, verified below, on a path that returns before
+    // any timeline write.
     expect(
       setProjectLines,
       'the number of setProject calls in handleApplySyncFromFiles changed — a ' +
         'new one needs its own cancel-safety argument, not silent coverage by this file',
-    ).toHaveLength(5);
+    ).toHaveLength(6);
 
     // Wave 3 U2 — the engine-switch transcript patch writes the transcript and
     // its provenance, and no timeline field.
@@ -150,17 +154,26 @@ describe('Group B closeout — handleApplySyncFromFiles cancel-boundary structur
     expect(patchBody).not.toMatch(/\bassets\s*:/);
     expect(patchBody).not.toMatch(/voiceoverId\s*:/);
 
+    // Wave 3 U4 — the re-transcription pause: log append only.
+    const retranscribePauseLine = setProjectLines[2]!;
+    const retranscribePauseBody = LINES.slice(retranscribePauseLine - 1, retranscribePauseLine + 12).join('\n');
+    expect(retranscribePauseBody).toContain('appendSyncLogEntries(');
+    expect(retranscribePauseBody).toContain("abortReason: 'fa-paused'");
+    expect(retranscribePauseBody).not.toMatch(/segments\s*:/);
+    expect(retranscribePauseBody).not.toMatch(/\bassets\s*:/);
+    expect(retranscribePauseBody).not.toMatch(/voiceoverId\s*:/);
+
     // The victim-pause branch's setProject call: same appendSyncLogEntries-only
     // shape as the pre-existing 'paused' branch — no segments/assets/voiceoverId
     // field, just the shared log-append helper.
-    const victimPauseLine = setProjectLines[3]!;
+    const victimPauseLine = setProjectLines[4]!;
     const victimPauseBody = LINES.slice(victimPauseLine - 1, victimPauseLine + 12).join('\n');
     expect(victimPauseBody).toContain('appendSyncLogEntries(');
     expect(victimPauseBody).not.toMatch(/segments\s*:/);
     expect(victimPauseBody).not.toMatch(/\bassets\s*:/);
     expect(victimPauseBody).not.toMatch(/voiceoverId\s*:/);
 
-    const realCommit = setProjectLines[4]!;
+    const realCommit = setProjectLines[5]!;
     const commitCheck = lineNumbersOf('if (syncAbortController.signal.aborted) return cancelledResult(lockRestoredSegments.length);')[0]!;
     expect(
       realCommit,
