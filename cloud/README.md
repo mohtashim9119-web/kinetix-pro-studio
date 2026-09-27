@@ -1,5 +1,19 @@
 # Cloud ASR proof of concept
 
+> **Wave 3 service.** The deployed service the desktop app calls is
+> `sync_service.py` (gateway + one T4 worker for both stages), with its pure
+> logic in `sync_core.py` (`python -m pytest cloud/test_sync_core.py`):
+>
+> ```sh
+> modal deploy cloud/sync_service.py                  # https://thekingsmanco99--kinetix-sync.modal.run
+> python cloud/mint_key.py mint <member>              # key -> cloud/.keys/<member>.key (gitignored)
+> python cloud/smoke_sync_service.py                  # live end-to-end check, ~$0.03
+> python cloud/billing_report.py                      # meter vs Modal invoice, $25 Wave 3 cap
+> ```
+>
+> Everything below describes the measurement harness (`app.py`, `align.py`,
+> `measure.py`), which is kept as-is for reproducibility.
+
 Measurement-only Modal functions. Nothing here is a production service and
 nothing ships in the desktop app. The three questions this answers are
 recorded in [`docs/architecture/cloud-asr-measurements.md`](../docs/architecture/cloud-asr-measurements.md).

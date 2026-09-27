@@ -69,3 +69,6 @@ cloud/fixtures/
 
 # Local measurement dumps (token streams, nvidia-smi logs). Regenerable.
 cloud/results/
+
+# Wave 3 gateway API keys (raw keys + member->digest registry). Never commit.
+cloud/.keys/
